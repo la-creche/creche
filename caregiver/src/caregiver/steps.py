@@ -34,6 +34,7 @@ from .grants import (
     rewrite_digests,
     write_grant_file,
 )
+from .lan import Port, url
 from .litellm_keys import LiteLLMError, LiteLLMKeys
 from .playpen_env import write_playpen_env
 from .status import CredentialsBlock, LimitsBlock, RotationState, now_rfc3339
@@ -292,6 +293,8 @@ def publish_playpen_env(state_root: Path, family_name: str, sandbox: str) -> Non
         state_root=state_root,
         family=family_name,
         sandbox=sandbox,
+        pep_url=url(Port.PEP),
+        litellm_base_url=url(Port.LITELLM),
     )
 
 

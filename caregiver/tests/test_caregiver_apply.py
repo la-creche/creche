@@ -16,6 +16,7 @@ from agent_family import FamilyState
 from caregiver.apply import ApplyResult, FamilyNotFoundError, apply_once
 from caregiver.credentials import read_creds, write_creds
 from caregiver.driver import DriverError, FakeDriver, SandboxSpec
+from caregiver.lan import Port, url
 from caregiver.litellm_keys import FakeLiteLLMKeys, LiteLLMError, key_alias
 from caregiver.playpen_env import read_playpen_env
 from caregiver.status import now_rfc3339
@@ -196,6 +197,18 @@ def test_creating_the_sandbox_writes_playpen_env(registry_root: Path, state_root
     assert values["AGENT_SANDBOX"] == "chat-s1"
 
 
+def test_the_env_file_names_the_two_planes_on_the_lan_address(
+    registry_root: Path, state_root: Path
+) -> None:
+    """The URL of each plane is the URL that this service builds for its own
+    calls: the LAN address of the site and the port of the plane."""
+    apply_chat(registry_root, state_root)
+    values = read_playpen_env(paths.playpen_env_path(state_root, "chat", "chat-s1"))
+
+    assert values["AGENT_PEP_URL"] == url(Port.PEP)
+    assert values["AGENT_LITELLM_BASE_URL"] == url(Port.LITELLM)
+
+
 def test_the_status_document_publishes_the_env_file_path(
     registry_root: Path, state_root: Path
 ) -> None:
@@ -241,6 +254,9 @@ def test_a_second_apply_keeps_the_env_file_current(registry_root: Path, state_ro
     assert result.status.sandboxes[0].playpen_env == str(
         paths.playpen_env_path(state_root, "chat", "chat-s1")
     )
+    values = read_playpen_env(paths.playpen_env_path(state_root, "chat", "chat-s1"))
+    assert values["AGENT_PEP_URL"] == url(Port.PEP)
+    assert values["AGENT_LITELLM_BASE_URL"] == url(Port.LITELLM)
 
 
 # --- idempotency -----------------------------------------------------------

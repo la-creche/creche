@@ -22,6 +22,7 @@ from caregiver.applied import read_applied, write_applied
 from caregiver.clock import seconds_from_now
 from caregiver.driver import DriverError, FakeDriver, SandboxSpec
 from caregiver.egress import EgressConfig, litellm_endpoint, pep_endpoint
+from caregiver.lan import Port, url
 from caregiver.litellm_keys import FakeLiteLLMKeys, HttpLiteLLMKeys, LiteLLMError, Spend
 from caregiver.reconcile import (
     DESTROY_STEP,
@@ -784,7 +785,10 @@ def test_adopting_a_replacement_rewrites_its_env_file(fleet: Fleet) -> None:
     fleet.switch = FakeSwitchClient()
     fleet.run()
 
-    assert "AGENT_SANDBOX=chat-s2" in env_path.read_text(encoding="utf-8")
+    lines = env_path.read_text(encoding="utf-8")
+    assert "AGENT_SANDBOX=chat-s2" in lines
+    assert f"AGENT_PEP_URL={url(Port.PEP)}\n" in lines
+    assert f"AGENT_LITELLM_BASE_URL={url(Port.LITELLM)}\n" in lines
 
 
 def test_a_restart_after_a_refused_switch_converges(fleet: Fleet) -> None:

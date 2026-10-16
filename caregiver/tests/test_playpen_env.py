@@ -6,7 +6,10 @@ playpen cannot be told a target path and cannot guess one. `caregiver`
 writes the three host paths, plus the sandbox id, into one file per
 sandbox beside the control directory. `sbx exec --env-file` is the only
 thing that carries a value into the VM, because `sbx exec` forwards no
-host environment."""
+host environment.
+
+The file also names the URL of each plane: the chaperone and LiteLLM. The
+caller of the writer gives the two URLs."""
 
 from __future__ import annotations
 
@@ -24,11 +27,37 @@ from caregiver import paths
 FAMILY = "chat"
 SANDBOX = "chat-s1"
 
+#: The URL of each plane, on a TEST-NET-1 address (RFC 5737).
+PEP_URL = "http://192.0.2.10:8300"
+LITELLM_BASE_URL = "http://192.0.2.10:4000"
+
 
 def write(state_root: Path, sandbox: str = SANDBOX) -> Path:
     path = paths.playpen_env_path(state_root, FAMILY, sandbox)
-    write_playpen_env(path, state_root=state_root, family=FAMILY, sandbox=sandbox)
+    write_playpen_env(
+        path,
+        state_root=state_root,
+        family=FAMILY,
+        sandbox=sandbox,
+        pep_url=PEP_URL,
+        litellm_base_url=LITELLM_BASE_URL,
+    )
     return path
+
+
+def test_it_holds_six_lines_in_one_order(tmp_path: Path) -> None:
+    """The three directories, the sandbox, then the URL of each plane: the
+    chaperone first, LiteLLM second."""
+    lines = write(tmp_path).read_text(encoding="utf-8").splitlines()
+
+    assert lines == [
+        f"AGENT_CRED_DIR={paths.creds_dir(tmp_path, FAMILY)}",
+        f"AGENT_FAMILY_CONFIG_DIR={paths.config_dir(tmp_path, FAMILY)}",
+        f"AGENT_CONTROL_DIR={paths.control_dir(tmp_path, FAMILY, SANDBOX)}",
+        f"AGENT_SANDBOX={SANDBOX}",
+        f"AGENT_PEP_URL={PEP_URL}",
+        f"AGENT_LITELLM_BASE_URL={LITELLM_BASE_URL}",
+    ]
 
 
 def test_it_sits_beside_the_control_directory(tmp_path: Path) -> None:
@@ -56,6 +85,15 @@ def test_it_names_the_sandbox(tmp_path: Path) -> None:
     assert read_playpen_env(write(tmp_path))["AGENT_SANDBOX"] == SANDBOX
 
 
+def test_it_names_each_plane_by_the_url_of_the_caller(tmp_path: Path) -> None:
+    """The writer holds no address and no port. Each URL is the text that
+    the caller gave, with no change."""
+    values = read_playpen_env(write(tmp_path))
+
+    assert values["AGENT_PEP_URL"] == PEP_URL
+    assert values["AGENT_LITELLM_BASE_URL"] == LITELLM_BASE_URL
+
+
 def test_it_names_no_path_under_run(tmp_path: Path) -> None:
     """The defect this file exists to fix: /run/family, /run/family-config
     and /run/control do not exist inside an sbx sandbox."""
@@ -67,10 +105,12 @@ def test_it_names_no_path_under_run(tmp_path: Path) -> None:
 
 def test_it_holds_no_secret(tmp_path: Path) -> None:
     """Invariant 13. The family key and the PEP token live in `creds.json`
-    at mode 0600. This file names that directory and never opens it."""
+    at mode 0600. This file names that directory and never opens it. It
+    names the URL of LiteLLM and of the chaperone, and no key and no token
+    of either one."""
     body = write(tmp_path).read_text(encoding="utf-8")
 
-    assert "LITELLM" not in body
+    assert "KEY" not in body
     assert "PEP_TOKEN" not in body
     assert "TOKEN" not in body
 
@@ -89,7 +129,7 @@ def test_every_line_is_one_assignment(tmp_path: Path) -> None:
     here, so neither is written."""
     lines = write(tmp_path).read_text(encoding="utf-8").splitlines()
 
-    assert len(lines) == 4
+    assert len(lines) == 6
     assert all(line.count("=") >= 1 and not line.startswith("#") for line in lines)
 
 

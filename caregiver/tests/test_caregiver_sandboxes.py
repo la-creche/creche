@@ -16,6 +16,7 @@ import pytest
 from agent_family import FamilyFile, load_registry, parse_family
 from caregiver.driver import DriverError, FakeDriver, SandboxSpec
 from caregiver.egress import EgressConfig, litellm_endpoint, pep_endpoint
+from caregiver.lan import Port, url
 from caregiver.litellm_keys import FakeLiteLLMKeys
 from caregiver.reconcile import Actors, reconcile_family
 from caregiver.sandboxes import (
@@ -124,6 +125,16 @@ def test_it_writes_playpen_env_for_the_new_id(state_root: Path, family: FamilyFi
     env_path = paths.playpen_env_path(state_root, "chat", "chat-s1")
     assert env_path.is_file()
     assert "AGENT_SANDBOX=chat-s1" in env_path.read_text(encoding="utf-8")
+
+
+def test_it_writes_the_url_of_each_plane_for_the_new_id(
+    state_root: Path, family: FamilyFile
+) -> None:
+    create(state_root, family, FakeDriver())
+    lines = paths.playpen_env_path(state_root, "chat", "chat-s1").read_text(encoding="utf-8")
+
+    assert f"AGENT_PEP_URL={url(Port.PEP)}\n" in lines
+    assert f"AGENT_LITELLM_BASE_URL={url(Port.LITELLM)}\n" in lines
 
 
 def test_the_allow_list_carries_both_planes(state_root: Path, family: FamilyFile) -> None:

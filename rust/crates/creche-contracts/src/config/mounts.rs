@@ -23,6 +23,7 @@ use std::str::FromStr;
 use serde::Deserialize;
 use serde_json::Value;
 
+use super::endpoints::{AGENT_LITELLM_BASE_URL, AGENT_PEP_URL, PlaneUrl, PlaneUrlError};
 use super::pytext;
 use super::values::{DirPath, FAMILIES_DIR_NAME, PathError};
 use crate::ids::{SandboxName, SandboxNameError};
@@ -1115,23 +1116,35 @@ impl RawPlaypenEnv {
 ///
 /// `sbx` mounts a host directory at the same path in the sandbox, and
 /// `sbx exec` forwards no host environment. The file tells the playpen
-/// where its three directories are and which sandbox it runs in. It holds
-/// no secret.
+/// where its three directories are and which sandbox it runs in. It also
+/// gives the playpen the URL of each plane: the chaperone and LiteLLM. It
+/// holds no secret.
 ///
-/// FAILURE ACTION. A variable that the file does not set is `fatal` with
-/// `mount_dir_unset` for the playpen, and never a default (contract 03 §7.1
-/// rule 5). The conversion from [`RawPlaypenEnv`] collects each such
-/// variable.
+/// FAILURE ACTION. A directory variable that the file does not set is
+/// `fatal` with `mount_dir_unset` for the playpen, and never a default
+/// (contract 03 §7.1 rule 5). For a plane variable that the file does not
+/// set, the playpen uses the URL of its build. The type has no default for
+/// the URL of a plane. The conversion from [`RawPlaypenEnv`] thus collects
+/// each variable that the file does not set, a plane variable too.
 ///
 /// ```
 /// use creche_contracts::config::mounts::PlaypenEnv;
 ///
-/// let env = PlaypenEnv::for_sandbox(&"/srv/agents/state/rework".parse()?, &"chat-s3".parse()?);
+/// let env = PlaypenEnv::for_sandbox(
+///     &"/srv/agents/state/rework".parse()?,
+///     &"chat-s3".parse()?,
+///     &"http://192.0.2.10:8300".parse()?,
+///     &"http://192.0.2.10:4000".parse()?,
+/// );
 /// assert_eq!(
 ///     env.control_dir().as_str(),
 ///     "/srv/agents/state/rework/families/chat/control/chat-s3"
 /// );
-/// assert!(env.to_text().ends_with("AGENT_SANDBOX=chat-s3\n"));
+/// assert_eq!(env.pep_url().endpoint(), "192.0.2.10:8300");
+/// assert!(
+///     env.to_text()
+///         .ends_with("AGENT_LITELLM_BASE_URL=http://192.0.2.10:4000\n")
+/// );
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
@@ -1145,6 +1158,8 @@ impl RawPlaypenEnv {
 ///     config_dir: "/b".parse().unwrap(),
 ///     control_dir: "/c".parse().unwrap(),
 ///     sandbox: "chat-s3".parse().unwrap(),
+///     pep_url: "http://192.0.2.10:8300".parse().unwrap(),
+///     litellm_base_url: "http://192.0.2.10:4000".parse().unwrap(),
 /// };
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1153,13 +1168,21 @@ pub struct PlaypenEnv {
     config_dir: DirPath,
     control_dir: DirPath,
     sandbox: SandboxName,
+    pep_url: PlaneUrl,
+    litellm_base_url: PlaneUrl,
 }
 
 impl PlaypenEnv {
     /// The env file of one sandbox under one state root. The three paths
-    /// are the paths of `caregiver.paths`.
+    /// are the paths of `caregiver.paths`. The caller gives the URL of each
+    /// plane: the chaperone first, LiteLLM second.
     #[must_use]
-    pub fn for_sandbox(state_root: &DirPath, sandbox: &SandboxName) -> Self {
+    pub fn for_sandbox(
+        state_root: &DirPath,
+        sandbox: &SandboxName,
+        pep_url: &PlaneUrl,
+        litellm_base_url: &PlaneUrl,
+    ) -> Self {
         let family = state_root
             .child(FAMILIES_DIR_NAME)
             .child(sandbox.family().as_str());
@@ -1169,6 +1192,8 @@ impl PlaypenEnv {
             config_dir: family.child(CONFIG_DIR),
             control_dir: family.child(CONTROL_DIR).child(sandbox.as_str()),
             sandbox: sandbox.clone(),
+            pep_url: pep_url.clone(),
+            litellm_base_url: litellm_base_url.clone(),
         }
     }
 
@@ -1196,18 +1221,34 @@ impl PlaypenEnv {
         &self.sandbox
     }
 
-    /// The bytes of the file, as the Python caregiver writes them: four
-    /// `NAME=VALUE` lines. The binary writes them with the mode
-    /// [`PLAYPEN_ENV_MODE`].
+    /// The URL of the chaperone.
+    #[must_use]
+    pub fn pep_url(&self) -> &PlaneUrl {
+        &self.pep_url
+    }
+
+    /// The base URL of LiteLLM.
+    #[must_use]
+    pub fn litellm_base_url(&self) -> &PlaneUrl {
+        &self.litellm_base_url
+    }
+
+    /// The bytes of the file, as the Python caregiver writes them: six
+    /// `NAME=VALUE` lines. The three directories come first, then the
+    /// sandbox, then the URL of the chaperone and the base URL of LiteLLM.
+    /// The binary writes them with the mode [`PLAYPEN_ENV_MODE`].
     #[must_use]
     pub fn to_text(&self) -> String {
         format!(
             "{CRED_DIR_VAR}{ASSIGN}{}\n{CONFIG_DIR_VAR}{ASSIGN}{}\n{CONTROL_DIR_VAR}{ASSIGN}{}\n\
-             {SANDBOX_VAR}{ASSIGN}{}\n",
+             {SANDBOX_VAR}{ASSIGN}{}\n{AGENT_PEP_URL}{ASSIGN}{}\n\
+             {AGENT_LITELLM_BASE_URL}{ASSIGN}{}\n",
             self.cred_dir,
             self.config_dir,
             self.control_dir,
             self.sandbox.as_str(),
+            self.pep_url,
+            self.litellm_base_url,
         )
     }
 }
@@ -1216,7 +1257,8 @@ impl PlaypenEnv {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlaypenEnvError {
     /// The file does not set the variable, or sets it to the empty text.
-    /// The playpen answers `fatal` with `mount_dir_unset`.
+    /// For one of the three directories, the playpen answers `fatal` with
+    /// `mount_dir_unset`.
     Unset {
         /// The name of the variable.
         variable: &'static str,
@@ -1230,6 +1272,10 @@ pub enum PlaypenEnvError {
     },
     /// The value of `AGENT_SANDBOX` is not a sandbox name.
     Sandbox(SandboxNameError),
+    /// The value of `AGENT_PEP_URL` is not the URL of a plane.
+    PepUrl(PlaneUrlError),
+    /// The value of `AGENT_LITELLM_BASE_URL` is not the URL of a plane.
+    LitellmBaseUrl(PlaneUrlError),
 }
 
 impl fmt::Display for PlaypenEnvError {
@@ -1238,6 +1284,8 @@ impl fmt::Display for PlaypenEnvError {
             Self::Unset { variable } => write!(f, "{variable}: no value"),
             Self::Path { variable, error } => write!(f, "{variable}: {error}"),
             Self::Sandbox(error) => write!(f, "{SANDBOX_VAR}: {error}"),
+            Self::PepUrl(error) => write!(f, "{AGENT_PEP_URL}: {error}"),
+            Self::LitellmBaseUrl(error) => write!(f, "{AGENT_LITELLM_BASE_URL}: {error}"),
         }
     }
 }
@@ -1254,7 +1302,9 @@ impl Error for PlaypenEnvError {}
 /// };
 ///
 /// let raw = RawPlaypenEnv::parse(
-///     "AGENT_CRED_DIR=/a\nAGENT_FAMILY_CONFIG_DIR=/b\nAGENT_CONTROL_DIR=/c\n",
+///     "AGENT_CRED_DIR=/a\nAGENT_FAMILY_CONFIG_DIR=/b\nAGENT_CONTROL_DIR=/c\n\
+///      AGENT_PEP_URL=http://192.0.2.10:8300\n\
+///      AGENT_LITELLM_BASE_URL=http://192.0.2.10:4000\n",
 /// );
 /// let errors: PlaypenEnvErrors = PlaypenEnv::try_from(&raw).unwrap_err();
 /// let unset = PlaypenEnvError::Unset { variable: "AGENT_SANDBOX" };
@@ -1310,6 +1360,30 @@ fn dir_of(raw: &RawPlaypenEnv, variable: &'static str) -> Result<DirPath, Plaype
         .map_err(|error| PlaypenEnvError::Path { variable, error })
 }
 
+// CONTRACT-QUESTION: contract 03 §7 gives the two plane URLs as fixed
+// values, and §7.1 names four variables of the env file. No contract says
+// what a reader does with an env file that sets no plane variable. The
+// type takes the strict reading: each of the two variables is required,
+// as each other variable of the file is. The conversion thus refuses a
+// file of four lines. The TypeScript playpen reads such a file and then
+// uses the two URLs of its build. The other reading keeps such a file and
+// takes each URL from another source. It costs two `Option` fields in
+// `PlaypenEnv`.
+/// The URL of the plane that one variable names. `refused` makes the error
+/// for a value that is not the URL of a plane.
+fn plane_of(
+    raw: &RawPlaypenEnv,
+    variable: &'static str,
+    refused: fn(PlaneUrlError) -> PlaypenEnvError,
+) -> Result<PlaneUrl, PlaypenEnvError> {
+    let text = raw
+        .get(variable)
+        .filter(|text| !text.is_empty())
+        .ok_or(PlaypenEnvError::Unset { variable })?;
+
+    text.parse().map_err(refused)
+}
+
 impl TryFrom<&RawPlaypenEnv> for PlaypenEnv {
     type Error = PlaypenEnvErrors;
 
@@ -1327,19 +1401,32 @@ impl TryFrom<&RawPlaypenEnv> for PlaypenEnv {
             dir_of(raw, CONFIG_DIR_VAR),
             dir_of(raw, CONTROL_DIR_VAR),
             sandbox,
+            plane_of(raw, AGENT_PEP_URL, PlaypenEnvError::PepUrl),
+            plane_of(raw, AGENT_LITELLM_BASE_URL, PlaypenEnvError::LitellmBaseUrl),
         ) {
-            (Ok(cred_dir), Ok(config_dir), Ok(control_dir), Ok(sandbox)) => Ok(Self {
+            (
+                Ok(cred_dir),
+                Ok(config_dir),
+                Ok(control_dir),
+                Ok(sandbox),
+                Ok(pep_url),
+                Ok(litellm_base_url),
+            ) => Ok(Self {
                 cred_dir,
                 config_dir,
                 control_dir,
                 sandbox,
+                pep_url,
+                litellm_base_url,
             }),
-            (cred_dir, config_dir, control_dir, sandbox) => {
+            (cred_dir, config_dir, control_dir, sandbox, pep_url, litellm_base_url) => {
                 let errors = [
                     cred_dir.err(),
                     config_dir.err(),
                     control_dir.err(),
                     sandbox.err(),
+                    pep_url.err(),
+                    litellm_base_url.err(),
                 ];
 
                 Err(PlaypenEnvErrors(errors.into_iter().flatten().collect()))
@@ -1909,10 +1996,24 @@ mod tests {
         }
     }
 
+    /// The URL of the chaperone in the tests of the env file.
+    const PEP_URL: &str = "http://192.0.2.10:8300";
+
+    /// The base URL of LiteLLM in the tests of the env file.
+    const LITELLM_BASE_URL: &str = "http://192.0.2.10:4000";
+
+    fn playpen_env(root: &str, sandbox: &str) -> PlaypenEnv {
+        PlaypenEnv::for_sandbox(
+            &root.parse().unwrap(),
+            &sandbox.parse().unwrap(),
+            &PEP_URL.parse().unwrap(),
+            &LITELLM_BASE_URL.parse().unwrap(),
+        )
+    }
+
     #[test]
-    fn the_env_file_holds_the_paths_of_one_sandbox() {
-        let root: DirPath = "/srv/agents/state/rework".parse().unwrap();
-        let env = PlaypenEnv::for_sandbox(&root, &"chat-s3".parse().unwrap());
+    fn the_env_file_holds_the_paths_and_the_planes_of_one_sandbox() {
+        let env = playpen_env("/srv/agents/state/rework", "chat-s3");
         let family = "/srv/agents/state/rework/families/chat";
 
         assert_eq!(env.cred_dir().as_str(), format!("{family}/creds"));
@@ -1922,20 +2023,43 @@ mod tests {
             format!("{family}/control/chat-s3")
         );
         assert_eq!(env.sandbox().as_str(), "chat-s3");
+        assert_eq!(env.pep_url().to_string(), PEP_URL);
+        assert_eq!(env.litellm_base_url().to_string(), LITELLM_BASE_URL);
         assert_eq!(
             env.to_text(),
             format!(
                 "AGENT_CRED_DIR={family}/creds\nAGENT_FAMILY_CONFIG_DIR={family}/config\n\
-                 AGENT_CONTROL_DIR={family}/control/chat-s3\nAGENT_SANDBOX=chat-s3\n"
+                 AGENT_CONTROL_DIR={family}/control/chat-s3\nAGENT_SANDBOX=chat-s3\n\
+                 AGENT_PEP_URL={PEP_URL}\nAGENT_LITELLM_BASE_URL={LITELLM_BASE_URL}\n"
             )
         );
     }
 
     #[test]
+    fn the_env_file_has_six_lines_and_each_plane_has_its_own_line() {
+        let env = PlaypenEnv::for_sandbox(
+            &"/srv/agents/state/rework".parse().unwrap(),
+            &"chat-s3".parse().unwrap(),
+            &"http://chaperone.example:8300".parse().unwrap(),
+            &"http://litellm.example:4000".parse().unwrap(),
+        );
+        let text = env.to_text();
+        let lines: Vec<&str> = text.lines().collect();
+
+        assert_eq!(lines.len(), 6);
+        assert_eq!(lines[4], "AGENT_PEP_URL=http://chaperone.example:8300");
+        assert_eq!(
+            lines[5],
+            "AGENT_LITELLM_BASE_URL=http://litellm.example:4000"
+        );
+        assert_eq!(env.pep_url().endpoint(), "chaperone.example:8300");
+        assert_eq!(env.litellm_base_url().endpoint(), "litellm.example:4000");
+    }
+
+    #[test]
     fn the_env_file_reads_back_as_the_same_value() {
         for root in ["/srv/agents/state/rework", "/", "//net/state"] {
-            let env =
-                PlaypenEnv::for_sandbox(&root.parse().unwrap(), &"dev-team-s12".parse().unwrap());
+            let env = playpen_env(root, "dev-team-s12");
             let raw = RawPlaypenEnv::parse(&env.to_text());
 
             assert_eq!(PlaypenEnv::try_from(&raw), Ok(env), "{root}");
@@ -1964,7 +2088,8 @@ mod tests {
     #[test]
     fn a_variable_that_the_env_file_does_not_set_is_an_error() {
         let raw = RawPlaypenEnv::parse(
-            "AGENT_CRED_DIR=\nAGENT_FAMILY_CONFIG_DIR=config\nAGENT_SANDBOX=chat\n",
+            "AGENT_CRED_DIR=\nAGENT_FAMILY_CONFIG_DIR=config\nAGENT_SANDBOX=chat\n\
+             AGENT_PEP_URL=https://192.0.2.10:8300\nAGENT_LITELLM_BASE_URL=\n",
         );
         let errors = PlaypenEnv::try_from(&raw).unwrap_err();
 
@@ -1982,19 +2107,92 @@ mod tests {
                     variable: CONTROL_DIR_VAR
                 },
                 PlaypenEnvError::Sandbox(SandboxNameError::NoNumber),
+                PlaypenEnvError::PepUrl(PlaneUrlError::NotHttp),
+                PlaypenEnvError::Unset {
+                    variable: AGENT_LITELLM_BASE_URL
+                },
             ]
         );
         assert_eq!(
             errors.to_string(),
             "AGENT_CRED_DIR: no value; AGENT_FAMILY_CONFIG_DIR: a path starts with /; \
-             AGENT_CONTROL_DIR: no value; AGENT_SANDBOX: a sandbox name ends with -s and a number"
+             AGENT_CONTROL_DIR: no value; AGENT_SANDBOX: a sandbox name ends with -s and a number; \
+             AGENT_PEP_URL: a plane URL starts with http://; AGENT_LITELLM_BASE_URL: no value"
         );
         assert_eq!(
             PlaypenEnv::try_from(&RawPlaypenEnv::parse(""))
                 .unwrap_err()
                 .as_slice()
                 .len(),
-            4
+            6
+        );
+    }
+
+    #[test]
+    fn an_env_file_with_no_plane_variable_is_refused() {
+        let raw = RawPlaypenEnv::parse(
+            "AGENT_CRED_DIR=/srv/agents/state/rework/families/chat/creds\n\
+             AGENT_FAMILY_CONFIG_DIR=/srv/agents/state/rework/families/chat/config\n\
+             AGENT_CONTROL_DIR=/srv/agents/state/rework/families/chat/control/chat-s3\n\
+             AGENT_SANDBOX=chat-s3\n",
+        );
+
+        assert_eq!(
+            PlaypenEnv::try_from(&raw).unwrap_err().as_slice(),
+            [
+                PlaypenEnvError::Unset {
+                    variable: AGENT_PEP_URL
+                },
+                PlaypenEnvError::Unset {
+                    variable: AGENT_LITELLM_BASE_URL
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_plane_variable_that_holds_no_plane_url_has_its_own_error() {
+        let four_lines = playpen_env("/srv/agents/state/rework", "chat-s3")
+            .to_text()
+            .lines()
+            .take(4)
+            .fold(String::new(), |text, line| text + line + "\n");
+
+        for (value, error) in [
+            ("192.0.2.10:8300", PlaneUrlError::NotHttp),
+            ("https://192.0.2.10:8300", PlaneUrlError::NotHttp),
+            (" http://192.0.2.10:8300", PlaneUrlError::NotHttp),
+            ("http://user@192.0.2.10:8300", PlaneUrlError::UserPart),
+            ("http://192.0.2.10:8300/", PlaneUrlError::AfterAuthority),
+            ("http://192.0.2.10", PlaneUrlError::NoPort),
+            ("http://192.0.2.10:8300 ", PlaneUrlError::PortForm),
+            ("http://192.0.2.10:８３００", PlaneUrlError::PortForm),
+            ("http://192.0.2.10:65536", PlaneUrlError::PortRange),
+        ] {
+            let pep = format!(
+                "{four_lines}AGENT_PEP_URL={value}\nAGENT_LITELLM_BASE_URL={LITELLM_BASE_URL}\n"
+            );
+            let litellm =
+                format!("{four_lines}AGENT_PEP_URL={PEP_URL}\nAGENT_LITELLM_BASE_URL={value}\n");
+
+            assert_eq!(
+                PlaypenEnv::try_from(&RawPlaypenEnv::parse(&pep))
+                    .unwrap_err()
+                    .as_slice(),
+                [PlaypenEnvError::PepUrl(error)],
+                "{value:?}"
+            );
+            assert_eq!(
+                PlaypenEnv::try_from(&RawPlaypenEnv::parse(&litellm))
+                    .unwrap_err()
+                    .as_slice(),
+                [PlaypenEnvError::LitellmBaseUrl(error)],
+                "{value:?}"
+            );
+        }
+        assert_eq!(
+            PlaypenEnvError::LitellmBaseUrl(PlaneUrlError::NoPort).to_string(),
+            "AGENT_LITELLM_BASE_URL: a plane URL gives its port"
         );
     }
 

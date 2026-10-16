@@ -51,6 +51,7 @@ from attendance.api import build_app
 from attendance.auth import Principal, TokenBook
 from attendance.config import Bind, Config
 from attendance.service import SessionService
+from caregiver.lan import Port, url
 from caregiver.playpen_env import write_playpen_env
 
 from caregiver import paths as caregiver_paths
@@ -320,6 +321,8 @@ class Stack:
             state_root=self.state_root,
             family=FAMILY,
             sandbox=sandbox,
+            pep_url=url(Port.PEP),
+            litellm_base_url=url(Port.LITELLM),
         )
 
     def _write_creds(self) -> None:

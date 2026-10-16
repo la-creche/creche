@@ -21,7 +21,7 @@ provides:
   # Contract 01: the family.yaml and mcp/<name>/server.yaml schemas.
   - { contract: family-file, major: 0, minor: 13 }
   # Contract 05: per-family status, sandbox state, switch-sandbox.
-  - { contract: manager-status, major: 0, minor: 16 }
+  - { contract: manager-status, major: 0, minor: 17 }
 requires:
   # Contract 04: it writes the PEP's grant file and mints the family token.
   - { contract: pep-grant, major: 0, min_minor: 11 }

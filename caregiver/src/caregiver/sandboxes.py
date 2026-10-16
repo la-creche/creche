@@ -42,6 +42,7 @@ from .driver import DriverError, Mount, SandboxDriver, SandboxSpec
 from .egress import EgressConfig
 from .faults import FaultEntry
 from .images import IMAGE_FLAVOR_UNCONFIGURED, SandboxImages
+from .lan import Port, url
 from .playpen_env import write_playpen_env
 from .status import ChannelState, SandboxLifecycle, SandboxPower, SandboxStatus
 from .switch import SwitchClient, SwitchError, SwitchRequest
@@ -205,6 +206,8 @@ def create_sandbox(
         state_root=state_root,
         family=family.name,
         sandbox=name,
+        pep_url=url(Port.PEP),
+        litellm_base_url=url(Port.LITELLM),
     )
     created = record.with_state(SandboxLifecycle.CREATING)
     _put(state_root, family.name, created)

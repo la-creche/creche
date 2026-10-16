@@ -12,6 +12,7 @@ use creche_vectors::{self as vectors, Marker, Outcome, Vector};
 use serde_json::{Map, Value, json};
 
 use super::attendance::{AttendanceConfig, Bind};
+use super::endpoints::PlaneUrl;
 use super::mounts::{Credentials, PlaypenEnv, RawPlaypenEnv, RuntimeConfig};
 use super::noticeboard::{AccessKey, CookieSecure, NoticeboardConfig};
 use super::roster::{RawRoster, Roster, Upstream};
@@ -676,9 +677,11 @@ fn creds_write(vector: &Vector) -> Did {
 fn playpen_env_write(vector: &Vector) -> Did {
     let args = args(vector);
     let text = |name: &str| args[name].as_str().unwrap();
-    let (Ok(state_root), Ok(sandbox)) = (
+    let (Ok(state_root), Ok(sandbox), Ok(pep_url), Ok(litellm_base_url)) = (
         text("state_root").parse::<DirPath>(),
         text("sandbox").parse::<SandboxName>(),
+        text("pep_url").parse::<PlaneUrl>(),
+        text("litellm_base_url").parse::<PlaneUrl>(),
     ) else {
         return Did::Refused(None);
     };
@@ -686,7 +689,7 @@ fn playpen_env_write(vector: &Vector) -> Did {
         return Did::Refused(None);
     }
 
-    output(PlaypenEnv::for_sandbox(&state_root, &sandbox).to_text())
+    output(PlaypenEnv::for_sandbox(&state_root, &sandbox, &pep_url, &litellm_base_url).to_text())
 }
 
 fn playpen_env_read(vector: &Vector) -> Did {
