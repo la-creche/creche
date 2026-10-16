@@ -259,3 +259,24 @@ def test_the_service_uses_the_toml_patch_for_a_toml_family(
     assert answer.status_code == 303
     assert seen == []
     assert CHAT_COMMENT in board.text()
+
+
+def test_the_patch_takes_the_markup_of_the_form(
+    board: Board, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """One save has one markup: the markup of the form. The name of the file
+    that the patch reads does not change it."""
+    other = tmp_path / "other" / "family.yaml"
+    other.parent.mkdir()
+    other.write_text(board.text(), encoding="utf-8")
+    monkeypatch.setattr(app_module, "family_path", lambda registry_dir, name: other)
+    board.get(EDIT)
+    body = posted_form(board)
+    body["description"] = "the house assistant, rewritten"
+    body["verb"] = "save"
+
+    answer = board.post(EDIT, body)
+
+    assert answer.status_code == 303
+    assert lines_that_moved(board.text()) == ['description = "the house assistant, rewritten"']
+    assert CHAT_COMMENT in board.text()

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent_family import Markup, parse_family
+from agent_family import Markup, load_registry, parse_family
 from noticeboard.registrywrite import family_path, save_family
 from noticeboard.tomlout import to_toml
 from noticeboard_helpers import (
@@ -135,6 +135,18 @@ def test_a_directory_with_both_names_refuses_the_save(tmp_path: Path) -> None:
     assert commit_count(root) == before
     assert toml_file(root).read_text(encoding="utf-8") == CHAT_FAMILY_TOML
     assert yaml_file.read_text(encoding="utf-8") == "name: chat\n"
+
+
+def test_the_path_of_a_directory_with_both_names_is_the_file_of_the_report(
+    tmp_path: Path,
+) -> None:
+    """The registry names the TOML file in the report of such a directory.
+    The save names the same file."""
+    root = make_registry(tmp_path, Markup.TOML)
+    (root / "families" / "chat" / "family.yaml").write_text("name: chat\n", encoding="utf-8")
+
+    assert family_path(root, "chat") == toml_file(root)
+    assert load_registry(root).reports["chat"].file == "families/chat/family.toml"
 
 
 def test_a_toml_symlink_is_refused(tmp_path: Path) -> None:

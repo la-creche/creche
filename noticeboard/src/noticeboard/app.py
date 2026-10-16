@@ -45,7 +45,7 @@ from starlette.staticfiles import StaticFiles
 from . import pages, security, tomlkeep
 from .auditfiles import ARGS_NOTICE, AuditFilter, known_days
 from .config import Config
-from .familyform import Form, document_of, form_of, markup_of, parse_posted, with_posted
+from .familyform import Form, document_of, form_of, parse_posted, with_posted
 from .pages import EditPage
 from .registrywrite import NAME_RE, family_path, save_family
 from .security import CSRF_COOKIE, CSRF_FIELD, Origin, Refusal
@@ -330,7 +330,7 @@ def _saved(
     if problem:
         return EditPage(family=name, form=typed, diff=diff, problem=problem, posted=posted)
 
-    text = _kept(config, name, models) or text
+    text = _kept(config, name, form.markup, models) or text
     result = save_family(config.registry_dir, name, text, posted.get("subject", ""))
 
     if not result.ok:
@@ -353,9 +353,12 @@ def _saved(
     )
 
 
-def _kept(config: Config, name: str, models: tuple[dict[str, Any], dict[str, Any]]) -> str | None:
+def _kept(
+    config: Config, name: str, markup: Markup, models: tuple[dict[str, Any], dict[str, Any]]
+) -> str | None:
     """The family file with only the changed fields replaced, so its
-    comments survive the save (`yamlkeep.py`, `tomlkeep.py`).
+    comments survive the save (`yamlkeep.py`, `tomlkeep.py`). `markup` is
+    the markup of the form, so one save has one markup.
 
     `None` whenever the file cannot be read or round-tripped, and the caller
     then writes the emitter's document instead. A save must not fail over a
@@ -363,11 +366,9 @@ def _kept(config: Config, name: str, models: tuple[dict[str, Any], dict[str, Any
     model that the form asked for: a save must not write another edit.
     """
     before, after = models
-    path = family_path(config.registry_dir, name)
-    markup = markup_of(path)
 
     try:
-        original = path.read_text(encoding="utf-8")
+        original = family_path(config.registry_dir, name).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         # The registry read this file as UTF-8 a moment ago. This is a second
         # read, and another writer can change the file between the two.
