@@ -791,7 +791,8 @@ deletes this paragraph and the table.
 
 The Python code holds more than one copy of most id grammars.
 `vectors/data/ids/disagreements.json` lists each input on which two copies of
-one grammar give different results.
+one grammar give different results. The file holds no row today. A test of
+`ids` fails when the file holds a row.
 
 1. The Rust type takes the strictest copy. It refuses each input that one
    copy refuses.
@@ -799,9 +800,8 @@ one grammar give different results.
    copy and what the copy does.
 3. List the question under "Known gaps".
 4. A surface in the test table of the type has the stance `equal`: the type
-   and the copy give the same result for each vector. `stricter` is an old
-   second stance. Do not use it for a new surface. Packet `decisions-ids`
-   deletes it from `ids`.
+   and the copy give the same result for each vector. `ids` has no second
+   stance. Do not add one.
 
 Reason: a value passes more than one copy before the platform uses it. The
 strictest copy is thus the grammar that holds on the host. A type that takes
@@ -2409,8 +2409,8 @@ adds a crate:
      Python, `$` also matches before a final newline. Each Python copy
      refuses a final newline, and the type refuses it.
   2. `ToolName`, contract 01 §3.4 and contract 01b §5. The contracts give no
-     cap. Two Python copies have a cap of 64, and one has a cap of 128. The
-     type has the cap of 64.
+     cap. Each of the three Python copies has a cap of 64. The type has that
+     cap.
   3. `EnvName`, contract 01b §4.1. The contract gives no grammar. Each of
      the two Python copies has a cap of 64. The type has that cap.
   4. `PackageVersion`, contract 01b §3.1. The contract gives no grammar.

@@ -1,8 +1,5 @@
 {
  "format": 1,
  "kind": "disagreements",
- "rows": [
-  {"grammar":"tool_name","id":"len-65","input":{"text":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"results":{"accepted":["id.tool_name.chaperone_grants"],"refused":["id.tool_name.family_file","id.tool_name.handover_mcpserver"]}},
-  {"grammar":"tool_name","id":"len-128","input":{"text":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"results":{"accepted":["id.tool_name.chaperone_grants"],"refused":["id.tool_name.family_file","id.tool_name.handover_mcpserver"]}}
- ]
+ "rows": []
 }

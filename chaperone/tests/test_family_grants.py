@@ -24,6 +24,9 @@ from chaperone import family_grants
 #: The vectors use the same number.
 TOO_DEEP = 400_000
 
+#: The most bytes of a tool name in a grant file.
+TOOL_NAME_MAX_BYTES = 64
+
 
 def _store(tmp_path: Path) -> tuple[FamilyStore, Path, FaultWriter]:
     grants_dir = tmp_path / "grants"
@@ -260,6 +263,41 @@ def test_parse_rejects_shapes_that_are_not_objects() -> None:
     assert parse_grants(b'{"version": true}', "chat")[0] is None
     assert parse_grants(b'{"version": "2"}', "chat")[0] is None
     assert parse_grants(b'{"version": 2}', "chat")[0] is None
+
+
+def _file_with_tool(name: str) -> bytes:
+    document = json.loads(json.dumps(make_grants().model_dump()))
+    document["tools"] = {"kagi": [name]}
+
+    return json.dumps(document).encode("utf-8")
+
+
+def test_a_tool_name_has_64_bytes_at_most() -> None:
+    """A grant file, a family file and a server file read one cap for a tool
+    name. The form takes ASCII only, so 64 characters are 64 bytes."""
+    longest = "a" * TOOL_NAME_MAX_BYTES
+    grants, _ = parse_grants(_file_with_tool(longest), "chat")
+
+    assert grants is not None
+    assert grants.tools == {"kagi": (longest,)}
+
+    refused, message = parse_grants(_file_with_tool(longest + "a"), "chat")
+
+    assert refused is None
+    assert message == "grants/chat.json: invalid (1 errors)"
+
+
+def test_a_file_with_a_longer_tool_name_fails_closed(tmp_path: Path) -> None:
+    """Contract 04 §1.4: a file that is not valid reads as no reach, and the
+    family gets the `grants_stale` fault."""
+    store, grants_dir, _ = _store(tmp_path)
+    too_long = "a" * (TOOL_NAME_MAX_BYTES + 1)
+    write_raw(grants_dir, "chat", _file_with_tool(too_long).decode("utf-8"))
+
+    assert store.lookup(FAMILY_TOKEN) is None
+    entry = _faults_of(tmp_path, "chat")[0]
+    assert entry["code"] == "grants_stale"
+    assert entry["message"] == "grants/chat.json: invalid (1 errors)"
 
 
 def _too_deep() -> str:

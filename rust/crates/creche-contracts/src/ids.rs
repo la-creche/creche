@@ -1062,12 +1062,12 @@ impl fmt::Display for McpUserError {
 impl Error for McpUserError {}
 
 // CONTRACT-QUESTION: contract 01 §3.4 and contract 01b §5 give a tool name the
-// form `[A-Za-z][A-Za-z0-9_-]*` and no cap. The three Python copies disagree:
-// `agent_family.grammar.TOOL_NAME` and `handover.mcpserver` cap a name at 64
-// characters, and the grant file parser of the chaperone caps it at 128. This
-// type takes the strictest copy: 64 bytes. A server file must pass
-// `handover.mcpserver` before a tool exists, so no tool has a longer name. A
-// change to a larger cap costs the one number `max` here.
+// form `[A-Za-z][A-Za-z0-9_-]*` and no cap. The three Python copies take one
+// cap, 64 characters: `agent_family.grammar.TOOL_NAME`, `handover.mcpserver`
+// and the grant file parser of the chaperone. This type takes that cap: 64
+// bytes. A server file must pass `handover.mcpserver` before a tool exists, so
+// no tool has a longer name. A change to a larger cap costs the one number
+// `max` here.
 const TOOL_NAME: Run = Run {
     noun: "a tool name",
     min: 1,
@@ -2678,7 +2678,7 @@ mod tests {
     mod python {
         use std::collections::HashSet;
 
-        use creche_vectors::{self as vectors, Disagreement, Outcome, Vector};
+        use creche_vectors::{self as vectors, Outcome, Vector};
         use serde_json::{Value, json};
 
         use super::super::*;
@@ -2693,10 +2693,6 @@ mod tests {
         enum Stance {
             /// The type and the copy do the same with each vector.
             Equal,
-            /// The copy accepts an input that a stricter copy refuses. The type
-            /// refuses each such input of `ids/disagreements.json`. On each other
-            /// vector the type and the copy do the same.
-            Stricter,
         }
 
         /// One surface that a type implements.
@@ -2710,14 +2706,6 @@ mod tests {
             Against {
                 surface,
                 stance: Stance::Equal,
-                replay,
-            }
-        }
-
-        const fn stricter(surface: &'static str, replay: fn(&str) -> Replay) -> Against {
-            Against {
-                surface,
-                stance: Stance::Stricter,
                 replay,
             }
         }
@@ -2832,7 +2820,7 @@ mod tests {
         ];
 
         const TOOL_NAME: &[Against] = &[
-            stricter("id.tool_name.chaperone_grants", takes::<ToolName>),
+            equal("id.tool_name.chaperone_grants", takes::<ToolName>),
             equal("id.tool_name.family_file", takes::<ToolName>),
             equal("id.tool_name.handover_mcpserver", takes::<ToolName>),
         ];
@@ -2951,8 +2939,7 @@ mod tests {
         }
 
         /// Each vector on which the Rust code differs from the Python code on
-        /// purpose. A vector outside this table and outside
-        /// `ids/disagreements.json` must be equal.
+        /// purpose. A vector outside this table must be equal.
         const DEVIATIONS: &[Deviation] = &[];
 
         /// The decision that covers one vector of one surface.
@@ -2969,19 +2956,6 @@ mod tests {
                 .filter(|deviation| deviation.surfaces.contains(&surface))
                 .map(|deviation| deviation.vectors.len())
                 .sum()
-        }
-
-        /// Whether `ids/disagreements.json` says that this surface accepts an
-        /// input that another copy of the grammar refuses.
-        fn is_laxer(rows: &[Disagreement], surface: &str, vector: &str) -> bool {
-            rows.iter().any(|row| {
-                row.id() == vector
-                    && row
-                        .surfaces(Outcome::Accepted)
-                        .iter()
-                        .any(|name| name == surface)
-                    && !row.surfaces(Outcome::Refused).is_empty()
-            })
         }
 
         /// What the Python code did with one input.
@@ -3012,9 +2986,7 @@ mod tests {
         /// and a run with `--nocapture` shows them.
         fn walk(name: &str) {
             let table = table_of(name);
-            let disagreements = vectors::disagreements().unwrap();
             let mut equal = 0;
-            let mut stricter = 0;
             let mut deviated = 0;
 
             assert!(
@@ -3023,7 +2995,6 @@ mod tests {
             );
             for against in table {
                 let surface = vectors::surface(against.surface).unwrap();
-                let mut laxer_here = 0;
                 let mut deviated_here = 0;
                 for vector in surface.vectors() {
                     let at = format!("{} {}", against.surface, vector.id());
@@ -3036,12 +3007,6 @@ mod tests {
                     } else if vector.result() == Outcome::Raised {
                         assert!(rust.is_err(), "{at}: the Python code raises");
                         equal += 1;
-                    } else if against.stance == Stance::Stricter
-                        && is_laxer(&disagreements, against.surface, vector.id())
-                    {
-                        assert_eq!(vector.result(), Outcome::Accepted, "{at}");
-                        assert!(rust.is_err(), "{at}: a stricter copy refuses");
-                        laxer_here += 1;
                     } else {
                         assert_eq!(rust, python_did(vector), "{at}");
                         equal += 1;
@@ -3049,25 +3014,17 @@ mod tests {
                 }
 
                 assert_eq!(
-                    laxer_here > 0,
-                    against.stance == Stance::Stricter,
-                    "{}: the stance is wrong",
-                    against.surface
-                );
-                assert_eq!(
                     deviated_here,
                     deviations_in(against.surface),
                     "{}",
                     against.surface
                 );
-                stricter += laxer_here;
                 deviated += deviated_here;
             }
 
             println!(
-                "{name}: {} vectors of {} surfaces: {equal} equal, {stricter} refused with the \
-                 strictest copy, {deviated} deviations",
-                equal + stricter + deviated,
+                "{name}: {} vectors of {} surfaces: {equal} equal, {deviated} deviations",
+                equal + deviated,
                 table.len()
             );
         }
@@ -3104,29 +3061,18 @@ mod tests {
             }
         }
 
+        /// Each surface has the stance `equal`. The copies of one grammar thus
+        /// give one result for each input, and the file of their differences
+        /// holds no row.
         #[test]
-        fn each_disagreement_is_in_a_table_as_a_stricter_stance() {
-            let stricter: HashSet<&str> = TYPES
+        fn no_two_python_copies_of_one_grammar_differ() {
+            let rows = vectors::disagreements().unwrap();
+            let differ: Vec<String> = rows
                 .iter()
-                .flat_map(|(_, table)| table.iter())
-                .filter(|against| against.stance == Stance::Stricter)
-                .map(|against| against.surface)
+                .map(|row| format!("{} {}", row.grammar(), row.id()))
                 .collect();
-            for row in vectors::disagreements().unwrap() {
-                assert!(
-                    row.surfaces(Outcome::Raised).is_empty(),
-                    "{} {}",
-                    row.grammar(),
-                    row.id()
-                );
-                for surface in row.surfaces(Outcome::Accepted) {
-                    assert!(
-                        stricter.contains(surface.as_str()),
-                        "{surface} {}",
-                        row.id()
-                    );
-                }
-            }
+
+            assert_eq!(differ, Vec::<String>::new());
         }
 
         #[test]
@@ -3185,7 +3131,7 @@ mod tests {
         }
 
         #[test]
-        fn a_tool_name_is_what_the_strictest_python_copy_takes() {
+        fn a_tool_name_is_what_each_python_copy_takes() {
             walk("ToolName");
         }
 
