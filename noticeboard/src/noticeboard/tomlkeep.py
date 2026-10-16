@@ -16,6 +16,9 @@ The three rules of `yamlkeep.py` apply here too:
    edit that this module cannot make in the layout of the file, goes back
    to the caller. The caller then writes the text of `tomlout.to_toml`.
 
+One change of a key costs time that grows with the size of its table. So
+an edit makes `_MOST_CHANGES` changes at most. A larger edit is rule 3.
+
 How a value that moved reaches the text:
 
 1. A key whose new value is `None` goes. TOML has no null, and an absent
@@ -53,9 +56,26 @@ from .tomlout import to_toml
 #: The one key of the text that `_item_of` reads a value from.
 _SLOT: Final = "value"
 
+#: The most keys that one edit sets, adds or removes in the text.
+_MOST_CHANGES: Final = 256
+
 
 class _CannotKeep(Exception):
     """An edit that this module cannot make in the layout of the file."""
+
+
+class _Budget:
+    """The changes that one edit can still make."""
+
+    def __init__(self) -> None:
+        self._left = _MOST_CHANGES
+
+    def spend(self) -> None:
+        """Count one change. Past the limit, the edit stops (rule 3)."""
+        self._left -= 1
+
+        if self._left < 0:
+            raise _CannotKeep(f"more than {_MOST_CHANGES} changes")
 
 
 def edited_text(original: str, before: Mapping[str, Any], after: Mapping[str, Any]) -> str | None:
@@ -68,7 +88,7 @@ def edited_text(original: str, before: Mapping[str, Any], after: Mapping[str, An
 
     try:
         document = tomlkit.parse(original)
-        _merge(document, (), before, after)
+        _merge(document, _Budget(), (), before, after)
 
         return document.as_string()
     except Exception:
@@ -96,6 +116,7 @@ def _node(document: tomlkit.TOMLDocument, path: tuple[str, ...]) -> MutableMappi
 
 def _merge(
     document: tomlkit.TOMLDocument,
+    budget: _Budget,
     path: tuple[str, ...],
     before: Mapping[str, Any],
     after: Mapping[str, Any],
@@ -106,16 +127,21 @@ def _merge(
         if key in before and before[key] == wanted:
             continue
 
-        _set(document, (*path, key), before.get(key), wanted)
+        _set(document, budget, (*path, key), before.get(key), wanted)
 
     # A key that the edit removed. Both dumps hold each field of the schema,
     # so this applies only inside a free-form table such as `tools`.
     for key in [one for one in _node(document, path) if one not in after]:
+        budget.spend()
         del _node(document, path)[key]
 
 
 def _set(
-    document: tomlkit.TOMLDocument, path: tuple[str, ...], was: object, wanted: object
+    document: tomlkit.TOMLDocument,
+    budget: _Budget,
+    path: tuple[str, ...],
+    was: object,
+    wanted: object,
 ) -> None:
     """One key. A table in the file and in the edit takes the edit key by
     key, so a one-field edit leaves the other keys and their comments."""
@@ -125,12 +151,14 @@ def _set(
 
     if wanted is None:
         if key in node:
+            budget.spend()
             del node[key]
         return
 
     if _holds_a_value(wanted) and _is_kept_table(held):
         _merge(
             document,
+            budget,
             path,
             cast("Mapping[str, Any]", was) if isinstance(was, Mapping) else {},
             cast("Mapping[str, Any]", wanted),
@@ -138,9 +166,10 @@ def _set(
         return
 
     if _holds_a_value(wanted):
-        _add_table(document, path, cast("Mapping[str, object]", wanted))
+        _add_table(document, budget, path, cast("Mapping[str, object]", wanted))
         return
 
+    budget.spend()
     node[key] = _item_of(wanted)
 
 
@@ -158,7 +187,10 @@ def _is_kept_table(held: object) -> bool:
 
 
 def _add_table(
-    document: tomlkit.TOMLDocument, path: tuple[str, ...], wanted: Mapping[str, object]
+    document: tomlkit.TOMLDocument,
+    budget: _Budget,
+    path: tuple[str, ...],
+    wanted: Mapping[str, object],
 ) -> None:
     """Rule 3: a new table, as one dotted key for each value of it."""
     parent, key = path[:-1], path[-1]
@@ -167,12 +199,14 @@ def _add_table(
         raise _CannotKeep(".".join(path))
 
     if key in _node(document, parent):
+        budget.spend()
         del _node(document, parent)[key]
 
     # A table of the file takes the keys at its own end. The view that
     # `tomlkit` gives of a table whose keys are apart in the file can add
     # none, so the text takes the keys at its end, under the whole path.
     for leaf, value in _leaves(path, wanted):
+        budget.spend()
         node = _node(document, parent)
 
         if isinstance(node, tomlkit.TOMLDocument | Table):

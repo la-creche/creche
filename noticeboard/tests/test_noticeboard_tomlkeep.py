@@ -294,3 +294,50 @@ def test_removing_the_only_tool_leaves_a_file_that_parses() -> None:
     assert "tools = {}" in text.splitlines()
     assert "egress = []" in text.splitlines()
     assert "# Search only. No other server is granted." in text.splitlines()
+
+
+def test_a_new_table_lands_in_a_table_whose_keys_are_apart() -> None:
+    """`tomlkit` gives such a table as a view. Each key of the new table
+    reaches the text, under its whole path."""
+    text = SMALL + 'quiet.floor_hours = 6\nmax_running_turns = 1\nquiet.board = "general"\n'
+    before = model_of(text)
+    daily = {"call": "ha__ha_call", "hour": 7, "zone": "UTC", "weekdays_only": False}
+    after = {**before, "quiet": {**before["quiet"], "daily": daily}}
+
+    patched = edited_text(text, before, after)
+
+    assert patched is not None
+    assert model_of(patched) == after
+    assert patched.startswith(text)
+
+
+#: The most keys that one edit changes in the text. Past it, the save
+#: writes the whole text of `tomlout.py`.
+MOST_CHANGES = 256
+
+
+def many_tools(count: int) -> str:
+    return SMALL + "".join(f'tools.s{one:03d} = "all"\n' for one in range(count))
+
+
+def test_an_edit_at_the_limit_of_changes_keeps_the_file() -> None:
+    text = many_tools(MOST_CHANGES + 1)
+    before = model_of(text)
+    tools = dict(before["tools"])
+    tools.update({f"s{one:03d}": ["search"] for one in range(MOST_CHANGES)})
+
+    patched = edited_text(text, before, {**before, "tools": tools})
+
+    assert patched is not None
+    assert model_of(patched)["tools"] == tools
+    assert f'tools.s{MOST_CHANGES:03d} = "all"' in patched.splitlines()
+
+
+def test_an_edit_past_the_limit_of_changes_is_refused() -> None:
+    """Each change of a key costs time that grows with its table. The limit
+    bounds the time of one save."""
+    text = many_tools(MOST_CHANGES + 1)
+    before = model_of(text)
+    tools = {f"s{one:03d}": ["search"] for one in range(MOST_CHANGES + 1)}
+
+    assert edited_text(text, before, {**before, "tools": tools}) is None
