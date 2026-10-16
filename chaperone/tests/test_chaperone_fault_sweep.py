@@ -79,6 +79,43 @@ def test_a_store_with_no_directory_sweeps_nothing(tmp_path: Path) -> None:
     assert store.sweep_faults() == frozenset()
 
 
+#: A text that is no family name. As a path part, it names the directory
+#: above the grant directory.
+NO_FAMILY_NAME = "../chat"
+
+
+class _FaultsWithNoFamilyName(FaultWriter):
+    """A fault writer with one open fault for a name that is no family name.
+    It records each family that the store reports a fault for or clears."""
+
+    def __init__(self, directory: Path) -> None:
+        super().__init__(directory)
+        self.reported: list[str] = []
+
+    def open_families(self) -> frozenset[str]:
+        return frozenset({NO_FAMILY_NAME})
+
+    def raise_stale(self, family: str, message: str, rev: str | None) -> None:
+        self.reported.append(family)
+        super().raise_stale(family, message, rev)
+
+    def clear(self, family: str) -> None:
+        self.reported.append(family)
+        super().clear(family)
+
+
+def test_a_fault_with_no_family_name_is_not_swept(tmp_path: Path) -> None:
+    """The sweep makes a path from the name of each open fault. For a name
+    that is no family name, it reads no file and reports nothing."""
+    grants_dir = tmp_path / "grants"
+    grants_dir.mkdir()
+    faults = _FaultsWithNoFamilyName(tmp_path / "faults" / "pep")
+    store = FamilyStore(grants_dir, faults)
+
+    assert store.sweep_faults() == frozenset()
+    assert faults.reported == []
+
+
 def test_a_sweep_failure_never_stops_the_loop() -> None:
     """A sweep that raises is logged and the next one still runs. The PEP
     keeps serving: a background timer may not take the process down."""

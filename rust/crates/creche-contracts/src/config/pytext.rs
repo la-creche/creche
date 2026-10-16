@@ -7,12 +7,14 @@
 //!
 //! The white space rule of `str` has users outside `config`, so its one copy
 //! is in `creche_util::pytext`. This module gives [`is_space`] and [`strip`]
-//! from there to the readers of a config.
+//! from there to the readers of a config. The white space rule of a number
+//! is there too: [`integer`] and [`float`] call `number_strip`.
 //!
 //! One difference stays on purpose: a decimal digit that is not ASCII. Python
 //! reads it as a digit. The functions here refuse it (`rust/AGENTS.md`, rule
 //! 9).
 
+use creche_util::pytext::number_strip;
 pub(super) use creche_util::pytext::{is_space, strip};
 
 /// Whether Python's `str.splitlines` ends a line at the character.
@@ -73,24 +75,17 @@ fn split_sign(text: &str) -> (bool, &str) {
 /// at the start is a digit of that count. An underscore and a sign are not.
 const INTEGER_DIGITS_MAX: usize = 4300;
 
-/// The text without the space that Python's `int` and `float` remove at the
-/// two ends.
-///
-/// The two functions remove the `White_Space` set of Unicode, which
-/// `str::trim` removes. They do not remove the four separators U+001C to
-/// U+001F, which `str.strip` removes. A reader that calls `str.strip` first
-/// calls [`strip`] first here.
-fn number_text(text: &str) -> &str {
-    text.trim()
-}
-
 /// Reads `text` as Python's `int(text)` does, for ASCII digits.
 ///
 /// Python takes space at the two ends, one sign, and single underscores
 /// between digits. It takes no prefix such as `0x`. It refuses a text of
 /// more than 4300 digits.
+///
+/// The space at the two ends is the space of `number_strip`, which keeps
+/// the four separators U+001C to U+001F. `str.strip` removes them. A reader
+/// that calls `str.strip` first calls [`strip`] first here.
 pub(super) fn integer(text: &str) -> Option<Integer> {
-    let (negative, rest) = split_sign(number_text(text));
+    let (negative, rest) = split_sign(number_strip(text));
     let digits = digit_run(rest)?;
     if digits.len() > INTEGER_DIGITS_MAX {
         return None;
@@ -157,7 +152,7 @@ fn decimal(text: &str) -> Option<String> {
 /// `1e999` as infinity. The caller decides what to do with such a value.
 /// Python has no cap on the digits of a float.
 pub(super) fn float(text: &str) -> Option<f64> {
-    let (negative, rest) = split_sign(number_text(text));
+    let (negative, rest) = split_sign(number_strip(text));
     let number = if NOT_FINITE_WORDS.contains(&rest.to_ascii_lowercase().as_str()) {
         rest.to_owned()
     } else {

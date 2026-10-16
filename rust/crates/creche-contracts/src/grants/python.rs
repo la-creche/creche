@@ -79,9 +79,6 @@ enum Refusal {
     TooLarge,
     /// The reader cannot read the bytes as a document, for this reason.
     Unreadable(JsonError),
-    /// The document is not valid. The row holds each issue, as [`Issue`]
-    /// shows it.
-    Invalid(&'static [&'static str]),
     /// The text is not a value of the closed set of the type.
     NotInSet,
 }
@@ -115,15 +112,6 @@ const NESTING_HAS_A_CAP: &str = "The contract gives no cap on the nesting of a d
 /// Each vector on which the Rust code differs from the Python code on
 /// purpose. Each other vector must be equal.
 const DEVIATIONS: &[Deviation] = &[
-    Deviation {
-        surface: GRANT_READER,
-        vector: "tools-tool-128-chars",
-        rust: Refusal::Invalid(&["at \"tools\", \"kagi\", 0: a tool name has 64 bytes or less"]),
-        contract: "contract 01 §3.4 and contract 01b §5",
-        decision: "A tool name has 64 bytes or less: `ids::ToolName` takes the strictest of \
-            the three Python copies of the grammar (rust/AGENTS.md). The grant file reader of \
-            the Python chaperone takes 128 characters.",
-    },
     Deviation {
         surface: GRANT_READER,
         vector: "json-lone-surrogate",
@@ -556,13 +544,6 @@ fn grant_refused_as_python(vector: &Vector, error: &GrantFileError, at: &str) {
     }
 }
 
-/// Whether the issues are the ones that a row of [`DEVIATIONS`] holds.
-fn issues_are(issues: &[Issue], wanted: &[&str]) -> bool {
-    let shown: Vec<String> = issues.iter().map(Issue::to_string).collect();
-
-    shown == wanted
-}
-
 /// Makes sure that the Rust code differs on a grant file as the row says, and
 /// in no other way.
 fn grant_differs_as_decided(
@@ -577,7 +558,6 @@ fn grant_differs_as_decided(
     let as_the_row_says = match (error.error(), deviation.rust) {
         (GrantError::TooLarge { .. }, Refusal::TooLarge) => true,
         (GrantError::NotJson(found), Refusal::Unreadable(wanted)) => *found == wanted,
-        (GrantError::Invalid(issues), Refusal::Invalid(wanted)) => issues_are(issues, wanted),
         _ => false,
     };
 
@@ -773,7 +753,6 @@ fn body_differs_as_decided(deviation: &Deviation, vector: &Vector, error: &BodyE
     let as_the_row_says = match (error, deviation.rust) {
         (BodyError::TooLarge { .. }, Refusal::TooLarge) => true,
         (BodyError::Unreadable(found), Refusal::Unreadable(wanted)) => *found == wanted,
-        (BodyError::Invalid(issues), Refusal::Invalid(wanted)) => issues_are(issues, wanted),
         _ => false,
     };
 
