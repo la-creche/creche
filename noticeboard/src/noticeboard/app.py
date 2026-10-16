@@ -35,17 +35,17 @@ from pathlib import Path
 from typing import Any, Final
 from urllib.parse import parse_qsl
 
-from agent_family import Diff, load_registry, parse_family
+from agent_family import Diff, Markup, load_registry, parse_family
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from starlette.concurrency import run_in_threadpool
 from starlette.staticfiles import StaticFiles
 
-from . import pages, security
+from . import pages, security, tomlkeep
 from .auditfiles import ARGS_NOTICE, AuditFilter, known_days
 from .config import Config
-from .familyform import Form, document_of, form_of, parse_posted, with_posted
+from .familyform import Form, document_of, form_of, markup_of, parse_posted, with_posted
 from .pages import EditPage
 from .registrywrite import NAME_RE, family_path, save_family
 from .security import CSRF_COOKIE, CSRF_FIELD, Origin, Refusal
@@ -293,7 +293,7 @@ def _apply(config: Config, name: str, posted: dict[str, str]) -> EditPage:
     if current is None:
         return pages.edit_page(config, name)
 
-    form = form_of(current, pages.index_of(registry))
+    form = form_of(current, pages.index_of(registry), pages.markup_in(registry, name))
     wanted, issues = parse_posted(form, posted)
     # CONTRACT-QUESTION: spec.md §8.2 gives what a save writes and does not
     # say which values the edit form shows on the page that answers a post.
@@ -355,7 +355,7 @@ def _saved(
 
 def _kept(config: Config, name: str, models: tuple[dict[str, Any], dict[str, Any]]) -> str | None:
     """The family file with only the changed fields replaced, so its
-    comments survive the save (`yamlkeep.py`).
+    comments survive the save (`yamlkeep.py`, `tomlkeep.py`).
 
     `None` whenever the file cannot be read or round-tripped, and the caller
     then writes the emitter's document instead. A save must not fail over a
@@ -363,30 +363,42 @@ def _kept(config: Config, name: str, models: tuple[dict[str, Any], dict[str, Any
     model that the form asked for: a save must not write another edit.
     """
     before, after = models
+    path = family_path(config.registry_dir, name)
+    markup = markup_of(path)
 
     try:
-        original = family_path(config.registry_dir, name).read_text(encoding="utf-8")
+        original = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         # The registry read this file as UTF-8 a moment ago. This is a second
         # read, and another writer can change the file between the two.
         return None
 
-    kept = edited_text(original, before, after)
+    kept = _patched(markup, original, before, after)
 
-    if kept is None or not _reads_as(kept, after):
+    if kept is None or not _reads_as(kept, after, markup):
         return None
 
     return kept
 
 
-def _reads_as(text: str, wanted: dict[str, Any]) -> bool:
+def _patched(
+    markup: Markup, original: str, before: dict[str, Any], after: dict[str, Any]
+) -> str | None:
+    """The patch of the module that keeps a file of that markup."""
+    if markup is Markup.TOML:
+        return tomlkeep.edited_text(original, before, after)
+
+    return edited_text(original, before, after)
+
+
+def _reads_as(text: str, wanted: dict[str, Any], markup: Markup) -> bool:
     """True when `agent_family` reads `text` as the model `wanted`.
 
-    `yamlkeep` moves values and reads no meaning, so a fault there gives a
-    text that is valid and wrong, or no YAML at all. The one reader of the
-    registry says which.
+    `yamlkeep` and `tomlkeep` move values and read no meaning, so a fault
+    there gives a text that is valid and wrong, or a text that does not
+    parse. The one reader of the registry says which.
     """
-    family, _ = parse_family(text)
+    family, _ = parse_family(text, markup)
 
     return family is not None and family.model_dump(mode="json") == wanted
 

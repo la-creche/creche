@@ -165,16 +165,14 @@ uv run pytest family/tests
 
 - The schema has no per-job budget and no per-job turn cap (`model.py`).
 - No rule refuses `embed` without an index mount (`validate.py`).
-- Four files still hold the text `family.yaml` and do not take it from
+- Three files still hold the text `family.yaml` and do not take it from
   `registry.py`:
   1. `caregiver/src/caregiver/paths.py`, the name of the applied copy.
   2. `caregiver/src/caregiver/reconcile.py`, the path of the registry file.
-  3. `noticeboard/src/noticeboard/registrywrite.py`.
-  4. `vectors/surfaces/family_file.py`.
+  3. `vectors/surfaces/family_file.py`.
 
   The TOML packet of each package changes its file:
-  `toml-caregiver-applied`, `toml-noticeboard-write` and
-  `toml-family-read-rust`.
+  `toml-caregiver-applied` and `toml-family-read-rust`.
 - These `CONTRACT-QUESTION` comments are open:
   1. `validate.py`, `_check_cron`, contract 01 §3.13. The contract gives no
      grammar for a cron field. The check takes ASCII digits and `*`, `,`,
