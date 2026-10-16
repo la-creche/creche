@@ -96,7 +96,7 @@
 #   - Two limits hold a notice for a later run. One notice for one service,
 #     surface and rule in 24 hours. 6 notices of this kind in one hour, for
 #     all services together. Both limits count in the wall-clock time of the
-#     host, so a step of that clock can reset the count of one hour.
+#     host, so a jump of that clock can reset the count of one hour.
 #   - A token whose `<seconds>` is more than one hour after the time of the
 #     run gets no notice. The journal gets one line with the count of them.
 #   - A run that is older than NOTICE_STEP_BUDGET_S seconds starts no send,
@@ -122,10 +122,13 @@
 #     of the notice of this kind before it.
 #   - The step changes no verdict and no exit status. It runs after the
 #     verdict is in its file, in a shell of its own.
-#   - Only a run of the unit sends a notice of this kind. A run by hand has
-#     no INVOCATION_ID of systemd, so its step sends no notice and writes
-#     one line in the journal. Its five checks and its outage notice are
-#     the same as in a run of the unit.
+#   - Only a run of the unit sends a notice of this kind. systemd gives
+#     each run of a unit an INVOCATION_ID of 32 hex digits. A run with no
+#     value of this form sends no notice and writes one line in the
+#     journal. A shell that systemd started can give its own
+#     INVOCATION_ID to a run by hand. That run then sends. The five checks
+#     and the outage notice of a run by hand are the same as in a run of
+#     the unit.
 #
 # WHERE THE TWO BEARERS COME FROM. `APPROVAL_URL` and `APPROVAL_TOKEN` are
 # read from /srv/agents/state/rework/hooks.env, which `bin/rework-cutover.sh

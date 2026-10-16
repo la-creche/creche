@@ -124,7 +124,7 @@ root, and `_notices.json` in the fault directory of the chaperone.
 - Two limits apply. The script sends one notice for one service, surface and
   rule in 24 hours. It sends 6 notices of this kind at most in one hour, for
   all services together. A later run sends a notice that a limit holds.
-  Both limits count in the wall-clock time of the host, so a step of that
+  Both limits count in the wall-clock time of the host, so a jump of that
   clock can reset the count of one hour.
 - A token whose `<seconds>` is more than one hour after the time of the run
   gets no notice. The journal gets one line with the count of such tokens.
@@ -151,9 +151,11 @@ root, and `_notices.json` in the fault directory of the chaperone.
 - The step changes no verdict and no exit status. It runs in a shell of its
   own, after the script wrote the verdict.
 - Only a run of the unit sends a notice of this kind. systemd gives each run
-  of a unit an `INVOCATION_ID` of 32 hex digits. A run with no such value
-  sends none and writes one line in the journal. A run by hand can overlap
-  a run of the timer, and both runs would read the same record.
+  of a unit an `INVOCATION_ID` of 32 hex digits. A run with no value of
+  this form sends none and writes one line in the journal. A run by hand
+  can overlap a run of the timer, and both runs would read the same record.
+- A shell that systemd started can give its own `INVOCATION_ID` to a run
+  by hand. That run then sends.
 
 **Rule 2: a firing unit fails only with status 78.** A firing unit is an
 instance of `creche-trigger@`. Check 4 reads the status of the last run of
