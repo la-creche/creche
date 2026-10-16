@@ -1577,6 +1577,57 @@ mod tests {
     }
 
     #[test]
+    fn the_writer_takes_no_value_that_the_family_file_check_refuses() {
+        // `caregiver.config_mount.write_config_mount` checks no field and
+        // writes a file for each of these arguments. No vector holds one: the
+        // caregiver gives the writer only the values of a valid family file.
+        let fields = |tools: &str, alias: &str, prompt: &str| {
+            format!(
+                r#"{{"model_alias": "{alias}", "sandbox_tools": {tools}, "shell": false, "system_prompt": "{prompt}"}}"#
+            )
+        };
+        let default_tools = r#"["read", "grep", "find", "ls"]"#;
+        for (text, issue) in [
+            (
+                fields(r#"["read", "bash"]"#, "agent-router", "append"),
+                RuntimeIssue::UnknownTool { at: 1 },
+            ),
+            (
+                fields(r#"["teleport"]"#, "agent-router", "append"),
+                RuntimeIssue::UnknownTool { at: 0 },
+            ),
+            (
+                fields(r#"["read", "read"]"#, "agent-router", "append"),
+                RuntimeIssue::DuplicateTool { at: 1 },
+            ),
+            (
+                fields(default_tools, "Agent-Router", "append"),
+                RuntimeIssue::ModelAlias(ModelAliasError::BadByte),
+            ),
+            (
+                fields(default_tools, "mod\u{e8}le", "append"),
+                RuntimeIssue::ModelAlias(ModelAliasError::BadByte),
+            ),
+            (
+                fields(default_tools, "", "append"),
+                RuntimeIssue::ModelAlias(ModelAliasError::Empty),
+            ),
+            (
+                fields(default_tools, "agent-router", "prepend"),
+                RuntimeIssue::UnknownSystemPrompt,
+            ),
+        ] {
+            assert_eq!(
+                RuntimeConfig::parse(text.as_bytes())
+                    .unwrap_err()
+                    .as_slice(),
+                [issue],
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
     fn the_strict_parse_refuses_a_file_of_another_shape() {
         for text in [
             "",
@@ -1981,6 +2032,119 @@ mod tests {
         );
     }
 
+    /// A key, a token and a time of a write. Each one is text of a test.
+    const TEST_KEY: &str = "sk-test-key";
+    const TEST_TOKEN: &str = "TESTTOKENTESTTOKENTESTTOKENTESTTOKENTESTTOKENTESTTOKEN22";
+    const TEST_WRITTEN: &str = "2030-01-02T03:04:05Z";
+
+    /// A `creds.json` on one line, with the JSON text of one field replaced.
+    fn creds_with(field: CredsField, json: &str) -> String {
+        let value = |own: CredsField, text: String| {
+            if own == field { json.to_owned() } else { text }
+        };
+
+        format!(
+            r#"{{"epoch": {}, "litellm_key": {}, "pep_token": {}, "written_at": {}}}"#,
+            value(CredsField::Epoch, String::from("7")),
+            value(CredsField::LitellmKey, format!("\"{TEST_KEY}\"")),
+            value(CredsField::PepToken, format!("\"{TEST_TOKEN}\"")),
+            value(CredsField::WrittenAt, format!("\"{TEST_WRITTEN}\"")),
+        )
+    }
+
+    #[test]
+    fn a_creds_file_holds_text_for_each_secret_and_an_epoch_of_64_bits() {
+        // `caregiver.credentials.read_creds` takes each of these files. No
+        // vector holds one: no contract names such a value, and the one
+        // writer of the file writes none.
+        let complete = creds_with(CredsField::Epoch, "7");
+
+        assert_eq!(Credentials::parse(complete.as_bytes()).unwrap().epoch(), 7);
+        for (field, json) in [
+            // A secret or a time that is no JSON string, and an empty secret.
+            (CredsField::LitellmKey, "null"),
+            (CredsField::LitellmKey, "7"),
+            (CredsField::LitellmKey, "true"),
+            (CredsField::LitellmKey, r#"["a", 1.0, null]"#),
+            (CredsField::LitellmKey, r#""""#),
+            (CredsField::PepToken, "null"),
+            (CredsField::PepToken, r#""""#),
+            (CredsField::WrittenAt, "null"),
+            (CredsField::WrittenAt, "7"),
+            // An epoch outside 64 bits with a sign.
+            (CredsField::Epoch, "9223372036854775808"),
+            (CredsField::Epoch, "18446744073709551615"),
+            (CredsField::Epoch, "1000000000000000000000000000000"),
+            (CredsField::Epoch, "-9223372036854775809"),
+            (CredsField::Epoch, "1e30"),
+            (CredsField::Epoch, "9223372036854775807.0"),
+            // The float -2^63. Python reads it as the integer -2^63.
+            (CredsField::Epoch, "-9223372036854775808.0"),
+            // A decimal digit that is not ASCII, as the JSON escape of
+            // U+0667. Python reads 7.
+            (CredsField::Epoch, r#""\u0667""#),
+        ] {
+            let text = creds_with(field, json);
+
+            assert_eq!(
+                Credentials::parse(text.as_bytes()).unwrap_err(),
+                CredentialsError::BadValue(field),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_writer_holds_no_empty_secret_and_no_epoch_past_64_bits() {
+        // `caregiver.credentials.write_creds` checks no field. It writes a
+        // file for an epoch of 2^63, for an empty key and for an empty token.
+        // No vector holds one: the caregiver gives the writer none of them.
+        let written = |epoch: &str, key: &str, token: &str| {
+            format!(
+                "{{\n  \"epoch\": {epoch},\n  \"litellm_key\": \"{key}\",\n  \"pep_token\": \
+                 \"{token}\",\n  \"written_at\": \"{TEST_WRITTEN}\",\n  \"previous_pep_token\": \
+                 null,\n  \"previous_expires_at\": null\n}}\n"
+            )
+        };
+        let held = Credentials::new(
+            7,
+            secret(TEST_KEY),
+            secret(TEST_TOKEN),
+            TEST_WRITTEN.to_owned(),
+        );
+
+        // The writer gives this form for a value that the type holds.
+        assert_eq!(held.to_json().unwrap(), written("7", TEST_KEY, TEST_TOKEN));
+        // An empty text is no secret, so the writer gets no empty key and no
+        // empty token.
+        assert_eq!(
+            Secret::try_from(String::new()).unwrap_err(),
+            crate::secret::SecretError::Empty
+        );
+        // The type refuses the file that the Python writer gives for each of
+        // the three, so no value of the type has that file as its text.
+        for (text, error) in [
+            (
+                written("9223372036854775808", TEST_KEY, TEST_TOKEN),
+                CredentialsError::BadValue(CredsField::Epoch),
+            ),
+            (
+                written("7", "", TEST_TOKEN),
+                CredentialsError::BadValue(CredsField::LitellmKey),
+            ),
+            (
+                written("7", TEST_KEY, ""),
+                CredentialsError::BadValue(CredsField::PepToken),
+            ),
+        ] {
+            assert_eq!(
+                Credentials::parse(text.as_bytes()).unwrap_err(),
+                error,
+                "{text}"
+            );
+        }
+    }
+
     #[test]
     fn a_previous_field_that_is_not_a_text_reads_as_absent() {
         for value in ["null", "7", "\"\"", "[\"old\"]", "true"] {
@@ -2054,6 +2218,76 @@ mod tests {
         );
         assert_eq!(env.pep_url().endpoint(), "chaperone.example:8300");
         assert_eq!(env.litellm_base_url().endpoint(), "litellm.example:4000");
+    }
+
+    #[test]
+    fn the_env_file_writer_takes_an_absolute_root_and_one_sandbox_name() {
+        // `caregiver.playpen_env.write_playpen_env` checks no argument. It
+        // writes a file for a relative state root, for a sandbox with no
+        // number and for a sandbox of another family. No vector holds one: the
+        // caregiver gives the writer none of them.
+        let root = "/srv/agents/state/rework";
+        let family = format!("{root}/families/chat");
+        let python_file = |family: &str, sandbox: &str| {
+            RawPlaypenEnv::parse(&format!(
+                "AGENT_CRED_DIR={family}/creds\nAGENT_FAMILY_CONFIG_DIR={family}/config\n\
+                 AGENT_CONTROL_DIR={family}/control/{sandbox}\nAGENT_SANDBOX={sandbox}\n\
+                 AGENT_PEP_URL={PEP_URL}\nAGENT_LITELLM_BASE_URL={LITELLM_BASE_URL}\n"
+            ))
+        };
+        let not_absolute = |variable| PlaypenEnvError::Path {
+            variable,
+            error: PathError::NotAbsolute,
+        };
+
+        // The state root `state`. The type of the root refuses it, and the
+        // reader refuses the file that the Python writer gives.
+        assert_eq!("state".parse::<DirPath>(), Err(PathError::NotAbsolute));
+        assert_eq!(
+            PlaypenEnv::try_from(&python_file("state/families/chat", "chat-s3"))
+                .unwrap_err()
+                .as_slice(),
+            [
+                not_absolute(CRED_DIR_VAR),
+                not_absolute(CONFIG_DIR_VAR),
+                not_absolute(CONTROL_DIR_VAR),
+            ]
+        );
+
+        // The sandbox `chat`, with no number.
+        assert_eq!(
+            "chat".parse::<SandboxName>(),
+            Err(SandboxNameError::NoNumber)
+        );
+        assert_eq!(
+            PlaypenEnv::try_from(&python_file(&family, "chat"))
+                .unwrap_err()
+                .as_slice(),
+            [PlaypenEnvError::Sandbox(SandboxNameError::NoNumber)]
+        );
+
+        // The family `chat` with the sandbox `code-s1`. The writer has no
+        // argument for a family. It takes the family of the sandbox name, so
+        // it cannot give the directories of one family to the sandbox of
+        // another family.
+        let other = playpen_env(root, "code-s1");
+
+        assert_eq!(
+            other.cred_dir().as_str(),
+            format!("{root}/families/code/creds")
+        );
+        assert_eq!(
+            other.config_dir().as_str(),
+            format!("{root}/families/code/config")
+        );
+        assert_eq!(
+            other.control_dir().as_str(),
+            format!("{root}/families/code/control/code-s1")
+        );
+        assert_ne!(
+            RawPlaypenEnv::parse(&other.to_text()),
+            python_file(&family, "code-s1")
+        );
     }
 
     #[test]

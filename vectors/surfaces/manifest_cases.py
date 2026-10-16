@@ -407,7 +407,6 @@ CASES: Final[tuple[Case, ...]] = (
     _with("build-word-newline", build='build:\n  - ["/bin/a", "x\\ny"]'),
     _with("build-word-nul", build='build:\n  - ["/bin/a", "x\\0y"]'),
     _with("build-word-carriage-return", build='build:\n  - ["/bin/a", "x\\ry"]'),
-    _with("build-word-lone-surrogate", build='build:\n  - ["/bin/a", "\\ud800"]'),
     _with("build-word-option-like", build='build:\n  - ["/bin/a", "--flag=$(x)", "; rm"]'),
     _with("build-argv0-parent", build='build:\n  - ["/usr/../bin/a"]'),
     _with("build-argv0-double-slash", build='build:\n  - ["/usr//bin/a"]'),
@@ -464,7 +463,6 @@ CASES: Final[tuple[Case, ...]] = (
     _with("install-null", install="install:"),
     _with("install-not-ascii", install=_install("/opt/caf\u00e9", "/opt/x.prev")),
     _with("install-space", install=_install('"/opt/a b"', "/opt/x.prev")),
-    _with("install-lone-surrogate", install=_install('"/opt/\\ud800"', "/opt/x.prev")),
     _with("install-final-newline", install=_install('"/opt/x\\n"', "/opt/x.prev")),
     _with("install-control-characters", install=_install('"/opt/x\\ty\\x1b"', "/opt/x.prev")),
     # --- provides and requires (\u00a73.1) ---------------------------------------
@@ -737,10 +735,6 @@ CASES: Final[tuple[Case, ...]] = (
     _with("yaml-tag-int", restore=_restore("automatic", '!!int "3"')),
     _with("yaml-tag-int-padded", restore=_restore("automatic", '!!int " 3 "')),
     _with("yaml-tag-int-new-octal", restore=_restore("automatic", "!!int 0o3")),
-    _with(
-        "yaml-tag-int-arabic-indic", restore=_restore("automatic", f'!!int "{ARABIC_INDIC_FOUR}"')
-    ),
-    _with("yaml-tag-int-no-break-space", restore=_restore("automatic", '!!int "4\u00a0"')),
     _with("yaml-tag-bool", release='release: !!bool "yes"'),
     _with("yaml-tag-bool-mixed-case", release='release: !!bool "oN"'),
     _with("yaml-tag-null", unit="unit: !!null anything"),
@@ -869,11 +863,6 @@ CASES: Final[tuple[Case, ...]] = (
         + "}\n",
     ),
     Case("yaml-nested-64", manifest(unit="unit: " + "[" * 64 + "]" * 64)),
-    Case("yaml-nested-200", manifest(unit="unit: " + "[" * 200 + "]" * 200)),
-    Case(
-        "yaml-nested-200-replaced",
-        manifest(unit="unit: " + "[" * 200 + "]" * 200 + "\n" + FIELDS["unit"]),
-    ),
     Case(
         "yaml-nested-100-block",
         manifest(unit="unit:" + "".join(f"\n{' ' * n}- " for n in range(1, 101)) + "x"),

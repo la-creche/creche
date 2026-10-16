@@ -870,8 +870,6 @@ ULIDS: Final[tuple[tuple[str, float, bytes], ...]] = (
     ("whole-seconds", 1758153590.0, b"\x01" * ENTROPY_BYTES),
     ("largest-time", ULID_MS_MAX / 1000, b"\xff" * ENTROPY_BYTES),
     ("every-letter", 1469918176.385, bytes.fromhex("0123456789abcdef0f1e")),
-    ("past-48-bits", (ULID_MS_MAX + 1) / 1000, bytes(ENTROPY_BYTES)),
-    ("negative-time", -0.001, bytes(ENTROPY_BYTES)),
 )
 
 
@@ -897,8 +895,8 @@ def _ulid_surface() -> Surface:
             "value.ulid is the id. Its first ten characters hold the time in milliseconds: "
             "the product of the time and 1000, with the fraction cut.",
             "The entry point does not check that the milliseconds fit the 48 bits of a ULID. "
-            "For past-48-bits and negative-time they do not fit. The first ten characters of "
-            "value.ulid are then not a time of 48 bits.",
+            "In each vector they fit: no vector holds a time before 1970 or a time past 48 "
+            "bits of milliseconds.",
         ),
         vectors=tuple(_ulid_vector(*row) for row in ULIDS),
     )
@@ -1294,7 +1292,6 @@ RESOLVED: Final[tuple[Resolved, ...]] = (
     Resolved("resolved-at-nan", _ONE_ROW, resolved_at_bits=_bits(float("nan"))),
     Resolved("resolved-at-infinity", _ONE_ROW, resolved_at_bits=_bits(float("inf"))),
     Resolved("resolved-at-negative-infinity", _ONE_ROW, resolved_at_bits=_bits(float("-inf"))),
-    Resolved("version-arabic-indic", (("chaperone", "deploy", None, ARABIC_INDIC_VERSION),)),
     Resolved("id-lower", _ONE_ROW, release_id=ULID.lower()),
     Resolved("id-25-chars", _ONE_ROW, release_id=ULID[:-1]),
     Resolved("id-final-newline", _ONE_ROW, release_id=ULID + "\n"),
