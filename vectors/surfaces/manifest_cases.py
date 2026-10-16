@@ -160,10 +160,7 @@ _BINARY_FIELDS: Final = {
     "kind": "kind: binary",
     "unit": "unit: creche-chaperone.service",
     "runs_as": "runs_as: root",
-    "build": (
-        "build:\n"
-        '  - ["/usr/local/bin/cargo", "build", "--release", "--locked", "--bin", "chaperone"]'
-    ),
+    "build": 'build:\n  - ["cargo", "build", "--release", "--locked", "--bin", "chaperone"]',
     "install": _install("/opt/components/chaperone", "/opt/components/chaperone.prev"),
     "provides": "provides:\n  - { contract: pep-grant, major: 2, minor: 1 }",
     "requires": "requires: []",
@@ -171,6 +168,12 @@ _BINARY_FIELDS: Final = {
     "verify": _verify('["/opt/components/chaperone/bin/chaperone-verify"]', "root", "300"),
     "secrets": "secrets: []",
 }
+
+
+def _binary(case_id: str, build: str, site: str = SITE_SET) -> Case:
+    """The valid binary manifest with another `build`. Its fields name no
+    path under the home of the operator, so it reads with no site file."""
+    return Case(case_id, manifest(**(_BINARY_FIELDS | {"build": build})), site)
 
 
 def _merge_chain(levels: int) -> dict[str, str]:
@@ -219,7 +222,14 @@ _PATH_257: Final = "/".join(["s" * 64, "s" * 64, "s" * 63, "s" * 63])
 CASES: Final[tuple[Case, ...]] = (
     # --- accepted: one per kind (\u00a78) -----------------------------------------
     Case("full", FULL),
-    _with("kind-binary", **_BINARY_FIELDS),
+    # The first word of a binary build is the word `cargo`. This input names
+    # the program by an absolute path, so it is refused.
+    _binary(
+        "kind-binary",
+        "build:\n"
+        '  - ["/usr/local/bin/cargo", "build", "--release", "--locked", "--bin", "chaperone"]',
+    ),
+    _with("kind-binary-build-cargo", **_BINARY_FIELDS),
     _with("kind-oci-image", kind="kind: oci-image", runs_as="runs_as: sandbox"),
     _with("kind-compose", kind="kind: compose", runs_as="runs_as: root"),
     _with("kind-data", **_DATA_FIELDS),
@@ -413,6 +423,20 @@ CASES: Final[tuple[Case, ...]] = (
     _with("build-mapping", build="build:\n  cmd: /bin/a"),
     _with("build-number", build="build: 5"),
     _with("build-false", build="build: false"),
+    _with("build-cargo-word-venv", build='build:\n  - ["cargo", "build", "--locked"]'),
+    _binary("build-binary-other-word", 'build:\n  - ["rustc", "--edition", "2021", "main.rs"]'),
+    _binary("build-binary-cargo-upper-case", 'build:\n  - ["Cargo", "build", "--locked"]'),
+    _binary("build-binary-cargo-prefix", 'build:\n  - ["cargo-build", "--locked"]'),
+    _binary("build-binary-relative-cargo", 'build:\n  - ["bin/cargo", "build", "--locked"]'),
+    _binary("build-binary-home-cargo", 'build:\n  - ["~/cargo", "build"]', SITE_MISSING),
+    _binary(
+        "build-binary-second-command",
+        'build:\n  - ["cargo", "build", "--locked"]\n  - ["/bin/true"]',
+    ),
+    _binary("build-binary-only-cargo", 'build:\n  - ["cargo"]'),
+    _binary("build-binary-empty-argv", "build:\n  - []"),
+    _binary("build-binary-cargo-text", 'build: "cargo build --locked"'),
+    _binary("build-binary-none", "build: []"),
     # --- install ------------------------------------------------------------
     _with("install-absolute", install=_install("/opt/components/x", "/opt/components/x.prev")),
     _no_site("install-home-no-site"),

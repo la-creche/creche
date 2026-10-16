@@ -25,6 +25,7 @@ from typing import Any, TypeVar, cast
 
 from .boundedyaml import MergeLimits, MergeTooDeep, MergeTooLarge, load
 from .catalog import (
+    BINARY_BUILD_PROGRAM,
     MANIFEST_CONTRACT_MAJOR,
     MANIFEST_CONTRACT_MINOR,
     ContractId,
@@ -81,6 +82,9 @@ PARENT_SEGMENT = ".."
 #: The word a manifest writes for the site's operator account.
 OPERATOR_ACCOUNT = "operator"
 
+#: The field that holds the build argv lists.
+BUILD_FIELD = "build"
+
 #: Contract 06 §8's field table, exactly. The key set is closed: an unknown
 #: key is a refusal, not a warning.
 REQUIRED_FIELDS = frozenset(
@@ -98,7 +102,7 @@ REQUIRED_FIELDS = frozenset(
         "release",
     }
 )
-OPTIONAL_FIELDS = frozenset({"build", "provides", "requires", "depends_on", "secrets"})
+OPTIONAL_FIELDS = frozenset({BUILD_FIELD, "provides", "requires", "depends_on", "secrets"})
 KNOWN_FIELDS = REQUIRED_FIELDS | OPTIONAL_FIELDS
 
 StrEnumT = TypeVar("StrEnumT", bound=StrEnum)
@@ -350,7 +354,26 @@ def _read_account[AccountT: StrEnum](
 
 
 def _read_argv(raw: Any, reader: _Reader, field: str) -> tuple[str, ...]:
-    """One argv list. A string is refused: a string is what reaches a shell."""
+    """One argv list whose first word is an absolute path."""
+    argv = _read_words(raw, reader, field)
+    argv[0] = check_absolute_path(_from_home(argv[0]), reader.subject, f"{field}[0]")
+
+    return tuple(argv)
+
+
+def _read_binary_argv(raw: Any, reader: _Reader) -> tuple[str, ...]:
+    """One `build` argv of a `kind: binary` manifest. Its first word is
+    `BINARY_BUILD_PROGRAM`, exactly: no path, and no `~/`."""
+    argv = _read_words(raw, reader, BUILD_FIELD)
+    if argv[0] != BINARY_BUILD_PROGRAM:
+        raise reader.refuse(f"field '{BUILD_FIELD}[0]' must be the word {BINARY_BUILD_PROGRAM}")
+
+    return tuple(argv)
+
+
+def _read_words(raw: Any, reader: _Reader, field: str) -> list[str]:
+    """The words of one argv list, 1 or more. A string is refused: a string
+    is what reaches a shell."""
     if not isinstance(raw, list):
         raise reader.refuse(f"field '{field}' must be a list of argv words")
 
@@ -368,13 +391,16 @@ def _read_argv(raw: Any, reader: _Reader, field: str) -> tuple[str, ...]:
 
         argv.append(item)
 
-    argv[0] = check_absolute_path(_from_home(argv[0]), reader.subject, f"{field}[0]")
-
-    return tuple(argv)
+    return argv
 
 
-def _read_build(reader: _Reader) -> tuple[tuple[str, ...], ...]:
-    return tuple(_read_argv(entry, reader, "build") for entry in reader.items("build"))
+def _read_build(reader: _Reader, kind: Kind) -> tuple[tuple[str, ...], ...]:
+    """The `build` argv lists. The kind decides the rule of the first word."""
+    entries = reader.items(BUILD_FIELD)
+    if kind is Kind.BINARY:
+        return tuple(_read_binary_argv(entry, reader) for entry in entries)
+
+    return tuple(_read_argv(entry, reader, BUILD_FIELD) for entry in entries)
 
 
 ContractRefs = list[tuple[ContractId, int, int]]
@@ -525,15 +551,23 @@ def parse_manifest(text: str, subject: str) -> ComponentManifest:
     requires = _read_contract_refs(reader, "requires", "min_minor")
     declared = reader.text("manifest_version", CONTRACT_VERSION_RE)
 
+    # The fields are read in this order, so a manifest with two faults gets
+    # the refusal of the first one. `build` needs the kind.
+    manifest_version = _check_manifest_version(declared, subject)
+    name = reader.text("name", NAME_RE)
+    repo = reader.whole("repo", Repo)
+    path = check_repo_path(reader.text("path", ANY_TEXT_RE), subject)
+    kind = reader.whole("kind", Kind)
+
     return ComponentManifest(
-        manifest_version=_check_manifest_version(declared, subject),
-        name=reader.text("name", NAME_RE),
-        repo=reader.whole("repo", Repo),
-        path=check_repo_path(reader.text("path", ANY_TEXT_RE), subject),
-        kind=reader.whole("kind", Kind),
+        manifest_version=manifest_version,
+        name=name,
+        repo=repo,
+        path=path,
+        kind=kind,
         unit=_read_unit(reader),
         runs_as=_read_account(reader, "runs_as", RunsAs),
-        build=_read_build(reader),
+        build=_read_build(reader, kind),
         install=_read_install(reader, subject),
         provides=tuple(Provided(item, major, minor) for item, major, minor in provides),
         requires=tuple(Required(item, major, floor) for item, major, floor in requires),
