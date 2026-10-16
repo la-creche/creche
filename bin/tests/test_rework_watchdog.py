@@ -40,9 +40,12 @@ from typing import TYPE_CHECKING, Final
 
 import pytest
 from chaperone.family_ids import FAMILY_NAME_RE
+from noticeboard.strictjson import Rule
+
+from noticeboard import notices
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
 REPO_ROOT: Final = Path(__file__).resolve().parents[2]
 SCRIPT: Final = REPO_ROOT / "bin" / "rework-watchdog.sh"
@@ -2450,6 +2453,50 @@ def test_last_reads_no_notice_file(rig: Rig) -> None:
     assert done.returncode == 0
     assert rig.posts() == []
     assert rig.sent_lines() == []
+
+
+# --- the writer of a notice file and this script ---------------------------------
+
+
+@pytest.fixture
+def notices_of(monkeypatch: pytest.MonkeyPatch) -> Callable[[Path], None]:
+    """Gives the notice module of the noticeboard the notice file of a rig,
+    with a fixed clock. The state of the module goes back after the test."""
+    monkeypatch.setattr(notices, "_settings", None)
+
+    def configure(path: Path) -> None:
+        notices.configure("noticeboard", path, clock=lambda: float(REFUSED_AT))
+
+    return configure
+
+
+def test_a_file_of_the_notice_writer_gives_one_notice_with_its_two_words(
+    rig: Rig, notices_of: Callable[[Path], None]
+) -> None:
+    """`notices.record` writes the file, and this script reads it."""
+    notices_of(rig.notices / "noticeboard.json")
+    notices.record("status.document", Rule.CONSTANT, "chat")
+    notices.record("status.document", Rule.CONSTANT, "chat")
+
+    done = rig.run()
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.json_summaries() == [f"{JSON_WORD} noticeboard status.document constant"]
+    assert len(rig.posts()) == 1
+    assert rig.sent_lines()[0].startswith(f"noticeboard status.document constant {REFUSED_AT} ")
+
+
+def test_a_file_of_the_notice_writer_with_no_proven_refusal_gives_no_notice(
+    rig: Rig, notices_of: Callable[[Path], None]
+) -> None:
+    notices_of(rig.notices / "noticeboard.json")
+    notices.record("session.answer", Rule.SYNTAX, proven=False)
+
+    done = rig.run()
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert (rig.notices / "noticeboard.json").exists()
+    assert rig.json_summaries() == []
 
 
 # --- what the script is made of -------------------------------------------------
