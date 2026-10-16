@@ -116,6 +116,10 @@
 #     of the notice of this kind before it.
 #   - The step changes no verdict and no exit status. It runs after the
 #     verdict is in its file, in a shell of its own.
+#   - Only a run of the unit sends a notice of this kind. A run by hand has
+#     no INVOCATION_ID of systemd, so its step sends no notice and writes
+#     one line in the journal. Its five checks and its outage notice are
+#     the same as in a run of the unit.
 #
 # WHERE THE TWO BEARERS COME FROM. `APPROVAL_URL` and `APPROVAL_TOKEN` are
 # read from /srv/agents/state/rework/hooks.env, which `bin/rework-cutover.sh
@@ -284,6 +288,10 @@ HOUR_S=3600
 # seconds. The unit of this script gives a run a start limit, and one notice
 # can take NOTICE_TIMEOUT_S.
 NOTICE_STEP_BUDGET_S=40
+
+# systemd gives each run of a unit an INVOCATION_ID of 32 hex digits. The
+# step runs only with an INVOCATION_ID of this form.
+UNIT_RUN_ID='[0-9a-f]{32}'
 
 # The first word of the summary, and the ids of this kind of notice. The
 # ids differ from the pair of the outage notice.
@@ -873,6 +881,14 @@ json_notice() {  # json_notice <service> <surface> <rule> <seconds>
 
 send_json_notices() {
   local path service plan held ahead sent word surface rule seconds room
+  # systemd starts one run of the unit at a time. A run by hand can overlap
+  # a run of the timer, and both runs would read the same record. So only
+  # a run of the unit sends a notice of this kind.
+  if ! matches "$UNIT_RUN_ID" "${INVOCATION_ID:-}"; then
+    say "json notices: this run has no INVOCATION_ID of systemd, so it sends no notice of this kind"
+    return 0
+  fi
+
   for path in "$NOTICES_DIR"/*"$NOTICE_SUFFIX" "$PEP_NOTICE_FILE"; do
     # A regular file only. A link, a directory and a name with no match are
     # not read.

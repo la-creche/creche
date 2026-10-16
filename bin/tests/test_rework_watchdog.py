@@ -78,6 +78,9 @@ JSON_IDS: Final = ("xxxxxxxxxxxxxxxxxxxxxxxxxx", "0000000000000002")
 
 #: The first word of the summary of a notice of a refused JSON text.
 JSON_WORD: Final = "json_not_strict"
+
+#: The INVOCATION_ID that systemd gives one run of a unit: 32 hex digits.
+UNIT_RUN: Final = "0123456789abcdef0123456789abcdef"
 SUMMARY: Final = re.compile(r'"summary":"([^"]*)"')
 
 #: The modes that a service gives its notice file and the directory of it.
@@ -410,11 +413,26 @@ class Rig:
         self.socket.chmod(FILE_MODE)
 
     def run(self, *args: str, **overrides: str) -> subprocess.CompletedProcess[str]:
+        """One run as the unit starts it: with an INVOCATION_ID."""
+        return self._start(args, UNIT_RUN, overrides)
+
+    def run_as(self, invocation: str | None, **overrides: str) -> subprocess.CompletedProcess[str]:
+        """One run with this INVOCATION_ID. `None` is a run with no such
+        variable, as a run by hand."""
+        return self._start((), invocation, overrides)
+
+    def _start(
+        self, args: Sequence[str], invocation: str | None, overrides: dict[str, str]
+    ) -> subprocess.CompletedProcess[str]:
         env = dict(os.environ)
         env["WATCHDOG_TEST_PREFIX"] = str(self.prefix)
         env["WD_STUB_LOG"] = str(self.stub_log)
         env["WD_POST_LOG"] = str(self.post_log)
         env["PATH"] = f"{self.stubs}{os.pathsep}{env['PATH']}"
+        env.pop("INVOCATION_ID", None)
+        if invocation is not None:
+            env["INVOCATION_ID"] = invocation
+
         env.update(overrides)
 
         return subprocess.run(
@@ -2083,6 +2101,35 @@ def test_a_fault_in_the_notice_step_does_not_end_the_run(
     assert rig.stored() == "up"
     assert rig.raw() == "chaperone"
     assert rig.posts() == []
+
+
+@pytest.mark.parametrize(
+    "invocation",
+    [None, "", UNIT_RUN.upper(), UNIT_RUN[1:], f"{UNIT_RUN}0", f"{UNIT_RUN}\n"],
+)
+def test_a_run_by_hand_sends_no_json_notice(rig: Rig, invocation: str | None) -> None:
+    """systemd starts one run of the unit at a time, and it gives each run an
+    INVOCATION_ID of 32 hex digits. A run by hand can overlap a run of the
+    timer, and both runs would read the same record. So a run with no such
+    INVOCATION_ID sends no notice of this kind and says so in one line. Its
+    outage check is the same as in a run of the unit."""
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    for _ in range(2):
+        done = rig.run_as(invocation, WD_PEP_CODE="000")
+
+        assert done.returncode == 1, done.stdout + done.stderr
+        assert rig.json_summaries() == []
+        assert done.stdout.count("INVOCATION_ID") == 1, done.stdout
+
+    assert len(rig.posts()) == 1
+    assert "rework DOWN" in rig.posts()[0]
+    assert rig.stored() == "chaperone"
+    assert rig.sent_lines() == []
+
+    rig.run()
+
+    assert rig.json_summaries() == [f"{JSON_WORD} noticeboard status.document syntax"]
 
 
 def test_the_bearer_of_a_json_notice_never_reaches_argv(rig: Rig) -> None:

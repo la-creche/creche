@@ -137,6 +137,10 @@ root, and `_notices.json` in the fault directory of the chaperone.
   bytes of the record at most, and it writes no larger record.
 - The step changes no verdict and no exit status. It runs in a shell of its
   own, after the script wrote the verdict.
+- Only a run of the unit sends a notice of this kind. systemd gives each run
+  of a unit an `INVOCATION_ID` of 32 hex digits. A run with no such value
+  sends none and writes one line in the journal. A run by hand can overlap
+  a run of the timer, and both runs would read the same record.
 
 **Rule 2: a firing unit fails only with status 78.** A firing unit is an
 instance of `creche-trigger@`. Check 4 reads the status of the last run of
