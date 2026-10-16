@@ -377,9 +377,11 @@ that wants a refusal changes one field.
   its own path into a panic message. Such a build must remap the path. That
   path holds the request id, so a fixed cargo configuration cannot name it
   (`treewalk.py`).
-- `handover artifacts` reads a manifest only for a component whose catalog
-  row says `binary`. Such a read needs the site file for a `~/` path, and a
-  CI runner has no site file. No catalog row says `binary` today (`cli.py`).
+- `handover artifacts --repo` reads the manifests only when the catalog of
+  that repository holds a binary row. It then reads each manifest of its
+  roots, also the manifest of a venv component. Such a read needs the site
+  file for a `~/` path, and a CI runner has no site file. No catalog row
+  says `binary` today (`cli.py`).
 - A binary build runs in the root of the fetched tree. A `rustup` proxy
   reads a toolchain file from the working directory and its parents, so it
   does not read `rust/rust-toolchain.toml`. It also downloads a toolchain
