@@ -6,7 +6,8 @@ of the package `family`, in a child process. The TOML path of
 YAML path reads the YAML text in the lax mode. Both give one model.
 
 The test converts at test time and writes no file. The migration removes the
-YAML fixtures, so a walk that finds no YAML file passes."""
+YAML fixtures. After that, the walk has no file to convert, and the test
+still passes."""
 
 from __future__ import annotations
 
@@ -16,13 +17,14 @@ from pathlib import Path
 
 import pytest
 from agent_family import Markup, parse_family
+from agent_family.registry import FAMILY_FILE_YAML
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "bin" / "yaml-to-toml.py"
 FAMILIES = REPO / "family" / "tests" / "fixtures" / "registry" / "families"
 
 #: Each YAML family file of the fixture registry, by its directory name.
-YAML_FAMILIES = sorted(path.parent.name for path in FAMILIES.glob("*/family.yaml"))
+YAML_FAMILIES = sorted(path.parent.name for path in FAMILIES.glob(f"*/{FAMILY_FILE_YAML}"))
 
 #: What the walk gets when the list is empty. pytest reports a parametrized
 #: test with no value as skipped, and an empty walk must pass.
@@ -49,7 +51,7 @@ def test_the_toml_text_reads_to_the_model_of_the_yaml_text(name: str) -> None:
         assert YAML_FAMILIES == []
         return
 
-    path = FAMILIES / name / "family.yaml"
+    path = FAMILIES / name / FAMILY_FILE_YAML
 
     from_yaml, yaml_issues = parse_family(path.read_text(encoding="utf-8"))
     from_toml, toml_issues = parse_family(_converted(path), Markup.TOML)
