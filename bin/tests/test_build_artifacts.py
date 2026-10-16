@@ -18,8 +18,9 @@ Cases:
 2. One row: the words and the variables of each call, the needles of the
    walk, the member names of the pack and the digest file.
 3. Each refusal: a tree with no program, a tree with another thing, a walk
-   fault, a build fault, each of the three limits, and a row that is not in
-   the line form.
+   fault, a build fault, each of the three limits, a row that is not in the
+   line form, and a path of a variable that is not absolute.
+4. `bin/lib/artifactrows.sh` is the one reader of the line form.
 """
 
 from __future__ import annotations
@@ -96,9 +97,9 @@ fi
 
 #: `cargo`: it writes its directory, its words and the build variables.
 #: Then it makes each program of STUB_PROGRAMS in bin/ of the install root,
-#: each with STUB_BYTES and the mode STUB_PROGRAM_MODE. STUB_RECORD leaves
-#: the record file that cargo writes without `--no-track`. STUB_CARGO_STATUS
-#: is its exit status.
+#: each with STUB_BYTES and the mode STUB_PROGRAM_MODE. A name with a slash
+#: makes a directory in bin/ too. STUB_RECORD leaves the record file that
+#: cargo writes without `--no-track`. STUB_CARGO_STATUS is its exit status.
 CARGO_STUB: Final = """#!/usr/bin/env bash
 {
   printf '%s\\037' cargo "$PWD" "$@"
@@ -117,6 +118,7 @@ fi
 
 mkdir -p "$CARGO_INSTALL_ROOT/bin"
 for program in ${STUB_PROGRAMS-agent-family}; do
+  mkdir -p "$(dirname "$CARGO_INSTALL_ROOT/bin/$program")"
   printf '%s' "${STUB_BYTES:-a program}" > "$CARGO_INSTALL_ROOT/bin/$program"
   chmod "${STUB_PROGRAM_MODE:-0755}" "$CARGO_INSTALL_ROOT/bin/$program"
 done
@@ -220,8 +222,11 @@ class Build:
             "STUB_ROWS": str(self.rows),
         }
         given = env | overrides
+        # The run starts in its own directory: a relative path that the
+        # script took would write there and not into the repository.
         self.done = subprocess.run(
             ["bash", str(SCRIPT)],
+            cwd=tmp_path,
             env={name: value for name, value in given.items() if value is not None},
             capture_output=True,
             text=True,
@@ -311,6 +316,32 @@ def test_a_run_with_no_clear_input_stops_first(
     assert run.done.returncode == 1, run.said
     assert fault in run.done.stderr
     assert not run.log.exists()
+
+
+@pytest.mark.parametrize(
+    ("overrides", "variable"),
+    [
+        ({"ARTIFACT_OUT": "out"}, "ARTIFACT_OUT"),
+        ({"ARTIFACT_REPO": None, "ARTIFACT_ROWS_FILE": "rows"}, "ARTIFACT_ROWS_FILE"),
+        ({"GITHUB_WORKSPACE": "work-space"}, "GITHUB_WORKSPACE"),
+        ({"RUNNER_TEMP": "temp"}, "RUNNER_TEMP"),
+        ({"HOME": "home"}, "HOME"),
+        ({"GITHUB_OUTPUT": "output"}, "GITHUB_OUTPUT"),
+        ({"CARGO_HOME": "cargo-home"}, "CARGO_HOME"),
+    ],
+    ids=lambda one: one if isinstance(one, str) else None,
+)
+def test_a_relative_path_stops_the_run_first(
+    tmp_path: Path, overrides: dict[str, str | None], variable: str
+) -> None:
+    """The script changes its directory to the workspace. A relative path
+    would then name another file than the path of the caller."""
+    run = Build(tmp_path, _row(), **overrides)
+
+    assert run.done.returncode == 1, run.said
+    assert run.done.stderr == f"build-artifacts: the variable {variable} is not an absolute path\n"
+    assert not run.log.exists()
+    assert not (run.out / "SHA256SUMS").exists()
 
 
 def test_an_output_directory_that_holds_a_file_stops_the_run(tmp_path: Path) -> None:
@@ -502,6 +533,31 @@ def test_a_file_in_bin_that_is_no_program_stops_the_build(tmp_path: Path) -> Non
 
     _refused(run)
     assert "the tree holds bin/agent-family, which is no program" in run.done.stderr
+
+
+@pytest.mark.parametrize("program", [".hidden", "-x"])
+def test_a_program_with_a_name_that_is_not_plain_stops_the_build(
+    tmp_path: Path, program: str
+) -> None:
+    """A member name goes onto the command line of tar. A name that starts
+    with a period or with `-` is not the name of a program of a row."""
+    run = Build(tmp_path, _row(), STUB_PROGRAMS=program)
+
+    _refused(run)
+    assert "the tree holds a program with a name that is not plain" in run.done.stderr
+    assert run.calls("handover")[1:] == []
+
+
+def test_a_directory_in_bin_stops_the_build(tmp_path: Path) -> None:
+    """The archive holds programs directly in `bin/`. The sorted list of the
+    tree names the directory before the file in it, so the directory is the
+    refusal."""
+    run = Build(tmp_path, _row(), STUB_PROGRAMS="sub/agent-family")
+
+    _refused(run)
+    assert "the tree holds bin/sub, which is no regular file" in run.done.stderr
+    assert len(run.done.stderr.splitlines()) == 1
+    assert run.calls("handover")[1:] == []
 
 
 def test_a_build_command_that_fails_stops_the_build(tmp_path: Path) -> None:

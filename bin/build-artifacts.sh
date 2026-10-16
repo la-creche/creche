@@ -22,6 +22,7 @@
 #                       the `handover` project beside this script.
 #   GITHUB_WORKSPACE, RUNNER_TEMP, HOME, GITHUB_OUTPUT: a runner sets them.
 #   CARGO_HOME          the cargo home. Default: $HOME/.cargo.
+# Each path of a variable is absolute: the script changes its directory.
 #
 # With no row the script starts no rustup and no cargo. It writes an empty
 # SHA256SUMS and an empty step output `digests`.
@@ -172,9 +173,6 @@ read_members() {
       bin)
         [[ -d "$path" && ! -L "$path" ]] || die "$component: bin in the tree is no directory"
         ;;
-      bin/*/*)
-        die "$component: the tree holds $name, which is no program directly in bin/"
-        ;;
       bin/*)
         [[ -f "$path" && ! -L "$path" ]] ||
           die "$component: the tree holds $name, which is no regular file"
@@ -266,6 +264,13 @@ fi
 if [[ -z "${ARTIFACT_REPO:-}" && -z "${ARTIFACT_ROWS_FILE:-}" ]]; then
   die "the variable ARTIFACT_REPO is not set"
 fi
+
+absolute ARTIFACT_OUT GITHUB_WORKSPACE RUNNER_TEMP HOME GITHUB_OUTPUT
+for NAME in ARTIFACT_ROWS_FILE CARGO_HOME; do
+  if [[ -n "${!NAME:-}" ]]; then
+    absolute "$NAME"
+  fi
+done
 
 WORKSPACE="$GITHUB_WORKSPACE"
 CARGO_DIR="${CARGO_HOME:-$HOME/.cargo}"
