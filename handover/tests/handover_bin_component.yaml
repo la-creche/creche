@@ -11,10 +11,11 @@ path: noticeboard
 kind: binary
 unit: creche-noticeboard.service
 runs_as: operator
-# `--locked`: the build installs what `rust/Cargo.lock` pins and resolves
+# `cargo`: the first word of each binary build is the program name, with no
+# path. `--locked`: the build installs what `rust/Cargo.lock` pins and resolves
 # nothing. `--no-track`: cargo writes no record that names the source tree.
 build:
-  - ["/usr/local/bin/cargo", "install", "--locked", "--no-track",
+  - ["cargo", "install", "--locked", "--no-track",
      "--path", "rust/crates/noticeboard"]
 install:
   to: ~/.local/components/noticeboard

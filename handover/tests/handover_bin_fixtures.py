@@ -40,9 +40,13 @@ CARGO = "cargo"
 #: The fixture manifests carry no `build`, and the executor stages nothing
 #: without one. This is the build of the fixture manifest file.
 BUILD_LINE = (
-    'build:\n  - ["/usr/local/bin/cargo", "install", "--locked", "--no-track",'
+    'build:\n  - ["cargo", "install", "--locked", "--no-track",'
     f' "--path", "rust/crates/{BINARY_NAME}"]\ninstall:'
 )
+
+#: The same build for a manifest of another kind. The first word of such a
+#: build is an absolute path, so `env` starts `cargo` here.
+OTHER_KIND_BUILD_LINE = BUILD_LINE.replace('"cargo"', '"/usr/bin/env", "cargo"', 1)
 
 #: The unit of the binary component, and a second unit out of the same tree.
 UNIT = "creche-noticeboard.service"
@@ -84,10 +88,12 @@ def binary_manifest_text(
 ) -> str:
     """`BINARY_NAME`'s manifest, with its tree under `components`, the
     cargo build and the given unit. `kind` lets a test read the same
-    manifest as a venv, to show what the kind alone changes."""
+    manifest as a venv, to show what the kind alone changes. A kind that
+    is not binary gets `OTHER_KIND_BUILD_LINE`."""
+    build = BUILD_LINE if kind is Kind.BINARY else OTHER_KIND_BUILD_LINE
     text = manifest_text(BINARY_NAME).replace("/opt/components", str(components))
     text = text.replace(f"kind: {CATALOG_BY_NAME[BINARY_NAME].kind}", f"kind: {kind}")
-    text = text.replace("install:", BUILD_LINE, 1)
+    text = text.replace("install:", build, 1)
     if unit is not None:
         text = text.replace("unit: null", f"unit: {unit}")
 

@@ -15,8 +15,9 @@ use std::str::FromStr;
 
 use super::yaml::{self, Value, ValueId};
 use super::{
-    ContractId, ContractNumber, Kind, MANIFEST_CONTRACT_MAJOR, MANIFEST_CONTRACT_MINOR,
-    RefusalCode, Releases, Repo, RestoreMode, RunsAs, SafeToken, VerifyUser,
+    BINARY_BUILD_PROGRAM, ContractId, ContractNumber, Kind, MANIFEST_CONTRACT_MAJOR,
+    MANIFEST_CONTRACT_MINOR, RefusalCode, Releases, Repo, RestoreMode, RunsAs, SafeToken,
+    VerifyUser,
 };
 use crate::ids::{ComponentName, ContractVersion, SecretName};
 
@@ -70,7 +71,10 @@ const REQUIRED_FIELDS: [&str; 11] = [
     "verify",
 ];
 
-const OPTIONAL_FIELDS: [&str; 5] = ["build", "depends_on", "provides", "requires", "secrets"];
+const OPTIONAL_FIELDS: [&str; 5] = [BUILD, "depends_on", "provides", "requires", "secrets"];
+
+/// The field that holds the build commands.
+const BUILD: &str = "build";
 
 /// What the reader gives for a field that the mapping does not hold.
 static ABSENT: Value = Value::Null;
@@ -677,6 +681,106 @@ impl Argv {
     }
 }
 
+/// One `build` command of a `binary` component (contract 06 §8).
+///
+/// The first word is the word [`BINARY_BUILD_PROGRAM`], with no path: a CI
+/// runner starts the program by its name. The type keeps only the words
+/// after the first one, so each value starts with that word. The other
+/// words have the rules of an [`Argv`]. The type has no conversion to an
+/// [`Argv`]: code that starts a program by its absolute path cannot take
+/// it. Only [`ComponentManifest::parse`] makes a value.
+///
+/// ```
+/// use creche_contracts::manifest::{Argv, Build, CargoArgv, ComponentManifest};
+///
+/// let text = r#"{manifest_version: "0.6", name: noticeboard, repo: agent-control, path: noticeboard, kind: binary, unit: null, runs_as: root, build: [[cargo, install, "--locked"]], install: {to: /opt/x, prev: /opt/x.prev}, verify: {command: [/opt/x/bin/verify], user: root, timeout_s: 5}, restore: {mode: automatic, keep: 1}, release: yes}"#;
+/// let manifest = ComponentManifest::parse(text, None)?;
+/// let commands: &[CargoArgv] = match manifest.build() {
+///     Build::Ci(commands) => commands,
+///     Build::Root(_) => &[],
+/// };
+/// let words: Vec<&str> = commands.iter().flat_map(CargoArgv::words).collect();
+/// assert_eq!(words, ["cargo", "install", "--locked"]);
+///
+/// // The verify command keeps its absolute path.
+/// let hook: &Argv = manifest.verify().command();
+/// assert_eq!(hook.program().as_str(), "/opt/x/bin/verify");
+/// # Ok::<(), creche_contracts::manifest::ManifestError>(())
+/// ```
+///
+/// Code outside this module cannot build a value from raw words:
+///
+/// ```compile_fail,E0451
+/// use creche_contracts::manifest::{Argv, Build, CargoArgv, ComponentManifest};
+///
+/// let command = CargoArgv {
+///     arguments: vec![String::from("install")],
+/// };
+/// ```
+///
+/// A value does not become an [`Argv`]:
+///
+/// ```compile_fail,E0277
+/// use creche_contracts::manifest::{Argv, Build, CargoArgv, ComponentManifest};
+///
+/// fn as_argv(command: CargoArgv) -> Argv {
+///     Argv::from(command)
+/// }
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CargoArgv {
+    arguments: Vec<String>,
+}
+
+impl CargoArgv {
+    /// The first word: [`BINARY_BUILD_PROGRAM`].
+    #[must_use]
+    pub const fn program(&self) -> &'static str {
+        BINARY_BUILD_PROGRAM
+    }
+
+    /// The words after the first one.
+    #[must_use]
+    pub fn arguments(&self) -> &[String] {
+        &self.arguments
+    }
+
+    /// Each word, the program first.
+    pub fn words(&self) -> impl Iterator<Item = &str> {
+        std::iter::once(self.program()).chain(self.arguments.iter().map(String::as_str))
+    }
+}
+
+/// The `build` commands of a manifest, in order (contract 06 §8).
+///
+/// The kind of the manifest gives the variant. A manifest with no `build`
+/// gives a variant with no command: root then only fetches the component.
+///
+/// ```
+/// use creche_contracts::manifest::{Build, ComponentManifest};
+///
+/// let text = r#"{manifest_version: "0.6", name: chaperone, repo: agent-control, path: chaperone, kind: venv, unit: null, runs_as: root, build: [[/usr/bin/uv, sync]], install: {to: /opt/x, prev: /opt/x.prev}, verify: {command: [/bin/true], user: root, timeout_s: 5}, restore: {mode: automatic, keep: 1}, release: yes}"#;
+/// let manifest = ComponentManifest::parse(text, None)?;
+/// let programs: Vec<&str> = match manifest.build() {
+///     Build::Root(commands) => commands
+///         .iter()
+///         .map(|command| command.program().as_str())
+///         .collect(),
+///     Build::Ci(_) => Vec::new(),
+/// };
+/// assert_eq!(programs, ["/usr/bin/uv"]);
+/// # Ok::<(), creche_contracts::manifest::ManifestError>(())
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Build {
+    /// The commands of each kind but `binary`. The first word of each one
+    /// is an absolute path. Root runs each one on the host.
+    Root(Vec<Argv>),
+    /// The commands of a `binary` component, for a CI runner. The first
+    /// word of each one is the word [`BINARY_BUILD_PROGRAM`].
+    Ci(Vec<CargoArgv>),
+}
+
 /// Makes the two types of a contract reference. They differ in the name of
 /// the second number.
 macro_rules! contract_reference {
@@ -921,7 +1025,7 @@ impl Install {
 /// holds a value does not check a field again.
 ///
 /// ```
-/// use creche_contracts::manifest::{ComponentManifest, Kind, Releases, RunsAs};
+/// use creche_contracts::manifest::{Build, ComponentManifest, Kind, Releases, RunsAs};
 ///
 /// let text = "\
 /// manifest_version: \"0.6\"
@@ -932,7 +1036,7 @@ impl Install {
 /// unit: creche-chaperone.service
 /// runs_as: root
 /// build:
-///   - [\"/usr/local/bin/cargo\", \"build\", \"--release\", \"--locked\"]
+///   - [\"cargo\", \"build\", \"--release\", \"--locked\"]
 /// install:
 ///   to: /opt/components/chaperone
 ///   prev: /opt/components/chaperone.prev
@@ -950,7 +1054,7 @@ impl Install {
 /// assert_eq!(manifest.kind(), Kind::Binary);
 /// assert_eq!(manifest.runs_as(), RunsAs::Root);
 /// assert_eq!(manifest.release(), Releases::Yes);
-/// assert_eq!(manifest.build().len(), 1);
+/// assert!(matches!(manifest.build(), Build::Ci(commands) if commands.len() == 1));
 /// # Ok::<(), creche_contracts::manifest::ManifestError>(())
 /// ```
 ///
@@ -973,7 +1077,7 @@ pub struct ComponentManifest {
     kind: Kind,
     unit: Option<UnitName>,
     runs_as: RunsAs,
-    build: Vec<Argv>,
+    build: Build,
     install: Install,
     provides: Vec<Provided>,
     requires: Vec<Required>,
@@ -1029,10 +1133,10 @@ impl ComponentManifest {
         self.runs_as
     }
 
-    /// The build commands, in order. Empty for a component that root only
-    /// fetches.
+    /// The build commands, in order. The kind gives the variant. No command
+    /// for a component that root only fetches.
     #[must_use]
-    pub fn build(&self) -> &[Argv] {
+    pub const fn build(&self) -> &Build {
         &self.build
     }
 
@@ -1326,6 +1430,9 @@ pub enum ManifestFault {
         /// The field.
         field: &'static str,
     },
+    /// The first word of a `build` command of a `binary` component is not
+    /// the word [`BINARY_BUILD_PROGRAM`].
+    BuildProgram,
     /// An install path or the program of a command is not an absolute path
     /// that the release tool uses.
     Path {
@@ -1409,6 +1516,11 @@ impl fmt::Display for ManifestFault {
             Self::ArgvControl { field } => {
                 write!(f, "field '{field}' argv words hold no NUL and no newline")
             }
+            Self::BuildProgram => write!(
+                f,
+                "field '{}' must be the word {BINARY_BUILD_PROGRAM}",
+                PathField::Build.as_str()
+            ),
             Self::Path { field, fault } => write!(f, "field '{}' {fault}", field.as_str()),
             Self::RepoPath(fault) => write!(f, "{fault}"),
             Self::SamePaths => f.write_str("install.prev must differ from install.to"),
@@ -1703,11 +1815,7 @@ impl ManifestReader<'_> {
             }
         };
         let runs_as = self.read_account(fields, "runs_as", RunsAs::Operator)?;
-        let build = fields
-            .items("build")?
-            .iter()
-            .map(|entry| self.read_argv(fields.tree.get(*entry), fields, "build", PathField::Build))
-            .collect::<Result<_, _>>()?;
+        let build = self.read_build(kind)?;
         let install = self.read_install()?;
         let depends_on = Self::read_depends_on(fields)?;
         let verify = self.read_verify()?;
@@ -1846,7 +1954,40 @@ impl ManifestReader<'_> {
         Ok(format!("{}/{rest}", operator.home()))
     }
 
-    /// One command. A string is refused: a string is what reaches a shell.
+    /// The `build` commands. The kind gives the rule of the first word.
+    fn read_build(&self, kind: Kind) -> Result<Build, ManifestError> {
+        let fields = &self.fields;
+        let entries = fields.items(BUILD)?.iter();
+
+        match kind {
+            Kind::Binary => entries
+                .map(|entry| Self::read_cargo_argv(fields.tree.get(*entry), fields))
+                .collect::<Result<_, _>>()
+                .map(Build::Ci),
+            Kind::Venv | Kind::OciImage | Kind::Compose | Kind::Data => entries
+                .map(|entry| {
+                    self.read_argv(fields.tree.get(*entry), fields, BUILD, PathField::Build)
+                })
+                .collect::<Result<_, _>>()
+                .map(Build::Root),
+        }
+    }
+
+    /// One `build` command of a `binary` component. The first word is the
+    /// word [`BINARY_BUILD_PROGRAM`], as it is: the reader expands no `~/`
+    /// there, so the command needs no site file.
+    fn read_cargo_argv(raw: &Value, fields: &Fields<'_>) -> Result<CargoArgv, ManifestError> {
+        let mut words = Self::read_words(raw, fields, BUILD)?.into_iter();
+        if words.next().as_deref() != Some(BINARY_BUILD_PROGRAM) {
+            return Err(fields.refuse(ManifestFault::BuildProgram));
+        }
+
+        Ok(CargoArgv {
+            arguments: words.collect(),
+        })
+    }
+
+    /// One command whose first word is an absolute path.
     fn read_argv(
         &self,
         raw: &Value,
@@ -1854,6 +1995,29 @@ impl ManifestReader<'_> {
         field: &'static str,
         path_field: PathField,
     ) -> Result<Argv, ManifestError> {
+        let mut words = Self::read_words(raw, fields, field)?;
+        let first = words.first().map_or("", String::as_str);
+        let expanded = self.expand_home(first)?;
+        let program: AbsolutePath = expanded.parse().map_err(|fault| {
+            fields.refuse(ManifestFault::Path {
+                field: path_field,
+                fault,
+            })
+        })?;
+        if let Some(word) = words.first_mut() {
+            *word = expanded;
+        }
+
+        Ok(Argv { program, words })
+    }
+
+    /// The words of one command: 1 to 32 strings. A string is refused: a
+    /// string is what reaches a shell.
+    fn read_words(
+        raw: &Value,
+        fields: &Fields<'_>,
+        field: &'static str,
+    ) -> Result<Vec<String>, ManifestError> {
         let Value::List(items) = raw else {
             return Err(fields.refuse(ManifestFault::ArgvNotList { field }));
         };
@@ -1886,19 +2050,7 @@ impl ManifestReader<'_> {
             words.push(word.as_str().to_owned());
         }
 
-        let first = words.first().map_or("", String::as_str);
-        let expanded = self.expand_home(first)?;
-        let program: AbsolutePath = expanded.parse().map_err(|fault| {
-            fields.refuse(ManifestFault::Path {
-                field: path_field,
-                fault,
-            })
-        })?;
-        if let Some(word) = words.first_mut() {
-            *word = expanded;
-        }
-
-        Ok(Argv { program, words })
+        Ok(words)
     }
 
     /// One install path: a text, with the home of the operator for `~/`.

@@ -69,10 +69,10 @@ const _: () = assert!(
 mod build_script;
 
 pub use component::{
-    AbsolutePath, AbsolutePathError, Argv, ComponentManifest, Install, Keep, KeepError,
-    MAX_MANIFEST_BYTES, ManifestError, ManifestFault, Operator, OperatorError, PathField, Provided,
-    RepoPath, RepoPathError, Required, Restore, Scope, Timeout, TimeoutError, UnitName,
-    UnitNameError, Verify, YamlFault,
+    AbsolutePath, AbsolutePathError, Argv, Build, CargoArgv, ComponentManifest, Install, Keep,
+    KeepError, MAX_MANIFEST_BYTES, ManifestError, ManifestFault, Operator, OperatorError,
+    PathField, Provided, RepoPath, RepoPathError, Required, Restore, Scope, Timeout, TimeoutError,
+    UnitName, UnitNameError, Verify, YamlFault,
 };
 pub use request::{
     Draft, MAX_REQUEST_BYTES, MintError, Request, RequestError, RequestField, RequestKind,
@@ -1090,6 +1090,18 @@ mod tests {
         json!(argv.words())
     }
 
+    fn build_json(build: &Build) -> Value {
+        match build {
+            Build::Root(commands) => json!(commands.iter().map(argv_json).collect::<Vec<_>>()),
+            Build::Ci(commands) => json!(
+                commands
+                    .iter()
+                    .map(|command| command.words().collect::<Vec<_>>())
+                    .collect::<Vec<_>>()
+            ),
+        }
+    }
+
     fn manifest_json(manifest: &ComponentManifest) -> Value {
         let provides: Vec<Value> = manifest
             .provides()
@@ -1125,7 +1137,7 @@ mod tests {
             "kind": manifest.kind().as_str(),
             "unit": manifest.unit().map(UnitName::as_str),
             "runs_as": manifest.runs_as().as_str(),
-            "build": manifest.build().iter().map(argv_json).collect::<Vec<_>>(),
+            "build": build_json(manifest.build()),
             "install": {
                 "to": manifest.install().to().as_str(),
                 "prev": manifest.install().prev().as_str(),
@@ -1228,6 +1240,78 @@ mod tests {
             .iter()
             .map(|(name, own)| if *name == field { line } else { own })
             .fold(String::new(), |text, line| text + line + "\n")
+    }
+
+    #[test]
+    fn the_kind_gives_the_variant_of_the_build() {
+        let read = |kind: &str, command: &str| {
+            let text = manifest_with("kind", &format!("kind: {kind}"))
+                + &format!("build: [[{command}, install, \"--locked\"]]\n");
+
+            ComponentManifest::parse(&text, None)
+        };
+
+        let binary = read("binary", "cargo").unwrap();
+        let Build::Ci(commands) = binary.build() else {
+            panic!("a binary build is {:?}", binary.build());
+        };
+        let words: Vec<Vec<&str>> = commands
+            .iter()
+            .map(|command| command.words().collect())
+            .collect();
+        assert_eq!(words, [["cargo", "install", "--locked"]]);
+        assert_eq!(commands[0].program(), BINARY_BUILD_PROGRAM);
+        assert_eq!(commands[0].arguments(), ["install", "--locked"]);
+
+        let venv = read("venv", "/usr/bin/cargo").unwrap();
+        let Build::Root(commands) = venv.build() else {
+            panic!("a venv build is {:?}", venv.build());
+        };
+        assert_eq!(commands[0].program().as_str(), "/usr/bin/cargo");
+
+        let fetched = ComponentManifest::parse(&manifest_with("kind", "kind: binary"), None);
+        assert_eq!(fetched.unwrap().build(), &Build::Ci(Vec::new()));
+    }
+
+    #[test]
+    fn a_binary_build_starts_with_the_word_and_no_other() {
+        let fault = |kind: &str, command: &str| {
+            let text = manifest_with("kind", &format!("kind: {kind}"))
+                + &format!("build: [[\"{command}\", build]]\n");
+
+            ComponentManifest::parse(&text, None).unwrap_err()
+        };
+
+        // `~/cargo` gives no site refusal: the reader expands no `~/` in
+        // that word, and the parse has no operator account.
+        for word in [
+            "/usr/bin/cargo",
+            "~/cargo",
+            "bin/cargo",
+            "Cargo",
+            "cargo-build",
+            "rustc",
+        ] {
+            let error = fault("binary", word);
+
+            assert_eq!(error.code(), RefusalCode::Manifest, "{word}");
+            assert_eq!(error.fault(), &ManifestFault::BuildProgram, "{word}");
+            assert_eq!(
+                error.detail(),
+                "field 'build[0]' must be the word cargo",
+                "{word}"
+            );
+        }
+
+        for kind in ["venv", "oci-image", "compose", "data"] {
+            let error = fault(kind, BINARY_BUILD_PROGRAM);
+
+            assert_eq!(
+                error.detail(),
+                "field 'build[0]' must be an absolute path",
+                "{kind}"
+            );
+        }
     }
 
     #[test]
