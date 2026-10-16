@@ -59,6 +59,9 @@ MAX_FIELD_CHARS: Final = 64 * 1024
 #: Where a family's own directory sits, for `check_family`'s path checks.
 _PROBE_DIR: Final = "families"
 
+#: The one key of the text in which `_readable` gives a value to the reader.
+_LONE_KEY: Final = "value"
+
 
 class Control(StrEnum):
     """What a field looks like on the page."""
@@ -536,7 +539,7 @@ def _flat_body(form: Form, posted: Mapping[str, str], top: str) -> dict[str, obj
         if not own.name.startswith(f"{top}."):
             continue
 
-        value, present = _saved(own, posted)
+        value, present = _saved_in(own, posted, form.markup)
 
         if present:
             body[own.name.split(".", 1)[1]] = value
@@ -582,9 +585,34 @@ def _toml_value(form: Form, posted: Mapping[str, str], top: str) -> tuple[object
     if own.control is Control.BLOCK and own.free:
         return _toml_block(own, posted)
 
-    value, present = _saved(own, posted)
+    value, present = _saved_in(own, posted, form.markup)
 
     return value, present, ""
+
+
+def _saved_in(own: Field, posted: Mapping[str, str], markup: Markup) -> tuple[object, bool]:
+    """`_saved`, for a document in `markup`.
+
+    The TOML reader refuses an integer past 64 bits for the whole text, and
+    its refusal names no field. In a TOML document such a number is thus its
+    text, and the model names the field.
+    """
+    value, present = _saved(own, posted)
+
+    if markup is Markup.TOML and own.control is Control.NUMBER and not _readable(value):
+        return str(value), present
+
+    return value, present
+
+
+def _readable(value: object) -> bool:
+    """True when the one reader takes `value` in a family file."""
+    try:
+        loads(to_toml({_LONE_KEY: value}).encode("utf-8"), FileKind.FAMILY)
+    except TomlRefusal:
+        return False
+
+    return True
 
 
 def _toml_block(own: Field, posted: Mapping[str, str]) -> tuple[object, bool, str]:

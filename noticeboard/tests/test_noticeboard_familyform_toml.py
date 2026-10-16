@@ -246,6 +246,30 @@ def test_a_date_in_a_block_is_refused_at_its_field() -> None:
     ]
 
 
+def test_a_number_past_64_bits_is_refused_at_its_field() -> None:
+    form = toml_form()
+    posted = posted_from(form)
+    posted["sandbox.cpus"] = "99999999999999999999"
+
+    after, issues = parse_posted(form, posted)
+
+    assert after is None
+    assert [(one.loc, one.msg) for one in issues] == [
+        ("sandbox.cpus", "Input should be a valid integer")
+    ]
+
+
+def test_a_number_inside_64_bits_stays_a_number() -> None:
+    form = toml_form()
+    posted = posted_from(form)
+    posted["sandbox.cpus"] = "-9223372036854775808"
+
+    text, problem = document_of(form, posted)
+
+    assert problem == ""
+    assert "sandbox.cpus = -9223372036854775808" in text.splitlines()
+
+
 def test_a_value_with_no_toml_form_is_a_problem_of_the_form(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
