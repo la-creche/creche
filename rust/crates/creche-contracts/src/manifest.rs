@@ -685,6 +685,31 @@ pub const BINARY_BUILD_FILES: [&str; 3] = [
 /// path (contract 06 §8).
 pub const BINARY_BUILD_PROGRAM: &str = "cargo";
 
+/// The one target of a `binary` build in CI: a static program for Linux on
+/// x86_64, with no C library of the host.
+pub const BINARY_TARGET: &str = "x86_64-unknown-linux-musl";
+
+/// The end of the name of the archive of a `binary` component:
+/// `<component>-<BINARY_TARGET><ARCHIVE_SUFFIX>`, a gzip of a tar.
+pub const ARCHIVE_SUFFIX: &str = ".tar.gz";
+
+/// The end of the name of the signature bundle of an archive: the name of
+/// the archive, then this.
+pub const BUNDLE_SUFFIX: &str = ".sigstore.json";
+
+/// The variable that tells `cargo install` where to write the programs of
+/// a `binary` build.
+pub const BINARY_INSTALL_ENV: &str = "CARGO_INSTALL_ROOT";
+
+/// The workflow file that signs the archives of each repository. A
+/// repository with no entry has no signer, so a `binary` component of that
+/// repository gets no tag.
+pub const RELEASE_WORKFLOW: [(Repo, &str); 1] = [(Repo::AgentControl, "release.yml")];
+
+/// The one branch that a release comes from. A signature names the ref of
+/// this branch.
+pub const MAIN_BRANCH: &str = "main";
+
 /// The first number of the newest `component-manifest` contract version
 /// that this code takes. It is the number of the `provides` row in the
 /// manifest of the release tool.
@@ -702,6 +727,19 @@ pub const LAST_IN_ORDER: &str = "handover";
 /// The largest count of components that one request names: the catalog less
 /// `registry-data`, which never releases (`stage7-releases.md` §2.3).
 pub const MAX_REQUEST_COMPONENTS: usize = 8;
+
+/// The largest archive of a `binary` component, in bytes.
+pub const ARCHIVE_MAX_BYTES: u64 = 256 * 1024 * 1024;
+
+/// The largest signature bundle of an archive, in bytes.
+pub const BUNDLE_MAX_BYTES: u64 = 1024 * 1024;
+
+/// The largest count of members of an archive.
+pub const ARCHIVE_MAX_MEMBERS: usize = 64;
+
+/// The largest count of bytes of the members of an archive after the
+/// unpack.
+pub const ARCHIVE_MAX_UNPACKED_BYTES: u64 = 512 * 1024 * 1024;
 
 // --- numbers and digests ---
 
@@ -1632,11 +1670,25 @@ mod tests {
             "arriving" => json!(ARRIVING),
             "binary-build-files" => json!(BINARY_BUILD_FILES),
             "binary-build-program" => json!(BINARY_BUILD_PROGRAM),
+            "binary-target" => json!(BINARY_TARGET),
+            "archive-suffix" => json!(ARCHIVE_SUFFIX),
+            "bundle-suffix" => json!(BUNDLE_SUFFIX),
+            "binary-install-env" => json!(BINARY_INSTALL_ENV),
+            "release-workflow" => RELEASE_WORKFLOW
+                .iter()
+                .map(|(repo, file)| (repo.as_str().to_owned(), json!(file)))
+                .collect::<Map<String, Value>>()
+                .into(),
+            "main-branch" => json!(MAIN_BRANCH),
             "manifest-contract-version" => {
                 json!({"major": MANIFEST_CONTRACT_MAJOR, "minor": MANIFEST_CONTRACT_MINOR})
             }
             "last-in-order" => json!(LAST_IN_ORDER),
             "max-request-components" => json!(MAX_REQUEST_COMPONENTS),
+            "archive-max-bytes" => json!(ARCHIVE_MAX_BYTES),
+            "bundle-max-bytes" => json!(BUNDLE_MAX_BYTES),
+            "archive-max-members" => json!(ARCHIVE_MAX_MEMBERS),
+            "archive-max-unpacked-bytes" => json!(ARCHIVE_MAX_UNPACKED_BYTES),
             "set-repo" => words(Repo::ALL, Repo::as_str),
             "set-kind" => words(Kind::ALL, Kind::as_str),
             "set-runs-as" => words(RunsAs::ALL, RunsAs::as_str),

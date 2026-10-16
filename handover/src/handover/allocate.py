@@ -166,6 +166,17 @@ def read_level(labels: tuple[str, ...]) -> BumpLevel:
     return BumpLevel.PATCH
 
 
+def repo_row(name: str, repo: Repo) -> CatalogRow:
+    """The row of `name` in the catalog of `repo`. A name that the catalog
+    of that repository does not hold refuses with the `catalog` code."""
+    for row in CATALOG:
+        if row.name == name and row.repo is repo:
+            return row
+
+    detail = f"{safe_token(name)} is no component of {repo}"
+    raise Refusal(RefusalCode.CATALOG, "contract 06 §1", detail)
+
+
 def _matches(path: str, row: CatalogRow) -> bool:
     if row.path == REPO_ROOT_PATH:
         return True

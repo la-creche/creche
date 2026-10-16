@@ -160,6 +160,31 @@ BINARY_BUILD_FILES: tuple[str, ...] = (
 #: argv of every other kind starts with an absolute path.
 BINARY_BUILD_PROGRAM = "cargo"
 
+#: The one target of a `kind: binary` build in CI: a static program for
+#: Linux on x86_64, with no C library of the host.
+BINARY_TARGET = "x86_64-unknown-linux-musl"
+
+#: The end of the name of the archive of a binary component:
+#: `<component>-<BINARY_TARGET><ARCHIVE_SUFFIX>`, a gzip of a tar.
+ARCHIVE_SUFFIX = ".tar.gz"
+
+#: The end of the name of the signature bundle of an archive: the name of
+#: the archive, then this.
+BUNDLE_SUFFIX = ".sigstore.json"
+
+#: The variable that tells `cargo install` where to write the programs of a
+#: binary build. The build writes each program at `<this>/bin/<name>`.
+BINARY_INSTALL_ENV = "CARGO_INSTALL_ROOT"
+
+#: The workflow file that signs the archives of a repository. The identity
+#: of each signature names this file. A repository with no entry has no
+#: signer, so a binary component of that repository gets no tag.
+RELEASE_WORKFLOW: dict[Repo, str] = {Repo.AGENT_CONTROL: "release.yml"}
+
+#: The one branch that a release comes from. A signature names the ref of
+#: this branch, and the merge of a release is a merge into it.
+MAIN_BRANCH = "main"
+
 #: Components on their way out of the catalog. A checkout may carry such a
 #: component's manifest or not, and both read. A component leaves in two
 #: commits, this entry first and the directory's deletion second, so the
@@ -199,6 +224,17 @@ LAST_IN_ORDER = "handover"
 #: stage7-releases.md §2.3: at most eight entries, the catalog minus
 #: `registry-data`, which never releases.
 MAX_REQUEST_COMPONENTS = 8
+
+#: The limits of the two assets of a binary component. CI refuses an
+#: archive past a limit before it signs it, and each reader of the archive
+#: refuses it too. The size of the archive and of its bundle, in bytes.
+ARCHIVE_MAX_BYTES = 256 * 1024 * 1024
+BUNDLE_MAX_BYTES = 1024 * 1024
+
+#: The count of members of an archive, and the bytes of those members after
+#: the unpack.
+ARCHIVE_MAX_MEMBERS = 64
+ARCHIVE_MAX_UNPACKED_BYTES = 512 * 1024 * 1024
 
 
 def releasable_names() -> tuple[str, ...]:

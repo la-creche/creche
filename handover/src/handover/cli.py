@@ -4,7 +4,7 @@
 (`handover/component.yaml`, `name: handover`), and nothing else declares
 it.
 
-Five subcommands, and only the last two write anything.
+Seven subcommands. Only `request` and `follow` write anything.
 
 1. `check` validates what is on disk: every manifest parses, every name
    matches contract 06 §1, `depends_on` is acyclic, and rules C1 to C3 hold
@@ -15,6 +15,8 @@ Five subcommands, and only the last two write anything.
 3. `allocate-tags` says what tag a merge allocates (contract 06 §2.1).
    `--cut <file>` plans nothing: it prints each changed path of the file,
    cut to the prefix the planner reads, for `bin/allocate-tags.sh`.
+   `--assets <component>` plans nothing either: it prints one line for each
+   asset that the Release of that component must hold, with its size limit.
 4. `request <name>[@<version>] …` files ONE release request into the spool
    (`stage7-releases.md` §2.3). It prints §2.5's seven fields first, so the operator
    reads what the phone will show BEFORE the file exists, and it refuses what
@@ -28,6 +30,14 @@ Five subcommands, and only the last two write anything.
    request for that set. It files a set once, after it read the same set on
    two runs, and it approves nothing. A run with nothing new prints one
    line and exits 0.
+6. `artifacts` prints what CI builds for each binary component, in a line
+   form that a `read` loop of bash reads (`artifacts.ArtifactRow`).
+   `--crate-row` prints one such row for a crate that need not be a
+   component. `--verify-words` prints the words of the signature check,
+   one on each line.
+7. `check-tree --kind binary` walks a built tree of compiled programs
+   (`treewalk.py`). It prints one line for each fault and exits 1 when it
+   finds one.
 
 Exit codes: 0 pass, 1 refusal, 2 a usage mistake or a spool this host cannot
 write.
@@ -37,6 +47,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from collections.abc import Callable
@@ -44,8 +55,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic, sleep
 
-from .allocate import cut_paths, plan_tags, read_lines
-from .catalog import Repo, releasable_names
+from .allocate import cut_paths, plan_tags, read_lines, repo_row
+from .artifacts import (
+    archive_components,
+    asset_limits,
+    crate_row,
+    rows,
+    signer_policy,
+    verify_words,
+)
+from .catalog import Kind, Repo, releasable_names
 from .contracts import ContractRow
 from .corpus import (
     BEHIND_NOTE,
@@ -90,6 +109,7 @@ from .requester.preview import HEADER
 from .resolve import Resolution, build_document, deploying_names, parse_request, resolve
 from .site import require_complete as require_complete_site
 from .state import MAX_STATE_BYTES, ReleaseState, parse_state
+from .treewalk import binary_escapes
 
 EXIT_OK = 0
 EXIT_REFUSED = 1
@@ -344,8 +364,45 @@ def _run_cut(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _flag(dest: str) -> str:
+    """The full name of the option whose value lands in `dest`."""
+    return "--" + dest.replace("_", "-")
+
+
+def _usage(detail: str) -> int:
+    """A usage mistake that the parser does not see: one line, exit 2."""
+    print(f"{PROG}: {detail}", file=sys.stderr)
+
+    return EXIT_USAGE
+
+
+#: The inputs of a plan. `--assets` plans nothing, so it takes none of them.
+PLAN_INPUTS = ("paths", "tags", "at_sha", "levels", "cut")
+
+
+def _run_assets(args: argparse.Namespace) -> int:
+    """The assets that the Release of one component holds: one line for
+    each, `<name> <largest size in bytes>`, the archive first. No line for
+    a component whose kind ships no archive. It plans nothing."""
+    extra = [_flag(name) for name in PLAN_INPUTS if getattr(args, name) is not None]
+    if args.json:
+        extra.append("--json")
+
+    if extra:
+        return _usage(f"--assets takes no {', '.join(extra)}")
+
+    row = repo_row(args.assets, Repo(args.repo))
+    for asset in asset_limits(row.name, row.kind):
+        print(f"{asset.name} {asset.max_bytes}")
+
+    return EXIT_OK
+
+
 def _run_allocate(args: argparse.Namespace) -> int:
     """What tag this merge allocates. It creates nothing itself."""
+    if args.assets is not None:
+        return _run_assets(args)
+
     if args.cut is not None:
         return _run_cut(args)
 
@@ -379,6 +436,114 @@ def _run_allocate(args: argparse.Namespace) -> int:
         print("no component touched: no tag, no Release")
 
     return EXIT_OK
+
+
+#: The options of `artifacts`, by their `dest`, and the three forms. Each
+#: form takes its own options and refuses each other one. The first form
+#: needs `repo`, and each other form needs each of its options but
+#: `trusted_root`.
+ARTIFACT_OPTIONS = (
+    "repo",
+    "root",
+    "crate_row",
+    "crate_dir",
+    "verify_words",
+    "github_repository",
+    "sha",
+    "archive",
+    "bundle",
+    "trusted_root",
+)
+ROW_OPTIONS = frozenset({"repo", "root"})
+CRATE_OPTIONS = frozenset({"crate_row", "crate_dir"})
+WORD_OPTIONS = frozenset(
+    {"verify_words", "repo", "github_repository", "sha", "archive", "bundle", "trusted_root"}
+)
+OPTIONAL_WORD_OPTIONS = frozenset({"trusted_root"})
+
+
+def _run_artifacts(args: argparse.Namespace) -> int:
+    """What CI builds, packs and checks for a binary component. One of
+    three forms, by the options given."""
+    given = {name for name in ARTIFACT_OPTIONS if getattr(args, name) not in (None, False)}
+    run: Handler = _run_artifact_rows
+    allowed, needed = ROW_OPTIONS, frozenset({"repo"})
+    if args.verify_words:
+        run, allowed, needed = _run_verify_words, WORD_OPTIONS, WORD_OPTIONS - OPTIONAL_WORD_OPTIONS
+    elif args.crate_row is not None:
+        run, allowed, needed = _run_crate_row, CRATE_OPTIONS, CRATE_OPTIONS
+
+    extra = sorted(given - allowed)
+    if extra:
+        return _usage(f"this form of artifacts takes no {', '.join(map(_flag, extra))}")
+
+    missing = sorted(needed - given)
+    if missing:
+        return _usage(f"this form of artifacts needs {', '.join(map(_flag, missing))}")
+
+    return run(args)
+
+
+def _print_lines(lines: tuple[str, ...]) -> None:
+    for line in lines:
+        print(line)
+
+
+def _run_artifact_rows(args: argparse.Namespace) -> int:
+    """One row for each binary component of `--repo`. The manifests are
+    read as `check --partial` reads them, and only when the catalog of that
+    repository holds a binary component: with none, nothing is read and
+    nothing is printed."""
+    repo = Repo(args.repo)
+    if not archive_components(repo):
+        return EXIT_OK
+
+    manifests = discover(_roots(args.root)).manifests()
+    for row in rows(manifests, repo):
+        _print_lines(row.lines())
+
+    return EXIT_OK
+
+
+def _run_crate_row(args: argparse.Namespace) -> int:
+    """One row for a crate that need not be a component. No manifest and no
+    catalog row is read."""
+    _print_lines(crate_row(args.crate_row, args.crate_dir).lines())
+
+    return EXIT_OK
+
+
+def _run_verify_words(args: argparse.Namespace) -> int:
+    """The words of the signature check after the program name, one on each
+    line. `--github-repository` is `<owner>/<name>`, as the code service
+    names the repository."""
+    owner, _, name = args.github_repository.partition("/")
+    policy = signer_policy(Repo(args.repo), owner, name, args.sha)
+    _print_lines(verify_words(policy, args.archive, args.bundle, args.trusted_root))
+
+    return EXIT_OK
+
+
+def _needle(text: str) -> bytes:
+    """`--needle PATH`: an absolute path below `/`, as the bytes that the
+    walk looks for. Each other text is argparse's usage error, exit 2."""
+    if not text.startswith("/") or not text.strip("/"):
+        raise argparse.ArgumentTypeError(
+            f"expected an absolute path below /, read {safe_token(text)}"
+        )
+
+    return os.fsencode(text)
+
+
+def _run_check_tree(args: argparse.Namespace) -> int:
+    """CI's walk of a tree of compiled programs: one line for each fault,
+    and exit 1 when there is one. It gives the walk no program list: CI
+    holds the tree to the link rules, the rule of a second name and the
+    rule of the needles."""
+    found = binary_escapes(Path(args.tree), (), args.needle)
+    _print_lines(found)
+
+    return EXIT_REFUSED if found else EXIT_OK
 
 
 def _wanted(items: list[str]) -> dict[str, str]:
@@ -897,10 +1062,60 @@ def build_parser() -> argparse.ArgumentParser:
         help="file of changed repo-relative paths, one per line: print each one "
         "cut to the prefix that decides its components, and plan nothing",
     )
+    tags.add_argument(
+        "--assets",
+        metavar="COMPONENT",
+        help="plan nothing: print the name and the size limit in bytes of each asset "
+        "that the Release of this component holds, one per line",
+    )
     repos = [str(item) for item in Repo]
     tags.add_argument("--repo", default=str(Repo.AGENT_CONTROL), choices=repos)
     tags.add_argument("--json", action="store_true", help="one JSON object instead of a table")
     tags.set_defaults(handler=_run_allocate)
+
+    made = sub.add_parser("artifacts", help="what CI builds and checks for a binary component")
+    made.add_argument("--repo", choices=repos, help="the catalog's name of the repository")
+    made.add_argument("--root", action="append", help="repository root to search (repeatable)")
+    made.add_argument(
+        "--crate-row",
+        dest="crate_row",
+        metavar="NAME",
+        help="print one row under this name for the crate of --crate-dir, and read no manifest",
+    )
+    made.add_argument(
+        "--crate-dir", dest="crate_dir", metavar="DIR", help="a crate directory below rust/crates/"
+    )
+    made.add_argument(
+        "--verify-words",
+        dest="verify_words",
+        action="store_true",
+        help="print the words of the signature check, one on each line",
+    )
+    made.add_argument(
+        "--github-repository",
+        dest="github_repository",
+        metavar="OWNER/NAME",
+        help="the repository as the code service names it",
+    )
+    made.add_argument("--sha", help="the commit that the signature must name")
+    made.add_argument("--archive", help="the absolute path of the archive")
+    made.add_argument("--bundle", help="the absolute path of the bundle of its signature")
+    made.add_argument(
+        "--trusted-root", dest="trusted_root", help="the absolute path of a trust root file"
+    )
+    made.set_defaults(handler=_run_artifacts, json=False)
+
+    walk = sub.add_parser("check-tree", help="walk a built tree of compiled programs (CI)")
+    walk.add_argument("--kind", required=True, choices=[str(Kind.BINARY)])
+    walk.add_argument("--tree", required=True, help="the tree that the build wrote")
+    walk.add_argument(
+        "--needle",
+        required=True,
+        action="append",
+        type=_needle,
+        help="an absolute path that no file of the tree may hold (repeatable)",
+    )
+    walk.set_defaults(handler=_run_check_tree, json=False)
 
     _add_request(sub.add_parser("request", help="file one release request (§2.3)"))
     _add_follow(sub.add_parser("follow", help="file a request for every newer tag, once"))

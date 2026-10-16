@@ -95,7 +95,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Final
 
-from ..catalog import Kind, RestoreMode, VerifyUser
+from ..catalog import BINARY_INSTALL_ENV, Kind, RestoreMode, VerifyUser
 from ..errors import Refusal, RefusalCode, safe_token
 from ..manifest import ComponentManifest
 from ..site import operator_home, operator_user
@@ -147,7 +147,7 @@ VENV_ENV_NAME: Final = "UV_PROJECT_ENVIRONMENT"
 #: downloads a toolchain that the host does not have. How the host gets
 #: its toolchain is the operator's decision. A build that runs in `rust/`
 #: costs a working directory rule per kind.
-BINARY_ENV_NAME: Final = "CARGO_INSTALL_ROOT"
+BINARY_ENV_NAME: Final = BINARY_INSTALL_ENV
 
 #: The kinds whose tree holds the programs that its units start: the
 #: console scripts of a venv and the compiled programs of a binary tree,
