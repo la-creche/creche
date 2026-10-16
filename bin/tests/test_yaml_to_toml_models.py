@@ -9,11 +9,11 @@ Two more tests hold the TOML path of a server file to the root reader,
 `handover.mcpserver.parse_server`. This file imports `handover`, and the
 tests of `family` do not.
 
-1. The cross test. Root accepts the YAML text of each fixture server, and
-   the validator accepts its TOML text.
+1. The cross test. Root accepts the YAML text of each fixture server and
+   its TOML text. The validator accepts the TOML text.
 2. The differences. For each rule that root holds and the YAML path does
-   not, root refuses a YAML text, the YAML path accepts it and the TOML path
-   refuses its converted text.
+   not, root refuses a YAML text and its converted text. The YAML path
+   accepts the YAML text, and the TOML path refuses the converted text.
 
 The test converts at test time and writes no file of the repository. The
 migration removes the YAML fixtures. After that, each walk has no file to
@@ -133,11 +133,14 @@ def test_root_accepts_the_yaml_text_and_the_validator_accepts_the_toml_text(name
         return
 
     path = SERVERS / name / SERVER_FILE_YAML
+    toml_text = _converted(path)
 
     read = mcpserver.parse_server(path.read_bytes(), name)
+    read_toml = mcpserver.parse_server(toml_text.encode(), name, mcpserver.Markup.TOML)
 
     assert read.name == name
-    assert _server_issues(_converted(path), name, Markup.TOML) == ()
+    assert read_toml.name == name
+    assert _server_issues(toml_text, name, Markup.TOML) == ()
 
 
 # --- the differences between the YAML path and root --------------------------------
@@ -228,11 +231,16 @@ def test_root_refuses_each_difference_and_so_does_the_toml_path(case: str, tmp_p
     path = tmp_path / SERVER_FILE_YAML
     path.write_text(yaml_text, encoding="utf-8")
 
+    toml_text = _converted(path)
+
     with pytest.raises(Refusal):
         mcpserver.parse_server(yaml_text.encode(), "kagi")
 
+    with pytest.raises(Refusal):
+        mcpserver.parse_server(toml_text.encode(), "kagi", mcpserver.Markup.TOML)
+
     assert _server_issues(yaml_text, "kagi", Markup.YAML) == ()
-    assert _server_issues(_converted(path), "kagi", Markup.TOML) != ()
+    assert _server_issues(toml_text, "kagi", Markup.TOML) != ()
 
 
 def test_root_and_each_path_accept_the_base_of_the_differences(tmp_path: Path) -> None:
@@ -240,6 +248,9 @@ def test_root_and_each_path_accept_the_base_of_the_differences(tmp_path: Path) -
     path = tmp_path / SERVER_FILE_YAML
     path.write_text(yaml_text, encoding="utf-8")
 
+    toml_text = _converted(path)
+
     assert mcpserver.parse_server(yaml_text.encode(), "kagi").name == "kagi"
+    assert mcpserver.parse_server(toml_text.encode(), "kagi", mcpserver.Markup.TOML).name == "kagi"
     assert _server_issues(yaml_text, "kagi", Markup.YAML) == ()
-    assert _server_issues(_converted(path), "kagi", Markup.TOML) == ()
+    assert _server_issues(toml_text, "kagi", Markup.TOML) == ()
