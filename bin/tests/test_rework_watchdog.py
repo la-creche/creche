@@ -2177,13 +2177,14 @@ def test_no_answer_on_the_limits_sends_nothing(rig: Rig) -> None:
     assert len(rig.json_summaries()) == 1
 
 
-def test_a_held_line_with_a_word_that_is_no_count_sends_nothing(rig: Rig) -> None:
+@pytest.mark.parametrize("held", ["held 0 x", "held 0"])
+def test_a_held_line_with_a_word_that_is_no_count_sends_nothing(rig: Rig, held: str) -> None:
     """The last line of the plan holds two counts. A second word that is no
-    count is no answer on the limits. The run then sends no notice of this
-    kind and says so in one line."""
+    count is no answer on the limits, and one count is no answer too. The
+    run then sends no notice of this kind and says so in one line."""
     rig.notice("noticeboard", token("status.document:syntax"))
 
-    done = rig.run(WD_AWK_HELD="held 0 x")
+    done = rig.run(WD_AWK_HELD=held)
 
     assert done.returncode == 0, done.stdout + done.stderr
     assert rig.posts() == []

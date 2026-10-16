@@ -920,7 +920,7 @@ json_notice() {  # json_notice <service> <surface> <rule> <seconds>
 }
 
 send_json_notices() {
-  local path service plan held ahead sent word surface rule seconds room
+  local path service plan last held ahead sent word surface rule seconds room
   # systemd starts one run of the unit at a time. A run by hand can overlap
   # a run of the timer, and both runs would read the same record. So only
   # a run of the unit sends a notice of this kind.
@@ -959,13 +959,16 @@ send_json_notices() {
 
   plan="$({ printf '%s' "$SENT_LINES"; printf '%s' "$TOKENS"; } | awk -v now="$NOW" \
     -v same="$SAME_NOTICE_EVERY_S" -v hour="$HOUR_S" -v most="$NOTICES_PER_HOUR" "$NOTICE_PLAN")"
-  held="${plan##*held }"
-  ahead="${held#* }"
-  held="${held% *}"
-  if [[ "$plan" != *"held "* ]] || ! matches '[0-9]{1,9} [0-9]{1,9}' "$held $ahead"; then
+  # The whole last line must be the line `held` with two counts.
+  last="${plan##*"$NL"}"
+  if ! matches 'held [0-9]{1,9} [0-9]{1,9}' "$last"; then
     say "json notices: awk gave no answer on the limits, so this run sends no notice of this kind"
     return 0
   fi
+
+  held="${last#held }"
+  ahead="${held#* }"
+  held="${held% *}"
 
   [[ "$ahead" == 0 ]] \
     || say "json notices: tokens with a time more than ${HOUR_S}s after now (no notice): $ahead"
