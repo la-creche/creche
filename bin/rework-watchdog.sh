@@ -690,13 +690,14 @@ TOKENS=""
 # record first, then the lines of TOKENS. A record line has five words and
 # a token line has four. It prints one line `send` for each notice, in the
 # order of the tokens, and one last line `held` with two counts: the tokens
-# that a limit holds, and the tokens with a time after `now`.
+# that a limit holds, and the tokens that are news with a time more than
+# `hour` seconds after `now`.
+#   - A token is news when the record has no line for its service, surface
+#     and rule, or when its `<seconds>` is above the `<seconds>` of that
+#     line. A token that is no news gets no notice and no count.
 #   - A token whose `<seconds>` is more than `hour` seconds after `now` gets
 #     no notice. The clock of a host can jump, and the record must hold no
 #     `<seconds>` that is far after `now`.
-#   - A token is news when the record has no line for its service, surface
-#     and rule, or when its `<seconds>` is above the `<seconds>` of that
-#     line.
 #   - The limit of one service, surface and rule holds a token when the
 #     send time of that line is less than `same` seconds away from `now`.
 #   - The limit of all services holds a token when `most` notices have a
@@ -721,12 +722,10 @@ NF == 5 {
   next
 }
 NF == 4 {
-  if ($4 + 0 > now + hour) { ahead++; next }
   key = $1 " " $2 " " $3
-  if (key in known) {
-    if ($4 + 0 <= sent[key]) next
-    if (near(at[key], same + 0)) { held++; next }
-  }
+  if ((key in known) && $4 + 0 <= sent[key]) next
+  if ($4 + 0 > now + hour) { ahead++; next }
+  if ((key in known) && near(at[key], same + 0)) { held++; next }
   if (recent + 0 >= most + 0) { held++; next }
   recent++
   known[key] = 1

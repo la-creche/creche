@@ -124,8 +124,12 @@ exit 0
 #: The POST comes FIRST on purpose. Its `-d` body quotes the very URL the
 #: PEP check names, so a `*/healthz*` pattern ahead of it swallows the
 #: notice and answers it with an HTTP code.
+#:
+#: `WD_POST_SLEEP` makes each POST take that count of seconds: a hook that
+#: answers slowly.
 CURL_BODY: Final = """case "$*" in
   *"-X POST"*)
+    [ -n "${WD_POST_SLEEP:-}" ] && sleep "$WD_POST_SLEEP"
     printf '%s\\n' "$*" >> "$WD_POST_LOG"
     exit "${WD_POST_EXIT:-0}" ;;
   *"--unix-socket"*) printf '%s' "${WD_SOCK_CODE:-401}" ;;
@@ -196,6 +200,9 @@ esac
 #: time plus that count of seconds. A case uses it to run the script one hour
 #: or one day later. `Rig.run_later` sets it.
 #:
+#: `WD_CLOCK_AT` stops that clock: `date -u +%s` then answers that count of
+#: seconds. A case uses it to put a time exactly at the edge of a rule.
+#:
 #: `WD_DATE_FAIL_AT` makes one `date -u +%s` call fail with no output: the
 #: call with that number, from 1. The stub counts the calls in its log, so
 #: the number counts each run of one rig. Check 2 makes one such call in a
@@ -209,6 +216,10 @@ DATE_BODY: Final = """case "$1" in
       +%s)
         calls="$(grep -c '^date -u +%s$' "$WD_STUB_LOG")"
         [ "$calls" = "${WD_DATE_FAIL_AT:-}" ] && exit 1
+        if [ -n "${WD_CLOCK_AT:-}" ]; then
+          printf '%s\\n' "$WD_CLOCK_AT"
+          exit 0
+        fi
         real="$(/bin/date -u +%s)"
         printf '%s\\n' "$(( real + ${WD_CLOCK_AHEAD_S:-0} ))"
         exit 0 ;;
@@ -244,10 +255,20 @@ esac"""
 #: fail with status 2: the call with that number, from 1. Such a call makes
 #: the new record for one notice. The stub counts the calls in its log, so
 #: the number counts each run of one rig.
+#:
+#: `WD_AWK_HELD` is the last line of the plan, the call that gets the
+#: variable `now`. The stub gives each other line of the real `awk`, then
+#: this line in the place of the line `held`.
 AWK_MORE: Final = """case "$*" in
   *"key="*)
     calls="$(grep -c '^awk -v key=' "$WD_STUB_LOG")"
     [ "$calls" = "${WD_AWK_KEY_FAIL_AT:-}" ] && exit 2 ;;
+  *"now="*)
+    if [ -n "${WD_AWK_HELD:-}" ]; then
+      {real} "$@" | grep -v '^held '
+      printf '%s\\n' "$WD_AWK_HELD"
+      exit 0
+    fi ;;
 esac"""
 
 #: `WD_DISK_FULL` is the model of a full disk for the record of sent
@@ -363,7 +384,9 @@ class Rig:
             ("mktemp", "WD_MKTEMP_EXIT", MKTEMP_MORE),
             ("awk", "WD_AWK_EXIT", AWK_MORE),
         ):
-            body = REAL_BODY.format(switch=switch, more=more, real=shutil.which(name))
+            real = shutil.which(name)
+            assert real is not None, name
+            body = REAL_BODY.format(switch=switch, more=more.replace("{real}", real), real=real)
             _stub(self.stubs, name, body)
 
         _stub(self.stubs, "mv", MV_BODY.format(real=shutil.which("mv")))
@@ -1166,6 +1189,20 @@ def test_one_token_gives_one_json_notice(rig: Rig) -> None:
     assert len(rig.posts()) == 1
 
 
+@pytest.mark.parametrize("pair", ["push:syntax", "status.document:push"])
+def test_a_surface_or_rule_named_push_gets_its_notice(rig: Rig, pair: str) -> None:
+    """The key `push` is the word `push` in quotes with a colon after it.
+    The row of such a pair holds the word `push` in quotes with a comma
+    after it. That line is no line of the key."""
+    rig.notice("noticeboard", token(pair))
+
+    done = rig.run()
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.json_summaries() == [f"{JSON_WORD} noticeboard {pair.replace(':', ' ')}"]
+    assert "breaks its pattern" not in done.stdout
+
+
 def test_a_second_run_with_the_same_file_sends_nothing(rig: Rig) -> None:
     rig.notice("noticeboard", token("status.document:syntax"))
     rig.run()
@@ -1213,24 +1250,66 @@ def test_an_older_time_for_a_sent_pair_sends_nothing(rig: Rig) -> None:
 def test_a_time_far_after_now_gets_no_notice(rig: Rig) -> None:
     """The clock of a host can jump. A token whose time is more than one
     hour after now gets no notice and no record line, and the journal gets
-    one line with the count. A later refusal of the same service, surface
-    and rule with a time before now then gets its notice."""
+    one line with the count. A token one minute before that edge gets its
+    notice. A later refusal of the same service, surface and rule with a
+    time before now then gets its notice."""
     pair = "status.document:syntax"
     now = int(time.time())
     near = token("audit.line:syntax", now + 30 * MINUTE_S)
-    rig.notice("noticeboard", token(pair, now + 400 * DAY_S), near)
+    edge = token("session.answer:too_deep", now + HOUR_S - MINUTE_S)
+    late = (
+        token(pair, now + 400 * DAY_S),
+        token("status.outcome:constant", now + 90 * MINUTE_S),
+        token("audit.line:trailing_data", now + HOUR_S + 2 * MINUTE_S),
+    )
+    rig.notice("noticeboard", late[0], near, edge, *late[1:])
 
     done = rig.run()
 
     assert done.returncode == 0, done.stdout + done.stderr
-    assert rig.json_summaries() == [f"{JSON_WORD} noticeboard audit.line syntax"]
-    assert done.stdout.count("after now (no notice): 1") == 1, done.stdout
-    assert [one.split()[1] for one in rig.sent_lines()] == ["audit.line"]
+    assert rig.json_summaries() == [
+        f"{JSON_WORD} noticeboard audit.line syntax",
+        f"{JSON_WORD} noticeboard session.answer too_deep",
+    ]
+    assert done.stdout.count("after now (no notice): 3") == 1, done.stdout
+    assert [one.split()[1] for one in rig.sent_lines()] == ["audit.line", "session.answer"]
 
-    rig.notice("noticeboard", token(pair, now - MINUTE_S), near)
+    rig.notice("noticeboard", token(pair, now - MINUTE_S), near, edge)
     done = rig.run()
 
-    assert rig.json_summaries()[1:] == [f"{JSON_WORD} noticeboard status.document syntax"]
+    assert rig.json_summaries()[2:] == [f"{JSON_WORD} noticeboard status.document syntax"]
+    assert "after now" not in done.stdout
+
+
+def test_a_time_one_hour_after_now_gets_its_notice(rig: Rig) -> None:
+    """The edge of the rule. A time of exactly one hour after now is not
+    more than one hour after now, so it gets its notice. One second more
+    gets no notice. This case stops the clock of the run."""
+    now = int(time.time())
+    rig.notice(
+        "noticeboard",
+        token("status.document:syntax", now + HOUR_S),
+        token("audit.line:syntax", now + HOUR_S + 1),
+    )
+
+    done = rig.run(WD_CLOCK_AT=str(now))
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.json_summaries() == [f"{JSON_WORD} noticeboard status.document syntax"]
+    assert done.stdout.count("after now (no notice): 1") == 1, done.stdout
+
+
+def test_a_sent_token_is_not_ahead_after_the_clock_moves_back(rig: Rig) -> None:
+    """The record check comes before the rule of the hour. A token that the
+    record holds is no news, also when the clock of the host moved back by
+    more than one hour. The journal then counts it as no token ahead."""
+    rig.notice("noticeboard", token("status.document:syntax", int(time.time()) - MINUTE_S))
+    rig.run()
+
+    done = rig.run_later(-2 * HOUR_S)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert len(rig.json_summaries()) == 1
     assert "after now" not in done.stdout
 
 
@@ -1405,6 +1484,7 @@ BROKEN_PUSH_LINES: Final = {
     "no-indent": b'"push": "status.document:syntax:1760000000",',
     "more-indent": b'  "push": "status.document:syntax:1760000000",',
     "no-space": b' "push":"status.document:syntax:1760000000",',
+    "space-before-colon": b' "push" : "status.document:syntax:1760000000",',
     "number": b' "push": 1760000000,',
     "null": b' "push": null,',
     "no-end-quote": b' "push": "status.document:syntax:1760000000,',
@@ -1987,6 +2067,20 @@ def test_no_answer_on_the_limits_sends_nothing(rig: Rig) -> None:
     assert len(rig.json_summaries()) == 1
 
 
+def test_a_held_line_with_a_word_that_is_no_count_sends_nothing(rig: Rig) -> None:
+    """The last line of the plan holds two counts. A second word that is no
+    count is no answer on the limits. The run then sends no notice of this
+    kind and says so in one line."""
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    done = rig.run(WD_AWK_HELD="held 0 x")
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.posts() == []
+    assert done.stdout.count("awk gave no answer on the limits") == 1, done.stdout
+    assert rig.sent_lines() == []
+
+
 @pytest.mark.parametrize("blocked", ["record", "directory"])
 def test_a_record_that_cannot_be_written_sends_nothing(rig: Rig, blocked: str) -> None:
     """A notice with no record line has no limit. The script proves that it
@@ -2055,6 +2149,74 @@ def _script_copy(tmp_path: Path, text: str) -> Path:
     copy.write_text(text, encoding="utf-8")
 
     return copy
+
+
+#: The line of the step that starts the loop of the sends.
+SEND_LOOP: Final = "  while read -r word service surface rule seconds; do\n"
+
+#: The line of the step that compares the age of the run with the budget.
+BUDGET_CHECK: Final = "NOTICE_STEP_BUDGET_S ))"
+
+#: The longest time that the step can need after the start of its last
+#: send, apart from the send itself: the record write of a send that
+#: failed, and the journal line.
+AFTER_THE_SEND_S: Final = 5
+
+
+def test_the_step_ends_inside_the_start_limit_of_its_unit() -> None:
+    """systemd stops a run at `TimeoutStartSec` of the unit. A stop after
+    a send that the hook took can leave the old record behind. The step
+    starts no send when the run is older than NOTICE_STEP_BUDGET_S. bash
+    counts `SECONDS` in whole seconds, so the last send starts before an
+    age of NOTICE_STEP_BUDGET_S + 1. One send takes NOTICE_TIMEOUT_S at
+    most."""
+    unit = (REPO_ROOT / "systemd" / "creche-watchdog.service").read_text(encoding="utf-8")
+    limits = re.findall(r"^TimeoutStartSec=([0-9]+)$", unit, re.MULTILINE)
+    assert len(limits) == 1
+
+    longest = _number("NOTICE_STEP_BUDGET_S") + 1 + _number("NOTICE_TIMEOUT_S") + AFTER_THE_SEND_S
+
+    assert longest <= int(limits[0])
+
+
+def test_a_slow_hook_stops_the_step_at_its_budget(rig: Rig, tmp_path: Path) -> None:
+    """`SECONDS` keeps its count in the shell of the step, across a send.
+    This case runs a copy of the script with a budget of 1 s and a hook
+    that takes 2 s for each send. The copy sets `SECONDS` to 0 directly
+    before the loop of the sends, so the time of the checks does not
+    count. The first send starts, and the step then stops with one line."""
+    text, found = BUDGET_LINE.subn("NOTICE_STEP_BUDGET_S=1", SCRIPT.read_text(encoding="utf-8"))
+    assert found == 1
+    assert text.count(SEND_LOOP) == 1
+    rig.script = _script_copy(tmp_path, text.replace(SEND_LOOP, f"  SECONDS=0\n{SEND_LOOP}"))
+    rig.notice("noticeboard", *[token(one) for one in THREE_PAIRS])
+
+    done = rig.run(WD_POST_SLEEP="2")
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.json_summaries() == THREE_SUMMARIES[:1]
+    assert done.stdout.count("so it sends no more of this kind") == 1, done.stdout
+    assert len(rig.sent_lines()) == 1
+
+
+@pytest.mark.parametrize("over", [0, 1])
+def test_the_budget_holds_a_run_older_than_it(rig: Rig, tmp_path: Path, over: int) -> None:
+    """A run that is NOTICE_STEP_BUDGET_S seconds old still sends. A run
+    that is one second older starts no send and says so in one line. This
+    case runs a copy of the script that sets `SECONDS` to that age
+    directly before each check of the budget."""
+    text = SCRIPT.read_text(encoding="utf-8")
+    checks = [one for one in text.splitlines(keepends=True) if BUDGET_CHECK in one]
+    assert len(checks) == 1
+    age = f"    SECONDS=$(( NOTICE_STEP_BUDGET_S + {over} ))\n"
+    rig.script = _script_copy(tmp_path, text.replace(checks[0], age + checks[0]))
+    rig.notice("noticeboard", *[token(one) for one in THREE_PAIRS])
+
+    done = rig.run()
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.json_summaries() == THREE_SUMMARIES[: 3 * (1 - over)]
+    assert done.stdout.count("so it sends no more of this kind") == over, done.stdout
 
 
 def test_a_run_past_its_time_budget_starts_no_send(rig: Rig, tmp_path: Path) -> None:
