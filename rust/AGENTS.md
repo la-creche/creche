@@ -770,12 +770,7 @@ The `status` module has no time type. Each time of contract 05 is a
 `Timestamp`. The staleness rule of that contract is in `status::views`:
 `STALE_AFTER_SECONDS`, `Age` and `Freshness`.
 
-`status::time` is an older path. It holds no type. It gives `Timestamp` and
-`status::views::Freshness` to code that still names them there. Add no user
-of that path. Packet `decisions-runtime-time` changes each user and deletes
-the path.
-
-Four older parts of the workspace still hold a time type or date arithmetic
+Three older parts of the workspace still hold a time type or date arithmetic
 of their own. Add no user of them. One packet moves each part to
 `Timestamp` or deletes the part. The pull request of that packet deletes
 the row of the part. The pull request that deletes the last row also
@@ -784,7 +779,6 @@ deletes this paragraph and the table.
 | Part | Packet |
 |---|---|
 | `session::Timestamp` | `strict-attendance-time` |
-| The stamp of a log line in `creche-runtime` | `decisions-runtime-time` |
 | The `!!timestamp` value of the YAML reader of `agent-family` | `toml-drop-yaml-validator` |
 | The `!!timestamp` check of `manifest::yaml` | `toml-drop-yaml-manifest` |
 
