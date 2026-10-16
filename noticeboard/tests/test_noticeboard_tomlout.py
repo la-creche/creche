@@ -8,6 +8,7 @@ save checks the model and gives the text to the validator.
 
 from __future__ import annotations
 
+from datetime import UTC, date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -156,3 +157,33 @@ def test_an_integer_past_64_bits_reaches_no_family() -> None:
 
     assert family is None
     assert issues
+
+
+#: A TOML date, time and date-time, each as the one reader gives it.
+MOMENTS = {
+    "date": date(1979, 5, 27),
+    "time": time(7, 32),
+    "time-fraction": time(7, 32, 0, 500000),
+    "local-date-time": datetime(1979, 5, 27, 7, 32),
+    "utc-date-time": datetime(1979, 5, 27, 7, 32, tzinfo=UTC),
+    "offset-date-time": datetime(1979, 5, 27, 0, 32, tzinfo=timezone(timedelta(hours=-7))),
+}
+
+
+@pytest.mark.parametrize("value", MOMENTS.values(), ids=MOMENTS.keys())
+def test_a_moment_comes_back_as_it_went_in(value: object) -> None:
+    """A block of the form can hold a TOML date, time or date-time. Its text
+    is the same moment, so the model reads a moment and not a text."""
+    assert read(to_toml({"value": value})) == {"value": value}
+    assert read(to_toml({"files": [{"path": value}]})) == {"files": [{"path": value}]}
+
+
+def test_a_moment_has_no_quotes() -> None:
+    written = to_toml({"value": datetime(1979, 5, 27, 7, 32, tzinfo=UTC)})
+
+    assert written == "value = 1979-05-27T07:32:00+00:00\n"
+
+
+def test_a_value_with_no_toml_form_is_refused() -> None:
+    with pytest.raises(TypeError, match="TOML has no form for a value of type object"):
+        to_toml({"value": object()})

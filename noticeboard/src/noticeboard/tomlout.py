@@ -15,6 +15,7 @@ The layout is the layout of a converted registry file:
 5. A key whose value is `None` gets no line. TOML has no null, and an
    absent key reads as `None` in the model.
 6. A text is a basic string, with an escape for each control character.
+7. A date, a time and a date-time have their ISO text and no quotes.
 
 The writer proves its own output in the same way as `yamlout.py`:
 `app.py` reads the text again with `agent_family.parse_family` and writes it
@@ -28,6 +29,7 @@ import math
 import re
 import unicodedata
 from collections.abc import Iterator, Mapping, Sequence
+from datetime import date, time
 from typing import Final, cast
 
 #: The indent of one item of a list that has one line for each item.
@@ -54,9 +56,14 @@ _ESCAPED_CATEGORIES: Final = frozenset(("Cc", "Cs"))
 
 _EMPTY_TABLE: Final = "{}"
 
+#: The types of a TOML date, time and date-time in a value of the reader.
+_MOMENTS: Final = (date, time)
+
 
 def to_toml(document: Mapping[str, object]) -> str:
-    """One TOML text, in the layout above, ending in a newline."""
+    """One TOML text, in the layout above, ending in a newline.
+
+    Raises `TypeError` for a value that TOML has no form for."""
     return "".join(f"{one}\n" for one in _lines(document, ()))
 
 
@@ -120,10 +127,13 @@ def _inline(value: object) -> str:
     if _is_list(value):
         return "[" + ", ".join(_inline(one) for one in cast("Sequence[object]", value)) + "]"
 
-    # Nothing else comes out of a pydantic `model_dump(mode="json")`. The
-    # text of the repr keeps the document readable, so the check of the
-    # caller refuses it with a report and not an exception.
-    return _basic(repr(value))
+    if isinstance(value, _MOMENTS):
+        # The reader gives a TOML date, time or date-time as a value of
+        # `datetime`. Its ISO text is the same value in TOML, so the model
+        # reads a moment and not a text.
+        return value.isoformat()
+
+    raise TypeError(f"TOML has no form for a value of type {type(value).__name__}")
 
 
 def _inline_pairs(body: Mapping[str, object], prefix: tuple[str, ...]) -> Iterator[str]:

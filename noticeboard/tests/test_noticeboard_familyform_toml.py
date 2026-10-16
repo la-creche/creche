@@ -8,7 +8,11 @@ reader, puts each value into one mapping, and `tomlout` writes the mapping.
 
 from __future__ import annotations
 
+from typing import Any
+
+import pytest
 from agent_family import FamilyFile, Index, Markup, parse_family
+from agent_family.tomlfile import FileKind
 from noticeboard.familyform import (
     Control,
     Form,
@@ -19,6 +23,8 @@ from noticeboard.familyform import (
     with_posted,
 )
 from noticeboard_helpers import CHAT_COMMENT, CHAT_FAMILY_TOML
+
+from noticeboard import familyform
 
 CHAT_INDEX = Index(kinds={"chat": "attended"})
 
@@ -223,3 +229,37 @@ def test_a_comment_of_a_block_does_not_reach_the_document() -> None:
     assert problem == ""
     assert CHAT_COMMENT not in text
     assert family(text).files[0].path == "/srv"
+
+
+def test_a_date_in_a_block_is_refused_at_its_field() -> None:
+    """The reader gives a TOML date-time as a moment. The document holds the
+    same moment, so the model refuses it as it refuses it in a file."""
+    form = toml_form()
+    posted = posted_from(form)
+    posted["files"] = 'files = [{ path = 1979-05-27T07:32:00Z, mode = "ro" }]\n'
+
+    after, issues = parse_posted(form, posted)
+
+    assert after is None
+    assert [(one.loc, one.msg) for one in issues] == [
+        ("files[0].path", "Input should be a valid string")
+    ]
+
+
+def test_a_value_with_no_toml_form_is_a_problem_of_the_form(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The reader gives no such value. The form still answers with a
+    problem and writes no text."""
+    real = familyform.loads
+
+    def loads(data: bytes, kind: FileKind) -> dict[str, Any]:
+        return {"files": object()} if data.startswith(b"files") else real(data, kind)
+
+    monkeypatch.setattr(familyform, "loads", loads)
+    form = toml_form()
+
+    text, problem = document_of(form, posted_from(form))
+
+    assert text == ""
+    assert problem == "TOML has no form for a value of type object"

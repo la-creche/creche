@@ -563,7 +563,10 @@ def _toml_document(form: Form, posted: Mapping[str, str]) -> tuple[str, str]:
         if present:
             body[top] = value
 
-    return to_toml(body), ""
+    try:
+        return to_toml(body), ""
+    except TypeError as error:
+        return "", str(error)
 
 
 def _toml_value(form: Form, posted: Mapping[str, str], top: str) -> tuple[object, bool, str]:
