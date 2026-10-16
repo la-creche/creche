@@ -5,6 +5,7 @@ the reconciler keeps a verbatim copy of the revision it last applied."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -238,6 +239,31 @@ def test_a_toml_copy_that_does_not_parse_hides_the_yaml_copy(tmp_path: Path) -> 
     )
 
     assert read_applied(tmp_path, "chat") is None
+
+
+def _toml_copy_not_utf8(path: Path) -> None:
+    path.write_bytes(b'name = "chat\xff"\n')
+
+
+def _toml_copy_a_directory(path: Path) -> None:
+    path.mkdir()
+
+
+@pytest.mark.parametrize(
+    "spoil",
+    [_toml_copy_not_utf8, _toml_copy_a_directory],
+    ids=["not-utf8", "a-directory"],
+)
+def test_a_toml_copy_that_does_not_read_hides_the_yaml_copy(
+    tmp_path: Path, spoil: Callable[[Path], None]
+) -> None:
+    """A TOML copy that is there and does not read is nothing applied. The
+    read does not take the YAML copy, which is an older revision."""
+    write_chat(tmp_path)
+    spoil(paths.applied_family_path(tmp_path, "chat", Markup.TOML))
+
+    assert read_applied(tmp_path, "chat") is None
+    assert read_applied_text(tmp_path, "chat") == ""
 
 
 def test_forgetting_removes_both_copies(tmp_path: Path) -> None:
