@@ -747,8 +747,19 @@ load_sent() {
     return 1
   fi
 
-  blob="$(read_capped "$SENT_FILE" "$SENT_READ_CAP")"
-  [[ -n "$blob" ]] || return 0
+  # With no record, each pair is news again. So a read that fails, or that
+  # stops at its time limit, gives no record. A read that gives nothing
+  # from a file that holds bytes gives no record too.
+  if ! blob="$(read_capped "$SENT_FILE" "$SENT_READ_CAP")"; then
+    say "json notices: the read of $SENT_FILE failed, so this run sends no notice of this kind"
+    return 1
+  fi
+
+  if [[ -z "$blob" ]]; then
+    [[ -s "$SENT_FILE" ]] || return 0
+    say "json notices: the read of $SENT_FILE gave nothing, so this run sends no notice of this kind"
+    return 1
+  fi
 
   broken="$(printf '%s\n' "$blob" | LC_ALL=C grep -a -c -v -x -E -e "$SENT_LINE")"
   [[ "$broken" == 0 ]] \

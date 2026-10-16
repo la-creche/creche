@@ -134,7 +134,18 @@ esac
 #: -in here. It drops the duration and runs the command, which is what the
 #: cases are about: the ceiling itself is a production guard against a hung
 #: mount and there is nothing to hang on a temp directory.
-TIMEOUT_BODY: Final = """shift
+#:
+#: `WD_RECORD_READ` changes the read of the record of sent notices. `fail`
+#: gives no output and status 124, as `timeout` does for a `head` that it
+#: stopped. `empty` gives no output and status 0.
+TIMEOUT_BODY: Final = """case "$*" in
+  *" head -c "*"/notices-sent")
+    case "${WD_RECORD_READ:-}" in
+      fail) exit 124 ;;
+      empty) exit 0 ;;
+    esac ;;
+esac
+shift
 exec "$@"
 """
 
@@ -1734,6 +1745,33 @@ def test_a_record_over_its_byte_cap_sends_nothing(rig: Rig) -> None:
     assert done.returncode == 0, done.stdout + done.stderr
     assert rig.posts() == []
     assert done.stdout.count(str(rig.sent)) == 1
+
+
+@pytest.mark.parametrize("read", ["fail", "empty"])
+def test_a_record_read_that_gives_nothing_sends_nothing(rig: Rig, read: str) -> None:
+    """A read of the record can fail, or stop at its time limit on a slow
+    disk. A read can also give nothing from a record that holds bytes. With
+    no record, each pair would be news again. So such a run sends no notice
+    of this kind, says so in one line and keeps the record as it was. The
+    next run sends each pair one time."""
+    first = f"{JSON_WORD} noticeboard status.document syntax"
+    rig.notice("noticeboard", token("status.document:syntax"))
+    rig.run()
+    record = rig.sent_lines()
+    assert len(record) == 1
+    rig.notice("noticeboard", token("status.document:syntax"), token("audit.line:syntax"))
+
+    done = rig.run(WD_RECORD_READ=read)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.json_summaries() == [first]
+    assert done.stdout.count(str(rig.sent)) == 1, done.stdout
+    assert rig.sent_lines() == record
+
+    rig.run()
+
+    assert rig.json_summaries() == [first, f"{JSON_WORD} noticeboard audit.line syntax"]
+    assert len(rig.sent_lines()) == 2
 
 
 def _fill_record(rig: Rig, room: int) -> list[str]:
