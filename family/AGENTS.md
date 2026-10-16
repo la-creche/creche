@@ -151,9 +151,13 @@ the YAML path does not hold:
    256 characters at most and no NUL character.
 4. The key after `secret:` matches `[a-z][a-z0-9_]{1,62}`.
 5. A fence names one tool at least, or `all`.
-6. The caps on a count: 200 tools, 32 words of `run.args`, 32 variables, 64
-   entries of `arg_allows` and of `arg_denies`, 256 values of a fence and 8
-   shared secrets.
+6. Each count has a cap:
+   - 200 tools.
+   - 32 words of `run.args`.
+   - 32 variables of `run.env`.
+   - 64 entries of `arg_allows` and 64 entries of `arg_denies`.
+   - 256 values of a fence.
+   - 8 shared secrets.
 
 The TOML path also keeps two rules of the YAML path that root does not
 hold:
@@ -164,15 +168,18 @@ hold:
 `grammar.py` holds a copy of each pattern and each cap of root that the
 YAML path does not hold. Each copy has the name of its source in
 `handover.mcpserver`, and a copy of a pattern adds `^` and `\Z`.
+`serverrules.py` holds two more copies, which both paths apply:
+`_LOCK_PATH` is `LOCK_PATH_RE`, and `_ARG_NAME` is `ARG_NAME_RE`. The
+argument of a fence has two parts at most in both readers.
 `bin/tests/test_server_grammar_copies.py` holds each copy equal to its
 source. The package `family` does not import `handover`, so the test is in
 `bin/tests`.
 
 `bin/tests/test_yaml_to_toml_models.py` holds the two readers equal on each
-server file of the fixture registry: root accepts the YAML text, and the
-validator accepts its TOML text. It also gives root the YAML text of each
-rule of the list above. Root refuses each one, the YAML path accepts it,
-and the TOML path refuses its TOML text.
+server file of the fixture registry. Root accepts the YAML text, and the
+validator accepts its TOML text. The test also gives root the YAML text of
+each rule of the list above. Root refuses each one, the YAML path accepts
+it, and the TOML path refuses its TOML text.
 
 ## What it enforces
 
@@ -231,6 +238,14 @@ uv run pytest family/tests
   The TOML packet of each package changes its file:
   `toml-caregiver-applied`, `toml-noticeboard-write` and
   `toml-family-read-rust`.
+- Three files still hold the text `server.yaml` and do not take it from
+  `registry.py`:
+  1. `validate.py`, in three messages of the family file rules. Packet
+     `toml-drop-yaml-validator-python` changes them.
+  2. `vectors/surfaces/server_file.py`, the constant `SERVER_FILE`. Packet
+     `toml-server-read-rust` changes it.
+  3. `caregiver/src/caregiver/mcp_wire.py`, in one message. No packet
+     changes it yet.
 - These `CONTRACT-QUESTION` comments are open:
   1. `validate.py`, `_check_cron`, contract 01 §3.13. The contract gives no
      grammar for a cron field. The check takes ASCII digits and `*`, `,`,
