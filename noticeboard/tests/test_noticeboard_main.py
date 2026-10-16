@@ -7,6 +7,10 @@ from pathlib import Path
 import pytest
 from noticeboard.__main__ import EXIT_BAD_CONFIG, EXIT_OK, main
 from noticeboard.config import MIN_KEY_BYTES
+from noticeboard.strictjson import Rule
+
+from noticeboard import __main__ as entry
+from noticeboard import notices
 
 KEY = "k" * MIN_KEY_BYTES
 
@@ -82,3 +86,64 @@ def test_a_lan_bind_with_a_long_key_is_allowed(monkeypatch: pytest.MonkeyPatch) 
     code = run(monkeypatch, {"VIEW_BIND": "192.0.2.10", "VIEW_ACCESS_KEY": KEY}, "--check")
 
     assert code == EXIT_OK
+
+
+@pytest.fixture
+def no_server(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    """The start runs to the server and starts none. The state of the notice
+    module goes back after the test."""
+    started: list[object] = []
+    monkeypatch.setattr(entry.uvicorn, "run", lambda *args, **kwargs: started.append(args))
+    monkeypatch.setattr(notices, "_settings", None)
+
+    return started
+
+
+def test_a_start_gives_the_notice_file_of_the_state_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, no_server: list[object]
+) -> None:
+    code = run(monkeypatch, env(VIEW_STATE_ROOT=str(tmp_path)))
+
+    assert code == EXIT_OK
+    assert len(no_server) == 1
+    # The start writes no file. The first refusal writes the notice file.
+    assert list(tmp_path.iterdir()) == []
+
+    notices.record("status.document", Rule.SYNTAX, "chat")
+
+    written = (tmp_path / "notices" / "noticeboard.json").read_text(encoding="utf-8")
+    assert '"service": "noticeboard"' in written
+    assert '"push": "status.document:syntax:' in written
+
+
+def test_a_start_with_a_state_root_that_cannot_hold_a_directory_still_serves(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    no_server: list[object],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    root = tmp_path / "root"
+    root.write_bytes(b"")
+
+    code = run(monkeypatch, env(VIEW_STATE_ROOT=str(root)))
+    notices.record("status.document", Rule.SYNTAX)
+
+    assert code == EXIT_OK
+    assert len(no_server) == 1
+    assert "json_not_strict noticeboard status.document syntax" in caplog.messages
+    assert root.read_bytes() == b""
+
+
+def test_check_gives_no_notice_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    no_server: list[object],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    code = run(monkeypatch, env(VIEW_STATE_ROOT=str(tmp_path)), "--check")
+    notices.record("status.document", Rule.SYNTAX)
+
+    assert code == EXIT_OK
+    assert no_server == []
+    assert "json_not_strict unset status.document syntax" in caplog.messages
+    assert list(tmp_path.iterdir()) == []

@@ -52,7 +52,7 @@ the lowest offset. The checks run in this sequence:
 
 The pass of step 4 reads `SCAN_MAX` bytes at most. A refused text that is
 longer keeps the word that the standard decoder gives, and its offset is
-`None`. No reader of the noticeboard has a cap above `SCAN_MAX`.
+`None`. The word can then differ from the word of the Rust check.
 
 This file is a copy. Each package that needs these rules holds a file with
 the same bytes, and `bin/tests/test_strictjson_copies.py` fails when two

@@ -5,15 +5,21 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from noticeboard.auditfiles import (
     ARGS_NOTICE,
-    MAX_ARGS_CHARS,
     MAX_LINE_BYTES,
     AuditFilter,
     known_days,
     read_page,
 )
-from noticeboard_helpers import audit_line, deep_object, peak_memory_of, write_audit_day
+from noticeboard_helpers import (
+    Notices,
+    audit_line,
+    deep_object,
+    peak_memory_of,
+    write_audit_day,
+)
 
 #: A record under `MAX_LINE_BYTES` that nests past the limit of the JSON reader.
 DEEP_RECORD_LEVELS = 250_000
@@ -23,9 +29,12 @@ DEEP_RECORD_LEVELS = 250_000
 FULLWIDTH_2026 = "\uff12\uff10\uff12\uff16"
 ARABIC_INDIC_ONE = "\u0661"
 
-#: Arguments that the JSON reader takes, and the most memory their page may take.
-DEEP_ARGS_LEVELS = 3_000
+#: The deepest arguments of a strict record: the record is one level more.
+DEEP_ARGS_LEVELS = 63
 PAGE_MEMORY_MAX = 4 * 1024 * 1024
+
+#: The problem of a text that is not strict JSON, after the name of the day.
+NOT_STRICT = "is not JSON: the text breaks a rule of strict JSON"
 
 
 def test_the_page_says_it_shows_full_arguments() -> None:
@@ -175,8 +184,9 @@ def test_enormous_arguments_are_capped_and_say_so(tmp_path: Path) -> None:
     assert page.rows[0].args_truncated
 
 
-def test_arguments_that_nest_deep_render_in_bounded_memory(tmp_path: Path) -> None:
-    """The reader stops at the display cap."""
+def test_the_deepest_arguments_of_a_strict_record_render_in_bounded_memory(
+    tmp_path: Path,
+) -> None:
     args = "[" * DEEP_ARGS_LEVELS + "]" * DEEP_ARGS_LEVELS
     line = json.dumps(audit_line(args="@")).replace('"@"', args)
     (tmp_path / "2026-09-19.jsonl").write_text(line + "\n", encoding="utf-8")
@@ -186,9 +196,18 @@ def test_arguments_that_nest_deep_render_in_bounded_memory(tmp_path: Path) -> No
     row = page.rows[0]
     assert row.problem == ""
     assert row.args.startswith("[\n  [\n    [\n")
-    assert len(row.args) == MAX_ARGS_CHARS
-    assert row.args_truncated
+    assert row.args == json.dumps(json.loads(args), indent=2)
+    assert not row.args_truncated
     assert peak < PAGE_MEMORY_MAX
+
+
+def test_the_arguments_render_as_the_strict_writer_writes_them(tmp_path: Path) -> None:
+    args = {"b": [1, 2.5, None], "a": "caf\xe9 \u2028"}
+    write_audit_day(tmp_path, "2026-09-19", [audit_line(args=args)])
+
+    page = read_page(tmp_path, AuditFilter())
+
+    assert page.rows[0].args == json.dumps(args, indent=2, sort_keys=True, ensure_ascii=False)
 
 
 def test_a_record_that_will_not_parse_takes_a_row(tmp_path: Path) -> None:
@@ -213,8 +232,21 @@ def test_a_record_that_nests_too_deep_takes_a_row(tmp_path: Path) -> None:
     page = read_page(tmp_path, AuditFilter())
 
     assert len(page.rows) == 2
-    assert "nests deeper than the reader allows" in page.rows[0].problem
+    assert page.rows[0].problem == f"2026-09-19.jsonl {NOT_STRICT}"
     assert page.rows[1].tool == "kagi__kagi_search_fetch"
+
+
+def test_a_record_that_is_not_strict_records_a_notice_with_no_family(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    recorded = Notices().install(monkeypatch)
+    path = write_audit_day(tmp_path, "2026-09-19", [audit_line()])
+    path.write_bytes(path.read_bytes() + b'{"family": "chat", "args": {"x": NaN}}\n')
+
+    page = read_page(tmp_path, AuditFilter())
+
+    assert page.rows[0].problem == f"2026-09-19.jsonl {NOT_STRICT}"
+    assert recorded.calls == [("audit.line", "constant", None, True)]
 
 
 def test_an_absurd_record_is_not_parsed_and_says_so(tmp_path: Path) -> None:

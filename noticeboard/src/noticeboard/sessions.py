@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Final, Protocol
 
 from . import jsonfiles
-from .jsonfiles import Json
+from .jsonfiles import Json, Surface
 
 #: Contract 02 §5.2: 1 to 200, default 50.
 MAX_SESSION_LIMIT: Final = 200
@@ -244,7 +244,7 @@ class SessionReader:
         if cursor:
             params["cursor"] = cursor
 
-        body, problem = self._object("/v1/sessions", params, MAX_LIST_BYTES)
+        body, problem = self._object("/v1/sessions", params, MAX_LIST_BYTES, family or None)
 
         if body is None:
             return SessionList(problem=problem)
@@ -260,7 +260,7 @@ class SessionReader:
         """Contract 02 §5.3: the session object plus its newest turns."""
         path = f"/v1/sessions/{family}/{session}"
         params = {"turns": str(min(turns, MAX_TURNS))}
-        body, problem = self._object(path, params, MAX_LIST_BYTES)
+        body, problem = self._object(path, params, MAX_LIST_BYTES, family)
 
         if body is None:
             return SessionDetail(problem=problem)
@@ -285,23 +285,33 @@ class SessionReader:
             return Stream(problems=(reply.problem,))
 
         if reply.status != _OK:
-            return Stream(problems=(_refusal(reply),))
+            return Stream(problems=(_refusal(reply, family),))
 
-        return _stream(reply.body)
+        return _stream(reply.body, family)
 
-    def _object(self, path: str, params: Mapping[str, str], limit: int) -> tuple[Json | None, str]:
+    def _object(
+        self, path: str, params: Mapping[str, str], limit: int, family: str | None
+    ) -> tuple[Json | None, str]:
+        """One answer of `attendance`. `family` is the family of the path or of
+        the query, for the notice of an answer that is not strict JSON."""
         reply = self._call(path, params)
 
         if reply.problem:
             return None, reply.problem
 
         if reply.status != _OK:
-            return None, _refusal(reply)
+            return None, _refusal(reply, family)
 
         if len(reply.body) > limit:
             return None, f"attendance answered over {limit} bytes; refusing to parse it"
 
-        body, problem = jsonfiles.parse_object(reply.body, "attendance's answer")
+        body, problem = jsonfiles.parse_object(
+            reply.body,
+            "attendance's answer",
+            limit,
+            surface=Surface.SESSION_ANSWER,
+            family=family,
+        )
 
         return body, problem or ""
 
@@ -339,9 +349,19 @@ class SessionReader:
         return found, ""
 
 
-def _refusal(reply: Reply) -> str:
-    """Contract 02 §14's error body, read as a sentence for a page."""
-    body, _ = jsonfiles.parse_object(reply.body, "attendance's refusal")
+def _refusal(reply: Reply, family: str | None) -> str:
+    """Contract 02 §14's error body, read as a sentence for a page.
+
+    A refusal has no size cap of its own. It has the cap of the largest
+    answer of this reader, the stream.
+    """
+    body, _ = jsonfiles.parse_object(
+        reply.body,
+        "attendance's refusal",
+        MAX_STREAM_BYTES,
+        surface=Surface.SESSION_ANSWER,
+        family=family,
+    )
     error = jsonfiles.child(body or {}, "error")
     code = jsonfiles.whole(error, "code")
     message = jsonfiles.text(error, "message")
@@ -352,11 +372,12 @@ def _refusal(reply: Reply) -> str:
     return f"attendance refused: {code} ({reply.status}) {message}".rstrip()
 
 
-def _stream(raw: bytes) -> Stream:
+def _stream(raw: bytes, family: str) -> Stream:
     """NDJSON to objects. LF is the only delimiter (contract 02 §8).
 
     U+2028 and U+2029 are legal inside a JSON string, so a generic line
-    reader would cut one journal line into two.
+    reader would cut one journal line into two. A line has the cap of the
+    whole stream.
     """
     problems: list[str] = []
     truncated = False
@@ -377,7 +398,13 @@ def _stream(raw: bytes) -> Stream:
             truncated = True
             break
 
-        body, problem = jsonfiles.parse_object(one, "a journal line")
+        body, problem = jsonfiles.parse_object(
+            one,
+            "a journal line",
+            MAX_STREAM_BYTES,
+            surface=Surface.SESSION_JOURNAL_LINE,
+            family=family,
+        )
 
         if body is None:
             problems.append(problem or "a journal line would not parse")

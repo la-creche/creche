@@ -22,14 +22,13 @@ Three properties this module holds:
 
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from . import jsonfiles
-from .jsonfiles import Json
+from . import jsonfiles, strictjson
+from .jsonfiles import Json, Surface
 
 #: One line said in every rendering of this page.
 ARGS_NOTICE: Final = (
@@ -61,9 +60,6 @@ MAX_DAYS: Final = 30
 MAX_ARGS_CHARS: Final = 20_000
 
 MAX_CHAIN: Final = 10
-
-#: How a page writes one record's arguments.
-_ARGS_ENCODER: Final = json.JSONEncoder(indent=2, sort_keys=True, ensure_ascii=False)
 
 
 @dataclass(frozen=True)
@@ -268,7 +264,7 @@ def _row(raw: bytes, day: str) -> AuditRow:
     if len(raw) > MAX_LINE_BYTES:
         return _bad_row(f"{day}: a record passed {MAX_LINE_BYTES} bytes and was not parsed")
 
-    body, problem = jsonfiles.parse_object(raw, day)
+    body, problem = jsonfiles.parse_object(raw, day, surface=Surface.AUDIT_LINE)
 
     if body is None:
         return _bad_row(problem or f"{day}: a record would not parse")
@@ -309,24 +305,12 @@ def _args(body: Json) -> tuple[str, bool]:
     if value is None:
         return "", False
 
-    chunks: list[str] = []
-    size = 0
-
     try:
-        # The loop stops one chunk past the cap and never builds the rest of
-        # the text.
-        for chunk in _ARGS_ENCODER.iterencode(value):
-            chunks.append(chunk)
-            size += len(chunk)
-
-            if size > MAX_ARGS_CHARS:
-                break
-    except (TypeError, ValueError, RecursionError):
-        # RecursionError is a guard only. The cap stops the loop before the
-        # encoder goes that deep, so no test reaches that type.
+        rendered = strictjson.dumps(value, indent=2, sort_keys=True, ensure_ascii=False)
+    except ValueError:
+        # A guard only. The strict reader gave the value, so the value has a
+        # strict text, and no test reaches this branch.
         return "<arguments this noticeboard could not render>", False
-
-    rendered = "".join(chunks)
 
     if len(rendered) <= MAX_ARGS_CHARS:
         return rendered, False

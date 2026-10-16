@@ -223,9 +223,12 @@ def test_a_malformed_state_file_renders_a_report_not_a_stack_trace(board: Harnes
     assert "Traceback" not in answer.text
 
 
-def test_a_text_with_half_a_surrogate_pair_renders_as_its_escape(board: Harness) -> None:
+def test_a_file_with_half_a_surrogate_pair_shows_as_a_file_that_is_not_json(
+    board: Harness,
+) -> None:
     """JSON can escape one half of a surrogate pair, and UTF-8 has no form
-    for it. The page shows the escape."""
+    for it. Such a text is not strict JSON, so the page shows the file as
+    unreadable and holds no part of the text."""
     from noticeboard_helpers import audit_line, status_doc, write_audit_day, write_json
 
     write_json(board.config.families_dir / "chat" / "status.json", status_doc(kind=HALF_PAIR))
@@ -235,9 +238,11 @@ def test_a_text_with_half_a_surrogate_pair_renders_as_its_escape(board: Harness)
     audit = board.get("/audit")
 
     assert home.status_code == 200
-    assert "a\\ud800b" in home.text
+    assert "status.json is not JSON" in home.text
+    assert "ud800" not in home.text
     assert audit.status_code == 200
-    assert "a\\ud800b" in audit.text
+    assert "2026-09-19.jsonl is not JSON" in audit.text
+    assert "ud800" not in audit.text
 
 
 def test_an_exception_nobody_predicted_answers_the_refusal_body(
@@ -361,9 +366,11 @@ def test_a_dead_attendance_still_renders_the_session_page(board: Harness) -> Non
     assert "cannot reach attendance" in answer.text
 
 
-def test_a_token_sum_with_no_text_form_shows_as_unknown(board: Harness) -> None:
-    """The page shows `unknown` for a sum that the interpreter cannot write
-    as text."""
+def test_a_count_past_64_bits_shows_the_answer_as_one_that_is_not_json(
+    board: Harness,
+) -> None:
+    """An integer outside 64 bits is not strict JSON. The page shows the
+    answer as one that it cannot read."""
     usage = dict.fromkeys(("input", "output", "cache_read", "cache_write"), LONGEST_COUNT)
     detail = session_doc()
     detail["turns"] = [turn_doc(usage=usage)]
@@ -372,7 +379,8 @@ def test_a_token_sum_with_no_text_form_shows_as_unknown(board: Harness) -> None:
     answer = board.get(f"/sessions/{CHAT}/{OWUI}")
 
     assert answer.status_code == 200
-    assert "<td>unknown" in answer.text
+    assert "is not JSON" in answer.text
+    assert "999999" not in answer.text
 
 
 def test_the_audit_page_says_it_shows_full_arguments(board: Harness) -> None:
