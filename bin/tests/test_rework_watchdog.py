@@ -237,12 +237,24 @@ MKTEMP_MORE: Final = """case "$*" in
     [ "$calls" = "${WD_MKTEMP_FAIL_AT:-}" ] && exit 1 ;;
 esac"""
 
-#: `WD_AWK_KEY_EXIT` makes one kind of `awk` call fail with that status: the
-#: call that gets the variable `key`. That call makes the new record after a
-#: send.
+#: `WD_AWK_KEY_FAIL_AT` makes one `awk` call that gets the variable `key`
+#: fail with status 2: the call with that number, from 1. Such a call makes
+#: the new record for one notice. The stub counts the calls in its log, so
+#: the number counts each run of one rig.
 AWK_MORE: Final = """case "$*" in
-  *"key="*) [ -n "${WD_AWK_KEY_EXIT:-}" ] && exit "$WD_AWK_KEY_EXIT" ;;
+  *"key="*)
+    calls="$(grep -c '^awk -v key=' "$WD_STUB_LOG")"
+    [ "$calls" = "${WD_AWK_KEY_FAIL_AT:-}" ] && exit 2 ;;
 esac"""
+
+#: `WD_DISK_FULL` is the model of a full disk for the record of sent
+#: notices. A file of 0 bytes fits, and a file of 1 byte or more does not.
+#: So `mv` fails for a draft of the record that holds a byte.
+MV_BODY: Final = """case "$*" in
+  *"/notices-sent") [ -n "${{WD_DISK_FULL:-}}" ] && [ -s "$2" ] && exit 1 ;;
+esac
+exec {real} "$@"
+"""
 
 
 def _stub(directory: Path, name: str, body: str = ":") -> None:
@@ -350,6 +362,8 @@ class Rig:
         ):
             body = REAL_BODY.format(switch=switch, more=more, real=shutil.which(name))
             _stub(self.stubs, name, body)
+
+        _stub(self.stubs, "mv", MV_BODY.format(real=shutil.which("mv")))
 
         #: The script of a run. One case runs a changed copy.
         self.script = SCRIPT
@@ -1832,39 +1846,94 @@ def test_a_record_line_that_fits_exactly_is_sent(rig: Rig, spare: int) -> None:
     assert "is over" not in again.stdout
 
 
-def test_a_failed_record_update_keeps_each_old_line(rig: Rig) -> None:
-    """`awk` makes the new record after a send. When that call fails, the
-    record keeps each line, and the run sends no more notices of this kind."""
+#: Three pairs of one notice file, and the summary of each one.
+THREE_PAIRS: Final = SEVEN_PAIRS[:3]
+THREE_SUMMARIES: Final = [f"{JSON_WORD} noticeboard {one.replace(':', ' ')}" for one in THREE_PAIRS]
+
+
+@pytest.mark.parametrize("fail_at", [1, 2])
+def test_a_failed_record_update_sends_each_pair_once(rig: Rig, fail_at: int) -> None:
+    """`awk` makes the new record for each notice. When that call fails, the
+    record keeps each old line and the line of each notice that the run
+    sent, and the run sends no more notices of this kind. The next run
+    sends each other pair one time. Call 2 fails after a send."""
     old = int(time.time()) - 7 * DAY_S
     lines = [f"attendance {one.replace(':', ' ')} {REFUSED_AT} {old}" for one in SEVEN_PAIRS[:5]]
     _write(rig.sent, "\n".join(lines) + "\n")
-    rig.notice("noticeboard", token("status.document:syntax"), token("audit.line:syntax"))
+    rig.notice("noticeboard", *[token(one) for one in THREE_PAIRS])
 
-    done = rig.run(WD_AWK_KEY_EXIT="2")
+    done = rig.run(WD_AWK_KEY_FAIL_AT=str(fail_at))
 
     assert done.returncode == 0, done.stdout + done.stderr
-    assert len(rig.posts()) == 1
-    assert done.stdout.count("awk gave no answer after a send") == 1, done.stdout
-    assert rig.sent_lines() == lines
+    assert rig.json_summaries() == THREE_SUMMARIES[: fail_at - 1]
+    assert done.stdout.count("awk gave no answer") == 1, done.stdout
+    assert rig.sent_lines()[:5] == lines
+    assert [one.split()[1] for one in rig.sent_lines()[5:]] == ["status.document"][: fail_at - 1]
+
+    rig.run()
+
+    assert sorted(rig.json_summaries()) == sorted(THREE_SUMMARIES)
+    assert len(rig.sent_lines()) == 8
 
 
-def test_a_record_write_that_fails_after_a_send_stops_the_step(rig: Rig) -> None:
-    """The run proves the record with one write before the first send. This
-    case fails the second write, the one after the send. The run then sends
-    no more notices of this kind, and the next run sends each one."""
-    rig.notice("noticeboard", *[token(one) for one in SEVEN_PAIRS[:3]])
+def test_a_record_write_that_fails_before_a_send_stops_the_step(rig: Rig) -> None:
+    """The run writes the line of each notice to the record before it sends
+    the notice. This case fails the second write. The run then sends no
+    more notices of this kind, and the next run sends each other pair one
+    time."""
+    rig.notice("noticeboard", *[token(one) for one in THREE_PAIRS])
 
     done = rig.run(WD_MKTEMP_FAIL_AT="2")
 
     assert done.returncode == 0, done.stdout + done.stderr
-    assert len(rig.posts()) == 1
-    assert done.stdout.count("after a send") == 1, done.stdout
-    assert rig.sent_lines() == []
+    assert rig.json_summaries() == THREE_SUMMARIES[:1]
+    assert [one.split()[1] for one in rig.sent_lines()] == ["status.document"]
+    assert done.stdout.count(f"cannot write {rig.sent} before a send") == 1, done.stdout
 
     rig.run()
 
-    assert len(rig.json_summaries()) == 4
+    assert rig.json_summaries() == THREE_SUMMARIES
     assert len(rig.sent_lines()) == 3
+
+
+def test_a_full_disk_sends_no_notice(rig: Rig) -> None:
+    """A full disk takes a file of 0 bytes and refuses each byte more. The
+    record has no line until the first notice. The line of a notice goes to
+    the record before the send, so each run with a full disk sends no notice
+    of this kind. The next run with room sends the notice one time."""
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    for _ in range(3):
+        done = rig.run(WD_DISK_FULL="1")
+
+        assert done.returncode == 0, done.stdout + done.stderr
+        assert done.stdout.count(f"cannot write {rig.sent}") == 1, done.stdout
+
+    assert rig.posts() == []
+    assert rig.sent_lines() == []
+
+    rig.run()
+    rig.run()
+
+    assert rig.json_summaries() == THREE_SUMMARIES[:1]
+
+
+def test_a_failed_send_with_no_write_back_is_missed(rig: Rig) -> None:
+    """A send that fails gets the old record back. When that write fails
+    too, the record keeps the line of a notice that the hook did not take.
+    That notice is missed, and no later run sends it."""
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    done = rig.run(WD_POST_EXIT="7", WD_MKTEMP_FAIL_AT="2")
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert len(rig.posts()) == 1
+    assert [one.split()[1] for one in rig.sent_lines()] == ["status.document"]
+    assert done.stdout.count(f"cannot write the old {rig.sent} back") == 1, done.stdout
+
+    rig.run()
+
+    assert len(rig.posts()) == 1
 
 
 def test_no_time_from_date_sends_nothing(rig: Rig) -> None:

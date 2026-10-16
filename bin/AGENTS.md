@@ -129,8 +129,9 @@ root, and `_notices.json` in the fault directory of the chaperone.
 - A run that is older than `NOTICE_STEP_BUDGET_S` seconds starts no send. A
   later run sends the notices that are left.
 - The file `watchdog/notices-sent` under the state root is the record of the
-  sent notices. It has the modes of the verdict file. A notice that the hook
-  did not take leaves the record as it was.
+  sent notices. It has the modes of the verdict file. The line of a notice
+  goes to the record before the send. A notice that the hook did not take
+  leaves the record as it was.
 - Both limits come from the record. A run that cannot read the record, or
   cannot write it, sends no notice of this kind. The script reads 262,144
   bytes of the record at most, and it writes no larger record.

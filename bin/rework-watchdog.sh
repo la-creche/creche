@@ -103,9 +103,11 @@
 #     sends the notices that are left.
 #   - /srv/agents/state/rework/watchdog/notices-sent is the record of the
 #     sent notices, one line for each service, surface and rule. Both limits
-#     come from it. A notice that the hook did not take leaves the record as
-#     it was, so the next run sends it. A run stops this step at the first
-#     notice that the hook did not take.
+#     come from it. The line of a notice goes to the record before the
+#     send, so a fault after the send gives no second notice. A notice that
+#     the hook did not take leaves the record as it was, so the next run
+#     sends it. A run stops this step at the first notice that the hook did
+#     not take.
 #   - The script reads 262,144 bytes of the record at most, and it writes no
 #     larger record. A record that it cannot read, or cannot write, stops
 #     the step for that run: a notice with no record line has no limit.
@@ -834,31 +836,39 @@ notice_file() {  # notice_file <service> <file>
   done
 }
 
-# Sends one notice and puts it in the record. Status 1 stops the step for
-# this run.
+# Puts one notice in the record, then sends it. Status 1 stops the step for
+# this run. The record line comes before the send, so a fault after the
+# send cannot leave a sent notice with no record line. Such a fault gives
+# a missed notice, not the same notice two times.
 json_notice() {  # json_notice <service> <surface> <rule> <seconds>
-  local key kept
+  local key kept before
   key="$1 $2 $3 "
-
-  # A hook that takes no notice costs the time limit of one notice. The
-  # record stays as it is, and the next run sends this notice again.
-  send_notice "$JSON_NOTICE_WORD $1 $2 $3" "$JSON_NOTICE_JOB_ID" "$JSON_NOTICE_GATE_ID" || return 1
+  before="$SENT_LINES"
 
   # The new line takes the place of the line of the same service, surface
   # and rule. `pipefail` gives the status of `awk`. A call that fails must
   # not empty the record, so the record stays as it is.
   if ! kept="$(printf '%s' "$SENT_LINES" | awk -v key="$key" 'index($0, key) != 1')"; then
-    say "json notices: awk gave no answer after a send, so this run sends no more of this kind"
+    say "json notices: awk gave no answer before a send, so this run sends no more of this kind"
     return 1
   fi
 
   SENT_LINES="${kept:+$kept$NL}$key$4 $NOW$NL"
   if ! remember_sent; then
-    say "json notices: cannot write $SENT_FILE after a send, so this run sends no more of this kind"
+    SENT_LINES="$before"
+    say "json notices: cannot write $SENT_FILE before a send, so this run sends no more of this kind"
     return 1
   fi
 
-  return 0
+  send_notice "$JSON_NOTICE_WORD $1 $2 $3" "$JSON_NOTICE_JOB_ID" "$JSON_NOTICE_GATE_ID" && return 0
+
+  # A hook that takes no notice costs the time limit of one notice. The old
+  # record goes back, and the next run sends this notice again. When the
+  # old record cannot go back, this notice is missed.
+  SENT_LINES="$before"
+  remember_sent || say "json notices: cannot write the old $SENT_FILE back after a failed send"
+
+  return 1
 }
 
 send_json_notices() {
@@ -912,13 +922,6 @@ send_json_notices() {
     if (( SECONDS > NOTICE_STEP_BUDGET_S )); then
       say "json notices: this run is ${SECONDS}s old, so it sends no more of this kind"
       break
-    fi
-
-    # A notice with no record line has no limit. So the run proves one time
-    # that it can write the record, before it sends the first notice.
-    if [[ "$sent" == 0 ]] && ! remember_sent; then
-      say "json notices: cannot write $SENT_FILE, so this run sends no notice of this kind"
-      return 0
     fi
 
     # The script reads SENT_READ_CAP bytes of its record at most, so it
