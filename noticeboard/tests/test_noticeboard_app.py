@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -161,6 +162,29 @@ def test_the_home_page_shows_a_row_per_family(board: Harness) -> None:
     assert "chat" in answer.text
     assert "scrum-lead" in answer.text
     assert "in sync" in answer.text
+
+
+def test_the_home_page_writes_its_read_time_in_utc_with_z(board: Harness) -> None:
+    """The clock of the fixture gives 12:00:00 in UTC on 2026-09-19."""
+    answer = board.get("/")
+
+    assert 'read at <span class="when">2026-09-19T12:00:00Z</span>' in answer.text
+    assert "+00:00" not in answer.text
+
+
+def test_the_read_time_is_the_instant_in_utc_with_whole_seconds(board: Harness) -> None:
+    """A clock with another offset and a fraction of a second gives the same form."""
+    two_hours_ahead = timezone(timedelta(hours=2))
+    moment = datetime(2031, 4, 18, 8, 43, 10, 999_999, tzinfo=two_hours_ahead)
+    reader = SessionReader(transport=board.fake, token_file=write_token(board.config.state_root))
+    app = build_app(board.config, reader, lambda: moment)
+
+    with TestClient(app, base_url=f"http://{HOST}") as client:
+        answer = client.get("/", headers={ACCESS_HEADER: KEY})
+
+    assert answer.status_code == 200
+    assert 'read at <span class="when">2031-04-18T06:43:10Z</span>' in answer.text
+    assert "2031-04-18T08:43:10" not in answer.text
 
 
 def test_spend_appears_once_per_family_and_never_beside_a_sandbox(board: Harness) -> None:

@@ -2018,9 +2018,6 @@ adds a crate:
     `config::caregiver` define the port of another service as a constant.
     `config::endpoints` holds the names of the variables. The packet that
     makes a service read a variable deletes the constant of that service.
-  - Rule 10. `time::Timestamp` has no differential test. No Python reader
-    has its grammar today. Packet `strict-noticeboard-time` adds that
-    reader, its vectors and the test.
   - Rule 10. The `mcp` module has no differential test. The Python
     chaperone reads the MCP wire with a third-party package, and no vector
     records a message. The tests of the module hold each type against lines

@@ -58,5 +58,5 @@
 {% endfor %}
 </tbody>
 </table>
-<p class="foot">read at {{ when(page.now.isoformat()) }}</p>
+<p class="foot">read at {{ when(page.now | rfc3339) }}</p>
 {% endblock %}

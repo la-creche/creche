@@ -69,7 +69,7 @@ directory is not a workspace package, so a change here does not change
 | `surfaces/manifest.py` | the eleven `manifest.<name>` surfaces of contract 06 |
 | `surfaces/session_cases.py` | the written inputs of the session API surfaces |
 | `surfaces/session.py` | the session API: `session.request.*`, `session.query.*`, `session.error_body`, `session.answer.*`, `session.journal.*`, `session.stream.*`, `session.turn.move`, `session.state.derive`, `session.outcome.*` |
-| `surfaces/runtime.py` | the helper code that each service copies: `runtime.untrusted.<copy>.<helper>`, `runtime.parse_object.noticeboard`, `runtime.strict_json`, `runtime.token.<reader>`, `runtime.bearer.<copy>`, `runtime.edge.<service>` |
+| `surfaces/runtime.py` | the helper code that each service copies: `runtime.untrusted.<copy>.<helper>`, `runtime.parse_object.noticeboard`, `runtime.strict_json`, `runtime.time`, `runtime.token.<reader>`, `runtime.bearer.<copy>`, `runtime.edge.<service>` |
 | `surfaces/noticeboard_cases.py` | the written inputs of the noticeboard surfaces |
 | `surfaces/noticeboard.py` | the noticeboard: `noticeboard.security.*`, `noticeboard.urlform`, `noticeboard.app.query`, `noticeboard.route.*`, `noticeboard.sessions.*`, `noticeboard.transcript.fold`, `noticeboard.audit.page`, `noticeboard.statusdocs.report`, `noticeboard.verify.envfile`, `noticeboard.cli.check`, `noticeboard.static.css` |
 | `surfaces/library.py` | the index builder: `library.chunk_text`, `library.file_hash`, `library.read_document`, `library.report`, `library.tei_url`, `library.embedding`, `library.schema`, `library.index_scope` |
@@ -149,8 +149,8 @@ directory is not a workspace package, so a change here does not change
   reader, of the fault file reader or of the outcome reader.
 - No vector covers a status document that is UTF-16. The Python noticeboard
   reads such a document. The Rust view of the noticeboard refuses it.
-- No vector covers a `written_at` with no UTC offset. `attendance` and the
-  noticeboard read such a time as UTC. The Rust views read it as no time.
+- No vector covers a `written_at` with no UTC offset. `attendance` reads
+  such a time as UTC. The noticeboard and the Rust views read it as no time.
 - Five patterns have no public entry point: `_ENV_NAME_RE` in the four
   `verify.py` modules, `_LOCK_PATH` and `_ARG_NAME` in
   `agent_family.serverrules`, `_REPO_NAME` in `handover.site` and
@@ -263,11 +263,11 @@ directory is not a workspace package, so a change here does not change
   generator cannot change the owner of a file.
 - `config.noticeboard.env` names no `VIEW_ACCESS_KEY_FILE`. The entry point
   reads that file. `noticeboard.cli.check` holds the vectors of a key file.
-- The group `runtime` covers the lenient readers and the strict JSON
-  reader. It also covers the token files, the bearer of a request and the
-  answers of the web framework. No vector covers an atomic write, a read
-  with a size cap or a path under the state root. No vector covers the mint
-  of a random token or a signal.
+- The group `runtime` covers the lenient readers, the strict JSON reader
+  and the time reader. It also covers the token files, the bearer of a
+  request and the answers of the web framework. No vector covers an atomic
+  write, a read with a size cap or a path under the state root. No vector
+  covers the mint of a random token or a signal.
 - No vector covers the text that a service decodes from the output of a
   child program. The locale gives the encoding of that decode, and the
   locale is a value of the machine.
@@ -291,6 +291,20 @@ directory is not a workspace package, so a change here does not change
   offsets.
 - No vector covers the strict writer, `dumps` of `noticeboard.strictjson`.
   `noticeboard/tests` holds that writer.
+- `runtime.time` records the copy of the time reader in the noticeboard,
+  `noticeboard/src/noticeboard/rfc3339.py`. No vector records another copy.
+  `bin/tests/test_rfc3339_copies.py` holds each copy to the same bytes.
+- A refused vector of `runtime.time` holds no reason. The entry point
+  returns `None` for each text that is no time. The test table of the Rust
+  module `time` names the rule that each such text breaks.
+- `runtime.time` takes each text of `TIMES` in `surfaces/session_cases.py`,
+  and more texts from a list of its own. A text that enters `TIMES` thus
+  also enters `runtime.time`.
+- `runtime.time` holds two of the five forms on which
+  `datetime.fromisoformat` differs between versions: a fraction with no
+  digit, and hour 24. The pattern of the time reader refuses each of the
+  two before `datetime.fromisoformat` gets the text. Each supported Python
+  version thus gives the same result for them.
 - Two token readers are private functions: `_read_token` of
   `attendance.auth` and `_read_key` of `agent_door_owui.config`. A
   `runtime.token` surface calls the public caller of each one:

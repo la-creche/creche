@@ -8,6 +8,8 @@ The surfaces, by what each one pins:
   that the noticeboard reads from them, or to a refusal.
 - `runtime.strict_json`: the bytes of one JSON text to its value, or to the
   word of the rule that makes the text not strict.
+- `runtime.time`: one text to the instant that the time reader gives for it,
+  or to a refusal.
 - `runtime.token.<reader>`: the bytes and the mode of one token file to
   accepted or refused.
 - `runtime.bearer.<copy>`: the bytes of one `Authorization` header to
@@ -31,6 +33,7 @@ import json
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Final, Protocol, cast
 from urllib.parse import urlsplit
@@ -64,7 +67,7 @@ from starlette.testclient import TestClient
 from starlette.types import ASGIApp, Message
 
 from attendance import atomic as attendance_atomic
-from noticeboard import jsonfiles, strictjson
+from noticeboard import jsonfiles, rfc3339, strictjson
 from vectors.core import (
     Json,
     Raised,
@@ -82,6 +85,7 @@ from vectors.core import (
     text_input,
 )
 from vectors.surfaces.session import StandIn
+from vectors.surfaces.session_cases import TIMES
 
 GROUP: Final = "runtime"
 
@@ -845,6 +849,140 @@ def _strict_surface() -> Surface:
             *(_strict_vector(text, None) for text in STRICT_ACCEPTED),
             *(_strict_vector(text, rule) for text, rule in refusals),
         ),
+    )
+
+
+# --- the time reader ----------------------------------------------------------
+
+#: The instant that the count of an accepted vector starts at.
+EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
+
+_MICROSECOND: Final = timedelta(microseconds=1)
+
+#: More texts of a time than `TIMES` of the session cases holds: an id and
+#: the text. `TIMES` and this list together hold each text of the two test
+#: tables of the Rust type `creche_contracts::time::Timestamp`.
+MORE_TIMES: Final[tuple[tuple[str, str], ...]] = (
+    # --- midnight UTC in three forms, and each letter in lower case ---
+    ("midnight-zulu", "2999-01-01T00:00:00Z"),
+    ("midnight-lower-zulu", "2999-01-01T00:00:00z"),
+    ("midnight-through-an-offset", "2999-01-01T02:00:00+02:00"),
+    ("lower-t-and-lower-zulu", "2026-10-06t06:00:00z"),
+    # --- a fraction: the reader keeps six digits and does not round ---
+    ("fraction-9-digits", "2026-10-06T06:00:00.123456789Z"),
+    ("fraction-9-nines-at-the-last-second", "9999-12-31T23:59:59.999999999Z"),
+    ("fraction-7-nines-before-the-epoch", "1969-12-31T23:59:59.9999999Z"),
+    ("fraction-1-digit-and-offset-plus", "2026-10-06T06:00:00.5+05:30"),
+    ("fraction-1-digit-and-offset-minus", "2026-10-06T06:00:00.5-05:30"),
+    # --- the first and the last instant, each through the largest offset ---
+    ("first-instant-with-a-zero-fraction", "0001-01-01T00:00:00.000000+00:00"),
+    ("first-instant-through-offset-23-59", "0001-01-01T23:59:00+23:59"),
+    ("last-instant-through-offset-minus-23-59", "9999-12-31T00:00:59.999999-23:59"),
+    # --- the two sides of 1970 ---
+    ("one-second-before-the-epoch", "1969-12-31T23:59:59Z"),
+    ("one-microsecond-after-the-epoch", "1970-01-01T00:00:00.000001Z"),
+    ("epoch-through-an-offset", "1970-01-01T01:00:00+01:00"),
+    # --- a leap day of a year that 400 divides, and the last second of a day ---
+    ("leap-day-of-2000", "2000-02-29T00:00:00Z"),
+    ("leap-day-of-2400-last-second", "2400-02-29T23:59:59Z"),
+    ("last-second-of-a-day", "2026-10-06T23:59:59Z"),
+    # --- a space in place of the `T`, no offset, hour 24 and second 61 ---
+    ("midnight-space-separator", "2999-01-01 00:00:00Z"),
+    ("midnight-no-zone", "2999-01-01T00:00:00"),
+    ("fraction-and-no-zone", "2026-10-06T06:00:00.5"),
+    ("hour-24-at-midnight", "2999-01-01T24:00:00Z"),
+    ("hour-24", "2026-10-06T24:00:00Z"),
+    ("second-61", "2026-10-06T06:00:61Z"),
+    # --- a fraction of no digit and of 10 digits, and a number in it ---
+    ("fraction-no-digit", "2026-10-06T06:00:00.Z"),
+    ("fraction-10-digits", "2026-10-06T06:00:00.1234567890Z"),
+    ("fraction-minus-sign", "2026-10-06T06:00:00.-5Z"),
+    ("fraction-plus-sign", "2026-10-06T06:00:00.+5Z"),
+    ("fraction-exponent", "2026-10-06T06:00:00.5e1Z"),
+    # --- the year 0000, also when the offset moves the instant to 0001 ---
+    ("year-zero-offset-moves-to-year-one", "0000-12-31T23:30:00-01:00"),
+    ("year-zero-leap-day", "0000-02-29T00:00:00Z"),
+    ("year-zero-last-microsecond", "0000-12-31T23:59:59.999999Z"),
+    # --- next to the first and the last instant, through the largest offset ---
+    ("one-microsecond-before-the-first-instant", "0001-01-01T23:58:59.999999+23:59"),
+    ("one-second-after-the-last-second", "9999-12-31T00:01:00-23:59"),
+    # --- an offset outside the form or outside its bounds ---
+    ("offset-minutes-one-digit", "2026-10-06T06:00:00+05:3"),
+    ("offset-minutes-three-digits", "2026-10-06T06:00:00+05:300"),
+    ("offset-hours-one-digit", "2026-10-06T06:00:00+5:30"),
+    ("offset-two-signs", "2026-10-06T06:00:00+-5:30"),
+    ("offset-minutes-minus-sign", "2026-10-06T06:00:00+05:-3"),
+    ("offset-23-60", "2026-10-06T06:00:00+23:60"),
+    ("offset-minus-24-00", "2026-10-06T06:00:00-24:00"),
+    # --- a sign, a digit and a letter that are not ASCII ---
+    ("offset-minus-sign-not-ascii", "2026-10-06T06:00:00\u221205:30"),
+    ("offset-arabic-digits", "2026-10-06T06:00:00+\u0660\u0665:30"),
+    ("second-arabic-digit", "2026-10-06T06:00:0\u0660Z"),
+    ("zulu-full-width", "2026-10-06T06:00:00\uff3a"),
+    ("date-hyphen-not-ascii", "2026\u201010-06T06:00:00Z"),
+    # --- white space at an end, a sign at the start and no text ---
+    ("trailing-carriage-return-and-newline", "2026-10-06T06:00:00Z\r\n"),
+    ("leading-newline", "\n2026-10-06T06:00:00Z"),
+    ("trailing-tab", "2026-10-06T06:00:00Z\t"),
+    ("plus-sign-first", "+2026-10-06T06:00:00Z"),
+    ("minus-sign-first", "-2026-10-06T06:00:00Z"),
+    ("hour-minus-sign", "2026-10-06T-6:00:00Z"),
+    ("empty", ""),
+    # --- a date that the calendar does not have ---
+    ("no-leap-day-in-1900", "1900-02-29T00:00:00Z"),
+    ("no-leap-day-in-2100", "2100-02-29T00:00:00Z"),
+    ("month-zero", "2026-00-06T06:00:00Z"),
+    ("day-32", "2026-10-32T06:00:00Z"),
+    ("day-31-of-april", "2026-04-31T06:00:00Z"),
+    # --- a text that breaks more than one rule ---
+    ("each-field-out-of-bounds-offset-no-colon", "0000-13-01T25:00:00+2400"),
+    ("each-field-out-of-bounds-no-zone", "0000-13-01T25:00:00"),
+    ("month-13-hour-25-offset-24-00", "2026-13-01T25:00:00+24:00"),
+    ("hour-25-offset-24-00", "2026-10-06T25:00:00+24:00"),
+    ("year-zero-offset-24-00", "0000-01-01T00:00:00+24:00"),
+    ("year-zero-month-13", "0000-13-01T00:00:00Z"),
+)
+
+
+def _micros(moment: datetime) -> int:
+    """The microseconds from `EPOCH` to `moment`, with no float in the sum."""
+    return (moment - EPOCH) // _MICROSECOND
+
+
+def _time_vector(vector_id: str, text: str) -> Vector:
+    given = text_input(text)
+    outcome = attempt(lambda: rfc3339.parse(text))
+    if isinstance(outcome, Raised):
+        return raised(vector_id, given, outcome.exc)
+
+    if outcome is None:
+        return refused(vector_id, given)
+
+    return accepted(vector_id, given, _micros(outcome))
+
+
+def _time_surface() -> Surface:
+    tail = "time"
+
+    return Surface(
+        name=f"{GROUP}.{tail}",
+        path=f"{GROUP}/{tail}.json",
+        entry="noticeboard.rfc3339.parse",
+        contract='contract 02 §13.2 and contract 05 §2.1: the grammar of rust/AGENTS.md, "Time"',
+        notes=(
+            "The input is one text. The entry point gives the instant of a time text in UTC, "
+            "or None.",
+            "An accepted vector is a text in the grammar. value is the count of microseconds "
+            "from 1970-01-01T00:00:00Z to the instant. It is an integer, and it is below zero "
+            "for an earlier instant.",
+            "The entry point keeps the first six digits of a fraction and drops the others. "
+            "It does not round.",
+            "A refused vector is a text that is no time. The entry point returns None for it, "
+            "so a vector holds no reason.",
+            "The grammar is that of the Rust type creche_contracts::time::Timestamp. Each copy "
+            "of the time reader gives the same result and the same count.",
+        ),
+        vectors=tuple(_time_vector(vector_id, text) for vector_id, text in (*TIMES, *MORE_TIMES)),
     )
 
 
@@ -2037,6 +2175,7 @@ def surfaces() -> tuple[Surface, ...]:
             *(_untrusted_surface(helper) for helper in HELPERS),
             _parse_surface(),
             _strict_surface(),
+            _time_surface(),
             *(_token_surface(reader, scratch / "token") for reader in TOKEN_READERS),
             *(_bearer_surface(copy, scratch / "bearer") for copy in COPIES),
             *(_edge_surface(service, scratch / "edge") for service in SERVICES),

@@ -123,6 +123,7 @@ and `Referer` unchanged. `/healthz` and `/static/*` stay keyless.
 | `config.py`, `security.py` | the environment and the two starts it refuses, the key and CSRF checks |
 | `jsonfiles.py`, `statusdocs.py`, `auditfiles.py` | reading another process's files without raising |
 | `strictjson.py` | the strict reader and the strict writer of a JSON text. The file is a copy, and `bin/tests/test_strictjson_copies.py` holds each copy to the same bytes |
+| `rfc3339.py` | the one reader of a time text. The file is a copy, and `bin/tests/test_rfc3339_copies.py` holds each copy to the same bytes |
 | `sessions.py`, `attendancehttp.py`, `transcript.py` | `attendance` as `view-ro`, the wire, journal lines folded for a reader |
 | `familyform.py`, `yamlout.py`, `yamlkeep.py`, `registrywrite.py` | the form, the whole file, the patched file, the commit |
 | `pages.py`, `app.py` | what each page needs, and the routes |
@@ -161,6 +162,12 @@ prefixed `test_noticeboard_`.
   byte offset, so the two words can differ. `strictjson.py` has an offset
   for four rules only. No module of this package imports `strictjson.py`
   yet.
+- The contracts name RFC 3339 for a time and give no more of its grammar.
+  `rfc3339.py` takes the grammar of the Rust type
+  `creche_contracts::time::Timestamp`. It thus refuses three texts that
+  section 5.6 of RFC 3339 permits: a fraction of more than 9 digits, second
+  60 and the year 0000. "Known gaps" of `rust/AGENTS.md` has the same
+  question for the Rust type.
 - `spec.md` §8.1 names no answer for a route parameter that is not an id.
   The route answers the 404 of a path that has no route (`app.py`).
 - `spec.md` §8.3 names no answer for an exception that no reader predicted.
