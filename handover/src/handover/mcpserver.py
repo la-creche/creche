@@ -1,6 +1,8 @@
-"""`mcp/<name>/server.yaml`, read as hostile bytes (contract 01b).
+"""`mcp/<name>/server.toml` or `server.yaml`, read as hostile bytes (contract 01b).
 
-One file declares one MCP server (invariant 18). This module reads the part
+One file declares one MCP server (invariant 18). A server directory holds
+`server.toml` or `server.yaml`, and never both: `read_server_dir` refuses a
+directory that holds the two names. This module reads the part
 root must act on — the pin and the entrypoint — and validates the whole file
 while it is there, because a field this module ignores is still a field a
 later reader will trust.
@@ -18,11 +20,16 @@ rather than an assumption either one makes.
 
 A reviewer should find each of these either enforced below or refused.
 
-1. The file is at most `MAX_SERVER_BYTES`. The cap is applied to the BYTES,
-   before the parse, never after.
-2. It is a YAML mapping, loaded with the safe loader of PyYAML. No tag, no
-   anchor cycle and no Python object can come out of that. The loader has
-   a bound on merge keys (`boundedyaml.load`).
+1. A YAML file is at most `MAX_SERVER_BYTES`. A TOML file is at most the
+   byte limit of `tomlfile.FileKind.SERVER`, and `tomlfile.loads` holds
+   that limit. The cap is applied to the BYTES, before the parse, never
+   after.
+2. A YAML file is a YAML mapping, loaded with the safe loader of PyYAML.
+   No tag, no anchor cycle and no Python object can come out of that. The
+   loader has a bound on merge keys (`boundedyaml.load`). A TOML file is a
+   TOML 1.0 table, read by `tomlfile.loads` with its level limit. Each
+   refusal of that reader gives one of its fixed texts, which hold no byte
+   of the file.
 3. Its top-level keys are exactly `REQUIRED_KEYS`, plus any of
    `OPTIONAL_KEYS`, and nothing else. An unknown key is a refusal, not a
    value that is quietly dropped: contract 01b's field set is closed, and a
@@ -89,6 +96,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final, cast
 
+from . import tomlfile
 from .artifacts import CODE_HOST, HTTPS
 from .boundedyaml import MergeLimits, load
 from .errors import Refusal, RefusalCode, safe_token
@@ -105,7 +113,11 @@ MAX_SERVER_BYTES: Final = 64 * 1024
 #: Another number costs one line here and one line in the Rust reader.
 MERGE_LIMITS: Final = MergeLimits(depth=400, pairs=100_000)
 
-SERVER_FILE_NAME: Final = "server.yaml"
+#: The two names of a server file. `read_server_dir` reads `SERVER_FILE_NAME`
+#: when the directory holds that name, and `SERVER_FILE_NAME_YAML` when it
+#: does not. A directory that holds both names is a refusal.
+SERVER_FILE_NAME: Final = "server.toml"
+SERVER_FILE_NAME_YAML: Final = "server.yaml"
 
 #: Contract 01b §1: hyphens, never an underscore, because the PEP's call
 #: name is `<server>__<tool>`.
@@ -209,6 +221,18 @@ class Source(StrEnum):
     AGENT_MCP = "agent-mcp"
 
 
+class Markup(StrEnum):
+    """The markup of the text of a server file."""
+
+    TOML = "toml"
+    YAML = "yaml"
+
+    @property
+    def file_name(self) -> str:
+        """The name of a server file in this markup."""
+        return SERVER_FILE_NAME if self is Markup.TOML else SERVER_FILE_NAME_YAML
+
+
 #: Which pin fields each source requires, and therefore which it refuses.
 #: `python` is shared and defaulted, so it is in no row.
 _REQUIRED_PIN: Final[dict[Source, frozenset[str]]] = {
@@ -289,7 +313,8 @@ class SharedSecret:
 
 @dataclass(frozen=True)
 class ServerFile:
-    """One `mcp/<name>/server.yaml` that root is willing to install from."""
+    """One server file that root is willing to install from. The TOML form
+    and the YAML form of one declaration give equal values."""
 
     name: str
     pin: ServerPin
@@ -335,28 +360,57 @@ def _refuse(name: str, detail: str) -> Refusal:
 
 
 def read_server_dir(directory: Path) -> ServerFile:
-    """Read `<directory>/server.yaml`, whose name must be the directory's.
+    """Read the server file of `directory`, whose name must be the directory's.
 
     The directory name is the authority: it is a path component root already
     walked, and the file's own `name` field has to agree with it (contract
     01b §1).
+
+    The file is `server.toml` when the directory holds that name, else
+    `server.yaml`. A directory that holds both names is a refusal, and root
+    reads neither file. Each entry counts as a name: a link, a link to no
+    file and a directory too. The name that root reads must be a regular
+    file and no link.
     """
-    path = directory / SERVER_FILE_NAME
+    markup = _markup_of(directory)
+    path = directory / markup.file_name
     if path.is_symlink() or not path.is_file():
-        raise _refuse(directory.name, "server.yaml is missing or is not a regular file")
+        raise _refuse(directory.name, f"{markup.file_name} is missing or is not a regular file")
 
     raw = path.read_bytes()
 
-    return parse_server(raw, directory.name)
+    return parse_server(raw, directory.name, markup)
 
 
-def parse_server(raw: bytes, directory: str) -> ServerFile:
-    """Contract 01b, every rule, against the bytes as they arrived."""
-    if len(raw) > MAX_SERVER_BYTES:
-        raise _refuse(directory, f"server.yaml is larger than {MAX_SERVER_BYTES} bytes")
+def _markup_of(directory: Path) -> Markup:
+    """The markup of the one server file of `directory`.
 
-    body = _mapping(directory, raw)
-    _check_keys(directory, frozenset(body))
+    A directory with no entry of either name gives YAML, so the refusal of
+    the missing file names `server.yaml`."""
+    has_toml = _holds(directory / SERVER_FILE_NAME)
+    has_yaml = _holds(directory / SERVER_FILE_NAME_YAML)
+    if has_toml and has_yaml:
+        raise _refuse(
+            directory.name, f"holds {SERVER_FILE_NAME} and {SERVER_FILE_NAME_YAML}; keep one"
+        )
+
+    return Markup.TOML if has_toml else Markup.YAML
+
+
+def _holds(path: Path) -> bool:
+    """Whether the directory has an entry at `path`. A link counts, also a
+    link to no file, and the link is not followed."""
+    return path.is_symlink() or path.exists()
+
+
+def parse_server(raw: bytes, directory: str, markup: Markup = Markup.YAML) -> ServerFile:
+    """Contract 01b, every rule, against the bytes as they arrived.
+
+    `markup` names the markup of the bytes. A caller that gives none reads
+    a YAML text. Each check after the read of the text is the same for the
+    two markups."""
+    body = _mapping(directory, raw, markup)
+    _check_keys(directory, frozenset(body), markup)
     name = _name(directory, body["name"])
     _identity(name, body["identity"])
     pin = _install(name, body["install"])
@@ -464,34 +518,60 @@ def _one_share(name: str, value: Any, secrets: tuple[str, ...]) -> SharedSecret:
     return SharedSecret(secret=secret, server=partner)
 
 
-def _mapping(directory: str, raw: bytes) -> dict[str, Any]:
+def _mapping(directory: str, raw: bytes, markup: Markup) -> dict[str, Any]:
+    """The top-level mapping of the text, with a text for each key."""
+    if markup is Markup.TOML:
+        return _toml_table(directory, raw)
+
+    return _yaml_mapping(directory, raw)
+
+
+def _toml_table(directory: str, raw: bytes) -> dict[str, Any]:
+    """The top table of a TOML text. `tomlfile.loads` holds the byte limit
+    and the level limit of a server file. Each key of a TOML table is a
+    text, and the top level is always a table.
+
+    A refusal of the reader gives one refusal with the fixed text of the
+    reader, which holds no line, no column and no byte of the file."""
+    try:
+        return tomlfile.loads(raw, tomlfile.FileKind.SERVER)
+    except tomlfile.TomlRefusal as refusal:
+        raise _refuse(directory, f"{SERVER_FILE_NAME}: {refusal}") from None
+
+
+def _yaml_mapping(directory: str, raw: bytes) -> dict[str, Any]:
+    if len(raw) > MAX_SERVER_BYTES:
+        raise _refuse(directory, f"{SERVER_FILE_NAME_YAML} is larger than {MAX_SERVER_BYTES} bytes")
+
     # Each error of the reader, as `manifest.parse_manifest` takes it.
     try:
         loaded: Any = load(raw.decode("utf-8"), MERGE_LIMITS)
     except Exception:
-        raise _refuse(directory, "server.yaml is not readable YAML") from None
+        raise _refuse(directory, f"{SERVER_FILE_NAME_YAML} is not readable YAML") from None
 
     if not isinstance(loaded, dict):
-        raise _refuse(directory, "server.yaml is not a mapping")
+        raise _refuse(directory, f"{SERVER_FILE_NAME_YAML} is not a mapping")
 
     body: dict[str, Any] = {}
     for key, value in cast(dict[Any, Any], loaded).items():
         if not isinstance(key, str):
-            raise _refuse(directory, "server.yaml has a non-string key")
+            raise _refuse(directory, f"{SERVER_FILE_NAME_YAML} has a non-string key")
 
         body[key] = value
 
     return body
 
 
-def _check_keys(directory: str, keys: frozenset[str]) -> None:
+def _check_keys(directory: str, keys: frozenset[str], markup: Markup) -> None:
     missing = REQUIRED_KEYS - keys
     if missing:
-        raise _refuse(directory, f"server.yaml has no {safe_token(sorted(missing)[0])}")
+        raise _refuse(directory, f"{markup.file_name} has no {safe_token(sorted(missing)[0])}")
 
     unknown = keys - REQUIRED_KEYS - OPTIONAL_KEYS
     if unknown:
-        raise _refuse(directory, f"server.yaml has unknown key {safe_token(sorted(unknown)[0])}")
+        raise _refuse(
+            directory, f"{markup.file_name} has unknown key {safe_token(sorted(unknown)[0])}"
+        )
 
 
 def _name(directory: str, value: Any) -> str:
@@ -792,7 +872,7 @@ def _fence_values(name: str, field: str, value: Any) -> tuple[str, ...]:
 
 
 def read_registry(mcp_root: Path, limit: int) -> tuple[ServerFile, ...]:
-    """Every `mcp/<name>/server.yaml` under a registry checkout, by name.
+    """Every server file under a registry checkout, by name.
 
     The walk is what makes the directory name the authority: root lists the
     directories it finds, validates each name itself, and never follows a
