@@ -111,6 +111,10 @@ SEVEN_PAIRS: Final = (
     "session.journal_line:lone_surrogate",
 )
 
+#: Three pairs of one notice file, and the summary of each one.
+THREE_PAIRS: Final = SEVEN_PAIRS[:3]
+THREE_SUMMARIES: Final = [f"{JSON_WORD} noticeboard {one.replace(':', ' ')}" for one in THREE_PAIRS]
+
 STUB: Final = """#!/bin/sh
 printf '%s\\n' "{name} $*" >> "$WD_STUB_LOG"
 {body}
@@ -144,11 +148,14 @@ esac
 #:
 #: `WD_RECORD_READ` changes the read of the record of sent notices. `fail`
 #: gives no output and status 124, as `timeout` does for a `head` that it
-#: stopped. `empty` gives no output and status 0.
+#: stopped. `cut` gives the first line of the record and status 124: a
+#: `head` that `timeout` stopped in the middle. `empty` gives no output and
+#: status 0.
 TIMEOUT_BODY: Final = """case "$*" in
   *" head -c "*"/notices-sent")
     case "${WD_RECORD_READ:-}" in
       fail) exit 124 ;;
+      cut) head -n 1 "$5"; exit 124 ;;
       empty) exit 0 ;;
     esac ;;
 esac
@@ -1859,31 +1866,31 @@ def test_a_record_over_its_byte_cap_sends_nothing(rig: Rig) -> None:
     assert done.stdout.count(str(rig.sent)) == 1
 
 
-@pytest.mark.parametrize("read", ["fail", "empty"])
-def test_a_record_read_that_gives_nothing_sends_nothing(rig: Rig, read: str) -> None:
+@pytest.mark.parametrize("read", ["fail", "cut", "empty"])
+def test_a_record_read_that_fails_sends_nothing(rig: Rig, read: str) -> None:
     """A read of the record can fail, or stop at its time limit on a slow
-    disk. A read can also give nothing from a record that holds bytes. With
-    no record, each pair would be news again. So such a run sends no notice
-    of this kind, says so in one line and keeps the record as it was. The
-    next run sends each pair one time."""
-    first = f"{JSON_WORD} noticeboard status.document syntax"
-    rig.notice("noticeboard", token("status.document:syntax"))
+    disk, with no output or with a part of the record. A read can also give
+    nothing from a record that holds bytes. A pair with no record line is
+    news again. So such a run sends no notice of this kind, says so in one
+    line and keeps the record as it was. The next run sends each pair one
+    time."""
+    rig.notice("noticeboard", *[token(one) for one in THREE_PAIRS[:2]])
     rig.run()
     record = rig.sent_lines()
-    assert len(record) == 1
-    rig.notice("noticeboard", token("status.document:syntax"), token("audit.line:syntax"))
+    assert len(record) == 2
+    rig.notice("noticeboard", *[token(one) for one in THREE_PAIRS])
 
     done = rig.run(WD_RECORD_READ=read)
 
     assert done.returncode == 0, done.stdout + done.stderr
-    assert rig.json_summaries() == [first]
+    assert rig.json_summaries() == THREE_SUMMARIES[:2]
     assert done.stdout.count(str(rig.sent)) == 1, done.stdout
     assert rig.sent_lines() == record
 
     rig.run()
 
-    assert rig.json_summaries() == [first, f"{JSON_WORD} noticeboard audit.line syntax"]
-    assert len(rig.sent_lines()) == 2
+    assert rig.json_summaries() == THREE_SUMMARIES
+    assert len(rig.sent_lines()) == 3
 
 
 def _fill_record(rig: Rig, room: int) -> list[str]:
@@ -1942,11 +1949,6 @@ def test_a_record_line_that_fits_exactly_is_sent(rig: Rig, spare: int) -> None:
 
     assert len(rig.posts()) == sent
     assert "is over" not in again.stdout
-
-
-#: Three pairs of one notice file, and the summary of each one.
-THREE_PAIRS: Final = SEVEN_PAIRS[:3]
-THREE_SUMMARIES: Final = [f"{JSON_WORD} noticeboard {one.replace(':', ' ')}" for one in THREE_PAIRS]
 
 
 @pytest.mark.parametrize("fail_at", [1, 2])
