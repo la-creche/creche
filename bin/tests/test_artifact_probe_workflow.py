@@ -53,7 +53,7 @@ from typing import Any, Final
 import pytest
 import yaml
 from handover.artifacts import crate_row
-from handover.catalog import BINARY_TARGET, RELEASE_WORKFLOW, Repo
+from handover.catalog import BINARY_TARGET, BUNDLE_SUFFIX, RELEASE_WORKFLOW, Repo
 
 REPO: Final = Path(__file__).resolve().parents[2]
 WORKFLOW: Final = REPO / ".github" / "workflows" / "artifact-probe.yml"
@@ -600,6 +600,14 @@ def test_the_names_of_the_script_are_the_names_of_the_catalog() -> None:
     assert f'CATALOG_REPO="{Repo.AGENT_CONTROL}"' in SCRIPT_TEXT
     assert 'CRATE_DIR="rust/crates/agent-family"' in SCRIPT_TEXT
     assert (REPO / "rust" / "crates" / "agent-family" / "Cargo.toml").is_file()
+
+
+def test_the_sign_job_names_the_bundle_as_the_catalog_does() -> None:
+    """`verify` takes the name of the bundle from the row, and the row takes
+    it from the catalog. The job `sign` writes the bundle with the suffix of
+    the catalog, so a change of the constant fails here and not in a probe
+    run."""
+    assert f'--bundle "$ARCHIVE{BUNDLE_SUFFIX}" "$ARCHIVE"' in SIGN_RUN
 
 
 def test_the_constants_of_the_workflow_have_one_place() -> None:

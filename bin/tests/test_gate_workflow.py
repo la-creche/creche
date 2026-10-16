@@ -114,6 +114,7 @@ from typing import Any
 
 import pytest
 import yaml
+from handover.catalog import ARCHIVE_SUFFIX, BUNDLE_SUFFIX, Repo
 
 REPO = Path(__file__).resolve().parents[2]
 WORKFLOWS = REPO / ".github" / "workflows"
@@ -521,7 +522,7 @@ SYSTEMD_ASKED = {
 }
 
 #: The catalog's name for this repository (`handover/src/handover/catalog.py`).
-THIS_REPOSITORY = "agent-control"
+THIS_REPOSITORY = str(Repo.AGENT_CONTROL)
 
 #: The job that builds the archive of each binary component, in both files.
 #: The job of the release that signs each archive.
@@ -2000,6 +2001,22 @@ def test_the_sign_job_is_pinned_as_a_whole() -> None:
     assert job["steps"] == SIGN_STEPS
     assert "bin/" not in step["run"]
     assert "${{" not in step["run"]
+
+
+def test_the_sign_job_names_the_assets_as_the_catalog_does() -> None:
+    """The tag script takes the names of the two assets from the catalog
+    (`handover allocate-tags --assets`). The `sign` job writes the bundle
+    and finds each archive by the two suffixes of the catalog, so a change
+    of one constant fails here before a release run refuses each binary
+    component."""
+    archive_end = ARCHIVE_SUFFIX.replace(".", "[.]") + "$'"
+
+    assert f'"$bundles/$name{BUNDLE_SUFFIX}"' in SIGN_RUN
+    assert f"line='^[0-9a-f]{{64}}  [A-Za-z0-9][A-Za-z0-9._-]*{archive_end}\n" in SIGN_RUN
+    assert f'"$name" != *{ARCHIVE_SUFFIX} ]]' in SIGN_RUN
+    assert f'compgen -G "$RUNNER_TEMP/assets/*{ARCHIVE_SUFFIX}"' in COSIGN_FETCH
+    assert COSIGN_FETCH in SIGN_RUN
+    assert COSIGN_FETCH in COSIGN_RUN
 
 
 def test_the_digest_check_is_before_the_first_cosign_word() -> None:
