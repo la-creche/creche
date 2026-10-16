@@ -17,6 +17,12 @@
 #   RELEASE_CLI    the resolver command. Default: `uv run` against the
 #                  `handover` project beside this script, wherever it sits.
 #
+# A BINARY COMPONENT SHIPS TWO ASSETS: the archive that CI built and the
+# bundle of its signature. Two more variables serve it, and a run with no
+# binary component reads neither:
+#   ASSET_DIR      the directory that holds the assets of this run.
+#   COSIGN         the absolute path of the verifier of a signature.
+#
 # THE DRY RUN NEEDS NO WRITE SCOPE, and it says what the next merge would
 # tag. It prints every component's range. From a developer's own checkout:
 #   GITHUB_REPOSITORY=<owner>/agent-control GITHUB_SHA=$(git rev-parse HEAD) \
@@ -359,6 +365,93 @@ done < "$WORK/names"
 
 cat "$WORK/plan"
 
+# ---- the two assets of a binary component ----------------------------------
+#
+# The planner says which component ships assets, because the kind of a
+# component lives in the catalog and this script holds no copy of it.
+# `allocate-tags --assets` prints one line for each asset, `<name> <largest
+# size in bytes>`, the archive first. It prints nothing for each other kind,
+# and then no line below checks a file or starts the verifier.
+#
+# A binary component gets its tag only when both files are in ASSET_DIR,
+# each one at most its size, and the verifier passes the signature. If not,
+# the component counts as refused and the next row goes on: each other
+# component still gets its tag, and the run ends red.
+#
+# The verifier gets the words of `handover artifacts --verify-words`, the
+# words that root uses on the host. They name the ref of `main`, so a run
+# on another branch gets no tag for a binary component.
+
+# refuse COMPONENT REASON: one `::error::` line, and one more refused row.
+refuse() {
+  printf '::error::%s\n' "$1 refused: $2" >&2
+  REFUSED=$((REFUSED + 1))
+}
+
+# assets_of COMPONENT: the asset lines of COMPONENT into $WORK/assets. It
+# fails for a refusal of the planner, and for an answer that is not 0 or 2
+# lines of a name and a count.
+assets_of() {
+  local name limit extra count=0
+  "${CLI[@]}" allocate-tags --repo "$REPO" --assets "$1" < /dev/null > "$WORK/assets" \
+    || return 1
+  while read -r name limit extra; do
+    [[ -n "$name" && "$limit" =~ ^[0-9]+$ && -z "$extra" ]] || return 1
+    count=$((count + 1))
+  done < "$WORK/assets"
+  [[ "$count" -eq 0 || "$count" -eq 2 ]]
+}
+
+# check_assets COMPONENT: each asset of $WORK/assets is a file in ASSET_DIR,
+# at most its size, and the verifier passes the signature. On success ATTACH
+# holds the absolute path of each file, the archive first. On a failure the
+# component is refused.
+check_assets() {
+  local component=$1 dir name limit path size word
+  ATTACH=()
+  dir=$(cd -- "${ASSET_DIR:-}" 2>/dev/null && pwd) && [[ -n "${ASSET_DIR:-}" ]] \
+    || { refuse "$component" "ASSET_DIR names no directory"; return 1; }
+
+  while read -r name limit; do
+    path="$dir/$name"
+    if [[ -L "$path" || ! -f "$path" ]]; then
+      refuse "$component" "$name is not a file in ASSET_DIR"
+      return 1
+    fi
+
+    size=$(($(wc -c < "$path")))
+    if [[ "$size" -gt "$limit" ]]; then
+      refuse "$component" "$name has $size bytes, more than its limit of $limit"
+      return 1
+    fi
+
+    ATTACH+=("$path")
+  done < "$WORK/assets"
+
+  if [[ -z "${COSIGN:-}" || "$COSIGN" != /* || ! -x "$COSIGN" ]]; then
+    refuse "$component" "COSIGN names no program by an absolute path"
+    return 1
+  fi
+
+  if ! "${CLI[@]}" artifacts --verify-words --repo "$REPO" \
+    --github-repository "${GITHUB_REPOSITORY:-}" --sha "$SHA" \
+    --archive "${ATTACH[0]}" --bundle "${ATTACH[1]}" < /dev/null > "$WORK/words"; then
+    refuse "$component" "the planner gave no words for the check of its signature"
+    return 1
+  fi
+
+  WORDS=()
+  while IFS= read -r word; do
+    WORDS+=("$word")
+  done < "$WORK/words"
+  if ! "$COSIGN" ${WORDS[@]+"${WORDS[@]}"} < /dev/null; then
+    refuse "$component" "the verifier refused the signature of ${ATTACH[0]##*/}"
+    return 1
+  fi
+
+  return 0
+}
+
 # The Release body: what merged, what this tag is, and what it covers.
 release_notes() {
   local component=$1 tag=$2 detail=$3
@@ -376,12 +469,26 @@ while read -r outcome tag _from detail; do
   case "$outcome" in
     noop) say "keeping $tag: already on this commit" ;;
     create)
-      if [[ "$DRY_RUN" == yes ]]; then
-        say "would create $tag on $SHA and publish its Release"
+      component=${tag%-v*}
+      if ! assets_of "$component"; then
+        refuse "$component" "the planner gave no list of its assets"
         continue
       fi
 
-      NOTES=$(release_notes "${tag%-v*}" "$tag" "$detail")
+      if [[ "$DRY_RUN" == yes ]]; then
+        say "would create $tag on $SHA and publish its Release"
+        while read -r name _limit; do
+          say "would attach $name to $tag"
+        done < "$WORK/assets"
+        continue
+      fi
+
+      ATTACH=()
+      if [[ -s "$WORK/assets" ]] && ! check_assets "$component"; then
+        continue
+      fi
+
+      NOTES=$(release_notes "$component" "$tag" "$detail")
 
       # A tag that already exists stops the run. Never -f, never a delete.
       git -C "$REPO_ROOT" tag "$tag" "$SHA" \
@@ -389,7 +496,7 @@ while read -r outcome tag _from detail; do
       git -C "$REPO_ROOT" push origin "refs/tags/$tag" \
         || die "conflict: $tag exists on the remote; a tag is never moved"
       gh release create "$tag" "${GH_REPO_ARGS[@]+"${GH_REPO_ARGS[@]}"}" \
-        --target "$SHA" --title "$tag" --notes "$NOTES" \
+        --target "$SHA" --title "$tag" --notes "$NOTES" "${ATTACH[@]+"${ATTACH[@]}"}" \
         || die "$tag is pushed but its Release did not publish"
       say "released $tag on $SHA: $BODY"
       MADE=$((MADE + 1))
@@ -401,7 +508,8 @@ done < "$WORK/plan"
 say "allocate-tags: $MADE created"
 
 # Reported last so the tags that WERE right are already made and pushed. A
-# run that ends here needs a human: a tag in this repository is not in this
-# commit's history, and every run will say so until somebody fixes it.
+# run that ends here needs a human. A newest tag that is not in this
+# commit's history stays so until somebody fixes it. A binary component
+# whose assets did not pass keeps its range, so a later run tags it.
 [[ "$REFUSED" -eq 0 ]] \
-  || die "$REFUSED component(s) refused: a newest tag that is not an ancestor of $SHA"
+  || die "$REFUSED component(s) refused: each one has its own ::error:: line above"
