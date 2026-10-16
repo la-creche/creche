@@ -263,7 +263,7 @@ def test_two_unknown_keys_of_a_server_give_two_issues_in_sorted_order() -> None:
         (PYPI_TOML + "name = 'twice'\n", NOT_TOML),
         (PYPI_TOML + "a = {b = 1,}\n", NOT_TOML),
         (PYPI_TOML + "c = 9223372036854775808\n", NOT_TOML),
-        ("﻿" + PYPI_TOML, "the file starts with a byte order mark"),
+        ("\ufeff" + PYPI_TOML, "the file starts with a byte order mark"),
         (PYPI_TOML + "padding = '" + "x" * 65536 + "'\n", TOO_LARGE),
         ('name = "a\ud800"\n', NOT_UTF8),
     ],
