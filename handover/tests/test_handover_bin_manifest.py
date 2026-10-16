@@ -195,8 +195,7 @@ def test_the_fixture_is_not_a_declaration() -> None:
 #: file, and the executor runs a binary build argv as it is, as it runs a
 #: venv build argv. The stricter reading refuses, before the first argv
 #: runs, a binary build that does not carry the flag. It costs a rule about
-#: one build tool in the executor, and it refuses a build step that is not
-#: cargo.
+#: one build tool in the executor.
 LOCKED = "--locked"
 
 
