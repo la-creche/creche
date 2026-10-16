@@ -89,6 +89,15 @@ host where something has gone wrong.
   needs a new one.
 - The applied snapshot moves at the end of a successful pass. An interrupted
   pass leaves the old one.
+- The applied copy of a family file has the name of the format of its text:
+  `applied/family.toml` or `applied/family.yaml`. `agent_family.registry`
+  holds the two names, and `paths.py` imports them.
+- A pass copies the registry file that the report of the family names. A
+  write of the snapshot writes the copy of that format first. It then
+  removes the other copy and writes `applied.json`.
+- A read of the snapshot takes `applied/family.toml` first and
+  `applied/family.yaml` second. It gives the text to the parser of that
+  format. A copy that does not parse reads as nothing applied.
 - Narrowing runs before widening, everywhere. Egress removals before allows.
   Timer removals before timer writes.
 - A refused switch keeps both sandboxes.
