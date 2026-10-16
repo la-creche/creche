@@ -1109,6 +1109,33 @@ mod tests {
     }
 
     #[test]
+    fn a_text_that_is_no_lan_address_is_a_fault_of_that_key_only() {
+        // `handover.site.lan_address` takes each of these texts. No vector
+        // holds one: the intake calls that reader at its start.
+        let name: RepoName = "agent-control".parse().unwrap();
+        for (value, error) in [
+            ("0.0.0.0", LanAddressError::EachInterface),
+            ("0", LanAddressError::NotIpv4),
+            ("192.0.2", LanAddressError::NotIpv4),
+            ("192.0.2.256", LanAddressError::NotIpv4),
+            ("192.0.2.010", LanAddressError::NotIpv4),
+            ("0x7f.0.0.1", LanAddressError::NotIpv4),
+            ("host.123", LanAddressError::NotIpv4),
+        ] {
+            let parsed = file(&format!("{COMPLETE}AGENT_LAN_ADDRESS={value}\n"));
+            let refusal = parsed.lan_address().unwrap_err();
+
+            assert_eq!(refusal.key(), SiteKey::LanAddress, "{value}");
+            assert_eq!(refusal.fault(), SiteFault::LanAddress(error), "{value}");
+            assert_eq!(parsed.github_owner().unwrap().as_str(), "example-owner");
+            assert_eq!(parsed.operator_user().unwrap().as_str(), "operator");
+            assert_eq!(parsed.operator_home().unwrap().as_str(), "/home/operator");
+            assert_eq!(parsed.github_repo(&name), Ok(name.clone()));
+            assert!(Site::try_from(&parsed).is_err(), "{value}");
+        }
+    }
+
+    #[test]
     fn a_site_holds_the_four_values() {
         let site = Site::try_from(&file(COMPLETE)).unwrap();
 
