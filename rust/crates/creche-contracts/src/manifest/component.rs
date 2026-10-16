@@ -1976,6 +1976,13 @@ impl ManifestReader<'_> {
     /// One `build` command of a `binary` component. The first word is the
     /// word [`BINARY_BUILD_PROGRAM`], as it is: the reader expands no `~/`
     /// there, so the command needs no site file.
+    ///
+    /// A word with a lone surrogate gets [`ManifestFault::NotUnicode`]
+    /// before the check of the first word. The Python reader takes such a
+    /// word. For a first word with a lone surrogate, it gives the refusal of
+    /// the first word: the two readers refuse with the code `manifest`, and
+    /// the details differ. For a later word, the Python reader accepts the
+    /// command. No vector holds either input.
     fn read_cargo_argv(raw: &Value, fields: &Fields<'_>) -> Result<CargoArgv, ManifestError> {
         let mut words = Self::read_words(raw, fields, BUILD)?.into_iter();
         if words.next().as_deref() != Some(BINARY_BUILD_PROGRAM) {

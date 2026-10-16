@@ -1315,6 +1315,24 @@ mod tests {
     }
 
     #[test]
+    fn a_binary_build_word_that_is_not_unicode_is_refused_first() {
+        // The Python reader takes each of the two commands. It refuses the
+        // first one as a first word that is not cargo, and accepts the second.
+        for command in [r#"["\ud800", build]"#, r#"[cargo, "\ud800"]"#] {
+            let text = manifest_with("kind", "kind: binary") + &format!("build: [{command}]\n");
+
+            let error = ComponentManifest::parse(&text, None).unwrap_err();
+
+            assert_eq!(error.code(), RefusalCode::Manifest, "{command}");
+            assert_eq!(
+                error.fault(),
+                &ManifestFault::NotUnicode { field: "build" },
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
     fn a_manifest_reads_up_to_the_version_of_the_provides_row() {
         let read = |minor: u16| {
             let line = format!("manifest_version: \"{MANIFEST_CONTRACT_MAJOR}.{minor}\"");
