@@ -18,10 +18,6 @@ use crate::parse::{DOCUMENT, Markup, parse_family, parse_family_toml, parse_serv
 use crate::report::Report;
 use crate::zones::ZoneFacts;
 
-/// The two names of a family file. The loader reads `FAMILY_FILE` first and
-/// `FAMILY_FILE_YAML` second, and a directory with both is an error.
-const FAMILY_FILE: &str = "family.toml";
-const FAMILY_FILE_YAML: &str = "family.yaml";
 const SERVER_FILE: &str = "server.yaml";
 const SKILL_FILE: &str = "SKILL.md";
 const INSTRUCTIONS_FILE: &str = "instructions.md";
@@ -341,68 +337,73 @@ fn read_family(path: &Path, markup: Markup) -> (Option<RawFamily>, Vec<Issue>) {
     read.unwrap_or_else(|problem| (None, vec![error(problem)]))
 }
 
-/// What one directory under `families/` gives the loader.
+/// The name of the family file in `markup`. The loader reads the TOML file
+/// first and the YAML file second, and a directory with both is an error.
+const fn family_file(markup: Markup) -> &'static str {
+    match markup {
+        Markup::Toml => "family.toml",
+        Markup::Yaml => "family.yaml",
+    }
+}
+
+/// The family file of the directory `name`, as its report names it.
+fn report_file(name: &str, markup: Markup) -> String {
+    format!("{FAMILIES_DIR}/{name}/{}", family_file(markup))
+}
+
+/// What the directories under `families/` give the loader.
 struct Families {
-    /// Each family file with the right shape.
-    parsed: BTreeMap<String, RawFamily>,
-    /// The issues of each other directory.
-    issues: BTreeMap<String, Vec<Issue>>,
-    /// The name of the file that the report of each directory names: the
-    /// TOML name when that file is there, else the YAML name.
-    files: BTreeMap<String, &'static str>,
+    /// Each family file with the right shape, and the markup of that file.
+    parsed: BTreeMap<String, (Markup, RawFamily)>,
+    /// The report of each other directory.
+    reports: BTreeMap<String, Report>,
 }
 
 fn read_families(root: &Path) -> Families {
     let mut families = Families {
         parsed: BTreeMap::new(),
-        issues: BTreeMap::new(),
-        files: BTreeMap::new(),
+        reports: BTreeMap::new(),
     };
     for directory in subdirectories(&root.join(FAMILIES_DIR)) {
         let name = name_of(&directory);
-        let has_toml = directory.join(FAMILY_FILE).is_file();
-        let has_yaml = directory.join(FAMILY_FILE_YAML).is_file();
-        let file = if has_toml {
-            FAMILY_FILE
-        } else {
-            FAMILY_FILE_YAML
-        };
-        families.files.insert(name.clone(), file);
-        if has_toml && has_yaml {
+        let has_toml = directory.join(family_file(Markup::Toml)).is_file();
+        let has_yaml = directory.join(family_file(Markup::Yaml)).is_file();
+        // The report names the TOML file when it is there, else the YAML
+        // file.
+        let markup = if has_toml { Markup::Toml } else { Markup::Yaml };
+        let issues = if has_toml && has_yaml {
             // CONTRACT-QUESTION: contract 01 §1 names one file,
             // `family.toml`. It does not say what a reader does with a
             // directory that also holds `family.yaml`. The loader takes the
             // strict reading, as the Python loader does: one error, and it
             // parses neither file. The report names `family.toml`. The other
             // reading names `family.yaml`. A change costs the line that
-            // selects `file` and one vector.
-            let issue = error(format!(
-                "two family files: {FAMILY_FILE} and {FAMILY_FILE_YAML}; keep one"
-            ));
-            families.issues.insert(name, vec![issue]);
-            continue;
-        }
-
-        if !has_toml && !has_yaml {
+            // selects `markup` and one vector.
+            vec![error(format!(
+                "two family files: {} and {}; keep one",
+                family_file(Markup::Toml),
+                family_file(Markup::Yaml)
+            ))]
+        } else if !has_toml && !has_yaml {
             // Contract 01 §5.6 rule 3: a warning, and `caregiver` ignores
             // the directory.
-            let issue = warning(
+            let file = family_file(Markup::Yaml);
+            vec![warning(
                 DOCUMENT,
-                format!("no {FAMILY_FILE_YAML}; this directory is ignored"),
-            );
-            families.issues.insert(name, vec![issue]);
-            continue;
-        }
+                format!("no {file}; this directory is ignored"),
+            )]
+        } else {
+            match read_family(&directory.join(family_file(markup)), markup) {
+                (Some(raw), _) => {
+                    families.parsed.insert(name, (markup, raw));
+                    continue;
+                }
+                (None, issues) => issues,
+            }
+        };
 
-        let markup = if has_toml { Markup::Toml } else { Markup::Yaml };
-        match read_family(&directory.join(file), markup) {
-            (Some(raw), _) => {
-                families.parsed.insert(name, raw);
-            }
-            (None, issues) => {
-                families.issues.insert(name, issues);
-            }
-        }
+        let report = Report::new(&name, &report_file(&name, markup), issues);
+        families.reports.insert(name, report);
     }
 
     families
@@ -499,15 +500,14 @@ fn check_dispatch(families: &BTreeMap<String, RawFamily>, reports: &mut BTreeMap
 pub fn load_registry(root: &Path, host: Option<&dyn HostFacts>, zones: &dyn ZoneFacts) -> Registry {
     let servers = read_servers(root);
     let Families {
-        parsed,
-        issues: mut issues_by_name,
-        files,
+        parsed: read,
+        mut reports,
     } = read_families(root);
     let skills = read_skills(root);
     let index = Index {
-        kinds: parsed
+        kinds: read
             .iter()
-            .map(|(name, family)| (name.clone(), family.kind.clone()))
+            .map(|(name, (_, family))| (name.clone(), family.kind.clone()))
             .collect(),
         servers: servers
             .parsed
@@ -520,26 +520,19 @@ pub fn load_registry(root: &Path, host: Option<&dyn HostFacts>, zones: &dyn Zone
             .collect(),
         skills: skills.clone(),
     };
+    let mut parsed = BTreeMap::new();
     let mut families = BTreeMap::new();
-    for (name, raw) in &parsed {
-        let (family, issues) = check_family(raw.clone(), name, &index, host, zones);
+    for (name, (markup, raw)) in read {
+        let (family, issues) = check_family(raw.clone(), &name, &index, host, zones);
         if let Some(family) = family {
             families.insert(name.clone(), family);
         }
 
-        issues_by_name.insert(name.clone(), issues);
+        let report = Report::new(&name, &report_file(&name, markup), issues);
+        reports.insert(name.clone(), report);
+        parsed.insert(name, raw);
     }
 
-    let mut reports: BTreeMap<String, Report> = issues_by_name
-        .into_iter()
-        .map(|(name, issues)| {
-            let file = files.get(&name).copied().unwrap_or(FAMILY_FILE_YAML);
-            let file = format!("{FAMILIES_DIR}/{name}/{file}");
-            let report = Report::new(&name, &file, issues);
-
-            (name, report)
-        })
-        .collect();
     check_webhooks(&parsed, &mut reports);
     check_dispatch(&parsed, &mut reports);
     // A family with an error from a check of the whole registry is not
@@ -561,8 +554,9 @@ pub fn load_registry(root: &Path, host: Option<&dyn HostFacts>, zones: &dyn Zone
 
 #[cfg(test)]
 mod tests {
-    use super::revision_of;
+    use super::{load_registry, revision_of};
     use crate::scratch::Scratch;
+    use crate::zones::SystemZones;
 
     /// What the Python function `revision_of` answers for the registry of
     /// these tests, and for the same registry with one file more.
@@ -602,5 +596,46 @@ mod tests {
         assert_eq!(revision_of(&scratch.path("unix")), PYTHON_REVISION);
         assert_eq!(revision_of(&scratch.path("dos")), PYTHON_REVISION);
         assert_eq!(revision_of(&scratch.path("old")), PYTHON_REVISION);
+    }
+
+    #[test]
+    fn each_report_names_the_family_file_of_its_directory() {
+        let scratch = Scratch::new();
+        let toml = "kind = \"thin\"\ndescription = \"x\"\n\
+                    model = { router = \"fast\", budget_usd_per_day = 1 }\n";
+        let yaml = "kind: thin\ndescription: x\nmodel: { router: fast, budget_usd_per_day: 1 }\n";
+        let files = [
+            ("both/family.toml", "name = \"both\"\n".to_owned()),
+            ("both/family.yaml", "name: both\n".to_owned()),
+            ("none/notes.txt", "No family file.\n".to_owned()),
+            ("toml/family.toml", format!("name = \"toml\"\n{toml}")),
+            ("toml-bad/family.toml", "name = 1\n".to_owned()),
+            ("yaml/family.yaml", format!("name: yaml\n{yaml}")),
+            ("yaml-bad/family.yaml", "name: [1]\n".to_owned()),
+        ];
+        for (path, text) in &files {
+            scratch.write(&format!("registry/families/{path}"), text.as_bytes());
+        }
+
+        let loaded = load_registry(&scratch.path("registry"), None, &SystemZones::host());
+        let named: Vec<(&str, &str)> = loaded
+            .reports()
+            .iter()
+            .map(|(name, report)| (name.as_str(), report.file()))
+            .collect();
+
+        assert_eq!(
+            named,
+            [
+                ("both", "families/both/family.toml"),
+                ("none", "families/none/family.yaml"),
+                ("toml", "families/toml/family.toml"),
+                ("toml-bad", "families/toml-bad/family.toml"),
+                ("yaml", "families/yaml/family.yaml"),
+                ("yaml-bad", "families/yaml-bad/family.yaml"),
+            ]
+        );
+        let parsed: Vec<&String> = loaded.parsed_families().keys().collect();
+        assert_eq!(parsed, ["toml", "yaml"]);
     }
 }
