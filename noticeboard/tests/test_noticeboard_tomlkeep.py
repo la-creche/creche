@@ -150,6 +150,17 @@ def test_an_added_tool_lands_in_the_table() -> None:
     assert "# The four reads contract 01 §8.1 names." in text.splitlines()
 
 
+def test_a_table_that_loses_each_key_and_gains_one_takes_the_edit() -> None:
+    """Each change of a table goes through a view of `tomlkit` that the
+    module reads again. A view that a change went through does not follow
+    that change."""
+    text = saved(tools={"vikunja-work": "all"})
+
+    assert model_of(text)["tools"] == {"vikunja-work": "all"}
+    assert 'tools.vikunja-work = "all"' in text.splitlines()
+    assert "# The four reads contract 01 §8.1 names." in text.splitlines()
+
+
 def test_a_replaced_list_has_the_layout_of_the_writer() -> None:
     """A list goes whole. Its new text is the text of `tomlout.py`."""
     files = [{"path": "/srv/agents/vault", "mode": "rw"}]

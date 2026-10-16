@@ -68,7 +68,7 @@ def edited_text(original: str, before: Mapping[str, Any], after: Mapping[str, An
 
     try:
         document = tomlkit.parse(original)
-        _merge(document, document, (), before, after)
+        _merge(document, (), before, after)
 
         return document.as_string()
     except Exception:
@@ -79,35 +79,47 @@ def edited_text(original: str, before: Mapping[str, Any], after: Mapping[str, An
         return None
 
 
+def _node(document: tomlkit.TOMLDocument, path: tuple[str, ...]) -> MutableMapping[str, Any]:
+    """The table at `path`, read again from the document.
+
+    `tomlkit` gives a table whose keys are apart in the file as a view. A
+    view does not follow a change that went through it, so each change goes
+    through a view that this function reads again.
+    """
+    node: object = document
+
+    for key in path:
+        node = cast("MutableMapping[str, Any]", node)[key]
+
+    return cast("MutableMapping[str, Any]", node)
+
+
 def _merge(
     document: tomlkit.TOMLDocument,
-    node: MutableMapping[str, Any],
     path: tuple[str, ...],
     before: Mapping[str, Any],
     after: Mapping[str, Any],
 ) -> None:
-    """Replace, inside `node`, exactly the keys whose value moved."""
+    """Replace, inside the table at `path`, exactly the keys whose value
+    moved."""
     for key, wanted in after.items():
         if key in before and before[key] == wanted:
             continue
 
-        _set(document, node, (*path, key), before.get(key), wanted)
+        _set(document, (*path, key), before.get(key), wanted)
 
     # A key that the edit removed. Both dumps hold each field of the schema,
     # so this applies only inside a free-form table such as `tools`.
-    for key in [one for one in node if one not in after]:
-        del node[key]
+    for key in [one for one in _node(document, path) if one not in after]:
+        del _node(document, path)[key]
 
 
 def _set(
-    document: tomlkit.TOMLDocument,
-    node: MutableMapping[str, Any],
-    path: tuple[str, ...],
-    was: object,
-    wanted: object,
+    document: tomlkit.TOMLDocument, path: tuple[str, ...], was: object, wanted: object
 ) -> None:
     """One key. A table in the file and in the edit takes the edit key by
     key, so a one-field edit leaves the other keys and their comments."""
+    node = _node(document, path[:-1])
     key = path[-1]
     held: object = node.get(key)
 
@@ -119,7 +131,6 @@ def _set(
     if _holds_a_value(wanted) and _is_kept_table(held):
         _merge(
             document,
-            cast("MutableMapping[str, Any]", held),
             path,
             cast("Mapping[str, Any]", was) if isinstance(was, Mapping) else {},
             cast("Mapping[str, Any]", wanted),
@@ -127,7 +138,7 @@ def _set(
         return
 
     if _holds_a_value(wanted):
-        _add_table(document, node, path, cast("Mapping[str, object]", wanted))
+        _add_table(document, path, cast("Mapping[str, object]", wanted))
         return
 
     node[key] = _item_of(wanted)
@@ -147,30 +158,27 @@ def _is_kept_table(held: object) -> bool:
 
 
 def _add_table(
-    document: tomlkit.TOMLDocument,
-    node: MutableMapping[str, Any],
-    path: tuple[str, ...],
-    wanted: Mapping[str, object],
+    document: tomlkit.TOMLDocument, path: tuple[str, ...], wanted: Mapping[str, object]
 ) -> None:
     """Rule 3: a new table, as one dotted key for each value of it."""
-    if isinstance(node, InlineTable):
+    parent, key = path[:-1], path[-1]
+
+    if isinstance(_node(document, parent), InlineTable):
         raise _CannotKeep(".".join(path))
 
-    key = path[-1]
-
-    if key in node:
-        del node[key]
+    if key in _node(document, parent):
+        del _node(document, parent)[key]
 
     # A table of the file takes the keys at its own end. The view that
     # `tomlkit` gives of a table whose keys are apart in the file can add
     # none, so the text takes the keys at its end, under the whole path.
-    if isinstance(node, tomlkit.TOMLDocument | Table):
-        for leaf, value in _leaves((key,), wanted):
-            node.add(tomlkit.key(list(leaf)), _item_of(value))
-        return
-
     for leaf, value in _leaves(path, wanted):
-        document.add(tomlkit.key(list(leaf)), _item_of(value))
+        node = _node(document, parent)
+
+        if isinstance(node, tomlkit.TOMLDocument | Table):
+            node.add(tomlkit.key(list(leaf[len(parent) :])), _item_of(value))
+        else:
+            document.add(tomlkit.key(list(leaf)), _item_of(value))
 
 
 def _leaves(
