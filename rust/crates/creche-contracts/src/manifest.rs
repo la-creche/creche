@@ -679,6 +679,12 @@ pub const BINARY_BUILD_FILES: [&str; 3] = [
     "rust/rust-toolchain.toml",
 ];
 
+/// The first word of each `build` command of a `binary` component: the name
+/// of the program, with no path. A CI runner has no fixed path for the
+/// program. The `build` command of each other kind starts with an absolute
+/// path (contract 06 §8).
+pub const BINARY_BUILD_PROGRAM: &str = "cargo";
+
 /// The first number of the newest `component-manifest` contract version
 /// that this code takes. It is the number of the `provides` row in the
 /// manifest of the release tool.
@@ -1465,6 +1471,7 @@ mod tests {
             "retiring" => json!(RETIRING),
             "arriving" => json!(ARRIVING),
             "binary-build-files" => json!(BINARY_BUILD_FILES),
+            "binary-build-program" => json!(BINARY_BUILD_PROGRAM),
             "manifest-contract-version" => {
                 json!({"major": MANIFEST_CONTRACT_MAJOR, "minor": MANIFEST_CONTRACT_MINOR})
             }
