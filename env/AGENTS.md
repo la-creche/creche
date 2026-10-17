@@ -104,11 +104,12 @@ command prints `<file>: cannot be read: <reason>` and exits with status 78.
 
 ## Rules for a change
 
-1. A value of `default.env` never changes. A new value takes a new key. A
-   later change removes the old key. Reason: each tree has its own copy of
-   the file, and two copies must give one value for each key that both
-   hold. `bin/tests/test_envfile_catalog.py` holds this rule against the
-   merge base.
+1. Do not change a value of `default.env`. For another value, add a key.
+   Remove the old key in a later change, and never add it again. Reason: a
+   release installs one copy of the file in each tree, so two trees can
+   hold two versions. Each key of both versions must then have one value.
+   `bin/tests/test_envfile_catalog.py` compares each key with each earlier
+   version of the file on the base branch.
 2. A key gets a default when each host can use one value. A key with no
    such value is a required key of `example.env`.
 3. A default names no host, no user, no domain and no address of a

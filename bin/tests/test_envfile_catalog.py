@@ -1,16 +1,17 @@
 """The catalog of the product: `default.env`, `example.env` and `root-keys.txt`.
 
 The three files are the package data of `creche-env` (`env/AGENTS.md`).
-Each tree of a release carries its own copy, so these tests hold the rules
-that keep two copies in agreement and the public repository clean:
+A release puts one copy of them into each tree that it installs. These
+tests keep the copies of two trees compatible and keep the public
+repository clean:
 
 1. The pair reads, and each required key has an example value that the
    reader of its key takes.
 2. The two files name no IPv4 address but a documentation address and
    loopback.
 3. Each key of `root-keys.txt` is a catalog key.
-4. No value of `default.env` differs from its value at the merge base: a
-   new value takes a new key.
+4. A key of `default.env` keeps each value that an earlier version on the
+   base branch gave it. Another value needs another key.
 5. A copy of `example.env` as the `.env` stops the command with status 78
    and one line for each required key.
 """
@@ -123,23 +124,43 @@ def _git(*words: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_no_default_differs_from_the_merge_base() -> None:
-    """Each tree carries its own copy of `default.env`, so a key that two
-    copies hold must have one value in both. A new value takes a new key."""
+def _assignments(text: str) -> dict[str, str]:
+    """Each `KEY=VALUE` line of one earlier version of `default.env`. A
+    later rule of the grammar can refuse an earlier version, so this reads
+    only the form of an assignment."""
+    found: dict[str, str] = {}
+    for line in text.splitlines():
+        if line and not line.startswith("#"):
+            key, _, value = line.partition("=")
+            found[key] = value
+
+    return found
+
+
+def test_no_default_differs_from_an_earlier_value() -> None:
+    """Two trees of two releases hold two copies of `default.env`. They
+    read one key in the same way only when its value never moves. The test
+    reads each version of the file in the history of the merge base, so a
+    key that a change removed cannot come back with another value."""
     base = _git("merge-base", "HEAD", BASE_BRANCH)
     assert base.returncode == 0, f"no merge base with {BASE_BRANCH}: {base.stderr}"
 
-    old = _git("show", f"{base.stdout.strip()}:{DEFAULT_PATH}")
-    if old.returncode != 0:
-        assert "exists on disk, but not in" in old.stderr or "does not exist" in old.stderr
-        return
+    commits = _git("log", "--format=%H", base.stdout.strip(), "--", DEFAULT_PATH)
+    assert commits.returncode == 0, commits.stderr
 
-    before = {
-        one.key: one.value
-        for one in parse(Text(DEFAULT_FILE, old.stdout.encode()), FileKind.DEFAULT)
-    }
     now = parse(Text(DEFAULT_FILE, (PAIR_DIR / DEFAULT_FILE).read_bytes()), FileKind.DEFAULT)
-    changed = [one.key for one in now if one.key in before and before[one.key] != one.value]
+    changed: list[str] = []
+    for commit in commits.stdout.split():
+        old = _git("show", f"{commit}:{DEFAULT_PATH}")
+        if old.returncode != 0:
+            continue
+
+        before = _assignments(old.stdout)
+        changed.extend(
+            f"{one.key} ({commit})"
+            for one in now
+            if one.key in before and before[one.key] != one.value
+        )
 
     assert changed == [], "a new value takes a new key"
 
