@@ -50,6 +50,15 @@ CHILD_WALL_S: Final = 60
 CHILD_RESIDENT_BYTES: Final = 512 * 1024 * 1024
 CHILD_PAST_MEMORY: Final = 9
 
+#: The status of the child when the thread cannot read the largest resident
+#: memory. The thread then writes `NO_PEAK_LINE` and the fault as one line
+#: on standard error.
+CHILD_NO_PEAK: Final = 10
+
+#: The start of the line that the thread writes when it cannot read the
+#: largest resident memory. The `repr` of the fault follows it.
+NO_PEAK_LINE: Final = "the watch cannot read the peak: "
+
 #: The levels of `_doubling`, and the merge keys of `_itself`. A reader with
 #: no limit makes more than 16,000,000 copies from each of the two.
 LEVELS: Final = 24
@@ -61,6 +70,12 @@ TEXT_BYTES_MAX: Final = 4096
 #: file that its second argument names with the reader that its first
 #: argument names. A system that does not take a limit leaves it out: the
 #: CPU limit and the limit of the thread hold on each supported system.
+#:
+#: The thread reads the largest resident memory of the child itself.
+#: On Linux, `ru_maxrss` also holds the peak of the memory that the process
+#: had before its exec, which is the memory of its parent. `VmHWM` of
+#: `/proc/self/status` holds only the memory that the process has after its
+#: exec. On macOS, `ru_maxrss` holds only the memory of the process itself.
 CHILD: Final = f"""
 import os
 import resource
@@ -80,16 +95,26 @@ for kind, limit in limits:
     except (OSError, ValueError):
         pass
 
-# The largest resident memory is bytes on macOS and KiB on Linux.
-unit = 1 if sys.platform == "darwin" else 1024
+
+def peak_bytes():
+    if sys.platform == "linux":
+        with open("/proc/self/status", "rb") as status:
+            line = next(row for row in status if row.startswith(b"VmHWM:"))
+        return int(line.split()[1]) * 1024
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return peak if sys.platform == "darwin" else peak * 1024
 
 
 def watch():
-    while True:
-        if resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * unit > {CHILD_RESIDENT_BYTES}:
-            os._exit({CHILD_PAST_MEMORY})
-
-        time.sleep(0.02)
+    status = {CHILD_NO_PEAK}
+    try:
+        while peak_bytes() <= {CHILD_RESIDENT_BYTES}:
+            time.sleep(0.02)
+        status = {CHILD_PAST_MEMORY}
+    except BaseException as fault:
+        os.write(2, f"{NO_PEAK_LINE}{{fault!r}}\\n".encode())
+    finally:
+        os._exit(status)
 
 
 threading.Thread(target=watch, daemon=True).start()
@@ -104,6 +129,25 @@ except (*UNREADABLE, SecretsFormatError) as error:
     print("refused", type(error).__name__)
 else:
     print("read")
+"""
+
+#: The size of the value that `HOLDER` holds: the resident limit of the
+#: child, and 64 MiB more.
+HELD_BYTES: Final = CHILD_RESIDENT_BYTES + 64 * 1024 * 1024
+
+#: Holds a value of `HELD_BYTES` while it runs the command of its arguments
+#: with its own standard streams, and ends with the status of that command.
+#: `bytearray` writes each byte of the value, so the peak resident size of
+#: this process passes the resident limit of the child. The value is not in
+#: the test process, so the peak of the test process does not change. The
+#: command gets half of the wall time limit of the child, so this process
+#: stops the command before the test stops this process.
+HOLDER: Final = f"""
+import subprocess
+import sys
+
+held = bytearray({HELD_BYTES})
+sys.exit(subprocess.run(sys.argv[1:], timeout={CHILD_WALL_S / 2}).returncode)
 """
 
 
@@ -165,6 +209,32 @@ def _file(tmp_path: Path, text: str) -> Path:
     return path
 
 
+def _run_child(
+    program: str, reader: str, path: Path, *parent: str
+) -> subprocess.CompletedProcess[str]:
+    """Runs `program` in a child process inside the wall time limit, with
+    `reader` and `path` as its arguments. `parent` is the command of a
+    process that starts the child, or no word: then this process starts
+    it."""
+    return subprocess.run(
+        [*parent, sys.executable, "-c", program, reader, str(path)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=CHILD_WALL_S,
+    )
+
+
+def _waits_at_the_read(program: str, before: str = "") -> str:
+    """`program` with the lines `before`, then a wait with no end, in front
+    of its read. Only the thread can then end the child."""
+    read = "reader, path = "
+    waits = program.replace(read, f"{before}threading.Event().wait()\n{read}", 1)
+    assert waits.count("Event().wait()") == 1
+
+    return waits
+
+
 @pytest.mark.slow
 @pytest.mark.usefixtures("fake_sops")
 @pytest.mark.parametrize("text", KINDS)
@@ -174,16 +244,54 @@ def test_a_small_text_of_each_kind_is_refused_inside_the_limits(
 ) -> None:
     assert len(text.encode()) < TEXT_BYTES_MAX
 
-    done = subprocess.run(
-        [sys.executable, "-c", CHILD, reader, str(_file(tmp_path, text))],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=CHILD_WALL_S,
-    )
+    done = _run_child(CHILD, reader, _file(tmp_path, text))
 
     assert done.returncode == 0, done.stderr
     assert done.stdout.split()[0] == "refused", done.stdout
+
+
+@pytest.mark.slow
+def test_the_child_watches_only_its_own_memory(tmp_path: Path) -> None:
+    """The parent of the child holds a peak past the resident limit of the
+    child while the child runs. On Linux, the `ru_maxrss` of the child holds
+    the memory of its parent from before its exec. The thread of the child
+    does not count that memory."""
+    path = _file(tmp_path, _itself(LEVELS))
+
+    done = _run_child(CHILD, "roster", path, sys.executable, "-c", HOLDER)
+
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.split()[0] == "refused", done.stdout
+
+
+@pytest.mark.slow
+def test_a_child_past_its_limit_ends_with_its_status(tmp_path: Path) -> None:
+    """The thread reads the largest resident memory of the child itself, in
+    bytes. The child holds a value past its resident limit, and the thread
+    ends it with `CHILD_PAST_MEMORY`. On Linux the thread reads `VmHWM`, so
+    this test fails there for a thread that reads no peak or reads it in
+    KiB."""
+    child = _waits_at_the_read(CHILD, f"held = bytearray({HELD_BYTES})\n")
+
+    done = _run_child(child, "roster", _file(tmp_path, _itself(LEVELS)))
+
+    assert done.returncode == CHILD_PAST_MEMORY, done.stderr
+
+
+@pytest.mark.slow
+def test_a_watch_that_cannot_read_the_peak_stops_the_child(tmp_path: Path) -> None:
+    """The thread fails closed. When it cannot read the largest resident
+    memory, the child ends with `CHILD_NO_PEAK` and names the fault on its
+    standard error."""
+    fault = OSError("no peak")
+    head = "def peak_bytes():\n"
+    child = _waits_at_the_read(CHILD.replace(head, f"{head}    raise {fault!r}\n", 1))
+    assert child.count(repr(fault)) == 1
+
+    done = _run_child(child, "roster", _file(tmp_path, _itself(LEVELS)))
+
+    assert done.returncode == CHILD_NO_PEAK
+    assert done.stderr == f"{NO_PEAK_LINE}{fault!r}\n"
 
 
 #: A text with a character that PyYAML does not read. PyYAML raises on it

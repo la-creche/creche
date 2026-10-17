@@ -12,6 +12,7 @@ import json
 import math
 import pickle
 import time
+import timeit
 from collections.abc import Callable
 
 import pytest
@@ -1371,7 +1372,14 @@ def test_a_value_with_no_json_text_keeps_the_error_of_the_standard_writer() -> N
 # --- the cost --------------------------------------------------------------------------
 
 #: The most that the strict reader can cost, as a multiple of the standard reader.
-COST_MAX = 10
+#: The text of 20-digit integers costs the most: about 4 standard reads on a
+#: development machine, and about 11 on a CI runner. A reader that is 100
+#: times slower costs more than 100 standard reads for each text.
+COST_MAX = 30
+
+#: The rounds of the cost test. Each round times one standard read, then one
+#: strict read, so a period of load on the machine reaches both sides.
+ROUNDS = 10
 
 RECORD = (
     '{"id": "01J9ZQ3V5K8M2N4P6R7S8T9V0W", "state": "ready", "count": 42, "spend": 3.25, '
@@ -1399,24 +1407,36 @@ def filled(unit: str) -> bytes:
     return data + b" " * (MEBIBYTE - len(data))
 
 
-def cpu_seconds(call: Callable[[], object]) -> float:
-    """The least processor time of five runs of `call`."""
-    runs: list[float] = []
-    for _ in range(5):
-        start = time.process_time()
-        call()
-        runs.append(time.process_time() - start)
+def least_cpu_seconds(
+    standard_read: Callable[[], object], strict_read: Callable[[], object]
+) -> tuple[float, float]:
+    """The least processor time of `standard_read` and of `strict_read`, in
+    `ROUNDS` rounds.
 
-    return min(runs)
+    The test takes the best of several runs of each side. A count of Python
+    steps is no measure here: it does not see the work of the decoder in C,
+    and that work is most of a standard read. The clock is the processor
+    time of this thread. The garbage collector is off in each run, as
+    `timeit` sets it. Another process and another thread thus add no time
+    to a run. A run that a period of load made slow is not the least run of
+    its side.
+    """
+    runs: tuple[list[float], list[float]] = ([], [])
+    for _ in range(ROUNDS):
+        for call, times in zip((standard_read, strict_read), runs, strict=True):
+            times.append(timeit.Timer(call, timer=time.thread_time).timeit(number=1))
+
+    return min(runs[0]), min(runs[1])
 
 
 @pytest.mark.parametrize("unit", UNITS)
-def test_a_strict_text_of_one_mebibyte_costs_ten_standard_reads_at_most(unit: str) -> None:
+def test_a_strict_text_of_one_mebibyte_costs_cost_max_standard_reads_at_most(unit: str) -> None:
     data = filled(unit)
     assert len(data) == MEBIBYTE
     assert strictjson.loads(data, cap=MEBIBYTE) == json.loads(data)
 
-    standard = cpu_seconds(lambda: json.loads(data))
-    strict = cpu_seconds(lambda: strictjson.loads(data, cap=MEBIBYTE))
+    standard, strict = least_cpu_seconds(
+        lambda: json.loads(data), lambda: strictjson.loads(data, cap=MEBIBYTE)
+    )
 
     assert strict <= COST_MAX * standard, f"{strict:.4f} s against {standard:.4f} s"
