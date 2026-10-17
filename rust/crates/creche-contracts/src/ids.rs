@@ -1197,6 +1197,14 @@ run_id! {
     SECRET_NAME
 }
 
+impl SecretName {
+    /// The grammar of a secret name as the text of a pattern. The message
+    /// for a text that is no secret name shows it.
+    pub(crate) fn form() -> String {
+        SECRET_NAME.form()
+    }
+}
+
 // CONTRACT-QUESTION: contract 01b §3.1 says that the version of a package is
 // exact and never a range. It gives no grammar. The two Python copies take one
 // form, `[0-9][0-9A-Za-z.]{0,63}`: `agent_family.grammar.EXACT_VERSION` and
