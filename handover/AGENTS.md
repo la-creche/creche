@@ -461,3 +461,7 @@ that wants a refusal changes one field.
 - Contract 06 §8.2 names no rule for a staged venv tree that is a link. The
   walk reports the link as a fault with the code `editable`
   (`executor/selfcontained.py`).
+- Contract 06 §8.2 and PEP 610 name no size for a `direct_url.json` record.
+  Root reads 64 KiB of such a record at most. A larger record is a record
+  that root cannot read, and the walk reports it as a fault
+  (`executor/selfcontained.py`).

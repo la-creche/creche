@@ -82,8 +82,12 @@ SITE_GLOB: Final = "lib/*/site-packages"
 DIRECT_URL: Final = "direct_url.json"
 DIST_INFO_GLOB: Final = f"*.dist-info/{DIRECT_URL}"
 
-#: The most bytes of one such file. PEP 610 names no size. The file holds a
-#: URL and a few short fields, so 64 KiB is far above each real one.
+#: The most bytes of one such file. The file holds a URL and a few short
+#: fields, so 64 KiB is far above each real one.
+#: CONTRACT-QUESTION: contract 06 §8.2 and PEP 610 name no size for this
+#: file. Root reads 64 KiB of it at most, and a larger file is a record that
+#: root cannot read: an `UNREADABLE_DIRECT_URL` fault. A change costs this
+#: one constant.
 MAX_DIRECT_URL_BYTES: Final = 64 * 1024
 
 #: The surface word of a notice for such a file that is not strict JSON.
