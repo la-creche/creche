@@ -119,8 +119,9 @@
 #     larger record. A record that it cannot read, or cannot write, stops
 #     the step for that run: a notice with no record line has no limit.
 #   - A record that holds bytes and no record line stops the step in each
-#     run. To send again, remove watchdog/notices-sent. Each pair in the
-#     notice files can then get one more notice, 6 in one hour at most.
+#     run. The operator removes watchdog/notices-sent to repair it. After
+#     that, each service, surface and rule of the notice files can get one
+#     more notice, 6 in one hour at most.
 #   - The notice has ids of its own, so its card and the card of an outage
 #     do not replace each other. One notice of this kind replaces the card
 #     of the notice of this kind before it.

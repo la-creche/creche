@@ -151,8 +151,9 @@ root, and `_notices.json` in the fault directory of the chaperone.
   script reads 262,144 bytes of the record at most, and it writes no larger
   record.
 - A record that holds bytes and no record line stops the step in each run.
-  To send again, remove `watchdog/notices-sent`. Each pair in the notice
-  files can then get one more notice, 6 in one hour at most.
+  The operator removes `watchdog/notices-sent` to repair it. After that,
+  each service, surface and rule of the notice files can get one more
+  notice, 6 in one hour at most.
 - The step changes no verdict and no exit status. It runs in a shell of its
   own, after the script wrote the verdict.
 - Only a run of the unit sends a notice of this kind. systemd gives each run
