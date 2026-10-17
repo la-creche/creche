@@ -3,7 +3,7 @@
 ```
  1 intake      parse the request as hostile bytes (§3.2)
  2 resolve     manifests at their tags + the live state -> contract 06 §9
- 3 provenance  P1-P5 per deploying component, plus monotonic
+ 3 provenance  P1-P6 per deploying component, plus monotonic
  4 contracts   rules C1 to C5 over the resolved set
  5 approve     one tap, bound to manifest_sha256 (§2.5)
  6 lock        flock: two requests run one after the other
@@ -43,7 +43,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Final, cast
 
-from ..artifacts import archive_expected
+from ..artifacts import ArtifactRefusal, archive_expected, signer_policy
 from ..catalog import CATALOG_BY_NAME, Kind
 from ..discovery import read_one
 from ..errors import Refusal, RefusalCode
@@ -58,6 +58,7 @@ from ..resolve import (
     deploying_versions,
     resolve,
 )
+from ..site import github_owner, github_repo
 from ..state import ReleaseState
 from .approval import (
     APPROVAL_TTL_S,
@@ -92,7 +93,7 @@ from .live_state import (
 )
 from .mcpbuild import Fetched, McpBuilder, ServerBuild
 from .notice import Notifier, say_nothing
-from .provenance import ApiGetFn, check_monotonic
+from .provenance import ApiGetFn, VerifiedArtifact, check_artifact, check_monotonic
 from .provenance import verify as check_provenance
 from .quiesce import Quiesce
 from .quiet import NO_WINDOW, BusySeenFn, needs_window, wait_for_quiet
@@ -102,6 +103,12 @@ from .roster import restore as restore_roster
 from .roster import write as write_roster
 from .source import require_trusted
 from .spool import SelfNote, Spool, SwitchNote, VerifyHook, acquire, release_lock
+
+#: The step detail of step 3: the checks of the code host, and those with
+#: the check of an archive, for a set that holds a `kind: binary`
+#: component.
+HOST_CHECKS: Final = "P1-P5"
+ALL_CHECKS: Final = "P1-P6"
 
 #: §2.4 row 6: a wait past this is `failed, step: lock`.
 LOCK_WAIT_S: Final = 1800.0
@@ -403,6 +410,9 @@ class Release:
         #: 2 makes the copy. Step 8 gives the result of step 2 back to the
         #: copy, so it reads root's copy again and never the store.
         self.copies: dict[str, Copied | NoCopy] = {}
+        #: The archive of each binary component that passed check P6 at
+        #: step 3, by component. Step 8 unpacks only these.
+        self.verified: dict[str, VerifiedArtifact] = {}
         #: What step 8's compose dry run said each `kind: compose`
         #: component would recreate. Step 9 reads it for §2.8's window.
         self.recreates: dict[str, tuple[str, ...]] = {}
@@ -844,7 +854,8 @@ class Release:
     # -- 3 provenance ---------------------------------------------------
 
     def _provenance(self) -> str:
-        """P1 to P5 per deploying component, plus the monotonic rule.
+        """P1 to P5 per deploying component, plus the monotonic rule, then
+        P6 for each component whose manifest ships an archive.
 
         Every component in the set, not only the first: one unverified
         entry in a set of three is a set nobody verified.
@@ -860,9 +871,30 @@ class Release:
                 self.wiring.api, name, str(manifest.repo), plan.tag(name), plan.sha(name)
             )
             check_monotonic(name, plan.to_version(name), plan.from_version(name))
+            if archive_expected(manifest.kind):
+                self.verified[name] = self._check_archive(plan, name, manifest)
+
             found.append(f"{name} PR #{reply.pr}")
 
-        return f"P1-P5 pass: {', '.join(found)}"
+        checks = ALL_CHECKS if self.verified else HOST_CHECKS
+
+        return f"{checks} pass: {', '.join(found)}"
+
+    def _check_archive(
+        self, plan: Plan, name: str, manifest: ComponentManifest
+    ) -> VerifiedArtifact:
+        """P6 for one component, on root's copy of step 2. The signer is a
+        job of the release workflow of its repository, at the resolved SHA.
+        The site file gives the owner and the name of that repository on
+        the code host, with the letter case that they have there."""
+        copy = self.copies.get(name)
+        if not isinstance(copy, Copied):
+            raise Refusal(RefusalCode.P6, name, str(ArtifactRefusal.NO_ARTIFACT))
+
+        repo = manifest.repo
+        policy = signer_policy(repo, github_owner(), github_repo(str(repo)), plan.sha(name))
+
+        return check_artifact(self.wiring.host.run, name, policy, copy)
 
     # -- 4 contracts ----------------------------------------------------
 
@@ -1009,7 +1041,7 @@ class Release:
         # here leaves the host exactly as it was (contract 06 §1 rule 8).
         self.installer.check_unit_binds(manifest, source)
         self.paths[name] = paths
-        self.installer.build(manifest, source, paths)
+        self.installer.build(manifest, source, paths, self.verified.get(name))
         write_stamp(paths.new, plan.to_version(name))
         # The manifest goes into the artifact beside the version stamp, so
         # the NEXT release reads this component's interface out of a tree

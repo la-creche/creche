@@ -4,7 +4,7 @@ One entry per request, written under the lock at step 10, at
 `done/<ULID>.json`, with the whole log beside it at `done/<ULID>.log`.
 
 **The ledger informs and never decides.** `done/` is readable by the group,
-so a rollback target is re-verified P1 to P5 like any other request, and the
+so a rollback target is re-verified P1 to P6 like any other request, and the
 rule that a component never goes backwards rests on what is INSTALLED. Every
 reader of this module should keep that in mind before adding a function that
 reads an entry back.

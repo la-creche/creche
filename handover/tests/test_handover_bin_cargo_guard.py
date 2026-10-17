@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Final
 
 import pytest
-from handover.executor.install import BINARY_ENV_NAME
+from handover.catalog import BINARY_INSTALL_ENV
 from handover.executor.selfcontained import NAMES_WORK_TREE, binary_escapes
 from handover.manifest import ComponentManifest, Markup, parse_manifest
 from handover_bin_fixtures import BINARY_MANIFEST, BINARY_NAME
@@ -119,16 +119,16 @@ def _workspace(root: Path) -> Path:
 
 
 def _build(tmp_path: Path, argv: tuple[str, ...], source: Path, new: Path) -> None:
-    """One build argv, run the way the executor runs it: in the fetched
-    tree, with the staged tree named by `BINARY_ENV_NAME` and nothing else
-    of this process's cargo configuration."""
+    """One build argv, run the way CI runs it: in the root of the tree,
+    with the staged tree named by `BINARY_INSTALL_ENV` and nothing else of
+    this process's cargo configuration."""
     env = {
         "PATH": os.environ["PATH"],
         "HOME": os.environ.get("HOME", str(tmp_path)),
         "LANG": "C.UTF-8",
         "CARGO_HOME": str(tmp_path / "cargo-home"),
         "CARGO_NET_OFFLINE": "true",
-        BINARY_ENV_NAME: str(new),
+        BINARY_INSTALL_ENV: str(new),
     }
     for name in ("RUSTUP_HOME", "RUSTUP_TOOLCHAIN"):
         if name in os.environ:

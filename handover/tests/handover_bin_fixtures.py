@@ -19,8 +19,9 @@ holds:
    as a child with the words of the verifier.
 4. `verified_artifact`: a `VerifiedArtifact`, from check P6 itself.
 
-`staged_binary_tree` writes what `cargo install` leaves, and `FakeRun`
-calls it when the build argv runs.
+`staged_binary_tree` writes what the unpack leaves. `Staging.build` puts
+`made` in the place of the unpack, so a test can stage a tree that no
+archive unpacks to, and the walk after the unpack still refuses it.
 """
 
 from __future__ import annotations
@@ -38,6 +39,7 @@ from pathlib import Path
 import pytest
 from handover.artifacts import TOKEN_ISSUER, asset_names, signer_policy
 from handover.catalog import CATALOG, CATALOG_BY_NAME, CatalogRow, Kind
+from handover.executor import install
 from handover.executor.artifact import Copied
 from handover.executor.host import (
     NO_VERIFIER_EXIT_CODE,
@@ -168,9 +170,26 @@ class Staging:
     paths: Paths
     #: The fetched work tree, where the build argv runs.
     source: Path
+    #: What the stage leaves at `<install.to>.new`, or None for nothing.
+    made: Callable[[Path], object] | None = None
 
     def build(self) -> None:
-        self.installer.build(self.manifest, self.source, self.paths)
+        """Step 8 for the component. A binary manifest gets a
+        `VerifiedArtifact`, and `made` stands in for its unpack."""
+        if self.manifest.kind is not Kind.BINARY:
+            self.installer.build(self.manifest, self.source, self.paths)
+
+            return
+
+        verified = verified_artifact(self.tmp_path / "copy")
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(install, "extract_tar", self._unpack)
+            self.installer.build(self.manifest, self.source, self.paths, verified)
+
+    def _unpack(self, archive: Path, into: Path, component: str | None = None) -> None:
+        del archive, component
+        if self.made is not None:
+            self.made(into)
 
     def program(self, name: str = BINARY_NAME) -> str:
         """The path a unit names for one program of the LIVE tree."""
@@ -202,22 +221,24 @@ def make_staging(
     unit: str | None = None,
     kind: Kind = Kind.BINARY,
 ) -> Staging:
-    """A fake host on which the build argv of a binary component leaves
-    what `made` writes at `<install.to>.new`. None leaves nothing."""
+    """A fake host on which the stage of the component leaves what `made`
+    writes at `<install.to>.new`. None leaves nothing. For a binary
+    manifest `made` stands in for the unpack, and for each other kind it
+    runs at the build argv."""
     components = tmp_path / "components"
     manifest = parse_manifest(
         binary_manifest_text(components, unit, kind), f"{BINARY_NAME}/component.yaml", Markup.YAML
     )
     paths = paths_of(manifest, (components,))
     run = FakeRun(answers=git_host_answers())
-    if made is not None:
+    if made is not None and kind is not Kind.BINARY:
         run.hooks[CARGO] = lambda _: made(paths.new)
 
     host = fake_host(tmp_path, run)
     source = host.work_root / "01K5J8M2Q7V3X9R4T6N0B8C2DE" / BINARY_NAME
     source.mkdir(parents=True)
 
-    return Staging(tmp_path, run, Installer(host), manifest, paths, source)
+    return Staging(tmp_path, run, Installer(host), manifest, paths, source, made)
 
 
 # -- the archive, its signature and the verifier ------------------------------

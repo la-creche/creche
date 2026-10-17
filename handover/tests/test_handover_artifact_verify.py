@@ -2,7 +2,7 @@
 
 Root verifies its copy of the archive of a binary component with `cosign`,
 as two children in a transient unit of systemd with a dynamic user. Root
-reads the exit status of each child and no text. Three groups of tests:
+reads the exit status of each child and no text. Four groups of tests:
 
 1. The two optional keys of the site file that name the verifier and
    `systemd-run`.
@@ -10,22 +10,25 @@ reads the exit status of each child and no text. Three groups of tests:
    fail-closed arm, root's time limit, and the check of each program file.
 3. `check_artifact` with a recorded runner: each class of exit status, the
    exact words of each child, and the member list after a pass.
+4. Step 3 and step 8 for a manifest that says `binary` while the catalog
+   row of the component says `venv`.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import stat
 import subprocess
 import tarfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 import pytest
 from handover.artifacts import ArtifactRefusal, SignerPolicy, signer_policy, verify_words
-from handover.catalog import Repo
+from handover.catalog import CATALOG_BY_NAME, Kind, Repo
 from handover.errors import Refusal, RefusalCode
 from handover.executor import host, provenance
 from handover.executor.artifact import Copied
@@ -45,24 +48,43 @@ from handover.executor.host import (
     make_runner,
     verifier_argv,
 )
+from handover.executor.install import paths_of
 from handover.executor.provenance import (
     TRUSTED_ROOT,
     VerifiedArtifact,
     check_artifact,
 )
+from handover.executor.request import parse_request
+from handover.executor.spool import Spool
+from handover.executor.steps import Plan, Release, Wiring
+from handover.manifest import Markup, parse_manifest
+from handover.resolve import build_document, resolve
+from handover.state import ReleaseState, SourceFacts
 from handover_bin_fixtures import (
     BINARY_NAME,
     OWNER,
+    PROGRAM_BYTES,
     PROGRAMS,
     ROOT_OWNED_STARTER,
     ROOT_OWNED_VERIFIER,
+    StandIn,
     archive_bytes,
+    binary_manifest_text,
     signed_bundle,
     site_text,
+    stock_store,
 )
 from handover_executor_fixtures import (
     DIGEST,
+    REQUEST_ID,
     SHA_OF,
+    FakeRun,
+    fake_host,
+    grant_transport,
+    green_api,
+    make_spool_dirs,
+    request_body,
+    this_uid,
 )
 
 from handover import site
@@ -628,3 +650,64 @@ def test_only_check_p6_builds_a_verified_artifact() -> None:
     )
 
     assert builders == ["executor/provenance.py"]
+
+
+# ---- 4. step 3 and step 8, with the kind of the manifest only -------------------------
+
+
+@pytest.fixture
+def release(tmp_path: Path, home: Path) -> Iterator[Release]:
+    """A release of the component, live at `LIVE_VERSION`, to `NEW_VERSION`.
+    The store holds a good archive and its signature. The catalog row of
+    the component says `venv`."""
+    raw = archive_bytes()
+    stock_store(home, f"{COMPONENT}-v{NEW_VERSION}", raw, signed_bundle(raw))
+    run = FakeRun()
+    wiring = Wiring(
+        host=replace(fake_host(tmp_path, run), run=StandIn(run)),
+        transport=grant_transport(),
+        api=green_api(str(CATALOG_BY_NAME[COMPONENT].repo), f"{COMPONENT}-v{NEW_VERSION}", SHA),
+    )
+    raw_request = json.dumps(request_body({COMPONENT: NEW_VERSION})).encode("utf-8")
+    spool = Spool(str(make_spool_dirs(tmp_path)), this_uid())
+    try:
+        yield Release(parse_request(raw_request, REQUEST_ID), wiring, spool)
+    finally:
+        spool.close()
+
+
+def _plan(release: Release, tmp_path: Path) -> Plan:
+    """Steps 2 to 4 as a plan: the manifest of the new tag says `binary`,
+    and root's copy is made."""
+    manifest = parse_manifest(
+        binary_manifest_text(tmp_path / "components"),
+        f"{COMPONENT}/component.yaml",
+        Markup.YAML,
+    )
+    manifests = {COMPONENT: manifest}
+    facts = SourceFacts(sha=SHA, input_digest=DIGEST, artifact_digest=None)
+    state = ReleaseState(live={COMPONENT: LIVE_VERSION}, facts={COMPONENT: facts})
+    state = release._copy_artifacts(state, manifests)  # pyright: ignore[reportPrivateUsage]
+    resolution = resolve(manifests, state, release.request.wanted())
+    document = build_document(resolution, state, REQUEST_ID, "human", 1.0)
+
+    return Plan(resolution, manifests, document, resolution.order)
+
+
+def test_steps_3_and_8_read_the_kind_of_the_manifest_and_no_row(
+    release: Release, tmp_path: Path
+) -> None:
+    assert CATALOG_BY_NAME[COMPONENT].kind is Kind.VENV
+    plan = _plan(release, tmp_path)
+    release.plan = plan
+
+    detail = release._provenance()  # pyright: ignore[reportPrivateUsage]
+
+    assert detail.startswith("P1-P6 pass")
+    verified = release.verified[COMPONENT]
+    manifest = plan.manifest(COMPONENT)
+    paths = paths_of(manifest, release.wiring.host.install_roots)
+    source = tmp_path / "work" / REQUEST_ID / COMPONENT
+    release.installer.build(manifest, source, paths, verified)
+
+    assert (paths.new / "bin" / COMPONENT).read_bytes() == PROGRAM_BYTES

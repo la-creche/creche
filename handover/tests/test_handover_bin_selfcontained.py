@@ -12,8 +12,10 @@ outside itself in other ways. Each one is built here by hand and refused:
 4. The staged tree itself is a link, or is not there.
 
 The first half drives the walk. The second half drives the executor's own
-`build`, which decides WHICH programs the walk must find: the verify
-command's, and those of every unit that step 9 leaves in force.
+stage, which decides WHICH programs the walk must find: the verify
+command's, and those of every unit that step 9 leaves in force. The stage
+unpacks a verified archive, and each test puts the tree that it builds by
+hand in the place of the unpack (`handover_bin_fixtures.Staging`).
 """
 
 from __future__ import annotations

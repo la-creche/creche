@@ -13,7 +13,8 @@ Four groups of tests:
 2. Each fault of the store, which gives no copy and one note line.
 3. A later call in the same release, which gets the result of the first.
 4. The method of `Release` that puts the digest into the state, and a
-   whole release of a component whose manifest says `binary`.
+   whole release of a component whose manifest says `binary`. That release
+   verifies the copy with a stand-in verifier and unpacks it.
 """
 
 from __future__ import annotations
@@ -67,9 +68,13 @@ from handover.state import ReleaseState, SourceFacts
 from handover_bin_fixtures import (
     BINARY_NAME,
     CARGO,
+    PROGRAM_BYTES,
     UNIT,
+    StandIn,
+    archive_bytes,
     binary_manifest_text,
-    staged_binary_tree,
+    signed_bundle,
+    site_text,
     unit_text,
     use_binary_catalog,
     write_program,
@@ -121,11 +126,7 @@ def home(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPat
     """The home of the operator, which a site file of this test names."""
     made = tmp_path_factory.mktemp("home")
     site_file = tmp_path_factory.mktemp("site") / "site.env"
-    site_file.write_text(
-        "AGENT_GITHUB_OWNER=example-owner\nAGENT_OPERATOR_USER=operator\n"
-        f"AGENT_OPERATOR_HOME={made}\nAGENT_LAN_ADDRESS=192.0.2.10\n",
-        encoding="utf-8",
-    )
+    site_file.write_text(site_text(made), encoding="utf-8")
     monkeypatch.setenv(site.SITE_FILE_ENV, str(site_file))
 
     return made
@@ -678,11 +679,17 @@ def test_a_binary_component_with_no_copy_keeps_null_and_says_why(
 # ---- a whole release ---------------------------------------------------------------
 
 
+#: A good archive of the component, and the bundle of its signature, for a
+#: whole release. Check P6 passes for them.
+GOOD_ARCHIVE = archive_bytes()
+GOOD_BUNDLE = signed_bundle(GOOD_ARCHIVE)
+
+
 @dataclass
 class Bench:
     """A whole release of the component, whose catalog row and manifest say
-    `binary`, with both files in the store. Root still builds the component
-    from its `build` commands."""
+    `binary`, with a good archive and its signature in the store. Check P6
+    passes for the copy, and step 8 unpacks it."""
 
     run: FakeRun
     host: Host
@@ -722,16 +729,15 @@ class Bench:
 @pytest.fixture
 def bench(tmp_path: Path, home: Path, monkeypatch: pytest.MonkeyPatch) -> Bench:
     use_binary_catalog(monkeypatch)
-    _stock(home)
+    _stock(home, GOOD_ARCHIVE, GOOD_BUNDLE)
     components = tmp_path / "components"
     run = FakeRun(answers=git_host_answers())
-    host = fake_host(tmp_path, run)
+    host = replace(fake_host(tmp_path, run), run=StandIn(run))
     stamp_tree(components, COMPONENT, LIVE_VERSION)
     (tmp_path / "system-units" / UNIT).write_text(
         unit_text(str(components / COMPONENT / "bin" / COMPONENT)), encoding="utf-8"
     )
     write_program(components / COMPONENT / "bin" / COMPONENT)
-    run.hooks[CARGO] = lambda _: staged_binary_tree(components / f"{COMPONENT}.new")
 
     def write_tree(destination: Path, name: str) -> None:
         del name
@@ -764,7 +770,7 @@ def test_the_resolved_manifest_holds_the_digest_of_a_binary_component(bench: Ben
     ledger = bench.release()
 
     assert ledger["status"] == "succeeded", ledger.get("reason")
-    assert _row(ledger)["artifact_digest"] == _sha256(ARCHIVE)
+    assert _row(ledger)["artifact_digest"] == _sha256(GOOD_ARCHIVE)
 
 
 def test_each_other_component_keeps_null(bench: Bench) -> None:
@@ -774,11 +780,13 @@ def test_each_other_component_keeps_null(bench: Bench) -> None:
     assert [one["name"] for one in rows if one["artifact_digest"] is not None] == [COMPONENT]
 
 
-def test_the_release_still_builds_the_component(bench: Bench) -> None:
-    """This change copies and hashes. The stage still runs the build."""
+def test_the_release_unpacks_the_copy_and_runs_no_build(bench: Bench, tmp_path: Path) -> None:
+    """The stage unpacks the copy that check P6 verified. No `build`
+    command of the manifest runs."""
     bench.release()
 
-    assert bench.run.ran(CARGO)
+    assert not bench.run.ran(CARGO)
+    assert (tmp_path / "components" / COMPONENT / "bin" / COMPONENT).read_bytes() == PROGRAM_BYTES
 
 
 def test_the_release_removes_the_copy(bench: Bench, tmp_path: Path) -> None:
@@ -798,7 +806,6 @@ def test_a_copy_removed_after_step_2_is_refused_with_drift(bench: Bench, tmp_pat
 
     assert ledger["status"] == "refused"
     assert ledger["refused_check"] == "drift"
-    assert not bench.run.ran(CARGO)
     assert not (tmp_path / "components" / f"{COMPONENT}.new").exists()
 
 
@@ -815,7 +822,7 @@ def test_the_whole_copy_removed_after_step_2_is_refused_with_drift(
 
     assert ledger["status"] == "refused"
     assert ledger["refused_check"] == "drift"
-    assert not bench.run.ran(CARGO)
+    assert not (tmp_path / "components" / f"{COMPONENT}.new").exists()
 
 
 def test_one_changed_byte_of_the_copy_is_refused_with_drift(bench: Bench, tmp_path: Path) -> None:
@@ -828,7 +835,7 @@ def test_one_changed_byte_of_the_copy_is_refused_with_drift(bench: Bench, tmp_pa
     ledger = bench.release(change)
 
     assert ledger["refused_check"] == "drift"
-    assert not bench.run.ran(CARGO)
+    assert not (tmp_path / "components" / f"{COMPONENT}.new").exists()
 
 
 def test_one_changed_byte_of_the_copy_changes_the_hash(
