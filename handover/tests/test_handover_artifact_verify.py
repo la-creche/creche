@@ -22,6 +22,7 @@ import stat
 import subprocess
 import tarfile
 from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -86,6 +87,7 @@ from handover_executor_fixtures import (
     request_body,
     this_uid,
 )
+from handover_fixtures import manifest_text
 
 from handover import site
 
@@ -154,20 +156,21 @@ def test_a_program_that_is_no_plain_absolute_path_refuses(
 
 
 @pytest.mark.usefixtures("operator_is_an_account")
+@pytest.mark.parametrize("key", [site.SiteKey.COSIGN_PROGRAM, site.SiteKey.SYSTEMD_RUN_PROGRAM])
 def test_the_verify_hook_of_the_executor_reads_both_keys(
-    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch, key: site.SiteKey
 ) -> None:
     """`check --site` refuses a site file with a value that P6 refuses."""
     lines = (
         "AGENT_GITHUB_OWNER=some-org\nAGENT_OPERATOR_USER=someone\n"
         "AGENT_OPERATOR_HOME=/home/someone\nAGENT_LAN_ADDRESS=192.0.2.10\n"
     )
-    _site(tmp_path_factory, monkeypatch, f"{lines}AGENT_SYSTEMD_RUN_PROGRAM=systemd-run\n")
+    _site(tmp_path_factory, monkeypatch, f"{lines}{key.value}=no-absolute-path\n")
 
     with pytest.raises(Refusal) as caught:
         site.require_complete()
 
-    assert "AGENT_SYSTEMD_RUN_PROGRAM" in caught.value.detail
+    assert key.value in caught.value.detail
 
 
 # ---- 2. the runner ---------------------------------------------------------------
@@ -340,7 +343,12 @@ def test_the_time_of_root_ends_before_the_time_of_the_unit() -> None:
 
 
 def test_the_trust_root_is_in_the_state_directory_of_the_unit() -> None:
+    """Probe run 38943722125 measured the path of the trust root that the
+    verifier writes there."""
     assert TRUSTED_ROOT.startswith(f"{VERIFIER_TUF_ROOT}/")
+    assert TRUSTED_ROOT == (
+        "/var/lib/creche-verify/tuf/tuf-repo-cdn.sigstore.dev/targets/trusted_root.json"
+    )
 
 
 # -- the check of a program file
@@ -655,18 +663,24 @@ def test_only_check_p6_builds_a_verified_artifact() -> None:
 # ---- 4. step 3 and step 8, with the kind of the manifest only -------------------------
 
 
-@pytest.fixture
-def release(tmp_path: Path, home: Path) -> Iterator[Release]:
+@contextmanager
+def _releasing(
+    tmp_path: Path, home: Path, owner: str = OWNER, name: str | None = None
+) -> Iterator[Release]:
     """A release of the component, live at `LIVE_VERSION`, to `NEW_VERSION`.
-    The store holds a good archive and its signature. The catalog row of
-    the component says `venv`."""
+    The store holds a good archive and its signature by the workflow of
+    the repository that the code host calls `<owner>/<name>`. `name` is the
+    catalog name when it is None. The catalog row of the component says
+    `venv`."""
+    tag = f"{COMPONENT}-v{NEW_VERSION}"
+    hosted = name if name is not None else str(CATALOG_BY_NAME[COMPONENT].repo)
     raw = archive_bytes()
-    stock_store(home, f"{COMPONENT}-v{NEW_VERSION}", raw, signed_bundle(raw))
+    stock_store(home, tag, raw, signed_bundle(raw, owner=owner, name=hosted))
     run = FakeRun()
     wiring = Wiring(
         host=replace(fake_host(tmp_path, run), run=StandIn(run)),
         transport=grant_transport(),
-        api=green_api(str(CATALOG_BY_NAME[COMPONENT].repo), f"{COMPONENT}-v{NEW_VERSION}", SHA),
+        api=green_api(hosted, tag, SHA, owner=owner),
     )
     raw_request = json.dumps(request_body({COMPONENT: NEW_VERSION})).encode("utf-8")
     spool = Spool(str(make_spool_dirs(tmp_path)), this_uid())
@@ -676,11 +690,18 @@ def release(tmp_path: Path, home: Path) -> Iterator[Release]:
         spool.close()
 
 
-def _plan(release: Release, tmp_path: Path) -> Plan:
-    """Steps 2 to 4 as a plan: the manifest of the new tag says `binary`,
-    and root's copy is made."""
+@pytest.fixture
+def release(tmp_path: Path, home: Path) -> Iterator[Release]:
+    """A release with the owner and the names of the example site file."""
+    with _releasing(tmp_path, home) as made:
+        yield made
+
+
+def _plan(release: Release, tmp_path: Path, text: str | None = None) -> Plan:
+    """Steps 2 to 4 as a plan, and root's copy is made. The manifest of the
+    new tag is `text`, and by default it says `binary`."""
     manifest = parse_manifest(
-        binary_manifest_text(tmp_path / "components"),
+        text if text is not None else binary_manifest_text(tmp_path / "components"),
         f"{COMPONENT}/component.yaml",
         Markup.YAML,
     )
@@ -711,3 +732,53 @@ def test_steps_3_and_8_read_the_kind_of_the_manifest_and_no_row(
     release.installer.build(manifest, source, paths, verified)
 
     assert (paths.new / "bin" / COMPONENT).read_bytes() == PROGRAM_BYTES
+
+
+def test_a_set_with_no_archive_passes_the_five_checks_of_the_code_host(
+    release: Release, tmp_path: Path
+) -> None:
+    """The manifest of the new tag says `venv`: no check P6 and no
+    verifier child."""
+    release.plan = _plan(release, tmp_path, manifest_text(COMPONENT))
+
+    detail = release._provenance()  # pyright: ignore[reportPrivateUsage]
+
+    assert detail.startswith("P1-P5 pass")
+    assert release.verified == {}
+    assert release.copies == {}
+
+
+#: An owner and a hosted name of the repository, each with capital
+#: letters. The site file gives them, and the signer has them so.
+MIXED_OWNER = "Example-Owner"
+HOSTED_NAME = "Hosted-Name"
+
+
+def _after(words: tuple[str, ...], flag: str) -> str:
+    return words[words.index(flag) + 1]
+
+
+def test_the_signer_has_the_owner_and_the_name_of_the_site_file(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The identity is exact text. Child 2 gets the owner and the hosted
+    name of the repository as the site file gives them, with their letter
+    case, and the signature passes."""
+    home = tmp_path_factory.mktemp("home")
+    hosted = f"AGENT_GITHUB_REPO_AGENT_CONTROL={HOSTED_NAME}\n"
+    _site(tmp_path_factory, monkeypatch, site_text(home, owner=MIXED_OWNER) + hosted)
+
+    with _releasing(tmp_path, home, MIXED_OWNER, HOSTED_NAME) as release:
+        release.plan = _plan(release, tmp_path)
+        detail = release._provenance()  # pyright: ignore[reportPrivateUsage]
+        stand_in = release.wiring.host.run
+
+    assert isinstance(stand_in, StandIn)
+    _, check = stand_in.words
+    assert detail.startswith("P1-P6 pass")
+    assert _after(check, "--certificate-identity") == (
+        "https://github.com/Example-Owner/Hosted-Name/.github/workflows/release.yml@refs/heads/main"
+    )
+    assert _after(check, "--certificate-github-workflow-repository") == (
+        "Example-Owner/Hosted-Name"
+    )

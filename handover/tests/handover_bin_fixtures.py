@@ -311,12 +311,18 @@ def archive_bytes(
     return raw.getvalue()
 
 
-def signed_bundle(archive: bytes, commit: str = SHA_OF[BINARY_NAME], owner: str = OWNER) -> bytes:
+def signed_bundle(
+    archive: bytes,
+    commit: str = SHA_OF[BINARY_NAME],
+    owner: str = OWNER,
+    name: str | None = None,
+) -> bytes:
     """The bundle that `STAND_IN` passes for `archive`: a signature of the
-    release workflow of `agent-control`, hosted as `<owner>/agent-control`,
-    at `commit`."""
+    release workflow of `agent-control`, hosted as `<owner>/<name>`, at
+    `commit`. `name` is the catalog name when it is None."""
     row = CATALOG_BY_NAME[BINARY_NAME]
-    policy = signer_policy(row.repo, owner, str(row.repo), commit)
+    hosted = name if name is not None else str(row.repo)
+    policy = signer_policy(row.repo, owner, hosted, commit)
     claims = {
         "sha256": hashlib.sha256(archive).hexdigest(),
         "issuer": TOKEN_ISSUER,
@@ -349,11 +355,11 @@ def stock_store(home: Path, tag: str, archive: bytes | None, bundle: bytes | Non
     return directory
 
 
-def site_text(home: Path, verifier: str = ROOT_OWNED_VERIFIER) -> str:
-    """A site file with the operator home `home`, the verifier `verifier`
-    and `ROOT_OWNED_STARTER` as `systemd-run`."""
+def site_text(home: Path, verifier: str = ROOT_OWNED_VERIFIER, owner: str = OWNER) -> str:
+    """A site file with the owner `owner`, the operator home `home`, the
+    verifier `verifier` and `ROOT_OWNED_STARTER` as `systemd-run`."""
     return (
-        f"AGENT_GITHUB_OWNER={OWNER}\nAGENT_OPERATOR_USER=operator\n"
+        f"AGENT_GITHUB_OWNER={owner}\nAGENT_OPERATOR_USER=operator\n"
         f"AGENT_OPERATOR_HOME={home}\nAGENT_LAN_ADDRESS=192.0.2.10\n"
         f"AGENT_COSIGN_PROGRAM={verifier}\nAGENT_SYSTEMD_RUN_PROGRAM={ROOT_OWNED_STARTER}\n"
     )
