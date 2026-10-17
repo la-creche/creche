@@ -1,8 +1,9 @@
 # agent-family
 
 The Rust port of the Python package `agent_family`: the validator of the
-family file and of `mcp/<name>/server.yaml`, the registry loader and the
-`agent-family` program. A family file is `family.toml` or `family.yaml`.
+family file and of the server file, the registry loader and the
+`agent-family` program. A family file is `families/<name>/family.toml` or
+`family.yaml`. A server file is `mcp/<name>/server.toml` or `server.yaml`.
 `rust/AGENTS.md` and the root `AGENTS.md` apply here too.
 
 The Python package is the authority until a release of `caregiver` uses this
@@ -32,7 +33,8 @@ same messages.
 
 The types are in `creche-contracts`: `family` holds `RawFamily`, `Family` and
 the report types, and `server` holds `RawServer` and `Server`.
-`RawFamily::from_toml` of `family` reads a TOML family file.
+`RawFamily::from_toml` of `family` reads a TOML family file, and
+`RawServer::from_toml` of `server` reads a TOML server file.
 
 ## How one file becomes a report
 
@@ -49,25 +51,51 @@ the report types, and `server` holds `RawServer` and `Server`.
 A `Family` exists only through step 3. `Registry::families` holds a family
 only when steps 3 and 4 give no error.
 
-A TOML family file takes another path for steps 1 and 2:
+A TOML family file and a TOML server file take another path for steps 1
+and 2:
 
-1. `RawFamily::from_toml` of `creche-contracts` reads the bytes with the TOML
-   reader of that crate. It gives a raw file, a refusal of the reader or
-   each fault of the shape. A fault holds no message.
+1. `RawFamily::from_toml` or `RawServer::from_toml` of `creche-contracts`
+   reads the bytes with the TOML reader of that crate. It gives a raw file, a
+   refusal of the reader or each fault of the shape. A fault holds no
+   message.
 2. `parse.rs` writes the message of each fault with the texts of the YAML
    path. The TOML path reads each field in the strict mode of pydantic: a
    field takes the kind of its type, and a float field also takes an
    integer.
-3. Steps 3 to 5 are the same for both formats.
+3. Steps 3 to 5 are the same for both formats, with one difference for a
+   server file. "The grammar of root" below has it.
 
-The loader reads `family.toml` first and `family.yaml` second. A directory
-with both files gets one error, and the loader parses neither file. The
-loader reads `server.yaml` only.
+The loader reads `family.toml` first and `family.yaml` second, and
+`server.toml` first and `server.yaml` second. A directory with both names of
+one kind gets one error, and the loader parses neither file. The report
+names the TOML name.
+
+## The grammar of root
+
+Root reads each server file again at a release. Contract 01b §1 makes root
+accept each TOML file that the validator accepts. `Server::from_raw` of
+`creche-contracts` thus gets the markup of the file, and a TOML server file
+gets each rule of root that the YAML path does not hold:
+
+1. The grammar of `install.package`, `install.repo`, `install.asset`,
+   `install.python`, `run.entrypoint` and `run.state_dir_env`.
+2. A cap and no NUL character for a word of `run.args`, a value of
+   `run.env` and a value of a fence.
+3. The grammar of `ids::SecretName` for the key after `secret:`.
+4. A count of each character of an identity and of a description. A text
+   of white space only gets a message of its own.
+5. One tool at least in the list of a fence.
+6. A cap on the count of the tools, of the words of `run.args`, of the
+   variables of `run.env`, of the fences of each kind, of the values of one
+   fence and of the shared secrets.
+
+A YAML server file keeps the rules of the Python YAML path. The vectors of
+`server_file.toml` hold each rule at its limit and one past it.
 
 ## Rules
 
 1. Change no rule here without a vector. `tests/vectors.rs` walks each
-   vector of the six surfaces of this crate.
+   vector of the seven surfaces of this crate.
 2. For a difference from the Python code, do what "The differential test"
    of `rust/AGENTS.md` says.
 3. Keep the message of an issue equal to the Python message. The operator
@@ -166,11 +194,12 @@ Rules for the program:
      more. The Python validator reads more levels. A debug build reads a
      text of 128 levels on a stack of 1 MiB. The vectors are
      `nest-128-levels` and `nest-129-levels`.
-  7. `registry.rs`, `read_families`, contract 01 §1. The contract names one
-     family file. It does not say what a loader does with a directory that
-     holds `family.toml` and `family.yaml`. The loader gives one error and
-     parses neither file, as the Python loader does. The vector is
-     `toml-two-names` of `family_file.toml`.
+  7. `registry.rs`, `read_one`, contract 01 §1 and contract 01b §1. Each
+     contract names one file. It does not say what a loader does with a
+     directory that holds the TOML name and the YAML name. The loader gives
+     one error and parses neither file, as the Python loader does. The
+     vectors are `toml-two-names` of `family_file.toml` and of
+     `server_file.toml`.
   8. `creche-contracts/src/ids.rs`, `ToolName`, `EnvName` and
      `PackageVersion`, contract 01 §3.4 and contract 01b §3.1, §4.1 and §5.
      `rust/AGENTS.md` lists the three questions. The Python validator and
@@ -201,6 +230,13 @@ Rules for the program:
   Python 3.14 reads more texts as a negative number, for example `-5.`. For
   a number, the program reads only ASCII digits. Python also reads a decimal
   digit that is not ASCII.
+- `Server` holds `install.package`, `install.asset`, `install.python` and
+  `run.state_dir_env` as text, and `install.repo` and `run.entrypoint` in
+  types with the grammar of the YAML path. The YAML path takes each such
+  text, and one `Server` type holds the files of both paths. The TOML path
+  checks the grammar of root for each one before it makes the `Server`. The
+  packet that removes the YAML path of a server file can give each one a
+  type with the grammar of root.
 - `report::FamilyState` is here. The module `status` of `creche-contracts`
   holds no type yet. Move the type there when contract 05 has its types.
 - The Python validator accepts each value of the list below. This crate
@@ -218,4 +254,5 @@ Rules for the program:
      check finds the family by the name of its directory.
   8. A lock path with a `.` segment, and a mount path with a `/` at its
      end.
-  9. `state_dir_env` and `install.python` with no grammar check.
+  9. `state_dir_env` and `install.python` of a YAML server file with no
+     grammar check. A TOML server file gets the grammar of root.

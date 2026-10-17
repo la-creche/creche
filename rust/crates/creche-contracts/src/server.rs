@@ -2712,7 +2712,10 @@ mod tests {
 
     /// The surfaces whose accepted vectors hold a parsed server file, with
     /// the markup of their inputs.
-    const SURFACES: [(&str, Markup); 1] = [("server_file", Markup::Yaml)];
+    const SURFACES: [(&str, Markup); 2] = [
+        ("server_file", Markup::Yaml),
+        ("server_file.toml", Markup::Toml),
+    ];
 
     /// Each server file that the Python validator accepts is a `Server`, and
     /// the `Server` holds each field as the Python model holds it. The crate

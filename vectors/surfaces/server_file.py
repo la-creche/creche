@@ -1,9 +1,14 @@
-"""`server.yaml` (contract 01b): the bytes of one file to its validation report.
+"""`server.yaml` and `server.toml` (contract 01b): the bytes of one file to its
+validation report.
 
 The entry point is `agent_family.load_registry`, as for `family_file`. It
 calls `parse_server` and `check_server` for each directory under `mcp/`. The
 generator copies a registry to a temporary directory, writes the input there
 and reads the report of that one server back.
+
+Two surfaces. Each input of `server_file` is a YAML text in a copy of
+`FAMILY_REGISTRY`. Each input of `server_file.toml` is a TOML text in a copy
+of `TOML_REGISTRY`.
 """
 
 from __future__ import annotations
@@ -14,6 +19,8 @@ from pathlib import Path
 from typing import Final
 
 from agent_family import Registry, load_registry
+from agent_family.registry import SERVER_FILE as TOML_FILE
+from agent_family.registry import SERVER_FILE_YAML
 
 from vectors.core import (
     Json,
@@ -26,35 +33,56 @@ from vectors.core import (
     raised,
     refused,
 )
-from vectors.surfaces.family_cases import Case
+from vectors.surfaces.family_cases import PLACEHOLDER, Case
 from vectors.surfaces.family_file import (
     FAMILY_REGISTRY,
     FIXTURE_REGISTRIES,
     REPO_ROOT,
+    TOML_REGISTRIES,
+    TOML_REGISTRY,
     copy_registry,
 )
 from vectors.surfaces.server_cases import CASES
+from vectors.surfaces.server_toml_cases import CASES as TOML_CASES
 
 MCP_DIR: Final = "mcp"
-SERVER_FILE: Final = "server.yaml"
+SERVER_FILE: Final = SERVER_FILE_YAML
 
 CONTRACT: Final = "contract 01b"
 ENTRY: Final = "agent_family.load_registry"
 
-NOTES: Final = (
-    "The input is the bytes of one server.yaml.",
-    "params.registry is a registry in this repository, as a path from the repository root. "
-    "params.directory is the directory of the input under mcp/ in that registry.",
-    "family_file.registries.json holds each file of each such registry.",
-    "To replay a vector: copy the registry, write the input to mcp/<directory>/server.yaml, "
-    "load the registry and read the server report of <directory>.",
-    "result is accepted when the report holds no issue of severity error. issues holds every "
-    "issue in order. value is the parsed server file, with every default filled in.",
+
+def _notes(file: str) -> tuple[str, ...]:
+    """The notes of a surface whose input is written as `file`."""
+    return (
+        f"The input is the bytes of one {file}.",
+        "params.registry is a registry in this repository, as a path from the repository root. "
+        "params.directory is the directory of the input under mcp/ in that registry.",
+        "family_file.registries.json holds each file of each such registry.",
+        f"To replay a vector: copy the registry, write the input to mcp/<directory>/{file}, "
+        "load the registry and read the server report of <directory>.",
+        "result is accepted when the report holds no issue of severity error. issues holds every "
+        "issue in order. value is the parsed server file, with every default filled in.",
+    )
+
+
+#: The note of a surface whose vectors can add files to the registry.
+FILES_NOTE: Final = (
+    "params.files holds every other file a vector adds to the registry, by path from the "
+    "registry root. Write each one before the input."
 )
 
 
 def _params(registry: str, case: Case) -> dict[str, Json]:
-    return {"registry": registry, "directory": case.directory_name()}
+    params: dict[str, Json] = {"registry": registry, "directory": case.directory_name()}
+    if case.files:
+        files: dict[str, Json] = {
+            path: text.replace(PLACEHOLDER, case.directory_name())
+            for path, text in case.files.items()
+        }
+        params["files"] = files
+
+    return params
 
 
 def _outcome(case: Case, loaded: Registry, registry: str) -> Vector:
@@ -76,13 +104,30 @@ def _outcome(case: Case, loaded: Registry, registry: str) -> Vector:
     )
 
 
-def _vector(registry: str, case: Case, shared: Path) -> Vector:
-    """One written case: a directory in the shared copy, and away again."""
-    directory = shared / MCP_DIR / case.directory_name()
-    directory.mkdir(parents=True)
-    (directory / SERVER_FILE).write_bytes(case.text_bytes())
+def _staged(registry: str, case: Case, scratch: Path) -> Path:
+    """The root of a registry with the files of the case: a copy of its own
+    for a case with files, else the shared copy."""
+    if not case.files:
+        return scratch / "shared"
+
+    root = scratch / case.id
+    copy_registry(REPO_ROOT / registry, root)
+    for path, text in case.files.items():
+        target = root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text.replace(PLACEHOLDER, case.directory_name()), encoding="utf-8")
+
+    return root
+
+
+def _vector(registry: str, case: Case, scratch: Path, file: str = SERVER_FILE) -> Vector:
+    """One written case: a directory in a copy of the registry, and away
+    again."""
+    directory = _staged(registry, case, scratch) / MCP_DIR / case.directory_name()
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / file).write_bytes(case.text_bytes())
     try:
-        loaded = attempt(lambda: load_registry(shared))
+        loaded = attempt(lambda: load_registry(directory.parents[1]))
     finally:
         shutil.rmtree(directory)
 
@@ -94,19 +139,24 @@ def _vector(registry: str, case: Case, shared: Path) -> Vector:
     return _outcome(case, loaded, registry)
 
 
-def _fixture_vectors(registry: str) -> list[Vector]:
-    """Every server file of one registry of this repository, as it is."""
+def _fixture_vectors(registry: str, file: str = SERVER_FILE) -> list[Vector]:
+    """Every server file named `file` of one registry of this repository, as
+    it is. The TOML copy of a registry gives the ids of the YAML registry:
+    `TOML_REGISTRY` gives `fixture-registry-<name>`."""
     base = REPO_ROOT / registry / MCP_DIR
     if not base.is_dir():
         return []
 
+    names = sorted(path.name for path in base.iterdir() if (path / file).is_file())
+    if not names:
+        return []
+
     loaded = load_registry(REPO_ROOT / registry)
-    names = sorted(path.name for path in base.iterdir() if (path / SERVER_FILE).is_file())
-    label = Path(registry).name.removesuffix("-registry")
+    label = Path(registry).name.removesuffix("-toml").removesuffix("-registry")
 
     return [
         _outcome(
-            Case(f"fixture-{label}-{name}", (base / name / SERVER_FILE).read_bytes(), name),
+            Case(f"fixture-{label}-{name}", (base / name / file).read_bytes(), name),
             loaded,
             registry,
         )
@@ -114,16 +164,25 @@ def _fixture_vectors(registry: str) -> list[Vector]:
     ]
 
 
+def _written(registry: str, cases: tuple[Case, ...], scratch: Path, file: str) -> list[Vector]:
+    """Each written case, in one copy of `registry` that the cases share."""
+    copy_registry(REPO_ROOT / registry, scratch / "shared")
+
+    return [_vector(registry, case, scratch, file) for case in cases]
+
+
 def surfaces() -> tuple[Surface, ...]:
     vectors: list[Vector] = []
     for registry in FIXTURE_REGISTRIES:
         vectors.extend(_fixture_vectors(registry))
 
+    toml: list[Vector] = []
+    for registry in TOML_REGISTRIES:
+        toml.extend(_fixture_vectors(registry, TOML_FILE))
+
     with tempfile.TemporaryDirectory(prefix="vectors-server-") as scratch:
-        shared = Path(scratch) / "shared"
-        copy_registry(REPO_ROOT / FAMILY_REGISTRY, shared)
-        for case in CASES:
-            vectors.append(_vector(FAMILY_REGISTRY, case, shared))
+        vectors.extend(_written(FAMILY_REGISTRY, CASES, Path(scratch) / "yaml", SERVER_FILE))
+        toml.extend(_written(TOML_REGISTRY, TOML_CASES, Path(scratch) / "toml", TOML_FILE))
 
     return (
         Surface(
@@ -131,7 +190,15 @@ def surfaces() -> tuple[Surface, ...]:
             path="server_file.json",
             entry=ENTRY,
             contract=CONTRACT,
-            notes=NOTES,
+            notes=_notes(SERVER_FILE),
             vectors=tuple(vectors),
+        ),
+        Surface(
+            name="server_file.toml",
+            path="server_file.toml.json",
+            entry=ENTRY,
+            contract=CONTRACT,
+            notes=(*_notes(TOML_FILE), FILES_NOTE),
+            vectors=tuple(toml),
         ),
     )

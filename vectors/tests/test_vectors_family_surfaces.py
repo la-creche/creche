@@ -20,6 +20,7 @@ REGISTRY_SURFACES = (
     "family_file.host.json",
     "family_file.toml.json",
     "server_file.json",
+    "server_file.toml.json",
 )
 CLI_FILE = "family_file.cli.json"
 CLASSIFY_FILE = "family_file.classify.json"

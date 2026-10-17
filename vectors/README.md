@@ -29,13 +29,14 @@ release replaces that surface.
 | `generate.py` | the program that writes each file under `data/` that is not frozen |
 | `core.py` | the file format: the normalizer and the renderer |
 | `surfaces/` | one module per group of surfaces, with the written inputs |
-| `fixtures/registry-toml/` | the TOML copy of the fixture registry of the package `family`. Each family file is `family.toml`. `vectors/AGENTS.md` has its rules |
+| `fixtures/registry-toml/` | the TOML copy of the fixture registry of the package `family`. Each family file is `family.toml`, and each server file is `server.toml`. `vectors/AGENTS.md` has its rules |
 | `data/index.json` | one row per surface: name, path, entry point, counts. One line per frozen file: path and digest |
 | `data/ids/` | the id grammars, one file per copy of a grammar |
 | `data/ids/disagreements.json` | each input for which two copies of one grammar give different results |
 | `data/family_file.json`, `data/family_file.host.json` | `family.yaml` to its validation report |
 | `data/family_file.toml.json` | `family.toml` to its validation report |
 | `data/server_file.json` | `server.yaml` to its validation report |
+| `data/server_file.toml.json` | `server.toml` to its validation report |
 | `data/family_file.classify.json` | two family files to the diff between them |
 | `data/family_file.cli.json` | a command line of `agent-family` to its output |
 | `data/family_file.registries.json` | each file of each registry that a vector names |
@@ -227,7 +228,7 @@ It ends with one newline. Each vector is on one line.
 | `result` | always | `accepted`, `refused` or `raised` |
 | `value` | when the Python code parsed the input into a value | the normalized value |
 | `refusal` | when the Python code gives a reason | the refusal code, or an object that holds the reason |
-| `issues`, `status` | on `family_file` and on `server_file` | the validation report |
+| `issues`, `status` | on `family_file`, `family_file.host`, `family_file.toml`, `server_file` and `server_file.toml` | the validation report |
 | `http_status` | on the two body surfaces, on `chaperone.reason` and on a surface of `data/session/` that writes an answer | the HTTP status of the answer. On a refused vector of a body surface or of `data/session/` it is inside `refusal`. |
 | `output` | on a surface that writes bytes | the exact bytes that the Python code writes, as an input form |
 | `file` | on the two log surfaces of `data/chaperone/` | the name of the file that takes the line |
@@ -364,8 +365,9 @@ The Rust reader, the crate `creche-vectors`, holds these rules.
 
 ## The registry file
 
-A vector of `family_file`, of `family_file.toml`, of `server_file` and of
-`family_file.cli` names a registry of this repository in `params.registry`.
+A vector of `family_file`, of `family_file.host`, of `family_file.toml`, of
+`server_file`, of `server_file.toml` and of `family_file.cli` names a
+registry of this repository in `params.registry`.
 A Rust test reads no file outside `rust/` and `vectors/data`.
 `data/family_file.registries.json` thus holds each file of each such
 registry.

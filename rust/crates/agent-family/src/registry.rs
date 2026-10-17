@@ -664,4 +664,51 @@ mod tests {
         let parsed: Vec<&String> = loaded.parsed_families().keys().collect();
         assert_eq!(parsed, ["toml", "yaml"]);
     }
+
+    #[test]
+    fn each_server_report_names_the_server_file_of_its_directory() {
+        let scratch = Scratch::new();
+        let toml = "identity = \"x\"\ninstall.source = \"agent-mcp\"\n\
+                    run.entrypoint = \"example-mcp\"\n";
+        let yaml =
+            "identity: x\ninstall: { source: agent-mcp }\nrun: { entrypoint: example-mcp }\n";
+        let files = [
+            ("both/server.toml", "name = \"both\"\n".to_owned()),
+            ("both/server.yaml", "name: both\n".to_owned()),
+            ("none/notes.txt", "No server file.\n".to_owned()),
+            ("toml/server.toml", format!("name = \"toml\"\n{toml}")),
+            ("toml-bad/server.toml", "name = 1\n".to_owned()),
+            (
+                "toml-root/server.toml",
+                format!("name = \"toml-root\"\n{toml}run.args = [\"\\u0000\"]\n"),
+            ),
+            ("yaml/server.yaml", format!("name: yaml\n{yaml}")),
+        ];
+        for (path, text) in &files {
+            scratch.write(&format!("registry/mcp/{path}"), text.as_bytes());
+        }
+
+        let loaded = load_registry(&scratch.path("registry"), None, &SystemZones::host());
+        let named: Vec<(&str, &str, bool)> = loaded
+            .server_reports()
+            .iter()
+            .map(|(name, report)| (name.as_str(), report.file(), report.ok()))
+            .collect();
+
+        assert_eq!(
+            named,
+            [
+                ("both", "mcp/both/server.toml", false),
+                ("none", "mcp/none/server.yaml", true),
+                ("toml", "mcp/toml/server.toml", true),
+                ("toml-bad", "mcp/toml-bad/server.toml", false),
+                ("toml-root", "mcp/toml-root/server.toml", false),
+                ("yaml", "mcp/yaml/server.yaml", true),
+            ]
+        );
+        let parsed: Vec<&String> = loaded.parsed_servers().keys().collect();
+        assert_eq!(parsed, ["toml", "toml-root", "yaml"]);
+        let valid: Vec<&String> = loaded.servers().keys().collect();
+        assert_eq!(valid, ["toml", "yaml"]);
+    }
 }
