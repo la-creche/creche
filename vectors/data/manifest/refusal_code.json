@@ -23,6 +23,7 @@
   {"id":"code-p3","input":{"text":"P3"},"result":"accepted","value":"P3"},
   {"id":"code-p4","input":{"text":"P4"},"result":"accepted","value":"P4"},
   {"id":"code-p5","input":{"text":"P5"},"result":"accepted","value":"P5"},
+  {"id":"code-p6","input":{"text":"P6"},"result":"accepted","value":"P6"},
   {"id":"code-monotonic","input":{"text":"monotonic"},"result":"accepted","value":"monotonic"},
   {"id":"code-server","input":{"text":"server"},"result":"accepted","value":"server"},
   {"id":"code-editable","input":{"text":"editable"},"result":"accepted","value":"editable"},
@@ -34,7 +35,8 @@
   {"id":"upper-request","input":{"text":"Request"},"result":"refused"},
   {"id":"final-newline","input":{"text":"request\n"},"result":"refused"},
   {"id":"final-space","input":{"text":"manifest "},"result":"refused"},
-  {"id":"p6","input":{"text":"P6"},"result":"refused"},
+  {"id":"p6","input":{"text":"P6"},"result":"accepted","value":"P6"},
+  {"id":"p7","input":{"text":"P7"},"result":"refused"},
   {"id":"c5","input":{"text":"C5"},"result":"refused"},
   {"id":"other-word","input":{"text":"unknown"},"result":"refused"},
   {"id":"enum-name","input":{"text":"MANIFEST"},"result":"refused"}

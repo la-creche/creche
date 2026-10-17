@@ -359,13 +359,16 @@ def _catalog_surface() -> Surface:
     )
 
 
-_NOT_CODES: Final = (
+#: The written texts. The enum decides the result of each one. `p6` is the
+#: code of check P6, and `p7` names no check.
+_WRITTEN_TEXTS: Final = (
     ("empty", ""),
     ("lower-c1", "c1"),
     ("upper-request", "Request"),
     ("final-newline", "request\n"),
     ("final-space", "manifest "),
     ("p6", "P6"),
+    ("p7", "P7"),
     ("c5", "C5"),
     ("other-word", "unknown"),
     ("enum-name", "MANIFEST"),
@@ -395,7 +398,7 @@ def _refusal_code_surface() -> Surface:
             "The accepted vectors are every member of the enum, in its order. No other text "
             "is a refusal code.",
         ),
-        vectors=tuple(_code_vector(*row) for row in (*codes, *_NOT_CODES)),
+        vectors=tuple(_code_vector(*row) for row in (*codes, *_WRITTEN_TEXTS)),
     )
 
 

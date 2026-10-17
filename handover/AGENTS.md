@@ -220,7 +220,9 @@ has the name of the markup of the manifest: `.component.toml` or
 4. A denial, a refusal and a failed release hold the set. Only a newer tag
    asks again.
 5. A gate that closed with no tap is not an answer. The follower asks again
-   after one hour, and four times in all.
+   after one hour, and four times in all. It asks again in the same way
+   after a refusal of check P6 with the reason
+   `the verifier was not available`.
 6. The marker is written before the request. A marker that cannot be
    written costs no request.
 7. A followed name is a releasable component of the catalog. It carries no
