@@ -1,0 +1,21 @@
+{
+ "context": {},
+ "contract": "env/AGENTS.md, the env files",
+ "entry": "creche_env.envfile.check_trust",
+ "format": 1,
+ "notes": ["The input is args: the uid that owns the file, the st_mode of the file and the uid that reads it. A fault names the file site.env.","An accepted vector holds no value.","A refused vector holds a list of faults in refusal, in the order of the reader. A fault is an object with four keys: fault, file, line and key. line 0 means the whole file, and an empty key means no key. A fault holds no value."],
+ "surface": "envfile.trust",
+ "vectors": [
+  {"id":"root-reads-a-file-of-root","input":{"args":{"mode":33188,"owner":0,"reader":0}},"result":"accepted"},
+  {"id":"root-reads-a-private-file-of-root","input":{"args":{"mode":33152,"owner":0,"reader":0}},"result":"accepted"},
+  {"id":"an-account-reads-a-file-of-root","input":{"args":{"mode":33188,"owner":0,"reader":1000}},"result":"accepted"},
+  {"id":"an-account-reads-its-own-file","input":{"args":{"mode":33152,"owner":1000,"reader":1000}},"result":"accepted"},
+  {"id":"others-can-read-and-run","input":{"args":{"mode":33261,"owner":1000,"reader":1000}},"result":"accepted"},
+  {"id":"root-reads-a-file-of-an-account","input":{"args":{"mode":33152,"owner":1000,"reader":0}},"refusal":[{"fault":"wrong-owner","file":"site.env","key":"","line":0}],"result":"refused"},
+  {"id":"an-account-reads-a-file-of-another","input":{"args":{"mode":33152,"owner":1001,"reader":1000}},"refusal":[{"fault":"wrong-owner","file":"site.env","key":"","line":0}],"result":"refused"},
+  {"id":"group-can-write","input":{"args":{"mode":33204,"owner":0,"reader":0}},"refusal":[{"fault":"others-write","file":"site.env","key":"","line":0}],"result":"refused"},
+  {"id":"other-can-write","input":{"args":{"mode":33154,"owner":1000,"reader":1000}},"refusal":[{"fault":"others-write","file":"site.env","key":"","line":0}],"result":"refused"},
+  {"id":"each-can-write","input":{"args":{"mode":33206,"owner":0,"reader":1000}},"refusal":[{"fault":"others-write","file":"site.env","key":"","line":0}],"result":"refused"},
+  {"id":"owner-before-the-mode","input":{"args":{"mode":33206,"owner":1001,"reader":1000}},"refusal":[{"fault":"wrong-owner","file":"site.env","key":"","line":0}],"result":"refused"}
+ ]
+}

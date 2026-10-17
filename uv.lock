@@ -16,6 +16,7 @@ members = [
     "attendance",
     "caregiver",
     "chaperone",
+    "creche-env",
     "handover",
     "library",
     "noticeboard",
@@ -33,6 +34,7 @@ dependencies = [
     { name = "attendance" },
     { name = "caregiver" },
     { name = "chaperone" },
+    { name = "creche-env" },
     { name = "handover" },
     { name = "library" },
     { name = "noticeboard" },
@@ -58,6 +60,7 @@ requires-dist = [
     { name = "attendance", editable = "attendance" },
     { name = "caregiver", editable = "caregiver" },
     { name = "chaperone", editable = "chaperone" },
+    { name = "creche-env", editable = "env" },
     { name = "handover", editable = "handover" },
     { name = "library", editable = "library" },
     { name = "noticeboard", editable = "noticeboard" },
@@ -446,6 +449,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/c6/08/1e00f7923eaaba45fb3d51dd794125fc766304b1df264f3a9c6557bfb30e/coverage-7.15.4-cp315-cp315t-win_arm64.whl", hash = "sha256:68be5e1de60ff13c9095bbec0e5a7fa45b33b101752215b91345ea1f61c4a278", size = 225213, upload-time = "2026-08-06T13:50:19.981Z" },
     { url = "https://files.pythonhosted.org/packages/b4/d9/e70c286c979378f061d8266e279b686ab0b0b688e1fe0af864684f23a77d/coverage-7.15.4-py3-none-any.whl", hash = "sha256:964730a1e9de9c0cf11be6a1a3c79ce419c34882842abd256086ba4698705e84", size = 214332, upload-time = "2026-08-06T13:50:22.192Z" },
 ]
+
+[[package]]
+name = "creche-env"
+version = "0.1.0"
+source = { editable = "env" }
 
 [[package]]
 name = "cryptography"
