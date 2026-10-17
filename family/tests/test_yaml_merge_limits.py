@@ -403,10 +403,14 @@ def test_the_child_watches_only_its_own_memory() -> None:
 
 def test_a_watch_that_cannot_read_the_peak_stops_the_child() -> None:
     """The watch fails closed. When it cannot read the peak, the child ends
-    with status 4 and names the fault on its standard error."""
+    with status 4 and names the fault on its standard error. The main thread
+    of this child waits with no end before it imports the readers, so only
+    the watch can end the child."""
     head = "def peak_bytes():\n"
+    imports = "from agent_family.parse import "
     child = CHILD.replace(head, head + '    raise OSError("no peak")\n', 1)
-    assert child != CHILD
+    child = child.replace(imports, "threading.Event().wait()\n" + imports, 1)
+    assert child.count("no peak") == child.count("Event().wait()") == 1
 
     done = _run_child(child, "")
 
