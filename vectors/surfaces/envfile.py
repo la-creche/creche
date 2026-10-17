@@ -386,7 +386,7 @@ ROOT: Final = 0
 READER: Final = 1000
 OTHER: Final = 1001
 
-#: A regular file of each mode.
+#: The type bits of a regular file. Each mode of the list carries them.
 REGULAR: Final = 0o100000
 
 #: The inputs of `envfile.trust`: an id, the owner, the mode, the reader and
