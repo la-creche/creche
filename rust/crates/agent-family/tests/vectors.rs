@@ -33,11 +33,12 @@ mod walk {
     const OWN_SURFACES: [&str; 2] = ["family_file", "server_file"];
 
     /// Each surface that a test of this file walks.
-    const SURFACES: [&str; 6] = [
+    const SURFACES: [&str; 7] = [
         "family_file",
         "family_file.host",
         "family_file.toml",
         "server_file",
+        "server_file.toml",
         "family_file.classify",
         "family_file.cli",
     ];
@@ -387,9 +388,18 @@ mod walk {
         walk_family_file("family_file.toml");
     }
 
-    #[test]
-    fn a_server_file_has_the_python_report() {
-        let surface = vectors::surface("server_file").unwrap();
+    /// The name of the input of a surface of a server file. The surface
+    /// `server_file.toml` stages a TOML text, and `server_file` a YAML text.
+    fn server_file_of(surface: &str) -> &'static str {
+        if surface == "server_file.toml" {
+            "server.toml"
+        } else {
+            "server.yaml"
+        }
+    }
+
+    fn walk_server_file(surface_name: &str) {
+        let surface = vectors::surface(surface_name).unwrap();
         let registries = registries();
         for vector in surface.vectors() {
             let id = vector.id();
@@ -397,12 +407,12 @@ mod walk {
             let directory = params["directory"].as_str().unwrap();
             let scratch = staged(&registries, params, "");
             scratch.write(
-                &format!("mcp/{directory}/server.yaml"),
+                &format!("mcp/{directory}/{}", server_file_of(surface_name)),
                 &vector.input().bytes().unwrap(),
             );
             let loaded = load_registry(&scratch.0, None, &SystemZones::host());
             let report = &loaded.server_reports()[directory];
-            check_report("server_file", vector, report);
+            check_report(surface_name, vector, report);
             if vector.result() != Outcome::Accepted {
                 assert!(!loaded.servers().contains_key(directory), "{id}");
                 continue;
@@ -421,6 +431,16 @@ mod walk {
                 "{id}"
             );
         }
+    }
+
+    #[test]
+    fn a_server_file_has_the_python_report() {
+        walk_server_file("server_file");
+    }
+
+    #[test]
+    fn a_toml_server_file_has_the_python_report() {
+        walk_server_file("server_file.toml");
     }
 
     /// The JSON form of a diff that the generator writes.

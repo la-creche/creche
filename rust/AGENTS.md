@@ -2177,9 +2177,9 @@ adds a crate:
     also changes it.
 - No type calls `tomlfile::write` yet. `write` has an `expect(dead_code)`
   line for a build that is no test build. The packet that adds the first
-  caller deletes the line. The raw type of the family file is the one
-  caller of `read` today. Two packets add a caller of `read`:
-  `toml-manifest-read-rust` and `toml-roster-read-chaperone`.
+  caller deletes the line. The raw types of the family file and of the
+  server file are the two callers of `read` today. Two packets add a caller
+  of `read`: `toml-manifest-read-rust` and `toml-roster-read-chaperone`.
 - The differential test of `tomlfile` reads each vector with the kind
   `Roster` only. A vector of the byte limit of another kind is not in the
   surface. A plain test of the module and a test of the Python reader hold

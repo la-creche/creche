@@ -3733,8 +3733,25 @@ impl From<&Family> for RawFamily {
 
 // --- the TOML file ---
 
+/// The markup of the text of a registry file: a family file or a server
+/// file. A registry reads the TOML name first and the YAML name second.
+///
+/// The set is closed, and it does not cross a process boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Markup {
+    /// `family.toml` or `server.toml`.
+    Toml,
+    /// `family.yaml` or `server.yaml`.
+    Yaml,
+}
+
 #[cfg(feature = "tomlfile")]
 pub use markup::{Block, GrantArm, LocPart, ShapeFault, ShapeProblem, TomlRefusal, Wants};
+
+/// The shape check that the raw type of a TOML server file shares with this
+/// module (`crate::server`).
+#[cfg(feature = "tomlfile")]
+pub(crate) use markup::{Grant, Walk, grant_of, owned, table, texts};
 
 /// `family.toml`: the bytes of one file to a [`RawFamily`], or to each fault
 /// of its shape.
@@ -3770,7 +3787,9 @@ mod markup {
     use crate::tomlfile::{self, FileKind, TomlFault, Unknown};
     use Wants::{Boolean, Integer, List, Map, Number, Text};
 
-    /// Why the bytes of a `family.toml` give no [`RawFamily`].
+    /// Why the bytes of a TOML registry file give no raw file: a `family.toml`
+    /// gives no [`RawFamily`], or a `server.toml` gives no
+    /// [`crate::server::RawServer`].
     ///
     /// The set is closed, and it does not cross a process boundary.
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3778,7 +3797,7 @@ mod markup {
         /// The TOML reader refuses the bytes. The text of the fault is the
         /// message for the whole file.
         Unread(TomlFault),
-        /// The text does not have the shape of the family file: each fault,
+        /// The text does not have the shape of the file: each fault,
         /// in the order of the Python report. A list with no fault is a
         /// defect of the check. The caller then reports one error for the
         /// whole file.
@@ -3794,13 +3813,15 @@ mod markup {
         Key(String),
         /// The index of an item of a list, from 0.
         Index(usize),
-        /// One arm of a grant of `tools`. The Python model reports a grant
-        /// that neither arm takes one time for each arm.
+        /// One arm of a grant of `tools`, or of the `tools` of a fence of a
+        /// server file. The Python model reports a value that neither arm
+        /// takes one time for each arm.
         Arm(GrantArm),
     }
 
-    /// The two arms of a grant of `tools` (contract 01 §3.4): a list of tool
-    /// names, or the text `all`.
+    /// The two arms of a grant of `tools` (contract 01 §3.4) and of the
+    /// `tools` of a fence (contract 01b §7): a list of tool names, or the text
+    /// `all`.
     ///
     /// The set is closed, and it does not cross a process boundary.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3839,14 +3860,15 @@ mod markup {
         Number,
         /// A list.
         List,
-        /// A table with free keys: `tools`.
+        /// A table with free keys: `tools` of a family file, and `run.env` of a
+        /// server file.
         Map,
         /// A table that one nested model reads.
         Block(Block),
     }
 
-    /// A table of the family file that one nested model reads. Each one has
-    /// a model of its own in the Python package.
+    /// A table of a family file or of a server file that one nested model
+    /// reads. Each one has a model of its own in the Python package.
     ///
     /// The set is closed, and it does not cross a process boundary.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3877,11 +3899,21 @@ mod markup {
         Quiet,
         /// `quiet.daily`.
         Daily,
+        /// `install` of a server file.
+        Install,
+        /// `run` of a server file.
+        Run,
+        /// One item of `tools` of a server file.
+        Tool,
+        /// One item of `arg_allows` or of `arg_denies` of a server file.
+        Fence,
+        /// One item of `shared_secrets` of a server file.
+        SharedSecret,
     }
 
     sealed! {
-        /// One fault of the shape of a `family.toml`: a location and what is
-        /// wrong there.
+        /// One fault of the shape of a `family.toml` or of a `server.toml`: a
+        /// location and what is wrong there.
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct ShapeFault {
             loc: Vec<LocPart>,
@@ -3916,19 +3948,17 @@ mod markup {
             let raw: TomlFamily =
                 tomlfile::read(bytes, FileKind::Family).map_err(TomlRefusal::Unread)?;
             let mut walk = Walk::default();
+            let family = family_of(&raw, &mut walk);
 
-            match family_of(&raw, &mut walk) {
-                Some(family) if walk.faults.is_empty() => Ok(family),
-                _ => Err(TomlRefusal::Shape(walk.faults)),
-            }
+            walk.finish(family)
         }
     }
 
     // --- the raw type ---
 
-    /// A grant of `tools`, as the file wrote it.
+    /// A grant of `tools`, or the `tools` of a fence, as the file wrote it.
     #[derive(Debug, Clone, PartialEq, Eq)]
-    enum Grant {
+    pub(crate) enum Grant {
         /// A list. Each item keeps its kind.
         Names(Vec<Field<String>>),
         /// One text.
@@ -4173,20 +4203,20 @@ mod markup {
     // --- the check of the shape ---
 
     /// The kind of a table that the model of `block` reads.
-    fn table(block: Block) -> Wants {
+    pub(crate) fn table(block: Block) -> Wants {
         Wants::Block(block)
     }
 
     /// Collects each fault, with the location of the value that the check
     /// reads.
     #[derive(Debug, Default)]
-    struct Walk {
+    pub(crate) struct Walk {
         path: Vec<LocPart>,
         faults: Vec<ShapeFault>,
     }
 
     impl Walk {
-        fn fault(&mut self, problem: ShapeProblem) {
+        pub(crate) fn fault(&mut self, problem: ShapeProblem) {
             self.faults.push(ShapeFault {
                 loc: self.path.clone(),
                 problem,
@@ -4194,7 +4224,7 @@ mod markup {
         }
 
         /// Runs `read` with one more part at the end of the location.
-        fn at<T>(&mut self, part: LocPart, read: impl FnOnce(&mut Self) -> T) -> T {
+        pub(crate) fn at<T>(&mut self, part: LocPart, read: impl FnOnce(&mut Self) -> T) -> T {
             self.path.push(part);
             let out = read(self);
             self.path.pop();
@@ -4204,7 +4234,7 @@ mod markup {
 
         /// The value of a field that takes the kind `wants`, or no value and
         /// one fault.
-        fn held<'a, T>(&mut self, field: &'a Field<T>, wants: Wants) -> Option<&'a T> {
+        pub(crate) fn held<'a, T>(&mut self, field: &'a Field<T>, wants: Wants) -> Option<&'a T> {
             match field {
                 Field::Value(value) => Some(value),
                 Field::Missing => {
@@ -4222,7 +4252,7 @@ mod markup {
         }
 
         /// A field with no default.
-        fn required<T, U>(
+        pub(crate) fn required<T, U>(
             &mut self,
             name: &str,
             field: &Field<T>,
@@ -4236,7 +4266,7 @@ mod markup {
 
         /// A field with a default. The outer `None` is a fault. The inner
         /// `None` is a field that the file does not hold.
-        fn optional<T, U>(
+        pub(crate) fn optional<T, U>(
             &mut self,
             name: &str,
             field: &Field<T>,
@@ -4252,7 +4282,7 @@ mod markup {
 
         /// Each item of a list, read with `read`. Each item gives its own
         /// faults.
-        fn each<T, U>(
+        pub(crate) fn each<T, U>(
             &mut self,
             items: &[Field<T>],
             wants: Wants,
@@ -4273,7 +4303,7 @@ mod markup {
 
         /// One fault for each key that a model does not name, in sorted
         /// order. `None` when the table holds such a key.
-        fn unknown(&mut self, unknown: &Unknown) -> Option<()> {
+        pub(crate) fn unknown(&mut self, unknown: &Unknown) -> Option<()> {
             for key in unknown.kinds().keys() {
                 self.at(LocPart::Key(key.clone()), |walk| {
                     walk.fault(ShapeProblem::Unknown);
@@ -4282,9 +4312,18 @@ mod markup {
 
             unknown.kinds().is_empty().then_some(())
         }
+
+        /// The raw file of a check, or each fault of the check. A check
+        /// gives a raw file only when the walk holds no fault.
+        pub(crate) fn finish<T>(self, raw: Option<T>) -> Result<T, TomlRefusal> {
+            match raw {
+                Some(raw) if self.faults.is_empty() => Ok(raw),
+                _ => Err(TomlRefusal::Shape(self.faults)),
+            }
+        }
     }
 
-    fn owned<T: Clone>(value: &T, _walk: &mut Walk) -> Option<T> {
+    pub(crate) fn owned<T: Clone>(value: &T, _walk: &mut Walk) -> Option<T> {
         Some(value.clone())
     }
 
@@ -4292,13 +4331,13 @@ mod markup {
         Some(RawInt::from(*value))
     }
 
-    fn texts(items: &[Field<String>], walk: &mut Walk) -> Option<Vec<String>> {
+    pub(crate) fn texts(items: &[Field<String>], walk: &mut Walk) -> Option<Vec<String>> {
         walk.each(items, Text, owned)
     }
 
     /// The union `list[str] | str` of the Python model. When neither arm
     /// takes the value, each arm gives its faults: the list arm first.
-    fn grant_of(grant: &Field<Grant>, walk: &mut Walk) -> Option<RawToolGrant> {
+    pub(crate) fn grant_of(grant: &Field<Grant>, walk: &mut Walk) -> Option<RawToolGrant> {
         let names = LocPart::Arm(GrantArm::Names);
         let text = LocPart::Arm(GrantArm::Text);
         let as_list = match grant {
