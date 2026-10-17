@@ -16,9 +16,16 @@ markup of the manifest.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
-from handover.catalog import CATALOG, CATALOG_BY_NAME, Releases
+from handover.catalog import (
+    CATALOG,
+    CATALOG_BY_NAME,
+    MANIFEST_CONTRACT_MAJOR,
+    MANIFEST_CONTRACT_MINOR,
+    Releases,
+)
 from handover.cli import EXIT_OK, EXIT_REFUSED, main
 from handover.discovery import MAX_MANIFEST_FILES, discover, read_one
 from handover.errors import Refusal, RefusalCode
@@ -41,6 +48,7 @@ from handover.manifest import (
     Markup,
     parse_manifest,
 )
+from handover.silent import silent_manifest
 from handover.tomlfile import BYTE_ORDER_MARK, DEPTH, NOT_TOML, NOT_UTF8, TOO_LARGE, FileKind
 from handover_executor_fixtures import (
     REQUEST_ID,
@@ -672,3 +680,49 @@ def test_check_refuses_a_checkout_with_both_names(
 
     assert main(["check", *argv]) == EXIT_REFUSED
     assert "keep one" in capsys.readouterr().err
+
+
+# -- the manifest of a component that is not installed ------------------------
+
+#: The YAML text that `silent.py` built before it built a TOML text. The two
+#: texts give one manifest for each component.
+SILENT_YAML = """
+manifest_version: "{version}"
+name: {name}
+repo: {repo}
+path: {path}
+kind: {kind}
+unit: null
+runs_as: none
+install:
+  to: /opt/components/{name}
+  prev: /opt/components/{name}.prev
+provides: []
+requires: []
+depends_on: []
+verify:
+  command: ["/opt/components/{name}/bin/{name}-verify", "--json"]
+  user: root
+  timeout_s: 60
+restore:
+  mode: automatic
+  keep: 1
+secrets: []
+release: no
+"""
+
+
+@pytest.mark.parametrize("name", sorted(CATALOG_BY_NAME))
+def test_a_silent_manifest_is_the_manifest_of_its_yaml_text(name: str) -> None:
+    row = CATALOG_BY_NAME[name]
+    kind = "data" if str(row.kind) == "data" else "venv"
+    fields: dict[str, Any] = {
+        "version": f"{MANIFEST_CONTRACT_MAJOR}.{MANIFEST_CONTRACT_MINOR}",
+        "name": name,
+        "repo": row.repo,
+        "path": row.path,
+        "kind": kind,
+    }
+    text = SILENT_YAML.format(**fields)
+
+    assert silent_manifest(name) == parse_manifest(text, f"{name} (not installed)", Markup.YAML)
