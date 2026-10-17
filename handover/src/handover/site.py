@@ -17,6 +17,11 @@ one reads it from there:
         AGENT_GITHUB_REPO_AGENT_CONTROL=...  optional, one per repository:
                                              its name on GitHub, when that
                                              is not the catalog's name
+        AGENT_COSIGN_PROGRAM=...             optional: the verifier of the
+                                             signature of an archive
+        AGENT_SYSTEMD_RUN_PROGRAM=...        optional: the program that
+                                             starts each child of the
+                                             verifier in a transient unit
 
 The same file is every unit's `EnvironmentFile`, and that is how a service
 reads the values it needs. This module reads only what root's executor, the
@@ -27,8 +32,10 @@ The file holds no secret. It is root-owned and world-readable, because root's
 executor, the operator's requester and the PEP's release door all read it,
 and each must get the same answer.
 
-A value that is missing or malformed refuses with the `site` code. It never
-falls back to a default: a default would be somebody's host.
+A required value that is missing, and each value that is malformed, refuses
+with the `site` code. A required value never falls back to a default: a
+default would be somebody's host. An optional key has its default beside its
+read, and that default names no deployment.
 
 `AGENT_SITE_FILE` names another file. The tests set it, and nothing on a
 host does.
@@ -80,10 +87,25 @@ class SiteKey(StrEnum):
     OPERATOR_USER = "AGENT_OPERATOR_USER"
     OPERATOR_HOME = "AGENT_OPERATOR_HOME"
     LAN_ADDRESS = "AGENT_LAN_ADDRESS"
+    #: Optional. `COSIGN_DEFAULT` when the file does not set it.
+    COSIGN_PROGRAM = "AGENT_COSIGN_PROGRAM"
+    #: Optional. `SYSTEMD_RUN_DEFAULT` when the file does not set it.
+    SYSTEMD_RUN_PROGRAM = "AGENT_SYSTEMD_RUN_PROGRAM"
 
+
+#: The verifier of the signature of an archive, where the file names none.
+COSIGN_DEFAULT: Final = "/usr/local/bin/cosign"
+
+#: The program that starts a transient unit of systemd, where the file
+#: names none.
+SYSTEMD_RUN_DEFAULT: Final = "/usr/bin/systemd-run"
 
 #: One DNS label: letters, digits and inner hyphens, at most 63 characters.
 _LABEL: Final = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+
+#: An absolute path of plain segments: no empty segment, no `.` or `..`
+#: segment and no slash at the end.
+_ABSOLUTE_PATH: Final = re.compile(r"(?:/[A-Za-z0-9_][A-Za-z0-9._-]*)+")
 
 #: What each value may look like. A GitHub login is 1 to 39 characters of
 #: letters, digits and single hyphens, and never starts or ends with one. A
@@ -92,11 +114,14 @@ _LABEL: Final = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
 #: and a trailing slash are refused where it is read. A LAN address is an
 #: IPv4 address or a host name, both dot-separated plain labels: root binds
 #: it and builds a link from it, so a port, a scheme or a slash is refused.
+#: A program is an absolute path of plain segments: root starts it.
 _SHAPES: Final[dict[SiteKey, re.Pattern[str]]] = {
     SiteKey.GITHUB_OWNER: re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}"),
     SiteKey.OPERATOR_USER: re.compile(r"[a-z_][a-z0-9_-]{0,31}"),
-    SiteKey.OPERATOR_HOME: re.compile(r"(?:/[A-Za-z0-9_][A-Za-z0-9._-]*)+"),
+    SiteKey.OPERATOR_HOME: _ABSOLUTE_PATH,
     SiteKey.LAN_ADDRESS: re.compile(rf"{_LABEL}(?:\.{_LABEL})*"),
+    SiteKey.COSIGN_PROGRAM: _ABSOLUTE_PATH,
+    SiteKey.SYSTEMD_RUN_PROGRAM: _ABSOLUTE_PATH,
 }
 
 
@@ -199,6 +224,19 @@ def read(key: SiteKey) -> str:
     return value
 
 
+def _optional(key: SiteKey, default: str) -> str:
+    """One optional value of the site file, checked against its shape, or
+    `default` when the file does not set the key."""
+    value = _values(site_file()).get(key.value)
+    if value is None:
+        return default
+
+    if not _SHAPES[key].fullmatch(value):
+        raise _refuse(f"{key.value} is not a value this accepts: {safe_token(value)}")
+
+    return value
+
+
 def forget() -> None:
     """Drop what was read, so the next `read` opens the file again. A
     long-lived process calls it where it re-reads its other inputs."""
@@ -263,6 +301,8 @@ def require_complete() -> None:
     github_owner()
     operator_account()
     lan_address()
+    cosign_program()
+    systemd_run_program()
 
 
 def operator_account() -> pwd.struct_passwd:
@@ -293,3 +333,16 @@ def lan_address() -> str:
     """The host's LAN address. The intake binds it and the link the
     operator taps names it."""
     return read(SiteKey.LAN_ADDRESS)
+
+
+def cosign_program() -> str:
+    """The verifier of the signature of an archive. Root starts it in a
+    transient unit, and only when root owns the file and each directory
+    above it (`executor/host.py`)."""
+    return _optional(SiteKey.COSIGN_PROGRAM, COSIGN_DEFAULT)
+
+
+def systemd_run_program() -> str:
+    """The program that starts each child of the verifier in a transient
+    unit. Root starts it with the owner rule of the verifier."""
+    return _optional(SiteKey.SYSTEMD_RUN_PROGRAM, SYSTEMD_RUN_DEFAULT)

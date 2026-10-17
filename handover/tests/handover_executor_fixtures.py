@@ -382,9 +382,10 @@ class FakeApi:
         return ApiReply(404, "not found")
 
 
-def green_api(repo: str, tag: str, sha: str) -> FakeApi:
-    """Every provenance answer a merged, CI-green, bot-cut Release gives."""
-    base = f"/repos/example-owner/{repo}"
+def green_api(repo: str, tag: str, sha: str, owner: str = "example-owner") -> FakeApi:
+    """Every provenance answer a merged, CI-green, bot-cut Release gives,
+    for the repository that the code host calls `<owner>/<repo>`."""
+    base = f"/repos/{owner}/{repo}"
 
     return FakeApi(
         {

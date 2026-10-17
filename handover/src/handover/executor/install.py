@@ -75,13 +75,14 @@ Nine rules this module exists to keep.
      clone.
    - The sibling set is recomputed from the tree and the host at each step.
      What goes BACK is only what the switch note or this run kept.
-9. **A tree of compiled programs holds what its units start.** After the
-   build of a `kind: binary` component, every program that the verify
-   command or a unit in force starts must be a regular, executable file of
-   the staged tree, and the tree must reach nothing outside itself
-   (`selfcontained.check_binary_tree`). The verify hook cannot prove this:
-   it runs while the fetched work tree is still on disk. A venv gets
-   `selfcontained.check_tree` at the same point.
+9. **A tree of compiled programs holds what its units start.** Root runs
+   no build of a `kind: binary` component. It unpacks the archive that
+   check P6 verified (`provenance.VerifiedArtifact`). After the unpack,
+   every program that the verify command or a unit in force starts must be
+   a regular, executable file of the staged tree, and the tree must reach
+   nothing outside itself (`selfcontained.check_binary_tree`). The verify
+   hook cannot prove this: it runs while the fetched work tree is still on
+   disk. A venv gets `selfcontained.check_tree` at the same point.
 """
 
 from __future__ import annotations
@@ -93,9 +94,9 @@ import stat
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
-from ..catalog import BINARY_INSTALL_ENV, Kind, RestoreMode, VerifyUser
+from ..catalog import Kind, RestoreMode, VerifyUser
 from ..errors import Refusal, RefusalCode, safe_token
 from ..manifest import ComponentManifest
 from ..site import operator_home, operator_user
@@ -104,6 +105,11 @@ from .quiet import WATCHED_SERVICES
 from .selfcontained import check_binary_tree, check_tree
 from .source import GIT, REFRESH_COMMAND, git_env, git_ground, require_trusted
 from .spool import VerifyHook
+from .unpack import UnpackRefused, extract_tar
+
+if TYPE_CHECKING:
+    # `provenance` imports `artifact`, which imports this module.
+    from .provenance import VerifiedArtifact
 
 NEW_SUFFIX: Final = ".new"
 
@@ -128,26 +134,11 @@ UNIT_DIR_IN_TREE: Final = "systemd"
 #: `uv` puts the project environment where this names, which is how a
 #: `build` entry with no interpolation still lands in `<install.to>.new`.
 #: CONTRACT-QUESTION: contract 06 §8's `output` defaults to this, and
-#: `manifest.py` refuses the key, so every build gets this variable or
-#: `BINARY_ENV_NAME`, by its kind. Reading the key would let a manifest name
-#: a variable in the environment of a child that runs as root.
+#: `manifest.py` refuses the key, so every build that root runs gets this
+#: variable. Root runs no build of a `kind: binary` component. Reading the
+#: key would let a manifest name a variable in the environment of a child
+#: that runs as root.
 VENV_ENV_NAME: Final = "UV_PROJECT_ENVIRONMENT"
-
-#: The same, for a `kind: binary` build. `cargo install` with no `--root`
-#: writes each program at `<this>/bin/<name>`, so the staged tree has the
-#: layout a venv has and every `ExecStart=` path keeps its shape.
-#: Measured against cargo 1.92.0 on 2026-10-03, and again by
-#: `handover/tests/test_handover_bin_cargo_guard.py`.
-#:
-#: The build runs in the root of the fetched tree, as a venv build does.
-#: CONTRACT-QUESTION: contract 06 §8 says where a build writes and not
-#: where it runs. Measured against rustup 1.29.0: a `rustup` proxy reads a
-#: toolchain file from the working directory and its parents, so from the
-#: root of the tree it does not read `rust/rust-toolchain.toml`, and it
-#: downloads a toolchain that the host does not have. How the host gets
-#: its toolchain is the operator's decision. A build that runs in `rust/`
-#: costs a working directory rule per kind.
-BINARY_ENV_NAME: Final = BINARY_INSTALL_ENV
 
 #: The kinds whose tree holds the programs that its units start: the
 #: console scripts of a venv and the compiled programs of a binary tree,
@@ -527,10 +518,32 @@ class Installer:
 
         return chosen, _unit_text(manifest, chosen)
 
-    def build(self, manifest: ComponentManifest, source: Path, paths: Paths) -> None:
-        """Run `build` into `<install.to>.new`, then prove the hook is there."""
+    def build(
+        self,
+        manifest: ComponentManifest,
+        source: Path,
+        paths: Paths,
+        verified: VerifiedArtifact | None = None,
+    ) -> None:
+        """Fill `<install.to>.new`, then prove the hook is there.
+
+        A `kind: binary` component gets the unpack of its `verified`
+        archive, and no command of its `build` runs. Each other kind runs
+        its `build` there. `source` is the fetched work tree in both cases:
+        the walk of a binary tree looks for its path.
+        """
         remove_tree(paths.new)
         paths.new.parent.mkdir(parents=True, exist_ok=True)
+        if manifest.kind is Kind.BINARY:
+            _unpack(manifest, paths, verified)
+        else:
+            self._run_build(manifest, source, paths)
+
+        self._check_staged_hook(manifest, paths)
+        self._check_self_contained(manifest, source, paths)
+
+    def _run_build(self, manifest: ComponentManifest, source: Path, paths: Paths) -> None:
+        """The `build` argv of the manifest, as root, in the fetched tree."""
         self._make_relocatable(manifest, source, paths)
         for argv in manifest.build:
             self._must(
@@ -539,11 +552,8 @@ class Installer:
                 BUILD_TIMEOUT_S,
                 f"{manifest.name}: build failed",
                 cwd=source,
-                env={_output_env(manifest.kind): str(paths.new)},
+                env={VENV_ENV_NAME: str(paths.new)},
             )
-
-        self._check_staged_hook(manifest, paths)
-        self._check_self_contained(manifest, source, paths)
 
     def _check_self_contained(
         self, manifest: ComponentManifest, source: Path, paths: Paths
@@ -1190,10 +1200,24 @@ def _stderr_suffix(stderr: str) -> str:
     return f": {' | '.join(tail)}"
 
 
-def _output_env(kind: Kind) -> str:
-    """The variable through which a build of this kind learns where
-    `<install.to>.new` is. Every kind but `binary` keeps the one it had."""
-    return BINARY_ENV_NAME if kind is Kind.BINARY else VENV_ENV_NAME
+def _unpack(manifest: ComponentManifest, paths: Paths, verified: VerifiedArtifact | None) -> None:
+    """The archive that check P6 verified, unpacked into `<install.to>.new`
+    with the rules of a component archive (`unpack.py`).
+
+    Each fault is a failed stage: no verified archive of this component, a
+    shape that the unpack refuses, and a copy that cannot be read, also
+    one that is gone. The step removes the staged tree.
+    """
+    if verified is None or verified.component != manifest.name:
+        raise StepFailed(f"{manifest.name}: no archive that check P6 verified")
+
+    try:
+        extract_tar(verified.archive, paths.new, manifest.name)
+    except UnpackRefused as refused:
+        raise StepFailed(f"{manifest.name}: {refused.detail}") from None
+    except OSError as exc:
+        detail = f"{manifest.name}: the archive could not be unpacked: {type(exc).__name__}"
+        raise StepFailed(detail) from None
 
 
 def restorable(manifest: ComponentManifest) -> bool:

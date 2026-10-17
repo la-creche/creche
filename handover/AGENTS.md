@@ -132,8 +132,10 @@ The console script is `handover`. The verify hook and the operator's
    depend on it.
 4. `FIRST_VERSION` and the bump arithmetic live in one place.
 5. The site file holds everything that differs between deployments. `site.py`
-   reads it. A missing value refuses with the `site` code. It never falls back
-   to a default.
+   reads it. A required value that is missing refuses with the `site` code.
+   It never falls back to a default. An optional key has its default beside
+   its read in `site.py`, and the default names no deployment. A value that
+   does not have its shape refuses with the `site` code.
 6. The version of the manifest contract has one source: the `provides` row
    for `component-manifest` in `handover/component.yaml`. `catalog.py` holds
    the same two numbers as constants that a person types:
@@ -289,13 +291,16 @@ has the name of the markup of the manifest: `.component.toml` or
 
 1. A `kind: binary` component is a tree of compiled programs. Each program
    is at `<install.to>/bin/<name>`, the layout of a venv.
-2. Root builds it on the host from the manifest's own `build` argv, as it
-   builds a venv. The user, the environment and the time limit are the
-   same. Every `build` argv carries `--locked`, and `cargo install` carries
-   `--no-track`. The first word of each `build` argv is the word `cargo`,
-   with no path (`catalog.BINARY_BUILD_PROGRAM`).
-3. The executor sets `CARGO_INSTALL_ROOT` to the staged tree. No venv step
-   runs: no `uv venv --relocatable` and no walk of `site-packages`.
+2. CI builds it from the manifest's own `build` argv. CI packs the programs
+   into one archive and signs the archive. Every `build` argv carries
+   `--locked`, and `cargo install` carries `--no-track`. The first word of
+   each `build` argv is the word `cargo`, with no path
+   (`catalog.BINARY_BUILD_PROGRAM`). CI sets `CARGO_INSTALL_ROOT`
+   (`catalog.BINARY_INSTALL_ENV`).
+3. Root runs no command of the `build` argv. Check P6 verifies root's copy
+   of the archive at step 3, and step 8 unpacks that copy into
+   `<install.to>.new` (`executor/unpack.py`). No venv step runs: no
+   `uv venv --relocatable` and no walk of `site-packages`.
 4. The unit rules of a venv apply. The unit must start a program inside
    `install.to`, and a sibling unit travels with the component's own unit.
 5. Every program that a unit or the verify command starts is a regular,
@@ -324,6 +329,31 @@ has the name of the markup of the manifest: `.component.toml` or
 11. File the request for that release from a checkout that holds the new
     catalog, with `uv run handover request handover`. The `release` verb
     of the chaperone reads no manifest, so it can file the request too.
+12. Check P6 (`executor/provenance.py`) starts the verifier, `cosign`, in
+    two children. Each child runs in a transient unit of systemd, as a
+    dynamic user with no privilege (`host.As.VERIFIER`). Child 1 loads the
+    trust root. Child 2 checks the signature with no network. Root reads
+    the exit status of each child and no text. After a pass, root reads
+    the member list of its copy and writes no file. A pass gives a
+    `VerifiedArtifact`. Only the check makes one, and step 8 unpacks only
+    such a value.
+12a. The dynamic user of the unit reads root's copy. Before the first
+     child, root gives the work root (`layout.WORK_ROOT`) the mode 0755.
+     Step 2 gives the same mode to each directory from `work/<id>` down to
+     the archive.
+13. Root starts a child of the verifier only when root trusts the verifier
+    and `systemd-run` (`host.distrusted`). Each program is a regular file
+    of root, and group and other cannot write it. Each directory above it,
+    up to `/`, has the same owner rule. No link is followed. The check runs
+    before each child. The site file names the two programs with the keys
+    `AGENT_COSIGN_PROGRAM` and `AGENT_SYSTEMD_RUN_PROGRAM`, and each key has
+    a default.
+13a. For each program that fails the check, step 3 writes one line to the
+     log of the ledger entry. The line names the path that failed and the
+     reason. The refusal of P6 names no path.
+14. Root's own time limit of a verifier child ends before the time limit
+    of its unit. A child that does not end in its time is thus no answer,
+    and the follower asks again.
 
 ## The server file (`mcpserver.py`)
 
@@ -388,9 +418,9 @@ The executor runs as root from `creche-handover.path`, through the wrapper
 | `cli.py` | `check`, `resolve`, `allocate-tags`, `request`, `follow`, `artifacts`, `check-tree` |
 | `requester/`, `corpus/` | one request file, one `git fetch`, and the fetch of the two assets of a binary component into the store (`corpus/artifacts.py`) |
 | `follow/` | the set a newer tag moves, the marker, the decision |
-| `executor/spool.py`, `request.py`, `live_state.py`, `provenance.py` | the five directories, the request, the built document, P1 to P5 |
+| `executor/spool.py`, `request.py`, `live_state.py`, `provenance.py` | the five directories, the request, the built document, P1 to P6 |
 | `executor/approval.py`, `phone.py`, `notice.py`, `quiesce.py`, `quiet.py` | the gate, the transport, the outcome push, step 7, the quiet minutes |
-| `executor/host.py`, `install.py`, `mcpbuild.py`, `roster.py`, `self_switch.py` | the one spawn, steps 8 to 10, a server tree, the roster, the self-release |
+| `executor/host.py`, `install.py`, `mcpbuild.py`, `roster.py`, `self_switch.py` | the one spawn and the unit of the verifier, steps 8 to 10, a server tree, the roster, the self-release |
 | `executor/unpack.py`, `artifact.py` | the unpack of a tar archive and the member list of a component archive, root's copy of the two assets of a binary component and the digest of its archive |
 | `executor/ledger.py`, `steps.py`, `drain.py` | the entry, the ten steps, the unit's entry point |
 | `intake/token.py`, `store.py`, `service.py`, `gaps.py`, `notify.py`, `run.py` | the capability, the kernel rule, the two routes, the gap directory, the one push, the entry point |
@@ -403,7 +433,9 @@ uv run pytest handover/tests
 ```
 
 No test needs a host. A real `git`, `uv`, `cargo` or `sops` runs against
-`tmp_path`. The `cargo` test skips on a machine that has no `cargo`. A real
+`tmp_path`. A stand-in runs in the place of `cosign`, after the real check
+of the two programs of the verifier. The `cargo` test skips on a machine
+that has no `cargo`. A real
 `curl` fetches from a loopback https server, and that test skips on a
 machine that has no `curl` or no `openssl`.
 TLS runs on loopback. Every test file's basename starts with
@@ -415,10 +447,9 @@ that wants a refusal changes one field.
 - The checker runs C2, C3, C4, then C1 (`contracts.py`).
 - A component named at its live version is `unchanged`, and step 9 restarts
   nothing (`resolve.py`).
-- Every build uses `UV_PROJECT_ENVIRONMENT`, or `CARGO_INSTALL_ROOT` for a
-  binary component. Every unit file is `systemd/<unit>`. No manifest can
-  name another variable or another place (`manifest.py`,
-  `executor/install.py`).
+- Every build that root runs uses `UV_PROJECT_ENVIRONMENT`. Every unit file
+  is `systemd/<unit>`. No manifest can name another variable or another
+  place (`manifest.py`, `executor/install.py`).
 - Every component with no tag gets `0.1.0` (`allocate.py`).
 - The per-requester cap counts one drain pass and keys on `requested_by`,
   which the requester writes (`executor/drain.py`).
@@ -488,10 +519,14 @@ that wants a refusal changes one field.
   (`requester/file.py`).
 - The `chaperone` venv carries `handover`'s console scripts
   (`chaperone/pyproject.toml`).
-- Contract 06 §8 does not list `kind: binary`. Build on the host or verify
-  an artifact that CI built and attested: the operator decides. Root builds
-  on the host today, as it builds a venv. A cargo build script runs
-  arbitrary code, so the user that runs the build matters (`catalog.py`).
+- `stage7-releases.md` §2.4 step 3 says that root reads only the exit
+  status of the verifier, and §2.6 lists the four reasons of P6. Neither
+  section gives a reason to an exit status. Through `systemd-run --wait`,
+  a child that does not start ends with the status 1. A child past the
+  time limit of its unit ends with the same status, as a refused signature
+  does. Root checks the two program files before each child, and its own
+  time limit ends first. Each other status of child 2 that is not 0 is a
+  refused signature (`executor/provenance.py`).
 - Contract 06 §1 rule 10 names no file of a Cargo workspace. Three files
   move a binary component: `rust/Cargo.lock`, `rust/Cargo.toml` and
   `rust/rust-toolchain.toml`. A `rust/.cargo/config.toml` moves none
@@ -527,22 +562,16 @@ that wants a refusal changes one field.
   (`discovery.py`, `executor/steps.py`).
 - The executor refuses a binary tree when a file holds the path of the
   fetched work tree. The walk cannot tell a path that a program opens from
-  a path that it only prints. Code that a build script generates can carry
-  its own path into a panic message. Such a build must remap the path. That
-  path holds the request id, so a fixed cargo configuration cannot name it
+  a path that it only prints. CI builds with a remap of the paths of the
+  runner, and it runs the walk with those paths before it signs
   (`treewalk.py`).
 - `handover artifacts --repo` reads the manifests only when the catalog of
   that repository holds a binary row. It then reads each manifest of its
   roots, also the manifest of a venv component. Such a read needs the site
   file for a `~/` path, and a CI runner has no site file. No catalog row
   says `binary` today (`cli.py`).
-- A binary build runs in the root of the fetched tree. A `rustup` proxy
-  reads a toolchain file from the working directory and its parents, so it
-  does not read `rust/rust-toolchain.toml`. It also downloads a toolchain
-  that the host does not have. The operator decides how the host gets its
-  toolchain (`executor/install.py`).
 - A run that ends in the way of a crash keeps `work/<id>`. No later run
-  removes it. A binary build leaves its `target` directory there
+  removes it. It holds root's copy of each archive of the release
   (`executor/steps.py`).
 - `stage7-releases.md` §2.4 row 8 names no rule for the set-user-ID bit, the
   set-group-ID bit and the sticky bit of a staged file. The mode pass drops

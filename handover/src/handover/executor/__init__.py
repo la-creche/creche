@@ -14,7 +14,7 @@ Module map, in the order one release walks through them:
 | `spool` | The five directories, `O_NOFOLLOW` everywhere, the lock. |
 | `request` | §2.3's request, parsed as hostile bytes. |
 | `live_state` | Contract 06 §11's document, held to the version stamps. |
-| `provenance` | P1 to P5 against the GitHub API, fail closed. |
+| `provenance` | P1 to P5 against the GitHub API, and P6 with the verifier, fail closed. |
 | `approval` | The gate id, the summary, the transport seam. |
 | `quiesce` | Step 7: no turn mid-start. |
 | `host` | The one place a child process starts. No shell, ever. |

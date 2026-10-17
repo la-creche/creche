@@ -223,9 +223,10 @@ def test_the_document_has_contract_06_paragraph_9_fields() -> None:
 
 #: The hash of two documents, as the writer before the strict writer gave
 #: it. The approval binds to the hash, so the strict writer gives each
-#: strict document the bytes of before.
-HASH_OF_TWO = "sha256:ce5ae6ded375962189d9c1e82a386345146fb58c9cf56bb1ba6fedf8754655c8"
-HASH_OF_A_FRACTION = "sha256:11d8c47c46aa28897c4e95b74f8b8d3ded8ceba747cc538892882249121b3fb2"
+#: strict document the bytes of before. Each document holds the version
+#: text of the manifest contract, 0.19, so a new version moves both hashes.
+HASH_OF_TWO = "sha256:b9d4682f03246806efc8b5501eb8969732252039d461c1df645be98f4ca36101"
+HASH_OF_A_FRACTION = "sha256:2f2600b140298d68c9bcf89a937902bac1092e448863abdc3d4be206e71a6322"
 
 
 def test_the_hash_of_a_document_is_the_hash_of_before() -> None:
