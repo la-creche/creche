@@ -524,10 +524,12 @@ fault, the event of a channel line and the arguments of a tool call.
   function.
 
 Only `session` calls the writer today. `mcp` gets the writer through
-`Opaque::of`. Only `mcp` calls the reader. The index of the vector files is
-a strict text too. The crate `creche-vectors` reads it and does not use
-`creche-contracts`, so its raw types hold the rules for the index. "Known
-gaps" names the packet that moves each module to the two.
+`Opaque::of`. `mcp` calls the reader. The reader of the noticeboard in
+`status` and `untrusted::parse_object` call `check`, and then a parser of
+their own module. The index of the vector files is a strict text too. The
+crate `creche-vectors` reads it and does not use `creche-contracts`, so its
+raw types hold the rules for the index. "Known gaps" names the packet that
+moves each module to the two.
 Until then, these parts stay:
 
 - Four older functions format a float: `float_text` of `channel`, of
@@ -983,6 +985,12 @@ Rule 1 holds in each other part. The reader makes the raw type first, and a
 conversion that can fail makes the valid type. Rule 7 holds too. Only the
 detail of a fault holds a `status::json::Json`, and contract 05 §3.3 makes
 that value opaque.
+
+The reader of the noticeboard reads strict JSON. `Reader::is_strict` says
+so, and `json::check` reads the bytes before the hand parser. Its
+`ReadError::NotStrict` keeps the refusal for the notice. The four other
+readers of a status document take what their Python readers take. No
+reader skips a byte order mark.
 
 ## The config of a process
 
@@ -2704,54 +2712,41 @@ adds a crate:
   takes typed parts.
 - These `CONTRACT-QUESTION` comments are open in
   `crates/creche-contracts/src/untrusted.rs`:
-  1. `parse_object`, contract 02 §3 rule 3. The contract says that a body is
-     JSON. It does not say if a reader takes what `json.loads` of Python
-     takes past strict JSON in UTF-8. Each Python client takes a part of it.
-     Difference 1 and difference 4 below say which part. The reader is
-     `serde_json`, which refuses each part.
-  2. `DEPTH_MAX`, contract 02 §3 rule 3. The contract gives a body no nesting
-     limit. `parse_object` reads 127 levels, the limit of `serde_json`. The
-     tree of the module stops at 128 levels, for a deserializer with no
-     limit.
-  3. `number`, contracts 02, 04 and 05. No contract gives a zero a sign. The
-     reader keeps the sign that `serde_json` gives. Difference 3 below says
+  1. `DEPTH_MAX`, contract 02 §3 rule 3. The contract gives a body no nesting
+     limit. The tree of the module stops at 128 levels, for a deserializer
+     with no limit. `parse_object` reads a strict text, which nests 64
+     levels at most.
+  2. `number`, contracts 02, 04 and 05. No contract gives a zero a sign. The
+     reader keeps the sign that `serde_json` gives. Difference 2 below says
      what that sign is and what a change costs.
-- The module `untrusted` differs from the Python helpers on purpose in four
-  ways. The test of the module holds each one. A row of `DEVIATIONS` holds
-  each vector of `runtime.parse_object.noticeboard` on which the two sides
-  differ. A plain test holds each other input.
-  1. An answer is strict JSON in UTF-8, with no byte order mark. It holds no
-     `NaN`, no `Infinity`, no number outside the range of a float and no half
-     of a surrogate pair. Each Python client reads `NaN`, `Infinity`, such a
-     number and the escape of such a half. The noticeboard, the delegate
-     client of the chaperone and `caregiver` give `json.loads` the bytes.
-     They also read a byte order mark, UTF-16, UTF-32 and the bytes of such
-     a half. The three doors give `json.loads` the text of `httpx`, and they
-     refuse the first three.
-  2. An answer nests 127 levels at most.
-  3. `number` reads the integer `-0` as `-0.0`, and Python reads it as
+- `untrusted::parse_object` reads strict JSON: `json::check` reads the bytes
+  first, with the cap of the caller. Its `NotAnObject::NotStrict` keeps the
+  refusal for the notice. The Python reader of the noticeboard reads strict
+  JSON too, and each vector of `runtime.parse_object.noticeboard` is equal.
+- The module `untrusted` differs from the other Python helpers on purpose
+  in three ways. A plain test of the module holds each one.
+  1. An answer is strict JSON. The delegate client of the chaperone,
+     `caregiver` and the three doors read an answer with `json.loads`. That
+     reader takes `NaN`, `Infinity`, an integer of each size, a key two times
+     and the escape of one half of a surrogate pair. The delegate client and
+     `caregiver` give `json.loads` the bytes. They thus also read a byte
+     order mark, UTF-16, UTF-32 and the bytes of such a half. The three doors
+     give `json.loads` the text of `httpx`, and they refuse the first three.
+  2. `number` reads the integer `-0` as `-0.0`, and Python reads it as
      `0.0`. `serde_json` gives the text `-0` and the text `-0.0` as one
      float, so the reader cannot tell the two apart. No writer of the
      platform writes the text `-0`. `json::Number` reads the text of a token
      and tells the two apart. The reader can use that type after the module
      reads a text through `json`. No packet has that change yet.
-  4. An answer holds no byte that is not UTF-8. The three doors read such a
-     byte as U+FFFD, because `httpx` makes a text of the body first. The
-     three other clients refuse the answer, and `parse_object` refuses it
-     too. The port of a door gives `parse_object` the lossy text of the body,
-     or it names the difference in its pull request.
-
-  One more row is a vector on which the two sides accept the same document.
-  The raw type of the test keeps an integer past 64 bits as a float. `int`
-  reads such an integer as 0, and the Python helpers keep each digit of it.
-  Such an integer is not strict JSON. A plain test holds that result.
-- `untrusted::parse_object` refuses the whole answer for difference 1, for
-  difference 2 and for difference 4. The Python services write the JSON body
-  of an answer with the JSON response class of their web framework. That
-  class writes no `NaN`, no `Infinity` and no half of a surrogate pair. It
-  writes an integer of each size. The owner of the crate decides if the
-  module gets a JSON reader of its own, as `channel`, `grants`, `status` and
-  `manifest` have.
+  3. An answer holds no byte that is not UTF-8. The three doors read such a
+     byte as U+FFFD, because `httpx` makes a text of the body first. The two
+     other clients refuse the answer, and `parse_object` refuses it too. The
+     port of a door gives `parse_object` the lossy text of the body, or it
+     names the difference in its pull request.
+- The Python services write the JSON body of an answer with the JSON
+  response class of their web framework. That class writes no `NaN`, no
+  `Infinity` and no half of a surrogate pair. It writes an integer of each
+  size, and `parse_object` refuses an integer outside 64 bits.
 - The module `untrusted` has no reader that tells a value that is no list
   from an empty list. `untrusted::list` reads both as the empty list.
   `is_list` of each door gives `False` for the first only, and `as_array` of
@@ -2860,8 +2855,8 @@ adds a crate:
      stops at a depth that depends on the interpreter. A value of 256 levels
      needs less than 384 KiB of stack.
   2. `Json::parse_bytes`, contract 05 §2. The contract does not name the
-     encoding of a file. The reader takes UTF-8. The Python reader of the
-     noticeboard also takes UTF-16 and UTF-32.
+     encoding of a file. The reader takes UTF-8. Each Python writer writes
+     UTF-8, and the reader of the noticeboard reads strict JSON.
   3. `JsonError::LoneSurrogate`, contract 05 §2. The Python reader keeps an
      escape of one half of a surrogate pair. The reader refuses the file.
   4. `views::freshness`, contract 05 §2.1. The contract names RFC 3339 for
@@ -2912,11 +2907,18 @@ adds a crate:
   five Python readers do not agree. The table `DISAGREEMENTS` in
   `status/python.rs` names each class of such documents, with one or two
   documents of the class. The owner decides which reading each port keeps.
+  The table has no row for one class: a document that is not strict JSON.
+  The view of the noticeboard refuses such a document, and the four other
+  views take it. Two examples are the vectors `spend-nan` and
+  `json-duplicate-kind`. No row is added for this class, because the packet
+  of each other reader makes that reader strict.
 - A view of `status` does not refuse a document for these three values. It
   reads a time with no UTC offset as no time. It reads a time outside the
   years 1 to 9999 as no time. It reads a number above the range of a float as
-  no number. The document is then stale, or it shows no spend. A unit test
-  covers each value, and no vector holds one.
+  no number. The document is then stale, or it shows no spend. The view of
+  the noticeboard is the exception for the number: its reader reads strict
+  JSON, so it refuses the document. A unit test covers each value, and no
+  vector holds one.
 - Three inputs left the vectors of contract 05 under resolution (c) of "When
   the two results differ". For each one, the Python code of today and
   `time::Timestamp` give two results. A plain test of `status::views` or of

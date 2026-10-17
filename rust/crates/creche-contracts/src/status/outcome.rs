@@ -4,8 +4,8 @@
 //! Contract 02 §13.1 owns the record and its writer. This module holds the
 //! view of the one reader that contract 05 names.
 
-use super::json::{ByteOrderMark, Integer, Object};
-use super::raw::{ReadError, block, integer, number, read_object, text};
+use super::json::{Integer, Object};
+use super::raw::{ReadError, block, integer, number, read_strict_object, text};
 use super::views::TEXT_CHARS_MAX;
 
 /// The largest outcome record that the noticeboard parses: 1 MiB.
@@ -137,10 +137,11 @@ fn shown(object: &Object, key: &str) -> String {
 
 /// The view of the noticeboard: the bytes of one outcome record. `stem` is
 /// the name of the file with no `.json`. The noticeboard makes a row for each
-/// file.
+/// file. The noticeboard reads strict JSON, so a text that is not strict
+/// gives a row with [`ReadError::NotStrict`].
 #[must_use]
 pub fn noticeboard(bytes: &[u8], stem: &str) -> OutcomeRow {
-    let object = match read_object(bytes, OUTCOME_CAP_BYTES, ByteOrderMark::Skip) {
+    let object = match read_strict_object(bytes, OUTCOME_CAP_BYTES) {
         Ok(object) => object,
         Err(problem) => return unreadable(stem, problem),
     };
@@ -196,7 +197,8 @@ fn unreadable(stem: &str, problem: ReadError) -> OutcomeRow {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::status::json::{JsonError, JsonKind};
+    use crate::json::Rule;
+    use crate::status::json::JsonKind;
 
     const STEM: &str = "01JBQ7WZ0X4T9V6K2H8M3N5PQR";
 
@@ -258,25 +260,51 @@ mod tests {
         assert_eq!(trigger(r#"{"trigger": ["timer"]}"#), "");
     }
 
-    #[test]
-    fn a_spend_past_the_range_of_a_float_reads_as_no_number() {
-        let text = format!(r#"{{"spend_usd": 1{}}}"#, "0".repeat(400));
+    /// The rule and the offset of the strict refusal of a row.
+    fn not_strict(row: &OutcomeRow) -> Option<(Rule, usize)> {
+        let problem = row.problem()?;
 
-        assert_eq!(noticeboard(text.as_bytes(), STEM).spend_usd(), None);
+        problem
+            .not_strict()
+            .map(|refusal| (refusal.rule(), refusal.at()))
+    }
+
+    #[test]
+    fn a_spend_past_the_range_of_64_bits_gives_a_row_with_a_problem() {
+        let text = format!(r#"{{"spend_usd": 1{}}}"#, "0".repeat(400));
+        let row = noticeboard(text.as_bytes(), STEM);
+
+        assert_eq!(row.spend_usd(), None);
+        assert_eq!(not_strict(&row), Some((Rule::IntegerRange, 14)));
     }
 
     #[test]
     fn a_file_that_is_not_an_object_gives_a_row_with_a_problem() {
-        let problems = [
-            (&b""[..], ReadError::NotJson(JsonError::Syntax { at: 0 })),
-            (b"[]", ReadError::NotAnObject(JsonKind::Array)),
-            (b"\"\xff\"", ReadError::NotJson(JsonError::NotUtf8)),
+        let row = noticeboard(b"[]", STEM);
+
+        assert_eq!(row.problem(), Some(ReadError::NotAnObject(JsonKind::Array)));
+        assert_eq!(row.id(), STEM);
+    }
+
+    #[test]
+    fn a_text_that_is_not_strict_gives_a_row_with_the_strict_refusal() {
+        let rows: [(&[u8], Rule, usize); 6] = [
+            (b"", Rule::Syntax, 0),
+            (b"\"\xff\"", Rule::NotUtf8, 1),
+            (b"\xef\xbb\xbf{}", Rule::ByteOrderMark, 0),
+            (br#"{"spend_usd": NaN}"#, Rule::Constant, 14),
+            (
+                br#"{"turns": 18446744073709551616}"#,
+                Rule::IntegerRange,
+                10,
+            ),
+            (br#"{"family": "a", "family": "b"}"#, Rule::DuplicateKey, 16),
         ];
 
-        for (bytes, problem) in problems {
+        for (bytes, rule, at) in rows {
             let row = noticeboard(bytes, STEM);
 
-            assert_eq!(row.problem(), Some(problem));
+            assert_eq!(not_strict(&row), Some((rule, at)), "{bytes:?}");
             assert_eq!(row.id(), STEM);
         }
     }

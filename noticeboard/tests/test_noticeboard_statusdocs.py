@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from noticeboard.jsonfiles import MAX_TEXT_CHARS
 from noticeboard.statusdocs import (
     NOT_TEXT,
@@ -16,6 +17,7 @@ from noticeboard.statusdocs import (
 )
 from noticeboard_helpers import (
     NOW,
+    Notices,
     deep_object,
     fault_doc,
     make_state_root,
@@ -150,8 +152,16 @@ def test_a_malformed_document_reports_and_does_not_raise(tmp_path: Path) -> None
     assert "is not JSON" in row.problem
 
 
+#: The problem of a text that is not strict JSON, after the name of the file.
+NOT_STRICT = "is not JSON: the text breaks a rule of strict JSON"
+
+
+@pytest.fixture
+def recorded(monkeypatch: pytest.MonkeyPatch) -> Notices:
+    return Notices().install(monkeypatch)
+
+
 def test_a_document_that_nests_too_deep_reports(tmp_path: Path) -> None:
-    """The JSON reader raises RecursionError on this document, not ValueError."""
     path = tmp_path / "families" / "chat" / "status.json"
     path.parent.mkdir(parents=True)
     path.write_bytes(deep_object())
@@ -159,7 +169,21 @@ def test_a_document_that_nests_too_deep_reports(tmp_path: Path) -> None:
     row = read_family(tmp_path / "families", "chat", NOW)
 
     assert row.health is Health.UNREADABLE
-    assert row.problem == "status.json is not JSON: it nests deeper than the reader allows"
+    assert row.problem == f"status.json {NOT_STRICT}"
+
+
+def test_a_document_that_is_not_strict_records_a_notice_of_its_family(
+    tmp_path: Path, recorded: Notices
+) -> None:
+    path = tmp_path / "families" / "chat" / "status.json"
+    path.parent.mkdir(parents=True)
+    path.write_text('{"kind": "attended", "spend": NaN}', encoding="utf-8")
+
+    row = read_family(tmp_path / "families", "chat", NOW)
+
+    assert row.health is Health.UNREADABLE
+    assert row.problem == f"status.json {NOT_STRICT}"
+    assert recorded.calls == [("status.document", "constant", "chat", True)]
 
 
 def test_a_document_that_is_not_an_object_reports(tmp_path: Path) -> None:
@@ -339,17 +363,17 @@ def test_null_spend_is_not_a_number(tmp_path: Path) -> None:
     assert row.spend is None
 
 
-def test_a_spend_number_past_every_float_reads_unknown(tmp_path: Path) -> None:
+def test_a_spend_number_past_64_bits_makes_the_document_unreadable(tmp_path: Path) -> None:
+    """An integer outside 64 bits is not strict JSON."""
     root = tmp_path / "state"
     spend = {"spend_usd": 10**400, "budget_usd": 10**400, "window": "day"}
     write_json(root / "families" / "chat" / "status.json", status_doc(spend=spend))
 
     row = read_family(root / "families", "chat", NOW)
 
-    assert row.problem == ""
-    assert row.spend is not None
-    assert not row.spend.known
-    assert row.spend.budget_usd is None
+    assert row.health is Health.UNREADABLE
+    assert row.problem == f"status.json {NOT_STRICT}"
+    assert row.spend is None
 
 
 def test_spend_share_needs_both_numbers(tmp_path: Path) -> None:
@@ -458,7 +482,20 @@ def test_a_report_that_nests_too_deep_is_reported(tmp_path: Path) -> None:
     issues, problem = read_report(path)
 
     assert issues == ()
-    assert "nests deeper than the reader allows" in problem
+    assert problem == f"validation.json {NOT_STRICT}"
+
+
+def test_a_report_that_is_not_strict_records_a_notice_of_the_report(
+    tmp_path: Path, recorded: Notices
+) -> None:
+    path = tmp_path / "validation.json"
+    path.write_bytes(b'{"issues": [], "issues": []}')
+
+    issues, problem = read_report(path, "chat")
+
+    assert issues == ()
+    assert problem == f"validation.json {NOT_STRICT}"
+    assert recorded.calls == [("status.report", "duplicate_key", "chat", True)]
 
 
 def test_outcomes_come_back_newest_first(tmp_path: Path) -> None:
@@ -495,7 +532,21 @@ def test_an_outcome_that_nests_too_deep_reports_on_its_own_row(tmp_path: Path) -
     rows = read_outcomes(tmp_path / "state" / "outcomes", "scrum-lead", limit=10)
 
     assert len(rows) == 1
-    assert "nests deeper than the reader allows" in rows[0].problem
+    assert rows[0].problem == f"01JBQ80M4F7S2YQ1VZK6W3TDEN.json {NOT_STRICT}"
+
+
+def test_an_outcome_that_is_not_strict_records_a_notice_of_its_family(
+    tmp_path: Path, recorded: Notices
+) -> None:
+    root = tmp_path / "state" / "outcomes" / "scrum-lead"
+    root.mkdir(parents=True)
+    (root / "01JBQ80M4F7S2YQ1VZK6W3TDEN.json").write_bytes(b'{"turns": 1e999}')
+
+    rows = read_outcomes(tmp_path / "state" / "outcomes", "scrum-lead", limit=10)
+
+    assert len(rows) == 1
+    assert rows[0].problem == f"01JBQ80M4F7S2YQ1VZK6W3TDEN.json {NOT_STRICT}"
+    assert recorded.calls == [("status.outcome", "float_range", "scrum-lead", True)]
 
 
 def test_a_missing_outcome_directory_is_not_an_error(tmp_path: Path) -> None:

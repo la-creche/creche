@@ -148,7 +148,7 @@ fn python_type(kind: JsonKind) -> &'static str {
 fn problem_class(problem: ReadError) -> String {
     match problem {
         ReadError::TooLarge { .. } => "too large".to_owned(),
-        ReadError::NotJson(_) => "not JSON".to_owned(),
+        ReadError::NotStrict(_) | ReadError::NotJson(_) => "not JSON".to_owned(),
         ReadError::NotAnObject(kind) => format!("not an object: {}", python_type(kind)),
     }
 }
@@ -1120,11 +1120,6 @@ const DISAGREEMENTS: &[Disagreement] = &[
             Accepted,
             Refused,
         ],
-    },
-    Disagreement {
-        vector: "bytes-bom",
-        contract: "§2: the file is JSON. A JSON text has no byte order mark.",
-        took: [Refused, Accepted, Refused, Refused, Refused],
     },
     Disagreement {
         vector: "family-other-name",

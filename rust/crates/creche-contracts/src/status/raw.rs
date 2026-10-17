@@ -11,12 +11,17 @@
 //!   type refuses.
 //!
 //! The raw type has no `serde` derive. [`super::json`] says why: `serde_json`
-//! refuses four forms of a JSON text that each Python reader takes.
+//! refuses four forms of a JSON text that four Python readers take.
+//!
+//! The reader of the noticeboard reads strict JSON: [`crate::json::check`]
+//! reads the text before the hand parser of [`super::json`]. Each other
+//! reader takes what its Python reader takes.
 
 use std::error::Error;
 use std::fmt;
 
-use super::json::{ByteOrderMark, Integer, Json, JsonError, JsonKind, Object};
+use super::json::{Integer, Json, JsonError, JsonKind, Object};
+use crate::json::{self as strict, ByteCap, NotStrict};
 use crate::slot::{Found, Slot};
 
 /// The largest file that `attendance` and the noticeboard read: 1 MiB.
@@ -53,15 +58,14 @@ impl Reader {
         }
     }
 
-    /// What the reader does with a byte order mark. The noticeboard skips
-    /// one, and each other reader refuses the file.
+    /// Whether the reader reads strict JSON (`rust/AGENTS.md`, "JSON"). Only
+    /// the noticeboard does today. The packet that makes the last reader
+    /// strict deletes this method.
     #[must_use]
-    pub const fn byte_order_mark(self) -> ByteOrderMark {
+    pub const fn is_strict(self) -> bool {
         match self {
-            Self::Noticeboard => ByteOrderMark::Skip,
-            Self::Attendance | Self::DoorTui | Self::DoorTrigger | Self::DoorOwui => {
-                ByteOrderMark::Refuse
-            }
+            Self::Noticeboard => true,
+            Self::Attendance | Self::DoorTui | Self::DoorTrigger | Self::DoorOwui => false,
         }
     }
 }
@@ -74,16 +78,31 @@ pub enum ReadError {
         /// The cap of the reader, in bytes.
         cap: usize,
     },
+    /// The bytes are not strict JSON. Only a strict reader gives this error.
+    NotStrict(NotStrict),
     /// The bytes are not one JSON text.
     NotJson(JsonError),
     /// The JSON text is not an object.
     NotAnObject(JsonKind),
 }
 
+impl ReadError {
+    /// The refusal of the strict check, for a text that is not strict JSON.
+    /// A service builds the notice for the operator from this value.
+    #[must_use]
+    pub const fn not_strict(&self) -> Option<&NotStrict> {
+        match self {
+            Self::NotStrict(refusal) => Some(refusal),
+            Self::TooLarge { .. } | Self::NotJson(_) | Self::NotAnObject(_) => None,
+        }
+    }
+}
+
 impl fmt::Display for ReadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::TooLarge { cap } => write!(f, "the file has more than {cap} bytes"),
+            Self::NotStrict(refusal) => write!(f, "the file is not strict JSON: {refusal}"),
             Self::NotJson(error) => write!(f, "the file is not JSON: {error}"),
             Self::NotAnObject(kind) => write!(f, "the file holds {kind:?}, not a JSON object"),
         }
@@ -92,20 +111,33 @@ impl fmt::Display for ReadError {
 
 impl Error for ReadError {}
 
-/// Reads the bytes of one file as one JSON object.
-pub(crate) fn read_object(
-    bytes: &[u8],
-    cap: usize,
-    mark: ByteOrderMark,
-) -> Result<Object, ReadError> {
+/// Reads the bytes of one file as one JSON object, as a Python reader that
+/// is not strict reads them.
+pub(crate) fn read_object(bytes: &[u8], cap: usize) -> Result<Object, ReadError> {
     if bytes.len() > cap {
         return Err(ReadError::TooLarge { cap });
     }
 
-    match Json::parse_bytes(bytes, mark).map_err(ReadError::NotJson)? {
+    match Json::parse_bytes(bytes).map_err(ReadError::NotJson)? {
         Json::Object(object) => Ok(object),
         other => Err(ReadError::NotAnObject(other.kind())),
     }
+}
+
+/// Reads the bytes of one file as one JSON object of a strict text.
+///
+/// A file over `cap` is [`ReadError::TooLarge`], as for each reader. The
+/// strict check then reads the bytes. The hand parser reads each strict text
+/// as `json.loads` of Python reads it, so the value is the value of the
+/// Python reader.
+pub(crate) fn read_strict_object(bytes: &[u8], cap: usize) -> Result<Object, ReadError> {
+    if bytes.len() > cap {
+        return Err(ReadError::TooLarge { cap });
+    }
+
+    strict::check(bytes, ByteCap::new(cap)).map_err(ReadError::NotStrict)?;
+
+    read_object(bytes, cap)
 }
 
 /// The kind of a value of the tree, for a [`Slot`] that does not take it.
@@ -486,14 +518,18 @@ pub struct RawStatus {
 }
 
 impl RawStatus {
-    /// Reads the bytes of one `status.json`, with the size cap and the byte
-    /// order mark rule of `reader`.
+    /// Reads the bytes of one `status.json`, with the size cap of `reader`.
+    /// A strict reader refuses a text that is not strict JSON.
     ///
     /// # Errors
     ///
     /// [`ReadError`] when the bytes are not one JSON object.
     pub fn read(bytes: &[u8], reader: Reader) -> Result<Self, ReadError> {
-        let object = read_object(bytes, reader.size_cap(), reader.byte_order_mark())?;
+        let object = if reader.is_strict() {
+            read_strict_object(bytes, reader.size_cap())?
+        } else {
+            read_object(bytes, reader.size_cap())?
+        };
 
         Ok(Self::from_object(&object))
     }
@@ -612,8 +648,17 @@ mod tests {
         assert_eq!(spend.window, Slot::Other(Found::Boolean));
     }
 
+    /// The rule and the offset of a strict refusal of `reader`.
+    fn not_strict(bytes: &[u8], reader: Reader) -> Option<(strict::Rule, usize)> {
+        let refused = RawStatus::read(bytes, reader).err()?;
+
+        refused
+            .not_strict()
+            .map(|refusal| (refusal.rule(), refusal.at()))
+    }
+
     #[test]
-    fn each_reader_has_its_cap_and_its_rule_for_a_byte_order_mark() {
+    fn each_reader_has_its_cap_and_refuses_a_byte_order_mark() {
         let marked = "\u{feff}{}".as_bytes();
         let large = format!(r#"{{"x": "{}"}}"#, "a".repeat(DOOR_CAP_BYTES));
 
@@ -630,7 +675,10 @@ mod tests {
             );
         }
 
-        assert!(RawStatus::read(marked, Reader::Noticeboard).is_ok());
+        assert_eq!(
+            not_strict(marked, Reader::Noticeboard),
+            Some((strict::Rule::ByteOrderMark, 0))
+        );
         assert!(RawStatus::read(large.as_bytes(), Reader::Attendance).is_ok());
         assert!(RawStatus::read(large.as_bytes(), Reader::Noticeboard).is_ok());
         assert_eq!(
@@ -679,7 +727,7 @@ mod tests {
             (r#""in_sync""#, JsonKind::String),
             ("5", JsonKind::Integer),
             ("true", JsonKind::Bool),
-            ("NaN", JsonKind::Float),
+            ("2.5", JsonKind::Float),
         ];
 
         for (text, kind) in kinds {
@@ -694,5 +742,72 @@ mod tests {
             ReadError::NotAnObject(JsonKind::Array).to_string(),
             "the file holds Array, not a JSON object"
         );
+    }
+    #[test]
+    fn only_the_reader_of_the_noticeboard_is_strict() {
+        let strict_readers: Vec<Reader> = [
+            Reader::Attendance,
+            Reader::Noticeboard,
+            Reader::DoorTui,
+            Reader::DoorTrigger,
+            Reader::DoorOwui,
+        ]
+        .into_iter()
+        .filter(|reader| reader.is_strict())
+        .collect();
+
+        assert_eq!(strict_readers, [Reader::Noticeboard]);
+    }
+
+    #[test]
+    fn the_reader_of_the_noticeboard_refuses_each_text_that_is_not_strict() {
+        let deep = format!(r#"{{"x":{}{}}}"#, "[".repeat(64), "]".repeat(64));
+        let rows: [(&[u8], strict::Rule, usize); 11] = [
+            (br#"{"spend": NaN}"#, strict::Rule::Constant, 10),
+            (b"\xef\xbb\xbf{}", strict::Rule::ByteOrderMark, 0),
+            (b"\xff\xfe{\x00}\x00", strict::Rule::NotUtf8, 0),
+            (b"{\x00}\x00", strict::Rule::Syntax, 1),
+            (br#"{"kind": "\ud800"}"#, strict::Rule::LoneSurrogate, 10),
+            (br#"{"kind": 1, "kind": 2}"#, strict::Rule::DuplicateKey, 12),
+            (
+                br#"{"epoch": 18446744073709551616}"#,
+                strict::Rule::IntegerRange,
+                10,
+            ),
+            (br#"{"spend": 1e999}"#, strict::Rule::FloatRange, 10),
+            (deep.as_bytes(), strict::Rule::TooDeep, 68),
+            (br#"{"kind": 1,}"#, strict::Rule::Syntax, 11),
+            (br#"{} {}"#, strict::Rule::TrailingData, 3),
+        ];
+
+        for (bytes, rule, at) in rows {
+            let shown = String::from_utf8_lossy(bytes);
+
+            assert_eq!(
+                not_strict(bytes, Reader::Noticeboard),
+                Some((rule, at)),
+                "{shown}"
+            );
+        }
+        // A reader that is not strict takes what its Python reader takes.
+        assert!(RawStatus::read(br#"{"spend": NaN}"#, Reader::Attendance).is_ok());
+        assert!(RawStatus::read(br#"{"kind": 1, "kind": 2}"#, Reader::DoorOwui).is_ok());
+    }
+
+    #[test]
+    fn only_a_strict_refusal_has_a_value_for_the_notice() {
+        let refused = RawStatus::read(b"[NaN]", Reader::Noticeboard).unwrap_err();
+
+        assert_eq!(
+            refused.to_string(),
+            "the file is not strict JSON: constant at byte 1"
+        );
+        for other in [
+            ReadError::TooLarge { cap: 1 },
+            ReadError::NotJson(JsonError::NotUtf8),
+            ReadError::NotAnObject(JsonKind::Array),
+        ] {
+            assert_eq!(other.not_strict(), None);
+        }
     }
 }
