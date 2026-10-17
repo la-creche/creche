@@ -82,6 +82,15 @@ The console script is `handover`. The verify hook and the operator's
    and memory with no bound. No `except` clause stops that. `boundedyaml`
    counts the pairs that the merge keys copy, and the levels of a chain of
    merge keys. Past a limit, the text does not parse.
+9. Each TOML reader calls `tomlfile.loads` with the kind of its file, and
+   never `tomllib.loads`. `tomlfile` holds the byte limit and the level
+   limit of each kind. It refuses each form that TOML 1.1 added, with each
+   version of Python. A refusal has one of four fixed texts, and no text
+   holds a byte of the file.
+10. `tomlfile.py` is a copy of `family/src/agent_family/tomlfile.py`, byte
+    for byte. Reason: `handover` imports no module of `agent_family`.
+    `bin/tests/test_tomlfile_numbers.py` holds the two files equal. Change
+    both files in one commit.
 
 ## Rules the design depends on
 
@@ -228,6 +237,27 @@ The console script is `handover`. The verify hook and the operator's
     catalog, with `uv run handover request handover`. The `release` verb
     of the chaperone reads no manifest, so it can file the request too.
 
+## The server file (`mcpserver.py`)
+
+Root reads each server file again at an `mcp-servers` release. It trusts no
+other reader of the file.
+
+1. A server directory holds `server.toml` or `server.yaml`. Root reads
+   `server.toml` when the directory holds that name. Else it reads
+   `server.yaml`.
+2. A directory that holds both names is a refusal, and root reads neither
+   file. A link, a link to no file and a directory each count as a name.
+3. Root reads no link, for each of the two names.
+4. Root gives a TOML text to `tomlfile.loads` with the kind `SERVER`. The
+   byte limit of that kind is the one size limit of the text. A refusal of
+   the reader gives one refusal: `server.toml: <the text of the reader>`.
+5. A YAML text keeps `MAX_SERVER_BYTES` and the merge limits of
+   `boundedyaml`.
+6. Each check after the read is the same for the two forms. A refusal names
+   the field, and never the value.
+7. `SERVER_FILE_NAME` and `SERVER_FILE_NAME_YAML` hold the two names. Write
+   no other copy of a name.
+
 ## The chaperone's upstream roster (`executor/roster.py`)
 
 1. Root writes it. `caregiver` must never write it.
@@ -260,9 +290,9 @@ The executor runs as root from `creche-handover.path`, through the wrapper
 | Module | Owns |
 |---|---|
 | `errors.py`, `catalog.py`, `site.py` | the closed refusal list, the component list, the site file |
-| `boundedyaml.py` | the YAML loader of each reader, with its two merge limits |
+| `boundedyaml.py`, `tomlfile.py` | the YAML loader of each reader, with its two merge limits, and the TOML reader of each file kind |
 | `manifest.py`, `discovery.py`, `order.py`, `contracts.py` | `component.yaml` as hostile input, the walk, the order, rules C1 to C5 |
-| `state.py`, `resolve.py`, `allocate.py`, `mcpserver.py`, `silent.py` | the live-state shape, the decision and hash, the tag plan, `server.yaml` as hostile bytes, the uninstalled component |
+| `state.py`, `resolve.py`, `allocate.py`, `mcpserver.py`, `silent.py` | the live-state shape, the decision and hash, the tag plan, the server file as hostile bytes, the uninstalled component |
 | `artifacts.py`, `treewalk.py` | the names, the limits and the signer of the archive of a binary component, the walk of a tree of compiled programs |
 | `cli.py` | `check`, `resolve`, `allocate-tags`, `request`, `follow`, `artifacts`, `check-tree` |
 | `requester/`, `corpus/` | one request file, one `git fetch` |
@@ -328,10 +358,16 @@ that wants a refusal changes one field.
   A whole number of a manifest can thus hold one. Contract 06 §8 names no
   YAML form for a number (`manifest.py`).
 - Contract 06 §8 and §10 and contract 01b give no limit for a merge key. A
-  manifest takes a chain of 128 merge keys and 65,536 copied pairs. A server
-  file takes a chain of 400 and 100,000 copied pairs. Each pair of limits is
-  that of the Rust reader of the same file, so the two readers refuse the
-  same text (`manifest.py`, `mcpserver.py`).
+  manifest takes a chain of 128 merge keys and 65,536 copied pairs. A YAML
+  server file takes a chain of 400 and 100,000 copied pairs. Each pair of
+  limits is that of the Rust reader of the same file, so the two readers
+  refuse the same text (`manifest.py`, `mcpserver.py`).
+- Contract 01b §1 names one server file in each directory. It does not say
+  which kind of entry holds a name. Root counts each entry: a regular file,
+  a link, a link to no file and a directory. A stray entry of the other
+  name thus refuses the directory. The family reader of
+  `agent_family.registry` counts only a regular file or a link to one
+  (`mcpserver.py`).
 - No contract names the sops file. Its reader takes the two merge limits of
   a manifest (`intake/store.py`).
 - A manifest whose chain of merge keys passes the limit gets the refusal
