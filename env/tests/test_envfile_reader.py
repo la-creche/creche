@@ -12,6 +12,8 @@ from __future__ import annotations
 import dataclasses
 import os
 import pwd
+import subprocess
+import sys
 from pathlib import Path
 from typing import Final
 
@@ -21,6 +23,15 @@ from creche_env.cli import main
 from creche_env.envfile import EnvError, Fault, ReadError, Text
 
 EX_CONFIG: Final = os.EX_CONFIG
+
+#: The command in a child process, for a test that a hang or a closed
+#: output would break in this process.
+CHILD: Final = (
+    sys.executable,
+    "-c",
+    "import sys; from creche_env.cli import main; sys.exit(main())",
+)
+CHILD_TIMEOUT_S: Final = 60.0
 
 PAIR_DEFAULT = "ROOT=/srv/data\nSTATE=${ROOT}/state\nHOME_DIR=${home:ACCOUNT}\nTRUSTED=/opt\n"
 PAIR_EXAMPLE = "# The required keys.\n#ACCOUNT=operator\n"
@@ -311,6 +322,24 @@ def test_an_absent_pair_cannot_be_read(capsys: pytest.CaptureFixture[str], tmp_p
 
     assert status == EX_CONFIG
     assert err == f"creche-env: {tmp_path / 'none' / 'default.env'}: cannot be read: ENOENT\n"
+
+
+def test_a_closed_output_gives_74_and_no_text(pair: Path, site: Path) -> None:
+    read_end, write_end = os.pipe()
+    os.close(read_end)
+    try:
+        run = subprocess.run(
+            [*CHILD, "get", "ROOT", "--pair", str(pair), "--env", str(site)],
+            stdout=write_end,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            timeout=CHILD_TIMEOUT_S,
+        )
+    finally:
+        os.close(write_end)
+
+    assert (run.returncode, run.stderr) == (os.EX_IOERR, "")
 
 
 def test_the_env_file_must_pass_the_trust_check(

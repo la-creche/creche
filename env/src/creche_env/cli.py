@@ -15,7 +15,9 @@ The pair and `root-keys.txt` are the package data, or the files in `--pair
 DIR`. The `.env` is `--env FILE`, else `envfile.site_file`. Each `.env` and
 the file of `raw` pass the trust check. A fault prints one line on stderr
 and the status is 78, `os.EX_CONFIG`. A command line that the parser
-refuses gives 2. The command reads no catalog key from its environment.
+refuses gives 2. An output that the reader closed gives 74, `os.EX_IOERR`,
+and the command then prints nothing more. The command reads no catalog key
+from its environment.
 """
 
 from __future__ import annotations
@@ -54,6 +56,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     command: Command = args.command
     try:
+        status = _status(command, args)
+        sys.stdout.flush()
+    except BrokenPipeError:
+        _drop_output()
+        return os.EX_IOERR
+
+    return status
+
+
+def _status(command: Command, args: argparse.Namespace) -> int:
+    try:
         return command(args)
     except EnvError as error:
         for one in error.problems:
@@ -62,6 +75,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         _say(str(error))
 
     return os.EX_CONFIG
+
+
+def _drop_output() -> None:
+    """Point stdout and stderr at the null device, so that the flush at the
+    exit of the interpreter writes to no closed pipe."""
+    null = os.open(os.devnull, os.O_WRONLY)
+    for stream in (sys.stdout, sys.stderr):
+        os.dup2(null, stream.fileno())
+
+    os.close(null)
 
 
 def _say(text: str) -> None:
