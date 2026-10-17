@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use creche_contracts::family::{
-    CALL_SEPARATOR, Family, Issue, Kind, MountPath, MountPathError, PLATFORM_SERVER,
+    CALL_SEPARATOR, Family, Issue, Kind, Markup, MountPath, MountPathError, PLATFORM_SERVER,
     PLATFORM_WITHHELD, Placed, RawFamily, RawToolGrant, SURVEY_TOOL, Section, Severity, Slot,
     mount_root_issue,
 };
@@ -358,11 +358,16 @@ pub fn check_family(
 }
 
 /// Each rule that contract 01b states for one server file: the answer of
-/// the Python `check_server`.
+/// the Python `check_server`. `markup` is the markup of the text that `raw`
+/// came from: a TOML file gets the grammar of root too.
 ///
 /// The server is `Some` only when no rule gives an error.
 #[must_use]
-pub fn check_server(raw: RawServer, directory: &str) -> (Option<Server>, Vec<Issue>) {
+pub fn check_server(
+    raw: RawServer,
+    directory: &str,
+    markup: Markup,
+) -> (Option<Server>, Vec<Issue>) {
     let mut placed = Vec::new();
     if raw.name != directory {
         placed.push(Placed::error(
@@ -375,7 +380,7 @@ pub fn check_server(raw: RawServer, directory: &str) -> (Option<Server>, Vec<Iss
         ));
     }
 
-    let server = match Server::try_from(raw) {
+    let server = match Server::from_raw(raw, markup) {
         Ok(server) => Some(server),
         Err(refused) => {
             placed.extend(refused.into_issues());

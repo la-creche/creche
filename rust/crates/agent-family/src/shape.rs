@@ -33,7 +33,7 @@ pub(crate) const LIST_ARM: &str = "list[str]";
 pub(crate) const STR_ARM: &str = "str";
 
 /// The name of the Python class of the model that reads a table of the
-/// family file.
+/// family file or of the server file.
 pub(crate) fn class_of(block: Block) -> &'static str {
     match block {
         Block::Model => "ModelBlock",
@@ -49,6 +49,11 @@ pub(crate) fn class_of(block: Block) -> &'static str {
         Block::Trigger => "Trigger",
         Block::Quiet => "QuietBlock",
         Block::Daily => "DailyCall",
+        Block::Install => "InstallBlock",
+        Block::Run => "RunBlock",
+        Block::Tool => "ToolEntry",
+        Block::Fence => "FenceEntry",
+        Block::SharedSecret => "SharedSecretEntry",
     }
 }
 
@@ -711,7 +716,7 @@ const DEFAULT_PYTHON: &str = "3.12";
 
 fn read_install(value: Value<'_>, walk: &mut Walk) -> Option<RawInstall> {
     let text = read_optional_str;
-    let mut fields = Fields::of(value, "InstallBlock", walk)?;
+    let mut fields = Fields::of(value, class_of(Block::Install), walk)?;
     let source = fields.required("source", walk, read_str);
     let package = fields.optional("package", walk, text);
     let version = fields.optional("version", walk, text);
@@ -739,7 +744,7 @@ fn read_install(value: Value<'_>, walk: &mut Walk) -> Option<RawInstall> {
 }
 
 fn read_run(value: Value<'_>, walk: &mut Walk) -> Option<RawRun> {
-    let mut fields = Fields::of(value, "RunBlock", walk)?;
+    let mut fields = Fields::of(value, class_of(Block::Run), walk)?;
     let entrypoint = fields.required("entrypoint", walk, read_str);
     let args = fields.optional("args", walk, read_strings);
     let env = fields.optional("env", walk, |value, walk| read_dict(value, walk, read_str));
@@ -761,7 +766,7 @@ fn read_run(value: Value<'_>, walk: &mut Walk) -> Option<RawRun> {
 }
 
 fn read_tool(value: Value<'_>, walk: &mut Walk) -> Option<RawTool> {
-    let mut fields = Fields::of(value, "ToolEntry", walk)?;
+    let mut fields = Fields::of(value, class_of(Block::Tool), walk)?;
     let name = fields.required("name", walk, read_str);
     let description = fields.required("description", walk, read_str);
     let write = fields.optional("write", walk, read_bool);
@@ -777,7 +782,7 @@ fn read_tool(value: Value<'_>, walk: &mut Walk) -> Option<RawTool> {
 }
 
 fn read_fence(value: Value<'_>, walk: &mut Walk) -> Option<RawFence> {
-    let mut fields = Fields::of(value, "FenceEntry", walk)?;
+    let mut fields = Fields::of(value, class_of(Block::Fence), walk)?;
     let tools = fields.required("tools", walk, read_grant);
     let arg = fields.required("arg", walk, read_str);
     let values = fields.required("values", walk, read_strings);
@@ -793,7 +798,7 @@ fn read_fence(value: Value<'_>, walk: &mut Walk) -> Option<RawFence> {
 }
 
 fn read_shared(value: Value<'_>, walk: &mut Walk) -> Option<RawSharedSecret> {
-    let mut fields = Fields::of(value, "SharedSecretEntry", walk)?;
+    let mut fields = Fields::of(value, class_of(Block::SharedSecret), walk)?;
     let secret = fields.required("secret", walk, read_str);
     let server = fields.required("server", walk, read_str);
     let clean = fields.finish(walk);

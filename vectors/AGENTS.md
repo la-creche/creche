@@ -57,7 +57,8 @@ directory is not a workspace package, so a change here does not change
 | `surfaces/family_toml_cases.py` | the written `family.toml` inputs |
 | `surfaces/family_file.py` | `family_file`, `family_file.host`, `family_file.toml` and `family_file.registries.json` |
 | `surfaces/server_cases.py` | the written `server.yaml` inputs |
-| `surfaces/server_file.py` | `server_file` |
+| `surfaces/server_toml_cases.py` | the written `server.toml` inputs |
+| `surfaces/server_file.py` | `server_file` and `server_file.toml` |
 | `surfaces/classify.py` | `family_file.classify` |
 | `surfaces/family_cli.py` | `family_file.cli` |
 | `surfaces/channel.py` | `channel.parse`, `channel.frame`, `channel.build` |
@@ -82,19 +83,26 @@ directory is not a workspace package, so a change here does not change
 fixture registry of the package `family`. A path under `vectors/` belongs to
 no component. A change here thus mints no tag.
 
-1. Each family file is `family.toml`. `bin/yaml-to-toml.py` writes it from
-   its twin `family.yaml`.
+1. Each family file is `family.toml`, and each server file is
+   `server.toml`. `bin/yaml-to-toml.py` writes each one from its twin
+   `family.yaml` or `server.yaml`.
 2. Each other file has the bytes of its twin, at the same path.
 3. `tests/test_vectors_fixture_registry.py` holds both rules. It runs
-   `bin/yaml-to-toml.py --check` for each pair of family files.
+   `bin/yaml-to-toml.py --check` for each pair of family files and for each
+   pair of server files.
 4. The generator stages each case of `family_file.toml` in a copy of this
    registry. It writes the input to `families/<directory>/family.toml`.
-5. Change a file here in the pull request that changes its twin.
+5. The generator stages each case of `server_file.toml` in a copy of this
+   registry. It writes the input to `mcp/<directory>/server.toml`.
+6. Change a file here in the pull request that changes its twin.
 
 Each case of `surfaces/family_toml_cases.py` that has the id of a case of
 `surfaces/family_cases.py` is its twin. A twin holds the same values in TOML.
 A case that needs a form of YAML has no twin. The module docstring lists the
-forms.
+forms. The same rule holds for `surfaces/server_toml_cases.py` and
+`surfaces/server_cases.py`. A twin of a server case can get another result
+than its case. The TOML path of a server file applies the grammar of root,
+and the YAML path does not.
 
 ## Known gaps
 
@@ -596,8 +604,6 @@ forms.
 - The changed texts of `tomlfile.syntax` start from the list `TAKEN` of
   `surfaces/tomlfile.py`. A change to that list moves each changed text.
   The ids stay, and the inputs change.
-- The server files of `fixtures/registry-toml/` are YAML texts. Packet
-  `toml-server-read-rust` converts them.
 - The registries of the process-level suite hold no `family.toml` yet. So
   `family_file.toml` holds no vector of their files. Packet `toml-judge`
   converts them.
