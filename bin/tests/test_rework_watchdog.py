@@ -134,7 +134,8 @@ exit 0
 #:
 #: A POST with the word `-w` in its argv writes `WD_POST_CODE`, the HTTP
 #: code of the answer. The default is `000`, which curl writes when no
-#: answer came. An empty `WD_POST_CODE` writes no code.
+#: answer came. An empty `WD_POST_CODE` writes no code. A POST that fails
+#: writes one error line to stderr, as `curl -sS` does.
 CURL_BODY: Final = """case "$*" in
   *"-X POST"*)
     [ -n "${WD_POST_SLEEP:-}" ] && sleep "$WD_POST_SLEEP"
@@ -142,6 +143,7 @@ CURL_BODY: Final = """case "$*" in
     for one in "$@"; do
       [ "$one" = -w ] && printf '%s' "${WD_POST_CODE-000}"
     done
+    [ "${WD_POST_EXIT:-0}" = 0 ] || printf 'curl: (%s) stub error\\n' "$WD_POST_EXIT" >&2
     exit "${WD_POST_EXIT:-0}" ;;
   *"--unix-socket"*) printf '%s' "${WD_SOCK_CODE:-401}" ;;
   *"/healthz"*) printf '%s' "${WD_PEP_CODE:-200}" ;;
@@ -1774,10 +1776,15 @@ def test_a_json_notice_that_fails_is_sent_by_the_next_run(rig: Rig) -> None:
 #: for the name of the host. 7: no connection to the hook.
 UNREACHED_STATUSES: Final = ("6", "7")
 
-#: Some curl statuses of a send that the hook can have taken. 22: an HTTP
-#: error as the answer. 28: no full answer in the time limit. 52: no
-#: answer at all. 56: a connection that broke during the answer.
-TAKEN_STATUSES: Final = ("22", "28", "52", "56")
+#: Some curl statuses of a send that the script counts as taken. 22: an
+#: HTTP error as the answer. 28: no full answer in the time limit. 52: no
+#: answer at all. 56: a connection that broke during the answer. No status
+#: of the rest proves that the hook took no notice either. 1: a protocol
+#: that curl does not have. 3: a URL that curl cannot read. 18: a partial
+#: transfer. 26: a read error, for example of the header file. 35: a TLS
+#: fault. 55: a send that failed. 92: a fault of an HTTP/2 stream. 127: no
+#: curl on the PATH.
+TAKEN_STATUSES: Final = ("22", "28", "52", "56", "1", "3", "18", "26", "35", "55", "92", "127")
 
 #: Some HTTP codes of an answer of the hook with curl status 22. 401: the
 #: hook refuses the bearer. 404: the hook has no such path. 502: the hook
@@ -1817,10 +1824,11 @@ def test_a_send_that_never_reached_the_hook_is_sent_again(rig: Rig, status: str)
 
 @pytest.mark.parametrize("status", TAKEN_STATUSES)
 def test_a_send_that_the_hook_can_have_taken_is_not_sent_again(rig: Rig, status: str) -> None:
-    """curl can fail after the hook took a notice. Such a notice keeps its
-    record line, and no later run sends it. So a fault gives a missed
-    notice, never a second one. The run sends no more notices of this kind
-    and says so in one line. A later run sends each other pair."""
+    """The script counts the notice of each such status as taken. Such a
+    notice keeps its record line, and no later run sends it. So a fault
+    gives a missed notice, never a second one. The run sends no more
+    notices of this kind and says so in one line. A later run sends each
+    other pair."""
     rig.notice("noticeboard", *[token(one) for one in THREE_PAIRS])
 
     done = rig.run(WD_POST_EXIT=status)
@@ -1844,13 +1852,18 @@ def test_a_send_that_the_hook_refused_is_missed(rig: Rig, code: str) -> None:
     The record keeps the line of that notice, so the notice is missed and
     no later run sends it. The journal line of the failed send names the
     curl status and the HTTP code. A hook that refuses the bearer then
-    shows in the journal."""
+    shows in the journal. The send holds -f, so an HTTP error is a failed
+    send. It holds -o /dev/null, so no byte of the answer reaches the
+    journal line."""
     rig.notice("noticeboard", token("status.document:syntax"))
 
     done = rig.run(WD_POST_EXIT="22", WD_POST_CODE=code)
 
     assert done.returncode == 0, done.stdout + done.stderr
     assert done.stdout.count(f"NOTICE NOT SENT (curl exit 22, HTTP {code}): ") == 1, done.stdout
+    assert rig.posts(), done.stdout
+    for one in rig.posts():
+        assert " -f -o /dev/null -w %{http_code} " in one, one
     assert [one.split()[1] for one in rig.sent_lines()] == ["status.document"]
 
     rig.run()
