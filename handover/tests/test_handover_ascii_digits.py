@@ -21,7 +21,7 @@ from handover.executor import request as executor_request
 from handover.executor.provenance import check_monotonic
 from handover.executor.request import parse_request
 from handover.executor.source import newest_tagged_version
-from handover.manifest import parse_manifest
+from handover.manifest import Markup, parse_manifest
 from handover.state import parse_state
 from handover_executor_fixtures import REQUEST_ID, request_body
 from handover_fixtures import FIXTURE_MANIFEST_VERSION, manifest_text
@@ -123,7 +123,7 @@ def test_a_manifest_version_with_another_digit_is_refused(digit: str) -> None:
     )
     assert digit in text
     with pytest.raises(Refusal) as caught:
-        parse_manifest(text, "chaperone/component.yaml")
+        parse_manifest(text, "chaperone/component.yaml", Markup.YAML)
 
     assert caught.value.code is RefusalCode.MANIFEST
     assert "manifest_version" in caught.value.detail

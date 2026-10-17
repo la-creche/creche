@@ -35,7 +35,7 @@ from handover.executor.host import (
 from handover.executor.install import paths_of
 from handover.executor.spool import DONE_DIR, MAX_REQUESTS_PER_PASS, Spool
 from handover.executor.steps import Wiring
-from handover.manifest import parse_manifest
+from handover.manifest import Markup, parse_manifest
 from handover_executor_fixtures import (
     REQUEST_ID,
     SHA_OF,
@@ -89,7 +89,7 @@ def test_a_host_built_with_no_roots_still_contains_install_paths() -> None:
     """A `Host` built the way `build_wiring` builds it refuses `/etc`. The
     default is the containment check, not an empty tuple that turns it off."""
     text = manifest_text("chaperone").replace("/opt/components/chaperone", "/etc/chaperone")
-    manifest = parse_manifest(text, "chaperone/component.yaml")
+    manifest = parse_manifest(text, "chaperone/component.yaml", Markup.YAML)
 
     with pytest.raises(Refusal) as raised:
         paths_of(manifest, Host(run=_no_child).install_roots)

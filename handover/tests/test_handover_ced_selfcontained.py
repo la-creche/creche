@@ -24,7 +24,7 @@ from handover.catalog import Kind
 from handover.errors import Refusal, RefusalCode
 from handover.executor.install import Installer, StepFailed, paths_of
 from handover.executor.selfcontained import NOT_A_TREE, OUTSIDE, check_tree, escapes
-from handover.manifest import ComponentManifest, parse_manifest
+from handover.manifest import ComponentManifest, Markup, parse_manifest
 from handover_executor_fixtures import FakeRun, fake_host, git_host_answers
 from handover_fixtures import manifest_text
 
@@ -242,7 +242,7 @@ def _manifest(tmp_path: Path, name: str = "chaperone", **edits: str) -> Componen
     for old, new in edits.items():
         text = text.replace(old, new)
 
-    return parse_manifest(text, f"{name}/component.yaml")
+    return parse_manifest(text, f"{name}/component.yaml", Markup.YAML)
 
 
 def _build(tmp_path: Path, write: str) -> tuple[FakeRun, ComponentManifest, Path]:

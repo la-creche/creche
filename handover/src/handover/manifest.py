@@ -1,10 +1,23 @@
-"""`component.yaml`, parsed as hostile input (contract 06 §8, §10).
+"""`component.toml` or `component.yaml`, parsed as hostile input (contract 06
+§8, §10).
 
 A manifest can come from a branch an agent wrote (stage7-releases.md §3.2), so
-this module trusts nothing: a byte cap before the parse, the safe loader of
-PyYAML only, with a bound on merge keys (`boundedyaml.load`), a closed key
-set, a strict pattern per scalar, and a refusal that names the field rather
-than echoing its value.
+this module trusts nothing: a byte cap before the parse, a closed key set, a
+strict pattern per scalar, and a refusal that names the field rather than
+echoing its value.
+
+The text of a manifest has one of two markups, and the caller names it.
+
+1. A TOML text goes to `tomlfile.loads` with the file kind `MANIFEST`. That
+   reader holds the byte cap and the level limit, and a refusal of the reader
+   gives one refusal with the fixed text of the reader.
+2. A YAML text has the byte cap `MAX_MANIFEST_BYTES` and the safe loader of
+   PyYAML only, with a bound on merge keys (`boundedyaml.load`).
+
+Each check after the read of the text is the same for the two markups, with
+two rules of TOML. `unit` is optional, and an absent key means no unit:
+TOML has no null. `release` is a boolean, and the reader refuses a text. A
+YAML text keeps `unit: null` and the words `yes` and `no`.
 
 Two rules are load-bearing and easy to lose in a refactor.
 
@@ -23,6 +36,7 @@ from enum import StrEnum
 from pathlib import PurePosixPath
 from typing import Any, TypeVar, cast
 
+from . import tomlfile
 from .boundedyaml import MergeLimits, MergeTooDeep, MergeTooLarge, load
 from .catalog import (
     BINARY_BUILD_PROGRAM,
@@ -41,7 +55,7 @@ from .site import operator_home, operator_user
 
 #: A `component.yaml` is one page of declarations. Sixteen kibibytes is four
 #: times the largest one in this repo, and small enough that a refusal costs
-#: one read.
+#: one read. A `component.toml` has the byte limit of `tomlfile.FileKind.MANIFEST`.
 MAX_MANIFEST_BYTES = 16 * 1024
 
 MAX_LIST_ITEMS = 64
@@ -73,7 +87,14 @@ SECRET_RE = re.compile(r"[a-z][a-z0-9_]{1,62}")
 PATH_SEGMENT_RE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 ANY_TEXT_RE = re.compile(r".{1,512}", re.DOTALL)
 
-MANIFEST_FILENAME = "component.yaml"
+#: The two names of a manifest. A directory that holds `MANIFEST_FILENAME`
+#: holds a TOML text. Else its manifest is `MANIFEST_FILENAME_YAML`, a YAML
+#: text. Write no other copy of a name.
+MANIFEST_FILENAME = "component.toml"
+MANIFEST_FILENAME_YAML = "component.yaml"
+
+#: The two names in the text of a refusal for a manifest that no root holds.
+EITHER_MANIFEST_NAME = f"{MANIFEST_FILENAME} or {MANIFEST_FILENAME_YAML}"
 
 REPO_ROOT_PATH = "."
 
@@ -86,6 +107,10 @@ OPERATOR_ACCOUNT = "operator"
 #: The field that holds the build argv lists.
 BUILD_FIELD = "build"
 
+#: The field that a TOML text can leave out. TOML has no null, so an absent
+#: key is the TOML form of `unit: null`.
+UNIT_FIELD = "unit"
+
 #: Contract 06 §8's field table, exactly. The key set is closed: an unknown
 #: key is a refusal, not a warning.
 REQUIRED_FIELDS = frozenset(
@@ -95,7 +120,7 @@ REQUIRED_FIELDS = frozenset(
         "repo",
         "path",
         "kind",
-        "unit",
+        UNIT_FIELD,
         "runs_as",
         "install",
         "verify",
@@ -106,7 +131,27 @@ REQUIRED_FIELDS = frozenset(
 OPTIONAL_FIELDS = frozenset({BUILD_FIELD, "provides", "requires", "depends_on", "secrets"})
 KNOWN_FIELDS = REQUIRED_FIELDS | OPTIONAL_FIELDS
 
+#: The fields that a TOML text must hold.
+REQUIRED_TOML_FIELDS = REQUIRED_FIELDS - {UNIT_FIELD}
+
 StrEnumT = TypeVar("StrEnumT", bound=StrEnum)
+
+
+class Markup(StrEnum):
+    """The markup of the text of a manifest."""
+
+    TOML = "toml"
+    YAML = "yaml"
+
+    @property
+    def file_name(self) -> str:
+        """The name of a manifest in this markup."""
+        return MANIFEST_FILENAME if self is Markup.TOML else MANIFEST_FILENAME_YAML
+
+    @property
+    def required_fields(self) -> frozenset[str]:
+        """The fields that a text in this markup must hold."""
+        return REQUIRED_TOML_FIELDS if self is Markup.TOML else REQUIRED_FIELDS
 
 
 @dataclass(frozen=True)
@@ -148,7 +193,7 @@ class Install:
 
 @dataclass(frozen=True)
 class ComponentManifest:
-    """One parsed `component.yaml`. Every field has passed its own pattern."""
+    """One parsed manifest. Every field has passed its own pattern."""
 
     manifest_version: str
     name: str
@@ -457,17 +502,22 @@ def _read_secrets(reader: _Reader) -> tuple[str, ...]:
 
 
 def _read_unit(reader: _Reader) -> str | None:
-    if reader.raw("unit") is None:
+    if reader.raw(UNIT_FIELD) is None:
         return None
 
-    return reader.text("unit", UNIT_RE)
+    return reader.text(UNIT_FIELD, UNIT_RE)
 
 
-def _read_release(reader: _Reader) -> Releases:
-    """`release: yes` is a YAML bool. `release: "yes"` is a string. Take both."""
+def _read_release(reader: _Reader, markup: Markup) -> Releases:
+    """In TOML, `release` is `true` or `false`, and the reader refuses a
+    text. In YAML, `release: yes` is a YAML bool and `release: "yes"` is a
+    string, and the reader takes both."""
     value = reader.raw("release")
     if isinstance(value, bool):
         return Releases.YES if value else Releases.NO
+
+    if markup is Markup.TOML:
+        raise reader.refuse("field 'release' must be true or false")
 
     return reader.whole("release", Releases)
 
@@ -517,33 +567,13 @@ def _read_restore(reader: _Reader) -> Restore:
     )
 
 
-def parse_manifest(text: str, subject: str) -> ComponentManifest:
-    """Parse one `component.yaml`. `subject` is the label a refusal names."""
-    try:
-        size = len(text.encode("utf-8"))
-    except UnicodeEncodeError:
-        raise Refusal(RefusalCode.MANIFEST, subject, "is not UTF-8") from None
-
-    if size > MAX_MANIFEST_BYTES:
-        raise Refusal(RefusalCode.MANIFEST, subject, f"larger than {MAX_MANIFEST_BYTES} bytes")
-
-    # PyYAML raises more than `YAMLError`. A scalar that it cannot build
-    # raises `ValueError`, `KeyError` or `AttributeError`, and a text that
-    # nests too deep raises `RecursionError`. The list is not closed, so
-    # each error of the reader is the one refusal.
-    try:
-        loaded: Any = load(text, MERGE_LIMITS)
-    except Exception as error:
-        detail = f"does not parse: {_yaml_where(error)}"
-        raise Refusal(RefusalCode.MANIFEST, subject, detail) from None
-
-    if not isinstance(loaded, dict):
-        raise Refusal(RefusalCode.MANIFEST, subject, "is not a mapping")
-
-    body = _as_string_keyed(cast(dict[Any, Any], loaded), subject, "<top level>")
+def parse_manifest(text: str, subject: str, markup: Markup) -> ComponentManifest:
+    """Parse one manifest whose text has the markup `markup`. `subject` is
+    the label a refusal names."""
+    body = _toml_body(text, subject) if markup is Markup.TOML else _yaml_body(text, subject)
     _refuse_unknown_keys(body, KNOWN_FIELDS, subject)
 
-    missing = sorted(REQUIRED_FIELDS - set(body))
+    missing = sorted(markup.required_fields - set(body))
     if missing:
         raise Refusal(RefusalCode.MANIFEST, subject, f"missing required field: {missing[0]}")
 
@@ -576,8 +606,70 @@ def parse_manifest(text: str, subject: str) -> ComponentManifest:
         verify=_read_verify(reader),
         restore=_read_restore(reader),
         secrets=_read_secrets(reader),
-        release=_read_release(reader),
+        release=_read_release(reader, markup),
     )
+
+
+def toml_text_of(data: bytes, subject: str) -> str:
+    """The text of the bytes of a `component.toml` file, for `parse_manifest`.
+
+    Bytes that are not UTF-8 get the refusal that the TOML reader gives
+    them. The reader checks the size first, so more bytes than its limit get
+    the text of the size. The reader refuses each text that is not UTF-8,
+    and the last line gives its encoding text if it does not."""
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        _toml_table(data, subject)
+
+    raise Refusal(RefusalCode.MANIFEST, subject, tomlfile.NOT_UTF8)
+
+
+def _toml_body(text: str, subject: str) -> dict[str, Any]:
+    """The top table of a TOML text.
+
+    A lone surrogate has no UTF-8 form. `surrogatepass` gives it the three
+    bytes of its code point, and the reader refuses those bytes."""
+    return _toml_table(text.encode("utf-8", "surrogatepass"), subject)
+
+
+def _toml_table(data: bytes, subject: str) -> dict[str, Any]:
+    """The top table of the bytes of a TOML text. `tomlfile.loads` holds the
+    byte limit and the level limit of a manifest. Each key of a TOML table
+    is a text, and the top level is always a table.
+
+    A refusal of the reader gives one refusal with the fixed text of the
+    reader, which holds no line, no column and no byte of the file."""
+    try:
+        return tomlfile.loads(data, tomlfile.FileKind.MANIFEST)
+    except tomlfile.TomlRefusal as refusal:
+        raise Refusal(RefusalCode.MANIFEST, subject, str(refusal)) from None
+
+
+def _yaml_body(text: str, subject: str) -> dict[str, Any]:
+    """The top mapping of a YAML text, with a text for each key."""
+    try:
+        size = len(text.encode("utf-8"))
+    except UnicodeEncodeError:
+        raise Refusal(RefusalCode.MANIFEST, subject, "is not UTF-8") from None
+
+    if size > MAX_MANIFEST_BYTES:
+        raise Refusal(RefusalCode.MANIFEST, subject, f"larger than {MAX_MANIFEST_BYTES} bytes")
+
+    # PyYAML raises more than `YAMLError`. A scalar that it cannot build
+    # raises `ValueError`, `KeyError` or `AttributeError`, and a text that
+    # nests too deep raises `RecursionError`. The list is not closed, so
+    # each error of the reader is the one refusal.
+    try:
+        loaded: Any = load(text, MERGE_LIMITS)
+    except Exception as error:
+        detail = f"does not parse: {_yaml_where(error)}"
+        raise Refusal(RefusalCode.MANIFEST, subject, detail) from None
+
+    if not isinstance(loaded, dict):
+        raise Refusal(RefusalCode.MANIFEST, subject, "is not a mapping")
+
+    return _as_string_keyed(cast(dict[Any, Any], loaded), subject, "<top level>")
 
 
 def _yaml_where(error: Exception) -> str:

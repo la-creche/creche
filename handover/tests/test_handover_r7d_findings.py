@@ -28,6 +28,7 @@ from handover.executor.host import INSTALL_ROOT, Host, operator_install_root
 from handover.executor.install import paths_of
 from handover.executor.live_state import (
     MAX_MANIFEST_BYTES,
+    StampedText,
     installed_manifest,
     installed_version,
     write_manifest_stamp,
@@ -35,7 +36,7 @@ from handover.executor.live_state import (
 from handover.executor.quiesce import LAUNCH_GRACE_S, MAX_SCAN_ENTRIES, Quiesce
 from handover.executor.spool import DONE_DIR, Spool, SwitchNote, VerifyHook
 from handover.executor.steps import Wiring
-from handover.manifest import parse_manifest
+from handover.manifest import Markup, parse_manifest
 from handover.resolve import deploying_names
 from handover.silent import silent_manifest
 from handover.state import ReleaseState
@@ -67,7 +68,7 @@ def _repo_manifest(name: str):
     root = Path(__file__).resolve().parents[2]
     path = root / row.path / "component.yaml"
 
-    return parse_manifest(path.read_text(encoding="utf-8"), str(path))
+    return parse_manifest(path.read_text(encoding="utf-8"), str(path), Markup.YAML)
 
 
 def _default_roots() -> tuple[Path, ...]:
@@ -111,7 +112,7 @@ def test_an_install_path_under_neither_root_is_still_refused() -> None:
     roots must not widen it to every root."""
     manifest = _repo_manifest("chaperone")
     bent = parse_manifest(
-        _text_with_install(manifest.name, "/etc/agent", "/etc/agent.prev"), "bent.yaml"
+        _text_with_install(manifest.name, "/etc/agent", "/etc/agent.prev"), "bent.yaml", Markup.YAML
     )
 
     with pytest.raises(Refusal):
@@ -496,9 +497,9 @@ def test_the_switch_stamps_the_manifest_into_the_artifact(tmp_path: Path) -> Non
     tree is root-owned and the file got there through a verified release."""
     tree = tmp_path / "chaperone"
     tree.mkdir()
-    write_manifest_stamp(tree, "name: chaperone\n")
+    write_manifest_stamp(tree, "name: chaperone\n", Markup.YAML)
 
-    assert installed_manifest(tree) == "name: chaperone\n"
+    assert installed_manifest(tree) == StampedText("name: chaperone\n", Markup.YAML)
     assert installed_manifest(tmp_path / "nothing") is None
 
 
@@ -507,7 +508,7 @@ def test_an_oversized_stamped_manifest_is_not_read(tmp_path: Path) -> None:
     file must not be read into memory."""
     tree = tmp_path / "chaperone"
     tree.mkdir()
-    write_manifest_stamp(tree, "x" * (MAX_MANIFEST_BYTES + 1))
+    write_manifest_stamp(tree, "x" * (MAX_MANIFEST_BYTES + 1), Markup.YAML)
 
     assert installed_manifest(tree) is None
 
@@ -545,7 +546,7 @@ def test_a_stamped_live_tree_reads_as_safe(tmp_path: Path) -> None:
     the verdict goes back to `safe`."""
     bench = _release_bench(tmp_path)
     tree = stamp_tree(bench.components, "infra", "1.0.0")
-    write_manifest_stamp(tree, _bench_manifest(bench, "infra"))
+    write_manifest_stamp(tree, _bench_manifest(bench, "infra"), Markup.YAML)
 
     _drive_one(bench)
 
@@ -606,7 +607,7 @@ def _release_bench(tmp_path: Path) -> ReleaseBench:
     )
     bench = ReleaseBench(tmp_path, spool_root, tmp_path / "components", run, wiring, seen)
     tree = stamp_tree(bench.components, "chaperone", LIVE_VERSION)
-    write_manifest_stamp(tree, _bench_manifest(bench, "chaperone"))
+    write_manifest_stamp(tree, _bench_manifest(bench, "chaperone"), Markup.YAML)
 
     return bench
 

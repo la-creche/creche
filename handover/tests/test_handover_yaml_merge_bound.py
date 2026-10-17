@@ -27,7 +27,7 @@ from handover.boundedyaml import MergeLimits, MergeTooDeep, MergeTooLarge, load
 from handover.errors import Refusal, RefusalCode
 from handover.intake import store
 from handover.intake.store import recipients_of
-from handover.manifest import MAX_MANIFEST_BYTES, parse_manifest
+from handover.manifest import MAX_MANIFEST_BYTES, Markup, parse_manifest
 from handover.mcpserver import MAX_SERVER_BYTES, parse_server
 from handover_fixtures import manifest_text
 from handover_mcp_fixtures import KAGI_LOCK_PATH, KAGI_YAML
@@ -74,10 +74,10 @@ text = sys.stdin.read()
 
 MANIFEST_CHILD = """
 from handover.errors import Refusal
-from handover.manifest import parse_manifest
+from handover.manifest import Markup, parse_manifest
 
 try:
-    parse_manifest(text, "subject")
+    parse_manifest(text, "subject", Markup.YAML)
     print("accepted")
 except Refusal as refusal:
     print(refusal.detail)
@@ -184,7 +184,7 @@ def _manifest_with(first_unit: str) -> str:
 def _manifest_refusal(text: str) -> str:
     assert len(text.encode("utf-8")) <= MAX_MANIFEST_BYTES
     with pytest.raises(Refusal) as caught:
-        parse_manifest(text, SUBJECT)
+        parse_manifest(text, SUBJECT, Markup.YAML)
 
     assert caught.value.code is RefusalCode.MANIFEST
 
@@ -405,7 +405,7 @@ def _manifest_chain(levels: int) -> str:
 
 
 def test_a_manifest_reads_a_chain_at_its_limit() -> None:
-    parsed = parse_manifest(_manifest_chain(manifest.MERGE_LIMITS.depth), SUBJECT)
+    parsed = parse_manifest(_manifest_chain(manifest.MERGE_LIMITS.depth), SUBJECT, Markup.YAML)
 
     assert parsed.restore.keep == 1
 
@@ -428,7 +428,7 @@ def _manifest_copies(merges: int) -> str:
 def test_a_manifest_reads_the_copies_at_its_limit() -> None:
     merges = manifest.MERGE_LIMITS.pairs // COPIED_KEYS
 
-    assert parse_manifest(_manifest_copies(merges), SUBJECT).unit is None
+    assert parse_manifest(_manifest_copies(merges), SUBJECT, Markup.YAML).unit is None
 
 
 def test_a_manifest_whose_merge_keys_copy_more_does_not_parse() -> None:

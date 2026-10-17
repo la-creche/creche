@@ -47,7 +47,7 @@ from handover.executor.live_state import (
 )
 from handover.executor.spool import DONE_DIR, Spool
 from handover.executor.steps import Wiring
-from handover.manifest import OPERATOR_HOME_PREFIX, ComponentManifest, parse_manifest
+from handover.manifest import OPERATOR_HOME_PREFIX, ComponentManifest, Markup, parse_manifest
 from handover.requester import preview_of
 from handover.resolve import deploying_names, resolve
 from handover.state import ReleaseState
@@ -111,7 +111,7 @@ _MANIFEST_DIR = {"caregiver": "caregiver", "attendance": "attendance", "noticebo
 def _floor(component: str, contract: str) -> str:
     """`MAJOR.MIN_MINOR` as `<component>/component.yaml` requires it today."""
     path = REPO_ROOT / _MANIFEST_DIR[component] / "component.yaml"
-    manifest = parse_manifest(path.read_text(encoding="utf-8"), str(path))
+    manifest = parse_manifest(path.read_text(encoding="utf-8"), str(path), Markup.YAML)
     for one in manifest.requires:
         if str(one.contract) == contract:
             return f"{one.major}.{one.min_minor}"
@@ -345,7 +345,7 @@ def _repo_manifests(bench: First) -> dict[str, ComponentManifest]:
     for row in CATALOG:
         text = _repo_manifest(bench.components, row.name)
         if text is not None:
-            found[row.name] = parse_manifest(text, f"{row.name}/component.yaml")
+            found[row.name] = parse_manifest(text, f"{row.name}/component.yaml", Markup.YAML)
 
     return found
 

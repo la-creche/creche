@@ -134,7 +134,7 @@ def test_check_refuses_an_incomplete_set(
     code = main(["check", "--root", str(tmp_path)])
 
     assert code == EXIT_REFUSED
-    assert "no component.yaml under any root" in capsys.readouterr().err
+    assert "no component.toml or component.yaml under any root" in capsys.readouterr().err
 
 
 def test_partial_accepts_one_repo(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

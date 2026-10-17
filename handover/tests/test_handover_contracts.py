@@ -6,7 +6,7 @@ import pytest
 from handover.catalog import ContractId
 from handover.contracts import ContractRow, LiveProvided, build_table
 from handover.errors import Refusal, RefusalCode
-from handover.manifest import ComponentManifest, parse_manifest
+from handover.manifest import ComponentManifest, Markup, parse_manifest
 from handover_fixtures import manifest_text, provides_entry, requires_entry
 
 PEP_GRANT_LIVE: LiveProvided = {ContractId.PEP_GRANT: (2, 0)}
@@ -15,7 +15,7 @@ PEP_GRANT_LIVE: LiveProvided = {ContractId.PEP_GRANT: (2, 0)}
 def _manifest(name: str, *, provides: str = "", requires: str = "") -> ComponentManifest:
     text = manifest_text(name, provides=provides, requires=requires)
 
-    return parse_manifest(text, f"{name}/component.yaml")
+    return parse_manifest(text, f"{name}/component.yaml", Markup.YAML)
 
 
 def _green_set() -> dict[str, ComponentManifest]:

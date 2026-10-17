@@ -48,7 +48,7 @@ from handover.executor.install import (
     Installer,
     paths_of,
 )
-from handover.manifest import parse_manifest
+from handover.manifest import Markup, parse_manifest
 from handover_executor_fixtures import FakeRun, fake_host, git_host_answers
 from handover_fixtures import manifest_text
 
@@ -202,7 +202,7 @@ def _manifest(tmp_path: Path, name: str, kind: Kind) -> object:
     # The shared fixture writes `kind: venv` for every releasable row, so a
     # case about another kind says which one it means.
     text = text.replace(f"kind: {Kind.VENV}", f"kind: {kind}")
-    parsed = parse_manifest(text, f"{name}/component.yaml")
+    parsed = parse_manifest(text, f"{name}/component.yaml", Markup.YAML)
     assert parsed.kind is kind
 
     return parsed

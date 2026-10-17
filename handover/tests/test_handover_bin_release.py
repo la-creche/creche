@@ -28,7 +28,7 @@ from handover.catalog import CATALOG, CATALOG_BY_NAME
 from handover.executor.approval import Decision, Summary
 from handover.executor.drain import Counter, handle
 from handover.executor.install import BINARY_ENV_NAME, RELOCATABLE_ARGV
-from handover.executor.live_state import MANIFEST_STAMP, installed_version
+from handover.executor.live_state import MANIFEST_STAMP_YAML, installed_version
 from handover.executor.selfcontained import ABSOLUTE_LINK, NOT_STAGED
 from handover.executor.spool import DONE_DIR, Spool
 from handover.executor.steps import Wiring
@@ -231,7 +231,7 @@ def test_the_live_tree_carries_both_stamps(bench: Bench) -> None:
     owns."""
     bench.release()
 
-    assert "kind: binary" in (bench.tree() / MANIFEST_STAMP).read_text(encoding="utf-8")
+    assert "kind: binary" in (bench.tree() / MANIFEST_STAMP_YAML).read_text(encoding="utf-8")
 
 
 def test_everyone_can_run_a_released_program(bench: Bench) -> None:

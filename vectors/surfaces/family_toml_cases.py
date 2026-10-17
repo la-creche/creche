@@ -24,11 +24,9 @@ from typing import Final
 from vectors.surfaces.family_cases import (
     HUGE_DIGITS,
     LONG_TOOL_NAME,
-    LONG_TOOL_SERVER,
     NEST_INNER,
     PLACEHOLDER,
     PLATFORM_FAMILY,
-    PLATFORM_SERVER_WITH_MERGE,
     Case,
 )
 
@@ -96,6 +94,41 @@ verbs.enqueue.targets = ["%NAME%"]
 verbs.job_status = {}
 triggers = [
     { cron = "@daily" },
+]
+"""
+
+#: The TOML twin of `PLATFORM_SERVER_WITH_MERGE` of `family_cases.py`: a
+#: platform server file that declares the tool no family is granted. The
+#: server files of the TOML registry are `server.toml`, so a case writes this
+#: text there.
+PLATFORM_SERVER_WITH_MERGE: Final = """\
+name = "github-platform"
+identity = "A written server file that declares the withheld tool."
+
+install.source = "pypi"
+install.package = "example-mcp"
+install.version = "1.0.0"
+install.lock = "mcp/github-platform/install.lock"
+install.python = "3.12"
+
+run.entrypoint = "example-mcp"
+run.env = {}
+
+tools = [
+    { name = "get_file_contents", description = "Read one file at a ref." },
+    { name = "merge_pull_request", description = "Merge a pull request." },
+]
+"""
+
+#: The TOML twin of `LONG_TOOL_SERVER` of `family_cases.py`: a server file
+#: that declares the tool `LONG_TOOL_NAME`.
+LONG_TOOL_SERVER: Final = f"""\
+name = "long-tool-server"
+identity = "One written server."
+install.source = "agent-mcp"
+run.entrypoint = "example-mcp"
+tools = [
+    {{ name = "{LONG_TOOL_NAME}", description = "One tool." }},
 ]
 """
 
@@ -442,7 +475,7 @@ files = [
     _case(
         "fence-withheld-all",
         ATTENDED_HEAD + 'tools.github-platform = "all"\n',
-        files={"mcp/github-platform/server.yaml": PLATFORM_SERVER_WITH_MERGE},
+        files={"mcp/github-platform/server.toml": PLATFORM_SERVER_WITH_MERGE},
     ),
     # --- tools (contract 01 §3.4) ---
     _case(
@@ -692,7 +725,7 @@ quiet.floor_hours = 168
     _case(
         "fence-withheld-all-auto",
         CRON_HEAD + 'tools.github-platform = "all"\n',
-        files={"mcp/github-platform/server.yaml": PLATFORM_SERVER_WITH_MERGE},
+        files={"mcp/github-platform/server.toml": PLATFORM_SERVER_WITH_MERGE},
     ),
     _case(
         "rule-skills-no-file",
@@ -709,7 +742,7 @@ quiet.floor_hours = 168
     _case(
         "long-tool-name",
         HEAD + f'tools.long-tool-server = ["{LONG_TOOL_NAME}"]\n',
-        files={"mcp/long-tool-server/server.yaml": LONG_TOOL_SERVER},
+        files={"mcp/long-tool-server/server.toml": LONG_TOOL_SERVER},
     ),
 )
 
