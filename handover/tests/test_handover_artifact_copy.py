@@ -392,11 +392,12 @@ def test_a_file_with_two_names_gives_no_copy(home: Path, work: Path) -> None:
     assert _no_copy(_copy(work)) == _note(SECOND_NAME, "archive")
 
 
-def test_a_file_open_to_group_or_other_gives_no_copy(home: Path, work: Path) -> None:
+@pytest.mark.parametrize("mode", [0o640, 0o604], ids=["group", "other"])
+def test_a_file_open_to_group_or_other_gives_no_copy(home: Path, work: Path, mode: int) -> None:
     """The operator side gives each file 0600 (`handover/AGENTS.md`, rule
     5a)."""
     directory = _stock(home)
-    (directory / NAMES.bundle).chmod(0o640)
+    (directory / NAMES.bundle).chmod(mode)
 
     assert _no_copy(_copy(work)) == _note(OPEN_TO_OTHERS, "bundle")
     assert _left(work) == []

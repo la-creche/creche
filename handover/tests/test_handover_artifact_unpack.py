@@ -110,10 +110,16 @@ def test_a_good_archive_unpacks_into_bin(tmp_path: Path) -> None:
 
 
 def test_each_program_gets_the_mode_0755(tmp_path: Path) -> None:
-    """The member of the verify hook says 0700. The unpack sets 0755."""
+    """The member of the verify hook says 0700. The unpack sets 0755, also
+    under the umask 0027 of the release unit."""
     into = tmp_path / "into"
+    archive = _archive(tmp_path, _good)
 
-    extract_tar(_archive(tmp_path, _good), into, COMPONENT)
+    before = os.umask(0o027)
+    try:
+        extract_tar(archive, into, COMPONENT)
+    finally:
+        os.umask(before)
 
     for program in (into / "bin").iterdir():
         assert program.stat().st_mode & 0o7777 == 0o755
