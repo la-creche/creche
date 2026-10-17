@@ -488,6 +488,40 @@ from caregiver.mcp_release import McpPaths, served_servers
 print(served_servers(McpPaths(roster=Path(sys.argv[1]))))
 """
 
+#: The size of the value that `HOLDER` holds: the memory limit of the child,
+#: and 64 MiB more.
+HELD_BYTES: Final = CHILD_BYTES + 64 * 1024 * 1024
+
+#: Holds a value of `HELD_BYTES` while it runs the command of its arguments
+#: with its own standard streams, and ends with the status of that command.
+#: `bytearray` writes each byte of the value, so the peak resident size of
+#: this process passes the memory limit of the child. The value is not in
+#: the test process, so the peak of the test process does not change. The
+#: command gets half of the time limit of the child, so this process stops
+#: the command before the test stops this process.
+HOLDER: Final = f"""
+import subprocess
+import sys
+
+held = bytearray({HELD_BYTES})
+sys.exit(subprocess.run(sys.argv[1:], timeout={CHILD_SECONDS / 2}).returncode)
+"""
+
+
+def _read_in_child(program: str, roster: Path, *parent: str) -> subprocess.CompletedProcess[str]:
+    """Runs `program` in a child process inside the time limit, with the
+    roster `roster` and the memory limit as its arguments. `parent` is the
+    command of a process that starts the child, or no word: then this
+    process starts it."""
+    return subprocess.run(
+        [*parent, sys.executable, "-c", program, str(roster), str(CHILD_BYTES)],
+        capture_output=True,
+        text=True,
+        timeout=CHILD_SECONDS,
+        check=False,
+    )
+
+
 #: The count of keys in the mapping that `_merged` copies.
 MERGED_KEYS: Final = 256
 
@@ -700,13 +734,19 @@ def test_a_small_roster_cannot_take_the_memory_of_the_reader(bench: Bench, text:
     too."""
     bench.mcp.roster.write_text(text, encoding="utf-8")
 
-    done = subprocess.run(
-        [sys.executable, "-c", ROSTER_CHILD, str(bench.mcp.roster), str(CHILD_BYTES)],
-        capture_output=True,
-        text=True,
-        timeout=CHILD_SECONDS,
-        check=False,
-    )
+    done = _read_in_child(ROSTER_CHILD, bench.mcp.roster)
+
+    assert (done.returncode, done.stdout.strip()) == (0, "()"), done.stderr
+
+
+def test_the_roster_child_watches_only_its_own_memory(bench: Bench) -> None:
+    """The parent of the child holds a peak past the memory limit of the
+    child while the child runs. On Linux, the `ru_maxrss` of the child holds
+    the memory of its parent from before its exec. The watch of the child
+    does not count that memory."""
+    bench.mcp.roster.write_text(_chain(CHAIN_LEVELS), encoding="utf-8")
+
+    done = _read_in_child(ROSTER_CHILD, bench.mcp.roster, sys.executable, "-c", HOLDER)
 
     assert (done.returncode, done.stdout.strip()) == (0, "()"), done.stderr
 
