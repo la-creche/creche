@@ -76,7 +76,7 @@ from ..state import ReleaseState
 #: operator reads who asked before the tap. Recorded, never trusted.
 REQUESTED_BY: Final = "follow"
 
-#: How long a set whose tap nobody gave waits before it is asked again.
+#: How long a set that nobody answered (rule 5) waits before it is asked again.
 #: The gate itself is open for fifteen minutes, so an hour is four of them.
 AGAIN_S: Final = 3600.0
 
