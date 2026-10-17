@@ -60,6 +60,7 @@ from ..catalog import ARCHIVE_MAX_BYTES, BUNDLE_MAX_BYTES, CATALOG_BY_NAME
 from ..errors import Refusal
 from ..site import operator_home
 from .install import DIR_MODE
+from .quiet import CHECKED_READ_FLAGS, GROUP_OTHER_BITS
 from .source import DIGEST_PREFIX, artifact_store
 from .unpack import BLOCK_BYTES
 
@@ -69,15 +70,6 @@ COPY_DIR: Final = "artifacts"
 
 #: The mode of each file of the copy.
 FILE_MODE: Final = 0o644
-
-#: The bits of group and other. A file of the store has none of them.
-GROUP_OTHER_BITS: Final = 0o077
-
-#: The open of a file of the store, as root opens each file of the operator
-#: (`quiet.read_view_token`). `O_NONBLOCK` and `O_NOCTTY` keep a FIFO or a
-#: terminal at the path from blocking root before the check of the
-#: descriptor.
-_FILE_FLAGS: Final = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOCTTY | os.O_CLOEXEC
 
 #: The open of a directory of the store path. No link is followed.
 _DIR_FLAGS: Final = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -282,7 +274,7 @@ def _copy_one(
     check runs on the open descriptor, before the first read."""
     words = {"component": component, "asset": str(part.asset)}
     try:
-        source = os.open(part.name, _FILE_FLAGS, dir_fd=tag_fd)
+        source = os.open(part.name, CHECKED_READ_FLAGS, dir_fd=tag_fd)
     except OSError:
         raise _Fault(NO_FILE.format_map(words)) from None
 
@@ -392,7 +384,7 @@ def _hash_copy(component: str, parts: _Pair, target: Path) -> Copied:
     for part in parts:
         words = {"component": component, "asset": str(part.asset)}
         try:
-            source = os.open(target / part.name, _FILE_FLAGS)
+            source = os.open(target / part.name, CHECKED_READ_FLAGS)
         except OSError:
             raise _Fault(COPY_GONE.format_map(words)) from None
 
