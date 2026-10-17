@@ -8,10 +8,10 @@ the operator would read it out of `done/<ULID>.json` after the fact.
 
 `handover request` runs as the operator, in the operator's own directory, with
 the operator's own credentials. So it fetches first. This module is that fetch and
-nothing else.
+nothing else, and its child `artifacts.py` fetches the artifacts (rule 5).
 
 **It is the fourth actor** of `stage7-releases.md` §2.1, and `handover/AGENTS.md`
-names it beside the other three. Four rules hold its shape, and each one is
+names it beside the other three. Five rules hold its shape, and each one is
 the reason it is a package of its own rather than four lines in `cli.py`.
 
 1. **It runs ONE verb, `git fetch`, in ONE root, `/srv/agents/code`.** No
@@ -29,6 +29,14 @@ the reason it is a package of its own rather than four lines in `cli.py`.
 4. **`chaperone/` never imports it.** The PEP's `release` verb runs as `chaperone`, which
    owns no corpus and holds no credential, and this module starts children.
    `handover/tests/test_handover_r7j_freshness.py` asserts the absence.
+5. **It has a second child, `curl`, and a second root, the store.**
+   `artifacts.py` fetches the two assets of the Release of a binary
+   component into the store of artifacts below the home of the operator
+   (`executor/source.artifact_store`). Rule 1 is the rule of the git child.
+   Rules 2 to 4 hold for the second child too. `run_capped` in this module
+   starts it, with a time limit and a limit on the size of each file that
+   it writes. Root reads the store later, and it trusts no name and no mode
+   of it.
 
 It carries the executor's own `git_ground` and `git_env`, because this is the
 same directory root reads a moment later and the operator's own gitconfig must not
@@ -40,6 +48,7 @@ ssh transport (`SSH`).
 from __future__ import annotations
 
 import os
+import resource
 import subprocess
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
@@ -193,6 +202,60 @@ def _run(argv: list[str], cwd: Path, env: dict[str, str], timeout_s: float) -> i
     return done.returncode
 
 
+# -- the child of a download ---------------------------------------------
+
+#: One download child: an argv LIST, a time limit in seconds, and the
+#: largest file that the child may write. It answers the exit status. A child
+#: that does not start raises `OSError`, and a child past its time limit
+#: raises `TimeoutError`. A test substitutes it to read the argv without a
+#: network.
+CappedRunFn = Callable[[list[str], float, int], int]
+
+
+def run_capped(argv: list[str], timeout_s: float, max_file_bytes: int) -> int:
+    """The real download child, with no shell and no text of the child kept.
+
+    The child writes no file larger than `max_file_bytes`. The kernel
+    counts the bytes as the child writes them, so the limit holds also when
+    a server sends no length (`executor/host.py`, `_limit_writes`). The
+    environment holds `PATH` and `LANG` only: the child needs no credential.
+    """
+    whole = {"PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"), "LANG": "C.UTF-8"}
+    try:
+        done = subprocess.run(
+            argv,
+            env=whole,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout_s,
+            check=False,
+            preexec_fn=_limit_writes(max_file_bytes),
+        )
+    except subprocess.TimeoutExpired as late:
+        raise TimeoutError("the child passed its time limit") from late
+    except subprocess.SubprocessError as fault:
+        raise OSError("the child could not start") from fault
+
+    return done.returncode
+
+
+def _limit_writes(max_bytes: int) -> Callable[[], None]:
+    """`RLIMIT_FSIZE` for one child, applied between fork and exec. A hard
+    limit below `max_bytes` stays: an account cannot raise its hard limit.
+
+    `preexec_fn` is not safe in a process with threads. Each command of
+    this package runs in one process with no thread of its own.
+    """
+    _soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
+    cap = max_bytes if hard == resource.RLIM_INFINITY else min(max_bytes, hard)
+
+    def apply() -> None:
+        resource.setrlimit(resource.RLIMIT_FSIZE, (cap, cap))
+
+    return apply
+
+
 # -- what the requester can say about a tag ------------------------------
 
 #: One `git tag --list` or `git rev-parse` in a clone. Both print a line and
@@ -297,10 +360,12 @@ __all__ = [
     "FETCH_NOTE",
     "FETCH_TIMEOUT_S",
     "UNREADABLE_NOTE",
+    "CappedRunFn",
     "CorpusReport",
     "RunFn",
     "local_readers",
     "read_git",
     "refresh",
     "repos_of",
+    "run_capped",
 ]
