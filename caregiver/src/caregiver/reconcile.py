@@ -37,6 +37,7 @@ from agent_family import (
     FamilyState,
     Index,
     Issue,
+    Markup,
     Registry,
     Report,
     Severity,
@@ -469,17 +470,20 @@ def _converge(
     ]
 
     settled = _model_live_at(applied, diff, ran)
-    done = not halted and live is not None and not sandbox_faults
+    family_file = _family_text(registry, report)
+    done = not halted and live is not None and not sandbox_faults and family_file is not None
     # `done` already implies a resolved image — an unresolved one is a
-    # fault, and a fault is not done. The second half is what lets the
-    # type say so.
-    if done and image is not None:
+    # fault, and a fault is not done. It also implies a family file of one
+    # markup. The two checks after `done` are what let the type say so.
+    if done and image is not None and family_file is not None:
+        text, markup = family_file
         write_applied(
             state_root,
             family.name,
             rev=registry.revision,
             image=image,
-            family_text=_family_text(registry, family.name),
+            family_text=text,
+            markup=markup,
             model_live_at=settled,
         )
 
@@ -1111,8 +1115,18 @@ def _config_text(registry: Registry, family: FamilyFile) -> tuple[str, dict[str,
     return _text(registry.instructions(family.name)), skills
 
 
-def _family_text(registry: Registry, family_name: str) -> str:
-    return _text(registry.root / "families" / family_name / "family.yaml")
+def _family_text(registry: Registry, report: Report) -> tuple[str, Markup] | None:
+    """The text of the family file that the loader read, and its markup.
+    The report of the family names that file, and the name of the file
+    gives its markup. `None` for a name that no markup has. The pass is
+    then not done: it writes no snapshot, and the status document keeps
+    the old revision as `applied_rev`."""
+    path = registry.root / report.file
+    for markup in Markup:
+        if path.name == paths.family_file_name(markup):
+            return _text(path), markup
+
+    return None
 
 
 def _text(path: Path) -> str:
