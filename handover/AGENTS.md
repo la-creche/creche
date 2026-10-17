@@ -43,10 +43,13 @@ constants of `spool` and `live_state`, and the `live_state` builder. It
 prints no gate id, because root alone computes `manifest_sha256`.
 
 `corpus/` runs `git fetch` in the corpus root, as the operator, before a
-request is filed. It refuses to run as root. Nothing in it raises.
-`chaperone/` never imports it, and neither does `requester/`.
+request is filed. `corpus/artifacts.py` runs `curl` as the operator. It
+fetches the two assets of the Release of a binary component into the store
+below the home of the operator. The package refuses to run as root. Nothing
+in it raises. `chaperone/` never imports it, and neither does `requester/`.
 
-`follow/` reads one ledger entry and writes one marker file. When the
+`follow/` reads one ledger entry and the marker file, and it writes the
+marker file. The marker also holds the wait of each binary member. When the
 ledger entry or the marker is not strict JSON, the follower also writes one
 row in its notice file. It starts no child and opens no socket. The fetch
 is `corpus/`'s and the request is `requester/`'s. `cli.py` calls all three.
@@ -220,6 +223,13 @@ has the name of the markup of the manifest: `.component.toml` or
    written costs no request.
 7. A followed name is a releasable component of the catalog. It carries no
    version: the version is the newest tag.
+8. A member that ships an archive is ready when the store holds its two
+   files. While a member is not ready, the run files nothing. This wait
+   lasts 600 seconds from the first run that read the tag of the member.
+   After that time, the follower files the set without that member and
+   prints one line. The marker keeps the version and the time of that first
+   run, under the key `waits`. The member comes back in a new set when its
+   files arrive.
 
 ## Rules `mcpbuild.py` adds
 
@@ -347,6 +357,7 @@ live in other repositories. Exit codes: 0 pass, 1 refusal, 2 a usage mistake.
 
 The follower runs as the operator from `creche-follow.timer`, out of the
 `handover` component tree. The marker is `~/.local/state/creche/follow.json`.
+The store of artifacts is `~/.local/state/creche/artifacts`.
 The notice file is `notices/follow.json` below the state root.
 
 The executor runs as root from `creche-handover.path`, through the wrapper
@@ -364,7 +375,7 @@ The executor runs as root from `creche-handover.path`, through the wrapper
 | `state.py`, `resolve.py`, `allocate.py`, `mcpserver.py`, `silent.py` | the live-state shape, the decision and hash, the tag plan, the server file as hostile bytes, the uninstalled component |
 | `artifacts.py`, `treewalk.py` | the names, the limits and the signer of the archive of a binary component, the walk of a tree of compiled programs |
 | `cli.py` | `check`, `resolve`, `allocate-tags`, `request`, `follow`, `artifacts`, `check-tree` |
-| `requester/`, `corpus/` | one request file, one `git fetch` |
+| `requester/`, `corpus/` | one request file, one `git fetch`, and the fetch of the two assets of a binary component into the store (`corpus/artifacts.py`) |
 | `follow/` | the set a newer tag moves, the marker, the decision |
 | `executor/spool.py`, `request.py`, `live_state.py`, `provenance.py` | the five directories, the request, the built document, P1 to P5 |
 | `executor/approval.py`, `phone.py`, `notice.py`, `quiesce.py`, `quiet.py` | the gate, the transport, the outcome push, step 7, the quiet minutes |
@@ -380,7 +391,9 @@ uv run pytest handover/tests
 ```
 
 No test needs a host. A real `git`, `uv`, `cargo` or `sops` runs against
-`tmp_path`. The `cargo` test skips on a machine that has no `cargo`.
+`tmp_path`. The `cargo` test skips on a machine that has no `cargo`. A real
+`curl` fetches from a loopback https server, and that test skips on a
+machine that has no `curl`.
 TLS runs on loopback. Every test file's basename starts with
 `test_handover_`. `handover_fixtures.py` builds valid manifests only. A test
 that wants a refusal changes one field.
@@ -397,6 +410,9 @@ that wants a refusal changes one field.
 - Every component with no tag gets `0.1.0` (`allocate.py`).
 - The per-requester cap counts one drain pass and keys on `requested_by`,
   which the requester writes (`executor/drain.py`).
+- A link that cannot fetch an archive inside one run of the follower never
+  fetches it. One run has 270 seconds, and the fetch resumes no partial
+  file. `handover request` fetches with 600 seconds (`corpus/artifacts.py`).
 - The follower does not ask again for a request that root never ledgered.
   A newer tag or a request by hand recovers (`follow/`).
 - The follower reads tags out of the corpus. Root refuses a tag that has no
