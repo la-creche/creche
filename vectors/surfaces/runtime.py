@@ -469,8 +469,14 @@ DOCUMENTS: Final[tuple[Document, ...]] = (
 
 
 def _parsed(raw: bytes) -> tuple[bool, object]:
-    """Whether the noticeboard reads an object from `raw`, and the object."""
-    body, problem = jsonfiles.parse_object(raw, FILE_NAME)
+    """Whether the noticeboard reads an object from `raw`, and the object.
+
+    A refused text also gives one log line of the notice. No vector holds it.
+    """
+    with quiet_logs():
+        body, problem = jsonfiles.parse_object(
+            raw, FILE_NAME, surface=jsonfiles.Surface.STATUS_DOCUMENT
+        )
 
     return problem is None and body is not None, body
 
@@ -503,10 +509,11 @@ def _parse_surface() -> Surface:
             "An accepted vector is a file that holds one JSON object. value is that object.",
             "A refused vector is a file that the entry point reads no object from. The entry "
             "point returns a problem text for it. No vector holds that text.",
-            "The entry point gives the bytes to json.loads of Python. That reader takes "
-            "UTF-8 with a byte order mark, UTF-16 and UTF-32. It takes NaN, Infinity and an "
-            "escape of one half of a surrogate pair. It keeps the last value of a key that "
-            "an object holds two times.",
+            "The entry point reads strict JSON: it gives the bytes to loads of "
+            "noticeboard.strictjson with a cap of 1 MiB. A text that is not strict JSON is "
+            "refused. The surface runtime.strict_json holds the rules of that reader.",
+            "The entry point also takes a surface word for the notice of a refused text. The "
+            "generator gives it status.document.",
         ),
         vectors=tuple(_document_vector(document) for document in DOCUMENTS),
     )

@@ -6,7 +6,10 @@ import json
 from pathlib import Path
 
 import pytest
+from noticeboard.jsonfiles import MAX_DOC_BYTES
 from noticeboard.sessions import (
+    MAX_LIST_BYTES,
+    MAX_STREAM_BYTES,
     MAX_STREAM_LINES,
     SESSION_ID_MAX,
     SessionReader,
@@ -15,6 +18,7 @@ from noticeboard.sessions import (
 )
 from noticeboard_helpers import (
     FakeAttendance,
+    Notices,
     deep_object,
     journal_line,
     ndjson,
@@ -193,8 +197,16 @@ def test_a_malformed_body_becomes_a_report(tmp_path: Path) -> None:
     assert "not JSON" in answer.problem
 
 
+#: The problem of a text that is not strict JSON, after the name of the text.
+NOT_STRICT = "is not JSON: the text breaks a rule of strict JSON"
+
+
+@pytest.fixture
+def recorded(monkeypatch: pytest.MonkeyPatch) -> Notices:
+    return Notices().install(monkeypatch)
+
+
 def test_a_body_that_nests_too_deep_becomes_a_report(tmp_path: Path) -> None:
-    """The JSON reader raises RecursionError on this body, not ValueError."""
     fake = FakeAttendance()
     fake.answer(LIST_PATH, deep_object())
     fake.answer(DETAIL_PATH, deep_object())
@@ -203,9 +215,64 @@ def test_a_body_that_nests_too_deep_becomes_a_report(tmp_path: Path) -> None:
     detail = reader(tmp_path, fake).detail(CHAT, OWUI)
 
     assert listed.rows == ()
-    assert "nests deeper than the reader allows" in listed.problem
+    assert listed.problem == f"attendance's answer {NOT_STRICT}"
     assert detail.session is None
-    assert "nests deeper than the reader allows" in detail.problem
+    assert detail.problem == f"attendance's answer {NOT_STRICT}"
+
+
+def test_an_answer_that_is_not_strict_records_a_notice_of_the_family(
+    tmp_path: Path, recorded: Notices
+) -> None:
+    fake = FakeAttendance()
+    fake.answer(LIST_PATH, b'{"sessions": [], "next_cursor": NaN}')
+    fake.answer(DETAIL_PATH, b'{"session": "a", "session": "b"}')
+
+    reader(tmp_path, fake).sessions()
+    reader(tmp_path, fake).sessions(family=CHAT)
+    reader(tmp_path, fake).detail(CHAT, OWUI)
+
+    assert recorded.calls == [
+        ("session.answer", "constant", None, True),
+        ("session.answer", "constant", CHAT, True),
+        ("session.answer", "duplicate_key", CHAT, True),
+    ]
+
+
+def test_a_refusal_that_is_not_strict_records_a_notice(tmp_path: Path, recorded: Notices) -> None:
+    fake = FakeAttendance()
+    fake.answer(EVENTS_PATH, b'{"error": {"code": "forbidden", "retry": NaN}}', status=403)
+
+    stream = reader(tmp_path, fake).events(CHAT, OWUI)
+
+    assert stream.problems == ("attendance answered 403 with no error code",)
+    assert recorded.calls == [("session.answer", "constant", CHAT, True)]
+
+
+def test_a_refusal_past_the_cap_of_the_stream_records_a_notice_of_its_size(
+    tmp_path: Path, recorded: Notices
+) -> None:
+    """A refusal has the cap of the stream."""
+    fake = FakeAttendance()
+    body = b'{"error": {"code": "forbidden"}}'.ljust(MAX_STREAM_BYTES + 1)
+    fake.answer(EVENTS_PATH, body, status=403)
+
+    stream = reader(tmp_path, fake).events(CHAT, OWUI)
+
+    assert stream.problems == ("attendance answered 403 with no error code",)
+    assert recorded.calls == [("session.answer", "too_large", CHAT, True)]
+
+
+def test_an_answer_past_the_cap_of_a_document_still_reads(tmp_path: Path) -> None:
+    """An answer has the cap of the session reader, and not the cap of a file."""
+    fake = FakeAttendance()
+    padding = "x" * (MAX_DOC_BYTES + 1)
+    fake.answer(LIST_PATH, {"sessions": [], "next_cursor": padding})
+
+    listed = reader(tmp_path, fake).sessions()
+
+    assert MAX_DOC_BYTES < len(padding) < MAX_LIST_BYTES
+    assert listed.problem == ""
+    assert listed.next_cursor == padding[:500]
 
 
 def test_the_turns_carry_their_state_and_usage(tmp_path: Path) -> None:
@@ -287,9 +354,34 @@ def test_a_journal_line_that_nests_too_deep_never_hides_the_rest(tmp_path: Path)
     stream = reader(tmp_path, fake).events(CHAT, OWUI)
 
     assert len(stream.lines) == 1
-    assert stream.problems == (
-        "a journal line is not JSON: it nests deeper than the reader allows",
-    )
+    assert stream.problems == (f"a journal line {NOT_STRICT}",)
+
+
+def test_a_journal_line_past_the_cap_of_a_document_still_reads(tmp_path: Path) -> None:
+    """A journal line has the cap of the stream, and not the cap of a file."""
+    fake = FakeAttendance()
+    text = "x" * (MAX_DOC_BYTES + 1)
+    fake.answer(EVENTS_PATH, ndjson([journal_line(1, "note", {"text": text})]))
+
+    stream = reader(tmp_path, fake).events(CHAT, OWUI)
+
+    assert MAX_DOC_BYTES < len(text) < MAX_STREAM_BYTES
+    assert stream.problems == ()
+    assert len(stream.lines) == 1
+
+
+def test_a_journal_line_that_is_not_strict_records_a_notice_of_the_family(
+    tmp_path: Path, recorded: Notices
+) -> None:
+    fake = FakeAttendance()
+    broken = b'{"seq": 2, "kind": "note", "body": {"x": "\\ud800"}}\n'
+    fake.answer(EVENTS_PATH, ndjson([journal_line(1, "note", {})]) + broken)
+
+    stream = reader(tmp_path, fake).events(CHAT, OWUI)
+
+    assert len(stream.lines) == 1
+    assert stream.problems == (f"a journal line {NOT_STRICT}",)
+    assert recorded.calls == [("session.journal_line", "lone_surrogate", CHAT, True)]
 
 
 def test_an_enormous_stream_is_capped_and_says_so(tmp_path: Path) -> None:

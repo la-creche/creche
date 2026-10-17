@@ -307,6 +307,31 @@ def deep_object(depth: int = VERY_DEEP) -> bytes:
     return b'{"x":' + b"[" * depth + b"]" * depth + b"}"
 
 
+#: One call of `notices.record`: the surface, the rule word, the family and
+#: the proof.
+type Notice = tuple[str, str, str | None, bool]
+
+
+class Notices:
+    """The calls of `notices.record` in one test. `install` puts the recorder
+    in the place of the function, and the test fixture puts it back."""
+
+    def __init__(self) -> None:
+        self.calls: list[Notice] = []
+
+    def record(
+        self, surface: str, rule: object, family: str | None = None, *, proven: bool = True
+    ) -> None:
+        self.calls.append((str(surface), str(rule), family, proven))
+
+    def install(self, monkeypatch: Any) -> Notices:
+        from noticeboard import notices
+
+        monkeypatch.setattr(notices, "record", self.record)
+
+        return self
+
+
 def peak_memory_of[T](call: Callable[[], T]) -> tuple[T, int]:
     """What `call` returns, and the most bytes it held at one time."""
     tracemalloc.start()

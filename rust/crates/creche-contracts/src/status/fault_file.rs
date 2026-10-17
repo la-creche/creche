@@ -10,7 +10,7 @@
 use std::error::Error;
 use std::fmt;
 
-use super::json::{ByteOrderMark, Charset, Json, Layout, Object};
+use super::json::{Charset, Json, Layout, Object};
 use super::raw::{FAULT_KEYS, RawFault, ReadError, list, read_object, text};
 use super::views::{Freshness, freshness};
 use super::words::{FaultCode, FaultSource};
@@ -484,8 +484,7 @@ pub fn caregiver(
     source: FaultSource,
     now: Timestamp,
 ) -> Result<FoldedFaults, FaultFileRefusal> {
-    let object = read_object(bytes, FAULT_FILE_CAP_BYTES, ByteOrderMark::Refuse)
-        .map_err(FaultFileRefusal::Unreadable)?;
+    let object = read_object(bytes, FAULT_FILE_CAP_BYTES).map_err(FaultFileRefusal::Unreadable)?;
     let missing = |field| FaultFileRefusal::Field { field };
     let family = text(&object, "family");
     let family = family.value().ok_or(missing("family"))?;
