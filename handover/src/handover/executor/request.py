@@ -12,6 +12,10 @@ Two rules here are load bearing and easy to lose in a refactor.
    rule 3).
 2. **A refusal's reason is a FIXED string.** It may land in the ledger, so it
    never quotes the file (§3.2 rule 4).
+3. **The text is strict JSON** (`strictjson.py`). A text that is not strict
+   gets the refusal of a text that is not JSON, and one notice with the
+   surface `SURFACE` and the rule. The notice names no family: a family
+   comes from a path or a token, and a request names one only in its text.
 
 The id is upper-case Crockford base32, as contract 06 §9 and contract 02 §2
 fix every ULID.
@@ -19,13 +23,13 @@ fix every ULID.
 
 from __future__ import annotations
 
-import json
 import math
 import re
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Final, cast
 
+from .. import notices, strictjson
 from ..catalog import MAX_REQUEST_COMPONENTS
 from ..errors import Refusal, RefusalCode
 
@@ -34,6 +38,16 @@ from ..errors import Refusal, RefusalCode
 MAX_REQUEST_BYTES: Final = 4096
 
 REQUEST_SUFFIX: Final = ".json"
+
+#: The surface word of a notice for a request text that is not strict JSON.
+SURFACE: Final = "manifest.request"
+
+#: The refusal of a text that is not a JSON object. A text that is not
+#: strict JSON gets it too.
+NOT_AN_OBJECT: Final = "is not a JSON object"
+
+#: The refusal of a field that does not have its form.
+_MALFORMED: Final = "field '{key}' is malformed"
 
 #: Contract 06 §9: 26 upper-case Crockford characters, I, L, O and U absent.
 ULID_RE: Final = re.compile(r"[0-9A-HJKMNP-TV-Z]{26}")
@@ -106,14 +120,20 @@ def _refuse(detail: str) -> Refusal:
     return Refusal(RefusalCode.REQUEST, "request", detail)
 
 
+def malformed(key: str) -> Refusal:
+    """The refusal of the field `key`, which does not have its form."""
+    return _refuse(_MALFORMED.format(key=key))
+
+
 def _object(raw: bytes) -> dict[str, Any]:
     try:
-        loaded: Any = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError, RecursionError):
-        raise _refuse("is not a JSON object") from None
+        loaded: Any = strictjson.loads(raw, cap=MAX_REQUEST_BYTES)
+    except strictjson.NotStrictJson as refusal:
+        notices.record(SURFACE, refusal.rule)
+        raise _refuse(NOT_AN_OBJECT) from None
 
     if not isinstance(loaded, dict):
-        raise _refuse("is not a JSON object")
+        raise _refuse(NOT_AN_OBJECT)
 
     body: dict[str, Any] = {}
     for key, value in cast(dict[Any, Any], loaded).items():
@@ -128,7 +148,7 @@ def _object(raw: bytes) -> dict[str, Any]:
 def _text(body: dict[str, Any], key: str, pattern: re.Pattern[str]) -> str:
     value = body[key]
     if not isinstance(value, str) or not pattern.fullmatch(value):
-        raise _refuse(f"field '{key}' is malformed")
+        raise malformed(key)
 
     return value
 
@@ -171,17 +191,17 @@ def _components(value: Any) -> tuple[tuple[str, str], ...]:
 def _timestamp(value: Any) -> float:
     # A YAML or JSON bool is a Python int. Refuse it before the range check.
     if isinstance(value, bool) or not isinstance(value, int | float):
-        raise _refuse("field 'ts' is malformed")
+        raise malformed("ts")
 
     # A whole number past the largest float has no float. Python raises
     # there, and a request file holds such a number in a few hundred bytes.
     try:
         stamp = float(value)
     except OverflowError:
-        raise _refuse("field 'ts' is malformed") from None
+        raise malformed("ts") from None
 
     if not math.isfinite(stamp) or stamp < 0:
-        raise _refuse("field 'ts' is malformed")
+        raise malformed("ts")
 
     return stamp
 
@@ -190,7 +210,7 @@ def _kind(value: Any) -> Kind:
     try:
         return Kind(value)
     except ValueError:
-        raise _refuse("field 'kind' is malformed") from None
+        raise malformed("kind") from None
 
 
 def _rollback_of(body: dict[str, Any], kind: Kind) -> str | None:
@@ -224,7 +244,7 @@ def parse_request(raw: bytes, request_id: str) -> Request:
         raise _refuse("field 'id' differs from the file name")
 
     if not ULID_RE.fullmatch(request_id):
-        raise _refuse("field 'id' is malformed")
+        raise malformed("id")
 
     kind = _kind(body["kind"])
 

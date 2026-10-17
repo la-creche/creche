@@ -60,13 +60,15 @@ against — which the operator can cause at any moment anyway, by killing the pi
 processes the turns run in.
 
 **`BusySeenFn` is a seam**, and `attendance_signal` is what production wires
-into it. Every failure answers None, and None is never quiet.
+into it. Every failure answers None, and None is never quiet. An answer that
+is not strict JSON (`strictjson.py`, a module of the standard library) is
+such a failure, and `notices.record` writes its log line with the surface
+`SURFACE`.
 """
 
 from __future__ import annotations
 
 import http.client
-import json
 import os
 import socket
 import stat
@@ -74,6 +76,8 @@ from collections.abc import Callable, Iterable
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final, cast
+
+from .. import notices, strictjson
 
 #: §2.8: five consecutive quiet minutes.
 QUIET_WINDOW_S: Final = 300.0
@@ -111,6 +115,10 @@ ASK_TIMEOUT_S: Final = 5.0
 
 #: An answer root will read. One row of contract 02 §4.2 is under 1 KiB.
 MAX_REPLY_BYTES: Final = 64 * 1024
+
+#: The surface word of a notice for an answer of `attendance` that is not
+#: strict JSON. It is the word of each other reader of the session API.
+SURFACE: Final = "session.answer"
 
 #: Contract 02 §3 rule 7's floor. A shorter file is not this token.
 MIN_TOKEN_BYTES: Final = 32
@@ -327,8 +335,10 @@ def _has_rows(raw: bytes) -> bool | None:
         return None
 
     try:
-        loaded: Any = json.loads(raw)
-    except ValueError:
+        loaded: Any = strictjson.loads(raw, cap=MAX_REPLY_BYTES)
+    except strictjson.NotStrictJson as refusal:
+        notices.record(SURFACE, refusal.rule)
+
         return None
 
     if not isinstance(loaded, dict):

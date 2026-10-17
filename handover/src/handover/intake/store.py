@@ -89,9 +89,9 @@ MAX_SOPS_BYTES: Final = 64 * 1024
 #: What the merge keys of the sops file can copy (`boundedyaml.py`).
 #:
 #: CONTRACT-QUESTION: no contract names this file, so none gives a limit
-#: for a merge key. The reading taken is the two limits of a manifest. The
-#: file needs no merge key. Another number costs this line.
-MERGE_LIMITS: Final = MergeLimits(depth=128, pairs=65_536)
+#: for a merge key. The reading taken is the two limits and the count of a
+#: manifest. The file needs no merge key. Another number costs this line.
+MERGE_LIMITS: Final = MergeLimits(depth=128, pairs=65_536, floor=0)
 
 #: An age public key: `age1` and 58 characters of bech32. Every recipient
 #: becomes part of one `--age` argument, and a value that is not a key is

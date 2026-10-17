@@ -8,7 +8,9 @@ Two layers, deliberately separate.
 2. `build_document()` turns that decision into contract 06 §9's resolved
    manifest and hashes it. The hash is what the operator's phone approval binds to
    (stage7-releases.md §2.5), so it is computed over canonical JSON: sorted
-   keys, no whitespace, and every list in an order this module fixes.
+   keys, no whitespace, and every list in an order this module fixes. The
+   text is strict JSON (`strictjson.py`). JSON holds no NaN and no infinity,
+   so a `resolved_at` that is not finite is a refusal.
 
 Nothing here touches a host, a git remote or an OCI registry. Root does that
 in `executor/` and hands the answers in as `ReleaseState`.
@@ -17,10 +19,11 @@ in `executor/` and hands the answers in as `ReleaseState`.
 from __future__ import annotations
 
 import hashlib
-import json
+import math
 import re
 from dataclasses import dataclass
 
+from . import strictjson
 from .catalog import (
     CATALOG,
     CATALOG_BY_NAME,
@@ -52,6 +55,9 @@ REQUESTED_BY_RE = re.compile(r"[a-z][a-z0-9-]{1,30}")
 TAG_FORMAT = "{name}-v{version}"
 DIGEST_PREFIX = "sha256:"
 MANIFEST_VERSION = f"{MANIFEST_CONTRACT_MAJOR}.{MANIFEST_CONTRACT_MINOR}"
+
+#: The refusal of a `resolved_at` that strict JSON cannot hold.
+RESOLVED_AT_NOT_FINITE = "resolved_at must be a finite number"
 
 
 @dataclass(frozen=True)
@@ -254,8 +260,10 @@ def _contract_entry(row: ContractRow) -> dict[str, object]:
 
 
 def canonical_json(document: dict[str, object]) -> str:
-    """Contract 06 §9's hash input: sorted keys, no whitespace."""
-    return json.dumps(document, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    """Contract 06 §9's hash input: sorted keys, no whitespace.
+
+    Raises `NotStrictJson` for a document with no strict JSON text."""
+    return strictjson.dumps(document, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
 def manifest_hash(document: dict[str, object]) -> str:
@@ -280,6 +288,9 @@ def build_document(
     if not REQUESTED_BY_RE.fullmatch(requested_by):
         detail = f"requested_by must be a family name, 'human' or 'ci': {safe_token(requested_by)}"
         raise Refusal(RefusalCode.REQUEST, "request", detail)
+
+    if not math.isfinite(resolved_at):
+        raise Refusal(RefusalCode.REQUEST, "request", RESOLVED_AT_NOT_FINITE)
 
     document: dict[str, object] = {
         "manifest_version": MANIFEST_VERSION,

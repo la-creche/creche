@@ -25,13 +25,22 @@ chain is root's, so nothing the operator owns can be renamed under it.
 table, and `handover/tests/test_handover_roots_layout.py` holds the two to one
 answer.
 
-Constants only, stdlib only: `spool.py`, `host.py`, `intake/store.py` and the
-requester all import this module.
+The module also holds `STATE_ROOT`, the state root of the operator. No
+root of this module is below it, and root writes no file there.
+
+Constants only, stdlib only: `spool.py`, `host.py`, `intake/store.py`, the
+requester and the follower all import this module.
 """
 
 from __future__ import annotations
 
 from typing import Final
+
+#: The state root of the operator account. It is the operator's, so no root
+#: of this module is below it. The follower of the release tool runs as the
+#: operator, and it writes its notice file below this directory, as each
+#: other program of the operator account does.
+STATE_ROOT: Final = "/srv/agents/state/rework"
 
 #: `root:root 0755`. Under `/var/lib` and not `/srv/agents`, because
 #: `/srv/agents` is the operator's, group `agents`, 0755, and a root under it could be renamed.

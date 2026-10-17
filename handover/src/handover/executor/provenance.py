@@ -29,7 +29,10 @@ miss:
 
 **The predicate fails closed.** A transport error or an undocumented answer
 is a refusal, never a pass. There is no pin check, because no pin is
-written by hand (contract 06 §3.3).
+written by hand (contract 06 §3.3). An answer is strict JSON
+(`strictjson.py`). An answer that is not strict stops the check as an
+answer that is not JSON does, and `notices.record` writes its log line with
+the surface `SURFACE`.
 
 Nothing here reads the spool, the ledger or a checkout. The API reader is
 injected, so every test answers it from a fixture.
@@ -38,13 +41,13 @@ injected, so every test answers it from a fixture.
 from __future__ import annotations
 
 import http.client
-import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Final, cast
 
+from .. import notices, strictjson
 from ..catalog import MAIN_BRANCH
 from ..errors import Refusal, RefusalCode
 from ..site import github_owner, github_repo
@@ -57,6 +60,9 @@ API_VERSION: Final = "2022-11-28"
 API_TIMEOUT_S: Final = 20.0
 API_MAX_BYTES: Final = 2 << 20
 USER_AGENT: Final = "handover"
+
+#: The surface word of a notice for an answer that is not strict JSON.
+SURFACE: Final = "code_host.answer"
 
 MAIN: Final = MAIN_BRANCH
 
@@ -130,11 +136,10 @@ def github_api(token: str) -> ApiGetFn:
         if len(raw) > API_MAX_BYTES:
             raise ValueError("answer larger than API_MAX_BYTES")
 
-        text = raw.decode("utf-8")
         if response.status != HTTP_OK:
-            return ApiReply(response.status, text)
+            return ApiReply(response.status, raw.decode("utf-8"))
 
-        return ApiReply(response.status, json.loads(text))
+        return ApiReply(response.status, strictjson.loads(raw, cap=API_MAX_BYTES))
 
     return get
 
@@ -143,6 +148,9 @@ def _get(api: ApiGetFn, path: str, code: RefusalCode, component: str) -> ApiRepl
     try:
         return api(path, Accept.JSON)
     except Exception as exc:
+        if isinstance(exc, strictjson.NotStrictJson):
+            notices.record(SURFACE, exc.rule)
+
         detail = f"api.github.com unreachable: {type(exc).__name__}"
         raise _refuse(code, component, detail) from None
 

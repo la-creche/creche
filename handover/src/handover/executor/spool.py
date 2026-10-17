@@ -37,6 +37,11 @@ Two more come from §2.2.
    leave a swapped tree nobody records. Root writes what it is about to swap
    BEFORE it swaps it, so the next run can put it back (§2.4 step 10).
 
+Each file that root writes here is strict JSON (`strictjson.py`). A record
+with no strict text is a write that fails: `SpoolError`, and no part of a
+file. A note that root reads back and that is not strict is no note, and
+`notices.record` writes its log line with the surface `SURFACE`.
+
 Stdlib only, every import at module top: a release re-syncs the venv under
 the running executor (contract 06 §1.1).
 """
@@ -45,13 +50,13 @@ from __future__ import annotations
 
 import errno
 import fcntl
-import json
 import os
 import stat
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Final, cast
 
+from .. import notices, strictjson
 from ..errors import Refusal, RefusalCode
 from . import layout
 from .request import MAX_REQUEST_BYTES, REQUEST_SUFFIX, Request, parse_request
@@ -74,6 +79,10 @@ TMP_SUFFIX: Final = ".tmp"
 
 #: A ledger entry carries the whole resolved manifest and a 200 line tail.
 MAX_RECORD_BYTES: Final = 1 << 20
+
+#: The surface word of a notice for a file of the spool that is not strict
+#: JSON.
+SURFACE: Final = "release.spool_entry"
 
 #: The bounds of a hook's time limit, in seconds. They are the bounds that
 #: `manifest.py` gives the field `verify.timeout_s`, and a test holds the two
@@ -352,7 +361,14 @@ def read_capped(dir_fd: int, name: str, cap: int, owner_uids: frozenset[int] | N
 
 
 def _encode(data: dict[str, object]) -> bytes:
-    return (json.dumps(data, indent=2, sort_keys=False) + "\n").encode("utf-8")
+    """The bytes of one record. Raises `SpoolError` for a record with no
+    strict JSON text, before a file is opened."""
+    try:
+        text = strictjson.dumps(data, indent=2, sort_keys=False)
+    except strictjson.NotStrictJson as refusal:
+        raise SpoolError(f"a record has no strict JSON text ({refusal.rule})") from None
+
+    return (text + "\n").encode("utf-8")
 
 
 def _write_new(dir_fd: int, name: str, payload: bytes) -> None:
@@ -560,8 +576,10 @@ class Spool:
             return None
 
         try:
-            body: object = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, ValueError, RecursionError):
+            body: object = strictjson.loads(raw, cap=MAX_RECORD_BYTES)
+        except strictjson.NotStrictJson as refusal:
+            notices.record(SURFACE, refusal.rule)
+
             return None
 
         if not isinstance(body, dict):
@@ -628,11 +646,12 @@ class Spool:
         # it on the next run, which exited 1 without draining and re-fired
         # the path unit into its start limit. Root's own half-written log is
         # root's to replace — the ENTRY is the record, and it is absent.
+        payload = _encode(entry)
         if not self.ledgered(request_id):
             _unlink_quiet(self.done_fd, request_id + LOG_SUFFIX)
 
         _write_new(self.done_fd, request_id + LOG_SUFFIX, log_text.encode("utf-8"))
-        _write_new(self.done_fd, name, _encode(entry))
+        _write_new(self.done_fd, name, payload)
         _unlink_quiet(self.running_fd, name)
         self._clear_notes_of(request_id)
 

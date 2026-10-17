@@ -7,6 +7,11 @@
 //! the one writer and [`Request::parse`] is the one parser.
 //! [`Request::plan`] writes the draft of a requester and then parses the
 //! bytes, so a requester gets the refusal that root gives for the same bytes.
+//!
+//! A request file is strict JSON: [`json::check`](crate::json::check) reads
+//! the bytes first, with the cap [`MAX_REQUEST_BYTES`]. A text that is not
+//! strict gets the refusal of a text that is not JSON, and the error keeps
+//! the [`NotStrict`] for the notice of the service.
 
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -16,6 +21,7 @@ use std::str::FromStr;
 use super::json::{self, Charset, Value};
 use super::{MAX_REQUEST_COMPONENTS, RefusalCode};
 use crate::ids::{ComponentName, FamilyName, FamilyNameError, SessionId, Ulid, Version};
+use crate::json::{self as strict, ByteCap, NotStrict};
 
 /// The largest request file, in bytes. A complete request is about 300
 /// bytes. The parser applies the cap before the parse.
@@ -468,7 +474,9 @@ impl Request {
             return Err(RequestError::TooLarge);
         }
 
-        let text = std::str::from_utf8(raw).map_err(|_| RequestError::NotObject)?;
+        let text = strict::check(raw, ByteCap::new(MAX_REQUEST_BYTES))
+            .map_err(RequestError::NotStrict)?
+            .as_str();
         let Ok(Value::Object(body)) = json::parse(text) else {
             return Err(RequestError::NotObject);
         };
@@ -518,10 +526,18 @@ impl Request {
     /// Makes the request of a requester: writes the draft as a request file,
     /// and parses the bytes as root does.
     ///
+    /// JSON holds no time that is not finite. For such a time the function
+    /// writes no file and gives the refusal of a `ts` with no time, as the
+    /// Python requester does.
+    ///
     /// # Errors
     ///
     /// Gives the [`RequestError`] that root gives for the same bytes.
     pub fn plan(draft: &Draft) -> Result<Self, RequestError> {
+        if !draft.now.is_finite() {
+            return Err(RequestError::Malformed(RequestField::Ts));
+        }
+
         let components = draft
             .components
             .iter()
@@ -692,7 +708,10 @@ impl RequestField {
 pub enum RequestError {
     /// The file is larger than [`MAX_REQUEST_BYTES`].
     TooLarge,
-    /// The bytes are not UTF-8, not JSON, or not a JSON object.
+    /// The bytes are not strict JSON. The detail is the detail of
+    /// [`RequestError::NotObject`].
+    NotStrict(NotStrict),
+    /// The bytes are not a JSON object.
     NotObject,
     /// The keys are not exactly the seven keys of a request.
     KeysDiffer,
@@ -734,13 +753,34 @@ impl RequestError {
     pub fn detail(&self) -> String {
         self.to_string()
     }
+
+    /// The refusal of the strict reader, for the notice of a service.
+    /// `None` for each other error.
+    #[must_use]
+    pub const fn not_strict(&self) -> Option<&NotStrict> {
+        match self {
+            Self::NotStrict(refusal) => Some(refusal),
+            Self::TooLarge
+            | Self::NotObject
+            | Self::KeysDiffer
+            | Self::IdDiffers
+            | Self::Malformed(_)
+            | Self::ComponentsNotObject
+            | Self::ComponentsEmpty
+            | Self::ComponentsTooMany
+            | Self::ComponentName
+            | Self::ComponentVersion
+            | Self::RollbackOnRelease
+            | Self::RollbackUnset => None,
+        }
+    }
 }
 
 impl fmt::Display for RequestError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::TooLarge => write!(f, "is larger than {MAX_REQUEST_BYTES} bytes"),
-            Self::NotObject => f.write_str("is not a JSON object"),
+            Self::NotStrict(_) | Self::NotObject => f.write_str("is not a JSON object"),
             Self::KeysDiffer => f.write_str("keys differ from the request shape"),
             Self::IdDiffers => f.write_str("field 'id' differs from the file name"),
             Self::Malformed(field) => write!(f, "field '{}' is malformed", field.as_str()),

@@ -105,13 +105,15 @@ from .errors import Refusal, RefusalCode, safe_token
 #: long `tools` list and refuses anything that is not a declaration.
 MAX_SERVER_BYTES: Final = 64 * 1024
 
-#: What the merge keys of one server file can copy (`boundedyaml.py`).
+#: What the merge keys of one server file can copy (`boundedyaml.py`). A
+#: merged mapping counts its pairs, and one when it has no pair.
 #:
 #: CONTRACT-QUESTION: contract 01b gives no limit for a merge key. The
-#: reading taken is the two limits of the Rust reader of this file, so that
-#: the two readers refuse the same text. No server file needs a merge key.
-#: Another number costs one line here and one line in the Rust reader.
-MERGE_LIMITS: Final = MergeLimits(depth=400, pairs=100_000)
+#: reading taken is the two limits and the count of the Rust reader of this
+#: file, so that the two readers refuse the same text. The family reader of
+#: the file counts the same. No server file needs a merge key. Another
+#: number costs one line here and one line in the Rust reader.
+MERGE_LIMITS: Final = MergeLimits(depth=400, pairs=100_000, floor=1)
 
 #: The two names of a server file. `read_server_dir` reads `SERVER_FILE_NAME`
 #: when the directory holds that name, and `SERVER_FILE_NAME_YAML` when it

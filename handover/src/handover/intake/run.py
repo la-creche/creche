@@ -51,6 +51,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import Final, Protocol
 
+from .. import notices
 from ..errors import Refusal
 from ..executor.host import make_sealer
 from ..site import lan_address, operator_user
@@ -61,6 +62,10 @@ from .store import DEFAULT_SECRETS_DIR, SecretStore, recipients_of
 from .token import TOKEN_TTL_S, Tokens
 
 LOG_PREFIX: Final = "handover-intake"
+
+#: The service word of the notice of a text that is not strict JSON: the
+#: name of the program, as each log line gives it.
+NOTICE_SERVICE: Final = LOG_PREFIX
 
 #: How often root looks at the gap directory. A gap is opened by a
 #: reconciler and answered by a human, so seconds of lag cost nothing.
@@ -430,6 +435,10 @@ def main() -> int:
 
         return 1
 
+    # The intake runs as root, and root writes no file in a directory that
+    # the operator owns. The notice of a gap file that is not strict JSON is
+    # thus its log line only.
+    notices.configure(NOTICE_SERVICE, None)
     print(f"{LOG_PREFIX}: watching {DEFAULT_GAPS_DIR}", flush=True)
     _loop(wiring, time.sleep)
 

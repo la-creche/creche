@@ -1,8 +1,7 @@
 //! A JSON reader that takes what Python `json.loads` takes, and the writers
 //! that give what Python `json.dumps` gives.
 //!
-//! The release tool reads a request file and a live-state document with
-//! Python `json.loads`. That reader is not strict JSON:
+//! Python `json.loads` is not strict JSON:
 //!
 //! - It takes `NaN`, `Infinity` and `-Infinity`.
 //! - It takes a key more than one time. The last value stays, at the place of
@@ -10,9 +9,10 @@
 //! - It takes an integer of each size up to 4300 digits.
 //! - It takes a lone surrogate escape in a string.
 //!
-//! This reader does the same, so that one text gives one refusal in both
-//! languages. A float is read with the correct rounding, and a float is
-//! written as Python `repr` writes it.
+//! This reader does the same. The release tool now reads a request file and a
+//! live-state document as strict JSON, and each caller of this reader gives
+//! it a text that passed [`crate::json::check`]. A float is read with the
+//! correct rounding, and a float is written as Python `repr` writes it.
 //!
 //! The reader keeps what a caller here looks at. It keeps no item of an array.
 //! It keeps the entries of an object only down to [`KEEP_LEVELS`] levels. No
@@ -29,12 +29,10 @@ const KEEP_LEVELS: usize = 3;
 const INT_DIGITS_MAX: usize = 4300;
 
 // CONTRACT-QUESTION: `stage7-releases.md` §3.2 and contract 06 §11 do not say
-// what a lone surrogate escape is. Python keeps it as one code point of the
-// string. A Rust string cannot hold one, so this reader writes U+FFFD. Each
-// caller refuses the string in both languages, because each field is ASCII.
-// Two keys of one object that differ only in such a code point become one
-// key here, so the detail of the refusal can differ. To keep the code point,
-// a string must be a list of code units.
+// what a lone surrogate escape is. A Rust string cannot hold one, so this
+// reader writes U+FFFD. Each caller reads the text with the strict check
+// first, and the check refuses such an escape, as the Python release tool
+// does. To keep the code point, a string must be a list of code units.
 /// What a lone surrogate of a Python string is in a Rust string.
 const REPLACEMENT: char = '\u{fffd}';
 

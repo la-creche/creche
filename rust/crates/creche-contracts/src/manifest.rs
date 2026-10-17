@@ -937,56 +937,6 @@ mod tests {
         ("manifest.summary", "Summary"),
     ];
 
-    /// Each vector that the Python code accepts and the Rust code refuses, on
-    /// purpose: the surface, the vector, the contract section and the reason.
-    const DEVIATIONS: [(&str, &str, &str, &str); 3] = [
-        (
-            "manifest.resolved",
-            "resolved-at-nan",
-            "contract 06 §9",
-            "resolved_at is a number, and JSON has no NaN",
-        ),
-        (
-            "manifest.resolved",
-            "resolved-at-infinity",
-            "contract 06 §9",
-            "resolved_at is a number, and JSON has no infinity",
-        ),
-        (
-            "manifest.resolved",
-            "resolved-at-negative-infinity",
-            "contract 06 §9",
-            "resolved_at is a number, and JSON has no infinity",
-        ),
-    ];
-
-    /// The vectors of one surface that the Python code accepts and the Rust
-    /// code refuses.
-    #[derive(Default)]
-    struct Found {
-        deviations: BTreeSet<String>,
-    }
-
-    fn rows_of(table: &[(&str, &str, &str, &str)], surface: &str) -> BTreeSet<String> {
-        table
-            .iter()
-            .filter(|row| row.0 == surface)
-            .map(|row| row.1.to_owned())
-            .collect()
-    }
-
-    impl Found {
-        /// Stops the test when the differences are not the rows of the table.
-        fn check(&self, surface: &str) {
-            assert_eq!(
-                self.deviations,
-                rows_of(&DEVIATIONS, surface),
-                "{surface}: the vectors that Python accepts and Rust refuses are not the rows of \
-                 DEVIATIONS"
-            );
-        }
-    }
-
     fn text_field<'a>(object: &'a Map<String, Value>, key: &str) -> &'a str {
         object
             .get(key)
@@ -1052,11 +1002,6 @@ mod tests {
             .collect();
 
         assert_eq!(indexed, named);
-        for (surface, id, section, reason) in &DEVIATIONS {
-            assert!(named.contains(surface), "{surface} {id}");
-            assert!(section.starts_with("contract 06 §"), "{surface} {id}");
-            assert!(!reason.is_empty(), "{surface} {id}");
-        }
     }
 
     // --- component.yaml ---
@@ -1146,7 +1091,6 @@ mod tests {
             .unwrap();
         let operator =
             Operator::new(text_field(account, "user"), text_field(account, "home")).unwrap();
-        let mut found = Found::default();
         for vector in surface.vectors() {
             let id = vector.id();
             let text = vector.input().text().unwrap();
@@ -1162,7 +1106,7 @@ mod tests {
                     assert_eq!(&manifest_json(&manifest), vector.value().unwrap(), "{id}");
                 }
                 (Outcome::Accepted, Err(_)) => {
-                    found.deviations.insert(id.to_owned());
+                    panic!("{id}: Python accepts the manifest and Rust refuses it")
                 }
                 (Outcome::Refused, Err(error)) => {
                     let (check, subject, detail) = refusal(vector);
@@ -1184,8 +1128,6 @@ mod tests {
                 }
             }
         }
-
-        found.check("manifest.component");
     }
 
     /// The text of a list of fields, with the lines of one field replaced.
@@ -1845,7 +1787,6 @@ mod tests {
     #[test]
     fn a_request_file_parses_as_the_executor_parses_it() {
         let surface = vectors::surface("manifest.request.parse").unwrap();
-        let mut found = Found::default();
         for vector in surface.vectors() {
             let id = vector.id();
             let raw = vector.input().bytes().unwrap();
@@ -1859,34 +1800,59 @@ mod tests {
                 .map(|request_id| Request::parse(&raw, &request_id));
             match (vector.result(), parsed) {
                 (Outcome::Accepted, Some(Ok(request))) => check_request(vector, &request),
-                (Outcome::Accepted, Some(Err(_)) | None) => {
-                    found.deviations.insert(id.to_owned());
-                }
                 (Outcome::Refused, Some(Err(error))) => check_request_refusal(vector, error),
                 (Outcome::Raised, Some(Err(_))) | (Outcome::Refused | Outcome::Raised, None) => {}
                 (outcome, _) => panic!("{id}: Python {outcome:?}, and Rust differs"),
             }
         }
-
-        found.check("manifest.request.parse");
     }
 
     #[test]
-    fn a_request_with_a_number_too_large_for_a_float_is_refused() {
+    fn a_request_that_is_not_strict_keeps_the_refusal_for_the_notice() {
+        let id: Ulid = "01K5J8M2Q7V3X9R4T6N0B8C2DE".parse().unwrap();
+        let twice = format!(r#"{{"id": "{id}", "id": "{id}"}}"#);
+        let refused = Request::parse(twice.as_bytes(), &id).unwrap_err();
+
+        assert_eq!(refused.detail(), "is not a JSON object");
+        assert_eq!(
+            refused
+                .not_strict()
+                .map(|refusal| (refusal.rule(), refusal.at())),
+            Some((crate::json::Rule::DuplicateKey, 37))
+        );
+        assert_eq!(RequestError::NotObject.not_strict(), None);
+        assert_eq!(
+            Request::parse(b"[]", &id).map_err(|error| error.not_strict().is_some()),
+            Err(false)
+        );
+    }
+
+    #[test]
+    fn a_request_with_a_number_outside_the_ranges_of_strict_json_is_refused() {
         let id: Ulid = "01K5J8M2Q7V3X9R4T6N0B8C2DE".parse().unwrap();
         let file = |ts: &str| {
             format!(
                 r#"{{"id": "{id}", "kind": "release", "components": {{"chaperone": "2.1.0"}}, "rollback_of": null, "requested_by": "human", "requester_session": null, "ts": {ts}}}"#
             )
         };
-        let largest = format!("1{}", "0".repeat(308));
-        let too_large = format!("1{}", "0".repeat(309));
+        let rule = |ts: &str| {
+            Request::parse(file(ts).as_bytes(), &id)
+                .unwrap_err()
+                .not_strict()
+                .map(crate::json::NotStrict::rule)
+        };
 
-        assert!(Request::parse(file(&largest).as_bytes(), &id).is_ok());
+        assert!(Request::parse(file("18446744073709551615").as_bytes(), &id).is_ok());
+        assert!(Request::parse(file("1.7976931348623157e308").as_bytes(), &id).is_ok());
         assert_eq!(
-            Request::parse(file(&too_large).as_bytes(), &id),
-            Err(RequestError::Malformed(RequestField::Ts))
+            rule("18446744073709551616"),
+            Some(crate::json::Rule::IntegerRange)
         );
+        assert_eq!(
+            rule(&format!("1{}", "0".repeat(308))),
+            Some(crate::json::Rule::IntegerRange)
+        );
+        assert_eq!(rule("1e309"), Some(crate::json::Rule::FloatRange));
     }
 
     fn draft_of(args: &Map<String, Value>) -> Option<Draft> {
@@ -1929,16 +1895,12 @@ mod tests {
     #[test]
     fn a_requester_plans_the_request_that_the_python_requester_writes() {
         let surface = vectors::surface("manifest.request.plan").unwrap();
-        let mut found = Found::default();
         for vector in surface.vectors() {
             let id = vector.id();
             let planned =
                 draft_of(vector.input().args().unwrap()).map(|draft| Request::plan(&draft));
             match (vector.result(), planned) {
                 (Outcome::Accepted, Some(Ok(request))) => check_request(vector, &request),
-                (Outcome::Accepted, Some(Err(_)) | None) => {
-                    found.deviations.insert(id.to_owned());
-                }
                 (Outcome::Refused, Some(Err(error))) => check_request_refusal(vector, error),
                 // A draft holds its id as a `Ulid`. An id that is no ULID has
                 // no draft in Rust, and the Python requester refuses such an id.
@@ -1946,8 +1908,6 @@ mod tests {
                 (outcome, _) => panic!("{id}: Python {outcome:?}, and Rust differs"),
             }
         }
-
-        found.check("manifest.request.plan");
     }
 
     #[test]
@@ -2036,7 +1996,6 @@ mod tests {
     #[test]
     fn a_request_id_is_minted_as_the_python_requester_mints_it() {
         let surface = vectors::surface("manifest.request.ulid").unwrap();
-        let mut found = Found::default();
         for vector in surface.vectors() {
             let id = vector.id();
             let args = vector.input().args().unwrap();
@@ -2053,19 +2012,14 @@ mod tests {
                 .and_then(|now| mint_ulid(now, entropy).ok());
 
             assert_eq!(vector.result(), Outcome::Accepted, "{id}");
-            match minted {
-                Some(minted) => assert_eq!(
-                    &json!({"ulid": minted.as_str()}),
-                    vector.value().unwrap(),
-                    "{id}"
-                ),
-                None => {
-                    found.deviations.insert(id.to_owned());
-                }
-            }
-        }
+            let minted = minted.unwrap_or_else(|| panic!("{id}: Python mints an id and Rust none"));
 
-        found.check("manifest.request.ulid");
+            assert_eq!(
+                &json!({"ulid": minted.as_str()}),
+                vector.value().unwrap(),
+                "{id}"
+            );
+        }
 
         let largest = Timestamp::new(281_474_976_710.655).unwrap();
         let past_48_bits = Timestamp::new(281_474_976_710.656).unwrap();
@@ -2153,7 +2107,6 @@ mod tests {
     fn a_live_state_document_parses_as_the_python_parser_parses_it() {
         let surface = vectors::surface("manifest.state").unwrap();
         let label = text_field(surface.context(), "subject");
-        let mut found = Found::default();
         for vector in surface.vectors() {
             let id = vector.id();
             let text = vector.input().text().unwrap();
@@ -2162,7 +2115,7 @@ mod tests {
                     assert_eq!(&state_json(&state), vector.value().unwrap(), "{id}");
                 }
                 (Outcome::Accepted, Err(_)) => {
-                    found.deviations.insert(id.to_owned());
+                    panic!("{id}: Python accepts the document and Rust refuses it")
                 }
                 (Outcome::Refused, Err(error)) => {
                     let (check, subject, detail) = refusal(vector);
@@ -2177,8 +2130,6 @@ mod tests {
                 }
             }
         }
-
-        found.check("manifest.state");
     }
 
     #[test]
@@ -2186,10 +2137,14 @@ mod tests {
         let long = "1".repeat(4301);
         let deep = format!("{{\"live\": {}{}}}", "[".repeat(30_000), "]".repeat(30_000));
         let version = format!("{{\"provided\": {{\"pep-grant\": \"{long}.0\"}}}}");
+        let refused = ReleaseState::parse(&deep).unwrap_err();
 
+        assert_eq!(refused.detail(), "does not parse as JSON");
         assert_eq!(
-            ReleaseState::parse(&deep),
-            Err(StateError::NotObject(StateLabel::Map(StateMap::Live)))
+            refused
+                .not_strict()
+                .map(|refusal| (refusal.rule(), refusal.at())),
+            Some((crate::json::Rule::TooDeep, 72))
         );
         assert_eq!(
             ReleaseState::parse(&version),
@@ -2347,7 +2302,6 @@ mod tests {
     #[test]
     fn a_resolved_manifest_has_the_bytes_and_the_hash_of_the_python_one() {
         let surface = vectors::surface("manifest.resolved").unwrap();
-        let mut found = Found::default();
         for vector in surface.vectors() {
             let id = vector.id();
             let built = resolved_of(vector.input().args().unwrap());
@@ -2364,19 +2318,18 @@ mod tests {
                     assert_eq!(resolved_json(&manifest), value, "{id}");
                 }
                 (Outcome::Accepted, None) => {
-                    found.deviations.insert(id.to_owned());
+                    panic!("{id}: Python builds a manifest and Rust has no value for it")
                 }
-                // The Python builder checks the id and `requested_by`. In Rust
-                // the type of each argument holds its check, so a refused vector
-                // has no value to build a manifest from.
+                // The Python builder checks the id, `requested_by` and
+                // `resolved_at`. In Rust the type of each argument holds its
+                // check, so a refused vector has no value to build a manifest
+                // from.
                 (Outcome::Refused | Outcome::Raised, None) => {}
                 (Outcome::Refused | Outcome::Raised, Some(_)) => {
                     panic!("{id}: Python refuses the arguments and Rust builds a manifest")
                 }
             }
         }
-
-        found.check("manifest.resolved");
     }
 
     #[test]

@@ -64,14 +64,15 @@ MAX_STRING_CHARS = 512
 MAX_PATH_CHARS = 256
 MAX_CONTRACT_NUMBER = 999
 
-#: What the merge keys of one manifest can copy (`boundedyaml.py`).
+#: What the merge keys of one manifest can copy (`boundedyaml.py`). A
+#: merged mapping counts its pairs, and nothing when it has no pair.
 #:
 #: CONTRACT-QUESTION: contract 06 §8 and §10 give no limit for a merge key.
-#: The reading taken is the two limits of the Rust reader of this file, so
-#: that the two readers refuse the same text. No manifest of this
-#: repository has a merge key. Another number costs one line here and one
-#: line in the Rust reader.
-MERGE_LIMITS = MergeLimits(depth=128, pairs=65_536)
+#: The reading taken is the two limits and the count of the Rust reader of
+#: this file, so that the two readers refuse the same text. No manifest of
+#: this repository has a merge key. Another number costs one line here and
+#: one line in the Rust reader.
+MERGE_LIMITS = MergeLimits(depth=128, pairs=65_536, floor=0)
 
 TIMEOUT_MIN_S = 1
 TIMEOUT_MAX_S = 300

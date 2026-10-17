@@ -4,8 +4,12 @@
 //! Root builds the document. This module is the form and the parser. A parser
 //! is necessary because `handover resolve --state <file>` gives the resolver
 //! a document that a test or a person wrote. Such a document is input, so the
-//! parser reads it as input: a size cap, a closed key set, a check for each
-//! scalar, and a refusal that names the field and does not show its value.
+//! parser reads it as input: a size cap, strict JSON, a closed key set, a
+//! check for each scalar, and a refusal that names the field and does not
+//! show its value. [`json::check`](crate::json::check) reads the text first,
+//! with the cap [`MAX_STATE_BYTES`]. A text that is not strict does not parse
+//! as JSON, and the error keeps the [`NotStrict`] for the notice of the
+//! service.
 
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -14,6 +18,7 @@ use std::fmt;
 use super::json::{self, Object, Value};
 use super::{ContractId, Digest, RefusalCode, SafeToken, catalog_row};
 use crate::ids::{ComponentName, ContractVersion, GitObjectId, Version};
+use crate::json::{self as strict, ByteCap, NotStrict};
 
 /// The largest live-state document, in bytes. The parser applies the cap
 /// before the parse.
@@ -188,6 +193,8 @@ impl ReleaseState {
             return Err(StateError::TooLarge);
         }
 
+        strict::check(text.as_bytes(), ByteCap::new(MAX_STATE_BYTES))
+            .map_err(StateError::NotStrict)?;
         let loaded = json::parse(text).map_err(|_| StateError::NotJson)?;
         let Value::Object(body) = &loaded else {
             return Err(StateError::NotObject(StateLabel::Top));
@@ -336,7 +343,10 @@ impl fmt::Display for StateLabel {
 pub enum StateError {
     /// The text is larger than [`MAX_STATE_BYTES`].
     TooLarge,
-    /// The text is not JSON that Python reads.
+    /// The text is not strict JSON. The detail is the detail of
+    /// [`StateError::NotJson`].
+    NotStrict(NotStrict),
+    /// The text is not JSON.
     NotJson,
     /// This place is not an object.
     NotObject(StateLabel),
@@ -387,6 +397,27 @@ impl StateError {
     pub fn detail(&self) -> String {
         self.to_string()
     }
+
+    /// The refusal of the strict reader, for the notice of a service.
+    /// `None` for each other error.
+    #[must_use]
+    pub const fn not_strict(&self) -> Option<&NotStrict> {
+        match self {
+            Self::NotStrict(refusal) => Some(refusal),
+            Self::TooLarge
+            | Self::NotJson
+            | Self::NotObject(_)
+            | Self::UnknownField(_)
+            | Self::UnknownName { .. }
+            | Self::Version { .. }
+            | Self::UnknownContract(_)
+            | Self::ContractVersion(_)
+            | Self::FactField { .. }
+            | Self::Sha(_)
+            | Self::InputDigest(_)
+            | Self::ArtifactDigest(_) => None,
+        }
+    }
 }
 
 impl fmt::Display for StateError {
@@ -394,7 +425,7 @@ impl fmt::Display for StateError {
         const DIGEST_FORM: &str = "must be sha256:<64 hex> or null";
         match self {
             Self::TooLarge => write!(f, "larger than {MAX_STATE_BYTES} bytes"),
-            Self::NotJson => f.write_str("does not parse as JSON"),
+            Self::NotStrict(_) | Self::NotJson => f.write_str("does not parse as JSON"),
             Self::NotObject(label) => write!(f, "'{label}' must be an object"),
             Self::UnknownField(token) => write!(f, "unknown field: {token}"),
             Self::UnknownName { map, name } => write!(

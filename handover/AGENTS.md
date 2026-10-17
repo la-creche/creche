@@ -29,7 +29,8 @@ The release tool. Six jobs, and two of them touch nothing. The root
 
 **Nothing outside `executor/`, `intake/`, `requester/`, `corpus/` and
 `follow/` touches a host.** The top level reads files the caller names and
-writes nothing. No
+writes nothing. The one exception is `notices.py`: it writes the notice file
+of a program that names one, and only the follower names one. No
 `subprocess`, no network, no environment variable that changes a decision.
 
 1. The pure half never imports `executor/`.
@@ -45,9 +46,11 @@ prints no gate id, because root alone computes `manifest_sha256`.
 request is filed. It refuses to run as root. Nothing in it raises.
 `chaperone/` never imports it, and neither does `requester/`.
 
-`follow/` reads one ledger entry and writes one marker file. It starts no
-child and opens no socket. The fetch is `corpus/`'s and the request is
-`requester/`'s. `cli.py` calls all three. `chaperone/` never imports it.
+`follow/` reads one ledger entry and writes one marker file. When the
+ledger entry or the marker is not strict JSON, the follower also writes one
+row in its notice file. It starts no child and opens no socket. The fetch
+is `corpus/`'s and the request is `requester/`'s. `cli.py` calls all three.
+`chaperone/` never imports it.
 
 `bin/allocate-tags.sh` runs in GitHub Actions. It never runs on a host. Its
 arithmetic lives in `allocate.py`, which is pure.
@@ -75,14 +78,17 @@ The console script is `handover`. The verify hook and the operator's
 6. A parser answers a refusal for each error of its reader library. PyYAML
    raises more than `YAMLError`: a scalar that it cannot build raises
    `ValueError`, and a text that nests too deep raises `RecursionError`.
-7. A JSON integer has no largest value. A reader that makes a float of a
-   number answers a refusal for a number that no float holds. A whole
-   number that becomes a time limit has a range.
+7. Each JSON reader calls `strictjson.loads` with the byte cap of its file
+   or answer, and never `json.loads`. Each JSON writer calls
+   `strictjson.dumps`, and never `json.dumps`. The command line is the one
+   exception: it prints its own reports with `json.dumps`, and no reader
+   reads them. A whole number that becomes a time limit has a range.
 8. Each YAML reader calls `boundedyaml.load`, and never `yaml.safe_load`.
    PyYAML gives a merge key no limit, so a short text can make it use time
    and memory with no bound. No `except` clause stops that. `boundedyaml`
    counts the pairs that the merge keys copy, and the levels of a chain of
-   merge keys. Past a limit, the text does not parse.
+   merge keys. The reader of a server file counts one for a merged mapping
+   with no pair. Past a limit, the text does not parse.
 9. Each TOML reader calls `tomlfile.loads` with the kind of its file, and
    never `tomllib.loads`. `tomlfile` holds the byte limit and the level
    limit of each kind. It refuses each form that TOML 1.1 added, with each
@@ -92,6 +98,24 @@ The console script is `handover`. The verify hook and the operator's
     for byte. Reason: `handover` imports no module of `agent_family`.
     `bin/tests/test_tomlfile_numbers.py` holds the two files equal. Change
     both files in one commit.
+11. A reader gives a text that is not strict JSON the answer that it gives
+    a text that is not JSON. It also calls `notices.record` with the
+    surface word of the reader and the rule word. No text of the refused
+    file goes into the notice. A writer refuses a value with no strict
+    text, and it writes no part of a file and sends no body.
+12. `strictjson.py` and `notices.py` are copies of the files of the
+    noticeboard, byte for byte. Both need the standard library only, so
+    `executor/phone.py` and `executor/quiet.py` can import them.
+    `bin/tests/test_strictjson_copies.py` holds each copy equal. Change each
+    copy in one commit.
+13. Each program calls `notices.configure` one time at its start. Only the
+    follower has a notice file: `notices/follow.json` below the state root
+    of the operator (`executor/layout.py`). A timer starts it, and the
+    operator does not watch its log. `--notices` names another file. A run
+    with `--dry-run` writes no notice file, and a run as root writes none.
+    The executor, the intake and each other subcommand write the log line
+    only. The executor and the intake run as root. Root writes no file in a
+    directory that the operator owns.
 
 ## Rules the design depends on
 
@@ -323,6 +347,7 @@ live in other repositories. Exit codes: 0 pass, 1 refusal, 2 a usage mistake.
 
 The follower runs as the operator from `creche-follow.timer`, out of the
 `handover` component tree. The marker is `~/.local/state/creche/follow.json`.
+The notice file is `notices/follow.json` below the state root.
 
 The executor runs as root from `creche-handover.path`, through the wrapper
 `bin/creche-handover`, which decrypts the site's sops file and execs
@@ -333,7 +358,8 @@ The executor runs as root from `creche-handover.path`, through the wrapper
 | Module | Owns |
 |---|---|
 | `errors.py`, `catalog.py`, `site.py` | the closed refusal list, the component list, the site file |
-| `boundedyaml.py`, `tomlfile.py` | the YAML loader of each reader, with its two merge limits, and the TOML reader of each file kind |
+| `strictjson.py`, `notices.py` | the strict reader and the strict writer of a JSON text, and the notice of a refused text. Each file is a copy |
+| `boundedyaml.py`, `tomlfile.py` | the YAML loader of each reader, with its two merge limits and its count of an empty merged mapping, and the TOML reader of each file kind |
 | `manifest.py`, `discovery.py`, `order.py`, `contracts.py` | the manifest as hostile input, the walk, the order, rules C1 to C5 |
 | `state.py`, `resolve.py`, `allocate.py`, `mcpserver.py`, `silent.py` | the live-state shape, the decision and hash, the tag plan, the server file as hostile bytes, the uninstalled component |
 | `artifacts.py`, `treewalk.py` | the names, the limits and the signer of the archive of a binary component, the walk of a tree of compiled programs |
@@ -485,4 +511,8 @@ that wants a refusal changes one field.
   component (`executor/install.py`).
 - Contract 06 §8.2 names no rule for a staged venv tree that is a link. The
   walk reports the link as a fault with the code `editable`
+  (`executor/selfcontained.py`).
+- Contract 06 §8.2 and PEP 610 name no size for a `direct_url.json` record.
+  Root reads 64 KiB of such a record at most. A larger record is a record
+  that root cannot read, and the walk reports it as a fault
   (`executor/selfcontained.py`).

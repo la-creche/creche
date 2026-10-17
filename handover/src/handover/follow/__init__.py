@@ -33,9 +33,11 @@ Six rules hold its shape, each with the reason it is a rule.
    behind it is filed again on the next run, and each one is a push. In
    this order a marker that cannot be written costs no request at all.
 
-This package reads one ledger entry and writes one marker. It starts no
-child and opens no socket: the fetch is `corpus/`'s and the request is
-`requester/`'s, and `cli.py` calls all three. `chaperone/` never imports it.
+This package reads one ledger entry and writes one marker. When the ledger
+entry or the marker is not strict JSON (`strictjson.py`), the follower also
+writes one row in its notice file (`notices.py`). It starts no child and
+opens no socket: the fetch is `corpus/`'s and the request is `requester/`'s,
+and `cli.py` calls all three. `chaperone/` never imports it.
 
 Stdlib only, like the requester: a release re-syncs this venv under a run.
 """
@@ -43,7 +45,6 @@ Stdlib only, like the requester: a release re-syncs this venv under a run.
 from __future__ import annotations
 
 import contextlib
-import json
 import os
 import stat
 from collections.abc import Iterable, Mapping
@@ -52,9 +53,12 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Final, cast
 
+from .. import notices, strictjson
 from ..errors import RefusalCode
 from ..executor.approval import Verdict, not_granted
+from ..executor.layout import STATE_ROOT
 from ..executor.spool import DONE_DIR
+from ..executor.spool import SURFACE as ENTRY_SURFACE
 from ..state import ReleaseState
 
 #: §2.3's `requested_by`, and a row of the phone summary (§2.5): the
@@ -75,6 +79,17 @@ MARKER_DIR: Final = ".local/state/creche"
 MARKER_NAME: Final = "follow.json"
 MARKER_FILE_MODE: Final = 0o600
 MARKER_DIR_MODE: Final = 0o700
+
+#: The notice file of the follower, under the state root of the operator.
+#: A timer starts the follower, and the operator does not watch its log.
+#: The host script that sends the notice push reads each file of this
+#: directory.
+NOTICE_SERVICE: Final = "follow"
+NOTICES_FILE: Final = f"{STATE_ROOT}/notices/{NOTICE_SERVICE}.json"
+
+#: The surface word of a notice for the marker. A notice for an entry of
+#: the ledger takes the word of the spool (`ENTRY_SURFACE`).
+MARKER_SURFACE: Final = "release.marker"
 
 #: A marker holds at most eight names and one id. A larger file is not one.
 MAX_MARKER_BYTES: Final = 4096
@@ -246,13 +261,17 @@ def _read_capped(path: Path, cap: int) -> bytes | None:
         os.close(fd)
 
 
-def _object_of(raw: bytes | None) -> dict[str, object] | None:
+def _object_of(raw: bytes | None, cap: int, surface: str) -> dict[str, object] | None:
+    """The object of a strict text of at most `cap` bytes, or None. A text
+    that is not strict JSON also records a notice with `surface`."""
     if raw is None:
         return None
 
     try:
-        body = json.loads(raw)
-    except (ValueError, UnicodeDecodeError, RecursionError):
+        body = strictjson.loads(raw, cap=cap)
+    except strictjson.NotStrictJson as refusal:
+        notices.record(surface, refusal.rule)
+
         return None
 
     if not isinstance(body, dict):
@@ -278,7 +297,7 @@ def _set_of(value: object) -> Moving | None:
 def read_marker(path: Path) -> Marker:
     """The marker, or an empty one. A file that does not read as a marker
     costs one repeated request, and refusing would stop every future one."""
-    body = _object_of(_read_capped(path, MAX_MARKER_BYTES))
+    body = _object_of(_read_capped(path, MAX_MARKER_BYTES), MAX_MARKER_BYTES, MARKER_SURFACE)
     if body is None:
         return Marker()
 
@@ -307,7 +326,9 @@ def read_marker(path: Path) -> Marker:
 
 def write_marker(path: Path, marker: Marker) -> None:
     """Whole file or none. Raises `OSError` when this host cannot write it,
-    and the caller then files nothing (rule 6)."""
+    and the caller then files nothing (rule 6). Raises `NotStrictJson`, and
+    writes nothing, for a marker with no strict text."""
+    data = strictjson.dumps(marker.as_dict(), sort_keys=True).encode("utf-8")
     path.parent.mkdir(mode=MARKER_DIR_MODE, parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.tmp")
     with contextlib.suppress(FileNotFoundError):
@@ -317,7 +338,7 @@ def write_marker(path: Path, marker: Marker) -> None:
     fd = os.open(tmp, flags, MARKER_FILE_MODE)
     try:
         os.fchmod(fd, MARKER_FILE_MODE)
-        os.write(fd, json.dumps(marker.as_dict(), sort_keys=True).encode("utf-8"))
+        os.write(fd, data)
         os.fsync(fd)
     finally:
         os.close(fd)
@@ -338,7 +359,7 @@ def read_answer(done_dir: Path, request_id: str | None) -> Answer:
     if not entry.exists():
         return Answer.NONE
 
-    body = _object_of(_read_capped(entry, MAX_ENTRY_BYTES))
+    body = _object_of(_read_capped(entry, MAX_ENTRY_BYTES), MAX_ENTRY_BYTES, ENTRY_SURFACE)
     if body is None:
         return Answer.FINAL
 
@@ -351,6 +372,8 @@ def read_answer(done_dir: Path, request_id: str | None) -> Answer:
 __all__ = [
     "AGAIN_S",
     "MAX_ASKS",
+    "NOTICES_FILE",
+    "NOTICE_SERVICE",
     "REQUESTED_BY",
     "Answer",
     "Marker",

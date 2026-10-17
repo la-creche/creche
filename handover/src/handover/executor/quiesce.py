@@ -9,17 +9,21 @@ The evidence is the turn record `attendance` writes at
 `/srv/agents/sessions/<family>/<session>/turns/<turn>.json` (contract 02
 §9), which carries `state` and `started_at`. Root reads it the way it reads
 every operator-owned file: capped, and a record it cannot parse informs nothing
-rather than blocking forever.
+rather than blocking forever. A record is strict JSON (`strictjson.py`). A
+record that is not strict is a record root cannot parse, and
+`notices.record` writes its log line with the surface `SURFACE`. Root proves
+no writer of a record, so the notice says `proven=False`.
 """
 
 from __future__ import annotations
 
-import json
 import os
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final, cast
+
+from .. import notices, strictjson
 
 TURNS_DIR: Final = "turns"
 TURN_SUFFIX: Final = ".json"
@@ -33,6 +37,9 @@ LAUNCH_GRACE_S: Final = 90.0
 
 #: A turn record is one page.
 MAX_TURN_BYTES: Final = 64 * 1024
+
+#: The surface word of a notice for a turn record that is not strict JSON.
+SURFACE: Final = "release.turn_record"
 
 #: How many records one pass reads before it stops looking. A host with more
 #: in-flight turns than this is busy by any definition.
@@ -156,8 +163,13 @@ def _read(record: Path) -> dict[str, Any] | None:
         if record.stat().st_size > MAX_TURN_BYTES:
             return None
 
-        loaded: Any = json.loads(record.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        with record.open("rb") as file:
+            loaded: Any = strictjson.loads(file.read(MAX_TURN_BYTES + 1), cap=MAX_TURN_BYTES)
+    except strictjson.NotStrictJson as refusal:
+        notices.record(SURFACE, refusal.rule, proven=False)
+
+        return None
+    except OSError:
         return None
 
     if not isinstance(loaded, dict):

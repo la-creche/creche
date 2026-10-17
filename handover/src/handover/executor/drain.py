@@ -38,6 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+from .. import notices
 from ..catalog import CATALOG_BY_NAME
 from ..errors import Refusal, RefusalCode
 from ..resolve import TAG_FORMAT
@@ -89,6 +90,12 @@ UNREADABLE_REASON: Final = "not a plain file root will read"
 UNNAMED_READ_REASON: Final = "the reader raised an error that it does not name"
 
 LOG_PREFIX: Final = "handover"
+
+#: The service word of the notice of a text that is not strict JSON. The
+#: executor runs as root, and root writes no file in a directory that the
+#: operator owns. So the executor has no notice file, and the notice is its
+#: log line.
+NOTICE_SERVICE: Final = "handover-exec"
 
 #: One `git rev-parse` in a clone root already vetted. It reads one object
 #: id and prints 40 bytes, so the cap is a hung child and not a slow one.
@@ -537,6 +544,7 @@ def main() -> int:
 
         return 1
 
+    notices.configure(NOTICE_SERVICE, None)
     try:
         spool = Spool(SPOOL_ROOT, operator_uid, also_owned_by=_chaperone_uids())
     except SpoolError as exc:

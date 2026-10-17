@@ -14,13 +14,19 @@ step costs what the text costs. The constructor then puts the pairs of each
 2. the levels of a chain of merge keys: a `<<` value that has a `<<` value
    of its own.
 
+The count of one merged mapping is the count of its pairs, and at least the
+floor of the reader. A floor of 1 counts one for a merged mapping with no
+pair, so the count of a text grows with each mapping that a merge key names.
+
 Past a limit it raises `MergeLimit`. That is a `yaml.YAMLError`, so a caller
 that refuses each error of the reader refuses this text too.
 
-The Rust readers of the same files count the same two things at the same
-places (`rust/crates/creche-contracts/src/manifest/yaml.rs` and
+The Rust readers of the same files count the same things at the same places
+(`rust/crates/creche-contracts/src/manifest/yaml.rs` and
 `rust/crates/agent-family/src/yaml/construct.rs`). A caller gives the limits
 of the Rust reader of its file, so the two languages refuse the same text.
+The Rust reader of a manifest has the floor 0, and the Rust reader of a
+server file has the floor 1.
 
 Pure: no child, no network and no file.
 """
@@ -50,12 +56,15 @@ Pairs = list[tuple[Node, Node]]
 
 @dataclass(frozen=True)
 class MergeLimits:
-    """The two limits of one reader."""
+    """The two limits of one reader, and how it counts one merged mapping."""
 
     #: The longest chain of merge keys.
     depth: int
     #: The most pairs that the merge keys of one text copy.
     pairs: int
+    #: The least count of one merged mapping. A mapping with fewer pairs
+    #: counts this number.
+    floor: int
 
 
 class MergeLimit(yaml.YAMLError):
@@ -119,9 +128,10 @@ class _Loader(yaml.SafeLoader):
 
     def _counted(self, node: MappingNode) -> Pairs:
         """The pairs of one flat mapping that a merge key names. The count
-        is before the copy, so a text past the limit costs no copy."""
+        is before the copy, so a text past the limit costs no copy. A
+        mapping with fewer pairs than the floor counts the floor."""
         pairs = cast("Pairs", node.value)
-        self._copied += len(pairs)
+        self._copied += max(self._limits.floor, len(pairs))
         if self._copied > self._limits.pairs:
             raise MergeTooLarge
 
