@@ -27,7 +27,7 @@ from handover.executor import drain, phone, provenance, quiet, spool
 from handover.executor.approval import Verdict, not_granted
 from handover.executor.quiesce import starting
 from handover.executor.request import NOT_AN_OBJECT, parse_request
-from handover.executor.selfcontained import MAX_DIRECT_URL_BYTES, UNREADABLE_DIRECT_URL, escapes
+from handover.executor.selfcontained import UNREADABLE_DIRECT_URL, escapes
 from handover.executor.spool import RUNNING_DIR, SWITCH_SUFFIX, Spool, SpoolError
 from handover.follow import Answer, Marker, read_answer, read_marker, write_marker
 from handover.intake import notify
@@ -514,8 +514,9 @@ def test_a_strict_record_of_an_editable_install_is_a_fault(
 def test_a_record_at_the_cap_reads_and_a_larger_one_is_a_fault(
     tmp_path: Path, recorded: Notices
 ) -> None:
+    """The cap is 64 KiB (`MAX_DIRECT_URL_BYTES`)."""
     text = '{"url": "file:///src", "dir_info": {"editable": true}}'
-    at_cap = text + " " * (MAX_DIRECT_URL_BYTES - len(text))
+    at_cap = text + " " * (64 * 1024 - len(text))
 
     (fault,) = escapes(_venv(tmp_path / "at", at_cap))
     assert fault.endswith("is installed editable")
