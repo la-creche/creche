@@ -619,13 +619,23 @@ def test_a_unit_whose_program_the_archive_does_not_hold_is_refused(
 # ---- a unit that starts another tree -------------------------------------------
 
 
-def test_a_unit_outside_the_tree_is_refused_before_the_unpack(tmp_path: Path, home: Path) -> None:
+def test_a_unit_outside_the_tree_is_refused_before_the_unpack(
+    tmp_path: Path, home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Contract 06 §1 rule 8, for a binary component. The refusal comes
     before the unpack, so the host is exactly as it was."""
+    unpacked: list[Path] = []
+
+    def record(archive: Path, into: Path, component: str | None = None) -> None:
+        del into, component
+        unpacked.append(archive)
+
+    monkeypatch.setattr(install, "extract_tar", record)
     bench = _make_bench(tmp_path, home)
     bench.install_unit(unit_text(ELSEWHERE))
 
     assert "refused" in bench.release()
 
     assert bench.ledger()["refused_check"] == "unit"
+    assert unpacked == []
     _untouched(bench)
