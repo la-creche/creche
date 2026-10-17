@@ -11,7 +11,7 @@ Four groups of tests:
 1. `copy_from_store` against a store that a test writes, as the operator
    side writes it: each directory 0700, each file 0600.
 2. Each fault of the store, which gives no copy and one note line.
-3. A second call in the same release.
+3. A later call in the same release, which gets the result of the first.
 4. The method of `Release` that puts the digest into the state, and a
    whole release of a component whose manifest says `binary`.
 """
@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import stat
 import threading
 from collections.abc import Callable, Iterator
@@ -39,6 +40,7 @@ from handover.executor.artifact import (
     COPY_GONE,
     GREW,
     NO_ASSETS,
+    NO_COPY_DIR,
     NO_FILE,
     NO_HOME,
     NO_STORE_DIR,
@@ -167,8 +169,10 @@ def work(tmp_path: Path) -> Path:
     return tmp_path / "work" / REQUEST_ID
 
 
-def _copy(work: Path, uid: int | None = None) -> Copied | NoCopy:
-    return copy_from_store(COMPONENT, TAG, work, os.getuid() if uid is None else uid)
+def _copy(
+    work: Path, uid: int | None = None, earlier: Copied | NoCopy | None = None
+) -> Copied | NoCopy:
+    return copy_from_store(COMPONENT, TAG, work, os.getuid() if uid is None else uid, earlier)
 
 
 def _copy_dir(work: Path) -> Path:
@@ -292,7 +296,7 @@ def test_a_link_in_the_place_of_a_file_gives_no_copy(
     assert _no_copy(_copy(work)) == _note(NO_FILE, "archive")
 
 
-@pytest.mark.parametrize("level", [".local", "creche", COPY_DIR, REPO, TAG])
+@pytest.mark.parametrize("level", [".local", "creche", STORE_PARTS[-1], REPO, TAG])
 def test_a_link_in_the_place_of_a_directory_of_the_path_gives_no_copy(
     home: Path, work: Path, tmp_path: Path, level: str
 ) -> None:
@@ -485,7 +489,7 @@ def test_a_site_file_with_no_home_gives_no_copy(
     assert _no_copy(_copy(work)) == _note(NO_HOME)
 
 
-# ---- 3. a second call in the same release ----------------------------------------
+# ---- 3. a later call in the same release -----------------------------------------
 
 
 def test_a_second_call_gives_the_digest_of_the_first_after_a_change_of_the_store(
@@ -495,7 +499,7 @@ def test_a_second_call_gives_the_digest_of_the_first_after_a_change_of_the_store
     first = _copied(_copy(work))
     _put(directory / NAMES.archive, b"other bytes in the store\n")
 
-    second = _copied(_copy(work))
+    second = _copied(_copy(work, earlier=first))
 
     assert second.digest == first.digest == _sha256(ARCHIVE)
 
@@ -507,16 +511,41 @@ def test_a_second_call_after_the_copy_is_removed_gives_no_copy(home: Path, work:
     first.archive.unlink()
     first.bundle.unlink()
 
-    assert _no_copy(_copy(work)) == _note(COPY_GONE, "archive")
+    assert _no_copy(_copy(work, earlier=first)) == _note(COPY_GONE, "archive")
     assert _left(work) == []
 
 
+def test_a_second_call_after_the_directory_of_the_copy_is_removed_reads_no_store(
+    home: Path, work: Path
+) -> None:
+    """The record of the first call is the result that the release keeps,
+    and not a directory. The second call makes no directory and copies
+    nothing."""
+    _stock(home)
+    first = _copied(_copy(work))
+    shutil.rmtree(_copy_dir(work))
+
+    assert _no_copy(_copy(work, earlier=first)) == _note(COPY_GONE, "archive")
+    assert not _copy_dir(work).exists()
+
+
 def test_a_second_call_after_a_first_with_no_store_reads_no_store(home: Path, work: Path) -> None:
-    """The files arrive in the store after step 2. Step 8 copies nothing."""
-    assert isinstance(_copy(work), NoCopy)
+    """The files arrive in the store after step 2. Step 8 copies nothing,
+    and it gives the note of step 2 again."""
+    first = _copy(work)
+    assert _no_copy(first) == _note(NO_STORE_DIR)
     _stock(home)
 
-    assert _no_copy(_copy(work)) == _note(COPY_GONE, "archive")
+    assert _copy(work, earlier=first) is first
+    assert _left(work) == []
+
+
+def test_a_first_call_copies_nothing_into_a_directory_that_is_there(home: Path, work: Path) -> None:
+    _stock(home)
+    _copy_dir(work).mkdir(parents=True)
+
+    assert _no_copy(_copy(work)) == _note(NO_COPY_DIR)
+    assert _left(work) == []
 
 
 def test_a_second_call_hashes_a_changed_copy_again(home: Path, work: Path) -> None:
@@ -526,7 +555,7 @@ def test_a_second_call_hashes_a_changed_copy_again(home: Path, work: Path) -> No
     changed[0] ^= 1
     first.archive.write_bytes(bytes(changed))
 
-    second = _copied(_copy(work))
+    second = _copied(_copy(work, earlier=first))
 
     assert second.digest == _sha256(bytes(changed)) != first.digest
 
@@ -536,7 +565,25 @@ def test_a_second_call_refuses_a_copy_with_another_mode(home: Path, work: Path) 
     first = _copied(_copy(work))
     first.bundle.chmod(0o666)
 
-    assert _no_copy(_copy(work)) == _note(COPY_CHANGED, "bundle")
+    assert _no_copy(_copy(work, earlier=first)) == _note(COPY_CHANGED, "bundle")
+
+
+def test_a_second_call_refuses_a_copy_with_a_second_name(home: Path, work: Path) -> None:
+    _stock(home)
+    first = _copied(_copy(work))
+    os.link(first.archive, _copy_dir(work) / "second-name")
+
+    assert _no_copy(_copy(work, earlier=first)) == _note(COPY_CHANGED, "archive")
+
+
+def test_a_second_call_refuses_a_copy_of_another_owner(
+    home: Path, work: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stock(home)
+    first = _copied(_copy(work))
+    _faked_fstat(monkeypatch, lambda found: _with(found, st_uid=found.st_uid + 1))
+
+    assert _no_copy(_copy(work, earlier=first)) == _note(COPY_CHANGED, "archive")
 
 
 # ---- 4. the digest in the resolved manifest ----------------------------------------
@@ -752,6 +799,22 @@ def test_a_copy_removed_after_step_2_is_refused_with_drift(bench: Bench, tmp_pat
     assert ledger["refused_check"] == "drift"
     assert not bench.run.ran(CARGO)
     assert not (tmp_path / "components" / f"{COMPONENT}.new").exists()
+
+
+def test_the_whole_copy_removed_after_step_2_is_refused_with_drift(
+    bench: Bench, tmp_path: Path
+) -> None:
+    """Step 8 makes no new copy from the store, also when the directory of
+    the copy is gone. The store still holds both files."""
+
+    def remove() -> None:
+        shutil.rmtree(_copy_of(tmp_path).parent)
+
+    ledger = bench.release(remove)
+
+    assert ledger["status"] == "refused"
+    assert ledger["refused_check"] == "drift"
+    assert not bench.run.ran(CARGO)
 
 
 def test_one_changed_byte_of_the_copy_is_refused_with_drift(bench: Bench, tmp_path: Path) -> None:

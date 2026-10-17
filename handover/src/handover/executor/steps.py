@@ -400,7 +400,8 @@ class Release:
         self.fetched: list[str] = []
         #: The result of the last copy of the two assets of each binary
         #: component that deploys, by component (`_copy_artifacts`). Step
-        #: 2 makes the copy, and step 8 reads it again.
+        #: 2 makes the copy. Step 8 gives the result of step 2 back to the
+        #: copy, so it reads root's copy again and never the store.
         self.copies: dict[str, Copied | NoCopy] = {}
         #: What step 8's compose dry run said each `kind: compose`
         #: component would recreate. Step 9 reads it for §2.8's window.
@@ -735,10 +736,10 @@ class Release:
         (`artifact.py`) and puts the digest of its copy into
         `artifact_digest`. A component with no copy keeps null.
 
-        Step 2 and step 8 each call it. The first call reads the store,
-        and the second reads the copy. So a copy that changed after the
-        approval gives another hash of the resolved manifest, and step 8
-        refuses with `drift`.
+        Step 2 and step 8 each call it. The first call reads the store.
+        The second call gets the result of the first, and it reads the
+        copy. So a copy that changed after the approval gives another hash
+        of the resolved manifest, and step 8 refuses with `drift`.
         """
         work = self.wiring.host.work_root / self.request.id
         facts = dict(state.facts)
@@ -748,7 +749,8 @@ class Release:
                 continue
 
             tag = TAG_FORMAT.format(name=name, version=version)
-            copy = copy_from_store(name, tag, work, self.wiring.host.source_owner_uid)
+            earlier = self.copies.get(name)
+            copy = copy_from_store(name, tag, work, self.wiring.host.source_owner_uid, earlier)
             self.copies[name] = copy
             known = facts.get(name)
             if isinstance(copy, NoCopy):

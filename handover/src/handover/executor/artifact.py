@@ -31,10 +31,12 @@ Seven rules hold the copy:
 5. **The digest is the SHA-256 of the archive bytes that root wrote**, as
    `sha256:<64 hex>`. It goes into `artifact_digest` of the resolved
    manifest, so the gate id and the tap bind those bytes.
-6. **Root reads the store one time in a release.** The directory of the
-   component in the work tree is the record of the first call. Root makes
-   it before it opens the store. A second call finds it, reads the copy
-   again and hashes it again.
+6. **Root reads the store one time in a release.** The release keeps the
+   result of the first call and gives it to each later call. A later call
+   never opens the store: it gives the `NoCopy` of the first call again,
+   or it reads root's copy and hashes it again. The first call makes the
+   directory of the component in the work tree, and it copies nothing when
+   that directory is there already.
 7. **Nothing here raises.** Each fault gives no copy and one fixed note
    line. A component with no copy keeps a null `artifact_digest`.
 
@@ -146,31 +148,43 @@ class _Fault(Exception):
         self.note = note
 
 
-def copy_from_store(component: str, tag: str, work: Path, operator_uid: int) -> Copied | NoCopy:
+def copy_from_store(
+    component: str,
+    tag: str,
+    work: Path,
+    operator_uid: int,
+    earlier: Copied | NoCopy | None = None,
+) -> Copied | NoCopy:
     """Root's copy of the archive and the bundle of `component` at `tag`, in
     `work`, the work directory of the request. `operator_uid` is the uid of
     the operator, who owns the store.
 
-    The first call in a release copies from the store. Each later call
-    reads the copy and hashes it again, and never opens the store. Never
-    raises.
+    `earlier` is the result of the first call for `component` in this
+    release, and None for the first call itself. The first call copies from
+    the store. A later call never opens the store: it gives the `NoCopy` of
+    the first call again, or it reads root's copy and hashes it again.
+    Never raises.
     """
     matched = TAG_RE.fullmatch(tag)
     if component not in CATALOG_BY_NAME or matched is None or matched.group(1) != component:
         return NoCopy(NOT_ITS_TAG.format(component=component))
+
+    if isinstance(earlier, NoCopy):
+        return earlier
 
     parts = _parts(component)
     if parts is None:
         return NoCopy(NO_ASSETS.format(component=component))
 
     target = work / COPY_DIR / component
-    try:
-        first = _make_copy_dir(work, target)
-    except OSError:
-        return NoCopy(NO_COPY_DIR.format(component=component))
+    if earlier is None:
+        try:
+            _make_copy_dir(work, target)
+        except OSError:
+            return NoCopy(NO_COPY_DIR.format(component=component))
 
     try:
-        if first:
+        if earlier is None:
             return _copy(component, tag, parts, target, operator_uid)
 
         return _hash_copy(component, parts, target)
@@ -194,22 +208,16 @@ def _parts(component: str) -> _Pair | None:
             return None
 
 
-def _make_copy_dir(work: Path, target: Path) -> bool:
+def _make_copy_dir(work: Path, target: Path) -> None:
     """Make each directory from `work` down to `target`, each with the mode
-    0755. True when this call made `target`, and False when it was there.
-    Raises `OSError` for a link or a file in the place of a directory."""
+    0755. Raises `OSError` for a link or a file in the place of a
+    directory, and for a `target` that is there already."""
     work.mkdir(exist_ok=True)
     _own_dir(work)
     (work / COPY_DIR).mkdir(exist_ok=True)
     _own_dir(work / COPY_DIR)
-    try:
-        target.mkdir()
-    except FileExistsError:
-        return False
-
+    target.mkdir()
     _own_dir(target)
-
-    return True
 
 
 def _own_dir(path: Path) -> None:
