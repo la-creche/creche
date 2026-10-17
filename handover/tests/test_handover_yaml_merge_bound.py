@@ -198,7 +198,7 @@ PAIRS_REFUSAL = f"does not parse: the merge keys copy more than {manifest.MERGE_
 
 # -- the reader ----------------------------------------------------------------
 
-LIMITS = MergeLimits(depth=4, pairs=12)
+LIMITS = MergeLimits(depth=4, pairs=12, floor=0)
 
 
 def test_a_document_with_no_merge_key_reads_as_before() -> None:
@@ -299,7 +299,7 @@ SAME_AS_PYYAML = (
 )
 
 #: Limits that no text of `SAME_AS_PYYAML` reaches.
-NO_LIMIT = MergeLimits(depth=64, pairs=4096)
+NO_LIMIT = MergeLimits(depth=64, pairs=4096, floor=0)
 
 
 def _result(read: Callable[[str], object], text: str) -> str:
@@ -343,17 +343,51 @@ def test_no_module_of_this_package_calls_a_loader_with_no_bound() -> None:
 #: The limits of the Rust reader of a manifest and of a server file
 #: (`rust/crates/creche-contracts/src/manifest/yaml.rs` and
 #: `rust/crates/agent-family/src/yaml/construct.rs`).
-MANIFEST_LIMITS = MergeLimits(depth=128, pairs=65_536)
-SERVER_LIMITS = MergeLimits(depth=400, pairs=100_000)
+MANIFEST_LIMITS = MergeLimits(depth=128, pairs=65_536, floor=0)
+SERVER_LIMITS = MergeLimits(depth=400, pairs=100_000, floor=1)
 
 
 def test_each_reader_has_the_limits_of_its_rust_reader() -> None:
     """The numbers themselves. Each other test takes a limit from the module
     that it tests, so a changed number there moves that test with it. The
-    sops file has no Rust reader and takes the limits of a manifest."""
+    sops file has no Rust reader and takes the limits of a manifest.
+
+    The Rust reader of a manifest counts the pairs of each merged mapping.
+    The Rust reader of a server file counts one for a merged mapping with no
+    pair, so its floor is 1."""
     assert manifest.MERGE_LIMITS == MANIFEST_LIMITS
     assert mcpserver.MERGE_LIMITS == SERVER_LIMITS
     assert store.MERGE_LIMITS == MANIFEST_LIMITS
+
+
+def _no_pairs(count: int, listed: int = 250) -> str:
+    """A list of mappings that merges `count` mappings with no pair. The
+    last mapping takes each one through a list of `listed` aliases."""
+    lists, rest = divmod(count, listed)
+    merges = ", ".join(["<<: *l"] * lists + ["<<: *e"] * rest)
+    names = ", ".join(["*e"] * listed)
+
+    return f"  - &e {{}}\n  - &l [{names}]\n  - {{{merges}}}\n"
+
+
+def test_a_floor_counts_each_merged_mapping_with_no_pair() -> None:
+    with_floor = MergeLimits(depth=4, pairs=12, floor=1)
+    text = "e: &e {}\nown: {<<: [*e, *e, *e, *e, *e, *e, *e, *e, *e, *e, *e, *e]}\n"
+
+    assert load(text, with_floor)["own"] == {}
+    assert load(text, LIMITS)["own"] == {}
+    with pytest.raises(MergeTooLarge):
+        load(text.replace("[*e, ", "[*e, *e, "), with_floor)
+
+    assert load(text.replace("[*e, ", "[*e, *e, "), LIMITS)["own"] == {}
+
+
+def test_a_floor_does_not_count_a_mapping_with_pairs_more_than_once() -> None:
+    with_floor = MergeLimits(depth=4, pairs=12, floor=1)
+
+    assert len(load(_copies(3, 4), with_floor)["own"]) == 3
+    with pytest.raises(MergeTooLarge):
+        load(_copies(3, 5), with_floor)
 
 
 # -- component.yaml ------------------------------------------------------------
@@ -477,6 +511,61 @@ def test_a_server_file_past_a_merge_limit_does_not_parse() -> None:
 
     assert past_depth == "server.yaml is not readable YAML"
     assert past_pairs == "server.yaml is not readable YAML"
+
+
+def test_a_server_file_counts_one_for_each_merged_mapping_with_no_pair() -> None:
+    """The family reader of a server file counts the same, so the two readers
+    of one file refuse the same text. The reader takes the text at the limit.
+    The refusal is then for the key `extra`, which no server file has."""
+    limits = mcpserver.MERGE_LIMITS
+    at_limit = _server_refusal(_server_text("extra:\n" + _no_pairs(limits.pairs)))
+    past = _server_refusal(_server_text("extra:\n" + _no_pairs(limits.pairs + 1)))
+
+    assert "not readable YAML" not in at_limit
+    assert past == "server.yaml is not readable YAML"
+
+
+def test_a_manifest_counts_nothing_for_a_merged_mapping_with_no_pair() -> None:
+    text = _manifest_with(_no_pairs(mcpserver.MERGE_LIMITS.pairs + 1))
+
+    assert parse_manifest(text, SUBJECT).unit is None
+
+
+#: A server file whose merge keys take 2,400 times 2,400 mappings with no
+#: pair, in about 29 KB. The child prints the detail of the read, and the
+#: CPU seconds of the read less the CPU seconds that PyYAML takes to make
+#: the nodes of the text. The difference is the time of the merge step.
+SQUARE_SIDE = 2400
+TIMED_SERVER_CHILD = """
+import yaml
+from handover.errors import Refusal
+from handover.mcpserver import parse_server
+
+start = time.process_time()
+yaml.compose(text, Loader=yaml.SafeLoader)
+nodes = time.process_time() - start
+start = time.process_time()
+try:
+    parse_server(text.encode("utf-8"), "kagi")
+    print("accepted")
+except Refusal as refusal:
+    print(refusal.detail)
+print(time.process_time() - start - nodes)
+"""
+
+#: The most CPU seconds of that merge step. The count stops the step after
+#: 100,001 of the 5,760,000 mappings.
+SQUARE_CPU_S = 0.2
+
+
+def test_a_server_file_with_many_merged_mappings_with_no_pair_is_refused_fast() -> None:
+    text = _server_text("extra:\n" + _no_pairs(SQUARE_SIDE * SQUARE_SIDE, SQUARE_SIDE))
+    assert len(text.encode("utf-8")) <= MAX_SERVER_BYTES
+
+    detail, seconds = _in_child(TIMED_SERVER_CHILD, text).splitlines()
+
+    assert detail == "server.yaml is not readable YAML"
+    assert float(seconds) < SQUARE_CPU_S
 
 
 def test_a_small_server_file_with_merge_keys_that_double_does_not_parse() -> None:
