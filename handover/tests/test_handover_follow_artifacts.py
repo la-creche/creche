@@ -715,6 +715,8 @@ def test_check_p6_with_no_verifier_answer_reads_as_unanswered(tmp_path: Path) ->
         ("approval", "the verifier was not available"),
         (["P6"], "the verifier was not available"),
         (None, "the verifier was not available"),
+        ("approval", [not_granted(Verdict.TIMEOUT)]),
+        ("approval", {"reason": not_granted(Verdict.TIMEOUT)}),
     ],
     ids=[
         "no-artifact",
@@ -730,13 +732,15 @@ def test_check_p6_with_no_verifier_answer_reads_as_unanswered(tmp_path: Path) ->
         "check-approval",
         "check-list",
         "check-null",
+        "approval-list",
+        "approval-object",
     ],
 )
 def test_each_other_answer_of_check_p6_is_final(
     tmp_path: Path, check: object, reason: object
 ) -> None:
-    """A reason outside the enum, or the reason under another check, holds
-    the set."""
+    """A reason outside the enum, the reason under another check, or a check
+    or a reason that is no text, holds the set. This applies to each check."""
     _write_entry(tmp_path, ID, check, reason)
 
     assert read_answer(tmp_path, ID) is Answer.FINAL
