@@ -528,7 +528,7 @@ def test_a_server_file_counts_one_for_each_merged_mapping_with_no_pair() -> None
 def test_a_manifest_counts_nothing_for_a_merged_mapping_with_no_pair() -> None:
     text = _manifest_with(_no_pairs(mcpserver.MERGE_LIMITS.pairs + 1))
 
-    assert parse_manifest(text, SUBJECT).unit is None
+    assert parse_manifest(text, SUBJECT, Markup.YAML).unit is None
 
 
 #: A server file whose merge keys take 2,400 times 2,400 mappings with no
