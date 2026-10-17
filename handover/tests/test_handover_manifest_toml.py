@@ -396,6 +396,26 @@ def test_both_names_refuse_read_one(tmp_path: Path) -> None:
     assert caught.value.detail == "holds component.toml and component.yaml; keep one"
 
 
+@pytest.mark.parametrize("both", [False, True], ids=["one-name", "both-names"])
+def test_read_one_refuses_a_symlinked_component_directory(tmp_path: Path, both: bool) -> None:
+    """The link of the directory is the refusal, before the names in the
+    directory count."""
+    real = tmp_path / "elsewhere"
+    if both:
+        _both_names(real)
+    else:
+        real.mkdir()
+        (real / MANIFEST_FILENAME).write_text(manifest_toml("chaperone"), encoding="utf-8")
+    (tmp_path / "chaperone").symlink_to(real)
+
+    with pytest.raises(Refusal) as caught:
+        read_one(tmp_path, "chaperone")
+
+    assert caught.value.code is RefusalCode.CATALOG
+    assert caught.value.subject == "chaperone"
+    assert caught.value.detail == "chaperone is a symlink"
+
+
 @pytest.mark.parametrize("markup", list(Markup))
 def test_read_one_reads_each_name(tmp_path: Path, markup: Markup) -> None:
     text = manifest_toml("chaperone") if markup is Markup.TOML else manifest_text("chaperone")

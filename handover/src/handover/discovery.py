@@ -238,14 +238,15 @@ def read_one(root: Path, name: str) -> FoundManifest:
     """
     row = CATALOG_BY_NAME[name]
     directory = root if row.path == REPO_ROOT_PATH else root / row.path
-    markup = _markup_of(_entries_of(directory), row.path)
-    subject = f"{row.path}/{markup.file_name}"
     # The tree came out of a checkout at a SHA the live state named, so the
     # directory is input too: `_read_manifest_file` refuses a symlinked
-    # FILE, and this refuses a symlinked directory above it.
+    # FILE, and this refuses a symlinked directory above it, before the
+    # entries of the directory count.
     if directory.is_symlink():
-        raise Refusal(RefusalCode.CATALOG, subject, f"{row.path} is a symlink")
+        raise Refusal(RefusalCode.CATALOG, row.path, f"{row.path} is a symlink")
 
+    markup = _markup_of(_entries_of(directory), row.path)
+    subject = f"{row.path}/{markup.file_name}"
     path = directory / markup.file_name
     if not path.exists():
         detail = f"no {EITHER_MANIFEST_NAME} under any root: {name}"
