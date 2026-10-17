@@ -314,11 +314,32 @@ for parse in (parse_family, parse_server):
 """
 
 
-def _in_child(text: str) -> list[list[str] | None]:
+#: The size of the value that `HOLDER` holds: two times the memory limit of
+#: the child.
+HELD_BYTES: Final = 2 * CHILD_BYTES
+
+#: Holds a value of `HELD_BYTES` while it runs the command of its arguments
+#: with its own standard streams, and ends with the status of that command.
+#: `bytearray` writes each byte of the value, so the peak resident size of
+#: this process passes the memory limit of the child. The value is not in
+#: the test process, so the peak of the test process does not change. The
+#: command gets half of the time limit of the child, so this process stops
+#: the command before the test stops this process.
+HOLDER: Final = f"""
+import subprocess
+import sys
+
+held = bytearray({HELD_BYTES})
+sys.exit(subprocess.run(sys.argv[1:], timeout={CHILD_SECONDS / 2}).returncode)
+"""
+
+
+def _in_child(text: str, *parent: str) -> list[list[str] | None]:
     """The answer of `parse_family` and of `parse_server` for `text`, from a
-    child process inside the two limits."""
+    child process inside the two limits. `parent` is the command of a process
+    that starts the child, or no word: then this process starts it."""
     done = subprocess.run(
-        [sys.executable, "-c", CHILD, str(CHILD_BYTES)],
+        [*parent, sys.executable, "-c", CHILD, str(CHILD_BYTES)],
         input=text.encode("utf-8"),
         capture_output=True,
         timeout=CHILD_SECONDS,
@@ -344,6 +365,16 @@ def test_a_text_far_past_the_entry_limit_is_refused_in_bounds(
     build: Callable[[Reader, int], str], size: int
 ) -> None:
     assert _in_child(build(FAMILY, size)) == [[TOO_MANY], [TOO_MANY]]
+
+
+def test_the_child_watches_only_its_own_memory() -> None:
+    """The parent of the child holds a peak past the memory limit of the
+    child while the child runs. On Linux, the `ru_maxrss` of the child holds
+    the memory of its parent from before its exec. The watch of the child
+    does not count that memory."""
+    holder = (sys.executable, "-c", HOLDER)
+
+    assert _in_child(_levels(FAMILY, FAR), *holder) == [[TOO_MANY], [TOO_MANY]]
 
 
 def test_a_refused_character_is_a_report_in_a_child_process() -> None:
