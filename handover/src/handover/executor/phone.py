@@ -35,16 +35,21 @@ Three rules this module keeps.
 3. **Fail closed.** An unreachable hook, an unparseable answer, an answer
    for another gate: all deny. Contract 04 §8.4 already says an
    undeliverable push denies at once.
+
+A body and an answer are strict JSON (`strictjson.py`, a module of the
+standard library). A body with no strict text is not sent, and it reads as
+an unreachable hook. An answer that is not strict reads as no answer, and
+`notices.record` writes its log line with the surface `SURFACE`.
 """
 
 from __future__ import annotations
 
-import json
 import urllib.error
 import urllib.request
 from collections.abc import Callable
 from typing import Any, Final, cast
 
+from .. import notices, strictjson
 from .approval import ACTION_RE, Decision, Summary, Verdict, release_action
 from .notice import Notice
 
@@ -81,6 +86,9 @@ POLL_S: Final = 5.0
 #: An answer root will read into memory. A verdict is four short fields.
 MAX_REPLY_BYTES: Final = 64 * 1024
 
+#: The surface word of a notice for an answer that is not strict JSON.
+SURFACE: Final = "hook.answer"
+
 #: Contract 04 §8.3 caps the whole summary. §2.5's seven fields ride
 #: beside it as `fields`, so the reader gets both the line and the table.
 SUMMARY_MAX_CHARS: Final = 200
@@ -111,8 +119,13 @@ def summary_line(summary: Summary) -> str:
 
 def _post(url: str, token: str, body: dict[str, object]) -> dict[str, object] | None:
     """One request. None means the hook could not be reached or would not
-    answer JSON. The bearer rides a header and reaches no log line."""
-    payload = json.dumps(body).encode("utf-8")
+    answer JSON. The bearer rides a header and reaches no log line. A body
+    with no strict JSON text is not sent."""
+    try:
+        payload = strictjson.dumps(body).encode("utf-8")
+    except strictjson.NotStrictJson:
+        return None
+
     # The URL is root's own configuration, never a byte a requester wrote.
     request = urllib.request.Request(
         url,
@@ -146,8 +159,10 @@ def _parse(raw: bytes) -> dict[str, object] | None:
         return {}
 
     try:
-        loaded: Any = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError):
+        loaded: Any = strictjson.loads(raw, cap=MAX_REPLY_BYTES)
+    except strictjson.NotStrictJson as refusal:
+        notices.record(SURFACE, refusal.rule)
+
         return None
 
     if not isinstance(loaded, dict):

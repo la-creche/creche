@@ -48,13 +48,12 @@ that reads from it passes.
 
 from __future__ import annotations
 
-import json
 import os
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Final, cast
 
-from .. import treewalk
+from .. import notices, strictjson, treewalk
 from ..errors import Refusal, RefusalCode, safe_token
 from ..treewalk import ABSOLUTE_LINK as ABSOLUTE_LINK
 from ..treewalk import LINK_LOOP as LINK_LOOP
@@ -82,6 +81,13 @@ SITE_GLOB: Final = "lib/*/site-packages"
 #: it for a workspace member installed editable.
 DIRECT_URL: Final = "direct_url.json"
 DIST_INFO_GLOB: Final = f"*.dist-info/{DIRECT_URL}"
+
+#: The most bytes of one such file. PEP 610 names no size. The file holds a
+#: URL and a few short fields, so 64 KiB is far above each real one.
+MAX_DIRECT_URL_BYTES: Final = 64 * 1024
+
+#: The surface word of a notice for such a file that is not strict JSON.
+SURFACE: Final = "release.direct_url"
 
 #: `site.addpackage` EXECUTES a line that starts with either of these and
 #: adds no path for it. `uv venv --relocatable` writes one: `_virtualenv.pth`
@@ -214,14 +220,24 @@ def _editable_faults(site: Path) -> list[str]:
     An editable install names a source directory by definition, so the flag
     is the fault and there is no second path test here. A file root cannot
     parse is a package root cannot say is non-editable, and invariant 19
-    answers that with a report rather than a guess.
+    answers that with a report rather than a guess. The file is strict JSON
+    (`strictjson.py`) of `MAX_DIRECT_URL_BYTES` at most. A file that is not
+    strict is a file root cannot parse, and `notices.record` writes its log
+    line with the surface `SURFACE`.
     """
     faults: list[str] = []
     for path in sorted(site.glob(DIST_INFO_GLOB)):
         name = safe_token(path.parent.name)
         try:
-            body = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, ValueError):
+            with path.open("rb") as file:
+                data = file.read(MAX_DIRECT_URL_BYTES + 1)
+
+            body = strictjson.loads(data, cap=MAX_DIRECT_URL_BYTES)
+        except strictjson.NotStrictJson as refusal:
+            notices.record(SURFACE, refusal.rule)
+            faults.append(f"{UNREADABLE_DIRECT_URL}: {name}")
+            continue
+        except OSError:
             faults.append(f"{UNREADABLE_DIRECT_URL}: {name}")
             continue
 

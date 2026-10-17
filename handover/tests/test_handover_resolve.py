@@ -221,6 +221,29 @@ def test_the_document_has_contract_06_paragraph_9_fields() -> None:
     assert str(document["manifest_sha256"]).startswith("sha256:")
 
 
+#: The hash of two documents, as the writer before the strict writer gave
+#: it. The approval binds to the hash, so the strict writer gives each
+#: strict document the bytes of before.
+HASH_OF_TWO = "sha256:ce5ae6ded375962189d9c1e82a386345146fb58c9cf56bb1ba6fedf8754655c8"
+HASH_OF_A_FRACTION = "sha256:11d8c47c46aa28897c4e95b74f8b8d3ded8ceba747cc538892882249121b3fb2"
+
+
+def test_the_hash_of_a_document_is_the_hash_of_before() -> None:
+    state = _state()
+    one = build_document(
+        resolve(_nine(), state, {"chaperone": "2.1.0"}),
+        state,
+        RELEASE_ID,
+        "agent-control",
+        1758153590.123456,
+    )
+
+    assert _document({"chaperone": "2.1.0", "attendance": "1.5.0"})["manifest_sha256"] == (
+        HASH_OF_TWO
+    )
+    assert one["manifest_sha256"] == HASH_OF_A_FRACTION
+
+
 def test_the_same_set_hashes_the_same_whatever_the_argument_order() -> None:
     forwards = _document(parse_request(["chaperone=2.1.0", "attendance=1.5.0"]))
     backwards = _document(parse_request(["attendance=1.5.0", "chaperone=2.1.0"]))

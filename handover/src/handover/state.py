@@ -14,18 +14,19 @@ This module is the SHAPE and the parser, not the source. A parser is still
 needed because `handover resolve --state <file>` hands the pure
 resolver a document a test or a reader wrote, which is what "pure" buys: every
 refusal in `resolve.py` is provable with a fixture and no host. A document
-from that door is input, so it is parsed like one: a byte cap, a closed key
-set, a pattern per scalar, and a refusal that names the field rather than its
-value.
+from that door is input, so it is parsed like one: a byte cap, strict JSON
+(`strictjson.py`), a closed key set, a pattern per scalar, and a refusal that
+names the field rather than its value. A text that is not strict JSON does
+not parse as JSON, and it leaves one notice with the surface `SURFACE`.
 """
 
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any, Final, cast
 
+from . import notices, strictjson
 from .catalog import CATALOG_BY_NAME, ContractId
 from .errors import Refusal, RefusalCode, safe_token
 
@@ -40,6 +41,9 @@ DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 
 STATE_FIELDS = frozenset({"live", "provided", "latest", "facts"})
 FACT_FIELDS = frozenset({"sha", "input_digest", "artifact_digest"})
+
+#: The surface word of a notice for a document that is not strict JSON.
+SURFACE: Final = "manifest.state"
 
 
 @dataclass(frozen=True)
@@ -185,16 +189,17 @@ def _read_facts(value: Any, subject: str) -> dict[str, SourceFacts]:
 def parse_state(text: str, subject: str) -> ReleaseState:
     """Parse one live-state document. Every key is optional and defaults empty."""
     try:
-        size = len(text.encode("utf-8"))
+        data = text.encode("utf-8")
     except UnicodeEncodeError:
         raise _refuse(subject, "is not UTF-8") from None
 
-    if size > MAX_STATE_BYTES:
+    if len(data) > MAX_STATE_BYTES:
         raise _refuse(subject, f"larger than {MAX_STATE_BYTES} bytes")
 
     try:
-        loaded: Any = json.loads(text)
-    except (ValueError, RecursionError):
+        loaded: Any = strictjson.loads(data, cap=MAX_STATE_BYTES)
+    except strictjson.NotStrictJson as refusal:
+        notices.record(SURFACE, refusal.rule)
         raise _refuse(subject, "does not parse as JSON") from None
 
     body = _as_mapping(loaded, subject, "<top level>")

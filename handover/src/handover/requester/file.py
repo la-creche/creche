@@ -21,6 +21,11 @@ Three rules, each with the reason it is a rule.
    itself. The executor still enforces its own cap: this one is a courtesy
    and never a control.
 
+A request file is strict JSON (`strictjson.py`). A time that is not finite
+gets the refusal that root gives a `ts` with no time. Each other body with
+no strict text gets the refusal that root gives a text that is not strict
+JSON. Neither one writes a file.
+
 Stdlib only, every import at module top. The PEP imports this module, and a
 release re-syncs venvs under running processes (contract 06 §1.1).
 """
@@ -28,14 +33,22 @@ release re-syncs venvs under running processes (contract 06 §1.1).
 from __future__ import annotations
 
 import contextlib
-import json
+import math
 import os
 import stat
 from collections.abc import Callable, Mapping
 from typing import Final
 
+from .. import strictjson
 from ..errors import Refusal, RefusalCode
-from ..executor.request import MAX_REQUEST_BYTES, REQUEST_SUFFIX, Request, parse_request
+from ..executor.request import (
+    MAX_REQUEST_BYTES,
+    NOT_AN_OBJECT,
+    REQUEST_SUFFIX,
+    Request,
+    malformed,
+    parse_request,
+)
 from ..executor.spool import MAX_PENDING_PER_REQUESTER, REQUESTS_DIR, SPOOL_ROOT
 
 #: Where a request lands on the host. Built from the executor's own two
@@ -115,6 +128,10 @@ def plan_request(
     Every refusal out of here is one root would give for the same bytes, with
     root's own detail string, so a caller can print it unchanged.
     """
+    # JSON holds no time that is not finite, so no text reaches the parser.
+    if not math.isfinite(now):
+        raise malformed("ts")
+
     minted = request_id if request_id is not None else new_ulid(now)
     body: dict[str, object] = {
         "id": minted,
@@ -125,7 +142,11 @@ def plan_request(
         "requester_session": requester_session,
         "ts": now,
     }
-    raw = _encode(body)
+    try:
+        raw = _encode(body)
+    except strictjson.NotStrictJson:
+        raise Refusal(RefusalCode.REQUEST, "request", NOT_AN_OBJECT) from None
+
     if len(raw) > MAX_REQUEST_BYTES:
         raise Refusal(RefusalCode.REQUEST, "request", f"is larger than {MAX_REQUEST_BYTES} bytes")
 
@@ -160,7 +181,9 @@ def pending_count(requests_dir: str = REQUESTS_PATH) -> int:
 
 
 def _encode(body: dict[str, object]) -> bytes:
-    return json.dumps(body, sort_keys=False).encode("utf-8")
+    """The bytes of a request. Raises `NotStrictJson` for a body with no
+    strict JSON text."""
+    return strictjson.dumps(body, sort_keys=False).encode("utf-8")
 
 
 def _open_requests(requests_dir: str) -> int:

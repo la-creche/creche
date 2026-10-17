@@ -30,7 +30,9 @@ So every byte here is hostile, and the rules are §3.2's — the same ones
 4. The key set is closed, and the body must AGREE with the file name. A
    file called `weather_token.json` whose body names `github_token` is
    refused whole: otherwise the gap the operator is shown and the gap root fills
-   are two different names, which is §6 row 8 through the side door.
+   are two different names, which is §6 row 8 through the side door. The
+   body is strict JSON (`strictjson.py`). A body that is not strict is no
+   gap, and `notices.record` writes its log line with the surface `SURFACE`.
 5. The pass is bounded. The directory's size is the attacker's choice, so
    root reads a bounded prefix with `scandir`, which yields lazily, and
    sorts only what it kept.
@@ -44,13 +46,13 @@ write.
 
 from __future__ import annotations
 
-import json
 import os
 import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final, cast
 
+from .. import notices, strictjson
 from .token import SECRET_NAME_RE, SERVER_NAME_RE
 
 #: `caregiver`'s `GAPS_DIR`, a SIBLING of the secrets directory.
@@ -74,6 +76,9 @@ MAX_SCANNED_ENTRIES: Final = 4096
 
 #: §3.2 rule 2 applied to this file: an unknown key is a refusal.
 GAP_KEYS: Final = frozenset({"server", "secret", "at"})
+
+#: The surface word of a notice for a gap file that is not strict JSON.
+SURFACE: Final = "release.gap_file"
 
 _DIR_FLAGS: Final = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 _READ_FLAGS: Final = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
@@ -256,8 +261,10 @@ def _parse_gap(raw: bytes, secret: str) -> OpenGap | None:
     """Rule 4. The three fields, the closed key set, and the agreement
     between the body and the file name."""
     try:
-        loaded: Any = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError):
+        loaded: Any = strictjson.loads(raw, cap=MAX_GAP_BYTES)
+    except strictjson.NotStrictJson as refusal:
+        notices.record(SURFACE, refusal.rule)
+
         return None
 
     if not isinstance(loaded, dict):

@@ -1,9 +1,10 @@
 """A number that a file holds is read with a bound.
 
 `stage7-releases.md` §2.2: `requests/` is drained on each run, with no
-exception. A JSON integer has no largest value, and a float has one. A
-reader that converts the number answers a refusal for a number it cannot
-hold. It does not raise.
+exception. Each reader reads strict JSON (`handover/strictjson.py`). A text
+with an integer outside 64 bits, or with a float that is not finite, is not
+strict. The reader answers the refusal of a text that is not JSON for it. It
+does not raise.
 
 The same holds for each file that a later run reads back: the marker of
 the follower, a gap file, a note in `running/` and a ledger entry.
@@ -23,7 +24,7 @@ from handover.executor import spool as spool_module
 from handover.executor.approval import Decision, Summary, Verdict, action_id_of, check_decision
 from handover.executor.drain import drain
 from handover.executor.phone import PUSH_KIND, make_transport
-from handover.executor.request import Request, parse_request
+from handover.executor.request import NOT_AN_OBJECT, Request, parse_request
 from handover.executor.spool import (
     DONE_DIR,
     HOOK_TIMEOUT_MAX_S,
@@ -110,13 +111,28 @@ def test_a_time_too_large_for_a_float_is_refused(ts: int) -> None:
         parse_request(_raw(_body(ts)), REQUEST_ID)
 
     assert caught.value.code is RefusalCode.REQUEST
-    assert caught.value.detail == TS_REFUSAL
+    assert caught.value.detail == NOT_AN_OBJECT
+
+
+def test_a_time_that_is_not_finite_is_refused() -> None:
+    with pytest.raises(Refusal) as caught:
+        parse_request(_raw(_body(1.0)).replace(b"1.0}", b"1e309}"), REQUEST_ID)
+
+    assert caught.value.detail == NOT_AN_OBJECT
 
 
 def test_the_largest_power_of_ten_is_still_a_time() -> None:
-    request = parse_request(_raw(_body(LARGEST_POWER)), REQUEST_ID)
+    """A float token. An integer token of 309 digits is outside 64 bits."""
+    request = parse_request(_raw(_body(float(LARGEST_POWER))), REQUEST_ID)
 
     assert request.ts == float(LARGEST_POWER)
+
+
+def test_a_time_below_zero_is_refused_at_its_field() -> None:
+    with pytest.raises(Refusal) as caught:
+        parse_request(_raw(_body(-1.0)), REQUEST_ID)
+
+    assert caught.value.detail == TS_REFUSAL
 
 
 def test_a_request_with_such_a_time_leaves_requests(tmp_path: Path) -> None:
@@ -142,7 +158,7 @@ def test_a_request_with_such_a_time_leaves_requests(tmp_path: Path) -> None:
         entry = _entry(spool_root, request_id)
         assert entry["status"] == "refused"
         assert entry["refused_check"] == "request"
-        assert entry["reason"] == TS_REFUSAL
+        assert entry["reason"] == NOT_AN_OBJECT
 
 
 def test_a_read_that_raises_moves_the_file_and_the_pass_goes_on(
@@ -220,9 +236,9 @@ def _gaps(tmp_path: Path) -> Path:
     return directory
 
 
-def test_a_gap_with_a_time_that_no_float_holds_is_still_a_gap(tmp_path: Path) -> None:
-    """`at` decides nothing, so the gap stays and the time is zero. A
-    second gap in the same directory is read too."""
+def test_a_gap_with_a_time_that_no_float_holds_is_no_gap(tmp_path: Path) -> None:
+    """The text is not strict JSON, so the file is no gap. A second gap in
+    the same directory is read."""
     directory = _gaps(tmp_path)
     for secret, at in ((SECRET, PAST_A_FLOAT), ("other_token", 7)):
         body = {"server": SERVER, "secret": secret, "at": at}
@@ -230,7 +246,18 @@ def test_a_gap_with_a_time_that_no_float_holds_is_still_a_gap(tmp_path: Path) ->
 
     found = GapDirectory(directory, os.getuid()).open_gaps()
 
-    assert [(one.secret, one.at) for one in found] == [("other_token", 7.0), (SECRET, 0.0)]
+    assert [(one.secret, one.at) for one in found] == [("other_token", 7.0)]
+
+
+def test_a_gap_with_a_time_that_is_no_number_is_still_a_gap(tmp_path: Path) -> None:
+    """`at` decides nothing, so the gap stays and the time is zero."""
+    directory = _gaps(tmp_path)
+    body = {"server": SERVER, "secret": SECRET, "at": "soon"}
+    (directory / f"{SECRET}.json").write_text(json.dumps(body), encoding="utf-8")
+
+    found = GapDirectory(directory, os.getuid()).open_gaps()
+
+    assert [(one.secret, one.at) for one in found] == [(SECRET, 0.0)]
 
 
 class _Stop(Exception):
@@ -406,12 +433,20 @@ def test_a_note_keeps_a_hook_with_a_time_limit_in_its_bounds(tmp_path: Path, tim
     assert found.note.verify.timeout_s == timeout
 
 
+def test_a_note_with_a_time_limit_outside_64_bits_is_no_note(tmp_path: Path) -> None:
+    """The text is not strict JSON, so root reads no note from it."""
+    spool_root = make_spool_dirs(tmp_path)
+    _switch_file(spool_root, _hook(PAST_A_FLOAT))
+
+    assert _unfinished(spool_root) == []
+
+
 @pytest.mark.parametrize(
     "timeout",
     [
         pytest.param(HOOK_TIMEOUT_MIN_S - 1, id="below"),
         pytest.param(HOOK_TIMEOUT_MAX_S + 1, id="above"),
-        pytest.param(PAST_A_FLOAT, id="past-a-float"),
+        pytest.param(2**63, id="past-a-signed-64-bit-integer"),
         pytest.param(True, id="a-boolean"),
     ],
 )

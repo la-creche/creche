@@ -29,7 +29,9 @@ Seven subcommands. Only `request` and `follow` write anything.
    which of the named components a newer tag would move, and files ONE
    request for that set. It files a set once, after it read the same set on
    two runs, and it approves nothing. A run with nothing new prints one
-   line and exits 0.
+   line and exits 0. A text that is not strict JSON leaves one row in its
+   notice file (`--notices`), because a timer starts it and no person reads
+   its log. `--dry-run` writes no notice file.
 6. `artifacts` prints what CI builds for each binary component, in a line
    form that a `read` loop of bash reads (`artifacts.ArtifactRow`).
    `--crate-row` prints one such row for a crate that need not be a
@@ -38,6 +40,9 @@ Seven subcommands. Only `request` and `follow` write anything.
 7. `check-tree --kind binary` walks a built tree of compiled programs
    (`treewalk.py`). It prints one line for each fault and exits 1 when it
    finds one.
+
+Each other subcommand writes the log line of such a text, and no notice
+file: a person or a CI job starts it and reads the line.
 
 Exit codes: 0 pass, 1 refusal, 2 a usage mistake or a spool this host cannot
 write.
@@ -55,6 +60,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic, sleep
 
+from . import notices, strictjson
 from .allocate import cut_paths, plan_tags, read_lines, repo_row
 from .artifacts import (
     archive_components,
@@ -77,6 +83,12 @@ from .corpus import (
 )
 from .discovery import ManifestSet, discover, require_complete
 from .errors import Refusal, RefusalCode, safe_token
+from .follow import (
+    NOTICE_SERVICE as FOLLOW_SERVICE,
+)
+from .follow import (
+    NOTICES_FILE as FOLLOW_NOTICES,
+)
 from .follow import (
     REQUESTED_BY as FOLLOWED_BY,
 )
@@ -1011,6 +1023,10 @@ def _add_follow(watch: argparse.ArgumentParser) -> None:
         help="where this command remembers the set it asked for (default: under the home)",
     )
     watch.add_argument(
+        "--notices",
+        help="the notice file of a text that is not strict JSON (default: under the state root)",
+    )
+    watch.add_argument(
         "--dry-run",
         dest="dry_run",
         action="store_true",
@@ -1123,8 +1139,21 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _notice_file(args: argparse.Namespace) -> tuple[str, Path | None]:
+    """The service word and the notice file of this run. Only a run of
+    `follow` that can write has a file."""
+    if args.command != "follow":
+        return PROG, None
+
+    if args.dry_run:
+        return FOLLOW_SERVICE, None
+
+    return FOLLOW_SERVICE, Path(args.notices or FOLLOW_NOTICES)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    notices.configure(*_notice_file(args))
     handler: Handler = args.handler
     try:
         return handler(args)
@@ -1142,6 +1171,12 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_USAGE
     except OSError as error:
         print(f"{PROG}: {error.strerror or 'cannot read'}", file=sys.stderr)
+
+        return EXIT_USAGE
+    except strictjson.NotStrictJson as refusal:
+        # A file this run writes, for a value with no strict JSON text. It
+        # writes no part of the file.
+        print(f"{PROG}: a value has no strict JSON text ({refusal.rule})", file=sys.stderr)
 
         return EXIT_USAGE
 

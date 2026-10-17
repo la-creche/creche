@@ -26,17 +26,18 @@ Four rules, each with its reason.
 4. **Fail closed, and say so.** A push that did not land means the operator is
    holding no notification, so the token it carried is dead weight: it
    fills a slot and keeps the listener bound for nothing. `run.py` drops
-   it.
+   it. A body with no strict JSON text (`strictjson.py`) is a push that did
+   not land: it is not sent.
 """
 
 from __future__ import annotations
 
-import json
 import urllib.error
 import urllib.request
 from collections.abc import Callable
 from typing import Final
 
+from .. import strictjson
 from .gaps import OpenGap
 
 #: Where root's own environment carries the hook. The same two names the
@@ -122,9 +123,14 @@ def _post(url: str, token: str, body: dict[str, object]) -> bool:
     Nothing of the request and nothing of the answer is returned or
     logged: the body holds the link, and the link holds the token.
     """
+    try:
+        payload = strictjson.dumps(body).encode("utf-8")
+    except strictjson.NotStrictJson:
+        return False
+
     request = urllib.request.Request(
         url,
-        data=json.dumps(body).encode("utf-8"),
+        data=payload,
         method="POST",
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
     )

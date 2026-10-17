@@ -23,9 +23,19 @@ from handover.executor.approval import Verdict, not_granted
 from handover.executor.ledger import Entry, Outcome
 from handover.executor.live_state import write_stamp
 from handover.executor.request import parse_request
-from handover.follow import AGAIN_S, MAX_ASKS, REQUESTED_BY, Answer, Marker, Step, decide
+from handover.follow import (
+    AGAIN_S,
+    MAX_ASKS,
+    NOTICE_SERVICE,
+    NOTICES_FILE,
+    REQUESTED_BY,
+    Answer,
+    Marker,
+    Step,
+    decide,
+)
 
-from handover import cli
+from handover import cli, notices
 
 BOARD = "noticeboard"
 PEP = "chaperone"
@@ -84,6 +94,10 @@ class _Host:
     def marker(self) -> Path:
         return self.root / "state" / "follow.json"
 
+    @property
+    def notices(self) -> Path:
+        return self.root / "state" / "notices" / "follow.json"
+
     def options(self) -> list[str]:
         return [
             "--corpus",
@@ -94,6 +108,8 @@ class _Host:
             str(self.requests),
             "--marker",
             str(self.marker),
+            "--notices",
+            str(self.notices),
         ]
 
     def tag(self, name: str, version: str) -> None:
@@ -135,6 +151,9 @@ class _Host:
 
 @pytest.fixture
 def host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Host:
+    # A run sets the notice file of the process. The test puts the
+    # settings back at its end.
+    monkeypatch.setattr(notices, "_settings", None)
     made = _Host(tmp_path)
     corpus = tmp_path / "corpus"
     corpus.mkdir()
@@ -395,6 +414,78 @@ def test_a_marker_that_does_not_parse_reads_as_no_marker(host: _Host) -> None:
     assert len(host.filed()) == 1
 
 
+# -- the notice of a text that is not strict JSON ------------------------------
+
+
+def test_an_entry_that_is_not_strict_holds_the_set_and_leaves_a_notice(host: _Host) -> None:
+    """The gate closed with no tap, and the follower asks again after the
+    hold. An entry that is not strict JSON is an entry this side cannot
+    read: it holds the set, as each other entry of that kind does."""
+    host.install(BOARD, LIVE)
+    host.tag(BOARD, NEXT)
+    host.follow(BOARD)
+    host.follow(BOARD)
+    host.answer(Verdict.TIMEOUT)
+    entry = next(host.done.glob("*.json"))
+    text = entry.read_text(encoding="utf-8")
+    entry.write_text(text.replace('"reason"', '"reason": "x", "reason"', 1), encoding="utf-8")
+
+    host.now += AGAIN_S
+    assert host.follow(BOARD) == cli.EXIT_OK
+
+    assert host.filed() == []
+    document = json.loads(host.notices.read_bytes())
+    assert document["service"] == NOTICE_SERVICE
+    assert [(row["surface"], row["rule"], row["count"]) for row in document["rows"]] == [
+        ("release.spool_entry", "duplicate_key", 1)
+    ]
+
+
+def test_a_run_with_no_flag_names_the_notice_file_of_the_state_root(
+    host: _Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    configured: list[tuple[str, Path | None]] = []
+    monkeypatch.setattr(notices, "configure", lambda *given: configured.append(given))
+    host.install(BOARD, LIVE)
+    options = host.options()
+    del options[-2:]
+
+    assert cli.main(["follow", BOARD, *options]) == cli.EXIT_OK
+
+    assert configured == [(NOTICE_SERVICE, Path(NOTICES_FILE))]
+    assert NOTICES_FILE.endswith(f"/notices/{NOTICE_SERVICE}.json")
+
+
+def test_a_dry_run_has_no_notice_file(host: _Host, monkeypatch: pytest.MonkeyPatch) -> None:
+    configured: list[tuple[str, Path | None]] = []
+    monkeypatch.setattr(notices, "configure", lambda *given: configured.append(given))
+    host.install(BOARD, LIVE)
+    host.marker.parent.mkdir(parents=True)
+    host.marker.write_text("{not json", encoding="utf-8")
+
+    assert host.follow(BOARD, more=("--dry-run",)) == cli.EXIT_OK
+
+    assert configured == [(NOTICE_SERVICE, None)]
+    assert not host.notices.exists()
+
+
+def test_each_other_verb_has_no_notice_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A person or a CI job starts it and reads the log line."""
+    monkeypatch.setattr(notices, "_settings", None)
+    configured: list[tuple[str, Path | None]] = []
+    monkeypatch.setattr(notices, "configure", lambda *given: configured.append(given))
+    state = tmp_path / "live-state.json"
+    state.write_text('{"live": {}, "live": {}}', encoding="utf-8")
+
+    code = cli.main(["resolve", "--root", str(tmp_path), "--partial", "--state", str(state)])
+
+    assert code == cli.EXIT_REFUSED
+    assert configured == [(cli.PROG, None)]
+    assert list(tmp_path.iterdir()) == [state]
+
+
 def test_the_marker_is_the_operators_alone(host: _Host) -> None:
     host.install(BOARD, LIVE)
     host.tag(BOARD, NEXT)
@@ -466,9 +557,14 @@ def test_follow_starts_no_child_and_opens_no_socket() -> None:
 
 
 def test_follow_imports_only_the_executors_pure_modules() -> None:
-    """The words a gate that did not grant is ledgered with, and the ledger
-    directory's name. Anything else would give a timer the executor's reach."""
-    allowed = ("from ..executor.approval import", "from ..executor.spool import")
+    """The words a gate that did not grant is ledgered with, the ledger
+    directory's name, and the state root of the notice file. Anything else
+    would give a timer the executor's reach."""
+    allowed = (
+        "from ..executor.approval import",
+        "from ..executor.spool import",
+        "from ..executor.layout import",
+    )
     for module in (_PACKAGE / "follow").rglob("*.py"):
         for line in module.read_text(encoding="utf-8").splitlines():
             if "executor" in line and line.startswith(("from", "import")):
