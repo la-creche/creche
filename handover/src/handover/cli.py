@@ -56,8 +56,8 @@ import json
 import os
 import sys
 import time
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, replace
 from pathlib import Path
 from time import monotonic, sleep
 
@@ -71,7 +71,7 @@ from .artifacts import (
     signer_policy,
     verify_words,
 )
-from .catalog import Kind, Repo, releasable_names
+from .catalog import Action, Kind, Repo, releasable_names
 from .contracts import ContractRow
 from .corpus import (
     BEHIND_NOTE,
@@ -81,6 +81,14 @@ from .corpus import (
     local_readers,
     refresh,
     repos_of,
+)
+from .corpus.artifacts import (
+    NO_STORE,
+    ArtifactReport,
+    artifact_store,
+    fetch_artifacts,
+    prune_artifacts,
+    ships_archive,
 )
 from .discovery import ManifestSet, discover, require_complete
 from .errors import Refusal, RefusalCode, safe_token
@@ -94,12 +102,15 @@ from .follow import (
     REQUESTED_BY as FOLLOWED_BY,
 )
 from .follow import (
+    RUN_DEADLINE_S,
     Answer,
+    Marker,
     Step,
     asked_marker,
     decide,
     default_marker,
     done_dir_of,
+    gate_artifacts,
     moving_of,
     read_answer,
     read_marker,
@@ -119,7 +130,14 @@ from .requester import (
     select_manifests,
 )
 from .requester.preview import HEADER
-from .resolve import Resolution, build_document, deploying_names, parse_request, resolve
+from .resolve import (
+    TAG_FORMAT,
+    Resolution,
+    build_document,
+    deploying_names,
+    parse_request,
+    resolve,
+)
 from .site import require_complete as require_complete_site
 from .state import MAX_STATE_BYTES, ReleaseState, parse_state
 from .treewalk import binary_escapes
@@ -175,6 +193,14 @@ WAITED = "after waiting {limit}s"
 #: `follow`'s clock. The marker carries a time from one run to the next, so
 #: `monotonic` cannot serve. A module name, so a test swaps it like `sleep`.
 wall_time = time.time
+
+#: When this process started, on the clock of `monotonic`. The console
+#: script imports this module first. A run of `follow` fetches no artifact
+#: after `follow.RUN_DEADLINE_S` from this time.
+PROCESS_START = monotonic()
+
+#: The time that `request` gives the fetch of the artifacts, on each poll.
+REQUEST_FETCH_S = 600
 
 Document = dict[str, object]
 Handler = Callable[[argparse.Namespace], int]
@@ -792,7 +818,45 @@ def _resolve_after(
         _print_notes(built)
         raise
 
+    if fetched is not None:
+        _fetch_deploying(resolution)
+
     return _Resolved(fetched, built, chosen, resolution)
+
+
+def _fetch_deploying(resolution: Resolution) -> None:
+    """Fetch the two assets of each binary component that deploys into the
+    store, after the corpus fetch of the same poll.
+
+    A fault is a note on stderr, and the request still files, for the
+    reason of `_print_corpus`: a request that this side refused for a
+    network fault would cost the operator a command.
+    """
+    tags: dict[str, str] = {}
+    for item in resolution.components:
+        tag = item.tag()
+        if item.action is Action.DEPLOY and tag is not None and ships_archive(item.name):
+            tags[item.name] = tag
+
+    if tags:
+        _print_artifacts(_fetch_into_store(tags, monotonic() + REQUEST_FETCH_S))
+
+
+def _fetch_into_store(tags: Mapping[str, str], deadline: float) -> ArtifactReport:
+    """The fetch into the store of the site file. A site file with no home
+    of the operator is one line and no child."""
+    try:
+        store = artifact_store()
+    except Refusal:
+        return ArtifactReport(frozenset(), (NO_STORE,))
+
+    return fetch_artifacts(tags, store, deadline)
+
+
+def _print_artifacts(report: ArtifactReport) -> None:
+    """Each line of an artifact fetch, on stderr like every note."""
+    for line in report.lines:
+        print(f"note: {line}", file=sys.stderr)
 
 
 def _unmoved(found: _Resolved, wanted: dict[str, str]) -> list[str]:
@@ -890,9 +954,51 @@ def _set_text(moving: dict[str, str]) -> str:
     return ", ".join(f"{name} {version}" for name, version in sorted(moving.items()))
 
 
+def _ready_members(moving: dict[str, str]) -> frozenset[str]:
+    """Each member of `moving` that ships no archive, and each member whose
+    two files the store holds after this run's fetch (`follow/`, rule 7)."""
+    tags = {
+        name: TAG_FORMAT.format(name=name, version=version)
+        for name, version in moving.items()
+        if ships_archive(name)
+    }
+    plain = frozenset(moving) - frozenset(tags)
+    if not tags:
+        return plain
+
+    report = _fetch_into_store(tags, PROCESS_START + RUN_DEADLINE_S)
+    _print_artifacts(report)
+
+    return plain | report.ready
+
+
+def _prune_store(wanted: dict[str, str], state: ReleaseState) -> None:
+    """Remove the store directory of each tag below the live version of its
+    component. Only a run that follows a component that ships an archive
+    reads the store."""
+    if not any(ships_archive(name) for name in wanted):
+        return
+
+    try:
+        store = artifact_store()
+    except Refusal:
+        return
+
+    live = {name: version for name, version in state.live.items() if version is not None}
+    for line in prune_artifacts(store, live):
+        print(f"note: {line}", file=sys.stderr)
+
+
+def _keep_waits(args: argparse.Namespace, path: Path, marker: Marker, read: Marker) -> None:
+    """Write the marker when only its waits changed, in a run that files
+    nothing. A dry run writes nothing."""
+    if not args.dry_run and marker.waits != read.waits:
+        write_marker(path, marker)
+
+
 def _run_follow(args: argparse.Namespace) -> int:
     """One run of the timer: fetch, read what a newer tag moves, and file
-    one request for a set that is new (`follow/`, rules 2 to 6)."""
+    one request for a set that is new (`follow/`, rules 2 to 7)."""
     wanted = dict.fromkeys(args.components, LATEST)
     corpus = Path(args.corpus)
     # A failed fetch is a printed line, and the run reads the corpus as it
@@ -903,20 +1009,37 @@ def _run_follow(args: argparse.Namespace) -> int:
     for line in notes:
         print(f"note: {line}", file=sys.stderr)
 
+    ready = _ready_members(moving)
+    if not args.dry_run:
+        _prune_store(wanted, built.state)
+
     marker_file = Path(args.marker) if args.marker else default_marker()
-    marker = read_marker(marker_file)
+    read = read_marker(marker_file)
     now = wall_time()
+    gate = gate_artifacts(moving, ready, read.waits, now)
+    for line in gate.lines():
+        print(line)
+
+    marker = replace(read, waits=gate.waits)
+    if gate.waiting:
+        _keep_waits(args, marker_file, marker, read)
+
+        return EXIT_OK
+
+    moving = gate.moving
     answer = Answer.NONE
     if moving and moving == marker.asked:
         answer = read_answer(done_dir_of(args.spool), marker.request_id)
 
     step = decide(moving, marker, answer, now)
     if step is Step.IDLE:
+        _keep_waits(args, marker_file, marker, read)
         print("nothing new")
 
         return EXIT_OK
 
     if step is Step.HELD:
+        _keep_waits(args, marker_file, marker, read)
         print(f"held: {_set_text(moving)} is asked already, as {marker.request_id}")
 
         return EXIT_OK

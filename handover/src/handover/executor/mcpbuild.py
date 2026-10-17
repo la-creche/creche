@@ -195,6 +195,7 @@ from .install import (
     remove_tree,
 )
 from .selfcontained import check_tree
+from .source import CURL, CURL_PROTOCOL_FLAGS
 
 PREV_SUFFIX: Final = ".prev"
 
@@ -221,7 +222,6 @@ UV_CACHE_DIR_NAME: Final = "uv-cache"
 #: one action.
 PYTHON_DIR_NAME: Final = ".python"
 
-CURL: Final = "/usr/bin/curl"
 CHOWN: Final = "/usr/bin/chown"
 
 #: The largest release asset root will hold. github-mcp-server's Linux
@@ -229,9 +229,8 @@ CHOWN: Final = "/usr/bin/chown"
 MAX_ASSET_BYTES: Final = 128 * 1024 * 1024
 
 #: `bin/creche-deploy` has fetched every github-mcp-server release
-#: with these flags since it was written. `--proto '=https'` and `--tlsv1.2`
-#: are the two that matter: a redirect to `http` or to `file:` is refused by
-#: curl itself, before root sees a byte.
+#: with these flags since it was written. The two protocol flags are
+#: `source.CURL_PROTOCOL_FLAGS`, and `source.CURL` is the program.
 #:
 #: `--max-filesize` caps what one fetch writes. A `server.yaml` names `repo`,
 #: `version` and `asset`, so a hostile file picks a path on github.com that
@@ -246,9 +245,7 @@ MAX_ASSET_BYTES: Final = 128 * 1024 * 1024
 #: stops an undeclared one at the cap.
 CURL_FLAGS: Final = (
     "-fsSL",
-    "--proto",
-    "=https",
-    "--tlsv1.2",
+    *CURL_PROTOCOL_FLAGS,
     "--max-time",
     "600",
     "--max-filesize",

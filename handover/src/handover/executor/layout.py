@@ -26,7 +26,9 @@ table, and `handover/tests/test_handover_roots_layout.py` holds the two to one
 answer.
 
 The module also holds `STATE_ROOT`, the state root of the operator. No
-root of this module is below it, and root writes no file there.
+root of this module is below it, and root writes no file there. It also
+holds the names of the state directory below the home of the operator, and
+of the store of artifacts in it.
 
 Constants only, stdlib only: `spool.py`, `host.py`, `intake/store.py`, the
 requester and the follower all import this module.
@@ -41,6 +43,14 @@ from typing import Final
 #: operator, and it writes its notice file below this directory, as each
 #: other program of the operator account does.
 STATE_ROOT: Final = "/srv/agents/state/rework"
+
+#: The state directory of the release tool below the home of the operator.
+#: The marker of the follower is in it, and so is the store of artifacts.
+OPERATOR_STATE_DIR: Final = ".local/state/creche"
+
+#: The store of the archives of binary components, in `OPERATOR_STATE_DIR`.
+#: The operator side writes it, and root reads it (`source.artifact_store`).
+ARTIFACT_STORE_DIR: Final = "artifacts"
 
 #: `root:root 0755`. Under `/var/lib` and not `/srv/agents`, because
 #: `/srv/agents` is the operator's, group `agents`, 0755, and a root under it could be renamed.
