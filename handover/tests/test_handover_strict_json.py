@@ -606,8 +606,7 @@ def test_the_executor_has_no_notice_file(
     configured: list[tuple[str, Path | None]],
 ) -> None:
     """Root creates no file in a directory that the operator account can
-    write. A refused text ends its release run, and the outcome push of that
-    run tells the operator."""
+    write, so the notice of the executor is its log line."""
     monkeypatch.setattr(drain.os, "geteuid", lambda: 0)
     monkeypatch.setattr(drain, "keep_only_the_secrets", lambda _env: drain.Secrets("", "", ""))
     monkeypatch.setattr(drain, "SPOOL_ROOT", str(tmp_path / "absent"))
