@@ -249,9 +249,13 @@ def _fetch_asset(
 ) -> _Step:
     """One child for one asset: the temporary name first, the final name
     after status 0."""
-    seconds = min(CHILD_MAX_S, math.floor(deadline - monotonic()))
-    if seconds < 1:
+    # A comparison and no `floor` first: a deadline that is not a finite
+    # number is no time left, or `CHILD_MAX_S`, and never an error.
+    left = deadline - monotonic()
+    if not left >= 1:
         return _Step.NO_TIME
+
+    seconds = CHILD_MAX_S if left >= CHILD_MAX_S else math.floor(left)
 
     final = want.directory / asset.name
     temp = want.directory / f"{TEMP_PREFIX}{asset.name}{TEMP_SUFFIX}"

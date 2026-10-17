@@ -13,6 +13,7 @@ one gives the fetch a fake `curl`, as `refresh` takes a fake `git`
 
 from __future__ import annotations
 
+import math
 import os
 import shutil
 import stat
@@ -229,6 +230,17 @@ def test_the_time_limit_of_a_child_is_the_time_that_is_left(store: Path, curl: _
     argv, timeout_s, _ = curl.calls[0]
     assert argv[argv.index("--max-time") + 1] == "42"
     assert timeout_s == 42.0
+
+
+@pytest.mark.parametrize(("deadline", "calls"), [(math.inf, 2), (math.nan, 0)], ids=["inf", "nan"])
+def test_a_deadline_that_is_no_finite_number_never_raises(
+    store: Path, curl: _Curl, deadline: float, calls: int
+) -> None:
+    report = fetch_artifacts({BINARY_NAME: TAG}, store, deadline, run=curl, euid=1000)
+
+    assert len(curl.calls) == calls
+    assert [call[1] for call in curl.calls] == [float(CHILD_MAX_S)] * calls
+    assert report.lines[-1] == (NO_TIME if calls == 0 else f"fetched {NAMES.bundle} of {TAG}")
 
 
 def test_no_time_left_starts_no_child(store: Path, curl: _Curl) -> None:
