@@ -2,9 +2,9 @@
 tool reads it.
 
 A directory holds `component.toml` or `component.yaml`. The tool reads
-`component.toml` when the directory holds that name, and `component.yaml`
-when it does not. A directory that holds both names is a refusal. The TOML
-text goes through `handover.tomlfile` with the file kind `MANIFEST`. Each
+`component.toml` where the directory holds that name. Else it reads
+`component.yaml`. The tool refuses a directory that holds both names. The
+TOML text goes through `handover.tomlfile` with the file kind `MANIFEST`. Each
 check after that read is the check of the YAML form, with two rules of
 TOML: `unit` is optional, and `release` is a boolean.
 

@@ -6,10 +6,10 @@ itself is defensive: no symlink is followed, a cap bounds the number of files,
 and a manifest is read only after its size passes.
 
 A directory holds `component.toml` or `component.yaml`. The walk and
-`read_one` read `component.toml` when the directory holds that name, and
-`component.yaml` when it does not. A directory that holds both names is a
-refusal with the code `manifest`, and neither file is read. For that rule,
-each entry of a name counts: a regular file, a link, a link to no file and a
+`read_one` read `component.toml` where the directory holds that name. Else
+they read `component.yaml`. The tool refuses a directory that holds both
+names, with the code `manifest`, and reads neither file. For that rule, each
+entry of a name counts: a regular file, a link, a link to no file and a
 directory.
 
 Contract 06 §10's last two rows live here: a catalogued component with no

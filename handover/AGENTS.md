@@ -124,9 +124,11 @@ is `component.yaml`. Write no other copy of a name.
 1. A directory holds one of the two names. The walk of `discover` and
    `read_one` read `component.toml` when the directory holds that name.
    Else they read `component.yaml`.
-2. A directory that holds both names is a refusal with the code `manifest`,
-   and the tool reads neither file. Each entry of a name counts: a regular
-   file, a link, a link to no file and a directory.
+2. The tool refuses a directory that holds both names, with the code
+   `manifest`. It then reads neither file. Each entry of a name counts: a
+   regular file, a link, a link to no file and a directory. Before that
+   rule, `read_one` refuses a component directory that is a link, with the
+   code `catalog`.
 3. The cap of `MAX_MANIFEST_FILES` counts the manifests of both names.
 4. The caller of `parse_manifest` names the markup of the text. `Markup`
    holds the two markups. No default markup exists.
@@ -139,7 +141,7 @@ is `component.yaml`. Write no other copy of a name.
    `boundedyaml`. Packet `toml-drop-yaml-manifest` removes the YAML form.
 8. Each check after the read is the same for the two forms, with two rules
    of TOML. `unit` is optional, and an absent key means no unit. `release`
-   is `true` or `false`, and a text is refused. A YAML text keeps
+   is `true` or `false`, and the tool refuses a text. A YAML text keeps
    `unit: null` and the words `yes` and `no`.
 9. `silent.py` builds a TOML text. It has no `unit` key, and `release` is
    `false`.
@@ -403,14 +405,14 @@ that wants a refusal changes one field.
   server file takes a chain of 400 and 100,000 copied pairs. Each pair of
   limits is that of the Rust reader of the same file, so the two readers
   refuse the same text (`manifest.py`, `mcpserver.py`).
-- Contract 06 §10.2 makes a directory that holds `component.toml` and
-  `component.yaml` a refusal. It does not say which kind of entry holds a
+- Under contract 06 §10.2, the tool refuses a directory with the two
+  manifest names. The contract does not say which kind of entry holds a
   name. Each entry counts, also a link, a link to no file and a directory
   (`discovery.py`).
-- Contract 06 §10.2 says that the tool reads the stamp `.component.toml`
-  first and `.component.yaml` second. It does not say what the tool reads
-  when the TOML stamp is there and cannot be read. The tool reads no stamp
-  then, and the component takes row 4 of §10.2 (`executor/live_state.py`).
+- Contract 06 §10.2 puts the TOML stamp before the YAML stamp. It does not
+  say what the tool reads when the TOML stamp is there and the tool cannot
+  read it. The tool reads no stamp then, and the component takes row 4 of
+  §10.2 (`executor/live_state.py`).
 - Contract 01b §1 names one server file in each directory. It does not say
   which kind of entry holds a name. Root counts each entry: a regular file,
   a link, a link to no file and a directory. A stray entry of the other

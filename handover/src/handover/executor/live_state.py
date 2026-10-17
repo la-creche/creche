@@ -140,13 +140,12 @@ def installed_manifest(tree: Path) -> StampedText | None:
     A tree that holds an entry named `MANIFEST_STAMP` reads that entry
     alone: a link there, or a text that is not UTF-8, is no stamp.
 
-    CONTRACT-QUESTION: contract 06 §10.2 says that the tool reads the TOML
-    stamp first and the YAML stamp second. It does not say what the tool
-    reads when the TOML stamp is there and cannot be read. The tool reads
-    no stamp then, and the component takes row 4 of §10.2. The other
-    reading takes the YAML stamp, which an older release wrote. A change
-    costs the first `if` of this function and one test of
-    `tests/test_handover_manifest_toml.py`."""
+    CONTRACT-QUESTION: contract 06 §10.2 puts the TOML stamp before the
+    YAML stamp. It does not say what the tool reads when the TOML stamp is
+    there and the tool cannot read it. The tool reads no stamp then, and
+    the component takes row 4 of §10.2. The other reading takes the YAML
+    stamp, which an older release wrote. A change costs the first `if` of
+    this function and one test of `tests/test_handover_manifest_toml.py`."""
     toml_stamp = tree / MANIFEST_STAMP
     if toml_stamp.is_symlink() or toml_stamp.exists():
         return _stamp_of(_toml_stamp_text(toml_stamp), Markup.TOML)

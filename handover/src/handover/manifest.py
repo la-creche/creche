@@ -16,8 +16,8 @@ The text of a manifest has one of two markups, and the caller names it.
 
 Each check after the read of the text is the same for the two markups, with
 two rules of TOML. `unit` is optional, and an absent key means no unit:
-TOML has no null. `release` is a boolean, and a text is refused. A YAML text
-keeps `unit: null` and the words `yes` and `no`.
+TOML has no null. `release` is a boolean, and the reader refuses a text. A
+YAML text keeps `unit: null` and the words `yes` and `no`.
 
 Two rules are load-bearing and easy to lose in a refactor.
 
@@ -508,9 +508,9 @@ def _read_unit(reader: _Reader) -> str | None:
 
 
 def _read_release(reader: _Reader, markup: Markup) -> Releases:
-    """In TOML, `release` is `true` or `false`, and a text is refused. In
-    YAML, `release: yes` is a YAML bool and `release: "yes"` is a string, and
-    the reader takes both."""
+    """In TOML, `release` is `true` or `false`, and the reader refuses a
+    text. In YAML, `release: yes` is a YAML bool and `release: "yes"` is a
+    string, and the reader takes both."""
     value = reader.raw("release")
     if isinstance(value, bool):
         return Releases.YES if value else Releases.NO
