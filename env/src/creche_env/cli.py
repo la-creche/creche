@@ -14,10 +14,10 @@ the value of KEY in one file of the grammar-only mode, or nothing.
 The pair and `root-keys.txt` are the package data, or the files in `--pair
 DIR`. The `.env` is `--env FILE`, else `envfile.site_file`. Each `.env` and
 the file of `raw` pass the trust check. A fault prints one line on stderr
-and the status is 78, `os.EX_CONFIG`. A command line that the parser
-refuses gives 2. An output that the reader closed gives 74, `os.EX_IOERR`,
-and the command then prints nothing more. The command reads no catalog key
-from its environment.
+and the status is 78, `os.EX_CONFIG`, also when stderr is closed. A command
+line that the parser refuses gives 2. A closed stdout gives 74,
+`os.EX_IOERR`, when the command has a value to print, and the command then
+prints nothing more. The command reads no catalog key from its environment.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ import os
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Final
+from typing import Final, TextIO
 
 from .envfile import (
     EnvError,
@@ -50,6 +50,10 @@ PROGRAM: Final = "creche-env"
 type Command = Callable[[argparse.Namespace], int]
 
 
+class _NoOutput(Exception):
+    """Stdout is closed: the caller gave no fd 1, or its reader went away."""
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """The entry point of `creche-env`."""
     parser = _parser()
@@ -57,9 +61,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     command: Command = args.command
     try:
         status = _status(command, args)
-        sys.stdout.flush()
-    except BrokenPipeError:
-        _drop_output()
+        _flush()
+    except _NoOutput:
         return os.EX_IOERR
 
     return status
@@ -77,22 +80,48 @@ def _status(command: Command, args: argparse.Namespace) -> int:
     return os.EX_CONFIG
 
 
-def _drop_output() -> None:
-    """Point stdout and stderr at the null device, so that the flush at the
-    exit of the interpreter writes to no closed pipe."""
+def _drop(stream: TextIO) -> None:
+    """Point `stream` at the null device, so that the flush at the exit of
+    the interpreter writes to no closed pipe."""
     null = os.open(os.devnull, os.O_WRONLY)
-    for stream in (sys.stdout, sys.stderr):
-        os.dup2(null, stream.fileno())
-
+    os.dup2(null, stream.fileno())
     os.close(null)
 
 
 def _say(text: str) -> None:
-    sys.stderr.write(f"{PROGRAM}: {text}\n")
+    """One line on stderr. A closed stderr changes no status."""
+    stream = sys.stderr
+    if stream is None:
+        return
+
+    try:
+        stream.write(f"{PROGRAM}: {text}\n")
+    except BrokenPipeError:
+        _drop(stream)
 
 
 def _out(text: str) -> None:
-    sys.stdout.write(f"{text}\n")
+    stream = sys.stdout
+    if stream is None:
+        raise _NoOutput
+
+    try:
+        stream.write(f"{text}\n")
+    except BrokenPipeError:
+        _drop(stream)
+        raise _NoOutput from None
+
+
+def _flush() -> None:
+    stream = sys.stdout
+    if stream is None:
+        return
+
+    try:
+        stream.flush()
+    except BrokenPipeError:
+        _drop(stream)
+        raise _NoOutput from None
 
 
 def _parser() -> argparse.ArgumentParser:

@@ -360,6 +360,50 @@ def test_a_closed_output_gives_74_and_no_text(pair: Path, site: Path) -> None:
     assert (run.returncode, run.stderr) == (os.EX_IOERR, "")
 
 
+@pytest.mark.parametrize(
+    ("words", "close", "status"),
+    [
+        (("check",), ">&-", 0),
+        (("get", "ROOT"), ">&-", os.EX_IOERR),
+        (("get", "SURPLUS"), "2>&-", EX_CONFIG),
+    ],
+)
+def test_a_closed_descriptor_keeps_the_status(
+    pair: Path, site: Path, words: tuple[str, ...], close: str, status: int
+) -> None:
+    """The shell starts the command with fd 1 or fd 2 closed. A command
+    with nothing to print gives 0, a value to print gives 74, and a fault
+    gives 78."""
+    command = (*CHILD, *words, "--pair", str(pair), "--env", str(site))
+    run = subprocess.run(
+        ["/bin/sh", "-c", f'exec "$@" {close}', "sh", *command],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=CHILD_TIMEOUT_S,
+    )
+
+    assert (run.returncode, run.stdout, run.stderr) == (status, "", "")
+
+
+def test_a_fault_with_a_closed_error_output_gives_78(pair: Path, site: Path) -> None:
+    read_end, write_end = os.pipe()
+    os.close(read_end)
+    try:
+        run = subprocess.run(
+            [*CHILD, "get", "SURPLUS", "--pair", str(pair), "--env", str(site)],
+            stdout=subprocess.PIPE,
+            stderr=write_end,
+            text=True,
+            check=False,
+            timeout=CHILD_TIMEOUT_S,
+        )
+    finally:
+        os.close(write_end)
+
+    assert (run.returncode, run.stdout) == (EX_CONFIG, "")
+
+
 def test_the_env_file_must_pass_the_trust_check(
     capsys: pytest.CaptureFixture[str], tmp_path: Path, pair: Path
 ) -> None:
