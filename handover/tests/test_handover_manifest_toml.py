@@ -388,6 +388,14 @@ def test_a_directory_counts_as_a_name(tmp_path: Path, kind: str) -> None:
     assert "keep one" in again.value.detail
 
 
+def test_a_walk_takes_no_directory_with_the_yaml_name(tmp_path: Path) -> None:
+    """A YAML manifest is a file of the walk. A directory with the YAML name
+    and no TOML name beside it holds no manifest, as before the TOML name."""
+    (tmp_path / "chaperone" / MANIFEST_FILENAME_YAML).mkdir(parents=True)
+
+    assert discover([tmp_path]).found == {}
+
+
 def test_both_names_refuse_read_one(tmp_path: Path) -> None:
     _both_names(tmp_path / "chaperone")
 
