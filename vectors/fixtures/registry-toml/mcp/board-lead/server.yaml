@@ -1,0 +1,26 @@
+# FIXTURE ONLY. The ten tool names come from contract 01 §8.6's grants for
+# `scrum-lead`. No contract 01b example covers this server.
+name: board-lead
+identity: "The Vikunja bot `bot-scrum-lead`. It refines, points and splits tickets across every epic on the board, and it is the only bot that files a child ticket."
+
+install:
+  source: agent-mcp
+
+run:
+  entrypoint: vikunja-lead-mcp
+  env:
+    VIKUNJA_URL: http://127.0.0.1:3456
+    VIKUNJA_TOKEN: secret:vikunja_token_lead
+    VIKUNJA_ACTOR: bot-scrum-lead
+
+tools:
+  - { name: survey_board, description: Read every ticket that needs a decision., write: false }
+  - { name: get_ticket, description: Read one ticket., write: false }
+  - { name: append_dev_notes, description: Append refinement notes to one ticket., write: true }
+  - { name: set_points, description: Set one ticket's estimate., write: true }
+  - { name: mark_refined, description: Move one ticket out of refinement., write: true }
+  - { name: label_epic, description: Put one ticket on an epic., write: true }
+  - { name: mark_blocked, description: "Mark one ticket blocked, with a reason.", write: true }
+  - { name: file_child_ticket, description: Split one ticket into a child., write: true }
+  - { name: comment_on_ticket, description: Comment on one ticket., write: true }
+  - { name: file_ticket, description: File a new ticket., write: true }

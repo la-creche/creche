@@ -1,0 +1,23 @@
+# FIXTURE ONLY. Contract 01 §8.1's `chat` grants these four tools. No
+# contract 01b example covers this server, so this file is a fixture, not a
+# contract example.
+#
+# Contract 01b §5 rule 5: a read server does not merely hide its write tools,
+# it does not build them. That is why `ha` and `ha-read` are two files.
+name: ha-read
+identity: "A Home Assistant long-lived token with read scope only. It answers state, history and search, and it calls no service."
+
+install:
+  source: agent-mcp
+
+run:
+  entrypoint: ha-mcp-read
+  env:
+    HA_URL: http://127.0.0.1:8123
+    HA_TOKEN: secret:ha_token_read
+
+tools:
+  - { name: ha_get_state, description: Read one entity's current state., write: false }
+  - { name: ha_search, description: Search entities by name or area., write: false }
+  - { name: ha_get_overview, description: Read a summary of every area., write: false }
+  - { name: ha_get_history, description: Read one entity's recent history., write: false }

@@ -11,7 +11,7 @@ from typing import Any
 
 import yaml
 from agent_family.model import FamilyFile
-from agent_family.parse import parse_family, parse_server
+from agent_family.parse import Markup, parse_family, parse_server
 from agent_family.registry import load_registry
 from agent_family.report import Issue, Issues, Report
 from agent_family.server import McpServerFile
@@ -147,5 +147,5 @@ def check_server_rules(fixture: str, **changes: Any) -> Report:
     single-file rules need no registry context)."""
     server = edited_server(fixture, **changes)
     issues = Issues()
-    check_server(server, fixture, issues)
+    check_server(server, fixture, issues, Markup.YAML)
     return Report(server.name, f"mcp/{fixture}/server.yaml", issues.frozen())

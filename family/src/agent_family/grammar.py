@@ -39,11 +39,46 @@ ENV_VAR_NAME: Final = re.compile(rf"^{ENV_VAR_NAME_FORM}\Z")
 HA_IDENTIFIER: Final = re.compile(r"^[a-z][a-z0-9_]*\Z")
 HA_ENTITY_ID: Final = re.compile(r"^[a-z][a-z0-9_]*\.[a-z0-9_]+\Z")
 SHA256_HEX: Final = re.compile(r"^[0-9a-f]{64}\Z")
+#: `<owner>/<name>` on GitHub, for a YAML server file. A TOML server file
+#: takes `REPO_RE`, the pattern of root.
 GITHUB_REPO: Final = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+\Z")
 #: An exact version, never a range: a range makes a hash meaningless
 #: (contract 01b §3.1).
 EXACT_VERSION: Final = re.compile(rf"^{EXACT_VERSION_FORM}\Z")
 VERSION_RANGE_CHARS: Final = ("*", "^", "~", ">", "<", "=", ",", " ")
+
+# --- the grammar of root for a TOML server file (contract 01b §1) ---
+
+# Root reads each server file again at a release (`handover.mcpserver`).
+# Each `_RE` and `MAX_` name below is a copy of a value of that module, with
+# the name that it has there. A pattern of root has no anchor, and root uses
+# it with `fullmatch`. Its copy here adds `^` and `\Z`, as each pattern of
+# this module has them. A `_FORM` is the text of a pattern of root, for a
+# message. The TOML path of `serverrules` applies each pattern and each cap,
+# so a TOML server file that passes this validator passes root. A YAML
+# server file keeps the rules of today. `DEFAULT_PYTHON` is the default of
+# the model for both markups. `bin/tests/test_server_grammar_copies.py` holds
+# each copy and each form equal to its source.
+PACKAGE_FORM: Final = "[A-Za-z0-9][A-Za-z0-9._-]{0,63}"
+REPO_FORM: Final = "[A-Za-z0-9][A-Za-z0-9._-]{0,38}/[A-Za-z0-9][A-Za-z0-9._-]{0,99}"
+ASSET_FORM: Final = "[A-Za-z0-9][A-Za-z0-9._+-]{0,127}"
+ENTRYPOINT_FORM: Final = "[A-Za-z0-9][A-Za-z0-9._-]{0,63}"
+SECRET_NAME_FORM: Final = "[a-z][a-z0-9_]{1,62}"
+PACKAGE_RE: Final = re.compile(rf"^{PACKAGE_FORM}\Z")
+REPO_RE: Final = re.compile(rf"^{REPO_FORM}\Z")
+ASSET_RE: Final = re.compile(rf"^{ASSET_FORM}\Z")
+ENTRYPOINT_RE: Final = re.compile(rf"^{ENTRYPOINT_FORM}\Z")
+SECRET_NAME_RE: Final = re.compile(rf"^{SECRET_NAME_FORM}\Z")
+PYTHONS: Final = ("3.12", "3.13")
+DEFAULT_PYTHON: Final = "3.12"
+MAX_TOOLS: Final = 200
+MAX_ARGS: Final = 32
+MAX_ENV: Final = 32
+MAX_FENCES: Final = 64
+MAX_FENCE_VALUES: Final = 256
+MAX_SHARED: Final = 8
+MAX_ARG_CHARS: Final = 256
+MAX_VALUE_CHARS: Final = 256
 
 # --- ranges (contract 01 §3) ---
 

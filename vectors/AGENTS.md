@@ -54,7 +54,8 @@ directory is not a workspace package, so a change here does not change
 | `generate.py` | the list of groups, the index, the frozen files, `write`, `--check`, `--counts`, `--freeze` |
 | `surfaces/ids.py` | the id grammars and `ids/disagreements.json` |
 | `surfaces/family_cases.py` | the written `family.yaml` inputs |
-| `surfaces/family_file.py` | `family_file`, `family_file.host` and `family_file.registries.json` |
+| `surfaces/family_toml_cases.py` | the written `family.toml` inputs |
+| `surfaces/family_file.py` | `family_file`, `family_file.host`, `family_file.toml` and `family_file.registries.json` |
 | `surfaces/server_cases.py` | the written `server.yaml` inputs |
 | `surfaces/server_file.py` | `server_file` |
 | `surfaces/classify.py` | `family_file.classify` |
@@ -74,6 +75,26 @@ directory is not a workspace package, so a change here does not change
 | `surfaces/noticeboard.py` | the noticeboard: `noticeboard.security.*`, `noticeboard.urlform`, `noticeboard.app.query`, `noticeboard.route.*`, `noticeboard.sessions.*`, `noticeboard.transcript.fold`, `noticeboard.audit.page`, `noticeboard.statusdocs.report`, `noticeboard.verify.envfile`, `noticeboard.cli.check`, `noticeboard.static.css` |
 | `surfaces/library.py` | the index builder: `library.chunk_text`, `library.file_hash`, `library.read_document`, `library.report`, `library.tei_url`, `library.embedding`, `library.schema`, `library.index_scope` |
 | `surfaces/tomlfile.py` | the syntax of a TOML file: `tomlfile.syntax` |
+
+## The TOML fixture registry
+
+`fixtures/registry-toml/` is a copy of `family/tests/fixtures/registry`, the
+fixture registry of the package `family`. A path under `vectors/` belongs to
+no component. A change here thus mints no tag.
+
+1. Each family file is `family.toml`. `bin/yaml-to-toml.py` writes it from
+   its twin `family.yaml`.
+2. Each other file has the bytes of its twin, at the same path.
+3. `tests/test_vectors_fixture_registry.py` holds both rules. It runs
+   `bin/yaml-to-toml.py --check` for each pair of family files.
+4. The generator stages each case of `family_file.toml` in a copy of this
+   registry. It writes the input to `families/<directory>/family.toml`.
+5. Change a file here in the pull request that changes its twin.
+
+Each case of `surfaces/family_toml_cases.py` that has the id of a case of
+`surfaces/family_cases.py` is its twin. A twin holds the same values in TOML.
+A case that needs a form of YAML has no twin. The module docstring lists the
+forms.
 
 ## Known gaps
 
@@ -328,14 +349,15 @@ directory is not a workspace package, so a change here does not change
   optional argument: the limit of `text` and the fallback of `integer`.
 - A refused vector of `runtime.parse_object.noticeboard` holds no reason. The
   problem text of the entry point holds a message of the interpreter.
-- `runtime.strict_json` holds no text that breaks more than one rule. For
-  such a text, the Python reader names the fault that it finds first. The
-  Rust reader names the fault at the lowest byte offset. The two words can
-  thus differ. The docstring of `noticeboard/src/noticeboard/strictjson.py`
-  has the sequence of the Python reader.
-- A refused vector of `runtime.strict_json` holds no offset. The Python
-  reader has an offset for four rules only. `noticeboard/tests` holds those
-  offsets.
+- `runtime.strict_json` holds no text that breaks more than one rule.
+  `noticeboard/tests` holds such texts. For a refused text of 1 MiB or less,
+  the Python reader names the fault at the lowest byte offset, as the Rust
+  reader does. For a longer text, the Python reader names the fault that the
+  standard decoder finds, and the two words can differ. The docstring of
+  `noticeboard/src/noticeboard/strictjson.py` has the rule.
+- A refused vector of `runtime.strict_json` holds no offset.
+  `noticeboard/tests` holds the rule and the offset of each refused text of
+  the tests of the Rust check.
 - No vector covers the strict writer, `dumps` of `noticeboard.strictjson`.
   `noticeboard/tests` holds that writer.
 - `runtime.time` records the copy of the time reader in the noticeboard,
@@ -583,3 +605,8 @@ directory is not a workspace package, so a change here does not change
   of its value. No file kind has a field for a date-time.
 - A refused vector of `tomlfile.syntax` holds no reason. The entry point
   has one error type for each refusal.
+- The server files of `fixtures/registry-toml/` are YAML texts. Packet
+  `toml-server-read-rust` converts them.
+- The registries of the process-level suite hold no `family.toml` yet. So
+  `family_file.toml` holds no vector of their files. Packet `toml-judge`
+  converts them.

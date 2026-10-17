@@ -29,10 +29,12 @@ release replaces that surface.
 | `generate.py` | the program that writes each file under `data/` that is not frozen |
 | `core.py` | the file format: the normalizer and the renderer |
 | `surfaces/` | one module per group of surfaces, with the written inputs |
+| `fixtures/registry-toml/` | the TOML copy of the fixture registry of the package `family`. Each family file is `family.toml`. `vectors/AGENTS.md` has its rules |
 | `data/index.json` | one row per surface: name, path, entry point, counts. One line per frozen file: path and digest |
 | `data/ids/` | the id grammars, one file per copy of a grammar |
 | `data/ids/disagreements.json` | each input for which two copies of one grammar give different results |
 | `data/family_file.json`, `data/family_file.host.json` | `family.yaml` to its validation report |
+| `data/family_file.toml.json` | `family.toml` to its validation report |
 | `data/server_file.json` | `server.yaml` to its validation report |
 | `data/family_file.classify.json` | two family files to the diff between them |
 | `data/family_file.cli.json` | a command line of `agent-family` to its output |
@@ -362,10 +364,11 @@ The Rust reader, the crate `creche-vectors`, holds these rules.
 
 ## The registry file
 
-A vector of `family_file`, of `server_file` and of `family_file.cli` names a
-registry of this repository in `params.registry`. A Rust test reads no file
-outside `rust/` and `vectors/data`. `data/family_file.registries.json` thus
-holds each file of each such registry.
+A vector of `family_file`, of `family_file.toml`, of `server_file` and of
+`family_file.cli` names a registry of this repository in `params.registry`.
+A Rust test reads no file outside `rust/` and `vectors/data`.
+`data/family_file.registries.json` thus holds each file of each such
+registry.
 
 | Key | Meaning |
 |---|---|
