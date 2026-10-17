@@ -226,7 +226,7 @@ NEST_INNER: Final = 127
 _DEEP_FLOW: Final = 10_000
 
 #: A count of decimal digits past the limit of 4300 digits of Python.
-_HUGE_DIGITS: Final = 5_000
+HUGE_DIGITS: Final = 5_000
 
 #: A count of base 16 digits whose number has more than 4300 decimal digits.
 _HUGE_HEX_DIGITS: Final = 4_000
@@ -492,7 +492,7 @@ files:
     _case("yaml-unclosed-flow", HEAD + "files: [ { path: /srv/agents/vault, mode: ro }\n"),
     _case("yaml-bad-indent", "name: %NAME%\n  kind: thin\ndescription: x\n"),
     _case("yaml-big-int", HEAD + "max_inflight_delegations: 99999999999999999999999\n"),
-    _case("yaml-huge-int", HEAD + "max_inflight_delegations: " + "9" * _HUGE_DIGITS + "\n"),
+    _case("yaml-huge-int", HEAD + "max_inflight_delegations: " + "9" * HUGE_DIGITS + "\n"),
     _case("yaml-tag-str", HEAD + "sandbox: { cpus: !!str 2 }\n"),
     _case("yaml-tag-int", HEAD + 'sandbox: { cpus: !!int "2" }\n'),
     _case("yaml-tag-float", HEAD + "sandbox: { cpus: !!float 2 }\n"),
@@ -721,7 +721,7 @@ verbs:
         HEAD
         + "egress: ['example.com:00443', 'example.com:000443', 'example.com:0000000000', "
         + "'example.com:065536', 'example.com:100000', 'example.com:"
-        + "9" * _HUGE_DIGITS
+        + "9" * HUGE_DIGITS
         + "']\n",
     ),
     # --- the runtime fields (contract 01 §3.8) ---
@@ -941,9 +941,9 @@ approval:
     _case("rule-sandbox-memory-over", HEAD + "sandbox: { memory: 16385m }\n"),
     _case(
         "rule-sandbox-memory-digits",
-        HEAD + "sandbox: { memory: " + "9" * _HUGE_DIGITS + "g }\n",
+        HEAD + "sandbox: { memory: " + "9" * HUGE_DIGITS + "g }\n",
     ),
-    _case("rule-job-timeout-digits", HEAD + "job: { timeout: " + "9" * _HUGE_DIGITS + "s }\n"),
+    _case("rule-job-timeout-digits", HEAD + "job: { timeout: " + "9" * HUGE_DIGITS + "s }\n"),
     _case(
         "rule-approval-all-undeclared",
         ATTENDED_HEAD + "tools:\n  kagi: all\napproval: [kagi__no_such_tool, kagi__kagi_extract]\n",

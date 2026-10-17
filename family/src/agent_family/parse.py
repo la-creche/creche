@@ -44,7 +44,7 @@ from .server import (
 
 
 class Markup(StrEnum):
-    """The markup of the text of a family file."""
+    """The markup of the text of a family file or of a server file."""
 
     TOML = "toml"
     YAML = "yaml"
@@ -325,5 +325,18 @@ def parse_family_toml(data: bytes) -> tuple[FamilyFile | None, list[Issue]]:
     return _load_toml(data, tomlfile.FileKind.FAMILY, FamilyFile, _FAMILY_CONTAINERS)
 
 
-def parse_server(text: str) -> tuple[McpServerFile | None, list[Issue]]:
+def parse_server(
+    text: str, markup: Markup = Markup.YAML
+) -> tuple[McpServerFile | None, list[Issue]]:
+    if markup is Markup.TOML:
+        # The same encoding as `parse_family`: the reader refuses the bytes
+        # of a lone surrogate.
+        return parse_server_toml(text.encode("utf-8", "surrogatepass"))
+
     return _load(text, McpServerFile, _SERVER_CONTAINERS)
+
+
+def parse_server_toml(data: bytes) -> tuple[McpServerFile | None, list[Issue]]:
+    """The TOML path for the bytes of a server file. The byte limit of the
+    file kind is the one size cap of this path."""
+    return _load_toml(data, tomlfile.FileKind.SERVER, McpServerFile, _SERVER_CONTAINERS)
