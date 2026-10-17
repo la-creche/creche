@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from handover.catalog import LAST_IN_ORDER
 from handover.errors import Refusal, RefusalCode
-from handover.manifest import parse_manifest
+from handover.manifest import Markup, parse_manifest
 from handover.order import Graph, build_graph, check_acyclic, deploy_order
 from handover_fixtures import manifest_text
 
@@ -25,7 +25,9 @@ REPO_GRAPH: Graph = {
 def _graph(edges: dict[str, str]) -> Graph:
     """Parse one manifest per name so the graph comes through the real reader."""
     manifests = {
-        name: parse_manifest(manifest_text(name, depends_on=depends), f"{name}/component.yaml")
+        name: parse_manifest(
+            manifest_text(name, depends_on=depends), f"{name}/component.yaml", Markup.YAML
+        )
         for name, depends in edges.items()
     }
 

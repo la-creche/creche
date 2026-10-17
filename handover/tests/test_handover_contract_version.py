@@ -13,19 +13,19 @@ from pathlib import Path
 import pytest
 from handover.catalog import MANIFEST_CONTRACT_MAJOR, MANIFEST_CONTRACT_MINOR, ContractId
 from handover.errors import Refusal, RefusalCode
-from handover.manifest import MANIFEST_FILENAME, parse_manifest
+from handover.manifest import MANIFEST_FILENAME_YAML, Markup, parse_manifest
 from handover.resolve import MANIFEST_VERSION
 from handover_fixtures import FIXTURE_MANIFEST_VERSION, manifest_text
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 #: The manifest that holds the row.
-OWN_MANIFEST = REPO_ROOT / "handover" / MANIFEST_FILENAME
+OWN_MANIFEST = REPO_ROOT / "handover" / MANIFEST_FILENAME_YAML
 
 
 def _provided() -> tuple[int, int]:
     """The two numbers of the one row for `component-manifest`."""
-    manifest = parse_manifest(OWN_MANIFEST.read_text(encoding="utf-8"), "handover")
+    manifest = parse_manifest(OWN_MANIFEST.read_text(encoding="utf-8"), "handover", Markup.YAML)
     rows = [one for one in manifest.provides if one.contract is ContractId.COMPONENT_MANIFEST]
     assert len(rows) == 1, rows
 
@@ -55,14 +55,16 @@ def test_a_manifest_at_the_version_of_the_row_reads() -> None:
     major, minor = _provided()
     version = f"{major}.{minor}"
 
-    assert parse_manifest(_declaring(version), "attendance").manifest_version == version
+    assert (
+        parse_manifest(_declaring(version), "attendance", Markup.YAML).manifest_version == version
+    )
 
 
 def test_a_manifest_one_minor_above_the_row_is_refused() -> None:
     major, minor = _provided()
 
     with pytest.raises(Refusal) as caught:
-        parse_manifest(_declaring(f"{major}.{minor + 1}"), "attendance")
+        parse_manifest(_declaring(f"{major}.{minor + 1}"), "attendance", Markup.YAML)
 
     assert caught.value.code is RefusalCode.MANIFEST
     assert caught.value.detail == (

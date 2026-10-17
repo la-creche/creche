@@ -7,7 +7,7 @@ import json
 import pytest
 from handover.catalog import CATALOG, Action, ContractId
 from handover.errors import Refusal, RefusalCode
-from handover.manifest import ComponentManifest, parse_manifest
+from handover.manifest import ComponentManifest, Markup, parse_manifest
 from handover.resolve import (
     build_document,
     canonical_json,
@@ -55,7 +55,7 @@ def _nine() -> dict[str, ComponentManifest]:
     for row in CATALOG:
         provides, requires, depends = EDGES[row.name]
         text = manifest_text(row.name, provides=provides, requires=requires, depends_on=depends)
-        manifests[row.name] = parse_manifest(text, f"{row.name}/component.yaml")
+        manifests[row.name] = parse_manifest(text, f"{row.name}/component.yaml", Markup.YAML)
 
     return manifests
 
@@ -142,7 +142,7 @@ def test_a_component_with_no_manifest_is_refused() -> None:
     with pytest.raises(Refusal) as caught:
         resolve(manifests, _state(), {"chaperone": "2.1.0"})
 
-    assert "has no component.yaml" in caught.value.detail
+    assert "has no component.toml or component.yaml" in caught.value.detail
 
 
 def test_latest_needs_a_live_state_entry() -> None:

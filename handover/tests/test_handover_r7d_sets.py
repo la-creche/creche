@@ -33,6 +33,7 @@ from handover.executor.live_state import installed_version, write_manifest_stamp
 from handover.executor.quiet import QUIET_WINDOW_S, WATCHED_SERVICES, needs_window
 from handover.executor.spool import DONE_DIR, Spool
 from handover.executor.steps import Wiring
+from handover.manifest import Markup
 from handover_executor_fixtures import (
     REQUEST_ID,
     SHA_OF,
@@ -215,7 +216,7 @@ def _live_tree(bench: SetBench, name: str, version: str) -> None:
     the manifest, so step 2 reads this component out of a tree root owns
     rather than at the document's SHA."""
     tree = stamp_tree(bench.components, name, version)
-    write_manifest_stamp(tree, bench.manifest(name))
+    write_manifest_stamp(tree, bench.manifest(name), Markup.YAML)
 
 
 def _fail_hook_once(bench: SetBench, word: str) -> None:

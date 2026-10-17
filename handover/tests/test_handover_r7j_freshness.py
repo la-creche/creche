@@ -354,8 +354,8 @@ def test_the_roots_are_read_after_the_fetch_not_before(
 ) -> None:
     """A manifest that merged minutes ago reaches the corpus only through
     the fetch, so the roots are read AFTER it. Read before it,
-    `request noticeboard` refuses with `no component.yaml under any root:
-    mcp-servers` although the merge happened.
+    `request noticeboard` refuses with `no component.toml or component.yaml
+    under any root: mcp-servers` although the merge happened.
 
     This fake corpus only grows the missing manifest when "fetched", so
     the request can only succeed if the fetch really does run first."""

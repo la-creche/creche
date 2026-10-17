@@ -37,6 +37,7 @@ from handover.executor.spool import (
     VerifyHook,
 )
 from handover.executor.steps import Wiring
+from handover.manifest import Markup
 from handover_executor_fixtures import (
     REQUEST_ID,
     SHA_OF,
@@ -139,7 +140,7 @@ def _make_bench(tmp_path: Path, moves: dict[str, tuple[str, str]]) -> Bench:
 
     for name, (live, _) in moves.items():
         tree = stamp_tree(bench.components, name, live)
-        write_manifest_stamp(tree, bench.manifest(name))
+        write_manifest_stamp(tree, bench.manifest(name), Markup.YAML)
 
     _serve(bench, {name: new for name, (_, new) in moves.items()})
 

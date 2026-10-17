@@ -41,6 +41,7 @@ from handover.executor.source import (
     tag_names,
     tag_sha,
 )
+from handover.manifest import Markup
 from handover_executor_fixtures import FakeApi, FakeRun, fake_host, fake_readers, stamp_tree
 from handover_fixtures import manifest_text, provides_entry
 
@@ -308,6 +309,7 @@ def test_provided_comes_from_the_stamped_manifests(tmp_path: Path) -> None:
     write_manifest_stamp(
         roots[0] / "attendance",
         manifest_text("attendance", provides=provides_entry("session-api", 1, 4)),
+        Markup.YAML,
     )
 
     built = build_state(roots, {}, Readers())
@@ -326,6 +328,7 @@ def test_a_stamped_manifest_claiming_another_components_contract_is_dropped(
     write_manifest_stamp(
         roots[0] / "noticeboard",
         manifest_text("noticeboard", provides=provides_entry("session-api", 9, 9)),
+        Markup.YAML,
     )
 
     assert build_state(roots, {}, Readers()).state.provided == {}
