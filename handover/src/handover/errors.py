@@ -18,7 +18,7 @@ from enum import StrEnum
 #: live-state document is the resolver's second input and contract 06 does not
 #: name it, so a bad one needs a code of its own rather than borrowing
 #: `MANIFEST`, which would tell a reader the wrong file is broken. `RATE`,
-#: `APPROVAL`, `DRIFT`, `P1` to `P5` and `MONOTONIC` are the executor's, and
+#: `APPROVAL`, `DRIFT`, `P1` to `P6` and `MONOTONIC` are the executor's, and
 #: `stage7-releases.md` §2.4 and §3.2 name every one of them. Nothing else may
 #: reach the ledger.
 class RefusalCode(StrEnum):
@@ -44,6 +44,10 @@ class RefusalCode(StrEnum):
     P3 = "P3"
     P4 = "P4"
     P5 = "P5"
+    #: §2.4 step 3, for a `kind: binary` component: the signature of its
+    #: archive and the member list of root's copy. Its reason is one member
+    #: of `artifacts.ArtifactRefusal`.
+    P6 = "P6"
     #: §2.4 step 3: a component may not go backwards outside a rollback.
     MONOTONIC = "monotonic"
     #: §4.2: one `mcp/<name>/server.yaml` root will not install from. Its

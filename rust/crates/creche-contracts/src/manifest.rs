@@ -270,6 +270,9 @@ word_enum! {
         P4 => "P4",
         /// The fifth check of the provenance predicate.
         P5 => "P5",
+        /// The sixth check of the provenance predicate: the signature and
+        /// the member list of the archive of a `binary` component.
+        P6 => "P6",
         /// A component would go to an older version.
         Monotonic => "monotonic",
         /// An MCP server file is not one that root installs from.
@@ -1679,10 +1682,12 @@ mod tests {
         assert_eq!(releasable_names().count(), MAX_REQUEST_COMPONENTS);
     }
 
+    /// The generator makes one vector `code-<name>` for each member of the
+    /// Python enum, in its order. A written text can also be a code.
     #[test]
     fn a_refusal_code_is_one_of_the_python_codes() {
         let surface = vectors::surface("manifest.refusal_code").unwrap();
-        let mut accepted = Vec::new();
+        let mut members = Vec::new();
         for vector in surface.vectors() {
             let text = vector.input().text().unwrap();
             match (vector.result(), text.parse::<RefusalCode>()) {
@@ -1693,7 +1698,9 @@ mod tests {
                         "{}",
                         vector.id()
                     );
-                    accepted.push(code);
+                    if vector.id().starts_with("code-") {
+                        members.push(code);
+                    }
                 }
                 (Outcome::Refused | Outcome::Raised, Err(UnknownRefusalCode)) => {}
                 (outcome, code) => panic!("{}: Python {outcome:?}, Rust {code:?}", vector.id()),
@@ -1701,7 +1708,7 @@ mod tests {
         }
 
         assert_eq!(
-            accepted,
+            members,
             RefusalCode::ALL,
             "the codes, in the order of the Python enum"
         );
