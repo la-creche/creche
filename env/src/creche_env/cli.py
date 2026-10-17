@@ -14,8 +14,8 @@ the value of KEY in one file of the grammar-only mode, or nothing.
 The pair and `root-keys.txt` are the package data, or the files in `--pair
 DIR`. The `.env` is `--env FILE`, else `envfile.site_file`. Each `.env` and
 the file of `raw` pass the trust check. A fault prints one line on stderr
-and the status is 78. A command line that the parser refuses gives 2. The
-command reads no catalog key from its environment.
+and the status is 78, `os.EX_CONFIG`. A command line that the parser
+refuses gives 2. The command reads no catalog key from its environment.
 """
 
 from __future__ import annotations
@@ -45,10 +45,6 @@ from .envfile import (
 
 PROGRAM: Final = "creche-env"
 
-#: The status of each refused file: `EX_CONFIG` of `sysexits.h`.
-EX_CONFIG: Final = 78
-EX_OK: Final = 0
-
 type Command = Callable[[argparse.Namespace], int]
 
 
@@ -65,7 +61,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ReadError as error:
         _say(str(error))
 
-    return EX_CONFIG
+    return os.EX_CONFIG
 
 
 def _say(text: str) -> None:
@@ -139,7 +135,7 @@ def _get(args: argparse.Namespace) -> int:
     settings = load(pair, read_trusted(_env_file(args.env)))
     _out(settings.values.get(key, ""))
 
-    return EX_OK
+    return os.EX_OK
 
 
 def _check(args: argparse.Namespace) -> int:
@@ -149,7 +145,7 @@ def _check(args: argparse.Namespace) -> int:
     for pair in pairs:
         load(pair, env)
 
-    return EX_OK
+    return os.EX_OK
 
 
 def _changed(args: argparse.Namespace) -> int:
@@ -165,7 +161,7 @@ def _changed(args: argparse.Namespace) -> int:
         if old.get(key) != new.get(key):
             _out(key)
 
-    return EX_OK
+    return os.EX_OK
 
 
 def _raw(args: argparse.Namespace) -> int:
@@ -177,4 +173,4 @@ def _raw(args: argparse.Namespace) -> int:
     if value is not None:
         _out(value)
 
-    return EX_OK
+    return os.EX_OK

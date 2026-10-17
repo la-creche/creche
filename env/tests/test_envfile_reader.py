@@ -13,11 +13,14 @@ import dataclasses
 import os
 import pwd
 from pathlib import Path
+from typing import Final
 
 import pytest
 from creche_env import envfile
-from creche_env.cli import EX_CONFIG, main
+from creche_env.cli import main
 from creche_env.envfile import EnvError, Fault, ReadError, Text
+
+EX_CONFIG: Final = os.EX_CONFIG
 
 PAIR_DEFAULT = "ROOT=/srv/data\nSTATE=${ROOT}/state\nHOME_DIR=${home:ACCOUNT}\nTRUSTED=/opt\n"
 PAIR_EXAMPLE = "# The required keys.\n#ACCOUNT=operator\n"

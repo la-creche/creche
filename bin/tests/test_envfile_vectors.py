@@ -33,9 +33,10 @@ from pathlib import Path
 from typing import Any, Final
 
 import pytest
-from creche_env.cli import EX_CONFIG, main
+from creche_env.cli import main
 from creche_env.envfile import Fault, Text, read_pair
 
+EX_CONFIG: Final = os.EX_CONFIG
 REPO: Final = Path(__file__).resolve().parents[2]
 DATA: Final = REPO / "vectors" / "data" / "envfile"
 LIBRARY: Final = REPO / "bin" / "lib" / "envfile.sh"

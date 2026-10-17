@@ -18,6 +18,7 @@ that keep two copies in agreement and the public repository clean:
 from __future__ import annotations
 
 import ipaddress
+import os
 import re
 import shutil
 import subprocess
@@ -157,7 +158,7 @@ def test_a_copy_of_example_env_names_each_required_key(tmp_path: Path) -> None:
         timeout=60,
     )
 
-    assert (run.returncode, run.stdout) == (78, "")
+    assert (run.returncode, run.stdout) == (os.EX_CONFIG, "")
     named = [line.rsplit(" ", 1)[-1] for line in run.stderr.splitlines()]
     assert named == list(TYPES)
     assert all(": required-unset " in line for line in run.stderr.splitlines())
