@@ -9,7 +9,7 @@ four reads root can make for itself.
 | Field | Where it comes from |
 |---|---|
 | `live` | `<install.to>/.release-version`, root's own stamp under a root-owned tree |
-| `provided` | the `component.yaml` the last release stamped into each live tree |
+| `provided` | the manifest the last release stamped into each live tree |
 | `latest` | the newest `<component>-v<version>` tag, from an injected reader |
 | `facts` | the tag's commit, and a digest over that commit's source |
 
@@ -42,26 +42,39 @@ from typing import Final
 
 from ..catalog import CATALOG_BY_NAME, CONTRACT_OWNER, ContractId, Releases
 from ..errors import Refusal
-from ..manifest import ComponentManifest, parse_manifest
+from ..manifest import (
+    MANIFEST_FILENAME,
+    MANIFEST_FILENAME_YAML,
+    ComponentManifest,
+    Markup,
+    parse_manifest,
+)
 from ..resolve import LATEST, TAG_FORMAT, deploying_versions
 from ..silent import silent_manifest
 from ..site import operator_home
 from ..state import ReleaseState, SourceFacts
+from ..tomlfile import FileKind
 
 #: Written into the artifact by the switch, read back to learn what is live.
 STAMP_FILE: Final = ".release-version"
 
-#: The other thing the switch stamps into the artifact: the `component.yaml`
-#: root resolved this version from. It is what makes a NON-deploying
+#: The other thing the switch stamps into the artifact: the manifest root
+#: resolved this version from. It is what makes a NON-deploying
 #: component's `provides` and `requires` a fact rather than a claim: the
 #: tree is root-owned and the file got there through a verified release.
 #: Without it, step 2 read every manifest at a SHA the operator-written
 #: live-state document supplied, and only the deploying one was ever tied
 #: to a verified tag.
-MANIFEST_STAMP: Final = ".component.yaml"
+#:
+#: The stamp has the name of the markup of its text. A tree that holds an
+#: entry named `MANIFEST_STAMP` reads that stamp, and a tree that does not
+#: reads `MANIFEST_STAMP_YAML`.
+MANIFEST_STAMP: Final = f".{MANIFEST_FILENAME}"
+MANIFEST_STAMP_YAML: Final = f".{MANIFEST_FILENAME_YAML}"
 
-#: One manifest is a page of YAML. The cap is here so a planted file under
-#: an install tree cannot be read into memory.
+#: One YAML manifest is a page of YAML. The cap is here so a planted file
+#: under an install tree cannot be read into memory. The read of a TOML stamp
+#: stops one byte past the byte limit of `FileKind.MANIFEST`.
 MAX_MANIFEST_BYTES: Final = 64 * 1024
 
 #: A version is at most `999.999.999` plus a newline. The cap is here so a
@@ -99,25 +112,75 @@ def write_stamp(tree: Path, version: str) -> None:
     (tree / STAMP_FILE).write_text(f"{version}\n", encoding="utf-8")
 
 
-def write_manifest_stamp(tree: Path, text: str) -> None:
+def stamp_name(markup: Markup) -> str:
+    """The name of the manifest stamp of a text in `markup`."""
+    return MANIFEST_STAMP if markup is Markup.TOML else MANIFEST_STAMP_YAML
+
+
+@dataclass(frozen=True)
+class StampedText:
+    """The text of a manifest stamp, and the markup that its name gives."""
+
+    text: str
+    markup: Markup
+
+
+def write_manifest_stamp(tree: Path, text: str, markup: Markup) -> None:
     """Stamp the manifest this version was resolved from into the staged
-    tree, before it is switched in. Root writes it, root owns the tree."""
-    (tree / MANIFEST_STAMP).write_text(text, encoding="utf-8")
+    tree, before it is switched in, under the name of its markup. Root
+    writes it, root owns the tree."""
+    (tree / stamp_name(markup)).write_text(text, encoding="utf-8")
 
 
-def installed_manifest(tree: Path) -> str | None:
+def installed_manifest(tree: Path) -> StampedText | None:
     """The stamped manifest under a live tree, or None where no release
-    has put one there yet."""
-    stamp = tree / MANIFEST_STAMP
+    has put one there yet.
+
+    The tool reads `MANIFEST_STAMP` first and `MANIFEST_STAMP_YAML` second.
+    A tree that holds an entry named `MANIFEST_STAMP` reads that entry
+    alone: a link there, or a text that is not UTF-8, is no stamp.
+
+    CONTRACT-QUESTION: contract 06 §10.2 says that the tool reads the TOML
+    stamp first and the YAML stamp second. It does not say what the tool
+    reads when the TOML stamp is there and cannot be read. The tool reads
+    no stamp then, and the component takes row 4 of §10.2. The other
+    reading takes the YAML stamp, which an older release wrote. A change
+    costs the first `if` of this function and one test of
+    `tests/test_handover_manifest_toml.py`."""
+    toml_stamp = tree / MANIFEST_STAMP
+    if toml_stamp.is_symlink() or toml_stamp.exists():
+        return _stamp_of(_toml_stamp_text(toml_stamp), Markup.TOML)
+
+    return _stamp_of(_yaml_stamp_text(tree / MANIFEST_STAMP_YAML), Markup.YAML)
+
+
+def _stamp_of(text: str | None, markup: Markup) -> StampedText | None:
+    return StampedText(text, markup) if text else None
+
+
+def _toml_stamp_text(stamp: Path) -> str | None:
+    """The text of a TOML stamp. The read stops one byte past the byte limit
+    of `FileKind.MANIFEST`, so the parse refuses a larger file."""
+    try:
+        if stamp.is_symlink():
+            return None
+
+        with stamp.open("rb") as handle:
+            data = handle.read(FileKind.MANIFEST.byte_limit + 1)
+
+        return data.decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _yaml_stamp_text(stamp: Path) -> str | None:
     try:
         if stamp.is_symlink() or stamp.stat().st_size > MAX_MANIFEST_BYTES:
             return None
 
-        text = stamp.read_text(encoding="utf-8")
+        return stamp.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return None
-
-    return text or None
 
 
 def installed_version(tree: Path) -> str | None:
@@ -201,8 +264,8 @@ class LiveTree:
     present: bool = False
     #: `<install.to>/.release-version`, or None for a first install.
     version: str | None = None
-    #: The `component.yaml` the last release stamped in, parsed. None where
-    #: no release has stamped one: a tree the cutover or the visit made.
+    #: The manifest the last release stamped in, parsed. None where no
+    #: release has stamped one: a tree the cutover or the visit made.
     manifest: ComponentManifest | None = None
 
 
@@ -258,12 +321,12 @@ def _stamped_manifest(tree: Path, name: str) -> ComponentManifest | None:
     fourth row, which names it on the phone as unverified. Refusing here
     would let one unreadable byte under one tree stop every release.
     """
-    text = installed_manifest(tree)
-    if text is None:
+    stamp = installed_manifest(tree)
+    if stamp is None:
         return None
 
     try:
-        found = parse_manifest(text, f"{name}/{MANIFEST_STAMP}")
+        found = parse_manifest(stamp.text, f"{name}/{stamp_name(stamp.markup)}", stamp.markup)
     except Refusal:
         return None
 

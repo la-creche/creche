@@ -40,7 +40,7 @@ from handover.contracts import Consumer, ContractRow
 from handover.errors import Refusal, RefusalCode
 from handover.executor import approval
 from handover.executor.request import MAX_REQUEST_BYTES, Request, parse_request
-from handover.manifest import parse_manifest
+from handover.manifest import Markup, parse_manifest
 from handover.requester.file import file_request, new_ulid, plan_request
 from handover.resolve import (
     Resolution,
@@ -188,7 +188,7 @@ def _component_vector(case: Case) -> Vector:
     text = expand(case.parts) if case.parts else case.text
     params = {"site": case.site}
     with site_file(_SITES[case.site]) as path:
-        outcome = _run(lambda: parse_manifest(text, MANIFEST_SUBJECT))
+        outcome = _run(lambda: parse_manifest(text, MANIFEST_SUBJECT, Markup.YAML))
 
     if isinstance(outcome, Raised):
         return raised(case.id, given, outcome.exc, params=params)

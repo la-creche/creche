@@ -44,7 +44,7 @@ from handover.catalog import (
 )
 from handover.cli import EXIT_OK, EXIT_REFUSED, EXIT_USAGE, main
 from handover.errors import Refusal, RefusalCode
-from handover.manifest import parse_manifest
+from handover.manifest import Markup, parse_manifest
 from handover.mcpserver import ServerPin, Source
 from handover.site import SITE_FILE_ENV
 from handover.treewalk import ABSOLUTE_LINK, NAMES_WORK_TREE
@@ -506,7 +506,7 @@ def test_a_manifest_of_another_kind_makes_no_row(
     for a caller that reads the manifests another way."""
     use_binary_catalog(monkeypatch)
     text = binary_manifest_text(tmp_path / "components", kind=Kind.VENV)
-    manifest = parse_manifest(text, "noticeboard/component.yaml")
+    manifest = parse_manifest(text, "noticeboard/component.yaml", Markup.YAML)
 
     refusal = _refusal(lambda: rows({BINARY_NAME: manifest}, Repo.AGENT_CONTROL))
 

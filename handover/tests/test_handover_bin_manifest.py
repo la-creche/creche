@@ -14,7 +14,7 @@ import pytest
 from handover.catalog import BINARY_BUILD_PROGRAM, CATALOG, Kind, RunsAs
 from handover.discovery import MANIFEST_FILENAME, discover
 from handover.errors import Refusal, RefusalCode
-from handover.manifest import ComponentManifest, parse_manifest
+from handover.manifest import ComponentManifest, Markup, parse_manifest
 from handover.silent import silent_manifest
 
 #: The fixture manifest. Its name is not `component.yaml` on purpose.
@@ -33,7 +33,7 @@ def _fixture() -> str:
 
 
 def _parse(text: str) -> ComponentManifest:
-    return parse_manifest(text, "fixture/component.yaml")
+    return parse_manifest(text, "fixture/component.yaml", Markup.YAML)
 
 
 def _refusal(text: str) -> Refusal:

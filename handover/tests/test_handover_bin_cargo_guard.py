@@ -35,7 +35,7 @@ from typing import Final
 import pytest
 from handover.executor.install import BINARY_ENV_NAME
 from handover.executor.selfcontained import NAMES_WORK_TREE, binary_escapes
-from handover.manifest import ComponentManifest, parse_manifest
+from handover.manifest import ComponentManifest, Markup, parse_manifest
 from handover_bin_fixtures import BINARY_MANIFEST, BINARY_NAME
 
 pytestmark = pytest.mark.slow
@@ -99,7 +99,9 @@ def _cargo() -> str:
 
 
 def _manifest() -> ComponentManifest:
-    return parse_manifest(BINARY_MANIFEST.read_text(encoding="utf-8"), "fixture/component.yaml")
+    return parse_manifest(
+        BINARY_MANIFEST.read_text(encoding="utf-8"), "fixture/component.yaml", Markup.YAML
+    )
 
 
 def _workspace(root: Path) -> Path:

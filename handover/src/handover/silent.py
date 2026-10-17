@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Final
 
 from .catalog import CATALOG_BY_NAME, MANIFEST_CONTRACT_MAJOR, MANIFEST_CONTRACT_MINOR, Kind
-from .manifest import ComponentManifest, parse_manifest
+from .manifest import ComponentManifest, Markup, parse_manifest
 
 #: Where a component that is not installed would install. It sits under an
 #: install root so the containment check passes, and nothing ever writes
@@ -47,7 +47,7 @@ def silent_manifest(name: str) -> ComponentManifest:
 
     text = _text(name, str(row.repo), row.path, str(kind))
 
-    return parse_manifest(text, f"{name} (not installed)")
+    return parse_manifest(text, f"{name} (not installed)", Markup.YAML)
 
 
 def _text(name: str, repo: str, path: str, kind: str) -> str:

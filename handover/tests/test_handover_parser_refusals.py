@@ -20,7 +20,7 @@ from handover.errors import Refusal, RefusalCode
 from handover.executor.provenance import check_monotonic
 from handover.executor.source import newest_tagged_version
 from handover.intake.store import recipients_of
-from handover.manifest import MAX_MANIFEST_BYTES, parse_manifest
+from handover.manifest import MAX_MANIFEST_BYTES, Markup, parse_manifest
 from handover.mcpserver import parse_server
 from handover.state import MAX_STATE_BYTES, parse_state
 from handover_fixtures import manifest_text
@@ -43,7 +43,7 @@ LONE_SURROGATE = "\\ud800".encode("ascii").decode("unicode_escape")
 def _manifest_refusal(text: str) -> Refusal:
     assert len(text.encode("utf-8", "surrogatepass")) <= MAX_MANIFEST_BYTES
     with pytest.raises(Refusal) as caught:
-        parse_manifest(text, SUBJECT)
+        parse_manifest(text, SUBJECT, Markup.YAML)
 
     assert caught.value.code is RefusalCode.MANIFEST
 

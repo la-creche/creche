@@ -19,7 +19,7 @@ import pytest
 from handover.catalog import CATALOG, CATALOG_BY_NAME, CatalogRow, Kind
 from handover.executor.host import Command
 from handover.executor.install import Installer, Paths, paths_of
-from handover.manifest import ComponentManifest, parse_manifest
+from handover.manifest import ComponentManifest, Markup, parse_manifest
 from handover_executor_fixtures import FakeRun, fake_host, git_host_answers
 from handover_fixtures import manifest_text
 
@@ -175,7 +175,7 @@ def make_staging(
     what `made` writes at `<install.to>.new`. None leaves nothing."""
     components = tmp_path / "components"
     manifest = parse_manifest(
-        binary_manifest_text(components, unit, kind), f"{BINARY_NAME}/component.yaml"
+        binary_manifest_text(components, unit, kind), f"{BINARY_NAME}/component.yaml", Markup.YAML
     )
     paths = paths_of(manifest, (components,))
     run = FakeRun(answers=git_host_answers())

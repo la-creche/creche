@@ -36,7 +36,7 @@ from typing import Final
 import pytest
 from handover.executor.install import RELOCATABLE_ARGV, UV, VENV_ENV_NAME
 from handover.executor.selfcontained import SITE_GLOB, escapes
-from handover.manifest import parse_manifest
+from handover.manifest import Markup, parse_manifest
 
 pytestmark = pytest.mark.slow
 
@@ -98,7 +98,7 @@ def _build_argv() -> list[str]:
     guard carries its own copy of the argv.
     """
     text = (REPO_ROOT / COMPONENT_DIR / "component.yaml").read_text(encoding="utf-8")
-    manifest = parse_manifest(text, f"{COMPONENT_DIR}/component.yaml")
+    manifest = parse_manifest(text, f"{COMPONENT_DIR}/component.yaml", Markup.YAML)
     assert len(manifest.build) == 1, "the guard builds one argv"
 
     return [_uv(), *manifest.build[0][1:]]
@@ -230,7 +230,7 @@ def test_every_console_script_the_manifest_needs_is_in_the_tree(
     so this asks the built tree rather than the `pyproject.toml`."""
     _, tree = built
     text = (REPO_ROOT / COMPONENT_DIR / "component.yaml").read_text(encoding="utf-8")
-    manifest = parse_manifest(text, f"{COMPONENT_DIR}/component.yaml")
+    manifest = parse_manifest(text, f"{COMPONENT_DIR}/component.yaml", Markup.YAML)
     hook = Path(manifest.verify.command[0]).name
 
     assert (tree / "bin" / hook).is_file(), sorted(one.name for one in (tree / "bin").iterdir())

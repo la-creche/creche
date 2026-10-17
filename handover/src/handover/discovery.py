@@ -1,9 +1,16 @@
-"""Finding `component.yaml` on disk, and matching what is found to the catalog.
+"""Finding manifests on disk, and matching what is found to the catalog.
 
 This is the only module that touches the filesystem for manifests. It reads
 and never writes. A repository can be a branch an agent wrote, so the walk
 itself is defensive: no symlink is followed, a cap bounds the number of files,
 and a manifest is read only after its size passes.
+
+A directory holds `component.toml` or `component.yaml`. The walk and
+`read_one` read `component.toml` when the directory holds that name, and
+`component.yaml` when it does not. A directory that holds both names is a
+refusal with the code `manifest`, and neither file is read. For that rule,
+each entry of a name counts: a regular file, a link, a link to no file and a
+directory.
 
 Contract 06 §10's last two rows live here: a catalogued component with no
 file, and a file for a name the catalog does not hold.
@@ -12,6 +19,7 @@ file, and a file for a name the catalog does not hold.
 from __future__ import annotations
 
 import os
+from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -19,15 +27,23 @@ from .catalog import ARRIVING, CATALOG, CATALOG_BY_NAME, RETIRING, Releases
 from .errors import Refusal, RefusalCode, safe_token
 from .manifest import (
     MANIFEST_FILENAME,
+    MANIFEST_FILENAME_YAML,
     MAX_MANIFEST_BYTES,
     REPO_ROOT_PATH,
     ComponentManifest,
+    Markup,
     parse_manifest,
+    toml_text_of,
 )
+from .tomlfile import FileKind
 
 #: Nine components plus room for a mistake. A tree with more than this many
-#: `component.yaml` files is not the repository this tool knows.
+#: manifests is not the repository this tool knows. The cap counts both names.
 MAX_MANIFEST_FILES = 32
+
+#: The two names, for the text of a refusal.
+_BOTH_NAMES = f"{MANIFEST_FILENAME} and {MANIFEST_FILENAME_YAML}"
+_EITHER_NAME = f"{MANIFEST_FILENAME} or {MANIFEST_FILENAME_YAML}"
 
 #: Deep enough for `playpen/bridge/...`, shallow enough that a crafted tree
 #: cannot make the walk expensive.
@@ -58,8 +74,11 @@ class FoundManifest:
     manifest: ComponentManifest
     #: Repo-relative directory that held the file, `.` at a repository root.
     directory: str
-    #: The label a refusal names, such as `chaperone/component.yaml`.
+    #: The label a refusal names, such as `chaperone/component.toml`.
     subject: str
+    #: The markup of the text. The switch stamps the text under the name of
+    #: this markup (`live_state.write_manifest_stamp`).
+    markup: Markup
     #: The file's own bytes, as read. The switch stamps them into the
     #: artifact so the NEXT release reads this component's interface out
     #: of a tree root owns (`live_state.MANIFEST_STAMP`).
@@ -78,14 +97,22 @@ class ManifestSet:
         return {name: item.manifest for name, item in self.found.items()}
 
 
-def _read_manifest_file(path: Path, subject: str) -> str:
-    """Read one manifest, refusing a symlink and anything oversized."""
+def _read_manifest_file(path: Path, subject: str, markup: Markup) -> str:
+    """Read one manifest, refusing a symlink and anything oversized.
+
+    A TOML file is read up to one byte past the byte limit of
+    `FileKind.MANIFEST`, and the TOML reader refuses a larger text with its
+    own text. A YAML file keeps `MAX_MANIFEST_BYTES`."""
     if path.is_symlink():
         raise Refusal(RefusalCode.MANIFEST, subject, "is a symlink")
 
     stat_result = path.stat()
     if not path.is_file():
         raise Refusal(RefusalCode.MANIFEST, subject, "is not a regular file")
+
+    if markup is Markup.TOML:
+        with path.open("rb") as handle:
+            return toml_text_of(handle.read(FileKind.MANIFEST.byte_limit + 1), subject)
 
     if stat_result.st_size > MAX_MANIFEST_BYTES:
         raise Refusal(RefusalCode.MANIFEST, subject, f"larger than {MAX_MANIFEST_BYTES} bytes")
@@ -96,11 +123,47 @@ def _read_manifest_file(path: Path, subject: str) -> str:
         raise Refusal(RefusalCode.MANIFEST, subject, "is not UTF-8") from None
 
 
-def _walk_for_manifests(root: Path) -> list[Path]:
-    """Every `component.yaml` under `root`, symlinked directories excluded."""
-    found: list[Path] = []
+def _entries_of(directory: Path) -> frozenset[str]:
+    """The names of a manifest that `directory` has an entry for."""
+    names = (MANIFEST_FILENAME, MANIFEST_FILENAME_YAML)
+
+    return frozenset(name for name in names if _holds(directory / name))
+
+
+def _holds(path: Path) -> bool:
+    """Whether a directory has an entry at `path`. A link counts, also a
+    link to no file, and the link is not followed."""
+    return path.is_symlink() or path.exists()
+
+
+def _markup_of(entries: Collection[str], subject: str) -> Markup:
+    """The markup of the manifest of a directory with these entries: TOML
+    when it holds an entry named `component.toml`, else YAML. A directory
+    that holds both names is a refusal.
+
+    CONTRACT-QUESTION: contract 06 §10.2 makes a directory that holds both
+    names a refusal. It does not say which kind of entry holds a name. Each
+    entry counts, also a link, a link to no file and a directory: a stray
+    entry of the other name thus refuses the directory. The other reading
+    counts only a regular file. A change costs the entries that the walk and
+    `_entries_of` give, and one test of `tests/test_handover_manifest_toml.py`."""
+    has_toml = MANIFEST_FILENAME in entries
+    if has_toml and MANIFEST_FILENAME_YAML in entries:
+        raise Refusal(RefusalCode.MANIFEST, subject, f"holds {_BOTH_NAMES}; keep one")
+
+    return Markup.TOML if has_toml else Markup.YAML
+
+
+def _walk_for_manifests(root: Path) -> list[tuple[Path, Markup]]:
+    """Every manifest under `root` with its markup, symlinked directories
+    excluded. A YAML name counts where the walk lists it among the files
+    of its directory."""
+    found: list[tuple[Path, Markup]] = []
     for current, directories, files in os.walk(root, followlinks=False):
         here = Path(current)
+        # Each entry of the directory, before the filter below: a link to a
+        # directory is in `directories`, and a link to no file in `files`.
+        entries = frozenset(files) | frozenset(directories)
         depth = len(here.relative_to(root).parts)
         if depth >= MAX_WALK_DEPTH:
             directories[:] = []
@@ -111,23 +174,29 @@ def _walk_for_manifests(root: Path) -> list[Path]:
             if name not in SKIPPED_DIRS and not (here / name).is_symlink()
         )
 
-        if MANIFEST_FILENAME in files:
-            found.append(here / MANIFEST_FILENAME)
+        markup = _markup_of(entries, _relative(here, root))
+        if markup is Markup.TOML or MANIFEST_FILENAME_YAML in files:
+            found.append((here / markup.file_name, markup))
 
         if len(found) > MAX_MANIFEST_FILES:
             raise Refusal(
                 RefusalCode.CATALOG,
                 str(root),
-                f"more than {MAX_MANIFEST_FILES} {MANIFEST_FILENAME} files",
+                f"more than {MAX_MANIFEST_FILES} {_BOTH_NAMES} files",
             )
 
     return found
 
 
-def _directory_of(path: Path, root: Path) -> str:
-    relative = path.parent.relative_to(root).as_posix()
+def _relative(directory: Path, root: Path) -> str:
+    """A directory under `root` as a repo-relative path, `.` for the root."""
+    relative = directory.relative_to(root).as_posix()
 
-    return REPO_ROOT_PATH if relative == "" else relative
+    return REPO_ROOT_PATH if relative in {"", "."} else relative
+
+
+def _directory_of(path: Path, root: Path) -> str:
+    return _relative(path.parent, root)
 
 
 def _check_against_catalog(found: FoundManifest) -> None:
@@ -156,7 +225,7 @@ def _check_against_catalog(found: FoundManifest) -> None:
 
 
 def read_one(root: Path, name: str) -> FoundManifest:
-    """One component's `component.yaml`, at the path the catalog fixes.
+    """One component's manifest, at the path the catalog fixes.
 
     `discover` walks a whole repository, which is what the CLI wants from a
     checkout. The executor wants the opposite: it fetches one clone PER
@@ -169,21 +238,24 @@ def read_one(root: Path, name: str) -> FoundManifest:
     """
     row = CATALOG_BY_NAME[name]
     directory = root if row.path == REPO_ROOT_PATH else root / row.path
-    subject = f"{row.path}/{MANIFEST_FILENAME}"
+    markup = _markup_of(_entries_of(directory), row.path)
+    subject = f"{row.path}/{markup.file_name}"
     # The tree came out of a checkout at a SHA the live state named, so the
     # directory is input too: `_read_manifest_file` refuses a symlinked
     # FILE, and this refuses a symlinked directory above it.
     if directory.is_symlink():
         raise Refusal(RefusalCode.CATALOG, subject, f"{row.path} is a symlink")
 
-    path = directory / MANIFEST_FILENAME
+    path = directory / markup.file_name
     if not path.exists():
-        detail = f"no {MANIFEST_FILENAME} under any root: {name}"
+        detail = f"no {_EITHER_NAME} under any root: {name}"
         raise Refusal(RefusalCode.CATALOG, "contract 06 §1", detail)
 
-    text = _read_manifest_file(path, subject)
-    manifest = parse_manifest(text, subject)
-    found = FoundManifest(manifest=manifest, directory=row.path, subject=subject, text=text)
+    text = _read_manifest_file(path, subject, markup)
+    manifest = parse_manifest(text, subject, markup)
+    found = FoundManifest(
+        manifest=manifest, directory=row.path, subject=subject, markup=markup, text=text
+    )
     _check_against_catalog(found)
     if manifest.name != name:
         detail = f"declares {safe_token(manifest.name)} at {name}'s path"
@@ -193,17 +265,17 @@ def read_one(root: Path, name: str) -> FoundManifest:
 
 
 def discover(roots: list[Path]) -> ManifestSet:
-    """Read every `component.yaml` under `roots` and match it to the catalog."""
+    """Read every manifest under `roots` and match it to the catalog."""
     found: dict[str, FoundManifest] = {}
     for root in roots:
         resolved = root.resolve()
-        for path in _walk_for_manifests(resolved):
+        for path, markup in _walk_for_manifests(resolved):
             directory = _directory_of(path, resolved)
-            subject = f"{directory}/{MANIFEST_FILENAME}"
-            text = _read_manifest_file(path, subject)
-            manifest = parse_manifest(text, subject)
+            subject = f"{directory}/{markup.file_name}"
+            text = _read_manifest_file(path, subject, markup)
+            manifest = parse_manifest(text, subject, markup)
             entry = FoundManifest(
-                manifest=manifest, directory=directory, subject=subject, text=text
+                manifest=manifest, directory=directory, subject=subject, markup=markup, text=text
             )
             _check_against_catalog(entry)
 
@@ -225,7 +297,7 @@ def require_complete(manifests: ManifestSet) -> None:
     if not manifests.missing:
         return
 
-    detail = f"no {MANIFEST_FILENAME} under any root: {', '.join(manifests.missing)}"
+    detail = f"no {_EITHER_NAME} under any root: {', '.join(manifests.missing)}"
     raise Refusal(RefusalCode.CATALOG, "contract 06 §1", detail)
 
 

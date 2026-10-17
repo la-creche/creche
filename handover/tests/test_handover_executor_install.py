@@ -22,7 +22,7 @@ from handover.executor.install import (
     restorable,
 )
 from handover.executor.live_state import installed_version
-from handover.manifest import ComponentManifest, parse_manifest
+from handover.manifest import ComponentManifest, Markup, parse_manifest
 from handover_executor_fixtures import FakeRun, fake_host, git_host_answers, stamp_tree
 from handover_fixtures import manifest_text
 
@@ -35,7 +35,7 @@ def _manifest(tmp_path: Path, name: str = "chaperone", **edits: str) -> Componen
     for old, new in edits.items():
         text = text.replace(old, new)
 
-    return parse_manifest(text, f"{name}/component.yaml")
+    return parse_manifest(text, f"{name}/component.yaml", Markup.YAML)
 
 
 def test_a_root_verify_hook_runs_as_root(tmp_path: Path) -> None:

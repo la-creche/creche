@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from handover.catalog import ContractId, Kind, Releases, Repo, RestoreMode, RunsAs, VerifyUser
 from handover.errors import UNPRINTABLE, Refusal, RefusalCode, safe_token
-from handover.manifest import MAX_MANIFEST_BYTES, parse_manifest
+from handover.manifest import MAX_MANIFEST_BYTES, Markup, parse_manifest
 
 from handover import site
 
@@ -42,7 +42,7 @@ release: yes
 
 
 def _parse(text: str):
-    return parse_manifest(text, "fixture/component.yaml")
+    return parse_manifest(text, "fixture/component.yaml", Markup.YAML)
 
 
 def _without(field: str) -> str:

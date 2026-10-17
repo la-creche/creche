@@ -962,7 +962,8 @@ class Release:
         # The manifest goes into the artifact beside the version stamp, so
         # the NEXT release reads this component's interface out of a tree
         # root owns rather than at a SHA a document claimed.
-        write_manifest_stamp(paths.new, read_one(source, name).text)
+        found = read_one(source, name)
+        write_manifest_stamp(paths.new, found.text, found.markup)
         # The unit file goes into the artifact too, so step 9 installs it
         # from a tree its owner can read. The clone is root's `0750`, and a
         # user unit is installed as the operator.

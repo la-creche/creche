@@ -43,7 +43,7 @@ from handover.executor.install import (
 from handover.executor.live_state import installed_version
 from handover.executor.spool import DONE_DIR, Spool
 from handover.executor.steps import Wiring
-from handover.manifest import parse_manifest
+from handover.manifest import Markup, parse_manifest
 from handover.site import SITE_FILE_ENV, operator_home
 from handover_executor_fixtures import (
     REQUEST_ID,
@@ -518,7 +518,7 @@ def test_the_repositorys_own_units_start_the_trees_their_manifests_install() -> 
     """
     found: set[str] = set()
     for path in sorted(REPO_ROOT.glob("*/component.yaml")):
-        manifest = parse_manifest(path.read_text(encoding="utf-8"), str(path))
+        manifest = parse_manifest(path.read_text(encoding="utf-8"), str(path), Markup.YAML)
         if manifest.unit is None or manifest.kind not in PROGRAM_KINDS:
             continue
 
@@ -547,6 +547,7 @@ def test_the_real_pep_unit_and_the_real_manifest_pass_rule_eight(tmp_path: Path)
     manifest = parse_manifest(
         (REPO_ROOT / "chaperone" / "component.yaml").read_text(encoding="utf-8"),
         "chaperone/component.yaml",
+        Markup.YAML,
     )
     assert manifest.install.to == "/opt/components/chaperone"
 
@@ -584,7 +585,7 @@ def test_every_unit_that_starts_a_tree_travels_with_its_component(tmp_path: Path
     shipped = sorted((REPO_ROOT / "systemd").glob("*.service"))
     staged_for: dict[str, set[str]] = {}
     for path in sorted(REPO_ROOT.glob("*/component.yaml")):
-        manifest = parse_manifest(path.read_text(encoding="utf-8"), str(path))
+        manifest = parse_manifest(path.read_text(encoding="utf-8"), str(path), Markup.YAML)
         if manifest.unit is None or manifest.kind not in PROGRAM_KINDS:
             continue
 
