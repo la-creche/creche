@@ -324,6 +324,24 @@ def test_an_absent_pair_cannot_be_read(capsys: pytest.CaptureFixture[str], tmp_p
     assert err == f"creche-env: {tmp_path / 'none' / 'default.env'}: cannot be read: ENOENT\n"
 
 
+def test_a_fifo_as_the_env_file_cannot_be_read(tmp_path: Path, pair: Path) -> None:
+    """The open does not wait for a writer, so the command ends at once.
+    The child process has a time limit."""
+    fifo = tmp_path / "site.env"
+    os.mkfifo(fifo, 0o600)
+
+    run = subprocess.run(
+        [*CHILD, "check", "--pair", str(pair), "--env", str(fifo)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=CHILD_TIMEOUT_S,
+    )
+
+    assert (run.returncode, run.stdout) == (EX_CONFIG, "")
+    assert run.stderr == f"creche-env: {fifo}: cannot be read: no regular file\n"
+
+
 def test_a_closed_output_gives_74_and_no_text(pair: Path, site: Path) -> None:
     read_end, write_end = os.pipe()
     os.close(read_end)
@@ -365,6 +383,20 @@ def test_changed_trusted_names_each_root_key_that_changed(
         0,
         "TRUSTED\nSTATE\n",
         "",
+    )
+
+
+@pytest.mark.parametrize("open_one", ["old", "new"])
+def test_changed_trusted_reads_two_trusted_files(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, pair: Path, site: Path, open_one: str
+) -> None:
+    other = _write(tmp_path / "open.env", f"ACCOUNT={_me()}\n", 0o602)
+    files = (other, site) if open_one == "old" else (site, other)
+
+    assert _run(capsys, "changed-trusted", *files, "--pair", pair) == (
+        EX_CONFIG,
+        "",
+        f"creche-env: {other}: others-write\n",
     )
 
 
@@ -410,6 +442,16 @@ def test_raw_prints_one_value_and_nothing_for_an_absent_key(
         EX_CONFIG,
         "",
         f"creche-env: {hooks}: bad-key\n",
+    )
+
+
+def test_raw_reads_only_a_trusted_file(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    hooks = _write(tmp_path / "hooks.env", "TOKEN=a\n", 0o620)
+
+    assert _run(capsys, "raw", hooks, "TOKEN") == (
+        EX_CONFIG,
+        "",
+        f"creche-env: {hooks}: others-write\n",
     )
 
 
