@@ -1374,7 +1374,7 @@ def test_a_value_with_no_json_text_keeps_the_error_of_the_standard_writer() -> N
 #: The most that the strict reader can cost, as a multiple of the standard reader.
 #: The text of 20-digit integers costs the most: about 4 standard reads on a
 #: development machine, and about 11 on a CI runner. A reader that is 100
-#: times slower costs more than 150 standard reads for each text.
+#: times slower costs more than 100 standard reads for each text.
 COST_MAX = 30
 
 #: The rounds of the cost test. Each round times one standard read, then one
@@ -1430,7 +1430,7 @@ def least_cpu_seconds(
 
 
 @pytest.mark.parametrize("unit", UNITS)
-def test_a_strict_text_of_one_mebibyte_costs_thirty_standard_reads_at_most(unit: str) -> None:
+def test_a_strict_text_of_one_mebibyte_costs_cost_max_standard_reads_at_most(unit: str) -> None:
     data = filled(unit)
     assert len(data) == MEBIBYTE
     assert strictjson.loads(data, cap=MEBIBYTE) == json.loads(data)
