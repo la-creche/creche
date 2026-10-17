@@ -23,9 +23,10 @@ import pwd
 import re
 import stat
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import InitVar, dataclass
 from enum import Enum, StrEnum
 from pathlib import Path
+from types import MappingProxyType
 from typing import Final
 
 #: The most bytes of one file, and of one value after the references.
@@ -157,13 +158,45 @@ class Text:
     data: bytes
 
 
+class _Made:
+    """No module but this one names this type. `Line`, `Pair` and `Settings`
+    take a value of it first, so only the readers of this module make one:
+    pyright refuses the private name in each other module, and each type
+    refuses each other value."""
+
+
+_MADE: Final = _Made()
+
+
+def _require_made(made: _Made, kind: str) -> None:
+    if made is not _MADE:
+        raise TypeError(f"only the readers of creche_env.envfile make a {kind}")
+
+
 @dataclass(frozen=True, slots=True)
 class Line:
-    """One assignment: the key, the value and the number of its line."""
+    """One assignment: the key, the value and the number of its line.
+    `parse` is the one maker, and the accessors read the fields."""
 
-    key: str
-    value: str
-    number: int
+    made: InitVar[_Made]
+    _key: str
+    _value: str
+    _number: int
+
+    def __post_init__(self, made: _Made) -> None:
+        _require_made(made, "Line")
+
+    @property
+    def key(self) -> str:
+        return self._key
+
+    @property
+    def value(self) -> str:
+        return self._value
+
+    @property
+    def number(self) -> int:
+        return self._number
 
 
 def _lines(source: Text) -> list[str]:
@@ -248,7 +281,7 @@ def _assignment(name: str, number: int, line: str, kind: FileKind) -> Line:
 
     _check_value(name, number, key, value, kind)
 
-    return Line(key, value, number)
+    return Line(_MADE, key, value, number)
 
 
 def _check_value(name: str, number: int, key: str, value: str, kind: FileKind) -> None:
@@ -284,16 +317,37 @@ def _is_plain(value: str) -> bool:
 @dataclass(frozen=True, slots=True)
 class Pair:
     """The catalog: the defaults of `default.env` and the required keys of
-    `example.env`, with the names of the two files."""
+    `example.env`, with the names of the two files. `read_pair` is the one
+    maker, and the accessors read the fields."""
 
-    defaults: tuple[Line, ...]
-    required: tuple[Line, ...]
-    default_file: str
-    example_file: str
+    made: InitVar[_Made]
+    _defaults: tuple[Line, ...]
+    _required: tuple[Line, ...]
+    _default_file: str
+    _example_file: str
+
+    def __post_init__(self, made: _Made) -> None:
+        _require_made(made, "Pair")
+
+    @property
+    def defaults(self) -> tuple[Line, ...]:
+        return self._defaults
+
+    @property
+    def required(self) -> tuple[Line, ...]:
+        return self._required
+
+    @property
+    def default_file(self) -> str:
+        return self._default_file
+
+    @property
+    def example_file(self) -> str:
+        return self._example_file
 
     def catalog(self) -> tuple[str, ...]:
         """Each catalog key: the defaults, then the required keys."""
-        return tuple(one.key for one in (*self.defaults, *self.required))
+        return tuple(one.key for one in (*self._defaults, *self._required))
 
 
 def read_pair(default: Text, example: Text) -> Pair:
@@ -305,17 +359,30 @@ def read_pair(default: Text, example: Text) -> Pair:
         if one.key in known:
             raise _fault(Fault.DUPLICATE_KEY, example.name, one.number, one.key)
 
-    return Pair(defaults, required, default.name, example.name)
+    return Pair(_MADE, defaults, required, default.name, example.name)
 
 
 @dataclass(frozen=True, slots=True)
 class Settings:
     """What the layers give. `values`: each catalog key that has a value.
     `sources`: each catalog key in catalog order, with the file and the line
-    of the text that it took."""
+    of the text that it took. `load` is the one maker. The two maps are
+    read-only views."""
 
-    values: Mapping[str, str]
-    sources: Mapping[str, tuple[str, int]]
+    made: InitVar[_Made]
+    _values: Mapping[str, str]
+    _sources: Mapping[str, tuple[str, int]]
+
+    def __post_init__(self, made: _Made) -> None:
+        _require_made(made, "Settings")
+
+    @property
+    def values(self) -> Mapping[str, str]:
+        return self._values
+
+    @property
+    def sources(self) -> Mapping[str, tuple[str, int]]:
+        return self._sources
 
 
 #: The home of an account, or None for an account that the database lacks.
@@ -360,7 +427,9 @@ def load(pair: Pair, env: Text, homes: HomeLookup | None = None) -> Settings:
     sources = {key: where[key] for key in pair.catalog()}
     with_homes = _with_homes(texts, sources, homes or system_home)
 
-    return Settings(_resolve(with_homes, sources), sources)
+    values = _resolve(with_homes, sources)
+
+    return Settings(_MADE, MappingProxyType(values), MappingProxyType(sources))
 
 
 def _with_homes(

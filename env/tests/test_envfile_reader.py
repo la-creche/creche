@@ -9,6 +9,7 @@ package data.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import pwd
 from pathlib import Path
@@ -116,6 +117,28 @@ def test_an_absent_file_and_a_directory_cannot_be_read(tmp_path: Path) -> None:
 
     with pytest.raises(ReadError, match="no regular file"):
         envfile.read_trusted(tmp_path)
+
+
+def test_only_the_readers_make_a_line_a_pair_and_settings() -> None:
+    pair = envfile.read_pair(Text("default.env", b"A=1\n"), Text("example.env", b""))
+    settings = envfile.load(pair, Text(".env", b""))
+
+    for made in (pair.defaults[0], pair, settings):
+        fields = [getattr(made, one.name) for one in dataclasses.fields(made)]
+        with pytest.raises(TypeError, match="only the readers"):
+            type(made)(object(), *fields)
+        with pytest.raises((TypeError, ValueError), match="InitVar"):
+            dataclasses.replace(made)
+
+
+def test_the_maps_of_the_settings_are_read_only() -> None:
+    pair = envfile.read_pair(Text("default.env", b"A=1\n"), Text("example.env", b""))
+    settings = envfile.load(pair, Text(".env", b""))
+
+    with pytest.raises(TypeError):
+        settings.values["A"] = "2"  # type: ignore[index]
+    with pytest.raises(TypeError):
+        settings.sources["A"] = (".env", 1)  # type: ignore[index]
 
 
 def test_the_read_stops_one_byte_past_the_limit(tmp_path: Path) -> None:
