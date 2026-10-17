@@ -103,6 +103,10 @@ OPERATOR_ACCOUNT = "operator"
 #: The field that holds the build argv lists.
 BUILD_FIELD = "build"
 
+#: The field that a TOML text can leave out. TOML has no null, so an absent
+#: key is the TOML form of `unit: null`.
+UNIT_FIELD = "unit"
+
 #: Contract 06 §8's field table, exactly. The key set is closed: an unknown
 #: key is a refusal, not a warning.
 REQUIRED_FIELDS = frozenset(
@@ -112,7 +116,7 @@ REQUIRED_FIELDS = frozenset(
         "repo",
         "path",
         "kind",
-        "unit",
+        UNIT_FIELD,
         "runs_as",
         "install",
         "verify",
@@ -122,10 +126,6 @@ REQUIRED_FIELDS = frozenset(
 )
 OPTIONAL_FIELDS = frozenset({BUILD_FIELD, "provides", "requires", "depends_on", "secrets"})
 KNOWN_FIELDS = REQUIRED_FIELDS | OPTIONAL_FIELDS
-
-#: The field that a TOML text can leave out. TOML has no null, so an absent
-#: key is the TOML form of `unit: null`.
-UNIT_FIELD = "unit"
 
 #: The fields that a TOML text must hold.
 REQUIRED_TOML_FIELDS = REQUIRED_FIELDS - {UNIT_FIELD}
@@ -498,10 +498,10 @@ def _read_secrets(reader: _Reader) -> tuple[str, ...]:
 
 
 def _read_unit(reader: _Reader) -> str | None:
-    if reader.raw("unit") is None:
+    if reader.raw(UNIT_FIELD) is None:
         return None
 
-    return reader.text("unit", UNIT_RE)
+    return reader.text(UNIT_FIELD, UNIT_RE)
 
 
 def _read_release(reader: _Reader, markup: Markup) -> Releases:
