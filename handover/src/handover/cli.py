@@ -30,8 +30,9 @@ Seven subcommands. Only `request` and `follow` write anything.
    request for that set. It files a set once, after it read the same set on
    two runs, and it approves nothing. A run with nothing new prints one
    line and exits 0. A text that is not strict JSON leaves one row in its
-   notice file (`--notices`), because a timer starts it and no person reads
-   its log. `--dry-run` writes no notice file.
+   notice file (`--notices`), because a timer starts it and the operator
+   does not watch its log. `--dry-run` writes no notice file, and a run as
+   root writes none.
 6. `artifacts` prints what CI builds for each binary component, in a line
    form that a `read` loop of bash reads (`artifacts.ArtifactRow`).
    `--crate-row` prints one such row for a crate that need not be a
@@ -1141,11 +1142,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _notice_file(args: argparse.Namespace) -> tuple[str, Path | None]:
     """The service word and the notice file of this run. Only a run of
-    `follow` that can write has a file."""
+    `follow` that can write has a file. The operator owns the directory of
+    that file, so a run as root has none."""
     if args.command != "follow":
         return PROG, None
 
-    if args.dry_run:
+    if args.dry_run or os.geteuid() == 0:
         return FOLLOW_SERVICE, None
 
     return FOLLOW_SERVICE, Path(args.notices or FOLLOW_NOTICES)

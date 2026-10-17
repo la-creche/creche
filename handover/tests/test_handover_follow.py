@@ -12,6 +12,8 @@ A test lands a tag with `git tag`, the way a fetch would bring one.
 from __future__ import annotations
 
 import json
+import logging
+import math
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -469,19 +471,69 @@ def test_a_dry_run_has_no_notice_file(host: _Host, monkeypatch: pytest.MonkeyPat
     assert not host.notices.exists()
 
 
-def test_each_other_verb_has_no_notice_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_a_run_as_root_has_no_notice_file(
+    host: _Host, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """A person or a CI job starts it and reads the log line."""
+    """The operator owns the directory of the notice file, so a run as root
+    writes the log line of a refused text only."""
+    configured: list[tuple[str, Path | None]] = []
+    configure = notices.configure
+
+    def spy(service: str, path: Path | None) -> None:
+        configured.append((service, path))
+        configure(service, path)
+
+    monkeypatch.setattr(notices, "configure", spy)
+    monkeypatch.setattr(cli.os, "geteuid", lambda: 0)
+    host.install(BOARD, LIVE)
+    host.marker.parent.mkdir(parents=True)
+    host.marker.write_text('{"seen": {}, "at": NaN}', encoding="utf-8")
+
+    with caplog.at_level(logging.ERROR, logger=notices.__name__):
+        assert host.follow(BOARD) == cli.EXIT_OK
+
+    assert configured == [(NOTICE_SERVICE, None)]
+    assert caplog.messages == [f"json_not_strict {NOTICE_SERVICE} release.marker constant"]
+    assert not host.notices.parent.exists()
+
+
+def test_a_marker_with_no_strict_text_ends_the_run_and_writes_nothing(
+    host: _Host, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The run files no request without its marker (rule 6)."""
+    monkeypatch.setattr(
+        cli, "seen_marker", lambda moving, _marker: Marker(seen=dict(moving), asked_at=math.inf)
+    )
+    host.install(BOARD, LIVE)
+    host.tag(BOARD, NEXT)
+    capsys.readouterr()
+
+    assert host.follow(BOARD) == cli.EXIT_USAGE
+
+    assert capsys.readouterr().err == f"{cli.PROG}: a value has no strict JSON text (constant)\n"
+    assert not host.marker.exists()
+    assert not host.notices.exists()
+    assert host.filed() == []
+
+
+@pytest.mark.parametrize(
+    ("verb", "code"),
+    [(("resolve", "--partial"), cli.EXIT_REFUSED), (("check", "--partial"), cli.EXIT_OK)],
+    ids=["resolve", "check"],
+)
+def test_each_other_verb_has_no_notice_file(
+    verb: tuple[str, ...], code: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The caller of such a command reads its log line."""
     monkeypatch.setattr(notices, "_settings", None)
     configured: list[tuple[str, Path | None]] = []
     monkeypatch.setattr(notices, "configure", lambda *given: configured.append(given))
     state = tmp_path / "live-state.json"
     state.write_text('{"live": {}, "live": {}}', encoding="utf-8")
+    more = ("--state", str(state)) if verb[0] == "resolve" else ()
 
-    code = cli.main(["resolve", "--root", str(tmp_path), "--partial", "--state", str(state)])
+    assert cli.main([*verb, "--root", str(tmp_path), *more]) == code
 
-    assert code == cli.EXIT_REFUSED
     assert configured == [(cli.PROG, None)]
     assert list(tmp_path.iterdir()) == [state]
 

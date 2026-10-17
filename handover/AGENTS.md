@@ -109,11 +109,12 @@ The console script is `handover`. The verify hook and the operator's
     copy in one commit.
 13. Each program calls `notices.configure` one time at its start. Only the
     follower has a notice file: `notices/follow.json` below the state root
-    of the operator (`executor/layout.py`). A timer starts it, so no person
-    reads its log. `--notices` names another file, and `--dry-run` writes
-    none. The executor, the intake and each other subcommand write the log
-    line only. Root runs the executor and the intake, and root creates no
-    file in a directory that the operator can write.
+    of the operator (`executor/layout.py`). A timer starts it, and the
+    operator does not watch its log. `--notices` names another file. A run
+    with `--dry-run` writes no notice file, and a run as root writes none.
+    The executor, the intake and each other subcommand write the log line
+    only. The executor and the intake run as root. Root writes no file in a
+    directory that the operator owns.
 
 ## Rules the design depends on
 
