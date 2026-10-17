@@ -210,6 +210,14 @@ Rules for the program:
      this crate have one form for each of the three texts. A tool name and
      a variable name have 64 bytes at most. A version has 64 bytes at most
      and holds no `+` and no `-`.
+  9. `creche-contracts/src/server.rs`, the grammar of root, contract 01b §3
+     to §7. The contract gives no grammar for six fields of a server file,
+     for a value and for the key after `secret:`. It gives no cap for a
+     count, and it does not say how to count an identity and a description.
+     The TOML path takes the rules of root ("The grammar of root"). The YAML
+     path takes none of them. A change costs one constant or one grammar in
+     `server.rs`, its twin in the Python TOML path and the vectors of that
+     rule.
 - A YAML integer of more than 4300 decimal digits has no value here, in
   each base. This crate refuses the text.
 - The Python validator gives the same message for each text that has no

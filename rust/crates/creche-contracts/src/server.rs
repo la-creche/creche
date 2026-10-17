@@ -768,11 +768,16 @@ impl Server {
 
 // --- the grammar of root ---
 
-// Contract 01b §1: root reads each server file again at a release, and root
-// accepts each TOML file that the validator accepts. The TOML path thus
-// applies each rule of root below. The YAML path applies none of them. The
-// contract gives no grammar for these texts and no cap for these counts. The
-// numbers are those of the Python TOML path, which copies them from root.
+// CONTRACT-QUESTION: contract 01b §3 to §7 gives no grammar for `package`,
+// `repo`, `asset`, `python`, `entrypoint`, `state_dir_env`, a value and the
+// key after `secret:`. It gives no cap for the counts below. It does not say
+// if the count of an identity or of a description comes before or after the
+// collapse of white space. §1 makes root accept each TOML file that the
+// validator accepts. The TOML path thus takes the strict reading: each rule
+// of root below. The YAML path applies none of them. The numbers are those
+// of the Python TOML path, which copies them from root. A change costs one
+// constant or one grammar here, its twin in the Python TOML path and the
+// vectors of that rule in `server_file.toml`.
 
 /// The largest count of tools in a TOML file.
 const TOOLS_MAX: usize = 200;
