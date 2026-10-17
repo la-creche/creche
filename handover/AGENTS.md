@@ -519,11 +519,11 @@ that wants a refusal changes one field.
 - `stage7-releases.md` §2.4 step 3 says that root reads only the exit
   status of the verifier, and §2.6 lists the four reasons of P6. Neither
   section gives a reason to an exit status. Through `systemd-run --wait`,
-  a child that does not start and a child past the time limit of its unit
-  end with the status 1, as a refused signature does. Root checks the two
-  program files before each child, and its own time limit ends first. Each
-  other status of child 2 that is not 0 is a refused signature
-  (`executor/provenance.py`).
+  a child that does not start ends with the status 1. A child past the
+  time limit of its unit ends with the same status, as a refused signature
+  does. Root checks the two program files before each child, and its own
+  time limit ends first. Each other status of child 2 that is not 0 is a
+  refused signature (`executor/provenance.py`).
 - Contract 06 §1 rule 10 names no file of a Cargo workspace. Three files
   move a binary component: `rust/Cargo.lock`, `rust/Cargo.toml` and
   `rust/rust-toolchain.toml`. A `rust/.cargo/config.toml` moves none
