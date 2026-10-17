@@ -162,7 +162,7 @@ def test_no_default_differs_from_an_earlier_value() -> None:
             if one.key in before and before[one.key] != one.value
         )
 
-    assert changed == [], "a new value takes a new key"
+    assert changed == [], "another value needs another key"
 
 
 def test_a_copy_of_example_env_names_each_required_key(tmp_path: Path) -> None:

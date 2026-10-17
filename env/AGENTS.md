@@ -28,26 +28,28 @@ holds that the wheel has the three files.
    variable `AGENT_SITE_FILE` names another one in a test.
 4. The `.env` overrides a default, key by key. It also sets each required
    key. A key outside the catalog is refused.
-5. A secret never goes into one of the files. A value that a program writes
-   for another program is state, and it stays out too. A bash script parses
-   no file of the product: it calls the command.
+5. No file of the catalog holds a secret. No file of the catalog holds
+   state, such as a value that one program writes for another program to
+   read. A bash script parses no file of the product: it calls the command.
 6. A file outside the catalog is read in the grammar-only mode: the rules of
    a `.env`, with no catalog and no reference. `creche-env raw` reads one.
 
 ## The grammar
 
-1. A file is UTF-8 with no byte order mark, and it has 64 KiB at most.
-2. Each line ends with LF, and a file that is not empty ends with LF. A CR
-   is refused.
-3. A line is empty, a comment or an assignment. A comment starts with `#`
-   in the first column.
+1. The bytes of a file are UTF-8, and the file does not start with a byte
+   order mark. A file has 64 KiB or less.
+2. The reader splits a file at each LF. The last byte of a file that has
+   bytes is an LF. A file holds no CR.
+3. Each line has one of three kinds: an empty line, a comment or an
+   assignment. The `#` of a comment is the first character of its line.
 4. After its `#`, a comment holds no backslash and no ASCII control
    character. A character outside ASCII is permitted.
-5. An assignment is `KEY=VALUE`, with no space around `=`. A key matches
-   `[A-Z][A-Z0-9_]{0,63}`.
-6. A value holds printable ASCII and the space. It holds no quote, no
-   backslash and no `#`. It does not start or end with a space.
-7. A key is on one line of a file at most.
+5. An assignment has the key, then `=`, then the value. No space is next to
+   the `=`. The pattern of a key is `[A-Z][A-Z0-9_]{0,63}`.
+6. Each character of a value is a printable ASCII character or the space.
+   Four of those characters are not permitted: `"`, `'`, the backslash and
+   `#`. The first and the last character of a value are not a space.
+7. One file sets a key one time at most.
 8. A value of a `.env` is not empty and holds no `$`. To take the default,
    remove the line.
 9. A value of `default.env` can hold `${KEY}`, the value of another
@@ -63,17 +65,17 @@ The reader applies these steps in this order:
 3. Check each required key. Each absent required key is a fault, and the
    reader names each one.
 4. Replace each `${home:KEY}`. The password database gives the home.
-5. Replace each `${KEY}`. A cycle is refused. A chain has 8 references at
-   most.
+5. Replace each `${KEY}` with the value of KEY. The reader refuses a cycle,
+   and a chain of more than 8 references.
 
 The result holds each catalog key that has a value. A program gives the
 result to its typed config, and the type checks each value.
 
 ## The faults
 
-A fault names the file, the line and the key. It never names a value. Line
-0 is a fault of the whole file. The command prints one line for each fault
-and exits with status 78.
+A fault gives three things: the file, the line and the key. It never shows
+a value. Line 0 is a fault of the whole file. The command prints one line
+for each fault and exits with status 78.
 
 | Fault | Cause |
 |---|---|
@@ -81,7 +83,7 @@ and exits with status 78.
 | `not-utf8` | A file is not UTF-8. |
 | `byte-order-mark` | A file starts with a byte order mark. |
 | `carriage-return` | A line holds a CR. |
-| `no-final-newline` | A file that is not empty does not end with LF. |
+| `no-final-newline` | The last byte of a file that has bytes is not an LF. |
 | `not-key-value` | A line has no `=`. A line of `example.env` is not a comment. A comment holds a backslash or an ASCII control character. |
 | `bad-key` | A key is not in the grammar. |
 | `bad-value` | A value is not in the grammar. A home is not a value of a `.env`. |
@@ -123,10 +125,10 @@ command prints `<file>: cannot be read: <reason>` and exits with status 78.
 7. A change of the grammar or of a layer changes the vectors of
    `envfile.*` in the same pull request. The Rust reader must give the same
    result for each vector.
-8. A component that installs `creche-env` bundles `env`. A change here then
-   moves the tag of that component. No component installs the package yet,
-   so a change here moves no tag. A change of `uv.lock` moves the tag of
-   each venv component.
+8. No component installs the package yet. A change in this directory thus
+   mints no tag. A component that installs the package must bundle `env`.
+   A change here then mints a tag for that component. Each change of
+   `uv.lock` mints a tag for each venv component.
 
 ## Known gaps
 
@@ -135,9 +137,16 @@ command prints `<file>: cannot be read: <reason>` and exits with status 78.
 - No program applies the rule of the environment yet. `check_environment`
   holds the rule for a program of root. The command reads no catalog key
   from its environment.
-- The path of the site file has two sources: `envfile.SITE_FILE` and
-  `handover.site.SITE_FILE`. The second one goes when `handover` reads the
-  site file through this package.
+- Some values and one check of `envfile` have a second source in
+  `handover.site`. The packet `handover-site-keys` moves `handover` to this
+  package and removes each copy there:
+  1. `SITE_FILE` and `SITE_FILE_ENV`.
+  2. `MAX_BYTES`, which is `MAX_SITE_BYTES` there.
+  3. `ROOT_UID`.
+  4. `OTHERS_WRITE_BITS`, which is `OTHERS_WRITE` there.
+  5. `check_trust`, which is `_require_trusted` there.
+- `chaperone.site.SITE_FILE` is a third source of the path of the site
+  file. The packet `chaperone-site-keys` removes it.
 - CONTRACT-QUESTION: no contract text gives these readings, and each one
   is the most strict. A change costs the reader, its vectors and the Rust
   reader.

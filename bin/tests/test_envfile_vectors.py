@@ -5,11 +5,11 @@ reads the env files only through the command, so this module runs the
 command on each vector:
 
 1. `envfile.layer`: `check` with the pair and the `.env` of the vector, then
-   `get` for each catalog key of an accepted vector. The vector gives the
-   password database as a map, so the test runs `main` in this process with
-   that map in place of `pwd.getpwnam`. The command reads no catalog key
-   from its environment, so a vector that only the environment refuses
-   exits with 0 here.
+   `get` for each catalog key of an accepted vector. A vector holds the
+   home of each account it knows, so the test runs `main` in this process,
+   with a lookup of those homes in place of `pwd.getpwnam`. The command
+   reads no catalog key from its environment, so a vector that only the
+   environment refuses exits with 0 here.
 2. `envfile.raw`: `raw` for each key of an accepted vector, and for one key
    of a refused vector.
 3. The bash path: `creche_env_check` and `creche_env_get` of
