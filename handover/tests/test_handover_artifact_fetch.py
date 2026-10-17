@@ -21,14 +21,23 @@ import stat
 import subprocess
 import sys
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import cast
 
 import handover.artifacts as pure_half
 import pytest
+from handover.allocate import TAG_FORMAT, TAG_RE
 from handover.artifacts import CODE_HOST, HTTPS, asset_names
-from handover.catalog import ARCHIVE_MAX_BYTES, BUNDLE_MAX_BYTES, CATALOG, CATALOG_BY_NAME, Repo
+from handover.catalog import (
+    ARCHIVE_MAX_BYTES,
+    BUNDLE_MAX_BYTES,
+    CATALOG,
+    CATALOG_BY_NAME,
+    Action,
+    Kind,
+    Repo,
+)
 from handover.corpus import CappedRunFn, CorpusReport, run_capped
 from handover.corpus import artifacts as fetching
 from handover.corpus.artifacts import (
@@ -49,6 +58,7 @@ from handover.executor.mcpbuild import CURL_FLAGS, MAX_ASSET_BYTES
 from handover.executor.request import parse_request
 from handover.executor.source import CURL, CURL_PROTOCOL_FLAGS
 from handover.follow import MARKER_DIR
+from handover.resolve import ResolvedComponent
 from handover.site import SITE_FILE_ENV
 from handover_bin_fixtures import BINARY_NAME, binary_manifest_text, use_binary_catalog
 from handover_fixtures import manifest_text, write_manifest
@@ -318,6 +328,45 @@ def test_a_held_file_outside_its_limit_is_fetched_again(
     assert (_tag_dir(store) / NAMES.bundle).read_bytes() == BUNDLE_BYTES
 
 
+def test_with_no_time_left_two_members_give_one_line(
+    store: Path, curl: _Curl, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fetch stops at the first member that has no time left."""
+    other = "caregiver"
+    monkeypatch.setitem(CATALOG_BY_NAME, other, replace(CATALOG_BY_NAME[other], kind=Kind.BINARY))
+    tags = {other: f"{other}-v{VERSION}", BINARY_NAME: TAG}
+
+    report = _fetch(store, curl, left=0.5, tags=tags)
+
+    assert curl.calls == []
+    assert report == ArtifactReport(frozenset(), (NO_TIME,))
+    assert not _tag_dir(store).exists()
+
+
+def test_a_name_that_is_not_in_the_catalog_is_no_line_and_no_child(
+    store: Path, curl: _Curl
+) -> None:
+    report = _fetch(store, curl, tags={"unknown": "unknown-v1.0.0"})
+
+    assert curl.calls == []
+    assert report == ArtifactReport(frozenset(), ())
+
+
+def test_a_tag_of_the_resolver_is_a_tag_of_the_allocator() -> None:
+    """The follower, a request and root build a tag with
+    `resolve.TAG_FORMAT`. The fetch reads it with the pattern of the
+    allocator, and the prune builds one with `allocate.TAG_FORMAT`. Both
+    formats give one tag, so no binary member reads as a tag of another
+    shape."""
+    for row in CATALOG:
+        made = ResolvedComponent(row.name, Action.DEPLOY, None, VERSION).tag()
+        matched = TAG_RE.fullmatch(made or "")
+
+        assert made == TAG_FORMAT.format(component=row.name, version=VERSION)
+        assert matched is not None
+        assert matched.group(1) == row.name
+
+
 def test_an_exit_status_is_the_one_value_of_the_child_in_a_line(store: Path, curl: _Curl) -> None:
     curl.code = 63
 
@@ -409,6 +458,19 @@ def test_the_modes_are_exact_whatever_the_umask(store: Path, curl: _Curl) -> Non
 
     for name in (NAMES.archive, NAMES.bundle):
         assert _mode(_tag_dir(store) / name) == FILE_MODE, name
+
+
+def test_absent_parents_of_the_store_get_the_mode_whatever_the_umask(
+    home: Path, store: Path, curl: _Curl
+) -> None:
+    old = os.umask(0)
+    try:
+        _fetch(store, curl)
+    finally:
+        os.umask(old)
+
+    for path in (home / ".local", home / ".local" / "state", store.parent):
+        assert _mode(path) == DIR_MODE, path
 
 
 def test_a_directory_of_another_mode_gets_the_mode_and_no_child(store: Path, curl: _Curl) -> None:
@@ -838,6 +900,25 @@ def test_a_request_fetches_both_files_of_a_binary_component_that_deploys(
     assert f"note: fetched {NAMES.bundle} of {TAG}\n" in err
     argv = curl.calls[0][0]
     assert argv[argv.index("--max-time") + 1] == str(min(cli.REQUEST_FETCH_S, CHILD_MAX_S))
+
+
+def test_a_request_fetches_no_binary_component_that_does_not_deploy(
+    tmp_path: Path, home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`noticeboard` is live at its newest tag, so it is `unchanged` in the
+    resolution of a request for `chaperone`."""
+    del home
+    desk = _desk(tmp_path, (BINARY_NAME, "chaperone"))
+    _git(desk.control, "tag", f"chaperone-v{VERSION}")
+    curl = _empty_curl()
+    _publish(curl)
+    monkeypatch.setattr(fetching, "run_capped", curl)
+    monkeypatch.setattr(cli, "refresh", _Polls(desk, curl))
+
+    assert cli.main(["request", "chaperone", *desk.options]) == cli.EXIT_OK
+
+    assert curl.calls == []
+    assert _filed(desk) == [{"chaperone": "latest"}]
 
 
 def test_a_request_whose_fetch_fails_still_files_and_says_so(

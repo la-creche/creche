@@ -384,6 +384,23 @@ def test_a_set_with_no_binary_member_gets_the_decision_and_the_lines_of_today(
     assert "waits" not in cast("dict[str, object]", written)
 
 
+def test_a_run_with_no_binary_member_reads_no_store(
+    today: _Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No fetch, no prune and no read of the site file for the store."""
+
+    def no_store() -> Path:
+        raise AssertionError("the run asked for the path of the store")
+
+    monkeypatch.setattr(cli, "artifact_store", no_store)
+    today.install(BOARD, LIVE)
+    today.tag(BOARD, NEXT)
+
+    assert today.follow(BOARD) == cli.EXIT_OK
+    assert today.follow(BOARD) == cli.EXIT_OK
+    assert today.filed() == [{BOARD: NEXT}]
+
+
 # -- the marker -----------------------------------------------------------------
 
 ASKED = {BOARD: NEXT, PEP: NEXT}
