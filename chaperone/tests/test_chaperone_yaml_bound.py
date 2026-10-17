@@ -51,8 +51,13 @@ CHILD_RESIDENT_BYTES: Final = 512 * 1024 * 1024
 CHILD_PAST_MEMORY: Final = 9
 
 #: The status of the child when the thread cannot read the largest resident
-#: memory. The thread then writes the fault as one line on standard error.
+#: memory. The thread then writes `NO_PEAK_LINE` and the fault as one line
+#: on standard error.
 CHILD_NO_PEAK: Final = 10
+
+#: The start of the line that the thread writes when it cannot read the
+#: largest resident memory. The `repr` of the fault follows it.
+NO_PEAK_LINE: Final = "the watch cannot read the peak: "
 
 #: The levels of `_doubling`, and the merge keys of `_itself`. A reader with
 #: no limit makes more than 16,000,000 copies from each of the two.
@@ -107,7 +112,7 @@ def watch():
             time.sleep(0.02)
         status = {CHILD_PAST_MEMORY}
     except BaseException as fault:
-        os.write(2, f"the watch cannot read the peak: {{fault!r}}\\n".encode())
+        os.write(2, f"{NO_PEAK_LINE}{{fault!r}}\\n".encode())
     finally:
         os._exit(status)
 
@@ -220,6 +225,16 @@ def _run_child(
     )
 
 
+def _waits_at_the_read(program: str, before: str = "") -> str:
+    """`program` with the lines `before`, then a wait with no end, in front
+    of its read. Only the thread can then end the child."""
+    read = "reader, path = "
+    waits = program.replace(read, f"{before}threading.Event().wait()\n{read}", 1)
+    assert waits.count("Event().wait()") == 1
+
+    return waits
+
+
 @pytest.mark.slow
 @pytest.mark.usefixtures("fake_sops")
 @pytest.mark.parametrize("text", KINDS)
@@ -250,21 +265,33 @@ def test_the_child_watches_only_its_own_memory(tmp_path: Path) -> None:
 
 
 @pytest.mark.slow
+def test_a_child_past_its_limit_ends_with_its_status(tmp_path: Path) -> None:
+    """The thread reads the largest resident memory of the child itself, in
+    bytes. The child holds a value past its resident limit, and the thread
+    ends it with `CHILD_PAST_MEMORY`. On Linux the thread reads `VmHWM`, so
+    this test fails there for a thread that reads no peak or reads it in
+    KiB."""
+    child = _waits_at_the_read(CHILD, f"held = bytearray({HELD_BYTES})\n")
+
+    done = _run_child(child, "roster", _file(tmp_path, _itself(LEVELS)))
+
+    assert done.returncode == CHILD_PAST_MEMORY, done.stderr
+
+
+@pytest.mark.slow
 def test_a_watch_that_cannot_read_the_peak_stops_the_child(tmp_path: Path) -> None:
     """The thread fails closed. When it cannot read the largest resident
     memory, the child ends with `CHILD_NO_PEAK` and names the fault on its
-    standard error. The main thread of this child waits with no end before
-    its read, so only the thread can end the child."""
+    standard error."""
+    fault = OSError("no peak")
     head = "def peak_bytes():\n"
-    read = "reader, path = "
-    child = CHILD.replace(head, head + '    raise OSError("no peak")\n', 1)
-    child = child.replace(read, "threading.Event().wait()\n" + read, 1)
-    assert child.count("no peak") == child.count("Event().wait()") == 1
+    child = _waits_at_the_read(CHILD.replace(head, f"{head}    raise {fault!r}\n", 1))
+    assert child.count(repr(fault)) == 1
 
     done = _run_child(child, "roster", _file(tmp_path, _itself(LEVELS)))
 
     assert done.returncode == CHILD_NO_PEAK
-    assert done.stderr == "the watch cannot read the peak: OSError('no peak')\n"
+    assert done.stderr == f"{NO_PEAK_LINE}{fault!r}\n"
 
 
 #: A text with a character that PyYAML does not read. PyYAML raises on it
