@@ -32,7 +32,7 @@ from .catalog import (
 )
 from .contracts import ContractRow, Unprovided, build_table
 from .errors import Refusal, RefusalCode, safe_token
-from .manifest import MANIFEST_FILENAME, MANIFEST_FILENAME_YAML, ComponentManifest
+from .manifest import EITHER_MANIFEST_NAME, ComponentManifest
 from .order import build_graph, deploy_order
 from .state import VERSION_RE, ReleaseState, SourceFacts
 
@@ -123,7 +123,7 @@ def _check_requested(name: str, manifests: dict[str, ComponentManifest]) -> None
         raise Refusal(RefusalCode.REQUEST, "request", f"{name} never releases (contract 06 §6)")
 
     if name not in manifests:
-        detail = f"{name} has no {MANIFEST_FILENAME} or {MANIFEST_FILENAME_YAML} under any root"
+        detail = f"{name} has no {EITHER_MANIFEST_NAME} under any root"
         raise Refusal(RefusalCode.REQUEST, "request", detail)
 
 

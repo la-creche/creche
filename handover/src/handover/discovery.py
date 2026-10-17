@@ -26,6 +26,7 @@ from pathlib import Path
 from .catalog import ARRIVING, CATALOG, CATALOG_BY_NAME, RETIRING, Releases
 from .errors import Refusal, RefusalCode, safe_token
 from .manifest import (
+    EITHER_MANIFEST_NAME,
     MANIFEST_FILENAME,
     MANIFEST_FILENAME_YAML,
     MAX_MANIFEST_BYTES,
@@ -43,7 +44,6 @@ MAX_MANIFEST_FILES = 32
 
 #: The two names, for the text of a refusal.
 _BOTH_NAMES = f"{MANIFEST_FILENAME} and {MANIFEST_FILENAME_YAML}"
-_EITHER_NAME = f"{MANIFEST_FILENAME} or {MANIFEST_FILENAME_YAML}"
 
 #: Deep enough for `playpen/bridge/...`, shallow enough that a crafted tree
 #: cannot make the walk expensive.
@@ -248,7 +248,7 @@ def read_one(root: Path, name: str) -> FoundManifest:
 
     path = directory / markup.file_name
     if not path.exists():
-        detail = f"no {_EITHER_NAME} under any root: {name}"
+        detail = f"no {EITHER_MANIFEST_NAME} under any root: {name}"
         raise Refusal(RefusalCode.CATALOG, "contract 06 §1", detail)
 
     text = _read_manifest_file(path, subject, markup)
@@ -297,7 +297,7 @@ def require_complete(manifests: ManifestSet) -> None:
     if not manifests.missing:
         return
 
-    detail = f"no {_EITHER_NAME} under any root: {', '.join(manifests.missing)}"
+    detail = f"no {EITHER_MANIFEST_NAME} under any root: {', '.join(manifests.missing)}"
     raise Refusal(RefusalCode.CATALOG, "contract 06 §1", detail)
 
 

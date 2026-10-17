@@ -92,6 +92,9 @@ ANY_TEXT_RE = re.compile(r".{1,512}", re.DOTALL)
 MANIFEST_FILENAME = "component.toml"
 MANIFEST_FILENAME_YAML = "component.yaml"
 
+#: The two names in the text of a refusal for a manifest that no root holds.
+EITHER_MANIFEST_NAME = f"{MANIFEST_FILENAME} or {MANIFEST_FILENAME_YAML}"
+
 REPO_ROOT_PATH = "."
 
 #: The path segment that climbs out of a directory.
