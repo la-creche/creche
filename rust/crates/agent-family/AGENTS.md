@@ -92,6 +92,10 @@ gets each rule of root that the YAML path does not hold:
 A YAML server file keeps the rules of the Python YAML path. The vectors of
 `server_file.toml` hold each rule at its limit and one past it.
 
+`TryFrom<RawServer>` and the `Deserialize` of `Server` name no markup. Each
+one applies the grammar of a TOML file. Only `Server::from_raw` with
+`Markup::Yaml` applies the YAML rules.
+
 ## Rules
 
 1. Change no rule here without a vector. `tests/vectors.rs` walks each

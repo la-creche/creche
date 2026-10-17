@@ -7,7 +7,8 @@
 //!    `RawServer::from_toml` reads the bytes of a `server.toml` into it.
 //! 2. [`Server`] holds a file that obeys each rule that one file can show. The
 //!    one way to a `Server` is [`Server::from_raw`], with the markup of the
-//!    file. `TryFrom<RawServer>` is that conversion for a YAML file.
+//!    file. `TryFrom<RawServer>` is that conversion for a TOML file, so a
+//!    caller that names no markup gets the strict grammar.
 //!
 //! The conversion reports each violation, with the severity, the location and
 //! the message of the Python validator `agent_family`. One rule needs more
@@ -1724,10 +1725,12 @@ impl Server {
 impl TryFrom<RawServer> for Server {
     type Error = Refused;
 
-    /// Checks each rule that one YAML file decides: [`Server::from_raw`]
-    /// with [`Markup::Yaml`].
+    /// Checks each rule that one TOML file decides: [`Server::from_raw`]
+    /// with [`Markup::Toml`]. A caller that names no markup thus gets the
+    /// strict grammar, also through the `Deserialize` of `Server`. Only a
+    /// call of `from_raw` with [`Markup::Yaml`] gets the YAML rules.
     fn try_from(raw: RawServer) -> Result<Self, Refused> {
-        Self::from_raw(raw, Markup::Yaml)
+        Self::from_raw(raw, Markup::Toml)
     }
 }
 
@@ -2311,7 +2314,7 @@ mod tests {
     }
 
     fn locs_of(raw: RawServer) -> Vec<String> {
-        Server::try_from(raw)
+        Server::from_raw(raw, Markup::Yaml)
             .err()
             .map(|refused| refused.into_issues())
             .unwrap_or_default()
@@ -2387,7 +2390,7 @@ mod tests {
 
     #[test]
     fn a_minimal_file_is_a_server() {
-        let server = Server::try_from(minimal("web-search")).unwrap();
+        let server = Server::from_raw(minimal("web-search"), Markup::Yaml).unwrap();
         assert_eq!(server.name().as_str(), "web-search");
         assert_eq!(server.install().pin(), &Pin::AgentMcp);
         assert_eq!(server.run().state_dir(), &StateDir::None);
@@ -2403,7 +2406,7 @@ mod tests {
         raw.run
             .env
             .insert("A_URL".to_owned(), "https://example.invalid".to_owned());
-        let server = Server::try_from(raw).unwrap();
+        let server = Server::from_raw(raw, Markup::Yaml).unwrap();
         let values: Vec<&EnvValue> = server.run().env().values().collect();
         assert_eq!(
             values,
@@ -2439,7 +2442,7 @@ mod tests {
 
     /// The message of each issue of a file that the conversion refuses.
     fn msgs_of(raw: RawServer) -> Vec<String> {
-        Server::try_from(raw)
+        Server::from_raw(raw, Markup::Yaml)
             .err()
             .map(|refused| refused.into_issues())
             .unwrap_or_default()
@@ -2474,7 +2477,7 @@ mod tests {
 
         let mut raw = minimal("example");
         raw.run.env.insert("A".repeat(64), "x".to_owned());
-        assert!(Server::try_from(raw).is_ok());
+        assert!(Server::from_raw(raw, Markup::Yaml).is_ok());
     }
 
     #[test]
@@ -2496,7 +2499,7 @@ mod tests {
 
         let mut raw = minimal("example");
         raw.tools = vec![tool("a".repeat(64))];
-        assert!(Server::try_from(raw).is_ok());
+        assert!(Server::from_raw(raw, Markup::Yaml).is_ok());
     }
 
     /// Each text of `accepted` holds the grammar, and each text of `refused`
@@ -2664,8 +2667,27 @@ mod tests {
         );
         let mut raw = past_root();
         raw.shared_secrets.truncate(1);
-        let server = Server::from_raw(raw.clone(), Markup::Yaml).unwrap();
-        assert_eq!(Server::try_from(raw), Ok(server));
+        assert!(Server::from_raw(raw, Markup::Yaml).is_ok());
+    }
+
+    /// The `TryFrom` and the `Deserialize` of `Server` name no markup, and
+    /// each one takes the grammar of root.
+    #[test]
+    fn a_conversion_that_names_no_markup_gets_the_grammar_of_root() {
+        let mut past = past_root();
+        past.shared_secrets.truncate(1);
+        let strict = Server::from_raw(past.clone(), Markup::Toml);
+        assert!(strict.is_err());
+        assert!(Server::from_raw(past.clone(), Markup::Yaml).is_ok());
+        assert_eq!(Server::try_from(past.clone()), strict);
+        let value = serde_json::to_value(&past).unwrap();
+        assert!(serde_json::from_value::<Server>(value).is_err());
+
+        let plain = minimal("web-search");
+        let server = Server::from_raw(plain.clone(), Markup::Toml).unwrap();
+        assert_eq!(Server::try_from(plain.clone()), Ok(server.clone()));
+        let value = serde_json::to_value(&plain).unwrap();
+        assert_eq!(serde_json::from_value::<Server>(value).unwrap(), server);
     }
 
     #[test]
