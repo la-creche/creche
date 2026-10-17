@@ -47,6 +47,13 @@
 #   /srv/agents/state/rework/hooks.env, after which this fallback reads
 #   nothing.
 #
+# creche_env_get KEY [OPTION ...] and creche_env_check [OPTION ...]
+#   Run `creche-env get` or `creche-env check` of <checkout>/.venv, where
+#   <checkout> is the tree that holds this file (env/AGENTS.md). OPTION goes
+#   to the command, for example `--env FILE`. No bash code parses the files.
+#   A fault prints one line on stderr and returns 78, and so does a tree
+#   with no command.
+#
 # Never echo a secret: callers pass VALUE in, this file never logs it. The
 # caller is responsible for printing key NAMES only, e.g.:
 #   echo "keys now present: $(cut -d= -f1 "$ENV_FILE" | tr '\n' ' ')"
@@ -104,4 +111,30 @@ envfile_hook_value() {
   printf 'DEPRECATED: %s came from %s. Nothing writes that file any more; run bin/rework-cutover.sh up to put it in %s.\n' \
     "$key" "$old" "$hooks" >&2
   printf '%s' "$value"
+}
+
+# The status of a fault of the env files, and of an absent command.
+CRECHE_ENV_FAULT=78
+
+_creche_env_program() {
+  local checkout
+  checkout="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)" || return "$CRECHE_ENV_FAULT"
+  if [[ ! -x "$checkout/.venv/bin/creche-env" ]]; then
+    printf 'creche-env: %s/.venv/bin/creche-env is no program\n' "$checkout" >&2
+    return "$CRECHE_ENV_FAULT"
+  fi
+
+  printf '%s/.venv/bin/creche-env' "$checkout"
+}
+
+creche_env_get() {
+  local program
+  program="$(_creche_env_program)" || return "$CRECHE_ENV_FAULT"
+  "$program" get "$@"
+}
+
+creche_env_check() {
+  local program
+  program="$(_creche_env_program)" || return "$CRECHE_ENV_FAULT"
+  "$program" check "$@"
 }
