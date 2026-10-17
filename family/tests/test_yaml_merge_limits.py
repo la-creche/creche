@@ -274,7 +274,15 @@ CHILD_BYTES: Final = 256 * 1024 * 1024
 #: Reads the text on its standard input with both readers. Prints the
 #: messages of each report as one line of JSON, or `null` for a text that
 #: the reader reads. The argument is the memory limit of the process, in
-#: bytes. The process ends with status 3 when it passes the limit.
+#: bytes. The process ends with status 3 when its peak resident size passes
+#: the limit. It ends with status 4 when it cannot read that peak, and it
+#: writes the fault as one line on its standard error.
+#:
+#: The peak is the peak of the process itself. On Linux, `ru_maxrss` also
+#: holds the peak of the memory that the process had before its exec, which
+#: is the memory of its parent. `VmHWM` of `/proc/self/status` holds only
+#: the memory that the process has after its exec. On macOS, `ru_maxrss`
+#: holds only the memory of the process itself.
 CHILD: Final = """
 import json
 import os
@@ -287,15 +295,24 @@ LIMIT = int(sys.argv[1])
 
 
 def peak_bytes():
+    if sys.platform == "linux":
+        with open("/proc/self/status", "rb") as status:
+            line = next(row for row in status if row.startswith(b"VmHWM:"))
+        return int(line.split()[1]) * 1024
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return peak if sys.platform == "darwin" else peak * 1024
 
 
 def watch():
-    while peak_bytes() <= LIMIT:
-        time.sleep(0.01)
-
-    os._exit(3)
+    status = 4
+    try:
+        while peak_bytes() <= LIMIT:
+            time.sleep(0.01)
+        status = 3
+    except BaseException as fault:
+        os.write(2, f"the watch cannot read the peak: {fault!r}\\n".encode())
+    finally:
+        os._exit(status)
 
 
 try:
@@ -314,16 +331,44 @@ for parse in (parse_family, parse_server):
 """
 
 
-def _in_child(text: str) -> list[list[str] | None]:
-    """The answer of `parse_family` and of `parse_server` for `text`, from a
-    child process inside the two limits."""
-    done = subprocess.run(
-        [sys.executable, "-c", CHILD, str(CHILD_BYTES)],
+#: The size of the value that `HOLDER` holds: two times the memory limit of
+#: the child.
+HELD_BYTES: Final = 2 * CHILD_BYTES
+
+#: Holds a value of `HELD_BYTES` while it runs the command of its arguments
+#: with its own standard streams, and ends with the status of that command.
+#: `bytearray` writes each byte of the value, so the peak resident size of
+#: this process passes the memory limit of the child. The value is not in
+#: the test process, so the peak of the test process does not change. The
+#: command gets half of the time limit of the child, so this process stops
+#: the command before the test stops this process.
+HOLDER: Final = f"""
+import subprocess
+import sys
+
+held = bytearray({HELD_BYTES})
+sys.exit(subprocess.run(sys.argv[1:], timeout={CHILD_SECONDS / 2}).returncode)
+"""
+
+
+def _run_child(program: str, text: str, *parent: str) -> subprocess.CompletedProcess[bytes]:
+    """Runs `program` in a child process inside the time limit, with the
+    memory limit as its argument and `text` on its standard input. `parent`
+    is the command of a process that starts the child, or no word: then this
+    process starts it."""
+    return subprocess.run(
+        [*parent, sys.executable, "-c", program, str(CHILD_BYTES)],
         input=text.encode("utf-8"),
         capture_output=True,
         timeout=CHILD_SECONDS,
         check=False,
     )
+
+
+def _in_child(text: str, *parent: str) -> list[list[str] | None]:
+    """The answer of `parse_family` and of `parse_server` for `text`, from a
+    child process inside the two limits. `parent` is as for `_run_child`."""
+    done = _run_child(CHILD, text, *parent)
     assert done.returncode == 0, done.stderr.decode("utf-8", "replace")
 
     return [json.loads(line) for line in done.stdout.decode("utf-8").splitlines()]
@@ -344,6 +389,29 @@ def test_a_text_far_past_the_entry_limit_is_refused_in_bounds(
     build: Callable[[Reader, int], str], size: int
 ) -> None:
     assert _in_child(build(FAMILY, size)) == [[TOO_MANY], [TOO_MANY]]
+
+
+def test_the_child_watches_only_its_own_memory() -> None:
+    """The parent of the child holds a peak past the memory limit of the
+    child while the child runs. On Linux, the `ru_maxrss` of the child holds
+    the memory of its parent from before its exec. The watch of the child
+    does not count that memory."""
+    holder = (sys.executable, "-c", HOLDER)
+
+    assert _in_child(_levels(FAMILY, FAR), *holder) == [[TOO_MANY], [TOO_MANY]]
+
+
+def test_a_watch_that_cannot_read_the_peak_stops_the_child() -> None:
+    """The watch fails closed. When it cannot read the peak, the child ends
+    with status 4 and names the fault on its standard error."""
+    head = "def peak_bytes():\n"
+    child = CHILD.replace(head, head + '    raise OSError("no peak")\n', 1)
+    assert child != CHILD
+
+    done = _run_child(child, "")
+
+    assert done.returncode == 4
+    assert done.stderr == b"the watch cannot read the peak: OSError('no peak')\n"
 
 
 def test_a_refused_character_is_a_report_in_a_child_process() -> None:
