@@ -13,6 +13,7 @@ one gives the fetch a fake `curl`, as `refresh` takes a fake `git`
 
 from __future__ import annotations
 
+import errno
 import math
 import os
 import shutil
@@ -33,7 +34,9 @@ from handover.corpus.artifacts import (
     CHILD_MAX_S,
     DIR_MODE,
     FILE_MODE,
+    LOCKED,
     NO_TIME,
+    NOT_LOCKED,
     ROOT_REFUSAL,
     ArtifactReport,
     artifact_store,
@@ -426,6 +429,43 @@ def test_a_link_in_place_of_a_store_directory_is_a_line_and_no_child(
     assert curl.calls == []
     assert report == ArtifactReport(frozenset(), (f"{TAG}: the store directory could not be made",))
     assert list(elsewhere.iterdir()) == []
+
+
+def test_a_second_fetch_of_one_tag_starts_no_child(store: Path, curl: _Curl) -> None:
+    """A run of the follower and a request can fetch one tag at one time.
+    The second fetch starts while the child of the first one writes. It gets
+    one line, and the file of the first child keeps its name."""
+    second = _Curl(serves=dict(curl.serves))
+    inner: list[ArtifactReport] = []
+
+    def first(argv: list[str], timeout_s: float, max_file_bytes: int) -> int:
+        if not inner:
+            inner.append(_fetch(store, second))
+
+        return curl(argv, timeout_s, max_file_bytes)
+
+    deadline = fetching.monotonic() + LATER
+    report = fetch_artifacts({BINARY_NAME: TAG}, store, deadline, run=first, euid=1000)
+
+    assert inner == [ArtifactReport(frozenset(), (LOCKED.format(tag=TAG),))]
+    assert second.calls == []
+    assert report.ready == frozenset({BINARY_NAME})
+    assert (_tag_dir(store) / NAMES.archive).read_bytes() == ARCHIVE_BYTES
+    assert (_tag_dir(store) / NAMES.bundle).read_bytes() == BUNDLE_BYTES
+
+
+def test_a_lock_that_fails_is_a_line_and_no_child(
+    store: Path, curl: _Curl, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_lock(_fd: int, _operation: int) -> None:
+        raise OSError(errno.ENOLCK, "no lock")
+
+    monkeypatch.setattr(fetching.fcntl, "flock", no_lock)
+
+    report = _fetch(store, curl)
+
+    assert curl.calls == []
+    assert report == ArtifactReport(frozenset(), (NOT_LOCKED.format(tag=TAG),))
 
 
 def test_a_site_file_with_no_owner_starts_no_child(

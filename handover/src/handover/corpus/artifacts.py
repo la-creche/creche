@@ -13,7 +13,7 @@ operator compute one path. Each directory of the store has the mode 0700 and
 each file the mode 0600, whatever the umask. Root trusts no name and no mode
 of the store, and it checks both.
 
-Five rules hold its shape:
+Six rules hold its shape:
 
 1. **It refuses to run as root.** The store is the operator's directory, and
    root writes no file there. A run as root is one line and no child.
@@ -29,6 +29,10 @@ Five rules hold its shape:
    size limit of an asset is a flag of curl and a limit of the process too,
    because curl reads its flag against a length that a server need not
    send.
+6. **One fetch at a time writes in the directory of a tag.** The fetch
+   holds an exclusive `flock` on that directory while it writes there. A
+   second fetch of the same tag, for example a run of the follower beside a
+   `handover request`, gets one line and starts no child.
 
 A Release gets its assets some seconds after its tag. So an answer of the
 server with an error is the normal first answer for a new tag.
@@ -37,6 +41,7 @@ server with an error is the normal first answer for a new tag.
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import math
 import os
 import re
@@ -81,6 +86,9 @@ SERVER_ERROR_EXIT: Final = 22
 #: The open of a fetched file. No link is followed.
 _READ_FLAGS: Final = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
 
+#: The open of the directory of one tag, for its lock (rule 6).
+_LOCK_FLAGS: Final = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+
 ROOT_REFUSAL: Final = "refusing to fetch an artifact as root: the store is the operator's directory"
 PRUNE_ROOT_REFUSAL: Final = "refusing to prune the store as root: it is the operator's directory"
 NO_STORE: Final = "the site file gives no home of the operator, so the store has no path"
@@ -88,6 +96,8 @@ NO_TIME: Final = "no time is left in this run to fetch an artifact"
 NOT_ITS_TAG: Final = "{component}: the tag is not a tag of this component, so nothing is fetched"
 NO_URL: Final = "{component}: the site file gives no download URL, so nothing is fetched"
 NO_DIRECTORY: Final = "{tag}: the store directory could not be made"
+LOCKED: Final = "{tag}: another fetch holds the store directory"
+NOT_LOCKED: Final = "{tag}: the store directory could not be locked"
 FETCHED: Final = "fetched {asset} of {tag}"
 NO_START: Final = "{asset} of {tag}: the fetch could not start"
 TOO_LATE: Final = "{asset} of {tag}: the fetch passed its time limit"
@@ -206,13 +216,48 @@ def _complete(store: Path, want: _Want) -> bool:
 def _fetch_one(
     store: Path, want: _Want, deadline: float, runner: CappedRunFn, lines: list[str]
 ) -> _Step:
-    """Make the directories of `want`, then fetch each asset that is not
-    held. The first fault stops this component."""
+    """Make the directories of `want`, lock the directory of the tag, then
+    fetch each asset that is not held. The first fault stops this
+    component."""
     if not _make_directories(store, want):
         lines.append(NO_DIRECTORY.format(tag=want.tag))
 
         return _Step.FAILED
 
+    try:
+        fd = os.open(want.directory, _LOCK_FLAGS)
+    except OSError:
+        lines.append(NOT_LOCKED.format(tag=want.tag))
+
+        return _Step.FAILED
+
+    try:
+        fault = _lock_fault(fd)
+        if fault is not None:
+            lines.append(fault.format(tag=want.tag))
+
+            return _Step.FAILED
+
+        return _fetch_held(want, deadline, runner, lines)
+    finally:
+        os.close(fd)
+
+
+def _lock_fault(fd: int) -> str | None:
+    """None when this fetch holds the lock of the open directory, or the
+    fault line. The lock does not wait, and `close` releases it."""
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return LOCKED
+    except OSError:
+        return NOT_LOCKED
+
+    return None
+
+
+def _fetch_held(want: _Want, deadline: float, runner: CappedRunFn, lines: list[str]) -> _Step:
+    """Fetch each asset that is not held, under the lock of the directory."""
     for asset in want.assets:
         if _held(want.directory / asset.name, asset.max_bytes):
             continue

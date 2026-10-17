@@ -45,8 +45,10 @@ prints no gate id, because root alone computes `manifest_sha256`.
 `corpus/` runs `git fetch` in the corpus root, as the operator, before a
 request is filed. `corpus/artifacts.py` runs `curl` as the operator. It
 fetches the two assets of the Release of a binary component into the store
-below the home of the operator. The package refuses to run as root. Nothing
-in it raises. `chaperone/` never imports it, and neither does `requester/`.
+below the home of the operator. One fetch at a time writes in the directory
+of a tag: the fetch holds a lock on that directory. The package refuses to
+run as root. Nothing in it raises. `chaperone/` never imports it, and neither
+does `requester/`.
 
 `follow/` reads one ledger entry and the marker file, and it writes the
 marker file. The marker also holds the wait of each binary member. When the
