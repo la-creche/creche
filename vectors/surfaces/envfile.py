@@ -81,6 +81,11 @@ def _reversed_chain(count: int) -> str:
     return "".join(reversed(_chain(count).splitlines(keepends=True)))
 
 
+def _cycle(count: int) -> str:
+    """A cycle of `count` keys: `R0=${R1}`, and so on, to `R<count - 1>=${R0}`."""
+    return "".join(f"R{index}=${{R{(index + 1) % count}}}\n" for index in range(count))
+
+
 @dataclass(frozen=True)
 class Layer:
     """One input of `envfile.layer`, and the result that its list names."""
@@ -243,15 +248,26 @@ LAYERS: Final[tuple[Layer, ...]] = (
     Layer("cycle-below-a-key", NO, default=DEFAULTS + "A=${B}\nB=${C}\nC=${B}\n"),
     Layer("chain-of-nine", NO, default=_chain(9), example="", env=""),
     Layer("chain-of-nine-in-reverse", NO, default=_reversed_chain(9), example="", env=""),
+    Layer("cycle-longer-than-a-chain", NO, default=_cycle(10), example="", env=""),
     Layer("unknown-account", NO, homes=()),
     Layer("home-with-a-space-at-the-end", NO, homes=(("operator", "/home/operator "),)),
     Layer("home-with-a-number-sign", NO, homes=(("operator", "/home/#operator"),)),
     Layer("home-with-a-dollar", NO, homes=(("operator", "/home/${DATA_ROOT}"),)),
     Layer("empty-home", NO, homes=(("operator", ""),)),
     Layer(
+        "home-of-a-key-that-holds-a-reference",
+        NO,
+        default=DEFAULTS + "ALIAS=${OWNER_USER}\nALIAS_HOME=${home:ALIAS}\n",
+    ),
+    Layer(
         "value-larger-than-a-file",
         NO,
         default=DEFAULTS + "B=" + "b" * 1000 + "\nA=" + "${B}" * 70 + "\n",
+    ),
+    Layer(
+        "value-larger-after-its-last-reference",
+        NO,
+        default=DEFAULTS + "B=" + "b" * 1000 + "\nA=" + "${B}" * 65 + "t" * 600 + "\n",
     ),
     Layer("environment-differs-from-a-default", NO, environ=(("DATA_ROOT", "/other"),)),
     Layer("environment-differs-from-env", NO, environ=(("OWNER_USER", "other"),)),
