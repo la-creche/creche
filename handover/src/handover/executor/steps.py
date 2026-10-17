@@ -77,6 +77,7 @@ from .install import (
     Paths,
     StepFailed,
     VerifyOutcome,
+    normalize_dir,
     paths_of,
     remove_tree,
     restorable,
@@ -891,6 +892,11 @@ class Release:
         if not isinstance(copy, Copied):
             raise Refusal(RefusalCode.P6, name, str(ArtifactRefusal.NO_ARTIFACT))
 
+        # The unit of the verifier reads the copy as a dynamic user, which
+        # must pass through each directory down to it. Step 2 can make the
+        # work root with the umask of the release unit, and the copy opens
+        # only the directories from `<request id>` down.
+        normalize_dir(self.wiring.host.work_root)
         repo = manifest.repo
         policy = signer_policy(repo, github_owner(), github_repo(str(repo)), plan.sha(name))
 

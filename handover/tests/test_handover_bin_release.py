@@ -47,7 +47,7 @@ from handover.executor import install
 from handover.executor.approval import Decision, Summary
 from handover.executor.artifact import COPY_DIR
 from handover.executor.drain import Counter, handle
-from handover.executor.host import UNIT_END, VERIFIER_NO_NETWORK
+from handover.executor.host import UNIT_END, VERIFIER_NO_NETWORK, As, Command, Result
 from handover.executor.install import RELOCATABLE_ARGV
 from handover.executor.live_state import MANIFEST_STAMP_YAML, installed_version
 from handover.executor.selfcontained import NAMES_WORK_TREE, NOT_STAGED
@@ -361,21 +361,38 @@ def test_each_verifier_child_runs_in_its_unit(bench: Bench) -> None:
 
 def test_the_copy_is_open_to_the_verifier_under_the_umask_0027(bench: Bench) -> None:
     """The verifier reads the copy as a dynamic user. The release unit runs
-    with the umask 0027."""
+    with the umask 0027, and the release makes the work root itself. Each
+    directory from the work root down to the copy is open when a verifier
+    child starts."""
+    work_root = bench.tmp_path / "work"
+    work_root.rmdir()
     seen: dict[str, int] = {}
 
-    def look() -> None:
-        copy = bench.copy()
-        seen["file"] = os.stat(copy).st_mode & 0o777
-        seen["directory"] = os.stat(copy.parent).st_mode & 0o777
+    def look(command: Command) -> Result:
+        if command.identity is As.VERIFIER:
+            copy = bench.copy()
+            seen["file"] = os.stat(copy).st_mode & 0o777
+            for directory in copy.parents:
+                seen[str(directory.relative_to(work_root))] = os.stat(directory).st_mode & 0o777
+                if directory == work_root:
+                    break
 
+        return bench.stand_in(command)
+
+    bench.wiring = replace(bench.wiring, host=replace(bench.wiring.host, run=look))
     before = os.umask(0o027)
     try:
-        assert "succeeded" in bench.release(look), bench.reason()
+        assert "succeeded" in bench.release(), bench.reason()
     finally:
         os.umask(before)
 
-    assert seen == {"file": 0o644, "directory": 0o755}
+    assert seen == {
+        "file": 0o644,
+        f"{REQUEST_ID}/{COPY_DIR}/{BINARY_NAME}": 0o755,
+        f"{REQUEST_ID}/{COPY_DIR}": 0o755,
+        REQUEST_ID: 0o755,
+        ".": 0o755,
+    }
 
 
 def test_the_release_unpacks_then_restarts_then_runs_the_hook(bench: Bench) -> None:

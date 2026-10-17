@@ -337,6 +337,10 @@ has the name of the markup of the manifest: `.component.toml` or
     the member list of its copy and writes no file. A pass gives a
     `VerifiedArtifact`. Only the check makes one, and step 8 unpacks only
     such a value.
+12a. The dynamic user of the unit reads root's copy. Before the first
+     child, root gives the work root (`layout.WORK_ROOT`) the mode 0755.
+     Step 2 gives the same mode to each directory from `work/<id>` down to
+     the archive.
 13. Root starts a child of the verifier only when root trusts the verifier
     and `systemd-run` (`host.distrusted`). Each program is a regular file
     of root, and group and other cannot write it. Each directory above it,
