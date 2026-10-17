@@ -524,12 +524,13 @@ fault, the event of a channel line and the arguments of a tool call.
   function.
 
 Only `session` calls the writer today. `mcp` gets the writer through
-`Opaque::of`. `mcp` calls the reader. The reader of the noticeboard in
-`status` and `untrusted::parse_object` call `check`, and then a parser of
-their own module. The index of the vector files is a strict text too. The
-crate `creche-vectors` reads it and does not use `creche-contracts`, so its
-raw types hold the rules for the index. "Known gaps" names the packet that
-moves each module to the two.
+`Opaque::of`. `mcp` calls the reader. Four readers call `check`, and then a
+parser of their own module: the reader of the noticeboard in `status`,
+`untrusted::parse_object`, `manifest::Request::parse` and
+`manifest::ReleaseState::parse`. The index of the vector files is a strict
+text too. The crate `creche-vectors` reads it and does not use
+`creche-contracts`, so its raw types hold the rules for the index. "Known
+gaps" names the packet that moves each module to the two.
 Until then, these parts stay:
 
 - Four older functions format a float: `float_text` of `channel`, of
@@ -2550,15 +2551,16 @@ adds a crate:
   6. `Requester`, `stage7-releases.md` §2.3 and contract 06 §9. The two
      texts list different words. The Python code checks only the grammar of
      a name, and the type does the same.
-  7. `ResolvedAt`, contract 06 §9. The Python builder takes each float. The
-     type refuses NaN and an infinity, which JSON cannot hold.
+  7. `ResolvedAt`, contract 06 §9. The contract calls the field a number.
+     The type and the Python builder refuse NaN and an infinity, which JSON
+     cannot hold. Both take a time below zero.
   8. The YAML reader, contract 06 §8 and §10. The contract gives no limit
      for a merge key. The reader refuses a document whose merge keys copy
      more than 65,536 pairs.
-  9. The JSON reader, `stage7-releases.md` §3.2 and contract 06 §11. Python
-     keeps a lone surrogate escape as one code point. The reader writes
-     U+FFFD. The detail of a refusal can then differ from the Python
-     detail. The result is a refusal in both.
+  9. The JSON reader, `stage7-releases.md` §3.2 and contract 06 §11. The
+     reader writes U+FFFD for a lone surrogate escape. Each caller reads the
+     text with `json::check` first, which refuses such an escape, as the
+     Python release tool does.
   10. The YAML reader, contract 06 §8 and §10. The contract gives no limit
       for a chain of merge keys. An alias makes such a chain with no
       nesting. The reader refuses a chain past 128 levels.
@@ -2587,10 +2589,6 @@ adds a crate:
      of question 12 above.
   3. One row of `manifest.resolved`: a version with a decimal digit outside
      ASCII.
-- The test of `manifest` still has one table of differences, with three
-  rows. Each row is a `resolved_at` that is NaN or an infinity. The Python
-  builder writes a manifest for each one. The change that makes the Python
-  builder refuse those numbers removes the rows and deletes the table.
 - `manifest::Operator` holds two values of the site file. `config::site`
   holds the site file and has the types `OperatorUser` and `OperatorHome`.
   `ComponentManifest::parse` does not use them yet. A change to those two

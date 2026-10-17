@@ -37,11 +37,10 @@ const SUMMARY_FIELD_MAX: usize = 120;
 /// What ends a field that the summary cut.
 const CUT_MARK: char = '\u{2026}';
 
-// CONTRACT-QUESTION: contract 06 §9 calls `resolved_at` a number. The Python
-// builder takes each float and writes `NaN` and `Infinity`, which JSON does
-// not have. This type refuses a float that is not finite. It takes a time
-// below zero, as the Python builder does. A stricter type costs one more
-// check in the constructor.
+// CONTRACT-QUESTION: contract 06 §9 calls `resolved_at` a number. JSON has
+// no `NaN` and no infinity, so this type and the Python builder refuse a
+// float that is not finite. Both take a time below zero. A stricter type
+// costs one more check in the constructor and in the Python builder.
 /// When root resolved a release: Unix seconds of its clock, as a finite
 /// float (contract 06 §9, the field `resolved_at`).
 ///
