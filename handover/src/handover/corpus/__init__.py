@@ -98,6 +98,11 @@ BEHIND_NOTE: Final = (
 
 ROOT_REFUSAL: Final = "refusing to refresh the corpus as root: it is the operator's directory"
 
+#: The `PATH` of each child when the caller has none, and the `LANG` of each
+#: child. Each child of this package takes them from here.
+_PATH_FALLBACK: Final = "/usr/local/bin:/usr/bin:/bin"
+_CHILD_LANG: Final = "C.UTF-8"
+
 #: `git fetch` and nothing else. `--tags` because a provenance check resolves
 #: a tag, and a tag that arrived after the last hourly sync is the same
 #: staleness this module exists for.
@@ -184,9 +189,9 @@ def _run(argv: list[str], cwd: Path, env: dict[str, str], timeout_s: float) -> i
     and this fetch is exactly the one that needs the operator's credentials.
     """
     whole = {
-        "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+        "PATH": os.environ.get("PATH", _PATH_FALLBACK),
         "HOME": os.environ.get("HOME", ""),
-        "LANG": "C.UTF-8",
+        "LANG": _CHILD_LANG,
         **env,
     }
     done = subprocess.run(
@@ -220,7 +225,7 @@ def run_capped(argv: list[str], timeout_s: float, max_file_bytes: int) -> int:
     a server sends no length (`executor/host.py`, `_limit_writes`). The
     environment holds `PATH` and `LANG` only: the child needs no credential.
     """
-    whole = {"PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"), "LANG": "C.UTF-8"}
+    whole = {"PATH": os.environ.get("PATH", _PATH_FALLBACK), "LANG": _CHILD_LANG}
     try:
         done = subprocess.run(
             argv,
@@ -298,9 +303,9 @@ def read_git(argv: Sequence[str], cwd: Path) -> str | None:
 
 def _child_env() -> dict[str, str]:
     return {
-        "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+        "PATH": os.environ.get("PATH", _PATH_FALLBACK),
         "HOME": os.environ.get("HOME", ""),
-        "LANG": "C.UTF-8",
+        "LANG": _CHILD_LANG,
         **git_env(),
     }
 

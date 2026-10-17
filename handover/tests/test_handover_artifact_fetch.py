@@ -23,6 +23,7 @@ import sys
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import cast
 
 import handover.artifacts as pure_half
 import pytest
@@ -53,6 +54,7 @@ from handover_bin_fixtures import BINARY_NAME, binary_manifest_text, use_binary_
 from handover_fixtures import manifest_text, write_manifest
 
 from handover import cli
+from handover import corpus as corpus_module
 
 OWNER = "example-owner"
 LIVE_VERSION = "0.1.0"
@@ -524,6 +526,23 @@ def test_the_child_writes_no_file_past_its_limit(tmp_path: Path) -> None:
 
     assert code != 0
     assert target.stat().st_size <= 1024
+
+
+def test_the_child_gets_path_and_lang_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    """curl needs no credential and no setting of the caller."""
+    envs: list[dict[str, str]] = []
+
+    def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        envs.append(dict(cast("dict[str, str]", kwargs["env"])))
+
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setenv("HOME", "/nonexistent")
+    monkeypatch.setattr(corpus_module.subprocess, "run", run)
+
+    assert run_capped([CURL, "--version"], 5.0, 1024) == 0
+    assert [sorted(env) for env in envs] == [["LANG", "PATH"]]
+    assert envs[0]["LANG"] == "C.UTF-8"
 
 
 def test_a_child_past_its_time_limit_raises_a_timeout(tmp_path: Path) -> None:
