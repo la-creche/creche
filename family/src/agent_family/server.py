@@ -1,7 +1,7 @@
-"""`mcp/<name>/server.yaml` schema (contract 01b).
+"""The server file schema, `mcp/<name>/server.toml` or `server.yaml` (contract 01b).
 
 One file declares one MCP server (invariant 18). Shape only, for the same
-reason as `model.py`: the value rules live in `validate.py`."""
+reason as `model.py`: the value rules live in `serverrules.py`."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from typing import Final
 
 from pydantic import Field
 
-from .grammar import ALL_TOOLS
+from .grammar import ALL_TOOLS, DEFAULT_PYTHON
 from .model import Strict
 
 #: `tools: all`, or a list of this server's tool names (contract 01b §7).
@@ -31,7 +31,7 @@ class InstallBlock(Strict):
     #: again in `caregiver`'s registry read, which is where invariant 18's
     #: near end looks for a declared server.
     lock: str | None = None
-    python: str = "3.12"
+    python: str = DEFAULT_PYTHON
     repo: str | None = None
     asset: str | None = None
     sha256: str | None = None

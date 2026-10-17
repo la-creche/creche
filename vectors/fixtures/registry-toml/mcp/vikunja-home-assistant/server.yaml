@@ -1,5 +1,8 @@
-name: vikunja-networking
-identity: "The Vikunja bot `bot-networking`. It writes as that actor, on the `networking` epic, in the House project, and cannot reach another epic."
+# FIXTURE ONLY. Contract 01b's examples cover one vikunja-* server (§8.4).
+# Contract 01 §8 grants three more, so this file repeats that shape with this
+# epic's own bot. It is a test fixture, not a contract example.
+name: vikunja-home-assistant
+identity: "The Vikunja bot `bot-home-assistant`. It writes as that actor, on the `home-assistant` epic, in the House project, and cannot reach another epic."
 
 install:
   source: agent-mcp
@@ -8,9 +11,9 @@ run:
   entrypoint: vikunja-mcp
   env:
     VIKUNJA_URL: http://127.0.0.1:3456
-    VIKUNJA_TOKEN: secret:vikunja_token_networking
-    VIKUNJA_ACTOR: bot-networking
-    VIKUNJA_EPIC: networking
+    VIKUNJA_TOKEN: secret:vikunja_token_home_assistant
+    VIKUNJA_ACTOR: bot-home-assistant
+    VIKUNJA_EPIC: home-assistant
     VIKUNJA_PROJECT: House
 
 tools:

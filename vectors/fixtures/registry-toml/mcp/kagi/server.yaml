@@ -14,5 +14,7 @@ run:
     KAGI_API_KEY: secret:kagi_api_key
 
 tools:
-  - { name: kagi_search_fetch, description: Search the web and return ranked results with snippets., write: false }
-  - { name: kagi_extract, description: Fetch one URL and return its readable text., write: false }
+  - name: kagi_search_fetch
+    description: Search the web and return ranked results with snippets.
+  - name: kagi_extract
+    description: Fetch one URL and return its readable text.

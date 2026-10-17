@@ -12,14 +12,14 @@ use crate::yaml::{Int, Obj, PYTHON_INT_DIGITS};
 pub(crate) const STRING_TYPE: &str = "Input should be a valid string";
 const STRING_UNICODE: &str =
     "Input should be a valid string, unable to parse raw data as a unicode string";
-const INT_TYPE: &str = "Input should be a valid integer";
+pub(crate) const INT_TYPE: &str = "Input should be a valid integer";
 const INT_PARSING: &str = "Input should be a valid integer, unable to parse string as an integer";
 const INT_SIZE: &str = "Unable to parse input string as an integer, exceeded maximum size";
 const INT_FROM_FLOAT: &str = "Input should be a valid integer, got a number with a fractional part";
 const FINITE_NUMBER: &str = "Input should be a finite number";
-const FLOAT_TYPE: &str = "Input should be a valid number";
+pub(crate) const FLOAT_TYPE: &str = "Input should be a valid number";
 const FLOAT_PARSING: &str = "Input should be a valid number, unable to parse string as a number";
-const BOOL_TYPE: &str = "Input should be a valid boolean";
+pub(crate) const BOOL_TYPE: &str = "Input should be a valid boolean";
 const BOOL_PARSING: &str = "Input should be a valid boolean, unable to interpret input";
 
 /// 2 to the power 63. pydantic reads a float as an integer only between

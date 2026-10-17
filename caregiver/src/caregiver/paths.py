@@ -8,6 +8,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Final
 
+from agent_family import Markup
+from agent_family.registry import FAMILY_FILE, FAMILY_FILE_YAML
+
 #: Rework runtime state.
 STATE_ROOT: Final = Path("/srv/agents/state/rework")
 
@@ -47,7 +50,6 @@ PLAYPEN_ENV_PREFIX: Final = "supervisor-"
 PLAYPEN_ENV_SUFFIX: Final = ".env"
 SANDBOXES_FILE: Final = "sandboxes.json"
 APPLIED_DIR: Final = "applied"
-APPLIED_FAMILY_FILE: Final = "family.yaml"
 APPLIED_META_FILE: Final = "applied.json"
 
 
@@ -128,8 +130,19 @@ def applied_dir(root: Path, family: str) -> Path:
     return family_dir(root, family) / APPLIED_DIR
 
 
-def applied_family_path(root: Path, family: str) -> Path:
-    return applied_dir(root, family) / APPLIED_FAMILY_FILE
+def family_file_name(markup: Markup) -> str:
+    """The name of a family file in one markup: `family.toml` or
+    `family.yaml`. A registry file and its applied copy have this name."""
+    match markup:
+        case Markup.TOML:
+            return FAMILY_FILE
+        case Markup.YAML:
+            return FAMILY_FILE_YAML
+
+
+def applied_family_path(root: Path, family: str, markup: Markup) -> Path:
+    """The applied copy of a family file in one markup."""
+    return applied_dir(root, family) / family_file_name(markup)
 
 
 def applied_meta_path(root: Path, family: str) -> Path:

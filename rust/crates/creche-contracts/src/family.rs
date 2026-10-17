@@ -1,4 +1,5 @@
-//! The family file: `family.yaml` and its validation report (contract 01).
+//! The family file: `family.yaml` or `family.toml`, and its validation report
+//! (contract 01).
 //!
 //! Two layers hold one file:
 //!
@@ -3730,6 +3731,995 @@ impl From<&Family> for RawFamily {
     }
 }
 
+// --- the TOML file ---
+
+#[cfg(feature = "tomlfile")]
+pub use markup::{Block, GrantArm, LocPart, ShapeFault, ShapeProblem, TomlRefusal, Wants};
+
+/// `family.toml`: the bytes of one file to a [`RawFamily`], or to each fault
+/// of its shape.
+///
+/// [`crate::tomlfile`] reads the bytes into one private raw type. The raw
+/// type is total: each field is a lenient field, so the read fails for no
+/// value. The check then reads each field as the Python model `FamilyFile`
+/// reads a TOML text, in the strict mode of pydantic:
+///
+/// - A field takes the kind of its type and no other. A float field also
+///   takes an integer, as the nearest float.
+/// - A date-time, a date and a time are of no kind that a field takes.
+/// - The check reports each field in the order of the Python model, and then
+///   each key that the model does not name, in sorted order. The reader gives
+///   the keys of a table in sorted order, so a table with free keys reports
+///   its faults in that order too.
+///
+/// A fault holds no text of a message. The validator in the crate
+/// `agent-family` writes the message of each fault.
+#[cfg(feature = "tomlfile")]
+mod markup {
+    use std::collections::BTreeMap;
+    use std::fmt;
+
+    use serde::de::{self, IgnoredAny, MapAccess, SeqAccess, Visitor};
+    use serde::{Deserialize, Deserializer};
+
+    use super::{
+        RawDaily, RawEnqueue, RawFamily, RawHaCall, RawHaTriple, RawInt, RawJob, RawModel,
+        RawMount, RawNoFence, RawQuiet, RawRelease, RawSandbox, RawToolGrant, RawTrigger, RawVerbs,
+    };
+    use crate::slot::{Found, Nested, Slot as Field};
+    use crate::tomlfile::{self, FileKind, TomlFault, Unknown};
+    use Wants::{Boolean, Integer, List, Map, Number, Text};
+
+    /// Why the bytes of a `family.toml` give no [`RawFamily`].
+    ///
+    /// The set is closed, and it does not cross a process boundary.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum TomlRefusal {
+        /// The TOML reader refuses the bytes. The text of the fault is the
+        /// message for the whole file.
+        Unread(TomlFault),
+        /// The text does not have the shape of the family file: each fault,
+        /// in the order of the Python report. A list with no fault is a
+        /// defect of the check. The caller then reports one error for the
+        /// whole file.
+        Shape(Vec<ShapeFault>),
+    }
+
+    /// One part of the location of a fault.
+    ///
+    /// The set is closed, and it does not cross a process boundary.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum LocPart {
+        /// The key of a table.
+        Key(String),
+        /// The index of an item of a list, from 0.
+        Index(usize),
+        /// One arm of a grant of `tools`. The Python model reports a grant
+        /// that neither arm takes one time for each arm.
+        Arm(GrantArm),
+    }
+
+    /// The two arms of a grant of `tools` (contract 01 §3.4): a list of tool
+    /// names, or the text `all`.
+    ///
+    /// The set is closed, and it does not cross a process boundary.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum GrantArm {
+        /// A list of tool names.
+        Names,
+        /// One text.
+        Text,
+    }
+
+    /// What is wrong at the location of a fault.
+    ///
+    /// The set is closed, and it does not cross a process boundary.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum ShapeProblem {
+        /// The file does not hold a field that has no default.
+        Missing,
+        /// The value has a kind that the field does not take.
+        WrongType(Wants),
+        /// The model has no field with the name of the key.
+        Unknown,
+    }
+
+    /// The kind of value that a field takes.
+    ///
+    /// The set is closed, and it does not cross a process boundary.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Wants {
+        /// A text.
+        Text,
+        /// An integer.
+        Integer,
+        /// `true` or `false`.
+        Boolean,
+        /// A float, or an integer.
+        Number,
+        /// A list.
+        List,
+        /// A table with free keys: `tools`.
+        Map,
+        /// A table that one nested model reads.
+        Block(Block),
+    }
+
+    /// A table of the family file that one nested model reads. Each one has
+    /// a model of its own in the Python package.
+    ///
+    /// The set is closed, and it does not cross a process boundary.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Block {
+        /// `model`.
+        Model,
+        /// One item of `files`.
+        Mount,
+        /// `verbs`.
+        Verbs,
+        /// `verbs.embed` and `verbs.job_status`: a verb that takes no fence.
+        NoFence,
+        /// `verbs.ha_call`.
+        HaCall,
+        /// One item of `verbs.ha_call.allow`.
+        HaTriple,
+        /// `verbs.enqueue`.
+        Enqueue,
+        /// `verbs.release`.
+        Release,
+        /// `sandbox`.
+        Sandbox,
+        /// `job`.
+        Job,
+        /// One item of `triggers`.
+        Trigger,
+        /// `quiet`.
+        Quiet,
+        /// `quiet.daily`.
+        Daily,
+    }
+
+    sealed! {
+        /// One fault of the shape of a `family.toml`: a location and what is
+        /// wrong there.
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        pub struct ShapeFault {
+            loc: Vec<LocPart>,
+            problem: ShapeProblem,
+        }
+    }
+
+    impl ShapeFault {
+        /// The location: each part, from the top table. The top table itself
+        /// has no part.
+        #[must_use]
+        pub fn loc(&self) -> &[LocPart] {
+            &self.loc
+        }
+
+        /// What is wrong at the location.
+        #[must_use]
+        pub fn problem(&self) -> ShapeProblem {
+            self.problem
+        }
+    }
+
+    impl RawFamily {
+        /// The raw family file of the bytes of one `family.toml`, with each
+        /// default.
+        ///
+        /// # Errors
+        ///
+        /// [`TomlRefusal::Unread`] when the TOML reader refuses the bytes, and
+        /// [`TomlRefusal::Shape`] with each fault of the shape.
+        pub fn from_toml(bytes: &[u8]) -> Result<Self, TomlRefusal> {
+            let raw: TomlFamily =
+                tomlfile::read(bytes, FileKind::Family).map_err(TomlRefusal::Unread)?;
+            let mut walk = Walk::default();
+
+            match family_of(&raw, &mut walk) {
+                Some(family) if walk.faults.is_empty() => Ok(family),
+                _ => Err(TomlRefusal::Shape(walk.faults)),
+            }
+        }
+    }
+
+    // --- the raw type ---
+
+    /// A grant of `tools`, as the file wrote it.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum Grant {
+        /// A list. Each item keeps its kind.
+        Names(Vec<Field<String>>),
+        /// One text.
+        Text(String),
+    }
+
+    /// A grant reads a value of each kind: a text and a list are a grant, and
+    /// each other kind is `Other`.
+    impl<'de> Deserialize<'de> for Field<Grant> {
+        fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            deserializer.deserialize_any(Grants)
+        }
+    }
+
+    struct Grants;
+
+    impl<'de> Visitor<'de> for Grants {
+        type Value = Field<Grant>;
+
+        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("a list of tool names or a text")
+        }
+
+        fn visit_bool<E: de::Error>(self, _flag: bool) -> Result<Self::Value, E> {
+            Ok(Field::Other(Found::Boolean))
+        }
+
+        fn visit_i64<E: de::Error>(self, _integer: i64) -> Result<Self::Value, E> {
+            Ok(Field::Other(Found::Integer))
+        }
+
+        fn visit_u64<E: de::Error>(self, _integer: u64) -> Result<Self::Value, E> {
+            Ok(Field::Other(Found::Integer))
+        }
+
+        fn visit_f64<E: de::Error>(self, _float: f64) -> Result<Self::Value, E> {
+            Ok(Field::Other(Found::Float))
+        }
+
+        fn visit_str<E: de::Error>(self, text: &str) -> Result<Self::Value, E> {
+            Ok(Field::Value(Grant::Text(text.to_owned())))
+        }
+
+        /// The reader gives a date-time as the unit value.
+        fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(Field::Null)
+        }
+
+        fn visit_seq<A: SeqAccess<'de>>(self, mut list: A) -> Result<Self::Value, A::Error> {
+            let mut names = Vec::new();
+            while let Some(name) = list.next_element()? {
+                names.push(name);
+            }
+
+            Ok(Field::Value(Grant::Names(names)))
+        }
+
+        fn visit_map<A: MapAccess<'de>>(self, mut table: A) -> Result<Self::Value, A::Error> {
+            while table.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+
+            Ok(Field::Other(Found::Table))
+        }
+    }
+
+    /// One `family.toml`, as the file wrote it. Each field of the Python
+    /// model `FamilyFile` is here, and `unknown` takes each other key.
+    #[derive(Debug, Default, Deserialize)]
+    #[serde(default)]
+    struct TomlFamily {
+        name: Field<String>,
+        kind: Field<String>,
+        description: Field<String>,
+        model: Field<TomlModel>,
+        files: Field<Vec<Field<TomlMount>>>,
+        tools: Field<BTreeMap<String, Field<Grant>>>,
+        verbs: Field<TomlVerbs>,
+        delegates: Field<Vec<Field<String>>>,
+        max_inflight_delegations: Field<i64>,
+        egress: Field<Vec<Field<String>>>,
+        shell: Field<bool>,
+        sandbox_tools: Field<Vec<Field<String>>>,
+        system_prompt: Field<String>,
+        sandbox: Field<TomlSandbox>,
+        skills: Field<Vec<Field<String>>>,
+        approval: Field<Vec<Field<String>>>,
+        job: Field<TomlJob>,
+        triggers: Field<Vec<Field<TomlTrigger>>>,
+        max_running_turns: Field<i64>,
+        quiet: Field<TomlQuiet>,
+        #[serde(flatten)]
+        unknown: Unknown,
+    }
+
+    /// `model`.
+    #[derive(Debug, Default, Deserialize)]
+    #[serde(default)]
+    struct TomlModel {
+        router: Field<String>,
+        budget_usd_per_day: Field<f64>,
+        #[serde(flatten)]
+        unknown: Unknown,
+    }
+
+    /// One item of `files`.
+    #[derive(Debug, Default, Deserialize)]
+    #[serde(default)]
+    struct TomlMount {
+        path: Field<String>,
+        mode: Field<String>,
+        #[serde(flatten)]
+        unknown: Unknown,
+    }
+
+    /// `verbs`.
+    #[derive(Debug, Default, Deserialize)]
+    #[serde(default)]
+    struct TomlVerbs {
+        embed: Field<TomlNoFence>,
+        ha_call: Field<TomlHaCall>,
+        enqueue: Field<TomlEnqueue>,
+        job_status: Field<TomlNoFence>,
+        release: Field<TomlRelease>,
+        #[serde(flatten)]
+        unknown: Unknown,
+    }
+
+    /// The fence of a verb that takes no fence: an empty table.
+    #[derive(Debug, Default, Deserialize)]
+    #[serde(default)]
+    struct TomlNoFence {
+        #[serde(flatten)]
+        unknown: Unknown,
+    }
+
+    /// `verbs.ha_call`.
+    #[derive(Debug, Default, Deserialize)]
+    #[serde(default)]
+    struct TomlHaCall {
+        allow: Field<Vec<Field<TomlHaTriple>>>,
+        #[serde(flatten)]
+        unknown: Unknown,
+    }
+
+    /// One item of `verbs.ha_call.allow`.
+    #[derive(Debug, Default, Deserialize)]
+    #[serde(default)]
+    struct TomlHaTriple {
+        domain: Field<String>,
+        service: Field<String>,
+        entity_id: Field<String>,
+        #[serde(flatten)]
+        unknown: Unknown,
+    }
+
+    /// `verbs.enqueue`.
+    #[derive(Debug, Default, Deserialize)]
+    #[serde(default)]
+    struct TomlEnqueue {
+        targets: Field<Vec<Field<String>>>,
+        #[serde(flatten)]
+        unknown: Unknown,
+    }
+
+    /// `verbs.release`.
+    #[derive(Debug, Default, Deserialize)]
+    #[serde(default)]
+    struct TomlRelease {
+        components: Field<Vec<Field<String>>>,
+        #[serde(flatten)]
+        unknown: Unknown,
+    }
+
+    /// `sandbox`.
+    #[derive(Debug, Default, Deserialize)]
+    #[serde(default)]
+    struct TomlSandbox {
+        cpus: Field<i64>,
+        memory: Field<String>,
+        max_resident_processes: Field<i64>,
+        image: Field<String>,
+        #[serde(flatten)]
+        unknown: Unknown,
+    }
+
+    /// `job`.
+    #[derive(Debug, Default, Deserialize)]
+    #[serde(default)]
+    struct TomlJob {
+        timeout: Field<String>,
+        #[serde(flatten)]
+        unknown: Unknown,
+    }
+
+    /// One item of `triggers`.
+    #[derive(Debug, Default, Deserialize)]
+    #[serde(default)]
+    struct TomlTrigger {
+        cron: Field<String>,
+        webhook: Field<String>,
+        enqueue: Field<bool>,
+        #[serde(flatten)]
+        unknown: Unknown,
+    }
+
+    /// `quiet`.
+    #[derive(Debug, Default, Deserialize)]
+    #[serde(default)]
+    struct TomlQuiet {
+        board: Field<String>,
+        daily: Field<TomlDaily>,
+        floor_hours: Field<i64>,
+        #[serde(flatten)]
+        unknown: Unknown,
+    }
+
+    /// `quiet.daily`.
+    #[derive(Debug, Default, Deserialize)]
+    #[serde(default)]
+    struct TomlDaily {
+        call: Field<String>,
+        hour: Field<i64>,
+        zone: Field<String>,
+        weekdays_only: Field<bool>,
+        #[serde(flatten)]
+        unknown: Unknown,
+    }
+
+    impl Nested for TomlModel {}
+    impl Nested for TomlMount {}
+    impl Nested for TomlVerbs {}
+    impl Nested for TomlNoFence {}
+    impl Nested for TomlHaCall {}
+    impl Nested for TomlHaTriple {}
+    impl Nested for TomlEnqueue {}
+    impl Nested for TomlRelease {}
+    impl Nested for TomlSandbox {}
+    impl Nested for TomlJob {}
+    impl Nested for TomlTrigger {}
+    impl Nested for TomlQuiet {}
+    impl Nested for TomlDaily {}
+
+    // --- the check of the shape ---
+
+    /// The kind of a table that the model of `block` reads.
+    fn table(block: Block) -> Wants {
+        Wants::Block(block)
+    }
+
+    /// Collects each fault, with the location of the value that the check
+    /// reads.
+    #[derive(Debug, Default)]
+    struct Walk {
+        path: Vec<LocPart>,
+        faults: Vec<ShapeFault>,
+    }
+
+    impl Walk {
+        fn fault(&mut self, problem: ShapeProblem) {
+            self.faults.push(ShapeFault {
+                loc: self.path.clone(),
+                problem,
+            });
+        }
+
+        /// Runs `read` with one more part at the end of the location.
+        fn at<T>(&mut self, part: LocPart, read: impl FnOnce(&mut Self) -> T) -> T {
+            self.path.push(part);
+            let out = read(self);
+            self.path.pop();
+
+            out
+        }
+
+        /// The value of a field that takes the kind `wants`, or no value and
+        /// one fault.
+        fn held<'a, T>(&mut self, field: &'a Field<T>, wants: Wants) -> Option<&'a T> {
+            match field {
+                Field::Value(value) => Some(value),
+                Field::Missing => {
+                    self.fault(ShapeProblem::Missing);
+
+                    None
+                }
+                // TOML has no null: a date-time reads as `Null`.
+                Field::Null | Field::Other(_) => {
+                    self.fault(ShapeProblem::WrongType(wants));
+
+                    None
+                }
+            }
+        }
+
+        /// A field with no default.
+        fn required<T, U>(
+            &mut self,
+            name: &str,
+            field: &Field<T>,
+            wants: Wants,
+            read: impl FnOnce(&T, &mut Self) -> Option<U>,
+        ) -> Option<U> {
+            self.at(LocPart::Key(name.to_owned()), |walk| {
+                walk.held(field, wants).and_then(|value| read(value, walk))
+            })
+        }
+
+        /// A field with a default. The outer `None` is a fault. The inner
+        /// `None` is a field that the file does not hold.
+        fn optional<T, U>(
+            &mut self,
+            name: &str,
+            field: &Field<T>,
+            wants: Wants,
+            read: impl FnOnce(&T, &mut Self) -> Option<U>,
+        ) -> Option<Option<U>> {
+            if matches!(field, Field::Missing) {
+                return Some(None);
+            }
+
+            self.required(name, field, wants, read).map(Some)
+        }
+
+        /// Each item of a list, read with `read`. Each item gives its own
+        /// faults.
+        fn each<T, U>(
+            &mut self,
+            items: &[Field<T>],
+            wants: Wants,
+            read: impl Fn(&T, &mut Self) -> Option<U>,
+        ) -> Option<Vec<U>> {
+            let read: Vec<Option<U>> = items
+                .iter()
+                .enumerate()
+                .map(|(index, item)| {
+                    self.at(LocPart::Index(index), |walk| {
+                        walk.held(item, wants).and_then(|value| read(value, walk))
+                    })
+                })
+                .collect();
+
+            read.into_iter().collect()
+        }
+
+        /// One fault for each key that a model does not name, in sorted
+        /// order. `None` when the table holds such a key.
+        fn unknown(&mut self, unknown: &Unknown) -> Option<()> {
+            for key in unknown.kinds().keys() {
+                self.at(LocPart::Key(key.clone()), |walk| {
+                    walk.fault(ShapeProblem::Unknown);
+                });
+            }
+
+            unknown.kinds().is_empty().then_some(())
+        }
+    }
+
+    fn owned<T: Clone>(value: &T, _walk: &mut Walk) -> Option<T> {
+        Some(value.clone())
+    }
+
+    fn integer(value: &i64, _walk: &mut Walk) -> Option<RawInt> {
+        Some(RawInt::from(*value))
+    }
+
+    fn texts(items: &[Field<String>], walk: &mut Walk) -> Option<Vec<String>> {
+        walk.each(items, Text, owned)
+    }
+
+    /// The union `list[str] | str` of the Python model. When neither arm
+    /// takes the value, each arm gives its faults: the list arm first.
+    fn grant_of(grant: &Field<Grant>, walk: &mut Walk) -> Option<RawToolGrant> {
+        let names = LocPart::Arm(GrantArm::Names);
+        let text = LocPart::Arm(GrantArm::Text);
+        let as_list = match grant {
+            Field::Value(Grant::Text(text)) => return Some(RawToolGrant::Text(text.clone())),
+            Field::Value(Grant::Names(items)) => walk.at(names, |walk| texts(items, walk)),
+            Field::Missing | Field::Null | Field::Other(_) => {
+                walk.at(names, |walk| walk.fault(ShapeProblem::WrongType(List)));
+                None
+            }
+        };
+        if as_list.is_none() {
+            walk.at(text, |walk| walk.fault(ShapeProblem::WrongType(Text)));
+        }
+
+        as_list.map(RawToolGrant::Named)
+    }
+
+    fn tools_of(
+        grants: &BTreeMap<String, Field<Grant>>,
+        walk: &mut Walk,
+    ) -> Option<BTreeMap<String, RawToolGrant>> {
+        let read: Vec<Option<(String, RawToolGrant)>> = grants
+            .iter()
+            .map(|(server, grant)| {
+                let grant = walk.at(LocPart::Key(server.clone()), |walk| grant_of(grant, walk));
+
+                grant.map(|grant| (server.clone(), grant))
+            })
+            .collect();
+
+        read.into_iter().collect()
+    }
+
+    fn model_of(raw: &TomlModel, walk: &mut Walk) -> Option<RawModel> {
+        let router = walk.required("router", &raw.router, Text, owned);
+        let budget = walk.required("budget_usd_per_day", &raw.budget_usd_per_day, Number, owned);
+        walk.unknown(&raw.unknown)?;
+
+        Some(RawModel {
+            router: router?,
+            budget_usd_per_day: budget?,
+        })
+    }
+
+    fn mount_of(raw: &TomlMount, walk: &mut Walk) -> Option<RawMount> {
+        let path = walk.required("path", &raw.path, Text, owned);
+        let mode = walk.required("mode", &raw.mode, Text, owned);
+        walk.unknown(&raw.unknown)?;
+
+        Some(RawMount {
+            path: path?,
+            mode: mode?,
+        })
+    }
+
+    fn no_fence_of(raw: &TomlNoFence, walk: &mut Walk) -> Option<RawNoFence> {
+        walk.unknown(&raw.unknown).map(|()| RawNoFence {})
+    }
+
+    fn ha_triple_of(raw: &TomlHaTriple, walk: &mut Walk) -> Option<RawHaTriple> {
+        let domain = walk.required("domain", &raw.domain, Text, owned);
+        let service = walk.required("service", &raw.service, Text, owned);
+        let entity_id = walk.optional("entity_id", &raw.entity_id, Text, owned);
+        walk.unknown(&raw.unknown)?;
+
+        Some(RawHaTriple {
+            domain: domain?,
+            service: service?,
+            entity_id: entity_id?,
+        })
+    }
+
+    fn ha_call_of(raw: &TomlHaCall, walk: &mut Walk) -> Option<RawHaCall> {
+        let triple = table(Block::HaTriple);
+        let allow = walk.required("allow", &raw.allow, List, |l, w| {
+            w.each(l, triple, ha_triple_of)
+        });
+        walk.unknown(&raw.unknown)?;
+
+        Some(RawHaCall { allow: allow? })
+    }
+
+    fn enqueue_of(raw: &TomlEnqueue, walk: &mut Walk) -> Option<RawEnqueue> {
+        let targets = walk.required("targets", &raw.targets, List, |l, w| texts(l, w));
+        walk.unknown(&raw.unknown)?;
+
+        Some(RawEnqueue { targets: targets? })
+    }
+
+    fn release_of(raw: &TomlRelease, walk: &mut Walk) -> Option<RawRelease> {
+        let components = walk.required("components", &raw.components, List, |l, w| texts(l, w));
+        walk.unknown(&raw.unknown)?;
+
+        Some(RawRelease {
+            components: components?,
+        })
+    }
+
+    fn verbs_of(raw: &TomlVerbs, walk: &mut Walk) -> Option<RawVerbs> {
+        let no_fence = table(Block::NoFence);
+        let embed = walk.optional("embed", &raw.embed, no_fence, no_fence_of);
+        let ha_call = walk.optional("ha_call", &raw.ha_call, table(Block::HaCall), ha_call_of);
+        let enqueue = walk.optional("enqueue", &raw.enqueue, table(Block::Enqueue), enqueue_of);
+        let job_status = walk.optional("job_status", &raw.job_status, no_fence, no_fence_of);
+        let release = walk.optional("release", &raw.release, table(Block::Release), release_of);
+        walk.unknown(&raw.unknown)?;
+
+        Some(RawVerbs {
+            embed: embed?,
+            ha_call: ha_call?,
+            enqueue: enqueue?,
+            job_status: job_status?,
+            release: release?,
+        })
+    }
+
+    fn sandbox_of(raw: &TomlSandbox, walk: &mut Walk) -> Option<RawSandbox> {
+        let resident = &raw.max_resident_processes;
+        let cpus = walk.optional("cpus", &raw.cpus, Integer, integer);
+        let memory = walk.optional("memory", &raw.memory, Text, owned);
+        let resident = walk.optional("max_resident_processes", resident, Integer, integer);
+        let image = walk.optional("image", &raw.image, Text, owned);
+        walk.unknown(&raw.unknown)?;
+
+        let default = RawSandbox::default();
+
+        Some(RawSandbox {
+            cpus: cpus?.unwrap_or(default.cpus),
+            memory: memory?.unwrap_or(default.memory),
+            max_resident_processes: resident?.unwrap_or(default.max_resident_processes),
+            image: image?.unwrap_or(default.image),
+        })
+    }
+
+    fn job_of(raw: &TomlJob, walk: &mut Walk) -> Option<RawJob> {
+        let timeout = walk.optional("timeout", &raw.timeout, Text, owned);
+        walk.unknown(&raw.unknown)?;
+
+        Some(RawJob {
+            timeout: timeout?.unwrap_or(RawJob::default().timeout),
+        })
+    }
+
+    fn trigger_of(raw: &TomlTrigger, walk: &mut Walk) -> Option<RawTrigger> {
+        let cron = walk.optional("cron", &raw.cron, Text, owned);
+        let webhook = walk.optional("webhook", &raw.webhook, Text, owned);
+        let enqueue = walk.optional("enqueue", &raw.enqueue, Boolean, owned);
+        walk.unknown(&raw.unknown)?;
+
+        Some(RawTrigger {
+            cron: cron?,
+            webhook: webhook?,
+            enqueue: enqueue?,
+        })
+    }
+
+    fn daily_of(raw: &TomlDaily, walk: &mut Walk) -> Option<RawDaily> {
+        let call = walk.required("call", &raw.call, Text, owned);
+        let hour = walk.required("hour", &raw.hour, Integer, integer);
+        let zone = walk.required("zone", &raw.zone, Text, owned);
+        let weekdays_only = walk.optional("weekdays_only", &raw.weekdays_only, Boolean, owned);
+        walk.unknown(&raw.unknown)?;
+
+        Some(RawDaily {
+            call: call?,
+            hour: hour?,
+            zone: zone?,
+            weekdays_only: weekdays_only?.unwrap_or(false),
+        })
+    }
+
+    fn quiet_of(raw: &TomlQuiet, walk: &mut Walk) -> Option<RawQuiet> {
+        let board = walk.optional("board", &raw.board, Text, owned);
+        let daily = walk.optional("daily", &raw.daily, table(Block::Daily), daily_of);
+        let floor_hours = walk.optional("floor_hours", &raw.floor_hours, Integer, integer);
+        walk.unknown(&raw.unknown)?;
+
+        Some(RawQuiet {
+            board: board?,
+            daily: daily?,
+            floor_hours: floor_hours?.unwrap_or(RawQuiet::default().floor_hours),
+        })
+    }
+
+    /// The Python model `FamilyFile`: each field in the order of the model.
+    fn family_of(raw: &TomlFamily, walk: &mut Walk) -> Option<RawFamily> {
+        let (mount, trigger) = (table(Block::Mount), table(Block::Trigger));
+        let name = walk.required("name", &raw.name, Text, owned);
+        let kind = walk.required("kind", &raw.kind, Text, owned);
+        let description = walk.required("description", &raw.description, Text, owned);
+        let model = walk.required("model", &raw.model, table(Block::Model), model_of);
+        let files = walk.optional("files", &raw.files, List, |l, w| w.each(l, mount, mount_of));
+        let tools = walk.optional("tools", &raw.tools, Map, tools_of);
+        let verbs = walk.optional("verbs", &raw.verbs, table(Block::Verbs), verbs_of);
+        let delegates = walk.optional("delegates", &raw.delegates, List, |l, w| texts(l, w));
+        let inflight = &raw.max_inflight_delegations;
+        let inflight = walk.optional("max_inflight_delegations", inflight, Integer, integer);
+        let egress = walk.optional("egress", &raw.egress, List, |l, w| texts(l, w));
+        let shell = walk.optional("shell", &raw.shell, Boolean, owned);
+        let tools_in = walk.optional("sandbox_tools", &raw.sandbox_tools, List, |l, w| {
+            texts(l, w)
+        });
+        let prompt = walk.optional("system_prompt", &raw.system_prompt, Text, owned);
+        let sandbox = walk.optional("sandbox", &raw.sandbox, table(Block::Sandbox), sandbox_of);
+        let skills = walk.optional("skills", &raw.skills, List, |l, w| texts(l, w));
+        let approval = walk.optional("approval", &raw.approval, List, |l, w| texts(l, w));
+        let job = walk.optional("job", &raw.job, table(Block::Job), job_of);
+        let triggers = walk.optional("triggers", &raw.triggers, List, |l, w| {
+            w.each(l, trigger, trigger_of)
+        });
+        let running = walk.optional(
+            "max_running_turns",
+            &raw.max_running_turns,
+            Integer,
+            integer,
+        );
+        let quiet = walk.optional("quiet", &raw.quiet, table(Block::Quiet), quiet_of);
+        walk.unknown(&raw.unknown)?;
+
+        let base = RawFamily::with_defaults(name?, kind?, description?, model?);
+
+        Some(RawFamily {
+            files: files?.unwrap_or_default(),
+            tools: tools?.unwrap_or_default(),
+            verbs: verbs?.unwrap_or_default(),
+            delegates: delegates?.unwrap_or_default(),
+            max_inflight_delegations: inflight?
+                .unwrap_or_else(|| base.max_inflight_delegations.clone()),
+            egress: egress?.unwrap_or_default(),
+            shell: shell?.unwrap_or(false),
+            sandbox_tools: tools_in?.unwrap_or_else(|| base.sandbox_tools.clone()),
+            system_prompt: prompt?.unwrap_or_else(|| base.system_prompt.clone()),
+            sandbox: sandbox?.unwrap_or_default(),
+            skills: skills?.unwrap_or_default(),
+            approval: approval?.unwrap_or_default(),
+            job: job?,
+            triggers: triggers?,
+            max_running_turns: running?,
+            quiet: quiet?,
+            ..base
+        })
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::slot::tests::reads_empty_table;
+
+        /// A thin family that each rule of one file accepts.
+        const HEAD: &str = "name = \"oracle\"\nkind = \"thin\"\ndescription = \"x\"\n\
+                            model = { router = \"fast\", budget_usd_per_day = 1 }\n";
+
+        fn key(name: &str) -> LocPart {
+            LocPart::Key(name.to_owned())
+        }
+
+        /// Each fault of a text that the reader takes, as a location and a
+        /// problem.
+        fn faults(text: &str) -> Vec<(Vec<LocPart>, ShapeProblem)> {
+            match RawFamily::from_toml(text.as_bytes()) {
+                Err(TomlRefusal::Shape(faults)) => faults
+                    .into_iter()
+                    .map(|fault| (fault.loc().to_vec(), fault.problem()))
+                    .collect(),
+                other => panic!("no fault of the shape: {other:?}"),
+            }
+        }
+
+        fn wrong(wants: Wants) -> ShapeProblem {
+            ShapeProblem::WrongType(wants)
+        }
+
+        #[test]
+        fn each_raw_struct_reads_an_empty_table() {
+            assert!(reads_empty_table::<TomlFamily>());
+            assert!(reads_empty_table::<TomlModel>());
+            assert!(reads_empty_table::<TomlMount>());
+            assert!(reads_empty_table::<TomlVerbs>());
+            assert!(reads_empty_table::<TomlNoFence>());
+            assert!(reads_empty_table::<TomlHaCall>());
+            assert!(reads_empty_table::<TomlHaTriple>());
+            assert!(reads_empty_table::<TomlEnqueue>());
+            assert!(reads_empty_table::<TomlRelease>());
+            assert!(reads_empty_table::<TomlSandbox>());
+            assert!(reads_empty_table::<TomlJob>());
+            assert!(reads_empty_table::<TomlTrigger>());
+            assert!(reads_empty_table::<TomlQuiet>());
+            assert!(reads_empty_table::<TomlDaily>());
+        }
+
+        #[test]
+        fn a_file_with_only_the_required_fields_gets_each_default() {
+            let raw = RawFamily::from_toml(HEAD.as_bytes()).unwrap();
+            let wanted = RawFamily::with_defaults(
+                "oracle".to_owned(),
+                "thin".to_owned(),
+                "x".to_owned(),
+                RawModel {
+                    router: "fast".to_owned(),
+                    budget_usd_per_day: 1.0,
+                },
+            );
+
+            assert_eq!(raw, wanted);
+        }
+
+        #[test]
+        fn a_float_field_takes_an_integer_and_an_integer_field_takes_no_float() {
+            let text = HEAD.replace("budget_usd_per_day = 1 ", "budget_usd_per_day = 12 ");
+            let raw = RawFamily::from_toml(text.as_bytes()).unwrap();
+            assert_eq!(raw.model.budget_usd_per_day.to_bits(), 12.0_f64.to_bits());
+
+            for value in ["2.0", "\"2\"", "true", "2026-10-03"] {
+                assert_eq!(
+                    faults(&format!("{HEAD}max_inflight_delegations = {value}\n")),
+                    [(vec![key("max_inflight_delegations")], wrong(Wants::Integer))],
+                    "{value}"
+                );
+            }
+        }
+
+        #[test]
+        fn a_date_time_is_a_wrong_type_and_no_table() {
+            let text = "name = \"oracle\"\nkind = \"thin\"\ndescription = 2026-10-03\n\
+                        model = 1979-05-27T07:32:00Z\nshell = 07:32:00\n";
+
+            assert_eq!(
+                faults(text),
+                [
+                    (vec![key("description")], wrong(Wants::Text)),
+                    (vec![key("model")], wrong(Wants::Block(Block::Model))),
+                    (vec![key("shell")], wrong(Wants::Boolean)),
+                ]
+            );
+        }
+
+        #[test]
+        fn a_list_where_a_table_is_wanted_is_a_wrong_type() {
+            let text = "name = \"oracle\"\nkind = \"thin\"\ndescription = \"x\"\n\
+                        model = [\"fast\", 1]\nfiles = [[\"/srv/agents/vault\", \"ro\"]]\n\
+                        tools = [\"kagi\"]\n";
+
+            assert_eq!(
+                faults(text),
+                [
+                    (vec![key("model")], wrong(Wants::Block(Block::Model))),
+                    (
+                        vec![key("files"), LocPart::Index(0)],
+                        wrong(Wants::Block(Block::Mount)),
+                    ),
+                    (vec![key("tools")], wrong(Wants::Map)),
+                ]
+            );
+        }
+
+        #[test]
+        fn the_faults_follow_the_model_and_then_each_unknown_key_in_order() {
+            let text = "zeta = 1\nalpha = 2\nshell = 1\nname = \"oracle\"\n\
+                        model = { zz = 1, router = 5, aa = 2 }\n";
+
+            assert_eq!(
+                faults(text),
+                [
+                    (vec![key("kind")], ShapeProblem::Missing),
+                    (vec![key("description")], ShapeProblem::Missing),
+                    (vec![key("model"), key("router")], wrong(Wants::Text)),
+                    (
+                        vec![key("model"), key("budget_usd_per_day")],
+                        ShapeProblem::Missing,
+                    ),
+                    (vec![key("model"), key("aa")], ShapeProblem::Unknown),
+                    (vec![key("model"), key("zz")], ShapeProblem::Unknown),
+                    (vec![key("shell")], wrong(Wants::Boolean)),
+                    (vec![key("alpha")], ShapeProblem::Unknown),
+                    (vec![key("zeta")], ShapeProblem::Unknown),
+                ]
+            );
+        }
+
+        #[test]
+        fn a_grant_that_neither_arm_takes_gives_one_fault_for_each_arm() {
+            let text = format!("{HEAD}tools = {{ zz = 5, mail = [\"a\", 7], kagi = \"all\" }}\n");
+            let names = LocPart::Arm(GrantArm::Names);
+            let one_text = LocPart::Arm(GrantArm::Text);
+
+            assert_eq!(
+                faults(&text),
+                [
+                    (
+                        vec![key("tools"), key("mail"), names.clone(), LocPart::Index(1)],
+                        wrong(Wants::Text),
+                    ),
+                    (
+                        vec![key("tools"), key("mail"), one_text.clone()],
+                        wrong(Wants::Text),
+                    ),
+                    (vec![key("tools"), key("zz"), names], wrong(Wants::List)),
+                    (vec![key("tools"), key("zz"), one_text], wrong(Wants::Text)),
+                ]
+            );
+
+            let text = format!("{HEAD}tools = {{ kagi = \"all\", mail = [\"a\"] }}\n");
+            let raw = RawFamily::from_toml(text.as_bytes()).unwrap();
+            assert!(raw.grants_all("kagi"));
+            assert_eq!(raw.tool_names("mail"), ["a"]);
+        }
+
+        #[test]
+        fn a_refusal_of_the_reader_is_no_fault_of_the_shape() {
+            assert_eq!(
+                RawFamily::from_toml(b"name = \"\xff\"\n"),
+                Err(TomlRefusal::Unread(TomlFault::NotUtf8))
+            );
+            assert_eq!(
+                RawFamily::from_toml(b"kind = \"thin\"\nkind = \"thin\"\n"),
+                Err(TomlRefusal::Unread(TomlFault::NotToml))
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
@@ -4224,7 +5214,7 @@ mod tests {
     }
 
     /// The surfaces whose accepted vectors hold a parsed family file.
-    const SURFACES: [&str; 2] = ["family_file", "family_file.host"];
+    const SURFACES: [&str; 3] = ["family_file", "family_file.host", "family_file.toml"];
 
     /// Where the Rust code stops on a vector that the Python code accepts.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,3 +1,6 @@
+# FIXTURE ONLY. Contract 01b's examples cover one vikunja-* server (§8.4).
+# Contract 01 §8 grants three more, so this file repeats that shape with this
+# epic's own bot. It is a test fixture, not a contract example.
 name: vikunja-agent-control
 identity: "The Vikunja bot `bot-agent-control`. It writes as that actor, on the `agent-control` epic, in the House project, and cannot reach another epic."
 

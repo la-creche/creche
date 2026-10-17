@@ -89,6 +89,21 @@ host where something has gone wrong.
   needs a new one.
 - The applied snapshot moves at the end of a successful pass. An interrupted
   pass leaves the old one.
+- The applied copy of a family file has the name of the markup of its
+  text: `applied/family.toml` for TOML, `applied/family.yaml` for YAML.
+  `agent_family.Markup` is the type of the markup.
+  `paths.family_file_name` gives the file name for each markup. It takes
+  the two names from `agent_family.registry`.
+- A pass copies the registry file that the report of the family names. The
+  name of that file gives its markup. A name that no markup has gives no
+  copy. The pass is then not done, and the old snapshot stays.
+- A write of the snapshot first writes the copy in the markup of that
+  registry file. It then removes the other copy and writes `applied.json`.
+- A read of the snapshot takes `applied/family.toml` first and
+  `applied/family.yaml` second. It gives the text to the parser of that
+  markup. A copy that does not parse reads as nothing applied. A copy that
+  is there and that caregiver cannot read also gives nothing applied. The
+  read then takes no other copy.
 - Narrowing runs before widening, everywhere. Egress removals before allows.
   Timer removals before timer writes.
 - A refused switch keeps both sandboxes.
