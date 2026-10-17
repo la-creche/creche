@@ -274,7 +274,14 @@ CHILD_BYTES: Final = 256 * 1024 * 1024
 #: Reads the text on its standard input with both readers. Prints the
 #: messages of each report as one line of JSON, or `null` for a text that
 #: the reader reads. The argument is the memory limit of the process, in
-#: bytes. The process ends with status 3 when it passes the limit.
+#: bytes. The process ends with status 3 when its peak resident size passes
+#: the limit, or when it cannot read that peak.
+#:
+#: The peak is the peak of the process itself. On Linux, `ru_maxrss` also
+#: holds the peak of the memory that the process had before its exec, which
+#: is the memory of its parent. `VmHWM` of `/proc/self/status` holds only
+#: the memory that the process has after its exec. On macOS, `ru_maxrss`
+#: holds only the memory of the process itself.
 CHILD: Final = """
 import json
 import os
@@ -287,15 +294,20 @@ LIMIT = int(sys.argv[1])
 
 
 def peak_bytes():
+    if sys.platform == "linux":
+        with open("/proc/self/status", "rb") as status:
+            line = next(row for row in status if row.startswith(b"VmHWM:"))
+        return int(line.split()[1]) * 1024
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return peak if sys.platform == "darwin" else peak * 1024
 
 
 def watch():
-    while peak_bytes() <= LIMIT:
-        time.sleep(0.01)
-
-    os._exit(3)
+    try:
+        while peak_bytes() <= LIMIT:
+            time.sleep(0.01)
+    finally:
+        os._exit(3)
 
 
 try:
