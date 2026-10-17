@@ -28,7 +28,9 @@ Seven rules hold its shape, each with the reason it is a rule.
 5. **A tap nobody gave is not an answer.** The gate closes after fifteen
    minutes. A phone out of reach must not send the operator to a terminal,
    which is the step this module removes. So that one outcome is asked
-   again after `AGAIN_S`, and `MAX_ASKS` times in all.
+   again after `AGAIN_S`, and `MAX_ASKS` times in all. Check P6 with the
+   reason `ArtifactRefusal.VERIFIER_UNAVAILABLE` is asked again in the
+   same way: the verifier gave root no answer about the signature.
 6. **The marker goes down BEFORE the request.** A request with no marker
    behind it is filed again on the next run, and each one is a push. In
    this order a marker that cannot be written costs no request at all.
@@ -62,6 +64,7 @@ from pathlib import Path
 from typing import Final, cast
 
 from .. import notices, strictjson
+from ..artifacts import ArtifactRefusal
 from ..errors import RefusalCode
 from ..executor.approval import Verdict, not_granted
 from ..executor.layout import OPERATOR_STATE_DIR, STATE_ROOT
@@ -131,8 +134,16 @@ WAIT_KEYS: Final = frozenset({"version", "since"})
 #: Component name to the version a release would move it to.
 Moving = dict[str, str]
 
-#: The two reasons root ledgers when the gate closed with no tap.
-_NOBODY_TAPPED: Final = frozenset({not_granted(Verdict.TIMEOUT), not_granted(Verdict.EXPIRED)})
+#: The check and the reason of each ledger entry that nobody answered
+#: (rule 5): the gate closed with no tap, or check P6 got no answer from
+#: the verifier.
+_NOBODY_ANSWERED: Final = frozenset(
+    {
+        (str(RefusalCode.APPROVAL), not_granted(Verdict.TIMEOUT)),
+        (str(RefusalCode.APPROVAL), not_granted(Verdict.EXPIRED)),
+        (str(RefusalCode.P6), str(ArtifactRefusal.VERIFIER_UNAVAILABLE)),
+    }
+)
 
 
 class Step(StrEnum):
@@ -153,7 +164,8 @@ class Answer(StrEnum):
 
     #: No entry: the request waits in `requests/`, or the gate is open.
     NONE = "none"
-    #: The gate closed with no tap.
+    #: The gate closed with no tap, or check P6 got no answer from the
+    #: verifier.
     UNANSWERED = "unanswered"
     #: Every other entry: a success, a denial, a refusal, a failure.
     FINAL = "final"
@@ -524,10 +536,11 @@ def read_answer(done_dir: Path, request_id: str | None) -> Answer:
     if body is None:
         return Answer.FINAL
 
-    if body.get("refused_check") != str(RefusalCode.APPROVAL):
+    check, reason = body.get("refused_check"), body.get("reason")
+    if not isinstance(check, str) or not isinstance(reason, str):
         return Answer.FINAL
 
-    return Answer.UNANSWERED if body.get("reason") in _NOBODY_TAPPED else Answer.FINAL
+    return Answer.UNANSWERED if (check, reason) in _NOBODY_ANSWERED else Answer.FINAL
 
 
 __all__ = [
