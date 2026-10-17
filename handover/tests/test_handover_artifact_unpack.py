@@ -23,6 +23,7 @@ from handover.catalog import ARCHIVE_MAX_MEMBERS, ARCHIVE_MAX_UNPACKED_BYTES
 from handover.executor.unpack import (
     ASSET_MAX_MEMBERS,
     ASSET_MAX_UNPACKED_BYTES,
+    FRAME_BYTES,
     UnpackFault,
     UnpackRefused,
     extract_tar,
@@ -372,6 +373,160 @@ def test_an_archive_that_does_not_decompress_is_refused(tmp_path: Path) -> None:
 
     assert unpacked.value.fault is UnpackFault.NOT_READABLE
     assert listed.value.fault is UnpackFault.NOT_READABLE
+
+
+def _tar_of_three() -> bytes:
+    """A tar of three programs, with no compression."""
+    raw = io.BytesIO()
+    with tarfile.open(fileobj=raw, mode="w") as tar:
+        for index in range(3):
+            _member(tar, f"{COMPONENT}/bin/p{index}", body=b"program %d " % index * 9000)
+
+    return raw.getvalue()
+
+
+def _changed(raw: bytes, offset: int, flip: int = 0x01) -> bytes:
+    changed = bytearray(raw)
+    changed[offset] ^= flip
+
+    return bytes(changed)
+
+
+def _corrupt_cases() -> dict[str, bytes]:
+    """Four gzip streams of the tar of three programs, each with one change.
+
+    1. The first byte after the gzip header: the deflate data does not
+       decompress.
+    2. A byte of the CRC in the trailer.
+    3. A byte of the length in the trailer.
+    4. One byte of the data of a member, with the trailer of the stream
+       before that change.
+    """
+    tar = _tar_of_three()
+    whole = gzip.compress(tar, mtime=0)
+    other = gzip.compress(_changed(tar, tarfile.BLOCKSIZE + 5), mtime=0)
+
+    return {
+        "deflate": _changed(whole, 10),
+        "crc": _changed(whole, len(whole) - 8),
+        "length": _changed(whole, len(whole) - 1),
+        "member-data": other[:-8] + whole[-8:],
+    }
+
+
+@pytest.mark.parametrize("case", ["deflate", "crc", "length", "member-data"])
+def test_a_corrupt_gzip_stream_is_refused(tmp_path: Path, case: str) -> None:
+    """The unpack reads the gzip stream to its end, so the check of its CRC
+    and of its length runs for each archive."""
+    archive = tmp_path / f"{COMPONENT}.tar.gz"
+    archive.write_bytes(_corrupt_cases()[case])
+
+    with pytest.raises(UnpackRefused) as unpacked:
+        extract_tar(archive, tmp_path / "into", COMPONENT)
+
+    with pytest.raises(UnpackRefused) as listed:
+        list_component_archive(archive, COMPONENT)
+
+    assert unpacked.value.fault is UnpackFault.NOT_READABLE
+    assert listed.value.fault is UnpackFault.NOT_READABLE
+
+
+def test_each_changed_byte_of_the_gzip_data_is_refused_or_changes_nothing(
+    tmp_path: Path,
+) -> None:
+    """A change of one bit after the gzip header gives a refusal, or a
+    stream that decompresses to the same tar. No other error leaves the
+    list."""
+    whole = gzip.compress(_tar_of_three(), mtime=0)
+    archive = tmp_path / f"{COMPONENT}.tar.gz"
+    passed: list[int] = []
+    for offset in range(10, len(whole)):
+        archive.write_bytes(_changed(whole, offset))
+        try:
+            programs = list_component_archive(archive, COMPONENT)
+        except UnpackRefused:
+            continue
+
+        assert programs == ("p0", "p1", "p2"), offset
+        passed.append(offset)
+
+    assert len(passed) < len(whole) // 10
+
+
+def _with_comment(tmp_path: Path, comment_bytes: int) -> Path:
+    """An archive of one program whose member has an extended header with
+    a comment of `comment_bytes` bytes."""
+    info = tarfile.TarInfo(f"{COMPONENT}/bin/{COMPONENT}")
+    info.size = len(PROGRAM)
+    info.mode = 0o755
+    info.pax_headers = {"comment": "x" * comment_bytes}
+    raw = info.tobuf(format=tarfile.PAX_FORMAT) + PROGRAM.ljust(tarfile.BLOCKSIZE, b"\0")
+
+    return _claims(tmp_path, raw, bytes(2 * tarfile.BLOCKSIZE))
+
+
+def test_an_extended_header_of_one_block_passes(tmp_path: Path) -> None:
+    archive = _with_comment(tmp_path, 200)
+    into = tmp_path / "into"
+
+    assert list_component_archive(archive, COMPONENT) == (COMPONENT,)
+    extract_tar(archive, into, COMPONENT)
+    assert (into / "bin" / COMPONENT).read_bytes() == PROGRAM
+
+
+def test_an_extended_header_past_the_frame_is_refused(tmp_path: Path) -> None:
+    """`tarfile` reads a whole extended header into memory before the walk
+    sees its member. The bound of the tar stream stops that read."""
+    archive = _with_comment(tmp_path, FRAME_BYTES)
+    into = tmp_path / "into"
+
+    with pytest.raises(UnpackRefused) as unpacked:
+        extract_tar(archive, into, COMPONENT)
+
+    with pytest.raises(UnpackRefused) as listed:
+        list_component_archive(archive, COMPONENT)
+
+    assert unpacked.value.fault is UnpackFault.EXTRA_BYTES
+    assert listed.value.fault is UnpackFault.EXTRA_BYTES
+    assert not (into / "bin").exists()
+
+
+def test_bytes_past_the_end_of_the_tar_are_refused(tmp_path: Path) -> None:
+    """The read of the gzip stream to its end has the same bound."""
+    archive = _claims(tmp_path, _tar_of_three(), bytes(FRAME_BYTES + 1))
+
+    with pytest.raises(UnpackRefused) as unpacked:
+        extract_tar(archive, tmp_path / "into", COMPONENT)
+
+    with pytest.raises(UnpackRefused) as listed:
+        list_component_archive(archive, COMPONENT)
+
+    assert unpacked.value.fault is UnpackFault.EXTRA_BYTES
+    assert listed.value.fault is UnpackFault.EXTRA_BYTES
+
+
+def test_an_into_that_is_there_is_an_error_of_the_caller(tmp_path: Path) -> None:
+    """The unpack of a component archive makes its target itself."""
+    archive = _archive(tmp_path, _good)
+    into = tmp_path / "into"
+    into.mkdir()
+
+    with pytest.raises(FileExistsError):
+        extract_tar(archive, into, COMPONENT)
+
+    assert list(into.iterdir()) == []
+
+
+def test_a_link_in_the_place_of_into_is_an_error_of_the_caller(tmp_path: Path) -> None:
+    archive = _archive(tmp_path, _good)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (tmp_path / "into").symlink_to(elsewhere)
+
+    with pytest.raises(FileExistsError):
+        extract_tar(archive, tmp_path / "into", COMPONENT)
+
+    assert list(elsewhere.iterdir()) == []
 
 
 def test_bytes_that_are_no_archive_are_refused(tmp_path: Path) -> None:

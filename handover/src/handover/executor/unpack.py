@@ -29,11 +29,19 @@ component:
    `<program>` is one plain path segment.
 2. A directory member is refused, and so is each other name.
 3. A second member with a name that the unpack already took is refused.
-4. The archive is a gzip of a tar, and nothing else. A gzip stream that
-   ends early or that does not decompress is not a readable archive.
+4. The archive is a gzip of a tar, and nothing else. The module reads the
+   gzip stream to its end, so the check of its CRC and of its length runs
+   for each archive. A gzip stream that ends early, that does not
+   decompress or that fails that check is not a readable archive.
 5. The limits are `catalog.ARCHIVE_MAX_MEMBERS` and
    `catalog.ARCHIVE_MAX_UNPACKED_BYTES`. The limits of an MCP asset are
    the two constants of this module.
+6. The tar stream holds the bytes of the members that the walk took, and
+   `FRAME_BYTES` more at most. `tarfile` reads a whole extended header
+   into memory before the walk sees its member, so this bound also holds
+   the memory of that read.
+7. The unpack makes the target directory itself. Each program is a new
+   file, and no link is followed at its name.
 
 A refusal raises `UnpackRefused`. Its detail is a member of the closed set
 `UnpackFault`, so no byte of an archive reaches a refusal. Each caller turns
@@ -42,12 +50,17 @@ it into a refusal of its own.
 
 from __future__ import annotations
 
+import gzip
+import io
+import os
 import tarfile
-from collections.abc import Iterator
+import zlib
+from collections.abc import Callable, Generator, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Final, Literal
+from typing import IO, Final
 
 from ..catalog import ARCHIVE_MAX_MEMBERS, ARCHIVE_MAX_UNPACKED_BYTES
 from ..manifest import PATH_SEGMENT_RE
@@ -80,17 +93,33 @@ MEMBER_PARTS: Final = 3
 #: The two path segments that a plain segment never is.
 DOT_SEGMENTS: Final = frozenset({".", ".."})
 
-#: How each kind of archive is opened. An MCP asset can have each
-#: compression that `tarfile` reads. A component archive is a gzip of a tar.
-type ReadMode = Literal["r:*", "r:gz"]
-ASSET_MODE: Final[ReadMode] = "r:*"
-COMPONENT_MODE: Final[ReadMode] = "r:gz"
+#: How an MCP asset is opened: with each compression that `tarfile` reads.
+#: A component archive goes through the gzip reader of this module, and
+#: `tarfile` reads the tar stream from it in order (`"r|"`).
+ASSET_MODE: Final = "r:*"
 
 #: The errors that make an archive not readable. For an MCP asset it is the
 #: error of `tarfile`. The gzip stream of a component archive can also end
-#: early, and `tarfile` then raises `EOFError` and not an error of its own.
+#: early (`EOFError`), hold a block that does not decompress (`zlib.error`),
+#: or fail the check of its CRC or of its length (`gzip.BadGzipFile`).
 ASSET_UNREADABLE: Final = (tarfile.TarError,)
-COMPONENT_UNREADABLE: Final = (tarfile.TarError, EOFError)
+COMPONENT_UNREADABLE: Final = (tarfile.TarError, EOFError, zlib.error, gzip.BadGzipFile)
+
+#: The bytes of a component archive around the bytes of its members, at
+#: most. Each member has a header, can have the header and the block of a
+#: long name, and pads its last block: four blocks. The walk reads the
+#: header of one member past the limit of members. The end of the archive
+#: is two blocks and the pad of its last record, and `tarfile` reads one
+#: record ahead.
+FRAME_BYTES: Final = (
+    (ARCHIVE_MAX_MEMBERS + 1) * 4 * tarfile.BLOCKSIZE
+    + 2 * tarfile.BLOCKSIZE
+    + 2 * tarfile.RECORDSIZE
+)
+
+#: The open of each program of a component archive: a new file, and no
+#: link is followed at its name.
+_PROGRAM_FLAGS: Final = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
 
 
 class UnpackFault(StrEnum):
@@ -110,6 +139,7 @@ class UnpackFault(StrEnum):
     SAME_NAME = "the archive holds two members with one name"
     ARCHIVE_MEMBERS = f"the archive holds more than {ARCHIVE_MAX_MEMBERS} members"
     ARCHIVE_BYTES = f"the archive unpacks to more than {ARCHIVE_MAX_UNPACKED_BYTES} bytes"
+    EXTRA_BYTES = "the archive holds more bytes than its members and their headers"
 
 
 class UnpackRefused(Exception):
@@ -128,7 +158,6 @@ class UnpackRefused(Exception):
 class _Rules:
     """What one kind of archive may hold."""
 
-    mode: ReadMode
     unreadable: tuple[type[Exception], ...]
     max_members: int
     max_bytes: int
@@ -141,7 +170,6 @@ class _Rules:
 def _rules(component: str | None) -> _Rules:
     if component is None:
         return _Rules(
-            mode=ASSET_MODE,
             unreadable=ASSET_UNREADABLE,
             max_members=ASSET_MAX_MEMBERS,
             max_bytes=ASSET_MAX_UNPACKED_BYTES,
@@ -151,7 +179,6 @@ def _rules(component: str | None) -> _Rules:
         )
 
     return _Rules(
-        mode=COMPONENT_MODE,
         unreadable=COMPONENT_UNREADABLE,
         max_members=ARCHIVE_MAX_MEMBERS,
         max_bytes=ARCHIVE_MAX_UNPACKED_BYTES,
@@ -169,6 +196,11 @@ class _Placed:
     relative: str
 
 
+#: What the walk tells the reader of an archive about each member that it
+#: took: the size of the member.
+type _Took = Callable[[int], None]
+
+
 def extract_tar(archive: Path, into: Path, component: str | None = None) -> None:
     """Unpack `archive` into `into`. Each member is checked before a byte of
     it is written.
@@ -177,19 +209,22 @@ def extract_tar(archive: Path, into: Path, component: str | None = None) -> None
     each member goes to its own name below `into`, and a file keeps its mode
     bits inside 0755. With `component`, `archive` is the archive of that
     binary component: each member goes to `<into>/bin/<program>` with the
-    mode 0755.
+    mode 0755. The unpack then makes `into` itself, so `into` must not be
+    there, and its parent is a directory that only root can write.
 
-    Raises `UnpackRefused` for each refused shape and for each limit.
+    Raises `UnpackRefused` for each refused shape and for each limit, and
+    `OSError` when the `into` of a component archive is there already.
     """
-    into.mkdir(parents=True, exist_ok=True)
+    if component is None:
+        into.mkdir(parents=True, exist_ok=True)
+    else:
+        into.mkdir()
+
     root = into.resolve()
     rules = _rules(component)
-    try:
-        with tarfile.open(archive, rules.mode) as tar:
-            for placed in _walk(tar, rules):
-                _write_member(tar, placed, root, rules)
-    except rules.unreadable:
-        raise UnpackRefused(UnpackFault.NOT_READABLE) from None
+    with _refusing(rules), _opened(archive, rules) as (tar, took):
+        for placed in _walk(tar, rules, took):
+            _write_member(tar, placed, root, rules)
 
 
 def list_component_archive(archive: Path, component: str) -> tuple[str, ...]:
@@ -201,14 +236,78 @@ def list_component_archive(archive: Path, component: str) -> tuple[str, ...]:
     component, the two limits included.
     """
     rules = _rules(component)
+    with _refusing(rules), _opened(archive, rules) as (tar, took):
+        return tuple(Path(placed.relative).name for placed in _walk(tar, rules, took))
+
+
+@contextmanager
+def _refusing(rules: _Rules) -> Generator[None]:
+    """Each error of `rules.unreadable` becomes the refusal `NOT_READABLE`."""
     try:
-        with tarfile.open(archive, rules.mode) as tar:
-            return tuple(Path(placed.relative).name for placed in _walk(tar, rules))
+        yield
     except rules.unreadable:
         raise UnpackRefused(UnpackFault.NOT_READABLE) from None
 
 
-def _walk(tar: tarfile.TarFile, rules: _Rules) -> Iterator[_Placed]:
+@contextmanager
+def _opened(archive: Path, rules: _Rules) -> Generator[tuple[tarfile.TarFile, _Took]]:
+    """The open archive, and what the walk tells its reader. After the walk,
+    the reader of a component archive reads the gzip stream to its end."""
+    if rules.component is None:
+        with tarfile.open(archive, ASSET_MODE) as tar:
+            yield tar, _count_nothing
+
+        return
+
+    with archive.open("rb") as raw, gzip.GzipFile(fileobj=raw, mode="rb") as unzipped:
+        stream = _Counted(unzipped)
+        with tarfile.open(fileobj=stream, mode="r|") as tar:
+            yield tar, stream.took
+
+        stream.drain()
+
+
+def _count_nothing(size: int) -> None:
+    """An MCP asset has no bound of its tar stream."""
+    del size
+
+
+class _Counted(io.BufferedIOBase):
+    """The tar stream of a component archive, as the gzip reader gives it.
+
+    It gives no byte past the bytes of the members that the walk took and
+    `FRAME_BYTES`. Each byte past that refuses the archive.
+    """
+
+    def __init__(self, source: gzip.GzipFile) -> None:
+        super().__init__()
+        self._source = source
+        self._left = FRAME_BYTES
+
+    def readable(self) -> bool:
+        return True
+
+    def took(self, size: int) -> None:
+        """The walk took a member of `size` bytes."""
+        self._left += size
+
+    def read(self, size: int | None = -1, /) -> bytes:
+        want = self._left + 1 if size is None or size < 0 else min(size, self._left + 1)
+        block = self._source.read(want)
+        self._left -= len(block)
+        if self._left < 0:
+            raise UnpackRefused(UnpackFault.EXTRA_BYTES)
+
+        return block
+
+    def drain(self) -> None:
+        """Read the rest of the stream. The gzip reader checks the CRC and
+        the length of the stream at its end."""
+        while self.read(BLOCK_BYTES):
+            continue
+
+
+def _walk(tar: tarfile.TarFile, rules: _Rules, took: _Took) -> Iterator[_Placed]:
     """Each member in the order of the archive, after its checks and the two
     limits."""
     written = 0
@@ -223,6 +322,7 @@ def _walk(tar: tarfile.TarFile, rules: _Rules) -> Iterator[_Placed]:
         if written > rules.max_bytes:
             raise UnpackRefused(rules.too_large)
 
+        took(member.size)
         yield _Placed(member, relative)
 
 
@@ -284,12 +384,22 @@ def _write_member(tar: tarfile.TarFile, placed: _Placed, root: Path, rules: _Rul
     if source is None:
         raise UnpackRefused(UnpackFault.NO_CONTENT)
 
-    with target.open("wb") as handle:
-        for block in iter(lambda: source.read(BLOCK_BYTES), b""):
-            handle.write(block)
+    if rules.component is None:
+        with target.open("wb") as handle:
+            _copy_blocks(source, handle)
 
-    mode = member.mode & ASSET_MODE_BITS if rules.component is None else PROGRAM_MODE
-    target.chmod(mode)
+        target.chmod(member.mode & ASSET_MODE_BITS)
+
+        return
+
+    with os.fdopen(os.open(target, _PROGRAM_FLAGS, PROGRAM_MODE), "wb") as handle:
+        os.fchmod(handle.fileno(), PROGRAM_MODE)
+        _copy_blocks(source, handle)
+
+
+def _copy_blocks(source: IO[bytes], handle: IO[bytes]) -> None:
+    for block in iter(lambda: source.read(BLOCK_BYTES), b""):
+        handle.write(block)
 
 
 __all__ = [
