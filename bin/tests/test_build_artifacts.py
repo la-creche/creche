@@ -633,35 +633,92 @@ def test_the_limits_of_a_row_are_the_constants_of_the_catalog() -> None:
     assert f"install-env {BINARY_INSTALL_ENV}\n" in row
 
 
-#: Rows that are not in the line form. Each one stops the run before the
-#: first call of `rustup`.
+#: The reasons of the reader for a row in another form.
+NO_KEY_COMPONENT: Final = "a row has no key component where the line form puts it"
+NO_WORD_COUNT: Final = "a command of a row has no count of words"
+ROWS_END: Final = "the rows end inside a row"
+
+#: Rows that are not in the line form, each with the reason of its refusal.
+#: Each one stops the run before the first call of `rustup`. A case names
+#: one check of the reader, so the other checks cannot refuse it for that
+#: check.
 BROKEN_ROWS: Final = {
-    "a-key-out-of-order": _row().replace("component agent-family\ntarget", "target"),
-    "a-path-as-a-name": _row(archive="../agent-family.tar.gz"),
-    "an-option-as-a-name": _row(component="-rf"),
-    "a-limit-of-zero": _row(max_members="0"),
-    "a-limit-that-is-no-count": _row(max_archive_bytes="12k"),
-    "no-command": re.sub(r"argv 6\n(.*\n){6}", "", _row()),
-    "no-end": _row().removesuffix("end\n"),
-    "a-short-command": _row().replace("argv 6\n", "argv 9\n"),
-    "an-empty-first-word": _row().replace("argv 6\ncargo\n", "argv 6\n\n"),
-    "a-variable-that-is-no-name": _row(install_env="CARGO INSTALL"),
-    "two-rows-with-one-component": _row() + _row(archive="other.tar.gz", bundle="other.json"),
-    "two-rows-with-one-archive": _row() + _row(component="other", bundle="other.json"),
-    "two-rows-with-one-bundle": _row() + _row(component="other", archive="other.tar.gz"),
-    "a-junk-line-first": f"junk line\n{_row()}",
-    "a-line-after-the-end-with-no-line-feed": f"{_row()}component other",
-    "the-name-of-the-digest-file": _row(archive="SHA256SUMS"),
-    "a-blank-line": f"{_row()}\n",
+    "a-key-out-of-order": (
+        _row().replace("component agent-family\ntarget", "target"),
+        NO_KEY_COMPONENT,
+    ),
+    "a-line-with-no-key": (
+        _row().replace("component agent-family\n", "agent-family\n"),
+        NO_KEY_COMPONENT,
+    ),
+    "a-path-as-a-name": (
+        _row(archive="../agent-family.tar.gz"),
+        "the archive of a row is not a plain name",
+    ),
+    "a-slash-in-a-name": (_row(archive="a/b.tar.gz"), "the archive of a row is not a plain name"),
+    "an-option-as-a-name": (_row(component="-rf"), "the component of a row is not a plain name"),
+    "a-limit-of-zero": (_row(max_members="0"), "the max-members of a row is not a count above 0"),
+    "a-limit-of-nineteen-digits": (
+        _row(max_members="9" * 19),
+        "the max-members of a row is not a count above 0",
+    ),
+    "a-limit-that-is-no-count": (
+        _row(max_archive_bytes="12k"),
+        "the max-archive-bytes of a row is not a count above 0",
+    ),
+    "no-command": (
+        re.sub(r"argv 6\n(.*\n){6}", "", _row()),
+        "a row has no command where the line form puts one",
+    ),
+    "no-end": (_row().removesuffix("end\n"), ROWS_END),
+    "a-short-command": (_row().replace("argv 6\n", "argv 9\n"), ROWS_END),
+    "a-command-of-no-words": (_row().replace("argv 6\n", "argv 0\n"), NO_WORD_COUNT),
+    "a-count-that-is-no-number": (_row().replace("argv 6\n", "argv x\n"), NO_WORD_COUNT),
+    "a-count-of-five-digits": (_row().replace("argv 6\n", "argv 10000\n"), NO_WORD_COUNT),
+    "an-empty-first-word": (
+        _row().replace("argv 6\ncargo\n", "argv 6\n\n"),
+        "a command of a row has an empty first word",
+    ),
+    "a-variable-that-is-no-name": (
+        _row(install_env="CARGO INSTALL"),
+        "the install-env of a row is not a variable name",
+    ),
+    "a-variable-that-starts-with-a-digit": (
+        _row(install_env="1VAR"),
+        "the install-env of a row is not a variable name",
+    ),
+    "two-rows-with-one-component": (
+        _row() + _row(archive="other.tar.gz", bundle="other.json"),
+        f"two rows name the component {COMPONENT}",
+    ),
+    "two-rows-with-one-archive": (
+        _row() + _row(component="other", bundle="other.json"),
+        f"two rows name the archive {ARCHIVE}",
+    ),
+    "two-rows-with-one-bundle": (
+        _row() + _row(component="other", archive="other.tar.gz"),
+        f"two rows name the bundle {ARCHIVE}{BUNDLE_SUFFIX}",
+    ),
+    "a-junk-line-first": (f"junk line\n{_row()}", NO_KEY_COMPONENT),
+    "a-line-after-the-end-with-no-line-feed": (f"{_row()}component other", ROWS_END),
+    "the-name-of-the-digest-file": (
+        _row(archive="SHA256SUMS"),
+        f"the archive of {COMPONENT} has the name of the digest file",
+    ),
+    "a-blank-line": (f"{_row()}\n", NO_KEY_COMPONENT),
 }
 
 
-@pytest.mark.parametrize("rows", BROKEN_ROWS.values(), ids=BROKEN_ROWS)
-def test_a_row_that_is_not_in_the_line_form_stops_the_run(tmp_path: Path, rows: str) -> None:
+@pytest.mark.parametrize(("rows", "fault"), BROKEN_ROWS.values(), ids=BROKEN_ROWS)
+def test_a_row_that_is_not_in_the_line_form_stops_the_run(
+    tmp_path: Path, rows: str, fault: str
+) -> None:
+    """The one line of the run is the reason of the reader. Another check
+    that refuses the same text gives another line and fails the case."""
     run = Build(tmp_path, rows)
 
     _refused(run)
-    assert len(run.done.stderr.splitlines()) == 1
+    assert run.done.stderr == f"build-artifacts: {fault}\n"
     assert run.calls("rustup") == []
 
 
@@ -676,8 +733,9 @@ def test_a_last_row_with_no_line_feed_is_a_whole_row(tmp_path: Path) -> None:
 
 def test_the_line_form_has_one_reader() -> None:
     """`bin/lib/artifactrows.sh` reads the rows for the build script and for
-    the probe. No other file under `bin/` holds the keys of the form or a
-    reader of it, so the two scripts read one row in one way."""
+    the probe. Each of the two scripts sources it. No other file under `bin/`
+    outside `tests/` defines `read_rows` or names the key
+    `max-unpacked-bytes`. The test reads those two texts only."""
     sourced = '. "$SELF_ROOT/bin/lib/artifactrows.sh"\n'
     others = [
         path
