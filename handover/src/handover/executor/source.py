@@ -47,6 +47,8 @@ from typing import Final
 from ..catalog import BINARY_BUILD_FILES, CATALOG_BY_NAME, Kind
 from ..errors import Refusal, RefusalCode
 from ..resolve import TAG_FORMAT
+from ..site import operator_home
+from .layout import ARTIFACT_STORE_DIR, OPERATOR_STATE_DIR
 
 #: The operator's OWN clones, refreshed hourly by `code-corpus-sync.timer` as the operator.
 #: Every sandbox that sees this root sees it READ-ONLY (contract 01 §5.5
@@ -237,6 +239,28 @@ def _refuse(component: str, detail: str) -> None:
 #: and imported by `install.py` and `corpus/`, so the three readers of a
 #: repository name one binary (`handover/AGENTS.md`, pain 1).
 GIT: Final = "/usr/bin/git"
+
+#: The program of each download of an asset, absolute for the reason `GIT`
+#: is. `mcpbuild.py` fetches the asset of an MCP server with it, and
+#: `corpus/artifacts.py` fetches the archive of a binary component.
+CURL: Final = "/usr/bin/curl"
+
+#: The two protocol flags of each download. They are the two that matter: a
+#: redirect to `http` or to `file:` is refused by curl itself, before a
+#: reader sees a byte.
+CURL_PROTOCOL_FLAGS: Final = ("--proto", "=https", "--tlsv1.2")
+
+
+def artifact_store() -> Path:
+    """The store of the archives of binary components:
+    `<operator home>/.local/state/creche/artifacts`.
+
+    The operator side writes it and root reads it, and both compute the
+    path here. The home comes from the site file, so a site file with no
+    valid home refuses with the `site` code.
+    """
+    return Path(operator_home()) / OPERATOR_STATE_DIR / ARTIFACT_STORE_DIR
+
 
 #: One git read, as the two callers can both provide it: an argv LIST and the
 #: directory it runs in, answering the child's stdout or None for ANY failure.

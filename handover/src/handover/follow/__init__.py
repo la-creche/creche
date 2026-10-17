@@ -56,7 +56,7 @@ from typing import Final, cast
 from .. import notices, strictjson
 from ..errors import RefusalCode
 from ..executor.approval import Verdict, not_granted
-from ..executor.layout import STATE_ROOT
+from ..executor.layout import OPERATOR_STATE_DIR, STATE_ROOT
 from ..executor.spool import DONE_DIR
 from ..executor.spool import SURFACE as ENTRY_SURFACE
 from ..state import ReleaseState
@@ -75,7 +75,7 @@ MAX_ASKS: Final = 4
 
 #: The marker, under the operator's own home. Its directory is `0700` and
 #: the file `0600`: nothing but this module reads it.
-MARKER_DIR: Final = ".local/state/creche"
+MARKER_DIR: Final = OPERATOR_STATE_DIR
 MARKER_NAME: Final = "follow.json"
 MARKER_FILE_MODE: Final = 0o600
 MARKER_DIR_MODE: Final = 0o700
