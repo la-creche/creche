@@ -91,10 +91,10 @@ UNNAMED_READ_REASON: Final = "the reader raised an error that it does not name"
 
 LOG_PREFIX: Final = "handover"
 
-#: The service word of the notice of a text that is not strict JSON. Root
-#: runs the executor, and root creates no file in a directory that the
-#: operator account can write. So the executor has no notice file, and the
-#: notice is its log line.
+#: The service word of the notice of a text that is not strict JSON. The
+#: executor runs as root, and root writes no file in a directory that the
+#: operator owns. So the executor has no notice file, and the notice is its
+#: log line.
 NOTICE_SERVICE: Final = "handover-exec"
 
 #: One `git rev-parse` in a clone root already vetted. It reads one object

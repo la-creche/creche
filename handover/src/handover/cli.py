@@ -42,8 +42,8 @@ Seven subcommands. Only `request` and `follow` write anything.
    (`treewalk.py`). It prints one line for each fault and exits 1 when it
    finds one.
 
-Each other subcommand writes the log line of such a text, and no notice
-file: a person or a CI job starts it and reads the line.
+Each other subcommand has no notice file. It writes only the log line of
+such a text, and its caller reads that line.
 
 Exit codes: 0 pass, 1 refusal, 2 a usage mistake or a spool this host cannot
 write.

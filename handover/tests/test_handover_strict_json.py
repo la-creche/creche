@@ -187,7 +187,7 @@ def test_a_marker_with_no_strict_text_is_not_written(tmp_path: Path) -> None:
     with pytest.raises(NotStrictJson):
         write_marker(path, marker)
 
-    assert list(tmp_path.rglob("*")) in ([], [tmp_path / "state"])
+    assert list(tmp_path.rglob("*")) == []
 
 
 def test_a_strict_marker_has_the_bytes_of_before(tmp_path: Path) -> None:
@@ -620,8 +620,8 @@ def test_the_executor_has_no_notice_file(
     monkeypatch: pytest.MonkeyPatch,
     configured: list[tuple[str, Path | None]],
 ) -> None:
-    """Root creates no file in a directory that the operator account can
-    write, so the notice of the executor is its log line."""
+    """The executor runs as root, and root writes no file in a directory
+    that the operator owns. Its notice is thus its log line only."""
     monkeypatch.setattr(drain.os, "geteuid", lambda: 0)
     monkeypatch.setattr(drain, "keep_only_the_secrets", lambda _env: drain.Secrets("", "", ""))
     monkeypatch.setattr(drain, "SPOOL_ROOT", str(tmp_path / "absent"))

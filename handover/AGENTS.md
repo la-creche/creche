@@ -45,11 +45,11 @@ prints no gate id, because root alone computes `manifest_sha256`.
 request is filed. It refuses to run as root. Nothing in it raises.
 `chaperone/` never imports it, and neither does `requester/`.
 
-`follow/` reads one ledger entry and writes one marker file. A text of the
-two that is not strict JSON also writes one row in the notice file of the
-follower. It starts no child and opens no socket. The fetch is `corpus/`'s
-and the request is `requester/`'s. `cli.py` calls all three. `chaperone/`
-never imports it.
+`follow/` reads one ledger entry and writes one marker file. When the
+ledger entry or the marker is not strict JSON, the follower also writes one
+row in its notice file. It starts no child and opens no socket. The fetch
+is `corpus/`'s and the request is `requester/`'s. `cli.py` calls all three.
+`chaperone/` never imports it.
 
 `bin/allocate-tags.sh` runs in GitHub Actions. It never runs on a host. Its
 arithmetic lives in `allocate.py`, which is pure.

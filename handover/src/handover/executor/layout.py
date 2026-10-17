@@ -25,6 +25,9 @@ chain is root's, so nothing the operator owns can be renamed under it.
 table, and `handover/tests/test_handover_roots_layout.py` holds the two to one
 answer.
 
+The module also holds `STATE_ROOT`, the state root of the operator. No
+root of this module is below it, and root writes no file there.
+
 Constants only, stdlib only: `spool.py`, `host.py`, `intake/store.py`, the
 requester and the follower all import this module.
 """
