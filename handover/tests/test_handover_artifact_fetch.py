@@ -18,15 +18,15 @@ import shutil
 import stat
 import subprocess
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import handover.artifacts as pure_half
 import pytest
 from handover.artifacts import CODE_HOST, HTTPS, asset_names
-from handover.catalog import ARCHIVE_MAX_BYTES, BUNDLE_MAX_BYTES, Repo
-from handover.corpus import CappedRunFn, run_capped
+from handover.catalog import ARCHIVE_MAX_BYTES, BUNDLE_MAX_BYTES, CATALOG, CATALOG_BY_NAME, Repo
+from handover.corpus import CappedRunFn, CorpusReport, run_capped
 from handover.corpus import artifacts as fetching
 from handover.corpus.artifacts import (
     CHILD_MAX_S,
@@ -39,13 +39,19 @@ from handover.corpus.artifacts import (
     fetch_artifacts,
     ships_archive,
 )
+from handover.executor.live_state import write_stamp
 from handover.executor.mcpbuild import CURL_FLAGS, MAX_ASSET_BYTES
+from handover.executor.request import parse_request
 from handover.executor.source import CURL, CURL_PROTOCOL_FLAGS
 from handover.follow import MARKER_DIR
 from handover.site import SITE_FILE_ENV
-from handover_bin_fixtures import BINARY_NAME, use_binary_catalog
+from handover_bin_fixtures import BINARY_NAME, binary_manifest_text, use_binary_catalog
+from handover_fixtures import manifest_text, write_manifest
+
+from handover import cli
 
 OWNER = "example-owner"
+LIVE_VERSION = "0.1.0"
 VERSION = "0.1.1"
 TAG = f"{BINARY_NAME}-v{VERSION}"
 NAMES = asset_names(BINARY_NAME)
@@ -597,3 +603,201 @@ def test_the_real_curl_stops_at_the_limit_with_no_length_and_with_one(
     assert bundle.lines[0] == f"fetched {NAMES.archive} of {TAG}"
     assert bundle.lines[1].startswith(f"{NAMES.bundle} of {TAG}: the fetch exited ")
     assert sorted(path.name for path in _tag_dir(store).iterdir()) == [NAMES.archive]
+
+
+# -- handover request ------------------------------------------------------------
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", "-C", str(repo), *args],
+        capture_output=True,
+        text=True,
+        check=True,
+        env={
+            "PATH": "/usr/local/bin:/usr/bin:/bin",
+            "HOME": str(repo),
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": "/dev/null",
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@t",
+        },
+    )
+
+
+@dataclass(frozen=True)
+class _Desk:
+    """Where `handover request` reads and files, under `tmp_path`."""
+
+    options: list[str]
+    spool: Path
+    control: Path
+
+
+def _desk(tmp_path: Path, live: tuple[str, ...]) -> _Desk:
+    """Every manifest, with the binary one for `noticeboard`, three clones,
+    and each `live` component installed and tagged at `LIVE_VERSION`."""
+    roots = tmp_path / "repo"
+    installs = tmp_path / "components"
+    for row in CATALOG:
+        text = binary_manifest_text(installs) if row.name == BINARY_NAME else None
+        write_manifest(roots, row.name, text or manifest_text(row.name))
+
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    corpus.chmod(0o755)
+    for repo in Repo:
+        clone = corpus / str(repo)
+        clone.mkdir()
+        clone.chmod(0o755)
+        (clone / "README.md").write_text(f"{repo}\n", encoding="utf-8")
+        _git(clone, "init", "-q", "-b", "main")
+        _git(clone, "add", "-A")
+        _git(clone, "commit", "-q", "-m", "first")
+
+    for name in live:
+        _git(corpus / str(CATALOG_BY_NAME[name].repo), "tag", f"{name}-v{LIVE_VERSION}")
+        tree = installs / name
+        tree.mkdir(parents=True)
+        write_stamp(tree, LIVE_VERSION)
+
+    spool = tmp_path / "spool"
+    spool.mkdir()
+    options = ["--root", str(roots), "--partial", "--corpus", str(corpus)]
+    options += ["--install-root", str(installs), "--spool", str(spool)]
+
+    return _Desk(options, spool, corpus / str(Repo.AGENT_CONTROL))
+
+
+@dataclass
+class _Polls:
+    """`cli.refresh` for a request: poll N lands the tags of `lands[N]` and
+    publishes the assets of `publishes[N]`."""
+
+    desk: _Desk
+    curl: _Curl
+    lands: dict[int, str] = field(default_factory=dict[int, str])
+    publishes: dict[int, Callable[[], None]] = field(default_factory=dict[int, Callable[[], None]])
+    polls: int = 0
+
+    def __call__(self, repos: tuple[str, ...], *_args: object, **_kwargs: object) -> CorpusReport:
+        self.polls += 1
+        tag = self.lands.get(self.polls)
+        if tag is not None:
+            _git(self.desk.control, "tag", tag)
+
+        publish = self.publishes.get(self.polls)
+        if publish is not None:
+            publish()
+
+        return CorpusReport(True, [f"fetched {name}" for name in repos])
+
+
+@pytest.fixture
+def desk(tmp_path: Path, home: Path, monkeypatch: pytest.MonkeyPatch) -> _Desk:
+    del home
+    made = _desk(tmp_path, (BINARY_NAME, "chaperone"))
+    _git(made.control, "tag", TAG)
+
+    return made
+
+
+def _filed(desk: _Desk) -> list[dict[str, str]]:
+    return [
+        parse_request(path.read_bytes(), path.stem).wanted()
+        for path in sorted(desk.spool.glob("*.json"))
+    ]
+
+
+def _empty_curl() -> _Curl:
+    return _Curl()
+
+
+def _publish(curl: _Curl) -> None:
+    curl.serves.update({_url(NAMES.archive): ARCHIVE_BYTES, _url(NAMES.bundle): BUNDLE_BYTES})
+
+
+def test_a_request_fetches_both_files_of_a_binary_component_that_deploys(
+    desk: _Desk, store: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    curl = _empty_curl()
+    _publish(curl)
+    monkeypatch.setattr(fetching, "run_capped", curl)
+    monkeypatch.setattr(cli, "refresh", _Polls(desk, curl))
+    # A clock that stands, so the time limit of the child is exact.
+    monkeypatch.setattr(fetching, "monotonic", lambda: 0.0)
+    monkeypatch.setattr(cli, "monotonic", lambda: 0.0)
+
+    code = cli.main(["request", BINARY_NAME, *desk.options])
+
+    err = capsys.readouterr().err
+    assert code == cli.EXIT_OK, err
+    assert _filed(desk) == [{BINARY_NAME: "latest"}]
+    assert (_tag_dir(store) / NAMES.archive).read_bytes() == ARCHIVE_BYTES
+    assert f"note: fetched {NAMES.bundle} of {TAG}\n" in err
+    argv = curl.calls[0][0]
+    assert argv[argv.index("--max-time") + 1] == str(min(cli.REQUEST_FETCH_S, CHILD_MAX_S))
+
+
+def test_a_request_whose_fetch_fails_still_files_and_says_so(
+    desk: _Desk, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Root answers `no artifact in the store` before the tap, so a request
+    that refused to file here would only cost the operator a command."""
+    curl = _empty_curl()
+    monkeypatch.setattr(fetching, "run_capped", curl)
+    monkeypatch.setattr(cli, "refresh", _Polls(desk, curl))
+
+    code = cli.main(["request", BINARY_NAME, *desk.options])
+
+    err = capsys.readouterr().err
+    assert code == cli.EXIT_OK, err
+    assert _filed(desk) == [{BINARY_NAME: "latest"}]
+    assert f"note: {NAMES.archive} of {TAG}: the server answered with an error\n" in err
+
+
+def test_each_poll_of_a_wait_fetches_again(desk: _Desk, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The assets are published on poll 2, and the tag of `chaperone` lands
+    on poll 3. Poll 1 asks for the archive, poll 2 for both files, and poll 3
+    finds both in the store."""
+    curl = _empty_curl()
+    polls = _Polls(
+        desk, curl, lands={3: f"chaperone-v{VERSION}"}, publishes={2: lambda: _publish(curl)}
+    )
+    clock = [0.0]
+
+    def sleep(seconds: float) -> None:
+        clock[0] += seconds
+
+    monkeypatch.setattr(fetching, "run_capped", curl)
+    monkeypatch.setattr(fetching, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(cli, "refresh", polls)
+    monkeypatch.setattr(cli, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(cli, "sleep", sleep)
+
+    code = cli.main(["request", BINARY_NAME, "chaperone", *desk.options, "--wait"])
+
+    assert code == cli.EXIT_OK
+    assert polls.polls == 3
+    assert [call[0][-1] for call in curl.calls] == [
+        _url(NAMES.archive),
+        _url(NAMES.archive),
+        _url(NAMES.bundle),
+    ]
+    assert _filed(desk) == [{BINARY_NAME: "latest", "chaperone": "latest"}]
+
+
+def test_a_dry_run_with_no_wait_fetches_no_artifact(
+    desk: _Desk, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """It fetches no corpus either, as it does today."""
+    curl = _empty_curl()
+    _publish(curl)
+    monkeypatch.setattr(fetching, "run_capped", curl)
+    monkeypatch.setattr(cli, "refresh", _Polls(desk, curl))
+
+    assert cli.main(["request", BINARY_NAME, *desk.options, "--dry-run"]) == cli.EXIT_OK
+
+    assert curl.calls == []
