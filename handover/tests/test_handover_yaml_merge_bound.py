@@ -47,10 +47,28 @@ MEMORY_LIMIT_BYTES = 1 << 30
 #: The levels of the small text that each reader refuses at its copy limit.
 DOUBLING_LEVELS = 40
 
+#: The status of the child when the watch of `CHILD_LIMITS` finds a size
+#: past the memory limit, and the status when it cannot read the size.
+PAST_LIMIT_STATUS = 70
+NO_PEAK_STATUS = 71
+
+#: The start of the line that the watch writes on standard error when it
+#: cannot read the size. The `repr` of the fault follows it.
+NO_PEAK_LINE = "the watch cannot read the peak: "
+
 #: What the child does before it reads: it takes the two limits. One
 #: system takes no limit on the address space, so a thread also watches
-#: the largest size of the process and ends it past the limit.
-CHILD_LIMITS = """
+#: the largest size of the process and ends it past the limit, with
+#: `PAST_LIMIT_STATUS`. The thread ends the process with `NO_PEAK_STATUS`
+#: when it cannot read the largest size, and it writes `NO_PEAK_LINE` and
+#: the fault as one line on standard error.
+#:
+#: The largest size is that of the process itself. On Linux, `ru_maxrss`
+#: also holds the peak of the memory that the process had before its exec,
+#: which is the memory of its parent. `VmHWM` of `/proc/self/status` holds
+#: only the memory that the process has after its exec. On macOS,
+#: `ru_maxrss` holds only the memory of the process itself.
+CHILD_LIMITS = f"""
 import os, resource, sys, threading, time
 
 cpu, memory = int(sys.argv[1]), int(sys.argv[2])
@@ -60,13 +78,24 @@ try:
 except (ValueError, OSError):
     pass
 
-unit = 1 if sys.platform == "darwin" else 1024
+def peak_bytes():
+    if sys.platform == "linux":
+        with open("/proc/self/status", "rb") as status:
+            line = next(row for row in status if row.startswith(b"VmHWM:"))
+        return int(line.split()[1]) * 1024
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return peak if sys.platform == "darwin" else peak * 1024
 
 def watch():
-    while True:
-        if resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * unit > memory:
-            os._exit(70)
-        time.sleep(0.02)
+    status = {NO_PEAK_STATUS}
+    try:
+        while peak_bytes() <= memory:
+            time.sleep(0.02)
+        status = {PAST_LIMIT_STATUS}
+    except BaseException as fault:
+        os.write(2, f"{NO_PEAK_LINE}{{fault!r}}\\n".encode())
+    finally:
+        os._exit(status)
 
 threading.Thread(target=watch, daemon=True).start()
 text = sys.stdin.read()
@@ -106,14 +135,45 @@ print(recipients_of(path, "secrets/mcp/kagi.env", owner_uid=os.getuid()))
 """
 
 
-def _in_child(payload: str, text: str, *args: str) -> str:
-    """What the child prints. The child ends inside the limits, or the test
-    fails here."""
-    argv = [sys.executable, "-c", CHILD_LIMITS + payload]
+#: The size of the value that `HOLDER` holds: the memory limit of the child,
+#: and 64 MiB more.
+HELD_BYTES = MEMORY_LIMIT_BYTES + 64 * 1024 * 1024
+
+#: Holds a value of `HELD_BYTES` while it runs the command of its arguments
+#: with its own standard streams, and ends with the status of that command.
+#: `bytearray` writes each byte of the value, so the peak resident size of
+#: this process passes the memory limit of the child. The value is not in
+#: the test process, so the peak of the test process does not change. The
+#: command gets half of the wall time limit of the child, so this process
+#: stops the command before the test stops this process.
+HOLDER = f"""
+import subprocess
+import sys
+
+held = bytearray({HELD_BYTES})
+sys.exit(subprocess.run(sys.argv[1:], timeout={WALL_LIMIT_S / 2}).returncode)
+"""
+
+
+def _run_child(
+    program: str, text: str, *args: str, parent: tuple[str, ...] = ()
+) -> subprocess.CompletedProcess[str]:
+    """Runs `program` in a child process inside the wall time limit, with
+    the CPU limit, the memory limit and `args` as its arguments and `text`
+    on its standard input. `parent` is the command of a process that starts
+    the child, or no word: then this process starts it."""
+    argv = [*parent, sys.executable, "-c", program]
     argv += [str(CPU_LIMIT_S), str(MEMORY_LIMIT_BYTES), *args]
-    done = subprocess.run(
+
+    return subprocess.run(
         argv, input=text, capture_output=True, text=True, timeout=WALL_LIMIT_S, check=False
     )
+
+
+def _in_child(payload: str, text: str, *args: str, parent: tuple[str, ...] = ()) -> str:
+    """What the child prints. The child ends inside the limits, or the test
+    fails here. `parent` is as for `_run_child`."""
+    done = _run_child(CHILD_LIMITS + payload, text, *args, parent=parent)
 
     assert done.returncode == 0, done.stderr[-2000:]
 
@@ -448,6 +508,52 @@ def test_a_small_manifest_with_merge_keys_that_double_does_not_parse() -> None:
     assert len(text.encode("utf-8")) <= 4096
 
     assert _in_child(MANIFEST_CHILD, text) == PAIRS_REFUSAL
+
+
+def test_the_child_watches_only_its_own_memory() -> None:
+    """The parent of the child holds a peak past the memory limit of the
+    child while the child runs. On Linux, the `ru_maxrss` of the child holds
+    the memory of its parent from before its exec. The watch of the child
+    does not count that memory."""
+    text = _manifest_with(_doubling(DOUBLING_LEVELS))
+    holder = (sys.executable, "-c", HOLDER)
+
+    assert _in_child(MANIFEST_CHILD, text, parent=holder) == PAIRS_REFUSAL
+
+
+#: The size of the value that the child of
+#: `test_the_watch_reads_the_peak_of_the_child_in_bytes` holds.
+PROBE_BYTES = MEMORY_LIMIT_BYTES // 2
+
+
+def test_the_watch_reads_the_peak_of_the_child_in_bytes() -> None:
+    """The child holds `PROBE_BYTES` and prints the peak that its watch
+    reads. On Linux the address space limit of the child is its memory
+    limit, so that limit stops a value past the memory limit before the
+    watch sees it. This test thus checks the read itself. On Linux the
+    watch reads `VmHWM`, so this test fails there for a watch that reads no
+    peak or reads it in KiB."""
+    probe = f"held = bytearray({PROBE_BYTES})\nprint(peak_bytes())\n"
+
+    assert int(_in_child(probe, "")) >= PROBE_BYTES
+
+
+def test_a_watch_that_cannot_read_the_peak_stops_the_child() -> None:
+    """The watch fails closed. When it cannot read the peak, the child ends
+    with `NO_PEAK_STATUS` and names the fault on its standard error. The
+    main thread of this child waits with no end before its read, so only
+    the watch can end the child."""
+    fault = OSError("no peak")
+    head = "def peak_bytes():\n"
+    read = "text = sys.stdin.read()"
+    limits = CHILD_LIMITS.replace(head, f"{head}    raise {fault!r}\n", 1)
+    limits = limits.replace(read, "threading.Event().wait()\n" + read, 1)
+    assert limits.count(repr(fault)) == limits.count("Event().wait()") == 1
+
+    done = _run_child(limits + MANIFEST_CHILD, "")
+
+    assert done.returncode == NO_PEAK_STATUS
+    assert done.stderr == f"{NO_PEAK_LINE}{fault!r}\n"
 
 
 #: The start of the refusal of a manifest for each text of `SMALL_TEXTS`.
