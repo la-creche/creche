@@ -3,10 +3,11 @@
 The release tool. Six jobs, and two of them touch nothing. The root
 `AGENTS.md` applies here too.
 
-1. **The resolver.** Every component declares itself in a `component.yaml`.
-   The resolver reads them, builds the deploy order from `depends_on`, checks
-   that a set is compatible, and produces the resolved manifest and its
-   hash. The operator's phone approval binds to that hash.
+1. **The resolver.** Every component declares itself in a manifest:
+   `component.toml` or `component.yaml`. The resolver reads them, builds the
+   deploy order from `depends_on`, checks that a set is compatible, and
+   produces the resolved manifest and its hash. The operator's phone
+   approval binds to that hash.
 2. **The tag allocator.** A merge allocates each touched component's next
    tag from its newest tag plus the bump level a label asked for.
 3. **The executor** (`executor/`). The ten release steps, as root, on the
@@ -61,10 +62,10 @@ The console script is `handover`. The verify hook and the operator's
 
 ## Trust rules
 
-1. Every input is hostile. A `component.yaml` can come from a branch an agent
-   wrote. A byte cap before the parse, the safe loader of PyYAML only, a
-   closed key set, a strict pattern per scalar, and a refusal that names the
-   field.
+1. Every input is hostile. A manifest can come from a branch an agent
+   wrote. A byte cap before the parse, `tomlfile` for a TOML text, the safe
+   loader of PyYAML only for a YAML text, a closed key set, a strict pattern
+   per scalar, and a refusal that names the field.
 2. Every pattern is `re.fullmatch`. A pattern writes a digit as `[0-9]`.
    On text, `\d` also matches a digit that is not ASCII.
 3. `errors.safe_token` is the one door untrusted text goes through. Anything
@@ -113,6 +114,46 @@ The console script is `handover`. The verify hook and the operator's
    the row differ. Only the Rust code takes the two numbers from the row
    with a program: a build script (`rust/AGENTS.md`). Change the row and
    the constants in one commit.
+
+## The component manifest (`manifest.py`, `discovery.py`)
+
+The manifest of a component has two names during the change from YAML to
+TOML. `MANIFEST_FILENAME` is `component.toml`, and `MANIFEST_FILENAME_YAML`
+is `component.yaml`. Write no other copy of a name.
+
+1. A directory holds one of the two names. The walk of `discover` and
+   `read_one` read `component.toml` when the directory holds that name.
+   Else they read `component.yaml`.
+2. A directory that holds both names is a refusal with the code `manifest`,
+   and the tool reads neither file. Each entry of a name counts: a regular
+   file, a link, a link to no file and a directory.
+3. The cap of `MAX_MANIFEST_FILES` counts the manifests of both names.
+4. The caller of `parse_manifest` names the markup of the text. `Markup`
+   holds the two markups. No default markup exists.
+5. A TOML text goes to `tomlfile.loads` with the kind `MANIFEST`. The byte
+   limit of that kind is the one size limit of the text. A refusal of the
+   reader gives one refusal with the text of the reader.
+6. The tool reads a TOML file as bytes, up to one byte past that limit.
+   The reader thus refuses a larger file with its own text.
+7. A YAML text keeps `MAX_MANIFEST_BYTES` and the merge limits of
+   `boundedyaml`. Packet `toml-drop-yaml-manifest` removes the YAML form.
+8. Each check after the read is the same for the two forms, with two rules
+   of TOML. `unit` is optional, and an absent key means no unit. `release`
+   is `true` or `false`, and a text is refused. A YAML text keeps
+   `unit: null` and the words `yes` and `no`.
+9. `silent.py` builds a TOML text. It has no `unit` key, and `release` is
+   `false`.
+
+The switch stamps the manifest into the tree that it installs. The stamp
+has the name of the markup of the manifest: `.component.toml` or
+`.component.yaml` (`live_state.MANIFEST_STAMP` and `MANIFEST_STAMP_YAML`).
+
+1. `installed_manifest` reads `.component.toml` when the tree holds an
+   entry of that name. Else it reads `.component.yaml`. It gives the text
+   with its markup.
+2. The read of a TOML stamp stops one byte past the byte limit of the kind
+   `MANIFEST`. A YAML stamp keeps the cap of 64 KiB.
+3. A stamp that does not parse reads as absent, and never as a refusal.
 
 ## Rules `executor/` adds
 
@@ -291,7 +332,7 @@ The executor runs as root from `creche-handover.path`, through the wrapper
 |---|---|
 | `errors.py`, `catalog.py`, `site.py` | the closed refusal list, the component list, the site file |
 | `boundedyaml.py`, `tomlfile.py` | the YAML loader of each reader, with its two merge limits, and the TOML reader of each file kind |
-| `manifest.py`, `discovery.py`, `order.py`, `contracts.py` | `component.yaml` as hostile input, the walk, the order, rules C1 to C5 |
+| `manifest.py`, `discovery.py`, `order.py`, `contracts.py` | the manifest as hostile input, the walk, the order, rules C1 to C5 |
 | `state.py`, `resolve.py`, `allocate.py`, `mcpserver.py`, `silent.py` | the live-state shape, the decision and hash, the tag plan, the server file as hostile bytes, the uninstalled component |
 | `artifacts.py`, `treewalk.py` | the names, the limits and the signer of the archive of a binary component, the walk of a tree of compiled programs |
 | `cli.py` | `check`, `resolve`, `allocate-tags`, `request`, `follow`, `artifacts`, `check-tree` |
@@ -362,6 +403,14 @@ that wants a refusal changes one field.
   server file takes a chain of 400 and 100,000 copied pairs. Each pair of
   limits is that of the Rust reader of the same file, so the two readers
   refuse the same text (`manifest.py`, `mcpserver.py`).
+- Contract 06 §10.2 makes a directory that holds `component.toml` and
+  `component.yaml` a refusal. It does not say which kind of entry holds a
+  name. Each entry counts, also a link, a link to no file and a directory
+  (`discovery.py`).
+- Contract 06 §10.2 says that the tool reads the stamp `.component.toml`
+  first and `.component.yaml` second. It does not say what the tool reads
+  when the TOML stamp is there and cannot be read. The tool reads no stamp
+  then, and the component takes row 4 of §10.2 (`executor/live_state.py`).
 - Contract 01b §1 names one server file in each directory. It does not say
   which kind of entry holds a name. Root counts each entry: a regular file,
   a link, a link to no file and a directory. A stray entry of the other
