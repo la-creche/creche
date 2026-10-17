@@ -3,15 +3,15 @@
 Root installs a binary component from an archive that CI built and signed
 (`artifacts.py` of the pure half). Root fetches nothing. The operator side
 fetches the archive and the bundle of its signature into the store, and root
-copies the two files later and checks the signature. A SHA-256 names bytes,
-so the way that the bytes took cannot change them.
+copies the two files later and checks the signature. The check covers the
+bytes, so the route of the bytes does not matter.
 
     <operator home>/.local/state/creche/artifacts/<catalog repo>/<tag>/<asset>
 
-`executor/source.artifact_store` gives the first part, so root and the
-operator compute one path. Each directory of the store has the mode 0700 and
-each file the mode 0600, whatever the umask. Root trusts no name and no mode
-of the store, and it checks both.
+The first part comes from `executor/source.artifact_store`, the one function
+that each side calls. Each directory of the store has the mode 0700 and each
+file the mode 0600, whatever the umask. Root reads the store later and
+checks each name and each mode itself.
 
 Six rules hold its shape:
 
@@ -26,16 +26,16 @@ Six rules hold its shape:
    first, and it resumes no partial file.
 5. **Each child has a time limit and a size limit.** The time limit is the
    time that is left before the deadline, and `CHILD_MAX_S` at most. The
-   size limit of an asset is a flag of curl and a limit of the process too,
-   because curl reads its flag against a length that a server need not
-   send.
+   size limit of an asset is a flag of curl and a limit of the process too.
+   The flag acts only on a length that the server states, and a server can
+   state none.
 6. **One fetch at a time writes in the directory of a tag.** The fetch
    holds an exclusive `flock` on that directory while it writes there. A
    second fetch of the same tag, for example a run of the follower beside a
    `handover request`, gets one line and starts no child.
 
-A Release gets its assets some seconds after its tag. So an answer of the
-server with an error is the normal first answer for a new tag.
+CI publishes the two assets of a Release after it pushes the tag. For a new
+tag, the first fetch thus often gets an error from the server.
 """
 
 from __future__ import annotations

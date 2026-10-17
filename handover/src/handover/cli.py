@@ -828,8 +828,9 @@ def _fetch_deploying(resolution: Resolution) -> None:
     """Fetch the two assets of each binary component that deploys into the
     store, after the corpus fetch of the same poll.
 
-    A fault prints a note and never stops the request, for the reason of
-    `_print_corpus`: root answers `no artifact in the store` before the tap.
+    A fault is a note on stderr, and the request still files, for the
+    reason of `_print_corpus`: a request that this side refused for a
+    network fault would cost the operator a command.
     """
     tags: dict[str, str] = {}
     for item in resolution.components:

@@ -35,8 +35,8 @@ the reason it is a package of its own rather than four lines in `cli.py`.
    (`executor/source.artifact_store`). Rule 1 is the rule of the git child.
    Rules 2 to 4 hold for the second child too. `run_capped` in this module
    starts it, with a time limit and a limit on the size of each file that
-   it writes. Root reads the store later, and it trusts no name and no mode
-   of it.
+   it writes. Root reads the store later and checks each name and each mode
+   itself.
 
 It carries the executor's own `git_ground` and `git_env`, because this is the
 same directory root reads a moment later and the operator's own gitconfig must not

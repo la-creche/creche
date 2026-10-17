@@ -38,7 +38,7 @@ Seven rules hold its shape, each with the reason it is a rule.
    it waits the run files nothing. After `ARTIFACT_WAIT_S` it leaves the set
    of the run, so one network fault costs no refusal and stops no other
    member. `cli.py` asks the store, and `gate_artifacts` takes the answer as
-   data. A member whose files arrive later makes a new set.
+   data. When the files arrive later, the member is part of a new set.
 
 This package reads one ledger entry and writes one marker. When the ledger
 entry or the marker is not strict JSON (`strictjson.py`), the follower also
@@ -111,8 +111,8 @@ ENTRY_SUFFIX: Final = ".json"
 _READ_FLAGS: Final = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
 
 #: How long a member that ships an archive waits for its two files in the
-#: store, from the first run that read its tag with no files. A Release gets
-#: its assets some seconds after its tag.
+#: store, from the first run that read its tag with no files. CI publishes
+#: the assets after it pushes the tag, so the first runs can find none.
 ARTIFACT_WAIT_S: Final = 600
 
 #: The time of one run, from the start of the process. The fetch of the

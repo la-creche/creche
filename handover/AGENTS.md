@@ -226,12 +226,12 @@ has the name of the markup of the manifest: `.component.toml` or
 7. A followed name is a releasable component of the catalog. It carries no
    version: the version is the newest tag.
 8. A member that ships an archive is ready when the store holds its two
-   files. While a member is not ready, the run files nothing. This wait
-   lasts 600 seconds from the first run that read the tag of the member.
-   After that time, the follower files the set without that member and
-   prints one line. The marker keeps the version and the time of that first
-   run, under the key `waits`. The member comes back in a new set when its
-   files arrive.
+   files. While a member is not ready and its 600 seconds are not over, the
+   run files nothing. The 600 seconds start at the first run that read the
+   tag of the member. After that time, the rest of the set goes to rules 2
+   to 6, and the run prints one line. The marker keeps the version and the
+   time of that first run, under the key `waits`. When the files arrive
+   later, the member is part of a new set.
 
 ## Rules `mcpbuild.py` adds
 
@@ -395,7 +395,7 @@ uv run pytest handover/tests
 No test needs a host. A real `git`, `uv`, `cargo` or `sops` runs against
 `tmp_path`. The `cargo` test skips on a machine that has no `cargo`. A real
 `curl` fetches from a loopback https server, and that test skips on a
-machine that has no `curl`.
+machine that has no `curl` or no `openssl`.
 TLS runs on loopback. Every test file's basename starts with
 `test_handover_`. `handover_fixtures.py` builds valid manifests only. A test
 that wants a refusal changes one field.
@@ -412,9 +412,10 @@ that wants a refusal changes one field.
 - Every component with no tag gets `0.1.0` (`allocate.py`).
 - The per-requester cap counts one drain pass and keys on `requested_by`,
   which the requester writes (`executor/drain.py`).
-- A link that cannot fetch an archive inside one run of the follower never
-  fetches it. One run has 270 seconds, and the fetch resumes no partial
-  file. `handover request` fetches with 600 seconds (`corpus/artifacts.py`).
+- When the network connection of the host cannot fetch an archive inside
+  one run of the follower, the follower never fetches it. One run has 270
+  seconds, and the fetch resumes no partial file. `handover request` fetches
+  with 600 seconds (`cli.py`).
 - The follower does not ask again for a request that root never ledgered.
   A newer tag or a request by hand recovers (`follow/`).
 - The follower reads tags out of the corpus. Root refuses a tag that has no

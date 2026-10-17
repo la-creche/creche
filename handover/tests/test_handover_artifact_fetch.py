@@ -166,7 +166,7 @@ def _mode(path: Path) -> int:
 
 
 def test_the_store_is_below_the_home_of_the_site_file(home: Path) -> None:
-    """Root and the operator compute one path, from the site file."""
+    """Each side takes the path from the home of the site file."""
     assert artifact_store() == home / ".local" / "state" / "creche" / "artifacts"
 
 
@@ -269,8 +269,9 @@ def test_no_time_left_starts_no_child(store: Path, curl: _Curl) -> None:
 def test_a_file_the_server_does_not_have_leaves_the_component_unready(
     store: Path, curl: _Curl
 ) -> None:
-    """A Release gets its assets some seconds after its tag, so this is the
-    normal first answer. No final name exists, and no temporary file stays."""
+    """CI publishes the assets after it pushes the tag, so a new tag often
+    gets this answer first. No final name exists, and no temporary file
+    stays."""
     del curl.serves[_url(NAMES.bundle)]
 
     report = _fetch(store, curl)
