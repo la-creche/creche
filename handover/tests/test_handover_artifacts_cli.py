@@ -18,6 +18,7 @@ import pytest
 from handover.artifacts import (
     CODE_HOST,
     TOKEN_ISSUER,
+    ArtifactRefusal,
     ArtifactRow,
     archive_expected,
     asset_names,
@@ -87,6 +88,14 @@ WORDS = (
     ARCHIVE,
 )
 
+#: The four reasons of check P6, as the ledger writes them.
+P6_REASONS = (
+    "no artifact in the store",
+    "the artifact signature was refused",
+    "the verifier was not available",
+    "the archive shape was refused",
+)
+
 
 def _out(capsys: pytest.CaptureFixture[str], *argv: str) -> tuple[int, list[str]]:
     code = main(list(argv))
@@ -140,6 +149,26 @@ def test_the_limits_and_the_names_of_the_catalog() -> None:
     assert BUNDLE_MAX_BYTES == 1024 * 1024
     assert ARCHIVE_MAX_MEMBERS == 64
     assert ARCHIVE_MAX_UNPACKED_BYTES == 512 * 1024 * 1024
+
+
+def test_check_p6_has_one_code_and_four_reasons() -> None:
+    assert str(RefusalCode.P6) == "P6"
+    assert [str(reason) for reason in ArtifactRefusal] == list(P6_REASONS)
+
+
+def test_only_the_module_of_the_archive_holds_a_reason_of_check_p6() -> None:
+    """Each other module imports the enum. A second copy of a text can
+    drift, and the follower then reads a reason that no refusal gives."""
+    source = REPO_ROOT / "handover" / "src" / "handover"
+    texts = {path: path.read_text(encoding="utf-8") for path in source.rglob("*.py")}
+    holders = {
+        reason: sorted(
+            str(path.relative_to(source)) for path, text in texts.items() if reason in text
+        )
+        for reason in P6_REASONS
+    }
+
+    assert holders == {reason: ["artifacts.py"] for reason in P6_REASONS}
 
 
 def test_each_download_url_starts_with_the_one_code_host() -> None:

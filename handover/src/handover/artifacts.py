@@ -14,6 +14,7 @@ reads, so each side reads one source:
    that a signature must name, as the words of the verifier.
 4. `rows` and `crate_row`: what CI builds, as the line form that
    `handover artifacts` prints.
+5. `ArtifactRefusal`: the four reasons of a refusal with the code `P6`.
 
 Pure: no child, no socket, and no import of `executor/`. It reads no file.
 """
@@ -22,6 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import InitVar, dataclass
+from enum import StrEnum
 from typing import Final
 
 from .allocate import TAG_RE
@@ -80,6 +82,29 @@ INSTALL_ARGS: Final = ("install", "--locked", "--no-track", "--path")
 
 #: The two path segments that a plain path never holds.
 _DOT_SEGMENTS: Final = frozenset({".", ".."})
+
+
+class ArtifactRefusal(StrEnum):
+    """The four reasons of a refusal with the code `P6`, a closed list.
+
+    The detail of each such refusal is one of the four texts, and the
+    ledger writes the detail as the `reason`. The follower reads the
+    reason back out of the ledger. Only this module holds the texts.
+    """
+
+    #: The store holds no archive or no bundle of the component.
+    NO_ARTIFACT = "no artifact in the store"
+    #: The verifier did not pass the signature, or the certificate names
+    #: another workflow, ref or commit.
+    SIGNATURE_REFUSED = "the artifact signature was refused"
+    #: Root found no verifier that it can start, or a child of the
+    #: verifier did not start, did not end in its time or could not load
+    #: the trust root. The signature has no answer, so the follower asks
+    #: again.
+    VERIFIER_UNAVAILABLE = "the verifier was not available"
+    #: The signature passed, and the unpack refuses the member list of
+    #: the archive.
+    SHAPE_REFUSED = "the archive shape was refused"
 
 
 def archive_expected(kind: Kind) -> bool:

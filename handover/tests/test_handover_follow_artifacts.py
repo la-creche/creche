@@ -5,6 +5,9 @@ operator. A member that ships an archive and has no two files there is not
 ready. The follower files nothing for `ARTIFACT_WAIT_S` after the first run
 that read its tag, and after that time the member leaves the set of the run.
 
+A refusal of check P6 whose verifier gave no answer is asked again, as a
+tap nobody gave is (rule 5). Each other P6 refusal holds the set.
+
 Each test runs the real builder over a real clone under `tmp_path`, as
 `test_handover_follow.py` does. `cli.refresh` stands in for the git fetch,
 `corpus.artifacts.run_capped` for curl, and `cli.wall_time` is the clock of
@@ -21,20 +24,28 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from handover.artifacts import asset_names
+from handover.artifacts import ArtifactRefusal, asset_names
 from handover.catalog import CATALOG_BY_NAME, Repo
 from handover.corpus import CorpusReport
 from handover.corpus import artifacts as fetching
 from handover.corpus.artifacts import CHILD_MAX_S, PRUNE_ROOT_REFUSAL, prune_artifacts
+from handover.errors import RefusalCode
+from handover.executor.approval import Verdict, not_granted
+from handover.executor.ledger import Entry, Outcome
 from handover.executor.live_state import write_stamp
 from handover.executor.request import parse_request
 from handover.follow import (
+    AGAIN_S,
     ARTIFACT_WAIT_S,
+    MAX_ASKS,
     MAX_MARKER_BYTES,
+    REQUESTED_BY,
     RUN_DEADLINE_S,
+    Answer,
     Marker,
     Wait,
     gate_artifacts,
+    read_answer,
     read_marker,
     write_marker,
 )
@@ -160,6 +171,26 @@ class _Host:
 
     def tag_dir(self, name: str, version: str) -> Path:
         return self.store / str(CATALOG_BY_NAME[name].repo) / f"{name}-v{version}"
+
+    def refuse(self, check: RefusalCode, reason: str) -> None:
+        """Root's ledger entry for the newest request: a refusal with
+        `check` and `reason`. Root also takes the request out of
+        `requests/`."""
+        newest = sorted(self.requests.glob("*.json"))[-1]
+        _write_entry(self.root / "spool" / "done", newest.stem, check, reason)
+        newest.rename(self.root / "spool" / "taken" / newest.name)
+
+    def taken(self) -> int:
+        return len(list((self.root / "spool" / "taken").glob("*.json")))
+
+
+def _write_entry(done: Path, request_id: str, check: object, reason: object) -> None:
+    """One refused entry, as `executor/ledger.py` writes it. `check` and
+    `reason` can be any JSON value."""
+    entry = Entry(id=request_id, kind="release", requested_by=REQUESTED_BY)
+    entry.status = Outcome.REFUSED
+    body = {**entry.as_dict(), "refused_check": check, "reason": reason}
+    (done / f"{request_id}.json").write_bytes(strictjson.dumps(body).encode())
 
 
 def _make_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Host:
@@ -591,3 +622,125 @@ def test_the_store_directories_are_the_operators_alone(host: _Host) -> None:
 
     for path in (host.store, host.store / str(Repo.AGENT_CONTROL), host.tag_dir(BOARD, NEXT)):
         assert os.lstat(path).st_mode & 0o777 == 0o700, path
+
+
+# -- the answers of check P6 ----------------------------------------------------------
+
+
+def test_a_p6_refusal_with_no_verifier_answer_is_asked_again(host: _Host) -> None:
+    """The verifier gave root no answer about the signature, so nobody
+    answered. The set is asked again after `AGAIN_S`, as a tap nobody
+    gave is."""
+    host.install(BOARD, LIVE)
+    host.tag(BOARD, NEXT)
+    host.releases.publish(BOARD, NEXT)
+    host.follow(BOARD)
+    host.follow(BOARD)
+    host.refuse(RefusalCode.P6, ArtifactRefusal.VERIFIER_UNAVAILABLE)
+
+    host.now += AGAIN_S - 1
+    host.follow(BOARD)
+    assert host.filed() == []
+
+    host.now += 1
+    host.follow(BOARD)
+    assert host.filed() == [{BOARD: NEXT}]
+    assert host.taken() == 1
+
+
+def test_a_p6_refusal_with_no_verifier_answer_is_asked_a_fixed_number_of_times(
+    host: _Host,
+) -> None:
+    host.install(BOARD, LIVE)
+    host.tag(BOARD, NEXT)
+    host.releases.publish(BOARD, NEXT)
+    host.follow(BOARD)
+
+    for _ in range(MAX_ASKS + 3):
+        host.follow(BOARD)
+        if host.filed():
+            host.refuse(RefusalCode.P6, ArtifactRefusal.VERIFIER_UNAVAILABLE)
+
+        host.now += AGAIN_S
+
+    assert host.taken() == MAX_ASKS
+    assert host.filed() == []
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        ArtifactRefusal.NO_ARTIFACT,
+        ArtifactRefusal.SIGNATURE_REFUSED,
+        ArtifactRefusal.SHAPE_REFUSED,
+        "the verifier was not available.",
+    ],
+    ids=["no-artifact", "signature", "shape", "outside-the-enum"],
+)
+def test_each_other_p6_refusal_holds_the_set(host: _Host, reason: str) -> None:
+    """Root pushed the outcome already. Only a newer tag asks again."""
+    host.install(BOARD, LIVE)
+    host.tag(BOARD, NEXT)
+    host.releases.publish(BOARD, NEXT)
+    host.follow(BOARD)
+    host.follow(BOARD)
+    host.refuse(RefusalCode.P6, reason)
+
+    host.now += AGAIN_S * 10
+    assert host.follow(BOARD) == cli.EXIT_OK
+
+    assert host.filed() == []
+    assert host.taken() == 1
+
+
+def test_check_p6_with_no_verifier_answer_reads_as_unanswered(tmp_path: Path) -> None:
+    _write_entry(tmp_path, ID, "P6", "the verifier was not available")
+
+    assert read_answer(tmp_path, ID) is Answer.UNANSWERED
+
+
+@pytest.mark.parametrize(
+    ("check", "reason"),
+    [
+        ("P6", "no artifact in the store"),
+        ("P6", "the artifact signature was refused"),
+        ("P6", "the archive shape was refused"),
+        ("P6", "The verifier was not available"),
+        ("P6", "the verifier was not available "),
+        ("P6", not_granted(Verdict.TIMEOUT)),
+        ("P6", ""),
+        ("P6", None),
+        ("P6", ["the verifier was not available"]),
+        ("P5", "the verifier was not available"),
+        ("approval", "the verifier was not available"),
+        (["P6"], "the verifier was not available"),
+        (None, "the verifier was not available"),
+        ("approval", [not_granted(Verdict.TIMEOUT)]),
+        ("approval", {"reason": not_granted(Verdict.TIMEOUT)}),
+    ],
+    ids=[
+        "no-artifact",
+        "signature",
+        "shape",
+        "upper-case",
+        "final-space",
+        "reason-of-the-gate",
+        "empty",
+        "null",
+        "list",
+        "check-p5",
+        "check-approval",
+        "check-list",
+        "check-null",
+        "approval-list",
+        "approval-object",
+    ],
+)
+def test_each_other_answer_of_check_p6_is_final(
+    tmp_path: Path, check: object, reason: object
+) -> None:
+    """A reason outside the enum, the reason under another check, or a check
+    or a reason that is no text, holds the set. This applies to each check."""
+    _write_entry(tmp_path, ID, check, reason)
+
+    assert read_answer(tmp_path, ID) is Answer.FINAL
