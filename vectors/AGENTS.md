@@ -349,14 +349,15 @@ forms.
   optional argument: the limit of `text` and the fallback of `integer`.
 - A refused vector of `runtime.parse_object.noticeboard` holds no reason. The
   problem text of the entry point holds a message of the interpreter.
-- `runtime.strict_json` holds no text that breaks more than one rule. For
-  such a text, the Python reader names the fault that it finds first. The
-  Rust reader names the fault at the lowest byte offset. The two words can
-  thus differ. The docstring of `noticeboard/src/noticeboard/strictjson.py`
-  has the sequence of the Python reader.
-- A refused vector of `runtime.strict_json` holds no offset. The Python
-  reader has an offset for four rules only. `noticeboard/tests` holds those
-  offsets.
+- `runtime.strict_json` holds no text that breaks more than one rule.
+  `noticeboard/tests` holds such texts. For a refused text of 1 MiB or less,
+  the Python reader names the fault at the lowest byte offset, as the Rust
+  reader does. For a longer text, the Python reader names the fault that the
+  standard decoder finds, and the two words can differ. The docstring of
+  `noticeboard/src/noticeboard/strictjson.py` has the rule.
+- A refused vector of `runtime.strict_json` holds no offset.
+  `noticeboard/tests` holds the rule and the offset of each refused text of
+  the tests of the Rust check.
 - No vector covers the strict writer, `dumps` of `noticeboard.strictjson`.
   `noticeboard/tests` holds that writer.
 - `runtime.time` records the copy of the time reader in the noticeboard,

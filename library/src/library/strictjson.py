@@ -37,25 +37,22 @@ the enum `Rule` there. The vector surface `runtime.strict_json` records the
 reader of the noticeboard copy. A test of the Rust module gives each input of
 that surface to the Rust reader.
 
-A text can break more than one rule. The refusal then names the fault that
-this reader finds first, in this sequence:
+A refusal names the rule and the byte offset that the Rust check names. A
+text can break more than one rule, and the refusal then names the fault at
+the lowest offset. The checks run in this sequence:
 
-1. The size.
-2. The encoding: UTF-8 first, then the mark.
-3. The read of the standard decoder, from the start of the text: the grammar,
-   a word that is no value, the range of a number and a key two times. The
-   decoder gives the keys of an object when the object ends. A text that
-   nests deeper than the decoder can read breaks rule 6 here.
-4. A character after the value.
-5. The depth.
-6. A lone surrogate.
+1. The size. The offset is the cap.
+2. The encoding: UTF-8 first, then the mark. The offset is the first byte
+   that is not UTF-8, or 0 for the mark.
+3. The read of the standard decoder. It decides if the text is strict, and
+   no loop of this module reads each character of a strict text.
+4. For a refused text only, one more pass: the pass of the Rust check, in
+   Python code. It reads the text from the start and stops at the first
+   fault. The module doc of the Rust module has the offset of each rule.
 
-The Rust reader names the fault at the lowest byte offset. For a text with
-two faults, the two readers can thus give two words. The vector surface holds
-only texts that break one rule.
-
-The standard decoder reads each text. No loop of this module reads each
-character of a long text.
+The pass of step 4 reads `SCAN_MAX` bytes at most. A refused text that is
+longer keeps the word that the standard decoder gives, and its offset is
+`None`. The word can then differ from the word of the Rust check.
 
 This file is a copy. Each package that needs these rules holds a file with
 the same bytes, and `bin/tests/test_strictjson_copies.py` fails when two
@@ -80,6 +77,9 @@ DEPTH_MAX: Final = 64
 #: value of 64 bits with a sign, and the largest value of 64 bits with none.
 INTEGER_MIN: Final = -(2**63)
 INTEGER_MAX: Final = 2**64 - 1
+
+#: The most bytes that the pass for the offset of a refusal reads.
+SCAN_MAX: Final = 1 << 20
 
 
 class Rule(enum.StrEnum):
@@ -109,19 +109,10 @@ class NotStrictJson(ValueError):
     text and no other error, so a log line can print it for a text that holds
     a secret.
 
-    `offset` is a count of bytes from the start of the text, or `None`.
-    `loads` gives a count for four rules, and the Rust reader gives the same
-    count for a text that breaks one rule:
-
-    - `TOO_LARGE`: the cap.
-    - `NOT_UTF8`: the first byte that is not UTF-8.
-    - `BYTE_ORDER_MARK`: 0.
-    - `TRAILING_DATA`: the first byte after the value that is not white
-      space.
-
-    For each other rule the offset is `None`, because the standard decoder
-    gives this module no such place. Each refusal of `dumps` has the offset
-    `None`.
+    `offset` is a count of bytes from the start of the text, or `None`. For
+    a refusal of `loads`, it is the offset that the Rust check gives. It is
+    `None` for a refused text of more than `SCAN_MAX` bytes, and for each
+    refusal of `dumps`.
     """
 
     def __init__(self, rule: Rule, offset: int | None) -> None:
@@ -225,10 +216,8 @@ class _Numbers:
 
     def integer(self, token: str) -> int:
         self.settle()
-        if len(token) <= _INTEGER_CHARS_MAX:
-            value = int(token)
-            if INTEGER_MIN <= value <= INTEGER_MAX:
-                return value
+        if _is_in_range(token):
+            return int(token)
 
         self.held = (Rule.INTEGER_RANGE, token)
 
@@ -256,6 +245,11 @@ class _Numbers:
         run = before[len(before.rstrip(_NUMBER_CHARS)) :]
 
         return run == self.held[1]
+
+
+def _is_in_range(token: str) -> bool:
+    """Whether the integer token `token` is in the range of rule 7."""
+    return len(token) <= _INTEGER_CHARS_MAX and INTEGER_MIN <= int(token) <= INTEGER_MAX
 
 
 def _in_number(text: str, at: int) -> bool:
@@ -319,16 +313,6 @@ def _has_lone_surrogate(data: bytes, value: object) -> bool:
     return False
 
 
-# CONTRACT-QUESTION: `rust/AGENTS.md`, "JSON", gives the Rust check one
-# sequence: the fault at the lowest byte offset names the rule, and each rule
-# has an offset. It does not say what a copy of the reader in another
-# language names for a text that breaks two rules. This copy names the fault
-# that it finds first, in the sequence of the module docstring, and it has
-# an offset for four rules. The vector surface `runtime.strict_json` holds
-# the two readers to one result and one word for each text that breaks one
-# rule. A copy with the sequence and each offset of the Rust check costs a
-# reader that takes each character in Python code. Such a reader is slower
-# than the cost limit that the tests of this module hold.
 def _read(text: str, data: bytes) -> object:
     """The value of `text`, which is the text of the bytes `data`.
 
@@ -416,7 +400,326 @@ def loads(data: bytes, *, cap: int) -> object:
     if text.startswith(_BYTE_ORDER_MARK):
         raise NotStrictJson(Rule.BYTE_ORDER_MARK, 0)
 
-    return _read(text, data)
+    found: NotStrictJson | None = None
+    try:
+        return _read(text, data)
+    except NotStrictJson as refusal:
+        found = refusal
+
+    # The pass is outside the `except` block, so its refusal holds no other
+    # error.
+    raise _at_lowest_offset(data, found)
+
+
+def _at_lowest_offset(data: bytes, found: NotStrictJson) -> NotStrictJson:
+    """The refusal of the Rust check for `data`, which the decoder refused.
+
+    `found` is the refusal of the standard decoder. It stays for a text of
+    more than `SCAN_MAX` bytes. It also stays when the pass finds no fault,
+    which no text does: the decoder and the pass hold the same rules.
+    """
+    if len(data) > SCAN_MAX:
+        return found
+
+    scan = _Scan(data)
+    try:
+        scan.text()
+    except NotStrictJson as refusal:
+        return refusal
+
+    return found
+
+
+#: The bytes of the grammar, as numbers.
+_OPEN_LIST: Final = ord("[")
+_CLOSE_LIST: Final = ord("]")
+_OPEN_OBJECT: Final = ord("{")
+_CLOSE_OBJECT: Final = ord("}")
+_COMMA: Final = ord(",")
+_COLON: Final = ord(":")
+_QUOTE_BYTE: Final = ord('"')
+_ESCAPE_BYTE: Final = ord("\\")
+_MINUS: Final = ord("-")
+_PLUS_BYTE: Final = ord("+")
+_ZERO: Final = ord("0")
+_NINE: Final = ord("9")
+_POINT: Final = ord(".")
+_EXPONENTS: Final = (ord("e"), ord("E"))
+_HEX_ESCAPE: Final = ord("u")
+
+#: Each byte that the run of a number can hold.
+_NUMBER_BYTES: Final = frozenset(_NUMBER_CHARS.encode("ascii"))
+
+#: The words of rule 3 that are no value. The pass looks for each one before
+#: it reads a value.
+_CONSTANT_WORDS: Final = (b"NaN", b"Infinity", b"-Infinity")
+
+#: The character of each escape of one letter.
+_SHORT_ESCAPES: Final = {
+    ord('"'): '"',
+    ord("\\"): "\\",
+    ord("/"): "/",
+    ord("b"): "\b",
+    ord("f"): "\f",
+    ord("n"): "\n",
+    ord("r"): "\r",
+    ord("t"): "\t",
+}
+
+_HEX_BYTES: Final = frozenset(b"0123456789abcdefABCDEF")
+_HEX_DIGITS: Final = 4
+
+#: The code units of the first halves and of the second halves of a pair.
+_FIRST_HALF: Final = range(0xD800, 0xDC00)
+_SECOND_HALF: Final = range(0xDC00, 0xE000)
+_PAIRS_START: Final = 0x1_0000
+_HALF_BITS: Final = 10
+
+#: The runs that the pass takes in one step: white space, digits, and the
+#: characters of a string that need no escape.
+_SPACE_RUN: Final = re.compile(rb"[ \t\n\r]*")
+_DIGIT_RUN: Final = re.compile(rb"[0-9]*")
+_PLAIN_RUN: Final = re.compile(rb'[^"\\\x00-\x1f]*')
+
+
+class _Scan:
+    """The pass of the Rust check over a text that is UTF-8 with no mark.
+
+    The pass reads the text one time, from the start, and raises the
+    refusal of the first fault. It holds the grammar of `json/scan.rs` in
+    the crate `creche-contracts`, function for function, with the same
+    offset for each refusal. A run of white space, of digits or of plain
+    characters is one step of a pattern, so most steps take more than one
+    byte.
+
+    No method calls itself. A list holds one entry for each array and each
+    object that is open: `None` for an array, and the set of the keys for
+    an object.
+    """
+
+    def __init__(self, data: bytes) -> None:
+        self._data: Final = data
+        self._at = 0
+        self._open: list[set[str] | None] = []
+
+    def _peek(self) -> int | None:
+        return self._data[self._at] if self._at < len(self._data) else None
+
+    def _takes(self, byte: int) -> bool:
+        found = self._peek() == byte
+        if found:
+            self._at += 1
+
+        return found
+
+    def _refuse(self, rule: Rule, at: int | None = None) -> NoReturn:
+        raise NotStrictJson(rule, self._at if at is None else at)
+
+    def _run(self, pattern: re.Pattern[bytes]) -> int:
+        """Moves past the run of `pattern`. The result is its count of bytes."""
+        start = self._at
+        found = pattern.match(self._data, start)
+        self._at = start if found is None else found.end()
+
+        return self._at - start
+
+    def text(self) -> None:
+        """Reads the whole text. Raises the refusal of the first fault."""
+        self._run(_SPACE_RUN)
+        after_value = self._value()
+
+        while self._open:
+            self._run(_SPACE_RUN)
+            keys = self._open[-1]
+            if keys is None:
+                more = self._item_follows() if after_value else not self._takes(_CLOSE_LIST)
+            else:
+                more = self._next_key(keys) if after_value else self._first_key(keys)
+
+            if more:
+                self._run(_SPACE_RUN)
+                after_value = self._value()
+            else:
+                self._open.pop()
+                after_value = True
+
+        self._run(_SPACE_RUN)
+        if self._peek() is not None:
+            self._refuse(Rule.TRAILING_DATA)
+
+    def _value(self) -> bool:
+        """Reads the start of one value. `True` after a scalar, which the
+        call reads to its end. `False` after the bracket of an array or of
+        an object, which is then open."""
+        if self._data.startswith(_CONSTANT_WORDS, self._at):
+            self._refuse(Rule.CONSTANT)
+
+        byte = self._peek()
+        if byte in (_OPEN_LIST, _OPEN_OBJECT):
+            if len(self._open) >= DEPTH_MAX:
+                self._refuse(Rule.TOO_DEEP)
+            self._at += 1
+            self._open.append(None if byte == _OPEN_LIST else set())
+
+            return False
+
+        if byte == _QUOTE_BYTE:
+            self._string()
+        elif byte == ord("t"):
+            self._literal(b"true")
+        elif byte == ord("f"):
+            self._literal(b"false")
+        elif byte == ord("n"):
+            self._literal(b"null")
+        elif byte == _MINUS or (byte is not None and _ZERO <= byte <= _NINE):
+            self._number()
+        else:
+            self._refuse(Rule.SYNTAX)
+
+        return True
+
+    def _literal(self, word: bytes) -> None:
+        """Each byte of `word`. The refusal is at the first byte that differs."""
+        for byte in word:
+            if not self._takes(byte):
+                self._refuse(Rule.SYNTAX)
+
+    def _number(self) -> None:
+        """The longest run of number characters. It must be a number of RFC 8259."""
+        start = self._at
+        self._takes(_MINUS)
+        whole = 1 if self._takes(_ZERO) else self._run(_DIGIT_RUN)
+        if whole == 0:
+            self._refuse(Rule.SYNTAX)
+        if self._takes(_POINT) and self._run(_DIGIT_RUN) == 0:
+            self._refuse(Rule.SYNTAX)
+        if self._takes(_EXPONENTS[0]) or self._takes(_EXPONENTS[1]):
+            if not self._takes(_PLUS_BYTE):
+                self._takes(_MINUS)
+            if self._run(_DIGIT_RUN) == 0:
+                self._refuse(Rule.SYNTAX)
+
+        # The grammar ends here, and the run does not: `01`, `1.5.2`, `1e5e3`.
+        byte = self._peek()
+        if byte is not None and byte in _NUMBER_BYTES:
+            self._refuse(Rule.SYNTAX)
+
+        token = self._data[start : self._at].decode("ascii")
+        if not any(mark in token for mark in ".eE"):
+            if not _is_in_range(token):
+                self._refuse(Rule.INTEGER_RANGE, start)
+        elif not math.isfinite(float(token)):
+            self._refuse(Rule.FLOAT_RANGE, start)
+
+    def _first_key(self, keys: set[str]) -> bool:
+        """The first key of an object and its colon. `False` for `{}`."""
+        if self._takes(_CLOSE_OBJECT):
+            return False
+        self._key(keys)
+
+        return True
+
+    def _next_key(self, keys: set[str]) -> bool:
+        """The comma after a member, the next key and its colon. `False` at
+        the end of the object."""
+        if self._takes(_CLOSE_OBJECT):
+            return False
+        if not self._takes(_COMMA):
+            self._refuse(Rule.SYNTAX)
+        self._run(_SPACE_RUN)
+        self._key(keys)
+
+        return True
+
+    def _item_follows(self) -> bool:
+        """The comma after an item. `False` at the end of the array."""
+        if self._takes(_CLOSE_LIST):
+            return False
+        if not self._takes(_COMMA):
+            self._refuse(Rule.SYNTAX)
+
+        return True
+
+    def _key(self, keys: set[str]) -> None:
+        """One key and the colon after it. Rule 5 at the first quote of the key."""
+        start = self._at
+        if self._peek() != _QUOTE_BYTE:
+            self._refuse(Rule.SYNTAX)
+
+        key = self._string()
+        if key in keys:
+            self._refuse(Rule.DUPLICATE_KEY, start)
+        keys.add(key)
+
+        self._run(_SPACE_RUN)
+        if not self._takes(_COLON):
+            self._refuse(Rule.SYNTAX)
+
+    def _string(self) -> str:
+        """One string, from its first quote. The result is its text after the
+        decode of each escape."""
+        self._at += 1
+        parts: list[str] = []
+
+        while True:
+            start = self._at
+            if self._run(_PLAIN_RUN):
+                parts.append(self._data[start : self._at].decode("utf-8"))
+
+            byte = self._peek()
+            if byte == _QUOTE_BYTE:
+                self._at += 1
+
+                return "".join(parts)
+
+            if byte != _ESCAPE_BYTE:
+                # A control character with no escape, or the end of the text.
+                self._refuse(Rule.SYNTAX)
+
+            parts.append(self._escape())
+
+    def _escape(self) -> str:
+        """One escape, or the two escapes of a surrogate pair. Each refusal is
+        at the backslash."""
+        start = self._at
+        letter = self._data[start + 1] if start + 1 < len(self._data) else None
+        self._at += 2
+
+        character = _SHORT_ESCAPES.get(letter) if letter is not None else None
+        if character is not None:
+            return character
+
+        if letter != _HEX_ESCAPE:
+            self._refuse(Rule.SYNTAX, start)
+
+        unit = self._hex_unit()
+        if unit is None:
+            self._refuse(Rule.SYNTAX, start)
+        if unit in _SECOND_HALF:
+            self._refuse(Rule.LONE_SURROGATE, start)
+        if unit not in _FIRST_HALF:
+            return chr(unit)
+
+        # The escape of the second half must be the next six bytes.
+        if not (self._takes(_ESCAPE_BYTE) and self._takes(_HEX_ESCAPE)):
+            self._refuse(Rule.LONE_SURROGATE, start)
+        second = self._hex_unit()
+        if second is None or second not in _SECOND_HALF:
+            self._refuse(Rule.LONE_SURROGATE, start)
+
+        high = unit - _FIRST_HALF.start
+        low = second - _SECOND_HALF.start
+
+        return chr(_PAIRS_START + (high << _HALF_BITS) + low)
+
+    def _hex_unit(self) -> int | None:
+        """Four hex digits of each letter case, or `None`."""
+        digits = self._data[self._at : self._at + _HEX_DIGITS]
+        if len(digits) != _HEX_DIGITS or any(byte not in _HEX_BYTES for byte in digits):
+            return None
+        self._at += _HEX_DIGITS
+
+        return int(digits, 16)
 
 
 def _broken_rule(text: str) -> Rule | None:

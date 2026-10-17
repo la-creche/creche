@@ -156,12 +156,10 @@ prefixed `test_noticeboard_`.
   UTF-16 and UTF-32, as `json.loads` does.
 - No contract gives a range for a count. `jsonfiles.integer` takes an integer
   of any size.
-- `rust/AGENTS.md`, "JSON", does not say which rule a copy of the strict
-  reader names for a text that breaks two rules. `strictjson.py` names the
-  fault that it finds first. The Rust reader names the fault at the lowest
-  byte offset, so the two words can differ. `strictjson.py` has an offset
-  for four rules only. No module of this package imports `strictjson.py`
-  yet.
+- `strictjson.py` names the rule and the offset of the Rust check for a
+  refused text of 1 MiB or less. For a longer refused text, it names the
+  fault that the standard decoder finds, with no offset, and the two words
+  can differ. No module of this package imports `strictjson.py` yet.
 - The contracts name RFC 3339 for a time and give no more of its grammar.
   `rfc3339.py` takes the grammar of the Rust type
   `creche_contracts::time::Timestamp`. It thus refuses three texts that
