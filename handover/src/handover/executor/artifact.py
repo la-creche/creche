@@ -55,8 +55,8 @@ from pathlib import Path
 from typing import Final
 
 from ..allocate import TAG_RE
-from ..artifacts import asset_names
-from ..catalog import ARCHIVE_MAX_BYTES, BUNDLE_MAX_BYTES, CATALOG_BY_NAME
+from ..artifacts import asset_limits
+from ..catalog import CATALOG_BY_NAME, Kind
 from ..errors import Refusal
 from ..site import operator_home
 from .install import DIR_MODE
@@ -82,6 +82,7 @@ _HOME_FLAGS: Final = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC
 _WRITE_FLAGS: Final = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
 
 NOT_ITS_TAG: Final = "{component}: the tag is not a tag of this component, so root copies nothing"
+NO_ASSETS: Final = "{component}: the release tool names no archive and bundle for this component"
 NO_COPY_DIR: Final = "{component}: root could not make the directory of its copy"
 NO_HOME: Final = "{component}: the site file gives no home of the operator, so root copies nothing"
 NO_STORE_DIR: Final = "{component}: a directory of the store path is absent or is a link"
@@ -158,11 +159,10 @@ def copy_from_store(component: str, tag: str, work: Path, operator_uid: int) -> 
     if component not in CATALOG_BY_NAME or matched is None or matched.group(1) != component:
         return NoCopy(NOT_ITS_TAG.format(component=component))
 
-    names = asset_names(component)
-    parts: _Pair = (
-        _Part(Asset.ARCHIVE, names.archive, ARCHIVE_MAX_BYTES),
-        _Part(Asset.BUNDLE, names.bundle, BUNDLE_MAX_BYTES),
-    )
+    parts = _parts(component)
+    if parts is None:
+        return NoCopy(NO_ASSETS.format(component=component))
+
     target = work / COPY_DIR / component
     try:
         first = _make_copy_dir(work, target)
@@ -178,6 +178,20 @@ def copy_from_store(component: str, tag: str, work: Path, operator_uid: int) -> 
         return NoCopy(fault.note)
     except OSError:
         return NoCopy(NO_READ.format(component=component))
+
+
+def _parts(component: str) -> _Pair | None:
+    """The archive and the bundle of `component`, each with its limit, as
+    `artifacts.asset_limits` gives them: the archive first. None when it
+    does not give two assets."""
+    match asset_limits(component, Kind.BINARY):
+        case (archive, bundle):
+            return (
+                _Part(Asset.ARCHIVE, archive.name, archive.max_bytes),
+                _Part(Asset.BUNDLE, bundle.name, bundle.max_bytes),
+            )
+        case _:
+            return None
 
 
 def _make_copy_dir(work: Path, target: Path) -> bool:

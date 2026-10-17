@@ -29,14 +29,16 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from handover.artifacts import asset_names
+from handover.artifacts import AssetLimit, asset_limits, asset_names
 from handover.catalog import BUNDLE_MAX_BYTES, CATALOG, CATALOG_BY_NAME, Kind
+from handover.executor import artifact
 from handover.executor.approval import Decision, Summary
 from handover.executor.artifact import (
     COPY_CHANGED,
     COPY_DIR,
     COPY_GONE,
     GREW,
+    NO_ASSETS,
     NO_FILE,
     NO_HOME,
     NO_STORE_DIR,
@@ -447,6 +449,30 @@ def test_a_tag_of_another_component_gives_no_copy(home: Path, work: Path) -> Non
 
     assert _no_copy(result) == _note(NOT_ITS_TAG)
     assert not work.exists()
+
+
+def test_a_component_with_no_two_assets_gives_no_copy(
+    home: Path, work: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The names and the limits come from `artifacts.asset_limits`, and
+    the copy takes exactly two assets from it."""
+    _stock(home)
+    monkeypatch.setattr(artifact, "asset_limits", lambda component, kind: ())
+
+    assert _no_copy(_copy(work)) == _note(NO_ASSETS)
+    assert not work.exists()
+
+
+def test_the_copy_takes_the_names_and_the_limits_of_the_release_tool(
+    home: Path, work: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A bundle limit of one byte from `asset_limits` holds for the copy."""
+    _stock(home)
+    archive, bundle = asset_limits(COMPONENT, Kind.BINARY)
+    one_byte = (archive, AssetLimit(name=bundle.name, max_bytes=1))
+    monkeypatch.setattr(artifact, "asset_limits", lambda component, kind: one_byte)
+
+    assert _no_copy(_copy(work)) == _note(OUTSIDE_LIMIT, "bundle")
 
 
 def test_a_site_file_with_no_home_gives_no_copy(
