@@ -106,14 +106,45 @@ print(recipients_of(path, "secrets/mcp/kagi.env", owner_uid=os.getuid()))
 """
 
 
-def _in_child(payload: str, text: str, *args: str) -> str:
-    """What the child prints. The child ends inside the limits, or the test
-    fails here."""
-    argv = [sys.executable, "-c", CHILD_LIMITS + payload]
+#: The size of the value that `HOLDER` holds: the memory limit of the child,
+#: and 64 MiB more.
+HELD_BYTES = MEMORY_LIMIT_BYTES + 64 * 1024 * 1024
+
+#: Holds a value of `HELD_BYTES` while it runs the command of its arguments
+#: with its own standard streams, and ends with the status of that command.
+#: `bytearray` writes each byte of the value, so the peak resident size of
+#: this process passes the memory limit of the child. The value is not in
+#: the test process, so the peak of the test process does not change. The
+#: command gets half of the wall time limit of the child, so this process
+#: stops the command before the test stops this process.
+HOLDER = f"""
+import subprocess
+import sys
+
+held = bytearray({HELD_BYTES})
+sys.exit(subprocess.run(sys.argv[1:], timeout={WALL_LIMIT_S / 2}).returncode)
+"""
+
+
+def _run_child(
+    program: str, text: str, *args: str, parent: tuple[str, ...] = ()
+) -> subprocess.CompletedProcess[str]:
+    """Runs `program` in a child process inside the wall time limit, with
+    the CPU limit, the memory limit and `args` as its arguments and `text`
+    on its standard input. `parent` is the command of a process that starts
+    the child, or no word: then this process starts it."""
+    argv = [*parent, sys.executable, "-c", program]
     argv += [str(CPU_LIMIT_S), str(MEMORY_LIMIT_BYTES), *args]
-    done = subprocess.run(
+
+    return subprocess.run(
         argv, input=text, capture_output=True, text=True, timeout=WALL_LIMIT_S, check=False
     )
+
+
+def _in_child(payload: str, text: str, *args: str, parent: tuple[str, ...] = ()) -> str:
+    """What the child prints. The child ends inside the limits, or the test
+    fails here. `parent` is as for `_run_child`."""
+    done = _run_child(CHILD_LIMITS + payload, text, *args, parent=parent)
 
     assert done.returncode == 0, done.stderr[-2000:]
 
@@ -448,6 +479,17 @@ def test_a_small_manifest_with_merge_keys_that_double_does_not_parse() -> None:
     assert len(text.encode("utf-8")) <= 4096
 
     assert _in_child(MANIFEST_CHILD, text) == PAIRS_REFUSAL
+
+
+def test_the_child_watches_only_its_own_memory() -> None:
+    """The parent of the child holds a peak past the memory limit of the
+    child while the child runs. On Linux, the `ru_maxrss` of the child holds
+    the memory of its parent from before its exec. The watch of the child
+    does not count that memory."""
+    text = _manifest_with(_doubling(DOUBLING_LEVELS))
+    holder = (sys.executable, "-c", HOLDER)
+
+    assert _in_child(MANIFEST_CHILD, text, parent=holder) == PAIRS_REFUSAL
 
 
 #: The start of the refusal of a manifest for each text of `SMALL_TEXTS`.
