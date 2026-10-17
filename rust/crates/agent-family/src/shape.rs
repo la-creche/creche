@@ -10,7 +10,7 @@
 use std::collections::BTreeMap;
 
 use creche_contracts::family::{
-    RawDaily, RawEnqueue, RawFamily, RawHaCall, RawHaTriple, RawJob, RawModel, RawMount,
+    Block, RawDaily, RawEnqueue, RawFamily, RawHaCall, RawHaTriple, RawJob, RawModel, RawMount,
     RawNoFence, RawQuiet, RawRelease, RawSandbox, RawToolGrant, RawTrigger, RawVerbs,
     python_float_text,
 };
@@ -20,17 +20,43 @@ use crate::lax;
 use crate::yaml::text::repr_bytes;
 use crate::yaml::{DateTime, Obj, ObjId, Value};
 
-const MISSING: &str = "Field required";
+pub(crate) const MISSING: &str = "Field required";
 const INVALID_KEY: &str = "Keys should be strings";
-const LIST_TYPE: &str = "Input should be a valid list";
-const DICT_TYPE: &str = "Input should be a valid dictionary";
+pub(crate) const LIST_TYPE: &str = "Input should be a valid list";
+pub(crate) const DICT_TYPE: &str = "Input should be a valid dictionary";
 
 /// The part of a location that names the key of a mapping entry.
 const KEY_PART: &str = "[key]";
 
 /// The two parts that name the arms of the union `list[str] | str`.
-const LIST_ARM: &str = "list[str]";
-const STR_ARM: &str = "str";
+pub(crate) const LIST_ARM: &str = "list[str]";
+pub(crate) const STR_ARM: &str = "str";
+
+/// The name of the Python class of the model that reads a table of the
+/// family file.
+pub(crate) fn class_of(block: Block) -> &'static str {
+    match block {
+        Block::Model => "ModelBlock",
+        Block::Mount => "FileMount",
+        Block::Verbs => "VerbsBlock",
+        Block::NoFence => "NoFence",
+        Block::HaCall => "HaCallFence",
+        Block::HaTriple => "HaTriple",
+        Block::Enqueue => "EnqueueFence",
+        Block::Release => "ReleaseFence",
+        Block::Sandbox => "SandboxBlock",
+        Block::Job => "JobBlock",
+        Block::Trigger => "Trigger",
+        Block::Quiet => "QuietBlock",
+        Block::Daily => "DailyCall",
+    }
+}
+
+/// The error of pydantic for a value that is no mapping, where the model
+/// with the class name `model` reads a mapping.
+pub(crate) fn model_type_msg(model: &str) -> String {
+    format!("Input should be a valid dictionary or instance of {model}")
+}
 
 /// One part of a location, as pydantic holds it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -325,9 +351,7 @@ impl<'a> Fields<'a> {
     /// no mapping. `model` is the name of the Python class.
     fn of(value: Value<'a>, model: &str, walk: &mut Walk) -> Option<Self> {
         let Obj::Dict(pairs) = value.obj() else {
-            walk.said(&format!(
-                "Input should be a valid dictionary or instance of {model}"
-            ));
+            walk.said(&model_type_msg(model));
 
             return None;
         };
@@ -410,7 +434,7 @@ fn or<T>(read: Option<Option<T>>, default: impl FnOnce() -> T) -> Option<T> {
 }
 
 fn read_model_block(value: Value<'_>, walk: &mut Walk) -> Option<RawModel> {
-    let mut fields = Fields::of(value, "ModelBlock", walk)?;
+    let mut fields = Fields::of(value, class_of(Block::Model), walk)?;
     let router = fields.required("router", walk, read_str);
     let budget = fields.required("budget_usd_per_day", walk, read_float);
     let clean = fields.finish(walk);
@@ -424,7 +448,7 @@ fn read_model_block(value: Value<'_>, walk: &mut Walk) -> Option<RawModel> {
 }
 
 fn read_mount(value: Value<'_>, walk: &mut Walk) -> Option<RawMount> {
-    let mut fields = Fields::of(value, "FileMount", walk)?;
+    let mut fields = Fields::of(value, class_of(Block::Mount), walk)?;
     let path = fields.required("path", walk, read_str);
     let mode = fields.required("mode", walk, read_str);
     let clean = fields.finish(walk);
@@ -439,7 +463,7 @@ fn read_mount(value: Value<'_>, walk: &mut Walk) -> Option<RawMount> {
 
 fn read_sandbox(value: Value<'_>, walk: &mut Walk) -> Option<RawSandbox> {
     let default = RawSandbox::default();
-    let mut fields = Fields::of(value, "SandboxBlock", walk)?;
+    let mut fields = Fields::of(value, class_of(Block::Sandbox), walk)?;
     let cpus = fields.optional("cpus", walk, read_int);
     let memory = fields.optional("memory", walk, read_str);
     let resident = fields.optional("max_resident_processes", walk, read_int);
@@ -457,7 +481,7 @@ fn read_sandbox(value: Value<'_>, walk: &mut Walk) -> Option<RawSandbox> {
 }
 
 fn read_job(value: Value<'_>, walk: &mut Walk) -> Option<RawJob> {
-    let mut fields = Fields::of(value, "JobBlock", walk)?;
+    let mut fields = Fields::of(value, class_of(Block::Job), walk)?;
     let timeout = fields.optional("timeout", walk, read_str);
     let clean = fields.finish(walk);
 
@@ -469,7 +493,7 @@ fn read_job(value: Value<'_>, walk: &mut Walk) -> Option<RawJob> {
 }
 
 fn read_trigger(value: Value<'_>, walk: &mut Walk) -> Option<RawTrigger> {
-    let mut fields = Fields::of(value, "Trigger", walk)?;
+    let mut fields = Fields::of(value, class_of(Block::Trigger), walk)?;
     let cron = fields.optional("cron", walk, |value, walk| {
         read_optional(value, walk, read_str)
     });
@@ -491,7 +515,7 @@ fn read_trigger(value: Value<'_>, walk: &mut Walk) -> Option<RawTrigger> {
 }
 
 fn read_daily(value: Value<'_>, walk: &mut Walk) -> Option<RawDaily> {
-    let mut fields = Fields::of(value, "DailyCall", walk)?;
+    let mut fields = Fields::of(value, class_of(Block::Daily), walk)?;
     let call = fields.required("call", walk, read_str);
     let hour = fields.required("hour", walk, read_int);
     let zone = fields.required("zone", walk, read_str);
@@ -509,7 +533,7 @@ fn read_daily(value: Value<'_>, walk: &mut Walk) -> Option<RawDaily> {
 }
 
 fn read_quiet(value: Value<'_>, walk: &mut Walk) -> Option<RawQuiet> {
-    let mut fields = Fields::of(value, "QuietBlock", walk)?;
+    let mut fields = Fields::of(value, class_of(Block::Quiet), walk)?;
     let board = fields.optional("board", walk, |value, walk| {
         read_optional(value, walk, read_str)
     });
@@ -529,7 +553,7 @@ fn read_quiet(value: Value<'_>, walk: &mut Walk) -> Option<RawQuiet> {
 }
 
 fn read_ha_triple(value: Value<'_>, walk: &mut Walk) -> Option<RawHaTriple> {
-    let mut fields = Fields::of(value, "HaTriple", walk)?;
+    let mut fields = Fields::of(value, class_of(Block::HaTriple), walk)?;
     let domain = fields.required("domain", walk, read_str);
     let service = fields.required("service", walk, read_str);
     let entity_id = fields.optional("entity_id", walk, |value, walk| {
@@ -547,13 +571,13 @@ fn read_ha_triple(value: Value<'_>, walk: &mut Walk) -> Option<RawHaTriple> {
 }
 
 fn read_no_fence(value: Value<'_>, walk: &mut Walk) -> Option<RawNoFence> {
-    let fields = Fields::of(value, "NoFence", walk)?;
+    let fields = Fields::of(value, class_of(Block::NoFence), walk)?;
 
     fields.finish(walk).then_some(RawNoFence {})
 }
 
 fn read_ha_call(value: Value<'_>, walk: &mut Walk) -> Option<RawHaCall> {
-    let mut fields = Fields::of(value, "HaCallFence", walk)?;
+    let mut fields = Fields::of(value, class_of(Block::HaCall), walk)?;
     let allow = fields.required("allow", walk, |value, walk| {
         read_list(value, walk, read_ha_triple)
     });
@@ -565,7 +589,7 @@ fn read_ha_call(value: Value<'_>, walk: &mut Walk) -> Option<RawHaCall> {
 }
 
 fn read_enqueue(value: Value<'_>, walk: &mut Walk) -> Option<RawEnqueue> {
-    let mut fields = Fields::of(value, "EnqueueFence", walk)?;
+    let mut fields = Fields::of(value, class_of(Block::Enqueue), walk)?;
     let targets = fields.required("targets", walk, read_strings);
     let clean = fields.finish(walk);
 
@@ -575,7 +599,7 @@ fn read_enqueue(value: Value<'_>, walk: &mut Walk) -> Option<RawEnqueue> {
 }
 
 fn read_release(value: Value<'_>, walk: &mut Walk) -> Option<RawRelease> {
-    let mut fields = Fields::of(value, "ReleaseFence", walk)?;
+    let mut fields = Fields::of(value, class_of(Block::Release), walk)?;
     let components = fields.required("components", walk, read_strings);
     let clean = fields.finish(walk);
 
@@ -587,7 +611,7 @@ fn read_release(value: Value<'_>, walk: &mut Walk) -> Option<RawRelease> {
 }
 
 fn read_verbs(value: Value<'_>, walk: &mut Walk) -> Option<RawVerbs> {
-    let mut fields = Fields::of(value, "VerbsBlock", walk)?;
+    let mut fields = Fields::of(value, class_of(Block::Verbs), walk)?;
     let embed = fields.optional("embed", walk, |value, walk| {
         read_optional(value, walk, read_no_fence)
     });

@@ -10,7 +10,7 @@
 //! | Module | Holds |
 //! |---|---|
 //! | `yaml` | a YAML reader that reads a text as PyYAML reads it |
-//! | `shape`, `lax`, `parse` | YAML text to a raw file, or to issues |
+//! | `shape`, `lax`, `parse` | YAML or TOML text to a raw file, or to issues |
 //! | `crossref` | the rules that need the registry or the host |
 //! | `registry` | the loader of a registry, and its revision |
 //! | `classify` | live or replacement, field by field |
@@ -34,7 +34,7 @@ mod zones;
 pub use classify::{Diff, Direction, FieldChange, Landing, Step, SwitchMode, classify};
 pub use cli::{EXIT_INVALID, EXIT_OK, EXIT_USAGE, NAME, entry, run};
 pub use crossref::{HostFacts, Index, check_family, check_server};
-pub use parse::{DOCUMENT, parse_family, parse_server};
+pub use parse::{DOCUMENT, Markup, parse_family, parse_server};
 pub use registry::{Registry, load_registry, revision_of};
 pub use report::{Applied, FIRST_ERROR_CHARS, FamilyState, Report};
 pub use zones::{SystemZones, ZoneFacts};

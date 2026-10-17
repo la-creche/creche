@@ -1,9 +1,10 @@
 # family
 
-The one place the family file and `mcp/<name>/server.yaml` are defined. A
-family file is `family.toml` or `family.yaml`. The package is
-`agent_family`. `caregiver` is its only caller. The root
-`AGENTS.md` applies here too.
+The one place the family file and the server file are defined. A family
+file is `family.toml` or `family.yaml`. A server file is
+`mcp/<name>/server.toml` or `mcp/<name>/server.yaml`. The package is
+`agent_family`. `caregiver` is its only caller. The root `AGENTS.md` applies
+here too.
 
 Two products come out of it:
 
@@ -16,14 +17,14 @@ Bad input never raises. A bad definition yields a report, not a crash.
 
 | Module | Owns |
 |---|---|
-| `grammar.py` | names, ranges and small parsers. One pattern per identifier. |
+| `grammar.py` | names, ranges and small parsers. One pattern per identifier. The copies of the grammar of root for a server file. |
 | `model.py` | the family file shape only: fields, types, `extra="forbid"` |
-| `server.py` | `server.yaml` shape, same rule |
+| `server.py` | the server file shape, same rule |
 | `parse.py` | YAML or TOML text to a model, or to issues. Never an exception. |
 | `tomlfile.py` | the TOML reader: the byte limit of each file kind, the level limit, the TOML 1.0 check and the four texts of a refusal |
 | `report.py` | `Issue`, `Report`, `FamilyState` |
 | `validate.py` | the family file value and cross-reference rules |
-| `serverrules.py` | `server.yaml` value rules |
+| `serverrules.py` | the server file value rules. A TOML file also gets the rules of root. |
 | `registry.py` | reads `families/`, `mcp/`, `skills/`. One report per family. |
 | `classify.py` | pure: two parsed families in, a live-or-replace diff out |
 | `cli.py` | `agent-family validate` |
@@ -51,39 +52,55 @@ instead of the first.
 - `all` resolves against the server file at read time, in
   `Index.granted_tools` only.
 
-## The two names of a family file
+## The two names of a file
 
-`registry.py` holds the two names: `FAMILY_FILE` is `family.toml`, and
-`FAMILY_FILE_YAML` is `family.yaml`. The two names have no other source. A
-package that imports `agent_family` takes each name from `registry.py`.
-"Known gaps" lists the copies that are left. The process-level suite imports
-no package of a service (`integration/proc/AGENTS.md`, rule 2), so it keeps
-its own text of each name.
+`registry.py` holds the two names of each file kind:
 
-1. The registry reads `family.toml` first and `family.yaml` second.
-2. A directory with both names gets one error at `<document>`. The registry
-   does not parse that family.
-3. A directory with neither name keeps the warning `no family.yaml; this
-   directory is ignored`.
+| Kind | TOML name | YAML name |
+|---|---|---|
+| family file | `FAMILY_FILE`, `family.toml` | `FAMILY_FILE_YAML`, `family.yaml` |
+| server file | `SERVER_FILE`, `server.toml` | `SERVER_FILE_YAML`, `server.yaml` |
+
+The names have no other source. A package that imports `agent_family` takes
+each name from `registry.py`. "Known gaps" lists the copies that are left.
+The process-level suite imports no package of a service
+(`integration/proc/AGENTS.md`, rule 2), so it keeps its own text of each
+name.
+
+For each kind, the registry reads a directory in this way:
+
+1. The registry reads the TOML name first and the YAML name second.
+2. A directory with both names gets one error at `<document>`, for example
+   `two server files: server.toml and server.yaml; keep one`. The registry
+   does not parse either file.
+3. A directory with neither name keeps the warning of today, for example
+   `no server.yaml; this directory is ignored`.
 4. The report names the file that the registry read. With both names, it
-   names `family.toml`. Contract 01 does not decide this case ("Known
+   names the TOML name. The contracts do not decide this case ("Known
    gaps").
+
+A registry can hold files of both markups. A family in `family.toml` finds
+a server in `server.yaml`, and a family in `family.yaml` finds a server in
+`server.toml`.
 
 ## The TOML path
 
-`parse_family(text, Markup.TOML)` reads a TOML text. The default markup is
-`Markup.YAML`, so a caller that gives one argument reads YAML as before.
+`parse_family(text, Markup.TOML)` and `parse_server(text, Markup.TOML)` read
+a TOML text. The default markup is `Markup.YAML`, so a caller that gives one
+argument reads YAML as before.
 
-- `tomlfile.loads` reads the bytes of the text with `FileKind.FAMILY`. A
-  refusal is one error at `<document>`. Its message is one of the four
-  texts of the reader. A text holds no line and no character of the file.
+- `tomlfile.loads` reads the bytes of the text with `FileKind.FAMILY` or
+  `FileKind.SERVER`. The byte limit of the kind is the one size cap of the
+  TOML path. A refusal is one error at `<document>`. Its message is one of
+  the four texts of the reader. A text holds no line and no character of
+  the file.
 - The doc string of `tomlfile.py` lists the seven checks of `loads` in
   their sequence. Check 6 refuses an integer outside 64 bits. It also
   refuses a float text with a digit and a value that is not finite, for
   example `1e999`.
 - The registry reads a TOML file as bytes, and it reads the byte limit of
-  a family file plus one byte at most. It gives the bytes to
-  `parse_family_toml`, so the reader judges each byte of the file.
+  its kind plus one byte at most. It gives the bytes to `parse_family_toml`
+  or to `parse_server_toml`, so the reader judges each byte of the file.
 - The model validates in the strict mode of pydantic. A field takes only
   the type of the model. A float field also takes an integer. The model
   refuses `"2"` and `2.0` for an integer, `"yes"` for a boolean and a date
@@ -117,6 +134,52 @@ text.
 Python 3.12 to 3.14 refuse each form before the check runs. The tests thus
 call `_only_toml10` directly, and one test gives `loads` a stand-in parser
 that reads TOML 1.1.
+
+## The grammar of root for a TOML server file
+
+Root reads each server file again at a release, with
+`handover.mcpserver`. Under contract 01b §1, root accepts each TOML server
+file that the validator accepts. `check_server` takes the markup of the
+file. A TOML file gets each rule of the YAML path and each rule of root that
+the YAML path does not hold:
+
+1. An identity and a description count each character. The YAML path
+   counts after the collapse of white space.
+2. The grammar of `package`, `repo`, `asset`, `python`, `entrypoint` and
+   `state_dir_env`.
+3. A value of `run.env`, a word of `run.args` and a value of a fence have
+   256 characters at most and no NUL character.
+4. The key after `secret:` matches `[a-z][a-z0-9_]{1,62}`.
+5. A fence names one tool at least, or `all`.
+6. Each count has a cap:
+   - 200 tools.
+   - 32 words of `run.args`.
+   - 32 variables of `run.env`.
+   - 64 entries of `arg_allows` and 64 entries of `arg_denies`.
+   - 256 values of a fence.
+   - 8 shared secrets.
+
+The TOML path also keeps two rules of the YAML path that root does not
+hold:
+
+1. An identity has 300 characters at most. Root takes 1000.
+2. A description of white space only is an error. Root takes it.
+
+`grammar.py` holds a copy of each pattern and each cap of root that the
+YAML path does not hold. Each copy has the name of its source in
+`handover.mcpserver`, and a copy of a pattern adds `^` and `\Z`.
+`serverrules.py` holds two more copies, which both paths apply:
+`_LOCK_PATH` is `LOCK_PATH_RE`, and `_ARG_NAME` is `ARG_NAME_RE`. The
+argument of a fence has two parts at most in both readers.
+`bin/tests/test_server_grammar_copies.py` holds each copy equal to its
+source. The package `family` does not import `handover`, so the test is in
+`bin/tests`.
+
+`bin/tests/test_yaml_to_toml_models.py` holds the two readers equal on each
+server file of the fixture registry. Root accepts the YAML text, and the
+validator accepts its TOML text. The test also gives root the YAML text of
+each rule of the list above. Root refuses each one, the YAML path accepts
+it, and the TOML path refuses its TOML text.
 
 ## What it enforces
 
@@ -173,6 +236,14 @@ uv run pytest family/tests
 
   The TOML packet of each package changes its file:
   `toml-caregiver-applied` and `toml-family-read-rust`.
+- Three files still hold the text `server.yaml` and do not take it from
+  `registry.py`:
+  1. `validate.py`, in three messages of the family file rules. Packet
+     `toml-drop-yaml-validator-python` changes them.
+  2. `vectors/surfaces/server_file.py`, the constant `SERVER_FILE`. Packet
+     `toml-server-read-rust` changes it.
+  3. `caregiver/src/caregiver/mcp_wire.py`, in one message. No packet
+     changes it yet.
 - These `CONTRACT-QUESTION` comments are open:
   1. `validate.py`, `_check_cron`, contract 01 §3.13. The contract gives no
      grammar for a cron field. The check takes ASCII digits and `*`, `,`,
@@ -181,11 +252,13 @@ uv run pytest family/tests
      not say how strict the read of a type is. The YAML path reads `"2"` as
      the integer 2, `"yes"` as true and `true` as the number 1. The TOML
      path uses the strict mode.
-  3. `serverrules.py`, seven comments, contract 01b §3 to §7.
-     `handover.mcpserver` reads the same file as root and refuses more
-     files. A file can thus pass here, and root can refuse it at a release.
-     The contract does not decide these differences:
-     - The count of an identity and of a description. This validator counts
+  3. `serverrules.py`, seven comments, contract 01b §3 to §7. These
+     differences apply to a YAML server file only. A TOML server file gets
+     the grammar of root ("The grammar of root for a TOML server file").
+     `handover.mcpserver` reads the same file as root and refuses more YAML
+     files. A YAML file can thus pass here, and root can refuse it at a
+     release. The contract does not decide these differences:
+     - The count of an identity and of a description. The YAML path counts
        after the collapse of whitespace. Root counts each character.
      - The grammar of `package`, `repo`, `asset`, `python`, `entrypoint`
        and `state_dir_env`.
@@ -208,9 +281,10 @@ uv run pytest family/tests
      that is less than 180 calls deep. With a deeper caller, the reader can
      refuse a shorter chain. It then gives the report for a text that nests
      too deep. The Rust reader reads that chain.
-  5. `registry.py`, `_read_families`, contract 01 §1. The contract names one
-     file, `family.toml`. It does not say what a reader does with a
-     directory that holds `family.toml` and `family.yaml`. The registry
-     gives one error and parses neither file. The report names
-     `family.toml`. The other reading names `family.yaml`. The Rust reader
-     of a registry must give the same answer.
+  5. `registry.py`, `_read_directory`, contract 01 §1 and contract 01b §1.
+     Each contract names one file, `family.toml` and `server.toml`.
+     `spec.md` §12.3 row 5 makes a directory with both names a refusal. It
+     does not say which name the report names. The registry gives one
+     error and parses neither file. The report names the TOML name. The
+     other reading names the YAML name. The Rust reader of a registry must
+     give the same answer.

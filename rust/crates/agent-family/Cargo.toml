@@ -14,7 +14,9 @@ name = "agent-family"
 path = "src/main.rs"
 
 [dependencies]
-creche-contracts = { path = "../creche-contracts" }
+# The registry loader reads `family.toml` with the TOML reader of this
+# dependency, so the crate names that feature itself.
+creche-contracts = { path = "../creche-contracts", features = ["tomlfile"] }
 # The program takes two functions from this dependency. `log::init` sets the
 # panic hook. `service::enter` ends the program with status 1 after a panic.
 # A copy of either one in this crate can drift from its source

@@ -1,4 +1,5 @@
-"""`family.yaml` (contract 01): the bytes of one file to its validation report.
+"""`family.yaml` and `family.toml` (contract 01): the bytes of one file to
+its validation report.
 
 The entry point is `agent_family.load_registry`, the one `caregiver` calls.
 A family file is validated against the rest of a registry, so every vector
@@ -6,8 +7,10 @@ names the registry it sits in and its directory under `families/`. The
 generator copies that registry to a temporary directory, writes the input
 there and reads the report of that one family back.
 
-Two surfaces. `family_file` has no host: the two checks that need one
-downgrade to a warning. `family_file.host` has a written host.
+Three surfaces. `family_file` has no host: the two checks that need one
+downgrade to a warning. `family_file.host` has a written host. Each input of
+the two is a YAML text. `family_file.toml` has no host, and each input is a
+TOML text in a copy of `TOML_REGISTRY`.
 """
 
 from __future__ import annotations
@@ -21,6 +24,8 @@ from pathlib import Path
 from typing import Final
 
 from agent_family import Registry, load_registry
+from agent_family.registry import FAMILY_FILE as TOML_FILE
+from agent_family.registry import FAMILY_FILE_YAML
 from agent_family.validate import HostFacts
 
 from vectors.core import (
@@ -38,23 +43,35 @@ from vectors.core import (
     refused,
 )
 from vectors.surfaces.family_cases import CASES, PLACEHOLDER, Case
+from vectors.surfaces.family_toml_cases import CASES as TOML_CASES
 
 REPO_ROOT: Final = Path(__file__).resolve().parents[2]
 
 #: The registry every written case is filed in. Public test data of `family`.
 FAMILY_REGISTRY: Final = "family/tests/fixtures/registry"
 
-#: Every registry in this repository whose family files are inputs as they are.
-FIXTURE_REGISTRIES: Final = (
-    FAMILY_REGISTRY,
+#: The registries of the process-level suite.
+INTEGRATION_REGISTRIES: Final = (
     "integration/fixtures/eq-registry",
     "integration/fixtures/stage3-registry",
     "integration/fixtures/stage4-registry",
     "integration/fixtures/stage5-registry",
 )
 
+#: Every registry in this repository whose family files are inputs as they are.
+FIXTURE_REGISTRIES: Final = (FAMILY_REGISTRY, *INTEGRATION_REGISTRIES)
+
+#: The registry every written TOML case is filed in: a copy of
+#: `FAMILY_REGISTRY` with each family file as `family.toml`. A path under
+#: `vectors/` belongs to no component, so a change here mints no tag.
+TOML_REGISTRY: Final = "vectors/fixtures/registry-toml"
+
+#: Every registry in this repository whose `family.toml` files are inputs as
+#: they are. A registry of the process-level suite holds no such file yet.
+TOML_REGISTRIES: Final = (TOML_REGISTRY, *INTEGRATION_REGISTRIES)
+
 FAMILIES_DIR: Final = "families"
-FAMILY_FILE: Final = "family.yaml"
+FAMILY_FILE: Final = FAMILY_FILE_YAML
 
 CONTRACT: Final = "contract 01"
 ENTRY: Final = "agent_family.load_registry"
@@ -63,19 +80,26 @@ ENTRY: Final = "agent_family.load_registry"
 #: reader in another language reads no file outside `vectors/data/`.
 REGISTRIES_FILE: Final = "family_file.registries.json"
 
-NOTES: Final = (
-    "The input is the bytes of one family.yaml.",
-    "params.registry is a registry in this repository, as a path from the repository root. "
-    "params.directory is the directory of the input under families/ in that registry.",
-    "family_file.registries.json holds each file of each such registry.",
-    "params.files holds every other file a vector adds to the registry, by path from the "
-    "registry root. A file there replaces the registry's own file at that path.",
-    "A family file is validated against the whole registry. To replay a vector: copy the "
-    "registry, write params.files, write the input to families/<directory>/family.yaml, "
-    "load the registry and read the report of <directory>.",
-    "result is accepted when the report holds no issue of severity error. issues holds every "
-    "issue in order. value is the parsed family, with every default filled in.",
-)
+
+def _notes(file: str) -> tuple[str, ...]:
+    """The notes of a surface whose input is written as `file`."""
+    return (
+        f"The input is the bytes of one {file}.",
+        "params.registry is a registry in this repository, as a path from the repository "
+        "root. params.directory is the directory of the input under families/ in that "
+        "registry.",
+        "family_file.registries.json holds each file of each such registry.",
+        "params.files holds every other file a vector adds to the registry, by path from the "
+        "registry root. A file there replaces the registry's own file at that path.",
+        "A family file is validated against the whole registry. To replay a vector: copy the "
+        f"registry, write params.files, write the input to families/<directory>/{file}, "
+        "load the registry and read the report of <directory>.",
+        "result is accepted when the report holds no issue of severity error. issues holds "
+        "every issue in order. value is the parsed family, with every default filled in.",
+    )
+
+
+NOTES: Final = _notes(FAMILY_FILE)
 
 #: The host of the `family_file.host` surface: the aliases LiteLLM serves,
 #: and one symbolic link out of an allowed root.
@@ -137,18 +161,19 @@ def _params(registry: str, case: Case) -> dict[str, Json]:
     return params
 
 
-def _write_input(root: Path, case: Case) -> Path:
-    """The case's own file, in its directory under `root`. Returns the directory."""
+def _write_input(root: Path, case: Case, file: str) -> Path:
+    """The case's own file, named `file`, in its directory under `root`.
+    Returns the directory."""
     directory = root / FAMILIES_DIR / case.directory_name()
     directory.mkdir(parents=True, exist_ok=True)
-    (directory / FAMILY_FILE).write_bytes(case.text_bytes())
+    (directory / file).write_bytes(case.text_bytes())
 
     return directory
 
 
 @contextmanager
-def _staged(registry: str, case: Case, scratch: Path) -> Generator[Path]:
-    """A copy of `registry` with the case written into it.
+def _staged(registry: str, case: Case, scratch: Path, file: str) -> Generator[Path]:
+    """A copy of `registry` with the case written into it as `file`.
 
     A case that adds files or takes the directory of a family the registry
     holds gets a copy of its own. Every other case adds one directory to a
@@ -163,7 +188,7 @@ def _staged(registry: str, case: Case, scratch: Path) -> Generator[Path]:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(text.replace(PLACEHOLDER, case.directory_name()), encoding="utf-8")
 
-        _write_input(root, case)
+        _write_input(root, case, file)
         yield root
         return
 
@@ -171,7 +196,7 @@ def _staged(registry: str, case: Case, scratch: Path) -> Generator[Path]:
     if not shared.is_dir():
         copy_registry(REPO_ROOT / registry, shared)
 
-    directory = _write_input(shared, case)
+    directory = _write_input(shared, case, file)
     try:
         yield shared
     finally:
@@ -195,10 +220,12 @@ def _outcome(case: Case, loaded: Registry, given: dict[str, Json], params: Json)
     )
 
 
-def _vector(registry: str, case: Case, scratch: Path, host: HostFacts | None) -> Vector:
+def _vector(
+    registry: str, case: Case, scratch: Path, host: HostFacts | None, file: str = FAMILY_FILE
+) -> Vector:
     given = bytes_input(case.text_bytes())
     params = _params(registry, case)
-    with _staged(registry, case, scratch) as root:
+    with _staged(registry, case, scratch, file) as root:
         loaded = attempt(lambda: load_registry(root, host))
 
     if isinstance(loaded, Raised):
@@ -207,8 +234,11 @@ def _vector(registry: str, case: Case, scratch: Path, host: HostFacts | None) ->
     return _outcome(case, loaded, given, params)
 
 
-def _fixture_vectors(registry: str, host: HostFacts | None) -> list[Vector]:
-    """Every family file of one registry of this repository, as it is.
+def _fixture_vectors(
+    registry: str, host: HostFacts | None, file: str = FAMILY_FILE
+) -> list[Vector]:
+    """Every family file named `file` of one registry of this repository, as
+    it is.
 
     One load serves them all. The input is the file the registry already
     holds, so a copy with the input written into it is the same registry.
@@ -217,19 +247,20 @@ def _fixture_vectors(registry: str, host: HostFacts | None) -> list[Vector]:
 
     return [
         _outcome(case, loaded, bytes_input(case.text_bytes()), _params(registry, case))
-        for case in _fixture_cases(registry)
+        for case in _fixture_cases(registry, file)
     ]
 
 
-def _fixture_cases(registry: str) -> tuple[Case, ...]:
-    """Every family file a registry of this repository holds, as it is."""
+def _fixture_cases(registry: str, file: str) -> tuple[Case, ...]:
+    """Every family file named `file` that a registry of this repository
+    holds, as it is. The TOML copy of a registry gives the ids of the YAML
+    registry: `TOML_REGISTRY` gives `fixture-registry-<name>`."""
     base = REPO_ROOT / registry / FAMILIES_DIR
-    names = sorted(path.name for path in base.iterdir() if (path / FAMILY_FILE).is_file())
-    label = Path(registry).name.removesuffix("-registry")
+    names = sorted(path.name for path in base.iterdir() if (path / file).is_file())
+    label = Path(registry).name.removesuffix("-toml").removesuffix("-registry")
 
     return tuple(
-        Case(f"fixture-{label}-{name}", (base / name / FAMILY_FILE).read_bytes(), name)
-        for name in names
+        Case(f"fixture-{label}-{name}", (base / name / file).read_bytes(), name) for name in names
     )
 
 
@@ -262,7 +293,7 @@ HOST_CASES: Final = (
 def render_registries() -> str:
     """The bytes of `family_file.registries.json`. One file of a registry per line."""
     rows: list[str] = []
-    for registry in FIXTURE_REGISTRIES:
+    for registry in (*FIXTURE_REGISTRIES, TOML_REGISTRY):
         base = REPO_ROOT / registry
         for path in registry_files(base):
             row: dict[str, Json] = {
@@ -292,6 +323,13 @@ def surfaces() -> tuple[Surface, ...]:
         for case in HOST_CASES:
             hosted.append(_vector(FAMILY_REGISTRY, case, scratch / "host", host))
 
+        toml: list[Vector] = []
+        for registry in TOML_REGISTRIES:
+            toml.extend(_fixture_vectors(registry, None, TOML_FILE))
+
+        for case in TOML_CASES:
+            toml.append(_vector(TOML_REGISTRY, case, scratch / "toml", None, TOML_FILE))
+
     host_context = normalize({"model_aliases": sorted(HOST_ALIASES), "links": HOST_LINKS})
 
     return (
@@ -315,5 +353,16 @@ def surfaces() -> tuple[Surface, ...]:
             ),
             context={"host": host_context},
             vectors=tuple(hosted),
+        ),
+        Surface(
+            name="family_file.toml",
+            path="family_file.toml.json",
+            entry=ENTRY,
+            contract=CONTRACT,
+            notes=(
+                *_notes(TOML_FILE),
+                "No host: the checks that need one are warnings with downgraded true.",
+            ),
+            vectors=tuple(toml),
         ),
     )

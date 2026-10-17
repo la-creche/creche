@@ -26,6 +26,16 @@ FAMILY_YAML: dict[str, Any] = {
     "model": {"router": "agent-router", "budget_usd_per_day": 15},
 }
 
+#: The default `chat` family as a TOML text. Its value is the value of
+#: `FAMILY_YAML`.
+FAMILY_TOML: str = """\
+name = "chat"
+kind = "attended"
+description = "Test family."
+model.router = "agent-router"
+model.budget_usd_per_day = 15
+"""
+
 #: A grant the validator refuses, in a file that still parses: no
 #: `mcp/ghost/server.yaml` declares the server. `registry.families` holds
 #: the file all the same, beside a report that is not ok.

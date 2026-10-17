@@ -47,6 +47,10 @@
 //! No limit counts the values of a file. A TOML text has no alias, so the
 //! size limit bounds the count. Each grammar holds its own caps.
 //!
+//! [`take_bytes`] gives a caller the bytes of a file for `read`: the limit of
+//! the kind and one byte more, at most. The caller thus holds no larger text,
+//! and it learns no limit.
+//!
 //! # What a raw type gets
 //!
 //! - **The keys of a table come in sorted order**, by their code points. A
@@ -77,6 +81,7 @@
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
+use std::io::{self, Read};
 
 use serde::de::value::{MapDeserializer, SeqDeserializer};
 use serde::de::{self, DeserializeOwned, IntoDeserializer, MapAccess, Visitor};
@@ -213,13 +218,6 @@ impl Error for TomlWriteFault {}
 /// # Errors
 ///
 /// [`TomlFault`] for the first check that fails.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no raw type calls the reader yet. The packet that adds the first caller removes this line"
-    )
-)]
 pub(crate) fn read<T: DeserializeOwned>(bytes: &[u8], kind: FileKind) -> Result<T, TomlFault> {
     let limit = kind.byte_limit();
     if bytes.len() > limit {
@@ -232,6 +230,24 @@ pub(crate) fn read<T: DeserializeOwned>(bytes: &[u8], kind: FileKind) -> Result<
     }
 
     T::deserialize(tree_of(text)?).map_err(|_| TomlFault::Shape)
+}
+
+/// The bytes of one file of `kind` from `source`: the limit of the kind and
+/// one byte more, at most.
+///
+/// `read` refuses a text of that size with [`TomlFault::TooLarge`]. A caller
+/// that gets the bytes of a file from this function thus holds no more bytes
+/// than `read` needs, and the limit stays in this module.
+///
+/// # Errors
+///
+/// The error of `source`.
+pub fn take_bytes<R: Read>(source: R, kind: FileKind) -> io::Result<Vec<u8>> {
+    let most = u64::try_from(kind.byte_limit()).map_or(u64::MAX, |limit| limit.saturating_add(1));
+    let mut bytes = Vec::new();
+    source.take(most).read_to_end(&mut bytes)?;
+
+    Ok(bytes)
 }
 
 /// Writes one value as a TOML text.
@@ -277,13 +293,6 @@ pub(crate) fn write<T: Serialize>(value: &T) -> Result<String, TomlWriteFault> {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Unknown(BTreeMap<String, Found>);
 
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no raw type has this field yet. The packet that adds the first one removes this line"
-    )
-)]
 impl Unknown {
     /// Each key, with the kind of its value.
     pub(crate) const fn kinds(&self) -> &BTreeMap<String, Found> {
@@ -670,6 +679,22 @@ mod tests {
                 read::<Seen>(over_limit.as_bytes(), kind),
                 Err(TomlFault::TooLarge { limit })
             );
+        }
+    }
+
+    #[test]
+    fn take_bytes_stops_one_byte_past_the_limit_of_the_kind() {
+        for (kind, limit) in LIMITS {
+            let long = vec![b'#'; limit + 100];
+            let short = vec![b'#'; limit];
+
+            let taken = take_bytes(long.as_slice(), kind).unwrap();
+            assert_eq!(taken.len(), limit + 1);
+            assert_eq!(
+                read::<Seen>(&taken, kind),
+                Err(TomlFault::TooLarge { limit })
+            );
+            assert_eq!(take_bytes(short.as_slice(), kind).unwrap(), short);
         }
     }
 
