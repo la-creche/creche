@@ -11,8 +11,21 @@ that the tag is a Release CI cut, on the SHA the resolver computed, on
 | P3 | The SHA is reachable from `main`. |
 | P4 | The SHA is a pull-request merge commit. |
 | P5 | That pull request's head has CI runs, all completed and successful. |
+| P6 | A `kind: binary` component: the signature and the member list of root's copy of an archive. |
 
 Plus: no component goes backwards unless `kind: rollback` (§2.4 step 3).
+
+P1 to P5 ask the GitHub API. P6 asks the verifier, `cosign`, as two
+children in a transient unit with a dynamic user (`host.As.VERIFIER`):
+
+1. Child 1 loads the trust root into the state directory of the unit. It
+   needs the network.
+2. Child 2 checks the signature with the words of `artifacts.verify_words`
+   and the trust root of child 1. Its unit has no network.
+
+Root reads the exit status of each child and no text. After a signature
+passes, root reads the member list of its copy and writes no file. A pass
+gives a `VerifiedArtifact`, and the stage unpacks only such a value.
 
 They read the tag shape `<component>-vX.Y.Z` (contract 06 §2) and were
 measured on the host on 2026-09-17. Two facts from that run are easy to
@@ -43,15 +56,29 @@ from __future__ import annotations
 import http.client
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import InitVar, dataclass
 from enum import StrEnum
+from pathlib import Path
 from typing import Any, Final, cast
 
 from .. import notices, strictjson
+from ..artifacts import ArtifactRefusal, SignerPolicy, verify_words
 from ..catalog import MAIN_BRANCH
 from ..errors import Refusal, RefusalCode
-from ..site import github_owner, github_repo
+from ..site import cosign_program, github_owner, github_repo
+from .artifact import Copied
+from .host import (
+    NO_VERIFIER_EXIT_CODE,
+    TIMEOUT_EXIT_CODE,
+    VERIFIER_TIMEOUT_S,
+    VERIFIER_TUF_ROOT,
+    As,
+    Command,
+    Network,
+    RunFn,
+)
 from .source import newest_tagged_version
+from .unpack import UnpackRefused, list_component_archive
 
 #: What `git/matching-refs/tags/<prefix>` answers with in front of a name.
 TAG_REF_PREFIX: Final = "refs/tags/"
@@ -318,6 +345,144 @@ def verify(api: ApiGetFn, component: str, repo: str, tag: str, sha: str) -> Veri
     check_runs_green(api, component, repo, head_sha)
 
     return Verified(component=component, pr=number, head_sha=head_sha)
+
+
+#: The trust root that child 1 of P6 writes into the state directory of
+#: the verifier, and that child 2 reads with no network. Probe run
+#: 38943722125 measured the path with the verifier of the release workflow.
+TRUSTED_ROOT: Final = f"{VERIFIER_TUF_ROOT}/tuf-repo-cdn.sigstore.dev/targets/trusted_root.json"
+
+#: The verb of child 1: load the trust root.
+REFRESH: Final = "initialize"
+
+#: The exit status of a verifier child that passed.
+PASSED: Final = 0
+
+#: The statuses of a verifier child that root reads as no answer: root
+#: started no child, or the child did not end in root's time.
+NO_ANSWER: Final = frozenset({NO_VERIFIER_EXIT_CODE, TIMEOUT_EXIT_CODE})
+
+
+class _Checked:
+    """No module but this one names this type. `VerifiedArtifact` takes a
+    value of it first, so only `check_artifact` makes one: pyright refuses
+    the private name in each other module, and the type refuses each other
+    value."""
+
+
+_CHECKED: Final = _Checked()
+
+
+@dataclass(frozen=True)
+class VerifiedArtifact:
+    """Root's copy of the archive of one component, after P6 passed: the
+    signature and the member list. Step 8 unpacks only such a value.
+
+    `check_artifact` is the one maker. The fields are private to this
+    module, and the accessors read them.
+    """
+
+    made: InitVar[_Checked]
+    _component: str
+    _archive: Path
+    _digest: str
+    _programs: tuple[str, ...]
+
+    def __post_init__(self, made: _Checked) -> None:
+        if made is not _CHECKED:
+            raise TypeError("only check_artifact makes a VerifiedArtifact")
+
+    @property
+    def component(self) -> str:
+        return self._component
+
+    @property
+    def archive(self) -> Path:
+        """Root's copy of the archive, in the work tree of the request."""
+        return self._archive
+
+    @property
+    def digest(self) -> str:
+        """The digest of the copy at step 2: `sha256:<64 hex>`."""
+        return self._digest
+
+    @property
+    def programs(self) -> tuple[str, ...]:
+        """The program names of the archive, in the order of the archive."""
+        return self._programs
+
+
+def _refuse_artifact(component: str, reason: ArtifactRefusal) -> Refusal:
+    return Refusal(RefusalCode.P6, component, str(reason))
+
+
+def check_artifact(
+    run: RunFn, component: str, policy: SignerPolicy, copy: Copied
+) -> VerifiedArtifact:
+    """P6 for one `kind: binary` component: the signature of root's copy
+    of its archive, then the member list of that copy.
+
+    Each refusal has the code `P6` and one reason of
+    `artifacts.ArtifactRefusal`, and no text of a child:
+
+    1. Root starts no child, or a child does not end in root's time
+       (`NO_ANSWER`): `VERIFIER_UNAVAILABLE`.
+    2. Child 1 ends with another status that is not 0: the same.
+    3. Child 2 ends with another status that is not 0:
+       `SIGNATURE_REFUSED`.
+    4. The member list of the copy has a shape that the unpack refuses:
+       `SHAPE_REFUSED`.
+
+    No file of the copy is opened before the signature passes.
+
+    CONTRACT-QUESTION: `stage7-releases.md` §2.4 step 3 says that root
+    reads only the exit status of the verifier, and §2.6 lists the four
+    reasons of P6. Neither section gives a reason to an exit status.
+    Through `systemd-run --wait`, a child that does not start and a child
+    past the time limit of its unit end with the exit status 1, and so
+    does a signature that the verifier refuses (probe run 38943722125).
+    The reading taken: root checks the two program files before each
+    child, and the time limit of root ends before the time limit of the
+    unit. Each other status of child 2 that is not 0 is a refused
+    signature, so the follower does not ask again. A change costs a
+    signal other than the exit status.
+    """
+    verifier = cosign_program()
+    refresh = Command(argv=(verifier, REFRESH), identity=As.VERIFIER, timeout_s=VERIFIER_TIMEOUT_S)
+    if _status(run, refresh) != PASSED:
+        raise _refuse_artifact(component, ArtifactRefusal.VERIFIER_UNAVAILABLE)
+
+    words = verify_words(policy, str(copy.archive), str(copy.bundle), TRUSTED_ROOT)
+    check = Command(
+        argv=(verifier, *words),
+        identity=As.VERIFIER,
+        timeout_s=VERIFIER_TIMEOUT_S,
+        network=Network.NONE,
+    )
+    status = _status(run, check)
+    if status in NO_ANSWER:
+        raise _refuse_artifact(component, ArtifactRefusal.VERIFIER_UNAVAILABLE)
+
+    if status != PASSED:
+        raise _refuse_artifact(component, ArtifactRefusal.SIGNATURE_REFUSED)
+
+    try:
+        programs = list_component_archive(copy.archive, component)
+    except (UnpackRefused, OSError):
+        # A copy whose member list root cannot read has no shape that
+        # passed.
+        raise _refuse_artifact(component, ArtifactRefusal.SHAPE_REFUSED) from None
+
+    return VerifiedArtifact(_CHECKED, component, copy.archive, copy.digest, programs)
+
+
+def _status(run: RunFn, command: Command) -> int:
+    """The exit status of one verifier child. A child that the system does
+    not start is root's own `NO_VERIFIER_EXIT_CODE`."""
+    try:
+        return run(command).code
+    except OSError:
+        return NO_VERIFIER_EXIT_CODE
 
 
 #: One page of matching refs. GitHub sorts them alphabetically, so a FULL

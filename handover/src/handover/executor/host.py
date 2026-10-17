@@ -17,8 +17,10 @@ Three rules, each with the measurement behind it.
 
 from __future__ import annotations
 
+import os
 import re
 import resource
+import stat
 import subprocess
 import time
 from collections.abc import Callable
@@ -27,7 +29,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Final
 
-from ..site import operator_home, operator_user
+from ..site import ROOT_UID, cosign_program, operator_home, operator_user, systemd_run_program
 from . import layout
 from .live_state import INSTALL_ROOT as INSTALL_ROOT
 from .live_state import default_install_roots
@@ -117,6 +119,19 @@ class As(StrEnum):
     #: `mcp-servers` is a FAMILY of processes, so the user is in
     #: `Command.user` and `MCP_USER_RE` is what makes it a user name.
     MCP = "mcp"
+    #: The verifier of the signature of an archive (check P6). It runs in a
+    #: transient unit of systemd, as a dynamic user with no privilege. Only
+    #: the verifier that the site file names runs so (`verifier_argv`).
+    VERIFIER = "verifier"
+
+
+class Network(StrEnum):
+    """Whether a child of `As.VERIFIER` reaches the network."""
+
+    #: The network of the host.
+    HOST = "host"
+    #: No network: the unit of the child gets `PrivateNetwork=yes`.
+    NONE = "none"
 
 
 #: `mcp-<name>` for a server name root already validated. A `Command` that
@@ -130,6 +145,157 @@ MCP_USER_RE: Final = re.compile(r"mcp-[a-z][a-z0-9-]{1,30}")
 #: with them (`stage7-releases.md` §4.2, "a third-party package never runs as
 #: root").
 NO_MCP_USER_EXIT_CODE: Final = 125
+
+#: What an `As.VERIFIER` command answers when root starts no child for it:
+#: its first word is not the verifier of the site file, or root does not
+#: trust the verifier or `systemd-run` (`distrusted`). It is a failure and
+#: never a fallback, as `NO_MCP_USER_EXIT_CODE` is.
+NO_VERIFIER_EXIT_CODE: Final = 126
+
+#: The state directory of the unit of a verifier child, below `/var/lib`.
+#: systemd makes it for the dynamic user. The verifier keeps its trust root
+#: there, from the first child of a check to the second.
+VERIFIER_STATE_NAME: Final = "creche-verify"
+VERIFIER_STATE_DIR: Final = f"/var/lib/{VERIFIER_STATE_NAME}"
+
+#: Where the verifier keeps the trust root that it loads.
+VERIFIER_TUF_ROOT: Final = f"{VERIFIER_STATE_DIR}/tuf"
+
+#: The time limit of the unit of a verifier child, in seconds. systemd stops
+#: the child there.
+VERIFIER_UNIT_SECONDS: Final = 120
+
+#: Root's own time limit for a verifier child. It is shorter than the limit
+#: of the unit, so a child that does not end in its time always answers
+#: `TIMEOUT_EXIT_CODE`. Through `systemd-run --wait`, the time limit of the
+#: unit ends with the exit status 1 (probe run 38943722125), and the
+#: verifier refuses a signature with that status too.
+VERIFIER_TIMEOUT_S: Final = VERIFIER_UNIT_SECONDS / 2
+
+#: The words of `systemd-run` before the program of a verifier child. The
+#: child waits for its unit and leaves no unit behind. It runs as a dynamic
+#: user with no capability, sees no home and no device, and can write only
+#: its state directory and its own `/tmp`. No `--pipe`: root reads the exit
+#: status of the child and no text.
+VERIFIER_UNIT: Final = (
+    "--quiet",
+    "--wait",
+    "--collect",
+    "-p",
+    "DynamicUser=yes",
+    "-p",
+    f"StateDirectory={VERIFIER_STATE_NAME}",
+    "-p",
+    "NoNewPrivileges=yes",
+    "-p",
+    "ProtectSystem=strict",
+    "-p",
+    "ProtectHome=yes",
+    "-p",
+    "PrivateTmp=yes",
+    "-p",
+    "PrivateDevices=yes",
+    "-p",
+    "CapabilityBoundingSet=",
+    "-p",
+    "MemoryMax=512M",
+    "-p",
+    f"RuntimeMaxSec={VERIFIER_UNIT_SECONDS}",
+    f"--setenv=HOME={VERIFIER_STATE_DIR}",
+    f"--setenv=TUF_ROOT={VERIFIER_TUF_ROOT}",
+)
+
+#: The words that take the network from the unit of a verifier child.
+VERIFIER_NO_NETWORK: Final = ("-p", "PrivateNetwork=yes")
+
+#: The word between the words of `systemd-run` and those of the child.
+UNIT_END: Final = "--"
+
+#: The write bits of the group and of each other account.
+OTHERS_WRITE: Final = stat.S_IWGRP | stat.S_IWOTH
+
+
+class Distrust(StrEnum):
+    """Why root does not start a program file. A closed list."""
+
+    ABSENT = "the path names no file"
+    NOT_A_FILE = "the program is not a regular file"
+    NOT_A_DIRECTORY = "a directory of the path is not a directory"
+    NOT_ROOTS = "root does not own it"
+    OPEN = "group or other can write it"
+
+
+@dataclass(frozen=True)
+class Distrusted:
+    """One path of a program that root does not start, and why."""
+
+    path: Path
+    why: Distrust
+
+
+def distrusted(program: str) -> Distrusted | None:
+    """None when root may start `program`, else the first path that fails.
+
+    Root starts a program as root, so whoever can change the file decides
+    what root runs. The program is a regular file that root (uid 0) owns,
+    and group and other cannot write it. Each directory above it, up to
+    `/`, is a directory with the same owner rule: a directory somebody else
+    can write holds a name that they can swap after this check. No link is
+    followed, so a link at the path or above it fails.
+    `bin/creche-handover` holds the same rule for `sops`.
+    """
+    path = Path(program)
+    found = _judge(path, stat.S_ISREG, Distrust.NOT_A_FILE)
+    if found is not None:
+        return found
+
+    for directory in path.parents:
+        found = _judge(directory, stat.S_ISDIR, Distrust.NOT_A_DIRECTORY)
+        if found is not None:
+            return found
+
+    return None
+
+
+def _judge(path: Path, is_kind: Callable[[int], bool], wrong_kind: Distrust) -> Distrusted | None:
+    """One path of `distrusted`, through `lstat`."""
+    try:
+        facts = os.lstat(path)
+    except OSError:
+        return Distrusted(path, Distrust.ABSENT)
+
+    if not is_kind(facts.st_mode):
+        return Distrusted(path, wrong_kind)
+
+    if facts.st_uid != ROOT_UID:
+        return Distrusted(path, Distrust.NOT_ROOTS)
+
+    if facts.st_mode & OTHERS_WRITE:
+        return Distrusted(path, Distrust.OPEN)
+
+    return None
+
+
+def verifier_argv(command: Command) -> tuple[str, ...] | None:
+    """The whole argv of a child of `As.VERIFIER`: `systemd-run`, the words
+    of the unit, `--`, and the words of `command`. A `Network.NONE` command
+    adds `VERIFIER_NO_NETWORK` to the unit.
+
+    None when root starts no child: the first word of `command` is not the
+    verifier of the site file, or `distrusted` finds a fault in the verifier
+    or in `systemd-run`. The check runs before each child.
+    """
+    verifier = cosign_program()
+    if not command.argv or command.argv[0] != verifier:
+        return None
+
+    starter = systemd_run_program()
+    if distrusted(starter) is not None or distrusted(verifier) is not None:
+        return None
+
+    network = VERIFIER_NO_NETWORK if command.network is Network.NONE else ()
+
+    return (starter, *VERIFIER_UNIT, *network, UNIT_END, *command.argv)
 
 
 @dataclass(frozen=True)
@@ -151,6 +317,8 @@ class Command:
     #: place a download can be capped when the server sent no length. A
     #: child that exceeds it takes `SIGXFSZ`.
     max_file_bytes: int | None = None
+    #: Read for `As.VERIFIER` only.
+    network: Network = Network.HOST
 
     def line(self) -> str:
         """What the log records. Argv words, never a shell line, so nobody
@@ -345,6 +513,10 @@ def child_env(
         }
     elif identity is As.MCP:
         base = {"PATH": MCP_PATH, "HOME": NO_HOME, "LANG": CHILD_LANG}
+    elif identity is As.VERIFIER:
+        # `systemd-run` itself, as root. The unit gets none of it: its
+        # environment is the `--setenv` words of `VERIFIER_UNIT`.
+        base = {"PATH": ROOT_PATH, "HOME": "/root", "LANG": CHILD_LANG}
     else:
         base = {
             "PATH": ROOT_PATH,
@@ -392,6 +564,17 @@ def make_runner(operator_uid: int) -> RunFn:
 
             argv = [RUNUSER, "-u", command.user, "--", *argv]
 
+        if command.identity is As.VERIFIER:
+            # Fail closed, as for `As.MCP`: a program that root does not
+            # trust does not run, and no other program runs in its place.
+            words = verifier_argv(command)
+            if words is None:
+                return Result(NO_VERIFIER_EXIT_CODE, "", "no trusted verifier for this command\n")
+
+            argv = list(words)
+
+        # Root reads the exit status of a verifier child and no text of it.
+        output = subprocess.DEVNULL if command.identity is As.VERIFIER else subprocess.PIPE
         cap = command.max_file_bytes
         try:
             proc = subprocess.run(
@@ -399,7 +582,8 @@ def make_runner(operator_uid: int) -> RunFn:
                 env=child_env(command.identity, operator_uid, dict(command.env)),
                 cwd=str(command.cwd) if command.cwd else None,
                 stdin=subprocess.DEVNULL,
-                capture_output=True,
+                stdout=output,
+                stderr=output,
                 text=True,
                 errors="replace",
                 timeout=command.timeout_s,
@@ -411,6 +595,6 @@ def make_runner(operator_uid: int) -> RunFn:
             # reads a `Result`, and none of them catches this.
             return Result(TIMEOUT_EXIT_CODE, "", f"no answer in {command.timeout_s:.0f}s\n")
 
-        return Result(proc.returncode, proc.stdout, proc.stderr)
+        return Result(proc.returncode, proc.stdout or "", proc.stderr or "")
 
     return run
