@@ -80,7 +80,7 @@ for each fault and exits with status 78.
 
 | Fault | Cause |
 |---|---|
-| `too-large` | A file has more than 64 KiB. A value has more after its references. |
+| `too-large` | A file has more than 64 KiB. A value has more than 64 KiB after its references. |
 | `not-utf8` | A file is not UTF-8. |
 | `byte-order-mark` | A file starts with a byte order mark. |
 | `carriage-return` | A line holds a CR. |
@@ -138,16 +138,32 @@ command prints `<file>: cannot be read: <reason>` and exits with status 78.
 - No program applies the rule of the environment yet. `check_environment`
   holds the rule for a program of root. The command reads no catalog key
   from its environment.
-- Some values and one check of `envfile` have a second source in
-  `handover.site`. The packet `handover-site-keys` moves `handover` to this
-  package and removes each copy there:
-  1. `SITE_FILE` and `SITE_FILE_ENV`.
-  2. `MAX_BYTES`, which is `MAX_SITE_BYTES` there.
-  3. `ROOT_UID`.
-  4. `OTHERS_WRITE_BITS`, which is `OTHERS_WRITE` there.
-  5. `check_trust`, which is `_require_trusted` there.
-- `chaperone.site.SITE_FILE` is a third source of the path of the site
-  file. The packet `chaperone-site-keys` removes it.
+- Other files hold a copy of a value or of a check of `envfile`. The
+  change that moves a program to this package removes the copies of that
+  program:
+  1. `handover.site`: `SITE_FILE`, `SITE_FILE_ENV`, `MAX_SITE_BYTES`,
+     `ROOT_UID`, `OTHERS_WRITE` and `_require_trusted`. The packet
+     `handover-site-keys` removes them.
+  2. `config::site` of `creche-contracts`: `SITE_FILE`, `MAX_SITE_BYTES`,
+     `ROOT_UID`, `OTHERS_WRITE` and `check_trust`. The packets
+     `envfile-reader-rust` and `handover-site-keys` remove them.
+  3. `chaperone.site.SITE_FILE` and the verify command of
+     `chaperone/component.yaml`. The packet `chaperone-site-keys` removes
+     them.
+  4. The path of the site file in `bin/provision-library.sh`,
+     `bin/rework-watchdog.sh` and `bin/sbx-drift-check.sh`. The packet
+     `bin-site-keys` removes it.
+  5. The path of the site file in `playpen/bin/playpen-build`. The packet
+     `playpen-site-keys` removes it.
+  6. The `EnvironmentFile=` line of each unit under `systemd/`. The packet
+     `units-site-keys` removes it.
+  7. The path of the site file in the text of a config error of
+     `attendance`, `caregiver`, `noticeboard` and `door-trigger`. The
+     change that moves each program removes it.
+- `Problem` keeps its fields public, so each module can make one. The
+  command makes one for a word of its command line. A maker gives a line
+  of 0 or more, and a key of the grammar or an empty key. A `Problem`
+  never holds a value.
 - CONTRACT-QUESTION: no contract text gives these readings, and each one
   is the most strict. A change costs the reader, its vectors and the Rust
   reader.
