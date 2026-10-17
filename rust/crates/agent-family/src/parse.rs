@@ -1,15 +1,36 @@
-//! YAML text to a raw file, or to issues. Never a panic (invariant 19).
+//! YAML or TOML text to a raw file, or to issues. Never a panic (invariant
+//! 19).
 //!
 //! A parse that fails is data. The caller gets `None` and each issue that
-//! the YAML reader and the shape check found. The family keeps its last good
+//! the reader and the shape check found. The family keeps its last good
 //! state.
+//!
+//! The YAML path reads each field in the lax mode of pydantic. The TOML path
+//! reads the text with `RawFamily::from_toml` of `creche-contracts`, which
+//! reads each field in the strict mode: a field takes the kind of its type,
+//! and a float field also takes an integer. This module writes the message of
+//! each fault of that check, with the texts of the YAML path.
 
-use creche_contracts::family::{Issue, RawFamily, Severity};
+use creche_contracts::family::{
+    GrantArm, Issue, LocPart, RawFamily, Severity, ShapeFault, ShapeProblem, TomlRefusal, Wants,
+};
 use creche_contracts::server::RawServer;
 
 use crate::difflib::closest_name;
+use crate::lax;
 use crate::shape::{self, Fault, Part, Problem, Walk};
 use crate::yaml::{self, LoadError, Value};
+
+/// The markup of the text of a family file.
+///
+/// The set is closed, and it does not cross a process boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Markup {
+    /// `family.toml`.
+    Toml,
+    /// `family.yaml`.
+    Yaml,
+}
 
 /// The location of an issue of the whole file.
 pub const DOCUMENT: &str = "<document>";
@@ -238,10 +259,62 @@ fn closed<T>(raw: Option<T>, issues: Vec<Issue>) -> (Option<T>, Vec<Issue>) {
     (raw, issues)
 }
 
-/// The raw family file of a YAML text, or each issue of its shape.
+/// The raw family file of a text in `markup`, or each issue of its shape.
 #[must_use]
-pub fn parse_family(text: &str) -> (Option<RawFamily>, Vec<Issue>) {
-    one_document(text, FAMILY_CONTAINERS, shape::read_family)
+pub fn parse_family(text: &str, markup: Markup) -> (Option<RawFamily>, Vec<Issue>) {
+    match markup {
+        Markup::Yaml => one_document(text, FAMILY_CONTAINERS, shape::read_family),
+        Markup::Toml => parse_family_toml(text.as_bytes()),
+    }
+}
+
+/// The TOML path for the bytes of a file. The registry gives the bytes that
+/// it read, so the TOML reader judges each byte of the file.
+#[must_use]
+pub(crate) fn parse_family_toml(bytes: &[u8]) -> (Option<RawFamily>, Vec<Issue>) {
+    match RawFamily::from_toml(bytes) {
+        Ok(raw) => (Some(raw), Vec::new()),
+        Err(TomlRefusal::Unread(fault)) => {
+            (None, vec![error(DOCUMENT.to_owned(), fault.to_string())])
+        }
+        Err(TomlRefusal::Shape(faults)) => closed(None, faults.iter().map(shape_issue).collect()),
+    }
+}
+
+/// The part of a location of the report for one part of a fault of the
+/// TOML path.
+fn part_of(part: &LocPart) -> Part {
+    match part {
+        LocPart::Key(key) => Part::Key(key.clone()),
+        LocPart::Index(index) => Part::Index(index.to_string()),
+        LocPart::Arm(GrantArm::Names) => Part::Key(shape::LIST_ARM.to_owned()),
+        LocPart::Arm(GrantArm::Text) => Part::Key(shape::STR_ARM.to_owned()),
+    }
+}
+
+/// The error of pydantic in the strict mode for a value of a wrong kind.
+fn wants_msg(wants: Wants) -> String {
+    match wants {
+        Wants::Text => lax::STRING_TYPE.to_owned(),
+        Wants::Integer => lax::INT_TYPE.to_owned(),
+        Wants::Boolean => lax::BOOL_TYPE.to_owned(),
+        Wants::Number => lax::FLOAT_TYPE.to_owned(),
+        Wants::List => shape::LIST_TYPE.to_owned(),
+        Wants::Map => shape::DICT_TYPE.to_owned(),
+        Wants::Block(block) => shape::model_type_msg(shape::class_of(block)),
+    }
+}
+
+/// The issue of one fault of the TOML path.
+fn shape_issue(fault: &ShapeFault) -> Issue {
+    let loc: Vec<Part> = fault.loc().iter().map(part_of).collect();
+    let msg = match fault.problem() {
+        ShapeProblem::Missing => shape::MISSING.to_owned(),
+        ShapeProblem::Unknown => unknown_field_msg(&loc, FAMILY_CONTAINERS),
+        ShapeProblem::WrongType(wants) => wants_msg(wants),
+    };
+
+    error(fmt_loc(&loc), msg)
 }
 
 /// The raw server file of a YAML text, or each issue of its shape.
@@ -254,7 +327,7 @@ pub fn parse_server(text: &str) -> (Option<RawServer>, Vec<Issue>) {
 mod tests {
     use creche_contracts::family::Severity;
 
-    use super::{DOCUMENT, NO_REASON, closed, error, parse_family};
+    use super::{DOCUMENT, Markup, NO_REASON, closed, error, parse_family, parse_family_toml};
     use crate::yaml::NESTING_MAX;
 
     /// The stack of the thread of the test below. A default thread has two
@@ -268,7 +341,7 @@ mod tests {
         let text = format!("egress: {}{}\n", "[".repeat(inner), "]".repeat(inner));
         let thread = std::thread::Builder::new()
             .stack_size(SMALL_STACK)
-            .spawn(move || parse_family(&text));
+            .spawn(move || parse_family(&text, Markup::Yaml));
         let (raw, issues) = thread.unwrap().join().unwrap();
 
         assert_eq!(raw, None);
@@ -297,5 +370,37 @@ mod tests {
         );
         assert_eq!(closed::<u8>(None, vec![issue.clone()]), (None, vec![issue]));
         assert_eq!(closed(Some(1_u8), Vec::new()), (Some(1), Vec::new()));
+    }
+
+    #[test]
+    fn the_toml_markup_reads_the_text_with_the_toml_reader() {
+        let head = "kind = \"thin\"\ndescription = \"x\"\nmodel.router = \"fast\"\n";
+        let valid = format!("name = \"oracle\"\n{head}model.budget_usd_per_day = 1\n");
+        let (raw, issues) = parse_family(&valid, Markup::Toml);
+
+        assert_eq!(
+            (raw.clone(), issues.clone()),
+            parse_family_toml(valid.as_bytes())
+        );
+        assert!(issues.is_empty(), "{issues:?}");
+        assert_eq!(raw.map(|raw| raw.model.router), Some("fast".to_owned()));
+        // The YAML reader reads no dotted key.
+        assert_eq!(parse_family(&valid, Markup::Yaml).0, None);
+
+        let wrong = format!("name = 1\n{head}model.budget_usd_per_day = true\n");
+        let (raw, issues) = parse_family(&wrong, Markup::Toml);
+        let read: Vec<(&str, &str)> = issues
+            .iter()
+            .map(|issue| (issue.loc.as_str(), issue.msg.as_str()))
+            .collect();
+
+        assert_eq!(raw, None);
+        assert_eq!(
+            read,
+            [
+                ("name", "Input should be a valid string"),
+                ("model.budget_usd_per_day", "Input should be a valid number"),
+            ]
+        );
     }
 }

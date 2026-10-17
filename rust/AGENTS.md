@@ -578,6 +578,7 @@ limit. Code that calls the crate `toml` directly holds none of the three.
 | `write` | The function that writes a value as a TOML text. It gives the text or a `TomlWriteFault`. |
 | `TomlWriteFault` | The refusal of `write`. `NoTomlForm` is for a value that the crate cannot write. `NotReadable` is for a text that `read` refuses. |
 | `Unknown` | The target of `#[serde(flatten)]` in a raw type. It keeps each key that the raw type does not name, with the kind of its value. |
+| `take_bytes` | The function that gives a caller the bytes of a file for `read`: the limit of the kind and one byte more, at most. The caller thus learns no limit. |
 
 `read`, `write` and `Unknown` are private to the crate. The module of a
 contract holds the raw type of its file kind, and that module calls `read`
@@ -2128,15 +2129,11 @@ adds a crate:
     change costs one condition in the scan. The same condition holds the
     two forms that pass, so a change to the third sentence of rule 12
     also changes it.
-- No raw type calls `tomlfile::read` yet, and no type calls
-  `tomlfile::write`. `read`, `write` and the accessor of `Unknown` each
-  have an `expect(dead_code)` line for a build that is no test build. The
-  packet that adds the first caller of an item deletes the line of that
-  item. Three packets add a caller of `read`: `toml-family-read-rust`,
+- No type calls `tomlfile::write` yet. `write` has an `expect(dead_code)`
+  line for a build that is no test build. The packet that adds the first
+  caller deletes the line. The raw type of the family file is the one
+  caller of `read` today. Two packets add a caller of `read`:
   `toml-manifest-read-rust` and `toml-roster-read-chaperone`.
-- No Python reader of a file kind holds the limits and the fault texts of
-  `tomlfile` yet. Packet `toml-family-read-python` adds the first one, and
-  the test that holds its numbers and its texts equal to the Rust file.
 - The differential test of `tomlfile` walks the surface `tomlfile.syntax`.
   The entry point of that surface is the TOML reader of the Python standard
   library, because no product code reads TOML yet. The surface holds no

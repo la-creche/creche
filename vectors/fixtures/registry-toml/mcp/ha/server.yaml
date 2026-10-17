@@ -1,0 +1,24 @@
+# FIXTURE ONLY. No contract 01b example covers this server. `ha: all` is
+# broad for exactly the reason this file shows: every tool declared here is
+# granted, now and later (contract 01 §3.4 rule 4).
+name: ha
+identity: "A Home Assistant long-lived token that may call services. It reaches every entity this token can see, which is every entity in the house."
+
+install:
+  source: agent-mcp
+
+run:
+  entrypoint: ha-mcp
+  env:
+    HA_URL: http://127.0.0.1:8123
+    HA_TOKEN: secret:ha_token_write
+
+tools:
+  - { name: ha_get_state, description: Read one entity's current state., write: false }
+  - { name: ha_search, description: Search entities by name or area., write: false }
+  - { name: ha_get_overview, description: Read a summary of every area., write: false }
+  - { name: ha_get_history, description: Read one entity's recent history., write: false }
+  - { name: ha_turn_on, description: Turn one entity on., write: true }
+  - { name: ha_turn_off, description: Turn one entity off., write: true }
+  - { name: ha_set_state, description: Set one entity's state., write: true }
+  - { name: ha_call_service, description: Call one Home Assistant service., write: true }
