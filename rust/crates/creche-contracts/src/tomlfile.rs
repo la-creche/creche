@@ -352,8 +352,10 @@ enum Node {
 // crate refuses such a text in its parse, and the reading here keeps that
 // refusal: a strict JSON text of a contract has the same rule for a float.
 // The TOML reader of the Python standard library reads the text as an
-// infinity, so no vector holds one. The other reading costs a float parser
-// in this module, because the crate has no switch.
+// infinity. The Python reader of a file kind refuses it with a check of its
+// own. Vectors of the surface `tomlfile.syntax` hold such texts, for example
+// `float-outside-the-range`. The other reading costs a float parser in this
+// module, because the crate has no switch.
 //
 // CONTRACT-QUESTION: TOML 1.0, the multi-line strings. A reader can change
 // a line end inside such a string to the line end of its platform. The
@@ -362,7 +364,8 @@ enum Node {
 // library gives an LF. The reading here is one LF, so each reader of a file
 // kind gives one value. The other reading refuses a CR LF inside a
 // multi-line string. It costs a check here and a check in each Python
-// reader, and three vectors of the surface `tomlfile.syntax` move.
+// reader, and each vector of the surface `tomlfile.syntax` with a CR LF
+// inside a multi-line string moves.
 fn tree_of(text: &str) -> Result<Node, TomlFault> {
     let text = text.replace(CR_LF, LF);
     if text.contains(CR) || !toml10::holds(&text, u32::from(LEVEL_MAX)) {
@@ -476,9 +479,10 @@ fn levelled(top: toml::Table) -> Option<Node> {
 // of the Python standard library refuses both, because the time types of
 // Python hold neither. No file kind holds a date-time. The reading here
 // refuses both, so the two readers refuse the same texts. `time::Timestamp`
-// refuses the same two forms. A change costs this function and its four
-// vectors in the surface `tomlfile.syntax`. The Python reader then needs a
-// parser of its own for a date-time.
+// refuses the same two forms. A change costs this function and each vector
+// of the surface `tomlfile.syntax` that holds such a text, for example
+// `second-60`. The Python reader then needs a parser of its own for a
+// date-time.
 fn both_take(moment: &toml::value::Datetime) -> bool {
     const LEAP_SECOND: u8 = 60;
 
@@ -837,8 +841,9 @@ mod tests {
 
     #[test]
     fn a_float_outside_the_range_of_a_float_is_refused() {
-        // No vector holds such a text: the TOML reader of the Python standard
-        // library reads it as an infinity.
+        // The TOML reader of the Python standard library reads such a text
+        // as an infinity. The Python reader of a file kind refuses it, and
+        // the surface `tomlfile.syntax` holds the first two texts.
         for text in ["a = 1e999\n", "a = -1e999\n", "a = 1e309\n", "a = 2e308\n"] {
             assert!(!is_toml(text), "{text:?}");
         }
@@ -1575,6 +1580,83 @@ mod tests {
         serde_json::to_string(value).unwrap()
     }
 
+    /// The counts of one walk of the vectors. Each vector falls into one
+    /// count. Each vector that the two readers judge apart is also a line of
+    /// `apart`.
+    #[derive(Debug, Default)]
+    struct Walk {
+        /// Both readers read the text, with an equal value.
+        equal_values: usize,
+        /// Both readers refuse the text, with an equal text of the refusal.
+        equal_refusals: usize,
+        /// One reader reads the text, and the other refuses it.
+        one_reads_alone: usize,
+        /// Another difference: another value, another kind of a date-time,
+        /// another text of the refusal, or the result `raised`.
+        other_differences: usize,
+        /// One line for each vector of the last two counts.
+        apart: Vec<String>,
+    }
+
+    impl Walk {
+        /// Compares the result of [`read`] with one vector.
+        fn compare(&mut self, vector: &creche_vectors::Vector) {
+            let id = vector.id();
+            let bytes = vector.input().bytes().unwrap();
+            let read = read::<Seen>(&bytes, FileKind::Roster);
+
+            match (vector.result(), read) {
+                // The surface must hold no vector with the result `raised`.
+                (Outcome::Raised, _) => {
+                    self.differ(format!("{id}: the vector has the result raised"))
+                }
+                (Outcome::Accepted, Ok(seen)) => {
+                    let wanted = vector.value().unwrap();
+                    if text_of(&read_json(&seen)) != text_of(&without_kinds(wanted)) {
+                        self.differ(format!("{id}: another value"));
+                        return;
+                    }
+
+                    // The reader gives no kind of a date-time. The crate
+                    // does, for the text that the reader gives it: each CR
+                    // LF is an LF.
+                    let text = std::str::from_utf8(&bytes).unwrap().replace(CR_LF, LF);
+                    let table: toml::Table = text.parse().unwrap();
+                    if text_of(&crate_json(&toml::Value::Table(table))) != text_of(wanted) {
+                        self.differ(format!("{id}: another kind of a date-time"));
+                        return;
+                    }
+
+                    self.equal_values += 1;
+                }
+                (Outcome::Refused, Err(fault)) => {
+                    let message = json!(fault.to_string());
+                    if vector.refusal() != Some(&message) {
+                        self.differ(format!("{id}: the reader refuses with {message}"));
+                        return;
+                    }
+
+                    self.equal_refusals += 1;
+                }
+                (Outcome::Accepted, Err(fault)) => {
+                    self.one_reads_alone += 1;
+                    self.apart
+                        .push(format!("{id}: the reader refuses with {fault}"));
+                }
+                (Outcome::Refused, Ok(_)) => {
+                    self.one_reads_alone += 1;
+                    self.apart.push(format!("{id}: the reader takes the text"));
+                }
+            }
+        }
+
+        /// Records a vector of the count `other_differences`.
+        fn differ(&mut self, line: String) {
+            self.other_differences += 1;
+            self.apart.push(line);
+        }
+    }
+
     #[test]
     fn the_reader_agrees_with_the_python_reader_on_each_vector() {
         let unnamed: Vec<String> = creche_vectors::index()
@@ -1587,35 +1669,27 @@ mod tests {
 
         for name in SURFACES {
             let surface = creche_vectors::surface(name).unwrap();
-
+            let mut walk = Walk::default();
             for vector in surface.vectors() {
-                let id = vector.id();
-                let bytes = vector.input().bytes().unwrap();
-                let read = read::<Seen>(&bytes, FileKind::Roster);
-
-                if vector.result() != Outcome::Accepted {
-                    assert!(read.is_err(), "{id}: the reader takes the text");
-                    continue;
-                }
-
-                let wanted = vector.value().unwrap();
-                let seen = read.unwrap_or_else(|fault| panic!("{id}: {fault}"));
-                assert_eq!(
-                    text_of(&read_json(&seen)),
-                    text_of(&without_kinds(wanted)),
-                    "{id}"
-                );
-
-                // The reader gives no kind of a date-time. The crate does,
-                // for the text that the reader gives it: each CR LF is an LF.
-                let text = std::str::from_utf8(&bytes).unwrap().replace(CR_LF, LF);
-                let table: toml::Table = text.parse().unwrap();
-                assert_eq!(
-                    text_of(&crate_json(&toml::Value::Table(table))),
-                    text_of(wanted),
-                    "{id}: the kind of a date-time"
-                );
+                walk.compare(vector);
             }
+
+            // The four counts of a run. `cargo test -- --nocapture` shows
+            // them, for example for a run with more changed texts.
+            eprintln!(
+                "{name}: both read with an equal value {}, both refuse with an equal \
+                 message {}, one reads alone {}, another difference {}",
+                walk.equal_values,
+                walk.equal_refusals,
+                walk.one_reads_alone,
+                walk.other_differences
+            );
+            assert!(
+                walk.apart.is_empty(),
+                "{name}: {} vectors differ: {:#?}",
+                walk.apart.len(),
+                walk.apart
+            );
         }
     }
 

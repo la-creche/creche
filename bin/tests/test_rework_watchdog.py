@@ -134,10 +134,19 @@ exit 0
 #:
 #: `WD_POST_SLEEP` makes each POST take that count of seconds: a hook that
 #: answers slowly.
+#:
+#: A POST with the word `-w` in its argv writes `WD_POST_CODE`, the HTTP
+#: code of the answer. The default is `000`, which curl writes when no
+#: answer came. An empty `WD_POST_CODE` writes no code. A POST that fails
+#: writes one error line to stderr, as `curl -sS` does.
 CURL_BODY: Final = """case "$*" in
   *"-X POST"*)
     [ -n "${WD_POST_SLEEP:-}" ] && sleep "$WD_POST_SLEEP"
     printf '%s\\n' "$*" >> "$WD_POST_LOG"
+    for one in "$@"; do
+      [ "$one" = -w ] && printf '%s' "${WD_POST_CODE-000}"
+    done
+    [ "${WD_POST_EXIT:-0}" = 0 ] || printf 'curl: (%s) stub error\\n' "$WD_POST_EXIT" >&2
     exit "${WD_POST_EXIT:-0}" ;;
   *"--unix-socket"*) printf '%s' "${WD_SOCK_CODE:-401}" ;;
   *"/healthz"*) printf '%s' "${WD_PEP_CODE:-200}" ;;
@@ -1770,10 +1779,31 @@ def test_a_json_notice_that_fails_is_sent_by_the_next_run(rig: Rig) -> None:
 #: for the name of the host. 7: no connection to the hook.
 UNREACHED_STATUSES: Final = ("6", "7")
 
-#: Some curl statuses of a send that the hook can have taken. 22: an HTTP
-#: error as the answer. 28: no full answer in the time limit. 52: no
-#: answer at all. 56: a connection that broke during the answer.
-TAKEN_STATUSES: Final = ("22", "28", "52", "56")
+#: Some curl statuses of a send that the script counts as taken. 22: an
+#: HTTP error as the answer. 28: no full answer in the time limit. 52: no
+#: answer at all. 56: a connection that broke during the answer. No status
+#: of the rest proves that the hook took no notice either. 1: a protocol
+#: that curl does not have. 3: a URL that curl cannot read. 18: a partial
+#: transfer. 26: a read error, for example of the header file. 35: a TLS
+#: fault. 55: a send that failed. 92: a fault of an HTTP/2 stream. 127: no
+#: curl on the PATH.
+TAKEN_STATUSES: Final = ("22", "28", "52", "56", "1", "3", "18", "26", "35", "55", "92", "127")
+
+#: Some HTTP codes of an answer of the hook with curl status 22. 401: the
+#: hook refuses the bearer. 404: the hook has no such path. 502: the hook
+#: cannot reach the phone.
+REFUSED_CODES: Final = ("401", "404", "502")
+
+
+def test_only_status_6_and_7_put_the_old_record_back() -> None:
+    """A curl status in NOT_REACHED_CURL puts the old record back, and the
+    next run sends that notice again. A status that can come after the hook
+    took the notice must not join the list. Each run would then send that
+    notice again, with no limit. So the list holds 6 and 7 and no other
+    status."""
+    statuses = " ".join(UNREACHED_STATUSES)
+
+    assert _constant("NOT_REACHED_CURL") == f"NOT_REACHED_CURL=' {statuses} '"
 
 
 @pytest.mark.parametrize("status", UNREACHED_STATUSES)
@@ -1797,10 +1827,11 @@ def test_a_send_that_never_reached_the_hook_is_sent_again(rig: Rig, status: str)
 
 @pytest.mark.parametrize("status", TAKEN_STATUSES)
 def test_a_send_that_the_hook_can_have_taken_is_not_sent_again(rig: Rig, status: str) -> None:
-    """curl can fail after the hook took a notice. Such a notice keeps its
-    record line, and no later run sends it. So a fault gives a missed
-    notice, never a second one. The run sends no more notices of this kind
-    and says so in one line. A later run sends each other pair."""
+    """The script counts the notice of each such status as taken. Such a
+    notice keeps its record line, and no later run sends it. So a fault
+    gives a missed notice, never a second one. The run sends no more
+    notices of this kind and says so in one line. A later run sends each
+    other pair."""
     rig.notice("noticeboard", *[token(one) for one in THREE_PAIRS])
 
     done = rig.run(WD_POST_EXIT=status)
@@ -1809,12 +1840,52 @@ def test_a_send_that_the_hook_can_have_taken_is_not_sent_again(rig: Rig, status:
     assert rig.json_summaries() == THREE_SUMMARIES[:1]
     assert [one.split()[1] for one in rig.sent_lines()] == ["status.document"]
     assert done.stdout.count("the hook can have taken") == 1, done.stdout
+    assert done.stdout.count(f"NOTICE NOT SENT (curl exit {status}, HTTP 000): ") == 1
 
     rig.run()
     rig.run()
 
     assert rig.json_summaries() == THREE_SUMMARIES
     assert len(rig.sent_lines()) == 3
+
+
+@pytest.mark.parametrize("code", REFUSED_CODES)
+def test_a_send_that_the_hook_refused_is_missed(rig: Rig, code: str) -> None:
+    """curl ends with status 22 when the hook answers with an HTTP error.
+    The record keeps the line of that notice, so the notice is missed and
+    no later run sends it. The journal line of the failed send names the
+    curl status and the HTTP code. A hook that refuses the bearer then
+    shows in the journal. The send holds -f, so an HTTP error is a failed
+    send. It holds -o /dev/null, so no byte of the answer reaches the
+    journal line."""
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    done = rig.run(WD_POST_EXIT="22", WD_POST_CODE=code)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert done.stdout.count(f"NOTICE NOT SENT (curl exit 22, HTTP {code}): ") == 1, done.stdout
+    assert rig.posts(), done.stdout
+    for one in rig.posts():
+        assert " -f -o /dev/null -w %{http_code} " in one, one
+    assert [one.split()[1] for one in rig.sent_lines()] == ["status.document"]
+
+    rig.run()
+    rig.run()
+
+    assert rig.json_summaries() == THREE_SUMMARIES[:1]
+    assert len(rig.sent_lines()) == 1
+
+
+def test_a_send_with_no_http_code_says_so(rig: Rig) -> None:
+    """curl writes no HTTP code when it stops before it starts a transfer,
+    for example when it cannot read the header file. The journal line then
+    says that the send got no code."""
+    rig.notice("noticeboard", token("status.document:syntax"))
+
+    done = rig.run(WD_POST_EXIT="26", WD_POST_CODE="")
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert done.stdout.count("NOTICE NOT SENT (curl exit 26, HTTP nothing): ") == 1, done.stdout
 
 
 @pytest.mark.parametrize("status", UNREACHED_STATUSES + TAKEN_STATUSES)
@@ -2559,6 +2630,46 @@ def test_the_prose_holds_the_numbers_of_the_script() -> None:
 
     assert f"one line has {_number('NOTICE_TOKENS_MAX')} tokens at most" in rules
     assert _number("HOUR_S") == HOUR_S
+
+
+#: A claim that is false for a curl status that ends before a byte leaves,
+#: for example 3 (a URL that curl cannot read) or 127 (no curl).
+FALSE_CLAIMS: Final = (
+    "can come after the hook took the notice",
+    "After each other failed send, the hook can have taken the notice",
+)
+
+
+@pytest.mark.docs
+def test_the_prose_holds_the_rule_of_a_failed_send() -> None:
+    """The comments of the script and `bin/AGENTS.md` say the same rule for
+    a failed send and the same repair of the record. The repair names the
+    limit of one hour, and that number equals its constant. Neither text
+    says that each other curl status can come after the hook took the
+    notice."""
+    script = SCRIPT.read_text(encoding="utf-8").splitlines()
+    comments = _one_line(" ".join(one.lstrip("# ") for one in script if one.startswith("#")))
+    comments = comments.replace("`", "")
+    rules = _one_line((SCRIPT.parent / "AGENTS.md").read_text(encoding="utf-8")).replace("`", "")
+    texts = (
+        "No other status proves that the hook took no notice, so the script counts the"
+        " notice as taken.",
+        "When curl writes no code, the line says HTTP nothing.",
+        "So a hook that refuses the bearer misses each JSON notice. The journal line of each"
+        " failed send names the HTTP code.",
+        "A record that holds bytes and no record line stops the step in each run. The"
+        " operator removes watchdog/notices-sent to repair it. After that, each service,"
+        " surface and rule of the notice files can get one more notice,"
+        f" {_number('NOTICES_PER_HOUR')} in one hour at most.",
+    )
+
+    for text in texts:
+        assert text in comments, text
+        assert text in rules, text
+
+    for claim in FALSE_CLAIMS:
+        assert claim not in comments, claim
+        assert claim not in rules, claim
 
 
 def test_the_header_names_each_command_of_the_script() -> None:

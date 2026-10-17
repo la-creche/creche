@@ -629,6 +629,44 @@ question.
   of the first four texts (rule 13). A Python reader of a file kind copies
   them.
 
+The differential test of `tomlfile` walks the surface `tomlfile.syntax`. The
+entry point of that surface is `agent_family.tomlfile.loads`, the Python
+reader of a file kind, with the kind `ROSTER`. The test reads each input
+with `FileKind::Roster`. For each vector, it compares three things:
+
+1. The result: the two readers read the text, or the two refuse it.
+2. The value of a text that the two read.
+3. The text of a refusal. `TomlFault` and the Python reader write the same
+   four texts.
+
+The surface holds 500 changed texts, `changed-000` to `changed-499`. Each
+one is a written text that the reader takes, with one change.
+`changed_texts` of `vectors/surfaces/tomlfile.py` makes them from a fixed
+seed. The test puts each vector in one of four counts. It prints the four
+counts:
+
+1. The texts that the two readers read, with an equal value.
+2. The texts that the two readers refuse, with an equal text.
+3. The texts that one reader reads alone.
+4. The vectors with another difference: another value, another kind of a
+   date-time, another text of a refusal, or the result `raised`.
+
+The test fails when count 3 or count 4 is not 0. It then names each such
+vector.
+
+To make a larger run, do these steps in a work tree:
+
+1. Set `CHANGED_COUNT` of `vectors/surfaces/tomlfile.py` to the count of
+   the run, for example 100,000.
+2. Run `uv run python -m vectors.generate`.
+3. Run the test in `rust/`. The command is below.
+4. Restore the module and the two vector files with git. Do not commit the
+   data of such a run.
+
+```bash
+cargo test -p creche-contracts --lib tomlfile::tests::the_reader_agrees -- --nocapture
+```
+
 The crate `toml` reads TOML 1.1 and has no switch for TOML 1.0. `toml10`
 refuses these six forms. Its doc comment holds the rule of each one.
 
@@ -2142,27 +2180,28 @@ adds a crate:
   caller deletes the line. The raw type of the family file is the one
   caller of `read` today. Two packets add a caller of `read`:
   `toml-manifest-read-rust` and `toml-roster-read-chaperone`.
-- The differential test of `tomlfile` walks the surface `tomlfile.syntax`.
-  The entry point of that surface is the TOML reader of the Python standard
-  library, because no product code reads TOML yet. The surface holds no
-  text of four kinds, and a plain test of the module holds each kind.
-  "Known gaps" of `vectors/AGENTS.md` lists them. Packet
-  `toml-syntax-vectors` changes the entry point and adds the four kinds.
+- The differential test of `tomlfile` reads each vector with the kind
+  `Roster` only. A vector of the byte limit of another kind is not in the
+  surface. A plain test of the module and a test of the Python reader hold
+  the limit of each kind.
 - These `CONTRACT-QUESTION` comments are open in
   `crates/creche-contracts/src/tomlfile.rs`:
   1. `tree_of`, TOML 1.0. The specification gives a float 64 bits. It does
      not say what a reader does with a text outside that range, for example
      `1e999`. The crate `toml` refuses the text, and the reader keeps that
      refusal, as "JSON" does for a float token. The TOML reader of the
-     Python standard library reads the text as an infinity. A Python reader
-     of a file kind thus needs a check of its own. No packet has that part
-     yet. The other reading costs a float parser in the module.
+     Python standard library reads the text as an infinity. The Python
+     reader of a file kind refuses it with a check of its own. Vectors of
+     `tomlfile.syntax` hold such texts, for example
+     `float-outside-the-range`. The other reading costs a float parser in
+     the module.
   2. `both_take`, TOML 1.0. The specification takes the second 60 and the
      year 0000 in a date-time. The crate reads both. The TOML reader of the
      Python standard library refuses both. The reader refuses both, as
      `time::Timestamp` does. No file kind holds a date-time. A change costs
-     one function and four vectors of `tomlfile.syntax`. A Python reader
-     then needs a date-time parser of its own.
+     one function and each vector of `tomlfile.syntax` that holds such a
+     text, for example `second-60`. A Python reader then needs a date-time
+     parser of its own.
   3. `write`. No rule says what the writer does with a value whose text
      `read` refuses. `write` takes the strict reading: it gives
      `TomlWriteFault::NotReadable`. The other reading writes each value
@@ -2174,7 +2213,8 @@ adds a crate:
      `read` gives one LF, so each reader of a file kind gives one value.
      The other reading refuses a CR LF inside a multi-line string. It
      costs one check in the module and one check in each Python reader.
-     Three vectors of `tomlfile.syntax` then move.
+     Each vector of `tomlfile.syntax` with a CR LF inside a multi-line
+     string then moves.
 - Two lines of "JSON" wait for a confirmation of the owner: the duplicate
   key line and the 64-bit integer line. The Python readers accept both kinds
   of text today. One function of `crates/creche-contracts/src/json/scan.rs`

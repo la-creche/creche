@@ -75,6 +75,19 @@ The browser posts those values again, so a save after a preview writes the
 edit that the preview showed. A locked control shows the value of the
 registry.
 
+The form has the markup of the family file that the registry read: YAML or
+TOML. A block control shows its text in that markup. For a TOML family:
+
+1. The form reads the text of each block alone, with
+   `agent_family.tomlfile.loads` and `FileKind.FAMILY`.
+2. Each field puts its value into one mapping. `tomlout.py` writes that
+   mapping. The form never joins two TOML texts, because a key after a
+   `[table]` line belongs to that table.
+3. A block that the reader refuses is a problem of the form. The problem
+   holds the text of the refusal.
+4. A TOML text cannot hold a null. A block without a value thus shows no
+   text. A block without a key gives no value.
+
 ## Writing the registry
 
 17. Snapshot the family's whole directory, not two known paths.
@@ -92,11 +105,17 @@ registry.
     validator reads a copy of `families`, `mcp` and `skills`. `caregiver`
     then never reads a text that the validator refuses. Write the family
     file to a temporary file in its own directory. Rename it into place.
-24. The noticeboard never parses YAML itself. `agent_family` owns the reader.
-    `yamlkeep.py` is the one module that touches a YAML library, and it reads
-    no meaning. `app.py` gives the patched text back to `agent_family`. When
+24. The noticeboard never parses YAML or TOML itself. `agent_family` owns
+    the reader. `yamlkeep.py` and `tomlkeep.py` are the two modules that
+    touch a library that keeps the layout of a file, and they read no
+    meaning. `app.py` gives the patched text back to `agent_family`. When
     the text does not read as the model of the form, the save writes the
-    document of `yamlout.py`.
+    document of `yamlout.py` or of `tomlout.py`.
+25. Save a family under the file name that the registry read for it:
+    `family.toml` or `family.yaml`. The two names come from
+    `agent_family.registry`. The file of a new family is `family.yaml` if
+    a directory of the registry holds a `family.yaml`. Else it is
+    `family.toml`.
 
 ## Run it
 
@@ -131,6 +150,7 @@ and `Referer` unchanged. `/healthz` and `/static/*` stay keyless.
 | `rfc3339.py` | the one reader of a time text. The file is a copy, and `bin/tests/test_rfc3339_copies.py` holds each copy to the same bytes |
 | `sessions.py`, `attendancehttp.py`, `transcript.py` | `attendance` as `view-ro`, the wire, journal lines folded for a reader |
 | `familyform.py`, `yamlout.py`, `yamlkeep.py`, `registrywrite.py` | the form, the whole file, the patched file, the commit |
+| `tomlout.py`, `tomlkeep.py` | the whole TOML file and the patched TOML file |
 | `pages.py`, `app.py` | what each page needs, and the routes |
 | `verify.py` | `noticeboard-verify` |
 | `templates/`, `static/` | Jinja2 and one stylesheet |
@@ -192,6 +212,12 @@ prefixed `test_noticeboard_`.
   on a line past column 100.
 - A save that removes the last key of a block also removes the comment lines
   and the blank lines after that key (`yamlkeep.py`).
+- A save that replaces a list of a TOML file removes each comment line
+  inside that list (`tomlkeep.py`). A comment line above a key that the
+  save removes stays where it was.
+- A save that adds a table inside an inline table of a TOML file writes the
+  whole document of `tomlout.py`. That document holds no comment
+  (`tomlkeep.py`).
 - The copy that a save validates keeps each link as a link
   (`registrywrite.py`). A relative link that leaves `families`, `mcp` and
   `skills` does not resolve there. When the validator needs its target, the
