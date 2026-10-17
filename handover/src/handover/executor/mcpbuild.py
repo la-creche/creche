@@ -82,7 +82,8 @@ own module.
    component, a symlink or hard link, a device, FIFO or socket, and any
    setuid or setgid bit. Members are counted and their sizes summed against
    caps, because a tar bomb inside a hash-pinned artifact is still a tar
-   bomb.
+   bomb. `unpack.py` holds the unpack, and this module turns its refusal
+   into a refusal with the `server` code.
 6. **`--relocatable` comes first.** A venv does not survive the switch's
    rename otherwise: `uv` writes an absolute interpreter path into every
    console script, and after `<name>.new` becomes `<name>` each one names a
@@ -172,8 +173,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-import tarfile
-from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Final
@@ -196,6 +195,7 @@ from .install import (
 )
 from .selfcontained import check_tree
 from .source import CURL, CURL_PROTOCOL_FLAGS
+from .unpack import BLOCK_BYTES, UnpackRefused, extract_tar
 
 PREV_SUFFIX: Final = ".prev"
 
@@ -253,15 +253,6 @@ CURL_FLAGS: Final = (
 )
 
 DOWNLOAD_TIMEOUT_S: Final = 900.0
-
-#: Assumption 5's two caps. A hash-pinned artifact can still be a tar bomb:
-#: the hash proves it is the file the project published, not that the file
-#: is small.
-MAX_MEMBERS: Final = 20_000
-MAX_UNPACKED_BYTES: Final = 512 * 1024 * 1024
-
-#: Read in blocks so a capped file never arrives in memory whole.
-HASH_BLOCK_BYTES: Final = 1024 * 1024
 
 #: The largest committed closure root will read. A `--generate-hashes` lock
 #: over a hundred dependencies is about 100 KiB.
@@ -579,7 +570,11 @@ class McpBuilder:
             )
 
         unpacked = staging / "unpacked"
-        _extract_tar(server.name, archive, unpacked)
+        try:
+            extract_tar(archive, unpacked)
+        except UnpackRefused as refused:
+            raise _refuse(server.name, refused.detail) from None
+
         self._place_binary(server, unpacked, paths.new)
 
         return ServerBuild(server.name, paths, url, (f"sha256:{declared}",))
@@ -928,7 +923,7 @@ def _sha256_of(name: str, path: Path) -> str:
 
     digest = hashlib.sha256()
     with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(HASH_BLOCK_BYTES), b""):
+        for block in iter(lambda: handle.read(BLOCK_BYTES), b""):
             digest.update(block)
 
     return digest.hexdigest()
@@ -1038,71 +1033,3 @@ def _find_entrypoint(unpacked: Path, entrypoint: str) -> Path | None:
             return candidate
 
     return None
-
-
-def _extract_tar(name: str, archive: Path, into: Path) -> None:
-    """Assumption 5. Every member checked before a byte of it is written."""
-    into.mkdir(parents=True, exist_ok=True)
-    root = into.resolve()
-    written = 0
-    count = 0
-    try:
-        with tarfile.open(archive, "r:*") as tar:
-            for member in _members(name, tar):
-                count += 1
-                if count > MAX_MEMBERS:
-                    raise _refuse(name, f"the asset holds more than {MAX_MEMBERS} members")
-
-                written += member.size
-                if written > MAX_UNPACKED_BYTES:
-                    raise _refuse(name, f"the asset unpacks to more than {MAX_UNPACKED_BYTES}")
-
-                _write_member(name, tar, member, root)
-    except tarfile.TarError:
-        raise _refuse(name, "the asset is not a readable archive") from None
-
-
-def _members(name: str, tar: tarfile.TarFile) -> Iterator[tarfile.TarInfo]:
-    for member in tar:
-        _check_member(name, member)
-        yield member
-
-
-def _check_member(name: str, member: tarfile.TarInfo) -> None:
-    """The five refused shapes, each with what it would otherwise do."""
-    path = Path(member.name)
-    if path.is_absolute() or ".." in path.parts:
-        raise _refuse(name, "the asset holds a member that leaves its tree")
-
-    if member.issym() or member.islnk():
-        # A link is the shape that leaves the tree after extraction rather
-        # than during it, so it is refused by kind and not by target.
-        raise _refuse(name, "the asset holds a link")
-
-    if not member.isfile() and not member.isdir():
-        raise _refuse(name, "the asset holds a member that is not a file or a directory")
-
-    if member.mode & (0o4000 | 0o2000):
-        raise _refuse(name, "the asset holds a setuid or setgid member")
-
-
-def _write_member(name: str, tar: tarfile.TarFile, member: tarfile.TarInfo, root: Path) -> None:
-    target = (root / member.name).resolve()
-    if target != root and root not in target.parents:
-        raise _refuse(name, "the asset holds a member that resolves outside its tree")
-
-    if member.isdir():
-        target.mkdir(parents=True, exist_ok=True)
-
-        return
-
-    target.parent.mkdir(parents=True, exist_ok=True)
-    source = tar.extractfile(member)
-    if source is None:
-        raise _refuse(name, "the asset holds a member with no content")
-
-    with target.open("wb") as handle:
-        for block in iter(lambda: source.read(HASH_BLOCK_BYTES), b""):
-            handle.write(block)
-
-    target.chmod(member.mode & 0o755)
