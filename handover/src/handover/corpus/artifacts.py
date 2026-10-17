@@ -375,9 +375,15 @@ def _held(path: Path, max_bytes: int) -> bool:
     except OSError:
         return False
 
-    regular = stat.S_ISREG(info.st_mode) and info.st_size <= max_bytes
+    regular = stat.S_ISREG(info.st_mode) and _inside_limit(info.st_size, max_bytes)
 
     return regular and stat.S_IMODE(info.st_mode) == FILE_MODE
+
+
+def _inside_limit(size: int, max_bytes: int) -> bool:
+    """The limit of an asset: one byte at least, and `max_bytes` at most. No
+    asset is an empty file."""
+    return 0 < size <= max_bytes
 
 
 def _make_directories(store: Path, want: _Want) -> bool:
@@ -413,7 +419,7 @@ def _make_private(path: Path) -> None:
 
 def _seal(path: Path, max_bytes: int) -> bool:
     """Give a fetched file the mode `FILE_MODE`. False for a link, for a file
-    that is not regular and for a file past its limit."""
+    that is not regular and for a file outside its limit."""
     try:
         fd = os.open(path, _READ_FLAGS)
     except OSError:
@@ -421,7 +427,7 @@ def _seal(path: Path, max_bytes: int) -> bool:
 
     try:
         info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_size > max_bytes:
+        if not stat.S_ISREG(info.st_mode) or not _inside_limit(info.st_size, max_bytes):
             return False
 
         os.fchmod(fd, FILE_MODE)

@@ -288,6 +288,34 @@ def test_a_file_over_its_limit_gets_no_final_name(
     )
 
 
+def test_an_empty_file_gets_no_final_name(store: Path, curl: _Curl) -> None:
+    """No asset is an empty file, so an empty answer is fetched again later."""
+    curl.serves[_url(NAMES.bundle)] = b""
+
+    report = _fetch(store, curl)
+
+    assert report.ready == frozenset()
+    assert sorted(path.name for path in _tag_dir(store).iterdir()) == [NAMES.archive]
+    assert report.lines[-1] == (
+        f"{NAMES.bundle} of {TAG}: the fetched file is not a regular file inside its limit"
+    )
+
+
+@pytest.mark.parametrize("held", [BUNDLE_BYTES + b"x", b""], ids=["too-large", "empty"])
+def test_a_held_file_outside_its_limit_is_fetched_again(
+    store: Path, curl: _Curl, monkeypatch: pytest.MonkeyPatch, held: bytes
+) -> None:
+    monkeypatch.setattr(pure_half, "BUNDLE_MAX_BYTES", len(BUNDLE_BYTES))
+    _fetch(store, curl)
+    (_tag_dir(store) / NAMES.bundle).write_bytes(held)
+    assert _mode(_tag_dir(store) / NAMES.bundle) == FILE_MODE
+
+    report = _fetch(store, curl)
+
+    assert report == ArtifactReport(frozenset({BINARY_NAME}), (f"fetched {NAMES.bundle} of {TAG}",))
+    assert (_tag_dir(store) / NAMES.bundle).read_bytes() == BUNDLE_BYTES
+
+
 def test_an_exit_status_is_the_one_value_of_the_child_in_a_line(store: Path, curl: _Curl) -> None:
     curl.code = 63
 
