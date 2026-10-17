@@ -24,7 +24,7 @@
 # with no command or with no `end`, and a text after the last `end`. It
 # also refuses two rows with one component, one archive or one bundle. A
 # refusal returns 1 and puts the reason into ROWS_FAULT. After a refusal,
-# the arrays hold no complete row.
+# the arrays can hold rows. A caller uses none of them.
 #
 # The reader exits no shell. Each caller says what a refusal stops, so call
 # it as `read_rows FILE || ...`. Each check returns by itself, so the reader
