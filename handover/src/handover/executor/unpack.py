@@ -135,9 +135,11 @@ FRAME_BYTES: Final = (
     + 2 * tarfile.RECORDSIZE
 )
 
-#: The open of each program of a component archive: a new file, and no
-#: link is followed at its name.
-_PROGRAM_FLAGS: Final = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
+#: The open of a new file as root: a name that is there already is an
+#: error, and no link is followed at the name. Each program of a component
+#: archive and each file of root's copy of an asset (`artifact.py`) is
+#: opened so.
+NEW_FILE_FLAGS: Final = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
 
 
 class UnpackFault(StrEnum):
@@ -413,7 +415,7 @@ def _write_member(tar: tarfile.TarFile, placed: _Placed, root: Path, rules: _Rul
 
         return
 
-    with os.fdopen(os.open(target, _PROGRAM_FLAGS, PROGRAM_MODE), "wb") as handle:
+    with os.fdopen(os.open(target, NEW_FILE_FLAGS, PROGRAM_MODE), "wb") as handle:
         os.fchmod(handle.fileno(), PROGRAM_MODE)
         _copy_blocks(source, handle)
 
@@ -427,6 +429,7 @@ __all__ = [
     "ASSET_MAX_MEMBERS",
     "ASSET_MAX_UNPACKED_BYTES",
     "BLOCK_BYTES",
+    "NEW_FILE_FLAGS",
     "UnpackFault",
     "UnpackRefused",
     "extract_tar",

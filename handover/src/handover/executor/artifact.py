@@ -64,7 +64,7 @@ from ..site import operator_home
 from .install import DIR_MODE
 from .quiet import CHECKED_READ_FLAGS, GROUP_OTHER_BITS
 from .source import DIGEST_PREFIX, artifact_store
-from .unpack import BLOCK_BYTES
+from .unpack import BLOCK_BYTES, NEW_FILE_FLAGS
 
 #: The directory of the copies in the work tree of a request. A component is
 #: never named so: its clone is a directory of the same work tree.
@@ -79,9 +79,6 @@ _DIR_FLAGS: Final = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 #: The open of the operator home. The site file names it, and its parent is
 #: not the operator's.
 _HOME_FLAGS: Final = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC
-
-#: The open of a file of the copy. The file is new, and no link is followed.
-_WRITE_FLAGS: Final = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
 
 NOT_ITS_TAG: Final = "{component}: the tag is not a tag of this component, so root copies nothing"
 NO_ASSETS: Final = "{component}: the release tool names no archive and bundle for this component"
@@ -346,7 +343,7 @@ def _write_copy(
     """Write the bytes of `source` to a new file `destination`, and give
     each written block to `sink`."""
     try:
-        target = os.open(destination, _WRITE_FLAGS, FILE_MODE)
+        target = os.open(destination, NEW_FILE_FLAGS, FILE_MODE)
     except OSError:
         raise _Fault(NOT_WRITTEN.format_map(words)) from None
 
