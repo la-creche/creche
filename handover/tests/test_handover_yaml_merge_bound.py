@@ -49,7 +49,15 @@ DOUBLING_LEVELS = 40
 
 #: What the child does before it reads: it takes the two limits. One
 #: system takes no limit on the address space, so a thread also watches
-#: the largest size of the process and ends it past the limit.
+#: the largest size of the process and ends it past the limit, with status
+#: 70. The thread ends the process with status 71 when it cannot read the
+#: largest size, and it writes the fault as one line on standard error.
+#:
+#: The largest size is that of the process itself. On Linux, `ru_maxrss`
+#: also holds the peak of the memory that the process had before its exec,
+#: which is the memory of its parent. `VmHWM` of `/proc/self/status` holds
+#: only the memory that the process has after its exec. On macOS,
+#: `ru_maxrss` holds only the memory of the process itself.
 CHILD_LIMITS = """
 import os, resource, sys, threading, time
 
@@ -60,13 +68,24 @@ try:
 except (ValueError, OSError):
     pass
 
-unit = 1 if sys.platform == "darwin" else 1024
+def peak_bytes():
+    if sys.platform == "linux":
+        with open("/proc/self/status", "rb") as status:
+            line = next(row for row in status if row.startswith(b"VmHWM:"))
+        return int(line.split()[1]) * 1024
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return peak if sys.platform == "darwin" else peak * 1024
 
 def watch():
-    while True:
-        if resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * unit > memory:
-            os._exit(70)
-        time.sleep(0.02)
+    status = 71
+    try:
+        while peak_bytes() <= memory:
+            time.sleep(0.02)
+        status = 70
+    except BaseException as fault:
+        os.write(2, f"the watch cannot read the peak: {fault!r}\\n".encode())
+    finally:
+        os._exit(status)
 
 threading.Thread(target=watch, daemon=True).start()
 text = sys.stdin.read()
@@ -490,6 +509,23 @@ def test_the_child_watches_only_its_own_memory() -> None:
     holder = (sys.executable, "-c", HOLDER)
 
     assert _in_child(MANIFEST_CHILD, text, parent=holder) == PAIRS_REFUSAL
+
+
+def test_a_watch_that_cannot_read_the_peak_stops_the_child() -> None:
+    """The watch fails closed. When it cannot read the peak, the child ends
+    with status 71 and names the fault on its standard error. The main
+    thread of this child waits with no end before its read, so only the
+    watch can end the child."""
+    head = "def peak_bytes():\n"
+    read = "text = sys.stdin.read()"
+    limits = CHILD_LIMITS.replace(head, head + '    raise OSError("no peak")\n', 1)
+    limits = limits.replace(read, "threading.Event().wait()\n" + read, 1)
+    assert limits.count("no peak") == limits.count("Event().wait()") == 1
+
+    done = _run_child(limits + MANIFEST_CHILD, "")
+
+    assert done.returncode == 71
+    assert done.stderr == "the watch cannot read the peak: OSError('no peak')\n"
 
 
 #: The start of the refusal of a manifest for each text of `SMALL_TEXTS`.
