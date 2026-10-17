@@ -348,6 +348,9 @@ has the name of the markup of the manifest: `.component.toml` or
     before each child. The site file names the two programs with the keys
     `AGENT_COSIGN_PROGRAM` and `AGENT_SYSTEMD_RUN_PROGRAM`, and each key has
     a default.
+13a. For each program that fails the check, step 3 writes one line to the
+     log of the ledger entry. The line names the path that failed and the
+     reason. The refusal of P6 names no path.
 14. Root's own time limit of a verifier child ends before the time limit
     of its unit. A child that does not end in its time is thus no answer,
     and the follower asks again.

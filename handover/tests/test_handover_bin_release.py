@@ -47,7 +47,14 @@ from handover.executor import install
 from handover.executor.approval import Decision, Summary
 from handover.executor.artifact import COPY_DIR
 from handover.executor.drain import Counter, handle
-from handover.executor.host import UNIT_END, VERIFIER_NO_NETWORK, As, Command, Result
+from handover.executor.host import (
+    UNIT_END,
+    VERIFIER_NO_NETWORK,
+    As,
+    Command,
+    Distrust,
+    Result,
+)
 from handover.executor.install import RELOCATABLE_ARGV
 from handover.executor.live_state import MANIFEST_STAMP_YAML, installed_version
 from handover.executor.selfcontained import NAMES_WORK_TREE, NOT_STAGED
@@ -284,6 +291,13 @@ def _untouched(bench: Bench) -> None:
     assert not bench.run.ran("restart")
 
 
+def _said(bench: Bench, text: str) -> bool:
+    """Whether a line of the log of the ledger entry holds `text`."""
+    lines = cast("list[str]", bench.ledger()["log_tail"])
+
+    return any(text in line for line in lines)
+
+
 def _refused_p6(bench: Bench, reason: ArtifactRefusal) -> None:
     """Refused by check P6 with `reason`, before the tap."""
     assert "refused" in bench.release()
@@ -477,12 +491,14 @@ def test_an_absent_verifier_is_no_verifier(
     tmp_path_factory: pytest.TempPathFactory,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _use_site(tmp_path_factory, monkeypatch, home, str(tmp_path / "absent" / "cosign"))
+    absent = tmp_path / "absent" / "cosign"
+    _use_site(tmp_path_factory, monkeypatch, home, str(absent))
     bench = _make_bench(tmp_path, home)
     bench.install_unit(unit_text(bench.program()))
 
     _refused_p6(bench, ArtifactRefusal.VERIFIER_UNAVAILABLE)
     assert bench.stand_in.words == []
+    assert _said(bench, f"{absent}: {Distrust.ABSENT}")
 
 
 def test_a_verifier_file_that_another_account_can_write_is_not_run(
@@ -499,6 +515,7 @@ def test_a_verifier_file_that_another_account_can_write_is_not_run(
 
     _refused_p6(bench, ArtifactRefusal.VERIFIER_UNAVAILABLE)
     assert bench.stand_in.words == []
+    assert _said(bench, f"root does not start {verifier}: {verifier}: {Distrust.NOT_ROOTS}")
 
 
 def test_an_absent_artifact_is_refused_before_the_tap(tmp_path: Path, home: Path) -> None:

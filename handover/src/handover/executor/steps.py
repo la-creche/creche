@@ -58,7 +58,7 @@ from ..resolve import (
     deploying_versions,
     resolve,
 )
-from ..site import github_owner, github_repo
+from ..site import cosign_program, github_owner, github_repo, systemd_run_program
 from ..state import ReleaseState
 from .approval import (
     APPROVAL_TTL_S,
@@ -70,7 +70,7 @@ from .approval import (
     gate_id,
 )
 from .artifact import Copied, NoCopy, copy_from_store
-from .host import Host
+from .host import Host, distrusted
 from .install import (
     UNIT_KEPT_SUFFIX,
     Installer,
@@ -899,8 +899,21 @@ class Release:
         normalize_dir(self.wiring.host.work_root)
         repo = manifest.repo
         policy = signer_policy(repo, github_owner(), github_repo(str(repo)), plan.sha(name))
+        self._say_distrusted(name)
 
         return check_artifact(self.wiring.host.run, name, policy, copy)
+
+    def _say_distrusted(self, name: str) -> None:
+        """One log line for each program of the verifier that root does
+        not start, with the path that failed the check and the reason. The
+        runner makes the same check before each child
+        (`host.verifier_argv`), and the refusal of P6 names no path."""
+        for program in (cosign_program(), systemd_run_program()):
+            found = distrusted(program)
+            if found is not None:
+                self.entry.say(
+                    f"P6 {name}: root does not start {program}: {found.path}: {found.why}"
+                )
 
     # -- 4 contracts ----------------------------------------------------
 
