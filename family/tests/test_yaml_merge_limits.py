@@ -406,16 +406,17 @@ def test_a_watch_that_cannot_read_the_peak_stops_the_child() -> None:
     with status 4 and names the fault on its standard error. The main thread
     of this child waits with no end before it imports the readers, so only
     the watch can end the child."""
+    fault = OSError("no peak")
     head = "def peak_bytes():\n"
     imports = "from agent_family.parse import "
-    child = CHILD.replace(head, head + '    raise OSError("no peak")\n', 1)
+    child = CHILD.replace(head, f"{head}    raise {fault!r}\n", 1)
     child = child.replace(imports, "threading.Event().wait()\n" + imports, 1)
-    assert child.count("no peak") == child.count("Event().wait()") == 1
+    assert child.count(repr(fault)) == child.count("Event().wait()") == 1
 
     done = _run_child(child, "")
 
     assert done.returncode == 4
-    assert done.stderr == b"the watch cannot read the peak: OSError('no peak')\n"
+    assert done.stderr == f"the watch cannot read the peak: {fault!r}\n".encode()
 
 
 def test_a_refused_character_is_a_report_in_a_child_process() -> None:
