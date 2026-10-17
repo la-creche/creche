@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import gzip
 import io
+import os
 import tarfile
 from collections.abc import Callable
 from pathlib import Path
@@ -324,6 +325,44 @@ def test_the_bytes_of_each_member_count(tmp_path: Path) -> None:
 
 def test_a_tar_that_is_no_gzip_is_refused(tmp_path: Path) -> None:
     archive = _archive(tmp_path, _good, mode="w")
+
+    with pytest.raises(UnpackRefused) as unpacked:
+        extract_tar(archive, tmp_path / "into", COMPONENT)
+
+    with pytest.raises(UnpackRefused) as listed:
+        list_component_archive(archive, COMPONENT)
+
+    assert unpacked.value.fault is UnpackFault.NOT_READABLE
+    assert listed.value.fault is UnpackFault.NOT_READABLE
+
+
+@pytest.mark.parametrize("keep", [10, 0.3, 0.6])
+def test_an_archive_that_ends_early_is_refused(tmp_path: Path, keep: float) -> None:
+    """The gzip stream stops in its header, or inside a member."""
+
+    def make(tar: tarfile.TarFile) -> None:
+        for index in range(3):
+            _member(tar, f"{COMPONENT}/bin/p{index}", body=os.urandom(64 * 1024))
+
+    whole = _archive(tmp_path, make).read_bytes()
+    cut = int(keep * len(whole)) if isinstance(keep, float) else keep
+    archive = tmp_path / "archive" / f"{COMPONENT}.tar.gz"
+    archive.write_bytes(whole[:cut])
+
+    with pytest.raises(UnpackRefused) as unpacked:
+        extract_tar(archive, tmp_path / "into", COMPONENT)
+
+    with pytest.raises(UnpackRefused) as listed:
+        list_component_archive(archive, COMPONENT)
+
+    assert unpacked.value.fault is UnpackFault.NOT_READABLE
+    assert listed.value.fault is UnpackFault.NOT_READABLE
+
+
+def test_an_archive_that_does_not_decompress_is_refused(tmp_path: Path) -> None:
+    """A gzip header, then a deflate block of a type that does not exist."""
+    archive = tmp_path / f"{COMPONENT}.tar.gz"
+    archive.write_bytes(gzip.compress(b"")[:10] + b"\x07" + bytes(32))
 
     with pytest.raises(UnpackRefused) as unpacked:
         extract_tar(archive, tmp_path / "into", COMPONENT)

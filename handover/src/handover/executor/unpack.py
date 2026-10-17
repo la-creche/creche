@@ -29,7 +29,8 @@ component:
    `<program>` is one plain path segment.
 2. A directory member is refused, and so is each other name.
 3. A second member with a name that the unpack already took is refused.
-4. The archive is a gzip of a tar, and nothing else.
+4. The archive is a gzip of a tar, and nothing else. A gzip stream that
+   ends early or that does not decompress is not a readable archive.
 5. The limits are `catalog.ARCHIVE_MAX_MEMBERS` and
    `catalog.ARCHIVE_MAX_UNPACKED_BYTES`. The limits of an MCP asset are
    the two constants of this module.
@@ -85,6 +86,12 @@ type ReadMode = Literal["r:*", "r:gz"]
 ASSET_MODE: Final[ReadMode] = "r:*"
 COMPONENT_MODE: Final[ReadMode] = "r:gz"
 
+#: The errors that make an archive not readable. For an MCP asset it is the
+#: error of `tarfile`. The gzip stream of a component archive can also end
+#: early, and `tarfile` then raises `EOFError` and not an error of its own.
+ASSET_UNREADABLE: Final = (tarfile.TarError,)
+COMPONENT_UNREADABLE: Final = (tarfile.TarError, EOFError)
+
 
 class UnpackFault(StrEnum):
     """Each refusal of an unpack, with its fixed detail text."""
@@ -122,6 +129,7 @@ class _Rules:
     """What one kind of archive may hold."""
 
     mode: ReadMode
+    unreadable: tuple[type[Exception], ...]
     max_members: int
     max_bytes: int
     too_many: UnpackFault
@@ -134,6 +142,7 @@ def _rules(component: str | None) -> _Rules:
     if component is None:
         return _Rules(
             mode=ASSET_MODE,
+            unreadable=ASSET_UNREADABLE,
             max_members=ASSET_MAX_MEMBERS,
             max_bytes=ASSET_MAX_UNPACKED_BYTES,
             too_many=UnpackFault.ASSET_MEMBERS,
@@ -143,6 +152,7 @@ def _rules(component: str | None) -> _Rules:
 
     return _Rules(
         mode=COMPONENT_MODE,
+        unreadable=COMPONENT_UNREADABLE,
         max_members=ARCHIVE_MAX_MEMBERS,
         max_bytes=ARCHIVE_MAX_UNPACKED_BYTES,
         too_many=UnpackFault.ARCHIVE_MEMBERS,
@@ -178,7 +188,7 @@ def extract_tar(archive: Path, into: Path, component: str | None = None) -> None
         with tarfile.open(archive, rules.mode) as tar:
             for placed in _walk(tar, rules):
                 _write_member(tar, placed, root, rules)
-    except tarfile.TarError:
+    except rules.unreadable:
         raise UnpackRefused(UnpackFault.NOT_READABLE) from None
 
 
@@ -194,7 +204,7 @@ def list_component_archive(archive: Path, component: str) -> tuple[str, ...]:
     try:
         with tarfile.open(archive, rules.mode) as tar:
             return tuple(Path(placed.relative).name for placed in _walk(tar, rules))
-    except tarfile.TarError:
+    except rules.unreadable:
         raise UnpackRefused(UnpackFault.NOT_READABLE) from None
 
 
