@@ -109,12 +109,13 @@
 #     this step at the first send that fails.
 #   - A send that surely did not reach the hook puts the old record back,
 #     so the next run sends that notice. That is a host with no hook, or
-#     curl status 6 or 7. For each other status the script cannot prove
-#     that the hook took none, so it counts the notice as taken. The record
-#     then keeps its line, and that notice is missed. When the old record
-#     cannot go back, that notice is missed too.
+#     curl status 6 or 7. No other status proves that the hook took no
+#     notice, so the script counts the notice as taken. The record then
+#     keeps its line, and that notice is missed. When the old record cannot
+#     go back, that notice is missed too.
 #   - The journal line of a failed send names the curl status and the HTTP
-#     code: `(curl exit <status>, HTTP <code>)`.
+#     code: `(curl exit <status>, HTTP <code>)`. When curl writes no code,
+#     the line says `HTTP nothing`.
 #   - The script reads 262,144 bytes of the record at most, and it writes no
 #     larger record. A record that it cannot read, or cannot write, stops
 #     the step for that run: a notice with no record line has no limit.
@@ -257,17 +258,17 @@ NOTICE_TIMEOUT_S=10
 # The status of `send_notice` for a notice that surely did not reach the
 # hook: the host has no hook, or curl ends with a status of
 # NOT_REACHED_CURL. 6 is no address for the name of the host, and 7 is no
-# connection. For each other status the script cannot prove that the hook
-# took none, so it counts the notice as taken. The outage notice tries
-# again after each failed send.
+# connection. No other status proves that the hook took no notice, so the
+# script counts the notice as taken. The outage notice tries again after
+# each failed send.
 # CONTRACT-QUESTION: no contract text says which failed send the hook can
 # have taken. The reading here: only these cases count as proof that the
-# hook took none. The owner of the repository decided the case of status
-# 22, an HTTP error as the answer of the hook. The record keeps the line,
-# so that notice is missed. So a hook that refuses the bearer misses each
-# JSON notice. The journal line of each failed send names the HTTP code. A
-# change costs NOT_REACHED_CURL and its tests in
-# bin/tests/test_rework_watchdog.py.
+# hook took none. A curl status of 22 means that the hook answered with an
+# HTTP error. The owner of the repository decided this case. The record
+# keeps the line of that notice, so that notice is missed. So a hook that
+# refuses the bearer misses each JSON notice. The journal line of each
+# failed send names the HTTP code. A change costs NOT_REACHED_CURL and its
+# tests in bin/tests/test_rework_watchdog.py.
 NOT_REACHED=2
 NOT_REACHED_CURL=' 6 7 '
 
@@ -917,9 +918,9 @@ json_notice() {  # json_notice <service> <surface> <rule> <seconds>
   status=$?
   [[ "$status" == 0 ]] && return 0
 
-  # The script cannot prove that the hook took none, so it counts the
-  # notice as taken. The record keeps its line, so a fault gives a missed
-  # notice and never a second one.
+  # Only NOT_REACHED proves that the hook took no notice, so the script
+  # counts this notice as taken. The record keeps its line, so a fault
+  # gives a missed notice and never a second one.
   if [[ "$status" != "$NOT_REACHED" ]]; then
     say "json notices: the hook can have taken the notice, so $SENT_FILE keeps its line and no later run sends it"
     return 1

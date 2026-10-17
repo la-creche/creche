@@ -1874,8 +1874,8 @@ def test_a_send_that_the_hook_refused_is_missed(rig: Rig, code: str) -> None:
 
 
 def test_a_send_with_no_http_code_says_so(rig: Rig) -> None:
-    """curl writes no HTTP code when it stops before the request, for
-    example when it cannot read the header file. The journal line then
+    """curl writes no HTTP code when it stops before it starts a transfer,
+    for example when it cannot read the header file. The journal line then
     says that the send got no code."""
     rig.notice("noticeboard", token("status.document:syntax"))
 
@@ -2602,10 +2602,12 @@ def test_the_prose_holds_the_rule_of_a_failed_send() -> None:
     notice."""
     script = SCRIPT.read_text(encoding="utf-8").splitlines()
     comments = _one_line(" ".join(one.lstrip("# ") for one in script if one.startswith("#")))
+    comments = comments.replace("`", "")
     rules = _one_line((SCRIPT.parent / "AGENTS.md").read_text(encoding="utf-8")).replace("`", "")
     texts = (
-        "For each other status the script cannot prove that the hook took none, so it"
-        " counts the notice as taken.",
+        "No other status proves that the hook took no notice, so the script counts the"
+        " notice as taken.",
+        "When curl writes no code, the line says HTTP nothing.",
         "So a hook that refuses the bearer misses each JSON notice. The journal line of each"
         " failed send names the HTTP code.",
         "A record that holds bytes and no record line stops the step in each run. The"
