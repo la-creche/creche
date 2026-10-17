@@ -39,6 +39,10 @@ PAGE_MEMORY_MAX = 4 * 1024 * 1024
 #: The items of strict arguments whose record is just under `MAX_LINE_BYTES`.
 WIDE_ARGS_ITEMS = 260_000
 
+#: The items of the same arguments whose text is past `MAX_ARGS_CHARS`. The
+#: two texts start with the same `MAX_ARGS_CHARS` characters.
+FEW_ARGS_ITEMS = 1_000
+
 #: The problem of a text that is not strict JSON, after the name of the day.
 NOT_STRICT = "is not JSON: the text breaks a rule of strict JSON"
 
@@ -207,11 +211,14 @@ def test_the_deepest_arguments_of_a_strict_record_render_in_bounded_memory(
     assert peak < PAGE_MEMORY_MAX
 
 
+def deep_zeros(items: int) -> str:
+    """Strict arguments: `items` zeros in `DEEP_ARGS_LEVELS` arrays."""
+    return "[" * DEEP_ARGS_LEVELS + ",".join(["0"] * items) + "]" * DEEP_ARGS_LEVELS
+
+
 def test_strict_arguments_past_the_cap_render_in_bounded_memory(tmp_path: Path) -> None:
     """The render stops at the display cap."""
-    items = ",".join(["0"] * WIDE_ARGS_ITEMS)
-    args = "[" * DEEP_ARGS_LEVELS + items + "]" * DEEP_ARGS_LEVELS
-    line = json.dumps(audit_line(args="@")).replace('"@"', args)
+    line = json.dumps(audit_line(args="@")).replace('"@"', deep_zeros(WIDE_ARGS_ITEMS))
     assert len(line) < MAX_LINE_BYTES
     (tmp_path / "2026-09-19.jsonl").write_text(line + "\n", encoding="utf-8")
 
@@ -219,7 +226,9 @@ def test_strict_arguments_past_the_cap_render_in_bounded_memory(tmp_path: Path) 
 
     row = page.rows[0]
     assert row.problem == ""
-    assert row.args == json.dumps(json.loads(args), indent=2)[:MAX_ARGS_CHARS]
+    head = json.dumps(json.loads(deep_zeros(FEW_ARGS_ITEMS)), indent=2)
+    assert len(head) > MAX_ARGS_CHARS
+    assert row.args == head[:MAX_ARGS_CHARS]
     assert row.args_truncated
     assert peak < PAGE_MEMORY_MAX
 

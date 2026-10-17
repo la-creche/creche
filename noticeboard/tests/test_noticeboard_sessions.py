@@ -253,8 +253,8 @@ def test_a_refusal_past_the_cap_of_the_stream_records_a_notice_of_its_size(
 ) -> None:
     """A refusal has the cap of the stream."""
     fake = FakeAttendance()
-    error = {"code": "forbidden", "message": "x" * MAX_STREAM_BYTES}
-    fake.answer(EVENTS_PATH, {"error": error}, status=403)
+    body = b'{"error": {"code": "forbidden"}}'.ljust(MAX_STREAM_BYTES + 1)
+    fake.answer(EVENTS_PATH, body, status=403)
 
     stream = reader(tmp_path, fake).events(CHAT, OWUI)
 
