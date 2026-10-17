@@ -82,10 +82,25 @@ On any other code change it skips its one step after the checkout and is
 still a success. The job runs on the runner itself, with no container: only
 there is systemd process 1. The script answers which change needs the proof,
 and the scope runs the proof when the script gives no answer.
+
+The `artifacts` job runs `bin/build-artifacts.sh`: the build, the walk and the
+pack of each binary component. Both files hold the job, equal apart from the
+rule of a step. In the gate each step after the checkout runs only for a code
+change that touches an input of an archive (`bin/lib/artifactrule.sh`). In
+the release each step runs at each push. The job keeps no cache, and its
+checkout keeps no token.
+
+The release has one job more than the gate: `sign`. It holds the identity
+token and no code of the repository. It signs only the archives that the job
+output of `artifacts` names, after a check of their SHA-256. The `release`
+job takes the archives and the bundles, takes cosign with the text of the
+`sign` job, and gives both to the tag script. No pull request runs the
+release, so the tests hold each word of the two jobs and run each text.
 """
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -99,6 +114,7 @@ from typing import Any
 
 import pytest
 import yaml
+from handover.catalog import ARCHIVE_SUFFIX, BUNDLE_SUFFIX, Repo
 
 REPO = Path(__file__).resolve().parents[2]
 WORKFLOWS = REPO / ".github" / "workflows"
@@ -123,7 +139,17 @@ BY_NAME = [GATE_NAME, RELEASE_NAME]
 #: `env`. The tests that hold a job equal in the two files read `jobs` only.
 FILE_KEYS = {
     GATE_NAME: {"name", True, "permissions", "concurrency", "jobs"},
-    RELEASE_NAME: {"name", True, "permissions", "jobs"},
+    RELEASE_NAME: {"name", True, "permissions", "env", "jobs"},
+}
+
+#: The one `env` key of the files: the pin of cosign in the release. To take
+#: another cosign, compute the SHA-256 of the asset `cosign-linux-amd64` of
+#: the new release and compare it with the file `cosign_checksums.txt` of
+#: that release. Then change the two values here, in `release.yml` and in
+#: `artifact-probe.yml`.
+COSIGN_ENV = {
+    "COSIGN_VERSION": "v3.1.3",
+    "COSIGN_SHA256": "4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71",
 }
 
 #: What starts the gate: a pull request, and a merge queue's group.
@@ -495,6 +521,220 @@ SYSTEMD_ASKED = {
     ),
 }
 
+#: The catalog's name for this repository (`handover/src/handover/catalog.py`).
+THIS_REPOSITORY = str(Repo.AGENT_CONTROL)
+
+#: The job that builds the archive of each binary component, in both files.
+#: The job of the release that signs each archive.
+ARTIFACTS_JOB = "artifacts"
+SIGN_JOB = "sign"
+
+#: The rule of each step of the gate's `artifacts` job after its checkout: a
+#: code change that touches an input of an archive. A Markdown change under
+#: rust/ answers `artifacts=true`, so the rule asks for the code scope too.
+#: Only the answer `false` skips a step: an answer that is missing builds.
+ONLY_ARTIFACTS = "needs.scope.outputs.scope == 'code' && needs.scope.outputs.artifacts != 'false'"
+
+#: How the scope job of the gate hands that answer on.
+ARTIFACTS_OUTPUT = "${{ steps.scope.outputs.artifacts }}"
+
+#: The jobs of each file with no rule of their own. The verdict needs a
+#: success from each of them in each scope.
+NO_RULE = {
+    GATE_NAME: {"scope", "lint", ARTIFACTS_JOB},
+    RELEASE_NAME: {"scope", "lint", ARTIFACTS_JOB, SIGN_JOB},
+}
+
+#: The actions of the two jobs, by their commit.
+CHECKOUT_ACTION = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+SETUP_UV = "astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4"
+UPLOAD_ACTION = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+DOWNLOAD_ACTION = "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
+
+#: The days that a workflow artifact of the two jobs stays.
+RETENTION_DAYS = 7
+
+#: Where the archives, the bundles and cosign go on a runner.
+ARTIFACT_DIR = "${{ runner.temp }}/artifacts"
+ASSET_DIR = "${{ runner.temp }}/assets"
+BUNDLE_DIR = "${{ runner.temp }}/bundles"
+COSIGN_PATH = "${{ runner.temp }}/cosign"
+
+#: Each key of the `artifacts` job. No `if`: with its steps skipped the job
+#: is a success. No `permissions`: it holds the read-only token of its file.
+ARTIFACTS_KEYS = {"needs", "runs-on", "timeout-minutes", "outputs", "steps"}
+
+#: The one output of the job: the step output of the build.
+ARTIFACTS_OUTPUTS = {"digests": "${{ steps.build.outputs.digests }}"}
+
+#: The variables of the build step, each one. No ARTIFACT_ROWS_FILE: the
+#: release builds the rows of the catalog, and no file of the caller.
+BUILD_STEP_ENV = {"ARTIFACT_REPO": THIS_REPOSITORY, "ARTIFACT_OUT": ARTIFACT_DIR}
+
+#: The steps of the job in the release, as a whole. The checkout keeps no
+#: token in the clone, because a build script runs here. The step that takes
+#: uv keeps no cache: the job has no cache step.
+ARTIFACTS_STEPS = [
+    {"uses": CHECKOUT_ACTION, "with": {"fetch-depth": 0, "persist-credentials": False}},
+    {"uses": SETUP_UV, "with": {"enable-cache": False}},
+    {"name": "build", "id": "build", "env": BUILD_STEP_ENV, "run": "bin/build-artifacts.sh"},
+    {
+        "uses": UPLOAD_ACTION,
+        "with": {
+            "name": ARTIFACTS_JOB,
+            "path": ARTIFACT_DIR,
+            "if-no-files-found": "error",
+            "retention-days": RETENTION_DAYS,
+        },
+    },
+]
+
+#: The text that takes cosign. The `sign` job and the `release` job hold it.
+#: With no archive it prints one line and fetches nothing, so a run with no
+#: binary component fetches no program of 141 MB. Else it compares the
+#: SHA-256 of the program with the constant before the line that makes the
+#: file a program, and that line is before the first run of it.
+COSIGN_FETCH = """\
+cosign="$RUNNER_TEMP/cosign"
+if compgen -G "$RUNNER_TEMP/assets/*.tar.gz" > /dev/null; then
+  curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \\
+    --output "$cosign" \\
+    "https://github.com/sigstore/cosign/releases/download/$COSIGN_VERSION/cosign-linux-amd64"
+  found="$(sha256sum "$cosign" | cut -d ' ' -f 1)"
+  if [[ "$found" != "$COSIGN_SHA256" ]]; then
+    echo "cosign: the program has the SHA-256 $found, not $COSIGN_SHA256" >&2
+    exit 1
+  fi
+  chmod 0755 "$cosign"
+  "$cosign" version
+else
+  echo "cosign: no archive, so no fetch"
+fi
+"""
+
+#: The whole text of the cosign step of the `release` job.
+COSIGN_RUN = "set -euo pipefail\n" + COSIGN_FETCH
+
+#: The three lines of the fetch that must keep their order.
+COSIGN_COMPARE = 'if [[ "$found" != "$COSIGN_SHA256" ]]; then'
+COSIGN_MODE = 'chmod 0755 "$cosign"'
+COSIGN_FIRST_USE = '"$cosign" version'
+
+#: The line of the `sign` step that compares each archive with the job
+#: output of `artifacts`.
+DIGEST_CHECK = '(cd "$assets" && sha256sum --check --strict <<< "$DIGESTS")'
+
+#: The whole text of the `sign` step: the check of the archives, the fetch,
+#: and one signature for each archive.
+SIGN_RUN = (
+    """\
+set -euo pipefail
+shopt -s dotglob
+assets="$RUNNER_TEMP/assets"
+bundles="$RUNNER_TEMP/bundles"
+mkdir -p "$bundles"
+line='^[0-9a-f]{64}  [A-Za-z0-9][A-Za-z0-9._-]*[.]tar[.]gz$'
+named=""
+if [[ -n "$DIGESTS" ]]; then
+  while IFS= read -r one; do
+    if [[ ! "$one" =~ $line ]]; then
+      echo "sign: the job artifacts gave a line that is no SHA-256 line of an archive" >&2
+      exit 1
+    fi
+    named+="${one:66}"$'\\n'
+  done <<< "$DIGESTS"
+fi
+files=""
+for file in "$assets"/*; do
+  name="${file##*/}"
+  if [[ ! -e "$file" || "$name" == "SHA256SUMS" ]]; then
+    continue
+  fi
+  if [[ -L "$file" || ! -f "$file" || "$name" != *.tar.gz ]]; then
+    echo "sign: the job artifacts gave $name, which is no archive" >&2
+    exit 1
+  fi
+  files+="$name"$'\\n'
+done
+if [[ "$(printf '%s' "$named" | sort -u)" != "$(printf '%s' "$named" | sort)" ]]; then
+  echo "sign: the job artifacts named one archive two times" >&2
+  exit 1
+fi
+if [[ "$(printf '%s' "$named" | sort)" != "$(printf '%s' "$files" | sort)" ]]; then
+  echo "sign: the archives are not the archives that the job artifacts named" >&2
+  exit 1
+fi
+if [[ -z "$named" ]]; then
+  echo "sign: no archive"
+  : > "$bundles/SHA256SUMS"
+  exit 0
+fi
+"""
+    + DIGEST_CHECK
+    + "\n"
+    + COSIGN_FETCH
+    + """\
+while IFS= read -r one; do
+  name="${one:66}"
+  "$cosign" sign-blob --yes --bundle "$bundles/$name.sigstore.json" "$assets/$name" < /dev/null
+done <<< "$DIGESTS"
+printf '%s\\n' "$DIGESTS" > "$bundles/SHA256SUMS"
+"""
+)
+
+#: Each key of the `sign` job. No `if`: the job runs in each scope, and with
+#: no archive it signs nothing and passes.
+SIGN_KEYS = {"needs", "runs-on", "timeout-minutes", "permissions", "steps"}
+
+#: The whole token of the `sign` job.
+SIGN_PERMISSIONS = {"id-token": "write"}
+
+#: The steps of the `sign` job, as a whole: the archives of the run, the one
+#: run step and the bundles. No checkout and no local action.
+SIGN_STEPS = [
+    {"uses": DOWNLOAD_ACTION, "with": {"name": ARTIFACTS_JOB, "path": ASSET_DIR}},
+    {
+        "name": SIGN_JOB,
+        "env": {"DIGESTS": "${{ needs.artifacts.outputs.digests }}"},
+        "run": SIGN_RUN,
+    },
+    {
+        "uses": UPLOAD_ACTION,
+        "with": {
+            "name": "bundles",
+            "path": BUNDLE_DIR,
+            "if-no-files-found": "error",
+            "retention-days": RETENTION_DAYS,
+        },
+    },
+]
+
+#: The time limit of the cosign step of the `release` job. That job holds
+#: the group of one allocation at a time, so a fetch that hangs would hold
+#: each later release run. The step comes before the tag step, so the limit
+#: stops no allocation half way.
+COSIGN_STEP_MINUTES = 10
+
+#: The cosign step of the `release` job.
+COSIGN_STEP = {"name": "cosign", "timeout-minutes": COSIGN_STEP_MINUTES, "run": COSIGN_RUN}
+
+#: The steps of the `release` job between the verdict and the step that
+#: takes uv: the two workflow artifacts into one directory, then cosign.
+RELEASE_ASSET_STEPS = [
+    {"uses": DOWNLOAD_ACTION, "with": {"name": ARTIFACTS_JOB, "path": ASSET_DIR}},
+    {"uses": DOWNLOAD_ACTION, "with": {"name": "bundles", "path": ASSET_DIR}},
+    COSIGN_STEP,
+]
+
+#: The variables of the tag step: the token, the catalog name, the assets of
+#: a binary component and the program that checks their signature.
+TAG_ENV = {
+    "GH_TOKEN": "${{ github.token }}",
+    "TAG_REPO": THIS_REPOSITORY,
+    "ASSET_DIR": ASSET_DIR,
+    "COSIGN": COSIGN_PATH,
+}
+
 #: The whole test command of the `proc` job, as `integration/proc/AGENTS.md`
 #: gives it.
 PROC_RUN = "uv run pytest integration/proc -m slow"
@@ -630,9 +870,6 @@ LINT_RUNS = {
 VERDICT_STEP = "every job passed"
 TAG_STEP = "tag and release"
 
-#: The catalog's name for this repository (`handover/src/handover/catalog.py`).
-THIS_REPOSITORY = "agent-control"
-
 #: The whole of the tag step: the allocator, which holds the logic and its
 #: own tests (handover/tests/test_handover_tag_script.py).
 TAG_RUN = "handover/bin/allocate-tags.sh"
@@ -751,7 +988,7 @@ def test_the_docs_scope_runs_no_shard_no_playpen_and_no_rust(
         SYSTEMD_JOB,
     }
     assert only_code == set(DOCS), "the verdict table of this file names other jobs"
-    assert {name for name, rule in by_scope.items() if rule is None} == {"scope", "lint"}
+    assert {name for name, rule in by_scope.items() if rule is None} == NO_RULE[last]
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
@@ -780,11 +1017,26 @@ def test_the_release_runs_the_gates_test_jobs() -> None:
     ):
         assert RELEASE_JOBS[name] == JOBS[name], f"release.yml's {name} job is not gate.yml's"
 
+    gated = JOBS[ARTIFACTS_JOB]
+    released = RELEASE_JOBS[ARTIFACTS_JOB]
+    unruled = [
+        {key: value for key, value in step.items() if key != "if"} for step in gated["steps"]
+    ]
+
+    assert {key: value for key, value in gated.items() if key != "steps"} == {
+        key: value for key, value in released.items() if key != "steps"
+    }
+    assert unruled == released["steps"], "release.yml's artifacts job is not gate.yml's"
+
 
 def test_the_two_workflows_have_the_same_jobs() -> None:
-    """The release runs each job of the gate before its last job, and no
-    other job. A job that enters one file alone fails here."""
-    assert set(JOBS) - {GATE_NAME} == set(RELEASE_JOBS) - {RELEASE_NAME}
+    """The release runs each job of the gate before its last job, and one
+    job more: `sign`. A job that enters one file alone fails here. So the
+    last job of the release needs one job more than the last job of the
+    gate."""
+    assert set(JOBS) - {GATE_NAME} == set(RELEASE_JOBS) - {RELEASE_NAME, SIGN_JOB}
+    assert SIGN_JOB not in JOBS
+    assert len(RELEASE_JOBS[RELEASE_NAME]["needs"]) == len(JOBS[GATE_NAME]["needs"]) + 1
 
 
 @pytest.mark.parametrize(
@@ -796,8 +1048,10 @@ def test_a_workflow_file_has_no_key_that_changes_each_job(
     """A job that is equal in the two files runs the same steps only when no
     key beside `jobs` changes them. A `defaults` key of one file gives each
     `run` step another shell, and an `env` key gives each step a variable.
-    Only the gate has a `concurrency` key."""
+    Only the gate has a `concurrency` key. Only the release has an `env`
+    key, and it holds the pin of cosign and nothing else."""
     assert set(workflow) == FILE_KEYS[name]
+    assert workflow.get("env", COSIGN_ENV) == COSIGN_ENV
 
 
 def _node_steps(job: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1626,6 +1880,16 @@ def test_the_tag_step_runs_only_after_the_verdict() -> None:
     assert tag["run"] == TAG_RUN
 
 
+def test_no_time_limit_can_stop_an_allocation_half_way() -> None:
+    """A time limit on the `release` job or on its tag step can stop the
+    tag script between a tag and its Release. The cosign step before the tag
+    step holds the limit of a fetch."""
+    tag = _step(RELEASE_JOBS, RELEASE_NAME, TAG_STEP)
+
+    assert "timeout-minutes" not in RELEASE_JOBS[RELEASE_NAME]
+    assert "timeout-minutes" not in tag
+
+
 def test_the_tag_step_says_which_catalog_repository_it_tags() -> None:
     """The allocator would otherwise take the name from where the
     repository is hosted, and refuse a name the catalog does not hold
@@ -1647,15 +1911,433 @@ def test_two_merges_never_allocate_at_once() -> None:
 
 def test_only_the_release_job_may_write() -> None:
     """Every other job runs the merged code, so none of them holds the
-    token that tags."""
+    token that tags. Three rules:
+
+    1. The `release` job holds the token that tags.
+    2. The `sign` job holds the identity token and no other permission. It
+       has no checkout and no local action, so no code of the repository
+       runs beside that token.
+    3. No other job sets its permissions."""
     assert RELEASE["permissions"] == {"contents": "read", "actions": "read"}
     assert RELEASE_JOBS[RELEASE_NAME]["permissions"] == {
         "contents": "write",
         "pull-requests": "read",
     }
+    assert RELEASE_JOBS[SIGN_JOB]["permissions"] == SIGN_PERMISSIONS
+    for step in RELEASE_JOBS[SIGN_JOB]["steps"]:
+        uses = step.get("uses", "")
+
+        assert not uses.startswith("actions/checkout@"), "the sign job has a checkout"
+        assert not uses.startswith("./"), f"the sign job uses the local action {uses}"
     for name, job in RELEASE_JOBS.items():
-        if name != RELEASE_NAME:
+        if name not in (RELEASE_NAME, SIGN_JOB):
             assert "permissions" not in job, f"{name} sets its own permissions"
+    for name, job in JOBS.items():
+        assert "permissions" not in job, f"{name} sets its own permissions"
+
+
+def test_the_artifacts_job_of_the_release_is_pinned_as_a_whole() -> None:
+    """Each key of the job and each step, in their order. The job has no
+    rule and no `permissions` key. The job output is the step output of the
+    build. One more step can put another file into the upload, and one more
+    key can let a failed step pass."""
+    job = RELEASE_JOBS[ARTIFACTS_JOB]
+
+    assert set(job) == ARTIFACTS_KEYS
+    assert job["needs"] == "scope"
+    assert job["runs-on"] == "ubuntu-latest"
+    assert 0 < job["timeout-minutes"] <= 30
+    assert job["outputs"] == ARTIFACTS_OUTPUTS
+    assert job["steps"] == ARTIFACTS_STEPS
+    assert (REPO / "bin" / "build-artifacts.sh").is_file()
+
+
+def test_the_build_step_of_the_release_names_its_variables_and_no_other() -> None:
+    """The release builds the rows of the catalog. A rows file of the caller
+    would build another set."""
+    (build,) = [step for step in RELEASE_JOBS[ARTIFACTS_JOB]["steps"] if step.get("id") == "build"]
+
+    assert build["env"] == BUILD_STEP_ENV
+    assert "ARTIFACT_ROWS_FILE" not in build["env"]
+
+
+@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
+def test_the_artifacts_job_keeps_no_cache_and_no_token(
+    jobs: dict[str, dict[str, Any]], last: str
+) -> None:
+    """The bytes of an archive come from a clean build. A build script runs
+    here, so the clone keeps no token."""
+    steps = jobs[ARTIFACTS_JOB]["steps"]
+    uv = [step for step in steps if step.get("uses") == SETUP_UV]
+
+    assert all(not step.get("uses", "").startswith("actions/cache@") for step in steps)
+    assert [step["with"] for step in uv] == [{"enable-cache": False}]
+    assert steps[0]["uses"] == CHECKOUT_ACTION
+    assert steps[0]["with"]["persist-credentials"] is False
+
+
+def test_the_artifacts_job_takes_uv_at_the_pin_of_the_release_job() -> None:
+    (pinned,) = [
+        step for step in RELEASE_JOBS[RELEASE_NAME]["steps"] if step.get("uses") == SETUP_UV
+    ]
+
+    assert pinned == {"uses": SETUP_UV}
+
+
+def test_each_step_of_the_gates_artifacts_job_after_the_checkout_has_the_rule() -> None:
+    """A job skipped as a whole is red in the verdict. So the job runs, and
+    each step after the checkout carries the rule."""
+    checkout, *steps = JOBS[ARTIFACTS_JOB]["steps"]
+
+    assert "if" not in checkout
+    assert steps
+    for step in steps:
+        assert step["if"] == ONLY_ARTIFACTS, f"{step.get('name') or step.get('uses')} always runs"
+    for step in RELEASE_JOBS[ARTIFACTS_JOB]["steps"]:
+        assert "if" not in step, "a step of the release's artifacts job has a rule"
+
+
+def test_the_scope_job_of_the_gate_hands_the_artifacts_answer_on() -> None:
+    assert JOBS["scope"]["outputs"][ARTIFACTS_JOB] == ARTIFACTS_OUTPUT
+    assert SCOPE_ACTION["outputs"][ARTIFACTS_JOB]["value"] == ARTIFACTS_OUTPUT
+    assert ". bin/lib/artifactrule.sh\n" in _scope_run(GATE_NAME)
+    assert _scope_run(GATE_NAME).index("rustrule.sh") < _scope_run(GATE_NAME).index(
+        "artifactrule.sh"
+    )
+
+
+def test_the_sign_job_is_pinned_as_a_whole() -> None:
+    """The job holds the identity token. Each word that it runs is in the
+    workflow file: the test holds each step, each key and the whole text of
+    the one run step. No step starts a file of the repository, and no text
+    holds an expression that a value of the run fills in."""
+    job = RELEASE_JOBS[SIGN_JOB]
+    (step,) = [one for one in job["steps"] if "run" in one]
+
+    assert set(job) == SIGN_KEYS
+    assert job["needs"] == ARTIFACTS_JOB
+    assert 0 < job["timeout-minutes"] <= 15
+    assert job["steps"] == SIGN_STEPS
+    assert "bin/" not in step["run"]
+    assert "${{" not in step["run"]
+
+
+def test_the_sign_job_names_the_assets_as_the_catalog_does() -> None:
+    """The tag script takes the names of the two assets from the catalog
+    (`handover allocate-tags --assets`). The `sign` job writes the bundle
+    and finds each archive by the two suffixes of the catalog, so a change
+    of one constant fails here before a release run refuses each binary
+    component."""
+    archive_end = ARCHIVE_SUFFIX.replace(".", "[.]") + "$'"
+
+    assert f'"$bundles/$name{BUNDLE_SUFFIX}"' in SIGN_RUN
+    assert f"line='^[0-9a-f]{{64}}  [A-Za-z0-9][A-Za-z0-9._-]*{archive_end}\n" in SIGN_RUN
+    assert f'"$name" != *{ARCHIVE_SUFFIX} ]]' in SIGN_RUN
+    assert f'compgen -G "$RUNNER_TEMP/assets/*{ARCHIVE_SUFFIX}"' in COSIGN_FETCH
+    assert COSIGN_FETCH in SIGN_RUN
+    assert COSIGN_FETCH in COSIGN_RUN
+
+
+def test_the_digest_check_is_before_the_first_cosign_word() -> None:
+    """The step compares each archive with the job output before it takes
+    cosign. In the fetch the compare of the program comes before the line
+    that makes the file a program, and that line before the first run."""
+    first = re.search(r"\bcosign\b", SIGN_RUN)
+
+    assert first is not None
+    assert SIGN_RUN.index(DIGEST_CHECK) < first.start()
+    assert (
+        COSIGN_FETCH.index(COSIGN_COMPARE)
+        < COSIGN_FETCH.index(COSIGN_MODE)
+        < COSIGN_FETCH.index(COSIGN_FIRST_USE)
+    )
+
+
+def test_the_sign_job_and_the_release_job_take_one_cosign() -> None:
+    """One text takes cosign in the two jobs, with the two constants of the
+    file. The release job then checks a signature with the program that the
+    sign job signed with."""
+    (step,) = [one for one in RELEASE_JOBS[RELEASE_NAME]["steps"] if one.get("name") == "cosign"]
+
+    assert RELEASE["env"] == COSIGN_ENV
+    assert step == COSIGN_STEP
+    assert COSIGN_FETCH in SIGN_RUN
+    for name, job in RELEASE_JOBS.items():
+        for one in job["steps"]:
+            assert not set(one.get("env", {})) & set(COSIGN_ENV), f"{name} sets a constant again"
+
+
+def test_the_release_job_takes_the_assets_after_the_verdict_and_before_the_tag() -> None:
+    """The two workflow artifacts go into one directory, and cosign comes
+    after them: the fetch reads that directory. The tag step gets both."""
+    steps = RELEASE_JOBS[RELEASE_NAME]["steps"]
+    names = [step.get("name") or step.get("uses") for step in steps]
+    verdict = names.index(VERDICT_STEP)
+    tag = names.index(TAG_STEP)
+
+    assert steps[verdict + 1 : verdict + 1 + len(RELEASE_ASSET_STEPS)] == RELEASE_ASSET_STEPS
+    assert verdict + len(RELEASE_ASSET_STEPS) < tag
+    assert _step(RELEASE_JOBS, RELEASE_NAME, TAG_STEP)["env"] == TAG_ENV
+    assert _step(RELEASE_JOBS, RELEASE_NAME, TAG_STEP)["run"] == TAG_RUN
+
+
+@pytest.mark.parametrize(
+    ("workflow", "name"), [(GATE, GATE_NAME), (RELEASE, RELEASE_NAME)], ids=BY_NAME
+)
+def test_each_upload_fails_with_no_file_and_stays_seven_days(
+    workflow: dict[Any, Any], name: str
+) -> None:
+    uploads = [
+        step
+        for job in workflow["jobs"].values()
+        for step in job["steps"]
+        if step.get("uses", "").startswith("actions/upload-artifact@")
+    ]
+
+    assert uploads
+    for step in uploads:
+        assert step["uses"] == UPLOAD_ACTION
+        assert step["with"]["if-no-files-found"] == "error"
+        assert step["with"]["retention-days"] == RETENTION_DAYS
+    for job in workflow["jobs"].values():
+        for step in job["steps"]:
+            if step.get("uses", "").startswith("actions/download-artifact@"):
+                assert step["uses"] == DOWNLOAD_ACTION
+
+
+#: What a run of the `sign` step needs of a runner: `sha256sum --check
+#: --strict`. A case that needs it skips on a development machine without
+#: it, and fails in CI.
+IN_CI = bool(os.environ.get("CI"))
+
+
+def _checks_a_line() -> bool:
+    """Whether the `sha256sum` of this machine takes `--check --strict` and a
+    line on its standard input, as the one of a runner does."""
+    program = shutil.which("sha256sum")
+    if program is None:
+        return False
+
+    done = subprocess.run(
+        [program, "--check", "--strict"],
+        input=f"{hashlib.sha256(b'').hexdigest()}  /dev/null\n",
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    return done.returncode == 0
+
+
+needs_sha256sum_check = pytest.mark.skipif(
+    not IN_CI and not _checks_a_line(), reason="the step uses `sha256sum --check --strict`"
+)
+
+#: `curl`: it writes its words to STUB_LOG and puts STUB_PROGRAM at the path
+#: after `--output`.
+CURL_STUB = """#!/usr/bin/env bash
+printf '%s\\037' curl "$@" >> "$STUB_LOG"
+printf '\\n' >> "$STUB_LOG"
+while [[ "$#" -gt 0 ]]; do
+  if [[ "$1" == "--output" ]]; then
+    cp "$STUB_PROGRAM" "$2"
+  fi
+  shift
+done
+"""
+
+#: What the stub `curl` fetches: a program that writes its words to
+#: STUB_USED, and writes a bundle at the path after `--bundle`.
+FETCHED = """#!/bin/sh
+echo "$*" >> "$STUB_USED"
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--bundle" ]; then
+    echo "a bundle" > "$2"
+  fi
+  shift
+done
+"""
+
+#: Two archives and their lines of `sha256sum`.
+ONE = "one-x86_64-unknown-linux-musl.tar.gz"
+TWO = "two-x86_64-unknown-linux-musl.tar.gz"
+BYTES = {ONE: b"the first archive", TWO: b"the second archive"}
+LINES = {name: f"{hashlib.sha256(body).hexdigest()}  {name}" for name, body in BYTES.items()}
+
+
+class Fetch:
+    """One run of the text of a step that takes cosign, on a runner whose
+    temporary directory holds `files` in `assets/`."""
+
+    def __init__(
+        self,
+        tmp_path: Path,
+        text: str,
+        files: dict[str, bytes],
+        digests: str = "",
+        sha256: str | None = None,
+    ) -> None:
+        stubs = tmp_path / "stubs"
+        stubs.mkdir()
+        curl = stubs / "curl"
+        curl.write_text(CURL_STUB, encoding="utf-8")
+        curl.chmod(0o755)
+        fetched = tmp_path / "fetched"
+        fetched.write_text(FETCHED, encoding="utf-8")
+
+        self.temp = tmp_path / "temp"
+        self.assets = self.temp / "assets"
+        self.assets.mkdir(parents=True)
+        for name, body in files.items():
+            (self.assets / name).write_bytes(body)
+
+        self.bundles = self.temp / "bundles"
+        self.program = self.temp / "cosign"
+        self.log = tmp_path / "calls.log"
+        self.used = tmp_path / "used"
+        self.done = subprocess.run(
+            ["bash", "-c", text],
+            env={
+                "PATH": f"{stubs}{os.pathsep}{os.environ['PATH']}",
+                "RUNNER_TEMP": str(self.temp),
+                "DIGESTS": digests,
+                "COSIGN_VERSION": COSIGN_ENV["COSIGN_VERSION"],
+                "COSIGN_SHA256": sha256 or hashlib.sha256(FETCHED.encode()).hexdigest(),
+                "STUB_LOG": str(self.log),
+                "STUB_PROGRAM": str(fetched),
+                "STUB_USED": str(self.used),
+            },
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+    @property
+    def fetches(self) -> int:
+        if not self.log.exists():
+            return 0
+
+        return len(self.log.read_text(encoding="utf-8").splitlines())
+
+
+def test_with_no_archive_the_sign_step_signs_nothing_and_fetches_nothing(tmp_path: Path) -> None:
+    """The catalog of today holds no binary component. The step prints one
+    line and uploads an empty SHA256SUMS: the release job cannot download an
+    artifact that does not exist."""
+    run = Fetch(tmp_path, SIGN_RUN, {"SHA256SUMS": b""})
+
+    assert run.done.returncode == 0, run.done.stdout + run.done.stderr
+    assert run.done.stdout == "sign: no archive\n"
+    assert sorted(path.name for path in run.bundles.iterdir()) == ["SHA256SUMS"]
+    assert (run.bundles / "SHA256SUMS").read_bytes() == b""
+    assert run.fetches == 0
+
+
+@needs_sha256sum_check
+def test_the_sign_step_signs_each_archive_that_the_job_output_names(tmp_path: Path) -> None:
+    digests = f"{LINES[ONE]}\n{LINES[TWO]}"
+    run = Fetch(tmp_path, SIGN_RUN, {**BYTES, "SHA256SUMS": f"{digests}\n".encode()}, digests)
+
+    assert run.done.returncode == 0, run.done.stdout + run.done.stderr
+    assert run.fetches == 1
+    assert run.used.read_text(encoding="utf-8").splitlines() == [
+        "version",
+        f"sign-blob --yes --bundle {run.bundles}/{ONE}.sigstore.json {run.assets}/{ONE}",
+        f"sign-blob --yes --bundle {run.bundles}/{TWO}.sigstore.json {run.assets}/{TWO}",
+    ]
+    assert sorted(path.name for path in run.bundles.iterdir()) == sorted(
+        ["SHA256SUMS", f"{ONE}.sigstore.json", f"{TWO}.sigstore.json"]
+    )
+    assert (run.bundles / "SHA256SUMS").read_text(encoding="utf-8") == f"{digests}\n"
+
+
+#: (the files of the artifact, the job output, the line of the refusal).
+#: Each one stops the step before it takes cosign.
+REFUSED_SIGNS = {
+    "an-absent-archive": ({}, LINES[ONE], "the archives are not the archives"),
+    "an-archive-that-no-line-names": (BYTES, LINES[ONE], "the archives are not the archives"),
+    "an-archive-with-no-line": ({ONE: BYTES[ONE]}, "", "the archives are not the archives"),
+    "a-file-that-is-no-archive": (
+        {ONE: BYTES[ONE], "notes.txt": b""},
+        LINES[ONE],
+        "gave notes.txt, which is no archive",
+    ),
+    "a-hidden-archive": (
+        {ONE: BYTES[ONE], f".{TWO}": b""},
+        LINES[ONE],
+        "the archives are not the archives",
+    ),
+    "no-sha256-line": ({ONE: BYTES[ONE]}, ONE, "no SHA-256 line of an archive"),
+    "an-option-as-a-name": (
+        {"-rf.tar.gz": b""},
+        LINES[ONE].replace(ONE, "-rf.tar.gz"),
+        "no SHA-256 line",
+    ),
+    "a-path-as-a-name": (
+        {ONE: BYTES[ONE]},
+        LINES[ONE].replace(ONE, f"../{ONE}"),
+        "no SHA-256 line",
+    ),
+    "one-name-two-times": ({ONE: BYTES[ONE]}, f"{LINES[ONE]}\n{LINES[ONE]}", "two times"),
+}
+
+
+@pytest.mark.parametrize(("files", "digests", "fault"), REFUSED_SIGNS.values(), ids=REFUSED_SIGNS)
+def test_the_sign_step_refuses_a_set_that_the_job_output_does_not_name(
+    tmp_path: Path, files: dict[str, bytes], digests: str, fault: str
+) -> None:
+    """Each job of a run can write a workflow artifact. So the step signs
+    only the archives that the job output names."""
+    run = Fetch(tmp_path, SIGN_RUN, files, digests)
+
+    assert run.done.returncode == 1
+    assert fault in run.done.stderr
+    assert run.fetches == 0
+    assert not (run.bundles / "SHA256SUMS").exists()
+
+
+@needs_sha256sum_check
+def test_the_sign_step_refuses_an_archive_with_other_bytes(tmp_path: Path) -> None:
+    run = Fetch(tmp_path, SIGN_RUN, {ONE: BYTES[ONE] + b"!"}, LINES[ONE])
+
+    assert run.done.returncode != 0
+    assert run.fetches == 0
+    assert not run.used.exists()
+
+
+def test_with_no_archive_the_cosign_step_of_the_release_fetches_nothing(tmp_path: Path) -> None:
+    """A run with no binary component fetches no program of 141 MB. The tag
+    script reads COSIGN only for a binary component."""
+    run = Fetch(tmp_path, COSIGN_RUN, {"SHA256SUMS": b""})
+
+    assert run.done.returncode == 0, run.done.stdout + run.done.stderr
+    assert run.done.stdout == "cosign: no archive, so no fetch\n"
+    assert run.fetches == 0
+    assert not run.program.exists()
+
+
+@pytest.mark.skipif(
+    not IN_CI and shutil.which("sha256sum") is None, reason="the step uses sha256sum"
+)
+def test_the_cosign_step_runs_the_program_only_after_the_compare(tmp_path: Path) -> None:
+    run = Fetch(tmp_path, COSIGN_RUN, {ONE: BYTES[ONE]})
+
+    assert run.done.returncode == 0, run.done.stdout + run.done.stderr
+    assert run.fetches == 1
+    assert run.used.read_text(encoding="utf-8") == "version\n"
+    assert os.access(run.program, os.X_OK)
+
+
+@pytest.mark.skipif(
+    not IN_CI and shutil.which("sha256sum") is None, reason="the step uses sha256sum"
+)
+def test_the_cosign_step_never_runs_a_file_with_another_sha256(tmp_path: Path) -> None:
+    run = Fetch(tmp_path, COSIGN_RUN, {ONE: BYTES[ONE]}, sha256=COSIGN_ENV["COSIGN_SHA256"])
+
+    assert run.done.returncode == 1
+    assert f"not {COSIGN_ENV['COSIGN_SHA256']}" in run.done.stderr
+    assert not run.used.exists()
+    assert not os.access(run.program, os.X_OK)
 
 
 def test_gate_judges_with_the_shared_verdict_and_nothing_else() -> None:
@@ -1704,13 +2386,15 @@ def test_a_shard_outside_one_to_n_is_refused(text: str) -> None:
         _root_conftest().parse_shard(text)
 
 
-def _needs(scope: str | None, results: dict[str, str]) -> str:
-    """`toJSON(needs)` as the last job sees it: every job a success but for
-    the ones `results` names. Both workflows need the same jobs:
-    `test_the_two_workflows_have_the_same_jobs` and
-    `test_the_last_job_needs_every_other_job_and_always_runs` hold that. So
-    one text is the needs of the gate and of the release."""
-    names = sorted(set(JOBS) - {GATE_NAME})
+def _needs(
+    jobs: dict[str, dict[str, Any]], last: str, scope: str | None, results: dict[str, str]
+) -> str:
+    """`toJSON(needs)` as the last job of `jobs` sees it: every job a success
+    but for the ones `results` names. A name that the file does not hold is
+    left out. `test_the_last_job_needs_every_other_job_and_always_runs` holds
+    that the last job needs each other job. The release needs one job more
+    than the gate: `test_the_two_workflows_have_the_same_jobs`."""
+    names = sorted(set(jobs) - {last})
     needs = {name: {"result": results.get(name, "success"), "outputs": {}} for name in names}
     if scope is not None:
         needs["scope"]["outputs"] = {"scope": scope}
@@ -1730,51 +2414,80 @@ DOCS = {
     SYSTEMD_JOB: "skipped",
 }
 
-#: (what the jobs did, whether `gate` is green)
-VERDICTS = [
-    (_needs("code", {}), True),
-    (_needs("docs", DOCS), True),
+#: (the scope, what the jobs did, whether the last job is green), for the
+#: last job of each of the two files.
+CASES: list[tuple[str | None, dict[str, str], bool]] = [
+    ("code", {}, True),
+    ("docs", DOCS, True),
     # One red shard makes the matrix job a failure.
-    (_needs("code", {"tests": "failure"}), False),
-    (_needs("code", {"playpen": "cancelled"}), False),
-    (_needs("code", {"rust": "failure"}), False),
-    (_needs("code", {COVERAGE_JOB: "failure"}), False),
-    (_needs("code", {"proc": "failure"}), False),
-    (_needs("code", {SYSTEMD_JOB: "failure"}), False),
-    (_needs("code", {SYSTEMD_JOB: "cancelled"}), False),
-    (_needs("code", {"lint": "failure"}), False),
-    (_needs("docs", DOCS | {"lint": "failure"}), False),
+    ("code", {"tests": "failure"}, False),
+    ("code", {"playpen": "cancelled"}, False),
+    ("code", {"rust": "failure"}, False),
+    ("code", {COVERAGE_JOB: "failure"}, False),
+    ("code", {"proc": "failure"}, False),
+    ("code", {SYSTEMD_JOB: "failure"}, False),
+    ("code", {SYSTEMD_JOB: "cancelled"}, False),
+    ("code", {"lint": "failure"}, False),
+    ("docs", DOCS | {"lint": "failure"}, False),
     # A suite that did not run on a code PR is red, not skipped.
-    (_needs("code", {"tests": "skipped"}), False),
-    (_needs("code", {"lint": "skipped"}), False),
+    ("code", {"tests": "skipped"}, False),
+    ("code", {"lint": "skipped"}, False),
     # The Rust checks run on every code PR. The job skips its own steps when
     # the PR touches nothing under rust/, and is a success.
-    (_needs("code", {"rust": "skipped"}), False),
+    ("code", {"rust": "skipped"}, False),
     # The coverage job does the same. A run of it that did not end is red too.
-    (_needs("code", {COVERAGE_JOB: "skipped"}), False),
-    (_needs("code", {COVERAGE_JOB: "cancelled"}), False),
+    ("code", {COVERAGE_JOB: "skipped"}, False),
+    ("code", {COVERAGE_JOB: "cancelled"}, False),
     # The process suite is in no shard. A code PR on which it did not run
     # is red.
-    (_needs("code", {"proc": "skipped"}), False),
+    ("code", {"proc": "skipped"}, False),
     # The judge of the Rust programs runs on every code PR too.
-    (_needs("code", {PROC_RUST_JOB: "failure"}), False),
-    (_needs("code", {PROC_RUST_JOB: "cancelled"}), False),
-    (_needs("code", {PROC_RUST_JOB: "skipped"}), False),
+    ("code", {PROC_RUST_JOB: "failure"}, False),
+    ("code", {PROC_RUST_JOB: "cancelled"}, False),
+    ("code", {PROC_RUST_JOB: "skipped"}, False),
     # The two old suites of integration/ are in no shard either.
-    (_needs("code", {SUITES_JOB: "failure"}), False),
-    (_needs("code", {SUITES_JOB: "skipped"}), False),
+    ("code", {SUITES_JOB: "failure"}, False),
+    ("code", {SUITES_JOB: "skipped"}, False),
     # The systemd proof runs on every code PR, as the Rust checks do. The
     # job skips its own step when the PR touches no file of the proof.
-    (_needs("code", {SYSTEMD_JOB: "skipped"}), False),
+    ("code", {SYSTEMD_JOB: "skipped"}, False),
+    # The job of the archives has no rule of its own. With its steps
+    # skipped it is a success, in each scope.
+    ("code", {ARTIFACTS_JOB: "failure"}, False),
+    ("code", {ARTIFACTS_JOB: "skipped"}, False),
+    ("docs", DOCS | {ARTIFACTS_JOB: "success"}, True),
+    ("docs", DOCS | {ARTIFACTS_JOB: "skipped"}, False),
     # A job that ran on a docs PR is not what the scope asks for.
-    (_needs("docs", DOCS | {"rust": "success"}), False),
-    (_needs("docs", DOCS | {COVERAGE_JOB: "success"}), False),
-    (_needs("docs", DOCS | {"proc": "success"}), False),
-    (_needs("docs", DOCS | {PROC_RUST_JOB: "success"}), False),
-    (_needs("docs", DOCS | {SUITES_JOB: "success"}), False),
-    (_needs("docs", DOCS | {SYSTEMD_JOB: "success"}), False),
+    ("docs", DOCS | {"rust": "success"}, False),
+    ("docs", DOCS | {COVERAGE_JOB: "success"}, False),
+    ("docs", DOCS | {"proc": "success"}, False),
+    ("docs", DOCS | {PROC_RUST_JOB: "success"}, False),
+    ("docs", DOCS | {SUITES_JOB: "success"}, False),
+    ("docs", DOCS | {SYSTEMD_JOB: "success"}, False),
     # No scope: the scope job failed and everything behind it was skipped.
-    (_needs(None, DOCS | {"scope": "failure"}), False),
+    (None, DOCS | {"scope": "failure"}, False),
+]
+
+#: The cases of the `sign` job, which only the release has. A failed
+#: signature holds back each tag of the run.
+SIGN_CASES: list[tuple[str | None, dict[str, str], bool]] = [
+    ("code", {SIGN_JOB: "failure"}, False),
+    ("code", {SIGN_JOB: "skipped"}, False),
+    ("docs", DOCS | {SIGN_JOB: "cancelled"}, False),
+    ("docs", DOCS | {SIGN_JOB: "success"}, True),
+]
+
+#: (what the jobs did, whether the last job is green)
+VERDICTS = [
+    *[
+        (_needs(jobs, last, scope, results), green)
+        for jobs, last in WORKFLOW_JOBS
+        for scope, results, green in CASES
+    ],
+    *[
+        (_needs(RELEASE_JOBS, RELEASE_NAME, scope, results), green)
+        for scope, results, green in SIGN_CASES
+    ],
 ]
 
 
@@ -1797,47 +2510,76 @@ def test_the_verdict_is_green_only_when_every_job_its_scope_asks_for_passed(
 
 
 #: What the scope action answers for a change, as (docs or code, rust,
-#: systemd).
+#: systemd, artifacts).
 SCOPES = [
-    (["chaperone/src/chaperone/app.py"], ("code", "false", "false")),
-    (["rust/crates/one/src/lib.rs"], ("code", "true", "false")),
-    (["chaperone/src/chaperone/app.py", "rust/Cargo.lock"], ("code", "true", "false")),
-    (["docs/later.md"], ("docs", "false", "false")),
-    # The `rust` job is left out of a docs PR, whatever this answer is.
-    (["rust/AGENTS.md"], ("docs", "true", "false")),
+    (["chaperone/src/chaperone/app.py"], ("code", "false", "false", "false")),
+    (["rust/crates/one/src/lib.rs"], ("code", "true", "false", "true")),
+    (["chaperone/src/chaperone/app.py", "rust/Cargo.lock"], ("code", "true", "false", "true")),
+    (["docs/later.md"], ("docs", "false", "false", "false")),
+    # The `rust` job is left out of a docs PR, whatever this answer is. The
+    # steps of the `artifacts` job ask for the code scope too.
+    (["rust/AGENTS.md"], ("docs", "true", "false", "true")),
     # A file of the Rust checks themselves. The tests of the gate use a fake
     # cargo, so only this run proves the change with the real one.
-    (["bin/rust-gate.sh"], ("code", "true", "false")),
-    (["bin/rust-coverage.sh"], ("code", "true", "false")),
-    (["bin/lib/rustrule.sh"], ("code", "true", "false")),
+    (["bin/rust-gate.sh"], ("code", "true", "false", "true")),
+    (["bin/rust-coverage.sh"], ("code", "true", "false", "true")),
+    (["bin/lib/rustrule.sh"], ("code", "true", "false", "true")),
     # The four CI files are files of the Rust checks. They are no files of
     # the systemd proof: the tests of this file hold the `systemd-proof` job.
-    ([".github/workflows/gate.yml"], ("code", "true", "false")),
-    ([".github/workflows/release.yml"], ("code", "true", "false")),
-    ([".github/actions/scope/action.yml"], ("code", "true", "false")),
-    ([".github/actions/cargo-llvm-cov/action.yml"], ("code", "true", "false")),
+    ([".github/workflows/gate.yml"], ("code", "true", "false", "true")),
+    ([".github/workflows/release.yml"], ("code", "true", "false", "true")),
+    ([".github/actions/scope/action.yml"], ("code", "true", "false", "true")),
+    ([".github/actions/cargo-llvm-cov/action.yml"], ("code", "true", "false", "true")),
     # The Rust tests read vectors/data, so a vector that moves runs them.
-    (["vectors/data/index.json"], ("code", "true", "false")),
-    (["vectors/generate.py"], ("code", "true", "false")),
-    (["chaperone/src/chaperone/app.py", "vectors/data/ids/family.json"], ("code", "true", "false")),
-    (["vectors/README.md"], ("docs", "true", "false")),
+    (["vectors/data/index.json"], ("code", "true", "false", "true")),
+    (["vectors/generate.py"], ("code", "true", "false", "true")),
+    (
+        ["chaperone/src/chaperone/app.py", "vectors/data/ids/family.json"],
+        ("code", "true", "false", "true"),
+    ),
+    (["vectors/README.md"], ("docs", "true", "false", "true")),
     # The Python half of the gate starts no cargo step of its own in CI.
-    (["bin/quality-gate.sh"], ("code", "false", "false")),
-    ([".github/actions/verdict/action.yml"], ("code", "false", "false")),
+    (["bin/quality-gate.sh"], ("code", "false", "false", "false")),
+    ([".github/actions/verdict/action.yml"], ("code", "false", "false", "false")),
     # A unit file, and the proof script itself. The tests of the script use
     # a fake systemd, so only this run proves the change with the real one.
-    (["systemd/creche-attendance.service"], ("code", "false", "true")),
-    (["chaperone/src/chaperone/app.py", "systemd/creche-follow.timer"], ("code", "false", "true")),
-    (["bin/systemd-proof.sh"], ("code", "false", "true")),
-    (["systemd/creche-new@.timer"], ("code", "false", "true")),
+    (["systemd/creche-attendance.service"], ("code", "false", "true", "false")),
+    (
+        ["chaperone/src/chaperone/app.py", "systemd/creche-follow.timer"],
+        ("code", "false", "true", "false"),
+    ),
+    (["bin/systemd-proof.sh"], ("code", "false", "true", "false")),
+    (["systemd/creche-new@.timer"], ("code", "false", "true", "false")),
     # git writes this path inside double quotes.
-    (['systemd/creche-"one".service'], ("code", "false", "true")),
+    (['systemd/creche-"one".service'], ("code", "false", "true", "false")),
     # Every path under systemd/ counts, a Markdown file too. The
     # `systemd-proof` job is left out of a docs PR, whatever this answer is.
-    (["systemd/AGENTS.md"], ("docs", "false", "true")),
+    (["systemd/AGENTS.md"], ("docs", "false", "true", "false")),
     # Only the directory at the root holds the unit files.
-    (["docs/systemd/notes.md"], ("docs", "false", "false")),
-    (["systemd-notes.txt"], ("code", "false", "false")),
+    (["docs/systemd/notes.md"], ("docs", "false", "false", "false")),
+    (["systemd-notes.txt"], ("code", "false", "false", "false")),
+    # The manifest of a component holds the build commands of a binary
+    # component: at the root, and one directory deep, in each of the two
+    # forms. A file of that name two directories deep is no manifest.
+    (["attendance/component.yaml"], ("code", "false", "false", "true")),
+    (["attendance/component.toml"], ("code", "false", "false", "true")),
+    (["component.yaml"], ("code", "false", "false", "true")),
+    (["docs/rework/component.yaml"], ("code", "false", "false", "false")),
+    (["attendance/component.yml"], ("code", "false", "false", "false")),
+    # The release tool gives the rows, the limits and the walk. Its own
+    # manifest is a file of the Rust checks too.
+    (["handover/src/handover/catalog.py"], ("code", "false", "false", "true")),
+    (["handover/component.yaml"], ("code", "true", "false", "true")),
+    (["handover/AGENTS.md"], ("docs", "false", "false", "true")),
+    (['handover/src/handover/one "x".py'], ("code", "false", "false", "true")),
+    (["handover-notes.txt"], ("code", "false", "false", "false")),
+    # The script that builds, the reader of its rows, and the rule itself.
+    (["bin/build-artifacts.sh"], ("code", "false", "false", "true")),
+    (["bin/lib/artifactrows.sh"], ("code", "false", "false", "true")),
+    (["bin/lib/artifactrule.sh"], ("code", "false", "false", "true")),
+    # The probe uses the build script, and no archive of a release holds a
+    # file of the probe.
+    (["bin/artifact-probe.sh"], ("code", "false", "false", "false")),
 ]
 
 
@@ -1862,9 +2604,9 @@ def _git(repo: Path, *args: str) -> str:
     return done.stdout.strip()
 
 
-def _scope_of(repo: Path, base: str) -> tuple[str, str, str]:
+def _scope_of(repo: Path, base: str) -> tuple[str, str, str, str]:
     """Runs the scope action's own script in `repo`, as a merge group on
-    `base` would. Returns its three outputs."""
+    `base` would. Returns its four outputs."""
     (step,) = SCOPE_ACTION["runs"]["steps"]
     output = repo.parent / "output"
     output.write_text("", encoding="utf-8")
@@ -1886,16 +2628,16 @@ def _scope_of(repo: Path, base: str) -> tuple[str, str, str]:
     assert done.returncode == 0, done.stdout + done.stderr
     outputs = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines())
 
-    return outputs["scope"], outputs["rust"], outputs["systemd"]
+    return outputs["scope"], outputs["rust"], outputs["systemd"], outputs["artifacts"]
 
 
 @pytest.fixture
 def checkout(tmp_path: Path) -> Path:
-    """A repository with one commit, the two rules the scope action sources
-    and the script that it asks."""
+    """A repository with one commit, the three rules the scope action
+    sources and the script that it asks."""
     repo = tmp_path / "repo"
     (repo / "bin" / "lib").mkdir(parents=True)
-    for name in ("lib/docsrule.sh", "lib/rustrule.sh", "systemd-proof.sh"):
+    for name in ("lib/docsrule.sh", "lib/rustrule.sh", "lib/artifactrule.sh", "systemd-proof.sh"):
         shutil.copy2(REPO / "bin" / name, repo / "bin" / name)
 
     _git(repo, "init", "-q", "-b", "main")
@@ -1907,7 +2649,7 @@ def checkout(tmp_path: Path) -> Path:
 
 @pytest.mark.parametrize(("paths", "scope"), SCOPES, ids=lambda one: " ".join(one))
 def test_the_scope_says_whether_a_change_touches_rust(
-    checkout: Path, paths: list[str], scope: tuple[str, str, str]
+    checkout: Path, paths: list[str], scope: tuple[str, str, str, str]
 ) -> None:
     base = _git(checkout, "rev-parse", "HEAD")
     for name in paths:
@@ -1936,19 +2678,20 @@ def test_a_unit_file_that_moves_out_of_systemd_runs_the_proof(checkout: Path) ->
     _git(checkout, "mv", "systemd/creche-one.service", "units/creche-one.service")
     _git(checkout, "commit", "-q", "-m", "the move")
 
-    assert _scope_of(checkout, base) == ("code", "false", "true")
+    assert _scope_of(checkout, base) == ("code", "false", "true", "false")
 
 
 def test_a_change_the_scope_cannot_read_is_code_and_rust(checkout: Path) -> None:
     """No merge group, and no `origin/main` to take a merge-base with: the
-    full suite, the cargo checks and the systemd proof are the safe answer."""
-    assert _scope_of(checkout, "") == ("code", "true", "true")
+    full suite, the cargo checks, the systemd proof and the build of the
+    archives are the safe answer."""
+    assert _scope_of(checkout, "") == ("code", "true", "true", "true")
 
 
 def test_a_base_that_the_clone_lacks_is_code_rust_and_systemd(checkout: Path) -> None:
     """A merge group names its base. A clone that lacks that commit reads no
     change, and each check is then the safe answer."""
-    assert _scope_of(checkout, "0" * 40) == ("code", "true", "true")
+    assert _scope_of(checkout, "0" * 40) == ("code", "true", "true", "true")
 
 
 @pytest.mark.parametrize("fault", ["absent", "not executable", "fails"])
@@ -1963,7 +2706,7 @@ def test_a_scope_that_gets_no_answer_from_the_script_runs_the_proof(
     _git(checkout, "add", "-A")
     _git(checkout, "commit", "-q", "-m", "the change")
 
-    assert _scope_of(checkout, base) == ("code", "false", "false")
+    assert _scope_of(checkout, base) == ("code", "false", "false", "false")
 
     script = checkout / SYSTEMD_RUN
     if fault == "absent":
@@ -1973,7 +2716,7 @@ def test_a_scope_that_gets_no_answer_from_the_script_runs_the_proof(
     else:
         script.write_text("#!/usr/bin/env bash\nexit 3\n", encoding="utf-8")
 
-    assert _scope_of(checkout, base) == ("code", "false", "true")
+    assert _scope_of(checkout, base) == ("code", "false", "true", "false")
 
 
 def test_every_checkout_takes_full_history() -> None:

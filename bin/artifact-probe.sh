@@ -7,12 +7,24 @@
 # hook and no unit runs it. A person or an agent starts that workflow by
 # hand, on `main` only.
 #
-# `build` needs rustup, cargo, GNU tar, gzip, sha256sum and `file`. It reads
-# PROBE_TARGET, and the variables that a runner sets.
-# `verify` needs sudo, systemd-run and jq. It reads PROBE_TARGET, COSIGN (the
-# cosign program, after the workflow compared its SHA-256), PROBE_SIGNED (the
-# directory with the archive and its bundle), PROBE_TOOLCHAIN and
-# PROBE_REMAP_NEEDED (two results of `build`, for the report).
+# The probe uses the real parts. `handover artifacts --crate-row` gives the
+# row of the crate: the target, the names of the two assets, the install
+# variable and the build words. bin/lib/artifactrows.sh reads the row, the
+# one reader of that line form. bin/build-artifacts.sh builds, walks and
+# packs with that row, as the job `artifacts` of release.yml does for a
+# binary component. `handover artifacts --verify-words` gives the words of
+# each check, as the tag script and root use them. So the probe holds no copy
+# of the target, of a limit or of the words of a check.
+#
+# `build` needs rustup, cargo, GNU tar, gzip, sha256sum, `file` and the
+# `handover` command. It reads the variables that a runner sets.
+# `verify` needs sudo, systemd-run, jq and the `handover` command. It reads
+# COSIGN (the cosign program, after the workflow compared its SHA-256),
+# PROBE_SIGNED (the directory with the archive and its bundle),
+# PROBE_TOOLCHAIN and PROBE_REMAP_NEEDED (two results of `build`, for the
+# report).
+# RELEASE_CLI is the `handover` command. Default: `uv run` against the
+# `handover` project beside this script.
 #
 # It attaches nothing to a Release, makes no tag and changes no file of the
 # repository. `verify` writes below /usr/local/bin and /var/lib of the
@@ -27,35 +39,35 @@
 set -uo pipefail
 export LC_ALL=C
 
-#: The crate that the probe builds. It is also the name of the tree inside
-#: the archive, and the name of the one program of that tree.
+#: The crate that the probe builds. It is also the name of the row, the name
+#: of the tree inside the archive, and the name of the one program of that
+#: tree.
 COMPONENT="agent-family"
 CRATE_DIR="rust/crates/agent-family"
+
+#: The catalog's name for this repository. The words of a check name the
+#: release workflow of that repository.
+CATALOG_REPO="agent-control"
 
 #: The one directory from which rustup reads the toolchain file.
 RUST_DIR="rust"
 
-#: The two forms of the build. The first one remaps each path of the runner.
-WITH_REMAP="remap"
+#: The name of the build with no remap flag.
 NO_REMAP="plain"
 
-#: What the remap flags put in the place of the three paths.
-REMAP_WORKSPACE="/probe/workspace"
-REMAP_CARGO_HOME="/probe/cargo-home"
-REMAP_TEMP="/probe/temp"
-
-#: What the certificate of a signature must name. The workflow file is the
-#: file that starts this script, and the ref is the one ref that the workflow
-#: measures on.
+#: The workflow file that the words of `handover artifacts --verify-words`
+#: name, and the file that starts this script. The certificate of the
+#: signature of a probe run names the second one. The probe replaces the
+#: first name with the second one in one word.
+RELEASE_FILE="release.yml"
 WORKFLOW_FILE="artifact-probe.yml"
-MAIN_REF="refs/heads/main"
-CODE_HOST="https://github.com"
-TOKEN_ISSUER="https://token.actions.githubusercontent.com"
 
-#: Three values that no certificate of this run names.
+#: The flag before the ref claim of a check.
+REF_FLAG="--certificate-github-workflow-ref"
+
+#: Two values that no certificate of this run names.
 ZERO_SHA="0000000000000000000000000000000000000000"
 OTHER_REF="refs/heads/other"
-OTHER_WORKFLOW="release.yml"
 
 #: Where root puts the verifier and its copy of the two files. A dynamic
 #: user cannot read below /home, so neither is in the directory of the job.
@@ -118,6 +130,19 @@ YES="yes"
 NO="no"
 UNKNOWN="unknown"
 
+#: The `handover` command, as bin/build-artifacts.sh starts it.
+SELF_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+if [[ -n "${RELEASE_CLI:-}" ]]; then
+  # shellcheck disable=SC2206
+  CLI=(${RELEASE_CLI})
+else
+  CLI=(uv run --project "$SELF_ROOT/handover" handover)
+fi
+
+#: The one reader of the line form of `handover artifacts`.
+# shellcheck source=lib/artifactrows.sh
+. "$SELF_ROOT/bin/lib/artifactrows.sh"
+
 FAILS=0
 say() { printf 'artifact-probe: %s\n' "$*"; }
 pass() { say "PASS: $*"; }
@@ -166,12 +191,33 @@ value() {
   note "$1: $2"
 }
 
-# archive_name: the name of the archive for the target. It stops the run
-# for a target that is not one plain word: the name goes into a path and
-# into a command line.
-archive_name() {
-  [[ "$PROBE_TARGET" =~ ^[A-Za-z0-9_-]+$ ]] || die "PROBE_TARGET is not the name of a target"
-  printf '%s-%s.tar.gz\n' "$COMPONENT" "$PROBE_TARGET"
+# read_row FILE: asks `handover artifacts --crate-row` for the row of the
+# crate and writes it to FILE. bin/lib/artifactrows.sh reads the file into
+# its arrays. The file holds exactly one row: the row of the crate, with one
+# command. Status 1, with the reason in ROWS_FAULT, for a command that fails
+# and for each other text.
+read_row() {
+  local file="$1"
+
+  if ! "${CLI[@]}" artifacts --crate-row "$COMPONENT" --crate-dir "$CRATE_DIR" \
+    < /dev/null > "$file"; then
+    ROWS_FAULT="the command failed"
+    return 1
+  fi
+
+  read_rows "$file" || return 1
+  if [[ "${#ROW_COMPONENT[@]}" -ne 1 ]]; then
+    ROWS_FAULT="the text holds ${#ROW_COMPONENT[@]} rows, not 1"
+    return 1
+  fi
+  if [[ "${ROW_COMPONENT[0]}" != "$COMPONENT" ]]; then
+    ROWS_FAULT="the row names another component"
+    return 1
+  fi
+  if [[ "${ROW_COMMANDS[0]}" -ne 1 ]]; then
+    ROWS_FAULT="the row holds ${ROW_COMMANDS[0]} commands, not 1"
+    return 1
+  fi
 }
 
 # bytes_of FILE: the size of FILE.
@@ -182,42 +228,45 @@ bytes_of() {
 # ---------------------------------------------------------------- build ----
 
 #: The four paths of the runner that no file of a tree can hold, and the name
-#: of each one. `build` fills the two lists.
+#: of each one. `build` fills the two lists. The build with no remap flag
+#: reads them. bin/build-artifacts.sh holds the same four needles for its
+#: walk.
 NEEDLES=()
 NEEDLE_NAMES=()
 
-#: The name of the toolchain that rust/rust-toolchain.toml gives, and the
-#: remap flags of the first build.
+#: The name of the toolchain that rust/rust-toolchain.toml gives.
 TOOLCHAIN=""
-REMAP_FLAGS=""
 
-# install_tree ROOT FORM: builds the crate into ROOT, from the repository
-# root. cargo reads the target from CARGO_BUILD_TARGET, and the toolchain
-# from RUSTUP_TOOLCHAIN: a rustup proxy does not read the toolchain file of
-# rust/ from the repository root.
-install_tree() {
-  local root="$1" form="$2"
+# run_build ROWS OUT STEP_OUTPUT: one run of bin/build-artifacts.sh with the
+# row of ROWS, into the empty directory OUT. The script writes its step
+# output to STEP_OUTPUT, so the outputs of this step stay the four of the
+# probe.
+run_build() {
+  env -u ARTIFACT_REPO \
+    ARTIFACT_ROWS_FILE="$1" \
+    ARTIFACT_OUT="$2" \
+    GITHUB_OUTPUT="$3" \
+    "$SELF_ROOT/bin/build-artifacts.sh"
+}
+
+# install_plain ROOT: builds the crate into ROOT with no remap flag, from the
+# repository root. The words, the target and the install variable come from
+# the row. The row has one command, so COMMAND_WORD holds its words. cargo
+# reads the toolchain from RUSTUP_TOOLCHAIN: a rustup proxy does not read
+# the toolchain file of rust/ from the repository root. No shell reads a
+# word: the words go to `exec` as a list.
+install_plain() {
+  local root="$1"
 
   mkdir -p "$root" || return 1
-
-  if [[ "$form" == "$WITH_REMAP" ]]; then
-    env -u CARGO_ENCODED_RUSTFLAGS \
-      CARGO_INSTALL_ROOT="$root" \
-      CARGO_BUILD_TARGET="$PROBE_TARGET" \
-      RUSTUP_TOOLCHAIN="$TOOLCHAIN" \
-      CARGO_INCREMENTAL=0 \
-      RUSTFLAGS="$REMAP_FLAGS" \
-      cargo install --locked --no-track --path "$CRATE_DIR"
-
-    return
-  fi
-
-  env -u CARGO_ENCODED_RUSTFLAGS -u RUSTFLAGS \
-    CARGO_INSTALL_ROOT="$root" \
-    CARGO_BUILD_TARGET="$PROBE_TARGET" \
-    RUSTUP_TOOLCHAIN="$TOOLCHAIN" \
-    CARGO_INCREMENTAL=0 \
-    cargo install --locked --no-track --path "$CRATE_DIR"
+  (
+    unset CARGO_ENCODED_RUSTFLAGS RUSTFLAGS
+    export "${ROW_ENV[0]}=$root"
+    export CARGO_BUILD_TARGET="${ROW_TARGET[0]}"
+    export RUSTUP_TOOLCHAIN="$TOOLCHAIN"
+    export CARGO_INCREMENTAL=0
+    exec -- "${COMMAND_WORD[@]}"
+  ) < /dev/null
 }
 
 # path_hits TREE: prints one line for each file of TREE that holds a path of
@@ -253,108 +302,73 @@ show_paths() {
   done | sort -u | head -n 20
 }
 
-#: The members of the archive, sorted: `<component>/bin/<program>`.
-MEMBERS=()
-
-# read_members ROOT: fills MEMBERS from the tree at ROOT. Status 1 when the
-# tree holds a thing that is no regular file directly in bin/.
-read_members() {
-  local root="$1" path name
-
-  MEMBERS=()
-  while IFS= read -r path; do
-    name="${path#"$root"/}"
-    case "$name" in
-      bin)
-        [[ -d "$path" && ! -L "$path" ]] || return 1
-        ;;
-      bin/*/*)
-        return 1
-        ;;
-      bin/*)
-        [[ -f "$path" && ! -L "$path" ]] || return 1
-        [[ "${name#bin/}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || return 1
-        MEMBERS+=("$COMPONENT/$name")
-        ;;
-      *)
-        return 1
-        ;;
-    esac
-  done < <(find "$root" -mindepth 1 | sort)
-
-  [[ "${#MEMBERS[@]}" -gt 0 ]]
-}
-
-# pack PARENT OUT: writes the archive of the tree PARENT/<component> to OUT.
-# Each input that can differ between two runs has a fixed value: the order,
-# the owner, the group, the time and the mode of a member, and the name and
-# the time that gzip can keep.
-pack() {
-  local parent="$1" out="$2"
-
-  tar --create --file - --directory "$parent" \
-    --sort=name --owner=0 --group=0 --numeric-owner --mtime=@0 --mode=0755 \
-    -- "${MEMBERS[@]}" | gzip --no-name > "$out"
-}
-
-# members_hold ARCHIVE: whether ARCHIVE holds each name of MEMBERS and no
-# other, each one as a regular file with the mode 0755 and the owner 0.
+# members_hold ARCHIVE: whether ARCHIVE holds `<component>/bin/<component>`
+# and no other member, as a regular file with the mode 0755 and the owner 0.
+# The probe reads the archive that the build script packed. It does not
+# trust the words that the script gave to tar.
 members_hold() {
-  local archive="$1" names wanted
+  local archive="$1" names
 
-  wanted="$(printf '%s\n' "${MEMBERS[@]}")"
   names="$(tar --list --gzip --file "$archive")" || return 1
-  [[ "$names" == "$wanted" ]] || return 1
+  [[ "$names" == "$COMPONENT/bin/$COMPONENT" ]] || return 1
 
   tar --list --verbose --numeric-owner --gzip --file "$archive" |
     awk '$1 != "-rwxr-xr-x" || $2 != "0/0" { bad = 1 } END { exit bad }'
 }
 
 build() {
-  need GITHUB_WORKSPACE RUNNER_TEMP GITHUB_OUTPUT GITHUB_STEP_SUMMARY HOME PROBE_TARGET
+  need GITHUB_WORKSPACE RUNNER_TEMP GITHUB_OUTPUT GITHUB_STEP_SUMMARY HOME
 
   local workspace="$GITHUB_WORKSPACE" work="$RUNNER_TEMP/artifact-probe"
   local cargo_home="${CARGO_HOME:-$HOME/.cargo}"
-  local remapped="$work/$WITH_REMAP" plain="$work/$NO_REMAP"
+  local row="$work/row" plain="$work/$NO_REMAP" unpacked="$work/unpacked"
   local pack_one="$work/pack-1" pack_two="$work/pack-2"
-  local name active program kind hits remap_needed line
+  local active name program kind hits remap_needed line
 
-  name="$(archive_name)" || exit 1
   NEEDLES=("$workspace" "$HOME" "$RUNNER_TEMP" "$cargo_home")
   NEEDLE_NAMES=(GITHUB_WORKSPACE HOME RUNNER_TEMP "the cargo home")
 
-  # RUSTFLAGS is one text that cargo splits at each space.
-  case "$workspace$cargo_home$RUNNER_TEMP" in
-    *[[:space:]]*) die "a path of the runner holds a space, and RUSTFLAGS cannot carry it" ;;
-  esac
-  REMAP_FLAGS="--remap-path-prefix=$workspace=$REMAP_WORKSPACE"
-  REMAP_FLAGS="$REMAP_FLAGS --remap-path-prefix=$cargo_home=$REMAP_CARGO_HOME"
-  REMAP_FLAGS="$REMAP_FLAGS --remap-path-prefix=$RUNNER_TEMP=$REMAP_TEMP"
-
   [[ ! -e "$work" ]] || die "$work exists: each install root must start empty"
-  mkdir -p "$pack_one" "$pack_two" || die "cannot make $work"
+  mkdir -p "$unpacked" || die "cannot make $work"
+  cd "$workspace" || die "cannot enter the checkout"
 
-  # 1. The toolchain of rust/rust-toolchain.toml, and the target for it.
-  cd "$workspace/$RUST_DIR" || die "the checkout has no $RUST_DIR directory"
-  rustup toolchain install --no-self-update || die "rustup did not install the toolchain"
-  active="$(rustup show active-toolchain)" || die "rustup named no active toolchain"
+  # 1. The row of the crate.
+  read_row "$row" || die "handover gave no row of $COMPONENT in the line form: $ROWS_FAULT"
+  name="${ROW_ARCHIVE[0]}"
+  note "target: ${ROW_TARGET[0]}"
+
+  # 2. The real build: bin/build-artifacts.sh with the row. It installs the
+  # toolchain of rust/rust-toolchain.toml and the target. It builds from the
+  # repository root with each path of the runner remapped. `handover
+  # check-tree` walks the tree, and one file that holds a path of the runner
+  # stops the run: the archive of such a tree gets no signature. A toolchain
+  # with the component `rust-src` puts its own directory, below HOME, into a
+  # program, and no remap flag remaps it. The toolchain file of rust/ names
+  # no such component.
+  run_build "$row" "$pack_one" "$work/output-1" || die "the build failed"
+  active="$(cd "$RUST_DIR" && rustup show active-toolchain)" || die "rustup named no active toolchain"
   TOOLCHAIN="${active%%[[:space:]]*}"
   [[ -n "$TOOLCHAIN" ]] || die "rustup named no active toolchain"
-  rustup target add --toolchain "$TOOLCHAIN" "$PROBE_TARGET" ||
-    die "rustup did not add the target $PROBE_TARGET"
   note "toolchain: $TOOLCHAIN"
-  note "target: $PROBE_TARGET"
+  note "tree: no file holds a path of the runner"
 
-  # 2. The build, from the repository root, with each path remapped.
-  cd "$workspace" || die "cannot enter the checkout"
-  install_tree "$remapped/$COMPONENT" "$WITH_REMAP" || die "the build failed"
+  # 3. A second run of the build script gives the same bytes. cargo takes the
+  # build of the first run, so the two archives pack one program. The archive
+  # holds the one program as a regular file with mode 0755.
+  run_build "$row" "$pack_two" "$work/output-2" || die "the second build failed"
+  cmp -s "$pack_one/$name" "$pack_two/$name" || die "two runs of the build script gave two archives"
+  members_hold "$pack_one/$name" ||
+    die "a member of the archive is not a regular file $COMPONENT/bin/$COMPONENT with mode 0755"
+  note "archive: $name, $(bytes_of "$pack_one/$name") bytes, and two runs give equal archives"
 
-  # 3. cargo read the two variables. The program is in bin/ of the install
-  # root. It has a static link: a build for the runner itself makes a
-  # program that needs the C library of the runner. And the program runs.
-  program="$remapped/$COMPONENT/bin/$COMPONENT"
+  # 4. The program of the archive has a static link: a build for the runner
+  # itself makes a program that needs the C library of the runner. And the
+  # program runs.
+  tar --extract --gzip --file "$pack_one/$name" --directory "$unpacked" ||
+    die "cannot unpack the archive"
+  program="$unpacked/$COMPONENT/bin/$COMPONENT"
   [[ -f "$program" && ! -L "$program" && -x "$program" ]] ||
-    die "the build made no program at bin/$COMPONENT of its tree"
+    die "the archive holds no program at $COMPONENT/bin/$COMPONENT"
   kind="$(file --brief -- "$program")" || die "file did not read the program"
   say "file: $kind"
   [[ "$kind" == *x86-64* ]] || die "the program is not an x86-64 program"
@@ -363,23 +377,10 @@ build() {
   "$program" --help > /dev/null || die "the program did not run: --help failed"
   note "program: a static x86-64 program, and --help ended with status 0"
 
-  # 4. No file of the tree holds a path of the runner. One hit stops the
-  # run: the archive of such a tree gets no signature. A toolchain with the
-  # component `rust-src` puts its own directory, below HOME, into a program,
-  # and no flag above remaps it. The toolchain file of rust/ names no such
-  # component.
-  hits="$(path_hits "$remapped/$COMPONENT")" || die "grep did not read the tree"
-  if [[ -n "$hits" ]]; then
-    printf '%s\n' "$hits"
-    show_paths "$remapped/$COMPONENT"
-    die "a file of the tree holds a path of the runner"
-  fi
-  note "tree: no file holds a path of the runner"
-
   # 5. The same build with no remap flag. This step stops nothing: it says
   # whether the flags are necessary.
   remap_needed="$UNKNOWN"
-  if install_tree "$plain/$COMPONENT" "$NO_REMAP"; then
+  if install_plain "$plain/$COMPONENT"; then
     if hits="$(path_hits "$plain/$COMPONENT")"; then
       remap_needed="$NO"
       if [[ -n "$hits" ]]; then
@@ -393,17 +394,11 @@ build() {
   fi
   note "remap_needed: $remap_needed"
 
-  # 6. Two packs of the first tree are equal, byte for byte.
-  read_members "$remapped/$COMPONENT" ||
-    die "the tree holds a thing that is no regular file directly in bin/"
-  pack "$remapped" "$pack_one/$name" || die "the first pack failed"
-  pack "$remapped" "$pack_two/$name" || die "the second pack failed"
-  cmp -s "$pack_one/$name" "$pack_two/$name" || die "two packs of one tree differ"
-  members_hold "$pack_one/$name" ||
-    die "a member of the archive is not a regular file $COMPONENT/bin/<program> with mode 0755"
-  note "archive: $name, $(bytes_of "$pack_one/$name") bytes, and two packs are equal"
-
-  line="$(cd "$pack_one" && sha256sum -- "$name")" || die "sha256sum did not read the archive"
+  # 6. The digest of the build script: one line of `sha256sum`, for the job
+  # `sign`.
+  line="$(cat -- "$pack_one/SHA256SUMS")" || die "the build gave no SHA256SUMS"
+  [[ "$line" == *"  $name" && "$line" != *$'\n'* ]] ||
+    die "SHA256SUMS of the build does not name the one archive $name"
   {
     printf 'digest=%s\n' "$line"
     printf 'archive=%s\n' "$pack_one/$name"
@@ -476,36 +471,82 @@ journal() {
     --identifier systemd --identifier cosign --identifier systemd-run || true
 }
 
-# verify_words BUNDLE ROOT WORKFLOW REF SHA BLOB: sets WORDS to the program
-# words of one check. ROOT is a trusted root file, or empty: cosign then
-# reads the trust root itself. REF is the ref of the workflow claim. The
-# identity always names MAIN_REF, so the case with another ref measures that
-# one claim.
-verify_words() {
-  local bundle="$1" root="$2" workflow="$3" ref="$4" sha="$5" blob="$6"
+#: The file that takes the words of `handover artifacts --verify-words`.
+WORDS_FILE=""
 
-  WORDS=("$VERIFIER" verify-blob --bundle "$bundle")
+# release_words ROOT SHA BLOB BUNDLE: sets WORDS to the program words of one
+# check, as `handover artifacts --verify-words` gives them after the program
+# name. They name the release workflow of the repository. ROOT is a trusted
+# root file, or empty: cosign then reads the trust root itself. Status 1 when
+# the command gives no word.
+release_words() {
+  local root="$1" sha="$2" blob="$3" bundle="$4" word
+  local args=(
+    artifacts --verify-words --repo "$CATALOG_REPO"
+    --github-repository "$GITHUB_REPOSITORY" --sha "$sha"
+    --archive "$blob" --bundle "$bundle"
+  )
+
   if [[ -n "$root" ]]; then
-    WORDS+=(--trusted-root "$root")
+    args+=(--trusted-root "$root")
   fi
 
-  WORDS+=(
-    --certificate-oidc-issuer "$TOKEN_ISSUER"
-    --certificate-identity
-    "$CODE_HOST/$GITHUB_REPOSITORY/.github/workflows/$workflow@$MAIN_REF"
-    --certificate-github-workflow-repository "$GITHUB_REPOSITORY"
-    --certificate-github-workflow-ref "$ref"
-    --certificate-github-workflow-sha "$sha"
-    "$blob"
-  )
+  "${CLI[@]}" "${args[@]}" < /dev/null > "$WORDS_FILE" || return 1
+  WORDS=("$VERIFIER")
+  while IFS= read -r word; do
+    WORDS+=("$word")
+  done < "$WORDS_FILE"
+
+  [[ "${#WORDS[@]}" -gt 1 ]]
 }
 
-# must_fail NAME BUNDLE WORKFLOW REF SHA BLOB: one check that differs from
-# the check that passed in one word. Status 0 fails the probe.
+# probe_words ROOT SHA BLOB BUNDLE: the words of `release_words`, with the
+# name of this workflow file in the place of the release workflow. A probe
+# run signs as WORKFLOW_FILE. Status 1 when not one word names the release
+# workflow: the words then are not the words of the check that root makes.
+probe_words() {
+  local index word changed=0
+
+  release_words "$@" || return 1
+  for ((index = 1; index < ${#WORDS[@]}; index++)); do
+    word="${WORDS[$index]}"
+    if [[ "$word" == *"/$RELEASE_FILE@"* ]]; then
+      WORDS[$index]="${word//\/$RELEASE_FILE@//$WORKFLOW_FILE@}"
+      changed=$((changed + 1))
+    fi
+  done
+
+  [[ "$changed" -eq 1 ]]
+}
+
+# other_ref: the word after REF_FLAG in WORDS becomes OTHER_REF. The
+# identity still names the ref of `main`, so the case measures the one claim
+# of the ref. Status 1 when not one word is REF_FLAG.
+other_ref() {
+  local index found=0
+
+  for ((index = 1; index + 1 < ${#WORDS[@]}; index++)); do
+    if [[ "${WORDS[$index]}" == "$REF_FLAG" ]]; then
+      WORDS[index + 1]="$OTHER_REF"
+      found=$((found + 1))
+    fi
+  done
+
+  [[ "$found" -eq 1 ]]
+}
+
+# no_words NAME: a case whose words the probe did not get. It fails the
+# probe, and the report names the case as one that did not run.
+no_words() {
+  fail "$1: handover gave no words for the check"
+  no_case "$1"
+}
+
+# must_fail NAME: one check with the words of WORDS. Each such check differs
+# from the check that passed in one word. Status 0 fails the probe.
 must_fail() {
   local name="$1"
 
-  verify_words "$2" "$PASSING_ROOT" "$3" "$4" "$5" "$6"
   run_case "$name" sudo "${PREFIX[@]}" -- "${WORDS[@]}"
   if [[ "$STATUS" -eq 0 ]]; then
     fail "$name: a check that must fail ended with status 0"
@@ -550,31 +591,42 @@ nested_words() {
 
 verify() {
   need GITHUB_WORKSPACE RUNNER_TEMP GITHUB_OUTPUT GITHUB_STEP_SUMMARY \
-    GITHUB_REPOSITORY GITHUB_SHA PROBE_TARGET PROBE_SIGNED COSIGN
+    GITHUB_REPOSITORY GITHUB_SHA PROBE_SIGNED COSIGN
 
-  local name archive bundle copy changed report roots root_file root_count
-  local two_children systemd_version cosign_version words
+  local name archive bundle copy copy_bundle changed report roots root_file
+  local root_count two_children systemd_version cosign_version words one_child
 
-  name="$(archive_name)" || exit 1
-  archive="$PROBE_SIGNED/$name"
-  bundle="$archive.sigstore.json"
-  copy="$COPY_DIR/$name"
-  changed="$copy.changed"
-  report="$RUNNER_TEMP/probe-report.json"
-
-  [[ -f "$archive" ]] || die "the job sign gave no file $name"
-  [[ -f "$bundle" ]] || die "the job sign gave no file $name.sigstore.json"
   [[ -x "$COSIGN" ]] || die "COSIGN names no program"
   [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]] || die "GITHUB_SHA is not a commit id"
   [[ "$GITHUB_REPOSITORY" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] ||
     die "GITHUB_REPOSITORY is not an owner and a repository"
+
+  read_row "$RUNNER_TEMP/probe-row" ||
+    die "handover gave no row of $COMPONENT in the line form: $ROWS_FAULT"
+  name="${ROW_ARCHIVE[0]}"
+  archive="$PROBE_SIGNED/$name"
+  bundle="$PROBE_SIGNED/${ROW_BUNDLE[0]}"
+  copy="$COPY_DIR/$name"
+  copy_bundle="$COPY_DIR/${ROW_BUNDLE[0]}"
+  changed="$copy.changed"
+  report="$RUNNER_TEMP/probe-report.json"
+  WORDS_FILE="$RUNNER_TEMP/probe-words"
+
+  [[ -f "$archive" ]] || die "the job sign gave no file $name"
+  [[ -f "$bundle" ]] || die "the job sign gave no file ${ROW_BUNDLE[0]}"
+
+  # The words of the first check. A command that gives no such words stops
+  # the run here, before the first child.
+  probe_words "" "$GITHUB_SHA" "$copy" "$copy_bundle" ||
+    die "handover gave no words in which one word names $RELEASE_FILE"
+  one_child=("${WORDS[@]}")
 
   # 1. Root owns the verifier and the copy of the two files.
   sudo install -o root -g root -m 0755 -- "$COSIGN" "$VERIFIER" ||
     die "cannot install the verifier"
   sudo install -d -o root -g root -m 0755 -- "$COPY_DIR" || die "cannot make $COPY_DIR"
   sudo install -o root -g root -m 0644 -- "$archive" "$copy" || die "cannot copy the archive"
-  sudo install -o root -g root -m 0644 -- "$bundle" "$copy.sigstore.json" ||
+  sudo install -o root -g root -m 0644 -- "$bundle" "$copy_bundle" ||
     die "cannot copy the bundle"
 
   # From here each failure counts, and the report is written. Without this
@@ -584,17 +636,16 @@ verify() {
 
   # 2. The words that start each child are RUN, above.
 
-  text target "$PROBE_TARGET"
+  text target "${ROW_TARGET[0]}"
   text toolchain "${PROBE_TOOLCHAIN:-$UNKNOWN}"
   text remap_needed "${PROBE_REMAP_NEEDED:-$UNKNOWN}"
 
   # 3. One child: cosign reads the trust root from the network and checks
   # the signature.
-  verify_words "$copy.sigstore.json" "" "$WORKFLOW_FILE" "$MAIN_REF" "$GITHUB_SHA" "$copy"
-  run_case one_child sudo "${RUN[@]}" -- "${WORDS[@]}"
+  run_case one_child sudo "${RUN[@]}" -- "${one_child[@]}"
   if [[ "$STATUS" -eq 0 ]]; then
     pass "one_child"
-    PASSING=("${WORDS[@]}")
+    PASSING=("${one_child[@]}")
     PREFIX=("${RUN[@]}")
   else
     fail "one_child: the check ended with status $STATUS"
@@ -629,9 +680,11 @@ verify() {
   # from the file of step 4. A status that is not 0 fails nothing: the probe
   # then reports that the way with one child is the way that works.
   two_children="$NO"
-  if [[ -n "$root_file" ]]; then
-    verify_words "$copy.sigstore.json" "$root_file" "$WORKFLOW_FILE" "$MAIN_REF" \
-      "$GITHUB_SHA" "$copy"
+  if [[ -z "$root_file" ]]; then
+    no_case two_children
+  elif ! probe_words "$root_file" "$GITHUB_SHA" "$copy" "$copy_bundle"; then
+    no_words two_children
+  else
     run_case two_children sudo "${RUN[@]}" -p "$NO_NETWORK" -- "${WORDS[@]}"
     if [[ "$STATUS" -eq 0 ]]; then
       two_children="$YES"
@@ -642,24 +695,35 @@ verify() {
       say "two_children: the check with no network ended with status $STATUS"
       journal
     fi
-  else
-    no_case two_children
   fi
   text two_children "$two_children"
 
   if [[ "${#PASSING[@]}" -gt 0 ]]; then
     # 6. Four checks that must fail. Each one differs from the check that
-    # passed in one word.
-    must_fail zero_sha "$copy.sigstore.json" "$WORKFLOW_FILE" "$MAIN_REF" "$ZERO_SHA" "$copy"
-    must_fail other_ref "$copy.sigstore.json" "$WORKFLOW_FILE" "$OTHER_REF" "$GITHUB_SHA" "$copy"
-    must_fail other_workflow "$copy.sigstore.json" "$OTHER_WORKFLOW" "$MAIN_REF" \
-      "$GITHUB_SHA" "$copy"
-    if change_byte "$archive" "$changed"; then
-      must_fail changed_byte "$copy.sigstore.json" "$WORKFLOW_FILE" "$MAIN_REF" \
-        "$GITHUB_SHA" "$changed"
+    # passed in one word. The words of the release workflow, as root makes
+    # them, are the check with another workflow.
+    if probe_words "$PASSING_ROOT" "$ZERO_SHA" "$copy" "$copy_bundle"; then
+      must_fail zero_sha
     else
+      no_words zero_sha
+    fi
+    if probe_words "$PASSING_ROOT" "$GITHUB_SHA" "$copy" "$copy_bundle" && other_ref; then
+      must_fail other_ref
+    else
+      no_words other_ref
+    fi
+    if release_words "$PASSING_ROOT" "$GITHUB_SHA" "$copy" "$copy_bundle"; then
+      must_fail other_workflow
+    else
+      no_words other_workflow
+    fi
+    if ! change_byte "$archive" "$changed"; then
       fail "changed_byte: cannot make a copy of the archive with one changed byte"
       no_case changed_byte
+    elif probe_words "$PASSING_ROOT" "$GITHUB_SHA" "$changed" "$copy_bundle"; then
+      must_fail changed_byte
+    else
+      no_words changed_byte
     fi
   else
     say "no check passed: the four checks that must fail did not run"

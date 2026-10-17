@@ -63,7 +63,7 @@ The other directories:
 
 | Directory | What it holds | Read |
 |---|---|---|
-| `bin/` | Every script that runs on the host, and the three shell libraries. | [bin/AGENTS.md](bin/AGENTS.md) |
+| `bin/` | The scripts that run on the host, the scripts of CI and the five shell libraries. | [bin/AGENTS.md](bin/AGENTS.md) |
 | `systemd/` | Every unit file. A unit is installed by a script, never by hand. | [systemd/AGENTS.md](systemd/AGENTS.md) |
 | `integration/` | The cross-package suite. It runs the real doors, `attendance`, the chaperone and the playpen together. | [integration/AGENTS.md](integration/AGENTS.md) |
 | `rust/` | The Cargo workspace: every Rust crate. No release uses it. | [rust/AGENTS.md](rust/AGENTS.md) |

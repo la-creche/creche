@@ -109,7 +109,7 @@ in `AGENTS.md` yourself.
 ## CI
 
 `.github/workflows/gate.yml` runs on every pull request and on every merge
-group. It has ten kinds of job:
+group. It has eleven kinds of job:
 
 1. `lint`: ruff, ruff format, pyright. On a docs-only pull request it also
    runs the tests marked `docs`.
@@ -143,7 +143,12 @@ group. It has ten kinds of job:
    `systemd-analyze verify`. When the pull request changes no file of the
    proof, the job skips that step and passes. `bin/AGENTS.md` lists those
    files.
-10. `gate`: red unless every other job passed. This is the one check the
+10. `artifacts`: `bin/build-artifacts.sh`, the build, the walk and the pack
+    of the archive of each binary component. When the pull request changes
+    no input of an archive, the job skips each step after the checkout and
+    passes. `bin/lib/artifactrule.sh` lists the inputs. `bin/AGENTS.md` has
+    the rules of the script.
+11. `gate`: red unless every other job passed. This is the one check the
     merge queue and the release executor read.
 
 Comment `!retest` on a pull request to restart its CI on the same commit.
@@ -165,6 +170,10 @@ component's own newest tag.
 - A component's paths include every workspace package its build installs. A
   change under `family/` moves `attendance`, `caregiver` and `noticeboard`.
   A change to `uv.lock` moves every venv component.
+- A binary component ships two assets on its Release: the archive that the
+  `artifacts` job built, and the bundle of its keyless signature. The `sign`
+  job of `release.yml` signs each archive. With no binary component, the two
+  jobs build nothing and sign nothing.
 - A change under `rust/` moves no component today, because no component is a
   binary component. A change to `rust/Cargo.lock`, `rust/Cargo.toml` or
   `rust/rust-toolchain.toml` moves every binary component and no other kind.

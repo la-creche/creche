@@ -1,7 +1,8 @@
 # PR gate: lint, the full suite, the playpen's vitest suite, the process-level
 # suite, the same suite as the judge of each Rust program, the two old
-# integration suites, the Rust checks, the Rust coverage rule and the systemd
-# proof, as jobs that run at once on separate runners.
+# integration suites, the Rust checks, the Rust coverage rule, the systemd
+# proof and the archive of each binary component, as jobs that run at once on
+# separate runners.
 #
 #   scope ──┬── tests (1..N)   code   the full suite, one shard per job
 #           ├── playpen     code   the TypeScript suite and its build
@@ -17,10 +18,13 @@
 #           │                      change: no cargo step
 #           ├── rust-coverage  code   the tests with cargo llvm-cov and the
 #           │                      coverage rule, for the same change
-#           └── systemd-proof
-#                           code   the restart rule of the daemon units, on
-#                                  the systemd of the runner, for a change
-#                                  under systemd/. No such change: no proof
+#           ├── systemd-proof
+#           │               code   the restart rule of the daemon units, on
+#           │                      the systemd of the runner, for a change
+#           │                      under systemd/. No such change: no proof
+#           └── artifacts   the build, the walk and the pack of each binary
+#                           component, for a code change that touches an
+#                           input of an archive. No such change: no build
 #   lint ─────────────────────────┐   ruff, ruff format, pyright, and on a
 #                                 │   docs PR the tests marked `docs`
 #                                 └── gate   red unless every job passed
@@ -50,7 +54,8 @@
 # Actions are SHA-pinned with the tag as a comment, as agent-registry's
 # validate.yml does.
 # release.yml runs the same `tests`, `playpen`, `proc`, `proc-rust`, `suites`,
-# `rust`, `rust-coverage` and `systemd-proof` jobs after the merge.
+# `rust`, `rust-coverage` and `systemd-proof` jobs after the merge. Its
+# `artifacts` job is this one with no rule on a step.
 # agent-mcp carries its own gate.yml, with no JS steps. Diff the files when
 # changing one.
 name: gate
@@ -82,6 +87,7 @@ jobs:
       scope: ${{ steps.scope.outputs.scope }}
       rust: ${{ steps.scope.outputs.rust }}
       systemd: ${{ steps.scope.outputs.systemd }}
+      artifacts: ${{ steps.scope.outputs.artifacts }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -545,10 +551,76 @@ jobs:
       - run: bin/systemd-proof.sh
         if: needs.scope.outputs.systemd != 'false'
 
+  # The archive of each binary component: bin/build-artifacts.sh. The script
+  # asks `handover artifacts` for one row for each binary component of the
+  # catalog. For each row it runs the build commands of the manifest, walks
+  # the tree for a path of the runner, packs the tree and refuses an archive
+  # over a limit of its row. It writes SHA256SUMS, and the step output
+  # `digests` holds the same text. With no binary component it prints one
+  # line, and the upload holds an empty SHA256SUMS.
+  #
+  # release.yml holds the same job, and its job `sign` signs each archive.
+  # Here the archive is signed by no job: the pull request proves that each
+  # binary component still builds, walks and packs.
+  #
+  # Each step after the checkout runs only for a code change that touches an
+  # input of an archive (bin/lib/artifactrule.sh). A change under rust/ that
+  # is Markdown only answers `artifacts=true`, so the step rule asks for the
+  # code scope too. The job has no rule of its own: with its steps skipped it
+  # is a success, and the verdict needs a success from it in each scope. In
+  # release.yml no step has a rule: each run can tag a component that an
+  # older run missed. bin/tests/test_gate_workflow.py holds the two jobs
+  # equal apart from the rule of a step.
+  #
+  # The checkout keeps no token in the clone: a build script runs here. The
+  # job has no cache: the bytes of an archive come from a clean build. The
+  # job has the read-only token of the file.
+  #
+  # The time limit: a job has 6 hours by default. The probe built the program
+  # of one crate two times in less than 30 minutes.
+  artifacts:
+    needs: scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      digests: ${{ steps.build.outputs.digests }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The `handover` command gives the rows and walks each tree.
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        if: needs.scope.outputs.scope == 'code' && needs.scope.outputs.artifacts != 'false'
+        with:
+          enable-cache: false
+
+      # ARTIFACT_REPO: the catalog's name for this repository. TAG_REPO of the
+      # tag step of release.yml holds the same name.
+      - name: build
+        id: build
+        if: needs.scope.outputs.scope == 'code' && needs.scope.outputs.artifacts != 'false'
+        env:
+          ARTIFACT_REPO: agent-control
+          ARTIFACT_OUT: ${{ runner.temp }}/artifacts
+        run: bin/build-artifacts.sh
+
+      # The script writes SHA256SUMS in each run, so the upload always has
+      # one file. The next job cannot download an artifact that does not
+      # exist.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: needs.scope.outputs.scope == 'code' && needs.scope.outputs.artifacts != 'false'
+        with:
+          name: artifacts
+          path: ${{ runner.temp }}/artifacts
+          if-no-files-found: error
+          retention-days: 7
+
   # The one check a session reads. `always()`: a job that needs a failed job
   # is skipped by default, and a skipped `gate` would not read as red.
   gate:
-    needs: [scope, lint, tests, playpen, proc, proc-rust, suites, rust, rust-coverage, systemd-proof]
+    needs: [scope, lint, tests, playpen, proc, proc-rust, suites, rust, rust-coverage, systemd-proof, artifacts]
     if: always()
     runs-on: ubuntu-latest
     steps:
