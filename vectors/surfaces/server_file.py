@@ -124,7 +124,9 @@ def _vector(registry: str, case: Case, scratch: Path, file: str = SERVER_FILE) -
     """One written case: a directory in a copy of the registry, and away
     again."""
     directory = _staged(registry, case, scratch) / MCP_DIR / case.directory_name()
-    directory.mkdir(parents=True, exist_ok=True)
+    # Only a case with files has a copy of its own, and a file of the case can
+    # be in the directory already. A case in the shared copy gets a new one.
+    directory.mkdir(parents=True, exist_ok=bool(case.files))
     (directory / file).write_bytes(case.text_bytes())
     try:
         loaded = attempt(lambda: load_registry(directory.parents[1]))
