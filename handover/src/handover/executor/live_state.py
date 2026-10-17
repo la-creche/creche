@@ -482,12 +482,15 @@ def select_manifests(
 
 
 def _artifact_digest(component: str) -> str | None:
-    """Contract 06 §9's `artifact_digest`.
+    """Contract 06 §9's `artifact_digest`, as this builder knows it: `null`.
 
-    `null` for every kind but `oci-image`, and `null` for that one too
-    today: nothing in this repository pushes `playpen` to an OCI
-    registry, so there is no registry digest to record. Saying so here,
-    once, is better than nine `None`s a reader has to infer a reason for.
+    This builder runs before root reads a manifest, so it cannot know the
+    kind of a component. Step 2 fills the value after that read, for each
+    component that deploys and whose manifest says `binary`: the digest of
+    root's copy of its archive (`steps.Release._copy_artifacts`). Step 8
+    fills it again from the same copy. Each other kind keeps `null`. For
+    `oci-image` that is so today because nothing in this repository pushes
+    `playpen` to an OCI registry, so there is no registry digest to record.
     Contract 06 §9 carries the same sentence.
     """
     del component

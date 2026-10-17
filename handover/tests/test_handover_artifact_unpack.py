@@ -1,0 +1,619 @@
+"""The unpack of the archive of a binary component, and its member list.
+
+An archive of a binary component holds regular files named
+`<component>/bin/<program>`, and nothing else. `extract_tar` with a
+component writes each one to `<into>/bin/<program>` with the mode 0755.
+`list_component_archive` reads the same member headers with the same checks
+and writes no file. Each test here gives both functions one archive. The
+unpack of an MCP asset keeps its own rules, and
+`test_handover_r7f_mcp_build.py` holds them.
+"""
+
+from __future__ import annotations
+
+import gzip
+import io
+import os
+import tarfile
+from collections.abc import Callable
+from pathlib import Path
+
+import pytest
+from handover.catalog import ARCHIVE_MAX_MEMBERS, ARCHIVE_MAX_UNPACKED_BYTES
+from handover.executor.unpack import (
+    ASSET_MAX_MEMBERS,
+    ASSET_MAX_UNPACKED_BYTES,
+    FRAME_BYTES,
+    UnpackFault,
+    UnpackRefused,
+    extract_tar,
+    list_component_archive,
+)
+
+COMPONENT = "noticeboard"
+
+#: What a compiled program starts with. No test runs one.
+PROGRAM = b"\x7fELF\x02\x01\x01\x00 a compiled program\n"
+
+Make = Callable[[tarfile.TarFile], None]
+
+
+def _member(tar: tarfile.TarFile, name: str, mode: int = 0o755, body: bytes = PROGRAM) -> None:
+    info = tarfile.TarInfo(name)
+    info.size = len(body)
+    info.mode = mode
+    tar.addfile(info, io.BytesIO(body))
+
+
+def _special(tar: tarfile.TarFile, name: str, kind: bytes, linkname: str = "") -> None:
+    info = tarfile.TarInfo(name)
+    info.type = kind
+    info.linkname = linkname
+    tar.addfile(info)
+
+
+def _archive(tmp_path: Path, make: Make, mode: str = "w:gz") -> Path:
+    path = tmp_path / "archive" / f"{COMPONENT}.tar.gz"
+    path.parent.mkdir()
+    with tarfile.open(path, mode) as tar:
+        make(tar)
+
+    return path
+
+
+def _program(name: str) -> Make:
+    return lambda tar: _member(tar, f"{COMPONENT}/bin/{name}")
+
+
+def _refusal(tmp_path: Path, make: Make) -> tuple[UnpackFault, UnpackFault, list[Path]]:
+    """What the unpack and the list each refuse `make` with, and each file
+    that the list left in the directory of the archive."""
+    archive = _archive(tmp_path, make)
+    with pytest.raises(UnpackRefused) as unpacked:
+        extract_tar(archive, tmp_path / "into", COMPONENT)
+
+    with pytest.raises(UnpackRefused) as listed:
+        list_component_archive(archive, COMPONENT)
+
+    left = sorted(archive.parent.iterdir())
+
+    return unpacked.value.fault, listed.value.fault, left
+
+
+def _both_refuse(tmp_path: Path, make: Make, fault: UnpackFault) -> None:
+    unpacked, listed, left = _refusal(tmp_path, make)
+
+    assert unpacked is fault
+    assert listed is fault
+    assert [one.name for one in left] == [f"{COMPONENT}.tar.gz"]
+
+
+# -- a good archive ----------------------------------------------------------
+
+
+def _good(tar: tarfile.TarFile) -> None:
+    _member(tar, f"{COMPONENT}/bin/{COMPONENT}")
+    _member(tar, f"{COMPONENT}/bin/{COMPONENT}-verify", mode=0o700)
+
+
+def test_a_good_archive_unpacks_into_bin(tmp_path: Path) -> None:
+    into = tmp_path / "into"
+
+    extract_tar(_archive(tmp_path, _good), into, COMPONENT)
+
+    assert sorted(one.name for one in into.iterdir()) == ["bin"]
+    assert sorted(one.name for one in (into / "bin").iterdir()) == [
+        COMPONENT,
+        f"{COMPONENT}-verify",
+    ]
+    assert (into / "bin" / COMPONENT).read_bytes() == PROGRAM
+
+
+def test_each_program_gets_the_mode_0755(tmp_path: Path) -> None:
+    """The member of the verify hook says 0700. The unpack sets 0755, also
+    under the umask 0027 of the release unit."""
+    into = tmp_path / "into"
+    archive = _archive(tmp_path, _good)
+
+    before = os.umask(0o027)
+    try:
+        extract_tar(archive, into, COMPONENT)
+    finally:
+        os.umask(before)
+
+    for program in (into / "bin").iterdir():
+        assert program.stat().st_mode & 0o7777 == 0o755
+
+
+def test_the_list_gives_the_programs_in_the_order_of_the_archive(tmp_path: Path) -> None:
+    def make(tar: tarfile.TarFile) -> None:
+        for name in ("zeta", "alpha", "mid"):
+            _member(tar, f"{COMPONENT}/bin/{name}")
+
+    archive = _archive(tmp_path, make)
+
+    assert list_component_archive(archive, COMPONENT) == ("zeta", "alpha", "mid")
+
+
+def test_the_list_writes_no_file(tmp_path: Path) -> None:
+    archive = _archive(tmp_path, _good)
+
+    list_component_archive(archive, COMPONENT)
+
+    assert [one.name for one in archive.parent.iterdir()] == [archive.name]
+    assert sorted(one.name for one in tmp_path.iterdir()) == ["archive"]
+
+
+def test_an_archive_of_64_members_passes(tmp_path: Path) -> None:
+    """The limit is inclusive."""
+
+    def make(tar: tarfile.TarFile) -> None:
+        for index in range(ARCHIVE_MAX_MEMBERS):
+            _member(tar, f"{COMPONENT}/bin/p{index:02d}", body=b"x")
+
+    archive = _archive(tmp_path, make)
+
+    assert len(list_component_archive(archive, COMPONENT)) == ARCHIVE_MAX_MEMBERS
+    extract_tar(archive, tmp_path / "into", COMPONENT)
+    assert len(list((tmp_path / "into" / "bin").iterdir())) == ARCHIVE_MAX_MEMBERS
+
+
+# -- the names of a component archive --------------------------------------------
+
+
+def test_a_member_of_another_component_is_refused(tmp_path: Path) -> None:
+    """The archive of another component of the same commit has a valid
+    signature too. Its names tell it apart."""
+    _both_refuse(
+        tmp_path,
+        lambda tar: _member(tar, "caregiver/bin/caregiver"),
+        UnpackFault.NOT_A_PROGRAM,
+    )
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        f"{COMPONENT}/lib/{COMPONENT}",
+        f"{COMPONENT}/{COMPONENT}",
+        f"{COMPONENT}/bin/sub/{COMPONENT}",
+        f"bin/{COMPONENT}",
+        COMPONENT,
+        f"./{COMPONENT}/bin/{COMPONENT}",
+        f"{COMPONENT}//bin/{COMPONENT}",
+        f"{COMPONENT}/bin/.",
+        f"{COMPONENT}/bin/a program",
+    ],
+)
+def test_a_member_outside_bin_is_refused(tmp_path: Path, name: str) -> None:
+    _both_refuse(tmp_path, lambda tar: _member(tar, name), UnpackFault.NOT_A_PROGRAM)
+
+
+def test_a_directory_member_is_refused(tmp_path: Path) -> None:
+    def make(tar: tarfile.TarFile) -> None:
+        _special(tar, f"{COMPONENT}/bin", tarfile.DIRTYPE)
+        _program(COMPONENT)(tar)
+
+    _both_refuse(tmp_path, make, UnpackFault.DIRECTORY)
+
+
+def test_two_members_with_one_name_are_refused(tmp_path: Path) -> None:
+    def make(tar: tarfile.TarFile) -> None:
+        _program(COMPONENT)(tar)
+        _member(tar, f"{COMPONENT}/bin/{COMPONENT}", body=b"a second program\n")
+
+    _both_refuse(tmp_path, make, UnpackFault.SAME_NAME)
+
+
+def test_the_second_member_of_one_name_writes_nothing_over_the_first(tmp_path: Path) -> None:
+    def make(tar: tarfile.TarFile) -> None:
+        _program(COMPONENT)(tar)
+        _member(tar, f"{COMPONENT}/bin/{COMPONENT}", body=b"a second program\n")
+
+    into = tmp_path / "into"
+    with pytest.raises(UnpackRefused):
+        extract_tar(_archive(tmp_path, make), into, COMPONENT)
+
+    assert (into / "bin" / COMPONENT).read_bytes() == PROGRAM
+
+
+# -- the five shapes -------------------------------------------------------------
+
+
+@pytest.mark.parametrize("kind", [tarfile.SYMTYPE, tarfile.LNKTYPE])
+def test_a_link_is_refused(tmp_path: Path, kind: bytes) -> None:
+    _both_refuse(
+        tmp_path,
+        lambda tar: _special(tar, f"{COMPONENT}/bin/{COMPONENT}", kind, "/etc/shadow"),
+        UnpackFault.LINK,
+    )
+
+
+@pytest.mark.parametrize("kind", [tarfile.CHRTYPE, tarfile.BLKTYPE, tarfile.FIFOTYPE])
+def test_a_device_is_refused(tmp_path: Path, kind: bytes) -> None:
+    _both_refuse(
+        tmp_path,
+        lambda tar: _special(tar, f"{COMPONENT}/bin/{COMPONENT}", kind),
+        UnpackFault.NOT_FILE_OR_DIRECTORY,
+    )
+
+
+@pytest.mark.parametrize("mode", [0o4755, 0o2755])
+def test_a_set_id_bit_is_refused(tmp_path: Path, mode: int) -> None:
+    _both_refuse(
+        tmp_path,
+        lambda tar: _member(tar, f"{COMPONENT}/bin/{COMPONENT}", mode=mode),
+        UnpackFault.SET_ID,
+    )
+
+
+def test_an_absolute_name_is_refused(tmp_path: Path) -> None:
+    _both_refuse(
+        tmp_path,
+        lambda tar: _member(tar, f"/{COMPONENT}/bin/{COMPONENT}"),
+        UnpackFault.LEAVES_TREE,
+    )
+
+
+@pytest.mark.parametrize(
+    "name", [f"{COMPONENT}/bin/../{COMPONENT}", f"../{COMPONENT}/bin/{COMPONENT}"]
+)
+def test_a_dot_dot_segment_is_refused(tmp_path: Path, name: str) -> None:
+    _both_refuse(tmp_path, lambda tar: _member(tar, name), UnpackFault.LEAVES_TREE)
+
+
+# -- a sparse member -------------------------------------------------------------
+
+
+def _with_pax(headers: dict[str, str]) -> Make:
+    """One program whose member has the extended header `headers`."""
+
+    def make(tar: tarfile.TarFile) -> None:
+        info = tarfile.TarInfo(f"{COMPONENT}/bin/{COMPONENT}")
+        info.size = len(PROGRAM)
+        info.mode = 0o755
+        info.pax_headers = headers
+        tar.addfile(info, io.BytesIO(PROGRAM))
+
+    return make
+
+
+def _old_sparse(tar: tarfile.TarFile) -> None:
+    """One program in a member of the old sparse type of GNU tar."""
+    info = tarfile.TarInfo(f"{COMPONENT}/bin/{COMPONENT}")
+    info.type = tarfile.GNUTYPE_SPARSE
+    info.size = len(PROGRAM)
+    info.mode = 0o755
+    tar.addfile(info, io.BytesIO(PROGRAM))
+
+
+@pytest.mark.parametrize(
+    "make",
+    [
+        _with_pax({"GNU.sparse.map": "0,1", "GNU.sparse.size": "1048576"}),
+        _old_sparse,
+    ],
+    ids=["extended-header", "old-type"],
+)
+def test_a_sparse_member_is_refused(tmp_path: Path, make: Make) -> None:
+    """A sparse member unpacks to more bytes than the archive holds for it.
+    It is not a plain regular file."""
+    _both_refuse(tmp_path, make, UnpackFault.NOT_A_PROGRAM)
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"GNU.sparse.size": "x"},
+        {"GNU.sparse.realsize": "x"},
+        {"GNU.sparse.major": "1", "GNU.sparse.minor": "0"},
+    ],
+    ids=["size", "realsize", "map-in-the-data"],
+)
+def test_a_sparse_header_that_is_no_number_is_refused(
+    tmp_path: Path, headers: dict[str, str]
+) -> None:
+    """The third case reads its map from the data of the member, and the
+    data of the member is no number."""
+    _both_refuse(tmp_path, _with_pax(headers), UnpackFault.NOT_READABLE)
+
+
+# -- the two limits --------------------------------------------------------------
+
+
+def test_65_members_are_refused(tmp_path: Path) -> None:
+    def make(tar: tarfile.TarFile) -> None:
+        for index in range(ARCHIVE_MAX_MEMBERS + 1):
+            _member(tar, f"{COMPONENT}/bin/p{index:02d}", body=b"x")
+
+    _both_refuse(tmp_path, make, UnpackFault.ARCHIVE_MEMBERS)
+
+
+def _header(name: str, size: int) -> bytes:
+    """One member header that claims `size` bytes. The limit is checked on
+    the header, before a byte of the member is read."""
+    info = tarfile.TarInfo(name)
+    info.size = size
+    info.mode = 0o755
+
+    return info.tobuf(format=tarfile.PAX_FORMAT)
+
+
+def _claims(tmp_path: Path, *raw: bytes) -> Path:
+    archive = tmp_path / "archive" / f"{COMPONENT}.tar.gz"
+    archive.parent.mkdir()
+    archive.write_bytes(gzip.compress(b"".join(raw)))
+
+    return archive
+
+
+def test_more_bytes_than_the_limit_are_refused(tmp_path: Path) -> None:
+    archive = _claims(
+        tmp_path, _header(f"{COMPONENT}/bin/{COMPONENT}", ARCHIVE_MAX_UNPACKED_BYTES + 1)
+    )
+    into = tmp_path / "into"
+
+    with pytest.raises(UnpackRefused) as unpacked:
+        extract_tar(archive, into, COMPONENT)
+
+    with pytest.raises(UnpackRefused) as listed:
+        list_component_archive(archive, COMPONENT)
+
+    assert unpacked.value.fault is UnpackFault.ARCHIVE_BYTES
+    assert listed.value.fault is UnpackFault.ARCHIVE_BYTES
+    assert not (into / "bin").exists()
+
+
+def test_the_bytes_of_each_member_count(tmp_path: Path) -> None:
+    """One byte, then a member of exactly the limit: the sum passes it. The
+    first member fits, so the unpack writes it."""
+    first = _header(f"{COMPONENT}/bin/small", 1) + b"x".ljust(tarfile.BLOCKSIZE, b"\0")
+    archive = _claims(tmp_path, first, _header(f"{COMPONENT}/bin/big", ARCHIVE_MAX_UNPACKED_BYTES))
+    into = tmp_path / "into"
+
+    with pytest.raises(UnpackRefused) as unpacked:
+        extract_tar(archive, into, COMPONENT)
+
+    with pytest.raises(UnpackRefused) as listed:
+        list_component_archive(archive, COMPONENT)
+
+    assert unpacked.value.fault is UnpackFault.ARCHIVE_BYTES
+    assert listed.value.fault is UnpackFault.ARCHIVE_BYTES
+    assert (into / "bin" / "small").read_bytes() == b"x"
+    assert not (into / "bin" / "big").exists()
+
+
+# -- the archive itself --------------------------------------------------------
+
+
+def test_a_tar_that_is_no_gzip_is_refused(tmp_path: Path) -> None:
+    archive = _archive(tmp_path, _good, mode="w")
+
+    with pytest.raises(UnpackRefused) as unpacked:
+        extract_tar(archive, tmp_path / "into", COMPONENT)
+
+    with pytest.raises(UnpackRefused) as listed:
+        list_component_archive(archive, COMPONENT)
+
+    assert unpacked.value.fault is UnpackFault.NOT_READABLE
+    assert listed.value.fault is UnpackFault.NOT_READABLE
+
+
+@pytest.mark.parametrize("keep", [10, 0.3, 0.6])
+def test_an_archive_that_ends_early_is_refused(tmp_path: Path, keep: float) -> None:
+    """The gzip stream stops in its header, or inside a member."""
+
+    def make(tar: tarfile.TarFile) -> None:
+        for index in range(3):
+            _member(tar, f"{COMPONENT}/bin/p{index}", body=os.urandom(64 * 1024))
+
+    whole = _archive(tmp_path, make).read_bytes()
+    cut = int(keep * len(whole)) if isinstance(keep, float) else keep
+    archive = tmp_path / "archive" / f"{COMPONENT}.tar.gz"
+    archive.write_bytes(whole[:cut])
+
+    with pytest.raises(UnpackRefused) as unpacked:
+        extract_tar(archive, tmp_path / "into", COMPONENT)
+
+    with pytest.raises(UnpackRefused) as listed:
+        list_component_archive(archive, COMPONENT)
+
+    assert unpacked.value.fault is UnpackFault.NOT_READABLE
+    assert listed.value.fault is UnpackFault.NOT_READABLE
+
+
+def test_an_archive_that_does_not_decompress_is_refused(tmp_path: Path) -> None:
+    """A gzip header, then a deflate block of a type that does not exist."""
+    archive = tmp_path / f"{COMPONENT}.tar.gz"
+    archive.write_bytes(gzip.compress(b"")[:10] + b"\x07" + bytes(32))
+
+    with pytest.raises(UnpackRefused) as unpacked:
+        extract_tar(archive, tmp_path / "into", COMPONENT)
+
+    with pytest.raises(UnpackRefused) as listed:
+        list_component_archive(archive, COMPONENT)
+
+    assert unpacked.value.fault is UnpackFault.NOT_READABLE
+    assert listed.value.fault is UnpackFault.NOT_READABLE
+
+
+def _tar_of_three() -> bytes:
+    """A tar of three programs, with no compression."""
+    raw = io.BytesIO()
+    with tarfile.open(fileobj=raw, mode="w") as tar:
+        for index in range(3):
+            _member(tar, f"{COMPONENT}/bin/p{index}", body=b"program %d " % index * 9000)
+
+    return raw.getvalue()
+
+
+def _changed(raw: bytes, offset: int, flip: int = 0x01) -> bytes:
+    changed = bytearray(raw)
+    changed[offset] ^= flip
+
+    return bytes(changed)
+
+
+def _corrupt_cases() -> dict[str, bytes]:
+    """Four gzip streams of the tar of three programs, each with one change.
+
+    1. The first byte after the gzip header: the deflate data does not
+       decompress.
+    2. A byte of the CRC in the trailer.
+    3. A byte of the length in the trailer.
+    4. One byte of the data of a member, with the trailer of the stream
+       before that change.
+    """
+    tar = _tar_of_three()
+    whole = gzip.compress(tar, mtime=0)
+    other = gzip.compress(_changed(tar, tarfile.BLOCKSIZE + 5), mtime=0)
+
+    return {
+        "deflate": _changed(whole, 10),
+        "crc": _changed(whole, len(whole) - 8),
+        "length": _changed(whole, len(whole) - 1),
+        "member-data": other[:-8] + whole[-8:],
+    }
+
+
+@pytest.mark.parametrize("case", ["deflate", "crc", "length", "member-data"])
+def test_a_corrupt_gzip_stream_is_refused(tmp_path: Path, case: str) -> None:
+    """The unpack reads the gzip stream to its end, so the check of its CRC
+    and of its length runs for each archive."""
+    archive = tmp_path / f"{COMPONENT}.tar.gz"
+    archive.write_bytes(_corrupt_cases()[case])
+
+    with pytest.raises(UnpackRefused) as unpacked:
+        extract_tar(archive, tmp_path / "into", COMPONENT)
+
+    with pytest.raises(UnpackRefused) as listed:
+        list_component_archive(archive, COMPONENT)
+
+    assert unpacked.value.fault is UnpackFault.NOT_READABLE
+    assert listed.value.fault is UnpackFault.NOT_READABLE
+
+
+def test_each_changed_byte_of_the_gzip_data_is_refused_or_changes_nothing(
+    tmp_path: Path,
+) -> None:
+    """A change of one bit after the gzip header gives a refusal, or a
+    stream that decompresses to the same tar. No other error leaves the
+    list."""
+    whole = gzip.compress(_tar_of_three(), mtime=0)
+    archive = tmp_path / f"{COMPONENT}.tar.gz"
+    passed: list[int] = []
+    for offset in range(10, len(whole)):
+        archive.write_bytes(_changed(whole, offset))
+        try:
+            programs = list_component_archive(archive, COMPONENT)
+        except UnpackRefused:
+            continue
+
+        assert programs == ("p0", "p1", "p2"), offset
+        passed.append(offset)
+
+    assert len(passed) < len(whole) // 10
+
+
+def _with_comment(tmp_path: Path, comment_bytes: int) -> Path:
+    """An archive of one program whose member has an extended header with
+    a comment of `comment_bytes` bytes."""
+    info = tarfile.TarInfo(f"{COMPONENT}/bin/{COMPONENT}")
+    info.size = len(PROGRAM)
+    info.mode = 0o755
+    info.pax_headers = {"comment": "x" * comment_bytes}
+    raw = info.tobuf(format=tarfile.PAX_FORMAT) + PROGRAM.ljust(tarfile.BLOCKSIZE, b"\0")
+
+    return _claims(tmp_path, raw, bytes(2 * tarfile.BLOCKSIZE))
+
+
+def test_an_extended_header_of_one_block_passes(tmp_path: Path) -> None:
+    archive = _with_comment(tmp_path, 200)
+    into = tmp_path / "into"
+
+    assert list_component_archive(archive, COMPONENT) == (COMPONENT,)
+    extract_tar(archive, into, COMPONENT)
+    assert (into / "bin" / COMPONENT).read_bytes() == PROGRAM
+
+
+def test_an_extended_header_past_the_frame_is_refused(tmp_path: Path) -> None:
+    """`tarfile` reads a whole extended header into memory before the walk
+    sees its member. The bound of the tar stream stops that read."""
+    archive = _with_comment(tmp_path, FRAME_BYTES)
+    into = tmp_path / "into"
+
+    with pytest.raises(UnpackRefused) as unpacked:
+        extract_tar(archive, into, COMPONENT)
+
+    with pytest.raises(UnpackRefused) as listed:
+        list_component_archive(archive, COMPONENT)
+
+    assert unpacked.value.fault is UnpackFault.EXTRA_BYTES
+    assert listed.value.fault is UnpackFault.EXTRA_BYTES
+    assert not (into / "bin").exists()
+
+
+def test_bytes_past_the_end_of_the_tar_are_refused(tmp_path: Path) -> None:
+    """The read of the gzip stream to its end has the same bound."""
+    archive = _claims(tmp_path, _tar_of_three(), bytes(FRAME_BYTES + 1))
+
+    with pytest.raises(UnpackRefused) as unpacked:
+        extract_tar(archive, tmp_path / "into", COMPONENT)
+
+    with pytest.raises(UnpackRefused) as listed:
+        list_component_archive(archive, COMPONENT)
+
+    assert unpacked.value.fault is UnpackFault.EXTRA_BYTES
+    assert listed.value.fault is UnpackFault.EXTRA_BYTES
+
+
+def test_an_into_that_is_there_is_an_error_of_the_caller(tmp_path: Path) -> None:
+    """The unpack of a component archive makes its target itself."""
+    archive = _archive(tmp_path, _good)
+    into = tmp_path / "into"
+    into.mkdir()
+
+    with pytest.raises(FileExistsError):
+        extract_tar(archive, into, COMPONENT)
+
+    assert list(into.iterdir()) == []
+
+
+def test_a_link_in_the_place_of_into_is_an_error_of_the_caller(tmp_path: Path) -> None:
+    archive = _archive(tmp_path, _good)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (tmp_path / "into").symlink_to(elsewhere)
+
+    with pytest.raises(FileExistsError):
+        extract_tar(archive, tmp_path / "into", COMPONENT)
+
+    assert list(elsewhere.iterdir()) == []
+
+
+def test_bytes_that_are_no_archive_are_refused(tmp_path: Path) -> None:
+    archive = tmp_path / f"{COMPONENT}.tar.gz"
+    archive.write_bytes(b"this is no archive\n")
+
+    with pytest.raises(UnpackRefused) as listed:
+        list_component_archive(archive, COMPONENT)
+
+    assert listed.value.fault is UnpackFault.NOT_READABLE
+
+
+def test_each_detail_is_a_fixed_text(tmp_path: Path) -> None:
+    """The detail names the rule and no byte of the archive."""
+    archive = _archive(tmp_path, lambda tar: _member(tar, "secret-name/bin/secret-program"))
+
+    with pytest.raises(UnpackRefused) as listed:
+        list_component_archive(archive, COMPONENT)
+
+    assert listed.value.detail == str(UnpackFault.NOT_A_PROGRAM)
+    assert "secret" not in listed.value.detail
+
+
+def test_the_limits_of_an_mcp_asset_stay() -> None:
+    assert ASSET_MAX_MEMBERS == 20_000
+    assert ASSET_MAX_UNPACKED_BYTES == 512 * 1024 * 1024
+    assert str(UnpackFault.ASSET_MEMBERS) == "the asset holds more than 20000 members"
+    assert str(UnpackFault.ASSET_BYTES) == "the asset unpacks to more than 536870912"

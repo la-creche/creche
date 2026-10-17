@@ -126,6 +126,17 @@ MIN_TOKEN_BYTES: Final = 32
 #: A file root reads whole is a file a writer can grow.
 MAX_TOKEN_BYTES: Final = 4096
 
+#: The open of a file whose descriptor root checks before the first read:
+#: the `view-ro` token here, and the store and the copy of `artifact.py`.
+#: `O_NOFOLLOW` refuses a link at the last part of the path. `O_NONBLOCK`
+#: and `O_NOCTTY` keep a FIFO or a terminal at the path from blocking root
+#: before `fstat` gets a word in.
+CHECKED_READ_FLAGS: Final = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOCTTY | os.O_CLOEXEC
+
+#: The bits of group and of other. A file that root reads from the operator
+#: has none of them (`handover/AGENTS.md`, rule 5a).
+GROUP_OTHER_BITS: Final = 0o077
+
 #: What the `Host:` header carries. `attendance` serves one name over a Unix
 #: socket and no DNS is involved, so this is a constant and not a hostname.
 SOCKET_HOST: Final = "sessiond"
@@ -202,9 +213,8 @@ def read_view_token(path: Path, owner_uid: int) -> bytes | None:
     path cannot block root or take a controlling terminal before `fstat`
     gets a word in.
     """
-    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOCTTY | os.O_CLOEXEC
     try:
-        handle = os.open(path, flags)
+        handle = os.open(path, CHECKED_READ_FLAGS)
     except OSError:
         return None
 
@@ -227,7 +237,7 @@ def _token_of(handle: int, owner_uid: int) -> bytes | None:
 
     # Contract 02 §3 rule 5: `view-ro` is not one of the two tokens the PEP
     # reads, so nothing wider than 0600 is this file.
-    if stat.S_IMODE(facts.st_mode) & 0o077:
+    if stat.S_IMODE(facts.st_mode) & GROUP_OTHER_BITS:
         return None
 
     if not MIN_TOKEN_BYTES <= facts.st_size <= MAX_TOKEN_BYTES:
