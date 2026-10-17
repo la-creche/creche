@@ -106,6 +106,25 @@ else:
     print("read")
 """
 
+#: The size of the value that `HOLDER` holds: the resident limit of the
+#: child, and 64 MiB more.
+HELD_BYTES: Final = CHILD_RESIDENT_BYTES + 64 * 1024 * 1024
+
+#: Holds a value of `HELD_BYTES` while it runs the command of its arguments
+#: with its own standard streams, and ends with the status of that command.
+#: `bytearray` writes each byte of the value, so the peak resident size of
+#: this process passes the resident limit of the child. The value is not in
+#: the test process, so the peak of the test process does not change. The
+#: command gets half of the wall time limit of the child, so this process
+#: stops the command before the test stops this process.
+HOLDER: Final = f"""
+import subprocess
+import sys
+
+held = bytearray({HELD_BYTES})
+sys.exit(subprocess.run(sys.argv[1:], timeout={CHILD_WALL_S / 2}).returncode)
+"""
+
 
 def _row(name: str, env: str) -> str:
     return f"{name}:\n  command: {COMMAND}\n  env: {env}\n"
@@ -165,6 +184,22 @@ def _file(tmp_path: Path, text: str) -> Path:
     return path
 
 
+def _run_child(
+    program: str, reader: str, path: Path, *parent: str
+) -> subprocess.CompletedProcess[str]:
+    """Runs `program` in a child process inside the wall time limit, with
+    `reader` and `path` as its arguments. `parent` is the command of a
+    process that starts the child, or no word: then this process starts
+    it."""
+    return subprocess.run(
+        [*parent, sys.executable, "-c", program, reader, str(path)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=CHILD_WALL_S,
+    )
+
+
 @pytest.mark.slow
 @pytest.mark.usefixtures("fake_sops")
 @pytest.mark.parametrize("text", KINDS)
@@ -174,13 +209,21 @@ def test_a_small_text_of_each_kind_is_refused_inside_the_limits(
 ) -> None:
     assert len(text.encode()) < TEXT_BYTES_MAX
 
-    done = subprocess.run(
-        [sys.executable, "-c", CHILD, reader, str(_file(tmp_path, text))],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=CHILD_WALL_S,
-    )
+    done = _run_child(CHILD, reader, _file(tmp_path, text))
+
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.split()[0] == "refused", done.stdout
+
+
+@pytest.mark.slow
+def test_the_child_watches_only_its_own_memory(tmp_path: Path) -> None:
+    """The parent of the child holds a peak past the resident limit of the
+    child while the child runs. On Linux, the `ru_maxrss` of the child holds
+    the memory of its parent from before its exec. The thread of the child
+    does not count that memory."""
+    path = _file(tmp_path, _itself(LEVELS))
+
+    done = _run_child(CHILD, "roster", path, sys.executable, "-c", HOLDER)
 
     assert done.returncode == 0, done.stderr
     assert done.stdout.split()[0] == "refused", done.stdout
