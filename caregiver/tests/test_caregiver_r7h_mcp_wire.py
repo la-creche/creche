@@ -770,10 +770,14 @@ def test_the_roster_child_watches_only_its_own_memory(bench: Bench) -> None:
 
 def test_a_roster_watch_that_cannot_read_the_peak_stops_the_child(bench: Bench) -> None:
     """The watch fails closed. When it cannot read the peak, the child ends
-    with status 4 and names the fault on its standard error."""
+    with status 4 and names the fault on its standard error. The main thread
+    of this child waits with no end before its read, so only the watch can
+    end the child."""
     head = "def peak_bytes():\n"
+    read = "from caregiver.mcp_release import "
     child = ROSTER_CHILD.replace(head, head + '    raise OSError("no peak")\n', 1)
-    assert child != ROSTER_CHILD
+    child = child.replace(read, "threading.Event().wait()\n" + read, 1)
+    assert child.count("no peak") == child.count("Event().wait()") == 1
 
     done = _read_in_child(child, bench.mcp.roster)
 
