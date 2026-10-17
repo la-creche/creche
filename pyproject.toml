@@ -16,13 +16,14 @@ dependencies = [
     "agent-door-trigger",
     "noticeboard",
     "handover",
+    "creche-env",
 ]
 
 [tool.uv]
 package = false
 
 [tool.uv.workspace]
-members = ["chaperone", "library", "family", "caregiver", "attendance", "door-owui", "door-tui", "door-trigger", "noticeboard", "handover"]
+members = ["chaperone", "library", "family", "caregiver", "attendance", "door-owui", "door-tui", "door-trigger", "noticeboard", "handover", "env"]
 
 [tool.uv.sources]
 chaperone = { workspace = true }
@@ -35,6 +36,7 @@ agent-door-tui = { workspace = true }
 agent-door-trigger = { workspace = true }
 noticeboard = { workspace = true }
 handover = { workspace = true }
+creche-env = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -63,6 +65,7 @@ testpaths = [
     "door-trigger/tests",
     "noticeboard/tests",
     "handover/tests",
+    "env/tests",
     "vectors/tests",
 ]
 addopts = "-q"
@@ -106,4 +109,5 @@ source = [
     "agent_door_trigger",
     "noticeboard",
     "handover",
+    "creche_env",
 ]

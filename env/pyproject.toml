@@ -1,0 +1,25 @@
+[project]
+name = "creche-env"
+version = "0.1.0"
+description = "creche-env: the one reader of default.env, example.env and a .env file."
+requires-python = ">=3.12"
+# The standard library only: a script calls the command before a component
+# tree exists, and no reader of a config file may pull a package of its own.
+dependencies = []
+
+[project.scripts]
+creche-env = "creche_env.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/creche_env"]
+
+[tool.uv]
+# uv rebuilds a local package only when pyproject.toml, setup.py or setup.cfg
+# changes, and every first-party package stays at one version. Without the
+# source in the key, a non-editable build installs the FIRST wheel uv ever
+# cached for this directory (handover/tests/test_handover_ced_uv_guard.py).
+cache-keys = [{ file = "pyproject.toml" }, { file = "src/**" }]
