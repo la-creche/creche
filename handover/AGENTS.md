@@ -506,7 +506,9 @@ that wants a refusal changes one field.
 - Contract 06 §8 says that the unpack of a component archive counts
   members and bytes. It names no bound for the bytes of a tar header or for
   the bytes after the end of the tar. The unpack refuses a tar stream that
-  holds more than the bytes of its members and `FRAME_BYTES`
+  holds more than the bytes of its members and `FRAME_BYTES`. The size of a
+  sparse member is not the count of its bytes in the stream. The unpack
+  thus refuses a sparse member as a member that is not a plain regular file
   (`executor/unpack.py`).
 - Contract 06 §8.2 names the code `editable` for a venv tree. A binary tree
   that is not self-contained gets the same code

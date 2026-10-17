@@ -25,14 +25,16 @@ that the archive is small.
 The archive of a binary component has more rules. The caller names the
 component:
 
-1. Each member is a regular file named `<component>/bin/<program>`, and
-   `<program>` is one plain path segment.
+1. Each member is a plain regular file named `<component>/bin/<program>`,
+   and `<program>` is one plain path segment. A sparse member is not a
+   plain regular file.
 2. A directory member is refused, and so is each other name.
 3. A second member with a name that the unpack already took is refused.
 4. The archive is a gzip of a tar, and nothing else. The module reads the
    gzip stream to its end, so the check of its CRC and of its length runs
    for each archive. A gzip stream that ends early, that does not
-   decompress or that fails that check is not a readable archive.
+   decompress or that fails that check is not a readable archive. A member
+   header that `tarfile` cannot convert is not a readable archive either.
 5. The limits are `catalog.ARCHIVE_MAX_MEMBERS` and
    `catalog.ARCHIVE_MAX_UNPACKED_BYTES`. The limits of an MCP asset are
    the two constants of this module.
@@ -101,9 +103,17 @@ ASSET_MODE: Final = "r:*"
 #: The errors that make an archive not readable. For an MCP asset it is the
 #: error of `tarfile`. The gzip stream of a component archive can also end
 #: early (`EOFError`), hold a block that does not decompress (`zlib.error`),
-#: or fail the check of its CRC or of its length (`gzip.BadGzipFile`).
+#: or fail the check of its CRC or of its length (`gzip.BadGzipFile`). A
+#: member header of a component archive with a value that `tarfile` cannot
+#: convert, for example a sparse size that is no number, gives `ValueError`.
 ASSET_UNREADABLE: Final = (tarfile.TarError,)
-COMPONENT_UNREADABLE: Final = (tarfile.TarError, EOFError, zlib.error, gzip.BadGzipFile)
+COMPONENT_UNREADABLE: Final = (
+    tarfile.TarError,
+    EOFError,
+    zlib.error,
+    gzip.BadGzipFile,
+    ValueError,
+)
 
 #: The bytes of a component archive around the bytes of its members, at
 #: most. Each member has a header, can have the header and the block of a
@@ -116,7 +126,9 @@ COMPONENT_UNREADABLE: Final = (tarfile.TarError, EOFError, zlib.error, gzip.BadG
 #: and bytes. It names no bound for the bytes of a tar header or for the
 #: bytes after the end of the tar. The reading taken: the tar stream holds
 #: the bytes of its members and this frame at most, and each byte past
-#: that refuses the archive. A change costs this constant.
+#: that refuses the archive. The size of a sparse member is not the count
+#: of its bytes in the stream, so the unpack refuses a sparse member as a
+#: member that is not a plain regular file. A change costs this constant.
 FRAME_BYTES: Final = (
     (ARCHIVE_MAX_MEMBERS + 1) * 4 * tarfile.BLOCKSIZE
     + 2 * tarfile.BLOCKSIZE
@@ -356,6 +368,9 @@ def _place(member: tarfile.TarInfo, rules: _Rules, taken: set[str]) -> str:
 
     if member.isdir():
         raise UnpackRefused(UnpackFault.DIRECTORY)
+
+    if member.issparse():
+        raise UnpackRefused(UnpackFault.NOT_A_PROGRAM)
 
     parts = member.name.split("/")
     if len(parts) != MEMBER_PARTS:

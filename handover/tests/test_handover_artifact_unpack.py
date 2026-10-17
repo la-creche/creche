@@ -256,6 +256,62 @@ def test_a_dot_dot_segment_is_refused(tmp_path: Path, name: str) -> None:
     _both_refuse(tmp_path, lambda tar: _member(tar, name), UnpackFault.LEAVES_TREE)
 
 
+# -- a sparse member -------------------------------------------------------------
+
+
+def _with_pax(headers: dict[str, str]) -> Make:
+    """One program whose member has the extended header `headers`."""
+
+    def make(tar: tarfile.TarFile) -> None:
+        info = tarfile.TarInfo(f"{COMPONENT}/bin/{COMPONENT}")
+        info.size = len(PROGRAM)
+        info.mode = 0o755
+        info.pax_headers = headers
+        tar.addfile(info, io.BytesIO(PROGRAM))
+
+    return make
+
+
+def _old_sparse(tar: tarfile.TarFile) -> None:
+    """One program in a member of the old sparse type of GNU tar."""
+    info = tarfile.TarInfo(f"{COMPONENT}/bin/{COMPONENT}")
+    info.type = tarfile.GNUTYPE_SPARSE
+    info.size = len(PROGRAM)
+    info.mode = 0o755
+    tar.addfile(info, io.BytesIO(PROGRAM))
+
+
+@pytest.mark.parametrize(
+    "make",
+    [
+        _with_pax({"GNU.sparse.map": "0,1", "GNU.sparse.size": "1048576"}),
+        _old_sparse,
+    ],
+    ids=["extended-header", "old-type"],
+)
+def test_a_sparse_member_is_refused(tmp_path: Path, make: Make) -> None:
+    """A sparse member unpacks to more bytes than the archive holds for it.
+    It is not a plain regular file."""
+    _both_refuse(tmp_path, make, UnpackFault.NOT_A_PROGRAM)
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"GNU.sparse.size": "x"},
+        {"GNU.sparse.realsize": "x"},
+        {"GNU.sparse.major": "1", "GNU.sparse.minor": "0"},
+    ],
+    ids=["size", "realsize", "map-in-the-data"],
+)
+def test_a_sparse_header_that_is_no_number_is_refused(
+    tmp_path: Path, headers: dict[str, str]
+) -> None:
+    """The third case reads its map from the data of the member, and the
+    data of the member is no number."""
+    _both_refuse(tmp_path, _with_pax(headers), UnpackFault.NOT_READABLE)
+
+
 # -- the two limits --------------------------------------------------------------
 
 
