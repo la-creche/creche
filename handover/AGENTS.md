@@ -501,6 +501,11 @@ that wants a refusal changes one field.
   Root also refuses a file with a bit for group or other, a file with a
   second name and an empty file. It refuses a directory of the store path
   that is a link or that the operator does not own (`executor/artifact.py`).
+- Contract 06 §8 says that the unpack of a component archive counts
+  members and bytes. It names no bound for the bytes of a tar header or for
+  the bytes after the end of the tar. The unpack refuses a tar stream that
+  holds more than the bytes of its members and `FRAME_BYTES`
+  (`executor/unpack.py`).
 - Contract 06 §8.2 names the code `editable` for a venv tree. A binary tree
   that is not self-contained gets the same code
   (`executor/selfcontained.py`).

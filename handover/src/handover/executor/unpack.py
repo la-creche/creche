@@ -111,6 +111,12 @@ COMPONENT_UNREADABLE: Final = (tarfile.TarError, EOFError, zlib.error, gzip.BadG
 #: header of one member past the limit of members. The end of the archive
 #: is two blocks and the pad of its last record, and `tarfile` reads one
 #: record ahead.
+#:
+#: CONTRACT-QUESTION: contract 06 §8 says that the unpack counts members
+#: and bytes. It names no bound for the bytes of a tar header or for the
+#: bytes after the end of the tar. The reading taken: the tar stream holds
+#: the bytes of its members and this frame at most, and each byte past
+#: that refuses the archive. A change costs this constant.
 FRAME_BYTES: Final = (
     (ARCHIVE_MAX_MEMBERS + 1) * 4 * tarfile.BLOCKSIZE
     + 2 * tarfile.BLOCKSIZE
