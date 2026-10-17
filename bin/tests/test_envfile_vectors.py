@@ -268,6 +268,19 @@ def test_each_function_runs_the_command_of_its_own_tree(checkout: Path) -> None:
     assert (checked.returncode, checked.stdout) == (0, "check\n")
 
 
+def test_a_cd_after_a_relative_source_changes_no_tree(checkout: Path) -> None:
+    run = subprocess.run(
+        ["bash", "-c", '. bin/lib/envfile.sh; cd /; creche_env_check "$@"', "bash", "--env", "x"],
+        cwd=checkout,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+
+    assert (run.returncode, run.stdout, run.stderr) == (0, "check\n--env\nx\n", "")
+
+
 def test_a_fault_keeps_status_78(checkout: Path) -> None:
     library = checkout / "bin" / "lib" / "envfile.sh"
     env = {**os.environ, "STUB_STATUS": "78"}

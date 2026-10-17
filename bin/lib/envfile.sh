@@ -49,10 +49,12 @@
 #
 # creche_env_get KEY [OPTION ...] and creche_env_check [OPTION ...]
 #   Run `creche-env get` or `creche-env check` of <checkout>/.venv, where
-#   <checkout> is the tree that holds this file (env/AGENTS.md). OPTION goes
-#   to the command, for example `--env FILE`. No bash code parses the files.
-#   A fault prints one line on stderr and returns 78, and so does a tree
-#   with no command.
+#   <checkout> is the tree that holds this file (env/AGENTS.md). The source
+#   of this file fixes <checkout>, so a later `cd` of the caller changes
+#   nothing. OPTION goes to the command, for example `--env FILE`. No bash
+#   code parses the files. Each function gives the status of the command:
+#   78 for a refused file. A tree with no command also gives 78, with one
+#   line on stderr.
 #
 # Never echo a secret: callers pass VALUE in, this file never logs it. The
 # caller is responsible for printing key NAMES only, e.g.:
@@ -116,15 +118,19 @@ envfile_hook_value() {
 # The status of a fault of the env files, and of an absent command.
 CRECHE_ENV_FAULT=78
 
+# The tree that holds this file, as an absolute path. Empty when the source
+# cannot find it: each call then gives the fault status.
+_CRECHE_ENV_CHECKOUT="$(CDPATH="" cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)" \
+  || _CRECHE_ENV_CHECKOUT=""
+
 _creche_env_program() {
-  local checkout
-  checkout="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)" || return "$CRECHE_ENV_FAULT"
-  if [[ ! -x "$checkout/.venv/bin/creche-env" ]]; then
-    printf 'creche-env: %s/.venv/bin/creche-env is no program\n' "$checkout" >&2
+  local program="$_CRECHE_ENV_CHECKOUT/.venv/bin/creche-env"
+  if [[ -z "$_CRECHE_ENV_CHECKOUT" || ! -x "$program" ]]; then
+    printf 'creche-env: %s is no program\n' "$program" >&2
     return "$CRECHE_ENV_FAULT"
   fi
 
-  printf '%s/.venv/bin/creche-env' "$checkout"
+  printf '%s' "$program"
 }
 
 creche_env_get() {
