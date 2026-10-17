@@ -67,14 +67,16 @@ _KEY: Final = re.compile(_KEY_TEXT)
 #: `'` and `\`.
 _VALUE: Final = re.compile(r"[\x20\x21\x24-\x26\x28-\x5b\x5d-\x7e]*")
 
-#: A comment: `#`, then text with no backslash and no ASCII control
-#: character. Text outside ASCII is free.
+#: A comment: `#`, then text with no backslash and no control character,
+#: which is U+0000 to U+001F and U+007F to U+009F. Each other character is
+#: free.
 #:
 #: CONTRACT-QUESTION: no contract text limits the text of a comment.
 #: Reading taken: the strict one. An older systemd reads a comment that ends
-#: with `\` as one comment with the next line, and a NUL ends its read of the
-#: file. A change costs this pattern and its vectors.
-_COMMENT: Final = re.compile(r"#[^\x00-\x1f\x7f\\]*")
+#: with `\` as one comment with the next line, and systemd does not read a
+#: NUL in a file the way that this reader would. A change costs this pattern
+#: and its vectors.
+_COMMENT: Final = re.compile(rf"{re.escape(COMMENT)}[^\x00-\x1f\x7f-\x9f\\]*")
 
 #: The two forms of a reference, and each form alone.
 _PLACE: Final = re.compile(rf"\$\{{(?:home:)?{_KEY_TEXT}\}}")

@@ -42,8 +42,9 @@ holds that the wheel has the three files.
    bytes is an LF. A file holds no CR.
 3. Each line has one of three kinds: an empty line, a comment or an
    assignment. The `#` of a comment is the first character of its line.
-4. After its `#`, a comment holds no backslash and no ASCII control
-   character. A character outside ASCII is permitted.
+4. After its `#`, a comment holds no backslash and no control character.
+   The control characters are U+0000 to U+001F and U+007F to U+009F. Each
+   other character is permitted.
 5. An assignment has the key, then `=`, then the value. No space is next to
    the `=`. The pattern of a key is `[A-Z][A-Z0-9_]{0,63}`.
 6. Each character of a value is a printable ASCII character or the space.
@@ -84,7 +85,7 @@ for each fault and exits with status 78.
 | `byte-order-mark` | A file starts with a byte order mark. |
 | `carriage-return` | A line holds a CR. |
 | `no-final-newline` | The last byte of a file that has bytes is not an LF. |
-| `not-key-value` | A line has no `=`. A line of `example.env` is not a comment. A comment holds a backslash or an ASCII control character. |
+| `not-key-value` | A line has no `=`. A line of `example.env` is not a comment. A comment holds a backslash or a control character. |
 | `bad-key` | A key is not in the grammar. |
 | `bad-value` | A value is not in the grammar. A home is not a value of a `.env`. |
 | `empty-value` | A value is empty where the file needs a value. |
@@ -157,4 +158,5 @@ command prints `<file>: cannot be read: <reason>` and exits with status 78.
   5. A home of the password database must be a value of a `.env`.
   6. A file that the process cannot read has no name in the fault set.
   7. `changed-trusted` compares the values after each layer.
-  8. A comment holds no backslash and no ASCII control character.
+  8. A comment holds no backslash and no control character, U+0000 to
+     U+001F and U+007F to U+009F.
