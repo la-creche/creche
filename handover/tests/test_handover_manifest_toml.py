@@ -74,6 +74,8 @@ from handover_fixtures import (
     write_manifest,
 )
 
+from handover import discovery
+
 #: Each set of arguments that the suite gives `manifest_text`. A run of the
 #: suite that recorded each call gave this list. An argument with an empty
 #: text is the default, so it is not in a set.
@@ -463,6 +465,26 @@ def test_a_large_toml_file_gets_the_text_of_the_reader(tmp_path: Path) -> None:
     assert caught.value.detail == TOO_LARGE.format(limit=FileKind.MANIFEST.byte_limit)
 
 
+def test_the_read_of_a_toml_file_stops_one_byte_past_the_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sizes: list[int] = []
+    decode = discovery.toml_text_of
+
+    def recorded(data: bytes, subject: str) -> str:
+        sizes.append(len(data))
+        return decode(data, subject)
+
+    monkeypatch.setattr(discovery, "toml_text_of", recorded)
+    padding = "#" * (FileKind.MANIFEST.byte_limit * 4) + "\n"
+    write_manifest(tmp_path, "chaperone", padding + manifest_toml("chaperone"), Markup.TOML)
+
+    with pytest.raises(Refusal):
+        discover([tmp_path])
+
+    assert sizes == [FileKind.MANIFEST.byte_limit + 1]
+
+
 def test_the_reader_gets_the_bytes_of_the_file(tmp_path: Path) -> None:
     """A byte that is no UTF-8 and a CR with no LF each reach the reader as
     they are in the file."""
@@ -538,6 +560,15 @@ def test_a_toml_stamp_that_is_a_link_reads_as_absent(tmp_path: Path) -> None:
     real = tmp_path / "elsewhere"
     real.write_text("the toml text\n", encoding="utf-8")
     (tmp_path / MANIFEST_STAMP).symlink_to(real)
+
+    assert installed_manifest(tmp_path) is None
+
+
+def test_a_toml_stamp_that_is_a_link_to_no_file_reads_as_absent(tmp_path: Path) -> None:
+    """A link to no file is an entry of the TOML name too. The YAML stamp
+    beside it is not read."""
+    write_manifest_stamp(tmp_path, manifest_text("chaperone"), Markup.YAML)
+    (tmp_path / MANIFEST_STAMP).symlink_to(tmp_path / "nothing")
 
     assert installed_manifest(tmp_path) is None
 
