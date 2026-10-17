@@ -441,8 +441,8 @@ def _copied(target: Path, parts: _Pair, hex_digest: str) -> Copied:
 
 
 def _discard(target: Path, parts: _Pair) -> None:
-    """Remove each file that a failed copy wrote. The directory stays, as
-    the record of the first call."""
+    """Remove each file that a failed copy wrote. The directory stays, so
+    a second call with no `earlier` copies nothing (`NO_COPY_DIR`)."""
     for part in parts:
         try:
             os.unlink(target / part.name)
