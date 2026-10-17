@@ -33,11 +33,11 @@ Six rules hold its shape, each with the reason it is a rule.
    behind it is filed again on the next run, and each one is a push. In
    this order a marker that cannot be written costs no request at all.
 
-This package reads one ledger entry and writes one marker. A text of the
-two that is not strict JSON (`strictjson.py`) also writes one row in the
-notice file of the follower (`notices.py`). It starts no child and opens no
-socket: the fetch is `corpus/`'s and the request is `requester/`'s, and
-`cli.py` calls all three. `chaperone/` never imports it.
+This package reads one ledger entry and writes one marker. When the ledger
+entry or the marker is not strict JSON (`strictjson.py`), the follower also
+writes one row in its notice file (`notices.py`). It starts no child and
+opens no socket: the fetch is `corpus/`'s and the request is `requester/`'s,
+and `cli.py` calls all three. `chaperone/` never imports it.
 
 Stdlib only, like the requester: a release re-syncs this venv under a run.
 """
@@ -58,6 +58,7 @@ from ..errors import RefusalCode
 from ..executor.approval import Verdict, not_granted
 from ..executor.layout import STATE_ROOT
 from ..executor.spool import DONE_DIR
+from ..executor.spool import SURFACE as ENTRY_SURFACE
 from ..state import ReleaseState
 
 #: §2.3's `requested_by`, and a row of the phone summary (§2.5): the
@@ -80,14 +81,15 @@ MARKER_FILE_MODE: Final = 0o600
 MARKER_DIR_MODE: Final = 0o700
 
 #: The notice file of the follower, under the state root of the operator.
-#: A timer starts the follower, so no person reads its log line. The host
-#: script that sends the notice push reads each file of this directory.
+#: A timer starts the follower, and the operator does not watch its log.
+#: The host script that sends the notice push reads each file of this
+#: directory.
 NOTICE_SERVICE: Final = "follow"
 NOTICES_FILE: Final = f"{STATE_ROOT}/notices/{NOTICE_SERVICE}.json"
 
-#: The surface words of a notice: the marker, and an entry of the ledger.
+#: The surface word of a notice for the marker. A notice for an entry of
+#: the ledger takes the word of the spool (`ENTRY_SURFACE`).
 MARKER_SURFACE: Final = "release.marker"
-ENTRY_SURFACE: Final = "release.spool_entry"
 
 #: A marker holds at most eight names and one id. A larger file is not one.
 MAX_MARKER_BYTES: Final = 4096

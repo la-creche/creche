@@ -63,8 +63,9 @@ from .token import TOKEN_TTL_S, Tokens
 
 LOG_PREFIX: Final = "handover-intake"
 
-#: The service word of the notice of a text that is not strict JSON.
-NOTICE_SERVICE: Final = "handover-intake"
+#: The service word of the notice of a text that is not strict JSON: the
+#: name of the program, as each log line gives it.
+NOTICE_SERVICE: Final = LOG_PREFIX
 
 #: How often root looks at the gap directory. A gap is opened by a
 #: reconciler and answered by a human, so seconds of lag cost nothing.
@@ -434,9 +435,9 @@ def main() -> int:
 
         return 1
 
-    # Root creates no file in a directory that the operator account can
-    # write, so the notice of a gap file that is not strict JSON is its log
-    # line only.
+    # The intake runs as root, and root writes no file in a directory that
+    # the operator owns. The notice of a gap file that is not strict JSON is
+    # thus its log line only.
     notices.configure(NOTICE_SERVICE, None)
     print(f"{LOG_PREFIX}: watching {DEFAULT_GAPS_DIR}", flush=True)
     _loop(wiring, time.sleep)
