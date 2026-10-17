@@ -328,12 +328,13 @@ fn read_one<T>(
     };
     if has_toml && has_yaml {
         // CONTRACT-QUESTION: contract 01 §1 and contract 01b §1 each name one
-        // file, `family.toml` and `server.toml`. They do not say what a reader
-        // does with a directory that also holds the YAML name. The loader
-        // takes the strict reading, as the Python loader does: one error, and
-        // it parses neither file. The report names the TOML name. The other
-        // reading names the YAML name. A change costs the line that selects
-        // `markup` and one vector of each kind.
+        // file, `family.toml` and `server.toml`. Row 5 of `spec.md` §12.3
+        // refuses a directory that holds the TOML name and the YAML name. It
+        // does not say which name the report shows. The loader gives one
+        // error and parses neither file, as the Python loader does, and the
+        // report shows the TOML name. The other reading shows the YAML name.
+        // A change costs the line that selects `markup` and one vector of
+        // each kind.
         return refused(error(format!(
             "two {} files: {} and {}; keep one",
             file.word, file.toml, file.yaml

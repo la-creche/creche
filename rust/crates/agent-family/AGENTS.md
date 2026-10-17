@@ -198,12 +198,12 @@ Rules for the program:
      more. The Python validator reads more levels. A debug build reads a
      text of 128 levels on a stack of 1 MiB. The vectors are
      `nest-128-levels` and `nest-129-levels`.
-  7. `registry.rs`, `read_one`, contract 01 §1 and contract 01b §1. Each
-     contract names one file. It does not say what a loader does with a
-     directory that holds the TOML name and the YAML name. The loader gives
-     one error and parses neither file, as the Python loader does. The
-     vectors are `toml-two-names` of `family_file.toml` and of
-     `server_file.toml`.
+  7. `registry.rs`, `read_one`, contract 01 §1 and contract 01b §1. Row 5
+     of `spec.md` §12.3 refuses a directory that holds the TOML name and
+     the YAML name. It does not say which name the report shows. The loader
+     gives one error and parses neither file, as the Python loader does. The
+     report shows the TOML name. The vectors are `toml-two-names` of
+     `family_file.toml` and of `server_file.toml`.
   8. `creche-contracts/src/ids.rs`, `ToolName`, `EnvName` and
      `PackageVersion`, contract 01 §3.4 and contract 01b §3.1, §4.1 and §5.
      `rust/AGENTS.md` lists the three questions. The Python validator and
