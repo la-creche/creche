@@ -42,6 +42,7 @@ from vectors.surfaces import (
     channel,
     classify,
     config,
+    envfile,
     family_cli,
     family_file,
     grants,
@@ -113,6 +114,7 @@ GROUPS: Final[dict[str, Callable[[], tuple[Surface, ...]]]] = {
     "noticeboard": noticeboard.surfaces,
     "library": library.surfaces,
     "tomlfile": tomlfile.surfaces,
+    "envfile": envfile.surfaces,
 }
 
 

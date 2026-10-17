@@ -1,0 +1,30 @@
+{
+ "context": {},
+ "contract": "env/AGENTS.md, the env files",
+ "entry": "creche_env.envfile.raw",
+ "format": 1,
+ "notes": ["The input is the bytes of one file, named plain.env. The entry point reads it in the grammar-only mode: the rules of a .env, no catalog and no reference.","An accepted vector holds each key of the file and its value in value.","A refused vector holds a list of faults in refusal, in the order of the reader. A fault is an object with four keys: fault, file, line and key. line 0 means the whole file, and an empty key means no key. A fault holds no value."],
+ "surface": "envfile.raw",
+ "vectors": [
+  {"id":"empty","input":{"text":""},"result":"accepted","value":{}},
+  {"id":"line-end-only","input":{"text":"\n"},"result":"accepted","value":{}},
+  {"id":"keys-and-comments","input":{"text":"# hooks\nAPPROVAL_URL=http://127.0.0.1:1881/a\n\nTOKEN=a-b_c=\n"},"result":"accepted","value":{"APPROVAL_URL":"http://127.0.0.1:1881/a","TOKEN":"a-b_c="}},
+  {"id":"each-printable-sign","input":{"text":"SIGNS=a!%&()*+,-./:;<=>?@[]^_`{|}~z\n"},"result":"accepted","value":{"SIGNS":"a!%&()*+,-./:;<=>?@[]^_`{|}~z"}},
+  {"id":"braces-with-no-dollar","input":{"text":"A={x}\n"},"result":"accepted","value":{"A":"{x}"}},
+  {"id":"largest-file","input":{"repeat":[["A=1\n#",1],["x",65530],["\n",1]]},"result":"accepted","value":{"A":"1"}},
+  {"id":"too-large","input":{"repeat":[["A=1\n#",1],["x",65531],["\n",1]]},"refusal":[{"fault":"too-large","file":"plain.env","key":"","line":0}],"result":"refused"},
+  {"id":"not-utf8","input":{"base64":"QT0xCiMg/wo="},"refusal":[{"fault":"not-utf8","file":"plain.env","key":"","line":0}],"result":"refused"},
+  {"id":"byte-order-mark","input":{"text":"\ufeffA=1\n"},"refusal":[{"fault":"byte-order-mark","file":"plain.env","key":"","line":0}],"result":"refused"},
+  {"id":"carriage-return","input":{"text":"A=1\r\n"},"refusal":[{"fault":"carriage-return","file":"plain.env","key":"","line":1}],"result":"refused"},
+  {"id":"no-final-newline","input":{"text":"A=1"},"refusal":[{"fault":"no-final-newline","file":"plain.env","key":"","line":0}],"result":"refused"},
+  {"id":"no-equals-sign","input":{"text":"A=1\nB\n"},"refusal":[{"fault":"not-key-value","file":"plain.env","key":"","line":2}],"result":"refused"},
+  {"id":"key-in-lower-case","input":{"text":"base=a/b@sha256:0\n"},"refusal":[{"fault":"bad-key","file":"plain.env","key":"","line":1}],"result":"refused"},
+  {"id":"export","input":{"text":"export A=1\n"},"refusal":[{"fault":"bad-key","file":"plain.env","key":"","line":1}],"result":"refused"},
+  {"id":"leading-space","input":{"text":" A=1\n"},"refusal":[{"fault":"bad-key","file":"plain.env","key":"","line":1}],"result":"refused"},
+  {"id":"double-quotes","input":{"text":"A=\"1\"\n"},"refusal":[{"fault":"bad-value","file":"plain.env","key":"A","line":1}],"result":"refused"},
+  {"id":"space-at-the-end","input":{"text":"A=1 \n"},"refusal":[{"fault":"bad-value","file":"plain.env","key":"A","line":1}],"result":"refused"},
+  {"id":"empty-value","input":{"text":"A=\n"},"refusal":[{"fault":"empty-value","file":"plain.env","key":"A","line":1}],"result":"refused"},
+  {"id":"duplicate-key","input":{"text":"A=1\nA=2\n"},"refusal":[{"fault":"duplicate-key","file":"plain.env","key":"A","line":2}],"result":"refused"},
+  {"id":"reference","input":{"text":"A=${B}\nB=1\n"},"refusal":[{"fault":"reference-in-env","file":"plain.env","key":"A","line":1}],"result":"refused"}
+ ]
+}
