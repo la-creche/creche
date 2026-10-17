@@ -156,7 +156,8 @@ pub struct RawSharedSecret {
     pub server: String,
 }
 
-/// One `server.yaml`, as the file wrote it, with each default.
+/// One server file, `server.toml` or `server.yaml`, as the file wrote it,
+/// with each default.
 ///
 /// The shape is the shape of the Python model `McpServerFile`. No value rule
 /// holds for a value of this type.
@@ -706,7 +707,8 @@ impl SharedSecret {
 }
 
 sealed! {
-    /// One `server.yaml` that obeys each rule that one file can show.
+    /// One server file, `server.toml` or `server.yaml`, that obeys each rule
+    /// that one file can show.
     ///
     /// One rule is not in this type: the name is the name of the directory.
     /// `agent-family` checks it.

@@ -101,8 +101,8 @@ Each case of `surfaces/family_toml_cases.py` that has the id of a case of
 A case that needs a form of YAML has no twin. The module docstring lists the
 forms. The same rule holds for `surfaces/server_toml_cases.py` and
 `surfaces/server_cases.py`. A twin of a server case can get another result
-than its case, because the TOML path of a server file applies the grammar of
-root.
+than its case. The TOML path of a server file applies the grammar of root,
+and the YAML path does not.
 
 ## Known gaps
 

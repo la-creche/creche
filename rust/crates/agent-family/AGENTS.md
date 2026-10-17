@@ -74,8 +74,8 @@ names the TOML name.
 
 Root reads each server file again at a release. Contract 01b §1 makes root
 accept each TOML file that the validator accepts. `Server::from_raw` of
-`creche-contracts` thus gets the markup of the file, and a TOML server file
-gets each rule of root that the YAML path does not hold:
+`creche-contracts` thus gets the markup of the file. A TOML server file gets
+each rule of root that the YAML path does not hold:
 
 1. The grammar of `install.package`, `install.repo`, `install.asset`,
    `install.python`, `run.entrypoint` and `run.state_dir_env`.
@@ -85,9 +85,13 @@ gets each rule of root that the YAML path does not hold:
 4. A count of each character of an identity and of a description. A text
    of white space only gets a message of its own.
 5. One tool at least in the list of a fence.
-6. A cap on the count of the tools, of the words of `run.args`, of the
-   variables of `run.env`, of the fences of each kind, of the values of one
-   fence and of the shared secrets.
+6. A cap on each of these counts:
+   - The tools.
+   - The words of `run.args`.
+   - The variables of `run.env`.
+   - The fences of each kind.
+   - The values of one fence.
+   - The shared secrets.
 
 A YAML server file keeps the rules of the Python YAML path. The vectors of
 `server_file.toml` hold each rule at its limit and one past it.
