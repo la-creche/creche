@@ -16,6 +16,8 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
+from agent_family import Markup
+
 NOW = datetime(2026, 9, 19, 12, 0, 0, tzinfo=UTC)
 
 #: The comments are load-bearing. The real family files explain each grant
@@ -44,6 +46,42 @@ triggers:
   - { cron: "0 6 * * *" }
 max_running_turns: 1
 """
+
+#: `CHAT_FAMILY_YAML` as a TOML family file, in the layout of a converted
+#: registry file.
+CHAT_FAMILY_TOML = f"""\
+name = "chat"
+kind = "attended"
+description = "the house assistant"
+model.router = "agent-router"
+model.budget_usd_per_day = 15
+files = [
+    {CHAT_COMMENT}
+    {{ path = "/srv/agents/vault", mode = "ro" }},
+]
+egress = []
+shell = false
+skills = []
+"""
+
+#: `SCRUM_FAMILY_YAML` as a TOML family file.
+SCRUM_FAMILY_TOML = """\
+name = "scrum-lead"
+kind = "autonomous"
+description = "the morning triage agent"
+model.router = "agent-router"
+model.budget_usd_per_day = 5
+triggers = [
+    { cron = "0 6 * * *" },
+]
+max_running_turns = 1
+"""
+
+#: The two family files of a fixture registry, and their names, for each markup.
+REGISTRY_FILES = {
+    Markup.YAML: ("family.yaml", CHAT_FAMILY_YAML, SCRUM_FAMILY_YAML),
+    Markup.TOML: ("family.toml", CHAT_FAMILY_TOML, SCRUM_FAMILY_TOML),
+}
 
 
 def stamp(offset_s: float = 0.0) -> str:
@@ -371,16 +409,16 @@ def write_audit_day(audit_dir: Path, day: str, rows: list[dict[str, Any]]) -> Pa
     return path
 
 
-def make_registry(base: Path) -> Path:
-    """A git registry with two families, as `caregiver` reads it."""
+def make_registry(base: Path, markup: Markup = Markup.YAML) -> Path:
+    """A git registry with two families, as `caregiver` reads it. Each
+    family file has the markup that `markup` names."""
+    file, chat, scrum = REGISTRY_FILES[markup]
     root = base / "registry"
     (root / "families" / "chat").mkdir(parents=True)
-    (root / "families" / "chat" / "family.yaml").write_text(CHAT_FAMILY_YAML, encoding="utf-8")
+    (root / "families" / "chat" / file).write_text(chat, encoding="utf-8")
     (root / "families" / "chat" / "instructions.md").write_text("Be useful.\n", encoding="utf-8")
     (root / "families" / "scrum-lead").mkdir(parents=True)
-    (root / "families" / "scrum-lead" / "family.yaml").write_text(
-        SCRUM_FAMILY_YAML, encoding="utf-8"
-    )
+    (root / "families" / "scrum-lead" / file).write_text(scrum, encoding="utf-8")
     (root / "mcp").mkdir()
     (root / "skills").mkdir()
 
