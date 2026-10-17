@@ -14,11 +14,12 @@ use creche_contracts::tomlfile::{self, FileKind};
 use creche_util::{hex, pytext, sha256};
 
 use crate::crossref::{HostFacts, Index, check_family, check_server};
-use crate::parse::{DOCUMENT, Markup, parse_family, parse_family_toml, parse_server};
+use crate::parse::{
+    DOCUMENT, Markup, parse_family, parse_family_toml, parse_server, parse_server_toml,
+};
 use crate::report::Report;
 use crate::zones::ZoneFacts;
 
-const SERVER_FILE: &str = "server.yaml";
 const SKILL_FILE: &str = "SKILL.md";
 const INSTRUCTIONS_FILE: &str = "instructions.md";
 const FAMILIES_DIR: &str = "families";
@@ -183,14 +184,14 @@ fn read(path: &Path) -> Result<String, String> {
     Ok(pytext::universal_newlines(&text).into_owned())
 }
 
-/// The bytes of a TOML family file. The read stops one byte past the limit
-/// of the file kind, so the TOML reader refuses a larger file with its own
-/// text. The error is the reason that the loader reports.
-fn read_toml(path: &Path) -> Result<Vec<u8>, String> {
+/// The bytes of a TOML file of `kind`. The read stops one byte past the
+/// limit of the file kind, so the TOML reader refuses a larger file with its
+/// own text. The error is the reason that the loader reports.
+fn read_toml(path: &Path, kind: FileKind) -> Result<Vec<u8>, String> {
     let name = name_of(path);
     let file = fs::File::open(path).map_err(|error| cannot_read(&name, &error))?;
 
-    tomlfile::take_bytes(file, FileKind::Family).map_err(|error| cannot_read(&name, &error))
+    tomlfile::take_bytes(file, kind).map_err(|error| cannot_read(&name, &error))
 }
 
 /// Each directory under `base`, in the order of the names.
@@ -264,27 +265,102 @@ pub fn revision_of(root: &Path) -> String {
     format!("{REVISION_PREFIX}{short}")
 }
 
-/// What one directory under `families/` or `mcp/` holds.
-enum Found {
-    /// The text of the file.
-    Text(String),
-    /// The issue for a directory with no file, or with a file that the
-    /// loader cannot read.
-    Issue(Issue),
+/// The file of one kind in a directory of the registry: the word of its
+/// messages, its two names and its kind for the TOML reader.
+struct FileName {
+    word: &'static str,
+    toml: &'static str,
+    yaml: &'static str,
+    kind: FileKind,
 }
 
-fn find(directory: &Path, file: &str) -> Found {
-    let path = directory.join(file);
-    if !path.is_file() {
-        return Found::Issue(warning(
+impl FileName {
+    /// The name of the file in `markup`.
+    const fn name(&self, markup: Markup) -> &'static str {
+        match markup {
+            Markup::Toml => self.toml,
+            Markup::Yaml => self.yaml,
+        }
+    }
+}
+
+const FAMILY_FILE: FileName = FileName {
+    word: "family",
+    toml: "family.toml",
+    yaml: "family.yaml",
+    kind: FileKind::Family,
+};
+
+const SERVER_FILE: FileName = FileName {
+    word: "server",
+    toml: "server.toml",
+    yaml: "server.yaml",
+    kind: FileKind::Server,
+};
+
+/// The parse of a text of one markup: the raw file, or each issue.
+type Parse<T, Text> = fn(&Text) -> (Option<T>, Vec<Issue>);
+
+/// What the loader reads in one directory: the markup of the file that the
+/// report names, the raw file, and the issues of the read and of the parse.
+struct ReadOne<T> {
+    markup: Markup,
+    raw: Option<T>,
+    issues: Vec<Issue>,
+}
+
+/// The one file of `file` in `directory`, read and parsed. The loader reads
+/// the TOML name first and the YAML name second. The report names the TOML
+/// name when that file is there, else the YAML name.
+fn read_one<T>(
+    directory: &Path,
+    file: &FileName,
+    parse_toml: Parse<T, [u8]>,
+    parse_yaml: Parse<T, str>,
+) -> ReadOne<T> {
+    let has_toml = directory.join(file.toml).is_file();
+    let has_yaml = directory.join(file.yaml).is_file();
+    let markup = if has_toml { Markup::Toml } else { Markup::Yaml };
+    let refused = |issue: Issue| ReadOne {
+        markup,
+        raw: None,
+        issues: vec![issue],
+    };
+    if has_toml && has_yaml {
+        // CONTRACT-QUESTION: contract 01 §1 and contract 01b §1 each name one
+        // file, `family.toml` and `server.toml`. Row 5 of `spec.md` §12.3
+        // refuses a directory that holds the TOML name and the YAML name. It
+        // does not say which name the report shows. The loader gives one
+        // error and parses neither file, as the Python loader does, and the
+        // report shows the TOML name. The other reading shows the YAML name.
+        // A change costs the line that selects `markup` and one vector of
+        // each kind.
+        return refused(error(format!(
+            "two {} files: {} and {}; keep one",
+            file.word, file.toml, file.yaml
+        )));
+    }
+
+    if !has_toml && !has_yaml {
+        // Contract 01 §5.6 rule 3: a warning, and `caregiver` ignores the
+        // directory.
+        return refused(warning(
             DOCUMENT,
-            format!("no {file}; this directory is ignored"),
+            format!("no {}; this directory is ignored", file.yaml),
         ));
     }
 
-    match read(&path) {
-        Ok(text) => Found::Text(text),
-        Err(problem) => Found::Issue(error(problem)),
+    let path = directory.join(file.name(markup));
+    let read = match markup {
+        Markup::Toml => read_toml(&path, file.kind).map(|bytes| parse_toml(&bytes)),
+        Markup::Yaml => read(&path).map(|text| parse_yaml(&text)),
+    };
+    let (raw, issues) = read.unwrap_or_else(|problem| (None, vec![error(problem)]));
+
+    ReadOne {
+        markup,
+        raw,
+        issues,
     }
 }
 
@@ -302,21 +378,21 @@ fn read_servers(root: &Path) -> Servers {
     };
     for directory in subdirectories(&root.join(MCP_DIR)) {
         let name = name_of(&directory);
-        let file = format!("{MCP_DIR}/{name}/{SERVER_FILE}");
-        let issues = match find(&directory, SERVER_FILE) {
-            Found::Issue(issue) => vec![issue],
-            Found::Text(text) => match parse_server(&text) {
-                (Some(raw), _) => {
-                    servers.parsed.insert(name.clone(), raw.clone());
-                    let (server, issues) = check_server(raw, &name);
-                    if let Some(server) = server {
-                        servers.valid.insert(name.clone(), server);
-                    }
-
-                    issues
+        let parse_yaml = |text: &str| parse_server(text, Markup::Yaml);
+        let read = read_one(&directory, &SERVER_FILE, parse_server_toml, parse_yaml);
+        let file = format!("{MCP_DIR}/{name}/{}", SERVER_FILE.name(read.markup));
+        let issues = match read.raw {
+            Some(raw) => {
+                servers.parsed.insert(name.clone(), raw.clone());
+                // The rules of a server file get the markup of its text.
+                let (server, issues) = check_server(raw, &name, read.markup);
+                if let Some(server) = server {
+                    servers.valid.insert(name.clone(), server);
                 }
-                (None, issues) => issues,
-            },
+
+                issues
+            }
+            None => read.issues,
         };
         servers
             .reports
@@ -326,29 +402,9 @@ fn read_servers(root: &Path) -> Servers {
     servers
 }
 
-/// One family file, read and parsed. A file that the loader cannot read
-/// gives one error.
-fn read_family(path: &Path, markup: Markup) -> (Option<RawFamily>, Vec<Issue>) {
-    let read = match markup {
-        Markup::Toml => read_toml(path).map(|bytes| parse_family_toml(&bytes)),
-        Markup::Yaml => read(path).map(|text| parse_family(&text, Markup::Yaml)),
-    };
-
-    read.unwrap_or_else(|problem| (None, vec![error(problem)]))
-}
-
-/// The name of the family file in `markup`. The loader reads the TOML file
-/// first and the YAML file second, and a directory with both is an error.
-const fn family_file(markup: Markup) -> &'static str {
-    match markup {
-        Markup::Toml => "family.toml",
-        Markup::Yaml => "family.yaml",
-    }
-}
-
 /// The family file of the directory `name`, as its report names it.
 fn report_file(name: &str, markup: Markup) -> String {
-    format!("{FAMILIES_DIR}/{name}/{}", family_file(markup))
+    format!("{FAMILIES_DIR}/{name}/{}", FAMILY_FILE.name(markup))
 }
 
 /// What the directories under `families/` give the loader.
@@ -366,43 +422,14 @@ fn read_families(root: &Path) -> Families {
     };
     for directory in subdirectories(&root.join(FAMILIES_DIR)) {
         let name = name_of(&directory);
-        let has_toml = directory.join(family_file(Markup::Toml)).is_file();
-        let has_yaml = directory.join(family_file(Markup::Yaml)).is_file();
-        // The report names the TOML file when it is there, else the YAML
-        // file.
-        let markup = if has_toml { Markup::Toml } else { Markup::Yaml };
-        let issues = if has_toml && has_yaml {
-            // CONTRACT-QUESTION: contract 01 §1 names one file,
-            // `family.toml`. It does not say what a reader does with a
-            // directory that also holds `family.yaml`. The loader takes the
-            // strict reading, as the Python loader does: one error, and it
-            // parses neither file. The report names `family.toml`. The other
-            // reading names `family.yaml`. A change costs the line that
-            // selects `markup` and one vector.
-            vec![error(format!(
-                "two family files: {} and {}; keep one",
-                family_file(Markup::Toml),
-                family_file(Markup::Yaml)
-            ))]
-        } else if !has_toml && !has_yaml {
-            // Contract 01 §5.6 rule 3: a warning, and `caregiver` ignores
-            // the directory.
-            let file = family_file(Markup::Yaml);
-            vec![warning(
-                DOCUMENT,
-                format!("no {file}; this directory is ignored"),
-            )]
-        } else {
-            match read_family(&directory.join(family_file(markup)), markup) {
-                (Some(raw), _) => {
-                    families.parsed.insert(name, (markup, raw));
-                    continue;
-                }
-                (None, issues) => issues,
-            }
-        };
+        let parse_yaml = |text: &str| parse_family(text, Markup::Yaml);
+        let read = read_one(&directory, &FAMILY_FILE, parse_family_toml, parse_yaml);
+        if let Some(raw) = read.raw {
+            families.parsed.insert(name, (read.markup, raw));
+            continue;
+        }
 
-        let report = Report::new(&name, &report_file(&name, markup), issues);
+        let report = Report::new(&name, &report_file(&name, read.markup), read.issues);
         families.reports.insert(name, report);
     }
 
@@ -637,5 +664,52 @@ mod tests {
         );
         let parsed: Vec<&String> = loaded.parsed_families().keys().collect();
         assert_eq!(parsed, ["toml", "yaml"]);
+    }
+
+    #[test]
+    fn each_server_report_names_the_server_file_of_its_directory() {
+        let scratch = Scratch::new();
+        let toml = "identity = \"x\"\ninstall.source = \"agent-mcp\"\n\
+                    run.entrypoint = \"example-mcp\"\n";
+        let yaml =
+            "identity: x\ninstall: { source: agent-mcp }\nrun: { entrypoint: example-mcp }\n";
+        let files = [
+            ("both/server.toml", "name = \"both\"\n".to_owned()),
+            ("both/server.yaml", "name: both\n".to_owned()),
+            ("none/notes.txt", "No server file.\n".to_owned()),
+            ("toml/server.toml", format!("name = \"toml\"\n{toml}")),
+            ("toml-bad/server.toml", "name = 1\n".to_owned()),
+            (
+                "toml-root/server.toml",
+                format!("name = \"toml-root\"\n{toml}run.args = [\"\\u0000\"]\n"),
+            ),
+            ("yaml/server.yaml", format!("name: yaml\n{yaml}")),
+        ];
+        for (path, text) in &files {
+            scratch.write(&format!("registry/mcp/{path}"), text.as_bytes());
+        }
+
+        let loaded = load_registry(&scratch.path("registry"), None, &SystemZones::host());
+        let named: Vec<(&str, &str, bool)> = loaded
+            .server_reports()
+            .iter()
+            .map(|(name, report)| (name.as_str(), report.file(), report.ok()))
+            .collect();
+
+        assert_eq!(
+            named,
+            [
+                ("both", "mcp/both/server.toml", false),
+                ("none", "mcp/none/server.yaml", true),
+                ("toml", "mcp/toml/server.toml", true),
+                ("toml-bad", "mcp/toml-bad/server.toml", false),
+                ("toml-root", "mcp/toml-root/server.toml", false),
+                ("yaml", "mcp/yaml/server.yaml", true),
+            ]
+        );
+        let parsed: Vec<&String> = loaded.parsed_servers().keys().collect();
+        assert_eq!(parsed, ["toml", "toml-root", "yaml"]);
+        let valid: Vec<&String> = loaded.servers().keys().collect();
+        assert_eq!(valid, ["toml", "yaml"]);
     }
 }

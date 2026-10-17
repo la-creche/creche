@@ -6,11 +6,13 @@
 //! state.
 //!
 //! The YAML path reads each field in the lax mode of pydantic. The TOML path
-//! reads the text with `RawFamily::from_toml` of `creche-contracts`, which
-//! reads each field in the strict mode: a field takes the kind of its type,
-//! and a float field also takes an integer. This module writes the message of
-//! each fault of that check, with the texts of the YAML path.
+//! reads the text with `RawFamily::from_toml` or `RawServer::from_toml` of
+//! `creche-contracts`, which reads each field in the strict mode: a field
+//! takes the kind of its type, and a float field also takes an integer. This
+//! module writes the message of each fault of that check, with the texts of
+//! the YAML path.
 
+pub use creche_contracts::family::Markup;
 use creche_contracts::family::{
     GrantArm, Issue, LocPart, RawFamily, Severity, ShapeFault, ShapeProblem, TomlRefusal, Wants,
 };
@@ -20,17 +22,6 @@ use crate::difflib::closest_name;
 use crate::lax;
 use crate::shape::{self, Fault, Part, Problem, Walk};
 use crate::yaml::{self, LoadError, Value};
-
-/// The markup of the text of a family file.
-///
-/// The set is closed, and it does not cross a process boundary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Markup {
-    /// `family.toml`.
-    Toml,
-    /// `family.yaml`.
-    Yaml,
-}
 
 /// The location of an issue of the whole file.
 pub const DOCUMENT: &str = "<document>";
@@ -272,12 +263,24 @@ pub fn parse_family(text: &str, markup: Markup) -> (Option<RawFamily>, Vec<Issue
 /// it read, so the TOML reader judges each byte of the file.
 #[must_use]
 pub(crate) fn parse_family_toml(bytes: &[u8]) -> (Option<RawFamily>, Vec<Issue>) {
-    match RawFamily::from_toml(bytes) {
+    toml_issues(RawFamily::from_toml(bytes), FAMILY_CONTAINERS)
+}
+
+/// The raw file of a read of the TOML path, or each issue of the read.
+fn toml_issues<T>(read: Result<T, TomlRefusal>, containers: Containers) -> (Option<T>, Vec<Issue>) {
+    match read {
         Ok(raw) => (Some(raw), Vec::new()),
         Err(TomlRefusal::Unread(fault)) => {
             (None, vec![error(DOCUMENT.to_owned(), fault.to_string())])
         }
-        Err(TomlRefusal::Shape(faults)) => closed(None, faults.iter().map(shape_issue).collect()),
+        Err(TomlRefusal::Shape(faults)) => {
+            let issues = faults
+                .iter()
+                .map(|fault| shape_issue(fault, containers))
+                .collect();
+
+            closed(None, issues)
+        }
     }
 }
 
@@ -305,29 +308,43 @@ fn wants_msg(wants: Wants) -> String {
     }
 }
 
-/// The issue of one fault of the TOML path.
-fn shape_issue(fault: &ShapeFault) -> Issue {
+/// The issue of one fault of the TOML path, in a file whose containers are
+/// `containers`.
+fn shape_issue(fault: &ShapeFault, containers: Containers) -> Issue {
     let loc: Vec<Part> = fault.loc().iter().map(part_of).collect();
     let msg = match fault.problem() {
         ShapeProblem::Missing => shape::MISSING.to_owned(),
-        ShapeProblem::Unknown => unknown_field_msg(&loc, FAMILY_CONTAINERS),
+        ShapeProblem::Unknown => unknown_field_msg(&loc, containers),
         ShapeProblem::WrongType(wants) => wants_msg(wants),
     };
 
     error(fmt_loc(&loc), msg)
 }
 
-/// The raw server file of a YAML text, or each issue of its shape.
+/// The raw server file of a text in `markup`, or each issue of its shape.
 #[must_use]
-pub fn parse_server(text: &str) -> (Option<RawServer>, Vec<Issue>) {
-    one_document(text, SERVER_CONTAINERS, shape::read_server)
+pub fn parse_server(text: &str, markup: Markup) -> (Option<RawServer>, Vec<Issue>) {
+    match markup {
+        Markup::Yaml => one_document(text, SERVER_CONTAINERS, shape::read_server),
+        Markup::Toml => parse_server_toml(text.as_bytes()),
+    }
+}
+
+/// The TOML path for the bytes of a server file. The byte limit of the file
+/// kind is the one size cap of this path.
+#[must_use]
+pub(crate) fn parse_server_toml(bytes: &[u8]) -> (Option<RawServer>, Vec<Issue>) {
+    toml_issues(RawServer::from_toml(bytes), SERVER_CONTAINERS)
 }
 
 #[cfg(test)]
 mod tests {
     use creche_contracts::family::Severity;
 
-    use super::{DOCUMENT, Markup, NO_REASON, closed, error, parse_family, parse_family_toml};
+    use super::{
+        DOCUMENT, Markup, NO_REASON, closed, error, parse_family, parse_family_toml, parse_server,
+        parse_server_toml,
+    };
     use crate::yaml::NESTING_MAX;
 
     /// The stack of the thread of the test below. A default thread has two
@@ -400,6 +417,49 @@ mod tests {
             [
                 ("name", "Input should be a valid string"),
                 ("model.budget_usd_per_day", "Input should be a valid number"),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_toml_markup_reads_a_server_file_with_the_toml_reader() {
+        let valid = "name = \"example\"\nidentity = \"x\"\ninstall.source = \"agent-mcp\"\n\
+                     run.entrypoint = \"example-mcp\"\n";
+        let (raw, issues) = parse_server(valid, Markup::Toml);
+
+        assert_eq!(
+            (raw.clone(), issues.clone()),
+            parse_server_toml(valid.as_bytes())
+        );
+        assert!(issues.is_empty(), "{issues:?}");
+        assert_eq!(
+            raw.map(|raw| raw.run.entrypoint),
+            Some("example-mcp".to_owned())
+        );
+        // The YAML reader reads no dotted key.
+        assert_eq!(parse_server(valid, Markup::Yaml).0, None);
+
+        let wrong = "name = \"example\"\nidentity = \"x\"\ninstall = 1\nrun = { zz = 1 }\n";
+        let (raw, issues) = parse_server(wrong, Markup::Toml);
+        let read: Vec<(&str, &str)> = issues
+            .iter()
+            .map(|issue| (issue.loc.as_str(), issue.msg.as_str()))
+            .collect();
+
+        assert_eq!(raw, None);
+        assert_eq!(
+            read,
+            [
+                (
+                    "install",
+                    "Input should be a valid dictionary or instance of InstallBlock"
+                ),
+                ("run.entrypoint", "Field required"),
+                (
+                    "run.zz",
+                    "unknown field 'zz'; known fields here are entrypoint, args, env, state_dir, \
+                     state_dir_env"
+                ),
             ]
         );
     }
