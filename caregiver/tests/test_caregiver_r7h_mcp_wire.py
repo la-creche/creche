@@ -450,18 +450,28 @@ def test_a_roster_name_with_no_text_is_nothing_served(bench: Bench) -> None:
 CHILD_SECONDS: Final = 30.0
 CHILD_BYTES: Final = 256 * 1024 * 1024
 
+#: The status of the child when its peak resident size passes its memory
+#: limit, and the status when its watch cannot read that peak.
+ROSTER_PAST_LIMIT: Final = 3
+ROSTER_NO_PEAK: Final = 4
+
+#: The start of the line that the watch writes on standard error when it
+#: cannot read the peak. The `repr` of the fault follows it.
+NO_PEAK_LINE: Final = "the watch cannot read the peak: "
+
 #: Reads the roster that the first argument names, and prints the answer.
 #: The second argument is the memory limit of the process, in bytes. The
-#: process ends with status 3 when its peak resident size passes the limit.
-#: It ends with status 4 when it cannot read that peak, and it writes the
-#: fault as one line on its standard error.
+#: process ends with `ROSTER_PAST_LIMIT` when its peak resident size passes
+#: the limit. It ends with `ROSTER_NO_PEAK` when it cannot read that peak,
+#: and it writes `NO_PEAK_LINE` and the fault as one line on its standard
+#: error.
 #:
 #: The peak is the peak of the process itself. On Linux, `ru_maxrss` also
 #: holds the peak of the memory that the process had before its exec, which
 #: is the memory of its parent. `VmHWM` of `/proc/self/status` holds only
 #: the memory that the process has after its exec. On macOS, `ru_maxrss`
 #: holds only the memory of the process itself.
-ROSTER_CHILD: Final = """
+ROSTER_CHILD: Final = f"""
 import os
 import resource
 import sys
@@ -482,13 +492,13 @@ def peak_bytes():
 
 
 def watch():
-    status = 4
+    status = {ROSTER_NO_PEAK}
     try:
         while peak_bytes() <= LIMIT:
             time.sleep(0.01)
-        status = 3
+        status = {ROSTER_PAST_LIMIT}
     except BaseException as fault:
-        os.write(2, f"the watch cannot read the peak: {fault!r}\\n".encode())
+        os.write(2, f"{NO_PEAK_LINE}{{fault!r}}\\n".encode())
     finally:
         os._exit(status)
 
@@ -537,6 +547,16 @@ def _read_in_child(program: str, roster: Path, *parent: str) -> subprocess.Compl
         timeout=CHILD_SECONDS,
         check=False,
     )
+
+
+def _waits_at_the_read(program: str, before: str = "") -> str:
+    """`program` with the lines `before`, then a wait with no end, in front
+    of its read. Only the watch can then end the child."""
+    read = "from caregiver.mcp_release import "
+    waits = program.replace(read, f"{before}threading.Event().wait()\n{read}", 1)
+    assert waits.count("Event().wait()") == 1
+
+    return waits
 
 
 #: The count of keys in the mapping that `_merged` copies.
@@ -768,21 +788,30 @@ def test_the_roster_child_watches_only_its_own_memory(bench: Bench) -> None:
     assert (done.returncode, done.stdout.strip()) == (0, "()"), done.stderr
 
 
-def test_a_roster_watch_that_cannot_read_the_peak_stops_the_child(bench: Bench) -> None:
-    """The watch fails closed. When it cannot read the peak, the child ends
-    with status 4 and names the fault on its standard error. The main thread
-    of this child waits with no end before its read, so only the watch can
-    end the child."""
-    head = "def peak_bytes():\n"
-    read = "from caregiver.mcp_release import "
-    child = ROSTER_CHILD.replace(head, head + '    raise OSError("no peak")\n', 1)
-    child = child.replace(read, "threading.Event().wait()\n" + read, 1)
-    assert child.count("no peak") == child.count("Event().wait()") == 1
+def test_a_roster_child_past_its_limit_ends_with_its_status(bench: Bench) -> None:
+    """The watch reads the peak of the child itself, in bytes. The child
+    holds a value past its memory limit, and the watch ends it with
+    `ROSTER_PAST_LIMIT`. On Linux the watch reads `VmHWM`, so this test
+    fails there for a watch that reads no peak or reads it in KiB."""
+    child = _waits_at_the_read(ROSTER_CHILD, f"held = bytearray({HELD_BYTES})\n")
 
     done = _read_in_child(child, bench.mcp.roster)
 
-    assert done.returncode == 4
-    assert done.stderr == "the watch cannot read the peak: OSError('no peak')\n"
+    assert done.returncode == ROSTER_PAST_LIMIT, done.stderr
+
+
+def test_a_roster_watch_that_cannot_read_the_peak_stops_the_child(bench: Bench) -> None:
+    """The watch fails closed. When it cannot read the peak, the child ends
+    with `ROSTER_NO_PEAK` and names the fault on its standard error."""
+    fault = OSError("no peak")
+    head = "def peak_bytes():\n"
+    child = _waits_at_the_read(ROSTER_CHILD.replace(head, f"{head}    raise {fault!r}\n", 1))
+    assert child.count(repr(fault)) == 1
+
+    done = _read_in_child(child, bench.mcp.roster)
+
+    assert done.returncode == ROSTER_NO_PEAK
+    assert done.stderr == f"{NO_PEAK_LINE}{fault!r}\n"
 
 
 def test_a_served_server_the_registry_dropped_asks_for_a_release(bench: Bench) -> None:
