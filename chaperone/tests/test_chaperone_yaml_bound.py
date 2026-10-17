@@ -50,6 +50,10 @@ CHILD_WALL_S: Final = 60
 CHILD_RESIDENT_BYTES: Final = 512 * 1024 * 1024
 CHILD_PAST_MEMORY: Final = 9
 
+#: The status of the child when the thread cannot read the largest resident
+#: memory. The thread then writes the fault as one line on standard error.
+CHILD_NO_PEAK: Final = 10
+
 #: The levels of `_doubling`, and the merge keys of `_itself`. A reader with
 #: no limit makes more than 16,000,000 copies from each of the two.
 LEVELS: Final = 24
@@ -61,6 +65,12 @@ TEXT_BYTES_MAX: Final = 4096
 #: file that its second argument names with the reader that its first
 #: argument names. A system that does not take a limit leaves it out: the
 #: CPU limit and the limit of the thread hold on each supported system.
+#:
+#: The thread reads the largest resident memory of the child itself.
+#: On Linux, `ru_maxrss` also holds the peak of the memory that the process
+#: had before its exec, which is the memory of its parent. `VmHWM` of
+#: `/proc/self/status` holds only the memory that the process has after its
+#: exec. On macOS, `ru_maxrss` holds only the memory of the process itself.
 CHILD: Final = f"""
 import os
 import resource
@@ -80,16 +90,26 @@ for kind, limit in limits:
     except (OSError, ValueError):
         pass
 
-# The largest resident memory is bytes on macOS and KiB on Linux.
-unit = 1 if sys.platform == "darwin" else 1024
+
+def peak_bytes():
+    if sys.platform == "linux":
+        with open("/proc/self/status", "rb") as status:
+            line = next(row for row in status if row.startswith(b"VmHWM:"))
+        return int(line.split()[1]) * 1024
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return peak if sys.platform == "darwin" else peak * 1024
 
 
 def watch():
-    while True:
-        if resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * unit > {CHILD_RESIDENT_BYTES}:
-            os._exit({CHILD_PAST_MEMORY})
-
-        time.sleep(0.02)
+    status = {CHILD_NO_PEAK}
+    try:
+        while peak_bytes() <= {CHILD_RESIDENT_BYTES}:
+            time.sleep(0.02)
+        status = {CHILD_PAST_MEMORY}
+    except BaseException as fault:
+        os.write(2, f"the watch cannot read the peak: {{fault!r}}\\n".encode())
+    finally:
+        os._exit(status)
 
 
 threading.Thread(target=watch, daemon=True).start()
@@ -227,6 +247,24 @@ def test_the_child_watches_only_its_own_memory(tmp_path: Path) -> None:
 
     assert done.returncode == 0, done.stderr
     assert done.stdout.split()[0] == "refused", done.stdout
+
+
+@pytest.mark.slow
+def test_a_watch_that_cannot_read_the_peak_stops_the_child(tmp_path: Path) -> None:
+    """The thread fails closed. When it cannot read the largest resident
+    memory, the child ends with `CHILD_NO_PEAK` and names the fault on its
+    standard error. The main thread of this child waits with no end before
+    its read, so only the thread can end the child."""
+    head = "def peak_bytes():\n"
+    read = "reader, path = "
+    child = CHILD.replace(head, head + '    raise OSError("no peak")\n', 1)
+    child = child.replace(read, "threading.Event().wait()\n" + read, 1)
+    assert child.count("no peak") == child.count("Event().wait()") == 1
+
+    done = _run_child(child, "roster", _file(tmp_path, _itself(LEVELS)))
+
+    assert done.returncode == CHILD_NO_PEAK
+    assert done.stderr == "the watch cannot read the peak: OSError('no peak')\n"
 
 
 #: A text with a character that PyYAML does not read. PyYAML raises on it
