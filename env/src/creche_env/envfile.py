@@ -67,6 +67,15 @@ _KEY: Final = re.compile(_KEY_TEXT)
 #: `'` and `\`.
 _VALUE: Final = re.compile(r"[\x20\x21\x24-\x26\x28-\x5b\x5d-\x7e]*")
 
+#: A comment: `#`, then text with no backslash and no ASCII control
+#: character. Text outside ASCII is free.
+#:
+#: CONTRACT-QUESTION: no contract text limits the text of a comment.
+#: Reading taken: the strict one. An older systemd reads a comment that ends
+#: with `\` as one comment with the next line, and a NUL ends its read of the
+#: file. A change costs this pattern and its vectors.
+_COMMENT: Final = re.compile(r"#[^\x00-\x1f\x7f\\]*")
+
 #: The two forms of a reference, and each form alone.
 _PLACE: Final = re.compile(rf"\$\{{(?:home:)?{_KEY_TEXT}\}}")
 _HOME_PLACE: Final = re.compile(rf"\$\{{home:({_KEY_TEXT})\}}")
@@ -150,14 +159,6 @@ def _fault(fault: Fault, file: str, line: int = 0, key: str = "") -> EnvError:
     return EnvError((Problem(fault, file, line, key),))
 
 
-@dataclass(frozen=True, slots=True)
-class Text:
-    """The bytes of one file, and the name that a fault gives the file."""
-
-    name: str
-    data: bytes
-
-
 class _Made:
     """No module but this one names this type. `Line`, `Pair` and `Settings`
     take a value of it first, so only the readers of this module make one:
@@ -171,6 +172,14 @@ _MADE: Final = _Made()
 def _require_made(made: _Made, kind: str) -> None:
     if made is not _MADE:
         raise TypeError(f"only the readers of creche_env.envfile make a {kind}")
+
+
+@dataclass(frozen=True, slots=True)
+class Text:
+    """The bytes of one file, and the name that a fault gives the file."""
+
+    name: str
+    data: bytes
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,7 +256,11 @@ def _line(name: str, number: int, line: str, kind: FileKind) -> Line | None:
         return None
 
     if line.startswith(COMMENT):
-        return _declaration(name, number, line) if kind is FileKind.EXAMPLE else None
+        return (
+            _declaration(name, number, line)
+            if kind is FileKind.EXAMPLE
+            else _comment(name, number, line)
+        )
 
     if kind is FileKind.EXAMPLE:
         # Each line of `example.env` is a comment: a copy of the file sets
@@ -262,13 +275,19 @@ def _declaration(name: str, number: int, line: str) -> Line | None:
     prose. The value to show has the rules of a `.env` value."""
     body = line.removeprefix(COMMENT)
     if not body or body.startswith(SPACE):
-        return None
+        return _comment(name, number, line)
 
     # CONTRACT-QUESTION: no contract text says what `#text` with no space
     # is in `example.env`. Reading taken: a declaration, so each such line
     # must be one. A change costs this branch and its vectors.
 
     return _assignment(name, number, body, FileKind.ENV)
+
+
+def _comment(name: str, number: int, line: str) -> None:
+    """Refuse a comment that `_COMMENT` does not take."""
+    if _COMMENT.fullmatch(line) is None:
+        raise _fault(Fault.NOT_KEY_VALUE, name, number)
 
 
 def _assignment(name: str, number: int, line: str, kind: FileKind) -> Line:

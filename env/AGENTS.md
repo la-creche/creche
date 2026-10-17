@@ -41,14 +41,16 @@ holds that the wheel has the three files.
    is refused.
 3. A line is empty, a comment or an assignment. A comment starts with `#`
    in the first column.
-4. An assignment is `KEY=VALUE`, with no space around `=`. A key matches
+4. After its `#`, a comment holds no backslash and no ASCII control
+   character. A character outside ASCII is permitted.
+5. An assignment is `KEY=VALUE`, with no space around `=`. A key matches
    `[A-Z][A-Z0-9_]{0,63}`.
-5. A value holds printable ASCII and the space. It holds no quote, no
+6. A value holds printable ASCII and the space. It holds no quote, no
    backslash and no `#`. It does not start or end with a space.
-6. A key is on one line of a file at most.
-7. A value of a `.env` is not empty and holds no `$`. To take the default,
+7. A key is on one line of a file at most.
+8. A value of a `.env` is not empty and holds no `$`. To take the default,
    remove the line.
-8. A value of `default.env` can hold `${KEY}`, the value of another
+9. A value of `default.env` can hold `${KEY}`, the value of another
    catalog key. It can also hold `${home:KEY}`, the home directory of the
    account that KEY names. It holds `$` in no other form.
 
@@ -80,7 +82,7 @@ and exits with status 78.
 | `byte-order-mark` | A file starts with a byte order mark. |
 | `carriage-return` | A line holds a CR. |
 | `no-final-newline` | A file that is not empty does not end with LF. |
-| `not-key-value` | A line has no `=`. A line of `example.env` is not a comment. |
+| `not-key-value` | A line has no `=`. A line of `example.env` is not a comment. A comment holds a backslash or an ASCII control character. |
 | `bad-key` | A key is not in the grammar. |
 | `bad-value` | A value is not in the grammar. A home is not a value of a `.env`. |
 | `empty-value` | A value is empty where the file needs a value. |
@@ -145,3 +147,4 @@ command prints `<file>: cannot be read: <reason>` and exits with status 78.
   5. A home of the password database must be a value of a `.env`.
   6. A file that the process cannot read has no name in the fault set.
   7. `changed-trusted` compares the values after each layer.
+  8. A comment holds no backslash and no ASCII control character.

@@ -15,6 +15,7 @@
   {"id":"too-large","input":{"repeat":[["A=1\n#",1],["x",65531],["\n",1]]},"refusal":[{"fault":"too-large","file":"plain.env","key":"","line":0}],"result":"refused"},
   {"id":"not-utf8","input":{"base64":"QT0xCiMg/wo="},"refusal":[{"fault":"not-utf8","file":"plain.env","key":"","line":0}],"result":"refused"},
   {"id":"byte-order-mark","input":{"text":"\ufeffA=1\n"},"refusal":[{"fault":"byte-order-mark","file":"plain.env","key":"","line":0}],"result":"refused"},
+  {"id":"comment-ends-with-a-backslash","input":{"text":"# a \\\nA=1\n"},"refusal":[{"fault":"not-key-value","file":"plain.env","key":"","line":1}],"result":"refused"},
   {"id":"carriage-return","input":{"text":"A=1\r\n"},"refusal":[{"fault":"carriage-return","file":"plain.env","key":"","line":1}],"result":"refused"},
   {"id":"no-final-newline","input":{"text":"A=1"},"refusal":[{"fault":"no-final-newline","file":"plain.env","key":"","line":0}],"result":"refused"},
   {"id":"no-equals-sign","input":{"text":"A=1\nB\n"},"refusal":[{"fault":"not-key-value","file":"plain.env","key":"","line":2}],"result":"refused"},
