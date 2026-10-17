@@ -48,7 +48,7 @@ release replaces that surface.
 | `data/runtime/` | the helper code that each service copies: the lenient field readers, the strict JSON reader, the time reader, the token files, the bearer of a request and the answers of the web framework |
 | `data/noticeboard/` | the noticeboard: the checks of its perimeter, the form body, the route parameters, the readers of `attendance`, of the audit files and of a validation report, the verify hook and `noticeboard --check` |
 | `data/library/` | the index builder: the chunks of a text, the hash of a file, the text of a file, the report, the URL of the embedder, the bytes of a vector in a store, the schema of a store and the rows of a store after each run |
-| `data/tomlfile/` | the syntax of a TOML file: the text of one file to the table that a reader gives, or to a refusal |
+| `data/tomlfile/` | the syntax of a TOML file: the bytes of one file to the table that the reader of a file kind gives, or to the text of its refusal |
 | `tests/` | the test that holds `data/` equal to the generator, and the tests of the generator |
 
 ## Regenerate
