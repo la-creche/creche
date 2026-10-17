@@ -37,18 +37,27 @@ from __future__ import annotations
 import errno
 import os
 import traceback
-from collections.abc import Callable
-from dataclasses import dataclass, field
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import Final, cast
 
+from ..artifacts import archive_expected
 from ..catalog import CATALOG_BY_NAME, Kind
 from ..discovery import read_one
 from ..errors import Refusal, RefusalCode
 from ..manifest import ComponentManifest
 from ..mcpserver import ServerFile, read_registry
-from ..resolve import Resolution, ResolvedComponent, build_document, deploying_names, resolve
+from ..resolve import (
+    TAG_FORMAT,
+    Resolution,
+    ResolvedComponent,
+    build_document,
+    deploying_names,
+    deploying_versions,
+    resolve,
+)
 from ..state import ReleaseState
 from .approval import (
     APPROVAL_TTL_S,
@@ -59,6 +68,7 @@ from .approval import (
     contracts_row,
     gate_id,
 )
+from .artifact import Copied, NoCopy, copy_from_store
 from .host import Host
 from .install import (
     UNIT_KEPT_SUFFIX,
@@ -388,6 +398,10 @@ class Release:
         #: order it cloned them. Row 5 of `_read_manifests` reads out of
         #: these and out of nothing else.
         self.fetched: list[str] = []
+        #: The result of the last copy of the two assets of each binary
+        #: component that deploys, by component (`_copy_artifacts`). Step
+        #: 2 makes the copy, and step 8 reads it again.
+        self.copies: dict[str, Copied | NoCopy] = {}
         #: What step 8's compose dry run said each `kind: compose`
         #: component would recreate. Step 9 reads it for §2.8's window.
         self.recreates: dict[str, tuple[str, ...]] = {}
@@ -592,6 +606,7 @@ class Release:
     def _resolve(self) -> str:
         state = self._build_state()
         manifests = self._read_manifests(state)
+        state = self._copy_artifacts(state, manifests)
         try:
             resolution = resolve(manifests, state, self.request.wanted())
         except Refusal as refusal:
@@ -707,6 +722,41 @@ class Release:
             self.entry.manual.append(f"installed and unstamped, nothing root can read: {name}")
 
         return chosen.manifests
+
+    def _copy_artifacts(
+        self, state: ReleaseState, manifests: Mapping[str, ComponentManifest]
+    ) -> ReleaseState:
+        """`state` with the digest of root's copy of each archive.
+
+        The manifest of the new tag is root's one source for the kind of a
+        component. So this runs after root read the manifests, and before
+        `resolve`. For each component that deploys and whose manifest
+        ships an archive, root copies the two assets of the new tag
+        (`artifact.py`) and puts the digest of its copy into
+        `artifact_digest`. A component with no copy keeps null.
+
+        Step 2 and step 8 each call it. The first call reads the store,
+        and the second reads the copy. So a copy that changed after the
+        approval gives another hash of the resolved manifest, and step 8
+        refuses with `drift`.
+        """
+        work = self.wiring.host.work_root / self.request.id
+        facts = dict(state.facts)
+        for name, version in sorted(deploying_versions(state, self.request.wanted()).items()):
+            manifest = manifests.get(name)
+            if manifest is None or not archive_expected(manifest.kind):
+                continue
+
+            tag = TAG_FORMAT.format(name=name, version=version)
+            copy = copy_from_store(name, tag, work, self.wiring.host.source_owner_uid)
+            self.copies[name] = copy
+            known = facts.get(name)
+            if isinstance(copy, NoCopy):
+                self.entry.say(copy.note)
+            elif known is not None:
+                facts[name] = replace(known, artifact_digest=copy.digest)
+
+        return replace(state, facts=facts)
 
     def _at_commit(self, state: ReleaseState, deploying: frozenset[str]) -> AtCommitFn:
         """Root's source for a manifest at a commit, per §10.2's rows.
@@ -929,7 +979,7 @@ class Release:
         fail closed and audited, with nothing swapped.
         """
         plan = self._require_plan()
-        state = self._build_state()
+        state = self._copy_artifacts(self._build_state(), plan.manifests)
         again = resolve(plan.manifests, state, self.request.wanted())
         # The same clock as step 2, so the compare is over the SET and not
         # over the seconds between the two resolutions.

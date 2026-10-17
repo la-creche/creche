@@ -1,9 +1,9 @@
 """The unpack of a tar archive, as root.
 
-Two callers read an archive here. `mcpbuild.py` unpacks the release asset
-of an MCP server after it checked the pinned hash. The executor reads the
-archive of a binary component that CI built and signed (`artifacts.py` of
-the pure half). This module is the one place that opens a tar archive.
+`mcpbuild.py` unpacks the release asset of an MCP server here, after it
+checked the pinned hash. The module also reads the archive of a binary
+component, which CI builds and signs (`artifacts.py` of the pure half). It
+is the one place of the executor that opens a tar archive.
 
 Each member is checked before a byte of it is written. Five shapes are
 refused in each archive:

@@ -255,7 +255,14 @@ has the name of the markup of the manifest: `.component.toml` or
 5a. Root reads an operator-owned file with `O_NOFOLLOW` and checks the open
     descriptor: regular file, the operator's uid, mode 0600, bounded size.
     Root must not act as the operator's deputy against a file the operator
-    cannot read.
+    cannot read. The rule has two cases:
+    1. The `view-ro` token of the quiet window (`quiet.py`).
+    2. The archive and the bundle of a binary component in the store
+       (`executor/artifact.py`). Root also opens each directory below the
+       operator home with no link followed, and the operator must own each
+       one. A file has one name only, and root reads it in blocks up to its
+       limit. Root reads the store one time in a release, at step 2. Each
+       later read is a read of root's own copy.
 6. Root believes a manifest at a SHA it verifies, or out of a tree it owns.
    There is no third source.
 
@@ -382,6 +389,7 @@ The executor runs as root from `creche-handover.path`, through the wrapper
 | `executor/spool.py`, `request.py`, `live_state.py`, `provenance.py` | the five directories, the request, the built document, P1 to P5 |
 | `executor/approval.py`, `phone.py`, `notice.py`, `quiesce.py`, `quiet.py` | the gate, the transport, the outcome push, step 7, the quiet minutes |
 | `executor/host.py`, `install.py`, `mcpbuild.py`, `roster.py`, `self_switch.py` | the one spawn, steps 8 to 10, a server tree, the roster, the self-release |
+| `executor/unpack.py`, `artifact.py` | the unpack of a tar archive and the member list of a component archive, root's copy of the two assets of a binary component and the digest of its archive |
 | `executor/ledger.py`, `steps.py`, `drain.py` | the entry, the ten steps, the unit's entry point |
 | `intake/token.py`, `store.py`, `service.py`, `gaps.py`, `notify.py`, `run.py` | the capability, the kernel rule, the two routes, the gap directory, the one push, the entry point |
 | `bin/allocate-tags.sh` | the workflow's body: gather, plan, tag, release |
@@ -488,6 +496,11 @@ that wants a refusal changes one field.
   (`catalog.py`).
 - Only a test of this repository holds a binary build to `--locked`. The
   executor does not check the flag (`tests/test_handover_bin_manifest.py`).
+- Contract 06 §3.4 names three checks of a file in the store of artifacts:
+  a regular file, the operator as its owner, and a size at most the cap.
+  Root also refuses a file with a bit for group or other, a file with a
+  second name and an empty file. It refuses a directory of the store path
+  that is a link or that the operator does not own (`executor/artifact.py`).
 - Contract 06 §8.2 names the code `editable` for a venv tree. A binary tree
   that is not self-contained gets the same code
   (`executor/selfcontained.py`).
