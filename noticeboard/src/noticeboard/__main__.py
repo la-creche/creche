@@ -18,6 +18,7 @@ from pathlib import Path
 
 import uvicorn
 
+from . import notices
 from .app import build_app
 from .attendancehttp import HttpTransport, build_client
 from .config import Config, ConfigError, from_env
@@ -25,6 +26,12 @@ from .sessions import SessionReader
 
 EXIT_OK = 0
 EXIT_BAD_CONFIG = 2
+
+#: The service word of the notice of a refused JSON text, and the directory
+#: of the notice file under the state root. The host script reads
+#: `<state root>/notices/<service>.json`.
+NOTICE_SERVICE = "noticeboard"
+NOTICES_DIR = "notices"
 
 _LOG = logging.getLogger("noticeboard")
 
@@ -47,6 +54,9 @@ def main(argv: list[str] | None = None) -> int:
         _report(config)
         return EXIT_OK
 
+    # A directory that the service cannot make leaves the log line of each
+    # notice, and the service serves.
+    notices.configure(NOTICE_SERVICE, config.state_root / NOTICES_DIR / f"{NOTICE_SERVICE}.json")
     _serve(config)
 
     return EXIT_OK

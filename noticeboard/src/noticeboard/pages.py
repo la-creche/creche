@@ -143,7 +143,7 @@ def _report(config: Config, row: FamilyRow) -> tuple[tuple[IssueRow, ...], str]:
     if not named:
         return (), "the status document says this family is invalid and names no report"
 
-    return statusdocs.read_report(Path(named))
+    return statusdocs.read_report(Path(named), row.name)
 
 
 def _outcomes(config: Config, name: str, row: FamilyRow) -> tuple[OutcomeRow, ...]:

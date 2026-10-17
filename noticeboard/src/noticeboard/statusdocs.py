@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Final
 
 from . import jsonfiles
-from .jsonfiles import Json
+from .jsonfiles import Json, Surface
 
 #: Contract 05 §2 rule 5, and §3.3.1 rule 7 for a fault file.
 STALE_AFTER_S: Final = 90
@@ -304,7 +304,7 @@ def listing_problem(families_dir: Path) -> str:
 def read_family(families_dir: Path, name: str, now: datetime) -> FamilyRow:
     """One family's status document, read as untrusted input."""
     path = families_dir / name / STATUS_FILE
-    body, problem = jsonfiles.read_object(path)
+    body, problem = jsonfiles.read_object(path, surface=Surface.STATUS_DOCUMENT, family=name)
 
     if body is None:
         return _unreadable(name, problem or jsonfiles.missing(STATUS_FILE))
@@ -317,13 +317,14 @@ def read_families(families_dir: Path, now: datetime) -> tuple[FamilyRow, ...]:
     return tuple(read_family(families_dir, name, now) for name in family_names(families_dir))
 
 
-def read_report(path: Path) -> tuple[tuple[IssueRow, ...], str]:
+def read_report(path: Path, family: str | None = None) -> tuple[tuple[IssueRow, ...], str]:
     """Contract 01 §7's issue list from the file §3.2 points at.
 
     Answers the issues and a problem string. A report is only read when the
     status document names one, so a missing file here IS worth reporting.
+    `family` is the family whose status document names the report.
     """
-    body, problem = jsonfiles.read_object(path)
+    body, problem = jsonfiles.read_object(path, surface=Surface.STATUS_REPORT, family=family)
 
     if body is None:
         return (), problem or jsonfiles.missing(path.name)
@@ -359,11 +360,11 @@ def read_outcomes(outcomes_dir: Path, family: str, limit: int) -> tuple[OutcomeR
     except OSError:
         return ()
 
-    return tuple(_outcome(directory / name) for name in names[:limit])
+    return tuple(_outcome(directory / name, family) for name in names[:limit])
 
 
-def _outcome(path: Path) -> OutcomeRow:
-    body, problem = jsonfiles.read_object(path)
+def _outcome(path: Path, family: str) -> OutcomeRow:
+    body, problem = jsonfiles.read_object(path, surface=Surface.STATUS_OUTCOME, family=family)
     name = path.stem
 
     if body is None:

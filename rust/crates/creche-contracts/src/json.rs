@@ -356,7 +356,9 @@ impl Rule {
 ///
 /// let refusal = NotStrict { rule: Rule::Syntax, at: 3 };
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// The value is `Copy`, so an error type that is `Copy` can keep it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NotStrict {
     rule: Rule,
     at: usize,

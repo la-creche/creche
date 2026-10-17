@@ -7,18 +7,24 @@ STRING, which a page renders as a report. It never yields an exception,
 because a stack trace on the noticeboard is the worst possible answer to "what
 is running right now".
 
+A text is JSON here only when it is strict JSON (`strictjson.py`). A text
+that is not strict also records one notice for the operator
+(`notices.py`): the surface word of the text, the word of the rule that it
+breaks, and the family that the caller found in a path. No byte of the text
+goes into the notice or into the problem string.
+
 Nothing here interprets a field's meaning. `statusdocs.py` and its
 neighbours do that, one layer up.
 """
 
 from __future__ import annotations
 
-import json
+import enum
 from datetime import datetime
 from pathlib import Path
 from typing import Final, cast
 
-from . import rfc3339
+from . import notices, rfc3339, strictjson
 
 #: One parsed JSON object. Nothing below it is typed: every field is read
 #: through a helper here, which is the point.
@@ -36,16 +42,50 @@ MAX_TEXT_CHARS: Final = 500
 
 _MISSING: Final = "missing"
 
-#: What a page says for a text that nests past the limit of the JSON reader.
-_TOO_DEEP: Final = "it nests deeper than the reader allows"
+#: What a page says for a text that is not strict JSON. The rule goes to the
+#: notice only.
+_NOT_STRICT: Final = "the text breaks a rule of strict JSON"
 
 
-def read_object(path: Path, limit: int = MAX_DOC_BYTES) -> tuple[Json | None, str | None]:
+class Surface(enum.StrEnum):
+    """What a text is, in the notice of a refusal. The set is closed.
+
+    The value of a member is the surface word of the notice.
+    """
+
+    #: The status document of a family (contract 05 §2).
+    STATUS_DOCUMENT = "status.document"
+    #: The validation report that a status document names (contract 05 §3.2).
+    #
+    # CONTRACT-QUESTION: contract 05 §3.2 names the report and no surface
+    # word of it in a notice. The reading here gives it a word of its own,
+    # so a notice names the file that broke the rule. The other reading files
+    # it under `status.document`. A change costs this member and its test.
+    STATUS_REPORT = "status.report"
+    #: An outcome record (contract 05 §8).
+    STATUS_OUTCOME = "status.outcome"
+    #: One record of an audit day file of the chaperone (contract 04 §6).
+    AUDIT_LINE = "audit.line"
+    #: The body of an answer of `attendance` (contract 02 §5).
+    SESSION_ANSWER = "session.answer"
+    #: One line of the event stream of a session (contract 02 §8).
+    SESSION_JOURNAL_LINE = "session.journal_line"
+
+
+def read_object(
+    path: Path,
+    limit: int = MAX_DOC_BYTES,
+    *,
+    surface: Surface,
+    family: str | None = None,
+) -> tuple[Json | None, str | None]:
     """One JSON object from a file, or a reason it could not be read.
 
     Answers `(None, None)` for a file that does not exist: absence is not a
     problem to report on every page, it is the ordinary state of an outcome
     directory or a fault file (contract 05 §3.3.1 rule 5).
+
+    `surface` and `family` go to the notice of a text that is not strict.
     """
     try:
         with path.open("rb") as handle:
@@ -66,28 +106,34 @@ def read_object(path: Path, limit: int = MAX_DOC_BYTES) -> tuple[Json | None, st
     if len(raw) > limit:
         return None, f"{path.name} is over {limit} bytes; refusing to parse it"
 
-    return parse_object(raw, path.name)
+    return parse_object(raw, path.name, limit, surface=surface, family=family)
 
 
-def parse_object(raw: bytes, name: str) -> tuple[Json | None, str | None]:
-    """The same checks, on bytes already in hand."""
-    # CONTRACT-QUESTION: contract 05 §2 names no encoding for a file.
-    # `json.loads` takes UTF-8, UTF-16 and UTF-32, so this reader takes the
-    # three. The reading stays, because a stricter reader would refuse a file
-    # that a page shows today. A reader of UTF-8 alone costs one decode step.
+def parse_object(
+    raw: bytes,
+    name: str,
+    cap: int = MAX_DOC_BYTES,
+    *,
+    surface: Surface,
+    family: str | None = None,
+) -> tuple[Json | None, str | None]:
+    """The same checks, on bytes already in hand.
+
+    `cap` is the most bytes of the text. A text that is not strict JSON gives
+    one problem sentence, and one notice with `surface`, its rule and
+    `family`. `family` comes from a path, never from the text.
+    """
     try:
-        parsed: object = json.loads(raw)
-    except RecursionError:
-        # Deep nesting raises this type, not ValueError. Its text names the
-        # interpreter's stack, which differs between two Python versions.
-        return None, f"{name} is not JSON: {_TOO_DEEP}"
-    except (ValueError, UnicodeDecodeError) as error:
-        return None, f"{name} is not JSON: {error}"
+        parsed = strictjson.loads(raw, cap=cap)
+    except strictjson.NotStrictJson as refusal:
+        notices.record(surface, refusal.rule, family)
+
+        return None, f"{name} is not JSON: {_NOT_STRICT}"
 
     if not isinstance(parsed, dict):
         return None, f"{name} is {type(parsed).__name__}, not a JSON object"
 
-    # `json.loads` answers `Any`, so pyright cannot see the key type. Every
+    # The reader answers `object`, so pyright cannot see the key type. Every
     # JSON object has string keys by definition of the format.
     return cast("Json", parsed), None
 

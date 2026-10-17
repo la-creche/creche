@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Final
 
 from . import jsonfiles
-from .jsonfiles import Json
+from .jsonfiles import Json, Surface
 
 #: One line said in every rendering of this page.
 ARGS_NOTICE: Final = (
@@ -62,8 +62,13 @@ MAX_ARGS_CHARS: Final = 20_000
 
 MAX_CHAIN: Final = 10
 
-#: How a page writes one record's arguments.
-_ARGS_ENCODER: Final = json.JSONEncoder(indent=2, sort_keys=True, ensure_ascii=False)
+#: How a page writes one record's arguments. The strict reader gives each
+#: value, so the text is the text of `strictjson.dumps` with these options.
+#: The encoder stops at the display cap. `strictjson.dumps` builds the whole
+#: text first.
+_ARGS_ENCODER: Final = json.JSONEncoder(
+    indent=2, sort_keys=True, ensure_ascii=False, allow_nan=False
+)
 
 
 @dataclass(frozen=True)
@@ -268,7 +273,7 @@ def _row(raw: bytes, day: str) -> AuditRow:
     if len(raw) > MAX_LINE_BYTES:
         return _bad_row(f"{day}: a record passed {MAX_LINE_BYTES} bytes and was not parsed")
 
-    body, problem = jsonfiles.parse_object(raw, day)
+    body, problem = jsonfiles.parse_object(raw, day, surface=Surface.AUDIT_LINE)
 
     if body is None:
         return _bad_row(problem or f"{day}: a record would not parse")
@@ -321,9 +326,9 @@ def _args(body: Json) -> tuple[str, bool]:
 
             if size > MAX_ARGS_CHARS:
                 break
-    except (TypeError, ValueError, RecursionError):
-        # RecursionError is a guard only. The cap stops the loop before the
-        # encoder goes that deep, so no test reaches that type.
+    except ValueError:
+        # A guard only. The strict reader gave the value, so the value has a
+        # strict text, and no test reaches this branch.
         return "<arguments this noticeboard could not render>", False
 
     rendered = "".join(chunks)
