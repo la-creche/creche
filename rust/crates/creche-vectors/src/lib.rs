@@ -34,6 +34,9 @@
 //! 7. Two vectors of the file have the same id.
 //! 8. An input, an `output` or a marker object has a form that the format
 //!    does not name.
+//! 9. A file of an `args` input has a name that is no text, or an input
+//!    form that the reader cannot read. [`ArgsFile`] says which value is a
+//!    file.
 //!
 //! The reader refuses the index in each of these cases:
 //!
@@ -571,6 +574,11 @@ impl Vector {
 
         if let Input::Args(arguments) = &input {
             arguments.values().try_for_each(check_markers).map_err(at)?;
+            for (key, argument) in arguments {
+                if let Some(Err(reason)) = ArgsFile::of(argument) {
+                    return Err(at(format!("the file of the argument {key}: {reason}")));
+                }
+            }
         }
         raw.fields
             .values()
@@ -649,6 +657,18 @@ impl Input {
         }
     }
 
+    /// The file that the named argument `key` of an `args` input holds.
+    /// `None` for another form, for an argument that the input does not
+    /// have, and for an argument that is no file. [`ArgsFile`] says which
+    /// value is a file.
+    ///
+    /// The reader refuses a vector file with a file that it cannot read, so
+    /// a file that this function gives has its bytes.
+    #[must_use]
+    pub fn file(&self, key: &str) -> Option<ArgsFile> {
+        ArgsFile::of(self.args()?.get(key)?)?.ok()
+    }
+
     /// The input of a raw input. The error is the reason of a refusal.
     fn checked(raw: RawInput) -> Result<Self, String> {
         match raw {
@@ -666,6 +686,104 @@ impl Input {
                 .map(Self::Chunks),
         }
     }
+}
+
+/// One file of an `args` input: its name and its bytes.
+///
+/// `vectors/README.md`, "The five input forms", gives such a file the form
+/// of an object with two keys: `name`, and one of the input forms `text`,
+/// `base64` and `repeat`. A value of another form is no file.
+/// [`Input::file`] gives one.
+///
+/// ```
+/// let surface = creche_vectors::surface("envfile.layer")?;
+/// let vector = surface.vector("the-written-pair").ok_or("no such vector")?;
+/// let file = vector.input().file("env").ok_or("no such file")?;
+///
+/// assert_eq!(file.name(), ".env");
+/// assert!(file.bytes().ends_with(b"\n"));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// Code outside this crate cannot build a file. Only the reader makes one:
+///
+/// ```compile_fail,E0451
+/// let file = creche_vectors::ArgsFile {
+///     name: String::from(".env"),
+///     bytes: Vec::new(),
+/// };
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArgsFile {
+    name: String,
+    bytes: Vec<u8>,
+}
+
+impl ArgsFile {
+    /// The name that the entry point gives the file.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The bytes of the file, as its input form stands for them.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// The file of an argument. `None` for a value that does not have the
+    /// form of a file. The error is the reason of a refusal.
+    fn of(argument: &Value) -> Option<Result<Self, String>> {
+        let members = argument.as_object()?;
+        let is_file = members.len() == FILE_KEYS
+            && members.contains_key(NAME_KEY)
+            && FILE_FORMS.iter().any(|form| members.contains_key(*form));
+        if !is_file {
+            return None;
+        }
+
+        let raw = ObjectOnly::<RawArgsFile>::deserialize(argument)
+            .map(|object| object.0)
+            .map_err(|error| error.to_string());
+
+        Some(raw.and_then(Self::checked))
+    }
+
+    /// The file of a raw file. The error is the reason of a refusal.
+    fn checked(raw: RawArgsFile) -> Result<Self, String> {
+        let bytes = match (raw.text, raw.base64, raw.repeat) {
+            (Some(text), None, None) => text.into_bytes(),
+            (None, Some(encoded), None) => decoded(&encoded)?,
+            (None, None, Some(parts)) => expand(&parts)?.into_bytes(),
+            _ => return Err(String::from("a file has one input form")),
+        };
+
+        Ok(Self {
+            name: raw.name,
+            bytes,
+        })
+    }
+}
+
+/// The key of the name of a file of an `args` input.
+const NAME_KEY: &str = "name";
+
+/// The input forms that a file of an `args` input can have.
+const FILE_FORMS: [&str; 3] = ["text", "base64", "repeat"];
+
+/// The count of the keys of a file of an `args` input: the name and one
+/// form.
+const FILE_KEYS: usize = 2;
+
+/// A file of an `args` input, as `serde` reads it.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawArgsFile {
+    name: String,
+    text: Option<String>,
+    base64: Option<String>,
+    repeat: Option<Vec<(String, usize)>>,
 }
 
 /// A value that has no JSON form that each strict reader accepts. The
@@ -1448,6 +1566,59 @@ mod tests {
 
         assert!(Input::checked(bad_base64).is_err());
         assert!(Input::checked(bad_chunk).is_err());
+    }
+
+    /// The `args` input of one vector, with these named arguments.
+    fn args_input(arguments: &Value) -> Input {
+        Input::checked(serde_json::from_value(json!({"args": arguments})).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn a_file_of_an_args_input_gives_its_name_and_its_bytes() {
+        let input = args_input(&json!({
+            "text": {"name": "a.env", "text": "A=1\n"},
+            "base64": {"name": "b.env", "base64": "/w=="},
+            "repeat": {"name": "c.env", "repeat": [["x", 3], ["\n", 1]]},
+            "other": {"name": "trigger", "kind": "cron"},
+            "plain": "text",
+        }));
+        let file = |key: &str| input.file(key).map(|file| (file.name, file.bytes));
+
+        assert_eq!(
+            file("text"),
+            Some((String::from("a.env"), b"A=1\n".to_vec()))
+        );
+        assert_eq!(file("base64"), Some((String::from("b.env"), vec![0xff])));
+        assert_eq!(
+            file("repeat"),
+            Some((String::from("c.env"), b"xxx\n".to_vec()))
+        );
+        assert_eq!(file("other"), None);
+        assert_eq!(file("plain"), None);
+        assert_eq!(file("absent"), None);
+        assert_eq!(Input::Text(String::from("a")).file("text"), None);
+    }
+
+    #[test]
+    fn a_vector_file_with_a_file_that_the_reader_cannot_read_is_refused() {
+        for (argument, reason) in [
+            (json!({"name": 1, "text": "a"}), "invalid type"),
+            (json!({"name": "a", "base64": "Zg"}), NO_BASE64),
+            (json!({"name": "a", "text": 1}), "invalid type"),
+            (json!({"name": "a", "repeat": [["a"]]}), "invalid length"),
+        ] {
+            let vectors = json!([
+                {"id": "one", "input": {"args": {"env": argument}}, "result": "accepted"},
+                {"id": "two", "input": {"text": ""}, "result": "refused"},
+            ]);
+            let reason_of = refused(&row(1, 1, 0), &file(&vectors));
+
+            assert!(
+                reason_of.starts_with("the vector one: the file of the argument env: "),
+                "{reason_of}"
+            );
+            assert!(reason_of.contains(reason), "{reason_of}");
+        }
     }
 
     /// A text in the form of a digest of the index.

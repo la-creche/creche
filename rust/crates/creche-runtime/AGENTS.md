@@ -22,6 +22,7 @@ stub is left: each function of this crate has its body.
 | `src/log.rs` | One line on stderr for each event. The panic hook. The writers for stdout and stderr. | `foundation-skeleton` |
 | `src/atomic.rs` | A file write through a temporary file, a sync and a rename. The swap of a directory through one exchange of two names. | `foundation-files` |
 | `src/readfile.rs` | A file read with a size cap. The read gives each failure as a value and does not panic. | `foundation-files` |
+| `src/envfile.rs` | The read of the `.env` of the host: one open, one `fstat` of the open file, the trust check and the bytes. | `envfile-reader-rust` |
 | `src/layout.rs` | The paths under the state root that more than one service uses. | `foundation-files` |
 | `src/clock.rs` | The `Clock` seam and the clock of the host. | `foundation-clock-entropy` |
 | `src/entropy.rs` | The `Entropy` seam. The mint of a ULID and of a random token. | `foundation-clock-entropy` |

@@ -13,6 +13,7 @@ use serde_json::{Map, Value, json};
 
 use super::attendance::{AttendanceConfig, Bind};
 use super::endpoints::PlaneUrl;
+use super::envfile::{self, Fault, Uid};
 use super::mounts::{Credentials, PlaypenEnv, RawPlaypenEnv, RuntimeConfig};
 use super::noticeboard::{AccessKey, CookieSecure, NoticeboardConfig};
 use super::roster::{RawRoster, Roster, Upstream};
@@ -267,8 +268,17 @@ fn site_file_refusal(error: SiteFileError) -> Did {
         SiteFileError::TooLarge => "too_large",
         SiteFileError::NotUtf8 => "unreadable",
         SiteFileError::NotKeyValue => "not_key_value",
-        SiteFileError::WrongOwner => "owner",
-        SiteFileError::OthersWrite => "mode",
+    };
+
+    Did::Refused(Some(json!(class)))
+}
+
+/// The refusal of the trust check, which `envfile` holds for the site file.
+fn trust_refusal(error: &envfile::EnvError) -> Did {
+    let class = match error.problems()[0].fault() {
+        Fault::WrongOwner => "owner",
+        Fault::OthersWrite => "mode",
+        fault => panic!("the trust check gives no {fault}"),
     };
 
     Did::Refused(Some(json!(class)))
@@ -287,8 +297,9 @@ fn site_field<T: ToString>(read: Result<T, site::SiteError>) -> Value {
 fn site_file(vector: &Vector) -> Did {
     let mode = vector.field("params").unwrap()["mode"].as_str().unwrap();
     let mode = u32::from_str_radix(mode, 8).unwrap();
-    if let Err(error) = site::check_trust(GENERATOR_UID, GENERATOR_UID, mode) {
-        return site_file_refusal(error);
+    let generator = Uid::new(GENERATOR_UID);
+    if let Err(error) = envfile::check_trust(site::SITE_FILE, generator, mode, generator) {
+        return trust_refusal(&error);
     }
 
     let file = match SiteFile::parse(&vector.input().bytes().unwrap()) {

@@ -14,6 +14,7 @@
 //! | Module | What it holds |
 //! |---|---|
 //! | [`site`] | The site file, `/etc/creche/site.env`. |
+//! | [`envfile`] | The reader of the env files: `default.env`, `example.env` and a `.env`. |
 //! | [`attendance`], [`caregiver`], [`chaperone`], [`door_owui`], [`door_trigger`], [`noticeboard`], [`intake`] | The config of one daemon. |
 //! | [`endpoints`] | The names of some variables that hold the address of another service, and the URL type of a plane. |
 //! | [`roster`] | The roster of MCP servers that the chaperone reads. |
@@ -40,6 +41,7 @@ pub mod chaperone;
 pub mod door_owui;
 pub mod door_trigger;
 pub mod endpoints;
+pub mod envfile;
 pub mod intake;
 pub mod mounts;
 pub mod noticeboard;
