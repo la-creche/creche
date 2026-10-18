@@ -76,6 +76,7 @@ directory is not a workspace package, so a change here does not change
 | `surfaces/noticeboard.py` | the noticeboard: `noticeboard.security.*`, `noticeboard.urlform`, `noticeboard.app.query`, `noticeboard.route.*`, `noticeboard.sessions.*`, `noticeboard.transcript.fold`, `noticeboard.audit.page`, `noticeboard.statusdocs.report`, `noticeboard.verify.envfile`, `noticeboard.cli.check`, `noticeboard.static.css` |
 | `surfaces/library.py` | the index builder: `library.chunk_text`, `library.file_hash`, `library.read_document`, `library.report`, `library.tei_url`, `library.embedding`, `library.schema`, `library.index_scope` |
 | `surfaces/tomlfile.py` | the syntax of a TOML file: `tomlfile.syntax`, and its changed texts |
+| `surfaces/envfile.py` | the reader of the env files: `envfile.layer`, `envfile.raw`, `envfile.trust` |
 
 ## The TOML fixture registry
 

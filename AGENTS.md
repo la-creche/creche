@@ -97,6 +97,7 @@ text with no UTC offset is not a time.
 | `noticeboard/` | `noticeboard/AGENTS.md` |
 | `playpen/`, `toybox/` | `playpen/AGENTS.md`, `toybox/AGENTS.md` |
 | `handover/` | `handover/AGENTS.md` |
+| `env/` | `env/AGENTS.md` |
 | `library/` | `library/AGENTS.md` |
 | `integration/` | `integration/AGENTS.md` |
 | `bin/` | `bin/AGENTS.md` |
