@@ -68,9 +68,9 @@ impl Error for SiteReadError {}
 /// 5. Read [`envfile::MAX_BYTES`] and one byte more at most. The parse of
 ///    the text then refuses a file that is too large.
 ///
-/// The Python origin names the `errno` of a failed call, for example
-/// `ENOENT`. This function gives the text of `strerror`, as each error of
-/// this crate does.
+/// The Python origin is `read_trusted` (`env/src/creche_env/envfile.py:676-679`).
+/// It names the `errno` of a failed call, for example `ENOENT`. This
+/// function gives the text of `strerror`, as each error of this crate does.
 ///
 /// # Errors
 ///

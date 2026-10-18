@@ -315,6 +315,14 @@ impl fmt::Display for Problem {
 
 /// The files give no settings: one fault or more.
 ///
+/// ```
+/// use creche_contracts::config::envfile::{EnvError, Text, read_pair};
+///
+/// let (default, example) = (Text::new("default.env", "A=1\nA=2\n"), Text::new("example.env", ""));
+/// let error: EnvError = read_pair(&default, &example).unwrap_err();
+/// assert_eq!(error.to_string(), "default.env:2: duplicate-key A");
+/// ```
+///
 /// Code outside this module cannot build an error with no fault:
 ///
 /// ```compile_fail,E0423
