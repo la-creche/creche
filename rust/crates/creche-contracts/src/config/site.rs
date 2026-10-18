@@ -19,13 +19,13 @@ use std::str::FromStr;
 
 use super::pytext;
 use super::values::{LanAddress, LanAddressError};
-use super::{AtReload, AtStart, Checked, FailureAction};
+use super::{AtReload, AtStart, Checked, FailureAction, envfile};
 
-/// Where a deployment writes its values.
-pub const SITE_FILE: &str = "/etc/creche/site.env";
+/// Where a deployment writes its values. [`envfile`] holds the value.
+pub const SITE_FILE: &str = envfile::SITE_FILE;
 
-/// The largest count of bytes in a site file.
-pub const MAX_SITE_BYTES: usize = 64 * 1024;
+/// The largest count of bytes in a site file. [`envfile`] holds the value.
+pub const MAX_SITE_BYTES: usize = envfile::MAX_BYTES;
 
 /// What starts a comment line.
 const COMMENT: char = '#';
@@ -35,12 +35,6 @@ const ASSIGN: char = '=';
 
 /// The two quote characters that systemd removes from a value.
 const QUOTES: [char; 2] = ['"', '\''];
-
-/// The write bits of the group and of each other account.
-const OTHERS_WRITE: u32 = 0o022;
-
-/// The uid of root.
-const ROOT_UID: u32 = 0;
 
 /// The one account that the operator cannot be.
 const ROOT_USER: &str = "root";
@@ -257,10 +251,6 @@ pub enum SiteFileError {
     NotUtf8,
     /// A line is not empty, is not a comment and holds no `=`.
     NotKeyValue,
-    /// The owner of the file is not root and not the account that reads it.
-    WrongOwner,
-    /// The group, or each other account, can write the file.
-    OthersWrite,
 }
 
 impl fmt::Display for SiteFileError {
@@ -269,40 +259,11 @@ impl fmt::Display for SiteFileError {
             Self::TooLarge => write!(f, "the site file has {MAX_SITE_BYTES} bytes or less"),
             Self::NotUtf8 => f.write_str("the site file is UTF-8"),
             Self::NotKeyValue => f.write_str("each line of the site file is KEY=VALUE"),
-            Self::WrongOwner => {
-                f.write_str("the owner of the site file is root or the account that reads it")
-            }
-            Self::OthersWrite => {
-                f.write_str("only the owner of the site file has the permission to write it")
-            }
         }
     }
 }
 
 impl Error for SiteFileError {}
-
-/// Makes sure that only root, or the account that reads the file, can
-/// change a site file.
-///
-/// The file says which account root drops to and where root installs, so an
-/// account that can write the file chooses the two. The binary takes the
-/// owner and the mode from one `fstat` of the open file, and reads the file
-/// through the same descriptor.
-///
-/// # Errors
-///
-/// [`SiteFileError::WrongOwner`] and [`SiteFileError::OthersWrite`].
-pub fn check_trust(owner_uid: u32, reader_uid: u32, mode: u32) -> Result<(), SiteFileError> {
-    if owner_uid != ROOT_UID && owner_uid != reader_uid {
-        return Err(SiteFileError::WrongOwner);
-    }
-
-    if mode & OTHERS_WRITE != 0 {
-        return Err(SiteFileError::OthersWrite);
-    }
-
-    Ok(())
-}
 
 // --- the typed values ---
 
@@ -985,29 +946,6 @@ mod tests {
         );
         assert_eq!(SiteFile::parse(b"export"), Err(SiteFileError::NotKeyValue));
         assert_eq!(SiteFile::parse(b""), Ok(SiteFile(BTreeMap::new())));
-    }
-
-    #[test]
-    fn only_root_or_the_reader_can_change_a_site_file() {
-        assert_eq!(check_trust(0, 1000, 0o100644), Ok(()));
-        assert_eq!(check_trust(1000, 1000, 0o100600), Ok(()));
-        assert_eq!(check_trust(0, 0, 0o100644), Ok(()));
-        assert_eq!(
-            check_trust(1001, 1000, 0o100644),
-            Err(SiteFileError::WrongOwner)
-        );
-        assert_eq!(
-            check_trust(1000, 0, 0o100644),
-            Err(SiteFileError::WrongOwner)
-        );
-        assert_eq!(
-            check_trust(0, 1000, 0o100664),
-            Err(SiteFileError::OthersWrite)
-        );
-        assert_eq!(
-            check_trust(0, 1000, 0o100646),
-            Err(SiteFileError::OthersWrite)
-        );
     }
 
     #[test]
