@@ -46,7 +46,7 @@ defect that a test finds late.
 | `status` | The status document, the fault files and one view for each reader: contract 05. |
 | `manifest` | The component manifest and the release request: contract 06. |
 | `mcp` | The words of the MCP wire. JSON-RPC 2.0 and the Model Context Protocol (MCP) state them. The module holds the message, the id of a request, the method names, the error codes, the protocol revisions and three results. No contract owns these words. A client and each server take them from this module. |
-| `config` | The config of each process: the site file, the environment of each daemon, the roster and the mount files. "The config of a process" below holds its rules. |
+| `config` | The config of each process: the site file, the env files, the environment of each daemon, the roster and the mount files. "The config of a process" and "The env files" below hold its rules. |
 | `untrusted` | Readers for an answer of another service. A field of a wrong type reads as empty. The raw type of an answer uses them. |
 
 `src/manifest.rs` holds the closed sets, the catalog and the differential
@@ -1002,6 +1002,7 @@ and never a raw text.
 | Module of `config` | What it holds |
 |---|---|
 | `site` | The site file: `SiteFile` is the raw form, and `Site` is the valid form. |
+| `envfile` | The reader of the env files: the grammar, the layers, the references and the trust check. "The env files" below holds its rules. |
 | `attendance`, `caregiver`, `chaperone`, `door_owui`, `door_trigger`, `noticeboard`, `intake` | The config of one daemon. |
 | `endpoints` | The names of some variables that hold the address of another service. A daemon module reads such a name from this module. `PlaneUrl` is the URL of a plane. A plane is a service of the host that each sandbox calls: the chaperone and LiteLLM. |
 | `roster` | The roster of the chaperone. `RawRoster` takes its tree through `serde`. |
@@ -1090,6 +1091,31 @@ More rules for a config type:
 - `config/python.rs` holds the differential test of the module. Its table
   `SURFACES` names each `config.` surface. A later packet deletes its second
   table, `DEVIATIONS`. Do not add a row to that table.
+
+## The env files
+
+`creche_contracts::config::envfile` is the Rust reader of the env files of
+the product. `creche_env.envfile` is the Python reader. `env/AGENTS.md` holds
+the grammar, the layers and the faults. The vectors of the surfaces
+`envfile.*` hold the two readers equal.
+
+- Read the pair of the product with `Pair::product`. The crate embeds
+  `env/src/creche_env/default.env` and `example.env` with `include_str!`.
+  Keep no second copy of the two files.
+- Read the `.env` of the host with `creche_runtime::envfile::read_site`. It
+  opens the file one time, and it gives the owner and the mode of one
+  `fstat` of the open file to `envfile::check_trust`.
+- Give the settings to the type of a config with `Settings::to_env`.
+- A server that gets each value from its environment calls
+  `load_environment`. Its list `free` names each variable outside the
+  catalog that the server reads, for example `PATH`.
+- A program of root calls `check_environment` at its start.
+- A binary component whose program calls `Pair::product` holds the two
+  files. Its row in the catalog of `handover/src/handover/catalog.py` must
+  then bundle `env`, so a change of the pair moves its tag. No component is
+  a binary component today.
+- `rust_gate_path` of `bin/lib/rustrule.sh` names the two files. CI thus
+  runs the Rust checks for a change of the pair alone.
 
 ## The rules for a service
 
@@ -1354,6 +1380,8 @@ commit message.
   add its directory to `bin/lib/rustrule.sh` first.
 - One build script reads one file outside those two directories. "The
   version of the manifest contract" names the file and its rule.
+- `config::envfile` embeds two files outside those two directories. "The
+  env files" names them and their rule.
 - A Rust source file includes no Markdown file. A push of Markdown files
   only runs no cargo step. `bin/rust-gate.sh` refuses a line that holds
   `include_str!`, `include_bytes!` or `include!` and a name that ends in
@@ -1375,7 +1403,7 @@ one exception: it gives each item of the reader to its users under the path
    `vectors/data/index.json`. It returns an error for a format that is not 1
    and for a count that differs from the index. The test calls `unwrap`.
 2. Read the input of each vector with `Input::text`, `Input::bytes` or
-   `Input::args`.
+   `Input::args`. Read a file of an `args` input with `Input::file`.
 3. Call the Rust code with the input.
 4. Compare the result with `Vector::result`. Compare the value with
    `Vector::value` and the refusal with `Vector::refusal`, as parsed JSON.
@@ -2589,6 +2617,19 @@ adds a crate:
      of question 12 above.
   3. One row of `manifest.resolved`: a version with a decimal digit outside
      ASCII.
+- This `CONTRACT-QUESTION` comment is open in
+  `crates/creche-contracts/src/config/envfile.rs`: no contract text gives
+  the environment layer of `load_environment` a rule for two inputs. An
+  empty value is no value, so the default holds. A variable outside the
+  catalog is refused unless the program names it in `free`. A change costs
+  one check of the function.
+- `config::envfile::load` takes the lookup of an account home from its
+  caller. No crate of the workspace reads the password database yet. The
+  Python reader reads it when its caller gives no lookup.
+- Two readers of the site file remain: `config::site::SiteFile` with the
+  grammar of `handover.site`, and `config::envfile`. Packet
+  `handover-site-keys` moves `handover.site` and `SiteFile` to the shared
+  reader in one pull request.
 - `manifest::Operator` holds two values of the site file. `config::site`
   holds the site file and has the types `OperatorUser` and `OperatorHome`.
   `ComponentManifest::parse` does not use them yet. A change to those two

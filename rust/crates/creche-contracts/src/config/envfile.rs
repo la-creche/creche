@@ -558,18 +558,15 @@ fn line_of(text: &str, number: usize, kind: FileKind) -> Result<Option<Line>, Li
     };
 
     if kind == FileKind::Example && !body.is_empty() && !body.starts_with(SPACE) {
-        // CONTRACT-QUESTION: no contract text says what `#text` with no
-        // space is in `example.env`. Reading taken, as the Python reader: a
-        // declaration, so each such line must be one. A change costs this
-        // branch and its vectors.
+        // `#text` with no space declares a key, so it must be an
+        // assignment. The owner confirmed this reading of the Python reader.
         return assignment(body, number, FileKind::Env).map(Some);
     }
 
-    // CONTRACT-QUESTION: no contract text limits the text of a comment.
-    // Reading taken, as the Python reader: no backslash and no control
-    // character, U+0000 to U+001F and U+007F to U+009F. An older systemd
-    // reads a comment that ends with a backslash as one comment with the
-    // next line. A change costs this check and its vectors.
+    // A comment holds no backslash and no control character, U+0000 to
+    // U+001F and U+007F to U+009F: the rule of the Python reader, which the
+    // owner confirmed. An older systemd reads a comment that ends with a
+    // backslash as one comment with the next line.
     if body.chars().any(|one| one.is_control() || one == '\\') {
         return Err((Fault::NotKeyValue, None));
     }
@@ -905,6 +902,8 @@ pub fn load_environment(
         // the environment is. Reading taken: no value, so the default
         // holds. Each Python service reads an empty variable as a variable
         // that is not set (`Env::text`). A change costs this check.
+        // The same question holds the reading of `free`: a variable outside
+        // the catalog is refused unless the program names it there.
         if !value.is_empty() {
             lines.push(Line {
                 key: key.clone(),
@@ -1022,8 +1021,8 @@ fn layers(
 /// KEY. The account is the text of KEY before layers 4 and 5, so a text
 /// with a reference names no account.
 ///
-/// CONTRACT-QUESTION: no contract text gives a home a grammar. Reading
-/// taken, as the Python reader: a home is a value that a `.env` can hold.
+/// A home is a value that a `.env` can hold: the rule of the Python reader,
+/// which the owner confirmed.
 fn with_homes(
     node: &Node<'_>,
     texts: &BTreeMap<&str, &Node<'_>>,
@@ -1088,9 +1087,8 @@ impl<'a> Resolver<'a, '_> {
     /// the first key of `path`. A cycle of more than [`MAX_DEPTH`] keys is
     /// such a chain too.
     ///
-    /// CONTRACT-QUESTION: no contract text limits a value after its
-    /// references. Reading taken, as the Python reader: [`MAX_BYTES`], the
-    /// limit of a file.
+    /// A value has [`MAX_BYTES`] at most after its references, the limit of
+    /// a file: the rule of the Python reader, which the owner confirmed.
     fn visit(
         &mut self,
         node: &Node<'a>,
@@ -1187,9 +1185,8 @@ pub fn check_environment(settings: &Settings, environ: &Env) -> Result<(), EnvEr
 /// `.env`, in the order of its lines, with no catalog and no reference. The
 /// Python reader gives the same assignments as a map.
 ///
-/// CONTRACT-QUESTION: no contract text gives this mode the rules of a
-/// value. Reading taken, as the Python reader: the rules of a `.env`, so no
-/// empty value and no `$`.
+/// The mode takes the rules of a value of a `.env`, so no empty value and
+/// no `$`: the rule of the Python reader, which the owner confirmed.
 ///
 /// # Errors
 ///
