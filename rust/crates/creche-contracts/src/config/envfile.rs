@@ -858,14 +858,21 @@ pub fn load(
 /// The function has no Python origin. The rules of a key and the rule of
 /// the catalog apply to `environ`. The rules of a value of a `.env` do not:
 /// the typed config of the program checks each value, and a secret passes
-/// as it is. No layer reads a reference in such a value.
+/// as it is. No layer reads a reference in such a value. The size rule of a
+/// value applies: a value of the environment has [`MAX_BYTES`] at most, as
+/// a value of `default.env` after its references. A longer value is
+/// [`Fault::TooLarge`].
 ///
 /// 1. A catalog key takes its value from `environ`. A value that is not
 ///    UTF-8 is [`Fault::NotUtf8`].
-/// 2. `free` names each other variable that the program reads, for
+/// 2. `free` names each other variable that the environment can hold, for
 ///    example `PATH`. Such a variable is no input of the layers.
 /// 3. Each other variable is [`Fault::BadKey`] when its name is no key, and
-///    [`Fault::UnknownKey`] when it is one.
+///    [`Fault::UnknownKey`] when it is one. This also applies to a variable
+///    that the program does not read, for example `LANG`.
+///
+/// [`Env::from_os`] drops a variable whose name is not UTF-8. Such a
+/// variable thus never reaches this function, and no fault names it.
 ///
 /// A fault of the environment names [`ENVIRONMENT`] and line 0.
 ///
@@ -903,7 +910,8 @@ pub fn load_environment(
         // holds. Each Python service reads an empty variable as a variable
         // that is not set (`Env::text`). A change costs this check.
         // The same question holds the reading of `free`: a variable outside
-        // the catalog is refused unless the program names it there.
+        // the catalog is refused unless the program names it there, also a
+        // variable that the program does not read.
         if !value.is_empty() {
             lines.push(Line {
                 key: key.clone(),
@@ -1500,6 +1508,20 @@ mod tests {
         }
 
         assert!(load_environment(&pair(), &not_utf8("LANG"), &["LANG"], homes).is_ok());
+    }
+
+    #[test]
+    fn a_value_of_the_environment_has_the_size_limit_of_a_value() {
+        let environ = |size: usize| {
+            let value = "a".repeat(size);
+
+            Env::from_pairs([("USER", "operator"), ("OPTIONAL", value.as_str())])
+        };
+
+        let settings = load_environment(&pair(), &environ(MAX_BYTES), &[], homes).unwrap();
+        assert_eq!(settings.value("OPTIONAL").map(str::len), Some(MAX_BYTES));
+        let error = load_environment(&pair(), &environ(MAX_BYTES + 1), &[], homes).unwrap_err();
+        assert_eq!(lines(&error), ["environment: too-large OPTIONAL"]);
     }
 
     #[test]

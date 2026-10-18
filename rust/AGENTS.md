@@ -1107,8 +1107,13 @@ the grammar, the layers and the faults. The vectors of the surfaces
   `fstat` of the open file to `envfile::check_trust`.
 - Give the settings to the type of a config with `Settings::to_env`.
 - A server that gets each value from its environment calls
-  `load_environment`. Its list `free` names each variable outside the
-  catalog that the server reads, for example `PATH`.
+  `load_environment`. Its list `free` names each other variable that the
+  environment can hold, for example `PATH`. The function refuses each
+  variable outside the catalog and outside `free`, also a variable that the
+  server does not read.
+- A value of the environment has `MAX_BYTES` at most, as a value of
+  `default.env` after its references. No other rule of a value of a `.env`
+  applies to it.
 - A program of root calls `check_environment` at its start.
 - A binary component whose program calls `Pair::product` holds the two
   files. Its row in the catalog of `handover/src/handover/catalog.py` must
@@ -2621,8 +2626,12 @@ adds a crate:
   `crates/creche-contracts/src/config/envfile.rs`: no contract text gives
   the environment layer of `load_environment` a rule for two inputs. An
   empty value is no value, so the default holds. A variable outside the
-  catalog is refused unless the program names it in `free`. A change costs
-  one check of the function.
+  catalog is refused unless the program names it in `free`, also a
+  variable that the program does not read. A change costs one check of the
+  function.
+- `config::Env::from_os` drops a variable whose name is not UTF-8. Such a
+  variable thus never reaches `load_environment`, and no fault names it.
+  No packet has that part yet.
 - `config::envfile::load` takes the lookup of an account home from its
   caller. No crate of the workspace reads the password database yet. The
   Python reader reads it when its caller gives no lookup.
