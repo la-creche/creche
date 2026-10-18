@@ -2571,6 +2571,11 @@ SCOPES = [
     (["handover/src/handover/catalog.py"], ("code", "false", "false", "true")),
     (["handover/component.yaml"], ("code", "true", "false", "true")),
     (["handover/AGENTS.md"], ("docs", "false", "false", "true")),
+    # creche-contracts embeds the pair of the product, so a change of the
+    # pair alone runs the Rust checks. A change of the reader does not.
+    (["env/src/creche_env/default.env"], ("code", "true", "false", "true")),
+    (["env/src/creche_env/example.env"], ("code", "true", "false", "true")),
+    (["env/src/creche_env/envfile.py"], ("code", "false", "false", "false")),
     (['handover/src/handover/one "x".py'], ("code", "false", "false", "true")),
     (["handover-notes.txt"], ("code", "false", "false", "false")),
     # The script that builds, the reader of its rows, and the rule itself.

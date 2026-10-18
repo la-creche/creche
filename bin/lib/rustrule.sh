@@ -11,9 +11,9 @@
 # Rust change: the cargo checks are the safe answer.
 #
 # CI takes a wider answer than the hooks: rust_touched also counts a file of
-# the Rust checks themselves, and the one file outside rust/ that a build
-# script reads (rust_gate_path). A runner always has cargo, so the wider
-# answer costs no session its commit.
+# the Rust checks themselves, the one file outside rust/ that a build script
+# reads, and the two files that a crate embeds (rust_gate_path). A runner
+# always has cargo, so the wider answer costs no session its commit.
 #
 # The Rust tests read vectors/data (vectors/README.md), so a vector that moves
 # can break one. rust_touched counts a path under vectors/ too (vectors_path).
@@ -74,12 +74,17 @@ vectors_path() {
 # changes a Rust constant and can stop the Rust build. The file has the
 # name component.yaml today, and component.toml is the name of its TOML
 # form.
+#
+# The pair of the product counts too. creche-contracts embeds default.env
+# and example.env of env/ (rust/AGENTS.md, "The env files"), so a change of
+# one of the two alone changes a Rust program and its tests.
 rust_gate_path() {
   case "$1" in
     bin/rust-gate.sh | bin/rust-coverage.sh | bin/lib/rustrule.sh | \
       .github/workflows/gate.yml | .github/workflows/release.yml | \
       .github/actions/scope/* | .github/actions/cargo-llvm-cov/* | \
-      handover/component.yaml | handover/component.toml)
+      handover/component.yaml | handover/component.toml | \
+      env/src/creche_env/default.env | env/src/creche_env/example.env)
       return 0
       ;;
   esac
