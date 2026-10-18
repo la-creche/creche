@@ -202,9 +202,16 @@ mod tests {
                 .unwrap()
                 .success()
         );
+        let directory = root.path().join("directory.env");
+        fs::create_dir(&directory).unwrap();
         let absent = root.path().join("absent.env");
 
-        for path in [root.path().to_owned(), fifo] {
+        // Each account can write the two paths. The check of the file type
+        // comes first, as in the Python reader, so the result is no trust
+        // fault.
+        for (path, mode) in [(directory, 0o777), (fifo, 0o666)] {
+            fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+
             let file = path.display().to_string();
             assert_eq!(read_site(&path), Err(SiteReadError::NotAFile { file }));
         }
