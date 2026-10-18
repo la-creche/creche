@@ -17,7 +17,7 @@ gives each item of this crate to its users as `creche_testkit::vectors`.
 
 | Path | What it holds |
 |---|---|
-| `src/lib.rs` | `index` and `surface`: the rows of the index, and the vector file of one surface. The input forms, the markers and the error type. |
+| `src/lib.rs` | `index` and `surface`: the rows of the index, and the vector file of one surface. The input forms, the files of an `args` input, the markers and the error type. |
 | `src/disagreements.rs` | `disagreements`: the rows of `ids/disagreements.json`. |
 | `src/registries.rs` | `registries`: the rows of `family_file.registries.json`. |
 
