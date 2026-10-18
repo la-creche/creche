@@ -1084,8 +1084,11 @@ impl<'a> Resolver<'a, '_> {
     ///
     /// A fault names the key whose text holds the reference that fails. A
     /// chain that is too long is the one exception: the fault names `top`,
-    /// the first key of `path`. A cycle of more than [`MAX_DEPTH`] keys is
-    /// such a chain too.
+    /// the first key of `path`. The cycle check comes before the depth check,
+    /// as in the Python reader. A cycle of 9 keys, [`MAX_DEPTH`] and one
+    /// more, is thus [`Fault::ReferenceCycle`]. A cycle of 10 keys or more
+    /// is a chain that is too long: its 9th reference comes before the
+    /// reference that goes back to a key of the cycle.
     ///
     /// A value has [`MAX_BYTES`] at most after its references, the limit of
     /// a file: the rule of the Python reader, which the owner confirmed.
@@ -1310,6 +1313,28 @@ mod tests {
         assert_eq!(
             KeyError.to_string(),
             "a key has the form [A-Z][A-Z0-9_]{0,63}"
+        );
+    }
+
+    #[test]
+    fn a_cycle_of_nine_keys_is_a_cycle_and_a_cycle_of_ten_is_too_deep() {
+        let fault = |count: usize| {
+            let cycle: String = (0..count)
+                .map(|index| format!("R{index}=${{R{}}}\n", (index + 1) % count))
+                .collect();
+            let pair = read_pair(
+                &Text::new(DEFAULT_FILE, cycle),
+                &Text::new(EXAMPLE_FILE, ""),
+            )
+            .unwrap();
+
+            lines(&load(&pair, &Text::new(".env", ""), homes).unwrap_err())
+        };
+
+        assert_eq!(fault(MAX_DEPTH + 1), ["default.env:9: reference-cycle R8"]);
+        assert_eq!(
+            fault(MAX_DEPTH + 2),
+            ["default.env:1: reference-too-deep R0"]
         );
     }
 
