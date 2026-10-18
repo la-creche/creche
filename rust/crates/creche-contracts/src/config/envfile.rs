@@ -559,14 +559,14 @@ fn line_of(text: &str, number: usize, kind: FileKind) -> Result<Option<Line>, Li
 
     if kind == FileKind::Example && !body.is_empty() && !body.starts_with(SPACE) {
         // `#text` with no space declares a key, so it must be an
-        // assignment. The owner confirmed this reading of the Python reader.
+        // assignment: the decided rule of the Python reader.
         return assignment(body, number, FileKind::Env).map(Some);
     }
 
     // A comment holds no backslash and no control character, U+0000 to
-    // U+001F and U+007F to U+009F: the rule of the Python reader, which the
-    // owner confirmed. An older systemd reads a comment that ends with a
-    // backslash as one comment with the next line.
+    // U+001F and U+007F to U+009F: the decided rule of the Python reader.
+    // An older systemd reads a comment that ends with a backslash as one
+    // comment with the next line.
     if body.chars().any(|one| one.is_control() || one == '\\') {
         return Err((Fault::NotKeyValue, None));
     }
@@ -1029,8 +1029,8 @@ fn layers(
 /// KEY. The account is the text of KEY before layers 4 and 5, so a text
 /// with a reference names no account.
 ///
-/// A home is a value that a `.env` can hold: the rule of the Python reader,
-/// which the owner confirmed.
+/// A home is a value that a `.env` can hold: the decided rule of the
+/// Python reader.
 fn with_homes(
     node: &Node<'_>,
     texts: &BTreeMap<&str, &Node<'_>>,
@@ -1099,7 +1099,7 @@ impl<'a> Resolver<'a, '_> {
     /// reference that goes back to a key of the cycle.
     ///
     /// A value has [`MAX_BYTES`] at most after its references, the limit of
-    /// a file: the rule of the Python reader, which the owner confirmed.
+    /// a file: the decided rule of the Python reader.
     fn visit(
         &mut self,
         node: &Node<'a>,
@@ -1197,7 +1197,7 @@ pub fn check_environment(settings: &Settings, environ: &Env) -> Result<(), EnvEr
 /// Python reader gives the same assignments as a map.
 ///
 /// The mode takes the rules of a value of a `.env`, so no empty value and
-/// no `$`: the rule of the Python reader, which the owner confirmed.
+/// no `$`: the decided rule of the Python reader.
 ///
 /// # Errors
 ///
