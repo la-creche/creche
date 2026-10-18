@@ -35,6 +35,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use super::{Env, EnvValue};
+use crate::ids::EnvName;
 
 /// The most bytes of one file, and of one value after its references.
 pub const MAX_BYTES: usize = 64 * 1024;
@@ -62,9 +63,6 @@ pub const ENVIRONMENT: &str = "environment";
 const PRODUCT_DEFAULTS: &str = include_str!("../../../../../env/src/creche_env/default.env");
 const PRODUCT_EXAMPLE: &str = include_str!("../../../../../env/src/creche_env/example.env");
 
-/// The most characters of a key.
-const KEY_MAX: usize = 64;
-
 /// The write bits of the group and of each other account.
 const OTHERS_WRITE_BITS: u32 = 0o022;
 
@@ -75,33 +73,35 @@ const REFERENCE_SIGN: char = '$';
 
 // --- the key and the faults ---
 
-/// A key of an env file: `[A-Z][A-Z0-9_]{0,63}`, the grammar of the name of
-/// a variable.
+/// A key of an env file: an [`EnvName`], the grammar of the name of a
+/// variable. `ids` holds that one grammar.
 ///
 /// ```
-/// use creche_contracts::config::envfile::Key;
+/// use creche_contracts::{config::envfile::Key, ids::EnvName};
 ///
 /// let key: Key = "AGENT_LAN_ADDRESS".parse()?;
-/// assert_eq!(key.as_str(), "AGENT_LAN_ADDRESS");
+/// let name: EnvName = "AGENT_LAN_ADDRESS".parse().unwrap();
+/// assert_eq!(key.as_str(), name.as_str());
 /// assert!("agent".parse::<Key>().is_err());
 /// # Ok::<(), creche_contracts::config::envfile::KeyError>(())
 /// ```
 ///
-/// Code outside this module cannot build a key from a raw string:
+/// Code outside this module cannot build a key from a name:
 ///
 /// ```compile_fail,E0423
-/// use creche_contracts::config::envfile::Key;
+/// use creche_contracts::{config::envfile::Key, ids::EnvName};
 ///
-/// let key = Key(String::from("lower"));
+/// let name: EnvName = "AGENT_LAN_ADDRESS".parse().unwrap();
+/// let key = Key(name);
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Key(String);
+pub struct Key(EnvName);
 
 impl Key {
     /// The key as text.
     #[must_use]
     pub fn as_str(&self) -> &str {
-        &self.0
+        self.0.as_str()
     }
 }
 
@@ -109,27 +109,19 @@ impl FromStr for Key {
     type Err = KeyError;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        let mut bytes = text.bytes();
-        let first = bytes.next().is_some_and(|byte| byte.is_ascii_uppercase());
-        let rest =
-            bytes.all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_');
-        if !first || !rest || text.len() > KEY_MAX {
-            return Err(KeyError);
-        }
-
-        Ok(Self(text.to_owned()))
+        text.parse().map(Self).map_err(|_| KeyError)
     }
 }
 
 impl Borrow<str> for Key {
     fn borrow(&self) -> &str {
-        &self.0
+        self.0.as_str()
     }
 }
 
 impl fmt::Display for Key {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
+        f.write_str(self.0.as_str())
     }
 }
 
@@ -139,7 +131,7 @@ pub struct KeyError;
 
 impl fmt::Display for KeyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("a key is a capital letter and 63 capital letters, digits or _ at most")
+        write!(f, "a key has the form {}", EnvName::form())
     }
 }
 
@@ -1314,6 +1306,11 @@ mod tests {
         ] {
             assert_eq!(text.parse::<Key>(), Err(KeyError), "{text:?}");
         }
+
+        assert_eq!(
+            KeyError.to_string(),
+            "a key has the form [A-Z][A-Z0-9_]{0,63}"
+        );
     }
 
     #[test]
