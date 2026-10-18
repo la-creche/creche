@@ -9,6 +9,7 @@
 //! |---|---|
 //! | [`atomic`] | A file write through a temporary file, a sync and a rename. |
 //! | [`readfile`] | A file read with a size cap. The read gives each failure as a value and does not panic. |
+//! | [`envfile`] | The read of the `.env` of the host, with the trust check of the opened file. |
 //! | [`layout`] | The paths under the state root that more than one service uses. |
 //! | [`clock`], [`entropy`] | The clock and the random source, as seams that a test replaces. The mint of a ULID and of a random token. |
 //! | [`log`] | One line on stderr for each event, and the panic hook. |
@@ -31,6 +32,7 @@ pub mod atomic;
 pub mod clock;
 pub mod command;
 pub mod entropy;
+pub mod envfile;
 pub mod faults;
 pub mod http;
 pub mod layout;

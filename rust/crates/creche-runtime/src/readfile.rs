@@ -391,7 +391,7 @@ fn read_open(file: File, cap: ByteCap) -> FileRead {
 ///   process.
 /// - `NOFOLLOW`, for [`Follow::Refuse`]: the kernel refuses a symlink at the
 ///   last part of the path. The check and the open are one call.
-fn open_flags(follow: Follow) -> OFlags {
+pub(crate) fn open_flags(follow: Follow) -> OFlags {
     let flags = OFlags::RDONLY | OFlags::NONBLOCK | OFlags::CLOEXEC | OFlags::NOCTTY;
 
     match follow {
@@ -402,7 +402,7 @@ fn open_flags(follow: Follow) -> OFlags {
 
 /// Opens `path`. When a signal stops the call, the function makes the call
 /// again, as the open of the standard library and the open of Python do.
-fn open_path(path: &Path, flags: OFlags) -> Result<OwnedFd, Errno> {
+pub(crate) fn open_path(path: &Path, flags: OFlags) -> Result<OwnedFd, Errno> {
     again_after_a_signal(|| rustix::fs::open(path, flags, Mode::empty()))
 }
 
