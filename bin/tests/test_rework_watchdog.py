@@ -1059,20 +1059,21 @@ def test_check_4_reads_each_firing_unit(rig: Rig) -> None:
         assert lines.count(f"systemctl --user show {unit} -p ExecMainStatus --value") == 1
 
 
-def test_a_firing_that_ended_with_78_is_a_failed_unit(rig: Rig) -> None:
-    """Status 78 is the status of a start that the config refuses. The rule
-    of two runs in a row holds for it as for each other check."""
+def test_a_firing_that_ended_with_78_fails_the_key_firings(rig: Rig) -> None:
+    """Status 78 is the status of a start that the config refuses. Such a
+    firing fails the key `firings`. The rule of two runs in a row holds for
+    it as for each other check."""
     first = rig.run(WD_FIRINGS=f"{FIRING}=78")
 
     assert first.returncode == 1
-    assert "units: " in first.stdout
+    assert "firings: " in first.stdout
     assert ", 1 of 2" in first.stdout
     assert rig.posts() == []
 
     second = rig.run(WD_FIRINGS=f"{FIRING}=78")
 
     assert second.returncode == 1
-    assert rig.stored() == "units"
+    assert rig.stored() == "firings"
     assert len(rig.posts()) == 1
     assert "rework DOWN" in rig.posts()[0]
     assert FIRING in rig.posts()[0]
@@ -1111,15 +1112,72 @@ def test_a_show_call_with_no_answer_ends_the_read(rig: Rig) -> None:
     assert rig.posts() == []
 
 
-def test_a_firing_and_a_failed_unit_are_one_units_failure(rig: Rig) -> None:
-    states = {"WD_FIRINGS": f"{FIRING}=78", "WD_FAILED_UNITS": "creche-caregiver.service"}
+#: An always-on unit that systemd reports failed, in the cases of the two
+#: keys of check 4.
+FAILED_UNIT: Final = "creche-caregiver.service"
+
+
+def test_a_refused_firing_and_a_failed_unit_are_two_keys(rig: Rig) -> None:
+    """The key `units` holds the failed always-on unit, and the key
+    `firings` holds the refused firing. The verdict lists both keys in the
+    order of the calls, and `--last` prints it. One push names both, with
+    the detail line of each key."""
+    states = {"WD_FIRINGS": f"{FIRING}=78", "WD_FAILED_UNITS": FAILED_UNIT}
     rig.run(**states)
-    rig.run(**states)
+    done = rig.run(**states)
+
+    assert done.returncode == 1
+    assert rig.stored() == "units firings"
+    assert rig.raw() == "units firings"
+    assert len(rig.posts()) == 1
+    post = rig.posts()[0]
+    units = post.index(f"systemd reports failed: {FAILED_UNIT}")
+    assert units < post.index(f"the last firing ended with status 78: {FIRING}")
+    assert rig.run("--last").stdout.strip() == "units firings"
+
+
+def test_a_unit_that_fails_after_a_refused_firing_pushes(rig: Rig) -> None:
+    """A refused firing keeps its status 78 until the next firing of its
+    family. An always-on unit that fails in that time moves the verdict
+    from `firings` to `units firings`, and a second push names the unit."""
+    firing = {"WD_FIRINGS": f"{FIRING}=78"}
+    rig.run(**firing)
+    rig.run(**firing)
+
+    assert rig.stored() == "firings"
+    assert len(rig.posts()) == 1
+
+    both = {**firing, "WD_FAILED_UNITS": FAILED_UNIT}
+    rig.run(**both)
+    done = rig.run(**both)
+
+    assert done.returncode == 1
+    assert rig.stored() == "units firings"
+    assert len(rig.posts()) == 2
+    assert FAILED_UNIT not in rig.posts()[0]
+    assert FAILED_UNIT in rig.posts()[1]
+
+
+def test_a_firing_refused_after_a_failed_unit_pushes(rig: Rig) -> None:
+    """A failed always-on unit is confirmed first. A refused firing then
+    moves the verdict from `units` to `units firings`, and a second push
+    names the firing."""
+    unit = {"WD_FAILED_UNITS": FAILED_UNIT}
+    rig.run(**unit)
+    rig.run(**unit)
 
     assert rig.stored() == "units"
     assert len(rig.posts()) == 1
-    assert FIRING in rig.posts()[0]
-    assert "creche-caregiver.service" in rig.posts()[0]
+
+    both = {**unit, "WD_FIRINGS": f"{FIRING}=78"}
+    rig.run(**both)
+    done = rig.run(**both)
+
+    assert done.returncode == 1
+    assert rig.stored() == "units firings"
+    assert len(rig.posts()) == 2
+    assert FIRING not in rig.posts()[0]
+    assert FIRING in rig.posts()[1]
 
 
 @pytest.mark.parametrize(

@@ -30,17 +30,21 @@
 #                GET returns 401, which proves a listener and needs no
 #                token (invariant 13).  5 s
 #   4. units     `systemctl --user is-failed` must be false for each of the
-#                five rework user units.  5 s
+#      firings   five rework user units.  5 s
 #                The check also reads each firing unit, an instance of
 #                `creche-trigger@`. `systemctl --user list-units` names the
 #                instances, and one `systemctl --user show` call for each
 #                instance gives the status of its last run. Status 78 is
 #                the status of a start that the config refuses, and it
-#                counts as a failed unit. Each other status counts as no
+#                counts as a failed firing. Each other status counts as no
 #                failure: a firing ends with status 1 when the session
 #                service refuses the job, and no config causes that.
 #                5 s for each call. One call with no answer in that time
 #                ends the read of the firing units for the run.
+#                The check has two keys. The key `units` holds the failed
+#                rework user units, and the key `firings` holds the firing
+#                units that ended with status 78. So a config fault of one
+#                family does not hide an outage of an always-on unit.
 #   5. registry  `registry-sync.service` must have ended well inside the
 #                last 5 minutes. It is what pulls /srv/agents/registry,
 #                and a fleet that ignores every merge looks exactly like a
@@ -536,7 +540,7 @@ check_attendance() {
 # --- 4. no rework unit is failed ------------------------------------------------
 
 check_units() {
-  local unit failed listed rest status refused detail
+  local unit failed listed rest status refused
   failed=""
   for unit in $UNITS; do
     # `is-failed` exits 0 when the unit IS failed. Under `timeout`, because
@@ -575,11 +579,15 @@ check_units() {
     return 0
   fi
 
-  detail=""
-  [[ -n "$failed" ]] && detail="systemd reports failed:${failed}"
-  [[ -n "$refused" ]] \
-    && detail="${detail:+$detail, }the last firing ended with status $CONFIG_REFUSED_STATUS:${refused}"
-  note_down units "$detail"
+  # Two keys, so a config fault of one family does not hide an outage of an
+  # always-on unit. A refused firing keeps its status until the next firing.
+  if [[ -n "$failed" ]]; then
+    note_down units "systemd reports failed:${failed}"
+  fi
+
+  if [[ -n "$refused" ]]; then
+    note_down firings "the last firing ended with status $CONFIG_REFUSED_STATUS:${refused}"
+  fi
 }
 
 # --- 5. the registry still reaches this host ----------------------------------
