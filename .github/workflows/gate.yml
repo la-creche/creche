@@ -82,7 +82,7 @@ concurrency:
 
 jobs:
   scope:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       scope: ${{ steps.scope.outputs.scope }}
       rust: ${{ steps.scope.outputs.rust }}
@@ -100,7 +100,7 @@ jobs:
   # It asks the scope itself, so it starts with the scope job and a docs PR
   # does not wait for one job before the other.
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -123,7 +123,7 @@ jobs:
   tests:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       # A red shard does not stop the others: one run shows every failure.
       fail-fast: false
@@ -156,7 +156,7 @@ jobs:
   playpen:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # `pnpm run build` fixes the LAN address in the bundle and refuses to
     # build without one (playpen/build.mjs). CI throws the bundle away,
     # so the example site's TEST-NET-1 address does.
@@ -196,7 +196,7 @@ jobs:
   proc:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -249,7 +249,7 @@ jobs:
   proc-rust:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       # As in the `rust` job: no build here starts from the last one.
@@ -300,7 +300,7 @@ jobs:
   suites:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -400,7 +400,7 @@ jobs:
   rust:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       # A CI build starts from a cache or from nothing, never from the last
       # build of the same tree, so the incremental state is only weight.
@@ -493,7 +493,7 @@ jobs:
   rust-coverage:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       # As in the `rust` job: no build here starts from the last one.
@@ -541,7 +541,7 @@ jobs:
   systemd-proof:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -580,7 +580,7 @@ jobs:
   # of one crate two times in less than 30 minutes.
   artifacts:
     needs: scope
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     outputs:
       digests: ${{ steps.build.outputs.digests }}
@@ -622,7 +622,7 @@ jobs:
   gate:
     needs: [scope, lint, tests, playpen, proc, proc-rust, suites, rust, rust-coverage, systemd-proof, artifacts]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       # The verdict is a local action, read from the checkout. Full history
       # as in every job (bin/tests/test_gate_workflow.py).

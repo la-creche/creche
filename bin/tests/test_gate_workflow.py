@@ -333,7 +333,7 @@ COVERAGE_PREFIX = "LLVM_COV_"
 COVERAGE_JOB_KEYS = {"needs", "if", "runs-on", "timeout-minutes", "env", "steps"}
 
 #: The runner of the job: the system of the release archive above.
-COVERAGE_RUNNER = "ubuntu-latest"
+COVERAGE_RUNNER = "ubuntu-24.04"
 
 #: Each variable of the job. One more can change what the run compiles, for
 #: example `RUSTFLAGS`, and then what the report holds.
@@ -500,7 +500,7 @@ ONLY_SYSTEMD = "needs.scope.outputs.systemd != 'false'"
 SYSTEMD_OUTPUT = "${{ steps.scope.outputs.systemd }}"
 
 #: The machine of the job: the hosted runner, with its own systemd.
-SYSTEMD_RUNNER = "ubuntu-latest"
+SYSTEMD_RUNNER = "ubuntu-24.04"
 
 #: Each key of the job. One more key can move the proof off the systemd of
 #: the runner, for example `container`. One more key can also let a failed
@@ -1945,7 +1945,7 @@ def test_the_artifacts_job_of_the_release_is_pinned_as_a_whole() -> None:
 
     assert set(job) == ARTIFACTS_KEYS
     assert job["needs"] == "scope"
-    assert job["runs-on"] == "ubuntu-latest"
+    assert job["runs-on"] == "ubuntu-24.04"
     assert 0 < job["timeout-minutes"] <= 30
     assert job["outputs"] == ARTIFACTS_OUTPUTS
     assert job["steps"] == ARTIFACTS_STEPS
