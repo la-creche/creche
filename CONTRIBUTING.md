@@ -124,9 +124,6 @@ component's own newest tag.
 - No job of `release.yml` builds or signs an archive. The catalog has no
   binary component. The tag script refuses a binary component that has no
   archive, so such a component gets no tag.
-- A change under `rust/` moves no component today, because no component is a
-  binary component. A change to `rust/Cargo.lock`, `rust/Cargo.toml` or
-  `rust/rust-toolchain.toml` moves every binary component and no other kind.
 - Prose moves no tag. A `.md` file outside `tests/` and `fixtures/` is
   prose. A merge that changes only `playpen/AGENTS.md` makes no tag. The next
   code change to `playpen/` makes one tag, and that tag covers both merges.

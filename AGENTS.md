@@ -16,8 +16,6 @@ until the prose is fixed. This is the most important rule in this file.
 1. Run `git config core.hooksPath githooks` once per clone.
 2. Run `uv sync` once.
 3. For `playpen/`, run `pnpm install` in that directory.
-4. For `rust/`, install rustup. It installs the toolchain that
-   `rust/rust-toolchain.toml` names.
 
 ## Every change
 
@@ -96,7 +94,6 @@ text with no UTC offset is not a time.
 | `library/` | `library/AGENTS.md` |
 | `integration/` | `integration/AGENTS.md` |
 | `bin/` | `bin/AGENTS.md` |
-| `rust/` | `rust/AGENTS.md` |
 | `vectors/` | `vectors/AGENTS.md` |
 | `systemd/` | `systemd/AGENTS.md` |
 | branches, hooks, CI, tags | `CONTRIBUTING.md` |
