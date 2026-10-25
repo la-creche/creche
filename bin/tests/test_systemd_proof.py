@@ -1,11 +1,10 @@
 """The systemd proof fails for each result that breaks the restart rule.
 
 `bin/systemd-proof.sh` runs on a Linux runner. There it proves the restart
-rule of `rust/AGENTS.md`, "The config of a process": after exit status 78,
-systemd does not start a unit with `RestartPreventExitStatus=78` again. Only
-that run is the proof.
+rule of the daemon units: after exit status 78, systemd does not start a
+unit with `RestartPreventExitStatus=78` again. Only that run is the proof.
 This file holds the script itself: a proof that cannot fail proves nothing.
-Six things could go wrong without one red line, and each gets a check here:
+Five things could go wrong without one red line, and each gets a check here:
 
 1. **A case that passes on a wrong result.** Case 1 fails for a unit that is
    not `failed`, for another exit status and for one restart. Case 2 and
@@ -23,9 +22,6 @@ Six things could go wrong without one red line, and each gets a check here:
 5. **A change that needs the proof, and skips it.** `--unchanged` says no
    for a change that git cannot read, and a wrong call is no answer. The
    table of the changes is in `bin/tests/test_gate_workflow.py`.
-6. **A proof of another line than the one the Rust code names.** The status
-   and the unit line of the script equal `EX_CONFIG` and `NO_RESTART_LINE`
-   of `rust/crates/creche-contracts/src/config.rs`.
 
 Each test runs the real script in a throwaway tree. `sudo`, `ps`, `sleep`,
 `systemctl`, `systemd-run` and `systemd-analyze` are fakes that write their
@@ -36,7 +32,6 @@ the script and the fakes call, so no test reaches the systemd of the machine.
 from __future__ import annotations
 
 import os
-import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -48,11 +43,6 @@ REPO = Path(__file__).resolve().parents[2]
 
 #: The file under test, copied into the throwaway tree.
 PROOF = "bin/systemd-proof.sh"
-
-#: The home of the two Rust constants that the script copies.
-RUST_CONFIG = REPO / "rust" / "crates" / "creche-contracts" / "src" / "config.rs"
-RUST_STATUS = re.compile(r"^pub const EX_CONFIG: u8 = (\d+);$", re.MULTILINE)
-RUST_LINE = re.compile(r'^pub const NO_RESTART_LINE: &str = "([^"]+)";$', re.MULTILINE)
 
 #: Every program that the script and the fakes call, but the fakes.
 TOOLS = ("bash", "dirname", "git", "sed", "rm", "cat", "true")
@@ -345,23 +335,6 @@ def test_each_unit_holds_the_restart_rule_and_starts_as_root(machine: Machine) -
     assert done.of("systemd-run") == starts
     for start in starts:
         assert ["-n", "systemd-run", *start] in done.of("sudo")
-
-
-def test_the_proof_tests_the_status_and_the_line_that_the_rust_code_names() -> None:
-    """The script cannot read a Rust constant, so it holds a copy of two.
-    This pin fails when a copy differs. It also fails when the Rust file no
-    longer holds a constant in this form: change the pin with that file."""
-    text = RUST_CONFIG.read_text(encoding="utf-8")
-    status = RUST_STATUS.search(text)
-    line = RUST_LINE.search(text)
-
-    assert status is not None, f"{RUST_CONFIG.name} holds no `EX_CONFIG` in the pinned form"
-    assert line is not None, f"{RUST_CONFIG.name} holds no `NO_RESTART_LINE` in the pinned form"
-    assert f"--property={line.group(1)}" == RESTART_RULE[-1]
-    assert STARTS[MAIN_REFUSES] == ["/bin/sh", "-c", f"exit {status.group(1)}"]
-    assert STARTS[CHECK_REFUSES][0] == (
-        f'--property=ExecStartPre=/bin/sh -c "exit {status.group(1)}"'
-    )
 
 
 def test_the_proof_reads_case_1_last_and_after_the_wait(machine: Machine) -> None:
