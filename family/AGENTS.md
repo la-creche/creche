@@ -111,10 +111,9 @@ argument reads YAML as before.
 
 `tomlfile.py` imports only from the standard library. Its doc string names
 no package of this repository and no path in it. Another package can thus
-hold a byte copy of the file. It
-copies the four byte limits, the level limit and the four texts from
-`rust/crates/creche-contracts/src/tomlfile.rs`, which is their source.
-`bin/tests/test_tomlfile_numbers.py` holds each copy equal to the Rust file.
+hold a byte copy of the file. `handover/src/handover/tomlfile.py` is such a
+copy. `bin/tests/test_tomlfile_numbers.py` holds the two files equal, byte
+for byte.
 
 ### The check of the six forms of TOML 1.1
 

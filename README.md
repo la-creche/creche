@@ -63,7 +63,7 @@ The other directories:
 
 | Directory | What it holds | Read |
 |---|---|---|
-| `bin/` | The scripts that run on the host, the scripts of CI and the five shell libraries. | [bin/AGENTS.md](bin/AGENTS.md) |
+| `bin/` | The scripts that run on the host, the scripts of CI and the two shell libraries. | [bin/AGENTS.md](bin/AGENTS.md) |
 | `systemd/` | Every unit file. A unit is installed by a script, never by hand. | [systemd/AGENTS.md](systemd/AGENTS.md) |
 | `integration/` | The cross-package suite. It runs the real doors, `attendance`, the chaperone and the playpen together. | [integration/AGENTS.md](integration/AGENTS.md) |
 | `rust/` | The Cargo workspace: every Rust crate. No release uses it. | [rust/AGENTS.md](rust/AGENTS.md) |
@@ -93,8 +93,6 @@ The other directories:
 | Change when a new tag files a request | `handover/src/handover/follow/`, `systemd/creche-follow.service` |
 | Change what a deploy does | `bin/creche-deploy` |
 | Change the quality gate or the docs rule | `bin/quality-gate.sh`, `bin/lib/docsrule.sh` |
-| Change the Rust checks, or the rule that starts them | `bin/rust-gate.sh`, `bin/lib/rustrule.sh` |
-| Change the coverage rule of the Rust code | `bin/rust-coverage.sh`, `rust/coverage-files.txt` |
 | Add a Rust type for a contract | `rust/crates/creche-contracts/`. Read `rust/AGENTS.md` first. |
 | Change the index schema | `library/src/library/library.py` and `playpen/bridge/index-store.ts`, together |
 
@@ -110,7 +108,6 @@ bin/quality-gate.sh                    # ruff, ruff format, pyright
 uv run pytest -n auto                  # every Python suite in pyproject.toml
 cd playpen && pnpm install && pnpm test && pnpm run typecheck && pnpm run build
 uv run pytest integration/tests -m slow   # the cross-package gate, after pnpm build
-bin/rust-gate.sh --tests               # the Rust workspace: fmt, clippy, deny, test
 ```
 
 No test needs a host, a sandbox, LiteLLM or a model. Every external thing

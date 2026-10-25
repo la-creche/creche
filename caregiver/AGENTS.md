@@ -82,9 +82,9 @@ host where something has gone wrong.
 - A pass checks the size of the grant file before the key step, with
   `steps.check_grants`. A pass that refuses the file runs no step. It mints
   no key, sends nothing to LiteLLM and writes no `creds.json`.
-- The cap has one source: `GRANT_FILE_MAX_BYTES` of the Rust crate
-  `creche-contracts`. `grants.py` holds a copy with the same name.
-  `bin/tests/test_grant_file_cap.py` fails when the copy differs.
+- `grants.py` holds the cap as `GRANT_FILE_MAX_BYTES`. The chaperone holds
+  the same number. `bin/tests/test_grant_file_cap.py` fails when the two
+  numbers differ.
 - `apply_once` creates a sandbox once. `classify()` decides whether a change
   needs a new one.
 - The applied snapshot moves at the end of a successful pass. An interrupted
