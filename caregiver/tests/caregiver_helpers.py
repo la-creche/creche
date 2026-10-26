@@ -10,16 +10,15 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-import yaml
-from agent_family import FamilyFile, parse_family
+from agent_family import FamilyFile, Markup, parse_family
 from caregiver.credentials import read_creds, token_sha256, write_creds
 from caregiver.grants import UNCOMPARED
 
 from caregiver import paths
 
-FAMILY_YAML: dict[str, Any] = {
+FAMILY_BODY: dict[str, Any] = {
     "name": "chat",
     "kind": "attended",
     "description": "Test family.",
@@ -27,7 +26,7 @@ FAMILY_YAML: dict[str, Any] = {
 }
 
 #: The default `chat` family as a TOML text. Its value is the value of
-#: `FAMILY_YAML`.
+#: `FAMILY_BODY`.
 FAMILY_TOML: str = """\
 name = "chat"
 kind = "attended"
@@ -37,7 +36,7 @@ model.budget_usd_per_day = 15
 """
 
 #: A grant the validator refuses, in a file that still parses: no
-#: `mcp/ghost/server.yaml` declares the server. `registry.families` holds
+#: `mcp/ghost/server.toml` declares the server. `registry.families` holds
 #: the file all the same, beside a report that is not ok.
 REFUSED_TOOLS: dict[str, list[str]] = {"ghost": ["merge_pull_request"]}
 
@@ -81,18 +80,46 @@ class NoText:
         raise RecursionError("maximum recursion depth exceeded")
 
 
-def family_yaml(**overrides: object) -> str:
-    """The default `chat` family as YAML text, with any field replaced."""
-    body = dict(FAMILY_YAML)
+def _toml_key(key: str) -> str:
+    bare = key.replace("_", "a").replace("-", "a")
+    return key if bare.isascii() and bare.isalnum() else json.dumps(key)
+
+
+def _toml_value(value: object) -> str:
+    """One value in TOML. The JSON form of a text, a number or a boolean is
+    also its TOML form. A table is an inline table, and a key with no value
+    is left out, because TOML has no null."""
+    if isinstance(value, list | tuple):
+        return "[" + ", ".join(_toml_value(one) for one in cast("list[object]", value)) + "]"
+
+    if isinstance(value, dict):
+        items = cast("dict[str, object]", value).items()
+        pairs = [f"{_toml_key(key)} = {_toml_value(one)}" for key, one in items if one is not None]
+        return "{ " + ", ".join(pairs) + " }" if pairs else "{}"
+
+    return json.dumps(value, ensure_ascii=False)
+
+
+def toml_text(body: dict[str, Any]) -> str:
+    """A TOML text with one line for each key of the top table."""
+    lines = [
+        f"{_toml_key(key)} = {_toml_value(one)}\n" for key, one in body.items() if one is not None
+    ]
+    return "".join(lines)
+
+
+def family_toml(**overrides: object) -> str:
+    """The default `chat` family as TOML text, with any field replaced."""
+    body = dict(FAMILY_BODY)
     body.update(overrides)
-    return yaml.safe_dump(body)
+    return toml_text(body)
 
 
 def chat_family(**overrides: object) -> FamilyFile:
     """The same file, parsed. Raises on a shape the parser refuses, so a
     test that mistypes an override fails at the fixture, not three
     assertions later."""
-    family, issues = parse_family(family_yaml(**overrides))
+    family, issues = parse_family(family_toml(**overrides), Markup.TOML)
     if family is None:
         raise AssertionError(f"the test's own family file does not parse: {issues}")
 
@@ -103,18 +130,18 @@ def write_registry(root: Path, **overrides: object) -> Path:
     """One family in a fresh (or already-populated) registry root. The
     default shape is a minimal, valid `chat` family; pass `name=...` for a
     second family, or any other field to make it invalid on purpose."""
-    body = dict(FAMILY_YAML)
+    body = dict(FAMILY_BODY)
     body.update(overrides)
     name = str(body["name"])
     family_dir = root / "families" / name
     family_dir.mkdir(parents=True, exist_ok=True)
-    (family_dir / "family.yaml").write_text(yaml.safe_dump(body), encoding="utf-8")
+    (family_dir / "family.toml").write_text(toml_text(body), encoding="utf-8")
     (family_dir / "instructions.md").write_text("Be helpful.\n", encoding="utf-8")
     return root
 
 
 def write_no_file_dir(root: Path, name: str = "stray") -> Path:
-    """A directory under `families/` that holds no `family.yaml`. Contract
+    """A directory under `families/` that holds no `family.toml`. Contract
     01 §5.6 rule 3: the registry reports a warning for it."""
     directory = root / "families" / name
     directory.mkdir(parents=True, exist_ok=True)

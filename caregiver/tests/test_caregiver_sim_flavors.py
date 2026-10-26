@@ -6,7 +6,7 @@ this module holds `caregiver` to resolving it, to replacing the sandbox
 when it moves, and to raising a fault rather than falling back to `base`
 when the platform was given no image for the flavor a family asked for.
 
-    family.yaml sandbox.image: python
+    family.toml sandbox.image = "python"
       -> SandboxImages(base=..., python=...).resolve("python")
       -> sbx create ... -t <the python reference>
 

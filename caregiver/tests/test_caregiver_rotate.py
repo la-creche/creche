@@ -34,7 +34,7 @@ from caregiver_helpers import (
     OLD_TOKEN,
     REFUSED_TOOLS,
     chat_family,
-    family_yaml,
+    family_toml,
     grants_alone,
     write_registry,
 )
@@ -295,8 +295,8 @@ def applied(state_root: Path) -> None:
         FAMILY,
         rev="reg-1",
         image="sha256:abc",
-        family_text=family_yaml(),
-        markup=Markup.YAML,
+        family_text=family_toml(),
+        markup=Markup.TOML,
     )
 
 
@@ -342,8 +342,8 @@ def test_a_snapshot_under_another_name_serves_nobody(tmp_path: Path, state_root:
         FAMILY,
         rev="reg-1",
         image="sha256:abc",
-        family_text=family_yaml(name="ops"),
-        markup=Markup.YAML,
+        family_text=family_toml(name="ops"),
+        markup=Markup.TOML,
     )
     registry = load_registry(write_registry(tmp_path / "registry"))
     assert serving_family(registry, FAMILY, state_root=state_root) is None

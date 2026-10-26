@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import Final
 
 import pytest
-import yaml
 from caregiver.driver import FakeDriver
 from caregiver.egress import EgressConfig
 from caregiver.litellm_keys import FakeLiteLLMKeys
@@ -33,7 +32,7 @@ from caregiver.mcp_wire import SECRET_TWICE, McpReport
 from caregiver.reconcile import Actors
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
-from caregiver_helpers import write_registry
+from caregiver_helpers import toml_text, write_registry
 
 IMAGE: Final = "sha256:deadbeef"
 NOW: Final = 1_758_153_600.0
@@ -49,7 +48,7 @@ HA_PAIR: Final = ("ha", "ha-read")
 HA_SECRET: Final = "ha_read_token"
 
 
-def server_yaml(name: str = SERVER, secret: str = SECRET, partner: str = "") -> str:
+def server_toml(name: str = SERVER, secret: str = SECRET, partner: str = "") -> str:
     """Contract 01b §8.1, shortened to what this wire reads.
 
     `partner` adds the §4.3 declaration. Empty means the file declares no
@@ -74,7 +73,7 @@ def server_yaml(name: str = SERVER, secret: str = SECRET, partner: str = "") -> 
     if partner:
         body["shared_secrets"] = [{"secret": secret, "server": partner}]
 
-    return yaml.safe_dump(body)
+    return toml_text(body)
 
 
 def copy_ha(registry: Path) -> None:
@@ -85,8 +84,8 @@ def copy_ha(registry: Path) -> None:
 def write_server(registry: Path, name: str = SERVER, body: str | None = None) -> Path:
     directory = registry / "mcp" / name
     directory.mkdir(parents=True, exist_ok=True)
-    path = directory / "server.yaml"
-    path.write_text(server_yaml(name) if body is None else body, encoding="utf-8")
+    path = directory / "server.toml"
+    path.write_text(server_toml(name) if body is None else body, encoding="utf-8")
 
     return path
 
@@ -275,7 +274,7 @@ def test_two_servers_naming_one_secret_open_no_gap(bench: Bench) -> None:
     a refused GAP: root must not mint a token for a name whose owner is
     ambiguous."""
     write_server(bench.registry_root)
-    write_server(bench.registry_root, name="evil", body=server_yaml("evil", SECRET))
+    write_server(bench.registry_root, name="evil", body=server_toml("evil", SECRET))
 
     bench.look()
 
@@ -323,8 +322,8 @@ def test_a_one_sided_declaration_is_still_a_clash(bench: Bench) -> None:
     """§4.3 rule 1. `weather` names `evil` and `evil` names nobody, so
     the agreement is half written. Accepting it would let one merged edit
     bind a name whose owner never agreed, which is §6 row 8's attack."""
-    write_server(bench.registry_root, body=server_yaml(SERVER, partner="evil"))
-    write_server(bench.registry_root, name="evil", body=server_yaml("evil", SECRET))
+    write_server(bench.registry_root, body=server_toml(SERVER, partner="evil"))
+    write_server(bench.registry_root, name="evil", body=server_toml("evil", SECRET))
 
     bench.look()
 
@@ -338,7 +337,7 @@ def test_a_third_server_breaks_the_pair(bench: Bench) -> None:
     is missing, so the whole name is a clash again and the pair loses the
     gap it would have had alone."""
     copy_ha(bench.registry_root)
-    write_server(bench.registry_root, name="evil", body=server_yaml("evil", HA_SECRET))
+    write_server(bench.registry_root, name="evil", body=server_toml("evil", HA_SECRET))
 
     bench.look()
 

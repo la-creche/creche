@@ -34,7 +34,6 @@ from pathlib import Path
 from typing import Final
 
 import pytest
-import yaml
 from agent_family import FamilyState, revision_of
 from caregiver.driver import FakeDriver
 from caregiver.egress import EgressConfig
@@ -46,7 +45,7 @@ from caregiver.reconcile import Actors
 from caregiver.status import forget_published
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
-from caregiver_helpers import published, write_registry
+from caregiver_helpers import published, toml_text, write_registry
 
 from caregiver import loop as loop_module
 from caregiver import paths
@@ -77,9 +76,9 @@ RESTORED: Final = 0o700
 is_root = pytest.mark.skipif(os.geteuid() == 0, reason="root reads a 0000 directory anyway")
 
 
-def server_yaml(name: str = SERVER, secret: str = SECRET) -> str:
+def server_toml(name: str = SERVER, secret: str = SECRET) -> str:
     """Contract 01b §8.1, shortened to what `mcp_wire` reads."""
-    return yaml.safe_dump(
+    return toml_text(
         {
             "name": name,
             "identity": f"The fleet's {name} credential. Read only.",
@@ -110,7 +109,7 @@ class Bench:
 
         directory = self.registry_root / "mcp" / SERVER
         directory.mkdir(parents=True)
-        (directory / "server.yaml").write_text(server_yaml(), encoding="utf-8")
+        (directory / "server.toml").write_text(server_toml(), encoding="utf-8")
 
         self.mcp = McpPaths(
             requests=_made(tmp_path / "spool" / "requests"),

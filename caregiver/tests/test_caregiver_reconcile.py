@@ -37,7 +37,7 @@ from caregiver.reconcile import (
 )
 from caregiver.switch import FakeSwitchClient, SwitchRequest
 from caregiver.timers import FakeUnits
-from caregiver_helpers import FAMILY_TOML, write_no_file_dir, write_registry
+from caregiver_helpers import FAMILY_BODY, FAMILY_TOML, toml_text, write_no_file_dir, write_registry
 
 from caregiver import applied as applied_module
 from caregiver import paths, sandboxes
@@ -195,14 +195,14 @@ def granted_hosts(driver: FakeDriver, sandbox_id: str) -> set[str]:
 
 
 def family_text(fleet: Fleet) -> str:
-    return (fleet.registry_root / "families" / FAMILY / "family.yaml").read_text(encoding="utf-8")
+    return (fleet.registry_root / "families" / FAMILY / FAMILY_FILE).read_text(encoding="utf-8")
 
 
 def roll_back(fleet: Fleet, *, rev: str, text: str) -> None:
     """Put the applied snapshot back where a crash would have left it: the
     steps ran, the snapshot did not move."""
     write_applied(
-        fleet.state_root, FAMILY, rev=rev, image=IMAGE, family_text=text, markup=Markup.YAML
+        fleet.state_root, FAMILY, rev=rev, image=IMAGE, family_text=text, markup=Markup.TOML
     )
 
 
@@ -456,7 +456,7 @@ def test_a_malformed_grant_file_is_written_again(fleet: Fleet) -> None:
 
 
 def write_server(registry_root: Path, tools: tuple[str, ...], identity: str = "Search.") -> None:
-    """`mcp/kagi/server.yaml`, cut to what a grant reads (contract 01b §8.1)."""
+    """`mcp/kagi/server.toml`, cut to what a grant reads (contract 01b §8.1)."""
     body = {
         "name": SERVER,
         "identity": identity,
@@ -466,7 +466,7 @@ def write_server(registry_root: Path, tools: tuple[str, ...], identity: str = "S
     }
     directory = registry_root / "mcp" / SERVER
     directory.mkdir(parents=True, exist_ok=True)
-    (directory / "server.yaml").write_text(yaml.safe_dump(body), encoding="utf-8")
+    (directory / "server.toml").write_text(toml_text(body), encoding="utf-8")
 
 
 def granted(fleet: Fleet) -> dict[str, object]:
@@ -1167,6 +1167,14 @@ def copy_writes(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
     return written
 
 
+def as_yaml(fleet: Fleet) -> None:
+    """Replace the TOML registry file of the family with a YAML file of
+    equal value."""
+    directory = fleet.registry_root / "families" / FAMILY
+    (directory / FAMILY_FILE).unlink()
+    (directory / FAMILY_FILE_YAML).write_text(yaml.safe_dump(FAMILY_BODY), encoding="utf-8")
+
+
 def to_toml(fleet: Fleet) -> str:
     """Replace the YAML registry file of the family with a TOML file of
     equal value. Give the TOML text."""
@@ -1182,6 +1190,7 @@ def test_a_toml_registry_file_of_equal_value_moves_the_copy_to_its_name(
     """The YAML copy and the TOML registry file hold one value, so the pass
     changes nothing. It writes the TOML copy one time, and the YAML copy is
     then gone."""
+    as_yaml(fleet)
     fleet.run()
     toml_text = to_toml(fleet)
     written = copy_writes(monkeypatch)
@@ -1204,6 +1213,7 @@ def test_a_toml_registry_file_of_equal_value_moves_the_copy_to_its_name(
 
 def test_a_pass_after_the_move_reads_the_toml_copy(fleet: Fleet) -> None:
     """The next pass diffs the TOML registry file against the TOML copy."""
+    as_yaml(fleet)
     fleet.run()
     to_toml(fleet)
     fleet.run()
@@ -1222,6 +1232,7 @@ def test_a_yaml_copy_and_a_yaml_registry_file_act_as_before(
     fleet: Fleet, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The YAML copy keeps its name, and no TOML copy appears."""
+    as_yaml(fleet)
     fleet.run()
     written = copy_writes(monkeypatch)
     fleet.forget_calls()
@@ -1235,7 +1246,8 @@ def test_a_yaml_copy_and_a_yaml_registry_file_act_as_before(
         yaml_copy,
         paths.applied_meta_path(fleet.state_root, FAMILY),
     ]
-    assert yaml_copy.read_text(encoding="utf-8") == family_text(fleet)
+    registry_file = fleet.registry_root / "families" / FAMILY / FAMILY_FILE_YAML
+    assert yaml_copy.read_text(encoding="utf-8") == registry_file.read_text(encoding="utf-8")
     assert not paths.applied_family_path(fleet.state_root, FAMILY, Markup.TOML).exists()
 
 
@@ -1262,7 +1274,7 @@ def test_a_registry_file_of_no_markup_moves_no_copy(fleet: Fleet, name: str) -> 
     assert applied is not None
     assert applied.family.description == "Test family."
     copies = sorted(one.name for one in paths.applied_dir(fleet.state_root, FAMILY).iterdir())
-    assert copies == [paths.APPLIED_META_FILE, FAMILY_FILE_YAML]
+    assert copies == [paths.APPLIED_META_FILE, FAMILY_FILE]
     body = json.loads(paths.status_path(fleet.state_root, FAMILY).read_text(encoding="utf-8"))
     assert body["state"] == str(FamilyState.RECONCILING)
     assert body["applied_rev"] == applied.rev

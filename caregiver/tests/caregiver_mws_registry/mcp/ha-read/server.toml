@@ -1,0 +1,29 @@
+name = "ha-read"
+identity = "A dedicated Home Assistant user, non-admin, with an entity read allowlist in HA's own auth policy. It can read the entities that policy allows and change nothing."
+
+install.source = "pypi"
+install.package = "ha-mcp"
+install.version = "8.4.3"
+install.lock = "mcp/ha-read/install.lock"
+install.python = "3.13"
+
+run.entrypoint = "ha-mcp"
+run.env.HOMEASSISTANT_URL = "http://192.0.2.20:8123"
+run.env.HOMEASSISTANT_TOKEN = "secret:ha_read_token"
+run.env.READ_ONLY_MODE = "true"
+run.env.ENABLE_WEBSOCKET = "true"
+run.env.HA_MCP_DISABLE_SETTINGS_UI = "true"
+run.env.HA_MCP_DISABLE_UPDATE_CHECK = "true"
+run.state_dir = true
+run.state_dir_env = "HA_MCP_CONFIG_DIR"
+
+tools = [
+    { name = "ha_get_state", description = "Read one entity's state and attributes.", write = false },
+    { name = "ha_search", description = "Search entities by name, domain or area.", write = false },
+    { name = "ha_get_overview", description = "Summarise the house by domain and area.", write = false },
+    { name = "ha_get_history", description = "Read an entity's history or long-term statistics.", write = false },
+]
+
+shared_secrets = [
+    { secret = "ha_read_token", server = "ha" },
+]

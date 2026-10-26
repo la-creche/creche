@@ -98,7 +98,7 @@ def test_credentials_block_as_json() -> None:
 
 def test_limits_block_defaults_max_queued_turns_to_100() -> None:
     """Contract 05 §2.1: attendance's own constant (contract 02 §13 rule 4),
-    not read from family.yaml, so it is the one field not null by default."""
+    not read from family.toml, so it is the one field not null by default."""
     assert LimitsBlock().as_json() == {
         "max_running_turns": None,
         "max_queued_turns": 100,
@@ -199,7 +199,7 @@ def test_a_document_that_does_not_read_is_not_restamped(tmp_path: Path, raw: byt
 def test_write_validation_report_publishes_agent_familys_report(tmp_path: Path) -> None:
     report = Report(
         family="chat",
-        file="families/chat/family.yaml",
+        file="families/chat/family.toml",
         issues=(Issue(Severity.ERROR, "tools.kagi[1]", "not declared"),),
         state=FamilyState.INVALID,
         applied=False,
