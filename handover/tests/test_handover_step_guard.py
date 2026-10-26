@@ -50,7 +50,7 @@ from handover_executor_fixtures import (
 )
 from handover_fixtures import manifest_text
 
-COMPONENT = "chaperone"
+COMPONENT = "caregiver"
 HOOK = f"{COMPONENT}-verify"
 LIVE_VERSION = "2.0.3"
 NEW_VERSION = "2.1.0"
@@ -65,7 +65,7 @@ ERROR_TEXT = "the-text-of-the-error"
 
 @dataclass
 class Bench:
-    """One wired executor on a host where `chaperone` is live at 2.0.3."""
+    """One wired executor on a host where `caregiver` is live at 2.0.3."""
 
     spool_root: Path
     wiring: Wiring

@@ -296,12 +296,12 @@ def test_a_first_run_tags_every_component_that_has_none(
 ) -> None:
     """Item 1: a repository with no component tag gets them all at once, so
     the operator has a `noticeboard-v…` to name without waiting for a merge under `noticeboard/`."""
-    _commit(repo, "chaperone/src/one.py")
+    _commit(repo, "caregiver/src/one.py")
 
     done = _run(repo, shims, tmp_path)
 
     assert done.returncode == 0, done.stderr
-    assert "released chaperone-v0.1.0" in done.stdout
+    assert "released caregiver-v0.1.0" in done.stdout
     assert "released noticeboard-v0.1.0" in done.stdout
     assert _tags(repo) == FIRST_TAGS
 
@@ -309,7 +309,7 @@ def test_a_first_run_tags_every_component_that_has_none(
 @pytest.mark.slow
 def test_the_first_run_is_idempotent(repo: Path, shims: Path, tmp_path: Path) -> None:
     """A second dispatch on the same commit is the safe thing to do."""
-    _commit(repo, "chaperone/src/one.py")
+    _commit(repo, "caregiver/src/one.py")
     assert _run(repo, shims, tmp_path).returncode == 0
 
     done = _run(repo, shims, tmp_path)
@@ -324,20 +324,20 @@ def test_after_the_bootstrap_only_the_changed_component_moves(
     repo: Path, shims: Path, tmp_path: Path
 ) -> None:
     """The rule extinguishes itself: one tag per component, once."""
-    _commit(repo, "chaperone/src/one.py")
+    _commit(repo, "caregiver/src/one.py")
     assert _run(repo, shims, tmp_path).returncode == 0
 
-    _commit(repo, "chaperone/src/two.py")
+    _commit(repo, "caregiver/src/two.py")
     assert _run(repo, shims, tmp_path).returncode == 0
 
-    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1"])
+    assert _tags(repo) == sorted([*FIRST_TAGS, "caregiver-v0.1.1"])
 
 
 #: A path with a character that is not ASCII, and one with a double quote.
 #: With its default `core.quotePath`, git writes the first one inside double
 #: quotes, and it writes the second one so under each setting.
-NOT_ASCII_PATH = "chaperone/src/caf\u00e9.py"
-QUOTE_PATH = 'chaperone/src/a"b.py'
+NOT_ASCII_PATH = "caregiver/src/caf\u00e9.py"
+QUOTE_PATH = 'caregiver/src/a"b.py'
 
 
 @pytest.mark.slow
@@ -349,14 +349,14 @@ def test_a_changed_path_that_git_would_quote_moves_its_component(
     starts with a double quote, so its first segment named no component and
     the merge made no tag."""
     _git(repo, "config", "core.quotePath", "true")
-    _commit(repo, "chaperone/src/one.py")
+    _commit(repo, "caregiver/src/one.py")
     assert _run(repo, shims, tmp_path).returncode == 0
 
     _commit(repo, path)
     done = _run(repo, shims, tmp_path)
 
     assert done.returncode == 0, done.stderr
-    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1"])
+    assert _tags(repo) == sorted([*FIRST_TAGS, "caregiver-v0.1.1"])
 
 
 @pytest.mark.slow
@@ -366,14 +366,14 @@ def test_a_label_counts_for_a_changed_path_that_git_would_quote(
     """The label of a pull request counts for the components that its merge
     changed. The script reads those paths with a second `git diff`."""
     _git(repo, "config", "core.quotePath", "true")
-    _commit(repo, "chaperone/src/one.py")
+    _commit(repo, "caregiver/src/one.py")
     assert _run(repo, shims, tmp_path).returncode == 0
 
     _commit(repo, NOT_ASCII_PATH)
     done = _run(repo, shims, tmp_path, labels="bump:minor")
 
     assert done.returncode == 0, done.stderr
-    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.2.0"])
+    assert _tags(repo) == sorted([*FIRST_TAGS, "caregiver-v0.2.0"])
 
 
 @pytest.mark.slow
@@ -384,27 +384,27 @@ def test_a_directory_that_git_would_quote_does_not_stop_the_run(
     quoted name is four characters for each byte, and the planner refuses
     a line of more than 512 characters."""
     _git(repo, "config", "core.quotePath", "true")
-    _commit(repo, "chaperone/src/one.py")
+    _commit(repo, "caregiver/src/one.py")
     assert _run(repo, shims, tmp_path).returncode == 0
 
-    _commit(repo, f"chaperone/{'\u00e9' * 100}/two.py")
+    _commit(repo, f"caregiver/{'\u00e9' * 100}/two.py")
     done = _run(repo, shims, tmp_path)
 
     assert done.returncode == 0, done.stderr
-    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1"])
+    assert _tags(repo) == sorted([*FIRST_TAGS, "caregiver-v0.1.1"])
 
 
 #: Two names that hold a line feed. git ends each name of a `-z` list with
 #: NUL, so each one is one path: the first under `docs/`, the second under
-#: `chaperone/`.
+#: `caregiver/`.
 LINE_FEED_IN_DOCS = "docs/one\nattendance/two.py"
-LINE_FEED_IN_CHAPERONE = "chaperone/src/one\ntwo.py"
+LINE_FEED_IN_CAREGIVER = "caregiver/src/one\ntwo.py"
 
 
 @pytest.mark.slow
 @pytest.mark.parametrize(
     ("path", "moved"),
-    [(LINE_FEED_IN_DOCS, []), (LINE_FEED_IN_CHAPERONE, ["chaperone-v0.1.1"])],
+    [(LINE_FEED_IN_DOCS, []), (LINE_FEED_IN_CAREGIVER, ["caregiver-v0.1.1"])],
 )
 def test_a_name_with_a_line_feed_stays_one_path(
     repo: Path, shims: Path, tmp_path: Path, path: str, moved: list[str]
@@ -412,7 +412,7 @@ def test_a_name_with_a_line_feed_stays_one_path(
     """The script gives the planner one line for each changed path. A name
     with a line feed is one line, and it moves the component of its own
     first segment and no other."""
-    _commit(repo, "chaperone/src/one.py")
+    _commit(repo, "caregiver/src/one.py")
     assert _run(repo, shims, tmp_path).returncode == 0
 
     _commit(repo, path)
@@ -430,15 +430,15 @@ def test_a_file_that_leaves_a_component_moves_that_component(
     `--no-renames` says otherwise. The component that lost the file then
     had no changed path, and the merge made no tag for it."""
     _git(repo, "config", "diff.renames", "true")
-    _commit(repo, "chaperone/src/one.py", "docs/guide.md")
+    _commit(repo, "caregiver/src/one.py", "caregiver/src/two.py", "docs/guide.md")
     assert _run(repo, shims, tmp_path).returncode == 0
 
-    _git(repo, "mv", "chaperone/src/one.py", "docs/one.py")
+    _git(repo, "mv", "caregiver/src/one.py", "docs/one.py")
     _git(repo, "commit", "-q", "-m", "move one file out")
     done = _run(repo, shims, tmp_path, labels="bump:minor")
 
     assert done.returncode == 0, done.stderr
-    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.2.0"])
+    assert _tags(repo) == sorted([*FIRST_TAGS, "caregiver-v0.2.0"])
 
 
 @pytest.mark.slow
@@ -462,7 +462,7 @@ def test_an_unknown_argument_stops_the_run(repo: Path, shims: Path, tmp_path: Pa
     """A typo for `--dry-run` must not be a real run. The script creates
     tags and Releases, and a silently ignored argument is how a reader who
     meant to look ends up having allocated."""
-    _commit(repo, "chaperone/src/one.py")
+    _commit(repo, "caregiver/src/one.py")
 
     done = _run(repo, shims, tmp_path, "--dryrun")
 
@@ -478,21 +478,21 @@ def test_an_unknown_argument_stops_the_run(repo: Path, shims: Path, tmp_path: Pa
 def test_two_merges_in_a_row_both_get_a_tag(repo: Path, shims: Path, tmp_path: Path) -> None:
     """Pain 1, end to end: neither merge leaves the branch tip untagged."""
     _seed_first_tags(repo)
-    first = _commit(repo, "chaperone/src/one.py")
+    first = _commit(repo, "caregiver/src/one.py")
     assert _run(repo, shims, tmp_path).returncode == 0
 
-    second = _commit(repo, "chaperone/src/two.py")
+    second = _commit(repo, "caregiver/src/two.py")
     assert _run(repo, shims, tmp_path).returncode == 0
 
-    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1", "chaperone-v0.1.2"])
-    assert _git(repo, "rev-list", "-n1", "chaperone-v0.1.1") == first
-    assert _git(repo, "rev-list", "-n1", "chaperone-v0.1.2") == second
+    assert _tags(repo) == sorted([*FIRST_TAGS, "caregiver-v0.1.1", "caregiver-v0.1.2"])
+    assert _git(repo, "rev-list", "-n1", "caregiver-v0.1.1") == first
+    assert _git(repo, "rev-list", "-n1", "caregiver-v0.1.2") == second
 
 
 @pytest.mark.slow
 def test_a_rerun_on_one_commit_creates_nothing(repo: Path, shims: Path, tmp_path: Path) -> None:
     _seed_first_tags(repo)
-    _commit(repo, "chaperone/src/one.py")
+    _commit(repo, "caregiver/src/one.py")
     assert _run(repo, shims, tmp_path).returncode == 0
 
     done = _run(repo, shims, tmp_path)
@@ -500,7 +500,7 @@ def test_a_rerun_on_one_commit_creates_nothing(repo: Path, shims: Path, tmp_path
     assert done.returncode == 0
     assert "already on this commit" in done.stdout
     assert "allocate-tags: 0 created" in done.stdout
-    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1"])
+    assert _tags(repo) == sorted([*FIRST_TAGS, "caregiver-v0.1.1"])
 
 
 @pytest.mark.slow
@@ -554,12 +554,12 @@ def test_a_code_merge_after_a_prose_merge_gets_one_tag(
 @pytest.mark.slow
 def test_a_bump_label_raises_the_level(repo: Path, shims: Path, tmp_path: Path) -> None:
     _seed_first_tags(repo)
-    _commit(repo, "chaperone/src/one.py")
+    _commit(repo, "caregiver/src/one.py")
 
     done = _run(repo, shims, tmp_path, labels="bump:minor", pr="yes")
 
     assert done.returncode == 0, done.stderr
-    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.2.0"])
+    assert _tags(repo) == sorted([*FIRST_TAGS, "caregiver-v0.2.0"])
 
 
 @pytest.mark.slow
@@ -567,16 +567,16 @@ def test_a_label_raises_only_the_component_its_merge_changed(
     repo: Path, shims: Path, tmp_path: Path
 ) -> None:
     """A merge queue lands two pull requests in one push, so one run reads
-    both. The labelled one changed `attendance/`, the other `chaperone/`: the label
+    both. The labelled one changed `attendance/`, the other `caregiver/`: the label
     is `attendance`'s alone, though both ranges hold that merge."""
     _seed_first_tags(repo)
     labelled = _commit(repo, "attendance/src/one.py")
-    _commit(repo, "chaperone/src/one.py")
+    _commit(repo, "caregiver/src/one.py")
 
     done = _run(repo, shims, tmp_path, bumps={labelled: "bump:minor"}, pr="yes")
 
     assert done.returncode == 0, done.stderr
-    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1", "attendance-v0.2.0"])
+    assert _tags(repo) == sorted([*FIRST_TAGS, "caregiver-v0.1.1", "attendance-v0.2.0"])
 
 
 @pytest.mark.slow
@@ -585,20 +585,20 @@ def test_a_label_from_before_the_range_raises_nothing(
 ) -> None:
     """A labelled merge the component's newest tag already covers asked for
     that tag's level, not for the next one's."""
-    covered = _commit(repo, "chaperone/src/one.py")
+    covered = _commit(repo, "caregiver/src/one.py")
     _seed_first_tags(repo)
-    _commit(repo, "chaperone/src/two.py")
+    _commit(repo, "caregiver/src/two.py")
 
     done = _run(repo, shims, tmp_path, bumps={covered: "bump:major"}, pr="yes")
 
     assert done.returncode == 0, done.stderr
-    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1"])
+    assert _tags(repo) == sorted([*FIRST_TAGS, "caregiver-v0.1.1"])
 
 
 @pytest.mark.slow
 def test_a_bump_label_never_raises_a_first_tag(repo: Path, shims: Path, tmp_path: Path) -> None:
     """A component that has never released has no number to bump."""
-    _commit(repo, "chaperone/src/one.py")
+    _commit(repo, "caregiver/src/one.py")
 
     done = _run(repo, shims, tmp_path, labels="bump:major", pr="yes")
 
@@ -611,12 +611,12 @@ def test_a_set_of_components_each_get_their_own_tag(
     repo: Path, shims: Path, tmp_path: Path
 ) -> None:
     _seed_first_tags(repo)
-    _commit(repo, "chaperone/src/one.py", "attendance/src/two.py")
+    _commit(repo, "caregiver/src/one.py", "attendance/src/two.py")
 
     done = _run(repo, shims, tmp_path)
 
     assert done.returncode == 0, done.stderr
-    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1", "attendance-v0.1.1"])
+    assert _tags(repo) == sorted([*FIRST_TAGS, "caregiver-v0.1.1", "attendance-v0.1.1"])
 
 
 @pytest.mark.slow
@@ -627,27 +627,27 @@ def test_a_tag_the_remote_already_holds_stops_the_run(
 
     The planner's target is always above every tag it was shown, so only a
     tag this checkout has not fetched can collide. Here the remote carries
-    `chaperone-v0.1.0` on another commit and this checkout does not.
+    `caregiver-v0.1.0` on another commit and this checkout does not.
     """
     origin = tmp_path / "origin.git"
     base = _git(repo, "rev-parse", "HEAD")
-    _git(origin, "tag", "chaperone-v0.1.0", base)
-    _commit(repo, "chaperone/src/one.py")
+    _git(origin, "tag", "caregiver-v0.1.0", base)
+    _commit(repo, "caregiver/src/one.py")
 
     done = _run(repo, shims, tmp_path)
 
     assert done.returncode != 0
-    assert "conflict: chaperone-v0.1.0 exists on the remote" in done.stderr
+    assert "conflict: caregiver-v0.1.0 exists on the remote" in done.stderr
 
 
 @pytest.mark.slow
 def test_dry_run_writes_no_tag(repo: Path, shims: Path, tmp_path: Path) -> None:
-    _commit(repo, "chaperone/src/one.py")
+    _commit(repo, "caregiver/src/one.py")
 
     done = _run(repo, shims, tmp_path, "--dry-run")
 
     assert done.returncode == 0
-    assert "would create chaperone-v0.1.0" in done.stdout
+    assert "would create caregiver-v0.1.0" in done.stdout
     assert _tags(repo) == []
 
 
@@ -681,17 +681,17 @@ def test_each_component_reads_its_own_window(repo: Path, shims: Path, tmp_path: 
     """Two components, two different newest tags, two different ranges."""
     _seed_first_tags(repo)
     _commit(repo, "noticeboard/src/one.py")
-    _commit(repo, "chaperone/src/one.py")
+    _commit(repo, "caregiver/src/one.py")
     assert _run(repo, shims, tmp_path).returncode == 0
-    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1", "noticeboard-v0.1.1"])
+    assert _tags(repo) == sorted([*FIRST_TAGS, "caregiver-v0.1.1", "noticeboard-v0.1.1"])
 
     # `noticeboard`'s window now starts at noticeboard-v0.1.1, so the earlier noticeboard/ change is
-    # behind it and only the new one counts. `chaperone` saw nothing at all.
+    # behind it and only the new one counts. `caregiver` saw nothing at all.
     _commit(repo, "noticeboard/src/two.py")
     assert _run(repo, shims, tmp_path).returncode == 0
 
     assert _tags(repo) == sorted(
-        [*FIRST_TAGS, "chaperone-v0.1.1", "noticeboard-v0.1.1", "noticeboard-v0.1.2"]
+        [*FIRST_TAGS, "caregiver-v0.1.1", "noticeboard-v0.1.1", "noticeboard-v0.1.2"]
     )
 
 
@@ -705,17 +705,17 @@ def test_a_tag_that_is_not_an_ancestor_refuses_that_component(
     the others are tagged."""
     _seed_first_tags(repo)
     _git(repo, "checkout", "-q", "-b", "side")
-    side = _commit(repo, "chaperone/src/side.py")
-    _git(repo, "tag", "chaperone-v0.2.0", side)
+    side = _commit(repo, "caregiver/src/side.py")
+    _git(repo, "tag", "caregiver-v0.2.0", side)
     _git(repo, "checkout", "-q", "main")
-    _commit(repo, "chaperone/src/one.py", "noticeboard/src/one.py")
+    _commit(repo, "caregiver/src/one.py", "noticeboard/src/one.py")
 
     done = _run(repo, shims, tmp_path)
 
     assert done.returncode != 0
-    assert "chaperone-v0.2.0 is not an ancestor" in done.stderr
+    assert "caregiver-v0.2.0 is not an ancestor" in done.stderr
     assert "noticeboard-v0.1.1" in _tags(repo)
-    assert "chaperone-v0.2.1" not in _tags(repo)
+    assert "caregiver-v0.2.1" not in _tags(repo)
 
 
 @pytest.mark.slow
@@ -735,9 +735,6 @@ def test_the_dry_run_prints_the_range_per_component(
     assert "handover: 2 commit(s) since handover-v0.1.0" in done.stdout
     assert "would create noticeboard-v0.1.1" in done.stdout
     assert "would create handover" not in done.stdout
-    # `chaperone` has no `chaperone/` here, but its build installs `release/`, which the
-    # fixture holds (contract 06 §1 rule 9), so its range is read.
-    assert "chaperone: 2 commit(s) since chaperone-v0.1.0" in done.stdout
     # Neither `caregiver/` nor `family/` exists, so no range can be read for
     # `caregiver`. A skipped component is said out loud, never left out.
     assert "caregiver: no path in this tree" in done.stdout
@@ -785,7 +782,7 @@ def test_the_body_names_the_pull_requests_in_the_range(
 def test_a_first_tags_body_says_it_has_no_range(repo: Path, shims: Path, tmp_path: Path) -> None:
     """A component with no tag has no window to measure, and the body must
     not imply one."""
-    _commit(repo, "chaperone/src/one.py")
+    _commit(repo, "caregiver/src/one.py")
 
     done = _run(repo, shims, tmp_path, pr="yes")
 
@@ -861,7 +858,7 @@ def test_a_repository_the_catalog_does_not_know_stops_the_run(
 ) -> None:
     """Falling back to agent-control's components in somebody else's
     checkout is how a tag lands in the wrong repository. Refuse instead."""
-    _commit(repo, "chaperone/src/one.py")
+    _commit(repo, "caregiver/src/one.py")
 
     done = _run(repo, shims, tmp_path, repository="example-owner/some-other-repo")
 
@@ -877,7 +874,7 @@ def test_tag_repo_names_the_catalogs_repository_when_its_host_does_not(
     """A repository may be hosted under a name the catalog does not hold.
     Its workflow then says which catalog repository it is, and GitHub is
     still asked by the hosted name."""
-    _commit(repo, "chaperone/src/one.py")
+    _commit(repo, "caregiver/src/one.py")
 
     done = _run(
         repo,
@@ -890,7 +887,7 @@ def test_tag_repo_names_the_catalogs_repository_when_its_host_does_not(
 
     assert done.returncode == 0, done.stderr
     assert "repo:    agent-control" in done.stdout
-    assert "chaperone-v0.1.0" in _tags(repo)
+    assert "caregiver-v0.1.0" in _tags(repo)
     log = (tmp_path / "gh.log").read_text(encoding="utf-8")
     assert "--repo example-owner/some-product" in log
     assert "example-owner/agent-control" not in log
@@ -900,7 +897,7 @@ def test_tag_repo_names_the_catalogs_repository_when_its_host_does_not(
 def test_a_tag_repo_the_catalog_does_not_know_stops_the_run(
     repo: Path, shims: Path, tmp_path: Path
 ) -> None:
-    _commit(repo, "chaperone/src/one.py")
+    _commit(repo, "caregiver/src/one.py")
 
     done = _run(repo, shims, tmp_path, tag_repo="some-other-repo")
 
@@ -923,7 +920,7 @@ def test_the_origin_remote_names_the_repository_when_ci_does_not(
     assert done.returncode == 0, done.stderr
     assert "repo:    agent-mcp" in done.stdout
     assert "would create mcp-servers-v0.1.0" in done.stdout
-    assert "chaperone" not in done.stdout
+    assert "caregiver" not in done.stdout
 
 
 # ---- the tree the run tags -------------------------------------------------
@@ -937,7 +934,7 @@ def test_the_script_tags_the_tree_it_is_pointed_at(
     branch: the script reads and tags the borrowing checkout, and leaves its
     own alone."""
     _commit(other_repo, "src/agent_mcp/one.py")
-    _commit(repo, "chaperone/src/one.py")
+    _commit(repo, "caregiver/src/one.py")
 
     done = _run(
         repo, shims, tmp_path, repository="example-owner/agent-mcp", tree=other_repo, pr="yes"
@@ -984,7 +981,7 @@ def test_a_tag_repo_root_that_is_not_a_directory_stops_the_run(
     repo: Path, shims: Path, tmp_path: Path
 ) -> None:
     """A mistyped path must not quietly tag the script's own checkout."""
-    _commit(repo, "chaperone/src/one.py")
+    _commit(repo, "caregiver/src/one.py")
 
     done = _run(repo, shims, tmp_path, tree=tmp_path / "nowhere")
 
@@ -1005,7 +1002,7 @@ def test_a_failed_pull_request_read_is_no_pull_request(
     requests therefore turned a 401 body into the labels and into the
     Release notes. Two tokens are now in play (agent-mcp's workflow adds a
     PAT), so a read that failed must read as no pull request at all."""
-    _commit(repo, "chaperone/src/one.py")
+    _commit(repo, "caregiver/src/one.py")
 
     done = _run(repo, shims, tmp_path, labels="bump:minor", pr="yes", gh_reads=False)
 
@@ -1014,7 +1011,7 @@ def test_a_failed_pull_request_read_is_no_pull_request(
     assert "Bad credentials" not in done.stdout
     log = (tmp_path / "gh.log").read_text(encoding="utf-8")
     assert "Bad credentials" not in log
-    assert "touch chaperone/src/one.py" in log
+    assert "touch caregiver/src/one.py" in log
 
 
 # ---- a directory deeper than the top level, and the Cargo workspace --------
@@ -1112,7 +1109,7 @@ def test_the_cargo_lock_file_tags_the_binary_component_alone(
 ) -> None:
     """`rust/Cargo.lock` is a file two segments deep. Cut to `rust`, it
     moved nothing. It moves the binary component, and no venv component."""
-    _commit(repo, f"{NESTED_BUNDLE}/src/lib.rs", "chaperone/src/one.py")
+    _commit(repo, f"{NESTED_BUNDLE}/src/lib.rs", "caregiver/src/one.py")
     _seed_first_tags(repo)
     _commit(repo, "rust/Cargo.lock")
 
@@ -1143,7 +1140,7 @@ def test_the_cargo_workspace_tags_no_component_of_todays_catalog(
 ) -> None:
     """The real planner, whose catalog holds no binary component: a merge
     that changes the Cargo workspace and a crate moves no tag at all."""
-    _commit(repo, "chaperone/src/one.py", "noticeboard/src/one.py")
+    _commit(repo, "caregiver/src/one.py", "noticeboard/src/one.py")
     _seed_first_tags(repo)
     _commit(repo, "rust/Cargo.lock", "rust/Cargo.toml", "rust/rust-toolchain.toml")
     _commit(repo, f"{NESTED_BUNDLE}/src/lib.rs")
@@ -1158,12 +1155,12 @@ def test_the_cargo_workspace_tags_no_component_of_todays_catalog(
 # ---- the two assets of a binary component ----------------------------------
 
 
-def _binary_and_chaperone(repo: Path) -> str:
-    """A merge that moves the binary component and `chaperone`, after the
+def _binary_and_caregiver(repo: Path) -> str:
+    """A merge that moves the binary component and `caregiver`, after the
     first tags. The SHA of the merge."""
     _seed_first_tags(repo)
 
-    return _commit(repo, f"{NESTED_BUNDLE}/src/lib.rs", "chaperone/src/one.py")
+    return _commit(repo, f"{NESTED_BUNDLE}/src/lib.rs", "caregiver/src/one.py")
 
 
 def _words(assets: Assets) -> list[str]:
@@ -1181,16 +1178,16 @@ def test_a_binary_component_releases_its_two_assets(
     archive = assets.directory / names.archive
     bundle = assets.directory / names.bundle
     bundle.write_bytes(b"x" * BUNDLE_MAX_BYTES)
-    sha = _binary_and_chaperone(repo)
+    sha = _binary_and_caregiver(repo)
 
     done = _run(repo, shims, tmp_path, cli=binary_cli, assets=assets)
 
     assert done.returncode == 0, done.stderr
-    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1", "noticeboard-v0.1.1"])
+    assert _tags(repo) == sorted([*FIRST_TAGS, "caregiver-v0.1.1", "noticeboard-v0.1.1"])
     releases = (tmp_path / "gh.log").read_text(encoding="utf-8").split("release create ")
     (attached,) = [one for one in releases if one.startswith("noticeboard-v0.1.1 ")]
     assert attached.endswith(f" {archive} {bundle}\n")
-    (plain,) = [one for one in releases if one.startswith("chaperone-v0.1.1 ")]
+    (plain,) = [one for one in releases if one.startswith("caregiver-v0.1.1 ")]
     assert str(archive) not in plain
     assert _words(assets) == [
         "verify-blob",
@@ -1220,13 +1217,13 @@ def test_an_absent_asset_refuses_that_component_alone(
     red end."""
     names = asset_names(BINARY_COMPONENT)
     (assets.directory / getattr(names, absent)).unlink()
-    _binary_and_chaperone(repo)
+    _binary_and_caregiver(repo)
 
     done = _run(repo, shims, tmp_path, cli=binary_cli, assets=assets)
 
     assert done.returncode != 0
     assert f"::error::noticeboard refused: {getattr(names, absent)} is not a file" in done.stderr
-    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1"])
+    assert _tags(repo) == sorted([*FIRST_TAGS, "caregiver-v0.1.1"])
     assert not assets.log.exists()
 
 
@@ -1247,13 +1244,13 @@ def test_an_asset_over_its_limit_refuses_that_component_alone(
     name = getattr(asset_names(BINARY_COMPONENT), which)
     with (assets.directory / name).open("r+b") as file:
         file.truncate(limit + 1)
-    _binary_and_chaperone(repo)
+    _binary_and_caregiver(repo)
 
     done = _run(repo, shims, tmp_path, cli=binary_cli, assets=assets)
 
     assert done.returncode != 0
     assert f"{name} has {limit + 1} bytes, more than its limit of {limit}" in done.stderr
-    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1"])
+    assert _tags(repo) == sorted([*FIRST_TAGS, "caregiver-v0.1.1"])
     assert not assets.log.exists()
 
 
@@ -1262,13 +1259,13 @@ def test_a_signature_that_the_verifier_refuses_refuses_that_component_alone(
     repo: Path, shims: Path, tmp_path: Path, binary_cli: str, assets: Assets
 ) -> None:
     """The verifier ends with status 1: the same as an absent file."""
-    _binary_and_chaperone(repo)
+    _binary_and_caregiver(repo)
 
     done = _run(repo, shims, tmp_path, cli=binary_cli, assets=assets, cosign_status=1)
 
     assert done.returncode != 0
     assert "::error::noticeboard refused: the verifier refused the signature" in done.stderr
-    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1"])
+    assert _tags(repo) == sorted([*FIRST_TAGS, "caregiver-v0.1.1"])
     assert _words(assets)[0] == "verify-blob"
 
 
@@ -1277,14 +1274,14 @@ def test_a_run_with_no_verifier_refuses_that_component_alone(
     repo: Path, shims: Path, tmp_path: Path, binary_cli: str, assets: Assets
 ) -> None:
     """COSIGN must name a program by an absolute path."""
-    _binary_and_chaperone(repo)
+    _binary_and_caregiver(repo)
     assets.cosign.unlink()
 
     done = _run(repo, shims, tmp_path, cli=binary_cli, assets=assets)
 
     assert done.returncode != 0
     assert "noticeboard refused: COSIGN names no program" in done.stderr
-    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1"])
+    assert _tags(repo) == sorted([*FIRST_TAGS, "caregiver-v0.1.1"])
 
 
 @pytest.mark.slow
@@ -1292,7 +1289,7 @@ def test_a_dry_run_names_the_two_assets_and_checks_no_file(
     repo: Path, shims: Path, tmp_path: Path, binary_cli: str
 ) -> None:
     """No asset directory and no verifier: a dry run reads neither."""
-    _binary_and_chaperone(repo)
+    _binary_and_caregiver(repo)
 
     done = _run(repo, shims, tmp_path, "--dry-run", cli=binary_cli)
 
@@ -1303,7 +1300,7 @@ def test_a_dry_run_names_the_two_assets_and_checks_no_file(
         f"would attach {names.archive} to noticeboard-v0.1.1",
         f"would attach {names.bundle} to noticeboard-v0.1.1",
     ]
-    assert "would create chaperone-v0.1.1" in done.stdout
+    assert "would create caregiver-v0.1.1" in done.stdout
     assert _tags(repo) == FIRST_TAGS
 
 
@@ -1314,7 +1311,7 @@ def test_an_asset_directory_that_names_none_refuses_that_component_alone(
 ) -> None:
     """An empty ASSET_DIR names no directory. The working directory does
     not take its place."""
-    _binary_and_chaperone(repo)
+    _binary_and_caregiver(repo)
 
     done = _run(
         repo,
@@ -1327,7 +1324,7 @@ def test_an_asset_directory_that_names_none_refuses_that_component_alone(
 
     assert done.returncode != 0
     assert "::error::noticeboard refused: ASSET_DIR names no directory" in done.stderr
-    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1"])
+    assert _tags(repo) == sorted([*FIRST_TAGS, "caregiver-v0.1.1"])
     assert not assets.log.exists()
 
 
@@ -1343,13 +1340,13 @@ def test_a_link_in_place_of_an_asset_refuses_that_component_alone(
     target.write_bytes(asset.read_bytes())
     asset.unlink()
     asset.symlink_to(target)
-    _binary_and_chaperone(repo)
+    _binary_and_caregiver(repo)
 
     done = _run(repo, shims, tmp_path, cli=binary_cli, assets=assets)
 
     assert done.returncode != 0
     assert f"::error::noticeboard refused: {name} is not a file in ASSET_DIR" in done.stderr
-    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1"])
+    assert _tags(repo) == sorted([*FIRST_TAGS, "caregiver-v0.1.1"])
     assert not assets.log.exists()
 
 
@@ -1396,7 +1393,7 @@ def test_an_answer_of_the_planner_in_another_form_refuses_that_component_alone(
 ) -> None:
     """The answer of `--assets` is no line or two lines of a name and a
     count. Each other answer is a refusal, and no file is checked."""
-    _binary_and_chaperone(repo)
+    _binary_and_caregiver(repo)
 
     done = _run(
         repo,
@@ -1409,5 +1406,5 @@ def test_an_answer_of_the_planner_in_another_form_refuses_that_component_alone(
 
     assert done.returncode != 0
     assert "::error::noticeboard refused: the planner gave no list of its assets" in done.stderr
-    assert _tags(repo) == sorted([*FIRST_TAGS, "chaperone-v0.1.1"])
+    assert _tags(repo) == sorted([*FIRST_TAGS, "caregiver-v0.1.1"])
     assert not assets.log.exists()

@@ -30,9 +30,9 @@ from handover.state import ReleaseState
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-#: The two components that live in repositories agent-control cannot write
-#: (contract 06 §10.1).
-ELSEWHERE = ("mcp-servers", "registry-data")
+#: The three components that live in repositories agent-control cannot
+#: write (contract 06 §10.1), in catalog order.
+ELSEWHERE = ("chaperone", "mcp-servers", "registry-data")
 
 
 @pytest.fixture(scope="module")
@@ -68,10 +68,15 @@ def test_a_manifest_sits_where_the_catalog_says(found: ManifestSet) -> None:
 
 
 def test_the_repo_set_resolves_with_a_green_table(found: ManifestSet) -> None:
+    """Each contract whose provider is a component of this repository has a
+    row. `pep-grant` has its provider in the chaperone repository, so each
+    floor on it is a line and not a refusal."""
     resolution = resolve(found.manifests(), ReleaseState(), {})
+    here = {one for one in ContractId if CONTRACT_OWNER[one] in found.found}
 
     assert resolution.order == ()
-    assert len(resolution.contracts) == len(ContractId)
+    assert {row.contract for row in resolution.contracts} == here
+    assert {line.contract for line in resolution.unprovided} == set(ContractId) - here
 
 
 def test_handover_provides_the_manifest_contract(found: ManifestSet) -> None:
@@ -84,11 +89,15 @@ def test_handover_provides_the_manifest_contract(found: ManifestSet) -> None:
 
 def test_every_floor_is_the_providers_current_minor(found: ManifestSet) -> None:
     """Nothing is built against an older draft, so every floor is the
-    version the contract's provider declares today."""
+    version the contract's provider declares today. A floor on a contract
+    whose provider is in another repository has no provider here."""
     provided = _provided(found)
     for name, manifest in found.manifests().items():
         for required in manifest.requires:
-            expected = provided[required.contract]
+            expected = provided.get(required.contract)
+            if expected is None:
+                continue
+
             assert (required.major, required.min_minor) == expected, f"{name} {required.contract}"
 
 

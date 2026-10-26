@@ -187,7 +187,7 @@ def _matches(path: str, row: CatalogRow) -> bool:
 
     # The Cargo workspace files decide what every binary build makes, and
     # they move no other kind (`catalog.BINARY_BUILD_FILES`).
-    if row.kind is Kind.BINARY and path in BINARY_BUILD_FILES:
+    if row.kind is Kind.BINARY and path in BINARY_BUILD_FILES.get(row.repo, ()):
         return True
 
     # A directory the build installs counts as the component's own (contract
@@ -205,7 +205,7 @@ def _nested_tops(repo: Repo) -> tuple[str, ...]:
         if row.repo is not repo:
             continue
 
-        build_files = BINARY_BUILD_FILES if row.kind is Kind.BINARY else ()
+        build_files = BINARY_BUILD_FILES.get(repo, ()) if row.kind is Kind.BINARY else ()
         found.update(top for top in (row.path, *row.bundles, *build_files) if "/" in top)
 
     return tuple(sorted(found))

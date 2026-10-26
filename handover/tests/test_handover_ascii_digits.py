@@ -65,9 +65,9 @@ def test_a_contract_version_pattern_takes_ascii_digits_only(
 
 @pytest.mark.parametrize("digit", DIGITS)
 def test_the_tag_pattern_takes_ascii_digits_only(digit: str) -> None:
-    assert allocate.TAG_RE.fullmatch("chaperone-v1.2.1")
+    assert allocate.TAG_RE.fullmatch("caregiver-v1.2.1")
     for version in (f"{digit}.2.1", f"1.{digit}.1", f"1.2.{digit}"):
-        assert allocate.TAG_RE.fullmatch(f"chaperone-v{version}") is None
+        assert allocate.TAG_RE.fullmatch(f"caregiver-v{version}") is None
 
 
 def test_no_module_of_the_package_writes_the_unicode_digit_class() -> None:
@@ -88,29 +88,29 @@ def test_no_module_of_the_package_writes_the_unicode_digit_class() -> None:
 @pytest.mark.parametrize("digit", DIGITS)
 def test_a_tag_with_another_digit_is_no_version(digit: str) -> None:
     """The reader of the newest version gave `1.2.1` for such a tag."""
-    assert newest_tagged_version([f"chaperone-v1.2.{digit}"], "chaperone") is None
+    assert newest_tagged_version([f"caregiver-v1.2.{digit}"], "caregiver") is None
 
 
 def test_a_tag_with_another_digit_is_not_the_newest_version() -> None:
     """Python reads ARABIC-INDIC DIGIT NINE as 9. The reader gave `9.0.0`."""
-    names = ["chaperone-v0.1.0", "chaperone-v\u0669.0.0"]
+    names = ["caregiver-v0.1.0", "caregiver-v\u0669.0.0"]
 
-    assert newest_tagged_version(names, "chaperone") == "0.1.0"
+    assert newest_tagged_version(names, "caregiver") == "0.1.0"
 
 
 def test_the_allocator_does_not_count_from_such_a_tag() -> None:
     """The next tag follows the newest tag that is a version."""
-    tags = ("chaperone-v0.1.0", "chaperone-v\u0669.0.0")
-    plans = plan_tags(("chaperone/src/x.py",), (), tags, (), Repo.AGENT_CONTROL)
-    plan = next(one for one in plans if one.component == "chaperone")
+    tags = ("caregiver-v0.1.0", "caregiver-v\u0669.0.0")
+    plans = plan_tags(("caregiver/src/x.py",), (), tags, (), Repo.AGENT_CONTROL)
+    plan = next(one for one in plans if one.component == "caregiver")
 
     assert plan.outcome is TagOutcome.CREATE
-    assert plan.tag == "chaperone-v0.1.1"
+    assert plan.tag == "caregiver-v0.1.1"
     assert plan.from_version == "0.1.0"
 
 
 def test_such_a_tag_alone_leaves_the_component_untagged() -> None:
-    assert "chaperone" in allocate.untagged((f"chaperone-v{ARABIC_ONE}.0.0",), Repo.AGENT_CONTROL)
+    assert "caregiver" in allocate.untagged((f"caregiver-v{ARABIC_ONE}.0.0",), Repo.AGENT_CONTROL)
 
 
 # -- each parser ---------------------------------------------------------------
@@ -118,12 +118,12 @@ def test_such_a_tag_alone_leaves_the_component_untagged() -> None:
 
 @pytest.mark.parametrize("digit", DIGITS)
 def test_a_manifest_version_with_another_digit_is_refused(digit: str) -> None:
-    text = manifest_text("chaperone").replace(
+    text = manifest_text("caregiver").replace(
         f'manifest_version: "{FIXTURE_MANIFEST_VERSION}"', f'manifest_version: "0.{digit}"'
     )
     assert digit in text
     with pytest.raises(Refusal) as caught:
-        parse_manifest(text, "chaperone/component.yaml", Markup.YAML)
+        parse_manifest(text, "caregiver/component.yaml", Markup.YAML)
 
     assert caught.value.code is RefusalCode.MANIFEST
     assert "manifest_version" in caught.value.detail
@@ -133,8 +133,8 @@ def test_a_manifest_version_with_another_digit_is_refused(digit: str) -> None:
 @pytest.mark.parametrize(
     "document",
     [
-        {"live": {"chaperone": "1.2.{digit}"}},
-        {"latest": {"chaperone": "{digit}.2.1"}},
+        {"live": {"caregiver": "1.2.{digit}"}},
+        {"latest": {"caregiver": "{digit}.2.1"}},
         {"provided": {"pep-grant": "0.{digit}"}},
         {"provided": {"pep-grant": "{digit}.4"}},
     ],
@@ -151,7 +151,7 @@ def test_a_state_number_with_another_digit_is_refused(
 
 @pytest.mark.parametrize("digit", DIGITS)
 def test_a_requested_version_with_another_digit_is_refused(digit: str) -> None:
-    body = request_body({"chaperone": f"1.2.{digit}"})
+    body = request_body({"caregiver": f"1.2.{digit}"})
     with pytest.raises(Refusal) as caught:
         parse_request(json.dumps(body).encode("utf-8"), REQUEST_ID)
 
@@ -162,6 +162,6 @@ def test_a_requested_version_with_another_digit_is_refused(digit: str) -> None:
 def test_the_monotonic_rule_does_not_compare_such_a_version(digit: str) -> None:
     """The rule read `1.2.<digit>` as `1.2.1` and passed it over `1.2.0`."""
     with pytest.raises(Refusal) as caught:
-        check_monotonic("chaperone", f"1.2.{digit}", "1.2.0")
+        check_monotonic("caregiver", f"1.2.{digit}", "1.2.0")
 
     assert caught.value.code is RefusalCode.MONOTONIC

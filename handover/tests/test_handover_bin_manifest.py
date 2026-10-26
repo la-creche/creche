@@ -167,9 +167,10 @@ def test_the_kinds_are_the_four_old_ones_and_binary() -> None:
     assert {str(one) for one in Kind} == {"venv", "binary", "oci-image", "compose", "data"}
 
 
-def test_no_component_of_the_catalog_is_binary() -> None:
-    """This change adds the kind and no component."""
-    assert all(row.kind is not Kind.BINARY for row in CATALOG)
+def test_only_chaperone_is_binary() -> None:
+    """The Rust chaperone of the chaperone repository is the one binary
+    component."""
+    assert [row.name for row in CATALOG if row.kind is Kind.BINARY] == ["chaperone"]
 
 
 def test_an_uninstalled_component_never_reads_as_binary() -> None:

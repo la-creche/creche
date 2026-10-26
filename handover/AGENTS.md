@@ -309,9 +309,10 @@ has the name of the markup of the manifest: `.component.toml` or
    in the staged tree has an absolute target, leaves the tree or is in a
    loop. No file holds the path of the fetched work tree or has a second
    name.
-7. `catalog.BINARY_BUILD_FILES` move every binary component and no other
-   kind. The input digest of a binary component covers those files and not
-   `uv.lock`.
+7. `catalog.BINARY_BUILD_FILES` holds the Cargo workspace files of each
+   repository. They move every binary component of that repository and no
+   other kind. The input digest of a binary component covers those files
+   and not `uv.lock`.
 8. Change a component's kind in its catalog row and in its manifest in one
    commit. Discovery refuses a manifest whose kind is not the kind of its
    row, with the code `catalog`.
@@ -355,6 +356,83 @@ has the name of the markup of the manifest: `.component.toml` or
     of its unit. A child that does not end in its time is thus no answer,
     and the follower asks again.
 
+## The chaperone, a binary component of its own repository
+
+The catalog row of `chaperone` is `CatalogRow("chaperone", Repo.CHAPERONE,
+".", Kind.BINARY, Releases.YES)`. It replaced the row of the Python
+`chaperone` of this repository. `main` does not release the Python
+`chaperone`. The `live-stack` branch keeps the old catalog.
+
+1. The manifest is `component.toml` at the root of the chaperone
+   repository. This repository holds no manifest of `chaperone`. Root reads
+   the manifest from a clone of the chaperone repository, at the commit of
+   the tag.
+2. `tests/handover_chaperone_component.toml` holds a copy of the manifest.
+   A test holds the copy equal to the text below.
+3. The `release.yml` workflow of the chaperone repository builds the seven
+   programs and packs them into one archive. It signs the archive and makes
+   the tag `chaperone-v<version>`. `bin/allocate-tags.sh` does not run in
+   that repository.
+4. The archive is `chaperone-x86_64-unknown-linux-musl.tar.gz`. It holds
+   seven members: `chaperone/bin/chaperone`, `chaperone/bin/chaperone-as`,
+   `chaperone/bin/chaperone-attendance`, `chaperone/bin/chaperone-deny-all`,
+   `chaperone/bin/chaperone-ha-approval`, `chaperone/bin/chaperone-ha-call`,
+   and `chaperone/bin/chaperone-release`. The bundle is the name of the
+   archive with `.sigstore.json` at the end.
+5. Check P6 takes a signature only from `release.yml` of the chaperone
+   repository, on `main` (`catalog.RELEASE_WORKFLOW`).
+6. The Cargo workspace of the chaperone repository is at its root:
+   `Cargo.lock`, `Cargo.toml` and `rust-toolchain.toml`. The row has the
+   path `.`, so each path of that repository moves `chaperone`.
+7. Root refuses a version below the installed version, with the code
+   `monotonic`. The first tag of the Rust `chaperone` must be above the
+   version of the Python `chaperone` that the host runs.
+8. `chaperone verify` reads the front door address from the site file,
+   under the key `CHAPERONE_LISTEN`.
+
+The text of `component.toml` at the root of the chaperone repository:
+
+```toml
+manifest_version = "0.19"
+name = "chaperone"
+repo = "chaperone"
+path = "."
+kind = "binary"
+unit = "creche-chaperone.service"
+runs_as = "root"
+build = [
+  ["cargo", "install", "--locked", "--no-track", "--path", "crates/chaperone", "--bin", "chaperone"],
+  ["cargo", "install", "--locked", "--no-track", "--path", "crates/run-as", "--bin", "chaperone-as"],
+  ["cargo", "install", "--locked", "--no-track", "--path", "plugins/effect/included/attendance", "--bin", "chaperone-attendance"],
+  ["cargo", "install", "--locked", "--no-track", "--path", "plugins/default/deny-all", "--bin", "chaperone-deny-all"],
+  ["cargo", "install", "--locked", "--no-track", "--path", "plugins/effect/included/ha-approval", "--bin", "chaperone-ha-approval"],
+  ["cargo", "install", "--locked", "--no-track", "--path", "plugins/effect/included/ha-call", "--bin", "chaperone-ha-call"],
+  ["cargo", "install", "--locked", "--no-track", "--path", "plugins/effect/included/release", "--bin", "chaperone-release"],
+]
+install.to = "/opt/components/chaperone"
+install.prev = "/opt/components/chaperone.prev"
+verify.command = ["/opt/components/chaperone/bin/chaperone", "verify", "--json", "--env-file", "/etc/creche/site.env", "--listen-key", "CHAPERONE_LISTEN"]
+verify.user = "root"
+verify.timeout_s = 60
+restore.mode = "automatic"
+restore.keep = 3
+release = true
+```
+
+Before the first release of the Rust `chaperone`, the operator does these
+steps:
+
+1. Add the chaperone repository to `/srv/agents/state/code-repos.txt`, with
+   the directory name `chaperone`.
+2. Start `code-corpus-sync.service`. Then make sure that
+   `/srv/agents/code/chaperone` exists.
+3. Give the token of root read access to the contents and the Actions of
+   the chaperone repository. Checks P1 to P5 read them.
+4. Set `CHAPERONE_LISTEN` in the site file to the front door address.
+5. Set `AGENT_GITHUB_REPO_CHAPERONE` in the site file only when the
+   repository has another name on GitHub.
+6. Release `handover` alone ("Binary builds", rule 10).
+
 ## The server file (`mcpserver.py`)
 
 Root reads each server file again at an `mcp-servers` release. It trusts no
@@ -393,7 +471,7 @@ uv run handover request attendance chaperone@2.1.0 --root . --dry-run
 uv run handover follow attendance chaperone --dry-run   # what the timer would do
 ```
 
-`--partial` is what this repository needs: two of the catalog's components
+`--partial` is what this repository needs: three of the catalog's components
 live in other repositories. Exit codes: 0 pass, 1 refusal, 2 a usage mistake.
 
 The follower runs as the operator from `creche-follow.timer`, out of the
@@ -483,6 +561,14 @@ that wants a refusal changes one field.
   that is no failed hook still stops the restore at its component
   (`executor/steps.py`).
 - `arg_allows` is applied by nothing (`executor/roster.py`).
+- Contract 06 §3 names `chaperone` as the owner of `pep-grant`. The
+  manifest of the Rust `chaperone` provides no contract. Each floor on
+  `pep-grant` is then a line `not verified`, and not a refusal
+  (`contracts.py`).
+- The manifest of the Rust `chaperone` names `creche-chaperone.service`.
+  The clone of the chaperone repository holds no unit file, so step 9
+  keeps the installed unit. The unit of this repository starts the Python
+  program with no subcommand (`systemd/creche-chaperone.service`).
 - PyYAML reads a digit that is not ASCII in a number with the tag `!!int`.
   A whole number of a manifest can thus hold one. Contract 06 §8 names no
   YAML form for a number (`manifest.py`).
@@ -517,8 +603,6 @@ that wants a refusal changes one field.
   only by hand.
 - The requester refuses once `requests/` holds eight entries of any owner
   (`requester/file.py`).
-- The `chaperone` venv carries `handover`'s console scripts
-  (`chaperone/pyproject.toml`).
 - `stage7-releases.md` §2.4 step 3 says that root reads only the exit
   status of the verifier, and §2.6 lists the four reasons of P6. Neither
   section gives a reason to an exit status. Through `systemd-run --wait`,
@@ -527,10 +611,11 @@ that wants a refusal changes one field.
   does. Root checks the two program files before each child, and its own
   time limit ends first. Each other status of child 2 that is not 0 is a
   refused signature (`executor/provenance.py`).
-- Contract 06 §1 rule 10 names no file of a Cargo workspace. Three files
-  move a binary component: `rust/Cargo.lock`, `rust/Cargo.toml` and
-  `rust/rust-toolchain.toml`. A `rust/.cargo/config.toml` moves none
-  (`catalog.py`).
+- Contract 06 §1 rule 10 names no file of a Cargo workspace. In this
+  repository, three files move a binary component: `rust/Cargo.lock`,
+  `rust/Cargo.toml` and `rust/rust-toolchain.toml`. A
+  `rust/.cargo/config.toml` moves none. In the chaperone repository, each
+  path moves `chaperone` (`catalog.py`).
 - Only a test of this repository holds a binary build to `--locked`. The
   executor does not check the flag (`tests/test_handover_bin_manifest.py`).
 - Contract 06 §3.4 names three checks of a file in the store of artifacts:
@@ -568,8 +653,9 @@ that wants a refusal changes one field.
 - `handover artifacts --repo` reads the manifests only when the catalog of
   that repository holds a binary row. It then reads each manifest of its
   roots, also the manifest of a venv component. Such a read needs the site
-  file for a `~/` path, and a CI runner has no site file. No catalog row
-  says `binary` today (`cli.py`).
+  file for a `~/` path, and a CI runner has no site file. Only the row of
+  `chaperone` says `binary`, and the workflow of the chaperone repository
+  does not run this command (`cli.py`).
 - A run that ends in the way of a crash keeps `work/<id>`. No later run
   removes it. It holds root's copy of each archive of the release
   (`executor/steps.py`).

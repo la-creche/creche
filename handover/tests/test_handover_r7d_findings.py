@@ -79,7 +79,7 @@ def _default_roots() -> tuple[Path, ...]:
 
 
 def test_the_default_install_roots_hold_both_trees() -> None:
-    """Contract 06 §1: `chaperone` installs under `/opt/components`, `attendance`
+    """Contract 06 §1: `handover` installs under `/opt/components`, `attendance`
     under the operator's home. One root covers half the catalog."""
     roots = _default_roots()
 
@@ -98,7 +98,7 @@ def test_a_user_venv_component_is_not_refused_by_containment(name: str) -> None:
     assert str(paths.to).startswith(operator_install_root())
 
 
-@pytest.mark.parametrize("name", ["chaperone", "handover", "playpen"])
+@pytest.mark.parametrize("name", ["handover", "playpen"])
 def test_a_root_venv_component_is_still_contained(name: str) -> None:
     manifest = _repo_manifest(name)
 
@@ -110,7 +110,7 @@ def test_a_root_venv_component_is_still_contained(name: str) -> None:
 def test_an_install_path_under_neither_root_is_still_refused() -> None:
     """The containment check is the point of the field. Widening it to two
     roots must not widen it to every root."""
-    manifest = _repo_manifest("chaperone")
+    manifest = _repo_manifest("handover")
     bent = parse_manifest(
         _text_with_install(manifest.name, "/etc/agent", "/etc/agent.prev"), "bent.yaml", Markup.YAML
     )
@@ -125,11 +125,11 @@ def test_an_install_path_under_neither_root_is_still_refused() -> None:
 #: What `spool.note_name` calls the note this bench writes: the run's id
 #: and the component it was switching. `unfinished` splits it again, or
 #: `ledgered` would be asked a question no entry can ever answer.
-NOTE_NAME = f"{REQUEST_ID}-chaperone"
+NOTE_NAME = f"{REQUEST_ID}-caregiver"
 
 
 class RepairBench:
-    """A host with `chaperone` swapped in and a switch note nobody cleared."""
+    """A host with `caregiver` swapped in and a switch note nobody cleared."""
 
     def __init__(self, tmp_path: Path, run: FakeRun) -> None:
         self.tmp_path = tmp_path
@@ -145,10 +145,10 @@ class RepairBench:
 
     def note(self, *, hook: VerifyHook | None) -> SwitchNote:
         return SwitchNote(
-            "chaperone",
-            str(self.components / "chaperone"),
-            str(self.components / "chaperone.prev"),
-            "creche-chaperone.service",
+            "caregiver",
+            str(self.components / "caregiver"),
+            str(self.components / "caregiver.prev"),
+            "creche-caregiver.service",
             hook,
         )
 
@@ -181,12 +181,12 @@ class RepairBench:
 @pytest.fixture
 def repair_bench(tmp_path: Path) -> RepairBench:
     bench = RepairBench(tmp_path, FakeRun(answers=git_host_answers()))
-    stamp_tree(bench.components, "chaperone.prev", LIVE_VERSION)
-    stamp_tree(bench.components, "chaperone", NEW_VERSION)
+    stamp_tree(bench.components, "caregiver.prev", LIVE_VERSION)
+    stamp_tree(bench.components, "caregiver", NEW_VERSION)
     # A unit is refreshed and restarted only where one is already
     # installed (contract 06 §8, `install.py` rule 4).
     (tmp_path / "system-units").mkdir(exist_ok=True)
-    (tmp_path / "system-units" / "creche-chaperone.service").write_text(
+    (tmp_path / "system-units" / "creche-caregiver.service").write_text(
         "[Unit]\n", encoding="utf-8"
     )
 
@@ -195,7 +195,7 @@ def repair_bench(tmp_path: Path) -> RepairBench:
 
 def _hook(bench: RepairBench) -> VerifyHook:
     return VerifyHook(
-        command=(str(bench.components / "chaperone" / "bin" / "chaperone-verify"), "--json"),
+        command=(str(bench.components / "caregiver" / "bin" / "caregiver-verify"), "--json"),
         user="root",
         timeout_s=60,
     )
@@ -212,7 +212,7 @@ def test_a_repaired_crash_writes_its_own_ledger_entry(repair_bench: RepairBench)
     assert entry["reason"] == "a crash between the switch and the verify"
     names = [str(row.get("name")) for row in cast("list[dict[str, object]]", entry["steps"])]
     assert names == ["restore"]
-    assert installed_version(repair_bench.components / "chaperone") == LIVE_VERSION
+    assert installed_version(repair_bench.components / "caregiver") == LIVE_VERSION
 
 
 def test_a_repairs_entry_says_which_request_it_belongs_to(repair_bench: RepairBench) -> None:
@@ -232,7 +232,7 @@ def test_a_repair_removes_the_crashed_trees_new(repair_bench: RepairBench) -> No
     failed release does."""
     repair_bench.repair(repair_bench.note(hook=_hook(repair_bench)))
 
-    staged = repair_bench.components / "chaperone.new"
+    staged = repair_bench.components / "caregiver.new"
     assert not staged.exists()
     assert f"removed {staged}" in cast("list[object]", repair_bench.ledger()["log_tail"])
 
@@ -243,7 +243,7 @@ def test_a_repair_restarts_the_restored_unit(repair_bench: RepairBench) -> None:
     repair_bench.repair(repair_bench.note(hook=_hook(repair_bench)))
 
     assert repair_bench.run.ran("restart")
-    assert repair_bench.run.ran("creche-chaperone.service")
+    assert repair_bench.run.ran("creche-caregiver.service")
 
 
 def test_a_repair_runs_the_previous_versions_verify_hook(repair_bench: RepairBench) -> None:
@@ -258,19 +258,19 @@ def test_a_repair_runs_the_previous_versions_verify_hook(repair_bench: RepairBen
     # or fail. Empty here because the fake hook is never actually asked to
     # print anything.
     expected = {
-        "component": "chaperone",
+        "component": "caregiver",
         "status": "ok",
         "seconds": rows[0]["seconds"],
         "detail": "",
     }
     assert rows == [expected]
-    assert repair_bench.run.ran("chaperone-verify")
+    assert repair_bench.run.ran("caregiver-verify")
 
 
 def test_a_repair_whose_verify_fails_is_ledgered_failed(repair_bench: RepairBench) -> None:
     """Nothing further is automatic (§2.4 row 10). The entry says so instead
     of the journal saying nothing."""
-    repair_bench.run.fails["chaperone-verify"] = 1
+    repair_bench.run.fails["caregiver-verify"] = 1
 
     repair_bench.repair(repair_bench.note(hook=_hook(repair_bench)))
 
@@ -289,7 +289,7 @@ def test_a_repair_with_no_recorded_hook_says_so_under_manual(
     entry = repair_bench.ledger()
     assert entry["status"] == "restored"
     assert any("verify" in str(one) for one in cast("list[object]", entry["manual"]))
-    assert not repair_bench.run.ran("chaperone-verify")
+    assert not repair_bench.run.ran("caregiver-verify")
 
 
 def test_a_repair_with_no_previous_tree_restarts_nothing(repair_bench: RepairBench) -> None:
@@ -301,7 +301,7 @@ def test_a_repair_with_no_previous_tree_restarts_nothing(repair_bench: RepairBen
     What it must not be is silent. The note is cleared, one `manual` line
     says nothing went back, and the entry carries the request id the note
     belonged to."""
-    (repair_bench.components / "chaperone.prev").rename(repair_bench.components / "chaperone.kept")
+    (repair_bench.components / "caregiver.prev").rename(repair_bench.components / "caregiver.kept")
 
     lines = repair_bench.repair(repair_bench.note(hook=_hook(repair_bench)))
 
@@ -309,14 +309,14 @@ def test_a_repair_with_no_previous_tree_restarts_nothing(repair_bench: RepairBen
     assert entry["id"] == REQUEST_ID
     assert any("nothing to put back" in str(one) for one in cast("list[object]", entry["manual"]))
     assert not repair_bench.run.ran("restart")
-    assert installed_version(repair_bench.components / "chaperone") == NEW_VERSION
+    assert installed_version(repair_bench.components / "caregiver") == NEW_VERSION
     assert any(REQUEST_ID in one for one in lines)
 
 
 def test_a_run_that_recorded_itself_is_not_repaired(repair_bench: RepairBench) -> None:
     """A note whose run is ledgered is spent.
 
-    Asked about `<request id>-chaperone` rather than the request id, `ledgered`
+    Asked about `<request id>-caregiver` rather than the request id, `ledgered`
     would match no entry and every note would be repaired — the unit
     restarted and the hook re-run over a release the run had already
     decided and written down. A run that recorded itself is not a crash,
@@ -329,8 +329,8 @@ def test_a_run_that_recorded_itself_is_not_repaired(repair_bench: RepairBench) -
 
     assert any("already ledgered" in one for one in lines)
     # Nothing was put back and nothing was started.
-    assert installed_version(repair_bench.components / "chaperone") == NEW_VERSION
-    assert not repair_bench.run.ran("chaperone-verify")
+    assert installed_version(repair_bench.components / "caregiver") == NEW_VERSION
+    assert not repair_bench.run.ran("caregiver-verify")
     assert not (repair_bench.spool_root / DONE_DIR / f"{NOTE_NAME}.json").exists()
 
 
@@ -347,7 +347,7 @@ def test_a_repair_never_overwrites_an_existing_ledger_entry(
 
     assert repair_bench.ledger()["status"] == "restored"
     assert any("already ledgered" in one for one in lines)
-    assert not repair_bench.run.ran("chaperone-verify")
+    assert not repair_bench.run.ran("caregiver-verify")
 
 
 def test_a_stale_log_from_a_half_written_finish_does_not_wedge_the_run(
@@ -495,18 +495,18 @@ def test_a_silent_manifest_passes_the_real_parser() -> None:
 def test_the_switch_stamps_the_manifest_into_the_artifact(tmp_path: Path) -> None:
     """The stamp is what turns the next release's read into a fact: the
     tree is root-owned and the file got there through a verified release."""
-    tree = tmp_path / "chaperone"
+    tree = tmp_path / "caregiver"
     tree.mkdir()
-    write_manifest_stamp(tree, "name: chaperone\n", Markup.YAML)
+    write_manifest_stamp(tree, "name: caregiver\n", Markup.YAML)
 
-    assert installed_manifest(tree) == StampedText("name: chaperone\n", Markup.YAML)
+    assert installed_manifest(tree) == StampedText("name: caregiver\n", Markup.YAML)
     assert installed_manifest(tmp_path / "nothing") is None
 
 
 def test_an_oversized_stamped_manifest_is_not_read(tmp_path: Path) -> None:
     """An install tree is root-owned, and the cap is still here: a planted
     file must not be read into memory."""
-    tree = tmp_path / "chaperone"
+    tree = tmp_path / "caregiver"
     tree.mkdir()
     write_manifest_stamp(tree, "x" * (MAX_MANIFEST_BYTES + 1), Markup.YAML)
 
@@ -524,7 +524,7 @@ def test_only_the_deploying_component_is_fetched(tmp_path: Path) -> None:
 
     cloned = [line for line in bench.run.argv_lines() if "clone" in line]
     assert len(cloned) == 1
-    assert "/chaperone" in cloned[0]
+    assert "/caregiver" in cloned[0]
 
 
 def test_an_unstamped_live_tree_puts_suspect_in_front_of_the_operator(tmp_path: Path) -> None:
@@ -557,12 +557,12 @@ def test_deploying_names_needs_no_manifest() -> None:
     """The executor has to know what deploys BEFORE it decides which
     manifests it may believe. The action depends only on the request and
     the live state, which is what makes that ordering possible."""
-    state = ReleaseState(live={"chaperone": "2.0.3"}, provided={}, latest={}, facts={})
+    state = ReleaseState(live={"caregiver": "2.0.3"}, provided={}, latest={}, facts={})
 
-    assert deploying_names(state, {"chaperone": "2.1.0"}) == frozenset({"chaperone"})
+    assert deploying_names(state, {"caregiver": "2.1.0"}) == frozenset({"caregiver"})
     # Already live: `unchanged`, so it is not deployed and its manifest is
     # not fetched either.
-    assert deploying_names(state, {"chaperone": "2.0.3"}) == frozenset()
+    assert deploying_names(state, {"caregiver": "2.0.3"}) == frozenset()
     assert deploying_names(state, {"not-a-component": "1.0.0"}) == frozenset()
 
 
@@ -572,7 +572,7 @@ BUILD_LINE = 'build:\n  - ["/usr/local/bin/uv", "sync", "--frozen"]\ninstall:'
 
 @dataclass
 class ReleaseBench:
-    """One wired executor that releases `chaperone`, and the summaries the phone
+    """One wired executor that releases `caregiver`, and the summaries the phone
     was shown."""
 
     tmp_path: Path
@@ -602,18 +602,18 @@ def _release_bench(tmp_path: Path) -> ReleaseBench:
     wiring = Wiring(
         host=fake_host(tmp_path, run),
         transport=watching,
-        readers=fake_readers(latest={"chaperone": NEW_VERSION}),
-        api=green_api("agent-control", f"chaperone-v{NEW_VERSION}", SHA_OF["chaperone"]),
+        readers=fake_readers(latest={"caregiver": NEW_VERSION}),
+        api=green_api("agent-control", f"caregiver-v{NEW_VERSION}", SHA_OF["caregiver"]),
     )
     bench = ReleaseBench(tmp_path, spool_root, tmp_path / "components", run, wiring, seen)
-    tree = stamp_tree(bench.components, "chaperone", LIVE_VERSION)
-    write_manifest_stamp(tree, _bench_manifest(bench, "chaperone"), Markup.YAML)
+    tree = stamp_tree(bench.components, "caregiver", LIVE_VERSION)
+    write_manifest_stamp(tree, _bench_manifest(bench, "caregiver"), Markup.YAML)
 
     return bench
 
 
 def _drive_one(bench: ReleaseBench) -> str:
-    """One release of `chaperone`, through the real spool and the real steps."""
+    """One release of `caregiver`, through the real spool and the real steps."""
 
     def write_tree(destination: Path, component: str) -> None:
         row = CATALOG_BY_NAME[component]
@@ -622,8 +622,8 @@ def _drive_one(bench: ReleaseBench) -> str:
         (sub / "component.yaml").write_text(_bench_manifest(bench, component), encoding="utf-8")
 
     bench.run.dynamic = GitFake(write_tree)
-    bench.run.hooks["sync"] = lambda _: stamp_tree(bench.components, "chaperone.new", NEW_VERSION)
-    write_request(bench.spool_root, REQUEST_ID, request_body({"chaperone": NEW_VERSION}))
+    bench.run.hooks["sync"] = lambda _: stamp_tree(bench.components, "caregiver.new", NEW_VERSION)
+    write_request(bench.spool_root, REQUEST_ID, request_body({"caregiver": NEW_VERSION}))
     spool = Spool(str(bench.spool_root), this_uid())
     try:
         return handle(spool, f"{REQUEST_ID}.json", bench.wiring, Counter())
@@ -636,15 +636,15 @@ def _text_with_install(name: str, to: str, prev: str) -> str:
 manifest_version: "0.4"
 name: {name}
 repo: agent-control
-path: chaperone
+path: {name}
 kind: venv
-unit: creche-chaperone.service
+unit: creche-{name}.service
 runs_as: root
 install:
   to: {to}
   prev: {prev}
 verify:
-  command: ["{to}/bin/chaperone-verify", "--json"]
+  command: ["{to}/bin/{name}-verify", "--json"]
   user: root
   timeout_s: 60
 restore:

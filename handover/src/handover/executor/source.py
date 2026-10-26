@@ -370,7 +370,7 @@ def digest_paths(component: str) -> tuple[str, ...]:
     # A binary build reads the Cargo workspace files and no `uv.lock`, so
     # those are its lock files (`catalog.BINARY_BUILD_FILES`).
     if row.kind is Kind.BINARY:
-        return tuple(sorted((path, *BINARY_BUILD_FILES)))
+        return tuple(sorted((path, *BINARY_BUILD_FILES.get(row.repo, ()))))
 
     return tuple(sorted((path, LOCK_FILE)))
 

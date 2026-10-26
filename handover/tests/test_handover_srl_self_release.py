@@ -59,8 +59,8 @@ from handover_fixtures import manifest_text
 SELF = "handover"
 LIVE = "0.1.6"
 NEW = "0.1.7"
-PEP_LIVE = "2.0.3"
-PEP_NEW = "2.1.0"
+CARE_LIVE = "2.0.3"
+CARE_NEW = "2.1.0"
 
 #: A second request, filed after the first. ULIDs sort by time.
 LATER_ID = "01K5J8M2Q7V3X9R4T6N0B8C2DF"
@@ -171,7 +171,7 @@ def bench(tmp_path: Path) -> Bench:
 
 @pytest.fixture
 def pair(tmp_path: Path) -> Bench:
-    return _make_bench(tmp_path, {"chaperone": (PEP_LIVE, PEP_NEW), SELF: (LIVE, NEW)})
+    return _make_bench(tmp_path, {"caregiver": (CARE_LIVE, CARE_NEW), SELF: (LIVE, NEW)})
 
 
 def _run(bench: Bench, components: dict[str, str], counter: Counter | None = None) -> str:
@@ -325,24 +325,24 @@ def test_the_intake_restart_is_named_under_manual(bench: Bench) -> None:
 
 
 def test_a_set_switches_handover_after_everything_else(pair: Bench) -> None:
-    """Rule 1 and rule 2 together: `chaperone` swaps and verifies inside the
+    """Rule 1 and rule 2 together: `caregiver` swaps and verifies inside the
     release, `handover` after its entry."""
-    _run(pair, {"chaperone": PEP_NEW, SELF: NEW})
+    _run(pair, {"caregiver": CARE_NEW, SELF: NEW})
 
     release = pair.ledger()
-    assert cast("dict[str, object]", release["manifest"])["order"] == ["chaperone", SELF]
-    assert _verified(release) == ["chaperone"]
+    assert cast("dict[str, object]", release["manifest"])["order"] == ["caregiver", SELF]
+    assert _verified(release) == ["caregiver"]
     assert _verified(pair.self_entry()) == [SELF]
-    assert pair.live("chaperone") == PEP_NEW
+    assert pair.live("caregiver") == CARE_NEW
     assert pair.live() == NEW
 
 
 def test_a_failed_set_never_switches_handover(pair: Bench) -> None:
-    """`chaperone` fails its hook, the set restores, and `handover` never
+    """`caregiver` fails its hook, the set restores, and `handover` never
     moves: no note, no second entry, no staged tree left behind."""
-    pair.run.fails["chaperone-verify"] = 1
+    pair.run.fails["caregiver-verify"] = 1
 
-    _run(pair, {"chaperone": PEP_NEW, SELF: NEW})
+    _run(pair, {"caregiver": CARE_NEW, SELF: NEW})
 
     assert pair.ledger()["status"] != "succeeded"
     assert not pair.has_entry(SELF_ENTRY)

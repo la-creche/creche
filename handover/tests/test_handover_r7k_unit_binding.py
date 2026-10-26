@@ -1,7 +1,7 @@
 """A release that cannot change what runs is refused.
 
 A unit that execs `/opt/creche/.venv/bin/chaperone` while
-`chaperone/component.yaml` installs to `/opt/components/chaperone` and names that unit
+the manifest of `chaperone` installs to `/opt/components/chaperone` and names that unit
 lets a `chaperone` release build a tree, swap it, restart the unit, pass its
 verify and write `done` — while the PEP still runs the code of `/opt`. What
 the tap binds to must be what runs (invariant 17, `stage7-releases.md`
@@ -72,7 +72,11 @@ NEW_VERSION = "2.1.0"
 #: without one.
 BUILD_LINE = 'build:\n  - ["/usr/local/bin/uv", "sync", "--frozen", "--no-editable"]\ninstall:'
 
+SYSTEM_UNIT = "creche-caregiver.service"
 CHAPERONE_UNIT = "creche-chaperone.service"
+
+#: The copy of the manifest that the chaperone repository holds.
+CHAPERONE_MANIFEST = Path(__file__).resolve().parent / "handover_chaperone_component.toml"
 NOTICEBOARD_UNIT = "creche-noticeboard.service"
 
 #: The refusal code, as the ledger records it.
@@ -185,8 +189,8 @@ def _make_bench(tmp_path: Path, component: str, unit: str | None) -> Bench:
 
 @pytest.fixture
 def bench(tmp_path: Path) -> Bench:
-    """`chaperone` live at 2.0.3, 2.1.0 the latest tag, one system unit."""
-    return _make_bench(tmp_path, "chaperone", CHAPERONE_UNIT)
+    """`caregiver` live at 2.0.3, 2.1.0 the latest tag, one system unit."""
+    return _make_bench(tmp_path, "caregiver", SYSTEM_UNIT)
 
 
 def _release(bench: Bench) -> str:
@@ -203,8 +207,8 @@ def _release(bench: Bench) -> str:
 
 def test_a_unit_that_starts_a_program_outside_the_tree_is_refused(bench: Bench) -> None:
     """The unit execs `/opt/creche/.venv`, and the release installs
-    `/opt/components/chaperone`."""
-    _install_unit(bench, _unit_text("/opt/creche/.venv/bin/chaperone"))
+    `/opt/components/caregiver`."""
+    _install_unit(bench, _unit_text("/opt/creche/.venv/bin/caregiver"))
     _serve(bench)
 
     result = _release(bench)
@@ -212,27 +216,27 @@ def test_a_unit_that_starts_a_program_outside_the_tree_is_refused(bench: Bench) 
     assert "refused" in result
     entry = bench.ledger()
     assert entry["refused_check"] == UNIT_CODE
-    assert CHAPERONE_UNIT in bench.reason()
-    assert "/opt/creche/.venv/bin/chaperone" in bench.reason()
+    assert SYSTEM_UNIT in bench.reason()
+    assert "/opt/creche/.venv/bin/caregiver" in bench.reason()
 
 
 def test_the_refusal_swaps_nothing_and_restarts_nothing(bench: Bench) -> None:
     """Step 8 refuses, so the old tree is still in service and the unit was
     never touched."""
-    _install_unit(bench, _unit_text("/opt/creche/.venv/bin/chaperone"))
+    _install_unit(bench, _unit_text("/opt/creche/.venv/bin/caregiver"))
     _serve(bench)
 
     _release(bench)
 
     assert installed_version(bench.tree()) == LIVE_VERSION
-    assert not (bench.components / "chaperone.new").exists()
-    assert not (bench.components / "chaperone.prev").exists()
+    assert not (bench.components / "caregiver.new").exists()
+    assert not (bench.components / "caregiver.prev").exists()
     assert not bench.run.ran("restart")
 
 
 def test_a_unit_that_starts_the_tree_releases(bench: Bench) -> None:
     """The other direction, and the one that must not become collateral."""
-    _install_unit(bench, _unit_text(f"{bench.tree()}/bin/chaperone"))
+    _install_unit(bench, _unit_text(f"{bench.tree()}/bin/caregiver"))
     _serve(bench)
 
     result = _release(bench)
@@ -303,7 +307,7 @@ def test_a_user_unit_reaches_its_tree_through_the_home_specifier(tmp_path: Path)
 def test_the_home_specifier_in_a_system_unit_is_not_the_operators_home(bench: Bench) -> None:
     """In a system unit `%h` is root's home. It is left as written, which
     is a path outside every tree, so the unit is refused."""
-    _install_unit(bench, _unit_text("%h/components/chaperone/bin/chaperone"))
+    _install_unit(bench, _unit_text("%h/components/caregiver/bin/caregiver"))
     _serve(bench)
 
     assert "refused" in _release(bench)
@@ -313,7 +317,7 @@ def test_the_home_specifier_in_a_system_unit_is_not_the_operators_home(bench: Be
 def test_a_component_with_no_unit_is_not_checked(tmp_path: Path) -> None:
     """`handover` and `playpen` carry `unit: null`. Nothing is
     restarted, so there is no unit to disagree with the tree."""
-    bench = _make_bench(tmp_path, "chaperone", None)
+    bench = _make_bench(tmp_path, "caregiver", None)
     _serve(bench)
 
     assert "succeeded" in _release(bench), bench.reason()
@@ -330,14 +334,14 @@ def test_a_unit_nothing_installed_is_left_to_the_manual_list(bench: Bench) -> No
     assert "succeeded" in result, bench.reason()
     manual = bench.ledger()["manual"]
     assert isinstance(manual, list)
-    assert any(CHAPERONE_UNIT in str(one) for one in manual), manual  # pyright: ignore[reportUnknownVariableType]
+    assert any(SYSTEM_UNIT in str(one) for one in manual), manual  # pyright: ignore[reportUnknownVariableType]
 
 
 def test_the_unit_the_release_installs_is_the_one_that_is_read(bench: Bench) -> None:
     """Step 9 refreshes the unit file in place from the fetched tree, so the
     release that CORRECTS the unit is exactly the release that must pass."""
-    _install_unit(bench, _unit_text("/opt/creche/.venv/bin/chaperone"))
-    _serve(bench, staged_unit=_unit_text(f"{bench.tree()}/bin/chaperone"))
+    _install_unit(bench, _unit_text("/opt/creche/.venv/bin/caregiver"))
+    _serve(bench, staged_unit=_unit_text(f"{bench.tree()}/bin/caregiver"))
 
     assert "succeeded" in _release(bench), bench.reason()
 
@@ -345,8 +349,8 @@ def test_the_unit_the_release_installs_is_the_one_that_is_read(bench: Bench) -> 
 def test_a_staged_unit_that_still_points_away_is_refused(bench: Bench) -> None:
     """The same door, shut. A tree that carries a unit file is not thereby
     trusted: the file is read and held to the same rule."""
-    _install_unit(bench, _unit_text(f"{bench.tree()}/bin/chaperone"))
-    _serve(bench, staged_unit=_unit_text("/opt/creche/.venv/bin/chaperone"))
+    _install_unit(bench, _unit_text(f"{bench.tree()}/bin/caregiver"))
+    _serve(bench, staged_unit=_unit_text("/opt/creche/.venv/bin/caregiver"))
 
     result = _release(bench)
 
@@ -359,10 +363,10 @@ def test_a_symlinked_installed_unit_keeps_its_own_text(bench: Bench) -> None:
     replace a linked unit and the linked file is what stays in force."""
     installed = _install_unit(bench, "")
     installed.unlink()
-    real = bench.tmp_path / "linked-creche-chaperone.service"
-    real.write_text(_unit_text("/opt/creche/.venv/bin/chaperone"), encoding="utf-8")
+    real = bench.tmp_path / "linked-creche-caregiver.service"
+    real.write_text(_unit_text("/opt/creche/.venv/bin/caregiver"), encoding="utf-8")
     installed.symlink_to(real)
-    _serve(bench, staged_unit=_unit_text(f"{bench.tree()}/bin/chaperone"))
+    _serve(bench, staged_unit=_unit_text(f"{bench.tree()}/bin/caregiver"))
 
     result = _release(bench)
 
@@ -392,9 +396,9 @@ def _over_the_cap(bench: Bench) -> str:
     Its last `ExecStart=` line is after the cap and starts one that is
     not."""
     filler = FILLER * (MAX_UNIT_BYTES // len(FILLER) + 1)
-    first = _unit_text(f"{bench.tree()}/bin/chaperone")
+    first = _unit_text(f"{bench.tree()}/bin/caregiver")
 
-    return f"{first}{filler}ExecStart=/opt/creche/.venv/bin/chaperone\n"
+    return f"{first}{filler}ExecStart=/opt/creche/.venv/bin/caregiver\n"
 
 
 def _stage_detail(bench: Bench) -> str:
@@ -420,7 +424,7 @@ def test_an_installed_unit_over_the_cap_stops_the_stage(bench: Bench) -> None:
 def test_a_staged_unit_over_the_cap_stops_the_stage(bench: Bench) -> None:
     """The same file, where the release carries it and step 9 would put it
     in force."""
-    _install_unit(bench, _unit_text(f"{bench.tree()}/bin/chaperone"))
+    _install_unit(bench, _unit_text(f"{bench.tree()}/bin/caregiver"))
     _serve(bench, staged_unit=_over_the_cap(bench))
 
     result = _release(bench)
@@ -432,7 +436,7 @@ def test_a_staged_unit_over_the_cap_stops_the_stage(bench: Bench) -> None:
 
 def test_a_unit_at_the_cap_is_read_whole(bench: Bench) -> None:
     """The cap stops a file that is longer, and no file that fits."""
-    text = _unit_text(f"{bench.tree()}/bin/chaperone")
+    text = _unit_text(f"{bench.tree()}/bin/caregiver")
     text += "#" * (MAX_UNIT_BYTES - len(text) - 1) + "\n"
     assert len(text.encode("utf-8")) == MAX_UNIT_BYTES
     _install_unit(bench, text)
@@ -538,16 +542,15 @@ def test_the_real_pep_unit_and_the_real_manifest_pass_rule_eight(tmp_path: Path)
     """`chaperone`, through the executor's OWN check rather than a re-reading.
 
     The test above compares two strings. This one runs `check_unit_binds`
-    with this repository's `systemd/creche-chaperone.service` and
-    `chaperone/component.yaml` exactly as they ship, in both readings step 9 can
-    take: the file already installed under `/etc/systemd/system`, and the
-    file the release would refresh in its place. `chaperone` is the component
-    this rule is written for, and the one worth driving end to end.
+    with this repository's `systemd/creche-chaperone.service` and the
+    manifest of the chaperone repository (`handover_chaperone_component.toml`).
+    The clone of the chaperone repository holds no `systemd/`, so step 9
+    reads the file already installed under `/etc/systemd/system`.
+    `chaperone` is the component this rule is written for, and the one
+    worth driving end to end.
     """
     manifest = parse_manifest(
-        (REPO_ROOT / "chaperone" / "component.yaml").read_text(encoding="utf-8"),
-        "chaperone/component.yaml",
-        Markup.YAML,
+        CHAPERONE_MANIFEST.read_text(encoding="utf-8"), CHAPERONE_MANIFEST.name, Markup.TOML
     )
     assert manifest.install.to == "/opt/components/chaperone"
 
@@ -555,10 +558,7 @@ def test_the_real_pep_unit_and_the_real_manifest_pass_rule_eight(tmp_path: Path)
     shipped = (REPO_ROOT / "systemd" / CHAPERONE_UNIT).read_text(encoding="utf-8")
     (tmp_path / "system-units" / CHAPERONE_UNIT).write_text(shipped, encoding="utf-8")
 
-    # No `systemd/` under the source, so the INSTALLED file is what is read.
     installer.check_unit_binds(manifest, tmp_path / "no-systemd-directory")
-    # And with it, so the file step 9 would copy over is what is read.
-    installer.check_unit_binds(manifest, REPO_ROOT)
 
 
 #: `attendance`'s three door units, which run out of its tree

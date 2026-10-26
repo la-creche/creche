@@ -9,7 +9,9 @@ This is the ONE test that keeps a manifest's `--env-file` and its unit's
 own `EnvironmentFile=` from drifting apart. The rule cuts both ways: a
 component whose unit declares `EnvironmentFile=` must pass that same path
 with `--env-file`, and one whose unit declares none must not claim one
-either. `chaperone` reads the site file, `/etc/creche/site.env`.
+either. `chaperone` reads the site file, `/etc/creche/site.env`. Its
+manifest is at the root of the chaperone repository, and this repository
+holds a copy (`handover_chaperone_component.toml`).
 """
 
 from __future__ import annotations
@@ -18,9 +20,13 @@ import re
 from pathlib import Path
 
 from handover.discovery import read_one
+from handover.manifest import Markup, parse_manifest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SYSTEMD_DIR = REPO_ROOT / "systemd"
+
+#: The copy of the manifest that the chaperone repository holds.
+CHAPERONE_MANIFEST = Path(__file__).resolve().parent / "handover_chaperone_component.toml"
 
 ENV_FILE_RE = re.compile(r"^EnvironmentFile=(\S+)$", re.MULTILINE)
 
@@ -29,8 +35,9 @@ UNIT_OF = {
     "noticeboard": "creche-noticeboard.service",
     "attendance": "creche-attendance.service",
     "caregiver": "creche-caregiver.service",
-    "chaperone": "creche-chaperone.service",
 }
+
+CHAPERONE_UNIT = "creche-chaperone.service"
 
 
 def _unit_env_file(unit: str) -> str | None:
@@ -76,10 +83,11 @@ def test_noticeboard_attendance_and_caregiver_each_name_a_real_env_file() -> Non
 
 
 def test_chaperone_names_the_site_file_on_both_sides() -> None:
-    """`creche-chaperone.service` reads its LAN address, its Home Assistant and its
-    sops path from the site file, and `chaperone-verify` reads the same file."""
-    manifest = read_one(REPO_ROOT, "chaperone").manifest
+    """`creche-chaperone.service` reads its LAN address from the site file,
+    and `chaperone verify` reads the same file."""
+    text = CHAPERONE_MANIFEST.read_text(encoding="utf-8")
+    manifest = parse_manifest(text, CHAPERONE_MANIFEST.name, Markup.TOML)
     path = "/etc/creche/site.env"
 
-    assert _unit_env_file(UNIT_OF["chaperone"]) == path
+    assert _unit_env_file(CHAPERONE_UNIT) == path
     assert _verify_env_file(manifest.verify.command) == path

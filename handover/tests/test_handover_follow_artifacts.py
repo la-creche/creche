@@ -55,7 +55,7 @@ from handover_bin_fixtures import BINARY_NAME, use_binary_catalog
 from handover import cli, notices, strictjson
 
 BOARD = BINARY_NAME
-PEP = "chaperone"
+CARE = "caregiver"
 OLDER = "0.0.9"
 LIVE = "0.1.0"
 NEXT = "0.1.1"
@@ -276,27 +276,27 @@ def test_after_the_wait_the_member_leaves_the_set_of_the_run(
 ) -> None:
     """One network fault costs no refusal and stops no other member."""
     host.install(BOARD, LIVE)
-    host.install(PEP, LIVE)
+    host.install(CARE, LIVE)
     host.tag(BOARD, NEXT)
-    host.tag(PEP, NEXT)
-    host.follow(BOARD, PEP)
+    host.tag(CARE, NEXT)
+    host.follow(BOARD, CARE)
     capsys.readouterr()
 
     host.now = START + ARTIFACT_WAIT_S
-    host.follow(BOARD, PEP)
+    host.follow(BOARD, CARE)
     assert _out(capsys) == [
         OMITTED,
-        f"seen: {PEP} {NEXT}. The next run files it if it reads the same set",
+        f"seen: {CARE} {NEXT}. The next run files it if it reads the same set",
     ]
 
     host.now += 120
-    host.follow(BOARD, PEP)
-    assert host.filed() == [{PEP: NEXT}]
+    host.follow(BOARD, CARE)
+    assert host.filed() == [{CARE: NEXT}]
     assert _out(capsys)[0] == OMITTED
 
     host.now += 120
-    host.follow(BOARD, PEP)
-    assert host.filed() == [{PEP: NEXT}]
+    host.follow(BOARD, CARE)
+    assert host.filed() == [{CARE: NEXT}]
     assert read_marker(host.marker).waits == {BOARD: Wait(NEXT, START)}
 
 
@@ -304,20 +304,20 @@ def test_an_artifact_that_arrives_later_makes_a_new_set(
     host: _Host, capsys: pytest.CaptureFixture[str]
 ) -> None:
     host.install(BOARD, LIVE)
-    host.install(PEP, LIVE)
+    host.install(CARE, LIVE)
     host.tag(BOARD, NEXT)
-    host.tag(PEP, NEXT)
+    host.tag(CARE, NEXT)
     for later in (0.0, ARTIFACT_WAIT_S, ARTIFACT_WAIT_S + 120):
         host.now = START + later
-        host.follow(BOARD, PEP)
+        host.follow(BOARD, CARE)
 
     host.releases.publish(BOARD, NEXT)
     host.now += 120
-    host.follow(BOARD, PEP)
+    host.follow(BOARD, CARE)
     host.now += 120
-    host.follow(BOARD, PEP)
+    host.follow(BOARD, CARE)
 
-    assert host.filed() == [{PEP: NEXT}, {BOARD: NEXT, PEP: NEXT}]
+    assert host.filed() == [{CARE: NEXT}, {BOARD: NEXT, CARE: NEXT}]
     assert read_marker(host.marker).waits == {}
     assert sorted(path.name for path in host.tag_dir(BOARD, NEXT).iterdir()) == sorted(
         (asset_names(BOARD).archive, asset_names(BOARD).bundle)
@@ -434,7 +434,7 @@ def test_a_run_with_no_binary_member_reads_no_store(
 
 # -- the marker -----------------------------------------------------------------
 
-ASKED = {BOARD: NEXT, PEP: NEXT}
+ASKED = {BOARD: NEXT, CARE: NEXT}
 ID = "01K5J8M2Q7V3X9R4T6N0B8C2DE"
 
 
@@ -512,7 +512,7 @@ def test_a_waits_value_of_another_shape_reads_as_an_empty_marker(
 
 
 def test_a_ready_member_does_not_wait() -> None:
-    gate = gate_artifacts({BOARD: NEXT, PEP: NEXT}, frozenset({BOARD, PEP}), {}, START)
+    gate = gate_artifacts({BOARD: NEXT, CARE: NEXT}, frozenset({BOARD, CARE}), {}, START)
 
     assert (gate.moving, gate.waits, gate.waiting, gate.omitted) == (ASKED, {}, {}, {})
     assert gate.lines() == ()
@@ -530,16 +530,16 @@ def test_a_ready_member_does_not_wait() -> None:
     ids=["first", "in-time", "over", "other-version", "clock-went-back"],
 )
 def test_the_wait_rule(waits: dict[str, Wait], now: float, waiting: bool, since: float) -> None:
-    gate = gate_artifacts({BOARD: NEXT, PEP: NEXT}, frozenset({PEP}), waits, now)
+    gate = gate_artifacts({BOARD: NEXT, CARE: NEXT}, frozenset({CARE}), waits, now)
 
     assert gate.waits == {BOARD: Wait(NEXT, since)}
     assert (gate.waiting, gate.omitted) == (({BOARD: NEXT}, {}) if waiting else ({}, {BOARD: NEXT}))
-    assert gate.moving == (ASKED if waiting else {PEP: NEXT})
+    assert gate.moving == (ASKED if waiting else {CARE: NEXT})
     assert gate.lines() == ((WAITING,) if waiting else (OMITTED,))
 
 
 def test_a_wait_of_a_member_that_no_longer_moves_is_dropped() -> None:
-    gate = gate_artifacts({PEP: NEXT}, frozenset({PEP}), {BOARD: Wait(NEXT, START)}, START)
+    gate = gate_artifacts({CARE: NEXT}, frozenset({CARE}), {BOARD: Wait(NEXT, START)}, START)
 
     assert gate.waits == {}
 

@@ -1,0 +1,30 @@
+# The manifest that the chaperone repository holds at its root, as
+# `component.toml`. This repository holds no manifest of `chaperone`: the
+# executor reads it out of a clone of the chaperone repository, at the
+# commit of the tag. The file name is not `component.toml`, so `handover
+# check` never reads it. `handover/AGENTS.md` holds the same text, and a
+# test holds the two equal.
+manifest_version = "0.19"
+name = "chaperone"
+repo = "chaperone"
+path = "."
+kind = "binary"
+unit = "creche-chaperone.service"
+runs_as = "root"
+build = [
+  ["cargo", "install", "--locked", "--no-track", "--path", "crates/chaperone", "--bin", "chaperone"],
+  ["cargo", "install", "--locked", "--no-track", "--path", "crates/run-as", "--bin", "chaperone-as"],
+  ["cargo", "install", "--locked", "--no-track", "--path", "plugins/effect/included/attendance", "--bin", "chaperone-attendance"],
+  ["cargo", "install", "--locked", "--no-track", "--path", "plugins/default/deny-all", "--bin", "chaperone-deny-all"],
+  ["cargo", "install", "--locked", "--no-track", "--path", "plugins/effect/included/ha-approval", "--bin", "chaperone-ha-approval"],
+  ["cargo", "install", "--locked", "--no-track", "--path", "plugins/effect/included/ha-call", "--bin", "chaperone-ha-call"],
+  ["cargo", "install", "--locked", "--no-track", "--path", "plugins/effect/included/release", "--bin", "chaperone-release"],
+]
+install.to = "/opt/components/chaperone"
+install.prev = "/opt/components/chaperone.prev"
+verify.command = ["/opt/components/chaperone/bin/chaperone", "verify", "--json", "--env-file", "/etc/creche/site.env", "--listen-key", "CHAPERONE_LISTEN"]
+verify.user = "root"
+verify.timeout_s = 60
+restore.mode = "automatic"
+restore.keep = 3
+release = true

@@ -26,6 +26,9 @@ from handover import allocate
 
 CONTROL = Repo.AGENT_CONTROL
 
+#: The Cargo workspace files of this repository.
+WORKSPACE_FILES = BINARY_BUILD_FILES[CONTROL]
+
 #: Changed paths of every shape a range can hold: under a component, under
 #: a bundle, under the Cargo workspace, a root file and a document.
 SAMPLES = (
@@ -44,7 +47,7 @@ SAMPLES = (
     NESTED_BUNDLE,
     f"{NESTED_BUNDLE}/Cargo.toml",
     f"{NESTED_BUNDLE}/src/deep/er/lib.rs",
-    *BINARY_BUILD_FILES,
+    *WORKSPACE_FILES,
 )
 
 
@@ -101,7 +104,7 @@ def test_a_path_beside_a_nested_bundle_is_cut_to_the_first_segment(
     assert _reached("rust/crates/other/src/lib.rs") == ()
 
 
-@pytest.mark.parametrize("path", BINARY_BUILD_FILES)
+@pytest.mark.parametrize("path", WORKSPACE_FILES)
 def test_a_workspace_file_is_not_cut(monkeypatch: pytest.MonkeyPatch, path: str) -> None:
     """The rule for a workspace file matches the whole path, so a cut to
     `rust` would lose the one line that moves a binary component."""
