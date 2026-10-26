@@ -525,8 +525,8 @@ and the YAML path does not.
   the end of such a file. No vector covers a day file or a report that the
   reader cannot open.
 - No vector covers the edit form, the text that a save writes or the save
-  itself: `noticeboard.familyform`, `noticeboard.yamlout`,
-  `noticeboard.yamlkeep` and `noticeboard.registrywrite`. No vector covers
+  itself: `noticeboard.familyform`, `noticeboard.tomlout`,
+  `noticeboard.tomlkeep` and `noticeboard.registrywrite`. No vector covers
   the markup of a page.
 - Three surfaces of the index builder go through `index_scope`:
   `library.embedding`, `library.schema` and `library.index_scope`. The

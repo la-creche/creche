@@ -1,7 +1,6 @@
 """The edit form of a TOML family.
 
-The form holds the markup of the file that the registry read. A block
-control shows TOML text, and the form writes a TOML document. A TOML text
+A block control shows TOML text, and the form writes a TOML document. A TOML text
 is not the join of its parts, so the form reads each block with the one
 reader, puts each value into one mapping, and `tomlout` writes the mapping.
 """
@@ -18,7 +17,6 @@ from noticeboard.familyform import (
     Form,
     document_of,
     form_of,
-    markup_of,
     parse_posted,
     with_posted,
 )
@@ -37,7 +35,7 @@ def family(text: str = CHAT_FAMILY_TOML) -> FamilyFile:
 
 
 def toml_form() -> Form:
-    return form_of(family(), CHAT_INDEX, Markup.TOML)
+    return form_of(family(), CHAT_INDEX)
 
 
 def posted_from(form: Form) -> dict[str, str]:
@@ -62,16 +60,6 @@ def value_of(form: Form, name: str) -> str:
     found = form.field(name)
     assert found is not None, name
     return found.value
-
-
-def test_the_markup_of_a_file_comes_from_its_name() -> None:
-    assert markup_of("families/chat/family.toml") is Markup.TOML
-    assert markup_of("families/chat/family.yaml") is Markup.YAML
-
-
-def test_the_form_of_a_toml_family_holds_its_markup() -> None:
-    assert toml_form().markup is Markup.TOML
-    assert form_of(family(), CHAT_INDEX).markup is Markup.YAML
 
 
 def test_a_block_shows_toml_text_with_its_key() -> None:

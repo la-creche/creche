@@ -16,7 +16,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
-from agent_family import Markup
+from agent_family.registry import FAMILY_FILE
 
 NOW = datetime(2026, 9, 19, 12, 0, 0, tzinfo=UTC)
 
@@ -24,31 +24,7 @@ NOW = datetime(2026, 9, 19, 12, 0, 0, tzinfo=UTC)
 #: where it sits, and a form save has to bring them back.
 CHAT_COMMENT = "# The vault is read-only here, and it syncs to the operator's phone."
 
-CHAT_FAMILY_YAML = f"""\
-name: chat
-kind: attended
-description: the house assistant
-model: {{ router: agent-router, budget_usd_per_day: 15 }}
-files:
-  {CHAT_COMMENT}
-  - {{ path: /srv/agents/vault, mode: ro }}
-egress: []
-shell: false
-skills: []
-"""
-
-SCRUM_FAMILY_YAML = """\
-name: scrum-lead
-kind: autonomous
-description: the morning triage agent
-model: { router: agent-router, budget_usd_per_day: 5 }
-triggers:
-  - { cron: "0 6 * * *" }
-max_running_turns: 1
-"""
-
-#: `CHAT_FAMILY_YAML` as a TOML family file, in the layout of a converted
-#: registry file.
+#: The `chat` family, in the layout of a converted registry file.
 CHAT_FAMILY_TOML = f"""\
 name = "chat"
 kind = "attended"
@@ -64,7 +40,7 @@ shell = false
 skills = []
 """
 
-#: `SCRUM_FAMILY_YAML` as a TOML family file.
+#: The `scrum-lead` family.
 SCRUM_FAMILY_TOML = """\
 name = "scrum-lead"
 kind = "autonomous"
@@ -76,12 +52,6 @@ triggers = [
 ]
 max_running_turns = 1
 """
-
-#: The two family files of a fixture registry, and their names, for each markup.
-REGISTRY_FILES = {
-    Markup.YAML: ("family.yaml", CHAT_FAMILY_YAML, SCRUM_FAMILY_YAML),
-    Markup.TOML: ("family.toml", CHAT_FAMILY_TOML, SCRUM_FAMILY_TOML),
-}
 
 
 def stamp(offset_s: float = 0.0) -> str:
@@ -394,7 +364,7 @@ def make_state_root(base: Path) -> Path:
         families / "chat" / "validation.json",
         {
             "family": "chat",
-            "file": "families/chat/family.yaml",
+            "file": "families/chat/family.toml",
             "status": "reconciling",
             "applied": False,
             "issues": [],
@@ -434,16 +404,14 @@ def write_audit_day(audit_dir: Path, day: str, rows: list[dict[str, Any]]) -> Pa
     return path
 
 
-def make_registry(base: Path, markup: Markup = Markup.YAML) -> Path:
-    """A git registry with two families, as `caregiver` reads it. Each
-    family file has the markup that `markup` names."""
-    file, chat, scrum = REGISTRY_FILES[markup]
+def make_registry(base: Path) -> Path:
+    """A git registry with two families, as `caregiver` reads it."""
     root = base / "registry"
     (root / "families" / "chat").mkdir(parents=True)
-    (root / "families" / "chat" / file).write_text(chat, encoding="utf-8")
+    (root / "families" / "chat" / FAMILY_FILE).write_text(CHAT_FAMILY_TOML, encoding="utf-8")
     (root / "families" / "chat" / "instructions.md").write_text("Be useful.\n", encoding="utf-8")
     (root / "families" / "scrum-lead").mkdir(parents=True)
-    (root / "families" / "scrum-lead" / file).write_text(scrum, encoding="utf-8")
+    (root / "families" / "scrum-lead" / FAMILY_FILE).write_text(SCRUM_FAMILY_TOML, encoding="utf-8")
     (root / "mcp").mkdir()
     (root / "skills").mkdir()
 

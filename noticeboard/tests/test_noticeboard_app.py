@@ -23,7 +23,7 @@ from noticeboard.security import ACCESS_HEADER, CSRF_COOKIE, CSRF_FIELD
 from noticeboard.sessions import SessionReader
 from noticeboard_helpers import (
     CHAT_COMMENT,
-    CHAT_FAMILY_YAML,
+    CHAT_FAMILY_TOML,
     NOW,
     FakeAttendance,
     browser_values,
@@ -507,26 +507,26 @@ def test_a_save_keeps_the_files_comments(board: Harness) -> None:
 
     board.post("/families/chat/edit", body)
 
-    saved = (board.config.registry_dir / "families/chat/family.yaml").read_text(encoding="utf-8")
+    saved = (board.config.registry_dir / "families/chat/family.toml").read_text(encoding="utf-8")
     assert CHAT_COMMENT in saved
     assert "the house assistant, rewritten" in saved
     # The style the author wrote, on a line the edit never touched.
-    assert "- { path: /srv/agents/vault, mode: ro }" in saved
+    assert '{ path = "/srv/agents/vault", mode = "ro" },' in saved
 
 
 @pytest.mark.parametrize(
-    "patched", [CHAT_FAMILY_YAML, "name: chat\n{}\n"], ids=["another-model", "no-model"]
+    "patched", [CHAT_FAMILY_TOML, 'name = "chat"\n{}\n'], ids=["another-model", "no-model"]
 )
 def test_a_patch_that_does_not_read_as_the_edit_gives_way_to_the_emitter(
     board: Harness, monkeypatch: pytest.MonkeyPatch, patched: str
 ) -> None:
     """The patched text goes back through the reader. A text that reads as
     another model, or as none, must not be what the save writes."""
-    from agent_family import parse_family
+    from agent_family import Markup, parse_family
 
-    from noticeboard import app as app_module
+    from noticeboard import tomlkeep
 
-    monkeypatch.setattr(app_module, "edited_text", lambda original, before, after: patched)
+    monkeypatch.setattr(tomlkeep, "edited_text", lambda original, before, after: patched)
     board.get("/families/chat/edit")
     before = commit_count(board.config.registry_dir)
     body = posted_form(board)
@@ -535,8 +535,8 @@ def test_a_patch_that_does_not_read_as_the_edit_gives_way_to_the_emitter(
 
     answer = board.post("/families/chat/edit", body)
 
-    saved = (board.config.registry_dir / "families/chat/family.yaml").read_text(encoding="utf-8")
-    family, _ = parse_family(saved)
+    saved = (board.config.registry_dir / "families/chat/family.toml").read_text(encoding="utf-8")
+    family, _ = parse_family(saved, Markup.TOML)
     assert answer.status_code == 303
     assert commit_count(board.config.registry_dir) == before + 1
     assert family is not None
@@ -551,7 +551,7 @@ def test_a_file_that_the_patch_cannot_read_gives_way_to_the_emitter(
     UTF-8 then gives no patch, and the save writes the whole document."""
     from noticeboard import app as app_module
 
-    changed = tmp_path / "changed-family.yaml"
+    changed = tmp_path / "changed-family.toml"
     changed.write_bytes(b"description: \xff\xfe\n")
     monkeypatch.setattr(app_module, "family_path", lambda registry_dir, name: changed)
     board.get("/families/chat/edit")
@@ -562,7 +562,7 @@ def test_a_file_that_the_patch_cannot_read_gives_way_to_the_emitter(
 
     answer = board.post("/families/chat/edit", body)
 
-    saved = (board.config.registry_dir / "families/chat/family.yaml").read_text(encoding="utf-8")
+    saved = (board.config.registry_dir / "families/chat/family.toml").read_text(encoding="utf-8")
     assert answer.status_code == 303
     assert commit_count(board.config.registry_dir) == before + 1
     assert "the house assistant, rewritten" in saved
@@ -574,7 +574,7 @@ def test_a_save_that_changes_nothing_makes_no_commit(board: Harness) -> None:
     registry's git log is the grant audit trail."""
     board.get("/families/chat/edit")
     before = commit_count(board.config.registry_dir)
-    original = (board.config.registry_dir / "families/chat/family.yaml").read_bytes()
+    original = (board.config.registry_dir / "families/chat/family.toml").read_bytes()
     body = posted_form(board)
     body["verb"] = "save"
 
@@ -582,13 +582,13 @@ def test_a_save_that_changes_nothing_makes_no_commit(board: Harness) -> None:
 
     assert answer.status_code == 303
     assert commit_count(board.config.registry_dir) == before
-    assert (board.config.registry_dir / "families/chat/family.yaml").read_bytes() == original
+    assert (board.config.registry_dir / "families/chat/family.toml").read_bytes() == original
 
 
 def test_an_invalid_edit_writes_nothing_and_reports(board: Harness) -> None:
     board.get("/families/chat/edit")
     before = commit_count(board.config.registry_dir)
-    original = (board.config.registry_dir / "families/chat/family.yaml").read_bytes()
+    original = (board.config.registry_dir / "families/chat/family.toml").read_bytes()
     body = posted_form(board)
     body["model.budget_usd_per_day"] = "-4"
     body["verb"] = "save"
@@ -598,7 +598,7 @@ def test_an_invalid_edit_writes_nothing_and_reports(board: Harness) -> None:
     assert answer.status_code == 200
     assert "refused" in answer.text
     assert commit_count(board.config.registry_dir) == before
-    assert (board.config.registry_dir / "families/chat/family.yaml").read_bytes() == original
+    assert (board.config.registry_dir / "families/chat/family.toml").read_bytes() == original
 
 
 def test_a_preview_says_live_or_replace_and_writes_nothing(board: Harness) -> None:
@@ -628,7 +628,7 @@ def test_a_live_only_preview_says_the_sandbox_keeps_running(board: Harness) -> N
 
 
 def family_text(board: Harness) -> str:
-    path = board.config.registry_dir / "families/chat/family.yaml"
+    path = board.config.registry_dir / "families/chat/family.toml"
 
     return path.read_text(encoding="utf-8")
 
@@ -671,7 +671,7 @@ TYPED = {
     "number": ("sandbox.cpus", "6"),
     "box": ("shell", "on"),
     "lines": ("egress", "example.test\nsecond.example.test\n"),
-    "block": ("files", "files:\n  - { path: /srv/agents/vault, mode: rw }\n"),
+    "block": ("files", 'files = [{ path = "/srv/agents/vault", mode = "rw" }]\n'),
 }
 
 
@@ -696,8 +696,8 @@ def test_a_box_that_the_reader_cleared_stays_clear_after_a_preview(board: Harnes
     """A box that is not checked posts nothing. The page must not check it
     again from the registry."""
     root = board.config.registry_dir
-    path = root / "families/chat/family.yaml"
-    path.write_text(family_text(board).replace("shell: false", "shell: true"), encoding="utf-8")
+    path = root / "families/chat/family.toml"
+    path.write_text(family_text(board).replace("shell = false", "shell = true"), encoding="utf-8")
     git(root, "commit", "-q", "-a", "-m", "give the family a shell")
     board.get("/families/chat/edit")
     body = posted_form(board)
@@ -713,7 +713,7 @@ def test_a_box_that_the_reader_cleared_stays_clear_after_a_preview(board: Harnes
 #: An edit that the save refuses, at each of its three steps: the form,
 #: the schema and the rules of the registry.
 REFUSED = {
-    "a-block-with-another-key": ("files", "mounts:\n  - { path: /srv, mode: ro }\n"),
+    "a-block-with-another-key": ("files", 'mounts = [{ path = "/srv", mode = "ro" }]\n'),
     "a-word-for-a-number": ("sandbox.cpus", "many"),
     "a-budget-below-zero": ("model.budget_usd_per_day", "-4"),
 }
@@ -827,6 +827,6 @@ def test_a_session_id_of_the_longest_form_reaches_its_page(board: Harness) -> No
 
 
 def test_the_fixture_family_is_the_one_the_registry_holds(board: Harness) -> None:
-    held = (board.config.registry_dir / "families/chat/family.yaml").read_text(encoding="utf-8")
+    held = (board.config.registry_dir / "families/chat/family.toml").read_text(encoding="utf-8")
 
-    assert held == CHAT_FAMILY_YAML
+    assert held == CHAT_FAMILY_TOML

@@ -1,17 +1,18 @@
 """Saving a TOML family file without losing what it says about itself.
 
-This module is the TOML twin of `yamlkeep.py`. `tomlout.py` builds a whole
-text from the model, and that text has no comment. So a save patches the
-bytes that are on disk. `edited_text` reads the original with `tomlkit`,
-walks the two MODEL dumps side by side, and writes only the fields whose
-value moved. Comments, key order and the layout of each other field come
-back byte for byte.
+`tomlout.py` builds a whole text from the model, and that text has no
+comment. So a save patches the bytes that are on disk. `edited_text` reads
+the original with `tomlkit`, walks the two MODEL dumps side by side, and
+writes only the fields whose value moved. Comments, key order and the
+layout of each other field come back byte for byte.
 
-The three rules of `yamlkeep.py` apply here too:
+Three rules make this safe:
 
 1. **A field that did not move is not touched.** Its `before` and its
    `after` are the same value.
 2. **An unchanged save returns the original bytes.** Not a new dump of them.
+   `registrywrite.save_family` compares the new text with the file and makes
+   no commit when they match.
 3. **`None` is a real answer.** A text that `tomlkit` cannot read, or an
    edit that this module cannot make in the layout of the file, goes back
    to the caller. The caller then writes the text of `tomlout.to_toml`.
