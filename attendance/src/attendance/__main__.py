@@ -23,7 +23,7 @@ from pathlib import Path
 
 import uvicorn
 
-from .api import build_app
+from .api import Listener, build_app
 from .auth import Principal, TokenBook, TokenError
 from .config import Config, ConfigError, from_env
 from .service import SessionService
@@ -70,10 +70,11 @@ async def serve(config: Config, tokens: TokenBook) -> None:
     service = SessionService(config)
     service.start()
     service.start_upkeep()
-    app = build_app(service, tokens)
+    socket_app = build_app(service, tokens, Listener.SOCKET)
+    lan_app = build_app(service, tokens, Listener.LAN)
     servers = [
         _Server(setting, socket_path=config.socket_path if setting.uds else None)
-        for setting in _uvicorn_configs(config, app)
+        for setting in _uvicorn_configs(config, socket_app, lan_app)
     ]
 
     _install_signals(tokens, servers)
@@ -84,7 +85,7 @@ async def serve(config: Config, tokens: TokenBook) -> None:
         await service.close()
 
 
-def _uvicorn_configs(config: Config, app: object) -> list[uvicorn.Config]:
+def _uvicorn_configs(config: Config, socket_app: object, lan_app: object) -> list[uvicorn.Config]:
     """A Unix socket always, plus the LAN address when the config says so.
 
     Never loopback and never 0.0.0.0 (contract 02 §3 rule 2). Both services
@@ -96,7 +97,7 @@ def _uvicorn_configs(config: Config, app: object) -> list[uvicorn.Config]:
 
     settings = [
         uvicorn.Config(
-            app,  # pyright: ignore[reportArgumentType]
+            socket_app,  # pyright: ignore[reportArgumentType]
             uds=str(config.socket_path),
             log_level="info",
             access_log=False,
@@ -106,7 +107,7 @@ def _uvicorn_configs(config: Config, app: object) -> list[uvicorn.Config]:
     if config.binds_lan:
         settings.append(
             uvicorn.Config(
-                app,  # pyright: ignore[reportArgumentType]
+                lan_app,  # pyright: ignore[reportArgumentType]
                 host=config.lan_address,
                 port=config.lan_port,
                 log_level="info",

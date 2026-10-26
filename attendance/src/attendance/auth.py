@@ -47,6 +47,9 @@ class Principal(StrEnum):
     DOOR_DISPATCH = "door-dispatch"
     DOOR_TRIGGER = "door-trigger"
     VIEW_RO = "view-ro"
+    #: The ACP door (phase 2 plan, row 17). It reaches `WS /acp/{family}` and
+    #: nothing else.
+    DOOR_ACP = "door-acp"
     #: The old name: the host minted `tokens/managerd.token` under it.
     CAREGIVER = "managerd"
 
@@ -64,6 +67,8 @@ class Access(StrEnum):
     WRITE = "write"
     READ = "read"
     INTERNAL = "internal"
+    #: A byte pipe to one sandbox's facade. No session route takes it.
+    ACP = "acp"
 
 
 @dataclass(slots=True, frozen=True)
@@ -90,6 +95,10 @@ _GRANTS: dict[Principal, Grant] = {
         Access.WRITE, Holder.TRIGGER, SessionPrefix.AUTO, SessionKind.AUTONOMOUS
     ),
     Principal.VIEW_RO: Grant(Access.READ, None, None, None),
+    # CONTRACT-QUESTION: the phase 2 plan names no family kind for the ACP
+    # door. Reading taken: attended families only, the kind of the two doors
+    # it replaces. A change costs this one row.
+    Principal.DOOR_ACP: Grant(Access.ACP, None, None, SessionKind.ATTENDED),
     Principal.CAREGIVER: Grant(Access.INTERNAL, None, None, None),
 }
 

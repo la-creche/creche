@@ -24,6 +24,7 @@ from collections.abc import AsyncGenerator, Callable, Coroutine
 from typing import Any
 
 from . import dispatch, jobs, outcomes, owui_copy, wire
+from .acp_link import MAX_ACP_LINE_BYTES
 from .approvals import AuditTail, Gate, GateState, outcome_of
 from .atomic import read_json
 from .auth import (
@@ -721,6 +722,43 @@ class SessionService:
             "state": live.record.state.value,
             "journal_seq": self._seq_of(live.record.family, live.record.session),
         }
+
+    async def open_acp_relay(self, principal: Principal, family: str) -> Channel:
+        """One started `sbx exec acp-relay` for one ACP door connection.
+
+        The same checks as a turn: the family must serve, the door must
+        reach its kind, and the sandbox is the one its turns go to.
+        """
+        check_access(principal, Access.ACP)
+        status = self._status.require(family)
+        check_may_serve(status)
+        check_family_kind(principal, family, served_kind(status))
+        info = self._sandbox_for(family, status)
+
+        if info is None:
+            raise ApiError(
+                ErrorCode.SANDBOX_UNAVAILABLE,
+                f"family {family} has no sandbox to relay to",
+                family=family,
+            )
+
+        relay = ExecChannel(
+            dial=self._dial_for(family, status, info.id),
+            command=self._config.acp_relay_command,
+            log_path=self._config.playpen_log(family),
+            max_line_bytes=MAX_ACP_LINE_BYTES,
+        )
+
+        try:
+            await relay.start()
+        except ChannelClosed as error:
+            raise ApiError(
+                ErrorCode.SANDBOX_UNAVAILABLE,
+                f"family {family} relay did not start",
+                family=family,
+            ) from error
+
+        return relay
 
     # ------------------------------------------------------------ thin jobs
 
