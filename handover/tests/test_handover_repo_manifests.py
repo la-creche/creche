@@ -69,15 +69,16 @@ def test_a_manifest_sits_where_the_catalog_says(found: ManifestSet) -> None:
 
 def test_the_repo_set_resolves_with_a_green_table(found: ManifestSet) -> None:
     """Each contract that a component of this repository provides has a
-    row. `pep-grant` has its provider in the chaperone repository, and
-    `playpen` provides no `channel`, so each floor on them is a line and not
-    a refusal."""
+    row. `pep-grant` has its provider in the chaperone repository, so each
+    floor on it is a line and not a refusal. A floor on a contract whose
+    owner is here and provides nothing, such as `channel`, fails."""
     resolution = resolve(found.manifests(), ReleaseState(), {})
     here = {one.contract for manifest in found.manifests().values() for one in manifest.provides}
+    elsewhere = {one for one in ContractId if CONTRACT_OWNER[one] not in found.found}
 
     assert resolution.order == ()
     assert {row.contract for row in resolution.contracts} == here
-    assert {line.contract for line in resolution.unprovided} == set(ContractId) - here
+    assert {line.contract for line in resolution.unprovided} == elsewhere
 
 
 def test_handover_provides_the_manifest_contract(found: ManifestSet) -> None:

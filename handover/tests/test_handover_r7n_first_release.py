@@ -96,9 +96,9 @@ UNPROVIDED = "pep-grant"
 #: Every requirement root cannot check on the host, in the order
 #: `contracts._check_floors` walks the set: by component name, then in the
 #: order the manifest declares them. `chaperone` provides `pep-grant` and
-#: is not a tree under an install root. Nothing provides `channel`.
-#: `handover` requires nothing, and `noticeboard` gets `session-api`
-#: from `attendance` and `manager-status` from `caregiver`, which ARE trees.
+#: is not a tree under an install root. `handover` requires nothing, and
+#: `noticeboard` gets `session-api` from `attendance` and `manager-status`
+#: from `caregiver`, which ARE trees.
 #:
 #: The FLOORS are read from the manifests and never written here. A contract
 #: draft moves a `min_minor` in some other pull request, and a number typed
@@ -127,8 +127,6 @@ def _not_verified(component: str, contract: str, owner: str) -> str:
 
 
 UNVERIFIED = [
-    _not_verified("attendance", "channel", "playpen"),
-    _not_verified("caregiver", "channel", "playpen"),
     _not_verified("noticeboard", "pep-grant", "chaperone"),
 ]
 
@@ -137,7 +135,7 @@ UNVERIFIED = [
 #: `caregiver`, `session-api` from `attendance`, `component-manifest` from
 #: `handover`.
 REVIEW_ROW = "suspect: 3 manifest(s) not verified (attendance, caregiver, handover)"
-CONTRACTS_ROW = "4 satisfied, 3 not verified"
+CONTRACTS_ROW = "4 satisfied, 1 not verified"
 
 #: The second request the real spool held: `caregiver` asked for
 #: `mcp-servers=latest` while agent-mcp carried no `mcp-servers-v*` tag,
@@ -466,7 +464,7 @@ def test_the_unprovided_requirement_is_reported_and_never_refused(first: First) 
     entry = first.ledger()
     assert entry["status"] == "succeeded"
     assert [one for one in _manual_lines(first) if one.startswith("not verified:")] == UNVERIFIED
-    assert "3 requirement(s) not verified" in str(first.step("contracts")["detail"])
+    assert "1 requirement(s) not verified" in str(first.step("contracts")["detail"])
     # And `pep-grant`, the one the real refusal named, is among them.
     assert sum(1 for one in UNVERIFIED if UNPROVIDED in one) == 1
 
