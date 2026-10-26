@@ -86,7 +86,7 @@ describe("session/prompt", () => {
       "session_info_update",
     ]);
     expect(said).toBe("All done.");
-    expect(updates.at(-1)).toEqual({ sessionUpdate: "session_info_update", title: "Echo, please.", updatedAt: expect.any(String) });
+    expect(updates.at(-1)).toEqual({ sessionUpdate: "session_info_update", title: "Echo, please.", updatedAt: expect.any(String), _meta: { "creche/created_at": expect.any(String) } });
   });
 
   it("sends only the second turn's updates on the second turn", async () => {
@@ -98,7 +98,7 @@ describe("session/prompt", () => {
     const second = wire.updates(id).slice(before);
 
     expect(story(second)).toEqual(["agent_message_chunk", "session_info_update"]);
-    expect(second.at(-1)).toEqual({ sessionUpdate: "session_info_update", updatedAt: expect.any(String) });
+    expect(second.at(-1)).toEqual({ sessionUpdate: "session_info_update", updatedAt: expect.any(String), _meta: { "creche/created_at": expect.any(String) } });
   });
 
   it("answers a failed turn with a JSON-RPC error, never a stop reason", async () => {

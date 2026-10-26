@@ -5,6 +5,8 @@
 //   session/new     creche/job         `job-<ulid>` or `auto-<ulid>`
 //   session/prompt  creche/delegation  {id: <ulid>, caller_session}
 //                   creche/trigger     {kind, name, fired_at, chain?}
+//
+// The facade sends `creche/created_at` back (`utcOf`), and reads it never.
 
 import { META_DELEGATION, META_JOB, META_TRIGGER } from "./vectors.js";
 
@@ -73,6 +75,13 @@ export function jobOf(meta: Meta): Checked<string | null> {
   }
 
   return isText(value, JOB) ? { ok: true, value } : fail(META_JOB);
+}
+
+/** `text` as RFC 3339 UTC, or null when it is not an RFC 3339 time. */
+export function utcOf(text: string): string | null {
+  const at = RFC3339.test(text) ? new Date(text) : null;
+
+  return at === null || Number.isNaN(at.getTime()) ? null : at.toISOString();
 }
 
 /** A trigger rebuilt from its checked fields, so no other field passes. */

@@ -42,19 +42,21 @@ and the beat cadence. The facade tests read it. The attendance tests read it
 too. Change a value there, and both sides change.
 
 Its `session_meta` holds the three keys of `_meta` that attendance sends,
-the method that carries each and the shape of each value:
+the method that carries each and the shape of each value, and the one key
+that the facade adds:
 
 | Key | Method | Column of `creche_sessions` |
 |---|---|---|
 | `creche/job` | `session/new` | `job_id` |
 | `creche/delegation` | the first `session/prompt` | `delegation`: the ID only |
 | `creche/trigger` | the first `session/prompt` | `trigger_json` |
+| `creche/created_at` | sent: `session/list`, `session_info_update` | `created_at`, as RFC 3339 UTC |
 
 `src/creche-meta.ts` checks each value. A bad value is refused with
 invalid params. A session keeps its first delegation and its first
 trigger, and a prompt that sends another one is refused. No key goes into
-the model's prompt. At the end of each turn, `session_info_update` sends
-the keys of the session in its `_meta`.
+the model's prompt. Each `session/list` row, and the `session_info_update`
+at the end of each turn, sends the keys of the session in its `_meta`.
 
 ## Environment
 

@@ -42,7 +42,7 @@
     "exit_status": 0
   },
   "session_meta": {
-    "about": "The creche keys of `_meta` that attendance sends. `method` names the one message that carries each key: `session/prompt` is the first prompt of the job. The facade checks the shape, keeps the value in `column` of `creche_sessions`, and never puts it in the model's prompt. `info_update` is what the facade sends at the end of each turn. It shows each key, and a session sends only the keys that it holds.",
+    "about": "The creche keys of `_meta`. attendance sends `job`, `delegation` and `trigger`. `method` names the one message that carries each of them: `session/prompt` is the first prompt of the job. The facade checks the shape, keeps the value in `column` of `creche_sessions`, and never puts it in the model's prompt. The facade sends `created_at`: `column` as RFC 3339 UTC. `info_update` is what the facade sends at the end of each turn. It shows each key. Each `session/list` row carries the same `_meta`, and a session sends only the keys that it holds.",
     "job": {
       "key": "creche/job",
       "method": "session/new",
@@ -66,10 +66,17 @@
         "chain": ["chat", "scrum-lead", "issue-worker"]
       }
     },
+    "created_at": {
+      "key": "creche/created_at",
+      "method": ["session/list", "session_info_update"],
+      "column": "created_at",
+      "value": "2026-10-25T11:59:58.000Z"
+    },
     "info_update": {
       "sessionUpdate": "session_info_update",
       "updatedAt": "2026-10-25T12:00:05.000Z",
       "_meta": {
+        "creche/created_at": "2026-10-25T11:59:58.000Z",
         "creche/job": "auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK",
         "creche/delegation": "01K5J9QWB2M4N6Q8S0V2W4Y6A8",
         "creche/trigger": {
