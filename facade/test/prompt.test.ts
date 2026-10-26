@@ -10,8 +10,6 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { facadeApp } from "../src/acp.js";
 import { sessionService } from "../src/service.js";
 import { SessionIndex } from "../src/session-index.js";
-import { Sessions } from "../src/sessions.js";
-import { Turns } from "../src/turns.js";
 import { Wire } from "./acp-wire.js";
 import { FAUX_MODEL, faux } from "./faux-flue.js";
 import { startFlue } from "./faux-flue.js";
@@ -38,8 +36,8 @@ afterAll(() => flue.stop());
 let wire: Wire;
 
 beforeEach(() => {
-  const sessions = new Sessions(Echoer, new SessionIndex(new DatabaseSync(":memory:")));
-  wire = new Wire(facadeApp(NO_HOOKS, sessionService(sessions, new Turns(sessions))));
+  const index = new SessionIndex(new DatabaseSync(":memory:"));
+  wire = new Wire(facadeApp(NO_HOOKS, sessionService({ agent: Echoer, agentName: "Echoer", index, store: flue.store })));
 });
 
 async function newSession(): Promise<string> {

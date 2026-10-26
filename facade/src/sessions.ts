@@ -15,6 +15,7 @@ import type { Agent, AgentInstanceHandle } from "@flue/runtime";
 import type {
   ListSessionsRequest,
   ListSessionsResponse,
+  LoadSessionRequest,
   NewSessionRequest,
   NewSessionResponse,
   Outcome,
@@ -38,6 +39,23 @@ export function titleOf(text: string): string {
   return cutToBytes(line.trim().replace(/\s+/g, " "), MAX_TITLE_BYTES);
 }
 
+/**
+ * What the facade refuses in `session/new` and `session/load`, or null.
+ * The family decides the agent's tools. A client's offer would be dropped
+ * in silence, so the facade refuses it.
+ */
+export function sessionFault(params: NewSessionRequest | LoadSessionRequest): string | null {
+  if (!isAbsolute(params.cwd)) {
+    return "cwd is not an absolute path";
+  }
+
+  if (params.mcpServers.length > 0) {
+    return "the facade takes no client MCP server";
+  }
+
+  return (params.additionalDirectories ?? []).length > 0 ? "the facade takes no additional directory" : null;
+}
+
 function toInfo(row: SessionRow): SessionInfo {
   return { sessionId: row.id, cwd: row.cwd, title: row.title, updatedAt: row.updatedAt };
 }
@@ -52,18 +70,9 @@ export class Sessions {
   ) {}
 
   public async newSession(params: NewSessionRequest): Promise<Outcome<NewSessionResponse>> {
-    if (!isAbsolute(params.cwd)) {
-      return refuse("cwd is not an absolute path");
-    }
-
-    // The family decides the agent's tools. A client's offer would be
-    // dropped in silence, so the facade refuses it.
-    if (params.mcpServers.length > 0) {
-      return refuse("the facade takes no client MCP server");
-    }
-
-    if ((params.additionalDirectories ?? []).length > 0) {
-      return refuse("the facade takes no additional directory");
+    const fault = sessionFault(params);
+    if (fault !== null) {
+      return refuse(fault);
     }
 
     const id = randomUUID();
@@ -81,6 +90,11 @@ export class Sessions {
     }
 
     return { ok: true, value: { sessions: page.rows.map(toInfo), nextCursor: page.nextCursor } };
+  }
+
+  /** True when `creche_sessions` lists the session. */
+  public known(id: string): boolean {
+    return this.index.get(id) !== null;
   }
 
   /** The Flue handle of a listed session, or null. */

@@ -12,6 +12,7 @@
 import { agent, methods, ndJsonStream, RequestError } from "@agentclientprotocol/sdk";
 import type {
   AgentApp,
+  AgentConnection,
   AnyMessage,
   AnyResponse,
   CancelNotification,
@@ -19,6 +20,7 @@ import type {
   InitializeResponse,
   ListSessionsRequest,
   ListSessionsResponse,
+  LoadSessionRequest,
   NewSessionRequest,
   NewSessionResponse,
   PromptRequest,
@@ -41,6 +43,7 @@ export type {
   ContentBlock,
   ListSessionsRequest,
   ListSessionsResponse,
+  LoadSessionRequest,
   NewSessionRequest,
   NewSessionResponse,
   PromptRequest,
@@ -61,14 +64,20 @@ export type Refusal =
 
 export type Outcome<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly refusal: Refusal };
 
-/** Sends one `session/update` to the client of this link. */
-export type SendUpdate = (sessionId: string, update: SessionUpdate) => Promise<void>;
+/** The client end of one link, for the life of the link. */
+export interface Peer {
+  /** Sends one `session/update` to this client. */
+  send(sessionId: string, update: SessionUpdate): Promise<void>;
+  /** Resolves when the link closes. */
+  readonly closed: Promise<void>;
+}
 
 /** The session methods. Null on a link that serves no session yet. */
 export interface SessionService {
-  newSession(params: NewSessionRequest): Promise<Outcome<NewSessionResponse>>;
+  newSession(params: NewSessionRequest, peer: Peer): Promise<Outcome<NewSessionResponse>>;
+  loadSession(params: LoadSessionRequest, peer: Peer): Promise<Outcome<Record<string, never>>>;
   listSessions(params: ListSessionsRequest): Promise<Outcome<ListSessionsResponse>>;
-  prompt(params: PromptRequest, send: SendUpdate): Promise<Outcome<PromptResponse>>;
+  prompt(params: PromptRequest, peer: Peer): Promise<Outcome<PromptResponse>>;
   cancel(params: CancelNotification): Promise<void>;
 }
 
@@ -132,6 +141,7 @@ export interface SupervisorHooks {
   readonly onShutdown: () => void;
 }
 
+/** The app of one link. Build one for each link: it holds the link's peer. */
 export function facadeApp(hooks: SupervisorHooks, sessions: SessionService | null): AgentApp {
   const app = agent({ name: "creche-facade" })
     .onRequest(methods.agent.initialize, () => INITIALIZE_RESPONSE)
@@ -147,16 +157,24 @@ export function facadeApp(hooks: SupervisorHooks, sessions: SessionService | nul
     return app;
   }
 
+  // One app serves one link, so the peer of its one connection is the
+  // peer of every handler.
+  let link: AgentConnection | null = null;
+  const peer: Peer = {
+    send: async (sessionId, update) => link?.client.notify(methods.client.session.update, { sessionId, update }),
+    get closed() {
+      return link?.closed ?? Promise.resolve();
+    },
+  };
+
   return app
-    .onRequest(methods.agent.session.new, ({ params }) => answer(sessions.newSession(params)))
+    .onConnect((connection) => {
+      link = connection;
+    })
+    .onRequest(methods.agent.session.new, ({ params }) => answer(sessions.newSession(params, peer)))
+    .onRequest(methods.agent.session.load, ({ params }) => answer(sessions.loadSession(params, peer)))
     .onRequest(methods.agent.session.list, ({ params }) => answer(sessions.listSessions(params)))
-    .onRequest(methods.agent.session.prompt, ({ params, client }) =>
-      answer(
-        sessions.prompt(params, (sessionId, update) =>
-          client.notify(methods.client.session.update, { sessionId, update }),
-        ),
-      ),
-    )
+    .onRequest(methods.agent.session.prompt, ({ params }) => answer(sessions.prompt(params, peer)))
     .onNotification(methods.agent.session.cancel, ({ params }) => sessions.cancel(params));
 }
 
