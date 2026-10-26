@@ -65,7 +65,7 @@ class DoorConfig:
     door_key: bytes
     attendance_socket: Path
     attendance_token: bytes
-    require_authentik: bool = True
+    require_authentik: bool = False
 
     def describe(self) -> str:
         """A one-line summary for `--check`. Carries no secret."""
@@ -101,7 +101,7 @@ def from_env(environ: dict[str, str] | None = None) -> DoorConfig:
         door_key=door_key,
         attendance_socket=Path(socket),
         attendance_token=attendance_token,
-        require_authentik=_flag(env, ENV_REQUIRE_AUTHENTIK, default=True),
+        require_authentik=_flag(env, ENV_REQUIRE_AUTHENTIK, default=False),
     )
 
 

@@ -29,8 +29,15 @@ Environment=DOOR_ACP_KEY_FILE=/srv/agents/state/rework/door-acp.key
 # attendance's door-acp token: the door sends it on attendance's socket.
 Environment=DOOR_ACP_ATTENDANCE_TOKEN_FILE=/srv/agents/state/rework/tokens/door-acp.token
 # DOOR_ACP_ATTENDANCE_SOCKET defaults to attendance's socket on the state root.
-# DOOR_ACP_REQUIRE_AUTHENTIK defaults to true: a client without the Authentik
-# header gets 401. A site whose terminal clients reach the door sets false.
+# DOOR_ACP_REQUIRE_AUTHENTIK defaults to false: the bearer is the only check.
+# The chat-UI deployment, where the browser reaches the door through NPM and
+# Authentik, sets it to true in a drop-in. A client without the Authentik
+# header then gets 401:
+#   ~/.config/systemd/user/creche-door-acp.service.d/authentik.conf
+#   [Service]
+#   Environment=DOOR_ACP_REQUIRE_AUTHENTIK=true
+# The site file holds the catalog keys only, so the flag is not set there.
+# A terminal deployment sets nothing.
 # A bad key file or a wide bind stops the unit here, before a bind.
 ExecStartPre=%h/.local/components/door-acp/bin/agent-door-acp --check
 ExecStart=%h/.local/components/door-acp/bin/agent-door-acp

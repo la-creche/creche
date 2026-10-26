@@ -26,7 +26,8 @@ FAMILY_PATTERN = re.compile(r"[a-z][a-z0-9-]{1,30}")
 
 #: The header that the reverse proxy sets after Authentik's forward auth
 #: passes. The door reads its presence only, never its value as an identity.
-#: `require_authentik` false drops this check, for a terminal client.
+#: The check runs only while `require_authentik` is true: the chat-UI
+#: deployment sets it. A terminal deployment leaves it off.
 FORWARD_AUTH_HEADER = "x-authentik-username"
 
 _BEARER = b"Bearer "
