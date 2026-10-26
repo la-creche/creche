@@ -25,13 +25,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-from .family_status import FamilyStatus
-from .persona import Persona
-from .requests import RunTurnRequest
-
 # Contract 02 §10.2 rule 4 and §8.1's `branch_fallback` body.
 UNMAPPED_PARENT = "unmapped_parent"
-FORK_REFUSED = "fork_refused"
 
 
 class Branch(Enum):
@@ -57,21 +52,6 @@ class Decision:
             return None
 
         return {"fork_from": self.fork_from}
-
-
-@dataclass(slots=True)
-class Fork:
-    """What a refused fork needs to run the same turn without one.
-
-    Contract 03 §4.1: pi may refuse a fork target that is not on the active
-    branch, and the fallback decision stays on the host because policy is
-    the host's job.
-    """
-
-    request: RunTurnRequest
-    persona: Persona
-    status: FamilyStatus
-    sandbox: str
 
 
 def decide(owui_map: dict[str, str], parent_id: str | None, turns_total: int) -> Decision:

@@ -18,8 +18,6 @@ from pathlib import Path
 
 from .atomic import is_group_or_world_readable
 from .errors import ApiError, ErrorCode
-from .ids import SessionPrefix
-from .models import Holder
 from .paths import token_file
 from .states import SessionKind
 
@@ -76,30 +74,22 @@ class Grant:
     """Contract 02 §3.1's row, as the code reads it."""
 
     access: Access
-    holder: Holder | None
-    prefix: SessionPrefix | None
     kind: SessionKind | None
 
 
 # Deny by default (invariant 11): a principal reaches exactly its own row.
 _GRANTS: dict[Principal, Grant] = {
-    Principal.DOOR_OWUI: Grant(Access.WRITE, Holder.OWUI, SessionPrefix.OWUI, SessionKind.ATTENDED),
-    Principal.DOOR_TUI: Grant(Access.WRITE, Holder.TUI, SessionPrefix.TUI, SessionKind.ATTENDED),
-    Principal.DOOR_DELEGATE: Grant(
-        Access.WRITE, Holder.DELEGATE, SessionPrefix.JOB, SessionKind.THIN
-    ),
-    Principal.DOOR_DISPATCH: Grant(
-        Access.WRITE, Holder.DISPATCH, SessionPrefix.AUTO, SessionKind.AUTONOMOUS
-    ),
-    Principal.DOOR_TRIGGER: Grant(
-        Access.WRITE, Holder.TRIGGER, SessionPrefix.AUTO, SessionKind.AUTONOMOUS
-    ),
-    Principal.VIEW_RO: Grant(Access.READ, None, None, None),
+    Principal.DOOR_OWUI: Grant(Access.WRITE, SessionKind.ATTENDED),
+    Principal.DOOR_TUI: Grant(Access.WRITE, SessionKind.ATTENDED),
+    Principal.DOOR_DELEGATE: Grant(Access.WRITE, SessionKind.THIN),
+    Principal.DOOR_DISPATCH: Grant(Access.WRITE, SessionKind.AUTONOMOUS),
+    Principal.DOOR_TRIGGER: Grant(Access.WRITE, SessionKind.AUTONOMOUS),
+    Principal.VIEW_RO: Grant(Access.READ, None),
     # CONTRACT-QUESTION: the phase 2 plan names no family kind for the ACP
     # door. Reading taken: attended families only, the kind of the two doors
     # it replaces. A change costs this one row.
-    Principal.DOOR_ACP: Grant(Access.ACP, None, None, SessionKind.ATTENDED),
-    Principal.CAREGIVER: Grant(Access.INTERNAL, None, None, None),
+    Principal.DOOR_ACP: Grant(Access.ACP, SessionKind.ATTENDED),
+    Principal.CAREGIVER: Grant(Access.INTERNAL, None),
 }
 
 
@@ -192,48 +182,6 @@ def check_family_kind(principal: Principal, family: str, kind: SessionKind) -> N
         family=family,
         detail={"principal": principal.value, "kind": kind.value},
     )
-
-
-def check_session_prefix(principal: Principal, family: str, session: str) -> None:
-    """A door creates one session-id prefix only (contract 02 §3.1).
-
-    §3.1 runs this check on create and nowhere else. Read as every request,
-    the TUI could never write to an `owui-` session, which contradicts
-    invariant 3 ("one session, every UI") and §7.2's own example of the TUI
-    meeting an `owui` lease holder. The family-kind check still runs on every
-    call.
-    """
-    allowed = grant_of(principal).prefix
-
-    if allowed is None:
-        return
-
-    if session.startswith(allowed.value):
-        return
-
-    raise ApiError(
-        ErrorCode.FORBIDDEN,
-        f"{principal.value} may not touch this session id",
-        family=family,
-        session=session,
-        detail={"principal": principal.value, "expected_prefix": allowed.value},
-    )
-
-
-def holder_of(principal: Principal, family: str, session: str) -> Holder:
-    """Which lease holder this principal writes as (contract 02 §7.1)."""
-    holder = grant_of(principal).holder
-
-    if holder is None:
-        raise ApiError(
-            ErrorCode.FORBIDDEN,
-            f"{principal.value} is not a writer",
-            family=family,
-            session=session,
-            detail={"principal": principal.value},
-        )
-
-    return holder
 
 
 def _unauthorized() -> ApiError:

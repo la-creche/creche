@@ -23,12 +23,11 @@ from attendance.jobs import (
     job_timeout_s,
 )
 from attendance.paths import sandbox_sessions_mount
-from attendance.requests import CreateRequest, DelegateRequest, read_delegate
+from attendance.requests import DelegateRequest, read_delegate
 from attendance.workspace import CODE_SANDBOX_FAMILY, owner_dir
 from attendance_harness import (
     CHAT_SESSION,
     FAMILY,
-    FakeFleet,
     make_config,
     wait_until,
     write_status,
@@ -39,7 +38,6 @@ from attendance.service import SessionService  # isort: skip
 
 DELEGATE = Principal.DOOR_DELEGATE
 OWUI = Principal.DOOR_OWUI
-DOOR = "chaperone-1"
 
 ORACLE = "vault-oracle"
 ORACLE_SANDBOX = "vault-oracle-s1"
@@ -73,7 +71,6 @@ class DelegateHarness:
         self.facades = FacadeFleet(prompt_mode=mode)
         self.service = SessionService(
             self.config,
-            factory=FakeFleet().factory,
             acp_factory=self.facades.factory,
             cold_start_wait_s=1.0,
             cancel_wait_s=CANCEL_WAIT_S,
@@ -95,7 +92,7 @@ class DelegateHarness:
         )
 
     async def delegate(self, request: DelegateRequest) -> dict[str, object]:
-        return await asyncio.wait_for(self.service.run_delegate(DELEGATE, request, DOOR), 5.0)
+        return await asyncio.wait_for(self.service.run_delegate(DELEGATE, request), 5.0)
 
     def facade(self, sandbox: str = ORACLE_SANDBOX) -> FakeFacade:
         return self.facades.facades[sandbox]
@@ -148,12 +145,12 @@ async def test_the_job_id_rides_on_session_new(tmp_path: Path) -> None:
 
 
 async def test_the_conversation_is_kept(tmp_path: Path) -> None:
-    """Q5: nothing deletes the conversation, and no session store holds one."""
+    """Q5: nothing deletes the conversation in the facade's store."""
     harness = DelegateHarness(tmp_path)
     await harness.delegate(harness.call())
 
-    assert harness.service.store.session_ids(ORACLE) == []
     assert harness.facade().sessions == ["sess-1"]
+    assert "session/close" not in harness.facade().methods
     await harness.stop()
 
 
@@ -274,7 +271,7 @@ async def test_only_the_delegate_door_may_call_it(tmp_path: Path) -> None:
     harness = DelegateHarness(tmp_path)
 
     with pytest.raises(ApiError) as refused:
-        await harness.service.run_delegate(OWUI, harness.call(), DOOR)
+        await harness.service.run_delegate(OWUI, harness.call())
 
     assert refused.value.code is ErrorCode.FORBIDDEN
     await harness.stop()
@@ -327,21 +324,6 @@ async def test_the_chat_directory_outlives_the_job(tmp_path: Path) -> None:
     await harness.delegate(harness.call(target=CODE_SANDBOX_FAMILY))
 
     assert (made / "clean.py").read_text(encoding="utf-8") == "import pandas"
-    await harness.stop()
-
-
-async def test_deleting_the_chat_session_removes_the_directory(tmp_path: Path) -> None:
-    """§12.1 rule 4 and contract 02 §5.8's table, last row."""
-    harness = DelegateHarness(tmp_path)
-    harness.service.create_or_find(OWUI, CreateRequest(family=FAMILY, session=CHAT_SESSION))
-    await harness.delegate(harness.call(target=CODE_SANDBOX_FAMILY))
-
-    made = owner_dir(harness.config.work_root, CHAT_SESSION)
-    assert made.is_dir()
-
-    await harness.service.delete_session(OWUI, FAMILY, CHAT_SESSION)
-
-    assert not made.exists()
     await harness.stop()
 
 

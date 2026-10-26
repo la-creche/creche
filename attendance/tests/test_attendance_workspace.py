@@ -13,7 +13,6 @@ from attendance.workspace import (
     WORKSPACE_KIND,
     make_owner_dir,
     owner_dir,
-    remove_owner_dir,
     workspace_of,
 )
 
@@ -60,23 +59,9 @@ def test_a_hostile_owner_id_never_becomes_a_path(tmp_path: Path, owner: str) -> 
 
 @pytest.mark.parametrize("owner", HOSTILE_IDS)
 def test_a_hostile_owner_id_is_refused_by_every_door(tmp_path: Path, owner: str) -> None:
-    for call in (owner_dir, remove_owner_dir):
+    for call in (owner_dir, make_owner_dir):
         with pytest.raises(ApiError):
             call(tmp_path, owner)
-
-
-def test_removing_it_takes_the_whole_tree(tmp_path: Path) -> None:
-    made = make_owner_dir(tmp_path, OWNER)
-    (made / "out").mkdir()
-    (made / "out" / "chart.png").write_bytes(b"\x89PNG")
-
-    assert remove_owner_dir(tmp_path, OWNER) is True
-    assert not made.exists()
-
-
-def test_removing_one_that_was_never_made_is_quiet(tmp_path: Path) -> None:
-    """A chat that never delegated still deletes cleanly (contract 02 §5.8)."""
-    assert remove_owner_dir(tmp_path, OWNER) is False
 
 
 def test_only_the_code_sandbox_family_gets_a_workspace() -> None:

@@ -64,8 +64,8 @@ directory is not a workspace package, so a change here does not change
 | `surfaces/config.py` | the site file, the roster, the mount files and three env readers: `config.<name>` |
 | `surfaces/manifest_cases.py` | the written `component.yaml` inputs |
 | `surfaces/manifest.py` | the eleven `manifest.<name>` surfaces of contract 06 |
-| `surfaces/session_cases.py` | the written inputs of the session API surfaces |
-| `surfaces/session.py` | the session API: `session.request.*`, `session.query.*`, `session.error_body`, `session.answer.*`, `session.journal.*`, `session.stream.*`, `session.turn.move`, `session.state.derive`, `session.outcome.*` |
+| `surfaces/session_cases.py` | the written inputs of the HTTP surfaces of `attendance` |
+| `surfaces/session.py` | the HTTP surface of `attendance`: `session.request.*` of the four routes, `session.error_body`, `session.outcome.write`. The other files under `data/session/` are frozen |
 | `surfaces/runtime.py` | the helper code that each service copies: `runtime.untrusted.<copy>.<helper>`, `runtime.parse_object.noticeboard`, `runtime.strict_json`, `runtime.time`, `runtime.token.<reader>`, `runtime.bearer.<copy>`, `runtime.edge.<service>` |
 | `surfaces/noticeboard_cases.py` | the written inputs of the noticeboard surfaces |
 | `surfaces/noticeboard.py` | the noticeboard: `noticeboard.security.*`, `noticeboard.urlform`, `noticeboard.app.query`, `noticeboard.route.*`, `noticeboard.sessions.*`, `noticeboard.transcript.fold`, `noticeboard.audit.page`, `noticeboard.statusdocs.report`, `noticeboard.verify.envfile`, `noticeboard.cli.check`, `noticeboard.static.css` |
@@ -101,8 +101,9 @@ and the YAML path does not.
 
 - An input that makes the Python code raise has no vector until its fix
   merges. Rule 5 states why.
-- No file is frozen yet. The pull request that removes the first Python
-  package freezes the first files.
+- The session API left `attendance` (phase 2 plan, row 21). Its files under
+  `data/session/` are frozen. Each other file of `data/session/` has a
+  Python origin still.
 - No Rust code compares the bytes of a frozen file with its digest. The
   Rust reader, the crate `creche-vectors`, checks only the form of the map
   `frozen`. `vectors/tests` holds each digest.

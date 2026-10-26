@@ -18,9 +18,8 @@ from __future__ import annotations
 import json
 import string
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any, Final
-
-from attendance.models import LineKind
 
 from noticeboard import auditfiles, jsonfiles, security, sessions, statusdocs, transcript
 from vectors.surfaces import ids
@@ -30,13 +29,116 @@ from vectors.surfaces.session_cases import (
     DIGEST,
     FAMILY,
     JOB_SESSION,
-    KIND_BODIES,
     OTHER_SESSION,
     SANDBOX,
     SESSION,
     TURN,
-    TURN_KINDS,
     Body,
+)
+
+
+class LineKind(StrEnum):
+    """The kinds of a journal line (contract 02 §8.1), as `attendance` wrote
+    them until the phase 2 plan, row 21. The noticeboard still reads them."""
+
+    SESSION_CREATED = "session_created"
+    SESSION_TITLED = "session_titled"
+    WRITER_CHANGED = "writer_changed"
+    TURN_QUEUED = "turn_queued"
+    TURN_STARTED = "turn_started"
+    PI_EVENT = "pi_event"
+    APPROVAL_REQUESTED = "approval_requested"
+    APPROVAL_RESOLVED = "approval_resolved"
+    TURN_SETTLED = "turn_settled"
+    TURN_FAILED = "turn_failed"
+    TURN_ABORTED = "turn_aborted"
+    BRANCH_FALLBACK = "branch_fallback"
+    TERMINAL_EXCHANGE = "terminal_exchange"
+    NOTE = "note"
+    HEARTBEAT = "heartbeat"
+
+
+_USAGE: Final[dict[str, Any]] = {
+    "input": 4120,
+    "output": 188,
+    "cache_read": 0,
+    "cache_write": 0,
+    "cost_usd": 0.014,
+}
+
+_SESSION_OBJECT: Final[dict[str, Any]] = {
+    "family": FAMILY,
+    "session": SESSION,
+    "kind": "attended",
+    "title": "Kitchen sensor debug",
+    "state": "idle",
+    "created_at": "2026-10-05T19:21:47Z",
+    "updated_at": "2026-10-05T19:21:47Z",
+    "journal_seq": 0,
+    "writer": None,
+    "turns_total": 0,
+    "terminal_total": 0,
+    "turns_running": 0,
+    "sandbox": None,
+    "persona_hash": None,
+    "labels": {"door": "owui"},
+}
+
+#: The body of each kind, with the keys in the order that `attendance`
+#: wrote them. The body of a `pi_event` has its keys in sorted order.
+KIND_BODIES: Final[dict[LineKind, dict[str, Any]]] = {
+    LineKind.SESSION_CREATED: _SESSION_OBJECT,
+    LineKind.SESSION_TITLED: {"title": "Kitchen sensor debug"},
+    LineKind.WRITER_CHANGED: {"holder": "tui", "reason": "taken_over"},
+    LineKind.TURN_QUEUED: {
+        "prompt": "Triage the open issues.",
+        "idempotency_key": "morning-triage-2026-10-07",
+        "queue_depth": 3,
+    },
+    LineKind.TURN_STARTED: {
+        "prompt": "Which sensor dropped out last night?",
+        "sandbox": SANDBOX,
+        "deadline_s": 3600,
+        "persona_hash": DIGEST,
+        "status_stale": False,
+    },
+    LineKind.PI_EVENT: {
+        "assistantMessageEvent": {"contentIndex": 0, "delta": "Sensor ", "type": "text_delta"},
+        "type": "message_update",
+    },
+    LineKind.APPROVAL_REQUESTED: {
+        "tool": "ha_call",
+        "summary": "",
+        "gate_id": "0123456789abcdef",
+    },
+    LineKind.APPROVAL_RESOLVED: {"decision": "approval_denied", "waited_s": 12},
+    LineKind.TURN_SETTLED: {"usage": _USAGE, "leaf_id": "e6", "user_entry_id": "e5"},
+    LineKind.TURN_FAILED: {"reason": "model_error", "message": "the model gave no answer"},
+    LineKind.TURN_ABORTED: {"reason": "user_stopped", "message": "tui_takeover"},
+    LineKind.BRANCH_FALLBACK: {"wanted_entry": None, "reason": "unmapped_parent"},
+    LineKind.TERMINAL_EXCHANGE: {
+        "entry_id": "e6",
+        "parent_entry_id": "e5",
+        "prompt": "what did the sensor read",
+        "answer": "21.4 degrees at 09:12",
+    },
+    LineKind.NOTE: {"note": "persona_truncated", "cap_bytes": 16384},
+    LineKind.HEARTBEAT: {"last_seq": 41},
+}
+
+#: The kinds that carry a turn id.
+TURN_KINDS: Final = frozenset(
+    {
+        LineKind.TURN_QUEUED,
+        LineKind.TURN_STARTED,
+        LineKind.PI_EVENT,
+        LineKind.APPROVAL_REQUESTED,
+        LineKind.APPROVAL_RESOLVED,
+        LineKind.TURN_SETTLED,
+        LineKind.TURN_FAILED,
+        LineKind.TURN_ABORTED,
+        LineKind.BRANCH_FALLBACK,
+    }
 )
 
 #: A second turn id, for a stream with two turns.

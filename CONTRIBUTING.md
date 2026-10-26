@@ -92,10 +92,9 @@ group. It has nine kinds of job:
    `pnpm test` builds `dist/` first.
 6. `proc`: the process-level suite, `uv run pytest integration/proc -m slow`.
    The job builds the playpen first. A test that skips is a failure there.
-7. `suites`: the two suites `integration/tests` and
-   `integration/tests_manager`. The job builds the playpen first. It runs
-   each suite with a pytest command of its own. A test that skips is a
-   failure there. `integration/AGENTS.md` has its rules.
+7. `suites`: the suite `integration/tests_manager`. The job builds the
+   playpen first. It runs the suite with a pytest command of its own. A test
+   that skips is a failure there. `integration/AGENTS.md` has its rules.
 8. `systemd-proof`: `bin/systemd-proof.sh`, on the systemd of the runner.
    It proves that a unit with `RestartPreventExitStatus=78` stays stopped
    after exit status 78. It also gives each unit file to

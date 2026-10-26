@@ -4,32 +4,22 @@
 about a family (contract 05 §2), and `attendance`'s own tests have always
 hand-written that file. These tests hand it the real one.
 
-    apply_once ──► families/chat/status.json ──► StatusReader ──► run_turn
-                                                                     │
-                                       FakePlaypen ◄── channel ◄──┘
+    apply_once ──► families/chat/status.json ──► StatusReader
 
-The second half of this file is the harder half. `apply_once` reports
-`creating`, never `ready`, and `ready` means "the channel handshake passed"
-(contract 05 §4.2). In stage 1 only `attendance` holds a channel, so only
-`attendance` can run that handshake.
+The scenarios that ran a turn over the channel left with the session API
+(phase 2 plan, row 21).
 """
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
 from attendance.auth import Principal
 from attendance.channel import SandboxDial
-from attendance.config import Config
-from attendance.errors import ApiError, ErrorCode, TurnReason
 from attendance.exec_channel import DEFAULT_COMMAND, build_argv
 from attendance.family_status import FamilyState, SandboxState, StatusReader, check_may_serve
-from attendance.requests import CreateRequest, RunTurnRequest
-from attendance.service import SessionService
-from attendance.states import SessionKind, TurnState
-from attendance_harness import FakeFleet, PlaypenPlan, make_config
+from attendance.states import SessionKind
 from caregiver.playpen_env import read_playpen_env
 
 from caregiver import paths as caregiver_paths
@@ -164,174 +154,3 @@ def test_the_default_command_carries_that_file_and_the_id(
     assert argv[:2] == ["sbx", "exec"]
     assert argv[argv.index("--env-file") + 1] == str(env_path)
     assert argv[argv.index("--sandbox") + 1] == SANDBOX
-
-
-# --- the pair, end to end ------------------------------------------------
-
-
-def build_service(applied: Applied, tmp_path: Path) -> tuple[SessionService, FakeFleet]:
-    """A real `attendance` whose state root IS the one `caregiver` wrote."""
-    base = make_config(tmp_path / "attendance")
-    config = Config(
-        sessions_root=applied.sessions_root,
-        state_root=applied.state_root,
-        work_root=base.work_root,
-        socket_path=base.socket_path,
-        bind=base.bind,
-        lan_address=base.lan_address,
-        lan_port=base.lan_port,
-        channel_command=base.channel_command,
-        log_dir=base.log_dir,
-    )
-    fleet = FakeFleet()
-    service = SessionService(config, factory=fleet.factory, cold_start_wait_s=COLD_START_WAIT_S)
-    service.start()
-    return service, fleet
-
-
-async def test_a_turn_reaches_the_sandbox_caregiver_created(
-    applied: Applied, tmp_path: Path
-) -> None:
-    """The point of the seam: the document `caregiver` wrote is enough for
-    `attendance` to dial the sandbox `caregiver` created."""
-    service, fleet = build_service(applied, tmp_path)
-    try:
-        service.create_or_find(OWUI, CreateRequest(family=FAMILY, session=SESSION))
-        live = await service.run_turn(OWUI, FAMILY, SESSION, RunTurnRequest(prompt=PROMPT), DOOR)
-        started = await fleet.playpen(SANDBOX).next_start()
-
-        assert live.record.sandbox == SANDBOX
-        assert started["session"] == SESSION
-        assert fleet.dials == [SANDBOX]
-        # Contract 03 §7.1: the dial carries the file, not only the id.
-        assert fleet.env_files == [
-            str(caregiver_paths.playpen_env_path(applied.state_root, FAMILY, SANDBOX))
-        ]
-    finally:
-        await service.close()
-        await fleet.stop()
-
-
-async def test_the_channel_carries_the_epoch_and_config_rev(
-    applied: Applied, tmp_path: Path
-) -> None:
-    """Both numbers come from the status document and nowhere else."""
-    service, fleet = build_service(applied, tmp_path)
-    try:
-        service.create_or_find(OWUI, CreateRequest(family=FAMILY, session=SESSION))
-        await service.run_turn(OWUI, FAMILY, SESSION, RunTurnRequest(prompt=PROMPT), DOOR)
-        started = await fleet.playpen(SANDBOX).next_start()
-        hello = fleet.playpen(SANDBOX).hello
-
-        assert started["env_epoch"] == 1
-        assert started["config_rev"] == applied.result.status.config_rev
-        assert hello is not None
-        assert hello["family"] == FAMILY
-    finally:
-        await service.close()
-        await fleet.stop()
-
-
-async def test_a_failed_handshake_still_fails_the_turn(applied: Applied, tmp_path: Path) -> None:
-    """Contract 05 §4.2: `ready` means the handshake passed. Dialling a
-    sandbox is not the same as it serving, and nothing here weakens that."""
-    service, fleet = build_service(applied, tmp_path)
-    # Contract 03 §3: a `ready` naming another sandbox fails the handshake.
-    fleet.plan(SANDBOX, PlaypenPlan(sandbox="chat-s99"))
-    try:
-        service.create_or_find(OWUI, CreateRequest(family=FAMILY, session=SESSION))
-        live = await service.run_turn(OWUI, FAMILY, SESSION, RunTurnRequest(prompt=PROMPT), DOOR)
-
-        assert live.record.state is TurnState.FAILED
-        assert live.record.reason is TurnReason.CHANNEL_LOST
-    finally:
-        await service.close()
-        await fleet.stop()
-
-
-async def test_a_family_with_no_sandbox_is_refused(applied: Applied, tmp_path: Path) -> None:
-    """The check is not weakened: an empty `sandboxes` list still refuses,
-    and nothing is dialled."""
-    strip_sandboxes(applied.status_path)
-    service, fleet = build_service(applied, tmp_path)
-    try:
-        service.create_or_find(OWUI, CreateRequest(family=FAMILY, session=SESSION))
-        with pytest.raises(ApiError) as raised:
-            await service.run_turn(OWUI, FAMILY, SESSION, RunTurnRequest(prompt=PROMPT), DOOR)
-
-        assert raised.value.code is ErrorCode.SANDBOX_UNAVAILABLE
-        assert fleet.dials == []
-    finally:
-        await service.close()
-        await fleet.stop()
-
-
-async def test_a_planned_sandbox_is_waited_for_not_dialled(
-    applied: Applied, tmp_path: Path
-) -> None:
-    """`planned` means nothing exists yet (contract 05 §4.2), so there is
-    nothing to dial. The cold-start wait still covers that case."""
-    set_sandbox_state(applied.status_path, SandboxState.PLANNED.value)
-    service, fleet = build_service(applied, tmp_path)
-    try:
-        service.create_or_find(OWUI, CreateRequest(family=FAMILY, session=SESSION))
-        with pytest.raises(ApiError) as raised:
-            await service.run_turn(OWUI, FAMILY, SESSION, RunTurnRequest(prompt=PROMPT), DOOR)
-
-        assert raised.value.code is ErrorCode.SANDBOX_UNAVAILABLE
-        assert fleet.dials == []
-    finally:
-        await service.close()
-        await fleet.stop()
-
-
-async def test_a_ready_sandbox_still_wins_over_a_newer_creating_one(
-    applied: Applied, tmp_path: Path
-) -> None:
-    """Stage 2's switch: while a replacement is being built, the sandbox
-    that already handshook keeps serving."""
-    add_sandbox(applied.status_path, "chat-s2", SandboxState.CREATING.value)
-    set_sandbox_state(applied.status_path, SandboxState.READY.value, box_id=SANDBOX)
-    service, fleet = build_service(applied, tmp_path)
-    try:
-        service.create_or_find(OWUI, CreateRequest(family=FAMILY, session=SESSION))
-        live = await service.run_turn(OWUI, FAMILY, SESSION, RunTurnRequest(prompt=PROMPT), DOOR)
-        await fleet.playpen(SANDBOX).next_start()
-
-        assert live.record.sandbox == SANDBOX
-    finally:
-        await service.close()
-        await fleet.stop()
-
-
-# --- editing the document, the way a later stage would -------------------
-
-
-def read_status(path: Path) -> dict[str, object]:
-    body: dict[str, object] = json.loads(path.read_text(encoding="utf-8"))
-    return body
-
-
-def write_status(path: Path, body: dict[str, object]) -> None:
-    path.write_text(json.dumps(body), encoding="utf-8")
-
-
-def strip_sandboxes(path: Path) -> None:
-    body = read_status(path)
-    body["sandboxes"] = []
-    write_status(path, body)
-
-
-def set_sandbox_state(path: Path, state: str, box_id: str = SANDBOX) -> None:
-    body = read_status(path)
-    for box in body["sandboxes"]:  # pyright: ignore[reportUnknownVariableType]
-        if box["id"] == box_id:  # pyright: ignore[reportUnknownMemberType]
-            box["state"] = state  # pyright: ignore[reportUnknownMemberType]
-    write_status(path, body)
-
-
-def add_sandbox(path: Path, box_id: str, state: str) -> None:
-    body = read_status(path)
-    first = body["sandboxes"][0]  # pyright: ignore[reportUnknownVariableType]
-    body["sandboxes"].append({**first, "id": box_id, "state": state})  # pyright: ignore[reportUnknownMemberType]
-    write_status(path, body)

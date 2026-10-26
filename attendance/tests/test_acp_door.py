@@ -163,12 +163,14 @@ async def test_the_relay_exit_closes_the_websocket(door: Door) -> None:
 
 
 @pytest.mark.slow
-async def test_the_acp_bearer_reaches_no_session_route(door: Door) -> None:
+async def test_the_acp_bearer_reaches_no_http_route(door: Door) -> None:
     transport = httpx.AsyncHTTPTransport(uds=str(door.config.socket_path))
     headers = {"Authorization": f"Bearer {door.tokens[Principal.DOOR_ACP]}"}
 
     async with httpx.AsyncClient(transport=transport, base_url="http://attendance") as client:
-        answer = await client.get("/v1/sessions", headers=headers)
+        answer = await client.post(
+            "/dispatch/jobs", json={"caller_family": FAMILY}, headers=headers
+        )
 
     assert answer.status_code == HTTP_FORBIDDEN
 

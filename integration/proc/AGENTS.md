@@ -10,8 +10,8 @@ Rules 11 and 15 of `integration/AGENTS.md` apply only to a topology with a
 env file from the contracts.
 
 The suite is the judge of a port. A service in another language passes or
-fails the same tests, and no test changes. The suites in `integration/tests`
-and `integration/tests_manager` host every service in the test process. They
+fails the same tests, and no test changes. The suite in
+`integration/tests_manager` hosts every service in the test process. It
 cannot judge a service that Python cannot import.
 
 The suite owns no product code. It is not in the root `testpaths`, so the
@@ -27,9 +27,7 @@ cd playpen && pnpm install && AGENT_LAN_ADDRESS=192.0.2.10 pnpm run build && cd 
 uv run pytest integration/proc -m slow
 ```
 
-Run this suite in its own pytest command. One command for this suite and an
-old suite fails at collection, because the old tests import `conftest` by
-name.
+Run this suite in its own pytest command.
 
 Add `-n 4` to run the tests on four workers. Each run prints the command of
 each service before its result line. Each line ends with the origin of the
@@ -282,32 +280,28 @@ each one, and each one runs to its end.
 
 | File | Topology | What the scenarios check |
 |---|---|---|
-| `test_proc_owui_turns.py` | door and `attendance` | the thirteen stage 1 scenarios, with the numbers of the old suite |
+| `test_proc_owui_turns.py` | door and `attendance` | the two stage 1 scenarios that run no turn: the model list and an empty chat id. The other eleven ran a turn over the session API, which left `attendance` in phase 2 row 21 |
 | `test_proc_owui_start.py` | door and `attendance` | a start, a refused start, the socket mode, a token reload |
 | `test_proc_switch.py` | door and `attendance` | the refusals of the switch call of contract 05 §5. The handshake runs over ACP since phase 2 row 20 |
-| `test_proc_status.py` | door and `attendance` | what the readers do with the status document and the config mount |
-| `test_proc_pi_events.py` | door and `attendance` | the journal line of a pi event that holds a lone surrogate |
 | `test_proc_delegate.py` | chaperone and `attendance` | the manifest and the refusals of contract 04 §7. The job runs over ACP since phase 2 row 18 |
 | `test_proc_caregiver_start.py` | `caregiver` alone, and the house | a start, a refused start, a signal, a kill, and the verbs that run to an end |
 | `test_proc_caregiver_files.py` | `caregiver` alone, `caregiver` with the chaperone, and the house | each file that `caregiver` publishes, read as the next program reads it, and the seams of `integration/tests_manager` that assert on a file |
 | `test_proc_override.py` | door and `attendance`, and the last four topologies | a service starts through its variable: one that serves, one that runs to its end, one on a terminal |
-| `test_proc_trigger_fire.py` | trigger door and `attendance` | the timer command: one job and its outcome record, a refused family, the queue, a restart of `attendance`, a refused start |
-| `test_proc_trigger_webhooks.py` | trigger door and `attendance` | the listener: a webhook starts a job, the one 404, the payload, the bearer files, a start, a refused start, `SIGHUP`, `SIGTERM` |
-| `test_proc_trigger_quiet.py` | trigger door and `attendance` | the quiet check of contract 01 §3.15, through the timer command |
-| `test_proc_board_pages.py` | noticeboard and `attendance` | each page of `docs/rework/spec.md` §8.1, a bad route parameter, the access key |
+| `test_proc_trigger_fire.py` | trigger door and `attendance` | the timer command: a refused family, `attendance` down, `--check`, a refused start. The jobs ran over the session API and left in phase 2 row 21 |
+| `test_proc_trigger_webhooks.py` | trigger door and `attendance` | the listener: the one 404, a body the door refuses, the bearer files, a start, a refused start, `SIGTERM`. The jobs ran over the session API and left in phase 2 row 21 |
+| `test_proc_board_pages.py` | noticeboard and `attendance` | each page of `docs/rework/spec.md` §8.1 that reads no session, a bad route parameter, the access key |
 | `test_proc_board_reports.py` | noticeboard | a status document that a reader cannot use, the fault, the spend and the step of a family, the audit page with more than one page, its filters and a line that is no record, the perimeter of `docs/rework/spec.md` §8.3, a config that refuses a start, the JSON check of `proc_board_reports.py` |
 | `test_proc_board_edit.py` | noticeboard | the edit form: the CSRF token, the preview, a save after a preview, the one commit, saves at one time, a refused save |
 | `test_proc_board_start.py` | noticeboard | a start, a refused start, `SIGTERM` |
 | `test_proc_board_form.py` | noticeboard | each kind of control of the edit form, a locked field, a save that changes nothing, a save that `git` refuses, the marks of the commit, what a save leaves in the checkout |
 | `test_proc_board_restart.py` | noticeboard | two starts on one root and one port: a saved family, and a form that stays open across the restart |
 | `test_proc_board_verify.py` | noticeboard and its verify hook | the hook of contract 06 §4: a pass, a failure, the env file, no secret in the output |
-| `test_proc_tui_terminal.py` | terminal door, door and `attendance` | attach, the command of contract 03 §7.6, the lease, a refused takeover, the release at exit and at a signal, a terminal exchange |
 | `test_proc_tui_start.py` | terminal door, door and `attendance` | `--check`, and each refusal before pi has the terminal |
 | `test_proc_library_build.py` | library and the TEI stand-in | a build, an update, the hash rule, a removed file, a new model, the two profiles, the store schema, the columns of a row of `files`, the order of the files, how a text file is read, the publish of the store |
 | `test_proc_library_start.py` | library and the TEI stand-in | a refused command line, the address of TEI, the preflight, `SIGTERM`, `SIGKILL`, a store that the program cannot read |
 | `test_proc_library_cross.py` | library, the reference and the TEI stand-in | one store under two writers: equal content after a build, after an update by the other writer, after three runs in turns, after a backfill of `chunks_emb`, after a killed run and after a new model. Equal embed calls. An equal first line of the report. The reference with the variable of the row set. The comparison itself: one changed copy of a store for each part, the tolerance of a rank, a store that the comparison refuses |
 | `test_proc_library_reader.py` | library, the reference, the TEI stand-in and the reader program | a store as the bridge reads it, with the SQLite of Node: the model, the count of values, the rows of an FTS5 query, the vectors. Equal rows for both writers. A store that is not alone in its directory. The statements of the reader program and the limit of a query, held against the text of the bridge |
-| `test_proc_edges.py` | door and `attendance`, chaperone and `attendance`, trigger door and `attendance`, noticeboard | the edge of each listener: an unknown path, a wrong method, a JSON body with no `Content-Type` header, a body that is not JSON, a final slash, `HEAD`, the socket file of a killed process, a stop with an open stream, `SIGINT`, `SIGHUP` |
+| `test_proc_edges.py` | door and `attendance`, chaperone and `attendance`, trigger door and `attendance`, noticeboard | the edge of each listener: an unknown path, a wrong method, a body that is not JSON, `HEAD`, the socket file of a killed process, `SIGINT`, `SIGHUP` |
 | `test_proc_chaperone_rs.py` | the Rust chaperone and its two effect stand-ins | the tools of the stand-in upstream, and the audit records of one allowed call |
 | `test_proc_harness.py`, `test_proc_table.py` | none | the harness and the table, checked against their own rules |
 | `test_proc_standins.py`, `test_proc_sse.py` | none | the record of a stand-in, and the SSE reader |
@@ -382,9 +376,8 @@ each one, and each one runs to its end.
     a person does: with a key, with a signal or with a closed terminal.
     Read the lease and the exit code. Do not assert on a sentence that the
     program shows, unless a contract gives the sentence.
-20. A scenario that needs pi on a terminal starts on a session that ran a
-    turn and that no terminal held before. The first four Known gaps of the
-    terminal door say why.
+20. Retired in phase 2 row 21, with the scenarios of a terminal on a
+    session. The number stays, so that other rules keep their references.
 21. Read a value of a family file through `load_family` of
     `proc_registry.py`. Write the text of a block of the edit form with
     `block_text` of that module. No test reads the markup of a family file.
@@ -679,21 +672,6 @@ the text of the failure. Work down this list.
 - **CONTRACT-QUESTION, the exit code of a refused start.** Contract 02 §3
   rule 7 names no exit code. The suite accepts each code that is not 0. A
   change to one fixed code costs one assertion in `test_proc_owui_start.py`.
-- **CONTRACT-QUESTION, a new `config_rev` and the pi process of a session.**
-  Contract 03 §6 rule 5 gives three reasons to reap the pi process that a
-  session keeps. A new `config_rev` is not one of them. The playpen starts a
-  new process at the next turn, and `test_proc_status.py` checks that. A
-  change costs one count in that file.
-- **CONTRACT-QUESTION, a pi event with a lone surrogate.** Contract 03 §8
-  cuts an event by its size. It names no event that holds one half of a
-  surrogate pair. The suite holds what the playpen does: the cut event keeps
-  its type and its scalar fields. A change costs the assertions of the one
-  scenario in `test_proc_pi_events.py`.
-- **CONTRACT-QUESTION, the model list and a family that was never valid.**
-  Contract 05 §3.1 and contract 02 §5.1 give only the refusal
-  `family_invalid` by `attendance`. No contract says what the door lists.
-  The door hides the family, and `test_proc_status.py` checks that. A change
-  costs one assertion in that file.
 - **CONTRACT-QUESTION, the exit codes of `caregiver`.** No contract names
   one. `caregiver/AGENTS.md` gives three codes: 0, 1 and 2. The suite holds
   those three where `caregiver` selects one. Two cases are different: a
@@ -789,52 +767,13 @@ the text of the failure. Work down this list.
   requests that the bridge sends. The playpen bundle fixes `PEP_URL` at build
   time: the LAN address of the site, port 8300. A pi process under the real
   playpen cannot dial a chaperone on another port.
-- **A terminal on a new session meets a pi process of the playpen.**
-  `attendance` starts a pi process for a session when a door creates it, and
-  does not wait (contract 03 §4.7 rules 8 and 9). The terminal door creates
-  the session, takes the lease and asks `attendance` to release that process
-  (contract 02 §5.11). The start is not complete then, so `attendance`
-  answers `released: false` and sends nothing. The cause is in the product,
-  and this suite changes no product code.
-- **The result of a terminal on a new session changes from run to run.**
-  The launcher and the playpen act in an order that no rule fixes. When the
-  launcher looks first, two pi processes hold one session store. When the
-  playpen starts its process first, the launcher exits 8.
-  `test_ct_a_new_session_exists_before_pi_runs` asserts only what holds in
-  each order.
-- **The answer to a release comes before the end of the pi process.**
-  `attendance` answers `released: true` when it sent `stop_process`
-  (contract 02 §5.11). The pi process ends later. A launcher that looks
-  immediately can find the process and exit 8. On the host `sbx exec -it`
-  takes longer than the end of pi. Here the launcher starts in about
-  100 ms.
-- **A second terminal directly after a first one can exit 8.** A pi process
-  that runs and waits ends before the launcher looks, so a scenario on a
-  session that ran a turn is safe. A pi process that just started needs
-  more time. The playpen starts one when a `tui` lease ends
-  (contract 02 §10.5). So the result of the second terminal changes from run
-  to run. `test_force_takes_an_idle_lease_from_another_terminal` stops at
-  the lease for that reason.
 - **CONTRACT-QUESTION, the exit code of a refusal of the terminal door.** No
-  contract names one. Contract 03 §7.6 names the codes of the launcher, and
-  the suite asserts that the door passes code 10 through. For a refusal of
-  the door itself the suite accepts each code that is not 0. A change costs
-  one assertion per scenario in `test_proc_tui_start.py`.
-- **CONTRACT-QUESTION, the terminal door at a signal.** Contract 02 §5.10
-  gives the release call. No contract says what the door does at a signal.
-  The suite holds the rule of `door-tui/AGENTS.md`: a signal releases the
-  lease and never ends pi. A change costs three assertions in one scenario
-  of `test_proc_tui_terminal.py`.
-- **No scenario for a renewal or an expiry of a lease.** The terminal door
-  renews every 20 seconds, and the lease of `attendance` lives 60 seconds
-  (contract 02 §7.1, §7.4). Neither number has a variable, so each scenario
-  would wait that long.
+  contract names one. For a refusal of the door itself the suite accepts
+  each code that is not 0. A change costs one assertion per scenario in
+  `test_proc_tui_start.py`.
 - **The pi stand-in is not the interactive pi.** On a terminal it reads one
   command per line, and it ends at the end of the input. No scenario says
   what the real pi does with a key.
-- **A closed terminal differs by system.** Linux sends `SIGHUP` to the
-  leader of the session and to the foreground group. macOS sends it to the
-  leader alone. The scenario reads the lease and not the end of pi.
 - **CONTRACT-QUESTION, the exit code of `agent-trigger fire`.** No contract
   names one. The suite reads 0 as a firing that `attendance` accepted or
   that the quiet check skipped. It reads each other code as a firing that
@@ -843,31 +782,20 @@ the text of the failure. Work down this list.
 - **CONTRACT-QUESTION, the answers of the webhook listener.**
   `docs/rework/spec.md` §7.3 and §11.5 give the 202 and the one 404. No
   contract gives the body of the 202, or the status of another refusal. The
-  suite holds what the old stage 5 suite holds. A change costs one assertion
+  suite holds what the old stage 5 suite held. A change costs one assertion
   per scenario in `test_proc_trigger_webhooks.py`.
-- **What the suite holds for the webhook listener.** The 202 names the
-  session and the state. A body over the limit gets 413. A body that is not
-  JSON gets 400. A refusal of `attendance` keeps the status of
-  contract 02 §14.
-- **No chaperone beside the trigger door.** Three things have no scenario
-  for that reason. The quiet check reads the board and the jobs of a family
-  through the chaperone (contract 01 §3.15, wake reasons 2 and 4). A gated
-  call of a job waits for a phone (contract 04 §8). The old stage 5 suite
-  holds the gate scenarios inside one test process. Here they need a
-  stand-in for the approval transport, and the bridge on the path.
+- **What the suite holds for the webhook listener.** A body over the limit
+  gets 413. A body that is not JSON gets 400.
 - **No scenario for the `enqueue` verb.** A family calls `enqueue` at the
   chaperone (contract 04 §4.1), and the chaperone calls `POST /dispatch` of
-  `attendance` (contract 02 §13.4). `integration/tests/test_eq_enqueue.py`
-  holds those scenarios in one test process. A scenario here needs a grant
-  file with the verb, and a status document with `triggers.enqueue: true`.
-  `write_grants` and `write_status` of `proc_tree.py` write neither.
-- **No scenario for a copy into Open WebUI.** Contract 02 §10.4 writes a
-  session that a terminal made into Open WebUI. The old stage 4 suite holds
-  those scenarios. An object in its test process takes the place of Open
-  WebUI. Here they need a stand-in program for Open WebUI, and none exists.
-- **The floor of the quiet check has no scenario.** `floor_hours` is 1 hour
-  at least, and the door has no variable for its clock. A scenario would
-  wait one hour.
+  `attendance` (contract 02 §13.4). The job runs over ACP, and this stack
+  has no facade.
+- **The doors of the session API have no scenario that runs work.** The
+  Open WebUI door, the trigger door and the terminal door call
+  `/v1/sessions*`, which left `attendance` in phase 2 row 21. Each
+  scenario of those doors that created a session, ran a turn, held a lease
+  or read a journal left with it. Phase 3 deletes `door-owui` and
+  `door-tui` and moves `door-trigger` to ACP.
 - **A webhook call while `attendance` is down has no scenario.** No contract
   gives the answer of the listener for that case.
 - **CONTRACT-QUESTION, the exit code of a refused start of the noticeboard.**
@@ -1093,25 +1021,21 @@ the text of the failure. Work down this list.
   the markup one reader. These places write the markup, or name it:
   - `family_text` and `block_text` of `proc_registry.py`
   - `write_family_file` and `Tree.family_file` of `proc_tree.py`
-  - the two `quiet` texts of `test_proc_trigger_quiet.py`
 
   `test_proc_table.py` reads the component manifest, which has the same
   markup. A change of the markup costs each of those places.
 - **CONTRACT-QUESTION, the answers that no handler of a service makes.** No
   contract names the answer of a listener to four requests. The requests are
   an unknown path, a wrong method, a path with a final slash, and `HEAD` on
-  a `GET` route. `test_proc_edges.py` holds four things:
+  a `GET` route. `test_proc_edges.py` holds three things:
   - An unknown path gets 404.
   - A known path with a wrong method gets 405.
-  - A known path with a final slash creates no session and starts no turn.
   - An answer to `HEAD` has no body.
 
-  No scenario there asserts on the content of a body. The last two
-  scenarios assert on no status. The scenario of the final slash leaves out
-  the noticeboard, which creates no session and starts no turn. The save
-  route of the noticeboard also answers 307 to a final slash, and no
-  scenario holds that the route then writes no commit. A change to one
-  fixed answer costs one assertion per scenario in that file.
+  No scenario there asserts on the content of a body. The `HEAD` scenario
+  asserts on no status. The scenario of the final slash left in phase 2
+  row 21: each request that it sent started work over the session API. A
+  change to one fixed answer costs one assertion per scenario in that file.
 
   The table gives what each service answers today. The table is for a
   person, and no scenario reads it. Each request carried the credential of
@@ -1119,7 +1043,7 @@ the text of the failure. Work down this list.
 
   | Service | Unknown path | Wrong method | Final slash | `HEAD` on a `GET` route |
   |---|---|---|---|---|
-  | `attendance` | 404, `application/json` | 405, `application/json` | 307, no content type | 405, `application/json` |
+  | `attendance` | 404, `application/json` | 405, `application/json` | 307, no content type | no `GET` route |
   | `door-owui` | 404, `application/json` | 405, `application/json` | 307, no content type | 405, `application/json` |
   | `chaperone` | 404, `application/json` | 405, `application/json` | 307, no content type | 405, `application/json` |
   | `noticeboard` | 404, `application/json` | 405, `application/json` | 307, no content type | 405, `application/json` |
@@ -1134,20 +1058,13 @@ the text of the failure. Work down this list.
     body.
   - With no key, the noticeboard answers 403 to an unknown path. With no
     credential, each other listener answers 404.
-- **CONTRACT-QUESTION, a JSON body with no `Content-Type` header.**
-  Contract 02 §3 rule 3 says that a request body is JSON. It names no
-  header. No contract says what the Open WebUI door does with such a body.
-  The suite holds that `attendance` and the door each read such a body, as
-  they do today. A change costs one scenario for each service in
-  `test_proc_edges.py`.
-
-  The chaperone answers 422 to such a body today. No scenario holds that.
 - **CONTRACT-QUESTION, a body that is not JSON.** Contract 02 §14 gives
   `attendance` the code `bad_request` with status 400. No contract gives the
   Open WebUI door or the chaperone an answer, and contract 04 §5 has no row
   for such a body. The suite holds one thing for the three services: a
   status of the 4xx class, with no session and no turn. A change costs one
-  assertion in `test_proc_edges.py`.
+  assertion in `test_proc_edges.py`. `attendance` gets the bodies on
+  `POST /dispatch/jobs`.
 
   The scenario sends three bodies to each of the three services:
   - A text that is not JSON.
@@ -1162,13 +1079,11 @@ the text of the failure. Work down this list.
 - **CONTRACT-QUESTION, a listener at a signal.** No contract says what a
   listener does at `SIGINT`, at `SIGHUP` with no reload, or at a stop with an
   open stream. No contract names an exit code after a signal.
-  `test_proc_edges.py` holds three things:
+  `test_proc_edges.py` holds two things:
   - `SIGINT` ends each listener inside the `TimeoutStopSec` of its unit.
     Nothing answers at its address after that.
   - `SIGHUP` ends the Open WebUI door and the noticeboard, and the port of
     each one closes. Neither service has a reload.
-  - A stop of the Open WebUI door with one open stream ends the process
-    inside 30 seconds. The turn settles in the journal.
 
   No scenario there reads an exit code. The services differ today:
   - After `SIGTERM`, `attendance` exits with code 0. The signal ends each
@@ -1179,11 +1094,9 @@ the text of the failure. Work down this list.
   - The chaperone has a reload only with a roster source. The chaperone of
     this suite has none, so `SIGHUP` ends it too. No scenario holds either
     case.
-  - At a stop with an open stream, the door sends the stream to its end.
-    Then the signal ends the door.
 
   A listener that ignores `SIGHUP` fails one scenario. A fixed exit code
-  costs one assertion in each of the three scenarios.
+  costs one assertion in each of the two scenarios.
 - **A run that ignores `SIGHUP` cannot judge the `SIGHUP` scenario.** A
   process that the suite starts ignores each signal that the run ignores,
   until it installs a handler. A run under `nohup` ignores `SIGHUP`. systemd

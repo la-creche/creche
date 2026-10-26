@@ -1,8 +1,9 @@
 """The switch-sandbox handshake (contract 05 §5).
 
-`caregiver` makes this one call. Every session survives it, the outgoing
-sandbox is drained or interrupted, and the old channel is shut down cleanly
-before this service reports the sandbox free.
+`caregiver` makes this one call. The incoming facade answers `initialize`
+first, the jobs in flight on the outgoing facade are drained or
+interrupted, and the outgoing facade is stopped before this service reports
+the sandbox free.
 """
 
 from __future__ import annotations
@@ -13,88 +14,52 @@ from typing import Any
 
 import pytest
 from attendance.auth import Principal
-from attendance.errors import ApiError, ErrorCode, TurnReason
+from attendance.errors import ApiError, ErrorCode
 from attendance.ids import new_ulid
-from attendance.models import LineKind
-from attendance.requests import (
-    CreateRequest,
-    DelegateRequest,
-    RunTurnRequest,
-    SwitchMode,
-    SwitchRequest,
-)
+from attendance.requests import DelegateRequest, SwitchMode, SwitchRequest
 from attendance.service import SessionService
-from attendance.states import TurnState
 from attendance.switching import SwitchOutcome
-from attendance.turns import LiveTurn
-from attendance_harness import (
-    FAMILY,
-    SANDBOX,
-    FakeFleet,
-    make_config,
-    settle_now,
-    wait_until,
-    write_status,
-)
+from attendance_harness import FAMILY, SANDBOX, make_config, wait_until, write_status
 from fake_facade import FacadeFleet, PromptMode
 
 CAREGIVER = Principal.CAREGIVER
-OWUI = Principal.DOOR_OWUI
-DOOR = "owui-1"
+DELEGATE = Principal.DOOR_DELEGATE
 
 NEXT_SANDBOX = "chat-s2"
-FIRST = "owui-chat-one"
-SECOND = "owui-chat-two"
 REASON = "mounts changed: added /srv/agents/work/code-sandbox rw"
-ANSWER = "Sensor kitchen_temp stopped reporting at 02:14."
 NOT_YET_S = 0.05
+
+#: The kind of the family here. A delegate job reaches a thin family only.
+KIND = "thin"
 
 
 class SwitchHarness:
-    """One family, two sandboxes, a fake playpen and a fake facade in each.
-
-    The playpen serves session turns. The facade answers the switch's
-    handshake and runs the jobs over ACP (phase 2 plan, row 20).
-    """
+    """One thin family, two sandboxes, and a fake facade in each."""
 
     def __init__(self, tmp_path: Path, mode: PromptMode = PromptMode.OK) -> None:
         self.config = make_config(tmp_path)
-        self.fleet = FakeFleet()
         self.facades = FacadeFleet(prompt_mode=mode)
-        self.service = SessionService(
+        self.service = self.revive()
+        self.publish()
+
+    def revive(self) -> SessionService:
+        service = SessionService(
             self.config,
-            factory=self.fleet.factory,
             acp_factory=self.facades.factory,
             cold_start_wait_s=1.0,
             cancel_wait_s=0.2,
         )
-        self.publish()
-        self.service.start()
+        service.start()
+        return service
 
-    def publish(self, *boxes: tuple[str, str]) -> None:
+    def publish(self, *boxes: tuple[str, str], kind: str = KIND) -> None:
         """Write the status document `caregiver` would publish right now.
 
         One sandbox to begin with. `caregiver` creates the replacement and
         then makes the call, so the second row appears with the switch.
         """
         rows = boxes if boxes else ((SANDBOX, "ready"),)
-        write_status(self.config.state_root, sandboxes=rows)
-
-    def create(self, session: str) -> None:
-        self.service.create_or_find(OWUI, CreateRequest(family=FAMILY, session=session))
-
-    async def start_turn(self, session: str) -> LiveTurn:
-        live = await self.service.run_turn(
-            OWUI, FAMILY, session, RunTurnRequest(prompt="ping"), DOOR
-        )
-        await self.fleet.playpen(live.record.sandbox).next_start()
-        return live
-
-    async def settle(self, live: LiveTurn) -> None:
-        playpen = self.fleet.playpen(live.record.sandbox)
-        await playpen.play_turn(live.record.session, live.record.turn, ANSWER)
-        await playpen.settle(live.record.session, live.record.turn)
-        await settle_now(live.done)
+        write_status(self.config.state_root, kind=kind, sandboxes=rows)
 
     def request(
         self,
@@ -118,131 +83,44 @@ class SwitchHarness:
         self.publish((SANDBOX, "ready"), (NEXT_SANDBOX, "ready"))
         return asyncio.create_task(self.service.switch_sandbox(CAREGIVER, self.request(**over)))
 
-    def notes(self, session: str) -> list[dict[str, Any]]:
-        return [
-            line.body
-            for line in self.service.store.journal.replay(FAMILY, session)
-            if line.kind is LineKind.NOTE
-        ]
+    async def job(self) -> dict[str, Any]:
+        return await self.service.run_delegate(DELEGATE, delegate_to())
+
+    async def held_job(self) -> asyncio.Task[dict[str, Any]]:
+        job = asyncio.create_task(self.job())
+        await wait_until(lambda: SANDBOX in self.facades.facades)
+        await wait_until(lambda: len(self.facades.facades[SANDBOX].held) == 1)
+        return job
+
+    def sandbox_of_last_job(self) -> str:
+        """The sandbox whose facade took the newest `session/new`."""
+        return next(
+            box for box in reversed(self.facades.dials) if self.facades.facades[box].sessions
+        )
 
     async def stop(self) -> None:
         await self.service.close()
-        await self.fleet.stop()
         await self.facades.stop()
 
 
-async def test_a_drain_waits_for_two_running_turns(tmp_path: Path) -> None:
-    """Contract 05 §5.3 rule 2. Running turns finish on the old sandbox."""
-    harness = SwitchHarness(tmp_path)
-    harness.create(FIRST)
-    harness.create(SECOND)
-    first = await harness.start_turn(FIRST)
-    second = await harness.start_turn(SECOND)
-    switch = harness.switch()
-
-    # The answer waits for the last turn, not for the first.
-    with pytest.raises(asyncio.TimeoutError):
-        await asyncio.wait_for(asyncio.shield(switch), NOT_YET_S)
-
-    await harness.settle(first)
-
-    with pytest.raises(asyncio.TimeoutError):
-        await asyncio.wait_for(asyncio.shield(switch), NOT_YET_S)
-
-    await harness.settle(second)
-    body = await asyncio.wait_for(switch, 2.0)
-
-    assert body == {
-        "switched": True,
-        "outcome": SwitchOutcome.DRAINED.value,
-        "turns_running_at_start": 2,
-        "turns_finished": 2,
-        "turns_aborted": 0,
-        "sessions": 2,
-    }
-    assert first.record.state is TurnState.SETTLED
-    assert second.record.state is TurnState.SETTLED
-    await harness.stop()
-
-
-async def test_a_new_turn_goes_to_the_incoming_sandbox(tmp_path: Path) -> None:
-    """§5.3 rule 1. `switched` is true from the instant the call is accepted."""
-    harness = SwitchHarness(tmp_path)
-    harness.create(FIRST)
-    running = await harness.start_turn(FIRST)
-    switch = harness.switch()
-    await asyncio.sleep(NOT_YET_S)
-
-    harness.create(SECOND)
-    moved = await harness.start_turn(SECOND)
-
-    assert moved.record.sandbox == NEXT_SANDBOX
-    assert harness.fleet.dials == [SANDBOX, NEXT_SANDBOX]
-
-    await harness.settle(running)
-    await asyncio.wait_for(switch, 2.0)
-    await harness.stop()
-
-
-async def test_an_interrupt_ends_running_turns_at_once(tmp_path: Path) -> None:
-    """§5.3 rule 3. A removal applies at once (invariant 9)."""
-    harness = SwitchHarness(tmp_path)
-    harness.create(FIRST)
-    harness.create(SECOND)
-    first = await harness.start_turn(FIRST)
-    second = await harness.start_turn(SECOND)
-    body = await asyncio.wait_for(harness.switch(mode=SwitchMode.INTERRUPT), 2.0)
-
-    assert body["outcome"] == SwitchOutcome.INTERRUPTED.value
-    assert body["turns_aborted"] == 2
-    assert body["turns_finished"] == 0
-
-    for live in (first, second):
-        assert live.record.state is TurnState.ABORTED
-        assert live.record.reason is TurnReason.PERMISSION_REMOVED
-
-    await harness.stop()
-
-
-async def test_a_drain_past_its_deadline_aborts_the_rest(tmp_path: Path) -> None:
-    """§5.3 rule 2's last sentence. `sandbox_lost` is the turn's reason."""
-    harness = SwitchHarness(tmp_path)
-    harness.create(FIRST)
-    stuck = await harness.start_turn(FIRST)
-    body = await asyncio.wait_for(harness.switch(deadline_s=1), 5.0)
-
-    assert body["outcome"] == SwitchOutcome.DEADLINE_HIT.value
-    assert body["turns_aborted"] == 1
-    assert body["turns_finished"] == 0
-    assert stuck.record.state is TurnState.ABORTED
-    assert stuck.record.reason is TurnReason.SANDBOX_LOST
-    await harness.stop()
-
-
-async def test_held_open_processes_close_before_the_channel(tmp_path: Path) -> None:
-    """Contract 05 §4.4 step 2, and `attendance/AGENTS.md` switch rule 2."""
-    harness = SwitchHarness(tmp_path)
-
-    for session in (FIRST, SECOND):
-        harness.create(session)
-        await harness.settle(await harness.start_turn(session))
-
-    old = harness.fleet.playpen(SANDBOX)
-    await asyncio.wait_for(harness.switch(), 2.0)
-
-    assert sorted(str(stop["session"]) for stop in old.stops) == [FIRST, SECOND]
-    assert harness.fleet.channels[SANDBOX].alive is False
-    await harness.stop()
+def delegate_to(family: str = FAMILY) -> DelegateRequest:
+    return DelegateRequest(
+        caller_family="vault-oracle",
+        target_family=family,
+        delegation_id=new_ulid(),
+        claimed_session_id=None,
+        message="ping",
+    )
 
 
 async def test_an_idle_family_switches_with_nothing_to_drain(tmp_path: Path) -> None:
     harness = SwitchHarness(tmp_path)
-    harness.create(FIRST)
+    await harness.job()
     body = await asyncio.wait_for(harness.switch(), 2.0)
 
     assert body["outcome"] == SwitchOutcome.DRAINED.value
     assert body["turns_running_at_start"] == 0
-    assert body["sessions"] == 1
+    assert body["sessions"] == 0
     await harness.stop()
 
 
@@ -253,7 +131,6 @@ async def test_a_first_create_has_no_outgoing_sandbox(tmp_path: Path) -> None:
 
     assert body["switched"] is True
     assert body["turns_running_at_start"] == 0
-    assert harness.fleet.dials == []
     assert harness.facades.dials == [NEXT_SANDBOX]
     await harness.stop()
 
@@ -261,50 +138,12 @@ async def test_a_first_create_has_no_outgoing_sandbox(tmp_path: Path) -> None:
 async def test_a_repeat_answers_the_same_and_does_nothing(tmp_path: Path) -> None:
     """§5.3 rule 7. `caregiver` may retry after a timeout."""
     harness = SwitchHarness(tmp_path)
-    harness.create(FIRST)
-    live = await harness.start_turn(FIRST)
-    old = harness.fleet.playpen(SANDBOX)
+    await harness.job()
     first = await asyncio.wait_for(harness.switch(mode=SwitchMode.INTERRUPT), 2.0)
-    aborts = len(old.aborts)
     second = await asyncio.wait_for(harness.switch(mode=SwitchMode.INTERRUPT), 2.0)
 
     assert second == first
-    assert len(old.aborts) == aborts
-    assert live.record.state is TurnState.ABORTED
-    assert len(harness.notes(FIRST)) == 1
-    await harness.stop()
-
-
-async def test_every_session_learns_why_its_turn_ended(tmp_path: Path) -> None:
-    """§5.3 rule 6. Both UIs can show the reason."""
-    harness = SwitchHarness(tmp_path)
-    harness.create(FIRST)
-    harness.create(SECOND)
-    await asyncio.wait_for(harness.switch(), 2.0)
-
-    for session in (FIRST, SECOND):
-        notes = harness.notes(session)
-        assert len(notes) == 1
-        assert notes[0]["from"] == SANDBOX
-        assert notes[0]["to"] == NEXT_SANDBOX
-        assert notes[0]["mode"] == SwitchMode.DRAIN.value
-        assert notes[0]["reason"] == REASON
-
-    await harness.stop()
-
-
-async def test_sessions_survive_a_switch(tmp_path: Path) -> None:
-    """§5.3 rule 4. A switch never deletes a session or changes an id."""
-    harness = SwitchHarness(tmp_path)
-    harness.create(FIRST)
-    await harness.settle(await harness.start_turn(FIRST))
-    await asyncio.wait_for(harness.switch(mode=SwitchMode.INTERRUPT), 2.0)
-
-    body = harness.service.get_session(OWUI, FAMILY, FIRST, 10)
-
-    assert body["session"] == FIRST
-    assert body["turns_total"] == 1
-    assert harness.service.store.session_ids(FAMILY) == [FIRST]
+    assert harness.facades.dials == [SANDBOX, NEXT_SANDBOX]
     await harness.stop()
 
 
@@ -340,10 +179,9 @@ async def test_a_creating_incoming_sandbox_is_accepted(tmp_path: Path) -> None:
 
     assert body["switched"] is True
 
-    harness.create(FIRST)
-    live = await harness.start_turn(FIRST)
+    await harness.job()
 
-    assert live.record.sandbox == NEXT_SANDBOX
+    assert harness.sandbox_of_last_job() == NEXT_SANDBOX
     await harness.stop()
 
 
@@ -368,21 +206,17 @@ async def test_a_malformed_pair_is_refused(tmp_path: Path, over: dict[str, Any])
 
 
 async def test_a_family_of_no_known_kind_is_not_switched(tmp_path: Path) -> None:
-    """§5.3 rule 8 names the refusals of a switch. A channel needs the kind of
+    """§5.3 rule 8 names the refusals of a switch. A link needs the kind of
     its family, so this service would not dial a sandbox of such a document."""
     harness = SwitchHarness(tmp_path)
-    write_status(
-        harness.config.state_root,
-        kind="robot",
-        sandboxes=((SANDBOX, "ready"), (NEXT_SANDBOX, "ready")),
-    )
+    harness.publish((SANDBOX, "ready"), (NEXT_SANDBOX, "ready"), kind="robot")
 
     with pytest.raises(ApiError) as refused:
         await harness.service.switch_sandbox(CAREGIVER, harness.request())
 
     assert refused.value.code is ErrorCode.BAD_REQUEST
     assert refused.value.message == "the status document states no kind"
-    assert harness.fleet.dials == []
+    assert harness.facades.dials == []
     await harness.stop()
 
 
@@ -403,7 +237,7 @@ async def test_no_door_may_switch(tmp_path: Path) -> None:
     harness = SwitchHarness(tmp_path)
 
     with pytest.raises(ApiError) as refused:
-        await harness.service.switch_sandbox(OWUI, harness.request())
+        await harness.service.switch_sandbox(DELEGATE, harness.request())
 
     assert refused.value.code is ErrorCode.FORBIDDEN
     await harness.stop()
@@ -412,57 +246,39 @@ async def test_no_door_may_switch(tmp_path: Path) -> None:
 async def test_a_crash_mid_switch_converges_on_the_document(tmp_path: Path) -> None:
     """The status document is the truth about which sandbox serves.
 
-    The new channel is open and the old one has not closed when the service
-    dies. Nothing about the switch is on disk, so the restart reads what
-    `caregiver` published and moves every new turn onto the new sandbox.
+    The service dies mid-switch. Nothing about the switch is on disk, so the
+    restart reads what `caregiver` published and sends the next job to the
+    new sandbox.
     """
-    harness = SwitchHarness(tmp_path)
-    harness.create(FIRST)
-    await harness.start_turn(FIRST)
+    harness = SwitchHarness(tmp_path, PromptMode.HOLD)
+    await harness.held_job()
     switch = harness.switch()
     await asyncio.sleep(NOT_YET_S)
-
-    # Mid-switch: the new sandbox already serves and the old one still runs.
-    harness.create(SECOND)
-    await harness.start_turn(SECOND)
     switch.cancel()
     await harness.service.close()
 
     # `caregiver` has since retired the old sandbox.
     harness.publish((SANDBOX, "stopping"), (NEXT_SANDBOX, "ready"))
-    revived = SessionService(harness.config, factory=harness.fleet.factory, cold_start_wait_s=1.0)
-    revived.start()
+    harness.facades.prompt_mode = PromptMode.OK
+    harness.service = harness.revive()
+    answer = await harness.job()
 
-    recovered = revived.store.load_turns(FAMILY, FIRST)
-
-    assert [turn.state for turn in recovered] == [TurnState.FAILED]
-    assert recovered[0].reason is TurnReason.CHANNEL_LOST
-
-    live = await revived.run_turn(OWUI, FAMILY, FIRST, RunTurnRequest(prompt="again"), DOOR)
-
-    assert live.record.sandbox == NEXT_SANDBOX
-    assert sorted(revived.store.session_ids(FAMILY)) == [FIRST, SECOND]
-
-    await revived.close()
+    assert answer["status"] == "ok"
+    assert harness.sandbox_of_last_job() == NEXT_SANDBOX
     await harness.stop()
 
 
 async def test_a_switch_starts_no_process_of_its_own(tmp_path: Path) -> None:
-    """§5.3 rule 8 asks for the handshake, rule 5 moves no process.
+    """§5.3 rule 8 asks for the handshake, and nothing more.
 
     So the switch dials the incoming sandbox once and starts nothing in it.
-    The first turn there still pays pi's cold start.
     """
     harness = SwitchHarness(tmp_path)
-    harness.create(FIRST)
-    await harness.settle(await harness.start_turn(FIRST))
+    await harness.job()
     await asyncio.wait_for(harness.switch(), 2.0)
 
-    assert harness.fleet.dials == [SANDBOX]
-    assert harness.facades.dials == [NEXT_SANDBOX]
+    assert harness.facades.dials == [SANDBOX, NEXT_SANDBOX]
     assert harness.facades.facades[NEXT_SANDBOX].methods == ["initialize"]
-
-    await wait_until(lambda: True)
     await harness.stop()
 
 
@@ -470,25 +286,23 @@ async def test_a_failed_handshake_keeps_the_family_serving(tmp_path: Path) -> No
     """Contract 05 §5.3 rule 8: nothing moves until the handshake passes.
 
     The incoming facade answers `initialize` with another protocol
-    version, so the call is refused. No turn moves, the outgoing channel stays open, and `caregiver`
-    still owns both sandboxes.
+    version, so the call is refused. No job moves, the outgoing facade
+    keeps serving, and `caregiver` still owns both sandboxes.
     """
     harness = SwitchHarness(tmp_path)
     harness.facades.mismatched.add(NEXT_SANDBOX)
-    harness.create(FIRST)
-    await harness.settle(await harness.start_turn(FIRST))
+    await harness.job()
 
     with pytest.raises(ApiError) as refused:
         await asyncio.wait_for(harness.switch(), 2.0)
 
     assert refused.value.code is ErrorCode.SANDBOX_UNAVAILABLE
-    assert harness.notes(FIRST) == []
 
-    # The next turn still runs on the sandbox the family was serving on.
-    live = await harness.start_turn(FIRST)
+    # The next job still runs on the sandbox the family was serving on.
+    answer = await harness.job()
 
-    assert live.record.sandbox == SANDBOX
-    await harness.settle(live)
+    assert answer["status"] == "ok"
+    assert harness.facades.facades[SANDBOX].sessions == ["sess-1", "sess-2"]
     await harness.stop()
 
 
@@ -501,7 +315,6 @@ async def test_a_refused_switch_is_retried_not_replayed(tmp_path: Path) -> None:
     """
     harness = SwitchHarness(tmp_path)
     harness.facades.mismatched.add(NEXT_SANDBOX)
-    harness.create(FIRST)
 
     with pytest.raises(ApiError):
         await asyncio.wait_for(harness.switch(), 2.0)
@@ -521,7 +334,6 @@ async def test_a_refused_switch_with_no_caller_is_retried(tmp_path: Path) -> Non
     """
     harness = SwitchHarness(tmp_path)
     harness.facades.mismatched.add(NEXT_SANDBOX)
-    harness.create(FIRST)
     call = harness.switch()
     await asyncio.sleep(0)
     call.cancel()
@@ -539,38 +351,34 @@ async def test_a_refused_switch_with_no_caller_is_retried(tmp_path: Path) -> Non
     await harness.stop()
 
 
-async def test_a_new_sandbox_alone_moves_no_turn(tmp_path: Path) -> None:
-    """Contract 05 §4.2 rule 1a. The §5 call is what moves new turns.
+async def test_a_new_sandbox_alone_moves_no_job(tmp_path: Path) -> None:
+    """Contract 05 §4.2 rule 1a. The §5 call is what moves new jobs.
 
     §4.3 step 5b publishes the replacement before the call, so between the
     publish and the answer both sandboxes are `creating`. Reading the
-    document per turn would hand the family to the replacement with no
+    document per job would hand the family to the replacement with no
     switch at all, and that replacement has had no handshake.
     """
     harness = SwitchHarness(tmp_path)
     harness.publish((SANDBOX, "creating"))
-    harness.create(FIRST)
-    await harness.settle(await harness.start_turn(FIRST))
+    await harness.job()
 
     harness.publish((SANDBOX, "creating"), (NEXT_SANDBOX, "creating"))
-    live = await harness.start_turn(FIRST)
+    await harness.job()
 
-    assert live.record.sandbox == SANDBOX
-    assert harness.fleet.dials == [SANDBOX]
-    await harness.settle(live)
+    assert harness.facades.dials == [SANDBOX]
     await harness.stop()
 
 
 async def test_a_shutdown_drops_a_running_switch(tmp_path: Path) -> None:
-    """A drain waits for turns, and `close()` may not wait for a drain.
+    """A drain waits for jobs, and `close()` may not wait for a drain.
 
     Nothing about a switch is on disk. A restart reads the status document
-    and converges on it, so the run is dropped exactly as a pre-start is. A
-    task left pending outlives the service it holds and warns when collected.
+    and converges on it, so the run is dropped. A task left pending outlives
+    the service it holds and warns when collected.
     """
-    harness = SwitchHarness(tmp_path)
-    harness.create(FIRST)
-    await harness.start_turn(FIRST)
+    harness = SwitchHarness(tmp_path, PromptMode.HOLD)
+    await harness.held_job()
     switch = harness.switch()
     await asyncio.sleep(NOT_YET_S)
 
@@ -581,54 +389,14 @@ async def test_a_shutdown_drops_a_running_switch(tmp_path: Path) -> None:
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(switch, 2.0)
 
-    await harness.fleet.stop()
     await harness.facades.stop()
-
-
-# ------------------------------------------------------- jobs over ACP
-
-
-def delegate_to(family: str = FAMILY) -> DelegateRequest:
-    return DelegateRequest(
-        caller_family="vault-oracle",
-        target_family=family,
-        delegation_id=new_ulid(),
-        claimed_session_id=None,
-        message="ping",
-    )
-
-
-async def thin_harness(tmp_path: Path, mode: PromptMode) -> SwitchHarness:
-    """The family is thin, so a delegate job runs on its facade."""
-    harness = SwitchHarness(tmp_path, mode)
-    write_status(harness.config.state_root, kind="thin", sandboxes=((SANDBOX, "ready"),))
-    return harness
-
-
-def thin_switch(harness: SwitchHarness, **over: Any) -> asyncio.Task[dict[str, Any]]:
-    write_status(
-        harness.config.state_root,
-        kind="thin",
-        sandboxes=((SANDBOX, "ready"), (NEXT_SANDBOX, "ready")),
-    )
-    request = harness.request(**over)
-    return asyncio.create_task(harness.service.switch_sandbox(CAREGIVER, request))
-
-
-async def held_job(harness: SwitchHarness) -> asyncio.Task[dict[str, object]]:
-    job = asyncio.create_task(
-        harness.service.run_delegate(Principal.DOOR_DELEGATE, delegate_to(), DOOR)
-    )
-    await wait_until(lambda: SANDBOX in harness.facades.facades)
-    await wait_until(lambda: len(harness.facades.facades[SANDBOX].held) == 1)
-    return job
 
 
 async def test_a_drain_waits_for_a_job_over_acp(tmp_path: Path) -> None:
     """§5.3 rule 2. A prompt in flight on the outgoing facade finishes."""
-    harness = await thin_harness(tmp_path, PromptMode.HOLD)
-    job = await held_job(harness)
-    switch = thin_switch(harness)
+    harness = SwitchHarness(tmp_path, PromptMode.HOLD)
+    job = await harness.held_job()
+    switch = harness.switch()
     await asyncio.sleep(NOT_YET_S)
 
     assert switch.done() is False
@@ -647,10 +415,11 @@ async def test_a_drain_waits_for_a_job_over_acp(tmp_path: Path) -> None:
 
 async def test_an_interrupt_ends_a_job_over_acp_at_once(tmp_path: Path) -> None:
     """§5.3 rule 3. The outgoing facade stops, and the job answers failed."""
-    harness = await thin_harness(tmp_path, PromptMode.HOLD)
-    job = await held_job(harness)
-    body = await asyncio.wait_for(thin_switch(harness, mode=SwitchMode.INTERRUPT), 2.0)
+    harness = SwitchHarness(tmp_path, PromptMode.HOLD)
+    job = await harness.held_job()
+    body = await asyncio.wait_for(harness.switch(mode=SwitchMode.INTERRUPT), 2.0)
 
+    assert body["outcome"] == SwitchOutcome.INTERRUPTED.value
     assert body["turns_aborted"] == 1
     answer = await asyncio.wait_for(job, 2.0)
     assert answer["status"] == "failed"
@@ -659,9 +428,9 @@ async def test_an_interrupt_ends_a_job_over_acp_at_once(tmp_path: Path) -> None:
 
 
 async def test_a_drain_past_its_deadline_stops_the_job(tmp_path: Path) -> None:
-    harness = await thin_harness(tmp_path, PromptMode.HOLD)
-    job = await held_job(harness)
-    body = await asyncio.wait_for(thin_switch(harness, deadline_s=0), 2.0)
+    harness = SwitchHarness(tmp_path, PromptMode.HOLD)
+    job = await harness.held_job()
+    body = await asyncio.wait_for(harness.switch(deadline_s=0), 2.0)
 
     assert body["outcome"] == SwitchOutcome.DEADLINE_HIT.value
     assert body["turns_aborted"] == 1
@@ -671,10 +440,10 @@ async def test_a_drain_past_its_deadline_stops_the_job(tmp_path: Path) -> None:
 
 async def test_a_new_job_goes_to_the_incoming_facade(tmp_path: Path) -> None:
     """§5.3 rule 1. The incoming link is the one the handshake opened."""
-    harness = await thin_harness(tmp_path, PromptMode.OK)
-    await harness.service.run_delegate(Principal.DOOR_DELEGATE, delegate_to(), DOOR)
-    await asyncio.wait_for(thin_switch(harness), 2.0)
-    answer = await harness.service.run_delegate(Principal.DOOR_DELEGATE, delegate_to(), DOOR)
+    harness = SwitchHarness(tmp_path)
+    await harness.job()
+    await asyncio.wait_for(harness.switch(), 2.0)
+    answer = await harness.job()
 
     assert answer["status"] == "ok"
     assert harness.facades.dials == [SANDBOX, NEXT_SANDBOX]

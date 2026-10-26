@@ -66,7 +66,7 @@ The other directories:
 |---|---|---|
 | `bin/` | The scripts that run on the host, the scripts of CI and the two shell libraries. | [bin/AGENTS.md](bin/AGENTS.md) |
 | `systemd/` | Every unit file. A unit is installed by a script, never by hand. | [systemd/AGENTS.md](systemd/AGENTS.md) |
-| `integration/` | The cross-package suite. It runs the real doors, `attendance`, the chaperone and the playpen together. | [integration/AGENTS.md](integration/AGENTS.md) |
+| `integration/` | The cross-package suites. The process-level suite runs each service as a process. A second suite runs the `caregiver` writers against their readers. | [integration/AGENTS.md](integration/AGENTS.md) |
 | `githooks/` | `pre-commit` and `pre-push`. They run `bin/quality-gate.sh`. | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | `.github/` | The pull request gate, the release run and `!retest`. | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | `docs/` | The writing standard. | [docs/writing-standard.md](docs/writing-standard.md) |
@@ -105,7 +105,7 @@ uv sync                                # every workspace member, one venv
 bin/quality-gate.sh                    # ruff, ruff format, pyright
 uv run pytest -n auto                  # every Python suite in pyproject.toml
 cd playpen && pnpm install && pnpm test && pnpm run typecheck && pnpm run build
-uv run pytest integration/tests -m slow   # the cross-package gate, after pnpm build
+uv run pytest integration/proc -m slow    # the process-level suite, after pnpm build
 ```
 
 No test needs a host, a sandbox, LiteLLM or a model. Every external thing

@@ -8,7 +8,19 @@ from pathlib import Path
 
 import httpx
 import pytest
-from attendance.verify import EXIT_FAILED, EXIT_OK, HTTP_UNAUTHORIZED, main
+from attendance.api import Listener, build_app
+from attendance.auth import TokenBook
+from attendance.service import SessionService
+from attendance.verify import (
+    EXIT_FAILED,
+    EXIT_OK,
+    HTTP_UNAUTHORIZED,
+    PROBE_METHOD,
+    PROBE_PATH,
+    main,
+)
+from attendance_harness import make_config, write_tokens
+from fastapi.testclient import TestClient
 
 SOCKET_NAME = "sessiond.sock"
 
@@ -141,3 +153,17 @@ def test_a_dead_service_behind_a_live_socket_fails(
 
     assert code == EXIT_FAILED
     assert failed(capsys) == ["anonymous read"]
+
+
+def test_the_probe_reaches_a_route_that_refuses_no_bearer(tmp_path: Path) -> None:
+    """The probe must name a route of the real app. An unknown path answers
+    404, and the hook would then fail on a service that is healthy."""
+    write_tokens(tmp_path / "state")
+    tokens = TokenBook(tmp_path / "state")
+    tokens.load()
+    app = build_app(SessionService(make_config(tmp_path)), tokens, Listener.SOCKET)
+
+    with TestClient(app) as client:
+        answer = client.request(PROBE_METHOD, PROBE_PATH)
+
+    assert answer.status_code == HTTP_UNAUTHORIZED

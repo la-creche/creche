@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import os
 import signal
 from collections.abc import Callable
@@ -44,16 +43,11 @@ from proc_board import BoardStack
 from proc_chat import (
     CHAT_PATH,
     MODELS_PATH,
-    SESSIONS_PATH,
-    TURN_SETTLED,
-    await_settled,
     chat_body,
     chat_id,
-    first_chunk,
     message_id,
     owui_headers,
     session_of,
-    until,
 )
 from proc_delegate import TARGET, DelegateStack
 from proc_harness import (
@@ -67,7 +61,6 @@ from proc_harness import (
 from proc_owui import OwuiStack
 from proc_services import SERVICES, Service
 from proc_stack import Stack
-from proc_standins import set_pi_env
 from proc_tree import FAMILY
 from proc_trigger import TriggerStack, hook_path
 
@@ -85,12 +78,17 @@ LISTENERS = (
 NO_ROUTE = "/no-such-route"
 
 CALL_PATH = "/call"
+
+#: The job listing of `attendance` (contract 02 §13.4.2). It reads a JSON
+#: body after the bearer. Its other routes need a facade, which this stack
+#: has not.
+JOBS_PATH = "/dispatch/jobs"
 HEALTH_PATH = "/healthz"
 
 #: For each listener, one route of it and a method that the route does not
 #: take. No method here carries a body.
 WRONG_METHOD = {
-    Service.ATTENDANCE: ("PUT", SESSIONS_PATH),
+    Service.ATTENDANCE: ("GET", JOBS_PATH),
     Service.DOOR_OWUI: ("GET", CHAT_PATH),
     Service.CHAPERONE: ("GET", CALL_PATH),
     Service.NOTICEBOARD: ("DELETE", HEALTH_PATH),
@@ -98,19 +96,12 @@ WRONG_METHOD = {
 }
 
 #: One route that takes `GET`, for each listener that has one. The webhook
-#: listener has none: its one route takes `POST`.
+#: listener and `attendance` have none: each of their routes takes `POST`.
 GET_ROUTE = {
-    Service.ATTENDANCE: SESSIONS_PATH,
     Service.DOOR_OWUI: MODELS_PATH,
     Service.CHAPERONE: HEALTH_PATH,
     Service.NOTICEBOARD: HEALTH_PATH,
 }
-
-#: The listeners whose request creates a session or starts a turn. The
-#: noticeboard does neither. Its save route writes a commit, and no scenario
-#: sends that route a final slash. The chaperone's delegate call runs over
-#: ACP since phase 2 row 18, and this stack has no facade.
-DO_WORK = (Service.ATTENDANCE, Service.DOOR_OWUI, Service.DOOR_TRIGGER)
 
 #: The listeners that read a JSON body, with no scenario for such a body in
 #: another file. `test_proc_trigger_webhooks.py` holds the webhook listener.
@@ -305,50 +296,6 @@ async def test_a_wrong_method_gets_405(listener: Listener) -> None:
     assert answer.status_code == httpx.codes.METHOD_NOT_ALLOWED, answer.text
 
 
-# CONTRACT-QUESTION: contract 02 §3 rule 3 says that a request body is JSON,
-# and it names no header. Reading taken: `attendance` reads the body as JSON
-# when the request has no `Content-Type` header, as it does today. A reading
-# that demands the header costs this scenario, and each caller that sends
-# none.
-#
-# The chaperone answers 422 to such a body today. No scenario holds that.
-async def test_attendance_reads_a_body_with_no_content_type(
-    owui: OwuiStack, attendance_api: httpx.AsyncClient
-) -> None:
-    """Contract 02 §3 rule 3 and §5.1. A create with no such header makes the session."""
-    session = session_of(chat_id())
-    body = json.dumps({"family": FAMILY, "session": session}).encode()
-    request = attendance_api.build_request("POST", SESSIONS_PATH, content=body)
-    assert CONTENT_TYPE not in request.headers, "this scenario sends no such header"
-
-    answer = await attendance_api.send(request)
-
-    assert answer.status_code == httpx.codes.CREATED, answer.text
-    assert answer.json()["session"] == session
-    assert owui.tree.sessions_of(FAMILY) == [session]
-
-
-# CONTRACT-QUESTION: no contract says what the door does with a chat request
-# that has no `Content-Type` header. Reading taken: the door reads the body
-# as JSON and runs the turn, as it does today. A reading that demands the
-# header costs this scenario.
-async def test_the_door_reads_a_body_with_no_content_type(
-    owui: OwuiStack, door: httpx.AsyncClient
-) -> None:
-    """A chat request with no such header runs its turn, and the turn settles."""
-    chat = chat_id()
-    body = json.dumps(chat_body(PROMPT, stream=False)).encode()
-    request = door.build_request(
-        "POST", CHAT_PATH, headers=owui_headers(chat, message_id()), content=body
-    )
-    assert CONTENT_TYPE not in request.headers, "this scenario sends no such header"
-
-    answer = await door.send(request)
-
-    assert answer.status_code == httpx.codes.OK, answer.text
-    await await_settled(owui.tree, session_of(chat))
-
-
 # CONTRACT-QUESTION: contract 02 §14 gives `attendance` the code
 # `bad_request` with status 400 for a malformed field. No contract gives the
 # door or the chaperone an answer to a body that is not JSON: contract 04 §5
@@ -370,33 +317,6 @@ async def test_a_body_that_is_not_json_is_refused(listener: Listener, body: byte
 
     assert answer.is_client_error, f"{answer.status_code}\n{answer.text}"
     assert work_done(listener.stack) == []
-
-
-# CONTRACT-QUESTION: no contract says what a listener does with a route that
-# has one more `/` at its end. Reading taken: such a request creates no
-# session and starts no turn, and the scenario asserts no status. Each
-# service answers 307 today, with a `Location` header that names the path
-# with no final slash, and with no body. The client of this scenario follows
-# no redirect. A reading that serves the path as the route costs this
-# scenario.
-@pytest.mark.parametrize("listener", DO_WORK, indirect=True)
-async def test_a_final_slash_starts_no_work(listener: Listener) -> None:
-    """A route with a final slash creates no session and starts no turn.
-
-    The same request to the route itself starts work. So the final slash is
-    the one reason that the first request started none.
-    """
-    work = work_of(listener.service)
-
-    async with listener.client() as client:
-        assert not client.follow_redirects, "this scenario follows no redirect"
-        await client.post(work.path + FINAL_SLASH, headers=work.headers, json=work.body)
-        started_by_the_slash = work_done(listener.stack)
-        accepted = await client.post(work.path, headers=work.headers, json=work.body)
-
-    assert started_by_the_slash == []
-    assert accepted.is_success, f"{accepted.status_code}\n{accepted.text}"
-    assert work_done(listener.stack) != []
 
 
 # CONTRACT-QUESTION: no contract says what a listener answers to `HEAD` on a
@@ -450,43 +370,6 @@ def test_attendance_starts_on_the_socket_file_of_a_killed_process(
     assert answers_http(address)
 
 
-# CONTRACT-QUESTION: no contract says what the door does with an open stream
-# at a stop. Reading taken: the process ends inside `TimeoutStopSec` of its
-# unit, and the turn settles on the host, as invariant 4 says for a client
-# that goes away. Today the door sends the stream to its end and then ends.
-# A door that cuts the stream at the stop passes this scenario too. A reading
-# that demands the whole stream costs one assertion here.
-async def test_a_stop_with_an_open_stream_ends_the_door(
-    owui: OwuiStack, door: httpx.AsyncClient
-) -> None:
-    """`TimeoutStopSec=30` of the unit. The stop ends the door, and the turn settles."""
-    assert owui.door is not None
-    stopped = owui.door
-    set_pi_env(owui.tree, **LONG_TURN)
-    chat = chat_id()
-    session = session_of(chat)
-
-    async with door.stream(
-        "POST",
-        CHAT_PATH,
-        headers=owui_headers(chat, message_id()),
-        json=chat_body(PROMPT, stream=True),
-    ) as response:
-        assert response.status_code == httpx.codes.OK
-        await first_chunk(response.aiter_text())
-        assert TURN_SETTLED not in owui.tree.journal_kinds(session), "the stream was not open"
-
-        stopped.send(signal.SIGTERM)
-        await until(
-            lambda: stopped.exit_code() is not None,
-            "the door to end with one stream open",
-            STOP_LIMIT_S[Service.DOOR_OWUI],
-        )
-
-    # Rule 13: the journal says that the turn settled. The stream does not.
-    await await_settled(owui.tree, session)
-
-
 # CONTRACT-QUESTION: no contract says what a listener does at `SIGINT`. No
 # unit sends it: `KillSignal=SIGTERM`. Reading taken: the signal ends the
 # listener as `SIGTERM` does, inside `TimeoutStopSec` of its unit, and
@@ -538,16 +421,12 @@ def test_each_stop_limit_is_that_of_its_unit() -> None:
 
 
 def work_of(service: Service) -> Work:
-    """The request of one listener that creates a session or starts a turn.
-
-    The scenario of the final slash also sends each request to the route
-    itself, and the listener accepts it there.
-    """
+    """The request of one listener that reads a JSON body."""
     session = session_of(chat_id())
 
     if service is Service.ATTENDANCE:
-        # Contract 02 §5.1: create or find a session.
-        return Work(SESSIONS_PATH, {}, {"family": FAMILY, "session": session})
+        # Contract 02 §13.4.2: the jobs of one caller family.
+        return Work(JOBS_PATH, {}, {"caller_family": FAMILY})
 
     if service is Service.DOOR_OWUI:
         # One whole turn, and the answer comes after the turn settled.
@@ -563,10 +442,6 @@ def work_of(service: Service) -> Work:
         }
 
         return Work(CALL_PATH, {SESSION_HEADER: session}, body)
-
-    if service is Service.DOOR_TRIGGER:
-        # `docs/rework/spec.md` §7.3: one job of the autonomous family.
-        return Work(hook_path(), {}, None)
 
     raise AssertionError(f"{service.value} takes no request that starts work")
 

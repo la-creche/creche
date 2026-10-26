@@ -18,12 +18,11 @@ from pathlib import Path
 import httpx
 import pytest
 from proc_board import BoardStack
-from proc_chat import chat_id, run_stream
 from proc_harness import Supervisor
 from proc_library import LibraryStack, write_vault
 from proc_owui import OwuiStack
 from proc_services import SERVICES, Service, command_of
-from proc_tree import Tree
+from proc_tree import FAMILY, Tree
 from proc_trigger import REVIEW, TriggerStack, hook_path
 from proc_tui import TuiStack
 
@@ -45,10 +44,13 @@ async def test_an_override_starts_each_service_of_a_topology(
     stack.start()
 
     async with stack.door_client() as door:
-        frames = await run_stream(door, chat_id(), "hello")
+        models = await door.get("/v1/models")
 
-    assert frames.ends_with_done
-    assert frames.error_chunks == []
+    async with stack.attendance_client("door-dispatch") as api:
+        jobs = await api.post("/dispatch/jobs", json={"caller_family": FAMILY})
+
+    assert models.status_code == httpx.codes.OK, models.text
+    assert jobs.status_code == httpx.codes.OK, jobs.text
     assert set(ran.read_text(encoding="utf-8").split()) == {"attendance", "door-owui"}
 
 
