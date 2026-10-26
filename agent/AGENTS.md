@@ -63,3 +63,10 @@ connection and the `auth` of the LiteLLM provider unwrap it.
 - The plane grammar has no vector. `test/planes.test.ts` holds a copy of
   the tables of `playpen/test/planes.test.ts`, and no check compares the
   two copies.
+- Flue adds its tool `task` to every agent, also with no subagent. The
+  model sees `task` beside the `mcp__ch__` tools
+  (`test/chaperone.test.ts`). With no subagent, `task` can run nothing.
+- The playpen framed each PEP tool result as untrusted data (invariant
+  14). Flue's MCP adapter gives a `ch` result to the model as flat text,
+  with no frame. A gated call reaches the model as a tool error with the
+  chaperone's text.
