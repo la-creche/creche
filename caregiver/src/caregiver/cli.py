@@ -39,6 +39,7 @@ from .lan import ConfigError, Port, url
 from .litellm_keys import HttpLiteLLMKeys, LiteLLMError, LiteLLMKeys
 from .loop import LoopConfig, SignalControl, serve
 from .mcp_release import paths_under
+from .policy_fleet import ChaperoneChecker, FleetPolicy, PolicyChecker, PolicyTarget
 from .reconcile import Actors, SpendRead, has_family_file, reconcile_family
 from .released import RELEASED_IMAGES, ReleasedImages
 from .rotate import (
@@ -100,6 +101,7 @@ def _parser() -> argparse.ArgumentParser:
     apply_cmd.add_argument("--state-root", type=Path, default=paths.STATE_ROOT)
     apply_cmd.add_argument("--litellm-base-url", default=None)
     _attendance_args(apply_cmd)
+    _chaperone_args(apply_cmd)
     apply_cmd.add_argument(
         "--write", action="store_true", help="act. Without it, print the plan only"
     )
@@ -140,6 +142,7 @@ def _parser() -> argparse.ArgumentParser:
     rotate_cmd.add_argument("family")
     rotate_cmd.add_argument("--state-root", type=Path, default=paths.STATE_ROOT)
     rotate_cmd.add_argument("--litellm-base-url", default=None)
+    _chaperone_args(rotate_cmd)
     rotate_cmd.add_argument("--scope", choices=[str(one) for one in Scope], default=str(Scope.BOTH))
     rotate_cmd.add_argument(
         "--mode", choices=[str(one) for one in Mode], default=str(Mode.GRACEFUL)
@@ -160,6 +163,7 @@ def _parser() -> argparse.ArgumentParser:
     delete_cmd.add_argument("family")
     delete_cmd.add_argument("--state-root", type=Path, default=paths.STATE_ROOT)
     delete_cmd.add_argument("--litellm-base-url", default=None)
+    _chaperone_args(delete_cmd)
     delete_cmd.add_argument(
         "--egress",
         action="append",
@@ -189,6 +193,7 @@ def _watch_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--state-root", type=Path, default=paths.STATE_ROOT)
     parser.add_argument("--litellm-base-url", default=None)
     _attendance_args(parser)
+    _chaperone_args(parser)
     parser.add_argument("--write", action="store_true", help="act. Without it, print the plan only")
 
 
@@ -268,6 +273,59 @@ def _attendance_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _chaperone_args(parser: argparse.ArgumentParser) -> None:
+    """Where the one `policy.toml` goes, and the binary that checks it.
+    Every verb that moves a grant or a token declares both."""
+    parser.add_argument(
+        "--chaperone-config-dir",
+        type=Path,
+        default=None,
+        help="the configuration directory of chaperone: install.toml and plugins/ of root, "
+        f"and the policy.toml this service writes. Default {paths.CHAPERONE_CONFIG_DIR}, "
+        f"and <state-root>/{paths.CHAPERONE_SCRATCH_DIR} for a --state-root of its own",
+    )
+    parser.add_argument(
+        "--chaperone-bin",
+        type=Path,
+        default=paths.CHAPERONE_BIN,
+        help="the chaperone binary. This service runs its check verb before each write "
+        "of policy.toml, and nothing else",
+    )
+
+
+def _chaperone_config_dir(args: argparse.Namespace) -> Path:
+    """The flag, else the host directory. A run with a `--state-root` of
+    its own writes into that root, never into the directory of the host:
+    the rule of `--released-images` and `--release-root`."""
+    if args.chaperone_config_dir is not None:
+        return Path(args.chaperone_config_dir)
+
+    if args.state_root != paths.STATE_ROOT:
+        return Path(args.state_root) / paths.CHAPERONE_SCRATCH_DIR
+
+    return paths.CHAPERONE_CONFIG_DIR
+
+
+def _fleet_policy(args: argparse.Namespace, checker: PolicyChecker | None) -> FleetPolicy:
+    """The target and the checker of `policy.toml`, or the checker a test
+    injected."""
+    config_dir = _chaperone_config_dir(args)
+    resolved = (
+        checker
+        if checker is not None
+        else ChaperoneChecker(
+            binary=Path(args.chaperone_bin),
+            config_dir=config_dir,
+            plugins_dir=config_dir / paths.CHAPERONE_PLUGINS_DIR,
+        )
+    )
+    return FleetPolicy(PolicyTarget(config_dir), resolved)
+
+
+def _chaperone_line(args: argparse.Namespace) -> str:
+    return f"policy.toml: {_chaperone_config_dir(args)}, checked by {args.chaperone_bin}"
+
+
 def _litellm_url(args: argparse.Namespace) -> str:
     return args.litellm_base_url or url(Port.LITELLM)
 
@@ -300,7 +358,7 @@ def _apply_plan(state_root: Path, family: str, report: Report) -> list[str]:
         if not has_creds
         else "plan: refresh the existing LiteLLM key's model and budget"
     )
-    lines.append("plan: write the grant file and the config mount")
+    lines.append("plan: write the grant file, the table of policy.toml and the config mount")
     sequence = paths.read_sandbox_sequence(state_root, family)
     lines.append(
         f"plan: create sandbox {paths.sandbox_id(family, 1)}"
@@ -311,7 +369,10 @@ def _apply_plan(state_root: Path, family: str, report: Report) -> list[str]:
 
 
 def _apply_once_command(
-    args: argparse.Namespace, driver: SandboxDriver | None, litellm: LiteLLMKeys | None
+    args: argparse.Namespace,
+    driver: SandboxDriver | None,
+    litellm: LiteLLMKeys | None,
+    checker: PolicyChecker | None,
 ) -> int:
     registry = load_registry(args.registry)
     report = registry.reports.get(args.family)
@@ -321,6 +382,8 @@ def _apply_once_command(
 
     for line in _apply_plan(args.state_root, args.family, report):
         print(line)
+
+    print(_chaperone_line(args))
 
     if not args.write:
         return EXIT_OK if report.ok else EXIT_PROBLEM
@@ -337,6 +400,7 @@ def _apply_once_command(
         python_image=args.image_python,
         driver=resolved_driver,
         litellm=resolved_litellm,
+        policy=_fleet_policy(args, checker),
         switch=_optional_switch(args),
     )
     print(f"result: {'ok' if result.ok else 'not ok'}, state={result.status.state}")
@@ -365,6 +429,7 @@ def _actors(
     litellm: LiteLLMKeys | None,
     switch: SwitchClient | None,
     units: UnitWriter | None,
+    checker: PolicyChecker | None,
 ) -> Actors:
     """Build the live clients, or take the fakes a test injected. Nothing
     here is built before `--write`: an `HttpSwitchClient` reads the token
@@ -377,6 +442,7 @@ def _actors(
         switch=switch if switch is not None else _switch_client(args),
         egress=EgressConfig(),
         units=units if units is not None else UserUnits(),
+        policy=_fleet_policy(args, checker),
     )
 
 
@@ -426,6 +492,7 @@ def _watch_plan(args: argparse.Namespace, families: Sequence[str]) -> list[str]:
         f"families: {', '.join(families) if families else '(none)'}",
         f"attendance: {_attendance_address(args)}, "
         f"token {paths.caregiver_token_path(args.state_root)}",
+        _chaperone_line(args),
     ]
 
 
@@ -445,6 +512,7 @@ def _serve_command(
     litellm: LiteLLMKeys | None,
     switch: SwitchClient | None,
     units: UnitWriter | None,
+    checker: PolicyChecker | None,
 ) -> int:
     registry = load_registry(args.registry)
     families = sorted(name for name in registry.reports if has_family_file(registry, name))
@@ -492,7 +560,7 @@ def _serve_command(
         chaperone=_pep_watch(args),
     )
     try:
-        serve(config, _actors(args, driver, litellm, switch, units), control)
+        serve(config, _actors(args, driver, litellm, switch, units, checker), control)
     except SwitchError as exc:
         print(f"caregiver: {exc}", file=sys.stderr)
         return EXIT_PROBLEM
@@ -506,6 +574,7 @@ def _reconcile_once_command(
     litellm: LiteLLMKeys | None,
     switch: SwitchClient | None,
     units: UnitWriter | None,
+    checker: PolicyChecker | None,
 ) -> int:
     registry = load_registry(args.registry)
     if not has_family_file(registry, args.family):
@@ -521,7 +590,7 @@ def _reconcile_once_command(
 
     logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
     try:
-        actors = _actors(args, driver, litellm, switch, units)
+        actors = _actors(args, driver, litellm, switch, units, checker)
     except SwitchError as exc:
         print(f"caregiver: {exc}", file=sys.stderr)
         return EXIT_PROBLEM
@@ -540,7 +609,9 @@ def _reconcile_once_command(
     return EXIT_OK if result.ok else EXIT_PROBLEM
 
 
-def _rotate_command(args: argparse.Namespace, litellm: LiteLLMKeys | None) -> int:
+def _rotate_command(
+    args: argparse.Namespace, litellm: LiteLLMKeys | None, checker: PolicyChecker | None
+) -> int:
     registry = load_registry(args.registry)
     family = valid_family(registry, args.family, state_root=args.state_root)
     serving = serving_family(registry, args.family, state_root=args.state_root)
@@ -554,6 +625,8 @@ def _rotate_command(args: argparse.Namespace, litellm: LiteLLMKeys | None) -> in
     if family is None:
         print("plan: the family file is invalid or refused, so the grants stay as applied")
 
+    print(_chaperone_line(args))
+
     if not args.write:
         return EXIT_OK
 
@@ -564,12 +637,27 @@ def _rotate_command(args: argparse.Namespace, litellm: LiteLLMKeys | None) -> in
         scope=Scope(args.scope), mode=Mode(args.mode), reason=Reason(args.reason)
     )
     try:
-        outcome = _rotated(request, registry, family, serving, args.state_root, resolved)
+        outcome = _rotated(
+            request,
+            registry,
+            family,
+            serving,
+            args.state_root,
+            resolved,
+            _fleet_policy(args, checker),
+        )
     except RotateError as exc:
         print(f"caregiver: {exc}", file=sys.stderr)
         return EXIT_PROBLEM
 
     print(f"result: epoch={outcome.epoch} state={outcome.state} ({outcome.note})")
+    if outcome.policy_error is not None:
+        print(
+            f"caregiver: policy.toml does not hold the new digests: {outcome.policy_error}",
+            file=sys.stderr,
+        )
+        return EXIT_PROBLEM
+
     return EXIT_OK
 
 
@@ -580,16 +668,25 @@ def _rotated(
     serving: ServingFamily | None,
     state_root: Path,
     litellm: LiteLLMKeys,
+    policy: FleetPolicy,
 ) -> RotateOutcome:
     """The family file when it can be applied. The applied definition, and
     the credentials alone, when it cannot."""
     if family is not None:
-        return rotate(request, family, _index_of(registry), state_root=state_root, litellm=litellm)
+        return rotate(
+            request,
+            family,
+            _index_of(registry),
+            state_root=state_root,
+            litellm=litellm,
+            policy=policy,
+            revision=registry.revision,
+        )
 
     if serving is None:
         raise RotateError("no definition serves this family")
 
-    return rotate_serving(request, serving, state_root=state_root, litellm=litellm)
+    return rotate_serving(request, serving, state_root=state_root, litellm=litellm, policy=policy)
 
 
 def _index_of(registry: Registry) -> Index:
@@ -615,6 +712,7 @@ def _read_status_json(state_root: Path, family: str) -> dict[str, Any] | None:
 def _print_status_text(doc: dict[str, Any]) -> None:
     print(f"{doc.get('family')}: {doc.get('state')} (kind={doc.get('kind')})")
     print(f"  registry_rev={doc.get('registry_rev')} applied_rev={doc.get('applied_rev')}")
+    _print_error_line(doc)
     _print_pep_line(doc)
     faults = doc.get("faults")
     if not isinstance(faults, list):
@@ -636,6 +734,18 @@ def _print_fault(fault: dict[str, Any]) -> None:
     message = fault.get("message")
     detail = f": {message}" if isinstance(message, str) and message else ""
     print(f"  fault: {fault.get('code')} (blocks_turns={fault.get('blocks_turns')}){detail}")
+
+
+def _print_error_line(doc: dict[str, Any]) -> None:
+    """The first error of an `invalid` document: a refused field, or the
+    one line of the assembly that left the family out of `policy.toml`."""
+    block = doc.get("validation")
+    if not isinstance(block, dict):
+        return
+
+    first = cast("dict[str, Any]", block).get("first_error")
+    if isinstance(first, str) and first:
+        print(f"  error: {first}")
 
 
 def _print_pep_line(doc: dict[str, Any]) -> None:
@@ -684,17 +794,22 @@ def _delete_plan(state_root: Path, family: str) -> list[str]:
     sequence = paths.read_sandbox_sequence(state_root, family)
     return [
         f"family: {family}",
-        "plan: delete the LiteLLM key, the grant file and creds.json",
+        "plan: delete the LiteLLM key, the grant file, the table of policy.toml and creds.json",
         f"plan: destroy {sequence} sandbox(es)" if sequence else "plan: no sandbox to destroy",
         f"plan: remove {paths.family_dir(state_root, family)}",
     ]
 
 
 def _delete_command(
-    args: argparse.Namespace, driver: SandboxDriver | None, litellm: LiteLLMKeys | None
+    args: argparse.Namespace,
+    driver: SandboxDriver | None,
+    litellm: LiteLLMKeys | None,
+    checker: PolicyChecker | None,
 ) -> int:
     for line in _delete_plan(args.state_root, args.family):
         print(line)
+
+    print(_chaperone_line(args))
 
     if not args.write:
         return EXIT_OK
@@ -703,14 +818,22 @@ def _delete_command(
         litellm if litellm is not None else HttpLiteLLMKeys(_litellm_url(args), _master_key())
     )
     resolved_driver = driver if driver is not None else SbxDriver()
-    delete_family(
+    kept = delete_family(
         args.family,
         state_root=args.state_root,
         driver=resolved_driver,
         litellm=resolved_litellm,
+        policy=_fleet_policy(args, checker),
         egress=tuple(args.egress),
     )
     print("deleted.")
+    if kept is not None:
+        print(
+            f"caregiver: policy.toml still holds the table of the family: {kept}",
+            file=sys.stderr,
+        )
+        return EXIT_PROBLEM
+
     return EXIT_OK
 
 
@@ -721,13 +844,14 @@ def main(
     litellm: LiteLLMKeys | None = None,
     switch: SwitchClient | None = None,
     units: UnitWriter | None = None,
+    checker: PolicyChecker | None = None,
 ) -> int:
-    """The four keyword arguments are for a test to inject fakes. The real
+    """The five keyword arguments are for a test to inject fakes. The real
     CLI never passes them: each `--write` path builds the live client
     itself, once it knows the action will actually run."""
     args = _parser().parse_args(argv)
     try:
-        return _run(args, driver, litellm, switch, units)
+        return _run(args, driver, litellm, switch, units, checker)
     except ConfigError as exc:
         print(f"caregiver: {exc}", file=sys.stderr)
         return EXIT_USAGE
@@ -746,25 +870,26 @@ def _run(
     litellm: LiteLLMKeys | None,
     switch: SwitchClient | None,
     units: UnitWriter | None,
+    checker: PolicyChecker | None,
 ) -> int:
     """The verb `args` names."""
     if args.command == "serve":
-        return _serve_command(args, driver, litellm, switch, units)
+        return _serve_command(args, driver, litellm, switch, units, checker)
 
     if args.command == "reconcile-once":
-        return _reconcile_once_command(args, driver, litellm, switch, units)
+        return _reconcile_once_command(args, driver, litellm, switch, units, checker)
 
     if args.command == "rotate":
-        return _rotate_command(args, litellm)
+        return _rotate_command(args, litellm, checker)
 
     if args.command == "apply-once":
-        return _apply_once_command(args, driver, litellm)
+        return _apply_once_command(args, driver, litellm, checker)
 
     if args.command == "status":
         return _status_command(args)
 
     if args.command == "delete":
-        return _delete_command(args, driver, litellm)
+        return _delete_command(args, driver, litellm, checker)
 
     return EXIT_USAGE  # unreachable: the subparsers group is required=True
 

@@ -46,7 +46,7 @@ from caregiver.paths import status_path
 from caregiver.reconcile import Actors
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
-from caregiver_helpers import toml_text, write_registry
+from caregiver_helpers import fake_policy, toml_text, write_registry
 
 NOW: Final = 1_758_153_590.0
 SERVER: Final = "weather"
@@ -785,7 +785,12 @@ class Bench:
                 heartbeat_s=0.0,
             ),
             Actors(
-                FakeDriver(), FakeLiteLLMKeys(), FakeSwitchClient(), EgressConfig(), FakeUnits()
+                FakeDriver(),
+                FakeLiteLLMKeys(),
+                FakeSwitchClient(),
+                EgressConfig(),
+                FakeUnits(),
+                fake_policy(self.state_root),
             ),
             self.state,
         )

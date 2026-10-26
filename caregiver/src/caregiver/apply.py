@@ -14,7 +14,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from agent_family import FamilyFile, FamilyState, HostFacts, Index, Report, load_registry
+from agent_family import (
+    FamilyFile,
+    FamilyState,
+    HostFacts,
+    Index,
+    Issue,
+    Report,
+    Severity,
+    load_registry,
+)
 
 from . import paths, sandboxes, steps
 from .atomic import read_json
@@ -26,6 +35,8 @@ from .images import SandboxImages
 from .lan import Port, url
 from .litellm_keys import LiteLLMKeys
 from .playpen_env import write_playpen_env
+from .policy_file import PolicyShapeError
+from .policy_fleet import FleetPolicy, LeftOut
 from .sandboxes import SandboxRecord
 from .status import (
     CredentialsBlock,
@@ -69,6 +80,7 @@ def apply_once(
     python_image: str = "",
     driver: SandboxDriver,
     litellm: LiteLLMKeys,
+    policy: FleetPolicy,
     host: HostFacts | None = None,
     egress: EgressConfig | None = None,
     # Contract 05 §4.3 steps 6 and 7. Optional, because `up` runs this verb
@@ -77,8 +89,13 @@ def apply_once(
     switch: SwitchClient | None = None,
 ) -> ApplyResult:
     """Validate, then -- only if the file is valid -- mint or refresh
-    credentials, write the grant file and the config mount, create the
-    sandbox if none exists yet, and publish the status document.
+    credentials, write the grant file, the table of `policy.toml` and the
+    config mount, create the sandbox if none exists yet, and publish the
+    status document.
+
+    A table that `chaperone check` refuses, for its shape or in the
+    assembly, stops the apply as an invalid file does. Its one error line
+    is the first error of the report.
 
     On an invalid file: write the validation report, write a status
     document reporting `invalid`, and stop (invariant 19). Nothing this
@@ -118,9 +135,11 @@ def apply_once(
         images=SandboxImages(base=image, python=python_image),
         driver=driver,
         litellm=litellm,
+        policy=policy,
         faults=faults,
         egress=egress if egress is not None else EgressConfig(),
         switch=switch,
+        never_applied_before=never_applied_before,
     )
 
 
@@ -194,10 +213,25 @@ def _apply_valid(
     images: SandboxImages,
     driver: SandboxDriver,
     litellm: LiteLLMKeys,
+    policy: FleetPolicy,
     faults: tuple[FaultEntry, ...],
     egress: EgressConfig,
     switch: SwitchClient | None,
+    never_applied_before: bool,
 ) -> ApplyResult:
+    def refuse(reason: str) -> ApplyResult:
+        issue = Issue(Severity.ERROR, steps.WHOLE_FILE, reason)
+        refused = Report(report.family, report.file, (*report.issues, issue), FamilyState.INVALID)
+        write_validation_report(paths.validation_path(state_root, family.name), refused)
+        return _stopped_on_invalid(
+            state_root, family.name, refused, registry_revision, faults, never_applied_before
+        )
+
+    try:
+        steps.check_policy(family, index)
+    except PolicyShapeError as refusal:
+        return refuse(str(refusal))
+
     creds, credentials_block, key_faults = steps.ensure_credentials(family, state_root, litellm)
     all_faults = (*faults, *key_faults)
     if creds is None:
@@ -209,6 +243,10 @@ def _apply_valid(
         )
 
     steps.write_grants(family, index, state_root, creds)
+    standing = steps.land_policy(family, index, state_root, creds, policy, rev=registry_revision)
+    if isinstance(standing, LeftOut):
+        return refuse(standing.reason)
+
     steps.write_config(family, state_root, instructions, skills)
     # Contract 05 §6.4, invariant 16: a declared webhook opens a live route
     # with no second, hand-made act. Beside the other credentials, before

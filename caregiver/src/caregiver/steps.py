@@ -37,6 +37,8 @@ from .grants import (
 from .lan import Port, url
 from .litellm_keys import LiteLLMError, LiteLLMKeys
 from .playpen_env import write_playpen_env
+from .policy_file import build_app
+from .policy_fleet import FleetPolicy, Standing, land_app, land_digests
 from .status import CredentialsBlock, LimitsBlock, RotationState, now_rfc3339
 
 #: Contract 01 §3.12, §3.14: what a thin/autonomous family gets when it
@@ -47,6 +49,16 @@ DEFAULT_JOB_TIMEOUT_S: Final = 120
 DEFAULT_MAX_RUNNING_TURNS: Final = 1
 
 log = logging.getLogger("caregiver.steps")
+
+#: The place of an issue that no one field of the family file owns. The
+#: validator of `agent_family` writes the same text for an issue of the
+#: whole file.
+#:
+#: CONTRACT-QUESTION: contract 01 §7 gives `loc` as a field path, and it
+#: has no rule for an issue with no field. The reading taken is the text of
+#: the validator. A reader that takes a field path alone finds no field of
+#: this name. Another text costs this constant and one test.
+WHOLE_FILE: Final = "<document>"
 
 #: Contract 05 §3.3.1: the two services that write a fault file.
 FAULT_SOURCES: Final = ("sessiond", "pep")
@@ -234,6 +246,42 @@ def write_digests(family_name: str, state_root: Path, creds: Credentials) -> boo
 def has_grants(family_name: str, state_root: Path) -> bool:
     """Would `write_digests` find a grant file to keep?"""
     return holds_grants(paths.grant_path(state_root, family_name), family_name)
+
+
+def check_policy(family: FamilyFile, index: Index) -> None:
+    """The shape check of `land_policy`, with no write and no key.
+
+    It raises `PolicyShapeError` for an app table that `chaperone check`
+    would refuse for its shape alone, for example an exposed tool name over
+    50 characters. A pass calls it before the key step, as it calls
+    `check_grants`."""
+    build_app(family, index, (_ONE_DIGEST,), rev="")
+
+
+def land_policy(
+    family: FamilyFile,
+    index: Index,
+    state_root: Path,
+    creds: Credentials,
+    policy: FleetPolicy,
+    *,
+    rev: str,
+) -> Standing:
+    """The table of the family in the one `policy.toml` of the Rust
+    chaperone: its grants from the family file, and each digest that
+    `creds.json` accepts now. `rev` is the registry revision, kept in the
+    note. The JSON grant file of `write_grants` stays beside it."""
+    app = build_app(family, index, _accepted_digests(creds), rev=rev)
+    return land_app(state_root, policy, family.name, app)
+
+
+def policy_digests(
+    family_name: str, state_root: Path, creds: Credentials, policy: FleetPolicy
+) -> Standing | None:
+    """The digests `land_policy` would list, in the fragment as it stands.
+    No family file goes in, so no grant moves. `None` when the family has
+    no fragment."""
+    return land_digests(state_root, policy, family_name, _accepted_digests(creds))
 
 
 def _accepted_digests(creds: Credentials) -> tuple[str, ...]:

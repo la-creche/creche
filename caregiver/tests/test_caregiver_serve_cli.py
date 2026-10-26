@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 from agent_family import FamilyState, load_registry
-from caregiver.cli import EXIT_OK, EXIT_PROBLEM, EXIT_USAGE, main
+from caregiver.cli import EXIT_OK, EXIT_PROBLEM, EXIT_USAGE
 from caregiver.credentials import read_creds, token_sha256
 from caregiver.driver import FakeDriver
 from caregiver.litellm_keys import FakeLiteLLMKeys, key_alias
@@ -22,6 +22,7 @@ from caregiver_helpers import (
     accepted_digests,
     current_digest,
     grants_alone,
+    main,
     published,
     published_epoch,
     write_no_file_dir,

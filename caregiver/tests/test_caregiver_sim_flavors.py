@@ -28,7 +28,7 @@ from caregiver.litellm_keys import FakeLiteLLMKeys
 from caregiver.reconcile import Actors, ReconcileResult, reconcile_family
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
-from caregiver_helpers import write_registry
+from caregiver_helpers import fake_policy, write_registry
 
 from caregiver import paths, sandboxes
 
@@ -80,7 +80,14 @@ class Fleet:
         write_registry(self.registry_root, **overrides)
 
     def run(self) -> ReconcileResult:
-        actors = Actors(self.driver, self.litellm, self.switch, EgressConfig(), self.units)
+        actors = Actors(
+            self.driver,
+            self.litellm,
+            self.switch,
+            EgressConfig(),
+            self.units,
+            fake_policy(self.state_root),
+        )
         return reconcile_family(
             load_registry(self.registry_root),
             FAMILY,

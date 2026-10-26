@@ -30,6 +30,9 @@ POLICY_VERSION: Final = 1
 #: `DIGESTS_MAX`: two digests while a token rotates.
 DIGESTS_MAX: Final = 2
 
+#: The key of the token digests in an app table.
+DIGESTS_KEY: Final = "token_sha256"
+
 #: `UpstreamBound` and `InflightLimit`.
 TIMEOUT_S_MIN: Final = 1
 TIMEOUT_S_MAX: Final = 120
@@ -211,15 +214,7 @@ class App:
     note: str | None = None
 
     def __post_init__(self) -> None:
-        if not 1 <= len(self.token_sha256) <= DIGESTS_MAX:
-            raise PolicyShapeError(f"an app needs 1 to {DIGESTS_MAX} token digests")
-
-        if len(set(self.token_sha256)) != len(self.token_sha256):
-            raise PolicyShapeError("an app holds one token digest twice")
-
-        for digest in self.token_sha256:
-            _check_name(digest, _DIGEST, "a token digest")
-
+        _check_digests(self.token_sha256)
         for name in self.grants:
             _check_plugin(name)
 
@@ -233,6 +228,17 @@ class PolicyFile:
     def __post_init__(self) -> None:
         for app_id in self.apps:
             _check_name(app_id, _SLUG, "an app ID")
+
+
+def _check_digests(digests: tuple[str, ...]) -> None:
+    if not 1 <= len(digests) <= DIGESTS_MAX:
+        raise PolicyShapeError(f"an app needs 1 to {DIGESTS_MAX} token digests")
+
+    if len(set(digests)) != len(digests):
+        raise PolicyShapeError("an app holds one token digest twice")
+
+    for digest in digests:
+        _check_name(digest, _DIGEST, "a token digest")
 
 
 def is_app_id(text: str) -> bool:
@@ -470,7 +476,7 @@ def render_app(app_id: str, app: App) -> str:
     if app.note is not None:
         lines.append(f"note = {_string(app.note)}")
 
-    lines.append(f"token_sha256 = {_array(app.token_sha256)}")
+    lines.append(render_digests(app.token_sha256))
     limits = app.limits
     lines.append(
         f"limits = {{ calls_per_minute = {limits.calls_per_minute}, "
@@ -489,6 +495,13 @@ def render_app(app_id: str, app: App) -> str:
             lines.append(f"enqueue_targets = {_array(attendance.enqueue_targets)}")
 
     return "\n".join(lines) + "\n"
+
+
+def render_digests(digests: tuple[str, ...]) -> str:
+    """The `token_sha256` line of an app table. `policy_fleet.py` puts it
+    into a fragment when a rotation moves the digests and no grant."""
+    _check_digests(digests)
+    return f"{DIGESTS_KEY} = {_array(digests)}"
 
 
 def _grant_lines(table: str, grant: UpstreamGrant) -> list[str]:

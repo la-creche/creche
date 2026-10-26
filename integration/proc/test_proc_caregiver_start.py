@@ -31,6 +31,7 @@ from proc_caregiver import (
     WRITE_FLAG,
     CaregiverStack,
     caregiver_env,
+    chaperone_flags,
     litellm_url,
     serve_words,
     text_of,
@@ -333,6 +334,7 @@ def _delete(stack: CaregiverStack) -> Finished:
         str(stack.tree.state_root),
         "--litellm-base-url",
         litellm_url(stack.litellm_port),
+        *chaperone_flags(stack.tree),
         WRITE_FLAG,
     )
 

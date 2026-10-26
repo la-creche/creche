@@ -37,13 +37,16 @@ from caregiver.grants import (
     write_grant_file,
 )
 from caregiver.litellm_keys import FakeLiteLLMKeys
-from caregiver.reconcile import WHOLE_FILE, Actors, ReconcileResult, reconcile_family
+from caregiver.policy_file import EXPOSED_NAME_MAX
+from caregiver.reconcile import Actors, ReconcileResult, reconcile_family
+from caregiver.steps import WHOLE_FILE
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
 from caregiver_helpers import (
     UNREADABLE_JSON,
     accepted_digests,
     current_digest,
+    fake_policy,
     published,
     toml_text,
     write_registry,
@@ -381,9 +384,14 @@ MANY_TOOLS = tuple(
 TOO_LARGE_NOTE = "refused: grant file over the cap"
 
 #: The count of characters of each name of `fill_tool`. One such name is one
-#: line of 60 bytes in a grant file, so a last name of 60 characters or less
-#: gives the file each size.
-FILL_CHARS = 50
+#: line of a grant file. `tools_for` makes names longer, up to
+#: `FILL_MAX_CHARS`, to give the file each size.
+FILL_CHARS = 36
+
+#: The longest name of `tools_for`. The exposed name `<server>__<tool>` of
+#: `policy.toml` has 50 characters at most, and the longest server name of
+#: `server_names` is `kagi-NN`.
+FILL_MAX_CHARS = EXPOSED_NAME_MAX - len(f"{SERVER}-00__")
 
 #: The most tools of one server file: the cap of root's grammar on a TOML
 #: server file. `Host.serve` puts each group of this many tools in a server
@@ -462,7 +470,14 @@ class Host:
         self.write_family()
 
     def one_pass(self) -> ReconcileResult:
-        actors = Actors(self.driver, self.litellm, FakeSwitchClient(), EgressConfig(), FakeUnits())
+        actors = Actors(
+            self.driver,
+            self.litellm,
+            FakeSwitchClient(),
+            EgressConfig(),
+            FakeUnits(),
+            fake_policy(self.state_root),
+        )
         return reconcile_family(
             load_registry(self.registry_root),
             "chat",
@@ -542,7 +557,7 @@ class Host:
         tools = [fill_tool(index) for index in range(count)]
         rest = size - measured(tools)
         for place in range(len(tools)):
-            more = min(rest, TOOL_CHARS - FILL_CHARS)
+            more = min(rest, FILL_MAX_CHARS - FILL_CHARS)
             tools[place] += "f" * more
             rest -= more
 
@@ -589,7 +604,14 @@ def test_a_pass_keeps_the_last_grant_file_when_the_next_one_is_over_the_cap(host
     assert result.status.state is FamilyState.INVALID
     assert result.note == TOO_LARGE_NOTE
     assert host.grant_path.read_bytes() == before
-    assert list(host.grant_path.parent.iterdir()) == [host.grant_path]
+    names = sorted(one.name for one in host.grant_path.parent.iterdir())
+    assert names == sorted(
+        [
+            host.grant_path.name,
+            paths.policy_fragment_path(host.state_root, "chat").name,
+            paths.policy_lock_path(host.state_root).name,
+        ]
+    )
     assert result.status.applied_rev == first.status.registry_rev
     assert result.status.validation.never_valid is False
     assert [one.id for one in result.status.sandboxes] == ["chat-s1"]

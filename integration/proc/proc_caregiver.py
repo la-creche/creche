@@ -8,6 +8,7 @@
       | HTTP, loopback port                 the LiteLLM stand-in
       | writes the status document, the grant file, the credential file,
       | the config mount and the env file of each sandbox
+      | runs the stand-in of `chaperone check`, then writes `policy.toml`
       | POST /internal/switch-sandbox over the Unix socket
       v
     attendance and the stand-ins      `proc_stack.py`
@@ -56,6 +57,8 @@ from proc_services import Service
 from proc_stack import CLIENT_TIMEOUT, Stack, base_env
 from proc_standins import (
     MASTER_KEY,
+    chaperone_check_program,
+    install_chaperone_check,
     install_pi,
     install_sbx_verbs,
     install_systemctl,
@@ -143,6 +146,17 @@ def watch_flags(tree: Tree, litellm_port: int) -> list[str]:
         str(tree.attendance_socket),
         "--litellm-base-url",
         litellm_url(litellm_port),
+        *chaperone_flags(tree),
+    ]
+
+
+def chaperone_flags(tree: Tree) -> list[str]:
+    """Where `caregiver` writes `policy.toml`, and the stand-in that checks it."""
+    return [
+        "--chaperone-config-dir",
+        str(tree.chaperone_config_dir),
+        "--chaperone-bin",
+        str(chaperone_check_program(tree)),
     ]
 
 
@@ -197,6 +211,7 @@ class CaregiverStack(Stack):
         install_sbx_verbs(self.tree)
         install_pi(self.tree)
         install_systemctl(self.tree)
+        install_chaperone_check(self.tree)
 
     def start_litellm(self) -> None:
         """Start the LiteLLM stand-in on a free loopback port, and wait for it."""

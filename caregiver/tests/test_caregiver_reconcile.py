@@ -35,7 +35,7 @@ from caregiver.reconcile import (
 )
 from caregiver.switch import FakeSwitchClient, SwitchRequest
 from caregiver.timers import FakeUnits
-from caregiver_helpers import toml_text, write_no_file_dir, write_registry
+from caregiver_helpers import fake_policy, toml_text, write_no_file_dir, write_registry
 
 from caregiver import paths, sandboxes
 
@@ -112,7 +112,14 @@ class Fleet:
         image: str = IMAGE,
         stopped: Stopped = Stopped.NO,
     ) -> ReconcileResult:
-        actors = Actors(self.driver, self.litellm, self.switch, EgressConfig(), self.units)
+        actors = Actors(
+            self.driver,
+            self.litellm,
+            self.switch,
+            EgressConfig(),
+            self.units,
+            fake_policy(self.state_root),
+        )
         return reconcile_family(
             load_registry(self.registry_root),
             FAMILY,
@@ -578,7 +585,14 @@ def test_a_directory_with_no_family_file_has_no_pass(fleet: Fleet) -> None:
     caller gets the answer for a name that the registry does not hold, and
     the pass writes nothing."""
     write_no_file_dir(fleet.registry_root)
-    actors = Actors(fleet.driver, fleet.litellm, fleet.switch, EgressConfig(), fleet.units)
+    actors = Actors(
+        fleet.driver,
+        fleet.litellm,
+        fleet.switch,
+        EgressConfig(),
+        fleet.units,
+        fake_policy(fleet.state_root),
+    )
 
     with pytest.raises(FamilyNotFoundError):
         reconcile_family(
@@ -1159,7 +1173,14 @@ def test_a_registry_file_of_another_name_moves_no_copy(fleet: Fleet, name: str) 
     fleet.write(description="Changed.")
     registry = load_registry(fleet.registry_root)
     report = replace(registry.reports[FAMILY], file=f"families/{FAMILY}/{name}")
-    actors = Actors(fleet.driver, fleet.litellm, fleet.switch, EgressConfig(), fleet.units)
+    actors = Actors(
+        fleet.driver,
+        fleet.litellm,
+        fleet.switch,
+        EgressConfig(),
+        fleet.units,
+        fake_policy(fleet.state_root),
+    )
 
     reconcile_family(
         replace(registry, reports={**registry.reports, FAMILY: report}),

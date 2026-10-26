@@ -21,7 +21,7 @@ from caregiver.egress import (
 )
 from caregiver.lan import LAN_ADDRESS_ENV
 from caregiver.litellm_keys import FakeLiteLLMKeys
-from caregiver_helpers import write_registry
+from caregiver_helpers import fake_policy, write_registry
 
 FAMILY: str = "chat"
 
@@ -44,6 +44,7 @@ def apply_family(
         registry_root,
         FAMILY,
         state_root=state_root,
+        policy=fake_policy(state_root),
         image="sha256:deadbeef",
         driver=driver if driver is not None else FakeDriver(),
         litellm=FakeLiteLLMKeys(),

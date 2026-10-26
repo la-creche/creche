@@ -39,6 +39,7 @@ from caregiver_helpers import (
     UNREADABLE_JSON,
     NoText,
     chat_family,
+    fake_policy,
     published,
     write_registry,
 )
@@ -746,7 +747,12 @@ def test_a_pass_publishes_an_absolute_env_file_path_for_a_ready_sandbox(
     the row of the ledger file holds none."""
     registry_root = write_registry(tmp_path / "registry")
     actors = Actors(
-        FakeDriver(), FakeLiteLLMKeys(), FakeSwitchClient(), EgressConfig(), FakeUnits()
+        FakeDriver(),
+        FakeLiteLLMKeys(),
+        FakeSwitchClient(),
+        EgressConfig(),
+        FakeUnits(),
+        fake_policy(state_root),
     )
 
     def one_pass() -> None:

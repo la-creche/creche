@@ -34,6 +34,7 @@ from caregiver_helpers import (
     OLD_TOKEN,
     REFUSED_TOOLS,
     chat_family,
+    fake_policy,
     family_toml,
     grants_alone,
     write_registry,
@@ -107,7 +108,15 @@ def grant_digests(state_root: Path) -> list[str]:
 
 def turn(state_root: Path, family: FamilyFile, litellm: FakeLiteLLMKeys, **fields: object):  # type: ignore[no-untyped-def]
     request = RotateRequest(**fields)  # type: ignore[arg-type]
-    return rotate(request, family, Index(), state_root=state_root, litellm=litellm)
+    return rotate(
+        request,
+        family,
+        Index(),
+        state_root=state_root,
+        policy=fake_policy(state_root),
+        revision="reg-rotate",
+        litellm=litellm,
+    )
 
 
 # --- the epoch ----------------------------------------------------------------------
@@ -233,10 +242,12 @@ def test_the_overlap_ends_when_its_grace_runs_out(
         family,
         Index(),
         state_root=state_root,
+        policy=fake_policy(state_root),
+        revision="reg-rotate",
         litellm=litellm,
         grace_s=-1,
     )
-    assert settle(FAMILY, state_root=state_root) is True
+    assert settle(FAMILY, state_root=state_root, policy=fake_policy(state_root)) is True
     assert grant_digests(state_root) == [token_sha256(_token_of(state_root))]
 
 
@@ -245,7 +256,7 @@ def test_an_overlap_that_is_still_open_is_left_alone(
 ) -> None:
     start(state_root, litellm)
     turn(state_root, family, litellm)
-    assert settle(FAMILY, state_root=state_root) is False
+    assert settle(FAMILY, state_root=state_root, policy=fake_policy(state_root)) is False
     assert len(grant_digests(state_root)) == 2
 
 
@@ -253,7 +264,7 @@ def test_settling_a_family_that_never_rotated_does_nothing(
     state_root: Path, family: FamilyFile, litellm: Watching
 ) -> None:
     start(state_root, litellm)
-    assert settle(FAMILY, state_root=state_root) is False
+    assert settle(FAMILY, state_root=state_root, policy=fake_policy(state_root)) is False
 
 
 def test_a_settle_moves_the_digests_and_no_grant(
@@ -267,7 +278,7 @@ def test_a_settle_moves_the_digests_and_no_grant(
     grants = grants_alone(state_root)
     end_overlap(state_root)
 
-    assert settle(FAMILY, state_root=state_root) is True
+    assert settle(FAMILY, state_root=state_root, policy=fake_policy(state_root)) is True
     assert grant_digests(state_root) == [token_sha256(_token_of(state_root))]
     assert grants_alone(state_root) == grants
 
@@ -281,7 +292,7 @@ def test_a_settle_with_no_grant_file_leaves_the_overlap_on_record(
     end_overlap(state_root)
     before = paths.creds_path(state_root, FAMILY).read_bytes()
 
-    assert settle(FAMILY, state_root=state_root) is False
+    assert settle(FAMILY, state_root=state_root, policy=fake_policy(state_root)) is False
     assert paths.creds_path(state_root, FAMILY).read_bytes() == before
 
 
@@ -357,7 +368,11 @@ def test_a_serving_rotation_moves_the_digests_and_no_grant(
     applied(state_root)
 
     outcome = rotate_serving(
-        RotateRequest(), serving(tmp_path, state_root), state_root=state_root, litellm=litellm
+        RotateRequest(),
+        serving(tmp_path, state_root),
+        state_root=state_root,
+        policy=fake_policy(state_root),
+        litellm=litellm,
     )
 
     assert outcome.epoch == 3
@@ -374,7 +389,11 @@ def test_a_serving_rotation_mints_the_key_the_applied_definition_asks_for(
     applied(state_root)
 
     rotate_serving(
-        RotateRequest(), serving(tmp_path, state_root), state_root=state_root, litellm=litellm
+        RotateRequest(),
+        serving(tmp_path, state_root),
+        state_root=state_root,
+        policy=fake_policy(state_root),
+        litellm=litellm,
     )
 
     assert litellm.budgets[key_alias(FAMILY)] == (["agent-router"], 15)
@@ -390,7 +409,11 @@ def test_a_serving_rotation_reads_the_grant_file_before_it_deletes_the_key(
 
     with pytest.raises(RotateError):
         rotate_serving(
-            RotateRequest(), serving(tmp_path, state_root), state_root=state_root, litellm=litellm
+            RotateRequest(),
+            serving(tmp_path, state_root),
+            state_root=state_root,
+            policy=fake_policy(state_root),
+            litellm=litellm,
         )
 
     assert litellm.order == []
@@ -406,6 +429,7 @@ def test_a_serving_key_rotation_writes_no_grant_file(
         RotateRequest(scope=Scope.KEY),
         serving(tmp_path, state_root),
         state_root=state_root,
+        policy=fake_policy(state_root),
         litellm=litellm,
     )
 
@@ -430,7 +454,11 @@ def test_a_grant_file_that_goes_away_mid_rotation_is_not_rendered_again(
     applied(state_root)
 
     outcome = rotate_serving(
-        RotateRequest(), serving(tmp_path, state_root), state_root=state_root, litellm=litellm
+        RotateRequest(),
+        serving(tmp_path, state_root),
+        state_root=state_root,
+        policy=fake_policy(state_root),
+        litellm=litellm,
     )
 
     assert outcome.epoch == 3

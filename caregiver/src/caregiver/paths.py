@@ -32,6 +32,23 @@ INDEX_ROOT: Final = Path("/srv/agents/state/index")
 #: The mode of a family mount that `index_root` takes.
 _READ_ONLY: Final = "ro"
 
+#: The configuration directory of the Rust chaperone: `install.toml` and
+#: `plugins/` of root, and the `policy.toml` that this service writes. It
+#: is `root:agents 1775`, so this service replaces its own file and no
+#: file of root.
+CHAPERONE_CONFIG_DIR: Final = Path("/etc/chaperone")
+
+#: The binary that the `chaperone` component installs. This service runs
+#: its `check` verb only.
+CHAPERONE_BIN: Final = Path("/opt/components/chaperone/bin/chaperone")
+
+#: The plugin tree inside the configuration directory of chaperone.
+CHAPERONE_PLUGINS_DIR: Final = "plugins"
+
+#: The configuration directory of chaperone for a run with a
+#: `--state-root` of its own, inside that root.
+CHAPERONE_SCRATCH_DIR: Final = "chaperone"
+
 FAMILIES_DIR: Final = "families"
 GRANTS_DIR: Final = "grants"
 FAULTS_DIR: Final = "faults"

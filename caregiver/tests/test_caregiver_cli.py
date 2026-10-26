@@ -7,11 +7,11 @@ import json
 from pathlib import Path
 
 import pytest
-from caregiver.cli import EXIT_OK, EXIT_PROBLEM, EXIT_USAGE, main
+from caregiver.cli import EXIT_OK, EXIT_PROBLEM, EXIT_USAGE
 from caregiver.credentials import read_creds
 from caregiver.driver import DriverError, FakeDriver
 from caregiver.litellm_keys import FakeLiteLLMKeys, LiteLLMError
-from caregiver_helpers import UNREADABLE_JSON, write_no_file_dir, write_registry
+from caregiver_helpers import UNREADABLE_JSON, main, write_no_file_dir, write_registry
 
 from caregiver import paths
 

@@ -36,6 +36,7 @@ from caregiver.driver import FakeDriver, SandboxSpec
 from caregiver.egress import EgressConfig
 from caregiver.litellm_keys import FakeLiteLLMKeys
 from caregiver.loop import LoopConfig, LoopState, Passes, look
+from caregiver.policy_fleet import FakeChecker, FleetPolicy, PolicyTarget
 from caregiver.reconcile import Actors
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
@@ -98,7 +99,14 @@ def _converge(registry: Path, state_root: Path, driver: FakeDriver) -> None:
         image=IMAGE,
         python_image=PYTHON_IMAGE,
     )
-    actors = Actors(driver, FakeLiteLLMKeys(), FakeSwitchClient(), EgressConfig(), FakeUnits())
+    actors = Actors(
+        driver,
+        FakeLiteLLMKeys(),
+        FakeSwitchClient(),
+        EgressConfig(),
+        FakeUnits(),
+        FleetPolicy(PolicyTarget(state_root.parent / "chaperone"), FakeChecker()),
+    )
     with Passes(config.max_concurrent_passes, grace_s=WAIT_S) as passes:
         look(config, actors, LoopState(), passes)
         assert passes.drain(WAIT_S) is True

@@ -995,7 +995,7 @@ def _pass(
 
     def run() -> None:
         try:
-            _settle_rotation(config, name)
+            _settle_rotation(config, actors, name)
             images = images_now(config)
             result = reconcile_family(
                 registry,
@@ -1053,7 +1053,7 @@ def _pass(
     return run
 
 
-def _settle_rotation(config: LoopConfig, name: str) -> None:
+def _settle_rotation(config: LoopConfig, actors: Actors, name: str) -> None:
     """Drop a rotation overlap whose grace has run out (contract 05 §6.3
     step 5). A grace period is a fact over time, which is exactly what a
     one-shot verb cannot hold and this loop can.
@@ -1066,7 +1066,7 @@ def _settle_rotation(config: LoopConfig, name: str) -> None:
     reads §3.1 as the family's DEFINITION: the settle moves the digests
     and no grant, so it runs whatever the file says. Reading §3.1 as every
     file would keep the previous token accepted until the file is valid."""
-    settle(name, state_root=config.state_root)
+    settle(name, state_root=config.state_root, policy=actors.policy)
 
 
 def _backoff(slot: FamilyLoop, name: str) -> Backoff:
@@ -1178,6 +1178,7 @@ def _delete_one(config: LoopConfig, actors: Actors, name: str) -> None:
         state_root=config.state_root,
         driver=actors.driver,
         litellm=actors.litellm,
+        policy=actors.policy,
         egress=tuple(applied.family.egress) if applied is not None else (),
         egress_config=actors.egress,
     )

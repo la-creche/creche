@@ -235,6 +235,12 @@ class Tree:
         return self.root / "standins"
 
     @property
+    def chaperone_config_dir(self) -> Path:
+        """The configuration directory of chaperone: `install.toml`, and the
+        `policy.toml` that `caregiver` writes."""
+        return self.root / "etc-chaperone"
+
+    @property
     def registry_root(self) -> Path:
         """The registry that `caregiver` watches (contract 01 §1)."""
         return self.root / "registry"

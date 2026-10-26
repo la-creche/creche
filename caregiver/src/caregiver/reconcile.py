@@ -58,6 +58,8 @@ from .grants import GrantFileTooLargeError
 from .images import SandboxImages
 from .litellm_keys import SPEND_WINDOW, LiteLLMError, LiteLLMKeys, Spend
 from .mcp_wire import McpReport
+from .policy_file import PolicyShapeError
+from .policy_fleet import FleetPolicy, LeftOut
 from .sandboxes import SandboxRecord
 from .status import (
     CredentialsBlock,
@@ -70,7 +72,7 @@ from .status import (
     write_status,
     write_validation_report,
 )
-from .steps import KeyRefresh
+from .steps import WHOLE_FILE, KeyRefresh
 from .switch import SwitchClient, SwitchError, SwitchRequest
 from .timers import TimerOutcome, UnitWriter, apply_timers
 from .webhook_tokens import WebhookToken, ensure_webhooks
@@ -110,15 +112,6 @@ TIMERS_STEP: Final = "write_timers"
 #: It never fires, and a schedule that does not run leaves no other trace.
 TIMER_ENABLE_FAILED: Final = "timer_enable_failed"
 
-#: The place of an issue that no one field of the family file owns. The
-#: validator of `agent_family` writes the same text for an issue of the
-#: whole file.
-#:
-#: CONTRACT-QUESTION: contract 01 §7 gives `loc` as a field path, and it
-#: has no rule for an issue with no field. The reading taken is the text of
-#: the validator. A reader that takes a field path alone finds no field of
-#: this name. Another text costs this constant and one test.
-WHOLE_FILE: Final = "<document>"
 
 #: Contract 05 §4.3 step 5b. `_replace` calls this with the steps it has
 #: run so far, to publish the status document BEFORE the §5 call. The
@@ -202,6 +195,7 @@ class Actors:
     switch: SwitchClient
     egress: EgressConfig
     units: UnitWriter
+    policy: FleetPolicy
 
 
 @dataclass(frozen=True)
@@ -220,6 +214,9 @@ class ReconcileResult:
     @property
     def ok(self) -> bool:
         return self.status.state is FamilyState.IN_SYNC
+
+    def noted(self, note: str) -> ReconcileResult:
+        return replace(self, note=note)
 
     def log_line(self) -> str:
         steps_text = ",".join(self.ran) if self.ran else "-"
@@ -346,6 +343,15 @@ def _converge(
                 state_root, report, registry.revision, folded, applied, chaperone, refusal
             )
 
+    # The app table of `policy.toml` has a shape check of its own, and it
+    # comes before the key step for the same reason.
+    try:
+        steps.check_policy(family, index)
+    except PolicyShapeError as refusal:
+        return _refuse(
+            state_root, report, registry.revision, folded, applied, chaperone, str(refusal)
+        ).noted("refused: app table of policy.toml")
+
     refresh = KeyRefresh.UPDATE if _needs(diff, Step.UPDATE_KEY) else KeyRefresh.KEEP
     creds, block, key_faults = steps.ensure_credentials(family, state_root, actors.litellm, refresh)
     faults.extend(key_faults)
@@ -385,6 +391,19 @@ def _converge(
             )
 
         ran.append(str(Step.WRITE_GRANTS))
+
+    # The JSON grant file above serves the Python PEP. The table below
+    # serves the Rust chaperone. A family that the assembly leaves out has
+    # no table, so the chaperone refuses each of its calls: it reads
+    # `invalid` with the one error line of the assembly, and the pass goes
+    # no further.
+    standing = steps.land_policy(
+        family, index, state_root, creds, actors.policy, rev=registry.revision
+    )
+    if isinstance(standing, LeftOut):
+        return _refuse(
+            state_root, report, registry.revision, folded, applied, chaperone, standing.reason
+        ).noted("refused: left out of policy.toml")
 
     if steps.write_config(family, state_root, *_config_text(registry, family)):
         ran.append(str(Step.WRITE_CONFIG))
@@ -859,7 +878,22 @@ def _refuse_grant_file(
     (contract 05 §3.1), although its family file has no error. The other
     reading is a fault, and contract 05 §3.3 has no code for it. A new code
     costs each reader with a closed set of codes."""
-    issue = Issue(Severity.ERROR, WHOLE_FILE, str(refusal))
+    kept = _refuse(state_root, report, revision, folded, applied, chaperone, str(refusal))
+    return kept.noted("refused: grant file over the cap")
+
+
+def _refuse(
+    state_root: Path,
+    report: Report,
+    revision: str,
+    folded: tuple[FaultEntry, ...],
+    applied: AppliedState | None,
+    chaperone: PepReport,
+    reason: str,
+) -> ReconcileResult:
+    """One more error of the validation report, and the family reads
+    `invalid`. The last applied state keeps serving."""
+    issue = Issue(Severity.ERROR, WHOLE_FILE, reason)
     refused = Report(
         family=report.family,
         file=report.file,
@@ -867,8 +901,7 @@ def _refuse_grant_file(
         state=FamilyState.INVALID,
     )
     write_validation_report(paths.validation_path(state_root, report.family), refused)
-    kept = _keep_last_good(state_root, report.family, refused, revision, folded, applied, chaperone)
-    return replace(kept, note="refused: grant file over the cap")
+    return _keep_last_good(state_root, report.family, refused, revision, folded, applied, chaperone)
 
 
 # --- publishing ---------------------------------------------------------------

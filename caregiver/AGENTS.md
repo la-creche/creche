@@ -59,14 +59,17 @@ host where something has gone wrong.
   In `serve`, their error ends in a handler of the loop. In each other
   verb it ends in `cli.main`: one line, and exit code 1.
 - Credentials die before processes. `delete.py` removes the LiteLLM key, then
-  the grant file, then `creds.json`, then the sandboxes. `test_delete.py`
-  checks the order from inside the fake driver.
+  the grant file, then the fragment of `policy.toml` and its table, then
+  `creds.json`, then the sandboxes. `test_delete.py` checks the order from
+  inside the fake driver.
 - No secret on argv, in a URL or in a log line. The master key comes from
   `LITELLM_MASTER_KEY` in the environment.
 - A verb that acts refuses to start with no master key. It writes one
   line that names the variable, and its exit code is 1.
 - The chaperone watch probes once per interval for the whole fleet. A probe
-  that raises, hangs or answers 503 is a probe that did not answer. A moved
+  answers only for a 200 whose body is a JSON object with `ok` true, the
+  `{"ok":true}` of the Rust chaperone. A probe that raises, hangs, answers
+  503 or answers another body is a probe that did not answer. A moved
   verdict forces a pass.
 - `chaperone.watch: off` is a value, not a silence. `status` prints it.
 - Root's answer to a release request is said, not only logged. `mcp_release`
@@ -214,8 +217,9 @@ the delete again when the backoff ends or the registry changes.
 
 ## `policy_file.py`
 
-This module writes `policy.toml`, the policy file of the Rust chaperone. No
-pass calls it yet.
+This module writes `policy.toml`, the policy file of the Rust chaperone.
+`steps.land_policy` calls `build_app`, and `policy_fleet.py` calls
+`render_app`.
 
 1. Each type mirrors one Rust type of `crates/core/src/policy.rs` in the
    chaperone repository. Add no field that the Rust type does not have.
@@ -246,8 +250,9 @@ pass calls it yet.
 
 ## `policy_fleet.py`
 
-This module writes the one `policy.toml` of the fleet. No pass calls it
-yet.
+This module writes the one `policy.toml` of the fleet. Each verb that
+moves a grant or a token calls it: a pass, `apply-once`, `rotate`, the
+settle of the loop and `delete`.
 
 1. Each family has one fragment, `grants/<family>.toml` in the state root:
    the text of `render_app`. `write_fragment` writes it. `remove_fragment`
@@ -277,6 +282,38 @@ yet.
 10. In the configuration directory of chaperone, this module writes the
     two names of `TargetFile` and nothing else. `install.toml` belongs to
     root.
+11. `land_app` writes the fragment when its table moved, the note aside.
+    It assembles when the fragment moved or when `policy.toml` does not
+    hold the fragment. A pass that moves nothing runs no check.
+12. `land_app` and `land_digests` answer `Held` or `LeftOut`, from what
+    `policy.toml` holds after the assembly. `LeftOut` carries one line:
+    the error of the family, or the error of the assembly.
+13. `land_digests` moves the `token_sha256` line of a fragment and no
+    other key. `rotate_serving` and `settle` call it, because they take no
+    family file.
+14. `withdraw_app` removes the fragment, then assembles. It answers why
+    `policy.toml` still holds the table, or `None`.
+
+### The wire
+
+1. Each pass writes the JSON grant file and the table of `policy.toml`.
+   The Python PEP reads the JSON file until the cutover.
+2. A pass checks the shape of the table before the key step, with
+   `steps.check_policy`. A `PolicyShapeError` is one error of the
+   validation report, and the pass runs no step.
+3. A family that `land_policy` leaves out reads `invalid`. Its first error
+   is the one line of `LeftOut`. The pass stops after the grant step, and
+   the applied snapshot does not move. Each later pass assembles again, so
+   the family comes back once the check passes.
+4. A rotation writes the digests into both files: two during the overlap,
+   one after. A rotation or a settle that `policy.toml` does not take is
+   one error line. It does not undo `creds.json`.
+5. `apply-once` refuses as a pass does, and publishes `invalid`.
+6. `--chaperone-config-dir` names the directory, `/etc/chaperone` by
+   default. A run with a `--state-root` of its own writes
+   `<state-root>/chaperone` instead. `--chaperone-bin` names the binary of
+   the check, `/opt/components/chaperone/bin/chaperone` by default.
+   `creche-caregiver.service` gives both.
 
 ## `mcp_release.py`
 

@@ -32,7 +32,7 @@ from caregiver.mcp_wire import SECRET_TWICE, McpReport
 from caregiver.reconcile import Actors
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
-from caregiver_helpers import toml_text, write_registry
+from caregiver_helpers import fake_policy, toml_text, write_registry
 
 IMAGE: Final = "sha256:deadbeef"
 NOW: Final = 1_758_153_600.0
@@ -124,7 +124,12 @@ class Bench:
 
     def actors(self) -> Actors:
         return Actors(
-            FakeDriver(), FakeLiteLLMKeys(), FakeSwitchClient(), EgressConfig(), FakeUnits()
+            FakeDriver(),
+            FakeLiteLLMKeys(),
+            FakeSwitchClient(),
+            EgressConfig(),
+            FakeUnits(),
+            fake_policy(self.state_root),
         )
 
     def look(self) -> None:
