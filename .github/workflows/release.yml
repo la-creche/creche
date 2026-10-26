@@ -219,7 +219,7 @@ jobs:
 
   # The agent module (agent/AGENTS.md). TypeScript, so the Python gate never
   # runs its suite. pnpm's version is agent/package.json's packageManager
-  # field. The module is a library: it has no build of its own.
+  # field. The module is a library: the facade job builds it.
   agent:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
@@ -245,6 +245,8 @@ jobs:
   # The ACP facade (facade/AGENTS.md). TypeScript, so the Python gate never
   # runs its suite. pnpm's version is facade/package.json's packageManager
   # field. `pnpm test` builds `dist/` first: the suite runs the built bin.
+  # facade/pnpm-workspace.yaml names ../agent, so the install here installs
+  # agent/ too, from facade/pnpm-lock.yaml, and the build builds it first.
   facade:
     needs: scope
     if: needs.scope.outputs.scope == 'code'

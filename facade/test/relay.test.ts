@@ -66,8 +66,10 @@ async function facade(): Promise<Facade> {
       },
       lock: new SupervisorLock(mkdtempSync(join(tmpdir(), "relay-control-")), "chat-s1"),
       deadlineMs: DEADLINE_MS,
-      runtime: null,
-      sessions: sessionService({ agent: Probe, agentName: "Probe", index, store: flue.store }),
+      serve: async () => ({
+        ok: true,
+        serving: { runtime: null, sessions: sessionService({ agent: Probe, agentName: "Probe", index, store: flue.store }) },
+      }),
       socketPath: socket,
     });
   });

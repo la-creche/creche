@@ -8,3 +8,9 @@ allowBuilds:
   '@google/genai': false
   esbuild: true
   protobufjs: false
+
+# The facade imports the agent module (agent/AGENTS.md) through
+# `workspace:`. One install here installs both, from this lockfile.
+packages:
+  - '.'
+  - '../agent'

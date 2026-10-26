@@ -38,6 +38,11 @@ export const AGENT_NAME = "family-agent";
 /** The one store file, on the sessions mount. */
 const STORE_FILE = "flue.db";
 
+/** `<AGENT_SESSIONS_DIR>/flue.db`. The facade opens `creche_sessions` there too. */
+export function storePath(config: FamilyConfig): string {
+  return join(config.mounts.sessions, STORE_FILE);
+}
+
 /** The agent's own instructions, before the family's. */
 const BASE_INSTRUCTIONS =
   "You are the agent of one family sandbox. Each tool call goes through a " +
@@ -133,7 +138,7 @@ export function composeAgent(config: FamilyConfig, workspace: string): ComposeRe
     composed: {
       agent: FamilyAgent,
       providers: [provider],
-      db: sqlite(join(config.mounts.sessions, STORE_FILE)),
+      db: sqlite(storePath(config)),
       skippedSkills: skills.skipped,
     },
   };

@@ -18,14 +18,21 @@ Flue is the agent runtime `@flue/runtime`.
 ## Build and test
 
 ```bash
-pnpm install
+pnpm install       # installs agent/ too: pnpm-workspace.yaml names it
 pnpm test          # builds dist/ first. No sbx, no VM, no model call
 pnpm run typecheck
-pnpm run build     # src/ to dist/src/, the vector file to dist/vectors/
+pnpm run build     # agent/ to agent/dist/, then src/ to dist/src/
 ```
 
 The tests run the built bin `dist/src/bin/creche-facade.js` as a child
-process, as attendance runs it.
+process, as attendance runs it. `test/compose.test.ts` runs it with one
+family's mounts (`agent/test/family.ts`), the agent's fake model and its
+fake `ch`.
+
+The facade imports the agent module from `agent/dist/`. Flue's hooks
+need one copy of `@flue/runtime`, but an install in `agent/` gives it a
+Flue of its own. After such an install, delete `agent/node_modules` and
+install here again.
 
 ## The wire
 
@@ -36,12 +43,15 @@ too. Change a value there, and both sides change.
 
 ## Environment
 
-`src/env.ts` reads two variables at process start.
+`src/family.ts` reads the family config one time at process start, with
+the agent module's `readFamilyConfig`. `agent/AGENTS.md` names each
+variable. The agent's store and the facade's `creche_sessions` share
+`$AGENT_SESSIONS_DIR/flue.db`. Flue starts only after the facade holds the
+lock.
 
-| Variable | Meaning | Absent |
-|---|---|---|
-| `AGENT_SANDBOX` | the sandbox id, for the lock record | exit 2 |
-| `AGENT_CONTROL_DIR` | the control mount, for `supervisor.lock` | exit 7 |
+The workspace of the granted sandbox tools is
+`$AGENT_SESSIONS_DIR/workspace`: the one writable mount for the agent's
+files, with `flue.db` kept out of the listing that Flue puts in the prompt.
 
 ## Exit status
 
@@ -52,8 +62,13 @@ too. Change a value there, and both sides change.
 | 3 | a live facade holds the lock |
 | 5 | no `_creche/beat` for three beat windows (90 s) |
 | 6 | the control mount cannot be written |
-| 7 | no `AGENT_CONTROL_DIR` |
+| 7 | a mount variable is unset. The facade reads the mounts first |
 | 8 | the relay socket cannot be made |
+| 9 to 15 | the agent module refuses the family config (`EXIT_BY_REFUSAL` in `src/family.ts`) |
+| 16 | Flue does not start |
+
+A refusal (2, 7, 9 to 15) writes one stderr line: the reason, and the
+variable or the field, never a value.
 
 `acp-relay` exits 0 when its link ends, and 1 when no facade listens.
 
@@ -119,10 +134,5 @@ facade.
   relay connection never arms its deadline. A relay whose host end died
   can hold its connection until the facade stops. `src/relay.ts` holds
   the `CONTRACT-QUESTION`.
-- `src/env.ts` parses two variables that `agent/src/config.ts` parses
-  too. Row 15 of the Phase 2 plan wires the agent module, and `env.ts`
-  then goes.
-- The bin starts no Flue runtime yet, so `_creche/shutdown` has no Flue
-  to stop, and the bin serves no session method. Row 15 starts Flue with
-  the agent module, wraps its adapter with `tapStores`, and passes
-  `sessionService` to the supervisor.
+- The workspace is one directory for every session. The playpen gave
+  `code-sandbox` one directory per chat (Phase 2 plan, risk 6).

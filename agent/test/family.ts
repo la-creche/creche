@@ -25,7 +25,8 @@ export interface FamilyFixture {
   readonly indexRoot?: string;
 }
 
-export async function familyConfig(fixture: FamilyFixture): Promise<FamilyConfig> {
+/** The mounts on disk, and the env that names them. The facade's tests start its bin with it. */
+export function familyEnv(fixture: FamilyFixture): Record<string, string> {
   const root = mkdtempSync(join(tmpdir(), "agent-family-"));
   const dir = (name: string): string => mkdtempSync(join(root, name));
   const credDir = dir("creds");
@@ -38,19 +39,20 @@ export async function familyConfig(fixture: FamilyFixture): Promise<FamilyConfig
     writeFileSync(join(configDir, name), text);
   }
 
-  const read = await readFamilyConfig(
-    {
-      AGENT_SESSIONS_DIR: dir("sessions"),
-      AGENT_CRED_DIR: credDir,
-      AGENT_FAMILY_CONFIG_DIR: configDir,
-      AGENT_CONTROL_DIR: dir("control"),
-      AGENT_SANDBOX: "chat-s1",
-      AGENT_PEP_URL: fixture.pepUrl ?? UNUSED_PLANE,
-      AGENT_LITELLM_BASE_URL: fixture.litellmUrl ?? UNUSED_PLANE,
-      ...(fixture.indexRoot === undefined ? {} : { AGENT_INDEX_ROOT: fixture.indexRoot }),
-    },
-    NO_RETRY_MS,
-  );
+  return {
+    AGENT_SESSIONS_DIR: dir("sessions"),
+    AGENT_CRED_DIR: credDir,
+    AGENT_FAMILY_CONFIG_DIR: configDir,
+    AGENT_CONTROL_DIR: dir("control"),
+    AGENT_SANDBOX: "chat-s1",
+    AGENT_PEP_URL: fixture.pepUrl ?? UNUSED_PLANE,
+    AGENT_LITELLM_BASE_URL: fixture.litellmUrl ?? UNUSED_PLANE,
+    ...(fixture.indexRoot === undefined ? {} : { AGENT_INDEX_ROOT: fixture.indexRoot }),
+  };
+}
+
+export async function familyConfig(fixture: FamilyFixture): Promise<FamilyConfig> {
+  const read = await readFamilyConfig(familyEnv(fixture), NO_RETRY_MS);
   if (!read.ok) {
     throw new Error(`fixture refused: ${read.refusal.reason}`);
   }

@@ -4,9 +4,10 @@
 import { spawn } from "node:child_process";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { familyEnv } from "../../agent/test/family.js";
+import type { FamilyFixture } from "../../agent/test/family.js";
 
 export const BIN = fileURLToPath(new URL("../dist/src/bin/creche-facade.js", import.meta.url));
 export const RELAY_BIN = fileURLToPath(new URL("../dist/src/bin/acp-relay.js", import.meta.url));
@@ -34,11 +35,10 @@ export function shortTmp(): string {
   return mkdtempSync("/tmp/fc-");
 }
 
-/** The environment of one facade: a sandbox id, a control mount, a TMPDIR. */
-export function facadeEnv(): NodeJS.ProcessEnv {
+/** One family's mounts, as the agent's tests make them, and a TMPDIR. */
+export function facadeEnv(fixture: FamilyFixture = {}): NodeJS.ProcessEnv {
   return {
-    AGENT_SANDBOX: "chat-s1",
-    AGENT_CONTROL_DIR: join(mkdtempSync(join(tmpdir(), "facade-")), "control"),
+    ...familyEnv({ runtime: { model_alias: "chat" }, ...fixture }),
     TMPDIR: shortTmp(),
   };
 }

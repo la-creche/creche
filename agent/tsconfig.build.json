@@ -1,0 +1,7 @@
+// The build that the facade imports: `src/` to `dist/`, with declarations.
+// The facade's `build` and `typecheck` run it first (facade/AGENTS.md).
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "rootDir": "src", "declaration": true },
+  "include": ["src"]
+}
