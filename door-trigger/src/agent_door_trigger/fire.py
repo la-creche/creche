@@ -2,41 +2,20 @@
 listener, so a CLI firing and a webhook firing can never drift apart in
 how they talk to `attendance`.
 
-A firing creates a fresh `auto-<ulid>` session (contract 02 §13 rule 1)
-and runs one turn with `wait: "accepted"`, the one response shape
-contract 02 §5.4 names for the trigger door. It never waits for the turn
-to settle, and a refusal is never retried in a loop by this door: the
-timer fires again, or the next webhook call is the retry.
+A firing is one `POST /trigger`. `attendance` enqueues one job in a fresh
+`auto-<ulid>` session (contract 02 §13 rule 1) and answers its id and its
+status at once. This door never waits for the job, and never retries a
+refusal in a loop: the timer fires again, or the next webhook call is the
+retry.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from enum import StrEnum
 
-from .attendance import AcceptedTurn, AttendanceClient, TurnRequest
+from .attendance import AttendanceClient, EnqueuedJob, TriggerJob, TriggerKind
 from .ulid import new_ulid
-
-SESSION_PREFIX = "auto-"
-
-# CONTRACT-QUESTION: contract 02 §13.2's `trigger` object carries a turn's
-# kind, name and fire time for §13.1's outcome record, and this door sends
-# them as three `labels` instead (§5.4's field table, up to 10 free-string
-# keys). §13.2 rule 2 still reads these three keys, and the object wins
-# where both are present.
-LABEL_TRIGGER_KIND = "trigger_kind"
-LABEL_TRIGGER_NAME = "trigger_name"
-LABEL_TRIGGER_FIRED_AT = "trigger_fired_at"
-
-
-class TriggerKind(StrEnum):
-    """Contract 02 §13.1's `trigger.kind`. A cron firing is a `timer`; only
-    a webhook firing carries a `name` (contract 01 §3.13's two trigger
-    forms — a cron entry has none)."""
-
-    TIMER = "timer"
-    WEBHOOK = "webhook"
 
 
 @dataclass(frozen=True)
@@ -49,19 +28,8 @@ class Firing:
     payload: str | None
 
 
-@dataclass(frozen=True)
-class FireOutcome:
-    """What `attendance` answered for one firing. Reaching this point at all
-    means the job was accepted or queued: any refusal raises
-    `AttendanceError` instead (contract 02 §14)."""
-
-    session: str
-    turn: str
-    state: str
-
-
-def fire_trigger(attendance: AttendanceClient, firing: Firing) -> FireOutcome:
-    """Create the session, run the turn, return what `attendance` answered.
+def fire_trigger(attendance: AttendanceClient, firing: Firing) -> EnqueuedJob:
+    """Enqueue the job, return what `attendance` answered.
 
     Raises `AttendanceError` (`errors.py`) for every refusal contract 02
     §14 defines. The caller (`cli.py`, `webhooks.py`) decides what that
@@ -69,35 +37,14 @@ def fire_trigger(attendance: AttendanceClient, firing: Firing) -> FireOutcome:
     external caller.
     """
     fired_at = datetime.now(UTC)
-    session = f"{SESSION_PREFIX}{new_ulid()}"
-
-    attendance.ensure_session(firing.family, session)
-
-    request = TurnRequest(
+    job = TriggerJob(
         family=firing.family,
-        session=session,
-        prompt=_prompt(firing, fired_at),
+        kind=firing.kind,
+        name=firing.name,
+        message=_prompt(firing, fired_at),
         idempotency_key=new_ulid(),
-        labels=_labels(firing, fired_at),
     )
-    accepted = attendance.accepted_turn(request)
-
-    return _outcome(session, accepted)
-
-
-def _outcome(session: str, accepted: AcceptedTurn) -> FireOutcome:
-    return FireOutcome(session=session, turn=accepted.turn, state=accepted.state)
-
-
-def _labels(firing: Firing, fired_at: datetime) -> dict[str, str]:
-    labels = {
-        LABEL_TRIGGER_KIND: str(firing.kind),
-        LABEL_TRIGGER_FIRED_AT: fired_at.isoformat(timespec="seconds"),
-    }
-    if firing.name is not None:
-        labels[LABEL_TRIGGER_NAME] = firing.name
-
-    return labels
+    return attendance.enqueue(job)
 
 
 def _prompt(firing: Firing, fired_at: datetime) -> str:

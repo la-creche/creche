@@ -17,7 +17,14 @@ from pathlib import Path
 import httpx
 import pytest
 from agent_door_trigger import payload
-from agent_door_trigger.attendance import AcceptedTurn, AttendanceClient, HttpAttendance
+from agent_door_trigger.attendance import (
+    AttendanceClient,
+    EnqueuedJob,
+    HttpAttendance,
+    JobStatus,
+    TriggerJob,
+    TriggerKind,
+)
 from agent_door_trigger.config import AttendanceTarget, ServeConfig
 from agent_door_trigger.errors import AttendanceError
 from agent_door_trigger.routes import Route
@@ -142,7 +149,7 @@ def test_a_route_that_stopped_being_servable_answers_404(tmp_path: Path) -> None
 
 
 def test_a_good_call_fires_and_returns_202(tmp_path: Path) -> None:
-    fake = FakeAttendance(accepted=AcceptedTurn(turn="01T", state="queued", journal_seq=1))
+    fake = FakeAttendance(status=JobStatus.QUEUED)
     routes = FakeRouteTable({("scrum-lead", "deploy-notify"): ROUTE})
     with _client(tmp_path, fake, routes) as client:
         response = client.post(
@@ -153,15 +160,15 @@ def test_a_good_call_fires_and_returns_202(tmp_path: Path) -> None:
 
     assert response.status_code == 202
     body = response.json()
-    assert body["state"] == "queued"
-    assert body["turn"] == "01T"
-    assert "session" in body
+    assert set(body) == {"session", "status"}
+    assert body["status"] == "queued"
+    assert str(body["session"]).startswith("auto-")
 
-    request = fake.requests[0]
-    assert '"release"' in request.prompt
-    assert "0.4.2" in request.prompt
-    assert request.labels["trigger_kind"] == "webhook"
-    assert request.labels["trigger_name"] == "deploy-notify"
+    job = fake.jobs[0]
+    assert '"release"' in job.message
+    assert "0.4.2" in job.message
+    assert job.kind is TriggerKind.WEBHOOK
+    assert job.name == "deploy-notify"
 
 
 def test_a_call_with_no_body_still_fires(tmp_path: Path) -> None:
@@ -171,7 +178,7 @@ def test_a_call_with_no_body_still_fires(tmp_path: Path) -> None:
         response = client.post("/triggers/scrum-lead/deploy-notify", headers=_auth(TOKEN))
 
     assert response.status_code == 202
-    assert "No payload was sent" in fake.requests[0].prompt
+    assert "No payload was sent" in fake.jobs[0].message
 
 
 # --- payload shape and size ---
@@ -217,7 +224,7 @@ def test_an_oversized_body_is_413(tmp_path: Path) -> None:
 
 
 def test_a_full_queue_answers_429(tmp_path: Path) -> None:
-    fake = FakeAttendance(turn_error=AttendanceError("queue_full", "queue is full", 429))
+    fake = FakeAttendance(error=AttendanceError("queue_full", "queue is full", 429))
     routes = FakeRouteTable({("scrum-lead", "deploy-notify"): ROUTE})
     with _client(tmp_path, fake, routes) as client:
         response = client.post("/triggers/scrum-lead/deploy-notify", headers=_auth(TOKEN))
@@ -227,7 +234,7 @@ def test_a_full_queue_answers_429(tmp_path: Path) -> None:
 
 
 def test_a_non_autonomous_family_answers_403(tmp_path: Path) -> None:
-    fake = FakeAttendance(ensure_error=AttendanceError("forbidden", "not autonomous", 403))
+    fake = FakeAttendance(error=AttendanceError("forbidden", "not autonomous", 403))
     routes = FakeRouteTable({("scrum-lead", "deploy-notify"): ROUTE})
     with _client(tmp_path, fake, routes) as client:
         response = client.post("/triggers/scrum-lead/deploy-notify", headers=_auth(TOKEN))
@@ -265,7 +272,7 @@ def test_no_answer_from_attendance_answers_502(tmp_path: Path, failure: Exceptio
 class _BrokenAttendance(FakeAttendance):
     """Raises an error that the route has no handler for."""
 
-    def ensure_session(self, family: str, session: str) -> None:
+    def enqueue(self, job: TriggerJob) -> EnqueuedJob:
         raise RuntimeError("a defect of the door")
 
 

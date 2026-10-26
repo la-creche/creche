@@ -17,7 +17,7 @@ from pathlib import Path
 import httpx
 import uvicorn
 
-from .attendance import AttendanceClient, HttpAttendance
+from .attendance import AttendanceClient, HttpAttendance, TriggerKind
 from .config import (
     ConfigError,
     FireConfig,
@@ -27,7 +27,7 @@ from .config import (
 )
 from .errors import AttendanceError, ExitCode
 from .families import StatusFiles
-from .fire import Firing, TriggerKind, fire_trigger
+from .fire import Firing, fire_trigger
 from .payload import PayloadError, read_payload
 from .quiet.chaperone import HttpFamilyReads, family_token
 from .quiet.gate import QuietGate, gated_family
@@ -178,7 +178,7 @@ def execute_fire(
     if gate is not None and check is not None:
         gate.record(outcome.session, check)
 
-    print(f"{outcome.session} {outcome.state}")
+    print(f"{outcome.session} {outcome.status}")
     return ExitCode.ACCEPTED
 
 
