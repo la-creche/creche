@@ -118,7 +118,7 @@ def _checks(config: Config) -> list[Check]:
     return [
         Check("config", True, f"bind {config.bind}:{config.port}"),
         _readable("families", config.families_dir),
-        _readable("audit", config.audit_dir),
+        _readable("audit", config.audit_file),
         _readable("registry", config.registry_dir),
         _readable("view-ro token", config.view_token_file),
         _healthy(config),
@@ -126,7 +126,7 @@ def _checks(config: Config) -> list[Check]:
 
 
 def _readable(name: str, path: Path) -> Check:
-    """Present and openable. A directory is listed, a file is stat'd."""
+    """Present and openable. A directory is listed, a file is opened."""
     if not path.exists():
         return Check(name, False, f"{path} is missing")
 
@@ -134,11 +134,11 @@ def _readable(name: str, path: Path) -> Check:
         if path.is_dir():
             next(iter(path.iterdir()), None)
         else:
-            path.stat()
+            path.open("rb").close()
     except OSError as error:
-        # The audit directory is the one that fails here in practice: the
-        # user manager's groups are frozen until the host reboots
-        # (README gotcha 4).
+        # The audit file is the one that fails here in practice: the user
+        # manager's groups are frozen until the host reboots, so the group
+        # `chaperone` does not apply to this service until then.
         return Check(name, False, f"{path}: {error.strerror or error}")
 
     return Check(name, True, str(path))

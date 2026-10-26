@@ -165,31 +165,37 @@ def outcome_doc(outcome_id: str, family: str = "scrum-lead", **extra: Any) -> di
     return row
 
 
-def audit_line(
-    family: str = "chat",
+#: The name of the audit file in a test state root. The host file is
+#: `/var/lib/chaperone/audit.jsonl`.
+AUDIT_FILE = "audit.jsonl"
+
+#: The run of the chaperone in each record of these tests: 16 bytes as hex.
+RUN = "07" * 16
+
+#: The SHA-256 of `{}`, the canonical form of no arguments.
+NO_ARGUMENTS_SHA256 = "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+
+
+def audit_record(
+    call: int = 1,
+    event: str = "decided",
+    detail: str = "allow",
+    app: str | None = "chat",
     tool: str = "kagi__kagi_search_fetch",
-    decision: str = "allow",
     **extra: Any,
 ) -> dict[str, Any]:
+    """One line of the chaperone's audit file, in the key order of the
+    Rust sink."""
     row: dict[str, Any] = {
-        "ts": stamp(30),
-        "family": family,
-        "sandbox_id": f"{family}-s3",
-        "sandbox_id_trusted": True,
-        "grants_rev": "01K5J9QW3R7T0ZP4YB2H6N8M1D",
+        "run": RUN,
+        "call": call,
+        "started": stamp(30),
+        "time": stamp(29),
+        "app": app,
         "tool": tool,
-        "args": {"query": "boiler service date"},
-        "decision": decision,
-        "reason": "granted",
-        "latency_ms": 38,
-        "waited_ms": 0,
-        "gate": None,
-        "claimed": {
-            "session_id": "owui-3f2a9c41-77b0-4a1e-9a4c-1d0e5f8b2c33",
-            "turn_id": "01K5J9QWB9R1V3T5Y7H9J2K4P6",
-            "delegation_id": None,
-        },
-        "chain": [family],
+        "arguments_sha256": NO_ARGUMENTS_SHA256,
+        "event": event,
+        "detail": detail,
     }
     row.update(extra)
     return row
@@ -355,7 +361,7 @@ def write_json(path: Path, body: object) -> None:
 
 
 def make_state_root(base: Path) -> Path:
-    """A state root holding two families, an outcome and one audit day."""
+    """A state root holding two families, an outcome and one audit file."""
     root = base / "state"
     families = root / "families"
 
@@ -392,15 +398,16 @@ def make_state_root(base: Path) -> Path:
         root / "outcomes" / "scrum-lead" / "01JBQ80M4F7S2YQ1VZK6W3TDEN.json",
         outcome_doc("01JBQ80M4F7S2YQ1VZK6W3TDEN"),
     )
-    write_audit_day(root / "audit", NOW.strftime("%Y-%m-%d"), [audit_line()])
+    write_audit(root / AUDIT_FILE, [audit_record()])
 
     return root
 
 
-def write_audit_day(audit_dir: Path, day: str, rows: list[dict[str, Any]]) -> Path:
-    audit_dir.mkdir(parents=True, exist_ok=True)
-    path = audit_dir / f"{day}.jsonl"
-    path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+def write_audit(path: Path, rows: list[dict[str, Any]]) -> Path:
+    """Append each row as one line, as the Rust sink writes it."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write("".join(json.dumps(row, separators=(",", ":")) + "\n" for row in rows))
     return path
 
 

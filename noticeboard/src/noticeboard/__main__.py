@@ -79,7 +79,7 @@ def _report(config: Config) -> None:
     print(f"cookie secure {'yes' if config.cookie_secure else 'no'}")
     print(f"state root    {_where(config.state_root)}")
     print(f"families      {_where(config.families_dir)}")
-    print(f"audit         {_where(config.audit_dir)}")
+    print(f"audit         {_where(config.audit_file)}")
     print(f"outcomes      {_where(config.outcomes_dir)}")
     print(f"registry      {_where(config.registry_dir)}")
     print(f"view-ro token {_where(config.view_token_file)}")

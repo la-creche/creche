@@ -20,7 +20,7 @@ view that also applied would be a second writer to the same state.
 | family state, sandboxes, faults, spend | `caregiver`'s status documents |
 | why a family is invalid | the validation report |
 | what an autonomous run did | the outcome records |
-| every tool call and its decision | the chaperone's audit files |
+| every tool call and its decision | the chaperone's audit file, `/var/lib/chaperone/audit.jsonl` |
 | sessions, turns, the event stream | `attendance`, as the principal `view-ro` |
 | the family file behind the form | the registry checkout |
 
@@ -124,10 +124,11 @@ uv run noticeboard-verify --json                # the component's verify hook
 |---|---|
 | `VIEW_BIND`, `VIEW_PORT` | the listen address and port 8370. Never a wildcard. |
 | `VIEW_ACCESS_KEY`, `VIEW_ACCESS_KEY_FILE` | the `X-View-Key` value the proxy injects. The file wins. |
-| `VIEW_STATE_ROOT` | families, audit, outcomes, tokens, and the notice file `notices/noticeboard.json` |
+| `VIEW_STATE_ROOT` | families, outcomes, tokens, and the notice file `notices/noticeboard.json` |
+| `VIEW_AUDIT_FILE` | the chaperone's audit file. The service reads it as a member of the group `chaperone`. |
 | `VIEW_REGISTRY_DIR` | the git checkout the form commits in |
 | `VIEW_SESSIOND_SOCKET`, `VIEW_SESSIOND_URL` | `attendance`, over a socket or TCP |
-| `VIEW_PAGE_SIZE` | audit lines and sessions per page |
+| `VIEW_PAGE_SIZE` | audit calls and sessions per page |
 | `VIEW_COOKIE_SECURE` | `Secure` on the CSRF cookie. Set `0` only for a plain-HTTP dev run. |
 
 A LAN bind with no key refuses to start, exit 2. The reverse proxy injects
@@ -183,13 +184,15 @@ prefixed `test_noticeboard_`.
   `jsonfiles.Surface` gives the report the word `status.report`
   (`jsonfiles.py`).
 - Each refused text writes the notice file one time. A page that reads
-  many refused texts, for example the lines of an audit day, writes it one
-  time for each text. It also writes one log line for each text, at each
+  many refused texts, for example the lines of the audit file, writes it
+  one time for each text. It also writes one log line for each text, at each
   view of the page.
-- The pass of `strictjson.py` for a refused text takes time. One refused
-  audit line of 512 KiB took about 0.6 seconds on a development machine.
-  An audit day of 32 MiB with 64 such lines can thus take about 36 seconds
-  for one page.
+- The pass of `strictjson.py` for a refused text takes time. The audit
+  reader reads 4 MiB of the audit file at most, and it does not parse a
+  line of more than 4 KiB. These two caps bound that time for one page.
+- No contract of this repository names the line of the audit file. The
+  reader takes the Rust type `Line` of `plugins/default/audit-jsonl` of the
+  chaperone repository (`auditfiles.py`).
 - The contracts name RFC 3339 for a time and give no more of its grammar.
   `rfc3339.py` takes a narrower grammar. It refuses three texts that
   section 5.6 of RFC 3339 permits: a fraction of more than 9 digits, second
@@ -224,6 +227,6 @@ prefixed `test_noticeboard_`.
 - The form holds no revision of the file that it shows. A save from a form
   that is older than the newest commit puts each field back to the value
   that the form holds (`app.py`). The preview shows each such field.
-- A user unit started before its user joined the `agents` group cannot read
-  the chaperone's 0640 audit files until the host reboots. The audit page
-  shows a banner and renders the rest.
+- A user unit started before its user joined the `chaperone` group cannot
+  read the chaperone's 0640 audit file until the host reboots. The audit
+  page shows a banner and renders the rest.

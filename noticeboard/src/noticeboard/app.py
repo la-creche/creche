@@ -43,7 +43,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.staticfiles import StaticFiles
 
 from . import pages, security, tomlkeep
-from .auditfiles import ARGS_NOTICE, AuditFilter, known_days
+from .auditfiles import ARGS_NOTICE, AuditFilter
 from .config import Config
 from .familyform import Form, document_of, form_of, parse_posted, with_posted
 from .pages import EditPage
@@ -229,7 +229,7 @@ def _routes(
             {
                 "page": pages.audit_page(config, wanted, offset),
                 "wanted": wanted,
-                "days": known_days(config.audit_dir),
+                "audit_file": config.audit_file,
             },
         )
 
@@ -411,7 +411,6 @@ async def _form_of(request: Request) -> tuple[dict[str, str], Refusal | None]:
 def _filter_of(query: Mapping[str, str]) -> AuditFilter:
     return AuditFilter(
         family=_one(query, "family"),
-        session=_one(query, "session"),
         tool=_one(query, "tool"),
         decision=_one(query, "decision"),
     )

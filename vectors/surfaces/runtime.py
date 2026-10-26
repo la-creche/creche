@@ -2017,6 +2017,7 @@ def _noticeboard_app(scratch: Path) -> FastAPI:
         attendance_socket=None,
         attendance_url=owui_config.UDS_BASE_URL,
         page_size=50,
+        audit_file=scratch / "state" / "audit.jsonl",
     )
     # No request of the surface gets to a page that reads a session.
     reader = SessionReader(

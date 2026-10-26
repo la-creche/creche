@@ -21,6 +21,7 @@ from noticeboard.pages import index_of
 from noticeboard.security import ACCESS_HEADER, CSRF_COOKIE, CSRF_FIELD
 from noticeboard.sessions import SessionReader
 from noticeboard_helpers import (
+    AUDIT_FILE,
     CHAT_COMMENT,
     CHAT_FAMILY_TOML,
     NOW,
@@ -82,6 +83,7 @@ def board(tmp_path: Path) -> Iterator[Board]:
         attendance_socket=None,
         attendance_url="http://sessiond",
         page_size=DEFAULT_PAGE_SIZE,
+        audit_file=state / AUDIT_FILE,
         cookie_secure=False,
         access_key=KEY,
     )

@@ -117,7 +117,7 @@ def test_a_healthy_service_passes_every_check(
     import threading
     from http.server import BaseHTTPRequestHandler, HTTPServer
 
-    from noticeboard_helpers import make_registry, make_state_root
+    from noticeboard_helpers import AUDIT_FILE, make_registry, make_state_root
 
     class Healthz(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
@@ -144,6 +144,7 @@ def test_a_healthy_service_passes_every_check(
                 "VIEW_PORT": str(server.server_port),
                 "VIEW_STATE_ROOT": str(state),
                 "VIEW_REGISTRY_DIR": str(registry),
+                "VIEW_AUDIT_FILE": str(state / AUDIT_FILE),
             },
             "--json",
         )

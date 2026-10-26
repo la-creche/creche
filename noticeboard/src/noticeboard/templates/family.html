@@ -97,14 +97,18 @@
 {{ problems(page.audit.problems) }}
 <p class="foot">{{ args_notice }}</p>
 <table>
-<thead><tr><th>when</th><th>tool</th><th>decision</th><th>session</th></tr></thead>
+<thead><tr><th>started</th><th>tool</th><th>decision</th><th>last record</th></tr></thead>
 <tbody>
 {% for line in page.audit.rows %}
 <tr>
-  <td>{{ when(line.ts) }}</td>
+  {% if line.kind == "unreadable" %}
+  <td colspan="4" class="problem">{{ line.problem }}</td>
+  {% else %}
+  <td>{{ when(line.started) }}</td>
   <td><code>{{ line.tool }}</code></td>
-  <td>{{ line.decision }}{% if line.reason %} ({{ line.reason }}){% endif %}</td>
-  <td>{{ line.session_id or "—" }}</td>
+  <td>{{ line.decision or "—" }}{% if line.reason %} ({{ line.reason }}){% endif %}</td>
+  <td>{{ line.outcome }}</td>
+  {% endif %}
 </tr>
 {% else %}
 <tr><td colspan="4">nothing recorded</td></tr>

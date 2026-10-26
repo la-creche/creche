@@ -22,6 +22,7 @@ from noticeboard.pages import index_of
 from noticeboard.security import ACCESS_HEADER, CSRF_COOKIE, CSRF_FIELD
 from noticeboard.sessions import SessionReader
 from noticeboard_helpers import (
+    AUDIT_FILE,
     CHAT_COMMENT,
     CHAT_FAMILY_TOML,
     NOW,
@@ -91,6 +92,7 @@ def board(tmp_path: Path) -> Iterator[Harness]:
         attendance_socket=None,
         attendance_url="http://sessiond",
         page_size=DEFAULT_PAGE_SIZE,
+        audit_file=state / AUDIT_FILE,
         cookie_secure=False,
         access_key=KEY,
     )
@@ -229,10 +231,10 @@ def test_a_file_with_half_a_surrogate_pair_shows_as_a_file_that_is_not_json(
     """JSON can escape one half of a surrogate pair, and UTF-8 has no form
     for it. Such a text is not strict JSON, so the page shows the file as
     unreadable and holds no part of the text."""
-    from noticeboard_helpers import audit_line, status_doc, write_audit_day, write_json
+    from noticeboard_helpers import audit_record, status_doc, write_audit, write_json
 
     write_json(board.config.families_dir / "chat" / "status.json", status_doc(kind=HALF_PAIR))
-    write_audit_day(board.config.audit_dir, "2026-09-19", [audit_line(args={"query": HALF_PAIR})])
+    write_audit(board.config.audit_file, [audit_record(detail=HALF_PAIR)])
 
     home = board.get("/")
     audit = board.get("/audit")
@@ -241,7 +243,7 @@ def test_a_file_with_half_a_surrogate_pair_shows_as_a_file_that_is_not_json(
     assert "status.json is not JSON" in home.text
     assert "ud800" not in home.text
     assert audit.status_code == 200
-    assert "2026-09-19.jsonl is not JSON" in audit.text
+    assert "audit.jsonl is not JSON" in audit.text
     assert "ud800" not in audit.text
 
 
@@ -404,26 +406,25 @@ def test_a_count_past_64_bits_shows_the_answer_as_one_that_is_not_json(
     assert "999999" not in answer.text
 
 
-def test_the_audit_page_says_it_shows_full_arguments(board: Harness) -> None:
+def test_the_audit_page_says_it_shows_argument_digests_only(board: Harness) -> None:
     answer = board.get("/audit")
 
-    assert "full tool arguments" in answer.text
+    assert "argument digests only" in answer.text
 
 
 def test_an_audit_filter_narrows_the_page(board: Harness) -> None:
-    from noticeboard_helpers import audit_line, write_audit_day
+    from noticeboard_helpers import audit_record, write_audit
 
-    write_audit_day(
-        board.config.audit_dir,
-        "2026-09-18",
-        [audit_line(tool="ha__ha_call", decision="deny", reason="not_granted")],
+    write_audit(
+        board.config.audit_file,
+        [audit_record(2, tool="ha-call__call_service", detail="deny:tool_not_granted")],
     )
 
     every = board.get("/audit").text
     denied = board.get("/audit?decision=deny").text
 
     assert "kagi__kagi_search_fetch" in every
-    assert "ha__ha_call" in denied
+    assert "ha-call__call_service" in denied
     assert "kagi__kagi_search_fetch" not in denied
 
 

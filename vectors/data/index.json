@@ -201,7 +201,7 @@
   {"accepted":0,"entry":"noticeboard.sessions.SessionReader.sessions, .detail and .events","path":"noticeboard/sessions.refusal.json","raised":0,"refused":41,"surface":"noticeboard.sessions.refusal","vectors":41},
   {"accepted":2,"entry":"noticeboard.sessions.SessionReader.sessions, the token file of the reader","path":"noticeboard/sessions.token.json","raised":0,"refused":5,"surface":"noticeboard.sessions.token","vectors":7},
   {"accepted":77,"entry":"noticeboard.transcript.fold, on the lines of noticeboard.sessions.SessionReader.events","path":"noticeboard/transcript.fold.json","raised":0,"refused":0,"surface":"noticeboard.transcript.fold","vectors":77},
-  {"accepted":87,"entry":"noticeboard.auditfiles.read_page","path":"noticeboard/audit.page.json","raised":0,"refused":0,"surface":"noticeboard.audit.page","vectors":87},
+  {"accepted":81,"entry":"noticeboard.auditfiles.read_page","path":"noticeboard/audit.page.json","raised":0,"refused":0,"surface":"noticeboard.audit.page","vectors":81},
   {"accepted":25,"entry":"noticeboard.statusdocs.read_report","path":"noticeboard/statusdocs.report.json","raised":0,"refused":9,"surface":"noticeboard.statusdocs.report","vectors":34},
   {"accepted":33,"entry":"noticeboard.verify.main, with --json and --env-file","path":"noticeboard/verify.envfile.json","raised":0,"refused":10,"surface":"noticeboard.verify.envfile","vectors":43},
   {"accepted":24,"entry":"noticeboard.__main__.main, with --check","path":"noticeboard/cli.check.json","raised":0,"refused":12,"surface":"noticeboard.cli.check","vectors":36},
