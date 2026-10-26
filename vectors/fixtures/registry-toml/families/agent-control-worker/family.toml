@@ -1,4 +1,4 @@
-# FIXTURE ONLY. See families/finance-worker/family.yaml for why these four
+# FIXTURE ONLY. See families/finance-worker/family.toml for why these four
 # worker families exist in the fixture.
 #
 # Note the fence: this family is NOT in the platform allowlist (§5.5), so it

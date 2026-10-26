@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import re
 import shutil
+import tomllib
 from pathlib import Path
 from typing import Any
 
 import pytest
-import yaml
 from agent_family import grammar, serverrules
 from agent_family.grammar import PLATFORM_SERVER, PROBE_FAMILY
 from agent_family.model import FamilyFile
@@ -396,7 +396,7 @@ MERGE_ENTRY = {"name": MERGE, "description": "Merge a pull request.", "write": T
 def _merge_declared() -> Index:
     """The fixture registry with the platform server declaring its merge tool
     again: what an edit to that server file restoring it looks like."""
-    body: dict[str, Any] = yaml.safe_load(server_text(PLATFORM_SERVER))
+    body = tomllib.loads(server_text(PLATFORM_SERVER))
     server = edited_server(PLATFORM_SERVER, tools=[*body["tools"], MERGE_ENTRY])
     index = full_index()
     return Index(index.kinds, {**index.servers, PLATFORM_SERVER: server}, index.skills)
@@ -406,7 +406,7 @@ def _check_against(index: Index, fixture: str, **changes: Any) -> Report:
     family = edited(fixture, **changes)
     issues = Issues()
     check_family(family, fixture, index, issues, host())
-    return Report(family.name, f"families/{fixture}/family.yaml", issues.frozen())
+    return Report(family.name, f"families/{fixture}/family.toml", issues.frozen())
 
 
 def test_the_platform_merge_is_never_granted_by_name() -> None:
@@ -769,10 +769,10 @@ def test_an_enqueue_trigger_nobody_targets_is_a_warning(tmp_path: Path) -> None:
     land in either order, so a dead trigger never blocks an apply."""
     registry_copy = tmp_path / "registry"
     shutil.copytree(FIXTURES, registry_copy)
-    target = registry_copy / "families" / "finance-worker" / "family.yaml"
+    target = registry_copy / "families" / "finance-worker" / "family.toml"
     target.write_text(
         target.read_text(encoding="utf-8").replace(
-            "- webhook: finance-worker-dispatch", "- enqueue: true"
+            '{ webhook = "finance-worker-dispatch" }', "{ enqueue = true }"
         ),
         encoding="utf-8",
     )
@@ -781,9 +781,9 @@ def test_an_enqueue_trigger_nobody_targets_is_a_warning(tmp_path: Path) -> None:
     assert targeted.reports["finance-worker"].ok
     assert "no family enqueues" not in messages(targeted.reports["finance-worker"])
 
-    lead = registry_copy / "families" / "scrum-lead" / "family.yaml"
+    lead = registry_copy / "families" / "scrum-lead" / "family.toml"
     lead.write_text(
-        lead.read_text(encoding="utf-8").replace("      - finance-worker\n", ""), encoding="utf-8"
+        lead.read_text(encoding="utf-8").replace('    "finance-worker",\n', ""), encoding="utf-8"
     )
 
     orphaned = load_registry(registry_copy, host())
@@ -800,10 +800,10 @@ def test_two_families_cannot_claim_the_same_webhook(tmp_path: Path) -> None:
     clean = load_registry(registry_copy, host())
     assert clean.reports["finance-worker"].ok  # today's fixture: no collision yet
 
-    target = registry_copy / "families" / "networking-worker" / "family.yaml"
+    target = registry_copy / "families" / "networking-worker" / "family.toml"
     target.write_text(
         target.read_text(encoding="utf-8").replace(
-            "webhook: networking-dispatch", "webhook: finance-worker-dispatch"
+            'webhook = "networking-dispatch"', 'webhook = "finance-worker-dispatch"'
         ),
         encoding="utf-8",
     )

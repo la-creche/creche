@@ -6,10 +6,11 @@ Helpers live in a module with a unique basename and are imported by name."""
 
 from __future__ import annotations
 
+import json
+import tomllib
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-import yaml
 from agent_family.model import FamilyFile
 from agent_family.parse import Markup, parse_family, parse_server
 from agent_family.registry import load_registry
@@ -21,7 +22,7 @@ from agent_family.validate import Index, check_family
 FIXTURES = Path(__file__).parent / "fixtures" / "registry"
 
 #: The six files contract 01 §8 writes out. The fixture holds more, and
-#: `fixtures/registry/families/finance-worker/family.yaml` says why.
+#: `fixtures/registry/families/finance-worker/family.toml` says why.
 CONTRACT_FAMILIES = (
     "chat",
     "code",
@@ -55,27 +56,57 @@ def host() -> FakeHost:
     return FakeHost(LIVE_ALIASES)
 
 
+def _toml_key(key: str) -> str:
+    return (
+        key
+        if key.replace("_", "a").replace("-", "a").isalnum() and key.isascii()
+        else json.dumps(key)
+    )
+
+
+def _toml_value(value: object) -> str:
+    """One value in TOML. The JSON form of a text, a number or a boolean is
+    also its TOML form. A table is an inline table, and a key with no value
+    is left out, because TOML has no null."""
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_value(one) for one in value) + "]"
+
+    if isinstance(value, dict):
+        items = cast("dict[str, object]", value).items()
+        pairs = [f"{_toml_key(key)} = {_toml_value(one)}" for key, one in items if one is not None]
+        return "{ " + ", ".join(pairs) + " }" if pairs else "{}"
+
+    return json.dumps(value, ensure_ascii=False)
+
+
+def toml_text(body: dict[str, Any]) -> str:
+    """A TOML text with one line for each key of the top table."""
+    return "".join(
+        f"{_toml_key(key)} = {_toml_value(one)}\n" for key, one in body.items() if one is not None
+    )
+
+
 def family_text(fixture: str) -> str:
-    return (FIXTURES / "families" / fixture / "family.yaml").read_text(encoding="utf-8")
+    return (FIXTURES / "families" / fixture / "family.toml").read_text(encoding="utf-8")
 
 
 def load(fixture: str) -> FamilyFile:
     """One fixture family, parsed. Raises in the test when it will not parse,
     which is the one place an exception is the right answer."""
-    family, issues = parse_family(family_text(fixture))
+    family, issues = parse_family(family_text(fixture), Markup.TOML)
     assert family is not None, issues
     return family
 
 
 def edited(fixture: str, **changes: Any) -> FamilyFile:
     """A fixture family with top-level fields replaced, then re-parsed. Going
-    through YAML keeps the test honest: it exercises the real parse.
+    through TOML keeps the test honest: it exercises the real parse.
 
     The parameter is `fixture`, not `name`, so a test can pass `name=...` in
     `changes` to edit the family's own `name` field without a keyword clash."""
-    body: dict[str, Any] = yaml.safe_load(family_text(fixture))
+    body = tomllib.loads(family_text(fixture))
     body.update(changes)
-    family, issues = parse_family(yaml.safe_dump(body))
+    family, issues = parse_family(toml_text(body), Markup.TOML)
     assert family is not None, issues
     return family
 
@@ -110,7 +141,7 @@ def check(fixture: str, **changes: Any) -> Report:
     family = edited(fixture, **changes)
     issues = Issues()
     check_family(family, fixture, full_index(), issues, host())
-    return Report(family.name, f"families/{fixture}/family.yaml", issues.frozen())
+    return Report(family.name, f"families/{fixture}/family.toml", issues.frozen())
 
 
 def check_no_host(fixture: str, **changes: Any) -> Report:
@@ -119,15 +150,15 @@ def check_no_host(fixture: str, **changes: Any) -> Report:
     family = edited(fixture, **changes)
     issues = Issues()
     check_family(family, fixture, full_index(), issues, None)
-    return Report(family.name, f"families/{fixture}/family.yaml", issues.frozen())
+    return Report(family.name, f"families/{fixture}/family.toml", issues.frozen())
 
 
 def server_text(fixture: str) -> str:
-    return (FIXTURES / "mcp" / fixture / "server.yaml").read_text(encoding="utf-8")
+    return (FIXTURES / "mcp" / fixture / "server.toml").read_text(encoding="utf-8")
 
 
 def load_server(fixture: str) -> McpServerFile:
-    server, issues = parse_server(server_text(fixture))
+    server, issues = parse_server(server_text(fixture), Markup.TOML)
     assert server is not None, issues
     return server
 
@@ -135,9 +166,9 @@ def load_server(fixture: str) -> McpServerFile:
 def edited_server(fixture: str, **changes: Any) -> McpServerFile:
     """Same trade as `edited`: the parameter is `fixture`, not `name`, so a
     test can override the server's own `name` field."""
-    body: dict[str, Any] = yaml.safe_load(server_text(fixture))
+    body = tomllib.loads(server_text(fixture))
     body.update(changes)
-    server, issues = parse_server(yaml.safe_dump(body))
+    server, issues = parse_server(toml_text(body), Markup.TOML)
     assert server is not None, issues
     return server
 
@@ -147,5 +178,5 @@ def check_server_rules(fixture: str, **changes: Any) -> Report:
     single-file rules need no registry context)."""
     server = edited_server(fixture, **changes)
     issues = Issues()
-    check_server(server, fixture, issues, Markup.YAML)
-    return Report(server.name, f"mcp/{fixture}/server.yaml", issues.frozen())
+    check_server(server, fixture, issues, Markup.TOML)
+    return Report(server.name, f"mcp/{fixture}/server.toml", issues.frozen())

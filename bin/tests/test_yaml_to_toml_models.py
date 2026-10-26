@@ -9,8 +9,8 @@ Two more tests hold the TOML path of a server file to the root reader,
 `handover.mcpserver.parse_server`. This file imports `handover`, and the
 tests of `family` do not.
 
-1. The cross test. Root accepts the YAML text of each fixture server and
-   its TOML text. The validator accepts the TOML text.
+1. The cross test. Root accepts the TOML text of each fixture server, and
+   the validator accepts it too.
 2. The differences. For each rule that root holds and the YAML path does
    not, root refuses a YAML text and its converted text. The YAML path
    accepts the YAML text, and the TOML path refuses the converted text.
@@ -30,7 +30,7 @@ from typing import Any
 import pytest
 import yaml
 from agent_family import Markup, parse_family, parse_server
-from agent_family.registry import FAMILY_FILE_YAML, SERVER_FILE_YAML
+from agent_family.registry import FAMILY_FILE_YAML, SERVER_FILE, SERVER_FILE_YAML
 from agent_family.report import Issue, Issues
 from agent_family.serverrules import check_server
 from handover.errors import Refusal
@@ -48,6 +48,9 @@ YAML_FAMILIES = sorted(path.parent.name for path in FAMILIES.glob(f"*/{FAMILY_FI
 
 #: Each YAML server file of the fixture registry, by its directory name.
 YAML_SERVERS = sorted(path.parent.name for path in SERVERS.glob(f"*/{SERVER_FILE_YAML}"))
+
+#: Each TOML server file of the fixture registry, by its directory name.
+TOML_SERVERS = sorted(path.parent.name for path in SERVERS.glob(f"*/{SERVER_FILE}"))
 
 #: What a walk gets when its list is empty. pytest reports a parametrized
 #: test with no value as skipped, and an empty walk must pass.
@@ -126,21 +129,18 @@ def test_the_walk_finds_the_eleven_server_files_of_today() -> None:
     assert len(YAML_SERVERS) in (0, 11)
 
 
-@pytest.mark.parametrize("name", YAML_SERVERS or [NO_FILE])
-def test_root_accepts_the_yaml_text_and_the_validator_accepts_the_toml_text(name: str) -> None:
-    if name == NO_FILE:
-        assert YAML_SERVERS == []
-        return
+@pytest.mark.parametrize("name", TOML_SERVERS)
+def test_root_and_the_validator_accept_each_toml_server_file(name: str) -> None:
+    path = SERVERS / name / SERVER_FILE
 
-    path = SERVERS / name / SERVER_FILE_YAML
-    toml_text = _converted(path)
-
-    read = mcpserver.parse_server(path.read_bytes(), name)
-    read_toml = mcpserver.parse_server(toml_text.encode(), name, mcpserver.Markup.TOML)
+    read = mcpserver.parse_server(path.read_bytes(), name, mcpserver.Markup.TOML)
 
     assert read.name == name
-    assert read_toml.name == name
-    assert _server_issues(toml_text, name, Markup.TOML) == ()
+    assert _server_issues(path.read_text(encoding="utf-8"), name, Markup.TOML) == ()
+
+
+def test_the_walk_finds_the_eleven_toml_server_files() -> None:
+    assert len(TOML_SERVERS) == 11
 
 
 # --- the differences between the YAML path and root --------------------------------

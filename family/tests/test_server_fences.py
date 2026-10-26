@@ -185,12 +185,12 @@ def test_repo_must_be_owner_slash_name() -> None:
 
 def test_entrypoint_may_carry_no_path() -> None:
     report = check_server_rules("kagi", run={"entrypoint": "bin/kagimcp", "env": {}})
-    assert "must be a console script name with no path" in messages(report)
+    assert "'bin/kagimcp' is not a console script name" in messages(report)
 
 
 def test_entrypoint_may_not_be_empty() -> None:
     report = check_server_rules("kagi", run={"entrypoint": "", "env": {}})
-    assert "must be a console script name with no path" in messages(report)
+    assert "'' is not a console script name" in messages(report)
 
 
 def test_env_var_name_must_match_the_shell_pattern() -> None:
@@ -220,7 +220,7 @@ def test_a_secret_prefix_must_name_a_key() -> None:
     report = check_server_rules(
         "kagi", run={"entrypoint": "kagimcp", "env": {"KAGI_API_KEY": "secret:"}}
     )
-    assert "'secret:' names no key" in messages(report)
+    assert "the key after 'secret:' is not a secret key" in messages(report)
 
 
 def test_state_dir_true_requires_state_dir_env() -> None:
