@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from collections.abc import Generator
+from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Final, cast
@@ -33,7 +33,14 @@ from proc_services import Service
 from proc_stack import CLIENT_TIMEOUT, Stack
 from proc_standins import APPROVAL, UPSTREAM, effect_program, install_effects
 from proc_strict import strict_object
-from proc_tree import RS_FAMILIES, RsFiles, build_bare_tree, write_rs_fleet_tree, write_rs_tree
+from proc_tree import (
+    RS_FAMILIES,
+    RsFiles,
+    build_bare_tree,
+    write_rs_draft_tree,
+    write_rs_fleet_tree,
+    write_rs_tree,
+)
 
 #: The path of the front door (§7.6) and of its health answer.
 MCP_PATH: Final = "/mcp"
@@ -117,6 +124,11 @@ class ChaperoneRsStack(Stack):
             self.tree.attendance_socket,
             policy,
         )
+
+    def prepare_draft(self, draft: Mapping[str, str], policy: str) -> None:
+        """Write the files of the install draft (`bin/chaperone-install-draft.py`), and `policy`."""
+        build_bare_tree(self.tree)
+        write_rs_draft_tree(self.files, draft, policy)
 
     def check(self, name: str) -> Finished:
         """`chaperone check` on one file of the configuration directory, with any exit code."""
