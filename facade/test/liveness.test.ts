@@ -63,12 +63,7 @@ function supervise(dir: string = controlDir()): Run {
       say: (text) => said.push(text),
       lock,
       deadlineMs: DEADLINE_MS,
-      runtime: {
-        stop: async () => {
-          events.push("stop");
-        },
-      },
-      sessions: null,
+      serve: async () => ({ ok: true, serving: { runtime: { stop: async () => void events.push("stop") }, sessions: null } }),
       socketPath: null,
     });
   });
@@ -181,5 +176,6 @@ describe("the lock", () => {
     expect(await noSandbox.exited()).toBe(2);
     expect(await noControl.exited()).toBe(7);
     expect(noSandbox.stdout().length + noControl.stdout().length).toBe(0);
+    expect(noSandbox.stderr()).toBe("creche-facade: sandbox_unset\n");
   });
 });

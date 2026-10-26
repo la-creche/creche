@@ -13,7 +13,12 @@ Flue is the agent runtime `@flue/runtime`. pi is the model layer under it,
 pnpm install
 pnpm test          # no sbx, no VM, no model call
 pnpm run typecheck
+pnpm run build     # src/ to dist/ with declarations, for the facade
 ```
+
+The facade imports `agent/agent` and `agent/config` from `dist/`
+(`package.json` `exports`). Its `build` and `typecheck` run this build
+first.
 
 The tests use `sqlite()` with no path, an in-memory store, and pi's
 `fauxProvider()`. A test needs no network and no model key.
@@ -108,6 +113,6 @@ connection and the `auth` of the LiteLLM provider unwrap it.
   internal to Flue. So each script opens its own MCP client on the `ch`
   definition (`src/codemode.ts`), with Flue's client package at Flue's
   pin. The script gets the chaperone's names, `tools.<upstream>__<tool>`.
-- The facade chooses the workspace of the granted sandbox tools. The
-  playpen gave `code-sandbox` one directory for each chat. The agent has
-  no chat id (plan risk 6).
+- The facade chooses the workspace of the granted sandbox tools:
+  `$AGENT_SESSIONS_DIR/workspace`. The playpen gave `code-sandbox` one
+  directory for each chat. The agent has no chat id (plan risk 6).

@@ -3,6 +3,7 @@
 //
 //   start ──► lock held by a live pid ──► exit 3
 //         ├─► control mount unwritable ─► exit 6
+//         ├─► Flue does not start ──────► exit 16
 //         ├─► relay socket refused ─────► exit 8
 //         └─► serve ──► _creche/shutdown ──► stop Flue ──► exit 0
 //                   ├─► stdin closed ──────► stop Flue ──► exit 0
@@ -22,11 +23,20 @@ export const EXIT_LOCK_HELD = 3;
 export const EXIT_DEADLINE = 5;
 export const EXIT_CONTROL_MOUNT = 6;
 export const EXIT_RELAY_SOCKET = 8;
+export const EXIT_NOT_STARTED = 16;
 
 /** The agent runtime that the facade owns. Flue's `start()` gives one. */
 export interface Runtime {
   stop(): Promise<void>;
 }
+
+/** What the facade serves once it holds the lock. */
+export interface Serving {
+  readonly runtime: Runtime | null;
+  readonly sessions: SessionService | null;
+}
+
+export type ServingStart = { readonly ok: true; readonly serving: Serving } | { readonly ok: false; readonly detail: string };
 
 export interface SupervisorOptions {
   readonly input: Readable;
@@ -34,10 +44,8 @@ export interface SupervisorOptions {
   readonly say: Say;
   readonly lock: SupervisorLock;
   readonly deadlineMs: number;
-  /** Null until the agent module is wired (Phase 2 plan, row 15). */
-  readonly runtime: Runtime | null;
-  /** Null until the agent module is wired (Phase 2 plan, row 15). */
-  readonly sessions: SessionService | null;
+  /** Starts Flue once the lock is held, never before: one Flue owner per sandbox. */
+  readonly serve: () => Promise<ServingStart>;
   /** The relay socket (`relaySocketPath`), or null for no relay. */
   readonly socketPath: string | null;
 }
@@ -59,10 +67,19 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
     return;
   }
 
+  const started = await options.serve();
+  if (!started.ok) {
+    say(`Flue did not start: ${started.detail}`);
+    lock.release();
+    stdout.exit(EXIT_NOT_STARTED);
+    return;
+  }
+
+  const { runtime, sessions } = started.serving;
   const relay =
     options.socketPath === null
       ? null
-      : await listenRelay(options.socketPath, (hooks) => facadeApp(hooks, options.sessions), options.deadlineMs, say);
+      : await listenRelay(options.socketPath, (hooks) => facadeApp(hooks, sessions), options.deadlineMs, say);
   if (relay !== null && !relay.ok) {
     say(`cannot listen on the relay socket: ${relay.detail}`);
     lock.release();
@@ -84,7 +101,7 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
 
     say(reason);
     try {
-      await options.runtime?.stop();
+      await runtime?.stop();
     } catch (error) {
       say(`Flue did not stop cleanly: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -103,7 +120,7 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
       onBeat: () => deadline.feed(),
       onShutdown: () => void stop("shutdown", EXIT_OK),
     },
-    options.sessions,
+    sessions,
   );
   const connection = app.connect(strictStream(options.input, strictWriter(stdout.writeLine, say)));
   say("serving ACP v1 on stdio");

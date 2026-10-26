@@ -4,7 +4,7 @@
 //
 // This file is the composition root and nothing else.
 
-import { readSupervisorEnv } from "../env.js";
+import { readFamily, serveFamily } from "../family.js";
 import { SupervisorLock } from "../lock.js";
 import { relaySocketPath } from "../relay.js";
 import { claimStdout, say } from "../stdio.js";
@@ -12,20 +12,24 @@ import { runSupervisor } from "../supervisor.js";
 import { BEAT_DEADLINE_MS } from "../vectors.js";
 
 const stdout = claimStdout();
-const env = readSupervisorEnv(process.env);
+const read = await readFamily(process.env);
 
-if (env.ok) {
+if (read.ok) {
+  const { family } = read;
+  for (const name of family.composed.skippedSkills) {
+    say(`skill ${name} is not valid; skipped`);
+  }
+
   void runSupervisor({
     input: process.stdin,
     stdout,
     say,
-    lock: new SupervisorLock(env.controlDir, env.sandbox),
+    lock: new SupervisorLock(family.config.mounts.control, family.config.sandbox),
     deadlineMs: BEAT_DEADLINE_MS,
-    runtime: null,
-    sessions: null,
+    serve: () => serveFamily(family),
     socketPath: relaySocketPath(),
   });
 } else {
-  say(env.detail);
-  stdout.exit(env.exitCode);
+  say(read.detail);
+  stdout.exit(read.exitCode);
 }

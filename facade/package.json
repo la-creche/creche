@@ -12,13 +12,14 @@
     "acp-relay": "dist/src/bin/acp-relay.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "typecheck": "tsc --noEmit",
+    "build": "tsc -p ../agent/tsconfig.build.json && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p ../agent/tsconfig.build.json && tsc --noEmit",
     "test": "pnpm run build && vitest run"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "2.0.2",
-    "@flue/runtime": "2.3.0"
+    "@flue/runtime": "2.3.0",
+    "agent": "workspace:*"
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "1.4.0",
