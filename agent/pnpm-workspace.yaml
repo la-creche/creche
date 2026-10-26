@@ -1,0 +1,9 @@
+# esbuild ships a platform binary and needs its postinstall script. vitest
+# runs on it. Without this list pnpm refuses with ERR_PNPM_IGNORED_BUILDS.
+#
+# The two false entries arrive with `@earendil-works/pi-ai`. The agent calls
+# no Google model and no protobuf service, so neither script runs.
+allowBuilds:
+  '@google/genai': false
+  esbuild: true
+  protobufjs: false
