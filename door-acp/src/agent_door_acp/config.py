@@ -11,6 +11,7 @@ as a path to a file and stays in memory as bytes.
 
 from __future__ import annotations
 
+import hmac
 import ipaddress
 import os
 import re
@@ -30,9 +31,18 @@ _NOT_OWNER_BITS = stat.S_IRWXG | stat.S_IRWXO
 #: the ports the host uses, and 8390 is not one of them.
 DEFAULT_PORT = 8390
 
+#: Contract 02 §3 rule 1: attendance's Unix socket lives on the state root.
+#: The same default as `door-trigger`'s.
+DEFAULT_ATTENDANCE_SOCKET = "/srv/agents/state/rework/sock/sessiond.sock"
+
 ENV_LAN_ADDRESS = "AGENT_LAN_ADDRESS"
 ENV_BIND = "DOOR_ACP_BIND"
 ENV_KEY_FILE = "DOOR_ACP_KEY_FILE"
+ENV_ATTENDANCE_SOCKET = "DOOR_ACP_ATTENDANCE_SOCKET"
+ENV_ATTENDANCE_TOKEN_FILE = "DOOR_ACP_ATTENDANCE_TOKEN_FILE"
+ENV_REQUIRE_AUTHENTIK = "DOOR_ACP_REQUIRE_AUTHENTIK"
+
+_FLAGS = {"true": True, "false": False}
 
 _PORT = re.compile(r"[0-9]{1,5}")
 
@@ -43,15 +53,26 @@ class ConfigError(Exception):
 
 @dataclass(frozen=True)
 class DoorConfig:
-    """Everything the door needs. `door_key` is a secret and is never logged."""
+    """Everything the door needs.
+
+    `door_key` is the bearer that a client sends to the door.
+    `attendance_token` is the bearer that the door sends to attendance. Both
+    are secrets, never logged, and never equal.
+    """
 
     bind_host: str
     bind_port: int
     door_key: bytes
+    attendance_socket: Path
+    attendance_token: bytes
+    require_authentik: bool = True
 
     def describe(self) -> str:
         """A one-line summary for `--check`. Carries no secret."""
-        return f"bind={self.bind_host}:{self.bind_port}"
+        return (
+            f"bind={self.bind_host}:{self.bind_port} attendance={self.attendance_socket} "
+            f"require_authentik={str(self.require_authentik).lower()}"
+        )
 
 
 def from_env(environ: dict[str, str] | None = None) -> DoorConfig:
@@ -63,7 +84,35 @@ def from_env(environ: dict[str, str] | None = None) -> DoorConfig:
         bind = f"{_lan_address(env)}:{DEFAULT_PORT}"
 
     host, port = _bind(bind)
-    return DoorConfig(bind_host=host, bind_port=port, door_key=_read_key(env))
+    door_key = read_key_file(ENV_KEY_FILE, env.get(ENV_KEY_FILE, ""))
+    attendance_token = read_key_file(
+        ENV_ATTENDANCE_TOKEN_FILE, env.get(ENV_ATTENDANCE_TOKEN_FILE, "")
+    )
+    if hmac.compare_digest(door_key, attendance_token):
+        raise ConfigError(
+            f"{ENV_KEY_FILE} and {ENV_ATTENDANCE_TOKEN_FILE} hold one key. "
+            "The client bearer and attendance's token must be two secrets."
+        )
+
+    socket = env.get(ENV_ATTENDANCE_SOCKET, "").strip() or DEFAULT_ATTENDANCE_SOCKET
+    return DoorConfig(
+        bind_host=host,
+        bind_port=port,
+        door_key=door_key,
+        attendance_socket=Path(socket),
+        attendance_token=attendance_token,
+        require_authentik=_flag(env, ENV_REQUIRE_AUTHENTIK, default=True),
+    )
+
+
+def _flag(env: dict[str, str], name: str, *, default: bool) -> bool:
+    value = env.get(name, "").strip()
+    if not value:
+        return default
+    if value not in _FLAGS:
+        raise ConfigError(f"{name}={value} is not true or false.")
+
+    return _FLAGS[value]
 
 
 def _lan_address(env: dict[str, str]) -> str:
@@ -96,10 +145,11 @@ def _bind(value: str) -> tuple[str, int]:
     return str(address), int(port)
 
 
-def _read_key(env: dict[str, str]) -> bytes:
-    name = env.get(ENV_KEY_FILE, "").strip()
+def read_key_file(setting: str, name: str) -> bytes:
+    """One key file, checked before it is trusted. `setting` names it in each error."""
+    name = name.strip()
     if not name:
-        raise ConfigError(f"{ENV_KEY_FILE} is not set. The door needs its key file.")
+        raise ConfigError(f"{setting} is not set. The door needs this key file.")
 
     path = Path(name)
     try:
@@ -107,22 +157,20 @@ def _read_key(env: dict[str, str]) -> bytes:
         raw = path.read_bytes()
     except OSError as exc:
         # The path is not a secret. The content is, and it is not in the text.
-        raise ConfigError(f"{ENV_KEY_FILE}: cannot read {path} ({exc.strerror}).") from exc
+        raise ConfigError(f"{setting}: cannot read {path} ({exc.strerror}).") from exc
     except ValueError as exc:
         # A path that the system refuses before the read: a NUL byte.
-        raise ConfigError(f"{ENV_KEY_FILE}: cannot read {name!r} ({exc}).") from exc
+        raise ConfigError(f"{setting}: cannot read {name!r} ({exc}).") from exc
 
     if mode & _NOT_OWNER_BITS:
-        raise ConfigError(
-            f"{ENV_KEY_FILE}: {path} is not mode 0600. Remove the group and other bits."
-        )
+        raise ConfigError(f"{setting}: {path} is not mode 0600. Remove the group and other bits.")
 
     value = raw.strip()
     if not value.isascii():
-        raise ConfigError(f"{ENV_KEY_FILE}: the key in {path} is not ASCII text.")
+        raise ConfigError(f"{setting}: the key in {path} is not ASCII text.")
     if len(value) < MIN_KEY_BYTES:
         raise ConfigError(
-            f"{ENV_KEY_FILE}: the key in {path} is shorter than {MIN_KEY_BYTES} bytes. "
+            f"{setting}: the key in {path} is shorter than {MIN_KEY_BYTES} bytes. "
             "An empty or short key is how a LAN surface becomes an open one."
         )
 

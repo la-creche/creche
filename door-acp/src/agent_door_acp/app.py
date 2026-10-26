@@ -1,9 +1,9 @@
 """The door's ASGI app: `GET /healthz` and `WS /acp/<family>`.
 
 The door forwards ACP frames between a WebSocket client and `attendance`'s
-`WS /acp/{family}`, and translates nothing. It parses no frame. Each check
-here reads the request line and the headers only, and each refusal comes
-before the upgrade. `_forward` is the one function that the forward replaces.
+`WS /acp/{family}`, and translates nothing. Each check here reads the
+request line and the headers only, and each refusal comes before the
+upgrade. `forward.py` owns the frames.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket
 
 from .config import DoorConfig
+from .forward import Upstream, forward
 
 #: The family path grammar: `/acp/<family>`. Read with `fullmatch` only.
 ACP_PREFIX = "/acp/"
@@ -25,11 +26,8 @@ FAMILY_PATTERN = re.compile(r"[a-z][a-z0-9-]{1,30}")
 
 #: The header that the reverse proxy sets after Authentik's forward auth
 #: passes. The door reads its presence only, never its value as an identity.
+#: `require_authentik` false drops this check, for a terminal client.
 FORWARD_AUTH_HEADER = "x-authentik-username"
-
-#: RFC 6455 §7.4 registry, 1013 "Try Again Later": the door has no forward yet.
-NOT_WIRED_CODE = 1013
-NOT_WIRED_REASON = "not wired"
 
 _BEARER = b"Bearer "
 _LATIN_1 = "latin-1"
@@ -38,12 +36,13 @@ _LATIN_1 = "latin-1"
 def create_app(config: DoorConfig) -> Starlette:
     """The app for one config. The key stays in this closure."""
     expected = _BEARER + config.door_key
+    upstream = Upstream(config.attendance_socket, config.attendance_token)
 
     async def healthz(request: Request) -> Response:
         return JSONResponse({"status": "ok"})
 
     async def acp(websocket: WebSocket) -> None:
-        if not _authorized(websocket, expected):
+        if not _authorized(websocket, expected, require_authentik=config.require_authentik):
             await websocket.send_denial_response(Response(status_code=401))
             return
 
@@ -55,7 +54,7 @@ def create_app(config: DoorConfig) -> Starlette:
             return
 
         await websocket.accept()
-        await _forward(websocket, family)
+        await forward(websocket, family, upstream)
 
     return Starlette(
         routes=[
@@ -65,16 +64,10 @@ def create_app(config: DoorConfig) -> Starlette:
     )
 
 
-def _authorized(websocket: WebSocket, expected: bytes) -> bool:
+def _authorized(websocket: WebSocket, expected: bytes, *, require_authentik: bool) -> bool:
     """Both checks run every time, so the time taken says nothing about which failed."""
     offered = websocket.headers.get("authorization", "").encode(_LATIN_1)
     bearer = hmac.compare_digest(offered, expected)
     forwarded = websocket.headers.get(FORWARD_AUTH_HEADER, "").strip() != ""
 
-    return bearer and forwarded
-
-
-async def _forward(websocket: WebSocket, family: str) -> None:
-    """Row 27 of the Phase 2 plan replaces this body with the forward."""
-    del family
-    await websocket.close(code=NOT_WIRED_CODE, reason=NOT_WIRED_REASON)
+    return bearer and (forwarded or not require_authentik)

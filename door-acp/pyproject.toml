@@ -7,6 +7,8 @@ dependencies = ["starlette==1.6.0", "uvicorn==0.52.4", "websockets==17.2"]
 
 [project.scripts]
 agent-door-acp = "agent_door_acp.__main__:main"
+# The stdio bridge for an ACP client that speaks stdio only.
+creche-acp-connect = "agent_door_acp.connect:main"
 
 [build-system]
 requires = ["hatchling"]
