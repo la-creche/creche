@@ -102,8 +102,9 @@ class CatalogRow:
 #:
 #: `bundles` follows each build through `uv.lock`: `attendance` installs the
 #: doors, and `agent-door-trigger` brings `agent-family`. `playpen`'s build
-#: is an image build, and `playpen/Dockerfile` copies the pi pin out of
-#: `toybox/`, so a pin that moves is a new image.
+#: is an image build, and `playpen/Dockerfile` copies `agent/` and
+#: `facade/` and installs them from the facade's lockfile, so a change to
+#: either one, the Flue pin included, is a new image.
 #: `test_each_component_bundles_what_its_build_installs` holds it equal.
 #:
 #: `chaperone` is the Rust program of the chaperone repository, and its
@@ -123,7 +124,9 @@ CATALOG: tuple[CatalogRow, ...] = (
     CatalogRow(
         "noticeboard", Repo.AGENT_CONTROL, "noticeboard", Kind.VENV, Releases.YES, ("family",)
     ),
-    CatalogRow("playpen", Repo.AGENT_CONTROL, "playpen", Kind.OCI_IMAGE, Releases.YES, ("toybox",)),
+    CatalogRow(
+        "playpen", Repo.AGENT_CONTROL, "playpen", Kind.OCI_IMAGE, Releases.YES, ("agent", "facade")
+    ),
     CatalogRow("mcp-servers", Repo.AGENT_MCP, ".", Kind.VENV, Releases.YES),
     CatalogRow("infra", Repo.AGENT_CONTROL, "infra", Kind.COMPOSE, Releases.YES),
     CatalogRow("handover", Repo.AGENT_CONTROL, "handover", Kind.VENV, Releases.YES),

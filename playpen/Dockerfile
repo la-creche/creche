@@ -1,14 +1,15 @@
-# agent-sandbox: the image every family's microVM runs (contract 03).
+# agent-sandbox: the image every family's microVM runs.
 #
-# It holds Node, pi at the version toybox/package.json pins, the playpen
-# bundle and the PEP bridge. Nothing else. There is no ingress into a sandbox,
-# so whatever is not in this image and not reachable through the PEP or the
-# family's egress allowlist does not exist for the agent.
+# It holds Node, ripgrep and the ACP facade with the agent module it
+# imports: `creche-facade` and `acp-relay` on PATH. Nothing else. There is no
+# ingress into a sandbox, so whatever is not in this image and not reachable
+# through the chaperone or the family's egress allowlist does not exist for
+# the agent.
 #
-# The build context is the REPO ROOT, not playpen/, because the pi pin and
-# its lock file live in toybox/. Copying those two files rather than
-# restating the version is what keeps the two images on one pi. README.md
-# carries the two exact build commands, which run on the host.
+# The build context is the REPO ROOT, not playpen/, because the facade and
+# the agent module are two sibling directories, `facade/` and `agent/`. The
+# image installs them from the facade's lockfile, so the Flue pin is the one
+# that `facade/pnpm-lock.yaml` holds and no second copy exists.
 #
 # Two targets:
 #   agent-sandbox         every family
@@ -17,108 +18,71 @@
 #                         needs no network
 ARG NODE_TAG=24-bookworm
 
-# --- The playpen and bridge bundles --------------------------------------
-# esbuild produces ONE file each, with no runtime dependency beyond Node's
-# standard library, so the final stage installs nothing for either.
+# --- The facade, deployed with its production dependencies ------------------
+# facade/pnpm-workspace.yaml names `../agent`, so one install in facade/
+# installs both, and `pnpm run build` builds agent/ first. The two
+# directories sit side by side here as they do in the repository.
 FROM node:${NODE_TAG} AS build
-# The site's LAN address, where LiteLLM and the PEP answer. A sandbox has no
-# site file, so the bundle fixes it (build.mjs): `docker build --build-arg
-# AGENT_LAN_ADDRESS=...`. Without it `pnpm build` below fails.
-ARG AGENT_LAN_ADDRESS
-WORKDIR /app
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 RUN corepack enable
-COPY playpen/package.json playpen/pnpm-lock.yaml playpen/pnpm-workspace.yaml ./
+WORKDIR /src/facade
+COPY facade/package.json facade/pnpm-lock.yaml facade/pnpm-workspace.yaml ./
+COPY agent/package.json /src/agent/
 RUN pnpm install --frozen-lockfile
-COPY playpen/tsconfig.json playpen/build.mjs ./
-COPY playpen/src ./src
-COPY playpen/bridge ./bridge
-RUN pnpm typecheck && pnpm build
+COPY agent/tsconfig.json agent/tsconfig.build.json /src/agent/
+COPY agent/src /src/agent/src
+COPY facade/tsconfig.json facade/tsconfig.build.json ./
+COPY facade/src ./src
+COPY facade/vectors ./vectors
+# `pnpm deploy` copies the facade and the agent module it imports into one
+# tree with no dev dependency. pnpm 10 and later deploy only with injected
+# workspace packages. The flag sets that for this one command, so the
+# lockfile and the development install keep their links.
+RUN pnpm run build \
+    && pnpm --filter facade --config.inject-workspace-packages=true \
+       deploy --prod --frozen-lockfile /opt/creche-facade
 
 # --- agent-sandbox ----------------------------------------------------------
 FROM node:${NODE_TAG} AS agent-sandbox
 
-# ripgrep backs pi's `grep` and fd backs pi's `find`. pi DOWNLOADS a missing
-# one from GitHub, which a sandbox with no egress cannot do, so a granted,
-# active `find` fails every call with "fd not present". Nothing else is
-# added: a shell exists because the
-# image has one, and whether the agent may use it is the family's `shell` flag
-# in runtime.json, not a property of this image.
+# Flue's `grep` runs ripgrep when `rg --version` answers, else grep. Its
+# `glob` runs find. Nothing else is added: a shell exists because the image
+# has one, and whether the agent may use it is the family's grant, not a
+# property of this image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ripgrep ca-certificates curl \
+    ripgrep ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# fd from its own release, pinned and checked. NOT Debian's `fd-find`: bookworm
-# ships 8.6.0, pi's `find` passes `--no-require-git`, and fd learned that flag
-# in 9.0. With 8.6.0 in the image pi finds `fdfind`, uses it, and every call
-# fails on the flag. pi 0.99.1 itself fetches
-# the newest release, so the newest is what its wrapper is written against.
-# The musl build is static, so it does not care which glibc the base has. The
-# digest is the one GitHub publishes for the asset, and the build stops when
-# the download does not match it.
-ARG FD_VERSION=10.5.0
-ARG FD_SHA256=761c72dc8e120d85b22292063be8a796e2eeb20eb3e4f38b8fa2343ccf3514a7
-RUN curl -fsSL -o /tmp/fd.tar.gz \
-      "https://github.com/sharkdp/fd/releases/download/v${FD_VERSION}/fd-v${FD_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
-    && echo "${FD_SHA256}  /tmp/fd.tar.gz" | sha256sum -c - \
-    && tar -xzf /tmp/fd.tar.gz -C /tmp \
-    && install -m 0755 "/tmp/fd-v${FD_VERSION}-x86_64-unknown-linux-musl/fd" /usr/local/bin/fd \
-    && rm -rf /tmp/fd.tar.gz "/tmp/fd-v${FD_VERSION}-x86_64-unknown-linux-musl" \
-    && fd --version
-
-# pi as one npm project, the same way toybox/ installs it. package.json is
-# also the file `sandbox-facts.ts` reads to report the pi version in `ready`,
-# so the pin and the reported version cannot drift.
-WORKDIR /opt/pi
-COPY toybox/package.json toybox/package-lock.json ./
-RUN npm ci --omit=dev --ignore-scripts \
-    && ln -s /opt/pi/node_modules/.bin/pi /usr/local/bin/pi
-
-# The playpen. The shim is what the host names in `sbx exec`.
-COPY --from=build /app/dist/playpen.js /opt/agent-supervisor/agent-supervisor.js
-RUN printf '#!/bin/sh\nexec node /opt/agent-supervisor/agent-supervisor.js "$@"\n' \
-    > /usr/local/bin/agent-supervisor \
-    && chmod 0755 /usr/local/bin/agent-supervisor
-
-# The TUI door's launcher (contract 03 §7.6). A second bundle beside the
-# playpen, not a second image: it reads the same `supervisor.env`, the same
-# mounts and the same session store, and asks the same builder for pi's command
-# line. The door opens it with `sbx exec -it`, so the terminal reaches pi.
-COPY --from=build /app/dist/agent-pi-launch.js /opt/agent-supervisor/agent-pi-launch.js
-RUN printf '#!/bin/sh\nexec node /opt/agent-supervisor/agent-pi-launch.js "$@"\n' \
-    > /usr/local/bin/agent-pi-launch \
-    && chmod 0755 /usr/local/bin/agent-pi-launch
-
-# The PEP bridge. It carries no credential and no policy: it presents whatever
-# the family's manifest says, so a grant changes without touching this image.
-#
-# Read-only, and outside every mount a session can write. `--no-extensions`
-# keeps discovery off, so the only extension pi loads is the one the playpen
-# names by this path. Discovery would also read the session store, which is
-# agent-writable and outlives the sandbox.
-COPY --from=build /app/dist/pep-bridge.js /opt/agent-bridge/pep-bridge.js
-RUN chmod 0444 /opt/agent-bridge/pep-bridge.js
-
-# Fail the BUILD, not the operator's first channel, when a bundle cannot start.
-# --sandbox is absent on purpose: index.ts then exits 2 without opening
-# anything, which proves the file parses and runs under this Node. Importing
-# the bridge only evaluates the module; its factory is never called, so there
-# is no network and no side effect.
-RUN node /opt/agent-supervisor/agent-supervisor.js; [ "$?" = "2" ]
-# The launcher answers an empty argument list the same way, before it reads a
-# mount or touches a session store, so this proves the bundle and nothing else.
-RUN node /opt/agent-supervisor/agent-pi-launch.js; [ "$?" = "2" ]
-RUN node --input-type=module \
-    -e "const m = await import('/opt/agent-bridge/pep-bridge.js'); if (typeof m.default !== 'function') { throw new Error('pep bridge has no default factory'); }"
-
-# Mount points, so a missing mount is an empty directory and not a surprise.
-RUN mkdir -p /work/sessions /run/family /run/family-config /run/control
+# The facade. Each shim is a program that the host names in `sbx exec`.
+COPY --from=build /opt/creche-facade /opt/creche-facade
+RUN for name in creche-facade acp-relay; do \
+      printf '#!/bin/sh\nexec node /opt/creche-facade/dist/src/bin/%s.js "$@"\n' "$name" \
+        > "/usr/local/bin/$name" \
+      && chmod 0755 "/usr/local/bin/$name"; \
+    done
 
 ENV NODE_ENV=production
 ENV HOME=/root
 ENV TMPDIR=/tmp
-# The VM stays up because the host holds one long-lived `sbx exec` open
-# (contract 03 §10 rule 1). This CMD only keeps PID 1 alive.
+
+# Fail the BUILD, not the first switch, when a program cannot start. The four
+# mount variables name directories that do not exist, and AGENT_SANDBOX is
+# absent: the facade then exits 2 and writes exactly one stderr line,
+# `creche-facade: sandbox_unset`, before it opens anything. The build fails
+# on any other status or any other stderr text, an empty one included.
+# That proves the tree loads under this Node.
+RUN err="$(AGENT_SESSIONS_DIR=/nonexistent/sessions AGENT_CRED_DIR=/nonexistent/creds \
+      AGENT_FAMILY_CONFIG_DIR=/nonexistent/config AGENT_CONTROL_DIR=/nonexistent/control \
+      creche-facade </dev/null 2>&1 >/dev/null)"; \
+    status=$?; \
+    if [ "$status" -ne 2 ] || [ "$err" != "creche-facade: sandbox_unset" ]; then \
+      printf 'creche-facade: exit %s, stderr:\n%s\n' "$status" "$err" >&2; exit 1; \
+    fi
+# No facade listens in a build, so the relay exits 1.
+RUN acp-relay </dev/null; [ "$?" = "1" ]
+
+# The VM stays up because the host holds one long-lived `sbx exec` open.
+# This CMD only keeps PID 1 alive.
 CMD ["sleep", "infinity"]
 
 # --- agent-sandbox-python ---------------------------------------------------
