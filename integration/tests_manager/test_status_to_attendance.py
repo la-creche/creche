@@ -17,7 +17,8 @@ from pathlib import Path
 import pytest
 from attendance.auth import Principal
 from attendance.channel import SandboxDial
-from attendance.exec_channel import DEFAULT_COMMAND, build_argv
+from attendance.config import DEFAULT_FACADE_COMMAND
+from attendance.exec_channel import build_argv
 from attendance.family_status import FamilyState, SandboxState, StatusReader, check_may_serve
 from attendance.states import SessionKind
 from caregiver.playpen_env import read_playpen_env
@@ -133,24 +134,23 @@ def test_the_env_file_names_the_directories_apply_mounted(applied: Applied) -> N
     assert values["AGENT_SANDBOX"] == SANDBOX
 
 
-def test_the_default_command_carries_that_file_and_the_id(
+def test_the_facade_command_carries_that_file_and_the_id(
     reader: StatusReader, applied: Applied
 ) -> None:
     """The end of the seam: what `attendance` would run on the host, built
     from `caregiver`'s own document with no value typed by hand.
 
     `sbx exec` forwards no host environment, so a command without
-    `--env-file` starts a playpen that finds none of its three mounts;
-    one without `--sandbox` makes it exit 2 before opening anything.
+    `--env-file` starts a facade that finds none of its three mounts.
     """
     status = reader.read(FAMILY)
     assert status is not None
     box = status.sandbox_by_id(SANDBOX)
     assert box is not None
 
-    argv = build_argv(DEFAULT_COMMAND, SandboxDial(SANDBOX, box.playpen_env))
+    argv = build_argv(DEFAULT_FACADE_COMMAND, SandboxDial(SANDBOX, box.playpen_env))
     env_path = caregiver_paths.playpen_env_path(applied.state_root, FAMILY, SANDBOX)
 
     assert argv[:2] == ["sbx", "exec"]
     assert argv[argv.index("--env-file") + 1] == str(env_path)
-    assert argv[argv.index("--sandbox") + 1] == SANDBOX
+    assert SANDBOX in argv

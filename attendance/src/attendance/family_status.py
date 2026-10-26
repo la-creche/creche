@@ -26,12 +26,6 @@ from .states import SessionKind
 STALE_AFTER_S = 90.0
 FIRST_EPOCH = 1
 
-#: Contract 05 §3.3. `caregiver` raises it when the PEP's `/healthz` has been
-#: silent for longer than the watch's threshold. `blocks_turns` is false, so
-#: `check_may_serve` lets every family serve, and one caller looks for this
-#: code by name: an autonomous firing, whose whole purpose is tool calls.
-PEP_UNREACHABLE = "pep_unreachable"
-
 
 class FamilyState(StrEnum):
     """Contract 05 §3's family states."""
@@ -124,10 +118,6 @@ class FamilyStatus:
         the state, so another reading changes one word of a detail.
         """
         return self.state.value if self.state is not None else None
-
-    def has_fault(self, code: str) -> bool:
-        """True when the document carries this fault, blocking or not."""
-        return code in self.fault_codes
 
     def is_stale(self, stale_after_s: float = STALE_AFTER_S) -> bool:
         """True when `caregiver` has not written for longer than the limit."""

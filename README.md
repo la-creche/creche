@@ -81,8 +81,8 @@ The other directories:
 | Change how a family change is priced as live or replace | `family/src/agent_family/classify.py` |
 | Change a reconcile step | `caregiver/src/caregiver/steps.py`, `reconcile.py` |
 | Change the sbx commands the host runs | `caregiver/src/caregiver/driver.py` |
-| Change a session, turn or journal rule | `attendance/src/attendance/service.py`, `journal.py` |
-| Change the channel protocol, host side | `attendance/src/attendance/wire.py`, `playpen_link.py` |
+| Change a delegate job, a dispatched job or the switch | `attendance/src/attendance/service.py`, `acp_jobs.py` |
+| Change the ACP link, host side | `attendance/src/attendance/acp_link.py` |
 | Change the channel protocol, sandbox side | `playpen/src/protocol.ts`, `playpen.ts` |
 | Change how pi is started | `playpen/src/pi-args.ts`, the one builder |
 | Change how a manifest becomes pi tools | `playpen/bridge/tools.ts` |

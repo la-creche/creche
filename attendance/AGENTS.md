@@ -25,25 +25,31 @@ inside the sandbox image, which carries Node.
    ACP on the target's facade. Only an autonomous family has a limit and a
    queue.
 
-The session API (`/v1/sessions*`), the journal and the event streams left
-in the phase 2 plan, row 21. Session files, journals and streams of an
-earlier release are not read. Nothing migrates them.
+The session API (`/v1/sessions*`), the journal, the event streams, the
+writer lease, the Open WebUI copy and the playpen channel left in the phase
+2 plan, rows 21 to 25. Session files, journals and streams of an earlier
+release are not read. Nothing migrates them. The facade owns each
+conversation and the one-writer rule (Flue's queue).
 
 ## Trust rules
 
 1. Every byte from a sandbox is a claim. A reader returns a refusal, never
    raises.
-2. Nothing from the channel is acted on. The host never opens a path, fetches
-   a URL or runs a string that came from a sandbox.
-3. `supervisor.lock` can delay a channel and can never grant one. Read the
+2. Nothing from a link is acted on. The host never opens a path, fetches a
+   URL or runs a string that came from a sandbox.
+3. `supervisor.lock` can delay a dial and can never grant one. Read the
    lock of the sandbox being dialled, never the family's. Time the counter,
    never a timestamp.
 4. A fault clears only on evidence: a completed handshake or a service start.
 5. A door's request body is untrusted input. `requests.py` parses it.
 6. The status document is a claim. A document with no known `kind` opens no
    door and starts no queued job. Read the kind with `served_kind`.
-7. A cap of a text from a sandbox is a count of bytes of UTF-8. The cut is
-   between two characters.
+7. A cap of a text from a sandbox is a count of bytes of UTF-8. Cut such a
+   text with `lines.cut_bytes`. The cut is between two characters.
+8. Frame every byte stream from a sandbox with `lines.LineSplitter`: LF
+   only, a cap per line, a refusal for a line over the cap or not UTF-8.
+9. The ACP door translates nothing. It checks the envelope and the size of
+   a frame, and pipes the bytes.
 
 ## Security rules
 
@@ -123,8 +129,7 @@ uv run python -m attendance           # serve
 | `SESSIOND_WORK_ROOT` | the `code-sandbox` work root |
 | `SESSIOND_SOCKET` | the Unix socket |
 | `SESSIOND_BIND_LAN`, `SESSIOND_LAN_ADDRESS`, `SESSIOND_LAN_PORT` | the optional TCP listener, port 8350 |
-| `SESSIOND_CHANNEL_COMMAND` | read and printed by `--check`, and used by no link since row 21. Row 25 removes it. |
-| `SESSIOND_LOG_DIR` | where each family's playpen stderr lands |
+| `SESSIOND_LOG_DIR` | where the stderr of each `sbx exec` of a family lands |
 | `SESSIOND_LOCK_STALE_S`, `SESSIOND_LOCK_POLL_S` | the lock beat window and its poll |
 | `SESSIOND_ACP_RELAY_COMMAND` | how one ACP door connection reaches the facade. `{env_file}` comes from the status document. |
 | `SESSIOND_FACADE_COMMAND` | how the supervisor link starts each sandbox's facade. `{env_file}` comes from the status document. |
@@ -141,14 +146,16 @@ chaperone reads them as another user. `SIGHUP` reloads them.
 | `service.py` | the operations: the jobs, the ACP door, the switch |
 | `requests.py` | every request body, validated before use |
 | `queueing.py`, `outcomes.py` | the dispatch queues, what survives a job |
-| `playpen_link.py`, `wire.py` | the old playpen channel. No route reaches it since row 21. Row 25 removes it. |
-| `switching.py`, `channel.py`, `exec_channel.py` | a switch, a byte channel, an `sbx exec` process |
+| `switching.py` | the bookkeeping of a switch: the pin and the runs |
+| `channel.py`, `exec_channel.py`, `lines.py` | a byte channel and its fake, an `sbx exec` process, the LF framing and the byte cut |
 | `supervisor_lock.py` | the proof that no older supervisor holds a sandbox |
 | `acp_link.py`, `acp/schema-v1.json` | the ACP link to one sandbox's facade, and the pinned ACP schema |
 | `acp_jobs.py` | one job over the link: `session/new`, one prompt, the deadline and its cancel |
 | `acp_door.py` | `WS /acp/{family}` on the Unix socket: one `acp-relay` per connection, the envelope check, nothing translated |
 | `jobs.py`, `dispatch.py`, `workspace.py` | thin jobs, the dispatch ledger, the per-chat work directory |
 | `family_status.py`, `faults.py` | the status document, the fault file |
+| `auth.py`, `config.py`, `paths.py` | the token files and the grants, the environment, every path |
+| `ids.py`, `clock.py`, `atomic.py`, `errors.py`, `models.py`, `states.py` | the id grammars, the time, the file writes, the error body, the trigger record, the family kind |
 | `tasks.py` | what a task says when it ends with an error |
 | `verify.py` | `attendance-verify` |
 
@@ -158,8 +165,11 @@ chaperone reads them as another user. `SIGHUP` reloads them.
 uv run pytest attendance/tests
 ```
 
-`tests/attendance_harness.py` is the far side of the channel. Add a new
-misbehaviour there. A test that spawns a process is marked `slow`.
+`tests/fake_facade.py` is the far side of a link: in process over a
+`FakeChannel`, or as a program that `fake_sbx.py` starts. Add a new
+misbehaviour of a facade there. `tests/attendance_harness.py` holds the
+fixtures: tokens, a status document, a config. A test that spawns a process
+is marked `slow`.
 
 ## Known gaps
 
@@ -184,8 +194,6 @@ misbehaviour there. A test that spawns a process is marked `slow`.
   reads `ended` with a null outcome.
 - An outcome record of a job over ACP has a null `spend_usd`: ACP reports
   no usage (`outcomes.py`).
-- After an idle close, the status document still says `channel: open`
-  (`playpen_link.py`).
 - `caregiver` writes the status document's `channel` field from its own
   ledger. This service does not publish its `LinkStatus` there: it never
   calls `caregiver`, and contract 05 names `caregiver` the one writer.
@@ -199,18 +207,17 @@ misbehaviour there. A test that spawns a process is marked `slow`.
   (`auth.py`).
 - The switch answer's `sessions` is 0: no session lives here
   (`service.py`).
-- Contract 03 §13 rule 6 names no nesting limit for an event. `cap_event`
-  reads an event of more than 64 levels as oversized (`wire.py`).
-- Contract 03 §4.6 and §5.5 do not say that a `ping` can have no nonce. The
-  playpen answers such a `ping` with `nonce: null`. `wire.parse` refuses a
-  `pong` whose nonce is not a text. This host sends a nonce in each `ping`
-  (`wire.py`).
-- Contract 03 §13 rule 5 names no event that the host cannot record. An
-  event with one half of a surrogate pair has no UTF-8 form. `cap_event`
-  reads it as oversized (`wire.py`).
+- `ErrorCode` still holds the codes of the session API, such as
+  `session_busy` and `lease_taken_over`. No route answers them now. The
+  vectors of `session.error_body` list every code (`errors.py`).
+- `SESSIOND_CHANNEL_COMMAND` and the three `SESSIOND_OWUI_*` keys stay in
+  the env catalog (`env/src/creche_env/default.env`). No program reads them.
+  Removing a catalog key refuses each site file that sets it.
+- `config.playpen_log` keeps the file name `playpen-<family>.log` for the
+  stderr of the facade and the relays (`config.py`).
 - Contract 03 §8 gives each cap of a text in bytes. It gives no count of
   bytes for one half of a surrogate pair. Such a half has no UTF-8 form.
-  `cut_bytes` counts it as three bytes and keeps it in the text (`wire.py`).
+  `cut_bytes` counts it as three bytes and keeps it in the text (`lines.py`).
 - Contract 05 §2.1 does not say what a reader does with a `kind` that is
   not one of its three words. `served_kind` refuses each door with
   `forbidden`. A family that never validated has an empty `kind` and gets

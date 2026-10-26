@@ -16,8 +16,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-from .exec_channel import DEFAULT_COMMAND
-from .wire import LOCK_POLL_S, LOCK_STALE_S
+from .supervisor_lock import LOCK_POLL_S, LOCK_STALE_S
 
 # Contract 02 §3 rule 1: a Unix socket is the default and is enough, because
 # all four doors run on the same host. `attendance` is a systemd USER unit, so
@@ -90,7 +89,6 @@ class Config:
     bind: Bind
     lan_address: str
     lan_port: int
-    channel_command: str
     log_dir: Path
     # Contract 03 §11.4 rule 4's two numbers. They are here so a test can watch
     # the lock in fractions of a second, and so an operator can widen the
@@ -107,7 +105,7 @@ class Config:
         return self.bind is Bind.SOCKET_AND_LAN
 
     def playpen_log(self, family: str) -> Path:
-        """Where one family's playpen stderr lands (contract 03 §1 rule 4)."""
+        """Where the stderr of each `sbx exec` of one family lands (contract 03 §1 rule 4)."""
         return self.log_dir / f"playpen-{family}.log"
 
 
@@ -123,7 +121,6 @@ def from_env(environ: dict[str, str] | None = None) -> Config:
         bind=_bind(source),
         lan_address=_lan_address(source),
         lan_port=_port(source),
-        channel_command=_text(source, "CHANNEL_COMMAND", DEFAULT_COMMAND),
         log_dir=_path(source, "LOG_DIR", DEFAULT_LOG_DIR),
         lock_stale_s=_seconds(source, "LOCK_STALE_S", LOCK_STALE_S),
         lock_poll_s=_seconds(source, "LOCK_POLL_S", LOCK_POLL_S),

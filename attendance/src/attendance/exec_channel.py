@@ -1,14 +1,14 @@
 """The real channel: one long-lived child process over stdio (contract 03 §1).
 
-On the host the command is
+On the host the command of the supervisor link is
 
-    sbx exec --env-file <supervisor.env> <sandbox id> -- \\
-      node /opt/agent-supervisor/agent-supervisor.js --sandbox <sandbox id>
+    sbx exec --env-file <supervisor.env> <sandbox id> -- creche-facade
 
-It is configurable so a test can point it at anything, and so the command can
+and the command of one ACP door connection ends in `acp-relay`. Each is
+configurable so a test can point it at anything, and so the command can
 change without a code change.
 
-Four facts shape this module.
+Three facts shape this module.
 
 1. `sbx exec` inherits and consumes stdin. That is the mechanism the channel
    relies on, and it is why every other `sbx exec` the platform runs needs
@@ -18,8 +18,6 @@ Four facts shape this module.
 3. `sbx exec` forwards NO host environment. `--env-file` is the only way a
    value reaches the VM, and `caregiver` writes the file it names
    (contract 03 §7.1).
-4. The playpen exits 2 without a sandbox id, so `--sandbox` is part of the
-   command and not an optional extra.
 """
 
 from __future__ import annotations
@@ -30,16 +28,12 @@ import shlex
 from pathlib import Path
 
 from .channel import ChannelClosed, SandboxDial
+from .lines import MAX_LINE_BYTES, LineSplitter, RawLine
 from .tasks import report_failure
-from .wire import MAX_LINE_BYTES, LineSplitter, RawLine
 
 READ_CHUNK_BYTES = 65_536
 SANDBOX_TEMPLATE_FIELD = "{sandbox}"
 ENV_FILE_TEMPLATE_FIELD = "{env_file}"
-DEFAULT_COMMAND = (
-    "sbx exec --env-file {env_file} {sandbox} -- "
-    "node /opt/agent-supervisor/agent-supervisor.js --sandbox {sandbox}"
-)
 _STDERR_LIMIT_BYTES = 4_096
 
 #: What the log holds in place of a stderr line that the reader dropped.
@@ -69,12 +63,12 @@ def build_argv(template: str, dial: SandboxDial) -> list[str]:
 
 
 class ExecChannel:
-    """Speaks contract 03 over a child process's stdin and stdout."""
+    """One framed byte stream over a child process's stdin and stdout."""
 
     def __init__(
         self,
         dial: SandboxDial,
-        command: str = DEFAULT_COMMAND,
+        command: str,
         log_path: Path | None = None,
         max_line_bytes: int = MAX_LINE_BYTES,
     ) -> None:

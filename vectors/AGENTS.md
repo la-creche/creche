@@ -56,7 +56,7 @@ directory is not a workspace package, so a change here does not change
 | `surfaces/server_file.py` | `server_file` and `server_file.toml` |
 | `surfaces/classify.py` | `family_file.classify` |
 | `surfaces/family_cli.py` | `family_file.cli` |
-| `surfaces/channel.py` | `channel.parse`, `channel.frame`, `channel.build` |
+| `surfaces/channel.py` | `channel.frame`. The files of `channel.parse` and `channel.build` are frozen |
 | `surfaces/grants.py` | `grants.parse`, `grants.write`, `chaperone.call_body`, `chaperone.approval_body`, `chaperone.verb` |
 | `surfaces/audit.py` | `chaperone.audit_line`, `chaperone.unidentified_line`, `chaperone.reason` |
 | `surfaces/status.py` | the five readers of `status.json`: `status.<reader>` |
@@ -104,6 +104,9 @@ and the YAML path does not.
 - The session API left `attendance` (phase 2 plan, row 21). Its files under
   `data/session/` are frozen. Each other file of `data/session/` has a
   Python origin still.
+- `attendance.wire` left in row 25. `channel/parse.json` and
+  `channel/build.json` are frozen. `channel/frame.json` reads the same
+  splitter in `attendance.lines`.
 - No Rust code compares the bytes of a frozen file with its digest. The
   Rust reader, the crate `creche-vectors`, checks only the form of the map
   `frozen`. `vectors/tests` holds each digest.
@@ -174,8 +177,6 @@ and the YAML path does not.
   no other way to set the time of a record.
 - No vector covers the retention sweep of a log, or a log directory that
   the chaperone cannot write.
-- `channel.parse` gives no vector for `unknown_address` or `sequence_gap`.
-  Those refusals need the state of a channel.
 - No vector covers the size cap of a grant file. No vector of the two body
   surfaces covers the body cap of the chaperone. The caller applies each cap
   before it calls the entry point. `chaperone.unidentified_line` holds two
@@ -199,18 +200,9 @@ and the YAML path does not.
   file.
 - `noticeboard.sessions.is_session` is a copy of the session id grammar.
   `noticeboard.route.session` covers it. The copy has no `id.` surface.
-- `host_reason` of `attendance.wire` has no vector. `cap_event` and
-  `read_usage` have vectors only through `channel.parse`.
 - No vector covers the playpen side of contract 03: what the playpen accepts
   from the host, and what it writes. The playpen is TypeScript, and the
   generator calls Python.
-- `channel.build` has no vector for `prompt`. `attendance.wire` has no
-  builder for that message.
-- `channel.build` holds a `workspace`, a `branch` and a `delegation` only as
-  the host makes them. It holds no `epoch` of 2^64 or more. A builder of
-  `attendance.wire` writes each object and each integer that its caller
-  gives, and the Rust types hold no other form. A plain test of the Rust
-  `channel::host` module holds the calls that have no vector.
 - `status.door_trigger` lists only an autonomous family, and a refused
   vector holds no reason. Most status documents are attended, so that
   reader refuses them on `kind` alone. The surface pins little of how that

@@ -1,7 +1,7 @@
 """Start the session service, or check its configuration and exit.
 
-The host has no `node` on its PATH, so nothing on this side of the channel
-may need it. This is a Python service and it stays one (contract 03 §14.1
+The host has no `node` on its PATH, so nothing on this side of a link may
+need it. This is a Python service and it stays one (contract 03 §14.1
 rule 6).
 
 `--check` validates the environment and every token file, prints what the
@@ -220,7 +220,7 @@ def _report(config: Config) -> None:
     else:
         print("attendance: tcp           off")
 
-    print(f"attendance: channel       {config.channel_command}")
+    print(f"attendance: facade        {config.facade_command}")
     print(f"attendance: tokens        {len(Principal)} files present and long enough")
 
 

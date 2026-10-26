@@ -1,6 +1,8 @@
 {
  "format": 1,
  "frozen": {
+  "channel/build.json": "971e0dd9bacf242ac88c8870e6178ef112acd1899ce04c022e2c91c82d9b7c47",
+  "channel/parse.json": "2ae3ecf473fd70afa431ac8faffd328bbb9ea3f6a5789ca83d5e85a2a784034b",
   "session/answer.lease.json": "a59211b550ffa172f832154506d3de90dc902ec6f56e0eeacfa0fbecce983c22",
   "session/answer.session.json": "c91d2cb1ded61ff5fb0cfac2bd79913091c157d234c564bd44db1dd5f92d5ccb",
   "session/answer.turn.json": "3c2792dea9d11655e4b6a8564b6fad5258da23c0eda964c52a47203c1d4734e7",
@@ -93,9 +95,7 @@
   {"accepted":46,"entry":"agent_family.load_registry","path":"server_file.toml.json","raised":0,"refused":119,"surface":"server_file.toml","vectors":165},
   {"accepted":86,"entry":"agent_family.classify","path":"family_file.classify.json","raised":0,"refused":0,"surface":"family_file.classify","vectors":86},
   {"accepted":27,"entry":"agent_family.cli.main","path":"family_file.cli.json","raised":0,"refused":19,"surface":"family_file.cli","vectors":46},
-  {"accepted":165,"entry":"attendance.wire.parse","path":"channel/parse.json","raised":0,"refused":98,"surface":"channel.parse","vectors":263},
-  {"accepted":37,"entry":"attendance.wire.LineSplitter.feed","path":"channel/frame.json","raised":0,"refused":0,"surface":"channel.frame","vectors":37},
-  {"accepted":23,"entry":"attendance.wire.encode(attendance.wire.<params.builder>(**args))","path":"channel/build.json","raised":0,"refused":2,"surface":"channel.build","vectors":25},
+  {"accepted":37,"entry":"attendance.lines.LineSplitter.feed","path":"channel/frame.json","raised":0,"refused":0,"surface":"channel.frame","vectors":37},
   {"accepted":51,"entry":"chaperone.family_grants.parse_grants","path":"chaperone/grants.json","raised":0,"refused":159,"surface":"grants.parse","vectors":210},
   {"accepted":12,"entry":"caregiver.grants.write_grant_file","path":"chaperone/grants_write.json","raised":0,"refused":0,"surface":"grants.write","vectors":12},
   {"accepted":33,"entry":"chaperone.app.CallBody","path":"chaperone/call_body.json","raised":0,"refused":40,"surface":"chaperone.call_body","vectors":73},
@@ -218,6 +218,8 @@
   {"accepted":26,"entry":"creche_env.envfile.load","path":"envfile/layer.json","raised":0,"refused":95,"surface":"envfile.layer","vectors":121},
   {"accepted":6,"entry":"creche_env.envfile.raw","path":"envfile/raw.json","raised":0,"refused":15,"surface":"envfile.raw","vectors":21},
   {"accepted":5,"entry":"creche_env.envfile.check_trust","path":"envfile/trust.json","raised":0,"refused":6,"surface":"envfile.trust","vectors":11},
+  {"accepted":23,"entry":"attendance.wire.encode(attendance.wire.<params.builder>(**args))","path":"channel/build.json","raised":0,"refused":2,"surface":"channel.build","vectors":25},
+  {"accepted":165,"entry":"attendance.wire.parse","path":"channel/parse.json","raised":0,"refused":98,"surface":"channel.parse","vectors":263},
   {"accepted":9,"entry":"attendance.models.WriterLease.to_api","path":"session/answer.lease.json","raised":0,"refused":0,"surface":"session.answer.lease","vectors":9},
   {"accepted":15,"entry":"attendance.models.Session.to_api","path":"session/answer.session.json","raised":0,"refused":0,"surface":"session.answer.session","vectors":15},
   {"accepted":25,"entry":"attendance.models.Turn.to_api","path":"session/answer.turn.json","raised":0,"refused":0,"surface":"session.answer.turn","vectors":25},

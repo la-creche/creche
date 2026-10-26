@@ -42,8 +42,6 @@ from attendance.channel import Channel, FakeChannel, SandboxDial
 from attendance.exec_channel import ExecChannel
 from attendance.faults import FaultCode, FaultReporter
 from attendance.paths import playpen_lock_file
-from attendance.playpen_link import EXIT_WAIT_S as PLAYPEN_EXIT_WAIT_S
-from attendance.wire import PING_INTERVAL_S
 from attendance_harness import FAMILY, SANDBOX
 from fake_facade import ANSWER, ERROR_CODE, FacadeFleet, PromptMode
 
@@ -60,6 +58,11 @@ READY_RESULT: dict[str, Any] = {
     "protocolVersion": 1,
     "agentCapabilities": {"loadSession": True, "sessionCapabilities": {"list": {}}},
 }
+
+#: Contract 03 §10's ping interval and stop grace. The link keeps the
+#: cadence of the playpen channel it replaces.
+PLAYPEN_PING_INTERVAL_S = 30
+PLAYPEN_STOP_GRACE_S = 5.0
 
 
 class Fleet:
@@ -226,7 +229,7 @@ async def test_beats_keep_the_playpen_cadence(tmp_path: Path) -> None:
     first = await answer(channel, {})
     second = await answer(channel, {})
 
-    assert BEAT_INTERVAL_S == PING_INTERVAL_S
+    assert BEAT_INTERVAL_S == PLAYPEN_PING_INTERVAL_S
     assert first["method"] == second["method"] == METHOD_BEAT
     assert second["id"] > first["id"]
 
@@ -243,7 +246,7 @@ async def test_stop_sends_shutdown_then_waits_the_grace(tmp_path: Path) -> None:
     await link.stop()
     shutdown = json.loads(await fleet.channels[SANDBOX].next_host_line())
 
-    assert EXIT_WAIT_S == PLAYPEN_EXIT_WAIT_S
+    assert EXIT_WAIT_S == PLAYPEN_STOP_GRACE_S
     assert shutdown == {"jsonrpc": "2.0", "method": METHOD_SHUTDOWN, "params": {}}
     assert time.monotonic() - begun >= SHORT_S * 4
     assert link.status.state is LinkState.STOPPED
