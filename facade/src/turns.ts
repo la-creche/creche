@@ -126,6 +126,12 @@ export class Turns {
       return text;
     }
 
+    // The keys go on the row, never into the text that the model reads.
+    const kept = this.sessions.keepPromptMeta(sessionId, params._meta);
+    if (!kept.ok) {
+      return kept;
+    }
+
     const running: Running = { handle, cancelled: false };
     this.running.set(sessionId, running);
     this.live.attach(sessionId, peer);

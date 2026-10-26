@@ -41,6 +41,21 @@ answer to `initialize`, `_creche/beat` and `_creche/shutdown`, the line cap
 and the beat cadence. The facade tests read it. The attendance tests read it
 too. Change a value there, and both sides change.
 
+Its `session_meta` holds the three keys of `_meta` that attendance sends,
+the method that carries each and the shape of each value:
+
+| Key | Method | Column of `creche_sessions` |
+|---|---|---|
+| `creche/job` | `session/new` | `job_id` |
+| `creche/delegation` | the first `session/prompt` | `delegation`: the ID only |
+| `creche/trigger` | the first `session/prompt` | `trigger_json` |
+
+`src/creche-meta.ts` checks each value. A bad value is refused with
+invalid params. A session keeps its first delegation and its first
+trigger, and a prompt that sends another one is refused. No key goes into
+the model's prompt. At the end of each turn, `session_info_update` sends
+the keys of the session in its `_meta`.
+
 ## Environment
 
 `src/family.ts` reads the family config one time at process start, with
@@ -76,7 +91,8 @@ variable or the field, never a value.
 
 A session is one Flue agent instance. Its ACP session id is the instance
 id. Flue keeps no list of conversations, so the facade keeps one table,
-`creche_sessions` (id, title, cwd, created_at, updated_at), in `flue.db`
+`creche_sessions` (id, title, cwd, created_at, updated_at, job_id,
+delegation, trigger_json), in `flue.db`
 beside Flue's own tables (`src/session-index.ts`). No other program of ours
 writes the file. The tests use `sqlite()` with no path and pi's
 `fauxProvider()`, as the agent tests do.
@@ -130,6 +146,11 @@ facade.
 
 ## Known gaps
 
+- The facade does not send `creche/delegation` to the chaperone. Flue's MCP
+  adapter sends no `_meta` on `tools/call`, and a connection has no
+  per-call header. So the chaperone cannot use the delegation ID for a
+  one-hop bound at run time. `src/sessions.ts` holds the
+  `CONTRACT-QUESTION`.
 - attendance's door adds no `_creche/beat` to a door connection, so a
   relay connection never arms its deadline. A relay whose host end died
   can hold its connection until the facade stops. `src/relay.ts` holds
