@@ -1,8 +1,8 @@
 """The service behind the routes (contract 02 §12, §13.4, contract 05 §5).
 
-Three operations run work in a family: a delegate call, a dispatched job and
-an ACP door connection. Each one runs over the ACP supervisor link to the
-sandbox's facade (`acp_link.py`). The fourth operation is the sandbox switch
+Four operations run work in a family: a delegate call, a dispatched job, a
+trigger's job and an ACP door connection. Each one runs over ACP to the
+sandbox's facade (`acp_link.py`). The fifth operation is the sandbox switch
 that `caregiver` asks for. The view reads a family's sessions over a relay
 of its own, and `busy` counts the work in flight.
 
@@ -54,7 +54,7 @@ from .family_status import (
 )
 from .faults import FaultCode, FaultReporter
 from .ids import SessionPrefix, is_sandbox, is_session, new_ulid
-from .models import DEFAULT_DEADLINE_S
+from .models import DEFAULT_DEADLINE_S, TriggerKind
 from .paths import outcome_file, sandbox_sessions_mount
 from .queueing import MAX_QUEUED_TURNS, JobQueue
 from .requests import (
@@ -63,6 +63,7 @@ from .requests import (
     JobQuery,
     SwitchMode,
     SwitchRequest,
+    TriggerRequest,
 )
 from .switching import SwitchBook, SwitchKey, SwitchOutcome, SwitchRun, SwitchTally, switch_key
 from .tasks import report_failure
@@ -98,6 +99,7 @@ class SessionService:
         self._switches = SwitchBook()
         self._cold_start_wait_s = cold_start_wait_s
         self._dispatches = dispatch.DispatchLedger(config.state_root)
+        self._triggers = dispatch.DispatchLedger(config.state_root, dispatch.LedgerDoor.TRIGGER)
         # Phase 2 plan, row 18. One supervisor link to each sandbox's facade,
         # and one lock per sandbox so two jobs never start two facades.
         self._acp_factory = acp_factory if acp_factory is not None else self._facade_factory
@@ -351,7 +353,7 @@ class SessionService:
         what became of each one.
         """
         check_access(principal, Access.WRITE)
-        self._check_dispatch_door(principal)
+        _check_door(principal, Principal.DOOR_DISPATCH)
         target = request.target_family
         status = self._status.require(target)
         # The dispatch door's grant is `autonomous`, so a thin or attended
@@ -365,14 +367,49 @@ class SessionService:
         if repeat is not None:
             return repeat
 
+        job = DispatchJob(entry=self._new_dispatch(request), message=request.message)
+        return await self._enqueue(job, status)
+
+    async def run_trigger(self, principal: Principal, request: TriggerRequest) -> dict[str, Any]:
+        """One firing of `door-trigger`: one `auto-<ulid>` job in the family.
+
+        The job takes a slot of the family's `JobQueue`, beside the
+        dispatched jobs, so `max_running_turns` holds for both. A repeat of
+        the idempotency key answers the first job and enqueues nothing.
+        """
+        check_access(principal, Access.WRITE)
+        _check_door(principal, Principal.DOOR_TRIGGER)
+        family = request.family
+        status = self._status.require(family)
+        check_family_kind(principal, family, served_kind(status))
+        check_may_serve(status)
+        found = self._triggers.find_repeat(family, request.idempotency_key)
+
+        if found is not None:
+            return self._dispatch_answer(found, created=False)
+
+        entry = dispatch.DispatchEntry(
+            session=f"{SessionPrefix.AUTO.value}{new_ulid()}",
+            caller_family=family,
+            family=family,
+            enqueued_at=now(),
+            idempotency_key=request.idempotency_key,
+            kind=request.kind,
+            trigger_name=request.name,
+        )
+        return await self._enqueue(DispatchJob(entry=entry, message=request.message), status)
+
+    async def _enqueue(self, job: DispatchJob, status: FamilyStatus) -> dict[str, Any]:
+        """Start the job, or queue it when the family has no free slot."""
+        entry = job.entry
+        target = entry.family
+        ledger = self._ledger_of(entry)
         # Rule 4: the queue is the TARGET's, and a full one refuses before
         # anything is written.
         self._jobs.check_room(target)
-        entry = self._new_dispatch(request)
-        job = DispatchJob(entry=entry, message=request.message)
 
         if not self._jobs.take_slot(target, entry.session, status.max_running_turns):
-            self._dispatches.write(entry)
+            ledger.write(entry)
             self._jobs.add(target, entry.session, job)
             return self._dispatch_answer(entry, created=True)
 
@@ -383,7 +420,7 @@ class SessionService:
             self._jobs.release(target, entry.session)
             raise
 
-        self._dispatches.write(entry)
+        ledger.write(entry)
         self._start_job(link, job)
         return self._dispatch_answer(entry, created=True)
 
@@ -395,15 +432,27 @@ class SessionService:
         (rule 2). No id ever leaks.
         """
         check_access(principal, Access.WRITE)
-        self._check_dispatch_door(principal)
+        _check_door(principal, Principal.DOOR_DISPATCH)
+        return self._read_ledger(self._dispatches, query)
 
+    def read_trigger_jobs(self, principal: Principal, query: JobQuery) -> dict[str, Any]:
+        """The jobs `door-trigger` started in one family, newest first."""
+        check_access(principal, Access.WRITE)
+        _check_door(principal, Principal.DOOR_TRIGGER)
+        return self._read_ledger(self._triggers, query)
+
+    def _read_ledger(self, ledger: dispatch.DispatchLedger, query: JobQuery) -> dict[str, Any]:
         if query.session is not None:
-            one = self._dispatches.read(query.caller_family, query.session)
+            one = ledger.read(query.caller_family, query.session)
             found = [one] if one is not None else []
         else:
-            found = self._dispatches.list(query.caller_family, query.since, query.limit)
+            found = ledger.list(query.caller_family, query.since, query.limit)
 
         return {"jobs": [self._job_view(entry) for entry in found]}
+
+    def _ledger_of(self, entry: dispatch.DispatchEntry) -> dispatch.DispatchLedger:
+        """The ledger of the door that started this job."""
+        return self._dispatches if entry.kind is TriggerKind.DISPATCH else self._triggers
 
     def dispatch_depth(self, family: str) -> int:
         """How many dispatched jobs of this family wait for a slot."""
@@ -499,7 +548,7 @@ class SessionService:
                 entry.family, entry.session, entry.trigger(), started, end, sandbox or ""
             )
             outcomes.write(self._config.state_root, record)
-            self._dispatches.note_outcome(entry.caller_family, entry.session, record.id)
+            self._ledger_of(entry).note_outcome(entry.caller_family, entry.session, record.id)
         finally:
             self._jobs.release(entry.family, entry.session)
             self._upkeep_step("the dispatch pump", lambda: self._pump_dispatch(entry.family))
@@ -524,7 +573,7 @@ class SessionService:
         return await run_job(
             link,
             plan,
-            on_session=lambda acp: self._dispatches.note_acp_session(
+            on_session=lambda acp: self._ledger_of(entry).note_acp_session(
                 entry.caller_family, entry.session, acp
             ),
         )
@@ -547,21 +596,6 @@ class SessionService:
 
             self._jobs.pop(family)
             self._start_job(None, job)
-
-    def _check_dispatch_door(self, principal: Principal) -> None:
-        """Contract 02 §13.4: the dispatch door serves these two paths.
-
-        The write grant alone is not enough, and neither is being the PEP:
-        `door-delegate` holds both and may not create an autonomous session.
-        """
-        if principal is Principal.DOOR_DISPATCH:
-            return
-
-        raise ApiError(
-            ErrorCode.FORBIDDEN,
-            f"{principal.value} is not the dispatch door",
-            detail={"principal": principal.value},
-        )
 
     def _check_dispatchable(self, status: FamilyStatus) -> None:
         """Contract 02 §13.4.1 rule 3. The TARGET declares `enqueue: true`.
@@ -931,6 +965,22 @@ def _check_view(principal: Principal) -> None:
             f"{principal.value} is not the view principal",
             detail={"principal": principal.value},
         )
+
+
+def _check_door(principal: Principal, door: Principal) -> None:
+    """Contract 02 §13.4: each door that starts a job serves its own paths.
+
+    The write grant alone is not enough, and neither is being the PEP:
+    `door-delegate` holds both and may not create an autonomous session.
+    """
+    if principal is door:
+        return
+
+    raise ApiError(
+        ErrorCode.FORBIDDEN,
+        f"{principal.value} may not use the routes of {door.value}",
+        detail={"principal": principal.value},
+    )
 
 
 def _in_family(sandbox: str, family: str) -> bool:

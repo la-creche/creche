@@ -21,6 +21,7 @@ _FAULT_SOURCE = "sessiond"
 _TOKENS = "tokens"
 _OUTCOMES = "outcomes"
 _DISPATCH = "dispatch"
+_TRIGGER_JOBS = "trigger-jobs"
 _AUDIT = "audit"
 _CODE_SANDBOX = "code-sandbox"
 
@@ -122,6 +123,19 @@ def dispatch_dir(state_root: Path, caller_family: str) -> Path:
 def dispatch_file(state_root: Path, caller_family: str, session: str) -> Path:
     """One ledger entry. The session id is the file name (§13.4.3)."""
     return dispatch_dir(state_root, caller_family) / f"{session}.json"
+
+
+def trigger_dir(state_root: Path, family: str) -> Path:
+    """One family's trigger ledger: the jobs `door-trigger` started in it.
+
+    Not `triggers/`: `door-trigger` keeps its quiet records there.
+    """
+    return state_root / _TRIGGER_JOBS / family
+
+
+def trigger_file(state_root: Path, family: str, session: str) -> Path:
+    """One trigger ledger entry. The session id is the file name."""
+    return trigger_dir(state_root, family) / f"{session}.json"
 
 
 def audit_file(state_root: Path, day: str) -> Path:

@@ -11,10 +11,10 @@ inside the sandbox image, which carries Node.
 
 ## What it does
 
-1. Serves `/delegate`, `/dispatch`, `/dispatch/jobs`,
-   `/internal/switch-sandbox`, the view routes and `/busy` over a Unix
-   socket, and over the LAN address when the config asks. Serves
-   `WS /acp/{family}` on the Unix socket only.
+1. Serves `/delegate`, `/dispatch`, `/dispatch/jobs`, `/trigger`,
+   `/trigger/jobs`, `/internal/switch-sandbox`, the view routes and `/busy`
+   over a Unix socket, and over the LAN address when the config asks.
+   Serves `WS /acp/{family}` on the Unix socket only.
 2. Holds one supervisor link per sandbox and treats every byte from it as
    untrusted.
 3. Reports faults in a fault file. It never calls `caregiver`. The one call
@@ -36,6 +36,34 @@ inside the sandbox image, which carries Node.
    sends `session/prompt` (`acp_view.py`).
 8. Serves `GET /busy` for `view-ro`: the release tool's quiet window reads
    it in place of the session API.
+9. Serves the trigger door for `door-trigger`. Each firing is one job in
+   an autonomous family's `JobQueue`, beside the dispatched jobs.
+
+## The trigger door
+
+Each route takes the `door-trigger` token and no other. `/trigger` takes
+an autonomous family only. The ACP door takes an attended family only.
+
+| Route | Body | Answers |
+|---|---|---|
+| `POST /trigger` | `{"family", "kind", "name", "message", "idempotency_key"}` | `{"session_id", "status", "created"}`, as `/dispatch` |
+| `POST /trigger/jobs` | `{"family", "session"?, "since"?, "limit"?}` | `{"jobs": [job]}`, as `/dispatch/jobs` |
+
+1. `kind` is `timer` or `webhook`. A webhook firing names its trigger in
+   `name`, in the grammar of a family name. A timer firing sends a null
+   `name`.
+2. `message` is the prompt, at most 256 KiB of UTF-8. It is data.
+3. `idempotency_key` is required, at most 128 characters. A repeat in the
+   same family within an hour answers the first job with `created` false,
+   and enqueues nothing.
+4. Each firing is a fresh `auto-<ulid>` job. The family's
+   `max_running_turns` and the queue cap hold for a trigger as for a
+   dispatch.
+5. The prompt's `_meta` carries `creche/trigger`: the kind, the name and
+   the time the job was enqueued. The outcome record names the same
+   trigger.
+6. The trigger ledger is `<state root>/trigger-jobs/<family>/`, apart from
+   the dispatch ledger.
 
 ## The view and `/busy`
 
@@ -196,7 +224,7 @@ chaperone reads them as another user. `SIGHUP` reloads them.
 | `acp_jobs.py` | one job over the link: `session/new`, one prompt, the deadline and its cancel |
 | `acp_door.py` | `WS /acp/{family}` on the Unix socket: one `acp-relay` per connection, its beat, the envelope check, the count of its prompts, nothing translated |
 | `acp_view.py` | the view: one relay per request, `session/list` or `session/load`, the transcript and its caps |
-| `jobs.py`, `dispatch.py`, `workspace.py` | thin jobs, the dispatch ledger, the per-chat work directory |
+| `jobs.py`, `dispatch.py`, `workspace.py` | thin jobs, the dispatch and trigger ledgers, the per-chat work directory |
 | `family_status.py`, `faults.py` | the status document, the fault file |
 | `auth.py`, `config.py`, `paths.py` | the token files and the grants, the environment, every path |
 | `ids.py`, `clock.py`, `atomic.py`, `errors.py`, `models.py`, `states.py` | the id grammars, the time, the file writes, the error body, the trigger record, the family kind |
@@ -246,8 +274,10 @@ is marked `slow`.
   from the work root (`service.py`).
 - No chat session lives here since row 21, so nothing deletes a chat's
   `code-sandbox` directory (`workspace.py`).
-- The principals `door-owui`, `door-tui` and `door-trigger` reach no route
-  since row 21. Their token files are still required at start (`auth.py`).
+- The principals `door-owui` and `door-tui` reach no route since row 21.
+  Their token files are still required at start (`auth.py`).
+- No contract names `/trigger`. The phase 3 plan, row 14, names the route.
+  Its body and its answer are this package's (`requests.py`).
 - The facade's `session/list` row carries `sessionId`, `cwd`, `title` and
   `updatedAt` only. The view reads `created`, `job_id`, `delegation` and
   `trigger` from the row's `_meta` (`creche/created_at`, `creche/job`,
