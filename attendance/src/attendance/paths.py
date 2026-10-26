@@ -18,7 +18,6 @@ _CREDS = "creds"
 _CONFIG = "config"
 _FAULTS = "faults"
 _FAULT_SOURCE = "sessiond"
-_LEASES = "leases"
 _TOKENS = "tokens"
 _OUTCOMES = "outcomes"
 _DISPATCH = "dispatch"
@@ -98,11 +97,6 @@ def fault_file(state_root: Path, family: str) -> Path:
 
 def faults_dir(state_root: Path) -> Path:
     return state_root / _FAULTS / _FAULT_SOURCE
-
-
-def lease_file(state_root: Path, family: str, session: str) -> Path:
-    """The lease mirror. A report, not a lock (contract 02 §7.1)."""
-    return state_root / _LEASES / family / f"{session}.json"
 
 
 def token_file(state_root: Path, door: str) -> Path:

@@ -431,8 +431,8 @@ class Refusal:
     turn: str | None = None
     detail: dict[str, Any] | None = None
     #: `detail` is the holder block of contract 02 §7.2, with its keys in
-    #: the order of `attendance.leases`. Each other detail has its keys in
-    #: the order that `attendance` writes them.
+    #: the order that `attendance.leases` wrote them. Each other detail has
+    #: its keys in the order that `attendance` writes them.
     holder_block: bool = False
 
 
