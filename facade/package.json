@@ -1,0 +1,28 @@
+{
+  "name": "facade",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "facade: the ACP agent of a family sandbox. One process per sandbox owns Flue.",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "bin": {
+    "creche-facade": "dist/src/bin/creche-facade.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "pnpm run build && vitest run"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "2.0.2",
+    "@flue/runtime": "2.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24",
+    "typescript": "^5.6",
+    "vitest": "^3"
+  },
+  "packageManager": "pnpm@11.20.0"
+}

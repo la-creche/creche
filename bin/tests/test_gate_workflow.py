@@ -43,6 +43,10 @@ each other job name is in both files.
 The `agent` job runs the vitest suite and the type check of `agent/`. Both
 workflows have the job, and the verdict leaves it out on a docs change.
 
+The `facade` job runs the vitest suite and the type check of `facade/`. Its
+`pnpm test` builds `dist/` first. Both workflows have the job, and the
+verdict leaves it out on a docs change.
+
 The `systemd-proof` job runs `bin/systemd-proof.sh` for a change that touches
 a file of the proof: `systemd/` or the script.
 On any other code change it skips its one step after the checkout and is
@@ -194,6 +198,13 @@ AGENT_JOB = "agent"
 #: The whole run of that job, and where it runs. The module has no build.
 AGENT_RUN = "pnpm install --frozen-lockfile && pnpm test && pnpm run typecheck"
 AGENT_DIR = "agent"
+
+#: The job that runs the suite and the type check of `facade/`.
+FACADE_JOB = "facade"
+
+#: The whole run of that job, and where it runs. `pnpm test` builds first.
+FACADE_RUN = AGENT_RUN
+FACADE_DIR = "facade"
 
 #: The whole test command of each suite, as `integration/AGENTS.md` gives it,
 #: by the name of its report. The job runs each command as it is, in a step of
@@ -377,7 +388,15 @@ def test_the_docs_scope_runs_no_shard_and_no_playpen(
     by_scope = {name: job.get("if") for name, job in jobs.items() if name != last}
     only_code = {name for name, rule in by_scope.items() if rule == ONLY_CODE}
 
-    assert only_code == {"tests", "playpen", AGENT_JOB, "proc", SUITES_JOB, SYSTEMD_JOB}
+    assert only_code == {
+        "tests",
+        "playpen",
+        AGENT_JOB,
+        FACADE_JOB,
+        "proc",
+        SUITES_JOB,
+        SYSTEMD_JOB,
+    }
     assert only_code == set(DOCS), "the verdict table of this file names other jobs"
     assert {name for name, rule in by_scope.items() if rule is None} == NO_RULE[last]
 
@@ -395,7 +414,7 @@ def test_the_release_runs_the_gates_test_jobs() -> None:
     """A change to one file's shards, playpen steps, process suite, old
     suites or systemd proof that misses the other would let a merge pass a
     release its PR could not, or the reverse."""
-    for name in ("tests", "playpen", AGENT_JOB, "proc", SUITES_JOB, SYSTEMD_JOB):
+    for name in ("tests", "playpen", AGENT_JOB, FACADE_JOB, "proc", SUITES_JOB, SYSTEMD_JOB):
         assert RELEASE_JOBS[name] == JOBS[name], f"release.yml's {name} job is not gate.yml's"
 
 
@@ -470,6 +489,21 @@ def test_the_agent_job_tests_and_typechecks_the_module(
 
     assert [(step["run"], step["working-directory"]) for step in runs] == [(AGENT_RUN, AGENT_DIR)]
     assert [one["uses"].split("@")[0] for one in _node_steps(jobs[AGENT_JOB])] == [
+        one["uses"].split("@")[0] for one in _node_steps(jobs["playpen"])
+    ]
+
+
+@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
+def test_the_facade_job_tests_and_typechecks_the_facade(
+    jobs: dict[str, dict[str, Any]], last: str
+) -> None:
+    """The Python gate never runs the TypeScript suite of `facade/`. A run
+    line that drops `pnpm test` or the type check is green and judges
+    nothing."""
+    runs = [step for step in jobs[FACADE_JOB]["steps"] if "run" in step]
+
+    assert [(step["run"], step["working-directory"]) for step in runs] == [(FACADE_RUN, FACADE_DIR)]
+    assert [one["uses"].split("@")[0] for one in _node_steps(jobs[FACADE_JOB])] == [
         one["uses"].split("@")[0] for one in _node_steps(jobs["playpen"])
     ]
 
@@ -859,6 +893,7 @@ DOCS = {
     "tests": "skipped",
     "playpen": "skipped",
     AGENT_JOB: "skipped",
+    FACADE_JOB: "skipped",
     "proc": "skipped",
     SUITES_JOB: "skipped",
     SYSTEMD_JOB: "skipped",
@@ -875,6 +910,9 @@ CASES: list[tuple[str | None, dict[str, str], bool]] = [
     ("code", {AGENT_JOB: "failure"}, False),
     ("code", {AGENT_JOB: "skipped"}, False),
     ("docs", DOCS | {AGENT_JOB: "success"}, False),
+    ("code", {FACADE_JOB: "failure"}, False),
+    ("code", {FACADE_JOB: "skipped"}, False),
+    ("docs", DOCS | {FACADE_JOB: "success"}, False),
     ("code", {"proc": "failure"}, False),
     ("code", {SYSTEMD_JOB: "failure"}, False),
     ("code", {SYSTEMD_JOB: "cancelled"}, False),

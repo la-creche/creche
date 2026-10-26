@@ -1,0 +1,7 @@
+// The build: `src/` to `dist/src/`. The vector file that `src/vectors.ts`
+// imports lands in `dist/vectors/`, so the root is the package.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "rootDir": "." },
+  "include": ["src"]
+}

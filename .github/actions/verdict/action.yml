@@ -30,6 +30,7 @@ runs:
                 "tests",
                 "playpen",
                 "agent",
+                "facade",
                 "proc",
                 "suites",
                 "systemd-proof",

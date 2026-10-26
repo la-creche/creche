@@ -1,0 +1,43 @@
+{
+  "about": "The creche extensions of ACP v1 between attendance and creche-facade. Each message is one JSON-RPC line as the wire carries it. The facade tests read this file, and the attendance tests read it too.",
+  "protocol_version": 1,
+  "max_line_bytes": 1048576,
+  "beat_interval_s": 30,
+  "missed_beats_allowed": 2,
+  "initialize": {
+    "meta_keys": [],
+    "request": {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "method": "initialize",
+      "params": {
+        "protocolVersion": 1,
+        "clientCapabilities": {
+          "fs": { "readTextFile": false, "writeTextFile": false },
+          "terminal": false
+        },
+        "clientInfo": { "name": "attendance", "version": "0.1.0" }
+      }
+    },
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 0,
+      "result": {
+        "protocolVersion": 1,
+        "agentCapabilities": {
+          "loadSession": true,
+          "sessionCapabilities": { "list": {} }
+        },
+        "authMethods": []
+      }
+    }
+  },
+  "beat": {
+    "request": { "jsonrpc": "2.0", "id": 1, "method": "_creche/beat", "params": {} },
+    "response": { "jsonrpc": "2.0", "id": 1, "result": {} }
+  },
+  "shutdown": {
+    "notification": { "jsonrpc": "2.0", "method": "_creche/shutdown", "params": {} },
+    "exit_status": 0
+  }
+}
