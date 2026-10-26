@@ -25,7 +25,7 @@ delegates = [] # required empty on a thin family (§3.6.4)
 egress = []
 
 shell = false
-sandbox_tools = ["read", "grep", "find", "ls"] # grep is the fallback when search misses
+sandbox_tools = ["read", "grep", "glob"] # grep is the fallback when search misses
 sandbox.cpus = 2
 sandbox.memory = "4g"
 

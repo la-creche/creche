@@ -44,7 +44,7 @@ delegates = []
 egress = []
 
 shell = false
-sandbox_tools = ["read", "grep", "find", "ls", "write", "edit"] # the ledger write lane
+sandbox_tools = ["read", "grep", "glob", "write", "edit"] # the ledger write lane
 sandbox.cpus = 2
 sandbox.memory = "4g"
 

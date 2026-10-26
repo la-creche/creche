@@ -575,14 +575,10 @@ def _check_runtime(family: FamilyFile, issues: Issues) -> None:
     seen: set[str] = set()
     for position, tool in enumerate(family.sandbox_tools):
         loc = f"sandbox_tools[{position}]"
-        if tool == "bash":
-            issues.error(
-                loc, "'bash' is never a sandbox tool; 'shell: true' is the only way to get one"
-            )
-            continue
-
         if tool not in allowed:
-            issues.error(loc, f"'{tool}' is not a sandbox tool; use one of {', '.join(allowed)}")
+            issues.error(
+                loc, f"'{tool}' is not a sandbox tool; use Flue's names: {', '.join(allowed)}"
+            )
             continue
 
         if tool in seen:

@@ -123,19 +123,18 @@ class Mode(StrEnum):
 
 
 class SandboxTool(StrEnum):
-    """Contract 01 §3.8. `bash` is deliberately absent: `shell` is the only
-    way to get one, so one field answers "can it run commands"."""
+    """The six built-in tools of Flue's `local()` sandbox, by Flue's names.
+    The owner's decision for row 6 of the Phase 2 plan replaces the names of
+    contract 01 §3.8. `bash` is one of the six: a grant of `bash` is the
+    one way to run commands. `codemode` is not a name here: the agent
+    mounts it for every family. The default grant is empty."""
 
     READ = "read"
     WRITE = "write"
     EDIT = "edit"
+    BASH = "bash"
     GREP = "grep"
-    FIND = "find"
-    LS = "ls"
-    # pi's built-in extension that runs model-written JavaScript over the
-    # other tools the family holds. It adds no reach: a script calls only
-    # what the model could call itself, and every PEP call is still decided.
-    CODEMODE = "codemode"
+    GLOB = "glob"
 
 
 class SystemPrompt(StrEnum):
@@ -164,7 +163,7 @@ class SandboxFlavor(StrEnum):
 #: Every flavor, in declaration order, for a refusal that names the set.
 SANDBOX_FLAVORS: Final = tuple(str(one) for one in SandboxFlavor)
 
-DEFAULT_SANDBOX_TOOLS: Final = ("read", "grep", "find", "ls")
+DEFAULT_SANDBOX_TOOLS: Final[tuple[str, ...]] = ()
 DEFAULT_CPUS: Final = 2
 DEFAULT_MEMORY: Final = "2g"
 #: node, pi and ripgrep, with no language runtime beyond them. A family

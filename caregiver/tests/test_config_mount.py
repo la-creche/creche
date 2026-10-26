@@ -7,7 +7,10 @@ import json
 from pathlib import Path
 
 import pytest
+from agent_family.parse import Markup, parse_family
 from caregiver.config_mount import RuntimeConfig, config_mount_matches, write_config_mount
+from caregiver.paths import config_dir
+from caregiver.steps import write_config
 
 
 def test_writes_instructions_and_runtime(tmp_path: Path) -> None:
@@ -125,3 +128,27 @@ def test_a_mount_file_that_is_not_utf8_does_not_match(tmp_path: Path, name: str)
     (target / name).write_bytes(b"You are \xff chat.")
 
     assert config_mount_matches(target, **revision) is False
+
+
+_FAMILY_HEAD = (
+    'name = "chat"\nkind = "attended"\ndescription = "d"\n'
+    'model.router = "agent-router"\nmodel.budget_usd_per_day = 1\n'
+)
+
+
+def _runtime_of(tmp_path: Path, family_text: str) -> dict[str, object]:
+    family, issues = parse_family(family_text, Markup.TOML)
+    assert family is not None, issues
+    write_config(family, tmp_path, "x", {})
+    runtime = config_dir(tmp_path, family.name) / "runtime.json"
+    return json.loads(runtime.read_text(encoding="utf-8"))
+
+
+def test_runtime_holds_the_family_flue_tools(tmp_path: Path) -> None:
+    text = _FAMILY_HEAD + 'sandbox_tools = ["read", "write", "edit", "bash", "grep", "glob"]\n'
+    tools = _runtime_of(tmp_path, text)["sandbox_tools"]
+    assert tools == ["read", "write", "edit", "bash", "grep", "glob"]
+
+
+def test_runtime_tools_default_to_empty(tmp_path: Path) -> None:
+    assert _runtime_of(tmp_path, _FAMILY_HEAD)["sandbox_tools"] == []

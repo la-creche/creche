@@ -22,7 +22,7 @@ delegates = []
 egress = []
 
 shell = true
-sandbox_tools = ["read", "grep", "find", "ls", "write", "edit"]
+sandbox_tools = ["read", "grep", "glob", "write", "edit"]
 # `egress: []` means this family can install nothing, so whatever it needs to
 # run code has to be in the image. `python` is the flavor that carries pandas,
 # numpy and matplotlib (§3.9).

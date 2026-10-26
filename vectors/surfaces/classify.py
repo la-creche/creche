@@ -178,10 +178,18 @@ PAIRS: Final[tuple[tuple[str, str, str], ...]] = (
     (
         "sandbox-tools-add",
         BASE,
-        BASE + 'sandbox_tools = ["read", "grep", "find", "ls", "write"]\n',
+        BASE + 'sandbox_tools = ["read", "grep", "glob", "write"]\n',
     ),
-    ("sandbox-tools-remove", BASE, BASE + 'sandbox_tools = ["read"]\n'),
-    ("sandbox-tools-order", BASE, BASE + 'sandbox_tools = ["ls", "find", "grep", "read"]\n'),
+    (
+        "sandbox-tools-remove",
+        BASE + 'sandbox_tools = ["read", "grep"]\n',
+        BASE + 'sandbox_tools = ["read"]\n',
+    ),
+    (
+        "sandbox-tools-order",
+        BASE + 'sandbox_tools = ["read", "grep", "glob"]\n',
+        BASE + 'sandbox_tools = ["glob", "grep", "read"]\n',
+    ),
     ("system-prompt", BASE, BASE + 'system_prompt = "replace"\n'),
     # --- the kind-fenced fields ---
     ("job-add", BASE, BASE + "job = {}\n"),

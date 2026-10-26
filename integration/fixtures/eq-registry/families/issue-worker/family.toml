@@ -20,7 +20,7 @@ delegates = []
 egress = []
 
 shell = false
-sandbox_tools = ["read", "grep", "find", "ls"]
+sandbox_tools = ["read", "grep", "glob"]
 sandbox.cpus = 2
 sandbox.memory = "4g"
 

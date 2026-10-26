@@ -129,7 +129,7 @@ def family_text(
         "egress = []",
         "",
         "shell = false",
-        'sandbox_tools = ["read", "grep", "find", "ls"]',
+        'sandbox_tools = ["read", "grep", "glob"]',
         'sandbox = { cpus = 2, memory = "4g" }',
         "",
         "skills = []",
