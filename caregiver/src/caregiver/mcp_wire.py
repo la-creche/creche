@@ -65,6 +65,7 @@ from datetime import UTC, datetime
 from typing import Final
 
 from agent_family import Registry
+from agent_family.registry import SERVER_FILE
 from agent_family.server import McpServerFile
 
 from .clock import now_rfc3339, rfc3339
@@ -281,7 +282,7 @@ def _broken(registry: Registry) -> tuple[str, ...]:
     `Registry.all_reports`, so this line is a pointer and not a second
     copy of the issue list."""
     return tuple(
-        f"mcp/{safe(name)}/server.yaml: {len(report.issues)} issue(s), see the registry report"
+        f"mcp/{safe(name)}/{SERVER_FILE}: {len(report.issues)} issue(s), see the registry report"
         for name, report in sorted(registry.server_reports.items())
         if not report.ok
     )

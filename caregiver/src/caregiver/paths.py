@@ -8,8 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Final
 
-from agent_family import Markup
-from agent_family.registry import FAMILY_FILE, FAMILY_FILE_YAML
+from agent_family.registry import FAMILY_FILE
 
 #: Rework runtime state.
 STATE_ROOT: Final = Path("/srv/agents/state/rework")
@@ -130,19 +129,10 @@ def applied_dir(root: Path, family: str) -> Path:
     return family_dir(root, family) / APPLIED_DIR
 
 
-def family_file_name(markup: Markup) -> str:
-    """The name of a family file in one markup: `family.toml` or
-    `family.yaml`. A registry file and its applied copy have this name."""
-    match markup:
-        case Markup.TOML:
-            return FAMILY_FILE
-        case Markup.YAML:
-            return FAMILY_FILE_YAML
-
-
-def applied_family_path(root: Path, family: str, markup: Markup) -> Path:
-    """The applied copy of a family file in one markup."""
-    return applied_dir(root, family) / family_file_name(markup)
+def applied_family_path(root: Path, family: str) -> Path:
+    """The applied copy of a family file. It has the name of the registry
+    file, `family.toml`."""
+    return applied_dir(root, family) / FAMILY_FILE
 
 
 def applied_meta_path(root: Path, family: str) -> Path:

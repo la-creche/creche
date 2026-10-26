@@ -788,7 +788,7 @@ def _dispatch(
     same way.
     """
     if not has_family_file(registry, name):
-        # Contract 01 §5.6 rule 3: a directory with no `family.yaml` is
+        # Contract 01 §5.6 rule 3: a directory with no `family.toml` is
         # ignored. No pass, no document and no record of the loop, so the
         # name is behind no revision.
         state.forget(name)
@@ -1108,7 +1108,7 @@ def _forget_deleted(
     gone: list[str] = []
     for name in _families_with_state(config.state_root, state.said):
         # CONTRACT-QUESTION: contract 01 §5.6 rule 3 says that `caregiver`
-        # ignores a family directory with no `family.yaml`. It does not say
+        # ignores a family directory with no `family.toml`. It does not say
         # what a family with state is when its directory loses the file.
         # Such a name has a report, so the reading here keeps the state: no
         # pass and no delete, and the status document goes stale. A stale
@@ -1119,7 +1119,7 @@ def _forget_deleted(
         if name in registry.reports:
             if not has_family_file(registry, name):
                 state.said.warn(
-                    f"{name}: its registry directory holds no family.yaml, so no pass "
+                    f"{name}: its registry directory holds no family.toml, so no pass "
                     "runs and its status document goes stale"
                 )
 

@@ -345,7 +345,7 @@ def apply_egress(
 
 
 def limits_for(family: FamilyFile) -> LimitsBlock:
-    """Contract 05 §2.1: two come from `family.yaml`; `max_queued_turns`
+    """Contract 05 §2.1: two come from `family.toml`; `max_queued_turns`
     is `attendance`'s own constant, which `LimitsBlock`'s default mirrors."""
     if family.kind == Kind.AUTONOMOUS:
         turns = (
