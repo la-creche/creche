@@ -13,26 +13,26 @@ max_inflight = 2
 invoke_agent = {}
 
 [apps.agent-control.grants.github-platform.tools]
-add_comment_to_pending_review = {}
-add_issue_comment = {}
-add_reply_to_pull_request_comment = {}
-create_branch = {}
-create_or_update_file = {}
-create_pull_request = {}
-delete_file = {}
-get_commit = {}
-get_file_contents = {}
-get_label = {}
-get_latest_release = {}
-list_branches = {}
-list_commits = {}
-list_pull_requests = {}
-list_tags = {}
-pull_request_read = {}
-pull_request_review_write = {}
-push_files = {}
-update_pull_request = {}
-update_pull_request_branch = {}
+add_comment_to_pending_review = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
+add_issue_comment = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
+add_reply_to_pull_request_comment = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
+create_branch = { arguments = { branch = { deny = ["main", "master"] }, owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
+create_or_update_file = { arguments = { branch = { deny = ["main", "master"] }, owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
+create_pull_request = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
+delete_file = { arguments = { branch = { deny = ["main", "master"] }, owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
+get_commit = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
+get_file_contents = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
+get_label = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
+get_latest_release = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
+list_branches = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
+list_commits = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
+list_pull_requests = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
+list_tags = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
+pull_request_read = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
+pull_request_review_write = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
+push_files = { arguments = { branch = { deny = ["main", "master"] }, owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
+update_pull_request = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
+update_pull_request_branch = { arguments = { branch = { deny = ["main", "master"] }, owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
 
 [apps.agent-control.grants.kagi.tools]
 kagi_extract = {}

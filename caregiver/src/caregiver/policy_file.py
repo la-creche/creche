@@ -10,9 +10,8 @@ refuses a value that the Rust reader refuses for that one field, so a wrong
 file is hard to write. The rules across apps (a shared digest, one hop)
 stay with `chaperone check`.
 
-`build_app` maps one family file and its server files to one app table.
-It leaves `ToolGrant.arguments` empty. The argument fences of the server
-files come with the next change of this module (phase 3, row 2)."""
+`build_app` maps one family file and its server files to one app table,
+with the argument fences of each server file on each granted tool."""
 
 from __future__ import annotations
 
@@ -22,7 +21,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Final
 
-from agent_family import FamilyFile, Index
+from agent_family import FamilyFile, Index, McpServerFile
+from agent_family.server import FenceEntry
 
 #: `RawPolicy.version`: the one version this chaperone reads.
 POLICY_VERSION: Final = 1
@@ -74,6 +74,14 @@ CALLS_PER_MINUTE: Final = 60
 MAX_PENDING_GATES: Final = 10
 
 NOTE_PREFIX: Final = "registry "
+
+#: `ExposedName::MAX`: an app sees a tool as `<upstream>__<tool>`, and the
+#: Rust chaperone lists no tool with a longer name.
+EXPOSED_NAME_MAX: Final = 50
+
+#: A server file fences a pair of arguments as `owner/repo`, with each value
+#: as `<owner>/<repo>`. `policy.toml` fences one argument per name.
+_PAIR_SEPARATOR: Final = "/"
 
 #: An approval entry with no `__` names a verb. Each verb with a home is one
 #: tool of one plugin upstream. `embed` and `ha_call` have none.
@@ -256,9 +264,11 @@ def build_app(family: FamilyFile, index: Index, digests: tuple[str, ...], *, rev
     is the family name. `all` expands against the current server files.
     `rev` is the registry revision, kept in the note."""
     gated = _gated(family, index)
+    granted = _granted(family, index)
+    _check_exposed(granted)
     grants = {
-        upstream: _upstream_grant(family, upstream, tools, gated)
-        for upstream, tools in _granted(family, index).items()
+        upstream: _upstream_grant(family, upstream, tools, gated, index.servers.get(upstream))
+        for upstream, tools in granted.items()
     }
     return App(
         note=f"{NOTE_PREFIX}{rev}",
@@ -288,6 +298,16 @@ def _granted(family: FamilyFile, index: Index) -> dict[str, tuple[str, ...]]:
     return granted
 
 
+def _check_exposed(granted: Mapping[str, tuple[str, ...]]) -> None:
+    for upstream, tools in granted.items():
+        for tool in tools:
+            exposed = f"{upstream}{_CALL_SEPARATOR}{tool}"
+            if len(exposed) > EXPOSED_NAME_MAX:
+                raise PolicyShapeError(
+                    f"the exposed name {exposed} is longer than {EXPOSED_NAME_MAX} characters"
+                )
+
+
 def _attendance_tools(family: FamilyFile) -> tuple[str, ...]:
     tools: list[str] = []
     if family.delegates:
@@ -303,12 +323,20 @@ def _attendance_tools(family: FamilyFile) -> tuple[str, ...]:
 
 
 def _upstream_grant(
-    family: FamilyFile, upstream: str, tools: tuple[str, ...], gated: set[tuple[str, str]]
+    family: FamilyFile,
+    upstream: str,
+    tools: tuple[str, ...],
+    gated: set[tuple[str, str]],
+    server: McpServerFile | None,
 ) -> UpstreamGrant:
     """`max_inflight` counts every call to `attendance`, not only the
-    delegate calls. `timeout_s` is set only for a delegate call."""
+    delegate calls. `timeout_s` is set only for a delegate call. A plugin
+    upstream has no server file, so its tools have no argument fence."""
     grants = {
-        tool: ToolGrant(approval=Approval.REQUIRED if (upstream, tool) in gated else Approval.NONE)
+        tool: ToolGrant(
+            approval=Approval.REQUIRED if (upstream, tool) in gated else Approval.NONE,
+            arguments=_fences(server, tool) if server is not None else {},
+        )
         for tool in tools
     }
     if upstream != ATTENDANCE:
@@ -337,6 +365,76 @@ def _gated(family: FamilyFile, index: Index) -> set[tuple[str, str]]:
         gated.update((server, name) for name in names)
 
     return gated
+
+
+def _fences(server: McpServerFile, tool: str) -> dict[str, ArgumentFence]:
+    """The fences of the server file that cover `tool`, one per argument.
+
+    1. Each `arg_denies` entry adds its values to the deny list of its
+       argument.
+    2. Each `arg_allows` entry keeps only its values in the allow list of
+       its argument. A call must pass every allow entry.
+    3. An argument with an allow list loses the denied values from it.
+       An allow list with no value left is refused, because an empty fence
+       does not load."""
+    declared = server.tool_names()
+    denied: dict[str, set[str]] = {}
+    allowed: dict[str, set[str]] = {}
+    for entry in server.arg_denies:
+        if entry.covers(tool, declared):
+            for name, values in _split(entry, FenceKind.DENY).items():
+                denied.setdefault(name, set()).update(values)
+
+    for entry in server.arg_allows:
+        if entry.covers(tool, declared):
+            for name, values in _split(entry, FenceKind.ALLOW).items():
+                allowed[name] = allowed[name] & values if name in allowed else set(values)
+
+    fences: dict[str, ArgumentFence] = {}
+    for name in sorted(denied.keys() | allowed.keys()):
+        if name not in allowed:
+            fences[name] = ArgumentFence(FenceKind.DENY, tuple(sorted(denied[name])))
+            continue
+
+        values = allowed[name] - denied.get(name, set())
+        if not values:
+            raise PolicyShapeError(
+                f"the fences of {server.name} on {tool} allow no value of {name}"
+            )
+
+        fences[name] = ArgumentFence(FenceKind.ALLOW, tuple(sorted(values)))
+
+    return fences
+
+
+def _split(entry: FenceEntry, kind: FenceKind) -> dict[str, frozenset[str]]:
+    """The values of one entry by argument name. A pair `owner/repo` gives
+    two arguments.
+
+    An allow of pairs gives the owners and the repos. That is the same
+    fence only when the pairs are every owner with every repo, so other
+    pairs are refused. A deny of pairs gives the repos alone. It also
+    denies a repo of the same name under another owner: a stricter fence."""
+    names = entry.arg.split(_PAIR_SEPARATOR)
+    if len(names) == 1:
+        return {entry.arg: frozenset(entry.values)}
+
+    pairs = [value.split(_PAIR_SEPARATOR) for value in entry.values]
+    if len(names) != 2 or any(len(pair) != 2 or not all(pair) for pair in pairs):
+        raise PolicyShapeError(f"each value of the fence on {entry.arg} must be two names")
+
+    first, second = names
+    firsts = frozenset(pair[0] for pair in pairs)
+    seconds = frozenset(pair[1] for pair in pairs)
+    if kind is FenceKind.DENY:
+        return {second: seconds}
+
+    if {(a, b) for a, b in pairs} != {(a, b) for a in firsts for b in seconds}:
+        raise PolicyShapeError(
+            f"the allowed values of {entry.arg} are not each {first} with each {second}"
+        )
+
+    return {first: firsts, second: seconds}
 
 
 def _attendance_section(family: FamilyFile) -> AttendanceSection | None:
