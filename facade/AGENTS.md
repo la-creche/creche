@@ -140,7 +140,9 @@ position follow it.
 Each socket connection gets an app of its own on the one session
 service, so a session's live updates reach every connection on it. A
 connection's beat deadline is armed by its first `_creche/beat`, and a
-missed deadline closes that connection alone. `_creche/shutdown` on a
+missed deadline closes that connection alone. attendance's door sends
+the beat on each relay connection, with the string ids
+`creche-beat-<n>`, and takes the answers. `_creche/shutdown` on a
 relay connection does nothing: only the supervisor link stops the
 facade.
 
@@ -151,9 +153,5 @@ facade.
   per-call header. So the chaperone cannot use the delegation ID for a
   one-hop bound at run time. `src/sessions.ts` holds the
   `CONTRACT-QUESTION`.
-- attendance's door adds no `_creche/beat` to a door connection, so a
-  relay connection never arms its deadline. A relay whose host end died
-  can hold its connection until the facade stops. `src/relay.ts` holds
-  the `CONTRACT-QUESTION`.
 - The workspace is one directory for every session. The playpen gave
   `code-sandbox` one directory per chat (Phase 2 plan, risk 6).

@@ -7,12 +7,9 @@
 // Each connection has a beat deadline of its own, armed by its first
 // `_creche/beat`. A connection whose deadline passes is closed alone.
 //
-// CONTRACT-QUESTION: attendance's door forwards a client's frames as they
-// are and adds no `_creche/beat`. So a door connection never arms its
-// deadline, and a relay whose host end died may hold its connection open
-// until the facade stops. Arming every connection at open would end each
-// idle client after 90 s. The facade arms on the first beat until the
-// owner chooses who beats a relay connection.
+// The owner's decision: attendance's door beats each relay connection, with
+// string ids `creche-beat-<n>`, and takes the answers. The first beat arms
+// the deadline, so an idle client is not ended before it.
 
 import { chmodSync, mkdirSync, rmSync } from "node:fs";
 import { createServer } from "node:net";

@@ -24,6 +24,12 @@ inside the sandbox image, which carries Node.
 5. Serves the dispatch door: `enqueue` and `job_status`. Each job runs over
    ACP on the target's facade. Only an autonomous family has a limit and a
    queue.
+6. Beats each ACP door connection. The door sends `_creche/beat` on the
+   relay every 30 s, with the string ids `creche-beat-<n>`. The prefix is
+   reserved. The door takes the facade's answers, so no answer reaches the
+   client. Each other line passes as it is. A relay that leaves two beats
+   unanswered closes with code 4408 (`Close.NO_BEAT`). An error answer
+   counts as no answer (`acp_door.py`).
 
 The session API (`/v1/sessions*`), the journal, the event streams, the
 writer lease, the Open WebUI copy and the playpen channel left in the phase
@@ -151,7 +157,7 @@ chaperone reads them as another user. `SIGHUP` reloads them.
 | `supervisor_lock.py` | the proof that no older supervisor holds a sandbox |
 | `acp_link.py`, `acp/schema-v1.json` | the ACP link to one sandbox's facade, and the pinned ACP schema |
 | `acp_jobs.py` | one job over the link: `session/new`, one prompt, the deadline and its cancel |
-| `acp_door.py` | `WS /acp/{family}` on the Unix socket: one `acp-relay` per connection, the envelope check, nothing translated |
+| `acp_door.py` | `WS /acp/{family}` on the Unix socket: one `acp-relay` per connection, its beat, the envelope check, nothing translated |
 | `jobs.py`, `dispatch.py`, `workspace.py` | thin jobs, the dispatch ledger, the per-chat work directory |
 | `family_status.py`, `faults.py` | the status document, the fault file |
 | `auth.py`, `config.py`, `paths.py` | the token files and the grants, the environment, every path |
