@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# CI: the proof of the restart rule of the daemon units (rust/AGENTS.md, "The
-# config of a process"). The `systemd-proof` job of gate.yml and of
-# release.yml runs it, against the systemd of the runner.
+# CI: the proof of the restart rule of the daemon units. The `systemd-proof`
+# job of gate.yml and of release.yml runs it, against the systemd of the
+# runner.
 #   bin/systemd-proof.sh                      the proof
 #   bin/systemd-proof.sh --unchanged FROM TO  exit 0 only when FROM..TO changes
 #                                             no file of the proof. The scope
@@ -44,17 +44,15 @@ SELF="bin/systemd-proof.sh"
 UNCHANGED="--unchanged"
 
 #: The exit status of a daemon that refuses its start: `EX_CONFIG` of
-#: rust/crates/creche-contracts/src/config.rs.
+#: sysexits.h.
 EX_CONFIG=78
 
-#: The line that keeps a unit stopped after that status: `NO_RESTART_LINE`
-#: of the same Rust file. bin/tests/test_systemd_proof.py holds this line and
-#: the status equal to the two Rust constants.
+#: The line that keeps a unit stopped after that status.
 NO_RESTART_LINE="RestartPreventExitStatus=$EX_CONFIG"
 
 #: What each test unit holds. Each daemon unit holds the first line and the
-#: third line today (bin/tests/test_rust_config_units.py). The delay of a
-#: restart is one second, so a restart shows soon.
+#: third line today. The delay of a restart is one second, so a restart
+#: shows soon.
 RESTART_RULE=(
   --property=Restart=always
   --property=RestartSec=1

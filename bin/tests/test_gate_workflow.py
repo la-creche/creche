@@ -25,50 +25,14 @@ in the tree, full history in every checkout.
 it: the same shard command, a last job that needs every other one, and one
 shared verdict (`.github/actions/verdict`), so a PR and its release cannot
 judge the same results differently. Its tag step runs only after that
-verdict, one allocation at a time, and only its last job may write.
-
-The `rust` job runs `bin/rust-gate.sh --tests` for a change that touches
-`rust/`, `vectors/`, or a file of the Rust checks themselves
-(`bin/lib/rustrule.sh`). On any other code change it skips every step but the
-checkout and is still a success, so `gate` reads green. The toolchain is the
-one `rust/rust-toolchain.toml` names. The job takes `cargo-deny` from a
-release archive, and it checks the SHA-256 of that archive before the unpack.
-
-The `rust-coverage` job runs `bin/rust-coverage.sh` for the same change, and
-skips its steps as the `rust` job does. It adds the LLVM tools to the same
-toolchain, and it takes `cargo-llvm-cov` from a release archive that it
-checked in the same way. `gate` needs the job, so a file of
-`rust/coverage-files.txt` with code that no test runs blocks a merge.
-
-`.github/workflows/coverage-nightly.yml` is a workflow of its own. One time a
-day it runs the same script with `--branch`, on one nightly toolchain that
-its one constant names by a date. No job of the two other files needs it, so
-it blocks no merge. The job that measures runs on `main` only. A run that a
-person starts on another ref is then a success, and it cannot block a release.
-
-The three jobs that measure take `cargo-llvm-cov` through one local action,
-`.github/actions/cargo-llvm-cov`. That file is the one home of the step and
-of its two constants: the version, and the SHA-256 of the release archive.
-The tests hold the action as a whole. They also fail when a workflow file
-holds a copy of the constants.
-
-`.github/workflows/advisories-daily.yml` is a workflow of its own too. One
-time a day it runs `bin/rust-gate.sh --advisories`: the advisory check of
-`cargo deny`, which the gate does not make. No job of the two other files
-needs it, so a new advisory blocks no merge. It takes `cargo-deny` with the
-step and the two constants of the `rust` job, and the tests hold the three
-copies equal. The job that checks runs on `main` only, as the job that
-measures does. It keeps no cache.
+verdict, one allocation at a time, and only its last job may write. The
+release builds no archive, so the tag step gets no variable of a binary
+component.
 
 The `proc` job runs the process-level suite (`integration/proc`), which is
 in no shard: `testpaths` does not hold it. The job builds the playpen first,
 and a test that skips is a failure there. A run in which every test skips
 because the bundle is missing would be green and would judge nothing.
-
-The `proc-rust` job runs `bin/proc-rust.sh`: the same suite as the judge of
-each Rust program that a file of `rust/proc` names. The job runs its steps on
-each code change, with the toolchain of the `rust` job and the venv of the
-`proc` job. It keeps the release build in a cache with a key of its own.
 
 The `suites` job runs the two old suites of `integration/`, each one in a
 pytest run of its own. It has the setup of the `proc` job. Its last step reads
@@ -82,25 +46,10 @@ On any other code change it skips its one step after the checkout and is
 still a success. The job runs on the runner itself, with no container: only
 there is systemd process 1. The script answers which change needs the proof,
 and the scope runs the proof when the script gives no answer.
-
-The `artifacts` job runs `bin/build-artifacts.sh`: the build, the walk and the
-pack of each binary component. Both files hold the job, equal apart from the
-rule of a step. In the gate each step after the checkout runs only for a code
-change that touches an input of an archive (`bin/lib/artifactrule.sh`). In
-the release each step runs at each push. The job keeps no cache, and its
-checkout keeps no token.
-
-The release has one job more than the gate: `sign`. It holds the identity
-token and no code of the repository. It signs only the archives that the job
-output of `artifacts` names, after a check of their SHA-256. The `release`
-job takes the archives and the bundles, takes cosign with the text of the
-`sign` job, and gives both to the tag script. No pull request runs the
-release, so the tests hold each word of the two jobs and run each text.
 """
 
 from __future__ import annotations
 
-import hashlib
 import importlib.util
 import json
 import os
@@ -114,7 +63,7 @@ from typing import Any
 
 import pytest
 import yaml
-from handover.catalog import ARCHIVE_SUFFIX, BUNDLE_SUFFIX, Repo
+from handover.catalog import Repo
 
 REPO = Path(__file__).resolve().parents[2]
 WORKFLOWS = REPO / ".github" / "workflows"
@@ -139,17 +88,7 @@ BY_NAME = [GATE_NAME, RELEASE_NAME]
 #: `env`. The tests that hold a job equal in the two files read `jobs` only.
 FILE_KEYS = {
     GATE_NAME: {"name", True, "permissions", "concurrency", "jobs"},
-    RELEASE_NAME: {"name", True, "permissions", "env", "jobs"},
-}
-
-#: The one `env` key of the files: the pin of cosign in the release. To take
-#: another cosign, compute the SHA-256 of the asset `cosign-linux-amd64` of
-#: the new release and compare it with the file `cosign_checksums.txt` of
-#: that release. Then change the two values here, in `release.yml` and in
-#: `artifact-probe.yml`.
-COSIGN_ENV = {
-    "COSIGN_VERSION": "v3.1.3",
-    "COSIGN_SHA256": "4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71",
+    RELEASE_NAME: {"name", True, "permissions", "jobs"},
 }
 
 #: What starts the gate: a pull request, and a merge queue's group.
@@ -180,320 +119,14 @@ SHARD_ENV = {"INDEX": "${{ strategy.job-index }}", "TOTAL": "${{ strategy.job-to
 #: A job a docs PR leaves out, as `jobs.<job>.if` spells it.
 ONLY_CODE = "needs.scope.outputs.scope == 'code'"
 
-#: A step of the `rust` job that a change with no path under rust/ skips.
-#: Only the answer `false` skips it. An answer that is missing, or that a
-#: rename lost, runs the checks.
-ONLY_RUST = "needs.scope.outputs.rust != 'false'"
-
-#: How the scope job hands the Rust answer to the `rust` job.
-RUST_OUTPUT = "${{ steps.scope.outputs.rust }}"
-
-#: The whole of the Rust checks: the script the hooks run too.
-RUST_RUN = "bin/rust-gate.sh --tests"
-
-#: The first line of the toolchain step. It names no toolchain, so rustup
-#: installs the one `rust/rust-toolchain.toml` names.
-TOOLCHAIN_RUN = "rustup toolchain install --no-self-update"
-
-#: The directory rustup reads that file from.
-RUST_DIR = "rust"
-
-#: The step that gives the job `cargo-deny`, the program behind the `cargo
-#: deny` step of `bin/rust-gate.sh`.
-DENY_STEP = "cargo-deny"
-
-#: The version, and the SHA-256 of its release archive for the runner:
-#: `cargo-deny-<version>-x86_64-unknown-linux-musl.tar.gz`. To take another
-#: version, compute the SHA-256 of the new archive and compare it with the
-#: `.sha256` file of that release. Then change the two values here and in the
-#: three workflow files: the gate, the release and the advisory run.
-DENY_ENV = {
-    "DENY_VERSION": "0.20.2",
-    "DENY_SHA256": "9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f",
-}
-
-#: The whole text of the step. The archive comes from a release of the
-#: cargo-deny repository. `set -euo pipefail` stops the step at the first
-#: command that fails. The compare is before the unpack, and the unpack is
-#: before the line that puts the program on PATH. A pin of some lines only
-#: lets a second unpack or a second value of `found` in between them.
-DENY_RUN = """\
-set -euo pipefail
-name="cargo-deny-$DENY_VERSION-x86_64-unknown-linux-musl"
-archive="$RUNNER_TEMP/$name.tar.gz"
-curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \\
-  --output "$archive" \\
-  "https://github.com/EmbarkStudios/cargo-deny/releases/download/$DENY_VERSION/$name.tar.gz"
-found="$(sha256sum "$archive" | cut -d ' ' -f 1)"
-if [[ "$found" != "$DENY_SHA256" ]]; then
-  echo "cargo-deny: the archive has the SHA-256 $found, not $DENY_SHA256" >&2
-  exit 1
-fi
-mkdir -p "$RUNNER_TEMP/cargo-deny"
-tar -xzf "$archive" -C "$RUNNER_TEMP/cargo-deny" --strip-components 1 "$name/cargo-deny"
-echo "$RUNNER_TEMP/cargo-deny" >> "$GITHUB_PATH"
-PATH="$RUNNER_TEMP/cargo-deny:$PATH" cargo deny --version
-"""
-
-#: Each key of the step. One more key can change what a failure of the step
-#: does, for example `continue-on-error` or `shell`.
-DENY_KEYS = {"name", "if", "working-directory", "env", "run"}
-
-#: The job that holds the coverage rule of the Rust workspace
-#: (`rust/AGENTS.md`, "The coverage rule").
-COVERAGE_JOB = "rust-coverage"
-
-#: The whole of that rule: one script, with no flag. `--report` would check
-#: a report of an earlier run, and `--branch` needs a nightly toolchain.
-COVERAGE_RUN = "bin/rust-coverage.sh"
-
-#: The whole text of the toolchain step of that job. The first line installs
-#: the toolchain that `rust/rust-toolchain.toml` names. The second line adds
-#: the LLVM tools to it, which `cargo llvm-cov` calls. The toolchain file
-#: does not change.
-COVERAGE_TOOLCHAIN_RUN = """\
-rustup toolchain install --no-self-update
-rustup component add llvm-tools-preview
-cargo --version
-"""
-
-#: The step that gives the job `cargo-llvm-cov`, the program behind the
-#: `cargo llvm-cov` step of `bin/rust-coverage.sh`.
-COVERAGE_STEP = "cargo-llvm-cov"
-
-#: The version, and the SHA-256 of its release archive for the runner:
-#: `cargo-llvm-cov-x86_64-unknown-linux-musl.tar.gz` of the release
-#: `v<version>`. To take another version, compute the SHA-256 of the new
-#: archive and compare it with the digest that the release page shows. Then
-#: change the two values here and in the action file. No workflow file holds
-#: them.
-COVERAGE_ENV = {
-    "LLVM_COV_VERSION": "0.9.1",
-    "LLVM_COV_SHA256": "3fca950394a3c49457657c158b1619cec8dfd2647ae5b48746734c0ab969a522",
-}
-
-#: The whole text of the step, as for `cargo-deny`: the compare is before the
-#: unpack, and the unpack is before the line that puts the program on PATH.
-#: The archive holds the program and no directory, so the unpack names the
-#: one member that it takes.
-COVERAGE_INSTALL_RUN = """\
-set -euo pipefail
-name="cargo-llvm-cov-x86_64-unknown-linux-musl"
-archive="$RUNNER_TEMP/$name.tar.gz"
-curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \\
-  --output "$archive" \\
-  "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v$LLVM_COV_VERSION/$name.tar.gz"
-found="$(sha256sum "$archive" | cut -d ' ' -f 1)"
-if [[ "$found" != "$LLVM_COV_SHA256" ]]; then
-  echo "cargo-llvm-cov: the archive has the SHA-256 $found, not $LLVM_COV_SHA256" >&2
-  exit 1
-fi
-mkdir -p "$RUNNER_TEMP/cargo-llvm-cov"
-tar -xzf "$archive" -C "$RUNNER_TEMP/cargo-llvm-cov" cargo-llvm-cov
-echo "$RUNNER_TEMP/cargo-llvm-cov" >> "$GITHUB_PATH"
-PATH="$RUNNER_TEMP/cargo-llvm-cov:$PATH" cargo llvm-cov --version
-"""
-
-#: The one home of that step: a local composite action. A job names the
-#: action by this path, and the runner reads it from the checkout. The file
-#: is here as text and as data.
-COVERAGE_ACTION = "./.github/actions/cargo-llvm-cov"
-COVERAGE_ACTION_FILE = REPO / COVERAGE_ACTION / "action.yml"
-COVERAGE_ACTION_TEXT = COVERAGE_ACTION_FILE.read_text(encoding="utf-8")
-COVERAGE_ACTION_DATA: dict[str, Any] = yaml.safe_load(COVERAGE_ACTION_TEXT)
-
-#: Each key of the action file, and each key of its `runs` table. One more
-#: key at the top gives the action an input or an output. The action has
-#: neither: a job cannot give it another version.
-COVERAGE_ACTION_KEYS = {"name", "description", "runs"}
-COVERAGE_RUNS_KEYS = {"using", "steps"}
-
-#: The kind of the action. Its step runs in the job that calls it, with the
-#: variables of that job.
-COMPOSITE = "composite"
-
-#: The one step of the action, as a whole: the text and the two constants
-#: above. A `run` step of a composite action needs the `shell` key. Without
-#: that key, the runner refuses the action file. One more key can make a red
-#: step green, for example `continue-on-error`.
-COVERAGE_ACTION_STEP = {
-    "shell": "bash",
-    "working-directory": RUST_DIR,
-    "env": COVERAGE_ENV,
-    "run": COVERAGE_INSTALL_RUN,
-}
-
-#: The start of the name of each of the two constants. Under `.github`, only
-#: the action file holds this text. A copy of the step in a workflow file
-#: holds it too.
-COVERAGE_PREFIX = "LLVM_COV_"
-
-#: Each key of the job, and each key of its three steps after the checkout.
-#: One more key can make a red step green, for example `continue-on-error`.
-COVERAGE_JOB_KEYS = {"needs", "if", "runs-on", "timeout-minutes", "env", "steps"}
-
-#: The runner of the job: the system of the release archive above.
-COVERAGE_RUNNER = "ubuntu-24.04"
-
-#: Each variable of the job. One more can change what the run compiles, for
-#: example `RUSTFLAGS`, and then what the report holds.
-COVERAGE_JOB_ENV = {"CARGO_INCREMENTAL": 0}
-COVERAGE_STEP_KEYS = [
-    {"name", "if", "working-directory", "run"},
-    {"name", "if", "uses"},
-    {"if", "run"},
-]
-
-#: The workflow that runs the branch check of the coverage rule one time a
-#: day, as text and as data. It is a file of its own: the check `gate` does
-#: not need it, so it blocks no merge.
-NIGHTLY_TEXT = (WORKFLOWS / "coverage-nightly.yml").read_text(encoding="utf-8")
-NIGHTLY = yaml.safe_load(NIGHTLY_TEXT)
-NIGHTLY_JOBS: dict[str, dict[str, Any]] = NIGHTLY["jobs"]
-NIGHTLY_NAME = "coverage-nightly"
-
-#: Each key of the workflow file. PyYAML reads the key `on` as the boolean.
-#: One more key can change each job, for example `defaults` with a shell
-#: that runs no line of a step, `env` or `concurrency`.
-NIGHTLY_FILE_KEYS = {"name", True, "permissions", "jobs"}
-
-#: When the workflow starts: at one minute of one hour of each day, and when
-#: a person starts it. The minute is not 0. GitHub delays a schedule most at
-#: the start of an hour.
-NIGHTLY_CRON = "37 4 * * *"
-NIGHTLY_EVENTS = {"schedule": [{"cron": NIGHTLY_CRON}], "workflow_dispatch": None}
-
-#: The whole token of the workflow. The job runs the code of `main`.
-READ_ONLY = {"contents": "read"}
-
-#: The job with no rule, and the job that measures. `guard` is what makes a
-#: run on another ref a success.
-NIGHTLY_GUARD = "guard"
-NIGHTLY_JOB = "branch-coverage"
-
-#: The one step of `guard`, as a whole. It prints the ref and cannot fail.
-#: A step that fails makes a run on another ref red.
-NIGHTLY_GUARD_STEP = {
-    "name": "ref",
-    "run": 'echo "coverage-nightly: the ref of this run is $GITHUB_REF"',
-}
-
-#: The one ref that the workflow measures on, as `jobs.<job>.if` spells it.
-#: The release executor reads each workflow run on the head of a merged pull
-#: request (`handover/src/handover/executor/provenance.py`, P5). A run that
-#: fails there blocks the release of that pull request.
-ON_MAIN = "github.ref == 'refs/heads/main'"
-
-#: The one nightly toolchain, by its date. A nightly gets no later fix, so
-#: the date is the pin. To take another date, run `bin/rust-coverage.sh
-#: --branch` on a machine with that nightly, and measure the facts about a
-#: branch in `rust/AGENTS.md` again. Then change the value here and in the
-#: workflow file.
-NIGHTLY_TOOLCHAIN = "nightly-2025-12-13"
-
-#: The form of that name. A name with no date, for example `nightly`, is
-#: another compiler on each day.
-DATED_NIGHTLY = re.compile(r"nightly-\d{4}-\d{2}-\d{2}")
-
-#: The variable that names the toolchain. rustup reads it for each cargo
-#: command, and it outranks `rust/rust-toolchain.toml`.
-TOOLCHAIN_VARIABLE = "RUSTUP_TOOLCHAIN"
-
-#: Each variable of the job. As for the `rust-coverage` job, one more can
-#: change what the run compiles.
-NIGHTLY_JOB_ENV = COVERAGE_JOB_ENV | {TOOLCHAIN_VARIABLE: NIGHTLY_TOOLCHAIN}
-
-#: The whole text of the toolchain step. It installs the toolchain of the
-#: variable with the LLVM tools that `cargo llvm-cov` calls. The two version
-#: lines show in the log which compiler measured.
-NIGHTLY_TOOLCHAIN_RUN = """\
-rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --no-self-update \\
-  --component llvm-tools-preview
-rustc --version
-cargo --version
-"""
-
-#: The whole of the nightly rule: the script of the `rust-coverage` job, with
-#: the flag that adds the branches.
-NIGHTLY_RUN = COVERAGE_RUN + " --branch"
-
-#: Each key of the two jobs, and each key of the steps of the second one. One
-#: more key can make a red step green, for example `continue-on-error`. A
-#: step has no `if`: no step can leave the measurement out.
-NIGHTLY_KEYS = {
-    NIGHTLY_GUARD: {"runs-on", "steps"},
-    NIGHTLY_JOB: {"needs", "if", "runs-on", "timeout-minutes", "env", "steps"},
-}
-NIGHTLY_STEP_KEYS = [
-    {"uses", "with"},
-    {"name", "working-directory", "run"},
-    {"name", "uses"},
-    {"run"},
-]
-
-#: The inputs of the checkout of the job. It keeps no token in the clone: the
-#: steps after it run the code of the repository.
-NIGHTLY_CHECKOUT = {"persist-credentials": False}
-
-#: The workflow that makes the advisory check of the locked crates one time a
-#: day, as data. It is a file of its own: the check `gate` does not need it,
-#: so a new advisory blocks no merge.
-ADVISORIES = yaml.safe_load((WORKFLOWS / "advisories-daily.yml").read_text(encoding="utf-8"))
-ADVISORIES_JOBS: dict[str, dict[str, Any]] = ADVISORIES["jobs"]
-ADVISORIES_NAME = "advisories-daily"
-
-#: When that workflow starts: at one minute of one hour of each day, and when
-#: a person starts it. The minute is not 0, as for the nightly run.
-ADVISORIES_CRON = "23 5 * * *"
-ADVISORIES_EVENTS = {"schedule": [{"cron": ADVISORIES_CRON}], "workflow_dispatch": None}
-
-#: The job with no rule, and the job that checks. As in the nightly workflow,
-#: `guard` is what makes a run on another ref a success.
-ADVISORIES_GUARD = "guard"
-ADVISORIES_JOB = "advisories"
-
-#: The one step of `guard`, as a whole. It prints the ref and cannot fail.
-ADVISORIES_GUARD_STEP = {
-    "name": "ref",
-    "run": 'echo "advisories-daily: the ref of this run is $GITHUB_REF"',
-}
-
-#: The flag of `bin/rust-gate.sh` that runs the advisory check and no other
-#: step, and the whole of the advisory run: the script with that flag.
-#: `bin/tests/test_rust_gate.py` holds the cargo line behind the flag.
-ADVISORIES_FLAG = "--advisories"
-ADVISORIES_RUN = "bin/rust-gate.sh --advisories"
-
-#: Each key of the two jobs, and each key of the steps of the second one: the
-#: checkout, the toolchain, the tool and the script. One more key can make a
-#: red step green, for example `continue-on-error`. A step has no `if`: no
-#: step can leave the check out. No step is a cache: the runner then holds no
-#: copy of the crates.io index of an earlier run.
-ADVISORIES_KEYS = {
-    ADVISORIES_GUARD: {"runs-on", "steps"},
-    ADVISORIES_JOB: {"needs", "if", "runs-on", "timeout-minutes", "steps"},
-}
-ADVISORIES_STEP_KEYS = [
-    {"uses", "with"},
-    {"name", "working-directory", "run"},
-    {"name", "working-directory", "env", "run"},
-    {"run"},
-]
-
-#: The two files the cargo cache is good for.
-CACHE_FILES = ("rust/rust-toolchain.toml", "rust/Cargo.lock")
-
-#: The whole key of the cargo cache: the system of the runner, then one hash
-#: of the two files.
-CACHE_KEY = "rust-${{ runner.os }}-${{ hashFiles('rust/rust-toolchain.toml', 'rust/Cargo.lock') }}"
-
 #: The job that proves the restart rule of the daemon units, and the whole
 #: of the proof: one script.
 SYSTEMD_JOB = "systemd-proof"
 SYSTEMD_RUN = "bin/systemd-proof.sh"
 
-#: The step of that job that a change with no file of the proof skips. As
-#: for `rust`, only the answer `false` skips it.
+#: The step of that job that a change with no file of the proof skips. Only
+#: the answer `false` skips it. An answer that is missing, or that a rename
+#: lost, runs the proof.
 ONLY_SYSTEMD = "needs.scope.outputs.systemd != 'false'"
 
 #: How the scope job hands that answer to the job.
@@ -524,216 +157,13 @@ SYSTEMD_ASKED = {
 #: The catalog's name for this repository (`handover/src/handover/catalog.py`).
 THIS_REPOSITORY = str(Repo.AGENT_CONTROL)
 
-#: The job that builds the archive of each binary component, in both files.
-#: The job of the release that signs each archive.
-ARTIFACTS_JOB = "artifacts"
-SIGN_JOB = "sign"
-
-#: The rule of each step of the gate's `artifacts` job after its checkout: a
-#: code change that touches an input of an archive. A Markdown change under
-#: rust/ answers `artifacts=true`, so the rule asks for the code scope too.
-#: Only the answer `false` skips a step: an answer that is missing builds.
-ONLY_ARTIFACTS = "needs.scope.outputs.scope == 'code' && needs.scope.outputs.artifacts != 'false'"
-
-#: How the scope job of the gate hands that answer on.
-ARTIFACTS_OUTPUT = "${{ steps.scope.outputs.artifacts }}"
-
 #: The jobs of each file with no rule of their own. The verdict needs a
 #: success from each of them in each scope.
-NO_RULE = {
-    GATE_NAME: {"scope", "lint", ARTIFACTS_JOB},
-    RELEASE_NAME: {"scope", "lint", ARTIFACTS_JOB, SIGN_JOB},
-}
+NO_RULE = {GATE_NAME: {"scope", "lint"}, RELEASE_NAME: {"scope", "lint"}}
 
-#: The actions of the two jobs, by their commit.
-CHECKOUT_ACTION = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
-SETUP_UV = "astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4"
-UPLOAD_ACTION = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
-DOWNLOAD_ACTION = "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
-
-#: The days that a workflow artifact of the two jobs stays.
-RETENTION_DAYS = 7
-
-#: Where the archives, the bundles and cosign go on a runner.
-ARTIFACT_DIR = "${{ runner.temp }}/artifacts"
-ASSET_DIR = "${{ runner.temp }}/assets"
-BUNDLE_DIR = "${{ runner.temp }}/bundles"
-COSIGN_PATH = "${{ runner.temp }}/cosign"
-
-#: Each key of the `artifacts` job. No `if`: with its steps skipped the job
-#: is a success. No `permissions`: it holds the read-only token of its file.
-ARTIFACTS_KEYS = {"needs", "runs-on", "timeout-minutes", "outputs", "steps"}
-
-#: The one output of the job: the step output of the build.
-ARTIFACTS_OUTPUTS = {"digests": "${{ steps.build.outputs.digests }}"}
-
-#: The variables of the build step, each one. No ARTIFACT_ROWS_FILE: the
-#: release builds the rows of the catalog, and no file of the caller.
-BUILD_STEP_ENV = {"ARTIFACT_REPO": THIS_REPOSITORY, "ARTIFACT_OUT": ARTIFACT_DIR}
-
-#: The steps of the job in the release, as a whole. The checkout keeps no
-#: token in the clone, because a build script runs here. The step that takes
-#: uv keeps no cache: the job has no cache step.
-ARTIFACTS_STEPS = [
-    {"uses": CHECKOUT_ACTION, "with": {"fetch-depth": 0, "persist-credentials": False}},
-    {"uses": SETUP_UV, "with": {"enable-cache": False}},
-    {"name": "build", "id": "build", "env": BUILD_STEP_ENV, "run": "bin/build-artifacts.sh"},
-    {
-        "uses": UPLOAD_ACTION,
-        "with": {
-            "name": ARTIFACTS_JOB,
-            "path": ARTIFACT_DIR,
-            "if-no-files-found": "error",
-            "retention-days": RETENTION_DAYS,
-        },
-    },
-]
-
-#: The text that takes cosign. The `sign` job and the `release` job hold it.
-#: With no archive it prints one line and fetches nothing, so a run with no
-#: binary component fetches no program of 141 MB. Else it compares the
-#: SHA-256 of the program with the constant before the line that makes the
-#: file a program, and that line is before the first run of it.
-COSIGN_FETCH = """\
-cosign="$RUNNER_TEMP/cosign"
-if compgen -G "$RUNNER_TEMP/assets/*.tar.gz" > /dev/null; then
-  curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \\
-    --output "$cosign" \\
-    "https://github.com/sigstore/cosign/releases/download/$COSIGN_VERSION/cosign-linux-amd64"
-  found="$(sha256sum "$cosign" | cut -d ' ' -f 1)"
-  if [[ "$found" != "$COSIGN_SHA256" ]]; then
-    echo "cosign: the program has the SHA-256 $found, not $COSIGN_SHA256" >&2
-    exit 1
-  fi
-  chmod 0755 "$cosign"
-  "$cosign" version
-else
-  echo "cosign: no archive, so no fetch"
-fi
-"""
-
-#: The whole text of the cosign step of the `release` job.
-COSIGN_RUN = "set -euo pipefail\n" + COSIGN_FETCH
-
-#: The three lines of the fetch that must keep their order.
-COSIGN_COMPARE = 'if [[ "$found" != "$COSIGN_SHA256" ]]; then'
-COSIGN_MODE = 'chmod 0755 "$cosign"'
-COSIGN_FIRST_USE = '"$cosign" version'
-
-#: The line of the `sign` step that compares each archive with the job
-#: output of `artifacts`.
-DIGEST_CHECK = '(cd "$assets" && sha256sum --check --strict <<< "$DIGESTS")'
-
-#: The whole text of the `sign` step: the check of the archives, the fetch,
-#: and one signature for each archive.
-SIGN_RUN = (
-    """\
-set -euo pipefail
-shopt -s dotglob
-assets="$RUNNER_TEMP/assets"
-bundles="$RUNNER_TEMP/bundles"
-mkdir -p "$bundles"
-line='^[0-9a-f]{64}  [A-Za-z0-9][A-Za-z0-9._-]*[.]tar[.]gz$'
-named=""
-if [[ -n "$DIGESTS" ]]; then
-  while IFS= read -r one; do
-    if [[ ! "$one" =~ $line ]]; then
-      echo "sign: the job artifacts gave a line that is no SHA-256 line of an archive" >&2
-      exit 1
-    fi
-    named+="${one:66}"$'\\n'
-  done <<< "$DIGESTS"
-fi
-files=""
-for file in "$assets"/*; do
-  name="${file##*/}"
-  if [[ ! -e "$file" || "$name" == "SHA256SUMS" ]]; then
-    continue
-  fi
-  if [[ -L "$file" || ! -f "$file" || "$name" != *.tar.gz ]]; then
-    echo "sign: the job artifacts gave $name, which is no archive" >&2
-    exit 1
-  fi
-  files+="$name"$'\\n'
-done
-if [[ "$(printf '%s' "$named" | sort -u)" != "$(printf '%s' "$named" | sort)" ]]; then
-  echo "sign: the job artifacts named one archive two times" >&2
-  exit 1
-fi
-if [[ "$(printf '%s' "$named" | sort)" != "$(printf '%s' "$files" | sort)" ]]; then
-  echo "sign: the archives are not the archives that the job artifacts named" >&2
-  exit 1
-fi
-if [[ -z "$named" ]]; then
-  echo "sign: no archive"
-  : > "$bundles/SHA256SUMS"
-  exit 0
-fi
-"""
-    + DIGEST_CHECK
-    + "\n"
-    + COSIGN_FETCH
-    + """\
-while IFS= read -r one; do
-  name="${one:66}"
-  "$cosign" sign-blob --yes --bundle "$bundles/$name.sigstore.json" "$assets/$name" < /dev/null
-done <<< "$DIGESTS"
-printf '%s\\n' "$DIGESTS" > "$bundles/SHA256SUMS"
-"""
-)
-
-#: Each key of the `sign` job. No `if`: the job runs in each scope, and with
-#: no archive it signs nothing and passes.
-SIGN_KEYS = {"needs", "runs-on", "timeout-minutes", "permissions", "steps"}
-
-#: The whole token of the `sign` job.
-SIGN_PERMISSIONS = {"id-token": "write"}
-
-#: The steps of the `sign` job, as a whole: the archives of the run, the one
-#: run step and the bundles. No checkout and no local action.
-SIGN_STEPS = [
-    {"uses": DOWNLOAD_ACTION, "with": {"name": ARTIFACTS_JOB, "path": ASSET_DIR}},
-    {
-        "name": SIGN_JOB,
-        "env": {"DIGESTS": "${{ needs.artifacts.outputs.digests }}"},
-        "run": SIGN_RUN,
-    },
-    {
-        "uses": UPLOAD_ACTION,
-        "with": {
-            "name": "bundles",
-            "path": BUNDLE_DIR,
-            "if-no-files-found": "error",
-            "retention-days": RETENTION_DAYS,
-        },
-    },
-]
-
-#: The time limit of the cosign step of the `release` job. That job holds
-#: the group of one allocation at a time, so a fetch that hangs would hold
-#: each later release run. The step comes before the tag step, so the limit
-#: stops no allocation half way.
-COSIGN_STEP_MINUTES = 10
-
-#: The cosign step of the `release` job.
-COSIGN_STEP = {"name": "cosign", "timeout-minutes": COSIGN_STEP_MINUTES, "run": COSIGN_RUN}
-
-#: The steps of the `release` job between the verdict and the step that
-#: takes uv: the two workflow artifacts into one directory, then cosign.
-RELEASE_ASSET_STEPS = [
-    {"uses": DOWNLOAD_ACTION, "with": {"name": ARTIFACTS_JOB, "path": ASSET_DIR}},
-    {"uses": DOWNLOAD_ACTION, "with": {"name": "bundles", "path": ASSET_DIR}},
-    COSIGN_STEP,
-]
-
-#: The variables of the tag step: the token, the catalog name, the assets of
-#: a binary component and the program that checks their signature.
-TAG_ENV = {
-    "GH_TOKEN": "${{ github.token }}",
-    "TAG_REPO": THIS_REPOSITORY,
-    "ASSET_DIR": ASSET_DIR,
-    "COSIGN": COSIGN_PATH,
-}
+#: The variables of the tag step: the token and the catalog name. No
+#: ASSET_DIR and no COSIGN: this workflow builds no archive.
+TAG_ENV = {"GH_TOKEN": "${{ github.token }}", "TAG_REPO": THIS_REPOSITORY}
 
 #: The whole test command of the `proc` job, as `integration/proc/AGENTS.md`
 #: gives it.
@@ -742,46 +172,6 @@ PROC_RUN = "uv run pytest integration/proc -m slow"
 #: The switch that makes a skip a failure, and the file that reads it.
 PROC_ENV = {"CRECHE_PROC_NO_SKIP": "1"}
 PROC_SWITCHES = REPO / "integration" / "proc" / "proc_services.py"
-
-#: The job that gives the process-level suite each Rust program of
-#: `rust/proc`, and the whole of that work: one script, with no flag. The
-#: flag `--dry-run` would start no build and no test.
-PROC_RUST_JOB = "proc-rust"
-PROC_RUST_RUN = "bin/proc-rust.sh"
-
-#: Each key of the job. One more key can make a red step green, for example
-#: `continue-on-error`. A step has no `if`: the job runs each step on each
-#: code change.
-PROC_RUST_KEYS = {"needs", "if", "runs-on", "timeout-minutes", "env", "steps"}
-
-#: The steps of the job, in order, each with its keys: the checkout, the
-#: toolchain, the cache, the venv and the script.
-PROC_RUST_STEP_KEYS = [
-    {"uses", "with"},
-    {"name", "working-directory", "run"},
-    {"uses", "with"},
-    {"uses"},
-    {"run"},
-]
-
-#: The whole text of the toolchain step of the job. The first line installs
-#: the toolchain that `rust/rust-toolchain.toml` names. The job runs no lint,
-#: so the step asks for no version of `rustfmt` and of `clippy`.
-PROC_RUST_TOOLCHAIN_RUN = """\
-rustup toolchain install --no-self-update
-cargo --version
-"""
-
-#: The whole key of the cache of the job. The start differs from the key of
-#: the `rust` job: that job saves a debug build, and a saved cache does not
-#: change. With one key for the two jobs, one of the two builds would start
-#: from nothing in each run.
-PROC_RUST_CACHE_KEY = (
-    "proc-rust-${{ runner.os }}-${{ hashFiles('rust/rust-toolchain.toml', 'rust/Cargo.lock') }}"
-)
-
-#: The directory of the builds of the workspace, as the cache names it.
-RUST_TARGET = "rust/target"
 
 #: The build that the suite needs, and where it runs. No vitest and no
 #: typecheck: the `playpen` job runs those.
@@ -971,22 +361,13 @@ def test_a_shard_names_no_path_and_no_number(jobs: dict[str, dict[str, Any]], la
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
-def test_the_docs_scope_runs_no_shard_no_playpen_and_no_rust(
+def test_the_docs_scope_runs_no_shard_and_no_playpen(
     jobs: dict[str, dict[str, Any]], last: str
 ) -> None:
     by_scope = {name: job.get("if") for name, job in jobs.items() if name != last}
     only_code = {name for name, rule in by_scope.items() if rule == ONLY_CODE}
 
-    assert only_code == {
-        "tests",
-        "playpen",
-        "proc",
-        PROC_RUST_JOB,
-        SUITES_JOB,
-        "rust",
-        COVERAGE_JOB,
-        SYSTEMD_JOB,
-    }
+    assert only_code == {"tests", "playpen", "proc", SUITES_JOB, SYSTEMD_JOB}
     assert only_code == set(DOCS), "the verdict table of this file names other jobs"
     assert {name for name, rule in by_scope.items() if rule is None} == NO_RULE[last]
 
@@ -1001,42 +382,19 @@ def test_lint_runs_the_docs_tests_on_a_docs_change_and_no_test_beside_the_shards
 
 
 def test_the_release_runs_the_gates_test_jobs() -> None:
-    """A change to one file's shards, playpen steps, process suite, Rust
-    judge, old suites, Rust steps, coverage steps or systemd proof that
-    misses the other would let a merge pass a release its PR could not, or
-    the reverse."""
-    for name in (
-        "tests",
-        "playpen",
-        "proc",
-        PROC_RUST_JOB,
-        SUITES_JOB,
-        "rust",
-        COVERAGE_JOB,
-        SYSTEMD_JOB,
-    ):
+    """A change to one file's shards, playpen steps, process suite, old
+    suites or systemd proof that misses the other would let a merge pass a
+    release its PR could not, or the reverse."""
+    for name in ("tests", "playpen", "proc", SUITES_JOB, SYSTEMD_JOB):
         assert RELEASE_JOBS[name] == JOBS[name], f"release.yml's {name} job is not gate.yml's"
-
-    gated = JOBS[ARTIFACTS_JOB]
-    released = RELEASE_JOBS[ARTIFACTS_JOB]
-    unruled = [
-        {key: value for key, value in step.items() if key != "if"} for step in gated["steps"]
-    ]
-
-    assert {key: value for key, value in gated.items() if key != "steps"} == {
-        key: value for key, value in released.items() if key != "steps"
-    }
-    assert unruled == released["steps"], "release.yml's artifacts job is not gate.yml's"
 
 
 def test_the_two_workflows_have_the_same_jobs() -> None:
-    """The release runs each job of the gate before its last job, and one
-    job more: `sign`. A job that enters one file alone fails here. So the
-    last job of the release needs one job more than the last job of the
-    gate."""
-    assert set(JOBS) - {GATE_NAME} == set(RELEASE_JOBS) - {RELEASE_NAME, SIGN_JOB}
-    assert SIGN_JOB not in JOBS
-    assert len(RELEASE_JOBS[RELEASE_NAME]["needs"]) == len(JOBS[GATE_NAME]["needs"]) + 1
+    """The release runs each job of the gate before its last job. A job that
+    enters one file alone fails here. So the last job of the release needs
+    as many jobs as the last job of the gate."""
+    assert set(JOBS) - {GATE_NAME} == set(RELEASE_JOBS) - {RELEASE_NAME}
+    assert len(RELEASE_JOBS[RELEASE_NAME]["needs"]) == len(JOBS[GATE_NAME]["needs"])
 
 
 @pytest.mark.parametrize(
@@ -1048,10 +406,8 @@ def test_a_workflow_file_has_no_key_that_changes_each_job(
     """A job that is equal in the two files runs the same steps only when no
     key beside `jobs` changes them. A `defaults` key of one file gives each
     `run` step another shell, and an `env` key gives each step a variable.
-    Only the gate has a `concurrency` key. Only the release has an `env`
-    key, and it holds the pin of cosign and nothing else."""
+    Only the gate has a `concurrency` key."""
     assert set(workflow) == FILE_KEYS[name]
-    assert workflow.get("env", COSIGN_ENV) == COSIGN_ENV
 
 
 def _node_steps(job: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1111,87 +467,6 @@ def test_the_proc_job_has_a_time_limit(jobs: dict[str, dict[str, Any]], last: st
     """A teardown waits for each process group. A fault in the harness can
     cost every test that wait, and a job with no limit has six hours."""
     assert 0 < jobs["proc"]["timeout-minutes"] <= 30
-
-
-@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
-def test_the_proc_rust_job_runs_each_step_on_each_code_change(
-    jobs: dict[str, dict[str, Any]], last: str
-) -> None:
-    """A scenario, the harness and a crate can each change the result, so no
-    step asks the scope. The job has no key and no step key that hides a red
-    step."""
-    job = jobs[PROC_RUST_JOB]
-
-    assert set(job) == PROC_RUST_KEYS
-    assert job["needs"] == "scope"
-    assert job["if"] == ONLY_CODE
-    assert job["runs-on"] == jobs["proc"]["runs-on"]
-    assert job["env"] == COVERAGE_JOB_ENV
-    assert [set(step) for step in job["steps"]] == PROC_RUST_STEP_KEYS
-
-
-@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
-def test_the_proc_rust_job_runs_the_script_after_the_toolchain_and_the_venv(
-    jobs: dict[str, dict[str, Any]], last: str
-) -> None:
-    """One copy of the cargo line and of the pytest line: `bin/proc-rust.sh`.
-    The step gives the script no flag. rustup takes the toolchain from
-    `rust/rust-toolchain.toml`, so the toolchain step runs inside `rust/` and
-    names no toolchain. The script starts `uv run pytest`, so the venv comes
-    before it."""
-    checkout, toolchain, _cache, venv, script = jobs[PROC_RUST_JOB]["steps"]
-
-    assert checkout["uses"].startswith("actions/checkout@")
-    assert toolchain["working-directory"] == RUST_DIR
-    assert toolchain["run"] == PROC_RUST_TOOLCHAIN_RUN
-    assert toolchain["run"].splitlines()[0] == TOOLCHAIN_RUN
-    assert venv == {"uses": UV_SYNC}
-    assert script == {"run": PROC_RUST_RUN}
-    assert (REPO / PROC_RUST_RUN).is_file()
-    for step in jobs[PROC_RUST_JOB]["steps"]:
-        assert "toolchain" not in step.get("with", {}), "a step names its own toolchain"
-
-
-@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
-def test_the_proc_rust_job_builds_no_playpen(jobs: dict[str, dict[str, Any]], last: str) -> None:
-    """No scenario that a file of `rust/proc` selects needs the bundle today.
-    A file that selects such a scenario fails in the job: the script makes a
-    skip a failure. The pull request that adds such a file gives the job the
-    node steps and the build of the `proc` job, and changes this test."""
-    job = jobs[PROC_RUST_JOB]
-
-    assert _node_steps(job) == []
-    assert PLAYPEN_BUILD not in [step.get("run") for step in job["steps"]]
-
-
-@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
-def test_the_proc_rust_job_keeps_its_release_build_under_a_key_of_its_own(
-    jobs: dict[str, dict[str, Any]], last: str
-) -> None:
-    (cache,) = [
-        step
-        for step in jobs[PROC_RUST_JOB]["steps"]
-        if step.get("uses", "").startswith("actions/cache@")
-    ]
-    (of_rust,) = [
-        step for step in jobs["rust"]["steps"] if step.get("uses", "").startswith("actions/cache@")
-    ]
-
-    assert set(cache["with"]) == {"path", "key"}
-    assert cache["with"]["key"] == PROC_RUST_CACHE_KEY
-    assert cache["with"]["key"] != of_rust["with"]["key"]
-    assert cache["uses"] == of_rust["uses"]
-    assert RUST_TARGET in cache["with"]["path"].split()
-    for name in CACHE_FILES:
-        assert f"'{name}'" in cache["with"]["key"]
-
-
-@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
-def test_the_proc_rust_job_has_the_time_limit_of_the_proc_job(
-    jobs: dict[str, dict[str, Any]], last: str
-) -> None:
-    """A teardown waits for each process group, as in the `proc` job."""
-    assert jobs[PROC_RUST_JOB]["timeout-minutes"] == jobs["proc"]["timeout-minutes"]
 
 
 def _report_of(name: str) -> str:
@@ -1365,444 +640,11 @@ def test_the_last_step_prints_the_counts_of_each_suite(reports: dict[str, Path])
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
-def test_a_change_outside_rust_skips_every_rust_step_and_not_the_job(
+def test_a_change_outside_systemd_skips_the_proof_step_and_not_the_job(
     jobs: dict[str, dict[str, Any]], last: str
 ) -> None:
     """A job skipped as a whole on a code change is red in the verdict. So
     the job runs, and each step after the checkout carries the rule."""
-    checkout, *steps = jobs["rust"]["steps"]
-
-    assert jobs["scope"]["outputs"]["rust"] == RUST_OUTPUT
-    assert jobs["rust"]["needs"] == "scope"
-    assert checkout["uses"].startswith("actions/checkout@")
-    assert "if" not in checkout
-    assert steps, "the rust job has no step but the checkout"
-    for step in steps:
-        assert step.get("if") == ONLY_RUST, f"{step.get('name') or step.get('uses')} always runs"
-
-
-@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
-def test_the_rust_job_runs_the_gate_the_hooks_run(
-    jobs: dict[str, dict[str, Any]], last: str
-) -> None:
-    """One copy of the cargo commands: `bin/rust-gate.sh`. A cargo line
-    written here would drift from the one a commit and a push run."""
-    runs = [step for step in jobs["rust"]["steps"] if "run" in step]
-    toolchain, deny, checks = runs
-
-    assert deny["name"] == DENY_STEP
-    assert checks["run"] == RUST_RUN
-    assert toolchain["working-directory"] == RUST_DIR
-    assert toolchain["run"].splitlines()[0] == TOOLCHAIN_RUN
-    for step in jobs["rust"]["steps"]:
-        assert "toolchain" not in step.get("with", {}), "a step names its own toolchain"
-
-
-@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
-def test_the_rust_job_takes_cargo_deny_from_an_archive_that_it_checked(
-    jobs: dict[str, dict[str, Any]], last: str
-) -> None:
-    """No action installs `cargo-deny`, so no commit pin holds the program.
-    The SHA-256 of the archive is the pin. The step must compare it before
-    the unpack, and it must put nothing on PATH after a sum that differs.
-    The test holds the whole text of the step and each key of the step."""
-    (deny,) = [step for step in jobs["rust"]["steps"] if step.get("name") == DENY_STEP]
-    names = [step.get("name") or step.get("run") for step in jobs["rust"]["steps"]]
-
-    assert set(deny) == DENY_KEYS
-    assert deny["env"] == DENY_ENV
-    assert deny["working-directory"] == RUST_DIR
-    assert deny["run"] == DENY_RUN
-    assert names.index(DENY_STEP) < names.index(RUST_RUN)
-
-
-@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
-def test_the_cargo_cache_is_keyed_by_the_toolchain_and_the_lock(
-    jobs: dict[str, dict[str, Any]], last: str
-) -> None:
-    (cache,) = [
-        step for step in jobs["rust"]["steps"] if step.get("uses", "").startswith("actions/cache@")
-    ]
-
-    for name in CACHE_FILES:
-        assert f"'{name}'" in cache["with"]["key"]
-        assert (REPO / name).is_file(), f"the cache key names {name}"
-    assert cache["with"]["key"] == CACHE_KEY
-    assert "restore-keys" not in cache["with"]
-
-
-@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
-def test_a_change_outside_rust_skips_every_coverage_step_and_not_the_job(
-    jobs: dict[str, dict[str, Any]], last: str
-) -> None:
-    """As for the `rust` job: the job runs on each code change, and each step
-    after the checkout carries the rule. The job has no key that hides a red
-    step."""
-    job = jobs[COVERAGE_JOB]
-    checkout, *steps = job["steps"]
-
-    assert set(job) == COVERAGE_JOB_KEYS
-    assert job["needs"] == "scope"
-    assert job["if"] == ONLY_CODE
-    assert job["runs-on"] == COVERAGE_RUNNER
-    assert job["env"] == COVERAGE_JOB_ENV
-    assert checkout["uses"].startswith("actions/checkout@")
-    assert "if" not in checkout
-    assert [set(step) for step in steps] == COVERAGE_STEP_KEYS
-    for step in steps:
-        assert step["if"] == ONLY_RUST, f"{step.get('name') or step['run']} always runs"
-
-
-@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
-def test_the_coverage_job_runs_the_script_on_the_pinned_toolchain(
-    jobs: dict[str, dict[str, Any]], last: str
-) -> None:
-    """One copy of the cargo line and of the rule: `bin/rust-coverage.sh`.
-    The step gives the script no flag. rustup takes the toolchain from
-    `rust/rust-toolchain.toml`, so the step runs inside `rust/` and names no
-    toolchain."""
-    _checkout, toolchain, _install, script = jobs[COVERAGE_JOB]["steps"]
-
-    assert toolchain["working-directory"] == RUST_DIR
-    assert toolchain["run"] == COVERAGE_TOOLCHAIN_RUN
-    assert toolchain["run"].splitlines()[0] == TOOLCHAIN_RUN
-    assert script["run"] == COVERAGE_RUN
-    assert (REPO / COVERAGE_RUN).is_file()
-
-
-@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
-def test_the_coverage_job_takes_cargo_llvm_cov_from_an_archive_that_it_checked(
-    jobs: dict[str, dict[str, Any]], last: str
-) -> None:
-    """No commit pin holds `cargo-llvm-cov`. The SHA-256 of the archive is
-    the pin, as for `cargo-deny`. One local action holds the step. The step
-    of the job is its name, the rule of the job and the path of that action,
-    and no other key. One more key can change what the step does, for example
-    `env` or `continue-on-error`. The action holds the whole text of the step
-    and the two constants."""
-    _checkout, _toolchain, install, _script = jobs[COVERAGE_JOB]["steps"]
-    (step,) = COVERAGE_ACTION_DATA["runs"]["steps"]
-
-    assert install == {"name": COVERAGE_STEP, "if": ONLY_RUST, "uses": COVERAGE_ACTION}
-    assert step["env"] == COVERAGE_ENV
-    assert step["working-directory"] == RUST_DIR
-    assert step["run"] == COVERAGE_INSTALL_RUN
-
-
-def test_the_cargo_llvm_cov_action_is_one_step_and_no_other_key() -> None:
-    """The action is the one copy of the step that takes `cargo-llvm-cov`.
-    The test holds the file as a whole: each key at the top, the kind, one
-    step, each key of that step and each value. A second step can put
-    another program on PATH after the compare. One more key of the step can
-    hide a compare that failed.
-
-    The text of the file sets each constant one time. PyYAML keeps the last
-    value of a key that a table holds two times, so the data alone does not
-    show a second line. The test thus counts the start of the two names in
-    the text. The `run` text holds that start in some places, and each
-    constant adds one place. A second line for a constant adds one more, also
-    with a quote or a space before its colon. The header comment of the
-    action must not hold that start."""
-    runs = COVERAGE_ACTION_DATA["runs"]
-    named = COVERAGE_INSTALL_RUN.count(COVERAGE_PREFIX) + len(COVERAGE_ENV)
-    found = COVERAGE_ACTION_TEXT.count(COVERAGE_PREFIX)
-
-    assert set(COVERAGE_ACTION_DATA) == COVERAGE_ACTION_KEYS
-    assert COVERAGE_ACTION_DATA["name"] == COVERAGE_STEP
-    assert COVERAGE_ACTION_DATA["description"].strip(), "the action has no description"
-    assert set(runs) == COVERAGE_RUNS_KEYS
-    assert runs["using"] == COMPOSITE
-    assert len(runs["steps"]) == 1, "the action has more than one step"
-    assert set(runs["steps"][0]) == set(COVERAGE_ACTION_STEP)
-    assert runs["steps"] == [COVERAGE_ACTION_STEP]
-    assert all(name.startswith(COVERAGE_PREFIX) for name in COVERAGE_ENV)
-    assert found == named, f"the action holds {COVERAGE_PREFIX} {found} times, not {named}"
-
-
-@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
-def test_the_coverage_job_has_a_time_limit(jobs: dict[str, dict[str, Any]], last: str) -> None:
-    """A test that does not end under the measurement holds the job, and a
-    job with no limit has six hours."""
-    assert 0 < jobs[COVERAGE_JOB]["timeout-minutes"] <= 30
-
-
-def test_the_nightly_workflow_starts_one_time_a_day_and_by_hand() -> None:
-    """One schedule with one minute and one hour, and `workflow_dispatch`.
-    No pull request and no push starts the file, so no run of it is on the
-    head of a pull request by itself. PyYAML reads the key `on` as the
-    boolean."""
-    minute, hour, *rest = NIGHTLY_CRON.split(" ")
-
-    assert NIGHTLY["name"] == NIGHTLY_NAME
-    assert NIGHTLY[True] == NIGHTLY_EVENTS
-    assert minute.isdigit() and 0 < int(minute) < 60, "the schedule is at the start of an hour"
-    assert hour.isdigit() and int(hour) < 24
-    assert rest == ["*", "*", "*"], "the schedule is not one time a day"
-
-
-def test_the_nightly_workflow_holds_the_read_only_token() -> None:
-    """The job runs the code of `main`, so no job holds a token that writes.
-    The file has no `concurrency` key: a group can cancel a run, and a
-    cancelled run on the head of a pull request blocks its release. It has no
-    `defaults` and no `env` key: each one changes what a step runs."""
-    assert set(NIGHTLY) == NIGHTLY_FILE_KEYS
-    assert NIGHTLY["permissions"] == READ_ONLY
-    for name, job in NIGHTLY_JOBS.items():
-        assert "permissions" not in job, f"{name} sets its own permissions"
-        assert "concurrency" not in job, f"{name} can cancel a run"
-
-
-def test_the_nightly_workflow_measures_on_main_only() -> None:
-    """A person can start the workflow on each ref. On another ref than
-    `main`, `guard` passes and the job that measures is skipped, so the run
-    is a success. `guard` has no rule, no checkout and no action: it runs no
-    code of the ref. Its one step prints a line, on a runner that exists: a
-    `guard` that fails or waits makes that run block a release."""
-    guard = NIGHTLY_JOBS[NIGHTLY_GUARD]
-    job = NIGHTLY_JOBS[NIGHTLY_JOB]
-
-    assert list(NIGHTLY_JOBS) == [NIGHTLY_GUARD, NIGHTLY_JOB]
-    assert {name: set(one) for name, one in NIGHTLY_JOBS.items()} == NIGHTLY_KEYS
-    assert guard["runs-on"] == COVERAGE_RUNNER
-    assert guard["steps"] == [NIGHTLY_GUARD_STEP]
-    assert job["needs"] == NIGHTLY_GUARD
-    assert job["if"] == ON_MAIN
-
-
-def test_the_nightly_job_has_no_key_that_hides_a_red_step() -> None:
-    """The job has the runner and the time limit of the `rust-coverage` job.
-    No step has an `if` or a `continue-on-error`: a step that fails makes the
-    run red."""
-    job = NIGHTLY_JOBS[NIGHTLY_JOB]
-    checkout = job["steps"][0]
-
-    assert job["runs-on"] == COVERAGE_RUNNER
-    assert 0 < job["timeout-minutes"] <= 30
-    assert [set(step) for step in job["steps"]] == NIGHTLY_STEP_KEYS
-    assert checkout["uses"].startswith("actions/checkout@")
-    assert checkout["with"] == NIGHTLY_CHECKOUT
-
-
-def test_the_nightly_job_installs_one_dated_nightly_from_one_constant() -> None:
-    """The date is the pin of the compiler. The file holds the name one time,
-    in the variable that rustup reads, and it holds no second nightly. The
-    toolchain step installs the toolchain of that variable and names no
-    other one."""
-    job = NIGHTLY_JOBS[NIGHTLY_JOB]
-    _checkout, toolchain, _install, _script = job["steps"]
-
-    assert DATED_NIGHTLY.fullmatch(NIGHTLY_TOOLCHAIN)
-    assert job["env"] == NIGHTLY_JOB_ENV
-    assert DATED_NIGHTLY.findall(NIGHTLY_TEXT) == [NIGHTLY_TOOLCHAIN]
-    assert toolchain["working-directory"] == RUST_DIR
-    assert toolchain["run"] == NIGHTLY_TOOLCHAIN_RUN
-    for step in job["steps"]:
-        assert "toolchain" not in step.get("with", {}), "a step names its own toolchain"
-
-
-def test_the_nightly_toolchain_is_in_the_nightly_workflow_only() -> None:
-    """The toolchain file of the workspace keeps its version: each job of the
-    gate and of the release builds with it, and a change of that file moves
-    the tag of each binary component. No job of those two files reads the
-    variable that outranks the file."""
-    pinned = tomllib.loads((REPO / RUST_DIR / "rust-toolchain.toml").read_text(encoding="utf-8"))
-
-    assert "nightly" not in pinned["toolchain"]["channel"]
-    for workflow in (GATE, RELEASE):
-        assert TOOLCHAIN_VARIABLE not in workflow.get("env", {})
-        for name, job in workflow["jobs"].items():
-            assert TOOLCHAIN_VARIABLE not in job.get("env", {}), f"{name} names a toolchain"
-            for step in job["steps"]:
-                assert TOOLCHAIN_VARIABLE not in step.get("env", {}), f"{name} names a toolchain"
-
-
-def test_the_three_workflows_take_the_same_cargo_llvm_cov() -> None:
-    """The nightly run and the merge gate must read a report of one tool
-    version: the script reads the form of that report. So the three jobs name
-    one action. The nightly step is the step of the `rust-coverage` job of
-    each other file, without the rule of that job. Each of the three files
-    calls the action one time. Under `.github`, the action file alone holds
-    the two constants: a copy of the step in a workflow file fails here."""
-    _checkout, _toolchain, install, _script = NIGHTLY_JOBS[NIGHTLY_JOB]["steps"]
-
-    assert install == {"name": COVERAGE_STEP, "uses": COVERAGE_ACTION}
-    for jobs, last in WORKFLOW_JOBS:
-        _checkout, _toolchain, gated, _script = jobs[COVERAGE_JOB]["steps"]
-
-        assert install == {key: value for key, value in gated.items() if key != "if"}, last
-
-    callers = {GATE_NAME: JOBS, RELEASE_NAME: RELEASE_JOBS, NIGHTLY_NAME: NIGHTLY_JOBS}
-    for name, jobs in callers.items():
-        steps = [step for job in jobs.values() for step in job["steps"]]
-        calls = [step for step in steps if step.get("uses") == COVERAGE_ACTION]
-
-        assert len(calls) == 1, f"{name} calls the action {len(calls)} times"
-
-    files = [path for path in sorted((REPO / ".github").rglob("*")) if path.is_file()]
-    holders = [path for path in files if COVERAGE_PREFIX.encode() in path.read_bytes()]
-
-    assert all(name.startswith(COVERAGE_PREFIX) for name in COVERAGE_ENV)
-    assert holders == [COVERAGE_ACTION_FILE]
-
-
-def test_the_nightly_job_runs_the_script_with_the_branch_flag() -> None:
-    """One copy of the cargo line and of the rule: `bin/rust-coverage.sh`.
-    `--branch` is the one difference from the `rust-coverage` job. The script
-    is the last step, after the toolchain and the tool."""
-    *_setup, script = NIGHTLY_JOBS[NIGHTLY_JOB]["steps"]
-
-    assert script == {"run": NIGHTLY_RUN}
-    assert (REPO / COVERAGE_RUN).is_file()
-    for jobs, _last in WORKFLOW_JOBS:
-        assert jobs[COVERAGE_JOB]["steps"][-1]["run"] == COVERAGE_RUN
-
-
-def test_the_advisory_workflow_starts_one_time_a_day_and_by_hand() -> None:
-    """One schedule with one minute and one hour, and `workflow_dispatch`.
-    No pull request and no push starts the file, so no run of it is on the
-    head of a pull request by itself. The two scheduled workflows do not
-    start in the same minute."""
-    minute, hour, *rest = ADVISORIES_CRON.split(" ")
-
-    assert ADVISORIES["name"] == ADVISORIES_NAME
-    assert ADVISORIES[True] == ADVISORIES_EVENTS
-    assert minute.isdigit() and 0 < int(minute) < 60, "the schedule is at the start of an hour"
-    assert hour.isdigit() and int(hour) < 24
-    assert rest == ["*", "*", "*"], "the schedule is not one time a day"
-    assert ADVISORIES_CRON != NIGHTLY_CRON
-
-
-def test_the_advisory_workflow_holds_the_read_only_token() -> None:
-    """The job runs the code of `main`, so no job holds a token that writes.
-    As for the nightly workflow, the file has no `concurrency` key, no
-    `defaults` key and no `env` key."""
-    assert set(ADVISORIES) == NIGHTLY_FILE_KEYS
-    assert ADVISORIES["permissions"] == READ_ONLY
-    for name, job in ADVISORIES_JOBS.items():
-        assert "permissions" not in job, f"{name} sets its own permissions"
-        assert "concurrency" not in job, f"{name} can cancel a run"
-
-
-def test_the_advisory_workflow_checks_on_main_only() -> None:
-    """A person can start the workflow on each ref. On another ref than
-    `main`, `guard` passes and the job that checks is skipped, so the run is
-    a success. A red run on the head of a pull request would block the
-    release of that pull request. `guard` has no rule, no checkout and no
-    action. Its one step prints a line."""
-    guard = ADVISORIES_JOBS[ADVISORIES_GUARD]
-    job = ADVISORIES_JOBS[ADVISORIES_JOB]
-
-    assert list(ADVISORIES_JOBS) == [ADVISORIES_GUARD, ADVISORIES_JOB]
-    assert {name: set(one) for name, one in ADVISORIES_JOBS.items()} == ADVISORIES_KEYS
-    assert guard["runs-on"] == COVERAGE_RUNNER
-    assert guard["steps"] == [ADVISORIES_GUARD_STEP]
-    assert job["needs"] == ADVISORIES_GUARD
-    assert job["if"] == ON_MAIN
-
-
-def test_the_advisory_job_has_no_cache_and_no_key_that_hides_a_red_step() -> None:
-    """No step has an `if` or a `continue-on-error`: a step that fails makes
-    the run red. The checkout is the one action of the job, so the job has no
-    cache. For a version that its author removed, `cargo deny` reads only the
-    copy of the crates.io index that cargo keeps on the machine. A runner
-    with no cache holds no copy of an earlier run. "Known gaps" of
-    `rust/AGENTS.md` names that fact. Change that entry in the commit that
-    gives the job a cache."""
-    job = ADVISORIES_JOBS[ADVISORIES_JOB]
-    checkout, *later = job["steps"]
-
-    assert job["runs-on"] == COVERAGE_RUNNER
-    assert 0 < job["timeout-minutes"] <= 15
-    assert [set(step) for step in job["steps"]] == ADVISORIES_STEP_KEYS
-    assert checkout["uses"].startswith("actions/checkout@")
-    assert checkout["with"] == NIGHTLY_CHECKOUT
-    for step in later:
-        assert "uses" not in step, "a step after the checkout is an action"
-
-
-def test_the_advisory_job_takes_the_toolchain_of_the_workspace() -> None:
-    """`cargo deny` starts cargo for the crates of the lock file. rustup
-    takes the toolchain from `rust/rust-toolchain.toml`, so the toolchain
-    step runs inside `rust/` and names no toolchain. No variable of the file
-    outranks the toolchain file."""
-    _checkout, toolchain, _install, _script = ADVISORIES_JOBS[ADVISORIES_JOB]["steps"]
-
-    assert toolchain["working-directory"] == RUST_DIR
-    assert toolchain["run"] == PROC_RUST_TOOLCHAIN_RUN
-    assert toolchain["run"].splitlines()[0] == TOOLCHAIN_RUN
-    for name, job in ADVISORIES_JOBS.items():
-        assert TOOLCHAIN_VARIABLE not in job.get("env", {}), f"{name} names a toolchain"
-        for step in job["steps"]:
-            assert TOOLCHAIN_VARIABLE not in step.get("env", {}), f"{name} names a toolchain"
-            assert "toolchain" not in step.get("with", {}), "a step names its own toolchain"
-
-
-def test_the_three_workflows_take_the_same_cargo_deny() -> None:
-    """The gate and the advisory run must read `rust/deny.toml` with one
-    version of the tool: another version can read the file in another way.
-    The step of the advisory job is the step of the `rust` job of each other
-    file, without the rule of that job. So the two constants and the whole
-    text are equal in the three files."""
-    _checkout, _toolchain, install, _script = ADVISORIES_JOBS[ADVISORIES_JOB]["steps"]
-
-    assert install["name"] == DENY_STEP
-    assert install["env"] == DENY_ENV
-    assert install["working-directory"] == RUST_DIR
-    assert install["run"] == DENY_RUN
-    for jobs, last in WORKFLOW_JOBS:
-        (gated,) = [step for step in jobs["rust"]["steps"] if step.get("name") == DENY_STEP]
-
-        assert install == {key: value for key, value in gated.items() if key != "if"}, last
-
-
-def test_the_advisory_job_runs_the_gate_script_with_the_advisory_flag() -> None:
-    """One copy of the cargo line: `bin/rust-gate.sh`. The flag is the whole
-    difference from the script step of the `rust` job. The script is the last
-    step, after the toolchain and the tool."""
-    *_setup, script = ADVISORIES_JOBS[ADVISORIES_JOB]["steps"]
-    gate_script, _tests = RUST_RUN.split()
-
-    assert script == {"run": ADVISORIES_RUN}
-    assert script["run"].split() == [gate_script, ADVISORIES_FLAG]
-    assert (REPO / gate_script).is_file()
-
-
-@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
-def test_no_job_of_the_gate_makes_the_advisory_check(
-    jobs: dict[str, dict[str, Any]], last: str
-) -> None:
-    """A new advisory changes the result of that check while the tree stays
-    the same. In a job of the gate it would fail a pull request that touches
-    no dependency. In a job of the release it would stop the tags of a merge.
-    So no step of the two files gives a script the flag, and no step holds a
-    `cargo deny` line of its own."""
-    for name, job in jobs.items():
-        for step in job["steps"]:
-            run = step.get("run", "")
-
-            assert ADVISORIES_FLAG not in run, f"{name} makes the advisory check"
-            assert "cargo deny" not in run.replace("cargo deny --version", ""), (
-                f"{name} holds a `cargo deny` line of its own"
-            )
-
-
-def test_the_release_skips_rust_only_over_a_commit_whose_run_passed() -> None:
-    """As for `docs`: a push never skips the Rust checks over a tree whose
-    Rust failed, or is still in, its own run."""
-    (step,) = [one for one in RELEASE_JOBS["scope"]["steps"] if one.get("id") == "scope"]
-
-    assert "rust=true\n" in step["run"]
-    assert 'if [[ "$passed" == 1 ]] && ! rust_touched "$BEFORE" "$GITHUB_SHA"; then' in step["run"]
-    assert 'echo "rust=$rust" >> "$GITHUB_OUTPUT"' in step["run"]
-
-
-@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
-def test_a_change_outside_systemd_skips_the_proof_step_and_not_the_job(
-    jobs: dict[str, dict[str, Any]], last: str
-) -> None:
-    """As for `rust`: a job skipped as a whole on a code change is red in
-    the verdict. So the job runs, and each step after the checkout carries
-    the rule."""
     checkout, *steps = jobs[SYSTEMD_JOB]["steps"]
 
     assert jobs["scope"]["outputs"]["systemd"] == SYSTEMD_OUTPUT
@@ -1846,7 +688,7 @@ def _scope_run(name: str) -> str:
 @pytest.mark.parametrize("name", BY_NAME)
 def test_a_scope_skips_the_proof_only_when_the_script_says_unchanged(name: str) -> None:
     """The release also asks for a commit whose own run passed, as it does
-    for `rust`: a push never skips the proof over a tree whose proof failed,
+    for `docs`: a push never skips the proof over a tree whose proof failed,
     or is still in, its run."""
     run = _scope_run(name)
 
@@ -1882,8 +724,7 @@ def test_the_tag_step_runs_only_after_the_verdict() -> None:
 
 def test_no_time_limit_can_stop_an_allocation_half_way() -> None:
     """A time limit on the `release` job or on its tag step can stop the
-    tag script between a tag and its Release. The cosign step before the tag
-    step holds the limit of a fetch."""
+    tag script between a tag and its Release."""
     tag = _step(RELEASE_JOBS, RELEASE_NAME, TAG_STEP)
 
     assert "timeout-minutes" not in RELEASE_JOBS[RELEASE_NAME]
@@ -1893,10 +734,12 @@ def test_no_time_limit_can_stop_an_allocation_half_way() -> None:
 def test_the_tag_step_says_which_catalog_repository_it_tags() -> None:
     """The allocator would otherwise take the name from where the
     repository is hosted, and refuse a name the catalog does not hold
-    (`handover/bin/allocate-tags.sh`, TAG_REPO)."""
+    (`handover/bin/allocate-tags.sh`, TAG_REPO). The step gets no variable
+    of a binary component."""
     tag = _step(RELEASE_JOBS, RELEASE_NAME, TAG_STEP)
 
     assert tag["env"]["TAG_REPO"] == THIS_REPOSITORY
+    assert tag["env"] == TAG_ENV
 
 
 def test_two_merges_never_allocate_at_once() -> None:
@@ -1911,433 +754,18 @@ def test_two_merges_never_allocate_at_once() -> None:
 
 def test_only_the_release_job_may_write() -> None:
     """Every other job runs the merged code, so none of them holds the
-    token that tags. Three rules:
-
-    1. The `release` job holds the token that tags.
-    2. The `sign` job holds the identity token and no other permission. It
-       has no checkout and no local action, so no code of the repository
-       runs beside that token.
-    3. No other job sets its permissions."""
+    token that tags. The `release` job holds that token, and no other job
+    sets its permissions."""
     assert RELEASE["permissions"] == {"contents": "read", "actions": "read"}
     assert RELEASE_JOBS[RELEASE_NAME]["permissions"] == {
         "contents": "write",
         "pull-requests": "read",
     }
-    assert RELEASE_JOBS[SIGN_JOB]["permissions"] == SIGN_PERMISSIONS
-    for step in RELEASE_JOBS[SIGN_JOB]["steps"]:
-        uses = step.get("uses", "")
-
-        assert not uses.startswith("actions/checkout@"), "the sign job has a checkout"
-        assert not uses.startswith("./"), f"the sign job uses the local action {uses}"
     for name, job in RELEASE_JOBS.items():
-        if name not in (RELEASE_NAME, SIGN_JOB):
+        if name != RELEASE_NAME:
             assert "permissions" not in job, f"{name} sets its own permissions"
     for name, job in JOBS.items():
         assert "permissions" not in job, f"{name} sets its own permissions"
-
-
-def test_the_artifacts_job_of_the_release_is_pinned_as_a_whole() -> None:
-    """Each key of the job and each step, in their order. The job has no
-    rule and no `permissions` key. The job output is the step output of the
-    build. One more step can put another file into the upload, and one more
-    key can let a failed step pass."""
-    job = RELEASE_JOBS[ARTIFACTS_JOB]
-
-    assert set(job) == ARTIFACTS_KEYS
-    assert job["needs"] == "scope"
-    assert job["runs-on"] == "ubuntu-24.04"
-    assert 0 < job["timeout-minutes"] <= 30
-    assert job["outputs"] == ARTIFACTS_OUTPUTS
-    assert job["steps"] == ARTIFACTS_STEPS
-    assert (REPO / "bin" / "build-artifacts.sh").is_file()
-
-
-def test_the_build_step_of_the_release_names_its_variables_and_no_other() -> None:
-    """The release builds the rows of the catalog. A rows file of the caller
-    would build another set."""
-    (build,) = [step for step in RELEASE_JOBS[ARTIFACTS_JOB]["steps"] if step.get("id") == "build"]
-
-    assert build["env"] == BUILD_STEP_ENV
-    assert "ARTIFACT_ROWS_FILE" not in build["env"]
-
-
-@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
-def test_the_artifacts_job_keeps_no_cache_and_no_token(
-    jobs: dict[str, dict[str, Any]], last: str
-) -> None:
-    """The bytes of an archive come from a clean build. A build script runs
-    here, so the clone keeps no token."""
-    steps = jobs[ARTIFACTS_JOB]["steps"]
-    uv = [step for step in steps if step.get("uses") == SETUP_UV]
-
-    assert all(not step.get("uses", "").startswith("actions/cache@") for step in steps)
-    assert [step["with"] for step in uv] == [{"enable-cache": False}]
-    assert steps[0]["uses"] == CHECKOUT_ACTION
-    assert steps[0]["with"]["persist-credentials"] is False
-
-
-def test_the_artifacts_job_takes_uv_at_the_pin_of_the_release_job() -> None:
-    (pinned,) = [
-        step for step in RELEASE_JOBS[RELEASE_NAME]["steps"] if step.get("uses") == SETUP_UV
-    ]
-
-    assert pinned == {"uses": SETUP_UV}
-
-
-def test_each_step_of_the_gates_artifacts_job_after_the_checkout_has_the_rule() -> None:
-    """A job skipped as a whole is red in the verdict. So the job runs, and
-    each step after the checkout carries the rule."""
-    checkout, *steps = JOBS[ARTIFACTS_JOB]["steps"]
-
-    assert "if" not in checkout
-    assert steps
-    for step in steps:
-        assert step["if"] == ONLY_ARTIFACTS, f"{step.get('name') or step.get('uses')} always runs"
-    for step in RELEASE_JOBS[ARTIFACTS_JOB]["steps"]:
-        assert "if" not in step, "a step of the release's artifacts job has a rule"
-
-
-def test_the_scope_job_of_the_gate_hands_the_artifacts_answer_on() -> None:
-    assert JOBS["scope"]["outputs"][ARTIFACTS_JOB] == ARTIFACTS_OUTPUT
-    assert SCOPE_ACTION["outputs"][ARTIFACTS_JOB]["value"] == ARTIFACTS_OUTPUT
-    assert ". bin/lib/artifactrule.sh\n" in _scope_run(GATE_NAME)
-    assert _scope_run(GATE_NAME).index("rustrule.sh") < _scope_run(GATE_NAME).index(
-        "artifactrule.sh"
-    )
-
-
-def test_the_sign_job_is_pinned_as_a_whole() -> None:
-    """The job holds the identity token. Each word that it runs is in the
-    workflow file: the test holds each step, each key and the whole text of
-    the one run step. No step starts a file of the repository, and no text
-    holds an expression that a value of the run fills in."""
-    job = RELEASE_JOBS[SIGN_JOB]
-    (step,) = [one for one in job["steps"] if "run" in one]
-
-    assert set(job) == SIGN_KEYS
-    assert job["needs"] == ARTIFACTS_JOB
-    assert 0 < job["timeout-minutes"] <= 15
-    assert job["steps"] == SIGN_STEPS
-    assert "bin/" not in step["run"]
-    assert "${{" not in step["run"]
-
-
-def test_the_sign_job_names_the_assets_as_the_catalog_does() -> None:
-    """The tag script takes the names of the two assets from the catalog
-    (`handover allocate-tags --assets`). The `sign` job writes the bundle
-    and finds each archive by the two suffixes of the catalog, so a change
-    of one constant fails here before a release run refuses each binary
-    component."""
-    archive_end = ARCHIVE_SUFFIX.replace(".", "[.]") + "$'"
-
-    assert f'"$bundles/$name{BUNDLE_SUFFIX}"' in SIGN_RUN
-    assert f"line='^[0-9a-f]{{64}}  [A-Za-z0-9][A-Za-z0-9._-]*{archive_end}\n" in SIGN_RUN
-    assert f'"$name" != *{ARCHIVE_SUFFIX} ]]' in SIGN_RUN
-    assert f'compgen -G "$RUNNER_TEMP/assets/*{ARCHIVE_SUFFIX}"' in COSIGN_FETCH
-    assert COSIGN_FETCH in SIGN_RUN
-    assert COSIGN_FETCH in COSIGN_RUN
-
-
-def test_the_digest_check_is_before_the_first_cosign_word() -> None:
-    """The step compares each archive with the job output before it takes
-    cosign. In the fetch the compare of the program comes before the line
-    that makes the file a program, and that line before the first run."""
-    first = re.search(r"\bcosign\b", SIGN_RUN)
-
-    assert first is not None
-    assert SIGN_RUN.index(DIGEST_CHECK) < first.start()
-    assert (
-        COSIGN_FETCH.index(COSIGN_COMPARE)
-        < COSIGN_FETCH.index(COSIGN_MODE)
-        < COSIGN_FETCH.index(COSIGN_FIRST_USE)
-    )
-
-
-def test_the_sign_job_and_the_release_job_take_one_cosign() -> None:
-    """One text takes cosign in the two jobs, with the two constants of the
-    file. The release job then checks a signature with the program that the
-    sign job signed with."""
-    (step,) = [one for one in RELEASE_JOBS[RELEASE_NAME]["steps"] if one.get("name") == "cosign"]
-
-    assert RELEASE["env"] == COSIGN_ENV
-    assert step == COSIGN_STEP
-    assert COSIGN_FETCH in SIGN_RUN
-    for name, job in RELEASE_JOBS.items():
-        for one in job["steps"]:
-            assert not set(one.get("env", {})) & set(COSIGN_ENV), f"{name} sets a constant again"
-
-
-def test_the_release_job_takes_the_assets_after_the_verdict_and_before_the_tag() -> None:
-    """The two workflow artifacts go into one directory, and cosign comes
-    after them: the fetch reads that directory. The tag step gets both."""
-    steps = RELEASE_JOBS[RELEASE_NAME]["steps"]
-    names = [step.get("name") or step.get("uses") for step in steps]
-    verdict = names.index(VERDICT_STEP)
-    tag = names.index(TAG_STEP)
-
-    assert steps[verdict + 1 : verdict + 1 + len(RELEASE_ASSET_STEPS)] == RELEASE_ASSET_STEPS
-    assert verdict + len(RELEASE_ASSET_STEPS) < tag
-    assert _step(RELEASE_JOBS, RELEASE_NAME, TAG_STEP)["env"] == TAG_ENV
-    assert _step(RELEASE_JOBS, RELEASE_NAME, TAG_STEP)["run"] == TAG_RUN
-
-
-@pytest.mark.parametrize(
-    ("workflow", "name"), [(GATE, GATE_NAME), (RELEASE, RELEASE_NAME)], ids=BY_NAME
-)
-def test_each_upload_fails_with_no_file_and_stays_seven_days(
-    workflow: dict[Any, Any], name: str
-) -> None:
-    uploads = [
-        step
-        for job in workflow["jobs"].values()
-        for step in job["steps"]
-        if step.get("uses", "").startswith("actions/upload-artifact@")
-    ]
-
-    assert uploads
-    for step in uploads:
-        assert step["uses"] == UPLOAD_ACTION
-        assert step["with"]["if-no-files-found"] == "error"
-        assert step["with"]["retention-days"] == RETENTION_DAYS
-    for job in workflow["jobs"].values():
-        for step in job["steps"]:
-            if step.get("uses", "").startswith("actions/download-artifact@"):
-                assert step["uses"] == DOWNLOAD_ACTION
-
-
-#: What a run of the `sign` step needs of a runner: `sha256sum --check
-#: --strict`. A case that needs it skips on a development machine without
-#: it, and fails in CI.
-IN_CI = bool(os.environ.get("CI"))
-
-
-def _checks_a_line() -> bool:
-    """Whether the `sha256sum` of this machine takes `--check --strict` and a
-    line on its standard input, as the one of a runner does."""
-    program = shutil.which("sha256sum")
-    if program is None:
-        return False
-
-    done = subprocess.run(
-        [program, "--check", "--strict"],
-        input=f"{hashlib.sha256(b'').hexdigest()}  /dev/null\n",
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    return done.returncode == 0
-
-
-needs_sha256sum_check = pytest.mark.skipif(
-    not IN_CI and not _checks_a_line(), reason="the step uses `sha256sum --check --strict`"
-)
-
-#: `curl`: it writes its words to STUB_LOG and puts STUB_PROGRAM at the path
-#: after `--output`.
-CURL_STUB = """#!/usr/bin/env bash
-printf '%s\\037' curl "$@" >> "$STUB_LOG"
-printf '\\n' >> "$STUB_LOG"
-while [[ "$#" -gt 0 ]]; do
-  if [[ "$1" == "--output" ]]; then
-    cp "$STUB_PROGRAM" "$2"
-  fi
-  shift
-done
-"""
-
-#: What the stub `curl` fetches: a program that writes its words to
-#: STUB_USED, and writes a bundle at the path after `--bundle`.
-FETCHED = """#!/bin/sh
-echo "$*" >> "$STUB_USED"
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = "--bundle" ]; then
-    echo "a bundle" > "$2"
-  fi
-  shift
-done
-"""
-
-#: Two archives and their lines of `sha256sum`.
-ONE = "one-x86_64-unknown-linux-musl.tar.gz"
-TWO = "two-x86_64-unknown-linux-musl.tar.gz"
-BYTES = {ONE: b"the first archive", TWO: b"the second archive"}
-LINES = {name: f"{hashlib.sha256(body).hexdigest()}  {name}" for name, body in BYTES.items()}
-
-
-class Fetch:
-    """One run of the text of a step that takes cosign, on a runner whose
-    temporary directory holds `files` in `assets/`."""
-
-    def __init__(
-        self,
-        tmp_path: Path,
-        text: str,
-        files: dict[str, bytes],
-        digests: str = "",
-        sha256: str | None = None,
-    ) -> None:
-        stubs = tmp_path / "stubs"
-        stubs.mkdir()
-        curl = stubs / "curl"
-        curl.write_text(CURL_STUB, encoding="utf-8")
-        curl.chmod(0o755)
-        fetched = tmp_path / "fetched"
-        fetched.write_text(FETCHED, encoding="utf-8")
-
-        self.temp = tmp_path / "temp"
-        self.assets = self.temp / "assets"
-        self.assets.mkdir(parents=True)
-        for name, body in files.items():
-            (self.assets / name).write_bytes(body)
-
-        self.bundles = self.temp / "bundles"
-        self.program = self.temp / "cosign"
-        self.log = tmp_path / "calls.log"
-        self.used = tmp_path / "used"
-        self.done = subprocess.run(
-            ["bash", "-c", text],
-            env={
-                "PATH": f"{stubs}{os.pathsep}{os.environ['PATH']}",
-                "RUNNER_TEMP": str(self.temp),
-                "DIGESTS": digests,
-                "COSIGN_VERSION": COSIGN_ENV["COSIGN_VERSION"],
-                "COSIGN_SHA256": sha256 or hashlib.sha256(FETCHED.encode()).hexdigest(),
-                "STUB_LOG": str(self.log),
-                "STUB_PROGRAM": str(fetched),
-                "STUB_USED": str(self.used),
-            },
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-
-    @property
-    def fetches(self) -> int:
-        if not self.log.exists():
-            return 0
-
-        return len(self.log.read_text(encoding="utf-8").splitlines())
-
-
-def test_with_no_archive_the_sign_step_signs_nothing_and_fetches_nothing(tmp_path: Path) -> None:
-    """The catalog of today holds no binary component. The step prints one
-    line and uploads an empty SHA256SUMS: the release job cannot download an
-    artifact that does not exist."""
-    run = Fetch(tmp_path, SIGN_RUN, {"SHA256SUMS": b""})
-
-    assert run.done.returncode == 0, run.done.stdout + run.done.stderr
-    assert run.done.stdout == "sign: no archive\n"
-    assert sorted(path.name for path in run.bundles.iterdir()) == ["SHA256SUMS"]
-    assert (run.bundles / "SHA256SUMS").read_bytes() == b""
-    assert run.fetches == 0
-
-
-@needs_sha256sum_check
-def test_the_sign_step_signs_each_archive_that_the_job_output_names(tmp_path: Path) -> None:
-    digests = f"{LINES[ONE]}\n{LINES[TWO]}"
-    run = Fetch(tmp_path, SIGN_RUN, {**BYTES, "SHA256SUMS": f"{digests}\n".encode()}, digests)
-
-    assert run.done.returncode == 0, run.done.stdout + run.done.stderr
-    assert run.fetches == 1
-    assert run.used.read_text(encoding="utf-8").splitlines() == [
-        "version",
-        f"sign-blob --yes --bundle {run.bundles}/{ONE}.sigstore.json {run.assets}/{ONE}",
-        f"sign-blob --yes --bundle {run.bundles}/{TWO}.sigstore.json {run.assets}/{TWO}",
-    ]
-    assert sorted(path.name for path in run.bundles.iterdir()) == sorted(
-        ["SHA256SUMS", f"{ONE}.sigstore.json", f"{TWO}.sigstore.json"]
-    )
-    assert (run.bundles / "SHA256SUMS").read_text(encoding="utf-8") == f"{digests}\n"
-
-
-#: (the files of the artifact, the job output, the line of the refusal).
-#: Each one stops the step before it takes cosign.
-REFUSED_SIGNS = {
-    "an-absent-archive": ({}, LINES[ONE], "the archives are not the archives"),
-    "an-archive-that-no-line-names": (BYTES, LINES[ONE], "the archives are not the archives"),
-    "an-archive-with-no-line": ({ONE: BYTES[ONE]}, "", "the archives are not the archives"),
-    "a-file-that-is-no-archive": (
-        {ONE: BYTES[ONE], "notes.txt": b""},
-        LINES[ONE],
-        "gave notes.txt, which is no archive",
-    ),
-    "a-hidden-archive": (
-        {ONE: BYTES[ONE], f".{TWO}": b""},
-        LINES[ONE],
-        "the archives are not the archives",
-    ),
-    "no-sha256-line": ({ONE: BYTES[ONE]}, ONE, "no SHA-256 line of an archive"),
-    "an-option-as-a-name": (
-        {"-rf.tar.gz": b""},
-        LINES[ONE].replace(ONE, "-rf.tar.gz"),
-        "no SHA-256 line",
-    ),
-    "a-path-as-a-name": (
-        {ONE: BYTES[ONE]},
-        LINES[ONE].replace(ONE, f"../{ONE}"),
-        "no SHA-256 line",
-    ),
-    "one-name-two-times": ({ONE: BYTES[ONE]}, f"{LINES[ONE]}\n{LINES[ONE]}", "two times"),
-}
-
-
-@pytest.mark.parametrize(("files", "digests", "fault"), REFUSED_SIGNS.values(), ids=REFUSED_SIGNS)
-def test_the_sign_step_refuses_a_set_that_the_job_output_does_not_name(
-    tmp_path: Path, files: dict[str, bytes], digests: str, fault: str
-) -> None:
-    """Each job of a run can write a workflow artifact. So the step signs
-    only the archives that the job output names."""
-    run = Fetch(tmp_path, SIGN_RUN, files, digests)
-
-    assert run.done.returncode == 1
-    assert fault in run.done.stderr
-    assert run.fetches == 0
-    assert not (run.bundles / "SHA256SUMS").exists()
-
-
-@needs_sha256sum_check
-def test_the_sign_step_refuses_an_archive_with_other_bytes(tmp_path: Path) -> None:
-    run = Fetch(tmp_path, SIGN_RUN, {ONE: BYTES[ONE] + b"!"}, LINES[ONE])
-
-    assert run.done.returncode != 0
-    assert run.fetches == 0
-    assert not run.used.exists()
-
-
-def test_with_no_archive_the_cosign_step_of_the_release_fetches_nothing(tmp_path: Path) -> None:
-    """A run with no binary component fetches no program of 141 MB. The tag
-    script reads COSIGN only for a binary component."""
-    run = Fetch(tmp_path, COSIGN_RUN, {"SHA256SUMS": b""})
-
-    assert run.done.returncode == 0, run.done.stdout + run.done.stderr
-    assert run.done.stdout == "cosign: no archive, so no fetch\n"
-    assert run.fetches == 0
-    assert not run.program.exists()
-
-
-@pytest.mark.skipif(
-    not IN_CI and shutil.which("sha256sum") is None, reason="the step uses sha256sum"
-)
-def test_the_cosign_step_runs_the_program_only_after_the_compare(tmp_path: Path) -> None:
-    run = Fetch(tmp_path, COSIGN_RUN, {ONE: BYTES[ONE]})
-
-    assert run.done.returncode == 0, run.done.stdout + run.done.stderr
-    assert run.fetches == 1
-    assert run.used.read_text(encoding="utf-8") == "version\n"
-    assert os.access(run.program, os.X_OK)
-
-
-@pytest.mark.skipif(
-    not IN_CI and shutil.which("sha256sum") is None, reason="the step uses sha256sum"
-)
-def test_the_cosign_step_never_runs_a_file_with_another_sha256(tmp_path: Path) -> None:
-    run = Fetch(tmp_path, COSIGN_RUN, {ONE: BYTES[ONE]}, sha256=COSIGN_ENV["COSIGN_SHA256"])
-
-    assert run.done.returncode == 1
-    assert f"not {COSIGN_ENV['COSIGN_SHA256']}" in run.done.stderr
-    assert not run.used.exists()
-    assert not os.access(run.program, os.X_OK)
 
 
 def test_gate_judges_with_the_shared_verdict_and_nothing_else() -> None:
@@ -2392,8 +820,7 @@ def _needs(
     """`toJSON(needs)` as the last job of `jobs` sees it: every job a success
     but for the ones `results` names. A name that the file does not hold is
     left out. `test_the_last_job_needs_every_other_job_and_always_runs` holds
-    that the last job needs each other job. The release needs one job more
-    than the gate: `test_the_two_workflows_have_the_same_jobs`."""
+    that the last job needs each other job."""
     names = sorted(set(jobs) - {last})
     needs = {name: {"result": results.get(name, "success"), "outputs": {}} for name in names}
     if scope is not None:
@@ -2407,10 +834,7 @@ DOCS = {
     "tests": "skipped",
     "playpen": "skipped",
     "proc": "skipped",
-    PROC_RUST_JOB: "skipped",
     SUITES_JOB: "skipped",
-    "rust": "skipped",
-    COVERAGE_JOB: "skipped",
     SYSTEMD_JOB: "skipped",
 }
 
@@ -2422,8 +846,6 @@ CASES: list[tuple[str | None, dict[str, str], bool]] = [
     # One red shard makes the matrix job a failure.
     ("code", {"tests": "failure"}, False),
     ("code", {"playpen": "cancelled"}, False),
-    ("code", {"rust": "failure"}, False),
-    ("code", {COVERAGE_JOB: "failure"}, False),
     ("code", {"proc": "failure"}, False),
     ("code", {SYSTEMD_JOB: "failure"}, False),
     ("code", {SYSTEMD_JOB: "cancelled"}, False),
@@ -2432,62 +854,28 @@ CASES: list[tuple[str | None, dict[str, str], bool]] = [
     # A suite that did not run on a code PR is red, not skipped.
     ("code", {"tests": "skipped"}, False),
     ("code", {"lint": "skipped"}, False),
-    # The Rust checks run on every code PR. The job skips its own steps when
-    # the PR touches nothing under rust/, and is a success.
-    ("code", {"rust": "skipped"}, False),
-    # The coverage job does the same. A run of it that did not end is red too.
-    ("code", {COVERAGE_JOB: "skipped"}, False),
-    ("code", {COVERAGE_JOB: "cancelled"}, False),
     # The process suite is in no shard. A code PR on which it did not run
     # is red.
     ("code", {"proc": "skipped"}, False),
-    # The judge of the Rust programs runs on every code PR too.
-    ("code", {PROC_RUST_JOB: "failure"}, False),
-    ("code", {PROC_RUST_JOB: "cancelled"}, False),
-    ("code", {PROC_RUST_JOB: "skipped"}, False),
     # The two old suites of integration/ are in no shard either.
     ("code", {SUITES_JOB: "failure"}, False),
     ("code", {SUITES_JOB: "skipped"}, False),
-    # The systemd proof runs on every code PR, as the Rust checks do. The
-    # job skips its own step when the PR touches no file of the proof.
+    # The systemd proof runs on every code PR. The job skips its own step
+    # when the PR touches no file of the proof, and is a success.
     ("code", {SYSTEMD_JOB: "skipped"}, False),
-    # The job of the archives has no rule of its own. With its steps
-    # skipped it is a success, in each scope.
-    ("code", {ARTIFACTS_JOB: "failure"}, False),
-    ("code", {ARTIFACTS_JOB: "skipped"}, False),
-    ("docs", DOCS | {ARTIFACTS_JOB: "success"}, True),
-    ("docs", DOCS | {ARTIFACTS_JOB: "skipped"}, False),
     # A job that ran on a docs PR is not what the scope asks for.
-    ("docs", DOCS | {"rust": "success"}, False),
-    ("docs", DOCS | {COVERAGE_JOB: "success"}, False),
     ("docs", DOCS | {"proc": "success"}, False),
-    ("docs", DOCS | {PROC_RUST_JOB: "success"}, False),
     ("docs", DOCS | {SUITES_JOB: "success"}, False),
     ("docs", DOCS | {SYSTEMD_JOB: "success"}, False),
     # No scope: the scope job failed and everything behind it was skipped.
     (None, DOCS | {"scope": "failure"}, False),
 ]
 
-#: The cases of the `sign` job, which only the release has. A failed
-#: signature holds back each tag of the run.
-SIGN_CASES: list[tuple[str | None, dict[str, str], bool]] = [
-    ("code", {SIGN_JOB: "failure"}, False),
-    ("code", {SIGN_JOB: "skipped"}, False),
-    ("docs", DOCS | {SIGN_JOB: "cancelled"}, False),
-    ("docs", DOCS | {SIGN_JOB: "success"}, True),
-]
-
 #: (what the jobs did, whether the last job is green)
 VERDICTS = [
-    *[
-        (_needs(jobs, last, scope, results), green)
-        for jobs, last in WORKFLOW_JOBS
-        for scope, results, green in CASES
-    ],
-    *[
-        (_needs(RELEASE_JOBS, RELEASE_NAME, scope, results), green)
-        for scope, results, green in SIGN_CASES
-    ],
+    (_needs(jobs, last, scope, results), green)
+    for jobs, last in WORKFLOW_JOBS
+    for scope, results, green in CASES
 ]
 
 
@@ -2509,82 +897,35 @@ def test_the_verdict_is_green_only_when_every_job_its_scope_asks_for_passed(
     assert (done.returncode == 0) == green, done.stdout + done.stderr
 
 
-#: What the scope action answers for a change, as (docs or code, rust,
-#: systemd, artifacts).
+#: What the scope action answers for a change, as (docs or code, systemd).
 SCOPES = [
-    (["chaperone/src/chaperone/app.py"], ("code", "false", "false", "false")),
-    (["rust/crates/one/src/lib.rs"], ("code", "true", "false", "true")),
-    (["chaperone/src/chaperone/app.py", "rust/Cargo.lock"], ("code", "true", "false", "true")),
-    (["docs/later.md"], ("docs", "false", "false", "false")),
-    # The `rust` job is left out of a docs PR, whatever this answer is. The
-    # steps of the `artifacts` job ask for the code scope too.
-    (["rust/AGENTS.md"], ("docs", "true", "false", "true")),
-    # A file of the Rust checks themselves. The tests of the gate use a fake
-    # cargo, so only this run proves the change with the real one.
-    (["bin/rust-gate.sh"], ("code", "true", "false", "true")),
-    (["bin/rust-coverage.sh"], ("code", "true", "false", "true")),
-    (["bin/lib/rustrule.sh"], ("code", "true", "false", "true")),
-    # The four CI files are files of the Rust checks. They are no files of
-    # the systemd proof: the tests of this file hold the `systemd-proof` job.
-    ([".github/workflows/gate.yml"], ("code", "true", "false", "true")),
-    ([".github/workflows/release.yml"], ("code", "true", "false", "true")),
-    ([".github/actions/scope/action.yml"], ("code", "true", "false", "true")),
-    ([".github/actions/cargo-llvm-cov/action.yml"], ("code", "true", "false", "true")),
-    # The Rust tests read vectors/data, so a vector that moves runs them.
-    (["vectors/data/index.json"], ("code", "true", "false", "true")),
-    (["vectors/generate.py"], ("code", "true", "false", "true")),
-    (
-        ["chaperone/src/chaperone/app.py", "vectors/data/ids/family.json"],
-        ("code", "true", "false", "true"),
-    ),
-    (["vectors/README.md"], ("docs", "true", "false", "true")),
-    # The Python half of the gate starts no cargo step of its own in CI.
-    (["bin/quality-gate.sh"], ("code", "false", "false", "false")),
-    ([".github/actions/verdict/action.yml"], ("code", "false", "false", "false")),
+    (["chaperone/src/chaperone/app.py"], ("code", "false")),
+    (["docs/later.md"], ("docs", "false")),
+    # The CI files are no files of the systemd proof: the tests of this file
+    # hold the `systemd-proof` job.
+    ([".github/workflows/gate.yml"], ("code", "false")),
+    ([".github/workflows/release.yml"], ("code", "false")),
+    ([".github/actions/scope/action.yml"], ("code", "false")),
+    (["vectors/data/index.json"], ("code", "false")),
+    (["vectors/README.md"], ("docs", "false")),
+    (["bin/quality-gate.sh"], ("code", "false")),
+    ([".github/actions/verdict/action.yml"], ("code", "false")),
     # A unit file, and the proof script itself. The tests of the script use
     # a fake systemd, so only this run proves the change with the real one.
-    (["systemd/creche-attendance.service"], ("code", "false", "true", "false")),
-    (
-        ["chaperone/src/chaperone/app.py", "systemd/creche-follow.timer"],
-        ("code", "false", "true", "false"),
-    ),
-    (["bin/systemd-proof.sh"], ("code", "false", "true", "false")),
-    (["systemd/creche-new@.timer"], ("code", "false", "true", "false")),
+    (["systemd/creche-attendance.service"], ("code", "true")),
+    (["chaperone/src/chaperone/app.py", "systemd/creche-follow.timer"], ("code", "true")),
+    (["bin/systemd-proof.sh"], ("code", "true")),
+    (["systemd/creche-new@.timer"], ("code", "true")),
     # git writes this path inside double quotes.
-    (['systemd/creche-"one".service'], ("code", "false", "true", "false")),
+    (['systemd/creche-"one".service'], ("code", "true")),
     # Every path under systemd/ counts, a Markdown file too. The
     # `systemd-proof` job is left out of a docs PR, whatever this answer is.
-    (["systemd/AGENTS.md"], ("docs", "false", "true", "false")),
+    (["systemd/AGENTS.md"], ("docs", "true")),
     # Only the directory at the root holds the unit files.
-    (["docs/systemd/notes.md"], ("docs", "false", "false", "false")),
-    (["systemd-notes.txt"], ("code", "false", "false", "false")),
-    # The manifest of a component holds the build commands of a binary
-    # component: at the root, and one directory deep, in each of the two
-    # forms. A file of that name two directories deep is no manifest.
-    (["attendance/component.yaml"], ("code", "false", "false", "true")),
-    (["attendance/component.toml"], ("code", "false", "false", "true")),
-    (["component.yaml"], ("code", "false", "false", "true")),
-    (["docs/rework/component.yaml"], ("code", "false", "false", "false")),
-    (["attendance/component.yml"], ("code", "false", "false", "false")),
-    # The release tool gives the rows, the limits and the walk. Its own
-    # manifest is a file of the Rust checks too.
-    (["handover/src/handover/catalog.py"], ("code", "false", "false", "true")),
-    (["handover/component.yaml"], ("code", "true", "false", "true")),
-    (["handover/AGENTS.md"], ("docs", "false", "false", "true")),
-    # creche-contracts embeds the pair of the product, so a change of the
-    # pair alone runs the Rust checks. A change of the reader does not.
-    (["env/src/creche_env/default.env"], ("code", "true", "false", "true")),
-    (["env/src/creche_env/example.env"], ("code", "true", "false", "true")),
-    (["env/src/creche_env/envfile.py"], ("code", "false", "false", "false")),
-    (['handover/src/handover/one "x".py'], ("code", "false", "false", "true")),
-    (["handover-notes.txt"], ("code", "false", "false", "false")),
-    # The script that builds, the reader of its rows, and the rule itself.
-    (["bin/build-artifacts.sh"], ("code", "false", "false", "true")),
-    (["bin/lib/artifactrows.sh"], ("code", "false", "false", "true")),
-    (["bin/lib/artifactrule.sh"], ("code", "false", "false", "true")),
-    # The probe uses the build script, and no archive of a release holds a
-    # file of the probe.
-    (["bin/artifact-probe.sh"], ("code", "false", "false", "false")),
+    (["docs/systemd/notes.md"], ("docs", "false")),
+    (["systemd-notes.txt"], ("code", "false")),
+    (["handover/src/handover/catalog.py"], ("code", "false")),
+    (["handover/AGENTS.md"], ("docs", "false")),
 ]
 
 
@@ -2609,9 +950,9 @@ def _git(repo: Path, *args: str) -> str:
     return done.stdout.strip()
 
 
-def _scope_of(repo: Path, base: str) -> tuple[str, str, str, str]:
+def _scope_of(repo: Path, base: str) -> tuple[str, str]:
     """Runs the scope action's own script in `repo`, as a merge group on
-    `base` would. Returns its four outputs."""
+    `base` would. Returns its two outputs."""
     (step,) = SCOPE_ACTION["runs"]["steps"]
     output = repo.parent / "output"
     output.write_text("", encoding="utf-8")
@@ -2633,16 +974,18 @@ def _scope_of(repo: Path, base: str) -> tuple[str, str, str, str]:
     assert done.returncode == 0, done.stdout + done.stderr
     outputs = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines())
 
-    return outputs["scope"], outputs["rust"], outputs["systemd"], outputs["artifacts"]
+    assert set(outputs) == {"scope", "systemd"}
+
+    return outputs["scope"], outputs["systemd"]
 
 
 @pytest.fixture
 def checkout(tmp_path: Path) -> Path:
-    """A repository with one commit, the three rules the scope action
-    sources and the script that it asks."""
+    """A repository with one commit, the rule the scope action sources and
+    the script that it asks."""
     repo = tmp_path / "repo"
     (repo / "bin" / "lib").mkdir(parents=True)
-    for name in ("lib/docsrule.sh", "lib/rustrule.sh", "lib/artifactrule.sh", "systemd-proof.sh"):
+    for name in ("lib/docsrule.sh", "systemd-proof.sh"):
         shutil.copy2(REPO / "bin" / name, repo / "bin" / name)
 
     _git(repo, "init", "-q", "-b", "main")
@@ -2653,14 +996,14 @@ def checkout(tmp_path: Path) -> Path:
 
 
 @pytest.mark.parametrize(("paths", "scope"), SCOPES, ids=lambda one: " ".join(one))
-def test_the_scope_says_whether_a_change_touches_rust(
-    checkout: Path, paths: list[str], scope: tuple[str, str, str, str]
+def test_the_scope_says_whether_a_change_is_docs_and_touches_systemd(
+    checkout: Path, paths: list[str], scope: tuple[str, str]
 ) -> None:
     base = _git(checkout, "rev-parse", "HEAD")
     for name in paths:
         (checkout / name).parent.mkdir(parents=True, exist_ok=True)
-        # One more line, not a new body: the scope sources the two rules and
-        # runs the script.
+        # One more line, not a new body: the scope sources the rule and runs
+        # the script.
         with (checkout / name).open("a", encoding="utf-8") as file:
             file.write("# changed\n")
     _git(checkout, "add", "-A")
@@ -2683,20 +1026,19 @@ def test_a_unit_file_that_moves_out_of_systemd_runs_the_proof(checkout: Path) ->
     _git(checkout, "mv", "systemd/creche-one.service", "units/creche-one.service")
     _git(checkout, "commit", "-q", "-m", "the move")
 
-    assert _scope_of(checkout, base) == ("code", "false", "true", "false")
+    assert _scope_of(checkout, base) == ("code", "true")
 
 
-def test_a_change_the_scope_cannot_read_is_code_and_rust(checkout: Path) -> None:
+def test_a_change_the_scope_cannot_read_is_code_and_systemd(checkout: Path) -> None:
     """No merge group, and no `origin/main` to take a merge-base with: the
-    full suite, the cargo checks, the systemd proof and the build of the
-    archives are the safe answer."""
-    assert _scope_of(checkout, "") == ("code", "true", "true", "true")
+    full suite and the systemd proof are the safe answer."""
+    assert _scope_of(checkout, "") == ("code", "true")
 
 
-def test_a_base_that_the_clone_lacks_is_code_rust_and_systemd(checkout: Path) -> None:
+def test_a_base_that_the_clone_lacks_is_code_and_systemd(checkout: Path) -> None:
     """A merge group names its base. A clone that lacks that commit reads no
     change, and each check is then the safe answer."""
-    assert _scope_of(checkout, "0" * 40) == ("code", "true", "true", "true")
+    assert _scope_of(checkout, "0" * 40) == ("code", "true")
 
 
 @pytest.mark.parametrize("fault", ["absent", "not executable", "fails"])
@@ -2711,7 +1053,7 @@ def test_a_scope_that_gets_no_answer_from_the_script_runs_the_proof(
     _git(checkout, "add", "-A")
     _git(checkout, "commit", "-q", "-m", "the change")
 
-    assert _scope_of(checkout, base) == ("code", "false", "false", "false")
+    assert _scope_of(checkout, base) == ("code", "false")
 
     script = checkout / SYSTEMD_RUN
     if fault == "absent":
@@ -2721,7 +1063,7 @@ def test_a_scope_that_gets_no_answer_from_the_script_runs_the_proof(
     else:
         script.write_text("#!/usr/bin/env bash\nexit 3\n", encoding="utf-8")
 
-    assert _scope_of(checkout, base) == ("code", "false", "true", "false")
+    assert _scope_of(checkout, base) == ("code", "true")
 
 
 def test_every_checkout_takes_full_history() -> None:

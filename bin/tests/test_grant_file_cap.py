@@ -1,12 +1,8 @@
-"""The cap of a grant file has one source.
+"""The cap of a grant file is one number in two packages.
 
-The source is `GRANT_FILE_MAX_BYTES` of the Rust crate `creche-contracts`
-(contract 04 §1.2). A Python package cannot read a Rust constant, so two
-packages hold a copy: the caregiver writes the file, and the chaperone reads
-it. Each test here fails when a copy differs from the source.
-
-The test reads the Rust constant from its source line. It also fails when
-that line has another form: change the pin together with the Rust file.
+Contract 04 §1.2 gives the cap. Two packages hold it: the caregiver writes
+the file, and the chaperone reads it. The first test fails when the two
+numbers differ.
 
 One more test holds the two packages together. The caregiver writes the
 largest file that it can write, and the chaperone reads that file.
@@ -14,7 +10,6 @@ largest file that it can write, and the chaperone reads that file.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import pytest
@@ -28,14 +23,6 @@ from caregiver.grants import (
 from chaperone.family_grants import MAX_GRANT_FILE_BYTES, FamilyStore
 from chaperone.faults import FaultWriter
 
-REPO = Path(__file__).resolve().parents[2]
-
-#: The home of the constant.
-RUST_FILE = REPO / "rust" / "crates" / "creche-contracts" / "src" / "grants" / "file.rs"
-
-#: The line of the constant: the product of two counts.
-RUST_CAP = re.compile(r"pub const GRANT_FILE_MAX_BYTES: usize = (\d+) \* (\d+);")
-
 FAMILY = "chat"
 SERVER = "kagi"
 
@@ -43,14 +30,6 @@ SERVER = "kagi"
 #: name is one line of 60 bytes in the file, so the last name has 60
 #: characters at most. The tool name form takes 64 characters at most.
 TOOL_CHARS = 50
-
-
-def rust_cap() -> int:
-    """The value of the Rust constant, from the one line that defines it."""
-    lines = RUST_FILE.read_text(encoding="utf-8").splitlines()
-    found = [match for match in map(RUST_CAP.fullmatch, lines) if match is not None]
-    assert len(found) == 1, f"{RUST_FILE.name} holds no `GRANT_FILE_MAX_BYTES` in the pinned form"
-    return int(found[0].group(1)) * int(found[0].group(2))
 
 
 def grant(tools: list[str]) -> GrantFile:
@@ -88,12 +67,8 @@ def tools_for(scratch: Path, size: int) -> list[str]:
     return [*(tool(index) for index in range(lines + 1)), "f" * (rest + 1)]
 
 
-def test_the_caregiver_holds_the_cap_of_the_rust_code() -> None:
-    assert rust_cap() == GRANT_FILE_MAX_BYTES
-
-
-def test_the_chaperone_holds_the_cap_of_the_rust_code() -> None:
-    assert rust_cap() == MAX_GRANT_FILE_BYTES
+def test_the_caregiver_and_the_chaperone_hold_one_cap() -> None:
+    assert GRANT_FILE_MAX_BYTES == MAX_GRANT_FILE_BYTES
 
 
 def test_the_chaperone_reads_the_largest_grant_file_of_the_caregiver(tmp_path: Path) -> None:

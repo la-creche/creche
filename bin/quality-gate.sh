@@ -15,20 +15,9 @@
 #                          process-level suite, in a pytest process of its own
 #                          --docs: only the tests marked `docs`, for a
 #                          change bin/lib/docsrule.sh calls docs only
-#   bin/rust-gate.sh       only for a change under rust/ (bin/lib/rustrule.sh):
-#                          cargo fmt, cargo clippy and cargo deny, and cargo
-#                          test where pytest runs. cargo deny runs only where
-#                          cargo-deny is on PATH. A push that changes vectors/
-#                          runs it too, but only where cargo is on PATH. Any
-#                          other change runs no cargo step and needs no cargo
-#                          on PATH
 # Enforced by githooks/ (`git config core.hooksPath githooks`).
 set -euo pipefail
 cd "$(dirname -- "${BASH_SOURCE[0]}")/.."
-
-# rust_path, rust_dirty and RUST_DIR: what counts as a Rust change.
-# vectors_path: what the Rust tests read outside rust/.
-. bin/lib/rustrule.sh
 
 # docs_path: what counts as prose.
 . bin/lib/docsrule.sh
@@ -45,10 +34,6 @@ ALWAYS="bin/tests/test_unique_test_basenames.py"
 #: The marker on every test that reads a doc or checks one exists
 #: (pyproject.toml's markers).
 DOCS_MARKER="docs"
-
-#: The Rust half of the gate, and the flag that adds cargo test to it.
-RUST_GATE="bin/rust-gate.sh"
-RUST_TESTS="--tests"
 
 #: The suite that holds vectors/data equal to what the Python code does
 #: (vectors/README.md). A change in a product package can move a vector, so a
@@ -129,7 +114,7 @@ tally() {
 }
 
 # proc_path PATH: whether PATH is under integration/proc/. A path that git
-# wrote in quotes counts, as for rust_path.
+# wrote in quotes counts too.
 proc_path() {
   case "$1" in
     "$PROC_DIR"/* | \""$PROC_DIR"/*)
@@ -143,13 +128,11 @@ proc_path() {
 # tests_for PATH...: pytest on the suites of the packages PATH... touch, with
 # one line per suite saying which path picked it. A path in no package
 # (uv.lock, pyproject.toml, docs/, .github/, githooks/) can change what any
-# suite sees, so it runs the full suite instead. A path under rust/ is cargo's
-# to test, not pytest's: it picks no suite and is not a path in no package.
-# A path under integration/proc/ is proc_for's: the same two things hold.
-# A path in a product package also picks vectors/tests.
+# suite sees, so it runs the full suite instead. A path under
+# integration/proc/ is proc_for's: it picks no suite and is not a path in no
+# package. A path in a product package also picks vectors/tests.
 tests_for() {
   local suites suite path first count stray="" strays=0 others=0 product=0
-  local procs=0
   local -a picked=()
 
   if [[ $# -eq 0 ]]; then
@@ -161,12 +144,7 @@ tests_for() {
 
   # One path outside every package is enough to run everything.
   for path in "$@"; do
-    if rust_path "$path"; then
-      continue
-    fi
-
     if proc_path "$path"; then
-      procs=$((procs + 1))
       continue
     fi
     others=$((others + 1))
@@ -182,10 +160,6 @@ tests_for() {
   done
 
   if [[ "$others" -eq 0 ]]; then
-    if [[ "$procs" -eq 0 ]]; then
-      echo "quality-gate: no pytest: every path is under $RUST_DIR/"
-    fi
-
     return 0
   fi
 
@@ -275,81 +249,6 @@ proc_for() {
   env "$PROC_NO_SKIP=1" "${PROC_PYTEST[@]}"
 }
 
-# rust_for MODE PATH...: why this run needs the Rust checks, e.g.
-# "rust/Cargo.lock and 1 more". Prints nothing when it needs none.
-#   no flag       the index or the work tree changes rust/, or git cannot
-#                 say whether it does
-#   --tests       always: the full run leaves nothing out
-#   --tests-for   one PATH or more is under rust/
-#   --docs        never
-rust_for() {
-  local mode="$1" path first="" count=0 state=0
-  shift
-
-  case "$mode" in
-    "")
-      rust_dirty || state=$?
-      case "$state" in
-        0) printf '%s' "a change under $RUST_DIR/ in the index or the work tree" ;;
-        1) ;;
-        *) printf '%s' "a state of $RUST_DIR/ that git cannot read" ;;
-      esac
-      ;;
-    --tests)
-      printf '%s' "the full run"
-      ;;
-    --tests-for)
-      for path in "$@"; do
-        if ! rust_path "$path"; then
-          continue
-        fi
-
-        if [[ -z "$first" ]]; then
-          first="$path"
-        fi
-        count=$((count + 1))
-      done
-
-      if [[ "$count" -gt 0 ]]; then
-        tally "$first" "$count"
-      fi
-      ;;
-  esac
-}
-
-# vectors_for MODE PATH...: which paths of a scoped run are under vectors/,
-# e.g. "vectors/data/index.json and 2 more". Prints nothing in another mode:
-# a commit runs no test, the full run runs the Rust checks for everything,
-# and a docs run starts no cargo step.
-#
-# The Rust tests read vectors/data, so these paths run the Rust checks too,
-# but only where cargo is on PATH. A Python session with no Rust toolchain
-# regenerates the vectors and must still push. CI runs the Rust checks for
-# the same change (rust_touched in bin/lib/rustrule.sh).
-vectors_for() {
-  local mode="$1" path first="" count=0
-  shift
-
-  if [[ "$mode" != --tests-for ]]; then
-    return 0
-  fi
-
-  for path in "$@"; do
-    if ! vectors_path "$path"; then
-      continue
-    fi
-
-    if [[ -z "$first" ]]; then
-      first="$path"
-    fi
-    count=$((count + 1))
-  done
-
-  if [[ "$count" -gt 0 ]]; then
-    tally "$first" "$count"
-  fi
-}
-
 MODE="${1:-}"
 case "$MODE" in
   "" | --tests | --docs) ;;
@@ -362,41 +261,9 @@ esac
 
 command -v uv >/dev/null || { echo "quality-gate: uv not on PATH" >&2; exit 1; }
 
-# Fail closed, and before the first check: a Rust change with no toolchain
-# must not pass on the Python checks alone.
-RUST_FOR="$(rust_for "$MODE" "$@")"
-if [[ -n "$RUST_FOR" ]] && ! command -v cargo >/dev/null; then
-  echo "quality-gate: cargo not on PATH: the Rust checks must run for $RUST_FOR" >&2
-  exit 1
-fi
-
-# A vector that moves runs the Rust checks where cargo is, and passes with one
-# line where it is not. A path under rust/ in the same run already decided.
-NO_RUST_FOR=""
-if [[ -z "$RUST_FOR" ]]; then
-  VECTORS_FOR="$(vectors_for "$MODE" "$@")"
-  if command -v cargo >/dev/null; then
-    RUST_FOR="$VECTORS_FOR"
-  else
-    NO_RUST_FOR="$VECTORS_FOR"
-  fi
-fi
-
 uv run ruff check .
 uv run ruff format --check .
 uv run pyright
-
-if [[ -n "$RUST_FOR" ]]; then
-  echo "quality-gate: $RUST_GATE, for $RUST_FOR"
-  case "$MODE" in
-    "") "$RUST_GATE" ;;
-    *) "$RUST_GATE" "$RUST_TESTS" ;;
-  esac
-fi
-
-if [[ -n "$NO_RUST_FOR" ]]; then
-  echo "quality-gate: cargo not on PATH: no Rust test for $NO_RUST_FOR. CI runs the Rust tests"
-fi
 
 case "$MODE" in
   --tests) "${PYTEST[@]}" ;;
