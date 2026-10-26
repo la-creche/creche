@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Final
 
 import pytest
+from agent_door_acp import config as door_acp
 from creche_env.envfile import (
     DEFAULT_FILE,
     EXAMPLE_FILE,
@@ -38,6 +39,7 @@ from creche_env.envfile import (
     root_keys_in,
 )
 
+from attendance import config as attendance
 from handover import site
 
 REPO: Final = Path(__file__).resolve().parents[2]
@@ -102,6 +104,26 @@ def test_each_example_value_is_a_value_of_its_type(
             assert TYPES[one.key]() == one.value, one.key
     finally:
         site.forget()
+
+
+def test_the_cutover_keys_have_the_defaults_of_their_programs() -> None:
+    settings = load(
+        pair_in(PAIR_DIR),
+        Text(".env", _example_env().encode()),
+        {"operator": EXAMPLE_HOME}.get,
+    )
+
+    assert settings.values["SESSIOND_FACADE_COMMAND"] == attendance.DEFAULT_FACADE_COMMAND
+    assert settings.values["SESSIOND_ACP_RELAY_COMMAND"] == attendance.DEFAULT_RELAY_COMMAND
+    assert settings.values["CHAPERONE_LISTEN"] == "192.0.2.10:8300"
+    assert settings.values["DOOR_ACP_BIND"] == f"192.0.2.10:{door_acp.DEFAULT_PORT}"
+    assert settings.values["DOOR_ACP_ATTENDANCE_SOCKET"] == door_acp.DEFAULT_ATTENDANCE_SOCKET
+
+
+def test_the_keys_of_the_old_channel_are_not_in_the_catalog() -> None:
+    keys = {one.key for one in pair_in(PAIR_DIR).defaults}
+
+    assert keys.isdisjoint({"SESSIOND_CHANNEL_COMMAND", "SESSIOND_OWUI_KEY_FILE"})
 
 
 @pytest.mark.parametrize("name", [DEFAULT_FILE, EXAMPLE_FILE])
