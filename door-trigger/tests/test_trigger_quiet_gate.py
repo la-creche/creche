@@ -14,7 +14,7 @@ from agent_door_trigger.quiet.decide import Jobs, Reason, Wake
 from agent_door_trigger.quiet.gate import Busy, gated_family
 from agent_door_trigger.quiet.records import Called, Ending
 from agent_door_trigger.quiet.state import GateState
-from trigger_quiet_fakes import BOARD, DONE, FAMILY, FAMILY_YAML, FRIDAY_MORNING, Rig
+from trigger_quiet_fakes import BOARD, DONE, FAMILY, FAMILY_TOML, FRIDAY_MORNING, Rig
 
 AN_HOUR = timedelta(hours=1)
 #: Friday 16:30 and Saturday 16:30 in Phoenix.
@@ -189,8 +189,8 @@ def test_a_weekend_owes_nothing() -> None:
 
 def test_a_family_that_starts_no_jobs_never_reads_them() -> None:
     rig = Rig()
-    text = FAMILY_YAML.replace(
-        "verbs:\n  enqueue: { targets: [finance-worker] }\n  job_status: {}\n", ""
+    text = FAMILY_TOML.replace(
+        'verbs.enqueue = { targets = ["finance-worker"] }\nverbs.job_status = {}\n', ""
     )
 
     rig.gate(text).check()
@@ -228,20 +228,19 @@ def test_a_record_that_will_not_write_never_stops_the_firing() -> None:
 def _write(registry: Path, text: str) -> None:
     directory = registry / "families" / FAMILY
     directory.mkdir(parents=True)
-    (directory / "family.yaml").write_text(text, encoding="utf-8")
+    (directory / "family.toml").write_text(text, encoding="utf-8")
 
 
 QUIET_ONLY = """\
-name: scrum-lead
-kind: autonomous
-description: Test fixture family.
+name = "scrum-lead"
+kind = "autonomous"
+description = "Test fixture family."
 
-model: { router: agent-router, budget_usd_per_day: 10 }
+model = { router = "agent-router", budget_usd_per_day = 10 }
 
-triggers:
-  - cron: "@hourly"
+triggers = [{ cron = "@hourly" }]
 
-quiet: { floor_hours: 12 }
+quiet = { floor_hours = 12 }
 """
 
 
@@ -255,7 +254,7 @@ def test_a_valid_file_with_quiet_is_gated(tmp_path: Path) -> None:
 
 
 def test_a_file_with_no_quiet_is_not_gated(tmp_path: Path) -> None:
-    _write(tmp_path, QUIET_ONLY.replace("quiet: { floor_hours: 12 }\n", ""))
+    _write(tmp_path, QUIET_ONLY.replace("quiet = { floor_hours = 12 }\n", ""))
 
     assert gated_family(tmp_path, FAMILY) is None
 
@@ -263,7 +262,7 @@ def test_a_file_with_no_quiet_is_not_gated(tmp_path: Path) -> None:
 def test_an_invalid_file_is_not_gated(tmp_path: Path) -> None:
     """`caregiver` serves the last good definition. A check read from the
     refused one is not one to trust, so the firing goes ahead."""
-    _write(tmp_path, QUIET_ONLY.replace("floor_hours: 12", "floor_hours: 0"))
+    _write(tmp_path, QUIET_ONLY.replace("floor_hours = 12", "floor_hours = 0"))
 
     assert gated_family(tmp_path, FAMILY) is None
 

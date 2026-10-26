@@ -11,7 +11,7 @@ from agent_door_trigger.quiet.decide import Jobs
 from agent_door_trigger.quiet.gate import QuietGate
 from agent_door_trigger.quiet.records import Called, Ending
 from agent_door_trigger.quiet.state import GateState
-from agent_family import FamilyFile, QuietBlock, parse_family
+from agent_family import FamilyFile, Markup, QuietBlock, parse_family
 
 FAMILY = "scrum-lead"
 BOARD = "a" * 64
@@ -20,33 +20,32 @@ DONE = frozenset({"auto-OLD"})
 #: A Friday, 10:00 in Phoenix.
 FRIDAY_MORNING = datetime(2026, 9, 25, 17, 0, tzinfo=UTC)
 
-FAMILY_YAML = """\
-name: scrum-lead
-kind: autonomous
-description: Test fixture family.
+FAMILY_TOML = """\
+name = "scrum-lead"
+kind = "autonomous"
+description = "Test fixture family."
 
-model: { router: agent-router, budget_usd_per_day: 10 }
+model = { router = "agent-router", budget_usd_per_day = 10 }
 
-tools:
-  board-lead: [survey_board]
-  mail: [send_standup_email]
+tools.board-lead = ["survey_board"]
+tools.mail = ["send_standup_email"]
 
-verbs:
-  enqueue: { targets: [finance-worker] }
-  job_status: {}
+verbs.enqueue = { targets = ["finance-worker"] }
+verbs.job_status = {}
 
-triggers:
-  - cron: "@hourly"
+triggers = [{ cron = "@hourly" }]
 
-quiet:
-  board: board-lead
-  daily: { call: mail__send_standup_email, hour: 16, zone: America/Phoenix, weekdays_only: true }
-  floor_hours: 24
+quiet.board = "board-lead"
+quiet.daily.call = "mail__send_standup_email"
+quiet.daily.hour = 16
+quiet.daily.zone = "America/Phoenix"
+quiet.daily.weekdays_only = true
+quiet.floor_hours = 24
 """
 
 
-def family(text: str = FAMILY_YAML) -> tuple[FamilyFile, QuietBlock]:
-    parsed, issues = parse_family(text)
+def family(text: str = FAMILY_TOML) -> tuple[FamilyFile, QuietBlock]:
+    parsed, issues = parse_family(text, Markup.TOML)
     assert parsed is not None, issues
     assert parsed.quiet is not None
     return parsed, parsed.quiet
@@ -124,7 +123,7 @@ class Rig:
     sessions: FakeSessions = field(default_factory=FakeSessions)
     now: datetime = FRIDAY_MORNING
 
-    def gate(self, text: str = FAMILY_YAML) -> QuietGate:
+    def gate(self, text: str = FAMILY_TOML) -> QuietGate:
         found, quiet = family(text)
         return QuietGate(
             found,
