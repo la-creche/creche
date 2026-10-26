@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const BIN = fileURLToPath(new URL("../dist/src/bin/creche-facade.js", import.meta.url));
+export const RELAY_BIN = fileURLToPath(new URL("../dist/src/bin/acp-relay.js", import.meta.url));
 
 const ANSWER_WAIT_MS = 5000;
 
@@ -25,16 +26,25 @@ export interface FacadeProcess {
   exited(): Promise<number | null>;
 }
 
-/** The environment of one facade: a sandbox id and a fresh control mount. */
+/**
+ * A fresh, short temp directory. A Unix socket path has a limit of about
+ * 100 bytes, and the temp directory of macOS is long.
+ */
+export function shortTmp(): string {
+  return mkdtempSync("/tmp/fc-");
+}
+
+/** The environment of one facade: a sandbox id, a control mount, a TMPDIR. */
 export function facadeEnv(): NodeJS.ProcessEnv {
   return {
     AGENT_SANDBOX: "chat-s1",
     AGENT_CONTROL_DIR: join(mkdtempSync(join(tmpdir(), "facade-")), "control"),
+    TMPDIR: shortTmp(),
   };
 }
 
-export function startFacade(env: NodeJS.ProcessEnv = facadeEnv()): FacadeProcess {
-  const child = spawn(process.execPath, [BIN], { env: { ...env, PATH: process.env["PATH"] ?? "" } });
+export function startFacade(env: NodeJS.ProcessEnv = facadeEnv(), bin: string = BIN): FacadeProcess {
+  const child = spawn(process.execPath, [bin], { env: { ...env, PATH: process.env["PATH"] ?? "" } });
   const out: Buffer[] = [];
   let err = "";
   let consumed = 0;

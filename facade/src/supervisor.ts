@@ -3,6 +3,7 @@
 //
 //   start ──► lock held by a live pid ──► exit 3
 //         ├─► control mount unwritable ─► exit 6
+//         ├─► relay socket refused ─────► exit 8
 //         └─► serve ──► _creche/shutdown ──► stop Flue ──► exit 0
 //                   ├─► stdin closed ──────► stop Flue ──► exit 0
 //                   └─► no beat in time ───► stop Flue ──► exit 5
@@ -13,12 +14,14 @@ import { facadeApp, strictStream, strictWriter } from "./acp.js";
 import type { SessionService } from "./acp.js";
 import { SupervisorLock } from "./lock.js";
 import { BeatDeadline } from "./liveness.js";
+import { closeRelay, listenRelay } from "./relay.js";
 import type { Say, Stdout } from "./stdio.js";
 
 export const EXIT_OK = 0;
 export const EXIT_LOCK_HELD = 3;
 export const EXIT_DEADLINE = 5;
 export const EXIT_CONTROL_MOUNT = 6;
+export const EXIT_RELAY_SOCKET = 8;
 
 /** The agent runtime that the facade owns. Flue's `start()` gives one. */
 export interface Runtime {
@@ -35,9 +38,11 @@ export interface SupervisorOptions {
   readonly runtime: Runtime | null;
   /** Null until the agent module is wired (Phase 2 plan, row 15). */
   readonly sessions: SessionService | null;
+  /** The relay socket (`relaySocketPath`), or null for no relay. */
+  readonly socketPath: string | null;
 }
 
-export function runSupervisor(options: SupervisorOptions): void {
+export async function runSupervisor(options: SupervisorOptions): Promise<void> {
   const { lock, say, stdout } = options;
 
   const holder = lock.liveHolder();
@@ -54,6 +59,17 @@ export function runSupervisor(options: SupervisorOptions): void {
     return;
   }
 
+  const relay =
+    options.socketPath === null
+      ? null
+      : await listenRelay(options.socketPath, (hooks) => facadeApp(hooks, options.sessions), options.deadlineMs, say);
+  if (relay !== null && !relay.ok) {
+    say(`cannot listen on the relay socket: ${relay.detail}`);
+    lock.release();
+    stdout.exit(EXIT_RELAY_SOCKET);
+    return;
+  }
+
   let stopping = false;
   const stop = async (reason: string, code: number): Promise<void> => {
     if (stopping) {
@@ -62,6 +78,10 @@ export function runSupervisor(options: SupervisorOptions): void {
 
     stopping = true;
     deadline.stop();
+    if (relay !== null && options.socketPath !== null) {
+      closeRelay(relay.server, options.socketPath);
+    }
+
     say(reason);
     try {
       await options.runtime?.stop();

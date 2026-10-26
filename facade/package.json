@@ -8,7 +8,8 @@
     "node": ">=22.19.0"
   },
   "bin": {
-    "creche-facade": "dist/src/bin/creche-facade.js"
+    "creche-facade": "dist/src/bin/creche-facade.js",
+    "acp-relay": "dist/src/bin/acp-relay.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

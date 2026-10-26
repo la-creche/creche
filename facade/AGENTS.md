@@ -4,6 +4,14 @@ The ACP facade: the ACP v1 agent of one family sandbox. attendance starts
 one `creche-facade` per sandbox with `sbx exec` and speaks ACP over its
 stdio. The root `AGENTS.md` applies here too.
 
+The package has two bins:
+
+- `creche-facade`: the one process of a sandbox that owns Flue. It holds
+  the lock, the beat and the stop. It serves ACP on stdio and on a Unix
+  socket in the VM, `$TMPDIR/creche-facade/acp.sock`.
+- `acp-relay`: one per door connection. It pipes its stdio to the
+  facade's socket, byte for byte. It parses nothing and adds nothing.
+
 ACP is the Agent Client Protocol. The SDK is `@agentclientprotocol/sdk`.
 Flue is the agent runtime `@flue/runtime`.
 
@@ -45,6 +53,9 @@ too. Change a value there, and both sides change.
 | 5 | no `_creche/beat` for three beat windows (90 s) |
 | 6 | the control mount cannot be written |
 | 7 | no `AGENT_CONTROL_DIR` |
+| 8 | the relay socket cannot be made |
+
+`acp-relay` exits 0 when its link ends, and 1 when no facade listens.
 
 ## Sessions
 
@@ -76,7 +87,7 @@ position follow it.
    types from `src/acp.ts`.
 3. Write to stdout only through the writer of `src/stdio.ts`. Each line is
    strict JSON under the line cap (`src/line.ts`). Free text goes to
-   stderr.
+   stderr. `acp-relay` writes to stdout only the bytes of the socket.
 4. A line that is not strict JSON, or that is over the cap, never reaches
    stdout. An answer becomes a JSON-RPC error with the same id. Another
    message is dropped, with a line on stderr.
@@ -93,8 +104,21 @@ position follow it.
 9. Never make stdin EOF the only way the process ends. A client-side kill
    of `sbx exec` does not reach the VM. The beat deadline ends the process.
 
+## Relay connections
+
+Each socket connection gets an app of its own on the one session
+service, so a session's live updates reach every connection on it. A
+connection's beat deadline is armed by its first `_creche/beat`, and a
+missed deadline closes that connection alone. `_creche/shutdown` on a
+relay connection does nothing: only the supervisor link stops the
+facade.
+
 ## Known gaps
 
+- attendance's door adds no `_creche/beat` to a door connection, so a
+  relay connection never arms its deadline. A relay whose host end died
+  can hold its connection until the facade stops. `src/relay.ts` holds
+  the `CONTRACT-QUESTION`.
 - `src/env.ts` parses two variables that `agent/src/config.ts` parses
   too. Row 15 of the Phase 2 plan wires the agent module, and `env.ts`
   then goes.
