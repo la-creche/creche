@@ -28,7 +28,6 @@ from pathlib import Path
 from typing import Final, cast
 
 import pytest
-import yaml
 from caregiver.driver import FakeDriver
 from caregiver.egress import EgressConfig
 from caregiver.litellm_keys import FakeLiteLLMKeys
@@ -47,7 +46,7 @@ from caregiver.paths import status_path
 from caregiver.reconcile import Actors
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
-from caregiver_helpers import write_registry
+from caregiver_helpers import toml_text, write_registry
 
 NOW: Final = 1_758_153_590.0
 SERVER: Final = "weather"
@@ -241,7 +240,7 @@ def test_a_server_that_arrived_asks_again_for_the_rest(paths: McpPaths) -> None:
 
 
 def test_a_moved_registry_revision_asks_again(paths: McpPaths) -> None:
-    """The operator edited `mcp/weather/server.yaml`: a corrected pin, a
+    """The operator edited `mcp/weather/server.toml`: a corrected pin, a
     rebuilt lock. The names did not move and the answer may have."""
     _refused_once(paths)
 
@@ -795,7 +794,7 @@ class Bench:
     def declare(self, name: str) -> None:
         directory = self.registry_root / "mcp" / name
         directory.mkdir(parents=True, exist_ok=True)
-        (directory / "server.yaml").write_text(_server_yaml(name), encoding="utf-8")
+        (directory / "server.toml").write_text(_server_toml(name), encoding="utf-8")
 
     def document(self, family: str = "chat") -> dict[str, object]:
         loaded: object = json.loads(status_path(self.state_root, family).read_text("utf-8"))
@@ -816,9 +815,9 @@ def _made(path: Path) -> Path:
     return path
 
 
-def _server_yaml(name: str) -> str:
+def _server_toml(name: str) -> str:
     """Contract 01b §8.1, shortened to what this wire reads."""
-    return yaml.safe_dump(
+    return toml_text(
         {
             "name": name,
             "identity": f"The fleet's {name} credential. Read only.",

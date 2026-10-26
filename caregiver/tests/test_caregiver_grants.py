@@ -8,6 +8,7 @@ stays."""
 from __future__ import annotations
 
 import json
+import shutil
 import stat
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
@@ -15,7 +16,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-import yaml
 from agent_family import FamilyFile, FamilyState, Index, load_registry, parse_family
 from agent_family.grammar import DEFAULT_MAX_INFLIGHT_DELEGATIONS, TOOL_NAME
 from agent_family.server import McpServerFile
@@ -45,6 +45,7 @@ from caregiver_helpers import (
     accepted_digests,
     current_digest,
     published,
+    toml_text,
     write_registry,
 )
 
@@ -370,7 +371,7 @@ SERVER = "kagi"
 #: that the tool name form takes.
 TOOL_CHARS = 64
 
-#: Tool names that the server file takes, and more of them than a grant file
+#: Tool names that the server files take, and more of them than a grant file
 #: holds. One name is one line of the file, so one line has more bytes than
 #: `TOOL_CHARS`. Only the cap refuses a registry with these tools.
 MANY_TOOLS = tuple(
@@ -383,6 +384,11 @@ TOO_LARGE_NOTE = "refused: grant file over the cap"
 #: line of 60 bytes in a grant file, so a last name of 60 characters or less
 #: gives the file each size.
 FILL_CHARS = 50
+
+#: The most tools of one server file: the cap of root's grammar on a TOML
+#: server file. `Host.serve` puts each group of this many tools in a server
+#: file of its own.
+SERVER_TOOLS = 200
 
 #: Long after each clock that this suite runs under.
 FAR_FUTURE = "2999-01-01T00:00:00Z"
@@ -400,28 +406,60 @@ class CountedKeys(FakeLiteLLMKeys):
         super().update_key(key, models, budget_usd_per_day)
 
 
+def server_names(count: int) -> list[str]:
+    """The names of `count` server files: `SERVER`, then `SERVER-01` and on."""
+    return [SERVER, *(f"{SERVER}-{group:02d}" for group in range(1, count))]
+
+
+def groups_of(tools: tuple[str, ...] | list[str]) -> dict[str, list[str]]:
+    """The tools of each server file that `Host.serve` writes for `tools`."""
+    chunks = [list(tools[at : at + SERVER_TOOLS]) for at in range(0, len(tools), SERVER_TOOLS)]
+    return dict(zip(server_names(len(chunks)), chunks, strict=True))
+
+
 @dataclass
 class Host:
     """One registry with the family `chat`, one state root and the fakes of
-    a pass. The family grants each tool of the server."""
+    a pass. The family grants each tool of each server."""
 
     registry_root: Path
     state_root: Path
     driver: FakeDriver = field(default_factory=FakeDriver)
     litellm: CountedKeys = field(default_factory=CountedKeys)
+    servers: list[str] = field(default_factory=lambda: [SERVER])
+    family_changes: dict[str, object] = field(default_factory=dict[str, object])
+
+    def write_family(self, **changes: object) -> None:
+        """Write the family file with these changes. It grants each server."""
+        self.family_changes.update(changes)
+        tools = dict.fromkeys(self.servers, "all")
+        write_registry(self.registry_root, **self.family_changes, tools=tools)
 
     def serve(self, *tools: str) -> None:
-        """Write the server file with these tools."""
-        body = {
-            "name": SERVER,
-            "identity": "Search.",
-            "install": {"source": "agent-mcp"},
-            "run": {"entrypoint": "kagi-mcp", "env": {"KAGI_API_KEY": "secret:kagi_api_key"}},
-            "tools": [{"name": tool, "description": "One tool."} for tool in tools],
-        }
-        directory = self.registry_root / "mcp" / SERVER
-        directory.mkdir(parents=True, exist_ok=True)
-        (directory / "server.yaml").write_text(yaml.safe_dump(body), encoding="utf-8")
+        """Write the server files with these tools, `SERVER_TOOLS` in each
+        file, and a family file that grants each server."""
+        mcp = self.registry_root / "mcp"
+        for name in self.servers:
+            shutil.rmtree(mcp / name, ignore_errors=True)
+
+        groups = groups_of(tools) if tools else {SERVER: []}
+        for name, names in groups.items():
+            body: dict[str, Any] = {
+                "name": name,
+                "identity": "Search.",
+                "install": {"source": "agent-mcp"},
+                "run": {"entrypoint": "kagi-mcp"},
+                "tools": [{"name": tool, "description": "One tool."} for tool in names],
+            }
+            if name == SERVER:
+                body["run"] = {**body["run"], "env": {"KAGI_API_KEY": "secret:kagi_api_key"}}
+
+            directory = mcp / name
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / "server.toml").write_text(toml_text(body), encoding="utf-8")
+
+        self.servers = list(groups)
+        self.write_family()
 
     def one_pass(self) -> ReconcileResult:
         actors = Actors(self.driver, self.litellm, FakeSwitchClient(), EgressConfig(), FakeUnits())
@@ -479,19 +517,38 @@ class Host:
 
     def tools_for(self, scratch: Path, size: int) -> list[str]:
         """Tool names that give the grant file of a pass `size` bytes. Each
-        name is one line of the file. The last name fills the file: one
-        character is one byte."""
+        name is one line of the file. The names that fill the file are
+        longer: one character is one byte."""
 
-        def measured(*tools: str) -> int:
+        def measured(tools: list[str]) -> int:
             self.serve(*tools)
             path = scratch / "measured.json"
-            write_grant_file(path, self.pass_grant())
+            try:
+                write_grant_file(path, self.pass_grant())
+            except GrantFileTooLargeError as refusal:
+                return refusal.size
+
             return path.stat().st_size
 
-        smallest = measured(fill_tool(0), "f")
-        line = measured(fill_tool(0), fill_tool(1), "f") - smallest
-        lines, rest = divmod(size - smallest, line)
-        return [*(fill_tool(index) for index in range(lines + 1)), "f" * (rest + 1)]
+        first = measured([fill_tool(0)])
+        line = measured([fill_tool(0), fill_tool(1)]) - first
+        count = max(1, (size - first) // line + 1)
+        while measured([fill_tool(index) for index in range(count)]) > size:
+            count -= 1
+
+        while measured([fill_tool(index) for index in range(count + 1)]) <= size:
+            count += 1
+
+        tools = [fill_tool(index) for index in range(count)]
+        rest = size - measured(tools)
+        for place in range(len(tools)):
+            more = min(rest, TOOL_CHARS - FILL_CHARS)
+            tools[place] += "f" * more
+            rest -= more
+
+        assert rest == 0
+        assert measured(tools) == size
+        return tools
 
 
 def fill_tool(index: int) -> str:
@@ -512,7 +569,8 @@ def test_only_the_cap_refuses_the_registry_of_many_tools(host: Host) -> None:
     registry = load_registry(host.registry_root)
 
     assert all(TOOL_NAME.fullmatch(name) is not None for name in MANY_TOOLS)
-    assert registry.server_reports[SERVER].ok
+    assert len(host.servers) > 1
+    assert all(registry.server_reports[name].ok for name in host.servers)
     assert registry.reports["chat"].ok
 
 
@@ -612,7 +670,7 @@ def test_a_first_pass_writes_a_grant_file_of_the_cap(host: Host, tmp_path: Path)
     assert result.status.state is FamilyState.IN_SYNC
     assert host.grant_path.stat().st_size == GRANT_FILE_MAX_BYTES
     granted = json.loads(host.grant_path.read_text(encoding="utf-8"))
-    assert granted["tools"] == {SERVER: at_cap}
+    assert granted["tools"] == groups_of(at_cap)
 
 
 def test_a_first_pass_of_one_byte_more_mints_no_key(host: Host, tmp_path: Path) -> None:
@@ -647,7 +705,7 @@ def test_a_refused_pass_leaves_the_key_as_it_is(host: Host) -> None:
     written = host.creds_path.stat().st_mtime_ns
 
     moved = {"router": "other-router", "budget_usd_per_day": 99}
-    write_registry(host.registry_root, tools={SERVER: "all"}, model=moved)
+    host.write_family(model=moved)
     host.serve("search", *MANY_TOOLS)
     result = host.one_pass()
     again = host.one_pass()
@@ -677,7 +735,7 @@ def test_the_size_check_counts_each_digest_of_the_creds_file(host: Host, tmp_pat
     creds = host.creds_path.read_bytes()
 
     moved = {"router": "other-router", "budget_usd_per_day": 99}
-    write_registry(host.registry_root, tools={SERVER: "all"}, model=moved)
+    host.write_family(model=moved)
     result = host.one_pass()
 
     assert result.status.state is FamilyState.INVALID
@@ -738,7 +796,7 @@ def test_a_key_step_after_the_size_check_writes_one_digest(
 
     monkeypatch.setattr(steps, "check_grants", check_then_rotate)
     moved = {"router": "other-router", "budget_usd_per_day": 99}
-    write_registry(host.registry_root, tools={SERVER: "all"}, model=moved)
+    host.write_family(model=moved)
     # The grant file holds the router, so the names are measured after the edit.
     host.serve(*host.tools_for(tmp_path, GRANT_FILE_MAX_BYTES))
     result = host.one_pass()

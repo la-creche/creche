@@ -14,14 +14,14 @@ from agent_family import Markup, parse_family
 from agent_family.registry import FAMILY_FILE
 from caregiver.applied import forget_applied, read_applied, read_applied_text, write_applied
 from caregiver.atomic import atomic_write
-from caregiver_helpers import FAMILY_TOML, FAMILY_YAML, UNREADABLE_JSON
+from caregiver_helpers import FAMILY_BODY, FAMILY_TOML, UNREADABLE_JSON
 
 from caregiver import applied as applied_module
 from caregiver import paths
 
 
 def family_text(**overrides: object) -> str:
-    body = dict(FAMILY_YAML)
+    body = dict(FAMILY_BODY)
     body.update(overrides)
     return yaml.safe_dump(body)
 

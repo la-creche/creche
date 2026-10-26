@@ -99,9 +99,9 @@ def test_the_planes_never_appear_in_the_family_file(tmp_path: Path) -> None:
     registry_root = registry_with_egress(tmp_path, [])
     driver = FakeDriver()
     apply_family(registry_root, tmp_path / "state", driver=driver)
-    family_yaml = (registry_root / "families" / FAMILY / "family.yaml").read_text(encoding="utf-8")
-    assert litellm_endpoint() not in family_yaml
-    assert pep_endpoint() not in family_yaml
+    family_toml = (registry_root / "families" / FAMILY / "family.toml").read_text(encoding="utf-8")
+    assert litellm_endpoint() not in family_toml
+    assert pep_endpoint() not in family_toml
     assert call_named(driver, "set_egress")[1] == (litellm_endpoint(), pep_endpoint())
 
 

@@ -358,7 +358,7 @@ def test_a_family_whose_file_went_away_keeps_its_state(
     and no delete, so the key and the sandbox of the family stay."""
     write_registry(bench.registry_root, name="ops")
     bench.look()
-    (bench.registry_root / "families" / "ops" / "family.yaml").unlink()
+    (bench.registry_root / "families" / "ops" / "family.toml").unlink()
 
     assert bench.look() == ("chat",)
 
@@ -376,7 +376,7 @@ def test_a_family_whose_file_went_away_is_named_one_time(
     directory that never had state gets no line."""
     write_registry(bench.registry_root, name="ops")
     bench.look()
-    (bench.registry_root / "families" / "ops" / "family.yaml").unlink()
+    (bench.registry_root / "families" / "ops" / "family.toml").unlink()
     write_no_file_dir(bench.registry_root)
 
     with caplog.at_level(logging.WARNING, logger="caregiver.loop"):
@@ -396,7 +396,7 @@ def test_an_ignored_directory_does_not_keep_the_loop_due(bench: Bench) -> None:
     each poll reads the whole registry for as long as the directory stays."""
     write_registry(bench.registry_root, name="ops")
     bench.look()
-    (bench.registry_root / "families" / "ops" / "family.yaml").unlink()
+    (bench.registry_root / "families" / "ops" / "family.toml").unlink()
     bench.look()
 
     assert bench.look() == ()
