@@ -20,7 +20,7 @@ from vectors.core import ACCEPTED, FORMAT, RAISED, REFUSED, Json, depth, has_sur
 
 REGENERATE = "run `uv run python -m vectors.generate` and read the diff"
 FIX_FIRST = "fix the defect in its package first: vectors/AGENTS.md rule 5"
-RESTORE = "restore the file from git: vectors/AGENTS.md rule 11"
+RESTORE = "restore the file from git: vectors/AGENTS.md rule 10"
 
 #: The forms an input takes: text, bytes that are not UTF-8, a long text
 #: written as repeated parts, the named arguments of a builder, or the chunks

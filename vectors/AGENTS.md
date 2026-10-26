@@ -1,8 +1,9 @@
 # vectors
 
-This directory holds the oracle for the Rust port. The oracle is what the
-Python implementation accepts, as data. `README.md` holds the file format
-and the commands. The root `AGENTS.md` applies here too.
+This directory holds the oracle of the Python code. The oracle is what the
+Python implementation accepts, as data. The tests of `vectors/tests` and
+`bin/tests/test_envfile_vectors.py` read it. `README.md` holds the file
+format and the commands. The root `AGENTS.md` applies here too.
 
 This directory is not a component. A change here mints no tag. This
 directory is not a workspace package, so a change here does not change
@@ -15,7 +16,7 @@ directory is not a workspace package, so a change here does not change
 2. Do not edit a file under `data/` by hand. Run the generator.
 3. Do not change a vector to make a test pass. A vector that moves is a
    change in what the platform accepts. Say why in the commit body.
-4. Keep a vector id when its input stays the same. A Rust test names the id.
+4. Keep a vector id when its input stays the same.
 5. Commit no `raised` vector. A `raised` vector is a defect of the Python
    code. This repository is public, and such a vector publishes an input
    that makes a service raise. Report the defect as `SECURITY.md` says. Fix
@@ -30,11 +31,7 @@ directory is not a workspace package, so a change here does not change
    `tests/test_vectors_runtime.py`. It builds the group `runtime` alone, in
    about one second.
 9. `pyright` checks this directory in strict mode.
-10. Do not remove an input because the Rust result differs from the Python
-    result. The one exception is resolution (c) in `rust/AGENTS.md`, section
-    "The differential test". The pull request then explains why resolutions
-    (d), (b) and (a) do not fit. A plain Rust test holds the removed input.
-11. Do not change a frozen file. A frozen file is a data file whose Python
+10. Do not change a frozen file. A frozen file is a data file whose Python
     origin left this repository. `README.md`, "A frozen file", has the
     steps and the checks.
     - The index holds the SHA-256 of each frozen file. A test fails when
@@ -42,9 +39,7 @@ directory is not a workspace package, so a change here does not change
       git.
     - Freeze a file only with `--freeze`. Do not write a line of the map
       `frozen` by hand. Do not change a digest.
-    - The Rust test of a frozen surface is the one reader of its file.
-    - Add no vector to a frozen file. Write each new case as a plain Rust
-      test, with the input in the test.
+    - Add no vector to a frozen file.
 
 ## Module map
 
@@ -150,9 +145,7 @@ and the YAML path does not.
 - `manifest.resolved` gives `resolved_at` as a float only. With an integer,
   Python writes no `.0`.
 - Three `manifest.` surfaces hold no input of the list below. The Python
-  release tool accepts each one, and the Rust code refuses it. Each one
-  stays out under resolution (c) of `rust/AGENTS.md`. A plain test of the
-  Rust `manifest` module holds each one.
+  release tool accepts each one.
   1. `manifest.component`: a number with the tag `!!int` that has a digit
      or a space outside ASCII.
   2. `manifest.component`: a lone surrogate in a word of a command or in an
@@ -207,9 +200,7 @@ and the YAML path does not.
   `family_file` covers the grammars that `agent_family` applies to a family
   file.
 - `noticeboard.sessions.is_session` is a copy of the session id grammar.
-  `noticeboard.route.session` covers it. The copy has no `id.` surface: a
-  new `id.` surface needs a row in the `ids` module of the Rust crate. Rule
-  5 of "Where a new type goes" in `rust/AGENTS.md` applies to that change.
+  `noticeboard.route.session` covers it. The copy has no `id.` surface.
 - `host_reason` of `attendance.wire` has no vector. `cap_event` and
   `read_usage` have vectors only through `channel.parse`.
 - No vector covers the playpen side of contract 03: what the playpen accepts
@@ -312,12 +303,10 @@ and the YAML path does not.
   generator cannot change the owner of a file.
 - `config.noticeboard.env` names no `VIEW_ACCESS_KEY_FILE`. The entry point
   reads that file. `noticeboard.cli.check` holds the vectors of a key file.
-- Four `config.` surfaces hold no value that the Python reader takes and
-  the Rust config type refuses: `config.site_file`, `config.attendance.env`,
+- Four `config.` surfaces have no vector for some values that the Python
+  reader takes: `config.site_file`, `config.attendance.env`,
   `config.noticeboard.env` and `config.chaperone.site`. A daemon calls each
-  of those readers at its start. Such a value stays out under resolution
-  (c) of `rust/AGENTS.md`. A plain test of the Rust config type holds it.
-  Five examples of such a value:
+  of those readers at its start. Five examples of such a value:
   1. A LAN address that is `0.0.0.0`, or that ends in a number and is not
      one IPv4 address.
   2. A relative path, and a socket path of more than 107 bytes.
@@ -562,23 +551,12 @@ and the YAML path does not.
   of `chunks_vec`. No reader outside the index builder reads `chunks_vec`.
 - `library.index_scope` holds the `rowid` of each row of `chunks_fts`. It
   holds no text of such a row, and no vector holds the answer to a search.
-- `library.tei_url` holds only a text that the Rust index builder will
-  take at its start. The entry point returns each text that is not empty.
-  Four examples of a text with no vector:
-  1. A URL with the scheme `https`. The HTTP client of the Rust runtime has
-     no TLS.
+- `library.tei_url` has no vector for some texts. The entry point returns
+  each text that is not empty. Four examples of a text with no vector:
+  1. A URL with the scheme `https`.
   2. A URL with no scheme.
   3. A URL with a user part.
   4. The LAN address `0.0.0.0`.
-
-  The strict config types of the Rust crate refuse examples 2, 3 and 4.
-
-  A text with no vector stays out under resolution (c) of `rust/AGENTS.md`:
-  the program reads the value at its start. That document states the case
-  for a daemon. The index builder is a command that a timer starts. The
-  reading here is that the case holds for such a command too. The Rust
-  config type of the index builder does not exist yet. The pull request of
-  that type adds a plain Rust test for each such text.
 - `library.embedding` holds no value that is not finite, no boolean and no
   vector with a wrong count of values.
 - No vector of `library.index_scope` holds a file that `index_scope`

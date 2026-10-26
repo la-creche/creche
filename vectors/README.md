@@ -1,25 +1,23 @@
 # vectors
 
 This directory records what the Python implementation accepts, refuses and
-writes. The record is data. A test in another language reads the data and
-compares its own result.
+writes. The record is data. The tests of `vectors/tests` and
+`bin/tests/test_envfile_vectors.py` read the data. A test fails when the
+Python code no longer gives the recorded result.
 
 A vector is one input and what the Python code did with that input. A surface
 is one entry point of the Python code. One surface has one vector file.
 
 ## The rule of authority
 
-The Python implementation is the authority for a surface until a Rust
-release replaces that surface.
+The Python implementation is the authority for each surface.
 
 1. A vector records what the Python code does. It does not record what a
    contract says.
 2. A vector with the result `raised` records a defect of the Python code.
-   The Rust code must not raise there. Refuse the input. No committed file
-   holds such a vector. Rule 5 of `vectors/AGENTS.md` states why.
-3. When a Rust release replaces a surface, the Rust code becomes the
-   authority. Change the generator in the same pull request.
-4. When the Python origin of a surface leaves this repository, the file of
+   No committed file holds such a vector. Rule 5 of `vectors/AGENTS.md`
+   states why.
+3. When the Python origin of a surface leaves this repository, the file of
    that surface becomes a frozen file. "A frozen file" below has the steps.
 
 ## Layout
@@ -76,10 +74,6 @@ suite.
 
 The pre-push hook runs this test for a change under a product package and
 for a change under `vectors/`.
-
-The Rust tests read `data/`. CI runs them for each code change under
-`vectors/`. The pre-push hook runs them for such a change when `cargo` is on
-`PATH`. Without `cargo`, the hook prints one line and passes.
 
 When a change to a product package moves behavior:
 
@@ -195,14 +189,10 @@ A reader refuses an index in each of these cases:
   leave two `frozen` maps.
 - A path or a digest has another form.
 
-The generator and the Rust reader hold these rules. The Rust reader is the
-crate `creche-vectors` under `rust/crates`. No other Rust code reads a file
-under `data/`.
+The generator holds these rules.
 
-The index is strict JSON: `rust/AGENTS.md`, "JSON", has the rules of such a
-text. The crate `creche-contracts` holds the strict JSON reader, and
-`creche-vectors` does not use that crate. The raw types of `creche-vectors`
-refuse each index that is not strict JSON.
+The index is strict JSON. The module doc of
+`noticeboard/src/noticeboard/strictjson.py` has the rules of such a text.
 
 ## The vector file
 
@@ -289,28 +279,6 @@ No file nests deeper than 100 levels. No string in a file holds a lone
 surrogate. A reader that stops at 128 levels reads every file. `serde_json`
 with its default settings is such a reader.
 
-## How a Rust test reads a vector
-
-A Rust test does steps 1 and 2 with one call of the crate `creche-vectors`.
-`rust/AGENTS.md`, "The differential test", names the functions of that
-crate.
-
-1. Read `vectors/data/index.json`. Find the row of the surface.
-2. Read the file that the `path` of the row names. Refuse a `format` that is
-   not `1`.
-3. Read the `notes` of the file once. They state how to replay the surface.
-4. For each vector, build the input from its form and its `params`.
-5. Call the Rust code.
-6. Compare the result with `result`.
-7. For `accepted`, compare the parsed value with `value` as parsed JSON, not
-   as text.
-8. For `refused`, compare the refusal code. Compare a message only where the
-   Rust code must write the same message.
-9. For `raised`, make sure that the Rust code refuses the input.
-
-A Rust test must not disagree with a vector on purpose. When a Rust result
-and a vector disagree, follow "The differential test" in `rust/AGENTS.md`.
-
 ## Rules for a new surface
 
 1. Call a public entry point of the product package. Do not change product
@@ -362,16 +330,13 @@ A reader refuses the file in each of these cases:
 - A row names the surfaces of less than two results.
 - Two rows have the same `grammar` and the same `id`.
 
-The Rust reader, the crate `creche-vectors`, holds these rules.
-
 ## The registry file
 
 A vector of `family_file`, of `family_file.host`, of `family_file.toml`, of
 `server_file`, of `server_file.toml` and of `family_file.cli` names a
 registry of this repository in `params.registry`.
-A Rust test reads no file outside `rust/` and `vectors/data`.
-`data/family_file.registries.json` thus holds each file of each such
-registry.
+`data/family_file.registries.json` holds each file of each such registry. A
+reader of a vector thus needs no file outside `vectors/data`.
 
 | Key | Meaning |
 |---|---|
@@ -405,8 +370,8 @@ A reader refuses the file in each of these cases:
 - The `path` of a row is a directory of another row of its registry. One
   name is then a file and a directory.
 
-The Rust reader, the crate `creche-vectors`, holds these rules. The rows of
-one registry thus make one tree of files, and a test can write each one.
+The rows of one registry thus make one tree of files, and a reader can
+write each one.
 
 The generator reads no file and no directory whose name starts with `.`.
 git does not track such a file in a registry of this repository. The file
