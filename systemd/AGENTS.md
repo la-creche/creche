@@ -9,7 +9,7 @@ from this directory at run time. The root `AGENTS.md` applies here too.
 | `creche-chaperone.service` | system, `User=chaperone` | the root bootstrap script, in the private repository |
 | `creche-handover.{service,path}`, `creche-handover-intake.service` | system, root | by hand only, never by a release |
 | `creche-attendance.service`, `creche-door-owui.service`, `creche-caregiver.service`, `creche-trigger-webhooks.service`, `creche-noticeboard.service` | user | the cutover script, in the private repository |
-| `creche-door-acp.service` | user | no script yet. The door ships in no component |
+| `creche-door-acp.service` | user | no script yet. The door ships in `attendance` |
 | `creche-trigger@.service` | user, templated | the cutover script, only when the host has none |
 | `creche-watchdog.{service,timer}`, `registry-sync.{service,timer}` | user | the cutover script |
 | `creche-follow.{service,timer}` | user | the cutover script |
@@ -24,9 +24,9 @@ installed unit file in place and never runs an installer.
 - **Every service of a component points its `ExecStart` into that
   component's tree**, never into `/opt/creche/.venv`. A release swaps the tree
   and restarts the unit. A unit that ran from the deploy's shared venv would
-  relaunch the old code, and the ledger would record a success. The three
-  door units run from the `attendance` tree. The two long-running doors carry
-  `PartOf=creche-attendance.service`.
+  relaunch the old code, and the ledger would record a success. The four
+  door units run from the `attendance` tree. The three long-running doors
+  carry `PartOf=creche-attendance.service`.
 - **A unit that runs a repository script points into `/opt/creche/bin`**, the
   root-owned deployed checkout. The watchdog and `registry-sync` do this.
 - **`creche-follow.service` runs `handover follow` out of the `handover`

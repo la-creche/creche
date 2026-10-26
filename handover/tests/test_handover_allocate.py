@@ -496,6 +496,13 @@ def test_a_door_change_tags_attendance() -> None:
     assert touched(changed, Repo.AGENT_CONTROL) == ("attendance",)
 
 
+def test_an_acp_door_change_tags_attendance() -> None:
+    """`door-acp` ships inside `attendance`'s tree, as each other door does."""
+    changed = ("door-acp/src/agent_door_acp/forward.py",)
+
+    assert touched(changed, Repo.AGENT_CONTROL) == ("attendance",)
+
+
 def test_a_family_change_tags_every_component_that_installs_it() -> None:
     """`agent-family` is in `attendance`'s, `caregiver`'s and `noticeboard`'s trees."""
     changed = ("family/src/agent_family/model.py",)

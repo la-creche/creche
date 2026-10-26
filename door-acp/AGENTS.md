@@ -4,7 +4,8 @@ The ACP front door. A client opens `WS /acp/<family>`. The door forwards ACP
 frames between that client and `attendance`'s `WS /acp/{family}`. It
 translates nothing. The package is `agent_door_acp`. The programs are
 `agent-door-acp`, the door, and `creche-acp-connect`, a stdio bridge for a
-terminal client. The root `AGENTS.md` applies here too.
+terminal client. The package ships in the tree of the `attendance`
+component, as each other door does. The root `AGENTS.md` applies here too.
 
 Rows 26 and 27 of the Phase 2 plan built this package.
 
