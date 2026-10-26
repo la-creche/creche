@@ -278,6 +278,14 @@ chaperone-rs ---- MCP over stdio ---> the upstream stand-in: echo, gated_echo
 a test reads the audit file
 ```
 
+`test_proc_policy_check.py` uses the same row and starts no process that
+serves. It writes the plugin tree, an `install.toml` and a `policy.toml`
+for the whole fleet, then runs `chaperone check` on each file. The install
+file holds one effect plugin for each server of the fixture registry of
+`family`, and the plugins `attendance` and `release` of §12. The policy
+file joins the golden files of `caregiver/tests/policy_golden`: one app
+table for each family of that registry, as `render_policy` writes them.
+
 The ninth topology, `proc_exit.py`, is the exit test of phase 2. It starts
 the Rust chaperone with the plugin `attendance`, the model stand-in,
 `attendance` and door-acp. `attendance` starts the facade of each family
@@ -342,6 +350,7 @@ each one, and each one runs to its end.
 | `test_proc_library_reader.py` | library, the reference, the TEI stand-in and the reader program | a store as the bridge reads it, with the SQLite of Node: the model, the count of values, the rows of an FTS5 query, the vectors. Equal rows for both writers. A store that is not alone in its directory. The statements of the reader program and the limit of a query, held against the text of the bridge |
 | `test_proc_edges.py` | door and `attendance`, chaperone and `attendance`, trigger door and `attendance`, noticeboard | the edge of each listener: an unknown path, a wrong method, a body that is not JSON, `HEAD`, the socket file of a killed process, `SIGINT`, `SIGHUP` |
 | `test_proc_chaperone_rs.py` | the Rust chaperone and its two effect stand-ins | the tools of the stand-in upstream, and the audit records of one allowed call |
+| `test_proc_policy_check.py` | `chaperone check` of the Rust chaperone | caregiver's policy file of every fixture family passes. A digest of two apps, a grant of an upstream that is not installed, and a delegate whose target delegates each fail with the error line of the chaperone |
 | `test_proc_exit.py` | the exit topology | the six scenarios of phase 2 row 30: a turn, an allowed call, a gated call, a cancel, a reconnect with `session/load`, and a delegate call from one family to another. Each scenario ends within 60 seconds |
 | `test_proc_harness.py`, `test_proc_table.py` | none | the harness and the table, checked against their own rules |
 | `test_proc_standins.py`, `test_proc_sse.py` | none | the record of a stand-in, and the SSE reader |
@@ -375,8 +384,11 @@ each one, and each one runs to its end.
 5. A stand-in is a program on disk. Do not give a service a Python object.
 6. Every file that a service reads is in the root. A writer in `proc_tree.py`
    or in `proc_registry.py` makes it from a contract, never from a module of
-   a service. A corpus of the index builder is the one exception. It is
+   a service. A corpus of the index builder is one exception. It is
    test data with no contract, and a writer of `proc_library.py` makes it.
+   The policy file of `test_proc_policy_check.py` is the other. It joins
+   the golden files of `caregiver`, because the scenario judges that
+   rendering. The test reads the files as text and imports no `caregiver`.
 7. A service gets its whole environment from the test. No variable of the
    shell that runs the suite reaches a service, except `PATH`, `LANG` and
    `TMPDIR`.

@@ -33,7 +33,7 @@ from proc_services import Service
 from proc_stack import CLIENT_TIMEOUT, Stack
 from proc_standins import APPROVAL, UPSTREAM, effect_program, install_effects
 from proc_strict import strict_object
-from proc_tree import RS_FAMILIES, RsFiles, build_bare_tree, write_rs_tree
+from proc_tree import RS_FAMILIES, RsFiles, build_bare_tree, write_rs_fleet_tree, write_rs_tree
 
 #: The path of the front door (§7.6) and of its health answer.
 MCP_PATH: Final = "/mcp"
@@ -105,6 +105,24 @@ class ChaperoneRsStack(Stack):
 
         for name in ("install.toml", "policy.toml"):
             self._run_ok("check", str(self.files.config_file(name)), *self._plugins())
+
+    def prepare_fleet(self, servers: tuple[str, ...], policy: str) -> None:
+        """Write the files of a fleet check: one effect plugin per server, and `policy` as it is."""
+        build_bare_tree(self.tree)
+        install_effects(self.tree)
+        write_rs_fleet_tree(
+            self.files,
+            effect_program(self.tree, UPSTREAM),
+            servers,
+            self.tree.attendance_socket,
+            policy,
+        )
+
+    def check(self, name: str) -> Finished:
+        """`chaperone check` on one file of the configuration directory, with any exit code."""
+        return self.run(
+            Service.CHAPERONE_RS, {}, "check", str(self.files.config_file(name)), *self._plugins()
+        )
 
     def start(self) -> None:
         """Start `chaperone serve`. Wait for `/healthz`, then run `chaperone verify`."""

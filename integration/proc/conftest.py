@@ -381,6 +381,17 @@ def chaperone_rs(tree: Tree, supervisor: Supervisor, chaperone_rs_binary: None) 
     return stack
 
 
+@pytest.fixture
+def chaperone_rs_files(
+    tree: Tree, supervisor: Supervisor, chaperone_rs_binary: None
+) -> ChaperoneRsStack:
+    """The Rust chaperone with no file written and no process started.
+
+    The test writes the files and runs each command of the chaperone itself.
+    """
+    return ChaperoneRsStack(tree, supervisor)
+
+
 @pytest.fixture(scope="session")
 def facade() -> None:
     """The built facade. A test that needs it and has none skips, or fails with no skip."""
