@@ -51,7 +51,7 @@ function supervise(dir: string = controlDir()): Run {
   locks.push(lock);
 
   const exited = new Promise<number>((resolve) => {
-    runSupervisor({
+    void runSupervisor({
       input,
       stdout: {
         writeLine: (line) => lines.push(line),
@@ -69,6 +69,7 @@ function supervise(dir: string = controlDir()): Run {
         },
       },
       sessions: null,
+      socketPath: null,
     });
   });
 

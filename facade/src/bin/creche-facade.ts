@@ -6,6 +6,7 @@
 
 import { readSupervisorEnv } from "../env.js";
 import { SupervisorLock } from "../lock.js";
+import { relaySocketPath } from "../relay.js";
 import { claimStdout, say } from "../stdio.js";
 import { runSupervisor } from "../supervisor.js";
 import { BEAT_DEADLINE_MS } from "../vectors.js";
@@ -14,7 +15,7 @@ const stdout = claimStdout();
 const env = readSupervisorEnv(process.env);
 
 if (env.ok) {
-  runSupervisor({
+  void runSupervisor({
     input: process.stdin,
     stdout,
     say,
@@ -22,6 +23,7 @@ if (env.ok) {
     deadlineMs: BEAT_DEADLINE_MS,
     runtime: null,
     sessions: null,
+    socketPath: relaySocketPath(),
   });
 } else {
   say(env.detail);
