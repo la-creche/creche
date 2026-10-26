@@ -1,0 +1,13 @@
+version = 1
+
+[apps.agent-control-worker]
+note = "registry 3f5dcabe"
+token_sha256 = ["8935c1044c6d9fd0a9dd9de607e051313066dc010bbf2b140a7e802f93a713f8"]
+limits = { calls_per_minute = 60, max_pending_gates = 10 }
+
+[apps.agent-control-worker.grants.vikunja-agent-control.tools]
+comment_on_ticket = {}
+get_ticket = {}
+list_ready_tickets = {}
+start_ticket = {}
+submit_for_verification = {}

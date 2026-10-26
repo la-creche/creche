@@ -1,0 +1,13 @@
+version = 1
+
+[apps.finance-worker]
+note = "registry 3f5dcabe"
+token_sha256 = ["60ecd371484dba08aa5a4b8f88e15fa35dd777b44053be9c25abd85e717f5018"]
+limits = { calls_per_minute = 60, max_pending_gates = 10 }
+
+[apps.finance-worker.grants.vikunja-finance.tools]
+comment_on_ticket = {}
+get_ticket = {}
+list_ready_tickets = {}
+start_ticket = {}
+submit_for_verification = {}

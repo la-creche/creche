@@ -1,0 +1,6 @@
+version = 1
+
+[apps.vault-oracle]
+note = "registry 3f5dcabe"
+token_sha256 = ["6b2538047b3e004f6eb4467387842cb3bc4faec21dd80ee11b733929d958037c"]
+limits = { calls_per_minute = 60, max_pending_gates = 10 }

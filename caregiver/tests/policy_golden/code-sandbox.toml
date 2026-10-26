@@ -1,0 +1,6 @@
+version = 1
+
+[apps.code-sandbox]
+note = "registry 3f5dcabe"
+token_sha256 = ["124586f155e05c64d464c334db343ba928bdc07bd66e427726b3c127887b135b"]
+limits = { calls_per_minute = 60, max_pending_gates = 10 }

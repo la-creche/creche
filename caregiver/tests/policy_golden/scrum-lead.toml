@@ -1,0 +1,31 @@
+version = 1
+
+[apps.scrum-lead]
+note = "registry 3f5dcabe"
+token_sha256 = ["4533a40b3de3398036d0e10be432241804ca0d9a822a139dd563593180521281"]
+limits = { calls_per_minute = 60, max_pending_gates = 10 }
+
+[apps.scrum-lead.grants.attendance]
+max_inflight = 2
+
+[apps.scrum-lead.grants.attendance.tools]
+enqueue = { approval = "required" }
+job_status = {}
+
+[apps.scrum-lead.grants.board-lead.tools]
+append_dev_notes = {}
+comment_on_ticket = {}
+file_child_ticket = {}
+file_ticket = {}
+get_ticket = {}
+label_epic = {}
+mark_blocked = {}
+mark_refined = {}
+set_points = {}
+survey_board = {}
+
+[apps.scrum-lead.grants.mail.tools]
+send_standup_email = {}
+
+[apps.scrum-lead.plugins.attendance]
+enqueue_targets = ["agent-control-worker", "finance-worker", "home-assistant-worker", "networking-worker"]
