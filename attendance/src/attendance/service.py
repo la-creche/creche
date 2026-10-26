@@ -3,7 +3,8 @@
 Three operations run work in a family: a delegate call, a dispatched job and
 an ACP door connection. Each one runs over the ACP supervisor link to the
 sandbox's facade (`acp_link.py`). The fourth operation is the sandbox switch
-that `caregiver` asks for.
+that `caregiver` asks for. The view reads a family's sessions over a relay
+of its own, and `busy` counts the work in flight.
 
 `attendance` never calls `caregiver`. Everything it knows about a family comes
 from the status document `caregiver` publishes (contract 05 §2).
@@ -14,10 +15,11 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
-from . import dispatch, jobs, outcomes
+from . import acp_view, dispatch, jobs, outcomes
+from .acp_door import DoorPrompts
 from .acp_jobs import (
     CANCEL_WAIT_S,
     META_DELEGATION,
@@ -51,7 +53,7 @@ from .family_status import (
     served_kind,
 )
 from .faults import FaultCode, FaultReporter
-from .ids import SessionPrefix, is_sandbox, new_ulid
+from .ids import SessionPrefix, is_sandbox, is_session, new_ulid
 from .models import DEFAULT_DEADLINE_S
 from .paths import outcome_file, sandbox_sessions_mount
 from .queueing import MAX_QUEUED_TURNS, JobQueue
@@ -88,6 +90,7 @@ class SessionService:
         acp_factory: ChannelFactory | None = None,
         cancel_wait_s: float = CANCEL_WAIT_S,
         max_queued_turns: int = MAX_QUEUED_TURNS,
+        relay_factory: ChannelFactory | None = None,
     ) -> None:
         self._config = config
         self._faults = FaultReporter(config.state_root)
@@ -98,6 +101,9 @@ class SessionService:
         # Phase 2 plan, row 18. One supervisor link to each sandbox's facade,
         # and one lock per sandbox so two jobs never start two facades.
         self._acp_factory = acp_factory if acp_factory is not None else self._facade_factory
+        # One `acp-relay` per door connection and per view request.
+        self._relay_factory = relay_factory if relay_factory is not None else self._relay_channel
+        self.door_prompts = DoorPrompts()
         self._acp_links: dict[str, AcpLink] = {}
         self._acp_dials: dict[str, asyncio.Lock] = {}
         self._cancel_wait_s = cancel_wait_s
@@ -188,6 +194,10 @@ class SessionService:
         status = self._status.require(family)
         check_may_serve(status)
         check_family_kind(principal, family, served_kind(status))
+        return await self._start_relay(family, status)
+
+    async def _start_relay(self, family: str, status: FamilyStatus) -> Channel:
+        """One started relay to the sandbox the family's jobs go to."""
         info = self._sandbox_for(family, status)
 
         if info is None:
@@ -197,12 +207,7 @@ class SessionService:
                 family=family,
             )
 
-        relay = ExecChannel(
-            dial=self._dial_for(family, status, info.id),
-            command=self._config.acp_relay_command,
-            log_path=self._config.playpen_log(family),
-            max_line_bytes=MAX_ACP_LINE_BYTES,
-        )
+        relay = self._relay_factory(self._dial_for(family, status, info.id))
 
         try:
             await relay.start()
@@ -214,6 +219,58 @@ class SessionService:
             ) from error
 
         return relay
+
+    # ----------------------------------------------------------------- view
+
+    async def view_sessions(
+        self, principal: Principal, family: str, query: Mapping[str, str]
+    ) -> dict[str, Any]:
+        """One page of the family's sessions: `initialize`, `session/list`."""
+        _check_view(principal)
+        cursor = acp_view.read_cursor(query)
+        relay = await self._start_relay(family, self._status.require(family))
+
+        try:
+            return await acp_view.list_sessions(relay, family, cursor)
+        finally:
+            await relay.close()
+
+    async def view_session(
+        self, principal: Principal, family: str, session: str, query: Mapping[str, str]
+    ) -> dict[str, Any]:
+        """One page of a transcript: `initialize`, `session/load`."""
+        _check_view(principal)
+        page = acp_view.read_page(query)
+
+        if not is_session(session):
+            raise ApiError(ErrorCode.BAD_REQUEST, "not a session id", family=family)
+
+        relay = await self._start_relay(family, self._status.require(family))
+        cwd = sandbox_sessions_mount(self._config.sessions_root, family)
+
+        try:
+            return await acp_view.load_transcript(relay, family, session, cwd, page)
+        finally:
+            await relay.close()
+
+    def busy(self, principal: Principal) -> dict[str, Any]:
+        """The work in flight, for the release tool's quiet window. No family.
+
+        A prompt counts on each supervisor link (delegate and dispatch
+        jobs) and on each ACP door connection. A dispatched job counts from
+        its slot, so a job that dials counts before its prompt.
+        """
+        _check_view(principal)
+        links = sum(link.prompts_in_flight for link in self._acp_links.values())
+        prompts = links + self.door_prompts.in_flight
+        running = self._jobs.running_total()
+        queued = self._jobs.waiting_total()
+        return {
+            "busy": prompts + running + queued > 0,
+            "prompts_in_flight": prompts,
+            "jobs_running": running,
+            "jobs_queued": queued,
+        }
 
     # ------------------------------------------------------------ thin jobs
 
@@ -790,6 +847,16 @@ class SessionService:
             max_line_bytes=MAX_ACP_LINE_BYTES,
         )
 
+    def _relay_channel(self, dial: SandboxDial) -> Channel:
+        family, _, _ = dial.sandbox.rpartition("-s")
+
+        return ExecChannel(
+            dial=dial,
+            command=self._config.acp_relay_command,
+            log_path=self._config.playpen_log(family),
+            max_line_bytes=MAX_ACP_LINE_BYTES,
+        )
+
     async def _acp_link_for(
         self, family: str, status: FamilyStatus, sandbox: str | None = None
     ) -> AcpLink:
@@ -849,6 +916,21 @@ class SessionService:
 
     def acp_link(self, sandbox: str) -> AcpLink | None:
         return self._acp_links.get(sandbox)
+
+
+def _check_view(principal: Principal) -> None:
+    """The view routes and `/busy` take `view-ro` only.
+
+    The read grant alone is not enough: each door that writes holds it too.
+    """
+    check_access(principal, Access.READ)
+
+    if principal is not Principal.VIEW_RO:
+        raise ApiError(
+            ErrorCode.FORBIDDEN,
+            f"{principal.value} is not the view principal",
+            detail={"principal": principal.value},
+        )
 
 
 def _in_family(sandbox: str, family: str) -> bool:

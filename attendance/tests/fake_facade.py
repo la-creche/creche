@@ -12,6 +12,10 @@ with `serve` and `FacadeFleet`.
 - `FAKE_FACADE_PROMPT=<mode>` scripts each `session/prompt` (`PromptMode`).
 - `FAKE_FACADE_RECORD=<path>` appends each method it receives to the file.
 
+`session/list` answers the page that `pages` holds for the cursor (`""`
+for none). `session/load` sends the updates that `replays` holds for the
+session, then answers `{}`. An unknown session answers `-32002`.
+
 `_creche/shutdown` ends the process with exit status 0.
 """
 
@@ -42,6 +46,9 @@ ANSWER = "".join(ANSWER_CHUNKS)
 #: The JSON-RPC error an `error` prompt answers with.
 ERROR_CODE = -32603
 ERROR_MESSAGE = "the model provider refused the request"
+
+#: ACP's `resourceNotFound`, the facade's answer to an unknown session.
+NOT_FOUND_CODE = -32002
 
 
 class PromptMode(StrEnum):
@@ -89,6 +96,12 @@ class FakeFacade:
     received: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     held: dict[str, Prompt] = field(default_factory=dict[str, Prompt])
     sessions: list[str] = field(default_factory=list[str])
+    #: `session/list` results by cursor, `""` for the first page.
+    pages: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
+    #: `session/load` updates by session id.
+    replays: dict[str, list[dict[str, Any]]] = field(
+        default_factory=dict[str, list[dict[str, Any]]]
+    )
 
     def handle(self, line: str) -> list[str]:
         """The lines this fake writes for one line it read. Raises `_Drop`."""
@@ -115,11 +128,27 @@ class FakeFacade:
         if method == "session/prompt":
             return self._prompt(int(str(request_id)), params)
 
+        if method == "session/list":
+            page = self.pages.get(str(params.get("cursor") or ""))
+            return [_answer(request_id, page)] if page is not None else [_error(request_id)]
+
+        if method == "session/load":
+            return self._load(request_id, str(params.get("sessionId")))
+
         if method == "session/cancel":
             held = self.held.pop(str(params.get("sessionId")), None)
             return [] if held is None else [_answer(held.request_id, {"stopReason": "cancelled"})]
 
         return []
+
+    def _load(self, request_id: object, session: str) -> list[str]:
+        updates = self.replays.get(session)
+
+        if updates is None:
+            return [_error(request_id, NOT_FOUND_CODE)]
+
+        notices = [_update(session, update) for update in updates]
+        return [*notices, _answer(request_id, {})]
 
     def settle(self, session: str, stop_reason: str = "end_turn", text: str = ANSWER) -> list[str]:
         """The lines that end one held prompt."""
@@ -156,10 +185,19 @@ def _answer(request_id: object, result: object) -> str:
     return _line({"jsonrpc": "2.0", "id": request_id, "result": result})
 
 
-def _chunk(session: str, text: str) -> str:
-    update = {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": text}}
+def _error(request_id: object, code: int = -32602) -> str:
+    error = {"code": code, "message": "refused"}
+    return _line({"jsonrpc": "2.0", "id": request_id, "error": error})
+
+
+def _update(session: str, update: dict[str, Any]) -> str:
     params = {"sessionId": session, "update": update}
     return _line({"jsonrpc": "2.0", "method": "session/update", "params": params})
+
+
+def _chunk(session: str, text: str) -> str:
+    update = {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": text}}
+    return _update(session, update)
 
 
 # ----------------------------------------------------------- in process
@@ -201,6 +239,14 @@ class FacadeFleet:
     channels: dict[str, FakeChannel] = field(default_factory=dict[str, "FakeChannel"])
     facades: dict[str, FakeFacade] = field(default_factory=dict[str, FakeFacade])
     dials: list[str] = field(default_factory=list[str])
+    #: What each relay's facade answers, and each relay's facade.
+    pages: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
+    replays: dict[str, list[dict[str, Any]]] = field(
+        default_factory=dict[str, list[dict[str, Any]]]
+    )
+    relays: list[FakeFacade] = field(default_factory=list[FakeFacade])
+    #: A relay that ends before it answers: no facade listens in the VM.
+    relay_gone: bool = False
     _tasks: list[asyncio.Task[None]] = field(default_factory=list[asyncio.Task[None]])
 
     def factory(self, dial: SandboxDial) -> Channel:
@@ -213,6 +259,21 @@ class FacadeFleet:
         self.channels[dial.sandbox] = channel
         self.facades[dial.sandbox] = facade
         self._tasks.append(asyncio.create_task(serve(channel, facade)))
+        return channel
+
+    def relay(self, dial: SandboxDial) -> Channel:
+        """One `acp-relay`: its own channel, to a facade that shares the script."""
+        from attendance.channel import FakeChannel
+
+        channel = FakeChannel(dial.sandbox)
+        facade = FakeFacade(pages=self.pages, replays=self.replays)
+        self.relays.append(facade)
+
+        if self.relay_gone:
+            self._tasks.append(asyncio.create_task(channel.drop()))
+        else:
+            self._tasks.append(asyncio.create_task(serve(channel, facade)))
+
         return channel
 
     async def settle(
