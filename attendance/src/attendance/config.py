@@ -41,6 +41,9 @@ DEFAULT_STATE_ROOT = "/srv/agents/state/rework"
 DEFAULT_WORK_ROOT = "/srv/agents/work"
 DEFAULT_LOG_DIR = "/var/log/sessiond"
 
+#: The playpen's `sbx exec` shape, for the relay into the facade's socket.
+DEFAULT_RELAY_COMMAND = "sbx exec --env-file {env_file} {sandbox} -- acp-relay"
+
 # Contract 02 §10.4. One file, mode 0600, beside every other credential this
 # host keeps. `SESSIOND_OWUI_URL` is what turns the feature on.
 DEFAULT_OWUI_KEY_FILE = "/srv/agents/state/rework/tokens/owui-api.key"
@@ -102,6 +105,8 @@ class Config:
     # window on a host where the sandbox writes its beat more slowly.
     lock_stale_s: float = LOCK_STALE_S
     lock_poll_s: float = LOCK_POLL_S
+    # Phase 2 plan, row 17. One `sbx exec acp-relay` per door connection.
+    acp_relay_command: str = DEFAULT_RELAY_COMMAND
 
     @property
     def binds_lan(self) -> bool:
@@ -131,6 +136,7 @@ def from_env(environ: dict[str, str] | None = None) -> Config:
         owui_folder_id=_text(source, "OWUI_FOLDER_ID", ""),
         lock_stale_s=_seconds(source, "LOCK_STALE_S", LOCK_STALE_S),
         lock_poll_s=_seconds(source, "LOCK_POLL_S", LOCK_POLL_S),
+        acp_relay_command=_text(source, "ACP_RELAY_COMMAND", DEFAULT_RELAY_COMMAND),
     )
 
 

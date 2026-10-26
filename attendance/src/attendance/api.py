@@ -11,11 +11,13 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from enum import StrEnum
 from typing import Any
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response, WebSocket
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from . import acp_door
 from . import requests as parse
 from .atomic import as_object
 from .auth import Principal, TokenBook
@@ -40,9 +42,21 @@ _LF = "\n"
 _INTERNAL_MESSAGE = "an error in attendance stopped this request"
 
 
-def build_app(service: SessionService, tokens: TokenBook) -> FastAPI:
+class Listener(StrEnum):
+    """Where an app is served. Only the Unix socket carries the ACP door."""
+
+    SOCKET = "socket"
+    LAN = "lan"
+
+
+def build_app(
+    service: SessionService, tokens: TokenBook, listener: Listener = Listener.LAN
+) -> FastAPI:
     """One app over one service. The caller owns both lifetimes."""
     app = FastAPI(title="attendance", docs_url=None, redoc_url=None, openapi_url=None)
+
+    if listener is Listener.SOCKET:
+        _add_acp_door(app, service, tokens)
 
     @app.exception_handler(ApiError)
     async def _refused(_: Request, error: ApiError) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
@@ -181,6 +195,26 @@ def build_app(service: SessionService, tokens: TokenBook) -> FastAPI:
         )
 
     return app
+
+
+def _add_acp_door(app: FastAPI, service: SessionService, tokens: TokenBook) -> None:
+    @app.websocket("/acp/{family}")
+    async def _acp(websocket: WebSocket, family: str) -> None:  # pyright: ignore[reportUnusedFunction]
+        """Phase 2 plan, row 17. The bearer and the family before any `sbx exec`.
+
+        The upgrade is accepted first, so that a refusal can carry its code.
+        No frame is read before the checks pass.
+        """
+        await websocket.accept()
+
+        try:
+            principal = tokens.identify(websocket.headers.get("authorization"))
+            relay = await service.open_acp_relay(principal, family)
+        except ApiError as error:
+            await websocket.close(code=acp_door.refusal_code(error), reason=error.code.value)
+            return
+
+        await acp_door.pipe(websocket, relay)
 
 
 async def _turn_response(

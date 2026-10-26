@@ -140,8 +140,9 @@ uv run python -m attendance           # serve
 | `SESSIOND_CHANNEL_COMMAND` | how a channel is opened. `{env_file}` comes from the status document. |
 | `SESSIOND_LOG_DIR` | where each family's playpen stderr lands |
 | `SESSIOND_LOCK_STALE_S`, `SESSIOND_LOCK_POLL_S` | the lock beat window and its poll |
+| `SESSIOND_ACP_RELAY_COMMAND` | how one ACP door connection reaches the facade. `{env_file}` comes from the status document. |
 
-Seven token files sit under `<state root>/tokens/`. Five are mode 0600. The
+Eight token files sit under `<state root>/tokens/`. Six are mode 0600. The
 delegate and dispatch tokens are mode 0640, group `agents`, because the
 chaperone reads them as another user. `SIGHUP` reloads them.
 
@@ -159,6 +160,7 @@ chaperone reads them as another user. `SIGHUP` reloads them.
 | `playpen_link.py`, `switching.py`, `channel.py`, `exec_channel.py`, `wire.py` | one sandbox's channel, a switch, the protocol |
 | `supervisor_lock.py` | the proof that no older supervisor holds a sandbox |
 | `acp_link.py`, `acp/schema-v1.json` | the ACP link to one sandbox's facade, and the pinned ACP schema. The service does not use the link yet |
+| `acp_door.py` | `WS /acp/{family}` on the Unix socket: one `acp-relay` per connection, the envelope check, nothing translated |
 | `jobs.py`, `dispatch.py`, `workspace.py` | thin jobs, the dispatch ledger, the per-chat work directory |
 | `family_status.py`, `faults.py` | the status document, the fault file |
 | `tasks.py` | what a task says when it ends with an error |
@@ -175,6 +177,8 @@ misbehaviour there. A test that spawns a process is marked `slow`.
 
 ## Known gaps
 
+- The phase 2 plan names no family kind for the ACP door. `door-acp`
+  reaches attended families only (`auth.py`).
 - The phase 2 plan puts `_creche/beat`, `_creche/shutdown` and the
   `initialize` `_meta` keys in a vector file under `facade/vectors/`. That
   file does not exist yet. `acp_link.py` sends the beat as a request, sends

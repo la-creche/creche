@@ -65,6 +65,9 @@ CLIENT_VERSION = "0.1.0"
 #: one way a value reaches the VM (contract 03 §7.1).
 FACADE_COMMAND = "sbx exec --env-file {env_file} {sandbox} -- creche-facade"
 
+#: The playpen channel's line cap. The ACP door uses it for each frame.
+MAX_ACP_LINE_BYTES = 1_048_576
+
 #: The playpen link's cadence and grace, so the two links behave the same.
 BEAT_INTERVAL_S = PING_INTERVAL_S
 EXIT_WAIT_S = STOP_GRACE_MS / 1_000
@@ -161,16 +164,10 @@ def _no_constant(name: str) -> object:
     raise Malformed(f"{name} is not JSON")
 
 
-def parse_response(text: str) -> Response:
-    """Validate one line as a JSON-RPC response. Raises `Malformed`.
-
-    A request or a notification from the facade is not an answer to this
-    link, so it fails here too.
-    """
+def loads_strict(text: str) -> object:
+    """Strict JSON: no `NaN`, no `Infinity`, no key twice. Raises `Malformed`."""
     try:
-        record: object = json.loads(
-            text, object_pairs_hook=_strict_pairs, parse_constant=_no_constant
-        )
+        return json.loads(text, object_pairs_hook=_strict_pairs, parse_constant=_no_constant)
     except Malformed:
         raise
     except Exception as error:
@@ -178,7 +175,14 @@ def parse_response(text: str) -> Response:
         # raises a plain ValueError.
         raise Malformed("not JSON") from error
 
-    fields = as_object(record)
+
+def parse_response(text: str) -> Response:
+    """Validate one line as a JSON-RPC response. Raises `Malformed`.
+
+    A request or a notification from the facade is not an answer to this
+    link, so it fails here too.
+    """
+    fields = as_object(loads_strict(text))
 
     if fields is None or fields.get("jsonrpc") != JSONRPC:
         raise Malformed("not a JSON-RPC 2.0 object")

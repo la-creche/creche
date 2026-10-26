@@ -144,6 +144,7 @@ PRINCIPALS: Final = (
     "door-dispatch",
     "door-trigger",
     "view-ro",
+    "door-acp",
     "managerd",
 )
 
