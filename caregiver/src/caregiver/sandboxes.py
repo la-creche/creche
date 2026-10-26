@@ -208,6 +208,7 @@ def create_sandbox(
         sandbox=name,
         pep_url=url(Port.PEP),
         litellm_base_url=url(Port.LITELLM),
+        index_root=paths.index_root(family),
     )
     created = record.with_state(SandboxLifecycle.CREATING)
     _put(state_root, family.name, created)

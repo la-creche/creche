@@ -318,15 +318,17 @@ def test_the_env_file_names_the_directories_apply_mounted(caregiver_alone: Careg
     order is the order of the contract, and only the first and the control
     directory are read-write.
 
-    The env file has six lines. The last two give the URL of each plane, on
-    the LAN address of the site.
+    The env file has seven lines. The first names the session store, the
+    first mount. The last two give the URL of each plane, on the LAN address
+    of the site.
     """
     tree = caregiver_alone.tree
     mounts = tree.mounts()
     made = sbx_sandboxes(tree)[SANDBOX]["mounts"]
 
-    assert len(tree.playpen_env().read_text(encoding="utf-8").splitlines()) == 6
+    assert len(tree.playpen_env().read_text(encoding="utf-8").splitlines()) == 7
     assert _env_of(tree.playpen_env()) == {
+        "AGENT_SESSIONS_DIR": made[0]["path"],
         "AGENT_CRED_DIR": str(mounts.creds),
         "AGENT_FAMILY_CONFIG_DIR": str(mounts.config),
         "AGENT_CONTROL_DIR": str(mounts.control),

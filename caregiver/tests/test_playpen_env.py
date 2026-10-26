@@ -17,10 +17,12 @@ import stat
 from pathlib import Path
 
 from caregiver.playpen_env import (
+    INDEX_ROOT_VAR,
     PLAYPEN_ENV_MODE,
     read_playpen_env,
     write_playpen_env,
 )
+from caregiver_helpers import chat_family
 
 from caregiver import paths
 
@@ -32,7 +34,7 @@ PEP_URL = "http://192.0.2.10:8300"
 LITELLM_BASE_URL = "http://192.0.2.10:4000"
 
 
-def write(state_root: Path, sandbox: str = SANDBOX) -> Path:
+def write(state_root: Path, sandbox: str = SANDBOX, index_root: Path | None = None) -> Path:
     path = paths.playpen_env_path(state_root, FAMILY, sandbox)
     write_playpen_env(
         path,
@@ -41,16 +43,18 @@ def write(state_root: Path, sandbox: str = SANDBOX) -> Path:
         sandbox=sandbox,
         pep_url=PEP_URL,
         litellm_base_url=LITELLM_BASE_URL,
+        index_root=index_root,
     )
     return path
 
 
-def test_it_holds_six_lines_in_one_order(tmp_path: Path) -> None:
-    """The three directories, the sandbox, then the URL of each plane: the
-    chaperone first, LiteLLM second."""
+def test_it_holds_seven_lines_in_one_order(tmp_path: Path) -> None:
+    """The sessions directory, the three directories, the sandbox, then the
+    URL of each plane: the chaperone first, LiteLLM second."""
     lines = write(tmp_path).read_text(encoding="utf-8").splitlines()
 
     assert lines == [
+        "AGENT_SESSIONS_DIR=/srv/agents/sessions/chat",
         f"AGENT_CRED_DIR={paths.creds_dir(tmp_path, FAMILY)}",
         f"AGENT_FAMILY_CONFIG_DIR={paths.config_dir(tmp_path, FAMILY)}",
         f"AGENT_CONTROL_DIR={paths.control_dir(tmp_path, FAMILY, SANDBOX)}",
@@ -129,7 +133,7 @@ def test_every_line_is_one_assignment(tmp_path: Path) -> None:
     here, so neither is written."""
     lines = write(tmp_path).read_text(encoding="utf-8").splitlines()
 
-    assert len(lines) == 6
+    assert len(lines) == 7
     assert all(line.count("=") >= 1 and not line.startswith("#") for line in lines)
 
 
@@ -153,3 +157,46 @@ def test_reading_a_file_that_is_not_utf8_yields_nothing(tmp_path: Path) -> None:
     path = tmp_path / "supervisor.env"
     path.write_bytes(b"AGENT_SANDBOX=chat-s1\xff\n")
     assert read_playpen_env(path) == {}
+
+
+def test_it_names_the_sessions_directory_of_the_host(tmp_path: Path) -> None:
+    """The agent module reads its session store from this variable. The
+    store is the host's sessions root, outside the state root."""
+    values = read_playpen_env(write(tmp_path))
+
+    assert values["AGENT_SESSIONS_DIR"] == str(paths.session_dir(FAMILY))
+
+
+def test_an_index_root_is_the_last_line(tmp_path: Path) -> None:
+    lines = write(tmp_path, index_root=paths.INDEX_ROOT).read_text(encoding="utf-8").splitlines()
+
+    assert len(lines) == 8
+    assert lines[-1] == "AGENT_INDEX_ROOT=/srv/agents/state/index"
+
+
+def test_no_index_root_writes_no_index_line(tmp_path: Path) -> None:
+    assert INDEX_ROOT_VAR not in read_playpen_env(write(tmp_path))
+
+
+def test_a_read_only_index_mount_gives_the_index_root() -> None:
+    family = chat_family(files=[{"path": "/srv/agents/state/index", "mode": "ro"}])
+
+    assert paths.index_root(family) == paths.INDEX_ROOT
+
+
+def test_a_family_with_no_index_mount_has_no_index_root() -> None:
+    family = chat_family(files=[{"path": "/srv/agents/vault", "mode": "ro"}])
+
+    assert paths.index_root(family) is None
+
+
+def test_an_index_mount_that_is_not_read_only_gives_no_index_root() -> None:
+    family = chat_family(files=[{"path": "/srv/agents/state/index", "mode": "rw"}])
+
+    assert paths.index_root(family) is None
+
+
+def test_a_mount_under_the_index_root_gives_no_index_root() -> None:
+    family = chat_family(files=[{"path": "/srv/agents/state/index/vault", "mode": "ro"}])
+
+    assert paths.index_root(family) is None

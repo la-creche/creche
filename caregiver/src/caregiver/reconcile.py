@@ -694,7 +694,7 @@ def _replace(
         # missing can never be dialled (contract 05 §4.1.1 rule 4), and this
         # is the only writer that could put it back. `apply_once` republishes
         # for the same reason.
-        steps.publish_playpen_env(state_root, family.name, incoming.id)
+        steps.publish_playpen_env(state_root, family, incoming.id)
 
     mode = (
         diff.switch_mode if diff is not None and diff.switch_mode is not None else SwitchMode.DRAIN

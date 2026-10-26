@@ -297,7 +297,7 @@ def _ensure_sandbox(
         # Republished, not only written at create: a family whose
         # `supervisor.env` went missing would fail every turn, and an apply
         # is the one thing that can put it back.
-        _write_playpen_env(state_root, family.name, live.id)
+        _write_playpen_env(state_root, family, live.id)
         return live, ()
 
     # Contract 01 §3.9: a flavor this host has no image for creates
@@ -320,18 +320,19 @@ def _ensure_sandbox(
     return outcome.record, ()
 
 
-def _write_playpen_env(state_root: Path, family_name: str, sandbox: str) -> None:
+def _write_playpen_env(state_root: Path, family: FamilyFile, sandbox: str) -> None:
     """Contract 03 section 7.1: `sbx exec` forwards no host environment, so
     `--env-file` is the only way the three mount paths reach the
     playpen. sbx mounts each directory at its own HOST path, so the file
     names those paths and rewrites nothing."""
     write_playpen_env(
-        paths.playpen_env_path(state_root, family_name, sandbox),
+        paths.playpen_env_path(state_root, family.name, sandbox),
         state_root=state_root,
-        family=family_name,
+        family=family.name,
         sandbox=sandbox,
         pep_url=url(Port.PEP),
         litellm_base_url=url(Port.LITELLM),
+        index_root=paths.index_root(family),
     )
 
 

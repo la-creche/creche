@@ -769,6 +769,7 @@ class EnvWrite:
     sandbox: str = "chat-s3"
     pep_url: str = _PEP_URL
     litellm_base_url: str = _LITELLM_BASE_URL
+    index_root: str | None = None
 
 
 ENV_WRITES: Final[tuple[EnvWrite, ...]] = (
@@ -778,6 +779,7 @@ ENV_WRITES: Final[tuple[EnvWrite, ...]] = (
     EnvWrite("state-root-final-slash", state_root="/tmp/state/"),
     EnvWrite("state-root-two-slashes", state_root="//net/state"),
     EnvWrite("state-root-dot-segment", state_root="/tmp/./state"),
+    EnvWrite("with-index-root", index_root="/srv/agents/state/index"),
 )
 
 
@@ -789,6 +791,9 @@ def _env_write_vector(write: EnvWrite, scratch: Path) -> Vector:
         "pep_url": write.pep_url,
         "litellm_base_url": write.litellm_base_url,
     }
+    if write.index_root is not None:
+        args["index_root"] = write.index_root
+
     given: dict[str, Json] = {"args": normalize(args)}
     target = scratch / "write" / write.id / "supervisor.env"
     outcome = attempt(
@@ -799,6 +804,7 @@ def _env_write_vector(write: EnvWrite, scratch: Path) -> Vector:
             sandbox=write.sandbox,
             pep_url=write.pep_url,
             litellm_base_url=write.litellm_base_url,
+            index_root=Path(write.index_root) if write.index_root is not None else None,
         )
     )
     if isinstance(outcome, Raised):
@@ -861,9 +867,10 @@ def _playpen_env_surfaces(scratch: Path) -> tuple[Surface, ...]:
             entry="caregiver.playpen_env.write_playpen_env",
             contract=PLAYPEN_ENV_CONTRACT,
             notes=(
-                "The input is the five named arguments of the entry point, as args. "
+                "The input is the named arguments of the entry point, as args. "
                 "state_root is a path. pep_url and litellm_base_url are the URLs of the "
-                "two planes.",
+                "two planes. index_root is a path, and an input with no index_root gives "
+                "None.",
                 "output is the exact bytes of the file that the entry point writes.",
                 "The entry point checks no argument.",
             ),

@@ -137,6 +137,24 @@ def test_it_writes_the_url_of_each_plane_for_the_new_id(
     assert f"AGENT_LITELLM_BASE_URL={url(Port.LITELLM)}\n" in lines
 
 
+def test_it_writes_the_sessions_directory_for_the_new_id(
+    state_root: Path, family: FamilyFile
+) -> None:
+    create(state_root, family, FakeDriver())
+    lines = paths.playpen_env_path(state_root, "chat", "chat-s1").read_text(encoding="utf-8")
+
+    assert "AGENT_SESSIONS_DIR=/srv/agents/sessions/chat\n" in lines
+    assert "AGENT_INDEX_ROOT" not in lines
+
+
+def test_it_writes_the_index_root_of_a_family_that_mounts_it(state_root: Path) -> None:
+    family = chat_family(files=[{"path": "/srv/agents/state/index", "mode": "ro"}])
+    create(state_root, family, FakeDriver())
+    lines = paths.playpen_env_path(state_root, "chat", "chat-s1").read_text(encoding="utf-8")
+
+    assert lines.endswith("AGENT_INDEX_ROOT=/srv/agents/state/index\n")
+
+
 def test_the_allow_list_carries_both_planes(state_root: Path, family: FamilyFile) -> None:
     driver = FakeDriver()
     outcome = create(state_root, family, driver)
