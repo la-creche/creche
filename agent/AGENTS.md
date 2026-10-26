@@ -78,3 +78,14 @@ connection and the `auth` of the LiteLLM provider unwrap it.
   `embed` from the chaperone. The agent takes no endpoint, so the vector
   half refuses with one note and the words half serves
   (`src/query-embed.ts`).
+- Contract 01 §3.8 names other `sandbox_tools` (`find`, `ls`,
+  `codemode`), a default of `read`, `grep`, `find`, `ls`, and `shell` as
+  the only door to `bash`. The owner's decision for row 6: Flue's six
+  names, an empty default, and a refusal for any other name
+  (`runtime_not_valid`). `shell` is read and grants nothing
+  (`src/runtime-config.ts`).
+- With a granted sandbox tool, Flue attaches `local()` at the workspace.
+  Flue then puts the workspace's `AGENTS.md` and a directory listing in
+  the prompt, and offers each skill under `<workspace>/.agents/skills/`.
+  For an empty grant, the agent must attach no sandbox.
+
