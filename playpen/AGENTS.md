@@ -189,8 +189,9 @@ it on a development machine.
     a line with no session and no turn.
 57. Send the code of a launcher error, not its text. Node writes the refused
     value in that text, and the environment of pi holds the credentials.
-58. Each line of the channel is strict JSON. `rust/AGENTS.md`, "JSON", has
-    the rules. `Channel.send` writes each line with `stringifyStrict` of
+58. Each line of the channel is strict JSON. The module doc of
+    `noticeboard/src/noticeboard/strictjson.py` has the rules.
+    `Channel.send` writes each line with `stringifyStrict` of
     `src/strict-json.ts`. Do not write a line of the channel with
     `JSON.stringify`.
     - `boundRecord` cuts a pi record that holds a lone surrogate, or that

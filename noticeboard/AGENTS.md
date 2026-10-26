@@ -197,11 +197,9 @@ prefixed `test_noticeboard_`.
   An audit day of 32 MiB with 64 such lines can thus take about 36 seconds
   for one page.
 - The contracts name RFC 3339 for a time and give no more of its grammar.
-  `rfc3339.py` takes the grammar of the Rust type
-  `creche_contracts::time::Timestamp`. It thus refuses three texts that
+  `rfc3339.py` takes a narrower grammar. It refuses three texts that
   section 5.6 of RFC 3339 permits: a fraction of more than 9 digits, second
-  60 and the year 0000. "Known gaps" of `rust/AGENTS.md` has the same
-  question for the Rust type.
+  60 and the year 0000.
 - `spec.md` §8.1 names no answer for a route parameter that is not an id.
   The route answers the 404 of a path that has no route (`app.py`).
 - `spec.md` §8.3 names no answer for an exception that no reader predicted.

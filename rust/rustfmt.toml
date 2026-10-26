@@ -1,2 +1,0 @@
-# The same width as ruff (pyproject.toml, line-length).
-max_width = 100

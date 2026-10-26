@@ -124,9 +124,6 @@ component's own newest tag.
 - No job of `release.yml` builds or signs an archive. The catalog has no
   binary component. The tag script refuses a binary component that has no
   archive, so such a component gets no tag.
-- A change under `rust/` moves no component today, because no component is a
-  binary component. A change to `rust/Cargo.lock`, `rust/Cargo.toml` or
-  `rust/rust-toolchain.toml` moves every binary component and no other kind.
 - Prose moves no tag. A `.md` file outside `tests/` and `fixtures/` is
   prose. A merge that changes only `playpen/AGENTS.md` makes no tag. The next
   code change to `playpen/` makes one tag, and that tag covers both merges.
@@ -148,56 +145,8 @@ that stacks unrelated changes enlarges the blast radius of a bad one.
 
 ## Removal of a Python package
 
-In the port to Rust, a Rust binary takes the place of a Python package. The
-Python package stays on `main` until each component whose build installed
-it is proven. An agent then creates one pull request that removes the
-package.
-
-Reason: a revert is the way back from a cutover release. That revert needs
-the Python package on `main`.
-
-| Word | Meaning |
-|---|---|
-| cutover release | The release that moves a component from its Python package to its Rust binary. `rust/AGENTS.md` has its rules. |
-| cutover tag | The tag of the cutover release. |
-| cutover commit | The commit of `main` that the cutover tag names. |
-| proof time | The time after the cutover release in which the Rust binary must run with no fault. |
-| removal pull request | The pull request that removes one Python package. |
-| evidence | The data that shows that each check holds for one component. |
-
-### When a component is proven
-
-Six checks decide if a component is proven. Each check must hold:
-
-1. **CI.** The `proc` job and the `rust` job of `release.yml` passed at the
-   cutover commit. In that run, the default command of each service of the
-   component started the Rust binary. `integration/proc/AGENTS.md` has the
-   service table.
-2. **The host.** The ledger entry of the cutover release has the status
-   `succeeded`. Each `verify` row of the component in that entry says `ok`.
-   A release with the status `restored` does not count.
-3. **Time.** The proof time is complete.
-4. **No fault.** In the proof time, each of these three facts holds:
-   - No release of the component has the status `restored` or `failed`.
-   - systemd restarted no unit of the component by itself.
-   - No unit of the component had an exit status other than 0.
-5. **Use.** In the proof time, the component did its usual work on the
-   host. A component that had no work in that time is not proven.
-6. **Defects.** No defect of the Rust version of the component is open with
-   the severity high or medium.
-
-Two lines give the proof time:
-
-- The proof time starts when the cutover release succeeds.
-- The proof time is 7 days of 24 hours each.
-
-When one check does not hold, the component is not proven. No rule gives the
-start of a new proof time. The owner of the repository decides it.
-
-### The removal pull request
-
-One removal pull request removes one Python package. Two lines say who
-does what:
+A removal pull request removes one Python package from `main`. Two lines say
+who does what:
 
 - An agent creates a removal pull request.
 - Only the owner of the repository merges a removal pull request.
@@ -207,17 +156,11 @@ The body of the pull request is the text of
 
 Create the pull request only when each of these three conditions holds:
 
-1. One component or more installed the package in its Python build. Each of
-   those components is proven.
+1. The owner of the repository asked for the removal of the package.
 2. In the component catalog, no row of a venv component names the directory
-   of the package. This applies to the path of a row and to its bundles. The
-   row of a binary component can keep that directory as its path.
+   of the package. This applies to the path of a row and to its bundles.
    `handover/src/handover/catalog.py` holds the catalog.
 3. No `pyproject.toml` of another package names the package.
-
-A package that no component installed in its Python build has no cutover
-release. The six checks thus cannot prove it. Do not create its removal pull
-request until the owner of the repository gives its checks.
 
 The pull request makes these six changes:
 
@@ -234,8 +177,7 @@ The pull request makes these six changes:
    "A frozen file", has the steps. The index then holds the SHA-256 of each
    frozen file, and a test fails for an edit that a person made by hand.
 5. Outside the directory of the package, it removes each test that imports
-   the package. It removes each stand-in that only the Python service
-   needed.
+   the package. It removes each stand-in that only the package needed.
 6. It changes or removes each line of a rule file that names a file of the
    package. It does the same for each comment of a unit file under
    `systemd/`. A rule file is an `AGENTS.md` file or this file.
@@ -265,27 +207,20 @@ a release. The body of the pull request thus shows what the merge starts:
 This repository is public, and each pull request is public too. The
 sanitization rule of `AGENTS.md` applies to the text of a removal pull
 request. That text names no host and no family of a deployment. It
-describes no defect, and it holds no evidence.
-
-Keep the evidence in a private place. The template has one table row for
-each component. On that row, give only a link to the evidence, for the
-owner. The link names no host, no user and no domain. A file name is
-sufficient.
+describes no defect.
 
 The way back from a removal is a revert of the removal pull request.
 
 ### Known gaps
 
-Four points of this section wait for the owner of the repository:
+Two points of this section wait for the owner of the repository:
 
-1. The length of the proof time. One line of this section holds that value.
-2. Who merges a removal pull request. One line of this section holds that
-   value.
-3. The start of a new proof time after a check that does not hold.
-4. The checks for a package that no component installed in its Python
-   build.
-
-The template holds neither of the two values.
+1. Who merges a removal pull request. One line of this section holds that
+   value. The template does not hold it.
+2. When a package is ready for its removal. No rule gives that point. The
+   reading here is the most conservative one: an agent creates a removal
+   pull request only when the owner asks for it. Condition 1 holds that
+   reading.
 
 ## The docs rule
 

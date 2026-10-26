@@ -121,7 +121,8 @@ A fake embedder. No TEI, no sandbox. The tests of the TEI client give
   1 MiB or less. An answer of TEI can have up to `ANSWER_MAX_BYTES` bytes.
   For a longer refused answer, `strictjson.py` names the fault that the
   standard decoder finds, and the two words can differ.
-- `rust/AGENTS.md`, "JSON", says that a service records a notice for the
-  operator when the strict reader refuses a text. It does not say what a
-  program in a sandbox does. `index-scope` writes the log line of "The
+- A service records a notice for the operator when the strict reader
+  refuses a text. `noticeboard/src/noticeboard/notices.py` writes such a
+  notice, and `bin/AGENTS.md`, "The watchdog", sends it. No rule says what
+  a program in a sandbox does. `index-scope` writes the log line of "The
   answers of TEI" and no notice. Its sandbox has no state root and no hook.
