@@ -32,6 +32,7 @@ from attendance_harness import (
     wait_until,
     write_status,
 )
+from creche_vectors import meta_key, value_fields
 from fake_facade import ANSWER, ERROR_MESSAGE, FacadeFleet, FakeFacade, PromptMode
 
 from attendance.service import SessionService  # isort: skip
@@ -138,7 +139,7 @@ async def test_the_job_id_rides_on_session_new(tmp_path: Path) -> None:
     body = await harness.delegate(harness.call())
     params = harness.new_session_params()
 
-    assert params["_meta"] == {"creche/job": body["session_id"]}
+    assert params["_meta"] == {meta_key("job"): body["session_id"]}
     assert params["cwd"] == sandbox_sessions_mount(harness.config.sessions_root, ORACLE)
     assert params["mcpServers"] == []
     await harness.stop()
@@ -333,9 +334,10 @@ async def test_the_delegation_rides_on_the_prompt(tmp_path: Path) -> None:
     delegation_id = new_ulid()
     await harness.delegate(harness.call(delegation_id=delegation_id))
 
-    assert harness.prompt_meta() == {
-        "creche/delegation": {"id": delegation_id, "caller_session": CHAT_SESSION}
-    }
+    sent = {"id": delegation_id, "caller_session": CHAT_SESSION}
+
+    assert harness.prompt_meta() == {meta_key("delegation"): sent}
+    assert set(sent) == value_fields("delegation")
     await harness.stop()
 
 
@@ -348,7 +350,7 @@ async def test_a_call_with_no_caller_session_still_sends_the_delegation_id(
     await harness.delegate(harness.call(owner=None, delegation_id=delegation_id))
 
     assert harness.prompt_meta() == {
-        "creche/delegation": {"id": delegation_id, "caller_session": None}
+        meta_key("delegation"): {"id": delegation_id, "caller_session": None}
     }
     await harness.stop()
 

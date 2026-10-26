@@ -40,5 +40,45 @@
   "shutdown": {
     "notification": { "jsonrpc": "2.0", "method": "_creche/shutdown", "params": {} },
     "exit_status": 0
+  },
+  "session_meta": {
+    "about": "The creche keys of `_meta` that attendance sends. `method` names the one message that carries each key: `session/prompt` is the first prompt of the job. The facade checks the shape, keeps the value in `column` of `creche_sessions`, and never puts it in the model's prompt. `info_update` is what the facade sends at the end of each turn. It shows each key, and a session sends only the keys that it holds.",
+    "job": {
+      "key": "creche/job",
+      "method": "session/new",
+      "column": "job_id",
+      "value": "auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK"
+    },
+    "delegation": {
+      "key": "creche/delegation",
+      "method": "session/prompt",
+      "column": "delegation",
+      "value": { "id": "01K5J9QWB2M4N6Q8S0V2W4Y6A8", "caller_session": "owui-3f2a9c41-77b0-4a1e-9a4c-1d0e5f8b2c33" }
+    },
+    "trigger": {
+      "key": "creche/trigger",
+      "method": "session/prompt",
+      "column": "trigger_json",
+      "value": {
+        "kind": "dispatch",
+        "name": "scrum-lead",
+        "fired_at": "2026-10-25T12:00:00Z",
+        "chain": ["chat", "scrum-lead", "issue-worker"]
+      }
+    },
+    "info_update": {
+      "sessionUpdate": "session_info_update",
+      "updatedAt": "2026-10-25T12:00:05.000Z",
+      "_meta": {
+        "creche/job": "auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK",
+        "creche/delegation": "01K5J9QWB2M4N6Q8S0V2W4Y6A8",
+        "creche/trigger": {
+          "kind": "dispatch",
+          "name": "scrum-lead",
+          "fired_at": "2026-10-25T12:00:00Z",
+          "chain": ["chat", "scrum-lead", "issue-worker"]
+        }
+      }
+    }
   }
 }
