@@ -1,7 +1,7 @@
 """The chaperone is a binary component of its own repository.
 
 The Rust chaperone lives in the chaperone repository. That repository's
-`release.yml` builds two programs, packs them into one archive, signs it
+`release.yml` builds seven programs, packs them into one archive, signs it
 and makes the tag `chaperone-v<version>`. The catalog row says where the
 executor finds the manifest, which workflow signed the archive and which
 paths move the component.
@@ -39,7 +39,7 @@ MANIFEST = HERE / "handover_chaperone_component.toml"
 OWNER = "example-owner"
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 
-#: The two build commands of `release.yml` in the chaperone repository.
+#: The seven build commands of `release.yml` in the chaperone repository.
 BUILD = (
     (
         "cargo",
@@ -60,6 +60,56 @@ BUILD = (
         "crates/run-as",
         "--bin",
         "chaperone-as",
+    ),
+    (
+        "cargo",
+        "install",
+        "--locked",
+        "--no-track",
+        "--path",
+        "plugins/effect/included/attendance",
+        "--bin",
+        "chaperone-attendance",
+    ),
+    (
+        "cargo",
+        "install",
+        "--locked",
+        "--no-track",
+        "--path",
+        "plugins/default/deny-all",
+        "--bin",
+        "chaperone-deny-all",
+    ),
+    (
+        "cargo",
+        "install",
+        "--locked",
+        "--no-track",
+        "--path",
+        "plugins/effect/included/ha-approval",
+        "--bin",
+        "chaperone-ha-approval",
+    ),
+    (
+        "cargo",
+        "install",
+        "--locked",
+        "--no-track",
+        "--path",
+        "plugins/effect/included/ha-call",
+        "--bin",
+        "chaperone-ha-call",
+    ),
+    (
+        "cargo",
+        "install",
+        "--locked",
+        "--no-track",
+        "--path",
+        "plugins/effect/included/release",
+        "--bin",
+        "chaperone-release",
     ),
 )
 

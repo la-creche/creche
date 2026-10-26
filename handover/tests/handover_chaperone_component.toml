@@ -14,6 +14,11 @@ runs_as = "root"
 build = [
   ["cargo", "install", "--locked", "--no-track", "--path", "crates/chaperone", "--bin", "chaperone"],
   ["cargo", "install", "--locked", "--no-track", "--path", "crates/run-as", "--bin", "chaperone-as"],
+  ["cargo", "install", "--locked", "--no-track", "--path", "plugins/effect/included/attendance", "--bin", "chaperone-attendance"],
+  ["cargo", "install", "--locked", "--no-track", "--path", "plugins/default/deny-all", "--bin", "chaperone-deny-all"],
+  ["cargo", "install", "--locked", "--no-track", "--path", "plugins/effect/included/ha-approval", "--bin", "chaperone-ha-approval"],
+  ["cargo", "install", "--locked", "--no-track", "--path", "plugins/effect/included/ha-call", "--bin", "chaperone-ha-call"],
+  ["cargo", "install", "--locked", "--no-track", "--path", "plugins/effect/included/release", "--bin", "chaperone-release"],
 ]
 install.to = "/opt/components/chaperone"
 install.prev = "/opt/components/chaperone.prev"

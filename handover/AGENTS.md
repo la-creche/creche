@@ -369,13 +369,16 @@ The catalog row of `chaperone` is `CatalogRow("chaperone", Repo.CHAPERONE,
    the tag.
 2. `tests/handover_chaperone_component.toml` holds a copy of the manifest.
    A test holds the copy equal to the text below.
-3. The `release.yml` workflow of the chaperone repository builds the two
+3. The `release.yml` workflow of the chaperone repository builds the seven
    programs and packs them into one archive. It signs the archive and makes
    the tag `chaperone-v<version>`. `bin/allocate-tags.sh` does not run in
    that repository.
 4. The archive is `chaperone-x86_64-unknown-linux-musl.tar.gz`. It holds
-   `chaperone/bin/chaperone` and `chaperone/bin/chaperone-as`. The bundle
-   is the name of the archive with `.sigstore.json` at the end.
+   seven members: `chaperone/bin/chaperone`, `chaperone/bin/chaperone-as`,
+   `chaperone/bin/chaperone-attendance`, `chaperone/bin/chaperone-deny-all`,
+   `chaperone/bin/chaperone-ha-approval`, `chaperone/bin/chaperone-ha-call`,
+   and `chaperone/bin/chaperone-release`. The bundle is the name of the
+   archive with `.sigstore.json` at the end.
 5. Check P6 takes a signature only from `release.yml` of the chaperone
    repository, on `main` (`catalog.RELEASE_WORKFLOW`).
 6. The Cargo workspace of the chaperone repository is at its root:
@@ -400,6 +403,11 @@ runs_as = "root"
 build = [
   ["cargo", "install", "--locked", "--no-track", "--path", "crates/chaperone", "--bin", "chaperone"],
   ["cargo", "install", "--locked", "--no-track", "--path", "crates/run-as", "--bin", "chaperone-as"],
+  ["cargo", "install", "--locked", "--no-track", "--path", "plugins/effect/included/attendance", "--bin", "chaperone-attendance"],
+  ["cargo", "install", "--locked", "--no-track", "--path", "plugins/default/deny-all", "--bin", "chaperone-deny-all"],
+  ["cargo", "install", "--locked", "--no-track", "--path", "plugins/effect/included/ha-approval", "--bin", "chaperone-ha-approval"],
+  ["cargo", "install", "--locked", "--no-track", "--path", "plugins/effect/included/ha-call", "--bin", "chaperone-ha-call"],
+  ["cargo", "install", "--locked", "--no-track", "--path", "plugins/effect/included/release", "--bin", "chaperone-release"],
 ]
 install.to = "/opt/components/chaperone"
 install.prev = "/opt/components/chaperone.prev"
