@@ -287,7 +287,7 @@ each one, and each one runs to its end.
 | `test_proc_switch.py` | door and `attendance` | the switch call of contract 05 §5, with a test in the place of `caregiver` |
 | `test_proc_status.py` | door and `attendance` | what the readers do with the status document and the config mount |
 | `test_proc_pi_events.py` | door and `attendance` | the journal line of a pi event that holds a lone surrogate |
-| `test_proc_delegate.py` | chaperone and `attendance` | the delegate path of contract 04 §7, the manifest and the audit |
+| `test_proc_delegate.py` | chaperone and `attendance` | the manifest and the refusals of contract 04 §7. The job runs over ACP since phase 2 row 18 |
 | `test_proc_caregiver_stage2.py` | the house | the stage 2 scenarios, with the names of the old suite |
 | `test_proc_caregiver_start.py` | `caregiver` alone, and the house | a start, a refused start, a signal, a kill, and the verbs that run to an end |
 | `test_proc_caregiver_files.py` | `caregiver` alone, `caregiver` with the chaperone, and the house | each file that `caregiver` publishes, read as the next program reads it, and the seams of `integration/tests_manager` that assert on a file |

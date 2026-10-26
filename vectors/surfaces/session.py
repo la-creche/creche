@@ -293,7 +293,6 @@ ROUTES: Final[tuple[Route, ...]] = (
         (
             _NOTE_PATH,
             _NOTE_TIME,
-            "value.delegation is always null. No body carries one.",
         ),
     ),
     Route(

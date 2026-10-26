@@ -26,7 +26,7 @@ from .ids import (
     is_session,
     is_ulid,
 )
-from .jobs import MESSAGE_MAX_BYTES, Delegation
+from .jobs import MESSAGE_MAX_BYTES
 from .leases import Intent
 from .models import (
     CHAIN_MAX_FAMILIES,
@@ -103,9 +103,6 @@ class RunTurnRequest:
     trigger: Trigger | None = None
     deadline_s: int = DEFAULT_DEADLINE_S
     labels: dict[str, str] = field(default_factory=dict[str, str])
-    # The delegate door's own field. No §5.4 body carries one: the PEP mints
-    # the id (contract 04 §7.4) and `read_delegate` is what fills this in.
-    delegation: Delegation | None = None
 
 
 @dataclass(slots=True)

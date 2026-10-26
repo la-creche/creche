@@ -18,7 +18,6 @@ from dataclasses import dataclass
 from typing import Any, Final
 
 from attendance.branching import Branch, Decision
-from attendance.jobs import Delegation
 from attendance.workspace import CODE_SANDBOX_FAMILY, workspace_of
 
 from attendance import wire
@@ -888,8 +887,8 @@ _OWNER: Final = "owui-3f2a9c41-77b0-4a1e-9a4c-1d0e5f8b2c33"
 _DELEGATION_ID: Final = "01JBQ7WZ0X4T9V6K2H8M3N5PQS"
 _HOST_WORKSPACE: Final = workspace_of(CODE_SANDBOX_FAMILY, _OWNER)
 _HOST_BRANCH: Final = Decision(Branch.FORK, fork_from="e-4").wire_branch
-_HOST_DELEGATION: Final = Delegation(_DELEGATION_ID, "chat", _OWNER).to_channel()
-_HOST_DELEGATION_NO_CALLER: Final = Delegation(_DELEGATION_ID, "chat").to_channel()
+_HOST_DELEGATION: Final = {"id": _DELEGATION_ID, "caller_session": _OWNER}
+_HOST_DELEGATION_NO_CALLER: Final = {"id": _DELEGATION_ID, "caller_session": None}
 
 BUILDS: Final[tuple[Build, ...]] = (
     Build(
@@ -1050,12 +1049,11 @@ def surfaces() -> tuple[Surface, ...]:
                 "A builder keeps the key order of an object it is given. Every object "
                 "inside args has its keys in sorted order, with one exception.",
                 "The exception is the delegation of a vector whose id starts with "
-                "start-turn-host-. The host makes that object with "
-                "attendance.jobs.Delegation.to_channel, which writes the key id and then "
-                "the key caller_session.",
+                "start-turn-host-. The host wrote the key id and then the key "
+                "caller_session.",
                 "In a vector whose id holds host-shapes, workspace, branch and delegation "
                 "are the objects that the host makes: attendance.workspace.workspace_of, "
-                "attendance.branching.Decision.wire_branch and to_channel.",
+                "attendance.branching.Decision.wire_branch and the delegation above.",
                 "output is the exact line the host writes, with its LF.",
                 "A refused vector is an input for which the entry point raises ValueError. "
                 "Each caller of the entry point catches that type.",

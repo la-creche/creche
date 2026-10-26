@@ -18,14 +18,24 @@ from attendance.acp_link import (
     EXIT_WAIT_S,
     FACADE_COMMAND,
     METHOD_BEAT,
+    METHOD_CANCEL,
+    METHOD_NEW_SESSION,
+    METHOD_PROMPT,
     METHOD_SHUTDOWN,
     SCHEMA_FILE,
+    AcpCallFailed,
     AcpHandshakeError,
     AcpLink,
+    AcpLinkLost,
     AgentAnswer,
     LinkState,
     OrphanFacade,
+    PromptEnd,
+    StopReason,
+    cancel_notice,
     initialize_request,
+    new_session_request,
+    prompt_request,
 )
 from attendance.atomic import write_json
 from attendance.channel import Channel, FakeChannel, SandboxDial
@@ -35,6 +45,7 @@ from attendance.paths import playpen_lock_file
 from attendance.playpen_link import EXIT_WAIT_S as PLAYPEN_EXIT_WAIT_S
 from attendance.wire import PING_INTERVAL_S
 from attendance_harness import FAMILY, SANDBOX
+from fake_facade import ANSWER, ERROR_CODE, FacadeFleet, PromptMode
 
 PINNED_SDK = "2.0.2"
 PINNED_SHA256 = "4bcd1d2051ff7ed379bd9b234fb9b09c5ab9245478698e9fab805bd9b52a33a6"
@@ -294,4 +305,154 @@ async def test_a_facade_that_writes_garbage_is_lost(tmp_path: Path) -> None:
     await link.start(dial)
     await until(lambda: fleet.lost != [], 5.0)
 
+    assert fleet.lost == [SANDBOX]
+
+
+# ------------------------------------------------------- client calls
+
+
+async def served_link(
+    tmp_path: Path, mode: PromptMode = PromptMode.OK
+) -> tuple[AcpLink, FacadeFleet, Fleet]:
+    """A link whose far side is `FakeFacade`, in this process."""
+    facades = FacadeFleet(prompt_mode=mode)
+    fleet = Fleet(tmp_path)
+    link = AcpLink(
+        FAMILY, facades.factory, fleet.faults, tmp_path, fleet.on_lost, exit_wait_s=SHORT_S
+    )
+    await link.start(SandboxDial(SANDBOX, "/env"))
+    return link, facades, fleet
+
+
+def test_the_client_calls_fit_the_schema() -> None:
+    defs = json.loads(SCHEMA_FILE.read_text())["$defs"]
+    calls = {
+        "NewSessionRequest": new_session_request(1, "/srv/work", {"creche/job": "job-1"}),
+        "PromptRequest": prompt_request(2, "sess-1", "hello", {"creche/trigger": {}}),
+        "CancelNotification": cancel_notice("sess-1"),
+    }
+
+    for name, call in calls.items():
+        schema = defs[name]
+        params = call["params"]
+
+        assert set(schema["required"]) <= set(params), name
+        assert set(params) <= set(schema["properties"]), name
+
+    assert calls["NewSessionRequest"]["method"] == METHOD_NEW_SESSION
+    assert calls["PromptRequest"]["method"] == METHOD_PROMPT
+    assert calls["PromptRequest"]["params"]["prompt"] == [{"type": "text", "text": "hello"}]
+    assert "id" not in calls["CancelNotification"]
+    assert {one["const"] for one in defs["StopReason"]["oneOf"]} == {
+        reason.value for reason in StopReason
+    }
+
+
+async def test_a_prompt_collects_the_chunks_until_end_turn(tmp_path: Path) -> None:
+    link, facades, _ = await served_link(tmp_path)
+
+    session = await link.new_session("/srv/work", {"creche/job": "job-1"})
+    end = await link.prompt(session, "When was the boiler serviced?", None)
+
+    assert end == PromptEnd(stop_reason=StopReason.END_TURN, text=ANSWER)
+    assert facades.facades[SANDBOX].methods == [
+        "initialize",
+        METHOD_NEW_SESSION,
+        METHOD_PROMPT,
+    ]
+    await link.stop()
+    await facades.stop()
+
+
+async def test_a_json_rpc_error_raises_call_failed(tmp_path: Path) -> None:
+    link, facades, fleet = await served_link(tmp_path, PromptMode.ERROR)
+    session = await link.new_session("/srv/work", None)
+
+    with pytest.raises(AcpCallFailed) as refused:
+        await link.prompt(session, "hello", None)
+
+    assert refused.value.code == ERROR_CODE
+    assert link.status.state is LinkState.READY
+    assert fleet.lost == []
+    await link.stop()
+    await facades.stop()
+
+
+async def test_a_link_lost_mid_prompt_raises_link_lost(tmp_path: Path) -> None:
+    link, facades, fleet = await served_link(tmp_path, PromptMode.LOSE)
+    session = await link.new_session("/srv/work", None)
+
+    with pytest.raises(AcpLinkLost):
+        await link.prompt(session, "hello", None)
+
+    await until(lambda: fleet.lost != [])
+    assert link.status.state is LinkState.CHANNEL_LOST
+    await facades.stop()
+
+
+async def test_cancel_ends_a_held_prompt_with_cancelled(tmp_path: Path) -> None:
+    link, facades, _ = await served_link(tmp_path, PromptMode.HANG)
+    session = await link.new_session("/srv/work", None)
+    prompt = asyncio.create_task(link.prompt(session, "hello", None))
+    await until(lambda: session in facades.facades[SANDBOX].held)
+
+    await link.cancel(session)
+
+    assert (await prompt).stop_reason is StopReason.CANCELLED
+    assert facades.facades[SANDBOX].methods[-1] == METHOD_CANCEL
+    await link.stop()
+    await facades.stop()
+
+
+async def test_a_late_answer_to_an_abandoned_prompt_is_dropped(tmp_path: Path) -> None:
+    link, facades, fleet = await served_link(tmp_path, PromptMode.HOLD)
+    session = await link.new_session("/srv/work", None)
+    prompt = asyncio.create_task(link.prompt(session, "hello", None))
+    await until(lambda: session in facades.facades[SANDBOX].held)
+
+    prompt.cancel()
+    await asyncio.gather(prompt, return_exceptions=True)
+    await facades.settle(SANDBOX, session)
+    again = await link.new_session("/srv/work", None)
+
+    assert again != session
+    assert fleet.lost == []
+    assert link.status.state is LinkState.READY
+    await link.stop()
+    await facades.stop()
+
+
+async def test_an_update_for_a_session_of_no_call_ends_the_link(tmp_path: Path) -> None:
+    link, facades, fleet = await served_link(tmp_path)
+    update = {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "x"}}
+    notice = {"jsonrpc": "2.0", "method": "session/update", "params": {}}
+    notice["params"] = {"sessionId": "sess-99", "update": update}
+
+    await facades.channels[SANDBOX].feed(json.dumps(notice))
+    await until(lambda: fleet.lost != [])
+
+    assert [fault.code for fault in fleet.faults.open_faults(FAMILY)] == [
+        FaultCode.PROTOCOL_VIOLATION
+    ]
+    await facades.stop()
+
+
+@pytest.mark.parametrize(
+    "result",
+    [{}, {"sessionId": 7}, {"sessionId": ""}],
+    ids=["no_id", "number", "empty"],
+)
+async def test_a_new_session_answer_without_an_id_ends_the_link(
+    tmp_path: Path, result: dict[str, Any]
+) -> None:
+    fleet = Fleet(tmp_path)
+    link = await open_link(tmp_path, fleet)
+    call = asyncio.create_task(link.new_session("/srv/work", None))
+
+    await answer(fleet.channels[SANDBOX], result)
+
+    with pytest.raises(AcpLinkLost):
+        await call
+
+    await until(lambda: fleet.lost != [])
     assert fleet.lost == [SANDBOX]

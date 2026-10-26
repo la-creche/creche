@@ -12,6 +12,10 @@ link sent. Any other line ends the link in `channel_lost`, with a
 This link parses the envelope and the answers to its own calls only. The
 schema of the pinned SDK sits in `acp/schema-v1.json`, and the tests tie
 these shapes to it.
+
+The link is also the client of one job: `new_session`, `prompt` and
+`cancel`. A `session/update` notification is read for a session that this
+link made, and only its `agent_message_chunk` text is kept.
 """
 
 from __future__ import annotations
@@ -20,14 +24,16 @@ import asyncio
 import contextlib
 import json
 import logging
+from collections import deque
 from collections.abc import Awaitable, Callable, Coroutine
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 from .atomic import as_object
 from .channel import Channel, ChannelClosed, SandboxDial
+from .config import DEFAULT_FACADE_COMMAND
 from .faults import FaultCode, FaultReporter
 from .paths import playpen_lock_file
 from .supervisor_lock import wait_out_lock
@@ -39,6 +45,7 @@ from .wire import (
     MISSED_PONGS_ALLOWED,
     PING_INTERVAL_S,
     STOP_GRACE_MS,
+    cut_bytes,
 )
 
 _LOG = logging.getLogger("attendance")
@@ -58,12 +65,17 @@ METHOD_INITIALIZE = "initialize"
 # `_meta`. When the vector file lands, the tests read it and these change.
 METHOD_BEAT = "_creche/beat"
 METHOD_SHUTDOWN = "_creche/shutdown"
+METHOD_NEW_SESSION = "session/new"
+METHOD_PROMPT = "session/prompt"
+METHOD_CANCEL = "session/cancel"
+METHOD_UPDATE = "session/update"
+UPDATE_MESSAGE_CHUNK = "agent_message_chunk"
 CLIENT_NAME = "attendance"
 CLIENT_VERSION = "0.1.0"
 
 #: The same `sbx exec` shape as the playpen's channel. The env file is the
 #: one way a value reaches the VM (contract 03 §7.1).
-FACADE_COMMAND = "sbx exec --env-file {env_file} {sandbox} -- creche-facade"
+FACADE_COMMAND = DEFAULT_FACADE_COMMAND
 
 #: The playpen channel's line cap. The ACP door uses it for each frame.
 MAX_ACP_LINE_BYTES = 1_048_576
@@ -72,7 +84,18 @@ MAX_ACP_LINE_BYTES = 1_048_576
 BEAT_INTERVAL_S = PING_INTERVAL_S
 EXIT_WAIT_S = STOP_GRACE_MS / 1_000
 
+#: The most text one prompt collects. The rest of the chunks are dropped.
+MAX_ANSWER_BYTES = 1_048_576
+
+#: The longest session id this link takes from the facade.
+MAX_SESSION_ID_BYTES = 256
+
+#: How many abandoned request ids and ended sessions this link remembers, so
+#: that a late answer or update for one of them is dropped, not a violation.
+MAX_RETIRED = 256
+
 _RESPONSE_KEYS = frozenset({"jsonrpc", "id", "result", "error"})
+_NOTICE_KEYS = frozenset({"jsonrpc", "method", "params"})
 _ERROR_KEYS = frozenset({"code", "message", "data"})
 
 
@@ -86,6 +109,29 @@ class _Mismatch(AcpHandshakeError):
 
 class OrphanFacade(Exception):
     """An older supervisor still beats this sandbox's lock."""
+
+
+class AcpLinkLost(Exception):
+    """The link ended before the facade answered this call."""
+
+
+class AcpCallFailed(Exception):
+    """The facade answered this call with a JSON-RPC error."""
+
+    def __init__(self, code: int, message: str) -> None:
+        super().__init__(f"{code}: {message}")
+        self.code = code
+        self.message = message
+
+
+class StopReason(StrEnum):
+    """ACP v1's stop reasons of a prompt turn."""
+
+    END_TURN = "end_turn"
+    MAX_TOKENS = "max_tokens"
+    MAX_TURN_REQUESTS = "max_turn_requests"
+    REFUSAL = "refusal"
+    CANCELLED = "cancelled"
 
 
 class LinkState(StrEnum):
@@ -126,6 +172,48 @@ class Response:
     error: RpcError | None = None
 
 
+@dataclass(slots=True, frozen=True)
+class Notice:
+    """One JSON-RPC notification from the facade."""
+
+    method: str
+    params: dict[str, Any]
+
+
+@dataclass(slots=True, frozen=True)
+class PromptEnd:
+    """How one `session/prompt` ended, and the text it streamed."""
+
+    stop_reason: StopReason
+    text: str
+
+
+@dataclass(slots=True)
+class _Call:
+    """One request in flight: its method decides how the answer is read."""
+
+    method: str
+    answer: asyncio.Future[object]
+
+
+@dataclass(slots=True)
+class _Collect:
+    """The text of one prompt in flight."""
+
+    parts: list[str] = field(default_factory=list[str])
+    size: int = 0
+
+    def add(self, text: str) -> None:
+        room = MAX_ANSWER_BYTES - self.size
+
+        if room <= 0:
+            return
+
+        kept = cut_bytes(text, room)
+        self.parts.append(kept)
+        self.size += len(kept.encode("utf-8", "surrogatepass"))
+
+
 class Malformed(Exception):
     """A line from the facade failed the envelope check."""
 
@@ -149,6 +237,34 @@ def initialize_request(request_id: int) -> dict[str, Any]:
             "clientInfo": {"name": CLIENT_NAME, "version": CLIENT_VERSION},
         },
     }
+
+
+def new_session_request(request_id: int, cwd: str, meta: dict[str, Any] | None) -> dict[str, Any]:
+    """`session/new`. The agent reaches its tools by itself: no MCP server."""
+    params: dict[str, Any] = {"cwd": cwd, "mcpServers": []}
+    return _request(METHOD_NEW_SESSION, request_id, params, meta)
+
+
+def prompt_request(
+    request_id: int, session: str, text: str, meta: dict[str, Any] | None
+) -> dict[str, Any]:
+    """`session/prompt` with one text block."""
+    params: dict[str, Any] = {"sessionId": session, "prompt": [{"type": "text", "text": text}]}
+    return _request(METHOD_PROMPT, request_id, params, meta)
+
+
+def cancel_notice(session: str) -> dict[str, Any]:
+    """`session/cancel`, a notification."""
+    return {"jsonrpc": JSONRPC, "method": METHOD_CANCEL, "params": {"sessionId": session}}
+
+
+def _request(
+    method: str, request_id: int, params: dict[str, Any], meta: dict[str, Any] | None
+) -> dict[str, Any]:
+    if meta is not None:
+        params["_meta"] = meta
+
+    return {"jsonrpc": JSONRPC, "id": request_id, "method": method, "params": params}
 
 
 def _strict_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -199,6 +315,33 @@ def parse_response(text: str) -> Response:
         return Response(id=request_id, error=_rpc_error(fields["error"]))
 
     return Response(id=request_id, result=fields["result"])
+
+
+def parse_message(text: str) -> Response | Notice:
+    """One line after the handshake: a response, or a notification.
+
+    A request from the facade is neither, so it fails here. This client
+    offers no method that the facade may call.
+    """
+    fields = as_object(loads_strict(text))
+
+    if fields is not None and "method" in fields and "id" not in fields:
+        return _notice(fields)
+
+    return parse_response(text)
+
+
+def _notice(fields: dict[str, Any]) -> Notice:
+    method = fields.get("method")
+    params = as_object(fields.get("params"))
+
+    if fields.get("jsonrpc") != JSONRPC or not set(fields) <= _NOTICE_KEYS:
+        raise Malformed("not a JSON-RPC 2.0 notification")
+
+    if not isinstance(method, str) or params is None:
+        raise Malformed("a notification with no method or no params")
+
+    return Notice(method=method, params=params)
 
 
 def _rpc_error(value: object) -> RpcError:
@@ -273,6 +416,11 @@ class AcpLink:
         self._next_id = 0
         self._beats: set[int] = set()
         self._loops: list[asyncio.Task[None]] = []
+        self._calls: dict[int, _Call] = {}
+        self._prompts: dict[str, _Collect] = {}
+        self._sessions: set[str] = set()
+        self._dropped_ids: deque[int] = deque(maxlen=MAX_RETIRED)
+        self._ended_sessions: deque[str] = deque(maxlen=MAX_RETIRED)
 
     @property
     def status(self) -> LinkStatus:
@@ -313,10 +461,79 @@ class AcpLink:
         self._loops = [self._spawn(self._read_loop(channel)), self._spawn(self._beat_loop())]
         return agent
 
+    async def new_session(self, cwd: str, meta: dict[str, Any] | None) -> str:
+        """`session/new`. The facade mints the id. Raises `AcpLinkLost` or
+        `AcpCallFailed`."""
+        request_id = self._mint_id()
+        answer = await self._call(
+            METHOD_NEW_SESSION, request_id, new_session_request(request_id, cwd, meta)
+        )
+        session = str(answer)
+        self._sessions.add(session)
+        return session
+
+    async def prompt(self, session: str, text: str, meta: dict[str, Any] | None) -> PromptEnd:
+        """`session/prompt`, and the `agent_message_chunk` text until it answers.
+
+        A cancel of the awaiting task abandons the request: its late answer,
+        and each late update of the session, is dropped.
+        """
+        if session not in self._sessions:
+            raise ValueError(f"session {session} was not made on this link")
+
+        request_id = self._mint_id()
+        collect = _Collect()
+        self._prompts[session] = collect
+
+        try:
+            reason = await self._call(
+                METHOD_PROMPT, request_id, prompt_request(request_id, session, text, meta)
+            )
+        finally:
+            self._prompts.pop(session, None)
+
+        return PromptEnd(stop_reason=StopReason(str(reason)), text="".join(collect.parts))
+
+    async def cancel(self, session: str) -> None:
+        """`session/cancel`. The prompt then answers `cancelled`."""
+        channel = self._channel
+
+        if channel is None or self._state is not LinkState.READY:
+            return
+
+        with contextlib.suppress(ChannelClosed, ValueError):
+            await channel.send(_line(cancel_notice(session)))
+
+    def end_session(self, session: str) -> None:
+        """Forget a session whose job ended. A late update of it is dropped."""
+        if session in self._sessions:
+            self._sessions.discard(session)
+            self._ended_sessions.append(session)
+
+    async def _call(self, method: str, request_id: int, message: dict[str, Any]) -> object:
+        channel = self._channel
+
+        if channel is None or self._state is not LinkState.READY:
+            raise AcpLinkLost(f"the link is {self._state.value}")
+
+        answer: asyncio.Future[object] = asyncio.get_running_loop().create_future()
+        self._calls[request_id] = _Call(method=method, answer=answer)
+
+        try:
+            await channel.send(_line(message))
+            return await answer
+        except ChannelClosed as error:
+            raise AcpLinkLost("the channel closed") from error
+        finally:
+            # Still listed means no answer came: a late one is dropped.
+            if self._calls.pop(request_id, None) is not None:
+                self._dropped_ids.append(request_id)
+
     async def stop(self) -> None:
         """Send `_creche/shutdown`, then wait the playpen's grace for the exit."""
         channel = self._channel
         self._state = LinkState.STOPPED
+        self._fail_calls("the link stopped")
         await self._stop_loops()
 
         if channel is None:
@@ -370,18 +587,69 @@ class AcpLink:
                 if raw.text is None:
                     raise Malformed(f"refused line: {raw.refusal}")
 
-                self._settle(parse_response(raw.text))
+                message = parse_message(raw.text)
+
+                if isinstance(message, Notice):
+                    self._read_notice(message)
+                else:
+                    self._settle(message)
             except Malformed as error:
                 self._fault(FaultCode.PROTOCOL_VIOLATION, str(error), None)
                 await self._lose(channel)
                 return
 
     def _settle(self, response: Response) -> None:
-        """Only a beat is in flight after the handshake."""
-        if response.id not in self._beats or response.error is not None:
-            raise Malformed("an answer to no beat")
+        """An answer to a beat, to a call in flight, or to an abandoned call."""
+        if response.id in self._beats:
+            if response.error is not None:
+                raise Malformed("a refused beat")
 
-        self._beats.clear()
+            self._beats.clear()
+            return
+
+        call = self._calls.get(response.id)
+
+        if call is None:
+            if response.id in self._dropped_ids:
+                return
+
+            raise Malformed("an answer to no request")
+
+        if response.error is not None:
+            del self._calls[response.id]
+            call.answer.set_exception(AcpCallFailed(response.error.code, response.error.message))
+            return
+
+        # Read before the call leaves the book: a bad answer loses the link,
+        # and the loss fails each call still in the book.
+        result = _read_result(call.method, response.result)
+        del self._calls[response.id]
+        call.answer.set_result(result)
+
+    def _read_notice(self, notice: Notice) -> None:
+        """A `session/update` of a session this link made. Nothing else."""
+        if notice.method != METHOD_UPDATE:
+            raise Malformed(f"a notification this client does not take: {notice.method}")
+
+        session = notice.params.get("sessionId")
+        update = as_object(notice.params.get("update"))
+
+        if not isinstance(session, str) or update is None:
+            raise Malformed("an update with no session or no update")
+
+        if not isinstance(update.get("sessionUpdate"), str):
+            raise Malformed("an update with no kind")
+
+        collect = self._prompts.get(session)
+
+        if collect is None:
+            if session in self._sessions or session in self._ended_sessions:
+                return
+
+            raise Malformed("an update for a session of no call")
+
+        if update["sessionUpdate"] == UPDATE_MESSAGE_CHUNK:
+            collect.add(_chunk_text(update))
 
     async def _beat_loop(self) -> None:
         """Two unanswered beats mean the facade is gone (contract 03 §10 rule 4)."""
@@ -408,9 +676,18 @@ class AcpLink:
 
         self._state = LinkState.CHANNEL_LOST
         _LOG.warning("family=%s sandbox=%s acp link lost", self._family, channel.sandbox)
+        self._fail_calls("the link was lost")
         await self._stop_loops()
         await channel.close()
         await self._on_lost(channel.sandbox)
+
+    def _fail_calls(self, why: str) -> None:
+        calls = list(self._calls.values())
+        self._calls.clear()
+
+        for call in calls:
+            if not call.answer.done():
+                call.answer.set_exception(AcpLinkLost(why))
 
     async def _stop_loops(self) -> None:
         current = asyncio.current_task()
@@ -435,6 +712,50 @@ class AcpLink:
     def _fault(self, code: FaultCode, message: str, dial: SandboxDial | None) -> None:
         sandbox = dial.sandbox if dial is not None else self.status.sandbox
         self._faults.raise_fault(self._family, code, f"acp: {message}", sandbox)
+
+
+def _read_result(method: str, result: object) -> object:
+    """The one field of an answer that this client reads. Raises `Malformed`."""
+    answer = as_object(result)
+
+    if answer is None:
+        raise Malformed(f"the answer to {method} is not an object")
+
+    if method == METHOD_NEW_SESSION:
+        session = answer.get("sessionId")
+
+        if not isinstance(session, str) or not session:
+            raise Malformed("session/new named no session")
+
+        if len(session.encode("utf-8", "surrogatepass")) > MAX_SESSION_ID_BYTES:
+            raise Malformed("session/new named a session id over the cap")
+
+        return session
+
+    reason = answer.get("stopReason")
+
+    if not isinstance(reason, str) or reason not in StopReason.__members__.values():
+        raise Malformed("session/prompt named no known stop reason")
+
+    return reason
+
+
+def _chunk_text(update: dict[str, Any]) -> str:
+    """The text of one `agent_message_chunk`. Another content kind is ''."""
+    content = as_object(update.get("content"))
+
+    if content is None or not isinstance(content.get("type"), str):
+        raise Malformed("a message chunk with no content")
+
+    if content["type"] != "text":
+        return ""
+
+    text = content.get("text")
+
+    if not isinstance(text, str):
+        raise Malformed("a text chunk with no text")
+
+    return text
 
 
 def _call(method: str, request_id: int | None = None) -> dict[str, Any]:
