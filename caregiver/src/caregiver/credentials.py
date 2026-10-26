@@ -8,19 +8,21 @@ in a log line (invariant 13)."""
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import json
+import re
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Final
 
 from .atomic import atomic_write, read_json
 
-#: Contract 04 section 2.2 rule 1: "at least 256 bits from the system
-#: random source, base32, no padding."
+#: Chaperone design section 9: a token is 32 bytes from the system random
+#: source, as 64 lower-case hex characters. The `bearer` plugin of the Rust
+#: chaperone refuses bearer text in any other form.
 TOKEN_BYTES: Final = 32
+_TOKEN: Final = re.compile(r"[0-9a-f]{64}")
 
 #: Contract 03 section 12.2: creds.json is mode 0600, readable only by the
 #: user caregiver runs as until the sandbox mounts it read-only.
@@ -28,8 +30,15 @@ CREDS_FILE_MODE: Final = 0o600
 
 
 def mint_token() -> str:
-    """256 bits, base32, no padding (contract 04 section 2.2 rule 1)."""
-    return base64.b32encode(secrets.token_bytes(TOKEN_BYTES)).decode("ascii").rstrip("=")
+    """256 bits as 64 lower-case hex characters (chaperone design section
+    9)."""
+    return secrets.token_hex(TOKEN_BYTES)
+
+
+def is_token(text: str) -> bool:
+    """Has `text` the form of `mint_token`? The Rust chaperone accepts no
+    other form."""
+    return _TOKEN.fullmatch(text) is not None
 
 
 def token_sha256(token: str) -> str:
@@ -92,7 +101,14 @@ def write_creds(path: Path, creds: Credentials) -> None:
 def read_creds(path: Path) -> Credentials | None:
     """`None` when no credentials exist yet (a new family) or the file is
     unreadable. Never raises: a corrupt `creds.json` is a fault for the
-    caller to report, not a crash (invariant 19's spirit applied here)."""
+    caller to report, not a crash (invariant 19's spirit applied here).
+
+    A `pep_token` that `is_token` refuses also reads as `None`. The Rust
+    chaperone accepts no such token, so the next pass mints a new one.
+
+    A `previous_pep_token` that `is_token` refuses reads as no overlap. The
+    current token stays, and the grant file lists no digest for the
+    previous one."""
     fields = read_json(path)
     if fields is None:
         return None
@@ -104,7 +120,7 @@ def read_creds(path: Path) -> Credentials | None:
     # as its text. A strict reader refuses such a file. The next pass then
     # mints a new key and a new token, and the epoch starts again at 1.
     try:
-        return Credentials(
+        creds = Credentials(
             epoch=int(fields["epoch"]),
             litellm_key=str(fields["litellm_key"]),
             pep_token=str(fields["pep_token"]),
@@ -116,6 +132,14 @@ def read_creds(path: Path) -> Credentials | None:
         # OverflowError is `int` of a float that is not finite.
         # RecursionError is `str` of a value that nests too deep.
         return None
+
+    if not is_token(creds.pep_token):
+        return None
+
+    if creds.previous_pep_token is not None and not is_token(creds.previous_pep_token):
+        return replace(creds, previous_pep_token=None, previous_expires_at=None)
+
+    return creds
 
 
 def _optional(value: Any) -> str | None:
