@@ -7,11 +7,13 @@ from pathlib import Path
 
 import pytest
 from agent_door_trigger.config import (
+    DEFAULT_AUDIT_FILE,
     DEFAULT_REGISTRY_ROOT,
     DEFAULT_WEBHOOK_PORT,
     ENV_ATTENDANCE_SOCKET,
     ENV_ATTENDANCE_TOKEN_FILE,
     ENV_ATTENDANCE_URL,
+    ENV_AUDIT_FILE,
     ENV_BIND,
     ENV_FAMILIES_DIR,
     ENV_LAN_ADDRESS,
@@ -161,6 +163,19 @@ def test_an_explicit_pep_url_still_wins(tmp_path: Path) -> None:
     )
 
     assert config.pep_url == "http://chaperone.test:1"
+
+
+def test_fire_reads_the_chaperones_audit_file_by_default(tmp_path: Path) -> None:
+    config = fire_config_from_env(_env(tmp_path))
+
+    assert config.audit_file == Path(DEFAULT_AUDIT_FILE) == Path("/var/lib/chaperone/audit.jsonl")
+
+
+def test_an_explicit_audit_file_wins(tmp_path: Path) -> None:
+    audit = tmp_path / "audit.jsonl"
+    config = fire_config_from_env(_env(tmp_path, **{ENV_AUDIT_FILE: str(audit)}))
+
+    assert config.audit_file == audit
 
 
 def test_fire_with_no_lan_address_names_the_variable(tmp_path: Path) -> None:
