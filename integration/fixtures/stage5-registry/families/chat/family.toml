@@ -5,22 +5,23 @@
 # never queued (§13 rule 5). It is stage 3's `chat` with the `code-sandbox`
 # delegate and the work-root mount dropped, because neither is on stage 5's
 # path.
-name: chat
-kind: attended
-description: General assistant. Knows the operator, searches, delegates, asks for tickets.
+name = "chat"
+kind = "attended"
+description = "General assistant. Knows the operator, searches, delegates, asks for tickets."
 
-model: { router: agent-router, budget_usd_per_day: 15 }
+model.router = "agent-router"
+model.budget_usd_per_day = 15
 
-verbs:
-  embed: {}
+verbs.embed = {}
 
-delegates: [vault-oracle]
+delegates = ["vault-oracle"]
 
-egress: []
+egress = []
 
-shell: false
-sandbox_tools: [read, grep, find, ls, write, edit]
-sandbox: { cpus: 4, memory: 8g }
+shell = false
+sandbox_tools = ["read", "grep", "find", "ls", "write", "edit"]
+sandbox.cpus = 4
+sandbox.memory = "8g"
 
-skills: []
-approval: []
+skills = []
+approval = []

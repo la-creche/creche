@@ -55,6 +55,7 @@ import json
 import os
 import sys
 import time
+import tomllib
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
@@ -63,7 +64,6 @@ from typing import Any, Final
 
 import httpx
 import pytest
-import yaml
 from agent_door_trigger.attendance import HttpAttendance
 from agent_door_trigger.cli import execute_fire
 from agent_door_trigger.config import AttendanceTarget, ServeConfig
@@ -82,6 +82,7 @@ from caregiver.litellm_keys import FakeLiteLLMKeys
 from chaperone.gatekeeper import Gatekeeper, HttpApprovalNotifier
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from noticeboard.tomlout import to_toml
 from stack import FAMILY, LOCK_POLL_S, LOCK_STALE_S, Stack, repo_root
 from stage3 import (
     BRIDGE_BUNDLE,
@@ -354,14 +355,14 @@ class Stage5:
             source = REGISTRY_ROOT / "families" / name
             target = registry_root / "families" / name
             target.mkdir(parents=True, exist_ok=True)
-            body: dict[str, Any] = yaml.safe_load(
-                (source / "family.yaml").read_text(encoding="utf-8")
+            body: dict[str, Any] = tomllib.loads(
+                (source / "family.toml").read_text(encoding="utf-8")
             )
 
             if name == family:
                 body.update(overrides)
 
-            (target / "family.yaml").write_text(yaml.safe_dump(body), encoding="utf-8")
+            (target / "family.toml").write_text(to_toml(body), encoding="utf-8")
             (target / "instructions.md").write_text(
                 (source / "instructions.md").read_text(encoding="utf-8"), encoding="utf-8"
             )

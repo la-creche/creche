@@ -6,7 +6,7 @@ three delegate calls at once could not pass. Contract 01 §3.6.1 makes it a
 field of the family file, default 2, range 1 to 8, and this suite proves the
 whole path:
 
-    families/chat/family.yaml   max_inflight_delegations: 3
+    families/chat/family.toml   max_inflight_delegations = 3
       │ caregiver apply
       ▼
     grants/chat.json            limits.max_inflight_delegations: 3

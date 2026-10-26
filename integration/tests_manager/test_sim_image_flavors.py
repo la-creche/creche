@@ -5,8 +5,8 @@ and nothing pulled the second one, so `code-sandbox` — `egress: []`, no
 way to install anything — answered "plot my spending by month" with
 `ModuleNotFoundError: No module named 'pandas'`.
 
-    families/plots/family.yaml  sandbox.image: python
-    families/chat/family.yaml   (no image field)
+    families/plots/family.toml  sandbox.image = "python"
+    families/chat/family.toml   (no image field)
               |
               v  the REAL loop, one pass per family
     sbx create plots-s1 -t <the python image>

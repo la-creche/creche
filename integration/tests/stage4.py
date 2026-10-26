@@ -56,6 +56,7 @@ import stat
 import sys
 import threading
 import time
+import tomllib
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -64,7 +65,6 @@ from pathlib import Path
 from typing import Any, Final
 
 import pytest
-import yaml
 from agent_door_owui.headers import PARENT_ID_HEADER, USER_MESSAGE_ID_HEADER
 from agent_door_tui.app import TuiDoor
 from agent_door_tui.attendance import HttpAttendance as TuiAttendance
@@ -81,6 +81,7 @@ from caregiver.litellm_keys import FakeLiteLLMKeys
 from conftest import chat_body, owui_headers
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from noticeboard.tomlout import to_toml
 from stack import FAMILY, LOCK_BEAT_MS, Stack, fake_pi_exec, repo_root
 
 from caregiver import paths as caregiver_paths
@@ -486,14 +487,14 @@ class Stage4:
             source = REGISTRY_ROOT / "families" / name
             target = registry_root / "families" / name
             target.mkdir(parents=True, exist_ok=True)
-            body: dict[str, Any] = yaml.safe_load(
-                (source / "family.yaml").read_text(encoding="utf-8")
+            body: dict[str, Any] = tomllib.loads(
+                (source / "family.toml").read_text(encoding="utf-8")
             )
 
             if name == family:
                 body.update(overrides)
 
-            (target / "family.yaml").write_text(yaml.safe_dump(body), encoding="utf-8")
+            (target / "family.toml").write_text(to_toml(body), encoding="utf-8")
             (target / "instructions.md").write_text(
                 (source / "instructions.md").read_text(encoding="utf-8"), encoding="utf-8"
             )
@@ -754,6 +755,6 @@ def _copy_servers(registry_root: Path) -> None:
     for source in sorted((REGISTRY_ROOT / "mcp").iterdir()):
         target = registry_root / "mcp" / source.name
         target.mkdir(parents=True, exist_ok=True)
-        (target / "server.yaml").write_text(
-            (source / "server.yaml").read_text(encoding="utf-8"), encoding="utf-8"
+        (target / "server.toml").write_text(
+            (source / "server.toml").read_text(encoding="utf-8"), encoding="utf-8"
         )

@@ -12,7 +12,7 @@ real `caregiver` and the real `door-trigger` of `stage5.py`.
    route from the file alone (invariant 16, contract 05 §6.4). Before this,
    `door-trigger` answered 404 until an operator wrote the token by hand.
 
-    family.yaml declares webhook: boiler-alert
+    family.toml declares webhook = "boiler-alert"
       ▼
     caregiver mints <state>/triggers/webhooks/ha-review/boiler-alert.token
       ▼                                       │

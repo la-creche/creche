@@ -110,8 +110,8 @@ class TriggerStack(Stack):
     def prepare(self, quiet: str | None = None) -> None:
         """The tree of the first topology, two more families and the registry.
 
-        `quiet` is the `quiet` mapping of the autonomous family, as YAML
-        text. None leaves the field out (contract 01 §3.15).
+        `quiet` is the `quiet` mapping of the autonomous family, as the
+        text of a TOML inline table. None leaves the field out (contract 01 §3.15).
         """
         Stack.prepare(self)
         add_family(self.tree, REVIEW, AUTONOMOUS, webhooks=(WEBHOOK,))

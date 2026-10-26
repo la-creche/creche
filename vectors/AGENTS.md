@@ -580,6 +580,3 @@ and the YAML path does not.
 - The changed texts of `tomlfile.syntax` start from the list `TAKEN` of
   `surfaces/tomlfile.py`. A change to that list moves each changed text.
   The ids stay, and the inputs change.
-- The registries of the process-level suite hold no `family.toml` yet. So
-  `family_file.toml` holds no vector of their files. Packet `toml-judge`
-  converts them.

@@ -4,7 +4,7 @@ Stage 1's harness holds the door, `attendance` and the playpen. Stage 2
 adds the reconciler, so that a change to a family FILE is what drives the
 scenario, exactly as it does on the host.
 
-    family.yaml ──► reconcile_family() ──► grants/<family>.json  (the PEP reads it)
+    family.toml ──► reconcile_family() ──► grants/<family>.json  (the PEP reads it)
                             │          ──► config/                (the playpen reads it)
                             │          ──► status.json            (`attendance` reads it)
                             │
@@ -27,7 +27,6 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-import yaml
 from agent_family import load_registry
 from caregiver.driver import FakeDriver
 from caregiver.egress import EgressConfig
@@ -36,6 +35,7 @@ from caregiver.reconcile import Actors, ReconcileResult, reconcile_family
 from caregiver.switch import HttpSwitchClient, SwitchClient, SwitchRequest, SwitchResult
 from caregiver.switch import read_token as read_caregiver_token
 from caregiver.timers import FakeUnits
+from noticeboard.tomlout import to_toml
 from stack import FAMILY, FIXTURE_LITELLM_KEY, Stack
 
 from caregiver import paths as caregiver_paths
@@ -69,7 +69,7 @@ def write_registry(root: Path, *, instructions: str = "Be helpful.\n", **overrid
     family_dir = root / "families" / FAMILY
     family_dir.mkdir(parents=True, exist_ok=True)
     body = family_body(**overrides)
-    (family_dir / "family.yaml").write_text(yaml.safe_dump(body), encoding="utf-8")
+    (family_dir / "family.toml").write_text(to_toml(body), encoding="utf-8")
     (family_dir / "instructions.md").write_text(instructions, encoding="utf-8")
     return root
 

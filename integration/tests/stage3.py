@@ -40,6 +40,7 @@ import os
 import stat
 import subprocess
 import sys
+import tomllib
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -47,13 +48,13 @@ from pathlib import Path
 from typing import Any, Final
 
 import pytest
-import yaml
 from attendance.auth import Principal
 from attendance.ids import SessionPrefix, new_ulid
 from caregiver.apply import ApplyResult, apply_once
 from caregiver.driver import FakeDriver
 from caregiver.litellm_keys import FakeLiteLLMKeys
 from fastapi import FastAPI
+from noticeboard.tomlout import to_toml
 from stack import FAMILY, LOCK_BEAT_MS, Stack, fake_pi_exec, repo_root
 
 from caregiver import paths as caregiver_paths
@@ -178,13 +179,13 @@ class Stage3:
             source = REGISTRY_ROOT / "families" / name
             target = registry_root / "families" / name
             target.mkdir(parents=True, exist_ok=True)
-            body: dict[str, Any] = yaml.safe_load(
-                (source / "family.yaml").read_text(encoding="utf-8")
+            body: dict[str, Any] = tomllib.loads(
+                (source / "family.toml").read_text(encoding="utf-8")
             )
             if name == family:
                 body.update(overrides)
 
-            (target / "family.yaml").write_text(yaml.safe_dump(body), encoding="utf-8")
+            (target / "family.toml").write_text(to_toml(body), encoding="utf-8")
             (target / "instructions.md").write_text(
                 (source / "instructions.md").read_text(encoding="utf-8"), encoding="utf-8"
             )

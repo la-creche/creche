@@ -5,7 +5,7 @@
 phone answers. Both sides were built from contract 04 by different agents.
 These tests put the real writer and the real reader on one temp root.
 
-    family.yaml approval: [ha_call]
+    family.toml approval = ["ha_call"]
         │
         └─► apply_once ──► grants/chat.json ──► decide_family ──► the gate
                                     ▲                                │
