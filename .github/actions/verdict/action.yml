@@ -29,6 +29,7 @@ runs:
             "docs": [
                 "tests",
                 "playpen",
+                "agent",
                 "proc",
                 "suites",
                 "systemd-proof",

@@ -1,0 +1,39 @@
+# agent
+
+The agent module: the one generic Flue agent of a family sandbox. It is a
+library. The ACP facade imports it and runs it with Flue's `start()`. The
+module has no bin and no HTTP surface. The root `AGENTS.md` applies here too.
+
+Flue is the agent runtime `@flue/runtime`. pi is the model layer under it,
+`@earendil-works/pi-ai` and `@earendil-works/pi-agent-core`.
+
+## Build and test
+
+```bash
+pnpm install
+pnpm test          # no sbx, no VM, no model call
+pnpm run typecheck
+```
+
+The tests use `sqlite()` with no path, an in-memory store, and pi's
+`fauxProvider()`. A test needs no network and no model key.
+
+## Rules
+
+1. Pin each runtime dependency to one exact version. Do not use a range.
+   A patch of Flue or pi can change a record that the facade reads.
+2. Do not put a credential in `useInitialData`. Flue writes that value one
+   time into `flue.db`, on a mount that the agent can write, and never
+   rotates it. Read the credentials from the mounts at process start.
+3. Give the model only the tools of the grant. This rule applies also to
+   the built-in tools of Flue's `local()`.
+4. Do not write prose to stdout. The facade owns stdout for ACP. Free text
+   goes to stderr.
+5. Parse each input at the edge, one time. The environment, the mounts and
+   each file there become typed values before other code reads them. A
+   refusal is a typed value, not an exception.
+6. Never log the value of a credential. Never put a real one in a fixture.
+
+## Known gaps
+
+None.

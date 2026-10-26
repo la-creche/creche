@@ -1,0 +1,25 @@
+{
+  "name": "agent",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "agent: the generic Flue agent of a family sandbox. A library the facade imports.",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "1.4.0",
+    "@earendil-works/pi-ai": "1.4.0",
+    "@flue/runtime": "2.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24",
+    "typescript": "^5.6",
+    "vitest": "^3"
+  },
+  "packageManager": "pnpm@11.20.0"
+}

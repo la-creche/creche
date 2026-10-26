@@ -5,6 +5,7 @@
 #           │                         docs push the tests marked `docs`
 #           ├── tests (1..N)   code   the full suite, one shard per job
 #           ├── playpen     code   the TypeScript suite and its build
+#           ├── agent       code   the agent module's suite and types
 #           ├── proc        code   the process-level suite, each service
 #           │                      as a process, on the built playpen
 #           ├── suites      code   the two old suites of integration/,
@@ -49,9 +50,9 @@
 # A docs-only push onto a commit whose own run passed runs only the tests
 # marked `docs`, as gate.yml does (bin/lib/docsrule.sh). The tag step still
 # runs.
-# The `tests`, `playpen`, `proc`, `suites` and `systemd-proof` jobs are
-# gate.yml's, and bin/tests/test_gate_workflow.py holds the two files to the
-# same shard command — diff the two when changing either.
+# The `tests`, `playpen`, `agent`, `proc`, `suites` and `systemd-proof`
+# jobs are gate.yml's, and bin/tests/test_gate_workflow.py holds the two
+# files to the same shard command — diff the two when changing either.
 #
 # A push that touches no file of the systemd proof, onto a commit whose own
 # run passed, skips the one step of the `systemd-proof` job (`--unchanged` of
@@ -213,6 +214,31 @@ jobs:
 
       - run: pnpm install --frozen-lockfile && pnpm test && pnpm run typecheck && pnpm run build
         working-directory: playpen
+
+  # The agent module (agent/AGENTS.md). TypeScript, so the Python gate never
+  # runs its suite. pnpm's version is agent/package.json's packageManager
+  # field. The module is a library: it has no build of its own.
+  agent:
+    needs: scope
+    if: needs.scope.outputs.scope == 'code'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: agent/package.json
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: agent/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile && pnpm test && pnpm run typecheck
+        working-directory: agent
 
   # The process-level suite (integration/proc/AGENTS.md). It starts each
   # service as a process, from the command its unit runs, so it can judge a
@@ -391,12 +417,12 @@ jobs:
       - run: bin/systemd-proof.sh
         if: needs.scope.outputs.systemd != 'false'
 
-  # `always()`: on a docs push `tests`, `playpen`, `proc`, `suites` and
-  # `systemd-proof` are skipped, and a job that needs a skipped job is
+  # `always()`: on a docs push `tests`, `playpen`, `agent`, `proc`, `suites`
+  # and `systemd-proof` are skipped, and a job that needs a skipped job is
   # skipped by default. The verdict step is
   # what holds the tags back when a job failed.
   release:
-    needs: [scope, lint, tests, playpen, proc, suites, systemd-proof]
+    needs: [scope, lint, tests, playpen, agent, proc, suites, systemd-proof]
     if: always()
     runs-on: ubuntu-24.04
     permissions:
