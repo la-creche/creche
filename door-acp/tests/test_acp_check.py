@@ -12,22 +12,34 @@ from pathlib import Path
 
 import pytest
 from agent_door_acp.__main__ import main
-from agent_door_acp.config import ENV_BIND, ENV_KEY_FILE, ENV_LAN_ADDRESS, ConfigError, from_env
+from agent_door_acp.config import (
+    ENV_ATTENDANCE_TOKEN_FILE,
+    ENV_BIND,
+    ENV_KEY_FILE,
+    ENV_LAN_ADDRESS,
+    ENV_REQUIRE_AUTHENTIK,
+    ConfigError,
+    from_env,
+)
 
 KEY = "k" * 32
+TOKEN = "t" * 32
 LAN = "192.0.2.10"
 UNIT = Path(__file__).resolve().parents[2] / "systemd" / "creche-door-acp.service"
 
 
-def _key_file(tmp_path: Path, mode: int = 0o600, text: str = KEY) -> Path:
-    path = tmp_path / "door-acp.key"
+def _key_file(
+    tmp_path: Path, mode: int = 0o600, text: str = KEY, name: str = "door-acp.key"
+) -> Path:
+    path = tmp_path / name
     path.write_text(text, encoding="utf-8")
     os.chmod(path, mode)
     return path
 
 
 def _env(key: Path, bind: str | None = f"{LAN}:8390") -> dict[str, str]:
-    env = {ENV_KEY_FILE: str(key)}
+    token = _key_file(key.parent, text=TOKEN, name="door-acp.token")
+    env = {ENV_KEY_FILE: str(key), ENV_ATTENDANCE_TOKEN_FILE: str(token)}
     if bind is not None:
         env[ENV_BIND] = bind
 
@@ -35,7 +47,13 @@ def _env(key: Path, bind: str | None = f"{LAN}:8390") -> dict[str, str]:
 
 
 def _check(monkeypatch: pytest.MonkeyPatch, env: dict[str, str]) -> int:
-    for name in (ENV_KEY_FILE, ENV_BIND, ENV_LAN_ADDRESS):
+    for name in (
+        ENV_KEY_FILE,
+        ENV_BIND,
+        ENV_LAN_ADDRESS,
+        ENV_ATTENDANCE_TOKEN_FILE,
+        ENV_REQUIRE_AUTHENTIK,
+    ):
         monkeypatch.delenv(name, raising=False)
 
     for name, value in env.items():
@@ -74,6 +92,26 @@ def test_a_good_config_passes_the_check(
     assert code == 0
     assert f"bind={LAN}:8390" in said.out
     assert KEY not in said.out + said.err
+    assert TOKEN not in said.out + said.err
+
+
+def test_one_key_for_the_door_and_attendance_is_refused(tmp_path: Path) -> None:
+    env = _env(_key_file(tmp_path, text=TOKEN))
+
+    with pytest.raises(ConfigError, match="two secrets"):
+        from_env(env)
+
+
+@pytest.mark.parametrize(("value", "required"), [("", True), ("true", True), ("false", False)])
+def test_require_authentik_defaults_to_true(tmp_path: Path, value: str, required: bool) -> None:
+    env = _env(_key_file(tmp_path)) | {ENV_REQUIRE_AUTHENTIK: value}
+
+    assert from_env(env).require_authentik is required
+
+
+def test_a_bad_require_authentik_is_refused(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError):
+        from_env(_env(_key_file(tmp_path)) | {ENV_REQUIRE_AUTHENTIK: "yes"})
 
 
 @pytest.mark.parametrize("text", ["", "k" * 31, "é" * 16, "k" * 31 + "\n"])
@@ -133,4 +171,8 @@ def test_the_unit_checks_the_config_then_runs_the_door() -> None:
     assert Path(start[0]).name == "agent-door-acp"
     assert check == [start[0], "--check"]
     assert "Environment=HOME=%h" in lines
+    assert (
+        f"Environment={ENV_ATTENDANCE_TOKEN_FILE}=/srv/agents/state/rework/tokens/door-acp.token"
+        in lines
+    )
     assert "Environment=XDG_CONFIG_HOME=%h/.config" in lines

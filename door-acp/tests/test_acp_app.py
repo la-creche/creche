@@ -1,14 +1,18 @@
 """The door's two routes: `GET /healthz` and `WS /acp/<family>`.
 
 Each refusal comes before the upgrade, as an HTTP status. A connection that
-passes every check is accepted, then closed with the "not wired" code.
+passes every check is accepted. Here no attendance listens, so the door
+closes it with the fixed code before any frame.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
-from agent_door_acp.app import FORWARD_AUTH_HEADER, NOT_WIRED_CODE, NOT_WIRED_REASON, create_app
+from agent_door_acp.app import FORWARD_AUTH_HEADER, create_app
 from agent_door_acp.config import DoorConfig
+from agent_door_acp.forward import UNREACHABLE_REASON, Close
 from starlette.testclient import TestClient, WebSocketDenialResponse
 from starlette.websockets import WebSocketDisconnect
 
@@ -16,10 +20,30 @@ KEY = "k" * 32
 GOOD = {"Authorization": f"Bearer {KEY}", FORWARD_AUTH_HEADER: "operator"}
 
 
+def _config(tmp_path: Path, *, require_authentik: bool = True) -> DoorConfig:
+    return DoorConfig(
+        bind_host="127.0.0.1",
+        bind_port=8390,
+        door_key=KEY.encode("ascii"),
+        attendance_socket=tmp_path / "absent.sock",
+        attendance_token=b"t" * 32,
+        require_authentik=require_authentik,
+    )
+
+
 @pytest.fixture
-def client() -> TestClient:
-    config = DoorConfig(bind_host="127.0.0.1", bind_port=8390, door_key=KEY.encode("ascii"))
-    return TestClient(create_app(config))
+def client(tmp_path: Path) -> TestClient:
+    return TestClient(create_app(_config(tmp_path)))
+
+
+def _closed(client: TestClient, path: str, headers: dict[str, str]) -> tuple[int, str]:
+    with (
+        client.websocket_connect(path, headers=headers) as socket,
+        pytest.raises(WebSocketDisconnect) as closed,
+    ):
+        socket.receive_text()
+
+    return closed.value.code, closed.value.reason
 
 
 def _refused(client: TestClient, path: str, headers: dict[str, str]) -> int:
@@ -76,11 +100,15 @@ def test_a_bad_family_is_refused_before_the_upgrade(client: TestClient, path: st
 
 
 @pytest.mark.parametrize("family", ["ch", "chat", "code-sandbox", "c" * 31])
-def test_a_good_connection_closes_as_not_wired(client: TestClient, family: str) -> None:
-    with (
-        client.websocket_connect(f"/acp/{family}", headers=GOOD) as socket,
-        pytest.raises(WebSocketDisconnect) as closed,
-    ):
-        socket.receive_text()
+def test_an_unreachable_attendance_closes_with_the_fixed_code(
+    client: TestClient, family: str
+) -> None:
+    assert _closed(client, f"/acp/{family}", GOOD) == (Close.UNREACHABLE, UNREACHABLE_REASON)
 
-    assert (closed.value.code, closed.value.reason) == (NOT_WIRED_CODE, NOT_WIRED_REASON)
+
+def test_a_terminal_client_needs_no_authentik_header_when_not_required(tmp_path: Path) -> None:
+    client = TestClient(create_app(_config(tmp_path, require_authentik=False)))
+    bearer_only = {"Authorization": f"Bearer {KEY}"}
+
+    assert _refused(client, "/acp/chat", {}) == 401
+    assert _closed(client, "/acp/chat", bearer_only)[0] == Close.UNREACHABLE

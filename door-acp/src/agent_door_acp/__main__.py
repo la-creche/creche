@@ -14,7 +14,8 @@ import sys
 import uvicorn
 
 from .app import create_app
-from .config import ConfigError, from_env
+from .config import ConfigError, DoorConfig, from_env
+from .forward import MAX_FRAME_BYTES
 
 #: The `websockets` sans-I/O protocol of uvicorn. It supports the denial
 #: response, so a refusal is an HTTP status before the upgrade.
@@ -35,15 +36,21 @@ def main(argv: list[str] | None = None) -> int:
         print(f"agent-door-acp: config OK: {config.describe()}")
         return 0
 
-    # from_env() already refuses a wide bind, so nothing here can widen it.
-    uvicorn.run(
+    uvicorn.Server(server_config(config)).run()
+    return 0
+
+
+def server_config(config: DoorConfig) -> uvicorn.Config:
+    """The server for one config. `from_env()` already refuses a wide bind."""
+    return uvicorn.Config(
         create_app(config),
         host=config.bind_host,
         port=config.bind_port,
         ws=_WS_PROTOCOL,
+        # A frame over attendance's cap closes 1009 before the door holds it.
+        ws_max_size=MAX_FRAME_BYTES,
         server_header=False,
     )
-    return 0
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:

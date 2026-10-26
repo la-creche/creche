@@ -1,9 +1,9 @@
-# The ACP front door (Phase 2 plan, row 26). USER unit, as the operator.
+# The ACP front door (Phase 2 plan, rows 26 and 27). USER unit, as the operator.
 #
 # `agent-door-acp` binds the host's LAN address, port 8390, behind NPM and
 # Authentik forward auth. It takes `WS /acp/<family>` and forwards ACP frames
-# to attendance. It translates nothing. This scaffold has no forward yet: a
-# connection that passes every check closes with the reason "not wired".
+# to attendance's `WS /acp/{family}` on attendance's Unix socket. It
+# translates nothing.
 #
 # The door ships in no component yet. The handover catalog has no row for it,
 # so no release installs the tree below and no script installs this unit.
@@ -23,8 +23,14 @@ Environment=HOME=%h
 Environment=XDG_CONFIG_HOME=%h/.config
 # The site's AGENT_LAN_ADDRESS: the bind when nothing sets DOOR_ACP_BIND.
 EnvironmentFile=/etc/creche/site.env
-# The door's own bearer key, mode 0600. The unit names the path, never the key.
+# Two secrets. The unit names each path, never a key. Each file is mode 0600.
+# The client bearer: NPM sends it for a browser, a terminal client sends it.
 Environment=DOOR_ACP_KEY_FILE=/srv/agents/state/rework/door-acp.key
+# attendance's door-acp token: the door sends it on attendance's socket.
+Environment=DOOR_ACP_ATTENDANCE_TOKEN_FILE=/srv/agents/state/rework/tokens/door-acp.token
+# DOOR_ACP_ATTENDANCE_SOCKET defaults to attendance's socket on the state root.
+# DOOR_ACP_REQUIRE_AUTHENTIK defaults to true: a client without the Authentik
+# header gets 401. A site whose terminal clients reach the door sets false.
 # A bad key file or a wide bind stops the unit here, before a bind.
 ExecStartPre=%h/.local/components/door-acp/bin/agent-door-acp --check
 ExecStart=%h/.local/components/door-acp/bin/agent-door-acp
