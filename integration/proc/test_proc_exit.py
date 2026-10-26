@@ -1,8 +1,12 @@
-"""The exit test of phase 2 (plan row 30): six scenarios on one topology.
+"""The exit test: the six scenarios of phase 2 (plan row 30) and three of
+`caregiver`, on one topology.
 
-`proc_exit.py` draws the topology. Each scenario plays Panda: a WebSocket
+`proc_exit.py` draws the topology. `caregiver` writes `policy.toml`, and the
+chaperone serves it. Each scenario of phase 2 plays Panda: a WebSocket
 client of ACP v1 at door-acp, with the door bearer. The model is the model
-stand-in, which answers from the script of each scenario.
+stand-in, which answers from the script of each scenario. Each scenario of
+`caregiver` plays the agent module of one family at the front door of the
+chaperone, with the token of its `creds.json`.
 
 Each assertion reads what crossed a process boundary: an ACP frame, the
 audit file of the chaperone, a record of a stand-in. The text of each
@@ -21,7 +25,7 @@ import re
 import socket
 import time
 from collections.abc import Iterator
-from typing import Final
+from typing import Any, Final
 
 import pytest
 from acp_client import (
@@ -32,7 +36,19 @@ from acp_client import (
     ToolCallUpdate,
     Update,
 )
-from proc_exit import CALLER, TARGET, ExitStack, explain, json_of, wait_until
+from proc_exit import (
+    CALLER,
+    ECHO_TOOL,
+    FAMILIES,
+    GATED_TOOL,
+    TARGET,
+    ExitStack,
+    explain,
+    json_of,
+    target_body,
+    token_digest,
+    wait_until,
+)
 from proc_standins import (
     MODEL,
     MODEL_DELAY_MS,
@@ -46,10 +62,27 @@ from proc_standins import (
     tune,
     upstream_calls,
 )
-from proc_tree import RS_ATTENDANCE, RS_UPSTREAM, first_sandbox
+from proc_tree import (
+    RS_ATTENDANCE,
+    RS_UPSTREAM,
+    end_token_overlap,
+    first_sandbox,
+    write_family_file,
+)
 
 #: The budget of one scenario, in seconds.
 BUDGET_S: Final = 60.0
+
+#: A token that the `bearer` plugin takes: 64 lower-case hex characters (§9).
+HEX_TOKEN: Final = re.compile(r"[0-9a-f]{64}")
+
+#: The result of a call of `echo` that runs, and of a call whose token no
+#: app table holds (§5.2 row 1).
+ECHOED: Final = {"content": [{"type": "text", "text": '{"text":"t"}'}], "isError": False}
+UNKNOWN: Final = {
+    "content": [{"type": "text", "text": "chaperone denied this call: unknown_credential"}],
+    "isError": True,
+}
 
 ECHO: Final = f"{RS_UPSTREAM}__echo"
 GATED_ECHO: Final = f"{RS_UPSTREAM}__gated_echo"
@@ -244,8 +277,9 @@ def test_family_a_asks_family_b_and_gets_its_answer_as_the_tool_result(
     """Scenario 6: `chat` calls `invoke_agent` with `vault-oracle`.
 
     The chaperone's plugin `attendance` posts the call to the delegate door.
-    `attendance` starts the facade of `vault-oracle`, which answers from the
-    script. The text comes back to `chat` as the result of the tool, in the
+    The facade of `vault-oracle` answers from the script. The switch of
+    `caregiver` started it, so the call starts no second facade. The text
+    comes back to `chat` as the result of the tool, in the
     frame of untrusted data (§12). The model stand-in takes the turns in
     arrival order: the call of `chat`, the answer of `vault-oracle`, the
     last word of `chat`.
@@ -271,7 +305,7 @@ def test_family_a_asks_family_b_and_gets_its_answer_as_the_tool_result(
         "source": f"family:{TARGET}",
         "content": ORACLE_ANSWER,
     }, explain("chaperone", "attendance", "facade")
-    assert [argv[argv.index("--") - 1] for argv in facades] == [
+    assert sorted(argv[argv.index("--") - 1] for argv in facades) == [
         first_sandbox(CALLER),
         first_sandbox(TARGET),
     ], explain("attendance")
@@ -339,3 +373,114 @@ def _request_of(stack: ExitStack, gate: str) -> dict[str, object] | None:
 def _drop(client: AcpClient) -> None:
     """End the TCP connection under a WebSocket with no close frame, as a lost network does."""
     client.socket.socket.shutdown(socket.SHUT_RDWR)
+
+
+# ------------------------------------------------------- the policy file
+
+
+def test_caregiver_writes_the_policy_the_chaperone_serves(exit_stack: ExitStack) -> None:
+    """`caregiver` writes one app table for each family, and `chaperone check` passes it.
+
+    Each table holds one digest: the digest of the token of 64 hex
+    characters in the `creds.json` of its family. The chaperone serves the
+    file: `chat` lists each tool of its grants.
+    """
+    apps = exit_stack.policy()["apps"]
+    checked = exit_stack.check("policy.toml")
+
+    with exit_stack.mcp(CALLER) as session:
+        names = sorted(session.tool_names())
+
+    assert sorted(apps) == sorted(FAMILIES)
+
+    for family in FAMILIES:
+        token = exit_stack.tokens[family]
+        assert HEX_TOKEN.fullmatch(token), f"the token of {family} is not 64 hex characters"
+        assert apps[family]["token_sha256"] == [token_digest(token)], explain("caregiver")
+
+    assert (checked.exit_code, checked.stdout.strip()) == (0, "policy.toml: ok"), checked.stderr
+    assert names == sorted([ECHO, GATED_ECHO, INVOKE_AGENT]), explain("chaperone")
+
+
+def test_a_registry_edit_reaches_the_chaperone_at_the_next_pass(exit_stack: ExitStack) -> None:
+    """A tool that the registry adds to a grant runs after the next pass of `caregiver`.
+
+    The family file of `vault-oracle` grants `echo` alone, so the chaperone
+    denies its call of `gated_echo`. The test adds the tool to that file.
+    The next pass of `caregiver` writes it into `policy.toml`. The
+    chaperone reloads the file at the next call (§6), and the identical
+    call runs.
+    """
+    with exit_stack.mcp(TARGET) as session:
+        before = session.call(GATED_ECHO, {"text": "x"})
+
+    write_family_file(exit_stack.tree, target_body((ECHO_TOOL, GATED_TOOL)))
+    wait_until(
+        lambda: _granted(exit_stack, TARGET) == [ECHO_TOOL, GATED_TOOL] or None,
+        f"{GATED_TOOL} in the grant of {TARGET}",
+        "caregiver",
+    )
+
+    with exit_stack.mcp(TARGET) as session:
+        after = session.call(GATED_ECHO, {"text": "x"})
+
+    assert before["isError"] is True, explain("chaperone")
+    assert after == {"content": [{"type": "text", "text": '{"text":"x"}'}], "isError": False}, (
+        explain("chaperone")
+    )
+    assert _events(exit_stack, GATED_ECHO) == [
+        ("decided", "deny:tool_not_granted"),
+        ("decided", "allow"),
+        ("ran", "is_error:false"),
+    ], explain("chaperone")
+
+
+def test_a_rotation_serves_two_digests_until_it_settles(exit_stack: ExitStack) -> None:
+    """`caregiver rotate` (graceful) serves the old and the new token, then the new one alone.
+
+    The rotation puts both digests into the table of `vault-oracle`, and a
+    call of `echo` runs with each token. The overlap lasts 300 seconds, and no flag
+    of `caregiver` changes that. So the test moves its end into the past, as
+    the 300 seconds would. The next pass of `caregiver serve` settles the
+    rotation: one digest stays, and the chaperone denies a call with the old
+    token.
+    The next pass comes 20 seconds after the last one at most.
+    """
+    old = exit_stack.tokens[TARGET]
+    done = exit_stack.rotate(TARGET)
+    new = str(exit_stack.credentials(TARGET)["pep_token"])
+    overlap = _digests(exit_stack, TARGET)
+    during = [_echo_as(exit_stack, token) for token in (old, new)]
+
+    end_token_overlap(exit_stack.tree, TARGET)
+    wait_until(
+        lambda: _digests(exit_stack, TARGET) == [token_digest(new)] or None,
+        f"the settle of {TARGET}",
+        "caregiver",
+    )
+    after = [_echo_as(exit_stack, token) for token in (old, new)]
+
+    assert done.exit_code == 0, done.stderr
+    assert HEX_TOKEN.fullmatch(new) and new != old
+    assert sorted(overlap) == sorted([token_digest(old), token_digest(new)]), explain("caregiver")
+    assert during == [ECHOED, ECHOED], explain("chaperone")
+    assert after == [UNKNOWN, ECHOED], explain("chaperone")
+    assert exit_stack.credentials(TARGET)["previous_pep_token"] is None, explain("caregiver")
+
+
+def _echo_as(stack: ExitStack, token: str) -> dict[str, Any]:
+    """The result of one call of `echo` at the front door, with `token` as the bearer."""
+    with stack.mcp_as(token) as session:
+        return session.call(ECHO, {"text": "t"})
+
+
+def _digests(stack: ExitStack, family: str) -> list[str]:
+    """The token digests that `policy.toml` holds for one family."""
+    return list(stack.policy().get("apps", {}).get(family, {}).get("token_sha256", []))
+
+
+def _granted(stack: ExitStack, family: str) -> list[str]:
+    """The tools of the upstream stand-in that `policy.toml` grants one family."""
+    grants = stack.policy().get("apps", {}).get(family, {}).get("grants", {})
+
+    return sorted(grants.get(RS_UPSTREAM, {}).get("tools", {}))
