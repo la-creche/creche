@@ -157,6 +157,8 @@ chaperone reads them as another user. `SIGHUP` reloads them.
 | `approvals.py` | reading the chaperone's audit for a held gate |
 | `owui_copy.py`, `terminal.py`, `branching.py`, `persona.py` | Open WebUI copy, terminal exchanges, pi branches, the folder prompt |
 | `playpen_link.py`, `switching.py`, `channel.py`, `exec_channel.py`, `wire.py` | one sandbox's channel, a switch, the protocol |
+| `supervisor_lock.py` | the proof that no older supervisor holds a sandbox |
+| `acp_link.py`, `acp/schema-v1.json` | the ACP link to one sandbox's facade, and the pinned ACP schema. The service does not use the link yet |
 | `jobs.py`, `dispatch.py`, `workspace.py` | thin jobs, the dispatch ledger, the per-chat work directory |
 | `family_status.py`, `faults.py` | the status document, the fault file |
 | `tasks.py` | what a task says when it ends with an error |
@@ -173,6 +175,10 @@ misbehaviour there. A test that spawns a process is marked `slow`.
 
 ## Known gaps
 
+- The phase 2 plan puts `_creche/beat`, `_creche/shutdown` and the
+  `initialize` `_meta` keys in a vector file under `facade/vectors/`. That
+  file does not exist yet. `acp_link.py` sends the beat as a request, sends
+  the shutdown as a notification, and sends no `_meta`.
 - `approvals.py` tails the chaperone's audit file, which lags up to one
   second (`approvals.py`, `service.py`).
 - An outcome record's `spend_usd` sums advisory costs. A sum of zero with
