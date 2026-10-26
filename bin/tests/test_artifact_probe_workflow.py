@@ -170,7 +170,7 @@ echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
 SIGN_DIRECTORY: Final = "probe"
 
 #: The machine of each job.
-RUNNER: Final = "ubuntu-latest"
+RUNNER: Final = "ubuntu-24.04"
 
 #: Each key of each job. One more key can change where a job runs or what
 #: a failure of it does, for example `continue-on-error`.

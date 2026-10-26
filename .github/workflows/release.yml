@@ -125,7 +125,7 @@ env:
 
 jobs:
   scope:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       scope: ${{ steps.scope.outputs.scope }}
       rust: ${{ steps.scope.outputs.rust }}
@@ -189,7 +189,7 @@ jobs:
 
   lint:
     needs: scope
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -208,7 +208,7 @@ jobs:
   tests:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       # A red shard does not stop the others: one run shows every failure.
       fail-fast: false
@@ -241,7 +241,7 @@ jobs:
   playpen:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # `pnpm run build` fixes the LAN address in the bundle and refuses to
     # build without one (playpen/build.mjs). CI throws the bundle away,
     # so the example site's TEST-NET-1 address does.
@@ -281,7 +281,7 @@ jobs:
   proc:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -334,7 +334,7 @@ jobs:
   proc-rust:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       # As in the `rust` job: no build here starts from the last one.
@@ -385,7 +385,7 @@ jobs:
   suites:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -485,7 +485,7 @@ jobs:
   rust:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       # A CI build starts from a cache or from nothing, never from the last
       # build of the same tree, so the incremental state is only weight.
@@ -578,7 +578,7 @@ jobs:
   rust-coverage:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       # As in the `rust` job: no build here starts from the last one.
@@ -626,7 +626,7 @@ jobs:
   systemd-proof:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -643,7 +643,7 @@ jobs:
   # prints one line, and the upload holds an empty SHA256SUMS.
   artifacts:
     needs: scope
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     outputs:
       digests: ${{ steps.build.outputs.digests }}
@@ -706,7 +706,7 @@ jobs:
   # green run tags what this run left.
   sign:
     needs: artifacts
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       id-token: write
@@ -797,7 +797,7 @@ jobs:
   release:
     needs: [scope, lint, tests, playpen, proc, proc-rust, suites, rust, rust-coverage, systemd-proof, artifacts, sign]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write # tags + Releases
       pull-requests: read # the merge SHA -> PR lookup, for labels and the body

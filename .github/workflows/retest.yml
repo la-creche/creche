@@ -38,7 +38,7 @@ jobs:
       github.event.issue.pull_request &&
       startsWith(github.event.comment.body, '!retest') &&
       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       # The comment arrives through the environment, never inside the script.
       - name: restart the runs on the PR head

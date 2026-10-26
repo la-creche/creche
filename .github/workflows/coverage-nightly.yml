@@ -63,7 +63,7 @@ permissions:
 jobs:
   # No `if`: this job is what makes a run on another ref a success.
   guard:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: ref
         run: 'echo "coverage-nightly: the ref of this run is $GITHUB_REF"'
@@ -74,7 +74,7 @@ jobs:
   branch-coverage:
     needs: guard
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       # As in the `rust-coverage` job of gate.yml: no build here starts from

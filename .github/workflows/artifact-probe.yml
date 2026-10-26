@@ -75,7 +75,7 @@ env:
 jobs:
   # No `if`: this job is what makes a run on another ref a success.
   guard:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: ref
         run: 'echo "artifact-probe: the ref of this run is $GITHUB_REF"'
@@ -83,7 +83,7 @@ jobs:
   build:
     needs: guard
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     outputs:
       # One line of `sha256sum`: the SHA-256, two spaces, the archive name.
@@ -113,7 +113,7 @@ jobs:
   sign:
     needs: [guard, build]
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       id-token: write
@@ -185,7 +185,7 @@ jobs:
   verify:
     needs: [guard, build, sign]
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
