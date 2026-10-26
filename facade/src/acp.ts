@@ -10,14 +10,70 @@
 // fails is dropped, with a line on stderr.
 
 import { agent, methods, ndJsonStream, RequestError } from "@agentclientprotocol/sdk";
-import type { AgentApp, AnyMessage, AnyResponse, InitializeResponse, Stream } from "@agentclientprotocol/sdk";
+import type {
+  AgentApp,
+  AnyMessage,
+  AnyResponse,
+  InitializeResponse,
+  ListSessionsRequest,
+  ListSessionsResponse,
+  NewSessionRequest,
+  NewSessionResponse,
+  SessionInfo,
+  SessionInfoUpdate,
+  Stream,
+} from "@agentclientprotocol/sdk";
 import { Readable } from "node:stream";
 
 import { describeRefusal, encodeLine } from "./line.js";
 import type { Say } from "./stdio.js";
 import { MAX_LINE_BYTES, METHOD_BEAT, METHOD_SHUTDOWN, PROTOCOL_VERSION } from "./vectors.js";
 
-export type { AgentApp, Stream };
+export type {
+  AgentApp,
+  ListSessionsRequest,
+  ListSessionsResponse,
+  NewSessionRequest,
+  NewSessionResponse,
+  SessionInfo,
+  SessionInfoUpdate,
+  Stream,
+};
+
+/** Why the facade refuses a request. Each kind is one JSON-RPC error. */
+export type Refusal =
+  | { readonly kind: "invalid_params"; readonly detail: string }
+  | { readonly kind: "unknown_session"; readonly sessionId: string };
+
+export type Outcome<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly refusal: Refusal };
+
+/** The session methods. Null on a link that serves no session yet. */
+export interface SessionService {
+  newSession(params: NewSessionRequest): Promise<Outcome<NewSessionResponse>>;
+  listSessions(params: ListSessionsRequest): Promise<Outcome<ListSessionsResponse>>;
+}
+
+function toError(refusal: Refusal): RequestError {
+  switch (refusal.kind) {
+    case "invalid_params":
+      return RequestError.invalidParams(undefined, refusal.detail);
+    case "unknown_session":
+      return RequestError.resourceNotFound(refusal.sessionId);
+    default: {
+      const unknown: never = refusal;
+      return unknown;
+    }
+  }
+}
+
+async function answer<T>(outcome: Promise<Outcome<T>>): Promise<T> {
+  const settled = await outcome;
+  if (!settled.ok) {
+    throw toError(settled.refusal);
+  }
+
+  return settled.value;
+}
 
 /** JSON-RPC's code for an error inside the server. */
 const INTERNAL_ERROR = -32603;
@@ -53,8 +109,8 @@ export interface SupervisorHooks {
   readonly onShutdown: () => void;
 }
 
-export function facadeApp(hooks: SupervisorHooks): AgentApp {
-  return agent({ name: "creche-facade" })
+export function facadeApp(hooks: SupervisorHooks, sessions: SessionService | null): AgentApp {
+  const app = agent({ name: "creche-facade" })
     .onRequest(methods.agent.initialize, () => INITIALIZE_RESPONSE)
     .onRequest(METHOD_BEAT, noParams, () => {
       hooks.onBeat();
@@ -63,6 +119,14 @@ export function facadeApp(hooks: SupervisorHooks): AgentApp {
     .onNotification(METHOD_SHUTDOWN, noParams, () => {
       hooks.onShutdown();
     });
+
+  if (sessions === null) {
+    return app;
+  }
+
+  return app
+    .onRequest(methods.agent.session.new, ({ params }) => answer(sessions.newSession(params)))
+    .onRequest(methods.agent.session.list, ({ params }) => answer(sessions.listSessions(params)));
 }
 
 function isAnswer(message: AnyMessage): message is AnyResponse {

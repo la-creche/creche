@@ -10,6 +10,7 @@
 import type { Readable } from "node:stream";
 
 import { facadeApp, strictStream, strictWriter } from "./acp.js";
+import type { SessionService } from "./acp.js";
 import { SupervisorLock } from "./lock.js";
 import { BeatDeadline } from "./liveness.js";
 import type { Say, Stdout } from "./stdio.js";
@@ -32,6 +33,8 @@ export interface SupervisorOptions {
   readonly deadlineMs: number;
   /** Null until the agent module is wired (Phase 2 plan, row 15). */
   readonly runtime: Runtime | null;
+  /** Null until the agent module is wired (Phase 2 plan, row 15). */
+  readonly sessions: SessionService | null;
 }
 
 export function runSupervisor(options: SupervisorOptions): void {
@@ -75,10 +78,13 @@ export function runSupervisor(options: SupervisorOptions): void {
   });
   deadline.feed();
 
-  const app = facadeApp({
-    onBeat: () => deadline.feed(),
-    onShutdown: () => void stop("shutdown", EXIT_OK),
-  });
+  const app = facadeApp(
+    {
+      onBeat: () => deadline.feed(),
+      onShutdown: () => void stop("shutdown", EXIT_OK),
+    },
+    options.sessions,
+  );
   const connection = app.connect(strictStream(options.input, strictWriter(stdout.writeLine, say)));
   say("serving ACP v1 on stdio");
 
