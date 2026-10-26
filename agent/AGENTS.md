@@ -70,3 +70,11 @@ connection and the `auth` of the LiteLLM provider unwrap it.
   14). Flue's MCP adapter gives a `ch` result to the model as flat text,
   with no frame. A gated call reaches the model as a tool error with the
   chaperone's text.
+- Flue gives the output of a `useTool` tool to the model as JSON text. A
+  string output arrives in quotes, with each line break as `\n`. The
+  untrusted frame of `index_search` arrives in that form too. An MCP
+  result arrives as plain text.
+- No contract names the embedding endpoint of `index_search`. Q38 drops
+  `embed` from the chaperone. The agent takes no endpoint, so the vector
+  half refuses with one note and the words half serves
+  (`src/query-embed.ts`).
