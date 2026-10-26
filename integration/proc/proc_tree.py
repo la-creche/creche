@@ -754,12 +754,46 @@ def write_playpen_env(tree: Tree, family: str = FAMILY, sandbox: str | None = No
     _atomic_write(tree.playpen_env(family, box), "\n".join(lines) + "\n", PLAYPEN_ENV_MODE)
 
 
-def write_creds(tree: Tree, family: str = FAMILY) -> None:
-    """The credential file the playpen reads at each pi start (contract 03 §12)."""
+def write_facade_env(tree: Tree, family: str, *, pep_url: str, litellm_url: str) -> None:
+    """The env file of the first sandbox of one family, for `creche-facade`.
+
+    The four lines of `write_playpen_env`, and the three more that the agent
+    module reads (`agent/src/config.ts`): the sessions mount and the two
+    plane URLs. Phase 2 plan correction 11: the fixtures write
+    `AGENT_SESSIONS_DIR` in phase 2, and `caregiver` writes it in phase 3.
+
+    CONTRACT-QUESTION: contract 03 §7 gives the two plane URLs as values of
+    the image, and the agent module reads each from its environment. The
+    env file is the one way a value of this suite reaches the sandbox
+    (contract 03 §7.1), so the URLs go there.
+    """
+    box = first_sandbox(family)
+    mounts = tree.mounts(family, box)
+    mounts.control.mkdir(parents=True, exist_ok=True)
+    lines = [
+        f"AGENT_SESSIONS_DIR={mounts.sessions}",
+        f"AGENT_CRED_DIR={mounts.creds}",
+        f"AGENT_FAMILY_CONFIG_DIR={mounts.config}",
+        f"AGENT_CONTROL_DIR={mounts.control}",
+        f"AGENT_SANDBOX={box}",
+        f"AGENT_PEP_URL={pep_url}",
+        f"AGENT_LITELLM_BASE_URL={litellm_url}",
+    ]
+
+    _atomic_write(tree.playpen_env(family, box), "\n".join(lines) + "\n", PLAYPEN_ENV_MODE)
+
+
+def write_creds(tree: Tree, family: str = FAMILY, pep_token: str | None = None) -> None:
+    """The credential file the playpen reads at each pi start (contract 03 §12).
+
+    `pep_token` is the bearer of the family at its chaperone. The default is
+    the fixture token of the Python chaperone. A topology of the Rust
+    chaperone gives the token that `chaperone token new` minted.
+    """
     document = {
         "epoch": CRED_EPOCH,
         "litellm_key": FIXTURE_LITELLM_KEY,
-        "pep_token": pep_token_of(family),
+        "pep_token": pep_token if pep_token is not None else pep_token_of(family),
         "written_at": _rfc3339(),
     }
 
@@ -1069,6 +1103,26 @@ RS_SECRET_VALUE: Final = "FIXTURE-STANDIN-KEY"
 
 RS_LIMITS: Final = "{ calls_per_minute = 60, max_pending_gates = 4 }"
 
+#: The plugin of chaperone §12 with two halves: a fence in
+#: `decision/included` and an upstream in `effect/included`. The effect half
+#: calls the doors of `attendance` over its Unix socket.
+RS_ATTENDANCE: Final = "attendance"
+
+#: The command of the effect half, as its manifest in the chaperone
+#: repository names it. The chaperone finds it next to its own binary (§7.7).
+RS_ATTENDANCE_PROGRAM: Final = "chaperone-attendance"
+
+#: Each secret parameter of the effect half, and the principal of
+#: `attendance` whose token file holds its value (contract 02 §3.1).
+RS_ATTENDANCE_SECRETS: Final = {
+    "DELEGATE_TOKEN": "door-delegate",
+    "DISPATCH_TOKEN": "door-dispatch",
+}
+
+#: The bound of a delegate call, which §12 asks of each app instance that
+#: delegates.
+RS_DELEGATE_TIMEOUT_S: Final = 120
+
 #: The plugin of each slot in `plugins/default` of the chaperone: kind,
 #: slot, and the command of an effect plugin. The suite writes the manifests
 #: itself, so a binary that a variable names needs no checkout beside it.
@@ -1142,11 +1196,16 @@ class RsFiles:
         return self.config_dir / name
 
 
-def rs_policy_text(families: tuple[str, ...] = RS_FAMILIES) -> str:
+def rs_policy_text(
+    families: tuple[str, ...] = RS_FAMILIES, delegates: Mapping[str, tuple[str, ...]] | None = None
+) -> str:
     """The policy file before `chaperone token new` adds a digest (§6, §9).
 
     Each app instance may call `echo`, and `gated_echo` with an approval.
+    An app instance in `delegates` may also call `attendance__invoke_agent`
+    for each family of its list, with the bound of §12.
     """
+    reach = delegates or {}
     parts = [
         "# The policy file of the Rust chaperone in one test (chaperone design §6).\n"
         "# `chaperone token new` adds the one digest of each app instance.\n"
@@ -1162,6 +1221,16 @@ def rs_policy_text(families: tuple[str, ...] = RS_FAMILIES) -> str:
             "echo = {}\n"
             'gated_echo = { approval = "required" }\n'
         )
+
+        if family in reach:
+            parts.append(
+                f"\n[apps.{family}.grants.{RS_ATTENDANCE}]\n"
+                f"timeout_s = {RS_DELEGATE_TIMEOUT_S}\n"
+                f"\n[apps.{family}.grants.{RS_ATTENDANCE}.tools]\n"
+                "invoke_agent = {}\n"
+                f"\n[apps.{family}.plugins.{RS_ATTENDANCE}]\n"
+                f"delegates = {json.dumps(list(reach[family]))}\n"
+            )
 
     return "".join(parts)
 
@@ -1192,12 +1261,22 @@ def rs_manifest(
     return "\n".join(lines) + "\n"
 
 
-def write_rs_tree(files: RsFiles, upstream: Path, approval: Path) -> None:
+def write_rs_tree(
+    files: RsFiles,
+    upstream: Path,
+    approval: Path,
+    attendance: tuple[Path, Mapping[str, tuple[str, ...]]] | None = None,
+) -> None:
     """Write the plugin tree, the secrets and both configuration files of the chaperone.
 
     `upstream` and `approval` are the absolute programs of the two effect
     stand-ins. The chaperone runs the program of an effect manifest as it
     is (§7.7).
+
+    `attendance` is the Unix socket of `attendance` and the delegates of
+    each app instance. With it, the tree holds both halves of the plugin
+    `attendance` (§12), the install entry gives the effect half `--socket`
+    and its two door tokens, and the policy grants `invoke_agent`.
     """
     for name, (kind, slot, program) in RS_DEFAULTS.items():
         command = (program,) if program is not None else ()
@@ -1218,5 +1297,46 @@ def write_rs_tree(files: RsFiles, upstream: Path, approval: Path) -> None:
     files.secrets_dir.chmod(_SECRETS_DIR_MODE)
     _atomic_write(files.secrets_dir / RS_SECRET_NAME, RS_SECRET_VALUE, _SECRET_MODE)
 
-    _atomic_write(files.config_file("install.toml"), RS_INSTALL, 0o644)
-    _atomic_write(files.config_file("policy.toml"), rs_policy_text(), 0o644)
+    install = RS_INSTALL
+    delegates: Mapping[str, tuple[str, ...]] = {}
+
+    if attendance is not None:
+        socket, delegates = attendance
+        install += _write_rs_attendance(files, socket)
+
+    _atomic_write(files.config_file("install.toml"), install, 0o644)
+    _atomic_write(files.config_file("policy.toml"), rs_policy_text(delegates=delegates), 0o644)
+
+
+def _write_rs_attendance(files: RsFiles, socket: Path) -> str:
+    """Both manifests and both secrets of the plugin `attendance`. Returns its install entry.
+
+    Each manifest is the one of the chaperone repository. Each secret file
+    holds the token of one door of `attendance`, as on the host.
+    """
+    plugin = f'name = "{RS_ATTENDANCE}"\nversion = "1.0.0"\n'
+    halves = {
+        "decision": f'{plugin}kind = "decision"\nhooks = ["fence"]\npairs_with = "effect"\n',
+        "effect": (
+            f'{plugin}kind = "effect"\nhooks = ["upstream"]\n'
+            f"secrets = {json.dumps(list(RS_ATTENDANCE_SECRETS))}\n"
+            'pairs_with = "decision"\n'
+            f"command = {json.dumps([RS_ATTENDANCE_PROGRAM])}\n"
+        ),
+    }
+
+    for kind, text in halves.items():
+        manifest = files.plugins_dir / kind / "included" / RS_ATTENDANCE / "plugin.toml"
+        _atomic_write(manifest, text, 0o644)
+
+    bindings: list[str] = []
+
+    for param, principal in RS_ATTENDANCE_SECRETS.items():
+        _atomic_write(files.secrets_dir / principal, token_of(principal), _SECRET_MODE)
+        bindings.append(f'{param} = "{principal}"')
+
+    return (
+        f"\n[plugins.{RS_ATTENDANCE}]\n"
+        f"args = {json.dumps(['--socket', str(socket)])}\n"
+        f"secrets = {{ {', '.join(bindings)} }}\n"
+    )

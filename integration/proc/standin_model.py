@@ -4,10 +4,14 @@
 
 No test may call a real model. The agent module calls this program as it
 calls LiteLLM, with `openai-completions` and the bearer of the family. The
-program answers two routes:
+program answers two routes, each with and without the `/v1` prefix, as
+LiteLLM does:
 
     GET  /v1/models             one model: the text of `model`, or the default
     POST /v1/chat/completions   the next turn of the script, as an SSE stream
+
+The agent module gives its client a base URL with no path, because a plane
+URL holds none, and the client appends `/chat/completions`.
 
 The test writes the script and the key. Every fact is a file under the
 state directory:
@@ -58,6 +62,9 @@ from typing import Any, Final, cast
 LOOPBACK: Final = "127.0.0.1"
 MODELS_PATH: Final = "/v1/models"
 COMPLETIONS_PATH: Final = "/v1/chat/completions"
+
+#: The prefix that LiteLLM serves each route with, and without.
+_VERSION_PREFIX: Final = "/v1"
 
 KEY_FILE: Final = "key"
 MODEL_FILE: Final = "model"
@@ -156,7 +163,7 @@ def chunks_of(turn: dict[str, Any], number: int, model: str) -> list[dict[str, A
 def _handler_for(script: Script) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
-            if self.path != MODELS_PATH:
+            if _route(self.path) != MODELS_PATH:
                 self._json(HTTP_NOT_FOUND, {"error": {"message": "no such route"}})
                 return
 
@@ -168,7 +175,7 @@ def _handler_for(script: Script) -> type[BaseHTTPRequestHandler]:
             self._json(HTTP_OK, {"object": "list", "data": [model]})
 
         def do_POST(self) -> None:
-            if self.path != COMPLETIONS_PATH:
+            if _route(self.path) != COMPLETIONS_PATH:
                 self._json(HTTP_NOT_FOUND, {"error": {"message": "no such route"}})
                 return
 
@@ -238,6 +245,11 @@ def _handler_for(script: Script) -> type[BaseHTTPRequestHandler]:
             self.wfile.write(raw)
 
     return Handler
+
+
+def _route(path: str) -> str:
+    """The route of one path: the path itself, or the path with `/v1` before it."""
+    return path if path.startswith(_VERSION_PREFIX + "/") else _VERSION_PREFIX + path
 
 
 def _json_of(raw: bytes) -> object:

@@ -6,13 +6,23 @@ the binary from the chaperone repository at the commit of `chaperone.pin`,
 and keeps it in a cache outside the checkout:
 
     ~/.cache/creche-proc/chaperone-rs/<commit>/bin/chaperone
+    ~/.cache/creche-proc/chaperone-rs/<commit>/bin/chaperone-attendance
+
+The second program is the effect half of the plugin `attendance`. The
+chaperone finds the program of an included effect plugin next to its own
+binary (chaperone `docs/design.md` §7.7), so both share one `bin`.
 
 A build has these steps, under one lock, so workers of one run build once:
 
 1. Fetch the one commit into a new directory beside the cache entry.
 2. Install the toolchain that the `rust-toolchain.toml` of the commit names.
-3. Run `cargo install --locked --no-track --bin chaperone` into a new root.
+3. Run `cargo install --locked --no-track --bin <program>` into a new root,
+   once for each program of `PROGRAMS`.
 4. Rename the new root to the cache entry. A failed build leaves no entry.
+
+An entry that lacks a program of `PROGRAMS` is from an older build of this
+file. The build builds again, and the new root takes the place of the old
+entry at step 4.
 
 The repository is `chaperone` beside this checkout on GitHub: the owner
 comes from the `origin` remote of this checkout, so no file here names it.
@@ -35,8 +45,17 @@ PIN_FILE: Final = Path(__file__).resolve().with_name("chaperone.pin")
 #: The name of the repository of the Rust chaperone, beside this one.
 REPOSITORY: Final = "chaperone"
 
-#: The program that the row starts, and the one binary that a build installs.
+#: The program that the row starts.
 PROGRAM: Final = "chaperone"
+
+#: The program of the effect half of the plugin `attendance` (§12).
+ATTENDANCE_PLUGIN: Final = "chaperone-attendance"
+
+#: Each program that a build installs, and the package that holds it.
+PROGRAMS: Final = {
+    PROGRAM: "crates/chaperone",
+    ATTENDANCE_PLUGIN: "plugins/effect/included/attendance",
+}
 
 _COMMIT: Final = re.compile(r"[0-9a-f]{40}")
 _COMMENT: Final = "#"
@@ -98,7 +117,7 @@ def build_pinned() -> Path:
     commit = pinned_commit()
     binary = pinned_binary(commit)
 
-    if binary.is_file():
+    if _complete(binary.parent):
         return binary
 
     for tool in ("git", "cargo"):
@@ -106,17 +125,23 @@ def build_pinned() -> Path:
             raise NoToolchain(f"the pinned build of chaperone needs `{tool}` on PATH")
 
     with _locked(cache_root() / f"{commit}.lock"):
-        if not binary.is_file():
+        if not _complete(binary.parent):
             _build(commit, binary.parent.parent)
 
     return binary
 
 
+def _complete(bin_dir: Path) -> bool:
+    """Whether the `bin` of one entry holds each program of `PROGRAMS`."""
+    return all((bin_dir / program).is_file() for program in PROGRAMS)
+
+
 def _build(commit: str, entry: Path) -> None:
     source = entry.with_name(f"{commit}.src")
     staged = entry.with_name(f"{commit}.new")
+    older = entry.with_name(f"{commit}.old")
 
-    for leftover in (source, staged):
+    for leftover in (source, staged, older):
         shutil.rmtree(leftover, ignore_errors=True)
 
     url = repository_url(_git(Path(__file__).resolve().parent, "remote", "get-url", "origin"))
@@ -128,10 +153,19 @@ def _build(commit: str, entry: Path) -> None:
     if shutil.which("rustup") is not None:
         _run(["rustup", "toolchain", "install", "--no-self-update"], source, _GIT_TIMEOUT_S)
 
-    install = ["cargo", "install", "--locked", "--no-track", "--bin", PROGRAM]
-    _run([*install, "--path", "crates/chaperone", "--root", str(staged)], source, _BUILD_TIMEOUT_S)
+    for program, package in PROGRAMS.items():
+        install = ["cargo", "install", "--locked", "--no-track", "--bin", program]
+        _run([*install, "--path", package, "--root", str(staged)], source, _BUILD_TIMEOUT_S)
+
+    # An entry of an older build moves aside only now, so a run that
+    # started its program from it lost nothing during the build.
+    if entry.exists():
+        entry.rename(older)
+
     staged.rename(entry)
-    shutil.rmtree(source, ignore_errors=True)
+
+    for leftover in (source, older):
+        shutil.rmtree(leftover, ignore_errors=True)
 
 
 def _git(cwd: Path, *args: str) -> str:

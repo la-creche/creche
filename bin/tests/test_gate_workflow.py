@@ -185,6 +185,11 @@ PROC_SWITCHES = REPO / "integration" / "proc" / "proc_services.py"
 PLAYPEN_BUILD = "pnpm install --frozen-lockfile && pnpm run build"
 PLAYPEN_DIR = "playpen"
 
+#: The second build of the `proc` job: the facade, which the exit test
+#: starts. The same command, in its own directory. The `facade` job runs its
+#: tests and its type check.
+FACADE_BUILD_DIR = "facade"
+
 #: The build refuses to run without a LAN address (playpen/build.mjs). The
 #: example site's TEST-NET-1 address is the one the suite writes too.
 BUILD_ENV = {"AGENT_LAN_ADDRESS": "192.0.2.10"}
@@ -268,7 +273,10 @@ UV_SYNC = "./.github/actions/uv-sync"
 CACHE_ACTION = "actions/cache@"
 CHAPERONE_CACHE = {
     "path": "~/.cache/creche-proc/chaperone-rs",
-    "key": "proc-chaperone-rs-${{ runner.os }}-${{ hashFiles('integration/proc/chaperone.pin') }}",
+    "key": (
+        "proc-chaperone-rs-${{ runner.os }}-${{ hashFiles('integration/proc/chaperone.pin', "
+        "'integration/proc/proc_chaperone_pin.py') }}"
+    ),
 }
 CHAPERONE_PIN = REPO / "integration" / "proc" / "chaperone.pin"
 CHAPERONE_BUILD = REPO / "integration" / "proc" / "proc_chaperone_pin.py"
@@ -457,12 +465,12 @@ def _node_steps(job: dict[str, Any]) -> list[dict[str, Any]]:
 def test_the_proc_job_builds_the_playpen_then_runs_the_process_suite(
     jobs: dict[str, dict[str, Any]], last: str
 ) -> None:
-    """The suite starts `node playpen/dist/playpen.js`, so the build comes
-    first, and the venv comes before the suite. The suite is one command,
-    with no path of one test and no `-k`."""
+    """The suite starts `node playpen/dist/playpen.js` and the built facade,
+    so both builds come first, and the venv comes before the suite. The
+    suite is one command, with no path of one test and no `-k`."""
     proc = jobs["proc"]
     runs = [step for step in proc["steps"] if "run" in step]
-    build, suite = runs
+    build, facade, suite = runs
     order = [step.get("uses") or step["run"] for step in proc["steps"]]
 
     assert proc["needs"] == "scope"
@@ -470,8 +478,10 @@ def test_the_proc_job_builds_the_playpen_then_runs_the_process_suite(
     assert build["run"] == PLAYPEN_BUILD
     assert build["working-directory"] == PLAYPEN_DIR
     assert build["env"] == BUILD_ENV
+    assert facade == {"run": PLAYPEN_BUILD, "working-directory": FACADE_BUILD_DIR}
     assert suite["run"] == PROC_RUN
     assert order.index(PLAYPEN_BUILD) < order.index(UV_SYNC) < order.index(PROC_RUN)
+    assert proc["steps"].index(facade) < order.index(UV_SYNC)
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
@@ -561,6 +571,10 @@ def _is_cache(step: dict[str, Any]) -> bool:
     return str(step.get("uses", "")).startswith(CACHE_ACTION)
 
 
+def _is_facade_build(step: dict[str, Any]) -> bool:
+    return step.get("working-directory") == FACADE_BUILD_DIR
+
+
 def _report_of(name: str) -> str:
     """The path of the JUnit report of one suite, as the workflow spells it."""
     return f"{REPORT_DIR}/{name}.xml"
@@ -589,7 +603,9 @@ def test_the_suites_job_has_the_setup_of_the_proc_job(
 ) -> None:
     """Each step before the first suite is a step of the `proc` job, in the
     same order: the checkout, node and pnpm, the build of the playpen, then
-    the venv. The two jobs then judge the bundle of one build command."""
+    the venv. The two jobs then judge the bundle of one build command. The
+    `proc` job has two steps more: the cache of the chaperone and the build
+    of the facade. No suite of this job starts either."""
     suites = jobs[SUITES_JOB]
     setup = _setup_of(suites, next(iter(SUITE_RUNS.values())))
 
@@ -597,7 +613,10 @@ def test_the_suites_job_has_the_setup_of_the_proc_job(
     assert suites["needs"] == "scope"
     assert suites["if"] == ONLY_CODE
     assert suites["runs-on"] == jobs["proc"]["runs-on"]
-    assert setup == [step for step in _setup_of(jobs["proc"], PROC_RUN) if not _is_cache(step)]
+    proc_setup = _setup_of(jobs["proc"], PROC_RUN)
+    shared = [step for step in proc_setup if not _is_cache(step) and not _is_facade_build(step)]
+
+    assert setup == shared
     assert [step.get("uses") or step["run"] for step in setup][-2:] == [PLAYPEN_BUILD, UV_SYNC]
 
 

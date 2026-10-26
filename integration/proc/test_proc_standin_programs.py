@@ -42,9 +42,11 @@ from proc_standins import (
     TEI_HOLD_EMBED,
     TEI_MODEL,
     TEI_NO_MODEL_ID,
+    SandboxTmp,
     calls_of,
     enabled_units,
     install_pi,
+    install_sbx,
     install_sbx_verbs,
     install_systemctl,
     litellm_calls,
@@ -56,6 +58,7 @@ from proc_standins import (
     tei_calls,
     tune,
     untune,
+    vm_tmp,
 )
 from proc_tree import IMAGE, Tree, build_bare_tree
 
@@ -290,6 +293,27 @@ def test_sbx_exec_gives_no_mount_when_a_test_says_so(
     )
 
     assert done.stdout.strip() == f"|{BOX}"
+
+
+def test_sbx_exec_gives_each_sandbox_a_tmpdir_of_its_own(
+    tree: Tree, supervisor: Supervisor
+) -> None:
+    """The `sbx` of the exit topology. Each VM has its own `/tmp`, and the
+    facade of a sandbox listens on a socket under `TMPDIR`."""
+    build_bare_tree(tree)
+    install_sbx(tree, SandboxTmp.OWN)
+    boxes = (BOX, "vault-oracle-s1")
+    show = 'test -d "$TMPDIR" && echo "$TMPDIR"'
+    seen: list[str] = []
+
+    for box in boxes:
+        words = ("exec", "--env-file", str(_env_file(tree)), box, "--", "/bin/sh", "-c", show)
+        done = _sbx(tree, supervisor, *words, env={"TMPDIR": "/caller/tmp"})
+
+        assert done.exit_code == 0, done.stderr
+        seen.append(done.stdout.strip())
+
+    assert seen == [str(vm_tmp(tree, box)) for box in boxes]
 
 
 def test_sbx_fails_a_verb_when_a_test_says_so(programs: Tree, supervisor: Supervisor) -> None:

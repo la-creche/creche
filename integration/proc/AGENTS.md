@@ -24,6 +24,7 @@ directory does not start it.
 
 ```bash
 cd playpen && pnpm install && AGENT_LAN_ADDRESS=192.0.2.10 pnpm run build && cd ..   # once, and after any playpen change
+cd facade && pnpm install --frozen-lockfile && pnpm run build && cd ..               # once, and after any agent or facade change
 uv run pytest integration/proc -m slow
 ```
 
@@ -35,7 +36,8 @@ command: `default` or `override`.
 
 A test that needs `playpen/dist/playpen.js` skips itself when the file is
 missing. A silent pass would be worse than a skip. The same applies to
-`playpen/dist/agent-pi-launch.js`, which the same build writes. The suite
+`playpen/dist/agent-pi-launch.js`, which the same build writes, and to the
+build of `facade/`, which the exit topology starts. The suite
 needs `node` and `git` on `PATH`. Every test is marked `slow` in
 `conftest.py`.
 
@@ -107,12 +109,18 @@ repository `chaperone`, and the venv does not hold it. Its default is a
 build of the commit in `chaperone.pin`:
 
 1. The first test that needs the program builds it, once for the run.
-   `proc_chaperone_pin.py` fetches the commit and runs `cargo install`.
+   `proc_chaperone_pin.py` fetches the commit and runs `cargo install` for
+   two programs: `chaperone`, and `chaperone-attendance`, the effect half
+   of the plugin `attendance`. The chaperone finds that program next to
+   its own binary (chaperone `docs/design.md` §7.7).
 2. The build goes into `~/.cache/creche-proc/chaperone-rs/<commit>`. The
-   `proc` job of CI keeps that directory in a cache with the pin file in
-   its key.
+   `proc` job of CI keeps that directory in a cache with the pin file and
+   `proc_chaperone_pin.py` in its key. An entry with no
+   `chaperone-attendance` is from an older build, and the next build
+   replaces it.
 3. A machine with no `git` or no `cargo` skips each test of the row. Set
-   `CRECHE_PROC_CHAPERONE_RS` to a built `chaperone` binary instead.
+   `CRECHE_PROC_CHAPERONE_RS` to a built `chaperone` binary instead. The
+   exit topology needs `chaperone-attendance` in the same directory.
 
 To take a new commit, write its full hash in `chaperone.pin`, with the date
 in the comment line.
@@ -185,7 +193,7 @@ It does not print the reference.
 
 ## What runs
 
-Eight topologies exist. `attendance`, the `sbx` stand-in and the `pi`
+Nine topologies exist. `attendance`, the `sbx` stand-in and the `pi`
 stand-in are in the first two.
 
 ```
@@ -270,6 +278,37 @@ chaperone-rs ---- MCP over stdio ---> the upstream stand-in: echo, gated_echo
 a test reads the audit file
 ```
 
+The ninth topology, `proc_exit.py`, is the exit test of phase 2. It starts
+the Rust chaperone with the plugin `attendance`, the model stand-in,
+`attendance` and door-acp. `attendance` starts the facade of each family
+through the `sbx` stand-in.
+
+```
+a test (plays Panda, a browser client of ACP)
+  | WebSocket, loopback port, the door bearer
+  v
+door-acp ---- WebSocket over the Unix socket, the token door-acp
+  v
+attendance ---- sbx exec creche-facade, one for each sandbox
+  |        ---- sbx exec acp-relay, one for each door connection
+  v
+creche-facade of chat and of vault-oracle     the built facade/dist
+  | chat completions ----------------------> the model stand-in
+  | MCP over streamable HTTP, the token ---> chaperone-rs
+  v
+chaperone-rs ---- the upstream and the approval stand-in
+  |          ---- chaperone-attendance ----> POST /delegate on the socket
+  v                                          of attendance
+chaperone-rs/audit.jsonl
+```
+
+The test plays `caregiver` once: a switch of `chat` onto its sandbox starts
+the first facade (contract 05 §5.3 rule 8). The `sbx` stand-in gives each
+sandbox a `TMPDIR` of its own, as each VM has its own `/tmp`: the facade
+listens on a socket under `TMPDIR`. The env file of each sandbox holds the
+three variables more that the agent module reads: `AGENT_SESSIONS_DIR` and
+the two plane URLs.
+
 Two files of the seventh topology run two more programs. A test starts
 each one, and each one runs to its end.
 
@@ -303,6 +342,7 @@ each one, and each one runs to its end.
 | `test_proc_library_reader.py` | library, the reference, the TEI stand-in and the reader program | a store as the bridge reads it, with the SQLite of Node: the model, the count of values, the rows of an FTS5 query, the vectors. Equal rows for both writers. A store that is not alone in its directory. The statements of the reader program and the limit of a query, held against the text of the bridge |
 | `test_proc_edges.py` | door and `attendance`, chaperone and `attendance`, trigger door and `attendance`, noticeboard | the edge of each listener: an unknown path, a wrong method, a body that is not JSON, `HEAD`, the socket file of a killed process, `SIGINT`, `SIGHUP` |
 | `test_proc_chaperone_rs.py` | the Rust chaperone and its two effect stand-ins | the tools of the stand-in upstream, and the audit records of one allowed call |
+| `test_proc_exit.py` | the exit topology | the six scenarios of phase 2 row 30: a turn, an allowed call, a gated call, a cancel, a reconnect with `session/load`, and a delegate call from one family to another. Each scenario ends within 60 seconds |
 | `test_proc_harness.py`, `test_proc_table.py` | none | the harness and the table, checked against their own rules |
 | `test_proc_standins.py`, `test_proc_sse.py` | none | the record of a stand-in, and the SSE reader |
 | `test_proc_standin_programs.py` | none | each rule of a stand-in program that a scenario relies on |
@@ -591,8 +631,10 @@ each one.
 | `fail-embed` | The tuning holds a text. A call whose inputs hold that text answers 500. |
 | `hold-embed` | The tuning holds a text. A call whose inputs hold that text waits until the file is gone. |
 
-The model stand-in has one tuning, `delay_ms`: the milliseconds between two
-chunks of a stream. A scenario that acts while a turn runs sets it first.
+The model stand-in answers each route with and without `/v1`, as LiteLLM
+does. The agent module appends `/chat/completions` to a base URL with no
+path. The model stand-in has one tuning, `delay_ms`: the milliseconds
+between two chunks of a stream. A scenario that acts while a turn runs sets it first.
 A test writes the turns with `script_model`. A completion past the last
 turn gets 500.
 
@@ -628,7 +670,8 @@ rename. Use the form of the table for a new topology.
 | a mapping | `family_body` and `write_family_file` of `proc_tree.py` | the third. `caregiver` reads the file, and a scenario changes one field of it. |
 | a text with a comment line | `family_text` and `write_family` of `proc_registry.py` | the fourth and the fifth. A save of the noticeboard must keep the comment. |
 
-The first, the second, the sixth and the seventh topology have no registry.
+The first, the second, the sixth, the seventh, the eighth and the ninth
+topology have no registry.
 
 A service that cannot start without a code change stops the work. Report the
 file, the constant and the variable that is missing. Do not change product
@@ -788,8 +831,25 @@ the text of the failure. Work down this list.
   gets 413. A body that is not JSON gets 400.
 - **No scenario for the `enqueue` verb.** A family calls `enqueue` at the
   chaperone (contract 04 §4.1), and the chaperone calls `POST /dispatch` of
-  `attendance` (contract 02 §13.4). The job runs over ACP, and this stack
-  has no facade.
+  `attendance` (contract 02 §13.4). The job runs over ACP. The exit
+  topology has a facade, and its policy grants no `enqueue`.
+- **CONTRACT-QUESTION, the two plane URLs of a facade.** Contract 03 §7
+  gives the URLs of the chaperone and of LiteLLM as values of the image.
+  The agent module reads each one from its environment, and refuses to
+  start without it. The exit topology writes both into the env file of
+  each sandbox, beside `AGENT_SESSIONS_DIR`, because the env file is the
+  one way a value reaches a sandbox (contract 03 §7.1). A change costs
+  `write_facade_env` of `proc_tree.py`.
+- **One stand-in of the model for two families.** The exit topology gives
+  both families one model stand-in, and the stand-in takes its turns in
+  arrival order. A scenario that runs two turns at one time cannot say
+  which family gets which turn. Each scenario of `test_proc_exit.py` runs
+  one turn at a time.
+- **The exit test does not judge a real model.** The model stand-in repeats
+  the identical call after an approval because its script says so. Phase 2
+  plan risk 3: a real model may not repeat the call, and Panda shows the
+  "Awaiting permission" text as a tool error. Phase 3 needs one check by
+  hand with a real model.
 - **The doors of the session API have no scenario that runs work.** The
   Open WebUI door, the trigger door and the terminal door call
   `/v1/sessions*`, which left `attendance` in phase 2 row 21. Each
@@ -1276,7 +1336,7 @@ the text of the failure. Work down this list.
 | `acp_client.py` | the ACP client of a test: a WebSocket, as the web build of Panda opens it |
 | `reader_store.mjs` | the Node program that reads one index store with the statements of the bridge |
 | `proc_stack.py` | `attendance`, its environment, and the start of a service on a free port |
-| `proc_owui.py`, `proc_delegate.py`, `proc_caregiver.py`, `proc_trigger.py`, `proc_board.py`, `proc_tui.py`, `proc_library.py`, `proc_chaperone_rs.py` | one topology each |
+| `proc_owui.py`, `proc_delegate.py`, `proc_caregiver.py`, `proc_trigger.py`, `proc_board.py`, `proc_tui.py`, `proc_library.py`, `proc_chaperone_rs.py`, `proc_exit.py` | one topology each |
 | `proc_chaperone_pin.py`, `chaperone.pin` | the commit of the Rust chaperone, its build and its cache |
 | `proc_board_reports.py` | a start of the noticeboard with a changed environment, the readers of a report, of a paging link and of the cookie, the check of a JSON body, and a post of an exact size |
 | `proc_chat.py`, `proc_sse.py` | what Open WebUI sends, and how a test reads the SSE stream back |
