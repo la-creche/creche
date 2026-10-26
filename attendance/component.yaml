@@ -36,8 +36,6 @@ provides:
 requires:
   # Contract 03's host side: one channel per sandbox, over sbx exec stdio.
   - { contract: channel, major: 0, min_minor: 12 }
-  # Contract 04 §7.3: it serves the PEP's one session path.
-  - { contract: pep-grant, major: 0, min_minor: 11 }
   # Contract 05: it reads caregiver's status document and writes a fault file.
   - { contract: manager-status, major: 0, min_minor: 17 }
 depends_on: [chaperone, playpen]

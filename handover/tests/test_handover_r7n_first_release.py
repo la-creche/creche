@@ -88,16 +88,16 @@ UNIT = "creche-noticeboard.service"
 #: a tree under an install root, so it can see none of them.
 INSTALLED_TREES = ("caregiver", "handover", "attendance", "noticeboard")
 
-#: What `chaperone` provides, and nobody in the resolved set does. `caregiver`,
-#: `attendance` and `noticeboard` all require it, so it is the requirement root cannot
-#: check on this host.
+#: What `chaperone` provides, and nobody in the resolved set does.
+#: `noticeboard` requires it, so it is the requirement root cannot check on
+#: this host.
 UNPROVIDED = "pep-grant"
 
 #: Every requirement root cannot check on the host, in the order
 #: `contracts._check_floors` walks the set: by component name, then in the
 #: order the manifest declares them. `chaperone` provides `pep-grant` and
-#: `playpen` provides `channel`, and neither is a tree under an
-#: install root. `handover` requires nothing, and `noticeboard` gets `session-api`
+#: is not a tree under an install root. Nothing provides `channel`.
+#: `handover` requires nothing, and `noticeboard` gets `session-api`
 #: from `attendance` and `manager-status` from `caregiver`, which ARE trees.
 #:
 #: The FLOORS are read from the manifests and never written here. A contract
@@ -128,8 +128,6 @@ def _not_verified(component: str, contract: str, owner: str) -> str:
 
 UNVERIFIED = [
     _not_verified("attendance", "channel", "playpen"),
-    _not_verified("attendance", "pep-grant", "chaperone"),
-    _not_verified("caregiver", "pep-grant", "chaperone"),
     _not_verified("caregiver", "channel", "playpen"),
     _not_verified("noticeboard", "pep-grant", "chaperone"),
 ]
@@ -139,7 +137,7 @@ UNVERIFIED = [
 #: `caregiver`, `session-api` from `attendance`, `component-manifest` from
 #: `handover`.
 REVIEW_ROW = "suspect: 3 manifest(s) not verified (attendance, caregiver, handover)"
-CONTRACTS_ROW = "4 satisfied, 5 not verified"
+CONTRACTS_ROW = "4 satisfied, 3 not verified"
 
 #: The second request the real spool held: `caregiver` asked for
 #: `mcp-servers=latest` while agent-mcp carried no `mcp-servers-v*` tag,
@@ -460,7 +458,7 @@ def test_the_unprovided_requirement_is_reported_and_never_refused(first: First) 
     `chaperone` was live out of `/opt/creche/.venv`, which is no tree
     under an install root, so root saw no provider for `pep-grant` —
     which `caregiver`, `attendance` and `noticeboard` all
-    require. Root cannot tell that from "nothing provides it", and
+    required then. Root cannot tell that from "nothing provides it", and
     refusing there refuses every release on this host for ever.
     """
     _release(first, {COMPONENT: FIRST_VERSION})
@@ -468,9 +466,9 @@ def test_the_unprovided_requirement_is_reported_and_never_refused(first: First) 
     entry = first.ledger()
     assert entry["status"] == "succeeded"
     assert [one for one in _manual_lines(first) if one.startswith("not verified:")] == UNVERIFIED
-    assert "5 requirement(s) not verified" in str(first.step("contracts")["detail"])
+    assert "3 requirement(s) not verified" in str(first.step("contracts")["detail"])
     # And `pep-grant`, the one the real refusal named, is among them.
-    assert sum(1 for one in UNVERIFIED if UNPROVIDED in one) == 3
+    assert sum(1 for one in UNVERIFIED if UNPROVIDED in one) == 1
 
 
 def test_a_provider_root_can_see_is_still_checked(first: First) -> None:
