@@ -1,5 +1,5 @@
 {
-  "about": "The creche extensions of ACP v1 between attendance and creche-facade. Each message is one JSON-RPC line as the wire carries it. The facade tests read this file, and the attendance tests read it too.",
+  "about": "The creche extensions of ACP v1 between attendance and creche-facade. Each message is one JSON-RPC line as the wire carries it. The facade tests read this file, and the attendance tests read it too. On the supervisor link the beat id is an integer. On a relay connection attendance's door sends the beat with a string id `creche-beat-<n>`, a prefix that the door reserves, and takes the answer.",
   "protocol_version": 1,
   "max_line_bytes": 1048576,
   "beat_interval_s": 30,
