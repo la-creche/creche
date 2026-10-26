@@ -11,7 +11,7 @@ import httpx
 from noticeboard.attendancehttp import HttpTransport
 
 TOKEN = "v" * 40
-LIST_PATH = "/v1/sessions"
+LIST_PATH = "/families/chat/sessions"
 
 
 def transport(handler: Callable[[httpx.Request], httpx.Response]) -> HttpTransport:

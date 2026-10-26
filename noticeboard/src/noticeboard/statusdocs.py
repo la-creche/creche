@@ -230,8 +230,7 @@ class FamilyRow:
     # There is no `turns_running` here: `caregiver` may not call
     # `GET /v1/sessions` (contract 02 §3.1), so it cannot count a running
     # turn, and a number it cannot count does not belong on the noticeboard
-    # invariant 20 calls the truth. The live count belongs to `attendance`,
-    # and `sessions.py` reads it per session there.
+    # invariant 20 calls the truth. The live count belongs to `attendance`.
 
     @property
     def blocking_faults(self) -> tuple[FaultRow, ...]:

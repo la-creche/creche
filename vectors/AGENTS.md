@@ -66,7 +66,7 @@ directory is not a workspace package, so a change here does not change
 | `surfaces/session.py` | the HTTP surface of `attendance`: `session.request.*` of the four routes, `session.error_body`, `session.outcome.write`. The other files under `data/session/` are frozen |
 | `surfaces/runtime.py` | the helper code that each service copies: `runtime.untrusted.<copy>.<helper>`, `runtime.parse_object.noticeboard`, `runtime.strict_json`, `runtime.time`, `runtime.token.<reader>`, `runtime.bearer.<copy>`, `runtime.edge.<service>` |
 | `surfaces/noticeboard_cases.py` | the written inputs of the noticeboard surfaces |
-| `surfaces/noticeboard.py` | the noticeboard: `noticeboard.security.*`, `noticeboard.urlform`, `noticeboard.app.query`, `noticeboard.route.*`, `noticeboard.sessions.*`, `noticeboard.transcript.fold`, `noticeboard.audit.page`, `noticeboard.statusdocs.report`, `noticeboard.verify.envfile`, `noticeboard.cli.check`, `noticeboard.static.css` |
+| `surfaces/noticeboard.py` | the noticeboard: `noticeboard.security.*`, `noticeboard.urlform`, `noticeboard.app.query`, `noticeboard.route.*`, `noticeboard.sessions.*`, `noticeboard.audit.page`, `noticeboard.statusdocs.report`, `noticeboard.verify.envfile`, `noticeboard.cli.check`, `noticeboard.static.css` |
 | `surfaces/library.py` | the index builder: `library.chunk_text`, `library.file_hash`, `library.read_document`, `library.report`, `library.tei_url`, `library.embedding`, `library.schema`, `library.index_scope` |
 | `surfaces/tomlfile.py` | the syntax of a TOML file: `tomlfile.syntax`, and its changed texts |
 | `surfaces/envfile.py` | the reader of the env files: `envfile.layer`, `envfile.raw`, `envfile.trust` |
@@ -434,9 +434,9 @@ did not.
 - `_parse_env_file` of `noticeboard.verify` is private.
   `noticeboard.verify.envfile` covers it through `main`. A vector shows a
   variable of the file only through the bind and the port of the config.
-- `_refusal` and `_stream` of `noticeboard.sessions` are private.
-  `noticeboard.sessions.refusal` and `noticeboard.sessions.events` cover them
-  through the calls of `SessionReader`.
+- `_refusal` and `_entry` of `noticeboard.sessions` are private.
+  `noticeboard.sessions.refusal` and `noticeboard.sessions.transcript` cover
+  them through the calls of `SessionReader`.
 - `noticeboard.security.key` gives `check_key` a text that the generator
   makes from the bytes of a header. In the service, the web framework makes
   that text. No vector covers the key check or the check of a form post

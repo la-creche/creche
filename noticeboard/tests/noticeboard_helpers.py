@@ -201,77 +201,57 @@ def audit_record(
     return row
 
 
-def session_doc(
-    session: str = "owui-3f2a9c41-77b0-4a1e-9a4c-1d0e5f8b2c33",
-    family: str = "chat",
-    state: str = "idle",
-    **extra: Any,
-) -> dict[str, Any]:
-    """A contract 02 §4.2 session object."""
+#: A session id of the facade.
+SESSION = "3f2a9c41-77b0-4a1e-9a4c-1d0e5f8b2c33"
+
+
+def view_row(session: str = SESSION, **extra: Any) -> dict[str, Any]:
+    """One row of `GET /families/{f}/sessions` of `attendance`."""
     row: dict[str, Any] = {
-        "family": family,
-        "session": session,
-        "kind": "attended",
+        "id": session,
         "title": "Boiler service date",
-        "state": state,
-        "created_at": stamp(1800),
-        "updated_at": stamp(60),
-        "journal_seq": 42,
-        "writer": None,
-        "turns_total": 3,
-        "turns_running": 0,
-        "sandbox": f"{family}-s3",
-        "persona_hash": "6f1c0a55",
-        "labels": {"door": "owui"},
+        "created": None,
+        "updated": stamp(60),
+        "job_id": None,
+        "delegation": None,
+        "trigger": None,
     }
     row.update(extra)
     return row
 
 
-def turn_doc(
-    turn: str = "01K5J9QWB9R1V3T5Y7H9J2K4P6", state: str = "settled", **extra: Any
-) -> dict[str, Any]:
-    """A contract 02 §4.4 turn object."""
-    row: dict[str, Any] = {
-        "turn": turn,
-        "state": state,
-        "reason": None,
-        "started_at": stamp(120),
-        "ended_at": stamp(118),
-        "deadline_s": 600,
-        "idempotency_key": None,
-        "sandbox": "chat-s3",
-        "usage": {
-            "input": 4120,
-            "output": 188,
-            "cache_read": 0,
-            "cache_write": 0,
-            "cost_usd": 0.014,
-        },
-        "approvals": 0,
-        "owui": None,
+def said(position: int, kind: str, text: str) -> dict[str, Any]:
+    """One text entry of a transcript page of `attendance`."""
+    return {"position": position, "kind": kind, "text": text}
+
+
+def tool_entry(position: int, call: str = "call-1", **extra: Any) -> dict[str, Any]:
+    """One tool call entry of a transcript page of `attendance`."""
+    entry: dict[str, Any] = {
+        "position": position,
+        "kind": "tool_call",
+        "tool_call_id": call,
+        "title": "kagi__kagi_search_fetch",
+        "status": "completed",
+        "result": "The boiler is due in March.",
     }
-    row.update(extra)
-    return row
+    entry.update(extra)
+    return entry
 
 
-def journal_line(
-    seq: int, kind: str, body: dict[str, Any], turn: str | None = None
+def transcript_doc(
+    entries: list[dict[str, Any]],
+    session: str = SESSION,
+    next_start: int | None = None,
+    truncated: bool = False,
 ) -> dict[str, Any]:
-    """A contract 02 §8 event line."""
-    line: dict[str, Any] = {
-        "journal_seq": seq,
-        "ts": stamp(100 - seq),
-        "kind": kind,
-        "turn": turn,
-        "body": body,
+    """One answer of `GET /families/{f}/sessions/{id}` of `attendance`."""
+    return {
+        "session_id": session,
+        "entries": entries,
+        "next": next_start,
+        "truncated": truncated,
     }
-    return line
-
-
-def ndjson(rows: list[dict[str, Any]]) -> bytes:
-    """Contract 02 §8: LF is the only delimiter."""
-    return b"".join(json.dumps(row).encode("utf-8") + b"\n" for row in rows)
 
 
 #: Past the nesting limit of the JSON reader of every supported Python.

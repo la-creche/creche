@@ -190,7 +190,6 @@ def test_the_surface_words_are_the_words_of_the_notices_of_the_noticeboard() -> 
         "status.outcome",
         "audit.line",
         "session.answer",
-        "session.journal_line",
     ]
 
 

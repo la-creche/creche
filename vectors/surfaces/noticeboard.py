@@ -11,11 +11,9 @@ The surfaces, by what each one pins:
   and to the count of calls that the page shows.
 - `noticeboard.route.family` and `noticeboard.route.session`: one route
   parameter to accepted or refused.
-- `noticeboard.sessions.list`, `.detail`, `.events`, `.refusal` and
-  `.token`: one answer of `attendance`, or one token file, to what the
-  reader of the noticeboard makes of it.
-- `noticeboard.transcript.fold`: one event stream to the entries of a
-  transcript.
+- `noticeboard.sessions.list`, `.transcript`, `.refusal` and `.token`:
+  one answer of a view route of `attendance`, or one token file, to what
+  the reader of the noticeboard makes of it.
 - `noticeboard.audit.page`: one audit file and one call to one page.
 - `noticeboard.statusdocs.report`: one validation report to its issues.
 - `noticeboard.verify.envfile`: one env file to the first check of the
@@ -61,11 +59,11 @@ from noticeboard.app import STATIC, build_app
 from noticeboard.auditfiles import AuditFilter, AuditRow, Unreadable
 from noticeboard.config import DEFAULT_PAGE_SIZE, DEFAULT_PORT, SOCKET_BASE_URL, Config
 from noticeboard.security import CSRF_COOKIE, CSRF_FIELD
-from noticeboard.sessions import Reply, SessionReader, SessionRow, TurnRow
+from noticeboard.sessions import Reply, SessionReader, SessionRow
 from starlette.types import ASGIApp, Message
 
 from noticeboard import __main__ as main_module
-from noticeboard import auditfiles, security, sessions, statusdocs, transcript, verify
+from noticeboard import auditfiles, security, sessions, statusdocs, verify
 from vectors.core import (
     Json,
     Raised,
@@ -89,6 +87,9 @@ GROUP: Final = "noticeboard"
 PERIMETER: Final = "spec.md §8.3"
 PAGES: Final = "spec.md §8.1"
 SESSION_API: Final = "contract 02"
+
+#: The module of `attendance` that serves the two view routes.
+VIEW_ROUTES: Final = "attendance/src/attendance/acp_view.py"
 
 HTTP_OK: Final = 200
 HTTP_NOT_FOUND: Final = 404
@@ -870,7 +871,7 @@ def _session_id_surface() -> Surface:
     )
 
 
-# --- the three calls of the reader ------------------------------------------------------
+# --- the two calls of the reader --------------------------------------------------------
 
 _NOTE_ANSWER: Final = (
     "The input is the bytes of the body of one answer of attendance. params.status is the "
@@ -890,32 +891,17 @@ _NOTE_LENIENT: Final = (
 )
 
 
-#: A field of a session row that the reader never sets and no page shows.
-_UNUSED_FIELD: Final = "problem"
-
-
 def _session_json(row: SessionRow) -> dict[str, Json]:
-    found = {key: value for key, value in _fields(row).items() if key != _UNUSED_FIELD}
-
-    return {**found, "door": row.door}
-
-
-def _turn_json(row: TurnRow) -> dict[str, Json]:
-    usage: dict[str, Json] = {**_fields(row.usage), "tokens_text": row.usage.tokens_text}
-
-    return {**_fields(row), "usage": usage, "running": row.running}
-
-
-def _list_params(answer: cases.Answer) -> dict[str, Json]:
-    return {"status": answer.status, "family": "", "limit": 50, "cursor": "", **answer.call}
+    return {**_fields(row), "origin": row.origin}
 
 
 def _list_vector(answer: cases.Answer, token_file: Path) -> Vector:
     given = answer.body.given()
-    params = _list_params(answer)
+    params: dict[str, Json] = {"status": answer.status, "family": FAMILY, "cursor": ""}
+    params.update(answer.call)
     stand_in = _answered(answer)
     reader = SessionReader(transport=stand_in, token_file=token_file)
-    outcome = attempt(lambda: reader.sessions(**answer.call))
+    outcome = attempt(lambda: reader.sessions(FAMILY, **answer.call))
     if isinstance(outcome, Raised):
         return raised(answer.id, given, outcome.exc, params=params)
 
@@ -938,7 +924,7 @@ def _unreachable_vector(token_file: Path) -> Vector:
     reader = SessionReader(
         transport=StandIn(Reply(problem=cases.UNREACHABLE)), token_file=token_file
     )
-    outcome = attempt(reader.sessions)
+    outcome = attempt(lambda: reader.sessions(FAMILY))
     if isinstance(outcome, Raised):
         return raised("transport-problem", given, outcome.exc)
 
@@ -949,19 +935,17 @@ def _list_surface(token_file: Path) -> Surface:
     return _surface(
         "sessions.list",
         "noticeboard.sessions.SessionReader.sessions",
-        f"{SESSION_API} §4.2, §5.2",
+        f"{VIEW_ROUTES}, GET /families/{{family}}/sessions",
         (
             _NOTE_ANSWER,
-            "params.family, params.limit and params.cursor are the arguments of the entry "
-            "point. An empty family and an empty cursor are the defaults.",
+            "params.family and params.cursor are the arguments of the entry point. An empty "
+            "cursor is the default, and the reader then sends no cursor.",
             _NOTE_REQUEST,
-            "value.rows is each session of the answer. door is the door that the reader "
-            "derives: from the start of the session id first, and from the holder of the "
-            "writer lease second.",
-            f"The reader takes the first {sessions.MAX_SESSION_LIMIT} items of the list and "
-            f"then drops each item that is no object. It takes the first "
-            f"{sessions.MAX_LABELS} labels in the sorted order of their keys and then drops "
-            "each label whose value is no text.",
+            "value.rows is each session of the answer. family is the family of the call. "
+            "origin is what started the session: the kind and the name of the trigger, then "
+            "delegation, then job. It is empty for a session with none of the three.",
+            f"The reader takes the first {sessions.MAX_SESSIONS} items of the list and then "
+            "drops each item that is no object.",
             _NOTE_LENIENT,
             _NOTE_REFUSED,
             "The vector transport-problem has no answer: args.problem is the text that the "
@@ -977,110 +961,62 @@ def _list_surface(token_file: Path) -> Surface:
     )
 
 
-def _detail_vector(answer: cases.Answer, token_file: Path) -> Vector:
+def _transcript_vector(answer: cases.Answer, token_file: Path) -> Vector:
     given = answer.body.given()
     params: dict[str, Json] = {
         "status": answer.status,
         "family": FAMILY,
         "session": SESSION,
-        "turns": sessions.DEFAULT_TURNS,
-        **answer.call,
+        "start": 0,
     }
+    params.update(answer.call)
     stand_in = _answered(answer)
     reader = SessionReader(transport=stand_in, token_file=token_file)
-    outcome = attempt(lambda: reader.detail(FAMILY, SESSION, **answer.call))
+    outcome = attempt(lambda: reader.transcript(FAMILY, SESSION, **answer.call))
     if isinstance(outcome, Raised):
         return raised(answer.id, given, outcome.exc, params=params)
 
-    if outcome.session is None:
+    if outcome.problem:
         return refused(answer.id, given, problem_of(outcome.problem), params=params)
 
-    turns: list[Json] = [_turn_json(turn) for turn in outcome.turns]
+    entries: list[Json] = [_fields(entry) for entry in outcome.entries]
+    unread: list[Json] = list(outcome.unread)
     value: dict[str, Json] = {
         "request": stand_in.only_call().as_json(),
-        "session": _session_json(outcome.session),
-        "turns": turns,
-    }
-
-    return accepted(answer.id, given, value, params=params)
-
-
-def _detail_surface(token_file: Path) -> Surface:
-    return _surface(
-        "sessions.detail",
-        "noticeboard.sessions.SessionReader.detail",
-        f"{SESSION_API} §4.2, §4.4, §5.3",
-        (
-            _NOTE_ANSWER,
-            "params.family, params.session and params.turns are the arguments of the entry point.",
-            _NOTE_REQUEST,
-            "value.session is the session of the answer, as noticeboard.sessions.list gives "
-            "one. value.turns is each turn of the answer.",
-            "running is true for a turn in one of the three states that are not final. "
-            "usage.tokens_text is the sum of the four counts of the usage, as a page shows "
-            "it. The sum of four counts of 64 bits can need more than 64 bits.",
-            f"The reader takes the first {sessions.MAX_TURNS} items of the list of turns and "
-            "then drops each item that is no object.",
-            _NOTE_LENIENT,
-            _NOTE_REFUSED,
-            _NOTE_PROBLEM,
-            _NOTE_PROBLEM_TEXT,
-        ),
-        tuple(_detail_vector(answer, token_file) for answer in cases.DETAILS),
-    )
-
-
-def _events_vector(answer: cases.Answer, token_file: Path) -> Vector:
-    given = answer.body.given()
-    params: dict[str, Json] = {
-        "status": answer.status,
-        "family": FAMILY,
-        "session": SESSION,
-        "from_seq": 0,
-        **answer.call,
-    }
-    stand_in = _answered(answer)
-    reader = SessionReader(transport=stand_in, token_file=token_file)
-    outcome = attempt(lambda: reader.events(FAMILY, SESSION, **answer.call))
-    if isinstance(outcome, Raised):
-        return raised(answer.id, given, outcome.exc, params=params)
-
-    problems: list[Json] = [problem_of(problem) for problem in outcome.problems]
-    value: dict[str, Json] = {
-        "request": stand_in.only_call().as_json(),
-        "lines": cast("list[Json]", normalize(outcome.lines)),
-        "problems": problems,
+        "entries": entries,
+        "unread": unread,
+        "next_start": outcome.next_start,
         "truncated": outcome.truncated,
     }
 
     return accepted(answer.id, given, value, params=params)
 
 
-def _events_surface(token_file: Path) -> Surface:
+def _transcript_surface(token_file: Path) -> Surface:
     return _surface(
-        "sessions.events",
-        "noticeboard.sessions.SessionReader.events",
-        f"{SESSION_API} §5.5, §8",
+        "sessions.transcript",
+        "noticeboard.sessions.SessionReader.transcript",
+        f"{VIEW_ROUTES}, GET /families/{{family}}/sessions/{{id}}",
         (
             _NOTE_ANSWER,
-            "params.family, params.session and params.from_seq are the arguments of the "
-            "entry point.",
+            "params.family, params.session and params.start are the arguments of the entry "
+            "point. The reader sends start only when it is more than 0.",
             _NOTE_REQUEST,
-            "value.lines is each line of the stream that is one JSON object, in the order of "
-            "the stream. The reader checks no field of a line.",
-            "The reader ends a line at LF only. It skips a line that holds only the six "
-            "bytes of ASCII whitespace: space, tab, LF, CR, VT and FF. It gives each other "
-            "line to the JSON reader with each of its bytes. A VT or an FF beside an object "
-            "thus makes a line that is no JSON.",
-            "value.problems has one problem for each line that is no JSON object and one for "
-            "each limit that the reader stopped at. value.truncated is true when the reader "
-            "stopped at a limit.",
-            f"The reader keeps the first {sessions.MAX_STREAM_BYTES} bytes of a stream and "
-            f"the first {sessions.MAX_STREAM_LINES} lines that are a JSON object.",
+            "value.entries is each entry of the answer that has a kind of the reader: user, "
+            "agent, thought or tool_call. The text of a tool call is its result. "
+            "value.unread has one sentence for each other entry that is an object.",
+            f"The reader takes the first {sessions.MAX_ENTRIES} items of the list and then "
+            f"drops each item that is no object. A text of an entry has "
+            f"{sessions.MAX_ENTRY_CHARS} characters or less. A title has {cases.CUT} "
+            "characters or less.",
+            "value.next_start is the next of the answer when it is an integer of 0 or more, "
+            "and null for each other value. value.truncated is true only for the JSON true.",
+            _NOTE_LENIENT,
+            _NOTE_REFUSED,
             _NOTE_PROBLEM,
             _NOTE_PROBLEM_TEXT,
         ),
-        tuple(_events_vector(answer, token_file) for answer in cases.STREAMS),
+        tuple(_transcript_vector(answer, token_file) for answer in cases.TRANSCRIPTS),
     )
 
 
@@ -1091,9 +1027,8 @@ def _refusal_text(answer: cases.Answer, token_file: Path) -> str | Raised:
         reader = SessionReader(transport=_answered(answer), token_file=token_file)
 
         return {
-            reader.sessions().problem,
-            reader.detail(FAMILY, SESSION).problem,
-            *reader.events(FAMILY, SESSION).problems,
+            reader.sessions(FAMILY).problem,
+            reader.transcript(FAMILY, SESSION).problem,
         }
 
     outcome = attempt(ask)
@@ -1101,7 +1036,7 @@ def _refusal_text(answer: cases.Answer, token_file: Path) -> str | Raised:
         return outcome
 
     if len(outcome) != 1:
-        raise ValueError(f"{answer.id}: the three calls give {sorted(outcome)}")
+        raise ValueError(f"{answer.id}: the two calls give {sorted(outcome)}")
 
     return outcome.pop()
 
@@ -1119,7 +1054,7 @@ def _refusal_vector(answer: cases.Answer, token_file: Path) -> Vector:
 def _refusal_surface(token_file: Path) -> Surface:
     return _surface(
         "sessions.refusal",
-        "noticeboard.sessions.SessionReader.sessions, .detail and .events",
+        "noticeboard.sessions.SessionReader.sessions and .transcript",
         f"{SESSION_API} §14",
         (
             _NOTE_ANSWER,
@@ -1131,8 +1066,8 @@ def _refusal_surface(token_file: Path) -> Surface:
             f"The reader keeps the first {cases.CUT} characters of the code and of the "
             "message. Then it removes the whitespace of Python str.rstrip from the end of "
             "the sentence.",
-            "The generator makes the three calls of the reader for each answer. It stops "
-            "when two calls give two sentences.",
+            "The generator makes the two calls of the reader for each answer. It stops "
+            "when the two calls give two sentences.",
             _NOTE_PROBLEM,
         ),
         tuple(_refusal_vector(answer, token_file) for answer in cases.REFUSALS),
@@ -1158,7 +1093,7 @@ def _token_vector(case: cases.TokenCase, scratch: Path) -> Vector:
 
     stand_in = StandIn(_NO_SESSION)
     reader = SessionReader(transport=stand_in, token_file=path)
-    outcome = attempt(reader.sessions)
+    outcome = attempt(lambda: reader.sessions(FAMILY))
     if isinstance(outcome, Raised):
         return raised(case.id, given, outcome.exc)
 
@@ -1193,64 +1128,6 @@ def _token_surface(scratch: Path) -> Surface:
         ),
         tuple(_token_vector(case, scratch / "token") for case in cases.TOKENS),
         {"mode": f"{MODE_OWNER:04o}"},
-    )
-
-
-# --- the transcript ---------------------------------------------------------------------
-
-
-def _folded(body: Body, token_file: Path) -> list[Json] | Raised:
-    """The entries of one stream: the reader first, and `fold` on its lines."""
-    reader = SessionReader(
-        transport=StandIn(Reply(status=HTTP_OK, body=body.data())), token_file=token_file
-    )
-    stream = attempt(lambda: reader.events(FAMILY, SESSION))
-    if isinstance(stream, Raised):
-        return stream
-
-    if stream.problems:
-        raise ValueError(f"{body.id}: the reader has a problem with a line of the transcript")
-
-    entries = attempt(lambda: transcript.fold(stream.lines))
-    if isinstance(entries, Raised):
-        return entries
-
-    return [_fields(entry) for entry in entries]
-
-
-def _transcript_vector(body: Body, token_file: Path) -> Vector:
-    given = body.given()
-    outcome = _folded(body, token_file)
-    if isinstance(outcome, Raised):
-        return raised(body.id, given, outcome.exc)
-
-    return accepted(body.id, given, {"entries": outcome})
-
-
-def _transcript_surface(token_file: Path) -> Surface:
-    return _surface(
-        "transcript.fold",
-        "noticeboard.transcript.fold, on the lines of noticeboard.sessions.SessionReader.events",
-        f"{SESSION_API} §8, §15.1",
-        (
-            "The input is the bytes of one event stream: each line is one JSON object and "
-            "ends with LF. The surface noticeboard.sessions.events holds what the reader "
-            "does with another line.",
-            "value.entries is each entry of the transcript, oldest first. voice is one of "
-            "prompt, answer, approval, note and failure.",
-            "The text deltas of one turn make one answer. A line of that turn that is no pi "
-            "event ends the answer, and the answer gets the time of that line. A heartbeat, "
-            "a line of the kind terminal_exchange, a line of an unknown kind and a line of "
-            "another turn do not end it. An answer with no such line comes after each other "
-            "entry and has an empty time.",
-            f"One delta has {transcript.MAX_DELTA_CHARS} characters or less. One answer has "
-            f"{transcript.MAX_ANSWER_CHARS} characters or less, and truncated is true for an "
-            "answer that had more.",
-            f"The entry point reads no line after it has {transcript.MAX_ENTRIES} entries. "
-            "Each answer with no end still makes an entry after that.",
-            _NOTE_LENIENT,
-        ),
-        tuple(_transcript_vector(body, token_file) for body in cases.TRANSCRIPTS),
     )
 
 
@@ -1652,11 +1529,9 @@ def surfaces() -> tuple[Surface, ...]:
             _segment_surface(scratch),
             _session_id_surface(),
             _list_surface(token_file),
-            _detail_surface(token_file),
-            _events_surface(token_file),
+            _transcript_surface(token_file),
             _refusal_surface(token_file),
             _token_surface(scratch),
-            _transcript_surface(token_file),
             _audit_surface(scratch),
             _report_surface(scratch),
             _env_file_surface(scratch),

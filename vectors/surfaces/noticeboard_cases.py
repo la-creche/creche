@@ -18,139 +18,24 @@ from __future__ import annotations
 import json
 import string
 from dataclasses import dataclass, field
-from enum import StrEnum
 from typing import Any, Final
 
-from noticeboard import auditfiles, jsonfiles, security, sessions, statusdocs, transcript
+from noticeboard import auditfiles, jsonfiles, security, sessions, statusdocs
 from vectors.surfaces import ids
 from vectors.surfaces.config import INT_DIGITS_MAX, LAN, VIEW_KEY
 from vectors.surfaces.session_cases import (
-    DIGEST,
     FAMILY,
     JOB_SESSION,
     OTHER_SESSION,
-    SANDBOX,
     SESSION,
-    TURN,
     Body,
 )
-
-
-class LineKind(StrEnum):
-    """The kinds of a journal line (contract 02 §8.1), as `attendance` wrote
-    them until the phase 2 plan, row 21. The noticeboard still reads them."""
-
-    SESSION_CREATED = "session_created"
-    SESSION_TITLED = "session_titled"
-    WRITER_CHANGED = "writer_changed"
-    TURN_QUEUED = "turn_queued"
-    TURN_STARTED = "turn_started"
-    PI_EVENT = "pi_event"
-    APPROVAL_REQUESTED = "approval_requested"
-    APPROVAL_RESOLVED = "approval_resolved"
-    TURN_SETTLED = "turn_settled"
-    TURN_FAILED = "turn_failed"
-    TURN_ABORTED = "turn_aborted"
-    BRANCH_FALLBACK = "branch_fallback"
-    TERMINAL_EXCHANGE = "terminal_exchange"
-    NOTE = "note"
-    HEARTBEAT = "heartbeat"
-
-
-_USAGE: Final[dict[str, Any]] = {
-    "input": 4120,
-    "output": 188,
-    "cache_read": 0,
-    "cache_write": 0,
-    "cost_usd": 0.014,
-}
-
-_SESSION_OBJECT: Final[dict[str, Any]] = {
-    "family": FAMILY,
-    "session": SESSION,
-    "kind": "attended",
-    "title": "Kitchen sensor debug",
-    "state": "idle",
-    "created_at": "2026-10-05T19:21:47Z",
-    "updated_at": "2026-10-05T19:21:47Z",
-    "journal_seq": 0,
-    "writer": None,
-    "turns_total": 0,
-    "terminal_total": 0,
-    "turns_running": 0,
-    "sandbox": None,
-    "persona_hash": None,
-    "labels": {"door": "owui"},
-}
-
-#: The body of each kind, with the keys in the order that `attendance`
-#: wrote them. The body of a `pi_event` has its keys in sorted order.
-KIND_BODIES: Final[dict[LineKind, dict[str, Any]]] = {
-    LineKind.SESSION_CREATED: _SESSION_OBJECT,
-    LineKind.SESSION_TITLED: {"title": "Kitchen sensor debug"},
-    LineKind.WRITER_CHANGED: {"holder": "tui", "reason": "taken_over"},
-    LineKind.TURN_QUEUED: {
-        "prompt": "Triage the open issues.",
-        "idempotency_key": "morning-triage-2026-10-07",
-        "queue_depth": 3,
-    },
-    LineKind.TURN_STARTED: {
-        "prompt": "Which sensor dropped out last night?",
-        "sandbox": SANDBOX,
-        "deadline_s": 3600,
-        "persona_hash": DIGEST,
-        "status_stale": False,
-    },
-    LineKind.PI_EVENT: {
-        "assistantMessageEvent": {"contentIndex": 0, "delta": "Sensor ", "type": "text_delta"},
-        "type": "message_update",
-    },
-    LineKind.APPROVAL_REQUESTED: {
-        "tool": "ha_call",
-        "summary": "",
-        "gate_id": "0123456789abcdef",
-    },
-    LineKind.APPROVAL_RESOLVED: {"decision": "approval_denied", "waited_s": 12},
-    LineKind.TURN_SETTLED: {"usage": _USAGE, "leaf_id": "e6", "user_entry_id": "e5"},
-    LineKind.TURN_FAILED: {"reason": "model_error", "message": "the model gave no answer"},
-    LineKind.TURN_ABORTED: {"reason": "user_stopped", "message": "tui_takeover"},
-    LineKind.BRANCH_FALLBACK: {"wanted_entry": None, "reason": "unmapped_parent"},
-    LineKind.TERMINAL_EXCHANGE: {
-        "entry_id": "e6",
-        "parent_entry_id": "e5",
-        "prompt": "what did the sensor read",
-        "answer": "21.4 degrees at 09:12",
-    },
-    LineKind.NOTE: {"note": "persona_truncated", "cap_bytes": 16384},
-    LineKind.HEARTBEAT: {"last_seq": 41},
-}
-
-#: The kinds that carry a turn id.
-TURN_KINDS: Final = frozenset(
-    {
-        LineKind.TURN_QUEUED,
-        LineKind.TURN_STARTED,
-        LineKind.PI_EVENT,
-        LineKind.APPROVAL_REQUESTED,
-        LineKind.APPROVAL_RESOLVED,
-        LineKind.TURN_SETTLED,
-        LineKind.TURN_FAILED,
-        LineKind.TURN_ABORTED,
-        LineKind.BRANCH_FALLBACK,
-    }
-)
-
-#: A second turn id, for a stream with two turns.
-OTHER_TURN: Final = "01JBQ7X2M5C8E1G4J7N0Q3S6V9"
 
 #: The largest integer that a strict JSON reader takes as a signed number.
 I64_MAX: Final = 2**63 - 1
 
 #: The count of characters that the noticeboard keeps of one text.
 CUT: Final = jsonfiles.MAX_TEXT_CHARS
-
-_TS: Final = "2026-10-05T19:22:31.070Z"
-_EARLIER: Final = "2026-10-05T19:21:47Z"
 
 
 def _json(value: object) -> bytes:
@@ -704,67 +589,28 @@ SESSION_IDS: Final[tuple[tuple[str, str], ...]] = (
     ("each-door-prefix", "job-auto-tui-owui-1"),
 )
 
-# --- the answers of attendance (contract 02 §4, §5) -------------------------------------
+# --- the answers of attendance: the two view routes ------------------------------------
 
-_WRITER: Final[dict[str, object]] = {
-    "holder": "owui",
-    "door_instance": "owui-1",
-    "since": _EARLIER,
-    "expires_at": "2026-10-05T19:23:31Z",
-    "turn": TURN,
+_TS: Final = "2026-10-05T19:22:31.070Z"
+
+#: The trigger of a session that a firing started.
+_TRIGGER: Final[dict[str, object]] = {
+    "kind": "dispatch",
+    "name": "scrum-lead",
+    "fired_at": "2026-10-25T12:00:00Z",
 }
 
 
-def _session(**fields: object) -> dict[str, object]:
-    """One session object of contract 02 §4.2, with the fields of the caller."""
+def _row(**fields: object) -> dict[str, object]:
+    """One row of `GET /families/{f}/sessions`, with the fields of the caller."""
     row: dict[str, object] = {
-        "family": FAMILY,
-        "session": SESSION,
-        "kind": "attended",
+        "id": SESSION,
         "title": "Kitchen sensor debug",
-        "state": "idle",
-        "created_at": _EARLIER,
-        "updated_at": _TS,
-        "journal_seq": 42,
-        "writer": None,
-        "turns_total": 3,
-        "turns_running": 0,
-        "sandbox": SANDBOX,
-        "persona_hash": DIGEST,
-        "labels": {"door": "owui"},
-    }
-    row.update(fields)
-
-    return row
-
-
-def _usage(**fields: object) -> dict[str, object]:
-    usage: dict[str, object] = {
-        "input": 4120,
-        "output": 188,
-        "cache_read": 12,
-        "cache_write": 3,
-        "cost_usd": 0.014,
-    }
-    usage.update(fields)
-
-    return usage
-
-
-def _turn(**fields: object) -> dict[str, object]:
-    """One turn object of contract 02 §4.4, with the fields of the caller."""
-    row: dict[str, object] = {
-        "turn": TURN,
-        "state": "settled",
-        "reason": None,
-        "started_at": _EARLIER,
-        "ended_at": _TS,
-        "deadline_s": 3600,
-        "idempotency_key": None,
-        "sandbox": SANDBOX,
-        "usage": _usage(),
-        "approvals": 0,
-        "owui": None,
+        "created": None,
+        "updated": _TS,
+        "job_id": None,
+        "delegation": None,
+        "trigger": None,
     }
     row.update(fields)
 
@@ -786,131 +632,71 @@ class Answer:
 
 
 def _listed(body_id: str, *rows: object, **fields: object) -> Answer:
-    """A list answer of contract 02 §5.2 that holds `rows`."""
+    """A list answer that holds `rows`."""
     return Answer(_o(body_id, {"sessions": list(rows), "next_cursor": None, **fields}))
 
-
-def _labels(count: int) -> dict[str, str]:
-    return {f"key-{number:02d}": f"value-{number}" for number in range(count)}
-
-
-_LONG_KEY: Final = "k" * CUT
 
 #: A transport failure, as the HTTP module of the noticeboard words one.
 UNREACHABLE: Final = "cannot reach attendance: ConnectError: the stand-in has no socket"
 
+_ANSWER_CAP: Final = sessions.MAX_ANSWER_BYTES
+
 LISTS: Final[tuple[Answer, ...]] = (
-    _listed("one-session", _session()),
+    _listed("one-session", _row()),
     _listed("no-session"),
-    _listed("two-sessions", _session(), _session(session=OTHER_SESSION, title="")),
+    _listed("two-sessions", _row(), _row(id=OTHER_SESSION, title=None)),
     Answer(_o("empty-object", {})),
     # --- the arguments of the call ---
-    Answer(_o("call-family", {"sessions": []}), call={"family": FAMILY}),
     Answer(_o("call-cursor", {"sessions": []}), call={"cursor": "b2Zmc2V0OjUw"}),
-    Answer(_o("call-limit-1", {"sessions": []}), call={"limit": 1}),
-    Answer(_o("call-limit-200", {"sessions": []}), call={"limit": sessions.MAX_SESSION_LIMIT}),
-    Answer(_o("call-limit-500", {"sessions": []}), call={"limit": 500}),
-    Answer(
-        _o("call-each-argument", {"sessions": []}),
-        call={"family": FAMILY, "limit": 25, "cursor": "b2Zmc2V0OjUw"},
-    ),
     # --- the list and the cursor ---
-    _listed("next-cursor", _session(), next_cursor="b2Zmc2V0OjUw"),
+    _listed("next-cursor", _row(), next_cursor="b2Zmc2V0OjUw"),
     _listed("next-cursor-number", next_cursor=5),
     _listed("next-cursor-600-characters", next_cursor="c" * 600),
     Answer(_o("sessions-null", {"sessions": None})),
-    Answer(_o("sessions-object", {"sessions": {"0": _session()}})),
+    Answer(_o("sessions-object", {"sessions": {"0": _row()}})),
     Answer(_o("sessions-text", {"sessions": "none"})),
-    _listed("rows-that-are-no-object", 5, "text", None, [_session()], _session(), True),
+    _listed("rows-that-are-no-object", 5, "text", None, [_row()], _row(), True),
     Answer(
         _o(
             "201-rows",
             {
                 "sessions": [
-                    *([0] * (sessions.MAX_SESSION_LIMIT - 1)),
-                    _session(session="owui-row-200"),
-                    _session(session="owui-row-201"),
+                    *([0] * (sessions.MAX_SESSIONS - 1)),
+                    _row(id="row-200"),
+                    _row(id="row-201"),
                 ]
             },
         )
     ),
-    # --- the door of a session ---
-    _listed("door-owui", _session(session="owui-1")),
-    _listed("door-tui", _session(session="tui-1")),
-    _listed("door-delegate", _session(session=f"job-{TURN}")),
-    _listed("door-trigger", _session(session=JOB_SESSION)),
-    _listed("door-from-the-writer", _session(session=TURN, writer=_WRITER)),
-    _listed("door-prefix-and-writer", _session(session="tui-1", writer=_WRITER)),
-    _listed("door-none", _session(session=TURN)),
-    _listed("door-prefix-upper-case", _session(session="OWUI-1")),
-    _listed("door-prefix-with-no-hyphen", _session(session="owui1")),
-    # --- each field of a session ---
+    # --- what started a session ---
+    _listed("origin-trigger", _row(trigger=_TRIGGER)),
+    _listed("origin-trigger-with-no-name", _row(trigger={"kind": "webhook"})),
+    _listed("origin-trigger-empty-object", _row(trigger={})),
+    _listed("origin-trigger-list", _row(trigger=[_TRIGGER])),
+    _listed("origin-delegation", _row(delegation="vault-oracle")),
+    _listed("origin-job", _row(job_id=JOB_SESSION)),
+    _listed("origin-each", _row(trigger=_TRIGGER, delegation="vault-oracle", job_id=JOB_SESSION)),
+    # --- each field of a row ---
     _listed("row-empty-object", {}),
     _listed(
         "wrong-types",
-        _session(
-            family=5,
-            session=None,
-            kind=["attended"],
+        _row(
+            id=5,
             title={"text": "x"},
-            state=True,
-            created_at=1,
-            updated_at=2.5,
-            journal_seq="42",
-            turns_total=True,
-            turns_running=3.0,
-            sandbox=0,
-            persona_hash=False,
-            writer="owui",
-            labels=["door"],
+            created=1,
+            updated=2.5,
+            job_id=True,
+            delegation=["x"],
+            trigger="dispatch",
         ),
     ),
-    _listed("nulls", _session(sandbox=None, persona_hash=None, title=None, labels=None)),
-    _listed("title-500-characters", _session(title="t" * CUT)),
-    _listed("title-501-characters", _session(title="t" * (CUT + 1))),
-    _listed("title-501-characters-outside-the-bmp", _session(title=_FACE * (CUT + 1))),
-    _listed("title-text-forms", _session(title='caf\u00e9 "quoted" <b> & \u2028 \x7f\n')),
-    _listed("session-501-characters", _session(session="s" * (CUT + 1))),
-    _listed("counts-zero", _session(journal_seq=0, turns_total=0, turns_running=0)),
-    _listed(
-        "counts-at-the-64-bit-limit",
-        _session(journal_seq=I64_MAX, turns_total=I64_MAX, turns_running=I64_MAX),
-    ),
-    _listed("unknown-field", _session(terminal_total=2, door="owui")),
-    # --- the writer ---
-    _listed("writer", _session(writer=_WRITER)),
-    _listed("writer-empty-object", _session(writer={})),
-    _listed("writer-list", _session(writer=[_WRITER])),
-    _listed(
-        "writer-wrong-types",
-        _session(
-            writer={"holder": 5, "door_instance": None, "since": True, "expires_at": [], "turn": {}}
-        ),
-    ),
-    _listed("writer-turn-null", _session(writer={**_WRITER, "turn": None})),
-    # --- the labels ---
-    _listed("labels-empty", _session(labels={})),
-    _listed("labels-20", _session(labels=_labels(sessions.MAX_LABELS))),
-    _listed("labels-21", _session(labels=_labels(sessions.MAX_LABELS + 1))),
-    _listed(
-        "21-labels-not-sorted",
-        _session(labels=dict(reversed(_labels(sessions.MAX_LABELS + 1).items()))),
-    ),
-    _listed("labels-sorted", _session(labels={"b": "2", "a": "1", "B": "3", "_": "4", "1": "5"})),
-    _listed("label-600-characters", _session(labels={"note": "v" * 600})),
-    _listed("label-key-600-characters", _session(labels={"k" * 600: "value"})),
-    _listed(
-        "label-keys-equal-after-the-cut",
-        _session(labels={_LONG_KEY + "a": "first", _LONG_KEY + "b": "second"}),
-    ),
-    _listed(
-        "label-values-that-are-no-text",
-        _session(labels={"a": 5, "b": None, "c": "kept", "d": ["x"], "e": {"k": "v"}, "f": True}),
-    ),
-    _listed(
-        "21-labels-first-is-no-text",
-        _session(labels={**_labels(sessions.MAX_LABELS + 1), "key-00": 5}),
-    ),
+    _listed("created", _row(created="2026-10-05T19:21:47Z")),
+    _listed("title-500-characters", _row(title="t" * CUT)),
+    _listed("title-501-characters", _row(title="t" * (CUT + 1))),
+    _listed("title-501-characters-outside-the-bmp", _row(title=_FACE * (CUT + 1))),
+    _listed("title-text-forms", _row(title='caf\u00e9 "quoted" <b> & \u2028 \x7f\n')),
+    _listed("id-501-characters", _row(id="s" * (CUT + 1))),
+    _listed("unknown-field", _row(cwd="/srv/agents/sessions/chat")),
     # --- a body that the reader refuses ---
     Answer(_t("not-json", "not json")),
     Answer(_t("cut-short", '{"sessions": [')),
@@ -920,226 +706,103 @@ LISTS: Final[tuple[Answer, ...]] = (
     Answer(_t("text", '"sessions"')),
     Answer(_t("number", "5")),
     Answer(_t("null", "null")),
-    Answer(
-        _long(
-            "at-the-size-cap", ('{"sessions":[]', 1), (" ", sessions.MAX_LIST_BYTES - 15), ("}", 1)
-        )
-    ),
-    Answer(
-        _long(
-            "over-the-size-cap",
-            ('{"sessions":[]', 1),
-            (" ", sessions.MAX_LIST_BYTES - 14),
-            ("}", 1),
-        )
-    ),
-)
-
-_TWO_TURNS: Final = (
-    _turn(),
-    _turn(turn=OTHER_TURN, state="running", ended_at=None, usage=None),
+    Answer(_long("at-the-size-cap", ('{"sessions":[]', 1), (" ", _ANSWER_CAP - 15), ("}", 1))),
+    Answer(_long("over-the-size-cap", ('{"sessions":[]', 1), (" ", _ANSWER_CAP - 14), ("}", 1))),
 )
 
 
-def _detail(body_id: str, *turns: object, **fields: object) -> Answer:
-    """A detail answer of contract 02 §5.3: one session and `turns`."""
-    return Answer(_o(body_id, {**_session(**fields), "turns": list(turns)}))
+def _said(position: object, kind: object, text: object) -> dict[str, object]:
+    """One text entry of a transcript page."""
+    return {"position": position, "kind": kind, "text": text}
 
 
-def _of_turn(body_id: str, **fields: object) -> Answer:
-    """A detail answer with one turn that has the fields of the caller."""
-    return _detail(body_id, _turn(**fields))
+def _tool(position: object, **fields: object) -> dict[str, object]:
+    """One tool call entry of a transcript page."""
+    entry: dict[str, object] = {
+        "position": position,
+        "kind": "tool_call",
+        "tool_call_id": "call-1",
+        "title": "kagi__kagi_search_fetch",
+        "status": "completed",
+        "result": "Sensor 3 dropped out at 02:10.",
+    }
+    entry.update(fields)
+
+    return entry
 
 
-def _of_usage(body_id: str, **fields: object) -> Answer:
-    return _of_turn(body_id, usage=_usage(**fields))
+def _paged(body_id: str, *entries: object, **fields: object) -> Answer:
+    """A transcript page that holds `entries`."""
+    page: dict[str, object] = {
+        "session_id": SESSION,
+        "entries": list(entries),
+        "next": None,
+        "truncated": False,
+    }
+    page.update(fields)
+
+    return Answer(_o(body_id, page))
 
 
-_NO_USAGE: Final = {key: value for key, value in _turn().items() if key != "usage"}
+_EXCHANGE: Final = (
+    _said(0, "user", "Which sensor dropped out?"),
+    _said(1, "agent", "Sensor 3 dropped out."),
+)
 
-DETAILS: Final[tuple[Answer, ...]] = (
-    _detail("session-and-two-turns", *_TWO_TURNS),
-    _detail("no-turn"),
-    Answer(_o("no-turns-key", _session())),
+_ENTRY_CAP: Final = sessions.MAX_ENTRY_CHARS
+
+TRANSCRIPTS: Final[tuple[Answer, ...]] = (
+    _paged("one-exchange", *_EXCHANGE),
+    _paged("no-entry"),
     Answer(_o("empty-object", {})),
+    _paged(
+        "each-kind",
+        _said(0, "user", "Which sensor dropped out?"),
+        _said(1, "thought", "The log names the sensor."),
+        _tool(2),
+        _said(3, "agent", "Sensor 3 dropped out."),
+    ),
     # --- the arguments of the call ---
-    Answer(_o("call-turns-1", _session()), call={"turns": 1}),
-    Answer(_o("call-turns-100", _session()), call={"turns": sessions.MAX_TURNS}),
-    Answer(_o("call-turns-500", _session()), call={"turns": 500}),
-    # --- the list of turns ---
-    Answer(_o("turns-null", {**_session(), "turns": None})),
-    Answer(_o("turns-object", {**_session(), "turns": {"0": _turn()}})),
-    _detail("turns-that-are-no-object", 5, "text", None, [_turn()], _turn(), False),
-    _detail(
-        "101-turns",
-        *([0] * (sessions.MAX_TURNS - 1)),
-        _turn(turn="turn-100"),
-        _turn(turn="turn-101"),
+    Answer(_paged("call-start-0", *_EXCHANGE).body, call={"start": 0}),
+    Answer(_paged("call-start-4", _said(4, "agent", "Yes.")).body, call={"start": 4}),
+    # --- the next page and the cap of the replay ---
+    _paged("next-4", *_EXCHANGE, next=4),
+    _paged("next-text", *_EXCHANGE, next="4"),
+    _paged("next-negative", *_EXCHANGE, next=-1),
+    _paged("next-true", *_EXCHANGE, next=True),
+    _paged("next-fraction", *_EXCHANGE, next=4.0),
+    _paged("truncated", *_EXCHANGE, truncated=True),
+    _paged("truncated-one", *_EXCHANGE, truncated=1),
+    # --- the list of entries ---
+    Answer(_o("entries-null", {"session_id": SESSION, "entries": None})),
+    Answer(_o("entries-object", {"session_id": SESSION, "entries": {"0": _EXCHANGE[0]}})),
+    _paged("entries-that-are-no-object", 5, "text", None, [_EXCHANGE[0]], _EXCHANGE[1], True),
+    _paged(
+        "501-entries",
+        *([0] * (sessions.MAX_ENTRIES - 1)),
+        _said(499, "user", "entry 500"),
+        _said(500, "user", "entry 501"),
     ),
-    # --- the session of the answer ---
-    _detail("session-writer", _turn(), writer=_WRITER),
-    _detail("session-wrong-types", _turn(), family=5, session=None, journal_seq="42", labels=5),
-    # --- each state of a turn ---
-    *(
-        _of_turn(f"state-{state}", state=state)
-        for state in (
-            "queued",
-            "running",
-            "waiting-approval",
-            "settled",
-            "failed",
-            "aborted",
-            "exploded",
-        )
-    ),
-    _of_turn("state-empty", state=""),
-    _of_turn("state-upper-case", state="Running"),
-    _of_turn("state-number", state=1),
-    # --- each field of a turn ---
-    _detail("turn-empty-object", {}),
-    _of_turn(
-        "turn-wrong-types",
-        turn=5,
-        state=None,
-        reason=["none"],
-        started_at=1,
-        ended_at=False,
-        deadline_s="3600",
-        sandbox={},
-        approvals=1.0,
-        usage="none",
-        persona_truncated="true",
-    ),
-    _of_turn("reason-text", state="failed", reason="model_error"),
-    _of_turn("deadline-true", deadline_s=True),
-    _of_turn("approvals-two", approvals=2),
-    _of_turn("persona-truncated", persona_truncated=True),
-    _of_turn("persona-truncated-false", persona_truncated=False),
-    _of_turn("persona-truncated-one", persona_truncated=1),
-    _of_turn("persona-truncated-text", persona_truncated="true"),
-    # --- the usage ---
-    _detail("no-usage", _NO_USAGE),
-    _of_turn("usage-null", usage=None),
-    _of_turn("usage-empty-object", usage={}),
-    _of_turn("usage-list", usage=[4120, 188]),
-    _of_usage("usage-wrong-types", input="5", output=True, cache_read=1.5, cache_write=None),
-    _of_usage("usage-zeros", input=0, output=0, cache_read=0, cache_write=0, cost_usd=0.0),
-    _of_usage(
-        "usage-sum-past-64-bits", input=2**62, output=2**62, cache_read=2**62, cache_write=2**62
-    ),
-    _of_usage(
-        "usage-each-count-at-the-64-bit-limit",
-        input=I64_MAX,
-        output=I64_MAX,
-        cache_read=I64_MAX,
-        cache_write=I64_MAX,
-    ),
-    _of_usage("cost-null", cost_usd=None),
-    _of_usage("cost-integer", cost_usd=2),
-    _of_usage("cost-zero", cost_usd=0),
-    _of_usage("cost-true", cost_usd=True),
-    _of_usage("cost-text", cost_usd="0.014"),
-    _of_usage("cost-small", cost_usd=0.00004),
-    _of_usage("cost-large", cost_usd=1e22),
+    # --- the kind of an entry ---
+    _paged("kind-unknown", _EXCHANGE[0], _said(1, "plan", "x"), _EXCHANGE[1]),
+    _paged("kind-upper-case", _said(0, "User", "x")),
+    _paged("kind-number", _said(0, 5, "x")),
+    _paged("kind-missing", {"position": 0, "text": "x"}),
+    _paged("kind-501-characters", _said(0, "k" * (CUT + 1), "x")),
+    # --- each field of an entry ---
+    _paged("entry-empty-object", {}),
+    _paged("said-wrong-types", _said("0", "user", 5)),
+    _paged("tool-wrong-types", _tool(True, title=5, status=None, result=["x"])),
+    _paged("tool-with-no-result", _tool(0, result=None, status="in_progress")),
+    _paged("text-at-the-cap", _said(0, "agent", "a" * _ENTRY_CAP)),
+    _paged("text-over-the-cap", _said(0, "agent", "a" * (_ENTRY_CAP + 1))),
+    _paged("text-forms", _said(0, "agent", 'caf\u00e9 "quoted" <b> & \u2028 \x7f\n')),
+    _paged("position-at-the-64-bit-limit", _said(I64_MAX, "user", "x")),
     # --- a body that the reader refuses ---
     Answer(_t("not-json", "not json")),
     Answer(_t("empty", "")),
     Answer(_t("list", "[]")),
     Answer(_t("null", "null")),
-)
-
-
-def line(seq: object, kind: object, body: object = None, turn: object = None) -> bytes:
-    """One line of the event stream of contract 02 §8, with its LF."""
-    record: dict[str, object] = {"journal_seq": seq, "ts": _TS, "kind": kind, "turn": turn}
-    if body is not None:
-        record["body"] = body
-
-    return _json(record) + b"\n"
-
-
-def _kind_line(seq: int, kind: LineKind) -> bytes:
-    """A line of one kind, with the body that `attendance` writes for that kind."""
-    turn = TURN if kind in TURN_KINDS else None
-
-    return line(seq, kind.value, KIND_BODIES[kind], turn)
-
-
-def _delta(seq: int, text: object, turn: str = TURN) -> bytes:
-    """One text delta of the answer of a turn (contract 02 §15.1)."""
-    body = {
-        "type": "message_update",
-        "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": text},
-    }
-
-    return line(seq, LineKind.PI_EVENT.value, body, turn)
-
-
-_STARTED: Final = line(1, "turn_started", {"prompt": "Which sensor dropped out?"}, TURN)
-_SETTLED: Final = line(4, "turn_settled", {}, TURN)
-_NOTE: Final = line(7, "note", {"note": "persona_truncated", "cap_bytes": 16384})
-_HEARTBEAT: Final = line(None, "heartbeat", {"last_seq": 7})
-
-#: One exchange: a prompt, an answer in two parts, and the end of the turn.
-EXCHANGE: Final = _STARTED + _delta(2, "Sensor ") + _delta(3, "3 dropped out.") + _SETTLED
-
-_LINES_CAP: Final = sessions.MAX_STREAM_LINES
-_BYTES_CAP: Final = sessions.MAX_STREAM_BYTES
-
-
-def _stream(body_id: str, raw: bytes, **call: object) -> Answer:
-    return Answer(Body(body_id, raw), call=dict(call))
-
-
-STREAMS: Final[tuple[Answer, ...]] = (
-    _stream("one-exchange", EXCHANGE),
-    _stream("no-line", b""),
-    _stream("each-kind", b"".join(_kind_line(seq, kind) for seq, kind in enumerate(LineKind, 1))),
-    _stream("heartbeat", _STARTED + _HEARTBEAT),
-    # --- the arguments of the call ---
-    _stream("call-from-seq-0", _NOTE, from_seq=0),
-    _stream("call-from-seq-42", _NOTE, from_seq=42),
-    _stream("call-from-seq-at-the-64-bit-limit", _NOTE, from_seq=I64_MAX),
-    # --- where a line ends ---
-    _stream("no-final-line-feed", _STARTED + _SETTLED[:-1]),
-    _stream("blank-lines", b"\n\n" + _STARTED + b"   \n\t\n\r\n" + _SETTLED + b"\n"),
-    _stream("cr-lf", _STARTED[:-1] + b"\r\n" + _SETTLED[:-1] + b"\r\n"),
-    _stream("line-in-spaces", b"  " + _NOTE[:-1] + b"  \n"),
-    _stream("line-of-ascii-whitespace", _STARTED + b" \t\r\x0b\x0c\n" + _SETTLED),
-    _stream("line-of-u00a0", _STARTED + "\u00a0\n".encode() + _SETTLED),
-    _stream("form-feed-before-the-object", b"\x0c{}\n"),
-    _stream("line-separator-inside-a-text", line(1, "note", {"note": "a\u2028b\u2029c\u0085d"})),
-    _stream("two-objects-on-one-line", _NOTE[:-1] + _NOTE),
-    # --- a line that the reader does not keep ---
-    _stream("line-not-json", _STARTED + b"not json\n" + _SETTLED),
-    _stream("line-cut-short", _STARTED + _SETTLED[:-3]),
-    _stream("line-list", _STARTED + b"[1]\n" + _SETTLED),
-    _stream("line-text", b'"note"\n'),
-    _stream("line-number", b"5\n"),
-    _stream("line-null", b"null\n"),
-    _stream("line-not-utf8", _STARTED + b'{"kind": "\xff"}\n' + _SETTLED),
-    _stream("each-line-not-json", b"a\nb\nc\n"),
-    # --- a line of free form ---
-    _stream("line-empty-object", b"{}\n"),
-    _stream("line-other-keys", b'{"a":1,"b":[true,null,1.5],"c":{"d":"e"}}\n'),
-    _stream(
-        "line-wrong-types",
-        line("42", 5, ["body"], {"turn": TURN}),
-    ),
-    # --- the two caps ---
-    Answer(_long("5000-lines-and-a-blank-line", ("{}\n", _LINES_CAP), (" \n", 1))),
-    Answer(_long("5001-lines", ("{}\n", _LINES_CAP + 1))),
-    Answer(_long("5001-lines-first-not-json", ("x\n", 1), ("{}\n", _LINES_CAP), ("x\n", 1))),
-    Answer(_long("at-the-size-cap", ('{"a":1}\n', 1), (" ", _BYTES_CAP - 16), ('{"b":2}\n', 1))),
-    Answer(_long("over-the-size-cap", ('{"a":1}\n', 1), (" ", _BYTES_CAP - 15), ('{"b":2}\n', 1))),
-    Answer(
-        _long(
-            "over-the-size-cap-inside-a-text",
-            ('{"a":1}\n{"b":"', 1),
-            ("x", _BYTES_CAP),
-            ('"}\n', 1),
-        )
-    ),
 )
 
 _NOT_FOUND: Final = {"error": {"code": "not_found", "message": "no such session"}}
@@ -1202,7 +865,7 @@ REFUSALS: Final[tuple[Answer, ...]] = (
         _long(
             "body-over-the-size-cap",
             ('{"error":{"code":"not_found"}', 1),
-            (" ", sessions.MAX_LIST_BYTES),
+            (" ", sessions.MAX_ANSWER_BYTES),
             ("}", 1),
         ),
         404,
@@ -1234,170 +897,6 @@ TOKENS: Final[tuple[TokenCase, ...]] = (
     TokenCase("line-feed-only", b"\n"),
     TokenCase("not-utf8", b"\xff" + _V),
     TokenCase("absent", None),
-)
-
-# --- the transcript (contract 02 §8) ----------------------------------------------------
-
-_ANSWER_CAP: Final = transcript.MAX_ANSWER_CHARS
-_DELTA_CAP: Final = transcript.MAX_DELTA_CHARS
-_ENTRY_CAP: Final = transcript.MAX_ENTRIES
-
-
-def _pi(seq: int, body: object, turn: str = TURN) -> bytes:
-    return line(seq, LineKind.PI_EVENT.value, body, turn)
-
-
-def _event(event: object) -> dict[str, object]:
-    return {"type": "message_update", "assistantMessageEvent": event}
-
-
-def _of_kind(body_id: str, kind: str, body: object = None, turn: object = TURN) -> Body:
-    """A stream of one line."""
-    return Body(body_id, line(5, kind, body, turn))
-
-
-def _noted(body_id: str, body: object) -> Body:
-    return _of_kind(body_id, "note", body, None)
-
-
-_TWO_PARTS: Final = _delta(2, "Sensor ") + _delta(3, "3 dropped out.")
-
-TRANSCRIPTS: Final[tuple[Body, ...]] = (
-    Body("one-exchange", EXCHANGE),
-    Body("no-line", b""),
-    *(Body(f"kind-{kind.value}", _kind_line(5, kind)) for kind in LineKind),
-    Body("each-kind", b"".join(_kind_line(seq, kind) for seq, kind in enumerate(LineKind, 1))),
-    # --- what ends an answer ---
-    Body("answer-with-no-end", _STARTED + _TWO_PARTS),
-    Body("answer-and-then-a-note", _TWO_PARTS + _NOTE),
-    Body("answer-and-then-a-heartbeat", _delta(2, "Sensor ") + _HEARTBEAT + _delta(3, "3.")),
-    Body(
-        "answer-and-then-an-unknown-kind",
-        _delta(2, "Sensor ") + line(3, "stream_overrun", {}, TURN) + _delta(4, "3."),
-    ),
-    Body(
-        "answer-and-then-a-terminal-exchange",
-        _delta(2, "Sensor ") + _kind_line(3, LineKind.TERMINAL_EXCHANGE) + _delta(4, "3."),
-    ),
-    Body(
-        "answer-and-then-a-line-of-another-turn",
-        _delta(2, "Sensor ") + line(3, "turn_settled", {}, OTHER_TURN) + _delta(4, "3."),
-    ),
-    Body(
-        "answer-and-then-a-line-with-no-turn",
-        _delta(2, "Sensor ") + line(3, "session_titled", {"title": "Sensors"}) + _delta(4, "3."),
-    ),
-    Body(
-        "two-turns-that-interleave",
-        line(1, "turn_started", {"prompt": "first"}, TURN)
-        + line(2, "turn_queued", {"prompt": "second", "queue_depth": 1}, OTHER_TURN)
-        + _delta(3, "one ", TURN)
-        + _delta(4, "two ", OTHER_TURN)
-        + _delta(5, "three", TURN)
-        + _delta(6, "four", OTHER_TURN)
-        + line(7, "turn_settled", {}, OTHER_TURN)
-        + line(8, "turn_settled", {}, TURN),
-    ),
-    Body(
-        "two-answers-with-no-end",
-        _delta(1, "one", OTHER_TURN) + _delta(2, "two", TURN) + _delta(3, "three", OTHER_TURN),
-    ),
-    Body(
-        "answer-of-a-line-with-no-turn",
-        line(1, "pi_event", _event({"type": "text_delta", "delta": "x"})),
-    ),
-    # --- a pi event ---
-    Body("delta-missing", _pi(2, _event({"type": "text_delta"}))),
-    Body("delta-number", _delta(2, 5)),
-    Body("delta-null-and-then-text", _delta(2, None) + _delta(3, "text")),
-    Body("delta-empty", _delta(2, "")),
-    Body("event-of-another-type", _pi(2, _event({"type": "thinking_delta", "delta": "hm"}))),
-    Body("event-with-no-type", _pi(2, _event({"delta": "text"}))),
-    Body("event-that-is-no-object", _pi(2, _event("text_delta"))),
-    Body(
-        "message-of-another-type",
-        _pi(
-            2,
-            {"type": "message_end", "assistantMessageEvent": {"type": "text_delta", "delta": "x"}},
-        ),
-    ),
-    Body("message-with-no-event", _pi(2, {"type": "message_update"})),
-    Body("pi-event-with-no-body", line(2, "pi_event", None, TURN)),
-    Body("delta-text-forms", _delta(2, 'caf\u00e9 "quoted" <b> & \u2028 \x7f\n') + _SETTLED),
-    _long(
-        "delta-8193-characters",
-        ('{"kind":"pi_event","turn":"t","body":{"type":"message_update",', 1),
-        ('"assistantMessageEvent":{"type":"text_delta","delta":"', 1),
-        ("d", _DELTA_CAP + 1),
-        ('"}}}\n', 1),
-    ),
-    _long(
-        "answer-40000-characters",
-        (_delta(2, "d" * 8000).decode("utf-8"), _ANSWER_CAP // 8000),
-    ),
-    _long(
-        "answer-40001-characters",
-        (_delta(2, "d" * 8000).decode("utf-8"), _ANSWER_CAP // 8000),
-        (_delta(3, "e").decode("utf-8"), 1),
-    ),
-    # --- each field of a line ---
-    Body("line-with-no-body", line(1, "turn_started", None, TURN)),
-    Body("line-with-no-kind", b'{"journal_seq":1,"turn":"t","body":{"prompt":"x"}}\n'),
-    Body("line-empty-object", b"{}\n"),
-    Body(
-        "line-wrong-types",
-        b'{"journal_seq":"1","ts":7,"kind":"turn_started","turn":5,"body":["prompt"]}\n',
-    ),
-    Body("kind-number", line(1, 5, {"prompt": "x"}, TURN)),
-    Body("kind-upper-case", line(1, "Turn_Started", {"prompt": "x"}, TURN)),
-    Body("turn-501-characters", line(1, "turn_settled", {}, "t" * (CUT + 1))),
-    # --- the body of each kind ---
-    _of_kind("started-status-stale", "turn_started", {"prompt": "x", "status_stale": True}),
-    _of_kind("started-status-stale-text", "turn_started", {"prompt": "x", "status_stale": "true"}),
-    _of_kind("started-prompt-501-characters", "turn_started", {"prompt": "p" * (CUT + 1)}),
-    _of_kind("started-prompt-number", "turn_started", {"prompt": 5}),
-    _of_kind("queued-no-depth", "turn_queued", {"prompt": "x"}),
-    _of_kind("queued-depth-text", "turn_queued", {"prompt": "x", "queue_depth": "3"}),
-    _of_kind("queued-depth-true", "turn_queued", {"prompt": "x", "queue_depth": True}),
-    _of_kind("failed-no-reason", "turn_failed", {"message": "the model gave no answer"}),
-    _of_kind("failed-no-message", "turn_failed", {"reason": "model_error"}),
-    _of_kind("failed-empty-body", "turn_failed", {}),
-    _of_kind("aborted-no-reason", "turn_aborted", {}),
-    _of_kind(
-        "approval-requested-with-a-summary",
-        "approval_requested",
-        {"tool": "ha_call", "summary": "turn the boiler off"},
-    ),
-    _of_kind("approval-requested-no-tool", "approval_requested", {}),
-    _of_kind("approval-resolved-no-decision", "approval_resolved", {"waited_s": 12}),
-    _of_kind("approval-resolved-no-wait", "approval_resolved", {"decision": "approved"}),
-    _of_kind(
-        "approval-resolved-wait-fraction",
-        "approval_resolved",
-        {"decision": "approved", "waited_s": 1.5},
-    ),
-    _of_kind("writer-no-holder", "writer_changed", {"reason": "lease_expired"}, None),
-    _of_kind("writer-holder-null", "writer_changed", {"holder": None, "reason": "released"}, None),
-    _of_kind("titled-no-title", "session_titled", {}, None),
-    _of_kind(
-        "fallback-with-an-entry",
-        "branch_fallback",
-        {"wanted_entry": "e5", "reason": "unmapped_parent"},
-    ),
-    # --- a note ---
-    _noted("note-stream-overrun", {"note": "stream_overrun", "last_seq": 118}),
-    _noted("note-stream-overrun-no-seq", {"note": "stream_overrun"}),
-    _noted("note-named", {"note": "persona_truncated", "cap_bytes": 16384}),
-    _noted("note-no-name", {"cap_bytes": 16384, "b": 1, "a": 2}),
-    _noted("note-name-number", {"note": 5}),
-    _noted("note-empty-body", {}),
-    _noted("note-11-keys", {f"key-{number:02d}": number for number in range(11, 0, -1)}),
-    # --- the cap of entries ---
-    _long(
-        "an-answer-with-no-end-and-2001-lines",
-        (_delta(1, "open").decode("utf-8"), 1),
-        ('{"kind":"turn_settled"}\n', _ENTRY_CAP + 1),
-    ),
 )
 
 # --- the audit file ---------------------------------------------------------------------

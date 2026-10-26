@@ -161,16 +161,15 @@ def _strict(raw: bytes) -> None:
 
 def _json_texts() -> Iterator[tuple[str, bytes]]:
     """Each written input that a reader of the noticeboard gives to its JSON reader."""
-    for answer in (*cases.LISTS, *cases.DETAILS, *cases.REFUSALS):
+    for answer in (*cases.LISTS, *cases.TRANSCRIPTS, *cases.REFUSALS):
         yield answer.id, answer.body.data()
 
     for report in cases.REPORTS:
         if report.body is not None:
             yield report.id, report.body.data()
 
-    streams = [answer.body for answer in cases.STREAMS] + list(cases.TRANSCRIPTS)
     files = [audit.file for audit in cases.AUDITS if audit.file is not None]
-    for body in (*streams, *files):
+    for body in files:
         for number, line in enumerate(body.data().split(b"\n")):
             yield f"{body.id}:{number}", line
 
