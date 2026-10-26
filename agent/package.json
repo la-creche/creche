@@ -14,7 +14,9 @@
   "dependencies": {
     "@earendil-works/pi-agent-core": "1.4.0",
     "@earendil-works/pi-ai": "1.4.0",
+    "@earendil-works/pi-codemode": "1.4.0",
     "@flue/runtime": "2.3.0",
+    "@modelcontextprotocol/client": "2.0.0",
     "valibot": "1.5.0"
   },
   "devDependencies": {

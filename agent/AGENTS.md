@@ -88,4 +88,9 @@ connection and the `auth` of the LiteLLM provider unwrap it.
   Flue then puts the workspace's `AGENTS.md` and a directory listing in
   the prompt, and offers each skill under `<workspace>/.agents/skills/`.
   For an empty grant, the agent must attach no sandbox.
+- Codemode does not use `createMcpConnection`. The `run` of each tool
+  that it adapts throws, because the adapter that runs a call is
+  internal to Flue. So each script opens its own MCP client on the `ch`
+  definition (`src/codemode.ts`), with Flue's client package at Flue's
+  pin. The script gets the chaperone's names, `tools.<upstream>__<tool>`.
 
