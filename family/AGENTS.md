@@ -175,8 +175,8 @@ source. The package `family` does not import `handover`, so the test is in
 `bin/tests`.
 
 `bin/tests/test_yaml_to_toml_models.py` holds the two readers equal on each
-server file of the fixture registry. Root accepts the YAML text, and the
-validator accepts its TOML text. The test also gives root the YAML text of
+server file of the fixture registry. Root accepts the TOML text, and the
+validator accepts it too. The test also gives root the YAML text of
 each rule of the list above. Root refuses each one, the YAML path accepts
 it, and the TOML path refuses its TOML text.
 

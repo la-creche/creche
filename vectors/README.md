@@ -27,7 +27,7 @@ The Python implementation is the authority for each surface.
 | `generate.py` | the program that writes each file under `data/` that is not frozen |
 | `core.py` | the file format: the normalizer and the renderer |
 | `surfaces/` | one module per group of surfaces, with the written inputs |
-| `fixtures/registry-toml/` | the TOML copy of the fixture registry of the package `family`. Each family file is `family.toml`, and each server file is `server.toml`. `vectors/AGENTS.md` has its rules |
+| `fixtures/registry-toml/` | the copy of the fixture registry of the package `family`. Each family file is `family.toml`, and each server file is `server.toml`. `vectors/AGENTS.md` has its rules |
 | `data/index.json` | one row per surface: name, path, entry point, counts. One line per frozen file: path and digest |
 | `data/ids/` | the id grammars, one file per copy of a grammar |
 | `data/ids/disagreements.json` | each input for which two copies of one grammar give different results |

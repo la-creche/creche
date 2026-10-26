@@ -80,12 +80,9 @@ fixture registry of the package `family`. A path under `vectors/` belongs to
 no component. A change here thus mints no tag.
 
 1. Each family file is `family.toml`, and each server file is
-   `server.toml`. `bin/yaml-to-toml.py` writes each one from its twin
-   `family.yaml` or `server.yaml`.
-2. Each other file has the bytes of its twin, at the same path.
-3. `tests/test_vectors_fixture_registry.py` holds both rules. It runs
-   `bin/yaml-to-toml.py --check` for each pair of family files and for each
-   pair of server files.
+   `server.toml`.
+2. Each file has the bytes of its twin, at the same path.
+3. `tests/test_vectors_fixture_registry.py` holds both rules.
 4. The generator stages each case of `family_file.toml` in a copy of this
    registry. It writes the input to `families/<directory>/family.toml`.
 5. The generator stages each case of `server_file.toml` in a copy of this

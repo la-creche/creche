@@ -92,8 +92,9 @@ def _notes(file: str) -> tuple[str, ...]:
         "params.files holds every other file a vector adds to the registry, by path from the "
         "registry root. A file there replaces the registry's own file at that path.",
         "A family file is validated against the whole registry. To replay a vector: copy the "
-        f"registry, write params.files, write the input to families/<directory>/{file}, "
-        "load the registry and read the report of <directory>.",
+        "registry, remove the family file of families/<directory>, write params.files, "
+        f"write the input to families/<directory>/{file}, load the registry and read the "
+        "report of <directory>.",
         "result is accepted when the report holds no issue of severity error. issues holds "
         "every issue in order. value is the parsed family, with every default filled in.",
     )
@@ -183,6 +184,11 @@ def _staged(registry: str, case: Case, scratch: Path, file: str) -> Generator[Pa
     if case.files or case.directory:
         root = scratch / case.id
         copy_registry(REPO_ROOT / registry, root)
+        # A case that takes the directory of a family replaces the family
+        # file of the registry, of either name. A file of the case comes after.
+        for name in (FAMILY_FILE_YAML, TOML_FILE):
+            (root / FAMILIES_DIR / case.directory_name() / name).unlink(missing_ok=True)
+
         for path, text in case.files.items():
             target = root / path
             target.parent.mkdir(parents=True, exist_ok=True)

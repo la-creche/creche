@@ -1,0 +1,16 @@
+name = "kagi"
+identity = "The fleet's Kagi API key. Search and page extraction, no account writes."
+
+install.source = "pypi"
+install.package = "kagimcp"
+install.version = "1.0.2"
+install.lock = "mcp/kagi/install.lock"
+install.python = "3.12"
+
+run.entrypoint = "kagimcp"
+run.env.KAGI_API_KEY = "secret:kagi_api_key"
+
+tools = [
+    { name = "kagi_search_fetch", description = "Search the web and return ranked results with snippets." },
+    { name = "kagi_extract", description = "Fetch one URL and return its readable text." },
+]
