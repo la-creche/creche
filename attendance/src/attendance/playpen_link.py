@@ -23,11 +23,11 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from . import wire
-from .atomic import read_json
 from .channel import Channel, ChannelClosed, SandboxDial
 from .faults import FaultCode, FaultReporter
 from .paths import playpen_lock_file
 from .states import SessionKind
+from .supervisor_lock import wait_out_lock
 from .tasks import report_failure
 from .wire import (
     CHANNEL_IDLE_TTL_ATTENDED_S,
@@ -154,51 +154,6 @@ class _RefusalBudget:
     @property
     def spent(self) -> int:
         return len(self._marks)
-
-
-class _BeatWatch:
-    """The lock's counter, timed by the HOST's clock (contract 03 §11.4 rule 4).
-
-    The host cannot test the playpen's pid, which lives in the VM's pid
-    namespace, and it cannot compare `started_at`, which the sandbox's clock
-    wrote. Two integers read a second apart are the one comparison that means
-    the same thing on both sides.
-    """
-
-    def __init__(self, stale_s: float) -> None:
-        self._stale_s = stale_s
-        self._beat: int | None = None
-        self._changed_at = time.monotonic()
-
-    def observe(self, beat: int | None) -> bool:
-        """Record one read. True when nothing has written for `stale_s`.
-
-        A read that produced no counter — an empty, half-written or malformed
-        file — decides nothing on its own (rule 3). It simply does not reset
-        the clock, so a file that never reads cleanly for a whole window is
-        treated the same as one nobody is writing.
-        """
-        if beat is not None and beat != self._beat:
-            self._beat = beat
-            self._changed_at = time.monotonic()
-            return False
-
-        return time.monotonic() - self._changed_at >= self._stale_s
-
-
-def _lock_beat(path: Path) -> int | None:
-    """The counter in the lock file, or None when it could not be read."""
-    raw = read_json(path)
-
-    if raw is None:
-        return None
-
-    beat = raw.get("beat")
-
-    if isinstance(beat, bool) or not isinstance(beat, int) or beat < 0:
-        return None
-
-    return beat
 
 
 def pi_idle_ttl_s(kind: SessionKind) -> int:
@@ -521,42 +476,21 @@ class PlaypenLink:
         handshake the switch asked for (contract 03 §7.1).
         """
         path = playpen_lock_file(self._state_root, self._family, sandbox)
-        watch = _BeatWatch(self._lock_stale_s)
-        ceiling = time.monotonic() + self._host_deadline_s
 
-        while True:
-            # A file the last playpen removed as it exited is the clean
-            # case, and the common one. Dial at once.
-            if not path.exists():
-                return
+        # A counter that keeps moving is a live playpen. Its own deadline
+        # ends it within `host_deadline_s` (§11.1 rule 1), so past that the
+        # sandbox is `caregiver`'s to replace, not this service's to dial
+        # (§11.4 rule 6).
+        if await wait_out_lock(path, self._lock_stale_s, self._lock_poll_s, self._host_deadline_s):
+            return
 
-            if watch.observe(_lock_beat(path)):
-                self._clear_stale_lock(path)
-                return
-
-            # A counter that keeps moving is a live playpen. Its own
-            # deadline ends it within `host_deadline_s` (§11.1 rule 1), so
-            # past that the sandbox is `caregiver`'s to replace, not this
-            # service's to dial (§11.4 rule 6).
-            if time.monotonic() >= ceiling:
-                self._faults.raise_fault(
-                    self._family,
-                    FaultCode.ORPHAN_PROCESSES,
-                    "supervisor.lock is still being written by a live playpen",
-                    sandbox,
-                )
-                raise OrphanPlaypen(f"sandbox {sandbox} may still hold a playpen")
-
-            await asyncio.sleep(self._lock_poll_s)
-
-    def _clear_stale_lock(self, path: Path) -> None:
-        """Remove a lock nobody is writing (§11.4 rule 4, step 2).
-
-        A failure here is not worth a turn. The playpen that left the file
-        is gone either way, and the next dial waits the same window again.
-        """
-        with contextlib.suppress(OSError):
-            path.unlink(missing_ok=True)
+        self._faults.raise_fault(
+            self._family,
+            FaultCode.ORPHAN_PROCESSES,
+            "supervisor.lock is still being written by a live playpen",
+            sandbox,
+        )
+        raise OrphanPlaypen(f"sandbox {sandbox} may still hold a playpen")
 
     async def _read_loop(self) -> None:
         channel = self._channel
