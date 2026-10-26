@@ -23,6 +23,16 @@ from .models import CHAIN_MAX_FAMILIES, TriggerKind
 # Contract 04 §4.1's own cap on `enqueue.idempotency_key`.
 DISPATCH_KEY_MAX = 128
 
+# `door-trigger`'s payload cap is 200 000 bytes, and its frame of the
+# payload adds a few lines.
+TRIGGER_MESSAGE_MAX_BYTES = 262_144
+
+# The kinds of a firing of `door-trigger`. A dispatch comes from the PEP.
+_FIRED_KINDS = {
+    TriggerKind.TIMER.value: TriggerKind.TIMER,
+    TriggerKind.WEBHOOK.value: TriggerKind.WEBHOOK,
+}
+
 # The message for a body that is not JSON. A text with no UTF-8 form gets
 # the same message: such a body is not JSON in UTF-8.
 NOT_JSON = "body is not JSON"
@@ -61,6 +71,20 @@ class DispatchRequest:
     chain: tuple[str, ...] = ()
     claimed_session_id: str | None = None
     idempotency_key: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class TriggerRequest:
+    """The body of `POST /trigger`, which `door-trigger` alone sends.
+
+    A webhook firing names its trigger. A timer firing names none.
+    """
+
+    family: str
+    kind: TriggerKind
+    name: str | None
+    message: str
+    idempotency_key: str
 
 
 @dataclass(slots=True)
@@ -158,13 +182,62 @@ def read_dispatch(raw: dict[str, Any]) -> DispatchRequest:
     )
 
 
+def read_trigger(raw: dict[str, Any]) -> TriggerRequest:
+    """`POST /trigger`. `door-trigger` is another process, so this is untrusted."""
+    family = _require_text(raw, "family")
+
+    if not is_family(family):
+        raise _bad("family is not a family name", family=family)
+
+    kind = _FIRED_KINDS.get(_require_text(raw, "kind", family))
+
+    if kind is None:
+        raise _bad("kind is not timer or webhook", family=family)
+
+    name = _trigger_name(raw.get("name"), kind, family)
+    message = _require_text(raw, "message", family)
+    _check_bytes(message, TRIGGER_MESSAGE_MAX_BYTES, "message", family, "")
+    key = _require_text(raw, "idempotency_key", family)
+
+    if len(key) > DISPATCH_KEY_MAX:
+        raise _bad(f"idempotency_key is over {DISPATCH_KEY_MAX} characters", family=family)
+
+    return TriggerRequest(
+        family=family,
+        kind=kind,
+        name=name,
+        message=message,
+        idempotency_key=key,
+    )
+
+
+def _trigger_name(value: object, kind: TriggerKind, family: str) -> str | None:
+    """A webhook firing names its trigger, a family-name slug. A timer names none."""
+    if kind is TriggerKind.TIMER and value is None:
+        return None
+
+    if kind is TriggerKind.WEBHOOK and isinstance(value, str) and is_family(value):
+        return value
+
+    raise _bad("a webhook firing names its trigger, and a timer firing names none", family=family)
+
+
 def read_jobs(raw: dict[str, Any]) -> JobQuery:
     """Contract 02 §13.4.2. The caller family decides the scope, and it is
     the one field this service checks against a token."""
-    caller = _require_text(raw, "caller_family")
+    return _job_query(raw, "caller_family")
+
+
+def read_trigger_jobs(raw: dict[str, Any]) -> JobQuery:
+    """`POST /trigger/jobs`. `family` decides the scope: its trigger ledger."""
+    return _job_query(raw, "family")
+
+
+def _job_query(raw: dict[str, Any], scope: str) -> JobQuery:
+    caller = _require_text(raw, scope)
 
     if not is_family(caller):
-        raise _bad("caller_family is not a family name", family=caller)
+        raise _bad(f"{scope} is not a family name", family=caller)
 
     session = _optional_text(raw, "session")
 

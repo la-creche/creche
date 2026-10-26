@@ -37,7 +37,7 @@ from .atomic import MODE_GROUP_READ, as_array, read_json, write_json
 from .clock import now, parse_rfc3339, rfc3339
 from .ids import is_family, is_session, is_ulid
 from .models import CHAIN_MAX_FAMILIES, Trigger, TriggerKind
-from .paths import dispatch_dir, dispatch_file
+from .paths import dispatch_dir, dispatch_file, trigger_dir, trigger_file
 
 # Contract 02 §13.4.2. Newest first, and a caller that names no limit gets a
 # standup-sized page rather than every job it ever started.
@@ -50,6 +50,13 @@ IDEMPOTENCY_WINDOW = timedelta(hours=1)
 # Contract 02 §13.4.3. The ledger is swept on the audit's schedule, because a
 # 90-day-old standup is still readable and neither file names a secret.
 RETENTION_DAYS = 180
+
+
+class LedgerDoor(StrEnum):
+    """The door that started the jobs of a ledger. Each door has a ledger."""
+
+    DISPATCH = "door-dispatch"
+    TRIGGER = "door-trigger"
 
 
 class JobStatus(StrEnum):
@@ -77,16 +84,24 @@ class DispatchEntry:
     """
 
     session: str
+    #: The key of the ledger: the family that enqueued, or the family that a
+    #: trigger fired in.
     caller_family: str
     family: str
     enqueued_at: datetime
-    delegation_id: str
+    #: The PEP's delegation id. None for a trigger.
+    delegation_id: str | None = None
     chain: tuple[str, ...] = ()
     caller_session: str | None = None
     idempotency_key: str | None = None
     outcome_id: str | None = None
     #: The conversation id the facade minted for this job, once it has one.
     acp_session: str | None = None
+    #: What fired the job: another family's `enqueue`, or a timer or a
+    #: webhook of `door-trigger`.
+    kind: TriggerKind = TriggerKind.DISPATCH
+    #: The name of a webhook trigger. None for each other kind.
+    trigger_name: str | None = None
 
     def to_file(self) -> dict[str, Any]:
         return {
@@ -100,17 +115,21 @@ class DispatchEntry:
             "idempotency_key": self.idempotency_key,
             "outcome_id": self.outcome_id,
             "acp_session": self.acp_session,
+            "kind": self.kind.value,
+            "trigger_name": self.trigger_name,
         }
 
     def trigger(self) -> Trigger:
         """Contract 02 §13.2's object for this job.
 
-        `name` is the CALLING family, from the entry this service wrote after
-        checking the token. A caller never names itself (§13.2 rule 5).
+        For a dispatch, `name` is the CALLING family, from the entry this
+        service wrote after checking the token. A caller never names itself
+        (§13.2 rule 5). For a webhook, `name` is the trigger's name.
         """
+        dispatched = self.kind is TriggerKind.DISPATCH
         return Trigger(
-            kind=TriggerKind.DISPATCH,
-            name=self.caller_family,
+            kind=self.kind,
+            name=self.caller_family if dispatched else self.trigger_name,
             fired_at=self.enqueued_at,
             chain=self.chain,
         )
@@ -162,13 +181,14 @@ class DispatchLedger:
     the directory.
     """
 
-    def __init__(self, state_root: Path) -> None:
+    def __init__(self, state_root: Path, door: LedgerDoor = LedgerDoor.DISPATCH) -> None:
         self._state_root = state_root
+        self._door = door
 
     def write(self, entry: DispatchEntry) -> None:
         """Save one entry. Temp file and rename, like every durable record."""
         write_json(
-            dispatch_file(self._state_root, entry.caller_family, entry.session),
+            self._file(entry.caller_family, entry.session),
             entry.to_file(),
             MODE_GROUP_READ,
         )
@@ -178,7 +198,7 @@ class DispatchLedger:
         if not is_family(caller_family) or not is_session(session):
             return None
 
-        raw = read_json(dispatch_file(self._state_root, caller_family, session))
+        raw = read_json(self._file(caller_family, session))
 
         if raw is None:
             return None
@@ -241,7 +261,7 @@ class DispatchLedger:
 
     def remove(self, entry: DispatchEntry) -> None:
         """Remove an entry whose job never started (§13.4.1 rule 5)."""
-        dispatch_file(self._state_root, entry.caller_family, entry.session).unlink(missing_ok=True)
+        self._file(entry.caller_family, entry.session).unlink(missing_ok=True)
 
     def find_repeat(self, caller_family: str, key: str) -> DispatchEntry | None:
         """The entry an in-window `idempotency_key` already created (§13.4.4).
@@ -271,12 +291,24 @@ class DispatchLedger:
         if not is_family(caller_family):
             return []
 
-        base = dispatch_dir(self._state_root, caller_family)
+        base = self._dir(caller_family)
 
         if not base.is_dir():
             return []
 
         return sorted((one for one in base.iterdir() if one.is_file()), reverse=True)
+
+    def _dir(self, caller_family: str) -> Path:
+        if self._door is LedgerDoor.TRIGGER:
+            return trigger_dir(self._state_root, caller_family)
+
+        return dispatch_dir(self._state_root, caller_family)
+
+    def _file(self, caller_family: str, session: str) -> Path:
+        if self._door is LedgerDoor.TRIGGER:
+            return trigger_file(self._state_root, caller_family, session)
+
+        return dispatch_file(self._state_root, caller_family, session)
 
 
 def _entry_from_file(raw: dict[str, Any], caller_family: str) -> DispatchEntry | None:
@@ -294,6 +326,11 @@ def _entry_from_file(raw: dict[str, Any], caller_family: str) -> DispatchEntry |
     if not is_session(session) or not is_family(family):
         return None
 
+    kind = _kind(raw.get("kind"))
+
+    if kind is None:
+        return None
+
     outcome_id = _text(raw.get("outcome_id"))
 
     return DispatchEntry(
@@ -301,13 +338,24 @@ def _entry_from_file(raw: dict[str, Any], caller_family: str) -> DispatchEntry |
         caller_family=caller_family,
         family=family,
         enqueued_at=enqueued_at,
-        delegation_id=delegation_id or "",
+        delegation_id=delegation_id,
         chain=_chain(raw.get("chain")),
         caller_session=_text(raw.get("caller_session")),
         idempotency_key=_text(raw.get("idempotency_key")),
         outcome_id=outcome_id if outcome_id is not None and is_ulid(outcome_id) else None,
         acp_session=_text(raw.get("acp_session")),
+        kind=kind,
+        trigger_name=_text(raw.get("trigger_name")),
     )
+
+
+def _kind(value: object) -> TriggerKind | None:
+    """An entry with no kind is a dispatch. An unknown kind is no entry."""
+    if value is None:
+        return TriggerKind.DISPATCH
+
+    known = {kind.value: kind for kind in TriggerKind}
+    return known.get(value) if isinstance(value, str) else None
 
 
 def _chain(value: object) -> tuple[str, ...]:

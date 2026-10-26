@@ -1,7 +1,7 @@
 """The HTTP surface (contract 02 §3, §12, §13.4, contract 05 §5).
 
-Three operations for the PEP's two doors, the single internal path
-`caregiver` calls, the read-only view and `/busy` for `view-ro`, and the
+Three operations for the PEP's two doors, two for the trigger door, the
+single internal path `caregiver` calls, the read-only view and `/busy` for `view-ro`, and the
 ACP door on the Unix socket. The shapes come from the contract, not from a
 framework: every body is parsed by `requests.py` so one refusal table
 serves every route.
@@ -109,6 +109,20 @@ def build_app(
     async def _busy(request: Request) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
         """The work in flight, for the release tool's quiet window."""
         return JSONResponse(content=service.busy(_caller(tokens, request)))
+
+    @app.post("/trigger")
+    async def _trigger(request: Request) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
+        """One firing of `door-trigger`: one job in an autonomous family."""
+        principal = _caller(tokens, request)
+        wanted = parse.read_trigger(await _json(request))
+        return JSONResponse(content=await service.run_trigger(principal, wanted))
+
+    @app.post("/trigger/jobs")
+    async def _trigger_jobs(request: Request) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
+        """The jobs `door-trigger` started in one family. The shape of `/dispatch/jobs`."""
+        principal = _caller(tokens, request)
+        query = parse.read_trigger_jobs(await _json(request))
+        return JSONResponse(content=service.read_trigger_jobs(principal, query))
 
     @app.post("/internal/switch-sandbox")
     async def _switch(request: Request) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
