@@ -51,6 +51,7 @@ dev = [
     { name = "pytest-xdist" },
     { name = "ruff" },
     { name = "types-pyyaml" },
+    { name = "websockets" },
 ]
 
 [package.metadata]
@@ -78,6 +79,7 @@ dev = [
     { name = "pytest-xdist", specifier = ">=3.8.0" },
     { name = "ruff", specifier = ">=0.6" },
     { name = "types-pyyaml", specifier = ">=6" },
+    { name = "websockets", specifier = ">=15" },
 ]
 
 [[package]]

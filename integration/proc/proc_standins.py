@@ -6,7 +6,7 @@ sandbox image names, or by an address in an argument. So a stand-in here is
 an executable file under the test's root, and the only thing a test reads
 back is what that program left on disk.
 
-Five stand-ins exist, and none is under test:
+Eight stand-ins exist, and none is under test:
 
 `sbx`
     Two forms. The first is `integration/tests/fake_sbx.py`, unchanged,
@@ -31,6 +31,13 @@ the LiteLLM key API
 the embedding service
     `standin_tei.py`. It listens on a loopback port too, and the index
     builder finds it through an address in a variable.
+the model
+    `standin_model.py`, a scripted chat completions server. It listens on a
+    loopback port, and the agent module finds it through an address.
+the upstream and the approval channel of the Rust chaperone
+    `standin_upstream.py` and `standin_approval.py`, each behind a wrapper.
+    The chaperone starts each one as an effect plugin, by the absolute path
+    of its wrapper in the `command` of its manifest.
 
 Each wrapper ends in `exec`. The stand-in stays one process, so stdin, stdout
 and every signal reach it unchanged, and the recorded pid is the pid of the
@@ -58,7 +65,10 @@ from pathlib import Path
 from typing import Any, Final
 from urllib.parse import quote, unquote
 
+import standin_approval
+import standin_model
 import standin_tei
+import standin_upstream
 from proc_harness import (
     Child,
     ProcError,
@@ -76,10 +86,13 @@ PI: Final = "pi"
 SYSTEMCTL: Final = "systemctl"
 LITELLM: Final = "litellm"
 TEI: Final = "tei"
+MODEL: Final = "model"
+UPSTREAM: Final = "upstream"
+APPROVAL: Final = "approval"
 
 #: Each stand-in that a wrapper starts. The teardown waits for each recorded
 #: process of these.
-_WRAPPED: Final = (SBX, PI, SYSTEMCTL)
+_WRAPPED: Final = (SBX, PI, SYSTEMCTL, UPSTREAM, APPROVAL)
 
 #: The two kinds of policy row that the `sbx` stand-in keeps.
 ALLOW: Final = "allow"
@@ -93,6 +106,13 @@ TEI_DIMS: Final = standin_tei.TUNE_DIMS
 TEI_FAIL_INFO: Final = standin_tei.TUNE_FAIL_INFO
 TEI_FAIL_EMBED: Final = standin_tei.TUNE_FAIL_EMBED
 TEI_HOLD_EMBED: Final = standin_tei.TUNE_HOLD_EMBED
+
+#: The tuning of the model stand-in: the milliseconds between two chunks.
+MODEL_DELAY_MS: Final = standin_model.TUNE_DELAY_MS
+
+#: The two answers of the approval stand-in that a scenario writes.
+APPROVED: Final = '{"answer":"approved"}'
+DENIED: Final = '{"answer":"denied","reason":"the test denies it"}'
 
 #: An obvious fixture, never a credential. The LiteLLM stand-in takes it as
 #: the master key, and `caregiver` gets it in `LITELLM_MASTER_KEY`.
@@ -284,6 +304,114 @@ def start_tei(tree: Tree, supervisor: Supervisor, env: Mapping[str, str]) -> tup
         return child, port
 
     raise ProcError(f"the TEI stand-in found no free port in {_BIND_ATTEMPTS} attempts")
+
+
+def start_model(
+    tree: Tree, supervisor: Supervisor, env: Mapping[str, str], key: str
+) -> tuple[Child, int]:
+    """Start the model stand-in with an empty script, and wait for it.
+
+    `key` is the one bearer that it takes. A test writes the turns with
+    `script_model`. A start that fails because another program took the
+    port first is tried again on another port.
+    """
+    state = state_dir(tree, MODEL)
+    state.mkdir(parents=True, exist_ok=True)
+    (state / standin_model.KEY_FILE).write_text(key + "\n", encoding="utf-8")
+    script_model(tree, [])
+    program = [sys.executable, str(standin_script(MODEL)), str(state)]
+
+    for _ in range(_BIND_ATTEMPTS):
+        port = supervisor.free_port()
+        child = supervisor.spawn(MODEL, [*program, str(port)], env, tree.root)
+
+        try:
+            supervisor.wait_ready(child, TcpAddress(port))
+        except ProcError:
+            if child.exit_code() is None or port_is_free(port):
+                raise
+
+            continue
+
+        return child, port
+
+    raise ProcError(f"the model stand-in found no free port in {_BIND_ATTEMPTS} attempts")
+
+
+def script_model(tree: Tree, turns: list[dict[str, Any]]) -> None:
+    """Write the turns of the model stand-in, by rename. The next completion reads them."""
+    path = state_dir(tree, MODEL) / standin_model.TURNS_FILE
+    temp = path.with_name(f".{path.name}.tmp")
+    temp.write_text(json.dumps(turns), encoding="utf-8")
+    temp.replace(path)
+
+
+def text_turn(text: str) -> dict[str, Any]:
+    return {"text": text}
+
+
+def tool_turn(name: str, arguments: Mapping[str, Any]) -> dict[str, Any]:
+    return {"tool_call": {"name": name, "arguments": dict(arguments)}}
+
+
+def install_effects(tree: Tree) -> None:
+    """Write the wrappers of the upstream and of the approval channel into the root's `bin`.
+
+    The manifest of each plugin names the absolute path that
+    `effect_program` gives.
+    """
+    (state_dir(tree, APPROVAL) / standin_approval.ANSWERS_DIR).mkdir(parents=True, exist_ok=True)
+
+    for name in (UPSTREAM, APPROVAL):
+        state_dir(tree, name).mkdir(parents=True, exist_ok=True)
+        words = [sys.executable, str(standin_script(name)), str(state_dir(tree, name))]
+        _write_program(tree, name, f'{_recorder(tree, name)}exec {shlex.join(words)} "$@"\n')
+
+
+def effect_program(tree: Tree, name: str) -> Path:
+    """The wrapper of one effect stand-in: `UPSTREAM` or `APPROVAL`."""
+    return _program(tree, name)
+
+
+def answer_gate(tree: Tree, name: str, answer: str = APPROVED) -> None:
+    """Answer a gate at the approval stand-in, by rename.
+
+    `name` is the gate ID, or the exposed name of a tool. A file of a tool
+    answers each gate of that tool, until `unanswer_gate` removes it.
+    """
+    path = state_dir(tree, APPROVAL) / standin_approval.ANSWERS_DIR / name
+    temp = path.with_name(f".{path.name}.tmp")
+    temp.write_text(answer, encoding="utf-8")
+    temp.replace(path)
+
+
+def unanswer_gate(tree: Tree, name: str) -> None:
+    (state_dir(tree, APPROVAL) / standin_approval.ANSWERS_DIR / name).unlink(missing_ok=True)
+
+
+def model_calls(tree: Tree) -> list[dict[str, Any]]:
+    """Each request that the model stand-in got, in arrival order: path and body."""
+    return _lines_of(state_dir(tree, MODEL) / standin_model.CALLS_FILE)
+
+
+def upstream_calls(tree: Tree) -> list[dict[str, Any]]:
+    """Each tool call that the upstream stand-in got: tool, arguments and `_meta`."""
+    return _lines_of(state_dir(tree, UPSTREAM) / standin_upstream.CALLS_FILE)
+
+
+def approval_requests(tree: Tree) -> list[dict[str, Any]]:
+    """Each `approve` call that the approval stand-in holds or held, in arrival order."""
+    return _lines_of(state_dir(tree, APPROVAL) / standin_approval.REQUESTS_FILE)
+
+
+def _lines_of(path: Path) -> list[dict[str, Any]]:
+    """The JSON lines of one record file. A line with no newline yet is not whole."""
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        return []
+
+    return [json.loads(line) for line in raw.split(b"\n")[:-1] if line.strip()]
 
 
 def install_pi(tree: Tree) -> None:
