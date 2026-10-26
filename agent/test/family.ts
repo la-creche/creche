@@ -1,10 +1,11 @@
 // One family's mounts in a temporary directory, read through the real edge,
 // `readFamilyConfig`. A test names only what it changes: the plane URLs and
-// the content of `runtime.json`.
+// the content of `runtime.json`, the other files of the config mount and the
+// index root.
 
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { readFamilyConfig } from "../src/config.js";
 import type { FamilyConfig } from "../src/config.js";
@@ -19,6 +20,9 @@ export interface FamilyFixture {
   readonly pepUrl?: string;
   readonly litellmUrl?: string;
   readonly runtime?: Readonly<Record<string, unknown>>;
+  /** Files of the config mount, by path relative to it. */
+  readonly configFiles?: Readonly<Record<string, string>>;
+  readonly indexRoot?: string;
 }
 
 export async function familyConfig(fixture: FamilyFixture): Promise<FamilyConfig> {
@@ -29,6 +33,10 @@ export async function familyConfig(fixture: FamilyFixture): Promise<FamilyConfig
   const creds = { epoch: 1, litellm_key: FIXTURE_KEY, pep_token: FIXTURE_TOKEN };
   writeFileSync(join(credDir, "creds.json"), JSON.stringify(creds));
   writeFileSync(join(configDir, "runtime.json"), JSON.stringify(fixture.runtime ?? {}));
+  for (const [name, text] of Object.entries(fixture.configFiles ?? {})) {
+    mkdirSync(dirname(join(configDir, name)), { recursive: true });
+    writeFileSync(join(configDir, name), text);
+  }
 
   const read = await readFamilyConfig(
     {
@@ -39,6 +47,7 @@ export async function familyConfig(fixture: FamilyFixture): Promise<FamilyConfig
       AGENT_SANDBOX: "chat-s1",
       AGENT_PEP_URL: fixture.pepUrl ?? UNUSED_PLANE,
       AGENT_LITELLM_BASE_URL: fixture.litellmUrl ?? UNUSED_PLANE,
+      ...(fixture.indexRoot === undefined ? {} : { AGENT_INDEX_ROOT: fixture.indexRoot }),
     },
     NO_RETRY_MS,
   );
