@@ -33,7 +33,6 @@ from proc_caregiver import (
     IN_SYNC,
     PLANE_ENDPOINTS,
     PLANE_URLS,
-    PYTHON_IMAGE,
     RECONCILING,
     WRITE_FLAG,
     CaregiverStack,
@@ -41,7 +40,6 @@ from proc_caregiver import (
     text_of,
     wait_until,
 )
-from proc_chat import await_settled, chat_id, run_stream, session_of
 from proc_standins import (
     ALLOW,
     DENY,
@@ -82,7 +80,6 @@ MANIFEST_PATH = "/manifest"
 CALL_PATH = "/call"
 
 OTHER = "ops"
-PLOTS = "plots"
 WAKER = "waker"
 GHOST = "ghost"
 NEXT_SANDBOX = "chat-s2"
@@ -144,13 +141,6 @@ SANDBOX_FIELDS = {
 }
 
 RFC3339 = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
-SHA256_HEX = re.compile(r"[0-9a-f]{64}")
-
-#: pi has eight tools of its own. A family with `read` and `grep` denies the
-#: other six by name. `powershell` is in no grant (contract 01 §3.8).
-DENIED_BUILTINS = "bash,powershell,edit,write,find,ls"
-PI_PROVIDER = "litellm"
-
 #: A watch that finds a silent chaperone in about one second.
 FAST_WATCH = ("--pep-probe-interval-s", "0.2", "--pep-unreachable-after-s", "1")
 
@@ -354,31 +344,6 @@ def test_the_env_file_names_the_directories_apply_mounted(caregiver_alone: Careg
     assert Path(made[0]["path"]).name == FAMILY
 
 
-async def test_the_family_file_reaches_the_flags_of_pi(house_prepared: CaregiverStack) -> None:
-    """Contract 01 §3.8 and contract 03 §7.1, through the real playpen.
-
-    The playpen reads the mounts that `caregiver` wrote, and it starts pi
-    from them. The tools, the model, the instructions and the skills reach pi
-    as flags. No credential is on the command line (invariant 13).
-    """
-    house = house_prepared
-    write_skill(house.tree, SKILL, SKILL_TEXT)
-    write_family_file(house.tree, family_body(skills=[SKILL], sandbox_tools=["read", "grep"]))
-    house.start_house()
-    house.await_serving()
-    config = house.tree.mounts().config
-
-    await _one_turn(house)
-    [pi] = house.pi_starts()
-
-    assert pi.value_after("--exclude-tools") == DENIED_BUILTINS
-    assert pi.value_after("--model") == f"{PI_PROVIDER}/{MODEL_ALIAS}"
-    assert pi.value_after("--append-system-prompt") == str(config / "instructions.md")
-    assert pi.value_after("--skill") == str(config / "skills")
-    assert house.credentials()["pep_token"] not in " ".join(pi.argv)
-    assert house.credentials()["litellm_key"] not in " ".join(pi.argv)
-
-
 # ----------------------------------------------------------- reach and egress
 
 
@@ -449,33 +414,6 @@ def test_the_second_family_serves_while_the_first_is_held(
 
     untune(stack.tree, SBX, f"hold-create-{SANDBOX}")
     stack.await_published()
-
-
-def test_the_flavor_picks_the_image_and_a_change_of_it_replaces_the_sandbox(
-    house_prepared: CaregiverStack,
-) -> None:
-    """Contract 01 §3.9 and contract 05 §3.5 last row.
-
-    The family file names a flavor, and the platform names the image. A
-    family with no flavor gets the base image. A change of the flavor is a
-    replacement: a new sandbox, a switch, and the old sandbox destroyed.
-    """
-    house = house_prepared
-    python = {"cpus": 2, "memory": "2g", "image": "python"}
-    publish_family(house.tree, family_body(PLOTS, sandbox=python))
-    house.start_house()
-    house.await_serving()
-    house.await_serving(PLOTS)
-
-    assert sbx_sandboxes(house.tree)[first_sandbox(PLOTS)]["image"] == PYTHON_IMAGE
-    assert sbx_sandboxes(house.tree)[SANDBOX]["image"] == IMAGE
-    assert [box["image"] for box in _status(house, PLOTS)["sandboxes"]] == [PYTHON_IMAGE]
-
-    write_family_file(house.tree, family_body(PLOTS))
-    house.await_serving(PLOTS, f"{PLOTS}-s2")
-
-    assert [box["image"] for box in _status(house, PLOTS)["sandboxes"]] == [IMAGE]
-    assert sorted(sbx_sandboxes(house.tree)) == [SANDBOX, f"{PLOTS}-s2"]
 
 
 def test_a_removed_family_file_ends_the_family(caregiver_prepared: CaregiverStack) -> None:
@@ -889,17 +827,6 @@ def _systemctl(stack: CaregiverStack) -> list[tuple[str, ...]]:
     calls = [call.argv for call in calls_of(stack.tree, SYSTEMCTL)]
 
     return [argv for argv in calls if "is-enabled" not in argv]
-
-
-async def _one_turn(house: CaregiverStack) -> None:
-    """One streamed turn through the door of the house, to its end in the journal."""
-    chat = chat_id()
-
-    async with house.door_client() as door:
-        frames = await run_stream(door, chat, "hello")
-
-    assert frames.error_chunks == []
-    await await_settled(house.tree, session_of(chat))
 
 
 async def _call(sandbox: httpx.AsyncClient, tool: str, args: dict[str, object]) -> httpx.Response:

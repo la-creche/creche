@@ -1157,26 +1157,63 @@ class SessionService:
         # sandbox, whatever the outgoing one is still finishing.
         self._switches.pin(family, request.to)
         moving = self._turns_on(family, outgoing)
+        jobs = self._acp_links.get(outgoing) if outgoing is not None else None
+        held = jobs.prompts_in_flight if jobs is not None else 0
         tally = SwitchTally(
-            running_at_start=len(moving),
+            running_at_start=len(moving) + held,
             sessions=len(self._sessions_of(family)),
         )
         self._note_switch(request)
 
         if request.mode is SwitchMode.INTERRUPT:
             outcome = await self._interrupt_turns(moving, tally, request.reason)
+            tally.aborted += held
         else:
-            outcome = await self._drain_turns(moving, tally, request.deadline_s)
+            outcome = await self._drain_all(moving, jobs, tally, request.deadline_s)
 
         await self._retire_sandbox(outgoing)
         return tally.to_api(outcome)
 
+    async def _drain_all(
+        self,
+        moving: list[LiveTurn],
+        jobs: AcpLink | None,
+        tally: SwitchTally,
+        deadline_s: int,
+    ) -> SwitchOutcome:
+        """§5.3 rule 2 for session turns and for jobs over ACP, on one clock.
+
+        A job still in flight at the deadline ends when the outgoing link
+        stops: its prompt answers `failed` with `channel_lost`.
+        """
+        held = jobs.prompts_in_flight if jobs is not None else 0
+        started = asyncio.get_running_loop().time()
+        outcome = await self._drain_turns(moving, tally, deadline_s)
+
+        if jobs is None or held == 0:
+            return outcome
+
+        left = max(deadline_s - (asyncio.get_running_loop().time() - started), 0.0)
+
+        try:
+            async with asyncio.timeout(left):
+                while jobs.prompts_in_flight > 0:
+                    await asyncio.sleep(COLD_START_POLL_S)
+        except TimeoutError:
+            tally.finished += held - jobs.prompts_in_flight
+            tally.aborted += jobs.prompts_in_flight
+            return SwitchOutcome.DEADLINE_HIT
+
+        tally.finished += held
+        return outcome
+
     async def _open_incoming(self, family: str, sandbox: str) -> None:
         """Contract 05 §5.3 rule 8: the switch is what asks for the handshake.
 
-        `ready` means the handshake passed and this service holds the only
-        channel, so the call that moves a family onto a new sandbox is the
-        one place that can prove the sandbox answers. It runs before rule
+        The handshake is ACP `initialize` on the incoming sandbox's facade
+        (phase 2 plan, row 20). `ready` means it passed and this service
+        holds the only supervisor link, so the call that moves a family onto
+        a new sandbox is the one place that can prove the sandbox answers. It runs before rule
         1's pin, so a handshake that cannot pass moves no turn, drains
         nothing and destroys nothing: the family keeps serving on the
         outgoing sandbox and a later `caregiver` pass retries.
@@ -1187,13 +1224,14 @@ class SessionService:
         status = self._status.require(family)
 
         try:
-            await self._link_for(family, status, sandbox)
-        except (OrphanPlaypen, PlaypenFatal, HandshakeError, ChannelClosed) as error:
+            await self._acp_link_for(family, status, sandbox)
+        except ApiError as error:
+            cause = error.__cause__ if error.__cause__ is not None else error
             raise ApiError(
                 ErrorCode.SANDBOX_UNAVAILABLE,
                 f"sandbox {sandbox} did not complete its handshake",
                 family=family,
-                detail={"sandbox": sandbox, "message": str(error)},
+                detail={"sandbox": sandbox, "message": str(cause)},
             ) from error
 
     async def _drain_turns(
@@ -1247,9 +1285,17 @@ class SessionService:
         process moves (§5.3 rule 5): each one dies here and the first turn on
         the new sandbox pays a cold start.
         """
+        if outgoing is None:
+            return
+
+        acp = self._acp_links.pop(outgoing, None)
+
+        if acp is not None:
+            await acp.stop()
+
         link = self._link_of(outgoing)
 
-        if link is None or outgoing is None:
+        if link is None:
             return
 
         for session in link.opened_sessions():
@@ -1988,13 +2034,19 @@ class SessionService:
             max_line_bytes=MAX_ACP_LINE_BYTES,
         )
 
-    async def _acp_link_for(self, family: str, status: FamilyStatus) -> AcpLink:
-        """The ready supervisor link to the family's facade, dialled once.
+    async def _acp_link_for(
+        self, family: str, status: FamilyStatus, sandbox: str | None = None
+    ) -> AcpLink:
+        """The ready supervisor link to a facade, dialled once.
 
-        The sandbox is the one the family's turns go to. A link that was
-        lost is dialled again. A dial that fails is `sandbox_unavailable`.
+        The sandbox is the one the family's turns go to, or the one a switch
+        names. `initialize` is the handshake (contract 05 §4.2's `ready`). A
+        link that was lost is dialled again. A dial that fails is
+        `sandbox_unavailable`.
         """
-        sandbox = await self._pick_sandbox(family, status)
+        if sandbox is None:
+            sandbox = await self._pick_sandbox(family, status)
+
         lock = self._acp_dials.setdefault(sandbox, asyncio.Lock())
 
         async with lock:

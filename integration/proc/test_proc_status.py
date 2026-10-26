@@ -1,13 +1,11 @@
 """What `attendance`, the door and the playpen do with what `caregiver` publishes.
 
-`integration/tests/test_i2_stage2.py` edits a family file and lets
-`caregiver`'s own code publish the result, inside the test process. No
-`caregiver` process runs in this topology, so a test plays `caregiver`: it
-writes the status document and the config mount as contracts 01 and 05 give
-them.
+No `caregiver` process runs in this topology, so a test plays `caregiver`:
+it writes the status document and the config mount as contracts 01 and 05
+give them.
 
 So these scenarios judge the readers. They do not prove that `caregiver`
-writes these files. `test_proc_caregiver_stage2.py` does, with a `caregiver`
+writes these files. `test_proc_caregiver_files.py` does, with a `caregiver`
 process.
 """
 

@@ -14,8 +14,15 @@ from typing import Any
 import pytest
 from attendance.auth import Principal
 from attendance.errors import ApiError, ErrorCode, TurnReason
+from attendance.ids import new_ulid
 from attendance.models import LineKind
-from attendance.requests import CreateRequest, RunTurnRequest, SwitchMode, SwitchRequest
+from attendance.requests import (
+    CreateRequest,
+    DelegateRequest,
+    RunTurnRequest,
+    SwitchMode,
+    SwitchRequest,
+)
 from attendance.service import SessionService
 from attendance.states import TurnState
 from attendance.switching import SwitchOutcome
@@ -24,12 +31,12 @@ from attendance_harness import (
     FAMILY,
     SANDBOX,
     FakeFleet,
-    PlaypenPlan,
     make_config,
     settle_now,
     wait_until,
     write_status,
 )
+from fake_facade import FacadeFleet, PromptMode
 
 CAREGIVER = Principal.CAREGIVER
 OWUI = Principal.DOOR_OWUI
@@ -44,13 +51,22 @@ NOT_YET_S = 0.05
 
 
 class SwitchHarness:
-    """One family, two sandboxes, and a fake playpen in each."""
+    """One family, two sandboxes, a fake playpen and a fake facade in each.
 
-    def __init__(self, tmp_path: Path) -> None:
+    The playpen serves session turns. The facade answers the switch's
+    handshake and runs the jobs over ACP (phase 2 plan, row 20).
+    """
+
+    def __init__(self, tmp_path: Path, mode: PromptMode = PromptMode.OK) -> None:
         self.config = make_config(tmp_path)
         self.fleet = FakeFleet()
+        self.facades = FacadeFleet(prompt_mode=mode)
         self.service = SessionService(
-            self.config, factory=self.fleet.factory, cold_start_wait_s=1.0
+            self.config,
+            factory=self.fleet.factory,
+            acp_factory=self.facades.factory,
+            cold_start_wait_s=1.0,
+            cancel_wait_s=0.2,
         )
         self.publish()
         self.service.start()
@@ -112,6 +128,7 @@ class SwitchHarness:
     async def stop(self) -> None:
         await self.service.close()
         await self.fleet.stop()
+        await self.facades.stop()
 
 
 async def test_a_drain_waits_for_two_running_turns(tmp_path: Path) -> None:
@@ -236,7 +253,8 @@ async def test_a_first_create_has_no_outgoing_sandbox(tmp_path: Path) -> None:
 
     assert body["switched"] is True
     assert body["turns_running_at_start"] == 0
-    assert harness.fleet.dials == [NEXT_SANDBOX]
+    assert harness.fleet.dials == []
+    assert harness.facades.dials == [NEXT_SANDBOX]
     await harness.stop()
 
 
@@ -440,11 +458,9 @@ async def test_a_switch_starts_no_process_of_its_own(tmp_path: Path) -> None:
     await harness.settle(await harness.start_turn(FIRST))
     await asyncio.wait_for(harness.switch(), 2.0)
 
-    assert harness.fleet.dials == [SANDBOX, NEXT_SANDBOX]
-    incoming = harness.fleet.playpen(NEXT_SANDBOX)
-
-    assert incoming.started == []
-    assert incoming.opens == []
+    assert harness.fleet.dials == [SANDBOX]
+    assert harness.facades.dials == [NEXT_SANDBOX]
+    assert harness.facades.facades[NEXT_SANDBOX].methods == ["initialize"]
 
     await wait_until(lambda: True)
     await harness.stop()
@@ -453,12 +469,12 @@ async def test_a_switch_starts_no_process_of_its_own(tmp_path: Path) -> None:
 async def test_a_failed_handshake_keeps_the_family_serving(tmp_path: Path) -> None:
     """Contract 05 §5.3 rule 8: nothing moves until the handshake passes.
 
-    The incoming sandbox answers `fatal` instead of `ready`, so the call is
-    refused. No turn moves, the outgoing channel stays open, and `caregiver`
+    The incoming facade answers `initialize` with another protocol
+    version, so the call is refused. No turn moves, the outgoing channel stays open, and `caregiver`
     still owns both sandboxes.
     """
     harness = SwitchHarness(tmp_path)
-    harness.fleet.plan(NEXT_SANDBOX, PlaypenPlan(fatal="control_mount_unwritable"))
+    harness.facades.mismatched.add(NEXT_SANDBOX)
     harness.create(FIRST)
     await harness.settle(await harness.start_turn(FIRST))
 
@@ -484,13 +500,13 @@ async def test_a_refused_switch_is_retried_not_replayed(tmp_path: Path) -> None:
     ever.
     """
     harness = SwitchHarness(tmp_path)
-    harness.fleet.plan(NEXT_SANDBOX, PlaypenPlan(fatal="control_mount_unwritable"))
+    harness.facades.mismatched.add(NEXT_SANDBOX)
     harness.create(FIRST)
 
     with pytest.raises(ApiError):
         await asyncio.wait_for(harness.switch(), 2.0)
 
-    harness.fleet.plan(NEXT_SANDBOX, PlaypenPlan())
+    harness.facades.mismatched.clear()
     body = await asyncio.wait_for(harness.switch(), 2.0)
 
     assert body["switched"] is True
@@ -504,7 +520,7 @@ async def test_a_refused_switch_with_no_caller_is_retried(tmp_path: Path) -> Non
     caller is there to forget the run. The retry must start a run of its own.
     """
     harness = SwitchHarness(tmp_path)
-    harness.fleet.plan(NEXT_SANDBOX, PlaypenPlan(fatal="control_mount_unwritable"))
+    harness.facades.mismatched.add(NEXT_SANDBOX)
     harness.create(FIRST)
     call = harness.switch()
     await asyncio.sleep(0)
@@ -513,10 +529,10 @@ async def test_a_refused_switch_with_no_caller_is_retried(tmp_path: Path) -> Non
     with pytest.raises(asyncio.CancelledError):
         await call
 
-    await wait_until(lambda: NEXT_SANDBOX in harness.fleet.dials)
+    await wait_until(lambda: NEXT_SANDBOX in harness.facades.dials)
     await asyncio.sleep(NOT_YET_S)
 
-    harness.fleet.plan(NEXT_SANDBOX, PlaypenPlan())
+    harness.facades.mismatched.clear()
     body = await asyncio.wait_for(harness.switch(), 2.0)
 
     assert body["switched"] is True
@@ -566,3 +582,102 @@ async def test_a_shutdown_drops_a_running_switch(tmp_path: Path) -> None:
         await asyncio.wait_for(switch, 2.0)
 
     await harness.fleet.stop()
+    await harness.facades.stop()
+
+
+# ------------------------------------------------------- jobs over ACP
+
+
+def delegate_to(family: str = FAMILY) -> DelegateRequest:
+    return DelegateRequest(
+        caller_family="vault-oracle",
+        target_family=family,
+        delegation_id=new_ulid(),
+        claimed_session_id=None,
+        message="ping",
+    )
+
+
+async def thin_harness(tmp_path: Path, mode: PromptMode) -> SwitchHarness:
+    """The family is thin, so a delegate job runs on its facade."""
+    harness = SwitchHarness(tmp_path, mode)
+    write_status(harness.config.state_root, kind="thin", sandboxes=((SANDBOX, "ready"),))
+    return harness
+
+
+def thin_switch(harness: SwitchHarness, **over: Any) -> asyncio.Task[dict[str, Any]]:
+    write_status(
+        harness.config.state_root,
+        kind="thin",
+        sandboxes=((SANDBOX, "ready"), (NEXT_SANDBOX, "ready")),
+    )
+    request = harness.request(**over)
+    return asyncio.create_task(harness.service.switch_sandbox(CAREGIVER, request))
+
+
+async def held_job(harness: SwitchHarness) -> asyncio.Task[dict[str, object]]:
+    job = asyncio.create_task(
+        harness.service.run_delegate(Principal.DOOR_DELEGATE, delegate_to(), DOOR)
+    )
+    await wait_until(lambda: SANDBOX in harness.facades.facades)
+    await wait_until(lambda: len(harness.facades.facades[SANDBOX].held) == 1)
+    return job
+
+
+async def test_a_drain_waits_for_a_job_over_acp(tmp_path: Path) -> None:
+    """§5.3 rule 2. A prompt in flight on the outgoing facade finishes."""
+    harness = await thin_harness(tmp_path, PromptMode.HOLD)
+    job = await held_job(harness)
+    switch = thin_switch(harness)
+    await asyncio.sleep(NOT_YET_S)
+
+    assert switch.done() is False
+
+    [session] = harness.facades.facades[SANDBOX].held
+    await harness.facades.settle(SANDBOX, session)
+    body = await asyncio.wait_for(switch, 2.0)
+
+    assert (await job)["status"] == "ok"
+    assert body["outcome"] == SwitchOutcome.DRAINED.value
+    assert body["turns_running_at_start"] == 1
+    assert body["turns_finished"] == 1
+    assert harness.facades.facades[SANDBOX].methods[-1] == "_creche/shutdown"
+    await harness.stop()
+
+
+async def test_an_interrupt_ends_a_job_over_acp_at_once(tmp_path: Path) -> None:
+    """§5.3 rule 3. The outgoing facade stops, and the job answers failed."""
+    harness = await thin_harness(tmp_path, PromptMode.HOLD)
+    job = await held_job(harness)
+    body = await asyncio.wait_for(thin_switch(harness, mode=SwitchMode.INTERRUPT), 2.0)
+
+    assert body["turns_aborted"] == 1
+    answer = await asyncio.wait_for(job, 2.0)
+    assert answer["status"] == "failed"
+    assert str(answer["error"]).startswith("channel_lost")
+    await harness.stop()
+
+
+async def test_a_drain_past_its_deadline_stops_the_job(tmp_path: Path) -> None:
+    harness = await thin_harness(tmp_path, PromptMode.HOLD)
+    job = await held_job(harness)
+    body = await asyncio.wait_for(thin_switch(harness, deadline_s=0), 2.0)
+
+    assert body["outcome"] == SwitchOutcome.DEADLINE_HIT.value
+    assert body["turns_aborted"] == 1
+    assert (await asyncio.wait_for(job, 2.0))["status"] == "failed"
+    await harness.stop()
+
+
+async def test_a_new_job_goes_to_the_incoming_facade(tmp_path: Path) -> None:
+    """§5.3 rule 1. The incoming link is the one the handshake opened."""
+    harness = await thin_harness(tmp_path, PromptMode.OK)
+    await harness.service.run_delegate(Principal.DOOR_DELEGATE, delegate_to(), DOOR)
+    await asyncio.wait_for(thin_switch(harness), 2.0)
+    answer = await harness.service.run_delegate(Principal.DOOR_DELEGATE, delegate_to(), DOOR)
+
+    assert answer["status"] == "ok"
+    assert harness.facades.dials == [SANDBOX, NEXT_SANDBOX]
+    assert harness.service.acp_link(SANDBOX) is None
+    assert harness.facades.facades[NEXT_SANDBOX].sessions == ["sess-1"]
+    await harness.stop()
