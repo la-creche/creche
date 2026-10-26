@@ -127,7 +127,7 @@ def family_page(config: Config, reader: SessionReader, name: str, now: datetime)
         issues_problem=problem,
         outcomes=_outcomes(config, name, row),
         audit=auditfiles.read_page(
-            config.audit_dir, AuditFilter(family=name), limit=FAMILY_AUDIT_LINES
+            config.audit_file, AuditFilter(family=name), limit=FAMILY_AUDIT_LINES
         ),
     )
 
@@ -186,7 +186,7 @@ def _window(row: SessionRow | None) -> int:
 
 def audit_page(config: Config, wanted: AuditFilter, offset: int) -> AuditPage:
     """One page of the audit, filtered."""
-    return auditfiles.read_page(config.audit_dir, wanted, offset=offset, limit=config.page_size)
+    return auditfiles.read_page(config.audit_file, wanted, offset=offset, limit=config.page_size)
 
 
 def edit_page(config: Config, name: str) -> EditPage:

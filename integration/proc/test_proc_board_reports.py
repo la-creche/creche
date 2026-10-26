@@ -6,8 +6,8 @@ scenarios here are in three groups:
 1. The home page and the family page, with a status document that a reader
    cannot use, and with the fault, spend and reconcile blocks of
    contract 05 §3.3, §7 and §3.4.
-2. The audit page of contract 04 §6: the pages, a line that is no record,
-   the filters, a directory that is not there.
+2. The audit page over the audit file of the Rust chaperone: the pages, a
+   line that is no record, the filters, a file that is not there.
 3. The perimeter of `docs/rework/spec.md` §8.3: the key, the body of a
    refusal, the cookie, the size of a post, and a start that the config
    refuses.
@@ -30,7 +30,6 @@ value by the class `flag`. The one stylesheet names the three.
 
 from __future__ import annotations
 
-import uuid
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -61,17 +60,13 @@ from proc_board_reports import (
     with_class,
 )
 from proc_harness import LOOPBACK, TcpAddress, is_listening
-from proc_html import table_rows
 from proc_services import Service
 from proc_tree import (
     FAMILY,
     VIEW_KEY,
     Fault,
     append_audit_lines,
-    audit_days,
-    audit_in_session,
     audit_line,
-    audit_on,
     audit_record,
     remove_families_dir,
     remove_status,
@@ -101,12 +96,10 @@ RFC3339 = "%Y-%m-%dT%H:%M:%SZ"
 #: Contract 05 §3.4: one step of a pass. No other part of a page holds it.
 STEP = "create_sandbox"
 
-#: `VIEW_PAGE_SIZE` of the paging scenario, and the tool of each record that
-#: the scenario writes, the oldest first. The first two are in the older of
-#: two day files.
+#: `VIEW_PAGE_SIZE` of the paging scenario, and the tool of each call that
+#: the scenario writes, the oldest first.
 PAGE_SIZE = 2
-CALLS = ["call_1", "call_2", "call_3", "call_4", "call_5"]
-OLDER_DAY_CALLS = 2
+CALLS = ["tool__call_1", "tool__call_2", "tool__call_3", "tool__call_4", "tool__call_5"]
 
 #: The texts of the two paging links.
 OLDER = "older"
@@ -115,16 +108,14 @@ NEWER = "newer"
 #: How many characters of a record a line holds that the writer did not end.
 TORN_CHARS = 20
 
-#: The three tools of the filter scenario, and the two sessions that the
-#: calls claimed (contract 04 §6.2). No name is a part of another name.
-EMBED = "embed"
-HA_CALL = "ha_call"
-JOB_STATUS = "job_status"
-SESSION_ONE = f"owui-{uuid.UUID(int=1)}"
-SESSION_TWO = f"owui-{uuid.UUID(int=2)}"
+#: The three tools of the filter scenario: exposed names of the Rust
+#: chaperone. No name is a part of another name.
+EMBED = "kagi__kagi_search_fetch"
+HA_CALL = "ha-call__call_service"
+JOB_STATUS = "attendance__job_status"
 
-#: Contract 04 §5 row 4: the reason of a call to a tool that no grant holds.
-NOT_GRANTED = "tool_not_granted"
+#: The detail of a call to a tool that no grant holds.
+NOT_GRANTED = "deny:tool_not_granted"
 
 #: U+2028. Built with `chr`, so this file holds no character that an editor
 #: does not show.
@@ -309,24 +300,19 @@ async def test_a_state_root_with_no_families_directory_gets_a_report(
 
 
 async def test_the_audit_page_pages_from_the_newest_record(board_prepared: BoardStack) -> None:
-    """`docs/rework/spec.md` §8.1: the audit page shows the day files, paged.
+    """`docs/rework/spec.md` §8.1: the audit page shows the audit file, paged.
 
-    Five records are in two day files, and a page holds two. The second page
-    holds the last record of one file and the first record of the other.
+    Five calls are in the file, and a page holds two.
 
     CONTRACT-QUESTION: §8.1 says `paged`. No contract gives the order of the
-    records or the links between two pages. Reading taken: the page of the
-    noticeboard as it is. The newest record is first, across the files and
-    in one file. A link with the text `older` leads to the next records, and
-    a link with the text `newer` leads one page back. A change costs this
-    scenario.
+    calls or the links between two pages. Reading taken: the page of the
+    noticeboard as it is. The call with the newest record is first. A link
+    with the text `older` leads to the next calls, and a link with the text
+    `newer` leads one page back. A change costs this scenario.
     """
     tree = board_prepared.tree
-    today, yesterday = audit_days(2)
-    records = [audit_record(FAMILY, tool) for tool in CALLS]
-    before = [audit_on(record, yesterday) for record in records[:OLDER_DAY_CALLS]]
-    append_audit_lines(tree, yesterday, [audit_line(record) for record in before])
-    append_audit_lines(tree, today, [audit_line(record) for record in records[OLDER_DAY_CALLS:]])
+    records = [audit_record(FAMILY, tool, call) for call, tool in enumerate(CALLS, start=1)]
+    append_audit_lines(tree, [audit_line(record) for record in records])
     start_board_with(board_prepared, {PAGE_SIZE_ENV: str(PAGE_SIZE)})
 
     async with board_prepared.client() as browser:
@@ -350,7 +336,7 @@ async def test_the_audit_page_pages_from_the_newest_record(board_prepared: Board
 async def test_an_audit_line_that_is_not_json_takes_one_row(board_alone: BoardStack) -> None:
     """A hole in the audit is a row. It hides no record (invariant 15).
 
-    CONTRACT-QUESTION: contract 04 §6 gives one record for each line. No
+    CONTRACT-QUESTION: the Rust sink writes one record for each line. No
     contract says what the page shows for a line that is no record. Reading
     taken: the line takes one row that is a report, with the class
     `problem` on the row or on a cell of it, and each record beside the line
@@ -358,16 +344,18 @@ async def test_an_audit_line_that_is_not_json_takes_one_row(board_alone: BoardSt
     A change costs this scenario.
     """
     tree = board_alone.tree
-    (today,) = audit_days(1)
-    first, second = (audit_line(audit_record(FAMILY, tool)) for tool in (EMBED, HA_CALL))
-    append_audit_lines(tree, today, [first, first[:TORN_CHARS], second])
+    first, second = (
+        audit_line(audit_record(FAMILY, tool, call))
+        for call, tool in enumerate((EMBED, HA_CALL), start=1)
+    )
+    append_audit_lines(tree, [first, first[:TORN_CHARS], second])
 
     async with board_alone.client() as browser:
         page = await page_of(browser, "/audit")
 
     assert len(problem_rows(page)) == 1
     assert len(audit_rows(page)) == 3
-    assert sorted(tools_of(page)) == [EMBED, HA_CALL]
+    assert sorted(tools_of(page)) == sorted([EMBED, HA_CALL])
 
 
 @pytest.mark.parametrize(
@@ -375,35 +363,29 @@ async def test_an_audit_line_that_is_not_json_takes_one_row(board_alone: BoardSt
     [
         ("decision=deny", HA_CALL),
         (f"tool={JOB_STATUS}", JOB_STATUS),
-        (f"session={SESSION_ONE}", EMBED),
     ],
-    ids=["decision", "tool", "session"],
+    ids=["decision", "tool"],
 )
 async def test_a_filter_of_the_audit_page_keeps_its_records(
     board_alone: BoardStack, query: str, tool: str
 ) -> None:
-    """The three filters that `test_proc_board_pages.py` does not hold.
+    """The two filters that `test_proc_board_pages.py` does not hold.
 
-    Each filter keeps one of three records, and each one keeps another.
+    Each filter keeps one of three calls, and each one keeps another.
 
     CONTRACT-QUESTION: no contract names a filter of the audit page. Reading
-    taken: the query names of the form on the page, and for each one the
-    whole value of a field of contract 04 §6.1 and §6.2. The noticeboard
-    keeps a record whose decision is equal to the value. For a tool and for
-    a session it keeps a record whose field holds the value as a part. A
-    whole value gives one result with each rule. A change costs this
-    scenario.
+    taken: the query names of the form on the page. The noticeboard keeps a
+    call whose decision is equal to the value. For a tool it keeps a call
+    whose tool holds the value as a part. A whole value gives one result
+    with each rule. A change costs this scenario.
     """
     tree = board_alone.tree
-    (today,) = audit_days(1)
     records = [
-        audit_in_session(audit_record(FAMILY, EMBED), SESSION_ONE),
-        audit_in_session(
-            audit_record(FAMILY, HA_CALL, decision="deny", reason=NOT_GRANTED), SESSION_TWO
-        ),
-        audit_in_session(audit_record(REVIEW, JOB_STATUS), SESSION_TWO),
+        audit_record(FAMILY, EMBED, 1),
+        audit_record(FAMILY, HA_CALL, 2, detail=NOT_GRANTED),
+        audit_record(REVIEW, JOB_STATUS, 3),
     ]
-    append_audit_lines(tree, today, [audit_line(record) for record in records])
+    append_audit_lines(tree, [audit_line(record) for record in records])
 
     async with board_alone.client() as browser:
         every = await page_of(browser, "/audit")
@@ -413,20 +395,20 @@ async def test_a_filter_of_the_audit_page_keeps_its_records(
     assert tools_of(kept) == [tool]
 
 
-async def test_the_audit_page_reports_a_missing_directory(board_alone: BoardStack) -> None:
+async def test_the_audit_page_reports_a_missing_file(board_alone: BoardStack) -> None:
     """The page says what it cannot read, and it shows the rest of itself.
 
-    No scenario of this root wrote an audit record, so the state root holds
-    no audit directory.
+    No scenario of this root wrote an audit record, so the root holds no
+    audit file.
 
-    CONTRACT-QUESTION: `docs/rework/spec.md` §8.3 gives a banner for audit
-    files that the service cannot read. No contract names a state root with
-    no audit directory. Reading taken: that page gets the same report, a
-    list with the class `problems`, and it still holds the table. The
-    noticeboard shows `cannot list the audit directory` with the reason. A
-    change costs this scenario.
+    CONTRACT-QUESTION: `docs/rework/spec.md` §8.3 gives a banner for an
+    audit file that the service cannot read. No contract names a root with
+    no audit file. Reading taken: that page gets the same report, a list
+    with the class `problems`, and it still holds the table. The
+    noticeboard shows `audit.jsonl is missing`. A change costs this
+    scenario.
     """
-    assert not board_alone.tree.audit_dir.exists()
+    assert not board_alone.tree.audit_file.exists()
 
     async with board_alone.client() as browser:
         page = await page_of(browser, "/audit")
@@ -435,29 +417,25 @@ async def test_the_audit_page_reports_a_missing_directory(board_alone: BoardStac
     assert page.one("table", AUDIT_TABLE).one("thead").all("th") != []
 
 
-async def test_a_record_with_a_line_separator_is_one_row(board_alone: BoardStack) -> None:
-    """LF alone ends a record. U+2028 is legal inside a JSON string.
+async def test_a_line_with_a_line_separator_is_one_row(board_alone: BoardStack) -> None:
+    """LF alone ends a line. U+2028 is legal inside a JSON string.
 
-    Contract 04 §6 makes the file JSONL. Contract 02 §8 gives the rule for
-    the event stream: a reader splits on LF only. The noticeboard uses the
-    same rule for the audit file.
+    The Rust sink writes JSONL. Contract 02 §8 gives the rule for the event
+    stream: a reader splits on LF only. The noticeboard uses the same rule
+    for the audit file. No field of a Rust record holds U+2028, so the line
+    is one row that is a report, not two rows.
     """
     tree = board_alone.tree
-    (today,) = audit_days(1)
-    text = f"{BEFORE_SEPARATOR}{LINE_SEPARATOR}{AFTER_SEPARATOR}"
-    line = audit_line(audit_record(FAMILY, EMBED, args={"input": text}))
-    append_audit_lines(tree, today, [line])
+    text = f"deny:{BEFORE_SEPARATOR}{LINE_SEPARATOR}{AFTER_SEPARATOR}"
+    line = audit_line(audit_record(FAMILY, EMBED, detail=text))
+    append_audit_lines(tree, [line])
 
     async with board_alone.client() as browser:
         page = await page_of(browser, "/audit")
 
-    records = table_rows(page.one("table", AUDIT_TABLE))
-
     assert LINE_SEPARATOR in line
     assert len(audit_rows(page)) == 1
-    assert problem_rows(page) == []
-    assert BEFORE_SEPARATOR in records[0]["arguments"].text
-    assert AFTER_SEPARATOR in records[0]["arguments"].text
+    assert len(problem_rows(page)) == 1
 
 
 # ------------------------------------------------------------- the perimeter

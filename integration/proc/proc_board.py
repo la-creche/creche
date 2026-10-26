@@ -5,7 +5,7 @@
       v
     noticeboard    one process, started through `Service.NOTICEBOARD`
       | reads state/families/<family>/status.json and validation.json
-      | reads state/outcomes/ and state/audit/
+      | reads state/outcomes/ and chaperone/audit.jsonl
       | writes one git commit in <root>/registry
       | HTTP over a Unix socket, the `view-ro` token
       v
@@ -90,9 +90,9 @@ KEY_ENV: Final = "VIEW_ACCESS_KEY"
 KEY_FILE_ENV: Final = "VIEW_ACCESS_KEY_FILE"
 STATE_ROOT_ENV: Final = "VIEW_STATE_ROOT"
 
-#: The tool of the one audit record of `BoardStack.write_audit_record`. Each
-#: family of the fixture holds the verb.
-AUDITED_TOOL: Final = "embed"
+#: The tool of the one audit record of `BoardStack.write_audit_record`: an
+#: exposed name of the Rust chaperone.
+AUDITED_TOOL: Final = "attendance__job_status"
 
 #: Two values that a scenario types into the `description` control: one for
 #: a first save, and one for a save after it.
@@ -119,6 +119,7 @@ def board_env(tree: Tree, host: str, port: int) -> dict[str, str]:
         STATE_ROOT_ENV: str(tree.state_root),
         "VIEW_REGISTRY_DIR": str(tree.registry_root),
         "VIEW_SESSIOND_SOCKET": str(tree.attendance_socket),
+        "VIEW_AUDIT_FILE": str(tree.audit_file),
     }
 
 
@@ -194,11 +195,10 @@ class BoardStack(Stack):
         self.supervisor.wait_ready(self.board, TcpAddress(self.board_port))
 
     def write_audit_record(self) -> None:
-        """Write one audit record, so that the root has the audit directory.
+        """Write one audit record, so that the root has the audit file.
 
-        The host has that directory before a service starts
-        (`systemd/creche-chaperone.service`). No fixture of this topology
-        makes it, and the verify hook looks for it.
+        The Rust chaperone makes the file when it starts. No fixture of this
+        topology makes it, and the verify hook looks for it.
         """
         append_audit(self.tree, [audit_record(FAMILY, AUDITED_TOOL)])
 

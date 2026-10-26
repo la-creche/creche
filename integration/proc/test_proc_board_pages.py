@@ -30,6 +30,7 @@ from proc_board import KEY_HEADER, REVIEW, BoardStack, html_of, page_of
 from proc_html import table_rows
 from proc_tree import (
     FAMILY,
+    NO_ARGUMENTS_SHA256,
     SANDBOX,
     VIEW_KEY,
     Validity,
@@ -136,12 +137,13 @@ async def test_an_invalid_family_shows_its_report(board_alone: BoardStack) -> No
 
 
 async def test_the_audit_page_shows_each_record_and_filters(board_alone: BoardStack) -> None:
-    """`GET /audit`. Contract 04 §6: the page reads the day files, arguments and all."""
+    """`GET /audit`. The page reads the audit file of the Rust chaperone, which
+    holds argument digests only."""
     append_audit(
         board_alone.tree,
         [
-            audit_record(FAMILY, "embed", args={"input": "boiler service date"}),
-            audit_record(REVIEW, "ha_call", decision="deny", reason="not_granted"),
+            audit_record(FAMILY, "kagi__kagi_search_fetch", 1),
+            audit_record(REVIEW, "ha-call__call_service", 2, detail="deny:tool_not_granted"),
         ],
     )
 
@@ -152,9 +154,13 @@ async def test_the_audit_page_shows_each_record_and_filters(board_alone: BoardSt
     rows = table_rows(every.one("table", "audit"))
     filtered = table_rows(one.one("table", "audit"))
 
-    assert sorted(row["tool"].one("code").text for row in rows) == ["embed", "ha_call"]
-    assert any("boiler service date" in row["arguments"].text for row in rows)
-    assert [row["tool"].one("code").text for row in filtered] == ["ha_call"]
+    assert sorted(row["tool"].one("code").text for row in rows) == [
+        "ha-call__call_service",
+        "kagi__kagi_search_fetch",
+    ]
+    assert all(row["argument digest"].text == NO_ARGUMENTS_SHA256 for row in rows)
+    assert "argument digests only" in every.one("p", "notice").text
+    assert [row["tool"].one("code").text for row in filtered] == ["ha-call__call_service"]
     assert filtered[0]["decision"].text.startswith("deny")
     assert REVIEW in filtered[0]["family"].text
 
@@ -210,7 +216,7 @@ async def test_a_route_parameter_that_is_no_id_is_not_found(board_alone: BoardSt
 
 
 async def test_a_bad_query_of_the_audit_page_is_ignored(board_alone: BoardStack) -> None:
-    append_audit(board_alone.tree, [audit_record(FAMILY, "embed")])
+    append_audit(board_alone.tree, [audit_record(FAMILY, "kagi__kagi_search_fetch")])
 
     async with board_alone.client() as browser:
         pages = {query: await page_of(browser, f"/audit?{query}") for query in BAD_QUERIES}

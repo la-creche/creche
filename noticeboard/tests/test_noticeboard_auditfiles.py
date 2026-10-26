@@ -1,333 +1,335 @@
-"""Reading the PEP's audit files (contract 04 §6)."""
+"""Reading the chaperone's one audit file."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 from noticeboard.auditfiles import (
     ARGS_NOTICE,
-    MAX_ARGS_CHARS,
     MAX_LINE_BYTES,
+    AuditCall,
     AuditFilter,
-    known_days,
+    Decision,
+    Event,
+    Unreadable,
     read_page,
 )
 from noticeboard_helpers import (
+    NO_ARGUMENTS_SHA256,
+    RUN,
     Notices,
-    audit_line,
-    deep_object,
-    peak_memory_of,
-    write_audit_day,
+    audit_record,
+    write_audit,
 )
 
-from noticeboard import strictjson
+from noticeboard import auditfiles
 
-#: A record under `MAX_LINE_BYTES` that nests past the limit of the JSON reader.
-DEEP_RECORD_LEVELS = 250_000
+#: The three lines of `writes_safe_records_with_mode_0600` in
+#: `plugins/default/audit-jsonl/src/lib.rs` of the chaperone repository. The
+#: test there writes an allowed call that fails, then a denied call. The
+#: policy is absent, so the app is null and the tool is `<unknown>`.
+RUST_FIXTURE = (
+    '{"run":"07070707070707070707070707070707","call":1,'
+    '"started":"2025-10-24T00:00:00.123Z","time":"2025-10-24T00:00:00.123Z",'
+    '"app":null,"tool":"<unknown>",'
+    '"arguments_sha256":"44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",'
+    '"event":"decided","detail":"allow"}\n'
+    '{"run":"07070707070707070707070707070707","call":1,'
+    '"started":"2025-10-24T00:00:00.123Z","time":"2025-10-24T00:01:00.123Z",'
+    '"app":null,"tool":"<unknown>",'
+    '"arguments_sha256":"44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",'
+    '"event":"failed","detail":"not_connected"}\n'
+    '{"run":"07070707070707070707070707070707","call":2,'
+    '"started":"2025-10-24T00:00:00.123Z","time":"2025-10-24T00:00:00.123Z",'
+    '"app":null,"tool":"<unknown>",'
+    '"arguments_sha256":"44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",'
+    '"event":"decided","detail":"deny:tool_not_granted"}\n'
+)
 
-#: Decimal digits of Unicode that are not ASCII. Written as escapes so the
-#: source file holds no character that looks like another.
-FULLWIDTH_2026 = "\uff12\uff10\uff12\uff16"
-ARABIC_INDIC_ONE = "\u0661"
+#: A gate ID: 16 bytes as hex.
+GATE = "0a" * 16
 
-#: The deepest arguments of a strict record: the record is one level more.
-DEEP_ARGS_LEVELS = 63
-PAGE_MEMORY_MAX = 4 * 1024 * 1024
-
-#: The items of strict arguments whose record is just under `MAX_LINE_BYTES`.
-WIDE_ARGS_ITEMS = 260_000
-
-#: The items of the same arguments whose text is past `MAX_ARGS_CHARS`. The
-#: two texts start with the same `MAX_ARGS_CHARS` characters.
-FEW_ARGS_ITEMS = 1_000
-
-#: The problem of a text that is not strict JSON, after the name of the day.
+#: The problem of a text that is not strict JSON, after the file name.
 NOT_STRICT = "is not JSON: the text breaks a rule of strict JSON"
 
 
-def test_the_page_says_it_shows_full_arguments() -> None:
-    assert "full tool arguments" in ARGS_NOTICE
+def audit_file(tmp_path: Path) -> Path:
+    return tmp_path / "audit.jsonl"
 
 
-def test_records_come_back_newest_first_within_a_day(tmp_path: Path) -> None:
-    write_audit_day(
-        tmp_path,
-        "2026-09-19",
-        [audit_line(tool="first"), audit_line(tool="second"), audit_line(tool="third")],
-    )
-
-    page = read_page(tmp_path, AuditFilter())
-
-    assert [one.tool for one in page.rows] == ["third", "second", "first"]
+def calls(rows: tuple[AuditCall | Unreadable, ...]) -> list[AuditCall]:
+    found = [one for one in rows if isinstance(one, AuditCall)]
+    assert len(found) == len(rows), [one for one in rows if isinstance(one, Unreadable)]
+    return found
 
 
-def test_newer_days_come_before_older_ones(tmp_path: Path) -> None:
-    write_audit_day(tmp_path, "2026-09-17", [audit_line(tool="old")])
-    write_audit_day(tmp_path, "2026-09-19", [audit_line(tool="new")])
+def problem_of(tmp_path: Path, line: str) -> str:
+    """Write one line, read the page and give the problem of its one row."""
+    audit_file(tmp_path).write_text(line + "\n", encoding="utf-8")
+    page = read_page(audit_file(tmp_path), AuditFilter())
 
-    page = read_page(tmp_path, AuditFilter())
-
-    assert [one.tool for one in page.rows] == ["new", "old"]
-    assert page.days_read == ("2026-09-19", "2026-09-17")
-
-
-def test_a_file_that_is_not_a_day_is_ignored(tmp_path: Path) -> None:
-    write_audit_day(tmp_path, "2026-09-19", [audit_line()])
-    (tmp_path / "notes.txt").write_text("hello", encoding="utf-8")
-    (tmp_path / "2026-09.jsonl").write_text("{}\n", encoding="utf-8")
-
-    assert known_days(tmp_path) == ("2026-09-19",)
+    assert len(page.rows) == 1
+    row = page.rows[0]
+    assert isinstance(row, Unreadable)
+    return row.problem
 
 
-def test_a_day_name_with_a_trailing_newline_is_ignored(tmp_path: Path) -> None:
-    # A `$` also matches before a final newline. `\Z` does not.
-    write_audit_day(tmp_path, "2026-09-19", [audit_line()])
-    (tmp_path / "2026-09-20.jsonl\n").write_text("{}\n", encoding="utf-8")
+def test_audit_reads_rust_records(tmp_path: Path) -> None:
+    audit_file(tmp_path).write_text(RUST_FIXTURE, encoding="utf-8")
 
-    assert known_days(tmp_path) == ("2026-09-19",)
+    page = read_page(audit_file(tmp_path), AuditFilter())
 
+    denied, failed = calls(page.rows)
+    assert (denied.run, denied.call) == (RUN, 2)
+    assert denied.decision is Decision.DENY
+    assert denied.reason == "tool_not_granted"
+    assert denied.outcome is Event.DECIDED
+    assert denied.app == ""
+    assert denied.tool == "<unknown>"
+    assert denied.arguments_sha256 == NO_ARGUMENTS_SHA256
 
-def test_a_day_name_with_digits_outside_ascii_is_ignored(tmp_path: Path) -> None:
-    # `\d` takes every decimal digit of Unicode unless the pattern says ASCII.
-    write_audit_day(tmp_path, "2026-09-19", [audit_line()])
-    (tmp_path / f"{FULLWIDTH_2026}-09-20.jsonl").write_text("{}\n", encoding="utf-8")
-    (tmp_path / f"2026-09-2{ARABIC_INDIC_ONE}.jsonl").write_text("{}\n", encoding="utf-8")
-
-    assert known_days(tmp_path) == ("2026-09-19",)
-
-
-def test_the_family_filter_is_exact(tmp_path: Path) -> None:
-    write_audit_day(
-        tmp_path,
-        "2026-09-19",
-        [audit_line(family="chat"), audit_line(family="chat-two"), audit_line(family="code")],
-    )
-
-    page = read_page(tmp_path, AuditFilter(family="chat"))
-
-    assert [one.family for one in page.rows] == ["chat"]
+    assert (failed.run, failed.call) == (RUN, 1)
+    assert [step.event for step in failed.steps] == [Event.DECIDED, Event.FAILED]
+    assert failed.decision is Decision.ALLOW
+    assert failed.outcome is Event.FAILED
+    assert failed.reason == "not_connected"
+    assert failed.started == "2025-10-24T00:00:00.123Z"
+    assert failed.ended == "2025-10-24T00:01:00.123Z"
+    assert page.problems == ()
 
 
-def test_the_tool_filter_is_a_substring(tmp_path: Path) -> None:
-    write_audit_day(
-        tmp_path,
-        "2026-09-19",
-        [audit_line(tool="kagi__kagi_search_fetch"), audit_line(tool="ha_call")],
-    )
-
-    page = read_page(tmp_path, AuditFilter(tool="kagi"))
-
-    assert [one.tool for one in page.rows] == ["kagi__kagi_search_fetch"]
+def test_the_page_says_it_shows_argument_digests_only() -> None:
+    assert "argument digests only" in ARGS_NOTICE
 
 
-def test_the_decision_filter_finds_denials(tmp_path: Path) -> None:
-    write_audit_day(
-        tmp_path,
-        "2026-09-19",
+def test_a_gated_call_is_one_row_with_its_gate(tmp_path: Path) -> None:
+    write_audit(
+        audit_file(tmp_path),
         [
-            audit_line(decision="allow"),
-            audit_line(decision="deny", reason="not_granted"),
-            audit_line(decision="pending", gate="01K5J9QWB2M4N6Q8S0V2W4Y6A8"),
+            audit_record(1, "decided", f"gate:{GATE}", tool="attendance__enqueue"),
+            audit_record(1, "waiting", f"gate:{GATE}", tool="attendance__enqueue"),
+            audit_record(2, "decided", "allow"),
+            audit_record(2, "ran", "is_error:false"),
+            audit_record(1, "ran", "is_error:true", tool="attendance__enqueue"),
         ],
     )
 
-    page = read_page(tmp_path, AuditFilter(decision="deny"))
+    page = read_page(audit_file(tmp_path), AuditFilter())
 
-    assert len(page.rows) == 1
-    assert page.rows[0].reason == "not_granted"
-
-
-def test_the_session_filter_reads_the_claimed_field(tmp_path: Path) -> None:
-    other = {"session_id": "tui-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK", "turn_id": None, "delegation_id": None}
-    write_audit_day(tmp_path, "2026-09-19", [audit_line(), audit_line(claimed=other)])
-
-    page = read_page(tmp_path, AuditFilter(session="tui-"))
-
-    assert len(page.rows) == 1
-    assert page.rows[0].session_id.startswith("tui-")
+    gated, other = calls(page.rows)
+    assert gated.call == 1
+    assert gated.decision is Decision.GATE
+    assert gated.gate == GATE
+    assert [step.event for step in gated.steps] == [Event.DECIDED, Event.WAITING, Event.RAN]
+    assert gated.is_error
+    assert other.call == 2
+    assert not other.is_error
+    assert other.gate == ""
 
 
-def test_a_dropped_header_reads_empty_not_missing(tmp_path: Path) -> None:
-    """Contract 04 §6.2: a dropped header reads null, and that is the fact."""
-    blank = {"session_id": None, "turn_id": None, "delegation_id": None}
-    write_audit_day(tmp_path, "2026-09-19", [audit_line(claimed=blank)])
-
-    page = read_page(tmp_path, AuditFilter())
-
-    assert page.rows[0].session_id == ""
-    assert page.rows[0].turn_id == ""
-
-
-def test_paging_walks_backwards_through_the_records(tmp_path: Path) -> None:
-    write_audit_day(
-        tmp_path, "2026-09-19", [audit_line(tool=f"tool-{index}") for index in range(10)]
+def test_a_delivered_record_names_its_gate(tmp_path: Path) -> None:
+    write_audit(
+        audit_file(tmp_path),
+        [audit_record(3, "decided", "allow"), audit_record(3, "delivered", f"gate:{GATE}")],
     )
 
-    first = read_page(tmp_path, AuditFilter(), offset=0, limit=4)
-    second = read_page(tmp_path, AuditFilter(), offset=4, limit=4)
-    last = read_page(tmp_path, AuditFilter(), offset=8, limit=4)
+    (row,) = calls(read_page(audit_file(tmp_path), AuditFilter()).rows)
 
-    assert [one.tool for one in first.rows] == ["tool-9", "tool-8", "tool-7", "tool-6"]
+    assert row.outcome is Event.DELIVERED
+    assert row.gate == GATE
+
+
+def test_two_runs_with_one_call_number_are_two_rows(tmp_path: Path) -> None:
+    write_audit(
+        audit_file(tmp_path),
+        [audit_record(1), audit_record(1, run="08" * 16)],
+    )
+
+    rows = calls(read_page(audit_file(tmp_path), AuditFilter()).rows)
+
+    assert [one.run for one in rows] == ["08" * 16, RUN]
+
+
+def test_a_call_whose_decision_is_outside_the_tail_still_shows(tmp_path: Path) -> None:
+    write_audit(audit_file(tmp_path), [audit_record(4, "ran", "is_error:false")])
+
+    (row,) = calls(read_page(audit_file(tmp_path), AuditFilter()).rows)
+
+    assert row.decision is None
+    assert row.outcome is Event.RAN
+
+
+def test_the_family_filter_is_exact_on_the_app(tmp_path: Path) -> None:
+    write_audit(
+        audit_file(tmp_path),
+        [audit_record(1, app="chat"), audit_record(2, app="chatty"), audit_record(3, app=None)],
+    )
+
+    rows = calls(read_page(audit_file(tmp_path), AuditFilter(family="chat")).rows)
+
+    assert [one.call for one in rows] == [1]
+
+
+def test_the_tool_filter_is_a_substring(tmp_path: Path) -> None:
+    write_audit(
+        audit_file(tmp_path),
+        [audit_record(1, tool="kagi__kagi_search_fetch"), audit_record(2, tool="mail__send")],
+    )
+
+    rows = calls(read_page(audit_file(tmp_path), AuditFilter(tool="kagi")).rows)
+
+    assert [one.call for one in rows] == [1]
+
+
+def test_the_decision_filter_finds_denials(tmp_path: Path) -> None:
+    write_audit(
+        audit_file(tmp_path),
+        [audit_record(1), audit_record(2, detail="deny:rate_limited")],
+    )
+
+    rows = calls(read_page(audit_file(tmp_path), AuditFilter(decision="deny")).rows)
+
+    assert [one.call for one in rows] == [2]
+    assert rows[0].reason == "rate_limited"
+
+
+def test_an_unreadable_line_matches_every_filter(tmp_path: Path) -> None:
+    audit_file(tmp_path).write_text("not json\n", encoding="utf-8")
+
+    page = read_page(audit_file(tmp_path), AuditFilter(family="chat", decision="deny"))
+
+    assert len(page.rows) == 1
+    assert isinstance(page.rows[0], Unreadable)
+
+
+def test_paging_walks_backwards_through_the_calls(tmp_path: Path) -> None:
+    write_audit(audit_file(tmp_path), [audit_record(number) for number in range(1, 6)])
+
+    first = read_page(audit_file(tmp_path), AuditFilter(), offset=0, limit=2)
+    second = read_page(audit_file(tmp_path), AuditFilter(), offset=2, limit=2)
+    last = read_page(audit_file(tmp_path), AuditFilter(), offset=4, limit=2)
+
+    assert [one.call for one in calls(first.rows)] == [5, 4]
     assert first.has_more
-    assert [one.tool for one in second.rows] == ["tool-5", "tool-4", "tool-3", "tool-2"]
-    assert last.has_more is False
-    assert last.next_offset == 12
-    assert second.previous_offset == 0
+    assert [one.call for one in calls(second.rows)] == [3, 2]
+    assert [one.call for one in calls(last.rows)] == [1]
+    assert not last.has_more
 
 
-def test_full_arguments_are_rendered(tmp_path: Path) -> None:
-    write_audit_day(tmp_path, "2026-09-19", [audit_line(args={"query": "boiler", "limit": 3})])
-
-    page = read_page(tmp_path, AuditFilter())
-
-    assert '"query": "boiler"' in page.rows[0].args
-    assert not page.rows[0].args_truncated
-
-
-def test_enormous_arguments_are_capped_and_say_so(tmp_path: Path) -> None:
-    write_audit_day(tmp_path, "2026-09-19", [audit_line(args={"blob": "x" * 30_000})])
-
-    page = read_page(tmp_path, AuditFilter())
-
-    assert page.rows[0].args_truncated
-
-
-def test_the_deepest_arguments_of_a_strict_record_render_in_bounded_memory(
-    tmp_path: Path,
+def test_a_huge_file_is_read_from_its_tail_and_says_so(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    args = "[" * DEEP_ARGS_LEVELS + "]" * DEEP_ARGS_LEVELS
-    line = json.dumps(audit_line(args="@")).replace('"@"', args)
-    (tmp_path / "2026-09-19.jsonl").write_text(line + "\n", encoding="utf-8")
+    write_audit(audit_file(tmp_path), [audit_record(number) for number in range(1, 101)])
+    one_line = len(json.dumps(audit_record(100), separators=(",", ":"))) + 1
+    monkeypatch.setattr(auditfiles, "MAX_TAIL_BYTES", one_line * 10 + 7)
 
-    page, peak = peak_memory_of(lambda: read_page(tmp_path, AuditFilter()))
+    page = read_page(audit_file(tmp_path), AuditFilter(), limit=500)
 
-    row = page.rows[0]
-    assert row.problem == ""
-    assert row.args.startswith("[\n  [\n    [\n")
-    assert row.args == json.dumps(json.loads(args), indent=2)
-    assert not row.args_truncated
-    assert peak < PAGE_MEMORY_MAX
+    rows = calls(page.rows)
+    assert [one.call for one in rows] == list(range(100, 90, -1))
+    assert any("read the newest" in one for one in page.problems)
 
 
-def deep_zeros(items: int) -> str:
-    """Strict arguments: `items` zeros in `DEEP_ARGS_LEVELS` arrays."""
-    return "[" * DEEP_ARGS_LEVELS + ",".join(["0"] * items) + "]" * DEEP_ARGS_LEVELS
+def test_an_unterminated_last_line_is_not_read(tmp_path: Path) -> None:
+    """The sink writes a line and its LF in one write. A text after the last
+    LF is a write in progress."""
+    write_audit(audit_file(tmp_path), [audit_record(1)])
+    with audit_file(tmp_path).open("a", encoding="utf-8") as handle:
+        handle.write('{"run":"07')
+
+    page = read_page(audit_file(tmp_path), AuditFilter())
+
+    assert [one.call for one in calls(page.rows)] == [1]
 
 
-def test_strict_arguments_past_the_cap_render_in_bounded_memory(tmp_path: Path) -> None:
-    """The render stops at the display cap."""
-    line = json.dumps(audit_line(args="@")).replace('"@"', deep_zeros(WIDE_ARGS_ITEMS))
-    assert len(line) < MAX_LINE_BYTES
-    (tmp_path / "2026-09-19.jsonl").write_text(line + "\n", encoding="utf-8")
+def test_a_missing_audit_file_reports_and_does_not_raise(tmp_path: Path) -> None:
+    page = read_page(audit_file(tmp_path), AuditFilter())
 
-    page, peak = peak_memory_of(lambda: read_page(tmp_path, AuditFilter()))
-
-    row = page.rows[0]
-    assert row.problem == ""
-    head = json.dumps(json.loads(deep_zeros(FEW_ARGS_ITEMS)), indent=2)
-    assert len(head) > MAX_ARGS_CHARS
-    assert row.args == head[:MAX_ARGS_CHARS]
-    assert row.args_truncated
-    assert peak < PAGE_MEMORY_MAX
+    assert page.rows == ()
+    assert any("audit.jsonl" in one for one in page.problems)
 
 
-def test_the_arguments_render_as_the_strict_writer_writes_them(tmp_path: Path) -> None:
-    args = {"b": [1, 2.5, None], "a": "caf\xe9 \u2028"}
-    write_audit_day(tmp_path, "2026-09-19", [audit_line(args=args)])
+def test_an_unreadable_audit_file_reports_and_does_not_raise(tmp_path: Path) -> None:
+    audit_file(tmp_path).mkdir()
 
-    page = read_page(tmp_path, AuditFilter())
+    page = read_page(audit_file(tmp_path), AuditFilter())
 
-    assert page.rows[0].args == strictjson.dumps(args, indent=2, sort_keys=True, ensure_ascii=False)
-
-
-def test_a_record_that_will_not_parse_takes_a_row(tmp_path: Path) -> None:
-    """Invariant 15: a hole a filter hides is worse than an odd row."""
-    path = write_audit_day(tmp_path, "2026-09-19", [audit_line()])
-    path.write_text(path.read_text(encoding="utf-8") + "{ broken\n", encoding="utf-8")
-
-    page = read_page(tmp_path, AuditFilter(family="chat"))
-
-    problems = [one for one in page.rows if one.problem]
-    assert len(problems) == 1
-    assert "is not JSON" in problems[0].problem
+    assert page.rows == ()
+    assert any("cannot read" in one for one in page.problems)
 
 
-def test_a_record_that_nests_too_deep_takes_a_row(tmp_path: Path) -> None:
-    """The JSON reader raises RecursionError on this record, not ValueError."""
-    path = write_audit_day(tmp_path, "2026-09-19", [audit_line()])
-    deep = deep_object(DEEP_RECORD_LEVELS)
-    assert len(deep) < MAX_LINE_BYTES
-    path.write_bytes(path.read_bytes() + deep + b"\n")
+def test_an_absurd_line_is_not_parsed_and_says_so(tmp_path: Path) -> None:
+    line = json.dumps(audit_record(tool="x" * MAX_LINE_BYTES))
 
-    page = read_page(tmp_path, AuditFilter())
-
-    assert len(page.rows) == 2
-    assert page.rows[0].problem == f"2026-09-19.jsonl {NOT_STRICT}"
-    assert page.rows[1].tool == "kagi__kagi_search_fetch"
+    assert str(MAX_LINE_BYTES) in problem_of(tmp_path, line)
 
 
-def test_a_record_that_is_not_strict_records_a_notice_with_no_family(
+def test_a_line_that_is_not_strict_records_a_notice_with_no_family(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     recorded = Notices().install(monkeypatch)
-    path = write_audit_day(tmp_path, "2026-09-19", [audit_line()])
-    path.write_bytes(path.read_bytes() + b'{"family": "chat", "args": {"x": NaN}}\n')
 
-    page = read_page(tmp_path, AuditFilter())
+    problem = problem_of(tmp_path, '{"run": NaN}')
 
-    assert page.rows[0].problem == f"2026-09-19.jsonl {NOT_STRICT}"
-    assert recorded.calls == [("audit.line", "constant", None, True)]
+    assert problem == f"audit.jsonl {NOT_STRICT}"
+    assert [(one[0], one[2]) for one in recorded.calls] == [("audit.line", None)]
 
 
-def test_an_absurd_record_is_not_parsed_and_says_so(tmp_path: Path) -> None:
-    line = json.dumps(audit_line(args={"blob": "y" * (MAX_LINE_BYTES + 10)}))
-    (tmp_path / "2026-09-19.jsonl").write_text(line + "\n", encoding="utf-8")
+def test_a_line_break_inside_a_string_does_not_split_a_line(tmp_path: Path) -> None:
+    """U+2028 is legal inside a JSON string. The reader splits on LF alone,
+    so the line is one unreadable row, not two rows."""
+    line = json.dumps(audit_record(detail="deny:\u2028x"), ensure_ascii=False)
 
-    page = read_page(tmp_path, AuditFilter())
-
-    assert "passed" in page.rows[0].problem
-
-
-def test_a_missing_audit_directory_reports_and_does_not_raise(tmp_path: Path) -> None:
-    page = read_page(tmp_path / "nothing-here", AuditFilter())
-
-    assert page.rows == ()
-    assert page.problems
-    assert "cannot list the audit directory" in page.problems[0]
+    assert "detail" in problem_of(tmp_path, line)
 
 
-def test_a_line_break_inside_a_string_does_not_split_a_record(tmp_path: Path) -> None:
-    """U+2028 is legal inside JSON, so only LF may delimit (contract 02 §8).
+@pytest.mark.parametrize(
+    ("change", "word"),
+    [
+        ({"extra": 1}, "extra"),
+        ({"run": "07" * 15}, "run"),
+        ({"run": "AB" * 16}, "run"),
+        ({"call": 0}, "call"),
+        ({"call": True}, "call"),
+        ({"started": "2025-10-24 00:00:00Z"}, "started"),
+        ({"time": 7}, "time"),
+        ({"app": ""}, "app"),
+        ({"app": "Chat"}, "app"),
+        ({"tool": "kagi"}, "tool"),
+        ({"arguments_sha256": "00"}, "arguments_sha256"),
+        ({"event": "allowed"}, "event"),
+        ({"detail": "permit"}, "detail"),
+        ({"event": "ran", "detail": "allow"}, "detail"),
+        ({"event": "waiting", "detail": "gate:short"}, "detail"),
+        ({"event": "failed", "detail": "Not Connected"}, "detail"),
+    ],
+)
+def test_a_line_outside_the_rust_shape_takes_a_row(
+    tmp_path: Path, change: dict[str, Any], word: str
+) -> None:
+    line = json.dumps(audit_record(**change))
 
-    The record is written with `ensure_ascii=False`, so a RAW U+2028 lands
-    in the file. A reader that splits on every Unicode line break sees two
-    broken halves here. This reader splits on LF alone and sees one record.
-    """
-    line = json.dumps(audit_line(args={"text": "one\u2028two"}), ensure_ascii=False)
-    (tmp_path / "2026-09-19.jsonl").write_text(line + "\n", encoding="utf-8")
-
-    page = read_page(tmp_path, AuditFilter())
-
-    assert len(page.rows) == 1
-    assert page.rows[0].problem == ""
-    assert "\u2028" in page.rows[0].args
+    assert word in problem_of(tmp_path, line)
 
 
-def test_the_chain_is_read_and_bounded(tmp_path: Path) -> None:
-    write_audit_day(
-        tmp_path, "2026-09-19", [audit_line(family="vault-oracle", chain=["chat", "vault-oracle"])]
+def test_a_line_with_a_missing_key_takes_a_row(tmp_path: Path) -> None:
+    record = audit_record()
+    del record["detail"]
+
+    assert "detail" in problem_of(tmp_path, json.dumps(record))
+
+
+def test_records_of_one_call_that_disagree_take_a_row(tmp_path: Path) -> None:
+    write_audit(
+        audit_file(tmp_path),
+        [audit_record(1), audit_record(1, "ran", "is_error:false", tool="mail__send")],
     )
 
-    page = read_page(tmp_path, AuditFilter())
+    page = read_page(audit_file(tmp_path), AuditFilter())
 
-    assert page.rows[0].chain == ("chat", "vault-oracle")
-
-
-def test_an_untrusted_sandbox_id_is_visible(tmp_path: Path) -> None:
-    write_audit_day(tmp_path, "2026-09-19", [audit_line(sandbox_id_trusted=False)])
-
-    page = read_page(tmp_path, AuditFilter())
-
-    assert not page.rows[0].sandbox_id_trusted
+    (row,) = page.rows
+    assert isinstance(row, Unreadable)
+    assert "disagree" in row.problem

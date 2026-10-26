@@ -7,8 +7,8 @@ The surfaces, by what each one pins:
 - `noticeboard.security.cookie`: one `Cookie` header to the token of the
   edit form and to the `Set-Cookie` header of the answer.
 - `noticeboard.urlform`: the bytes of a form body to its fields.
-- `noticeboard.app.query`: the query of the audit page to its four filters
-  and to the count of records that the page shows.
+- `noticeboard.app.query`: the query of the audit page to its three filters
+  and to the count of calls that the page shows.
 - `noticeboard.route.family` and `noticeboard.route.session`: one route
   parameter to accepted or refused.
 - `noticeboard.sessions.list`, `.detail`, `.events`, `.refusal` and
@@ -16,7 +16,7 @@ The surfaces, by what each one pins:
   reader of the noticeboard makes of it.
 - `noticeboard.transcript.fold`: one event stream to the entries of a
   transcript.
-- `noticeboard.audit.page`: one audit directory and one call to one page.
+- `noticeboard.audit.page`: one audit file and one call to one page.
 - `noticeboard.statusdocs.report`: one validation report to its issues.
 - `noticeboard.verify.envfile`: one env file to the first check of the
   verify hook.
@@ -58,7 +58,7 @@ from urllib.parse import parse_qsl, unquote
 import httpx
 from fastapi import FastAPI
 from noticeboard.app import STATIC, build_app
-from noticeboard.auditfiles import AuditFilter, AuditRow
+from noticeboard.auditfiles import AuditFilter, AuditRow, Unreadable
 from noticeboard.config import DEFAULT_PAGE_SIZE, DEFAULT_PORT, SOCKET_BASE_URL, Config
 from noticeboard.security import CSRF_COOKIE, CSRF_FIELD
 from noticeboard.sessions import Reply, SessionReader, SessionRow, TurnRow
@@ -166,6 +166,8 @@ class Kind(enum.Enum):
     NOT_AN_OBJECT = "not an object"
     REFUSED = "refused"
     UNREACHABLE = "unreachable"
+    #: A JSON object that does not have the shape of an audit record.
+    NOT_A_RECORD = "not a record"
     #: A notice: the reader stopped at a limit and kept what it read before.
     CAPPED = "capped"
 
@@ -180,12 +182,16 @@ _STARTS: Final[tuple[tuple[str, Kind], ...]] = (
     ("cannot call attendance: ", Kind.UNREACHABLE),
     ("cannot read the noticeboard-ro token: ", Kind.UNREADABLE),
     ("the noticeboard-ro token file is ", Kind.UNREADABLE),
-    ("cannot list the audit directory: ", Kind.UNREADABLE),
+    ("cannot read ", Kind.UNREADABLE),
+    ("the records of run ", Kind.NOT_A_RECORD),
     ("attendance answered over ", Kind.TOO_LARGE),
     ("the stream passed ", Kind.CAPPED),
     ("stopped after ", Kind.CAPPED),
-    ("showing the newest ", Kind.CAPPED),
+    ("read the newest ", Kind.CAPPED),
 )
+
+#: Where the reason starts in a problem text of a line that is no record.
+_NOT_A_RECORD_MARK: Final = ": a line has "
 
 #: The end of each problem text that has one class, whatever comes before.
 _ENDS: Final[tuple[tuple[str, Kind], ...]] = (
@@ -222,6 +228,9 @@ def problem_of(text: str) -> dict[str, Json]:
     for start, kind in _STARTS:
         if text.startswith(start):
             return {"class": kind.value, "text": text}
+
+    if _NOT_A_RECORD_MARK in text:
+        return {"class": Kind.NOT_A_RECORD.value, "text": text}
 
     if _NOT_JSON_MARK in text:
         head, mark, _ = text.partition(_NOT_JSON_MARK)
@@ -325,7 +334,8 @@ def _get(app: ASGIApp, ask: Ask) -> Answered | Raised:
 
 
 class _Page(HTMLParser):
-    """What a vector keeps of one page: each `input`, and the count of `pre` elements."""
+    """What a vector keeps of one page: each `input`, and the count of cells of the
+    class `digest`: one for each call of the audit page."""
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -333,7 +343,7 @@ class _Page(HTMLParser):
         self.records = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag == "pre":
+        if tag == "td" and dict(attrs).get("class") == "digest":
             self.records += 1
 
         if tag != "input":
@@ -437,6 +447,7 @@ def _app(scratch: Path, secure: Secure = Secure.ON) -> FastAPI:
         attendance_socket=None,
         attendance_url=SOCKET_BASE_URL,
         page_size=DEFAULT_PAGE_SIZE,
+        audit_file=scratch / "state" / cases.AUDIT_FILE,
         cookie_secure=secure is Secure.ON,
     )
     reader = SessionReader(transport=StandIn(_NO_SESSION), token_file=_token_file(scratch))
@@ -700,8 +711,8 @@ def _form_surface() -> Surface:
 
 AUDIT_PATH: Final = "/audit"
 
-#: The four filters of the audit page, in the order of its form.
-FILTERS: Final = ("family", "session", "tool", "decision")
+#: The three filters of the audit page, in the order of its form.
+FILTERS: Final = ("family", "tool", "decision")
 
 
 def _query_vector(app: ASGIApp, body: Body) -> Vector:
@@ -718,7 +729,7 @@ def _query_vector(app: ASGIApp, body: Body) -> Vector:
 
 def _query_surface(scratch: Path) -> Surface:
     home = scratch / "query"
-    _write(home / "state" / "audit" / cases.DAY, cases.QUERY_FILE)
+    _write(home / "state" / cases.AUDIT_FILE, cases.QUERY_FILE)
     app = _app(home)
 
     return _surface(
@@ -728,10 +739,10 @@ def _query_surface(scratch: Path) -> Surface:
         (
             "The input is the query of one request for the audit page: the bytes after the "
             "question mark. Each input is ASCII.",
-            "The audit directory holds one day file, context.audit_file. It has three "
-            "records, oldest first. The page size is context.page_size.",
-            "value.filters is the value of each of the four inputs of the filter form on the "
-            "page. value.rows is the count of records that the page shows.",
+            "The audit file is context.audit_file. It has three records of three calls, "
+            "oldest first. The page size is context.page_size.",
+            "value.filters is the value of each of the three inputs of the filter form on the "
+            "page. value.rows is the count of calls that the page shows.",
             "The service reads the last value of a name. It removes the whitespace of Python "
             f"str.strip from the two ends of a filter value. Then it keeps the first "
             f"{cases.FILTER_CHARS} characters. A character is one code point.",
@@ -741,8 +752,9 @@ def _query_surface(scratch: Path) -> Surface:
             "int removes each White_Space character of Unicode from the two ends of the "
             "text. It does not remove U+001C to U+001F there, which str.strip removes from a "
             "filter value.",
-            "The filters family and decision take a record whose field equals the value. The "
-            "filters tool and session take a record whose field holds the value.",
+            "The filter family takes a call whose app equals the value. The filter decision "
+            "takes a call whose decision equals the value. The filter tool takes a call "
+            "whose tool holds the value.",
             _NOTE_APP,
             _NOTE_SERVER,
         ),
@@ -750,7 +762,7 @@ def _query_surface(scratch: Path) -> Surface:
         {
             "path": AUDIT_PATH,
             "page_size": DEFAULT_PAGE_SIZE,
-            "audit_file": {"name": cases.DAY, "text": cases.QUERY_FILE.decode("utf-8")},
+            "audit_file": {"name": cases.AUDIT_FILE, "text": cases.QUERY_FILE.decode("utf-8")},
         },
     )
 
@@ -1242,23 +1254,18 @@ def _transcript_surface(token_file: Path) -> Surface:
     )
 
 
-# --- the audit files --------------------------------------------------------------------
+# --- the audit file ---------------------------------------------------------------------
 
 
 def _audit_given(case: cases.AuditCase) -> dict[str, Json]:
-    files: Json = None
-    if case.files is not None:
-        files = [{"name": one.id, **one.given()} for one in case.files]
+    file: Json = None
+    if case.file is not None:
+        file = case.file.given()
 
     return {
         "args": {
-            "files": files,
-            "filter": {
-                "family": case.family,
-                "session": case.session,
-                "tool": case.tool,
-                "decision": case.decision,
-            },
+            "file": file,
+            "filter": {"family": case.family, "tool": case.tool, "decision": case.decision},
             "offset": case.offset,
             "limit": case.limit,
         }
@@ -1266,19 +1273,30 @@ def _audit_given(case: cases.AuditCase) -> dict[str, Json]:
 
 
 def _audit_row(row: AuditRow) -> dict[str, Json]:
-    return {**_fields(row), "problem": problem_of(row.problem), "gated": row.gated}
+    if isinstance(row, Unreadable):
+        return {"problem": problem_of(row.problem)}
+
+    return {
+        **_fields(row),
+        "decision": normalize(row.decision),
+        "gate": row.gate,
+        "reason": row.reason,
+        "outcome": normalize(row.outcome),
+        "is_error": row.is_error,
+        "ended": row.ended,
+    }
 
 
 def _audit_vector(case: cases.AuditCase, scratch: Path) -> Vector:
     given = _audit_given(case)
     directory = scratch / case.id
-    if case.files is not None:
-        directory.mkdir(parents=True)
-        for one in case.files:
-            (directory / one.id).write_bytes(one.data())
+    directory.mkdir(parents=True)
+    path = directory / cases.AUDIT_FILE
+    if case.file is not None:
+        path.write_bytes(case.file.data())
 
-    wanted = AuditFilter(case.family, case.session, case.tool, case.decision)
-    outcome = attempt(lambda: auditfiles.read_page(directory, wanted, case.offset, case.limit))
+    wanted = AuditFilter(case.family, case.tool, case.decision)
+    outcome = attempt(lambda: auditfiles.read_page(path, wanted, case.offset, case.limit))
     if isinstance(outcome, Raised):
         return raised(case.id, given, outcome.exc)
 
@@ -1299,37 +1317,37 @@ def _audit_surface(scratch: Path) -> Surface:
     return _surface(
         "audit.page",
         "noticeboard.auditfiles.read_page",
-        "contract 04 §6",
+        "plugins/default/audit-jsonl of the chaperone repository, docs/design.md 5.4",
         (
-            "The input is one audit directory and one call. args.files is each file of the "
-            "directory: its name, and its bytes in one of the forms text, base64 and repeat. "
-            "args.files of null stands for a path with no directory.",
+            "The input is one audit file and one call. args.file is the bytes of the file in "
+            "one of the forms text, base64 and repeat. args.file of null stands for a path "
+            "with no file.",
             "args.filter, args.offset and args.limit are the arguments of the entry point. "
-            "An empty filter value takes each record.",
-            "value is the page. value.rows is its records, newest first: the reader reads "
-            "the day files in the reversed order of their names, and the lines of one file "
-            "from the last one to the first one.",
-            "The reader ends a line at LF only. It skips a line that holds only the six "
-            "bytes of ASCII whitespace. It gives each other line to the JSON reader with "
-            "each of its bytes. A line that is no JSON object makes a row with a problem, "
-            "and each filter takes that row.",
-            "The reader reads a file only when its whole name has the form of a day: four "
-            "ASCII digits, a hyphen, two ASCII digits, a hyphen, two ASCII digits and the "
-            "suffix .jsonl. A line feed after the suffix makes another name.",
-            "args of a row is the arguments of the record as text: JSON with sorted keys, an "
-            "indent of 2 spaces and each character outside ASCII as it is. A record with no "
-            "arguments and a record whose arguments are null have an empty text. "
-            f"args_truncated is true when the text had more than {auditfiles.MAX_ARGS_CHARS} "
-            "characters.",
-            f"chain is the first {auditfiles.MAX_CHAIN} items of the chain, less each item "
-            "that is no text. gated is true for a row whose gate is not empty.",
-            "value.scanned is the count of lines that the reader looked at. The reader "
-            "counts a line before it reads it. value.has_more is true when the reader found "
-            "one record more than the limit. value.days_read is each day file that the "
-            f"reader found, {auditfiles.MAX_DAYS} at most.",
-            _NOTE_LENIENT,
-            "The sentence for a path with no directory ends with the text that the system "
-            "gives for the error.",
+            "An empty filter value takes each call.",
+            f"The reader reads the last {auditfiles.MAX_TAIL_BYTES} bytes of the file at most. "
+            "When the file is longer, it drops the text before the first LF of the part that "
+            "it reads.",
+            "The reader ends a line at LF only. It does not read the text after the last LF. "
+            "It skips a line that holds only the six bytes of ASCII whitespace. It gives each "
+            "other line to the JSON reader with each of its bytes.",
+            "A record is a JSON object with the nine keys of the Rust sink and no other key. "
+            "run is 32 lower-case hex digits. call is an integer of 1 or more. started and "
+            "time are RFC 3339 times. app is null or a slug of the chaperone. tool is "
+            f"{auditfiles.UNKNOWN_TOOL} or an exposed name. arguments_sha256 is 64 lower-case "
+            "hex digits. event is one of decided, ran, waiting, delivered and failed. detail "
+            "has the form that its event takes.",
+            "value.rows is one row for each call, newest first: the reader orders the calls "
+            "by the newest record of each call. The records of one call have one run and one "
+            "call number. steps is the records of a call, oldest first.",
+            "decision comes from the decided record, and is null when the reader did not read "
+            "that record. gate is the gate ID of the first record whose detail names a gate. "
+            "reason is the deny code or the fault code. outcome is the event of the newest "
+            "record. ended is the time of the newest record.",
+            "A line that is no record makes a row with a problem, and each filter takes that "
+            "row. The records of one call that disagree on started, app, tool or "
+            "arguments_sha256 make one such row.",
+            "value.lines_read is the count of lines that the reader read. value.has_more is "
+            "true when the filter takes more calls than offset and limit show.",
             _NOTE_PROBLEM,
             _NOTE_PROBLEM_TEXT,
         ),

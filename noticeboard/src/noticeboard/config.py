@@ -29,6 +29,10 @@ LAN_ADDRESS_ENV: Final = "AGENT_LAN_ADDRESS"
 DEFAULT_STATE_ROOT: Final = "/srv/agents/state/rework"
 DEFAULT_REGISTRY_DIR: Final = "/srv/agents/registry"
 
+#: The one audit file of the chaperone. The noticeboard reads it as a member
+#: of the group `chaperone`.
+DEFAULT_AUDIT_FILE: Final = "/var/lib/chaperone/audit.jsonl"
+
 #: Contract 02 §3 rule 1: the socket lives on the production state root,
 #: because a hardened unit cannot reach `/run/user/<uid>`.
 DEFAULT_ATTENDANCE_SOCKET: Final = "/srv/agents/state/rework/sock/sessiond.sock"
@@ -73,6 +77,8 @@ class Config:
     attendance_socket: Path | None
     attendance_url: str
     page_size: int
+    #: The chaperone's audit file (`auditfiles.py`).
+    audit_file: Path
     #: `Secure` on the CSRF cookie. The proxy terminates TLS, so a browser
     #: only ever sees https. Set `VIEW_COOKIE_SECURE=0` for a plain-HTTP
     #: dev run: with it on, the browser sends no cookie over http and
@@ -85,11 +91,6 @@ class Config:
     @property
     def on_loopback(self) -> bool:
         return self.bind in _LOOPBACK
-
-    @property
-    def audit_dir(self) -> Path:
-        """Contract 04 §6: the PEP's daily JSONL files."""
-        return self.state_root / "audit"
 
     @property
     def families_dir(self) -> Path:
@@ -131,6 +132,7 @@ def from_env(environ: dict[str, str] | None = None) -> Config:
         attendance_socket=None if url else Path(socket_path),
         attendance_url=url or SOCKET_BASE_URL,
         page_size=_page_size(source),
+        audit_file=_path(source, "AUDIT_FILE", DEFAULT_AUDIT_FILE),
         cookie_secure=_flag(source, "COOKIE_SECURE"),
         access_key=key,
     )

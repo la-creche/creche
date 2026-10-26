@@ -24,7 +24,6 @@ from typing import Any, Final
 from noticeboard import auditfiles, jsonfiles, security, sessions, statusdocs, transcript
 from vectors.surfaces import ids
 from vectors.surfaces.config import INT_DIGITS_MAX, LAN, VIEW_KEY
-from vectors.surfaces.ids import ARABIC_ONE
 from vectors.surfaces.session_cases import (
     DIGEST,
     FAMILY,
@@ -510,9 +509,9 @@ FORMS: Final[tuple[Body, ...]] = (
 
 # --- the query of the audit page --------------------------------------------------------
 
-#: The day file of the audit records here. The audit page of the query
-#: surface reads it, and most cases of the audit surface hold it.
-DAY: Final = "2026-09-19.jsonl"
+#: The audit file. The audit page of the query surface reads it, and each
+#: case of the audit surface that has a file writes it.
+AUDIT_FILE: Final = "audit.jsonl"
 
 #: The count of characters that the audit page keeps of one filter value.
 FILTER_CHARS: Final = 200
@@ -522,49 +521,52 @@ LONG_FAMILY: Final = "f" * FILTER_CHARS
 
 _FACE: Final = "\U0001f600"
 
+#: A run ID and a gate ID of the chaperone: 16 bytes as lower-case hex.
+RUN: Final = "07" * 16
+OTHER_RUN: Final = "08" * 16
+GATE: Final = "0a" * 16
 
-def _audit(**fields: object) -> dict[str, object]:
-    """One audit record of contract 04 §6.1, with the fields of the caller."""
+#: The SHA-256 of `{}`, the canonical form of no arguments.
+NO_ARGUMENTS: Final = "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+
+
+def _audit(
+    call: int = 1, event: str = "decided", detail: str = "allow", **fields: object
+) -> dict[str, object]:
+    """One line of the chaperone's audit file, in the key order of the Rust
+    sink, with the fields of the caller."""
     record: dict[str, object] = {
-        "ts": "2026-09-19T11:59:30Z",
-        "family": FAMILY,
-        "sandbox_id": SANDBOX,
-        "sandbox_id_trusted": True,
-        "grants_rev": "01K5J9QW3R7T0ZP4YB2H6N8M1D",
+        "run": RUN,
+        "call": call,
+        "started": "2026-09-19T11:59:30Z",
+        "time": "2026-09-19T11:59:30.250Z",
+        "app": FAMILY,
         "tool": "kagi__kagi_search_fetch",
-        "args": {"query": "boiler service date"},
-        "decision": "allow",
-        "reason": "granted",
-        "latency_ms": 38,
-        "waited_ms": 0,
-        "gate": None,
-        "claimed": {"session_id": SESSION, "turn_id": TURN, "delegation_id": None},
-        "chain": [FAMILY],
+        "arguments_sha256": NO_ARGUMENTS,
+        "event": event,
+        "detail": detail,
     }
     record.update(fields)
 
     return record
 
 
-def _claimed(session: str) -> dict[str, object]:
-    return {"session_id": session, "turn_id": TURN, "delegation_id": None}
-
-
-#: The three records of the query surface, oldest first.
+#: The three records of the query surface, oldest first: three calls.
 QUERY_RECORDS: Final[tuple[dict[str, object], ...]] = (
-    _audit(ts="2026-09-19T08:00:00Z"),
+    _audit(1, started="2026-09-19T08:00:00Z", time="2026-09-19T08:00:00Z"),
     _audit(
-        ts="2026-09-19T09:00:00Z",
+        2,
+        detail="deny:tool_not_granted",
+        started="2026-09-19T09:00:00Z",
+        time="2026-09-19T09:00:00Z",
         tool="gh__list_issues",
-        decision="deny",
-        reason="not_granted",
-        claimed=_claimed(OTHER_SESSION),
     ),
     _audit(
-        ts="2026-09-19T10:00:00Z",
-        family="code",
+        3,
+        started="2026-09-19T10:00:00Z",
+        time="2026-09-19T10:00:00Z",
+        app="code",
         tool="kagi__kagi_summarize",
-        claimed=_claimed("owui-9d8c7b6a-5f4e-4d3c-8b2a-1f0e9d8c7b6a"),
     ),
 )
 
@@ -1398,262 +1400,204 @@ TRANSCRIPTS: Final[tuple[Body, ...]] = (
     ),
 )
 
-# --- the audit files (contract 04 §6) ---------------------------------------------------
+# --- the audit file ---------------------------------------------------------------------
 
-DAY_BEFORE: Final = "2026-09-18.jsonl"
-
-_ARGS_CAP: Final = auditfiles.MAX_ARGS_CHARS
 _LINE_CAP: Final = auditfiles.MAX_LINE_BYTES
+_TAIL_CAP: Final = auditfiles.MAX_TAIL_BYTES
 
 
 @dataclass(frozen=True)
 class AuditCase:
-    """One audit directory and one call of the reader."""
+    """One audit file and one call of the reader."""
 
     id: str
-    #: Each file of the directory. None stands for a path with no directory.
-    files: tuple[Body, ...] | None
+    #: The bytes of the file. None stands for a path with no file.
+    file: Body | None
     family: str = ""
-    session: str = ""
     tool: str = ""
     decision: str = ""
     offset: int = 0
     limit: int = 50
 
 
-def _day(name: str, *records: object) -> Body:
-    """One day file: each record on one line, oldest first."""
-    return Body(name, b"".join(_json(record) + b"\n" for record in records))
+def _file(*records: object) -> Body:
+    """The audit file: each record on one line, oldest first."""
+    return Body(AUDIT_FILE, b"".join(_json(record) + b"\n" for record in records))
 
 
-def _numbered(count: int, **fields: object) -> tuple[dict[str, object], ...]:
-    """`count` records. The tool of each one holds its number."""
-    return tuple(_audit(tool=f"tool-{number}", **fields) for number in range(1, count + 1))
+def _one(case_id: str, **fields: Any) -> AuditCase:
+    """A file that holds one record."""
+    return AuditCase(case_id, _file(_audit(**fields)))
 
 
-def _one(case_id: str, **fields: object) -> AuditCase:
-    """A directory with one day file that holds one record."""
-    return AuditCase(case_id, (_day(DAY, _audit(**fields)),))
+def _numbered(count: int) -> tuple[dict[str, object], ...]:
+    """`count` calls of one record each. The call number counts from 1."""
+    return tuple(_audit(number) for number in range(1, count + 1))
 
 
-_FIVE: Final = (_day(DAY, *_numbered(5)),)
-_TWO_DAYS: Final = (
-    _day(DAY_BEFORE, *_numbered(3, family="code")),
-    _day(DAY, *_numbered(3)),
-)
-_MIXED: Final = (_day(DAY, *QUERY_RECORDS),)
+def _tail(extra: int) -> Body:
+    """A file of `_TAIL_CAP + extra` bytes: one line of spaces, then two
+    records. The reader skips a line of spaces."""
+    line = _json(_audit(app="code")) + b"\n"
+    spaces = _TAIL_CAP + extra - 2 * len(line) - 1
+
+    return _long(AUDIT_FILE, (" ", spaces), ("\n", 1), (line.decode("utf-8"), 2))
+
+
+_FIVE: Final = _file(*_numbered(5))
+_MIXED: Final = _file(*QUERY_RECORDS)
 _RECORD: Final = _json(_audit())
-_OTHER_RECORD: Final = _json(_audit(family="code"))
+_OTHER_RECORD: Final = _json(_audit(2, app="code"))
+
+#: The three lines of `writes_safe_records_with_mode_0600` in
+#: `plugins/default/audit-jsonl/src/lib.rs` of the chaperone repository.
+_RUST: Final = (
+    _audit(
+        started="2025-10-24T00:00:00.123Z",
+        time="2025-10-24T00:00:00.123Z",
+        app=None,
+        tool=auditfiles.UNKNOWN_TOOL,
+    ),
+    _audit(
+        event="failed",
+        detail="not_connected",
+        started="2025-10-24T00:00:00.123Z",
+        time="2025-10-24T00:01:00.123Z",
+        app=None,
+        tool=auditfiles.UNKNOWN_TOOL,
+    ),
+    _audit(
+        2,
+        detail="deny:tool_not_granted",
+        started="2025-10-24T00:00:00.123Z",
+        time="2025-10-24T00:00:00.123Z",
+        app=None,
+        tool=auditfiles.UNKNOWN_TOOL,
+    ),
+)
+
+_GATED: Final = (
+    _audit(1, detail=f"gate:{GATE}"),
+    _audit(1, "waiting", f"gate:{GATE}"),
+    _audit(2),
+    _audit(2, "ran", "is_error:false"),
+    _audit(1, "ran", "is_error:true"),
+)
 
 AUDITS: Final[tuple[AuditCase, ...]] = (
-    AuditCase("one-record", (_day(DAY, _audit()),)),
-    AuditCase("no-directory", None),
-    AuditCase("no-file", ()),
-    AuditCase("empty-file", (Body(DAY, b""),)),
+    AuditCase("one-record", _file(_audit())),
+    AuditCase("no-file", None),
+    AuditCase("empty-file", Body(AUDIT_FILE, b"")),
+    AuditCase("rust-fixture", _file(*_RUST)),
+    # --- the records of one call ---
+    AuditCase("gated-calls", _file(*_GATED)),
+    AuditCase("delivered", _file(_audit(3), _audit(3, "delivered", f"gate:{GATE}"))),
+    AuditCase("decision-not-read", _file(_audit(4, "ran", "is_error:false"))),
+    AuditCase("two-runs-one-call-number", _file(_audit(), _audit(run=OTHER_RUN))),
+    AuditCase(
+        "records-that-disagree",
+        _file(_audit(), _audit(event="ran", detail="is_error:false", tool="mail__send")),
+    ),
+    AuditCase("failed-with-no-decision", _file(_audit(event="failed", detail="halted"))),
     # --- the order and the page ---
-    AuditCase("five-records", _FIVE),
+    AuditCase("five-calls", _FIVE),
     AuditCase("limit-2", _FIVE, limit=2),
     AuditCase("limit-2-offset-2", _FIVE, limit=2, offset=2),
     AuditCase("limit-2-offset-4", _FIVE, limit=2, offset=4),
     AuditCase("limit-5", _FIVE, limit=5),
-    AuditCase("limit-4", _FIVE, limit=4),
     AuditCase("offset-5", _FIVE, offset=5),
     AuditCase("offset-past-the-end", _FIVE, offset=50),
-    AuditCase("limit-1", _FIVE, limit=1),
-    AuditCase("two-days", _TWO_DAYS),
-    AuditCase("two-days-limit-4", _TWO_DAYS, limit=4),
-    AuditCase("two-days-limit-3", _TWO_DAYS, limit=3),
-    AuditCase("two-days-limit-2-offset-2", _TWO_DAYS, limit=2, offset=2),
-    AuditCase("two-days-family-of-the-older-day", _TWO_DAYS, family="code", limit=2),
-    # --- the four filters ---
+    # --- the three filters ---
     AuditCase("filter-family", _MIXED, family="chat"),
     AuditCase("filter-family-part-of-a-name", _MIXED, family="cha"),
+    AuditCase("filter-family-no-app", _file(_audit(app=None)), family="chat"),
     AuditCase("filter-decision", _MIXED, decision="deny"),
     AuditCase("filter-decision-part-of-a-word", _MIXED, decision="den"),
+    AuditCase("filter-decision-gate", _file(*_GATED), decision="gate"),
+    AuditCase(
+        "filter-decision-not-read",
+        _file(_audit(event="ran", detail="is_error:false")),
+        decision="allow",
+    ),
     AuditCase("filter-tool-part-of-a-name", _MIXED, tool="kagi"),
     AuditCase("filter-tool-upper-case", _MIXED, tool="KAGI"),
-    AuditCase("filter-session-part-of-an-id", _MIXED, session="owui-"),
-    AuditCase(
-        "filter-each", _MIXED, family="chat", session="owui-", tool="fetch", decision="allow"
-    ),
+    AuditCase("filter-each", _MIXED, family="chat", tool="fetch", decision="allow"),
     AuditCase("filter-no-record", _MIXED, family="code", decision="deny"),
     AuditCase("filter-and-offset", _MIXED, family="chat", offset=1),
     AuditCase(
         "filter-keeps-a-line-that-is-not-json",
-        (Body(DAY, _RECORD + b"\nnot json\n" + _OTHER_RECORD + b"\n"),),
+        Body(AUDIT_FILE, _RECORD + b"\nnot json\n" + _OTHER_RECORD + b"\n"),
         family="vault",
     ),
     # --- where a line ends ---
-    AuditCase("no-final-line-feed", (Body(DAY, _RECORD + b"\n" + _OTHER_RECORD),)),
+    AuditCase("no-final-line-feed", Body(AUDIT_FILE, _RECORD + b"\n" + _OTHER_RECORD)),
     AuditCase(
-        "blank-lines", (Body(DAY, b"\n\n" + _RECORD + b"\n  \n\t\n" + _OTHER_RECORD + b"\n\n"),)
+        "blank-lines",
+        Body(AUDIT_FILE, b"\n\n" + _RECORD + b"\n  \n\t\n" + _OTHER_RECORD + b"\n\n"),
     ),
-    AuditCase("cr-lf", (Body(DAY, _RECORD + b"\r\n" + _OTHER_RECORD + b"\r\n"),)),
-    AuditCase("form-feed-before-the-record", (Body(DAY, b"\x0c" + _RECORD + b"\n"),)),
-    _one("line-separator-inside-a-text", reason="a\u2028b\u2029c"),
+    AuditCase("cr-lf", Body(AUDIT_FILE, _RECORD + b"\r\n" + _OTHER_RECORD + b"\r\n")),
+    AuditCase("form-feed-before-the-record", Body(AUDIT_FILE, b"\x0c" + _RECORD + b"\n")),
+    _one("line-separator-inside-a-text", detail="deny:a\u2028b"),
     # --- a line that the reader does not parse ---
-    AuditCase("line-not-json", (Body(DAY, _RECORD + b"\nnot json\n" + _OTHER_RECORD + b"\n"),)),
-    AuditCase("line-cut-short", (Body(DAY, _RECORD + b"\n" + _OTHER_RECORD[:-5]),)),
-    AuditCase("line-list", (Body(DAY, b"[1]\n"),)),
-    AuditCase("line-null", (Body(DAY, b"null\n"),)),
-    AuditCase("line-not-utf8", (Body(DAY, b'{"family": "\xff"}\n'),)),
+    AuditCase("line-not-json", Body(AUDIT_FILE, _RECORD + b"\nnot json\n" + _OTHER_RECORD + b"\n")),
+    AuditCase("line-list", Body(AUDIT_FILE, b"[1]\n")),
+    AuditCase("line-null", Body(AUDIT_FILE, b"null\n")),
+    AuditCase("line-not-utf8", Body(AUDIT_FILE, b'{"app": "\xff"}\n')),
     AuditCase(
         "line-at-the-size-cap",
-        (_long(DAY, ('{"reason":"', 1), ("r", _LINE_CAP - 13), ('"}\n', 1)),),
+        _long(AUDIT_FILE, ('{"tool":"', 1), ("t", _LINE_CAP - 11), ('"}\n', 1)),
     ),
     AuditCase(
         "line-over-the-size-cap",
-        (_long(DAY, ('{"reason":"', 1), ("r", _LINE_CAP - 12), ('"}\n', 1)),),
+        _long(AUDIT_FILE, ('{"tool":"', 1), ("t", _LINE_CAP - 10), ('"}\n', 1)),
+    ),
+    # --- the keys of a record ---
+    AuditCase("record-empty-object", Body(AUDIT_FILE, b"{}\n")),
+    _one("unknown-key", verb="call"),
+    AuditCase(
+        "key-missing",
+        _file({key: value for key, value in _audit().items() if key != "detail"}),
     ),
     # --- each field of a record ---
-    AuditCase("record-empty-object", (Body(DAY, b"{}\n"),)),
-    _one(
-        "wrong-types",
-        ts=5,
-        family=None,
-        sandbox_id=["chat-s2"],
-        sandbox_id_trusted="true",
-        grants_rev={},
-        tool=True,
-        decision=1.5,
-        reason=0,
-        latency_ms="38",
-        waited_ms=True,
-        gate=7,
-        claimed="owui-1",
-        chain="chat",
-    ),
-    _one("untrusted-sandbox", sandbox_id_trusted=False),
-    _one("trusted-is-one", sandbox_id_trusted=1),
-    _one("gate", decision="allow", reason="approved", gate="0123456789abcdef", waited_ms=4200),
-    _one("gate-empty", gate=""),
-    _one("texts-501-characters", tool="t" * (CUT + 1), reason="r" * (CUT + 1)),
-    _one("counts-at-the-64-bit-limit", latency_ms=I64_MAX, waited_ms=I64_MAX),
-    _one("counts-that-are-fractions", latency_ms=38.0, waited_ms=0.5),
-    _one("unknown-field", verb="call", server="kagi"),
-    # --- the claimed block ---
-    _one("claimed-null", claimed=None),
-    _one("claimed-missing-keys", claimed={}),
-    _one(
-        "claimed-each-key",
-        claimed={"session_id": SESSION, "turn_id": TURN, "delegation_id": OTHER_TURN},
-    ),
-    _one("claimed-wrong-types", claimed={"session_id": 5, "turn_id": None, "delegation_id": ["x"]}),
-    _one("claimed-list", claimed=[SESSION]),
-    # --- the chain ---
-    _one("chain-empty", chain=[]),
-    _one("chain-null", chain=None),
-    _one("chain-10", chain=[f"family-{number}" for number in range(1, 11)]),
-    _one("chain-11", chain=[f"family-{number}" for number in range(1, 12)]),
-    _one("chain-items-that-are-no-text", chain=["chat", 5, None, "code", ["x"], "vault"]),
-    _one("chain-11-first-is-no-text", chain=[5, *(f"family-{number}" for number in range(1, 11))]),
-    _one("chain-item-501-characters", chain=["c" * (CUT + 1)]),
-    # --- the arguments ---
-    AuditCase("args-missing", (Body(DAY, b'{"tool":"ha_call"}\n'),)),
-    _one("args-null", args=None),
-    _one("args-empty-object", args={}),
-    _one("args-empty-list", args=[]),
-    _one("args-text", args="boiler"),
-    _one("args-number", args=5),
-    _one("args-false", args=False),
-    _one("args-list", args=["a", 1, None, True]),
-    _one("args-keys-not-sorted", args={"b": 1, "a": 2, "B": 3, "_": 4, "10": 5, "9": 6}),
-    _one("args-nested", args={"filter": {"state": ["open", "closed"], "labels": []}, "limit": 20}),
-    _one(
-        "args-text-forms",
-        args={"query": 'caf\u00e9 "quoted" <b> & \\ / \u2028 \U0001f600 \x7f\n\t'},
-    ),
-    AuditCase(
-        "args-number-forms",
-        (
-            Body(
-                DAY,
-                b'{"args":{"a":1.5,"b":0.1,"c":-0.0,"d":1e22,"e":1E5,"f":-7,"g":100,"h":2.50}}\n',
-            ),
-        ),
-    ),
-    AuditCase(
-        "args-20000-characters",
-        (_long(DAY, ('{"args":"', 1), ("a", _ARGS_CAP - 2), ('"}\n', 1)),),
-    ),
-    AuditCase(
-        "args-20001-characters",
-        (_long(DAY, ('{"args":"', 1), ("a", _ARGS_CAP - 1), ('"}\n', 1)),),
-    ),
-    AuditCase(
-        "args-long-list",
-        (_long(DAY, ('{"args":[', 1), ("1,", 4999), ("1]}\n", 1)),),
-    ),
-    # --- the names of the files ---
-    AuditCase(
-        "names-that-are-no-day",
-        (
-            _day(DAY, _audit()),
-            _day("2026-9-21.jsonl", _audit(tool="month-of-one-digit")),
-            _day("2026-09-22.json", _audit(tool="another-suffix")),
-            _day("2026-09-23.jsonl.bak", _audit(tool="a-second-suffix")),
-            _day("2026-09-20.JSONL", _audit(tool="suffix-upper-case")),
-            _day("x2026-09-24.jsonl", _audit(tool="a-letter-first")),
-            _day("20260925.jsonl", _audit(tool="no-hyphen")),
-            _day(f"2026-09-2{ARABIC_ONE}.jsonl", _audit(tool="arabic-digit")),
-            _day("audit.jsonl", _audit(tool="a-word")),
-        ),
-    ),
-    AuditCase(
-        "name-with-a-final-line-feed",
-        (
-            _day(DAY, _audit()),
-            _day("2026-09-26.jsonl\n", _audit(tool="line-feed-at-the-end")),
-        ),
-    ),
-    AuditCase(
-        "names-that-are-no-date",
-        (
-            _day("2026-13-45.jsonl", _audit(tool="month-13")),
-            _day("0000-00-00.jsonl", _audit(tool="zeros")),
-            _day("9999-99-99.jsonl", _audit(tool="nines")),
-        ),
-    ),
-    AuditCase(
-        "30-days",
-        tuple(_day(f"2026-08-{day:02d}.jsonl", _audit(tool=f"day-{day}")) for day in range(1, 31)),
-        limit=2,
-    ),
-    AuditCase(
-        "31-days",
-        tuple(_day(f"2026-08-{day:02d}.jsonl", _audit(tool=f"day-{day}")) for day in range(1, 32)),
-        limit=2,
-    ),
-    AuditCase(
-        "31-days-family-of-the-oldest-day",
-        (
-            *(_day(f"2026-08-{day:02d}.jsonl", _audit()) for day in range(2, 32)),
-            _day("2026-08-01.jsonl", _audit(family="code")),
-        ),
-        family="code",
-    ),
-    # --- the cap of lines ---
-    AuditCase(
-        "40000-lines-and-no-match",
-        (_long(DAY, ('{"family":"code"}\n', auditfiles.MAX_LINES_SCANNED)),),
-        family="chat",
-    ),
-    AuditCase(
-        "40001-lines-and-no-match",
-        (_long(DAY, ('{"family":"code"}\n', auditfiles.MAX_LINES_SCANNED + 1)),),
-        family="chat",
-    ),
-    AuditCase(
-        "40001-lines-and-the-oldest-matches",
-        (
-            _long(
-                DAY,
-                ('{"family":"chat"}\n', 1),
-                ('{"family":"code"}\n', auditfiles.MAX_LINES_SCANNED),
-            ),
-        ),
-        family="chat",
-    ),
+    _one("run-15-bytes", run="07" * 15),
+    _one("run-upper-case", run="AB" * 16),
+    _one("call-zero", call=0),
+    _one("call-negative", call=-1),
+    _one("call-true", call=True),
+    _one("call-fraction", call=1.0),
+    _one("call-at-the-64-bit-limit", call=I64_MAX),
+    _one("started-with-no-offset", started="2026-09-19T11:59:30"),
+    _one("started-with-an-offset", started="2026-09-19T13:59:30+02:00"),
+    _one("time-number", time=7),
+    _one("app-null", app=None),
+    _one("app-empty", app=""),
+    _one("app-upper-case", app="Chat"),
+    _one("app-64-characters", app="a" * 64),
+    _one("app-65-characters", app="a" * 65),
+    _one("tool-unknown", tool=auditfiles.UNKNOWN_TOOL),
+    _one("tool-no-separator", tool="kagi"),
+    _one("tool-upper-case-upstream", tool="Kagi__search"),
+    _one("tool-upper-case-tool", tool="kagi__Search.v2"),
+    _one("digest-short", arguments_sha256="00"),
+    _one("digest-upper-case", arguments_sha256=NO_ARGUMENTS.upper()),
+    _one("event-unknown", event="allowed"),
+    _one("event-upper-case", event="DECIDED"),
+    # --- the detail of each event ---
+    _one("decided-deny", detail="deny:argument_fenced"),
+    _one("decided-gate", detail=f"gate:{GATE}"),
+    _one("decided-deny-no-code", detail="deny:"),
+    _one("decided-gate-short", detail="gate:0a"),
+    _one("decided-permit", detail="permit"),
+    _one("ran-is-error-yes", event="ran", detail="is_error:yes"),
+    _one("ran-allow", event="ran", detail="allow"),
+    _one("waiting-no-gate", event="waiting", detail="allow"),
+    _one("delivered-gate-upper-case", event="delivered", detail=f"gate:{GATE.upper()}"),
+    _one("failed-code", event="failed", detail="upstream_timeout"),
+    _one("failed-words", event="failed", detail="Not Connected"),
+    _one("detail-number", detail=5),
+    # --- the tail of the file ---
+    AuditCase("file-at-the-tail-cap", _tail(0)),
+    AuditCase("file-over-the-tail-cap", _tail(1)),
 )
 
 # --- the validation report (contract 01 §7) ---------------------------------------------

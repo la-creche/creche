@@ -103,7 +103,6 @@ def test_state_paths_come_off_one_root(tmp_path: Path) -> None:
     config = from_env({"VIEW_BIND": "127.0.0.1", "VIEW_STATE_ROOT": str(tmp_path)})
 
     assert config.families_dir == tmp_path / "families"
-    assert config.audit_dir == tmp_path / "audit"
     assert config.outcomes_dir == tmp_path / "outcomes"
     assert config.view_token_file == tmp_path / "tokens" / "view-ro.token"
 

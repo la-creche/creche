@@ -33,10 +33,10 @@ SENTENCES = (
     ("", noticeboard.Kind.NONE),
     ("validation.json is missing", noticeboard.Kind.MISSING),
     ("the noticeboard-ro token file is empty", noticeboard.Kind.UNREADABLE),
-    ("cannot list the audit directory: No such file or directory", noticeboard.Kind.UNREADABLE),
+    ("cannot read audit.jsonl: Permission denied", noticeboard.Kind.UNREADABLE),
     ("attendance answered over 4194304 bytes; refusing to parse it", noticeboard.Kind.TOO_LARGE),
     (
-        "2026-09-19.jsonl: a record passed 524288 bytes and was not parsed",
+        "audit.jsonl: a line passed 4096 bytes and was not parsed",
         noticeboard.Kind.TOO_LARGE,
     ),
     ("a journal line is not JSON: Expecting value", noticeboard.Kind.NOT_JSON),
@@ -45,7 +45,8 @@ SENTENCES = (
     ("attendance answered 502 with no error code", noticeboard.Kind.REFUSED),
     (cases.UNREACHABLE, noticeboard.Kind.UNREACHABLE),
     ("stopped after 5000 journal lines", noticeboard.Kind.CAPPED),
-    ("showing the newest 30 day files of 31", noticeboard.Kind.CAPPED),
+    ("read the newest 4194304 bytes of 4194305", noticeboard.Kind.CAPPED),
+    ("audit.jsonl: a line has a bad run", noticeboard.Kind.NOT_A_RECORD),
 )
 
 
@@ -168,8 +169,8 @@ def _json_texts() -> Iterator[tuple[str, bytes]]:
             yield report.id, report.body.data()
 
     streams = [answer.body for answer in cases.STREAMS] + list(cases.TRANSCRIPTS)
-    days = [day for audit in cases.AUDITS for day in audit.files or ()]
-    for body in (*streams, *days):
+    files = [audit.file for audit in cases.AUDITS if audit.file is not None]
+    for body in (*streams, *files):
         for number, line in enumerate(body.data().split(b"\n")):
             yield f"{body.id}:{number}", line
 

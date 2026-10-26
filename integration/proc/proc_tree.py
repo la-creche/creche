@@ -21,7 +21,8 @@ topology with one writes only the registry and the token files, and
       state/door-owui.key                contract 02 §3 rule 7
       state/grants/<family>.json         contract 04 §1, the grant file
       state/faults/<writer>/<family>.json          contract 05 §3.3.1
-      state/audit/<day>.jsonl            contract 04 §6, written by the chaperone
+      state/audit/<day>.jsonl            contract 04 §6, written by the Python chaperone
+      chaperone/audit.jsonl              the audit file of the Rust chaperone
       state/outcomes/<family>/<id>.json  contract 02 §13.1, written by `attendance`
       state/triggers/webhooks/<family>/<name>.token   contract 05 §6.4
       state/view.key                     the key of the noticeboard
@@ -119,8 +120,14 @@ MAX_RUNNING_TURNS: Final = 1
 #: (contract 05 §2.1).
 MAX_QUEUED_TURNS: Final = 100
 
-#: Contract 04 §6: the mode of one audit file.
+#: The mode of the audit file of chaperone v0.3.0: group read.
 AUDIT_MODE: Final = 0o640
+
+#: A run ID of the Rust chaperone: 16 bytes as hex.
+AUDIT_RUN: Final = "07" * 16
+
+#: The SHA-256 of `{}`, the canonical form of no arguments.
+NO_ARGUMENTS_SHA256: Final = "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
 
 #: Contract 04 §1.2: the two defaults `caregiver` writes, and the default of
 #: the family file for `max_inflight_delegations`.
@@ -261,6 +268,11 @@ class Tree:
     @property
     def audit_dir(self) -> Path:
         return self.state_root / "audit"
+
+    @property
+    def audit_file(self) -> Path:
+        """The audit file of the Rust chaperone. The noticeboard reads it."""
+        return self.root / "chaperone" / "audit.jsonl"
 
     @property
     def webhooks_dir(self) -> Path:
@@ -895,70 +907,37 @@ def write_validation_report(tree: Tree, family: str, issues: list[dict[str, Any]
 
 
 def audit_record(
-    family: str,
+    app: str,
     tool: str,
+    call: int = 1,
     *,
-    args: dict[str, Any] | None = None,
-    decision: str = "allow",
-    reason: str = "granted",
+    event: str = "decided",
+    detail: str = "allow",
 ) -> dict[str, Any]:
-    """One audit record as the chaperone writes it now (contract 04 §6.1 to §6.3).
+    """One record as the Rust chaperone writes it (`docs/design.md` 5.4 of
+    the chaperone repository), in the key order of its sink.
 
-    Every trusted field is present. The three claimed keys are present and
-    null, as for a call with no header (§6.2). The chain holds one entry:
-    no delegation reached this call (§6.3).
+    `tool` is an exposed name, `<upstream>__<tool>`. The record holds the
+    SHA-256 of the canonical arguments, here of no arguments.
     """
+    now = _rfc3339_ms()
+
     return {
-        "ts": _rfc3339_ms(),
-        "family": family,
-        "sandbox_id": first_sandbox(family),
-        "sandbox_id_trusted": True,
-        "grants_rev": CONFIG_REV,
+        "run": AUDIT_RUN,
+        "call": call,
+        "started": now,
+        "time": now,
+        "app": app,
         "tool": tool,
-        "args": args if args is not None else {},
-        "decision": decision,
-        "reason": reason,
-        "latency_ms": 3,
-        "waited_ms": 0,
-        "gate": None,
-        "claimed": {"session_id": None, "turn_id": None, "delegation_id": None},
-        "chain": [family],
+        "arguments_sha256": NO_ARGUMENTS_SHA256,
+        "event": event,
+        "detail": detail,
     }
 
 
 def append_audit(tree: Tree, records: list[dict[str, Any]]) -> None:
-    """Append records to the audit file of this UTC day (contract 04 §6).
-
-    One record per line, LF as the delimiter, mode 0640.
-    """
-    path = tree.audit_dir / f"{datetime.now(UTC).strftime('%Y-%m-%d')}.jsonl"
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    with path.open("a", encoding="utf-8") as handle:
-        handle.writelines(json.dumps(record) + "\n" for record in records)
-
-    path.chmod(AUDIT_MODE)
-
-
-def audit_days(count: int) -> tuple[str, ...]:
-    """The names of the newest UTC days, the newest first (contract 04 §6).
-
-    Each name has the form `YYYY-MM-DD`. One call reads the clock one
-    time, so its names are different days at midnight too.
-    """
-    today = datetime.now(UTC).toordinal()
-
-    return tuple(datetime.fromordinal(today - back).strftime("%Y-%m-%d") for back in range(count))
-
-
-def audit_on(record: dict[str, Any], day: str) -> dict[str, Any]:
-    """The same audit record at noon of one UTC day (contract 04 §6.1, `ts`)."""
-    return record | {"ts": f"{day}T12:00:00.000Z"}
-
-
-def audit_in_session(record: dict[str, Any], session: str) -> dict[str, Any]:
-    """The same audit record from a call that claimed a session (contract 04 §6.2)."""
-    return record | {"claimed": record["claimed"] | {"session_id": session}}
+    """Append records to the audit file of the Rust chaperone, one line each."""
+    append_audit_lines(tree, [audit_line(record) for record in records])
 
 
 def audit_line(record: dict[str, Any]) -> str:
@@ -967,18 +946,18 @@ def audit_line(record: dict[str, Any]) -> str:
     A character outside ASCII stays as it is. JSON permits that in a
     string, also for U+2028 and U+2029.
     """
-    return json.dumps(record, ensure_ascii=False)
+    return json.dumps(record, ensure_ascii=False, separators=(",", ":"))
 
 
-def append_audit_lines(tree: Tree, day: str, lines: list[str]) -> None:
-    """Append lines to the audit file of one UTC day (contract 04 §6).
+def append_audit_lines(tree: Tree, lines: list[str]) -> None:
+    """Append lines to the audit file of the Rust chaperone.
 
     Each text goes into the file as it is, with LF after it. `audit_line`
     gives the text of a record. A text that is no record is for a
     scenario in which a reader finds a line that the chaperone did not
-    write whole. Mode 0640.
+    write whole. Mode 0640, the mode of chaperone v0.3.0.
     """
-    path = tree.audit_dir / f"{day}.jsonl"
+    path = tree.audit_file
     path.parent.mkdir(parents=True, exist_ok=True)
 
     with path.open("a", encoding="utf-8") as handle:

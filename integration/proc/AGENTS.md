@@ -902,35 +902,34 @@ the text of the failure. Work down this list.
   The noticeboard takes 90 seconds as the limit. A change costs one name in
   `proc_board_reports.py`.
 - **CONTRACT-QUESTION, the order and the links of the audit page.**
-  `docs/rework/spec.md` §8.1 says that the page shows the day files, paged.
-  No contract gives the order of the records or the links between two
-  pages. The suite holds the page of the noticeboard as it is:
-  - The newest record is first, across the day files and in one file.
-  - A link with the text `older` leads to the next records.
+  `docs/rework/spec.md` §8.1 says that the page shows the audit, paged. No
+  contract gives the order of the calls or the links between two pages.
+  The suite holds the page of the noticeboard as it is:
+  - The call with the newest record is first.
+  - A link with the text `older` leads to the next calls.
   - A link with the text `newer` leads one page back.
 
   A change costs one scenario in `test_proc_board_reports.py`.
-- **CONTRACT-QUESTION, an audit line that is no record.** Contract 04 §6
-  gives one record for each line. No contract says what the audit page
+- **CONTRACT-QUESTION, an audit line that is no record.** The Rust sink
+  writes one record for each line. No contract says what the audit page
   shows for a line that is not JSON. The suite holds that the line takes
   one row, and that the row or a cell of it has the class `problem`. Each
   record beside the line keeps its row. A change costs one scenario in
   `test_proc_board_reports.py`.
 - **CONTRACT-QUESTION, the filters of the audit page.** No contract names a
-  filter. The suite holds the four query names of the form on the page:
-  `family`, `session`, `tool` and `decision`. Each scenario gives the whole
-  value of a field of contract 04 §6.1 or §6.2. The noticeboard keeps a
-  record whose family or decision is equal to the value. For a tool or a
-  session, it keeps a record whose field holds the value as a part. No
-  scenario holds that difference. A change costs one scenario in
+  filter. The suite holds the three query names of the form on the page:
+  `family`, `tool` and `decision`. Each scenario gives a whole value. The
+  noticeboard keeps a call whose app or decision is equal to the value. For
+  a tool, it keeps a call whose tool holds the value as a part. No scenario
+  holds that difference. A change costs one scenario in
   `test_proc_board_pages.py` and one in `test_proc_board_reports.py`.
-- **CONTRACT-QUESTION, a state root with no audit directory.**
-  `docs/rework/spec.md` §8.3 gives the audit page a banner for audit files
-  that the service cannot read. No contract names a state root with no
-  audit directory. The suite holds that the page then has the same report:
-  a list with the class `problems`, and the table. The noticeboard shows
-  `cannot list the audit directory` and the reason. A change costs one
-  scenario in `test_proc_board_reports.py`.
+- **CONTRACT-QUESTION, a root with no audit file.**
+  `docs/rework/spec.md` §8.3 gives the audit page a banner for an audit
+  file that the service cannot read. No contract names a root with no
+  audit file. The suite holds that the page then has the same report: a
+  list with the class `problems`, and the table. The noticeboard shows
+  `audit.jsonl is missing`. A change costs one scenario in
+  `test_proc_board_reports.py`.
 - **CONTRACT-QUESTION, the body of a refusal of the noticeboard.**
   `docs/rework/spec.md` §8.3 rule 4 permits a word for the fault in a
   refusal, and no value. No contract gives the form of the body or a word.
@@ -1072,11 +1071,10 @@ the text of the failure. Work down this list.
   prints. The suite holds that the stdout of the hook with `--json` is one
   JSON object. The boolean `ok` of that object says what the exit code says.
   A change costs two assertions in `test_proc_board_verify.py`.
-- **No fixture makes the audit directory for the verify hook of the
-  noticeboard.** The hook looks for that directory. The host has it before a
-  service starts (`systemd/creche-chaperone.service`). No fixture of this
-  topology makes it, so each scenario that runs the hook writes one audit
-  record first.
+- **No fixture makes the audit file for the verify hook of the
+  noticeboard.** The hook opens that file. The Rust chaperone makes it when
+  it starts. No fixture of this topology makes it, so each scenario that
+  runs the hook writes one audit record first.
 - **The markup of a family file has more than one writer.** Rule 21 gives
   the markup one reader. These places write the markup, or name it:
   - `family_text` and `block_text` of `proc_registry.py`
