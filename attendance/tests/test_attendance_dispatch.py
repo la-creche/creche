@@ -1,19 +1,23 @@
 """The dispatch door: one family enqueues a job in another (contract 02 §13.4).
 
-Everything here runs against a fake playpen and a temporary state root, so
-no test needs the host, `sbx` or the PEP.
+The job runs over ACP on the target's facade (phase 2 plan, row 19). Every
+test runs against `FakeFacade` and a temporary state root, so no test needs
+the host, `sbx` or the PEP.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
+from attendance.acp_jobs import META_JOB, META_TRIGGER
+from attendance.acp_link import METHOD_NEW_SESSION, METHOD_PROMPT
 from attendance.auth import Principal
-from attendance.clock import now, rfc3339
+from attendance.clock import now
 from attendance.config import Config
 from attendance.dispatch import (
     IDEMPOTENCY_WINDOW,
@@ -23,12 +27,12 @@ from attendance.dispatch import (
     status_of,
 )
 from attendance.errors import ApiError, ErrorCode
-from attendance.models import TriggerKind
+from attendance.outcomes import SPEND_NO_USAGE_REASON
 from attendance.paths import dispatch_file
 from attendance.requests import DispatchRequest, JobQuery, read_dispatch, read_jobs
 from attendance.service import SessionService
-from attendance.states import SessionState
-from attendance_harness import FakeFleet, make_config, settle_now, wait_until, write_status
+from attendance_harness import FakeFleet, make_config, wait_until, write_status
+from fake_facade import FacadeFleet, FakeFacade, PromptMode
 
 DISPATCH_DOOR = Principal.DOOR_DISPATCH
 TRIGGER_DOOR = Principal.DOOR_TRIGGER
@@ -44,15 +48,16 @@ DOOR = "chaperone-1"
 JOB_SESSION = "auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK"
 OLDER_SESSION = "auto-01JBQ7YY1C5L9P3QWS1H7GXUAJ"
 OUTCOME_ID = "01JBQ80M4F7S2YQ1VZK6W3TDEN"
+SMALL_QUEUE = 2
 
 
 class DispatchHarness:
     """One service serving a dispatchable target and an attended family."""
 
-    def __init__(self, config: Config, service: SessionService, fleet: FakeFleet) -> None:
+    def __init__(self, config: Config, service: SessionService, facades: FacadeFleet) -> None:
         self.config = config
         self.service = service
-        self.fleet = fleet
+        self.facades = facades
 
     async def enqueue(self, **changed: Any) -> dict[str, Any]:
         return await self.service.run_dispatch(DISPATCH_DOOR, _request(**changed), DOOR)
@@ -69,24 +74,34 @@ class DispatchHarness:
         assert found is not None
         return found
 
-    async def settle(self, session: str) -> None:
-        """Play the turn the target started, then wait for the job to end."""
-        # `accepted` answers before the dial (contract 02 §5.4).
-        await wait_until(lambda: TARGET_SANDBOX in self.fleet.playpens)
-        playpen = self.fleet.playpen(TARGET_SANDBOX)
-        started = await playpen.next_start()
-        turn = str(started["turn"])
-        live = self.service.live_turn(TARGET, session, turn)
-        assert live is not None
-        await playpen.settle(session, turn)
-        await settle_now(live.done)
+    def facade(self) -> FakeFacade:
+        return self.facades.facades[TARGET_SANDBOX]
+
+    def received(self, method: str) -> list[dict[str, Any]]:
+        return [one["params"] for one in self.facade().received if one["method"] == method]
+
+    async def held(self, count: int) -> list[str]:
+        """Wait until the facade holds `count` prompts, then name their sessions."""
+        await wait_until(lambda: TARGET_SANDBOX in self.facades.facades)
+        await wait_until(lambda: len(self.facade().held) == count)
+        return list(self.facade().held)
+
+    async def ended(self, session: str) -> dict[str, Any]:
+        """Wait for the job's outcome, then read it through the door."""
+        await wait_until(lambda: self.entry(session).outcome_id is not None)
+        found = self.jobs(session=session)[0]
+        outcome: object = found["outcome"]
+        assert isinstance(outcome, dict)
+        return outcome  # pyright: ignore[reportUnknownVariableType]
 
     async def stop(self) -> None:
         await self.service.close()
-        await self.fleet.stop()
+        await self.facades.stop()
 
 
-async def build(tmp_path: Path, **limits: object) -> DispatchHarness:
+async def build(
+    tmp_path: Path, mode: PromptMode = PromptMode.OK, **limits: object
+) -> DispatchHarness:
     config = make_config(tmp_path)
     write_status(config.state_root)
     write_status(
@@ -97,10 +112,17 @@ async def build(tmp_path: Path, **limits: object) -> DispatchHarness:
         accepts_dispatch=True,
         **limits,  # pyright: ignore[reportArgumentType]
     )
-    fleet = FakeFleet()
-    service = SessionService(config, factory=fleet.factory, cold_start_wait_s=1.0)
+    facades = FacadeFleet(prompt_mode=mode)
+    service = SessionService(
+        config,
+        factory=FakeFleet().factory,
+        acp_factory=facades.factory,
+        cold_start_wait_s=1.0,
+        cancel_wait_s=0.2,
+        max_queued_turns=SMALL_QUEUE,
+    )
     service.start()
-    return DispatchHarness(config, service, fleet)
+    return DispatchHarness(config, service, facades)
 
 
 def _request(**changed: Any) -> DispatchRequest:
@@ -304,82 +326,242 @@ def test_a_damaged_entry_is_skipped(tmp_path: Path) -> None:
 
 
 def test_an_outcome_id_ends_the_job() -> None:
-    """§13.4.2 rule 4. The record wins over a session still being deleted."""
-    assert status_of(SessionState.RUNNING, OUTCOME_ID) is JobStatus.ENDED
+    """§13.4.2 rule 4. The record wins over a job that still runs."""
+    assert status_of(JobStatus.RUNNING, OUTCOME_ID) is JobStatus.ENDED
 
 
-def test_a_missing_session_ends_the_job() -> None:
+def test_a_job_that_is_not_live_has_ended() -> None:
     assert status_of(None, None) is JobStatus.ENDED
 
 
-def test_a_live_state_becomes_its_own_status() -> None:
-    assert status_of(SessionState.QUEUED, None) is JobStatus.QUEUED
-    assert status_of(SessionState.WAITING_APPROVAL, None) is JobStatus.WAITING_APPROVAL
+def test_a_live_job_reads_its_own_status() -> None:
+    assert status_of(JobStatus.QUEUED, None) is JobStatus.QUEUED
+    assert status_of(JobStatus.RUNNING, None) is JobStatus.RUNNING
 
 
-def test_an_idle_session_reads_as_dispatched() -> None:
-    """Rule 3. `running` would be a claim no turn supports."""
-    assert status_of(SessionState.IDLE, None) is JobStatus.DISPATCHED
+def test_an_entry_keeps_the_acp_session(tmp_path: Path) -> None:
+    """The facade mints the conversation id. The ledger maps the job to it."""
+    ledger = DispatchLedger(tmp_path)
+    ledger.write(_entry())
+    ledger.note_acp_session(CALLER, JOB_SESSION, "sess-7")
+    found = ledger.read(CALLER, JOB_SESSION)
+
+    assert found is not None
+    assert found.acp_session == "sess-7"
+    assert found.to_file()["acp_session"] == "sess-7"
 
 
 # ------------------------------------------------------------- the service
 
 
-@pytest.mark.asyncio
-async def test_a_dispatch_creates_one_job(tmp_path: Path) -> None:
-    """Contract 02 §13.4.1 rule 1."""
-    harness = await build(tmp_path)
+async def test_a_dispatch_runs_one_job_and_writes_the_ledger_row(tmp_path: Path) -> None:
+    """Contract 02 §13.4.1 rules 1 and 5."""
+    harness = await build(tmp_path, PromptMode.HOLD)
 
     try:
         answer = await harness.enqueue()
+        session = str(answer["session_id"])
+        await harness.held(1)
 
-        session: object = answer["session_id"]
-        assert isinstance(session, str)
         assert session.startswith("auto-")
-        assert answer["created"] is True
+        assert answer == {"session_id": session, "status": "running", "created": True}
         assert harness.entry(session).family == TARGET
+        assert harness.received(METHOD_NEW_SESSION)[0]["_meta"] == {META_JOB: session}
+        prompt = harness.received(METHOD_PROMPT)[0]
+        assert prompt["prompt"] == [{"type": "text", "text": MESSAGE}]
+        assert harness.jobs()[0]["status"] == "running"
     finally:
         await harness.stop()
 
 
-@pytest.mark.asyncio
-async def test_the_job_carries_a_dispatch_trigger(tmp_path: Path) -> None:
+async def test_the_ledger_maps_the_auto_id_to_the_acp_session(tmp_path: Path) -> None:
+    harness = await build(tmp_path, PromptMode.HOLD)
+
+    try:
+        answer = await harness.enqueue()
+        [acp_session] = await harness.held(1)
+
+        assert harness.entry(str(answer["session_id"])).acp_session == acp_session
+    finally:
+        await harness.stop()
+
+
+async def test_the_trigger_rides_on_the_prompt_meta(tmp_path: Path) -> None:
     """§13.2 rule 5. `name` is the calling family, from the token."""
+    harness = await build(tmp_path, PromptMode.HOLD)
+
+    try:
+        await harness.enqueue(caller_family=CHAT_FAMILY)
+        await harness.held(1)
+        trigger = harness.received(METHOD_PROMPT)[0]["_meta"][META_TRIGGER]
+
+        assert trigger["kind"] == "dispatch"
+        assert trigger["name"] == CHAT_FAMILY
+        assert trigger["chain"] == list(CHAIN)
+    finally:
+        await harness.stop()
+
+
+async def test_an_outcome_is_written_when_the_prompt_settles(tmp_path: Path) -> None:
+    """§13.1, §13.4.2 rules 3 and 5, and §13.4.3's `outcome_id`."""
     harness = await build(tmp_path)
 
     try:
         answer = await harness.enqueue()
         session = str(answer["session_id"])
-        record = harness.service.store.load(TARGET, session)
+        outcome = await harness.ended(session)
 
-        assert record is not None
-        assert record.trigger is not None
-        assert record.trigger.kind is TriggerKind.DISPATCH
-        assert record.trigger.name == CALLER
-        assert record.trigger.chain == CHAIN
+        assert outcome["session"] == session
+        assert outcome["status"] == "ok"
+        assert outcome["error"] is None
+        assert outcome["turns"] == 1
+        assert outcome["approvals"] is None
+        assert outcome["spend_usd"] is None
+        assert outcome["spend_reason"] == SPEND_NO_USAGE_REASON
+        assert outcome["sandbox"] == TARGET_SANDBOX
+        assert outcome["trigger"]["kind"] == "dispatch"
+        assert outcome["trigger"]["name"] == CALLER
+        assert outcome["trigger"]["chain"] == list(CHAIN)
+        assert harness.jobs()[0]["status"] == "ended"
     finally:
         await harness.stop()
 
 
-@pytest.mark.asyncio
-async def test_a_caller_cannot_name_itself(tmp_path: Path) -> None:
-    """The trigger's `name` comes from `caller_family`, never from a body."""
+async def test_a_failed_prompt_writes_a_failed_outcome(tmp_path: Path) -> None:
+    harness = await build(tmp_path, PromptMode.ERROR)
+
+    try:
+        answer = await harness.enqueue()
+        outcome = await harness.ended(str(answer["session_id"]))
+
+        assert outcome["status"] == "failed"
+        assert str(outcome["error"]).startswith("model_error")
+    finally:
+        await harness.stop()
+
+
+async def test_a_cancelled_prompt_reads_as_cancelled(tmp_path: Path) -> None:
+    harness = await build(tmp_path, PromptMode.HOLD)
+
+    try:
+        answer = await harness.enqueue()
+        [acp_session] = await harness.held(1)
+        await harness.facades.settle(TARGET_SANDBOX, acp_session, "cancelled")
+        outcome = await harness.ended(str(answer["session_id"]))
+
+        assert outcome["status"] == "cancelled"
+    finally:
+        await harness.stop()
+
+
+async def test_a_dispatch_past_the_limit_is_queued(tmp_path: Path) -> None:
+    """§13 rules 2 and 3, §13.4.1 rule 4. The queue is the target's."""
+    harness = await build(tmp_path, PromptMode.HOLD, max_running_turns=1)
+
+    try:
+        first = await harness.enqueue()
+        second = await harness.enqueue(delegation_id=SECOND_DELEGATION)
+        await harness.held(1)
+
+        assert first["status"] == "running"
+        assert second["status"] == "queued"
+        assert harness.service.dispatch_depth(TARGET) == 1
+        assert [job["status"] for job in harness.jobs()] == ["queued", "running"]
+    finally:
+        await harness.stop()
+
+
+async def test_a_queued_job_starts_when_a_slot_frees(tmp_path: Path) -> None:
+    """§13 rule 3: FIFO per family."""
+    harness = await build(tmp_path, PromptMode.HOLD, max_running_turns=1)
+
+    try:
+        await harness.enqueue()
+        second = await harness.enqueue(delegation_id=SECOND_DELEGATION)
+        [acp_first] = await harness.held(1)
+        await harness.facades.settle(TARGET_SANDBOX, acp_first)
+        await wait_until(lambda: acp_first not in harness.facade().held)
+        [acp_second] = await harness.held(1)
+
+        assert acp_second != acp_first
+        assert harness.entry(str(second["session_id"])).acp_session == acp_second
+        assert harness.service.dispatch_depth(TARGET) == 0
+    finally:
+        await harness.stop()
+
+
+async def test_queue_full_at_the_cap(tmp_path: Path) -> None:
+    """§13 rule 4. A full queue refuses before anything is written."""
+    harness = await build(tmp_path, PromptMode.HOLD, max_running_turns=1)
+
+    try:
+        for _ in range(1 + SMALL_QUEUE):
+            await harness.enqueue()
+
+        with pytest.raises(ApiError) as raised:
+            await harness.enqueue()
+
+        assert raised.value.code is ErrorCode.QUEUE_FULL
+        assert raised.value.detail == {"max_queued_turns": SMALL_QUEUE}
+        assert len(harness.jobs()) == 1 + SMALL_QUEUE
+    finally:
+        await harness.stop()
+
+
+async def test_a_repeat_with_the_same_key_answers_created_false(tmp_path: Path) -> None:
+    """Contract 02 §13.4.4 rule 2."""
+    harness = await build(tmp_path, PromptMode.HOLD)
+
+    try:
+        first = await harness.enqueue(idempotency_key="morning")
+        second = await harness.enqueue(idempotency_key="morning", delegation_id=SECOND_DELEGATION)
+        await harness.held(1)
+
+        assert second == {
+            "session_id": first["session_id"],
+            "status": "running",
+            "created": False,
+        }
+        assert len(harness.jobs()) == 1
+        assert len(harness.received(METHOD_NEW_SESSION)) == 1
+    finally:
+        await harness.stop()
+
+
+async def test_jobs_lists_newest_first_with_the_cap(tmp_path: Path) -> None:
+    """§13.4.2: newest first, and `limit` bounds the page."""
     harness = await build(tmp_path)
 
     try:
-        answer = await harness.enqueue(caller_family=CHAT_FAMILY)
-        session = str(answer["session_id"])
-        record = harness.service.store.load(TARGET, session)
+        made = [str((await harness.enqueue())["session_id"]) for _ in range(3)]
+        listed = [job["session"] for job in harness.jobs(limit=2)]
 
-        assert record is not None
-        assert record.trigger is not None
-        assert record.trigger.name == CHAT_FAMILY
-        assert harness.entry(session, caller=CHAT_FAMILY).caller_family == CHAT_FAMILY
+        assert listed == list(reversed(made))[:2]
     finally:
         await harness.stop()
 
 
-@pytest.mark.asyncio
+async def test_a_family_with_no_sandbox_is_refused_and_leaves_no_entry(tmp_path: Path) -> None:
+    """§13.4.1 rule 5. A refusal creates nothing."""
+    harness = await build(tmp_path)
+    write_status(
+        harness.config.state_root,
+        family=TARGET,
+        kind="autonomous",
+        sandboxes=(),
+        accepts_dispatch=True,
+    )
+
+    try:
+        with pytest.raises(ApiError) as raised:
+            await harness.enqueue()
+
+        assert raised.value.code is ErrorCode.SANDBOX_UNAVAILABLE
+        assert harness.jobs() == []
+    finally:
+        await harness.stop()
+
+
 async def test_another_door_may_not_dispatch(tmp_path: Path) -> None:
     """Contract 02 §13.4. The write grant alone is not enough."""
     harness = await build(tmp_path)
@@ -393,7 +575,6 @@ async def test_another_door_may_not_dispatch(tmp_path: Path) -> None:
         await harness.stop()
 
 
-@pytest.mark.asyncio
 async def test_an_attended_target_is_refused(tmp_path: Path) -> None:
     """The dispatch door's grant is `autonomous` (contract 02 §3.1)."""
     harness = await build(tmp_path)
@@ -407,11 +588,9 @@ async def test_an_attended_target_is_refused(tmp_path: Path) -> None:
         await harness.stop()
 
 
-@pytest.mark.asyncio
 async def test_a_target_of_no_known_kind_is_refused(tmp_path: Path) -> None:
     """Contract 02 §3.1. A status document that states no known kind proves no
-    autonomous family. The kind is read before each other fact of the target,
-    so the answer is not the one of a target without the trigger."""
+    autonomous family."""
     harness = await build(tmp_path)
     write_status(
         harness.config.state_root,
@@ -427,13 +606,12 @@ async def test_a_target_of_no_known_kind_is_refused(tmp_path: Path) -> None:
 
         assert raised.value.code is ErrorCode.FORBIDDEN
         assert raised.value.detail == {"kind": None}
-        assert harness.service.store.session_ids(TARGET) == []
         assert harness.jobs() == []
+        assert harness.facades.dials == []
     finally:
         await harness.stop()
 
 
-@pytest.mark.asyncio
 async def test_a_family_without_the_trigger_is_refused(tmp_path: Path) -> None:
     """§13.4.1 rule 3. Absence is denial (invariant 11)."""
     harness = await build(tmp_path)
@@ -450,50 +628,13 @@ async def test_a_family_without_the_trigger_is_refused(tmp_path: Path) -> None:
             await harness.enqueue()
 
         assert raised.value.code is ErrorCode.DISPATCH_NOT_DECLARED
-    finally:
-        await harness.stop()
-
-
-@pytest.mark.asyncio
-async def test_a_refused_dispatch_leaves_no_entry(tmp_path: Path) -> None:
-    """§13.4.1 rule 5. Nothing is left for `job_status` to report."""
-    harness = await build(tmp_path)
-    write_status(
-        harness.config.state_root,
-        family=TARGET,
-        kind="autonomous",
-        sandboxes=((TARGET_SANDBOX, "ready"),),
-        accepts_dispatch=False,
-    )
-
-    try:
-        with pytest.raises(ApiError):
-            await harness.enqueue()
-
         assert harness.jobs() == []
     finally:
         await harness.stop()
 
 
-@pytest.mark.asyncio
-async def test_a_repeat_starts_no_second_job(tmp_path: Path) -> None:
-    """Contract 02 §13.4.4 rule 2."""
-    harness = await build(tmp_path)
-
-    try:
-        first = await harness.enqueue(idempotency_key="morning")
-        second = await harness.enqueue(idempotency_key="morning", delegation_id=SECOND_DELEGATION)
-
-        assert second["session_id"] == first["session_id"]
-        assert second["created"] is False
-        assert len(harness.jobs()) == 1
-    finally:
-        await harness.stop()
-
-
-@pytest.mark.asyncio
 async def test_a_key_reused_on_another_family_is_refused(tmp_path: Path) -> None:
-    """Rule 3. Answering with a job of another family would be a lie."""
+    """§13.4.4 rule 3. Answering with a job of another family would be a lie."""
     harness = await build(tmp_path)
     write_status(
         harness.config.state_root,
@@ -514,43 +655,6 @@ async def test_a_key_reused_on_another_family_is_refused(tmp_path: Path) -> None
         await harness.stop()
 
 
-@pytest.mark.asyncio
-async def test_the_targets_queue_holds(tmp_path: Path) -> None:
-    """§13.4.1 rule 4. The queue is the target's, and a full one refuses."""
-    harness = await build(tmp_path, max_running_turns=1)
-
-    try:
-        await harness.enqueue()
-        second = await harness.enqueue(delegation_id=SECOND_DELEGATION)
-
-        assert second["status"] == "queued"
-        assert harness.service.queue_depth(TARGET) == 1
-    finally:
-        await harness.stop()
-
-
-# ----------------------------------------------------------------- the read
-
-
-@pytest.mark.asyncio
-async def test_a_live_job_reads_its_state(tmp_path: Path) -> None:
-    """§13.4.2 rule 3."""
-    harness = await build(tmp_path)
-
-    try:
-        answer = await harness.enqueue()
-        listed = harness.jobs()
-
-        assert len(listed) == 1
-        assert listed[0]["session"] == answer["session_id"]
-        assert listed[0]["family"] == TARGET
-        assert listed[0]["status"] in {"running", "dispatched"}
-        assert listed[0]["outcome"] is None
-    finally:
-        await harness.stop()
-
-
-@pytest.mark.asyncio
 async def test_another_callers_job_is_absent(tmp_path: Path) -> None:
     """§13.4.2 rule 2. An id leaks nothing, not even that it exists."""
     harness = await build(tmp_path)
@@ -565,30 +669,6 @@ async def test_another_callers_job_is_absent(tmp_path: Path) -> None:
         await harness.stop()
 
 
-@pytest.mark.asyncio
-async def test_a_finished_job_reads_its_outcome(tmp_path: Path) -> None:
-    """§13.4.2 rules 3 and 5, and §13.4.3's `outcome_id`."""
-    harness = await build(tmp_path)
-
-    try:
-        answer = await harness.enqueue()
-        session = str(answer["session_id"])
-        await harness.settle(session)
-        await wait_until(lambda: harness.jobs()[0]["status"] == "ended")
-
-        found = harness.jobs()[0]
-        outcome: object = found["outcome"]
-
-        assert isinstance(outcome, dict)
-        assert outcome["session"] == session  # pyright: ignore[reportUnknownArgumentType]
-        assert outcome["status"] == "ok"  # pyright: ignore[reportUnknownArgumentType]
-        assert outcome["trigger"]["kind"] == "dispatch"  # pyright: ignore[reportUnknownArgumentType, reportIndexIssue]
-        assert outcome["trigger"]["chain"] == list(CHAIN)  # pyright: ignore[reportUnknownArgumentType, reportIndexIssue]
-    finally:
-        await harness.stop()
-
-
-@pytest.mark.asyncio
 async def test_an_unreadable_outcome_still_ends_the_job(tmp_path: Path) -> None:
     """§13.4.2 rule 4. The job is over either way."""
     harness = await build(tmp_path)
@@ -596,9 +676,10 @@ async def test_an_unreadable_outcome_still_ends_the_job(tmp_path: Path) -> None:
     try:
         answer = await harness.enqueue()
         session = str(answer["session_id"])
-        await harness.settle(session)
-        await wait_until(lambda: harness.entry(session).outcome_id is not None)
-        _remove_outcomes(harness.config.state_root)
+        await harness.ended(session)
+
+        for path in (harness.config.state_root / "outcomes" / TARGET).glob("*.json"):
+            path.unlink()
 
         found = harness.jobs()[0]
 
@@ -608,16 +689,15 @@ async def test_an_unreadable_outcome_still_ends_the_job(tmp_path: Path) -> None:
         await harness.stop()
 
 
-def _remove_outcomes(state_root: Path) -> None:
-    for path in (state_root / "outcomes" / TARGET).glob("*.json"):
-        path.unlink()
+async def test_close_cancels_a_running_job(tmp_path: Path) -> None:
+    harness = await build(tmp_path, PromptMode.HOLD)
+    await harness.enqueue()
+    await harness.held(1)
+
+    await asyncio.wait_for(harness.stop(), 5.0)
 
 
 def _read(path: Path) -> dict[str, Any]:
     parsed: object = json.loads(path.read_text(encoding="utf-8"))
     assert isinstance(parsed, dict)
     return parsed  # pyright: ignore[reportUnknownVariableType]
-
-
-def _stamp(moment: datetime) -> str:
-    return rfc3339(moment)

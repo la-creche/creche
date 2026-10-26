@@ -1160,7 +1160,6 @@ _OUTCOME_ARGS: Final[dict[str, Any]] = {
     "status": "ok",
     "error": None,
     "turns": 3,
-    "approvals": {"requested": 1, "approved": 1, "denied": 0, "timed_out": 0},
     "spend_usd": 0.21,
     "spend_reason": None,
     "sandbox": "scrum-lead-s2",
@@ -1209,14 +1208,6 @@ OUTCOMES: Final[tuple[Outcome, ...]] = (
     Outcome("spend-zero", {**_OUTCOME_ARGS, "spend_usd": 0.0}),
     Outcome("spend-small", {**_OUTCOME_ARGS, "spend_usd": 0.000015}),
     Outcome("spend-long-float", {**_OUTCOME_ARGS, "spend_usd": cases.LONG_FLOAT}),
-    Outcome(
-        "approvals-denied-and-timed-out",
-        {
-            **_OUTCOME_ARGS,
-            "status": "denied",
-            "approvals": {"requested": 5, "approved": 1, "denied": 2, "timed_out": 1},
-        },
-    ),
     Outcome("no-sandbox", {**_OUTCOME_ARGS, "sandbox": ""}),
     Outcome(
         "times-before-the-year-1000",
@@ -1253,7 +1244,6 @@ def _outcome_record(args: dict[str, Any]) -> outcomes.OutcomeRecord:
         status=outcomes.Outcome(args["status"]),
         error=args["error"],
         turns=args["turns"],
-        approvals=outcomes.Approvals(**args["approvals"]),
         spend_usd=args["spend_usd"],
         spend_reason=args["spend_reason"],
         sandbox=args["sandbox"],

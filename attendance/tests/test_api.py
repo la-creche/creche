@@ -25,6 +25,7 @@ from attendance_harness import (
     write_status,
     write_tokens,
 )
+from fake_facade import FacadeFleet, PromptMode
 
 PROMPT = "Which sensor dropped out last night?"
 ANSWER = "Sensor kitchen_temp stopped reporting at 02:14."
@@ -49,6 +50,7 @@ class Rig:
     fleet: FakeFleet
     client: httpx.AsyncClient
     tokens: dict[Principal, str]
+    facades: FacadeFleet
 
     def head(self, principal: Principal, door: str = "door-1") -> dict[str, str]:
         return {
@@ -70,6 +72,7 @@ class Rig:
         await self.client.aclose()
         await self.service.close()
         await self.fleet.stop()
+        await self.facades.stop()
 
 
 @pytest.fixture
@@ -81,12 +84,16 @@ async def rig(tmp_path: Path) -> AsyncIterator[Rig]:
     book.load()
 
     fleet = FakeFleet()
-    service = SessionService(config, factory=fleet.factory, cold_start_wait_s=1.0)
+    # A held prompt keeps a dispatched job running while a test reads it.
+    facades = FacadeFleet(prompt_mode=PromptMode.HOLD)
+    service = SessionService(
+        config, factory=fleet.factory, acp_factory=facades.factory, cold_start_wait_s=1.0
+    )
     service.start()
     app = build_app(service, book)
     transport = httpx.ASGITransport(app=app)
     client = httpx.AsyncClient(transport=transport, base_url="http://sessiond")
-    built = Rig(config, service, fleet, client, made)
+    built = Rig(config, service, fleet, client, made, facades)
 
     yield built
 

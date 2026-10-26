@@ -133,3 +133,72 @@ class TurnQueue:
     def families(self) -> list[str]:
         """Every family with something waiting."""
         return [family for family, queue in self._waiting.items() if queue]
+
+
+class JobQueue[JobT]:
+    """The dispatch door's limit and FIFO, per family (contract 02 §13).
+
+    A job over ACP has no session in this service, so it has its own book:
+    how many run, which wait, and the live status of each by its id. Until
+    the session API goes (phase 2 plan, row 21), a family's door-trigger
+    turns and its dispatched jobs each count only themselves.
+    """
+
+    def __init__(self, max_queued: int = MAX_QUEUED_TURNS) -> None:
+        self._max_queued = max_queued
+        self._running: dict[str, set[str]] = {}
+        self._waiting: dict[str, deque[tuple[str, JobT]]] = {}
+
+    def depth(self, family: str) -> int:
+        return len(self._waiting.get(family, ()))
+
+    def running(self, family: str) -> int:
+        return len(self._running.get(family, ()))
+
+    def is_running(self, job: str) -> bool:
+        return any(job in jobs for jobs in self._running.values())
+
+    def is_waiting(self, job: str) -> bool:
+        return any(job == one for queue in self._waiting.values() for one, _ in queue)
+
+    def check_room(self, family: str) -> None:
+        """Raise `queue_full` before anything is written (§13 rule 4)."""
+        if self.depth(family) < self._max_queued:
+            return
+
+        raise ApiError(
+            ErrorCode.QUEUE_FULL,
+            f"family {family} already has {self._max_queued} queued turns",
+            family=family,
+            detail={"max_queued_turns": self._max_queued},
+        )
+
+    def take_slot(self, family: str, job: str, max_running: int | None) -> bool:
+        """Mark `job` running when the family has a free slot (§13 rule 2)."""
+        if slot_for(SessionKind.AUTONOMOUS, max_running, self.running(family)) is Slot.QUEUE:
+            return False
+
+        self._running.setdefault(family, set()).add(job)
+        return True
+
+    def add(self, family: str, job: str, item: JobT) -> None:
+        """Put one job at the back. `check_room` decides whether it fits."""
+        self._waiting.setdefault(family, deque()).append((job, item))
+
+    def head(self, family: str) -> tuple[str, JobT] | None:
+        queue = self._waiting.get(family)
+        return queue[0] if queue else None
+
+    def pop(self, family: str) -> None:
+        queue = self._waiting.get(family)
+
+        if queue:
+            queue.popleft()
+
+    def release(self, family: str, job: str) -> None:
+        """A running job ended. Its slot is free."""
+        self._running.get(family, set()).discard(job)
+
+    def families(self) -> list[str]:
+        """Every family with something waiting."""
+        return [family for family, queue in self._waiting.items() if queue]

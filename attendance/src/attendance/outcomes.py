@@ -24,11 +24,12 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final
 
+from .acp_jobs import EndKind, JobEnd
 from .atomic import MODE_PUBLIC_READ, write_json
-from .clock import rfc3339
+from .clock import now, rfc3339
 from .errors import TurnReason
 from .ids import new_ulid
-from .models import GateTally, Session, Trigger, Turn
+from .models import Session, Trigger, Turn
 from .paths import outcome_file
 from .states import TurnState
 
@@ -63,6 +64,13 @@ SPEND_NOT_FINITE_REASON: Final = (
     "the sum of the reported costs is not a finite number; the advisory number is unreliable"
 )
 
+# A job over ACP has no usage: the prompt answer carries none. LiteLLM is
+# spend's one authority (contract 05 §7), and this layer does not read it.
+SPEND_NO_USAGE_REASON: Final = (
+    "the job ran over ACP, whose prompt answer reports no usage; "
+    "LiteLLM is spend's one authority (contract 05 §7)"
+)
+
 
 class Outcome(StrEnum):
     """Contract 02 §13.1's `status` field."""
@@ -84,35 +92,6 @@ _BY_REASON: dict[TurnReason, Outcome] = {
 
 
 @dataclass(slots=True)
-class Approvals:
-    """Contract 02 §13.1's `approvals` block.
-
-    Every one of the four numbers is counted from the PEP's own audit
-    records (§13.1.1): `requested` when a gate opens, the other three from
-    the record that resolves it. None is read off the turn's failure
-    reason: a refused gate leaves the turn running (contract 02 §4.3), so
-    one turn can meet an approved gate AND a denied one.
-
-    `approved + denied + timed_out` can be lower than `requested`. A gate
-    that ended on `approval_revoked` or `approval_abandoned` decided nothing
-    about the call, and the job's `status` carries what happened instead.
-    """
-
-    requested: int = 0
-    approved: int = 0
-    denied: int = 0
-    timed_out: int = 0
-
-    def to_file(self) -> dict[str, Any]:
-        return {
-            "requested": self.requested,
-            "approved": self.approved,
-            "denied": self.denied,
-            "timed_out": self.timed_out,
-        }
-
-
-@dataclass(slots=True)
 class OutcomeRecord:
     """One finished autonomous job (contract 02 §13.1)."""
 
@@ -125,7 +104,6 @@ class OutcomeRecord:
     status: Outcome
     error: str | None
     turns: int
-    approvals: Approvals
     spend_usd: float | None
     #: Why `spend_usd` is null. Always None when it is a number.
     spend_reason: str | None
@@ -142,7 +120,9 @@ class OutcomeRecord:
             "status": self.status.value,
             "error": self.error,
             "turns": self.turns,
-            "approvals": self.approvals.to_file(),
+            # Phase 2 plan, row 19. Approvals are chaperone gates now, and
+            # no gate holds a turn, so this service counts none.
+            "approvals": None,
             "spend_usd": self.spend_usd,
             "spend_reason": self.spend_reason,
             "sandbox": self.sandbox,
@@ -164,11 +144,43 @@ def build(record: Session, turns: list[Turn], error: str | None = None) -> Outco
         status=status_of(last),
         error=cut_error(error),
         turns=len(turns),
-        approvals=_approvals(turns),
         spend_usd=spend_usd,
         spend_reason=spend_reason,
         sandbox=last.sandbox or record.sandbox or "",
     )
+
+
+def from_job(
+    family: str,
+    job: str,
+    trigger: Trigger,
+    started_at: datetime,
+    end: JobEnd,
+    sandbox: str,
+) -> OutcomeRecord:
+    """One record for one job over ACP: one prompt, so one turn."""
+    return OutcomeRecord(
+        id=new_ulid(),
+        family=family,
+        session=job,
+        trigger=trigger,
+        started_at=started_at,
+        ended_at=now(),
+        status=_BY_END[end.kind],
+        error=cut_error(end.error) if end.kind is not EndKind.OK else None,
+        turns=1,
+        spend_usd=None,
+        spend_reason=SPEND_NO_USAGE_REASON,
+        sandbox=sandbox,
+    )
+
+
+_BY_END: dict[EndKind, Outcome] = {
+    EndKind.OK: Outcome.OK,
+    EndKind.TIMEOUT: Outcome.TIMEOUT,
+    EndKind.FAILED: Outcome.FAILED,
+    EndKind.CANCELLED: Outcome.CANCELLED,
+}
 
 
 def _spend_of(turns: list[Turn]) -> tuple[float | None, str | None]:
@@ -215,21 +227,6 @@ def write(state_root: Path, outcome: OutcomeRecord) -> Path:
     path = outcome_file(state_root, outcome.family, outcome.id)
     write_json(path, outcome.to_file(), MODE_PUBLIC_READ)
     return path
-
-
-def _approvals(turns: list[Turn]) -> Approvals:
-    """Contract 02 §13.1.1. Every number is a count of audit records."""
-    whole = GateTally()
-
-    for turn in turns:
-        whole.add(turn.gates)
-
-    return Approvals(
-        requested=sum(turn.approvals for turn in turns),
-        approved=whole.approved,
-        denied=whole.denied,
-        timed_out=whole.timed_out,
-    )
 
 
 def cut_error(error: str | None) -> str | None:

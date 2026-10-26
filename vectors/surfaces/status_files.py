@@ -31,7 +31,7 @@ from unittest.mock import patch
 from agent_family import FamilyState
 from attendance.faults import FaultCode, FaultReporter
 from attendance.models import Trigger, TriggerKind
-from attendance.outcomes import Approvals, Outcome, OutcomeRecord
+from attendance.outcomes import Outcome, OutcomeRecord
 from attendance.paths import fault_file, outcome_file
 from caregiver.chaperone_watch import PepReach, PepReport
 from caregiver.faults import FaultEntry, read_fault_file
@@ -960,7 +960,6 @@ def _record(**changes: object) -> OutcomeRecord:
         status=Outcome.OK,
         error=None,
         turns=4,
-        approvals=Approvals(requested=2, approved=1, denied=1),
         spend_usd=0.5,
         spend_reason=None,
         sandbox=f"{FAMILY}-s2",
@@ -993,7 +992,6 @@ OUTCOME_DOCUMENTS: Final[tuple[OutcomeDocument, ...]] = (
             trigger=Trigger(TriggerKind.WEBHOOK, "boiler-alert", _FIRED),
             status=Outcome.FAILED,
             error="model_error: the model gave no answer",
-            approvals=Approvals(),
         ),
     ),
     OutcomeDocument(

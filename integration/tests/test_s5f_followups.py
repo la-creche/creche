@@ -22,11 +22,9 @@ real `caregiver` and the real `door-trigger` of `stage5.py`.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import stat
 from collections.abc import AsyncIterator, Iterator
-from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -35,8 +33,6 @@ from agent_door_trigger.tokens import MIN_WEBHOOK_TOKEN_BYTES
 from stack import Stack, until
 from stage5 import (
     CHAT,
-    GATED_ARGS,
-    GATED_TOOL,
     HA_REVIEW,
     WEBHOOK_NAME,
     WEBHOOK_TOKEN_MODE,
@@ -47,33 +43,9 @@ from stage5 import (
 from test_i5_stage5 import (
     HTTP_ACCEPTED,
     SETTLE_TIMEOUT_S,
-    settled_job,
-    waited_for_state,
 )
 
 from caregiver import paths as caregiver_paths
-
-#: The same tool with other arguments hashes to another gate (contract 04
-#: §8.2), which is what lets one turn meet two of them.
-SECOND_GATED_ARGS: dict[str, Any] = {
-    "domain": "notify",
-    "service": "mobile_app_example_phone",
-    "data": {"message": "the boiler is still cold"},
-}
-
-
-class Decision(StrEnum):
-    """What the fake phone taps (contract 04 §8.4 rule 4)."""
-
-    APPROVE = "approve"
-    DENY = "deny"
-
-
-#: TWO gates inside one turn, and `attendance` reads the PEP's audit once a
-#: second, so this turn has to outlive four of those polls plus two pushes
-#: and two taps. 600 deltas 40 ms apart is about 24 seconds.
-TWO_GATE_EVENTS = 600
-TWO_GATE_GAP_MS = 40
 
 pytestmark = pytest.mark.skipif(
     bridge_bundle_missing(),
@@ -113,89 +85,7 @@ def gated(stage: Stage5, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Ite
         yield ready
 
 
-async def two_gate_job(stage: Stage5) -> tuple[str, str]:
-    """A fired job whose turn is long enough to meet two gates.
-
-    `test_i5_stage5.held_job` runs a ten-second turn, which is one gate's
-    worth. The turn id comes from the REAL playpen's turn file, because
-    a gated call must name the turn the host actually started.
-    """
-    stage.stack.set_pi_env(events=TWO_GATE_EVENTS, delay_ms=TWO_GATE_GAP_MS)
-    fired = await stage.fire(HA_REVIEW)
-
-    await until(
-        lambda: stage.live_turn(HA_REVIEW, fired.session) is not None,
-        f"the playpen's turn file for {fired.session}",
-        timeout=SETTLE_TIMEOUT_S,
-    )
-    turn = stage.live_turn(HA_REVIEW, fired.session)
-    assert turn == fired.turn, "the playpen is running a turn attendance did not start"
-
-    return fired.session, turn
-
-
-async def tapped(stage: Stage5, decision: Decision, seen: str = "") -> str:
-    """Wait for a push about a NEW gate, answer it, and name it.
-
-    `seen` is the gate of the previous push. Without it the second call of
-    a two-gate turn reads the first notice again, taps a gate that already
-    resolved, and the PEP logs "arrived with no gate open" while the real
-    gate runs out its limit.
-    """
-    await until(
-        lambda: _fresh_gate(stage, seen) is not None,
-        "the PEP's push to the phone rail",
-        timeout=SETTLE_TIMEOUT_S,
-    )
-    gate = _fresh_gate(stage, seen)
-    assert gate is not None
-
-    if decision is Decision.APPROVE:
-        await stage.transport.approve(HA_REVIEW, gate)
-        return gate
-
-    await stage.transport.deny(HA_REVIEW, gate)
-    return gate
-
-
-def _fresh_gate(stage: Stage5, seen: str) -> str | None:
-    notice = stage.transport.last(HA_REVIEW)
-
-    if notice is None or notice.gate == seen:
-        return None
-
-    return notice.gate
-
-
 # ------------------------------------------------------------------- item A
-
-
-async def test_one_job_records_an_approved_gate_and_a_denied_one(gated: Stage5) -> None:
-    """Contract 02 §13.1.1, which draft 7 could not have represented."""
-    session, turn = await two_gate_job(gated)
-
-    first = asyncio.ensure_future(
-        gated.call_tool(GATED_TOOL, GATED_ARGS, session=session, turn=turn)
-    )
-    approved_gate = await tapped(gated, Decision.APPROVE)
-    assert (await first).ok
-
-    # The turn survived the first gate, so it can open a second one.
-    await waited_for_state(gated, session, "running")
-    second = asyncio.ensure_future(
-        gated.call_tool(GATED_TOOL, SECOND_GATED_ARGS, session=session, turn=turn)
-    )
-    denied_gate = await tapped(gated, Decision.DENY, seen=approved_gate)
-    refused = await second
-
-    assert not refused.ok
-    assert denied_gate != approved_gate
-
-    record = await settled_job(gated, session)
-    approvals = record["approvals"]
-    assert isinstance(approvals, dict)
-    assert approvals == {"requested": 2, "approved": 1, "denied": 1, "timed_out": 0}
-    assert record["status"] == "ok"
 
 
 # ------------------------------------------------------------------- item C

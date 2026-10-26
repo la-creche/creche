@@ -24,7 +24,8 @@ playpen runs inside the sandbox image, which carries Node.
    `session/prompt` on the family's facade. The conversation stays in the
    facade's store (phase 2 plan, Q5).
 8. Limits and queues turns for autonomous families only.
-9. Serves the dispatch door: `enqueue` and `job_status`.
+9. Serves the dispatch door: `enqueue` and `job_status`. Each job runs over
+   ACP on the target's facade.
 10. Copies an attended session into Open WebUI, and turns an edit into a pi
     branch.
 
@@ -114,8 +115,12 @@ playpen runs inside the sandbox image, which carries Node.
 6. The target's own status document decides whether it may be dispatched to.
 7. `door-dispatch` is its own principal.
 8. A caller never names itself. `caller_family` comes from the token.
-9. The ledger entry is written before the turn starts, and removed when the
-   turn refuses.
+9. A dispatched job runs over ACP (`JobQueue`, `acp_jobs.py`). Its ledger
+   entry is written only after every refusal, so a refusal leaves none.
+10. The job keeps its `auto-<ulid>` id. The facade mints the conversation
+    id, and the entry's `acp_session` maps one to the other.
+11. The outcome record is written, then noted in the ledger, then the slot
+    is freed and the next queued job starts.
 
 ## Mount rules
 
@@ -157,8 +162,7 @@ chaperone reads them as another user. `SIGHUP` reloads them.
 | `service.py` | the operations, the turn lifecycle, the channel callbacks |
 | `requests.py` | every request body, validated before use |
 | `turns.py`, `streams.py`, `journal.py`, `store.py` | live turns, readers, the NDJSON journal, the on-disk layout |
-| `leases.py`, `queueing.py`, `outcomes.py` | one writer per session, the autonomous queue, what survives a job |
-| `approvals.py` | reading the chaperone's audit for a held gate |
+| `leases.py`, `queueing.py`, `outcomes.py` | one writer per session, the autonomous queues, what survives a job |
 | `owui_copy.py`, `terminal.py`, `branching.py`, `persona.py` | Open WebUI copy, terminal exchanges, pi branches, the folder prompt |
 | `playpen_link.py`, `switching.py`, `channel.py`, `exec_channel.py`, `wire.py` | one sandbox's channel, a switch, the protocol |
 | `supervisor_lock.py` | the proof that no older supervisor holds a sandbox |
@@ -192,8 +196,19 @@ misbehaviour there. A test that spawns a process is marked `slow`.
   `creche/job` on `session/new` and `creche/delegation` on
   `session/prompt`. The facade may ignore both, so contract 04 §6.3's chain
   reaches the PEP only if the facade forwards it.
-- `approvals.py` tails the chaperone's audit file, which lags up to one
-  second (`approvals.py`, `service.py`).
+- Approvals are chaperone gates, and a gate holds no turn (phase 2 plan,
+  correction 9). An outcome record's `approvals` is null, and no turn
+  reaches `waiting-approval`.
+- A dispatched job sends its trigger in the prompt's `_meta` as
+  `creche/trigger`. The facade may ignore it: the outcome record takes the
+  trigger from the ledger entry.
+- Until the session API goes (phase 2 plan, row 21), a family's
+  door-trigger turns and its dispatched jobs each count only themselves
+  against `max_running_turns`.
+- A restart forgets each queued or running dispatched job. Its entry then
+  reads `ended` with a null outcome.
+- An outcome record of a job over ACP has a null `spend_usd`: ACP reports
+  no usage (`outcomes.py`).
 - An outcome record's `spend_usd` sums advisory costs. A sum of zero with
   tokens records `null` with `spend_reason` (`outcomes.py`).
 - Contract 02 §13.1 names no sum of costs that is not finite. Such a sum
@@ -256,10 +271,3 @@ misbehaviour there. A test that spawns a process is marked `slow`.
 - `_settle` does not raise `IllegalTransition`. For a move that contract 02
   §4.3 does not allow, it writes one log line and one `note` line. The turn
   does not move. No known path makes such a move (`service.py`, `states.py`).
-- Contract 03 §13 rule 8 accepts `turn_settled` for a turn in
-  `waiting-approval`. Contract 02 §4.3 has no move from `waiting-approval`
-  to `settled`. `_leave_approval` moves that turn through `running`
-  (`service.py`).
-- A turn can settle while the decision of its gate is not in the audit file
-  yet. That turn gets no `approval_resolved` line, and its tally does not
-  count the gate (`service.py`).

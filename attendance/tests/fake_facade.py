@@ -183,6 +183,8 @@ async def serve(channel: FakeChannel, facade: FakeFacade) -> None:
             await channel.feed(answer)
 
         if facade.methods[-1] == "_creche/shutdown":
+            # The process exits: the host reads the end of the stream.
+            await channel.drop()
             return
 
 

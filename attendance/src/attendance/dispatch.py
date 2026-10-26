@@ -6,11 +6,15 @@ deleted when it ends (§13 rule 7) and its outcome record is filed under the
 TARGET family by an id nobody else knows.
 
 ```
-  POST /dispatch --> entry written --> auto-<ulid> session --> one turn
-                         |                                        |
-  POST /dispatch/jobs <--'  live state from the store             | ends
-                         `--------------------------------------> outcome_id
+  POST /dispatch --> entry written --> auto-<ulid> job --> one ACP prompt
+                         |                    |                    |
+                         |      acp_session <-' session/new        | ends
+  POST /dispatch/jobs <--'  live state from the job queue          |
+                         `-----------------------------------> outcome_id
 ```
+
+The facade mints the conversation id (ACP `session/new`). The job keeps
+its `auto-<ulid>` id, and the entry's `acp_session` maps one to the other.
 
 The ledger is what closes that loop. Without it, "what became of the job I
 started" means opening every outcome record of every family and reading its
@@ -34,7 +38,6 @@ from .clock import now, parse_rfc3339, rfc3339
 from .ids import is_family, is_session, is_ulid
 from .models import CHAIN_MAX_FAMILIES, Trigger, TriggerKind
 from .paths import dispatch_dir, dispatch_file
-from .states import SessionState
 
 # Contract 02 §13.4.2. Newest first, and a caller that names no limit gets a
 # standup-sized page rather than every job it ever started.
@@ -52,10 +55,10 @@ RETENTION_DAYS = 180
 class JobStatus(StrEnum):
     """Contract 02 §13.4.2's `status`, one value per meaning.
 
-    The three live states are §4.1's own. `DISPATCHED` covers the rest of a
-    living session — created and not yet started, between turns, or ending —
-    because "running" would be a claim no turn supports. `ENDED` means the
-    outcome record exists, and it is the only status that carries one.
+    A job over ACP is `queued` or `running` while it lives. `DISPATCHED` and
+    `WAITING_APPROVAL` stay in the enum for the contract: no job over ACP
+    reads either, because a gate no longer holds a turn (phase 2 plan,
+    correction 9). `ENDED` means the job is over.
     """
 
     DISPATCHED = "dispatched"
@@ -63,15 +66,6 @@ class JobStatus(StrEnum):
     RUNNING = "running"
     WAITING_APPROVAL = "waiting-approval"
     ENDED = "ended"
-
-
-# §13.4.2 rule 3. A session state this table does not name is `dispatched`:
-# the job is alive and no turn of it is waiting on anything.
-_BY_SESSION_STATE: dict[SessionState, JobStatus] = {
-    SessionState.QUEUED: JobStatus.QUEUED,
-    SessionState.RUNNING: JobStatus.RUNNING,
-    SessionState.WAITING_APPROVAL: JobStatus.WAITING_APPROVAL,
-}
 
 
 @dataclass(slots=True)
@@ -91,6 +85,8 @@ class DispatchEntry:
     caller_session: str | None = None
     idempotency_key: str | None = None
     outcome_id: str | None = None
+    #: The conversation id the facade minted for this job, once it has one.
+    acp_session: str | None = None
 
     def to_file(self) -> dict[str, Any]:
         return {
@@ -103,6 +99,7 @@ class DispatchEntry:
             "caller_session": self.caller_session,
             "idempotency_key": self.idempotency_key,
             "outcome_id": self.outcome_id,
+            "acp_session": self.acp_session,
         }
 
     def trigger(self) -> Trigger:
@@ -119,25 +116,30 @@ class DispatchEntry:
         )
 
 
-def status_of(state: SessionState | None, outcome_id: str | None) -> JobStatus:
+@dataclass(slots=True, frozen=True)
+class DispatchJob:
+    """One job that waits for a slot, or runs. The message is data."""
+
+    entry: DispatchEntry
+    message: str
+
+
+def status_of(live: JobStatus | None, outcome_id: str | None) -> JobStatus:
     """Contract 02 §13.4.2 rules 3 and 4, in one place.
 
-    The outcome wins over the live state. §13.1 writes the record BEFORE the
-    session is deleted, so for one moment both exist, and the job is over.
+    The outcome wins over the live state: the record is written before the
+    job leaves the queue, so for one moment both exist, and the job is over.
     """
-    if outcome_id is not None:
+    if outcome_id is not None or live is None:
+        # No live job and no outcome: a restart ended it. The job is over in
+        # every way that matters, and nothing can say how it went.
         return JobStatus.ENDED
 
-    if state is None:
-        # The session is gone and no outcome id was ever noted. The job is
-        # over in every way that matters, and nothing can say how it went.
-        return JobStatus.ENDED
-
-    return _BY_SESSION_STATE.get(state, JobStatus.DISPATCHED)
+    return live
 
 
 def job_view(
-    entry: DispatchEntry, state: SessionState | None, outcome: dict[str, Any] | None
+    entry: DispatchEntry, live: JobStatus | None, outcome: dict[str, Any] | None
 ) -> dict[str, Any]:
     """One entry of §13.4.2's `jobs` list.
 
@@ -148,7 +150,7 @@ def job_view(
         "session": entry.session,
         "family": entry.family,
         "enqueued_at": rfc3339(entry.enqueued_at),
-        "status": status_of(state, entry.outcome_id).value,
+        "status": status_of(live, entry.outcome_id).value,
         "outcome": outcome,
     }
 
@@ -227,6 +229,20 @@ class DispatchLedger:
         entry.outcome_id = outcome_id
         self.write(entry)
 
+    def note_acp_session(self, caller_family: str, session: str, acp_session: str) -> None:
+        """Map the job to the conversation the facade minted for it."""
+        entry = self.read(caller_family, session)
+
+        if entry is None:
+            return
+
+        entry.acp_session = acp_session
+        self.write(entry)
+
+    def remove(self, entry: DispatchEntry) -> None:
+        """Remove an entry whose job never started (§13.4.1 rule 5)."""
+        dispatch_file(self._state_root, entry.caller_family, entry.session).unlink(missing_ok=True)
+
     def find_repeat(self, caller_family: str, key: str) -> DispatchEntry | None:
         """The entry an in-window `idempotency_key` already created (§13.4.4).
 
@@ -290,6 +306,7 @@ def _entry_from_file(raw: dict[str, Any], caller_family: str) -> DispatchEntry |
         caller_session=_text(raw.get("caller_session")),
         idempotency_key=_text(raw.get("idempotency_key")),
         outcome_id=outcome_id if outcome_id is not None and is_ulid(outcome_id) else None,
+        acp_session=_text(raw.get("acp_session")),
     )
 
 

@@ -23,7 +23,6 @@ approvals that block in place (packet CP). `stage5.py` holds the wiring.
 from __future__ import annotations
 
 import asyncio
-import time
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
@@ -44,7 +43,6 @@ from stage5 import (
     VAULT_ORACLE,
     WEBHOOK_NAME,
     Stage5,
-    ToolCall,
     bridge_bundle_missing,
     serving_stage5,
 )
@@ -76,18 +74,9 @@ QUICK_TURN_GAP_MS = 8
 #: one running turn and two waiting (contract 02 §13 rules 2 and 3).
 FIRES_AT_ONCE = 3
 
-#: Fine enough to measure a one-second poll without spinning on the socket.
-STATE_POLL_S = 0.02
-
 #: Long enough to clear `door-trigger`'s 32-byte floor, so a refusal proves
 #: the comparison and not the length check.
 WRONG_BEARER = "not-the-minted-bearer-" + "z" * 32
-
-#: `attendance` reads the PEP's audit file on its upkeep loop, once a second
-#: (`service.FLUSH_INTERVAL_S`). One whole poll plus slack for a loaded Mac
-#: is the bound scenario 4 asserts, and the printed number is the sample.
-MAX_GATE_LAG_S = 4.0
-
 
 pytestmark = pytest.mark.skipif(
     bridge_bundle_missing(),
@@ -172,30 +161,6 @@ async def held_job(stage: Stage5) -> tuple[str, str]:
     assert turn == fired.turn, "the playpen is running a turn attendance did not start"
 
     return fired.session, turn
-
-
-async def waited_for_state(stage: Stage5, session: str, wanted: str, since: float = 0.0) -> float:
-    """Wait for one session state and answer how long it took, in seconds.
-
-    Scenario 4's measurement, when `since` is the push's own arrival time.
-    `waiting-approval` reaches `attendance` only through the PEP's audit file,
-    read on a one-second loop, so the number is the lag a PEP-to-`attendance`
-    message would close.
-
-    `stack.until` takes a synchronous check and reading a session state is
-    one HTTP call, so this waits on its own rather than driving the state
-    read from inside a lambda.
-    """
-    started = since or time.monotonic()
-    deadline = time.monotonic() + SETTLE_TIMEOUT_S
-
-    while time.monotonic() < deadline:
-        if await stage.session_state(HA_REVIEW, session) == wanted:
-            return time.monotonic() - started
-
-        await asyncio.sleep(STATE_POLL_S)
-
-    raise AssertionError(f"session {session} never read {wanted}")
 
 
 # ---------------------------------------------------------------- scenario 1
@@ -380,50 +345,6 @@ async def test_an_attended_turn_runs_while_the_queue_is_full(stage: Stage5) -> N
 # ---------------------------------------------------------------- scenario 4
 
 
-async def test_a_gated_call_waits_for_the_phone_and_then_runs(gated: Stage5) -> None:
-    """The whole of contract 04 §8, inside a real autonomous job.
-
-    The PEP holds the call, the session reads `waiting-approval`, the fake
-    transport taps approve, the call runs and the job finishes with a record
-    that counts the approval.
-    """
-    session, turn = await held_job(gated)
-    call = asyncio.ensure_future(
-        gated.call_tool(GATED_TOOL, GATED_ARGS, session=session, turn=turn)
-    )
-
-    await until(
-        lambda: gated.transport.last(HA_REVIEW) is not None,
-        "the PEP's push to the phone rail",
-        timeout=SETTLE_TIMEOUT_S,
-    )
-    notice = gated.transport.last(HA_REVIEW)
-    assert notice is not None
-    assert notice.kind == "approval"
-    assert notice.summary.startswith(GATED_TOOL)
-    assert "mobile_app_example_phone" in notice.summary
-
-    lag_s = await waited_for_state(gated, session, "waiting-approval", since=notice.at)
-    print(f"\nI5 measurement: waiting-approval reached attendance {lag_s:.2f}s after the push")
-    # The bound, not the sample: `attendance` reads the PEP's audit on its
-    # one-second upkeep loop, so one poll plus slack is the whole of it.
-    assert lag_s < MAX_GATE_LAG_S
-
-    tap = await gated.transport.approve(HA_REVIEW, notice.gate)
-    assert tap.status_code == HTTP_OK
-
-    answered: ToolCall = await call
-    assert answered.ok, answered.error
-
-    record = await settled_job(gated, session)
-    approvals = record["approvals"]
-    assert isinstance(approvals, dict)
-    assert approvals["requested"] == 1
-    assert approvals["approved"] == 1
-    assert approvals["denied"] == 0
-    assert record["status"] == "ok"
-
-
 async def test_the_audit_holds_the_two_records_of_one_gate(gated: Stage5) -> None:
     """Contract 04 §6.4: one record when the gate opens, one when it resolves."""
     session, turn = await held_job(gated)
@@ -451,110 +372,7 @@ async def test_the_audit_holds_the_two_records_of_one_gate(gated: Stage5) -> Non
     assert lines[0]["tool"] == GATED_TOOL
 
 
-async def test_the_journal_names_the_gate_on_both_sides(gated: Stage5) -> None:
-    """Contract 02 §8.1's two lines, which is what the noticeboard reads."""
-    session, turn = await held_job(gated)
-    call = asyncio.ensure_future(
-        gated.call_tool(GATED_TOOL, GATED_ARGS, session=session, turn=turn)
-    )
-
-    await until(
-        lambda: gated.transport.last(HA_REVIEW) is not None,
-        "the PEP's push to the phone rail",
-        timeout=SETTLE_TIMEOUT_S,
-    )
-    notice = gated.transport.last(HA_REVIEW)
-    assert notice is not None
-
-    await waited_for_state(gated, session, "waiting-approval")
-    await gated.transport.approve(HA_REVIEW, notice.gate)
-    assert (await call).ok
-
-    await until(
-        lambda: _journal_kinds(gated, session).count("approval_resolved") == 1,
-        "the approval_resolved journal line",
-        timeout=SETTLE_TIMEOUT_S,
-    )
-    lines = gated.journal_lines(HA_REVIEW, session)
-    opened = [line for line in lines if line["kind"] == "approval_requested"]
-    resolved = [line for line in lines if line["kind"] == "approval_resolved"]
-
-    assert len(opened) == 1
-    assert opened[0]["body"]["gate_id"] == notice.gate
-    assert opened[0]["body"]["tool"] == GATED_TOOL
-    assert len(resolved) == 1
-    assert resolved[0]["body"]["decision"] == "approved"
-
-
-def _journal_kinds(stage: Stage5, session: str) -> list[str]:
-    return [str(line["kind"]) for line in stage.journal_lines(HA_REVIEW, session)]
-
-
 # ---------------------------------------------------------------- scenario 5
-
-
-async def test_a_denied_call_is_a_tool_error_and_the_job_still_ends(gated: Stage5) -> None:
-    """Contract 04 §8.4 rule 4's other value. The model reads an error."""
-    session, turn = await held_job(gated)
-    call = asyncio.ensure_future(
-        gated.call_tool(GATED_TOOL, GATED_ARGS, session=session, turn=turn)
-    )
-
-    await until(
-        lambda: gated.transport.last(HA_REVIEW) is not None,
-        "the PEP's push to the phone rail",
-        timeout=SETTLE_TIMEOUT_S,
-    )
-    notice = gated.transport.last(HA_REVIEW)
-    assert notice is not None
-
-    await waited_for_state(gated, session, "waiting-approval")
-    await gated.transport.deny(HA_REVIEW, notice.gate)
-    answered = await call
-
-    assert not answered.ok
-    assert answered.error
-
-    lines = gated.gate_lines(notice.gate)
-    assert lines[-1]["decision"] == "deny"
-    assert lines[-1]["reason"] == "approval_denied"
-
-    # Contract 02 draft 8 §4.3, the orchestrator's ruling of 2026-09-19: the
-    # turn returns to `running`, so the model can report the tool error and
-    # finish. The job ends `ok` with one denied gate inside it, which is the
-    # whole point of the ruling.
-    record = await settled_job(gated, session)
-    assert record["status"] == "ok"
-    approvals = record["approvals"]
-    assert isinstance(approvals, dict)
-    assert approvals["requested"] == 1
-    assert approvals["denied"] == 1
-    assert approvals["approved"] == 0
-    assert approvals["timed_out"] == 0
-
-
-async def test_an_unanswered_gate_times_out_and_the_job_still_ends(impatient: Stage5) -> None:
-    """Contract 04 §8.5. Nobody taps, the PEP denies, the job finishes."""
-    session, turn = await held_job(impatient)
-    answered = await impatient.call_tool(GATED_TOOL, GATED_ARGS, session=session, turn=turn)
-
-    assert not answered.ok
-
-    notice = impatient.transport.last(HA_REVIEW)
-    assert notice is not None
-    lines = impatient.gate_lines(notice.gate)
-    assert lines[-1]["reason"] == "approval_timeout"
-
-    # Contract 02 draft 8 §4.3 again: a timeout is a tool error, not the end
-    # of the turn.
-    record = await settled_job(impatient, session)
-    assert record["status"] == "ok"
-    approvals = record["approvals"]
-    assert isinstance(approvals, dict)
-    assert approvals["requested"] == 1
-    assert approvals["timed_out"] == 1
-    assert approvals["approved"] == 0
-    assert approvals["denied"] == 0
 
 
 async def test_an_undeliverable_push_denies_at_once(gated: Stage5) -> None:
