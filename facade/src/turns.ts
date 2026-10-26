@@ -19,12 +19,13 @@ import type {
   CancelNotification,
   ContentBlock,
   Outcome,
+  Peer,
   PromptRequest,
   PromptResponse,
-  SendUpdate,
   StopReason,
 } from "./acp.js";
 import { byteLength } from "./line.js";
+import type { Live } from "./live.js";
 import { chunkToUpdates, forward, SubmissionChunks } from "./mapper.js";
 import type { Sessions } from "./sessions.js";
 
@@ -103,9 +104,13 @@ function describe(error: unknown): string {
 export class Turns {
   private readonly running = new Map<string, Running>();
 
-  public constructor(private readonly sessions: Sessions) {}
+  public constructor(
+    private readonly sessions: Sessions,
+    private readonly live: Live,
+  ) {}
 
-  public async prompt(params: PromptRequest, send: SendUpdate): Promise<Outcome<PromptResponse>> {
+  /** The updates go to every peer on the session, the prompting one too. */
+  public async prompt(params: PromptRequest, peer: Peer): Promise<Outcome<PromptResponse>> {
     const { sessionId } = params;
     const handle = this.sessions.handle(sessionId);
     if (handle === null) {
@@ -123,20 +128,20 @@ export class Turns {
 
     const running: Running = { handle, cancelled: false };
     this.running.set(sessionId, running);
+    this.live.attach(sessionId, peer);
     let sent = Promise.resolve();
     let lastRecordAt: string | null = null;
 
     const settlement = await this.run(running, text.value, (chunk) => {
       lastRecordAt = ("timestamp" in chunk ? chunk.timestamp : undefined) ?? lastRecordAt;
-      for (const update of chunkToUpdates(chunk)) {
-        sent = sent.then(() => send(sessionId, update));
-      }
+      const items = chunkToUpdates(chunk).map((update) => ({ position: chunk.position, update }));
+      sent = this.live.publish(sessionId, items);
     });
     this.running.delete(sessionId);
 
     const info = this.sessions.recordTurn(sessionId, text.value, lastRecordAt);
     if (info !== null) {
-      sent = sent.then(() => send(sessionId, { sessionUpdate: "session_info_update", ...info }));
+      sent = this.live.publish(sessionId, [{ position: null, update: { sessionUpdate: "session_info_update", ...info } }]);
     }
 
     await sent;

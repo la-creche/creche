@@ -59,6 +59,14 @@ One prompt runs per session at a time. `handle.read()` replays the whole
 conversation from its start, so `SubmissionChunks` keeps only the chunks
 of the turn's own submission.
 
+`session/load` replays the history, then puts the link on the session's
+live updates (`src/live.ts`). Flue gives no public read of a whole
+conversation in process, so `src/flue-history.ts` reads Flue's updates
+view through `@flue/runtime/internal` (Phase 2 plan, Q2). The replay
+starts from the last `conversation-reset` (`src/replay.ts`). Live items
+that come during the replay wait, and only those after the last replayed
+position follow it.
+
 ## Rules
 
 1. Pin each runtime dependency to one exact version. Do not use a range.
@@ -77,9 +85,12 @@ of the turn's own submission.
    `never` default, so a new kind breaks the build.
 6. A failed turn answers a JSON-RPC error, never a stop reason
    (`settle` in `src/turns.ts`).
-7. Never serve without the lock. `lock.ts` never throws. Keep its pid and
+7. Only `src/flue-history.ts` imports `@flue/runtime/internal`.
+   `test/flue-history.test.ts` pins each fact that it reads. When that
+   test fails after a Flue change, fix the module, not the test.
+8. Never serve without the lock. `lock.ts` never throws. Keep its pid and
    its beat: attendance reads the beat with its own clock.
-8. Never make stdin EOF the only way the process ends. A client-side kill
+9. Never make stdin EOF the only way the process ends. A client-side kill
    of `sbx exec` does not reach the VM. The beat deadline ends the process.
 
 ## Known gaps
@@ -89,4 +100,5 @@ of the turn's own submission.
   then goes.
 - The bin starts no Flue runtime yet, so `_creche/shutdown` has no Flue
   to stop, and the bin serves no session method. Row 15 starts Flue with
-  the agent module and passes `Sessions` to the supervisor.
+  the agent module, wraps its adapter with `tapStores`, and passes
+  `sessionService` to the supervisor.

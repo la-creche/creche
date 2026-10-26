@@ -6,7 +6,9 @@ import { fauxProvider } from "@earendil-works/pi-ai";
 import { useModel } from "@flue/runtime";
 import type { Agent } from "@flue/runtime";
 import { sqlite, start } from "@flue/runtime/node";
-import type { PersistenceAdapter } from "@flue/runtime/adapter";
+import type { ConversationStreamStore, PersistenceAdapter } from "@flue/runtime/adapter";
+
+import { tapStores } from "../src/flue-history.js";
 
 export const faux = fauxProvider();
 
@@ -23,9 +25,15 @@ export function Probe(): string {
 /** The faux model's specifier, for an agent of one test file. */
 export const FAUX_MODEL = MODEL_SPEC;
 
-export async function startFlue(
-  agents: readonly Agent[] = [Probe],
-  db: PersistenceAdapter = sqlite(),
-): Promise<{ stop(): Promise<void> }> {
-  return start({ agents, db, providers: [faux.provider] });
+export interface Started {
+  stop(): Promise<void>;
+  /** The conversation store of this runtime. */
+  store(): ConversationStreamStore | null;
+}
+
+export async function startFlue(agents: readonly Agent[] = [Probe], db: PersistenceAdapter = sqlite()): Promise<Started> {
+  const tapped = tapStores(db);
+  const flue = await start({ agents, db: tapped.adapter, providers: [faux.provider] });
+
+  return { stop: () => flue.stop(), store: tapped.store };
 }
