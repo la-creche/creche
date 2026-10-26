@@ -207,7 +207,7 @@ gate --tests-for uv.lock integration/proc/proc_tree.py
 # The old suite and the stand-in for sbx stay paths in no package
 # (integration/AGENTS.md).
 for old in integration/tests/fake_sbx.py integration/tests_manager/conftest.py \
-  integration/fixtures/stage3-registry/families/chat/family.yaml; do
+  integration/fixtures/stage3-registry/families/chat/family.toml; do
   gate --tests-for "$old"
   [[ "$RC" == "0" && "$PYTEST" == "$FULL" ]] && said "full suite, for $old" \
     && pass "$old is in no package: full suite, and no process suite" \

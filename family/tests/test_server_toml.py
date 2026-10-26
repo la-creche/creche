@@ -1,10 +1,8 @@
-"""A TOML server file: the strict read, the grammar of root and the two names.
+"""A TOML server file: the strict read, the grammar of root and the file name.
 
-A TOML server file gets each rule of the YAML path and each rule of the root
-reader of the same file. A YAML server file keeps the rules of today. Each
-test holds its own texts. The tests of the differences build each text from
-one value: the TOML text with `_toml` and the YAML text with
-`yaml.safe_dump`."""
+A server file gets each rule of contract 01b and each rule of the root
+reader of the same file. Each test holds its own texts. The tests of the
+rules of root build each text from one value with `_toml`."""
 
 from __future__ import annotations
 
@@ -14,26 +12,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-import yaml
 from agent_family import Markup, load_registry, parse_server, registry, tomlfile
 from agent_family.report import Issue, Issues, Severity
 from agent_family.serverrules import check_server
-
-PYPI_YAML = """\
-name: kagi
-identity: The Kagi API key of the operator. Search and page extraction.
-install:
-  source: pypi
-  package: kagimcp
-  version: 0.1.2
-  lock: mcp/kagi/install.lock
-run:
-  entrypoint: kagimcp
-  env:
-    KAGI_API_KEY: secret:kagi_api_key
-tools:
-  - { name: kagi_search_fetch, description: Search the web., write: false }
-"""
 
 PYPI_TOML = """\
 name = "kagi"
@@ -50,31 +31,6 @@ run.env.KAGI_API_KEY = "secret:kagi_api_key"
 tools = [
     { name = "kagi_search_fetch", description = "Search the web.", write = false },
 ]
-"""
-
-RELEASE_YAML = """\
-name: github-code
-identity: A token for each repository of the operator.
-install:
-  source: github-release
-  repo: github/github-mcp-server
-  version: 1.12.0
-  asset: github-mcp-server_Linux_x86_64.tar.gz
-  sha256: "1234567890123456789012345678901234567890123456789012345678901234"
-run:
-  entrypoint: github-mcp-server
-  args: [stdio, --lockdown-mode]
-  env:
-    GITHUB_PERSONAL_ACCESS_TOKEN: secret:github_token_code
-arg_denies:
-  - tools: all
-    arg: owner/repo
-    values: [example-owner/agent-control]
-  - tools: [push_files]
-    arg: branch
-    values: [main, master]
-tools:
-  - { name: push_files, description: Push several files in one commit., write: true }
 """
 
 RELEASE_TOML = """\
@@ -101,19 +57,6 @@ tools = [
 ]
 """
 
-AGENT_MCP_YAML = """\
-name: ha-read
-identity: A read token of the house.
-install: { source: agent-mcp, python: "3.13" }
-run:
-  entrypoint: ha-mcp
-  env: { HA_URL: "http://192.0.2.10:8123", HA_TOKEN: "secret:ha_token" }
-  state_dir: true
-  state_dir_env: HA_MCP_CONFIG_DIR
-shared_secrets:
-  - { secret: ha_token, server: ha }
-"""
-
 AGENT_MCP_TOML = """\
 name = "ha-read"
 identity = "A read token of the house."
@@ -130,17 +73,13 @@ run.state_dir_env = "HA_MCP_CONFIG_DIR"
 shared_secrets = [{ secret = "ha_token", server = "ha" }]
 """
 
-#: Each source of a pin, as a YAML text and as a TOML text with equal values.
-PAIRS = {
-    "pypi": (PYPI_YAML, PYPI_TOML),
-    "github-release": (RELEASE_YAML, RELEASE_TOML),
-    "agent-mcp": (AGENT_MCP_YAML, AGENT_MCP_TOML),
-}
+#: A TOML text of each source of a pin.
+SOURCES = {"pypi": PYPI_TOML, "github-release": RELEASE_TOML, "agent-mcp": AGENT_MCP_TOML}
 
 NOT_TOML = "the text is not TOML 1.0, or it nests deeper than 8 levels"
 NOT_UTF8 = "the file is not UTF-8 text"
 TOO_LARGE = "the file has more than 65536 bytes"
-TWO_NAMES = "two server files: server.toml and server.yaml; keep one"
+NO_FILE = "no server.toml; this directory is ignored"
 
 
 def _issues(text: str) -> list[Issue]:
@@ -154,38 +93,34 @@ def _locs_and_messages(text: str) -> list[tuple[str, str]]:
     return [(issue.loc, issue.msg) for issue in _issues(text)]
 
 
-# --- the two paths of parse_server ------------------------------------------------
+# --- parse_server ---------------------------------------------------------------
 
 
-@pytest.mark.parametrize("source", list(PAIRS))
-def test_a_toml_server_of_each_source_reads_to_the_model_of_its_yaml_form(source: str) -> None:
-    yaml_text, toml_text = PAIRS[source]
+@pytest.mark.parametrize("source", list(SOURCES))
+def test_a_toml_server_of_each_source_reads(source: str) -> None:
+    server, issues = parse_server(SOURCES[source], Markup.TOML)
 
-    from_yaml, yaml_issues = parse_server(yaml_text)
-    from_toml, toml_issues = parse_server(toml_text, Markup.TOML)
-
-    assert yaml_issues == toml_issues == []
-    assert from_yaml is not None
-    assert from_toml == from_yaml
-    assert from_toml.install.source == source
+    assert issues == []
+    assert server is not None
+    assert server.install.source == source
 
 
-@pytest.mark.parametrize("source", list(PAIRS))
+@pytest.mark.parametrize("source", list(SOURCES))
 def test_a_toml_server_of_each_source_passes_each_rule(source: str) -> None:
-    server, _ = parse_server(PAIRS[source][1], Markup.TOML)
+    server, _ = parse_server(SOURCES[source], Markup.TOML)
     issues = Issues()
 
     assert server is not None
-    check_server(server, server.name, issues, Markup.TOML)
+    check_server(server, server.name, issues)
 
     assert issues.frozen() == ()
 
 
-def test_the_default_markup_of_a_server_is_yaml() -> None:
-    server, issues = parse_server(PYPI_YAML, Markup.YAML)
+def test_the_default_markup_of_a_server_is_toml() -> None:
+    server, issues = parse_server(PYPI_TOML, Markup.TOML)
 
     assert issues == []
-    assert parse_server(PYPI_YAML) == (server, issues)
+    assert parse_server(PYPI_TOML) == (server, issues)
 
 
 def test_a_sha256_of_64_digits_is_a_text_in_toml() -> None:
@@ -240,14 +175,6 @@ def test_a_value_of_another_type_is_refused(old: str, new: str, loc: str, messag
     assert [issue.loc for issue in issues] == [loc]
     assert message in issues[0].msg
     assert issues[0].severity is Severity.ERROR
-
-
-def test_the_yaml_path_of_a_server_keeps_its_lax_read() -> None:
-    server, issues = parse_server(AGENT_MCP_YAML.replace("state_dir: true", "state_dir: yes"))
-
-    assert issues == []
-    assert server is not None
-    assert server.run.state_dir is True
 
 
 def test_two_unknown_keys_of_a_server_give_two_issues_in_sorted_order() -> None:
@@ -379,20 +306,19 @@ def _changed(changes: dict[str, Any]) -> dict[str, Any]:
     return body
 
 
-def _report(body: dict[str, Any], markup: Markup) -> tuple[Issue, ...]:
-    """The issues of one server file, from the text of `markup`."""
-    text = _toml(body) if markup is Markup.TOML else yaml.safe_dump(body)
-    server, issues = parse_server(text, markup)
+def _report(body: dict[str, Any]) -> tuple[Issue, ...]:
+    """The issues of one server file, from its TOML text."""
+    server, issues = parse_server(_toml(body), Markup.TOML)
 
     assert issues == [], issues
     assert server is not None
     found = Issues()
-    check_server(server, body["name"], found, markup)
+    check_server(server, body["name"], found)
     return found.frozen()
 
 
-#: Each difference between the YAML path and the root reader: a file that
-#: the YAML path accepts and root refuses. The TOML path refuses it at `loc`.
+#: Each rule of root that contract 01b does not give: a file that root
+#: refuses. The validator refuses it at `loc`.
 DIFFERENCES: dict[str, tuple[dict[str, Any], str]] = {
     "identity-past-1000-characters": ({"identity": "a" + " " * 1000 + "b"}, "identity"),
     "description-past-200-characters": (
@@ -444,7 +370,7 @@ DIFFERENCES: dict[str, tuple[dict[str, Any], str]] = {
     "9-shared-secrets": (_shared(9), "shared_secrets"),
 }
 
-#: Each limit of root, at the limit. Both paths accept each one.
+#: Each limit of root, at the limit. The validator accepts each one.
 AT_THE_LIMIT: dict[str, dict[str, Any]] = {
     "identity-of-300-characters": {"identity": "i" * 300},
     "description-of-200-characters": {
@@ -468,28 +394,22 @@ AT_THE_LIMIT: dict[str, dict[str, Any]] = {
 
 
 @pytest.mark.parametrize("case", list(DIFFERENCES))
-def test_the_toml_path_refuses_each_difference_and_the_yaml_path_accepts_it(case: str) -> None:
+def test_the_validator_refuses_each_rule_of_root(case: str) -> None:
     changes, loc = DIFFERENCES[case]
-    body = _changed(changes)
 
-    toml_issues = _report(body, Markup.TOML)
+    issues = _report(_changed(changes))
 
-    assert _report(body, Markup.YAML) == ()
-    assert [issue.loc for issue in toml_issues] == [loc]
-    assert toml_issues[0].severity is Severity.ERROR
+    assert [issue.loc for issue in issues] == [loc]
+    assert issues[0].severity is Severity.ERROR
 
 
 @pytest.mark.parametrize("case", list(AT_THE_LIMIT))
-def test_each_path_accepts_each_limit_of_root(case: str) -> None:
-    body = _changed(AT_THE_LIMIT[case])
-
-    assert _report(body, Markup.TOML) == ()
-    assert _report(body, Markup.YAML) == ()
+def test_the_validator_accepts_each_limit_of_root(case: str) -> None:
+    assert _report(_changed(AT_THE_LIMIT[case])) == ()
 
 
-def test_the_base_server_of_the_differences_passes_each_path() -> None:
-    assert _report(copy.deepcopy(BASE), Markup.TOML) == ()
-    assert _report(copy.deepcopy(BASE), Markup.YAML) == ()
+def test_the_base_server_of_the_rules_of_root_passes() -> None:
+    assert _report(copy.deepcopy(BASE)) == ()
 
 
 @pytest.mark.parametrize(
@@ -595,25 +515,22 @@ def test_the_base_server_of_the_differences_passes_each_path() -> None:
     ],
 )
 def test_each_rule_of_root_has_one_message(changes: dict[str, Any], loc: str, message: str) -> None:
-    assert _report(_changed(changes), Markup.TOML) == (Issue(Severity.ERROR, loc, message),)
+    assert _report(_changed(changes)) == (Issue(Severity.ERROR, loc, message),)
 
 
-def test_the_yaml_path_counts_an_identity_after_the_collapse_of_white_space() -> None:
+def test_an_identity_counts_each_character() -> None:
     body = _changed({"identity": "a" + " " * 400 + "b"})
 
-    assert _report(body, Markup.YAML) == ()
-    assert [issue.loc for issue in _report(body, Markup.TOML)] == ["identity"]
+    assert [issue.loc for issue in _report(body)] == ["identity"]
 
 
-def test_the_toml_path_keeps_each_refusal_of_the_yaml_path() -> None:
-    """A rule that both paths hold gives one issue in each path."""
+def test_a_rule_of_contract_01b_gives_one_issue() -> None:
     body = _changed({"install": {**PYPI, "version": "1.0.0-rc1"}, "identity": ""})
 
-    assert _report(body, Markup.TOML) == _report(body, Markup.YAML)
-    assert [issue.loc for issue in _report(body, Markup.TOML)] == ["identity", "install.version"]
+    assert [issue.loc for issue in _report(body)] == ["identity", "install.version"]
 
 
-# --- the two file names in a registry ---------------------------------------------
+# --- the file name in a registry ---------------------------------------------------
 
 
 def _registry(tmp_path: Path, files: dict[str, bytes], name: str = "kagi") -> Path:
@@ -626,9 +543,8 @@ def _registry(tmp_path: Path, files: dict[str, bytes], name: str = "kagi") -> Pa
     return tmp_path
 
 
-def test_the_server_file_names_are_two_constants() -> None:
+def test_the_server_file_name_is_a_constant() -> None:
     assert registry.SERVER_FILE == "server.toml"
-    assert registry.SERVER_FILE_YAML == "server.yaml"
 
 
 def test_the_registry_reads_a_toml_server_file(tmp_path: Path) -> None:
@@ -636,58 +552,29 @@ def test_the_registry_reads_a_toml_server_file(tmp_path: Path) -> None:
 
     loaded = load_registry(root)
 
-    assert loaded.servers["kagi"] == parse_server(PYPI_YAML)[0]
+    assert loaded.servers["kagi"] == parse_server(PYPI_TOML)[0]
     assert loaded.server_reports["kagi"].file == "mcp/kagi/server.toml"
     assert loaded.server_reports["kagi"].issues == ()
 
 
-def test_the_registry_reads_a_yaml_server_file_as_today(tmp_path: Path) -> None:
-    root = _registry(tmp_path, {registry.SERVER_FILE_YAML: PYPI_YAML.encode()})
-
-    loaded = load_registry(root)
-
-    assert loaded.servers["kagi"] == parse_server(PYPI_YAML)[0]
-    assert loaded.server_reports["kagi"].file == "mcp/kagi/server.yaml"
-    assert loaded.server_reports["kagi"].issues == ()
-
-
-def test_the_registry_applies_the_grammar_of_root_to_a_toml_file_only(tmp_path: Path) -> None:
-    yaml_text = PYPI_YAML.replace("name: kagi", "name: kagi-yaml").replace(
-        "package: kagimcp", "package: _kagi"
-    )
-    toml_text = PYPI_TOML.replace('package = "kagimcp"', 'package = "_kagi"')
-    root = _registry(tmp_path, {registry.SERVER_FILE: toml_text.encode()})
-    _registry(tmp_path, {registry.SERVER_FILE_YAML: yaml_text.encode()}, name="kagi-yaml")
-
-    loaded = load_registry(root)
-
-    assert [issue.loc for issue in loaded.server_reports["kagi"].issues] == ["install.package"]
-    assert loaded.server_reports["kagi-yaml"].issues == ()
-    assert loaded.servers["kagi-yaml"].install.package == "_kagi"
-
-
-def test_both_server_names_in_one_directory_are_one_error_and_no_parse(tmp_path: Path) -> None:
-    root = _registry(
-        tmp_path,
-        {registry.SERVER_FILE: PYPI_TOML.encode(), registry.SERVER_FILE_YAML: PYPI_YAML.encode()},
-    )
+def test_a_server_yaml_is_no_server_file(tmp_path: Path) -> None:
+    """The registry reads no `server.yaml`. A directory that holds one and no
+    `server.toml` gets the warning of a directory with no file."""
+    root = _registry(tmp_path, {"server.yaml": b"name: kagi\n"})
 
     loaded = load_registry(root)
 
     assert "kagi" not in loaded.servers
-    assert loaded.server_reports["kagi"].issues == (Issue(Severity.ERROR, "<document>", TWO_NAMES),)
-    assert loaded.server_reports["kagi"].file == "mcp/kagi/server.toml"
+    assert loaded.server_reports["kagi"].issues == (Issue(Severity.WARNING, "<document>", NO_FILE),)
 
 
-def test_a_server_directory_with_no_file_keeps_the_warning_of_today(tmp_path: Path) -> None:
+def test_a_server_directory_with_no_file_gets_a_warning(tmp_path: Path) -> None:
     (tmp_path / registry.MCP_DIR / "kagi").mkdir(parents=True)
 
     loaded = load_registry(tmp_path)
 
-    assert loaded.server_reports["kagi"].issues == (
-        Issue(Severity.WARNING, "<document>", "no server.yaml; this directory is ignored"),
-    )
-    assert loaded.server_reports["kagi"].file == "mcp/kagi/server.yaml"
+    assert loaded.server_reports["kagi"].issues == (Issue(Severity.WARNING, "<document>", NO_FILE),)
+    assert loaded.server_reports["kagi"].file == "mcp/kagi/server.toml"
 
 
 @pytest.mark.parametrize(
@@ -740,7 +627,7 @@ def test_the_registry_reads_at_most_one_byte_past_the_limit_of_a_server(
     assert calls == [(65537, tomlfile.FileKind.SERVER)]
 
 
-# --- a registry that holds both formats --------------------------------------------
+# --- a family and its servers ------------------------------------------------------
 
 FAMILY_TOML = """\
 name = "helper"
@@ -753,9 +640,9 @@ tools.github-code = ["push_files"]
 """
 
 
-def test_a_toml_family_finds_a_toml_server_and_a_yaml_server(tmp_path: Path) -> None:
+def test_a_toml_family_finds_its_toml_servers(tmp_path: Path) -> None:
     root = _registry(tmp_path, {registry.SERVER_FILE: PYPI_TOML.encode()})
-    _registry(tmp_path, {registry.SERVER_FILE_YAML: RELEASE_YAML.encode()}, name="github-code")
+    _registry(tmp_path, {registry.SERVER_FILE: RELEASE_TOML.encode()}, name="github-code")
     family = tmp_path / registry.FAMILIES_DIR / "helper"
     family.mkdir(parents=True)
     (family / registry.FAMILY_FILE).write_text(FAMILY_TOML, encoding="utf-8")

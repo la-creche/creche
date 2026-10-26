@@ -70,7 +70,7 @@ written here. Do not use a synonym for one.
 | Name | Meaning |
 |---|---|
 | component | One unit of release: a directory with a `component.yaml`. |
-| family | One agent definition: one `family.yaml` in the registry. |
+| family | One agent definition: one `family.toml` in the registry. |
 | registry | The git checkout that holds every family file and every MCP server file. |
 | sandbox | One microVM that runs one family. |
 | session | One conversation in one family. |

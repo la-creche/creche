@@ -39,13 +39,16 @@ ENV_VAR_NAME: Final = re.compile(rf"^{ENV_VAR_NAME_FORM}\Z")
 HA_IDENTIFIER: Final = re.compile(r"^[a-z][a-z0-9_]*\Z")
 HA_ENTITY_ID: Final = re.compile(r"^[a-z][a-z0-9_]*\.[a-z0-9_]+\Z")
 SHA256_HEX: Final = re.compile(r"^[0-9a-f]{64}\Z")
-#: `<owner>/<name>` on GitHub, for a YAML server file. A TOML server file
-#: takes `REPO_RE`, the pattern of root.
-GITHUB_REPO: Final = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+\Z")
 #: An exact version, never a range: a range makes a hash meaningless
 #: (contract 01b §3.1).
 EXACT_VERSION: Final = re.compile(rf"^{EXACT_VERSION_FORM}\Z")
 VERSION_RANGE_CHARS: Final = ("*", "^", "~", ">", "<", "=", ",", " ")
+
+#: The name of a family file and the name of a server file (contract 01 §1,
+#: contract 01b §1). `registry.py` gives each name to a package that imports
+#: `agent_family`.
+FAMILY_FILE: Final = "family.toml"
+SERVER_FILE: Final = "server.toml"
 
 # --- the grammar of root for a TOML server file (contract 01b §1) ---
 
@@ -54,11 +57,10 @@ VERSION_RANGE_CHARS: Final = ("*", "^", "~", ">", "<", "=", ",", " ")
 # the name that it has there. A pattern of root has no anchor, and root uses
 # it with `fullmatch`. Its copy here adds `^` and `\Z`, as each pattern of
 # this module has them. A `_FORM` is the text of a pattern of root, for a
-# message. The TOML path of `serverrules` applies each pattern and each cap,
-# so a TOML server file that passes this validator passes root. A YAML
-# server file keeps the rules of today. `DEFAULT_PYTHON` is the default of
-# the model for both markups. `bin/tests/test_server_grammar_copies.py` holds
-# each copy and each form equal to its source.
+# message. `serverrules` applies each pattern and each cap, so a server file
+# that passes this validator passes root. `DEFAULT_PYTHON` is the default of
+# the model. `bin/tests/test_server_grammar_copies.py` holds each copy and
+# each form equal to its source.
 PACKAGE_FORM: Final = "[A-Za-z0-9][A-Za-z0-9._-]{0,63}"
 REPO_FORM: Final = "[A-Za-z0-9][A-Za-z0-9._-]{0,38}/[A-Za-z0-9][A-Za-z0-9._-]{0,99}"
 ASSET_FORM: Final = "[A-Za-z0-9][A-Za-z0-9._+-]{0,127}"

@@ -1,12 +1,13 @@
-"""Written `family.toml` inputs: one TOML twin of each rule case, and the cases
-of the TOML reader.
+"""Written `family.toml` inputs: one case of each rule, and the cases of the
+TOML reader.
 
-A twin has the id of its case in `family_cases.py` and holds the same values.
-The TOML path reads each field in the strict mode, so a twin of a `lax-` case
-holds the text or the float of its case, and the reader refuses it. A case of
-`family_cases.py` that needs a form of YAML has no twin: an anchor, an alias,
-a merge key, a tag, a YAML 1.1 word, a null, a key that is no text, a second
-document and a top value that is no mapping.
+A case that has the id of a vector of the frozen file `family_file.json` is
+the twin of that YAML input and holds the same values. The reader reads each
+field in the strict mode, so a twin of a `lax-` input holds the text or the
+float of its input, and the reader refuses it. A YAML input that needs a
+form of YAML has no twin: an anchor, an alias, a merge key, a tag, a YAML
+1.1 word, a null, a key that is no text, a second document and a top value
+that is no mapping.
 
 The cases with an id that starts with `toml-` are the cases of the TOML
 reader: the four refusals of the reader, the size limit, the level limit, a
@@ -19,16 +20,43 @@ No case names a deployment. An address is TEST-NET-1 (RFC 5737).
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Final
 
-from vectors.surfaces.family_cases import (
-    HUGE_DIGITS,
-    LONG_TOOL_NAME,
-    NEST_INNER,
-    PLACEHOLDER,
-    PLATFORM_FAMILY,
-    Case,
-)
+#: Stands for the case's directory. Not `@`: a cron shorthand starts with one.
+PLACEHOLDER: Final = "%NAME%"
+
+#: The family the platform fence allows (contract 01 §5.5).
+PLATFORM_FAMILY: Final = "agent-control"
+
+#: A tool name of 65 characters, one more than the limit of a tool name.
+LONG_TOOL_NAME: Final = "a" * 65
+
+#: The count of collections around the innermost one, for the two nesting
+#: cases. The mapping at the top is one level more.
+NEST_INNER: Final = 127
+
+#: A count of decimal digits past the limit of 4300 digits of Python.
+HUGE_DIGITS: Final = 5_000
+
+
+@dataclass(frozen=True)
+class Case:
+    """One written input, and where it sits in the registry."""
+
+    id: str
+    body: bytes
+    #: The directory under `families/`. Empty means the case's own id.
+    directory: str = ""
+    #: Other registry files the case needs, by path relative to the registry.
+    files: dict[str, str] = field(default_factory=dict[str, str])
+
+    def directory_name(self) -> str:
+        return self.directory or self.id
+
+    def text_bytes(self) -> bytes:
+        return self.body.replace(PLACEHOLDER.encode(), self.directory_name().encode())
+
 
 #: The most bytes of a family file. The case at the limit and the case one
 #: byte past it hold this number as text, so a changed limit moves a vector.
@@ -44,7 +72,7 @@ def _case(
     return Case(case_id, text.encode("utf-8"), directory, files or {})
 
 
-# A thin family every rule accepts, in the layout of `bin/yaml-to-toml.py`.
+# A thin family every rule accepts, in the layout of a converted registry file.
 HEAD: Final = """\
 name = "%NAME%"
 kind = "thin"
@@ -97,10 +125,9 @@ triggers = [
 ]
 """
 
-#: The TOML twin of `PLATFORM_SERVER_WITH_MERGE` of `family_cases.py`: a
-#: platform server file that declares the tool no family is granted. The
-#: server files of the TOML registry are `server.toml`, so a case writes this
-#: text there.
+#: A platform server file that declares the tool no family is granted. The
+#: server files of the registry are `server.toml`, so a case writes this text
+#: there.
 PLATFORM_SERVER_WITH_MERGE: Final = """\
 name = "github-platform"
 identity = "A written server file that declares the withheld tool."
@@ -120,8 +147,7 @@ tools = [
 ]
 """
 
-#: The TOML twin of `LONG_TOOL_SERVER` of `family_cases.py`: a server file
-#: that declares the tool `LONG_TOOL_NAME`.
+#: A server file that declares the tool `LONG_TOOL_NAME`.
 LONG_TOOL_SERVER: Final = f"""\
 name = "long-tool-server"
 identity = "One written server."
@@ -132,8 +158,8 @@ tools = [
 ]
 """
 
-#: The text of a YAML family file, for the case of two names in one
-#: directory.
+#: The text of a YAML family file, for the case of a `family.yaml` beside a
+#: `family.toml`. The registry reads no `family.yaml`.
 YAML_FAMILY: Final = """\
 name: toml-two-names
 kind: thin

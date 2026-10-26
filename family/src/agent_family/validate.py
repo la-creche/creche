@@ -1,4 +1,4 @@
-"""Value rules and cross-reference checks for `family.yaml` (contract 01).
+"""Value rules and cross-reference checks for `family.toml` (contract 01).
 
 Nothing here raises on bad input (invariant 19). Every check appends to one
 accumulator, so one parse reports every violation it can see.
@@ -51,6 +51,7 @@ from .grammar import (
     RESIDENT_PROCS_MAX,
     RESIDENT_PROCS_MIN,
     SANDBOX_FLAVORS,
+    SERVER_FILE,
     SERVER_NAME,
     SESSION_ROOT,
     SKILL_NAME,
@@ -348,7 +349,7 @@ def _check_tools(family: FamilyFile, index: Index, issues: Issues) -> None:
 
         declared = index.servers.get(server)
         if declared is None:
-            issues.error(loc, f"'{server}' has no mcp/{server}/server.yaml")
+            issues.error(loc, f"'{server}' has no mcp/{server}/{SERVER_FILE}")
 
         _check_withheld(family, index, server, loc, issues)
         if isinstance(grant, str):
@@ -378,7 +379,7 @@ def _check_withheld(
             issues.error(
                 loc,
                 f"'{ALL_TOOLS}' grants '{tool}', which is never granted: {reason}; drop it "
-                f"from mcp/{server}/server.yaml or name each tool",
+                f"from mcp/{server}/{SERVER_FILE} or name each tool",
             )
         return
 
@@ -419,7 +420,7 @@ def _check_named_tools(
             continue
 
         if declared is not None and tool not in declared.tool_names():
-            issues.error(at, f"'{tool}' is not declared in mcp/{server}/server.yaml")
+            issues.error(at, f"'{tool}' is not declared in mcp/{server}/{SERVER_FILE}")
 
 
 def _check_verbs(family: FamilyFile, index: Index, issues: Issues) -> None:

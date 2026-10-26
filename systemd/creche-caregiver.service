@@ -1,7 +1,7 @@
 # The family manager (rework contract 05). USER unit, as the operator.
 #
 # It watches the rework registry and converges every family to its
-# family.yaml: the LiteLLM key, the PEP token, the grant file, the family
+# family.toml: the LiteLLM key, the PEP token, the grant file, the family
 # config mount, the sandbox and the trigger timers. Invariant 9 is the whole
 # point — "a permission change needs one action and no manual apply" — so
 # this runs as a daemon, not as a command anybody types.

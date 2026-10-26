@@ -1,12 +1,10 @@
-"""Value rules for a server file, `mcp/<name>/server.toml` or `server.yaml`
-(contract 01b).
+"""Value rules for a server file, `mcp/<name>/server.toml` (contract 01b).
 
 The shape is already parsed. Everything here is a rule the reader must state
 in one sentence, because the author fixes it with one edit.
 
-A TOML file also gets each rule of root (`handover.mcpserver`) that the YAML
-path does not hold, so a TOML file that passes here passes root. A YAML file
-keeps the rules of today. `check_server` takes the markup of the file."""
+A server file also gets each rule of root (`handover.mcpserver`), so a file
+that passes here passes root."""
 
 from __future__ import annotations
 
@@ -24,7 +22,6 @@ from .grammar import (
     ENV_VAR_NAME_FORM,
     EXACT_VERSION,
     EXACT_VERSION_FORM,
-    GITHUB_REPO,
     IDENTITY_MAX,
     MAX_ARG_CHARS,
     MAX_ARGS,
@@ -49,7 +46,6 @@ from .grammar import (
     VERSION_RANGE_CHARS,
     InstallSource,
 )
-from .parse import Markup
 from .report import Issues
 from .server import FenceEntry, InstallBlock, McpServerFile
 
@@ -85,30 +81,17 @@ def collapse(text: str) -> str:
 
 # Two programs read this file: this validator, in CI and in `caregiver`, and
 # `handover.mcpserver`, as root. Under contract 01b §1, root accepts each
-# TOML file that this validator accepts, so each rule of root is a rule of
-# the TOML path too. For a YAML file, root refuses some files that this
-# validator accepts. Each CONTRACT-QUESTION below names a difference of the
-# YAML path. That path keeps its reading there, so a YAML file that passes
-# here can still be refused at a release. The YAML path leaves with the
-# YAML file.
+# file that this validator accepts, so each rule of root is a rule here too.
 
 
-def check_server(server: McpServerFile, directory: str, issues: Issues, markup: Markup) -> None:
-    """Every single-file rule of contract 01b, in file order. `markup` is the
-    markup of the text that `server` came from."""
-    _check_name(server, directory, issues, markup)
-    _check_install(server, issues, markup)
-    _check_run(server, issues, markup)
-    _check_tools(server, issues, markup)
-    _check_fences(server, issues, markup)
-    _check_shared(server, issues, markup)
-
-
-def _length(text: str, markup: Markup) -> int:
-    """The count of the characters of an identity or of a description. The
-    TOML path counts each character, as root does. The YAML path counts
-    after the collapse of white space."""
-    return len(text) if markup is Markup.TOML else len(collapse(text))
+def check_server(server: McpServerFile, directory: str, issues: Issues) -> None:
+    """Every single-file rule of contract 01b, in file order."""
+    _check_name(server, directory, issues)
+    _check_install(server, issues)
+    _check_run(server, issues)
+    _check_tools(server, issues)
+    _check_fences(server, issues)
+    _check_shared(server, issues)
 
 
 def _check_count(loc: str, count: int, cap: int, issues: Issues) -> None:
@@ -133,7 +116,7 @@ def _check_plain(loc: str, what: str, text: str, cap: int, issues: Issues) -> No
         issues.error(loc, f"{what} holds a NUL character")
 
 
-def _check_name(server: McpServerFile, directory: str, issues: Issues, markup: Markup) -> None:
+def _check_name(server: McpServerFile, directory: str, issues: Issues) -> None:
     if SERVER_NAME.fullmatch(server.name) is None:
         issues.error(
             "name",
@@ -146,10 +129,10 @@ def _check_name(server: McpServerFile, directory: str, issues: Issues, markup: M
 
     # CONTRACT-QUESTION: contract 01b §6 says "1 to 300 characters" and does
     # not say whether the count comes before or after the collapse of
-    # whitespace. The YAML path counts after it. Root counts each character,
-    # refuses more than 1000 and refuses an identity of white space only.
-    # The TOML path counts each character and keeps the cap of 300.
-    length = _length(server.identity, markup)
+    # whitespace. Root counts each character, refuses more than 1000 and
+    # takes an identity of white space only. This validator counts each
+    # character, keeps the cap of 300 and refuses white space only.
+    length = len(server.identity)
     if not 1 <= length <= IDENTITY_MAX:
         issues.error(
             "identity",
@@ -163,7 +146,7 @@ def _check_name(server: McpServerFile, directory: str, issues: Issues, markup: M
         )
 
 
-def _check_install(server: McpServerFile, issues: Issues, markup: Markup) -> None:
+def _check_install(server: McpServerFile, issues: Issues) -> None:
     install = server.install
     try:
         source = InstallSource(install.source)
@@ -180,16 +163,15 @@ def _check_install(server: McpServerFile, issues: Issues, markup: Markup) -> Non
     for name in sorted(present - set(_REQUIRED[source])):
         issues.error(f"install.{name}", f"source '{source}' does not take 'install.{name}'")
 
-    _check_pin_values(server, issues, markup)
+    _check_pin_values(server, issues)
 
 
-def _check_pin_values(server: McpServerFile, issues: Issues, markup: Markup) -> None:
+def _check_pin_values(server: McpServerFile, issues: Issues) -> None:
     # CONTRACT-QUESTION: contract 01b §3 gives no grammar for `package`,
-    # `repo`, `asset` and `python`. Both paths and root take one form for a
-    # version: `EXACT_VERSION_FORM`. The YAML path takes a repo of two parts.
-    # It does not read `package`, `asset` or `python`. Root is stricter on
-    # those four: a letter or a digit at the start, a cap on each length, and
-    # 3.12 or 3.13 for `python`. The TOML path takes the rules of root.
+    # `repo`, `asset` and `python`. This validator and root take one form
+    # for a version: `EXACT_VERSION_FORM`. For the other four, this
+    # validator takes the rules of root: a letter or a digit at the start, a
+    # cap on each length, and 3.12 or 3.13 for `python`.
     install = server.install
     version = install.version
     if version is not None and (
@@ -204,18 +186,15 @@ def _check_pin_values(server: McpServerFile, issues: Issues, markup: Markup) -> 
     if install.sha256 is not None and SHA256_HEX.fullmatch(install.sha256) is None:
         issues.error("install.sha256", "sha256 must be 64 lowercase hexadecimal characters")
 
-    repo = REPO_RE if markup is Markup.TOML else GITHUB_REPO
-    if install.repo is not None and repo.fullmatch(install.repo) is None:
+    if install.repo is not None and REPO_RE.fullmatch(install.repo) is None:
         issues.error("install.repo", f"'{install.repo}' is not <owner>/<name> on GitHub")
 
     _check_lock(server, issues)
-    if markup is Markup.TOML:
-        _check_root_pins(install, issues)
+    _check_root_pins(install, issues)
 
 
 def _check_root_pins(install: InstallBlock, issues: Issues) -> None:
-    """The TOML path only: the rules of root for `package`, `asset` and
-    `python`."""
+    """The rules of root for `package`, `asset` and `python`."""
     if install.package is not None and PACKAGE_RE.fullmatch(install.package) is None:
         issues.error(
             "install.package",
@@ -252,26 +231,18 @@ def _check_lock(server: McpServerFile, issues: Issues) -> None:
         issues.error("install.lock", "install.lock is not a plain repository path")
 
 
-def _check_run(server: McpServerFile, issues: Issues, markup: Markup) -> None:
+def _check_run(server: McpServerFile, issues: Issues) -> None:
     # CONTRACT-QUESTION: contract 01b §4 says "a console script or binary
-    # name, no path, no slash" and gives no characters and no cap. The YAML
-    # path refuses an empty name and a slash. Root takes
-    # `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`. Root also takes 32 words of `args`
-    # at most, each of 256 characters at most and with no NUL, 32 variables
-    # at most, and a variable name for `state_dir_env`. §4 and §4.2 give
-    # none of those. The TOML path takes the rules of root.
+    # name, no path, no slash" and gives no characters and no cap. Root
+    # takes `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`. Root also takes 32 words of
+    # `args` at most, each of 256 characters at most and with no NUL, 32
+    # variables at most, and a variable name for `state_dir_env`. §4 and
+    # §4.2 give none of those. This validator takes the rules of root.
     run = server.run
-    if markup is Markup.TOML:
-        _check_root_run(server, issues)
-    elif "/" in run.entrypoint or not run.entrypoint:
-        issues.error(
-            "run.entrypoint",
-            f"'{run.entrypoint}' must be a console script name with no path; the PEP builds the "
-            "absolute path from install.source",
-        )
+    _check_root_run(server, issues)
 
     for name, value in sorted(run.env.items()):
-        _check_env_entry(name, value, issues, markup)
+        _check_env_entry(name, value, issues)
 
     if run.state_dir and run.state_dir_env is None:
         issues.error("run.state_dir_env", "state_dir: true requires 'run.state_dir_env'")
@@ -280,7 +251,7 @@ def _check_run(server: McpServerFile, issues: Issues, markup: Markup) -> None:
         issues.error("run.state_dir_env", "state_dir_env needs 'run.state_dir: true'")
 
     variable = run.state_dir_env
-    if markup is Markup.TOML and variable is not None and ENV_VAR_NAME.fullmatch(variable) is None:
+    if variable is not None and ENV_VAR_NAME.fullmatch(variable) is None:
         issues.error(
             "run.state_dir_env",
             f"'{variable}' is not an environment variable name; use {ENV_VAR_NAME_FORM}",
@@ -288,8 +259,8 @@ def _check_run(server: McpServerFile, issues: Issues, markup: Markup) -> None:
 
 
 def _check_root_run(server: McpServerFile, issues: Issues) -> None:
-    """The TOML path only: the rules of root for the entrypoint, for `args`
-    and for the count of `env`."""
+    """The rules of root for the entrypoint, for `args` and for the count of
+    `env`."""
     run = server.run
     if ENTRYPOINT_RE.fullmatch(run.entrypoint) is None:
         issues.error(
@@ -304,19 +275,17 @@ def _check_root_run(server: McpServerFile, issues: Issues) -> None:
     _check_count("run.env", len(run.env), MAX_ENV, issues)
 
 
-def _check_env_entry(name: str, value: str, issues: Issues, markup: Markup) -> None:
+def _check_env_entry(name: str, value: str, issues: Issues) -> None:
     # CONTRACT-QUESTION: contract 01b §4.1 gives no grammar for a value or
-    # for the key after `secret:`. Both paths and root take one form for a
-    # name: `ENV_VAR_NAME_FORM`. The YAML path has no cap for a value. Root
-    # caps a value at 256 characters, refuses a NUL and takes
-    # `[a-z][a-z0-9_]{1,62}` for a key. The TOML path takes the rules of
-    # root.
+    # for the key after `secret:`. This validator and root take one form for
+    # a name: `ENV_VAR_NAME_FORM`. Root caps a value at 256 characters,
+    # refuses a NUL and takes `[a-z][a-z0-9_]{1,62}` for a key. This
+    # validator takes the rules of root.
     loc = f"run.env.{name}"
     if ENV_VAR_NAME.fullmatch(name) is None:
         issues.error(loc, f"'{name}' is not an environment variable name; use {ENV_VAR_NAME_FORM}")
 
-    if markup is Markup.TOML:
-        _check_plain(loc, _VALUE, value, MAX_VALUE_CHARS, issues)
+    _check_plain(loc, _VALUE, value, MAX_VALUE_CHARS, issues)
 
     secret_shaped = any(marker in name for marker in SECRET_NAME_MARKERS)
     if secret_shaped and not value.startswith(SECRET_PREFIX):
@@ -331,16 +300,14 @@ def _check_env_entry(name: str, value: str, issues: Issues, markup: Markup) -> N
         return
 
     key = value[len(SECRET_PREFIX) :]
-    if markup is Markup.TOML and SECRET_NAME_RE.fullmatch(key) is None:
+    if SECRET_NAME_RE.fullmatch(key) is None:
         issues.error(
             loc,
             f"the key after '{SECRET_PREFIX}' is not a secret key; use {SECRET_NAME_FORM}",
         )
-    elif markup is Markup.YAML and not key:
-        issues.error(loc, "'secret:' names no key")
 
 
-def _check_shared(server: McpServerFile, issues: Issues, markup: Markup) -> None:
+def _check_shared(server: McpServerFile, issues: Issues) -> None:
     """Contract 01b §4.3, as far as ONE file can be read.
 
     The agreement itself is registry-wide and root checks it
@@ -353,10 +320,9 @@ def _check_shared(server: McpServerFile, issues: Issues, markup: Markup) -> None
         for value in server.run.env.values()
         if value.startswith(SECRET_PREFIX)
     }
-    # CONTRACT-QUESTION: contract 01b §4.3 gives no count of entries. The
-    # YAML path has no cap. Root and the TOML path take 8 entries at most.
-    if markup is Markup.TOML:
-        _check_count("shared_secrets", len(server.shared_secrets), MAX_SHARED, issues)
+    # CONTRACT-QUESTION: contract 01b §4.3 gives no count of entries. Root
+    # and this validator take 8 entries at most.
+    _check_count("shared_secrets", len(server.shared_secrets), MAX_SHARED, issues)
 
     seen: set[str] = set()
     for index, entry in enumerate(server.shared_secrets):
@@ -376,17 +342,15 @@ def _check_shared(server: McpServerFile, issues: Issues, markup: Markup) -> None
         seen.add(entry.secret)
 
 
-def _check_tools(server: McpServerFile, issues: Issues, markup: Markup) -> None:
+def _check_tools(server: McpServerFile, issues: Issues) -> None:
     # CONTRACT-QUESTION: contract 01b §5 gives no cap for the count of tools.
     # It says "1 to 200 characters" for a description and does not say
     # whether the count comes before or after the collapse of whitespace.
-    # Both paths and root take one form for a name: `TOOL_NAME_FORM`. The
-    # YAML path has no cap for the count of tools and counts after the
-    # collapse. Root caps the list at 200 tools and counts each character of
-    # a description. The TOML path takes the rules of root. It also keeps
-    # the refusal of a description of white space only.
-    if markup is Markup.TOML:
-        _check_count("tools", len(server.tools), MAX_TOOLS, issues)
+    # This validator and root take one form for a name: `TOOL_NAME_FORM`.
+    # Root caps the list at 200 tools and counts each character of a
+    # description. This validator takes the rules of root. It also keeps the
+    # refusal of a description of white space only.
+    _check_count("tools", len(server.tools), MAX_TOOLS, issues)
 
     seen: set[str] = set()
     for index, entry in enumerate(server.tools):
@@ -398,7 +362,7 @@ def _check_tools(server: McpServerFile, issues: Issues, markup: Markup) -> None:
             issues.error(loc, f"'{entry.name}' is declared twice in this file")
 
         seen.add(entry.name)
-        length = _length(entry.description, markup)
+        length = len(entry.description)
         if not 1 <= length <= DESCRIPTION_MAX:
             issues.error(
                 loc,
@@ -408,30 +372,26 @@ def _check_tools(server: McpServerFile, issues: Issues, markup: Markup) -> None:
             issues.error(loc, "description holds only white space")
 
 
-def _check_fences(server: McpServerFile, issues: Issues, markup: Markup) -> None:
+def _check_fences(server: McpServerFile, issues: Issues) -> None:
     declared = server.tool_names()
     for field, entries in (("arg_allows", server.arg_allows), ("arg_denies", server.arg_denies)):
-        if markup is Markup.TOML:
-            _check_count(field, len(entries), MAX_FENCES, issues)
+        _check_count(field, len(entries), MAX_FENCES, issues)
 
         for index, entry in enumerate(entries):
-            _check_fence(entry, f"{field}[{index}]", declared, issues, markup)
+            _check_fence(entry, f"{field}[{index}]", declared, issues)
 
 
-def _check_fence(
-    entry: FenceEntry, loc: str, declared: tuple[str, ...], issues: Issues, markup: Markup
-) -> None:
+def _check_fence(entry: FenceEntry, loc: str, declared: tuple[str, ...], issues: Issues) -> None:
     # CONTRACT-QUESTION: contract 01b §7 does not say that a list of tools
     # holds one tool at least, and gives no cap for `values` or for the count
-    # of entries. The YAML path takes an empty list and has no cap. Root
-    # refuses an empty list, more than 256 values, a value of more than 256
-    # characters or with a NUL, and more than 64 entries. The TOML path takes
-    # the rules of root.
+    # of entries. Root refuses an empty list, more than 256 values, a value
+    # of more than 256 characters or with a NUL, and more than 64 entries.
+    # This validator takes the rules of root.
     scope = entry.tools
     if isinstance(scope, str) and scope != ALL_TOOLS:
         issues.error(f"{loc}.tools", f"'{scope}' must be a list of tool names or '{ALL_TOOLS}'")
 
-    if markup is Markup.TOML and isinstance(scope, list) and not scope:
+    if isinstance(scope, list) and not scope:
         issues.error(
             f"{loc}.tools",
             f"a fence entry needs at least one tool; use '{ALL_TOOLS}' or name a tool",
@@ -462,7 +422,6 @@ def _check_fence(
     if not entry.values:
         issues.error(f"{loc}.values", "a fence entry needs at least one value")
 
-    if markup is Markup.TOML:
-        _check_count(f"{loc}.values", len(entry.values), MAX_FENCE_VALUES, issues)
-        for index, value in enumerate(entry.values):
-            _check_plain(f"{loc}.values[{index}]", _VALUE, value, MAX_VALUE_CHARS, issues)
+    _check_count(f"{loc}.values", len(entry.values), MAX_FENCE_VALUES, issues)
+    for index, value in enumerate(entry.values):
+        _check_plain(f"{loc}.values[{index}]", _VALUE, value, MAX_VALUE_CHARS, issues)

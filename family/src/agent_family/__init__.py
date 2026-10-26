@@ -1,4 +1,4 @@
-"""family.yaml schema v1, validation report and registry loader (docs/rework/contracts/01, 01b).
+"""family.toml schema v1, validation report and registry loader (docs/rework/contracts/01, 01b).
 
 One file defines a family (invariant 16). This package parses that file, says
 what is wrong with it in a report rather than an exception (invariant 19), and

@@ -48,12 +48,10 @@ directory is not a workspace package, so a change here does not change
 | `core.py` | `normalize`, the markers, the input forms, `attempt`, `Vector`, `Surface`, `render` |
 | `generate.py` | the list of groups, the index, the frozen files, `write`, `--check`, `--counts`, `--freeze` |
 | `surfaces/ids.py` | the id grammars and `ids/disagreements.json` |
-| `surfaces/family_cases.py` | the written `family.yaml` inputs |
-| `surfaces/family_toml_cases.py` | the written `family.toml` inputs |
-| `surfaces/family_file.py` | `family_file`, `family_file.host`, `family_file.toml` and `family_file.registries.json` |
-| `surfaces/server_cases.py` | the written `server.yaml` inputs |
+| `surfaces/family_toml_cases.py` | the written `family.toml` inputs, and `Case` |
+| `surfaces/family_file.py` | `family_file.host`, `family_file.toml` and `family_file.registries.json` |
 | `surfaces/server_toml_cases.py` | the written `server.toml` inputs |
-| `surfaces/server_file.py` | `server_file` and `server_file.toml` |
+| `surfaces/server_file.py` | `server_file.toml` |
 | `surfaces/classify.py` | `family_file.classify` |
 | `surfaces/family_cli.py` | `family_file.cli` |
 | `surfaces/channel.py` | `channel.frame`. The files of `channel.parse` and `channel.build` are frozen |
@@ -89,13 +87,14 @@ no component. A change here thus mints no tag.
    registry. It writes the input to `mcp/<directory>/server.toml`.
 6. Change a file here in the pull request that changes its twin.
 
-Each case of `surfaces/family_toml_cases.py` that has the id of a case of
-`surfaces/family_cases.py` is its twin. A twin holds the same values in TOML.
-A case that needs a form of YAML has no twin. The module docstring lists the
-forms. The same rule holds for `surfaces/server_toml_cases.py` and
-`surfaces/server_cases.py`. A twin of a server case can get another result
-than its case. The TOML path of a server file applies the grammar of root,
-and the YAML path does not.
+Each case of `surfaces/family_toml_cases.py` that has the id of a vector of
+the frozen file `data/family_file.json` is the twin of that YAML input. A
+twin holds the same values in TOML. A YAML input that needs a form of YAML
+has no twin. The module docstring lists the forms. The same rule holds for
+`surfaces/server_toml_cases.py` and the frozen file `data/server_file.json`.
+A twin of a server input can get another result than its input. The
+validator applies the grammar of root to a server file, and the YAML path
+did not.
 
 ## Known gaps
 
@@ -107,6 +106,11 @@ and the YAML path does not.
 - `attendance.wire` left in row 25. `channel/parse.json` and
   `channel/build.json` are frozen. `channel/frame.json` reads the same
   splitter in `attendance.lines`.
+- The frozen files `family_file.json` and `server_file.json` hold the
+  vectors of the YAML reader of `agent_family`, which left this repository.
+  A vector there names a registry of `family_file.registries.json`. That
+  file holds the registries as they are now, as TOML, and not as they were
+  when the vector was made.
 - No Rust code compares the bytes of a frozen file with its digest. The
   Rust reader, the crate `creche-vectors`, checks only the form of the map
   `frozen`. `vectors/tests` holds each digest.
@@ -162,7 +166,7 @@ and the YAML path does not.
 - `family_file.cli` holds no text that `argparse` writes: no usage line and
   no help text. That text differs between two Python versions. A vector for
   such a command line holds the exit status only.
-- `server_file` and `family_file.cli` have no host. No vector covers the
+- `server_file.toml` and `family_file.cli` have no host. No vector covers the
   program with a model router or with a mount that is a symbolic link.
 - `grants.write` calls `write_grant_file`. No vector covers
   `build_grant_file`, which expands `all` and `<server>__*`.
@@ -196,8 +200,8 @@ and the YAML path does not.
 - Eight grammars have one copy and no id surface: the model alias, the
   mount path, the Home Assistant identifiers, the GitHub repo name, the
   unit name, the path segment, the image reference and the age recipient.
-  `family_file` covers the grammars that `agent_family` applies to a family
-  file.
+  `family_file.toml` covers the grammars that `agent_family` applies to a
+  family file.
 - `noticeboard.sessions.is_session` is a copy of the session id grammar.
   `noticeboard.route.session` covers it. The copy has no `id.` surface.
 - No vector covers the playpen side of contract 03: what the playpen accepts
@@ -207,7 +211,7 @@ and the YAML path does not.
   vector holds no reason. Most status documents are attended, so that
   reader refuses them on `kind` alone. The surface pins little of how that
   reader reads another field.
-- `family_file` uses two time zone names that every tz database holds. A
+- `family_file.toml` uses two time zone names that every tz database holds. A
   name that depends on the file system of the host has no vector.
 - The vectors with a 400,000-deep nesting assume the default stack size. A
   larger stack can let Python 3.14 read that input.
@@ -215,14 +219,6 @@ and the YAML path does not.
   Python version: 9,997 levels on 3.12 and 9,998 on 3.13. Python refuses that
   input when the caller is about 900 C calls deep. Python 3.14 refuses it on
   a small stack.
-- The vector `yaml-deep-flow` of `family_file` has a 10,000-deep nesting. It
-  assumes the default recursion limit of Python. With a larger limit, the
-  YAML reader can read that input.
-- The vector `yaml-merge-chain-at-limit` of `family_file` and of
-  `server_file` has a chain of 400 merge keys. The Python reader uses two
-  calls for each merge key of a chain. The vector assumes the default
-  recursion limit of Python and a caller that is less than 180 calls deep.
-  With a deeper caller, the reader refuses that input.
 - A vector with an integer of more than 4,300 digits assumes the default
   digit limit of Python `int`. With `PYTHONINTMAXSTRDIGITS=0`, Python reads
   such an integer, and the vector can move. `integer-4301-digits` of

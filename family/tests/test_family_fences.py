@@ -16,7 +16,7 @@ import pytest
 from agent_family import grammar, serverrules
 from agent_family.grammar import PLATFORM_SERVER, PROBE_FAMILY
 from agent_family.model import FamilyFile
-from agent_family.parse import parse_family
+from agent_family.parse import Markup, parse_family
 from agent_family.registry import load_registry
 from agent_family.report import Issues, Report
 from agent_family.validate import Index, check_family
@@ -66,7 +66,6 @@ SAMPLES = {
     "HA_IDENTIFIER": "light",
     "HA_ENTITY_ID": "light.kitchen",
     "SHA256_HEX": "a" * 64,
-    "GITHUB_REPO": "owner/name",
     "EXACT_VERSION": "1.0.2",
 }
 
@@ -215,12 +214,12 @@ def test_nested_mounts_are_allowed() -> None:
 
 TOOLS_CASES: tuple[tuple[dict[str, Any], str], ...] = (
     ({"Kagi": ["kagi_extract"]}, "not an MCP server name"),
-    ({"no-such-server": ["x"]}, "has no mcp/no-such-server/server.yaml"),
+    ({"no-such-server": ["x"]}, "has no mcp/no-such-server/server.toml"),
     ({"kagi": "everything"}, "must be a list of tool names or 'all'"),
     ({"kagi": []}, "an empty list grants nothing"),
     ({"kagi": ["kagi_extract", "kagi_extract"]}, "is granted twice"),
     ({"kagi": ["kagi extract"]}, "not a tool name"),
-    ({"kagi": ["kagi_summarize"]}, "not declared in mcp/kagi/server.yaml"),
+    ({"kagi": ["kagi_summarize"]}, "not declared in mcp/kagi/server.toml"),
 )
 
 
@@ -888,31 +887,28 @@ def test_quiet_with_no_cron_trigger_is_a_warning() -> None:
 # --- unknown fields (contract 01 §7 rule 1) ----------------------------------
 
 
+_HEAD = (
+    'name = "chat"\nkind = "attended"\ndescription = "x"\n'
+    'model = { router = "agent-router", budget_usd_per_day = 1 }\n'
+)
+
+
 def test_unknown_top_level_field_is_refused() -> None:
-    family, issues = parse_family(
-        "name: chat\nkind: attended\ndescription: x\n"
-        "model: {router: agent-router, budget_usd_per_day: 1}\n"
-        "bogus_field: 1\n"
-    )
+    family, issues = parse_family(_HEAD + "bogus_field = 1\n", Markup.TOML)
     assert family is None
     assert any("unknown field 'bogus_field'" in issue.msg for issue in issues)
     assert any("known fields here are" in issue.msg for issue in issues)
 
 
 def test_unknown_field_suggests_the_closest_name() -> None:
-    family, issues = parse_family(
-        "name: chat\nkind: attended\ndescriptoin: x\ndescription: x\n"
-        "model: {router: agent-router, budget_usd_per_day: 1}\n"
-    )
+    family, issues = parse_family(_HEAD + 'descriptoin = "x"\n', Markup.TOML)
     assert family is None
     assert any("did you mean 'description'?" in issue.msg for issue in issues)
 
 
 def test_unknown_nested_field_names_its_container() -> None:
-    family, issues = parse_family(
-        "name: chat\nkind: attended\ndescription: x\n"
-        "model: {router: agent-router, budget_usd_per_day: 1, extra: 1}\n"
-    )
+    text = _HEAD.replace("budget_usd_per_day = 1 }", "budget_usd_per_day = 1, extra = 1 }")
+    family, issues = parse_family(text, Markup.TOML)
     assert family is None
     assert any("model.extra" in f"{issue.loc}" for issue in issues)
 
@@ -926,73 +922,11 @@ def test_one_parse_reports_every_violation_it_can_see() -> None:
 # --- document shape (contract 01 §1) -----------------------------------------
 
 
-def test_a_non_mapping_document_is_refused() -> None:
-    family, issues = parse_family("- just\n- a\n- list\n")
-    assert family is None
-    assert any("top level must be a mapping" in issue.msg for issue in issues)
-
-
-def test_two_documents_in_one_file_is_refused() -> None:
-    family, issues = parse_family("name: chat\n---\nname: code\n")
-    assert family is None
-    assert any("one YAML document per file" in issue.msg for issue in issues)
-
-
-def test_unparsable_yaml_is_refused() -> None:
-    family, issues = parse_family("name: [unclosed\n")
-    assert family is None
-    assert any("YAML will not parse" in issue.msg for issue in issues)
-
-
-# --- a text with no value (contract 01 §7, invariant 19) ---------------------
-
-_HEAD = (
-    "name: chat\nkind: attended\ndescription: x\n"
-    "model: {router: agent-router, budget_usd_per_day: 1}\n"
-)
-
-#: YAML that the reader has no value for. Each one is past the syntax check.
-NO_VALUE_TEXTS = {
-    # A decimal integer of more digits than the interpreter converts.
-    "decimal-integer": "max_inflight_delegations: " + "9" * 5000 + "\n",
-    # The same size in base 16, which the reader converts and nothing prints.
-    "base-16-integer": "max_inflight_delegations: 0x" + "f" * 4000 + "\n",
-    "base-16-nested": "sandbox: { cpus: 0x" + "f" * 4000 + " }\n",
-    "base-16-key": "? 0x" + "f" * 4000 + "\n: 1\n",
-    # The reader gives a tuple for `!!pairs` and a set for `!!set`.
-    "base-16-pairs": "skills: !!pairs [ { a: 0x" + "f" * 4000 + " } ]\n",
-    "base-16-set": "skills: !!set\n  ? 0x" + "f" * 4000 + "\n",
-    # A date that the calendar does not hold.
-    "date": "shell: 2001-02-30\n",
-    # A tag on a text that is no value of the tag.
-    "int-tag-word": "sandbox: { cpus: !!int two }\n",
-    "int-tag-empty": 'sandbox: { cpus: !!int "" }\n',
-    "float-tag-word": "sandbox: { cpus: !!float two }\n",
-    "bool-tag-word": "shell: !!bool maybe\n",
-    "timestamp-tag-word": "shell: !!timestamp soon\n",
-    # A base 60 float past the largest float.
-    "base-60-float": "sandbox: { cpus: 1" + ":0" * 200 + ".5 }\n",
-}
-
-
-@pytest.mark.parametrize("case", NO_VALUE_TEXTS)
-def test_a_text_with_no_value_is_refused(case: str) -> None:
-    family, issues = parse_family(_HEAD + NO_VALUE_TEXTS[case])
+def test_unparsable_toml_is_refused() -> None:
+    family, issues = parse_family('name = ["unclosed"\n', Markup.TOML)
     assert family is None
     assert [issue.loc for issue in issues] == ["<document>"]
-    assert "YAML will not parse" in issues[0].msg
-
-
-def test_a_text_that_nests_too_deep_is_refused() -> None:
-    family, issues = parse_family(_HEAD + "skills: " + "[" * 10_000 + "]" * 10_000 + "\n")
-    assert family is None
-    assert [issue.msg for issue in issues] == ["YAML will not parse: the text nests too deep"]
-
-
-def test_an_anchor_that_holds_itself_is_read_to_its_end() -> None:
-    family, issues = parse_family(_HEAD + "skills: &again [*again]\n")
-    assert family is None
-    assert [issue.loc for issue in issues] == ["skills[0]"]
+    assert "not TOML 1.0" in issues[0].msg
 
 
 def test_one_file_with_no_value_does_not_stop_the_registry_read(tmp_path: Path) -> None:
@@ -1001,10 +935,12 @@ def test_one_file_with_no_value_does_not_stop_the_registry_read(tmp_path: Path) 
     shutil.copytree(FIXTURES, registry_copy)
     broken = registry_copy / "families" / "no-value"
     broken.mkdir()
-    (broken / "family.yaml").write_text(_HEAD + NO_VALUE_TEXTS["decimal-integer"], encoding="utf-8")
+    (broken / "family.toml").write_text(
+        _HEAD + "max_inflight_delegations = " + "9" * 5000 + "\n", encoding="utf-8"
+    )
 
     loaded = load_registry(registry_copy, host())
-    assert "YAML will not parse" in messages(loaded.reports["no-value"])
+    assert "not TOML 1.0" in messages(loaded.reports["no-value"])
     assert not loaded.reports["no-value"].ok
     assert "no-value" not in loaded.families
     assert loaded.reports["chat"].ok

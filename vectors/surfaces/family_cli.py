@@ -56,24 +56,24 @@ NOTES: Final = (
 #: A family file that breaks rules, with a character outside ASCII and a
 #: control character in a message.
 BROKEN_FAMILY: Final = """\
-name: broken-family
-kind: thin
-description: One written input.
-model: { router: "caf\\u00e9 \\"x\\"\\t\\\\", budget_usd_per_day: 1000 }
-delegates: [no-such-family]
+name = "broken-family"
+kind = "thin"
+description = "One written input."
+model = { router = "caf\\u00e9 \\"x\\"\\t\\\\", budget_usd_per_day = 1000 }
+delegates = ["no-such-family"]
 """
 
 #: A server file that breaks rules.
 BROKEN_SERVER: Final = """\
-name: another-name
-identity: One written server.
-install: { source: docker }
-run: { entrypoint: example-mcp }
+name = "another-name"
+identity = "One written server."
+install = { source = "docker" }
+run = { entrypoint = "example-mcp" }
 """
 
 BROKEN_FILES: Final = {
-    "families/broken-family/family.yaml": BROKEN_FAMILY,
-    "mcp/broken-server/server.yaml": BROKEN_SERVER,
+    "families/broken-family/family.toml": BROKEN_FAMILY,
+    "mcp/broken-server/server.toml": BROKEN_SERVER,
     "families/no-file/notes.txt": "A directory with no family file.\n",
 }
 
@@ -81,27 +81,27 @@ BROKEN_FILES: Final = {
 #: Files with each line end that is not one line feed. The revision of a
 #: registry reads each such line end as one line feed.
 LINE_END_FILES: Final = {
-    "families/line-ends/family.yaml": (
-        "name: line-ends\r\nkind: thin\r\ndescription: One written input.\r\n"
-        "model: { router: fast, budget_usd_per_day: 1 }\r\n"
+    "families/line-ends/family.toml": (
+        'name = "line-ends"\r\nkind = "thin"\r\ndescription = "One written input."\r\n'
+        'model = { router = "fast", budget_usd_per_day = 1 }\r\n'
     ),
     "skills/line-ends/SKILL.md": "one\rtwo\r\nthree\n",
 }
 
 #: A server file in a directory with the name of a family.
 SAME_NAME_FILES: Final = {
-    "mcp/chat/server.yaml": (
-        "name: chat\nidentity: One written server.\n"
-        "install: { source: docker }\nrun: { entrypoint: example-mcp }\n"
+    "mcp/chat/server.toml": (
+        'name = "chat"\nidentity = "One written server."\n'
+        'install = { source = "docker" }\nrun = { entrypoint = "example-mcp" }\n'
     ),
 }
 
 #: A skill directory with no skill file, and a family that names the skill.
 NO_SKILL_FILES: Final = {
     "skills/no-file-skill/notes.txt": "A skill directory with no skill file.\n",
-    "families/names-skill/family.yaml": (
-        "name: names-skill\nkind: thin\ndescription: One written input.\n"
-        "model: { router: fast, budget_usd_per_day: 1 }\nskills: [no-file-skill]\n"
+    "families/names-skill/family.toml": (
+        'name = "names-skill"\nkind = "thin"\ndescription = "One written input."\n'
+        'model = { router = "fast", budget_usd_per_day = 1 }\nskills = ["no-file-skill"]\n'
     ),
 }
 
@@ -146,7 +146,7 @@ CASES: Final[tuple[Case, ...]] = (
     # --- a path that is no directory ---
     Case("path-missing", ("validate", "no-such-directory")),
     Case("path-missing-json", ("validate", "./no-such//directory/", "--json")),
-    Case("path-is-a-file", ("validate", f"{COPY}/families/chat/family.yaml")),
+    Case("path-is-a-file", ("validate", f"{COPY}/families/chat/family.toml")),
     # --- a registry with errors ---
     Case("broken-text", ("validate", COPY), files=BROKEN_FILES),
     Case("broken-json", ("validate", COPY, "--json"), files=BROKEN_FILES),

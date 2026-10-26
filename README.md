@@ -28,9 +28,9 @@ interrupted change leaves a sandbox with less reach, never with more.
 ## 2. One file defines a family
 
 ```
-<registry>/families/<name>/family.yaml      the one file
+<registry>/families/<name>/family.toml      the one file
 <registry>/families/<name>/instructions.md  prose for the model
-<registry>/mcp/<name>/server.yaml           one MCP server
+<registry>/mcp/<name>/server.toml           one MCP server
 ```
 
 A family file is the only unit of permission. It names the models and the
@@ -56,7 +56,7 @@ turn. The `attendance` service takes that call from four doors.
 | `noticeboard/` | `noticeboard` | `creche-noticeboard.service`, user | The one view: every family, sandbox, session and audit line. | [noticeboard/AGENTS.md](noticeboard/AGENTS.md) |
 | `playpen/` | `playpen` | none, an OCI image | The process inside each sandbox, the pi bridge and the terminal launcher. | [playpen/AGENTS.md](playpen/AGENTS.md) |
 | `handover/` | `handover` | `creche-handover.{path,service}`, system, root. `creche-follow.{service,timer}`, user | The release tool: resolver, tag allocator, executor, requester, follower, secret intake. | [handover/AGENTS.md](handover/AGENTS.md) |
-| `family/` | in `caregiver` | none, a library | The `family.yaml` and `server.yaml` schemas, the validator, the registry loader. | [family/AGENTS.md](family/AGENTS.md) |
+| `family/` | in `caregiver` | none, a library | The `family.toml` and `server.toml` schemas, the validator, the registry loader. | [family/AGENTS.md](family/AGENTS.md) |
 | `library/` | none | `index@.timer`, user | The retrieval index builder. Not an agent. | [library/AGENTS.md](library/AGENTS.md) |
 | `toybox/` | none | none | The one pi version pin. | [toybox/AGENTS.md](toybox/AGENTS.md) |
 
