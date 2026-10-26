@@ -235,6 +235,11 @@ class PolicyFile:
             _check_name(app_id, _SLUG, "an app ID")
 
 
+def is_app_id(text: str) -> bool:
+    """Whether `text` matches the grammar of an app ID."""
+    return _SLUG.fullmatch(text) is not None
+
+
 def _check_name(text: str, grammar: re.Pattern[str], what: str) -> None:
     if grammar.fullmatch(text) is None:
         raise PolicyShapeError(f"{what} must match {grammar.pattern}")
