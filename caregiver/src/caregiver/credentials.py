@@ -12,7 +12,7 @@ import hashlib
 import json
 import re
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Final
 
@@ -104,7 +104,11 @@ def read_creds(path: Path) -> Credentials | None:
     caller to report, not a crash (invariant 19's spirit applied here).
 
     A `pep_token` that `is_token` refuses also reads as `None`. The Rust
-    chaperone accepts no such token, so the next pass mints a new one."""
+    chaperone accepts no such token, so the next pass mints a new one.
+
+    A `previous_pep_token` that `is_token` refuses reads as no overlap. The
+    current token stays, and the grant file lists no digest for the
+    previous one."""
     fields = read_json(path)
     if fields is None:
         return None
@@ -129,7 +133,13 @@ def read_creds(path: Path) -> Credentials | None:
         # RecursionError is `str` of a value that nests too deep.
         return None
 
-    return creds if is_token(creds.pep_token) else None
+    if not is_token(creds.pep_token):
+        return None
+
+    if creds.previous_pep_token is not None and not is_token(creds.previous_pep_token):
+        return replace(creds, previous_pep_token=None, previous_expires_at=None)
+
+    return creds
 
 
 def _optional(value: Any) -> str | None:

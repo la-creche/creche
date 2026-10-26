@@ -9,6 +9,7 @@ from pathlib import Path
 
 import caregiver.credentials as credentials_module
 import pytest
+from agent_family import Index
 from caregiver.credentials import (
     TOKEN_BYTES,
     Credentials,
@@ -18,8 +19,15 @@ from caregiver.credentials import (
     write_creds,
 )
 from caregiver.litellm_keys import FakeLiteLLMKeys
-from caregiver.steps import ensure_credentials
-from caregiver_helpers import DEEPER_THAN_STR, OLD_TOKEN, UNREADABLE_JSON, NoText, chat_family
+from caregiver.steps import check_grants, ensure_credentials, write_grants
+from caregiver_helpers import (
+    DEEPER_THAN_STR,
+    OLD_TOKEN,
+    UNREADABLE_JSON,
+    NoText,
+    accepted_digests,
+    chat_family,
+)
 
 from caregiver import paths
 
@@ -66,6 +74,61 @@ def test_a_pass_mints_a_new_token_over_one_of_the_old_form(tmp_path: Path) -> No
     assert creds.pep_token != BASE32_TOKEN
     assert len(creds.pep_token) == 2 * TOKEN_BYTES
     assert read_creds(path) == creds
+
+
+#: A token of the form of `mint_token` that is not `OLD_TOKEN`.
+NEW_TOKEN = "fedcba9876543210" * 4
+
+#: After any clock this suite runs under.
+FAR_FUTURE = "2999-01-01T00:00:00Z"
+
+
+def _with_previous(path: Path, previous: str) -> None:
+    """A `creds.json` with a current token of the right form and an overlap
+    that has not expired."""
+    write_creds(
+        path,
+        Credentials(4, "sk-x", NEW_TOKEN, "2026-09-19T00:00:00Z", previous, FAR_FUTURE),
+    )
+
+
+@pytest.mark.parametrize("previous", ["\u00e9", BASE32_TOKEN, OLD_TOKEN.upper()])
+def test_a_previous_token_of_another_form_reads_as_no_overlap(
+    tmp_path: Path, previous: str
+) -> None:
+    path = tmp_path / "creds.json"
+    _with_previous(path, previous)
+
+    creds = read_creds(path)
+
+    assert creds == Credentials(4, "sk-x", NEW_TOKEN, "2026-09-19T00:00:00Z")
+
+
+@pytest.mark.parametrize("previous", ["\u00e9", BASE32_TOKEN])
+def test_the_grant_pass_lists_no_digest_for_a_previous_token_of_another_form(
+    tmp_path: Path, previous: str
+) -> None:
+    family = chat_family()
+    no_servers = Index(kinds={}, servers={}, skills=frozenset())
+    _with_previous(paths.creds_path(tmp_path, family.name), previous)
+    creds = read_creds(paths.creds_path(tmp_path, family.name))
+    assert creds is not None
+
+    check_grants(family, no_servers, tmp_path)
+    write_grants(family, no_servers, tmp_path, creds)
+
+    assert accepted_digests(tmp_path) == [token_sha256(NEW_TOKEN)]
+
+
+def test_a_previous_token_of_the_right_form_stays(tmp_path: Path) -> None:
+    path = tmp_path / "creds.json"
+    _with_previous(path, OLD_TOKEN)
+
+    creds = read_creds(path)
+
+    assert creds is not None
+    assert creds.previous_pep_token == OLD_TOKEN
+    assert creds.previous_expires_at == FAR_FUTURE
 
 
 def test_mint_token_is_not_reused() -> None:

@@ -657,6 +657,16 @@ CREDS_DOCUMENTS: Final[tuple[CredsDocument, ...]] = (
     _creds("previous-number", previous_pep_token="7", previous_expires_at="7"),
     _creds("previous-list", previous_pep_token='["old"]', previous_expires_at="[]"),
     _creds("previous-true", previous_pep_token="true", previous_expires_at="false"),
+    _creds(
+        "previous-token-not-ascii",
+        previous_pep_token='"\\u00e9"',
+        previous_expires_at=f'"{_LATER}"',
+    ),
+    _creds(
+        "previous-token-base32",
+        previous_pep_token=f'"{_BASE32_TOKEN}"',
+        previous_expires_at=f'"{_LATER}"',
+    ),
 )
 
 #: The document that the writer writes, read back by the reader.
