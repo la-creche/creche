@@ -120,24 +120,20 @@ AS_TEST_USER: Final = partial(
 
 #: The one file the operator writes (§4.1 step 1), and the lock the same pull
 #: request reviewed beside it (contract 01b §3.4).
-SERVER_YAML: Final = f"""
-name: {SERVER}
-identity: "The fleet's Kagi API key. Search and page extraction, no account writes."
-install:
-  source: pypi
-  package: kagimcp
-  version: 1.0.2
-  lock: mcp/{SERVER}/install.lock
-  python: "3.12"
-run:
-  entrypoint: kagimcp
-  env:
-    STUB_SECRET: secret:{SECRET}
-tools:
-  - name: {TOOL}
-    description: Echo the text back, prefixed with the credential.
-  - name: sleep
-    description: Wait, so a test can hold a call in flight.
+SERVER_TOML: Final = f"""
+name = "{SERVER}"
+identity = "The fleet's Kagi API key. Search and page extraction, no account writes."
+install.source = "pypi"
+install.package = "kagimcp"
+install.version = "1.0.2"
+install.lock = "mcp/{SERVER}/install.lock"
+install.python = "3.12"
+run.entrypoint = "kagimcp"
+run.env.STUB_SECRET = "secret:{SECRET}"
+tools = [
+    {{ name = "{TOOL}", description = "Echo the text back, prefixed with the credential." }},
+    {{ name = "sleep", description = "Wait, so a test can hold a call in flight." }},
+]
 """
 
 #: `mcp-servers` as contract 06 §1 row 6 has it: one venv, no unit, so
@@ -285,15 +281,12 @@ def _teach(run: FakeRun, mcp: McpFake, components: Path, manifest: str) -> None:
 def _write_family(registry: Path) -> None:
     """One family, so `load_registry` has something beside the server."""
     directory = _made(registry / "families" / "chat")
-    (directory / "family.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "name": "chat",
-                "kind": "attended",
-                "description": "Test family.",
-                "model": {"router": "agent-router", "budget_usd_per_day": 15},
-            }
-        ),
+    (directory / "family.toml").write_text(
+        'name = "chat"\n'
+        'kind = "attended"\n'
+        'description = "Test family."\n'
+        'model.router = "agent-router"\n'
+        "model.budget_usd_per_day = 15\n",
         encoding="utf-8",
     )
     (directory / "instructions.md").write_text("Be helpful.\n", encoding="utf-8")
@@ -301,7 +294,7 @@ def _write_family(registry: Path) -> None:
 
 def _write_server(registry: Path) -> Path:
     directory = _made(registry / "mcp" / SERVER)
-    (directory / "server.yaml").write_text(SERVER_YAML, encoding="utf-8")
+    (directory / "server.toml").write_text(SERVER_TOML, encoding="utf-8")
     (directory / "install.lock").write_text(LOCK_TEXT, encoding="utf-8")
 
     return directory

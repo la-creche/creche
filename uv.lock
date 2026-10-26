@@ -152,14 +152,10 @@ version = "0.1.0"
 source = { editable = "family" }
 dependencies = [
     { name = "pydantic" },
-    { name = "pyyaml" },
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "pydantic", specifier = ">=2.8" },
-    { name = "pyyaml", specifier = ">=6" },
-]
+requires-dist = [{ name = "pydantic", specifier = ">=2.8" }]
 
 [[package]]
 name = "annotated-doc"

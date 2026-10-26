@@ -178,5 +178,5 @@ def check_server_rules(fixture: str, **changes: Any) -> Report:
     single-file rules need no registry context)."""
     server = edited_server(fixture, **changes)
     issues = Issues()
-    check_server(server, fixture, issues, Markup.TOML)
+    check_server(server, fixture, issues)
     return Report(server.name, f"mcp/{fixture}/server.toml", issues.frozen())

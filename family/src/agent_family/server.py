@@ -1,4 +1,4 @@
-"""The server file schema, `mcp/<name>/server.toml` or `server.yaml` (contract 01b).
+"""The server file schema, `mcp/<name>/server.toml` (contract 01b).
 
 One file declares one MCP server (invariant 18). Shape only, for the same
 reason as `model.py`: the value rules live in `serverrules.py`."""

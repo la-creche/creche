@@ -1,4 +1,4 @@
-"""`family.yaml` schema v1 (contract 01 §2, §3).
+"""`family.toml` schema v1 (contract 01 §2, §3).
 
 These models fix the SHAPE only: which fields exist, their types, and that an
 unknown field is a refusal. Every value rule — patterns, ranges, fences,
@@ -35,11 +35,8 @@ class Strict(BaseModel):
     """Unknown field = refusal, everywhere (contract 01 §7 rule 1)."""
 
     # CONTRACT-QUESTION: contract 01 §2 and contract 01b give a type for each
-    # field and do not say how strict the read of a type is. A YAML text is
-    # read in the lax mode of pydantic: `"2"` is the integer 2, `"yes"` is
-    # true and `true` is the number 1. Root refuses such a value in a server
-    # file. The strict mode refuses a YAML file that passes today. A TOML
-    # text is read in the strict mode (`parse.py`): each field takes only the
+    # field and do not say how strict the read of a type is. A text is read
+    # in the strict mode of pydantic (`parse.py`): each field takes only the
     # type of the model, and a float field also takes an integer.
     model_config = ConfigDict(extra="forbid", frozen=True)
 

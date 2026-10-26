@@ -1,7 +1,7 @@
 """The save of a TOML family file, and the name of the file of a family.
 
-A save writes a family as `family.toml`. A directory that also holds a
-`family.yaml` refuses the save.
+A save writes a family as `family.toml`. The registry reads no
+`family.yaml`, so such a file beside it changes nothing.
 """
 
 from __future__ import annotations
@@ -97,28 +97,27 @@ def test_a_new_family_in_a_registry_with_no_families_directory_is_family_toml(
     assert family_path(root, "chat") == toml_file(root)
 
 
-def test_a_directory_with_both_names_refuses_the_save(tmp_path: Path) -> None:
-    """The registry reads no family from such a directory, so the save that
-    the validator judges is refused."""
+def test_a_family_yaml_beside_the_family_does_not_stop_the_save(tmp_path: Path) -> None:
+    """The registry reads no `family.yaml`. The save writes `family.toml` and
+    leaves the other file as it is."""
     root = make_registry(tmp_path)
     yaml_file = root / "families" / "chat" / "family.yaml"
     yaml_file.write_text("name: chat\n", encoding="utf-8")
+    git(root, "add", "-A")
+    git(root, "commit", "-q", "-m", "a stray file")
     before = commit_count(root)
 
     result = save_family(root, "chat", GOOD, "widen the description")
 
-    assert not result.ok
-    assert any("two family files" in one.msg for one in result.errors)
-    assert commit_count(root) == before
-    assert toml_file(root).read_text(encoding="utf-8") == CHAT_FAMILY_TOML
+    assert result.ok, result.problem
+    assert commit_count(root) == before + 1
+    assert toml_file(root).read_text(encoding="utf-8") == GOOD
     assert yaml_file.read_text(encoding="utf-8") == "name: chat\n"
 
 
-def test_the_path_of_a_directory_with_both_names_is_the_file_of_the_report(
-    tmp_path: Path,
-) -> None:
-    """The registry names the TOML file in the report of such a directory.
-    The save names the same file."""
+def test_the_path_of_a_family_is_the_file_of_the_report(tmp_path: Path) -> None:
+    """The registry names the TOML file in the report of a family. The save
+    names the same file."""
     root = make_registry(tmp_path)
     (root / "families" / "chat" / "family.yaml").write_text("name: chat\n", encoding="utf-8")
 

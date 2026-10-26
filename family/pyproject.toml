@@ -1,9 +1,9 @@
 [project]
 name = "agent-family"
 version = "0.1.0"
-description = "family.yaml schema v1, validation report and registry loader (docs/rework/contracts/01, 01b)."
+description = "family.toml schema v1, validation report and registry loader (docs/rework/contracts/01, 01b)."
 requires-python = ">=3.12"
-dependencies = ["pydantic>=2.8", "pyyaml>=6"]
+dependencies = ["pydantic>=2.8"]
 
 [project.scripts]
 agent-family = "agent_family.cli:main"

@@ -1,5 +1,5 @@
-"""`family.yaml` and `family.toml` (contract 01): the bytes of one file to
-its validation report.
+"""`family.toml` (contract 01): the bytes of one file to its validation
+report.
 
 The entry point is `agent_family.load_registry`, the one `caregiver` calls.
 A family file is validated against the rest of a registry, so every vector
@@ -7,10 +7,11 @@ names the registry it sits in and its directory under `families/`. The
 generator copies that registry to a temporary directory, writes the input
 there and reads the report of that one family back.
 
-Three surfaces. `family_file` has no host: the two checks that need one
+Two surfaces. `family_file.toml` has no host: the two checks that need one
 downgrade to a warning. `family_file.host` has a written host. Each input of
-the two is a YAML text. `family_file.toml` has no host, and each input is a
-TOML text in a copy of `TOML_REGISTRY`.
+the two is a TOML text in a copy of `TOML_REGISTRY`. The surface
+`family_file` held YAML texts. Its file is frozen, because the YAML reader
+left this repository.
 """
 
 from __future__ import annotations
@@ -25,7 +26,6 @@ from typing import Final
 
 from agent_family import Registry, load_registry
 from agent_family.registry import FAMILY_FILE as TOML_FILE
-from agent_family.registry import FAMILY_FILE_YAML
 from agent_family.validate import HostFacts
 
 from vectors.core import (
@@ -42,12 +42,12 @@ from vectors.core import (
     raised,
     refused,
 )
-from vectors.surfaces.family_cases import CASES, PLACEHOLDER, Case
 from vectors.surfaces.family_toml_cases import CASES as TOML_CASES
+from vectors.surfaces.family_toml_cases import PLACEHOLDER, Case
 
 REPO_ROOT: Final = Path(__file__).resolve().parents[2]
 
-#: The registry every written case is filed in. Public test data of `family`.
+#: The fixture registry of the package `family`. Public test data.
 FAMILY_REGISTRY: Final = "family/tests/fixtures/registry"
 
 #: The registries of the process-level suite.
@@ -58,12 +58,13 @@ INTEGRATION_REGISTRIES: Final = (
     "integration/fixtures/stage5-registry",
 )
 
-#: Every registry in this repository whose family files are inputs as they are.
+#: Every registry in this repository that `family_file.registries.json` holds,
+#: beside `TOML_REGISTRY`. The frozen file `family_file.json` names them too.
 FIXTURE_REGISTRIES: Final = (FAMILY_REGISTRY, *INTEGRATION_REGISTRIES)
 
-#: The registry every written TOML case is filed in: a copy of
-#: `FAMILY_REGISTRY` with each family file as `family.toml`. A path under
-#: `vectors/` belongs to no component, so a change here mints no tag.
+#: The registry every written case is filed in: a copy of `FAMILY_REGISTRY`.
+#: A path under `vectors/` belongs to no component, so a change here mints
+#: no tag.
 TOML_REGISTRY: Final = "vectors/fixtures/registry-toml"
 
 #: Every registry in this repository whose `family.toml` files are inputs as
@@ -71,7 +72,6 @@ TOML_REGISTRY: Final = "vectors/fixtures/registry-toml"
 TOML_REGISTRIES: Final = (TOML_REGISTRY, *INTEGRATION_REGISTRIES)
 
 FAMILIES_DIR: Final = "families"
-FAMILY_FILE: Final = FAMILY_FILE_YAML
 
 CONTRACT: Final = "contract 01"
 ENTRY: Final = "agent_family.load_registry"
@@ -100,7 +100,7 @@ def _notes(file: str) -> tuple[str, ...]:
     )
 
 
-NOTES: Final = _notes(FAMILY_FILE)
+NOTES: Final = _notes(TOML_FILE)
 
 #: The host of the `family_file.host` surface: the aliases LiteLLM serves,
 #: and one symbolic link out of an allowed root.
@@ -185,9 +185,8 @@ def _staged(registry: str, case: Case, scratch: Path, file: str) -> Generator[Pa
         root = scratch / case.id
         copy_registry(REPO_ROOT / registry, root)
         # A case that takes the directory of a family replaces the family
-        # file of the registry, of either name. A file of the case comes after.
-        for name in (FAMILY_FILE_YAML, TOML_FILE):
-            (root / FAMILIES_DIR / case.directory_name() / name).unlink(missing_ok=True)
+        # file of the registry. A file of the case comes after.
+        (root / FAMILIES_DIR / case.directory_name() / TOML_FILE).unlink(missing_ok=True)
 
         for path, text in case.files.items():
             target = root / path
@@ -227,7 +226,7 @@ def _outcome(case: Case, loaded: Registry, given: dict[str, Json], params: Json)
 
 
 def _vector(
-    registry: str, case: Case, scratch: Path, host: HostFacts | None, file: str = FAMILY_FILE
+    registry: str, case: Case, scratch: Path, host: HostFacts | None, file: str = TOML_FILE
 ) -> Vector:
     given = bytes_input(case.text_bytes())
     params = _params(registry, case)
@@ -240,9 +239,7 @@ def _vector(
     return _outcome(case, loaded, given, params)
 
 
-def _fixture_vectors(
-    registry: str, host: HostFacts | None, file: str = FAMILY_FILE
-) -> list[Vector]:
+def _fixture_vectors(registry: str, host: HostFacts | None, file: str = TOML_FILE) -> list[Vector]:
     """Every family file named `file` of one registry of this repository, as
     it is.
 
@@ -259,8 +256,7 @@ def _fixture_vectors(
 
 def _fixture_cases(registry: str, file: str) -> tuple[Case, ...]:
     """Every family file named `file` that a registry of this repository
-    holds, as it is. The TOML copy of a registry gives the ids of the YAML
-    registry: `TOML_REGISTRY` gives `fixture-registry-<name>`."""
+    holds, as it is. `TOML_REGISTRY` gives the ids `fixture-registry-<name>`."""
     base = REPO_ROOT / registry / FAMILIES_DIR
     names = sorted(path.name for path in base.iterdir() if (path / file).is_file())
     label = Path(registry).name.removesuffix("-toml").removesuffix("-registry")
@@ -270,28 +266,28 @@ def _fixture_cases(registry: str, file: str) -> tuple[Case, ...]:
     )
 
 
+#: The head of each host case: a thin family with no router.
+_HOST_HEAD: Final = b'name = "%NAME%"\nkind = "thin"\ndescription = "One written input."\n'
+
 HOST_CASES: Final = (
     Case(
         "host-alias-unknown",
-        b"name: %NAME%\nkind: thin\ndescription: One written input.\n"
-        b"model: { router: no-such-alias, budget_usd_per_day: 1 }\n",
+        _HOST_HEAD + b'model = { router = "no-such-alias", budget_usd_per_day = 1 }\n',
     ),
     Case(
         "host-links",
-        b"name: %NAME%\nkind: thin\ndescription: One written input.\n"
-        b"model: { router: fast, budget_usd_per_day: 1 }\n"
-        b"files:\n"
-        b"  - { path: /srv/agents/vault/linked-out, mode: ro }\n"
-        b"  - { path: /srv/agents/vault/linked-in, mode: ro }\n"
-        b"  - { path: /srv/agents/vault/linked-platform, mode: ro }\n"
-        b"  - { path: /srv/agents/vault/plain, mode: ro }\n",
+        _HOST_HEAD + b'model = { router = "fast", budget_usd_per_day = 1 }\n'
+        b"files = [\n"
+        b'    { path = "/srv/agents/vault/linked-out", mode = "ro" },\n'
+        b'    { path = "/srv/agents/vault/linked-in", mode = "ro" },\n'
+        b'    { path = "/srv/agents/vault/linked-platform", mode = "ro" },\n'
+        b'    { path = "/srv/agents/vault/plain", mode = "ro" },\n'
+        b"]\n",
     ),
     Case(
         "host-link-session-store",
-        b"name: %NAME%\nkind: thin\ndescription: One written input.\n"
-        b"model: { router: fast, budget_usd_per_day: 1 }\n"
-        b"files:\n"
-        b"  - { path: /srv/agents/sessions/linked-store, mode: ro }\n",
+        _HOST_HEAD + b'model = { router = "fast", budget_usd_per_day = 1 }\n'
+        b'files = [{ path = "/srv/agents/sessions/linked-store", mode = "ro" }]\n',
     ),
 )
 
@@ -318,16 +314,9 @@ def surfaces() -> tuple[Surface, ...]:
     host = WrittenHost(frozenset(HOST_ALIASES), dict(HOST_LINKS))
     with tempfile.TemporaryDirectory(prefix="vectors-family-") as scratch_name:
         scratch = Path(scratch_name)
-        plain: list[Vector] = []
-        for registry in FIXTURE_REGISTRIES:
-            plain.extend(_fixture_vectors(registry, None))
-
-        for case in CASES:
-            plain.append(_vector(FAMILY_REGISTRY, case, scratch / "written", None))
-
-        hosted = _fixture_vectors(FAMILY_REGISTRY, host)
+        hosted = _fixture_vectors(TOML_REGISTRY, host)
         for case in HOST_CASES:
-            hosted.append(_vector(FAMILY_REGISTRY, case, scratch / "host", host))
+            hosted.append(_vector(TOML_REGISTRY, case, scratch / "host", host))
 
         toml: list[Vector] = []
         for registry in TOML_REGISTRIES:
@@ -339,14 +328,6 @@ def surfaces() -> tuple[Surface, ...]:
     host_context = normalize({"model_aliases": sorted(HOST_ALIASES), "links": HOST_LINKS})
 
     return (
-        Surface(
-            name="family_file",
-            path="family_file.json",
-            entry=ENTRY,
-            contract=CONTRACT,
-            notes=(*NOTES, "No host: the checks that need one are warnings with downgraded true."),
-            vectors=tuple(plain),
-        ),
         Surface(
             name="family_file.host",
             path="family_file.host.json",

@@ -1,14 +1,14 @@
-"""`server.yaml` and `server.toml` (contract 01b): the bytes of one file to its
-validation report.
+"""`server.toml` (contract 01b): the bytes of one file to its validation
+report.
 
 The entry point is `agent_family.load_registry`, as for `family_file`. It
 calls `parse_server` and `check_server` for each directory under `mcp/`. The
 generator copies a registry to a temporary directory, writes the input there
 and reads the report of that one server back.
 
-Two surfaces. Each input of `server_file` is a YAML text in a copy of
-`FAMILY_REGISTRY`. Each input of `server_file.toml` is a TOML text in a copy
-of `TOML_REGISTRY`.
+One surface, `server_file.toml`. Each input is a TOML text in a copy of
+`TOML_REGISTRY`. The surface `server_file` held the YAML texts. Its file is
+frozen, because the YAML reader left this repository.
 """
 
 from __future__ import annotations
@@ -20,7 +20,6 @@ from typing import Final
 
 from agent_family import Registry, load_registry
 from agent_family.registry import SERVER_FILE as TOML_FILE
-from agent_family.registry import SERVER_FILE_YAML
 
 from vectors.core import (
     Json,
@@ -33,20 +32,16 @@ from vectors.core import (
     raised,
     refused,
 )
-from vectors.surfaces.family_cases import PLACEHOLDER, Case
 from vectors.surfaces.family_file import (
-    FAMILY_REGISTRY,
-    FIXTURE_REGISTRIES,
     REPO_ROOT,
     TOML_REGISTRIES,
     TOML_REGISTRY,
     copy_registry,
 )
-from vectors.surfaces.server_cases import CASES
+from vectors.surfaces.family_toml_cases import PLACEHOLDER, Case
 from vectors.surfaces.server_toml_cases import CASES as TOML_CASES
 
 MCP_DIR: Final = "mcp"
-SERVER_FILE: Final = SERVER_FILE_YAML
 
 CONTRACT: Final = "contract 01b"
 ENTRY: Final = "agent_family.load_registry"
@@ -120,7 +115,7 @@ def _staged(registry: str, case: Case, scratch: Path) -> Path:
     return root
 
 
-def _vector(registry: str, case: Case, scratch: Path, file: str = SERVER_FILE) -> Vector:
+def _vector(registry: str, case: Case, scratch: Path, file: str = TOML_FILE) -> Vector:
     """One written case: a directory in a copy of the registry, and away
     again."""
     directory = _staged(registry, case, scratch) / MCP_DIR / case.directory_name()
@@ -141,10 +136,9 @@ def _vector(registry: str, case: Case, scratch: Path, file: str = SERVER_FILE) -
     return _outcome(case, loaded, registry)
 
 
-def _fixture_vectors(registry: str, file: str = SERVER_FILE) -> list[Vector]:
+def _fixture_vectors(registry: str, file: str = TOML_FILE) -> list[Vector]:
     """Every server file named `file` of one registry of this repository, as
-    it is. The TOML copy of a registry gives the ids of the YAML registry:
-    `TOML_REGISTRY` gives `fixture-registry-<name>`."""
+    it is. `TOML_REGISTRY` gives the ids `fixture-registry-<name>`."""
     base = REPO_ROOT / registry / MCP_DIR
     if not base.is_dir():
         return []
@@ -174,27 +168,14 @@ def _written(registry: str, cases: tuple[Case, ...], scratch: Path, file: str) -
 
 
 def surfaces() -> tuple[Surface, ...]:
-    vectors: list[Vector] = []
-    for registry in FIXTURE_REGISTRIES:
-        vectors.extend(_fixture_vectors(registry))
-
     toml: list[Vector] = []
     for registry in TOML_REGISTRIES:
         toml.extend(_fixture_vectors(registry, TOML_FILE))
 
     with tempfile.TemporaryDirectory(prefix="vectors-server-") as scratch:
-        vectors.extend(_written(FAMILY_REGISTRY, CASES, Path(scratch) / "yaml", SERVER_FILE))
         toml.extend(_written(TOML_REGISTRY, TOML_CASES, Path(scratch) / "toml", TOML_FILE))
 
     return (
-        Surface(
-            name="server_file",
-            path="server_file.json",
-            entry=ENTRY,
-            contract=CONTRACT,
-            notes=_notes(SERVER_FILE),
-            vectors=tuple(vectors),
-        ),
         Surface(
             name="server_file.toml",
             path="server_file.toml.json",

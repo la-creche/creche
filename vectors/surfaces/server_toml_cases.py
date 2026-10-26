@@ -1,15 +1,15 @@
-"""Written `server.toml` inputs: one TOML twin of each rule case, the cases of
-the TOML reader and the cases of the grammar of the TOML path.
+"""Written `server.toml` inputs: one case of each rule, the cases of the TOML
+reader and the cases of the grammar of root.
 
-A twin has the id of its case in `server_cases.py` and holds the same values.
-The TOML path reads each field in the strict mode, so a twin of a `lax-` case
-holds the text or the float of its case, and the reader refuses it. The TOML
-path also applies the grammar of root, so a twin can get another result than
-its case. A case of `server_cases.py` that needs a form of YAML has no twin:
-a null, a key that is no text, a second document, a top value that is no
-mapping, a text that is no YAML and a merge key. The cases with no twin are
-`wrong-type-env`, `doc-two`, `doc-top-list`, `doc-bad-yaml` and the four
-`yaml-merge-` cases.
+A case that has the id of a vector of the frozen file `server_file.json` is
+the twin of that YAML input and holds the same values. The reader reads each
+field in the strict mode, so a twin of a `lax-` input holds the text or the
+float of its input, and the reader refuses it. The validator also applies
+the grammar of root, so a twin can get another result than its input. A
+YAML input that needs a form of YAML has no twin: a null, a key that is no
+text, a second document, a top value that is no mapping, a text that is no
+YAML and a merge key. The inputs with no twin are `wrong-type-env`,
+`doc-two`, `doc-top-list`, `doc-bad-yaml` and the four `yaml-merge-` inputs.
 
 The cases with an id that starts with `toml-` are the cases of the TOML
 reader and of the TOML path: the refusals of the reader, the size limit, the
@@ -25,8 +25,10 @@ from __future__ import annotations
 
 from typing import Final
 
-from vectors.surfaces.family_cases import PLACEHOLDER, Case
-from vectors.surfaces.server_cases import DIGEST
+from vectors.surfaces.family_toml_cases import PLACEHOLDER, Case
+
+#: A 64-character lowercase hexadecimal digest.
+DIGEST: Final = "0123456789abcdef" * 4
 
 #: The most bytes of a server file. The case at the limit and the case one
 #: byte past it hold this number as text, so a changed limit moves a vector.
@@ -74,8 +76,8 @@ def _replaced(text: str, old: str, new: str) -> str:
     return text.replace(old, new)
 
 
-# An `agent-mcp` server every rule accepts, in the layout of
-# `bin/yaml-to-toml.py`. A case appends to it.
+# An `agent-mcp` server every rule accepts, in the layout of a converted
+# registry file. A case appends to it.
 HEAD: Final = """\
 name = "%NAME%"
 identity = "One written server."
@@ -443,8 +445,8 @@ arg_denies = [
 )
 
 
-#: The text of a YAML server file, for the case of two names in one
-#: directory.
+#: The text of a YAML server file, for the case of a `server.yaml` beside a
+#: `server.toml`. The registry reads no `server.yaml`.
 YAML_SERVER: Final = """\
 name: toml-two-names
 identity: One written server.
@@ -649,8 +651,8 @@ shared_secrets = [
     ),
 )
 
-#: One case for each rule of the grammar of root that the TOML path applies
-#: and the YAML path does not. A cap has a case at its limit and one past it.
+#: One case for each rule of the grammar of root that contract 01b does not
+#: give. A cap has a case at its limit and one past it.
 GRAMMAR_CASES: Final[tuple[Case, ...]] = (
     # --- the count of the characters of an identity and of a description -----
     _case("toml-identity-count-at-limit", _identity(_quoted("x " * (IDENTITY_MAX // 2)))),

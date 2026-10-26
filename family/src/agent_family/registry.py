@@ -12,28 +12,20 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from . import tomlfile
+from . import grammar, tomlfile
 from .model import FamilyFile
-from .parse import (
-    Markup,
-    parse_family,
-    parse_family_toml,
-    parse_server,
-    parse_server_toml,
-)
+from .parse import parse_family_toml, parse_server_toml
 from .report import FamilyState, Issue, Issues, Report
 from .server import McpServerFile
 from .serverrules import check_server
 from .validate import HostFacts, Index, check_family
 
-#: The two names of a family file and the two names of a server file. The
-#: registry reads the TOML name first and the YAML name second, and a
-#: directory with both is an error. A package that imports `agent_family`
-#: takes each name from here and keeps no copy.
-FAMILY_FILE: Final = "family.toml"
-FAMILY_FILE_YAML: Final = "family.yaml"
-SERVER_FILE: Final = "server.toml"
-SERVER_FILE_YAML: Final = "server.yaml"
+#: The name of a family file and the name of a server file. `grammar.py`
+#: holds them, so that `validate.py` names a file without an import of this
+#: module. A package that imports `agent_family` takes each name from here
+#: and keeps no copy.
+FAMILY_FILE: Final = grammar.FAMILY_FILE
+SERVER_FILE: Final = grammar.SERVER_FILE
 SKILL_FILE: Final = "SKILL.md"
 INSTRUCTIONS_FILE: Final = "instructions.md"
 FAMILIES_DIR: Final = "families"
@@ -167,89 +159,45 @@ def _read_toml(path: Path, kind: tomlfile.FileKind) -> tuple[bytes, str | None]:
 
 @dataclass(frozen=True)
 class _Kind[T]:
-    """One kind of file of the registry: the word of its messages, its two
-    names, its kind for the TOML reader and the parser of each markup."""
+    """One kind of file of the registry: its name, its kind for the TOML
+    reader and its parser."""
 
-    word: str
-    toml_name: str
-    yaml_name: str
+    name: str
     toml_kind: tomlfile.FileKind
     parse_toml: Callable[[bytes], tuple[T | None, list[Issue]]]
-    parse_yaml: Callable[[str], tuple[T | None, list[Issue]]]
 
 
-_FAMILY: Final = _Kind[FamilyFile](
-    "family",
-    FAMILY_FILE,
-    FAMILY_FILE_YAML,
-    tomlfile.FileKind.FAMILY,
-    parse_family_toml,
-    parse_family,
-)
-_SERVER: Final = _Kind[McpServerFile](
-    "server",
-    SERVER_FILE,
-    SERVER_FILE_YAML,
-    tomlfile.FileKind.SERVER,
-    parse_server_toml,
-    parse_server,
-)
+_FAMILY: Final = _Kind[FamilyFile](FAMILY_FILE, tomlfile.FileKind.FAMILY, parse_family_toml)
+_SERVER: Final = _Kind[McpServerFile](SERVER_FILE, tomlfile.FileKind.SERVER, parse_server_toml)
 
 
 @dataclass(frozen=True)
 class _Read[T]:
     """What the registry read in one directory: the name of the file that
-    the report names, the parsed model with the markup of its file, and the
-    issues of the read and of the parse."""
+    the report names, the parsed model, and the issues of the read and of
+    the parse."""
 
     file: str
-    parsed: tuple[T, Markup] | None
+    parsed: T | None
     issues: tuple[Issue, ...]
 
 
 def _read_directory[T](directory: Path, kind: _Kind[T]) -> _Read[T]:
-    """The one file of a directory, read and parsed. The report names the
-    TOML name when that file is there, else the YAML name."""
-    has_toml = (directory / kind.toml_name).is_file()
-    has_yaml = (directory / kind.yaml_name).is_file()
-    file = kind.toml_name if has_toml else kind.yaml_name
+    """The one file of a directory, read and parsed."""
+    file = kind.name
     issues = Issues()
-    if has_toml and has_yaml:
-        # CONTRACT-QUESTION: contract 01 §1 and contract 01b §1 each name one
-        # file, `family.toml` and `server.toml`. `spec.md` §12.3 row 5 makes
-        # a directory that also holds the YAML name a refusal. It does not
-        # say which name the report names. The registry gives one error, it
-        # parses neither file, and the report names the TOML name. The other
-        # reading names the YAML name. A change costs the line that sets
-        # `file` and one test of each kind.
-        issues.error(
-            "<document>",
-            f"two {kind.word} files: {kind.toml_name} and {kind.yaml_name}; keep one",
-        )
-        return _Read(file, None, issues.frozen())
-
-    if not has_toml and not has_yaml:
+    if not (directory / file).is_file():
         # §5.6 rule 3: a warning, and `caregiver` ignores the directory.
-        issues.warn("<document>", f"no {kind.yaml_name}; this directory is ignored")
+        issues.warn("<document>", f"no {file}; this directory is ignored")
         return _Read(file, None, issues.frozen())
 
-    if has_toml:
-        data, problem = _read_toml(directory / file, kind.toml_kind)
-        if problem is None:
-            model, entries = kind.parse_toml(data)
-            return _Read(file, _marked(model, Markup.TOML), tuple(entries))
-    else:
-        text, problem = _read(directory / file)
-        if problem is None:
-            model, entries = kind.parse_yaml(text)
-            return _Read(file, _marked(model, Markup.YAML), tuple(entries))
+    data, problem = _read_toml(directory / file, kind.toml_kind)
+    if problem is None:
+        model, entries = kind.parse_toml(data)
+        return _Read(file, model, tuple(entries))
 
     issues.error("<document>", problem)
     return _Read(file, None, issues.frozen())
-
-
-def _marked[T](model: T | None, markup: Markup) -> tuple[T, Markup] | None:
-    return None if model is None else (model, markup)
 
 
 def _read_families(
@@ -266,14 +214,13 @@ def _read_families(
         files[name] = read.file
         issues_by_name[name] = read.issues
         if read.parsed is not None:
-            parsed[name] = read.parsed[0]
+            parsed[name] = read.parsed
 
     return parsed, issues_by_name, files
 
 
 def _read_servers(root: Path) -> tuple[dict[str, McpServerFile], dict[str, Report]]:
-    """Each parsed server and the report of each directory. The rules of a
-    server file get the markup of the file that the registry read."""
+    """Each parsed server and the report of each directory."""
     servers: dict[str, McpServerFile] = {}
     reports: dict[str, Report] = {}
     for directory in _subdirectories(root / MCP_DIR):
@@ -281,9 +228,8 @@ def _read_servers(root: Path) -> tuple[dict[str, McpServerFile], dict[str, Repor
         read = _read_directory(directory, _SERVER)
         issues = Issues(list(read.issues))
         if read.parsed is not None:
-            server, markup = read.parsed
-            servers[name] = server
-            check_server(server, name, issues, markup)
+            servers[name] = read.parsed
+            check_server(read.parsed, name, issues)
 
         reports[name] = _report(name, f"{MCP_DIR}/{name}/{read.file}", issues.frozen())
 

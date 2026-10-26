@@ -31,9 +31,10 @@ The Python implementation is the authority for each surface.
 | `data/index.json` | one row per surface: name, path, entry point, counts. One line per frozen file: path and digest |
 | `data/ids/` | the id grammars, one file per copy of a grammar |
 | `data/ids/disagreements.json` | each input for which two copies of one grammar give different results |
-| `data/family_file.json`, `data/family_file.host.json` | `family.yaml` to its validation report |
+| `data/family_file.json` | `family.yaml` to its validation report. A frozen file: the YAML reader left this repository |
+| `data/family_file.host.json` | `family.toml` to its validation report, with a written host |
 | `data/family_file.toml.json` | `family.toml` to its validation report |
-| `data/server_file.json` | `server.yaml` to its validation report |
+| `data/server_file.json` | `server.yaml` to its validation report. A frozen file: the YAML reader left this repository |
 | `data/server_file.toml.json` | `server.toml` to its validation report |
 | `data/family_file.classify.json` | two family files to the diff between them |
 | `data/family_file.cli.json` | a command line of `agent-family` to its output |
