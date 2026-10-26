@@ -57,7 +57,8 @@ the variable.
 |---|---|
 | service | A program of this repository that the suite starts: one row of the service table. |
 | root | The temporary directory of one test. Every file and every Unix socket of the test is in it. |
-| stand-in | A program that takes the place of a program the suite cannot run: `sbx`, `pi`, `systemctl`, the LiteLLM key API and TEI. |
+| stand-in | A program that takes the place of a program the suite cannot run: `sbx`, `pi`, `systemctl`, the LiteLLM key API, TEI, a model, and an upstream and the approval channel of the Rust chaperone. |
+| ACP | The Agent Client Protocol, version 1. A client and an agent send JSON-RPC 2.0 messages. |
 | TEI | The embedding service that the index builder dials. It gives one vector for each text. |
 | topology | The services that one fixture starts together. |
 | terminal | A pseudo-terminal. A test holds the master side. A program holds the other side as its controlling terminal. |
@@ -273,6 +274,8 @@ each one, and each one runs to its end.
 | `test_proc_harness.py`, `test_proc_table.py` | none | the harness and the table, checked against their own rules |
 | `test_proc_standins.py`, `test_proc_sse.py` | none | the record of a stand-in, and the SSE reader |
 | `test_proc_standin_programs.py` | none | each rule of a stand-in program that a scenario relies on |
+| `test_proc_standin_model.py`, `test_proc_standin_effects.py` | none | the model stand-in over its port, and the two effect stand-ins over stdio |
+| `test_proc_standin_acp.py` | none | the ACP client, against a scripted agent in the test process |
 | `test_proc_terminal.py` | none | the pseudo-terminal of the harness: the keys, the signals, what it showed |
 | `test_proc_html.py`, `test_proc_ids.py` | none | the HTML reader, and the ids a test mints |
 | `test_proc_registry.py` | none | the `git` of the registry module: no repository above the root, and no config file of a person |
@@ -296,7 +299,7 @@ each one, and each one runs to its end.
    Two tests of `test_proc_library_reader.py` start no program. Each one
    reads files of the bridge as text. `test_proc_table.py` reads the unit
    files in the same way.
-4. Nothing under test may be faked. The five stand-ins are not under test.
+4. Nothing under test may be faked. The stand-ins are not under test.
 5. A stand-in is a program on disk. Do not give a service a Python object.
 6. Every file that a service reads is in the root. A writer in `proc_tree.py`
    or in `proc_registry.py` makes it from a contract, never from a module of
@@ -515,7 +518,7 @@ rule 4). The launcher itself is the real bundle, not a stand-in.
 
 ### The stand-in programs of this directory
 
-Four programs are in this directory. The docstring of each one lists its
+Seven programs are in this directory. The docstring of each one lists its
 verbs, its files and its tunings.
 
 | Program | Takes the place of | How a service finds it |
@@ -524,6 +527,9 @@ verbs, its files and its tunings.
 | `standin_systemctl.py` | `systemctl --user` | by name, through `PATH` |
 | `standin_litellm.py` | the key API of LiteLLM | by an address in an argument |
 | `standin_tei.py` | TEI, with the two routes that the index builder asks | by an address in a variable |
+| `standin_model.py` | a model behind LiteLLM: chat completions as an SSE stream, from a script that the test writes | by an address |
+| `standin_upstream.py` | an upstream of the Rust chaperone, with the tools `echo` and `gated_echo` | by the absolute path in the `command` of its manifest |
+| `standin_approval.py` | the approval channel of the Rust chaperone. A file that the test writes answers each gate | by the absolute path in the `command` of its manifest |
 
 Each program keeps its state in files under `standins/<name>-state` in the
 root. A test reads those files with a function of `proc_standins.py`. It
@@ -537,7 +543,8 @@ only to make a fault that the real program can have.
 A stand-in fails closed. It refuses a verb that it does not know, so a
 service that runs a new command fails here and gets no silent success.
 `test_proc_standin_programs.py` has one test for each rule of a stand-in
-that a scenario relies on. Add a test there when you add a rule.
+that a scenario relies on. Add a test there when you add a rule. The model
+and the two effect stand-ins have a test file of their own.
 
 The TEI stand-in gives each text a vector that depends on the text alone.
 `vector_blob` of `proc_library.py` gives the blob that a store must hold for
@@ -552,6 +559,17 @@ each one.
 | `fail-info` | `GET /info` answers 503. |
 | `fail-embed` | The tuning holds a text. A call whose inputs hold that text answers 500. |
 | `hold-embed` | The tuning holds a text. A call whose inputs hold that text waits until the file is gone. |
+
+The model stand-in has one tuning, `delay_ms`: the milliseconds between two
+chunks of a stream. A scenario that acts while a turn runs sets it first.
+A test writes the turns with `script_model`. A completion past the last
+turn gets 500.
+
+A test answers a gate of the approval stand-in with `answer_gate`. The name
+of the answer file is the gate ID or the exposed name of the tool. The
+stand-in holds the call of the chaperone until the file exists. The record
+`requests.jsonl` holds the call before the call waits, so a scenario waits
+for that line before it answers.
 
 A call holds a text when the text is a part of one of its inputs. The line
 of a held call is in `calls.jsonl` before the call waits. A scenario waits
@@ -1303,7 +1321,10 @@ the text of the failure. Work down this list.
 | `proc_ids.py` | the ids that a door mints |
 | `proc_html.py` | the reader of an HTML page: an element, a table, a form |
 | `proc_standins.py` | the wrapper of each stand-in, the record each one leaves, and the readers of its state |
-| `standin_sbx.py`, `standin_systemctl.py`, `standin_litellm.py`, `standin_tei.py` | the four stand-in programs of this directory |
+| `standin_sbx.py`, `standin_systemctl.py`, `standin_litellm.py`, `standin_tei.py`, `standin_model.py`, `standin_upstream.py`, `standin_approval.py` | the seven stand-in programs of this directory |
+| `standin_mcp.py` | the MCP server over stdio of the two effect stand-ins |
+| `proc_strict.py` | the strict reader of one JSON text |
+| `acp_client.py` | the ACP client of a test: a WebSocket, as the web build of Panda opens it |
 | `reader_store.mjs` | the Node program that reads one index store with the statements of the bridge |
 | `proc_stack.py` | `attendance`, its environment, and the start of a service on a free port |
 | `proc_owui.py`, `proc_delegate.py`, `proc_caregiver.py`, `proc_trigger.py`, `proc_board.py`, `proc_tui.py`, `proc_library.py` | one topology each |
