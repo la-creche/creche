@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import { Secret } from "../src/secret.js";
 
 const SRC = join(import.meta.dirname, "..", "src");
-const UNWRAP_SITES: readonly string[] = ["litellm.ts"];
+const UNWRAP_SITES: readonly string[] = ["chaperone.ts", "litellm.ts"];
 
 describe("Secret", () => {
   it("has no text form of its own", () => {
