@@ -21,18 +21,17 @@ from noticeboard.registrywrite import (
     head_sha,
     save_family,
 )
-from noticeboard.yamlout import to_yaml
-from noticeboard_helpers import CHAT_FAMILY_YAML, commit_count, git, make_registry
+from noticeboard_helpers import CHAT_FAMILY_TOML, commit_count, git, make_registry
 
 from noticeboard import registrywrite
 
-GOOD = CHAT_FAMILY_YAML.replace("the house assistant", "the house assistant, rewritten")
+GOOD = CHAT_FAMILY_TOML.replace("the house assistant", "the house assistant, rewritten")
 
 #: A second edit of the same file, for a save that runs beside the first.
-OTHER = CHAT_FAMILY_YAML.replace("the house assistant", "the house assistant, a second edit")
+OTHER = CHAT_FAMILY_TOML.replace("the house assistant", "the house assistant, a second edit")
 
 #: `kind` is not one of contract 01's three, so the whole registry fails.
-BAD = CHAT_FAMILY_YAML.replace("kind: attended", "kind: wizard")
+BAD = CHAT_FAMILY_TOML.replace('kind = "attended"', 'kind = "wizard"')
 
 #: How long the first save holds the lock while the second one waits. A save
 #: with no lock ends in less time than this.
@@ -43,7 +42,7 @@ JOIN_S = 60
 
 
 def family_file(root: Path, name: str = "chat") -> Path:
-    return root / "families" / name / "family.yaml"
+    return root / "families" / name / "family.toml"
 
 
 def names_in(directory: Path) -> list[str]:
@@ -110,13 +109,13 @@ def test_the_commit_email_names_no_host(tmp_path: Path) -> None:
 def test_the_commit_is_scoped_to_one_family(tmp_path: Path) -> None:
     """A stray edit beside the save must not ride along."""
     root = make_registry(tmp_path)
-    stray = root / "families" / "scrum-lead" / "family.yaml"
+    stray = root / "families" / "scrum-lead" / "family.toml"
     stray.write_text(stray.read_text(encoding="utf-8") + "# edited by hand\n", encoding="utf-8")
 
     save_family(root, "chat", GOOD, "widen the description")
 
     changed = git(root, "show", "--name-only", "--format=", "HEAD").stdout.split()
-    assert changed == ["families/chat/family.yaml"]
+    assert changed == ["families/chat/family.toml"]
 
 
 def test_an_invalid_edit_writes_nothing_and_commits_nothing(tmp_path: Path) -> None:
@@ -210,17 +209,17 @@ def test_a_save_puts_a_new_file_in_place_and_keeps_its_mode(tmp_path: Path) -> N
     assert result.ok
     assert after.st_ino != before.st_ino
     assert stat.S_IMODE(after.st_mode) == 0o640
-    assert names_in(root / "families" / "chat") == ["family.yaml", "instructions.md"]
+    assert names_in(root / "families" / "chat") == ["family.toml", "instructions.md"]
 
 
 def test_a_save_of_a_new_family_leaves_one_file(tmp_path: Path) -> None:
     root = make_registry(tmp_path)
-    text = GOOD.replace("name: chat", "name: second")
+    text = GOOD.replace('name = "chat"', 'name = "second"')
 
     result = save_family(root, "second", text, "add a family")
 
     assert result.ok, result.problem
-    assert names_in(root / "families" / "second") == ["family.yaml"]
+    assert names_in(root / "families" / "second") == ["family.toml"]
     assert family_file(root, "second").read_text(encoding="utf-8") == text
 
 
@@ -228,15 +227,15 @@ def test_a_temporary_file_of_a_killed_save_does_not_reach_the_commit(tmp_path: P
     """A save that the system killed between its write and its rename leaves
     its temporary file. The next save must not commit that file."""
     root = make_registry(tmp_path)
-    stale = root / "families" / "chat" / f".family.yaml.0123456789abcdef{TEMP_SUFFIX}"
+    stale = root / "families" / "chat" / f".family.toml.0123456789abcdef{TEMP_SUFFIX}"
     stale.write_text(BAD, encoding="utf-8")
 
     result = save_family(root, "chat", GOOD, "widen the description")
 
     changed = git(root, "show", "--name-only", "--format=", "HEAD").stdout.split()
     assert result.ok
-    assert changed == ["families/chat/family.yaml"]
-    assert names_in(root / "families" / "chat") == ["family.yaml", "instructions.md"]
+    assert changed == ["families/chat/family.toml"]
+    assert names_in(root / "families" / "chat") == ["family.toml", "instructions.md"]
 
 
 def test_an_invalid_edit_leaves_the_tree_clean(tmp_path: Path) -> None:
@@ -251,7 +250,7 @@ def test_an_invalid_edit_leaves_the_tree_clean(tmp_path: Path) -> None:
 def test_a_neighbour_broken_by_this_edit_refuses_the_save(tmp_path: Path) -> None:
     """Validation covers the whole registry, not the edited file alone."""
     root = make_registry(tmp_path)
-    scrum = root / "families" / "scrum-lead" / "family.yaml"
+    scrum = root / "families" / "scrum-lead" / "family.toml"
     scrum.write_text(
         scrum.read_text(encoding="utf-8") + 'delegates:\n  - "chat"\n  - "gone"\n',
         encoding="utf-8",
@@ -264,13 +263,13 @@ def test_a_neighbour_broken_by_this_edit_refuses_the_save(tmp_path: Path) -> Non
 
     assert not result.ok
     assert commit_count(root) == before
-    assert family_file(root).read_text(encoding="utf-8") == CHAT_FAMILY_YAML
+    assert family_file(root).read_text(encoding="utf-8") == CHAT_FAMILY_TOML
 
 
 def test_a_failed_save_of_a_new_family_removes_the_directory(tmp_path: Path) -> None:
     root = make_registry(tmp_path)
 
-    result = save_family(root, "wizard", BAD.replace("name: chat", "name: wizard"), "add it")
+    result = save_family(root, "wizard", BAD.replace('name = "chat"', 'name = "wizard"'), "add it")
 
     assert not result.ok
     assert not (root / "families" / "wizard").exists()
@@ -291,7 +290,7 @@ def test_a_failed_save_leaves_the_whole_directory_as_it_was(tmp_path: Path) -> N
 
 def committed(root: Path, name: str = "chat") -> str:
     """The family file as the newest commit holds it."""
-    return git(root, "show", f"HEAD:families/{name}/family.yaml").stdout
+    return git(root, "show", f"HEAD:families/{name}/family.toml").stdout
 
 
 def test_a_save_that_cannot_take_the_lock_changes_nothing(
@@ -366,7 +365,7 @@ def test_saves_at_one_time_leave_no_edit_without_a_commit(tmp_path: Path) -> Non
     root = make_registry(tmp_path)
     before = commit_count(root)
     texts = [
-        CHAT_FAMILY_YAML.replace("the house assistant", f"the house assistant, edit {number}")
+        CHAT_FAMILY_TOML.replace("the house assistant", f"the house assistant, edit {number}")
         for number in range(4)
     ]
     start = threading.Barrier(len(texts))
@@ -443,7 +442,7 @@ def test_a_concurrent_git_lock_rolls_the_save_back(tmp_path: Path) -> None:
     assert "git" in result.problem
     assert family_file(root).read_bytes() == original
     assert head_sha(root) == before
-    assert names_in(root / "families" / "chat") == ["family.yaml", "instructions.md"]
+    assert names_in(root / "families" / "chat") == ["family.toml", "instructions.md"]
 
 
 def test_a_failed_commit_puts_the_old_file_back_with_a_rename(
@@ -467,7 +466,7 @@ def test_a_failed_commit_puts_the_old_file_back_with_a_rename(
     assert len(written) == 1
     assert family_file(root).stat().st_ino != written[0]
     assert family_file(root).read_bytes() == original
-    assert names_in(root / "families" / "chat") == ["family.yaml", "instructions.md"]
+    assert names_in(root / "families" / "chat") == ["family.toml", "instructions.md"]
 
 
 def test_a_rename_that_fails_leaves_no_temporary_file(
@@ -487,14 +486,14 @@ def test_a_rename_that_fails_leaves_no_temporary_file(
         registrywrite._replace(family_file(root), GOOD.encode("utf-8"))
 
     assert family_file(root).read_bytes() == original
-    assert names_in(root / "families" / "chat") == ["family.yaml", "instructions.md"]
+    assert names_in(root / "families" / "chat") == ["family.toml", "instructions.md"]
 
 
 def test_an_unchanged_save_commits_nothing_and_says_so(tmp_path: Path) -> None:
     root = make_registry(tmp_path)
     before = commit_count(root)
 
-    result = save_family(root, "chat", CHAT_FAMILY_YAML, "no change")
+    result = save_family(root, "chat", CHAT_FAMILY_TOML, "no change")
 
     assert result.ok
     assert result.unchanged
@@ -532,7 +531,7 @@ def test_a_family_directory_pointing_out_of_the_registry_is_refused(tmp_path: Pa
 
     assert not result.ok
     assert "outside the registry" in result.problem
-    assert not (elsewhere / "family.yaml").exists()
+    assert not (elsewhere / "family.toml").exists()
 
 
 def test_a_symlink_pointing_back_inside_the_registry_is_refused(tmp_path: Path) -> None:
@@ -555,13 +554,13 @@ def test_a_families_link_into_the_checkout_refuses_the_save(tmp_path: Path) -> N
     held = root / "held"
     (root / "families").rename(held)
     (root / "families").symlink_to(held, target_is_directory=True)
-    original = (held / "chat" / "family.yaml").read_bytes()
+    original = (held / "chat" / "family.toml").read_bytes()
 
     result = save_family(root, "chat", BAD, "break it")
 
     assert not result.ok
     assert "resolves outside the copy" in result.problem
-    assert (held / "chat" / "family.yaml").read_bytes() == original
+    assert (held / "chat" / "family.toml").read_bytes() == original
 
 
 def test_an_oversized_document_is_refused_before_any_write(tmp_path: Path) -> None:
@@ -573,18 +572,3 @@ def test_an_oversized_document_is_refused_before_any_write(tmp_path: Path) -> No
     assert not result.ok
     assert "over" in result.problem
     assert family_file(root).read_bytes() == original
-
-
-def test_the_emitted_document_saves(tmp_path: Path) -> None:
-    """The form's output must be text this writer accepts."""
-    from agent_family import parse_family
-
-    root = make_registry(tmp_path)
-    family, _ = parse_family(CHAT_FAMILY_YAML)
-    assert family is not None
-    edited = family.model_copy(update={"description": "the house assistant, v2"})
-
-    result = save_family(root, "chat", to_yaml(edited.model_dump(mode="json")), "from the form")
-
-    assert result.ok, result.problem
-    assert "v2" in family_file(root).read_text(encoding="utf-8")

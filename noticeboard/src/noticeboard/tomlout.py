@@ -17,10 +17,10 @@ The layout is the layout of a converted registry file:
 6. A text is a basic string, with an escape for each control character.
 7. A date, a time and a date-time have their ISO text and no quotes.
 
-The writer proves its own output in the same way as `yamlout.py`:
-`app.py` reads the text again with `agent_family.parse_family` and writes it
-only when the model that comes back equals the model that went in. The save
-then gives the text to the validator of the whole registry.
+The writer proves its own output: `app.py` reads the text again with
+`agent_family.parse_family` and writes it only when the model that comes
+back equals the model that went in. The save then gives the text to the
+validator of the whole registry.
 """
 
 from __future__ import annotations

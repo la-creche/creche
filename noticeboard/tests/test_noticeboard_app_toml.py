@@ -32,7 +32,6 @@ from noticeboard_helpers import (
     write_token,
 )
 
-from noticeboard import app as app_module
 from noticeboard import tomlkeep
 
 KEY = "k" * 40
@@ -74,7 +73,7 @@ class Board:
 @pytest.fixture
 def board(tmp_path: Path) -> Iterator[Board]:
     state = make_state_root(tmp_path)
-    registry = make_registry(tmp_path, Markup.TOML)
+    registry = make_registry(tmp_path)
     config = Config(
         bind="127.0.0.1",
         port=8370,
@@ -96,7 +95,7 @@ def board(tmp_path: Path) -> Iterator[Board]:
 def posted_form(board: Board) -> dict[str, str]:
     """What a browser posts for the form of the TOML family `chat`."""
     registry = load_registry(board.registry)
-    form = form_of(registry.families["chat"], index_of(registry), Markup.TOML)
+    form = form_of(registry.families["chat"], index_of(registry))
     body: dict[str, str] = {}
 
     for one in form.fields:
@@ -124,7 +123,6 @@ def test_the_edit_page_of_a_toml_family_shows_toml_blocks(board: Board) -> None:
 
     assert answer.status_code == 200
     assert "TOML, including the key line" in answer.text
-    assert "YAML, including the key line" not in answer.text
     assert browser_values(answer.text)["tools"] == "tools = {}\n"
 
 
@@ -149,7 +147,6 @@ def test_a_save_of_a_toml_family_changes_one_line_and_keeps_its_comments(board: 
     assert commit_count(board.registry) == before + 1
     assert lines_that_moved(board.text()) == ['description = "the house assistant, rewritten"']
     assert CHAT_COMMENT in board.text()
-    assert not board.file.with_name("family.yaml").exists()
 
 
 def test_a_toml_save_that_changes_nothing_makes_no_commit(board: Board) -> None:
@@ -180,7 +177,7 @@ def test_a_patch_that_cannot_be_kept_gives_way_to_the_writer(
     body["description"] = "the house assistant, rewritten"
     body["verb"] = "save"
     registry = load_registry(board.registry)
-    form = form_of(registry.families["chat"], index_of(registry), Markup.TOML)
+    form = form_of(registry.families["chat"], index_of(registry))
     document, _ = document_of(form, body)
 
     answer = board.post(EDIT, body)
@@ -241,42 +238,3 @@ def test_a_toml_block_edit_saves_and_keeps_the_other_lines(board: Board) -> None
     assert family.shell is False
     assert family.egress == []
     assert [line for line in board.text().splitlines() if line.startswith("[")] == []
-
-
-def test_the_service_uses_the_toml_patch_for_a_toml_family(
-    board: Board, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The YAML patch never sees a TOML file."""
-    seen: list[str] = []
-    monkeypatch.setattr(app_module, "edited_text", lambda original, before, after: seen.append(""))
-    board.get(EDIT)
-    body = posted_form(board)
-    body["description"] = "the house assistant, rewritten"
-    body["verb"] = "save"
-
-    answer = board.post(EDIT, body)
-
-    assert answer.status_code == 303
-    assert seen == []
-    assert CHAT_COMMENT in board.text()
-
-
-def test_the_patch_takes_the_markup_of_the_form(
-    board: Board, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """One save has one markup: the markup of the form. The name of the file
-    that the patch reads does not change it."""
-    other = tmp_path / "other" / "family.yaml"
-    other.parent.mkdir()
-    other.write_text(board.text(), encoding="utf-8")
-    monkeypatch.setattr(app_module, "family_path", lambda registry_dir, name: other)
-    board.get(EDIT)
-    body = posted_form(board)
-    body["description"] = "the house assistant, rewritten"
-    body["verb"] = "save"
-
-    answer = board.post(EDIT, body)
-
-    assert answer.status_code == 303
-    assert lines_that_moved(board.text()) == ['description = "the house assistant, rewritten"']
-    assert CHAT_COMMENT in board.text()

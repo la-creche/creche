@@ -20,9 +20,8 @@ save. A disabled input posts nothing, so without the drop a lock would
 grey out a field while leaving its old value in the file, and the save
 would be refused by the very rule the form just displayed.
 
-A family file is YAML or TOML. The form holds the markup of the file that
-the registry read. A block control shows its text in that markup, and the
-form writes its document in that markup.
+A family file is TOML. A block control shows its text in TOML, and the form
+writes its document in TOML.
 """
 
 from __future__ import annotations
@@ -30,7 +29,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from enum import StrEnum
-from pathlib import PurePath
 from types import UnionType
 from typing import Any, Final, Union, cast, get_args, get_origin
 
@@ -45,12 +43,10 @@ from agent_family import (
     classify,
     parse_family,
 )
-from agent_family.registry import FAMILY_FILE
 from agent_family.tomlfile import FileKind, TomlRefusal, loads
 from pydantic import BaseModel
 
 from .tomlout import to_toml
-from .yamlout import to_yaml
 
 #: How much text one control accepts. A `verbs` block is the largest
 #: thing here and is still far under this (invariant 14).
@@ -71,7 +67,7 @@ class Control(StrEnum):
     CHECKBOX = "checkbox"
     #: A list of names, one per line. `delegates`, `egress`, `skills`.
     LINES = "lines"
-    #: A sub-document in the markup of the file, key line included. `files`,
+    #: A TOML sub-document, key line included. `files`,
     #: `tools`, `verbs`, `triggers`: shapes no flat control can hold honestly.
     BLOCK = "block"
 
@@ -104,9 +100,6 @@ class Field:
 class Form:
     family: str
     fields: tuple[Field, ...]
-    #: The markup of the family file. A block control shows its text in it,
-    #: and `document_of` writes in it.
-    markup: Markup = Markup.YAML
 
     def field(self, name: str) -> Field | None:
         return next((one for one in self.fields if one.name == name), None)
@@ -116,22 +109,12 @@ class Form:
         return tuple(one for one in self.fields if one.locked)
 
 
-def markup_of(file: str | PurePath) -> Markup:
-    """The markup of a family file, by its name. `agent_family.registry`
-    holds the two names, and `family.toml` is the TOML one."""
-    return Markup.TOML if PurePath(file).name == FAMILY_FILE else Markup.YAML
-
-
-def form_of(family: FamilyFile, index: Index, markup: Markup = Markup.YAML) -> Form:
+def form_of(family: FamilyFile, index: Index) -> Form:
     """Every control for one family, with every lock already applied."""
     rules = locks_of(family, index)
     document = family.model_dump(mode="json")
 
-    return Form(
-        family=family.name,
-        fields=tuple(_fields(document, rules, markup)),
-        markup=markup,
-    )
+    return Form(family=family.name, fields=tuple(_fields(document, rules)))
 
 
 def with_posted(form: Form, posted: Mapping[str, str]) -> Form:
@@ -142,10 +125,10 @@ def with_posted(form: Form, posted: Mapping[str, str]) -> Form:
     the preview showed. A locked control keeps the value of the registry: a
     disabled control posts nothing.
     """
-    return replace(form, fields=tuple(_typed(one, posted, form.markup) for one in form.fields))
+    return replace(form, fields=tuple(_typed(one, posted) for one in form.fields))
 
 
-def _typed(own: Field, posted: Mapping[str, str], markup: Markup) -> Field:
+def _typed(own: Field, posted: Mapping[str, str]) -> Field:
     """One control as the post left it.
 
     A browser names each free text control in a post. A control that the
@@ -157,10 +140,10 @@ def _typed(own: Field, posted: Mapping[str, str], markup: Markup) -> Field:
     if own.control is Control.CHECKBOX:
         return replace(own, checked=own.name in posted)
 
-    return replace(own, value=posted.get(own.name, _unnamed(own, markup))[:MAX_FIELD_CHARS])
+    return replace(own, value=posted.get(own.name, _unnamed(own))[:MAX_FIELD_CHARS])
 
 
-def _unnamed(own: Field, markup: Markup) -> str:
+def _unnamed(own: Field) -> str:
     """What a free text control shows when the post does not name it.
 
     The document takes the block of the registry for a block, and the
@@ -177,31 +160,33 @@ def _unnamed(own: Field, markup: Markup) -> str:
     if own.control is not Control.LINES or info is None:
         return ""
 
-    return _rendered(own.name, own.control, info.get_default(call_default_factory=True), markup)
+    return _rendered(own.name, own.control, info.get_default(call_default_factory=True))
 
 
 def document_of(form: Form, posted: Mapping[str, str]) -> tuple[str, str]:
     """The whole text of the family file the form describes, plus a problem.
 
-    Assembled in schema order, one chunk per top-level field, so the file
-    a save writes reads in the same order as the file it replaced. A TOML
-    text is not the join of its chunks: `_toml_document` builds it.
+    In a TOML text, a key after a `[table]` line belongs to that table. A
+    block that holds such a line would thus take each later field into its
+    table if the text were a join of the blocks. So each field puts its value
+    into one mapping, in schema order, and `tomlout` writes that mapping. The
+    file a save writes then reads in the same order as the file it replaced.
     """
-    if form.markup is Markup.TOML:
-        return _toml_document(form, posted)
-
-    chunks: list[str] = []
+    body: dict[str, object] = {}
 
     for top in FamilyFile.model_fields:
-        chunk, problem = _chunk(form, posted, top)
+        value, present, problem = _toml_value(form, posted, top)
 
         if problem:
             return "", problem
 
-        if chunk:
-            chunks.append(chunk)
+        if present:
+            body[top] = value
 
-    return "".join(chunks), ""
+    try:
+        return to_toml(body), ""
+    except TypeError as error:
+        return "", str(error)
 
 
 def parse_posted(form: Form, posted: Mapping[str, str]) -> tuple[FamilyFile | None, list[Issue]]:
@@ -211,7 +196,7 @@ def parse_posted(form: Form, posted: Mapping[str, str]) -> tuple[FamilyFile | No
     if problem:
         return None, [Issue(severity=Severity.ERROR, loc="form", msg=problem)]
 
-    return parse_family(text, form.markup)
+    return parse_family(text, Markup.TOML)
 
 
 def locks_of(family: FamilyFile, index: Index) -> dict[str, str]:
@@ -355,7 +340,7 @@ def _without_none(annotation: object) -> object:
     return kept[0] if len(kept) == 1 else annotation
 
 
-def _fields(document: Mapping[str, Any], rules: Mapping[str, str], markup: Markup) -> list[Field]:
+def _fields(document: Mapping[str, Any], rules: Mapping[str, str]) -> list[Field]:
     found: list[Field] = []
 
     for name, info in FamilyFile.model_fields.items():
@@ -363,10 +348,10 @@ def _fields(document: Mapping[str, Any], rules: Mapping[str, str], markup: Marku
         control = _control(info.annotation)
 
         if control is not None:
-            found.append(_one(name, control, value, rules, info.is_required(), markup))
+            found.append(_one(name, control, value, rules, info.is_required()))
             continue
 
-        found.extend(_nested(name, info.annotation, value, rules, markup))
+        found.extend(_nested(name, info.annotation, value, rules))
 
     return found
 
@@ -415,7 +400,7 @@ def _is_scalar(annotation: object) -> bool:
 
 
 def _nested(
-    parent: str, annotation: object, value: object, rules: Mapping[str, str], markup: Markup
+    parent: str, annotation: object, value: object, rules: Mapping[str, str]
 ) -> list[Field]:
     """One flat model, unfolded into `parent.child` controls."""
     inner = _without_none(annotation)
@@ -438,7 +423,7 @@ def _nested(
         inherited = {f"{parent}.{child}": rules[parent]} if parent in rules else {}
         merged = {**rules, **inherited}
         found.append(
-            _one(f"{parent}.{child}", control, body.get(child), merged, info.is_required(), markup)
+            _one(f"{parent}.{child}", control, body.get(child), merged, info.is_required())
         )
 
     return found
@@ -450,20 +435,19 @@ def _one(
     value: object,
     rules: Mapping[str, str],
     required: bool,
-    markup: Markup,
 ) -> Field:
     return Field(
         name=name,
         control=control,
-        value=_rendered(name, control, value, markup),
+        value=_rendered(name, control, value),
         checked=value is True,
         locked=rules.get(name, ""),
-        note=_note(control, markup),
+        note=_note(control),
         required=required,
     )
 
 
-def _rendered(name: str, control: Control, value: object, markup: Markup) -> str:
+def _rendered(name: str, control: Control, value: object) -> str:
     if control is Control.CHECKBOX:
         return ""
 
@@ -473,62 +457,23 @@ def _rendered(name: str, control: Control, value: object, markup: Markup) -> str
 
         return "".join(f"{one}\n" for one in cast("list[object]", value))
 
-    if control is Control.BLOCK and markup is Markup.TOML:
-        # A TOML text cannot hold a null, so the text of a field without a
-        # value is empty.
-        return to_toml({name: value})
-
     if control is Control.BLOCK:
         # The key line is part of the text, so what the reader edits is
-        # exactly what the file will hold.
-        return to_yaml({name: value}) if value is not None else f"{name}: null\n"
+        # exactly what the file will hold. A TOML text cannot hold a null,
+        # so the text of a field without a value is empty.
+        return to_toml({name: value})
 
     return "" if value is None else str(value)
 
 
-def _note(control: Control, markup: Markup) -> str:
+def _note(control: Control) -> str:
     if control is Control.LINES:
         return "one name per line"
 
-    if control is Control.BLOCK and markup is Markup.TOML:
+    if control is Control.BLOCK:
         return "TOML, including the key line"
 
-    if control is Control.BLOCK:
-        return "YAML, including the key line"
-
     return ""
-
-
-def _chunk(form: Form, posted: Mapping[str, str], top: str) -> tuple[str, str]:
-    """One top-level field's YAML, or the reason it could not be built."""
-    own = form.field(top)
-
-    if own is not None:
-        return _leaf_chunk(own, posted)
-
-    return _block_chunk(form, posted, top)
-
-
-def _leaf_chunk(own: Field, posted: Mapping[str, str]) -> tuple[str, str]:
-    if own.control is Control.BLOCK and own.free:
-        return _raw_block(own, posted)
-
-    value, present = _saved(own, posted)
-
-    if not present:
-        return "", ""
-
-    return to_yaml({own.name: value}), ""
-
-
-def _block_chunk(form: Form, posted: Mapping[str, str], top: str) -> tuple[str, str]:
-    """A flat model, rebuilt from its `parent.child` controls."""
-    body = _flat_body(form, posted, top)
-
-    if not body:
-        return "", ""
-
-    return to_yaml({top: body}), ""
 
 
 def _flat_body(form: Form, posted: Mapping[str, str], top: str) -> dict[str, object]:
@@ -539,37 +484,12 @@ def _flat_body(form: Form, posted: Mapping[str, str], top: str) -> dict[str, obj
         if not own.name.startswith(f"{top}."):
             continue
 
-        value, present = _saved_in(own, posted, form.markup)
+        value, present = _saved_in(own, posted)
 
         if present:
             body[own.name.split(".", 1)[1]] = value
 
     return body
-
-
-def _toml_document(form: Form, posted: Mapping[str, str]) -> tuple[str, str]:
-    """The whole TOML text the form describes, plus a problem.
-
-    In a TOML text, a key after a `[table]` line belongs to that table. A
-    block that holds such a line would thus take each later field into its
-    table if the text were a join of the blocks. So each field puts its value
-    into one mapping, in schema order, and `tomlout` writes that mapping.
-    """
-    body: dict[str, object] = {}
-
-    for top in FamilyFile.model_fields:
-        value, present, problem = _toml_value(form, posted, top)
-
-        if problem:
-            return "", problem
-
-        if present:
-            body[top] = value
-
-    try:
-        return to_toml(body), ""
-    except TypeError as error:
-        return "", str(error)
 
 
 def _toml_value(form: Form, posted: Mapping[str, str], top: str) -> tuple[object, bool, str]:
@@ -585,13 +505,13 @@ def _toml_value(form: Form, posted: Mapping[str, str], top: str) -> tuple[object
     if own.control is Control.BLOCK and own.free:
         return _toml_block(own, posted)
 
-    value, present = _saved_in(own, posted, form.markup)
+    value, present = _saved_in(own, posted)
 
     return value, present, ""
 
 
-def _saved_in(own: Field, posted: Mapping[str, str], markup: Markup) -> tuple[object, bool]:
-    """`_saved`, for a document in `markup`.
+def _saved_in(own: Field, posted: Mapping[str, str]) -> tuple[object, bool]:
+    """`_saved`, for a TOML document.
 
     The TOML reader refuses an integer past 64 bits for the whole text, and
     its refusal names no field. In a TOML document such a number is thus its
@@ -599,7 +519,7 @@ def _saved_in(own: Field, posted: Mapping[str, str], markup: Markup) -> tuple[ob
     """
     value, present = _saved(own, posted)
 
-    if markup is Markup.TOML and own.control is Control.NUMBER and not _readable(value):
+    if own.control is Control.NUMBER and not _readable(value):
         return str(value), present
 
     return value, present
@@ -663,23 +583,6 @@ def _held(own: Field) -> tuple[object, bool]:
         return own.checked, True
 
     return _value_of(own, {own.name: own.value})
-
-
-def _raw_block(own: Field, posted: Mapping[str, str]) -> tuple[str, str]:
-    """A YAML sub-document, as the reader typed it."""
-    text = posted.get(own.name, own.value)[:MAX_FIELD_CHARS]
-    first = next((one for one in text.splitlines() if one.strip()), "")
-
-    if not first:
-        return "", ""
-
-    # The block must define its own key and no other. Without this check
-    # a pasted block could add a second top-level key to the document,
-    # and YAML would keep the last one silently.
-    if not first.startswith(f"{own.name}:"):
-        return "", f"the {own.name} block must start with '{own.name}:'"
-
-    return text if text.endswith("\n") else text + "\n", ""
 
 
 def _value_of(own: Field, posted: Mapping[str, str]) -> tuple[object, bool]:

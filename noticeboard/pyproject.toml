@@ -9,11 +9,8 @@ dependencies = [
     "httpx>=0.27",
     "jinja2>=3.1",
     # A form save patches the family file round-trip so its comments survive
-    # (`yamlkeep.py`). It parses nothing for meaning: `agent-family` stays the
+    # (`tomlkeep.py`). It parses nothing for meaning: `agent-family` stays the
     # registry's one reader.
-    "ruamel.yaml>=0.18",
-    # The same for a TOML family file (`tomlkeep.py`). It also parses nothing
-    # for meaning.
     "tomlkit>=0.15",
     "agent-family",
 ]

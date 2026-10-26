@@ -7,7 +7,7 @@ from asking the validator, so a rule that changes changes the page.
 
 from __future__ import annotations
 
-from agent_family import FamilyFile, Index, Kind, parse_family
+from agent_family import FamilyFile, Index, Kind, Markup, parse_family
 from noticeboard.familyform import (
     MAX_FIELD_CHARS,
     Control,
@@ -18,11 +18,11 @@ from noticeboard.familyform import (
     parse_posted,
     with_posted,
 )
-from noticeboard_helpers import CHAT_FAMILY_YAML, SCRUM_FAMILY_YAML
+from noticeboard_helpers import CHAT_FAMILY_TOML, SCRUM_FAMILY_TOML
 
 
-def family(text: str = CHAT_FAMILY_YAML) -> FamilyFile:
-    parsed, issues = parse_family(text)
+def family(text: str = CHAT_FAMILY_TOML) -> FamilyFile:
+    parsed, issues = parse_family(text, Markup.TOML)
     assert issues == [], issues
     assert parsed is not None
     return parsed
@@ -111,7 +111,7 @@ def test_an_attended_family_cannot_take_triggers() -> None:
 
 
 def test_an_autonomous_family_may_take_its_own_fields() -> None:
-    rules = locks_of(family(SCRUM_FAMILY_YAML), SCRUM_INDEX)
+    rules = locks_of(family(SCRUM_FAMILY_TOML), SCRUM_INDEX)
 
     assert "triggers" not in rules
     assert "max_running_turns" not in rules
@@ -155,8 +155,8 @@ def test_a_locked_field_is_dropped_from_the_saved_document() -> None:
     text, problem = document_of(form, posted_from(form))
 
     assert problem == ""
-    assert "triggers:" not in text
-    assert "job:" not in text
+    assert "triggers" not in text
+    assert "job" not in text
 
 
 def test_a_forged_value_for_a_locked_field_is_ignored() -> None:
@@ -195,21 +195,10 @@ def test_a_lines_control_reads_one_name_per_line() -> None:
     assert after.egress == ["api.kagi.com", "files.example.org"]
 
 
-def test_a_block_that_names_another_key_is_refused() -> None:
-    form = form_of(family(), CHAT_INDEX)
-    posted = posted_from(form)
-    posted["files"] = 'name: "stolen"\n'
-
-    text, problem = document_of(form, posted)
-
-    assert text == ""
-    assert "must start with 'files:'" in problem
-
-
 def test_a_broken_block_becomes_a_report_not_an_exception() -> None:
     form = form_of(family(), CHAT_INDEX)
     posted = posted_from(form)
-    posted["files"] = "files:\n  - path: [unclosed\n"
+    posted["files"] = "files = [\n"
 
     after, issues = parse_posted(form, posted)
 
@@ -232,7 +221,7 @@ def test_the_form_of_an_answer_gives_the_document_of_the_post() -> None:
     posted["sandbox.cpus"] = "6"
     posted["shell"] = "on"
     posted["egress"] = "example.test\n"
-    posted["files"] = "files:\n  - { path: /srv/agents/vault, mode: rw }"
+    posted["files"] = 'files = [{ path = "/srv/agents/vault", mode = "rw" }]'
     del posted["system_prompt"]
 
     again = posted_from(with_posted(form, posted))
@@ -244,7 +233,7 @@ def test_the_form_of_an_answer_gives_the_document_of_the_post() -> None:
 def test_the_form_of_an_answer_keeps_a_locked_control() -> None:
     form = form_of(family(), CHAT_INDEX)
 
-    shown = with_posted(form, {"name": "second", "triggers": "triggers: []\n"})
+    shown = with_posted(form, {"name": "second", "triggers": "triggers = []\n"})
 
     assert shown.locked == form.locked
     assert value_of(shown, "name") == "chat"
@@ -254,7 +243,7 @@ def test_a_control_that_the_post_does_not_name_shows_no_text_of_the_reader() -> 
     """A browser names each free text control. For a post that names none,
     a block shows the block of the registry, as the document takes it. A
     list shows the default of the schema. Each other control is empty."""
-    form = form_of(family(CHAT_FAMILY_YAML + "sandbox_tools: [read]\n"), CHAT_INDEX)
+    form = form_of(family(CHAT_FAMILY_TOML + 'sandbox_tools = ["read"]\n'), CHAT_INDEX)
     no_list = posted_from(form)
     del no_list["sandbox_tools"]
     taken, _ = parse_posted(form, no_list)
@@ -297,7 +286,7 @@ def test_the_document_keeps_the_schema_field_order() -> None:
     form = form_of(family(), CHAT_INDEX)
     text, _ = document_of(form, posted_from(form))
 
-    assert text.index("name:") < text.index("kind:") < text.index("description:")
+    assert text.index("name =") < text.index("kind =") < text.index("description =")
 
 
 def test_the_kinds_the_form_knows_come_from_the_grammar() -> None:

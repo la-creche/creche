@@ -75,8 +75,7 @@ The browser posts those values again, so a save after a preview writes the
 edit that the preview showed. A locked control shows the value of the
 registry.
 
-The form has the markup of the family file that the registry read: YAML or
-TOML. A block control shows its text in that markup. For a TOML family:
+A family file is TOML. A block control shows its text in TOML:
 
 1. The form reads the text of each block alone, with
    `agent_family.tomlfile.loads` and `FileKind.FAMILY`.
@@ -105,17 +104,13 @@ TOML. A block control shows its text in that markup. For a TOML family:
     validator reads a copy of `families`, `mcp` and `skills`. `caregiver`
     then never reads a text that the validator refuses. Write the family
     file to a temporary file in its own directory. Rename it into place.
-24. The noticeboard never parses YAML or TOML itself. `agent_family` owns
-    the reader. `yamlkeep.py` and `tomlkeep.py` are the two modules that
-    touch a library that keeps the layout of a file, and they read no
-    meaning. `app.py` gives the patched text back to `agent_family`. When
-    the text does not read as the model of the form, the save writes the
-    document of `yamlout.py` or of `tomlout.py`.
-25. Save a family under the file name that the registry read for it:
-    `family.toml` or `family.yaml`. The two names come from
-    `agent_family.registry`. The file of a new family is `family.yaml` if
-    a directory of the registry holds a `family.yaml`. Else it is
-    `family.toml`.
+24. The noticeboard never parses TOML itself. `agent_family` owns the
+    reader. `tomlkeep.py` is the one module that touches a library that
+    keeps the layout of a file, and it reads no meaning. `app.py` gives the
+    patched text back to `agent_family`. When the text does not read as the
+    model of the form, the save writes the document of `tomlout.py`.
+25. Save a family as `family.toml`. The name comes from
+    `agent_family.registry`.
 
 ## Run it
 
@@ -149,8 +144,7 @@ and `Referer` unchanged. `/healthz` and `/static/*` stay keyless.
 | `notices.py` | the notice of a refused JSON text: one log line, and one row in the notice file that `bin/rework-watchdog.sh` reads. The file is a copy, and `bin/tests/test_strictjson_copies.py` holds each copy to the same bytes |
 | `rfc3339.py` | the one reader of a time text. The file is a copy, and `bin/tests/test_rfc3339_copies.py` holds each copy to the same bytes |
 | `sessions.py`, `attendancehttp.py`, `transcript.py` | `attendance` as `view-ro`, the wire, journal lines folded for a reader |
-| `familyform.py`, `yamlout.py`, `yamlkeep.py`, `registrywrite.py` | the form, the whole file, the patched file, the commit |
-| `tomlout.py`, `tomlkeep.py` | the whole TOML file and the patched TOML file |
+| `familyform.py`, `tomlout.py`, `tomlkeep.py`, `registrywrite.py` | the form, the whole file, the patched file, the commit |
 | `pages.py`, `app.py` | what each page needs, and the routes |
 | `verify.py` | `noticeboard-verify` |
 | `templates/`, `static/` | Jinja2 and one stylesheet |
@@ -205,11 +199,6 @@ prefixed `test_noticeboard_`.
 - `spec.md` §8.3 names no answer for an exception that no reader predicted.
   The service answers 500 with the refusal body and the word `internal`
   (`app.py`).
-- A save still rewrites two shapes that it did not edit (`yamlkeep.py`). The
-  first is a flow mapping inside a flow mapping. The second is a flow mapping
-  on a line past column 100.
-- A save that removes the last key of a block also removes the comment lines
-  and the blank lines after that key (`yamlkeep.py`).
 - A save that replaces a list of a TOML file removes each comment line
   inside that list (`tomlkeep.py`). A comment line above a key that the
   save removes stays where it was.

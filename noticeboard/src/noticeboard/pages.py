@@ -22,7 +22,6 @@ from agent_family import (
     FamilyFile,
     Index,
     Issue,
-    Markup,
     McpServerFile,
     Registry,
     classify,
@@ -32,7 +31,7 @@ from agent_family import (
 from . import auditfiles, statusdocs, transcript
 from .auditfiles import AuditFilter, AuditPage
 from .config import Config
-from .familyform import Form, form_of, markup_of
+from .familyform import Form, form_of
 from .sessions import SessionList, SessionReader, SessionRow, TurnRow
 from .statusdocs import FamilyRow, IssueRow, OutcomeRow
 
@@ -198,15 +197,7 @@ def edit_page(config: Config, name: str) -> EditPage:
     if family is None:
         return EditPage(family=name, form=Form(family=name, fields=()), problem=_missing(name))
 
-    return EditPage(
-        family=name, form=form_of(family, index_of(registry), markup_in(registry, name))
-    )
-
-
-def markup_in(registry: Registry, name: str) -> Markup:
-    """The markup of the file that the registry read for one family it
-    holds. The form shows and writes that markup."""
-    return markup_of(registry.reports[name].file)
+    return EditPage(family=name, form=form_of(family, index_of(registry)))
 
 
 def _missing(name: str) -> str:

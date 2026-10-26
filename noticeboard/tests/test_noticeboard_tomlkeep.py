@@ -1,12 +1,11 @@
 """A form save keeps the comments of a TOML family file.
 
-This suite is the TOML twin of `test_noticeboard_yamlkeep.py`.
 `tomlkeep.edited_text` patches the bytes that are there: it reads the
 original with `tomlkit`, replaces only the fields whose MODEL value moved,
 and writes the text again. Each other line comes back byte for byte.
 
-The fixtures `fixtures/commented-family.toml` and `fixtures/styled-family.toml`
-are the twins of the two YAML fixtures. `bin/yaml-to-toml.py` wrote them.
+The fixtures are `fixtures/commented-family.toml` and
+`fixtures/styled-family.toml`.
 """
 
 from __future__ import annotations
