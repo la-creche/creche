@@ -3,6 +3,9 @@
 
 import { spawn } from "node:child_process";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const BIN = fileURLToPath(new URL("../dist/src/bin/creche-facade.js", import.meta.url));
@@ -22,7 +25,15 @@ export interface FacadeProcess {
   exited(): Promise<number | null>;
 }
 
-export function startFacade(env: NodeJS.ProcessEnv = {}): FacadeProcess {
+/** The environment of one facade: a sandbox id and a fresh control mount. */
+export function facadeEnv(): NodeJS.ProcessEnv {
+  return {
+    AGENT_SANDBOX: "chat-s1",
+    AGENT_CONTROL_DIR: join(mkdtempSync(join(tmpdir(), "facade-")), "control"),
+  };
+}
+
+export function startFacade(env: NodeJS.ProcessEnv = facadeEnv()): FacadeProcess {
   const child = spawn(process.execPath, [BIN], { env: { ...env, PATH: process.env["PATH"] ?? "" } });
   const out: Buffer[] = [];
   let err = "";

@@ -15,7 +15,7 @@ import { Readable } from "node:stream";
 
 import { describeRefusal, encodeLine } from "./line.js";
 import type { Say } from "./stdio.js";
-import { MAX_LINE_BYTES, METHOD_BEAT, PROTOCOL_VERSION } from "./vectors.js";
+import { MAX_LINE_BYTES, METHOD_BEAT, METHOD_SHUTDOWN, PROTOCOL_VERSION } from "./vectors.js";
 
 export type { AgentApp, Stream };
 
@@ -45,10 +45,24 @@ function noParams(params: unknown): Record<string, never> {
   return {};
 }
 
-export function facadeApp(): AgentApp {
+/** What the creche extensions do on the supervisor link. */
+export interface SupervisorHooks {
+  /** A `_creche/beat` arrived. */
+  readonly onBeat: () => void;
+  /** A `_creche/shutdown` arrived. */
+  readonly onShutdown: () => void;
+}
+
+export function facadeApp(hooks: SupervisorHooks): AgentApp {
   return agent({ name: "creche-facade" })
     .onRequest(methods.agent.initialize, () => INITIALIZE_RESPONSE)
-    .onRequest(METHOD_BEAT, noParams, () => ({}));
+    .onRequest(METHOD_BEAT, noParams, () => {
+      hooks.onBeat();
+      return {};
+    })
+    .onNotification(METHOD_SHUTDOWN, noParams, () => {
+      hooks.onShutdown();
+    });
 }
 
 function isAnswer(message: AnyMessage): message is AnyResponse {

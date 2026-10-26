@@ -26,6 +26,26 @@ answer to `initialize`, `_creche/beat` and `_creche/shutdown`, the line cap
 and the beat cadence. The facade tests read it. The attendance tests read it
 too. Change a value there, and both sides change.
 
+## Environment
+
+`src/env.ts` reads two variables at process start.
+
+| Variable | Meaning | Absent |
+|---|---|---|
+| `AGENT_SANDBOX` | the sandbox id, for the lock record | exit 2 |
+| `AGENT_CONTROL_DIR` | the control mount, for `supervisor.lock` | exit 7 |
+
+## Exit status
+
+| Status | Cause |
+|---|---|
+| 0 | `_creche/shutdown`, or stdin closed |
+| 2 | no `AGENT_SANDBOX` |
+| 3 | a live facade holds the lock |
+| 5 | no `_creche/beat` for three beat windows (90 s) |
+| 6 | the control mount cannot be written |
+| 7 | no `AGENT_CONTROL_DIR` |
+
 ## Rules
 
 1. Pin each runtime dependency to one exact version. Do not use a range.
@@ -39,7 +59,15 @@ too. Change a value there, and both sides change.
 4. A line that is not strict JSON, or that is over the cap, never reaches
    stdout. An answer becomes a JSON-RPC error with the same id. Another
    message is dropped, with a line on stderr.
+5. Never serve without the lock. `lock.ts` never throws. Keep its pid and
+   its beat: attendance reads the beat with its own clock.
+6. Never make stdin EOF the only way the process ends. A client-side kill
+   of `sbx exec` does not reach the VM. The beat deadline ends the process.
 
 ## Known gaps
 
-None.
+- `src/env.ts` parses two variables that `agent/src/config.ts` parses
+  too. Row 15 of the Phase 2 plan wires the agent module, and `env.ts`
+  then goes.
+- The bin starts no Flue runtime yet, so `_creche/shutdown` has no Flue
+  to stop. Row 15 starts Flue with the agent module.
