@@ -10,8 +10,10 @@ from typing import Any, Final
 
 import pytest
 from agent_family import FamilyFile, Index, load_registry
+from agent_family.server import FenceEntry
 from caregiver.grants import DEFAULT_MAX_OPEN_GATES, DEFAULT_PEP_RPM
 from caregiver.policy_file import (
+    EXPOSED_NAME_MAX,
     App,
     Approval,
     ArgumentFence,
@@ -204,9 +206,131 @@ def test_the_note_names_the_registry_revision() -> None:
     assert app_table(chat_family())["note"] == f"registry {REV}"
 
 
-def test_build_app_leaves_argument_fences_empty() -> None:
-    app = build_app(_REGISTRY.families["code"], INDEX, (DIGEST,), rev=REV)
-    assert all(not grant.arguments for up in app.grants.values() for grant in up.tools.values())
+def tools_of(family: FamilyFile, server: str, index: Index = INDEX) -> dict[str, Any]:
+    """The tool table of one granted server, as a TOML reader reads it."""
+    app = build_app(family, index, (DIGEST,), rev=REV)
+    text = render_policy(PolicyFile({family.name: app}))
+    return tomllib.loads(text)["apps"][family.name]["grants"][server]["tools"]
+
+
+def fenced_index(server: str, **fences: list[FenceEntry]) -> Index:
+    """`INDEX` with the fences of one server file replaced."""
+    servers = dict(INDEX.servers)
+    servers[server] = servers[server].model_copy(update=fences)
+    return Index(kinds=INDEX.kinds, servers=servers, skills=INDEX.skills)
+
+
+def fence(arg: str, values: list[str], tools: list[str] | str = "all") -> FenceEntry:
+    return FenceEntry(tools=tools, arg=arg, values=values)
+
+
+def test_an_owner_repo_allow_splits_into_two_allows() -> None:
+    tools = tools_of(_REGISTRY.families["agent-control"], "github-platform")
+    assert tools["get_file_contents"] == {
+        "arguments": {
+            "owner": {"allow": ["example-owner"]},
+            "repo": {"allow": ["agent-control", "agent-mcp", "agent-registry"]},
+        }
+    }
+
+
+def test_an_owner_repo_deny_denies_the_repo_names() -> None:
+    tools = tools_of(_REGISTRY.families["code"], "github-code")
+    assert tools["search_code"] == {
+        "arguments": {"repo": {"deny": ["agent-control", "agent-mcp", "agent-registry"]}}
+    }
+
+
+def test_a_fence_on_named_tools_reaches_those_tools_only() -> None:
+    tools = tools_of(_REGISTRY.families["code"], "github-code")
+    assert tools["push_files"]["arguments"]["branch"] == {"deny": ["main", "master"]}
+    assert "branch" not in tools["list_branches"]["arguments"]
+
+
+def test_a_fence_keeps_the_approval_of_its_tool() -> None:
+    family = chat_family(
+        tools={"github-code": ["push_files"]}, approval=["github-code__push_files"]
+    )
+    assert tools_of(family, "github-code")["push_files"]["approval"] == "required"
+
+
+def test_two_denies_on_one_argument_join() -> None:
+    index = fenced_index("kagi", arg_denies=[fence("url", ["file:///"]), fence("url", ["data:"])])
+    tools = tools_of(chat_family(tools={"kagi": ["kagi_extract"]}), "kagi", index)
+    assert tools["kagi_extract"] == {"arguments": {"url": {"deny": ["data:", "file:///"]}}}
+
+
+def test_two_allows_on_one_argument_keep_the_common_values() -> None:
+    index = fenced_index(
+        "kagi", arg_allows=[fence("lang", ["de", "en"]), fence("lang", ["en", "fr"])]
+    )
+    tools = tools_of(chat_family(tools={"kagi": ["kagi_extract"]}), "kagi", index)
+    assert tools["kagi_extract"] == {"arguments": {"lang": {"allow": ["en"]}}}
+
+
+def test_a_deny_takes_its_values_out_of_an_allow() -> None:
+    index = fenced_index(
+        "kagi",
+        arg_allows=[fence("lang", ["de", "en"])],
+        arg_denies=[fence("lang", ["de"])],
+    )
+    tools = tools_of(chat_family(tools={"kagi": ["kagi_extract"]}), "kagi", index)
+    assert tools["kagi_extract"] == {"arguments": {"lang": {"allow": ["en"]}}}
+
+
+def test_fences_that_allow_no_value_are_refused() -> None:
+    index = fenced_index(
+        "kagi", arg_allows=[fence("lang", ["de"])], arg_denies=[fence("lang", ["de"])]
+    )
+    with pytest.raises(PolicyShapeError, match="allow no value of lang"):
+        build_app(chat_family(tools={"kagi": ["kagi_extract"]}), index, (DIGEST,), rev=REV)
+
+
+def test_an_allow_of_pairs_that_is_not_a_full_product_is_refused() -> None:
+    index = fenced_index(
+        "github-platform", arg_allows=[fence("owner/repo", ["a/x", "b/y"])], arg_denies=[]
+    )
+    family = chat_family(tools={"github-platform": ["get_commit"]})
+    with pytest.raises(PolicyShapeError, match="owner/repo"):
+        build_app(family, index, (DIGEST,), rev=REV)
+
+
+def test_an_allow_of_pairs_with_one_owner_splits_exactly() -> None:
+    index = fenced_index(
+        "github-platform",
+        arg_allows=[fence("owner/repo", ["a/x", "a/y", "b/x", "b/y"])],
+        arg_denies=[],
+    )
+    tools = tools_of(
+        chat_family(tools={"github-platform": ["get_commit"]}), "github-platform", index
+    )
+    assert tools["get_commit"] == {
+        "arguments": {"owner": {"allow": ["a", "b"]}, "repo": {"allow": ["x", "y"]}}
+    }
+
+
+@pytest.mark.parametrize("value", ["x", "a/b/c", "/x", "a/"])
+def test_a_pair_value_that_is_not_two_names_is_refused(value: str) -> None:
+    index = fenced_index("github-code", arg_denies=[fence("owner/repo", [value])])
+    family = chat_family(tools={"github-code": ["get_commit"]})
+    with pytest.raises(PolicyShapeError, match="owner/repo"):
+        build_app(family, index, (DIGEST,), rev=REV)
+
+
+def test_an_exposed_name_of_50_characters_is_granted() -> None:
+    tool = "t" * (EXPOSED_NAME_MAX - len("kagi__"))
+    assert tools_of(chat_family(tools={"kagi": [tool]}), "kagi") == {tool: {}}
+
+
+def test_an_exposed_name_over_50_characters_is_refused() -> None:
+    tool = "t" * (EXPOSED_NAME_MAX - len("kagi__") + 1)
+    with pytest.raises(PolicyShapeError, match=f"kagi__{tool}"):
+        build_app(chat_family(tools={"kagi": [tool]}), INDEX, (DIGEST,), rev=REV)
+
+
+def test_the_exposed_name_limit_is_the_rust_value() -> None:
+    """`ExposedName::MAX` of the Rust chaperone: 64 less `_mcp_chaperone`."""
+    assert EXPOSED_NAME_MAX == 64 - len("_mcp_chaperone") == 50
 
 
 @pytest.mark.parametrize("server", ["attendance", "release"])

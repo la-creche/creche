@@ -220,8 +220,17 @@ pass calls it yet.
    `attendance.invoke_agent`, `enqueue` and `job_status` give the tools of
    the same names, and `release` gives `release.request`. `embed` and
    `ha_call` give no grant.
-6. `build_app` writes no argument fence yet.
-7. `tests/policy_golden/` holds the expected text for each family of the
+6. `build_app` puts the argument fences of the server file on each tool
+   that they cover. An allow keeps the values common to each allow entry,
+   less the denied values. An allow with no value left is refused.
+7. A pair `owner/repo` becomes two arguments. An allow gives `owner` and
+   `repo`, and is refused when its pairs are not each owner with each
+   repo. A deny gives `repo` alone: it also denies a repo of that name
+   under another owner.
+8. `build_app` refuses a tool whose exposed name `<server>__<tool>` is
+   longer than `EXPOSED_NAME_MAX` (50). The Rust chaperone lists no such
+   tool.
+9. `tests/policy_golden/` holds the expected text for each family of the
    fixture registry of `family`. Change a golden file only with the change
    that moves it.
 
