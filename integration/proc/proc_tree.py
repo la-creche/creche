@@ -1045,3 +1045,178 @@ def _rfc3339_ms() -> str:
     now = datetime.now(UTC)
 
     return now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z"
+
+
+# ------------------------------------------------------- the Rust chaperone
+#
+# The files of chaperone `docs/design.md` §6 and §7, for the row
+# `chaperone-rs`. The chaperone reads them from `chaperone-rs/` in the root.
+
+#: The app instances of the Rust chaperone: one for each family (§12: the
+#: family of an app instance is its app ID).
+RS_FAMILIES: Final = (FAMILY, "vault-oracle")
+
+#: The plugin names of the two effect stand-ins. The exposed name of a tool
+#: is `<upstream>__<tool>` (§7.6).
+RS_UPSTREAM: Final = "standin"
+RS_APPROVAL: Final = "standin-approval"
+
+#: The secret parameter of the upstream stand-in, the name of its secret
+#: file, and its value. An obvious fixture, never a credential.
+RS_SECRET_PARAM: Final = "STANDIN_KEY"
+RS_SECRET_NAME: Final = "standin-key"
+RS_SECRET_VALUE: Final = "FIXTURE-STANDIN-KEY"
+
+RS_LIMITS: Final = "{ calls_per_minute = 60, max_pending_gates = 4 }"
+
+#: The plugin of each slot in `plugins/default` of the chaperone: kind,
+#: slot, and the command of an effect plugin. The suite writes the manifests
+#: itself, so a binary that a variable names needs no checkout beside it.
+RS_DEFAULTS: Final[dict[str, tuple[str, str, str | None]]] = {
+    "audit-jsonl": ("adapter", "audit_sink", None),
+    "bearer": ("decision", "identity", None),
+    "deny-all": ("effect", "approval_channel", "chaperone-deny-all"),
+    "mcp-http": ("adapter", "front_door", None),
+    "secret-files": ("adapter", "secret_source", None),
+    "system-clock": ("adapter", "clock", None),
+}
+
+#: The hook of each slot (§7.2, `plugins/AGENTS.md`).
+_RS_SLOT_HOOK: Final = {
+    "audit_sink": "audit_sink",
+    "identity": "identity",
+    "approval_channel": "approval",
+    "front_door": "front_door",
+    "secret_source": "secret_source",
+    "clock": "clock",
+}
+
+RS_INSTALL: Final = f"""\
+# The install file of the Rust chaperone in one test (chaperone design §6).
+version = 1
+
+[plugins.mcp-http]
+guard = "loopback"
+
+[plugins.{RS_UPSTREAM}]
+secrets = {{ {RS_SECRET_PARAM} = "{RS_SECRET_NAME}" }}
+
+[plugins.{RS_APPROVAL}]
+
+[slots]
+approval_channel = "{RS_APPROVAL}"
+"""
+
+_SECRETS_DIR_MODE: Final = 0o700
+_SECRET_MODE: Final = 0o600
+
+
+@dataclass(frozen=True, slots=True)
+class RsFiles:
+    """The paths of the Rust chaperone in one root."""
+
+    root: Path
+
+    @property
+    def config_dir(self) -> Path:
+        return self.root / "chaperone-rs" / "config"
+
+    @property
+    def plugins_dir(self) -> Path:
+        return self.root / "chaperone-rs" / "plugins"
+
+    @property
+    def secrets_dir(self) -> Path:
+        return self.root / "chaperone-rs" / "secrets"
+
+    @property
+    def audit_file(self) -> Path:
+        return self.root / "chaperone-rs" / "audit.jsonl"
+
+    @property
+    def admin_socket(self) -> Path:
+        """Beside the socket of `attendance`, so the path stays short (rule 9)."""
+        return self.root / "sock" / "chaperone-rs.sock"
+
+    def config_file(self, name: str) -> Path:
+        return self.config_dir / name
+
+
+def rs_policy_text(families: tuple[str, ...] = RS_FAMILIES) -> str:
+    """The policy file before `chaperone token new` adds a digest (§6, §9).
+
+    Each app instance may call `echo`, and `gated_echo` with an approval.
+    """
+    parts = [
+        "# The policy file of the Rust chaperone in one test (chaperone design §6).\n"
+        "# `chaperone token new` adds the one digest of each app instance.\n"
+        "version = 1\n"
+    ]
+
+    for family in families:
+        parts.append(
+            f"\n[apps.{family}]\n"
+            "token_sha256 = []\n"
+            f"limits = {RS_LIMITS}\n"
+            f"\n[apps.{family}.grants.{RS_UPSTREAM}.tools]\n"
+            "echo = {}\n"
+            'gated_echo = { approval = "required" }\n'
+        )
+
+    return "".join(parts)
+
+
+def rs_manifest(
+    name: str,
+    kind: str,
+    hooks: str,
+    *,
+    slot: str | None = None,
+    secrets: tuple[str, ...] = (),
+    command: tuple[str, ...] = (),
+) -> str:
+    """One `plugin.toml` (§7.4). A path or a name is a TOML basic string."""
+    lines = [f'name = "{name}"', 'version = "1.0.0"', f'kind = "{kind}"']
+
+    if slot is not None:
+        lines.append(f'slot = "{slot}"')
+
+    lines.append(f'hooks = ["{hooks}"]')
+
+    if secrets:
+        lines.append(f"secrets = {json.dumps(list(secrets))}")
+
+    if command:
+        lines.append(f"command = {json.dumps(list(command))}")
+
+    return "\n".join(lines) + "\n"
+
+
+def write_rs_tree(files: RsFiles, upstream: Path, approval: Path) -> None:
+    """Write the plugin tree, the secrets and both configuration files of the chaperone.
+
+    `upstream` and `approval` are the absolute programs of the two effect
+    stand-ins. The chaperone runs the program of an effect manifest as it
+    is (§7.7).
+    """
+    for name, (kind, slot, program) in RS_DEFAULTS.items():
+        command = (program,) if program is not None else ()
+        text = rs_manifest(name, kind, _RS_SLOT_HOOK[slot], slot=slot, command=command)
+        _atomic_write(files.plugins_dir / "default" / name / "plugin.toml", text, 0o644)
+
+    added = files.plugins_dir / "effect" / "added"
+    upstream_text = rs_manifest(
+        RS_UPSTREAM, "effect", "upstream", secrets=(RS_SECRET_PARAM,), command=(str(upstream),)
+    )
+    approval_text = rs_manifest(
+        RS_APPROVAL, "effect", "approval", slot="approval_channel", command=(str(approval),)
+    )
+    _atomic_write(added / RS_UPSTREAM / "plugin.toml", upstream_text, 0o644)
+    _atomic_write(added / RS_APPROVAL / "plugin.toml", approval_text, 0o644)
+
+    files.secrets_dir.mkdir(parents=True, exist_ok=True)
+    files.secrets_dir.chmod(_SECRETS_DIR_MODE)
+    _atomic_write(files.secrets_dir / RS_SECRET_NAME, RS_SECRET_VALUE, _SECRET_MODE)
+
+    _atomic_write(files.config_file("install.toml"), RS_INSTALL, 0o644)
+    _atomic_write(files.config_file("policy.toml"), rs_policy_text(), 0o644)

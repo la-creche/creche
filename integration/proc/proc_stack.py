@@ -163,19 +163,26 @@ class Stack:
         self.supervisor.wait_ready(self.attendance, UnixAddress(self.tree.attendance_socket))
 
     def start_on_port(
-        self, service: Service, env_for: Callable[[str], dict[str, str]], *args: str
+        self,
+        service: Service,
+        env_for: Callable[[str], dict[str, str]],
+        *args: str,
+        args_for: Callable[[str], list[str]] | None = None,
     ) -> tuple[Child, int]:
         """Start a service on a free loopback port, and wait for it.
 
         `env_for` takes the bind, as `host:port`, and returns the variables
         of the service. `args` are the words that the unit puts after the
-        command. A start that fails because another program took the port
-        first is tried again on another port. Any other failed start is an
-        error.
+        command. `args_for` takes the bind too, and returns more words, for
+        a service that takes its address in an argument. A start that fails
+        because another program took the port first is tried again on
+        another port. Any other failed start is an error.
         """
         for _ in range(_BIND_ATTEMPTS):
             port = self.supervisor.free_port()
-            child = self.spawn(service, env_for(f"{LOOPBACK}:{port}"), *args)
+            bind = f"{LOOPBACK}:{port}"
+            words = [*args, *(args_for(bind) if args_for is not None else [])]
+            child = self.spawn(service, env_for(bind), *words)
 
             try:
                 self.supervisor.wait_ready(child, TcpAddress(port))

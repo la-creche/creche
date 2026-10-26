@@ -41,6 +41,10 @@ missing. A silent pass would be worse than a skip. The same applies to
 needs `node` and `git` on `PATH`. Every test is marked `slow` in
 `conftest.py`.
 
+The scenarios of the Rust chaperone need `cargo` on `PATH` too, for the
+first build of the pinned commit. Each one skips itself when `cargo` or
+`git` is missing and no variable names a binary.
+
 Two scenarios of `test_proc_library_reader.py` run a Node program that
 imports `node:sqlite`. Each one skips itself when the `node` on `PATH` has
 no such module.
@@ -83,6 +87,7 @@ command and the name of one environment variable.
 | `noticeboard` | `noticeboard` | `CRECHE_PROC_NOTICEBOARD` |
 | `noticeboard-verify` | `noticeboard-verify` | `CRECHE_PROC_NOTICEBOARD_VERIFY` |
 | `library` | `index-scope` | `CRECHE_PROC_LIBRARY` |
+| `chaperone-rs` | `chaperone`, the pinned build | `CRECHE_PROC_CHAPERONE_RS` |
 
 The default command is the program and the first words of the unit's
 `ExecStart`. The program comes from the `bin` directory of the workspace
@@ -98,6 +103,21 @@ manifest.
 The row of `library` names no unit. The index unit runs `index-scope` in a
 sandbox, through `sbx exec` and a shell. `test_proc_table.py` reads the
 program and its words from the shell text of the unit.
+
+The row of `chaperone-rs` names no unit. It is the Rust chaperone of the
+repository `chaperone`, and the venv does not hold it. Its default is a
+build of the commit in `chaperone.pin`:
+
+1. The first test that needs the program builds it, once for the run.
+   `proc_chaperone_pin.py` fetches the commit and runs `cargo install`.
+2. The build goes into `~/.cache/creche-proc/chaperone-rs/<commit>`. The
+   `proc` job of CI keeps that directory in a cache with the pin file in
+   its key.
+3. A machine with no `git` or no `cargo` skips each test of the row. Set
+   `CRECHE_PROC_CHAPERONE_RS` to a built `chaperone` binary instead.
+
+To take a new commit, write its full hash in `chaperone.pin`, with the date
+in the comment line.
 
 ### Replace a service with another binary
 
@@ -167,7 +187,7 @@ It does not print the reference.
 
 ## What runs
 
-Seven topologies exist. `attendance`, the `sbx` stand-in and the `pi`
+Eight topologies exist. `attendance`, the `sbx` stand-in and the `pi`
 stand-in are in the first two.
 
 ```
@@ -234,6 +254,24 @@ library ---- GET /info, POST /embed, loopback port ---> the TEI stand-in
 a test reads store.db with SQLite
 ```
 
+The eighth topology, `proc_chaperone_rs.py`, starts the Rust chaperone and
+no `attendance`. The suite writes each file of chaperone `docs/design.md`
+§6 and §7 under `chaperone-rs/` in the root. `chaperone token new` mints
+the token of each family. `chaperone check` validates `install.toml` and
+`policy.toml` before the start. `chaperone verify` checks the front door
+after the start.
+
+```
+a test (plays the agent module of one family)
+  | MCP over streamable HTTP, loopback port, the token of the family
+  v
+chaperone-rs ---- MCP over stdio ---> the upstream stand-in: echo, gated_echo
+  |          ---- MCP over stdio ---> the approval stand-in: approve
+  | writes chaperone-rs/audit.jsonl
+  v
+a test reads the audit file
+```
+
 Two files of the seventh topology run two more programs. A test starts
 each one, and each one runs to its end.
 
@@ -271,6 +309,7 @@ each one, and each one runs to its end.
 | `test_proc_library_cross.py` | library, the reference and the TEI stand-in | one store under two writers: equal content after a build, after an update by the other writer, after three runs in turns, after a backfill of `chunks_emb`, after a killed run and after a new model. Equal embed calls. An equal first line of the report. The reference with the variable of the row set. The comparison itself: one changed copy of a store for each part, the tolerance of a rank, a store that the comparison refuses |
 | `test_proc_library_reader.py` | library, the reference, the TEI stand-in and the reader program | a store as the bridge reads it, with the SQLite of Node: the model, the count of values, the rows of an FTS5 query, the vectors. Equal rows for both writers. A store that is not alone in its directory. The statements of the reader program and the limit of a query, held against the text of the bridge |
 | `test_proc_edges.py` | door and `attendance`, chaperone and `attendance`, trigger door and `attendance`, noticeboard | the edge of each listener: an unknown path, a wrong method, a JSON body with no `Content-Type` header, a body that is not JSON, a final slash, `HEAD`, the socket file of a killed process, a stop with an open stream, `SIGINT`, `SIGHUP` |
+| `test_proc_chaperone_rs.py` | the Rust chaperone and its two effect stand-ins | the tools of the stand-in upstream, and the audit records of one allowed call |
 | `test_proc_harness.py`, `test_proc_table.py` | none | the harness and the table, checked against their own rules |
 | `test_proc_standins.py`, `test_proc_sse.py` | none | the record of a stand-in, and the SSE reader |
 | `test_proc_standin_programs.py` | none | each rule of a stand-in program that a scenario relies on |
@@ -1327,7 +1366,8 @@ the text of the failure. Work down this list.
 | `acp_client.py` | the ACP client of a test: a WebSocket, as the web build of Panda opens it |
 | `reader_store.mjs` | the Node program that reads one index store with the statements of the bridge |
 | `proc_stack.py` | `attendance`, its environment, and the start of a service on a free port |
-| `proc_owui.py`, `proc_delegate.py`, `proc_caregiver.py`, `proc_trigger.py`, `proc_board.py`, `proc_tui.py`, `proc_library.py` | one topology each |
+| `proc_owui.py`, `proc_delegate.py`, `proc_caregiver.py`, `proc_trigger.py`, `proc_board.py`, `proc_tui.py`, `proc_library.py`, `proc_chaperone_rs.py` | one topology each |
+| `proc_chaperone_pin.py`, `chaperone.pin` | the commit of the Rust chaperone, its build and its cache |
 | `proc_board_reports.py` | a start of the noticeboard with a changed environment, the readers of a report, of a paging link and of the cookie, the check of a JSON body, and a post of an exact size |
 | `proc_chat.py`, `proc_sse.py` | what Open WebUI sends, and how a test reads the SSE stream back |
 | `proc_report.py` | what a failed test carries, and the end of the processes of one test |

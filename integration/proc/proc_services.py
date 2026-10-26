@@ -33,6 +33,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Final
 
+from proc_chaperone_pin import BuildError, pinned_binary
+
 
 class Service(StrEnum):
     """Every program of this repository that the suite can start."""
@@ -44,9 +46,19 @@ class Service(StrEnum):
     DOOR_TUI = "door-tui"
     CAREGIVER = "caregiver"
     CHAPERONE = "chaperone"
+    CHAPERONE_RS = "chaperone-rs"
     NOTICEBOARD = "noticeboard"
     NOTICEBOARD_VERIFY = "noticeboard-verify"
     LIBRARY = "library"
+
+
+class Build(StrEnum):
+    """Where the default program of a row comes from."""
+
+    #: The `bin` of the workspace venv, in the place of the component tree.
+    VENV = "venv"
+    #: The pinned build of another repository (`proc_chaperone_pin.py`).
+    PINNED = "pinned"
 
 
 class Origin(StrEnum):
@@ -71,6 +83,8 @@ class StartEntry:
     #: or the release executor runs it as a verify hook (contract 06 §4).
     #: Empty also for a command that a unit runs inside a sandbox.
     units: tuple[str, ...]
+    #: Where the default program comes from.
+    build: Build = Build.VENV
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,6 +137,16 @@ SERVICES: Final[dict[Service, StartEntry]] = {
         selector=(),
         override="CRECHE_PROC_CHAPERONE",
         units=("creche-chaperone.service",),
+    ),
+    # The Rust chaperone (plan row 29). No unit of this repository runs it.
+    # Its default is the build of the commit in `chaperone.pin`, and the
+    # variable names a `chaperone` binary built elsewhere.
+    Service.CHAPERONE_RS: StartEntry(
+        program="chaperone",
+        selector=(),
+        override="CRECHE_PROC_CHAPERONE_RS",
+        units=(),
+        build=Build.PINNED,
     ),
     Service.NOTICEBOARD: StartEntry(
         program="noticeboard",
@@ -226,7 +250,7 @@ def reference_of(service: Service) -> StartCommand:
     judged one.
     """
     entry = SERVICES[service]
-    program = venv_bin() / entry.program
+    program = _default_program(entry)
 
     if not program.is_file():
         raise CommandError(
@@ -270,7 +294,13 @@ def describe_table(environ: Mapping[str, str] | None = None) -> list[str]:
 
 
 def _default_command(service: Service, entry: StartEntry) -> StartCommand:
-    program = venv_bin() / entry.program
+    program = _default_program(entry)
+
+    if entry.build is Build.PINNED and not program.is_file():
+        raise CommandError(
+            f"{service.value} is not built: {program} is missing. The first test "
+            f"that needs it builds it, or set {entry.override} to a built binary."
+        )
 
     if not program.is_file():
         raise CommandError(
@@ -279,6 +309,16 @@ def _default_command(service: Service, entry: StartEntry) -> StartCommand:
         )
 
     return _default_words(program, entry)
+
+
+def _default_program(entry: StartEntry) -> Path:
+    if entry.build is Build.PINNED:
+        try:
+            return pinned_binary()
+        except BuildError as error:
+            raise CommandError(str(error)) from error
+
+    return venv_bin() / entry.program
 
 
 def _default_words(program: Path, entry: StartEntry) -> StartCommand:

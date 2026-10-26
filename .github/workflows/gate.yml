@@ -257,6 +257,16 @@ jobs:
 
       - uses: ./.github/actions/uv-sync
 
+      # The Rust chaperone of the row `chaperone-rs`: the binary that the
+      # suite builds from the commit of integration/proc/chaperone.pin
+      # (integration/proc/proc_chaperone_pin.py). The key holds the pin
+      # file, so a new pin starts from an empty cache. On a miss the first
+      # test that needs the binary builds it with the cargo of the runner.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/creche-proc/chaperone-rs
+          key: proc-chaperone-rs-${{ runner.os }}-${{ hashFiles('integration/proc/chaperone.pin') }}
+
       - run: uv run pytest integration/proc -m slow
         env:
           CRECHE_PROC_NO_SKIP: "1"
