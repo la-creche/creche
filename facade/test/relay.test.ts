@@ -9,7 +9,7 @@ import { DatabaseSync } from "node:sqlite";
 import { PassThrough } from "node:stream";
 
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import vectors from "../vectors/creche-extensions.json" with { type: "json" };
 import { SupervisorLock } from "../src/lock.js";
@@ -21,6 +21,10 @@ import type { FacadeProcess } from "./facade-process.js";
 import { faux, Probe, startFlue } from "./faux-flue.js";
 
 const DEADLINE_MS = 300;
+
+// A test's budget is above the 5 s wait of `nextMessage`, so a missing
+// answer fails with that wait's error and the relay's stderr.
+vi.setConfig({ testTimeout: 15_000 });
 
 const flue = await startFlue([Probe]);
 
@@ -53,6 +57,9 @@ async function facade(): Promise<Facade> {
   const index = new SessionIndex(new DatabaseSync(":memory:"));
   let listening: () => void = () => undefined;
   const ready = new Promise<void>((resolve) => (listening = resolve));
+  // The supervisor link beats as attendance does. With no beat, the facade
+  // stops after DEADLINE_MS, often before a cold relay process connects.
+  const beating = setInterval(() => input.write(`${JSON.stringify(vectors.beat.request)}\n`), DEADLINE_MS / 3);
 
   const exited = new Promise<number>((resolve) => {
     void runSupervisor({
@@ -73,6 +80,7 @@ async function facade(): Promise<Facade> {
       socketPath: socket,
     });
   });
+  void exited.then(() => clearInterval(beating));
   await ready;
   const made = { tmp, socket, input, said, exited };
   facades.push(made);
