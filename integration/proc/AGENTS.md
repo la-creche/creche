@@ -245,11 +245,10 @@ each one, and each one runs to its end.
 |---|---|---|
 | `test_proc_owui_turns.py` | door and `attendance` | the thirteen stage 1 scenarios, with the numbers of the old suite |
 | `test_proc_owui_start.py` | door and `attendance` | a start, a refused start, the socket mode, a token reload |
-| `test_proc_switch.py` | door and `attendance` | the switch call of contract 05 §5, with a test in the place of `caregiver` |
+| `test_proc_switch.py` | door and `attendance` | the refusals of the switch call of contract 05 §5. The handshake runs over ACP since phase 2 row 20 |
 | `test_proc_status.py` | door and `attendance` | what the readers do with the status document and the config mount |
 | `test_proc_pi_events.py` | door and `attendance` | the journal line of a pi event that holds a lone surrogate |
 | `test_proc_delegate.py` | chaperone and `attendance` | the manifest and the refusals of contract 04 §7. The job runs over ACP since phase 2 row 18 |
-| `test_proc_caregiver_stage2.py` | the house | the stage 2 scenarios, with the names of the old suite |
 | `test_proc_caregiver_start.py` | `caregiver` alone, and the house | a start, a refused start, a signal, a kill, and the verbs that run to an end |
 | `test_proc_caregiver_files.py` | `caregiver` alone, `caregiver` with the chaperone, and the house | each file that `caregiver` publishes, read as the next program reads it, and the seams of `integration/tests_manager` that assert on a file |
 | `test_proc_override.py` | door and `attendance`, and the last four topologies | a service starts through its variable: one that serves, one that runs to its end, one on a terminal |
@@ -699,9 +698,8 @@ the text of the failure. Work down this list.
   of contract 05 §3.3 fixes `yes` for that code. Contract 05 §5.3 rule 8
   says that the family keeps serving after a refused switch. The suite holds
   `false` for the fault of an incoming sandbox while another sandbox serves.
-  `integration/tests` holds the same. A change costs one assertion in
-  `test_proc_caregiver_stage2.py`, and the turn after that assertion then
-  fails.
+  No scenario holds it since phase 2 row 20: the switch handshake runs
+  over ACP, and the house has no facade.
 - **CONTRACT-QUESTION, a registry with no family.** No contract says what
   it means. The suite holds the rule of `caregiver/AGENTS.md`: an empty
   registry deletes no family. A change costs one scenario in
@@ -709,8 +707,8 @@ the text of the failure. Work down this list.
 - **The document between a switch and the end of a destroy.** Contract 05
   §3.4 publishes the block before each step, and §4.3 step 7 sets `ready`
   after the handshake. `caregiver` publishes that document before the
-  destroy. The kill scenario of `test_proc_caregiver_stage2.py` holds the
-  ids of the two sandboxes at that moment, and it holds no state.
+  destroy. No scenario holds the document at that moment since phase 2
+  row 20.
 - **One process table for each sandbox of a test.** A sandbox on the host
   is a microVM with a process table of its own. A test has no microVM, so
   each playpen of the machine is in one table. On Linux the playpen counts
@@ -1039,7 +1037,6 @@ the text of the failure. Work down this list.
   - `family_text` and `block_text` of `proc_registry.py`
   - `write_family_file` and `Tree.family_file` of `proc_tree.py`
   - the two `quiet` texts of `test_proc_trigger_quiet.py`
-  - one family text in `test_proc_caregiver_stage2.py`
 
   `test_proc_table.py` reads the component manifest, which has the same
   markup. A change of the markup costs each of those places.

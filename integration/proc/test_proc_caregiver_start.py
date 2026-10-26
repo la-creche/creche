@@ -27,8 +27,6 @@ from proc_caregiver import (
     EXIT_USAGE,
     IN_SYNC,
     PLANE_ENDPOINTS,
-    READY,
-    RECONCILING,
     WATCH_OFF,
     WRITE_FLAG,
     CaregiverStack,
@@ -180,47 +178,6 @@ def test_sighup_makes_the_service_look_now(caregiver_prepared: CaregiverStack) -
         LOOK_DEADLINE_S,
     )
     assert child.exit_code() is None, "a reload ended the service"
-
-
-def test_a_stop_during_a_create_ends_the_step_and_starts_no_other(
-    house_prepared: CaregiverStack,
-) -> None:
-    """`TimeoutStopSec` of the unit, and contract 05 §4.2.
-
-    A stop is checked between two steps and never inside one. The create in
-    flight ends whole. No switch call follows, so `attendance` dials nothing.
-    The next start asks for the handshake of the same sandbox.
-    """
-    house = house_prepared
-    tune(house.tree, SBX, f"hold-create-{SANDBOX}")
-    house.start_house()
-    assert house.caregiver is not None
-    wait_until(lambda: house.sbx_commands() != [], "the create to start")
-
-    # CONTRACT-QUESTION: no contract says what a stop inside a step leaves.
-    # Contract 05 §4.2 rule 5 retires only a `planned` row at a start.
-    # Reading taken: what the unit file and `caregiver/AGENTS.md` say. The
-    # step in flight ends whole, the service exits 0, the document stays
-    # `reconciling` with the sandbox `creating`, and the next start keeps
-    # that sandbox. A service that ends the step at once costs each
-    # assertion after the signal.
-    house.caregiver.send(signal.SIGTERM)
-    time.sleep(QUIET_S)
-    assert house.caregiver.exit_code() is None, "the stop cut the create in flight"
-
-    untune(house.tree, SBX, f"hold-create-{SANDBOX}")
-
-    assert house.caregiver.wait(EXIT_DEADLINE_S) == EXIT_OK
-    assert house.dialled() == [], "a stopped caregiver asked for a handshake"
-    assert house.sandboxes() == [(SANDBOX, CREATING)]
-    assert house.state() == RECONCILING
-    assert _plane_rows(house, SANDBOX) == sorted(PLANE_ENDPOINTS)
-
-    house.spawn_caregiver()
-    house.await_serving()
-
-    assert house.sandboxes() == [(SANDBOX, READY)]
-    assert len(_creates(house)) == 1, "the next start made a second sandbox"
 
 
 def test_a_kill_inside_a_create_retires_the_sandbox(caregiver_prepared: CaregiverStack) -> None:

@@ -427,6 +427,11 @@ class AcpLink:
         sandbox = self._channel.sandbox if self._channel is not None else None
         return LinkStatus(state=self._state, sandbox=sandbox, agent=self._agent)
 
+    @property
+    def prompts_in_flight(self) -> int:
+        """How many `session/prompt` calls wait for their answer."""
+        return len(self._prompts)
+
     async def start(self, dial: SandboxDial) -> AgentAnswer:
         """Wait out the lock, start the facade, run the handshake."""
         lock = playpen_lock_file(self._state_root, self._family, dial.sandbox)

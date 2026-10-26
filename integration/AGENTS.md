@@ -69,7 +69,10 @@ node playpen/dist/playpen.js   (the real bundle)
 playpen/test/fake-pi.mjs   (the playpen's own double)
 ```
 
-Each later stage adds one real piece:
+Phase 2 row 20 deleted the scenarios of stages 1 to 5: the switch
+handshake and the jobs now run over ACP, and this stack has no facade.
+The stage modules stay as the wiring of the packet scenarios. Each later
+stage adds one real piece:
 
 | Stage | Adds |
 |---|---|
@@ -166,9 +169,7 @@ Work down this list. The first line that does not hold names the hop.
 | `tests/fake_sbx.py` | `sbx exec --env-file` for a machine with no sbx |
 | `tests/conftest.py`, `tests/sse_read.py` | the `stack` fixture, the `slow` mark, reading SSE back |
 | `tests/stage2.py` to `stage5.py`, `stage_eq.py`, `wb2.py` | the wiring of each later stage |
-| `tests/test_stage1_gate.py` | the thirteen scenarios |
-| `tests/test_i2_stage2.py` to `test_i5_stage5.py` | each stage's scenarios |
-| `tests/test_*.py`, other | one packet each: the switch, the launcher, the terminal door, delegations, enqueue, grant refresh, the noticeboard's reads, the pi shim |
+| `tests/test_*.py` | one packet each: the lease handover, the launcher, the terminal door, enqueue refusals, grant refresh, the noticeboard's reads, the pi shim |
 | `fixtures/*-registry/` | the families each stage publishes. Read-only inputs. |
 | `tests_manager/` | the `caregiver` writers against the real readers, with the Node drivers under `node/` |
 | `proc/` | the process-level suite: each service is a process. `proc/AGENTS.md` has its rules. |

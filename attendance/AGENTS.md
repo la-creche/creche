@@ -71,8 +71,10 @@ playpen runs inside the sandbox image, which carries Node.
 
 1. `attendance` never calls `caregiver`.
 2. This service runs the handshake, so it dials a `creating` sandbox.
-   `startable_sandbox()` holds that rule.
-3. One channel per sandbox, not per family. A draining family holds two.
+   `startable_sandbox()` holds that rule. The handshake is ACP `initialize`
+   on the sandbox's facade (`acp_link.py`).
+3. One supervisor link per sandbox, not per family. A draining family holds
+   two.
 4. Layers talk downward only: `api` to `service` to the stores and links to
    `channel` and `wire` to primitives. A route never touches the journal.
 5. Nothing here needs Node.
@@ -89,11 +91,16 @@ playpen runs inside the sandbox image, which carries Node.
 ## Switch rules
 
 1. The status document outranks the pin. The pin lives in memory.
-2. Release the outgoing sandbox before you answer. `_retire_sandbox` stops
-   every held-open process, sends `shutdown`, then closes the channel.
+2. Release the outgoing sandbox before you answer. `_retire_sandbox` sends
+   `_creche/shutdown` to the outgoing facade, then stops every held-open
+   process of the old channel, sends `shutdown`, and closes that channel.
 3. A switch belongs to the platform, not to the HTTP request. A repeat joins
    the run. A refused run is forgotten.
-4. The switch runs the handshake before anything moves.
+4. The switch runs the handshake before anything moves: `initialize` on
+   the incoming facade.
+7. A drain waits for the session turns and for the prompts in flight on
+   the outgoing facade, on one deadline. An interrupt stops the outgoing
+   facade, and each of its jobs answers `failed` with `channel_lost`.
 5. The pin is the family's choice of sandbox, not only a switch's.
 6. Interrupt waits for nothing. Do not add a grace period.
 
@@ -217,6 +224,9 @@ misbehaviour there. A test that spawns a process is marked `slow`.
   (`service.py`, `terminal.py`).
 - After an idle close, the status document still says `channel: open`
   (`playpen_link.py`).
+- `caregiver` writes the status document's `channel` field from its own
+  ledger. This service does not publish its `LinkStatus` there: it never
+  calls `caregiver`, and contract 05 names `caregiver` the one writer.
 - `wait=accepted` still waits out a `planned` sandbox for up to 60 seconds
   (`service.py`).
 - `X-Session-Id` is caller-set, so a model can aim a `code-sandbox` job at

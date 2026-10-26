@@ -83,6 +83,8 @@ class FakeFacade:
 
     prompt_mode: PromptMode = PromptMode.OK
     garbage: bool = False
+    #: Any other number fails the host's handshake.
+    protocol_version: int = 1
     methods: list[str] = field(default_factory=list[str])
     received: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     held: dict[str, Prompt] = field(default_factory=dict[str, Prompt])
@@ -98,7 +100,8 @@ class FakeFacade:
         params: dict[str, Any] = message.get("params") or {}
 
         if method == "initialize":
-            lines = [_answer(request_id, INITIALIZE_RESULT)]
+            result = {**INITIALIZE_RESULT, "protocolVersion": self.protocol_version}
+            lines = [_answer(request_id, result)]
             return [*lines, "not json"] if self.garbage else lines
 
         if method == "_creche/beat":
@@ -193,6 +196,8 @@ class FacadeFleet:
     """One `FakeChannel` and one `FakeFacade` per dialled sandbox."""
 
     prompt_mode: PromptMode = PromptMode.OK
+    #: The sandboxes whose facade speaks another protocol version.
+    mismatched: set[str] = field(default_factory=set[str])
     channels: dict[str, FakeChannel] = field(default_factory=dict[str, "FakeChannel"])
     facades: dict[str, FakeFacade] = field(default_factory=dict[str, FakeFacade])
     dials: list[str] = field(default_factory=list[str])
@@ -203,7 +208,8 @@ class FacadeFleet:
 
         self.dials.append(dial.sandbox)
         channel = FakeChannel(dial.sandbox)
-        facade = FakeFacade(prompt_mode=self.prompt_mode)
+        version = 2 if dial.sandbox in self.mismatched else 1
+        facade = FakeFacade(prompt_mode=self.prompt_mode, protocol_version=version)
         self.channels[dial.sandbox] = channel
         self.facades[dial.sandbox] = facade
         self._tasks.append(asyncio.create_task(serve(channel, facade)))
