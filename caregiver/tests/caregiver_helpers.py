@@ -49,7 +49,8 @@ KIND_MOVED: dict[str, object] = {"kind": "thin", "max_inflight_delegations": 7}
 LONG_AGO: str = "2020-01-01T00:00:00Z"
 
 #: The token of the epoch before a rotation, as `expire_overlap` leaves it.
-OLD_TOKEN: str = "OLDTOKEN"
+#: It has the form of `mint_token`, or `read_creds` refuses it.
+OLD_TOKEN: str = "0123456789abcdef" * 4
 
 #: More levels than the JSON parser of each supported Python version reads.
 VERY_DEEP: int = 400_000

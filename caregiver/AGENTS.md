@@ -135,6 +135,10 @@ host where something has gone wrong.
   `reconcile.py`.
 - `rotate` deletes the old key before it mints the new one. The token
   overlaps. The key does not.
+- A token is 32 random bytes as 64 lower-case hex characters. The Rust
+  chaperone accepts no other form. `read_creds` reads a `creds.json` with a
+  `pep_token` of another form as absent, so the next pass mints a new key
+  and a new token.
 - `rotate` publishes the new epoch. It writes the credentials block of
   the status document and no other field, so `written_at` stays. A write
   of the block that fails is one error line, and the rotation continues.

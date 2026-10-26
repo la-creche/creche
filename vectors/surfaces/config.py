@@ -533,8 +533,11 @@ _LATER: Final = "2030-01-02T03:09:05Z"
 
 #: The two values are text of a test. No LiteLLM and no chaperone takes them.
 _KEY: Final = "sk-test-key"
-_TOKEN: Final = "TESTTOKENTESTTOKENTESTTOKENTESTTOKENTESTTOKENTESTTOKEN22"
-_OLD_TOKEN: Final = "OLDERTOKENOLDERTOKENOLDERTOKENOLDERTOKENOLDERTOKEN222222"
+#: Two tokens of the form of `credentials.mint_token`: 64 lower-case hex.
+_TOKEN: Final = "7e57" * 16
+_OLD_TOKEN: Final = "01de" * 16
+#: A token of the form that `mint_token` wrote before: base32, no padding.
+_BASE32_TOKEN: Final = "TESTTOKENTESTTOKENTESTTOKENTESTTOKENTESTTOKENTESTTOKEN22"
 
 
 def _creds_text(**replaced: str) -> str:
@@ -640,6 +643,9 @@ CREDS_DOCUMENTS: Final[tuple[CredsDocument, ...]] = (
     _creds("key-not-ascii", litellm_key='"cl\\u00e9"'),
     _creds("key-lone-surrogate", litellm_key='"\\ud800"'),
     _creds("token-missing", pep_token=""),
+    _creds("token-base32", pep_token=f'"{_BASE32_TOKEN}"'),
+    _creds("token-upper-hex", pep_token=f'"{_TOKEN.upper()}"'),
+    _creds("token-63-hex", pep_token=f'"{_TOKEN[:-1]}"'),
     # --- the time of the write ---
     _creds("written-missing", written_at=""),
     _creds("written-empty", written_at='""'),

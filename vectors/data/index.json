@@ -117,7 +117,7 @@
   {"accepted":76,"entry":"handover.site.read","path":"config/site_file.json","raised":0,"refused":6,"surface":"config.site_file","vectors":82},
   {"accepted":22,"entry":"chaperone.mcp_client.load_upstreams","path":"config/roster.json","raised":0,"refused":50,"surface":"config.roster","vectors":72},
   {"accepted":8,"entry":"caregiver.config_mount.write_config_mount","path":"config/runtime_json.write.json","raised":0,"refused":0,"surface":"config.runtime_json.write","vectors":8},
-  {"accepted":37,"entry":"caregiver.credentials.read_creds","path":"config/creds_json.read.json","raised":0,"refused":30,"surface":"config.creds_json.read","vectors":67},
+  {"accepted":37,"entry":"caregiver.credentials.read_creds","path":"config/creds_json.read.json","raised":0,"refused":33,"surface":"config.creds_json.read","vectors":70},
   {"accepted":9,"entry":"caregiver.credentials.write_creds","path":"config/creds_json.write.json","raised":0,"refused":0,"surface":"config.creds_json.write","vectors":9},
   {"accepted":6,"entry":"caregiver.playpen_env.write_playpen_env","path":"config/playpen_env.write.json","raised":0,"refused":0,"surface":"config.playpen_env.write","vectors":6},
   {"accepted":13,"entry":"caregiver.playpen_env.read_playpen_env","path":"config/playpen_env.read.json","raised":0,"refused":0,"surface":"config.playpen_env.read","vectors":13},
