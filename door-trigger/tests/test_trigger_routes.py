@@ -29,13 +29,13 @@ def _write_family(
 ) -> None:
     directory = registry_root / "families" / name
     directory.mkdir(parents=True, exist_ok=True)
-    (directory / "family.yaml").write_text(
+    (directory / "family.toml").write_text(
         f"""\
-name: {name}
-kind: autonomous
-description: Test fixture family.
+name = "{name}"
+kind = "autonomous"
+description = "Test fixture family."
 
-model: {{ router: agent-router, budget_usd_per_day: 10 }}
+model = {{ router = "agent-router", budget_usd_per_day = 10 }}
 {triggers}
 """,
         encoding="utf-8",
@@ -53,7 +53,9 @@ def _write_token(webhooks_dir: Path, family: str, name: str, token: str = GOOD_T
 def test_a_servable_familys_declared_webhook_becomes_a_route(tmp_path: Path) -> None:
     registry_root = tmp_path / "registry"
     webhooks_dir = tmp_path / "webhooks"
-    _write_family(registry_root, "scrum-lead", triggers="\ntriggers:\n  - webhook: deploy-notify\n")
+    _write_family(
+        registry_root, "scrum-lead", triggers='\ntriggers = [{ webhook = "deploy-notify" }]\n'
+    )
     _write_token(webhooks_dir, "scrum-lead", "deploy-notify")
 
     table = RouteTable(
@@ -71,7 +73,9 @@ def test_a_servable_familys_declared_webhook_becomes_a_route(tmp_path: Path) -> 
 def test_a_family_families_py_excludes_gets_no_route_even_if_declared(tmp_path: Path) -> None:
     registry_root = tmp_path / "registry"
     webhooks_dir = tmp_path / "webhooks"
-    _write_family(registry_root, "scrum-lead", triggers="\ntriggers:\n  - webhook: deploy-notify\n")
+    _write_family(
+        registry_root, "scrum-lead", triggers='\ntriggers = [{ webhook = "deploy-notify" }]\n'
+    )
     _write_token(webhooks_dir, "scrum-lead", "deploy-notify")
 
     # families.py says nothing is servable: e.g. this family never validated.
@@ -86,7 +90,9 @@ def test_a_family_families_py_excludes_gets_no_route_even_if_declared(tmp_path: 
 def test_a_declared_webhook_with_no_token_file_gets_no_route(tmp_path: Path) -> None:
     registry_root = tmp_path / "registry"
     webhooks_dir = tmp_path / "webhooks"
-    _write_family(registry_root, "scrum-lead", triggers="\ntriggers:\n  - webhook: deploy-notify\n")
+    _write_family(
+        registry_root, "scrum-lead", triggers='\ntriggers = [{ webhook = "deploy-notify" }]\n'
+    )
     # No _write_token call: the route has no token file at all.
 
     table = RouteTable(
@@ -105,7 +111,9 @@ def test_a_token_caregiver_mints_later_is_served_on_the_next_refresh(tmp_path: P
     answer 404 until the next restart."""
     registry_root = tmp_path / "registry"
     webhooks_dir = tmp_path / "webhooks"
-    _write_family(registry_root, "scrum-lead", triggers="\ntriggers:\n  - webhook: deploy-notify\n")
+    _write_family(
+        registry_root, "scrum-lead", triggers='\ntriggers = [{ webhook = "deploy-notify" }]\n'
+    )
     table = RouteTable(
         registry_root=registry_root,
         webhooks_dir=webhooks_dir,
@@ -126,7 +134,9 @@ def test_a_rotated_token_replaces_the_old_one_on_a_refresh(tmp_path: Path) -> No
     value stops working: one file holds one value, with no overlap."""
     registry_root = tmp_path / "registry"
     webhooks_dir = tmp_path / "webhooks"
-    _write_family(registry_root, "scrum-lead", triggers="\ntriggers:\n  - webhook: deploy-notify\n")
+    _write_family(
+        registry_root, "scrum-lead", triggers='\ntriggers = [{ webhook = "deploy-notify" }]\n'
+    )
     _write_token(webhooks_dir, "scrum-lead", "deploy-notify")
     table = RouteTable(
         registry_root=registry_root,
@@ -147,7 +157,7 @@ def test_a_rotated_token_replaces_the_old_one_on_a_refresh(tmp_path: Path) -> No
 def test_a_cron_only_family_contributes_no_webhook_route(tmp_path: Path) -> None:
     registry_root = tmp_path / "registry"
     webhooks_dir = tmp_path / "webhooks"
-    _write_family(registry_root, "scrum-lead", triggers='\ntriggers:\n  - cron: "@hourly"\n')
+    _write_family(registry_root, "scrum-lead", triggers='\ntriggers = [{ cron = "@hourly" }]\n')
 
     table = RouteTable(
         registry_root=registry_root,
@@ -171,7 +181,7 @@ def test_an_unknown_family_and_name_are_both_simply_absent(tmp_path: Path) -> No
 def test_refresh_replaces_the_table_rather_than_merging(tmp_path: Path) -> None:
     registry_root = tmp_path / "registry"
     webhooks_dir = tmp_path / "webhooks"
-    _write_family(registry_root, "scrum-lead", triggers="\ntriggers:\n  - webhook: old-hook\n")
+    _write_family(registry_root, "scrum-lead", triggers='\ntriggers = [{ webhook = "old-hook" }]\n')
     _write_token(webhooks_dir, "scrum-lead", "old-hook")
 
     table = RouteTable(
@@ -184,7 +194,7 @@ def test_refresh_replaces_the_table_rather_than_merging(tmp_path: Path) -> None:
 
     # The family file is edited to rename the webhook. A stale entry for
     # the old name must not survive a refresh.
-    _write_family(registry_root, "scrum-lead", triggers="\ntriggers:\n  - webhook: new-hook\n")
+    _write_family(registry_root, "scrum-lead", triggers='\ntriggers = [{ webhook = "new-hook" }]\n')
     _write_token(webhooks_dir, "scrum-lead", "new-hook")
     table.refresh()
 
@@ -195,8 +205,12 @@ def test_refresh_replaces_the_table_rather_than_merging(tmp_path: Path) -> None:
 def test_two_families_each_get_their_own_route(tmp_path: Path) -> None:
     registry_root = tmp_path / "registry"
     webhooks_dir = tmp_path / "webhooks"
-    _write_family(registry_root, "scrum-lead", triggers="\ntriggers:\n  - webhook: lead-hook\n")
-    _write_family(registry_root, "ha-review", triggers="\ntriggers:\n  - webhook: review-hook\n")
+    _write_family(
+        registry_root, "scrum-lead", triggers='\ntriggers = [{ webhook = "lead-hook" }]\n'
+    )
+    _write_family(
+        registry_root, "ha-review", triggers='\ntriggers = [{ webhook = "review-hook" }]\n'
+    )
     _write_token(webhooks_dir, "scrum-lead", "lead-hook")
     _write_token(webhooks_dir, "ha-review", "review-hook")
 
