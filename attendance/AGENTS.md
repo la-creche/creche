@@ -216,9 +216,10 @@ is marked `slow`.
 - `ErrorCode` still holds the codes of the session API, such as
   `session_busy` and `lease_taken_over`. No route answers them now. The
   vectors of `session.error_body` list every code (`errors.py`).
-- `SESSIOND_CHANNEL_COMMAND` and the three `SESSIOND_OWUI_*` keys stay in
-  the env catalog (`env/src/creche_env/default.env`). No program reads them.
-  Removing a catalog key refuses each site file that sets it.
+- `SESSIOND_OWUI_URL` and `SESSIOND_OWUI_FOLDER_ID` stay in the env catalog
+  (`env/src/creche_env/default.env`). No program reads them. The catalog
+  lost `SESSIOND_CHANNEL_COMMAND` and `SESSIOND_OWUI_KEY_FILE`. Removing a
+  catalog key refuses each site file that sets it.
 - `config.playpen_log` keeps the file name `playpen-<family>.log` for the
   stderr of the facade and the relays (`config.py`).
 - Contract 03 §8 gives each cap of a text in bytes. It gives no count of
