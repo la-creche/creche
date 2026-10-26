@@ -1109,6 +1109,25 @@ RS_RELEASE: Final = "release"
 RS_RELEASE_PROGRAM: Final = "chaperone-release"
 RS_RELEASE_REQUESTER: Final = "agent-control"
 
+#: The approval plugin of §12 in `effect/included`: its manifest, as the
+#: chaperone repository holds it. The draft of `bin/chaperone-install-draft.py`
+#: picks it for the slot `approval_channel`.
+RS_HA_APPROVAL: Final = "ha-approval"
+RS_HA_APPROVAL_MANIFEST: Final = """\
+name = "ha-approval"
+version = "1.0.0"
+kind = "effect"
+slot = "approval_channel"
+hooks = ["approval"]
+secrets = ["APPROVAL_TOKEN", "RESUME_TOKEN"]
+command = ["chaperone-ha-approval"]
+"""
+
+#: The draft's path of `install.toml`, and the start of the path of each
+#: manifest that it adds. Both are relative to `/etc/chaperone`.
+RS_DRAFT_INSTALL: Final = "install.toml"
+RS_DRAFT_ADDED: Final = "plugins/effect/added/"
+
 #: The plugin of each slot in `plugins/default` of the chaperone: kind,
 #: slot, and the command of an effect plugin. The suite writes the manifests
 #: itself, so a binary that a variable names needs no checkout beside it.
@@ -1327,6 +1346,35 @@ def write_rs_fleet_tree(
     _atomic_write(files.config_file("policy.toml"), policy, 0o644)
 
 
+def write_rs_draft_tree(files: RsFiles, draft: Mapping[str, str], policy: str) -> None:
+    """The files of `chaperone check` for the draft of `bin/chaperone-install-draft.py`.
+
+    `draft` maps each path of the draft to its text: `install.toml` and one
+    manifest under `plugins/effect/added/` for each server. The tree also
+    holds each plugin of the chaperone that the draft names: the defaults,
+    `attendance`, `release` and `ha-approval`. `policy` is the text of
+    `policy.toml`, as it is.
+    """
+    _write_rs_defaults(files)
+    _write_rs_attendance_manifests(files)
+    included = files.plugins_dir / "effect" / "included"
+    release = rs_manifest(RS_RELEASE, "effect", "upstream", command=(RS_RELEASE_PROGRAM,))
+    _atomic_write(included / RS_RELEASE / "plugin.toml", release, 0o644)
+    _atomic_write(included / RS_HA_APPROVAL / "plugin.toml", RS_HA_APPROVAL_MANIFEST, 0o644)
+
+    for path, text in draft.items():
+        if path == RS_DRAFT_INSTALL:
+            _atomic_write(files.config_file(RS_DRAFT_INSTALL), text, 0o644)
+            continue
+
+        if not path.startswith(RS_DRAFT_ADDED) or ".." in path.split("/"):
+            raise ValueError(f"the draft holds a path outside {RS_DRAFT_ADDED}: {path}")
+
+        _atomic_write(files.plugins_dir / path.removeprefix("plugins/"), text, 0o644)
+
+    _atomic_write(files.config_file("policy.toml"), policy, 0o644)
+
+
 def _write_rs_defaults(files: RsFiles) -> None:
     """The manifest of each plugin in `plugins/default` (§7)."""
     for name, (kind, slot, program) in RS_DEFAULTS.items():
@@ -1348,6 +1396,22 @@ def _write_rs_attendance(files: RsFiles, socket: Path) -> str:
     Each manifest is the one of the chaperone repository. Each secret file
     holds the token of one door of `attendance`, as on the host.
     """
+    _write_rs_attendance_manifests(files)
+    bindings: list[str] = []
+
+    for param, principal in RS_ATTENDANCE_SECRETS.items():
+        _atomic_write(files.secrets_dir / principal, token_of(principal), _SECRET_MODE)
+        bindings.append(f'{param} = "{principal}"')
+
+    return (
+        f"\n[plugins.{RS_ATTENDANCE}]\n"
+        f"args = {json.dumps(['--socket', str(socket)])}\n"
+        f"secrets = {{ {', '.join(bindings)} }}\n"
+    )
+
+
+def _write_rs_attendance_manifests(files: RsFiles) -> None:
+    """Both manifests of the plugin `attendance`, as the chaperone repository holds them."""
     plugin = f'name = "{RS_ATTENDANCE}"\nversion = "1.0.0"\n'
     halves = {
         "decision": f'{plugin}kind = "decision"\nhooks = ["fence"]\npairs_with = "effect"\n',
@@ -1362,15 +1426,3 @@ def _write_rs_attendance(files: RsFiles, socket: Path) -> str:
     for kind, text in halves.items():
         manifest = files.plugins_dir / kind / "included" / RS_ATTENDANCE / "plugin.toml"
         _atomic_write(manifest, text, 0o644)
-
-    bindings: list[str] = []
-
-    for param, principal in RS_ATTENDANCE_SECRETS.items():
-        _atomic_write(files.secrets_dir / principal, token_of(principal), _SECRET_MODE)
-        bindings.append(f'{param} = "{principal}"')
-
-    return (
-        f"\n[plugins.{RS_ATTENDANCE}]\n"
-        f"args = {json.dumps(['--socket', str(socket)])}\n"
-        f"secrets = {{ {', '.join(bindings)} }}\n"
-    )

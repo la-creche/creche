@@ -1,0 +1,214 @@
+--- install.toml
+# A draft of chaperone's install file, from the server files of one registry.
+# chaperone-install-draft printed it. Review each entry before you install it.
+version = 1
+
+[plugins.mcp-http]
+guard = "host-firewall"
+
+[plugins.attendance]
+args = ["--socket", "/srv/agents/state/rework/sock/sessiond.sock"]
+secrets = { DELEGATE_TOKEN = "door-delegate", DISPATCH_TOKEN = "door-dispatch" }
+
+[plugins.release]
+args = ["--requests-dir", "/var/lib/creche-handover/releases/requests", "--requested-by", "agent-control"]
+
+[plugins.ha-approval]
+args = ["--hook-url", "http://127.0.0.1:1881/hook/approval", "--listen", "192.0.2.10:8310"]
+secrets = { APPROVAL_TOKEN = "approval-token", RESUME_TOKEN = "resume-token" }
+
+[plugins.board-lead]
+user = "mcp-board-lead"
+secret_delivery = "env"
+secrets = { VIKUNJA_TOKEN = "vikunja_token_lead" }
+
+[plugins.github-code]
+user = "mcp-github-code"
+secret_delivery = "env"
+secrets = { GITHUB_PERSONAL_ACCESS_TOKEN = "github_token_code" }
+
+[plugins.github-platform]
+user = "mcp-github-platform"
+secret_delivery = "env"
+secrets = { GITHUB_PERSONAL_ACCESS_TOKEN = "github_token_platform" }
+
+[plugins.ha]
+user = "mcp-ha"
+secret_delivery = "env"
+secrets = { HA_TOKEN = "ha_token_write" }
+
+[plugins.ha-read]
+user = "mcp-ha-read"
+secret_delivery = "env"
+secrets = { HA_TOKEN = "ha_token_read" }
+
+[plugins.kagi]
+user = "mcp-kagi"
+secret_delivery = "env"
+secrets = { KAGI_API_KEY = "kagi_api_key" }
+
+[plugins.mail]
+user = "mcp-mail"
+secret_delivery = "env"
+secrets = { SMTP_PASSWORD = "smtp_password_standup" }
+
+[plugins.vikunja-agent-control]
+user = "mcp-vikunja-agent-control"
+secret_delivery = "env"
+secrets = { VIKUNJA_TOKEN = "vikunja_token_agent_control" }
+
+[plugins.vikunja-finance]
+user = "mcp-vikunja-finance"
+secret_delivery = "env"
+secrets = { VIKUNJA_TOKEN = "vikunja_token_finance" }
+
+[plugins.vikunja-home-assistant]
+user = "mcp-vikunja-home-assistant"
+secret_delivery = "env"
+secrets = { VIKUNJA_TOKEN = "vikunja_token_home_assistant" }
+
+[plugins.vikunja-networking]
+user = "mcp-vikunja-networking"
+secret_delivery = "env"
+secrets = { VIKUNJA_TOKEN = "vikunja_token_networking" }
+
+[slots]
+approval_channel = "ha-approval"
+--- plugins/effect/added/board-lead/plugin.toml
+name = "board-lead"
+version = "1.0.0"
+kind = "effect"
+hooks = ["upstream"]
+secrets = ["VIKUNJA_TOKEN"]
+command = [
+    "/usr/bin/env",
+    "VIKUNJA_ACTOR=bot-scrum-lead",
+    "VIKUNJA_URL=http://127.0.0.1:3456",
+    "/opt/mcp/board-lead/bin/vikunja-lead-mcp",
+]
+--- plugins/effect/added/github-code/plugin.toml
+name = "github-code"
+version = "1.0.0"
+kind = "effect"
+hooks = ["upstream"]
+secrets = ["GITHUB_PERSONAL_ACCESS_TOKEN"]
+command = [
+    "/usr/bin/env",
+    "/opt/mcp/github-code/bin/github-mcp-server",
+    "stdio",
+    "--toolsets=context,repos,pull_requests,issues",
+    "--lockdown-mode",
+]
+--- plugins/effect/added/github-platform/plugin.toml
+name = "github-platform"
+version = "1.0.0"
+kind = "effect"
+hooks = ["upstream"]
+secrets = ["GITHUB_PERSONAL_ACCESS_TOKEN"]
+command = [
+    "/usr/bin/env",
+    "/opt/mcp/github-platform/bin/github-mcp-server",
+    "stdio",
+    "--toolsets=context,repos,pull_requests,issues",
+    "--lockdown-mode",
+]
+--- plugins/effect/added/ha/plugin.toml
+name = "ha"
+version = "1.0.0"
+kind = "effect"
+hooks = ["upstream"]
+secrets = ["HA_TOKEN"]
+command = [
+    "/usr/bin/env",
+    "HA_URL=http://127.0.0.1:8123",
+    "/opt/mcp/ha/bin/ha-mcp",
+]
+--- plugins/effect/added/ha-read/plugin.toml
+name = "ha-read"
+version = "1.0.0"
+kind = "effect"
+hooks = ["upstream"]
+secrets = ["HA_TOKEN"]
+command = [
+    "/usr/bin/env",
+    "HA_URL=http://127.0.0.1:8123",
+    "/opt/mcp/ha-read/bin/ha-mcp-read",
+]
+--- plugins/effect/added/kagi/plugin.toml
+name = "kagi"
+version = "1.0.0"
+kind = "effect"
+hooks = ["upstream"]
+secrets = ["KAGI_API_KEY"]
+command = [
+    "/usr/bin/env",
+    "/opt/mcp/kagi/bin/kagimcp",
+]
+--- plugins/effect/added/mail/plugin.toml
+name = "mail"
+version = "1.0.0"
+kind = "effect"
+hooks = ["upstream"]
+secrets = ["SMTP_PASSWORD"]
+command = [
+    "/usr/bin/env",
+    "MAIL_TO=operator@example.invalid",
+    "SMTP_HOST=127.0.0.1",
+    "/opt/mcp/mail/bin/mail-mcp",
+]
+--- plugins/effect/added/vikunja-agent-control/plugin.toml
+name = "vikunja-agent-control"
+version = "1.0.0"
+kind = "effect"
+hooks = ["upstream"]
+secrets = ["VIKUNJA_TOKEN"]
+command = [
+    "/usr/bin/env",
+    "VIKUNJA_ACTOR=bot-agent-control",
+    "VIKUNJA_EPIC=agent-control",
+    "VIKUNJA_PROJECT=House",
+    "VIKUNJA_URL=http://127.0.0.1:3456",
+    "/opt/mcp/vikunja-agent-control/bin/vikunja-mcp",
+]
+--- plugins/effect/added/vikunja-finance/plugin.toml
+name = "vikunja-finance"
+version = "1.0.0"
+kind = "effect"
+hooks = ["upstream"]
+secrets = ["VIKUNJA_TOKEN"]
+command = [
+    "/usr/bin/env",
+    "VIKUNJA_ACTOR=bot-finance",
+    "VIKUNJA_EPIC=finance",
+    "VIKUNJA_PROJECT=House",
+    "VIKUNJA_URL=http://127.0.0.1:3456",
+    "/opt/mcp/vikunja-finance/bin/vikunja-mcp",
+]
+--- plugins/effect/added/vikunja-home-assistant/plugin.toml
+name = "vikunja-home-assistant"
+version = "1.0.0"
+kind = "effect"
+hooks = ["upstream"]
+secrets = ["VIKUNJA_TOKEN"]
+command = [
+    "/usr/bin/env",
+    "VIKUNJA_ACTOR=bot-home-assistant",
+    "VIKUNJA_EPIC=home-assistant",
+    "VIKUNJA_PROJECT=House",
+    "VIKUNJA_URL=http://127.0.0.1:3456",
+    "/opt/mcp/vikunja-home-assistant/bin/vikunja-mcp",
+]
+--- plugins/effect/added/vikunja-networking/plugin.toml
+name = "vikunja-networking"
+version = "1.0.0"
+kind = "effect"
+hooks = ["upstream"]
+secrets = ["VIKUNJA_TOKEN"]
+command = [
+    "/usr/bin/env",
+    "VIKUNJA_ACTOR=bot-networking",
+    "VIKUNJA_EPIC=networking",
+    "VIKUNJA_PROJECT=House",
+    "VIKUNJA_URL=http://127.0.0.1:3456",
+    "/opt/mcp/vikunja-networking/bin/vikunja-mcp",
+]
