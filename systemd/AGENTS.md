@@ -9,6 +9,7 @@ from this directory at run time. The root `AGENTS.md` applies here too.
 | `creche-chaperone.service` | system, `User=chaperone` | the root bootstrap script, in the private repository |
 | `creche-handover.{service,path}`, `creche-handover-intake.service` | system, root | by hand only, never by a release |
 | `creche-attendance.service`, `creche-door-owui.service`, `creche-caregiver.service`, `creche-trigger-webhooks.service`, `creche-noticeboard.service` | user | the cutover script, in the private repository |
+| `creche-door-acp.service` | user | no script yet. The door ships in no component |
 | `creche-trigger@.service` | user, templated | the cutover script, only when the host has none |
 | `creche-watchdog.{service,timer}`, `registry-sync.{service,timer}` | user | the cutover script |
 | `creche-follow.{service,timer}` | user | the cutover script |

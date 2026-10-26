@@ -75,6 +75,7 @@ command and the name of one environment variable.
 | `attendance` | `python -m attendance` | `CRECHE_PROC_ATTENDANCE` |
 | `door-owui` | `python -m agent_door_owui` | `CRECHE_PROC_DOOR_OWUI` |
 | `door-trigger` | `agent-trigger` | `CRECHE_PROC_DOOR_TRIGGER` |
+| `door-acp` | `agent-door-acp` | `CRECHE_PROC_DOOR_ACP` |
 | `door-tui` | `agent-tui` | `CRECHE_PROC_DOOR_TUI` |
 | `caregiver` | `caregiver` | `CRECHE_PROC_CAREGIVER` |
 | `chaperone` | `chaperone` | `CRECHE_PROC_CHAPERONE` |
