@@ -99,7 +99,7 @@ describe("session/load", () => {
 
     expect(joined(second.updates(id).slice(replayed))).toEqual([
       { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Again." } },
-      { sessionUpdate: "session_info_update", updatedAt: expect.any(String) },
+      { sessionUpdate: "session_info_update", updatedAt: expect.any(String), _meta: { "creche/created_at": expect.any(String) } },
     ]);
   });
 

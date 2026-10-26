@@ -2,13 +2,14 @@
 // is the instance id, and `creche_sessions` lists it.
 //
 //   session/new  ──► mint an id ──► init() ──► one row
-//   session/list ──► one page of rows, newest first
+//   session/list ──► one page of rows, newest first, each with the creche keys
 //   a turn ends  ──► the title from the first user text, `updatedAt` from
 //                    the last record, the creche keys ──► session_info_update
 //
 // The creche keys of `_meta` (`src/creche-meta.ts`) go on the row: the job
 // id from `session/new`, the delegation and the trigger from the first
-// `session/prompt` that sends them. None of them reaches the model.
+// `session/prompt` that sends them. None of them reaches the model. The
+// row's `_meta` adds `creche/created_at`, which ACP's row does not have.
 //
 // CONTRACT-QUESTION: the owner asked to forward `creche/delegation` to the
 // chaperone as `_meta["creche.delegation"]` on each `tools/call` of the
@@ -22,8 +23,8 @@
 // not a contract. Flue keeps one connection per instance, so a static
 // header per session can exist, but only if the agent module reads the
 // delegation per instance. The chaperone reads no such header. Until Flue or the owner gives a path, the facade sends the
-// three keys in the `_meta` of `session_info_update`, for attendance and
-// the noticeboard to read.
+// three keys in the `_meta` of each `session/list` row and of
+// `session_info_update`, for attendance and the noticeboard to read.
 
 import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
@@ -41,11 +42,11 @@ import type {
   SessionInfo,
   SessionInfoUpdate,
 } from "./acp.js";
-import { jobOf, promptMetaOf } from "./creche-meta.js";
+import { jobOf, promptMetaOf, utcOf } from "./creche-meta.js";
 import type { Meta } from "./creche-meta.js";
 import { cutToBytes } from "./line.js";
 import type { SessionIndex, SessionRow } from "./session-index.js";
-import { META_DELEGATION, META_JOB, META_TRIGGER } from "./vectors.js";
+import { META_CREATED, META_DELEGATION, META_JOB, META_TRIGGER } from "./vectors.js";
 
 /** The longest title, in UTF-8 bytes. */
 export const MAX_TITLE_BYTES = 256;
@@ -78,9 +79,10 @@ export function sessionFault(params: NewSessionRequest | LoadSessionRequest): st
   return (params.additionalDirectories ?? []).length > 0 ? "the facade takes no additional directory" : null;
 }
 
-/** The creche keys of a row, as `session_info_update` sends them, or null. */
+/** The creche keys of a row, as `session/list` and `session_info_update` send them, or null. */
 function metaOf(row: SessionRow): Record<string, unknown> | null {
   const kept = [
+    [META_CREATED, utcOf(row.createdAt)],
     [META_JOB, row.jobId],
     [META_DELEGATION, row.delegation],
     [META_TRIGGER, row.trigger],
@@ -90,7 +92,10 @@ function metaOf(row: SessionRow): Record<string, unknown> | null {
 }
 
 function toInfo(row: SessionRow): SessionInfo {
-  return { sessionId: row.id, cwd: row.cwd, title: row.title, updatedAt: row.updatedAt };
+  const info = { sessionId: row.id, cwd: row.cwd, title: row.title, updatedAt: row.updatedAt };
+  const meta = metaOf(row);
+
+  return meta === null ? info : { ...info, _meta: meta };
 }
 
 export class Sessions {

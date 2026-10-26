@@ -17,7 +17,8 @@ def test_each_meta_key_and_its_method_are_the_vector_files() -> None:
         "trigger": (META_TRIGGER, METHOD_PROMPT),
     }
 
-    assert set(table) == {"about", "info_update", *sent}
+    # `created_at` is the one key that the facade sends and attendance does not.
+    assert set(table) == {"about", "info_update", "created_at", *sent}
     assert {role: (table[role]["key"], table[role]["method"]) for role in sent} == sent
 
 

@@ -13,6 +13,7 @@ import { MAX_TITLE_BYTES, Sessions, titleOf } from "../src/sessions.js";
 import { Wire } from "./acp-wire.js";
 import { faux, Probe, startFlue } from "./faux-flue.js";
 
+const CREATED = "creche/created_at";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const INVALID_PARAMS = -32602;
 const NO_HOOKS = { onBeat: () => undefined, onShutdown: () => undefined };
@@ -74,8 +75,8 @@ describe("session/list", () => {
 
     expect(await list()).toEqual({
       sessions: [
-        { sessionId: second, cwd: "/b", title: null, updatedAt: "2026-10-25T12:00:02.000Z" },
-        { sessionId: first, cwd: "/a", title: null, updatedAt: "2026-10-25T12:00:01.000Z" },
+        { sessionId: second, cwd: "/b", title: null, updatedAt: "2026-10-25T12:00:02.000Z", _meta: { [CREATED]: "2026-10-25T12:00:02.000Z" } },
+        { sessionId: first, cwd: "/a", title: null, updatedAt: "2026-10-25T12:00:01.000Z", _meta: { [CREATED]: "2026-10-25T12:00:01.000Z" } },
       ],
       nextCursor: null,
     });
@@ -102,6 +103,7 @@ describe("session/list", () => {
 describe("the record of a turn", () => {
   it("names the session from the first user text and dates it by the last record", async () => {
     const id = await newSession();
+    const _meta = { [CREATED]: "2026-10-25T12:00:01.000Z" };
     const handle = sessions.handle(id);
     const settledAt: string[] = [];
     faux.setResponses([fauxAssistantMessage("done"), fauxAssistantMessage("again")]);
@@ -120,9 +122,10 @@ describe("the record of a turn", () => {
     expect(sessions.recordTurn(id, "  Plan the   garden \nsecond line", settledAt[0] ?? null)).toEqual({
       title: "Plan the garden",
       updatedAt: settledAt[0],
+      _meta,
     });
-    expect(sessions.recordTurn(id, "Another thing", settledAt[1] ?? null)).toEqual({ updatedAt: settledAt[1] });
-    expect((await list())["sessions"]).toEqual([{ sessionId: id, cwd: "/work", title: "Plan the garden", updatedAt: settledAt[1] }]);
+    expect(sessions.recordTurn(id, "Another thing", settledAt[1] ?? null)).toEqual({ updatedAt: settledAt[1], _meta });
+    expect((await list())["sessions"]).toEqual([{ sessionId: id, cwd: "/work", title: "Plan the garden", updatedAt: settledAt[1], _meta }]);
   });
 
   it("cuts a title to its byte cap and knows no other session", () => {

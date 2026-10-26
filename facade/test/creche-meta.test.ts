@@ -1,5 +1,6 @@
 // The creche keys of `_meta` (vectors `session_meta`): checked, kept on the
-// session row, sent back in `session_info_update`, never in the prompt.
+// session row, sent back on each `session/list` row and in
+// `session_info_update`, with `creche/created_at`, never in the prompt.
 
 import { DatabaseSync } from "node:sqlite";
 
@@ -8,13 +9,13 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import vectors from "../vectors/creche-extensions.json" with { type: "json" };
 import { facadeApp } from "../src/acp.js";
-import { jobOf, promptMetaOf } from "../src/creche-meta.js";
+import { jobOf, promptMetaOf, utcOf } from "../src/creche-meta.js";
 import { sessionService } from "../src/service.js";
 import { SessionIndex } from "../src/session-index.js";
 import { Wire } from "./acp-wire.js";
 import { faux, Probe, startFlue } from "./faux-flue.js";
 
-const { job, delegation, trigger, info_update: infoUpdate } = vectors.session_meta;
+const { job, delegation, trigger, created_at: created, info_update: infoUpdate } = vectors.session_meta;
 const INVALID_PARAMS = -32602;
 const NO_HOOKS = { onBeat: () => undefined, onShutdown: () => undefined };
 
@@ -28,7 +29,8 @@ let wire: Wire;
 beforeEach(() => {
   db = new DatabaseSync(":memory:");
   index = new SessionIndex(db);
-  wire = new Wire(facadeApp(NO_HOOKS, sessionService({ agent: Probe, agentName: "Probe", index, store: flue.store })));
+  const now = (): Date => new Date(created.value);
+  wire = new Wire(facadeApp(NO_HOOKS, sessionService({ agent: Probe, agentName: "Probe", index, store: flue.store, now })));
 });
 
 async function newSession(meta?: Record<string, unknown>): Promise<string> {
@@ -50,6 +52,8 @@ describe("the shapes of the vector file", () => {
     });
     expect(promptMetaOf({ other: 1 })).toEqual({ ok: true, value: { delegation: null, trigger: null } });
     expect(jobOf(undefined)).toEqual({ ok: true, value: null });
+    expect([created.value, "2026-10-25T13:59:58+02:00"].map(utcOf)).toEqual([created.value, created.value]);
+    expect(["yesterday", "2026-13-45T00:00:00Z"].map(utcOf)).toEqual([null, null]);
   });
 
   it("refuses a value of another shape", () => {
@@ -87,6 +91,22 @@ describe("the session row", () => {
     for (const fact of [job.value, delegation.value.id, trigger.value.name, "creche"]) {
       expect(seen[0]).not.toContain(fact);
     }
+  });
+
+  it("lists a row with each key and the created time, as the vector's info update", async () => {
+    faux.setResponses([fauxAssistantMessage("Done.")]);
+    const id = await newSession({ [job.key]: job.value });
+    await prompt(id, { [delegation.key]: delegation.value, [trigger.key]: trigger.value });
+    const rows = (await wire.request("session/list", {})).result?.["sessions"] as Record<string, unknown>[];
+
+    expect(rows.map((row) => row["_meta"])).toEqual([infoUpdate._meta]);
+  });
+
+  it("lists a row with no creche key but the created time", async () => {
+    await newSession();
+    const rows = (await wire.request("session/list", {})).result?.["sessions"] as Record<string, unknown>[];
+
+    expect(rows.map((row) => row["_meta"])).toEqual([{ [created.key]: created.value }]);
   });
 
   it("refuses a bad key on session/new and lists no session", async () => {

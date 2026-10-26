@@ -40,3 +40,6 @@ export const META_DELEGATION = vectors.session_meta.delegation.key;
 
 /** The `_meta` key of the trigger, on the first `session/prompt`. */
 export const META_TRIGGER = vectors.session_meta.trigger.key;
+
+/** The `_meta` key of the creation time, on `session/list` and `session_info_update`. */
+export const META_CREATED = vectors.session_meta.created_at.key;
