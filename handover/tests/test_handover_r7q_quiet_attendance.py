@@ -7,11 +7,11 @@ and never passes an `input` hook. A counter there never moves, "never moved
 for five minutes" is always true, and the window opens at once while turns
 are running. That is fail OPEN, in the one direction §2.8 exists to prevent.
 
-The signal here is the one root can actually get: **the session service has
-reported no turn in flight for five consecutive minutes**. Every model call
-an agent makes belongs to a turn, and `attendance` knows every turn.
-`bin/rework-cutover.sh up` has asked exactly this question on the real host a
-dozen times, over the same socket, with the same `view-ro` bearer.
+The signal here is the one root can actually get: **`attendance` has
+reported nothing busy for five consecutive minutes**. Every model call an
+agent makes belongs to a prompt, and `attendance` counts every prompt in
+flight. Root asks `GET /busy` over the operator's socket, with the
+`view-ro` bearer.
 
 Root is the caller and both files are the operator's, so the confused-deputy case is
 the first thing these tests pin: root opens the token with `O_NOFOLLOW` and
@@ -38,7 +38,7 @@ from typing import IO, Final
 
 import pytest
 from handover.executor.quiet import (
-    BUSY_STATES,
+    BUSY_PATH,
     MIN_TOKEN_BYTES,
     QUIET_WINDOW_S,
     Busy,
@@ -73,6 +73,8 @@ class Plan:
     """What the fake `attendance` answers next, and what it was asked."""
 
     busy: bool = False
+    #: Replaces the counts of a busy answer, for the shapes root must refuse.
+    counts: dict[str, object] | None = None
     status: int = 200
     #: Replaces the JSON body entirely, for the shapes root must refuse.
     body: bytes | None = None
@@ -104,10 +106,16 @@ def _serve(reader: IO[bytes], writer: IO[bytes], plan: Plan) -> None:
     if plan.delay_s:
         time.sleep(plan.delay_s)
 
-    rows = [{"family": "chat", "session": "owui-1", "state": "running"}] if plan.busy else []
+    counts: dict[str, object] = {
+        "prompts_in_flight": 1 if plan.busy else 0,
+        "jobs_running": 0,
+        "jobs_queued": 0,
+    }
+    if plan.counts is not None:
+        counts = plan.counts
     body = plan.body
     if body is None:
-        body = json.dumps({"sessions": rows, "next_cursor": None}).encode("utf-8")
+        body = json.dumps({"busy": plan.busy, **counts}).encode("utf-8")
 
     head = (
         f"HTTP/1.1 {plan.status} answer\r\n"
@@ -246,26 +254,32 @@ def test_an_idle_host_is_not_busy(rig: Rig) -> None:
     assert rig.ask() is Busy.NO
 
 
-def test_a_session_in_flight_is_busy(rig: Rig) -> None:
+def test_a_prompt_in_flight_is_busy(rig: Rig) -> None:
     rig.plan.busy = True
 
     assert rig.ask() is Busy.YES
 
 
-def test_every_state_a_restart_would_cut_short_is_asked(rig: Rig) -> None:
-    """Contract 02 §4.1, and the same three `bin/rework-cutover.sh up` asks."""
+def test_a_queued_job_is_busy(rig: Rig) -> None:
+    """A queued job starts the instant a slot frees, which root cannot see
+    coming. `attendance` counts it as busy, and so does root."""
+    rig.plan.busy = True
+    rig.plan.counts = {"prompts_in_flight": 0, "jobs_running": 0, "jobs_queued": 1}
+
+    assert rig.ask() is Busy.YES
+
+
+def test_one_poll_asks_busy_once(rig: Rig) -> None:
     rig.ask()
 
-    asked = " ".join(rig.plan.paths())
-    for state in BUSY_STATES:
-        assert f"state={state}" in asked
+    assert rig.plan.paths() == [f"GET {BUSY_PATH} HTTP/1.1"]
 
 
 def test_the_bearer_rides_a_header_and_never_the_request_line(rig: Rig) -> None:
     """Invariant 13. A token in a path lands in every access log there is."""
     rig.ask()
 
-    assert rig.plan.bearers() == [f"Bearer {TOKEN}"] * len(BUSY_STATES)
+    assert rig.plan.bearers() == [f"Bearer {TOKEN}"]
     assert all(TOKEN not in line for line in rig.plan.paths())
 
 
@@ -307,8 +321,27 @@ def test_a_non_200_answer_is_never_quiet(rig: Rig) -> None:
     assert rig.ask() is Busy.UNKNOWN
 
 
-def test_a_body_that_is_not_the_list_shape_is_never_quiet(rig: Rig) -> None:
-    rig.plan.body = json.dumps({"rows": []}).encode("utf-8")
+def test_a_body_that_is_not_the_busy_shape_is_never_quiet(rig: Rig) -> None:
+    rig.plan.body = json.dumps({"sessions": []}).encode("utf-8")
+
+    assert rig.ask() is Busy.UNKNOWN
+
+
+@pytest.mark.parametrize(
+    "counts",
+    [
+        {"prompts_in_flight": 1, "jobs_running": 0, "jobs_queued": 0},
+        {"prompts_in_flight": -1, "jobs_running": 0, "jobs_queued": 0},
+        {"prompts_in_flight": False, "jobs_running": 0, "jobs_queued": 0},
+        {"prompts_in_flight": 0, "jobs_running": 0},
+    ],
+    ids=["a-count-the-flag-denies", "a-negative-count", "a-bool-count", "a-missing-count"],
+)
+def test_a_flag_and_counts_that_disagree_are_never_quiet(
+    rig: Rig, counts: dict[str, object]
+) -> None:
+    """Root believes `"busy": false` only when every count says 0 too."""
+    rig.plan.counts = counts
 
     assert rig.ask() is Busy.UNKNOWN
 

@@ -11,11 +11,10 @@ cannot know what compose would recreate, because the dry run needs the
 fetched files. And an hour of waiting should not be spent before the build
 has proved it works.
 
-**Quiet means: the session service has reported no turn in flight for five
-consecutive minutes.** Every model call an agent makes belongs to a turn,
-and `attendance` knows every turn. `bin/rework-cutover.sh up` asks exactly
-this before it restarts anything, over the same socket, with the same
-`view-ro` bearer.
+**Quiet means: `attendance` has reported nothing busy for five consecutive
+minutes.** Every model call an agent makes belongs to a prompt, and
+`attendance` counts every prompt in flight. Root asks `GET /busy` over the
+operator's socket, with the `view-ro` bearer.
 
 **Why not an nftables counter.** A named counter on `hook input` matching
 `ip daddr 192.0.2.10 tcp dport 4000` never sees the traffic. Measured on the
@@ -94,30 +93,29 @@ WATCHED_SERVICES: Final = ("ai-litellm", "ai-postgres", "ai-redis")
 #: §2.8's own words, as a fixed reason (§3.2 rule 4).
 NO_WINDOW: Final = f"no quiet window in {QUIET_MAX_WAIT_S:.0f}s"
 
-#: Contract 02 §4.1's three states a switch would cut short, and the same
-#: three `bin/rework-cutover.sh up` asks for.
-#:
-#: `running` is a turn making model calls now. `waiting-approval` is a live
-#: turn whose tool call waits for a phone tap: it makes no call while it
-#: waits, and it resumes with one the moment the tap lands, which root
-#: cannot see coming. `queued` is an autonomous turn holding a slot, which
-#: starts the instant a slot frees. Counting a state that is momentarily
-#: silent costs a delayed release. Not counting one costs dropped calls, so
-#: all three count (invariant 19's fail closed, applied to a wait).
-BUSY_STATES: Final = ("running", "queued", "waiting-approval")
+#: `attendance`'s answer to "is anything in flight". It names no family.
+BUSY_PATH: Final = "/busy"
 
-#: One page of one row. Root needs "is there one", never the list.
-LIST_LIMIT: Final = 1
+#: The flag of that answer: true when any count below is above 0.
+BUSY_KEY: Final = "busy"
 
-#: One question to `attendance`. Three of them run per poll, so a wedged
-#: socket costs at most 15 s of a 30 s poll and the hour cap still holds.
+#: The counts of that answer. A prompt in flight makes model calls now. A
+#: running job holds a slot and dials its prompt. A queued job starts the
+#: instant a slot frees, which root cannot see coming. Counting a job that
+#: is momentarily silent costs a delayed release. Not counting it costs
+#: dropped calls, so all three count (invariant 19's fail closed, applied
+#: to a wait).
+BUSY_COUNTS: Final = ("prompts_in_flight", "jobs_running", "jobs_queued")
+
+#: One question to `attendance` per poll, so a wedged socket costs at most
+#: 5 s of a 30 s poll and the hour cap still holds.
 ASK_TIMEOUT_S: Final = 5.0
 
-#: An answer root will read. One row of contract 02 §4.2 is under 1 KiB.
+#: An answer root will read. The busy answer is under 128 bytes.
 MAX_REPLY_BYTES: Final = 64 * 1024
 
 #: The surface word of a notice for an answer of `attendance` that is not
-#: strict JSON. It is the word of each other reader of the session API.
+#: strict JSON. It is the word of each other reader of `attendance`.
 SURFACE: Final = "session.answer"
 
 #: Contract 02 §3 rule 7's floor. A shorter file is not this token.
@@ -145,9 +143,9 @@ SOCKET_HOST: Final = "sessiond"
 class Busy(StrEnum):
     """What one question to `attendance` answered."""
 
-    #: At least one session is in a `BUSY_STATES` state.
+    #: `attendance` counts at least one prompt or job in flight.
     YES = "yes"
-    #: `attendance` answered, and no session is in flight.
+    #: `attendance` answered, and nothing is in flight.
     NO = "no"
     #: Root could not ask, or could not believe the answer. Never quiet.
     UNKNOWN = "unknown"
@@ -308,8 +306,8 @@ class _Connection(http.client.HTTPConnection):
         self.sock = sock
 
 
-def _any_session(socket_path: Path, token: bytes, state: str, timeout_s: float) -> bool | None:
-    """Whether `attendance` names one session in `state`, or None.
+def _ask_busy(socket_path: Path, token: bytes, timeout_s: float) -> bool | None:
+    """Whether `attendance` counts anything in flight, or None.
 
     The bearer rides a header and never the path (invariant 13): a token in
     a URL lands in every access log and every error message there is.
@@ -318,7 +316,7 @@ def _any_session(socket_path: Path, token: bytes, state: str, timeout_s: float) 
     try:
         connection.request(
             "GET",
-            f"/v1/sessions?state={state}&limit={LIST_LIMIT}",
+            BUSY_PATH,
             headers={
                 "Authorization": f"Bearer {token.decode('utf-8', 'strict')}",
                 "Accept": "application/json",
@@ -335,12 +333,16 @@ def _any_session(socket_path: Path, token: bytes, state: str, timeout_s: float) 
     finally:
         connection.close()
 
-    return _has_rows(raw)
+    return _is_busy(raw)
 
 
-def _has_rows(raw: bytes) -> bool | None:
-    """Contract 02 §5.2's answer shape, or None. Everything that crosses a
-    process boundary is validated before use (invariant 12)."""
+def _is_busy(raw: bytes) -> bool | None:
+    """The flag of the busy answer, or None. Everything that crosses a
+    process boundary is validated before use (invariant 12).
+
+    Root believes the flag only when each count is a whole number from 0
+    and the flag says what the counts say. Any other answer is None.
+    """
     if len(raw) > MAX_REPLY_BYTES:
         return None
 
@@ -354,11 +356,25 @@ def _has_rows(raw: bytes) -> bool | None:
     if not isinstance(loaded, dict):
         return None
 
-    rows = cast("dict[str, object]", loaded).get("sessions")
-    if not isinstance(rows, list):
+    answer = cast("dict[str, object]", loaded)
+    flag = answer.get(BUSY_KEY)
+    if not isinstance(flag, bool):
         return None
 
-    return len(cast("list[object]", rows)) > 0
+    counts = [answer.get(key) for key in BUSY_COUNTS]
+    if not all(_is_count(one) for one in counts):
+        return None
+
+    if flag != any(one != 0 for one in counts):
+        return None
+
+    return flag
+
+
+def _is_count(value: object) -> bool:
+    """A whole number from 0. JSON's `true` parses as a bool, and a bool is
+    an `int` to Python, so it is refused by name."""
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
 def ask_attendance(
@@ -372,7 +388,7 @@ def ask_attendance(
     The token is read again on every poll, so root holds no copy across an
     hour of waiting and a rotated token is picked up. Every way root can
     fail to get an answer — no socket, no token, a timeout, a non-200, a
-    body that is not the list shape — reads as `UNKNOWN`, which is never
+    body that is not the busy shape — reads as `UNKNOWN`, which is never
     quiet.
     """
     token = read_view_token(token_path, owner_uid)
@@ -382,15 +398,11 @@ def ask_attendance(
     if not _is_operators_socket(socket_path, owner_uid):
         return Busy.UNKNOWN
 
-    for state in BUSY_STATES:
-        found = _any_session(socket_path, token, state, timeout_s)
-        if found is None:
-            return Busy.UNKNOWN
+    found = _ask_busy(socket_path, token, timeout_s)
+    if found is None:
+        return Busy.UNKNOWN
 
-        if found:
-            return Busy.YES
-
-    return Busy.NO
+    return Busy.YES if found else Busy.NO
 
 
 class _Window:
@@ -431,7 +443,7 @@ def attendance_signal(
     owner_uid: int,
     clock: Callable[[], float],
 ) -> BusySeenFn:
-    """§2.8's signal: when root last saw a turn in flight.
+    """§2.8's signal: when root last saw a prompt or a job in flight.
 
     `owner_uid` is the operator's, and it is what root demands of both the token
     file and the socket. A caller that passes root's own uid gets a signal

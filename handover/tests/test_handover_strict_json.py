@@ -432,27 +432,30 @@ def test_a_record_with_no_strict_text_is_no_record(tmp_path: Path) -> None:
     assert list((spool_root / "done").iterdir()) == []
 
 
-# -- the session answer of the quiet window (session.answer) ------------------
+# -- the busy answer of the quiet window (session.answer) ---------------------
+
+BUSY_ANSWER = b'{"busy": true, "prompts_in_flight": 1, "jobs_running": 0, "jobs_queued": 0}'
+IDLE_ANSWER = b'{"busy": false, "prompts_in_flight": 0, "jobs_running": 0, "jobs_queued": 0}'
 
 
-def test_a_strict_session_answer_reads(recorded: Notices) -> None:
-    assert quiet._has_rows(b'{"sessions": [{"id": "s"}]}') is True
-    assert quiet._has_rows(b'{"sessions": []}') is False
+def test_a_strict_busy_answer_reads(recorded: Notices) -> None:
+    assert quiet._is_busy(BUSY_ANSWER) is True
+    assert quiet._is_busy(IDLE_ANSWER) is False
     assert recorded.calls == []
 
 
 @pytest.mark.parametrize(
     ("answer", "rule"),
     [
-        (b'{"sessions": [], "sessions": [{"id": "s"}]}', "duplicate_key"),
-        ('{"sessions": []}'.encode("utf-16"), "not_utf8"),
+        (b'{"busy": false, "busy": true, "prompts_in_flight": 1}', "duplicate_key"),
+        (IDLE_ANSWER.decode("utf-8").encode("utf-16"), "not_utf8"),
     ],
     ids=["a-key-two-times", "utf-16"],
 )
 def test_a_session_answer_that_is_not_strict_is_never_quiet(
     recorded: Notices, answer: bytes, rule: str
 ) -> None:
-    assert quiet._has_rows(answer) is None
+    assert quiet._is_busy(answer) is None
     assert recorded.calls == [("session.answer", rule, None, True)]
 
 
