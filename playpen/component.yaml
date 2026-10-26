@@ -26,12 +26,11 @@ build:
 install:
   to: /opt/components/playpen
   prev: /opt/components/playpen.prev
-provides:
-  # Contract 03: start turn, events, stop, keep-alive, over one sbx exec.
-  - { contract: channel, major: 0, minor: 12 }
-requires:
-  # Contract 04: the bridge turns the family's manifest into pi tools.
-  - { contract: pep-grant, major: 0, min_minor: 11 }
+# The Flue image serves no contract 03 channel: attendance reaches the
+# facade over ACP. It reads no contract 04 grant file: the chaperone reads
+# `policy.toml`.
+provides: []
+requires: []
 depends_on: []
 verify:
   # The hook ships in the tree `bin/playpen-build` stages (contract 06 §4
