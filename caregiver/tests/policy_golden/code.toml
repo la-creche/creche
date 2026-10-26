@@ -1,0 +1,65 @@
+version = 1
+
+[apps.code]
+note = "registry 3f5dcabe"
+token_sha256 = ["5694d08a2e53ffcae0c3103e5ad6f6076abd960eb1f8a56577040bc1028f702b"]
+limits = { calls_per_minute = 60, max_pending_gates = 10 }
+
+[apps.code.grants.attendance]
+timeout_s = 120
+max_inflight = 2
+
+[apps.code.grants.attendance.tools]
+invoke_agent = {}
+
+[apps.code.grants.github-code.tools]
+add_comment_to_pending_review = {}
+add_issue_comment = {}
+add_reply_to_pull_request_comment = {}
+create_branch = {}
+create_or_update_file = {}
+create_pull_request = {}
+delete_file = {}
+get_commit = {}
+get_file_contents = {}
+get_label = {}
+get_latest_release = {}
+list_branches = {}
+list_commits = {}
+list_pull_requests = {}
+list_tags = {}
+merge_pull_request = {}
+pull_request_read = {}
+pull_request_review_write = {}
+push_files = {}
+search_code = {}
+search_commits = {}
+search_pull_requests = {}
+search_repositories = {}
+update_pull_request = {}
+update_pull_request_branch = {}
+
+[apps.code.grants.kagi.tools]
+kagi_extract = {}
+kagi_search_fetch = {}
+
+[apps.code.grants.vikunja-home-assistant.tools]
+comment_on_ticket = {}
+create_triage_ticket = {}
+get_ticket = {}
+list_my_tickets = {}
+list_ready_tickets = {}
+start_ticket = {}
+submit_for_verification = {}
+
+[apps.code.grants.vikunja-networking.tools]
+comment_on_ticket = {}
+create_triage_ticket = {}
+get_ticket = {}
+list_my_tickets = {}
+list_ready_tickets = {}
+start_ticket = {}
+submit_for_verification = {}
+
+[apps.code.plugins.attendance]
+delegates = ["vault-oracle"]

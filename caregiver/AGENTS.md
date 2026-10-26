@@ -23,6 +23,7 @@ host where something has gone wrong.
 | `driver.py` | `SandboxDriver`: `SbxDriver` (real) and `FakeDriver` |
 | `litellm_keys.py`, `credentials.py`, `grants.py`, `config_mount.py` | the key, the token, the grant file, the config mount |
 | `playpen_env.py` | the env file `sbx exec --env-file` carries |
+| `policy_file.py` | the types and the text of `policy.toml`, and `build_app` |
 | `faults.py`, `chaperone_watch.py`, `status.py` | the fault files, the one chaperone probe, the status document |
 | `webhook_tokens.py`, `timers.py` | one bearer per webhook, and the generated timer units |
 | `switch.py` | the one call this service makes to `attendance` |
@@ -200,6 +201,29 @@ family gets its pass.
 
 A delete that fails gets the backoff of a failed create. The loop starts
 the delete again when the backoff ends or the registry changes.
+
+## `policy_file.py`
+
+This module writes `policy.toml`, the policy file of the Rust chaperone. No
+pass calls it yet.
+
+1. Each type mirrors one Rust type of `crates/core/src/policy.rs` in the
+   chaperone repository. Add no field that the Rust type does not have.
+2. A type refuses a value that the Rust reader refuses for that field. It
+   raises `PolicyShapeError`. The rules across apps stay with
+   `chaperone check`.
+3. `render_policy` and `render_app` write each map in key order. A tool
+   name with a `.` gets a quoted key.
+4. `build_app` maps one family file to one app. The app ID is the family
+   name. `all` expands against the current server files.
+5. The verbs are tools of plugin upstreams: `delegates` gives
+   `attendance.invoke_agent`, `enqueue` and `job_status` give the tools of
+   the same names, and `release` gives `release.request`. `embed` and
+   `ha_call` give no grant.
+6. `build_app` writes no argument fence yet.
+7. `tests/policy_golden/` holds the expected text for each family of the
+   fixture registry of `family`. Change a golden file only with the change
+   that moves it.
 
 ## `mcp_release.py`
 

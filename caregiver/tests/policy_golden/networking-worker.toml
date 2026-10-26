@@ -1,0 +1,13 @@
+version = 1
+
+[apps.networking-worker]
+note = "registry 3f5dcabe"
+token_sha256 = ["d714c091899fdfaef377f0672dffeadc4732a144d8b355082bbeca69ce766cb7"]
+limits = { calls_per_minute = 60, max_pending_gates = 10 }
+
+[apps.networking-worker.grants.vikunja-networking.tools]
+comment_on_ticket = {}
+get_ticket = {}
+list_ready_tickets = {}
+start_ticket = {}
+submit_for_verification = {}

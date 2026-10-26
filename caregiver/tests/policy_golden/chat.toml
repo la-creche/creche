@@ -1,0 +1,56 @@
+version = 1
+
+[apps.chat]
+note = "registry 3f5dcabe"
+token_sha256 = ["31e06f7d89feb99a0e6c0affe198748c3bb5bef5e3cc92d95cb9e996197d3fc3"]
+limits = { calls_per_minute = 60, max_pending_gates = 10 }
+
+[apps.chat.grants.attendance]
+timeout_s = 120
+max_inflight = 2
+
+[apps.chat.grants.attendance.tools]
+enqueue = {}
+invoke_agent = {}
+
+[apps.chat.grants.ha.tools]
+ha_call_service = {}
+ha_get_history = {}
+ha_get_overview = {}
+ha_get_state = {}
+ha_search = {}
+ha_set_state = {}
+ha_turn_off = {}
+ha_turn_on = {}
+
+[apps.chat.grants.ha-read.tools]
+ha_get_history = {}
+ha_get_overview = {}
+ha_get_state = {}
+ha_search = {}
+
+[apps.chat.grants.kagi.tools]
+kagi_extract = {}
+kagi_search_fetch = {}
+
+[apps.chat.grants.vikunja-finance.tools]
+comment_on_ticket = {}
+create_triage_ticket = {}
+get_ticket = {}
+list_my_tickets = {}
+list_ready_tickets = {}
+start_ticket = {}
+submit_for_verification = {}
+
+[apps.chat.grants.vikunja-home-assistant.tools]
+comment_on_ticket = {}
+create_triage_ticket = {}
+get_ticket = {}
+list_my_tickets = {}
+list_ready_tickets = {}
+start_ticket = {}
+submit_for_verification = {}
+
+[apps.chat.plugins.attendance]
+delegates = ["code-sandbox", "vault-oracle"]
+enqueue_targets = ["scrum-lead"]

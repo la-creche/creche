@@ -1,0 +1,54 @@
+version = 1
+
+[apps.agent-control]
+note = "registry 3f5dcabe"
+token_sha256 = ["7a915eb3babc7f28b9eb2baba335696a6796c97c586b8ddba51d8cea320017ca"]
+limits = { calls_per_minute = 60, max_pending_gates = 10 }
+
+[apps.agent-control.grants.attendance]
+timeout_s = 120
+max_inflight = 2
+
+[apps.agent-control.grants.attendance.tools]
+invoke_agent = {}
+
+[apps.agent-control.grants.github-platform.tools]
+add_comment_to_pending_review = {}
+add_issue_comment = {}
+add_reply_to_pull_request_comment = {}
+create_branch = {}
+create_or_update_file = {}
+create_pull_request = {}
+delete_file = {}
+get_commit = {}
+get_file_contents = {}
+get_label = {}
+get_latest_release = {}
+list_branches = {}
+list_commits = {}
+list_pull_requests = {}
+list_tags = {}
+pull_request_read = {}
+pull_request_review_write = {}
+push_files = {}
+update_pull_request = {}
+update_pull_request_branch = {}
+
+[apps.agent-control.grants.kagi.tools]
+kagi_extract = {}
+kagi_search_fetch = {}
+
+[apps.agent-control.grants.release.tools]
+request = {}
+
+[apps.agent-control.grants.vikunja-agent-control.tools]
+comment_on_ticket = {}
+create_triage_ticket = {}
+get_ticket = {}
+list_my_tickets = {}
+list_ready_tickets = {}
+start_ticket = {}
+submit_for_verification = {}
+
+[apps.agent-control.plugins.attendance]
+delegates = ["vault-oracle"]

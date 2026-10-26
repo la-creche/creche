@@ -1,0 +1,13 @@
+version = 1
+
+[apps.home-assistant-worker]
+note = "registry 3f5dcabe"
+token_sha256 = ["058a7b8a859a604aaa32eb3fdda58e391ca8e5810261b688f64c082bbef79cf2"]
+limits = { calls_per_minute = 60, max_pending_gates = 10 }
+
+[apps.home-assistant-worker.grants.vikunja-home-assistant.tools]
+comment_on_ticket = {}
+get_ticket = {}
+list_ready_tickets = {}
+start_ticket = {}
+submit_for_verification = {}
