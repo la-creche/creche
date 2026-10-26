@@ -43,9 +43,9 @@ FLAG = "--"
 #: The three flags of `caregiver serve` that the suite adds to those of the unit.
 NOT_IN_THE_UNIT = {"--litellm-base-url", "--release-root", "--poll-interval-s"}
 
-#: The two units that run the index builder in a sandbox, and the profile
-#: word that each one gives. None is a unit that gives no such word.
-INDEX_UNITS = {"index@.service": None, "index-code@.service": Profile.CODE}
+#: The unit that runs the index builder in a sandbox, and the profile word
+#: that it gives. None is a unit that gives no such word.
+INDEX_UNITS: dict[str, Profile | None] = {"index@.service": None}
 
 #: The words of an `ExecStart` that give a shell its command text.
 SHELL = ("sh", "-c")

@@ -57,7 +57,7 @@ def test_ex_config_of_this_platform_is_78() -> None:
     assert os.EX_CONFIG == EXIT_CONFIG
 
 
-@pytest.mark.parametrize("profile", [[], ["vault"], ["code"]], ids=["default", "vault", "code"])
+@pytest.mark.parametrize("profile", [[], ["vault"]], ids=["default", "vault"])
 def test_no_address_of_tei_ends_with_status_78(
     profile: list[str],
     tmp_path: Path,
@@ -98,7 +98,7 @@ def test_a_wrong_count_of_words_ends_with_status_2(
 
 
 @with_and_without_address
-@pytest.mark.parametrize("profile", ["prose", "VAULT", ""])
+@pytest.mark.parametrize("profile", ["prose", "VAULT", "", "code"])
 def test_an_unknown_profile_ends_with_status_2(
     profile: str,
     address: str | None,

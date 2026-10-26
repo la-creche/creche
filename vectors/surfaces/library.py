@@ -978,28 +978,6 @@ SCENARIOS: Final[tuple[Scenario, ...]] = (
         ),
         (_run(),),
     ),
-    Scenario(
-        "names-of-the-code-profile",
-        (
-            ("src/app.py", "def handler():\n    return 'ok'\n"),
-            ("src/client.ts", "export const call = () => fetch('/v1');\n"),
-            ("README.md", "The service has one route.\n"),
-            ("MAIN.RS", "fn main() {}\n"),
-            ("review-inbox/draft.md", "A directory that only the vault profile skips."),
-            ("notes.pdf", "A suffix of the vault profile only."),
-            ("Makefile", "all:\n"),
-            ("node_modules/pkg/index.js", "// generated\n"),
-            ("src/node_modules/index.js", "// generated\n"),
-            ("target/debug.rs", "// generated\n"),
-            ("dist/bundle.js", "// generated\n"),
-            ("build/out.js", "// generated\n"),
-            ("__pycache__/app.py", "# generated\n"),
-            (".git/config.toml", "# not source\n"),
-            (".index/a.md", "The directory of an old index."),
-        ),
-        (_run(),),
-        profile=Corpus.CODE,
-    ),
 )
 
 
@@ -1116,7 +1094,7 @@ def _index_surface(scratch: Path) -> Surface:
         notes=(
             "The input is a corpus and what happens to it, as args. args.files is a list of "
             "pairs: the path of a file from the scope, then its text. The generator writes "
-            "the UTF-8 bytes of the text. params.profile is the profile: vault or code.",
+            "the UTF-8 bytes of the text. params.profile is the profile: vault.",
             "args.steps is a list of steps, in order. A step is an object, and its key do "
             f"names its kind. {WRITE} writes the text to the path. {REMOVE} removes the "
             f"file of the path. {MODEL_STEP} gives the embedder the model of the key name. "

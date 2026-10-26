@@ -1,5 +1,5 @@
-# Keep the oracle's code corpus current. Pull-only; indexing is the
-# separate index-code@<repo>.timer.
+# Keep the code corpus current. Pull-only. handover reads the source
+# tree of a release from it.
 [Unit]
 Description=Refresh the code corpus clones
 

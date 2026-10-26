@@ -38,7 +38,6 @@ class Corpus(StrEnum):
     worth embedding and which directories are build output."""
 
     VAULT = "vault"
-    CODE = "code"
 
 
 @dataclass(frozen=True)
@@ -52,31 +51,7 @@ VAULT_PROFILE = CorpusProfile(
     suffixes=frozenset({".md", ".txt", ".pdf"}),
     skip_dirs=frozenset({".index", "review-inbox"}),
 )
-#: Source corpora. `_walk` already skips dot-directories (.git, .venv, .next),
-#: so these are the build outputs that would otherwise swamp the index —
-#: node_modules alone dwarfs the source it sits next to.
-CODE_PROFILE = CorpusProfile(
-    suffixes=frozenset(
-        {
-            ".py",
-            ".ts",
-            ".tsx",
-            ".js",
-            ".jsx",
-            ".rs",
-            ".go",
-            ".sh",
-            ".toml",
-            ".yaml",
-            ".yml",
-            ".sql",
-            ".md",
-            ".txt",
-        }
-    ),
-    skip_dirs=frozenset({".index", "node_modules", "target", "dist", "build", "__pycache__"}),
-)
-PROFILES = {Corpus.VAULT: VAULT_PROFILE, Corpus.CODE: CODE_PROFILE}
+PROFILES = {Corpus.VAULT: VAULT_PROFILE}
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 200
 EMBED_MAX_BATCH = 32

@@ -2,7 +2,6 @@
 # Provision the library for one corpus (OPERATOR, no sudo): image, sandbox with
 # the corpus as its only workspace, TEI-only egress, timer unit.
 #   ./bin/provision-library.sh notes           # vault scope (default)
-#   ./bin/provision-library.sh agent-control code
 #   ./bin/provision-library.sh alpha test      # gate fixture, no timer
 # Prerequisite: AGENT_LAN_ADDRESS in /etc/creche/site.env, or
 # LAN_ADDRESS in the environment.
@@ -11,7 +10,7 @@ set -euo pipefail
 # most of what each call costs. Set here because nothing that starts this
 # script sets it.
 export SBX_NO_TELEMETRY="${SBX_NO_TELEMETRY:-1}"
-(( $# >= 1 && $# <= 2 )) || { echo "usage: $0 <name> [vault|code|test]" >&2; exit 2; }
+(( $# >= 1 && $# <= 2 )) || { echo "usage: $0 <name> [vault|test]" >&2; exit 2; }
 NAME="$1"
 CORPUS="${2:-vault}"
 # The vault keeps bare index names (renaming would force a full re-embed);
@@ -20,9 +19,8 @@ CORPUS="${2:-vault}"
 # work forever, and the reaper already ignores non-vault, non-code roots.
 case "$CORPUS" in
   vault) SCOPE_DIR="/srv/agents/vault/$NAME"; IDX_NAME="$NAME";      UNIT="index" ;;
-  code)  SCOPE_DIR="/srv/agents/code/$NAME";  IDX_NAME="code-$NAME"; UNIT="index-code" ;;
   test)  SCOPE_DIR="/srv/agents/test/$NAME";  IDX_NAME="test-$NAME"; UNIT="" ;;
-  *) echo "unknown corpus $CORPUS; use vault, code or test" >&2; exit 2 ;;
+  *) echo "unknown corpus $CORPUS; use vault or test" >&2; exit 2 ;;
 esac
 IDX_DIR="/srv/agents/state/index/$IDX_NAME"
 REPO="$(cd "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"

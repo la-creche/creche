@@ -93,9 +93,9 @@ command is the program of `verify.command` in `noticeboard/component.yaml`.
 `test_proc_table.py` compares the row and the words of the suite with that
 manifest.
 
-The row of `library` names no unit. The two index units run `index-scope`
-in a sandbox, through `sbx exec` and a shell. `test_proc_table.py` reads the
-program and its words from the shell text of each unit.
+The row of `library` names no unit. The index unit runs `index-scope` in a
+sandbox, through `sbx exec` and a shell. `test_proc_table.py` reads the
+program and its words from the shell text of the unit.
 
 ### Replace a service with another binary
 
@@ -223,10 +223,10 @@ index builder, `index-scope`, beside the TEI stand-in.
 
 ```
 a test (plays a systemd timer)
-  | runs index-scope <corpus> <index directory> [vault|code] to its end
+  | runs index-scope <corpus> <index directory> [vault] to its end
   v
 library ---- GET /info, POST /embed, loopback port ---> the TEI stand-in
-  | reads the corpus: vault/<name> or code/<name> in the root
+  | reads the corpus: vault/<name> in the root
   | writes state/index/<name>/store.db, by one rename
   v
 a test reads store.db with SQLite
@@ -411,7 +411,7 @@ while it runs. Neither fixture needs the playpen bundle.
    also gets the variables of `DEFAULT_ONLY_ENV` in `proc_services.py`.
    `run_index` does this.
 2. Write a corpus with a writer of `proc_library.py`. A vault scope is
-   `vault/<name>` in the root. A code repository is `code/<name>`.
+   `vault/<name>` in the root.
 3. Keep the index directory outside the corpus: `state/index/<name>` in the
    root. Do not make that directory. The program makes it.
 4. Read the store through `Store`. Its connection is read-only, so a reader
@@ -476,8 +476,8 @@ of the two files:
 
 The test does not compare a whole statement.
 
-The two index units give the command. `test_proc_table.py` holds the words
-of `index_words` against the shell text of each unit. No scenario runs
+The index unit gives the command. `test_proc_table.py` holds the words of
+`index_words` against the shell text of the unit. No scenario runs
 `sbx exec`, the shell or the `sleep` of that text.
 
 ## Add a stand-in program
