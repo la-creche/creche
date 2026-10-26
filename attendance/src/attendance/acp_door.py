@@ -21,6 +21,12 @@ The door counts the `session/prompt` requests in flight on each
 connection, for `GET /busy`. A client request of that method opens one,
 and the relay's answer with the same id closes it. A connection that ends
 closes each of its own. The count reads the lines and changes none.
+
+The facade is JavaScript. It reads each JSON number as a double and writes
+that double in its answer, so the count keys a number id by its double:
+`1`, `1.0` and `1e0` are one id. A string id stays apart from a number id.
+A prompt with a number id past the double range closes with
+`Close.BAD_FRAME`, because its answer cannot carry the same id.
 """
 
 from __future__ import annotations
@@ -28,8 +34,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import math
 from collections.abc import Generator
 from enum import IntEnum
+from typing import Literal
 
 from starlette.websockets import WebSocket
 
@@ -117,17 +125,25 @@ class _OpenPrompts:
     """The prompts of one connection that wait for their answer."""
 
     def __init__(self) -> None:
-        self.ids: set[str] = set()
+        self.ids: set[_RpcIdKey] = set()
 
-    def sent(self, text: str) -> None:
-        """A client line. `text` passed `check_frame`."""
+    def sent(self, text: str) -> Close | None:
+        """A client line. `text` passed `check_frame`. None when it may pass."""
         if METHOD_PROMPT not in text:
-            return
+            return None
 
         record = as_object(loads_strict(text)) or {}
 
-        if record.get("method") == METHOD_PROMPT and "id" in record:
-            self.ids.add(_id_key(record["id"]))
+        if record.get("method") != METHOD_PROMPT or "id" not in record:
+            return None
+
+        key = _rpc_id_key(record["id"])
+
+        if key is None:
+            return Close.BAD_FRAME
+
+        self.ids.add(key)
+        return None
 
     def answered(self, text: str) -> None:
         """A relay line. A prompt answer holds `stopReason` or `error`."""
@@ -137,7 +153,10 @@ class _OpenPrompts:
         record = as_object(loads_strict(text)) or {}
 
         if "method" not in record and "id" in record:
-            self.ids.discard(_id_key(record["id"]))
+            key = _rpc_id_key(record["id"])
+
+            if key is not None:
+                self.ids.discard(key)
 
 
 class DoorPrompts:
@@ -162,9 +181,22 @@ class DoorPrompts:
             self._open.remove(one)
 
 
-def _id_key(value: object) -> str:
-    """An id as its JSON text, so `4` and `"4"` stay two ids."""
-    return json.dumps(value, separators=(",", ":"))
+#: A JSON-RPC id as the facade sees it: a number as its double, each other
+#: value as its JSON text.
+type _RpcIdKey = tuple[Literal["number"], float] | tuple[Literal["json"], str]
+
+
+def _rpc_id_key(value: object) -> _RpcIdKey | None:
+    """The key of one id. None for a number past the double range."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return ("json", json.dumps(value, separators=(",", ":")))
+
+    try:
+        double = float(value)
+    except OverflowError:
+        return None
+
+    return ("number", double) if math.isfinite(double) else None
 
 
 def refusal_code(error: ApiError) -> int:
@@ -246,7 +278,10 @@ async def _to_relay(websocket: WebSocket, relay: Channel, prompts: _OpenPrompts)
         if refused is not None:
             return refused
 
-        prompts.sent(text)
+        refused = prompts.sent(text)
+
+        if refused is not None:
+            return refused
 
         try:
             await relay.send(text + "\n")

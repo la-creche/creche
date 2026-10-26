@@ -144,8 +144,9 @@ async def test_a_frame_round_trips_byte_for_byte(door: Door) -> None:
         ('{"jsonrpc":"2.0",\n"id":1}', Close.BAD_FRAME),
         ('{"jsonrpc":"2.0","id":NaN}', Close.BAD_FRAME),
         ('{"id":1}', Close.BAD_FRAME),
+        ('{"jsonrpc":"2.0","id":1e999,"method":"session/prompt"}', Close.BAD_FRAME),
     ],
-    ids=["over_the_cap", "not_json", "two_lines", "nan", "no_envelope"],
+    ids=["over_the_cap", "not_json", "two_lines", "nan", "no_envelope", "prompt_id_past_double"],
 )
 async def test_a_bad_frame_closes_the_connection(door: Door, frame: str, code: int) -> None:
     async with door.door_acp() as connection:

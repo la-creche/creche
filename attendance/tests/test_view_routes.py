@@ -14,7 +14,7 @@ from typing import Any
 
 import httpx
 import pytest
-from attendance.acp_door import DoorPrompts
+from attendance.acp_door import Close, DoorPrompts
 from attendance.api import build_app
 from attendance.auth import Principal, TokenBook
 from attendance.config import Config
@@ -360,3 +360,61 @@ def test_the_door_counts_a_prompt_until_its_answer() -> None:
         assert prompts.in_flight == 1
 
     assert prompts.in_flight == 0
+
+
+def prompt(rpc_id: str) -> str:
+    """A `session/prompt` request with `rpc_id` as its id, in JSON text."""
+    return f'{{"jsonrpc":"2.0","id":{rpc_id},"method":"session/prompt","params":{{}}}}'
+
+
+def answer(rpc_id: str) -> str:
+    """The answer to a prompt with `rpc_id` as its id, in JSON text."""
+    return f'{{"jsonrpc":"2.0","id":{rpc_id},"result":{{"stopReason":"end_turn"}}}}'
+
+
+@pytest.mark.parametrize(
+    ("sent", "answered"),
+    [
+        ("1.0", "1"),
+        ("1", "1.0"),
+        ("1e0", "1"),
+        ("1.5", "1.5"),
+        ("9007199254740993", "9007199254740992"),
+    ],
+    ids=["float_then_int", "int_then_float", "exponent", "fraction", "past_2_53"],
+)
+def test_the_door_keys_a_number_id_by_its_double(sent: str, answered: str) -> None:
+    prompts = DoorPrompts()
+
+    with prompts.connection() as one:
+        assert one.sent(prompt(sent)) is None
+        assert prompts.in_flight == 1
+
+        one.answered(answer(answered))
+        assert prompts.in_flight == 0
+
+
+def test_the_door_keeps_a_string_id_apart_from_a_number_id() -> None:
+    prompts = DoorPrompts()
+
+    with prompts.connection() as one:
+        one.sent(prompt('"1"'))
+        one.sent(prompt("1"))
+        assert prompts.in_flight == 2
+
+        one.answered(answer("1.0"))
+        assert prompts.in_flight == 1
+
+        one.answered(answer('"1"'))
+        assert prompts.in_flight == 0
+
+
+@pytest.mark.parametrize(
+    "rpc_id", ["1e999", "-1e999", "9" * 400], ids=["exponent", "negative", "long_integer"]
+)
+def test_the_door_refuses_a_prompt_id_past_the_double_range(rpc_id: str) -> None:
+    prompts = DoorPrompts()
+
+    with prompts.connection() as one:
+        assert one.sent(prompt(rpc_id)) is Close.BAD_FRAME
+        assert prompts.in_flight == 0
