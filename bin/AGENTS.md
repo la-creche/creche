@@ -1,7 +1,7 @@
 # bin
 
 This directory holds the scripts that run on the host and the scripts of CI.
-It also holds five shell libraries, one tool for a development machine and
+It also holds two shell libraries, one tool for a development machine and
 the tests behind them. One house style across every file. The root
 `AGENTS.md` applies here too.
 
@@ -30,10 +30,8 @@ A reader must not infer it from the `id -u` guard. A root script asserts
 |---|---|---|
 | Setup | `provision-library.sh` | Idempotent, not a no-op. Every step checks before it writes. A value that has a current answer is upserted in place. A token minted once is never replaced in silence. |
 | Operations | `creche-deploy`, `creche-handover`, `creche-handover-intake`, `rework-watchdog.sh`, `rework-registry-sync.sh`, `sbx-drift-check.sh`, `sync-code-corpus.sh` | Run unattended from units and timers. Fail loudly into the journal. |
-| Checks | `quality-gate.sh`, `rust-gate.sh`, `rust-coverage.sh`, `systemd-proof.sh`, `proc-rust.sh` | Run from the hooks and from CI. `rust-coverage.sh`, `systemd-proof.sh` and `proc-rust.sh` run in CI only. No unit runs them. They use `set -euo pipefail`. In `quality-gate.sh`, in `rust-gate.sh`, in `systemd-proof.sh` and in `proc-rust.sh`, the first failed check stops the run. `rust-coverage.sh` stops when its cargo step fails. It then reports each failure of its checks. |
-| Probe | `artifact-probe.sh` | It runs in CI only, from a workflow that a person or an agent starts by hand. No hook and no unit runs it. It uses `set -uo pipefail` and the counter of a gate, so one run records each result. It can use the GNU tools of a runner. It stays bash 3.2-clean, because its tests run it on a development machine. |
-| Build | `build-artifacts.sh` | It runs in CI only: from the job `artifacts` of `gate.yml` and of `release.yml`, and from `artifact-probe.sh`. No hook and no unit runs it, and the host never runs it. It uses `set -euo pipefail`: the first fault stops the run with one line, and the run then writes no digest list. It can use the GNU tools of a runner. It stays bash 3.2-clean, because its tests run it on a development machine. |
-| Library | `lib/envfile.sh`, `lib/docsrule.sh`, `lib/rustrule.sh`, `lib/artifactrule.sh`, `lib/artifactrows.sh` | Sourced only, never executed. Say "Sourced only" in the header. That marker exempts the file from the mode rule below. |
+| Checks | `quality-gate.sh`, `systemd-proof.sh` | Run from the hooks and from CI. `systemd-proof.sh` runs in CI only. No unit runs them. They use `set -euo pipefail`. The first failed check stops the run. |
+| Library | `lib/envfile.sh`, `lib/docsrule.sh` | Sourced only, never executed. Say "Sourced only" in the header. That marker exempts the file from the mode rule below. |
 | Tools | `yaml-to-toml.py` | Run by hand on a development machine, and from a test in CI. No unit runs a tool, and the host does not need one. A tool reads the files that its command names and changes no file. |
 | Tests | `tests/test_*.py`, `tests/test_*.sh` | pytest collects the `.py` files. The `.sh` files run by hand: `bash bin/tests/<name>.sh`. None needs a host. |
 
@@ -89,13 +87,8 @@ through a file or a health endpoint, and give a short in-VM command a
 | `journal-scan.py` | OPERATOR, by hand | Read-only. A person starts it, and the one argument is the sessions root. It counts the journal lines in which UTF-8 cannot encode a key or a value. It also counts the `pi_event` lines whose event the host cut for another cause than its size. It prints each count. The only text of a journal line that the output can show is a `kind` word. |
 | `sync-code-corpus.sh` | OPERATOR, hourly | Refreshes the dedicated code clones the library indexes. The repository list lives outside the corpus. |
 | `provision-library.sh` | OPERATOR | One corpus: the image, the sandbox, TEI-only egress, the timer. Needs `AGENT_LAN_ADDRESS` from the site file. |
-| `quality-gate.sh` | OPERATOR, from the hooks and CI | ruff, ruff format, pyright, then pytest as asked: `--tests`, `--tests-for PATH...` or `--docs`. For a change that touches `rust/`, it also runs `rust-gate.sh`. For a push that changes `vectors/`, it runs `rust-gate.sh` when `cargo` is on `PATH`. For a push that changes a file under `integration/proc/` that is not prose, it runs the process-level suite. |
-| `rust-gate.sh` | OPERATOR and CI, from `quality-gate.sh`, from the `rust` job and from `.github/workflows/advisories-daily.yml` | The `[lints]` check, three text checks, `cargo fmt`, `cargo clippy` and `cargo deny` on the workspace under `rust/`. The text checks are the include check, the panic check and the public-field check. The script has a list of the crates that the public-field check does not read yet. `cargo clippy` runs two times: for the workspace, and for `creche-contracts` with no default feature. `--tests` adds `cargo test`. `cargo deny` runs where `cargo-deny` is on `PATH`. It makes three checks there: `bans`, `licenses` and `sources`. `--advisories` is a mode of its own. It makes the `advisories` check of `cargo deny` and runs no other step. The advisory workflow runs that mode one time a day, and that run blocks no merge. The script takes one flag at most, and it refuses a second word. |
-| `rust-coverage.sh` | CI and OPERATOR, from the `rust-coverage` job and from `.github/workflows/coverage-nightly.yml` | The coverage rule of the workspace under `rust/`. Runs the tests with `cargo llvm-cov`, then checks the report against `rust/coverage-files.txt`. Fails when a region or a line of a listed file ran in no test. Also fails when a listed file holds the text `coverage(off)` or the text `macro_rules!`. A call of a macro outside the closed list of the script fails too. Takes each count from the segments of the report, and none from a summary. Prints one line with the counts of each crate, and one line for each failure. `--report FILE` checks a report of an earlier run and starts no cargo. `--branch` adds the branches, on a nightly toolchain. The nightly workflow runs the script with that flag one time a day, and that run blocks no merge. Needs `python3`, `cargo-llvm-cov` and the component `llvm-tools-preview`. Sources `lib/rustrule.sh` for the name of the Rust directory. `rust/AGENTS.md` has the rule. |
+| `quality-gate.sh` | OPERATOR, from the hooks and CI | ruff, ruff format, pyright, then pytest as asked: `--tests`, `--tests-for PATH...` or `--docs`. For a push that changes a file under `integration/proc/` that is not prose, it runs the process-level suite. |
 | `systemd-proof.sh` | CI, from the `systemd-proof` job and from the scope of each workflow | Proves the restart rule of the daemon units on the systemd of the runner, with three transient units. Then gives each unit file under `systemd/` to `systemd-analyze verify`. `--unchanged FROM TO` says if a change needs no proof. |
-| `proc-rust.sh` | CI and OPERATOR, from the `proc-rust` job | Gives the process-level suite each Rust program that a file `rust/proc/*.run` names. A file names one cargo package, one program, the variable of one service and the tests that it selects. The script reads each file first, and a file that breaks a rule stops the run before the first build. For each file it does three steps. It removes the program of an earlier build. It runs `cargo build --release --locked -p <package>` in `rust/`. It runs the selected tests with `uv run pytest`. The variable of the file holds the path of the built program as one word of a shell, and `CRECHE_PROC_NO_SKIP` is `1`. `--dry-run` prints the lines of each file and starts nothing. Needs `cargo` and `uv`. Sources `lib/rustrule.sh` for the name of the Rust directory. `rust/AGENTS.md`, "The judge of a program", has the rules for a file. |
-| `artifact-probe.sh` | CI, from `.github/workflows/artifact-probe.yml` | It measures the tool facts for a binary component. CI builds such a component, and the host checks its signature. The probe uses the real parts. `build` asks `handover artifacts --crate-row` for the row of `agent-family` and gives the row to `build-artifacts.sh` two times. `lib/artifactrows.sh` reads the row, and the probe takes exactly one row of `agent-family` with one command. It then compares the two archives, byte for byte, and proves that the program of the archive is a static program that runs. One more build with no remap flag says whether the remap flags are necessary. `verify` checks the keyless signature of the archive with `cosign` inside `systemd-run`, as a user with no privilege. It takes the words of each check from `handover artifacts --verify-words` and puts its own workflow file in the place of `release.yml`, in one word. It writes `probe-report.json`. The script holds no copy of the target, of a limit or of the words of a check. It makes no tag and no Release. |
-| `build-artifacts.sh` | CI, from the job `artifacts` of `gate.yml` and of `release.yml`, and from `artifact-probe.sh` | It builds, walks, packs and checks the archive of each binary component. "The archives of the binary components" has the rules. |
 | `yaml-to-toml.py` | OPERATOR on a development machine, and CI | Converts one YAML file of the four kinds to TOML and prints the text. The four kinds are the family file, the server file, the component manifest and the roster. `--check` proves one converted pair: the values are equal, and the count of comments is equal. Status 1 means a pair that differs. Each other fault gives status 2. The header of the script holds the layout and each refusal. The script is temporary. Packet `toml-converter-leave` deletes the script when the tree holds no YAML file of the four kinds. |
 
 Production runs these scripts from `/opt/creche/bin/`. A change here is live
@@ -218,162 +211,13 @@ A push with no other path runs no other suite. One test of `bin/tests` reads
 prose?". The pre-push hook, `gate.yml` and `release.yml` source it.
 `quality-gate.sh` sources it for the rule of prose under `integration/proc/`.
 
-`quality-gate.sh` runs `rust-gate.sh` only for a change that touches `rust/`,
-and for a push that changes `vectors/`. `lib/rustrule.sh` holds the one copy
-of that rule. `quality-gate.sh`, `gate.yml` and `release.yml` source it.
-
-| Mode | The change touches `rust/` when | `rust-gate.sh` runs |
-|---|---|---|
-| no flag | the index or the work tree differs from `HEAD` under `rust/` | the `[lints]` check, the three text checks, `cargo fmt`, `cargo clippy`, `cargo deny` |
-| `--tests-for` | one path or more is under `rust/` | the same, then `cargo test` |
-| `--tests` | always | the same, then `cargo test` |
-| `--docs` | never | nothing |
-
-- A change that touches nothing under `rust/` needs no `cargo` on `PATH`,
-  because some sessions commit from a sandbox that has no Rust toolchain. It
-  starts no cargo step, with one exception: a push that changes `vectors/`.
-- A change that touches `rust/` with no `cargo` on `PATH` fails before the
-  first check.
-- The commit that concludes a merge is a special case of the no-flag mode.
-  When the index and the work tree hold exactly the `rust/` of the other
-  side, the change touches no `rust/`. A session with no `cargo` can then
-  merge `main`. An own edit under `rust/` in that commit still counts.
-- When git cannot read the state, the no-flag mode runs `rust-gate.sh`. The
-  gate names that cause in its line.
-- In `--tests-for` mode a path under `rust/` picks no pytest suite. It is not
-  a path in no package, so it does not start the full Python suite.
-- CI takes a wider answer than the hooks. There, a change to a file of the
-  Rust checks also runs `rust-gate.sh`. Those files are the script,
-  `rust-coverage.sh`, `lib/rustrule.sh`, `gate.yml`, `release.yml` and two
-  local actions: the scope action and `.github/actions/cargo-llvm-cov`. The
-  same change runs `rust-coverage.sh` in its job. The tests here use a fake
-  `cargo`, so only that run proves such a change. A commit or a push of those
-  files needs no `cargo`.
-- The Rust tests read `vectors/data`. In CI, a code change under `vectors/`
-  runs `rust-gate.sh`. In `--tests-for` mode, a path under `vectors/` runs
-  `rust-gate.sh --tests` when `cargo` is on `PATH`. Without `cargo`, the gate
-  prints one line and passes. A session with no Rust toolchain can then
-  regenerate the vectors and push. A commit of a vector starts no cargo step.
-- The `[lints]` check refuses a crate that has no `[lints]` table with the
-  line `workspace = true`. Such a crate builds with no lint of the workspace.
-  The check also fails when it finds no crate.
-- The include check refuses a Rust source file that includes a Markdown
-  file. A change of Markdown only runs no cargo step, so such a file can
-  break a doc test with no cargo run.
-- The panic check permits the word `catch_unwind` in three places only.
-  It refuses each other Rust source file under `rust/crates` with that
-  word. A reviewer then knows where each panic boundary is. The three
-  places are:
-  1. The crate `creche-runtime`.
-  2. `src/entry.rs` in a crate whose `Cargo.toml` does not name
-     `creche-runtime`.
-  3. Test code.
-- The public-field check refuses `pub` on a field of a struct, in each
-  crate under `rust/crates`. It permits the forms `pub(crate)` and
-  `pub(super)`. It reads no test code.
-- The public-field check does not read each crate yet. The list
-  `FIELD_CHECK_SKIPS` of the script names the crates that it skips. Add no
-  name to it. "Known gaps" of `rust/AGENTS.md` has the names, and the
-  packets that delete them.
-- The panic check and the public-field check read the text and need no
-  `cargo`. `rust/AGENTS.md`, "Checks", has the rules of both, and what
-  test code is.
-- Each of the two checks fails for a file that ends inside a test module.
-  The check then read no code below the first line of that module.
-- `cargo clippy` runs two times. The first command reads the workspace. The
-  second command reads `creche-contracts` with no default feature. That
-  crate has a cargo feature that is on by default, so the first command
-  does not build the crate without it. `rust/AGENTS.md`, "TOML", has the
-  feature.
-- `cargo deny --locked check bans licenses sources` runs after
-  `cargo clippy`. It holds the locked crates to `rust/deny.toml`: the
-  licenses, the sources and the bans. `rust/AGENTS.md` has the table.
-- That step needs `cargo-deny` on `PATH`. rustup does not install it.
-  Without it, `rust-gate.sh` prints one line and runs each other step.
-- In CI, `rust-gate.sh` fails without `cargo-deny`. The script reads `CI`,
-  which a runner sets. The `rust` job installs `cargo-deny` from a release
-  archive. It checks the SHA-256 of the archive before the unpack.
-- The gate does not make the `advisories` check of `rust/deny.toml`. That
-  check reads the advisory database, which changes while the tree stays the
-  same. `rust-gate.sh --advisories` runs
-  `cargo deny --locked check advisories` and no other step.
-  `.github/workflows/advisories-daily.yml` runs that mode one time a day, on
-  `main`.
-- With `--advisories`, the script fails on each machine that has no
-  `cargo-deny`. No other run makes that check for the same tree.
-
-## The archives of the binary components
-
-`build-artifacts.sh` makes the archive of each binary component. The job
-`sign` of `release.yml` signs each archive, and the tag script attaches the
-archive and its signature bundle to the Release of the component. The host
-fetches the two files and builds nothing.
-
-The script reads the rows from `handover artifacts --repo "$ARTIFACT_REPO"`.
-A row holds these values:
-
-- the component and the target
-- the names of the two assets
-- the name of the install variable
-- three limits
-- each build command of the manifest
-
-`ARTIFACT_ROWS_FILE` gives the rows in a file instead, for example one row
-of `handover artifacts --crate-row`. Give one of the two variables, not both.
-The script holds no copy of a value of a row. Each variable that names a
-path must hold an absolute path. The script changes its directory, so it
-refuses a relative path with one line.
-
-- With no row, the script prints one line and starts no `rustup` and no
-  `cargo`. It writes an empty `SHA256SUMS` and an empty step output
-  `digests`.
-- With a row or more, it installs the toolchain of
-  `rust/rust-toolchain.toml` and adds the target of each row.
-- It runs each command of a row in the repository root, as a list of words.
-  No shell reads a word. The install variable of the row names an empty
-  tree. `RUSTFLAGS` holds one `--remap-path-prefix` each for the workspace,
-  the cargo home and the temporary directory of the runner.
-- The tree must hold one program or more directly in `bin/`, and nothing
-  else.
-- `handover check-tree --kind binary` walks the tree. The needles are the
-  workspace, the home, the cargo home and the temporary directory of the
-  runner.
-- The pack gives each member the name `<component>/bin/<program>`, the
-  owner 0, the group 0, the time 0 and the mode 0755. The members are in
-  sorted order, and the archive has no directory member. gzip writes no name
-  and no time.
-- The script refuses an archive over a limit of its row. The three limits
-  are the bytes of the archive, the count of members and the bytes of the
-  tree. Root refuses such an archive, so CI must not sign it.
-- At the end, `SHA256SUMS` holds one line of `sha256sum` for each archive,
-  and the step output `digests` holds the same text.
-
-`lib/artifactrows.sh` is the one reader of the rows. `build-artifacts.sh`
-and `artifact-probe.sh` source it, so the two scripts read a row in one way.
-The reader refuses each text that is not in the line form of
-`handover artifacts`. It also refuses two rows with one component, one
-archive or one bundle. The reader gives the reason of a refusal to its
-caller. Each script then stops with one line.
-
-`lib/artifactrule.sh` holds the one copy of "does this change touch an input
-of an archive?". The scope action of `gate.yml` sources it after
-`lib/rustrule.sh`, because the rule calls `rust_touched`. An input of an
-archive is one of these:
-
-- a change that `rust_touched` counts
-- the manifest of a component, at the root or one directory deep
-- a path under `handover/`
-- `build-artifacts.sh` and `lib/artifactrows.sh`
-- the rule itself
-
-A change that the rule cannot read counts. `release.yml` does not ask the
-rule: its job `artifacts` builds at each push.
-
 ## The systemd proof
 
-`systemd-proof.sh` proves the restart rule of `rust/AGENTS.md`, "The config
-of a process". Only CI runs it. The `systemd-proof` job runs the proof, and
-the scope of each workflow asks `--unchanged`.
+`systemd-proof.sh` proves the restart rule of the daemon units. A daemon
+that refuses its start exits with status 78. A unit with
+`RestartPreventExitStatus=78` then stays stopped. Only CI runs the script.
+The `systemd-proof` job runs the proof, and the scope of each workflow asks
+`--unchanged`.
 
 The machine must run Linux with systemd as its first process, and `sudo`
 must not ask for a password. On another machine, the script fails before it
@@ -438,15 +282,8 @@ scope of `release.yml` ask it.
 | `test_envfile_vectors.py` | The command `creche-env` gives the result of each vector of `envfile.layer` and `envfile.raw`. `creche_env_check` and `creche_env_get` of `lib/envfile.sh` give it too, for each vector whose pair asks no account. Each function runs the command of its own tree, with its words, and keeps status 78. A `cd` after the source does not change that tree. |
 | `test_envfile_catalog.py` | The catalog of the product: the example value of each required key is a value of its type. The two files name no IPv4 address outside 192.0.2.0/24 and 127.0.0.0/8. Each key of `root-keys.txt` is a catalog key. No key of `default.env` has another value than in an earlier version of the file on the base branch. A copy of `example.env` stops the command with status 78 and names each required key. |
 | `test_pre_push_select.sh`, `test_pre_push_scope.py` | What a push tests. |
-| `test_rust_gate.py` | When the gate runs cargo, the exact cargo steps, the refusal with no `cargo` on `PATH`, the rule for `vectors/`, the `[lints]` check and the include check. The second clippy command comes directly after the first one. The `cargo deny` step: it runs where `cargo-deny` is on `PATH`, a machine without it passes with one line, and CI without it fails. That step names three checks, and no mode of the gate makes the advisory check. `--advisories` runs the advisory check and no other step, and it fails on each machine without `cargo-deny`. A call with two words fails with the usage line and starts no cargo step. The two modes together name each check of `rust/deny.toml`, and no check two times. The panic check: each of the three places passes, and a file in another place fails. The public-field check: what fails, what passes, and each name of its list. Both checks: what test code is, and a file that ends inside a test module fails. |
-| `test_rust_workspace.py` | Each entry of the lint gate in `rust/Cargo.toml`, and the two `[profile]` tables there. Each table of `rust/deny.toml`. No Cargo file is outside `rust/`. No Rust source file holds a table of differences. The test looks for the name `DEVIATIONS` and for a struct whose name starts with `Deviation`. The test has a list of the crates that it does not read yet, and it fails for a name with no crate. The crate file of `creche-vectors` names no crate but `serde`, `serde_json` and `creche-util`. No Rust source file outside `creche-vectors` holds the text `vectors/data`. A comment counts too. Only the two files of the module `tomlfile` of `creche-contracts` hold the text `toml::` or `toml_parser::`. Only those two files can give one of the two crates another name with `as`. No Cargo file under `rust/` gives one of the two crates another name with `package`. Only the crate file of `creche-contracts` takes one of the two. A change under `rust/` mints no tag. |
-| `test_rust_config_units.py` | Each Rust config type names one daemon unit. Each daemon unit holds `Restart=always` and no `RestartPreventExitStatus`. Three daemon units hold an `ExecStartPre=` check, and the Rust config type of each one says so. Each variable of a unit has a constant in the Rust module of its daemon. That constant holds the name as a text, or it reads the name from the Rust module `endpoints`. The chaperone module reads two names from that module. No other file of the Rust config code holds the text of a name of `endpoints`. |
-| `test_rust_coverage.py` | `rust-coverage.sh` against a small report, with no `cargo`. A listed file fails when one of its regions or lines ran in no test. The counts come from the segments of the report: two copies of a function can each run one part of it. One report holds the segments that `llvm-cov` wrote for a real file. A listed file that is not in the report fails. The text `coverage(off)` in a listed file fails. The text `macro_rules!` fails too, and so does a call of a macro outside the closed list of the script. A call of a listed macro passes with no path, and with the path of `std`, `core` or `alloc`. The test holds a copy of the closed list. It compares that copy with the script and with `rust/AGENTS.md`. The time of the search for a call grows with the size of a file and no faster. A file of `rust/crates/chaperone-policy/src` outside the list fails. A list or a report in another form stops the run. A fake `cargo` shows the cargo step, word for word. The Python program of the script imports no module of the caller, and ruff passes it. |
-| `test_proc_rust.py` | `proc-rust.sh`, against a fake `cargo` and a fake `uv`. The cargo step and the pytest step of each file, word for word. The two variables of the suite that a run sets. The suite reads the path of the program as one word, also from a tree whose path holds a space or a quote. The program of an earlier build is never the program of a run. The script takes the name of the Rust directory from `lib/rustrule.sh`. A tree with no file fails. Each rule of a file: a file that breaks one stops the run before the first build, with one line. Each file under `rust/proc` names the variable of a row of the service table. It names a program of a crate of the workspace, and it selects tests that the suite has. No scenario of `integration/proc/test_proc_board_start.py` leaves the selection of `probe.run` in silence. |
-| `test_build_artifacts.py` | `build-artifacts.sh`, against stand-ins for `rustup`, `cargo`, `tar`, `gzip` and the `handover` command. The rows are the real line form. No row: one line, an empty digest list and no call of `rustup` or `cargo`. One row: the words and the variables of each call, the needles of the walk, the member names and the digest file. Each refusal stops the run with one line and writes no digest list. The refusals are a tree with no program, a tree with another thing, a program name that is not plain and a directory in `bin/`. The run also stops for a walk fault, a build fault, each of the three limits and a row in another form. The line of each row in another form is the reason of the reader for that row. A relative path in a variable stops the run before the first call. No word of a command passes through a shell. A last row with no line feed is a whole row. `build-artifacts.sh` and `artifact-probe.sh` each source `lib/artifactrows.sh`. No other file under `bin/` outside `tests/` defines `read_rows` or names the key `max-unpacked-bytes`. |
-| `test_gate_workflow.py`, `test_retest_workflow.py` | The two CI files hold to the same shard command, the same `proc` job, the same `rust` job and the same `systemd-proof` job. They also hold to the same `proc-rust` job. That job runs `proc-rust.sh` with no flag on each code change, after the toolchain step and the venv step. It builds no playpen, and its cache has a key of its own. `!retest` restarts one run. The `rust` job checks the SHA-256 of the `cargo-deny` archive before the unpack. The key of the cache of that job holds a hash of the toolchain file and of the lock file. No job of the two files makes the advisory check. The `systemd-proof` job runs the script on the runner itself, with no container. A scope skips the proof only when the script answers `unchanged`. The last job of `gate.yml` is `gate`, and the last job of `release.yml` is `release`. Each other job name is in both files, but `sign`: only the release has it. The test fails for another job name that only one file has. The test also names each key at the top level of the two files. One more key there fails the test, for example `defaults` or `env`: such a key changes each job of its file. The one exception is the `env` key of the release. It holds the two constants of cosign and no other variable. The two files hold the same `suites` job. That job has the setup of the `proc` job and one pytest run for each of the two old suites of `integration/`. Its last step fails for a test that skipped and for a suite that ran no test. The two files also hold the same `rust-coverage` job. That job runs `rust-coverage.sh` with no flag. It takes `cargo-llvm-cov` through the action `.github/actions/cargo-llvm-cov`. The check `gate` needs the job. The test also pins `coverage-nightly.yml`. That workflow starts one time a day and by hand, and it holds the read-only token. Its job runs `rust-coverage.sh --branch` on `main` only, so a run on another ref is a success that measures nothing. One variable names the nightly toolchain by its date. Its job takes `cargo-llvm-cov` through the same action. The test pins that action as a whole. It holds the one step, each key of that step, the version of the tool and the SHA-256 of the archive. The step checks the SHA-256 before the unpack. Each of the three workflow files calls the action one time. The version and the SHA-256 are the two constants of the action. No other file under `.github` holds the name of one of the two. The test also pins `advisories-daily.yml`. That workflow starts one time a day and by hand, and it holds the read-only token. Its job runs `rust-gate.sh --advisories` on `main` only, so a run on another ref is a success that checks nothing. The job has no cache step. The step that takes `cargo-deny` is equal in the `rust` job of the two CI files and in that workflow. The two files hold the same `artifacts` job, apart from the rule of a step. Its steps are pinned as a whole: a checkout that keeps no token, uv with no cache, `build-artifacts.sh` with its two variables, and the upload. In the gate each step after the checkout asks the scope and the answer `artifacts` of `lib/artifactrule.sh`. The release has one job more: `sign`. It holds the identity token and no other permission, and it has no checkout and no local action. The test holds its steps and the whole text of its run step. The step compares each archive with the job output before the first word `cosign`. After the verdict, the `release` job takes both workflow artifacts and then cosign, with the text of the `sign` job. The cosign step has a time limit, and the job and the tag step have none. The tag step gets `ASSET_DIR` and `COSIGN`. The `sign` job names each asset with the two suffixes of the catalog, and the test imports them. The tests run the text of the two steps against a stand-in `curl`. The verdict cases cover the two new jobs. |
-| `test_artifact_probe_workflow.py` | The probe workflow has one trigger, `workflow_dispatch`. Each job that measures runs on `main` only, so a run on another ref is a success that measures nothing. Only the job `sign` holds the identity token, and it has no checkout. The tests hold that job as a whole: its steps, the text of each one and the inputs of its actions. The whole text of the step that takes `cosign`: it compares the SHA-256 before the first use. The two constants of cosign are equal in the probe and in `release.yml`. No file of the probe holds the target. The bundle of the job `sign` has the suffix of the catalog. `artifact-probe.sh` runs against binstubs, the real `handover` command and `build-artifacts.sh`. The tests hold the words of each child, each key of the report and each case that fails the probe. The probe reads the row with `lib/artifactrows.sh` and stops for each text that is not exactly one row of `agent-family` with one command. Some cases need a tool of a runner: GNU tar, `sha256sum --check --strict` or `jq`. On a development machine without the tool, those cases skip. In CI each case runs, and a case whose tool is absent fails. |
-| `test_systemd_proof.py` | `systemd-proof.sh`, against a fake systemd. Each case fails on a wrong result, and a value of `NRestarts` that is no count fails. The script removes its units after each failure. Only the line for an absent program passes a unit file. `--unchanged` says yes only for a change with no file of the proof. The status and the unit line of the script equal the two Rust constants. |
+| `test_gate_workflow.py`, `test_retest_workflow.py` | The two CI files hold to the same shard command, the same `proc` job, the same `suites` job and the same `systemd-proof` job. `!retest` restarts one run. The `systemd-proof` job runs the script on the runner itself, with no container. A scope skips the proof only when the script answers `unchanged`. The last job of `gate.yml` is `gate`, and the last job of `release.yml` is `release`. Each other job name is in both files, and the test fails for a job name that only one file has. The test also names each key at the top level of the two files. One more key there fails the test, for example `defaults` or `env`: such a key changes each job of its file. The `suites` job has the setup of the `proc` job and one pytest run for each of the two old suites of `integration/`. Its last step fails for a test that skipped and for a suite that ran no test. The tag step of the release gets the token and the catalog name, and no variable of a binary component. |
+| `test_systemd_proof.py` | `systemd-proof.sh`, against a fake systemd. Each case fails on a wrong result, and a value of `NRestarts` that is no count fails. The script removes its units after each failure. Only the line for an absent program passes a unit file. `--unchanged` says yes only for a change with no file of the proof. |
 | `test_handover_wrapper_owner.sh` | `creche-handover` refuses any of its three paths another account can write. |
 | `test_unique_test_basenames.py` | No two test modules share a basename across the workspace. |
 | `test_strictjson_copies.py` | Each copy of a copied module has the same bytes. A copied module is a file `strictjson.py` or `notices.py` at `<package>/src/<module>/`. A name with one copy passes, and a name with no copy passes. |

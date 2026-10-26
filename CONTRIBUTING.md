@@ -57,9 +57,7 @@ package.
 ## Hooks
 
 `githooks/pre-commit` runs `bin/quality-gate.sh` with no flag: ruff, ruff
-format and pyright. When the index or the work tree differs from `HEAD`
-under `rust/`, it also runs `cargo fmt` and `cargo clippy`. It then runs
-`cargo deny` where `cargo-deny` is on `PATH`.
+format and pyright.
 
 `githooks/pre-push` runs the same checks, then tests:
 
@@ -67,8 +65,7 @@ under `rust/`, it also runs `cargo fmt` and `cargo clippy`. It then runs
 |---|---|
 | a path under a package, for example `chaperone/app.py` | that package's suite, `--tests-for`. For a product package, also `vectors/tests` |
 | a path in no package, for example `uv.lock` or `pyproject.toml` | the full suite. The hook passes `--tests-for`, and the gate runs every suite |
-| a path under `vectors/`, for example `vectors/data/index.json` | `vectors/tests`, and the cargo steps when `cargo` is on `PATH` |
-| a path under `rust/`, for example `rust/Cargo.lock` | `cargo fmt`, `cargo clippy`, `cargo deny` where `cargo-deny` is on `PATH`, and `cargo test`. No pytest suite for that path |
+| a path under `vectors/`, for example `vectors/data/index.json` | `vectors/tests` |
 | a path under `integration/proc/`, for example `integration/proc/proc_tree.py` | the process-level suite on four workers, and no other suite for that path. A test that skips is a failure, as in the `proc` job of CI. A Markdown file there, outside `tests/` and `fixtures/`, picks no suite |
 | Markdown only, outside `tests/` and `fixtures/` | the tests marked `docs`, `--docs` |
 | nothing, or a deleted branch | no test |
@@ -77,39 +74,13 @@ A package is the directory above a `testpaths` entry in the root
 `pyproject.toml`. A new suite needs no change to the hook. A product package
 is each package but `bin/` and `vectors/`.
 
-The cargo steps are `bin/rust-gate.sh`. The rule that starts them is
-`bin/lib/rustrule.sh`.
-
-- A commit or a push with no path under `rust/` needs no `cargo` on `PATH`.
-  It starts no cargo step, with one exception.
-- The exception is a push with a path under `vectors/`. The Rust tests read
-  `vectors/data`, so that push starts the cargo steps when `cargo` is on
-  `PATH`. Without `cargo`, the gate prints one line and passes.
-- A commit or a push with a path under `rust/` needs `cargo`. Without it the
-  gate fails before the first check.
-- The commit that concludes a merge needs no `cargo` when only the other
-  side changed `rust/`. An own change under `rust/` in that commit needs
-  `cargo`.
-- A push that changes Rust and Python runs the cargo steps and the Python
-  suites.
-- When the hook cannot read what a push changes, it runs the full suite and
-  the cargo steps. That push needs `cargo`.
-- The `cargo deny` step needs the program `cargo-deny`. rustup does not
-  install it. Without it on `PATH`, the gate prints one line and runs each
-  other step. In CI, the gate fails without it.
-- The `cargo deny` step makes three checks: `bans`, `licenses` and
-  `sources`. It does not read the advisory database.
-  `.github/workflows/advisories-daily.yml` makes the `advisories` check one
-  time a day, and that run blocks no merge. `rust/AGENTS.md` has the rules of
-  both.
-
 No hook checks a commit message. Check the subject against the seven rules
 in `AGENTS.md` yourself.
 
 ## CI
 
 `.github/workflows/gate.yml` runs on every pull request and on every merge
-group. It has eleven kinds of job:
+group. It has seven kinds of job:
 
 1. `lint`: ruff, ruff format, pyright. On a docs-only pull request it also
    runs the tests marked `docs`.
@@ -118,38 +89,18 @@ group. It has eleven kinds of job:
 3. `playpen`: `pnpm test`, `pnpm run typecheck` and `pnpm run build`.
 4. `proc`: the process-level suite, `uv run pytest integration/proc -m slow`.
    The job builds the playpen first. A test that skips is a failure there.
-5. `proc-rust`: `bin/proc-rust.sh`, the process-level suite as the judge of
-   a Rust program. For each file `rust/proc/*.run`, the script builds one
-   program of the Cargo workspace. It then runs the scenarios that the file
-   selects, with that program in the place of one service. A test that skips
-   is a failure there. `rust/AGENTS.md` has the rules for a file.
-6. `suites`: the two suites `integration/tests` and
+5. `suites`: the two suites `integration/tests` and
    `integration/tests_manager`. The job builds the playpen first. It runs
    each suite with a pytest command of its own. A test that skips is a
    failure there. `integration/AGENTS.md` has its rules.
-7. `rust`: `bin/rust-gate.sh --tests`, with the toolchain that
-   `rust/rust-toolchain.toml` names. The job installs `cargo-deny` before
-   the script runs. When the pull request changes no path under `rust/` and
-   no path under `vectors/`, the job skips those steps and passes. A change
-   to the Rust checks themselves also runs the steps.
-   `rust_gate_path` in `bin/lib/rustrule.sh` lists those files.
-8. `rust-coverage`: `bin/rust-coverage.sh`, the coverage rule of the Rust
-   workspace. The job installs `cargo-llvm-cov` before the script runs. It
-   skips its steps for the same changes as the `rust` job. `rust/AGENTS.md`
-   has the rule.
-9. `systemd-proof`: `bin/systemd-proof.sh`, on the systemd of the runner.
+6. `systemd-proof`: `bin/systemd-proof.sh`, on the systemd of the runner.
    It proves that a unit with `RestartPreventExitStatus=78` stays stopped
    after exit status 78. It also gives each unit file to
    `systemd-analyze verify`. When the pull request changes no file of the
    proof, the job skips that step and passes. `bin/AGENTS.md` lists those
    files.
-10. `artifacts`: `bin/build-artifacts.sh`, the build, the walk and the pack
-    of the archive of each binary component. When the pull request changes
-    no input of an archive, the job skips each step after the checkout and
-    passes. `bin/lib/artifactrule.sh` lists the inputs. `bin/AGENTS.md` has
-    the rules of the script.
-11. `gate`: red unless every other job passed. This is the one check the
-    merge queue and the release executor read.
+7. `gate`: red unless every other job passed. This is the one check the
+   merge queue and the release executor read.
 
 Comment `!retest` on a pull request to restart its CI on the same commit.
 The comment is the command and nothing else. One run restarts per comment.
@@ -170,10 +121,9 @@ component's own newest tag.
 - A component's paths include every workspace package its build installs. A
   change under `family/` moves `attendance`, `caregiver` and `noticeboard`.
   A change to `uv.lock` moves every venv component.
-- A binary component ships two assets on its Release: the archive that the
-  `artifacts` job built, and the bundle of its keyless signature. The `sign`
-  job of `release.yml` signs each archive. With no binary component, the two
-  jobs build nothing and sign nothing.
+- No job of `release.yml` builds or signs an archive. The catalog has no
+  binary component. The tag script refuses a binary component that has no
+  archive, so such a component gets no tag.
 - A change under `rust/` moves no component today, because no component is a
   binary component. A change to `rust/Cargo.lock`, `rust/Cargo.toml` or
   `rust/rust-toolchain.toml` moves every binary component and no other kind.
