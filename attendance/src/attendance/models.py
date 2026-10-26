@@ -14,18 +14,7 @@ from typing import Any
 from .clock import rfc3339
 from .states import SessionKind
 
-LEASE_TTL_S = 60
 DEFAULT_DEADLINE_S = 3600
-
-
-class Holder(StrEnum):
-    """Which door holds the writer lease (contract 02 §7.1)."""
-
-    OWUI = "owui"
-    TUI = "tui"
-    DELEGATE = "delegate"
-    DISPATCH = "dispatch"
-    TRIGGER = "trigger"
 
 
 class TriggerKind(StrEnum):
@@ -102,29 +91,6 @@ class Usage:
         self.cache_read += other.cache_read
         self.cache_write += other.cache_write
         self.cost_usd += other.cost_usd
-
-
-@dataclass(slots=True)
-class WriterLease:
-    """One writer per session (contract 02 §7.1)."""
-
-    holder: Holder
-    door_instance: str
-    since: datetime
-    expires_at: datetime
-    turn: str | None = None
-
-    def to_api(self) -> dict[str, Any]:
-        return {
-            "holder": self.holder.value,
-            "door_instance": self.door_instance,
-            "since": rfc3339(self.since),
-            "expires_at": rfc3339(self.expires_at),
-            "turn": self.turn,
-        }
-
-    def is_expired(self, moment: datetime) -> bool:
-        return moment >= self.expires_at
 
 
 @dataclass(slots=True)

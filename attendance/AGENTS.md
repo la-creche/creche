@@ -87,14 +87,6 @@ earlier release are not read. Nothing migrates them.
    the deadline. An interrupt stops the outgoing facade, and each of its
    jobs answers `failed` with `channel_lost`.
 
-## Lease rules
-
-1. An idle lease passes to another door. `force` does not enter into it.
-2. An active session refuses every door and every flag. `queued` counts as
-   active.
-3. A renew never acquires.
-4. A release refuses while a turn is in flight.
-
 ## Autonomous and dispatch rules
 
 1. Only an autonomous family has a limit and a queue.
@@ -127,7 +119,7 @@ uv run python -m attendance           # serve
 | Variable | Meaning |
 |---|---|
 | `SESSIOND_SESSIONS_ROOT` | the root of each family's sessions mount, the cwd of a job |
-| `SESSIOND_STATE_ROOT` | tokens, leases, faults, family status |
+| `SESSIOND_STATE_ROOT` | tokens, faults, family status, outcome records, the dispatch ledger |
 | `SESSIOND_WORK_ROOT` | the `code-sandbox` work root |
 | `SESSIOND_SOCKET` | the Unix socket |
 | `SESSIOND_BIND_LAN`, `SESSIOND_LAN_ADDRESS`, `SESSIOND_LAN_PORT` | the optional TCP listener, port 8350 |
@@ -149,7 +141,6 @@ chaperone reads them as another user. `SIGHUP` reloads them.
 | `service.py` | the operations: the jobs, the ACP door, the switch |
 | `requests.py` | every request body, validated before use |
 | `queueing.py`, `outcomes.py` | the dispatch queues, what survives a job |
-| `leases.py` | the writer lease. No route reaches it since row 21. Row 22 removes it. |
 | `owui_copy.py`, `terminal.py`, `branching.py`, `persona.py` | Open WebUI copy, terminal exchanges, pi branches, the folder prompt. No route reaches them since row 21. Rows 23 and 24 remove them. |
 | `playpen_link.py`, `wire.py` | the old playpen channel. No route reaches it since row 21. Row 25 removes it. |
 | `switching.py`, `channel.py`, `exec_channel.py` | a switch, a byte channel, an `sbx exec` process |
