@@ -102,8 +102,8 @@ def test_one_key_for_the_door_and_attendance_is_refused(tmp_path: Path) -> None:
         from_env(env)
 
 
-@pytest.mark.parametrize(("value", "required"), [("", True), ("true", True), ("false", False)])
-def test_require_authentik_defaults_to_true(tmp_path: Path, value: str, required: bool) -> None:
+@pytest.mark.parametrize(("value", "required"), [("", False), ("true", True), ("false", False)])
+def test_require_authentik_defaults_to_false(tmp_path: Path, value: str, required: bool) -> None:
     env = _env(_key_file(tmp_path)) | {ENV_REQUIRE_AUTHENTIK: value}
 
     assert from_env(env).require_authentik is required
@@ -176,3 +176,9 @@ def test_the_unit_checks_the_config_then_runs_the_door() -> None:
         in lines
     )
     assert "Environment=XDG_CONFIG_HOME=%h/.config" in lines
+
+
+def test_require_authentik_is_false_with_no_variable(tmp_path: Path) -> None:
+    env = _env(_key_file(tmp_path))
+
+    assert from_env(env).require_authentik is False

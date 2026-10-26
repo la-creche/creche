@@ -19,9 +19,17 @@ Rows 26 and 27 of the Phase 2 plan built this package.
    `creche-acp-connect`.
 
 The door always checks the bearer. It also requires `X-authentik-username`
-while `DOOR_ACP_REQUIRE_AUTHENTIK` is `true`, the default. A site whose
-terminal clients reach the door sets it to `false`. Then the bearer is the
-only check.
+while `DOOR_ACP_REQUIRE_AUTHENTIK` is `true`. The default is `false`, and
+then the bearer is the only check.
+
+1. The chat-UI deployment sets `DOOR_ACP_REQUIRE_AUTHENTIK=true`. The
+   browser reaches the door through NPM and Authentik there. The value goes
+   in a drop-in of the unit,
+   `~/.config/systemd/user/creche-door-acp.service.d/authentik.conf`, with
+   the line `Environment=DOOR_ACP_REQUIRE_AUTHENTIK=true` under
+   `[Service]`. The site file holds only the keys of the catalog
+   (`env/AGENTS.md`), and this key is not one of them.
+2. A terminal deployment sets nothing.
 
 ## Two secrets
 
@@ -80,7 +88,7 @@ Any other path under `/acp/` gets `404` before the upgrade.
 | `DOOR_ACP_KEY_FILE` | the door's own bearer key. Mode 0600, 32 bytes or more. No default. |
 | `DOOR_ACP_ATTENDANCE_TOKEN_FILE` | attendance's `door-acp` token. The same file rules. No default. |
 | `DOOR_ACP_ATTENDANCE_SOCKET` | attendance's Unix socket. The default is `/srv/agents/state/rework/sock/sessiond.sock`. |
-| `DOOR_ACP_REQUIRE_AUTHENTIK` | `true` or `false`. The default is `true`. |
+| `DOOR_ACP_REQUIRE_AUTHENTIK` | `true` or `false`. The default is `false`. The chat-UI deployment sets `true`. |
 | `DOOR_ACP_BIND` | the listen address, `host:port`. The default is port 8390 on `AGENT_LAN_ADDRESS`. |
 | `AGENT_LAN_ADDRESS` | the host's LAN address, from the site file. |
 
