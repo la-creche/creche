@@ -40,12 +40,16 @@ DEFAULT_REGISTRY_ROOT = "/srv/agents/registry"
 #: under the shared rework state root.
 DEFAULT_WEBHOOKS_DIR = "/srv/agents/state/rework/triggers/webhooks"
 
-#: The shared rework state root: `attendance`'s outcome records, the PEP's
-#: audit and the quiet check's own records all sit under it.
+#: The shared rework state root: `attendance`'s outcome records and the
+#: quiet check's own records sit under it.
 DEFAULT_STATE_ROOT = "/srv/agents/state/rework"
 
-#: The PEP's port on the LAN address (`PEP_BIND`). The quiet check calls
-#: it as the family (contract 01 §3.15 rule 4).
+#: The chaperone's audit file. The quiet check reads it as a member of the
+#: group `chaperone`.
+DEFAULT_AUDIT_FILE = "/var/lib/chaperone/audit.jsonl"
+
+#: The chaperone's port on the LAN address (`CHAPERONE_LISTEN`). The quiet
+#: check calls it as the family (contract 01 §3.15 rule 4).
 PEP_PORT = 8300
 
 #: The host's LAN address, from the site file the unit names
@@ -78,6 +82,7 @@ ENV_WEBHOOKS_DIR = "DOOR_TRIGGER_WEBHOOKS_DIR"
 ENV_REFRESH_S = "DOOR_TRIGGER_REFRESH_S"
 ENV_STATE_ROOT = "DOOR_TRIGGER_STATE_ROOT"
 ENV_PEP_URL = "DOOR_TRIGGER_PEP_URL"
+ENV_AUDIT_FILE = "DOOR_TRIGGER_AUDIT_FILE"
 
 _WILDCARD_HOSTS = frozenset({"0.0.0.0", "::", "[::]", "*", ""})
 
@@ -105,13 +110,14 @@ class FireConfig:
     registry_root: Path
     families_dir: Path
     state_root: Path
+    audit_file: Path
 
     def describe(self) -> str:
         """A one-line summary for `--check`. Carries no secret."""
         target = self.attendance.socket or self.attendance.url
         return (
             f"attendance={target} chaperone={self.pep_url} registry={self.registry_root} "
-            f"families={self.families_dir} state={self.state_root}"
+            f"families={self.families_dir} state={self.state_root} audit={self.audit_file}"
         )
 
 
@@ -147,6 +153,7 @@ def fire_config_from_env(environ: dict[str, str] | None = None) -> FireConfig:
         registry_root=Path(env.get(ENV_REGISTRY_ROOT, DEFAULT_REGISTRY_ROOT)),
         families_dir=Path(env.get(ENV_FAMILIES_DIR, DEFAULT_FAMILIES_DIR)),
         state_root=Path(env.get(ENV_STATE_ROOT, DEFAULT_STATE_ROOT)),
+        audit_file=Path(env.get(ENV_AUDIT_FILE, "").strip() or DEFAULT_AUDIT_FILE),
     )
 
 

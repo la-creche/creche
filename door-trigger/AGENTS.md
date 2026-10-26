@@ -53,6 +53,11 @@ did.
 4. Live first, then the outcome record.
 5. The gate reads as the family, never wider. Its two chaperone calls carry
    the family's own token from `creds.json`. `decide.py` stays pure.
+6. The two calls are MCP tool calls at the chaperone's front door,
+   `POST /mcp`: `initialize`, then `tools/call` of
+   `<board>__survey_board` and `attendance__job_status`.
+7. The daily call is a `ran` record with `is_error:false` in the
+   chaperone's audit file. The gate reads at most the last 4 MiB of it.
 
 ## Behaviour under failure
 
@@ -77,8 +82,9 @@ did.
 | `DOOR_TRIGGER_BIND` | the listen address, port 8360 on the LAN address. Refuses `0.0.0.0`. | serve |
 | `DOOR_TRIGGER_FAMILIES_DIR` | where `caregiver` publishes status documents and `creds.json` | both |
 | `DOOR_TRIGGER_REGISTRY_ROOT` | the registry, read for webhook names and `quiet:` only | both |
-| `DOOR_TRIGGER_STATE_ROOT` | where the quiet check reads outcomes and audit, and keeps its record | fire |
-| `DOOR_TRIGGER_PEP_URL` | the chaperone the quiet check calls as the family | fire |
+| `DOOR_TRIGGER_STATE_ROOT` | where the quiet check reads outcomes and keeps its record | fire |
+| `DOOR_TRIGGER_PEP_URL` | the chaperone the quiet check calls as the family. The client adds `/mcp`. | fire |
+| `DOOR_TRIGGER_AUDIT_FILE` | the chaperone's audit file, default `/var/lib/chaperone/audit.jsonl` | fire |
 | `DOOR_TRIGGER_WEBHOOKS_DIR` | one `<family>/<name>.token` per declared webhook. `caregiver` mints them. | serve |
 | `DOOR_TRIGGER_REFRESH_S` | how often the route table re-reads, default 30 | serve |
 
@@ -93,7 +99,7 @@ validate the config and exit.
 | `attendance.py`, `fire.py` | the client, one firing |
 | `config.py`, `families.py`, `tokens.py`, `routes.py`, `webhooks.py` | the two configs, which families qualify, constant-time tokens, the route table, the listener |
 | `cli.py`, `__main__.py` | `fire` and `serve` |
-| `quiet/gate.py`, `decide.py`, `board.py`, `chaperone.py`, `records.py`, `state.py` | read everything, decide (pure), the board fingerprint, two calls as the family, outcomes and audit, the gate's record |
+| `quiet/gate.py`, `decide.py`, `board.py`, `chaperone.py`, `records.py`, `state.py` | read everything, decide (pure), the board fingerprint, two MCP calls as the family, outcomes and the audit file, the gate's record |
 
 ## Tests
 
@@ -121,6 +127,11 @@ is `door-owui`'s. Basenames are unique across the workspace. Run
   not checked at all (`quiet/gate.py`).
 - The quiet check is a second reader of the chaperone's audit. A user unit
   that cannot read the audit treats the daily call as owed (`quiet/records.py`).
+- A daily call older than the last 4 MiB of the audit file is not found,
+  and the gate wakes the family (`quiet/records.py`).
+- The quiet check reads no line shape but the nine keys of the Rust type
+  `Line`. A new key of the chaperone makes each line unread, and the gate
+  wakes the family (`quiet/records.py`).
 - Contract 01 §3.13 gives no cap on the nesting of a payload. The door
   refuses a payload that its JSON parser cannot read. The depth that the
   parser refuses differs between Python versions (`payload.py`).

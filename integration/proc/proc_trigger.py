@@ -67,6 +67,10 @@ REFRESH_S: Final = 30.0
 #: family of this fixture gives the check no reason to call one.
 NO_CHAPERONE_URL: Final = f"http://{LOOPBACK}:9"
 
+#: Where the quiet check finds the audit file of the chaperone, under the
+#: state root of the tree. No chaperone writes it here.
+NO_AUDIT_FILE: Final = "chaperone/audit.jsonl"
+
 
 def trigger_env(tree: Tree) -> dict[str, str]:
     """What both commands read: where `attendance` is, and the two trees.
@@ -97,6 +101,7 @@ def fire_env(tree: Tree) -> dict[str, str]:
     return trigger_env(tree) | {
         "DOOR_TRIGGER_STATE_ROOT": str(tree.state_root),
         "DOOR_TRIGGER_PEP_URL": NO_CHAPERONE_URL,
+        "DOOR_TRIGGER_AUDIT_FILE": str(tree.state_root / NO_AUDIT_FILE),
     }
 
 

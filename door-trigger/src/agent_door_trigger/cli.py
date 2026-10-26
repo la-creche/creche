@@ -36,10 +36,9 @@ from .quiet.state import StateFiles
 from .routes import RouteTable
 from .webhooks import create_app
 
-#: Under the state root: `attendance`'s outcome records (contract 02 §13.1),
-#: the PEP's audit (contract 04 §6) and the quiet check's own records.
+#: Under the state root: `attendance`'s outcome records (contract 02 §13.1)
+#: and the quiet check's own records.
 OUTCOMES_DIR = "outcomes"
-AUDIT_DIR = "audit"
 QUIET_DIR = "triggers/quiet"
 
 _LOG = logging.getLogger(__name__)
@@ -138,7 +137,7 @@ def _gate(
         found,
         quiet,
         reads=HttpFamilyReads(chaperone, family_token(config.families_dir, family)),
-        records=HostRecords(config.state_root / OUTCOMES_DIR, config.state_root / AUDIT_DIR),
+        records=HostRecords(config.state_root / OUTCOMES_DIR, config.audit_file),
         store=StateFiles(config.state_root / QUIET_DIR),
         sessions=attendance,
         clock=lambda: datetime.now(UTC),
