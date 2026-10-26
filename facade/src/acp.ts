@@ -14,13 +14,19 @@ import type {
   AgentApp,
   AnyMessage,
   AnyResponse,
+  CancelNotification,
+  ContentBlock,
   InitializeResponse,
   ListSessionsRequest,
   ListSessionsResponse,
   NewSessionRequest,
   NewSessionResponse,
+  PromptRequest,
+  PromptResponse,
   SessionInfo,
   SessionInfoUpdate,
+  SessionUpdate,
+  StopReason,
   Stream,
 } from "@agentclientprotocol/sdk";
 import { Readable } from "node:stream";
@@ -31,26 +37,39 @@ import { MAX_LINE_BYTES, METHOD_BEAT, METHOD_SHUTDOWN, PROTOCOL_VERSION } from "
 
 export type {
   AgentApp,
+  CancelNotification,
+  ContentBlock,
   ListSessionsRequest,
   ListSessionsResponse,
   NewSessionRequest,
   NewSessionResponse,
+  PromptRequest,
+  PromptResponse,
   SessionInfo,
   SessionInfoUpdate,
+  SessionUpdate,
+  StopReason,
   Stream,
 };
 
 /** Why the facade refuses a request. Each kind is one JSON-RPC error. */
 export type Refusal =
   | { readonly kind: "invalid_params"; readonly detail: string }
-  | { readonly kind: "unknown_session"; readonly sessionId: string };
+  | { readonly kind: "unknown_session"; readonly sessionId: string }
+  | { readonly kind: "busy"; readonly detail: string }
+  | { readonly kind: "failed"; readonly detail: string };
 
 export type Outcome<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly refusal: Refusal };
+
+/** Sends one `session/update` to the client of this link. */
+export type SendUpdate = (sessionId: string, update: SessionUpdate) => Promise<void>;
 
 /** The session methods. Null on a link that serves no session yet. */
 export interface SessionService {
   newSession(params: NewSessionRequest): Promise<Outcome<NewSessionResponse>>;
   listSessions(params: ListSessionsRequest): Promise<Outcome<ListSessionsResponse>>;
+  prompt(params: PromptRequest, send: SendUpdate): Promise<Outcome<PromptResponse>>;
+  cancel(params: CancelNotification): Promise<void>;
 }
 
 function toError(refusal: Refusal): RequestError {
@@ -59,6 +78,10 @@ function toError(refusal: Refusal): RequestError {
       return RequestError.invalidParams(undefined, refusal.detail);
     case "unknown_session":
       return RequestError.resourceNotFound(refusal.sessionId);
+    case "busy":
+      return RequestError.invalidRequest(undefined, refusal.detail);
+    case "failed":
+      return RequestError.internalError(undefined, refusal.detail);
     default: {
       const unknown: never = refusal;
       return unknown;
@@ -126,7 +149,15 @@ export function facadeApp(hooks: SupervisorHooks, sessions: SessionService | nul
 
   return app
     .onRequest(methods.agent.session.new, ({ params }) => answer(sessions.newSession(params)))
-    .onRequest(methods.agent.session.list, ({ params }) => answer(sessions.listSessions(params)));
+    .onRequest(methods.agent.session.list, ({ params }) => answer(sessions.listSessions(params)))
+    .onRequest(methods.agent.session.prompt, ({ params, client }) =>
+      answer(
+        sessions.prompt(params, (sessionId, update) =>
+          client.notify(methods.client.session.update, { sessionId, update }),
+        ),
+      ),
+    )
+    .onNotification(methods.agent.session.cancel, ({ params }) => sessions.cancel(params));
 }
 
 function isAnswer(message: AnyMessage): message is AnyResponse {

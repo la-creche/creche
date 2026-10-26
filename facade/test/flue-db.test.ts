@@ -17,7 +17,7 @@ import { faux, Probe, startFlue } from "./faux-flue.js";
 const file = join(mkdtempSync(join(tmpdir(), "facade-db-")), "flue.db");
 const db = new DatabaseSync(file);
 const index = new SessionIndex(db);
-const flue = await startFlue(Probe, sqlite(file));
+const flue = await startFlue([Probe], sqlite(file));
 
 afterAll(async () => {
   await flue.stop();
