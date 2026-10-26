@@ -122,6 +122,7 @@ component's own newest tag.
   request raises it for the components that pull request changed.
 - A component's paths include every workspace package its build installs. A
   change under `family/` moves `attendance`, `caregiver` and `noticeboard`.
+  A change under a door directory, `door-acp/` included, moves `attendance`.
   A change to `uv.lock` moves every venv component.
 - No job of `release.yml` builds or signs an archive. This repository has
   no binary component. The tag script refuses a binary component that has

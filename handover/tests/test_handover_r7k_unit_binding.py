@@ -561,10 +561,15 @@ def test_the_real_pep_unit_and_the_real_manifest_pass_rule_eight(tmp_path: Path)
     installer.check_unit_binds(manifest, tmp_path / "no-systemd-directory")
 
 
-#: `attendance`'s three door units, which run out of its tree
+#: `attendance`'s four door units, which run out of its tree
 #: (`install.py` rule 8).
 ATTENDANCE_DOORS = frozenset(
-    {"creche-door-owui.service", "creche-trigger-webhooks.service", "creche-trigger@.service"}
+    {
+        "creche-door-acp.service",
+        "creche-door-owui.service",
+        "creche-trigger-webhooks.service",
+        "creche-trigger@.service",
+    }
 )
 
 
@@ -581,7 +586,7 @@ def test_every_unit_that_starts_a_tree_travels_with_its_component(tmp_path: Path
     `stage_unit`. Every shipped unit is installed on a fake host, and a
     stage out of this repository must carry exactly the units that start
     the component's tree: its `unit:` and its siblings. So `attendance`'s
-    three doors are siblings of `attendance`."""
+    four doors are siblings of `attendance`."""
     shipped = sorted((REPO_ROOT / "systemd").glob("*.service"))
     staged_for: dict[str, set[str]] = {}
     for path in sorted(REPO_ROOT.glob("*/component.yaml")):

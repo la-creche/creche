@@ -51,7 +51,7 @@ turn. The `attendance` service takes that call from four doors.
 | `door-owui/` | in `attendance` | `creche-door-owui.service`, user | The Open WebUI door: an OpenAI-compatible surface. | [door-owui/AGENTS.md](door-owui/AGENTS.md) |
 | `door-tui/` | in `attendance` | none, a command | The terminal door: `agent-tui <family>`. | [door-tui/AGENTS.md](door-tui/AGENTS.md) |
 | `door-trigger/` | in `attendance` | `creche-trigger-webhooks.service`, `creche-trigger@.service`, user | The trigger door: timers and webhooks. | [door-trigger/AGENTS.md](door-trigger/AGENTS.md) |
-| `door-acp/` | none yet | `creche-door-acp.service`, user | The ACP door: `WS /acp/<family>`, forwarded to `attendance`. Also `creche-acp-connect`. | [door-acp/AGENTS.md](door-acp/AGENTS.md) |
+| `door-acp/` | in `attendance` | `creche-door-acp.service`, user | The ACP door: `WS /acp/<family>`, forwarded to `attendance`. Also `creche-acp-connect`. | [door-acp/AGENTS.md](door-acp/AGENTS.md) |
 | `caregiver/` | `caregiver` | `creche-caregiver.service`, user | The reconciler. It converges every family to its file. | [caregiver/AGENTS.md](caregiver/AGENTS.md) |
 | `noticeboard/` | `noticeboard` | `creche-noticeboard.service`, user | The one view: every family, sandbox, session and audit line. | [noticeboard/AGENTS.md](noticeboard/AGENTS.md) |
 | `playpen/` | `playpen` | none, an OCI image | The process inside each sandbox, the pi bridge and the terminal launcher. | [playpen/AGENTS.md](playpen/AGENTS.md) |

@@ -5,12 +5,14 @@
 # to attendance's `WS /acp/{family}` on attendance's Unix socket. It
 # translates nothing.
 #
-# The door ships in no component yet. The handover catalog has no row for it,
-# so no release installs the tree below and no script installs this unit.
+# The door ships in `attendance`'s tree, as each other door does
+# (`attendance/component.yaml`). A release of `attendance` restarts this unit
+# with its own, when the host has it installed. No script installs it yet.
 [Unit]
 Description=agent-door-acp, the ACP front door
 After=network-online.target creche-attendance.service
 Wants=network-online.target
+PartOf=creche-attendance.service
 # THE REWORK RESTART POLICY, argued in full in
 # `systemd/creche-caregiver.service`: no start limit, and a back-off.
 StartLimitIntervalSec=0
@@ -39,8 +41,8 @@ Environment=DOOR_ACP_ATTENDANCE_TOKEN_FILE=/srv/agents/state/rework/tokens/door-
 # The site file holds the catalog keys only, so the flag is not set there.
 # A terminal deployment sets nothing.
 # A bad key file or a wide bind stops the unit here, before a bind.
-ExecStartPre=%h/.local/components/door-acp/bin/agent-door-acp --check
-ExecStart=%h/.local/components/door-acp/bin/agent-door-acp
+ExecStartPre=%h/.local/components/attendance/bin/agent-door-acp --check
+ExecStart=%h/.local/components/attendance/bin/agent-door-acp
 Restart=always
 RestartSec=5s
 RestartSteps=5
