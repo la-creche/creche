@@ -1,5 +1,5 @@
 # The sandbox image builds from the repo root (playpen/Dockerfile copies
-# the pi pin out of toybox/), so the context is the whole tree.
+# agent/ and facade/), so the context is the whole tree.
 # Without this, every build uploads .git — 40 MB on its own — plus every
 # node_modules and venv in the working copy.
 .git

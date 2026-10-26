@@ -57,12 +57,4 @@ describe("build.mjs", () => {
     expect(scripts["build:playpen"]).toMatch(/^node build\.mjs /);
     expect(scripts["build:launch"]).toMatch(/^node build\.mjs /);
   });
-
-  it("gets the address from the image build's own argument", () => {
-    const dockerfile = readFileSync(join(PACKAGE, "Dockerfile"), "utf8");
-    const stage = dockerfile.slice(dockerfile.indexOf(" AS build\n"), dockerfile.indexOf(" AS agent-sandbox\n"));
-
-    expect(stage).toContain(`ARG ${VARIABLE}\n`);
-    expect(stage).toMatch(/^COPY .*playpen\/build\.mjs .*\.\/$/m);
-  });
 });

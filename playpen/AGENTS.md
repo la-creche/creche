@@ -1,7 +1,30 @@
 # playpen
 
-Three programs, one package, one sandbox image. The root `AGENTS.md` applies
-here too.
+The sandbox image, and three programs that the image no longer holds. The
+root `AGENTS.md` applies here too.
+
+## The image
+
+`Dockerfile` builds the image of every family's microVM. It holds Node 24,
+ripgrep and the ACP facade (`facade/AGENTS.md`) with the agent module it
+imports (`agent/AGENTS.md`). Two shims put the facade's two bins on `PATH`:
+
+| Program | Runs | The build proves |
+|---|---|---|
+| `creche-facade` | `node /opt/creche-facade/dist/src/bin/creche-facade.js` | exit 2 and one stderr line with no `AGENT_SANDBOX` |
+| `acp-relay` | `node /opt/creche-facade/dist/src/bin/acp-relay.js` | exit 1 with no facade |
+
+The build stage installs `facade/` and `agent/` from the facade's frozen
+lockfile, builds both and runs `pnpm deploy --prod` to `/opt/creche-facade`.
+The Flue pin is the one in `facade/pnpm-lock.yaml`. The image fixes no
+address: a sandbox reads the two plane URLs from the env file that
+`caregiver` writes. The `python` flavor adds pandas, numpy and matplotlib.
+
+The image holds no pi, no fd, no playpen bundle, no PEP bridge and no
+`agent-pi-launch`. The programs below stay in this directory until the
+Phase 4 deletion, and only their tests run.
+
+## The programs that left the image
 
 - `src/` is the playpen: the process inside each family's sandbox. The host
   opens one long-lived `sbx exec` and speaks the channel protocol over its
@@ -34,10 +57,10 @@ pnpm run typecheck
 AGENT_LAN_ADDRESS=192.0.2.10 pnpm run build   # three bundles, no runtime dependency
 ```
 
-The build fixes the LAN address in the bundle. A sandbox has no site file, so
-`build.mjs` refuses to build without `AGENT_LAN_ADDRESS`. The image is built
-on the host, from the repository root, with `playpen/Dockerfile`. Do not build
-it on a development machine.
+The build fixes the LAN address in the bundle, so `build.mjs` refuses to
+build without `AGENT_LAN_ADDRESS`. The bundles are for the tests and the
+process-level suite. The image is built on the host, from the repository
+root, with `playpen/Dockerfile`. Do not build it on a development machine.
 
 ## The channel
 
@@ -84,8 +107,8 @@ it on a development machine.
 16. `test/fake-pi.mjs` is not a pi emulator. An assertion against it is a
     statement about the playpen's logic, never about pi.
 17. Do not add a runtime dependency. `esbuild` bundles each entry to one file.
-18. Keep the pi pin in `toybox/package.json`. The Dockerfile copies that file.
-    `sandbox-facts.ts` reads it to report the pi version.
+18. Keep the pi pin in `toybox/package.json`. `sandbox-facts.ts` reads it to
+    report the pi version. The Dockerfile no longer copies it.
 19. `test/fake-pep.ts` is not a chaperone. Rule 16 applies to it.
 
 ## The bridge
@@ -167,14 +190,14 @@ it on a development machine.
 49. The build stages the tree only after both images are in the registry.
     A failed build stages nothing, and the host stays as it was.
 50. The build script reads nothing outside `playpen/`. The image build also
-    copies the pi pin out of `toybox/`, and the catalog bundles `toybox` for
-    that reason.
+    copies `agent/` and `facade/`, so the catalog row must bundle those two.
 51. `bin/playpen-verify` changes nothing and reaches nothing outside the
     host. It asks the registry for each digest in `images.env`.
 52. Keep three lists equal: the targets of `Dockerfile`, the flavors in
     `bin/playpen-build`, and `SandboxFlavor` in `family/`.
 53. `bin/tests/test_playpen_release.py` runs both scripts against a stub
-    `docker` and a stub registry. No test builds an image.
+    `docker` and a stub registry. `bin/tests/test_playpen_image.py` reads the
+    Dockerfile as text. No test builds an image.
 
 ## Caps and failures
 
@@ -285,8 +308,8 @@ Three test seams exist and nothing in the image sets them: `AGENT_PI_BIN`,
   cut. The playpen reads such an answer as a failure, and each later read
   that holds the same entry is one too. For each turn with such a read,
   the playpen sends no entry id and no entry count (`src/pi-process.ts`).
-- The verify hook does not start an image. The image build runs each bundle
-  once and stops on a bundle that does not load (`bin/playpen-verify`).
+- The verify hook does not start an image. The image build runs each program
+  once and stops on a program that does not load (`bin/playpen-verify`).
 - No test builds an image. The tests give `bin/playpen-build` a stub
   `docker` (`bin/tests/test_playpen_release.py`).
 - A release never removes an image from the registry (`bin/playpen-build`).

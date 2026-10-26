@@ -26,7 +26,6 @@ VERIFY = REPO_ROOT / "playpen" / "bin" / "playpen-verify"
 LIBRARY = REPO_ROOT / "playpen" / "bin" / "lib" / "registry.sh"
 
 REGISTRY = "127.0.0.1:5000"
-LAN = "192.0.2.10"
 BASE = "agent-sandbox"
 PYTHON = "agent-sandbox-python"
 DIGEST = {BASE: "sha256:" + "a" * 64, PYTHON: "sha256:" + "b" * 64}
@@ -67,10 +66,6 @@ class _Host:
     def held(self) -> Path:
         return self.root / "held"
 
-    @property
-    def site(self) -> Path:
-        return self.root / "site.env"
-
     def env(self, **more: str) -> dict[str, str]:
         return {
             "PATH": f"{self.root / 'stubs'}:/usr/bin:/bin",
@@ -78,7 +73,6 @@ class _Host:
             "STUB_LOG": str(self.root / "docker.log"),
             "STUB_DIGESTS": str(self.root / "digests"),
             "STUB_HELD": str(self.held),
-            "AGENT_SITE_FILE": str(self.site),
             "UV_PROJECT_ENVIRONMENT": str(self.staged),
             **more,
         }
@@ -123,9 +117,6 @@ def host(tmp_path: Path) -> _Host:
         (stubs / name).chmod(0o755)
 
     made = _Host(tmp_path)
-    made.site.write_text(
-        f"AGENT_OPERATOR_USER=someone\nAGENT_LAN_ADDRESS={LAN}\n", encoding="utf-8"
-    )
     lines = "".join(f"{name} {digest}\n" for name, digest in DIGEST.items())
     (tmp_path / "digests").write_text(lines, encoding="utf-8")
 
@@ -167,15 +158,15 @@ def test_the_build_stages_the_verify_hook(host: _Host) -> None:
     assert (host.staged / "bin" / "lib" / "registry.sh").read_bytes() == LIBRARY.read_bytes()
 
 
-def test_the_build_gives_docker_the_sites_address(host: _Host) -> None:
-    """`playpen/build.mjs` refuses to bundle without it, and a sandbox has
-    no site file to read it from."""
+def test_the_build_passes_docker_no_build_argument(host: _Host) -> None:
+    """The image fixes no address. A sandbox reads the two plane URLs from
+    the env file that caregiver writes, so the build reads no site file."""
     host.build()
 
     builds = [line for line in host.docker_calls() if line.startswith("build ")]
     assert len(builds) == 2
     for line, target in zip(builds, (BASE, PYTHON), strict=True):
-        assert f"--build-arg AGENT_LAN_ADDRESS={LAN}" in line
+        assert "--build-arg" not in line
         assert f"--target {target} " in line
         assert f"-f {REPO_ROOT}/playpen/Dockerfile" in line
         assert line.endswith(f" {REPO_ROOT}")
@@ -192,29 +183,6 @@ def test_the_build_pushes_what_it_built(host: _Host) -> None:
     assert all(reference in built for reference in pushed)
     assert pushed[0].startswith(f"{REGISTRY}/{BASE}:")
     assert pushed[1].startswith(f"{REGISTRY}/{PYTHON}:")
-
-
-def test_no_site_address_stages_nothing(host: _Host) -> None:
-    host.site.write_text("AGENT_OPERATOR_USER=someone\n", encoding="utf-8")
-
-    done = host.build()
-
-    assert done.returncode == 1
-    assert "AGENT_LAN_ADDRESS" in done.stderr
-    assert not host.staged.exists()
-    assert host.docker_calls() == []
-
-
-@pytest.mark.parametrize("value", ["10.0.0.1 --privileged", "a;b", "-x", ""])
-def test_an_address_that_is_not_one_word_stages_nothing(host: _Host, value: str) -> None:
-    """The value becomes one argv word of a command root runs."""
-    host.site.write_text(f"AGENT_LAN_ADDRESS={value}\n", encoding="utf-8")
-
-    done = host.build()
-
-    assert done.returncode == 1
-    assert not host.staged.exists()
-    assert host.docker_calls() == []
 
 
 def test_no_staged_tree_named_is_a_refusal(host: _Host) -> None:
