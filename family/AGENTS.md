@@ -183,6 +183,7 @@ refuses each one, and so does the validator.
 | `delegates` | each target exists and is `kind: thin` |
 | `max_inflight_delegations` | 1 to 8, default 2 |
 | `egress` | no IP literal, no wildcard, port 1 to 65535 |
+| `sandbox_tools` | Flue's six names only: `read`, `write`, `edit`, `bash`, `grep`, `glob`. No name two times. The default is empty. `codemode` is not a name: the agent mounts it for every family. |
 | `triggers` cron | five fields of ASCII digits and `*`, `,`, `-`, `/`, or one of the three short forms |
 | `approval` | every entry names something the file grants. No two overlap. |
 
@@ -215,6 +216,10 @@ uv run pytest family/tests
 
 - The schema has no per-job budget and no per-job turn cap (`model.py`).
 - No rule refuses `embed` without an index mount (`validate.py`).
+- Contract 01 §3.8 names other sandbox tools: `find`, `ls`, `codemode`,
+  with a default of `read`, `grep`, `find`, `ls`, and `shell` as the only
+  way to get `bash`. The owner decided on Flue's six names and an empty
+  default (`grammar.py`, `SandboxTool`). The owner updates the contract.
 - These `CONTRACT-QUESTION` comments are open:
   1. `validate.py`, `_check_cron`, contract 01 §3.13. The contract gives no
      grammar for a cron field. The check takes ASCII digits and `*`, `,`,

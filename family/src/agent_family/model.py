@@ -149,6 +149,9 @@ class FamilyFile(Strict):
     max_inflight_delegations: int = DEFAULT_MAX_INFLIGHT_DELEGATIONS
     egress: list[str] = Field(default_factory=list[str])
     shell: bool = False
+    # Flue's built-in tools that the family grants: `read`, `write`, `edit`,
+    # `bash`, `grep`, `glob` (`SandboxTool`). Empty by default. `codemode`
+    # is not a grant: the agent mounts it for every family.
     sandbox_tools: list[str] = Field(default_factory=lambda: list(DEFAULT_SANDBOX_TOOLS))
     system_prompt: str = SystemPrompt.APPEND
     sandbox: SandboxBlock = Field(default_factory=SandboxBlock)

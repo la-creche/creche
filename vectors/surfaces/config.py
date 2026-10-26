@@ -464,8 +464,8 @@ def _roster_surface(scratch: Path) -> Surface:
 
 RUNTIME_CONTRACT: Final = "contract 01 §6.1"
 
-_DEFAULT_TOOLS: Final = ("read", "grep", "find", "ls")
-_ALL_TOOLS: Final = ("read", "write", "edit", "grep", "find", "ls", "codemode")
+_DEFAULT_TOOLS: Final[tuple[str, ...]] = ()
+_ALL_TOOLS: Final = ("read", "write", "edit", "bash", "grep", "glob")
 _ALIAS: Final = "agent-router"
 
 
@@ -486,7 +486,7 @@ RUNTIMES: Final[tuple[Runtime, ...]] = (
     Runtime("no-tool", sandbox_tools=()),
     Runtime("one-tool", sandbox_tools=("read",)),
     Runtime("each-tool", shell=True, sandbox_tools=_ALL_TOOLS),
-    Runtime("tools-in-file-order", sandbox_tools=("ls", "codemode", "read")),
+    Runtime("tools-in-file-order", sandbox_tools=("glob", "bash", "read")),
     Runtime("replace", system_prompt="replace"),
     Runtime("alias-each-byte-class", model_alias="0a.b_c/d-e"),
 )

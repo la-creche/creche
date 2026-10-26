@@ -542,10 +542,12 @@ def test_a_hostname_with_a_port_in_range_is_allowed(entry: str) -> None:
 # --- 3.8 shell and sandbox_tools ---------------------------------------------
 
 RUNTIME_CASES = (
-    (["bash"], "'bash' is never a sandbox tool"),
     (["fly"], "not a sandbox tool"),
     (["read", "read"], "is listed twice"),
 )
+
+#: Flue's six names: the one sandbox tool vocabulary.
+FLUE_TOOLS = ["read", "write", "edit", "bash", "grep", "glob"]
 
 
 @pytest.mark.parametrize(("tools", "expect"), RUNTIME_CASES)
@@ -558,9 +560,25 @@ def test_empty_sandbox_tools_is_valid() -> None:
     assert not errors(check("vault-oracle", sandbox_tools=[]))
 
 
-def test_codemode_is_a_sandbox_tool() -> None:
-    # pi's built-in extension that runs scripts over the other granted tools.
-    assert not errors(check("code", sandbox_tools=["read", "grep", "codemode"]))
+def test_flue_six_tools_are_valid() -> None:
+    assert not errors(check("code", sandbox_tools=FLUE_TOOLS))
+
+
+@pytest.mark.parametrize("retired", ["find", "ls", "codemode", "shell"])
+def test_retired_tool_names_are_refused(retired: str) -> None:
+    report = check("chat", sandbox_tools=["read", retired])
+    assert f"sandbox_tools[1]: '{retired}' is not a sandbox tool" in messages(report)
+    assert "read, write, edit, bash, grep, glob" in messages(report)
+
+
+def test_sandbox_tools_default_is_empty() -> None:
+    text = (
+        'name = "x"\nkind = "thin"\ndescription = "d"\n'
+        'model.router = "r"\nmodel.budget_usd_per_day = 1\n'
+    )
+    family, issues = parse_family(text, Markup.TOML)
+    assert family is not None, issues
+    assert family.sandbox_tools == []
 
 
 @pytest.mark.parametrize("mode", ["append", "replace"])

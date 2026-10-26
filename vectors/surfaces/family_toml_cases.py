@@ -209,7 +209,7 @@ delegates = ["vault-oracle"]
 max_inflight_delegations = 3
 egress = ["example.com", "example.org:8443"]
 shell = true
-sandbox_tools = ["read", "write", "edit", "grep", "find", "ls", "codemode"]
+sandbox_tools = ["read", "write", "edit", "bash", "grep", "glob"]
 system_prompt = "replace"
 sandbox.cpus = 4
 sandbox.memory = "8g"
@@ -590,6 +590,10 @@ verbs.release.components = ["chaperone", "not-a-component"]
         HEAD + 'sandbox_tools = ["read", "bash", "teleport", "read"]\nsystem_prompt = "prepend"\n',
     ),
     _case("rule-runtime-empty", HEAD + "sandbox_tools = []\n"),
+    _case(
+        "rule-runtime-retired",
+        HEAD + 'sandbox_tools = ["find", "ls", "codemode", "shell"]\n',
+    ),
     # --- sandbox (contract 01 §3.9) ---
     _case(
         "rule-sandbox",

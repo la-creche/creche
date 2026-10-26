@@ -173,6 +173,10 @@ host where something has gone wrong.
   again in two cases only: a pass finds the replacement that an earlier pass
   left, or the operator runs `apply-once`.
 - `config_rev` and `applied_rev` are the same value: the registry revision.
+- `runtime.json` holds `sandbox_tools` as the list of the family file, in
+  file order. The names are Flue's six: `read`, `write`, `edit`, `bash`,
+  `grep`, `glob`. A family file with no `sandbox_tools` gets `[]`.
+  `codemode` is not in the list. The agent mounts it for every family.
 - A webhook's bearer is never logged and never published. The status document
   carries `token_path` alone.
 

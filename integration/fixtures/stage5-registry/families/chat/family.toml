@@ -19,7 +19,7 @@ delegates = ["vault-oracle"]
 egress = []
 
 shell = false
-sandbox_tools = ["read", "grep", "find", "ls", "write", "edit"]
+sandbox_tools = ["read", "grep", "glob", "write", "edit"]
 sandbox.cpus = 4
 sandbox.memory = "8g"
 
