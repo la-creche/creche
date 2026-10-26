@@ -1123,6 +1123,13 @@ RS_ATTENDANCE_SECRETS: Final = {
 #: delegates.
 RS_DELEGATE_TIMEOUT_S: Final = 120
 
+#: The plugin of §12 that files a release request: an effect half and no
+#: fence. Its program, as the manifest in the chaperone repository names
+#: it, and the family that its requests name.
+RS_RELEASE: Final = "release"
+RS_RELEASE_PROGRAM: Final = "chaperone-release"
+RS_RELEASE_REQUESTER: Final = "agent-control"
+
 #: The plugin of each slot in `plugins/default` of the chaperone: kind,
 #: slot, and the command of an effect plugin. The suite writes the manifests
 #: itself, so a binary that a variable names needs no checkout beside it.
@@ -1159,6 +1166,16 @@ secrets = {{ {RS_SECRET_PARAM} = "{RS_SECRET_NAME}" }}
 
 [slots]
 approval_channel = "{RS_APPROVAL}"
+"""
+
+#: The head of the install file for the policy file of a whole fleet. The
+#: plugins follow it.
+_RS_FLEET_INSTALL_HEAD: Final = """\
+# The install file of the Rust chaperone for a fleet check (chaperone design §6).
+version = 1
+
+[plugins.mcp-http]
+guard = "loopback"
 """
 
 _SECRETS_DIR_MODE: Final = 0o700
@@ -1278,11 +1295,7 @@ def write_rs_tree(
     `attendance` (§12), the install entry gives the effect half `--socket`
     and its two door tokens, and the policy grants `invoke_agent`.
     """
-    for name, (kind, slot, program) in RS_DEFAULTS.items():
-        command = (program,) if program is not None else ()
-        text = rs_manifest(name, kind, _RS_SLOT_HOOK[slot], slot=slot, command=command)
-        _atomic_write(files.plugins_dir / "default" / name / "plugin.toml", text, 0o644)
-
+    _write_rs_defaults(files)
     added = files.plugins_dir / "effect" / "added"
     upstream_text = rs_manifest(
         RS_UPSTREAM, "effect", "upstream", secrets=(RS_SECRET_PARAM,), command=(str(upstream),)
@@ -1306,6 +1319,48 @@ def write_rs_tree(
 
     _atomic_write(files.config_file("install.toml"), install, 0o644)
     _atomic_write(files.config_file("policy.toml"), rs_policy_text(delegates=delegates), 0o644)
+
+
+def write_rs_fleet_tree(
+    files: RsFiles, upstream: Path, servers: tuple[str, ...], socket: Path, policy: str
+) -> None:
+    """The files of `chaperone check` for the policy file of a whole fleet.
+
+    Each server is an effect plugin whose program is the upstream stand-in
+    `upstream`. The install file holds each server, and both plugins of
+    §12: `attendance` and `release`. The approval channel is the default
+    `deny-all`. `policy` is the text of `policy.toml`, as it is.
+    """
+    _write_rs_defaults(files)
+    install = f"{_RS_FLEET_INSTALL_HEAD}{_write_rs_attendance(files, socket)}"
+    release = rs_manifest(RS_RELEASE, "effect", "upstream", command=(RS_RELEASE_PROGRAM,))
+    _atomic_write(
+        files.plugins_dir / "effect" / "included" / RS_RELEASE / "plugin.toml", release, 0o644
+    )
+    install += f"\n[plugins.{RS_RELEASE}]\nargs = {json.dumps(_rs_release_args(files))}\n"
+
+    for server in servers:
+        text = rs_manifest(server, "effect", "upstream", command=(str(upstream),))
+        _atomic_write(files.plugins_dir / "effect" / "added" / server / "plugin.toml", text, 0o644)
+        install += f"\n[plugins.{server}]\n"
+
+    _atomic_write(files.config_file("install.toml"), install, 0o644)
+    _atomic_write(files.config_file("policy.toml"), policy, 0o644)
+
+
+def _write_rs_defaults(files: RsFiles) -> None:
+    """The manifest of each plugin in `plugins/default` (§7)."""
+    for name, (kind, slot, program) in RS_DEFAULTS.items():
+        command = (program,) if program is not None else ()
+        text = rs_manifest(name, kind, _RS_SLOT_HOOK[slot], slot=slot, command=command)
+        _atomic_write(files.plugins_dir / "default" / name / "plugin.toml", text, 0o644)
+
+
+def _rs_release_args(files: RsFiles) -> list[str]:
+    """The words of the `release` plugin: where it files a request, and for whom."""
+    requests = files.root / "chaperone-rs" / "release-requests"
+
+    return ["--requests-dir", str(requests), "--requested-by", RS_RELEASE_REQUESTER]
 
 
 def _write_rs_attendance(files: RsFiles, socket: Path) -> str:
