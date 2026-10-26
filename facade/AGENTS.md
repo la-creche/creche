@@ -46,6 +46,15 @@ too. Change a value there, and both sides change.
 | 6 | the control mount cannot be written |
 | 7 | no `AGENT_CONTROL_DIR` |
 
+## Sessions
+
+A session is one Flue agent instance. Its ACP session id is the instance
+id. Flue keeps no list of conversations, so the facade keeps one table,
+`creche_sessions` (id, title, cwd, created_at, updated_at), in `flue.db`
+beside Flue's own tables (`src/session-index.ts`). No other program of ours
+writes the file. The tests use `sqlite()` with no path and pi's
+`fauxProvider()`, as the agent tests do.
+
 ## Rules
 
 1. Pin each runtime dependency to one exact version. Do not use a range.
@@ -70,4 +79,5 @@ too. Change a value there, and both sides change.
   too. Row 15 of the Phase 2 plan wires the agent module, and `env.ts`
   then goes.
 - The bin starts no Flue runtime yet, so `_creche/shutdown` has no Flue
-  to stop. Row 15 starts Flue with the agent module.
+  to stop, and the bin serves no session method. Row 15 starts Flue with
+  the agent module and passes `Sessions` to the supervisor.

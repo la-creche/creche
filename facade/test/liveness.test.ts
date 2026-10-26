@@ -68,6 +68,7 @@ function supervise(dir: string = controlDir()): Run {
           events.push("stop");
         },
       },
+      sessions: null,
     });
   });
 

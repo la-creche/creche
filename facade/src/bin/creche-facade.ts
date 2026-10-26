@@ -21,6 +21,7 @@ if (env.ok) {
     lock: new SupervisorLock(env.controlDir, env.sandbox),
     deadlineMs: BEAT_DEADLINE_MS,
     runtime: null,
+    sessions: null,
   });
 } else {
   say(env.detail);
