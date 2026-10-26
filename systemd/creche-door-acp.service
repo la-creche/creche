@@ -1,0 +1,46 @@
+# The ACP front door (Phase 2 plan, row 26). USER unit, as the operator.
+#
+# `agent-door-acp` binds the host's LAN address, port 8390, behind NPM and
+# Authentik forward auth. It takes `WS /acp/<family>` and forwards ACP frames
+# to attendance. It translates nothing. This scaffold has no forward yet: a
+# connection that passes every check closes with the reason "not wired".
+#
+# The door ships in no component yet. The handover catalog has no row for it,
+# so no release installs the tree below and no script installs this unit.
+[Unit]
+Description=agent-door-acp, the ACP front door
+After=network-online.target creche-attendance.service
+Wants=network-online.target
+# THE REWORK RESTART POLICY, argued in full in
+# `systemd/creche-caregiver.service`: no start limit, and a back-off.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/creche
+# Every user unit carries both lines (systemd/AGENTS.md).
+Environment=HOME=%h
+Environment=XDG_CONFIG_HOME=%h/.config
+# The site's AGENT_LAN_ADDRESS: the bind when nothing sets DOOR_ACP_BIND.
+EnvironmentFile=/etc/creche/site.env
+# The door's own bearer key, mode 0600. The unit names the path, never the key.
+Environment=DOOR_ACP_KEY_FILE=/srv/agents/state/rework/door-acp.key
+# A bad key file or a wide bind stops the unit here, before a bind.
+ExecStartPre=%h/.local/components/door-acp/bin/agent-door-acp --check
+ExecStart=%h/.local/components/door-acp/bin/agent-door-acp
+Restart=always
+RestartSec=5s
+RestartSteps=5
+RestartMaxDelaySec=120s
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# The hardening that needs no mount namespace (systemd/AGENTS.md).
+NoNewPrivileges=yes
+SystemCallArchitectures=native
+RestrictRealtime=yes
+LockPersonality=yes
+UMask=0077
+
+[Install]
+WantedBy=default.target
