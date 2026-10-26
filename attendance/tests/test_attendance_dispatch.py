@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from attendance.acp_jobs import META_JOB, META_TRIGGER
 from attendance.acp_link import METHOD_NEW_SESSION, METHOD_PROMPT
 from attendance.auth import Principal
 from attendance.clock import now
@@ -32,6 +31,7 @@ from attendance.paths import dispatch_file
 from attendance.requests import DispatchRequest, JobQuery, read_dispatch, read_jobs
 from attendance.service import SessionService
 from attendance_harness import make_config, wait_until, write_status
+from creche_vectors import meta_key, value_fields
 from fake_facade import FacadeFleet, FakeFacade, PromptMode
 
 DISPATCH_DOOR = Principal.DOOR_DISPATCH
@@ -365,7 +365,7 @@ async def test_a_dispatch_runs_one_job_and_writes_the_ledger_row(tmp_path: Path)
         assert session.startswith("auto-")
         assert answer == {"session_id": session, "status": "running", "created": True}
         assert harness.entry(session).family == TARGET
-        assert harness.received(METHOD_NEW_SESSION)[0]["_meta"] == {META_JOB: session}
+        assert harness.received(METHOD_NEW_SESSION)[0]["_meta"] == {meta_key("job"): session}
         prompt = harness.received(METHOD_PROMPT)[0]
         assert prompt["prompt"] == [{"type": "text", "text": MESSAGE}]
         assert harness.jobs()[0]["status"] == "running"
@@ -392,11 +392,12 @@ async def test_the_trigger_rides_on_the_prompt_meta(tmp_path: Path) -> None:
     try:
         await harness.enqueue(caller_family=CHAT_FAMILY)
         await harness.held(1)
-        trigger = harness.received(METHOD_PROMPT)[0]["_meta"][META_TRIGGER]
+        trigger = harness.received(METHOD_PROMPT)[0]["_meta"][meta_key("trigger")]
 
         assert trigger["kind"] == "dispatch"
         assert trigger["name"] == CHAT_FAMILY
         assert trigger["chain"] == list(CHAIN)
+        assert set(trigger) == value_fields("trigger")
     finally:
         await harness.stop()
 

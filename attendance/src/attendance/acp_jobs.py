@@ -27,10 +27,10 @@ from typing import Any
 from .acp_link import AcpCallFailed, AcpLink, AcpLinkLost, PromptEnd, StopReason
 from .errors import TurnReason
 
-# CONTRACT-QUESTION: phase 2 plan (d) puts the `_meta` keys in a vector file
-# under `facade/vectors/`, which does not exist yet. This client sends three
-# keys, and the facade may ignore each one: `creche/job` on `session/new`,
-# and `creche/delegation` or `creche/trigger` on `session/prompt`.
+# The three `_meta` keys of a job: `creche/job` on `session/new`, and
+# `creche/delegation` or `creche/trigger` on `session/prompt`. The facade's
+# vector file (`session_meta`) holds each key, its method and its shape, and
+# `tests/test_acp_meta_vectors.py` holds these names equal to it.
 META_JOB = "creche/job"
 META_DELEGATION = "creche/delegation"
 META_TRIGGER = "creche/trigger"
