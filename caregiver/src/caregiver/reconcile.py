@@ -37,7 +37,6 @@ from agent_family import (
     FamilyState,
     Index,
     Issue,
-    Markup,
     Registry,
     Report,
     Severity,
@@ -45,6 +44,7 @@ from agent_family import (
     SwitchMode,
     classify,
 )
+from agent_family.registry import FAMILY_FILE
 
 from . import paths, sandboxes, steps
 from .applied import AppliedState, read_applied, write_applied
@@ -168,15 +168,15 @@ class SpendRead(StrEnum):
 
 
 class FamilyNotFoundError(RuntimeError):
-    """The registry holds no `family.yaml` for the name: no
+    """The registry holds no `family.toml` for the name: no
     `families/<name>/` directory, or a directory with no file. That is not
-    the same as an invalid `family.yaml`, which gets a report."""
+    the same as an invalid `family.toml`, which gets a report."""
 
 
 def has_family_file(registry: Registry, name: str) -> bool:
-    """Whether the registry holds a `family.yaml` for `name`.
+    """Whether the registry holds a `family.toml` for `name`.
 
-    Contract 01 §5.6 rule 3: a family directory with no `family.yaml` is a
+    Contract 01 §5.6 rule 3: a family directory with no `family.toml` is a
     warning, and `caregiver` ignores it. The registry gives that directory
     a report with no error and no parsed file. A file that does not parse
     has an error, and a file that parses is in `registry.families`."""
@@ -473,17 +473,15 @@ def _converge(
     family_file = _family_text(registry, report)
     done = not halted and live is not None and not sandbox_faults and family_file is not None
     # `done` already implies a resolved image — an unresolved one is a
-    # fault, and a fault is not done. It also implies a family file of one
-    # markup. The two checks after `done` are what let the type say so.
+    # fault, and a fault is not done. It also implies a family file named
+    # `family.toml`. The two checks after `done` are what let the type say so.
     if done and image is not None and family_file is not None:
-        text, markup = family_file
         write_applied(
             state_root,
             family.name,
             rev=registry.revision,
             image=image,
-            family_text=text,
-            markup=markup,
+            family_text=family_file,
             model_live_at=settled,
         )
 
@@ -1115,18 +1113,16 @@ def _config_text(registry: Registry, family: FamilyFile) -> tuple[str, dict[str,
     return _text(registry.instructions(family.name)), skills
 
 
-def _family_text(registry: Registry, report: Report) -> tuple[str, Markup] | None:
-    """The text of the family file that the loader read, and its markup.
-    The report of the family names that file, and the name of the file
-    gives its markup. `None` for a name that no markup has. The pass is
-    then not done: it writes no snapshot, and the status document keeps
-    the old revision as `applied_rev`."""
+def _family_text(registry: Registry, report: Report) -> str | None:
+    """The text of the family file that the loader read. The report of the
+    family names that file. `None` for a file that is not named
+    `family.toml`. The pass is then not done: it writes no snapshot, and
+    the status document keeps the old revision as `applied_rev`."""
     path = registry.root / report.file
-    for markup in Markup:
-        if path.name == paths.family_file_name(markup):
-            return _text(path), markup
+    if path.name != FAMILY_FILE:
+        return None
 
-    return None
+    return _text(path)
 
 
 def _text(path: Path) -> str:

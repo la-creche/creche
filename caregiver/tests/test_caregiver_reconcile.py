@@ -16,11 +16,9 @@ from pathlib import Path
 
 import httpx
 import pytest
-import yaml
-from agent_family import FamilyState, Markup, SwitchMode, load_registry
-from agent_family.registry import FAMILY_FILE, FAMILY_FILE_YAML
+from agent_family import FamilyState, SwitchMode, load_registry
+from agent_family.registry import FAMILY_FILE
 from caregiver.applied import read_applied, write_applied
-from caregiver.atomic import atomic_write
 from caregiver.clock import seconds_from_now
 from caregiver.driver import DriverError, FakeDriver, SandboxSpec
 from caregiver.egress import EgressConfig, litellm_endpoint, pep_endpoint
@@ -37,9 +35,8 @@ from caregiver.reconcile import (
 )
 from caregiver.switch import FakeSwitchClient, SwitchRequest
 from caregiver.timers import FakeUnits
-from caregiver_helpers import FAMILY_BODY, FAMILY_TOML, toml_text, write_no_file_dir, write_registry
+from caregiver_helpers import toml_text, write_no_file_dir, write_registry
 
-from caregiver import applied as applied_module
 from caregiver import paths, sandboxes
 
 FAMILY: str = "chat"
@@ -201,9 +198,7 @@ def family_text(fleet: Fleet) -> str:
 def roll_back(fleet: Fleet, *, rev: str, text: str) -> None:
     """Put the applied snapshot back where a crash would have left it: the
     steps ran, the snapshot did not move."""
-    write_applied(
-        fleet.state_root, FAMILY, rev=rev, image=IMAGE, family_text=text, markup=Markup.TOML
-    )
+    write_applied(fleet.state_root, FAMILY, rev=rev, image=IMAGE, family_text=text)
 
 
 # --- a first pass brings the family up ------------------------------------------
@@ -1152,110 +1147,14 @@ def test_a_stopped_pass_with_no_slow_step_to_run_is_a_whole_pass(fleet: Fleet) -
     assert result.status.state is FamilyState.IN_SYNC
 
 
-# --- the applied copy keeps the name of the format of the registry file ----------
+# --- the applied copy has the name of the registry file ----------------------------
 
 
-def copy_writes(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
-    """Each path that the applied snapshot writes from now on, in order."""
-    written: list[Path] = []
-
-    def record(path: Path, data: bytes, *, mode: int) -> None:
-        written.append(path)
-        atomic_write(path, data, mode=mode)
-
-    monkeypatch.setattr(applied_module, "atomic_write", record)
-    return written
-
-
-def as_yaml(fleet: Fleet) -> None:
-    """Replace the TOML registry file of the family with a YAML file of
-    equal value."""
-    directory = fleet.registry_root / "families" / FAMILY
-    (directory / FAMILY_FILE).unlink()
-    (directory / FAMILY_FILE_YAML).write_text(yaml.safe_dump(FAMILY_BODY), encoding="utf-8")
-
-
-def to_toml(fleet: Fleet) -> str:
-    """Replace the YAML registry file of the family with a TOML file of
-    equal value. Give the TOML text."""
-    directory = fleet.registry_root / "families" / FAMILY
-    (directory / FAMILY_FILE_YAML).unlink()
-    (directory / FAMILY_FILE).write_text(FAMILY_TOML, encoding="utf-8")
-    return FAMILY_TOML
-
-
-def test_a_toml_registry_file_of_equal_value_moves_the_copy_to_its_name(
-    fleet: Fleet, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The YAML copy and the TOML registry file hold one value, so the pass
-    changes nothing. It writes the TOML copy one time, and the YAML copy is
-    then gone."""
-    as_yaml(fleet)
-    fleet.run()
-    toml_text = to_toml(fleet)
-    written = copy_writes(monkeypatch)
-    fleet.forget_calls()
-
-    result = fleet.run()
-
-    assert result.note == "no change"
-    assert result.status.state is FamilyState.IN_SYNC
-    assert fleet.ops() == ()
-    toml_copy = paths.applied_family_path(fleet.state_root, FAMILY, Markup.TOML)
-    yaml_copy = paths.applied_family_path(fleet.state_root, FAMILY, Markup.YAML)
-    assert [one for one in written if one.parent == toml_copy.parent] == [
-        toml_copy,
-        paths.applied_meta_path(fleet.state_root, FAMILY),
-    ]
-    assert toml_copy.read_text(encoding="utf-8") == toml_text
-    assert not yaml_copy.exists()
-
-
-def test_a_pass_after_the_move_reads_the_toml_copy(fleet: Fleet) -> None:
-    """The next pass diffs the TOML registry file against the TOML copy."""
-    as_yaml(fleet)
-    fleet.run()
-    to_toml(fleet)
-    fleet.run()
-    fleet.forget_calls()
-
-    result = fleet.run()
-
-    assert result.note == "no change"
-    assert fleet.ops() == ()
-    applied = read_applied(fleet.state_root, FAMILY)
-    assert applied is not None
-    assert applied.rev == result.status.registry_rev
-
-
-def test_a_yaml_copy_and_a_yaml_registry_file_act_as_before(
-    fleet: Fleet, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The YAML copy keeps its name, and no TOML copy appears."""
-    as_yaml(fleet)
-    fleet.run()
-    written = copy_writes(monkeypatch)
-    fleet.forget_calls()
-
-    result = fleet.run()
-
-    assert result.note == "no change"
-    assert fleet.ops() == ()
-    yaml_copy = paths.applied_family_path(fleet.state_root, FAMILY, Markup.YAML)
-    assert [one for one in written if one.parent == yaml_copy.parent] == [
-        yaml_copy,
-        paths.applied_meta_path(fleet.state_root, FAMILY),
-    ]
-    registry_file = fleet.registry_root / "families" / FAMILY / FAMILY_FILE_YAML
-    assert yaml_copy.read_text(encoding="utf-8") == registry_file.read_text(encoding="utf-8")
-    assert not paths.applied_family_path(fleet.state_root, FAMILY, Markup.TOML).exists()
-
-
-@pytest.mark.parametrize("name", ["family.json", "other.toml"])
-def test_a_registry_file_of_no_markup_moves_no_copy(fleet: Fleet, name: str) -> None:
-    """The full name of the registry file gives the markup of the copy. A
-    name that no markup has gives no copy. The pass is then not done: the
-    snapshot stays, and the status document names the old revision."""
+@pytest.mark.parametrize("name", ["family.json", "other.toml", "family.yaml"])
+def test_a_registry_file_of_another_name_moves_no_copy(fleet: Fleet, name: str) -> None:
+    """Only a registry file named `family.toml` gives a copy. Another name
+    gives no copy. The pass is then not done: the snapshot stays, and the
+    status document names the old revision."""
     fleet.run()
     fleet.write(description="Changed.")
     registry = load_registry(fleet.registry_root)

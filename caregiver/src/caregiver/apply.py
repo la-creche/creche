@@ -43,9 +43,9 @@ from .webhook_tokens import ensure_webhooks
 
 
 class FamilyNotFoundError(RuntimeError):
-    """The registry holds no `family.yaml` for the name: no
+    """The registry holds no `family.toml` for the name: no
     `families/<name>/` directory, or a directory with no file (contract 01
-    section 5.6 rule 3). That is not the same as an invalid `family.yaml`,
+    section 5.6 rule 3). That is not the same as an invalid `family.toml`,
     which gets a report."""
 
 

@@ -387,7 +387,7 @@ def test_a_family_whose_file_went_away_is_named_one_time(
     warnings = [one.getMessage() for one in caplog.records if one.levelno == logging.WARNING]
     named = [line for line in warnings if line.startswith("ops: ")]
     assert len(named) == 1
-    assert "family.yaml" in named[0]
+    assert "family.toml" in named[0]
     assert not [line for line in warnings if line.startswith("stray: ")]
 
 

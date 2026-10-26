@@ -1,6 +1,6 @@
 """One image reference per sandbox flavor (contract 01 §3.9).
 
-    family.yaml `sandbox.image`   the flavor, a closed set
+    family.toml `sandbox.image`   the flavor, a closed set
              |
              v
     SandboxImages.resolve()       the reference this HOST was started with

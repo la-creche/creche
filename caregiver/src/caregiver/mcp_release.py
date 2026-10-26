@@ -462,7 +462,7 @@ def _load_roster(text: str) -> Any:
 def stale_servers(paths: McpPaths, declared: tuple[str, ...]) -> tuple[str, ...]:
     """Served, and no longer declared. The REMOVE half of invariant 18.
 
-    Without it, deleting `mcp/<name>/server.yaml` asked for nothing: the
+    Without it, deleting `mcp/<name>/server.toml` asked for nothing: the
     tree stayed installed, the roster kept naming it, and the upstream
     served for ever. "One file" has to mean the removal too, and a
     removal is the same one release — the executor writes the roster from
@@ -484,7 +484,7 @@ def request_servers(
 
     `revision` is the registry's content revision. It is half of what
     "something changed" means (rule 3): an edit to any `mcp/<name>/
-    server.yaml` — a corrected pin, a rebuilt lock — moves it without
+    server.toml` — a corrected pin, a rebuilt lock — moves it without
     moving a single server NAME, and it is exactly the kind of edit that
     turns root's refusal into a success.
     """

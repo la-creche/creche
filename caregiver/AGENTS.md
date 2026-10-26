@@ -1,6 +1,6 @@
 # caregiver
 
-The family manager. It reads `family.yaml` through `agent_family` and
+The family manager. It reads `family.toml` through `agent_family` and
 converges the host to it. The root `AGENTS.md` applies here too. For each
 family it:
 
@@ -89,21 +89,15 @@ host where something has gone wrong.
   needs a new one.
 - The applied snapshot moves at the end of a successful pass. An interrupted
   pass leaves the old one.
-- The applied copy of a family file has the name of the markup of its
-  text: `applied/family.toml` for TOML, `applied/family.yaml` for YAML.
-  `agent_family.Markup` is the type of the markup.
-  `paths.family_file_name` gives the file name for each markup. It takes
-  the two names from `agent_family.registry`.
-- A pass copies the registry file that the report of the family names. The
-  name of that file gives its markup. A name that no markup has gives no
-  copy. The pass is then not done, and the old snapshot stays.
-- A write of the snapshot first writes the copy in the markup of that
-  registry file. It then removes the other copy and writes `applied.json`.
-- A read of the snapshot takes `applied/family.toml` first and
-  `applied/family.yaml` second. It gives the text to the parser of that
-  markup. A copy that does not parse reads as nothing applied. A copy that
-  is there and that caregiver cannot read also gives nothing applied. The
-  read then takes no other copy.
+- The applied copy of a family file is `applied/family.toml`. The name
+  comes from `agent_family.registry`.
+- A pass copies the registry file that the report of the family names. A
+  file with another name than `family.toml` gives no copy. The pass is then
+  not done, and the old snapshot stays.
+- A write of the snapshot first writes the copy, then `applied.json`.
+- A copy that does not parse reads as nothing applied. A copy that
+  caregiver cannot read also gives nothing applied. caregiver reads no
+  `applied/family.yaml`.
 - Narrowing runs before widening, everywhere. Egress removals before allows.
   Timer removals before timer writes.
 - A refused switch keeps both sandboxes.
@@ -135,7 +129,7 @@ host where something has gone wrong.
 - The ledger writer keeps the field `supervisor_env` in each row. Another
   release of this package reads the path from that field.
 - An empty registry deletes no family.
-- A directory under `families/` with no `family.yaml` gets no pass and no
+- A directory under `families/` with no `family.toml` gets no pass and no
   delete. `reconcile.has_family_file` is the test for it. `apply.apply_once`
   holds a copy of that test, because `apply.py` does not call
   `reconcile.py`.
@@ -306,7 +300,7 @@ Nothing here touches a real sandbox or LiteLLM.
   mount. The family validator does not refuse such a file, so no report
   names it.
 - `CONTRACT-QUESTION` in `loop.py`, `_forget_deleted`. Contract 01 §5.6
-  rule 3 says that `caregiver` ignores a directory with no `family.yaml`.
+  rule 3 says that `caregiver` ignores a directory with no `family.toml`.
   It has no rule for a family with state whose directory loses the file.
   The loop keeps the state of that family, and its status document goes
   stale. The loop writes one warning that names the family. A stale

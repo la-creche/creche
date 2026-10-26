@@ -38,7 +38,7 @@ VALIDATION_FILE_MODE: Final = 0o644
 STALE_AFTER_S: Final = 90
 
 #: Contract 02 section 13 rule 4: `attendance`'s own constant, not a
-#: per-family setting read from `family.yaml`. `caregiver` only mirrors it
+#: per-family setting read from `family.toml`. `caregiver` only mirrors it
 #: into the status view (contract 05 section 2.1).
 ATTENDANCE_MAX_QUEUED_TURNS: Final = 100
 
@@ -186,7 +186,7 @@ def accepts_dispatch(family: FamilyFile) -> bool:
 @dataclass(frozen=True)
 class LimitsBlock:
     """Contract 05 section 2.1. `max_running_turns` and `job_timeout_s`
-    come from `family.yaml`; `max_queued_turns` mirrors `attendance`'s own
+    come from `family.toml`; `max_queued_turns` mirrors `attendance`'s own
     constant instead (`ATTENDANCE_MAX_QUEUED_TURNS`)."""
 
     max_running_turns: int | None = None

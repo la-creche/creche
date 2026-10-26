@@ -6,7 +6,7 @@ file, and rule 5 makes an empty `egress` list the normal attended case. So
 the family file is never the whole allow list. This module holds the rest
 of it, once, in one place a host can override.
 
-    family.yaml egress: []          the normal attended case
+    family.toml egress = []         the normal attended case
               +
     EgressConfig.litellm/.chaperone always allowed, never listed
               =

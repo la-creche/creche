@@ -12,7 +12,7 @@ an operator wrote the token by hand, and it said so in one log line and
 nowhere else.
 
 ```
-  family.yaml declares a webhook
+  family.toml declares a webhook
         |
         v
   caregiver mints <state>/triggers/webhooks/<family>/<name>.token, 0600
