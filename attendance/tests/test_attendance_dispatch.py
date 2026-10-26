@@ -31,7 +31,7 @@ from attendance.outcomes import SPEND_NO_USAGE_REASON
 from attendance.paths import dispatch_file
 from attendance.requests import DispatchRequest, JobQuery, read_dispatch, read_jobs
 from attendance.service import SessionService
-from attendance_harness import FakeFleet, make_config, wait_until, write_status
+from attendance_harness import make_config, wait_until, write_status
 from fake_facade import FacadeFleet, FakeFacade, PromptMode
 
 DISPATCH_DOOR = Principal.DOOR_DISPATCH
@@ -60,7 +60,7 @@ class DispatchHarness:
         self.facades = facades
 
     async def enqueue(self, **changed: Any) -> dict[str, Any]:
-        return await self.service.run_dispatch(DISPATCH_DOOR, _request(**changed), DOOR)
+        return await self.service.run_dispatch(DISPATCH_DOOR, _request(**changed))
 
     def jobs(self, **changed: Any) -> list[dict[str, Any]]:
         query = JobQuery(caller_family=changed.pop("caller_family", CALLER), **changed)
@@ -115,7 +115,6 @@ async def build(
     facades = FacadeFleet(prompt_mode=mode)
     service = SessionService(
         config,
-        factory=FakeFleet().factory,
         acp_factory=facades.factory,
         cold_start_wait_s=1.0,
         cancel_wait_s=0.2,
@@ -568,7 +567,7 @@ async def test_another_door_may_not_dispatch(tmp_path: Path) -> None:
 
     try:
         with pytest.raises(ApiError) as raised:
-            await harness.service.run_dispatch(TRIGGER_DOOR, _request(), DOOR)
+            await harness.service.run_dispatch(TRIGGER_DOOR, _request())
 
         assert raised.value.code is ErrorCode.FORBIDDEN
     finally:

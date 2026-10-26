@@ -14,12 +14,9 @@ from attendance.auth import (
     TokenError,
     check_access,
     check_family_kind,
-    check_session_prefix,
-    holder_of,
 )
 from attendance.config import LAN_ADDRESS_ENV, Bind, ConfigError, from_env
 from attendance.errors import ApiError, ErrorCode
-from attendance.models import Holder
 from attendance.paths import token_file
 from attendance.states import SessionKind
 
@@ -335,20 +332,3 @@ def test_the_refusal_reads_the_same_for_every_kind() -> None:
 def test_the_view_token_sees_every_kind() -> None:
     for kind in SessionKind:
         check_family_kind(Principal.VIEW_RO, "chat", kind)
-
-
-def test_a_door_token_is_pinned_to_one_session_prefix() -> None:
-    check_session_prefix(Principal.DOOR_TUI, "chat", "tui-01JBQ7WZ0X4T9V6K2H8M3N5PQR")
-
-    with pytest.raises(ApiError) as caught:
-        check_session_prefix(Principal.DOOR_TUI, "chat", "owui-abc")
-
-    assert caught.value.code is ErrorCode.FORBIDDEN
-
-
-def test_each_writer_has_its_own_lease_holder() -> None:
-    assert holder_of(Principal.DOOR_OWUI, "chat", "owui-a") is Holder.OWUI
-    assert holder_of(Principal.DOOR_DELEGATE, "code-sandbox", "job-a") is Holder.DELEGATE
-
-    with pytest.raises(ApiError):
-        holder_of(Principal.VIEW_RO, "chat", "owui-a")

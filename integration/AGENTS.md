@@ -1,8 +1,8 @@
 # integration
 
-The cross-package suite. The doors, `attendance`, the chaperone, `caregiver`
-and the playpen were each built against their own fakes. This is the first
-process that holds them together. The root `AGENTS.md` applies here too.
+The cross-package suites. The doors, `attendance`, the chaperone, `caregiver`
+and the playpen were each built against their own fakes. These suites hold
+them together. The root `AGENTS.md` applies here too.
 
 It owns no product code. A change here can change what is observed, never
 what happens. It is not in the root `testpaths`, so the full suite does not
@@ -12,31 +12,35 @@ run it.
 
 ```bash
 cd playpen && AGENT_LAN_ADDRESS=192.0.2.10 pnpm run build && cd ..   # once, and after any playpen change
-uv run pytest integration/tests -m slow
 uv run pytest integration/tests_manager -m slow
 ```
 
-Both suites skip themselves when `playpen/dist/playpen.js` is missing. A
-silent pass would be worse than a skip. Every test is marked `slow` in
+The suite skips itself when `playpen/dist/playpen.js` is missing. A silent
+pass would be worse than a skip. Every test is marked `slow` in
 `conftest.py`. The suite needs `node` on `PATH`.
+
+`tests/` held a second suite, which ran the doors, `attendance` and the
+playpen in one process over the session API. That API left `attendance` in
+the phase 2 plan, row 21, and the suite left with it. `tests/fake_sbx.py`
+stays: the process-level suite and the tests of `attendance` start it in
+place of `sbx`.
 
 ## CI
 
-The `suites` job runs both suites for each code change. Two workflow files
+The `suites` job runs the suite for each code change. Two workflow files
 have the job: `.github/workflows/gate.yml` and
-`.github/workflows/release.yml`. No hook runs the two suites. Run the two
-commands before you push a change to this directory.
+`.github/workflows/release.yml`. No hook runs the suite. Run the command
+before you push a change to this directory.
 
 1. The job builds the playpen, as the `proc` job does.
-2. It runs each suite in a pytest run of its own, with the two commands
-   above.
-3. Its last step reads the JUnit report of each run.
+2. It runs the suite in a pytest run of its own, with the command above.
+3. Its last step reads the JUnit report of the run.
 
 - A test that skips is a failure there. A suite that ran no test is a
   failure too.
-- The variable `PYTEST_ADDOPTS` gives each run the path of its report. The
+- The variable `PYTEST_ADDOPTS` gives the run the path of its report. The
   command stays as it is.
-- The last step prints one line for each suite: the tests that ran, the
+- The last step prints one line for the suite: the tests that ran, the
   total, the tests that skipped and the seconds.
 - The job has a time limit of 20 minutes.
 - `gate.yml` runs the job for a pull request and for a merge group.
@@ -44,58 +48,29 @@ commands before you push a change to this directory.
 - When the job fails in `release.yml`, that run mints no tag. The next green
   run of `release.yml` mints a tag for each component that changed after its
   newest tag.
-- `bin/tests/test_gate_workflow.py` pins the job, both commands and the last
+- `bin/tests/test_gate_workflow.py` pins the job, the command and the last
   step. It also holds the job of `release.yml` equal to the job of
   `gate.yml`.
 
 ## What runs
 
-```
-httpx client (plays Open WebUI)
-  | HTTP over a Unix socket
-  v
-door-owui  (real app, real listener)
-  | HTTP over a Unix socket
-  v
-attendance (real app, real listener, real SessionService)
-  | stdio, the channel protocol
-  v
-tests/fake_sbx.py exec --env-file <env file> ...
-  | execs with the env file's variables and no others
-  v
-node playpen/dist/playpen.js   (the real bundle)
-  | stdio, pi rpc
-  v
-playpen/test/fake-pi.mjs   (the playpen's own double)
-```
-
-Phase 2 row 20 deleted the scenarios of stages 1 to 5: the switch
-handshake and the jobs now run over ACP, and this stack has no facade.
-The stage modules stay as the wiring of the packet scenarios. Each later
-stage adds one real piece:
-
-| Stage | Adds |
-|---|---|
-| `stage2.py` | the real `caregiver` reconcile pass |
-| `stage3.py` | the real chaperone in front of the stack |
-| `stage4.py` | the terminal door beside the Open WebUI door |
-| `stage5.py` | the trigger door and the approval gate |
-| `tests_manager/` | the real `caregiver` writers against the real readers |
+`tests_manager/` runs the real `caregiver` writers against the real
+readers: the PEP family path, the playpen mounts and the status document
+that `attendance` reads. The Node drivers under `node/` start the real
+playpen readers.
 
 ## The process-level suite
 
-`proc/` holds a third suite. It starts each service as a process and talks
+`proc/` holds a second suite. It starts each service as a process and talks
 to it only through sockets, files and child programs. It can judge a service
-in another language, and the two suites above cannot. Read `proc/AGENTS.md`
+in another language, and the suite above cannot. Read `proc/AGENTS.md`
 before you edit it.
 
 ```bash
 uv run pytest integration/proc -m slow
 ```
 
-Run each suite in its own pytest command. One command for `proc/` and one of
-the suites above fails at collection, because the tests in `tests/` import
-`conftest` by name.
+Run each suite in its own pytest command.
 
 ## Rules
 
@@ -121,55 +96,27 @@ the suites above fails at collection, because the tests in `tests/` import
     status document.
 12. Never clear `supervisor.lock` by hand. The host proves the old playpen is
     gone by watching the beat counter.
-13. A scenario that acts mid-turn slows the fake pi first, through
-    `stack.set_pi_env`.
+13. Retired with the in-process stack (phase 2 plan, row 21). The
+    number stays, so that other documents keep their references.
 14. Never put a playpen mount path in this process's environment. The three
     directories arrive only through `--env-file`.
 15. The env file is written by `caregiver`'s own writer.
 16. A multi-family scenario must not set `SESSIOND_SANDBOX_SESSIONS_MOUNT`.
 17. Write a webhook's token file before the listener starts.
-18. A gate's limit must outlast `attendance`'s gate poll, twice over.
-19. A gated call carries the playpen's own turn id, read from the turn file.
-20. Fill `max_queued_turns` for real: 101 firings, not a patched constant.
-21. End each pi shim with `fake_pi_exec()` of `tests/stack.py`. The fake pi
-    then runs with `--mode=rpc` as one word. A test has no microVM, so each
-    playpen of the machine is in one process table. On Linux a playpen
-    counts each process there whose arguments hold `--mode` and `rpc` as two
-    words. With two words, a family with a second sandbox ends `degraded`
-    with the fault `orphan_processes`, on Linux only. The cost: no scenario
-    here can show that fault from the count of `ready`.
-
-## Reading a failure
-
-Work down this list. The first line that does not hold names the hop.
-
-1. Every test fails, or the suite skips: the bundle is missing or stale.
-2. `channel_lost`: the playpen died before or during the handshake. Read its
-   stderr at `<tmp_path>/log/playpen-chat.log`.
-3. `sandbox_unavailable`: `attendance` found no ready sandbox in the status
-   document.
-4. The stream ends with an error chunk: read the journal.
-   `Stack.journal_lines(session)` returns the lines in order.
-5. The answer is empty but the turn settled: the playpen and the door disagree
-   about an event shape.
-6. The wrong number of pi processes: `Stack.pi_starts()` is one line per real
-   start.
-7. `sandbox_lost` and a `fatal` line: the playpen could not take its lock. A
-   mount problem.
-8. A turn that waits about `lock_stale_s`: a previous playpen left its lock.
-9. A teardown error: a listener would not stop. This suite's own bug.
-10. `degraded` with the fault `orphan_processes`, on Linux only: a fake pi
-    ran with `--mode` and `rpc` as two words. Read rule 21.
+18. Retired with the in-process stack (phase 2 plan, row 21). The
+    number stays, so that other documents keep their references.
+19. Retired with the in-process stack (phase 2 plan, row 21). The
+    number stays, so that other documents keep their references.
+20. Retired with the in-process stack (phase 2 plan, row 21). The
+    number stays, so that other documents keep their references.
+21. Retired with the in-process stack (phase 2 plan, row 21). The
+    number stays, so that other documents keep their references.
 
 ## Layout
 
 | File | Holds |
 |---|---|
-| `tests/stack.py` | the wiring: temp mounts, the family fixture, both listeners, the pi shim |
 | `tests/fake_sbx.py` | `sbx exec --env-file` for a machine with no sbx |
-| `tests/conftest.py`, `tests/sse_read.py` | the `stack` fixture, the `slow` mark, reading SSE back |
-| `tests/stage2.py` to `stage5.py`, `stage_eq.py`, `wb2.py` | the wiring of each later stage |
-| `tests/test_*.py` | one packet each: the lease handover, the launcher, the terminal door, enqueue refusals, grant refresh, the noticeboard's reads, the pi shim |
-| `fixtures/*-registry/` | the families each stage publishes. Read-only inputs. |
+| `fixtures/*-registry/` | the families of the old stages. Read-only inputs. `vectors/` and `handover/` read them. |
 | `tests_manager/` | the `caregiver` writers against the real readers, with the Node drivers under `node/` |
 | `proc/` | the process-level suite: each service is a process. `proc/AGENTS.md` has its rules. |

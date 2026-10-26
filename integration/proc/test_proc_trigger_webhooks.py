@@ -20,22 +20,16 @@ that contract 02 §14 gives it. A change costs one assertion per scenario.
 
 from __future__ import annotations
 
-import asyncio
 import signal
 from pathlib import Path
 
 import httpx
 import pytest
-from proc_chat import TURN_STARTED, until
 from proc_harness import LOOPBACK, TcpAddress, is_listening
-from proc_ids import AUTO_PREFIX
 from proc_services import Service
-from proc_standins import HELD_TURN, set_pi_env
 from proc_tree import (
     AUTONOMOUS,
-    MAX_QUEUED_TURNS,
     SECRET_MODE,
-    Tree,
     Validity,
     replace_secret,
     token_of,
@@ -72,58 +66,6 @@ STOP_DEADLINE_S = 30.0
 EVERY_INTERFACE = "0.0.0.0"
 CHECK_FLAG = "--check"
 JSON_TYPE = {"Content-Type": "application/json"}
-
-
-async def test_a_webhook_starts_a_session(trigger: TriggerStack) -> None:
-    """Contract 02 §13 rule 1 and spec §11.5: 202 at once, then one whole job."""
-    tree = trigger.tree
-
-    async with trigger.automation() as automation:
-        reply = await automation.post(hook_path())
-
-    assert reply.status_code == httpx.codes.ACCEPTED, reply.text
-    session = str(reply.json()["session"])
-    assert session.startswith(AUTO_PREFIX)
-
-    await until(
-        lambda: tree.outcome_of(REVIEW, session) is not None,
-        f"the outcome record of {session}",
-        JOB_DEADLINE_S,
-    )
-    record = tree.outcome_of(REVIEW, session)
-
-    assert record is not None
-    assert record["status"] == "ok"
-    # Contract 02 §13.2: a webhook firing carries the name of the webhook.
-    assert record["trigger"]["kind"] == "webhook"
-    assert record["trigger"]["name"] == WEBHOOK
-
-
-async def test_a_webhook_payload_reaches_the_job_byte_for_byte(trigger: TriggerStack) -> None:
-    """The payload is data for the job, and the door does not write it again.
-
-    The prompt that `attendance` puts in the journal holds the body as it
-    came: the same key order and the same spaces.
-    """
-    tree = trigger.tree
-    body = b'{"sensor":"boiler",  "temp_c":11.5,"tags":["cold","attic"]}'
-    set_pi_env(tree, **HELD_TURN)
-
-    async with trigger.automation() as automation:
-        reply = await automation.post(hook_path(), content=body, headers=JSON_TYPE)
-
-    assert reply.status_code == httpx.codes.ACCEPTED, reply.text
-    session = str(reply.json()["session"])
-
-    await until(
-        lambda: _turn_prompt(tree, session) is not None,
-        f"the {TURN_STARTED} line of {session}",
-        JOB_DEADLINE_S,
-    )
-    prompt = _turn_prompt(tree, session)
-
-    assert prompt is not None
-    assert body.decode() in prompt
 
 
 async def test_a_wrong_webhook_bearer_reaches_nothing(trigger: TriggerStack) -> None:
@@ -177,25 +119,6 @@ async def test_a_body_that_is_not_json_is_refused_at_the_door(trigger: TriggerSt
     assert trigger.tree.sessions_of(REVIEW) == []
 
 
-async def test_the_hundred_and_first_queued_turn_is_refused(trigger: TriggerStack) -> None:
-    """Contract 02 §13 rule 4. The queue of `attendance` holds 100 turns.
-
-    The real limit: one turn runs, 100 wait, and the next firing gets 429.
-    A queued turn costs two calls on the host and no sandbox.
-    """
-    set_pi_env(trigger.tree, **HELD_TURN)
-
-    async with trigger.automation() as automation:
-        accepted = [await automation.post(hook_path()) for _ in range(MAX_QUEUED_TURNS + 1)]
-        refused = await automation.post(hook_path())
-
-    states = [str(reply.json().get("state")) for reply in accepted]
-
-    assert [reply.status_code for reply in accepted] == [httpx.codes.ACCEPTED] * len(accepted)
-    assert states == ["running"] + ["queued"] * MAX_QUEUED_TURNS
-    assert refused.status_code == httpx.codes.TOO_MANY_REQUESTS
-
-
 async def test_a_family_that_never_validated_has_no_route(
     trigger_prepared: TriggerStack, bundle: Path
 ) -> None:
@@ -238,39 +161,6 @@ async def test_a_bearer_file_that_cannot_be_trusted_has_no_route(
 
     assert reply.status_code == httpx.codes.NOT_FOUND
     assert tree.sessions_of(REVIEW) == []
-
-
-async def test_a_new_bearer_is_read_with_no_restart(
-    trigger_prepared: TriggerStack, bundle: Path
-) -> None:
-    """Contract 05 §6.4 rules 3 and 6: within `refresh_s`, and with no overlap."""
-    tree = trigger_prepared.tree
-    trigger_prepared.start(refresh_s=SHORT_REFRESH_S)
-
-    write_webhook_token(tree, REVIEW, WEBHOOK, token=ROTATED_BEARER)
-
-    async with trigger_prepared.automation(token=ROTATED_BEARER) as rotated:
-        await _answers(rotated, httpx.codes.ACCEPTED)
-
-    async with trigger_prepared.automation() as old:
-        refused = await old.post(hook_path())
-
-    assert refused.status_code == httpx.codes.NOT_FOUND
-
-
-async def test_sighup_reloads_the_routes(trigger_prepared: TriggerStack, bundle: Path) -> None:
-    """`ExecReload` of the unit. The reload comes long before the next refresh."""
-    tree = trigger_prepared.tree
-    trigger_prepared.start(refresh_s=NO_REFRESH_S)
-    assert trigger_prepared.listener is not None
-
-    write_webhook_token(tree, REVIEW, WEBHOOK, token=ROTATED_BEARER)
-    trigger_prepared.listener.send(signal.SIGHUP)
-
-    async with trigger_prepared.automation(token=ROTATED_BEARER) as rotated:
-        await _answers(rotated, httpx.codes.ACCEPTED)
-
-    assert trigger_prepared.listener.exit_code() is None, "a reload must not end the service"
 
 
 async def test_sigterm_ends_the_listener(trigger_prepared: TriggerStack) -> None:
@@ -326,29 +216,3 @@ def test_the_listener_refuses_to_bind_every_interface(trigger_prepared: TriggerS
 
     assert child.wait(EXIT_DEADLINE_S) != 0
     assert not is_listening(TcpAddress(port))
-
-
-async def _answers(automation: httpx.AsyncClient, wanted: int) -> None:
-    """Post until the answer is `wanted`. A reload is not instant."""
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + RELOAD_DEADLINE_S
-
-    while True:
-        reply = await automation.post(hook_path())
-
-        if reply.status_code == wanted:
-            return
-
-        if loop.time() > deadline:
-            raise AssertionError(f"the webhook still answers {reply.status_code}")
-
-        await asyncio.sleep(RELOAD_POLL_S)
-
-
-def _turn_prompt(tree: Tree, session: str) -> str | None:
-    """The prompt that `attendance` wrote for the first turn of one session."""
-    for line in tree.journal_lines(session, REVIEW):
-        if line["kind"] == TURN_STARTED:
-            return str(line["body"].get("prompt", ""))
-
-    return None

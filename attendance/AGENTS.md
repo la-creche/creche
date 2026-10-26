@@ -1,62 +1,49 @@
 # attendance
 
-The session service. Every kind of agent is one call: create a session in a
-family, run a turn. `attendance` owns sessions, turns, the journal and the
-event streams. Nothing else owns any of them. The root `AGENTS.md` applies
-here too.
+The host side of each family's facade. `attendance` holds the supervisor
+link to each sandbox's facade, runs the delegate and dispatch jobs over
+ACP, pipes the ACP door to the facade, and runs the sandbox switch. The
+conversations live in the facade's store, not here. The root `AGENTS.md`
+applies here too.
 
-It is Python because the host side of the channel may not need Node. The
-playpen runs inside the sandbox image, which carries Node.
+It is Python because the host side may not need Node. The facade runs
+inside the sandbox image, which carries Node.
 
 ## What it does
 
-1. Serves the session API to four doors and the noticeboard, over a Unix
-   socket, and over the LAN address when the config asks.
-2. Keeps every session on disk. A session survives a restart, a sandbox
-   replacement and a deploy.
-3. Writes every event to the journal before any client sees it. A client
-   that disconnects changes nothing.
-4. Holds one channel per sandbox and treats every byte from it as untrusted.
-5. Enforces one writer per session and many readers.
-6. Reports faults in a fault file. It never calls `caregiver`. The one call
+1. Serves `/delegate`, `/dispatch`, `/dispatch/jobs` and
+   `/internal/switch-sandbox` over a Unix socket, and over the LAN address
+   when the config asks. Serves `WS /acp/{family}` on the Unix socket only.
+2. Holds one supervisor link per sandbox and treats every byte from it as
+   untrusted.
+3. Reports faults in a fault file. It never calls `caregiver`. The one call
    between the two runs the other way: `caregiver` asks for a sandbox switch.
-7. Runs one thin job per delegate call over ACP: one `session/new` and one
+4. Runs one thin job per delegate call over ACP: one `session/new` and one
    `session/prompt` on the family's facade. The conversation stays in the
    facade's store (phase 2 plan, Q5).
-8. Limits and queues turns for autonomous families only.
-9. Serves the dispatch door: `enqueue` and `job_status`. Each job runs over
-   ACP on the target's facade.
-10. Copies an attended session into Open WebUI, and turns an edit into a pi
-    branch.
+5. Serves the dispatch door: `enqueue` and `job_status`. Each job runs over
+   ACP on the target's facade. Only an autonomous family has a limit and a
+   queue.
 
-## Ordering rules
-
-1. Write the journal line, then fan it out. `_append` does both, in that
-   order.
-2. Journal the prompt before you send `start_turn`.
-3. Subscribe before you replay.
-4. Seed the sequence counter from the journal, not from `session.json`.
-5. Never wait for a pre-start. `create_or_find` sends `open_session` and
-   returns.
-6. An idle close sends `shutdown` and waits for the exit, under the dial
-   lock. `_stop_loops` cancels every loop before it awaits any.
+The session API (`/v1/sessions*`), the journal and the event streams left
+in the phase 2 plan, row 21. Session files, journals and streams of an
+earlier release are not read. Nothing migrates them.
 
 ## Trust rules
 
-1. Every byte from the playpen is a claim. `wire.parse` returns a refusal,
-   never raises.
+1. Every byte from a sandbox is a claim. A reader returns a refusal, never
+   raises.
 2. Nothing from the channel is acted on. The host never opens a path, fetches
    a URL or runs a string that came from a sandbox.
 3. `supervisor.lock` can delay a channel and can never grant one. Read the
    lock of the sandbox being dialled, never the family's. Time the counter,
    never a timestamp.
 4. A fault clears only on evidence: a completed handshake or a service start.
-5. Persona text carries no authority.
-6. A door's request body is untrusted input. `requests.py` parses it.
-7. The status document is a claim. A document with no known `kind` opens no
-   door and starts no queued turn. Read the kind with `served_kind`.
-8. A cap of a text from the playpen is a count of bytes of UTF-8. Cut such
-   a text with `wire.cut_bytes`. The cut is between two characters.
+5. A door's request body is untrusted input. `requests.py` parses it.
+6. The status document is a claim. A document with no known `kind` opens no
+   door and starts no queued job. Read the kind with `served_kind`.
+7. A cap of a text from a sandbox is a count of bytes of UTF-8. The cut is
+   between two characters.
 
 ## Security rules
 
@@ -75,34 +62,30 @@ playpen runs inside the sandbox image, which carries Node.
    on the sandbox's facade (`acp_link.py`).
 3. One supervisor link per sandbox, not per family. A draining family holds
    two.
-4. Layers talk downward only: `api` to `service` to the stores and links to
-   `channel` and `wire` to primitives. A route never touches the journal.
+4. Layers talk downward only: `api` to `service` to the links to `channel`
+   to primitives.
 5. Nothing here needs Node.
 6. Build paths with `paths.py`.
 7. Give each task a name and the done-callback `tasks.report_failure`. A
    task that ends with an error must reach the log.
 8. Give each step of a loop that lives as long as the service a handler.
-   The handler logs the failure, and the loop goes on. `_flush_loop` and the
-   writer loop of `owui_copy.py` are the pattern. A channel loop is the
-   exception: a dead reader ends in a lost channel (contract 03 §10 rule 4).
-9. When the start of a turn raises, end the turn with `_fail_start`. A turn
-   must not stay in flight with no deadline watcher.
+   The handler logs the failure, and the loop goes on. `_upkeep_loop` is the
+   pattern. A link loop is the exception: a dead reader ends in a lost link.
 
 ## Switch rules
 
 1. The status document outranks the pin. The pin lives in memory.
 2. Release the outgoing sandbox before you answer. `_retire_sandbox` sends
-   `_creche/shutdown` to the outgoing facade, then stops every held-open
-   process of the old channel, sends `shutdown`, and closes that channel.
+   `_creche/shutdown` to the outgoing facade and stops its link.
 3. A switch belongs to the platform, not to the HTTP request. A repeat joins
    the run. A refused run is forgotten.
 4. The switch runs the handshake before anything moves: `initialize` on
    the incoming facade.
-7. A drain waits for the session turns and for the prompts in flight on
-   the outgoing facade, on one deadline. An interrupt stops the outgoing
-   facade, and each of its jobs answers `failed` with `channel_lost`.
 5. The pin is the family's choice of sandbox, not only a switch's.
 6. Interrupt waits for nothing. Do not add a grace period.
+7. A drain waits for the prompts in flight on the outgoing facade, up to
+   the deadline. An interrupt stops the outgoing facade, and each of its
+   jobs answers `failed` with `channel_lost`.
 
 ## Lease rules
 
@@ -115,19 +98,16 @@ playpen runs inside the sandbox image, which carries Node.
 ## Autonomous and dispatch rules
 
 1. Only an autonomous family has a limit and a queue.
-2. `queue_full` is checked before the turn is minted.
-3. `turn_queued` reaches disk before the FIFO holds the turn.
-4. A restart ends the queue with `queue_lost`.
-5. The outcome record is written before the session is deleted.
-6. The target's own status document decides whether it may be dispatched to.
-7. `door-dispatch` is its own principal.
-8. A caller never names itself. `caller_family` comes from the token.
-9. A dispatched job runs over ACP (`JobQueue`, `acp_jobs.py`). Its ledger
+2. `queue_full` is checked before anything is written.
+3. The target's own status document decides whether it may be dispatched to.
+4. `door-dispatch` is its own principal.
+5. A caller never names itself. `caller_family` comes from the token.
+6. A dispatched job runs over ACP (`JobQueue`, `acp_jobs.py`). Its ledger
    entry is written only after every refusal, so a refusal leaves none.
-10. The job keeps its `auto-<ulid>` id. The facade mints the conversation
-    id, and the entry's `acp_session` maps one to the other.
-11. The outcome record is written, then noted in the ledger, then the slot
-    is freed and the next queued job starts.
+7. The job keeps its `auto-<ulid>` id. The facade mints the conversation
+   id, and the entry's `acp_session` maps one to the other.
+8. The outcome record is written, then noted in the ledger, then the slot
+   is freed and the next queued job starts.
 
 ## Mount rules
 
@@ -146,12 +126,12 @@ uv run python -m attendance           # serve
 
 | Variable | Meaning |
 |---|---|
-| `SESSIOND_SESSIONS_ROOT` | the session store |
+| `SESSIOND_SESSIONS_ROOT` | the root of each family's sessions mount, the cwd of a job |
 | `SESSIOND_STATE_ROOT` | tokens, leases, faults, family status |
 | `SESSIOND_WORK_ROOT` | the `code-sandbox` work root |
 | `SESSIOND_SOCKET` | the Unix socket |
 | `SESSIOND_BIND_LAN`, `SESSIOND_LAN_ADDRESS`, `SESSIOND_LAN_PORT` | the optional TCP listener, port 8350 |
-| `SESSIOND_CHANNEL_COMMAND` | how a channel is opened. `{env_file}` comes from the status document. |
+| `SESSIOND_CHANNEL_COMMAND` | read and printed by `--check`, and used by no link since row 21. Row 25 removes it. |
 | `SESSIOND_LOG_DIR` | where each family's playpen stderr lands |
 | `SESSIOND_LOCK_STALE_S`, `SESSIOND_LOCK_POLL_S` | the lock beat window and its poll |
 | `SESSIOND_ACP_RELAY_COMMAND` | how one ACP door connection reaches the facade. `{env_file}` comes from the status document. |
@@ -166,12 +146,13 @@ chaperone reads them as another user. `SIGHUP` reloads them.
 | Module | Holds |
 |---|---|
 | `api.py`, `__main__.py` | the routes, `--check`, the signal handlers |
-| `service.py` | the operations, the turn lifecycle, the channel callbacks |
+| `service.py` | the operations: the jobs, the ACP door, the switch |
 | `requests.py` | every request body, validated before use |
-| `turns.py`, `streams.py`, `journal.py`, `store.py` | live turns, readers, the NDJSON journal, the on-disk layout |
-| `leases.py`, `queueing.py`, `outcomes.py` | one writer per session, the autonomous queues, what survives a job |
-| `owui_copy.py`, `terminal.py`, `branching.py`, `persona.py` | Open WebUI copy, terminal exchanges, pi branches, the folder prompt |
-| `playpen_link.py`, `switching.py`, `channel.py`, `exec_channel.py`, `wire.py` | one sandbox's channel, a switch, the protocol |
+| `queueing.py`, `outcomes.py` | the dispatch queues, what survives a job |
+| `leases.py` | the writer lease. No route reaches it since row 21. Row 22 removes it. |
+| `owui_copy.py`, `terminal.py`, `branching.py`, `persona.py` | Open WebUI copy, terminal exchanges, pi branches, the folder prompt. No route reaches them since row 21. Rows 23 and 24 remove them. |
+| `playpen_link.py`, `wire.py` | the old playpen channel. No route reaches it since row 21. Row 25 removes it. |
+| `switching.py`, `channel.py`, `exec_channel.py` | a switch, a byte channel, an `sbx exec` process |
 | `supervisor_lock.py` | the proof that no older supervisor holds a sandbox |
 | `acp_link.py`, `acp/schema-v1.json` | the ACP link to one sandbox's facade, and the pinned ACP schema |
 | `acp_jobs.py` | one job over the link: `session/new`, one prompt, the deadline and its cancel |
@@ -209,29 +190,25 @@ misbehaviour there. A test that spawns a process is marked `slow`.
 - A dispatched job sends its trigger in the prompt's `_meta` as
   `creche/trigger`. The facade may ignore it: the outcome record takes the
   trigger from the ledger entry.
-- Until the session API goes (phase 2 plan, row 21), a family's
-  door-trigger turns and its dispatched jobs each count only themselves
-  against `max_running_turns`.
 - A restart forgets each queued or running dispatched job. Its entry then
   reads `ended` with a null outcome.
 - An outcome record of a job over ACP has a null `spend_usd`: ACP reports
   no usage (`outcomes.py`).
-- An outcome record's `spend_usd` sums advisory costs. A sum of zero with
-  tokens records `null` with `spend_reason` (`outcomes.py`).
-- Contract 02 §13.1 names no sum of costs that is not finite. Such a sum
-  records `null` with `spend_reason` (`outcomes.py`).
-- A `tui-` session with a null `leaf_id` can reach its chat twice
-  (`service.py`, `terminal.py`).
 - After an idle close, the status document still says `channel: open`
   (`playpen_link.py`).
 - `caregiver` writes the status document's `channel` field from its own
   ledger. This service does not publish its `LinkStatus` there: it never
   calls `caregiver`, and contract 05 names `caregiver` the one writer.
-- `wait=accepted` still waits out a `planned` sandbox for up to 60 seconds
-  (`service.py`).
 - `X-Session-Id` is caller-set, so a model can aim a `code-sandbox` job at
   another chat's directory of the same family. The grammar stops any escape
   from the work root (`service.py`).
+- No chat session lives here since row 21, so nothing deletes a chat's
+  `code-sandbox` directory (`workspace.py`).
+- The principals `door-owui`, `door-tui`, `door-trigger` and `view-ro` reach
+  no route since row 21. Their token files are still required at start
+  (`auth.py`).
+- The switch answer's `sessions` is 0: no session lives here
+  (`service.py`).
 - Contract 03 §13 rule 6 names no nesting limit for an event. `cap_event`
   reads an event of more than 64 levels as oversized (`wire.py`).
 - Contract 03 §4.6 and §5.5 do not say that a `ping` can have no nonce. The
@@ -251,13 +228,6 @@ misbehaviour there. A test that spawns a process is marked `slow`.
 - Contract 05 §3 does not say what a reader does with a `state` that is not
   one of its four words. The reader keeps no state for it. The detail
   `family_state` of a refusal is then null (`family_status.py`).
-- Contract 02 §4.3 has no move from `queued` to `failed`, and no failure for
-  a turn that did not start. Two functions start a turn only to fail it:
-  `_refuse_toolless_job` and `_start_queued` (`service.py`).
-- `_fail_start` takes the other reading when the start of a queued turn
-  raises. The turn ends `aborted` with the reason `internal`. Contract 02
-  §13.1 then gives the job the status `cancelled`, not `failed`
-  (`service.py`).
 - Contract 02 §14 gives no rule for the fields of `internal`. The handler
   answers null for `family`, `session` and `turn`, an empty `detail` and a
   fixed message (`api.py`).
@@ -267,17 +237,10 @@ misbehaviour there. A test that spawns a process is marked `slow`.
 - Contract 02 §3 rule 3 says that a body is JSON. It does not say what a
   reader does with the escape of one half of a surrogate pair. Such a text
   has no UTF-8 form. A parser refuses the body with `bad_request` for each
-  text that an answer or a line of the channel can hold. Four texts reach a
-  file only: the reason of a stop, the reason of a switch, the name of a
-  trigger and the key of a dispatch. A parser takes the escape in each of
-  the four. A member that no parser reads can hold the escape too
-  (`requests.py`).
-- Contract 02 §11 rule 6 truncates a persona text and does not refuse it. A
-  persona text with one half of a surrogate pair has no UTF-8 form.
-  `_persona` refuses the body with `bad_request` (`requests.py`).
+  text that an answer or a line of the link can hold. Two texts reach a
+  file only: the reason of a switch and the key of a dispatch. A parser
+  takes the escape in each of the two. A member that no parser reads can
+  hold the escape too (`requests.py`).
 - Contract 02 §3 rule 2 says never `0.0.0.0` and gives the LAN address no
   grammar. `from_env` refuses each spelling of the address of each interface.
   It takes each other text as the address (`config.py`).
-- `_settle` does not raise `IllegalTransition`. For a move that contract 02
-  §4.3 does not allow, it writes one log line and one `note` line. The turn
-  does not move. No known path makes such a move (`service.py`, `states.py`).

@@ -7,8 +7,8 @@ It answers one question: does this component work RIGHT NOW? It asks the
 running process over the socket the service binds, never the files a release
 just wrote.
 
-**The one call is deliberately unauthenticated.** `GET /v1/sessions` without
-a bearer must answer 401. That single answer proves two things at once:
+**The one call is deliberately unauthenticated.** `POST /dispatch/jobs`
+without a bearer must answer 401. That single answer proves two things at once:
 
 1. the process is up and serving HTTP on its socket, and
 2. it still fails closed. A 200 here would mean the door opened to anyone
@@ -56,9 +56,11 @@ _ENV_NAME_RE: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 #: header. The name is never resolved.
 SOCKET_BASE_URL: Final = "http://sessiond"
 
-#: Contract 02 §3: the listing endpoint. Chosen because it is a plain read
-#: that changes nothing even if the auth check were ever to let it through.
-PROBE_PATH: Final = "/v1/sessions"
+#: Contract 02 §13.4.2: the job listing. Chosen because it is a read that
+#: changes nothing even if the auth check were ever to let it through. The
+#: route reads the bearer before the body, so no body is sent.
+PROBE_METHOD: Final = "POST"
+PROBE_PATH: Final = "/dispatch/jobs"
 PROBE_TIMEOUT_S: Final = 5.0
 
 #: The only answer that means "running and still failing closed".
@@ -150,7 +152,7 @@ def _refuses_anonymous(socket_path: Path) -> Check:
 
     try:
         with httpx.Client(transport=transport, timeout=PROBE_TIMEOUT_S) as client:
-            answer = client.get(url)
+            answer = client.request(PROBE_METHOD, url)
     except httpx.HTTPError as error:
         return Check("anonymous read", False, f"{socket_path}: {type(error).__name__}")
 

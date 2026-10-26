@@ -43,7 +43,7 @@ The Python implementation is the authority for each surface.
 | `data/status/` | the status document, one file per reader. The writer of the status document, the fault files and the outcome record |
 | `data/config/` | the configs: the site file, the roster, `runtime.json`, `creds.json`, the env file of the playpen and three env readers |
 | `data/manifest/` | the component manifest, the release request, the live-state document and the resolved manifest |
-| `data/session/` | the session API: the request bodies, the queries, the error body, the journal and the event stream |
+| `data/session/` | the HTTP surface of `attendance`: the request bodies, the error body and the outcome record. The files of the session API, which left `attendance`, are frozen |
 | `data/runtime/` | the helper code that each service copies: the lenient field readers, the strict JSON reader, the time reader, the token files, the bearer of a request and the answers of the web framework |
 | `data/noticeboard/` | the noticeboard: the checks of its perimeter, the form body, the route parameters, the readers of `attendance`, of the audit files and of a validation report, the verify hook and `noticeboard --check` |
 | `data/library/` | the index builder: the chunks of a text, the hash of a file, the text of a file, the report, the URL of the embedder, the bytes of a vector in a store, the schema of a store and the rows of a store after each run |

@@ -34,8 +34,8 @@ in no shard: `testpaths` does not hold it. The job builds the playpen first,
 and a test that skips is a failure there. A run in which every test skips
 because the bundle is missing would be green and would judge nothing.
 
-The `suites` job runs the two old suites of `integration/`, each one in a
-pytest run of its own. It has the setup of the `proc` job. Its last step reads
+The `suites` job runs the old suite of `integration/`, in a pytest run of
+its own. It has the setup of the `proc` job. Its last step reads
 the JUnit report of each run, and it fails for a test that skipped. Both
 workflows have the job. The last job of each file has a name of its own, and
 each other job name is in both files.
@@ -189,7 +189,7 @@ PLAYPEN_DIR = "playpen"
 #: example site's TEST-NET-1 address is the one the suite writes too.
 BUILD_ENV = {"AGENT_LAN_ADDRESS": "192.0.2.10"}
 
-#: The job that runs the two old suites of `integration/`.
+#: The job that runs the old suite of `integration/`.
 SUITES_JOB = "suites"
 
 #: The job that runs the suite and the type check of `agent/`.
@@ -210,7 +210,6 @@ FACADE_DIR = "facade"
 #: by the name of its report. The job runs each command as it is, in a step of
 #: its own.
 SUITE_RUNS = {
-    "tests": "uv run pytest integration/tests -m slow",
     "tests_manager": "uv run pytest integration/tests_manager -m slow",
 }
 
@@ -958,7 +957,7 @@ CASES: list[tuple[str | None, dict[str, str], bool]] = [
     # The process suite is in no shard. A code PR on which it did not run
     # is red.
     ("code", {"proc": "skipped"}, False),
-    # The two old suites of integration/ are in no shard either.
+    # The old suite of integration/ is in no shard either.
     ("code", {SUITES_JOB: "failure"}, False),
     ("code", {SUITES_JOB: "skipped"}, False),
     # The systemd proof runs on every code PR. The job skips its own step

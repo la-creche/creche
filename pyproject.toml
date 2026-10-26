@@ -95,9 +95,9 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "TC004", "TC005"]
 "*/tests/*" = ["RUF059"]
 
 [tool.ruff.lint.isort]
-# The root conftest.py makes `conftest` look first-party. integration/tests
-# import their OWN conftest.py, a local helper like `stack` and `stage2`,
-# which isort files as third-party. Keep all three in that one block.
+# The root conftest.py makes `conftest` look first-party. A suite that
+# imports its OWN conftest.py by name needs isort to file it as
+# third-party. Keep that one block.
 known-third-party = ["conftest"]
 
 [tool.coverage.run]

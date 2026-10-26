@@ -18,12 +18,10 @@ from pathlib import Path
 import pytest
 from proc_tree import (
     FAMILY,
-    SANDBOX,
     THIN,
     add_family,
     replace_secret,
     token_of,
-    write_status,
 )
 from proc_tui import ARG_NEW, ARG_SESSION, TuiStack
 
@@ -91,18 +89,6 @@ def test_a_terminal_reaches_an_attended_family_only(tui: TuiStack, family: str) 
     assert child.wait(EXIT_DEADLINE_S) != 0
     assert tui.terminal_calls() == []
     assert not (tree.sessions_root / family).is_dir() or tree.sessions_of(family) == []
-
-
-async def test_a_family_with_no_ready_sandbox_is_refused(tui: TuiStack) -> None:
-    """A terminal runs no handshake, so only a ready sandbox serves one (contract 05 §4.2)."""
-    session = await tui.chat_session()
-    write_status(tui.tree, sandboxes=((SANDBOX, "creating"),))
-
-    child, _ = tui.open_terminal(FAMILY, ARG_SESSION, session)
-
-    assert child.wait(EXIT_DEADLINE_S) != 0
-    assert tui.terminal_calls() == []
-    assert tui.lease_changes(session) == [("owui", "granted")]
 
 
 async def test_a_session_id_that_is_no_id_is_refused(tui: TuiStack) -> None:

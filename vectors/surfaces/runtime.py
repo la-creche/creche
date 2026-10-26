@@ -1606,7 +1606,12 @@ class Gate(Protocol):
 class _AttendanceGate:
     """`attendance` with a stand-in service. The token is the one of door-owui."""
 
-    ASK: Final = Ask("GET", "/v1/sessions")
+    ASK: Final = Ask(
+        "POST",
+        "/dispatch/jobs",
+        ((b"content-type", b"application/json"),),
+        b'{"caller_family":"chat"}',
+    )
 
     def __init__(self, scratch: Path, token: str) -> None:
         for other in Principal:
@@ -1806,7 +1811,7 @@ COPIES: Final[tuple[Copy, ...]] = (
     Copy(
         name="attendance",
         entry=(
-            "attendance.auth.TokenBook.identify, through the route GET /v1/sessions of "
+            "attendance.auth.TokenBook.identify, through the route POST /dispatch/jobs of "
             "attendance.api.build_app"
         ),
         contract="contract 02 §3 rules 4 and 6, §3.1",
@@ -2031,14 +2036,10 @@ SERVICES: Final[tuple[Service, ...]] = (
         name="attendance",
         entry="attendance.api.build_app",
         build=_attendance_app,
-        path="/v1/sessions",
-        method=GET,
-        other="PUT",
-        notes=(
-            "The path /v1/sessions has a route for POST and a route for GET, in that order. "
-            "The web framework names only the methods of the first route in the Allow header.",
-            _NOTE_OWN_HANDLER,
-        ),
+        path="/dispatch/jobs",
+        method=POST,
+        other=GET,
+        notes=(_NOTE_OWN_HANDLER,),
     ),
     Service(
         name="door_owui",

@@ -9,14 +9,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-SESSION_FILE = "session.json"
-JOURNAL_FILE = "journal.ndjson"
-TURNS_DIR = "turns"
-PI_DIR = "pi"
-INBOX_DIR = "inbox"
-OUTBOX_DIR = "outbox"
-SCRATCH_DIR = "scratch"
-
 STATUS_FILE = "status.json"
 PLAYPEN_LOCK = "supervisor.lock"
 
@@ -34,7 +26,7 @@ _AUDIT = "audit"
 _CODE_SANDBOX = "code-sandbox"
 
 # What the sandbox sees. sbx mounts /srv/agents/sessions/<family>/ at that
-# SAME path inside the VM (contract 03 §7.1), so a path sent on the channel is
+# SAME path inside the VM (contract 03 §7.1), so a path sent on the link is
 # the host path. There is no second name for it and nothing rewrites one.
 #
 # The integration harness runs the playpen as a plain child process on a
@@ -47,26 +39,6 @@ def family_sessions_dir(sessions_root: Path, family: str) -> Path:
     return sessions_root / family
 
 
-def session_dir(sessions_root: Path, family: str, session: str) -> Path:
-    return sessions_root / family / session
-
-
-def session_file(sessions_root: Path, family: str, session: str) -> Path:
-    return session_dir(sessions_root, family, session) / SESSION_FILE
-
-
-def journal_file(sessions_root: Path, family: str, session: str) -> Path:
-    return session_dir(sessions_root, family, session) / JOURNAL_FILE
-
-
-def turns_dir(sessions_root: Path, family: str, session: str) -> Path:
-    return session_dir(sessions_root, family, session) / TURNS_DIR
-
-
-def turn_file(sessions_root: Path, family: str, session: str, turn: str) -> Path:
-    return turns_dir(sessions_root, family, session) / f"{turn}.json"
-
-
 def sandbox_sessions_mount(sessions_root: Path, family: str) -> str:
     """Where the sandbox sees this family's sessions (contract 03 §7.1).
 
@@ -76,16 +48,6 @@ def sandbox_sessions_mount(sessions_root: Path, family: str) -> str:
     override = os.environ.get(SANDBOX_MOUNT_ENV, "").strip()
 
     return override or str(family_sessions_dir(sessions_root, family))
-
-
-def sandbox_cwd(sessions_root: Path, family: str, session: str) -> str:
-    """The turn's working directory inside the sandbox (contract 03 §4.1)."""
-    return f"{sandbox_sessions_mount(sessions_root, family)}/{session}"
-
-
-def sandbox_session_dir(sessions_root: Path, family: str, session: str) -> str:
-    """PI_CODING_AGENT_DIR inside the sandbox (contract 03 §4.1)."""
-    return f"{sandbox_cwd(sessions_root, family, session)}/{PI_DIR}"
 
 
 def family_state_dir(state_root: Path, family: str) -> Path:

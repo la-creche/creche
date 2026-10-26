@@ -19,7 +19,6 @@ import stat
 
 import httpx
 import pytest
-from proc_chat import SESSIONS_PATH, chat_id, session_of
 from proc_harness import LOOPBACK, TcpAddress, is_listening
 from proc_owui import OwuiStack, door_env
 from proc_services import Service
@@ -29,7 +28,13 @@ from proc_tree import DOOR_KEY, FAMILY, PRINCIPALS, replace_secret, token_of
 #: One byte under the floor of contract 02 §3 rule 7. Its text is one a test
 #: can find in an output, to prove that no output holds it.
 SHORT_SECRET = "short-secret-" + "s" * 18
-ROTATED_TOKEN = "rotated-door-owui-" + "r" * 32
+ROTATED_TOKEN = "rotated-door-dispatch-" + "r" * 32
+
+#: The job listing (contract 02 §13.4.2). The dispatch door reads it with no
+#: facade, so it answers 200 in this stack.
+JOBS_PATH = "/dispatch/jobs"
+JOBS_BODY = {"caller_family": FAMILY}
+DISPATCH = "door-dispatch"
 
 #: Contract 02 §3 rule 1: the mode `attendance` gives its socket after bind.
 SOCKET_MODE = 0o660
@@ -113,9 +118,9 @@ async def test_a_request_with_no_token_is_refused(
 
     async with owui.attendance_client() as client:
         client.headers.pop("Authorization")
-        missing = await client.get(SESSIONS_PATH)
+        missing = await client.post(JOBS_PATH, json=JOBS_BODY)
 
-    wrong = await attendance_api.get(SESSIONS_PATH, headers=unknown)
+    wrong = await attendance_api.post(JOBS_PATH, json=JOBS_BODY, headers=unknown)
 
     for response in (missing, wrong):
         assert response.status_code == httpx.codes.UNAUTHORIZED
@@ -133,20 +138,20 @@ async def test_the_door_refuses_a_wrong_key(door: httpx.AsyncClient) -> None:
 async def test_sighup_reloads_the_token_files(
     owui: OwuiStack, attendance_api: httpx.AsyncClient
 ) -> None:
-    """Contract 02 §3 rule 8. A reload changes the tokens and keeps the sessions."""
+    """Contract 02 §3 rule 8. A reload changes the tokens and keeps serving."""
     assert owui.attendance is not None
-    session = session_of(chat_id())
-    session_path = f"{SESSIONS_PATH}/{FAMILY}/{session}"
-    created = await attendance_api.post(SESSIONS_PATH, json={"family": FAMILY, "session": session})
-    assert created.status_code == httpx.codes.CREATED
+    token_path = owui.tree.token_file(DISPATCH)
+    old = {"Authorization": f"Bearer {token_of(DISPATCH)}"}
+    first = await attendance_api.post(JOBS_PATH, json=JOBS_BODY, headers=old)
+    assert first.status_code == httpx.codes.OK, first.text
 
-    replace_secret(owui.tree.token_file("door-owui"), ROTATED_TOKEN)
+    replace_secret(token_path, ROTATED_TOKEN)
     owui.attendance.send(signal.SIGHUP)
-    await _answers_ok(attendance_api, session_path, {"Authorization": f"Bearer {ROTATED_TOKEN}"})
+    await _answers_ok(attendance_api, {"Authorization": f"Bearer {ROTATED_TOKEN}"})
 
-    old = await attendance_api.get(session_path)
+    refused = await attendance_api.post(JOBS_PATH, json=JOBS_BODY, headers=old)
 
-    assert old.status_code == httpx.codes.UNAUTHORIZED
+    assert refused.status_code == httpx.codes.UNAUTHORIZED
     assert owui.attendance.exit_code() is None, "a reload must not end the service"
 
 
@@ -188,18 +193,18 @@ def test_the_door_check_validates_and_binds_nothing(owui_prepared: OwuiStack) ->
     assert token_of("door-owui") not in child.output()
 
 
-async def _answers_ok(client: httpx.AsyncClient, path: str, headers: dict[str, str]) -> None:
+async def _answers_ok(client: httpx.AsyncClient, headers: dict[str, str]) -> None:
     """Ask until the answer is 200. A reload is not instant."""
     loop = asyncio.get_running_loop()
     deadline = loop.time() + RELOAD_DEADLINE_S
 
     while True:
-        response = await client.get(path, headers=headers)
+        response = await client.post(JOBS_PATH, json=JOBS_BODY, headers=headers)
 
         if response.is_success:
             return
 
         if loop.time() > deadline:
-            raise AssertionError(f"{path} still answers {response.status_code}")
+            raise AssertionError(f"{JOBS_PATH} still answers {response.status_code}")
 
         await asyncio.sleep(RELOAD_POLL_S)

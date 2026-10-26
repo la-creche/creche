@@ -948,6 +948,14 @@ _FIRED: Final = datetime(2999, 1, 1, 6, 0, 0, tzinfo=UTC)
 _LONG_ERROR: Final = "x" * 4096
 
 
+#: A text of `spend_reason` that `attendance` wrote before the phase 2 plan,
+#: row 21. The noticeboard reads any text.
+_SPEND_UNKNOWN: Final = (
+    "tokens were used but no cost was reported; the advisory number is unreliable "
+    "and this layer does not read LiteLLM, spend's one authority (contract 05 §7)"
+)
+
+
 def _record(**changes: object) -> OutcomeRecord:
     """The record of one job that a timer started and that ended well."""
     record = OutcomeRecord(
@@ -1008,7 +1016,7 @@ OUTCOME_DOCUMENTS: Final[tuple[OutcomeDocument, ...]] = (
     OutcomeDocument("written-no-trigger", _record(trigger=None, status=Outcome.CANCELLED)),
     OutcomeDocument(
         "written-spend-unknown",
-        _record(spend_usd=None, spend_reason=outcomes.SPEND_UNKNOWN_REASON),
+        _record(spend_usd=None, spend_reason=_SPEND_UNKNOWN),
     ),
     OutcomeDocument("written-spend-zero", _record(spend_usd=0.0, turns=0, sandbox="")),
     OutcomeDocument("written-error-long", _record(status=Outcome.FAILED, error=_LONG_ERROR)),
