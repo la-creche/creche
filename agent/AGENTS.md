@@ -34,6 +34,21 @@ The tests use `sqlite()` with no path, an in-memory store, and pi's
    refusal is a typed value, not an exception.
 6. Never log the value of a credential. Never put a real one in a fixture.
 
+## Use
+
+The facade reads the edge, composes the agent and starts Flue, one time,
+at process start:
+
+```ts
+const read = await readFamilyConfig(process.env);       // src/config.ts
+const composed = composeAgent(read.config, workspace);  // src/agent.ts
+await start({ agents: [composed.agent], db: composed.db, providers: composed.providers });
+```
+
+Each step gives a typed refusal, not an exception. The store of
+`start()` is `<AGENT_SESSIONS_DIR>/flue.db`. The facade writes the names
+in `composed.skippedSkills` to stderr.
+
 ## Environment the agent expects
 
 `src/config.ts` reads each variable one time, at process start, into one
@@ -93,4 +108,6 @@ connection and the `auth` of the LiteLLM provider unwrap it.
   internal to Flue. So each script opens its own MCP client on the `ch`
   definition (`src/codemode.ts`), with Flue's client package at Flue's
   pin. The script gets the chaperone's names, `tools.<upstream>__<tool>`.
-
+- The facade chooses the workspace of the granted sandbox tools. The
+  playpen gave `code-sandbox` one directory for each chat. The agent has
+  no chat id (plan risk 6).
