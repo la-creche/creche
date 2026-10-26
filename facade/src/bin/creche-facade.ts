@@ -4,15 +4,25 @@
 //
 // This file is the composition root and nothing else.
 
-import { facadeApp, strictStream, strictWriter } from "../acp.js";
+import { readSupervisorEnv } from "../env.js";
+import { SupervisorLock } from "../lock.js";
 import { claimStdout, say } from "../stdio.js";
+import { runSupervisor } from "../supervisor.js";
+import { BEAT_DEADLINE_MS } from "../vectors.js";
 
 const stdout = claimStdout();
-const connection = facadeApp().connect(strictStream(process.stdin, strictWriter(stdout.writeLine, say)));
+const env = readSupervisorEnv(process.env);
 
-say("serving ACP v1 on stdio");
-
-void connection.closed.then(() => {
-  say("stdin closed");
-  stdout.exit(0);
-});
+if (env.ok) {
+  runSupervisor({
+    input: process.stdin,
+    stdout,
+    say,
+    lock: new SupervisorLock(env.controlDir, env.sandbox),
+    deadlineMs: BEAT_DEADLINE_MS,
+    runtime: null,
+  });
+} else {
+  say(env.detail);
+  stdout.exit(env.exitCode);
+}

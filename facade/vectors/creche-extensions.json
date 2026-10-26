@@ -4,6 +4,7 @@
   "max_line_bytes": 1048576,
   "beat_interval_s": 30,
   "missed_beats_allowed": 2,
+  "lock": { "file": "supervisor.lock", "beat_s": 5 },
   "initialize": {
     "meta_keys": [],
     "request": {
