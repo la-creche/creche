@@ -7,6 +7,9 @@
 
 import type { DatabaseSync } from "node:sqlite";
 
+import { triggerOf } from "./creche-meta.js";
+import type { Trigger } from "./creche-meta.js";
+
 /** How long a write waits while Flue holds the file, in milliseconds. */
 const BUSY_TIMEOUT_MS = 5000;
 
@@ -19,6 +22,12 @@ export interface SessionRow {
   readonly cwd: string;
   readonly createdAt: string;
   readonly updatedAt: string;
+  /** `creche/job` of `session/new`. */
+  readonly jobId: string | null;
+  /** The ID of `creche/delegation`. */
+  readonly delegation: string | null;
+  /** `creche/trigger`. A stored text that does not check reads as null. */
+  readonly trigger: Trigger | null;
 }
 
 export interface SessionPage {
@@ -36,8 +45,14 @@ const SCHEMA = `
     title TEXT,
     cwd TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    job_id TEXT,
+    delegation TEXT,
+    trigger_json TEXT
   )`;
+
+/** The columns that a table of an older facade does not have. */
+const ADDED_COLUMNS = ["job_id", "delegation", "trigger_json"] as const;
 
 interface Raw {
   readonly seq: number;
@@ -46,23 +61,56 @@ interface Raw {
   readonly cwd: string;
   readonly created_at: string;
   readonly updated_at: string;
+  readonly job_id: string | null;
+  readonly delegation: string | null;
+  readonly trigger_json: string | null;
+}
+
+function parsedTrigger(text: string | null): Trigger | null {
+  try {
+    return text === null ? null : triggerOf(JSON.parse(text));
+  } catch {
+    return null;
+  }
 }
 
 function toRow(raw: Raw): SessionRow {
-  return { id: raw.id, title: raw.title, cwd: raw.cwd, createdAt: raw.created_at, updatedAt: raw.updated_at };
+  return {
+    id: raw.id,
+    title: raw.title,
+    cwd: raw.cwd,
+    createdAt: raw.created_at,
+    updatedAt: raw.updated_at,
+    jobId: raw.job_id,
+    delegation: raw.delegation,
+    trigger: parsedTrigger(raw.trigger_json),
+  };
 }
 
-const COLUMNS = "rowid AS seq, id, title, cwd, created_at, updated_at";
+const COLUMNS = "rowid AS seq, id, title, cwd, created_at, updated_at, job_id, delegation, trigger_json";
 
 export class SessionIndex {
   /** `db` is `flue.db`, the file that Flue's `sqlite()` holds too. */
   public constructor(private readonly db: DatabaseSync) {
     db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
     db.exec(SCHEMA);
+    const present = (db.prepare("PRAGMA table_info(creche_sessions)").all() as { name: string }[]).map((column) => column.name);
+    for (const column of ADDED_COLUMNS.filter((name) => !present.includes(name))) {
+      db.exec(`ALTER TABLE creche_sessions ADD COLUMN ${column} TEXT`);
+    }
   }
 
-  public create(id: string, cwd: string, at: string): void {
-    this.db.prepare("INSERT INTO creche_sessions (id, cwd, created_at, updated_at) VALUES (?, ?, ?, ?)").run(id, cwd, at, at);
+  public create(id: string, cwd: string, at: string, jobId: string | null = null): void {
+    this.db
+      .prepare("INSERT INTO creche_sessions (id, cwd, created_at, updated_at, job_id) VALUES (?, ?, ?, ?, ?)")
+      .run(id, cwd, at, at, jobId);
+  }
+
+  /** Sets the delegation and the trigger once each. A later call keeps the first. */
+  public keepOnce(id: string, delegation: string | null, trigger: Trigger | null): void {
+    this.db
+      .prepare("UPDATE creche_sessions SET delegation = COALESCE(delegation, ?), trigger_json = COALESCE(trigger_json, ?) WHERE id = ?")
+      .run(delegation, trigger === null ? null : JSON.stringify(trigger), id);
   }
 
   public get(id: string): SessionRow | null {
