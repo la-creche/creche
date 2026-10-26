@@ -20,16 +20,16 @@ import httpx
 
 from .sessions import Reply
 
-#: A page must answer. `attendance` is on the same host, so a read that
-#: takes longer than this is an `attendance` that is not answering.
+#: A page must answer. `attendance` is on the same host, so a connect
+#: that takes longer than this is an `attendance` that is not answering.
 CONNECT_TIMEOUT_S: Final = 2.0
-READ_TIMEOUT_S: Final = 10.0
 
-#: A replayed stream is longer than a list call, and a page waits for it.
-STREAM_TIMEOUT_S: Final = 30.0
+#: A view read of `attendance` starts a relay to the facade and has 30
+#: seconds to answer. A read that takes longer than this is an
+#: `attendance` that is not answering.
+READ_TIMEOUT_S: Final = 35.0
 
-#: Contract 02 §5.5 answers NDJSON; every other read answers JSON.
-_STREAM_PATH: Final = "/events"
+_TIMEOUT: Final = httpx.Timeout(CONNECT_TIMEOUT_S, read=READ_TIMEOUT_S)
 
 #: What a page says when the client refuses a request. It names no part of
 #: the request.
@@ -50,7 +50,7 @@ class HttpTransport:
                 # Contract 02 §3 rule 4. The token appears here and in no
                 # URL, no log line and no page (invariant 13).
                 headers={"Authorization": f"Bearer {bearer}"},
-                timeout=_timeout(path),
+                timeout=_TIMEOUT,
             )
         except (httpx.LocalProtocolError, httpx.InvalidURL, UnicodeEncodeError):
             # The client itself refused a header or a path that HTTP cannot
@@ -77,9 +77,3 @@ def build_client(socket: Path | None, url: str) -> httpx.Client:
     transport = httpx.HTTPTransport(uds=str(socket)) if socket is not None else None
 
     return httpx.Client(base_url=url, transport=transport)
-
-
-def _timeout(path: str) -> httpx.Timeout:
-    read = STREAM_TIMEOUT_S if path.endswith(_STREAM_PATH) else READ_TIMEOUT_S
-
-    return httpx.Timeout(CONNECT_TIMEOUT_S, read=read)

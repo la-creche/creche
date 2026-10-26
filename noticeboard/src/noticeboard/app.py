@@ -214,14 +214,15 @@ def _routes(
     ) -> HTMLResponse:
         _require_family(family)
         _require_session(session)
-        body = pages.session_page(reader, family, session)
+        start = _offset_of(request.query_params, "start")
+        body = pages.session_page(reader, family, session, start)
 
         return render(request, "session.html", {"page": body})
 
     @app.get("/audit", response_class=HTMLResponse)
     def _audit(request: Request) -> HTMLResponse:  # pyright: ignore[reportUnusedFunction]
         wanted = _filter_of(request.query_params)
-        offset = _offset_of(request.query_params)
+        offset = _offset_of(request.query_params, "offset")
 
         return render(
             request,
@@ -424,9 +425,9 @@ def _one(query: Mapping[str, str], name: str) -> str:
     return query.get(name, "").strip()[:_MAX_QUERY_CHARS]
 
 
-def _offset_of(query: Mapping[str, str]) -> int:
+def _offset_of(query: Mapping[str, str], name: str) -> int:
     try:
-        return max(0, int(query.get("offset", "0")))
+        return max(0, int(query.get(name, "0")))
     except ValueError:
         return 0
 

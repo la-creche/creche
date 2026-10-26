@@ -26,9 +26,7 @@
 
 <h2>sandboxes</h2>
 <table>
-{# No "turns" column: `caregiver` cannot count a family's running turns.
-   The session table below carries the real number, per session, from
-   `attendance`. #}
+{# No "turns" column: `caregiver` cannot count a family's running turns. #}
 <thead><tr><th>id</th><th>state</th><th>power</th><th>image</th><th>size</th>
 <th>channel</th><th>ready</th></tr></thead>
 <tbody>
@@ -52,22 +50,20 @@
 <h2>sessions</h2>
 {{ problem(page.sessions.problem) }}
 <table>
-<thead><tr><th>title</th><th>door</th><th>state</th><th>turns</th>
-<th>last activity</th></tr></thead>
+<thead><tr><th>title</th><th>started by</th><th>last activity</th></tr></thead>
 <tbody>
 {% for one in page.sessions.rows %}
 <tr>
   <td><a href="/sessions/{{ one.family }}/{{ one.session }}">{{ one.title or one.session }}</a></td>
-  <td>{{ one.door or "—" }}</td>
-  <td>{{ one.state }}</td>
-  <td>{{ one.turns_running }} of {{ one.turns_total }}</td>
-  <td>{{ when(one.last_activity) }}</td>
+  <td>{{ one.origin or "—" }}</td>
+  <td>{{ when(one.updated) }}</td>
 </tr>
 {% else %}
-<tr><td colspan="5">no sessions</td></tr>
+<tr><td colspan="3">no sessions</td></tr>
 {% endfor %}
 </tbody>
 </table>
+{% if page.sessions.next_cursor %}<p class="foot">This list shows the newest sessions only.</p>{% endif %}
 
 {% if page.autonomous %}
 <h2>outcomes</h2>

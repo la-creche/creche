@@ -66,10 +66,8 @@ class Surface(enum.StrEnum):
     STATUS_OUTCOME = "status.outcome"
     #: One record of an audit day file of the chaperone (contract 04 §6).
     AUDIT_LINE = "audit.line"
-    #: The body of an answer of `attendance` (contract 02 §5).
+    #: The body of an answer of `attendance`.
     SESSION_ANSWER = "session.answer"
-    #: One line of the event stream of a session (contract 02 §8).
-    SESSION_JOURNAL_LINE = "session.journal_line"
 
 
 def read_object(

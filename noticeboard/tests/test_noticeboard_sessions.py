@@ -1,4 +1,4 @@
-"""`attendance` read as `view-ro` (contract 02)."""
+"""`attendance` read as `view-ro`, over its two read-only view routes."""
 
 from __future__ import annotations
 
@@ -8,44 +8,145 @@ from pathlib import Path
 import pytest
 from noticeboard.jsonfiles import MAX_DOC_BYTES
 from noticeboard.sessions import (
-    MAX_LIST_BYTES,
-    MAX_STREAM_BYTES,
-    MAX_STREAM_LINES,
+    MAX_ANSWER_BYTES,
+    MAX_ENTRIES,
+    MAX_SESSIONS,
     SESSION_ID_MAX,
+    EntryKind,
     SessionReader,
-    UsageRow,
     is_session,
 )
 from noticeboard_helpers import (
+    SESSION,
     FakeAttendance,
     Notices,
     deep_object,
-    journal_line,
-    ndjson,
-    session_doc,
-    turn_doc,
+    said,
+    tool_entry,
+    transcript_doc,
+    view_row,
     write_token,
 )
 
-LIST_PATH = "/v1/sessions"
 CHAT = "chat"
-OWUI = "owui-3f2a9c41-77b0-4a1e-9a4c-1d0e5f8b2c33"
-DETAIL_PATH = f"/v1/sessions/{CHAT}/{OWUI}"
-EVENTS_PATH = f"{DETAIL_PATH}/events"
+LIST_PATH = f"/families/{CHAT}/sessions"
+ONE_PATH = f"{LIST_PATH}/{SESSION}"
 
 #: U+2028. Built with `chr` so the source file holds no invisible character.
 LINE_SEP = chr(0x2028)
+
+TRIGGER = {"kind": "dispatch", "name": "scrum-lead", "fired_at": "2026-10-25T12:00:00Z"}
 
 
 def reader(tmp_path: Path, fake: FakeAttendance) -> SessionReader:
     return SessionReader(transport=fake, token_file=write_token(tmp_path))
 
 
+def test_the_session_list_reads_the_view_route(tmp_path: Path) -> None:
+    fake = FakeAttendance()
+    fake.answer(
+        LIST_PATH,
+        {
+            "sessions": [
+                view_row(),
+                view_row("s-2", title=None, job_id="job-1", trigger=TRIGGER),
+                view_row("s-3", delegation="vault-oracle"),
+            ],
+            "next_cursor": "c-2",
+        },
+    )
+
+    answer = reader(tmp_path, fake).sessions(CHAT)
+
+    assert fake.calls == [(LIST_PATH, {})]
+    assert answer.problem == ""
+    assert [one.session for one in answer.rows] == [SESSION, "s-2", "s-3"]
+    assert [one.family for one in answer.rows] == [CHAT] * 3
+    assert answer.rows[0].title == "Boiler service date"
+    assert answer.rows[1].title == ""
+    assert [one.origin for one in answer.rows] == ["", "trigger dispatch scrum-lead", "delegation"]
+    assert answer.rows[1].job_id == "job-1"
+    assert answer.next_cursor == "c-2"
+
+
+def test_a_cursor_goes_to_the_query(tmp_path: Path) -> None:
+    fake = FakeAttendance()
+    fake.answer(LIST_PATH, {"sessions": [], "next_cursor": None})
+
+    answer = reader(tmp_path, fake).sessions(CHAT, cursor="c-2")
+
+    assert fake.calls == [(LIST_PATH, {"cursor": "c-2"})]
+    assert answer.next_cursor == ""
+
+
+def test_the_transcript_reads_one_page_of_entries(tmp_path: Path) -> None:
+    fake = FakeAttendance()
+    entries = [
+        said(0, "user", "when is the boiler due?"),
+        tool_entry(1),
+        said(2, "thought", "the answer is in the result"),
+        said(3, "agent", "In March."),
+    ]
+    fake.answer(ONE_PATH, transcript_doc(entries, next_start=4, truncated=True))
+
+    page = reader(tmp_path, fake).transcript(CHAT, SESSION)
+
+    assert fake.calls == [(ONE_PATH, {})]
+    assert page.problem == ""
+    assert [one.kind for one in page.entries] == [
+        EntryKind.USER,
+        EntryKind.TOOL_CALL,
+        EntryKind.THOUGHT,
+        EntryKind.AGENT,
+    ]
+    assert page.entries[0].text == "when is the boiler due?"
+    assert page.entries[1].title == "kagi__kagi_search_fetch"
+    assert page.entries[1].status == "completed"
+    assert page.entries[1].text == "The boiler is due in March."
+    assert page.next_start == 4
+    assert page.truncated
+
+
+def test_a_later_page_of_the_transcript_names_its_start(tmp_path: Path) -> None:
+    fake = FakeAttendance()
+    fake.answer(ONE_PATH, transcript_doc([said(4, "agent", "Yes.")]))
+
+    page = reader(tmp_path, fake).transcript(CHAT, SESSION, start=4)
+
+    assert fake.calls == [(ONE_PATH, {"start": "4"})]
+    assert page.next_start is None
+    assert [one.position for one in page.entries] == [4]
+
+
+def test_an_entry_of_another_kind_is_a_problem_and_hides_no_other(tmp_path: Path) -> None:
+    fake = FakeAttendance()
+    entries = [said(0, "user", "hi"), said(1, "plan", "x"), said(2, "agent", "hello")]
+    fake.answer(ONE_PATH, transcript_doc(entries))
+
+    page = reader(tmp_path, fake).transcript(CHAT, SESSION)
+
+    assert [one.text for one in page.entries] == ["hi", "hello"]
+    assert page.unread == ("an entry of the transcript has the kind 'plan'",)
+    assert page.problem == ""
+
+
+def test_the_list_and_the_transcript_are_capped(tmp_path: Path) -> None:
+    fake = FakeAttendance()
+    fake.answer(LIST_PATH, {"sessions": [view_row(f"s-{n}") for n in range(MAX_SESSIONS + 5)]})
+    fake.answer(ONE_PATH, transcript_doc([said(n, "user", "x") for n in range(MAX_ENTRIES + 5)]))
+
+    listed = reader(tmp_path, fake).sessions(CHAT)
+    page = reader(tmp_path, fake).transcript(CHAT, SESSION)
+
+    assert len(listed.rows) == MAX_SESSIONS
+    assert len(page.entries) == MAX_ENTRIES
+
+
 @pytest.mark.parametrize(
     "value",
-    ["a", "0", "A.b_c-d", OWUI, "auto-01J9ZQ5V7Y8X4W3T2S1R0QPNMK", "a..b", "a" * SESSION_ID_MAX],
+    ["a", "0", "A.b_c-d", SESSION, "auto-01J9ZQ5V7Y8X4W3T2S1R0QPNMK", "a..b", "a" * SESSION_ID_MAX],
 )
-def test_a_session_id_of_contract_02_is_taken(value: str) -> None:
+def test_a_session_id_is_taken(value: str) -> None:
     assert is_session(value)
 
 
@@ -64,7 +165,7 @@ def test_a_session_id_of_contract_02_is_taken(value: str) -> None:
         "a:b",
         "a%2Fb",
         "a\tb",
-        "\u00e4",
+        "ä",
         "a" + LINE_SEP + "b",
         "a" * (SESSION_ID_MAX + 1),
         "\na",
@@ -76,23 +177,12 @@ def test_a_text_that_is_no_session_id_is_refused(value: str) -> None:
     assert not is_session(value)
 
 
-def test_the_session_list_is_read(tmp_path: Path) -> None:
-    fake = FakeAttendance()
-    fake.answer(LIST_PATH, {"sessions": [session_doc()], "next_cursor": None})
-
-    answer = reader(tmp_path, fake).sessions(family=CHAT)
-
-    assert answer.problem == ""
-    assert [one.title for one in answer.rows] == ["Boiler service date"]
-    assert answer.next_cursor == ""
-
-
 def test_the_token_never_reaches_the_query(tmp_path: Path) -> None:
     """Invariant 13. The bearer is its own argument, so no query can hold it."""
     fake = FakeAttendance()
     fake.answer(LIST_PATH, {"sessions": []})
 
-    reader(tmp_path, fake).sessions(family=CHAT)
+    reader(tmp_path, fake).sessions(CHAT)
 
     _, params = fake.calls[0]
     assert "v" * 40 not in json.dumps(params)
@@ -101,7 +191,7 @@ def test_the_token_never_reaches_the_query(tmp_path: Path) -> None:
 
 def test_a_missing_token_file_reports_and_makes_no_call(tmp_path: Path) -> None:
     fake = FakeAttendance()
-    answer = SessionReader(transport=fake, token_file=tmp_path / "gone.token").sessions()
+    answer = SessionReader(transport=fake, token_file=tmp_path / "gone.token").sessions(CHAT)
 
     assert "cannot read the noticeboard-ro token" in answer.problem
     assert fake.calls == []
@@ -109,7 +199,7 @@ def test_a_missing_token_file_reports_and_makes_no_call(tmp_path: Path) -> None:
 
 def test_an_empty_token_file_is_refused(tmp_path: Path) -> None:
     fake = FakeAttendance()
-    answer = SessionReader(transport=fake, token_file=write_token(tmp_path, "")).sessions()
+    answer = SessionReader(transport=fake, token_file=write_token(tmp_path, "")).sessions(CHAT)
 
     assert "empty" in answer.problem
     assert fake.calls == []
@@ -121,67 +211,32 @@ def test_a_token_file_that_is_not_text_reports_and_makes_no_call(tmp_path: Path)
     token_file = write_token(tmp_path)
     token_file.write_bytes(b"\xff\xfe" + b"v" * 40)
 
-    answer = SessionReader(transport=fake, token_file=token_file).sessions()
+    answer = SessionReader(transport=fake, token_file=token_file).sessions(CHAT)
 
     assert "token" in answer.problem
     assert fake.calls == []
 
 
-def test_the_door_comes_from_the_session_id_prefix(tmp_path: Path) -> None:
-    fake = FakeAttendance()
-    fake.answer(
-        LIST_PATH,
-        {
-            "sessions": [
-                session_doc(session=OWUI),
-                session_doc(session="tui-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK"),
-                session_doc(session="job-01JBQ80M4F7S2YQ1VZK6W3TDEN"),
-                session_doc(session="auto-01JBQ81P5G8T3ZR2WAL7X4UEFP"),
-            ]
-        },
-    )
-
-    answer = reader(tmp_path, fake).sessions()
-
-    assert [one.door for one in answer.rows] == ["owui", "tui", "delegate", "trigger"]
-
-
-def test_an_unknown_prefix_falls_back_to_the_lease_holder(tmp_path: Path) -> None:
-    lease = {
-        "holder": "tui",
-        "door_instance": "tui-a",
-        "since": "2026-09-19T11:59:00Z",
-        "expires_at": "2026-09-19T12:00:00Z",
-        "turn": None,
-    }
-    fake = FakeAttendance()
-    fake.answer(LIST_PATH, {"sessions": [session_doc(session="legacy-1", writer=lease)]})
-
-    answer = reader(tmp_path, fake).sessions()
-
-    assert answer.rows[0].door == "tui"
-
-
 def test_a_refusal_becomes_a_sentence_not_an_exception(tmp_path: Path) -> None:
     fake = FakeAttendance()
     fake.answer(
-        LIST_PATH,
-        {"error": {"code": "forbidden", "message": "this token may not read chat"}},
-        status=403,
+        ONE_PATH,
+        {"error": {"code": "sandbox_unavailable", "message": "family chat facade gave no answer"}},
+        status=503,
     )
 
-    answer = reader(tmp_path, fake).sessions()
+    page = reader(tmp_path, fake).transcript(CHAT, SESSION)
 
-    assert answer.rows == ()
-    assert "forbidden" in answer.problem
-    assert "403" in answer.problem
+    assert page.entries == ()
+    assert "sandbox_unavailable" in page.problem
+    assert "503" in page.problem
 
 
 def test_a_dead_attendance_becomes_a_report(tmp_path: Path) -> None:
     fake = FakeAttendance()
     fake.fault = "cannot reach attendance: ConnectError: no socket"
 
-    answer = reader(tmp_path, fake).sessions()
+    answer = reader(tmp_path, fake).sessions(CHAT)
 
     assert answer.rows == ()
     assert "cannot reach attendance" in answer.problem
@@ -191,7 +246,7 @@ def test_a_malformed_body_becomes_a_report(tmp_path: Path) -> None:
     fake = FakeAttendance()
     fake.answer(LIST_PATH, b"{ not json")
 
-    answer = reader(tmp_path, fake).sessions()
+    answer = reader(tmp_path, fake).sessions(CHAT)
 
     assert answer.rows == ()
     assert "not JSON" in answer.problem
@@ -209,15 +264,15 @@ def recorded(monkeypatch: pytest.MonkeyPatch) -> Notices:
 def test_a_body_that_nests_too_deep_becomes_a_report(tmp_path: Path) -> None:
     fake = FakeAttendance()
     fake.answer(LIST_PATH, deep_object())
-    fake.answer(DETAIL_PATH, deep_object())
+    fake.answer(ONE_PATH, deep_object())
 
-    listed = reader(tmp_path, fake).sessions()
-    detail = reader(tmp_path, fake).detail(CHAT, OWUI)
+    listed = reader(tmp_path, fake).sessions(CHAT)
+    page = reader(tmp_path, fake).transcript(CHAT, SESSION)
 
     assert listed.rows == ()
     assert listed.problem == f"attendance's answer {NOT_STRICT}"
-    assert detail.session is None
-    assert detail.problem == f"attendance's answer {NOT_STRICT}"
+    assert page.entries == ()
+    assert page.problem == f"attendance's answer {NOT_STRICT}"
 
 
 def test_an_answer_that_is_not_strict_records_a_notice_of_the_family(
@@ -225,14 +280,12 @@ def test_an_answer_that_is_not_strict_records_a_notice_of_the_family(
 ) -> None:
     fake = FakeAttendance()
     fake.answer(LIST_PATH, b'{"sessions": [], "next_cursor": NaN}')
-    fake.answer(DETAIL_PATH, b'{"session": "a", "session": "b"}')
+    fake.answer(ONE_PATH, b'{"session_id": "a", "session_id": "b"}')
 
-    reader(tmp_path, fake).sessions()
-    reader(tmp_path, fake).sessions(family=CHAT)
-    reader(tmp_path, fake).detail(CHAT, OWUI)
+    reader(tmp_path, fake).sessions(CHAT)
+    reader(tmp_path, fake).transcript(CHAT, SESSION)
 
     assert recorded.calls == [
-        ("session.answer", "constant", None, True),
         ("session.answer", "constant", CHAT, True),
         ("session.answer", "duplicate_key", CHAT, True),
     ]
@@ -240,25 +293,24 @@ def test_an_answer_that_is_not_strict_records_a_notice_of_the_family(
 
 def test_a_refusal_that_is_not_strict_records_a_notice(tmp_path: Path, recorded: Notices) -> None:
     fake = FakeAttendance()
-    fake.answer(EVENTS_PATH, b'{"error": {"code": "forbidden", "retry": NaN}}', status=403)
+    fake.answer(ONE_PATH, b'{"error": {"code": "forbidden", "retry": NaN}}', status=403)
 
-    stream = reader(tmp_path, fake).events(CHAT, OWUI)
+    page = reader(tmp_path, fake).transcript(CHAT, SESSION)
 
-    assert stream.problems == ("attendance answered 403 with no error code",)
+    assert page.problem == "attendance answered 403 with no error code"
     assert recorded.calls == [("session.answer", "constant", CHAT, True)]
 
 
-def test_a_refusal_past_the_cap_of_the_stream_records_a_notice_of_its_size(
+def test_a_refusal_past_the_cap_records_a_notice_of_its_size(
     tmp_path: Path, recorded: Notices
 ) -> None:
-    """A refusal has the cap of the stream."""
     fake = FakeAttendance()
-    body = b'{"error": {"code": "forbidden"}}'.ljust(MAX_STREAM_BYTES + 1)
-    fake.answer(EVENTS_PATH, body, status=403)
+    body = b'{"error": {"code": "forbidden"}}'.ljust(MAX_ANSWER_BYTES + 1)
+    fake.answer(LIST_PATH, body, status=403)
 
-    stream = reader(tmp_path, fake).events(CHAT, OWUI)
+    listed = reader(tmp_path, fake).sessions(CHAT)
 
-    assert stream.problems == ("attendance answered 403 with no error code",)
+    assert listed.problem == "attendance answered 403 with no error code"
     assert recorded.calls == [("session.answer", "too_large", CHAT, True)]
 
 
@@ -268,152 +320,8 @@ def test_an_answer_past_the_cap_of_a_document_still_reads(tmp_path: Path) -> Non
     padding = "x" * (MAX_DOC_BYTES + 1)
     fake.answer(LIST_PATH, {"sessions": [], "next_cursor": padding})
 
-    listed = reader(tmp_path, fake).sessions()
+    listed = reader(tmp_path, fake).sessions(CHAT)
 
-    assert MAX_DOC_BYTES < len(padding) < MAX_LIST_BYTES
+    assert MAX_DOC_BYTES < len(padding) < MAX_ANSWER_BYTES
     assert listed.problem == ""
     assert listed.next_cursor == padding[:500]
-
-
-def test_the_turns_carry_their_state_and_usage(tmp_path: Path) -> None:
-    fake = FakeAttendance()
-    body = session_doc()
-    body["turns"] = [turn_doc(), turn_doc(turn="01K5J9QWB2M4N6Q8S0V2W4Y6A8", state="running")]
-    fake.answer(DETAIL_PATH, body)
-
-    answer = reader(tmp_path, fake).detail(CHAT, OWUI)
-
-    assert answer.session is not None
-    assert [one.state for one in answer.turns] == ["settled", "running"]
-    assert answer.turns[0].usage.cost_usd == 0.014
-    assert answer.turns[0].usage.tokens == 4308
-    assert answer.turns[1].running
-
-
-def test_a_turn_without_usage_reads_zero_not_a_crash(tmp_path: Path) -> None:
-    fake = FakeAttendance()
-    body = session_doc()
-    body["turns"] = [turn_doc(usage=None)]
-    fake.answer(DETAIL_PATH, body)
-
-    answer = reader(tmp_path, fake).detail(CHAT, OWUI)
-
-    assert answer.turns[0].usage.tokens == 0
-    assert answer.turns[0].usage.cost_usd is None
-
-
-def test_the_token_sum_has_a_text_for_each_usage() -> None:
-    """A sum past the digit limit of the interpreter reads `unknown`."""
-    longest = int("9" * 4300)
-
-    assert UsageRow(input=4120, output=188).tokens_text == "4308"
-    assert UsageRow(input=longest, output=longest).tokens_text == "unknown"
-
-
-def test_the_event_stream_is_split_on_line_feed_alone(tmp_path: Path) -> None:
-    """Contract 02 §8: U+2028 is legal inside a JSON string."""
-    fake = FakeAttendance()
-    fake.answer(
-        EVENTS_PATH,
-        json.dumps(
-            journal_line(1, "note", {"text": f"one{LINE_SEP}two"}), ensure_ascii=False
-        ).encode("utf-8")
-        + b"\n",
-    )
-
-    stream = reader(tmp_path, fake).events(CHAT, OWUI)
-
-    assert len(stream.lines) == 1
-    assert stream.problems == ()
-
-
-def test_the_stream_asks_for_a_replay_and_never_follows(tmp_path: Path) -> None:
-    fake = FakeAttendance()
-    fake.answer(EVENTS_PATH, ndjson([journal_line(7, "note", {})]))
-
-    reader(tmp_path, fake).events(CHAT, OWUI, from_seq=6)
-
-    _, params = fake.calls[0]
-    assert params == {"from_seq": "6", "follow": "false"}
-
-
-def test_a_broken_journal_line_never_hides_the_rest(tmp_path: Path) -> None:
-    fake = FakeAttendance()
-    fake.answer(EVENTS_PATH, ndjson([journal_line(1, "note", {})]) + b"{ broken\n")
-
-    stream = reader(tmp_path, fake).events(CHAT, OWUI)
-
-    assert len(stream.lines) == 1
-    assert stream.problems
-
-
-def test_a_journal_line_that_nests_too_deep_never_hides_the_rest(tmp_path: Path) -> None:
-    fake = FakeAttendance()
-    fake.answer(EVENTS_PATH, ndjson([journal_line(1, "note", {})]) + deep_object() + b"\n")
-
-    stream = reader(tmp_path, fake).events(CHAT, OWUI)
-
-    assert len(stream.lines) == 1
-    assert stream.problems == (f"a journal line {NOT_STRICT}",)
-
-
-def test_a_journal_line_past_the_cap_of_a_document_still_reads(tmp_path: Path) -> None:
-    """A journal line has the cap of the stream, and not the cap of a file."""
-    fake = FakeAttendance()
-    text = "x" * (MAX_DOC_BYTES + 1)
-    fake.answer(EVENTS_PATH, ndjson([journal_line(1, "note", {"text": text})]))
-
-    stream = reader(tmp_path, fake).events(CHAT, OWUI)
-
-    assert MAX_DOC_BYTES < len(text) < MAX_STREAM_BYTES
-    assert stream.problems == ()
-    assert len(stream.lines) == 1
-
-
-def test_a_journal_line_that_is_not_strict_records_a_notice_of_the_family(
-    tmp_path: Path, recorded: Notices
-) -> None:
-    fake = FakeAttendance()
-    broken = b'{"seq": 2, "kind": "note", "body": {"x": "\\ud800"}}\n'
-    fake.answer(EVENTS_PATH, ndjson([journal_line(1, "note", {})]) + broken)
-
-    stream = reader(tmp_path, fake).events(CHAT, OWUI)
-
-    assert len(stream.lines) == 1
-    assert stream.problems == (f"a journal line {NOT_STRICT}",)
-    assert recorded.calls == [("session.journal_line", "lone_surrogate", CHAT, True)]
-
-
-def test_an_enormous_stream_is_capped_and_says_so(tmp_path: Path) -> None:
-    fake = FakeAttendance()
-    rows = [journal_line(one, "note", {}) for one in range(MAX_STREAM_LINES + 5)]
-    fake.answer(EVENTS_PATH, ndjson(rows))
-
-    stream = reader(tmp_path, fake).events(CHAT, OWUI)
-
-    assert len(stream.lines) == MAX_STREAM_LINES
-    assert stream.truncated
-    assert stream.problems
-
-
-def test_the_list_limit_is_held_to_the_contract_cap(tmp_path: Path) -> None:
-    fake = FakeAttendance()
-    fake.answer(LIST_PATH, {"sessions": []})
-
-    reader(tmp_path, fake).sessions(limit=9999)
-
-    _, params = fake.calls[0]
-    assert params["limit"] == "200"
-
-
-def test_free_labels_are_bounded(tmp_path: Path) -> None:
-    """§4.2 calls labels free strings, so a family writes them."""
-    labels = {f"k{index}": "x" * 900 for index in range(60)}
-    fake = FakeAttendance()
-    fake.answer(LIST_PATH, {"sessions": [session_doc(labels=labels)]})
-
-    answer = reader(tmp_path, fake).sessions()
-
-    kept = answer.rows[0].labels
-    assert len(kept) == 20
-    assert all(len(one) <= 500 for one in kept.values())

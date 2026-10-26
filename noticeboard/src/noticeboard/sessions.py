@@ -1,20 +1,29 @@
-"""`attendance` as the noticeboard reads it: principal `view-ro` (contract 02).
+"""`attendance` as the noticeboard reads it: principal `view-ro`.
 
-The noticeboard holds the weakest token in the system. Contract 02 §3.1 gives
-`view-ro` every family, no session id of its own, and no write at all, so
-this module offers three calls and no fourth: list sessions, read one
-session with its turns, and replay a session's event stream. Nothing here
-can create, steer, stop or delete, because there is no code for it.
+The noticeboard holds the weakest token in the system. `view-ro` reads
+every family and writes nothing, so this module offers two calls and no
+third: list the sessions of one family, and read one page of the
+transcript of one session. Nothing here can create, steer, stop or delete,
+because there is no code for it.
+
+`attendance` serves the two calls as read-only view routes:
+
+    GET /families/{family}/sessions          `session/list` of the facade
+    GET /families/{family}/sessions/{id}     `session/load` of the facade
+
+For each call, `attendance` opens one `acp-relay` to the family's facade,
+sends `initialize` and one read method, and answers JSON. The facade owns
+each conversation.
 
 Two shapes this module defends against.
 
 1. **An `attendance` that does not answer.** A page must still render. Every
    call returns its rows plus a `problem` string, never an exception, and
    the page shows the problem as a report (invariant 19).
-2. **An answer that is not what the contract says.** The body crosses a
+2. **An answer that is not what the route says.** The body crosses a
    process boundary, so it is untrusted input: every field is read through
-   `jsonfiles`, every list is capped, and a row that will not parse becomes
-   a row that says so (invariants 12 and 14).
+   `jsonfiles`, every list is capped, and an entry of a kind that the
+   reader does not know is a problem (invariants 12 and 14).
 
 The token is read from a file, never from the environment and never from
 argv, and it appears in one place: an `Authorization` header (invariant
@@ -23,6 +32,7 @@ argv, and it appears in one place: an `Authorization` header (invariant
 
 from __future__ import annotations
 
+import enum
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -32,45 +42,26 @@ from typing import Final, Protocol
 from . import jsonfiles
 from .jsonfiles import Json, Surface
 
-#: Contract 02 §5.2: 1 to 200, default 50.
-MAX_SESSION_LIMIT: Final = 200
+#: The cap of one answer. A transcript page of `attendance` holds 1 MiB of
+#: entries at most, and its JSON can be larger than that.
+MAX_ANSWER_BYTES: Final = 4 << 20
 
-#: Contract 02 §5.3: the newest N turns, at most 100.
-MAX_TURNS: Final = 100
-DEFAULT_TURNS: Final = 20
+#: The most sessions one list answer gives a page.
+MAX_SESSIONS: Final = 200
 
-#: A list body is small, but it crosses a process boundary all the same.
-MAX_LIST_BYTES: Final = 4 << 20
+#: The most entries of one transcript page of `attendance`.
+MAX_ENTRIES: Final = 500
 
-#: One replayed stream. A session's whole journal can be large, so the
-#: reader asks for a window (see `from_seq` in `events`) and still caps
-#: what it will hold.
-MAX_STREAM_BYTES: Final = 8 << 20
-MAX_STREAM_LINES: Final = 5_000
+#: The cap of one text of a transcript: the 64 KiB cap of `attendance`.
+#: A character has one byte or more, so no text that `attendance` sends
+#: passes it.
+MAX_ENTRY_CHARS: Final = 65_536
 
 _OK: Final = 200
 
-#: Contract 02 §2: a session id is 1 to 128 characters.
+#: A session id becomes one segment of a path, so a route checks it.
 SESSION_ID_MAX: Final = 128
 _SESSION_RE: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")
-
-#: Contract 02 §2's session id prefixes, mapped to the door that owns
-#: them. §3.1 names the matching tokens: `door-owui`, `door-tui`,
-#: `door-delegate`, `door-trigger`.
-#:
-#: CONTRACT-QUESTION: contract 02 §4.2 has no `door` field, and the session
-#: list shows one. The prefix is the only
-#: statement of origin that survives after a writer lease expires, so it
-#: is read first and `writer.holder` second.
-DOOR_BY_PREFIX: Final = (
-    ("owui-", "owui"),
-    ("tui-", "tui"),
-    ("job-", "delegate"),
-    ("auto-", "trigger"),
-)
-
-#: What a page shows for a count that it cannot write.
-NO_COUNT: Final = "unknown"
 
 
 def is_session(value: str) -> bool:
@@ -106,100 +97,43 @@ class Transport(Protocol):
     def get(self, path: str, params: Mapping[str, str], bearer: str) -> Reply: ...
 
 
-@dataclass(frozen=True)
-class WriterRow:
-    """Contract 02 §7.1. Null when nobody holds the lease."""
+class EntryKind(enum.StrEnum):
+    """The kind of one entry of a transcript page of `attendance`."""
 
-    holder: str
-    door_instance: str
-    since: str
-    expires_at: str
-    turn: str
-
-
-@dataclass(frozen=True)
-class UsageRow:
-    """Contract 02 §4.4's five members."""
-
-    input: int = 0
-    output: int = 0
-    cache_read: int = 0
-    cache_write: int = 0
-    cost_usd: float | None = None
-
-    @property
-    def tokens(self) -> int:
-        return self.input + self.output + self.cache_read + self.cache_write
-
-    @property
-    def tokens_text(self) -> str:
-        """The sum, as a page shows it.
-
-        The interpreter writes no text for an integer past its digit limit.
-        The page then shows `unknown`.
-        """
-        try:
-            return str(self.tokens)
-        except ValueError:
-            return NO_COUNT
-
-
-@dataclass(frozen=True)
-class TurnRow:
-    """Contract 02 §4.4."""
-
-    turn: str
-    state: str
-    reason: str
-    started_at: str
-    ended_at: str
-    deadline_s: int
-    sandbox: str
-    approvals: int
-    usage: UsageRow
-    #: §11 rule 6 sets this when the persona was cut at 16 KiB. §4.4 does
-    #: not list it, so absent reads false.
-    persona_truncated: bool
-
-    @property
-    def running(self) -> bool:
-        """Contract 02 §4.3: three states are not terminal."""
-        return self.state in ("queued", "running", "waiting-approval")
+    USER = "user"
+    AGENT = "agent"
+    THOUGHT = "thought"
+    TOOL_CALL = "tool_call"
 
 
 @dataclass(frozen=True)
 class SessionRow:
-    """Contract 02 §4.2, plus the door this noticeboard derives."""
+    """One row of `GET /families/{family}/sessions`."""
 
+    #: The family of the route. A row of the answer names no family.
     family: str
     session: str
-    kind: str
     title: str
-    state: str
-    created_at: str
-    updated_at: str
-    journal_seq: int
-    turns_total: int
-    turns_running: int
-    sandbox: str
-    persona_hash: str
-    writer: WriterRow | None
-    labels: Mapping[str, str]
-    problem: str = ""
+    created: str
+    updated: str
+    job_id: str
+    delegation: str
+    trigger: str
 
     @property
-    def door(self) -> str:
-        """Which door made this session."""
-        for prefix, name in DOOR_BY_PREFIX:
-            if self.session.startswith(prefix):
-                return name
+    def origin(self) -> str:
+        """What started the session, as a page shows it. Empty for a
+        session that a person started through a door."""
+        if self.trigger:
+            return f"trigger {self.trigger}"
 
-        return self.writer.holder if self.writer is not None else ""
+        if self.delegation:
+            return "delegation"
 
-    @property
-    def last_activity(self) -> str:
-        """§4.2: `updated_at` is the last journal append."""
-        return self.updated_at
+        if self.job_id:
+            return "job"
+
+        return ""
 
 
 @dataclass(frozen=True)
@@ -210,90 +144,87 @@ class SessionList:
 
 
 @dataclass(frozen=True)
-class SessionDetail:
-    session: SessionRow | None = None
-    turns: tuple[TurnRow, ...] = ()
-    problem: str = ""
+class Entry:
+    """One entry of a transcript page. A tool call has a title, a status
+    and its result as `text`."""
+
+    position: int
+    kind: EntryKind
+    text: str
+    title: str = ""
+    status: str = ""
 
 
 @dataclass(frozen=True)
-class Stream:
-    """A replayed journal, as lines. `transcript.py` gives them meaning."""
+class TranscriptPage:
+    """One page of the replay of one session, oldest entry first."""
 
-    lines: tuple[Json, ...] = ()
-    #: Every bound that bit, and every line that would not parse.
-    problems: tuple[str, ...] = ()
+    entries: tuple[Entry, ...] = ()
+    #: The `start` of the next page, or None when this page is the last.
+    next_start: int | None = None
+    #: `attendance` stopped the replay at its cap of updates.
     truncated: bool = False
+    #: An entry of a kind that this reader does not know, one sentence for
+    #: each. The page shows the sentence in the place of the entry.
+    unread: tuple[str, ...] = ()
+    #: The answer gave no page.
+    problem: str = ""
 
 
 @dataclass
 class SessionReader:
-    """The three calls `view-ro` may make."""
+    """The two calls `view-ro` may make."""
 
     transport: Transport
     token_file: Path
     _token: str = field(default="", init=False, repr=False)
 
-    def sessions(self, family: str = "", limit: int = 50, cursor: str = "") -> SessionList:
-        """Contract 02 §5.2. Newest activity first, as `attendance` orders it."""
-        params: dict[str, str] = {"limit": str(min(limit, MAX_SESSION_LIMIT))}
-
-        if family:
-            params["family"] = family
-
-        if cursor:
-            params["cursor"] = cursor
-
-        body, problem = self._object("/v1/sessions", params, MAX_LIST_BYTES, family or None)
+    def sessions(self, family: str, cursor: str = "") -> SessionList:
+        """One page of the family's sessions, newest first, as the facade
+        orders them."""
+        params = {"cursor": cursor} if cursor else {}
+        body, problem = self._object(f"/families/{family}/sessions", params, family)
 
         if body is None:
             return SessionList(problem=problem)
 
-        rows = jsonfiles.children(body, "sessions", MAX_SESSION_LIMIT)
+        rows = jsonfiles.children(body, "sessions", MAX_SESSIONS)
 
         return SessionList(
-            rows=tuple(_session(one) for one in rows),
-            next_cursor=jsonfiles.whole(body, "next_cursor"),
+            rows=tuple(_session(family, one) for one in rows),
+            next_cursor=jsonfiles.text(body, "next_cursor"),
         )
 
-    def detail(self, family: str, session: str, turns: int = DEFAULT_TURNS) -> SessionDetail:
-        """Contract 02 §5.3: the session object plus its newest turns."""
-        path = f"/v1/sessions/{family}/{session}"
-        params = {"turns": str(min(turns, MAX_TURNS))}
-        body, problem = self._object(path, params, MAX_LIST_BYTES, family)
+    def transcript(self, family: str, session: str, start: int = 0) -> TranscriptPage:
+        """One page of the transcript from the entry `start`."""
+        params = {"start": str(start)} if start > 0 else {}
+        body, problem = self._object(f"/families/{family}/sessions/{session}", params, family)
 
         if body is None:
-            return SessionDetail(problem=problem)
+            return TranscriptPage(problem=problem)
 
-        return SessionDetail(
-            session=_session(body),
-            turns=tuple(_turn(one) for one in jsonfiles.children(body, "turns", MAX_TURNS)),
+        entries: list[Entry] = []
+        unread: list[str] = []
+
+        for one in jsonfiles.children(body, "entries", MAX_ENTRIES):
+            entry = _entry(one)
+
+            if isinstance(entry, str):
+                unread.append(entry)
+                continue
+
+            entries.append(entry)
+
+        return TranscriptPage(
+            entries=tuple(entries),
+            next_start=_next_start(body),
+            truncated=jsonfiles.flag(body, "truncated"),
+            unread=tuple(unread),
         )
 
-    def events(self, family: str, session: str, from_seq: int = 0) -> Stream:
-        """Contract 02 §5.5, with `follow=false`.
-
-        A page is a snapshot, so the reader takes the replay and closes.
-        Following would hold a connection open for the life of a request
-        and give the reader nothing a refresh does not.
-        """
-        path = f"/v1/sessions/{family}/{session}/events"
-        params = {"from_seq": str(max(0, from_seq)), "follow": "false"}
-        reply = self._call(path, params)
-
-        if reply.problem:
-            return Stream(problems=(reply.problem,))
-
-        if reply.status != _OK:
-            return Stream(problems=(_refusal(reply, family),))
-
-        return _stream(reply.body, family)
-
-    def _object(
-        self, path: str, params: Mapping[str, str], limit: int, family: str | None
-    ) -> tuple[Json | None, str]:
-        """One answer of `attendance`. `family` is the family of the path or of
-        the query, for the notice of an answer that is not strict JSON."""
+    def _object(self, path: str, params: Mapping[str, str], family: str) -> tuple[Json | None, str]:
+        """One answer of `attendance`. `family` is the family of the path, for
+        the notice of an answer that is not strict JSON."""
         reply = self._call(path, params)
 
         if reply.problem:
@@ -302,13 +233,13 @@ class SessionReader:
         if reply.status != _OK:
             return None, _refusal(reply, family)
 
-        if len(reply.body) > limit:
-            return None, f"attendance answered over {limit} bytes; refusing to parse it"
+        if len(reply.body) > MAX_ANSWER_BYTES:
+            return None, f"attendance answered over {MAX_ANSWER_BYTES} bytes; refusing to parse it"
 
         body, problem = jsonfiles.parse_object(
             reply.body,
             "attendance's answer",
-            limit,
+            MAX_ANSWER_BYTES,
             surface=Surface.SESSION_ANSWER,
             family=family,
         )
@@ -349,16 +280,15 @@ class SessionReader:
         return found, ""
 
 
-def _refusal(reply: Reply, family: str | None) -> str:
+def _refusal(reply: Reply, family: str) -> str:
     """Contract 02 §14's error body, read as a sentence for a page.
 
-    A refusal has no size cap of its own. It has the cap of the largest
-    answer of this reader, the stream.
+    A refusal has the cap of an answer.
     """
     body, _ = jsonfiles.parse_object(
         reply.body,
         "attendance's refusal",
-        MAX_STREAM_BYTES,
+        MAX_ANSWER_BYTES,
         surface=Surface.SESSION_ANSWER,
         family=family,
     )
@@ -372,124 +302,60 @@ def _refusal(reply: Reply, family: str | None) -> str:
     return f"attendance refused: {code} ({reply.status}) {message}".rstrip()
 
 
-def _stream(raw: bytes, family: str) -> Stream:
-    """NDJSON to objects. LF is the only delimiter (contract 02 §8).
-
-    U+2028 and U+2029 are legal inside a JSON string, so a generic line
-    reader would cut one journal line into two. A line has the cap of the
-    whole stream.
-    """
-    problems: list[str] = []
-    truncated = False
-
-    if len(raw) > MAX_STREAM_BYTES:
-        raw = raw[:MAX_STREAM_BYTES]
-        problems.append(f"the stream passed {MAX_STREAM_BYTES} bytes and was cut")
-        truncated = True
-
-    lines: list[Json] = []
-
-    for one in raw.split(b"\n"):
-        if not one.strip():
-            continue
-
-        if len(lines) >= MAX_STREAM_LINES:
-            problems.append(f"stopped after {MAX_STREAM_LINES} journal lines")
-            truncated = True
-            break
-
-        body, problem = jsonfiles.parse_object(
-            one,
-            "a journal line",
-            MAX_STREAM_BYTES,
-            surface=Surface.SESSION_JOURNAL_LINE,
-            family=family,
-        )
-
-        if body is None:
-            problems.append(problem or "a journal line would not parse")
-            continue
-
-        lines.append(body)
-
-    return Stream(lines=tuple(lines), problems=tuple(problems), truncated=truncated)
-
-
-def _session(body: Json) -> SessionRow:
+def _session(family: str, body: Json) -> SessionRow:
     return SessionRow(
-        family=jsonfiles.whole(body, "family"),
-        session=jsonfiles.whole(body, "session"),
-        kind=jsonfiles.whole(body, "kind"),
+        family=family,
+        session=jsonfiles.whole(body, "id"),
         title=jsonfiles.text(body, "title"),
-        state=jsonfiles.whole(body, "state"),
-        created_at=jsonfiles.whole(body, "created_at"),
-        updated_at=jsonfiles.whole(body, "updated_at"),
-        journal_seq=jsonfiles.integer(body, "journal_seq"),
-        turns_total=jsonfiles.integer(body, "turns_total"),
-        turns_running=jsonfiles.integer(body, "turns_running"),
-        sandbox=jsonfiles.whole(body, "sandbox"),
-        persona_hash=jsonfiles.whole(body, "persona_hash"),
-        writer=_writer(body),
-        labels=_labels(body),
+        created=jsonfiles.whole(body, "created"),
+        updated=jsonfiles.whole(body, "updated"),
+        job_id=jsonfiles.whole(body, "job_id"),
+        delegation=jsonfiles.whole(body, "delegation"),
+        trigger=_trigger(body),
     )
 
 
-def _writer(body: Json) -> WriterRow | None:
-    found = jsonfiles.block(body, "writer")
+def _trigger(body: Json) -> str:
+    """The kind and the name of the trigger of a session, or empty."""
+    found = jsonfiles.block(body, "trigger")
 
     if found is None:
-        return None
+        return ""
 
-    return WriterRow(
-        holder=jsonfiles.whole(found, "holder"),
-        door_instance=jsonfiles.whole(found, "door_instance"),
-        since=jsonfiles.whole(found, "since"),
-        expires_at=jsonfiles.whole(found, "expires_at"),
-        turn=jsonfiles.whole(found, "turn"),
+    parts = (jsonfiles.whole(found, "kind"), jsonfiles.whole(found, "name"))
+
+    return " ".join(one for one in parts if one)
+
+
+def _entry(body: Json) -> Entry | str:
+    """One entry, or the problem of an entry of a kind this reader does
+    not know."""
+    kind = jsonfiles.whole(body, "kind")
+
+    if kind not in set(EntryKind):
+        return f"an entry of the transcript has the kind {kind[: jsonfiles.MAX_TEXT_CHARS]!r}"
+
+    if kind == EntryKind.TOOL_CALL:
+        return Entry(
+            position=jsonfiles.integer(body, "position"),
+            kind=EntryKind.TOOL_CALL,
+            text=jsonfiles.text(body, "result", MAX_ENTRY_CHARS),
+            title=jsonfiles.text(body, "title"),
+            status=jsonfiles.whole(body, "status"),
+        )
+
+    return Entry(
+        position=jsonfiles.integer(body, "position"),
+        kind=EntryKind(kind),
+        text=jsonfiles.text(body, "text", MAX_ENTRY_CHARS),
     )
 
 
-#: §4.2 calls `labels` "small free strings for the noticeboard". Free means a
-#: family can write anything into them, so the count and each value are
-#: capped before a page renders them.
-MAX_LABELS: Final = 20
+def _next_start(body: Json) -> int | None:
+    """The `next` of a page: an integer, or null for the last page."""
+    value = body.get("next")
 
+    if type(value) is int and value >= 0:
+        return value
 
-def _labels(body: Json) -> Mapping[str, str]:
-    found = jsonfiles.child(body, "labels")
-    kept: dict[str, str] = {}
-
-    for key in sorted(found)[:MAX_LABELS]:
-        value = found[key]
-
-        if isinstance(value, str):
-            kept[key[: jsonfiles.MAX_TEXT_CHARS]] = value[: jsonfiles.MAX_TEXT_CHARS]
-
-    return kept
-
-
-def _turn(body: Json) -> TurnRow:
-    return TurnRow(
-        turn=jsonfiles.whole(body, "turn"),
-        state=jsonfiles.whole(body, "state"),
-        reason=jsonfiles.whole(body, "reason"),
-        started_at=jsonfiles.whole(body, "started_at"),
-        ended_at=jsonfiles.whole(body, "ended_at"),
-        deadline_s=jsonfiles.integer(body, "deadline_s"),
-        sandbox=jsonfiles.whole(body, "sandbox"),
-        approvals=jsonfiles.integer(body, "approvals"),
-        usage=_usage(body),
-        persona_truncated=jsonfiles.flag(body, "persona_truncated"),
-    )
-
-
-def _usage(body: Json) -> UsageRow:
-    found = jsonfiles.child(body, "usage")
-
-    return UsageRow(
-        input=jsonfiles.integer(found, "input"),
-        output=jsonfiles.integer(found, "output"),
-        cache_read=jsonfiles.integer(found, "cache_read"),
-        cache_write=jsonfiles.integer(found, "cache_write"),
-        cost_usd=jsonfiles.number(found, "cost_usd"),
-    )
+    return None

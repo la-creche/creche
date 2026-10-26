@@ -26,22 +26,21 @@ from noticeboard_helpers import (
     CHAT_COMMENT,
     CHAT_FAMILY_TOML,
     NOW,
+    SESSION,
     FakeAttendance,
     browser_values,
     commit_count,
     git,
-    journal_line,
     make_registry,
     make_state_root,
-    ndjson,
-    session_doc,
-    turn_doc,
+    said,
+    transcript_doc,
+    view_row,
     write_token,
 )
 
 KEY = "k" * 40
 CHAT = "chat"
-OWUI = "owui-3f2a9c41-77b0-4a1e-9a4c-1d0e5f8b2c33"
 HOST = "noticeboard.example.test"
 
 #: A text that holds one half of a surrogate pair. JSON writes it as an escape.
@@ -97,27 +96,10 @@ def board(tmp_path: Path) -> Iterator[Harness]:
         access_key=KEY,
     )
     fake = FakeAttendance()
-    fake.answer("/v1/sessions", {"sessions": [session_doc()], "next_cursor": None})
-    detail = session_doc()
-    detail["turns"] = [turn_doc()]
-    fake.answer(f"/v1/sessions/{CHAT}/{OWUI}", detail)
+    fake.answer(f"/families/{CHAT}/sessions", {"sessions": [view_row()], "next_cursor": None})
     fake.answer(
-        f"/v1/sessions/{CHAT}/{OWUI}/events",
-        ndjson(
-            [
-                journal_line(41, "turn_started", {"prompt": "when is the boiler due?"}, "t1"),
-                journal_line(
-                    42,
-                    "pi_event",
-                    {
-                        "type": "message_update",
-                        "assistantMessageEvent": {"type": "text_delta", "delta": "In March."},
-                    },
-                    "t1",
-                ),
-                journal_line(43, "turn_settled", {"usage": {}}, "t1"),
-            ]
-        ),
+        f"/families/{CHAT}/sessions/{SESSION}",
+        transcript_doc([said(0, "user", "when is the boiler due?"), said(1, "agent", "In March.")]),
     )
     reader = SessionReader(transport=fake, token_file=write_token(state))
     # Staleness is a comparison against a clock, so the clock is pinned
@@ -371,19 +353,31 @@ def test_the_outcomes_of_a_family_come_from_its_own_directory(board: Harness) ->
     assert "01JBQ80M4F7S2YQ1VZK6W3TDEN" in answer.text
 
 
-def test_the_session_page_shows_the_transcript_and_the_turns(board: Harness) -> None:
-    answer = board.get(f"/sessions/{CHAT}/{OWUI}")
+def test_the_session_page_shows_the_transcript(board: Harness) -> None:
+    answer = board.get(f"/sessions/{CHAT}/{SESSION}")
 
     assert answer.status_code == 200
     assert "when is the boiler due?" in answer.text
     assert "In March." in answer.text
-    assert "settled" in answer.text
+    assert "later entries" not in answer.text
+
+
+def test_the_session_page_links_the_next_page_of_the_transcript(board: Harness) -> None:
+    board.fake.answer(
+        f"/families/{CHAT}/sessions/{SESSION}",
+        transcript_doc([said(4, "agent", "In March.")], next_start=5),
+    )
+
+    answer = board.get(f"/sessions/{CHAT}/{SESSION}?start=4")
+
+    assert board.fake.calls == [(f"/families/{CHAT}/sessions/{SESSION}", {"start": "4"})]
+    assert f"/sessions/{CHAT}/{SESSION}?start=5" in answer.text
 
 
 def test_a_dead_attendance_still_renders_the_session_page(board: Harness) -> None:
     board.fake.fault = "cannot reach attendance: ConnectError"
 
-    answer = board.get(f"/sessions/{CHAT}/{OWUI}")
+    answer = board.get(f"/sessions/{CHAT}/{SESSION}")
 
     assert answer.status_code == 200
     assert "cannot reach attendance" in answer.text
@@ -394,12 +388,10 @@ def test_a_count_past_64_bits_shows_the_answer_as_one_that_is_not_json(
 ) -> None:
     """An integer outside 64 bits is not strict JSON. The page shows the
     answer as one that it cannot read."""
-    usage = dict.fromkeys(("input", "output", "cache_read", "cache_write"), LONGEST_COUNT)
-    detail = session_doc()
-    detail["turns"] = [turn_doc(usage=usage)]
-    board.fake.answer(f"/v1/sessions/{CHAT}/{OWUI}", detail)
+    entry = said(0, "user", "x") | {"position": LONGEST_COUNT}
+    board.fake.answer(f"/families/{CHAT}/sessions/{SESSION}", transcript_doc([entry]))
 
-    answer = board.get(f"/sessions/{CHAT}/{OWUI}")
+    answer = board.get(f"/sessions/{CHAT}/{SESSION}")
 
     assert answer.status_code == 200
     assert "is not JSON" in answer.text
@@ -791,7 +783,7 @@ def test_a_save_answers_404_for_a_name_that_is_no_family_name(board: Harness, na
 def test_a_session_page_answers_404_for_a_family_that_is_no_family_name(
     board: Harness, family: str
 ) -> None:
-    answer = board.get(f"/sessions/{family}/{OWUI}")
+    answer = board.get(f"/sessions/{family}/{SESSION}")
 
     assert answer.status_code == 404
     assert board.fake.calls == []
@@ -821,10 +813,7 @@ def test_a_session_id_of_the_longest_form_reaches_its_page(board: Harness) -> No
     answer = board.get(f"/sessions/{CHAT}/{session}")
 
     assert answer.status_code == 200
-    assert [path for path, _ in board.fake.calls] == [
-        f"/v1/sessions/{CHAT}/{session}",
-        f"/v1/sessions/{CHAT}/{session}/events",
-    ]
+    assert [path for path, _ in board.fake.calls] == [f"/families/{CHAT}/sessions/{session}"]
 
 
 def test_the_fixture_family_is_the_one_the_registry_holds(board: Harness) -> None:

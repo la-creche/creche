@@ -28,11 +28,11 @@ from agent_family import (
     load_registry,
 )
 
-from . import auditfiles, statusdocs, transcript
+from . import auditfiles, statusdocs
 from .auditfiles import AuditFilter, AuditPage
 from .config import Config
 from .familyform import Form, form_of
-from .sessions import SessionList, SessionReader, SessionRow, TurnRow
+from .sessions import SessionList, SessionReader, TranscriptPage
 from .statusdocs import FamilyRow, IssueRow, OutcomeRow
 
 #: How many audit lines a family page shows before pointing at /audit.
@@ -40,11 +40,6 @@ FAMILY_AUDIT_LINES: Final = 10
 
 #: How many outcome records an autonomous family page shows.
 FAMILY_OUTCOMES: Final = 10
-
-#: How much of a session's journal one page replays. The window is taken
-#: from the END of the journal: `journal_seq` is gapless from 1, so
-#: `seq - WINDOW` is a legal `from_seq` and costs no extra call.
-TRANSCRIPT_WINDOW: Final = 400
 
 
 @dataclass(frozen=True)
@@ -76,10 +71,17 @@ class FamilyPage:
 @dataclass(frozen=True)
 class SessionPage:
     family: str
-    session: SessionRow | None
-    turns: tuple[TurnRow, ...]
-    entries: tuple[transcript.Entry, ...]
-    problems: tuple[str, ...] = ()
+    session: str
+    start: int
+    transcript: TranscriptPage
+
+    @property
+    def problems(self) -> tuple[str, ...]:
+        """The problem of the answer, then each entry that the reader did
+        not show."""
+        answer = (self.transcript.problem,) if self.transcript.problem else ()
+
+        return answer + self.transcript.unread
 
 
 @dataclass(frozen=True)
@@ -122,7 +124,7 @@ def family_page(config: Config, reader: SessionReader, name: str, now: datetime)
 
     return FamilyPage(
         row=row,
-        sessions=reader.sessions(family=name, limit=config.page_size),
+        sessions=reader.sessions(name),
         issues=issues,
         issues_problem=problem,
         outcomes=_outcomes(config, name, row),
@@ -155,33 +157,14 @@ def _outcomes(config: Config, name: str, row: FamilyRow) -> tuple[OutcomeRow, ..
     return statusdocs.read_outcomes(config.outcomes_dir, name, FAMILY_OUTCOMES)
 
 
-def session_page(reader: SessionReader, family: str, session: str) -> SessionPage:
-    """The transcript and the turns, read only."""
-    detail = reader.detail(family, session)
-    problems: list[str] = []
-
-    if detail.problem:
-        problems.append(detail.problem)
-
-    stream = reader.events(family, session, from_seq=_window(detail.session))
-    problems.extend(stream.problems)
-
+def session_page(reader: SessionReader, family: str, session: str, start: int) -> SessionPage:
+    """One page of the transcript, read only, from the entry `start`."""
     return SessionPage(
         family=family,
-        session=detail.session,
-        turns=detail.turns,
-        entries=transcript.fold(stream.lines),
-        problems=tuple(problems),
+        session=session,
+        start=start,
+        transcript=reader.transcript(family, session, start),
     )
-
-
-def _window(row: SessionRow | None) -> int:
-    """Where the replay starts. 0 for a session this noticeboard could not read,
-    which replays the whole journal and is bounded by the reader anyway."""
-    if row is None:
-        return 0
-
-    return max(0, row.journal_seq - TRANSCRIPT_WINDOW)
 
 
 def audit_page(config: Config, wanted: AuditFilter, offset: int) -> AuditPage:

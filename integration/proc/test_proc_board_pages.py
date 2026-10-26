@@ -65,8 +65,8 @@ PAGES = ["/", f"/families/{FAMILY}", f"/families/{REVIEW}", "/audit", f"/familie
 BAD_PARAMETERS = [
     "/families/no-such-family",
     "/families/no-such-family/edit",
-    f"/sessions/{FAMILY}/owui-no-such-session",
-    "/sessions/no-such-family/owui-x",
+    f"/sessions/{FAMILY}/no-such-session",
+    "/sessions/no-such-family/s-x",
 ]
 
 #: A route parameter that is no family name (contract 01 §2) and no session
@@ -75,7 +75,7 @@ NOT_AN_ID = [
     "/families/Not%20A%20Name",
     "/families/%2e%2e",
     "/families/Not%20A%20Name/edit",
-    "/sessions/Not%20A%20Name/owui-x",
+    "/sessions/Not%20A%20Name/s-x",
     f"/sessions/{FAMILY}/not%20an%20id",
 ]
 
@@ -178,7 +178,7 @@ async def test_each_page_is_html_with_no_script(board_alone: BoardStack) -> None
 
 async def test_a_page_answers_while_attendance_is_down(board_alone: BoardStack) -> None:
     """Invariant 20. The page says what it cannot see. It does not fail."""
-    session = f"owui-{uuid.uuid4()}"
+    session = str(uuid.uuid4())
 
     async with board_alone.client() as browser:
         home = await page_of(browser, "/")

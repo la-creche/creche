@@ -21,7 +21,7 @@ view that also applied would be a second writer to the same state.
 | why a family is invalid | the validation report |
 | what an autonomous run did | the outcome records |
 | every tool call and its decision | the chaperone's audit file, `/var/lib/chaperone/audit.jsonl` |
-| sessions, turns, the event stream | `attendance`, as the principal `view-ro` |
+| the sessions of a family, one page of a transcript | the two view routes of `attendance`, as the principal `view-ro` |
 | the family file behind the form | the registry checkout |
 
 ## Perimeter rules
@@ -57,8 +57,8 @@ any use. A value that fails answers 404.
     state.
 11. Spend is one number per family. `SandboxRow` has no spend field. A count
     comes from the service that can count it, or the page shows none.
-12. Key "settled" on the `turn_settled` line, never on the wrapped
-    `agent_settled` event.
+12. Read a session only through the view routes of `attendance`. The
+    noticeboard sends no ACP method and reads no file of the facade.
 
 ## The form
 
@@ -144,7 +144,7 @@ and `Referer` unchanged. `/healthz` and `/static/*` stay keyless.
 | `strictjson.py` | the strict reader and the strict writer of a JSON text. The file is a copy, and `bin/tests/test_strictjson_copies.py` holds each copy to the same bytes |
 | `notices.py` | the notice of a refused JSON text: one log line, and one row in the notice file that `bin/rework-watchdog.sh` reads. The file is a copy, and `bin/tests/test_strictjson_copies.py` holds each copy to the same bytes |
 | `rfc3339.py` | the one reader of a time text. The file is a copy, and `bin/tests/test_rfc3339_copies.py` holds each copy to the same bytes |
-| `sessions.py`, `attendancehttp.py`, `transcript.py` | `attendance` as `view-ro`, the wire, journal lines folded for a reader |
+| `sessions.py`, `attendancehttp.py` | the view routes of `attendance` as `view-ro`, and the wire |
 | `familyform.py`, `tomlout.py`, `tomlkeep.py`, `registrywrite.py` | the form, the whole file, the patched file, the commit |
 | `pages.py`, `app.py` | what each page needs, and the routes |
 | `verify.py` | `noticeboard-verify` |
@@ -162,8 +162,6 @@ prefixed `test_noticeboard_`.
 
 ## Known gaps
 
-- The session list derives the door from the session id prefix, then from
-  `writer.holder` (`sessions.py`).
 - No contract says how a view running as another user reads `view-ro.token`
   (`config.py`).
 - The base URL over the Unix socket is `http://sessiond`, never resolved
@@ -178,8 +176,7 @@ prefixed `test_noticeboard_`.
 - `strictjson.py` names the rule and the offset of the Rust check for a
   refused text of 1 MiB or less. For a longer refused text, it names the
   fault that the standard decoder finds, with no offset, and the two words
-  can differ. An answer of `attendance` has a cap of 4 MiB, and a line of
-  the event stream has a cap of 8 MiB.
+  can differ. An answer of `attendance` has a cap of 4 MiB.
 - No contract names the surface word of the validation report in a notice.
   `jsonfiles.Surface` gives the report the word `status.report`
   (`jsonfiles.py`).
