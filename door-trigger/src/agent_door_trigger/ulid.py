@@ -2,9 +2,8 @@
 
 Every ULID in the seven rework contracts is this exact alphabet and this
 exact length, "a session id's `<ulid>` suffix" named among them. `attendance`
-mints turn ids this same way; this door mints the `auto-<ulid>` session id
-for each firing and the turn's own `idempotency_key`, so the shape must
-already match before the two processes ever talk (contract 02 §2, §6).
+mints the `auto-<ulid>` session id of each job this same way. This door
+mints the `idempotency_key` of each firing.
 """
 
 from __future__ import annotations

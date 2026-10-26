@@ -43,7 +43,7 @@ from agent_door_owui import untrusted as owui_untrusted
 from agent_door_owui.app import create_app as create_owui_app
 from agent_door_owui.attendance import AttendanceClient as OwuiAttendance
 from agent_door_trigger import untrusted as trigger_untrusted
-from agent_door_trigger.attendance import AcceptedTurn, TurnRequest
+from agent_door_trigger.attendance import EnqueuedJob, TriggerJob
 from agent_door_trigger.config import AttendanceTarget, ServeConfig
 from agent_door_trigger.errors import AttendanceError
 from agent_door_trigger.routes import Route
@@ -1709,13 +1709,8 @@ class _CountingAttendance:
     def __init__(self) -> None:
         self.calls = 0
 
-    def ensure_session(self, family: str, session: str) -> None:
-        del family, session
-        self.calls += 1
-        raise AttendanceError("not_implemented", TAKEN, HTTP_NOT_IMPLEMENTED)
-
-    def accepted_turn(self, request: TurnRequest) -> AcceptedTurn:
-        del request
+    def enqueue(self, job: TriggerJob) -> EnqueuedJob:
+        del job
         self.calls += 1
         raise AttendanceError("not_implemented", TAKEN, HTTP_NOT_IMPLEMENTED)
 

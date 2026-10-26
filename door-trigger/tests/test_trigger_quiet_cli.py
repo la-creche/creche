@@ -10,7 +10,7 @@ from typing import Any
 
 import httpx
 import pytest
-from agent_door_trigger.attendance import AttendanceTarget, HttpAttendance
+from agent_door_trigger.attendance import JOBS_LIMIT, AttendanceTarget, HttpAttendance
 from agent_door_trigger.cli import execute_fire, main
 from agent_door_trigger.config import (
     ENV_ATTENDANCE_TOKEN_FILE,
@@ -33,7 +33,7 @@ def test_a_quiet_firing_starts_nothing_and_exits_zero(capsys: pytest.CaptureFixt
     code = execute_fire(attendance, FAMILY, None, None, rig.gate())
 
     assert code == ExitCode.ACCEPTED
-    assert attendance.requests == []
+    assert attendance.jobs == []
     assert capsys.readouterr().out.startswith(f"quiet: {FAMILY}: nothing changed since ")
 
 
@@ -49,12 +49,12 @@ def test_a_woken_firing_fires_and_keeps_its_session(capsys: pytest.CaptureFixtur
     session = fire_line.split()[0]
     assert rig.state.fired is not None
     assert rig.state.fired.session == session
-    assert attendance.ensured == [(FAMILY, session)]
+    assert [job.family for job in attendance.jobs] == [FAMILY]
 
 
 def test_a_refused_firing_keeps_nothing(capsys: pytest.CaptureFixture[str]) -> None:
     rig = Rig()
-    attendance = FakeAttendance(turn_error=AttendanceError("queue_full", "queue is full", 429))
+    attendance = FakeAttendance(error=AttendanceError("queue_full", "queue is full", 429))
 
     code = execute_fire(attendance, FAMILY, None, None, rig.gate())
 
@@ -75,7 +75,7 @@ def test_force_is_a_fire_flag(tmp_path: Path, capsys: pytest.CaptureFixture[str]
     assert f"chaperone=http://{os.environ[ENV_LAN_ADDRESS]}:{PEP_PORT}" in capsys.readouterr().out
 
 
-# --- HttpAttendance.any_live: contract 02 §5.2, as the gate asks it ---
+# --- HttpAttendance.any_live: the trigger jobs of the family, as the gate asks ---
 
 
 def _attendance(handler: Any) -> HttpAttendance:
@@ -84,26 +84,37 @@ def _attendance(handler: Any) -> HttpAttendance:
     return HttpAttendance(target, client=client)
 
 
-def test_a_listed_session_is_live() -> None:
+def _jobs(*statuses: str) -> dict[str, object]:
+    return {"jobs": [{"session": f"auto-{n}", "status": one} for n, one in enumerate(statuses)]}
+
+
+def test_a_running_job_is_live() -> None:
     seen: dict[str, object] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen["path"] = request.url.path
-        seen["query"] = dict(request.url.params)
+        seen["body"] = json.loads(request.content)
         seen["auth"] = request.headers.get("authorization")
-        return httpx.Response(200, json={"sessions": [{"session": "auto-A"}], "next_cursor": None})
+        return httpx.Response(200, json=_jobs("ended", "running"))
 
     assert _attendance(handler).any_live(FAMILY) is True
     assert seen == {
-        "path": "/v1/sessions",
-        "query": {"family": FAMILY, "limit": "1"},
+        "path": "/trigger/jobs",
+        "body": {"family": FAMILY, "limit": JOBS_LIMIT},
         "auth": "Bearer secret-token",
     }
 
 
-def test_no_listed_session_is_not_live() -> None:
+def test_a_queued_job_is_live() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=json.dumps({"sessions": [], "next_cursor": None}))
+        return httpx.Response(200, json=_jobs("queued"))
+
+    assert _attendance(handler).any_live(FAMILY) is True
+
+
+def test_only_ended_jobs_are_not_live() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_jobs("ended", "ended"))
 
     assert _attendance(handler).any_live(FAMILY) is False
 

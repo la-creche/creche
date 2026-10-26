@@ -2,7 +2,7 @@
 
 The trigger door. An autonomous family's sessions start from a timer or a
 webhook, never from a person. This package turns either firing into one
-`attendance` turn, as the principal `door-trigger`. The package is
+`attendance` job, as the principal `door-trigger`. The package is
 `agent_door_trigger`. The root `AGENTS.md` applies here too.
 
 Two processes, one shared core:
@@ -15,8 +15,10 @@ Two processes, one shared core:
 
 ## Rules
 
-- `fire.py` is the one place a firing becomes two `attendance` calls. The CLI
-  and the webhook route both call `fire_trigger()`.
+- `fire.py` is the one place a firing becomes an `attendance` call: one
+  `POST /trigger`. The CLI and the webhook route both call `fire_trigger()`.
+- `attendance` mints the job's `auto-<ulid>` id. The answer gives the id and
+  the job's status. This door mints the idempotency key of each firing.
 - The payload is data, never instructions. `payload.py` validates shape and
   size and hands the caller's bytes on unchanged. `fire.py` frames it as
   untrusted external data.
@@ -108,8 +110,13 @@ is `door-owui`'s. Basenames are unique across the workspace. Run
 - Routes read webhook names from the registry file, not from the status
   document, so a webhook added to a valid family can be routed before
   `caregiver` validates the edit (`routes.py`, `families.py`).
-- A firing's kind, name and time travel as three `trigger_*` labels
-  (`fire.py`).
+- The time of a firing in the prompt is this door's. The time in the
+  outcome record is `attendance`'s, when it enqueued the job (`fire.py`).
+- Each firing mints a new idempotency key. A second run of one firing by
+  systemd is a second job (`fire.py`).
+- The quiet check reads a job as live from `POST /trigger/jobs`. A job that
+  another family dispatched to the family is not counted
+  (`attendance.py`).
 - The quiet check reads `quiet:` from the registry file. An invalid file is
   not checked at all (`quiet/gate.py`).
 - The quiet check is a second reader of the chaperone's audit. A user unit

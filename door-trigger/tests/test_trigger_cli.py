@@ -8,7 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from agent_door_trigger.attendance import AcceptedTurn
+from agent_door_trigger.attendance import JobStatus
 from agent_door_trigger.cli import execute_fire, main
 from agent_door_trigger.config import (
     ENV_ATTENDANCE_TOKEN_FILE,
@@ -33,7 +33,7 @@ def _env(tmp_path: Path, **overrides: str) -> dict[str, str]:
 
 
 def test_a_cron_firing_prints_session_and_state(capsys: pytest.CaptureFixture[str]) -> None:
-    attendance = FakeAttendance(accepted=AcceptedTurn(turn="01T", state="queued", journal_seq=1))
+    attendance = FakeAttendance(status=JobStatus.QUEUED)
 
     code = execute_fire(attendance, "scrum-lead", None, None)
 
@@ -44,7 +44,7 @@ def test_a_cron_firing_prints_session_and_state(capsys: pytest.CaptureFixture[st
 
 
 def test_a_running_turn_is_also_accepted(capsys: pytest.CaptureFixture[str]) -> None:
-    attendance = FakeAttendance(accepted=AcceptedTurn(turn="01T", state="running", journal_seq=1))
+    attendance = FakeAttendance(status=JobStatus.RUNNING)
 
     code = execute_fire(attendance, "scrum-lead", None, None)
 
@@ -57,11 +57,11 @@ def test_a_webhook_style_fire_passes_the_trigger_name() -> None:
 
     execute_fire(attendance, "ha-review", "deploy-notify", None)
 
-    assert attendance.requests[0].labels["trigger_name"] == "deploy-notify"
+    assert attendance.jobs[0].name == "deploy-notify"
 
 
 def test_a_refusal_prints_to_stderr_and_exits_refused(capsys: pytest.CaptureFixture[str]) -> None:
-    attendance = FakeAttendance(turn_error=AttendanceError("queue_full", "queue is full", 429))
+    attendance = FakeAttendance(error=AttendanceError("queue_full", "queue is full", 429))
 
     code = execute_fire(attendance, "scrum-lead", None, None)
 
@@ -73,7 +73,7 @@ def test_a_refusal_prints_to_stderr_and_exits_refused(capsys: pytest.CaptureFixt
 
 
 def test_forbidden_is_also_a_refusal_not_a_crash(capsys: pytest.CaptureFixture[str]) -> None:
-    attendance = FakeAttendance(ensure_error=AttendanceError("forbidden", "not autonomous", 403))
+    attendance = FakeAttendance(error=AttendanceError("forbidden", "not autonomous", 403))
 
     code = execute_fire(attendance, "chat", None, None)
 

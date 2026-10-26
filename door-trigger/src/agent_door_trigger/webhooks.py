@@ -25,10 +25,10 @@ from fastapi import FastAPI, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
-from .attendance import AttendanceClient
+from .attendance import AttendanceClient, TriggerKind
 from .config import ServeConfig
 from .errors import CODE_UNREACHABLE, AttendanceError, webhook_status
-from .fire import Firing, TriggerKind, fire_trigger
+from .fire import Firing, fire_trigger
 from .payload import MAX_PAYLOAD_BYTES, PayloadInvalid, PayloadTooLarge, read_payload
 from .routes import Route, RouteLookup
 from .tokens import tokens_match
@@ -142,11 +142,11 @@ def _fire_webhook(
         )
 
     _LOG.info(
-        "trigger %s/%s: fired, session %s, state %s", family, name, outcome.session, outcome.state
+        "trigger %s/%s: fired, session %s, status %s", family, name, outcome.session, outcome.status
     )
     return JSONResponse(
         status_code=202,
-        content={"session": outcome.session, "turn": outcome.turn, "state": outcome.state},
+        content={"session": outcome.session, "status": outcome.status.value},
     )
 
 

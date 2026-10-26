@@ -1,9 +1,10 @@
-"""The client of `attendance`'s session API (contract 02), as `door-trigger`
-uses it: create-or-find a session (§5.1), then run one turn with
-`wait: "accepted"` (§5.4) — the one response shape contract 02 names for
-the trigger door. This door never streams and never waits for settled: a
-firing hands the job to `attendance` and returns, and a refusal is never
-retried in a loop by this door.
+"""The client of `attendance`'s trigger door, as `door-trigger` uses it.
+
+`POST /trigger` enqueues one job in an autonomous family and answers at
+once: the job's `auto-<ulid>` id and its status. `POST /trigger/jobs` reads
+the jobs of one family back, with the outcome record of each job that
+ended. This door never waits for a job, and never retries a refusal in a
+loop.
 
 Synchronous on purpose. `fire` is a one-shot CLI process with no event
 loop to share, and `serve`'s route handler offloads this blocking client
@@ -14,7 +15,8 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from enum import StrEnum
 from typing import Protocol
 
 import httpx
@@ -26,53 +28,71 @@ from .untrusted import as_object, field_text, is_list
 _LOG = logging.getLogger(__name__)
 
 _OK = 200
-_CREATED = 201
-_ACCEPTED = 202
 
 CONNECT_TIMEOUT_S = 5.0
-# Creating a session and queueing a turn are both fast, host-local calls:
-# neither waits on a sandbox or a model reply (contract 02 §5.4's
-# `accepted` row answers "at once").
+# Each call is fast and host-local: neither waits on a sandbox or a model
+# reply. `attendance` answers a job as soon as it is queued or started.
 READ_TIMEOUT_S = 15.0
+
+#: The most jobs one read asks for: `attendance`'s own cap of a page.
+JOBS_LIMIT = 200
+
+
+class TriggerKind(StrEnum):
+    """Contract 02 §13.2's `trigger.kind`. A cron firing is a `timer`. Only a
+    webhook firing carries a `name` (contract 01 §3.13's two trigger forms)."""
+
+    TIMER = "timer"
+    WEBHOOK = "webhook"
+
+
+class JobStatus(StrEnum):
+    """The status of a job, as `attendance` answers it."""
+
+    QUEUED = "queued"
+    RUNNING = "running"
+    ENDED = "ended"
+
+
+#: A job of these statuses is still live.
+LIVE_STATUSES = frozenset({JobStatus.QUEUED, JobStatus.RUNNING})
 
 
 @dataclass(frozen=True)
-class TurnRequest:
-    """One `accepted`-mode turn, addressed to a fresh session."""
+class TriggerJob:
+    """The body of one `POST /trigger`."""
 
     family: str
-    session: str
-    prompt: str
+    kind: TriggerKind
+    name: str | None
+    message: str
     idempotency_key: str
-    labels: dict[str, str] = field(default_factory=dict[str, str])
 
     def body(self) -> dict[str, object]:
         return {
-            "prompt": self.prompt,
+            "family": self.family,
+            "kind": self.kind.value,
+            "name": self.name,
+            "message": self.message,
             "idempotency_key": self.idempotency_key,
-            "wait": "accepted",
-            "labels": self.labels,
         }
 
 
 @dataclass(frozen=True)
-class AcceptedTurn:
-    """Contract 02 §5.4's `accepted` response: `{turn, state, journal_seq}`."""
+class EnqueuedJob:
+    """`attendance`'s answer to one `POST /trigger`."""
 
-    turn: str
-    state: str
-    journal_seq: int
+    session: str
+    status: JobStatus
+    #: False when the idempotency key found an earlier job.
+    created: bool
 
 
 class AttendanceClient(Protocol):
     """What a firing needs from `attendance` (`fire.py`), and nothing more."""
 
-    def ensure_session(self, family: str, session: str) -> None:
-        """Create or find the session. Contract 02 §5.1."""
-        ...
-
-    def accepted_turn(self, request: TurnRequest) -> AcceptedTurn:
-        """Run a turn and return at once. Contract 02 §5.4."""
+    def enqueue(self, job: TriggerJob) -> EnqueuedJob:
+        """Enqueue one job and return at once."""
         ...
 
 
@@ -86,46 +106,37 @@ class HttpAttendance:
     def close(self) -> None:
         self._client.close()
 
-    def ensure_session(self, family: str, session: str) -> None:
-        response = self._client.post(
-            "/v1/sessions",
-            json={"family": family, "session": session, "labels": {"door": "trigger"}},
-            headers=self._auth,
-            timeout=httpx.Timeout(CONNECT_TIMEOUT_S, read=READ_TIMEOUT_S),
-        )
-        if response.status_code in (_OK, _CREATED):
-            return
+    def enqueue(self, job: TriggerJob) -> EnqueuedJob:
+        response = self._post("/trigger", job.body())
 
-        raise _error_of(response.status_code, response.text)
-
-    def accepted_turn(self, request: TurnRequest) -> AcceptedTurn:
-        response = self._client.post(
-            f"/v1/sessions/{request.family}/{request.session}/turns",
-            json=request.body(),
-            headers=self._auth,
-            timeout=httpx.Timeout(CONNECT_TIMEOUT_S, read=READ_TIMEOUT_S),
-        )
-        if response.status_code != _ACCEPTED:
+        if response.status_code != _OK:
             raise _error_of(response.status_code, response.text)
 
-        return _accepted_of(response.text)
+        return _enqueued_of(response.text)
 
     def any_live(self, family: str) -> bool | None:
-        """Whether any session of `family` is listed (contract 02 §5.2). An
-        autonomous session is deleted when its job ends, so a listed one is
-        a job still queued or running. None when `attendance` would not say."""
-        response = self._client.get(
-            "/v1/sessions",
-            params={"family": family, "limit": 1},
+        """Whether a job this door started in `family` is queued or running.
+        None when `attendance` would not say."""
+        response = self._post("/trigger/jobs", {"family": family, "limit": JOBS_LIMIT})
+
+        if response.status_code != _OK:
+            _LOG.warning("attendance answered %d to a job list", response.status_code)
+            return None
+
+        jobs = _json_object(response.text).get("jobs")
+
+        if not is_list(jobs):
+            return None
+
+        return any(_status_of(as_object(one)) in LIVE_STATUSES for one in jobs)
+
+    def _post(self, path: str, body: dict[str, object]) -> httpx.Response:
+        return self._client.post(
+            path,
+            json=body,
             headers=self._auth,
             timeout=httpx.Timeout(CONNECT_TIMEOUT_S, read=READ_TIMEOUT_S),
         )
-        if response.status_code != _OK:
-            _LOG.warning("attendance answered %d to a session list", response.status_code)
-            return None
-
-        sessions = _json_object(response.text).get("sessions")
-        return bool(sessions) if is_list(sessions) else None
 
 
 def _build_client(target: AttendanceTarget) -> httpx.Client:
@@ -134,15 +145,21 @@ def _build_client(target: AttendanceTarget) -> httpx.Client:
     return httpx.Client(base_url=target.url, transport=transport)
 
 
-def _accepted_of(raw: str) -> AcceptedTurn:
+def _enqueued_of(raw: str) -> EnqueuedJob:
     body = _json_object(raw)
-    turn = field_text(body, "turn")
-    state = field_text(body, "state")
-    journal_seq = body.get("journal_seq")
-    if not turn or not state or not isinstance(journal_seq, int):
-        raise AttendanceError("internal", "attendance's accepted response is malformed", _ACCEPTED)
+    session = field_text(body, "session_id")
+    status = _status_of(body)
+    created = body.get("created")
 
-    return AcceptedTurn(turn=turn, state=state, journal_seq=journal_seq)
+    if not session or status is None or not isinstance(created, bool):
+        raise AttendanceError("internal", "attendance's job answer is malformed", _OK)
+
+    return EnqueuedJob(session=session, status=status, created=created)
+
+
+def _status_of(body: dict[str, object]) -> JobStatus | None:
+    known = {status.value: status for status in JobStatus}
+    return known.get(field_text(body, "status"))
 
 
 def _error_of(status: int, raw: str) -> AttendanceError:
