@@ -34,6 +34,32 @@ The tests use `sqlite()` with no path, an in-memory store, and pi's
    refusal is a typed value, not an exception.
 6. Never log the value of a credential. Never put a real one in a fixture.
 
+## Environment the agent expects
+
+`src/config.ts` reads each variable one time, at process start, into one
+`FamilyConfig`. A fault gives one refusal. The refusal names the variable or
+the field, never the value.
+
+| Variable | Meaning | Absent |
+|---|---|---|
+| `AGENT_SESSIONS_DIR` | the sessions directory, for `flue.db` | `mount_dir_unset` |
+| `AGENT_CRED_DIR` | the credential directory, for `creds.json` | `mount_dir_unset` |
+| `AGENT_FAMILY_CONFIG_DIR` | the family config directory | `mount_dir_unset` |
+| `AGENT_CONTROL_DIR` | the control directory | `mount_dir_unset` |
+| `AGENT_INDEX_ROOT` | the `library/` index store | no index |
+| `AGENT_SANDBOX` | the sandbox id | `sandbox_unset` |
+| `AGENT_PEP_URL` | the URL of the chaperone | `plane_unset` |
+| `AGENT_LITELLM_BASE_URL` | the base URL of LiteLLM | `plane_unset` |
+
+A credential is a `Secret` (`src/secret.ts`). Only the `auth` of the `ch`
+connection and the `auth` of the LiteLLM provider unwrap it.
+`test/secret.test.ts` holds that list.
+
 ## Known gaps
 
-None.
+- Contract 03 §7 gives the two plane URLs as fixed values. The playpen
+  takes the URL of its build for a plane variable that is absent or not
+  valid. The agent has no build URL, so it refuses (`src/config.ts`).
+- The plane grammar has no vector. `test/planes.test.ts` holds a copy of
+  the tables of `playpen/test/planes.test.ts`, and no check compares the
+  two copies.
