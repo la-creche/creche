@@ -1,7 +1,7 @@
 {
  "context": {},
  "contract": "contract 03 \u00a72",
- "entry": "attendance.wire.LineSplitter.feed",
+ "entry": "attendance.lines.LineSplitter.feed",
  "format": 1,
  "notes": ["The input is the chunks of one byte stream, in the order the host reads them.","params.max_line_bytes is the cap the splitter starts with. The host uses 1048576. A vector about the cap uses a small one.","value.feeds holds one array per chunk: the records that chunk completed, or refused. size is the bytes of the record with no LF. value.pending_bytes is what the splitter still holds after the last chunk."],
  "surface": "channel.frame",

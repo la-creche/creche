@@ -4,7 +4,7 @@ The process inside the sandbox rewrites `supervisor.lock` with a counter one
 higher on each beat. The file comes from inside the sandbox, so it is a
 claim. It can delay a dial. It can never grant one.
 
-The playpen link and the ACP link both read the lock with this module.
+The ACP link reads the lock with this module.
 """
 
 from __future__ import annotations
@@ -15,6 +15,14 @@ import time
 from pathlib import Path
 
 from .atomic import read_json
+
+# Contract 03 §11.4 rule 4. The supervisor rewrites `supervisor.lock` every
+# `lock_beat_s` (5 by default) with a counter one higher. A counter that has
+# not moved for this long means nothing is writing the file, so the host may
+# remove it and dial. Four beat windows, so one missed rewrite never
+# unlocks a live supervisor.
+LOCK_STALE_S = 20.0
+LOCK_POLL_S = 1.0
 
 
 class BeatWatch:

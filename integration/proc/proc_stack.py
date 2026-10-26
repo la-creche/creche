@@ -19,7 +19,6 @@ through the files under the root. It holds no object of a service.
 from __future__ import annotations
 
 import os
-import shlex
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Final
@@ -49,7 +48,7 @@ from proc_standins import (
     install_sbx,
 )
 from proc_terminal import Terminal
-from proc_tree import LAN_ADDRESS, Tree, build_tree, playpen_bundle, token_of
+from proc_tree import LAN_ADDRESS, Tree, build_tree, token_of
 
 #: A Unix socket has no host. An HTTP client still needs one for the request
 #: line, and nothing resolves this name.
@@ -87,15 +86,7 @@ def base_env(tree: Tree) -> dict[str, str]:
 
 
 def attendance_env(tree: Tree) -> dict[str, str]:
-    """The variables `creche-attendance.service` reads from its two files.
-
-    The channel command keeps the shape of the default: the same two
-    template fields, in the same order, with the `--sandbox` flag. Only the
-    path of the bundle differs, because no sandbox image exists here.
-    """
-    playpen = f"node {shlex.quote(str(playpen_bundle()))} --sandbox {{sandbox}}"
-    command = f"{SBX} exec --env-file {{env_file}} {{sandbox}} -- {playpen}"
-
+    """The variables `creche-attendance.service` reads from its two files."""
     return {
         "AGENT_LAN_ADDRESS": LAN_ADDRESS,
         "SESSIOND_SESSIONS_ROOT": str(tree.sessions_root),
@@ -103,7 +94,6 @@ def attendance_env(tree: Tree) -> dict[str, str]:
         "SESSIOND_WORK_ROOT": str(tree.work_root),
         "SESSIOND_SOCKET": str(tree.attendance_socket),
         "SESSIOND_LOG_DIR": str(tree.log_dir),
-        "SESSIOND_CHANNEL_COMMAND": command,
         "SESSIOND_LOCK_STALE_S": str(LOCK_STALE_S),
         "SESSIOND_LOCK_POLL_S": str(LOCK_POLL_S),
     }

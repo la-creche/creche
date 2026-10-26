@@ -38,7 +38,7 @@ The Python implementation is the authority for each surface.
 | `data/family_file.classify.json` | two family files to the diff between them |
 | `data/family_file.cli.json` | a command line of `agent-family` to its output |
 | `data/family_file.registries.json` | each file of each registry that a vector names |
-| `data/channel/` | the channel protocol: `parse`, `frame`, `build` |
+| `data/channel/` | the channel protocol: `frame`. The files of `parse` and `build` are frozen |
 | `data/chaperone/` | the grant file and its writer, the call body, the approval body, the two logs, the reasons, the verb catalog |
 | `data/status/` | the status document, one file per reader. The writer of the status document, the fault files and the outcome record |
 | `data/config/` | the configs: the site file, the roster, `runtime.json`, `creds.json`, the env file of the playpen and three env readers |

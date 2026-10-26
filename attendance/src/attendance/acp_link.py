@@ -35,18 +35,10 @@ from .atomic import as_object
 from .channel import Channel, ChannelClosed, SandboxDial
 from .config import DEFAULT_FACADE_COMMAND
 from .faults import FaultCode, FaultReporter
+from .lines import cut_bytes
 from .paths import playpen_lock_file
-from .supervisor_lock import wait_out_lock
+from .supervisor_lock import LOCK_POLL_S, LOCK_STALE_S, wait_out_lock
 from .tasks import report_failure
-from .wire import (
-    HOST_DEADLINE_S,
-    LOCK_POLL_S,
-    LOCK_STALE_S,
-    MISSED_PONGS_ALLOWED,
-    PING_INTERVAL_S,
-    STOP_GRACE_MS,
-    cut_bytes,
-)
 
 _LOG = logging.getLogger("attendance")
 
@@ -80,9 +72,13 @@ FACADE_COMMAND = DEFAULT_FACADE_COMMAND
 #: The playpen channel's line cap. The ACP door uses it for each frame.
 MAX_ACP_LINE_BYTES = 1_048_576
 
-#: The playpen link's cadence and grace, so the two links behave the same.
-BEAT_INTERVAL_S = PING_INTERVAL_S
-EXIT_WAIT_S = STOP_GRACE_MS / 1_000
+#: The beat cadence, the beats that may go unanswered, the deadline of the
+#: handshake and the grace of a stop. They are the numbers of the playpen
+#: channel (contract 03 §10), so the facade's peer sees the same host.
+BEAT_INTERVAL_S = 30
+MISSED_BEATS_ALLOWED = 2
+HOST_DEADLINE_S = 90
+EXIT_WAIT_S = 5.0
 
 #: The most text one prompt collects. The rest of the chunks are dropped.
 MAX_ANSWER_BYTES = 1_048_576
@@ -663,7 +659,7 @@ class AcpLink:
         while channel is not None:
             await asyncio.sleep(self._beat_interval_s)
 
-            if len(self._beats) >= MISSED_PONGS_ALLOWED:
+            if len(self._beats) >= MISSED_BEATS_ALLOWED:
                 await self._lose(channel)
                 return
 

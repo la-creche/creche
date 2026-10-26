@@ -1,8 +1,9 @@
 """The channel abstraction and its in-process fake (contract 03 §1).
 
-One `sbx exec` carries one channel to one sandbox. Everything above this
-module works in framed records and never touches a pipe, a process or a CLI.
-That is what lets every test run without the host and without `sbx`.
+One `sbx exec` carries one channel to one sandbox: the supervisor link to a
+facade, or one ACP door connection. Everything above this module works in
+framed records and never touches a pipe, a process or a CLI. That is what
+lets every test run without the host and without `sbx`.
 """
 
 from __future__ import annotations
@@ -11,11 +12,11 @@ import asyncio
 from dataclasses import dataclass
 from typing import Protocol
 
-from .wire import MAX_LINE_BYTES, LineSplitter, RawLine
+from .lines import MAX_LINE_BYTES, LineSplitter, RawLine
 
 
 class ChannelClosed(Exception):
-    """The channel is gone. Every in-flight turn on it is lost."""
+    """The channel is gone. Every call in flight on it is lost."""
 
 
 @dataclass(slots=True, frozen=True)
@@ -23,9 +24,9 @@ class SandboxDial:
     """What it takes to open one channel (contract 03 §7.1).
 
     Two values, never one. `sbx exec` forwards no host environment, so the
-    playpen learns where its mounts are only from the env file `caregiver`
-    wrote; the status document publishes that path per sandbox (contract 05
-    §4.1). A dial without it starts a playpen that answers `fatal`.
+    program in the sandbox learns where its mounts are only from the env
+    file `caregiver` wrote; the status document publishes that path per
+    sandbox (contract 05 §4.1).
     """
 
     sandbox: str
@@ -63,9 +64,9 @@ class Channel(Protocol):
 class FakeChannel:
     """A channel whose far side is a test, not a sandbox.
 
-    Both directions are queues. A test writes what the playpen would say
-    and reads what the host sent, so contract 03 can be exercised whole
-    without a process anywhere.
+    Both directions are queues. A test writes what the far side would say
+    and reads what the host sent, so a link can be exercised whole without
+    a process anywhere.
     """
 
     def __init__(self, sandbox: str, max_line_bytes: int = MAX_LINE_BYTES) -> None:

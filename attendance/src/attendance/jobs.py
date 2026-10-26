@@ -20,7 +20,6 @@ from .ids import SessionPrefix, new_ulid
 DEFAULT_JOB_TIMEOUT_S = 120
 
 # Contract 04 §7.1. The message the calling agent sends.
-MESSAGE_MIN_BYTES = 1
 MESSAGE_MAX_BYTES = 65_536
 
 # Contract 02 §13.1 uses the same bound for an outcome's error text.

@@ -31,10 +31,6 @@ _MILLIS_PER_SECOND = 1000
 # every prefixed form the contract names with room to spare: `owui-<uuid>`
 # is 41 characters and `tui-<ulid>` is 30.
 SESSION_ID_MAX = 128
-TITLE_MAX = 200
-ATTACHMENT_NAME_MAX = 120
-LABEL_KEYS_MAX = 10
-LABEL_VALUE_MAX = 200
 
 _FAMILY_RE = re.compile(r"^[a-z][a-z0-9-]{1,30}\Z")
 _SESSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")
