@@ -17,6 +17,9 @@ importers:
       '@flue/runtime':
         specifier: 2.3.0
         version: 2.3.0(@aws-sdk/credential-provider-node@3.972.88)(@smithy/signature-v4@5.7.4)(typescript@5.9.3)(ws@8.22.0)(zod@4.6.7)
+      valibot:
+        specifier: 1.5.0
+        version: 1.5.0(typescript@5.9.3)
     devDependencies:
       '@types/node':
         specifier: ^24
