@@ -67,13 +67,15 @@ ENV TMPDIR=/tmp
 
 # Fail the BUILD, not the first switch, when a program cannot start. The four
 # mount variables name directories that do not exist, and AGENT_SANDBOX is
-# absent: the facade then exits 2 with one stderr line before it opens
-# anything. That proves the tree loads under this Node.
+# absent: the facade then exits 2 and writes exactly one stderr line,
+# `creche-facade: sandbox_unset`, before it opens anything. The build fails
+# on any other status or any other stderr text, an empty one included.
+# That proves the tree loads under this Node.
 RUN err="$(AGENT_SESSIONS_DIR=/nonexistent/sessions AGENT_CRED_DIR=/nonexistent/creds \
       AGENT_FAMILY_CONFIG_DIR=/nonexistent/config AGENT_CONTROL_DIR=/nonexistent/control \
       creche-facade </dev/null 2>&1 >/dev/null)"; \
     status=$?; \
-    if [ "$status" -ne 2 ] || [ "$(printf '%s\n' "$err" | wc -l)" -ne 1 ]; then \
+    if [ "$status" -ne 2 ] || [ "$err" != "creche-facade: sandbox_unset" ]; then \
       printf 'creche-facade: exit %s, stderr:\n%s\n' "$status" "$err" >&2; exit 1; \
     fi
 # No facade listens in a build, so the relay exits 1.
