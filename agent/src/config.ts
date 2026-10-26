@@ -13,7 +13,7 @@ import type { MountDirs } from "./mounts.js";
 import { PlaneUrl } from "./planes.js";
 import type { PlaneUrlFault } from "./planes.js";
 import { readRuntimeConfig } from "./runtime-config.js";
-import type { RuntimeConfig } from "./runtime-config.js";
+import type { RuntimeConfig, RuntimeField } from "./runtime-config.js";
 
 const SANDBOX_ENV = "AGENT_SANDBOX";
 const PLANE_ENV = { pep: "AGENT_PEP_URL", litellm: "AGENT_LITELLM_BASE_URL" } as const;
@@ -35,7 +35,8 @@ export type ConfigRefusal =
   | { readonly reason: "sandbox_not_valid" }
   | { readonly reason: "plane_unset"; readonly variable: string }
   | { readonly reason: "plane_not_valid"; readonly variable: string; readonly fault: PlaneUrlFault }
-  | { readonly reason: "creds_not_valid"; readonly field: CredField | null };
+  | { readonly reason: "creds_not_valid"; readonly field: CredField | null }
+  | { readonly reason: "runtime_not_valid"; readonly field: RuntimeField };
 
 export type ConfigRead =
   | { readonly ok: true; readonly config: FamilyConfig }
@@ -86,6 +87,11 @@ export async function readFamilyConfig(
     return litellm;
   }
 
+  const runtime = readRuntimeConfig(mounts.dirs.config);
+  if (!runtime.ok) {
+    return { ok: false, refusal: { reason: "runtime_not_valid", field: runtime.field } };
+  }
+
   const creds = await readCreds(mounts.dirs.creds, credRetryMs);
   if (!creds.ok) {
     return { ok: false, refusal: { reason: "creds_not_valid", field: creds.field } };
@@ -98,7 +104,7 @@ export async function readFamilyConfig(
       mounts: mounts.dirs,
       planes: { pep: pep.url, litellm: litellm.url },
       creds: creds.creds,
-      runtime: readRuntimeConfig(mounts.dirs.config),
+      runtime: runtime.config,
     },
   };
 }

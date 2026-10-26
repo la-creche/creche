@@ -6,32 +6,46 @@
 //   <config dir>/skills/          the granted skills
 //
 // As in the playpen, a missing or malformed `runtime.json` gives the safe
-// defaults. No value of this file is part of the perimeter (contract 01
-// §3.8 rule 3). A wrong value costs behavior, not reach.
+// defaults. Each default grants nothing. One field is part of the
+// perimeter: `sandbox_tools` grants Flue's built-in tools on the host,
+// `bash` included. So a present `sandbox_tools` that is not a list of known
+// names is a typed refusal, never a guess.
+//
+// CONTRACT-QUESTION: contract 01 §3.8 names `read`, `write`, `edit`, `grep`,
+// `find`, `ls` and `codemode`, defaults to `read`, `grep`, `find`, `ls`, and
+// makes `shell` the only door to `bash`. The owner's decision for row 6 of
+// the Phase 2 plan: the names are Flue's six, the default is empty, and the
+// edge validates the list. This reader takes the owner's reading. A file
+// with a name of the contract refuses. `shell` is read and grants nothing.
+// The cost: `caregiver` writes the new names (Phase 3).
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-/**
- * Contract 01 §3.8. The names a grant can hold. `bash` is never one: `shell`
- * is the only door to it. Row 6 of the Phase 2 plan maps them to Flue's tools.
- */
-const SANDBOX_TOOLS = new Set(["read", "write", "edit", "grep", "find", "ls", "codemode"]);
+/** The six built-in tools of Flue's `local()` sandbox, by Flue's names. */
+export const SANDBOX_TOOL_NAMES = ["read", "write", "edit", "bash", "grep", "glob"] as const;
 
-/** Contract 01 §3.8's default when the file names none. */
-const DEFAULT_SANDBOX_TOOLS: readonly string[] = ["read", "grep", "find", "ls"];
+export type SandboxToolName = (typeof SANDBOX_TOOL_NAMES)[number];
 
 /** How `instructions.md` meets the agent's own prompt. */
 export type SystemPrompt = "append" | "replace";
 
 export interface RuntimeConfig {
   readonly shell: boolean;
-  readonly sandboxTools: readonly string[];
+  /** The granted built-in tools, in grant order, each one time. */
+  readonly sandboxTools: readonly SandboxToolName[];
   readonly modelAlias: string | null;
   readonly systemPrompt: SystemPrompt;
   readonly instructionsPath: string | null;
   readonly skillsPath: string | null;
 }
+
+/** The one field whose fault refuses. */
+export type RuntimeField = "sandbox_tools";
+
+export type RuntimeRead =
+  | { readonly ok: true; readonly config: RuntimeConfig }
+  | { readonly ok: false; readonly field: RuntimeField };
 
 function pathIfPresent(dir: string, name: string): string | null {
   const path = join(dir, name);
@@ -39,19 +53,27 @@ function pathIfPresent(dir: string, name: string): string | null {
   return existsSync(path) ? path : null;
 }
 
-/** Deny by default: an unknown name is dropped, not passed on. */
-function toolList(raw: unknown): readonly string[] {
-  if (!Array.isArray(raw)) {
-    return DEFAULT_SANDBOX_TOOLS;
-  }
-
-  return raw.filter((name): name is string => typeof name === "string" && SANDBOX_TOOLS.has(name));
+function isToolName(name: unknown): name is SandboxToolName {
+  return SANDBOX_TOOL_NAMES.some((known) => known === name);
 }
 
-export function readRuntimeConfig(dir: string): RuntimeConfig {
+/** Absent grants nothing. Anything but a list of known names is null. */
+function toolList(raw: unknown): readonly SandboxToolName[] | null {
+  if (raw === undefined) {
+    return [];
+  }
+
+  if (!Array.isArray(raw) || !raw.every(isToolName)) {
+    return null;
+  }
+
+  return [...new Set(raw)];
+}
+
+export function readRuntimeConfig(dir: string): RuntimeRead {
   const base: RuntimeConfig = {
     shell: false,
-    sandboxTools: DEFAULT_SANDBOX_TOOLS,
+    sandboxTools: [],
     modelAlias: null,
     systemPrompt: "append",
     instructionsPath: pathIfPresent(dir, "instructions.md"),
@@ -62,21 +84,29 @@ export function readRuntimeConfig(dir: string): RuntimeConfig {
   try {
     parsed = JSON.parse(readFileSync(join(dir, "runtime.json"), "utf8"));
   } catch {
-    return base;
+    return { ok: true, config: base };
   }
 
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    return base;
+    return { ok: true, config: base };
   }
 
   const raw = parsed as Record<string, unknown>;
+  const sandboxTools = toolList(raw["sandbox_tools"]);
+  if (sandboxTools === null) {
+    return { ok: false, field: "sandbox_tools" };
+  }
+
   const alias = raw["model_alias"];
 
   return {
-    ...base,
-    shell: raw["shell"] === true,
-    sandboxTools: toolList(raw["sandbox_tools"]),
-    modelAlias: typeof alias === "string" && alias.length > 0 ? alias : null,
-    systemPrompt: raw["system_prompt"] === "replace" ? "replace" : "append",
+    ok: true,
+    config: {
+      ...base,
+      shell: raw["shell"] === true,
+      sandboxTools,
+      modelAlias: typeof alias === "string" && alias.length > 0 ? alias : null,
+      systemPrompt: raw["system_prompt"] === "replace" ? "replace" : "append",
+    },
   };
 }
