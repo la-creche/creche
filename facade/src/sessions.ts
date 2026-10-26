@@ -20,7 +20,6 @@ import type {
   Outcome,
   SessionInfo,
   SessionInfoUpdate,
-  SessionService,
 } from "./acp.js";
 import { cutToBytes } from "./line.js";
 import type { SessionIndex, SessionRow } from "./session-index.js";
@@ -43,7 +42,7 @@ function toInfo(row: SessionRow): SessionInfo {
   return { sessionId: row.id, cwd: row.cwd, title: row.title, updatedAt: row.updatedAt };
 }
 
-export class Sessions implements SessionService {
+export class Sessions {
   private readonly handles = new Map<string, AgentInstanceHandle>();
 
   public constructor(

@@ -8,7 +8,9 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { facadeApp } from "../src/acp.js";
 import { LIST_PAGE_SIZE, SessionIndex } from "../src/session-index.js";
+import { sessionService } from "../src/service.js";
 import { MAX_TITLE_BYTES, Sessions, titleOf } from "../src/sessions.js";
+import { Turns } from "../src/turns.js";
 import { Wire } from "./acp-wire.js";
 import { faux, Probe, startFlue } from "./faux-flue.js";
 
@@ -26,7 +28,7 @@ let wire: Wire;
 beforeEach(() => {
   clock = Date.parse("2026-10-25T12:00:00Z");
   sessions = new Sessions(Probe, new SessionIndex(new DatabaseSync(":memory:")), () => new Date((clock += 1000)));
-  wire = new Wire(facadeApp(NO_HOOKS, sessions));
+  wire = new Wire(facadeApp(NO_HOOKS, sessionService(sessions, new Turns(sessions))));
 });
 
 async function newSession(cwd = "/work"): Promise<string> {

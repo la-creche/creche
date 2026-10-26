@@ -20,6 +20,12 @@ export function Probe(): string {
   return "Answer in one word.";
 }
 
-export async function startFlue(agent: Agent = Probe, db: PersistenceAdapter = sqlite()): Promise<{ stop(): Promise<void> }> {
-  return start({ agents: [agent], db, providers: [faux.provider] });
+/** The faux model's specifier, for an agent of one test file. */
+export const FAUX_MODEL = MODEL_SPEC;
+
+export async function startFlue(
+  agents: readonly Agent[] = [Probe],
+  db: PersistenceAdapter = sqlite(),
+): Promise<{ stop(): Promise<void> }> {
+  return start({ agents, db, providers: [faux.provider] });
 }
