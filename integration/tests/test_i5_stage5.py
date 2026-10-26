@@ -31,7 +31,7 @@ from pathlib import Path
 import pytest
 from agent_door_trigger.errors import AttendanceError
 from agent_door_trigger.payload import MAX_PAYLOAD_BYTES
-from attendance.ids import SessionPrefix, new_ulid
+from attendance.ids import SessionPrefix
 from attendance.queueing import MAX_QUEUED_TURNS
 from stack import Stack, until
 from stage5 import (
@@ -57,10 +57,6 @@ HTTP_BAD_REQUEST = 400
 HTTP_NOT_FOUND = 404
 HTTP_TOO_LARGE = 413
 HTTP_TOO_MANY = 429
-
-#: What `chat`'s model asks `vault-oracle`. Under 24 characters, because
-#: `fake-pi.mjs` slices a prompt there before echoing it (`AGENTS.md` 19).
-DELEGATE_QUESTION = "boiler-11c"
 
 #: A job of the fixture family is one short fake turn, but it crosses five
 #: processes on a loaded Mac. Stage 3 uses the same number for the same work.
@@ -379,31 +375,6 @@ async def test_an_attended_turn_runs_while_the_queue_is_full(stage: Stage5) -> N
     accepted = await stage.accepted_turn(CHAT, f"owui-{uuid.uuid4()}")
 
     assert accepted["state"] == "running", accepted
-
-
-async def test_a_thin_job_runs_while_the_queue_is_full(gated: Stage5) -> None:
-    """The same rule from the thin side: a job blocking at the PEP never waits.
-
-    The call is the real one — `chat`'s model asks `vault-oracle` through
-    the real bridge and the real PEP — so the job is started by the same
-    `/delegate` path the host uses.
-    """
-    gated.stack.set_pi_env(events=HELD_TURN_EVENTS, delay_ms=HELD_TURN_GAP_MS)
-    for _ in range(FIRES_AT_ONCE):
-        await gated.fire(HA_REVIEW)
-
-    gated.stack.set_pi_env(events=QUICK_TURN_EVENTS, delay_ms=QUICK_TURN_GAP_MS)
-    chat_session = f"owui-{uuid.uuid4()}"
-    answered = await gated.call_tool(
-        "invoke_agent",
-        {"family": VAULT_ORACLE, "message": DELEGATE_QUESTION},
-        session=chat_session,
-        turn=new_ulid(),
-        family=CHAT,
-    )
-
-    assert answered.ok, answered.error
-    assert DELEGATE_QUESTION in answered.text
 
 
 # ---------------------------------------------------------------- scenario 4

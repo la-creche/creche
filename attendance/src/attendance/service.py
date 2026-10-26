@@ -24,7 +24,14 @@ from collections.abc import AsyncGenerator, Callable, Coroutine
 from typing import Any
 
 from . import dispatch, jobs, outcomes, owui_copy, wire
-from .acp_link import MAX_ACP_LINE_BYTES
+from .acp_jobs import CANCEL_WAIT_S, META_DELEGATION, JobPlan, run_job
+from .acp_link import (
+    MAX_ACP_LINE_BYTES,
+    AcpHandshakeError,
+    AcpLink,
+    LinkState,
+    OrphanFacade,
+)
 from .approvals import AuditTail, Gate, GateState, outcome_of
 from .atomic import read_json
 from .auth import (
@@ -63,7 +70,13 @@ from .models import (
     Turn,
     WriterLease,
 )
-from .paths import dispatch_file, outcome_file, sandbox_cwd, sandbox_session_dir
+from .paths import (
+    dispatch_file,
+    outcome_file,
+    sandbox_cwd,
+    sandbox_session_dir,
+    sandbox_sessions_mount,
+)
 from .persona import Persona, prepare
 from .playpen_link import (
     ChannelFactory,
@@ -102,7 +115,7 @@ from .wire import (
     ProcessExitLine,
     SettledLine,
 )
-from .workspace import make_owner_dir, remove_owner_dir, workspace_of
+from .workspace import make_owner_dir, owner_dir, remove_owner_dir, workspace_of
 
 _LOG = logging.getLogger("attendance")
 
@@ -177,6 +190,8 @@ class SessionService:
         cold_start_wait_s: float = COLD_START_WAIT_S,
         owui: owui_copy.ChatApi | None = None,
         channel_idle_ttl_s: float = CHANNEL_IDLE_TTL_OTHER_S,
+        acp_factory: ChannelFactory | None = None,
+        cancel_wait_s: float = CANCEL_WAIT_S,
     ) -> None:
         self._config = config
         self._journal = Journal(config.sessions_root)
@@ -205,6 +220,12 @@ class SessionService:
         self._forks: dict[tuple[str, str, str], Fork] = {}
         self._sessions: dict[tuple[str, str], Session] = {}
         self._links: dict[str, PlaypenLink] = {}
+        # Phase 2 plan, row 18. One supervisor link to each sandbox's facade,
+        # and one lock per sandbox so two jobs never start two facades.
+        self._acp_factory = acp_factory if acp_factory is not None else self._facade_factory
+        self._acp_links: dict[str, AcpLink] = {}
+        self._acp_dials: dict[str, asyncio.Lock] = {}
+        self._cancel_wait_s = cancel_wait_s
         # What `_report_audit` last published, so a once-a-second poll
         # rewrites no file while nothing changes.
         self._audit_fault: str | None = None
@@ -433,6 +454,11 @@ class SessionService:
             await link.close()
 
         self._links.clear()
+
+        for acp in list(self._acp_links.values()):
+            await acp.stop()
+
+        self._acp_links.clear()
         self._journal.close_all()
 
     # ------------------------------------------------------------ sessions
@@ -765,62 +791,48 @@ class SessionService:
     async def run_delegate(
         self, principal: Principal, request: DelegateRequest, door_instance: str
     ) -> dict[str, Any]:
-        """Contract 04 §7.3 and contract 02 §12. One session, one turn, gone.
+        """Contract 04 §7.3 and contract 02 §12, over ACP (phase 2 plan, row 18).
 
-        The PEP is the one caller. A job leaves the audit record and nothing
-        else (invariant 15), so the answer has to travel in this response:
-        there is no journal left to fetch it from afterwards.
+        One `session/new` and one `session/prompt` on the family's facade.
+        The PEP is the one caller. The answer travels in this response. The
+        conversation stays in the facade's store (phase 2 plan, Q5).
         """
+        del door_instance
         check_access(principal, Access.WRITE)
         self._check_delegate_door(principal)
         family = request.target_family
         status = self._status.require(family)
         # The delegate door's grant is `thin`, so a family of any other kind
-        # is refused here before a session exists (contract 02 §3.1).
+        # is refused here before anything is dialled (contract 02 §3.1).
         check_family_kind(principal, family, served_kind(status))
         check_may_serve(status)
 
         owner = request.claimed_session_id
         self._prepare_work_dir(family, owner)
-        session = jobs.new_job_session()
-        self.create_or_find(
-            principal, CreateRequest(family=family, session=session, owner_session=owner)
+        link = await self._acp_link_for(family, status)
+        job = jobs.new_job_session()
+        delegation = {"id": request.delegation_id, "caller_session": owner}
+        plan = JobPlan(
+            job=job,
+            cwd=self._job_cwd(family, owner),
+            message=request.message,
+            deadline_s=jobs.job_timeout_s(status.job_timeout_s),
+            prompt_meta={META_DELEGATION: delegation},
+            cancel_wait_s=self._cancel_wait_s,
         )
+        return jobs.answer(job, await run_job(link, plan))
 
-        try:
-            return await self._run_job(principal, request, session, status, door_instance)
-        finally:
-            # §12 rules 5 and 6. The session goes whatever happened, including
-            # a refusal on the way to the turn: nothing may outlive the job.
-            await self.delete_session(principal, family, session)
+    def _job_cwd(self, family: str, owner: str | None) -> str:
+        """The cwd of one job inside the VM (contract 02 §12.1 rule 3).
 
-    async def _run_job(
-        self,
-        principal: Principal,
-        request: DelegateRequest,
-        session: str,
-        status: FamilyStatus,
-        door_instance: str,
-    ) -> dict[str, Any]:
-        """One turn at the family's job timeout, then the answer."""
-        live = await self.run_turn(
-            principal,
-            request.target_family,
-            session,
-            RunTurnRequest(
-                prompt=request.message,
-                wait=Wait.SETTLED,
-                deadline_s=jobs.job_timeout_s(status.job_timeout_s),
-                delegation=jobs.Delegation(
-                    delegation_id=request.delegation_id,
-                    caller_family=request.caller_family,
-                    caller_session=request.claimed_session_id,
-                ),
-            ),
-            door_instance,
-        )
-        await live.done.wait()
-        return jobs.answer(session, live.record, live.answer())
+        `code-sandbox` works in the calling chat's directory. Every other job
+        works in the family's sessions mount. Each is a host path, and sbx
+        mounts it at the same path inside the VM.
+        """
+        if owner is not None and workspace_of(family, owner) is not None:
+            return str(owner_dir(self._config.work_root, owner))
+
+        return sandbox_sessions_mount(self._config.sessions_root, family)
 
     def _prepare_work_dir(self, family: str, owner: str | None) -> None:
         """Contract 02 §12.1 rule 2. `code-sandbox` works in the chat's own
@@ -1773,7 +1785,6 @@ class SessionService:
                     attachments=request.attachments,
                     workspace=self._workspace(family, session),
                     branch=branch.wire_branch,
-                    delegation=_delegation_of(request),
                 )
             )
         except (OrphanPlaypen, PlaypenFatal) as error:
@@ -1969,6 +1980,61 @@ class SessionService:
             command=self._config.channel_command,
             log_path=self._config.playpen_log(family),
         )
+
+    def _facade_factory(self, dial: SandboxDial) -> Channel:
+        family, _, _ = dial.sandbox.rpartition("-s")
+
+        return ExecChannel(
+            dial=dial,
+            command=self._config.facade_command,
+            log_path=self._config.playpen_log(family),
+            max_line_bytes=MAX_ACP_LINE_BYTES,
+        )
+
+    async def _acp_link_for(self, family: str, status: FamilyStatus) -> AcpLink:
+        """The ready supervisor link to the family's facade, dialled once.
+
+        The sandbox is the one the family's turns go to. A link that was
+        lost is dialled again. A dial that fails is `sandbox_unavailable`.
+        """
+        sandbox = await self._pick_sandbox(family, status)
+        lock = self._acp_dials.setdefault(sandbox, asyncio.Lock())
+
+        async with lock:
+            link = self._acp_links.get(sandbox)
+
+            if link is not None and link.status.state is LinkState.READY:
+                return link
+
+            link = AcpLink(
+                family,
+                self._acp_factory,
+                self._faults,
+                self._config.state_root,
+                self._acp_lost,
+                lock_stale_s=self._config.lock_stale_s,
+                lock_poll_s=self._config.lock_poll_s,
+            )
+
+            try:
+                await link.start(self._dial_for(family, status, sandbox))
+            except (OrphanFacade, AcpHandshakeError, ChannelClosed) as error:
+                raise ApiError(
+                    ErrorCode.SANDBOX_UNAVAILABLE,
+                    f"family {family} facade did not start",
+                    family=family,
+                    detail={"sandbox": sandbox},
+                ) from error
+
+            self._acp_links[sandbox] = link
+            return link
+
+    async def _acp_lost(self, sandbox: str) -> None:
+        """Forget a lost link. The next job dials the sandbox again."""
+        link = self._acp_links.get(sandbox)
+
+        if link is not None and link.status.state is not LinkState.READY:
+            del self._acp_links[sandbox]
 
     async def _send_to(self, sandbox: str, family: str, message: dict[str, Any]) -> None:
         """Write one host message to the sandbox that serves a turn."""
@@ -2892,6 +2958,9 @@ class SessionService:
         """How many turns wait for a slot (contract 02 §13 rule 3)."""
         return self._queue.depth(family)
 
+    def acp_link(self, sandbox: str) -> AcpLink | None:
+        return self._acp_links.get(sandbox)
+
     def link(self, sandbox: str) -> PlaypenLink | None:
         return self._links.get(sandbox)
 
@@ -2977,14 +3046,6 @@ def _born_in_owui(session: str) -> bool:
     makes it the right answer to "does this session already have a chat".
     """
     return session.startswith(SessionPrefix.OWUI.value)
-
-
-def _delegation_of(request: RunTurnRequest) -> dict[str, Any] | None:
-    """What `start_turn` carries for a job inside a chain (contract 03 §7.4)."""
-    if request.delegation is None:
-        return None
-
-    return request.delegation.to_channel()
 
 
 def _list_order(record: Session) -> tuple[float, str, str]:

@@ -20,7 +20,9 @@ playpen runs inside the sandbox image, which carries Node.
 5. Enforces one writer per session and many readers.
 6. Reports faults in a fault file. It never calls `caregiver`. The one call
    between the two runs the other way: `caregiver` asks for a sandbox switch.
-7. Runs one thin job per delegate call, then deletes the session.
+7. Runs one thin job per delegate call over ACP: one `session/new` and one
+   `session/prompt` on the family's facade. The conversation stays in the
+   facade's store (phase 2 plan, Q5).
 8. Limits and queues turns for autonomous families only.
 9. Serves the dispatch door: `enqueue` and `job_status`.
 10. Copies an attended session into Open WebUI, and turns an edit into a pi
@@ -141,6 +143,7 @@ uv run python -m attendance           # serve
 | `SESSIOND_LOG_DIR` | where each family's playpen stderr lands |
 | `SESSIOND_LOCK_STALE_S`, `SESSIOND_LOCK_POLL_S` | the lock beat window and its poll |
 | `SESSIOND_ACP_RELAY_COMMAND` | how one ACP door connection reaches the facade. `{env_file}` comes from the status document. |
+| `SESSIOND_FACADE_COMMAND` | how the supervisor link starts each sandbox's facade. `{env_file}` comes from the status document. |
 
 Eight token files sit under `<state root>/tokens/`. Six are mode 0600. The
 delegate and dispatch tokens are mode 0640, group `agents`, because the
@@ -159,7 +162,8 @@ chaperone reads them as another user. `SIGHUP` reloads them.
 | `owui_copy.py`, `terminal.py`, `branching.py`, `persona.py` | Open WebUI copy, terminal exchanges, pi branches, the folder prompt |
 | `playpen_link.py`, `switching.py`, `channel.py`, `exec_channel.py`, `wire.py` | one sandbox's channel, a switch, the protocol |
 | `supervisor_lock.py` | the proof that no older supervisor holds a sandbox |
-| `acp_link.py`, `acp/schema-v1.json` | the ACP link to one sandbox's facade, and the pinned ACP schema. The service does not use the link yet |
+| `acp_link.py`, `acp/schema-v1.json` | the ACP link to one sandbox's facade, and the pinned ACP schema |
+| `acp_jobs.py` | one job over the link: `session/new`, one prompt, the deadline and its cancel |
 | `acp_door.py` | `WS /acp/{family}` on the Unix socket: one `acp-relay` per connection, the envelope check, nothing translated |
 | `jobs.py`, `dispatch.py`, `workspace.py` | thin jobs, the dispatch ledger, the per-chat work directory |
 | `family_status.py`, `faults.py` | the status document, the fault file |
@@ -183,6 +187,11 @@ misbehaviour there. A test that spawns a process is marked `slow`.
   `initialize` `_meta` keys in a vector file under `facade/vectors/`. That
   file does not exist yet. `acp_link.py` sends the beat as a request, sends
   the shutdown as a notification, and sends no `_meta`.
+- ACP's prompt answer carries no usage. A delegate answer's `usage` is null.
+- The phase 2 plan names no `_meta` keys for a job. `acp_jobs.py` sends
+  `creche/job` on `session/new` and `creche/delegation` on
+  `session/prompt`. The facade may ignore both, so contract 04 §6.3's chain
+  reaches the PEP only if the facade forwards it.
 - `approvals.py` tails the chaperone's audit file, which lags up to one
   second (`approvals.py`, `service.py`).
 - An outcome record's `spend_usd` sums advisory costs. A sum of zero with
