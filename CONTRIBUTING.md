@@ -123,9 +123,12 @@ component's own newest tag.
 - A component's paths include every workspace package its build installs. A
   change under `family/` moves `attendance`, `caregiver` and `noticeboard`.
   A change to `uv.lock` moves every venv component.
-- No job of `release.yml` builds or signs an archive. The catalog has no
-  binary component. The tag script refuses a binary component that has no
-  archive, so such a component gets no tag.
+- No job of `release.yml` builds or signs an archive. This repository has
+  no binary component. The tag script refuses a binary component that has
+  no archive, so such a component gets no tag.
+- `chaperone` is a binary component of the chaperone repository. The
+  `release.yml` of that repository builds, signs and tags it. Its manifest
+  is at the root of that repository (`handover/AGENTS.md`).
 - Prose moves no tag. A `.md` file outside `tests/` and `fixtures/` is
   prose. A merge that changes only `playpen/AGENTS.md` makes no tag. The next
   code change to `playpen/` makes one tag, and that tag covers both merges.

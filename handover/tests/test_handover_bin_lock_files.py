@@ -40,6 +40,9 @@ ALL_TAGGED = tuple(
 
 PYTHON_LOCK = "uv.lock"
 
+#: The Cargo workspace files of this repository.
+WORKSPACE_FILES = BINARY_BUILD_FILES[Repo.AGENT_CONTROL]
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -55,7 +58,7 @@ def _moved(paths: tuple[str, ...]) -> set[str]:
 
 
 def test_the_workspace_files_are_the_three_under_rust() -> None:
-    assert BINARY_BUILD_FILES == (
+    assert WORKSPACE_FILES == (
         "rust/Cargo.lock",
         "rust/Cargo.toml",
         "rust/rust-toolchain.toml",
@@ -65,8 +68,8 @@ def test_the_workspace_files_are_the_three_under_rust() -> None:
 def test_the_workspace_files_move_no_component_of_todays_catalog() -> None:
     """No row is a binary component, so a change to the Cargo workspace
     files is a merge that tags nothing."""
-    assert touched(BINARY_BUILD_FILES, Repo.AGENT_CONTROL) == ()
-    assert _plan(BINARY_BUILD_FILES) == ()
+    assert touched(WORKSPACE_FILES, Repo.AGENT_CONTROL) == ()
+    assert _plan(WORKSPACE_FILES) == ()
 
 
 def test_a_change_under_rust_moves_no_component_of_todays_catalog() -> None:
@@ -90,7 +93,7 @@ def test_each_manifest_declares_the_kind_of_its_catalog_row() -> None:
 # -- one binary component among the venv components -------------------------
 
 
-@pytest.mark.parametrize("changed", BINARY_BUILD_FILES)
+@pytest.mark.parametrize("changed", WORKSPACE_FILES)
 def test_each_workspace_file_moves_the_binary_component_alone(
     monkeypatch: pytest.MonkeyPatch, changed: str
 ) -> None:
@@ -109,8 +112,8 @@ def test_the_workspace_files_move_no_venv_component(monkeypatch: pytest.MonkeyPa
     venvs = {row.name for row in CATALOG if row.kind is Kind.VENV} - {BINARY_NAME}
 
     assert venvs
-    assert touched(BINARY_BUILD_FILES, Repo.AGENT_CONTROL) == (BINARY_NAME,)
-    assert not venvs & set(touched(BINARY_BUILD_FILES, Repo.AGENT_CONTROL))
+    assert touched(WORKSPACE_FILES, Repo.AGENT_CONTROL) == (BINARY_NAME,)
+    assert not venvs & set(touched(WORKSPACE_FILES, Repo.AGENT_CONTROL))
 
 
 def test_the_python_lock_file_moves_no_binary_component(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -159,12 +162,12 @@ def test_a_label_on_a_workspace_file_raises_no_venv_component(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     use_binary_catalog(monkeypatch)
-    lines = ("chaperone\tchaperone",)
-    levels = ("chaperone\tbump:minor\trust/Cargo.lock",)
+    lines = ("caregiver\tcaregiver",)
+    levels = ("caregiver\tbump:minor\trust/Cargo.lock",)
 
     (plan,) = _plan(lines, levels)
 
-    assert plan.tag == "chaperone-v0.1.1"
+    assert plan.tag == "caregiver-v0.1.1"
 
 
 # -- the input digest --------------------------------------------------------
@@ -176,7 +179,7 @@ def test_a_binary_digest_covers_the_workspace_files(monkeypatch: pytest.MonkeyPa
     input to what its build makes."""
     row = use_binary_catalog(monkeypatch)
 
-    assert digest_paths(BINARY_NAME) == tuple(sorted((row.path, *BINARY_BUILD_FILES)))
+    assert digest_paths(BINARY_NAME) == tuple(sorted((row.path, *WORKSPACE_FILES)))
     assert PYTHON_LOCK not in digest_paths(BINARY_NAME)
 
 
@@ -223,13 +226,13 @@ def _clone(tmp_path: Path) -> Path:
     """A repository with a component directory, a Cargo workspace and a
     Python lock file."""
     repo = tmp_path / "agent-control"
-    for name in (BINARY_NAME, "chaperone", "rust"):
+    for name in (BINARY_NAME, "caregiver", "rust"):
         (repo / name).mkdir(parents=True)
 
     repo.chmod(0o755)
     (repo / BINARY_NAME / "component.yaml").write_text("one\n", encoding="utf-8")
-    (repo / "chaperone" / "component.yaml").write_text("one\n", encoding="utf-8")
-    for path in (*BINARY_BUILD_FILES, PYTHON_LOCK):
+    (repo / "caregiver" / "component.yaml").write_text("one\n", encoding="utf-8")
+    for path in (*WORKSPACE_FILES, PYTHON_LOCK):
         (repo / path).write_text("one\n", encoding="utf-8")
 
     _git(repo, "init", "-q", "-b", "main")
@@ -247,7 +250,7 @@ def _digest_after(repo: Path, component: str, changed: str) -> str | None:
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("changed", BINARY_BUILD_FILES)
+@pytest.mark.parametrize("changed", WORKSPACE_FILES)
 def test_a_workspace_file_changes_a_binary_digest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, changed: str
 ) -> None:
@@ -272,12 +275,12 @@ def test_the_python_lock_file_does_not_change_a_binary_digest(
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("changed", BINARY_BUILD_FILES)
+@pytest.mark.parametrize("changed", WORKSPACE_FILES)
 def test_a_workspace_file_does_not_change_a_venv_digest(tmp_path: Path, changed: str) -> None:
-    """`chaperone` is a venv component of today's catalog."""
-    assert CATALOG_BY_NAME["chaperone"].kind is Kind.VENV
+    """`caregiver` is a venv component of today's catalog."""
+    assert CATALOG_BY_NAME["caregiver"].kind is Kind.VENV
     repo = _clone(tmp_path)
-    before = input_digest(_run_git, repo, "chaperone", _git(repo, "rev-parse", "HEAD").strip())
+    before = input_digest(_run_git, repo, "caregiver", _git(repo, "rev-parse", "HEAD").strip())
 
     assert before is not None
-    assert _digest_after(repo, "chaperone", changed) == before
+    assert _digest_after(repo, "caregiver", changed) == before

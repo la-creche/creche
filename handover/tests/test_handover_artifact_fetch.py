@@ -408,7 +408,7 @@ def test_a_run_as_root_is_one_line_and_no_child(store: Path, curl: _Curl) -> Non
 
 
 @pytest.mark.parametrize(
-    "tag", [f"{BINARY_NAME}-v1.2", f"chaperone-v{VERSION}", f"{TAG}\n", f"{BINARY_NAME}-v0.1.x"]
+    "tag", [f"{BINARY_NAME}-v1.2", f"attendance-v{VERSION}", f"{TAG}\n", f"{BINARY_NAME}-v0.1.x"]
 )
 def test_a_tag_that_is_not_a_tag_of_the_component_starts_no_child(
     store: Path, curl: _Curl, tag: str
@@ -423,17 +423,17 @@ def test_a_tag_that_is_not_a_tag_of_the_component_starts_no_child(
 
 
 def test_a_component_of_another_kind_starts_no_child(store: Path, curl: _Curl) -> None:
-    """`chaperone` is a venv in the catalog: it ships no archive."""
-    report = _fetch(store, curl, tags={"chaperone": f"chaperone-v{VERSION}"})
+    """`attendance` is a venv in the catalog: it ships no archive."""
+    report = _fetch(store, curl, tags={"attendance": f"attendance-v{VERSION}"})
 
-    assert not ships_archive("chaperone")
+    assert not ships_archive("attendance")
     assert curl.calls == []
     assert report == ArtifactReport(frozenset(), ())
 
 
 def test_only_a_binary_row_ships_an_archive(home: Path) -> None:
     assert ships_archive(BINARY_NAME)
-    assert [name for name in ("chaperone", "playpen", "infra") if ships_archive(name)] == []
+    assert [name for name in ("attendance", "playpen", "infra") if ships_archive(name)] == []
 
 
 def test_a_held_component_starts_no_child(store: Path, curl: _Curl) -> None:
@@ -860,7 +860,7 @@ class _Polls:
 @pytest.fixture
 def desk(tmp_path: Path, home: Path, monkeypatch: pytest.MonkeyPatch) -> _Desk:
     del home
-    made = _desk(tmp_path, (BINARY_NAME, "chaperone"))
+    made = _desk(tmp_path, (BINARY_NAME, "attendance"))
     _git(made.control, "tag", TAG)
 
     return made
@@ -907,19 +907,19 @@ def test_a_request_fetches_no_binary_component_that_does_not_deploy(
     tmp_path: Path, home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`noticeboard` is live at its newest tag, so it is `unchanged` in the
-    resolution of a request for `chaperone`."""
+    resolution of a request for `attendance`."""
     del home
-    desk = _desk(tmp_path, (BINARY_NAME, "chaperone"))
-    _git(desk.control, "tag", f"chaperone-v{VERSION}")
+    desk = _desk(tmp_path, (BINARY_NAME, "attendance"))
+    _git(desk.control, "tag", f"attendance-v{VERSION}")
     curl = _empty_curl()
     _publish(curl)
     monkeypatch.setattr(fetching, "run_capped", curl)
     monkeypatch.setattr(cli, "refresh", _Polls(desk, curl))
 
-    assert cli.main(["request", "chaperone", *desk.options]) == cli.EXIT_OK
+    assert cli.main(["request", "attendance", *desk.options]) == cli.EXIT_OK
 
     assert curl.calls == []
-    assert _filed(desk) == [{"chaperone": "latest"}]
+    assert _filed(desk) == [{"attendance": "latest"}]
 
 
 def test_a_request_whose_fetch_fails_still_files_and_says_so(
@@ -940,12 +940,12 @@ def test_a_request_whose_fetch_fails_still_files_and_says_so(
 
 
 def test_each_poll_of_a_wait_fetches_again(desk: _Desk, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The assets are published on poll 2, and the tag of `chaperone` lands
+    """The assets are published on poll 2, and the tag of `attendance` lands
     on poll 3. Poll 1 asks for the archive, poll 2 for both files, and poll 3
     finds both in the store."""
     curl = _empty_curl()
     polls = _Polls(
-        desk, curl, lands={3: f"chaperone-v{VERSION}"}, publishes={2: lambda: _publish(curl)}
+        desk, curl, lands={3: f"attendance-v{VERSION}"}, publishes={2: lambda: _publish(curl)}
     )
     clock = [0.0]
 
@@ -958,7 +958,7 @@ def test_each_poll_of_a_wait_fetches_again(desk: _Desk, monkeypatch: pytest.Monk
     monkeypatch.setattr(cli, "monotonic", lambda: clock[0])
     monkeypatch.setattr(cli, "sleep", sleep)
 
-    code = cli.main(["request", BINARY_NAME, "chaperone", *desk.options, "--wait"])
+    code = cli.main(["request", BINARY_NAME, "attendance", *desk.options, "--wait"])
 
     assert code == cli.EXIT_OK
     assert polls.polls == 3
@@ -967,7 +967,7 @@ def test_each_poll_of_a_wait_fetches_again(desk: _Desk, monkeypatch: pytest.Monk
         _url(NAMES.archive),
         _url(NAMES.bundle),
     ]
-    assert _filed(desk) == [{BINARY_NAME: "latest", "chaperone": "latest"}]
+    assert _filed(desk) == [{BINARY_NAME: "latest", "attendance": "latest"}]
 
 
 def test_a_dry_run_with_no_wait_fetches_no_artifact(

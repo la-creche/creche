@@ -31,7 +31,7 @@ from handover_fixtures import manifest_text
 PYTHON_DIR = "python3.12"
 
 
-def _tree(root: Path, name: str = "chaperone.new") -> Path:
+def _tree(root: Path, name: str = "noticeboard.new") -> Path:
     """A staged venv tree: a site-packages, a bin and a verify hook."""
     tree = root / name
     site = tree / "lib" / PYTHON_DIR / "site-packages"
@@ -64,8 +64,8 @@ def _dist_info(tree: Path, name: str, body: object) -> Path:
 
 def test_a_tree_that_holds_its_own_code_passes(tmp_path: Path) -> None:
     tree = _tree(tmp_path)
-    (_site(tree) / "chaperone").mkdir()
-    _dist_info(tree, "chaperone", {"url": "file:///src/chaperone", "dir_info": {}})
+    (_site(tree) / "noticeboard").mkdir()
+    _dist_info(tree, "noticeboard", {"url": "file:///src/noticeboard", "dir_info": {}})
 
     assert escapes(tree) == ()
 
@@ -186,18 +186,18 @@ def test_a_staged_tree_that_is_a_link_is_found(tmp_path: Path) -> None:
     the directory behind it. The walk read the directory behind the link
     and found no fault there."""
     behind = _tree(tmp_path, "behind")
-    staged = tmp_path / "chaperone.new"
+    staged = tmp_path / "noticeboard.new"
     staged.symlink_to(behind, target_is_directory=True)
 
     assert escapes(behind) == ()
-    assert escapes(staged) == (f"chaperone.new {NOT_A_TREE}",)
+    assert escapes(staged) == (f"noticeboard.new {NOT_A_TREE}",)
 
 
 def test_a_staged_tree_that_is_no_directory_is_found(tmp_path: Path) -> None:
-    plain = tmp_path / "chaperone.new"
+    plain = tmp_path / "noticeboard.new"
     plain.write_text("no tree\n", encoding="utf-8")
 
-    assert escapes(plain) == (f"chaperone.new {NOT_A_TREE}",)
+    assert escapes(plain) == (f"noticeboard.new {NOT_A_TREE}",)
     assert escapes(tmp_path / "absent.new") == (f"absent.new {NOT_A_TREE}",)
 
 
@@ -216,13 +216,13 @@ def test_check_tree_raises_its_own_refusal_code(tmp_path: Path) -> None:
     """The ledger's `refused_check` tells the operator which fault this was, so it
     is neither `manifest` nor a bare step failure."""
     tree = _tree(tmp_path)
-    (_site(tree) / "_editable_impl_chaperone.pth").write_text("/opt/x/src\n", encoding="utf-8")
+    (_site(tree) / "_editable_impl_noticeboard.pth").write_text("/opt/x/src\n", encoding="utf-8")
 
     with pytest.raises(Refusal) as raised:
-        check_tree("chaperone", tree)
+        check_tree("noticeboard", tree)
 
     assert raised.value.code is RefusalCode.EDITABLE
-    assert raised.value.subject == "chaperone"
+    assert raised.value.subject == "noticeboard"
 
 
 # ---- the executor -----------------------------------------------------------
@@ -232,10 +232,10 @@ def test_check_tree_raises_its_own_refusal_code(tmp_path: Path) -> None:
 #: fake `uv` writes the staged tree from a hook on this argv.
 BUILD_FIELD = """runs_as: operator
 build:
-  - ["/usr/local/bin/uv", "sync", "--frozen", "--no-editable", "--package", "chaperone"]"""
+  - ["/usr/local/bin/uv", "sync", "--frozen", "--no-editable", "--package", "noticeboard"]"""
 
 
-def _manifest(tmp_path: Path, name: str = "chaperone", **edits: str) -> ComponentManifest:
+def _manifest(tmp_path: Path, name: str = "noticeboard", **edits: str) -> ComponentManifest:
     text = manifest_text(name).replace("runs_as: operator", BUILD_FIELD)
     root = tmp_path / "components"
     text = text.replace(f"/opt/components/{name}", str(root / name))
@@ -253,10 +253,10 @@ def _build(tmp_path: Path, write: str) -> tuple[FakeRun, ComponentManifest, Path
     def make(_: object) -> None:
         tree = _tree(paths.new.parent, paths.new.name)
         if write:
-            (_site(tree) / "_editable_impl_chaperone.pth").write_text(write, encoding="utf-8")
+            (_site(tree) / "_editable_impl_noticeboard.pth").write_text(write, encoding="utf-8")
 
     run = FakeRun(answers=git_host_answers(), hooks={"sync": make})
-    source = tmp_path / "work" / "chaperone"
+    source = tmp_path / "work" / "noticeboard"
     source.mkdir(parents=True)
     Installer(fake_host(tmp_path, run)).build(manifest, source, paths)
 
@@ -265,7 +265,7 @@ def _build(tmp_path: Path, write: str) -> tuple[FakeRun, ComponentManifest, Path
 
 def test_a_staged_tree_that_escapes_refuses_the_release(tmp_path: Path) -> None:
     with pytest.raises(Refusal) as raised:
-        _build(tmp_path, "/opt/creche/chaperone/src\n")
+        _build(tmp_path, "/opt/creche/noticeboard/src\n")
 
     assert raised.value.code is RefusalCode.EDITABLE
 
@@ -273,12 +273,12 @@ def test_a_staged_tree_that_escapes_refuses_the_release(tmp_path: Path) -> None:
 def test_a_refused_build_swaps_nothing(tmp_path: Path) -> None:
     """The check runs at step 8, so the live tree is untouched: `install.to`
     still holds whatever was there and no rename has happened."""
-    live = tmp_path / "components" / "chaperone"
+    live = tmp_path / "components" / "noticeboard"
     (live / "bin").mkdir(parents=True)
     (live / "bin" / "marker").write_text("live\n", encoding="utf-8")
 
     with pytest.raises(Refusal):
-        _build(tmp_path, "/opt/creche/chaperone/src\n")
+        _build(tmp_path, "/opt/creche/noticeboard/src\n")
 
     assert (live / "bin" / "marker").is_file()
 
@@ -291,12 +291,12 @@ def test_a_staged_hook_that_is_a_link_loop_stops_the_stage(tmp_path: Path) -> No
     paths = paths_of(manifest, (tmp_path / "components",))
 
     def make(_: object) -> None:
-        hook = _tree(paths.new.parent, paths.new.name) / "bin" / "chaperone-verify"
+        hook = _tree(paths.new.parent, paths.new.name) / "bin" / "noticeboard-verify"
         hook.unlink()
         hook.symlink_to(hook.name)
 
     run = FakeRun(answers=git_host_answers(), hooks={"sync": make})
-    source = tmp_path / "work" / "chaperone"
+    source = tmp_path / "work" / "noticeboard"
     source.mkdir(parents=True)
 
     with pytest.raises(StepFailed, match="the staged verify hook is missing or escapes"):
@@ -306,10 +306,10 @@ def test_a_staged_hook_that_is_a_link_loop_stops_the_stage(tmp_path: Path) -> No
 def test_a_carried_unit_that_is_a_link_loop_is_no_unit(tmp_path: Path) -> None:
     """The fetched tree holds a link to itself at the name of the unit
     file. It is no file, so the release carries no unit and stages none."""
-    manifest = _manifest(tmp_path, **{"unit: null": "unit: creche-chaperone.service"})
-    source = tmp_path / "work" / "chaperone"
+    manifest = _manifest(tmp_path, **{"unit: null": "unit: creche-noticeboard.service"})
+    source = tmp_path / "work" / "noticeboard"
     (source / "systemd").mkdir(parents=True)
-    (source / "systemd" / "creche-chaperone.service").symlink_to("creche-chaperone.service")
+    (source / "systemd" / "creche-noticeboard.service").symlink_to("creche-noticeboard.service")
     staged = _tree(tmp_path / "components")
 
     Installer(fake_host(tmp_path, FakeRun())).stage_unit(manifest, source, staged)

@@ -144,7 +144,7 @@ def test_the_limits_and_the_names_of_the_catalog() -> None:
     assert BINARY_TARGET == "x86_64-unknown-linux-musl"
     assert BINARY_INSTALL_ENV == "CARGO_INSTALL_ROOT"
     assert MAIN_BRANCH == "main"
-    assert RELEASE_WORKFLOW == {Repo.AGENT_CONTROL: "release.yml"}
+    assert RELEASE_WORKFLOW == {Repo.AGENT_CONTROL: "release.yml", Repo.CHAPERONE: "release.yml"}
     assert ARCHIVE_MAX_BYTES == 256 * 1024 * 1024
     assert BUNDLE_MAX_BYTES == 1024 * 1024
     assert ARCHIVE_MAX_MEMBERS == 64
@@ -426,7 +426,7 @@ def test_with_no_binary_row_no_manifest_is_read(
     binary component the command reads no manifest, so it needs no site."""
     monkeypatch.setenv(SITE_FILE_ENV, str(tmp_path / "absent.env"))
 
-    for repo in Repo:
+    for repo in (one for one in Repo if not artifacts.archive_components(one)):
         assert _out(capsys, "artifacts", "--repo", str(repo), "--root", str(REPO_ROOT)) == (
             EXIT_OK,
             [],
@@ -743,8 +743,10 @@ def test_an_unknown_repository_is_a_usage_error() -> None:
 # ---- the assets of a Release ------------------------------------------------
 
 
-def test_no_component_of_today_has_an_asset(capsys: pytest.CaptureFixture[str]) -> None:
-    for row in CATALOG:
+def test_no_component_of_today_but_chaperone_has_an_asset(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    for row in (one for one in CATALOG if one.name != "chaperone"):
         argv = ["allocate-tags", "--repo", str(row.repo), "--assets", row.name]
 
         assert _out(capsys, *argv) == (EXIT_OK, []), row.name

@@ -40,7 +40,7 @@ from handover.follow import (
 from handover import cli, notices
 
 BOARD = "noticeboard"
-PEP = "chaperone"
+CARE = "caregiver"
 SERVERS = "mcp-servers"
 LIVE = "0.1.0"
 NEXT = "0.1.1"
@@ -235,14 +235,14 @@ def test_a_filed_set_is_not_filed_again(host: _Host) -> None:
 def test_two_new_tags_file_as_one_set(host: _Host) -> None:
     """One tap for any number of components (`stage7-releases.md` §2.7)."""
     host.install(BOARD, LIVE)
-    host.install(PEP, LIVE)
+    host.install(CARE, LIVE)
     host.tag(BOARD, NEXT)
-    host.tag(PEP, NEXT)
+    host.tag(CARE, NEXT)
 
-    host.follow(BOARD, PEP)
-    host.follow(BOARD, PEP)
+    host.follow(BOARD, CARE)
+    host.follow(BOARD, CARE)
 
-    assert [item["components"] for item in host.filed()] == [{BOARD: NEXT, PEP: NEXT}]
+    assert [item["components"] for item in host.filed()] == [{BOARD: NEXT, CARE: NEXT}]
 
 
 def test_components_of_two_repositories_file_as_one_set(host: _Host) -> None:
@@ -263,16 +263,16 @@ def test_components_of_two_repositories_file_as_one_set(host: _Host) -> None:
 def test_a_set_that_grows_between_two_runs_waits_one_more_run(host: _Host) -> None:
     """The second tag of one merge lands after the first run saw the first."""
     host.install(BOARD, LIVE)
-    host.install(PEP, LIVE)
+    host.install(CARE, LIVE)
     host.tag(BOARD, NEXT)
-    host.follow(BOARD, PEP)
+    host.follow(BOARD, CARE)
 
-    host.tag(PEP, NEXT)
-    host.follow(BOARD, PEP)
+    host.tag(CARE, NEXT)
+    host.follow(BOARD, CARE)
     assert host.filed() == []
 
-    host.follow(BOARD, PEP)
-    assert [item["components"] for item in host.filed()] == [{BOARD: NEXT, PEP: NEXT}]
+    host.follow(BOARD, CARE)
+    assert [item["components"] for item in host.filed()] == [{BOARD: NEXT, CARE: NEXT}]
 
 
 def test_a_denied_set_stays_quiet(host: _Host) -> None:

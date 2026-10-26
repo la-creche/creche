@@ -73,7 +73,7 @@ NEW_VERSION = "0.1.4"
 #: without one.
 BUILD_LINE = 'build:\n  - ["/usr/local/bin/uv", "sync", "--frozen", "--no-editable"]\ninstall:'
 
-CHAPERONE_UNIT = "creche-chaperone.service"
+SYSTEM_UNIT = "creche-caregiver.service"
 NOTICEBOARD_UNIT = "creche-noticeboard.service"
 
 #: `fake_host`'s two unit directories: `/etc/systemd/system`, and
@@ -333,8 +333,8 @@ def _user_bench(tmp_path: Path) -> Bench:
 
 
 def _system_bench(tmp_path: Path) -> Bench:
-    """`chaperone`, whose `creche-chaperone.service` is root's."""
-    return _make_bench(tmp_path, "chaperone", CHAPERONE_UNIT, SYSTEM_UNITS)
+    """`caregiver`, whose `creche-caregiver.service` is root's."""
+    return _make_bench(tmp_path, "caregiver", SYSTEM_UNIT, SYSTEM_UNITS)
 
 
 def _release(bench: Bench) -> str:
@@ -440,7 +440,7 @@ def test_the_staged_tree_carries_the_unit_with_the_normalized_mode(tmp_path: Pat
 
 
 def test_a_system_unit_is_installed_from_the_live_tree_as_root(tmp_path: Path) -> None:
-    """`chaperone`'s unit is root's, and root can read the clone. The refresh
+    """`caregiver`'s unit is root's, and root can read the clone. The refresh
     still reads the same place a user unit does, and runs as root."""
     bench = _system_bench(tmp_path)
     new = _unit_text(bench, NEW_SETTING)

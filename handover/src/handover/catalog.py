@@ -17,6 +17,7 @@ class Repo(StrEnum):
     AGENT_CONTROL = "agent-control"
     AGENT_MCP = "agent-mcp"
     AGENT_REGISTRY = "agent-registry"
+    CHAPERONE = "chaperone"
 
 
 class Kind(StrEnum):
@@ -100,15 +101,16 @@ class CatalogRow:
 #: `noticeboard` at `noticeboard/` and `playpen` at `playpen/`.
 #:
 #: `bundles` follows each build through `uv.lock`: `attendance` installs the
-#: doors, and `agent-door-trigger` brings `agent-family`; `chaperone`
-#: imports the requester, so `handover` ships in `chaperone`'s tree.
-#: `playpen`'s build is an image build, and `playpen/Dockerfile` copies the
-#: pi pin out of `toybox/`, so a pin that moves is a new image.
+#: doors, and `agent-door-trigger` brings `agent-family`. `playpen`'s build
+#: is an image build, and `playpen/Dockerfile` copies the pi pin out of
+#: `toybox/`, so a pin that moves is a new image.
 #: `test_each_component_bundles_what_its_build_installs` holds it equal.
+#:
+#: `chaperone` is the Rust program of the chaperone repository, and its
+#: manifest is at the root of that repository. Its row replaced the row of
+#: the Python `chaperone` of this repository.
 CATALOG: tuple[CatalogRow, ...] = (
-    CatalogRow(
-        "chaperone", Repo.AGENT_CONTROL, "chaperone", Kind.VENV, Releases.YES, ("handover",)
-    ),
+    CatalogRow("chaperone", Repo.CHAPERONE, ".", Kind.BINARY, Releases.YES),
     CatalogRow(
         "attendance",
         Repo.AGENT_CONTROL,
@@ -130,23 +132,27 @@ CATALOG: tuple[CatalogRow, ...] = (
 
 CATALOG_BY_NAME: dict[str, CatalogRow] = {row.name: row for row in CATALOG}
 
-#: The three files of the Cargo workspace that every `kind: binary` build
-#: reads beside its own crates. The lock file pins the third-party crates,
-#: the workspace manifest holds the build profile and the shared
-#: dependencies, and the toolchain file names the compiler. A change to one
-#: changes the programs that a build makes, so it moves the tag of every
-#: binary component and of no other kind. `uv.lock` is the same rule for a
-#: venv (contract 06 §1 rule 10).
+#: The three files of the Cargo workspace of each repository that every
+#: `kind: binary` build of that repository reads beside its own crates. The
+#: lock file pins the third-party crates, the workspace manifest holds the
+#: build profile and the shared dependencies, and the toolchain file names
+#: the compiler. A change to one changes the programs that a build makes,
+#: so it moves the tag of every binary component of that repository and of
+#: no other kind. `uv.lock` is the same rule for a venv (contract 06 §1 rule
+#: 10). A repository with no entry has no Cargo workspace.
+#:
+#: The workspace of the chaperone repository is at its root. Its row has
+#: the path `.`, so each path of that repository, `crates/` included,
+#: already moves `chaperone`.
 #: CONTRACT-QUESTION: contract 06 §1 rule 10 names `uv.lock` and no file of
 #: a Cargo workspace. The reading taken is these three files, at these
 #: paths. A `rust/.cargo/config.toml` can also change a build and is not in
 #: the list. A wider list costs a release of every binary component for
 #: each change to the added file.
-BINARY_BUILD_FILES: tuple[str, ...] = (
-    "rust/Cargo.lock",
-    "rust/Cargo.toml",
-    "rust/rust-toolchain.toml",
-)
+BINARY_BUILD_FILES: dict[Repo, tuple[str, ...]] = {
+    Repo.AGENT_CONTROL: ("rust/Cargo.lock", "rust/Cargo.toml", "rust/rust-toolchain.toml"),
+    Repo.CHAPERONE: ("Cargo.lock", "Cargo.toml", "rust-toolchain.toml"),
+}
 
 #: The first word of each `build` argv of a `kind: binary` manifest, as it
 #: is written: the program name and no path. A CI runner has no fixed path
@@ -173,7 +179,10 @@ BINARY_INSTALL_ENV = "CARGO_INSTALL_ROOT"
 #: The workflow file that signs the archives of a repository. The identity
 #: of each signature names this file. A repository with no entry has no
 #: signer, so a binary component of that repository gets no tag.
-RELEASE_WORKFLOW: dict[Repo, str] = {Repo.AGENT_CONTROL: "release.yml"}
+RELEASE_WORKFLOW: dict[Repo, str] = {
+    Repo.AGENT_CONTROL: "release.yml",
+    Repo.CHAPERONE: "release.yml",
+}
 
 #: The one branch that a release comes from. A signature names the ref of
 #: this branch, and the merge of a release is a merge into it.

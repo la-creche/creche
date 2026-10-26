@@ -26,7 +26,7 @@ from handover.state import MAX_STATE_BYTES, parse_state
 from handover_fixtures import manifest_text
 from handover_mcp_fixtures import KAGI_LOCK_PATH, KAGI_YAML
 
-SUBJECT = "chaperone/component.yaml"
+SUBJECT = "caregiver/component.yaml"
 STATE_SUBJECT = "live-state.json"
 
 #: Deeper than each supported Python reads, and under the byte cap.
@@ -52,7 +52,7 @@ def _manifest_refusal(text: str) -> Refusal:
 
 def _with_unit(value: str) -> str:
     """A valid manifest with one value in place of its unit."""
-    text = manifest_text("chaperone")
+    text = manifest_text("caregiver")
     assert "unit: null" in text
 
     return text.replace("unit: null", f"unit: {value}")
@@ -154,20 +154,20 @@ LONG_VERSIONS = (
 def test_a_tag_number_too_long_to_read_is_no_version(version: str) -> None:
     """Such a tag is not a version of its component, as a tag of another
     scheme is not. The newest version is the newest tag that is one."""
-    tag = f"chaperone-v{version}"
+    tag = f"caregiver-v{version}"
 
-    assert newest_tagged_version([tag], "chaperone") is None
-    assert newest_tagged_version(["chaperone-v0.1.0", tag], "chaperone") == "0.1.0"
+    assert newest_tagged_version([tag], "caregiver") is None
+    assert newest_tagged_version(["caregiver-v0.1.0", tag], "caregiver") == "0.1.0"
 
 
 @pytest.mark.parametrize("version", LONG_VERSIONS)
 def test_the_allocator_does_not_count_from_a_tag_too_long_to_read(version: str) -> None:
-    tags = ("chaperone-v0.1.0", f"chaperone-v{version}")
-    plans = plan_tags(("chaperone/src/x.py",), (), tags, (), Repo.AGENT_CONTROL)
-    plan = next(one for one in plans if one.component == "chaperone")
+    tags = ("caregiver-v0.1.0", f"caregiver-v{version}")
+    plans = plan_tags(("caregiver/src/x.py",), (), tags, (), Repo.AGENT_CONTROL)
+    plan = next(one for one in plans if one.component == "caregiver")
 
     assert plan.outcome is TagOutcome.CREATE
-    assert plan.tag == "chaperone-v0.1.1"
+    assert plan.tag == "caregiver-v0.1.1"
 
 
 @pytest.mark.parametrize("version", LONG_VERSIONS)
@@ -175,7 +175,7 @@ def test_the_monotonic_rule_refuses_a_version_too_long_to_read(version: str) -> 
     """The rule cannot compare the two versions, which is its refusal."""
     for target, live in ((version, "1.2.0"), ("1.2.0", version)):
         with pytest.raises(Refusal) as caught:
-            check_monotonic("chaperone", target, live)
+            check_monotonic("caregiver", target, live)
 
         assert caught.value.code is RefusalCode.MONOTONIC
         assert caught.value.detail == "cannot compare the target with the installed version"

@@ -131,18 +131,18 @@ def _all_manifests(bench: Bench, edits: dict[str, str] | None = None) -> dict[st
 
 @pytest.fixture
 def bench(tmp_path: Path) -> Bench:
-    """A host where `chaperone` is live at 2.0.3 and 2.1.0 is the latest tag."""
+    """A host where `caregiver` is live at 2.0.3 and 2.1.0 is the latest tag."""
     spool_root = make_spool_dirs(tmp_path)
     run = FakeRun(answers=git_host_answers())
     host = fake_host(tmp_path, run)
     wiring = Wiring(
         host=host,
         transport=grant_transport(),
-        readers=fake_readers(latest={"chaperone": NEW_VERSION}),
-        api=green_api("agent-control", f"chaperone-v{NEW_VERSION}", SHA_OF["chaperone"]),
+        readers=fake_readers(latest={"caregiver": NEW_VERSION}),
+        api=green_api("agent-control", f"caregiver-v{NEW_VERSION}", SHA_OF["caregiver"]),
     )
     built = Bench(tmp_path, spool_root, wiring, run, tmp_path / "components")
-    stamp_tree(built.components, "chaperone", LIVE_VERSION)
+    stamp_tree(built.components, "caregiver", LIVE_VERSION)
 
     return built
 
@@ -152,13 +152,13 @@ def _stage_builds(bench: Bench, version: str = NEW_VERSION) -> None:
     written: the staged tree with its hook, at `<install.to>.new`."""
 
     def write_new(_: object) -> None:
-        stamp_tree(bench.components, "chaperone.new", version)
+        stamp_tree(bench.components, "caregiver.new", version)
 
     bench.run.hooks["sync"] = write_new
 
 
 def _run_one(bench: Bench, body: dict[str, object] | None = None) -> str:
-    write_request(bench.spool_root, REQUEST_ID, body or request_body({"chaperone": NEW_VERSION}))
+    write_request(bench.spool_root, REQUEST_ID, body or request_body({"caregiver": NEW_VERSION}))
     _serve_manifests(bench, _all_manifests(bench))
     _stage_builds(bench)
     spool = bench.open_spool()
@@ -173,7 +173,7 @@ def _run_one(bench: Bench, body: dict[str, object] | None = None) -> str:
 
 def test_one_component_walks_every_step_and_lands(bench: Bench) -> None:
     """§2.4's ten steps, in order, ending `succeeded`. This is the shape
-    the operator reads after "release `chaperone` alone with one tap"."""
+    the operator reads after "release `caregiver` alone with one tap"."""
     result = _run_one(bench)
 
     assert "succeeded" in result
@@ -191,8 +191,8 @@ def test_one_component_walks_every_step_and_lands(bench: Bench) -> None:
         "switch",
         "record",
     ]
-    assert entry["previous"] == {"chaperone": LIVE_VERSION}
-    assert installed_version(bench.components / "chaperone") == NEW_VERSION
+    assert entry["previous"] == {"caregiver": LIVE_VERSION}
+    assert installed_version(bench.components / "caregiver") == NEW_VERSION
 
 
 def test_the_ledger_carries_the_whole_resolved_manifest(bench: Bench) -> None:
@@ -220,19 +220,19 @@ def test_the_request_file_always_leaves_requests(bench: Bench) -> None:
 def test_a_forged_request_file_is_refused(bench: Bench) -> None:
     """A file that is not §2.3's shape never reaches step 2. The reason in
     the ledger is root's own words, never the file's."""
-    body = request_body({"chaperone": NEW_VERSION}) | {"components": {"chaperone": "/etc/passwd"}}
+    body = request_body({"caregiver": NEW_VERSION}) | {"components": {"caregiver": "/etc/passwd"}}
     result = _run_one(bench, body)
 
     assert "refused" in result
     entry = bench.ledger()
     assert entry["refused_check"] == "request"
-    assert installed_version(bench.components / "chaperone") == LIVE_VERSION
+    assert installed_version(bench.components / "caregiver") == LIVE_VERSION
 
 
 def test_a_replayed_id_is_quarantined_and_never_read(bench: Bench) -> None:
     """§6 row 5: an id is spent once it reaches `running/` or `done/`."""
     _run_one(bench)
-    write_request(bench.spool_root, REQUEST_ID, request_body({"chaperone": NEW_VERSION}))
+    write_request(bench.spool_root, REQUEST_ID, request_body({"caregiver": NEW_VERSION}))
 
     spool = bench.open_spool()
     try:
@@ -247,11 +247,11 @@ def test_a_replayed_id_is_quarantined_and_never_read(bench: Bench) -> None:
 
 def test_a_component_may_not_go_backwards(bench: Bench) -> None:
     """§2.4 step 3's monotonic rule, resting on what is INSTALLED."""
-    stamp_tree(bench.components, "chaperone", "9.9.9")
-    body = request_body({"chaperone": NEW_VERSION})
+    stamp_tree(bench.components, "caregiver", "9.9.9")
+    body = request_body({"caregiver": NEW_VERSION})
     write_request(bench.spool_root, REQUEST_ID, body)
     write_live_state(
-        bench.tmp_path, live_state_body({"chaperone": "9.9.9"}, {"chaperone": NEW_VERSION})
+        bench.tmp_path, live_state_body({"caregiver": "9.9.9"}, {"caregiver": NEW_VERSION})
     )
     _serve_manifests(bench, _all_manifests(bench))
     _stage_builds(bench)
@@ -288,7 +288,7 @@ def test_a_denied_tap_touches_nothing(bench: Bench) -> None:
     _run_one(bench)
 
     assert bench.ledger()["refused_check"] == "approval"
-    assert installed_version(bench.components / "chaperone") == LIVE_VERSION
+    assert installed_version(bench.components / "caregiver") == LIVE_VERSION
     assert not bench.run.ran("systemctl")
 
 
@@ -300,7 +300,7 @@ def test_an_approval_for_another_hash_is_refused(bench: Bench) -> None:
     _run_one(bench)
 
     assert bench.ledger()["refused_check"] == "approval"
-    assert installed_version(bench.components / "chaperone") == LIVE_VERSION
+    assert installed_version(bench.components / "caregiver") == LIVE_VERSION
 
 
 def test_the_phone_summary_comes_from_roots_own_resolution(bench: Bench) -> None:
@@ -323,7 +323,7 @@ def test_the_phone_summary_comes_from_roots_own_resolution(bench: Bench) -> None
     _run_one(bench)
 
     summary = shown[0].as_dict()
-    assert summary["components"] == f"chaperone {LIVE_VERSION} → {NEW_VERSION}"
+    assert summary["components"] == f"caregiver {LIVE_VERSION} → {NEW_VERSION}"
     assert summary["restore"] == "automatic"
     assert summary["requested_by"] == "agent-control"
     manifest = bench.ledger()["manifest"]
@@ -355,7 +355,7 @@ def test_a_failed_verify_restores_and_the_previous_version_verifies(bench: Bench
     tree goes back, the previous version's own hook passes, and the ledger
     says all of it."""
     calls = {"n": 0}
-    bench.run.fails["chaperone-verify"] = 1
+    bench.run.fails["caregiver-verify"] = 1
 
     def pass_after_the_first_call(_: object) -> None:
         """The new version's hook fails once. The restored one passes, and
@@ -363,17 +363,17 @@ def test_a_failed_verify_restores_and_the_previous_version_verifies(bench: Bench
         verifies GREEN, not merely that the files went back."""
         calls["n"] += 1
         if calls["n"] > 1:
-            bench.run.fails.pop("chaperone-verify", None)
+            bench.run.fails.pop("caregiver-verify", None)
 
-    bench.run.hooks["chaperone-verify"] = pass_after_the_first_call
+    bench.run.hooks["caregiver-verify"] = pass_after_the_first_call
     _run_one(bench)
 
     entry = bench.ledger()
     assert entry["status"] == "restored"
-    assert entry["reason"] == "switch: chaperone verify failed"
+    assert entry["reason"] == "switch: caregiver verify failed"
     assert bench.step_status(entry, "switch") == "failed"
     assert bench.step_status(entry, "restore") == "ok"
-    assert installed_version(bench.components / "chaperone") == LIVE_VERSION
+    assert installed_version(bench.components / "caregiver") == LIVE_VERSION
     verify = entry["verify"]
     assert isinstance(verify, list)
     assert len(verify) == 2  # pyright: ignore[reportUnknownArgumentType]
@@ -385,15 +385,15 @@ def test_a_failed_verifys_ledger_row_carries_its_report(bench: Bench) -> None:
     the report `noticeboard-verify --json` printed to stdout nowhere in it."""
     report = '{"ok": false, "checks": [{"name": "config", "ok": false}]}'
     calls = {"n": 0}
-    bench.run.fails["chaperone-verify"] = 1
-    bench.run.fail_stdout["chaperone-verify"] = report
+    bench.run.fails["caregiver-verify"] = 1
+    bench.run.fail_stdout["caregiver-verify"] = report
 
     def pass_after_the_first_call(_: object) -> None:
         calls["n"] += 1
         if calls["n"] > 1:
-            bench.run.fails.pop("chaperone-verify", None)
+            bench.run.fails.pop("caregiver-verify", None)
 
-    bench.run.hooks["chaperone-verify"] = pass_after_the_first_call
+    bench.run.hooks["caregiver-verify"] = pass_after_the_first_call
     _run_one(bench)
 
     entry = bench.ledger()
@@ -415,37 +415,37 @@ def test_a_restore_leaves_no_tree_behind(bench: Bench) -> None:
     into the same name as the operator, at `rm: cannot remove 'noticeboard.new':
     Permission denied`."""
     calls = {"n": 0}
-    bench.run.fails["chaperone-verify"] = 1
+    bench.run.fails["caregiver-verify"] = 1
 
     def pass_after_the_first_call(_: object) -> None:
         calls["n"] += 1
         if calls["n"] > 1:
-            bench.run.fails.pop("chaperone-verify", None)
+            bench.run.fails.pop("caregiver-verify", None)
 
-    bench.run.hooks["chaperone-verify"] = pass_after_the_first_call
+    bench.run.hooks["caregiver-verify"] = pass_after_the_first_call
     _run_one(bench)
 
     entry = bench.ledger()
     assert entry["status"] == "restored"
-    staged = bench.components / "chaperone.new"
+    staged = bench.components / "caregiver.new"
     assert not staged.exists()
     log = entry["log_tail"]
     assert isinstance(log, list)
     assert f"removed {staged}" in log
     # What the sweep may not touch: the version the restore put back.
-    assert installed_version(bench.components / "chaperone") == LIVE_VERSION
+    assert installed_version(bench.components / "caregiver") == LIVE_VERSION
 
 
 def test_a_refused_release_leaves_no_tree_behind(bench: Bench) -> None:
     """The other two ends of the same rule: a release that never swapped
     anything staged trees all the same, and the directory it staged into
     is the one the next release and the next cutover both need."""
-    bench.run.fails["chaperone-verify"] = 1
+    bench.run.fails["caregiver-verify"] = 1
     _run_one(bench)
 
     entry = bench.ledger()
     assert entry["status"] == "failed"
-    assert not (bench.components / "chaperone.new").exists()
+    assert not (bench.components / "caregiver.new").exists()
 
 
 # -- the fetched trees ----------------------------------------------------
@@ -461,7 +461,7 @@ def test_a_release_removes_the_trees_it_fetched(bench: Bench) -> None:
     reads a fetched tree after the last step. A directory that stayed grew
     the disk with each release, by the build directory of each component."""
     seen: list[bool] = []
-    bench.run.hooks["chaperone-verify"] = lambda _: seen.append(_work(bench).is_dir())
+    bench.run.hooks["caregiver-verify"] = lambda _: seen.append(_work(bench).is_dir())
     _run_one(bench)
 
     entry = bench.ledger()
@@ -487,14 +487,14 @@ def test_a_refused_release_removes_the_trees_it_fetched(bench: Bench) -> None:
 
 def test_a_restored_release_removes_the_trees_it_fetched(bench: Bench) -> None:
     calls = {"n": 0}
-    bench.run.fails["chaperone-verify"] = 1
+    bench.run.fails["caregiver-verify"] = 1
 
     def pass_after_the_first_call(_: object) -> None:
         calls["n"] += 1
         if calls["n"] > 1:
-            bench.run.fails.pop("chaperone-verify", None)
+            bench.run.fails.pop("caregiver-verify", None)
 
-    bench.run.hooks["chaperone-verify"] = pass_after_the_first_call
+    bench.run.hooks["caregiver-verify"] = pass_after_the_first_call
     _run_one(bench)
 
     assert bench.ledger()["status"] == "restored"
@@ -507,21 +507,21 @@ def test_the_manifests_env_file_reaches_the_hooks_own_argv(bench: Bench) -> None
     verify hook fails unless it sees the exact `--env-file` argv this
     manifest names, the same way the operator's real `noticeboard-verify` needed its own
     unit's `EnvironmentFile=` to pass rather than a hand-run one."""
-    env_path = str(bench.components / "chaperone.env")
+    env_path = str(bench.components / "caregiver.env")
     edits = {'"--json"]': f'"--json", "--env-file", "{env_path}"]'}
     _serve_manifests(bench, _all_manifests(bench, edits))
-    write_request(bench.spool_root, REQUEST_ID, request_body({"chaperone": NEW_VERSION}))
+    write_request(bench.spool_root, REQUEST_ID, request_body({"caregiver": NEW_VERSION}))
     _stage_builds(bench)
 
     def check_env_file(command: Command) -> None:
         argv = list(command.argv)
         given = "--env-file" in argv and argv[argv.index("--env-file") + 1] == env_path
         if given:
-            bench.run.fails.pop("chaperone-verify", None)
+            bench.run.fails.pop("caregiver-verify", None)
         else:
-            bench.run.fails["chaperone-verify"] = 1
+            bench.run.fails["caregiver-verify"] = 1
 
-    bench.run.hooks["chaperone-verify"] = check_env_file
+    bench.run.hooks["caregiver-verify"] = check_env_file
 
     spool = bench.open_spool()
     try:
@@ -537,9 +537,9 @@ def test_a_manual_restore_component_stops_instead(bench: Bench) -> None:
     """Contract 06 §5.2 row 2: restore nothing, stop, ledger `failed`, push
     the phone. Blind reversal after a migration is the worse end."""
     _serve_manifests(bench, _all_manifests(bench, {"mode: automatic": "mode: manual"}))
-    write_request(bench.spool_root, REQUEST_ID, request_body({"chaperone": NEW_VERSION}))
+    write_request(bench.spool_root, REQUEST_ID, request_body({"caregiver": NEW_VERSION}))
     _stage_builds(bench)
-    bench.run.fails["chaperone-verify"] = 1
+    bench.run.fails["caregiver-verify"] = 1
 
     spool = bench.open_spool()
     try:
@@ -552,7 +552,7 @@ def test_a_manual_restore_component_stops_instead(bench: Bench) -> None:
     assert bench.step_status(entry, "restore") == "skipped"
     # The new tree is still live: stopping means stopping, and the operator reads
     # the phone push rather than finding a surprise reversal at 02:00.
-    assert installed_version(bench.components / "chaperone") == NEW_VERSION
+    assert installed_version(bench.components / "caregiver") == NEW_VERSION
 
 
 # -- the three more -------------------------------------------------------
@@ -562,15 +562,15 @@ def test_a_crash_between_switch_and_verify_is_repaired_by_the_next_run(bench: Be
     """The switch note is written BEFORE the move, so a crash in between
     leaves a record root owns. The next run puts the previous artifact back
     and does NOT retry the release."""
-    stamp_tree(bench.components, "chaperone.prev", LIVE_VERSION)
-    stamp_tree(bench.components, "chaperone", NEW_VERSION)
+    stamp_tree(bench.components, "caregiver.prev", LIVE_VERSION)
+    stamp_tree(bench.components, "caregiver", NEW_VERSION)
     spool = bench.open_spool()
     try:
         note = SwitchNote(
-            "chaperone",
-            str(bench.components / "chaperone"),
-            str(bench.components / "chaperone.prev"),
-            "creche-chaperone.service",
+            "caregiver",
+            str(bench.components / "caregiver"),
+            str(bench.components / "caregiver.prev"),
+            "creche-caregiver.service",
         )
         spool.note_switch(REQUEST_ID, note)
         assert spool.unfinished()
@@ -582,15 +582,15 @@ def test_a_crash_between_switch_and_verify_is_repaired_by_the_next_run(bench: Be
     # The repair is a step of its own, so the
     # line names the outcome it ledgered rather than only the swap.
     assert "repaired (restored)" in lines[0]
-    assert installed_version(bench.components / "chaperone") == LIVE_VERSION
+    assert installed_version(bench.components / "caregiver") == LIVE_VERSION
 
 
 def test_two_requests_at_once_run_one_after_the_other(bench: Bench) -> None:
     """§2.4 row 6. Both are drained in one pass, in id order, and each gets
     its own ledger entry — the lock is what serializes them."""
-    write_request(bench.spool_root, REQUEST_ID, request_body({"chaperone": NEW_VERSION}))
+    write_request(bench.spool_root, REQUEST_ID, request_body({"caregiver": NEW_VERSION}))
     write_request(
-        bench.spool_root, OTHER_ID, request_body({"chaperone": NEW_VERSION}, request_id=OTHER_ID)
+        bench.spool_root, OTHER_ID, request_body({"caregiver": NEW_VERSION}, request_id=OTHER_ID)
     )
     _serve_manifests(bench, _all_manifests(bench))
     _stage_builds(bench)
@@ -628,7 +628,7 @@ def test_the_rate_refusal_still_empties_requests(bench: Bench) -> None:
     ids = [f"01K5J8M2Q7V3X9R4T6N0B8C2{one:02X}" for one in range(0x10, 0x1B)]
     for one in ids:
         write_request(
-            bench.spool_root, one, request_body({"chaperone": NEW_VERSION}, request_id=one)
+            bench.spool_root, one, request_body({"caregiver": NEW_VERSION}, request_id=one)
         )
 
     _serve_manifests(bench, _all_manifests(bench))
@@ -664,18 +664,18 @@ def test_a_set_of_two_components_is_no_longer_refused(bench: Bench) -> None:
     write_live_state(
         bench.tmp_path,
         live_state_body(
-            {"chaperone": LIVE_VERSION, "attendance": "1.4.6"},
-            {"chaperone": NEW_VERSION, "attendance": "1.4.7"},
+            {"caregiver": LIVE_VERSION, "attendance": "1.4.6"},
+            {"caregiver": NEW_VERSION, "attendance": "1.4.7"},
         ),
     )
-    body = request_body({"chaperone": NEW_VERSION, "attendance": "1.4.7"})
+    body = request_body({"caregiver": NEW_VERSION, "attendance": "1.4.7"})
     _run_one(bench, body)
 
     assert "set of more than one" not in str(bench.ledger()["reason"])
 
 
 def test_a_rollback_refuses_at_intake(bench: Bench) -> None:
-    body = request_body({"chaperone": NEW_VERSION}, kind="rollback") | {"rollback_of": OTHER_ID}
+    body = request_body({"caregiver": NEW_VERSION}, kind="rollback") | {"rollback_of": OTHER_ID}
     _run_one(bench, body)
 
     assert "rollback" in str(bench.ledger()["reason"])
@@ -686,6 +686,6 @@ def test_a_staged_tree_is_stamped_before_it_is_switched(bench: Bench) -> None:
     written while the tree is still `.new` — never onto a live tree."""
     _run_one(bench)
 
-    assert (bench.components / "chaperone" / STAMP_FILE).read_text(encoding="utf-8").strip() == (
+    assert (bench.components / "caregiver" / STAMP_FILE).read_text(encoding="utf-8").strip() == (
         NEW_VERSION
     )

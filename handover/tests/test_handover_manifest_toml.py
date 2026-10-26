@@ -304,8 +304,8 @@ def test_a_refusal_of_the_reader_is_one_refusal_with_its_text(text: str, detail:
 
 def _both_names(directory: Path) -> None:
     directory.mkdir(parents=True, exist_ok=True)
-    (directory / MANIFEST_FILENAME).write_text(manifest_toml("chaperone"), encoding="utf-8")
-    (directory / MANIFEST_FILENAME_YAML).write_text(manifest_text("chaperone"), encoding="utf-8")
+    (directory / MANIFEST_FILENAME).write_text(manifest_toml("caregiver"), encoding="utf-8")
+    (directory / MANIFEST_FILENAME_YAML).write_text(manifest_text("caregiver"), encoding="utf-8")
 
 
 def test_the_two_names() -> None:
@@ -316,26 +316,26 @@ def test_the_two_names() -> None:
 
 
 def test_a_walk_finds_a_toml_and_a_yaml_manifest(tmp_path: Path) -> None:
-    write_manifest(tmp_path, "chaperone", manifest_toml("chaperone"), Markup.TOML)
+    write_manifest(tmp_path, "caregiver", manifest_toml("caregiver"), Markup.TOML)
     write_manifest(tmp_path, "attendance", manifest_text("attendance"))
 
     found = discover([tmp_path]).found
 
-    assert found["chaperone"].markup is Markup.TOML
-    assert found["chaperone"].subject == "chaperone/component.toml"
-    assert found["chaperone"].text == manifest_toml("chaperone")
+    assert found["caregiver"].markup is Markup.TOML
+    assert found["caregiver"].subject == "caregiver/component.toml"
+    assert found["caregiver"].text == manifest_toml("caregiver")
     assert found["attendance"].markup is Markup.YAML
     assert found["attendance"].subject == "attendance/component.yaml"
 
 
 def test_both_names_in_one_directory_refuse_the_walk(tmp_path: Path) -> None:
-    _both_names(tmp_path / "chaperone")
+    _both_names(tmp_path / "caregiver")
 
     with pytest.raises(Refusal) as caught:
         discover([tmp_path])
 
     assert caught.value.code is RefusalCode.MANIFEST
-    assert caught.value.subject == "chaperone"
+    assert caught.value.subject == "caregiver"
     assert caught.value.detail == "holds component.toml and component.yaml; keep one"
 
 
@@ -350,10 +350,10 @@ def test_both_names_at_a_repository_root_refuse_the_walk(tmp_path: Path) -> None
 
 def test_a_link_counts_as_a_name(tmp_path: Path) -> None:
     """Each entry of a name counts, also a link to no file."""
-    directory = tmp_path / "chaperone"
+    directory = tmp_path / "caregiver"
     directory.mkdir()
     (directory / MANIFEST_FILENAME).symlink_to(tmp_path / "nothing")
-    (directory / MANIFEST_FILENAME_YAML).write_text(manifest_text("chaperone"), encoding="utf-8")
+    (directory / MANIFEST_FILENAME_YAML).write_text(manifest_text("caregiver"), encoding="utf-8")
 
     with pytest.raises(Refusal) as caught:
         discover([tmp_path])
@@ -361,16 +361,16 @@ def test_a_link_counts_as_a_name(tmp_path: Path) -> None:
     assert "keep one" in caught.value.detail
 
     with pytest.raises(Refusal) as again:
-        read_one(tmp_path, "chaperone")
+        read_one(tmp_path, "caregiver")
 
     assert "keep one" in again.value.detail
 
 
 @pytest.mark.parametrize("kind", ["directory", "link-to-a-directory"])
 def test_a_directory_counts_as_a_name(tmp_path: Path, kind: str) -> None:
-    directory = tmp_path / "chaperone"
+    directory = tmp_path / "caregiver"
     directory.mkdir()
-    (directory / MANIFEST_FILENAME_YAML).write_text(manifest_text("chaperone"), encoding="utf-8")
+    (directory / MANIFEST_FILENAME_YAML).write_text(manifest_text("caregiver"), encoding="utf-8")
     if kind == "directory":
         (directory / MANIFEST_FILENAME).mkdir()
     else:
@@ -383,7 +383,7 @@ def test_a_directory_counts_as_a_name(tmp_path: Path, kind: str) -> None:
     assert "keep one" in caught.value.detail
 
     with pytest.raises(Refusal) as again:
-        read_one(tmp_path, "chaperone")
+        read_one(tmp_path, "caregiver")
 
     assert "keep one" in again.value.detail
 
@@ -391,16 +391,16 @@ def test_a_directory_counts_as_a_name(tmp_path: Path, kind: str) -> None:
 def test_a_walk_takes_no_directory_with_the_yaml_name(tmp_path: Path) -> None:
     """A YAML manifest is a file of the walk. A directory with the YAML name
     and no TOML name beside it holds no manifest, as before the TOML name."""
-    (tmp_path / "chaperone" / MANIFEST_FILENAME_YAML).mkdir(parents=True)
+    (tmp_path / "caregiver" / MANIFEST_FILENAME_YAML).mkdir(parents=True)
 
     assert discover([tmp_path]).found == {}
 
 
 def test_both_names_refuse_read_one(tmp_path: Path) -> None:
-    _both_names(tmp_path / "chaperone")
+    _both_names(tmp_path / "caregiver")
 
     with pytest.raises(Refusal) as caught:
-        read_one(tmp_path, "chaperone")
+        read_one(tmp_path, "caregiver")
 
     assert caught.value.code is RefusalCode.MANIFEST
     assert caught.value.detail == "holds component.toml and component.yaml; keep one"
@@ -415,35 +415,35 @@ def test_read_one_refuses_a_symlinked_component_directory(tmp_path: Path, both: 
         _both_names(real)
     else:
         real.mkdir()
-        (real / MANIFEST_FILENAME).write_text(manifest_toml("chaperone"), encoding="utf-8")
-    (tmp_path / "chaperone").symlink_to(real)
+        (real / MANIFEST_FILENAME).write_text(manifest_toml("caregiver"), encoding="utf-8")
+    (tmp_path / "caregiver").symlink_to(real)
 
     with pytest.raises(Refusal) as caught:
-        read_one(tmp_path, "chaperone")
+        read_one(tmp_path, "caregiver")
 
     assert caught.value.code is RefusalCode.CATALOG
-    assert caught.value.subject == "chaperone"
-    assert caught.value.detail == "chaperone is a symlink"
+    assert caught.value.subject == "caregiver"
+    assert caught.value.detail == "caregiver is a symlink"
 
 
 @pytest.mark.parametrize("markup", list(Markup))
 def test_read_one_reads_each_name(tmp_path: Path, markup: Markup) -> None:
-    text = manifest_toml("chaperone") if markup is Markup.TOML else manifest_text("chaperone")
-    write_manifest(tmp_path, "chaperone", text, markup)
+    text = manifest_toml("caregiver") if markup is Markup.TOML else manifest_text("caregiver")
+    write_manifest(tmp_path, "caregiver", text, markup)
 
-    found = read_one(tmp_path, "chaperone")
+    found = read_one(tmp_path, "caregiver")
 
     assert found.markup is markup
-    assert found.subject == f"chaperone/{markup.file_name}"
+    assert found.subject == f"caregiver/{markup.file_name}"
     assert found.text == text
-    assert found.manifest == parse_manifest(manifest_text("chaperone"), "c", Markup.YAML)
+    assert found.manifest == parse_manifest(manifest_text("caregiver"), "c", Markup.YAML)
 
 
 def test_read_one_names_both_names_when_neither_is_there(tmp_path: Path) -> None:
-    (tmp_path / "chaperone").mkdir()
+    (tmp_path / "caregiver").mkdir()
 
     with pytest.raises(Refusal) as caught:
-        read_one(tmp_path, "chaperone")
+        read_one(tmp_path, "caregiver")
 
     assert caught.value.code is RefusalCode.CATALOG
     assert "no component.toml or component.yaml under any root" in caught.value.detail
@@ -451,9 +451,9 @@ def test_read_one_names_both_names_when_neither_is_there(tmp_path: Path) -> None
 
 def test_a_symlinked_toml_manifest_is_refused(tmp_path: Path) -> None:
     real = tmp_path / "elsewhere.toml"
-    real.write_text(manifest_toml("chaperone"), encoding="utf-8")
-    (tmp_path / "chaperone").mkdir()
-    (tmp_path / "chaperone" / MANIFEST_FILENAME).symlink_to(real)
+    real.write_text(manifest_toml("caregiver"), encoding="utf-8")
+    (tmp_path / "caregiver").mkdir()
+    (tmp_path / "caregiver" / MANIFEST_FILENAME).symlink_to(real)
 
     with pytest.raises(Refusal) as caught:
         discover([tmp_path])
@@ -464,12 +464,12 @@ def test_a_symlinked_toml_manifest_is_refused(tmp_path: Path) -> None:
 
 def test_a_large_toml_file_gets_the_text_of_the_reader(tmp_path: Path) -> None:
     padding = "#" * (FileKind.MANIFEST.byte_limit * 4) + "\n"
-    write_manifest(tmp_path, "chaperone", padding + manifest_toml("chaperone"), Markup.TOML)
+    write_manifest(tmp_path, "caregiver", padding + manifest_toml("caregiver"), Markup.TOML)
 
     with pytest.raises(Refusal) as caught:
         discover([tmp_path])
 
-    assert caught.value.subject == "chaperone/component.toml"
+    assert caught.value.subject == "caregiver/component.toml"
     assert caught.value.detail == TOO_LARGE.format(limit=FileKind.MANIFEST.byte_limit)
 
 
@@ -485,7 +485,7 @@ def test_the_read_of_a_toml_file_stops_one_byte_past_the_limit(
 
     monkeypatch.setattr(discovery, "toml_text_of", recorded)
     padding = "#" * (FileKind.MANIFEST.byte_limit * 4) + "\n"
-    write_manifest(tmp_path, "chaperone", padding + manifest_toml("chaperone"), Markup.TOML)
+    write_manifest(tmp_path, "caregiver", padding + manifest_toml("caregiver"), Markup.TOML)
 
     with pytest.raises(Refusal):
         discover([tmp_path])
@@ -496,31 +496,31 @@ def test_the_read_of_a_toml_file_stops_one_byte_past_the_limit(
 def test_the_reader_gets_the_bytes_of_the_file(tmp_path: Path) -> None:
     """A byte that is no UTF-8 and a CR with no LF each reach the reader as
     they are in the file."""
-    directory = tmp_path / "chaperone"
+    directory = tmp_path / "caregiver"
     directory.mkdir()
     path = directory / MANIFEST_FILENAME
     path.write_bytes(b'name = "\xff"\n')
 
     with pytest.raises(Refusal) as caught:
-        read_one(tmp_path, "chaperone")
+        read_one(tmp_path, "caregiver")
 
     assert caught.value.detail == NOT_UTF8
 
-    path.write_bytes(manifest_toml("chaperone").encode("utf-8").replace(b"\n", b"\r"))
+    path.write_bytes(manifest_toml("caregiver").encode("utf-8").replace(b"\n", b"\r"))
 
     with pytest.raises(Refusal) as again:
-        read_one(tmp_path, "chaperone")
+        read_one(tmp_path, "caregiver")
 
     assert again.value.detail == NOT_TOML
 
 
 def test_a_toml_file_with_crlf_line_ends_reads(tmp_path: Path) -> None:
-    directory = tmp_path / "chaperone"
+    directory = tmp_path / "caregiver"
     directory.mkdir()
-    text = manifest_toml("chaperone")
+    text = manifest_toml("caregiver")
     (directory / MANIFEST_FILENAME).write_bytes(text.replace("\n", "\r\n").encode("utf-8"))
 
-    assert read_one(tmp_path, "chaperone").manifest == _parse_toml(text)
+    assert read_one(tmp_path, "caregiver").manifest == _parse_toml(text)
 
 
 def test_the_cap_counts_both_names(tmp_path: Path) -> None:
@@ -528,7 +528,7 @@ def test_the_cap_counts_both_names(tmp_path: Path) -> None:
         directory = tmp_path / f"c{index:03d}"
         directory.mkdir()
         name = MANIFEST_FILENAME if index % 2 else MANIFEST_FILENAME_YAML
-        (directory / name).write_text("name = 'chaperone'\n", encoding="utf-8")
+        (directory / name).write_text("name = 'caregiver'\n", encoding="utf-8")
 
     with pytest.raises(Refusal) as caught:
         discover([tmp_path])
@@ -575,7 +575,7 @@ def test_a_toml_stamp_that_is_a_link_reads_as_absent(tmp_path: Path) -> None:
 def test_a_toml_stamp_that_is_a_link_to_no_file_reads_as_absent(tmp_path: Path) -> None:
     """A link to no file is an entry of the TOML name too. The YAML stamp
     beside it is not read."""
-    write_manifest_stamp(tmp_path, manifest_text("chaperone"), Markup.YAML)
+    write_manifest_stamp(tmp_path, manifest_text("caregiver"), Markup.YAML)
     (tmp_path / MANIFEST_STAMP).symlink_to(tmp_path / "nothing")
 
     assert installed_manifest(tmp_path) is None
@@ -600,25 +600,25 @@ def _trees(tmp_path: Path, name: str, text: str, markup: Markup) -> LiveTree:
 
 @pytest.mark.parametrize("markup", list(Markup))
 def test_a_live_tree_reads_the_stamp_of_each_markup(tmp_path: Path, markup: Markup) -> None:
-    text = manifest_toml("chaperone") if markup is Markup.TOML else manifest_text("chaperone")
+    text = manifest_toml("caregiver") if markup is Markup.TOML else manifest_text("caregiver")
 
-    tree = _trees(tmp_path, "chaperone", text, markup)
+    tree = _trees(tmp_path, "caregiver", text, markup)
 
-    assert tree.manifest == parse_manifest(manifest_text("chaperone"), "c", Markup.YAML)
+    assert tree.manifest == parse_manifest(manifest_text("caregiver"), "c", Markup.YAML)
 
 
 @pytest.mark.parametrize(
     "text",
     [
         "name = [\n",
-        manifest_text("chaperone"),
-        "#" * FileKind.MANIFEST.byte_limit + "\n" + manifest_toml("chaperone"),
+        manifest_text("caregiver"),
+        "#" * FileKind.MANIFEST.byte_limit + "\n" + manifest_toml("caregiver"),
         manifest_toml("attendance"),
     ],
     ids=["no-toml", "yaml-text", "too-large", "another-component"],
 )
 def test_a_toml_stamp_that_does_not_parse_reads_as_absent(tmp_path: Path, text: str) -> None:
-    tree = _trees(tmp_path, "chaperone", text, Markup.TOML)
+    tree = _trees(tmp_path, "caregiver", text, Markup.TOML)
 
     assert tree.present
     assert tree.manifest is None
@@ -648,7 +648,7 @@ def _staged_manifest(name: str, components: Path, markup: Markup) -> str:
 
 
 def _release(tmp_path: Path, markup: Markup) -> Path:
-    """One release of `chaperone` from 2.0.3 to 2.1.0, whose manifest at the
+    """One release of `caregiver` from 2.0.3 to 2.1.0, whose manifest at the
     new tag has `markup`. Gives the live tree after the release."""
     components = tmp_path / "components"
     spool_root = make_spool_dirs(tmp_path)
@@ -656,28 +656,28 @@ def _release(tmp_path: Path, markup: Markup) -> Path:
     wiring = Wiring(
         host=fake_host(tmp_path, run),
         transport=grant_transport(),
-        readers=fake_readers(latest={"chaperone": NEW_VERSION}),
-        api=green_api("agent-control", f"chaperone-v{NEW_VERSION}", SHA_OF["chaperone"]),
+        readers=fake_readers(latest={"caregiver": NEW_VERSION}),
+        api=green_api("agent-control", f"caregiver-v{NEW_VERSION}", SHA_OF["caregiver"]),
     )
-    stamp_tree(components, "chaperone", LIVE_VERSION)
+    stamp_tree(components, "caregiver", LIVE_VERSION)
 
     def write_tree(destination: Path, component: str) -> None:
         text = _staged_manifest(component, components, markup)
         write_manifest(destination, component, text, markup)
 
     def build(_: object) -> None:
-        stamp_tree(components, "chaperone.new", NEW_VERSION)
+        stamp_tree(components, "caregiver.new", NEW_VERSION)
 
     run.dynamic = GitFake(write_tree)
     run.hooks["sync"] = build
-    write_request(spool_root, REQUEST_ID, request_body({"chaperone": NEW_VERSION}))
+    write_request(spool_root, REQUEST_ID, request_body({"caregiver": NEW_VERSION}))
     spool = Spool(str(spool_root), this_uid())
     try:
         assert "succeeded" in handle(spool, f"{REQUEST_ID}.json", wiring, Counter())
     finally:
         spool.close()
 
-    return components / "chaperone"
+    return components / "caregiver"
 
 
 @pytest.mark.parametrize("markup", list(Markup))
@@ -689,8 +689,8 @@ def test_the_stamp_of_a_release_has_the_name_of_its_markup(tmp_path: Path, marku
     stamp = installed_manifest(tree)
     assert stamp is not None
     assert stamp.markup is markup
-    assert stamp.text == _staged_manifest("chaperone", tmp_path / "components", markup)
-    assert read_trees((tmp_path / "components",))["chaperone"].manifest is not None
+    assert stamp.text == _staged_manifest("caregiver", tmp_path / "components", markup)
+    assert read_trees((tmp_path / "components",))["caregiver"].manifest is not None
 
 
 # -- the commands that walk a checkout -----------------------------------------
@@ -722,20 +722,20 @@ def test_a_request_reads_a_checkout_of_each_markup(tmp_path: Path, markup: Marku
     spool.mkdir()
     state = tmp_path / "live-state.json"
     state.write_text(
-        '{"live": {"chaperone": "2.0.3"}, "provided": {}, "latest": {"chaperone": "2.1.0"},'
+        '{"live": {"caregiver": "2.0.3"}, "provided": {}, "latest": {"caregiver": "2.1.0"},'
         ' "facts": {}}',
         encoding="utf-8",
     )
     argv = [*_checkout(tmp_path, markup), "--state", str(state), "--spool", str(spool)]
 
-    assert main(["request", "chaperone", *argv, "--dry-run"]) == EXIT_OK
+    assert main(["request", "caregiver", *argv, "--dry-run"]) == EXIT_OK
 
 
 def test_check_refuses_a_checkout_with_both_names(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     argv = _checkout(tmp_path, Markup.TOML)
-    write_manifest(tmp_path / "repo", "chaperone", manifest_text("chaperone"))
+    write_manifest(tmp_path / "repo", "caregiver", manifest_text("caregiver"))
 
     assert main(["check", *argv]) == EXIT_REFUSED
     assert "keep one" in capsys.readouterr().err

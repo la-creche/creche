@@ -77,15 +77,15 @@ def _fake_ssh(directory: Path) -> Path:
 
 
 def test_the_named_components_map_to_their_repositories() -> None:
-    assert repos_of(["chaperone", "attendance"]) == ("agent-control",)
+    assert repos_of(["caregiver", "attendance"]) == ("agent-control",)
     assert repos_of(["mcp-servers"]) == ("agent-mcp",)
-    assert repos_of(["chaperone", "mcp-servers"]) == ("agent-control", "agent-mcp")
+    assert repos_of(["caregiver", "mcp-servers"]) == ("agent-control", "agent-mcp")
 
 
 def test_a_name_the_catalog_does_not_hold_is_skipped_rather_than_guessed() -> None:
     """The request parser refuses it a moment later with root's own reason.
     Fetching for it would be this side inventing a repository name."""
-    assert repos_of(["../../etc", "chaperone"]) == ("agent-control",)
+    assert repos_of(["../../etc", "caregiver"]) == ("agent-control",)
 
 
 # ---- the fetch itself ------------------------------------------------------
@@ -124,7 +124,7 @@ def test_a_fetch_over_ssh_brings_a_new_tag(tmp_path: Path, monkeypatch: pytest.M
     """The corpus clones fetch from `git@github.com:…`, so this fetch IS an
     ssh transport. Under the executor's `core.sshCommand=false` git would
     run `false` as its ssh, every fetch would exit 128, and
-    `request chaperone --wait` would poll a corpus that never moves while the
+    `request caregiver --wait` would poll a corpus that never moves while the
     tag sits on GitHub.
 
     The `ssh` here runs the remote's `git-upload-pack` locally, so this is
@@ -140,7 +140,7 @@ def test_a_fetch_over_ssh_brings_a_new_tag(tmp_path: Path, monkeypatch: pytest.M
         capture_output=True,
         check=True,
     )
-    subprocess.run([GIT, "tag", "chaperone-v0.1.6"], cwd=upstream, capture_output=True, check=True)
+    subprocess.run([GIT, "tag", "caregiver-v0.1.6"], cwd=upstream, capture_output=True, check=True)
     monkeypatch.setattr(corpus_module, "SSH", str(_fake_ssh(tmp_path / "bin")), raising=False)
 
     report = refresh(("agent-control",), corpus)
@@ -149,7 +149,7 @@ def test_a_fetch_over_ssh_brings_a_new_tag(tmp_path: Path, monkeypatch: pytest.M
     tags = subprocess.run(
         [GIT, "tag", "--list"], cwd=clone, capture_output=True, text=True, check=True
     ).stdout.split()
-    assert "chaperone-v0.1.6" in tags
+    assert "caregiver-v0.1.6" in tags
 
 
 def test_a_repository_the_corpus_does_not_hold_is_reported_not_raised(tmp_path: Path) -> None:
@@ -231,7 +231,7 @@ def test_request_fetches_before_it_files_and_says_so(
     code = cli.main(
         [
             "request",
-            "chaperone@0.2.0",
+            "caregiver@0.2.0",
             "--root",
             str(_REPO_ROOT),
             "--partial",
@@ -259,7 +259,7 @@ def test_the_json_answer_is_one_object_with_the_corpus_lines_in_it(
     code = cli.main(
         [
             "request",
-            "chaperone@0.2.0",
+            "caregiver@0.2.0",
             "--root",
             str(_REPO_ROOT),
             "--partial",
@@ -282,7 +282,7 @@ def test_a_dry_run_fetches_nothing(
     monkeypatch.setattr(cli, "refresh", lambda *a, **k: calls.append(a) or CorpusReport(True, []))
 
     code = cli.main(
-        ["request", "chaperone@0.2.0", "--root", str(_REPO_ROOT), "--partial", "--dry-run"]
+        ["request", "caregiver@0.2.0", "--root", str(_REPO_ROOT), "--partial", "--dry-run"]
     )
 
     assert code == 0
@@ -302,7 +302,7 @@ def test_a_corpus_that_would_not_fetch_still_files_and_warns(
     code = cli.main(
         [
             "request",
-            "chaperone@0.2.0",
+            "caregiver@0.2.0",
             "--root",
             str(_REPO_ROOT),
             "--partial",
@@ -320,33 +320,39 @@ def test_a_corpus_that_would_not_fetch_still_files_and_warns(
 
 
 def _state_file(tmp_path: Path) -> str:
-    """`chaperone` resolves at `latest` with no real corpus: this is a read-order
+    """`caregiver` resolves at `latest` with no real corpus: this is a read-order
     test, not a tag-resolution one."""
-    body = {"live": {}, "provided": {}, "latest": {"chaperone": "0.2.0"}, "facts": {}}
+    body = {"live": {}, "provided": {}, "latest": {"caregiver": "0.2.0"}, "facts": {}}
     path = tmp_path / "live-state.json"
     path.write_text(json.dumps(body), encoding="utf-8")
 
     return str(path)
 
 
-def _three_roots(tmp_path: Path, *, omit: str) -> tuple[Path, Path, Path]:
-    """One directory per repo, the way a real request names three with
-    `--root ... --root ... --root ...`. One shared root
-    would not do: `mcp-servers` and `registry-data` both declare `path: "."`
-    (repo root), so writing both under one directory makes the second
-    overwrite the first's `component.yaml`. `omit` names the one component
-    left unwritten, everywhere."""
+def _repo_roots(tmp_path: Path, *, omit: str) -> tuple[Path, Path, Path, Path]:
+    """One directory per repo, the way a real request names four with
+    `--root ...` each. One shared root would not do: `mcp-servers`,
+    `registry-data` and `chaperone` each declare `path: "."` (repo root), so
+    writing two under one directory makes the second overwrite the first's
+    `component.yaml`. `omit` names the one component left unwritten,
+    everywhere."""
     control = tmp_path / "agent-control"
     mcp = tmp_path / "agent-mcp"
     registry = tmp_path / "agent-registry"
-    homes = {Repo.AGENT_CONTROL: control, Repo.AGENT_MCP: mcp, Repo.AGENT_REGISTRY: registry}
+    chaperone = tmp_path / "chaperone"
+    homes = {
+        Repo.AGENT_CONTROL: control,
+        Repo.AGENT_MCP: mcp,
+        Repo.AGENT_REGISTRY: registry,
+        Repo.CHAPERONE: chaperone,
+    }
     for row in CATALOG:
         if row.name == omit:
             continue
 
         write_manifest(homes[row.repo], row.name, manifest_text(row.name))
 
-    return control, mcp, registry
+    return control, mcp, registry, chaperone
 
 
 def test_the_roots_are_read_after_the_fetch_not_before(
@@ -359,7 +365,7 @@ def test_the_roots_are_read_after_the_fetch_not_before(
 
     This fake corpus only grows the missing manifest when "fetched", so
     the request can only succeed if the fetch really does run first."""
-    control, mcp, registry = _three_roots(tmp_path, omit="mcp-servers")
+    control, mcp, registry, chaperone = _repo_roots(tmp_path, omit="mcp-servers")
     # mcp-servers' component.yaml does not exist yet: the merge "has not
     # reached" this root.
 
@@ -374,13 +380,15 @@ def test_the_roots_are_read_after_the_fetch_not_before(
     code = cli.main(
         [
             "request",
-            "chaperone",
+            "caregiver",
             "--root",
             str(control),
             "--root",
             str(mcp),
             "--root",
             str(registry),
+            "--root",
+            str(chaperone),
             "--state",
             _state_file(tmp_path),
             "--spool",
@@ -398,7 +406,7 @@ def test_a_root_still_missing_after_the_fetch_names_the_sync_command(
     """The fetch ran and `mcp-servers` is STILL missing: the merge may
     simply not be in the corpus yet, and the refusal says the one command
     that catches it up rather than leaving the operator to guess."""
-    control, mcp, registry = _three_roots(tmp_path, omit="mcp-servers")
+    control, mcp, registry, chaperone = _repo_roots(tmp_path, omit="mcp-servers")
 
     monkeypatch.setattr(
         cli, "refresh", lambda repos, *a, **k: CorpusReport(True, [f"fetched {n}" for n in repos])
@@ -409,13 +417,15 @@ def test_a_root_still_missing_after_the_fetch_names_the_sync_command(
     code = cli.main(
         [
             "request",
-            "chaperone",
+            "caregiver",
             "--root",
             str(control),
             "--root",
             str(mcp),
             "--root",
             str(registry),
+            "--root",
+            str(chaperone),
             "--state",
             _state_file(tmp_path),
             "--spool",
@@ -435,18 +445,20 @@ def test_dry_run_never_gets_the_sync_hint(
 ) -> None:
     """No fetch is attempted on a dry run, so a missing root is the plain
     contract 06 §10 refusal: nothing here claims a fetch that did not run."""
-    control, mcp, registry = _three_roots(tmp_path, omit="mcp-servers")
+    control, mcp, registry, chaperone = _repo_roots(tmp_path, omit="mcp-servers")
 
     code = cli.main(
         [
             "request",
-            "chaperone",
+            "caregiver",
             "--root",
             str(control),
             "--root",
             str(mcp),
             "--root",
             str(registry),
+            "--root",
+            str(chaperone),
             "--state",
             _state_file(tmp_path),
             "--dry-run",

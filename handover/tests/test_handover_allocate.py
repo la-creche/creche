@@ -57,7 +57,7 @@ def _one(plans: tuple[TagPlan, ...], component: str) -> TagPlan:
 
 
 def test_a_changed_file_names_its_component() -> None:
-    assert touched(("chaperone/src/chaperone/call.py",), Repo.AGENT_CONTROL) == ("chaperone",)
+    assert touched(("caregiver/src/caregiver/call.py",), Repo.AGENT_CONTROL) == ("caregiver",)
 
 
 def test_the_view_directory_is_the_ui_component() -> None:
@@ -75,14 +75,14 @@ def test_a_whole_repo_component_takes_every_path() -> None:
 
 
 def test_components_come_back_in_catalog_order() -> None:
-    changed = ("handover/src/x.py", "chaperone/src/y.py", "infra/compose.yaml")
+    changed = ("handover/src/x.py", "caregiver/src/y.py", "infra/compose.yaml")
 
-    assert touched(changed, Repo.AGENT_CONTROL) == ("chaperone", "infra", "handover")
+    assert touched(changed, Repo.AGENT_CONTROL) == ("caregiver", "infra", "handover")
 
 
 def test_a_path_that_climbs_out_is_refused() -> None:
     with pytest.raises(Refusal) as caught:
-        touched(("../other-repo/chaperone/x.py",), Repo.AGENT_CONTROL)
+        touched(("../other-repo/caregiver/x.py",), Repo.AGENT_CONTROL)
 
     assert caught.value.code is RefusalCode.REQUEST
     assert "not repo-relative" in caught.value.detail
@@ -126,105 +126,105 @@ def test_a_component_with_no_tag_starts_at_its_first() -> None:
 
 
 def test_the_first_tag_of_a_component_is_created() -> None:
-    plan = _one(_plan(("chaperone/src/x.py",), tags=OLD_TAGS), "chaperone")
+    plan = _one(_plan(("caregiver/src/x.py",), tags=OLD_TAGS), "caregiver")
 
     assert plan.outcome is TagOutcome.CREATE
-    assert plan.tag == "chaperone-v0.1.0"
+    assert plan.tag == "caregiver-v0.1.0"
     assert plan.from_version is None
 
 
 def test_an_old_scheme_tag_is_not_a_version() -> None:
     """`v0.12.43` and `schema-v0.11.3` must not read as any component's."""
-    plan = _one(_plan(("schema/src/x.py", "chaperone/src/x.py"), tags=OLD_TAGS), "chaperone")
+    plan = _one(_plan(("schema/src/x.py", "caregiver/src/x.py"), tags=OLD_TAGS), "caregiver")
 
-    assert plan.tag == "chaperone-v0.1.0"
+    assert plan.tag == "caregiver-v0.1.0"
 
 
 def test_a_patch_bump_follows_the_newest_tag() -> None:
-    tags = (*OLD_TAGS, "chaperone-v0.9.9", "chaperone-v0.10.0", "chaperone-v0.2.0")
-    plan = _one(_plan(("chaperone/src/x.py",), tags=tags), "chaperone")
+    tags = (*OLD_TAGS, "caregiver-v0.9.9", "caregiver-v0.10.0", "caregiver-v0.2.0")
+    plan = _one(_plan(("caregiver/src/x.py",), tags=tags), "caregiver")
 
     assert plan.outcome is TagOutcome.CREATE
-    assert plan.tag == "chaperone-v0.10.1"
+    assert plan.tag == "caregiver-v0.10.1"
     assert plan.from_version == "0.10.0"
 
 
 def test_a_rerun_on_the_same_commit_is_a_noop() -> None:
-    tags = ("chaperone-v0.1.0", "chaperone-v0.1.1")
+    tags = ("caregiver-v0.1.0", "caregiver-v0.1.1")
     plan = _one(
-        _plan(("chaperone/src/x.py",), tags=tags, at_sha=("chaperone-v0.1.1",)), "chaperone"
+        _plan(("caregiver/src/x.py",), tags=tags, at_sha=("caregiver-v0.1.1",)), "caregiver"
     )
 
     assert plan.outcome is TagOutcome.NOOP
-    assert plan.tag == "chaperone-v0.1.1"
+    assert plan.tag == "caregiver-v0.1.1"
 
 
 def test_the_target_is_always_above_every_existing_tag() -> None:
     """Why the planner never emits `CONFLICT`: see `TagOutcome`'s docstring."""
-    tags = ("chaperone-v0.1.0", "chaperone-v0.1.1", "chaperone-v0.0.9", "chaperone-v0.2.0")
-    plan = _one(_plan(("chaperone/src/x.py",), tags=tags), "chaperone")
+    tags = ("caregiver-v0.1.0", "caregiver-v0.1.1", "caregiver-v0.0.9", "caregiver-v0.2.0")
+    plan = _one(_plan(("caregiver/src/x.py",), tags=tags), "caregiver")
 
     assert plan.outcome is TagOutcome.CREATE
-    assert plan.tag == "chaperone-v0.2.1"
+    assert plan.tag == "caregiver-v0.2.1"
     assert plan.tag not in tags
 
 
 def test_two_merges_in_a_row_never_collide() -> None:
     """Pain 1, tested directly: two pull requests merged back to back."""
-    tags = [*OLD_TAGS, "chaperone-v0.5.0"]
+    tags = [*OLD_TAGS, "caregiver-v0.5.0"]
 
-    first = _one(_plan(("chaperone/src/one.py",), tags=tuple(tags)), "chaperone")
+    first = _one(_plan(("caregiver/src/one.py",), tags=tuple(tags)), "caregiver")
     assert first.outcome is TagOutcome.CREATE
-    assert first.tag == "chaperone-v0.5.1"
+    assert first.tag == "caregiver-v0.5.1"
 
     # The workflow's concurrency group serializes the two runs, so the second
     # reads a tag list that already holds the first's tag.
     tags.append(first.tag)
-    second = _one(_plan(("chaperone/src/two.py",), tags=tuple(tags)), "chaperone")
+    second = _one(_plan(("caregiver/src/two.py",), tags=tuple(tags)), "caregiver")
 
     assert second.outcome is TagOutcome.CREATE
-    assert second.tag == "chaperone-v0.5.2"
+    assert second.tag == "caregiver-v0.5.2"
     assert second.tag != first.tag
 
 
 def test_two_merges_of_different_components_are_independent() -> None:
-    tags = ("chaperone-v0.5.0", "attendance-v1.2.3")
+    tags = ("caregiver-v0.5.0", "attendance-v1.2.3")
 
-    levels = ("chaperone\tbump:minor\tchaperone", "attendance\tbump:minor\tattendance")
+    levels = ("caregiver\tbump:minor\tcaregiver", "attendance\tbump:minor\tattendance")
 
-    plans = _plan(("chaperone/src/x.py", "attendance/src/y.py"), tags=tags, levels=levels)
+    plans = _plan(("caregiver/src/x.py", "attendance/src/y.py"), tags=tags, levels=levels)
 
-    assert _one(plans, "chaperone").tag == "chaperone-v0.6.0"
+    assert _one(plans, "caregiver").tag == "caregiver-v0.6.0"
     assert _one(plans, "attendance").tag == "attendance-v1.3.0"
 
 
 def test_a_label_raises_only_the_component_its_pull_request_changed() -> None:
     """A merge queue lands two pull requests in one push. One carries
-    `bump:minor` and changed `attendance/`, the other changed `chaperone/`. The
+    `bump:minor` and changed `attendance/`, the other changed `caregiver/`. The
     script writes the label into both ranges, because both hold that merge,
     and only `attendance` may take it."""
-    tags = ("chaperone-v0.5.0", "attendance-v1.2.3")
-    levels = ("chaperone\tbump:minor\tattendance", "attendance\tbump:minor\tattendance")
+    tags = ("caregiver-v0.5.0", "attendance-v1.2.3")
+    levels = ("caregiver\tbump:minor\tattendance", "attendance\tbump:minor\tattendance")
 
-    plans = _plan(("chaperone/src/x.py", "attendance/src/y.py"), tags=tags, levels=levels)
+    plans = _plan(("caregiver/src/x.py", "attendance/src/y.py"), tags=tags, levels=levels)
 
-    assert _one(plans, "chaperone").tag == "chaperone-v0.5.1"
+    assert _one(plans, "caregiver").tag == "caregiver-v0.5.1"
     assert _one(plans, "attendance").tag == "attendance-v1.3.0"
 
 
 def test_the_highest_level_in_a_range_wins() -> None:
     """A range can hold several merged pull requests. The tip's own label
     is not the only one that counts."""
-    tags = ("chaperone-v0.5.0",)
+    tags = ("caregiver-v0.5.0",)
     levels = (
-        "chaperone\tbump:minor\tchaperone",
-        "chaperone\tbump:major\tchaperone",
-        "chaperone\tbump:minor\tchaperone",
+        "caregiver\tbump:minor\tcaregiver",
+        "caregiver\tbump:major\tcaregiver",
+        "caregiver\tbump:minor\tcaregiver",
     )
 
     assert (
-        _one(_plan(("chaperone/src/x.py",), tags=tags, levels=levels), "chaperone").tag
-        == "chaperone-v1.0.0"
+        _one(_plan(("caregiver/src/x.py",), tags=tags, levels=levels), "caregiver").tag
+        == "caregiver-v1.0.0"
     )
 
 
@@ -243,14 +243,14 @@ def test_a_label_counts_through_a_bundled_package() -> None:
     "line",
     [
         "bump:minor",
-        "chaperone\tbump:minor",
-        "mcp-servers\tbump:minor\tchaperone",
-        "chaperone\tbump:minor\t../x",
+        "caregiver\tbump:minor",
+        "mcp-servers\tbump:minor\tcaregiver",
+        "caregiver\tbump:minor\t../x",
     ],
 )
 def test_a_level_line_the_script_would_never_write_is_refused(line: str) -> None:
     with pytest.raises(Refusal):
-        _plan(("chaperone/src/x.py",), tags=ALL_TAGGED, levels=(line,))
+        _plan(("caregiver/src/x.py",), tags=ALL_TAGGED, levels=(line,))
 
 
 def test_the_lock_file_moves_every_venv_component_and_no_other() -> None:
@@ -289,7 +289,7 @@ def test_a_repository_with_no_component_tag_has_them_all_untagged() -> None:
 
 
 def test_a_component_that_carries_a_tag_is_not_untagged() -> None:
-    assert "chaperone" not in untagged((*OLD_TAGS, "chaperone-v0.1.0"), Repo.AGENT_CONTROL)
+    assert "caregiver" not in untagged((*OLD_TAGS, "caregiver-v0.1.0"), Repo.AGENT_CONTROL)
 
 
 def test_another_repositorys_components_are_never_bootstrapped() -> None:
@@ -366,9 +366,9 @@ def test_a_docs_only_merge_still_gives_an_untagged_component_its_first() -> None
 
 def test_a_bump_label_never_raises_a_first_tag() -> None:
     """A component that has never released has no number to bump."""
-    plan = _one(_plan((), tags=OLD_TAGS, levels=("chaperone\tbump:major\tchaperone",)), "chaperone")
+    plan = _one(_plan((), tags=OLD_TAGS, levels=("caregiver\tbump:major\tcaregiver",)), "caregiver")
 
-    assert plan.tag == "chaperone-v0.1.0"
+    assert plan.tag == "caregiver-v0.1.0"
     assert plan.detail == "first tag"
 
 
@@ -388,10 +388,10 @@ def test_a_second_run_on_the_first_commit_creates_nothing() -> None:
 def test_a_rerun_before_the_tags_are_fetched_is_still_a_noop() -> None:
     """`--at-sha` is what makes a re-run idempotent. The tag list and the
     at-sha list come from the same checkout, so both hold the first tags."""
-    plans = _plan(("chaperone/src/x.py",), tags=ALL_TAGGED, at_sha=ALL_TAGGED)
+    plans = _plan(("caregiver/src/x.py",), tags=ALL_TAGGED, at_sha=ALL_TAGGED)
 
     assert all(item.outcome is TagOutcome.NOOP for item in plans)
-    assert _one(plans, "chaperone").tag == "chaperone-v0.1.0"
+    assert _one(plans, "caregiver").tag == "caregiver-v0.1.0"
 
 
 def test_a_component_added_later_gets_its_first_tag_unasked() -> None:
@@ -429,29 +429,29 @@ def test_read_lines_caps_one_lines_length() -> None:
 def test_a_line_that_names_a_component_counts_for_that_one_only() -> None:
     """A line of `<component>`, a TAB and a path is one line of that
     component's OWN range, not of the head commit's diff."""
-    assert touched(("chaperone\tchaperone",), Repo.AGENT_CONTROL) == ("chaperone",)
+    assert touched(("caregiver\tcaregiver",), Repo.AGENT_CONTROL) == ("caregiver",)
 
 
 def test_a_range_line_whose_path_is_another_components_counts_nothing() -> None:
-    """`attendance`'s range holds a change under `chaperone/`. That is a change to
-    `chaperone` that happened inside `attendance`'s window, and it tags neither."""
-    assert touched(("attendance\tchaperone",), Repo.AGENT_CONTROL) == ()
+    """`attendance`'s range holds a change under `caregiver/`. That is a change to
+    `caregiver` that happened inside `attendance`'s window, and it tags neither."""
+    assert touched(("attendance\tcaregiver",), Repo.AGENT_CONTROL) == ()
 
 
 def test_two_ranges_in_one_file_each_tag_their_own_component() -> None:
     lines = (
-        "chaperone\tchaperone",
-        "chaperone\tdocs",
+        "caregiver\tcaregiver",
+        "caregiver\tdocs",
         "noticeboard\tnoticeboard",
         "noticeboard\tdocs",
     )
 
-    assert touched(lines, Repo.AGENT_CONTROL) == ("chaperone", "noticeboard")
+    assert touched(lines, Repo.AGENT_CONTROL) == ("caregiver", "noticeboard")
 
 
 def test_a_range_lines_path_is_checked_like_any_other() -> None:
     with pytest.raises(Refusal) as caught:
-        touched(("chaperone\t../other-repo/chaperone/x.py",), Repo.AGENT_CONTROL)
+        touched(("caregiver\t../other-repo/caregiver/x.py",), Repo.AGENT_CONTROL)
 
     assert "not repo-relative" in caught.value.detail
 
@@ -474,7 +474,7 @@ def test_the_gap_a_missed_dispatch_leaves() -> None:
     assert head_commit_only == ()
 
     since_each_tag = _plan(
-        ("noticeboard\tnoticeboard", "noticeboard\tdocs", "chaperone\tdocs"), tags=ALL_TAGGED
+        ("noticeboard\tnoticeboard", "noticeboard\tdocs", "caregiver\tdocs"), tags=ALL_TAGGED
     )
 
     assert [item.tag for item in since_each_tag] == ["noticeboard-v0.1.1"]
@@ -483,7 +483,7 @@ def test_the_gap_a_missed_dispatch_leaves() -> None:
 def test_a_component_whose_range_holds_nothing_is_not_tagged() -> None:
     """The rule is still per component. A range that changed none of the
     component's own paths allocates nothing for it."""
-    assert _plan(("chaperone\tdocs", "noticeboard\tdocs"), tags=ALL_TAGGED) == ()
+    assert _plan(("caregiver\tdocs", "noticeboard\tdocs"), tags=ALL_TAGGED) == ()
 
 
 # ---- the packages a component's build installs -----------------------------
@@ -503,11 +503,12 @@ def test_a_family_change_tags_every_component_that_installs_it() -> None:
     assert touched(changed, Repo.AGENT_CONTROL) == ("attendance", "caregiver", "noticeboard")
 
 
-def test_a_handover_package_change_tags_chaperone_too() -> None:
-    """`chaperone` imports the requester, so `handover` is in its tree."""
+def test_a_handover_package_change_tags_handover_alone() -> None:
+    """No build of this repository installs `handover` beside its own
+    component. The Python `chaperone` did, and its row is gone."""
     changed = ("handover/src/handover/requester/file.py",)
 
-    assert touched(changed, Repo.AGENT_CONTROL) == ("chaperone", "handover")
+    assert touched(changed, Repo.AGENT_CONTROL) == ("handover",)
 
 
 def test_a_range_that_changed_only_installed_packages_still_tags() -> None:
@@ -537,9 +538,9 @@ def test_a_component_tagged_on_this_commit_is_still_reported() -> None:
     """A re-run's range is empty, because the tag the first run made IS the
     range's base. Without this row the second dispatch would print nothing
     and read exactly like a docs-only merge."""
-    plans = _plan((), tags=ALL_TAGGED, at_sha=("chaperone-v0.1.0",))
+    plans = _plan((), tags=ALL_TAGGED, at_sha=("caregiver-v0.1.0",))
 
-    assert [(item.component, item.outcome) for item in plans] == [("chaperone", TagOutcome.NOOP)]
+    assert [(item.component, item.outcome) for item in plans] == [("caregiver", TagOutcome.NOOP)]
 
 
 def test_tagged_here_is_scoped_by_repo() -> None:
