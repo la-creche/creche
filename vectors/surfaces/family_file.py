@@ -67,7 +67,7 @@ FIXTURE_REGISTRIES: Final = (FAMILY_REGISTRY, *INTEGRATION_REGISTRIES)
 TOML_REGISTRY: Final = "vectors/fixtures/registry-toml"
 
 #: Every registry in this repository whose `family.toml` files are inputs as
-#: they are. A registry of the process-level suite holds no such file yet.
+#: they are.
 TOML_REGISTRIES: Final = (TOML_REGISTRY, *INTEGRATION_REGISTRIES)
 
 FAMILIES_DIR: Final = "families"

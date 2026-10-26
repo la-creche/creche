@@ -1,7 +1,7 @@
 """The registry of one test: family files from contract 01, in a git checkout.
 
     <root>/registry/                      one git repository, one commit
-      families/<name>/family.yaml         contract 01 §2
+      families/<name>/family.toml         contract 01 §2
       families/<name>/instructions.md     contract 01 §1
 
 Each family file here follows the contract, never a module of a service, so
@@ -21,19 +21,20 @@ from __future__ import annotations
 import os
 import stat
 import subprocess
+import tomllib
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final, cast
 
-import yaml
 from proc_tree import (
     ATTENDED,
     AUTONOMOUS,
     MODEL_ALIAS,
     THIN,
     Tree,
+    toml_value,
     write_family_prose,
     write_registry_file,
 )
@@ -43,7 +44,7 @@ from proc_tree import (
 FILE_COMMENT: Final = "# A fixture of the process suite. Every reach goes through the chaperone."
 
 #: Contract 01 §3.13: the two trigger forms a scenario of this suite fires.
-CRON_HOURLY: Final = 'cron: "@hourly"'
+CRON_HOURLY: Final = '{ cron = "@hourly" }'
 
 #: Who made the first commit of the checkout. Never a person.
 _AUTHOR_NAME: Final = "process-suite"
@@ -93,7 +94,7 @@ class Commit:
 
 def webhook(name: str) -> str:
     """One webhook trigger (contract 01 §3.13), as an entry of `triggers`."""
-    return f"webhook: {name}"
+    return f'{{ webhook = "{name}" }}'
 
 
 def family_text(
@@ -105,45 +106,44 @@ def family_text(
     triggers: tuple[str, ...] = (),
     quiet: str | None = None,
 ) -> str:
-    """One whole `family.yaml` (contract 01 §2).
+    """One whole `family.toml` (contract 01 §2).
 
     Every reach is empty: no mount, no MCP server, no egress. The one verb is
     `embed`, the verb each family of the old fixtures holds. A thin family
     gets the default job limit (§3.12). An autonomous family gets `triggers`
     and the default turn limit (§3.13, §3.14), and `quiet` when a scenario
-    gives one (§3.15), as the text of a YAML mapping.
+    gives one (§3.15), as the text of a TOML inline table.
     """
     lines = [
         FILE_COMMENT,
-        f"name: {name}",
-        f"kind: {kind}",
-        f"description: {description}",
+        f'name = "{name}"',
+        f'kind = "{kind}"',
+        f'description = "{description}"',
         "",
-        f"model: {{ router: {MODEL_ALIAS}, budget_usd_per_day: 15 }}",
+        f'model = {{ router = "{MODEL_ALIAS}", budget_usd_per_day = 15 }}',
         "",
-        "verbs:",
-        "  embed: {}",
+        "verbs.embed = {}",
         "",
-        f"delegates: [{', '.join(delegates)}]",
+        f"delegates = {toml_value(list(delegates))}",
         "",
-        "egress: []",
+        "egress = []",
         "",
-        "shell: false",
-        "sandbox_tools: [read, grep, find, ls]",
-        "sandbox: { cpus: 2, memory: 4g }",
+        "shell = false",
+        'sandbox_tools = ["read", "grep", "find", "ls"]',
+        'sandbox = { cpus = 2, memory = "4g" }',
         "",
-        "skills: []",
-        "approval: []",
+        "skills = []",
+        "approval = []",
     ]
 
     if kind == THIN:
-        lines += ["job: { timeout: 120s }"]
+        lines += ['job = { timeout = "120s" }']
 
     if kind == AUTONOMOUS:
-        lines += ["", "triggers:", *(f"  - {entry}" for entry in triggers), "max_running_turns: 1"]
+        lines += ["", f"triggers = [{', '.join(triggers)}]", "max_running_turns = 1"]
 
     if quiet is not None:
-        lines += ["", f"quiet: {quiet}"]
+        lines += ["", f"quiet = {quiet}"]
 
     return "\n".join(lines) + "\n"
 
@@ -207,7 +207,7 @@ def load_family(tree: Tree, name: str) -> dict[str, Any]:
     This is the one reader of a family file in the suite. A scenario asserts
     on a field of the mapping, and no test names the markup of the file.
     """
-    loaded: object = yaml.safe_load(read_family(tree, name))
+    loaded: object = tomllib.loads(read_family(tree, name))
 
     if not isinstance(loaded, dict):
         raise RegistryError(f"{family_path(tree, name)} holds no mapping at the top level")
@@ -221,7 +221,7 @@ def block_text(key: str, value: object) -> str:
     A block control holds the key line and the value, in the markup of the
     family file.
     """
-    return yaml.safe_dump({key: value}, sort_keys=False)
+    return f"{key} = {toml_value(value)}\n"
 
 
 def family_mode(tree: Tree, name: str) -> int:

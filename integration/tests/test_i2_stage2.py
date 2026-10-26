@@ -7,7 +7,7 @@ removal applies at once." One action here means one edit to one registry
 file. Nothing else is touched, and every assertion reads something that
 crossed a process boundary.
 
-    family.yaml ──► caregiver ──► grants, config mount, status.json
+    family.toml ──► caregiver ──► grants, config mount, status.json
                           └────► POST /internal/switch-sandbox ──► attendance
                                                                       │
     Open WebUI ──► door-owui ──────────────────────────────────────►──┘
@@ -352,8 +352,8 @@ async def test_an_invalid_file_reports_and_keeps_serving(stack: Stack, tmp_path:
 
     assert await _one_turn(stack, chat) == []
 
-    (registry / "families" / FAMILY / "family.yaml").write_text(
-        "name: chat\nkind: nonsense\n", encoding="utf-8"
+    (registry / "families" / FAMILY / "family.toml").write_text(
+        'name = "chat"\nkind = "nonsense"\n', encoding="utf-8"
     )
     broken = await manager.pass_once()
     document = manager.status()

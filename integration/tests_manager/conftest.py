@@ -31,11 +31,11 @@ from pathlib import Path
 from typing import Any, Final
 
 import pytest
-import yaml
 from caregiver.apply import ApplyResult, apply_once
 from caregiver.credentials import read_creds
 from caregiver.driver import FakeDriver
 from caregiver.litellm_keys import FakeLiteLLMKeys
+from noticeboard.tomlout import to_toml
 
 from caregiver import paths
 
@@ -149,7 +149,7 @@ def write_family(registry_root: Path, body: dict[str, Any]) -> None:
     """One family directory, plus the one skill the file names."""
     family_dir = registry_root / "families" / str(body["name"])
     family_dir.mkdir(parents=True, exist_ok=True)
-    (family_dir / "family.yaml").write_text(yaml.safe_dump(body), encoding="utf-8")
+    (family_dir / "family.toml").write_text(to_toml(body), encoding="utf-8")
     (family_dir / "instructions.md").write_text(
         "You are the chat family. Answer plainly.\n", encoding="utf-8"
     )

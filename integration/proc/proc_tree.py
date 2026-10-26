@@ -8,7 +8,7 @@ topology with one writes only the registry and the token files, and
 `caregiver` writes the rest.
 
     <root>/
-      registry/families/<family>/family.yaml       contract 01 §1
+      registry/families/<family>/family.toml       contract 01 §1
       registry/families/<family>/instructions.md   contract 01 §1
       sessions/<family>/                 contract 02 §9, the session store
       state/families/<family>/status.json          contract 05 §2
@@ -44,9 +44,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Final
-
-import yaml
+from typing import Any, Final, cast
 
 FAMILY: Final = "chat"
 SANDBOX: Final = "chat-s1"
@@ -340,7 +338,7 @@ class Tree:
         return self.registry_root / "families" / family
 
     def family_file(self, family: str = FAMILY) -> Path:
-        return self.registry_family_dir(family) / "family.yaml"
+        return self.registry_family_dir(family) / "family.toml"
 
     def family_prose_file(self, family: str = FAMILY) -> Path:
         """The `instructions.md` of one family in the registry (contract 01 §1)."""
@@ -465,12 +463,40 @@ def family_body(family: str = FAMILY, kind: str = ATTENDED, **fields: object) ->
     return body
 
 
+def toml_value(value: object) -> str:
+    """One value in TOML, on one line. The JSON form of a text, a number or
+    a boolean is also its TOML form. A table is an inline table. TOML has no
+    null, so a key with no value is left out."""
+    if isinstance(value, list | tuple):
+        return "[" + ", ".join(toml_value(one) for one in cast("list[object]", value)) + "]"
+
+    if isinstance(value, dict):
+        items = cast("dict[str, object]", value).items()
+        pairs = [f"{_toml_key(key)} = {toml_value(one)}" for key, one in items if one is not None]
+        return "{ " + ", ".join(pairs) + " }" if pairs else "{}"
+
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _toml_key(key: str) -> str:
+    bare = key.replace("_", "a").replace("-", "a")
+    return key if bare.isascii() and bare.isalnum() else json.dumps(key)
+
+
+def toml_text(body: Mapping[str, Any]) -> str:
+    """A TOML text with one line for each key of the top table."""
+    lines = [
+        f"{_toml_key(key)} = {toml_value(one)}\n" for key, one in body.items() if one is not None
+    ]
+    return "".join(lines)
+
+
 def write_family_file(tree: Tree, body: Mapping[str, Any]) -> None:
-    """Put one `family.yaml` in the registry, whole, by rename.
+    """Put one `family.toml` in the registry, whole, by rename.
 
     This is the one action of invariant 9: an edit to one registry file.
     """
-    text = yaml.safe_dump(dict(body), sort_keys=False)
+    text = toml_text(body)
 
     write_registry_file(tree, tree.family_file(str(body["name"])), text)
 
@@ -823,7 +849,7 @@ def write_validation_report(tree: Tree, family: str, issues: list[dict[str, Any]
     errors = sum(1 for issue in issues if issue.get("severity") == "error")
     document: dict[str, Any] = {
         "family": family,
-        "file": f"families/{family}/family.yaml",
+        "file": f"families/{family}/family.toml",
         "status": "invalid",
         "applied": False,
         "issues": [{"downgraded": False} | issue for issue in issues],

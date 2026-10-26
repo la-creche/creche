@@ -8,36 +8,37 @@
 # 2. It holds `enqueue` over one worker, behind a phone tap. That is the one
 #    place this packet's gate and this packet's verb meet.
 #
-# No `tools:`: every MCP server needs an `mcp/<name>/server.yaml` and a
+# No `tools`: every MCP server needs an `mcp/<name>/server.toml` and a
 # running upstream (contract 01 §5.2), and no upstream is on this path.
-name: scrum-lead
-kind: autonomous
-description: Runs the pass. Wakes on a timer or a dispatch, starts a worker, reads the outcome.
+name = "scrum-lead"
+kind = "autonomous"
+description = "Runs the pass. Wakes on a timer or a dispatch, starts a worker, reads the outcome."
 
-model: { router: agent-router, budget_usd_per_day: 2 }
+model.router = "agent-router"
+model.budget_usd_per_day = 2
 
-verbs:
-  embed: {}
-  enqueue:
-    targets: [issue-worker]
-  job_status: {}
+verbs.embed = {}
+verbs.enqueue.targets = ["issue-worker"]
+verbs.job_status = {}
 
-delegates: []
+delegates = []
 
-egress: []
+egress = []
 
-shell: false
-sandbox_tools: [read, grep, find, ls]
-sandbox: { cpus: 2, memory: 4g }
+shell = false
+sandbox_tools = ["read", "grep", "find", "ls"]
+sandbox.cpus = 2
+sandbox.memory = "4g"
 
-skills: []
+skills = []
 
-triggers:
-  - cron: "@hourly"
-  - enqueue: true
+triggers = [
+    { cron = "@hourly" },
+    { enqueue = true },
+]
 
 # One wake at a time. A second dispatch queues (§3.14).
-max_running_turns: 1
+max_running_turns = 1
 
 # Starting another family's job is the gated action here (contract 04 §8).
-approval: [enqueue]
+approval = ["enqueue"]

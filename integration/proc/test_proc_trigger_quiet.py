@@ -30,12 +30,12 @@ from proc_trigger import REVIEW, TriggerStack, hook_path
 
 #: Contract 01 §3.15: the default floor. No scenario here runs that long, so
 #: the floor never is the reason for a wake.
-QUIET = "{ floor_hours: 24 }"
+QUIET = "{ floor_hours = 24 }"
 
 #: One call owed each day from hour 0 in UTC: owed all day, until the audit
 #: holds the call. `embed` is the one verb the fixture family holds.
 DAILY_CALL = "embed"
-QUIET_WITH_DAILY = f"{{ daily: {{ call: {DAILY_CALL}, hour: 0, zone: UTC }} }}"
+QUIET_WITH_DAILY = f'{{ daily = {{ call = "{DAILY_CALL}", hour = 0, zone = "UTC" }} }}'
 
 #: `docs/rework/spec.md` §11.6: what a skipped firing answers.
 QUIET_ANSWER = f"quiet: {REVIEW}: nothing changed since"

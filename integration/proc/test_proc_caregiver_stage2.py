@@ -399,7 +399,7 @@ async def test_an_invalid_file_reports_and_keeps_serving(
     before = house.sbx_commands()
     grants = house.grants()
 
-    write_registry_file(house.tree, house.tree.family_file(), "name: chat\nkind: nonsense\n")
+    write_registry_file(house.tree, house.tree.family_file(), 'name = "chat"\nkind = "nonsense"\n')
     await until(lambda: house.state() == INVALID, f"{FAMILY} to be {INVALID}", PASS_DEADLINE_S)
     document = _status(house)
 
