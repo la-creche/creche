@@ -7,12 +7,14 @@ to, and `sbx exec` forwards no host environment either. One file closes
 both gaps:
 
     /srv/agents/state/rework/families/<family>/supervisor-<family>-s<N>.env
+        AGENT_SESSIONS_DIR=/srv/agents/sessions/<family>
         AGENT_CRED_DIR=.../families/<family>/creds
         AGENT_FAMILY_CONFIG_DIR=.../families/<family>/config
         AGENT_CONTROL_DIR=.../families/<family>/control/<family>-s<N>
         AGENT_SANDBOX=<family>-s<N>
         AGENT_PEP_URL=http://<host>:<port>
         AGENT_LITELLM_BASE_URL=http://<host>:<port>
+        AGENT_INDEX_ROOT=/srv/agents/state/index   (only with that mount)
 
 One file per SANDBOX, not per family: it names the sandbox id and that
 sandbox's own control directory, and contract 05 §5 keeps the outgoing
@@ -22,7 +24,7 @@ It sits BESIDE the control directory, not inside it: a create empties the
 sandbox's control directory (contract 05 §4.3 rule 5), and that directory
 is mounted read-write into the untrusted sandbox.
 
-The last two lines name the two planes, the services of the host that each
+The two plane lines name the two planes, the services of the host that each
 sandbox calls: the chaperone and LiteLLM. The caller gives the two URLs.
 This module holds no address and no port.
 
@@ -43,8 +45,9 @@ from .atomic import atomic_write
 #: holds no secret, so the group that runs the platform may read it.
 PLAYPEN_ENV_MODE: Final = 0o640
 
-#: The names `playpen/src/mounts.ts` reads, and `AGENT_SANDBOX`, which
+#: The names `agent/src/mounts.ts` reads, and `AGENT_SANDBOX`, which
 #: `playpen/src/index.ts` takes when `--sandbox` is absent.
+SESSIONS_DIR_VAR: Final = "AGENT_SESSIONS_DIR"
 CRED_DIR_VAR: Final = "AGENT_CRED_DIR"
 CONFIG_DIR_VAR: Final = "AGENT_FAMILY_CONFIG_DIR"
 CONTROL_DIR_VAR: Final = "AGENT_CONTROL_DIR"
@@ -54,6 +57,8 @@ SANDBOX_VAR: Final = "AGENT_SANDBOX"
 #: base URL of LiteLLM.
 PEP_URL_VAR: Final = "AGENT_PEP_URL"
 LITELLM_BASE_URL_VAR: Final = "AGENT_LITELLM_BASE_URL"
+#: The index store of `library/`. `agent/src/mounts.ts` reads it when set.
+INDEX_ROOT_VAR: Final = "AGENT_INDEX_ROOT"
 
 _ASSIGN: Final = "="
 
@@ -66,6 +71,7 @@ def write_playpen_env(
     sandbox: str,
     pep_url: str,
     litellm_base_url: str,
+    index_root: Path | None,
 ) -> None:
     """Write the file for one sandbox. A create calls it. A pass that adopts
     the replacement of an earlier pass and `apply-once` call it again.
@@ -75,8 +81,11 @@ def write_playpen_env(
     target: no such directory exists under sbx.
 
     `pep_url` and `litellm_base_url` are the URLs of the two planes. Each
-    one goes into the file as the caller gave it."""
+    one goes into the file as the caller gave it. `index_root` is
+    `paths.index_root` of the family: with `None`, the file has no
+    `AGENT_INDEX_ROOT` line."""
     lines = [
+        f"{SESSIONS_DIR_VAR}{_ASSIGN}{paths.session_dir(family)}",
         f"{CRED_DIR_VAR}{_ASSIGN}{paths.creds_dir(state_root, family)}",
         f"{CONFIG_DIR_VAR}{_ASSIGN}{paths.config_dir(state_root, family)}",
         f"{CONTROL_DIR_VAR}{_ASSIGN}{paths.control_dir(state_root, family, sandbox)}",
@@ -84,6 +93,9 @@ def write_playpen_env(
         f"{PEP_URL_VAR}{_ASSIGN}{pep_url}",
         f"{LITELLM_BASE_URL_VAR}{_ASSIGN}{litellm_base_url}",
     ]
+    if index_root is not None:
+        lines.append(f"{INDEX_ROOT_VAR}{_ASSIGN}{index_root}")
+
     body = ("\n".join(lines) + "\n").encode("utf-8")
     atomic_write(path, body, mode=PLAYPEN_ENV_MODE)
 

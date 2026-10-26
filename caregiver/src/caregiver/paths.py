@@ -8,6 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Final
 
+from agent_family import FamilyFile
 from agent_family.registry import FAMILY_FILE
 
 #: Rework runtime state.
@@ -24,6 +25,12 @@ RELEASE_ROOT: Final = Path("/var/lib/creche-handover")
 #: (contract 01 §3.3 rule 6), so `caregiver` mounts it without ever reading
 #: or writing its contents.
 SESSIONS_ROOT: Final = Path("/srv/agents/sessions")
+
+#: Contract 01 §5.4: the index store of `library/`, one of the allowed
+#: roots. A family that mounts it reads it at this same path inside the VM.
+INDEX_ROOT: Final = Path("/srv/agents/state/index")
+#: The mode of a family mount that `index_root` takes.
+_READ_ONLY: Final = "ro"
 
 FAMILIES_DIR: Final = "families"
 GRANTS_DIR: Final = "grants"
@@ -155,6 +162,16 @@ def session_dir(family: str) -> Path:
     """`/srv/agents/sessions/<family>/`, mounted rw at this same path inside
     the VM. It is the primary workspace (contract 03 §7.1)."""
     return SESSIONS_ROOT / family
+
+
+def index_root(family: FamilyFile) -> Path | None:
+    """`INDEX_ROOT` when the family file mounts that path read-only, else
+    `None`. A mount of another path under it does not count."""
+    for mount in family.files:
+        if Path(mount.path) == INDEX_ROOT and mount.mode == _READ_ONLY:
+            return INDEX_ROOT
+
+    return None
 
 
 def sandbox_id(family: str, sequence: int) -> str:

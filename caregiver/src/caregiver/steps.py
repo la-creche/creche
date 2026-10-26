@@ -279,7 +279,7 @@ def write_config(
     return True
 
 
-def publish_playpen_env(state_root: Path, family_name: str, sandbox: str) -> None:
+def publish_playpen_env(state_root: Path, family: FamilyFile, sandbox: str) -> None:
     """Rewrite one sandbox's `supervisor.env` (contract 03 §7.1).
 
     A create writes it once. This puts it back for a sandbox an earlier
@@ -289,12 +289,13 @@ def publish_playpen_env(state_root: Path, family_name: str, sandbox: str) -> Non
     answer `fatal` (contract 05 §4.1.1 rule 4). Nothing else can repair it,
     because `caregiver` is the file's only writer."""
     write_playpen_env(
-        paths.playpen_env_path(state_root, family_name, sandbox),
+        paths.playpen_env_path(state_root, family.name, sandbox),
         state_root=state_root,
-        family=family_name,
+        family=family.name,
         sandbox=sandbox,
         pep_url=url(Port.PEP),
         litellm_base_url=url(Port.LITELLM),
+        index_root=paths.index_root(family),
     )
 
 

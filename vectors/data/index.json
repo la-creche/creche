@@ -119,7 +119,7 @@
   {"accepted":8,"entry":"caregiver.config_mount.write_config_mount","path":"config/runtime_json.write.json","raised":0,"refused":0,"surface":"config.runtime_json.write","vectors":8},
   {"accepted":39,"entry":"caregiver.credentials.read_creds","path":"config/creds_json.read.json","raised":0,"refused":33,"surface":"config.creds_json.read","vectors":72},
   {"accepted":9,"entry":"caregiver.credentials.write_creds","path":"config/creds_json.write.json","raised":0,"refused":0,"surface":"config.creds_json.write","vectors":9},
-  {"accepted":6,"entry":"caregiver.playpen_env.write_playpen_env","path":"config/playpen_env.write.json","raised":0,"refused":0,"surface":"config.playpen_env.write","vectors":6},
+  {"accepted":7,"entry":"caregiver.playpen_env.write_playpen_env","path":"config/playpen_env.write.json","raised":0,"refused":0,"surface":"config.playpen_env.write","vectors":7},
   {"accepted":13,"entry":"caregiver.playpen_env.read_playpen_env","path":"config/playpen_env.read.json","raised":0,"refused":0,"surface":"config.playpen_env.read","vectors":13},
   {"accepted":38,"entry":"attendance.config.from_env","path":"config/attendance.env.json","raised":0,"refused":32,"surface":"config.attendance.env","vectors":70},
   {"accepted":28,"entry":"noticeboard.config.from_env","path":"config/noticeboard.env.json","raised":0,"refused":18,"surface":"config.noticeboard.env","vectors":46},
