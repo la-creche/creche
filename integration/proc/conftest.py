@@ -30,6 +30,7 @@ from proc_caregiver import CaregiverStack
 from proc_chaperone_pin import BuildError, NoToolchain, build_pinned
 from proc_chaperone_rs import ChaperoneRsStack
 from proc_delegate import DelegateStack
+from proc_exit import FACADE_PROGRAMS, ExitStack, facade_bin
 from proc_harness import Supervisor, end_leaked_groups
 from proc_library import LibraryStack, node_has_sqlite
 from proc_owui import OwuiStack
@@ -374,6 +375,29 @@ def chaperone_rs_binary() -> None:
 def chaperone_rs(tree: Tree, supervisor: Supervisor, chaperone_rs_binary: None) -> ChaperoneRsStack:
     """The Rust chaperone and its two effect stand-ins, serving. `supervisor` ends it."""
     stack = ChaperoneRsStack(tree, supervisor)
+    stack.prepare()
+    stack.start()
+
+    return stack
+
+
+@pytest.fixture(scope="session")
+def facade() -> None:
+    """The built facade. A test that needs it and has none skips, or fails with no skip."""
+    for program in FACADE_PROGRAMS:
+        if not facade_bin(program).is_file():
+            _skip(
+                f"{facade_bin(program)} is missing: run "
+                "`pnpm install --frozen-lockfile && pnpm run build` in facade/ first"
+            )
+
+
+@pytest.fixture
+def exit_stack(
+    tree: Tree, supervisor: Supervisor, chaperone_rs_binary: None, facade: None
+) -> ExitStack:
+    """The exit topology, serving, with `chat` switched on. `supervisor` ends it."""
+    stack = ExitStack(tree, supervisor)
     stack.prepare()
     stack.start()
 

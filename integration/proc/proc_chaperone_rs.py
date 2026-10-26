@@ -78,6 +78,9 @@ class ChaperoneRsStack(Stack):
     chaperone: Child | None = None
     port: int = 0
     tokens: dict[str, str] = field(default_factory=dict[str, str])
+    #: The families that each app instance may ask through the plugin
+    #: `attendance`. None leaves the plugin out (`proc_exit.py` sets it).
+    delegates: dict[str, tuple[str, ...]] | None = None
 
     @property
     def files(self) -> RsFiles:
@@ -87,8 +90,14 @@ class ChaperoneRsStack(Stack):
         """Write every file, mint one token for each family, then check both files."""
         build_bare_tree(self.tree)
         install_effects(self.tree)
+        attendance = (
+            (self.tree.attendance_socket, self.delegates) if self.delegates is not None else None
+        )
         write_rs_tree(
-            self.files, effect_program(self.tree, UPSTREAM), effect_program(self.tree, APPROVAL)
+            self.files,
+            effect_program(self.tree, UPSTREAM),
+            effect_program(self.tree, APPROVAL),
+            attendance,
         )
 
         for family in RS_FAMILIES:

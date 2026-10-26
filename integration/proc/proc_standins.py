@@ -61,6 +61,7 @@ import sys
 import time
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final
 from urllib.parse import quote, unquote
@@ -138,6 +139,19 @@ _IMAGE_SEAMS: Final = ("AGENT_PI_BIN", "AGENT_LOCK_BEAT_MS", SESSIONS_MOUNT_ENV)
 #: What `sbx exec` takes to give the command the terminal of the caller.
 TERMINAL_FLAG: Final = "-it"
 
+#: The directory of the root that holds the `TMPDIR` of each sandbox.
+_VM_TMP: Final = "t"
+
+
+class SandboxTmp(StrEnum):
+    """Where the `sbx` stand-in puts the `TMPDIR` of a command."""
+
+    #: The `TMPDIR` of the caller, for each sandbox.
+    SHARED = "shared"
+    #: One `TMPDIR` for each sandbox, under `vm_tmp`, as each VM has its own `/tmp`.
+    OWN = "own"
+
+
 #: The word that ends the words of `sbx` and starts the command.
 _COMMAND_SEPARATOR: Final = "--"
 
@@ -212,13 +226,19 @@ def standin_script(name: str) -> Path:
     return Path(__file__).resolve().with_name(f"standin_{name}.py")
 
 
-def install_sbx(tree: Tree) -> None:
+def install_sbx(tree: Tree, tmp: SandboxTmp = SandboxTmp.SHARED) -> None:
     """Put `sbx` in the root's `bin`, the first directory of a service's PATH.
 
     This form knows `exec` only. It starts a playpen for each sandbox id, so
     a topology with no `caregiver` needs no `create`.
+
+    `SandboxTmp.OWN` gives each sandbox a `TMPDIR` of its own, under
+    `vm_tmp`, as each VM has its own `/tmp`. The facade of a sandbox listens on a socket
+    under `TMPDIR`, and each relay of that sandbox dials it there
+    (`facade/src/relay.ts`). With one `TMPDIR`, two facades of one root
+    would take one socket path.
     """
-    _install_sbx(tree, [str(fake_sbx_script())])
+    _install_sbx(tree, [str(fake_sbx_script())], tmp)
 
 
 def install_sbx_verbs(tree: Tree) -> None:
@@ -230,7 +250,15 @@ def install_sbx_verbs(tree: Tree) -> None:
     _install_sbx(tree, [str(standin_script(SBX)), str(state_dir(tree, SBX))])
 
 
-def _install_sbx(tree: Tree, program: list[str]) -> None:
+def vm_tmp(tree: Tree, sandbox: str) -> Path:
+    """The `TMPDIR` of one sandbox, under an `sbx` with `SandboxTmp.OWN`.
+
+    Short, so that the socket path of a facade stays under the limit of rule 9.
+    """
+    return tree.root / _VM_TMP / sandbox
+
+
+def _install_sbx(tree: Tree, program: list[str], tmp: SandboxTmp = SandboxTmp.SHARED) -> None:
     seams = {
         "AGENT_PI_BIN": str(_program(tree, PI)),
         "AGENT_LOCK_BEAT_MS": str(LOCK_BEAT_MS),
@@ -238,7 +266,7 @@ def _install_sbx(tree: Tree, program: list[str]) -> None:
     }
     exports = "".join(f"export {name}={shlex.quote(value)}\n" for name, value in seams.items())
     target = shlex.join([sys.executable, *program])
-    head = f"{_recorder(tree, SBX)}{exports}{_sandbox_facts(tree)}"
+    head = f"{_recorder(tree, SBX)}{exports}{_sandbox_facts(tree, tmp)}"
 
     _write_program(tree, SBX, f'{head}exec {target} "$@"\n')
 
@@ -607,7 +635,7 @@ def _recorder(tree: Tree, name: str) -> str:
     )
 
 
-def _sandbox_facts(tree: Tree) -> str:
+def _sandbox_facts(tree: Tree, tmp: SandboxTmp) -> str:
     """The part of the `sbx` wrapper that reads the words of one call.
 
     1. The sandbox id is the word before the command separator. Its family
@@ -615,8 +643,13 @@ def _sandbox_facts(tree: Tree) -> str:
        serves each family of a root.
     2. `-it` before the separator is dropped. The stand-in becomes the
        command, so the command has the terminal of the caller already.
+    3. With `SandboxTmp.OWN`, the sandbox id names the `TMPDIR` of the command.
+       `fake_sbx.py` passes `TMPDIR` as a variable of the image.
     """
     sessions = shlex.quote(str(tree.sessions_root))
+    vms = shlex.quote(str(tree.root / _VM_TMP))
+    own = f'TMPDIR={vms}/"$box"\nmkdir -p "$TMPDIR"\nexport TMPDIR\n'
+    tmp_lines = own if tmp is SandboxTmp.OWN else ""
 
     return (
         "box=\n"
@@ -632,6 +665,7 @@ def _sandbox_facts(tree: Tree) -> str:
         '  set -- "$@" "$word"\n'
         "done\n"
         f'export {SESSIONS_MOUNT_ENV}={sessions}/"${{box%-s*}}"\n'
+        f"{tmp_lines}"
     )
 
 

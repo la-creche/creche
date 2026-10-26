@@ -257,17 +257,24 @@ jobs:
         env:
           AGENT_LAN_ADDRESS: 192.0.2.10
 
+      # The exit test (integration/proc/test_proc_exit.py) starts the
+      # built `creche-facade` and `acp-relay` of facade/dist. The build
+      # builds agent/ first. The `facade` job runs the tests of both.
+      - run: pnpm install --frozen-lockfile && pnpm run build
+        working-directory: facade
+
       - uses: ./.github/actions/uv-sync
 
       # The Rust chaperone of the row `chaperone-rs`: the binary that the
       # suite builds from the commit of integration/proc/chaperone.pin
       # (integration/proc/proc_chaperone_pin.py). The key holds the pin
-      # file, so a new pin starts from an empty cache. On a miss the first
+      # file and the build script, so a new pin or a new program of the
+      # build starts from an empty cache. On a miss the first
       # test that needs the binary builds it with the cargo of the runner.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/creche-proc/chaperone-rs
-          key: proc-chaperone-rs-${{ runner.os }}-${{ hashFiles('integration/proc/chaperone.pin') }}
+          key: proc-chaperone-rs-${{ runner.os }}-${{ hashFiles('integration/proc/chaperone.pin', 'integration/proc/proc_chaperone_pin.py') }}
 
       - run: uv run pytest integration/proc -m slow
         env:

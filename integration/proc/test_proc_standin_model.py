@@ -93,6 +93,18 @@ def test_model_streams_a_text_turn_one_word_in_each_chunk(model: Model) -> None:
     assert frames.ends_with_done
 
 
+def test_model_answers_the_completions_path_with_no_version_prefix(model: Model) -> None:
+    """The agent module's base URL holds no path, and its client appends
+    `/chat/completions`. LiteLLM serves that path too."""
+    script_model(model.tree, [text_turn("hello")])
+
+    answer = model.client.post("/chat/completions", json=BODY)
+
+    assert answer.status_code == HTTP_OK
+    assert parse(answer.text).text == "hello"
+    assert model_calls(model.tree) == [{"path": "/chat/completions", "body": BODY}]
+
+
 def test_model_streams_a_tool_call_in_one_chunk(model: Model) -> None:
     script_model(model.tree, [tool_turn(TOOL, {"text": "hi"})])
 
