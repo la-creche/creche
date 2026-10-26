@@ -47,10 +47,6 @@ DEFAULT_RELAY_COMMAND = "sbx exec --env-file {env_file} {sandbox} -- acp-relay"
 #: The same shape, for the one supervisor exec of each sandbox's facade.
 DEFAULT_FACADE_COMMAND = "sbx exec --env-file {env_file} {sandbox} -- creche-facade"
 
-# Contract 02 §10.4. One file, mode 0600, beside every other credential this
-# host keeps. `SESSIOND_OWUI_URL` is what turns the feature on.
-DEFAULT_OWUI_KEY_FILE = "/srv/agents/state/rework/tokens/owui-api.key"
-
 ENV_PREFIX = "SESSIOND_"
 
 _TRUE_WORDS = frozenset({"1", "true", "yes", "on"})
@@ -96,13 +92,6 @@ class Config:
     lan_port: int
     channel_command: str
     log_dir: Path
-    # Contract 02 §10.4 rule 4. With either of these empty the Open WebUI
-    # copy is off and nothing else changes. The key is in a file, never in
-    # the environment: invariant 13 keeps a secret off argv and out of a
-    # process listing.
-    owui_url: str = ""
-    owui_key_file: Path = Path(DEFAULT_OWUI_KEY_FILE)
-    owui_folder_id: str = ""
     # Contract 03 §11.4 rule 4's two numbers. They are here so a test can watch
     # the lock in fractions of a second, and so an operator can widen the
     # window on a host where the sandbox writes its beat more slowly.
@@ -136,9 +125,6 @@ def from_env(environ: dict[str, str] | None = None) -> Config:
         lan_port=_port(source),
         channel_command=_text(source, "CHANNEL_COMMAND", DEFAULT_COMMAND),
         log_dir=_path(source, "LOG_DIR", DEFAULT_LOG_DIR),
-        owui_url=_text(source, "OWUI_URL", ""),
-        owui_key_file=_path(source, "OWUI_KEY_FILE", DEFAULT_OWUI_KEY_FILE),
-        owui_folder_id=_text(source, "OWUI_FOLDER_ID", ""),
         lock_stale_s=_seconds(source, "LOCK_STALE_S", LOCK_STALE_S),
         lock_poll_s=_seconds(source, "LOCK_POLL_S", LOCK_POLL_S),
         acp_relay_command=_text(source, "ACP_RELAY_COMMAND", DEFAULT_RELAY_COMMAND),

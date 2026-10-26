@@ -1,4 +1,4 @@
-"""The records the jobs and the remaining modules share (contract 02 §7, §13).
+"""The records of a job: its trigger and its usage (contract 02 §13).
 
 `to_api()` is the shape a reader sees. It holds exactly the fields the
 contract's table names.
@@ -6,13 +6,12 @@ contract's table names.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
 from .clock import rfc3339
-from .states import SessionKind
 
 DEFAULT_DEADLINE_S = 3600
 
@@ -91,41 +90,3 @@ class Usage:
         self.cache_read += other.cache_read
         self.cache_write += other.cache_write
         self.cost_usd += other.cost_usd
-
-
-@dataclass(slots=True)
-class Session:
-    """One durable conversation or job in one family (contract 02 §4.2)."""
-
-    family: str
-    session: str
-    kind: SessionKind
-    created_at: datetime
-    updated_at: datetime
-    title: str = ""
-    journal_seq: int = 0
-    turns_total: int = 0
-    sandbox: str | None = None
-    persona_hash: str | None = None
-    labels: dict[str, str] = field(default_factory=dict[str, str])
-    # Open WebUI message id to pi entry id (contract 02 §10.1). File only.
-    owui_map: dict[str, str] = field(default_factory=dict[str, str])
-    # The session that asked for this job, thin families only (contract 02
-    # §5.1, §12.1). File only: §4.2's field table does not carry it.
-    owner_session: str | None = None
-    # The firing that caused this job, autonomous families only (contract 02
-    # §13.2). File only, and fixed by the session's first turn.
-    trigger: Trigger | None = None
-    # The Open WebUI chat this session is copied into, and that copy's newest
-    # message (contract 02 §10.4). File only: a session not born in Open WebUI
-    # gains a chat, and the leaf is what an append attaches to. Reading the
-    # chat back instead is what §10.4 rule 1 forbids.
-    owui_chat: str | None = None
-    owui_leaf: str | None = None
-    # How many of `turns_total` were terminal exchanges (contract 02 §4.2,
-    # §10.5), and the newest pi entry this service has accounted for. The
-    # cursor is `since` on the next contract 03 §4.8 read, so a restart must
-    # not lose it: a lost cursor reads the whole history and copies every
-    # exchange into Open WebUI a second time.
-    terminal_total: int = 0
-    pi_cursor: str | None = None

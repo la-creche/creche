@@ -141,7 +141,7 @@ chaperone reads them as another user. `SIGHUP` reloads them.
 | `service.py` | the operations: the jobs, the ACP door, the switch |
 | `requests.py` | every request body, validated before use |
 | `queueing.py`, `outcomes.py` | the dispatch queues, what survives a job |
-| `owui_copy.py`, `terminal.py`, `branching.py`, `persona.py` | Open WebUI copy, terminal exchanges, pi branches, the folder prompt. No route reaches them since row 21. Rows 23 and 24 remove them. |
+| `branching.py` | pi branches. No route reaches it since row 21. Row 24 removes it. |
 | `playpen_link.py`, `wire.py` | the old playpen channel. No route reaches it since row 21. Row 25 removes it. |
 | `switching.py`, `channel.py`, `exec_channel.py` | a switch, a byte channel, an `sbx exec` process |
 | `supervisor_lock.py` | the proof that no older supervisor holds a sandbox |
