@@ -1,17 +1,17 @@
 """The seventh topology: the index builder alone, beside the TEI stand-in.
 
     a test (plays a systemd timer)
-      | runs `index-scope <corpus> <index directory> [vault|code]` to its end
+      | runs `index-scope <corpus> <index directory> [vault]` to its end
       v
     library        one process for each run, started through `Service.LIBRARY`
-      | reads <root>/vault/<name> or <root>/code/<name>
+      | reads <root>/vault/<name>
       | HTTP, loopback port: GET /info, POST /embed      the TEI stand-in
       | writes <root>/state/index/<name>/store.db, by one rename
       v
     a test reads store.db with the `sqlite3` module
 
-No `attendance` runs here, and no sandbox. On the host the two index units
-run the program inside a sandbox, through `sbx exec` and `sh -c`. The image
+No `attendance` runs here, and no sandbox. On the host the index unit runs
+the program inside a sandbox, through `sbx exec` and `sh -c`. The image
 of that sandbox gives the program a `PATH` and the address of TEI. So a test
 gives the program `PATH` and one address variable. `env_of` of
 `proc_services.py` adds what only the default command needs.
@@ -102,16 +102,8 @@ CANARY: Final = "canary"
 EXIT_OK: Final = 0
 EXIT_USAGE: Final = 2
 
-#: The vault scope and the code repository of a scenario with one corpus.
+#: The vault scope of a scenario with one corpus.
 NOTES: Final = "notes"
-REPO: Final = "demo"
-
-#: Each directory of build output that `write_repo` makes: each name that
-#: the `code` profile of `library/AGENTS.md` skips and that starts with no dot.
-BUILD_OUTPUT: Final = ("node_modules", "target", "dist", "build", "__pycache__")
-
-#: The index of a code repository has this prefix on the host.
-CODE_INDEX_PREFIX: Final = "code-"
 
 #: How long one run may take. A run of a scenario takes about one second on
 #: a laptop. A loaded machine is many times slower.
@@ -255,7 +247,6 @@ class Profile(StrEnum):
     """The third word of the command: which files of a corpus the program reads."""
 
     VAULT = "vault"
-    CODE = "code"
 
 
 @dataclass(frozen=True, slots=True)
@@ -632,13 +623,12 @@ class LibraryStack:
     tei_port: int = 0
 
     def prepare(self) -> None:
-        """Make the two corpus roots. Start nothing.
+        """Make the corpus root. Start nothing.
 
         The program makes its index directory itself, so no directory under
         `state/index` exists before the first run.
         """
-        for directory in (self.vault_root, self.code_root):
-            directory.mkdir(parents=True, exist_ok=True)
+        self.vault_root.mkdir(parents=True, exist_ok=True)
 
     def start_tei(self) -> None:
         """Start the TEI stand-in, and wait for it."""
@@ -650,17 +640,9 @@ class LibraryStack:
     def vault_root(self) -> Path:
         return self.tree.root / "vault"
 
-    @property
-    def code_root(self) -> Path:
-        return self.tree.root / "code"
-
     def vault(self, name: str = NOTES) -> Path:
         """The directory of one vault scope."""
         return self.vault_root / name
-
-    def code(self, name: str = REPO) -> Path:
-        """The directory of one code repository."""
-        return self.code_root / name
 
     def index_dir(self, name: str = NOTES) -> Path:
         """The index directory of one corpus, outside the corpus."""
@@ -907,7 +889,7 @@ def index_words(scope: Path, index_dir: Path, profile: Profile | None = None) ->
     """The words that an index unit puts after the program.
 
     None gives no third word, as the unit of a vault scope does.
-    `test_proc_table.py` holds these words against the two units.
+    `test_proc_table.py` holds these words against the unit.
     """
     words = [str(scope), str(index_dir)]
 
@@ -958,24 +940,6 @@ def write_vault(scope: Path) -> None:
     write_note(scope / BIKES, BIKES_TEXT)
     write_note(scope / "review-inbox" / "draft.md", "unapproved draft, never indexed")
     write_note(scope / ".hidden.md", "hidden file, never indexed")
-
-
-def write_repo(root: Path) -> None:
-    """A code repository: four source files, one PDF, build output and a `.git` directory.
-
-    With the `code` profile the program reads the four source files and
-    nothing else.
-    """
-    write_note(root / "src" / "app.py", "def handler():\n    return 'ok'\n")
-    write_note(root / "src" / "client.ts", "export const call = () => fetch('/v1');\n")
-    write_note(root / "README.md", "The service exposes /v1 and returns ok.\n")
-    write_note(root / "pyproject.toml", '[project]\nname = "demo"\n')
-    (root / "notes.pdf").write_bytes(b"%PDF-1.4 not source")
-
-    for junk in BUILD_OUTPUT:
-        write_note(root / junk / "bundle.js", "// generated, never indexed\n")
-
-    write_note(root / ".git" / "config.toml", "# vcs internals, never indexed\n")
 
 
 def write_corpus_of(scope: Path, chunks: int) -> Path:

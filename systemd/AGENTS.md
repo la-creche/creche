@@ -12,7 +12,7 @@ from this directory at run time. The root `AGENTS.md` applies here too.
 | `creche-trigger@.service` | user, templated | the cutover script, only when the host has none |
 | `creche-watchdog.{service,timer}`, `registry-sync.{service,timer}` | user | the cutover script |
 | `creche-follow.{service,timer}` | user | the cutover script |
-| `index@.{service,timer}`, `index-code@.{service,timer}` | user, templated | `bin/provision-library.sh` |
+| `index@.{service,timer}` | user, templated | `bin/provision-library.sh` |
 | `code-corpus-sync.*`, `sbx-drift.*` | user | setup scripts, in the private repository |
 
 Installing a unit stays an installer's job. A release refreshes an already
@@ -59,10 +59,8 @@ installed unit file in place and never runs an installer.
   `LockPersonality`. `SystemCallFilter` and `MemoryDenyWriteExecute` are not
   set on the user units. They shell out to `sbx`, and neither option has been
   tested against that.
-- **`sleep 8` in the index templates stays.** `sbx exec`'s attach races
+- **`sleep 8` in the index template stays.** `sbx exec`'s attach races
   process exit. Keep `TimeoutStartSec` above the `timeout` value.
-- **The two index timeouts differ on purpose.** The vault template allows
-  1500 s, the code template 3000 s.
 - **The release executor's service has no mount-namespace sandboxing.** Its
   `code` step is the deploy.
 
@@ -71,7 +69,6 @@ installed unit file in place and never runs an installer.
 | Timer | Cadence | Why |
 |---|---|---|
 | `index@<scope>` | 15 min | bounds retrieval staleness |
-| `index-code@<repo>` | 1 h | the corpus changes only on a push |
 | `code-corpus-sync` | 1 h | pull only |
 | `sbx-drift` | daily | the global policy must hold zero network allows |
 | `creche-watchdog` | 1 min | the thresholds set how fast an outage is seen, not the cadence |

@@ -26,7 +26,6 @@ from proc_library import (
     BIKES,
     BIKES_TEXT,
     CANARY,
-    CODE_INDEX_PREFIX,
     DIMS,
     EXIT_OK,
     FILE_PARAGRAPHS,
@@ -39,7 +38,6 @@ from proc_library import (
     META_UPDATED,
     MOVED_TEXT,
     NOTES,
-    REPO,
     SECOND_WORD,
     STORE_FILE,
     WORK_FILE,
@@ -52,13 +50,9 @@ from proc_library import (
     write_corpus_of,
     write_note,
     write_pdf,
-    write_repo,
     write_vault,
 )
 from proc_standins import TEI, TEI_FAIL_EMBED, TEI_MODEL, tune
-
-#: The index of the code repository of this file, with the name of the host.
-CODE_INDEX = f"{CODE_INDEX_PREFIX}{REPO}"
 
 #: The statement of each table that a reader depends on, as SQLite keeps it
 #: (`library/AGENTS.md`, "Store schema").
@@ -279,23 +273,6 @@ def test_store_from_before_plain_vectors_is_backfilled_without_reembedding(
     assert plain == {chunk.id: vector_blob(chunk.text) for chunk in library.store().chunks()}
     assert plain == library.store().vec_vectors()
     assert len(plain) == 2
-
-
-def test_code_profile_indexes_source_and_skips_build_output(library: LibraryStack) -> None:
-    """The unit of a code repository gives the word `code`, and an index named `code-<repo>`."""
-    repo = library.code()
-    write_repo(repo)
-
-    report = _run(library, repo, CODE_INDEX, Profile.CODE)
-
-    assert report.errors == ()
-    assert report.indexed == 4
-    assert _names(library, repo, CODE_INDEX) == {
-        "README.md",
-        "pyproject.toml",
-        "src/app.py",
-        "src/client.ts",
-    }
 
 
 def test_vault_profile_ignores_source_files(library: LibraryStack) -> None:

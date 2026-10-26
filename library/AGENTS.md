@@ -27,15 +27,12 @@ of such an index. FTS keeps serving.
 
 The index is derived state. It lives outside the corpus it describes, under
 the state root, never inside a vault scope. Never index a working checkout.
-Code corpora are dedicated clones. `bin/provision-library.sh` namespaces a
-code index as `code-<repo>`.
 
 ## Profiles
 
 | Profile | Indexes | Skips |
 |---|---|---|
 | `vault` | `.md .txt .pdf` | `.index`, `review-inbox`, dot-dirs |
-| `code` | `.py .ts .tsx .js .jsx .rs .go .sh .toml .yaml .yml .sql .md .txt` | `.index`, `node_modules`, `target`, `dist`, `build`, `__pycache__`, dot-dirs |
 
 ## Store schema
 
@@ -56,14 +53,13 @@ corpus.
 ## Run it
 
 ```bash
-index-scope <corpus-path> <index-dir> [vault|code]     # TEI_URL env
-./bin/provision-library.sh <name> [vault|code|test]    # image, sandbox, egress, timer
+index-scope <corpus-path> <index-dir> [vault]          # TEI_URL env
+./bin/provision-library.sh <name> [vault|test]         # image, sandbox, egress, timer
 ```
 
-Live, it runs from `index@<scope>.timer` and `index-code@<repo>.timer`, every
-15 minutes and every hour, inside a sandbox that mounts the corpus read-only.
-A TEI preflight embeds a canary first. An unreachable embedder leaves the
-corpus untouched.
+Live, it runs from `index@<scope>.timer` every 15 minutes, inside a sandbox
+that mounts the corpus read-only. A TEI preflight embeds a canary first. An
+unreachable embedder leaves the corpus untouched.
 
 The image build needs `--build-arg AGENT_LAN_ADDRESS=<address>`. A sandbox
 has no site file, so the build fixes the embedder's address.
@@ -78,7 +74,7 @@ has no site file, so the build fixes the embedder's address.
 
 The program reads its command line before its environment. A run that ends
 in another way has a status that is not 0. Two examples are a signal and a
-store file that the program cannot read. Each index unit is a `oneshot` unit
+store file that the program cannot read. The index unit is a `oneshot` unit
 of a timer, so no unit starts the program again because of a status.
 
 ## The answers of TEI

@@ -5,7 +5,7 @@ import struct
 from pathlib import Path
 
 import sqlite_vec
-from library.library import CODE_PROFILE, chunk_text, index_scope
+from library.library import chunk_text, index_scope
 
 
 class FakeEmbedder:
@@ -124,22 +124,6 @@ def test_chunking_overlap_and_bounds() -> None:
     assert len(chunks) >= 3
 
 
-def seed_repo(root: Path) -> None:
-    """A repo shaped like the real thing: source worth indexing, plus the
-    build output that would swamp the index if the profile let it through."""
-    (root / "src").mkdir(parents=True, exist_ok=True)
-    (root / "src" / "app.py").write_text("def handler():\n    return 'ok'\n")
-    (root / "src" / "client.ts").write_text("export const call = () => fetch('/v1');\n")
-    (root / "README.md").write_text("The service exposes /v1 and returns ok.\n")
-    (root / "pyproject.toml").write_text('[project]\nname = "demo"\n')
-    (root / "notes.pdf").write_bytes(b"%PDF-1.4 not source")
-    for junk in ("node_modules", "dist", "__pycache__"):
-        (root / junk).mkdir(exist_ok=True)
-        (root / junk / "bundle.js").write_text("// generated, never indexed\n")
-    (root / ".git").mkdir(exist_ok=True)
-    (root / ".git" / "config.toml").write_text("# vcs internals, never indexed\n")
-
-
 def emb_rows(conn: sqlite3.Connection) -> dict[int, tuple[float, ...]]:
     """`chunks_emb` decoded: little-endian float32, `dims` of them per row."""
     rows: dict[int, tuple[float, ...]] = {}
@@ -206,21 +190,6 @@ def test_store_from_before_plain_vectors_is_backfilled_without_reembedding(
     }
     conn.close()
     assert rows == vec and rows
-
-
-def test_code_profile_indexes_source_and_skips_build_output(tmp_path: Path) -> None:
-    repo = tmp_path / "agent-control"
-    seed_repo(repo)
-    report = index_scope(repo, FakeEmbedder(), index_dir_for(repo), profile=CODE_PROFILE)
-
-    indexed = {Path(p).name for p in report.indexed}
-    assert indexed == {"app.py", "client.ts", "README.md", "pyproject.toml"}
-    assert not report.errors
-    # the profile is the whole defense against a 100k-file node_modules
-    assert not any("node_modules" in p or "dist" in p for p in report.indexed)
-    assert not any("__pycache__" in p or ".git" in p for p in report.indexed)
-    # .pdf is prose-corpus only; source trees do not carry scanned documents
-    assert not any(p.endswith(".pdf") for p in report.indexed)
 
 
 def test_vault_profile_ignores_source_files(tmp_path: Path) -> None:

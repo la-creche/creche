@@ -101,7 +101,7 @@ class TeiEmbedder:
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
     if len(sys.argv) not in (3, 4):
-        print("usage: index-scope <scope-path> <index-dir> [vault|code]", file=sys.stderr)
+        print("usage: index-scope <scope-path> <index-dir> [vault]", file=sys.stderr)
         return 2
     scope = Path(sys.argv[1])
     index_dir = Path(sys.argv[2])
@@ -109,7 +109,7 @@ def main() -> int:
     try:
         profile = PROFILES[Corpus(sys.argv[3] if len(sys.argv) == 4 else Corpus.VAULT)]
     except ValueError:
-        print(f"unknown profile {sys.argv[3]!r}; use vault or code", file=sys.stderr)
+        print(f"unknown profile {sys.argv[3]!r}; use vault", file=sys.stderr)
         return 2
     if not scope.is_dir():
         print(f"not a directory: {scope}", file=sys.stderr)

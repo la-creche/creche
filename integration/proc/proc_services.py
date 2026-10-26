@@ -129,8 +129,8 @@ SERVICES: Final[dict[Service, StartEntry]] = {
         override="CRECHE_PROC_NOTICEBOARD_VERIFY",
         units=(),
     ),
-    # The two index units run the program in a sandbox: `sbx exec`, then
-    # `sh -c`. The program is not the first word of their `ExecStart`, so
+    # The index unit runs the program in a sandbox: `sbx exec`, then
+    # `sh -c`. The program is not the first word of its `ExecStart`, so
     # the row names no unit. `test_proc_table.py` reads the `sh -c` text.
     Service.LIBRARY: StartEntry(
         program="index-scope",

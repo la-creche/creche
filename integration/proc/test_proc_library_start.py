@@ -10,7 +10,7 @@ Reading taken: status 2 for a command line that the program refuses, which
 is the status that it returns today. For each other run that the program
 does not complete, any status that is not 0: a start with no TEI address, a
 preflight that fails, a signal, and a store that the program cannot read.
-The two index units are `oneshot` units of a timer, so no unit starts the
+The index unit is a `oneshot` unit of a timer, so no unit starts the
 program again because of a status. A change to one fixed status costs one
 assertion in each scenario here.
 """
