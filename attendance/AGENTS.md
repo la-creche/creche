@@ -11,9 +11,10 @@ inside the sandbox image, which carries Node.
 
 ## What it does
 
-1. Serves `/delegate`, `/dispatch`, `/dispatch/jobs` and
-   `/internal/switch-sandbox` over a Unix socket, and over the LAN address
-   when the config asks. Serves `WS /acp/{family}` on the Unix socket only.
+1. Serves `/delegate`, `/dispatch`, `/dispatch/jobs`,
+   `/internal/switch-sandbox`, the view routes and `/busy` over a Unix
+   socket, and over the LAN address when the config asks. Serves
+   `WS /acp/{family}` on the Unix socket only.
 2. Holds one supervisor link per sandbox and treats every byte from it as
    untrusted.
 3. Reports faults in a fault file. It never calls `caregiver`. The one call
@@ -30,6 +31,40 @@ inside the sandbox image, which carries Node.
    client. Each other line passes as it is. A relay that leaves two beats
    unanswered closes with code 4408 (`Close.NO_BEAT`). An error answer
    counts as no answer (`acp_door.py`).
+7. Serves the view for `view-ro`. Each view request opens one relay of its
+   own, sends `initialize` and one read method, and closes it. It never
+   sends `session/prompt` (`acp_view.py`).
+8. Serves `GET /busy` for `view-ro`: the release tool's quiet window reads
+   it in place of the session API.
+
+## The view and `/busy`
+
+Each route takes the `view-ro` token and no other. A family with no sandbox
+to relay to, a relay that ends, a line that is not strict JSON-RPC and a
+read past 30 s each answer 503 `sandbox_unavailable`.
+
+| Route | Sends | Answers |
+|---|---|---|
+| `GET /families/{f}/sessions?cursor=` | `session/list` | `{"sessions": [row], "next_cursor": str \| null}` |
+| `GET /families/{f}/sessions/{id}?start=&limit=` | `session/load` | `{"session_id", "entries": [entry], "next": int \| null, "truncated": bool}` |
+| `GET /busy` | nothing | `{"busy": bool, "prompts_in_flight": int, "jobs_running": int, "jobs_queued": int}` |
+
+1. A row is `{id, title, created, updated, job_id, delegation, trigger}`.
+   The cursor is the facade's, passed as it is: printable ASCII, at most
+   256 bytes.
+2. An entry has a `position` from 0 and a `kind`. `user`, `agent` and
+   `thought` carry `text`: consecutive chunks of one kind join. A
+   `tool_call` carries `tool_call_id`, `title`, `status` and `result`, the
+   text of its last update.
+3. The caps: 64 KiB of UTF-8 per text, 256 bytes per id or title, 20 000
+   updates per read (`truncated` is then true), `limit` 1 to 500 (default
+   100) and 1 MiB of entries per page.
+4. An unknown session is 404 `not_found`. A page of `start` and `limit`
+   that is not a whole number is 400 `bad_request`.
+5. `/busy` names no family. `prompts_in_flight` counts the prompts of each
+   supervisor link and of each ACP door connection. `jobs_running` and
+   `jobs_queued` are the dispatch door's `JobQueue`. `busy` is true when
+   any count is above 0.
 
 The session API (`/v1/sessions*`), the journal, the event streams, the
 writer lease, the Open WebUI copy and the playpen channel left in the phase
@@ -55,7 +90,9 @@ conversation and the one-writer rule (Flue's queue).
 8. Frame every byte stream from a sandbox with `lines.LineSplitter`: LF
    only, a cap per line, a refusal for a line over the cap or not UTF-8.
 9. The ACP door translates nothing. It checks the envelope and the size of
-   a frame, and pipes the bytes.
+   a frame, and pipes the bytes. It keys a prompt id as the JavaScript
+   facade reads it: a number by its double, a string apart from a number.
+   It closes on a prompt whose number id is past the double range.
 
 ## Security rules
 
@@ -157,7 +194,8 @@ chaperone reads them as another user. `SIGHUP` reloads them.
 | `supervisor_lock.py` | the proof that no older supervisor holds a sandbox |
 | `acp_link.py`, `acp/schema-v1.json` | the ACP link to one sandbox's facade, and the pinned ACP schema |
 | `acp_jobs.py` | one job over the link: `session/new`, one prompt, the deadline and its cancel |
-| `acp_door.py` | `WS /acp/{family}` on the Unix socket: one `acp-relay` per connection, its beat, the envelope check, nothing translated |
+| `acp_door.py` | `WS /acp/{family}` on the Unix socket: one `acp-relay` per connection, its beat, the envelope check, the count of its prompts, nothing translated |
+| `acp_view.py` | the view: one relay per request, `session/list` or `session/load`, the transcript and its caps |
 | `jobs.py`, `dispatch.py`, `workspace.py` | thin jobs, the dispatch ledger, the per-chat work directory |
 | `family_status.py`, `faults.py` | the status document, the fault file |
 | `auth.py`, `config.py`, `paths.py` | the token files and the grants, the environment, every path |
@@ -208,9 +246,16 @@ is marked `slow`.
   from the work root (`service.py`).
 - No chat session lives here since row 21, so nothing deletes a chat's
   `code-sandbox` directory (`workspace.py`).
-- The principals `door-owui`, `door-tui`, `door-trigger` and `view-ro` reach
-  no route since row 21. Their token files are still required at start
-  (`auth.py`).
+- The principals `door-owui`, `door-tui` and `door-trigger` reach no route
+  since row 21. Their token files are still required at start (`auth.py`).
+- The facade's `session/list` row carries `sessionId`, `cwd`, `title` and
+  `updatedAt` only. The view reads `created`, `job_id`, `delegation` and
+  `trigger` from the row's `_meta` (`creche/created_at`, `creche/job`,
+  `creche/delegation`, `creche/trigger`), so each reads null until the
+  facade sends them. No vector names `creche/created_at` yet
+  (`acp_view.py`).
+- A view request does not start a facade. A family whose facade is not
+  running answers 503 until a job or a switch starts it.
 - The switch answer's `sessions` is 0: no session lives here
   (`service.py`).
 - `ErrorCode` still holds the codes of the session API, such as

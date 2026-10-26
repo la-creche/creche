@@ -16,6 +16,17 @@ that answer never reaches the client. Each other line passes as it is, a
 client line with an id of the same shape included. A relay that leaves two
 beats unanswered closes with `Close.NO_BEAT`. An error answer counts as no
 answer.
+
+The door counts the `session/prompt` requests in flight on each
+connection, for `GET /busy`. A client request of that method opens one,
+and the relay's answer with the same id closes it. A connection that ends
+closes each of its own. The count reads the lines and changes none.
+
+The facade is JavaScript. It reads each JSON number as a double and writes
+that double in its answer, so the count keys a number id by its double:
+`1`, `1.0` and `1e0` are one id. A string id stays apart from a number id.
+A prompt with a number id past the double range closes with
+`Close.BAD_FRAME`, because its answer cannot carry the same id.
 """
 
 from __future__ import annotations
@@ -23,7 +34,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import math
+from collections.abc import Generator
 from enum import IntEnum
+from typing import Literal
 
 from starlette.websockets import WebSocket
 
@@ -32,6 +46,7 @@ from .acp_link import (
     JSONRPC,
     MAX_ACP_LINE_BYTES,
     METHOD_BEAT,
+    METHOD_PROMPT,
     MISSED_BEATS_ALLOWED,
     Malformed,
     loads_strict,
@@ -106,6 +121,84 @@ class _Beats:
         return True
 
 
+class _OpenPrompts:
+    """The prompts of one connection that wait for their answer."""
+
+    def __init__(self) -> None:
+        self.ids: set[_RpcIdKey] = set()
+
+    def sent(self, text: str) -> Close | None:
+        """A client line. `text` passed `check_frame`. None when it may pass."""
+        if METHOD_PROMPT not in text:
+            return None
+
+        record = as_object(loads_strict(text)) or {}
+
+        if record.get("method") != METHOD_PROMPT or "id" not in record:
+            return None
+
+        key = _rpc_id_key(record["id"])
+
+        if key is None:
+            return Close.BAD_FRAME
+
+        self.ids.add(key)
+        return None
+
+    def answered(self, text: str) -> None:
+        """A relay line. A prompt answer holds `stopReason` or `error`."""
+        if not self.ids or ("stopReason" not in text and '"error"' not in text):
+            return
+
+        record = as_object(loads_strict(text)) or {}
+
+        if "method" not in record and "id" in record:
+            key = _rpc_id_key(record["id"])
+
+            if key is not None:
+                self.ids.discard(key)
+
+
+class DoorPrompts:
+    """The `session/prompt` requests in flight on every door connection."""
+
+    def __init__(self) -> None:
+        self._open: list[_OpenPrompts] = []
+
+    @property
+    def in_flight(self) -> int:
+        return sum(len(one.ids) for one in self._open)
+
+    @contextlib.contextmanager
+    def connection(self) -> Generator[_OpenPrompts]:
+        """The count of one connection, for as long as it lives."""
+        one = _OpenPrompts()
+        self._open.append(one)
+
+        try:
+            yield one
+        finally:
+            self._open.remove(one)
+
+
+#: A JSON-RPC id as the facade sees it: a number as its double, each other
+#: value as its JSON text.
+type _RpcIdKey = tuple[Literal["number"], float] | tuple[Literal["json"], str]
+
+
+def _rpc_id_key(value: object) -> _RpcIdKey | None:
+    """The key of one id. None for a number past the double range."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return ("json", json.dumps(value, separators=(",", ":")))
+
+    try:
+        double = float(value)
+    except OverflowError:
+        return None
+
+    return ("number", double) if math.isfinite(double) else None
+
+
 def refusal_code(error: ApiError) -> int:
     return _REFUSAL_BASE + error.status
 
@@ -130,25 +223,33 @@ def check_frame(text: str) -> Close | None:
 
 
 async def pipe(
-    websocket: WebSocket, relay: Channel, beat_interval_s: float = BEAT_INTERVAL_S
+    websocket: WebSocket,
+    relay: Channel,
+    beat_interval_s: float = BEAT_INTERVAL_S,
+    prompts: DoorPrompts | None = None,
 ) -> None:
     """Forward both ways and beat the relay until one end stops. Then close both."""
     beats = _Beats()
-    tasks = {
-        asyncio.create_task(_to_relay(websocket, relay), name="acp door in"),
-        asyncio.create_task(_to_door(websocket, relay, beats), name="acp door out"),
-        asyncio.create_task(_beat(relay, beats, beat_interval_s), name="acp door beat"),
-    }
+    book = prompts if prompts is not None else DoorPrompts()
 
     # The relay closes on each way out, a cancel of this call included.
-    try:
-        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-    finally:
-        for task in tasks:
-            task.cancel()
+    with book.connection() as open_prompts:
+        tasks = {
+            asyncio.create_task(_to_relay(websocket, relay, open_prompts), name="acp door in"),
+            asyncio.create_task(
+                _to_door(websocket, relay, beats, open_prompts), name="acp door out"
+            ),
+            asyncio.create_task(_beat(relay, beats, beat_interval_s), name="acp door beat"),
+        }
 
-        await asyncio.gather(*tasks, return_exceptions=True)
-        await relay.close()
+        try:
+            done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in tasks:
+                task.cancel()
+
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await relay.close()
 
     finished = done.pop()
     why = finished.result() if finished.exception() is None else Close.RELAY_GONE
@@ -161,7 +262,7 @@ async def pipe(
         await websocket.close(code=why)
 
 
-async def _to_relay(websocket: WebSocket, relay: Channel) -> Close:
+async def _to_relay(websocket: WebSocket, relay: Channel, prompts: _OpenPrompts) -> Close:
     while True:
         message = await websocket.receive()
         text: object = message.get("text")
@@ -173,6 +274,11 @@ async def _to_relay(websocket: WebSocket, relay: Channel) -> Close:
             return Close.BAD_FRAME
 
         refused = check_frame(text)
+
+        if refused is not None:
+            return refused
+
+        refused = prompts.sent(text)
 
         if refused is not None:
             return refused
@@ -197,7 +303,9 @@ async def _beat(relay: Channel, beats: _Beats, interval_s: float) -> Close:
             return Close.RELAY_GONE
 
 
-async def _to_door(websocket: WebSocket, relay: Channel, beats: _Beats) -> Close:
+async def _to_door(
+    websocket: WebSocket, relay: Channel, beats: _Beats, prompts: _OpenPrompts
+) -> Close:
     while True:
         try:
             raw = await relay.receive()
@@ -218,4 +326,5 @@ async def _to_door(websocket: WebSocket, relay: Channel, beats: _Beats) -> Close
         if beats.take(raw.text):
             continue
 
+        prompts.answered(raw.text)
         await websocket.send_text(raw.text)

@@ -1,9 +1,10 @@
 """The HTTP surface (contract 02 §3, §12, §13.4, contract 05 §5).
 
 Three operations for the PEP's two doors, the single internal path
-`caregiver` calls, and the ACP door on the Unix socket. The shapes come from
-the contract, not from a framework: every body is parsed by `requests.py` so
-one refusal table serves every route.
+`caregiver` calls, the read-only view and `/busy` for `view-ro`, and the
+ACP door on the Unix socket. The shapes come from the contract, not from a
+framework: every body is parsed by `requests.py` so one refusal table
+serves every route.
 
 `attendance` never serves the OpenAI shape. A door does that (contract 02 §1).
 """
@@ -90,6 +91,25 @@ def build_app(
             content=service.read_jobs(principal, parse.read_jobs(await _json(request)))
         )
 
+    @app.get("/families/{family}/sessions")
+    async def _sessions(request: Request, family: str) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
+        """One page of `session/list`, over one relay."""
+        principal = _caller(tokens, request)
+        query = request.query_params
+        return JSONResponse(content=await service.view_sessions(principal, family, query))
+
+    @app.get("/families/{family}/sessions/{session}")
+    async def _session(request: Request, family: str, session: str) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
+        """One page of the replay of `session/load`, over one relay."""
+        principal = _caller(tokens, request)
+        query = request.query_params
+        return JSONResponse(content=await service.view_session(principal, family, session, query))
+
+    @app.get("/busy")
+    async def _busy(request: Request) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
+        """The work in flight, for the release tool's quiet window."""
+        return JSONResponse(content=service.busy(_caller(tokens, request)))
+
     @app.post("/internal/switch-sandbox")
     async def _switch(request: Request) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
         principal = _caller(tokens, request)
@@ -117,7 +137,7 @@ def _add_acp_door(app: FastAPI, service: SessionService, tokens: TokenBook) -> N
             await websocket.close(code=acp_door.refusal_code(error), reason=error.code.value)
             return
 
-        await acp_door.pipe(websocket, relay)
+        await acp_door.pipe(websocket, relay, prompts=service.door_prompts)
 
 
 def _caller(tokens: TokenBook, request: Request) -> Principal:

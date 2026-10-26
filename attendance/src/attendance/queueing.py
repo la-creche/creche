@@ -38,6 +38,14 @@ class JobQueue[JobT]:
     def running(self, family: str) -> int:
         return len(self._running.get(family, ()))
 
+    def running_total(self) -> int:
+        """How many jobs run, over every family."""
+        return sum(len(jobs) for jobs in self._running.values())
+
+    def waiting_total(self) -> int:
+        """How many jobs wait for a slot, over every family."""
+        return sum(len(queue) for queue in self._waiting.values())
+
     def is_running(self, job: str) -> bool:
         return any(job in jobs for jobs in self._running.values())
 
