@@ -53,6 +53,7 @@ from caregiver.egress import EgressConfig
 from caregiver.litellm_keys import FakeLiteLLMKeys
 from caregiver.loop import LoopConfig, LoopState, look
 from caregiver.mcp_release import MARKER_NAME, McpPaths
+from caregiver.policy_fleet import FakeChecker, FleetPolicy, PolicyTarget
 from caregiver.reconcile import Actors
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
@@ -192,7 +193,12 @@ class Bench:
             clock=lambda: self.now,
         )
         actors = Actors(
-            FakeDriver(), FakeLiteLLMKeys(), FakeSwitchClient(), EgressConfig(), FakeUnits()
+            FakeDriver(),
+            FakeLiteLLMKeys(),
+            FakeSwitchClient(),
+            EgressConfig(),
+            FakeUnits(),
+            FleetPolicy(PolicyTarget(self.state.parent / "etc-chaperone"), FakeChecker()),
         )
         look(config, actors, self.loop_state)
 
