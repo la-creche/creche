@@ -14,6 +14,13 @@ import pytest
 import yaml
 from proc_board import verify_words
 from proc_caregiver import serve_words
+from proc_chaperone_pin import (
+    PIN_FILE,
+    BuildError,
+    pinned_binary,
+    pinned_commit,
+    repository_url,
+)
 from proc_library import Profile, index_words
 from proc_services import (
     DEFAULT_ONLY_ENV,
@@ -240,6 +247,64 @@ def test_every_variable_of_the_table_is_known() -> None:
     environ = dict.fromkeys((entry.override for entry in SERVICES.values()), "/bin/sh")
 
     assert unknown_variables(environ) == []
+
+
+def test_the_rust_chaperone_defaults_to_the_pinned_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The default of `chaperone-rs` is the binary of the pinned commit in the cache.
+
+    It is never a program of the venv: the venv holds the Python
+    `chaperone`, and a run of that would judge another program.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    binary = pinned_binary()
+
+    with pytest.raises(CommandError, match="CRECHE_PROC_CHAPERONE_RS"):
+        command_of(Service.CHAPERONE_RS, {})
+
+    binary.parent.mkdir(parents=True)
+    _program(binary)
+    command = command_of(Service.CHAPERONE_RS, {})
+
+    assert command.origin is Origin.DEFAULT
+    assert command.words == (str(binary),)
+    assert binary.is_relative_to(tmp_path / ".cache" / "creche-proc" / "chaperone-rs")
+    assert binary.parent.parent.name == pinned_commit()
+
+
+def test_the_pin_file_holds_one_commit_and_a_comment() -> None:
+    lines = PIN_FILE.read_text(encoding="utf-8").splitlines()
+
+    assert [line for line in lines if line.startswith("#")] == lines[:1]
+    assert lines[1:] == [pinned_commit()]
+
+
+@pytest.mark.parametrize(
+    "text", ["", "# only a comment\n", "abc\n", "A" * 40 + "\n", "a" * 40 + "\n" + "b" * 40 + "\n"]
+)
+def test_a_pin_with_no_one_commit_is_an_error(text: str) -> None:
+    with pytest.raises(BuildError):
+        pinned_commit(text)
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "https://github.com/example-owner/agent-control",
+        "https://github.com/example-owner/agent-control.git",
+        "git@github.com:example-owner/agent-control.git",
+        "ssh://git@github.com/example-owner/agent-control.git",
+    ],
+)
+def test_the_chaperone_repository_is_beside_the_origin(origin: str) -> None:
+    """No file of this checkout names the owner. The origin remote gives it."""
+    assert repository_url(origin) == "https://github.com/example-owner/chaperone"
+
+
+def test_an_origin_off_github_is_an_error() -> None:
+    with pytest.raises(BuildError, match="CRECHE_PROC_CHAPERONE_RS"):
+        repository_url("https://git.example.invalid/example-owner/agent-control.git")
 
 
 def test_every_switch_of_the_suite_is_known() -> None:

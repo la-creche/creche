@@ -263,6 +263,17 @@ NODE_ACTIONS = ("pnpm/action-setup@", "actions/setup-node@")
 #: The local action that gives a job uv and the venv.
 UV_SYNC = "./.github/actions/uv-sync"
 
+#: The step of the `proc` job that keeps the pinned build of the Rust
+#: chaperone between runs (integration/proc/proc_chaperone_pin.py). The
+#: `suites` job builds no chaperone, so it has no such step.
+CACHE_ACTION = "actions/cache@"
+CHAPERONE_CACHE = {
+    "path": "~/.cache/creche-proc/chaperone-rs",
+    "key": "proc-chaperone-rs-${{ runner.os }}-${{ hashFiles('integration/proc/chaperone.pin') }}",
+}
+CHAPERONE_PIN = REPO / "integration" / "proc" / "chaperone.pin"
+CHAPERONE_BUILD = REPO / "integration" / "proc" / "proc_chaperone_pin.py"
+
 #: What the lint job runs for each scope: lint alone beside the shards, and
 #: lint with the tests marked `docs` where there is no shard. The gate's lint
 #: job asks the scope itself, and the release's reads the scope job.
@@ -528,6 +539,29 @@ def test_the_proc_job_has_a_time_limit(jobs: dict[str, dict[str, Any]], last: st
     assert 0 < jobs["proc"]["timeout-minutes"] <= 30
 
 
+@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
+def test_the_proc_job_keeps_the_pinned_chaperone_in_a_cache(
+    jobs: dict[str, dict[str, Any]], last: str
+) -> None:
+    """One cache step, pinned by a commit, after the venv and before the
+    suite. Its key holds the pin file, so a new pin builds again. Its path
+    is the cache that the build of the suite writes."""
+    steps = jobs["proc"]["steps"]
+    (cache,) = [step for step in steps if _is_cache(step)]
+    order = [step.get("uses") or step["run"] for step in steps]
+    sha = cache["uses"].removeprefix(CACHE_ACTION).split()[0]
+
+    assert len(sha) == 40 and all(char in "0123456789abcdef" for char in sha)
+    assert cache["with"] == CHAPERONE_CACHE
+    assert order.index(UV_SYNC) < steps.index(cache) < order.index(PROC_RUN)
+    assert CHAPERONE_PIN.is_file()
+    assert '"creche-proc" / "chaperone-rs"' in CHAPERONE_BUILD.read_text(encoding="utf-8")
+
+
+def _is_cache(step: dict[str, Any]) -> bool:
+    return str(step.get("uses", "")).startswith(CACHE_ACTION)
+
+
 def _report_of(name: str) -> str:
     """The path of the JUnit report of one suite, as the workflow spells it."""
     return f"{REPORT_DIR}/{name}.xml"
@@ -564,7 +598,7 @@ def test_the_suites_job_has_the_setup_of_the_proc_job(
     assert suites["needs"] == "scope"
     assert suites["if"] == ONLY_CODE
     assert suites["runs-on"] == jobs["proc"]["runs-on"]
-    assert setup == _setup_of(jobs["proc"], PROC_RUN)
+    assert setup == [step for step in _setup_of(jobs["proc"], PROC_RUN) if not _is_cache(step)]
     assert [step.get("uses") or step["run"] for step in setup][-2:] == [PLAYPEN_BUILD, UV_SYNC]
 
 

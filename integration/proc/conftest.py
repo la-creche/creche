@@ -27,12 +27,21 @@ import httpx
 import pytest
 from proc_board import BoardStack
 from proc_caregiver import CaregiverStack
+from proc_chaperone_pin import BuildError, NoToolchain, build_pinned
+from proc_chaperone_rs import ChaperoneRsStack
 from proc_delegate import DelegateStack
 from proc_harness import Supervisor, end_leaked_groups
 from proc_library import LibraryStack, node_has_sqlite
 from proc_owui import OwuiStack
 from proc_report import describe, end_processes
-from proc_services import KEEP_ROOTS_ENV, NO_SKIP_ENV, describe_table, unknown_variables
+from proc_services import (
+    KEEP_ROOTS_ENV,
+    NO_SKIP_ENV,
+    SERVICES,
+    Service,
+    describe_table,
+    unknown_variables,
+)
 from proc_tree import Tree, make_root, playpen_bundle, remove_root, socket_path_fits
 from proc_trigger import TriggerStack
 from proc_tui import TuiStack, launch_bundle
@@ -340,6 +349,35 @@ def library(library_prepared: LibraryStack) -> LibraryStack:
     library_prepared.start_tei()
 
     return library_prepared
+
+
+@pytest.fixture(scope="session")
+def chaperone_rs_binary() -> None:
+    """The Rust chaperone of the run: the variable of the row, or the pinned build.
+
+    With no variable, the first test that needs it builds the commit of
+    `chaperone.pin`, once for the run. A machine with no `git` or no
+    `cargo` skips. A build that fails fails the test.
+    """
+    if SERVICES[Service.CHAPERONE_RS].override in os.environ:
+        return
+
+    try:
+        build_pinned()
+    except NoToolchain as error:
+        _skip(str(error))
+    except BuildError as error:
+        pytest.fail(f"the pinned build of the Rust chaperone failed: {error}")
+
+
+@pytest.fixture
+def chaperone_rs(tree: Tree, supervisor: Supervisor, chaperone_rs_binary: None) -> ChaperoneRsStack:
+    """The Rust chaperone and its two effect stand-ins, serving. `supervisor` ends it."""
+    stack = ChaperoneRsStack(tree, supervisor)
+    stack.prepare()
+    stack.start()
+
+    return stack
 
 
 @pytest.fixture(scope="session")
