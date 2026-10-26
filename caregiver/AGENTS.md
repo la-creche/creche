@@ -24,6 +24,7 @@ host where something has gone wrong.
 | `litellm_keys.py`, `credentials.py`, `grants.py`, `config_mount.py` | the key, the token, the grant file, the config mount |
 | `playpen_env.py` | the env file `sbx exec --env-file` carries |
 | `policy_file.py` | the types and the text of `policy.toml`, and `build_app` |
+| `policy_fleet.py` | one fragment per family, and the checked assembly of the one `policy.toml` |
 | `faults.py`, `chaperone_watch.py`, `status.py` | the fault files, the one chaperone probe, the status document |
 | `webhook_tokens.py`, `timers.py` | one bearer per webhook, and the generated timer units |
 | `switch.py` | the one call this service makes to `attendance` |
@@ -37,8 +38,9 @@ host where something has gone wrong.
 
 - **Layers talk to the layer below, never sideways.** `apply.py`,
   `reconcile.py`, `rotate.py`, `sandboxes.py`, `loop.py`, `mcp_wire.py` and
-  `delete.py` call more than one sibling. Every other module talks only to
-  `paths.py`, `clock.py` and `atomic.py`.
+  `delete.py` call more than one sibling. `policy_fleet.py` calls
+  `policy_file.py`. Every other module talks only to `paths.py`,
+  `clock.py` and `atomic.py`.
 - Every external dependency sits behind a Protocol with a fake. Add a third
   the same way.
 - `atomic.py` is the only place that writes a file another process reads.
@@ -242,6 +244,40 @@ pass calls it yet.
    fixture registry of `family`. Change a golden file only with the change
    that moves it.
 
+## `policy_fleet.py`
+
+This module writes the one `policy.toml` of the fleet. No pass calls it
+yet.
+
+1. Each family has one fragment, `grants/<family>.toml` in the state root:
+   the text of `render_app`. `write_fragment` writes it. `remove_fragment`
+   removes it.
+2. `assemble_policy` holds an exclusive `flock` on `grants/policy.lock`.
+   It joins the fragments in family order after one `version = 1`. The
+   text is the text of `render_policy` for the same apps.
+3. A fragment that does not read, that is over the cap or that holds a
+   table other than its own `[apps.<family>]` is left out.
+4. A `PolicyChecker` checks the joined text. `ChaperoneChecker` runs
+   `chaperone check` in a new temp directory that holds a copy of
+   `install.toml`. `FakeChecker` is for tests.
+5. When the check refuses the joined text, the assembly checks a file
+   with no app. A refusal there is not the fault of a family: the
+   assembly writes nothing and leaves no family out.
+6. Otherwise each fragment is checked alone. A fragment that fails alone
+   is left out, with the first error line of the check for its family. The
+   rest is checked again.
+7. Never rename an unchecked file into place. A check that does not run
+   raises `CheckerError`, and the assembly writes nothing.
+8. The cap of `policy.toml` is `POLICY_FILE_MAX_BYTES`, 1 MiB, equal to
+   `POLICY_FILE_CAP` of the Rust chaperone. A larger text is refused
+   before the check.
+9. The checked text replaces `policy.toml` with `atomic_write`. The old
+   file becomes `policy.toml.prev` first. Text equal to the current file
+   writes nothing.
+10. In the configuration directory of chaperone, this module writes the
+    two names of `TargetFile` and nothing else. `install.toml` belongs to
+    root.
+
 ## `mcp_release.py`
 
 1. It installs nothing and reads no secret value.
@@ -352,6 +388,9 @@ Nothing here touches a real sandbox or LiteLLM.
   document fails the `heartbeat` check of `caregiver-verify`, so a release
   of `caregiver` fails while the directory stays as it is. The other
   reading deletes its key and its sandboxes.
+- Two fragments that each pass the check alone and fail together, such as
+  two apps with one token digest, stop every write of `policy.toml`. The
+  last file stays, and no family is left out (`policy_fleet.py`).
 - `CONTRACT-QUESTION` in `mcp_release.py`. `stage7-releases.md` §4.4 gives
   no limit for a merge key in the roster. The roster reader uses the two
   limits of the Rust reader of a component manifest.

@@ -57,6 +57,8 @@ PLAYPEN_ENV_SUFFIX: Final = ".env"
 SANDBOXES_FILE: Final = "sandboxes.json"
 APPLIED_DIR: Final = "applied"
 APPLIED_META_FILE: Final = "applied.json"
+POLICY_FRAGMENT_SUFFIX: Final = ".toml"
+POLICY_LOCK_FILE: Final = "policy.lock"
 
 
 def family_dir(root: Path, family: str) -> Path:
@@ -183,6 +185,25 @@ def sandbox_id(family: str, sequence: int) -> str:
 def grant_path(root: Path, family: str) -> Path:
     """Contract 04 §1.1: `/srv/agents/state/rework/grants/<family>.json`."""
     return root / GRANTS_DIR / f"{family}.json"
+
+
+def policy_fragment_path(root: Path, family: str) -> Path:
+    """The app table of one family for the Rust chaperone:
+    `/srv/agents/state/rework/grants/<family>.toml`. `policy_fleet.py`
+    joins every fragment into one `policy.toml`."""
+    return policy_fragments_dir(root) / f"{family}{POLICY_FRAGMENT_SUFFIX}"
+
+
+def policy_fragments_dir(root: Path) -> Path:
+    """The directory of the fragments. The grant files are there too."""
+    return root / GRANTS_DIR
+
+
+def policy_lock_path(root: Path) -> Path:
+    """The `flock` file of the assembly of `policy.toml`. It is in this
+    service's state, because the configuration directory of chaperone
+    takes `policy.toml` and nothing else from this service."""
+    return root / GRANTS_DIR / POLICY_LOCK_FILE
 
 
 def caregiver_token_path(root: Path) -> Path:
