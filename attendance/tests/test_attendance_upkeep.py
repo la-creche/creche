@@ -18,11 +18,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from attendance.atomic import write_json
 from attendance.auth import Principal
 from attendance.channel import Channel, SandboxDial
 from attendance.clock import now, rfc3339
-from attendance.faults import FaultCode
 from attendance.journal import Journal
 from attendance.models import LineKind
 from attendance.paths import audit_file, fault_file
@@ -140,25 +138,6 @@ async def test_upkeep_goes_on_after_a_failed_sync(
     await rig.stop()
 
 
-async def test_upkeep_reads_gates_after_a_failed_sync(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A sync that fails on each tick must not hide a turn that waits."""
-    monkeypatch.setattr("attendance.service.FLUSH_INTERVAL_S", TICK_S)
-    rig = await build(tmp_path)
-    turn = await rig.start()
-    rig.open_gate(CHAT_SESSION, turn)
-
-    def failing() -> None:
-        raise _sync_fails()
-
-    monkeypatch.setattr(rig.service.store.journal, "flush_due", failing)
-    rig.service.start_upkeep()
-    await wait_until(lambda: rig.state() is SessionState.WAITING_APPROVAL)
-
-    await rig.stop()
-
-
 async def test_upkeep_tries_the_queues_after_a_failed_try(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -180,110 +159,6 @@ async def test_upkeep_tries_the_queues_after_a_failed_try(
         await wait_until(lambda: calls >= TICKS_WANTED)
 
     assert "the queue pump" in caplog.text
-    await rig.stop()
-
-
-async def test_a_gate_that_fails_does_not_drop_the_next(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    """One poll reads each record once. A record after a failed one still counts."""
-    rig = await build(tmp_path)
-    first = await rig.start()
-    second = await rig.start(OTHER_SESSION)
-    rig.open_gate(CHAT_SESSION, first)
-    rig.open_gate(OTHER_SESSION, second)
-    save_turn = rig.service.store.save_turn
-    failed: list[str] = []
-
-    def failing_once(record: Any) -> None:
-        if not failed:
-            failed.append(record.turn)
-            raise OSError(errno.ENOSPC, "no space left")
-
-        save_turn(record)
-
-    monkeypatch.setattr(rig.service.store, "save_turn", failing_once)
-
-    with caplog.at_level(logging.ERROR, logger="attendance"):
-        rig.service.read_gates()
-
-    assert failed == [first]
-    assert rig.state(OTHER_SESSION) is SessionState.WAITING_APPROVAL
-    assert LineKind.APPROVAL_REQUESTED in [
-        line.kind for line in rig.service.store.journal.replay(FAMILY, OTHER_SESSION)
-    ]
-    assert "gate" in caplog.text
-    await rig.stop()
-
-
-@pytest.mark.skipif(os.geteuid() == 0, reason="root reads a 0000 directory anyway")
-async def test_an_audit_fault_that_was_not_written_is_written_again(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Contract 05 §3.3.1. A fault that reached no file is not a published fault."""
-    rig = await build(tmp_path)
-    await rig.start()
-    rig.audit.parent.mkdir(parents=True, exist_ok=True)
-    rig.audit.parent.chmod(0o000)
-    raise_fault = rig.service.faults.raise_fault
-    failed: list[FaultCode] = []
-
-    def failing_once(family: str, code: FaultCode, *rest: Any) -> None:
-        if not failed:
-            failed.append(code)
-            raise OSError(errno.ENOSPC, "no space left")
-
-        raise_fault(family, code, *rest)
-
-    monkeypatch.setattr(rig.service.faults, "raise_fault", failing_once)
-
-    try:
-        with pytest.raises(OSError, match="no space left"):
-            rig.service.read_gates()
-
-        rig.service.read_gates()
-
-        assert rig.fault_codes() == [FaultCode.AUDIT_UNREADABLE.value]
-    finally:
-        rig.audit.parent.chmod(0o700)
-
-    await rig.stop()
-
-
-@pytest.mark.skipif(os.geteuid() == 0, reason="root reads a 0000 directory anyway")
-async def test_an_audit_fault_that_was_not_cleared_is_cleared_again(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The other direction. A clear that reached no file is not a published clear."""
-    rig = await build(tmp_path)
-    await rig.start()
-    rig.audit.parent.mkdir(parents=True, exist_ok=True)
-    rig.audit.parent.chmod(0o000)
-
-    try:
-        rig.service.read_gates()
-    finally:
-        rig.audit.parent.chmod(0o700)
-
-    assert rig.fault_codes() == [FaultCode.AUDIT_UNREADABLE.value]
-
-    failed: list[Path] = []
-
-    def failing_once(path: Path, *rest: Any) -> None:
-        if not failed:
-            failed.append(path)
-            raise OSError(errno.ENOSPC, "no space left")
-
-        write_json(path, *rest)
-
-    monkeypatch.setattr("attendance.faults.write_json", failing_once)
-
-    with pytest.raises(OSError, match="no space left"):
-        rig.service.read_gates()
-
-    rig.service.read_gates()
-
-    assert rig.fault_codes() == []
     await rig.stop()
 
 

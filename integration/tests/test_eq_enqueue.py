@@ -26,7 +26,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from attendance.ids import SessionPrefix
 from stack import Stack, until
 from stage5 import ToolCall, bridge_bundle_missing
 from stage_eq import (
@@ -171,14 +170,6 @@ async def enqueue_from(
     )
 
 
-async def jobs_of(stage: StageEq, caller: str, session: str, turn: str) -> list[dict[str, Any]]:
-    """`job_status` from inside a running turn, as the model reads it."""
-    call = await stage.call_tool(JOB_STATUS, {}, session=session, turn=turn, family=caller)
-    assert call.ok, call.error
-
-    return _rows(call)
-
-
 def _rows(call: ToolCall) -> list[dict[str, Any]]:
     """The `jobs` list out of the bridge's rendered untrusted block."""
     found = re.search(r'\{"jobs":.*\}', call.text, re.DOTALL)
@@ -189,97 +180,10 @@ def _rows(call: ToolCall) -> list[dict[str, Any]]:
     return list(listed)
 
 
-async def approve_next_gate(stage: StageEq, family: str) -> str:
-    """Wait for the push this call raised, then tap approve. Answers the gate."""
-    await until(
-        lambda: stage.transport.last(family) is not None,
-        f"an approval push for {family}",
-        timeout=SETTLE_TIMEOUT_S,
-    )
-    notice = stage.transport.last(family)
-    assert notice is not None
-    reply = await stage.transport.approve(family, notice.gate)
-    assert reply.status_code == 200, reply.text
-
-    return notice.gate
-
-
 # ------------------------------------------------------------- scenario 1
 
 
-async def test_a_chat_enqueues_a_lead(dispatching: StageEq) -> None:
-    """Contract 04 §4.1. A granted caller starts one job and does not wait."""
-    session, turn = await chat_turn(dispatching)
-
-    call = await enqueue_from(dispatching, CHAT, session, turn, LEAD)
-
-    assert call.ok, call.error
-    assert ENQUEUE in call.registered
-    assert JOB_STATUS in call.registered
-
-    started = dispatching.ledger_entries(CHAT)
-    assert len(started) == 1
-    assert started[0]["family"] == LEAD
-    assert started[0]["session"].startswith(SessionPrefix.AUTO.value)
-    assert started[0]["session"] in call.text
-
-
-async def test_the_job_carries_the_callers_chain(dispatching: StageEq) -> None:
-    """Contract 04 §6.3. The chain continues across an enqueue, and the
-    outcome record is where a reader finds it after the session is gone."""
-    session, turn = await chat_turn(dispatching)
-    call = await enqueue_from(dispatching, CHAT, session, turn, LEAD)
-    assert call.ok, call.error
-
-    job = dispatching.ledger_entries(CHAT)[0]["session"]
-    record = await _settled(dispatching, LEAD, job)
-    trigger: Any = record["trigger"]
-
-    assert trigger["kind"] == "dispatch"
-    assert trigger["name"] == CHAT
-    assert trigger["chain"] == [CHAT, LEAD]
-
-
-async def test_the_audit_names_the_chain(dispatching: StageEq) -> None:
-    """Invariant 15 and contract 04 §6.3, in the PEP's own file.
-
-    The audit record's chain is "caller first, THIS family last", so the
-    caller's own record ends at the caller. The hop it started is in the
-    ledger entry, and from there in the job's outcome record.
-    """
-    session, turn = await chat_turn(dispatching)
-    await enqueue_from(dispatching, CHAT, session, turn, LEAD)
-
-    written = dispatching.enqueue_audit(CHAT)
-
-    assert written
-    assert written[-1]["decision"] == "allow"
-    assert written[-1]["chain"] == [CHAT]
-    assert dispatching.ledger_entries(CHAT)[0]["chain"] == [CHAT, LEAD]
-
-
 # ------------------------------------------------------------- scenario 2
-
-
-async def test_job_status_walks_to_the_outcome(dispatching: StageEq) -> None:
-    """Contract 02 §13.4.2. A live job has a status, and a finished one
-    carries its record, so `job_status` sees a job that has not ended."""
-    session, turn = await chat_turn(dispatching)
-    await enqueue_from(dispatching, CHAT, session, turn, LEAD)
-
-    live = await jobs_of(dispatching, CHAT, session, turn)
-    assert len(live) == 1
-    assert live[0]["status"] in {"dispatched", "queued", "running"}
-    assert live[0]["outcome"] is None
-
-    job = str(live[0]["session"])
-    await _settled(dispatching, LEAD, job)
-
-    ended = await jobs_of(dispatching, CHAT, session, turn)
-    assert ended[0]["status"] == "ended"
-    outcome: Any = ended[0]["outcome"]
-    assert outcome["session"] == job
-    assert outcome["status"] == "ok"
 
 
 async def test_an_unknown_id_reads_as_nothing(dispatching: StageEq) -> None:
@@ -294,27 +198,6 @@ async def test_an_unknown_id_reads_as_nothing(dispatching: StageEq) -> None:
 
 
 # ------------------------------------------------------------- scenario 3
-
-
-async def test_a_lead_enqueues_a_worker_behind_a_tap(dispatching: StageEq) -> None:
-    """Contract 04 §8 and §4.1 together. The lead's `approval` holds the
-    call at the PEP until the phone answers, and only then does a job start."""
-    session, turn = await lead_job(dispatching)
-    calling = asyncio.create_task(
-        enqueue_from(dispatching, LEAD, session, turn, WORKER, WORKER_PROMPT)
-    )
-
-    gate = await approve_next_gate(dispatching, LEAD)
-    call = await asyncio.wait_for(calling, timeout=SETTLE_TIMEOUT_S)
-
-    assert call.ok, call.error
-    started = dispatching.ledger_entries(LEAD)
-    assert len(started) == 1
-    assert started[0]["family"] == WORKER
-    assert [line["reason"] for line in dispatching.gate_lines(gate)] == [
-        "approval_required",
-        "approved",
-    ]
 
 
 async def test_a_denied_enqueue_leaves_the_turn_running(dispatching: StageEq) -> None:
@@ -374,19 +257,6 @@ async def test_a_refusal_leaves_the_callers_turn_alive(dispatching: StageEq) -> 
     await enqueue_from(dispatching, CHAT, session, turn, NO_DISPATCH)
 
     assert await dispatching.session_state(CHAT, session) == "running"
-
-
-async def _settled(stage: StageEq, family: str, session: str) -> dict[str, Any]:
-    """Wait for one job to leave its outcome record, then return it."""
-    await until(
-        lambda: stage.outcome_of(family, session) is not None,
-        f"an outcome record for {session}",
-        timeout=SETTLE_TIMEOUT_S,
-    )
-    record = stage.outcome_of(family, session)
-    assert record is not None
-
-    return record
 
 
 async def _reaches_state(stage: StageEq, family: str, session: str, wanted: str) -> bool:

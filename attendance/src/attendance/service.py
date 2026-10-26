@@ -24,7 +24,15 @@ from collections.abc import AsyncGenerator, Callable, Coroutine
 from typing import Any
 
 from . import dispatch, jobs, outcomes, owui_copy, wire
-from .acp_jobs import CANCEL_WAIT_S, META_DELEGATION, JobPlan, run_job
+from .acp_jobs import (
+    CANCEL_WAIT_S,
+    META_DELEGATION,
+    META_TRIGGER,
+    EndKind,
+    JobEnd,
+    JobPlan,
+    run_job,
+)
 from .acp_link import (
     MAX_ACP_LINE_BYTES,
     AcpHandshakeError,
@@ -32,7 +40,6 @@ from .acp_link import (
     LinkState,
     OrphanFacade,
 )
-from .approvals import AuditTail, Gate, GateState, outcome_of
 from .atomic import read_json
 from .auth import (
     Access,
@@ -47,6 +54,7 @@ from .branching import FORK_REFUSED, Branch, Decision, Fork, decide
 from .channel import Channel, ChannelClosed, SandboxDial
 from .clock import now
 from .config import Config
+from .dispatch import DispatchJob
 from .errors import ApiError, ErrorCode, TurnReason
 from .exec_channel import ExecChannel
 from .family_status import (
@@ -62,16 +70,15 @@ from .ids import SessionPrefix, is_family, is_sandbox, is_session, new_ulid, sha
 from .journal import Journal
 from .leases import Grant, Intent, LeaseBook, LeaseReason, Takeover, TurnActivity, busy_error
 from .models import (
+    DEFAULT_DEADLINE_S,
     Holder,
     JournalLine,
     LineKind,
     Session,
-    TriggerKind,
     Turn,
     WriterLease,
 )
 from .paths import (
-    dispatch_file,
     outcome_file,
     sandbox_cwd,
     sandbox_session_dir,
@@ -86,7 +93,7 @@ from .playpen_link import (
     PlaypenLink,
     Violation,
 )
-from .queueing import Slot, TurnQueue, Waiting, slot_for
+from .queueing import MAX_QUEUED_TURNS, JobQueue, Slot, TurnQueue, Waiting, slot_for
 from .requests import (
     CreateRequest,
     DelegateRequest,
@@ -169,16 +176,6 @@ _START_ERROR = "attendance could not start this turn"
 # caller that has no Open WebUI parent id wants exactly this.
 PLAIN_PROMPT = Decision(Branch.PROMPT)
 
-# Contract 04 §6.1's `reason` values that end a turn (contract 02 §4.3's
-# table). Every refusal that reaches a LIVE sandbox is NOT here: a deny, a
-# timeout, an undeliverable push and a grant revoked inside the gate all hand
-# the model a tool error it can report, so the turn goes back to `running`
-# and finishes the rest of its job. An abandoned gate has no caller left, so
-# there is nothing to report to.
-_GATE_FAILURES: dict[str, TurnReason] = {
-    "approval_abandoned": TurnReason.APPROVAL_DENIED,
-}
-
 
 class SessionService:
     """Sessions, turns, the journal and the channel to each family."""
@@ -192,6 +189,7 @@ class SessionService:
         channel_idle_ttl_s: float = CHANNEL_IDLE_TTL_OTHER_S,
         acp_factory: ChannelFactory | None = None,
         cancel_wait_s: float = CANCEL_WAIT_S,
+        max_queued_turns: int = MAX_QUEUED_TURNS,
     ) -> None:
         self._config = config
         self._journal = Journal(config.sessions_root)
@@ -200,7 +198,6 @@ class SessionService:
         self._leases = LeaseBook(config.state_root)
         self._faults = FaultReporter(config.state_root)
         self._status = StatusReader(config.state_root)
-        self._gates = AuditTail(config.state_root)
         self._turns = TurnBook()
         self._switches = SwitchBook()
         self._factory = factory if factory is not None else self._exec_factory
@@ -226,9 +223,9 @@ class SessionService:
         self._acp_links: dict[str, AcpLink] = {}
         self._acp_dials: dict[str, asyncio.Lock] = {}
         self._cancel_wait_s = cancel_wait_s
-        # What `_report_audit` last published, so a once-a-second poll
-        # rewrites no file while nothing changes.
-        self._audit_fault: str | None = None
+        # Phase 2 plan, row 19. The dispatch door's jobs, their limit and FIFO.
+        self._jobs: JobQueue[DispatchJob] = JobQueue(max_queued_turns)
+        self._job_tasks: set[asyncio.Task[None]] = set()
         self._upkeep: asyncio.Task[None] | None = None
         self._pre_starts: set[asyncio.Task[None]] = set()
         self._followups: set[asyncio.Task[None]] = set()
@@ -325,7 +322,6 @@ class SessionService:
         while True:
             await asyncio.sleep(FLUSH_INTERVAL_S)
             self._upkeep_step("the journal sync", self._journal.flush_due)
-            self._upkeep_step("the gate poll", self.read_gates)
             self._upkeep_step("the queue pump", self.pump_queues)
 
     def _upkeep_step(self, name: str, step: Callable[[], None]) -> None:
@@ -339,23 +335,6 @@ class SessionService:
             step()
         except Exception:
             _LOG.exception("upkeep: %s failed", name)
-
-    def read_gates(self) -> None:
-        """Contract 04 §8.6. Show a turn that waits for a phone tap.
-
-        The upkeep loop calls this. It is public so a test can drive it
-        without a clock, and so an operator's noticeboard sees the state within
-        `FLUSH_INTERVAL_S` of the PEP writing its `pending` record.
-        """
-        for gate in self._gates.poll():
-            try:
-                self._apply_gate(gate)
-            except Exception:
-                # The tail does not read a record again. Without this guard
-                # one record that fails drops each record after it.
-                _LOG.exception("gate %s of family %s was not applied", gate.gate, gate.family)
-
-        self._report_audit(self._gates.unreadable())
 
     def pump_queues(self) -> None:
         """Try the head of each queue again (contract 02 §13 rule 3).
@@ -375,26 +354,11 @@ class SessionService:
                 # this guard one family that fails hides each family after it.
                 _LOG.exception("queue of family %s was not tried", family)
 
-    def _report_audit(self, message: str | None) -> None:
-        """Contract 05 §3.3's `audit_unreadable`.
-
-        One audit file serves every family, so an unreadable one faults them
-        all. Only a CHANGE is published: this runs once a second, and the
-        fault file holds current faults, not an event log (§3.3.1 rule 1).
-        """
-        if message == self._audit_fault:
-            return
-
-        for family in self._status.families():
-            if message is None:
-                self._faults.clear(family, FaultCode.AUDIT_UNREADABLE)
-                continue
-
-            self._faults.raise_fault(family, FaultCode.AUDIT_UNREADABLE, message)
-
-        # After the writes. A write that failed leaves the change not
-        # published, so the next poll writes it again.
-        self._audit_fault = message
+        for family in self._jobs.families():
+            try:
+                self._pump_dispatch(family)
+            except Exception:
+                _LOG.exception("dispatch queue of family %s was not tried", family)
 
     async def owui_drained(self) -> None:
         """Wait until the Open WebUI copy is level with every settled turn.
@@ -454,6 +418,12 @@ class SessionService:
             await link.close()
 
         self._links.clear()
+
+        for job in list(self._job_tasks):
+            job.cancel()
+
+        await asyncio.gather(*self._job_tasks, return_exceptions=True)
+        self._job_tasks.clear()
 
         for acp in list(self._acp_links.values()):
             await acp.stop()
@@ -863,18 +833,19 @@ class SessionService:
     async def run_dispatch(
         self, principal: Principal, request: DispatchRequest, door_instance: str
     ) -> dict[str, Any]:
-        """Contract 02 §13.4.1. One family enqueues a job in another.
+        """Contract 02 §13.4.1, over ACP (phase 2 plan, row 19).
 
-        It never waits for the job. The answer is the session id, so a lead
-        can start four workers and carry on, and `read_jobs` is what says
-        later what became of each one.
+        It never waits for the job. The answer is the `auto-<ulid>` id, so a
+        lead can start four workers and carry on, and `read_jobs` says later
+        what became of each one.
         """
+        del door_instance
         check_access(principal, Access.WRITE)
         self._check_dispatch_door(principal)
         target = request.target_family
         status = self._status.require(target)
         # The dispatch door's grant is `autonomous`, so a thin or attended
-        # target is refused before a session exists (contract 02 §3.1).
+        # target is refused before anything is written (contract 02 §3.1).
         check_family_kind(principal, target, served_kind(status))
         check_may_serve(status)
         self._check_dispatchable(status)
@@ -885,11 +856,26 @@ class SessionService:
             return repeat
 
         # Rule 4: the queue is the TARGET's, and a full one refuses before
-        # any session exists. `run_turn` checks it again under the same lock.
-        self._queue.check_room(target)
-        entry = self._open_dispatch(principal, request)
+        # anything is written.
+        self._jobs.check_room(target)
+        entry = self._new_dispatch(request)
+        job = DispatchJob(entry=entry, message=request.message)
 
-        return await self._start_dispatch(principal, request, entry, door_instance)
+        if not self._jobs.take_slot(target, entry.session, status.max_running_turns):
+            self._dispatches.write(entry)
+            self._jobs.add(target, entry.session, job)
+            return self._dispatch_answer(entry, created=True)
+
+        try:
+            link = await self._acp_link_for(target, status)
+        except ApiError:
+            # Rule 5: a refusal leaves no id for `job_status` to report.
+            self._jobs.release(target, entry.session)
+            raise
+
+        self._dispatches.write(entry)
+        self._start_job(link, job)
+        return self._dispatch_answer(entry, created=True)
 
     def read_jobs(self, principal: Principal, query: JobQuery) -> dict[str, Any]:
         """Contract 02 §13.4.2. The jobs ONE family dispatched, newest first.
@@ -909,13 +895,27 @@ class SessionService:
 
         return {"jobs": [self._job_view(entry) for entry in found]}
 
-    def _job_view(self, entry: dispatch.DispatchEntry) -> dict[str, Any]:
-        """One job, live or finished. The live state comes from this
-        service's own books, and the outcome from the record on disk."""
-        record = self._sessions.get((entry.family, entry.session))
-        state = None if record is None else self._turns.session_state(entry.family, entry.session)
+    def dispatch_depth(self, family: str) -> int:
+        """How many dispatched jobs of this family wait for a slot."""
+        return self._jobs.depth(family)
 
-        return dispatch.job_view(entry, state, self._outcome_of(entry))
+    def _job_view(self, entry: dispatch.DispatchEntry) -> dict[str, Any]:
+        """One job, live or finished. The live state comes from the job
+        queue, and the outcome from the record on disk."""
+        return dispatch.job_view(entry, self._job_state(entry.session), self._outcome_of(entry))
+
+    def _job_state(self, job: str) -> dispatch.JobStatus | None:
+        if self._jobs.is_running(job):
+            return dispatch.JobStatus.RUNNING
+
+        if self._jobs.is_waiting(job):
+            return dispatch.JobStatus.QUEUED
+
+        return None
+
+    def _dispatch_answer(self, entry: dispatch.DispatchEntry, created: bool) -> dict[str, Any]:
+        live = dispatch.status_of(self._job_state(entry.session), entry.outcome_id)
+        return {"session_id": entry.session, "status": live.value, "created": created}
 
     def _outcome_of(self, entry: dispatch.DispatchEntry) -> dict[str, Any] | None:
         """§13.1's record for a finished job, or None while it runs.
@@ -929,11 +929,7 @@ class SessionService:
         return read_json(outcome_file(self._config.state_root, entry.family, entry.outcome_id))
 
     def _repeat_dispatch(self, request: DispatchRequest) -> dict[str, Any] | None:
-        """Contract 02 §13.4.4. An hour of deduplication, per caller family.
-
-        A repeat with a different message is refused rather than answered
-        with a job that ran a different prompt.
-        """
+        """Contract 02 §13.4.4. An hour of deduplication, per caller family."""
         key = request.idempotency_key
 
         if key is None:
@@ -952,28 +948,12 @@ class SessionService:
                 detail={"session": found.session, "family": found.family},
             )
 
-        state = self._turns.session_state(found.family, found.session)
-        return {"session_id": found.session, "status": state.value, "created": False}
+        return self._dispatch_answer(found, created=False)
 
-    def _open_dispatch(
-        self, principal: Principal, request: DispatchRequest
-    ) -> dispatch.DispatchEntry:
-        """Create the session and its ledger entry, in that order (rule 5).
-
-        The entry is written before the turn starts, so a job that ends at
-        once still has somewhere to note its outcome id.
-        """
-        session = f"{SessionPrefix.AUTO.value}{new_ulid()}"
-        self.create_or_find(
-            principal,
-            CreateRequest(
-                family=request.target_family,
-                session=session,
-                owner_session=request.claimed_session_id,
-            ),
-        )
-        entry = dispatch.DispatchEntry(
-            session=session,
+    def _new_dispatch(self, request: DispatchRequest) -> dispatch.DispatchEntry:
+        """The ledger entry of one job. The caller writes it (rule 5)."""
+        return dispatch.DispatchEntry(
+            session=f"{SessionPrefix.AUTO.value}{new_ulid()}",
             caller_family=request.caller_family,
             family=request.target_family,
             enqueued_at=now(),
@@ -982,50 +962,81 @@ class SessionService:
             caller_session=request.claimed_session_id,
             idempotency_key=request.idempotency_key,
         )
-        self._dispatches.write(entry)
-        return entry
 
-    async def _start_dispatch(
-        self,
-        principal: Principal,
-        request: DispatchRequest,
-        entry: dispatch.DispatchEntry,
-        door_instance: str,
-    ) -> dict[str, Any]:
-        """Run the one turn and answer at once (rule 1).
+    def _start_job(self, link: AcpLink | None, job: DispatchJob) -> None:
+        """Run one job apart from the request. With no link, the job dials."""
+        task = asyncio.create_task(
+            self._run_dispatch_job(link, job), name=f"dispatch {job.entry.session}"
+        )
+        task.add_done_callback(report_failure)
+        task.add_done_callback(self._job_tasks.discard)
+        self._job_tasks.add(task)
+
+    async def _run_dispatch_job(self, link: AcpLink | None, job: DispatchJob) -> None:
+        """One prompt, then the outcome record, then the next queued job.
 
         `message` becomes the prompt as DATA. The calling model wrote it, so
-        nothing here reads it as an instruction (invariant 14).
+        nothing here reads it as an instruction (invariant 14). The trigger
+        rides in the prompt's `_meta`, never in its text.
         """
+        entry = job.entry
+        started = now()
+
         try:
-            live = await self.run_turn(
-                principal,
-                request.target_family,
-                entry.session,
-                RunTurnRequest(
-                    prompt=request.message,
-                    wait=Wait.ACCEPTED,
-                    trigger=entry.trigger(),
-                ),
-                door_instance,
+            end = await self._dispatch_prompt(link, job)
+            sandbox = link.status.sandbox if link is not None else None
+            record = outcomes.from_job(
+                entry.family, entry.session, entry.trigger(), started, end, sandbox or ""
             )
-        except ApiError:
-            # Rule 5: a refusal leaves no id for `job_status` to report.
-            await self._remove_session(request.target_family, entry.session)
-            self._forget_dispatch(entry)
-            raise
+            outcomes.write(self._config.state_root, record)
+            self._dispatches.note_outcome(entry.caller_family, entry.session, record.id)
+        finally:
+            self._jobs.release(entry.family, entry.session)
+            self._upkeep_step("the dispatch pump", lambda: self._pump_dispatch(entry.family))
 
-        return {
-            "session_id": entry.session,
-            "status": live.record.state.value,
-            "created": True,
-        }
+    async def _dispatch_prompt(self, link: AcpLink | None, job: DispatchJob) -> JobEnd:
+        entry = job.entry
 
-    def _forget_dispatch(self, entry: dispatch.DispatchEntry) -> None:
-        """Remove a ledger entry whose turn never started (rule 5)."""
-        dispatch_file(self._config.state_root, entry.caller_family, entry.session).unlink(
-            missing_ok=True
+        if link is None:
+            try:
+                link = await self._acp_link_for(entry.family, self._status.require(entry.family))
+            except ApiError as error:
+                return JobEnd(EndKind.FAILED, error=f"{error.code.value}: {error}")
+
+        plan = JobPlan(
+            job=entry.session,
+            cwd=sandbox_sessions_mount(self._config.sessions_root, entry.family),
+            message=job.message,
+            deadline_s=DEFAULT_DEADLINE_S,
+            prompt_meta={META_TRIGGER: entry.trigger().to_api()},
+            cancel_wait_s=self._cancel_wait_s,
         )
+        return await run_job(
+            link,
+            plan,
+            on_session=lambda acp: self._dispatches.note_acp_session(
+                entry.caller_family, entry.session, acp
+            ),
+        )
+
+    def _pump_dispatch(self, family: str) -> None:
+        """Start the head of the family's queue while a slot is free (§13 rule 3).
+
+        The link is dialled inside the job, so the pump never waits.
+        """
+        while (head := self._jobs.head(family)) is not None:
+            status = self._status.read(family)
+
+            if status is None:
+                return
+
+            job_id, job = head
+
+            if not self._jobs.take_slot(family, job_id, status.max_running_turns):
+                return
+
+            self._jobs.pop(family)
+            self._start_job(None, job)
 
     def _check_dispatch_door(self, principal: Principal) -> None:
         """Contract 02 §13.4: the dispatch door serves these two paths.
@@ -1041,20 +1052,6 @@ class SessionService:
             f"{principal.value} is not the dispatch door",
             detail={"principal": principal.value},
         )
-
-    def _note_dispatch_outcome(self, record: Session, outcome_id: str) -> None:
-        """Contract 02 §13.4.3. Point the caller's ledger entry at the record.
-
-        It runs while the outcome is written and before the session is
-        deleted, because the session's trigger is the only thing that says
-        which family enqueued this job.
-        """
-        trigger = record.trigger
-
-        if trigger is None or trigger.kind is not TriggerKind.DISPATCH or trigger.name is None:
-            return
-
-        self._dispatches.note_outcome(trigger.name, record.session, outcome_id)
 
     def _check_dispatchable(self, status: FamilyStatus) -> None:
         """Contract 02 §13.4.1 rule 3. The TARGET declares `enqueue: true`.
@@ -2119,12 +2116,6 @@ class SessionService:
         if live is None or not live.is_active:
             return
 
-        self._leave_approval(live)
-
-        # The decision of the gate can end the turn.
-        if not live.is_active:
-            return
-
         live.record.usage.add(message.usage)
         self._map_owui(family, live, message)
         self._settle(
@@ -2138,28 +2129,6 @@ class SessionService:
                 "user_entry_id": message.user_entry_id,
             },
         )
-
-    def _leave_approval(self, live: LiveTurn) -> None:
-        """Let a turn that waits for approval settle (contract 03 §13 rule 8).
-
-        pi settles after the gated call returned, so the PEP decided the
-        gate. Its record can be in the audit file and not read yet: the gate
-        poll runs once in `FLUSH_INTERVAL_S`. The poll runs here first, so
-        the decision reaches the journal and the tally before the settle.
-
-        CONTRACT-QUESTION: contract 03 §13 rule 8 accepts the settle, and
-        contract 02 §4.3 has no move from `waiting-approval` to `settled`. A
-        turn that still waits after the poll goes through `running`. Left as
-        it is, the turn stays in flight until its deadline. A direct move in
-        §4.3 removes the pass through `running`.
-        """
-        if live.record.state is not TurnState.WAITING_APPROVAL:
-            return
-
-        self._upkeep_step("the gate poll", self.read_gates)
-
-        if live.record.state is TurnState.WAITING_APPROVAL:
-            live.record.state = TurnState.RUNNING
 
     async def handle_failed(self, family: str, message: FailedLine) -> None:
         live = self._turns.get(family, message.session, message.turn)
@@ -2473,69 +2442,6 @@ class SessionService:
             {"note": ILLEGAL_MOVE_NOTE, "from": refused.current.value, "to": wanted.value},
         )
 
-    def _apply_gate(self, gate: Gate) -> None:
-        """One audit record, applied to the turn it names (contract 04 §8.6).
-
-        CONTRACT-QUESTION: contract 04 sends this service no message when a
-        gate opens, and `claimed.session_id` and `claimed.turn_id` are the
-        sandbox's own claims (§3.1). The lookup below is what makes them
-        safe: only a turn the host itself started, in the family the PEP's
-        token proved, is moved.
-        """
-        live = self._turns.get(gate.family, gate.session, gate.turn)
-
-        if live is None:
-            return
-
-        if gate.state is GateState.OPENED:
-            self._open_gate(live, gate)
-            return
-
-        self._close_gate(live, gate)
-
-    def _open_gate(self, live: LiveTurn, gate: Gate) -> None:
-        """Contract 02 §4.3 and §8.1's `approval_requested` line."""
-        if not can_move(live.record.state, TurnState.WAITING_APPROVAL):
-            return
-
-        live.record.state = TurnState.WAITING_APPROVAL
-        live.record.approvals += 1
-        self._store.save_turn(live.record)
-        self._append(
-            live.record.family,
-            live.record.session,
-            LineKind.APPROVAL_REQUESTED,
-            live.record.turn,
-            # The summary is the PEP's, built by a pure function from the
-            # call (contract 04 §8.3), and it never reaches this file.
-            {"tool": gate.tool, "summary": "", "gate_id": gate.gate},
-        )
-
-    def _close_gate(self, live: LiveTurn, gate: Gate) -> None:
-        """Contract 02 §4.3. Back to `running`, or failed with the reason."""
-        if live.record.state is not TurnState.WAITING_APPROVAL:
-            return
-
-        self._append(
-            live.record.family,
-            live.record.session,
-            LineKind.APPROVAL_RESOLVED,
-            live.record.turn,
-            {"decision": gate.reason, "waited_s": gate.waited_s},
-        )
-        # Contract 02 §13.1.1. Counted here, from the PEP's own record, and
-        # never from the turn's failure reason: a deny leaves the turn
-        # running, so one turn can meet an approved gate and a denied one.
-        live.record.gates.count(outcome_of(gate.reason))
-        ending = _GATE_FAILURES.get(gate.reason)
-
-        if ending is None:
-            live.record.state = TurnState.RUNNING
-            self._store.save_turn(live.record)
-            return
-
-        self._settle(live, TurnState.FAILED, ending, gate.reason)
-
     def _end_job(self, live: LiveTurn, message: str) -> None:
         """Contract 02 §13 rule 7. A finished job leaves a record, not a session.
 
@@ -2560,7 +2466,6 @@ class SessionService:
         error = None if live.record.state is TurnState.SETTLED else message
         built = outcomes.build(record, [one.record for one in turns], error)
         outcomes.write(self._config.state_root, built)
-        self._note_dispatch_outcome(record, built.id)
         self._run_later(self._remove_session(family, session))
 
     def _release(self, live: LiveTurn) -> None:
