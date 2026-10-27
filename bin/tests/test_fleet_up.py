@@ -86,6 +86,9 @@ DIRS: Final = (
 
 ENV_FILES: Final = ("sessiond.env", "view.env", "managerd.env")
 
+#: The `systemctl` verbs that change nothing.
+READ_ONLY_VERBS: Final = frozenset({"is-enabled", "is-active", "show"})
+
 #: What `check` names for each item of the root checklist.
 ROOT_ITEMS: Final = (
     "cosign",
@@ -315,7 +318,7 @@ def test_check_changes_nothing(ready: Host) -> None:
     ready.run("check")
 
     assert _snapshot(ready.prefix, ready.home) == before
-    assert not any("enable" in call or "reload" in call for call in ready.calls())
+    assert all(call.split()[1] in READ_ONLY_VERBS for call in ready.calls()), ready.calls()
 
 
 def test_check_passes_an_item_once_it_is_there(empty: Host) -> None:
@@ -404,6 +407,8 @@ def test_up_without_a_master_key_waits_for_the_root_step(ready: Host) -> None:
     assert not (ready.state / "hooks.env").exists()
     managerd = (ready.state / "managerd.env").read_text(encoding="utf-8")
     assert "LITELLM_MASTER_KEY" not in managerd
+    assert (ready.unit_dir / "creche-caregiver.service").exists()
+    assert "creche-caregiver.service" not in ready.enabled.read_text(encoding="utf-8")
 
 
 def test_up_installs_each_unit_of_this_tree(ready: Host) -> None:
@@ -448,7 +453,7 @@ def test_up_twice_changes_nothing_the_second_time(ready: Host) -> None:
     assert done.returncode == 0, done.stdout + done.stderr
     assert _snapshot(ready.prefix, ready.home) == before
     second = ready.calls()[calls_before:]
-    assert all(call.split()[1] == "is-enabled" for call in second), second
+    assert all(call.split()[1] in READ_ONLY_VERBS for call in second), second
 
 
 def test_up_keeps_a_key_that_exists(ready: Host) -> None:

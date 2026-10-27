@@ -1,0 +1,768 @@
+#!/usr/bin/env bash
+# OPERATOR — on the host, as the operator, never as root:
+#   /opt/creche/bin/fleet-up check | up | down
+#
+# Setup family (bin/AGENTS.md). The fleet layer of the host, made from
+# nothing: the tokens and keys of the operator's services, their env files,
+# the state directories and the user units. `docs/fleet-bootstrap.md` is the
+# design, and it holds the root checklist that comes first.
+#
+#   check  Reads the host and changes nothing. One PASS or FAIL line for each
+#          item of the root checklist, then for each item of the fleet
+#          layer. Exit 0 when each line passes, 1 otherwise.
+#   up     Makes each item of the fleet layer that is absent and records it.
+#          A second run changes nothing. Exit 0 when the layer is whole, 3
+#          when it waits for a release or a root step (it says which), 1 on
+#          a refusal.
+#   down   Removes each path that the record names, in reverse order, and
+#          nothing else. A recorded directory that holds another file stays.
+#
+# WHAT IT NEVER DOES. It never runs sudo and refuses to run as root. It
+# never writes under /etc, /opt, /usr, the vault, the registry checkout or
+# the compose stack. It never writes `hooks.env`. It never prints a secret
+# and never puts one on argv. It keeps each token, key and file that exists
+# before it runs, and `down` leaves each of them. It reads one secret it did
+# not mint: LITELLM_MASTER_KEY of `hooks.env`, which `managerd.env` must hold.
+#
+# THE RECORD. `<state root>/fleet/record.json`, 0600 in a 0700 directory.
+# One entry for each directory, file and unit file that `up` made, and for
+# each unit that `up` enabled. `down` reads it and refuses the whole record
+# when one line is not of the form `up` writes, or when one entry is outside
+# the state root and outside `~/.config`.
+#
+# Prerequisites, copy-pasteable:
+#   command -v systemctl getent ss install cmp base64 head tr awk grep stat
+#   /opt/creche/.venv/bin/creche-env       # sudo creche-deploy builds it
+#   /opt/creche/bin/fleet-up check         # each root item passes first
+#
+# NOT -e: `check` counts failures, and `up` and `down` guard each step and
+# stop where a step says to.
+set -uo pipefail
+
+# --- names, paths and modes --------------------------------------------------
+
+# A TEST SEAM, not a permission. `bin/tests/test_fleet_up.py` points every
+# absolute root inside a temp directory. Empty everywhere else.
+PREFIX="${FLEET_TEST_PREFIX:-}"
+
+# The checkout that holds this script. Its `systemd/` holds the unit
+# sources. On the host it is /opt/creche, the deploy's checkout.
+TREE="$(CDPATH="" cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+UNIT_SOURCE_DIR="$TREE/systemd"
+
+STATE_ROOT="$PREFIX/srv/agents/state/rework"
+TOKENS_DIR="$STATE_ROOT/tokens"
+SOCK_DIR="$STATE_ROOT/sock"
+LOG_DIR="$STATE_ROOT/log"
+SOCKET="$SOCK_DIR/sessiond.sock"
+FLEET_DIR="$STATE_ROOT/fleet"
+RECORD_FILE="$FLEET_DIR/record.json"
+HOOKS_ENV="$STATE_ROOT/hooks.env"
+SESSIOND_ENV="$STATE_ROOT/sessiond.env"
+VIEW_ENV="$STATE_ROOT/view.env"
+MANAGERD_ENV="$STATE_ROOT/managerd.env"
+VIEW_KEY_FILE="$TOKENS_DIR/view-access.key"
+DOOR_ACP_KEY_FILE="$STATE_ROOT/door-acp.key"
+
+SESSIONS_ROOT="$PREFIX/srv/agents/sessions"
+REGISTRY="$PREFIX/srv/agents/registry"
+INSTALL_ROOT="$PREFIX/opt/components"
+HANDOVER="$INSTALL_ROOT/handover/bin/handover"
+IMAGES_ENV="$INSTALL_ROOT/playpen/images.env"
+PRODUCT_ROOT="$PREFIX/opt/creche"
+CHAPERONE_DIR="$PREFIX/etc/chaperone"
+CHAPERONE_INSTALLED="$INSTALL_ROOT/chaperone/bin/chaperone"
+COSIGN="$PREFIX/usr/local/bin/cosign"
+UV="$PREFIX/usr/local/bin/uv"
+SITE_FILE="${AGENT_SITE_FILE:-/etc/creche/site.env}"
+CODE_ROOT=/srv/agents/code
+ROOT_SECRETS=/etc/creche/secrets.enc.env
+
+COMPONENT_ROOT="$HOME/.local/components"
+USER_CONFIG="$HOME/.config"
+USER_UNIT_DIR="$USER_CONFIG/systemd/user"
+# `creche-caregiver.service` passes this path as `--chaperone-bin`.
+CHAPERONE_REL="$HOME/chaperone-rel/bin/chaperone"
+
+# The file the release executor stamps into a tree at its switch. A tree
+# with the stamp is a released tree.
+STAMP=.release-version
+
+# The directories `up` makes under the state root, parent before child. The
+# record directory is not in the list: `down` removes it last, by hand.
+PRIVATE_DIRS="tokens"
+SHARED_DIRS="families leases faults triggers triggers/webhooks log sock"
+STATE_GROUP=agents
+SOCK_DIR_MODE=2750
+
+# One token file for each principal of `attendance.auth.Principal`.
+# attendance refuses to start when one of them is missing, empty or short.
+# `bin/tests/test_fleet_up.py` holds this list equal to the enum.
+PRINCIPALS="door-owui door-tui door-delegate door-dispatch door-trigger view-ro door-acp managerd"
+SECRET_BYTES=48
+
+# Each user unit, in the order `up` installs and starts it. attendance comes
+# first: each door and the caregiver dial it.
+UNITS="creche-attendance.service creche-caregiver.service creche-noticeboard.service \
+creche-door-acp.service creche-trigger-webhooks.service creche-trigger@.service \
+creche-watchdog.service creche-watchdog.timer registry-sync.service registry-sync.timer \
+creche-follow.service creche-follow.timer"
+# The units `up` enables with `--now`. A template, and a service that a
+# timer starts, are installed only.
+ENABLED_UNITS="creche-attendance.service creche-caregiver.service creche-noticeboard.service \
+creche-door-acp.service creche-trigger-webhooks.service creche-watchdog.timer \
+registry-sync.timer creche-follow.timer"
+
+UV_MINIMUM=0.12.17
+CHAPERONE_DIR_MODE=1775
+APPROVAL_PORT=8310
+
+# The record: a fixed text, one entry on each line, so a bash reader can
+# hold it to an exact pattern. A path holds only these characters.
+RECORD_FORMAT="fleet-up record 1"
+RECORD_MAX_BYTES=262144
+PATH_RE='^/[A-Za-z0-9._@+/-]+$'
+ENTRY_RE='^    [{]"kind": "(dir|file|unit|enabled)", "path": "([^"\\]+)"[}],?$'
+TAB="$(printf '\t')"
+
+. "$TREE/bin/lib/envfile.sh"
+
+# --- output -------------------------------------------------------------------
+
+FAILS=0
+PENDING=""
+RECORD=""
+
+say()  { printf '%s\n' "$*"; }
+hdr()  { printf '\n===== %s =====\n' "$*"; }
+die()  { say "FATAL: $*"; exit 1; }
+pass() { say "PASS: $*"; }
+fail() { say "FAIL: $*"; FAILS=$((FAILS + 1)); }
+warn() { say "WARN: $*"; }
+
+# One line for each step that waits for another actor. `up` prints them at
+# its end and exits with 3.
+pending() {
+  PENDING="$PENDING$*
+"
+}
+
+usage() {
+  say "usage: fleet-up <check|up|down>"
+}
+
+not_root() {
+  [[ "$(id -u)" != "0" ]] || die "run as the operator, never as root"
+}
+
+# --- portable file facts --------------------------------------------------------
+
+# GNU stat on the host. BSD stat on a development machine, where the tests
+# also run.
+file_mode() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null; }
+file_owner() { stat -c '%U' "$1" 2>/dev/null || stat -f '%Su' "$1" 2>/dev/null; }
+file_group() { stat -c '%G' "$1" 2>/dev/null || stat -f '%Sg' "$1" 2>/dev/null; }
+
+in_words() {  # in_words <word> <list>
+  case " $2 " in
+    *" $1 "*) return 0 ;;
+  esac
+
+  return 1
+}
+
+group_has_me() {  # group_has_me <group>
+  local members
+  members="$(getent group "$1" 2>/dev/null | cut -d: -f4)"
+  case ",$members," in
+    *",$(id -un),"*) return 0 ;;
+  esac
+
+  return 1
+}
+
+version_at_least() {  # version_at_least <have> <want>
+  local h1 h2 h3 w1 w2 w3
+  IFS=. read -r h1 h2 h3 <<< "$1"
+  IFS=. read -r w1 w2 w3 <<< "$2"
+  h1="${h1//[^0-9]/}"; h2="${h2//[^0-9]/}"; h3="${h3//[^0-9]/}"
+  [[ -n "$h1" && -n "$h2" && -n "$h3" ]] || return 1
+
+  (( h1 != w1 )) && { (( h1 > w1 )); return; }
+  (( h2 != w2 )) && { (( h2 > w2 )); return; }
+  (( h3 >= w3 ))
+}
+
+# --- the units and the trees they run from --------------------------------------
+
+unit_tree() {  # unit_tree <unit>: which tree the unit runs from
+  case "$1" in
+    creche-attendance.service|creche-door-acp.service|creche-trigger-webhooks.service|creche-trigger@.service)
+      say attendance ;;
+    creche-caregiver.service) say caregiver ;;
+    creche-noticeboard.service) say noticeboard ;;
+    creche-follow.service|creche-follow.timer) say handover ;;
+    registry-sync.service|registry-sync.timer) say registry ;;
+    creche-watchdog.service|creche-watchdog.timer) say product ;;
+    *) return 1 ;;
+  esac
+}
+
+tree_is_there() {  # tree_is_there <tree>
+  case "$1" in
+    attendance|caregiver|noticeboard) [[ -f "$COMPONENT_ROOT/$1/$STAMP" ]] ;;
+    handover) [[ -f "$INSTALL_ROOT/handover/$STAMP" ]] ;;
+    registry) [[ -d "$REGISTRY/.git" ]] ;;
+    product) [[ -f "$TREE/bin/rework-watchdog.sh" && -f "$TREE/bin/rework-registry-sync.sh" ]] ;;
+    *) return 1 ;;
+  esac
+}
+
+# --- the record -------------------------------------------------------------------
+
+path_is_ours() {  # path_is_ours <path>: under the state root or ~/.config
+  [[ "$1" =~ $PATH_RE ]] || return 1
+
+  case "$1" in
+    */../*|*/..) return 1 ;;
+  esac
+
+  case "$1" in
+    "$STATE_ROOT"/*|"$USER_CONFIG"|"$USER_CONFIG"/*) return 0 ;;
+  esac
+
+  return 1
+}
+
+entry_is_ours() {  # entry_is_ours <kind> <path>
+  if [[ "$1" == enabled ]]; then
+    in_words "$2" "$UNITS"
+    return
+  fi
+
+  path_is_ours "$2"
+}
+
+record_has() {  # record_has <kind> <path>
+  printf '%s\n' "$RECORD" | grep -qxF -- "$1$TAB$2"
+}
+
+record_write() {
+  local kind path first=1 tmp="$RECORD_FILE.new"
+  (
+    umask 077
+    {
+      printf '{\n  "format": "%s",\n  "entries": [\n' "$RECORD_FORMAT"
+      while IFS="$TAB" read -r kind path; do
+        [[ -n "$kind" ]] || continue
+        [[ "$first" == 1 ]] || printf ',\n'
+        printf '    {"kind": "%s", "path": "%s"}' "$kind" "$path"
+        first=0
+      done <<< "$RECORD"
+      [[ "$first" == 1 ]] || printf '\n'
+      printf '  ]\n}\n'
+    } > "$tmp"
+  ) || return 1
+
+  mv "$tmp" "$RECORD_FILE"
+}
+
+record_add() {  # record_add <kind> <path>
+  entry_is_ours "$1" "$2" || die "refusing to record $1 $2: it is outside the state root and ~/.config"
+  record_has "$1" "$2" && return 0
+
+  RECORD="$RECORD$1$TAB$2
+"
+  record_write || die "could not write $RECORD_FILE"
+}
+
+# Reads the record into RECORD. A line that `up` does not write refuses the
+# whole record, so `down` acts on all of it or on none of it.
+record_load() {
+  local line kind path size
+  RECORD=""
+  [[ -f "$RECORD_FILE" ]] || return 0
+
+  size="$(wc -c < "$RECORD_FILE" | tr -d ' ')"
+  (( size <= RECORD_MAX_BYTES )) || die "$RECORD_FILE has more than $RECORD_MAX_BYTES bytes"
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    case "$line" in
+      '{'|'}'|'  "entries": ['|'  ]') continue ;;
+      "  \"format\": \"$RECORD_FORMAT\",") continue ;;
+    esac
+
+    [[ "$line" =~ $ENTRY_RE ]] || die "$RECORD_FILE: a line is not a record line: $line"
+    kind="${BASH_REMATCH[1]}"
+    path="${BASH_REMATCH[2]}"
+    entry_is_ours "$kind" "$path" \
+      || die "$RECORD_FILE names $path, which is outside the state root and ~/.config. down removes nothing."
+    RECORD="$RECORD$kind$TAB$path
+"
+  done < "$RECORD_FILE"
+}
+
+# --- the steps of up ----------------------------------------------------------------
+
+make_dir() {  # make_dir <umask> <path>
+  [[ -d "$2" ]] && return 0
+
+  ( umask "$1" && mkdir "$2" ) || die "could not make $2"
+  record_add dir "$2"
+  say "  made $2"
+}
+
+# The socket's directory carries the setgid bit and the group of the state,
+# so a socket bound in it gets that group. attendance writes the mode only
+# when it is wrong, and it reports a lost setgid bit.
+make_sock_dir() {
+  [[ -d "$SOCK_DIR" ]] && return 0
+
+  make_dir 027 "$SOCK_DIR"
+  if id -nG | tr ' ' '\n' | grep -qxF "$STATE_GROUP"; then
+    chgrp "$STATE_GROUP" "$SOCK_DIR" || warn "could not give $SOCK_DIR the group $STATE_GROUP"
+  else
+    warn "the operator is not in the group $STATE_GROUP, so $SOCK_DIR keeps the operator's group"
+  fi
+
+  chmod "$SOCK_DIR_MODE" "$SOCK_DIR" || warn "could not set mode $SOCK_DIR_MODE on $SOCK_DIR"
+}
+
+# 48 random bytes, base64, mode 0600 from the umask. A file that exists is
+# kept, whatever it holds: a token minted once is never replaced in silence.
+mint_secret() {  # mint_secret <path>
+  [[ -e "$1" ]] && return 0
+
+  ( umask 077 && head -c "$SECRET_BYTES" /dev/urandom | base64 | tr -d '\n' > "$1" ) \
+    || die "could not write $1"
+  record_add file "$1"
+  say "  minted $1 (the value is never printed)"
+}
+
+# Sets one key of an env file that `up` owns. A file that is absent is made
+# under umask 077 and recorded. A key with the same value is left alone, so
+# a second run writes nothing. Only a value that is no secret comes here:
+# `envfile_upsert` puts the value on the argv of awk.
+env_set() {  # env_set <file> <key> <value>
+  if [[ ! -e "$1" ]]; then
+    ( umask 077 && printf '%s\n' "# Written by bin/fleet-up, mode 0600. fleet-up owns each key below." > "$1" ) \
+      || die "could not write $1"
+    record_add file "$1"
+    say "  wrote $1"
+  fi
+
+  [[ "$(envfile_value "$1" "$2")" == "$3" ]] && return 0
+
+  envfile_upsert "$1" "$2" "$3"
+  say "  set $2 in $1"
+}
+
+up_dirs() {
+  local name
+  hdr "1. directories"
+  ( umask 077 && mkdir -p "$FLEET_DIR" ) || die "could not make $FLEET_DIR"
+
+  for name in $PRIVATE_DIRS; do
+    make_dir 077 "$STATE_ROOT/$name"
+  done
+
+  for name in $SHARED_DIRS; do
+    [[ "$name" == sock ]] && { make_sock_dir; continue; }
+    make_dir 027 "$STATE_ROOT/$name"
+  done
+
+  make_dir 022 "$USER_CONFIG"
+  make_dir 022 "$USER_CONFIG/systemd"
+  make_dir 022 "$USER_UNIT_DIR"
+}
+
+up_secrets() {
+  local principal
+  hdr "2. tokens and keys"
+  for principal in $PRINCIPALS; do
+    mint_secret "$TOKENS_DIR/$principal.token"
+  done
+
+  mint_secret "$VIEW_KEY_FILE"
+  mint_secret "$DOOR_ACP_KEY_FILE"
+}
+
+up_env_files() {
+  local pep_url base python key
+  hdr "3. env files"
+  pep_url="$(creche_env_get AGENT_PEP_URL --env "$SITE_FILE")" \
+    || die "creche-env cannot read AGENT_PEP_URL from $SITE_FILE"
+  [[ -n "$pep_url" ]] || die "AGENT_PEP_URL has no value in $SITE_FILE"
+
+  env_set "$SESSIOND_ENV" SESSIOND_STATE_ROOT "$STATE_ROOT"
+  env_set "$SESSIOND_ENV" SESSIOND_SESSIONS_ROOT "$SESSIONS_ROOT"
+  env_set "$SESSIOND_ENV" SESSIOND_SOCKET "$SOCKET"
+  env_set "$SESSIOND_ENV" SESSIOND_LOG_DIR "$LOG_DIR"
+
+  env_set "$VIEW_ENV" VIEW_STATE_ROOT "$STATE_ROOT"
+  env_set "$VIEW_ENV" VIEW_REGISTRY_DIR "$REGISTRY"
+  env_set "$VIEW_ENV" VIEW_SESSIOND_SOCKET "$SOCKET"
+  env_set "$VIEW_ENV" VIEW_ACCESS_KEY_FILE "$VIEW_KEY_FILE"
+
+  env_set "$MANAGERD_ENV" MANAGERD_STATE_ROOT "$STATE_ROOT"
+  env_set "$MANAGERD_ENV" AGENT_PEP_URL "$pep_url"
+
+  # The images of the last playpen release. caregiver reads that file
+  # itself and its references win. The unit still passes both flags.
+  base="$(envfile_value "$IMAGES_ENV" base)"
+  python="$(envfile_value "$IMAGES_ENV" python)"
+  if [[ -n "$base" && -n "$python" ]]; then
+    env_set "$MANAGERD_ENV" AGENT_SANDBOX_IMAGE "$base"
+    env_set "$MANAGERD_ENV" AGENT_SANDBOX_PYTHON_IMAGE "$python"
+  else
+    pending "no image in $IMAGES_ENV: release playpen first (handover request playpen)"
+  fi
+
+  # The one secret fleet-up does not mint. It reads the value from
+  # hooks.env and never writes hooks.env. `envfile_append_once` writes with
+  # printf, a builtin, so the value reaches no argv.
+  [[ -n "$(envfile_value "$MANAGERD_ENV" LITELLM_MASTER_KEY)" ]] && return 0
+
+  key="$(envfile_value "$HOOKS_ENV" LITELLM_MASTER_KEY)"
+  if [[ -z "$key" ]]; then
+    pending "no LITELLM_MASTER_KEY in $HOOKS_ENV. Root step, once, then run fleet-up up again:
+    sudo sh -c 'umask 077; sops -d $ROOT_SECRETS | grep \"^LITELLM_MASTER_KEY=\" >> $HOOKS_ENV'
+    sudo chown $(id -un) $HOOKS_ENV"
+    return 0
+  fi
+
+  envfile_append_once "$MANAGERD_ENV" LITELLM_MASTER_KEY "$key"
+  say "  set LITELLM_MASTER_KEY in $MANAGERD_ENV (from $HOOKS_ENV, the value is never printed)"
+}
+
+# caregiver refuses to start with no master key, and its unit passes both
+# image flags. A start before the file is whole only fills the journal.
+managerd_is_whole() {
+  local key
+  for key in LITELLM_MASTER_KEY AGENT_SANDBOX_IMAGE AGENT_SANDBOX_PYTHON_IMAGE; do
+    [[ -n "$(envfile_value "$MANAGERD_ENV" "$key")" ]] || return 1
+  done
+}
+
+install_unit() {  # install_unit <unit>: 0 when the file moved, 1 when it did not
+  local source="$UNIT_SOURCE_DIR/$1" target="$USER_UNIT_DIR/$1"
+  [[ -f "$source" ]] || die "no $source in this tree"
+
+  if [[ -f "$target" ]] && cmp -s "$source" "$target"; then
+    return 1
+  fi
+
+  if [[ -e "$target" ]]; then
+    install -m 0644 "$source" "$target" || die "could not install $target"
+    say "  refreshed $target. It was there before, so down leaves it. Restart $1 to load it."
+    return 0
+  fi
+
+  install -m 0644 "$source" "$target" || die "could not install $target"
+  record_add unit "$target"
+  say "  installed $target"
+  return 0
+}
+
+up_units() {
+  local unit tree moved=0 waiting="" installed=""
+  hdr "4. user units"
+  for unit in $UNITS; do
+    tree="$(unit_tree "$unit")" || die "no tree is known for $unit"
+    if ! tree_is_there "$tree"; then
+      in_words "$tree" "$waiting" || waiting="$waiting $tree"
+      say "  not installed: $unit. Its tree, $tree, is not there."
+      continue
+    fi
+
+    installed="$installed $unit"
+    install_unit "$unit" && moved=1
+  done
+
+  if [[ "$moved" == 1 ]]; then
+    systemctl --user daemon-reload || die "systemctl --user daemon-reload failed"
+  fi
+
+  for unit in $installed; do
+    in_words "$unit" "$ENABLED_UNITS" || continue
+    systemctl --user is-enabled "$unit" >/dev/null 2>&1 && continue
+    if [[ "$unit" == creche-caregiver.service ]] && ! managerd_is_whole; then
+      say "  not started: $unit. $MANAGERD_ENV has no master key or no image yet."
+      continue
+    fi
+
+    if ! systemctl --user enable --now "$unit"; then
+      fail "could not enable and start $unit. Read: journalctl --user -u $unit"
+      continue
+    fi
+
+    record_add enabled "$unit"
+    say "  enabled and started $unit"
+  done
+
+  waiting_line "$waiting"
+}
+
+# One line for each tree that holds a unit back, with the step that brings
+# the tree.
+waiting_line() {  # waiting_line <trees>
+  local tree components=""
+  for tree in $1; do
+    case "$tree" in
+      attendance|caregiver|noticeboard) components="$components $tree" ;;
+      handover) pending "no handover tree at $INSTALL_ROOT/handover: root installs it (docs/fleet-bootstrap.md, root step R3)" ;;
+      registry) pending "no registry checkout at $REGISTRY: the owner clones it (docs/fleet-bootstrap.md, owner step O1)" ;;
+      product) pending "no deployed checkout: sudo creche-deploy" ;;
+    esac
+  done
+
+  [[ -n "$components" ]] || return 0
+  pending "no released tree for:$components. File the release first, then run fleet-up up again:
+    $HANDOVER request$components --root $CODE_ROOT/agent-control --root $CODE_ROOT/agent-mcp --root $CODE_ROOT/agent-registry --root $CODE_ROOT/chaperone --dry-run
+    $HANDOVER request$components --root $CODE_ROOT/agent-control --root $CODE_ROOT/agent-mcp --root $CODE_ROOT/agent-registry --root $CODE_ROOT/chaperone --wait"
+}
+
+verb_up() {
+  [[ "$STATE_ROOT" =~ $PATH_RE && "$USER_CONFIG" =~ $PATH_RE ]] \
+    || die "the state root and HOME may hold only the characters of $PATH_RE"
+  [[ -d "$STATE_ROOT" ]] || die "$STATE_ROOT does not exist. It is a root step: docs/fleet-bootstrap.md, R1"
+  [[ -w "$STATE_ROOT" ]] || die "$STATE_ROOT is not writable by $(id -un). It is a root step: docs/fleet-bootstrap.md, R1"
+
+  record_load
+  up_dirs
+  up_secrets
+  up_env_files
+  up_units
+
+  hdr "result"
+  if [[ "$FAILS" -gt 0 ]]; then
+    say "fleet-up up: $FAILS step(s) failed. The record names each path made so far."
+    exit 1
+  fi
+
+  if [[ -n "$PENDING" ]]; then
+    printf '%s' "$PENDING" | sed 's/^/PENDING: /; s/^PENDING:     /    /'
+    exit 3
+  fi
+
+  say "fleet-up up: the fleet layer is whole. Record: $RECORD_FILE"
+}
+
+# --- down -----------------------------------------------------------------------------
+
+remove_entry() {  # remove_entry <kind> <path>: 0 when removed or gone, 1 when kept
+  case "$1" in
+    enabled)
+      systemctl --user disable --now "$2" >/dev/null 2>&1 || warn "systemctl could not disable $2"
+      say "  disabled and stopped $2" ;;
+    unit|file)
+      [[ -e "$2" || -L "$2" ]] || return 0
+      if [[ -d "$2" && ! -L "$2" ]]; then
+        say "  kept $2: it is a directory now"
+        return 1
+      fi
+      rm -f -- "$2" || { say "  kept $2: rm failed"; return 1; }
+      say "  removed $2" ;;
+    dir)
+      [[ -d "$2" ]] || return 0
+      if ! rmdir -- "$2" 2>/dev/null; then
+        say "  kept $2: it holds a file that fleet-up did not write"
+        return 1
+      fi
+      say "  removed $2" ;;
+  esac
+
+  return 0
+}
+
+verb_down() {
+  local kind path kept="" units_gone=0
+  record_load
+  if [[ -z "$RECORD" ]]; then
+    say "no record at $RECORD_FILE, so down removes nothing"
+    return 0
+  fi
+
+  hdr "down, in reverse order of the record"
+  while IFS="$TAB" read -r kind path; do
+    [[ -n "$kind" ]] || continue
+    if remove_entry "$kind" "$path"; then
+      [[ "$kind" == unit ]] && units_gone=1
+      continue
+    fi
+
+    kept="$kind$TAB$path
+$kept"
+  done < <(printf '%s' "$RECORD" | awk '{ line[NR] = $0 } END { for (i = NR; i > 0; i--) print line[i] }')
+
+  [[ "$units_gone" == 1 ]] && { systemctl --user daemon-reload || warn "daemon-reload failed"; }
+
+  if [[ -n "$kept" ]]; then
+    RECORD="$kept"
+    record_write || die "could not write $RECORD_FILE"
+    say "the record keeps each path that down kept: $RECORD_FILE"
+    return 0
+  fi
+
+  rm -f -- "$RECORD_FILE"
+  rmdir -- "$FLEET_DIR" 2>/dev/null || say "  kept $FLEET_DIR: it holds another file"
+  say "fleet-up down: each recorded path is gone"
+}
+
+# --- check ----------------------------------------------------------------------------
+
+# One line for one item: the description, then the command that proves it.
+item() {  # item <description> <command...>
+  local description="$1"
+  shift
+  if "$@"; then
+    pass "$description"
+  else
+    fail "$description"
+  fi
+}
+
+uv_is_new() {
+  version_at_least "$(uv_version)" "$UV_MINIMUM"
+}
+
+uv_version() {
+  local version
+  version="$("$UV" --version 2>/dev/null | awk '{ print $2 }')"
+  say "${version:-0.0.0}"
+}
+
+login_has_group() {  # login_has_group <group>
+  id -nG | tr ' ' '\n' | grep -qxF "$1"
+}
+
+chaperone_dir_is_set() {
+  [[ -d "$CHAPERONE_DIR" && "$(file_mode "$CHAPERONE_DIR")" == "$CHAPERONE_DIR_MODE" \
+    && "$(file_group "$CHAPERONE_DIR")" == "$STATE_GROUP" ]]
+}
+
+site_is_valid() {
+  creche_env_check --env "$SITE_FILE" >/dev/null 2>&1
+}
+
+site_sets() {  # site_sets <key>
+  [[ -n "$(envfile_value "$SITE_FILE" "$1")" ]]
+}
+
+chaperone_binary_is_there() {
+  [[ -x "$CHAPERONE_REL" || -x "$CHAPERONE_INSTALLED" ]]
+}
+
+port_listens() {  # port_listens <port>
+  ss -ltn 2>/dev/null | grep -Eq "[:.]$1([[:space:]]|\$)"
+}
+
+state_root_is_mine() {
+  [[ -d "$STATE_ROOT" && "$(file_owner "$STATE_ROOT")" == "$(id -un)" ]]
+}
+
+dir_is_writable() {  # dir_is_writable <path>
+  [[ -d "$1" && -w "$1" ]]
+}
+
+master_key_is_there() {
+  [[ -n "$(envfile_value "$HOOKS_ENV" LITELLM_MASTER_KEY)$(envfile_value "$MANAGERD_ENV" LITELLM_MASTER_KEY)" ]]
+}
+
+has_program() {  # has_program <name>
+  command -v "$1" >/dev/null 2>&1
+}
+
+private_file() {  # private_file <path>
+  [[ -f "$1" && "$(file_mode "$1")" == 600 ]]
+}
+
+unit_is_enabled() {  # unit_is_enabled <unit>
+  systemctl --user is-enabled "$1" >/dev/null 2>&1
+}
+
+check_root() {
+  local me
+  me="$(id -un)"
+  hdr "root checklist (fleet-up never does these: docs/fleet-bootstrap.md)"
+  item "R1 state root $STATE_ROOT, owned by $me" state_root_is_mine
+  item "R1 sessions root $SESSIONS_ROOT, writable by $me" dir_is_writable "$SESSIONS_ROOT"
+  item "R2 cosign at $COSIGN" test -x "$COSIGN"
+  item "R2 uv $UV_MINIMUM or newer at $UV (found: $(uv_version))" uv_is_new
+  item "R2 sbx on PATH" has_program sbx
+  item "R3 deployed checkout at $PRODUCT_ROOT" test -f "$PRODUCT_ROOT/bin/rework-watchdog.sh"
+  item "R3 handover tree at $INSTALL_ROOT/handover" test -f "$INSTALL_ROOT/handover/$STAMP"
+  item "R4 group chaperone exists and holds $me" group_has_me chaperone
+  item "R4 group $STATE_GROUP exists and holds $me" group_has_me "$STATE_GROUP"
+  item "R4 this login has the group chaperone (restart the user manager after usermod)" \
+    login_has_group chaperone
+  item "R5 $CHAPERONE_DIR mode $CHAPERONE_DIR_MODE, group $STATE_GROUP" chaperone_dir_is_set
+  item "R5 $CHAPERONE_DIR/install.toml" test -f "$CHAPERONE_DIR/install.toml"
+  item "R5 $CHAPERONE_DIR/plugins" test -d "$CHAPERONE_DIR/plugins"
+  item "R5 $CHAPERONE_DIR/secrets" test -d "$CHAPERONE_DIR/secrets"
+  item "R6 site file $SITE_FILE passes creche-env check" site_is_valid
+  item "R6 the site file sets CHAPERONE_LISTEN" site_sets CHAPERONE_LISTEN
+  item "R7 chaperone binary at $CHAPERONE_REL or $CHAPERONE_INSTALLED" chaperone_binary_is_there
+  item "R7 a listener on port $APPROVAL_PORT (ha-approval, after the chaperone release)" \
+    port_listens "$APPROVAL_PORT"
+  item "R8 playpen images at $IMAGES_ENV (the first playpen release)" test -f "$IMAGES_ENV"
+  item "R9 LITELLM_MASTER_KEY in hooks.env or managerd.env (the value is never printed)" \
+    master_key_is_there
+  item "O1 registry checkout at $REGISTRY" test -d "$REGISTRY/.git"
+
+  if [[ -z "$(envfile_value "$HOOKS_ENV" APPROVAL_URL)" || -z "$(envfile_value "$HOOKS_ENV" APPROVAL_TOKEN)" ]]; then
+    warn "no APPROVAL_URL or APPROVAL_TOKEN in hooks.env: the watchdog logs its notices and pushes none"
+  fi
+}
+
+check_fleet() {
+  local name unit
+  hdr "fleet layer (fleet-up up makes these)"
+  item "record $RECORD_FILE, in the directory $FLEET_DIR" test -f "$RECORD_FILE"
+  for name in $PRIVATE_DIRS $SHARED_DIRS; do
+    item "directory $STATE_ROOT/$name" test -d "$STATE_ROOT/$name"
+  done
+
+  for name in $PRINCIPALS; do
+    item "token $TOKENS_DIR/$name.token" test -s "$TOKENS_DIR/$name.token"
+  done
+
+  item "key $VIEW_KEY_FILE" test -s "$VIEW_KEY_FILE"
+  item "key $DOOR_ACP_KEY_FILE" test -s "$DOOR_ACP_KEY_FILE"
+
+  for name in "$SESSIOND_ENV" "$VIEW_ENV" "$MANAGERD_ENV"; do
+    item "env file $name, mode 0600" private_file "$name"
+  done
+
+  for unit in $UNITS; do
+    item "unit $unit installed (runs from the $(unit_tree "$unit") tree)" \
+      test -f "$USER_UNIT_DIR/$unit"
+    in_words "$unit" "$ENABLED_UNITS" || continue
+    item "unit $unit enabled" unit_is_enabled "$unit"
+  done
+}
+
+verb_check() {
+  check_root
+  check_fleet
+  hdr "result"
+  if [[ "$FAILS" -gt 0 ]]; then
+    say "fleet-up check: $FAILS item(s) fail"
+    exit 1
+  fi
+
+  say "fleet-up check: each item passes"
+}
+
+# --- main ---------------------------------------------------------------------------
+
+[[ $# -eq 1 ]] || { usage; exit 2; }
+not_root
+
+case "$1" in
+  check) verb_check ;;
+  up) verb_up ;;
+  down) verb_down ;;
+  -h|--help) usage ;;
+  *) usage; exit 2 ;;
+esac
