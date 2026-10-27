@@ -136,7 +136,7 @@ each recorded path in reverse order and nothing else.
 
 - `hooks.env`. Section 5 tells why.
 - A component tree. A release installs it.
-- A family, its grant file, its `creds.json`, its sandbox and its timers.
+- A family, its `creds.json`, its sandbox and its timers.
   The caregiver writes them. A timer of a family is a file in
   `~/.config/systemd/user/`, so `down` keeps that directory while a timer
   is there.
@@ -215,8 +215,7 @@ so `up` mints both.
 
 - `fleet-up` reads `CHAPERONE_LISTEN` from the site file with
   `envfile_value`. `env/AGENTS.md` lists this read as a known gap.
-- `bin/rework-watchdog.sh` still watches `creche-door-owui.service` and not
-  `creche-door-acp.service`.
+- `bin/rework-watchdog.sh` does not watch `creche-door-acp.service`.
 - `systemd/AGENTS.md` names the old cutover script as the installer of the
   user units. That changes when the owner takes this design.
 - The tokens of `door-delegate` and `door-dispatch` are 0600. The Python
