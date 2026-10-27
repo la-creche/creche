@@ -264,7 +264,7 @@ async def test_a_page_without_the_key_is_refused(board_alone: BoardStack, key: s
 async def test_no_page_shows_a_secret(board: BoardStack) -> None:
     """Invariant 13. No key and no token is on a page."""
     paths = ["/", f"/families/{FAMILY}", "/audit"]
-    secrets = [VIEW_KEY, token_of("view-ro"), token_of("door-owui")]
+    secrets = [VIEW_KEY, token_of("view-ro"), token_of("door-acp")]
 
     async with board.client() as browser:
         for path in paths:

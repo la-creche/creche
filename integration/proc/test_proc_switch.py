@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import httpx
 from proc_stack import Stack
-from proc_tree import FAMILY, SANDBOX, Tree, write_playpen_env, write_status
+from proc_tree import FAMILY, PRINCIPALS, SANDBOX, Tree, write_playpen_env, write_status
 
 SWITCH_PATH = "/internal/switch-sandbox"
 CAREGIVER = "managerd"
@@ -20,6 +20,7 @@ DRAIN = "drain"
 ADDITION = "sandbox.cpus changed: 2 to 4"
 
 HTTP_BAD_REQUEST = 400
+HTTP_UNAUTHORIZED = 401
 HTTP_FORBIDDEN = 403
 HTTP_UNAVAILABLE = 503
 
@@ -45,6 +46,22 @@ async def test_no_door_token_reaches_the_internal_call(attended: Stack) -> None:
     assert response.status_code == HTTP_FORBIDDEN
     assert response.json()["error"]["code"] == "forbidden"
     assert len(attended.sbx_calls()) == 0, "a refused call dialled a sandbox"
+
+
+async def test_each_token_of_the_tree_authenticates(attended: Stack) -> None:
+    """Contract 02 §3.1: each token file of the tree names a principal of `attendance`.
+
+    `attendance` knows the bearer, so the call gets past the token check. A
+    door token is then refused at `/internal/*`, and the caregiver token is
+    refused for the pair, because `from` and `to` name one sandbox.
+    """
+    answers = {
+        principal: await _switch(attended, DRAIN, to=SANDBOX, principal=principal)
+        for principal in PRINCIPALS
+    }
+
+    statuses = {principal: answer.status_code for principal, answer in answers.items()}
+    assert HTTP_UNAUTHORIZED not in statuses.values(), statuses
 
 
 async def test_a_switch_onto_a_sandbox_that_cannot_start_is_refused(attended: Stack) -> None:
