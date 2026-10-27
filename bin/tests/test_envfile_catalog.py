@@ -126,6 +126,60 @@ def test_the_keys_of_the_old_channel_are_not_in_the_catalog() -> None:
     assert keys.isdisjoint({"SESSIOND_CHANNEL_COMMAND", "SESSIOND_OWUI_KEY_FILE"})
 
 
+#: The keys of the Python PEP and of its roster, and the two keys of Open
+#: WebUI. No program reads them, and the host sets none of them.
+PEP_KEYS: Final = frozenset(
+    {
+        "PEP_BIND",
+        "PEP_REWORK_DIR",
+        "PEP_AUDIT_DIR",
+        "PEP_UPSTREAMS",
+        "PEP_UPSTREAMS_GENERATED",
+        "PEP_SECRETS",
+        "PEP_SECRETS_DIR",
+        "PEP_SESSIOND_SOCKET",
+        "PEP_DELEGATE_TOKEN_FILE",
+        "PEP_DISPATCH_TOKEN_FILE",
+        "PEP_RELEASE_REQUESTS_DIR",
+        "PEP_FAULT_SWEEP_INTERVAL_S",
+        "PEP_APPROVAL_URL",
+        "HA_URL",
+        "AGENT_ROSTER_FILE",
+        "AGENT_PEP_USER",
+        "AGENT_PEP_HOME",
+        "AGENT_PEP_AGE_KEY",
+        "SESSIOND_OWUI_URL",
+        "SESSIOND_OWUI_FOLDER_ID",
+    }
+)
+
+
+def test_the_keys_of_the_python_pep_are_not_in_the_catalog() -> None:
+    pair = pair_in(PAIR_DIR)
+    keys = {one.key for one in pair.defaults}
+
+    assert keys.isdisjoint(PEP_KEYS)
+    assert PEP_KEYS.isdisjoint(root_keys_in(PAIR_DIR, pair))
+
+
+def test_a_site_file_that_sets_pep_secrets_is_refused(tmp_path: Path) -> None:
+    assert PROGRAM.is_file(), "run `uv sync`: the venv has no creche-env"
+    site_file = tmp_path / "site.env"
+    site_file.write_text(_example_env() + "PEP_SECRETS=/etc/agent-pep/secrets\n", encoding="utf-8")
+    site_file.chmod(0o600)
+
+    run = subprocess.run(
+        [str(PROGRAM), "check", "--env", str(site_file)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+
+    assert (run.returncode, run.stdout) == (os.EX_CONFIG, "")
+    assert run.stderr.splitlines() == [f"creche-env: {site_file}:4: unknown-key PEP_SECRETS"]
+
+
 @pytest.mark.parametrize("name", [DEFAULT_FILE, EXAMPLE_FILE])
 def test_no_address_outside_the_documentation_and_loopback_networks(name: str) -> None:
     text = (PAIR_DIR / name).read_text(encoding="utf-8")
