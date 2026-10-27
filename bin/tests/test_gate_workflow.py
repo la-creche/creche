@@ -30,12 +30,13 @@ release builds no archive, so the tag step gets no variable of a binary
 component.
 
 The `proc` job runs the process-level suite (`integration/proc`), which is
-in no shard: `testpaths` does not hold it. The job builds the playpen first,
+in no shard: `testpaths` does not hold it. The job builds the facade first,
 and a test that skips is a failure there. A run in which every test skips
-because the bundle is missing would be green and would judge nothing.
+because the build is missing would be green and would judge nothing.
 
 The `suites` job runs the old suite of `integration/`, in a pytest run of
-its own. It has the setup of the `proc` job. Its last step reads
+its own. It has the checkout and the venv of the `proc` job, and no node.
+Its last step reads
 the JUnit report of each run, and it fails for a test that skipped. Both
 workflows have the job. The last job of each file has a name of its own, and
 each other job name is in both files.
@@ -180,19 +181,10 @@ PROC_RUN = "uv run pytest integration/proc -m slow"
 PROC_ENV = {"CRECHE_PROC_NO_SKIP": "1"}
 PROC_SWITCHES = REPO / "integration" / "proc" / "proc_services.py"
 
-#: The build that the suite needs, and where it runs. No vitest and no
-#: typecheck: the `playpen` job runs those.
-PLAYPEN_BUILD = "pnpm install --frozen-lockfile && pnpm run build"
-PLAYPEN_DIR = "playpen"
-
-#: The second build of the `proc` job: the facade, which the exit test
-#: starts. The same command, in its own directory. The `facade` job runs its
-#: tests and its type check.
+#: The build of the `proc` job: the facade, which the exit test starts, and
+#: where it runs. No vitest and no typecheck: the `facade` job runs those.
+FACADE_BUILD = "pnpm install --frozen-lockfile && pnpm run build"
 FACADE_BUILD_DIR = "facade"
-
-#: The build refuses to run without a LAN address (playpen/build.mjs). The
-#: example site's TEST-NET-1 address is the one the suite writes too.
-BUILD_ENV = {"AGENT_LAN_ADDRESS": "192.0.2.10"}
 
 #: The job that runs the old suite of `integration/`.
 SUITES_JOB = "suites"
@@ -400,7 +392,7 @@ def test_a_shard_names_no_path_and_no_number(jobs: dict[str, dict[str, Any]], la
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
-def test_the_docs_scope_runs_no_shard_and_no_playpen(
+def test_the_docs_scope_runs_no_shard_and_no_node_job(
     jobs: dict[str, dict[str, Any]], last: str
 ) -> None:
     by_scope = {name: job.get("if") for name, job in jobs.items() if name != last}
@@ -408,7 +400,6 @@ def test_the_docs_scope_runs_no_shard_and_no_playpen(
 
     assert only_code == {
         "tests",
-        "playpen",
         AGENT_JOB,
         FACADE_JOB,
         "proc",
@@ -429,10 +420,10 @@ def test_lint_runs_the_docs_tests_on_a_docs_change_and_no_test_beside_the_shards
 
 
 def test_the_release_runs_the_gates_test_jobs() -> None:
-    """A change to one file's shards, playpen steps, process suite, old
-    suites or systemd proof that misses the other would let a merge pass a
-    release its PR could not, or the reverse."""
-    for name in ("tests", "playpen", AGENT_JOB, FACADE_JOB, "proc", SUITES_JOB, SYSTEMD_JOB):
+    """A change to one file's shards, node steps, process suite, old suites
+    or systemd proof that misses the other would let a merge pass a release
+    its PR could not, or the reverse."""
+    for name in ("tests", AGENT_JOB, FACADE_JOB, "proc", SUITES_JOB, SYSTEMD_JOB):
         assert RELEASE_JOBS[name] == JOBS[name], f"release.yml's {name} job is not gate.yml's"
 
 
@@ -462,40 +453,36 @@ def _node_steps(job: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
-def test_the_proc_job_builds_the_playpen_then_runs_the_process_suite(
+def test_the_proc_job_builds_the_facade_then_runs_the_process_suite(
     jobs: dict[str, dict[str, Any]], last: str
 ) -> None:
-    """The suite starts `node playpen/dist/playpen.js` and the built facade,
-    so both builds come first, and the venv comes before the suite. The
-    suite is one command, with no path of one test and no `-k`."""
+    """The suite starts the built facade, so the build comes first, and the
+    venv comes before the suite. The suite is one command, with no path of
+    one test and no `-k`."""
     proc = jobs["proc"]
     runs = [step for step in proc["steps"] if "run" in step]
-    build, facade, suite = runs
+    facade, suite = runs
     order = [step.get("uses") or step["run"] for step in proc["steps"]]
 
     assert proc["needs"] == "scope"
     assert proc["if"] == ONLY_CODE
-    assert build["run"] == PLAYPEN_BUILD
-    assert build["working-directory"] == PLAYPEN_DIR
-    assert build["env"] == BUILD_ENV
-    assert facade == {"run": PLAYPEN_BUILD, "working-directory": FACADE_BUILD_DIR}
+    assert facade == {"run": FACADE_BUILD, "working-directory": FACADE_BUILD_DIR}
     assert suite["run"] == PROC_RUN
-    assert order.index(PLAYPEN_BUILD) < order.index(UV_SYNC) < order.index(PROC_RUN)
-    assert proc["steps"].index(facade) < order.index(UV_SYNC)
+    assert order.index(FACADE_BUILD) < order.index(UV_SYNC) < order.index(PROC_RUN)
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
-def test_the_proc_job_has_node_and_pnpm_as_the_playpen_job_has_them(
+def test_the_proc_job_has_node_and_pnpm_as_the_facade_job_has_them(
     jobs: dict[str, dict[str, Any]], last: str
 ) -> None:
-    """One node version and one pnpm for the bundle, whichever job builds
-    it. The suite must judge the bundle that the `playpen` job tests."""
+    """One node version and one pnpm for the facade, whichever job builds
+    it. The suite must judge the build that the `facade` job tests."""
     steps = _node_steps(jobs["proc"])
 
     assert [step["uses"].split("@")[0] for step in steps] == [
         name.rstrip("@") for name in NODE_ACTIONS
     ]
-    assert steps == _node_steps(jobs["playpen"])
+    assert steps == _node_steps(jobs[FACADE_JOB])
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
@@ -509,7 +496,7 @@ def test_the_agent_job_tests_and_typechecks_the_module(
 
     assert [(step["run"], step["working-directory"]) for step in runs] == [(AGENT_RUN, AGENT_DIR)]
     assert [one["uses"].split("@")[0] for one in _node_steps(jobs[AGENT_JOB])] == [
-        one["uses"].split("@")[0] for one in _node_steps(jobs["playpen"])
+        name.rstrip("@") for name in NODE_ACTIONS
     ]
 
 
@@ -524,13 +511,13 @@ def test_the_facade_job_tests_and_typechecks_the_facade(
 
     assert [(step["run"], step["working-directory"]) for step in runs] == [(FACADE_RUN, FACADE_DIR)]
     assert [one["uses"].split("@")[0] for one in _node_steps(jobs[FACADE_JOB])] == [
-        one["uses"].split("@")[0] for one in _node_steps(jobs["playpen"])
+        name.rstrip("@") for name in NODE_ACTIONS
     ]
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
 def test_a_skip_in_the_proc_job_is_a_failure(jobs: dict[str, dict[str, Any]], last: str) -> None:
-    """Every topology test skips itself when the bundle is missing. The
+    """A test that starts the facade skips itself when the build is missing. The
     switch must be one that the suite reads: the suite stops on a variable
     with its prefix that it does not know, and a name with another prefix
     would change nothing."""
@@ -598,14 +585,13 @@ def _suite_steps(jobs: dict[str, dict[str, Any]]) -> tuple[list[dict[str, Any]],
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
-def test_the_suites_job_has_the_setup_of_the_proc_job(
+def test_the_suites_job_has_the_checkout_and_the_venv_of_the_proc_job(
     jobs: dict[str, dict[str, Any]], last: str
 ) -> None:
     """Each step before the first suite is a step of the `proc` job, in the
-    same order: the checkout, node and pnpm, the build of the playpen, then
-    the venv. The two jobs then judge the bundle of one build command. The
-    `proc` job has two steps more: the cache of the chaperone and the build
-    of the facade. No suite of this job starts either."""
+    same order: the checkout, then the venv. No suite of this job starts
+    node, so the job has no node, no pnpm and no build. The `proc` job has
+    those steps and the cache of the chaperone."""
     suites = jobs[SUITES_JOB]
     setup = _setup_of(suites, next(iter(SUITE_RUNS.values())))
 
@@ -614,10 +600,16 @@ def test_the_suites_job_has_the_setup_of_the_proc_job(
     assert suites["if"] == ONLY_CODE
     assert suites["runs-on"] == jobs["proc"]["runs-on"]
     proc_setup = _setup_of(jobs["proc"], PROC_RUN)
-    shared = [step for step in proc_setup if not _is_cache(step) and not _is_facade_build(step)]
+    node = _node_steps(jobs["proc"])
+    shared = [
+        step
+        for step in proc_setup
+        if not _is_cache(step) and not _is_facade_build(step) and step not in node
+    ]
 
     assert setup == shared
-    assert [step.get("uses") or step["run"] for step in setup][-2:] == [PLAYPEN_BUILD, UV_SYNC]
+    assert _node_steps(suites) == []
+    assert [step.get("uses") or step["run"] for step in setup][-1] == UV_SYNC
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
@@ -943,7 +935,6 @@ def _needs(
 #: What a docs PR skips. A code PR skips nothing.
 DOCS = {
     "tests": "skipped",
-    "playpen": "skipped",
     AGENT_JOB: "skipped",
     FACADE_JOB: "skipped",
     "proc": "skipped",
@@ -958,7 +949,7 @@ CASES: list[tuple[str | None, dict[str, str], bool]] = [
     ("docs", DOCS, True),
     # One red shard makes the matrix job a failure.
     ("code", {"tests": "failure"}, False),
-    ("code", {"playpen": "cancelled"}, False),
+    ("code", {"proc": "cancelled"}, False),
     ("code", {AGENT_JOB: "failure"}, False),
     ("code", {AGENT_JOB: "skipped"}, False),
     ("docs", DOCS | {AGENT_JOB: "success"}, False),

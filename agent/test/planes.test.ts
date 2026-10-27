@@ -1,5 +1,5 @@
-// The tables are the tables of `playpen/test/planes.test.ts`, which holds the
-// tables of the tests of the Rust type `PlaneUrl`. Keep the two copies equal.
+// The tables are the tables of the tests of the Rust type `PlaneUrl`. Keep
+// the two copies equal.
 
 import { describe, expect, it } from "vitest";
 

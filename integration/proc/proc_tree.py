@@ -19,7 +19,6 @@ topology with one writes only the registry and the token files, and
       state/families/<family>/config/              contract 01 §6.1
       state/families/<family>/control/<id>/        contract 03 §7.1
       state/tokens/<principal>.token     contract 02 §3 rule 5
-      state/door-owui.key                contract 02 §3 rule 7
       state/grants/<family>.toml         the app table of `caregiver` for `policy.toml`
       state/faults/<writer>/<family>.json          contract 05 §3.3.1
       chaperone-rs/config/               the configuration directory of the Rust chaperone
@@ -99,9 +98,7 @@ CRED_EPOCH: Final = 7
 #: (contract 05 §4.1).
 IMAGE: Final = "sha256:" + "0" * 63 + "1"
 
-#: Obvious fixtures, never credentials. Each is long enough to pass the
-#: 32-byte floor of contract 02 §3 rule 7.
-DOOR_KEY: Final = "fixture-door-key-" + "d" * 32
+#: Obvious fixtures, never credentials.
 FIXTURE_LITELLM_KEY: Final = "FIXTURE-LITELLM-KEY"
 _TOKEN_FILL: Final = "x" * 32
 
@@ -169,11 +166,6 @@ _SOCKET_NAME: Final = "sessiond.sock"
 def repo_root() -> Path:
     """The checkout this file is in. `integration/proc/proc_tree.py` is 3 deep."""
     return Path(__file__).resolve().parents[2]
-
-
-def playpen_bundle() -> Path:
-    """The built playpen. `pnpm run build` in `playpen/` writes it."""
-    return repo_root() / "playpen" / "dist" / "playpen.js"
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,10 +253,6 @@ class Tree:
     @property
     def tokens_dir(self) -> Path:
         return self.state_root / "tokens"
-
-    @property
-    def door_key_file(self) -> Path:
-        return self.state_root / "door-owui.key"
 
     @property
     def attendance_socket(self) -> Path:
@@ -450,7 +438,6 @@ def build_bare_tree(tree: Tree) -> None:
         directory.mkdir(parents=True, exist_ok=True)
 
     write_tokens(tree)
-    write_door_key(tree)
 
 
 def family_body(family: str = FAMILY, kind: str = ATTENDED, **fields: object) -> dict[str, Any]:
@@ -952,10 +939,6 @@ def write_tokens(tree: Tree) -> None:
 def token_of(principal: str) -> str:
     """The fixture bearer of one principal. Never a credential."""
     return f"{principal}-{_TOKEN_FILL}"
-
-
-def write_door_key(tree: Tree) -> None:
-    _atomic_write(tree.door_key_file, DOOR_KEY + "\n", SECRET_MODE)
 
 
 def replace_secret(path: Path, content: str | None) -> None:

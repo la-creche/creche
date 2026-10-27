@@ -10,9 +10,7 @@ resolution-markers = [
 members = [
     "agent-control-workspace",
     "agent-door-acp",
-    "agent-door-owui",
     "agent-door-trigger",
-    "agent-door-tui",
     "agent-family",
     "attendance",
     "caregiver",
@@ -28,9 +26,7 @@ version = "0.0.0"
 source = { virtual = "." }
 dependencies = [
     { name = "agent-door-acp" },
-    { name = "agent-door-owui" },
     { name = "agent-door-trigger" },
-    { name = "agent-door-tui" },
     { name = "agent-family" },
     { name = "attendance" },
     { name = "caregiver" },
@@ -56,9 +52,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "agent-door-acp", editable = "door-acp" },
-    { name = "agent-door-owui", editable = "door-owui" },
     { name = "agent-door-trigger", editable = "door-trigger" },
-    { name = "agent-door-tui", editable = "door-tui" },
     { name = "agent-family", editable = "family" },
     { name = "attendance", editable = "attendance" },
     { name = "caregiver", editable = "caregiver" },
@@ -99,23 +93,6 @@ requires-dist = [
 ]
 
 [[package]]
-name = "agent-door-owui"
-version = "0.1.0"
-source = { editable = "door-owui" }
-dependencies = [
-    { name = "fastapi" },
-    { name = "httpx" },
-    { name = "uvicorn" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "fastapi", specifier = ">=0.115" },
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "uvicorn", specifier = ">=0.30" },
-]
-
-[[package]]
 name = "agent-door-trigger"
 version = "0.1.0"
 source = { editable = "door-trigger" }
@@ -133,17 +110,6 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "uvicorn", specifier = ">=0.30" },
 ]
-
-[[package]]
-name = "agent-door-tui"
-version = "0.1.0"
-source = { editable = "door-tui" }
-dependencies = [
-    { name = "httpx" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "httpx", specifier = ">=0.27" }]
 
 [[package]]
 name = "agent-family"

@@ -23,8 +23,7 @@ directory does not start it.
 ## Run it
 
 ```bash
-cd playpen && pnpm install && AGENT_LAN_ADDRESS=192.0.2.10 pnpm run build && cd ..   # once, and after any playpen change
-cd facade && pnpm install --frozen-lockfile && pnpm run build && cd ..               # once, and after any agent or facade change
+cd facade && pnpm install --frozen-lockfile && pnpm run build && cd ..   # once, and after any agent or facade change
 uv run pytest integration/proc -m slow
 ```
 
@@ -34,11 +33,9 @@ Add `-n 4` to run the tests on four workers. Each run prints the command of
 each service before its result line. Each line ends with the origin of the
 command: `default` or `override`.
 
-A test that needs `playpen/dist/playpen.js` skips itself when the file is
-missing. A silent pass would be worse than a skip. The same applies to
-`playpen/dist/agent-pi-launch.js`, which the same build writes, and to the
-build of `facade/`, which the exit topology starts. The suite
-needs `node` and `git` on `PATH`. Every test is marked `slow` in
+A test that needs the build of `facade/`, which the exit topology starts,
+skips itself when the build is missing. A silent pass would be worse than
+a skip. The suite needs `node` and `git` on `PATH`. Every test is marked `slow` in
 `conftest.py`.
 
 The scenarios of the Rust chaperone need `cargo` on `PATH` too, for the
@@ -61,12 +58,11 @@ the variable.
 |---|---|
 | service | A program of this repository that the suite starts: one row of the service table. |
 | root | The temporary directory of one test. Every file and every Unix socket of the test is in it. |
-| stand-in | A program that takes the place of a program the suite cannot run: `sbx`, `pi`, `systemctl`, the LiteLLM key API, TEI, a model, and an upstream and the approval channel of the Rust chaperone. |
+| stand-in | A program that takes the place of a program the suite cannot run: `sbx`, `systemctl`, the LiteLLM key API, TEI, a model, and an upstream and the approval channel of the Rust chaperone. |
 | ACP | The Agent Client Protocol, version 1. A client and an agent send JSON-RPC 2.0 messages. |
 | TEI | The embedding service that the index builder dials. It gives one vector for each text. |
 | topology | The services that one fixture starts together. |
-| terminal | A pseudo-terminal. A test holds the master side. A program holds the other side as its controlling terminal. |
-| listener | A service that listens for HTTP requests: `attendance`, the Open WebUI door, the noticeboard, and the `serve` command of the trigger door. |
+| listener | A service that listens for HTTP requests: `attendance`, the noticeboard, and the `serve` command of the trigger door. |
 | judged command | The command that a run starts for a service: the default command, or the value of the variable of the service. |
 | reference | The default command of a service, when a scenario runs it beside the judged command. |
 
@@ -78,10 +74,8 @@ command and the name of one environment variable.
 | Service | Default command | Variable |
 |---|---|---|
 | `attendance` | `python -m attendance` | `CRECHE_PROC_ATTENDANCE` |
-| `door-owui` | `python -m agent_door_owui` | `CRECHE_PROC_DOOR_OWUI` |
 | `door-trigger` | `agent-trigger` | `CRECHE_PROC_DOOR_TRIGGER` |
 | `door-acp` | `agent-door-acp` | `CRECHE_PROC_DOOR_ACP` |
-| `door-tui` | `agent-tui` | `CRECHE_PROC_DOOR_TUI` |
 | `caregiver` | `caregiver` | `CRECHE_PROC_CAREGIVER` |
 | `noticeboard` | `noticeboard` | `CRECHE_PROC_NOTICEBOARD` |
 | `noticeboard-verify` | `noticeboard-verify` | `CRECHE_PROC_NOTICEBOARD_VERIFY` |
@@ -192,28 +186,20 @@ It does not print the reference.
 
 ## What runs
 
-Eight topologies exist. Each one keeps its number. The second topology ran
+Seven topologies exist. Each one keeps its number. The second topology ran
 the Python chaperone in front of `attendance`. It left with that chaperone
-in the phase 3 plan, row 22. `attendance`, the `sbx` stand-in and the `pi`
-stand-in are in the first topology.
+in the phase 3 plan, row 22. The sixth left with the terminal door.
+`attendance` and the `sbx` stand-in are in the first topology.
 
 ```
-a test (plays Open WebUI)
-  | HTTP, loopback port
-  v
-door-owui
+a test (plays a door)
   | HTTP over a Unix socket
   v
 attendance
-  | stdio, the channel protocol
+  | stdio, ACP v1
   v
-sbx exec --env-file <env file> <sandbox> -- node playpen.js --sandbox <id>
-  |          the sbx stand-in, found through PATH
-  v
-node playpen/dist/playpen.js             the real bundle
-  | stdio, pi rpc
-  v
-the pi stand-in                          found through AGENT_PI_BIN
+sbx exec --env-file <env file> <sandbox> -- creche-facade
+             the sbx stand-in, found through PATH
 ```
 
 The third topology starts `caregiver` alone. No `attendance` answers the
@@ -229,18 +215,17 @@ caregiver ---- sbx create, policy, rm ---> the sbx stand-in, with state
   | the env file of each sandbox and `policy.toml`
   | POST /internal/switch-sandbox, over the Unix socket
   v
-no process answers
+no `attendance`: each sandbox stays `creating`
 ```
 
-The table gives the fourth, the fifth and the sixth topology. Each one
-starts `attendance` with the two stand-ins of the first picture. None starts
+The table gives the fourth and the fifth topology. Each one
+starts `attendance` with the stand-in of the first picture. None starts
 `caregiver`.
 
 | Topology | A test plays | The service |
 |---|---|---|
 | The fourth, `proc_trigger.py`: the trigger door and `attendance` | an automation on the LAN, over HTTP on a loopback port, and a systemd timer, which runs `agent-trigger fire` to its end | reads the registry, the status documents, the webhook bearer files and the outcome records. Dials `attendance` as `door-trigger`. |
 | The fifth, `proc_board.py`: the noticeboard and `attendance` | the reverse proxy and a browser, over HTTP on a loopback port | reads the status documents, the report, the outcome records and the audit files. Dials `attendance` as `view-ro`. Writes one git commit in the registry of the root. |
-| The sixth, `proc_tui.py`: the terminal door, the Open WebUI door and `attendance` | the operator at a keyboard, on a terminal | dials `attendance` as `door-tui`. Reads the status document. Runs `sbx exec -it` with the real launcher bundle, which starts the pi stand-in on the terminal. |
 
 The fifth topology has a second program: the verify hook of the
 noticeboard. A test plays the release executor. It writes the env file of
@@ -357,16 +342,14 @@ each one, and each one runs to its end.
 | Program | A test starts it through | What it does |
 |---|---|---|
 | the reference | `run_reference` | It writes or updates a store, as the program does. |
-| `reader_store.mjs` | `read_as_bridge` | It reads one store with the statements of the bridge of the playpen, through `node:sqlite`. |
+| `reader_store.mjs` | `read_as_bridge` | It reads one store with the statements of the bridge of the agent module, through `node:sqlite`. |
 
 | File | Topology | What the scenarios check |
 |---|---|---|
-| `test_proc_owui_turns.py` | door and `attendance` | the two stage 1 scenarios that run no turn: the model list and an empty chat id. The other eleven ran a turn over the session API, which left `attendance` in phase 2 row 21 |
-| `test_proc_owui_start.py` | door and `attendance` | a start, a refused start, the socket mode, a token reload |
-| `test_proc_switch.py` | door and `attendance` | the refusals of the switch call of contract 05 §5. The handshake runs over ACP since phase 2 row 20 |
+| `test_proc_switch.py` | `attendance` alone | the refusals of the switch call of contract 05 §5. The handshake runs over ACP since phase 2 row 20 |
 | `test_proc_caregiver_start.py` | `caregiver` alone | a start, a refused start, a signal, a kill, and the verbs that run to an end |
 | `test_proc_caregiver_files.py` | `caregiver` alone | each file that `caregiver` publishes, read as the next program reads it, and the seams of `integration/tests_manager` that assert on a file |
-| `test_proc_override.py` | door and `attendance`, and the last four topologies | a service starts through its variable: one that serves, one that runs to its end, one on a terminal |
+| `test_proc_override.py` | `attendance` alone, and the last four topologies | a service starts through its variable: one that serves, one that runs to its end |
 | `test_proc_trigger_fire.py` | trigger door and `attendance` | the timer command: a refused family, `attendance` down, `--check`, a refused start. The jobs ran over the session API and left in phase 2 row 21 |
 | `test_proc_trigger_webhooks.py` | trigger door and `attendance` | the listener: the one 404, a body the door refuses, the bearer files, a start, a refused start, `SIGTERM`. The jobs ran over the session API and left in phase 2 row 21 |
 | `test_proc_board_pages.py` | noticeboard and `attendance` | each page of `docs/rework/spec.md` §8.1 that reads no session, a bad route parameter, the access key |
@@ -376,12 +359,11 @@ each one, and each one runs to its end.
 | `test_proc_board_form.py` | noticeboard | each kind of control of the edit form, a locked field, a save that changes nothing, a save that `git` refuses, the marks of the commit, what a save leaves in the checkout |
 | `test_proc_board_restart.py` | noticeboard | two starts on one root and one port: a saved family, and a form that stays open across the restart |
 | `test_proc_board_verify.py` | noticeboard and its verify hook | the hook of contract 06 §4: a pass, a failure, the env file, no secret in the output |
-| `test_proc_tui_start.py` | terminal door, door and `attendance` | `--check`, and each refusal before pi has the terminal |
 | `test_proc_library_build.py` | library and the TEI stand-in | a build, an update, the hash rule, a removed file, a new model, the two profiles, the store schema, the columns of a row of `files`, the order of the files, how a text file is read, the publish of the store |
 | `test_proc_library_start.py` | library and the TEI stand-in | a refused command line, the address of TEI, the preflight, `SIGTERM`, `SIGKILL`, a store that the program cannot read |
 | `test_proc_library_cross.py` | library, the reference and the TEI stand-in | one store under two writers: equal content after a build, after an update by the other writer, after three runs in turns, after a backfill of `chunks_emb`, after a killed run and after a new model. Equal embed calls. An equal first line of the report. The reference with the variable of the row set. The comparison itself: one changed copy of a store for each part, the tolerance of a rank, a store that the comparison refuses |
 | `test_proc_library_reader.py` | library, the reference, the TEI stand-in and the reader program | a store as the bridge reads it, with the SQLite of Node: the model, the count of values, the rows of an FTS5 query, the vectors. Equal rows for both writers. A store that is not alone in its directory. The statements of the reader program and the limit of a query, held against the text of the bridge |
-| `test_proc_edges.py` | door and `attendance`, trigger door and `attendance`, noticeboard | the edge of each listener: an unknown path, a wrong method, a body that is not JSON, `HEAD`, the socket file of a killed process, `SIGINT`, `SIGHUP` |
+| `test_proc_edges.py` | `attendance` alone, trigger door and `attendance`, noticeboard | the edge of each listener: an unknown path, a wrong method, a body that is not JSON, `HEAD`, the socket file of a killed process, `SIGINT`, `SIGHUP` |
 | `test_proc_chaperone_rs.py` | the Rust chaperone and its two effect stand-ins | the tools of the stand-in upstream, and the audit records of one allowed call |
 | `test_proc_install_draft.py` | `chaperone check` of the Rust chaperone | the install draft of the fixture registry passes, and caregiver's fleet policy passes on top of it |
 | `test_proc_policy_check.py` | `chaperone check` of the Rust chaperone | caregiver's policy file of every fixture family passes. A digest of two apps, a grant of an upstream that is not installed, and a delegate whose target delegates each fail with the error line of the chaperone |
@@ -391,7 +373,6 @@ each one, and each one runs to its end.
 | `test_proc_standin_programs.py` | none | each rule of a stand-in program that a scenario relies on |
 | `test_proc_standin_model.py`, `test_proc_standin_effects.py` | none | the model stand-in over its port, and the two effect stand-ins over stdio |
 | `test_proc_standin_acp.py` | none | the ACP client, against a scripted agent in the test process |
-| `test_proc_terminal.py` | none | the pseudo-terminal of the harness: the keys, the signals, what it showed |
 | `test_proc_html.py`, `test_proc_ids.py` | none | the HTML reader, and the ids a test mints |
 | `test_proc_registry.py` | none | the `git` of the registry module: no repository above the root, and no config file of a person |
 
@@ -408,7 +389,6 @@ each one, and each one runs to its end.
      the store of an index
    - the record of a stand-in
    - the git repository of the registry, through `git`
-   - what a program wrote on its terminal
    - what a command wrote on its stdout or its stderr
 
    Two tests of `test_proc_library_reader.py` start no program. Each one
@@ -447,10 +427,8 @@ each one, and each one runs to its end.
 11. No test leaves a process behind. A teardown that had to kill a process
     fails the test. This applies to each process of a group, not only to the
     service. A group that no teardown ended fails the session.
-12. A scenario that acts during a turn slows the pi stand-in first, with
-    `set_pi_env`. The tuning reaches the next pi process that starts. A
-    session keeps its pi process, so set the tuning before the first turn of
-    the session.
+12. Retired with the pi stand-in. The number stays, so that other
+    documents keep their references.
 13. Wait for the journal, not for the stream. The `turn_settled` line comes
     after the client's `[DONE]`.
 14. Assert on a contract. When a contract is silent, take the most
@@ -463,10 +441,8 @@ each one, and each one runs to its end.
     link, a field. Do not compare a whole page with a text.
 18. Run `git` only through `proc_registry.py`. It gives `git` a whole
     environment, so no config file of a person reaches a test.
-19. Start a program that a person types with `spawn_on_terminal`. End it as
-    a person does: with a key, with a signal or with a closed terminal.
-    Read the lease and the exit code. Do not assert on a sentence that the
-    program shows, unless a contract gives the sentence.
+19. Retired with the terminal door. The number stays, so that other rules
+    keep their references.
 20. Retired in phase 2 row 21, with the scenarios of a terminal on a
     session. The number stays, so that other rules keep their references.
 21. Read a value of a family file through `load_family` of
@@ -527,7 +503,7 @@ that needs a second pass with no edit takes 20 seconds or more.
 `proc_library.py` holds the topology. The fixture `library` starts the TEI
 stand-in. The fixture `library_prepared` starts nothing. A test runs the
 program itself: `run_index` runs it to its end, and `start_index` returns
-while it runs. Neither fixture needs the playpen bundle.
+while it runs. Neither fixture needs the facade build.
 
 1. Give the program `PATH` and one address variable. The program needs no
    other variable of the image of an index sandbox. The default command
@@ -586,7 +562,7 @@ while it runs. Neither fixture needs the playpen bundle.
     the store of a run.
 
 `reader_store.mjs` is not a stand-in. No service starts it or dials it. It
-holds the five statements that `playpen/bridge/index-store.ts` runs on a
+holds the five statements that `agent/src/index-store.ts` runs on a
 store. Change the two files together.
 `test_the_reader_statements_are_those_of_the_bridge` compares four things
 of the two files:
@@ -611,8 +587,8 @@ that the suite cannot run. Add one only when a scenario needs it.
 1. Decide how the service finds the real program. It finds it by name
    through `PATH`, by a path in a variable, or by an address in a variable.
 2. Write the stand-in as a program. Put its source in this directory, or use
-   a program that another package owns. This suite uses `fake_sbx.py` and
-   `fake-pi.mjs` that way.
+   a program that another package owns. This suite uses `fake_sbx.py` that
+   way.
 3. Add an `install_` function to `proc_standins.py`. It writes a wrapper into
    the `bin` directory of the root. The wrapper records the call, then runs
    `exec` on the stand-in. The recorded pid is then the pid of the stand-in.
@@ -623,17 +599,11 @@ that the suite cannot run. Add one only when a scenario needs it.
 6. Give a stand-in that listens a Unix socket in the root or a loopback port
    from `Supervisor.free_port`.
 
-Do not grow `fake-pi.mjs` here. It belongs to `playpen/`.
-
-`set_pi_env` gives the pi stand-in its tunings. A number tunes a turn, for
-example `events` and `delay_ms`. The tuning `raw_line` is a text. The pi
-stand-in writes that text as one record in each turn, with no change.
-
-The `sbx` wrapper does two more things for the terminal door. It drops `-it`
-after it recorded the call, because `fake_sbx.py` takes no such word. It
-sets `SESSIOND_SANDBOX_SESSIONS_MOUNT` from the family of the sandbox id,
-because the launcher finds the session store through it (contract 03 §7.6
-rule 4). The launcher itself is the real bundle, not a stand-in.
+The `sbx` wrapper does two more things that the real `sbx` does. It drops
+`-it` after it recorded the call, because `fake_sbx.py` takes no such word.
+It sets `SESSIOND_SANDBOX_SESSIONS_MOUNT` from the family of the sandbox id
+(contract 03 §7.6 rule 4). No service of the suite runs `sbx exec -it`
+now. `test_proc_standins.py` holds both.
 
 ### The stand-in programs of this directory
 
@@ -720,7 +690,7 @@ rename. Use the form of the table for a new topology.
 | a mapping | `family_body` and `write_family_file` of `proc_tree.py` | the third and the ninth. `caregiver` reads the file, and a scenario changes one field of it. |
 | a text with a comment line | `family_text` and `write_family` of `proc_registry.py` | the fourth and the fifth. A save of the noticeboard must keep the comment. |
 
-The first, the sixth, the seventh and the eighth topology have no
+The first, the seventh and the eighth topology have no
 registry. `write_server_file` of `proc_tree.py` puts a server file in the
 registry of the ninth.
 
@@ -731,19 +701,18 @@ code for this suite.
 ## Reading a failure
 
 A failed test carries a section named `processes at call`. It holds the root
-path, the stdout and the stderr of each process, each playpen log and each
-status document. A program on a terminal has one part there, named
-`terminal`. A test that fails in its teardown carries the same output in
+path, the stdout and the stderr of each process, each sandbox log and each
+status document. A test that fails in its teardown carries the same output in
 the text of the failure. Work down this list.
 
-1. Every topology test skips: the bundle is missing. Build it. With
+1. Every exit test skips: the facade build is missing. Build it. With
    `CRECHE_PROC_NO_SKIP=1`, each of these tests fails with the same text.
 2. `exited N before it was ready`: the service refused to start. Read its
    stderr in the same message.
 3. `was not ready in 30.0 s`: the service runs and does not answer HTTP at
    its address. Read its stderr.
 4. The stream ends with an error chunk: read the journal of the session
-   under `sessions/` in the root, and the playpen log.
+   under `sessions/` in the root, and the sandbox log.
 5. `the teardown had to end a process`: a service ignored `SIGTERM`, a
    process of its group outlived it, or a stand-in outlived its service.
    The line `names a process outside this test` has one of two causes. A
@@ -765,7 +734,7 @@ the text of the failure. Work down this list.
   `proc_tree.py`.
 - **CONTRACT-QUESTION, the exit code of a refused start.** Contract 02 §3
   rule 7 names no exit code. The suite accepts each code that is not 0. A
-  change to one fixed code costs one assertion in `test_proc_owui_start.py`.
+  change to one fixed code costs one assertion per start scenario.
 - **CONTRACT-QUESTION, the exit codes of `caregiver`.** No contract names
   one. `caregiver/AGENTS.md` gives three codes: 0, 1 and 2. The suite holds
   those three where `caregiver` selects one. Two cases are different: a
@@ -837,7 +806,7 @@ the text of the failure. Work down this list.
   says that the family keeps serving after a refused switch. The suite holds
   `false` for the fault of an incoming sandbox while another sandbox serves.
   No scenario holds it since phase 2 row 20: the switch handshake runs
-  over ACP.
+  over ACP, and no topology with `caregiver` has a facade.
 - **CONTRACT-QUESTION, a registry with no family.** No contract says what
   it means. The suite holds the rule of `caregiver/AGENTS.md`: an empty
   registry deletes no family. A change costs one scenario in
@@ -847,28 +816,12 @@ the text of the failure. Work down this list.
   after the handshake. `caregiver` publishes that document before the
   destroy. No scenario holds the document at that moment since phase 2
   row 20.
-- **One process table for each sandbox of a test.** A sandbox on the host
-  is a microVM with a process table of its own. A test has no microVM, so
-  each playpen of the machine is in one table. On Linux the playpen counts
-  each process of that table whose arguments hold `--mode` and `rpc` as two
-  words (contract 03 §3 rule 4). The pi wrapper gives its program one word,
-  `--mode=rpc`, so no playpen counts the pi stand-in of another sandbox.
-  Without that, each replacement of a sandbox with a resident pi process
-  ends `degraded` with the fault `orphan_processes` on Linux, and `in_sync`
-  on macOS. The cost is that no scenario can show that fault.
 - **No scenario for `apply-once`.** It is a verb of `caregiver` with no
   scenario here.
 - **The epoch after `rotate`.** Contract 05 §6.3 step 3 publishes the new
   epoch in the status document. The `rotate` verb writes the credential
   file, the token digests of the policy and the credentials block of the
   document. The scenario of `rotate` does not read the document.
-- **CONTRACT-QUESTION, the exit code of a refusal of the terminal door.** No
-  contract names one. For a refusal of the door itself the suite accepts
-  each code that is not 0. A change costs one assertion per scenario in
-  `test_proc_tui_start.py`.
-- **The pi stand-in is not the interactive pi.** On a terminal it reads one
-  command per line, and it ends at the end of the input. No scenario says
-  what the real pi does with a key.
 - **CONTRACT-QUESTION, the exit code of `agent-trigger fire`.** No contract
   names one. The suite reads 0 as a firing that `attendance` accepted or
   that the quiet check skipped. It reads each other code as a firing that
@@ -903,12 +856,10 @@ the text of the failure. Work down this list.
   plan risk 3: a real model may not repeat the call, and Panda shows the
   "Awaiting permission" text as a tool error. Phase 3 needs one check by
   hand with a real model.
-- **The doors of the session API have no scenario that runs work.** The
-  Open WebUI door, the trigger door and the terminal door call
-  `/v1/sessions*`, which left `attendance` in phase 2 row 21. Each
-  scenario of those doors that created a session, ran a turn, held a lease
-  or read a journal left with it. Phase 3 deletes `door-owui` and
-  `door-tui` and moves `door-trigger` to ACP.
+- **The trigger door has no scenario that runs work.** It calls
+  `/v1/sessions*`, which left `attendance` in phase 2 row 21. Each scenario
+  of the door that created a session, ran a turn, held a lease or read a
+  journal left with it. Phase 3 moves `door-trigger` to ACP.
 - **A webhook call while `attendance` is down has no scenario.** No contract
   gives the answer of the listener for that case.
 - **CONTRACT-QUESTION, the exit code of a refused start of the noticeboard.**
@@ -1155,7 +1106,6 @@ the text of the failure. Work down this list.
   | Service | Unknown path | Wrong method | Final slash | `HEAD` on a `GET` route |
   |---|---|---|---|---|
   | `attendance` | 404, `application/json` | 405, `application/json` | 307, no content type | no `GET` route |
-  | `door-owui` | 404, `application/json` | 405, `application/json` | 307, no content type | 405, `application/json` |
   | `noticeboard` | 404, `application/json` | 405, `application/json` | 307, no content type | 405, `application/json` |
   | `door-trigger` | 404, `application/json` | 405, `application/json` | 307, no content type | no `GET` route |
 
@@ -1169,36 +1119,33 @@ the text of the failure. Work down this list.
   - With no key, the noticeboard answers 403 to an unknown path. With no
     credential, each other listener answers 404.
 - **CONTRACT-QUESTION, a body that is not JSON.** Contract 02 §14 gives
-  `attendance` the code `bad_request` with status 400. No contract gives the
-  Open WebUI door an answer. The suite holds one thing for the two services:
-  a status of the 4xx class, with no session and no turn. A change costs one
-  assertion in `test_proc_edges.py`. `attendance` gets the bodies on
-  `POST /dispatch/jobs`.
+  `attendance` the code `bad_request` with status 400. The suite holds one
+  thing: a status of the 4xx class, with no session and no turn. A change
+  costs one assertion in `test_proc_edges.py`. `attendance` gets the bodies
+  on `POST /dispatch/jobs`.
 
-  The scenario sends three bodies to each of the two services:
+  The scenario sends three bodies to `attendance`:
   - A text that is not JSON.
   - Three bytes that are not UTF-8.
   - 100,000 arrays, one inside the next. No contract gives a body a limit
     on its nesting. A reader with a limit refuses this body. A reader with
     no limit finds an array, and each request of the scenario is an object.
 
-  Today `attendance` answers 400 to each body. The door answers 400 with the
-  code `bad_body` to each body.
+  Today `attendance` answers 400 to each body.
 - **CONTRACT-QUESTION, a listener at a signal.** No contract says what a
   listener does at `SIGINT`, at `SIGHUP` with no reload, or at a stop with an
   open stream. No contract names an exit code after a signal.
   `test_proc_edges.py` holds two things:
   - `SIGINT` ends each listener inside the `TimeoutStopSec` of its unit.
     Nothing answers at its address after that.
-  - `SIGHUP` ends the Open WebUI door and the noticeboard, and the port of
-    each one closes. Neither service has a reload.
+  - `SIGHUP` ends the noticeboard, and its port closes. It has no
+    reload.
 
   No scenario there reads an exit code. The services differ today:
   - After `SIGTERM`, `attendance` exits with code 0. The signal ends each
     other listener, so none of them has an exit code.
   - After `SIGINT`, each listener exits with code 0.
-  - `SIGHUP` ends the door and the noticeboard immediately. Neither has an
-    exit code.
+  - `SIGHUP` ends the noticeboard immediately. It has no exit code.
 
   A listener that ignores `SIGHUP` fails one scenario. A fixed exit code
   costs one assertion in each of the two scenarios.
@@ -1348,8 +1295,8 @@ the text of the failure. Work down this list.
   statements of the bridge, and one test holds them against the text of
   the bridge. The reader program runs no code of the bridge: not the
   ranking, not the check of a row, not the search for the nearest vectors.
-  `playpen/test/index-search.test.ts` holds that code, with stores that
-  the test builds itself.
+  `agent/test/index-search.test.ts` holds that code, with stores that the
+  test builds itself.
 - **The reader program runs on the Node of the test machine.** The bridge
   runs on the Node of the sandbox image. The two can have different
   versions of SQLite.
@@ -1365,7 +1312,6 @@ the text of the failure. Work down this list.
 |---|---|
 | `proc_services.py` | the service table, and the rule for the override variable |
 | `proc_harness.py` | a child in its own process group, the wait for an address, the teardown, the check at session end |
-| `proc_terminal.py`, `proc_login.py` | the test side of a pseudo-terminal, and the program that gives a command its controlling terminal |
 | `proc_tree.py` | the root, and one writer for each file a service reads |
 | `proc_registry.py` | the registry of the root: the text of a family file, the one reader of a family file, the git repository, and what `git` reports |
 | `proc_ids.py` | the ids that a door mints |
@@ -1377,9 +1323,9 @@ the text of the failure. Work down this list.
 | `acp_client.py` | the ACP client of a test: a WebSocket, as the web build of Panda opens it |
 | `reader_store.mjs` | the Node program that reads one index store with the statements of the bridge |
 | `proc_stack.py` | `attendance`, its environment, and the start of a service on a free port |
-| `proc_owui.py`, `proc_caregiver.py`, `proc_trigger.py`, `proc_board.py`, `proc_tui.py`, `proc_library.py`, `proc_chaperone_rs.py`, `proc_exit.py` | one topology each |
+| `proc_caregiver.py`, `proc_trigger.py`, `proc_board.py`, `proc_library.py`, `proc_chaperone_rs.py`, `proc_exit.py` | one topology each |
 | `proc_chaperone_pin.py`, `chaperone.pin` | the commit of the Rust chaperone, its build and its cache |
 | `proc_board_reports.py` | a start of the noticeboard with a changed environment, the readers of a report, of a paging link and of the cookie, the check of a JSON body, and a post of an exact size |
-| `proc_chat.py`, `proc_sse.py` | what Open WebUI sends, and how a test reads the SSE stream back |
+| `proc_chat.py`, `proc_sse.py` | the session id of a chat and `until`, and how a test reads the SSE stream back |
 | `proc_report.py` | what a failed test carries, and the end of the processes of one test |
 | `conftest.py` | the fixtures, the `slow` mark, the report hook, the check of the variables |

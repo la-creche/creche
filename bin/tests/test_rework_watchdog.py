@@ -50,11 +50,10 @@ if TYPE_CHECKING:
 REPO_ROOT: Final = Path(__file__).resolve().parents[2]
 SCRIPT: Final = REPO_ROOT / "bin" / "rework-watchdog.sh"
 
-#: The five units the script asks `systemctl --user is-failed` about.
+#: The four units the script asks `systemctl --user is-failed` about.
 UNITS: Final = (
     "creche-attendance.service",
     "creche-caregiver.service",
-    "creche-door-owui.service",
     "creche-trigger-webhooks.service",
     "creche-noticeboard.service",
 )
@@ -128,6 +127,10 @@ exit 0
 #: per case, and the POST records its own argv so a case can read the
 #: notice text back.
 #:
+#: The socket answers like attendance: `/busy` answers `WD_SOCK_CODE`, 401
+#: by default, and each other path answers 404. Attendance has no route
+#: `/v1/sessions`, so a probe of that path gets 404.
+#:
 #: The POST comes FIRST on purpose. Its `-d` body quotes the very URL the
 #: PEP check names, so a `*/healthz*` pattern ahead of it swallows the
 #: notice and answers it with an HTTP code.
@@ -148,7 +151,8 @@ CURL_BODY: Final = """case "$*" in
     done
     [ "${WD_POST_EXIT:-0}" = 0 ] || printf 'curl: (%s) stub error\\n' "$WD_POST_EXIT" >&2
     exit "${WD_POST_EXIT:-0}" ;;
-  *"--unix-socket"*) printf '%s' "${WD_SOCK_CODE:-401}" ;;
+  *"--unix-socket"*"http://sessiond/busy") printf '%s' "${WD_SOCK_CODE:-401}" ;;
+  *"--unix-socket"*) printf '404' ;;
   *"/healthz"*) printf '%s' "${WD_PEP_CODE:-200}" ;;
 esac
 """
@@ -707,6 +711,33 @@ def test_a_missing_socket_is_found(rig: Rig) -> None:
     assert done.returncode == 1
     assert rig.stored() == "attendance"
     assert "no socket" in rig.posts()[0]
+
+
+def test_attendance_is_asked_on_busy(rig: Rig) -> None:
+    """`/busy` is a route of attendance. It answers 401 without a bearer."""
+    rig.run()
+    lines = rig.stub_log.read_text(encoding="utf-8")
+
+    assert "--unix-socket" in lines
+    assert "http://sessiond/busy" in lines
+    assert "/v1/" not in lines
+
+
+def test_a_socket_that_answers_200_is_up(rig: Rig) -> None:
+    rig.run(WD_SOCK_CODE="200")
+    done = rig.run(WD_SOCK_CODE="200")
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert rig.stored() == "up"
+
+
+def test_a_socket_that_answers_404_is_found(rig: Rig) -> None:
+    """A 404 is an answer, but not from the attendance that has `/busy`."""
+    rig.run(WD_SOCK_CODE="404")
+    done = rig.run(WD_SOCK_CODE="404")
+
+    assert done.returncode == 1
+    assert rig.stored() == "attendance"
 
 
 def test_a_socket_that_answers_nothing_is_found(rig: Rig) -> None:

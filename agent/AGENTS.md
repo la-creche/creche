@@ -81,8 +81,8 @@ connection and the `auth` of the LiteLLM provider unwrap it.
   takes the URL of its build for a plane variable that is absent or not
   valid. The agent has no build URL, so it refuses (`src/config.ts`).
 - The plane grammar has no vector. `test/planes.test.ts` holds a copy of
-  the tables of `playpen/test/planes.test.ts`, and no check compares the
-  two copies.
+  the tables of the tests of the Rust type `PlaneUrl`, and no check
+  compares the two copies.
 - Flue adds its tool `task` to every agent, also with no subagent. The
   model sees `task` beside the `mcp__ch__` tools
   (`test/chaperone.test.ts`). With no subagent, `task` can run nothing.

@@ -16,9 +16,9 @@ Description=caregiver, the rework family manager
 After=network-online.target
 Wants=network-online.target
 # THE REWORK RESTART POLICY. Decided once, argued here, and named by the
-# other five always-on rework units (`creche-attendance`, `creche-door-owui`,
+# other four always-on rework units (`creche-attendance`,
 # `creche-noticeboard`, `creche-trigger-webhooks`, `creche-chaperone`). Change it here and
-# in all six, or `bin/tests/test_rework_unit_restart.py` fails.
+# in all five, or `bin/tests/test_rework_unit_restart.py` fails.
 #
 # WHY NO START LIMIT. With StartLimitIntervalSec=120 and StartLimitBurst=5,
 # five crashes in 25 seconds and systemd gives up. A root script that leaves

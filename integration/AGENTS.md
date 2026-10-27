@@ -11,13 +11,10 @@ run it.
 ## Run it
 
 ```bash
-cd playpen && AGENT_LAN_ADDRESS=192.0.2.10 pnpm run build && cd ..   # once, and after any playpen change
 uv run pytest integration/tests_manager -m slow
 ```
 
-The suite skips itself when `playpen/dist/playpen.js` is missing. A silent
-pass would be worse than a skip. Every test is marked `slow` in
-`conftest.py`. The suite needs `node` on `PATH`.
+Every test is marked `slow` in `conftest.py`. The suite needs no `node`.
 
 `tests/` held a second suite, which ran the doors, `attendance` and the
 playpen in one process over the session API. That API left `attendance` in
@@ -32,7 +29,7 @@ have the job: `.github/workflows/gate.yml` and
 `.github/workflows/release.yml`. No hook runs the suite. Run the command
 before you push a change to this directory.
 
-1. The job builds the playpen, as the `proc` job does.
+1. The job has the checkout and the venv of the `proc` job, and no node.
 2. It runs the suite in a pytest run of its own, with the command above.
 3. Its last step reads the JUnit report of the run.
 
@@ -55,9 +52,8 @@ before you push a change to this directory.
 ## What runs
 
 `tests_manager/` runs the real `caregiver` writers against the real
-readers: the playpen mounts and the status document that `attendance`
-reads. The Node drivers under `node/` start the real
-playpen readers.
+readers: the sandbox env file and the status document that `attendance`
+reads.
 
 ## The process-level suite
 
@@ -74,10 +70,10 @@ Run each suite in its own pytest command.
 
 ## Rules
 
-1. Nothing under test may be faked. Four stand-ins exist, none under test:
-   `fake-pi.mjs`, `fake_sbx.py`, `FakeDriver` and `FakeLiteLLMKeys`.
-2. `fake-pi.mjs` belongs to `playpen/`. Reach it through `AGENT_PI_BIN`. Do
-   not copy it here. Do not grow it.
+1. Nothing under test may be faked. Three stand-ins exist, none under
+   test: `fake_sbx.py`, `FakeDriver` and `FakeLiteLLMKeys`.
+2. Retired with the playpen sources. The number stays, so that other
+   documents keep their references.
 3. When a scenario fails, decide which side departs from a contract, then fix
    that side, in its own commit, with its own unit test.
 4. Never weaken a check to make a test pass.
@@ -118,5 +114,5 @@ Run each suite in its own pytest command.
 |---|---|
 | `tests/fake_sbx.py` | `sbx exec --env-file` for a machine with no sbx |
 | `fixtures/*-registry/` | the families of the old stages. Read-only inputs. `vectors/` and `handover/` read them. |
-| `tests_manager/` | the `caregiver` writers against the real readers, with the Node drivers under `node/` |
+| `tests_manager/` | the `caregiver` writers against the real readers |
 | `proc/` | the process-level suite: each service is a process. `proc/AGENTS.md` has its rules. |

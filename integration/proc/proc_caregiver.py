@@ -48,7 +48,6 @@ from proc_standins import (
     MASTER_KEY,
     chaperone_check_program,
     install_chaperone_check,
-    install_pi,
     install_sbx_verbs,
     install_systemctl,
     start_litellm,
@@ -198,7 +197,6 @@ class CaregiverStack(Stack):
         self.tree.release_root.mkdir(parents=True, exist_ok=True)
         publish_family(self.tree, family_body())
         install_sbx_verbs(self.tree)
-        install_pi(self.tree)
         install_systemctl(self.tree)
         install_chaperone_check(self.tree)
 

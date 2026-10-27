@@ -33,9 +33,9 @@ a store that the second one updates, and the reverse. `run_reference` runs
 the reference, and `store_content` gives what one store holds, so a test
 compares the stores of two index directories for one corpus.
 
-A third program reads a store: the bridge of the playpen, with the SQLite
-of Node. `read_as_bridge` runs `reader_store.mjs`, which holds the
-statements of the bridge.
+A third program reads a store: the bridge of the agent module
+(`agent/src/index-store.ts`), with the SQLite of Node. `read_as_bridge`
+runs `reader_store.mjs`, which holds the statements of the bridge.
 """
 
 from __future__ import annotations

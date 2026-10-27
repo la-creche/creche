@@ -1,11 +1,11 @@
-"""The store of the index builder, read as the bridge of the playpen reads it.
+"""The store of the index builder, read as the agent module reads it.
 
-The bridge reads a store with the SQLite of Node, on a read-only
+The agent module reads a store with the SQLite of Node, on a read-only
 connection (contract 03 §7.3 rule 6). Each other scenario of the `library`
 topology reads a store with the `sqlite3` module of Python, which can be
 another SQLite. So the first two scenarios here run `reader_store.mjs`: a
-Node program that opens one store as the bridge opens it and that runs the
-statements of the bridge.
+Node program that opens one store as the agent module opens it and that
+runs the statements of the agent module.
 
 The third scenario holds the rule that the reader is the first program to
 open a store: `read_as_bridge` refuses a store that is not alone in its
@@ -13,9 +13,9 @@ directory.
 
 The last two scenarios start no program. Each one compares source text, as
 `test_proc_table.py` does with the unit files. One holds the statements of
-`reader_store.mjs` against those of `playpen/bridge/index-store.ts`, so the
-reader cannot drift from the bridge. One holds the limit of a query here
-against the constant of `playpen/bridge/search.ts`.
+`reader_store.mjs` against those of `agent/src/index-store.ts`, so the
+reader cannot drift from the agent module. One holds the limit of a query
+here against the constant of `agent/src/index-search.ts`.
 
 The second scenario runs the reference beside the program of the run.
 `integration/proc/AGENTS.md`, "The reference", has the rule.
@@ -48,13 +48,13 @@ from proc_library import (
 )
 from proc_tree import repo_root
 
-#: The file of the bridge that reads a store, and the file that gives a
-#: query its limit.
-BRIDGE = repo_root() / "playpen" / "bridge" / "index-store.ts"
-BRIDGE_SEARCH = repo_root() / "playpen" / "bridge" / "search.ts"
+#: The file of the agent module that reads a store, and the file that gives
+#: a query its limit.
+BRIDGE = repo_root() / "agent" / "src" / "index-store.ts"
+BRIDGE_SEARCH = repo_root() / "agent" / "src" / "index-search.ts"
 
-#: The most rows that the bridge asks of one FTS5 query: `CANDIDATES` of
-#: `playpen/bridge/search.ts`. One test holds the two values equal.
+#: The most rows that the agent module asks of one FTS5 query: `CANDIDATES`
+#: of `agent/src/index-search.ts`. One test holds the two values equal.
 LIMIT = 20
 
 #: A query that one note of `write_vault` answers, in the form that the
@@ -89,7 +89,7 @@ _VECTOR_TABLE = re.compile(r'const VECTOR_TABLE = "([a-z_]+)";')
 #: The options that a file gives the connection to a store.
 _OPEN_OPTIONS = re.compile(r"new DatabaseSync\([A-Za-z.]+, (\{[^{}\n]*\})\)")
 
-#: The whole line of `playpen/bridge/search.ts` that gives a query its limit.
+#: The whole line of `agent/src/index-search.ts` that gives a query its limit.
 _CANDIDATES = re.compile(r"const CANDIDATES = ([0-9]+);")
 
 

@@ -136,7 +136,7 @@ gate --tests-for attendance/src/attendance/app.py vectors/data/index.json
   || fail "a package and a vector: rc=$RC, pytest line '$PYTEST'"
 
 for stray in uv.lock pyproject.toml docs/host-release.md .github/workflows/gate.yml \
-  githooks/pre-push playpen/package.json README.md attendance-old/src/x.py; do
+  githooks/pre-push playpen/Dockerfile README.md attendance-old/src/x.py; do
   gate --tests-for attendance/src/attendance/app.py "$stray"
   [[ "$RC" == "0" && "$PYTEST" == "$FULL" ]] && said "full suite, for $stray" \
     && pass "$stray is in no package: full suite" \
@@ -161,7 +161,7 @@ said "integration/proc, for integration/proc/proc_tree.py and 1 more" \
 
 # Prose under integration/proc/ (bin/lib/docsrule.sh) picks no suite: no test
 # reads it. A push of a package and one line of that document then needs no
-# playpen bundle.
+# facade build.
 NO_PROC="no process suite: each path under integration/proc/ is prose"
 
 gate --tests-for integration/proc/proc_tree.py integration/proc/AGENTS.md

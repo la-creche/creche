@@ -38,18 +38,13 @@ from pathlib import Path
 from typing import Final, Protocol, cast
 from urllib.parse import urlsplit
 
-from agent_door_owui import config as owui_config
-from agent_door_owui import untrusted as owui_untrusted
-from agent_door_owui.app import create_app as create_owui_app
-from agent_door_owui.attendance import AttendanceClient as OwuiAttendance
 from agent_door_trigger import untrusted as trigger_untrusted
 from agent_door_trigger.attendance import EnqueuedJob, TriggerJob
-from agent_door_trigger.config import AttendanceTarget, ServeConfig
+from agent_door_trigger.config import UDS_BASE_URL, AttendanceTarget, ServeConfig
 from agent_door_trigger.errors import AttendanceError
 from agent_door_trigger.routes import Route
 from agent_door_trigger.tokens import read_webhook_token
 from agent_door_trigger.webhooks import create_app as create_trigger_app
-from agent_door_tui import untrusted as tui_untrusted
 from attendance.api import build_app as build_attendance_app
 from attendance.auth import Principal, TokenBook, TokenError
 from attendance.paths import token_file
@@ -250,31 +245,17 @@ def _capped(
     return Helper(copy, name, module, Shape.CAPPED, _of_capped(function))
 
 
-_OWUI: Final = "agent_door_owui.untrusted"
 _TRIGGER: Final = "agent_door_trigger.untrusted"
-_TUI: Final = "agent_door_tui.untrusted"
 _BOARD: Final = "noticeboard.jsonfiles"
 _ATTENDANCE: Final = "attendance.atomic"
 
 #: Each public helper of each copy, in the order of the index.
 HELPERS: Final[tuple[Helper, ...]] = (
-    _value("door_owui", _OWUI, owui_untrusted.is_object, "is_object"),
-    _value("door_owui", _OWUI, owui_untrusted.is_list, "is_list"),
-    _value("door_owui", _OWUI, owui_untrusted.as_object, "as_object"),
-    _value("door_owui", _OWUI, owui_untrusted.as_text, "as_text"),
-    _field("door_owui", _OWUI, owui_untrusted.field_text, "field_text"),
     _value("door_trigger", _TRIGGER, trigger_untrusted.is_object, "is_object"),
     _value("door_trigger", _TRIGGER, trigger_untrusted.is_list, "is_list"),
     _value("door_trigger", _TRIGGER, trigger_untrusted.as_object, "as_object"),
     _value("door_trigger", _TRIGGER, trigger_untrusted.as_text, "as_text"),
     _field("door_trigger", _TRIGGER, trigger_untrusted.field_text, "field_text"),
-    _value("door_tui", _TUI, tui_untrusted.is_object, "is_object"),
-    _value("door_tui", _TUI, tui_untrusted.is_list, "is_list"),
-    _value("door_tui", _TUI, tui_untrusted.as_object, "as_object"),
-    _value("door_tui", _TUI, tui_untrusted.as_list, "as_list"),
-    _value("door_tui", _TUI, tui_untrusted.as_text, "as_text"),
-    _field("door_tui", _TUI, tui_untrusted.field_text, "field_text"),
-    _field("door_tui", _TUI, tui_untrusted.field_int, "field_int"),
     _field("noticeboard", _BOARD, jsonfiles.text, "text"),
     _field("noticeboard", _BOARD, jsonfiles.whole, "whole"),
     _field("noticeboard", _BOARD, jsonfiles.integer, "integer"),
@@ -1168,16 +1149,6 @@ def _book(principal: Principal) -> Callable[[Path, TokenFile], Callable[[], obje
     return prepare
 
 
-def _door_key(directory: Path, file: TokenFile) -> Callable[[], object]:
-    key = directory / "door.key"
-    token = directory / "attendance.token"
-    _place(key, file)
-    _write(token, FILLER, MODE_OWNER)
-    variables = {owui_config.ENV_KEY_FILE: str(key), owui_config.ENV_TOKEN_FILE: str(token)}
-
-    return lambda: owui_config.from_env(variables).door_key
-
-
 def _one_file(
     read: Callable[[Path], object],
 ) -> Callable[[Path, TokenFile], Callable[[], object]]:
@@ -1250,30 +1221,6 @@ TOKEN_READERS: Final[tuple[TokenReader, ...]] = (
             "reader checks the count of bytes before the mode. The chaperone reads this "
             "file, so the group can have the read bit. mode means that the group or another "
             "account has another permission bit.",
-        ),
-    ),
-    TokenReader(
-        name="door",
-        entry=f"agent_door_owui.config.from_env, the file of {owui_config.ENV_KEY_FILE}",
-        contract="contract 02 §3 rule 7",
-        prepare=_door_key,
-        returns=Returns.TOKEN,
-        files=(*TEXT_FILES, *OTHER_FILES),
-        refusal=owui_config.ConfigError,
-        kinds=(
-            ("cannot read", "unreadable"),
-            ("is not UTF-8 text", "not_utf8"),
-            ("is shorter than", "short"),
-        ),
-        about=f"{owui_config.ENV_KEY_FILE}:",
-        notes=(
-            f"The generator gives the entry point two variables: {owui_config.ENV_KEY_FILE} "
-            f"names the input, and {owui_config.ENV_TOKEN_FILE} names a file of "
-            f"{len(FILLER)} bytes.",
-            _NOTE_TEXT,
-            "refusal is the kind of the refusal: unreadable, not_utf8 or short. The reader "
-            "counts the UTF-8 bytes of the text. An empty file is short. The reader checks "
-            "no mode.",
         ),
     ),
     TokenReader(
@@ -1606,44 +1553,6 @@ class _AttendanceGate:
         raise ValueError(f"attendance answers {reply.status}")
 
 
-class _NoFamilies:
-    """Stands for the family directory of the Open WebUI door: no family."""
-
-    def serving(self) -> list[str]:
-        return []
-
-
-class _OwuiGate:
-    """The Open WebUI door. The token is the key of the door."""
-
-    ASK: Final = Ask("GET", "/v1/models")
-
-    def __init__(self, scratch: Path, token: str) -> None:
-        config = owui_config.DoorConfig(
-            bind_host="127.0.0.1",
-            bind_port=8340,
-            door_key=token,
-            attendance_token=FILLER.decode("ascii"),
-            attendance_url=owui_config.UDS_BASE_URL,
-            attendance_socket=None,
-            families_dir=scratch / "families",
-        )
-        # The route of the request makes no call to `attendance`.
-        self._app = create_owui_app(config, cast("OwuiAttendance", object()), _NoFamilies())
-
-    def ask(self, header: bytes | None) -> Reply | Raised:
-        return _send(self._app, self.ASK, header)
-
-    def verdict(self, reply: Reply) -> Verdict:
-        if reply.status == HTTP_UNAUTHORIZED:
-            return Verdict(took=False)
-
-        if reply.status == HTTP_OK:
-            return Verdict(took=True)
-
-        raise ValueError(f"the Open WebUI door answers {reply.status}")
-
-
 #: The one route of the trigger listener that the generator declares.
 HOOK_FAMILY: Final = "chat"
 HOOK_NAME: Final = "hook"
@@ -1689,7 +1598,7 @@ class _TriggerGate:
 
     def __init__(self, scratch: Path, token: str) -> None:
         config = ServeConfig(
-            attendance=AttendanceTarget(owui_config.UDS_BASE_URL, None, FILLER.decode("ascii")),
+            attendance=AttendanceTarget(UDS_BASE_URL, None, FILLER.decode("ascii")),
             bind_host="127.0.0.1",
             bind_port=8360,
             families_dir=scratch / "families",
@@ -1754,19 +1663,6 @@ COPIES: Final[tuple[Copy, ...]] = (
             "An accepted vector is a request that the entry point finds a principal for. "
             "value.principal is that principal. A refused vector gets HTTP 401.",
             _NOTE_STRIP,
-        ),
-    ),
-    Copy(
-        name="door_owui",
-        entry="agent_door_owui.app.create_app, the route GET /v1/models",
-        contract="no contract: the module text of agent_door_owui.app",
-        ask=_OwuiGate.ASK,
-        build=_OwuiGate,
-        notes=(
-            "context.token is the key of the door. An accepted vector gets HTTP 200. A "
-            "refused vector gets HTTP 401.",
-            f"{_NOTE_LATIN} {_NOTE_SCHEME} It removes nothing from the rest. It encodes "
-            "the rest as UTF-8 and compares the bytes with the key.",
         ),
     ),
     Copy(
@@ -1888,23 +1784,9 @@ def _attendance_app(scratch: Path) -> FastAPI:
     return build_attendance_app(cast("SessionService", StandIn()), TokenBook(scratch))
 
 
-def _owui_app(scratch: Path) -> FastAPI:
-    config = owui_config.DoorConfig(
-        bind_host="127.0.0.1",
-        bind_port=8340,
-        door_key=TOKEN,
-        attendance_token=FILLER.decode("ascii"),
-        attendance_url=owui_config.UDS_BASE_URL,
-        attendance_socket=None,
-        families_dir=scratch / "families",
-    )
-
-    return create_owui_app(config, cast("OwuiAttendance", object()), _NoFamilies())
-
-
 def _trigger_app(scratch: Path) -> FastAPI:
     config = ServeConfig(
-        attendance=AttendanceTarget(owui_config.UDS_BASE_URL, None, FILLER.decode("ascii")),
+        attendance=AttendanceTarget(UDS_BASE_URL, None, FILLER.decode("ascii")),
         bind_host="127.0.0.1",
         bind_port=8360,
         families_dir=scratch / "families",
@@ -1923,7 +1805,7 @@ def _noticeboard_app(scratch: Path) -> FastAPI:
         state_root=scratch / "state",
         registry_dir=scratch / "registry",
         attendance_socket=None,
-        attendance_url=owui_config.UDS_BASE_URL,
+        attendance_url=UDS_BASE_URL,
         page_size=50,
         audit_file=scratch / "state" / "audit.jsonl",
     )
@@ -1948,15 +1830,6 @@ SERVICES: Final[tuple[Service, ...]] = (
         path="/dispatch/jobs",
         method=POST,
         other=GET,
-        notes=(_NOTE_OWN_HANDLER,),
-    ),
-    Service(
-        name="door_owui",
-        entry="agent_door_owui.app.create_app",
-        build=_owui_app,
-        path="/v1/models",
-        method=GET,
-        other=POST,
         notes=(_NOTE_OWN_HANDLER,),
     ),
     Service(

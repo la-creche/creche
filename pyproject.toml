@@ -10,8 +10,6 @@ dependencies = [
     "agent-family",
     "caregiver",
     "attendance",
-    "agent-door-owui",
-    "agent-door-tui",
     "agent-door-trigger",
     "agent-door-acp",
     "noticeboard",
@@ -23,15 +21,13 @@ dependencies = [
 package = false
 
 [tool.uv.workspace]
-members = ["library", "family", "caregiver", "attendance", "door-owui", "door-tui", "door-trigger", "door-acp", "noticeboard", "handover", "env"]
+members = ["library", "family", "caregiver", "attendance", "door-trigger", "door-acp", "noticeboard", "handover", "env"]
 
 [tool.uv.sources]
 library = { workspace = true }
 agent-family = { workspace = true }
 caregiver = { workspace = true }
 attendance = { workspace = true }
-agent-door-owui = { workspace = true }
-agent-door-tui = { workspace = true }
 agent-door-trigger = { workspace = true }
 agent-door-acp = { workspace = true }
 noticeboard = { workspace = true }
@@ -64,8 +60,6 @@ testpaths = [
     "family/tests",
     "caregiver/tests",
     "attendance/tests",
-    "door-owui/tests",
-    "door-tui/tests",
     "door-trigger/tests",
     "door-acp/tests",
     "noticeboard/tests",
@@ -108,8 +102,6 @@ source = [
     "agent_family",
     "caregiver",
     "attendance",
-    "agent_door_owui",
-    "agent_door_tui",
     "agent_door_trigger",
     "agent_door_acp",
     "noticeboard",

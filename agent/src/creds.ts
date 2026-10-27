@@ -1,7 +1,6 @@
-// A port of `playpen/src/creds.ts`. `caregiver` replaces `creds.json` with
-// `rename()`, so a reader never sees half a write. A reader can still see
-// the file before its content crosses the mount boundary, so the read
-// retries for a short time. Keep the retry.
+// `caregiver` replaces `creds.json` with `rename()`, so a reader never sees
+// half a write. A reader can still see the file before its content crosses
+// the mount boundary, so the read retries for a short time. Keep the retry.
 //
 // A refusal names a field, never a value.
 

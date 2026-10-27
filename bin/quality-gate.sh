@@ -54,7 +54,7 @@ PROC_DIR="integration/proc"
 PROC_PYTEST=(uv run pytest "$PROC_DIR" -m slow -n 4)
 
 #: The variable that makes each skip of that suite a failure. The `proc` job
-#: sets it too. A test there skips itself when the playpen bundle is missing,
+#: sets it too. A test there skips itself when the facade build is missing,
 #: and a run in which every test skips judged nothing.
 PROC_NO_SKIP="CRECHE_PROC_NO_SKIP"
 
@@ -213,11 +213,11 @@ tests_for() {
 # proc_for PATH...: the process-level suite, when one PATH or more is under
 # integration/proc/ and is not prose, with one line saying which path picked
 # it. The full suite holds no test in that directory, so only this run tests
-# such a path before the push. A skip is a failure here: with no playpen
-# bundle the suite would pass and judge nothing.
+# such a path before the push. A skip is a failure here: with no facade
+# build the suite would pass and judge nothing.
 #
 # Prose there (docs_path) picks no suite, because no test reads it. A push of
-# a package and one line of integration/proc/AGENTS.md then needs no bundle.
+# a package and one line of integration/proc/AGENTS.md then needs no build.
 proc_for() {
   local path first="" count=0 prose=0
 
