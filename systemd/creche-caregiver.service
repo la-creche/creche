@@ -1,7 +1,7 @@
 # The family manager (rework contract 05). USER unit, as the operator.
 #
 # It watches the rework registry and converges every family to its
-# family.toml: the LiteLLM key, the PEP token, the grant file, the table of
+# family.toml: the LiteLLM key, the PEP token, the table of
 # the family in /etc/chaperone/policy.toml, the family config mount, the
 # sandbox and the trigger timers. Invariant 9 is the whole
 # point — "a permission change needs one action and no manual apply" — so
@@ -135,8 +135,8 @@ NoNewPrivileges=yes
 SystemCallArchitectures=native
 RestrictRealtime=yes
 LockPersonality=yes
-# 0027, not 0077: the PEP (user `chaperone`, group `agents`) reads the grant files
-# this daemon writes. Every file it publishes is chmod'd explicitly anyway;
+# 0027, not 0077: the chaperone (user `chaperone`, group `agents`) reads the
+# policy.toml this daemon writes. Every file it publishes is chmod'd explicitly anyway;
 # this only covers directories made with a bare mkdir.
 UMask=0027
 

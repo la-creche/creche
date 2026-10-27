@@ -275,7 +275,7 @@ def test_reconcile_once_runs_one_pass_and_ends(caregiver_prepared: CaregiverStac
 def test_delete_stops_when_the_key_stays(caregiver_alone: CaregiverStack) -> None:
     """Invariant 13: credentials die before processes. The key is first.
 
-    LiteLLM refuses the delete. So the verb fails, and the grant file, the
+    LiteLLM refuses the delete. So the verb fails, and the app table, the
     credential file and the sandbox all stay.
     """
     stack = caregiver_alone
@@ -286,7 +286,8 @@ def test_delete_stops_when_the_key_stays(caregiver_alone: CaregiverStack) -> Non
 
     assert done.exit_code != EXIT_OK
     assert list(litellm_keys(stack.tree)) == [f"family-{FAMILY}"]
-    assert stack.tree.grant_file().is_file()
+    assert stack.tree.policy_fragment().is_file()
+    assert list(stack.apps()) == [FAMILY]
     assert stack.tree.creds_file().is_file()
     assert list(sbx_sandboxes(stack.tree)) == [SANDBOX]
 
@@ -294,7 +295,7 @@ def test_delete_stops_when_the_key_stays(caregiver_alone: CaregiverStack) -> Non
 def test_delete_ends_each_credential_before_the_sandbox(caregiver_alone: CaregiverStack) -> None:
     """Invariant 13 and contract 05 §4.4. The sandbox is last.
 
-    `sbx rm` fails. At that moment the key, the grant file and the
+    `sbx rm` fails. At that moment the key, the app table and the
     credential file are gone already. A second run ends the work.
     """
     stack = caregiver_alone
@@ -306,7 +307,8 @@ def test_delete_ends_each_credential_before_the_sandbox(caregiver_alone: Caregiv
     assert failed.exit_code != EXIT_OK
     assert list(sbx_sandboxes(stack.tree)) == [SANDBOX]
     assert litellm_keys(stack.tree) == {}
-    assert not stack.tree.grant_file().exists()
+    assert not stack.tree.policy_fragment().exists()
+    assert stack.apps() == {}
     assert not stack.tree.creds_file().exists()
 
     untune(stack.tree, SBX, "fail-rm")
@@ -352,7 +354,7 @@ def _nothing_was_touched(stack: CaregiverStack, done: Finished) -> None:
     No output holds the master key (invariant 13).
     """
     assert stack.tree.status() is None
-    assert not stack.tree.grant_file().exists()
+    assert not stack.tree.policy_fragment().exists()
     assert stack.sbx_calls() == []
     assert litellm_calls(stack.tree) == []
     assert MASTER_KEY not in done.stdout + done.stderr

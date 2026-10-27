@@ -52,7 +52,6 @@ CHAPERONE_SCRATCH_DIR: Final = "chaperone"
 FAMILIES_DIR: Final = "families"
 GRANTS_DIR: Final = "grants"
 FAULTS_DIR: Final = "faults"
-AUDIT_DIR: Final = "audit"
 TOKENS_DIR: Final = "tokens"
 #: Contract 05 §6.4. `door-trigger` reads the same two names from its own
 #: `DOOR_TRIGGER_WEBHOOKS_DIR` default, so a change here is a change there.
@@ -199,11 +198,6 @@ def sandbox_id(family: str, sequence: int) -> str:
     return f"{family}-s{sequence}"
 
 
-def grant_path(root: Path, family: str) -> Path:
-    """Contract 04 §1.1: `/srv/agents/state/rework/grants/<family>.json`."""
-    return root / GRANTS_DIR / f"{family}.json"
-
-
 def policy_fragment_path(root: Path, family: str) -> Path:
     """The app table of one family for the Rust chaperone:
     `/srv/agents/state/rework/grants/<family>.toml`. `policy_fleet.py`
@@ -212,7 +206,7 @@ def policy_fragment_path(root: Path, family: str) -> Path:
 
 
 def policy_fragments_dir(root: Path) -> Path:
-    """The directory of the fragments. The grant files are there too."""
+    """The directory of the fragments."""
     return root / GRANTS_DIR
 
 

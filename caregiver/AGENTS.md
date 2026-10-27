@@ -5,7 +5,8 @@ converges the host to it. The root `AGENTS.md` applies here too. For each
 family it:
 
 - mints the LiteLLM key and the chaperone token,
-- writes the grant file and the family config mount,
+- writes the table of the family in `policy.toml` and the family config
+  mount,
 - creates and replaces the sandbox,
 - generates the timers an autonomous family asks for.
 
@@ -21,7 +22,7 @@ host where something has gone wrong.
 | `paths.py`, `clock.py`, `atomic.py` | every host path, the one timestamp, the atomic write and the JSON read |
 | `lan.py`, `images.py`, `released.py` | the LAN address from the site file, the image a flavor maps to, and the images a `playpen` release installed |
 | `driver.py` | `SandboxDriver`: `SbxDriver` (real) and `FakeDriver` |
-| `litellm_keys.py`, `credentials.py`, `grants.py`, `config_mount.py` | the key, the token, the grant file, the config mount |
+| `litellm_keys.py`, `credentials.py`, `config_mount.py` | the key, the token, the config mount |
 | `playpen_env.py` | the env file `sbx exec --env-file` carries |
 | `policy_file.py` | the types and the text of `policy.toml`, and `build_app` |
 | `policy_fleet.py` | one fragment per family, and the checked assembly of the one `policy.toml` |
@@ -46,12 +47,9 @@ host where something has gone wrong.
 - `atomic.py` is the only place that writes a file another process reads.
 - `atomic.read_json` reads a JSON file. It answers `None` for content that
   it cannot read. It does not raise on content.
-- `grants.py`, `mcp_release.py`, `live_manifest.py` and `verify.py` keep a
-  read of their own. Each one refuses an integer past the digit limit and
-  nesting past the limit of the parser.
-- The grant file reader takes each encoding that `json.loads` finds in
-  bytes: UTF-8, UTF-16 and UTF-32. The other three refuse bytes that are
-  not UTF-8.
+- `mcp_release.py`, `live_manifest.py` and `verify.py` keep a read of
+  their own. Each one refuses an integer past the digit limit and nesting
+  past the limit of the parser. Each one refuses bytes that are not UTF-8.
 - A client maps each failure of its transport and of its answer to its own
   error: `DriverError`, `LiteLLMError`, `SwitchError`. A step names that
   error in its handler, with two exceptions.
@@ -59,7 +57,7 @@ host where something has gone wrong.
   In `serve`, their error ends in a handler of the loop. In each other
   verb it ends in `cli.main`: one line, and exit code 1.
 - Credentials die before processes. `delete.py` removes the LiteLLM key, then
-  the grant file, then the fragment of `policy.toml` and its table, then
+  the fragment of `policy.toml` and its table, then
   `creds.json`, then the sandboxes. `test_delete.py` checks the order from
   inside the fake driver.
 - No secret on argv, in a URL or in a log line. The master key comes from
@@ -78,19 +76,12 @@ host where something has gone wrong.
 - The marker is written before the request. Every field in it is hostile.
 - No status field claims what this service cannot observe. It cannot count
   running turns, so it does not.
-- Read the fault files after the grant file lands, not only before.
-- The grant file follows what it should hold, not the family file's diff.
-- `write_grant_file` builds the bytes of the file first. For a file over
-  the cap of contract 04 §1.2, it writes nothing and raises
-  `GrantFileTooLargeError`. The last file stays.
-- A pass turns that refusal into one error of the validation report. The
-  family reads `invalid`, and the pass raises no fault for it.
-- A pass checks the size of the grant file before the key step, with
-  `steps.check_grants`. A pass that refuses the file runs no step. It mints
-  no key, sends nothing to LiteLLM and writes no `creds.json`.
-- `grants.py` holds the cap as `GRANT_FILE_MAX_BYTES`. The chaperone holds
-  the same number. `bin/tests/test_grant_file_cap.py` fails when the two
-  numbers differ.
+- The table of the family follows what it should hold, not the family
+  file's diff.
+- `policy_fleet.py` holds the cap of `policy.toml` as
+  `POLICY_FILE_MAX_BYTES`, 1 MiB. The Rust chaperone holds the same number
+  as `POLICY_FILE_CAP`. `test_the_cap_is_the_rust_policy_file_cap` fails
+  when the two numbers differ.
 - `apply_once` creates a sandbox once. `classify()` decides whether a change
   needs a new one.
 - The applied snapshot moves at the end of a successful pass. An interrupted
@@ -154,7 +145,7 @@ host where something has gone wrong.
   edit.
 - A family file that is invalid or refused does not stop a rotation.
   `rotate_serving` takes the key's router and budget from the applied
-  snapshot. It writes the token digests into the grant file.
+  snapshot. It writes the token digests into the fragment of the family.
 - `settle` writes the token digests alone. It reads no family file.
 - An `invalid` status document carries the credentials block. `attendance`
   reads the epoch from that document alone.
@@ -296,17 +287,17 @@ settle of the loop and `delete`.
 
 ### The wire
 
-1. Each pass writes the JSON grant file and the table of `policy.toml`.
-   The Python PEP reads the JSON file until the cutover.
+1. Each pass writes the table of `policy.toml`. caregiver writes no
+   other policy file.
 2. A pass checks the shape of the table before the key step, with
    `steps.check_policy`. A `PolicyShapeError` is one error of the
    validation report, and the pass runs no step.
 3. A family that `land_policy` leaves out reads `invalid`. Its first error
-   is the one line of `LeftOut`. The pass stops after the grant step, and
+   is the one line of `LeftOut`. The pass stops after the policy step, and
    the applied snapshot does not move. Each later pass assembles again, so
    the family comes back once the check passes.
-4. A rotation writes the digests into both files: two during the overlap,
-   one after. A rotation or a settle that `policy.toml` does not take is
+4. A rotation writes the digests into the fragment: two during the
+   overlap, one after. A rotation or a settle that `policy.toml` does not take is
    one error line. It does not undo `creds.json`.
 5. `apply-once` refuses as a pass does, and publishes `invalid`.
 6. `--chaperone-config-dir` names the directory, `/etc/chaperone` by
@@ -379,28 +370,13 @@ Nothing here touches a real sandbox or LiteLLM.
   (`credentials.py`).
 - The ledger reader converts a field with `int` and `str`. No contract
   defines the ledger file (`sandboxes.py`).
-- No contract gives the encoding of the grant file. The reader takes each
-  encoding that `json.loads` finds in bytes (`grants.py`).
-- `CONTRACT-QUESTION` in `reconcile.py`, `_refuse_grant_file`. Contract 04
-  §1.2 gives the cap of a grant file. No contract says what a family reads
-  when its grant file is over that cap. A pass adds one error to the
-  validation report, and the family reads `invalid`. Contract 05 §3.3 has
-  no fault code for this case. A family with no applied file then reads
-  `never_valid: true`, although its family file has no error.
-- `CONTRACT-QUESTION` in `reconcile.py`, `WHOLE_FILE`. Contract 01 §7 gives
-  `loc` as a field path. No one field owns the size of a grant file, so
+- A pass lands the digests that `creds.json` gave at the start of the
+  pass. A rotation of another process can write new digests between that
+  read and the landing. The pass then writes the old digests, and the new
+  token is refused until the next pass (`reconcile.py`).
+- `CONTRACT-QUESTION` in `steps.py`, `WHOLE_FILE`. Contract 01 §7 gives
+  `loc` as a field path. No one field owns a refusal of the app table, so
   that error has the place `<document>`.
-- The cap applies to `grant_file_bytes` only: to `write_grant_file` and to
-  the size check of a pass. `rewrite_digests` writes the file that it read
-  with other digests, and it checks no size (`grants.py`).
-- `grants_current` compares the content of the grant file on disk and not
-  its size. A file over the cap that holds the grants of the family counts
-  as current. A pass then writes no grant file, and the family can read
-  `in_sync` (`steps.py`).
-- `apply-once` and `rotate` have no handler for `GrantFileTooLargeError`.
-  For a grant file over the cap, each verb ends with a traceback and exit
-  code 1. `rotate` writes `creds.json` before that step (`apply.py`,
-  `rotate.py`).
 - No pass manages a sandbox whose ledger row does not read. The row stays
   in the file, and the log names the family at each rewrite
   (`sandboxes.py`).

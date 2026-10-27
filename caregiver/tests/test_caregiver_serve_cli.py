@@ -360,7 +360,7 @@ def test_rotating_an_unknown_family_is_a_usage_mistake(bench: Bench) -> None:
 def test_rotating_an_invalid_family_keeps_its_grants(bench: Bench) -> None:
     """A file the validator refused still parses. A rotation on suspicion
     must not wait for a valid file, so it rotates the credentials of the
-    applied definition: no tool of the refused file reaches the grant file,
+    applied definition: no tool of the refused file reaches the fragment,
     and its budget reaches no key."""
     bench.reconcile("--write")
     grants = grants_alone(bench.state_root)
@@ -380,7 +380,7 @@ def test_rotating_an_invalid_family_keeps_its_grants(bench: Bench) -> None:
 def test_rotating_a_refused_kind_move_keeps_its_grants(bench: Bench) -> None:
     """A file whose `kind` moved has an ok report, and the reconciler
     refuses it against the applied snapshot. Its grants must never reach
-    the grant file, and its budget must never reach a new key."""
+    the fragment, and its budget must never reach a new key."""
     bench.reconcile("--write")
     grants = grants_alone(bench.state_root)
 
@@ -442,12 +442,12 @@ def test_rotating_an_invalid_family_that_was_never_applied_is_a_usage_mistake(
     assert bench.litellm.deleted == []
 
 
-def test_a_kept_grant_file_that_is_gone_refuses_a_token_rotation(bench: Bench) -> None:
+def test_a_kept_fragment_that_is_gone_refuses_a_token_rotation(bench: Bench) -> None:
     """The digests have no file to go into. The refusal comes before the
     old key is deleted, so nothing was rotated and nothing was lost."""
     bench.reconcile("--write")
     write_registry(bench.registry_root, tools=REFUSED_TOOLS)
-    paths.grant_path(bench.state_root, "chat").unlink()
+    paths.policy_fragment_path(bench.state_root, "chat").unlink()
 
     assert bench.rotate("--write") == EXIT_PROBLEM
     after = read_creds(paths.creds_path(bench.state_root, "chat"))
@@ -456,12 +456,12 @@ def test_a_kept_grant_file_that_is_gone_refuses_a_token_rotation(bench: Bench) -
     assert bench.litellm.deleted == []
 
 
-def test_a_key_rotation_of_an_invalid_family_needs_no_grant_file(bench: Bench) -> None:
+def test_a_key_rotation_of_an_invalid_family_needs_no_fragment(bench: Bench) -> None:
     """The key is the half a leak makes urgent, and it has no digest."""
     bench.reconcile("--write")
     write_registry(bench.registry_root, tools=REFUSED_TOOLS)
-    paths.grant_path(bench.state_root, "chat").unlink()
+    paths.policy_fragment_path(bench.state_root, "chat").unlink()
 
     assert bench.rotate("--scope", "key", "--write") == EXIT_OK
     assert bench.litellm.deleted == [key_alias("chat")]
-    assert not paths.grant_path(bench.state_root, "chat").exists()
+    assert not paths.policy_fragment_path(bench.state_root, "chat").exists()

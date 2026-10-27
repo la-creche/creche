@@ -8,6 +8,7 @@ in a module with a unique basename and are imported by name."""
 from __future__ import annotations
 
 import json
+import tomllib
 from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -17,8 +18,8 @@ from agent_family import FamilyFile, Markup, parse_family
 from caregiver.cli import main as cli_main
 from caregiver.credentials import read_creds, token_sha256, write_creds
 from caregiver.driver import SandboxDriver
-from caregiver.grants import UNCOMPARED
 from caregiver.litellm_keys import LiteLLMKeys
+from caregiver.policy_file import DIGESTS_KEY, render_digests
 from caregiver.policy_fleet import FakeChecker, FleetPolicy, PolicyChecker, PolicyTarget
 from caregiver.switch import SwitchClient
 from caregiver.timers import UnitWriter
@@ -49,7 +50,7 @@ REFUSED_TOOLS: dict[str, list[str]] = {"ghost": ["merge_pull_request"]}
 
 #: An edit the validator passes and the reconciler refuses: `kind` cannot
 #: move (contract 01 §3.1), and only the applied snapshot proves it did.
-#: The limit moves with it, so the edit shows in the grant file.
+#: The limit moves with it, so the edit shows in the table of the family.
 KIND_MOVED: dict[str, object] = {"kind": "thin", "max_inflight_delegations": 7}
 
 #: Before any clock this suite runs under.
@@ -188,9 +189,9 @@ def write_no_file_dir(root: Path, name: str = "stray") -> Path:
 
 
 def expire_overlap(state_root: Path, family: str = "chat") -> None:
-    """`creds.json` and the grant file as a graceful rotation leaves them
+    """`creds.json` and the fragment as a graceful rotation leaves them
     once the grace has run out: a previous token whose overlap is over, and
-    a grant file that still accepts it. The next `settle` has a write to
+    a fragment that still accepts it. The next `settle` has a write to
     make."""
     path = paths.creds_path(state_root, family)
     creds = read_creds(path)
@@ -198,23 +199,35 @@ def expire_overlap(state_root: Path, family: str = "chat") -> None:
         raise AssertionError(f"{family} has no credentials to expire")
 
     write_creds(path, replace(creds, previous_pep_token=OLD_TOKEN, previous_expires_at=LONG_AGO))
-    grant = paths.grant_path(state_root, family)
-    body = json.loads(grant.read_text(encoding="utf-8"))
-    body["token_sha256"] = [token_sha256(creds.pep_token), token_sha256(OLD_TOKEN)]
-    grant.write_text(json.dumps(body), encoding="utf-8")
+    fragment = paths.policy_fragment_path(state_root, family)
+    digests = (token_sha256(creds.pep_token), token_sha256(OLD_TOKEN))
+    lines = [
+        render_digests(digests) if one.startswith(f"{DIGESTS_KEY} = ") else one
+        for one in fragment.read_text(encoding="utf-8").split("\n")
+    ]
+    fragment.write_text("\n".join(lines), encoding="utf-8")
+
+
+def fragment_table(state_root: Path, family: str = "chat") -> dict[str, Any]:
+    """The table of the family in its fragment of `policy.toml`."""
+    text = paths.policy_fragment_path(state_root, family).read_text(encoding="utf-8")
+    return cast(dict[str, Any], tomllib.loads(text)["apps"][family])
 
 
 def accepted_digests(state_root: Path, family: str = "chat") -> list[str]:
     """Every token digest the chaperone accepts for this family."""
-    body = json.loads(paths.grant_path(state_root, family).read_text(encoding="utf-8"))
-    return list(body["token_sha256"])
+    return list(fragment_table(state_root, family)[DIGESTS_KEY])
 
 
 def grants_alone(state_root: Path, family: str = "chat") -> dict[str, Any]:
-    """The grant file with `rev` and the digests left out: what the family
-    may do, and nothing about which token proves it."""
-    body = json.loads(paths.grant_path(state_root, family).read_text(encoding="utf-8"))
-    return {key: value for key, value in body.items() if key not in UNCOMPARED}
+    """The table of the family with the note and the digests left out: what
+    the family may do, and nothing about which token proves it."""
+    left_out = {"note", DIGESTS_KEY}
+    return {
+        key: value
+        for key, value in fragment_table(state_root, family).items()
+        if key not in left_out
+    }
 
 
 def published(state_root: Path, family: str = "chat") -> dict[str, Any]:

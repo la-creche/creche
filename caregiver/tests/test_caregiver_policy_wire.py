@@ -2,8 +2,7 @@
 
 A pass writes the fragment of its family and assembles the one file of the
 fleet. A rotation moves the digests of the fragment. A delete removes the
-fragment, then assembles the file again. The JSON grant file stays beside
-it: the old PEP reads that file until the cutover."""
+fragment, then assembles the file again."""
 
 from __future__ import annotations
 
@@ -122,9 +121,12 @@ def test_reconcile_writes_the_fragment_and_assembles(fleet: Fleet) -> None:
     assert len(fleet.checker.checked) == 1
 
 
-def test_the_json_grant_file_stays_beside_the_fragment(fleet: Fleet) -> None:
+def test_a_pass_writes_no_json_grant_file(fleet: Fleet) -> None:
+    """`policy.toml` is the one policy output. The grant file of the
+    Python PEP left with that PEP."""
     fleet.run()
-    assert paths.grant_path(fleet.state_root, FAMILY).is_file()
+    assert paths.policy_fragment_path(fleet.state_root, FAMILY).is_file()
+    assert not (paths.policy_fragments_dir(fleet.state_root) / f"{FAMILY}.json").exists()
 
 
 def test_a_pass_that_moves_nothing_checks_nothing(fleet: Fleet) -> None:

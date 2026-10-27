@@ -57,7 +57,6 @@ from proc_standins import (
 from proc_tree import (
     BUDGET_USD,
     FAMILY,
-    GRANT_MODE,
     IMAGE,
     MODEL_ALIAS,
     PLAYPEN_ENV_MODE,
@@ -198,20 +197,19 @@ def test_the_spend_of_litellm_is_in_the_document(caregiver_prepared: CaregiverSt
     assert RFC3339.fullmatch(spend["as_of"])
 
 
-# ------------------------------------------------ the grant file and the key
+# ---------------------------------------------------- the policy and the key
 
 
-def test_the_grant_file_holds_a_digest_and_never_the_token(caregiver_alone: CaregiverStack) -> None:
-    """Contract 04 §1.1 and §2.2. A stolen grant file grants nothing."""
+def test_the_policy_holds_a_digest_and_never_the_token(caregiver_alone: CaregiverStack) -> None:
+    """A stolen `policy.toml` or a stolen fragment grants nothing."""
     tree = caregiver_alone.tree
     token = caregiver_alone.credentials()["pep_token"]
-    text = tree.grant_file().read_text(encoding="utf-8")
-    grants = caregiver_alone.grants()
 
-    assert token not in text
-    assert grants["token_sha256"] == [hashlib.sha256(token.encode("utf-8")).hexdigest()]
-    assert (grants["family"], grants["model_alias"]) == (FAMILY, MODEL_ALIAS)
-    assert _mode(tree.grant_file()) == GRANT_MODE
+    assert token not in tree.policy_file.read_text(encoding="utf-8")
+    assert token not in tree.policy_fragment().read_text(encoding="utf-8")
+    assert caregiver_alone.apps()[FAMILY]["token_sha256"] == [
+        hashlib.sha256(token.encode("utf-8")).hexdigest()
+    ]
 
 
 def test_the_key_is_minted_one_time(caregiver_alone: CaregiverStack) -> None:
@@ -248,7 +246,8 @@ def test_no_secret_is_in_an_output_or_in_a_shared_file(caregiver_alone: Caregive
     places = {
         "the output of caregiver": stack.caregiver.output(),
         "the status document": stack.tree.status_file().read_text(encoding="utf-8"),
-        "the grant file": stack.tree.grant_file().read_text(encoding="utf-8"),
+        "the policy file": stack.tree.policy_file.read_text(encoding="utf-8"),
+        "the policy fragment": stack.tree.policy_fragment().read_text(encoding="utf-8"),
         "the env file": stack.tree.playpen_env().read_text(encoding="utf-8"),
         "the validation report": stack.tree.validation_file().read_text(encoding="utf-8"),
         "an sbx command line": " ".join(word for call in stack.sbx_calls() for word in call.argv),
@@ -399,7 +398,7 @@ def test_the_second_family_serves_while_the_first_is_held(
 def test_a_removed_family_file_ends_the_family(caregiver_prepared: CaregiverStack) -> None:
     """Contract 05 §4.4 and invariant 13. A family with no file is a family that is gone.
 
-    Its key, its grant file, its sandbox, its policy rows and its state go.
+    Its key, its app table, its sandbox, its policy rows and its state go.
     The other family keeps each of its own.
     """
     stack = caregiver_prepared
@@ -413,11 +412,12 @@ def test_a_removed_family_file_ends_the_family(caregiver_prepared: CaregiverStac
     wait_until(lambda: not tree.family_dir(OTHER).exists(), f"the state of {OTHER} to go")
 
     assert list(litellm_keys(tree)) == [f"family-{FAMILY}"]
-    assert not tree.grant_file(OTHER).exists()
+    assert not tree.policy_fragment(OTHER).exists()
+    assert list(stack.apps()) == [FAMILY]
     assert list(sbx_sandboxes(tree)) == [SANDBOX]
     assert _reach(tree, first_sandbox(OTHER)) == []
     wait_until(lambda: stack.state() == IN_SYNC, f"{FAMILY} to be {IN_SYNC}")
-    assert tree.grant_file().is_file()
+    assert tree.policy_fragment().is_file()
 
 
 def test_a_directory_with_no_family_file_is_ignored(caregiver_alone: CaregiverStack) -> None:
@@ -487,7 +487,8 @@ def test_a_refused_mint_is_a_fault_and_makes_no_sandbox(caregiver_prepared: Care
     assert fault["blocks_turns"] is True
     assert stack.sbx_calls() == []
     assert not stack.tree.creds_file().exists()
-    assert not stack.tree.grant_file().exists()
+    assert not stack.tree.policy_fragment().exists()
+    assert stack.apps() == {}
 
 
 def test_a_failed_create_burns_its_id(caregiver_prepared: CaregiverStack) -> None:

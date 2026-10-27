@@ -11,7 +11,6 @@ from typing import Any, Final
 import pytest
 from agent_family import FamilyFile, Index, load_registry
 from agent_family.server import FenceEntry
-from caregiver.grants import DEFAULT_MAX_OPEN_GATES, DEFAULT_PEP_RPM
 from caregiver.policy_file import (
     EXPOSED_NAME_MAX,
     App,
@@ -177,10 +176,10 @@ def test_max_inflight_comes_from_the_family_file() -> None:
     assert table["grants"]["attendance"]["max_inflight"] == 5
 
 
-def test_limits_keep_the_values_of_the_grant_file() -> None:
+def test_limits_keep_their_values() -> None:
     assert app_table(chat_family())["limits"] == {
-        "calls_per_minute": DEFAULT_PEP_RPM,
-        "max_pending_gates": DEFAULT_MAX_OPEN_GATES,
+        "calls_per_minute": 60,
+        "max_pending_gates": 10,
     }
 
 

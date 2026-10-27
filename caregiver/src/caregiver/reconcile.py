@@ -54,7 +54,6 @@ from .credentials import Credentials
 from .driver import SandboxDriver
 from .egress import EgressConfig
 from .faults import FaultEntry
-from .grants import GrantFileTooLargeError
 from .images import SandboxImages
 from .litellm_keys import SPEND_WINDOW, LiteLLMError, LiteLLMKeys, Spend
 from .mcp_wire import McpReport
@@ -323,28 +322,11 @@ def _converge(
     ran: list[str] = []
     faults = list(folded)
 
-    # A missing grant file is the PEP refusing every call for this family,
-    # so it is rewritten whether or not the diff asked. So is a stale one: a
-    # server file moves what `all` grants while the family file stays put.
-    # It is not rewritten on every pass: `write_grants` mints a fresh `rev`
-    # each call, and the loop looks every two seconds.
+    # The app table of `policy.toml` has a shape check, and it comes before
+    # the key step. A pass that refuses the table then ran no step:
+    # LiteLLM, `creds.json` and the last table stay as they are (contract
+    # 05 §3.1).
     index = _index_of(registry)
-    grants_due = _needs(diff, Step.WRITE_GRANTS) or not steps.grants_current(
-        family, index, state_root
-    )
-    if grants_due:
-        # The size check comes before the key step. A pass that refuses the
-        # grant file then ran no step: LiteLLM, `creds.json` and the last
-        # grant file stay as they are (contract 05 §3.1).
-        try:
-            steps.check_grants(family, index, state_root)
-        except GrantFileTooLargeError as refusal:
-            return _refuse_grant_file(
-                state_root, report, registry.revision, folded, applied, chaperone, refusal
-            )
-
-    # The app table of `policy.toml` has a shape check of its own, and it
-    # comes before the key step for the same reason.
     try:
         steps.check_policy(family, index)
     except PolicyShapeError as refusal:
@@ -377,26 +359,12 @@ def _converge(
     if refresh is KeyRefresh.UPDATE and applied is not None:
         ran.append(str(Step.UPDATE_KEY))
 
-    if grants_due:
-        # The check above counted the digests that `creds.json` gave then.
-        # A rotation of another process can add one digest after the check.
-        # A key step that writes `creds.json` writes one token, so its grant
-        # file is no larger than the count. Only a pass that kept the key
-        # can thus get this refusal, and that pass ran no step before it.
-        try:
-            steps.write_grants(family, index, state_root, creds)
-        except GrantFileTooLargeError as refusal:
-            return _refuse_grant_file(
-                state_root, report, registry.revision, folded, applied, chaperone, refusal
-            )
-
-        ran.append(str(Step.WRITE_GRANTS))
-
-    # The JSON grant file above serves the Python PEP. The table below
-    # serves the Rust chaperone. A family that the assembly leaves out has
-    # no table, so the chaperone refuses each of its calls: it reads
-    # `invalid` with the one error line of the assembly, and the pass goes
-    # no further.
+    # The table of the family in `policy.toml` is landed on each pass. A
+    # server file moves what `all` grants while the family file stays put,
+    # and `land_policy` writes nothing when the table did not move. A family
+    # that the assembly leaves out has no table, so the chaperone refuses
+    # each of its calls: it reads `invalid` with the one error line of the
+    # assembly, and the pass goes no further.
     standing = steps.land_policy(
         family, index, state_root, creds, actors.policy, rev=registry.revision
     )
@@ -404,6 +372,9 @@ def _converge(
         return _refuse(
             state_root, report, registry.revision, folded, applied, chaperone, standing.reason
         ).noted("refused: left out of policy.toml")
+
+    if _needs(diff, Step.WRITE_GRANTS):
+        ran.append(str(Step.WRITE_GRANTS))
 
     if steps.write_config(family, state_root, *_config_text(registry, family)):
         ran.append(str(Step.WRITE_CONFIG))
@@ -447,7 +418,7 @@ def _converge(
 
     halted = False
     # Contract 01 §3.9. Resolved here and not inside the sandbox axis, so
-    # the steps above it — the grant file above all — still run for a
+    # the steps above it — the table of `policy.toml` above all — still run for a
     # family this host cannot build a sandbox for.
     image = images.resolve(family.sandbox.image)
     if image is None:
@@ -851,35 +822,6 @@ def _refuse_immutable(
     )
     write_status(paths.status_path(state_root, family.name), doc)
     return ReconcileResult(family.name, doc, (), "refused: immutable field moved")
-
-
-def _refuse_grant_file(
-    state_root: Path,
-    report: Report,
-    revision: str,
-    folded: tuple[FaultEntry, ...],
-    applied: AppliedState | None,
-    chaperone: PepReport,
-    refusal: GrantFileTooLargeError,
-) -> ReconcileResult:
-    """The grant file of this revision is over the cap of contract 04 §1.2,
-    and the pass wrote no grant file.
-
-    The refusal is one more error of the validation report, and the report
-    names the size. The family reads `invalid`, and the last applied grant
-    file keeps serving, as for each other file that a pass cannot apply
-    (contract 05 §3.1). The pass ran no step before the refusal.
-
-    CONTRACT-QUESTION: contract 04 §1.3 rule 1 says that `caregiver` writes
-    no grant file that it knows to be wrong. No contract says what the
-    family reads then. The reading taken is contract 01 §7 rule 3: an
-    error stops the apply, and the last good state stays. A family with no
-    applied file has no such state, so its document holds `never_valid`
-    (contract 05 §3.1), although its family file has no error. The other
-    reading is a fault, and contract 05 §3.3 has no code for it. A new code
-    costs each reader with a closed set of codes."""
-    kept = _refuse(state_root, report, revision, folded, applied, chaperone, str(refusal))
-    return kept.noted("refused: grant file over the cap")
 
 
 def _refuse(

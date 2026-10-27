@@ -2,8 +2,8 @@
 delete.
 
 Every mutating verb prints its plan and needs `--write` to act -- a plan
-readable before anything touches LiteLLM, the PEP's grant file or a
-sandbox. `status` is read-only and needs no gate.
+readable before anything touches LiteLLM, `policy.toml` or a sandbox.
+`status` is read-only and needs no gate.
 
 `serve` is the one the operator actually runs, through
 `systemd/creche-caregiver.service`. The other verbs exist for a host where
@@ -358,7 +358,7 @@ def _apply_plan(state_root: Path, family: str, report: Report) -> list[str]:
         if not has_creds
         else "plan: refresh the existing LiteLLM key's model and budget"
     )
-    lines.append("plan: write the grant file, the table of policy.toml and the config mount")
+    lines.append("plan: write the table of policy.toml and the config mount")
     sequence = paths.read_sandbox_sequence(state_root, family)
     lines.append(
         f"plan: create sandbox {paths.sandbox_id(family, 1)}"
@@ -794,7 +794,7 @@ def _delete_plan(state_root: Path, family: str) -> list[str]:
     sequence = paths.read_sandbox_sequence(state_root, family)
     return [
         f"family: {family}",
-        "plan: delete the LiteLLM key, the grant file, the table of policy.toml and creds.json",
+        "plan: delete the LiteLLM key, the table of policy.toml and creds.json",
         f"plan: destroy {sequence} sandbox(es)" if sequence else "plan: no sandbox to destroy",
         f"plan: remove {paths.family_dir(state_root, family)}",
     ]

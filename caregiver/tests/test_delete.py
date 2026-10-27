@@ -14,11 +14,11 @@ from caregiver import paths
 
 
 def seed(state_root: Path, family: str, *, sandboxes: int = 1) -> None:
-    """A family with a grant file, credentials and a sandbox count, as
-    `apply_once` would have left it."""
-    grant = paths.grant_path(state_root, family)
-    grant.parent.mkdir(parents=True, exist_ok=True)
-    grant.write_text("{}", encoding="utf-8")
+    """A family with a fragment of `policy.toml`, credentials and a sandbox
+    count, as `apply_once` would have left it."""
+    fragment = paths.policy_fragment_path(state_root, family)
+    fragment.parent.mkdir(parents=True, exist_ok=True)
+    fragment.write_text(f"[apps.{family}]\n", encoding="utf-8")
 
     creds = paths.creds_path(state_root, family)
     creds.parent.mkdir(parents=True, exist_ok=True)
@@ -54,20 +54,20 @@ def test_credentials_are_deleted_before_the_sandbox(tmp_path: Path) -> None:
     assert log == ["litellm.delete_key:chat", "driver.destroy:chat-s1"]
 
 
-def test_the_grant_file_and_creds_are_already_gone_when_the_sandbox_is_destroyed(
+def test_the_fragment_and_creds_are_already_gone_when_the_sandbox_is_destroyed(
     tmp_path: Path,
 ) -> None:
     state_root = tmp_path / "state"
     seed(state_root, "chat")
     litellm = FakeLiteLLMKeys()
-    grant_path = paths.grant_path(state_root, "chat")
+    fragment_path = paths.policy_fragment_path(state_root, "chat")
     creds_path = paths.creds_path(state_root, "chat")
     checked: dict[str, bool] = {}
 
     class CheckingDriver(FakeDriver):
         def destroy(self, name: str, allow: tuple[str, ...]) -> None:
             checked["key_deleted"] = key_alias("chat") in litellm.deleted
-            checked["grant_gone"] = not grant_path.exists()
+            checked["fragment_gone"] = not fragment_path.exists()
             checked["creds_gone"] = not creds_path.exists()
             super().destroy(name, allow)
 
@@ -78,7 +78,7 @@ def test_the_grant_file_and_creds_are_already_gone_when_the_sandbox_is_destroyed
         driver=CheckingDriver(),
         litellm=litellm,
     )
-    assert checked == {"key_deleted": True, "grant_gone": True, "creds_gone": True}
+    assert checked == {"key_deleted": True, "fragment_gone": True, "creds_gone": True}
 
 
 def test_the_litellm_key_is_deleted_by_alias(tmp_path: Path) -> None:

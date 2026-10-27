@@ -364,16 +364,16 @@ def test_status_with_no_family_lists_every_family(
 
 
 def test_delete_without_write_makes_no_change(state_root: Path) -> None:
-    grant = paths.grant_path(state_root, "chat")
-    grant.parent.mkdir(parents=True)
-    grant.write_text("{}", encoding="utf-8")
+    fragment = paths.policy_fragment_path(state_root, "chat")
+    fragment.parent.mkdir(parents=True)
+    fragment.write_text("[apps.chat]\n", encoding="utf-8")
     litellm = FakeLiteLLMKeys()
     code = main(
         ["delete", "chat", "--state-root", str(state_root)], litellm=litellm, driver=FakeDriver()
     )
     assert code == EXIT_OK
     assert litellm.deleted == []
-    assert grant.exists()
+    assert fragment.exists()
 
 
 def test_delete_without_write_prints_the_plan(

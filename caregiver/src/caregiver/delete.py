@@ -1,8 +1,7 @@
 """Delete a family entirely.
 
-Credentials die before processes (invariant 13): the LiteLLM key, the
-PEP grant file and the table of `policy.toml` are gone before any sandbox
-is touched. This module does
+Credentials die before processes (invariant 13): the LiteLLM key and the
+table of `policy.toml` are gone before any sandbox is touched. This module does
 not decide *when* deleting a family is the right action -- the caller (the
 CLI) does -- it only performs the deletion in the order invariant 13
 requires, and removes caregiver's own state for that family once nothing
@@ -17,7 +16,6 @@ from pathlib import Path
 from . import paths
 from .driver import SandboxDriver
 from .egress import EgressConfig
-from .grants import delete_grant_file
 from .litellm_keys import LiteLLMKeys
 from .policy_fleet import FleetPolicy, withdraw_app
 from .webhook_tokens import forget_webhooks
@@ -35,11 +33,11 @@ def delete_family(
     egress: tuple[str, ...] = (),
     egress_config: EgressConfig | None = None,
 ) -> str | None:
-    """1. The LiteLLM key. 2. The grant file (it carries the token's
-    digest; deleting it revokes the token, contract 04 section 1.3 rule
-    5). 3. The fragment of the family, then a new assembly of
-    `policy.toml` with no table for it. 4. `creds.json`. 5. Every sandbox
-    this family ever had. 6. This family's own state directory.
+    """1. The LiteLLM key. 2. The fragment of the family, then a new
+    assembly of `policy.toml` with no table for it (the table carries the
+    token's digest, so its removal revokes the token). 3. `creds.json`.
+    4. Every sandbox this family ever had. 5. This family's own state
+    directory.
 
     Answers why `policy.toml` still holds a table of the family, or `None`.
     A refused assembly does not stop the delete: the sandboxes that hold
@@ -55,7 +53,6 @@ def delete_family(
     a sandbox name nothing will reuse -- a known, accepted leak, not a
     reach a deleted family still has."""
     litellm.delete_key(family_name)
-    delete_grant_file(paths.grant_path(state_root, family_name))
     kept = withdraw_app(state_root, policy, family_name)
     if kept is not None:
         log.error("%s: policy.toml still holds the table of the family: %s", family_name, kept)

@@ -19,7 +19,7 @@ from caregiver.credentials import (
     write_creds,
 )
 from caregiver.litellm_keys import FakeLiteLLMKeys
-from caregiver.steps import check_grants, ensure_credentials, write_grants
+from caregiver.steps import check_policy, ensure_credentials, land_policy
 from caregiver_helpers import (
     DEEPER_THAN_STR,
     OLD_TOKEN,
@@ -27,6 +27,7 @@ from caregiver_helpers import (
     NoText,
     accepted_digests,
     chat_family,
+    fake_policy,
 )
 
 from caregiver import paths
@@ -105,7 +106,7 @@ def test_a_previous_token_of_another_form_reads_as_no_overlap(
 
 
 @pytest.mark.parametrize("previous", ["\u00e9", BASE32_TOKEN])
-def test_the_grant_pass_lists_no_digest_for_a_previous_token_of_another_form(
+def test_the_policy_lists_no_digest_for_a_previous_token_of_another_form(
     tmp_path: Path, previous: str
 ) -> None:
     family = chat_family()
@@ -114,8 +115,8 @@ def test_the_grant_pass_lists_no_digest_for_a_previous_token_of_another_form(
     creds = read_creds(paths.creds_path(tmp_path, family.name))
     assert creds is not None
 
-    check_grants(family, no_servers, tmp_path)
-    write_grants(family, no_servers, tmp_path, creds)
+    check_policy(family, no_servers)
+    land_policy(family, no_servers, tmp_path, creds, fake_policy(tmp_path), rev="r1")
 
     assert accepted_digests(tmp_path) == [token_sha256(NEW_TOKEN)]
 

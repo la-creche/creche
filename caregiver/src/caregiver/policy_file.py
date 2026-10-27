@@ -71,8 +71,7 @@ RELEASE_REQUEST: Final = "request"
 #: A delegate call may run for 120 seconds (design section 12).
 DELEGATE_TIMEOUT_S: Final = 120
 
-#: The two limits that the family file does not hold. They keep the values
-#: of the grant file: `pep_rpm` and `max_open_gates`.
+#: The two limits that the family file does not hold.
 CALLS_PER_MINUTE: Final = 60
 MAX_PENDING_GATES: Final = 10
 

@@ -6,7 +6,6 @@ outside and be worth nothing."""
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import replace
 from pathlib import Path
@@ -33,6 +32,7 @@ from caregiver_helpers import (
     LONG_AGO,
     OLD_TOKEN,
     REFUSED_TOOLS,
+    accepted_digests,
     chat_family,
     fake_policy,
     family_toml,
@@ -102,8 +102,7 @@ def start(state_root: Path, litellm: FakeLiteLLMKeys) -> Credentials:
 
 
 def grant_digests(state_root: Path) -> list[str]:
-    body = json.loads(paths.grant_path(state_root, FAMILY).read_text(encoding="utf-8"))
-    return list(body["token_sha256"])
+    return accepted_digests(state_root, FAMILY)
 
 
 def turn(state_root: Path, family: FamilyFile, litellm: FakeLiteLLMKeys, **fields: object):  # type: ignore[no-untyped-def]
@@ -214,8 +213,8 @@ def test_the_alias_never_holds_two_keys(
 def test_a_graceful_token_rotation_leaves_both_digests_accepted(
     state_root: Path, family: FamilyFile, litellm: Watching
 ) -> None:
-    """Contract 04 §2.2: the grant file lists every accepted digest, so a
-    turn that started under the old epoch finishes."""
+    """The table of the family lists every accepted digest, so a turn that
+    started under the old epoch finishes."""
     start(state_root, litellm)
     outcome = turn(state_root, family, litellm)
     digests = grant_digests(state_root)
@@ -283,10 +282,10 @@ def test_a_settle_moves_the_digests_and_no_grant(
     assert grants_alone(state_root) == grants
 
 
-def test_a_settle_with_no_grant_file_leaves_the_overlap_on_record(
+def test_a_settle_with_no_fragment_leaves_the_overlap_on_record(
     state_root: Path, litellm: Watching
 ) -> None:
-    """The grant file is written first. A settle that could not drop the
+    """The fragment is written first. A settle that could not drop the
     digest must not record that it did, or no later settle would try."""
     start(state_root, litellm)
     end_overlap(state_root)
@@ -399,11 +398,11 @@ def test_a_serving_rotation_mints_the_key_the_applied_definition_asks_for(
     assert litellm.budgets[key_alias(FAMILY)] == (["agent-router"], 15)
 
 
-def test_a_serving_rotation_reads_the_grant_file_before_it_deletes_the_key(
+def test_a_serving_rotation_reads_the_fragment_before_it_deletes_the_key(
     tmp_path: Path, state_root: Path, litellm: Watching
 ) -> None:
-    """`start` writes no grant file. A token with no file for its digest is
-    refused while the old key still lives."""
+    """`start` writes no fragment. A token with no fragment for its digest
+    is refused while the old key still lives."""
     start(state_root, litellm)
     applied(state_root)
 
@@ -419,7 +418,7 @@ def test_a_serving_rotation_reads_the_grant_file_before_it_deletes_the_key(
     assert litellm.order == []
 
 
-def test_a_serving_key_rotation_writes_no_grant_file(
+def test_a_serving_key_rotation_writes_no_fragment(
     tmp_path: Path, state_root: Path, litellm: Watching
 ) -> None:
     start(state_root, litellm)
@@ -434,10 +433,10 @@ def test_a_serving_key_rotation_writes_no_grant_file(
     )
 
     assert outcome.key_rotated is True
-    assert not paths.grant_path(state_root, FAMILY).exists()
+    assert not paths.policy_fragment_path(state_root, FAMILY).exists()
 
 
-def test_a_grant_file_that_goes_away_mid_rotation_is_not_rendered_again(
+def test_a_fragment_that_goes_away_mid_rotation_is_not_rendered_again(
     tmp_path: Path, state_root: Path, family: FamilyFile
 ) -> None:
     """The check ran, and then the file went. The credentials have moved by
@@ -445,7 +444,7 @@ def test_a_grant_file_that_goes_away_mid_rotation_is_not_rendered_again(
 
     class Vanishing(Watching):
         def rotate_key(self, family: str, models: list[str], budget_usd_per_day: float) -> str:
-            paths.grant_path(state_root, FAMILY).unlink()
+            paths.policy_fragment_path(state_root, FAMILY).unlink()
             return super().rotate_key(family, models, budget_usd_per_day)
 
     litellm = Vanishing()
@@ -462,7 +461,7 @@ def test_a_grant_file_that_goes_away_mid_rotation_is_not_rendered_again(
     )
 
     assert outcome.epoch == 3
-    assert not paths.grant_path(state_root, FAMILY).exists()
+    assert not paths.policy_fragment_path(state_root, FAMILY).exists()
 
 
 # --- scope ----------------------------------------------------------------------------
@@ -508,7 +507,7 @@ def test_a_document_write_that_fails_does_not_stop_the_rotation(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The credential file and the grant file moved before the publish. A
+    """The credential file and `policy.toml` moved before the publish. A
     write of the status document that fails is one error line, and the
     rotation ends its work: each webhook bearer moves. The next pass
     publishes the document."""
@@ -543,12 +542,11 @@ def end_overlap(state_root: Path) -> None:
 
 
 def plant_tool(state_root: Path) -> None:
-    """A grant in the file that no family in these tests declares, so a
-    write that renders the file again loses it."""
-    path = paths.grant_path(state_root, FAMILY)
-    body = json.loads(path.read_text(encoding="utf-8"))
-    body["tools"] = {"kagi": ["kagi_extract"]}
-    path.write_text(json.dumps(body), encoding="utf-8")
+    """A grant in the fragment that no family in these tests declares, so a
+    write that renders the fragment again loses it."""
+    path = paths.policy_fragment_path(state_root, FAMILY)
+    planted = f"\n[apps.{FAMILY}.grants.kagi.tools]\nkagi_extract = {{}}\n"
+    path.write_text(path.read_text(encoding="utf-8") + planted, encoding="utf-8")
 
 
 def _token_of(state_root: Path) -> str:

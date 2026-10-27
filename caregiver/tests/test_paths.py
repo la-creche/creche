@@ -14,7 +14,6 @@ from caregiver.paths import (
     creds_path,
     family_dir,
     fault_path,
-    grant_path,
     playpen_env_path,
     read_sandbox_sequence,
     sandbox_id,
@@ -92,10 +91,6 @@ def test_session_dir_is_outside_state_root() -> None:
 def test_sandbox_id_form() -> None:
     assert sandbox_id("chat", 1) == "chat-s1"
     assert sandbox_id("chat", 42) == "chat-s42"
-
-
-def test_grant_path() -> None:
-    assert grant_path(ROOT, "chat") == ROOT / "grants" / "chat.json"
 
 
 def test_fault_path_is_keyed_by_source_and_family() -> None:
