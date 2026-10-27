@@ -57,7 +57,7 @@ directory is not a workspace package, so a change here does not change
 | `surfaces/channel.py` | `channel.frame`. The files of `channel.parse` and `channel.build` are frozen |
 | `surfaces/grants.py` | `grants.parse`, `grants.write`, `chaperone.call_body`, `chaperone.approval_body`, `chaperone.verb` |
 | `surfaces/audit.py` | `chaperone.audit_line`, `chaperone.unidentified_line`, `chaperone.reason` |
-| `surfaces/status.py` | the five readers of `status.json`: `status.<reader>` |
+| `surfaces/status.py` | the four readers of `status.json`: `status.<reader>` |
 | `surfaces/status_files.py` | the writer of `status.json`, the fault files and the outcome record: `status.write`, `status.fault_file.<package>`, `status.outcome.noticeboard` |
 | `surfaces/config.py` | the site file, the roster, the mount files and three env readers: `config.<name>` |
 | `surfaces/manifest_cases.py` | the written `component.yaml` inputs |
@@ -271,10 +271,9 @@ did not.
   `caregiver.mcp_release.served_servers`. It gives one answer for a roster
   that it refuses and for a roster with no row, so a vector cannot hold a
   refusal. `caregiver/tests` holds its two limits for merge keys.
-- Four configs have no entry point that takes a map of variables, so no
-  vector covers them: `chaperone.__main__`, `caregiver.cli`,
-  `agent_door_owui.config` and `agent_door_trigger.config`. The two doors
-  read a key file while they parse. `config.chaperone.site` covers four
+- Three configs have no entry point that takes a map of variables, so no
+  vector covers them: `chaperone.__main__`, `caregiver.cli` and
+  `agent_door_trigger.config`. The door reads a key file while it parses. `config.chaperone.site` covers four
   readers of `chaperone.site`. No vector covers the fifth reader,
   `listener`. It gives the host and the port of the bind that `bind` gives
   as text.
@@ -360,13 +359,12 @@ did not.
   digit, and hour 24. The pattern of the time reader refuses each of the
   two before `datetime.fromisoformat` gets the text. Each supported Python
   version thus gives the same result for them.
-- Two token readers are private functions: `_read_token` of
-  `attendance.auth` and `_read_key` of `agent_door_owui.config`. A
-  `runtime.token` surface calls the public caller of each one:
-  `TokenBook.load` and `from_env`.
+- One token reader is a private function: `_read_token` of
+  `attendance.auth`. A `runtime.token` surface calls its public caller,
+  `TokenBook.load`.
 - No vector covers `_read_token` of `agent_door_tui.config` or of
-  `agent_door_trigger.config`. Each one is a copy of the reader that
-  `runtime.token.door` covers.
+  `agent_door_trigger.config`. Each one was a copy of the reader that the
+  frozen file `runtime/token.door.json` holds.
 - No surface covers `read_api` of `attendance.owui_copy`, which reads the
   key of Open WebUI. It reads UTF-8 text, removes the whitespace of Python
   `str.strip` from the two ends and has no least count of bytes.
@@ -386,11 +384,11 @@ did not.
   vector covers a directory at the path, a file that the generator cannot
   read or a file of more than 1 MiB.
 - No vector covers a symbolic link at the path of a token file. Each of the
-  six readers follows the link. A reader with a mode rule reads the mode of
+  five readers follows the link. A reader with a mode rule reads the mode of
   the file that the link names.
 - Each bearer reader is a private function: `_bearer_value` of
-  `attendance.auth` and of `agent_door_trigger.webhooks`, `_authenticate` of
-  `agent_door_owui.app`, `_bearer` and `_bearer_matches` of `chaperone.app`.
+  `attendance.auth` and of `agent_door_trigger.webhooks`, `_bearer` and
+  `_bearer_matches` of `chaperone.app`.
   A `runtime.bearer` surface calls its reader through one route of the app.
 - `runtime.bearer.chaperone` covers the bearer of the approval callback. No
   vector covers the bearer of a family on `GET /manifest` and on

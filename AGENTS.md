@@ -86,7 +86,7 @@ text with no UTC offset is not a time.
 | `family/` | `family/AGENTS.md` |
 | `attendance/` | `attendance/AGENTS.md` |
 | `caregiver/` | `caregiver/AGENTS.md` |
-| `door-owui/`, `door-tui/`, `door-trigger/`, `door-acp/` | the door's own `AGENTS.md` |
+| `door-tui/`, `door-trigger/`, `door-acp/` | the door's own `AGENTS.md` |
 | `noticeboard/` | `noticeboard/AGENTS.md` |
 | `playpen/` | `playpen/AGENTS.md` |
 | `agent/` | `agent/AGENTS.md` |

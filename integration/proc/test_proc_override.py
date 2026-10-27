@@ -20,8 +20,8 @@ import pytest
 from proc_board import BoardStack
 from proc_harness import Supervisor
 from proc_library import LibraryStack, write_vault
-from proc_owui import OwuiStack
 from proc_services import SERVICES, Service, command_of
+from proc_stack import Stack
 from proc_tree import FAMILY, Tree
 from proc_trigger import REVIEW, TriggerStack, hook_path
 from proc_tui import TuiStack
@@ -30,28 +30,24 @@ CHECK_FLAG = "--check"
 EXIT_DEADLINE_S = 30.0
 
 
-async def test_an_override_starts_each_service_of_a_topology(
+async def test_an_override_starts_attendance(
     tree: Tree, supervisor: Supervisor, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ran = tree.root / "override-ran"
-
-    for service in (Service.ATTENDANCE, Service.DOOR_OWUI):
-        program = _other_program(tree, service, ran)
-        monkeypatch.setenv(SERVICES[service].override, str(program))
-
-    stack = OwuiStack(tree, supervisor)
+    monkeypatch.setenv(
+        SERVICES[Service.ATTENDANCE].override,
+        str(_other_program(tree, Service.ATTENDANCE, ran)),
+    )
+    stack = Stack(tree, supervisor)
     stack.prepare()
-    stack.start()
-
-    async with stack.door_client() as door:
-        models = await door.get("/v1/models")
+    stack.spawn_attendance()
+    stack.await_attendance()
 
     async with stack.attendance_client("door-dispatch") as api:
         jobs = await api.post("/dispatch/jobs", json={"caller_family": FAMILY})
 
-    assert models.status_code == httpx.codes.OK, models.text
     assert jobs.status_code == httpx.codes.OK, jobs.text
-    assert set(ran.read_text(encoding="utf-8").split()) == {"attendance", "door-owui"}
+    assert ran.read_text(encoding="utf-8").split() == ["attendance"]
 
 
 async def test_an_override_starts_the_trigger_door_in_both_ways(

@@ -10,7 +10,6 @@ resolution-markers = [
 members = [
     "agent-control-workspace",
     "agent-door-acp",
-    "agent-door-owui",
     "agent-door-trigger",
     "agent-door-tui",
     "agent-family",
@@ -29,7 +28,6 @@ version = "0.0.0"
 source = { virtual = "." }
 dependencies = [
     { name = "agent-door-acp" },
-    { name = "agent-door-owui" },
     { name = "agent-door-trigger" },
     { name = "agent-door-tui" },
     { name = "agent-family" },
@@ -57,7 +55,6 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "agent-door-acp", editable = "door-acp" },
-    { name = "agent-door-owui", editable = "door-owui" },
     { name = "agent-door-trigger", editable = "door-trigger" },
     { name = "agent-door-tui", editable = "door-tui" },
     { name = "agent-family", editable = "family" },
@@ -97,23 +94,6 @@ requires-dist = [
     { name = "starlette", specifier = "==1.6.0" },
     { name = "uvicorn", specifier = "==0.52.4" },
     { name = "websockets", specifier = "==17.2" },
-]
-
-[[package]]
-name = "agent-door-owui"
-version = "0.1.0"
-source = { editable = "door-owui" }
-dependencies = [
-    { name = "fastapi" },
-    { name = "httpx" },
-    { name = "uvicorn" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "fastapi", specifier = ">=0.115" },
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "uvicorn", specifier = ">=0.30" },
 ]
 
 [[package]]

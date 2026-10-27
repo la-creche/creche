@@ -1,5 +1,5 @@
 {
-    "include": ["chaperone/src", "library/src", "family/src", "caregiver/src", "attendance/src", "door-owui/src", "door-tui/src", "door-trigger/src", "door-acp/src", "noticeboard/src", "handover/src", "env/src", "vectors"],
+    "include": ["chaperone/src", "library/src", "family/src", "caregiver/src", "attendance/src", "door-tui/src", "door-trigger/src", "door-acp/src", "noticeboard/src", "handover/src", "env/src", "vectors"],
     "typeCheckingMode": "strict",
     "pythonVersion": "3.12",
     "venvPath": ".",

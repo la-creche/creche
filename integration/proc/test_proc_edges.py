@@ -40,15 +40,7 @@ from pathlib import Path
 import httpx
 import pytest
 from proc_board import BoardStack
-from proc_chat import (
-    CHAT_PATH,
-    MODELS_PATH,
-    chat_body,
-    chat_id,
-    message_id,
-    owui_headers,
-    session_of,
-)
+from proc_chat import chat_id, session_of
 from proc_delegate import TARGET, DelegateStack
 from proc_harness import (
     Address,
@@ -58,17 +50,15 @@ from proc_harness import (
     answers_http,
     is_listening,
 )
-from proc_owui import OwuiStack
 from proc_services import SERVICES, Service
 from proc_stack import Stack
 from proc_tree import FAMILY
 from proc_trigger import TriggerStack, hook_path
 
-#: The five services that listen. The other two rows of the service table,
-#: the terminal door and `caregiver`, do not listen.
+#: The four services that listen. The terminal door and `caregiver` do not
+#: listen.
 LISTENERS = (
     Service.ATTENDANCE,
-    Service.DOOR_OWUI,
     Service.CHAPERONE,
     Service.NOTICEBOARD,
     Service.DOOR_TRIGGER,
@@ -89,7 +79,6 @@ HEALTH_PATH = "/healthz"
 #: take. No method here carries a body.
 WRONG_METHOD = {
     Service.ATTENDANCE: ("GET", JOBS_PATH),
-    Service.DOOR_OWUI: ("GET", CHAT_PATH),
     Service.CHAPERONE: ("GET", CALL_PATH),
     Service.NOTICEBOARD: ("DELETE", HEALTH_PATH),
     Service.DOOR_TRIGGER: ("GET", hook_path()),
@@ -98,17 +87,16 @@ WRONG_METHOD = {
 #: One route that takes `GET`, for each listener that has one. The webhook
 #: listener and `attendance` have none: each of their routes takes `POST`.
 GET_ROUTE = {
-    Service.DOOR_OWUI: MODELS_PATH,
     Service.CHAPERONE: HEALTH_PATH,
     Service.NOTICEBOARD: HEALTH_PATH,
 }
 
 #: The listeners that read a JSON body, with no scenario for such a body in
 #: another file. `test_proc_trigger_webhooks.py` holds the webhook listener.
-READ_JSON = (Service.ATTENDANCE, Service.DOOR_OWUI, Service.CHAPERONE)
+READ_JSON = (Service.ATTENDANCE, Service.CHAPERONE)
 
-#: The two listeners that have no reload at `SIGHUP` in each configuration.
-NO_RELOAD = (Service.DOOR_OWUI, Service.NOTICEBOARD)
+#: The listener that has no reload at `SIGHUP` in each configuration.
+NO_RELOAD = (Service.NOTICEBOARD,)
 
 FINAL_SLASH = "/"
 JSON_TYPE = {"Content-Type": "application/json"}
@@ -162,7 +150,6 @@ SYSTEMD_STOP_LIMIT_S = 90.0
 #: this table against the unit files.
 STOP_LIMIT_S = {
     Service.ATTENDANCE: 60.0,
-    Service.DOOR_OWUI: 30.0,
     Service.CHAPERONE: SYSTEMD_STOP_LIMIT_S,
     Service.NOTICEBOARD: 20.0,
     Service.DOOR_TRIGGER: 30.0,
@@ -212,19 +199,12 @@ def listener(request: pytest.FixtureRequest) -> Listener:
 
 
 def _attendance(request: pytest.FixtureRequest) -> Listener:
-    stack: OwuiStack = request.getfixturevalue("owui")
+    stack: Stack = request.getfixturevalue("attended")
     address = UnixAddress(stack.tree.attendance_socket)
 
     return Listener(
         Service.ATTENDANCE, stack, _running(stack.attendance), address, stack.attendance_client
     )
-
-
-def _door_owui(request: pytest.FixtureRequest) -> Listener:
-    stack: OwuiStack = request.getfixturevalue("owui")
-    address = TcpAddress(stack.door_port)
-
-    return Listener(Service.DOOR_OWUI, stack, _running(stack.door), address, stack.door_client)
 
 
 def _chaperone(request: pytest.FixtureRequest) -> Listener:
@@ -254,7 +234,6 @@ def _door_trigger(request: pytest.FixtureRequest) -> Listener:
 
 _LISTENER_OF: dict[Service, Callable[[pytest.FixtureRequest], Listener]] = {
     Service.ATTENDANCE: _attendance,
-    Service.DOOR_OWUI: _door_owui,
     Service.CHAPERONE: _chaperone,
     Service.NOTICEBOARD: _noticeboard,
     Service.DOOR_TRIGGER: _door_trigger,
@@ -342,17 +321,17 @@ async def test_head_on_a_get_route_has_no_body(listener: Listener) -> None:
 
 
 def test_attendance_starts_on_the_socket_file_of_a_killed_process(
-    owui_prepared: OwuiStack,
+    attended_prepared: Stack,
 ) -> None:
     """`Restart=always` of the unit, after a kill. Contract 02 §3 rule 1 gives the path.
 
     A killed process removes nothing. Its socket file stays at the path that
     the next process binds, and that process must start.
     """
-    tree = owui_prepared.tree
+    tree = attended_prepared.tree
     address = UnixAddress(tree.attendance_socket)
-    killed = owui_prepared.spawn_attendance()
-    owui_prepared.await_attendance()
+    killed = attended_prepared.spawn_attendance()
+    attended_prepared.await_attendance()
 
     os.killpg(killed.pgid, signal.SIGKILL)
     killed.wait(EXIT_DEADLINE_S)
@@ -360,8 +339,8 @@ def test_attendance_starts_on_the_socket_file_of_a_killed_process(
     assert tree.attendance_socket.is_socket(), "the kill left no socket file"
     assert not is_listening(address)
 
-    started = owui_prepared.spawn_attendance()
-    owui_prepared.await_attendance()
+    started = attended_prepared.spawn_attendance()
+    attended_prepared.await_attendance()
 
     assert started.exit_code() is None
     assert answers_http(address)
@@ -384,7 +363,7 @@ def test_sigint_ends_a_listener(listener: Listener) -> None:
 
 # CONTRACT-QUESTION: contract 02 §3 rule 8 gives `SIGHUP` a reload in
 # `attendance`. No contract says what a listener with no reload does at the
-# signal. Reading taken: what the door and the noticeboard do today. The
+# signal. Reading taken: what the noticeboard does today. The
 # signal ends the process, and its port closes. The other reading is a
 # listener that ignores the signal. A change to that reading costs the two
 # assertions here.
@@ -424,12 +403,6 @@ def work_of(service: Service) -> Work:
     if service is Service.ATTENDANCE:
         # Contract 02 §13.4.2: the jobs of one caller family.
         return Work(JOBS_PATH, {}, {"caller_family": FAMILY})
-
-    if service is Service.DOOR_OWUI:
-        # One whole turn, and the answer comes after the turn settled.
-        headers = owui_headers(chat_id(), message_id())
-
-        return Work(CHAT_PATH, headers, chat_body(PROMPT, stream=False))
 
     if service is Service.CHAPERONE:
         # Contract 04 §7.1: one job turn in the thin family.

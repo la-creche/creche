@@ -161,7 +161,7 @@ def test_an_override_reaches_one_service_only(tmp_path: Path) -> None:
     program = _program(tmp_path / "other-attendance")
     environ = {"CRECHE_PROC_ATTENDANCE": str(program)}
 
-    assert command_of(Service.DOOR_OWUI, environ).origin is Origin.DEFAULT
+    assert command_of(Service.DOOR_TRIGGER, environ).origin is Origin.DEFAULT
 
 
 def test_the_reference_is_the_default_with_the_variable_set(
@@ -234,13 +234,13 @@ def test_a_misspelled_variable_is_found() -> None:
     """Fail closed. A name that no row has would leave the default in place."""
     environ = {
         "CRECHE_PROC_ATTENDENCE": "/path/to/the/binary",
-        "CRECHE_PROC_DOOR_OWUI_": "/path/to/the/binary",
+        "CRECHE_PROC_DOOR_ACP_": "/path/to/the/binary",
         "CRECHE_PROC_CHAPERONE": "/path/to/the/binary",
         "CRECHE_PROC_KEEP": "1",
         "PATH": "/usr/bin",
     }
 
-    assert unknown_variables(environ) == ["CRECHE_PROC_ATTENDENCE", "CRECHE_PROC_DOOR_OWUI_"]
+    assert unknown_variables(environ) == ["CRECHE_PROC_ATTENDENCE", "CRECHE_PROC_DOOR_ACP_"]
 
 
 def test_every_variable_of_the_table_is_known() -> None:

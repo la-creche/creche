@@ -8,8 +8,8 @@
       v
     the command of the sandbox
 
-A topology adds the service in front: a door in `proc_owui.py`, the chaperone
-in `proc_delegate.py`. A test reaches each service through a socket and
+A topology adds the service in front: the trigger door in `proc_trigger.py`,
+the chaperone in `proc_delegate.py`. A test reaches each service through a socket and
 through the files under the root. It holds no object of a service.
 """
 
