@@ -36,12 +36,12 @@ official text from the ASD download page:
 
 | Rule | Do | Do not |
 |---|---|---|
-| Active voice | "The reconciler writes the grant file." | "The grant file is written." |
+| Active voice | "The reconciler writes the policy file." | "The policy file is written." |
 | One instruction per sentence | "Open the file. Read line 3." | "Open the file and read line 3, then check it." |
 | Sentence length | 20 words or less in an instruction. 25 words or less in a description. | Compound sentences with stacked clauses. |
 | Simple tenses | Present, past, future, imperative. | Present perfect and progressive forms, unless the simple form loses meaning. |
 | Articles | Keep "a", "an" and "the". | "Files not backed up are lost." |
-| Noun clusters | Three words or less: "grant file path". | "per-family status document poll interval". |
+| Noun clusters | Three words or less: "policy file path". | "per-family status document poll interval". |
 | Paragraphs | One topic. Six sentences or less. | A paragraph that covers two topics. |
 | Sequences | A numbered list for three or more steps. | A sequence inside one sentence. |
 | Punctuation | A period ends a sentence. | A semicolon. An em dash. |
@@ -76,7 +76,7 @@ written here. Do not use a synonym for one.
 | session | One conversation in one family. |
 | turn | One prompt and its answer, inside a session. |
 | door | A process that turns outside input into a turn. |
-| grant | What a family may do. The chaperone reads it from a grant file. |
+| grant | What a family may do. The chaperone reads it from the table of the family in `policy.toml`. |
 | verb | An action the chaperone executes itself, not through an MCP server. |
 | the chaperone | The Policy Enforcement Point (PEP). Every action outside a sandbox passes through it. |
 | the operator | The person who runs a deployment. |
