@@ -96,6 +96,7 @@ RECONCILING: Final = "reconciling"
 INVALID: Final = "invalid"
 DEGRADED: Final = "degraded"
 CREATING: Final = "creating"
+READY: Final = "ready"
 
 #: The exit codes that `caregiver/AGENTS.md` gives each verb.
 EXIT_OK: Final = 0
@@ -119,8 +120,11 @@ def caregiver_env() -> dict[str, str]:
     return {"AGENT_LAN_ADDRESS": LAN_ADDRESS, "LITELLM_MASTER_KEY": MASTER_KEY}
 
 
-def watch_flags(tree: Tree, litellm_port: int) -> list[str]:
-    """The flags that `serve` and `reconcile-once` share, as the unit gives them."""
+def watch_flags(tree: Tree, litellm_port: int, chaperone: list[str] | None = None) -> list[str]:
+    """The flags that `serve` and `reconcile-once` share, as the unit gives them.
+
+    `chaperone` replaces the flags of `chaperone_flags`.
+    """
     return [
         "--image",
         IMAGE,
@@ -132,7 +136,7 @@ def watch_flags(tree: Tree, litellm_port: int) -> list[str]:
         str(tree.attendance_socket),
         "--litellm-base-url",
         litellm_url(litellm_port),
-        *chaperone_flags(tree),
+        *(chaperone_flags(tree) if chaperone is None else chaperone),
     ]
 
 
@@ -146,16 +150,18 @@ def chaperone_flags(tree: Tree) -> list[str]:
     ]
 
 
-def serve_words(tree: Tree, litellm_port: int, pep_url: str) -> list[str]:
+def serve_words(
+    tree: Tree, litellm_port: int, pep_url: str, chaperone: list[str] | None = None
+) -> list[str]:
     """The words after the program in the `ExecStart` of the unit.
 
     The module docstring names the three arguments that the unit does not
-    have.
+    have. `chaperone` is as `watch_flags` takes it.
     """
     return [
         "serve",
         str(tree.registry_root),
-        *watch_flags(tree, litellm_port),
+        *watch_flags(tree, litellm_port, chaperone),
         "--pep-url",
         pep_url,
         "--release-root",

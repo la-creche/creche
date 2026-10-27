@@ -23,6 +23,7 @@ from proc_standins import (
     MODEL_DELAY_MS,
     model_calls,
     script_model,
+    set_model_keys,
     start_model,
     text_turn,
     tool_turn,
@@ -32,6 +33,7 @@ from proc_tree import Tree, build_bare_tree
 
 #: An obvious fixture, never a credential.
 KEY = "FIXTURE-FAMILY-KEY"
+OTHER_KEY = "FIXTURE-OTHER-FAMILY-KEY"
 TOOL = "mcp__ch__standin__echo"
 BODY: dict[str, Any] = {
     "model": "family-chat",
@@ -150,6 +152,21 @@ def test_model_refuses_another_bearer_and_records_no_line(model: Model) -> None:
 
     assert answer.status_code == HTTP_UNAUTHORIZED
     assert model_calls(model.tree) == []
+
+
+def test_model_takes_each_bearer_of_its_key_file(model: Model) -> None:
+    """One stand-in plays the model of two families, each with its own key."""
+    script_model(model.tree, [text_turn("one"), text_turn("two")])
+    set_model_keys(model.tree, KEY, OTHER_KEY)
+
+    answers = [
+        model.client.post(
+            standin_model.COMPLETIONS_PATH, json=BODY, headers={"Authorization": f"Bearer {key}"}
+        ).status_code
+        for key in (KEY, OTHER_KEY)
+    ]
+
+    assert answers == [HTTP_OK, HTTP_OK]
 
 
 def test_model_refuses_a_completion_that_does_not_stream(model: Model) -> None:

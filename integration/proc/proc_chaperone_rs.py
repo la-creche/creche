@@ -14,7 +14,8 @@ The suite writes every file that the chaperone reads, by chaperone
 and the secrets directory. `chaperone token new` mints the token of each
 family and adds its digest to the policy file. `chaperone check` validates
 both files before the start. `chaperone verify` checks the running front
-door after it.
+door after it. The exit topology (`proc_exit.py`) writes no policy file and
+mints no token: `caregiver` writes both.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ import time
 from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Final, cast
 
 import httpx
@@ -39,7 +41,8 @@ from proc_tree import (
     build_bare_tree,
     write_rs_draft_tree,
     write_rs_fleet_tree,
-    write_rs_tree,
+    write_rs_install,
+    write_rs_policy,
 )
 
 #: The path of the front door (§7.6) and of its health answer.
@@ -85,9 +88,6 @@ class ChaperoneRsStack(Stack):
     chaperone: Child | None = None
     port: int = 0
     tokens: dict[str, str] = field(default_factory=dict[str, str])
-    #: The families that each app instance may ask through the plugin
-    #: `attendance`. None leaves the plugin out (`proc_exit.py` sets it).
-    delegates: dict[str, tuple[str, ...]] | None = None
 
     @property
     def files(self) -> RsFiles:
@@ -95,23 +95,29 @@ class ChaperoneRsStack(Stack):
 
     def prepare(self) -> None:
         """Write every file, mint one token for each family, then check both files."""
-        build_bare_tree(self.tree)
-        install_effects(self.tree)
-        attendance = (
-            (self.tree.attendance_socket, self.delegates) if self.delegates is not None else None
-        )
-        write_rs_tree(
-            self.files,
-            effect_program(self.tree, UPSTREAM),
-            effect_program(self.tree, APPROVAL),
-            attendance,
-        )
+        self.prepare_install()
+        write_rs_policy(self.files)
 
         for family in RS_FAMILIES:
             self.tokens[family] = self._mint(family)
 
         for name in ("install.toml", "policy.toml"):
             self._run_ok("check", str(self.files.config_file(name)), *self._plugins())
+
+    def prepare_install(self, attendance: Path | None = None) -> None:
+        """Write the plugin tree, the secrets and `install.toml`. No policy file.
+
+        `attendance` is the Unix socket of `attendance`. With it, the tree
+        holds the plugin `attendance` (§12).
+        """
+        build_bare_tree(self.tree)
+        install_effects(self.tree)
+        write_rs_install(
+            self.files,
+            effect_program(self.tree, UPSTREAM),
+            effect_program(self.tree, APPROVAL),
+            attendance,
+        )
 
     def prepare_fleet(self, servers: tuple[str, ...], policy: str) -> None:
         """Write the files of a fleet check: one effect plugin per server, and `policy` as it is."""
@@ -157,7 +163,13 @@ class ChaperoneRsStack(Stack):
     @contextmanager
     def mcp(self, family: str) -> Generator[McpSession]:
         """An MCP session at the front door, with the bearer of one family."""
-        headers = {"Authorization": f"Bearer {self.tokens[family]}"}
+        with self.mcp_as(self.tokens[family]) as session:
+            yield session
+
+    @contextmanager
+    def mcp_as(self, token: str) -> Generator[McpSession]:
+        """An MCP session at the front door, with `token` as the bearer."""
+        headers = {"Authorization": f"Bearer {token}"}
         url = f"http://{LOOPBACK}:{self.port}{MCP_PATH}"
 
         with httpx.Client(headers=headers, timeout=CLIENT_TIMEOUT) as client:

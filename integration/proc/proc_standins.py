@@ -71,6 +71,7 @@ from urllib.parse import quote, unquote
 
 import standin_approval
 import standin_model
+import standin_sbx
 import standin_tei
 import standin_upstream
 from proc_harness import (
@@ -248,13 +249,26 @@ def install_sbx(tree: Tree, tmp: SandboxTmp = SandboxTmp.SHARED) -> None:
     _install_sbx(tree, [str(fake_sbx_script())], tmp)
 
 
-def install_sbx_verbs(tree: Tree) -> None:
+def install_sbx_verbs(tree: Tree, tmp: SandboxTmp = SandboxTmp.SHARED) -> None:
     """Put the `sbx` with each verb of `caregiver` in the root's `bin`.
 
-    `exec` starts a playpen only for a sandbox that `create` made.
+    `exec` starts a playpen only for a sandbox that `create` made. `tmp` is
+    as `install_sbx` takes it.
     """
     state_dir(tree, SBX).mkdir(parents=True, exist_ok=True)
-    _install_sbx(tree, [str(standin_script(SBX)), str(state_dir(tree, SBX))])
+    _install_sbx(tree, [str(standin_script(SBX)), str(state_dir(tree, SBX))], tmp)
+
+
+def set_sbx_view(tree: Tree, view: Mapping[str, str]) -> None:
+    """What each VM of the `sbx` with verbs sees of the host (`standin_sbx.py`, rule 5).
+
+    Each key is the start of a value in an env file: a URL on the LAN
+    address, or a host path. Its value is the place of the root that plays it.
+    """
+    path = state_dir(tree, SBX) / standin_sbx.VIEW_FILE
+    temp = path.with_name(f".{path.name}.tmp")
+    temp.write_text(json.dumps(dict(view)), encoding="utf-8")
+    temp.replace(path)
 
 
 def vm_tmp(tree: Tree, sandbox: str) -> Path:
@@ -359,17 +373,17 @@ def start_tei(tree: Tree, supervisor: Supervisor, env: Mapping[str, str]) -> tup
 
 
 def start_model(
-    tree: Tree, supervisor: Supervisor, env: Mapping[str, str], key: str
+    tree: Tree, supervisor: Supervisor, env: Mapping[str, str], *keys: str
 ) -> tuple[Child, int]:
     """Start the model stand-in with an empty script, and wait for it.
 
-    `key` is the one bearer that it takes. A test writes the turns with
-    `script_model`. A start that fails because another program took the
-    port first is tried again on another port.
+    `keys` are the bearers that it takes. `set_model_keys` changes them. A
+    test writes the turns with `script_model`. A start that fails because
+    another program took the port first is tried again on another port.
     """
     state = state_dir(tree, MODEL)
     state.mkdir(parents=True, exist_ok=True)
-    (state / standin_model.KEY_FILE).write_text(key + "\n", encoding="utf-8")
+    set_model_keys(tree, *keys)
     script_model(tree, [])
     program = [sys.executable, str(standin_script(MODEL)), str(state)]
 
@@ -388,6 +402,14 @@ def start_model(
         return child, port
 
     raise ProcError(f"the model stand-in found no free port in {_BIND_ATTEMPTS} attempts")
+
+
+def set_model_keys(tree: Tree, *keys: str) -> None:
+    """Write the bearers of the model stand-in, one on each line, by rename."""
+    path = state_dir(tree, MODEL) / standin_model.KEY_FILE
+    temp = path.with_name(f".{path.name}.tmp")
+    temp.write_text("".join(f"{key}\n" for key in keys), encoding="utf-8")
+    temp.replace(path)
 
 
 def script_model(tree: Tree, turns: list[dict[str, Any]]) -> None:
