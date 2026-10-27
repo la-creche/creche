@@ -40,8 +40,8 @@ The fleet layer also holds two parts that `fleet-up` does not make:
 - `/opt/creche` (the deploy), `/opt/components` (the releases) and
   `/opt/mcp`.
 - `/var/lib/creche-handover` and `/var/lib/chaperone`.
-- The system units: `creche-chaperone.service`, `creche-handover.path`,
-  `creche-handover.service` and `creche-handover-intake.service`.
+- The system units: `creche-chaperone.service`, `creche-handover.path`
+  and `creche-handover.service`.
 - The compose stack: LiteLLM, CouchDB and the other containers.
 - The state root `/srv/agents/state/rework` itself, and the sessions root
   `/srv/agents/sessions`.
