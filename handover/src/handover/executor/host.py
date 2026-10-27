@@ -359,7 +359,7 @@ def seal_argv(recipients: tuple[str, ...]) -> tuple[str, ...]:
     """`sops`, encrypt only, to a public recipient set.
 
     `sops` and not `age`, because the PEP decrypts these files with
-    `sops -d` already (`chaperone/src/chaperone/secrets.py`). One format and one
+    `sops -d` already. One format and one
     tool on both ends beats a second one that root alone understands.
 
     `--config /dev/null` is a control rather than tidiness

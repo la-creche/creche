@@ -96,13 +96,13 @@ gate
   && pass "no flag (pre-commit) runs no tests" \
   || fail "no flag: rc=$RC, pytest line '$PYTEST'"
 
-gate --tests-for chaperone/src/chaperone/app.py chaperone/README.md
-[[ "$RC" == "0" && "$PYTEST" == "$FULL chaperone/tests $VECTORS $ALWAYS" ]] \
+gate --tests-for attendance/src/attendance/app.py attendance/README.md
+[[ "$RC" == "0" && "$PYTEST" == "$FULL attendance/tests $VECTORS $ALWAYS" ]] \
   && pass "one product package runs its suite and the vectors, with the full run's flags" \
   || fail "one package: rc=$RC, pytest line '$PYTEST'"
-said "chaperone/tests, for chaperone/src/chaperone/app.py and 1 more" \
+said "attendance/tests, for attendance/src/attendance/app.py and 1 more" \
   && pass "the gate says which path picked the suite" \
-  || fail "no reason line for chaperone/tests: $(cat "$OUT")"
+  || fail "no reason line for attendance/tests: $(cat "$OUT")"
 said "$VECTORS, for a change in a product package" \
   && pass "the gate says why the vectors suite runs" \
   || fail "no reason line for $VECTORS: $(cat "$OUT")"
@@ -112,10 +112,10 @@ gate --tests-for caregiver/tests/caregiver_mws_registry/registry.yaml
   && pass "a test fixture directory counts as its package" \
   || fail "a fixture path: pytest line '$PYTEST'"
 
-gate --tests-for chaperone/pyproject.toml caregiver/AGENTS.md bin/lib/docsrule.sh
+gate --tests-for attendance/pyproject.toml caregiver/AGENTS.md bin/lib/docsrule.sh
 SCOPE="${PYTEST#"$FULL"}"
 [[ "$RC" == "0" && "$PYTEST" == "$FULL "* ]] \
-  && [[ "$(words "$SCOPE")" == "$(words "bin/tests caregiver/tests chaperone/tests $VECTORS")" ]] \
+  && [[ "$(words "$SCOPE")" == "$(words "bin/tests caregiver/tests attendance/tests $VECTORS")" ]] \
   && pass "three packages run three suites and the vectors, bin/tests already holding $ALWAYS" \
   || fail "three packages: rc=$RC, pytest line '$PYTEST'"
 
@@ -130,14 +130,14 @@ gate --tests-for vectors/data/index.json vectors/generate.py
   && pass "a path under vectors/ runs its suite one time" \
   || fail "vectors paths: rc=$RC, pytest line '$PYTEST'"
 
-gate --tests-for chaperone/src/chaperone/app.py vectors/data/index.json
-[[ "$RC" == "0" && "$PYTEST" == "$FULL chaperone/tests $VECTORS $ALWAYS" ]] \
+gate --tests-for attendance/src/attendance/app.py vectors/data/index.json
+[[ "$RC" == "0" && "$PYTEST" == "$FULL attendance/tests $VECTORS $ALWAYS" ]] \
   && pass "a product package and a moved vector run the vectors suite one time" \
   || fail "a package and a vector: rc=$RC, pytest line '$PYTEST'"
 
 for stray in uv.lock pyproject.toml docs/host-release.md .github/workflows/gate.yml \
-  githooks/pre-push playpen/Dockerfile README.md chaperone-old/src/x.py; do
-  gate --tests-for chaperone/src/chaperone/app.py "$stray"
+  githooks/pre-push playpen/Dockerfile README.md attendance-old/src/x.py; do
+  gate --tests-for attendance/src/attendance/app.py "$stray"
   [[ "$RC" == "0" && "$PYTEST" == "$FULL" ]] && said "full suite, for $stray" \
     && pass "$stray is in no package: full suite" \
     || fail "$stray: rc=$RC, pytest line '$PYTEST'"
@@ -170,8 +170,8 @@ gate --tests-for integration/proc/proc_tree.py integration/proc/AGENTS.md
   && pass "prose beside a process suite path is not a reason for the process suite" \
   || fail "a process suite path and prose: rc=$RC, pytest lines '$PYTEST', $(cat "$OUT")"
 
-gate --tests-for chaperone/src/chaperone/app.py integration/proc/AGENTS.md
-[[ "$RC" == "0" && "$PYTEST" == "$FULL chaperone/tests $VECTORS $ALWAYS" ]] && said "$NO_PROC" \
+gate --tests-for attendance/src/attendance/app.py integration/proc/AGENTS.md
+[[ "$RC" == "0" && "$PYTEST" == "$FULL attendance/tests $VECTORS $ALWAYS" ]] && said "$NO_PROC" \
   && pass "a package and prose under integration/proc/ run the suite of the package only" \
   || fail "a package and process suite prose: rc=$RC, pytest lines '$PYTEST', $(cat "$OUT")"
 
@@ -191,8 +191,8 @@ gate --tests-for '"integration/proc/a\tb.py"'
   && pass "a process suite path that git wrote in quotes picks the process suite" \
   || fail "a quoted process suite path: rc=$RC, pytest lines '$PYTEST'"
 
-gate --tests-for chaperone/src/chaperone/app.py integration/proc/proc_tree.py
-[[ "$RC" == "0" && "$PYTEST" == "$FULL chaperone/tests $VECTORS $ALWAYS"$'\n'"$PROC" ]] \
+gate --tests-for attendance/src/attendance/app.py integration/proc/proc_tree.py
+[[ "$RC" == "0" && "$PYTEST" == "$FULL attendance/tests $VECTORS $ALWAYS"$'\n'"$PROC" ]] \
   && pass "a package and the process suite run as two pytest processes" \
   || fail "a package and the process suite: rc=$RC, pytest lines '$PYTEST'"
 [[ "$NO_SKIP" == "unset 1" ]] \
@@ -219,8 +219,8 @@ PYTEST_RC=1 gate --tests-for integration/proc/proc_tree.py
   && pass "a failing process suite fails the gate (rc=$RC)" \
   || fail "a failing process suite: rc=$RC, $(cat "$OUT")"
 
-PYTEST_RC=1 gate --tests-for chaperone/src/chaperone/app.py integration/proc/proc_tree.py
-[[ "$RC" != "0" && "$PYTEST" == "$FULL chaperone/tests $VECTORS $ALWAYS" ]] \
+PYTEST_RC=1 gate --tests-for attendance/src/attendance/app.py integration/proc/proc_tree.py
+[[ "$RC" != "0" && "$PYTEST" == "$FULL attendance/tests $VECTORS $ALWAYS" ]] \
   && pass "a failing package suite stops the gate before the process suite" \
   || fail "a failing package suite: rc=$RC, pytest lines '$PYTEST'"
 
@@ -239,7 +239,7 @@ gate --docs
   && pass "--docs runs only the tests marked docs, with the full run's flags" \
   || fail "--docs: rc=$RC, pytest line '$PYTEST'"
 
-PYTEST_RC=1 gate --tests-for chaperone/src/chaperone/app.py
+PYTEST_RC=1 gate --tests-for attendance/src/attendance/app.py
 [[ "$RC" != "0" ]] && ! said "quality-gate: PASS" \
   && pass "a failing suite fails the gate (rc=$RC)" \
   || fail "a failing suite: rc=$RC, $(cat "$OUT")"
@@ -300,22 +300,22 @@ push() {
   fi
 }
 
-# main: BASE, then DOCS after the fork. topic: BASE, PEP, MGR.
+# main: BASE, then DOCS after the fork. topic: BASE, ATT, MGR.
 BASE="$(commit README.md)"
 git -C "$REPO" checkout -q -b topic
-PEP="$(commit chaperone/src/chaperone/app.py)"
+ATT="$(commit attendance/src/attendance/app.py)"
 MGR="$(commit caregiver/src/caregiver/loop.py)"
 git -C "$REPO" checkout -q main
 DOCS="$(commit docs/later.md)"
 git -C "$REPO" update-ref refs/remotes/origin/main "$DOCS"
 
-push "refs/heads/topic $MGR refs/heads/topic $PEP"
+push "refs/heads/topic $MGR refs/heads/topic $ATT"
 [[ "$RC" == "0" && "$ARGV" == "--tests-for caregiver/src/caregiver/loop.py" ]] \
   && pass "an updated branch tests remote sha..local sha" \
   || fail "updated branch: rc=$RC, gate got '$ARGV'"
 
 push "refs/heads/topic $MGR refs/heads/topic $ZERO"
-[[ "$ARGV" == "--tests-for caregiver/src/caregiver/loop.py chaperone/src/chaperone/app.py" ]] \
+[[ "$ARGV" == "--tests-for attendance/src/attendance/app.py caregiver/src/caregiver/loop.py" ]] \
   && pass "a new branch tests from its merge-base, not from origin/main's tip" \
   || fail "new branch: gate got '$ARGV'"
 
@@ -331,10 +331,10 @@ push "(delete) $ZERO refs/heads/topic $MGR"
   && pass "a deleted branch runs nothing" \
   || fail "delete: rc=$RC, gate got '$ARGV'"
 
-push "(delete) $ZERO refs/heads/old $PEP" \
+push "(delete) $ZERO refs/heads/old $ATT" \
   "refs/heads/a $MGR refs/heads/a $BASE" \
-  "refs/heads/b $MGR refs/heads/b $PEP"
-[[ "$ARGV" == "--tests-for caregiver/src/caregiver/loop.py chaperone/src/chaperone/app.py" ]] \
+  "refs/heads/b $MGR refs/heads/b $ATT"
+[[ "$ARGV" == "--tests-for attendance/src/attendance/app.py caregiver/src/caregiver/loop.py" ]] \
   && pass "several refs test the union of their paths, once each" \
   || fail "several refs: gate got '$ARGV'"
 
@@ -348,17 +348,17 @@ push "refs/heads/topic $MGR refs/heads/topic $UNFETCHED"
   && pass "a remote sha this clone never fetched runs the full suite" \
   || fail "unknown remote sha: gate got '$ARGV'"
 
-GATE_RC=1 push "refs/heads/topic $MGR refs/heads/topic $PEP"
+GATE_RC=1 push "refs/heads/topic $MGR refs/heads/topic $ATT"
 [[ "$RC" == "1" ]] \
   && pass "the gate's exit code is the push's" \
   || fail "a failing gate: the hook exited $RC"
 
 git -C "$REPO" checkout -q topic
-git -C "$REPO" mv chaperone/src/chaperone/app.py lib/app.py
-git -C "$REPO" -c user.email=t@t -c user.name=t commit -q -m "move app out of chaperone"
+git -C "$REPO" mv attendance/src/attendance/app.py lib/app.py
+git -C "$REPO" -c user.email=t@t -c user.name=t commit -q -m "move app out of attendance"
 MOVED="$(git -C "$REPO" rev-parse HEAD)"
 push "refs/heads/topic $MOVED refs/heads/topic $MGR"
-[[ "$ARGV" == "--tests-for chaperone/src/chaperone/app.py lib/app.py" ]] \
+[[ "$ARGV" == "--tests-for attendance/src/attendance/app.py lib/app.py" ]] \
   && pass "a rename counts its old path too, so the package it left is tested" \
   || fail "rename: gate got '$ARGV'"
 
@@ -371,7 +371,7 @@ versions() {
   printf '[project]\nname = "agent-control-workspace"\nversion = "%s"\n' "$1" \
     > "$REPO/pyproject.toml"
   printf '[[package]]\nname = "%s"\nversion = "%s"\n\n' \
-    agent-control-workspace "$1" chaperone "$2" > "$REPO/uv.lock"
+    agent-control-workspace "$1" attendance "$2" > "$REPO/uv.lock"
   git -C "$REPO" add -A
   git -C "$REPO" -c user.email=t@t -c user.name=t commit -q -m "versions $1 $2"
   git -C "$REPO" rev-parse HEAD
@@ -382,7 +382,7 @@ LOCKED="$(versions 0.1.0 0.1.0)"
 git -C "$REPO" update-ref refs/remotes/origin/main "$LOCKED"
 git -C "$REPO" checkout -q -b prose
 
-PROSE="$(commit docs/rework/runbook.md chaperone/AGENTS.md README.md)"
+PROSE="$(commit docs/rework/runbook.md attendance/AGENTS.md README.md)"
 push "refs/heads/prose $PROSE refs/heads/prose $ZERO"
 [[ "$RC" == "0" && "$ARGV" == "--docs" ]] && said "docs only" \
   && pass "a push of nothing but .md files runs only the tests marked docs" \
@@ -392,7 +392,7 @@ push "refs/heads/prose $PROSE refs/heads/prose $ZERO"
 # merge, so no line of pyproject.toml or uv.lock is prose.
 BUMPED="$(versions 0.1.1 0.1.0)"
 push "refs/heads/prose $BUMPED refs/heads/prose $ZERO"
-[[ "$ARGV" == "--tests-for README.md chaperone/AGENTS.md docs/rework/runbook.md pyproject.toml uv.lock" ]] \
+[[ "$ARGV" == "--tests-for README.md attendance/AGENTS.md docs/rework/runbook.md pyproject.toml uv.lock" ]] \
   && pass "a root version line that moves is code: the suites run" \
   || fail "docs and a root version line: gate got '$ARGV'"
 
@@ -411,7 +411,7 @@ push "refs/heads/prose $DEPENDS refs/heads/prose $MEMBER"
 # A fixture's .md is loaded by a test, and a non-.md file under docs/ can be
 # one too: docs/rework/nodered/fixtures/ is.
 PREVIOUS="$DEPENDS"
-for fixture in chaperone/tests/registry/instructions.md integration/fixtures/chat/SKILL.md \
+for fixture in attendance/tests/registry/instructions.md integration/fixtures/chat/SKILL.md \
   docs/rework/nodered/legs.json; do
   CHANGED="$(commit "$fixture")"
   push "refs/heads/prose $CHANGED refs/heads/prose $PREVIOUS"
@@ -422,8 +422,8 @@ for fixture in chaperone/tests/registry/instructions.md integration/fixtures/cha
 done
 
 push "refs/heads/prose $PROSE refs/heads/prose $ZERO" \
-  "refs/heads/topic $MGR refs/heads/topic $PEP"
-[[ "$ARGV" == "--tests-for README.md caregiver/src/caregiver/loop.py chaperone/AGENTS.md docs/rework/runbook.md" ]] \
+  "refs/heads/topic $MGR refs/heads/topic $ATT"
+[[ "$ARGV" == "--tests-for README.md attendance/AGENTS.md caregiver/src/caregiver/loop.py docs/rework/runbook.md" ]] \
   && pass "one ref that is not docs only makes the whole push scoped" \
   || fail "docs and code refs: gate got '$ARGV'"
 
@@ -432,7 +432,7 @@ push "refs/heads/prose $PROSE refs/heads/prose $ZERO" \
 git -C "$REPO" checkout -q -b catchup "$LOCKED"
 PUSHED="$(commit docs/rework/catchup.md)"
 git -C "$REPO" checkout -q main
-MOVED_ON="$(commit chaperone/src/chaperone/later.py)"
+MOVED_ON="$(commit attendance/src/attendance/later.py)"
 git -C "$REPO" update-ref refs/remotes/origin/main "$MOVED_ON"
 git -C "$REPO" checkout -q catchup
 git -C "$REPO" -c user.email=t@t -c user.name=t merge -q --no-edit main
@@ -451,7 +451,7 @@ push "refs/heads/catchup $OWN refs/heads/catchup $CAUGHT_UP"
 # A worktree cut before the docs rule has no rule to source.
 rm "$REPO/bin/lib/docsrule.sh"
 push "refs/heads/prose $PROSE refs/heads/prose $ZERO"
-[[ "$ARGV" == "--tests-for README.md chaperone/AGENTS.md docs/rework/runbook.md" ]] \
+[[ "$ARGV" == "--tests-for README.md attendance/AGENTS.md docs/rework/runbook.md" ]] \
   && pass "a tree with no docs rule runs the scoped suites" \
   || fail "no docs rule: gate got '$ARGV'"
 cp "$HERE/../lib/docsrule.sh" "$REPO/bin/lib/docsrule.sh"
@@ -463,7 +463,7 @@ cat > "$REPO/bin/quality-gate.sh" <<'FAKE'
 printf '%s\n' "$@" > "$GATE_ARGV"
 FAKE
 push "refs/heads/prose $PROSE refs/heads/prose $ZERO"
-[[ "$ARGV" == "--tests-for README.md chaperone/AGENTS.md docs/rework/runbook.md" ]] \
+[[ "$ARGV" == "--tests-for README.md attendance/AGENTS.md docs/rework/runbook.md" ]] \
   && pass "a gate that predates --docs runs the scoped suites" \
   || fail "a gate with no --docs: gate got '$ARGV'"
 
@@ -473,7 +473,7 @@ cat > "$REPO/bin/quality-gate.sh" <<'FAKE'
 #!/usr/bin/env bash
 printf '%s\n' "$@" > "$GATE_ARGV"
 FAKE
-push "refs/heads/topic $MGR refs/heads/topic $PEP"
+push "refs/heads/topic $MGR refs/heads/topic $ATT"
 [[ "$ARGV" == "--tests" ]] \
   && pass "a gate that predates the scoped mode runs the full suite" \
   || fail "old gate: got '$ARGV'"

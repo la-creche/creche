@@ -2,15 +2,14 @@
 
 `integration/tests_manager` runs the writers of `caregiver` inside the test
 process, with a fake driver and a fake LiteLLM. Here `caregiver` is a
-process. An assertion reads a file that another program reads, the record or
-the state of a stand-in, or an HTTP answer of the chaperone.
+process. An assertion reads a file that another program reads, or the record
+or the state of a stand-in.
 
 A scenario that `integration/tests_manager` also has keeps its name. Such a
 name can say `apply`: here `caregiver serve` does that work.
 
-Most scenarios run `caregiver` alone, where no `attendance` answers and each
-sandbox stays `creating`. A scenario that needs a turn or a replacement runs
-the house.
+Each scenario runs `caregiver` alone, where no `attendance` answers and each
+sandbox stays `creating`.
 """
 
 from __future__ import annotations
@@ -18,13 +17,11 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import signal
 import stat
 import time
 from pathlib import Path
 from typing import Any
 
-import httpx
 from proc_caregiver import (
     CANARIES,
     CREATING,
@@ -77,9 +74,6 @@ from proc_tree import (
     write_skill,
 )
 
-MANIFEST_PATH = "/manifest"
-CALL_PATH = "/call"
-
 OTHER = "ops"
 WAKER = "waker"
 GHOST = "ghost"
@@ -87,15 +81,6 @@ NEXT_SANDBOX = "chat-s2"
 SKILL = "kitchen"
 SKILL_TEXT = "# kitchen\n\nA fixture skill.\n"
 NEW_INSTRUCTIONS = "Answer only in metric units.\n"
-
-EMBED = "embed"
-HA_CALL = "ha_call"
-HA_ALLOW: list[dict[str, str]] = [{"domain": "notify", "service": "mobile_app_example_phone"}]
-VERBS: dict[str, dict[str, object]] = {EMBED: {}, HA_CALL: {"allow": HA_ALLOW}}
-
-#: Granted by no fixture family.
-UNGRANTED_VERB = "release"
-UNGRANTED_MCP_TOOL = "kagi__kagi_search_fetch"
 
 #: Two hosts for an egress list. `.example` names resolve nowhere.
 FIRST_HOST = "first.example:443"
@@ -142,17 +127,9 @@ SANDBOX_FIELDS = {
 }
 
 RFC3339 = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
-#: A watch that finds a silent chaperone in about one second.
-FAST_WATCH = ("--pep-probe-interval-s", "0.2", "--pep-unreachable-after-s", "1")
-
-PASS_DEADLINE_S = 30.0
-EXIT_DEADLINE_S = 30.0
 
 #: How long a scenario waits to see that nothing happens: five looks.
 QUIET_S = 1.0
-
-HTTP_OK = 200
-HTTP_FORBIDDEN = 403
 
 
 # ------------------------------------------------------- the status document
@@ -615,114 +592,12 @@ def test_a_timer_that_does_not_enable_is_a_fault(caregiver_prepared: CaregiverSt
     assert enabled_units(stack.tree) == []
 
 
-# ------------------------------------------------- the chaperone and the grants
+# ------------------------------------------------------------- the rotation
 
 
-async def test_the_manifest_tools_match_the_family_file(caregiver_prepared: CaregiverStack) -> None:
-    """Contract 04 §4, on the grant file and the token that `caregiver` wrote.
-
-    The token of the credential file names the family. The manifest holds the
-    two verbs of the family file, the model alias and the revision of the
-    grant file. No entry needs an approval.
-    """
-    stack = _with_chaperone(caregiver_prepared, family_body(verbs=VERBS))
-
-    async with stack.sandbox_client() as sandbox:
-        manifest = await sandbox.get(MANIFEST_PATH)
-
-    body = manifest.json()
-    assert manifest.status_code == HTTP_OK, manifest.text
-    assert (body["family"], body["model_alias"]) == (FAMILY, MODEL_ALIAS)
-    assert body["rev"] == stack.grants()["rev"]
-    assert [tool["name"] for tool in body["tools"]] == [EMBED, HA_CALL]
-    assert [tool["approval"] for tool in body["tools"]] == [False, False]
-
-
-async def test_another_token_resolves_to_nothing(caregiver_prepared: CaregiverStack) -> None:
-    """Contract 04 §5 row 1. Only the token that `caregiver` minted names the family."""
-    stack = _with_chaperone(caregiver_prepared, family_body(verbs=VERBS))
-
-    async with stack.sandbox_client() as sandbox:
-        stranger = await sandbox.get(
-            MANIFEST_PATH, headers={"Authorization": "Bearer not-the-family-token"}
-        )
-
-    assert stranger.status_code != HTTP_OK
-
-
-async def test_an_ungranted_verb_is_refused(caregiver_prepared: CaregiverStack) -> None:
-    """Contract 04 §5. A tool that the family file does not grant is refused and not offered."""
-    stack = _with_chaperone(caregiver_prepared, family_body(verbs=VERBS))
-
-    async with stack.sandbox_client() as sandbox:
-        verb = await _call(sandbox, UNGRANTED_VERB, {"components": {"caregiver": "latest"}})
-        tool = await _call(sandbox, UNGRANTED_MCP_TOOL, {"q": "boiler"})
-        manifest = await sandbox.get(MANIFEST_PATH)
-
-    for refused in (verb, tool):
-        assert refused.status_code == HTTP_FORBIDDEN
-        assert refused.json()["reason"] == "tool_not_granted"
-
-    names = [entry["name"] for entry in manifest.json()["tools"]]
-    assert UNGRANTED_VERB not in names
-    assert UNGRANTED_MCP_TOOL not in names
-
-
-async def test_the_token_survives_a_reapply(caregiver_prepared: CaregiverStack) -> None:
-    """Contract 05 §6.2: mint one time. A narrower grant is no rotation.
-
-    The sandbox keeps the token that it mounted, and the chaperone accepts
-    it after the edit.
-    """
-    stack = _with_chaperone(caregiver_prepared, family_body(verbs=VERBS))
-    before = stack.credentials()
-    first_rev = stack.grants()["rev"]
-
-    write_family_file(stack.tree, family_body(verbs={EMBED: {}}))
-    wait_until(lambda: stack.grants()["rev"] != first_rev, "a new grant file", PASS_DEADLINE_S)
-
-    async with stack.sandbox_client() as sandbox:
-        manifest = await sandbox.get(MANIFEST_PATH)
-
-    assert stack.credentials() == before
-    assert manifest.status_code == HTTP_OK
-    assert [tool["name"] for tool in manifest.json()["tools"]] == [EMBED]
-
-
-async def test_deleting_the_grant_file_revokes_the_family(
-    caregiver_prepared: CaregiverStack,
-) -> None:
-    """Contract 04 §1.3 rule 5. No grant file, no family, with no restart.
-
-    `caregiver` is the one writer of the grant file. The test stops it
-    first, so no pass writes the file again after the test removes it.
-    """
-    stack = _with_chaperone(caregiver_prepared, family_body(verbs=VERBS))
-    assert stack.chaperone is not None
-    assert stack.caregiver is not None
-
-    async with stack.sandbox_client() as sandbox:
-        before = await sandbox.get(MANIFEST_PATH)
-        stack.caregiver.send(signal.SIGTERM)
-        assert stack.caregiver.wait(EXIT_DEADLINE_S) == EXIT_OK
-        stack.tree.grant_file().unlink()
-        after = await sandbox.get(MANIFEST_PATH)
-
-    assert before.status_code == HTTP_OK
-    assert after.status_code != HTTP_OK
-    assert stack.chaperone.exit_code() is None
-
-
-async def test_a_rotation_keeps_the_old_token_for_the_overlap(
-    caregiver_prepared: CaregiverStack,
-) -> None:
-    """Contract 05 §6.3 and contract 04 §2.2. A graceful rotation ends no call.
-
-    The `rotate` verb writes a new key and a new token with the next epoch.
-    The grant file lists the digest of each token, so the chaperone accepts
-    the old token and the new one until the grace ends.
-    """
-    stack = _with_chaperone(caregiver_prepared, family_body(verbs=VERBS))
+def test_a_rotation_writes_a_new_token_and_a_new_key(caregiver_alone: CaregiverStack) -> None:
+    """Contract 05 §6.3. The `rotate` verb writes a new key and a new token with the next epoch."""
+    stack = caregiver_alone
     tree = stack.tree
     before = stack.credentials()
 
@@ -746,56 +621,11 @@ async def test_a_rotation_keeps_the_old_token_for_the_overlap(
     assert after["litellm_key"] in [entry["key"] for entry in litellm_keys(tree).values()]
     assert _mode(tree.creds_file()) == SECRET_MODE
 
-    async with stack.sandbox_client() as sandbox:
-        for token in (before["pep_token"], after["pep_token"]):
-            manifest = await sandbox.get(
-                MANIFEST_PATH, headers={"Authorization": f"Bearer {token}"}
-            )
-            assert manifest.status_code == HTTP_OK, manifest.text
-            assert manifest.json()["family"] == FAMILY
-
     for secret in (after["pep_token"], after["litellm_key"], MASTER_KEY):
         assert secret not in done.stdout + done.stderr
 
 
-def test_the_watch_reports_a_chaperone_that_stopped(caregiver_prepared: CaregiverStack) -> None:
-    """Contract 05 §2.2 and §3.3, `pep_unreachable`. One watch for every family.
-
-    The chaperone answers, and the document says `ok`. The chaperone stops,
-    and the document says `unreachable` with a fault that stops no turn.
-    """
-    stack = caregiver_prepared
-    stack.start_chaperone()
-    assert stack.chaperone is not None
-    stack.spawn_caregiver(*FAST_WATCH)
-    stack.await_published()
-    watched = _status(stack)["pep"]
-
-    assert (watched["watch"], watched["url"]) == ("ok", stack.pep_url())
-    assert RFC3339.fullmatch(watched["checked_at"])
-
-    stack.chaperone.send(signal.SIGTERM)
-    stack.chaperone.wait(EXIT_DEADLINE_S)
-    wait_until(lambda: stack.state() == DEGRADED, f"{FAMILY} to be {DEGRADED}", PASS_DEADLINE_S)
-    document = _status(stack)
-    fault = _one_fault(document, "pep_unreachable")
-
-    assert document["pep"]["watch"] == "unreachable"
-    assert RFC3339.fullmatch(document["pep"]["unreachable_since"])
-    assert fault["blocks_turns"] is False
-
-
 # -------------------------------------------------------------------- helpers
-
-
-def _with_chaperone(stack: CaregiverStack, body: dict[str, Any]) -> CaregiverStack:
-    """Start the chaperone, then `caregiver` on one family file. No `attendance` runs."""
-    write_family_file(stack.tree, body)
-    stack.start_chaperone()
-    stack.spawn_caregiver()
-    stack.await_published()
-
-    return stack
 
 
 def _autonomous(triggers: list[dict[str, str]]) -> dict[str, Any]:
@@ -831,11 +661,6 @@ def _systemctl(stack: CaregiverStack) -> list[tuple[str, ...]]:
     calls = [call.argv for call in calls_of(stack.tree, SYSTEMCTL)]
 
     return [argv for argv in calls if "is-enabled" not in argv]
-
-
-async def _call(sandbox: httpx.AsyncClient, tool: str, args: dict[str, object]) -> httpx.Response:
-    """One `/call`, as the bridge sends it (contract 04 §5)."""
-    return await sandbox.post(CALL_PATH, json={"tool": tool, "args": args})
 
 
 def _env_of(path: Path) -> dict[str, str]:

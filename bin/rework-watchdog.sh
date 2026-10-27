@@ -82,8 +82,7 @@
 # A notice file is the place where a service records each JSON text that it
 # refused. This script is the one sender of the notice, so no service holds
 # the bearer of the hook.
-#   - The notice files are /srv/agents/state/rework/notices/<service>.json
-#     and the file `_notices.json` in the fault directory of the chaperone.
+#   - The notice files are /srv/agents/state/rework/notices/<service>.json.
 #   - The script reads 65,536 bytes of a file at most. It takes the one line
 #     of the key `push` and holds that line to an exact pattern. A token of
 #     the line is `<surface>:<rule>:<seconds>`. The script evaluates no byte
@@ -217,8 +216,8 @@ creche-trigger-webhooks.service creche-noticeboard.service"
 # The firing units: each instance of this template unit runs one cron
 # trigger of one family and ends. The name of an instance is the name of a
 # family. FAMILY_NAME is the form of that name, and a test in
-# bin/tests/test_rework_watchdog.py holds it equal to the pattern of the
-# chaperone. FIRING_UNITS is what `list-units` gets. FIRING_UNIT_NAME is the
+# bin/tests/test_rework_watchdog.py holds it equal to the pattern of
+# agent_family. FIRING_UNITS is what `list-units` gets. FIRING_UNIT_NAME is the
 # exact form of a whole unit name, for `matches`: the two backslashes put
 # one backslash before the dot of the tail.
 FIRING_UNIT_HEAD='creche-trigger@'
@@ -283,13 +282,11 @@ NOTICE_GATE_ID=0000000000000001
 NOTICE_AGENT=rework-watchdog
 
 # The notice of a refused JSON text. A service has its notice file in
-# NOTICES_DIR, and the chaperone has one in its fault directory. A lock
+# NOTICES_DIR. A lock
 # file and a temporary file can be beside a notice file. Their names do not
 # end in `.json`.
 NOTICES_DIR="$STATE_ROOT/notices"
 NOTICE_SUFFIX=.json
-PEP_NOTICE_FILE="$STATE_ROOT/faults/pep/_notices.json"
-PEP_SERVICE=chaperone
 NOTICE_READ_CAP=65536
 
 # CONTRACT-QUESTION: no contract text gives the form of a notice file yet.
@@ -947,19 +944,16 @@ send_json_notices() {
     return 0
   fi
 
-  for path in "$NOTICES_DIR"/*"$NOTICE_SUFFIX" "$PEP_NOTICE_FILE"; do
+  for path in "$NOTICES_DIR"/*"$NOTICE_SUFFIX"; do
     # A regular file only. A link, a directory and a name with no match are
     # not read.
     [[ -f "$path" && ! -L "$path" ]] || continue
 
-    service="$PEP_SERVICE"
-    if [[ "$path" != "$PEP_NOTICE_FILE" ]]; then
-      service="${path##*/}"
-      service="${service%"$NOTICE_SUFFIX"}"
-      if ! matches "$SERVICE_NAME" "$service"; then
-        say "json notice: a file name under $NOTICES_DIR is no service name (not read)"
-        continue
-      fi
+    service="${path##*/}"
+    service="${service%"$NOTICE_SUFFIX"}"
+    if ! matches "$SERVICE_NAME" "$service"; then
+      say "json notice: a file name under $NOTICES_DIR is no service name (not read)"
+      continue
     fi
 
     notice_file "$service" "$path"

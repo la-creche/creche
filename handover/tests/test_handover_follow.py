@@ -623,14 +623,6 @@ def test_follow_imports_only_the_executors_pure_modules() -> None:
                 assert line.startswith(allowed), (module.name, line)
 
 
-def test_the_chaperone_never_imports_follow() -> None:
-    """The `release` verb files what its caller names. A chaperone that
-    could follow tags would file with no caller at all."""
-    chaperone = _PACKAGE.parents[2] / "chaperone" / "src"
-    for module in chaperone.rglob("*.py"):
-        assert "handover.follow" not in module.read_text(encoding="utf-8"), module.name
-
-
 # -- the units ----------------------------------------------------------------
 
 _SYSTEMD = _PACKAGE.parents[2] / "systemd"

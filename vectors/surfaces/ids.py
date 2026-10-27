@@ -12,7 +12,6 @@ the method the package's own code calls on it.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from re import Pattern
@@ -20,7 +19,6 @@ from typing import Final
 
 from agent_door_trigger import ulid as trigger_ulid
 from agent_family import grammar as family_grammar
-from chaperone.family_grants import parse_grants
 from handover.executor import host as executor_host
 from handover.executor import provenance, source
 from handover.executor import request as executor_request
@@ -29,11 +27,6 @@ from handover.intake import token as intake_token
 
 from attendance import ids as attendance_ids
 from caregiver import mcp_release
-from chaperone import family_ids as chaperone_ids
-from chaperone import gates as chaperone_gates
-from chaperone import headers as chaperone_headers
-from chaperone import run_as
-from chaperone import secrets as chaperone_secrets
 from handover import allocate, manifest, mcpserver, resolve, state
 from noticeboard import registrywrite
 from vectors.core import (
@@ -45,7 +38,6 @@ from vectors.core import (
     accepted,
     attempt,
     compact,
-    quiet_logs,
     raised,
     refused,
     text_input,
@@ -119,61 +111,6 @@ def _pattern_copy(owner: str, entry: str, pattern: Pattern[str]) -> Copy:
     """A public pattern the package calls `fullmatch` on."""
     return Copy(owner, f"{entry}.fullmatch", _fullmatch(pattern), (NOTE_PATTERN,))
 
-
-# --- chaperone: the grant file fields, through the public parser ---
-
-_GRANT_FAMILY: Final = "chat"
-_GRANT_DIGEST: Final = "0" * 64
-NOTE_GRANT: Final = (
-    "The entry point is the grant file parser. The input is one field of a grant file "
-    "that is valid in every other field."
-)
-
-
-def _grant_accepts(family: str, **fields: object) -> Outcome:
-    document: dict[str, object] = {
-        "version": 2,
-        "family": family,
-        "rev": "reg-000000",
-        "token_sha256": [_GRANT_DIGEST],
-        "model_alias": "fast",
-        **fields,
-    }
-    grants, _ = parse_grants(json.dumps(document).encode("utf-8"), family)
-
-    return grants is not None, None
-
-
-def _grant_copy(field: str, check: Check) -> Copy:
-    return Copy(
-        "chaperone_grants",
-        f"chaperone.family_grants.parse_grants, field {field}",
-        check,
-        (NOTE_GRANT,),
-    )
-
-
-# --- chaperone: the advisory headers ---
-
-
-def _claimed_session(text: str) -> Outcome:
-    with quiet_logs():
-        claimed = chaperone_headers.read_claimed({chaperone_headers.SESSION_ID_HEADER: text})
-
-    return claimed.session_id is not None, None
-
-
-def _claimed_turn(text: str) -> Outcome:
-    with quiet_logs():
-        claimed = chaperone_headers.read_claimed({chaperone_headers.TURN_ID_HEADER: text})
-
-    return claimed.turn_id is not None, None
-
-
-NOTE_CLAIMED: Final = (
-    "The entry point reads one advisory header. A refused value is dropped and reads as "
-    "absent. It denies no call."
-)
 
 # --- handover: a tag, through the function that reads the newest version ---
 
@@ -468,15 +405,6 @@ MCP_USER_CASES: Final = (
     ("crlf", "mcp-kagi\r\n"),
 )
 
-GATE_ID_CASES: Final = (
-    ("all-zero", "0" * 16),
-    ("upper", "0123456789ABCDEF"),
-    ("short-15-chars", "0123456789abcde"),
-    ("long-17-chars", "0123456789abcdef0"),
-    ("letter-g", "g123456789abcdef"),
-    ("crlf", "0123456789abcdef\r\n"),
-)
-
 ATTACHMENT_CASES: Final = (
     ("one-char", "a"),
     ("file-name", "report-2.final_v1.pdf"),
@@ -512,12 +440,6 @@ GRAMMARS: Final = (
                         "attendance.ids.is_family",
                         _predicate(attendance_ids.is_family),
                     ),
-                    Copy(
-                        "chaperone",
-                        "chaperone.family_ids.is_family_name",
-                        _predicate(chaperone_ids.is_family_name),
-                    ),
-                    _grant_copy("family", lambda text: _grant_accepts(text)),
                     _pattern_copy(
                         "family_file",
                         "agent_family.grammar.FAMILY_NAME",
@@ -557,10 +479,6 @@ GRAMMARS: Final = (
                         "caregiver",
                         "caregiver.mcp_release.SERVER_NAME_RE",
                         mcp_release.SERVER_NAME_RE,
-                    ),
-                    _grant_copy(
-                        "tools, a key",
-                        lambda text: _grant_accepts(_GRANT_FAMILY, tools={text: []}),
                     ),
                     _pattern_copy(
                         "handover_mcpserver",
@@ -620,7 +538,6 @@ GRAMMARS: Final = (
                 "mcp_user",
                 "contract 01b §9",
                 (
-                    _pattern_copy("chaperone", "chaperone.run_as.USER_RE", run_as.USER_RE),
                     _pattern_copy(
                         "handover_executor",
                         "handover.executor.host.MCP_USER_RE",
@@ -645,12 +562,6 @@ GRAMMARS: Final = (
                         "attendance.ids.is_session",
                         _predicate(attendance_ids.is_session),
                     ),
-                    Copy(
-                        "chaperone",
-                        "chaperone.headers.read_claimed, header x-session-id",
-                        _claimed_session,
-                        (NOTE_CLAIMED,),
-                    ),
                     _pattern_copy(
                         "handover_executor",
                         "handover.executor.request.SESSION_ID_RE",
@@ -672,12 +583,6 @@ GRAMMARS: Final = (
                 (
                     Copy(
                         "attendance", "attendance.ids.is_ulid", _predicate(attendance_ids.is_ulid)
-                    ),
-                    Copy(
-                        "chaperone",
-                        "chaperone.headers.read_claimed, header x-turn-id",
-                        _claimed_turn,
-                        (NOTE_CLAIMED,),
                     ),
                     Copy(
                         "door_trigger",
@@ -735,10 +640,6 @@ GRAMMARS: Final = (
                     _pattern_copy(
                         "family_file", "agent_family.grammar.TOOL_NAME", family_grammar.TOOL_NAME
                     ),
-                    _grant_copy(
-                        "tools, a list entry",
-                        lambda text: _grant_accepts(_GRANT_FAMILY, tools={"kagi": [text]}),
-                    ),
                     _pattern_copy(
                         "handover_mcpserver",
                         "handover.mcpserver.TOOL_NAME_RE",
@@ -786,11 +687,6 @@ GRAMMARS: Final = (
                         "caregiver",
                         "caregiver.mcp_release.SECRET_NAME_RE",
                         mcp_release.SECRET_NAME_RE,
-                    ),
-                    _pattern_copy(
-                        "chaperone",
-                        "chaperone.secrets.SECRET_NAME_RE",
-                        chaperone_secrets.SECRET_NAME_RE,
                     ),
                     _pattern_copy(
                         "handover_manifest", "handover.manifest.SECRET_RE", manifest.SECRET_RE
@@ -926,10 +822,6 @@ GRAMMARS: Final = (
                     _pattern_copy(
                         "family_file", "agent_family.grammar.SHA256_HEX", family_grammar.SHA256_HEX
                     ),
-                    _grant_copy(
-                        "token_sha256, a list entry",
-                        lambda text: _grant_accepts(_GRANT_FAMILY, token_sha256=[text]),
-                    ),
                     _pattern_copy(
                         "handover_mcpserver", "handover.mcpserver.SHA256_RE", mcpserver.SHA256_RE
                     ),
@@ -957,29 +849,6 @@ GRAMMARS: Final = (
                         "handover_source",
                         "handover.executor.source.OBJECT_ID_RE",
                         source.OBJECT_ID_RE,
-                    ),
-                ),
-            ),
-        ),
-    ),
-    Grammar(
-        "gate_id",
-        "0123456789abcde2",
-        "0",
-        GATE_ID_CASES,
-        (
-            Concept(
-                "gate_id",
-                "contract 04 §8.4",
-                (
-                    Copy(
-                        "chaperone",
-                        "chaperone.gates.GATE_ID_RE.match",
-                        _match(chaperone_gates.GATE_ID_RE),
-                        (
-                            "The entry point is a pattern. The package's own code calls "
-                            "`match` on it.",
-                        ),
                     ),
                 ),
             ),

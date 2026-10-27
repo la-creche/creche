@@ -1,31 +1,28 @@
-"""The configs: the site file, the roster, the mount files and three env readers.
+"""The configs: the site file, the mount files and two env readers.
 
 Each surface is one public entry point of a product package that reads or
 writes a config. A surface that needs a file gets one in a temporary
 directory, and no path of that directory goes into a vector.
 
-Three configs have no entry point that takes a map: `chaperone.__main__`,
-`caregiver.cli` and the two doors that read a key file while they parse. No
-surface covers them (`vectors/AGENTS.md`, "Known gaps").
+These configs have no entry point that takes a map: `caregiver.cli` and the
+two doors that read a key file while they parse. No surface covers them
+(`vectors/AGENTS.md`, "Known gaps").
 """
 
 from __future__ import annotations
 
 import os
 import tempfile
-from collections.abc import Callable, Generator, Mapping
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Final
 
-import yaml
 from handover.errors import Refusal
 
 from attendance import config as attendance_config
 from caregiver import config_mount, credentials, playpen_env
-from chaperone import mcp_client, reload_wiring
-from chaperone import site as chaperone_site
 from handover import site as handover_site
 from noticeboard import config as noticeboard_config
 from vectors.core import (
@@ -291,172 +288,6 @@ def _site_surface(scratch: Path) -> Surface:
             f"github_repo is the call github_repo('{CATALOG_REPO}').",
         ),
         vectors=tuple(_site_vector(document, scratch) for document in SITE_DOCUMENTS),
-    )
-
-
-# --- the roster -------------------------------------------------------------
-
-ROSTER_CONTRACT: Final = "stage7-releases.md §4.4"
-
-ROSTER_FILE_NAME: Final = "upstreams.yaml"
-
-_COMMAND: Final = "/opt/mcp/web-search/bin/web-search"
-
-
-def _row(**fields_: object) -> dict[str, object]:
-    return {"command": _COMMAND, **fields_}
-
-
-def _deny(**fields_: object) -> dict[str, object]:
-    return {"tools": ["search"], "arg": "site", "values": ["a"], **fields_}
-
-
-def _denies(*entries: object) -> dict[str, object]:
-    return {"a": _row(arg_denies=list(entries))}
-
-
-@dataclass(frozen=True)
-class Tree:
-    """One roster file, as the tree that a YAML reader builds from it."""
-
-    id: str
-    document: object
-
-
-TREES: Final[tuple[Tree, ...]] = (
-    # --- whole files ---
-    Tree("no-content", None),
-    Tree("empty-mapping", {}),
-    Tree("one-row", {"web-search": _row()}),
-    Tree(
-        "full-row",
-        {
-            "web-search": _row(
-                args=["--stdio", "--verbose"],
-                env={"SEARCH_API_KEY": "secret:search_api_key", "LOG_LEVEL": "info"},
-                tools=["search", "fetch"],
-                arg_denies=[
-                    _deny(tools=["search", "fetch"], values=["b", "a"]),
-                    _deny(arg="branch", values=["main"]),
-                ],
-            )
-        },
-    ),
-    Tree("three-rows", {"c": _row(), "a": _row(command="a"), "b": _row(args=["x"])}),
-    Tree("top-list", [_row()]),
-    Tree("top-text", "web-search"),
-    Tree("top-number", 7),
-    Tree("top-true", True),
-    # --- the name of a row ---
-    Tree("name-number", {1: _row()}),
-    Tree("name-true", {True: _row()}),
-    Tree("name-null", {None: _row()}),
-    Tree("name-empty", {"": _row()}),
-    Tree("name-not-a-server-name", {"Not A Server/Name": _row()}),
-    Tree("name-yes-text", {"yes": _row()}),
-    # --- the row ---
-    Tree("row-null", {"a": None}),
-    Tree("row-text", {"a": _COMMAND}),
-    Tree("row-list", {"a": [_COMMAND]}),
-    Tree("row-empty", {"a": {}}),
-    Tree("row-unknown-key", {"a": _row(user="root")}),
-    Tree("row-key-number", {"a": {"command": _COMMAND, 1: "x"}}),
-    # --- the command ---
-    Tree("command-missing", {"a": {"args": []}}),
-    Tree("command-null", {"a": _row(command=None)}),
-    Tree("command-number", {"a": _row(command=7)}),
-    Tree("command-true", {"a": _row(command=True)}),
-    Tree("command-list", {"a": _row(command=[_COMMAND])}),
-    Tree("command-empty", {"a": _row(command="")}),
-    Tree("command-relative", {"a": _row(command="web-search --stdio")}),
-    Tree("command-number-text", {"a": _row(command="123")}),
-    # --- the arguments ---
-    Tree("args-empty", {"a": _row(args=[])}),
-    Tree("args-null", {"a": _row(args=None)}),
-    Tree("args-text", {"a": _row(args="--stdio")}),
-    Tree("args-mapping", {"a": _row(args={"--stdio": ""})}),
-    Tree("args-number-item", {"a": _row(args=["--port", 8080])}),
-    Tree("args-null-item", {"a": _row(args=[None])}),
-    Tree("args-empty-item", {"a": _row(args=["", "a b", "--k=v"])}),
-    # --- the variables ---
-    Tree("env-empty", {"a": _row(env={})}),
-    Tree("env-null", {"a": _row(env=None)}),
-    Tree("env-list", {"a": _row(env=["A=1"])}),
-    Tree("env-number-value", {"a": _row(env={"PORT": 8080})}),
-    Tree("env-true-value", {"a": _row(env={"DEBUG": True})}),
-    Tree("env-null-value", {"a": _row(env={"A": None})}),
-    Tree("env-number-key", {"a": _row(env={1: "x"})}),
-    Tree("env-number-text", {"a": _row(env={"PORT": "8080", "DEBUG": "true"})}),
-    Tree("env-secret-forms", {"a": _row(env={"A": "secret:", "B": "secret:a:b", "C": "Secret:x"})}),
-    Tree("env-lax-names", {"a": _row(env={"lower case": "x", "": ""})}),
-    # --- the declared tools ---
-    Tree("tools-empty", {"a": _row(tools=[])}),
-    Tree("tools-null", {"a": _row(tools=None)}),
-    Tree("tools-text", {"a": _row(tools="search")}),
-    Tree("tools-number-item", {"a": _row(tools=[1])}),
-    Tree("tools-lax-names", {"a": _row(tools=["", "a tool", "search", "search"])}),
-    # --- the fences ---
-    Tree("denies-empty", _denies()),
-    Tree("denies-null", {"a": _row(arg_denies=None)}),
-    Tree("denies-mapping", {"a": _row(arg_denies=_deny())}),
-    Tree("denies-text-item", _denies("search")),
-    Tree("denies-list-item", _denies([["search"], "site", ["a"]])),
-    Tree("denies-one", _denies(_deny())),
-    Tree("denies-key-missing", _denies({"tools": ["search"], "arg": "site"})),
-    Tree("denies-key-more", _denies(_deny(reason="x"))),
-    Tree("denies-key-number", _denies({"tools": ["search"], "arg": "site", 1: ["a"]})),
-    Tree("denies-tools-empty", _denies(_deny(tools=[]))),
-    Tree("denies-tools-text", _denies(_deny(tools="search"))),
-    Tree("denies-tools-number-item", _denies(_deny(tools=[1]))),
-    Tree("denies-values-empty", _denies(_deny(values=[]))),
-    Tree("denies-values-number-item", _denies(_deny(values=[1]))),
-    Tree("denies-values-null", _denies(_deny(values=None))),
-    Tree("denies-arg-empty", _denies(_deny(arg=""))),
-    Tree("denies-arg-number", _denies(_deny(arg=7))),
-    Tree("denies-arg-null", _denies(_deny(arg=None))),
-    Tree("denies-repeated-members", _denies(_deny(tools=["b", "a", "b"], values=["x", "x"]))),
-    Tree("denies-second-bad", _denies(_deny(), _deny(tools=[]))),
-    Tree("second-row-bad", {"a": _row(), "b": _row(args="x")}),
-)
-
-
-def _roster_vector(tree: Tree, scratch: Path) -> Vector:
-    given: dict[str, Json] = {"args": {"document": normalize(tree.document)}}
-    text = yaml.safe_dump(tree.document)
-    if yaml.safe_load(text) != tree.document:
-        raise ValueError(f"{tree.id}: the YAML text does not read back as the tree")
-
-    target = scratch / tree.id / ROSTER_FILE_NAME
-    target.parent.mkdir(parents=True)
-    target.write_text(text, encoding="utf-8")
-    outcome = attempt(lambda: mcp_client.load_upstreams(target))
-    if not isinstance(outcome, Raised):
-        return accepted(tree.id, given, outcome)
-
-    if isinstance(outcome.exc, reload_wiring.UNREADABLE):
-        return refused(tree.id, given)
-
-    return raised(tree.id, given, outcome.exc)
-
-
-def _roster_surface(scratch: Path) -> Surface:
-    return Surface(
-        name="config.roster",
-        path="config/roster.json",
-        entry="chaperone.mcp_client.load_upstreams",
-        contract=ROSTER_CONTRACT,
-        notes=(
-            "The input is the tree of one roster file, as args.document. The generator writes "
-            "the tree as YAML with yaml.safe_dump and gives the entry point that file. No "
-            "vector holds YAML text.",
-            "A mapping with a key that is not a text is an $entries marker.",
-            "value maps the name of each upstream to its row. The tools and the values of a "
-            "fence are sets, so each one is a sorted array.",
-            "A refused vector is a file for which the entry point raises an exception that "
-            "chaperone.reload_wiring.UNREADABLE holds. A reload catches each one and keeps "
-            "the set that serves.",
-        ),
-        vectors=tuple(_roster_vector(tree, scratch) for tree in TREES),
     )
 
 
@@ -908,7 +739,7 @@ def _playpen_env_surfaces(scratch: Path) -> tuple[Surface, ...]:
     )
 
 
-# --- the environment of three services --------------------------------------
+# --- the environment of two services --------------------------------------
 
 LAN: Final = "192.0.2.10"
 
@@ -1158,118 +989,6 @@ def _noticeboard_vector(env: Environment) -> Vector:
     return raised(env.id, env.given(), outcome.exc)
 
 
-#: The four readers of `chaperone.site`, by the name a vector gives one.
-_CHAPERONE_READERS: Final[dict[str, Callable[[Mapping[str, str]], str]]] = {
-    "bind": chaperone_site.bind,
-    "lan_address": chaperone_site.lan_address,
-    "tei_url": chaperone_site.tei_url,
-    "ha_url": chaperone_site.ha_url,
-}
-
-
-@dataclass(frozen=True)
-class SiteCase:
-    """One environment of the chaperone, and the readers that it is an input of."""
-
-    env: Environment
-    readers: tuple[str, ...]
-
-
-def _pep(env_id: str, **variables: str) -> SiteCase:
-    """An environment that is an input of each reader."""
-    return SiteCase(Environment(env_id, variables), tuple(_CHAPERONE_READERS))
-
-
-def _pep_without(readers: tuple[str, ...], env_id: str, **variables: str) -> SiteCase:
-    """An environment that is no input of `readers`.
-
-    Each of those readers takes the environment, and its Rust type refuses it.
-    A plain test of the Rust config module holds that input (`rust/AGENTS.md`,
-    "When the two results differ").
-    """
-    unknown = set(readers) - _CHAPERONE_READERS.keys()
-    if unknown:
-        raise ValueError(f"{env_id}: no such reader: {sorted(unknown)}")
-
-    kept = tuple(name for name in _CHAPERONE_READERS if name not in readers)
-
-    return SiteCase(Environment(env_id, variables), kept)
-
-
-CHAPERONE_ENVS: Final[tuple[SiteCase, ...]] = (
-    _pep("site-only", AGENT_LAN_ADDRESS=LAN),
-    _pep("no-variable"),
-    _pep("lan-address-empty", AGENT_LAN_ADDRESS="  "),
-    _pep("lan-address-space", AGENT_LAN_ADDRESS=f" {LAN}\n"),
-    _pep("lan-address-host-name", AGENT_LAN_ADDRESS="host-1.example"),
-    _pep_without(
-        ("lan_address", "tei_url"), "lan-address-each-interface", AGENT_LAN_ADDRESS="0.0.0.0"
-    ),
-    _pep_without(("bind", "lan_address", "tei_url"), "lan-address-ipv6", AGENT_LAN_ADDRESS="::1"),
-    _pep_without(
-        ("bind", "lan_address", "tei_url"), "lan-address-not-a-host", AGENT_LAN_ADDRESS="not a host"
-    ),
-    _pep("bind-wins", AGENT_LAN_ADDRESS=LAN, PEP_BIND="127.0.0.1:18300"),
-    _pep("bind-and-no-site", PEP_BIND="127.0.0.1:18300"),
-    _pep("bind-empty", AGENT_LAN_ADDRESS=LAN, PEP_BIND=" "),
-    _pep("bind-space", PEP_BIND=" 127.0.0.1:18300\n"),
-    _pep("bind-ipv6-brackets", PEP_BIND="[::1]:18300"),
-    _pep("bind-ipv6-no-brackets", PEP_BIND="::1:18300"),
-    _pep("bind-host-name", PEP_BIND="localhost:18300"),
-    _pep("bind-each-interface", PEP_BIND="0.0.0.0:8300"),
-    _pep("bind-each-interface-one-number", PEP_BIND="0:8300"),
-    _pep("bind-each-interface-hexadecimal", PEP_BIND="0x0.0:8300"),
-    _pep("bind-each-interface-full-width", PEP_BIND="\uff10.\uff10.\uff10.\uff10:8300"),
-    _pep("bind-each-interface-then-space", PEP_BIND="0.0.0.0 x:8300"),
-    _pep("bind-each-interface-ipv6", PEP_BIND=":::8300"),
-    _pep("bind-each-interface-ipv6-brackets", PEP_BIND="[::]:8300"),
-    _pep("bind-each-interface-ipv4-in-ipv6", PEP_BIND="::ffff:0.0.0.0:8300"),
-    _pep("bind-each-interface-star", PEP_BIND="*:8300"),
-    _pep("bind-each-interface-past-32-bits", PEP_BIND="4294967296:8300"),
-    _pep("bind-each-interface-empty-zone", PEP_BIND="::%:8300"),
-    _pep("bind-each-interface-ipv4-end-zeros", PEP_BIND="::ffff:00.0.0.0:8300"),
-    _pep("bind-each-interface-long-group", PEP_BIND="00000:::8300"),
-    _pep("bind-no-port", PEP_BIND="127.0.0.1"),
-    _pep("bind-no-host", PEP_BIND=":8300"),
-    _pep("bind-host-empty-label", PEP_BIND="a..b:8300"),
-    _pep("bind-host-label-of-64", PEP_BIND=f"{'x' * 64}.example:8300"),
-    _pep("bind-port-word", PEP_BIND="127.0.0.1:http"),
-    _pep_without(("bind",), "bind-port-zero", PEP_BIND="127.0.0.1:0"),
-    _pep("bind-port-empty", PEP_BIND="127.0.0.1:"),
-    _pep("bind-port-minus", PEP_BIND="127.0.0.1:-1"),
-    _pep("bind-port-65535", PEP_BIND="127.0.0.1:65535"),
-    _pep("bind-port-65536", PEP_BIND="127.0.0.1:65536"),
-    _pep(
-        "home-assistant-of-the-site", AGENT_LAN_ADDRESS=LAN, AGENT_HA_URL="http://192.0.2.20:8123"
-    ),
-    _pep(
-        "home-assistant-of-the-service-wins",
-        AGENT_HA_URL="http://192.0.2.20:8123",
-        HA_URL="http://192.0.2.21:8123",
-    ),
-    _pep(
-        "home-assistant-empty-falls-to-the-site", AGENT_HA_URL="http://192.0.2.20:8123", HA_URL=" "
-    ),
-    _pep("home-assistant-final-slash", HA_URL="http://192.0.2.21:8123/"),
-    _pep("home-assistant-space", HA_URL=" https://ha.example\n"),
-    _pep_without(("ha_url",), "home-assistant-no-scheme", HA_URL="192.0.2.21:8123"),
-)
-
-
-def _chaperone_vector(env: Environment, function: str) -> Vector:
-    vector_id = f"{env.id}.{function}"
-    params = {"function": function}
-    reader = _CHAPERONE_READERS[function]
-    outcome = attempt(lambda: reader(dict(env.variables)))
-    if not isinstance(outcome, Raised):
-        return accepted(vector_id, env.given(), {"text": outcome}, params=params)
-
-    if isinstance(outcome.exc, chaperone_site.ConfigError):
-        return refused(vector_id, env.given(), _named(outcome.exc), params=params)
-
-    return raised(vector_id, env.given(), outcome.exc, params=params)
-
-
 _NOTE_ENV: Final = "The input is the variables of the process, as args."
 _NOTE_VARIABLE: Final = (
     "A refused vector is an environment for which the entry point raises its ConfigError. "
@@ -1308,27 +1027,6 @@ def _env_surfaces() -> tuple[Surface, ...]:
                 ),
                 vectors=tuple(_noticeboard_vector(env) for env in NOTICEBOARD_ENVS),
             ),
-            Surface(
-                name="config.chaperone.site",
-                path="config/chaperone.site.json",
-                entry="chaperone.site.<params.function>",
-                contract="contract 02 §3 rule 2, contract 04 §4.1",
-                notes=(
-                    _NOTE_ENV,
-                    "params.function names the reader: bind, lan_address, tei_url or ha_url. "
-                    "An environment has one vector for each reader that it is an input of. "
-                    "Some environments are no input of one reader or more. The id of a vector "
-                    "is the id of the environment, a dot and the name of the reader.",
-                    "value.text is the text that the reader returns. tei_url and ha_url "
-                    "return the empty text for a site with no such service.",
-                    _NOTE_VARIABLE,
-                ),
-                vectors=tuple(
-                    _chaperone_vector(case.env, function)
-                    for case in CHAPERONE_ENVS
-                    for function in case.readers
-                ),
-            ),
         )
 
 
@@ -1340,7 +1038,6 @@ def surfaces() -> tuple[Surface, ...]:
 
         return (
             _site_surface(scratch / "site"),
-            _roster_surface(scratch / "roster"),
             _runtime_surface(scratch / "runtime"),
             *_creds_surfaces(scratch / "creds"),
             *_playpen_env_surfaces(scratch / "playpen-env"),

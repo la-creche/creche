@@ -6,7 +6,6 @@ from this directory at run time. The root `AGENTS.md` applies here too.
 
 | Unit | Scope | Installed by |
 |---|---|---|
-| `creche-chaperone.service` | system, `User=chaperone` | the root bootstrap script, in the private repository |
 | `creche-handover.{service,path}`, `creche-handover-intake.service` | system, root | by hand only, never by a release |
 | `creche-attendance.service`, `creche-caregiver.service`, `creche-trigger-webhooks.service`, `creche-noticeboard.service` | user | the cutover script, in the private repository |
 | `creche-door-acp.service` | user | no script yet. The door ships in `attendance` |
@@ -47,14 +46,9 @@ installed unit file in place and never runs an installer.
   and points at `creche-trigger@.service` with `Unit=`.
 - **Mount-namespace hardening needs a system unit.** On a host with
   `apparmor_restrict_unprivileged_userns=1`, a user unit cannot use
-  `ProtectSystem`, `ProtectHome`, `PrivateTmp` or `ProtectProc`. The
-  chaperone's unit carries them in full. Its `ReadWritePaths` list is the
-  complete set of directories it may write. Its only capabilities are
-  `CAP_SETUID` and `CAP_SETGID`, for `chaperone-as`. `InaccessiblePaths=`
-  hides the vault, the registry and the work roots, with a `-` prefix.
-- **The chaperone's `HOME` is a subdirectory of its state directory, never
-  the parent.** Owning the parent would let a compromised child rename a
-  root-owned tree out from under a deploy.
+  `ProtectSystem`, `ProtectHome`, `PrivateTmp` or `ProtectProc`. The unit
+  of the chaperone is a system unit for this reason. That unit is in the
+  chaperone repository, not here.
 - **A user unit still gets the hardening that needs no namespace:**
   `NoNewPrivileges`, `UMask`, `SystemCallArchitectures`, `RestrictRealtime`,
   `LockPersonality`. `SystemCallFilter` and `MemoryDenyWriteExecute` are not

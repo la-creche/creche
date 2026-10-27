@@ -16,8 +16,7 @@ The release tool. Six jobs, and two of them touch nothing. The root
    restarts anything.
 4. **The requester** (`requester/`). It mints a ULID, builds the request's
    seven fields, validates them with the executor's own parser, and writes one
-   file into `requests/`. The operator reaches it as `handover request`. The
-   chaperone's `release` verb calls the same function.
+   file into `requests/`. The operator reaches it as `handover request`.
 5. **The secret intake** (`intake/`). It drains the gap directory, pushes
    the operator one link per missing secret, and seals what the operator
    pastes to a public recipient set. Root writes a secret it cannot read.
@@ -47,15 +46,13 @@ request is filed. `corpus/artifacts.py` runs `curl` as the operator. It
 fetches the two assets of the Release of a binary component into the store
 below the home of the operator. One fetch at a time writes in the directory
 of a tag: the fetch holds a lock on that directory. The package refuses to
-run as root. Nothing in it raises. `chaperone/` never imports it, and neither
-does `requester/`.
+run as root. Nothing in it raises. `requester/` never imports it.
 
 `follow/` reads one ledger entry and the marker file, and it writes the
 marker file. The marker also holds the wait of each binary member. When the
 ledger entry or the marker is not strict JSON, the follower also writes one
 row in its notice file. It starts no child and opens no socket. The fetch
 is `corpus/`'s and the request is `requester/`'s. `cli.py` calls all three.
-`chaperone/` never imports it.
 
 `bin/allocate-tags.sh` runs in GitHub Actions. It never runs on a host. Its
 arithmetic lives in `allocate.py`, which is pure.
@@ -360,8 +357,8 @@ has the name of the markup of the manifest: `.component.toml` or
 
 The catalog row of `chaperone` is `CatalogRow("chaperone", Repo.CHAPERONE,
 ".", Kind.BINARY, Releases.YES)`. It replaced the row of the Python
-`chaperone` of this repository. `main` does not release the Python
-`chaperone`. The `live-stack` branch keeps the old catalog.
+`chaperone`. This repository no longer holds the Python `chaperone`. The
+`live-stack` branch keeps the old catalog.
 
 1. The manifest is `component.toml` at the root of the chaperone
    repository. This repository holds no manifest of `chaperone`. Root reads
@@ -567,8 +564,7 @@ that wants a refusal changes one field.
   (`contracts.py`).
 - The manifest of the Rust `chaperone` names `creche-chaperone.service`.
   The clone of the chaperone repository holds no unit file, so step 9
-  keeps the installed unit. The unit of this repository starts the Python
-  program with no subcommand (`systemd/creche-chaperone.service`).
+  keeps the installed unit.
 - PyYAML reads a digit that is not ASCII in a number with the tag `!!int`.
   A whole number of a manifest can thus hold one. Contract 06 §8 names no
   YAML form for a number (`manifest.py`).

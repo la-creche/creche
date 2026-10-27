@@ -57,15 +57,15 @@ FIXTURE = {
     "ui/node_modules/react/index.js": "js",
     "shim/src/agent_shim.egg-info/PKG-INFO": "egg",
     # Live: tracked source beside leftovers of its own.
-    "chaperone/src/chaperone/host.py": "py",
-    "chaperone/src/chaperone/__pycache__/host.pyc": "pyc",
+    "library/src/library/host.py": "py",
+    "library/src/library/__pycache__/host.pyc": "pyc",
     # The venv the units run from.
-    f"{VENV}/bin/chaperone": "#!/bin/sh\n",
-    f"{VENV}/lib/python3.12/site-packages/chaperone/__init__.py": "",
+    f"{VENV}/bin/index-scope": "#!/bin/sh\n",
+    f"{VENV}/lib/python3.12/site-packages/library/__init__.py": "",
     # Untracked and NOT ignored: `-X` must leave it, `-x` would not.
     "left-by-hand.txt": "a decrypted secret, or a copy of a unit",
 }
-TRACKED = (".gitignore", "pyproject.toml", "chaperone/src/chaperone/host.py")
+TRACKED = (".gitignore", "pyproject.toml", "library/src/library/host.py")
 
 #: What the leftovers' own directories are called, once the files under them
 #: are gone: `git clean -d` removes the directory too.
@@ -135,13 +135,13 @@ def test_the_clean_removes_a_deleted_directorys_leftovers(deployed: Path) -> Non
 
 
 def test_the_clean_keeps_the_venv_every_unit_runs_from(deployed: Path) -> None:
-    """`/opt/creche/.venv` is what `creche-chaperone.service` execs from and
-    what `uv sync` fills two steps later in the same script."""
+    """`/opt/creche/.venv` is what the operator runs from and what `uv sync`
+    fills two steps later in the same script."""
     done = _git(deployed, *_clean_argv()[1:])
 
     assert done.returncode == 0, done.stdout + done.stderr
-    assert (deployed / VENV / "bin" / "chaperone").is_file()
-    assert (deployed / VENV / "lib/python3.12/site-packages/chaperone/__init__.py").is_file()
+    assert (deployed / VENV / "bin" / "index-scope").is_file()
+    assert (deployed / VENV / "lib/python3.12/site-packages/library/__init__.py").is_file()
 
 
 def test_the_clean_keeps_what_git_does_not_ignore(deployed: Path) -> None:
@@ -154,12 +154,12 @@ def test_the_clean_keeps_what_git_does_not_ignore(deployed: Path) -> None:
 
 
 def test_a_live_directory_keeps_its_tracked_files(deployed: Path) -> None:
-    """`chaperone/` is not deleted: it loses its `__pycache__` and keeps its
+    """`library/` is not deleted: it loses its `__pycache__` and keeps its
     source. The next two steps of the deploy write that cache again."""
     assert _git(deployed, *_clean_argv()[1:]).returncode == 0
 
-    assert (deployed / "chaperone/src/chaperone/host.py").is_file()
-    assert not (deployed / "chaperone/src/chaperone/__pycache__").exists()
+    assert (deployed / "library/src/library/host.py").is_file()
+    assert not (deployed / "library/src/library/__pycache__").exists()
 
 
 def test_an_exclude_pattern_would_not_have_kept_the_venv(deployed: Path) -> None:
@@ -185,7 +185,7 @@ def test_the_keep_is_anchored_to_the_top_of_the_tree(deployed: Path) -> None:
     assert _git(deployed, *_clean_argv()[1:]).returncode == 0
 
     assert not (deployed / "toybox").exists()
-    assert (deployed / VENV / "bin" / "chaperone").is_file()
+    assert (deployed / VENV / "bin" / "index-scope").is_file()
 
 
 def test_the_deploy_never_cleans_everything_untracked() -> None:

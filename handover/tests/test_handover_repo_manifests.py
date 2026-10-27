@@ -121,7 +121,7 @@ def test_the_handover_hook_passes_from_the_executors_directory(
     for `tmp_path`, an empty tree like the one it names."""
     manifest = found.manifests()["handover"]
     args = [str(tmp_path) if one == manifest.install.to else one for one in manifest.verify.command]
-    monkeypatch.chdir(REPO_ROOT / "chaperone")
+    monkeypatch.chdir(REPO_ROOT / "attendance")
 
     assert cli_main(args[1:]) == EXIT_OK
 

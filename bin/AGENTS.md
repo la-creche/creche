@@ -76,7 +76,7 @@ through a file or a health endpoint, and give a short in-VM command a
 
 | Script | Runs as | What it does |
 |---|---|---|
-| `creche-deploy` | ROOT, the single sudoers entry | Puts this repository at `/opt/creche` and the site at `/opt/private-docs`, fills the venv, restarts one unit: the chaperone. Then polls `is-active` and `NRestarts` for about 20 s. Origin is the operator's checkout, so root needs no GitHub credential. It installs no MCP server. |
+| `creche-deploy` | ROOT, the single sudoers entry | Puts this repository at `/opt/creche` and the site at `/opt/private-docs`, fills the venv. It restarts no unit. Origin is the operator's checkout, so root needs no GitHub credential. It installs no MCP server. |
 | `creche-handover` | ROOT, from `creche-handover.path` | Decrypts the site's sops file and execs `handover-exec` under it. Installed to `/usr/local/sbin` by hand, never by a release. Refuses a path another account can write. |
 | `creche-handover-intake` | ROOT, from `creche-handover-intake.service` | The same, for the secret intake. |
 | `rework-watchdog.sh` | OPERATOR, every minute | The outage alarm. Checks the chaperone's `/healthz`, `caregiver`'s freshness, `attendance`'s socket and `is-failed` for the units. Pushes once per change of verdict. `--last` prints the verdict. Shares no fate with what it watches. The unit check also reads each firing unit. After the checks, the script sends one notice for each service, surface and rule that a notice file records. "The watchdog" has the two rules. |
@@ -100,7 +100,7 @@ rules apply to these two parts.
 **Rule 1: a notice file is untrusted input, and only the watchdog sends its
 notice.** A notice file is the place where a service records each JSON text
 that it refused. The files are `notices/<service>.json` under the state
-root, and `_notices.json` in the fault directory of the chaperone.
+root.
 
 - The script reads only a regular file whose name ends in `.json`. A lock
   file and a temporary file can be beside a notice file. Their names have

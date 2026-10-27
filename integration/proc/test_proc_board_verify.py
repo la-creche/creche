@@ -11,10 +11,8 @@ hook finds the noticeboard. The suite writes the file from the variables of
 `proc_board.board_env`. The variable of the site file is not in it, because
 the hook does not read the site file.
 
-The host has the audit directory before a service starts
-(`systemd/creche-chaperone.service`), and the hook looks for it. No fixture
-of this topology makes the directory, so each fixture here writes one audit
-record first.
+The hook looks for the audit file of the chaperone. No fixture of this
+topology makes the file, so each fixture here writes one audit record first.
 
 CONTRACT-QUESTION: §4 rule 3 gives the exit code: 0 is a pass, and each
 other code is a failure. No contract gives what a hook prints. Reading

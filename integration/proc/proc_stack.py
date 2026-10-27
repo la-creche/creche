@@ -8,9 +8,9 @@
       v
     the command of the sandbox
 
-A topology adds the service in front: the trigger door in `proc_trigger.py`,
-the chaperone in `proc_delegate.py`. A test reaches each service through a socket and
-through the files under the root. It holds no object of a service.
+A topology adds the service in front: the trigger door in `proc_trigger.py`.
+A test reaches each service through a socket and through the files under the
+root. It holds no object of a service.
 """
 
 from __future__ import annotations

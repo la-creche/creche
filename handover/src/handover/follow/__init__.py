@@ -46,7 +46,7 @@ This package reads one ledger entry and writes one marker. When the ledger
 entry or the marker is not strict JSON (`strictjson.py`), the follower also
 writes one row in its notice file (`notices.py`). It starts no child and
 opens no socket: the fetch is `corpus/`'s and the request is `requester/`'s,
-and `cli.py` calls all three. `chaperone/` never imports it.
+and `cli.py` calls all three. The PEP never imports it.
 
 Stdlib only, like the requester: a release re-syncs this venv under a run.
 """

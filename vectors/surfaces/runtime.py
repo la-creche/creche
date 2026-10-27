@@ -50,9 +50,6 @@ from attendance.auth import Principal, TokenBook, TokenError
 from attendance.paths import token_file
 from attendance.service import SessionService
 from caregiver.switch import SwitchError, read_token
-from chaperone.app import PepConfig
-from chaperone.app import create_app as create_chaperone_app
-from chaperone.delegate import DoorTokenError, read_door_token
 from fastapi import FastAPI
 from noticeboard.app import build_app as build_noticeboard_app
 from noticeboard.config import Config as NoticeboardConfig
@@ -1227,26 +1224,6 @@ TOKEN_READERS: Final[tuple[TokenReader, ...]] = (
         ),
     ),
     TokenReader(
-        name="delegate",
-        entry="chaperone.delegate.read_door_token",
-        contract="contract 04 §7.3, contract 02 §3 rule 7",
-        prepare=_one_file(read_door_token),
-        returns=Returns.TOKEN,
-        files=(*TEXT_FILES, *OTHER_FILES),
-        refusal=DoorTokenError,
-        kinds=(
-            ("cannot read", "unreadable"),
-            ("is not UTF-8 text", "not_utf8"),
-            ("holds fewer than", "short"),
-        ),
-        notes=(
-            _NOTE_TEXT,
-            "refusal is the kind of the refusal: unreadable, not_utf8 or short. The reader "
-            "counts the UTF-8 bytes of the text. An empty file is short. The reader checks "
-            "no mode.",
-        ),
-    ),
-    TokenReader(
         name="webhook",
         entry="agent_door_trigger.tokens.read_webhook_token",
         contract="contract 05 §6.4",
@@ -1372,11 +1349,8 @@ _B: Final = _SCHEME + _T
 CLIENT: Final = ("192.0.2.10", 50000)
 SERVER: Final = ("testserver", 80)
 
-JSON_TYPE: Final = (b"content-type", b"application/json")
-
 HTTP_OK: Final = 200
 HTTP_UNAUTHORIZED: Final = 401
-HTTP_FORBIDDEN: Final = 403
 HTTP_NOT_FOUND: Final = 404
 HTTP_NOT_IMPLEMENTED: Final = 501
 
@@ -1523,13 +1497,6 @@ def _send(app: ASGIApp, ask: Ask, header: bytes | None) -> Reply | Raised:
     return asyncio.run(_asgi(app, ask))
 
 
-def _reason(reply: Reply) -> object:
-    """The `reason` of an answer of the chaperone, or None."""
-    body: object = json.loads(reply.body)
-
-    return cast("dict[str, object]", body).get("reason") if isinstance(body, dict) else None
-
-
 @dataclass(frozen=True)
 class Verdict:
     """Whether a service took the bearer of a request, and what it read from it."""
@@ -1658,37 +1625,6 @@ class _TriggerGate:
         raise ValueError(f"the trigger listener answers {reply.status}")
 
 
-#: A gate id of the form that the chaperone takes. No gate has this id.
-GATE: Final = "0123456789abcdef"
-
-
-class _ChaperoneGate:
-    """The chaperone with no phone rail. The token is the one of the approval callback."""
-
-    ASK: Final = Ask("POST", f"/approval/{GATE}", (JSON_TYPE,), b'{"decision":"approve"}')
-
-    def __init__(self, scratch: Path, token: str) -> None:
-        config = PepConfig(
-            audit_dir=scratch / "unidentified",
-            rework_dir=scratch / "rework",
-            approval_callback_token=token,
-        )
-        self._app = create_chaperone_app(config)
-
-    def ask(self, header: bytes | None) -> Reply | Raised:
-        return _send(self._app, self.ASK, header)
-
-    def verdict(self, reply: Reply) -> Verdict:
-        reason = _reason(reply)
-        if reply.status == HTTP_FORBIDDEN and reason == "unknown_token":
-            return Verdict(took=False)
-
-        if reply.status == HTTP_NOT_IMPLEMENTED and reason == "not_implemented":
-            return Verdict(took=True)
-
-        raise ValueError(f"the chaperone answers {reply.status}")
-
-
 @dataclass(frozen=True)
 class Copy:
     """One copy of the bearer reader, in its service."""
@@ -1740,23 +1676,6 @@ COPIES: Final[tuple[Copy, ...]] = (
             "accepted vector is a request that the listener starts a job for. A refused "
             "vector gets HTTP 404, the answer for a webhook that the listener does not know.",
             _NOTE_STRIP,
-        ),
-    ),
-    Copy(
-        name="chaperone",
-        entry=f"chaperone.app.create_app, the route POST /approval/{GATE}",
-        contract="contract 04 §8.4",
-        ask=_ChaperoneGate.ASK,
-        build=_ChaperoneGate,
-        notes=(
-            "context.token is the token of the approval callback. The request has the body "
-            '{"decision":"approve"}. A refused vector gets HTTP 403 with the reason '
-            "unknown_token. An accepted vector gets another answer: the chaperone of the "
-            "generator has no phone rail, so it answers HTTP 501.",
-            f"{_NOTE_LATIN} The copy splits the text at the first space. It takes the "
-            "scheme bearer in each case of letters. Then it removes the whitespace of Python "
-            "str.strip from the two ends of the rest, encodes the rest as UTF-8 and compares "
-            "the bytes with the token.",
         ),
     ),
 )
@@ -1879,12 +1798,6 @@ def _trigger_app(scratch: Path) -> FastAPI:
     return create_trigger_app(config, _CountingAttendance(), _OneRoute(TOKEN))
 
 
-def _chaperone_app(scratch: Path) -> FastAPI:
-    return create_chaperone_app(
-        PepConfig(audit_dir=scratch / "unidentified", rework_dir=scratch / "rework")
-    )
-
-
 def _noticeboard_app(scratch: Path) -> FastAPI:
     config = NoticeboardConfig(
         bind="127.0.0.1",
@@ -1930,15 +1843,6 @@ SERVICES: Final[tuple[Service, ...]] = (
             "The listener has no route for GET. The surface thus holds HEAD on a route for POST.",
             _NOTE_OWN_HANDLER,
         ),
-    ),
-    Service(
-        name="chaperone",
-        entry="chaperone.app.create_app",
-        build=_chaperone_app,
-        path="/healthz",
-        method=GET,
-        other=POST,
-        notes=(_NOTE_OWN_HANDLER,),
     ),
     Service(
         name="noticeboard",

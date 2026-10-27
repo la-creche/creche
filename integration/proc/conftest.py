@@ -19,17 +19,15 @@ Four rules are enforced here and not left to a test:
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterator, Callable, Generator, Iterator
+from collections.abc import Callable, Generator, Iterator
 from pathlib import Path
 from typing import NoReturn, cast
 
-import httpx
 import pytest
 from proc_board import BoardStack
 from proc_caregiver import CaregiverStack
 from proc_chaperone_pin import BuildError, NoToolchain, build_pinned
 from proc_chaperone_rs import ChaperoneRsStack
-from proc_delegate import DelegateStack
 from proc_exit import FACADE_PROGRAMS, ExitStack, facade_bin
 from proc_harness import Supervisor, end_leaked_groups
 from proc_library import LibraryStack, node_has_sqlite
@@ -164,23 +162,6 @@ def attended(attended_prepared: Stack) -> Stack:
     attended_prepared.await_attendance()
 
     return attended_prepared
-
-
-@pytest.fixture
-def delegate(tree: Tree, supervisor: Supervisor) -> DelegateStack:
-    """The second topology, serving. The `supervisor` fixture ends it."""
-    stack = DelegateStack(tree, supervisor)
-    stack.prepare()
-    stack.start()
-
-    return stack
-
-
-@pytest.fixture
-async def sandbox(delegate: DelegateStack) -> AsyncIterator[httpx.AsyncClient]:
-    """A client that plays the sandbox of the caller family at the chaperone."""
-    async with delegate.sandbox_client() as client:
-        yield client
 
 
 @pytest.fixture

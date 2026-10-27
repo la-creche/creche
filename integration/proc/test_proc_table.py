@@ -199,8 +199,8 @@ def test_only_two_files_run_the_reference() -> None:
 
 def test_an_empty_override_is_an_error() -> None:
     """Fail closed. An empty value never means the default."""
-    with pytest.raises(CommandError, match="CRECHE_PROC_CHAPERONE is set and empty"):
-        command_of(Service.CHAPERONE, {"CRECHE_PROC_CHAPERONE": "  "})
+    with pytest.raises(CommandError, match="CRECHE_PROC_CAREGIVER is set and empty"):
+        command_of(Service.CAREGIVER, {"CRECHE_PROC_CAREGIVER": "  "})
 
 
 def test_an_override_that_names_no_program_is_an_error(tmp_path: Path) -> None:
@@ -235,7 +235,7 @@ def test_a_misspelled_variable_is_found() -> None:
     environ = {
         "CRECHE_PROC_ATTENDENCE": "/path/to/the/binary",
         "CRECHE_PROC_DOOR_ACP_": "/path/to/the/binary",
-        "CRECHE_PROC_CHAPERONE": "/path/to/the/binary",
+        "CRECHE_PROC_CHAPERONE_RS": "/path/to/the/binary",
         "CRECHE_PROC_KEEP": "1",
         "PATH": "/usr/bin",
     }

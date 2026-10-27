@@ -1,9 +1,8 @@
 """Packet C2's shared fixtures: one applied `chat` family, real on both sides.
 
-`caregiver` writes four things that three other programs read:
+`caregiver` writes three things that two other programs read:
 
     caregiver.apply_once
-        |-- grants/<family>.json + creds.json ----> the PEP family path
         |-- config/ (runtime.json, instructions.md, skills/) -> the playpen
         |-- creds/ + control/ (mounts) -----------> the playpen
         `-- families/<family>/status.json --------> attendance
@@ -116,10 +115,6 @@ class Applied:
         creds = read_creds(paths.creds_path(self.state_root, FAMILY))
         assert creds is not None, "apply_once wrote no creds.json"
         return creds.pep_token
-
-    @property
-    def grant_path(self) -> Path:
-        return paths.grant_path(self.state_root, FAMILY)
 
     @property
     def config_dir(self) -> Path:

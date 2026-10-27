@@ -2,18 +2,17 @@
 the merge.
 
 `code-corpus-sync.timer` runs hourly, so `/srv/agents/code/<repo>` routinely
-does not hold the SHA a fresh release resolves to. Three places answer that,
+does not hold the SHA a fresh release resolves to. Two places answer that,
 and each answers it in the way its own account can:
 
 | Who | Runs as | What it does |
 |---|---|---|
 | `handover request` | the operator | fetches the component's repo, then files |
-| the PEP's `release` verb | `chaperone` | runs NO git, and says so in its answer |
 | the executor | root | refuses, naming the one command that fixes it |
 
 The executor's half is in `test_handover_r7j_source_trust.py`. This file is
-the other two, plus the rule that keeps them apart: `handover.corpus`
-starts children, so the PEP must never import it.
+the other half, plus the rule that keeps `requester/` apart from it:
+`handover.corpus` starts children, so `requester/` must never import it.
 """
 
 from __future__ import annotations
@@ -471,27 +470,7 @@ def test_dry_run_never_gets_the_sync_hint(
     assert "code-corpus-sync" not in printed
 
 
-# ---- the PEP runs no git ---------------------------------------------------
-
-
-def test_the_release_verbs_answer_says_the_corpus_is_not_its_to_refresh() -> None:
-    """The verb runs as `chaperone`, which holds no git credential and owns no
-    corpus. It files, and the answer names what the operator runs if the executor
-    then refuses."""
-    from chaperone.release_door import CORPUS_NOTE
-
-    assert CORPUS_NOTE
-    assert "sync-code-corpus" in CORPUS_NOTE
-
-
-def test_the_pep_never_imports_the_corpus_refresher() -> None:
-    """`handover.corpus` starts children. The PEP's process is where
-    `handover/AGENTS.md` keeps them out of, and `requester/` is the whole of
-    what `chaperone/` may reach in this package."""
-    chaperone = Path(__file__).resolve().parents[2] / "chaperone" / "src" / "chaperone"
-    for module in chaperone.rglob("*.py"):
-        text = module.read_text(encoding="utf-8")
-        assert "handover.corpus" not in text, module.name
+# ---- the requester runs no git ---------------------------------------------
 
 
 def test_the_requester_never_imports_the_corpus_refresher() -> None:

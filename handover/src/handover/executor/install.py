@@ -442,7 +442,7 @@ class Installer:
         """Contract 06 §1 rule 8: a release must be able to change what runs.
 
         When a unit execs `/opt/creche/.venv/bin/chaperone` while
-        `chaperone/component.yaml` installs `/opt/components/chaperone`, nothing in
+        the manifest of `chaperone` installs `/opt/components/chaperone`, nothing in
         steps 8 to 10 notices: the tree builds, the swap lands,
         the unit restarts, `chaperone-verify` passes out of the NEW tree, and the
         running PEP is the old code of `/opt`. The ledger says `succeeded`

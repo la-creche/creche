@@ -73,10 +73,6 @@ NEW_VERSION = "2.1.0"
 BUILD_LINE = 'build:\n  - ["/usr/local/bin/uv", "sync", "--frozen", "--no-editable"]\ninstall:'
 
 SYSTEM_UNIT = "creche-caregiver.service"
-CHAPERONE_UNIT = "creche-chaperone.service"
-
-#: The copy of the manifest that the chaperone repository holds.
-CHAPERONE_MANIFEST = Path(__file__).resolve().parent / "handover_chaperone_component.toml"
 NOTICEBOARD_UNIT = "creche-noticeboard.service"
 
 #: The refusal code, as the ledger records it.
@@ -495,9 +491,7 @@ def test_exec_start_pre_is_not_exec_start() -> None:
 # -- this repository's own units ----------------------------------------------
 
 #: Every component whose SHIPPED unit does not start a program inside its
-#: own `install.to`: none, since `creche-chaperone.service` execs
-#: `/opt/components/chaperone/bin/chaperone` and `bin/rework-release-visit.sh`
-#: bootstraps that first tree the way it bootstraps `handover`'s.
+#: own `install.to`: none.
 #:
 #: Keep it EMPTY. A new row here is a component whose release would write
 #: `succeeded` over a host it never changed, and rule 8 is what turns that
@@ -536,29 +530,6 @@ def test_the_repositorys_own_units_start_the_trees_their_manifests_install() -> 
             found.add(manifest.name)
 
     assert found == UNITS_THAT_DO_NOT_START_THEIR_TREE
-
-
-def test_the_real_pep_unit_and_the_real_manifest_pass_rule_eight(tmp_path: Path) -> None:
-    """`chaperone`, through the executor's OWN check rather than a re-reading.
-
-    The test above compares two strings. This one runs `check_unit_binds`
-    with this repository's `systemd/creche-chaperone.service` and the
-    manifest of the chaperone repository (`handover_chaperone_component.toml`).
-    The clone of the chaperone repository holds no `systemd/`, so step 9
-    reads the file already installed under `/etc/systemd/system`.
-    `chaperone` is the component this rule is written for, and the one
-    worth driving end to end.
-    """
-    manifest = parse_manifest(
-        CHAPERONE_MANIFEST.read_text(encoding="utf-8"), CHAPERONE_MANIFEST.name, Markup.TOML
-    )
-    assert manifest.install.to == "/opt/components/chaperone"
-
-    installer = Installer(fake_host(tmp_path, FakeRun(answers=git_host_answers())))
-    shipped = (REPO_ROOT / "systemd" / CHAPERONE_UNIT).read_text(encoding="utf-8")
-    (tmp_path / "system-units" / CHAPERONE_UNIT).write_text(shipped, encoding="utf-8")
-
-    installer.check_unit_binds(manifest, tmp_path / "no-systemd-directory")
 
 
 #: `attendance`'s three door units, which run out of its tree

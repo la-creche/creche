@@ -29,7 +29,7 @@ The Python implementation is the authority for each surface.
 | `surfaces/` | one module per group of surfaces, with the written inputs |
 | `fixtures/registry-toml/` | the copy of the fixture registry of the package `family`. Each family file is `family.toml`, and each server file is `server.toml`. `vectors/AGENTS.md` has its rules |
 | `data/index.json` | one row per surface: name, path, entry point, counts. One line per frozen file: path and digest |
-| `data/ids/` | the id grammars, one file per copy of a grammar |
+| `data/ids/` | the id grammars, one file per copy of a grammar. The files of the copies of the chaperone are frozen |
 | `data/ids/disagreements.json` | each input for which two copies of one grammar give different results |
 | `data/family_file.json` | `family.yaml` to its validation report. A frozen file: the YAML reader left this repository |
 | `data/family_file.host.json` | `family.toml` to its validation report, with a written host |
@@ -40,12 +40,12 @@ The Python implementation is the authority for each surface.
 | `data/family_file.cli.json` | a command line of `agent-family` to its output |
 | `data/family_file.registries.json` | each file of each registry that a vector names |
 | `data/channel/` | the channel protocol: `frame`. The files of `parse` and `build` are frozen |
-| `data/chaperone/` | the grant file and its writer, the call body, the approval body, the two logs, the reasons, the verb catalog |
-| `data/status/` | the status document, one file per reader. The writer of the status document, the fault files and the outcome record |
-| `data/config/` | the configs: the site file, the roster, `runtime.json`, `creds.json`, the env file of the playpen and three env readers |
+| `data/chaperone/` | the grant file and its writer, the call body, the approval body, the two logs, the reasons, the verb catalog. Each file is frozen: the Python chaperone left this repository |
+| `data/status/` | the status document, one file per reader. The writer of the status document, the fault files and the outcome record. The file of the fault writer of the chaperone is frozen |
+| `data/config/` | the configs: the site file, `runtime.json`, `creds.json`, the env file of the playpen and two env readers. The files of the roster and of `chaperone.site` are frozen |
 | `data/manifest/` | the component manifest, the release request, the live-state document and the resolved manifest |
 | `data/session/` | the HTTP surface of `attendance`: the request bodies, the error body and the outcome record. The files of the session API, which left `attendance`, are frozen |
-| `data/runtime/` | the helper code that each service copies: the lenient field readers, the strict JSON reader, the time reader, the token files, the bearer of a request and the answers of the web framework |
+| `data/runtime/` | the helper code that each service copies: the lenient field readers, the strict JSON reader, the time reader, the token files, the bearer of a request and the answers of the web framework. The files of the chaperone are frozen |
 | `data/noticeboard/` | the noticeboard: the checks of its perimeter, the form body, the route parameters, the readers of `attendance`, of the audit files and of a validation report, the verify hook and `noticeboard --check` |
 | `data/library/` | the index builder: the chunks of a text, the hash of a file, the text of a file, the report, the URL of the embedder, the bytes of a vector in a store, the schema of a store and the rows of a store after each run |
 | `data/tomlfile/` | the syntax of a TOML file: the bytes of one file to the table that the reader of a file kind gives, or to the text of its refusal |

@@ -82,7 +82,6 @@ text with no UTC offset is not a time.
 
 | Directory | Read |
 |---|---|
-| `chaperone/` | `chaperone/AGENTS.md` |
 | `family/` | `family/AGENTS.md` |
 | `attendance/` | `attendance/AGENTS.md` |
 | `caregiver/` | `caregiver/AGENTS.md` |

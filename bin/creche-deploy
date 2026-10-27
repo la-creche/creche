@@ -121,71 +121,34 @@ deploy_site "$PRODUCT" "$SITE" \
 # code". handover/component.yaml says the same, and bin/rework-release-visit.sh,
 # run by hand, is the step that installs it.
 
-# --compile-bytecode: this checkout is root-owned, so the operator's account and `chaperone` cannot
+# --compile-bytecode: this checkout is root-owned, so the operator's account cannot
 # write a single __pycache__ entry and every process start recompiles from
 # source — ~740 modules, measured at 1.8s per `agentctl` on the host against
-# 0.55s with the cache warm, and the same tax on each unit restart below.
+# 0.55s with the cache warm.
 # Writing the .pyc here, as root, is the only place it can happen.
 /usr/local/bin/uv sync --frozen --no-dev --compile-bytecode
 # uv compiles what it installs, which leaves out the workspace's own packages:
 # they are installed editable, so their sources live in this checkout rather
 # than site-packages. Best effort — a failure here costs the cache, not the
 # deploy, and a stale .pyc cannot be served (Python checks mtime and size).
-WORKSPACE_SRC=(/opt/creche/{chaperone,library}/src)
+WORKSPACE_SRC=(/opt/creche/library/src)
 /opt/creche/.venv/bin/python -m compileall -q "${WORKSPACE_SRC[@]}" \
   || echo "WARNING: bytecode pre-compile failed; imports fall back to source" >&2
-# venv must be world-executable so user `chaperone` (and the operator) can run from it;
+# venv must be world-executable so the operator can run from it;
 # the __pycache__ dirs just written need the same, and hold only code. This
-# tree is root-owned end to end (/opt/creche), never chaperone-writable, so
+# tree is root-owned end to end (/opt/creche), never writable by a service, so
 # a recursive chmod here carries no TOCTOU risk.
 chmod -R a+rX /opt/creche/.venv "${WORKSPACE_SRC[@]}"
 
 # No MCP server is installed here. Every server the PEP runs is
 # `mcp/<name>/server.yaml` in agent-registry, built into /opt/mcp/<name> by
-# an `mcp-servers` release (docs/rework/stage7-releases.md §4.2), and the
-# roster root writes is the only list of them. Old trees under
+# an `mcp-servers` release (docs/rework/stage7-releases.md §4.2). Old trees under
 # /opt/agent-pep-mcp stay where they are: a deploy is not the verb that
 # removes something, and `bin/rework-retire-old.sh remove-old-trees` is.
 
 systemctl daemon-reload
 
-# Crash-loop detection: `systemctl restart` returns 0 as soon as the
-# unit forks, and a unit that crashes 1s later under Restart=on-failure
-# looks identical to a healthy one to a plain `sleep 2; status || true`.
-# Poll is-active AND the restart counter for a while: "active" alone is
-# not enough evidence when the unit could be actively flapping between
-# our poll ticks.
-POLL_S=20
-FAILED_UNITS=()
-# The one unit this script restarts: the PEP, a system unit.
-check_unit() {
-  local unit="$1" waited=0 active="" restarts_before restarts_now
-  restarts_before="$(systemctl show -p NRestarts --value "$unit" 2>/dev/null || echo 0)"
-  while (( waited < POLL_S )); do
-    sleep 2
-    waited=$((waited + 2))
-    active="$(systemctl is-active "$unit" 2>/dev/null || true)"
-    restarts_now="$(systemctl show -p NRestarts --value "$unit" 2>/dev/null || echo 0)"
-    if [[ "$active" == "active" && "$restarts_now" -le "$restarts_before" ]]; then
-      echo "  $unit: active (NRestarts=$restarts_now)"
-      return 0
-    fi
-  done
-  echo "CRASH-LOOP: $unit is '$active' after ${POLL_S}s (NRestarts $restarts_before -> $restarts_now)" >&2
-  return 1
-}
-
-if systemctl is-enabled creche-chaperone >/dev/null 2>&1; then
-  systemctl restart creche-chaperone
-  check_unit creche-chaperone || FAILED_UNITS+=(creche-chaperone)
-fi
-
-# The rework's user units run from their own component trees, never from
-# this checkout's venv (systemd/AGENTS.md), so this deploy restarts no user
-# unit. `handover` owns them: it swaps <install.to> and
-# restarts the unit, then runs that component's verify hook.
-
-if ((${#FAILED_UNITS[@]} > 0)); then
-  echo "DEPLOY FAILED: crash-looping unit(s): ${FAILED_UNITS[*]}" >&2
-  exit 1
-fi
+# The rework's units run from their own component trees, never from this
+# checkout's venv (systemd/AGENTS.md), so this deploy restarts no unit.
+# `handover` owns them: it swaps <install.to> and restarts the unit, then
+# runs that component's verify hook. The chaperone is one of them.

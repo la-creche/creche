@@ -55,11 +55,9 @@ directory is not a workspace package, so a change here does not change
 | `surfaces/classify.py` | `family_file.classify` |
 | `surfaces/family_cli.py` | `family_file.cli` |
 | `surfaces/channel.py` | `channel.frame`. The files of `channel.parse` and `channel.build` are frozen |
-| `surfaces/grants.py` | `grants.parse`, `grants.write`, `chaperone.call_body`, `chaperone.approval_body`, `chaperone.verb` |
-| `surfaces/audit.py` | `chaperone.audit_line`, `chaperone.unidentified_line`, `chaperone.reason` |
 | `surfaces/status.py` | the three readers of `status.json`: `status.<reader>` |
-| `surfaces/status_files.py` | the writer of `status.json`, the fault files and the outcome record: `status.write`, `status.fault_file.<package>`, `status.outcome.noticeboard` |
-| `surfaces/config.py` | the site file, the roster, the mount files and three env readers: `config.<name>` |
+| `surfaces/status_files.py` | the writer of `status.json`, the fault files and the outcome record: `status.write`, `status.fault_file.<package>`, `status.outcome.noticeboard`. The file of `status.fault_file.chaperone` is frozen |
+| `surfaces/config.py` | the site file, the mount files and two env readers: `config.<name>`. The files of `config.roster` and `config.chaperone.site` are frozen |
 | `surfaces/manifest_cases.py` | the written `component.yaml` inputs |
 | `surfaces/manifest.py` | the eleven `manifest.<name>` surfaces of contract 06 |
 | `surfaces/session_cases.py` | the written inputs of the HTTP surfaces of `attendance` |
@@ -168,24 +166,10 @@ did not.
   such a command line holds the exit status only.
 - `server_file.toml` and `family_file.cli` have no host. No vector covers the
   program with a model router or with a mount that is a symbolic link.
-- `grants.write` calls `write_grant_file`. No vector covers
-  `build_grant_file`, which expands `all` and `<server>__*`.
-- `grants.write` holds valid fields only. The writer does not validate a
-  field, so an invalid field has no refusal to record. It holds no file of
-  more than 256 KiB. The writer writes such a file, and the chaperone then
-  refuses it.
 - No vector covers `rewrite_digests` or `grant_file_matches` of the
   caregiver.
-- The two log surfaces replace the clock of `chaperone.audit` and of
-  `chaperone.family_audit` while the entry point runs. The two modules give
-  no other way to set the time of a record.
-- No vector covers the retention sweep of a log, or a log directory that
-  the chaperone cannot write.
-- No vector covers the size cap of a grant file. No vector of the two body
-  surfaces covers the body cap of the chaperone. The caller applies each cap
-  before it calls the entry point. `chaperone.unidentified_line` holds two
-  vectors of a body over the cap. No vector covers the size cap of a status
-  reader, of the fault file reader or of the outcome reader.
+- No vector covers the size cap of a status reader, of the fault file
+  reader or of the outcome reader.
 - No vector covers a status document that is UTF-16. Each reader of the
   noticeboard refuses such a document: the Python reader and the Rust view
   read strict JSON, which is UTF-8.
@@ -258,11 +242,6 @@ did not.
   5. A colon and digits after the seconds, as in `06:00:23:599999`.
 - The generator runs on macOS, and CI runs it on Linux. No other system
   has a run.
-- `config.roster` holds the tree of a roster file and no YAML text. No
-  vector covers what PyYAML does with the text of a file: a comment, an
-  alias, a tab or a plain `yes`. No vector covers the three limits that the
-  chaperone holds on the merge keys and on the aliases of that text. No Rust
-  type reads the text of a roster.
 - No vector covers the roster writer, `handover.executor.roster`.
 - No vector covers `handover.mcpserver.parse_server` or the reader of the
   sops file in `handover.intake.store`. Each one has merge limits of its
@@ -271,12 +250,9 @@ did not.
   `caregiver.mcp_release.served_servers`. It gives one answer for a roster
   that it refuses and for a roster with no row, so a vector cannot hold a
   refusal. `caregiver/tests` holds its two limits for merge keys.
-- Three configs have no entry point that takes a map of variables, so no
-  vector covers them: `chaperone.__main__`, `caregiver.cli` and
-  `agent_door_trigger.config`. The door reads a key file while it parses. `config.chaperone.site` covers four
-  readers of `chaperone.site`. No vector covers the fifth reader,
-  `listener`. It gives the host and the port of the bind that `bind` gives
-  as text.
+- Two configs have no entry point that takes a map of variables, so no
+  vector covers them: `caregiver.cli` and `agent_door_trigger.config`. The
+  door reads a key file while it parses.
 - No vector covers `handover.intake.run`. It reads the site file and the
   environment of the process.
 - `config.playpen_env.read` takes a text. No vector covers an env file
@@ -288,9 +264,9 @@ did not.
   generator cannot change the owner of a file.
 - `config.noticeboard.env` names no `VIEW_ACCESS_KEY_FILE`. The entry point
   reads that file. `noticeboard.cli.check` holds the vectors of a key file.
-- Four `config.` surfaces have no vector for some values that the Python
-  reader takes: `config.site_file`, `config.attendance.env`,
-  `config.noticeboard.env` and `config.chaperone.site`. A daemon calls each
+- Three `config.` surfaces have no vector for some values that the Python
+  reader takes: `config.site_file`, `config.attendance.env` and
+  `config.noticeboard.env`. A daemon calls each
   of those readers at its start. Five examples of such a value:
   1. A LAN address that is `0.0.0.0`, or that ends in a number and is not
      one IPv4 address.
@@ -298,9 +274,6 @@ did not.
   3. A port or a count of seconds with a decimal digit outside ASCII.
   4. A count of seconds that no duration can hold.
   5. A URL with no scheme or with a user part.
-- An environment of `config.chaperone.site` has no vector for a reader
-  whose Rust type refuses that environment. `_pep_without` in
-  `surfaces/config.py` names those readers.
 - Three writer surfaces hold only arguments that the caregiver gives the
   entry point: `config.runtime_json.write`, `config.creds_json.write` and
   `config.playpen_env.write`. The entry point checks no argument, and the
@@ -323,9 +296,6 @@ did not.
 - No vector covers the text that a service decodes from the output of a
   child program. The locale gives the encoding of that decode, and the
   locale is a value of the machine.
-- `_text` of `chaperone.delegate` has no public entry point and no vector.
-  The reply reader of the delegate client calls it, and no surface covers
-  that reader.
 - The group `runtime` has no surface for `read_object`, `moment`, `age_s` and
   `missing` of `noticeboard.jsonfiles`, or for `read_json` of
   `attendance.atomic`.
@@ -386,24 +356,20 @@ did not.
   five readers follows the link. A reader with a mode rule reads the mode of
   the file that the link names.
 - Each bearer reader is a private function: `_bearer_value` of
-  `attendance.auth` and of `agent_door_trigger.webhooks`, `_bearer` and
-  `_bearer_matches` of `chaperone.app`.
+  `attendance.auth` and of `agent_door_trigger.webhooks`.
   A `runtime.bearer` surface calls its reader through one route of the app.
-- `runtime.bearer.chaperone` covers the bearer of the approval callback. No
-  vector covers the bearer of a family on `GET /manifest` and on
-  `POST /call`. The chaperone looks up that bearer in the grant files.
 - A `runtime.bearer` surface gives the app the bytes of a header with no
   server. A server removes each space and each tab at the two ends of a
   header value. No network client can thus send the header of five vectors:
   `scheme-and-space`, `scheme-and-spaces`, `space-before-the-scheme`,
   `space-at-the-end` and `tab-at-the-end`.
 - No vector covers a request with two `Authorization` headers. Each of the
-  four copies reads the first one.
+  three copies reads the first one.
 - The answers of a `runtime.edge` surface come from the versions of
   Starlette and of FastAPI that `uv.lock` pins. A vector can move when
   `uv.lock` takes a newer version.
 - No `runtime.edge` vector holds the answer of the web framework to a
-  handler that raises. Each of the five services has its own handler for an
+  handler that raises. Each of the four services has its own handler for an
   exception. The vector `handler-raises` holds the answer of that handler.
 - `runtime.edge.door_trigger` has no vector for HEAD on a GET route. The
   listener has no GET route.

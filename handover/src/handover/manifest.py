@@ -217,7 +217,7 @@ class _Reader:
     """Field access that refuses instead of raising a type error.
 
     `subject` is the label a refusal names: a caller-chosen path such as
-    `chaperone/component.yaml`, never a value read out of the document.
+    `attendance/component.yaml`, never a value read out of the document.
     """
 
     def __init__(self, subject: str, body: dict[str, Any]) -> None:
