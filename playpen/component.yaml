@@ -1,7 +1,7 @@
-# The image every family's microVM runs: pi, the playpen and the PEP
-# bridge. Contract 06 §1 row 5. One release replaces every family's sandbox
-# (§1 rule 5), so a component has one live version and the manifest carries
-# no range (§2.2).
+# The image every family's microVM runs: Node 24, ripgrep and the ACP
+# facade with the agent module (playpen/AGENTS.md). Contract 06 §1 row 5.
+# One release replaces every family's sandbox (§1 rule 5), so a component
+# has one live version and the manifest carries no range (§2.2).
 #
 # `build` runs `bin/playpen-build` out of the fetched source. It builds the
 # two images, pushes them to the host's own registry, and writes the tree a
