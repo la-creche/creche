@@ -88,7 +88,7 @@ text with no UTC offset is not a time.
 | `caregiver/` | `caregiver/AGENTS.md` |
 | `door-owui/`, `door-tui/`, `door-trigger/`, `door-acp/` | the door's own `AGENTS.md` |
 | `noticeboard/` | `noticeboard/AGENTS.md` |
-| `playpen/`, `toybox/` | `playpen/AGENTS.md`, `toybox/AGENTS.md` |
+| `playpen/` | `playpen/AGENTS.md` |
 | `agent/` | `agent/AGENTS.md` |
 | `facade/` | `facade/AGENTS.md` |
 | `handover/` | `handover/AGENTS.md` |

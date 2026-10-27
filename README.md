@@ -58,7 +58,6 @@ turn. The `attendance` service takes that call from four doors.
 | `handover/` | `handover` | `creche-handover.{path,service}`, system, root. `creche-follow.{service,timer}`, user | The release tool: resolver, tag allocator, executor, requester, follower, secret intake. | [handover/AGENTS.md](handover/AGENTS.md) |
 | `family/` | in `caregiver` | none, a library | The `family.toml` and `server.toml` schemas, the validator, the registry loader. | [family/AGENTS.md](family/AGENTS.md) |
 | `library/` | none | `index@.timer`, user | The retrieval index builder. Not an agent. | [library/AGENTS.md](library/AGENTS.md) |
-| `toybox/` | none | none | The one pi version pin. | [toybox/AGENTS.md](toybox/AGENTS.md) |
 
 The other directories:
 
