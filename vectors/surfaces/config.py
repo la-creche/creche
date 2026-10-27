@@ -127,7 +127,7 @@ SITE_DOCUMENTS: Final[tuple[SiteDocument, ...]] = (
     _site("crlf", _COMPLETE.replace("\n", "\r\n")),
     _site("no-final-newline", _COMPLETE.rstrip("\n")),
     _site("last-line-wins", _COMPLETE + "AGENT_LAN_ADDRESS=192.0.2.11\n"),
-    _site("other-keys", _COMPLETE + "AGENT_HA_URL=http://192.0.2.20:8123\nOTHER=1\n"),
+    _site("other-keys", _COMPLETE + "AGENT_PEP_URL=http://192.0.2.10:8300\nOTHER=1\n"),
     _site("export-prefix", _COMPLETE.replace("AGENT_LAN", "export AGENT_LAN")),
     _site("byte-order-mark", "\ufeff" + _COMPLETE),
     _site("line-with-no-sign", _COMPLETE + "not an assignment\n"),

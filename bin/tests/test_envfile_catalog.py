@@ -180,6 +180,37 @@ def test_a_site_file_that_sets_pep_secrets_is_refused(tmp_path: Path) -> None:
     assert run.stderr.splitlines() == [f"creche-env: {site_file}:4: unknown-key PEP_SECRETS"]
 
 
+#: The address of Home Assistant for the whole site. No program reads it,
+#: and the host does not set it.
+HA_URL_KEY: Final = "AGENT_HA_URL"
+
+
+def test_the_ha_url_of_the_site_is_not_in_the_catalog() -> None:
+    pair = pair_in(PAIR_DIR)
+
+    assert HA_URL_KEY not in {one.key for one in pair.defaults}
+    assert HA_URL_KEY not in root_keys_in(PAIR_DIR, pair)
+
+
+def test_a_site_file_that_sets_the_ha_url_is_refused(tmp_path: Path) -> None:
+    assert PROGRAM.is_file(), "run `uv sync`: the venv has no creche-env"
+    site_file = tmp_path / "site.env"
+    text = _example_env() + f"{HA_URL_KEY}=http://192.0.2.20:8123\n"
+    site_file.write_text(text, encoding="utf-8")
+    site_file.chmod(0o600)
+
+    run = subprocess.run(
+        [str(PROGRAM), "check", "--env", str(site_file)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+
+    assert (run.returncode, run.stdout) == (os.EX_CONFIG, "")
+    assert run.stderr.splitlines() == [f"creche-env: {site_file}:4: unknown-key {HA_URL_KEY}"]
+
+
 @pytest.mark.parametrize("name", [DEFAULT_FILE, EXAMPLE_FILE])
 def test_no_address_outside_the_documentation_and_loopback_networks(name: str) -> None:
     text = (PAIR_DIR / name).read_text(encoding="utf-8")
