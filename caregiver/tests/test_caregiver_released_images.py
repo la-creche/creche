@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from caregiver.cli import EXIT_OK, main
+from caregiver.cli import EXIT_OK
 from caregiver.driver import FakeDriver, SandboxSpec
 from caregiver.egress import EgressConfig
 from caregiver.images import SandboxImages
@@ -21,7 +21,7 @@ from caregiver.reconcile import Actors
 from caregiver.released import MAX_BYTES, ReleasedImages, parse_images, read_images
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
-from caregiver_helpers import write_registry
+from caregiver_helpers import fake_policy, main, write_registry
 
 REGISTRY = "127.0.0.1:5000"
 BASE = f"{REGISTRY}/agent-sandbox@sha256:{'a' * 64}"
@@ -166,7 +166,14 @@ def test_a_pass_creates_the_sandbox_from_the_released_image(tmp_path: Path) -> N
         image=GIVEN.base,
         released=ReleasedImages(path),
     )
-    actors = Actors(driver, FakeLiteLLMKeys(), FakeSwitchClient(), EgressConfig(), FakeUnits())
+    actors = Actors(
+        driver,
+        FakeLiteLLMKeys(),
+        FakeSwitchClient(),
+        EgressConfig(),
+        FakeUnits(),
+        fake_policy(tmp_path / "state"),
+    )
 
     look(config, actors, LoopState())
 

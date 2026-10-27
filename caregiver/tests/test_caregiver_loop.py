@@ -40,6 +40,7 @@ from caregiver_helpers import (
     accepted_digests,
     current_digest,
     expire_overlap,
+    fake_policy,
     grants_alone,
     write_no_file_dir,
     write_registry,
@@ -83,7 +84,14 @@ class Bench:
         return LoopConfig(**fields)  # type: ignore[arg-type]
 
     def actors(self) -> Actors:
-        return Actors(self.driver, self.litellm, self.switch, EgressConfig(), self.units)
+        return Actors(
+            self.driver,
+            self.litellm,
+            self.switch,
+            EgressConfig(),
+            self.units,
+            fake_policy(self.state_root),
+        )
 
     def look(self, **overrides: object) -> tuple[str, ...]:
         """The families this look ran a pass for. It waits for them: a

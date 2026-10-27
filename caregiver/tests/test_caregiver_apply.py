@@ -21,7 +21,7 @@ from caregiver.litellm_keys import FakeLiteLLMKeys, LiteLLMError, key_alias
 from caregiver.playpen_env import read_playpen_env
 from caregiver.status import now_rfc3339
 from caregiver.switch import FakeSwitchClient, SwitchClient
-from caregiver_helpers import UNREADABLE_JSON, write_no_file_dir, write_registry
+from caregiver_helpers import UNREADABLE_JSON, fake_policy, write_no_file_dir, write_registry
 
 from caregiver import paths
 
@@ -50,6 +50,7 @@ def apply_chat(
         registry_root,
         "chat",
         state_root=state_root,
+        policy=fake_policy(state_root),
         image="sha256:deadbeef",
         driver=driver if driver is not None else FakeDriver(),
         litellm=litellm if litellm is not None else FakeLiteLLMKeys(),
@@ -358,6 +359,7 @@ def test_family_not_in_the_registry_raises(registry_root: Path, state_root: Path
             registry_root,
             "no-such-family",
             state_root=state_root,
+            policy=fake_policy(state_root),
             image="x",
             driver=FakeDriver(),
             litellm=FakeLiteLLMKeys(),
@@ -374,6 +376,7 @@ def test_a_directory_with_no_family_file_raises(registry_root: Path, state_root:
             registry_root,
             "stray",
             state_root=state_root,
+            policy=fake_policy(state_root),
             image="x",
             driver=FakeDriver(),
             litellm=FakeLiteLLMKeys(),

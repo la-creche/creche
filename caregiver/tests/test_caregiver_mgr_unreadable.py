@@ -45,7 +45,7 @@ from caregiver.reconcile import Actors
 from caregiver.status import forget_published
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
-from caregiver_helpers import published, toml_text, write_registry
+from caregiver_helpers import fake_policy, published, toml_text, write_registry
 
 from caregiver import loop as loop_module
 from caregiver import paths
@@ -133,7 +133,12 @@ class Bench:
 
     def actors(self) -> Actors:
         return Actors(
-            FakeDriver(), FakeLiteLLMKeys(), FakeSwitchClient(), EgressConfig(), FakeUnits()
+            FakeDriver(),
+            FakeLiteLLMKeys(),
+            FakeSwitchClient(),
+            EgressConfig(),
+            FakeUnits(),
+            fake_policy(self.state_root),
         )
 
     def look(self, **overrides: float) -> tuple[str, ...]:

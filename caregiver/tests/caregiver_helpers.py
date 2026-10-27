@@ -8,13 +8,20 @@ in a module with a unique basename and are imported by name."""
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
 from agent_family import FamilyFile, Markup, parse_family
+from caregiver.cli import main as cli_main
 from caregiver.credentials import read_creds, token_sha256, write_creds
+from caregiver.driver import SandboxDriver
 from caregiver.grants import UNCOMPARED
+from caregiver.litellm_keys import LiteLLMKeys
+from caregiver.policy_fleet import FakeChecker, FleetPolicy, PolicyChecker, PolicyTarget
+from caregiver.switch import SwitchClient
+from caregiver.timers import UnitWriter
 
 from caregiver import paths
 
@@ -139,6 +146,36 @@ def write_registry(root: Path, **overrides: object) -> Path:
     (family_dir / "family.toml").write_text(toml_text(body), encoding="utf-8")
     (family_dir / "instructions.md").write_text("Be helpful.\n", encoding="utf-8")
     return root
+
+
+def fake_policy(root: Path, checker: FakeChecker | None = None) -> FleetPolicy:
+    """The `policy.toml` of a test: a configuration directory of chaperone
+    beside `root`, and a checker that passes each text unless told not to."""
+    return FleetPolicy(
+        PolicyTarget(root.parent / f"{root.name}-chaperone"),
+        checker if checker is not None else FakeChecker(),
+    )
+
+
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    driver: SandboxDriver | None = None,
+    litellm: LiteLLMKeys | None = None,
+    switch: SwitchClient | None = None,
+    units: UnitWriter | None = None,
+    checker: PolicyChecker | None = None,
+) -> int:
+    """`caregiver.cli.main` with a checker that passes each text, so that no
+    test runs a `chaperone` binary."""
+    return cli_main(
+        argv,
+        driver=driver,
+        litellm=litellm,
+        switch=switch,
+        units=units,
+        checker=checker if checker is not None else FakeChecker(),
+    )
 
 
 def write_no_file_dir(root: Path, name: str = "stray") -> Path:

@@ -31,7 +31,7 @@ from caregiver.loop import LoopConfig, LoopState, look
 from caregiver.reconcile import Actors
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
-from caregiver_helpers import write_registry
+from caregiver_helpers import fake_policy, write_registry
 
 from caregiver import paths
 
@@ -215,19 +215,47 @@ def test_an_off_watch_probes_nothing_and_never_moves() -> None:
 # --- the real probe ---------------------------------------------------------
 
 
+#: What the Rust chaperone answers on `GET /healthz` with a policy loaded.
+HEALTHY_BODY = b'{"ok":true}'
+
+
 @pytest.mark.parametrize(("status", "expected"), [(200, True), (204, False), (503, False)])
 def test_only_a_200_counts_as_an_answer(status: int, expected: bool) -> None:
     seen: list[str] = []
 
     def answer(request: httpx.Request) -> httpx.Response:
         seen.append(str(request.url))
-        return httpx.Response(status)
+        return httpx.Response(status, content=HEALTHY_BODY)
 
     client = httpx.Client(transport=httpx.MockTransport(answer))
     probe = HttpPepProbe(PEP_URL, client=client)
 
     assert probe.healthy() is expected
     assert seen == [f"{PEP_URL}{HEALTH_PATH}"]
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        (HEALTHY_BODY, True),
+        (b'{"ok":true,"roster":{"state":"off","since":null},"upstreams":null}', True),
+        (b'{"ok":false}', False),
+        (b'{"ok":"true"}', False),
+        (b"[true]", False),
+        (b"ok", False),
+        (b"", False),
+    ],
+)
+def test_a_200_counts_only_with_ok_true_in_its_body(body: bytes, expected: bool) -> None:
+    """The Rust chaperone answers `{"ok":true}`, and 503 with `{"ok":false}`
+    when it holds no valid policy. A 200 from a proxy with another body is
+    not the chaperone."""
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=body)
+
+    client = httpx.Client(transport=httpx.MockTransport(answer))
+    assert HttpPepProbe(PEP_URL, client=client).healthy() is expected
 
 
 def test_every_transport_error_is_mapped_to_no_answer() -> None:
@@ -271,7 +299,12 @@ class Fleet:
         self.watch = watch
         self.state = LoopState()
         self.actors = Actors(
-            FakeDriver(), FakeLiteLLMKeys(), FakeSwitchClient(), EgressConfig(), FakeUnits()
+            FakeDriver(),
+            FakeLiteLLMKeys(),
+            FakeSwitchClient(),
+            EgressConfig(),
+            FakeUnits(),
+            fake_policy(self.state_root),
         )
 
     def look(self) -> None:

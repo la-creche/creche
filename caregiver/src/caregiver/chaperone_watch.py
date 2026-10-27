@@ -6,7 +6,7 @@ every `enqueue`. A PEP that is down while nothing watches it leaves every
 family's document `in_sync` with no fault, and the noticeboard shows a
 healthy fleet.
 
-    every <interval>  ->  GET /healthz  ->  200?  -> the fault clears, now
+    every <interval>  ->  GET /healthz  ->  200 and {"ok":true}?  -> the fault clears, now
                                          \\-> no  -> failing for > threshold?
                                                     -> the fault is raised
 
@@ -30,13 +30,14 @@ same two `status.py` takes."""
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Final, Protocol
+from typing import Any, Final, Protocol, cast
 
 import httpx
 
@@ -51,11 +52,16 @@ log = logging.getLogger("caregiver.chaperone_watch")
 #: reading the noticeboard and an operator reading a turn see one name.
 PEP_UNREACHABLE: Final = "pep_unreachable"
 
-#: The PEP answers this with 200 when it is up (`chaperone/src/chaperone/app.py`).
-#: It holds no secret, so the probe carries no bearer (invariant 13).
+#: The Rust chaperone answers this with 200 and `{"ok":true}` when it
+#: serves a valid policy, and with 503 and `{"ok":false}` when it does not.
+#: The Python PEP answers 200 with `ok` true and two more keys. It holds no
+#: secret, so the probe carries no bearer (invariant 13).
 HEALTH_PATH: Final = "/healthz"
 
 HTTP_OK: Final = 200
+
+#: The key of the body that each reader of `/healthz` decides on.
+HEALTH_OK_KEY: Final = "ok"
 
 #: How often the PEP is asked. Ten seconds is short enough that nine
 #: probes fall inside the 90-second threshold, so a real outage is never
@@ -116,9 +122,10 @@ class HttpPepProbe:
         self._client = client or httpx.Client(timeout=timeout_s)
 
     def healthy(self) -> bool:
-        """True only on a 200. Every other answer, and every transport
-        error, is "it did not answer": a proxy in front of a PEP that is
-        starting answers 204 or 503, and neither is the PEP."""
+        """True only on a 200 whose body is an object with `ok` true. Every
+        other answer, and every transport error, is "it did not answer": a
+        proxy in front of a PEP that is starting answers 204 or 503, or a
+        200 with a page of its own, and none of them is the PEP."""
         try:
             answer = self._client.get(self._url, timeout=self._timeout_s)
         except httpx.HTTPError as exc:
@@ -128,7 +135,17 @@ class HttpPepProbe:
             log.debug("chaperone probe: %s", type(exc).__name__)
             return False
 
-        return answer.status_code == HTTP_OK
+        return answer.status_code == HTTP_OK and _says_ok(answer.content)
+
+
+def _says_ok(body: bytes) -> bool:
+    """Whether the body is a JSON object with `ok` true."""
+    try:
+        parsed: object = json.loads(body)
+    except (ValueError, RecursionError):
+        return False
+
+    return isinstance(parsed, dict) and cast("dict[str, Any]", parsed).get(HEALTH_OK_KEY) is True
 
 
 class FakePepProbe:
@@ -190,7 +207,7 @@ class PepReport:
             detail={
                 "url": self.url,
                 "message": (
-                    f"{self.url}{HEALTH_PATH} has not answered {HTTP_OK} since "
+                    f"{self.url}{HEALTH_PATH} has not answered {HTTP_OK} with ok true since "
                     f"{self.unreachable_since}; no tool call, delegation or enqueue "
                     "can be authorized while it does not"
                 ),

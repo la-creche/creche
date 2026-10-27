@@ -8,6 +8,7 @@ from caregiver.delete import delete_family
 from caregiver.driver import FakeDriver
 from caregiver.egress import litellm_endpoint, pep_endpoint
 from caregiver.litellm_keys import FakeLiteLLMKeys, key_alias
+from caregiver_helpers import fake_policy
 
 from caregiver import paths
 
@@ -44,7 +45,11 @@ def test_credentials_are_deleted_before_the_sandbox(tmp_path: Path) -> None:
             super().destroy(name, allow)
 
     delete_family(
-        "chat", state_root=state_root, driver=RecordingDriver(), litellm=RecordingLiteLLM()
+        "chat",
+        state_root=state_root,
+        policy=fake_policy(state_root),
+        driver=RecordingDriver(),
+        litellm=RecordingLiteLLM(),
     )
     assert log == ["litellm.delete_key:chat", "driver.destroy:chat-s1"]
 
@@ -66,7 +71,13 @@ def test_the_grant_file_and_creds_are_already_gone_when_the_sandbox_is_destroyed
             checked["creds_gone"] = not creds_path.exists()
             super().destroy(name, allow)
 
-    delete_family("chat", state_root=state_root, driver=CheckingDriver(), litellm=litellm)
+    delete_family(
+        "chat",
+        state_root=state_root,
+        policy=fake_policy(state_root),
+        driver=CheckingDriver(),
+        litellm=litellm,
+    )
     assert checked == {"key_deleted": True, "grant_gone": True, "creds_gone": True}
 
 
@@ -74,7 +85,13 @@ def test_the_litellm_key_is_deleted_by_alias(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
     seed(state_root, "chat")
     litellm = FakeLiteLLMKeys()
-    delete_family("chat", state_root=state_root, driver=FakeDriver(), litellm=litellm)
+    delete_family(
+        "chat",
+        state_root=state_root,
+        policy=fake_policy(state_root),
+        driver=FakeDriver(),
+        litellm=litellm,
+    )
     assert litellm.deleted == [key_alias("chat")]
 
 
@@ -82,7 +99,13 @@ def test_every_sandbox_the_family_ever_had_is_destroyed(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
     seed(state_root, "chat", sandboxes=3)
     driver = FakeDriver()
-    delete_family("chat", state_root=state_root, driver=driver, litellm=FakeLiteLLMKeys())
+    delete_family(
+        "chat",
+        state_root=state_root,
+        policy=fake_policy(state_root),
+        driver=driver,
+        litellm=FakeLiteLLMKeys(),
+    )
     destroyed = [call.args[0] for call in driver.calls if call.op == "destroy"]
     assert destroyed == ["chat-s1", "chat-s2", "chat-s3"]
 
@@ -91,7 +114,13 @@ def test_a_family_with_no_sandbox_yet_destroys_nothing(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
     seed(state_root, "chat", sandboxes=0)
     driver = FakeDriver()
-    delete_family("chat", state_root=state_root, driver=driver, litellm=FakeLiteLLMKeys())
+    delete_family(
+        "chat",
+        state_root=state_root,
+        policy=fake_policy(state_root),
+        driver=driver,
+        litellm=FakeLiteLLMKeys(),
+    )
     assert driver.calls == []
 
 
@@ -102,6 +131,7 @@ def test_egress_is_passed_through_to_every_destroy_call(tmp_path: Path) -> None:
     delete_family(
         "chat",
         state_root=state_root,
+        policy=fake_policy(state_root),
         driver=driver,
         litellm=FakeLiteLLMKeys(),
         egress=("github.com",),
@@ -116,21 +146,37 @@ def test_the_two_plane_rows_are_removed_even_with_no_family_egress(tmp_path: Pat
     state_root = tmp_path / "state"
     seed(state_root, "chat", sandboxes=1)
     driver = FakeDriver()
-    delete_family("chat", state_root=state_root, driver=driver, litellm=FakeLiteLLMKeys())
+    delete_family(
+        "chat",
+        state_root=state_root,
+        policy=fake_policy(state_root),
+        driver=driver,
+        litellm=FakeLiteLLMKeys(),
+    )
     assert driver.calls[0].args[1] == (litellm_endpoint(), pep_endpoint())
 
 
 def test_the_familys_state_directory_is_removed(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
     seed(state_root, "chat")
-    delete_family("chat", state_root=state_root, driver=FakeDriver(), litellm=FakeLiteLLMKeys())
+    delete_family(
+        "chat",
+        state_root=state_root,
+        policy=fake_policy(state_root),
+        driver=FakeDriver(),
+        litellm=FakeLiteLLMKeys(),
+    )
     assert not paths.family_dir(state_root, "chat").exists()
 
 
 def test_deleting_a_family_that_never_existed_does_not_raise(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
     delete_family(
-        "never-applied", state_root=state_root, driver=FakeDriver(), litellm=FakeLiteLLMKeys()
+        "never-applied",
+        state_root=state_root,
+        policy=fake_policy(state_root),
+        driver=FakeDriver(),
+        litellm=FakeLiteLLMKeys(),
     )
 
 
@@ -139,5 +185,17 @@ def test_deleting_twice_does_not_raise(tmp_path: Path) -> None:
     seed(state_root, "chat")
     driver = FakeDriver()
     litellm = FakeLiteLLMKeys()
-    delete_family("chat", state_root=state_root, driver=driver, litellm=litellm)
-    delete_family("chat", state_root=state_root, driver=driver, litellm=litellm)
+    delete_family(
+        "chat",
+        state_root=state_root,
+        policy=fake_policy(state_root),
+        driver=driver,
+        litellm=litellm,
+    )
+    delete_family(
+        "chat",
+        state_root=state_root,
+        policy=fake_policy(state_root),
+        driver=driver,
+        litellm=litellm,
+    )

@@ -35,6 +35,7 @@ from caregiver.apply import ApplyResult, apply_once
 from caregiver.credentials import read_creds
 from caregiver.driver import FakeDriver
 from caregiver.litellm_keys import FakeLiteLLMKeys
+from caregiver.policy_fleet import FakeChecker, FleetPolicy, PolicyTarget
 from noticeboard.tomlout import to_toml
 
 from caregiver import paths
@@ -168,6 +169,7 @@ def apply(
         registry_root,
         FAMILY,
         state_root=state_root,
+        policy=FleetPolicy(PolicyTarget(state_root.parent / "chaperone"), FakeChecker()),
         image=IMAGE,
         driver=driver,
         litellm=litellm,

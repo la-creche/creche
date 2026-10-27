@@ -30,6 +30,7 @@ from caregiver.driver import FakeDriver, SandboxSpec
 from caregiver.egress import EgressConfig
 from caregiver.litellm_keys import FakeLiteLLMKeys
 from caregiver.loop import LoopConfig, LoopState, Passes, look
+from caregiver.policy_fleet import FakeChecker, FleetPolicy, PolicyTarget
 from caregiver.reconcile import Actors
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
@@ -84,7 +85,14 @@ def test_the_second_family_serves_while_the_first_is_held(
     state_root = tmp_path / "state"
     driver = HoldingDriver(hold=FAMILY)
     config = LoopConfig(registry_root=two_families, state_root=state_root, image=IMAGE)
-    actors = Actors(driver, FakeLiteLLMKeys(), FakeSwitchClient(), EgressConfig(), FakeUnits())
+    actors = Actors(
+        driver,
+        FakeLiteLLMKeys(),
+        FakeSwitchClient(),
+        EgressConfig(),
+        FakeUnits(),
+        FleetPolicy(PolicyTarget(state_root.parent / "chaperone"), FakeChecker()),
+    )
     reader = StatusReader(state_root)
 
     with Passes(config.max_concurrent_passes, grace_s=WAIT_S) as passes:

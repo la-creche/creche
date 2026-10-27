@@ -35,7 +35,7 @@ from caregiver.reconcile import Actors
 from caregiver.status import SandboxLifecycle, forget_published, restamp_status
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
-from caregiver_helpers import write_registry
+from caregiver_helpers import fake_policy, write_registry
 
 from caregiver import loop as loop_module
 from caregiver import paths, sandboxes
@@ -123,7 +123,14 @@ class Bench:
         return LoopConfig(**fields)  # type: ignore[arg-type]
 
     def actors(self) -> Actors:
-        return Actors(self.driver, self.litellm, self.switch, EgressConfig(), self.units)
+        return Actors(
+            self.driver,
+            self.litellm,
+            self.switch,
+            EgressConfig(),
+            self.units,
+            fake_policy(self.state_root),
+        )
 
     def look(self, passes: Passes | None = None, **overrides: object) -> tuple[str, ...]:
         return look(self.config(**overrides), self.actors(), self.state, passes)
@@ -764,6 +771,7 @@ def test_apply_once_never_adopts_a_planned_sandbox_either(bench: Bench) -> None:
         bench.registry_root,
         "chat",
         state_root=bench.state_root,
+        policy=fake_policy(bench.state_root),
         image=IMAGE,
         driver=bench.driver,
         litellm=bench.litellm,

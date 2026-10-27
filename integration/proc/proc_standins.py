@@ -6,7 +6,7 @@ sandbox image names, or by an address in an argument. So a stand-in here is
 an executable file under the test's root, and the only thing a test reads
 back is what that program left on disk.
 
-Eight stand-ins exist, and none is under test:
+Nine stand-ins exist, and none is under test:
 
 `sbx`
     Two forms. The first is `integration/tests/fake_sbx.py`, unchanged,
@@ -25,6 +25,9 @@ Eight stand-ins exist, and none is under test:
 `systemctl`
     `standin_systemctl.py`, behind a wrapper. `caregiver` finds it through
     `PATH`.
+`chaperone check`
+    `standin_chaperone.py`, behind a wrapper. `caregiver` runs it by the
+    path of its `--chaperone-bin`, and not through `PATH`.
 the LiteLLM key API
     `standin_litellm.py`. It listens on a loopback port, so the supervisor
     of the test starts it, and no wrapper exists for it.
@@ -85,6 +88,11 @@ from proc_tree import Tree, repo_root
 SBX: Final = "sbx"
 PI: Final = "pi"
 SYSTEMCTL: Final = "systemctl"
+#: The program `caregiver` runs as `--chaperone-bin`. It is not named
+#: `chaperone`: the Python chaperone of a scenario has that name.
+CHAPERONE_CHECK: Final = "chaperone-check"
+#: The file name of the stand-in program of `chaperone check`.
+CHAPERONE: Final = "chaperone"
 LITELLM: Final = "litellm"
 TEI: Final = "tei"
 MODEL: Final = "model"
@@ -277,6 +285,23 @@ def install_systemctl(tree: Tree) -> None:
     words = [sys.executable, str(standin_script(SYSTEMCTL)), str(state_dir(tree, SYSTEMCTL))]
 
     _write_program(tree, SYSTEMCTL, f'{_recorder(tree, SYSTEMCTL)}exec {shlex.join(words)} "$@"\n')
+
+
+def install_chaperone_check(tree: Tree) -> Path:
+    """Put the stand-in of `chaperone check` in the root's `bin`, and an
+    empty `install.toml` in the configuration directory of chaperone.
+    Answers the path of the program, for `--chaperone-bin`."""
+    tree.chaperone_config_dir.mkdir(parents=True, exist_ok=True)
+    (tree.chaperone_config_dir / "install.toml").write_text("version = 1\n", encoding="utf-8")
+    words = [sys.executable, str(standin_script(CHAPERONE))]
+    _write_program(tree, CHAPERONE_CHECK, f'#!/bin/sh\nexec {shlex.join(words)} "$@"\n')
+
+    return chaperone_check_program(tree)
+
+
+def chaperone_check_program(tree: Tree) -> Path:
+    """The path of the stand-in of `chaperone check`."""
+    return _program(tree, CHAPERONE_CHECK)
 
 
 def start_litellm(tree: Tree, supervisor: Supervisor, env: Mapping[str, str]) -> tuple[Child, int]:

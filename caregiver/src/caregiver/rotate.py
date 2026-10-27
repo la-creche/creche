@@ -41,7 +41,15 @@ must end when its grace does. So the credentials move without the file.
 last pass wrote, and the key takes its router and budget from the applied
 snapshot. Neither renders a grant: the snapshot was valid against the
 registry of its own pass, and `all` expands against today's server files,
-so a grant rendered from it is one no validation approved."""
+so a grant rendered from it is one no validation approved.
+
+## The two files of the digests
+
+Each rotation writes the digests twice: into the JSON grant file of the
+Python PEP, and into the table of the family in `policy.toml` of the Rust
+chaperone. During the overlap the table holds two digests, after it one.
+`rotate` renders the table from the family file. `rotate_serving` and
+`settle` move the `token_sha256` line of the fragment as it stands."""
 
 from __future__ import annotations
 
@@ -59,6 +67,8 @@ from .applied import read_applied
 from .clock import now_rfc3339, seconds_from_now
 from .credentials import Credentials, mint_token, read_creds, write_creds
 from .litellm_keys import LiteLLMError, LiteLLMKeys
+from .policy_file import PolicyShapeError
+from .policy_fleet import FleetPolicy, LeftOut, Standing
 from .status import RotationState, publish_credentials
 from .webhook_tokens import WebhookToken, rotate_webhooks
 
@@ -132,6 +142,8 @@ class RotateOutcome:
     #: Contract 05 §6.4. The declared webhooks whose bearer moved, by PATH.
     #: The caller republishes the status document from these.
     webhooks: tuple[WebhookToken, ...] = ()
+    #: Why `policy.toml` does not hold the new digests, or `None`.
+    policy_error: str | None = None
 
 
 def valid_family(registry: Registry, name: str, *, state_root: Path) -> ValidFamily | None:
@@ -183,13 +195,23 @@ def rotate(
     *,
     state_root: Path,
     litellm: LiteLLMKeys,
+    policy: FleetPolicy,
+    revision: str,
     grace_s: int = ROTATION_GRACE_S,
 ) -> RotateOutcome:
     """Mint, write, publish: the three steps of contract 05 §6.3. The
-    grant file is rendered from the family file, new digests and all."""
+    grant file and the table of `policy.toml` are rendered from the family
+    file, new digests and all. `revision` is the registry revision, kept in
+    the note of the table."""
 
-    def land(creds: Credentials) -> None:
+    def land(creds: Credentials) -> str | None:
         steps.write_grants(family, index, state_root, creds)
+        try:
+            standing = steps.land_policy(family, index, state_root, creds, policy, rev=revision)
+        except PolicyShapeError as error:
+            standing = LeftOut(str(error))
+
+        return _policy_error(family.name, standing)
 
     return _rotate(request, family, land, state_root=state_root, litellm=litellm, grace_s=grace_s)
 
@@ -200,6 +222,7 @@ def rotate_serving(
     *,
     state_root: Path,
     litellm: LiteLLMKeys,
+    policy: FleetPolicy,
     grace_s: int = ROTATION_GRACE_S,
 ) -> RotateOutcome:
     """The same rotation for a family whose file cannot be applied: the
@@ -219,13 +242,19 @@ def rotate_serving(
             "scope=key needs none"
         )
 
-    def land(creds: Credentials) -> None:
-        if moves_token and not steps.write_digests(family.name, state_root, creds):
+    def land(creds: Credentials) -> str | None:
+        if not moves_token:
+            return None
+
+        if not steps.write_digests(family.name, state_root, creds):
             log.error(
                 "%s: the grant file went away during the rotation, so the new token's "
                 "digest is in no file",
                 family.name,
             )
+
+        standing = steps.policy_digests(family.name, state_root, creds, policy)
+        return _policy_error(family.name, standing)
 
     return _rotate(request, family, land, state_root=state_root, litellm=litellm, grace_s=grace_s)
 
@@ -233,14 +262,16 @@ def rotate_serving(
 def _rotate(
     request: RotateRequest,
     family: FamilyFile,
-    land: Callable[[Credentials], None],
+    land: Callable[[Credentials], str | None],
     *,
     state_root: Path,
     litellm: LiteLLMKeys,
     grace_s: int,
 ) -> RotateOutcome:
     """Both rotations. `land` puts the new credentials' digests into the
-    grant file, and is the one step they do differently.
+    grant file and into `policy.toml`, and is the one step they do
+    differently. It answers why `policy.toml` does not hold them, or
+    `None`.
 
     Order: the key first, because it is the half that can fail. A token
     rotation cannot fail — it is one `secrets.token_bytes` call — so doing
@@ -255,7 +286,7 @@ def _rotate(
     token = mint_token() if _does_token(request) else None
     fresh = _next(existing, request, key, token, grace_s)
     write_creds(creds_path, fresh)
-    land(fresh)
+    policy_error = land(fresh)
     # Contract 05 §6.3 step 3, after the grant file accepts the new token.
     # `attendance` puts this epoch on the channel, and a process that
     # starts under it reads the new credentials.
@@ -294,10 +325,24 @@ def _rotate(
         state=RotationState.ROTATING if fresh.previous_expires_at else RotationState.SETTLED,
         note=_note(request, key is not None),
         webhooks=hooks,
+        policy_error=policy_error,
     )
 
 
-def settle(name: str, *, state_root: Path) -> bool:
+def _policy_error(family_name: str, standing: Standing | None) -> str | None:
+    """Why `policy.toml` does not hold the new digests, logged once."""
+    if standing is None:
+        reason = "the family has no fragment, so policy.toml holds no table for it"
+    elif isinstance(standing, LeftOut):
+        reason = standing.reason
+    else:
+        return None
+
+    log.error("%s: policy.toml does not hold the new digests: %s", family_name, reason)
+    return reason
+
+
+def settle(name: str, *, state_root: Path, policy: FleetPolicy) -> bool:
     """Drop an overlap whose grace has run out (contract 05 §6.3 step 5).
 
     The watch loop calls this: a grace period is a fact over time, and a
@@ -307,10 +352,12 @@ def settle(name: str, *, state_root: Path) -> bool:
     file that cannot be applied does not hold the previous token open.
     `name` is a directory of the registry, never a field of a file.
 
-    The grant file first, then `creds.json`. A settle that could not drop
-    the digest must not record that it did, or no later settle would try.
-    With no grant file to keep there is nothing to settle yet: the pass
-    that writes one lists only the tokens still accepted."""
+    The grant file first, then the table of `policy.toml`, then
+    `creds.json`. A settle that could not drop the digest must not record
+    that it did, or no later settle would try. With no grant file to keep
+    there is nothing to settle yet: the pass that writes one lists only the
+    tokens still accepted. A table that the assembly leaves out holds no
+    digest at all, so it does not hold the settle back."""
     creds_path = paths.creds_path(state_root, name)
     existing = read_creds(creds_path)
     if existing is None or existing.previous_expires_at is None:
@@ -322,6 +369,10 @@ def settle(name: str, *, state_root: Path) -> bool:
     settled = replace(existing, previous_pep_token=None, previous_expires_at=None)
     if not steps.write_digests(name, state_root, settled):
         return False
+
+    standing = steps.policy_digests(name, state_root, settled, policy)
+    if isinstance(standing, LeftOut):
+        log.error("%s: policy.toml does not hold the settled digest: %s", name, standing.reason)
 
     write_creds(creds_path, settled)
     log.info("%s: rotation settled, the previous token is no longer accepted", name)

@@ -14,6 +14,10 @@ this module writes no file that the check did not pass.
 4. The checked text replaces `policy.toml` with an atomic rename. The file
    it replaces stays as `policy.toml.prev`.
 
+A verb lands a family with `land_app` or `land_digests`, and removes one
+with `withdraw_app`. Each answers what `policy.toml` holds for the family
+after the assembly, not what the verb wrote.
+
 The configuration directory of chaperone also holds the operator's
 `install.toml`. This module writes the two names of `TargetFile` there and
 nothing else."""
@@ -21,6 +25,7 @@ nothing else."""
 from __future__ import annotations
 
 import fcntl
+import logging
 import shutil
 import subprocess
 import tempfile
@@ -30,11 +35,21 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Final, Protocol, cast
+from typing import Any, Final, Protocol, cast
 
 from caregiver import paths
 from caregiver.atomic import atomic_write
-from caregiver.policy_file import POLICY_VERSION, App, is_app_id, render_app
+from caregiver.policy_file import (
+    DIGESTS_KEY,
+    POLICY_VERSION,
+    App,
+    PolicyShapeError,
+    is_app_id,
+    render_app,
+    render_digests,
+)
+
+log = logging.getLogger("caregiver.policy_fleet")
 
 #: `POLICY_FILE_CAP` of the Rust chaperone. A larger file does not load.
 POLICY_FILE_MAX_BYTES: Final = 1024 * 1024
@@ -54,6 +69,11 @@ _REASON_MAX: Final = 500
 
 _HEADER: Final = f"version = {POLICY_VERSION}\n"
 _APPS_KEY: Final = "apps"
+_NOTE_KEY: Final = "note"
+
+#: The first blank line of a fragment ends the table of the app itself. The
+#: tables of its grants and plugins come after it.
+_HEAD_END: Final = "\n\n"
 
 
 class TargetFile(StrEnum):
@@ -198,6 +218,170 @@ class Assembly:
     error: str | None = None
 
 
+@dataclass(frozen=True)
+class FleetPolicy:
+    """Where the one `policy.toml` goes, and what checks it. Each verb that
+    moves a grant or a token of a family takes one."""
+
+    target: PolicyTarget
+    checker: PolicyChecker
+
+
+@dataclass(frozen=True)
+class Held:
+    """`policy.toml` holds the current table of the family."""
+
+
+@dataclass(frozen=True)
+class LeftOut:
+    """`policy.toml` does not hold the current table of the family. The
+    chaperone refuses each call of the family. `reason` is the one error
+    line of the assembly."""
+
+    reason: str
+
+
+Standing = Held | LeftOut
+
+
+def land_app(root: Path, policy: FleetPolicy, family: str, app: App) -> Standing:
+    """Put the current table of one family into `policy.toml`.
+
+    The fragment is written when its table moved. A note that moved alone
+    is not a move. The file is assembled when the fragment moved, or when
+    `policy.toml` does not hold the fragment. So a pass that moves nothing
+    runs no check."""
+    wanted = _table(render_app(family, app), family, keep_note=False)
+    if wanted != _fragment_table(root, family, keep_note=False):
+        write_fragment(root, family, app)
+    elif holds(root, policy.target, family):
+        return Held()
+
+    return _assemble_for(root, policy, family)
+
+
+def land_digests(
+    root: Path, policy: FleetPolicy, family: str, digests: tuple[str, ...]
+) -> Standing | None:
+    """Put new token digests into the fragment as it stands, and assemble.
+    No other key of the fragment moves, so a family file that cannot be
+    applied moves no grant. `None` when the family has no fragment."""
+    path = paths.policy_fragment_path(root, family)
+    try:
+        text = _read_fragment(path, family)
+        moved = _with_digests(text, family, digests)
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as error:
+        return LeftOut(str(error))
+
+    if moved != text:
+        atomic_write(path, moved.encode("utf-8"), mode=_FRAGMENT_MODE)
+    elif holds(root, policy.target, family):
+        return Held()
+
+    return _assemble_for(root, policy, family)
+
+
+def withdraw_app(root: Path, policy: FleetPolicy, family: str) -> str | None:
+    """Remove the fragment of one family, then assemble. Answers why
+    `policy.toml` still holds a table of the family, or `None` when it
+    holds none."""
+    remove_fragment(root, family)
+    assembly = assemble_policy(root, policy.target, policy.checker)
+    if family not in _policy_apps(policy.target):
+        return None
+
+    return assembly.error or f"policy.toml still holds [apps.{family}]"
+
+
+def holds(root: Path, target: PolicyTarget, family: str) -> bool:
+    """Whether `policy.toml` holds the table of the fragment of the family,
+    note and all."""
+    fragment = _fragment_table(root, family, keep_note=True)
+    return fragment is not None and _policy_apps(target).get(family) == fragment
+
+
+def _assemble_for(root: Path, policy: FleetPolicy, family: str) -> Standing:
+    assembly = assemble_policy(root, policy.target, policy.checker)
+    reason = assembly.left_out.get(family)
+    if reason is not None:
+        return LeftOut(reason)
+
+    if holds(root, policy.target, family):
+        return Held()
+
+    return LeftOut(assembly.error or f"policy.toml does not hold [apps.{family}]")
+
+
+def _with_digests(text: str, family: str, digests: tuple[str, ...]) -> str:
+    """The fragment with one new `token_sha256` line. The line is in the
+    head of the app table: a tool of that name is in a table after it."""
+    try:
+        line = render_digests(digests)
+    except PolicyShapeError as error:
+        raise ValueError(str(error)) from error
+
+    head, end, rest = text.partition(_HEAD_END)
+    lines = head.split("\n")
+    found = [at for at, one in enumerate(lines) if one.startswith(f"{DIGESTS_KEY} = ")]
+    if len(found) != 1:
+        raise ValueError(f"the fragment of {family} has no one {DIGESTS_KEY} line")
+
+    lines[found[0]] = line
+    moved = "\n".join(lines) + end + rest
+    table = _table(moved, family, keep_note=True)
+    if table is None or table.get(DIGESTS_KEY) != list(digests):
+        raise ValueError(f"the fragment of {family} does not take the new digests")
+
+    return moved
+
+
+def _table(text: str, family: str, *, keep_note: bool) -> dict[str, Any] | None:
+    """The table of one app in a TOML text, or `None`."""
+    try:
+        apps = tomllib.loads(text).get(_APPS_KEY)
+    except tomllib.TOMLDecodeError:
+        return None
+
+    if not isinstance(apps, dict):
+        return None
+
+    table = cast("dict[str, Any]", apps).get(family)
+    if not isinstance(table, dict):
+        return None
+
+    found = dict(cast("dict[str, Any]", table))
+    if not keep_note:
+        found.pop(_NOTE_KEY, None)
+
+    return found
+
+
+def _fragment_table(root: Path, family: str, *, keep_note: bool) -> dict[str, Any] | None:
+    """The table of the fragment of one family, or `None` when it does not
+    read."""
+    try:
+        text = _read_fragment(paths.policy_fragment_path(root, family), family)
+    except (OSError, ValueError):
+        return None
+
+    return _table(text, family, keep_note=keep_note)
+
+
+def _policy_apps(target: PolicyTarget) -> dict[str, Any]:
+    """The app tables of `policy.toml`. None for a file that does not
+    read."""
+    try:
+        with target.path(TargetFile.POLICY).open("rb") as handle:
+            data = handle.read(POLICY_FILE_MAX_BYTES + 1)
+        apps = tomllib.loads(data.decode("utf-8")).get(_APPS_KEY)
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return {}
+
+    return cast("dict[str, Any]", apps) if isinstance(apps, dict) else {}
+
+
 def write_fragment(root: Path, family: str, app: App) -> None:
     """Write the app table of one family. The next assembly takes it."""
     text = render_app(family, app)
@@ -244,9 +428,18 @@ def _assemble(
         verdict = _check(text, checker)
 
     if isinstance(verdict, Refused):
+        log.warning("policy.toml: refused, the last file stays: %s", verdict.reason)
         return Assembly(FleetOutcome.REFUSED, left_out, verdict.reason)
 
-    return Assembly(_install(target, text), left_out)
+    outcome = _install(target, text)
+    if outcome is FleetOutcome.WRITTEN:
+        log.info(
+            "policy.toml: written with %d apps, %d left out",
+            len(fragments) - len(left_out.keys() & fragments.keys()),
+            len(left_out),
+        )
+
+    return Assembly(outcome, left_out)
 
 
 def _check(text: str, checker: PolicyChecker) -> Verdict:

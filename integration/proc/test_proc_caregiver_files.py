@@ -36,6 +36,7 @@ from proc_caregiver import (
     RECONCILING,
     WRITE_FLAG,
     CaregiverStack,
+    chaperone_flags,
     litellm_url,
     text_of,
     wait_until,
@@ -733,6 +734,7 @@ async def test_a_rotation_keeps_the_old_token_for_the_overlap(
         str(tree.state_root),
         "--litellm-base-url",
         litellm_url(stack.litellm_port),
+        *chaperone_flags(tree),
         WRITE_FLAG,
     )
     after = stack.credentials()

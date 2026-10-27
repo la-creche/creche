@@ -7,10 +7,10 @@ import os
 from pathlib import Path
 
 import pytest
-from caregiver.cli import EXIT_OK, EXIT_USAGE, main
+from caregiver.cli import EXIT_OK, EXIT_USAGE
 from caregiver.egress import EgressConfig
 from caregiver.lan import LAN_ADDRESS_ENV, ConfigError, Port, endpoint, url
-from caregiver_helpers import write_registry
+from caregiver_helpers import main, write_registry
 
 IMAGE = "sha256:deadbeef"
 
