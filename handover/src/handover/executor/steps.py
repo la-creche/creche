@@ -7,7 +7,7 @@
  4 contracts   rules C1 to C5 over the resolved set
  5 approve     one tap, bound to manifest_sha256 (§2.5)
  6 lock        flock: two requests run one after the other
- 7 quiesce     no turn mid-start
+ 7 quiesce     no prompt in flight, or the cap
  8 stage       re-resolve, compare the hash, fetch, build into <to>.new
  9 switch      keep the unit, swap, refresh the unit in place, restart, verify
 10 restore     put the previous tree and unit back, or record the success
@@ -96,8 +96,7 @@ from .mcpbuild import Fetched, McpBuilder, ServerBuild
 from .notice import Notifier, say_nothing
 from .provenance import ApiGetFn, VerifiedArtifact, check_artifact, check_monotonic
 from .provenance import verify as check_provenance
-from .quiesce import Quiesce
-from .quiet import NO_WINDOW, BusySeenFn, needs_window, wait_for_quiet
+from .quiet import NO_WINDOW, Busy, BusyNowFn, BusySeenFn, needs_window, wait_for_quiet
 from .request import Kind as RequestKind
 from .request import Request
 from .source import require_trusted
@@ -113,7 +112,8 @@ ALL_CHECKS: Final = "P1-P6"
 LOCK_WAIT_S: Final = 1800.0
 LOCK_POLL_S: Final = 2.0
 
-#: §2.4 row 7.
+#: §2.4 row 7. A host still busy at the cap runs a turn, not a start, and
+#: the release goes on.
 QUIESCE_WAIT_S: Final = 180.0
 QUIESCE_POLL_S: Final = 5.0
 
@@ -162,6 +162,12 @@ def _no_signal() -> float | None:
     closed, applied to a wait).
     """
     return None
+
+
+def _no_answer() -> Busy:
+    """Step 7's default reader: root can reach no session service at all.
+    Step 7 then waits out its cap, as for a busy host."""
+    return Busy.UNKNOWN
 
 
 #: §2.6's `reason` is a fixed string from a closed list, never built from
@@ -291,6 +297,9 @@ class Wiring:
     #: answers None, which is never quiet — a host whose session service
     #: root cannot reach is a host root cannot say is idle.
     last_busy_seen: BusySeenFn = _no_signal
+    #: Step 7's signal: whether `attendance` counts a prompt or a job in
+    #: flight now. The default answers `UNKNOWN`.
+    busy_now: BusyNowFn = _no_answer
 
 
 @dataclass
@@ -1000,18 +1009,16 @@ class Release:
     # -- 7 quiesce ------------------------------------------------------
 
     def _quiesce(self) -> str:
-        # One watcher for the whole wait: a turn root has been watching for
-        # longer than the launch grace stops counting, whatever its own
-        # `started_at` says.
-        watcher = Quiesce()
+        # `attendance` gives a count and no start time. A host still busy at
+        # the cap runs a turn, not a start, so the step ends and does not
+        # fail. A host root cannot ask costs the cap and no more.
         waited = 0.0
         while True:
-            busy = watcher.starting(self.wiring.host.sessions_root, self.wiring.host.clock())
-            if not busy:
-                return f"no turn mid-start (waited {waited:.0f}s)"
+            if self.wiring.busy_now() is Busy.NO:
+                return f"nothing in flight (waited {waited:.0f}s)"
 
             if waited >= QUIESCE_WAIT_S:
-                raise StepFailed(f"{len(busy)} turn(s) still mid-start")
+                return f"still busy after {QUIESCE_WAIT_S:.0f}s"
 
             self.wiring.host.sleep(QUIESCE_POLL_S)
             waited += QUIESCE_POLL_S

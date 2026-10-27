@@ -215,7 +215,6 @@ def fake_host(tmp_path: Path, run: FakeRun) -> Host:
         source_owner_gid=os.getgid(),
         system_unit_dir=tmp_path / "system-units",
         user_unit_dir=tmp_path / "user-units",
-        sessions_root=tmp_path / "sessions",
         install_roots=(tmp_path / "components",),
         # Contract 01b §4.2's root, which the visit makes before any
         # release runs. Here so a server that keeps state

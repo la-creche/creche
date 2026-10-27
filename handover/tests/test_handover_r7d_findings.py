@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
@@ -33,7 +32,6 @@ from handover.executor.live_state import (
     installed_version,
     write_manifest_stamp,
 )
-from handover.executor.quiesce import LAUNCH_GRACE_S, MAX_SCAN_ENTRIES, Quiesce
 from handover.executor.spool import DONE_DIR, Spool, SwitchNote, VerifyHook
 from handover.executor.steps import Wiring
 from handover.manifest import Markup, parse_manifest
@@ -361,113 +359,6 @@ def test_a_stale_log_from_a_half_written_finish_does_not_wedge_the_run(
     repair_bench.repair(repair_bench.note(hook=_hook(repair_bench)))
 
     assert repair_bench.ledger()["status"] == "restored"
-
-
-# -- a quiesce signal root can trust, and a bounded walk ------------------
-
-
-def _turn(root: Path, session: str, turn: str, started: float, state: str = "running") -> Path:
-    """One turn record, exactly the shape contract 02 §9 writes."""
-    directory = root / "chat" / session / "turns"
-    directory.mkdir(parents=True, exist_ok=True)
-    record = directory / f"{turn}.json"
-    stamp = datetime.fromtimestamp(started, UTC).strftime("%Y-%m-%dT%H:%M:%S.%f%z")
-    record.write_text(json.dumps({"state": state, "started_at": stamp}), encoding="utf-8")
-
-    return record
-
-
-NOW = 1758153600.0
-
-
-def test_a_rolling_started_at_stops_blocking_after_one_grace(tmp_path: Path) -> None:
-    """`started_at` is operator-written, so a record that keeps rolling it
-    forward would block step 7 for its whole 180 seconds and fail the
-    release AFTER the tap. Root's own first sighting is the signal it can
-    trust."""
-    sessions = tmp_path / "sessions"
-    watcher = Quiesce()
-    record = _turn(sessions, "owui-1", "T1", NOW)
-
-    # Five polls, each one grace period apart, and the record rolls its own
-    # `started_at` forward every time.
-    seen: list[int] = []
-    for step in range(5):
-        now = NOW + step * LAUNCH_GRACE_S
-        _turn(sessions, "owui-1", "T1", now)
-        seen.append(len(watcher.starting(sessions, now)))
-
-    assert record.exists()
-    assert seen[0] == 1
-    assert seen[-1] == 0
-
-
-def test_a_genuinely_starting_turn_still_gets_its_whole_window(tmp_path: Path) -> None:
-    """Root's own sighting must not make step 7 blind: a turn that really
-    did just start blocks until the launch grace runs out."""
-    sessions = tmp_path / "sessions"
-    watcher = Quiesce()
-    _turn(sessions, "owui-1", "T1", NOW)
-
-    assert watcher.starting(sessions, NOW) == ("chat/owui-1/T1",)
-    assert watcher.starting(sessions, NOW + LAUNCH_GRACE_S / 2) == ("chat/owui-1/T1",)
-
-
-def test_a_turn_that_claims_the_future_does_not_block(tmp_path: Path) -> None:
-    """A `started_at` ahead of root's clock is a disagreeing clock or a
-    writer holding the window open. Neither is a turn mid-start."""
-    sessions = tmp_path / "sessions"
-    _turn(sessions, "owui-1", "T1", NOW + 10_000.0)
-
-    assert Quiesce().starting(sessions, NOW) == ()
-
-
-def test_a_settled_turn_is_forgotten_so_a_later_one_gets_its_window(
-    tmp_path: Path,
-) -> None:
-    """The watcher's memory is per turn, and it drops a turn that settles.
-    A session that runs turn after turn must not exhaust one budget."""
-    sessions = tmp_path / "sessions"
-    watcher = Quiesce()
-    _turn(sessions, "owui-1", "T1", NOW)
-    watcher.starting(sessions, NOW)
-    _turn(sessions, "owui-1", "T1", NOW, state="settled")
-    watcher.starting(sessions, NOW + 1.0)
-
-    _turn(sessions, "owui-1", "T1", NOW + 2 * LAUNCH_GRACE_S)
-
-    assert watcher.starting(sessions, NOW + 2 * LAUNCH_GRACE_S) == ("chat/owui-1/T1",)
-
-
-def test_the_walk_spends_one_budget_unit_per_directory_entry(tmp_path: Path) -> None:
-    """`MAX_TURNS_SCANNED` bounded the READS
-    and not the LIST: `glob` materialized and sorted every path a
-    operator-side writer cared to create.
-
-    The budget binds at EVERY level, which is what a padded middle level
-    proves: with room for only a few entries the walk never reaches the
-    real turn, and with the whole budget it does.
-    """
-    sessions = tmp_path / "sessions"
-    for index in range(40):
-        (sessions / "chat" / f"pad{index:03d}").mkdir(parents=True)
-
-    _turn(sessions, "owui-1", "T1", NOW)
-
-    assert Quiesce().starting(sessions, NOW, budget=4) == ()
-    assert Quiesce().starting(sessions, NOW) == ("chat/owui-1/T1",)
-
-
-def test_the_default_budget_bounds_the_whole_walk() -> None:
-    """The number itself is the defence, so a later editor who lowers it to
-    a handful, or removes it, fails here."""
-    assert MAX_SCAN_ENTRIES >= 10_000
-
-
-def test_a_sessions_root_that_does_not_exist_is_quiet(tmp_path: Path) -> None:
-    """A host with no sessions tree yet is not busy, and a directory root
-    cannot open must not be able to stop a release."""
-    assert Quiesce().starting(tmp_path / "nothing", NOW) == ()
 
 
 # -- what root may believe about a manifest it did not verify -------------

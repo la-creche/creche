@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import cast
 
@@ -23,8 +23,9 @@ from handover.executor.approval import Decision, Summary, Verdict, gate_id
 from handover.executor.drain import Counter, drain, handle, repair_unfinished
 from handover.executor.host import Command
 from handover.executor.live_state import STAMP_FILE, installed_version
+from handover.executor.quiet import Busy
 from handover.executor.spool import DONE_DIR, REQUESTS_DIR, Spool, SwitchNote
-from handover.executor.steps import NOTHING_TO_DO, Wiring
+from handover.executor.steps import NOTHING_TO_DO, QUIESCE_WAIT_S, Wiring
 from handover_executor_fixtures import (
     REQUEST_ID,
     SHA_OF,
@@ -689,3 +690,40 @@ def test_a_staged_tree_is_stamped_before_it_is_switched(bench: Bench) -> None:
     assert (bench.components / "caregiver" / STAMP_FILE).read_text(encoding="utf-8").strip() == (
         NEW_VERSION
     )
+
+
+# -- step 7 asks attendance -------------------------------------------------
+
+
+def _step_detail(entry: dict[str, object], name: str) -> str | None:
+    rows = entry["steps"]
+    assert isinstance(rows, list)
+    for row in rows:  # pyright: ignore[reportUnknownVariableType]
+        if isinstance(row, dict) and row.get("name") == name:  # pyright: ignore[reportUnknownMemberType]
+            return str(row.get("detail"))  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
+
+    return None
+
+
+def test_step_7_waits_while_attendance_counts_a_prompt(bench: Bench) -> None:
+    """§2.4 row 7. Step 7 asks `attendance` (`GET /busy`). It reads no turn
+    record, because no program writes one."""
+    answers = [Busy.YES, Busy.UNKNOWN, Busy.NO]
+    bench.wiring = replace(bench.wiring, busy_now=lambda: answers.pop(0))
+    _run_one(bench)
+    entry = bench.ledger()
+
+    assert entry["status"] == "succeeded"
+    assert answers == []
+    assert _step_detail(entry, "quiesce") == "nothing in flight (waited 10s)"
+
+
+def test_step_7_stops_waiting_at_its_cap(bench: Bench) -> None:
+    """A prompt that runs past the cap is a running turn, not a start. The
+    release goes on: waiting for it would make the window unreachable."""
+    bench.wiring = replace(bench.wiring, busy_now=lambda: Busy.YES)
+    _run_one(bench)
+    entry = bench.ledger()
+
+    assert entry["status"] == "succeeded"
+    assert _step_detail(entry, "quiesce") == f"still busy after {QUIESCE_WAIT_S:.0f}s"

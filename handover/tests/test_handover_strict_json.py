@@ -24,7 +24,6 @@ import pytest
 from handover.errors import Refusal, RefusalCode
 from handover.executor import drain, phone, provenance, quiet, spool
 from handover.executor.approval import Verdict, not_granted
-from handover.executor.quiesce import starting
 from handover.executor.request import NOT_AN_OBJECT, parse_request
 from handover.executor.selfcontained import UNREADABLE_DIRECT_URL, escapes
 from handover.executor.spool import RUNNING_DIR, SWITCH_SUFFIX, Spool, SpoolError
@@ -415,38 +414,6 @@ def test_a_session_answer_that_is_not_strict_is_never_quiet(
 ) -> None:
     assert quiet._is_busy(answer) is None
     assert recorded.calls == [("session.answer", rule, None, True)]
-
-
-# -- the turn records of step 7 (release.turn_record) -------------------------
-
-
-def _turn(tmp_path: Path, text: str) -> Path:
-    turns = tmp_path / "sessions" / "family" / "session" / "turns"
-    turns.mkdir(parents=True)
-    (turns / "turn.json").write_text(text, "utf-8")
-
-    return tmp_path / "sessions"
-
-
-NOW = 1_760_000_000.0
-STARTED = "2025-10-09T08:53:10Z"
-
-
-def test_a_strict_turn_record_in_flight_is_mid_start(tmp_path: Path, recorded: Notices) -> None:
-    text = json.dumps({"state": "running", "started_at": STARTED})
-
-    assert starting(_turn(tmp_path, text), NOW) == ("family/session/turn",)
-    assert recorded.calls == []
-
-
-def test_a_turn_record_that_is_not_strict_informs_nothing(
-    tmp_path: Path, recorded: Notices
-) -> None:
-    """Root proves no writer of a turn record, so the notice says so."""
-    text = '{"state": "settled", "state": "running", "started_at": "' + STARTED + '"}'
-
-    assert starting(_turn(tmp_path, text), NOW) == ()
-    assert recorded.calls == [("release.turn_record", "duplicate_key", None, False)]
 
 
 # -- the record of a staged venv (release.direct_url) -------------------------
