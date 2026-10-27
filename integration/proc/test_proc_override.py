@@ -31,7 +31,7 @@ EXIT_DEADLINE_S = 30.0
 
 
 async def test_an_override_starts_each_service_of_a_topology(
-    tree: Tree, supervisor: Supervisor, bundle: Path, monkeypatch: pytest.MonkeyPatch
+    tree: Tree, supervisor: Supervisor, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ran = tree.root / "override-ran"
 

@@ -1,6 +1,6 @@
-// A port of `playpen/src/mounts.ts`. sbx mounts a host directory at its own
-// host path inside the VM, so no fixed in-VM path exists. The environment is
-// the only source of each directory, and a missing one is a refusal.
+// sbx mounts a host directory at its own host path inside the VM, so no fixed
+// in-VM path exists. The environment is the only source of each directory,
+// and a missing one is a refusal.
 
 /** The directories that each sandbox mounts, by the variable that names each one. */
 const REQUIRED = {

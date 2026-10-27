@@ -1,14 +1,13 @@
-# PR gate: lint, the full suite, the playpen's vitest suite, the agent
-# module's vitest suite, the ACP facade's vitest suite, the process-level
-# suite, the two old integration suites and the systemd proof, as jobs that
-# run at once on separate runners.
+# PR gate: lint, the full suite, the agent module's vitest suite, the ACP
+# facade's vitest suite, the process-level suite, the two old integration
+# suites and the systemd proof, as jobs that run at once on separate
+# runners.
 #
 #   scope ──┬── tests (1..N)   code   the full suite, one shard per job
-#           ├── playpen     code   the TypeScript suite and its build
 #           ├── agent       code   the agent module's suite and types
 #           ├── facade      code   the ACP facade's suite, build and types
 #           ├── proc        code   the process-level suite, each service
-#           │                      as a process, on the built playpen
+#           │                      as a process, on the built facade
 #           ├── suites      code   the old suite of integration/, in a
 #           │                      pytest run of its own
 #           └── systemd-proof
@@ -32,8 +31,8 @@
 # `gh pr checks` for `gate`.
 #
 # A PR of nothing but docs runs `bin/quality-gate.sh --docs` in the lint job,
-# lint and only the tests that read a doc: no shard, no playpen job, no agent
-# job, no facade job, no proc job, no suites job and no systemd-proof job
+# lint and only the tests that read a doc: no shard, no agent job, no
+# facade job, no proc job, no suites job and no systemd-proof job
 # (bin/lib/docsrule.sh, the rule the hook reads too).
 #
 # Every shard runs the whole of pyproject.toml's `testpaths` with
@@ -43,8 +42,8 @@
 #
 # Actions are SHA-pinned with the tag as a comment, as agent-registry's
 # validate.yml does.
-# release.yml runs the same `tests`, `playpen`, `agent`, `facade`, `proc`,
-# `suites` and `systemd-proof` jobs after the merge.
+# release.yml runs the same `tests`, `agent`, `facade`, `proc`, `suites`
+# and `systemd-proof` jobs after the merge.
 # agent-mcp carries its own gate.yml, with no JS steps. Diff the files when
 # changing one.
 name: gate
@@ -135,38 +134,6 @@ jobs:
           INDEX: ${{ strategy.job-index }}
           TOTAL: ${{ strategy.job-total }}
 
-  # agent-control only. The playpen is TypeScript and the Python gate
-  # never runs its suite. pnpm's version is playpen/package.json's
-  # packageManager field; node matches playpen/Dockerfile's NODE_TAG.
-  # `build` runs too: 120 integration tests skip when dist/ is absent, so
-  # a bundle that does not build has to fail HERE, not as a quiet skip.
-  playpen:
-    needs: scope
-    if: needs.scope.outputs.scope == 'code'
-    runs-on: ubuntu-24.04
-    # `pnpm run build` fixes the LAN address in the bundle and refuses to
-    # build without one (playpen/build.mjs). CI throws the bundle away,
-    # so the example site's TEST-NET-1 address does.
-    env:
-      AGENT_LAN_ADDRESS: 192.0.2.10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        with:
-          package_json_file: playpen/package.json
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24
-          cache: pnpm
-          cache-dependency-path: playpen/pnpm-lock.yaml
-
-      - run: pnpm install --frozen-lockfile && pnpm test && pnpm run typecheck && pnpm run build
-        working-directory: playpen
-
   # The agent module (agent/AGENTS.md). TypeScript, so the Python gate never
   # runs its suite. pnpm's version is agent/package.json's packageManager
   # field. The module is a library: the facade job builds it.
@@ -222,11 +189,11 @@ jobs:
   # The process-level suite (integration/proc/AGENTS.md). It starts each
   # service as a process, from the command its unit runs, so it can judge a
   # service in any language. It is not in `testpaths`: no shard runs it.
-  # It needs the built playpen, so it has node and pnpm as the playpen job
-  # has them, and the build takes the same TEST-NET-1 address.
+  # It needs the built facade, so it has node and pnpm as the facade job
+  # has them.
   #
-  # CRECHE_PROC_NO_SKIP: a test that needs the bundle skips itself when the
-  # bundle is missing. A run in which every test skips is green and judged
+  # CRECHE_PROC_NO_SKIP: a test that needs the facade skips itself when the
+  # build is missing. A run in which every test skips is green and judged
   # nothing, so here a skip is a failure.
   #
   # The time limit: a teardown waits 20 s for each process group. A fault
@@ -244,18 +211,13 @@ jobs:
 
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
-          package_json_file: playpen/package.json
+          package_json_file: facade/package.json
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: pnpm
-          cache-dependency-path: playpen/pnpm-lock.yaml
-
-      - run: pnpm install --frozen-lockfile && pnpm run build
-        working-directory: playpen
-        env:
-          AGENT_LAN_ADDRESS: 192.0.2.10
+          cache-dependency-path: facade/pnpm-lock.yaml
 
       # The exit test (integration/proc/test_proc_exit.py) starts the
       # built `creche-facade` and `acp-relay` of facade/dist. The build
@@ -282,19 +244,17 @@ jobs:
 
   # The old suite of integration/ (integration/AGENTS.md):
   # integration/tests_manager. It runs the services inside the pytest
-  # process, on the built playpen. It is not in `testpaths`: no shard runs
-  # it. The job has the setup of the `proc`
-  # job: node, pnpm, the build with the same TEST-NET-1 address, then the
-  # venv.
+  # process. It is not in `testpaths`: no shard runs it. It needs no node:
+  # the job has the checkout and the venv.
   #
   # The job runs the suite with the pytest command that
   # integration/AGENTS.md tells a person to run. integration/tests held a
   # second suite until the session API left attendance (phase 2 plan, row
   # 21). Only its stand-in for `sbx`, fake_sbx.py, stays there.
   #
-  # A test of the suite skips itself when the bundle is missing, and a run
-  # in which every test skips is green and judged nothing. The suite reads
-  # no switch that makes a skip a failure. So the run writes a JUnit report,
+  # A test of the suite can skip itself, and a run in which every test
+  # skips is green and judged nothing. The suite reads no switch that makes
+  # a skip a failure. So the run writes a JUnit report,
   # and the last step reads it. It fails for a test that skipped, for a
   # suite that ran no test and for a report that is missing. It prints the
   # counts and the time of the suite.
@@ -309,21 +269,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        with:
-          package_json_file: playpen/package.json
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24
-          cache: pnpm
-          cache-dependency-path: playpen/pnpm-lock.yaml
-
-      - run: pnpm install --frozen-lockfile && pnpm run build
-        working-directory: playpen
-        env:
-          AGENT_LAN_ADDRESS: 192.0.2.10
 
       - uses: ./.github/actions/uv-sync
 
@@ -411,7 +356,7 @@ jobs:
   # The one check a session reads. `always()`: a job that needs a failed job
   # is skipped by default, and a skipped `gate` would not read as red.
   gate:
-    needs: [scope, lint, tests, playpen, agent, facade, proc, suites, systemd-proof]
+    needs: [scope, lint, tests, agent, facade, proc, suites, systemd-proof]
     if: always()
     runs-on: ubuntu-24.04
     steps:

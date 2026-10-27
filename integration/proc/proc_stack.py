@@ -1,15 +1,12 @@
 """What every topology of this suite shares: `attendance` and the stand-ins.
 
     attendance     one process, started through `Service.ATTENDANCE`
-      | stdio, the channel protocol
+      | stdio, ACP v1
       v
-    sbx exec --env-file <env file> <sandbox> -- node playpen.js --sandbox <id>
+    sbx exec --env-file <env file> <sandbox> -- creche-facade
       |                 the `sbx` stand-in program, found through PATH
       v
-    node playpen/dist/playpen.js      the real bundle
-      | stdio, pi rpc
-      v
-    the `pi` stand-in program         found through AGENT_PI_BIN
+    the command of the sandbox
 
 A topology adds the service in front: a door in `proc_owui.py`, the chaperone
 in `proc_delegate.py`. A test reaches each service through a socket and
@@ -40,11 +37,9 @@ from proc_services import Service, command_of, env_of
 from proc_standins import (
     LOCK_POLL_S,
     LOCK_STALE_S,
-    PI,
     SBX,
     Call,
     calls_of,
-    install_pi,
     install_sbx,
 )
 from proc_terminal import Terminal
@@ -111,10 +106,9 @@ class Stack:
     # ------------------------------------------------------------------ start
 
     def prepare(self) -> None:
-        """Write the tree and both stand-in programs. Start nothing."""
+        """Write the tree and the `sbx` stand-in. Start nothing."""
         build_tree(self.tree)
         install_sbx(self.tree)
-        install_pi(self.tree)
 
     def spawn(self, service: Service, env: dict[str, str], *args: str) -> Child:
         """Start one service with the base environment under its own."""
@@ -198,10 +192,6 @@ class Stack:
         )
 
     # -------------------------------------------------- what crossed a boundary
-
-    def pi_starts(self) -> list[Call]:
-        """One entry per pi process a playpen started."""
-        return calls_of(self.tree, PI)
 
     def sbx_calls(self) -> list[Call]:
         """One entry per `sbx` command a service ran."""

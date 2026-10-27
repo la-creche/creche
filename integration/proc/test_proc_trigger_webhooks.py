@@ -21,7 +21,6 @@ that contract 02 §14 gives it. A change costs one assertion per scenario.
 from __future__ import annotations
 
 import signal
-from pathlib import Path
 
 import httpx
 import pytest
@@ -119,9 +118,7 @@ async def test_a_body_that_is_not_json_is_refused_at_the_door(trigger: TriggerSt
     assert trigger.tree.sessions_of(REVIEW) == []
 
 
-async def test_a_family_that_never_validated_has_no_route(
-    trigger_prepared: TriggerStack, bundle: Path
-) -> None:
+async def test_a_family_that_never_validated_has_no_route(trigger_prepared: TriggerStack) -> None:
     """Invariant 19, at this door: a file that was never valid opens no route."""
     tree = trigger_prepared.tree
     write_status(tree, REVIEW, AUTONOMOUS, validity=Validity.NEVER_VALID, webhooks=(WEBHOOK,))
@@ -136,7 +133,7 @@ async def test_a_family_that_never_validated_has_no_route(
 
 @pytest.mark.parametrize("case", ["missing", "short", "group-read", "not-text"])
 async def test_a_bearer_file_that_cannot_be_trusted_has_no_route(
-    trigger_prepared: TriggerStack, bundle: Path, case: str
+    trigger_prepared: TriggerStack, case: str
 ) -> None:
     """Contract 05 §6.4 rule 6. Such a route is absent, and absent answers 404."""
     tree = trigger_prepared.tree

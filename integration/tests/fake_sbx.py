@@ -17,7 +17,7 @@ child with no `AGENT_CRED_DIR`, no `AGENT_FAMILY_CONFIG_DIR` and no
 answer `fatal` instead of serving.
 
 `FAKE_SBX_IMAGE_ENV` names the variables that stand in for what the
-sandbox image provides (`AGENT_PI_BIN`, `AGENT_LOCK_BEAT_MS`). It is read
+sandbox image provides (`AGENT_LOCK_BEAT_MS`). It is read
 here, in the stand-in for `sbx` itself, never inside the child.
 
 This file `exec`s, so the playpen stays ONE process: stdin, stdout,

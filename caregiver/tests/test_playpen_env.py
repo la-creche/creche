@@ -84,8 +84,7 @@ def test_it_names_the_three_directories_by_host_path(tmp_path: Path) -> None:
 
 
 def test_it_names_the_sandbox(tmp_path: Path) -> None:
-    """The playpen takes its id from `--sandbox` first and from this
-    variable second (`playpen/src/index.ts`)."""
+    """The facade takes its id from this variable (`agent/src/config.ts`)."""
     assert read_playpen_env(write(tmp_path))["AGENT_SANDBOX"] == SANDBOX
 
 

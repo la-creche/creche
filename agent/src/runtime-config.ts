@@ -1,5 +1,4 @@
-// A port of the reader of `playpen/src/runtime-config.ts`. `caregiver`
-// writes the family config mount:
+// `caregiver` writes the family config mount:
 //
 //   <config dir>/runtime.json     shell, sandbox_tools, model_alias, system_prompt
 //   <config dir>/instructions.md  the family's own instructions

@@ -80,28 +80,27 @@ in `AGENTS.md` yourself.
 ## CI
 
 `.github/workflows/gate.yml` runs on every pull request and on every merge
-group. It has nine kinds of job:
+group. It has eight kinds of job:
 
 1. `lint`: ruff, ruff format, pyright. On a docs-only pull request it also
    runs the tests marked `docs`.
 2. `tests`: the full Python suite, as four shards. A test's own id puts it in
    exactly one shard.
-3. `playpen`: `pnpm test`, `pnpm run typecheck` and `pnpm run build`.
-4. `agent`: `pnpm test` and `pnpm run typecheck` in `agent/`.
-5. `facade`: `pnpm test` and `pnpm run typecheck` in `facade/`. Its
+3. `agent`: `pnpm test` and `pnpm run typecheck` in `agent/`.
+4. `facade`: `pnpm test` and `pnpm run typecheck` in `facade/`. Its
    `pnpm test` builds `dist/` first.
-6. `proc`: the process-level suite, `uv run pytest integration/proc -m slow`.
-   The job builds the playpen first. A test that skips is a failure there.
-7. `suites`: the suite `integration/tests_manager`. The job builds the
-   playpen first. It runs the suite with a pytest command of its own. A test
-   that skips is a failure there. `integration/AGENTS.md` has its rules.
-8. `systemd-proof`: `bin/systemd-proof.sh`, on the systemd of the runner.
+5. `proc`: the process-level suite, `uv run pytest integration/proc -m slow`.
+   The job builds the facade first. A test that skips is a failure there.
+6. `suites`: the suite `integration/tests_manager`. It runs the suite with
+   a pytest command of its own. A test that skips is a failure there.
+   `integration/AGENTS.md` has its rules.
+7. `systemd-proof`: `bin/systemd-proof.sh`, on the systemd of the runner.
    It proves that a unit with `RestartPreventExitStatus=78` stays stopped
    after exit status 78. It also gives each unit file to
    `systemd-analyze verify`. When the pull request changes no file of the
    proof, the job skips that step and passes. `bin/AGENTS.md` lists those
    files.
-9. `gate`: red unless every other job passed. This is the one check the
+8. `gate`: red unless every other job passed. This is the one check the
    merge queue and the release executor read.
 
 Comment `!retest` on a pull request to restart its CI on the same commit.

@@ -28,7 +28,6 @@ runs:
         LEFT_OUT = {
             "docs": [
                 "tests",
-                "playpen",
                 "agent",
                 "facade",
                 "proc",
