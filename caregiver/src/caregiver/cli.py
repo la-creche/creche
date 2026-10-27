@@ -38,7 +38,6 @@ from .images import SandboxImages
 from .lan import ConfigError, Port, url
 from .litellm_keys import HttpLiteLLMKeys, LiteLLMError, LiteLLMKeys
 from .loop import LoopConfig, SignalControl, serve
-from .mcp_release import paths_under
 from .policy_fleet import ChaperoneChecker, FleetPolicy, PolicyChecker, PolicyTarget
 from .reconcile import Actors, SpendRead, has_family_file, reconcile_family
 from .released import RELEASED_IMAGES, ReleasedImages
@@ -123,13 +122,6 @@ def _parser() -> argparse.ArgumentParser:
         default=LoopConfig.stop_grace_s,
         help="on SIGTERM, how long to wait for the steps in flight. "
         "Keep it below the unit's TimeoutStopSec",
-    )
-    serve_cmd.add_argument(
-        "--release-root",
-        type=Path,
-        default=paths.RELEASE_ROOT,
-        help="root's own root: the release spool, the sealed secrets and the roster. "
-        "A --state-root of its own needs one of these too",
     )
     _pep_watch_args(serve_cmd)
 
@@ -296,7 +288,7 @@ def _chaperone_args(parser: argparse.ArgumentParser) -> None:
 def _chaperone_config_dir(args: argparse.Namespace) -> Path:
     """The flag, else the host directory. A run with a `--state-root` of
     its own writes into that root, never into the directory of the host:
-    the rule of `--released-images` and `--release-root`."""
+    the rule of `--released-images`."""
     if args.chaperone_config_dir is not None:
         return Path(args.chaperone_config_dir)
 
@@ -452,8 +444,8 @@ def _released(args: argparse.Namespace) -> ReleasedImages | None:
     The default belongs to the real plane and to no other: a scratch run
     names a `--state-root` of its own and is given its images by its caller,
     so it must not pick up what the host's own `playpen` release installed.
-    The same rule `--release-root` follows. No unit names the flag, so an
-    installer can put a new unit file over an older `caregiver` tree."""
+    No unit names the flag, so an installer can put a new unit file over
+    an older `caregiver` tree."""
     if args.released_images is not None:
         return ReleasedImages(args.released_images)
 
@@ -526,19 +518,9 @@ def _serve_command(
         f"every {args.pep_probe_interval_s:.0f}s, "
         f"fault after {args.pep_unreachable_after_s:.0f}s of silence"
     )
-    print(f"release root: {args.release_root}")
     if not args.write:
         print("plan: watch and converge. Pass --write to start.")
         return EXIT_OK
-
-    # A scratch state root beside root's REAL release root would file a
-    # scratch run's requests into the spool root drains for real.
-    if args.state_root != paths.STATE_ROOT and args.release_root == paths.RELEASE_ROOT:
-        print(
-            "caregiver: a --state-root of its own needs a --release-root of its own",
-            file=sys.stderr,
-        )
-        return EXIT_USAGE
 
     logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
     control = SignalControl()
@@ -552,11 +534,6 @@ def _serve_command(
         poll_interval_s=args.poll_interval_s,
         max_concurrent_passes=args.max_concurrent_passes,
         stop_grace_s=args.stop_grace_s,
-        # `stage7-releases.md` §4.1 step 3. Derived from THIS run's two
-        # roots, so a scratch run never writes into root's real spool, and
-        # a host where root has not made the spool yet gets a quiet pass
-        # rather than an error every two seconds.
-        mcp=paths_under(Path(args.state_root), Path(args.release_root)),
         chaperone=_pep_watch(args),
     )
     try:
@@ -727,10 +704,9 @@ def _print_fault(fault: dict[str, Any]) -> None:
     """One fault, with its message.
 
     Contract 05 §3.3's `message` is where several codes keep their whole
-    content: `mcp_install_held` carries root's reason for refusing a
-    release there, and a code alone would send the reader to the journal
-    — which is the thing that row exists to avoid. It is bounded by its
-    writer, and this only ever prints what a document already holds."""
+    content, and a code alone would send the reader to the journal. It is
+    bounded by its writer, and this only ever prints what a document
+    already holds."""
     message = fault.get("message")
     detail = f": {message}" if isinstance(message, str) and message else ""
     print(f"  fault: {fault.get('code')} (blocks_turns={fault.get('blocks_turns')}){detail}")

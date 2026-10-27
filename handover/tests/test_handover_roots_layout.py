@@ -20,7 +20,6 @@ from typing import Final, cast
 from handover.executor import layout
 from handover.executor.host import Host, Result
 from handover.executor.spool import SPOOL_ROOT
-from handover.intake.store import DEFAULT_SECRETS_DIR
 
 #: Directories the operator owns on the host (`bin/bootstrap-root.sh`). A path root
 #: trusts under either of these is a path the operator can rename aside.
@@ -37,9 +36,7 @@ ROOT_OWNED: Final = (
 )
 
 #: `Host` fields root WRITES, or reads as its own.
-ROOT_TRUSTS: Final = frozenset(
-    {"work_root", "system_unit_dir", "mcp_root", "roster_file", "mcp_state_root"}
-)
+ROOT_TRUSTS: Final = frozenset({"work_root", "system_unit_dir", "mcp_root", "mcp_state_root"})
 
 #: `Host` fields root reads from the operator ON PURPOSE, and why each is safe.
 OPERATOR_BY_DESIGN: Final = {
@@ -94,7 +91,7 @@ def test_every_path_root_trusts_sits_under_a_root_owned_root() -> None:
     owns — so nothing the operator owns can be renamed above it."""
     fields = _path_fields()
     trusted = [path for name in ROOT_TRUSTS for path in fields[name]]
-    trusted += [Path(SPOOL_ROOT), Path(DEFAULT_SECRETS_DIR)]
+    trusted += [Path(SPOOL_ROOT)]
     trusted += [p for p in fields[INSTALL_ROOTS_FIELD] if not _is_under(p, OPERATOR_OWNED[1])]
 
     for path in trusted:
@@ -109,13 +106,11 @@ def test_every_host_path_field_is_classified() -> None:
     assert set(_path_fields()) == known
 
 
-def test_the_four_paths_that_moved_are_layouts() -> None:
-    """One spelling each. The spool, the intake's store and the roster are
-    what the PEP and `caregiver` are pointed at, so a second copy that drifted
-    would be a writer and a reader on two different paths."""
+def test_the_paths_that_moved_are_layouts() -> None:
+    """One spelling each. The spool is what the PEP and `caregiver` are
+    pointed at, so a second copy that drifted would be a writer and a reader
+    on two different paths."""
     fields = _path_fields()
 
     assert fields["work_root"] == (Path(layout.WORK_ROOT),)
-    assert fields["roster_file"] == (Path(layout.ROSTER_FILE),)
     assert SPOOL_ROOT == layout.SPOOL_ROOT
-    assert DEFAULT_SECRETS_DIR == layout.SECRETS_DIR

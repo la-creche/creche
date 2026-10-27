@@ -181,10 +181,9 @@ DEFAULT_PYTHON: Final = "3.12"
 SECRET_WORDS: Final = ("TOKEN", "KEY", "PASSWORD", "SECRET")
 SECRET_PREFIX: Final = "secret:"
 
-#: Contract 01b §4.1's `secret:<key>`, the same pattern the intake's store
-#: and `caregiver`'s gap writer apply. The name becomes a file name under
-#: root's secrets directory, so a name root could not read is a name root
-#: does not carry forward.
+#: Contract 01b §4.1's `secret:<key>`. The name becomes the name of a secret
+#: file, so a name that cannot be a file name is a name root does not carry
+#: forward.
 SECRET_NAME_RE: Final = re.compile(r"[a-z][a-z0-9_]{1,62}")
 
 #: Contract 01b §7: `tools: all`, or a list of this server's tool names.
@@ -281,9 +280,8 @@ class ServerPin:
 class ServerFence:
     """One `arg_denies` entry, after §7's shape rules.
 
-    `tools` is None for contract 01b's `all`. The roster writer expands it
-    against the declared set, because the PEP's own reader takes a list and
-    has no word for `all` (`mcp_client._parse_arg_denies`).
+    `tools` is None for contract 01b's `all`. `covers` expands it against
+    the declared set.
     """
 
     tools: tuple[str, ...] | None
@@ -327,18 +325,12 @@ class ServerFile:
     #: `stage7-releases.md` §6 row 8 — one secret name binds to at most one
     #: upstream — which needs every server's names in one place.
     secrets: tuple[str, ...] = ()
-    #: `run.args` and `run.env` as the file declared them: the roster is
-    #: these fields plus a command root builds itself.
+    #: `run.args` and `run.env` as the file declared them.
     args: tuple[str, ...] = ()
     env: tuple[tuple[str, str], ...] = ()
-    #: §7's deny rules. The PEP applies them on the upstream BY NAME, before
-    #: any grant is read, so a released server with no roster fence is a
-    #: server whose declared fences do not exist.
+    #: §7's deny rules.
     arg_denies: tuple[ServerFence, ...] = ()
-    #: §7's allow rules, carried and NOT written into the roster:
-    #: `UpstreamSpec` has no field for them and the PEP's reader would
-    #: refuse the file. They are here so the release can SAY that a
-    #: declared fence is not applied, instead of dropping it in silence.
+    #: §7's allow rules. Root carries them and applies none.
     arg_allows: tuple[ServerFence, ...] = ()
     #: §4.3's declarations. `read_registry` needs both halves of a pair
     #: in hand at once, so the entries are carried per file and matched
@@ -456,9 +448,8 @@ def _secrets(name: str, value: Any) -> tuple[str, ...]:
     this one.
 
     A name that fails `SECRET_NAME_RE` is refused rather than dropped.
-    Root would never be able to store it — the intake's store and
-    `caregiver`'s gap writer both check the same pattern — so the server
-    would install and then start with an unresolved reference.
+    No secret file could have that name, so the server would install and
+    then start with an unresolved reference.
     """
     found: set[str] = set()
     for key, inner in cast(dict[str, Any], value).items():
@@ -920,11 +911,6 @@ def _one_upstream_per_secret(servers: tuple[ServerFile, ...]) -> None:
     This is that validator, and here is where it belongs: the rule is
     about the registry as a whole, and this is the one place every
     declaration is in hand at once. Per file it is invisible.
-
-    The gap layout cannot catch it: `caregiver._write_gap` writes
-    `secret-gaps/<secret name>.json`, so a second server declaring one
-    name would overwrite the first server's gap and the operator would be pushed
-    one link naming one of the two.
 
     **The exception is declared and never inferred.** `ha` and `ha-read`
     hold ONE Home Assistant token on purpose: one user, two reaches, which

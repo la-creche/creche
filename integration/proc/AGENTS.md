@@ -485,13 +485,12 @@ that changes the registry first.
    attempt comes 20 seconds later.
 
 The start command is the `ExecStart` of `creche-caregiver.service`.
-`test_proc_table.py` holds each flag against the unit. The suite adds three
+`test_proc_table.py` holds each flag against the unit. The suite adds two
 flags that the unit does not have:
 
 | Flag | Why |
 |---|---|
 | `--litellm-base-url` | The unit dials LiteLLM on the LAN address of the site file. No test binds that address. |
-| `--release-root` | `caregiver` refuses a state root of a test with the release root of the host. |
 | `--poll-interval-s` | The default look is one in 2 seconds. The suite looks one time in 0.2 seconds, so an edit lands sooner. |
 
 `caregiver` looks again at a family when the registry changes, or 20
@@ -756,12 +755,6 @@ the text of the failure. Work down this list.
 - **No flag for the model cache time.** `MODEL_CACHE_S` in
   `caregiver/src/caregiver/reconcile.py` is 10 seconds. No scenario changes
   the model of a family.
-- **No flag for the install root of the MCP servers.** `installed_root` in
-  `caregiver/src/caregiver/mcp_release.py` is `/opt/mcp`. A registry that
-  declares an MCP server makes `caregiver` read that directory of the test
-  machine. The exit topology declares one, `standin`, because a family
-  grants only the tools of a declared server. Its release root has no
-  request spool, so `caregiver` reads no install and files no request.
 - **No flag for the grace of a rotation.** `ROTATION_GRACE_S` in
   `caregiver/src/caregiver/rotate.py` is 300 seconds. The rotation scenario
   of `test_proc_exit.py` moves the end of the overlap into the past with

@@ -87,11 +87,6 @@ SOURCE_ROOT: Final = CORPUS_ROOT
 #: which is why the two roots stay apart (`mcpbuild`, assumption 2).
 MCP_ROOT: Final = "/opt/mcp"
 
-#: `executor/roster.py`'s file, spelled once in `layout.py`. It is here
-#: beside the other host paths so a reader finds every path root writes in
-#: one list.
-ROSTER_FILE: Final = layout.ROSTER_FILE
-
 #: Contract 01b §4.2's root: `<root>/<name>` is the state directory of each
 #: server whose file declares `run.state_dir`. Under `/var/lib`
 #: and not `/opt/mcp`, because state outlives every tree a release swaps.
@@ -339,95 +334,6 @@ class Result:
 
 RunFn = Callable[[Command], Result]
 
-#: Where `sops` lives. Absolute for the same reason `runuser` is: a child's
-#: `PATH` is built here and is not promised to hold it.
-SOPS: Final = "/usr/local/bin/sops"
-
-#: One seal. Encryption needs PUBLIC keys only, so this child holds no
-#: private key and root can write a secret it cannot read
-#: (`stage7-releases.md` §4.3). Reading `/dev/stdin` is what keeps the
-#: plaintext out of argv and off the disk. `sops`'s stdin handling is
-#: confirmed on the host before the first paste.
-SEAL_TIMEOUT_S: Final = 30.0
-
-#: A sealed secret root will read back into memory. The largest is an
-#: armoured PEM block around an 8 KiB value.
-MAX_SEALED_BYTES: Final = 128 * 1024
-
-
-def seal_argv(recipients: tuple[str, ...]) -> tuple[str, ...]:
-    """`sops`, encrypt only, to a public recipient set.
-
-    `sops` and not `age`, because the PEP decrypts these files with
-    `sops -d` already. One format and one
-    tool on both ends beats a second one that root alone understands.
-
-    `--config /dev/null` is a control rather than tidiness
-    (`test_handover_r7g_sealer_sops.py`).
-    `sops` walks UP from the child's working directory looking for a
-    `.sops.yaml`, and a config whose `creation_rules` match no path exits
-    1 with "no matching creation rules found" — even though `--age` names
-    the recipients right here on the command line. The sealer's child
-    inherits root's working directory, and every platform checkout under
-    `/srv/agents/work/platform/` carries a `.sops.yaml` the attacker
-    writes. One file therefore wedged every future paste at 500, and the
-    only thing said anywhere would have been "the value could not be
-    sealed". Named explicitly, no file on disk decides whether root can
-    seal. Measured with `sops` 3.13.3: a discovered config can never ADD a
-    recipient past this `--age`, so the wedge was the whole exposure.
-    """
-    return (
-        SOPS,
-        "--config",
-        "/dev/null",
-        "--encrypt",
-        "--age",
-        ",".join(recipients),
-        "--input-type",
-        "binary",
-        "--output-type",
-        "binary",
-        "/dev/stdin",
-    )
-
-
-def make_sealer(recipients: tuple[str, ...], operator_uid: int) -> Callable[[bytes], bytes | None]:
-    """The one child that is HANDED a secret.
-
-    The plaintext goes to the child's STDIN. It never reaches `Command`,
-    which is logged, and never reaches argv or a file (invariant 13). The
-    answer is the sealed bytes, or None for every failure — a caller that
-    learns why would have to say so somewhere.
-    """
-    argv = list(seal_argv(recipients))
-
-    def seal(plaintext: bytes) -> bytes | None:
-        if not recipients:
-            return None
-
-        try:
-            proc = subprocess.run(
-                argv,
-                input=plaintext,
-                env=child_env(As.ROOT, operator_uid),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                timeout=SEAL_TIMEOUT_S,
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            return None
-
-        if proc.returncode != 0 or not proc.stdout:
-            return None
-
-        if len(proc.stdout) > MAX_SEALED_BYTES:
-            return None
-
-        return proc.stdout
-
-    return seal
-
 
 def _user_unit_dir() -> Path:
     """The operator's user-unit directory, e.g.
@@ -462,11 +368,6 @@ class Host:
     sessions_root: Path = Path("/srv/agents/sessions")
     install_roots: tuple[Path, ...] = field(default_factory=default_install_roots)
     mcp_root: Path = Path(MCP_ROOT)
-    #: `stage7-releases.md` §4.4 step 1's file: the upstream roster root
-    #: writes from the servers it just installed. Root's own state, not an
-    #: install root — a `chaperone` release swaps the whole `chaperone` tree, so a
-    #: roster inside it would vanish on the PEP's next release.
-    roster_file: Path = Path(ROSTER_FILE)
     #: `MCP_STATE_ROOT`, a field so a test points it inside `tmp_path`.
     mcp_state_root: Path = Path(MCP_STATE_ROOT)
     #: §2.8's signal. Fields rather than constants at the call site, so a

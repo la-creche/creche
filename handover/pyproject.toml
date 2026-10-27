@@ -14,11 +14,6 @@ handover = "handover.cli:main"
 # one request, `handover-exec` swaps trees and restarts units.
 # `bin/creche-handover` execs this one.
 handover-exec = "handover.executor.drain:main"
-# The ROOT secret intake (stage7-releases.md §4.3). A third name, because it
-# is a third identity and a third reach: this one binds a TLS listener on the
-# LAN address and is handed plaintext secrets, and it deploys nothing.
-# `bin/creche-handover-intake` execs it, and it runs until systemd stops it.
-handover-intake = "handover.intake.run:main"
 
 [build-system]
 requires = ["hatchling"]

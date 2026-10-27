@@ -29,7 +29,6 @@ from handover.executor.host import (
 from handover.executor.install import StepFailed
 from handover.executor.mcpbuild import (
     HOME_DIR,
-    HUP_ARGV,
     MAX_ASSET_BYTES,
     UV_CACHE_DIR_NAME,
     Fetched,
@@ -682,17 +681,6 @@ def test_a_swap_keeps_the_previous_tree_and_a_swap_back_restores_it(tmp_path: Pa
     builder.swap_back(build)
 
     assert (live / "marker").is_file()
-
-
-def test_the_last_action_is_one_signal_to_the_pep_unit(tmp_path: Path) -> None:
-    """§4.4 step 1. An argv list, to the unit by name, as root."""
-    fake = McpFake()
-    builder, _, _ = _builder(tmp_path, fake)
-
-    builder.reload_chaperone()
-
-    assert fake.seen[-1].argv == HUP_ARGV
-    assert fake.seen[-1].identity is As.ROOT
 
 
 # -- assumption 2: the name is the only thing that becomes a path --------

@@ -28,7 +28,6 @@ topology with one writes only the registry and the token files, and
       state/view.key                     the key of the noticeboard
       state/view.env                     contract 06 §4 rule 7, the env file of a unit
       sock/                              contract 02 §3 rule 1
-      release/                           the root of the release executor, empty
       home/.config/systemd/user/         the unit directory of a user manager
       work/  log/  home/  bin/  standins/  proc-logs/
 """
@@ -235,11 +234,6 @@ class Tree:
     def registry_root(self) -> Path:
         """The registry that `caregiver` watches (contract 01 §1)."""
         return self.root / "registry"
-
-    @property
-    def release_root(self) -> Path:
-        """What plays the root of the release executor. The suite leaves it empty."""
-        return self.root / "release"
 
     @property
     def unit_dir(self) -> Path:

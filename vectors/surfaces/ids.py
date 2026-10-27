@@ -22,11 +22,8 @@ from agent_family import grammar as family_grammar
 from handover.executor import host as executor_host
 from handover.executor import provenance, source
 from handover.executor import request as executor_request
-from handover.intake import store as intake_store
-from handover.intake import token as intake_token
 
 from attendance import ids as attendance_ids
-from caregiver import mcp_release
 from handover import allocate, manifest, mcpserver, resolve, state
 from noticeboard import registrywrite
 from vectors.core import (
@@ -476,19 +473,9 @@ GRAMMARS: Final = (
                         family_grammar.SERVER_NAME,
                     ),
                     _pattern_copy(
-                        "caregiver",
-                        "caregiver.mcp_release.SERVER_NAME_RE",
-                        mcp_release.SERVER_NAME_RE,
-                    ),
-                    _pattern_copy(
                         "handover_mcpserver",
                         "handover.mcpserver.SERVER_NAME_RE",
                         mcpserver.SERVER_NAME_RE,
-                    ),
-                    _pattern_copy(
-                        "handover_intake",
-                        "handover.intake.token.SERVER_NAME_RE",
-                        intake_token.SERVER_NAME_RE,
                     ),
                 ),
             ),
@@ -594,9 +581,6 @@ GRAMMARS: Final = (
                         ),
                     ),
                     _pattern_copy(
-                        "caregiver", "caregiver.mcp_release.ULID_RE", mcp_release.ULID_RE
-                    ),
-                    _pattern_copy(
                         "handover_requester", "handover.resolve.ULID_RE", resolve.ULID_RE
                     ),
                     _pattern_copy(
@@ -684,27 +668,12 @@ GRAMMARS: Final = (
                 "contract 01b §4.1, contract 06 §8",
                 (
                     _pattern_copy(
-                        "caregiver",
-                        "caregiver.mcp_release.SECRET_NAME_RE",
-                        mcp_release.SECRET_NAME_RE,
-                    ),
-                    _pattern_copy(
                         "handover_manifest", "handover.manifest.SECRET_RE", manifest.SECRET_RE
                     ),
                     _pattern_copy(
                         "handover_mcpserver",
                         "handover.mcpserver.SECRET_NAME_RE",
                         mcpserver.SECRET_NAME_RE,
-                    ),
-                    _pattern_copy(
-                        "handover_intake_store",
-                        "handover.intake.store.SECRET_NAME_RE",
-                        intake_store.SECRET_NAME_RE,
-                    ),
-                    _pattern_copy(
-                        "handover_intake_token",
-                        "handover.intake.token.SECRET_NAME_RE",
-                        intake_token.SECRET_NAME_RE,
                     ),
                 ),
             ),

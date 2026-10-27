@@ -90,11 +90,6 @@ EnvironmentFile=/etc/creche/site.env
 # release binary in ~/chaperone-rel. After the cutover, the default
 # /opt/components/chaperone/bin/chaperone is the Rust binary, and the flag
 # can go.
-# NO `--release-root`, and that is deliberate. Its default is
-# root's own root, /var/lib/creche-handover, and `bin/rework-cutover.sh up`
-# installs THIS file over a caregiver a release installed: a caregiver older
-# than ROOTS would refuse the flag and crash-loop. Name it only in a run
-# whose `--state-root` is not this one.
 ExecStart=%h/.local/components/caregiver/bin/caregiver serve \
   /srv/agents/registry \
   --image ${AGENT_SANDBOX_IMAGE} \

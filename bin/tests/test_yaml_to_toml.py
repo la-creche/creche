@@ -1,7 +1,7 @@
 """`bin/yaml-to-toml.py` writes one layout and proves each pair.
 
-The script converts a file of the four kinds: a family file, a server file,
-a component manifest and a roster. Each test here holds its own YAML text.
+The script converts a file of the three kinds: a family file, a server file
+and a component manifest. Each test here holds its own YAML text.
 No test reads a YAML fixture of the repository by name, because the
 migration removes those files.
 
@@ -16,7 +16,7 @@ Five things are held:
    values and the same count of comments, and for no other pair.
 4. **The second reader.** The values of a TOML text equal what
    `yaml.safe_load` gives for the YAML text.
-5. **The walk.** Each tracked YAML file of the four kinds converts, and the
+5. **The walk.** Each tracked YAML file of the three kinds converts, and the
    pair passes the check. A tree with no such file passes.
 """
 
@@ -65,7 +65,6 @@ y2t = _load()
 FAMILY = y2t.FileKind.FAMILY
 SERVER = y2t.FileKind.SERVER
 MANIFEST = y2t.FileKind.MANIFEST
-ROSTER = y2t.FileKind.ROSTER
 
 
 def _toml(text: str, kind: Any = FAMILY) -> str:
@@ -93,7 +92,6 @@ def _run(*args: str | Path) -> subprocess.CompletedProcess[str]:
         ("server.yaml", SERVER),
         ("component.yaml", MANIFEST),
         ("some_bin_component.yaml", MANIFEST),
-        ("upstreams.yaml", ROSTER),
     ],
 )
 def test_the_name_of_a_file_gives_its_kind(name: str, kind: Any) -> None:
@@ -384,36 +382,16 @@ def test_a_yaml_boolean_word_is_a_boolean(word: str, boolean: str) -> None:
     assert _toml(f"shell: {word}\n") == f"shell = {boolean}\n"
 
 
-def test_an_empty_roster_keeps_each_comment() -> None:
-    converted = y2t.convert("# The base roster.\n# It holds no row.\n{}\n", ROSTER)
+def test_an_empty_top_mapping_keeps_each_comment() -> None:
+    converted = y2t.convert("# A file.\n# It holds no key.\n{}\n", SERVER)
 
-    assert converted.toml == "# The base roster.\n# It holds no row.\n"
+    assert converted.toml == "# A file.\n# It holds no key.\n"
     assert tomllib.loads(converted.toml) == {}
     assert converted.comments == 2
 
 
 def test_a_comment_on_the_line_of_an_empty_top_mapping_stays() -> None:
-    assert _toml("{} # no row\n", ROSTER) == "# no row\n"
-
-
-def test_a_roster_row_gets_the_one_layout() -> None:
-    text = """\
-ha:
-  command: /opt/mcp/ha/bin/ha-mcp
-  args: []
-  env: { HA_URL: "http://192.0.2.10:8123" }
-  arg_denies:
-    - { tools: all, arg: entity_id, values: [lock.front] }
-"""
-
-    assert _toml(text, ROSTER) == (
-        'ha.command = "/opt/mcp/ha/bin/ha-mcp"\n'
-        "ha.args = []\n"
-        'ha.env.HA_URL = "http://192.0.2.10:8123"\n'
-        "ha.arg_denies = [\n"
-        '    { tools = "all", arg = "entity_id", values = ["lock.front"] },\n'
-        "]\n"
-    )
+    assert _toml("{} # no row\n", SERVER) == "# no row\n"
 
 
 # --- single values -----------------------------------------------------------
@@ -1318,7 +1296,7 @@ def _without_nulls(value: object) -> object:
 def _safe_load_values(text: str, kind: Any) -> object:
     """The values that a product reader gets from a YAML text.
 
-    Each product reader of the four kinds uses `yaml.safe_load`. The script
+    Each product reader of the three kinds uses `yaml.safe_load`. The script
     builds its values with a reader of its own, so this function is the one
     anchor outside that reader. It applies the two rules of the script that
     change a value: a null of a mapping gets no key, and the key `release` of
@@ -1394,14 +1372,13 @@ def test_the_script_and_safe_load_read_the_same_values(text: str, kind: Any) -> 
 
 # --- the walk over the files of the repository -------------------------------
 
-#: How git names a file of the four kinds. `kind_of` holds the same names.
+#: How git names a file of the three kinds. `kind_of` holds the same names.
 KIND_PATHSPECS = (
     ":(glob)**/family.yaml",
     ":(glob)**/*-family.yaml",
     ":(glob)**/server.yaml",
     ":(glob)**/component.yaml",
     ":(glob)**/*_component.yaml",
-    ":(glob)**/upstreams.yaml",
 )
 
 
@@ -1418,17 +1395,17 @@ def _git_files(*pathspecs: str) -> list[str]:
     return sorted(one for one in listing.split("\0") if one and (REPO / one).is_file())
 
 
-#: Each tracked YAML file of the four kinds. The migration removes them one
+#: Each tracked YAML file of the three kinds. The migration removes them one
 #: packet at a time, so the list gets shorter and then empty.
 TRACKED = _git_files(*KIND_PATHSPECS)
 
 #: What the walk gets when the list is empty. pytest reports a parametrized
 #: test with no value as skipped, and an empty tree must pass.
-NO_FILE = "(no YAML file of the four kinds is left)"
+NO_FILE = "(no YAML file of the three kinds is left)"
 
 
 @pytest.mark.parametrize("name", TRACKED or [NO_FILE])
-def test_each_tracked_file_of_the_four_kinds_converts(name: str) -> None:
+def test_each_tracked_file_of_the_three_kinds_converts(name: str) -> None:
     if name == NO_FILE:
         assert TRACKED == []
         return

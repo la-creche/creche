@@ -16,7 +16,6 @@ from __future__ import annotations
 import io
 import json
 import math
-import os
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -30,9 +29,6 @@ from handover.executor.request import NOT_AN_OBJECT, parse_request
 from handover.executor.selfcontained import UNREADABLE_DIRECT_URL, escapes
 from handover.executor.spool import RUNNING_DIR, SWITCH_SUFFIX, Spool, SpoolError
 from handover.follow import Answer, Marker, read_answer, read_marker, write_marker
-from handover.intake import notify
-from handover.intake import run as intake_run
-from handover.intake.gaps import GapDirectory, OpenGap
 from handover.requester.file import plan_request
 from handover.resolve import Resolution, build_document
 from handover.state import ReleaseState, parse_state
@@ -215,31 +211,6 @@ def test_a_ledger_entry_that_is_not_strict_holds_the_set(tmp_path: Path, recorde
     assert recorded.calls == [("release.spool_entry", "duplicate_key", None, True)]
 
 
-# -- a gap file of the intake (release.gap_file) -------------------------------
-
-
-def _gaps(tmp_path: Path, text: str) -> tuple[OpenGap, ...]:
-    directory = tmp_path / "secret-gaps"
-    directory.mkdir()
-    (directory / "kagi_token.json").write_text(text, "utf-8")
-
-    return GapDirectory(directory, os.getuid()).open_gaps()
-
-
-def test_a_strict_gap_file_is_a_gap(tmp_path: Path, recorded: Notices) -> None:
-    text = '{"server": "kagi", "secret": "kagi_token", "at": 1}'
-
-    assert _gaps(tmp_path, text) == (OpenGap("kagi", "kagi_token", 1.0),)
-    assert recorded.calls == []
-
-
-def test_a_gap_file_that_is_not_strict_is_no_gap(tmp_path: Path, recorded: Notices) -> None:
-    text = '{"server": "kagi", "secret": "other", "secret": "kagi_token", "at": 1}'
-
-    assert _gaps(tmp_path, text) == ()
-    assert recorded.calls == [("release.gap_file", "duplicate_key", None, True)]
-
-
 # -- the phone hook (hook.answer) ----------------------------------------------
 
 
@@ -315,19 +286,6 @@ def test_a_hook_body_with_no_strict_text_is_not_sent(opener: _Opener) -> None:
 
     assert phone._post("https://hook.invalid", "bearer", body) is None
     assert opener.sent == []
-
-
-def test_a_push_of_the_intake_with_no_strict_text_is_not_sent(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    made = _Opener(b"")
-    monkeypatch.setattr(notify.urllib.request, "build_opener", lambda *_handlers: made)
-
-    assert notify._post("https://hook.invalid", "bearer", {"kind": "secret-gap"}) is True
-    assert made.sent == [json.dumps({"kind": "secret-gap"}).encode("utf-8")]
-
-    assert notify._post("https://hook.invalid", "bearer", {"summary": "\ud800"}) is False
-    assert len(made.sent) == 1
 
 
 # -- the code host (code_host.answer) ------------------------------------------
@@ -634,22 +592,3 @@ def test_the_executor_has_no_notice_file(
 
     assert configured == [("handover-exec", None)]
     assert list(tmp_path.iterdir()) == []
-
-
-def test_the_intake_has_no_notice_file(
-    monkeypatch: pytest.MonkeyPatch, configured: list[tuple[str, Path | None]]
-) -> None:
-    monkeypatch.setattr(intake_run.os, "geteuid", lambda: 0)
-    monkeypatch.setattr(
-        intake_run, "keep_only_the_push_secrets", lambda _env: intake_run.Secrets("", "")
-    )
-    monkeypatch.setattr(intake_run, "_certificate_is_roots", lambda: True)
-    monkeypatch.setattr(
-        intake_run.pwd, "getpwnam", lambda _name: intake_run.pwd.getpwuid(os.getuid())
-    )
-    monkeypatch.setattr(intake_run, "build_wiring", lambda *_args: None)
-    monkeypatch.setattr(intake_run, "_loop", lambda *_args: None)
-
-    assert intake_run.main() == 0
-
-    assert configured == [("handover-intake", None)]

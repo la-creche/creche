@@ -6,7 +6,7 @@ from this directory at run time. The root `AGENTS.md` applies here too.
 
 | Unit | Scope | Installed by |
 |---|---|---|
-| `creche-handover.{service,path}`, `creche-handover-intake.service` | system, root | by hand only, never by a release |
+| `creche-handover.{service,path}` | system, root | by hand only, never by a release |
 | `creche-attendance.service`, `creche-caregiver.service`, `creche-trigger-webhooks.service`, `creche-noticeboard.service` | user | the cutover script, in the private repository |
 | `creche-door-acp.service` | user | no script yet. The door ships in `attendance` |
 | `creche-trigger@.service` | user, templated | the cutover script, only when the host has none |

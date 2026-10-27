@@ -25,8 +25,7 @@ writes nothing else. The operator reviews the draft and installs it as root.
 
 The plugin `ha-call` is not in the draft.
 
-Each fact of a server comes from its file, as handover's roster writer
-reads it (`handover/src/handover/executor/roster.py`):
+Each fact of a server comes from its file:
 
 1. The program is `<mcp root>/<name>/bin/<entrypoint>`, then `run.args`.
 2. A value `secret:<key>` of `run.env` is a secret. The secret file name is

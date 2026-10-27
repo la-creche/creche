@@ -315,13 +315,12 @@ def test_a_failed_verify_puts_the_previous_tree_back(bench: Bench) -> None:
     assert bench.running() == []
 
 
-def test_the_intake_restart_is_named_under_manual(bench: Bench) -> None:
-    """Rule 4. `handover` carries no unit, so the listener keeps the old
-    code until root restarts it, and the entry says so."""
+def test_the_entry_names_no_listener_to_restart(bench: Bench) -> None:
+    """`handover` runs no listener, so a self-release asks for no restart."""
     _run(bench, {SELF: NEW})
 
     manual = [str(one) for one in cast("list[object]", bench.self_entry()["manual"])]
-    assert any("systemctl restart creche-handover-intake" in one for one in manual)
+    assert manual == []
 
 
 def test_a_set_switches_handover_after_everything_else(pair: Bench) -> None:

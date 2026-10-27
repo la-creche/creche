@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
 # OPERATOR on a development machine, and CI: `uv run bin/yaml-to-toml.py FILE.yaml > FILE.toml`
 # The proof of one pair: `uv run bin/yaml-to-toml.py --check FILE.yaml FILE.toml`
-"""Convert one YAML file of the four kinds to TOML, or prove one converted pair.
+"""Convert one YAML file of the three kinds to TOML, or prove one converted pair.
 
 TEMPORARY. This script is a tool of the migration from YAML to TOML. Packet
 `toml-converter-leave` deletes the script when the tree holds no YAML file of
-the four kinds. The script needs PyYAML, which the workspace venv holds, so
+the three kinds. The script needs PyYAML, which the workspace venv holds, so
 start it with `uv run`.
 
-The four kinds, by the name of the file:
+The three kinds, by the name of the file:
 
     family file          family.yaml, *-family.yaml
     server file          server.yaml
     component manifest   component.yaml, *_component.yaml
-    roster               upstreams.yaml
 
 The layout of the TOML text:
 
@@ -123,12 +122,11 @@ RELEASE_WORDS = {"yes": True, "no": False}
 
 
 class FileKind(Enum):
-    """The four kinds of file that the script converts. The set is closed."""
+    """The three kinds of file that the script converts. The set is closed."""
 
     FAMILY = "family file"
     SERVER = "server file"
     MANIFEST = "component manifest"
-    ROSTER = "roster"
 
 
 #: The names of each kind: a whole file name, or the end of one.
@@ -136,7 +134,6 @@ WHOLE_NAMES = {
     "family.yaml": FileKind.FAMILY,
     "server.yaml": FileKind.SERVER,
     "component.yaml": FileKind.MANIFEST,
-    "upstreams.yaml": FileKind.ROSTER,
 }
 NAME_ENDS = {
     "-family.yaml": FileKind.FAMILY,
@@ -156,7 +153,7 @@ class Reason(Enum):
     DATE = "the file holds a date"
     BLOCK_TEXT = "the file holds a block text"
 
-    FILE_NAME = "the file name is not the name of one of the four kinds"
+    FILE_NAME = "the file name is not the name of one of the three kinds"
     NOT_UTF8 = "the file is not UTF-8 text"
     BYTE_ORDER_MARK = "the file starts with a byte order mark"
     NOT_YAML = "PyYAML does not read the file"
@@ -1055,7 +1052,7 @@ def _arguments(argv: list[str]) -> tuple[Path, Path | None]:
     """The YAML file, and the TOML file of `--check`. None asks for the TOML text."""
     parser = argparse.ArgumentParser(
         prog=f"{PROGRAM}.py",
-        description="Convert one YAML file of the four kinds to TOML, or prove one pair.",
+        description="Convert one YAML file of the three kinds to TOML, or prove one pair.",
     )
     parser.add_argument(
         "--check",

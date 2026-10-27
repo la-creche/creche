@@ -1,203 +1,21 @@
-"""Faults in the intake and the MCP build, one regression test each.
+"""Faults in the MCP build, one regression test each.
 
 Every test here fails on code that has its fault.
-
-Nothing here runs as root. The listener binds `127.0.0.1` on an ephemeral
-port, every directory is `tmp_path`, and `owner_uid` is this test's own uid.
 """
 
 from __future__ import annotations
 
-import http.client
-import shutil
-import socket
-import ssl
-import subprocess
-import threading
-import time
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Final
 
 import pytest
 from handover.errors import Refusal
-from handover.intake import service
-from handover.intake.gaps import MAX_GAPS_PER_PASS, GapDirectory, OpenGap
-from handover.intake.run import MAX_PUSHES_PER_PASS, MAX_WATCHED, Watch, Wiring, one_pass
-from handover.intake.service import Intake
-from handover.intake.store import SecretStore
-from handover.intake.token import Tokens
 from handover.mcpserver import read_registry
 
 pytestmark = pytest.mark.slow
 
-LOOPBACK: Final = "127.0.0.1"
-
 #: More servers than any of these tests declares.
 REGISTRY_LIMIT: Final = 64
-
-#: Short enough that a wedged accept loop is a fast test, long enough that
-#: a loaded machine still answers a good request well inside half of it.
-WEDGE_TIMEOUT_S: Final = 3.0
-
-#: How long the accept loop gets to reach the handshake before the real
-#: client connects. Without it the test races its own wedge.
-SETTLE_S: Final = 0.3
-
-HTTP_NOT_FOUND: Final = 404
-
-#: One byte of a TLS record header. Enough for the server to start a
-#: handshake, never enough for it to finish one.
-ONE_TLS_BYTE: Final = b"\x16"
-
-
-def _certificate(tmp_path: Path) -> tuple[str, str]:
-    """A throwaway self-signed certificate for loopback.
-
-    `openssl` and not a library, for `test_handover_r7g_intake_whole.py`'s
-    reason: the intake package imports no certificate builder and this test
-    must not add a dependency to it.
-    """
-    openssl = shutil.which("openssl")
-    if openssl is None:
-        pytest.skip("openssl is not on this machine, so no TLS listener can be built here")
-
-    cert, key = tmp_path / "intake.crt", tmp_path / "intake.key"
-    subprocess.run(
-        [
-            openssl,
-            "req",
-            "-x509",
-            "-newkey",
-            "rsa:2048",
-            "-nodes",
-            "-keyout",
-            str(key),
-            "-out",
-            str(cert),
-            "-days",
-            "1",
-            "-subj",
-            "/CN=agent-intake",
-            "-addext",
-            f"subjectAltName=IP:{LOOPBACK}",
-        ],
-        capture_output=True,
-        timeout=60,
-        check=True,
-    )
-
-    return str(cert), str(key)
-
-
-def _seal_nothing(plaintext: bytes) -> bytes | None:
-    del plaintext
-
-    return None
-
-
-@pytest.fixture
-def running(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[int]:
-    """A real intake on loopback, with a short connection clock.
-
-    `CONNECTION_TIMEOUT_S` is patched before `serve`, because `_handler_for`
-    reads it when it builds the handler class and `get_request` reads it per
-    connection.
-    """
-    monkeypatch.setattr(service, "CONNECTION_TIMEOUT_S", WEDGE_TIMEOUT_S)
-    secrets = tmp_path / "secrets"
-    secrets.mkdir(mode=0o700)
-    intake = Intake(
-        tokens=Tokens(time.time),
-        store=SecretStore(secrets, _seal_nothing, owner_uid=tmp_path.stat().st_uid),
-    )
-    certfile, keyfile = _certificate(tmp_path)
-    server = service.serve(intake, certfile, keyfile, LOOPBACK, 0)
-    thread = threading.Thread(target=server.serve_forever, name="rv9-intake", daemon=True)
-    thread.start()
-    try:
-        yield int(server.server_address[1])
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=WEDGE_TIMEOUT_S)
-
-
-def test_a_silent_peer_does_not_hold_the_accept_loop(running: int) -> None:
-    """Why moving the handshake off the listening socket is half a fix.
-
-    A handshake moved off the LISTENING socket, with a timeout on the
-    accepted one, can still sit in the accept loop: `socketserver` calls
-    `get_request()` in the accept thread, before `process_request` spawns
-    anything, so a peer that connects and says one byte still stops every
-    other connection — for `CONNECTION_TIMEOUT_S` instead of for ever.
-
-    With the handshake in the loop the good request answers after the
-    wedge's whole timeout. A test that drives `accept_one` with a fake
-    socket and checks only the ORDER of two calls cannot see it.
-    """
-    wedge = socket.create_connection((LOOPBACK, running), timeout=WEDGE_TIMEOUT_S)
-    try:
-        wedge.sendall(ONE_TLS_BYTE)
-        time.sleep(SETTLE_S)
-
-        started = time.monotonic()
-        connection = _client(running)
-        try:
-            connection.request("GET", "/secret/no-such-token/")
-            reply = connection.getresponse()
-            reply.read()
-            status = reply.status
-        finally:
-            connection.close()
-
-        elapsed = time.monotonic() - started
-
-        assert status == HTTP_NOT_FOUND
-        assert elapsed < WEDGE_TIMEOUT_S / 2, f"the accept loop was held for {elapsed:.2f}s"
-    finally:
-        wedge.close()
-
-
-def test_a_plain_http_probe_costs_one_connection(running: int) -> None:
-    """The other half of that move: a handshake that fails now fails in a
-    worker thread, so it must close that one connection there and leave the
-    listener serving. An earlier test proved this against a fake socket in
-    `accept_one`; the handshake is not there any more, so it is proved
-    against a real listener instead.
-    """
-    probe = socket.create_connection((LOOPBACK, running), timeout=WEDGE_TIMEOUT_S)
-    try:
-        probe.sendall(b"GET /secret/ HTTP/1.1\r\nHost: x\r\n\r\n")
-        # A close or a reset, never an answer: the handshake refused it.
-        try:
-            answered = probe.recv(1)
-        except ConnectionResetError:
-            answered = b""
-
-        assert answered == b"", "a plain HTTP request was answered on a TLS port"
-    finally:
-        probe.close()
-
-    connection = _client(running)
-    try:
-        connection.request("GET", "/secret/no-such-token/")
-        reply = connection.getresponse()
-        reply.read()
-
-        assert reply.status == HTTP_NOT_FOUND
-    finally:
-        connection.close()
-
-
-def _client(port: int) -> http.client.HTTPSConnection:
-    """A browser that accepts a self-signed certificate, which is what
-    the operator's phone does until they trust the certificate once."""
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    context.check_hostname = False
-    context.verify_mode = ssl.CERT_NONE
-
-    return http.client.HTTPSConnection(LOOPBACK, port, context=context, timeout=WEDGE_TIMEOUT_S * 3)
 
 
 # -- one secret name, two upstreams --------------------------------------
@@ -240,11 +58,8 @@ def test_two_servers_may_not_name_one_secret(tmp_path: Path) -> None:
     """`stage7-releases.md` §6 row 8.
 
     Row 8 says a second binding "is refused by the manifest validator".
-    `mcp_release.open_gaps` takes a `server -> names` map with no check
-    across servers, so `read_registry` keeps the names a secret-shaped key
-    uses and refuses a second server that names one. The gap file is keyed
-    on the SECRET name, so a second declaration would also overwrite the
-    first one's gap and show the operator one server.
+    `read_registry` keeps the names a secret-shaped key uses and refuses a
+    second server that names one.
 
     The attack: `mcp/evil/server.yaml` names `secret:github_token`, and a
     third-party package reads the platform's GitHub credential out of its
@@ -333,88 +148,3 @@ def test_a_longer_version_does_not_satisfy_the_pin() -> None:
 
     with pytest.raises(Refusal):
         _closure(DECLARED, text, DECLARED)
-
-
-# -- one write, sixty-four notifications ---------------------------------
-
-
-class _Phone:
-    """Every push root sent, so a test can count them."""
-
-    def __init__(self) -> None:
-        self.sent: list[str] = []
-
-    def __call__(self, gap: OpenGap, token: str) -> bool:
-        del token
-        self.sent.append(gap.secret)
-
-        return True
-
-
-class _AlwaysBound:
-    @property
-    def bound(self) -> bool:
-        return True
-
-    def open(self) -> bool:
-        return True
-
-    def close(self) -> None:
-        return
-
-
-def _flooded(tmp_path: Path, count: int) -> tuple[Wiring, _Phone]:
-    """A gap directory with `count` planted gaps, as the operator can write it."""
-    gaps = tmp_path / "secret-gaps"
-    gaps.mkdir()
-    secrets = tmp_path / "secrets"
-    secrets.mkdir(mode=0o700)
-    for index in range(count):
-        body = f'{{"server": "evil", "secret": "planted_{index:03d}", "at": 1.0}}'
-        (gaps / f"planted_{index:03d}.json").write_text(body, encoding="utf-8")
-
-    uid = tmp_path.stat().st_uid
-    phone = _Phone()
-
-    return (
-        Wiring(
-            gaps=GapDirectory(gaps, uid),
-            store=SecretStore(secrets, _seal_nothing, owner_uid=uid),
-            tokens=Tokens(time.time),
-            push=phone,
-            watch=Watch(time.time),
-            listener=_AlwaysBound(),
-            say=lambda line: None,
-        ),
-        phone,
-    )
-
-
-def test_one_write_cannot_cost_the_operator_a_pass_of_pushes(tmp_path: Path) -> None:
-    """Without a cap `one_pass` mints and pushes for every due gap.
-    `gaps.MAX_GAPS_PER_PASS` is 64 and the directory is operator-writable, so
-    one write would send the operator 64 notifications at once.
-    `Watch.due` paces a repeat of one NAME, and a writer that wants a
-    flood uses a new name each round.
-
-    It would also keep `pending_count()` above zero, so the root listener
-    on the LAN would stay bound instead of only while the operator has something
-    to answer.
-    """
-    wiring, phone = _flooded(tmp_path, MAX_GAPS_PER_PASS)
-    minted, closed = one_pass(wiring)
-
-    assert closed == 0
-    assert minted == MAX_PUSHES_PER_PASS
-    assert len(phone.sent) == MAX_PUSHES_PER_PASS
-
-
-def test_the_pushed_roster_does_not_grow_without_bound(tmp_path: Path) -> None:
-    """A dict keyed on a name the attacker writes, in a process that runs
-    for days."""
-    wiring, _ = _flooded(tmp_path, 1)
-    watch = wiring.watch
-    for index in range(MAX_WATCHED * 2):
-        watch.pushed(OpenGap("evil", f"planted_{index:05d}", 1.0))
-
-    assert len(watch.pushed_at) <= MAX_WATCHED

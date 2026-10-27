@@ -7,14 +7,12 @@ strict. The reader answers the refusal of a text that is not JSON for it. It
 does not raise.
 
 The same holds for each file that a later run reads back: the marker of
-the follower, a gap file, a note in `running/` and a ledger entry.
+the follower, a note in `running/` and a ledger entry.
 """
 
 from __future__ import annotations
 
 import json
-import os
-from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
@@ -38,11 +36,6 @@ from handover.executor.spool import (
 )
 from handover.executor.steps import Wiring
 from handover.follow import Answer, Marker, read_answer, read_marker
-from handover.intake import run as intake_run
-from handover.intake.gaps import GapDirectory, OpenGap
-from handover.intake.run import Watch
-from handover.intake.store import SecretStore
-from handover.intake.token import Tokens
 from handover_executor_fixtures import (
     REQUEST_ID,
     FakeRun,
@@ -224,174 +217,6 @@ def test_an_entry_that_nests_too_deep_holds_the_set(tmp_path: Path) -> None:
     entry.write_text('{"reason": ' + "[" * JSON_DEPTH + "]" * JSON_DEPTH + "}", encoding="utf-8")
 
     assert read_answer(tmp_path, REQUEST_ID) is Answer.FINAL
-
-
-# -- a gap file ----------------------------------------------------------------
-
-
-def _gaps(tmp_path: Path) -> Path:
-    directory = tmp_path / "secret-gaps"
-    directory.mkdir()
-
-    return directory
-
-
-def test_a_gap_with_a_time_that_no_float_holds_is_no_gap(tmp_path: Path) -> None:
-    """The text is not strict JSON, so the file is no gap. A second gap in
-    the same directory is read."""
-    directory = _gaps(tmp_path)
-    for secret, at in ((SECRET, PAST_A_FLOAT), ("other_token", 7)):
-        body = {"server": SERVER, "secret": secret, "at": at}
-        (directory / f"{secret}.json").write_text(json.dumps(body), encoding="utf-8")
-
-    found = GapDirectory(directory, os.getuid()).open_gaps()
-
-    assert [(one.secret, one.at) for one in found] == [("other_token", 7.0)]
-
-
-def test_a_gap_with_a_time_that_is_no_number_is_still_a_gap(tmp_path: Path) -> None:
-    """`at` decides nothing, so the gap stays and the time is zero."""
-    directory = _gaps(tmp_path)
-    body = {"server": SERVER, "secret": SECRET, "at": "soon"}
-    (directory / f"{SECRET}.json").write_text(json.dumps(body), encoding="utf-8")
-
-    found = GapDirectory(directory, os.getuid()).open_gaps()
-
-    assert [(one.secret, one.at) for one in found] == [(SECRET, 0.0)]
-
-
-class _Stop(Exception):
-    """Ends the loop of the intake in a test."""
-
-
-class _Listener:
-    bound = False
-
-    def open(self) -> bool:
-        return False
-
-    def close(self) -> None:
-        return None
-
-
-class _BoundListener:
-    """A listener that an earlier pass left bound."""
-
-    def __init__(self) -> None:
-        self.bound = True
-
-    def open(self) -> bool:
-        return True
-
-    def close(self) -> None:
-        self.bound = False
-
-
-class _StaysBound(_BoundListener):
-    """A bound listener whose close raises."""
-
-    def close(self) -> None:
-        raise RuntimeError(ERROR_TEXT)
-
-
-class _RaisesOnce(GapDirectory):
-    """A gap directory whose first read raises an error that is no `OSError`."""
-
-    def __init__(self, directory: Path) -> None:
-        super().__init__(directory, os.getuid())
-        self.reads = 0
-
-    def open_gaps(self) -> tuple[OpenGap, ...]:
-        self.reads += 1
-        if self.reads == 1:
-            raise RuntimeError(ERROR_TEXT)
-
-        return super().open_gaps()
-
-
-def _intake_wiring(
-    tmp_path: Path, gaps: GapDirectory, listener: intake_run.Binding
-) -> intake_run.Wiring:
-    secrets = tmp_path / "secrets"
-    secrets.mkdir(mode=0o700)
-
-    return intake_run.Wiring(
-        gaps=gaps,
-        store=SecretStore(secrets, lambda _: None, owner_uid=os.getuid()),
-        tokens=Tokens(lambda: 0.0),
-        push=lambda _gap, _token: False,
-        watch=Watch(lambda: 0.0),
-        listener=listener,
-    )
-
-
-def _stop_at(count: int) -> Callable[[float], None]:
-    """A sleep that ends the loop at its call number `count`."""
-    sleeps = {"n": 0}
-
-    def sleep(_: float) -> None:
-        sleeps["n"] += 1
-        if sleeps["n"] == count:
-            raise _Stop
-
-    return sleep
-
-
-def test_a_pass_that_raises_does_not_end_the_intake(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """The unit starts a process that ended again. A file that made one
-    pass raise then made each later process raise."""
-    gaps = _RaisesOnce(_gaps(tmp_path))
-    wiring = _intake_wiring(tmp_path, gaps, _Listener())
-
-    with pytest.raises(_Stop):
-        intake_run._loop(wiring, _stop_at(2))
-
-    assert gaps.reads == 2
-    said = capsys.readouterr().out
-    assert "RuntimeError" in said
-    assert ERROR_TEXT not in said
-
-
-def test_a_pass_that_raises_leaves_no_listener_with_no_token(tmp_path: Path) -> None:
-    """The listener is bound only while a token is pending. A pass that
-    raises does not come to the step that closes the listener, so the loop
-    closes it."""
-    listener = _BoundListener()
-    wiring = _intake_wiring(tmp_path, _RaisesOnce(_gaps(tmp_path)), listener)
-
-    with pytest.raises(_Stop):
-        intake_run._loop(wiring, _stop_at(1))
-
-    assert wiring.tokens.pending_count() == 0
-    assert not listener.bound
-
-
-def test_a_pass_that_raises_keeps_the_listener_of_a_pending_token(tmp_path: Path) -> None:
-    listener = _BoundListener()
-    wiring = _intake_wiring(tmp_path, _RaisesOnce(_gaps(tmp_path)), listener)
-    wiring.tokens.mint(SERVER, SECRET)
-
-    with pytest.raises(_Stop):
-        intake_run._loop(wiring, _stop_at(1))
-
-    assert listener.bound
-
-
-def test_a_close_that_raises_does_not_end_the_intake(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """The second error of one pass gets its own line, with the type of the
-    error and never its text. The loop then comes to its sleep."""
-    wiring = _intake_wiring(tmp_path, _RaisesOnce(_gaps(tmp_path)), _StaysBound())
-
-    with pytest.raises(_Stop):
-        intake_run._loop(wiring, _stop_at(1))
-
-    said = capsys.readouterr().out
-    assert said.count("RuntimeError") == 2
-    assert ERROR_TEXT not in said
 
 
 # -- a note in `running/` ------------------------------------------------------

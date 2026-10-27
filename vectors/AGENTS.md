@@ -104,6 +104,8 @@ did not.
 - `attendance.wire` left in row 25. `channel/parse.json` and
   `channel/build.json` are frozen. `channel/frame.json` reads the same
   splitter in `attendance.lines`.
+- `caregiver.mcp_release` and `handover.intake` left. Their six copies of
+  an id grammar under `data/ids/` are frozen.
 - The frozen files `family_file.json` and `server_file.json` hold the
   vectors of the YAML reader of `agent_family`, which left this repository.
   A vector there names a registry of `family_file.registries.json`. That
@@ -240,19 +242,11 @@ did not.
   5. A colon and digits after the seconds, as in `06:00:23:599999`.
 - The generator runs on macOS, and CI runs it on Linux. No other system
   has a run.
-- No vector covers the roster writer, `handover.executor.roster`.
-- No vector covers `handover.mcpserver.parse_server` or the reader of the
-  sops file in `handover.intake.store`. Each one has merge limits of its
-  own. Only the tests of `handover` hold those limits.
-- No vector covers the roster reader of the caregiver,
-  `caregiver.mcp_release.served_servers`. It gives one answer for a roster
-  that it refuses and for a roster with no row, so a vector cannot hold a
-  refusal. `caregiver/tests` holds its two limits for merge keys.
+- No vector covers `handover.mcpserver.parse_server`. It has merge limits
+  of its own. Only the tests of `handover` hold those limits.
 - Two configs have no entry point that takes a map of variables, so no
   vector covers them: `caregiver.cli` and `agent_door_trigger.config`. The
   door reads a key file while it parses.
-- No vector covers `handover.intake.run`. It reads the site file and the
-  environment of the process.
 - `config.playpen_env.read` takes a text. No vector covers an env file
   that is not UTF-8. `caregiver.playpen_env.read_playpen_env` reads such a
   file as a file with no variable.

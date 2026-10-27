@@ -1,16 +1,9 @@
 """Nothing a pass READS can kill the loop.
 
 `caregiver` runs as the operator, and a root script can leave a directory it reads
-`root:root 0750`. A pass then ends in:
-
-    loop._finish -> loop._mcp_servers -> mcp_wire.mcp_pass
-      -> pathlib is_dir -> os.stat
-    PermissionError: [Errno 13] Permission denied:
-      '/srv/agents/state/rework/releases/requests'
-
-`Path.is_dir` swallows ENOENT and ENOTDIR and re-raises EACCES. Outside
-`mcp_pass`'s own guard, that one call ends the loop, and every status
-document goes on saying `in_sync`.
+`root:root 0750`. A read there raises `PermissionError`. Outside a guard,
+that one call ends the loop, and every status document goes on saying
+`in_sync`.
 
 Two kinds of test here, because one of them cannot run everywhere.
 
@@ -39,36 +32,20 @@ from caregiver.driver import FakeDriver
 from caregiver.egress import EgressConfig
 from caregiver.litellm_keys import FakeLiteLLMKeys
 from caregiver.loop import BACKOFF_FIRST_S, Backoff, LoopConfig, LoopState, look
-from caregiver.mcp_release import MARKER_NAME, McpPaths
-from caregiver.mcp_wire import mcp_pass
 from caregiver.reconcile import Actors
 from caregiver.status import forget_published
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
-from caregiver_helpers import fake_policy, published, toml_text, write_registry
+from caregiver_helpers import fake_policy, published, write_registry
 
 from caregiver import loop as loop_module
 from caregiver import paths
 
 IMAGE: Final = "sha256:deadbeef"
-NOW: Final = 1_758_153_600.0
-
-SERVER: Final = "weather"
-SECRET: Final = "weather_token"
 
 #: The two families every test converges. ONE unreadable path costs
 #: neither of them a pass.
 FAMILIES: Final = ("chat", "vault-oracle")
-
-#: No `x` bit, so nothing below this directory can be STATTED. That is
-#: the fault exactly: with `releases/` `root:root 0750` and the
-#: operator not root, `releases/requests` cannot be stat'ed at all. A
-#: 0000 on the directory ITSELF would not reproduce it — a stat of a
-#: directory needs the search bit on its PARENT, not on itself.
-NO_SEARCH: Final = 0o600
-
-#: Readable and searchable, not writable.
-READ_ONLY: Final = 0o500
 
 #: Whatever the test put back afterwards. Never the umask's answer.
 RESTORED: Final = 0o700
@@ -76,30 +53,8 @@ RESTORED: Final = 0o700
 is_root = pytest.mark.skipif(os.geteuid() == 0, reason="root reads a 0000 directory anyway")
 
 
-def server_toml(name: str = SERVER, secret: str = SECRET) -> str:
-    """Contract 01b §8.1, shortened to what `mcp_wire` reads."""
-    return toml_text(
-        {
-            "name": name,
-            "identity": f"The fleet's {name} credential. Read only.",
-            "install": {
-                "source": "pypi",
-                "package": f"{name}-mcp",
-                "version": "1.0.0",
-                "lock": f"mcp/{name}/install.lock",
-                "python": "3.12",
-            },
-            "run": {
-                "entrypoint": f"{name}-mcp",
-                "env": {"API_TOKEN": f"secret:{secret}"},
-            },
-            "tools": [{"name": "forecast", "description": "Tomorrow's weather, by city."}],
-        }
-    )
-
-
 class Bench:
-    """Two families, one declared MCP server, and the spool's own paths."""
+    """Two families."""
 
     def __init__(self, tmp_path: Path) -> None:
         self.registry_root = tmp_path / "registry"
@@ -107,19 +62,6 @@ class Bench:
         for name in FAMILIES:
             write_registry(self.registry_root, name=name)
 
-        directory = self.registry_root / "mcp" / SERVER
-        directory.mkdir(parents=True)
-        (directory / "server.toml").write_text(server_toml(), encoding="utf-8")
-
-        self.mcp = McpPaths(
-            requests=_made(tmp_path / "spool" / "requests"),
-            done=_made(tmp_path / "spool" / "done"),
-            secrets=_made(tmp_path / "secrets"),
-            gaps=_made(tmp_path / "secret-gaps"),
-            installed_root=_made(tmp_path / "opt-mcp"),
-            marker=_made(self.state_root) / MARKER_NAME,
-            roster=self.state_root / "upstreams.yaml",
-        )
         self.state = LoopState()
 
     def config(self) -> LoopConfig:
@@ -127,8 +69,6 @@ class Bench:
             registry_root=self.registry_root,
             state_root=self.state_root,
             image=IMAGE,
-            mcp=self.mcp,
-            clock=lambda: NOW,
         )
 
     def actors(self) -> Actors:
@@ -153,169 +93,12 @@ class Bench:
             sorted(one.name for one in families.iterdir() if (one / "status.json").is_file())
         )
 
-    def requests(self) -> list[str]:
-        return sorted(one.name for one in self.mcp.requests.iterdir())
-
-
-def _made(path: Path) -> Path:
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
 
 @pytest.fixture
 def bench(tmp_path: Path) -> Iterator[Bench]:
     forget_published()
     yield Bench(tmp_path)
     forget_published()
-
-
-# --- the release spool, exactly as the host had it ---------------------------
-
-
-@is_root
-def test_an_unreadable_release_spool_does_not_kill_the_loop(bench: Bench) -> None:
-    """`mcp_pass`'s first line stats `requests/`, under a spool ROOT a root
-    script can re-mode."""
-    bench.mcp.requests.parent.chmod(NO_SEARCH)
-    try:
-        started = bench.look()
-    finally:
-        bench.mcp.requests.parent.chmod(RESTORED)
-
-    assert started == FAMILIES
-    assert bench.published() == FAMILIES
-
-
-@is_root
-def test_an_unreadable_release_spool_says_the_path_and_the_error(bench: Bench) -> None:
-    """Item 1 rule 1: the problem is SAID. Contract 05 gives a per-family
-    fault no honest home for a fleet-wide path this manager cannot read,
-    so the report line and the log line are the whole answer."""
-    bench.mcp.requests.parent.chmod(NO_SEARCH)
-    try:
-        bench.look()
-    finally:
-        bench.mcp.requests.parent.chmod(RESTORED)
-
-    line = "; ".join(bench.state.mcp.problems)
-    assert "PermissionError" in line
-    assert str(bench.mcp.requests) in line
-
-
-def test_a_spool_that_is_a_file_is_quiet(bench: Bench) -> None:
-    """A file where the directory belongs. `is_dir` answers False for one,
-    which is rule 2's "this host has no spool": quiet, not a problem."""
-    bench.mcp.requests.rmdir()
-    bench.mcp.requests.write_text("not a directory\n", encoding="utf-8")
-
-    started = bench.look()
-
-    assert started == FAMILIES
-    assert bench.state.mcp.problems == ()
-
-
-def test_an_unstattable_spool_is_a_problem_and_not_a_crash(
-    bench: Bench, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Kind 2 of the same fault, so a run as root proves it too."""
-    real = Path.is_dir
-
-    def refuse(self: Path, **kwargs: object) -> bool:
-        if self == bench.mcp.requests:
-            raise PermissionError(13, "Permission denied", str(self))
-
-        return bool(real(self, **kwargs))  # pyright: ignore[reportCallIssue]
-
-    monkeypatch.setattr(Path, "is_dir", refuse)
-
-    started = bench.look()
-
-    assert started == FAMILIES
-    assert any("PermissionError" in one for one in bench.state.mcp.problems)
-
-
-# --- the secrets directory: a fault a host can carry ------------------------
-
-
-def test_a_gap_that_cannot_be_read_does_not_stop_the_request(
-    bench: Bench, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """With `secrets/` `root:root 0700`, the operator cannot stat a child of it and
-    `open_gaps` raises on every pass. With both calls under ONE `try`, the
-    raise would ALSO skip `request_servers` and invariant 18 would file
-    nothing at all, for ever, with the log line blaming a secret.
-
-    One broken read may cost its own answer. It may not cost another's.
-    """
-    real = Path.exists
-
-    def refuse(self: Path, **kwargs: object) -> bool:
-        if self.parent == bench.mcp.secrets:
-            raise PermissionError(13, "Permission denied", str(self))
-
-        return bool(real(self, **kwargs))  # pyright: ignore[reportCallIssue]
-
-    monkeypatch.setattr(Path, "exists", refuse)
-
-    bench.look()
-
-    report = bench.state.mcp
-    assert report.requested == (SERVER,)
-    assert len(bench.requests()) == 1
-    assert any("PermissionError" in one for one in report.problems)
-
-
-@is_root
-def test_an_unreadable_secrets_directory_still_files_the_request(bench: Bench) -> None:
-    """`root:root 0700` on the host, reproduced by taking the search bit
-    off. The gap cannot be judged, and the REQUEST still goes."""
-    bench.mcp.secrets.chmod(NO_SEARCH)
-    try:
-        started = bench.look()
-    finally:
-        bench.mcp.secrets.chmod(RESTORED)
-
-    assert started == FAMILIES
-    assert bench.published() == FAMILIES
-    assert bench.state.mcp.requested == (SERVER,)
-    assert len(bench.requests()) == 1
-
-
-@is_root
-def test_an_unwritable_gap_directory_leaves_the_families_alone(bench: Bench) -> None:
-    """The write half. `atomic_write` into a read-only directory raises
-    EACCES, and the families still converge."""
-    bench.mcp.gaps.chmod(READ_ONLY)
-    try:
-        started = bench.look()
-    finally:
-        bench.mcp.gaps.chmod(RESTORED)
-
-    assert started == FAMILIES
-    assert any("PermissionError" in one for one in bench.state.mcp.problems)
-
-
-def test_mcp_pass_never_raises_whatever_the_spool_is(tmp_path: Path) -> None:
-    """The module's own rule 1, asserted against the module. A path that
-    is a file, a path that is gone, and a path nothing may read."""
-    registry_root = write_registry(tmp_path / "registry")
-    gone = tmp_path / "not-there"
-    (tmp_path / "a-file").write_text("x\n", encoding="utf-8")
-
-    for requests in (gone, tmp_path / "a-file", tmp_path):
-        paths = McpPaths(
-            requests=requests,
-            done=gone,
-            secrets=gone,
-            gaps=gone,
-            installed_root=gone,
-            marker=gone / MARKER_NAME,
-            roster=gone / "upstreams.yaml",
-        )
-        from agent_family import load_registry
-
-        # No assertion on the report: the claim is that the call RETURNS.
-        mcp_pass(load_registry(registry_root), paths, NOW)
 
 
 # --- caregiver's own state root ----------------------------------------------
@@ -495,30 +278,18 @@ def test_a_dispatch_that_raises_is_said_once(
     assert [one.getMessage().split(":")[0] for one in traced] == [first]
 
 
-def test_an_mcp_pass_that_raises_does_not_end_the_look(
+def test_a_listing_that_raises_does_not_end_the_look(
     bench: Bench, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The MCP pass runs after the families. An error that leaves it must
-    not leave the look, and the look must still record the revision. A look
+    """The deletes follow the families. An error that leaves them must not
+    leave the look, and the look must still record the revision. A look
     with no revision reads every later tick as an edit, and an edit clears
     each create backoff."""
-    monkeypatch.setattr(loop_module, "mcp_pass", refuse)
+    monkeypatch.setattr(loop_module, "_families_with_state", refuse)
 
     assert bench.look() == FAMILIES
     assert bench.state.revision == revision_of(bench.registry_root)
     assert bench.look() == ()
-
-
-def test_a_listing_that_raises_does_not_stop_the_mcp_pass(
-    bench: Bench, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Two steps follow the families. One that raises must not stop the
-    other."""
-    monkeypatch.setattr(loop_module, "_families_with_state", refuse)
-
-    assert bench.look() == FAMILIES
-    assert bench.requests() != []
-    assert bench.state.revision == revision_of(bench.registry_root)
 
 
 @pytest.mark.parametrize("step", ["delete_family", "remove_timers", "read_applied"])

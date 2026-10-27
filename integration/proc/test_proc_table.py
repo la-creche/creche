@@ -47,8 +47,8 @@ CONTINUES = "\\"
 OVERRIDE_PREFIX = "CRECHE_PROC_"
 FLAG = "--"
 
-#: The three flags of `caregiver serve` that the suite adds to those of the unit.
-NOT_IN_THE_UNIT = {"--litellm-base-url", "--release-root", "--poll-interval-s"}
+#: The two flags of `caregiver serve` that the suite adds to those of the unit.
+NOT_IN_THE_UNIT = {"--litellm-base-url", "--poll-interval-s"}
 
 #: The unit that runs the index builder in a sandbox, and the profile word
 #: that it gives. None is a unit that gives no such word.

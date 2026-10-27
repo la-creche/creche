@@ -260,7 +260,7 @@ def _code_lines() -> list[str]:
 
 def test_the_deploy_installs_no_mcp_server() -> None:
     """A second installer would build trees no release approved, on a path
-    the roster root writes never names. The one installer is the
+    chaperone's `install.toml` never names. The one installer is the
     `mcp-servers` release."""
     for line in _code_lines():
         for word in OLD_INSTALL_WORDS:

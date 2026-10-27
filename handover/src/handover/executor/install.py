@@ -466,9 +466,9 @@ class Installer:
         which refreshes the file in place from the fetched tree: otherwise
         the release that CORRECTS a unit would be the one release refused.
         A wrapper fails this rule, and that is the intended answer — root
-        cannot follow an exec chain without running it. The two wrappers on
-        this host, `/usr/local/sbin/creche-handover` and
-        `-intake`, belong to `handover`, which carries `unit: null`
+        cannot follow an exec chain without running it. The one wrapper on
+        this host, `/usr/local/sbin/creche-handover`, belongs to `handover`,
+        which carries `unit: null`
         (contract 06 §1.1 rule 5), so no component with a unit goes through
         one today.
         """

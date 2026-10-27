@@ -100,8 +100,6 @@ from .quiesce import Quiesce
 from .quiet import NO_WINDOW, BusySeenFn, needs_window, wait_for_quiet
 from .request import Kind as RequestKind
 from .request import Request
-from .roster import restore as restore_roster
-from .roster import write as write_roster
 from .source import require_trusted
 from .spool import SelfNote, Spool, SwitchNote, VerifyHook, acquire, release_lock
 
@@ -371,10 +369,6 @@ class Release:
         #: Server trees that actually swapped. Step 10 puts back exactly
         #: these, for the same reason `deployed` exists for components.
         self.swapped: list[ServerBuild] = []
-        #: Whether this release replaced the PEP's upstream roster. Step 10
-        #: puts it back only if it did: a `.prev` from an EARLIER release is
-        #: not this one's to restore.
-        self.roster_written = False
         self.plan: Plan | None = None
         #: One entry per component that STAGED, by name.
         self.paths: dict[str, Paths] = {}
@@ -1210,7 +1204,6 @@ class Release:
         self.running[name] = running
         self.installer.restart(manifest)
         self.installer.try_restart(running)
-        self._reload_upstreams(name)
         outcome = self.installer.verify(manifest)
         self._record_verify(outcome)
         if not outcome.ok:
@@ -1282,68 +1275,6 @@ class Release:
             self.swapped.append(build)
             self.entry.say(f"live {build.name}: {build.artifact}")
 
-        self._write_roster()
-
-    def _write_roster(self) -> None:
-        """§4.4 step 1's first half: root writes the upstream set.
-
-        It runs AFTER the trees are live and BEFORE the signal, because the
-        roster names commands inside those trees and the PEP probes each
-        added upstream the moment it re-reads the file.
-
-        It exists because nothing else writes the roster: without it, the
-        signal made the PEP re-read an unchanged file and compute
-        `added=()`. The servers were installed and never served, and
-        §4.1's "one file, one secret, one tap" was that plus a hand-edit
-        of a second repository.
-        """
-        host = self.wiring.host
-        count = write_roster(host.roster_file, self.servers, host.mcp_root, host.mcp_state_root)
-        self.roster_written = True
-        # Names and a count. No `run.env` value is read here either: a
-        # literal is public and a `secret:` reference is a name, and the
-        # ledger carries neither (invariant 13).
-        self.entry.say(f"roster: {count} upstream(s) in {self.wiring.host.roster_file}")
-        self._say_unapplied_allows()
-
-    def _say_unapplied_allows(self) -> None:
-        """Contract 01b §7 declares `arg_allows` and the PEP applies none.
-
-        Root carries the declaration and writes no allow row, because the
-        PEP's reader would refuse the whole roster and the reload would
-        keep the old set. Saying so in `manual` is the difference between
-        a fence the operator knows is not on and one that vanished.
-        """
-        named = sorted(one.name for one in self.servers if one.arg_allows)
-        if not named:
-            return
-
-        self.entry.manual.append(f"arg_allows is declared and not applied for: {', '.join(named)}")
-
-    def _reload_upstreams(self, name: str) -> None:
-        """§4.4 step 1, and the last action of an `mcp-servers` release.
-
-        The PEP re-reads its upstream set on `SIGHUP`, so the new server
-        answers with no restart and no blocked approval is lost. A signal
-        that does not land is recorded and does not fail the release: the
-        trees are correct, and the verify hook is what decides whether the
-        upstream actually serves.
-
-        The condition is the ROSTER and not the builds. A release that
-        removes the last declared server builds nothing and writes an
-        empty roster, and without a signal that removal would never reach
-        the PEP: the upstream would keep serving a tool the registry no
-        longer declares. Invariant 18's other direction.
-        """
-        if name != MCP_COMPONENT or not self.roster_written:
-            return
-
-        result = self.mcp.reload_chaperone()
-        if result.code != 0:
-            self.entry.manual.append("the PEP did not take the reload signal")
-
-        self.entry.say(f"reload signal to the PEP: exit {result.code}")
-
     def _wait_for_window(self, name: str) -> None:
         """§2.8. A diff that leaves LiteLLM alone needs no window. One that
         changes it waits for five quiet minutes, and an hour with none is
@@ -1401,20 +1332,18 @@ class Release:
         return f"back in reverse: {', '.join(put_back)}"
 
     def _restore_orphaned_servers(self) -> list[str]:
-        """The server trees and the roster, when the component itself never
-        deployed.
+        """The server trees, when the component itself never deployed.
 
-        Step 9 swaps the per-server trees and writes the roster BEFORE it
-        swaps the component's own tree, so a failure in between leaves the
-        new servers live and `mcp-servers` out of `deployed` — and the loop
-        above, which walks `deployed`, would put nothing back. The PEP would
-        keep serving a set no release ever finished.
+        Step 9 swaps the per-server trees BEFORE it swaps the component's
+        own tree, so a failure in between leaves the new servers live and
+        `mcp-servers` out of `deployed` — and the loop above, which walks
+        `deployed`, would put nothing back.
 
         It is a list rather than a flag because §2.6's `detail` names what
         went back, and "the servers only" is a different fact from "the
         component and its servers".
         """
-        if MCP_COMPONENT in self.deployed or not (self.swapped or self.roster_written):
+        if MCP_COMPONENT in self.deployed or not self.swapped:
             return []
 
         self._restore_servers(MCP_COMPONENT)
@@ -1431,11 +1360,9 @@ class Release:
         # refuses a component that has no previous artifact, which is
         # every FIRST install — and `mcp-servers` is one on the day the
         # first MCP server ships. Restored after it, the servers would
-        # stay live behind that refusal: the roster naming them, no signal
-        # sent, and the PEP serving a release that failed its own verify.
-        # The component's tree is one thing to put back;
-        # what the PEP SERVES is another, and the second must not depend
-        # on the first succeeding.
+        # stay live behind that refusal. The component's tree is one thing
+        # to put back; the server trees are another, and the second must
+        # not depend on the first succeeding.
         self._move_back(name, paths)
         # `swap_back` moves the tree that failed verify to `.new`, and it
         # does not stay: `run` removes every tree this release staged,
@@ -1484,14 +1411,11 @@ class Release:
         return _put_all_back(self.installer, unit, siblings, self.entry)
 
     def _restore_servers(self, name: str) -> None:
-        """Every server tree that swapped goes back, in reverse, then the
-        roster, then the signal.
+        """Every server tree that swapped goes back, in reverse.
 
         One method and not two halves, because the orphaned path and the
-        deployed path put back exactly the same three things and a second
-        expression of that is how two releases leave two hosts. The signal
-        is inside it for the same reason: a restore whose signal sat in
-        the caller lost it the moment anything before it raised.
+        deployed path put back exactly the same trees and a second
+        expression of that is how two releases leave two hosts.
         """
         if name != MCP_COMPONENT:
             return
@@ -1499,23 +1423,6 @@ class Release:
         for build in reversed(self.swapped):
             self.mcp.swap_back(build)
             self.entry.say(f"back {build.name}: {build.artifact}")
-
-        self._restore_roster()
-        self._reload_upstreams(name)
-
-    def _restore_roster(self) -> None:
-        """The roster goes back with the trees, before the signal.
-
-        A restore that put the trees back and left the new roster in place
-        would leave the PEP probing a command that is no longer installed:
-        the removed server would fail its probe, which is fail closed and
-        reported, but every reader would be looking at a roster that names
-        a release root had already undone.
-        """
-        if not self.roster_written:
-            return
-
-        self.entry.say(f"roster: {restore_roster(self.wiring.host.roster_file)}")
 
     def _record(self) -> str:
         # The notes are NOT cleared here. `spool.finish` clears every note

@@ -17,15 +17,12 @@ switch call, so each sandbox stays `creating` (contract 05 §4.2 rule 4).
 No file of a family comes from this suite. A test writes the registry, and
 `caregiver` publishes each family from it.
 
-The command is the `ExecStart` of `creche-caregiver.service`. Three
+The command is the `ExecStart` of `creche-caregiver.service`. Two
 arguments are not in the unit:
 
 `--litellm-base-url`
     The unit lets `caregiver` dial LiteLLM on the LAN address of the site
     file, and no test binds that.
-`--release-root`
-    `caregiver` refuses a state root of its own with the release root of the
-    host.
 `--poll-interval-s`
     The unit takes the default of 2 seconds. A shorter look makes an edit
     land sooner, and it changes nothing else.
@@ -155,7 +152,7 @@ def serve_words(
 ) -> list[str]:
     """The words after the program in the `ExecStart` of the unit.
 
-    The module docstring names the three arguments that the unit does not
+    The module docstring names the two arguments that the unit does not
     have. `chaperone` is as `watch_flags` takes it.
     """
     return [
@@ -164,8 +161,6 @@ def serve_words(
         *watch_flags(tree, litellm_port, chaperone),
         "--pep-url",
         pep_url,
-        "--release-root",
-        str(tree.release_root),
         "--poll-interval-s",
         POLL_INTERVAL_S,
         WRITE_FLAG,
@@ -194,7 +189,6 @@ class CaregiverStack(Stack):
         credential file exists: `caregiver` writes each one.
         """
         build_bare_tree(self.tree)
-        self.tree.release_root.mkdir(parents=True, exist_ok=True)
         publish_family(self.tree, family_body())
         install_sbx_verbs(self.tree)
         install_systemctl(self.tree)

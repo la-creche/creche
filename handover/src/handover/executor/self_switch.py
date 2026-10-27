@@ -50,12 +50,6 @@ from .steps import CRASH_VERIFY_FAILED, Wiring, remove_staged, verify_row
 NEVER_SWITCHED: Final = "switch: the run that staged it never swapped it"
 VERIFY_FAILED: Final = "switch: the new tree did not verify"
 
-#: Rule 4. `handover` carries `unit: null`, so the listener keeps the
-#: previous code until root restarts it.
-INTAKE_BY_HAND: Final = (
-    "the intake still runs the previous handover; as root: systemctl restart creche-handover-intake"
-)
-
 
 def switch_in(wiring: Wiring, request_id: str, note: SelfNote) -> Entry:
     """Rule 2's swap, then rule 3. The caller has already written the
@@ -101,7 +95,6 @@ def _verify(wiring: Wiring, note: SelfNote, entry: Entry, started: float) -> Ent
     _record(entry, outcome)
     if outcome.ok:
         entry.status = Outcome.SUCCEEDED
-        entry.manual.append(INTAKE_BY_HAND)
         detail = f"{note.component} {note.to_version} live"
         _add(entry, StepName.SWITCH, StepStatus.OK, started, wiring, detail)
 

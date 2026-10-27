@@ -1,6 +1,6 @@
 # handover
 
-The release tool. Six jobs, and two of them touch nothing. The root
+The release tool. Five jobs, and two of them touch nothing. The root
 `AGENTS.md` applies here too.
 
 1. **The resolver.** Every component declares itself in a manifest:
@@ -17,17 +17,14 @@ The release tool. Six jobs, and two of them touch nothing. The root
 4. **The requester** (`requester/`). It mints a ULID, builds the request's
    seven fields, validates them with the executor's own parser, and writes one
    file into `requests/`. The operator reaches it as `handover request`.
-5. **The secret intake** (`intake/`). It drains the gap directory, pushes
-   the operator one link per missing secret, and seals what the operator
-   pastes to a public recipient set. Root writes a secret it cannot read.
-6. **The follower** (`follow/`). A timer runs `handover follow` as the
+5. **The follower** (`follow/`). A timer runs `handover follow` as the
    operator. It fetches the corpus and reads which followed components have
    a newer tag. It files one request for that set. It approves nothing.
 
 ## The rule that contains every other one
 
-**Nothing outside `executor/`, `intake/`, `requester/`, `corpus/` and
-`follow/` touches a host.** The top level reads files the caller names and
+**Nothing outside `executor/`, `requester/`, `corpus/` and `follow/`
+touches a host.** The top level reads files the caller names and
 writes nothing. The one exception is `notices.py`: it writes the notice file
 of a program that names one, and only the follower names one. No
 `subprocess`, no network, no environment variable that changes a decision.
@@ -115,9 +112,9 @@ The console script is `handover`. The verify hook and the operator's
     of the operator (`executor/layout.py`). A timer starts it, and the
     operator does not watch its log. `--notices` names another file. A run
     with `--dry-run` writes no notice file, and a run as root writes none.
-    The executor, the intake and each other subcommand write the log line
-    only. The executor and the intake run as root. Root writes no file in a
-    directory that the operator owns.
+    The executor and each other subcommand write the log line only. The
+    executor runs as root. Root writes no file in a directory that the
+    operator owns.
 
 ## Rules the design depends on
 
@@ -267,22 +264,11 @@ has the name of the markup of the manifest: `.component.toml` or
 6. Root believes a manifest at a SHA it verifies, or out of a tree it owns.
    There is no third source.
 
-## Venv builds, the action id and the intake
+## Venv builds and the action id
 
 1. A `kind: venv` component is built with `uv venv --relocatable` first, so
    the tree survives its own rename.
 2. The action id root pushes is a 26-character lower-case ULID.
-3. `intake/` holds no private key, starts no child and has no read verb.
-   `host.make_sealer` is the one door, and it hands the plaintext to a
-   child's stdin.
-4. The intake's gap rule lives in the kernel: `O_EXCL`.
-5. The intake's mint never answers its caller. A token leaves on one phone
-   push and by no other route.
-6. The intake's page carries no script, and the policy says `script-src
-   'none'`.
-7. The listener is bound only while a token is pending.
-8. The intake reads the gap directory the way `spool.py` reads `requests/`.
-   One refused entry never refuses the directory.
 
 ## Binary builds
 
@@ -451,13 +437,19 @@ other reader of the file.
 7. `SERVER_FILE_NAME` and `SERVER_FILE_NAME_YAML` hold the two names. Write
    no other copy of a name.
 
-## The chaperone's upstream roster (`executor/roster.py`)
+## An `mcp-servers` release
 
-1. Root writes it. `caregiver` must never write it.
-2. `command` is built from the validated name and entrypoint, never copied.
-3. It lives outside every component install tree.
-4. A release that declares no server still writes it and still signals.
-5. `tools: all` is expanded here.
+1. The release builds and swaps the server trees under `/opt/mcp`. It does
+   nothing more for the chaperone.
+2. Root writes no roster. The Rust chaperone reads no roster.
+3. Root sends no signal to `creche-chaperone.service`. The Rust chaperone
+   has no handler for `SIGHUP`, so the signal ends its process.
+4. A restore puts the server trees back. It writes no roster and sends no
+   signal.
+5. The operator adds a server to the chaperone by hand: one plugin
+   manifest, one entry in `/etc/chaperone/install.toml`, and a restart of
+   `creche-chaperone.service`. `bin/chaperone-install-draft.py` prints a
+   draft of both files.
 
 ## Use
 
@@ -495,10 +487,9 @@ The executor runs as root from `creche-handover.path`, through the wrapper
 | `follow/` | the set a newer tag moves, the marker, the decision |
 | `executor/spool.py`, `request.py`, `live_state.py`, `provenance.py` | the five directories, the request, the built document, P1 to P6 |
 | `executor/approval.py`, `phone.py`, `notice.py`, `quiesce.py`, `quiet.py` | the gate, the transport, the outcome push, step 7, the quiet minutes |
-| `executor/host.py`, `install.py`, `mcpbuild.py`, `roster.py`, `self_switch.py` | the one spawn and the unit of the verifier, steps 8 to 10, a server tree, the roster, the self-release |
+| `executor/host.py`, `install.py`, `mcpbuild.py`, `self_switch.py` | the one spawn and the unit of the verifier, steps 8 to 10, a server tree, the self-release |
 | `executor/unpack.py`, `artifact.py` | the unpack of a tar archive and the member list of a component archive, root's copy of the two assets of a binary component and the digest of its archive |
 | `executor/ledger.py`, `steps.py`, `drain.py` | the entry, the ten steps, the unit's entry point |
-| `intake/token.py`, `store.py`, `service.py`, `gaps.py`, `notify.py`, `run.py` | the capability, the kernel rule, the two routes, the gap directory, the one push, the entry point |
 | `bin/allocate-tags.sh` | the workflow's body: gather, plan, tag, release |
 
 ## Tests
@@ -536,8 +527,6 @@ that wants a refusal changes one field.
   A newer tag or a request by hand recovers (`follow/`).
 - The follower reads tags out of the corpus. Root refuses a tag that has no
   Release, and that refusal holds the set (`follow/`).
-- The follower and `caregiver` can each file a request for `mcp-servers`.
-  Root refuses the second one, because it moves no component (`follow/`).
 - The requester's wake-up is not built. Root writes the ledger entry and
   pushes the phone only (`executor/notice.py`).
 - A switch keeps the unit it replaces as `<unit>.prev` (`executor/install.py`).
@@ -557,7 +546,7 @@ that wants a refusal changes one field.
   puts each other component back first, and the step then fails. A fault
   that is no failed hook still stops the restore at its component
   (`executor/steps.py`).
-- `arg_allows` is applied by nothing (`executor/roster.py`).
+- `arg_allows` is applied by nothing (`mcpserver.py`).
 - Contract 06 §3 names `chaperone` as the owner of `pep-grant`. The
   manifest of the Rust `chaperone` provides no contract. Each floor on
   `pep-grant` is then a line `not verified`, and not a refusal
@@ -588,16 +577,12 @@ that wants a refusal changes one field.
   name thus refuses the directory. The family reader of
   `agent_family.registry` counts only a regular file or a link to one
   (`mcpserver.py`).
-- No contract names the sops file. Its reader takes the two merge limits of
-  a manifest (`intake/store.py`).
 - A manifest whose chain of merge keys passes the limit gets the refusal
   text `nests deeper than 128 levels`. The Rust reader gives such a chain
   that text. The Python reader still reads plain nesting deeper than 128
   levels (`manifest.py`).
-- The intake reads `Content-Length` with `int`. That reader takes a sign,
-  an underscore and a digit that is not ASCII (`intake/service.py`).
-- The secret-name pattern is copied into five modules, and the copies agree
-  only by hand.
+- The secret-name pattern is copied into more than one module, and the
+  copies agree only by hand.
 - The requester refuses once `requests/` holds eight entries of any owner
   (`requester/file.py`).
 - `stage7-releases.md` §2.4 step 3 says that root reads only the exit
