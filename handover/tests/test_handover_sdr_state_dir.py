@@ -13,7 +13,7 @@ release:
     /var/lib/agent-mcp          root:root 0755      the visit makes it
     /var/lib/agent-mcp/<name>   mcp-<name> 0700     step 8 makes it
 
-These drive `McpBuilder` and the roster writer against `McpFake`. The
+These drive `McpBuilder` against `McpFake`. The
 eleven real declarations are `test_handover_mce_first_mcp_release.py`'s.
 """
 
@@ -25,10 +25,9 @@ from typing import Final
 
 import pytest
 from handover.errors import Refusal, RefusalCode
-from handover.executor.host import MCP_STATE_ROOT, As, Host
+from handover.executor.host import As, Host
 from handover.executor.install import INSTALL
 from handover.executor.mcpbuild import STATE_DIR_MODE, Fetched, McpBuilder
-from handover.executor.roster import rows
 from handover.mcpserver import ServerFile, parse_server
 from handover_mcp_fixtures import KAGI_LOCK_PATH, LOCK_TEXT, McpFake, kagi_server
 
@@ -154,8 +153,6 @@ def test_a_server_that_keeps_no_state_gets_neither_directory_nor_variable(
     assert build.state_dir is None
     assert list(builder.state_root.iterdir()) == []
     assert _naming(fake, builder.state_root) == []
-    row = rows((kagi_server(),), builder.mcp_root, builder.state_root)["kagi"]
-    assert row["env"] == {"KAGI_API_KEY": "secret:kagi_api_key"}
 
 
 def test_a_second_release_leaves_the_directory_and_its_contents_alone(tmp_path: Path) -> None:
@@ -262,39 +259,3 @@ def test_a_link_where_the_directory_goes_is_refused(tmp_path: Path) -> None:
         builder.stage_all((_stateful(),), work, source)
 
     assert _naming(fake, builder.state_root) == []
-
-
-# -- the roster names it ------------------------------------------------------
-
-
-def test_the_roster_row_carries_the_variable_with_that_path(tmp_path: Path) -> None:
-    """The PEP hands a row's `env` to the child as it is, so
-    the variable in the row is the whole of how the server learns it."""
-    fake = McpFake()
-    builder, work, source = _bench(tmp_path, fake)
-    (build,) = builder.stage_all((_stateful(),), work, source)
-
-    row = rows((_stateful(),), builder.mcp_root, builder.state_root)[STATEFUL]
-
-    assert row["env"] == {"NOTES_URL": "http://127.0.0.1:9", STATE_ENV: str(build.state_dir)}
-
-
-def test_root_s_path_wins_over_a_literal_of_the_same_name() -> None:
-    """A file that also sets the variable in `run.env` has said two
-    things, and only one of them is a directory root made for this server
-    alone. Another server's directory, or `/tmp`, is what §4.2 forbids."""
-    root = Path(MCP_STATE_ROOT)
-
-    row = rows((_stateful(literal="/tmp/elsewhere"),), Path("/opt/mcp"), root)[STATEFUL]
-
-    assert row["env"] == {"NOTES_URL": "http://127.0.0.1:9", STATE_ENV: f"{root}/{STATEFUL}"}
-
-
-def test_the_roster_s_default_root_is_the_host_s() -> None:
-    """A caller that names no root gets the host's, the one `Host` and the
-    visit both use."""
-    assert Host(run=McpFake()).mcp_state_root == Path(MCP_STATE_ROOT)
-
-    row = rows((_stateful(),), Path("/opt/mcp"))[STATEFUL]
-
-    assert row["env"] == {"NOTES_URL": "http://127.0.0.1:9", STATE_ENV: f"{MCP_STATE_ROOT}/notes"}

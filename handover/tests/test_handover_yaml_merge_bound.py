@@ -15,7 +15,6 @@ not compose, and a mapping that merges itself.
 from __future__ import annotations
 
 import ast
-import os
 import subprocess
 import sys
 from collections.abc import Callable
@@ -25,8 +24,6 @@ import pytest
 import yaml
 from handover.boundedyaml import MergeLimits, MergeTooDeep, MergeTooLarge, load
 from handover.errors import Refusal, RefusalCode
-from handover.intake import store
-from handover.intake.store import recipients_of
 from handover.manifest import MAX_MANIFEST_BYTES, Markup, parse_manifest
 from handover.mcpserver import MAX_SERVER_BYTES, parse_server
 from handover_fixtures import manifest_text
@@ -35,8 +32,6 @@ from handover_mcp_fixtures import KAGI_LOCK_PATH, KAGI_YAML
 from handover import manifest, mcpserver
 
 SUBJECT = "chaperone/component.yaml"
-SOPS_PATH = "secrets/mcp/kagi.env"
-RECIPIENT = "age1" + "q" * 58
 
 #: The limits of the child process: seconds of wall time, seconds of CPU
 #: time and bytes of memory.
@@ -121,17 +116,6 @@ try:
     print("accepted")
 except Refusal as refusal:
     print(refusal.detail)
-"""
-
-SOPS_CHILD = """
-import os
-from pathlib import Path
-from handover.intake.store import recipients_of
-
-path = Path(sys.argv[3])
-path.write_text(text, encoding="utf-8")
-path.chmod(0o600)
-print(recipients_of(path, "secrets/mcp/kagi.env", owner_uid=os.getuid()))
 """
 
 
@@ -409,15 +393,13 @@ SERVER_LIMITS = MergeLimits(depth=400, pairs=100_000, floor=1)
 
 def test_each_reader_has_the_limits_of_its_rust_reader() -> None:
     """The numbers themselves. Each other test takes a limit from the module
-    that it tests, so a changed number there moves that test with it. The
-    sops file has no Rust reader and takes the limits of a manifest.
+    that it tests, so a changed number there moves that test with it.
 
     The Rust reader of a manifest counts the pairs of each merged mapping.
     The Rust reader of a server file counts one for a merged mapping with no
     pair, so its floor is 1."""
     assert manifest.MERGE_LIMITS == MANIFEST_LIMITS
     assert mcpserver.MERGE_LIMITS == SERVER_LIMITS
-    assert store.MERGE_LIMITS == MANIFEST_LIMITS
 
 
 def _no_pairs(count: int, listed: int = 250) -> str:
@@ -694,56 +676,3 @@ def test_a_server_file_with_a_character_that_is_no_yaml_does_not_parse() -> None
     text = _server_text(f"# {NOT_A_YAML_CHARACTER}\n")
 
     assert _server_refusal(text) == "server.yaml is not readable YAML"
-
-
-# -- the sops file -------------------------------------------------------------
-
-
-def _sops_text(extra: str) -> str:
-    return f"creation_rules:\n  - path_regex: secrets/mcp/.*\n    age: {RECIPIENT}\n{extra}"
-
-
-def _recipients(tmp_path: Path, text: str) -> tuple[str, ...]:
-    path = tmp_path / ".sops.yaml"
-    path.write_text(text, encoding="utf-8")
-    path.chmod(0o600)
-
-    return recipients_of(path, SOPS_PATH, owner_uid=os.getuid())
-
-
-def test_a_sops_file_reads_merge_keys_at_its_limits(tmp_path: Path) -> None:
-    limits = store.MERGE_LIMITS
-
-    assert _recipients(tmp_path, _sops_text(_chain(limits.depth))) == (RECIPIENT,)
-    assert _recipients(tmp_path, _sops_text(_copies(256, limits.pairs // 256))) == (RECIPIENT,)
-
-
-def test_a_sops_file_past_a_merge_limit_names_no_recipient(tmp_path: Path) -> None:
-    limits = store.MERGE_LIMITS
-
-    assert _recipients(tmp_path, _sops_text(_chain(limits.depth + 1))) == ()
-    assert _recipients(tmp_path, _sops_text(_copies(256, limits.pairs // 256 + 1))) == ()
-
-
-def test_a_small_sops_file_with_merge_keys_that_double_names_no_recipient(
-    tmp_path: Path,
-) -> None:
-    text = _sops_text("extra:\n" + _doubling(DOUBLING_LEVELS))
-    assert len(text.encode("utf-8")) <= 4096
-
-    assert _in_child(SOPS_CHILD, text, str(tmp_path / ".sops.yaml")) == "()"
-
-
-@pytest.mark.parametrize("name", SMALL_TEXTS)
-def test_a_small_sops_file_of_each_other_kind_names_no_recipient(tmp_path: Path, name: str) -> None:
-    body, tail = SMALL_TEXTS[name]
-    text = _sops_text("extra:\n" + body) + tail
-    assert len(text.encode("utf-8")) <= 4096
-
-    assert _in_child(SOPS_CHILD, text, str(tmp_path / ".sops.yaml")) == "()"
-
-
-def test_a_sops_file_with_a_character_that_is_no_yaml_names_no_recipient(
-    tmp_path: Path,
-) -> None:
-    assert _recipients(tmp_path, _sops_text(f"# {NOT_A_YAML_CHARACTER}\n")) == ()

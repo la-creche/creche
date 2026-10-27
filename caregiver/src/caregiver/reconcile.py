@@ -56,7 +56,6 @@ from .egress import EgressConfig
 from .faults import FaultEntry
 from .images import SandboxImages
 from .litellm_keys import SPEND_WINDOW, LiteLLMError, LiteLLMKeys, Spend
-from .mcp_wire import McpReport
 from .policy_file import PolicyShapeError
 from .policy_fleet import FleetPolicy, LeftOut
 from .sandboxes import SandboxRecord
@@ -233,7 +232,6 @@ def reconcile_family(
     spend: SpendRead = SpendRead.SKIP,
     stop: StopCheck = _never,
     chaperone: PepReport | None = None,
-    mcp: McpReport | None = None,
 ) -> ReconcileResult:
     """Validate, diff, act, publish. Never raises on content.
 
@@ -248,13 +246,7 @@ def reconcile_family(
     `chaperone` is the fleet's one PEP reading, taken by the loop's watch and
     handed to every family's pass (contract 05 §3.3 `pep_unreachable`). A
     caller that passes none publishes `pep.watch: off`, because it has no
-    interval to probe over and may not claim the PEP answered.
-
-    `mcp` is the fleet's one MCP pass reading, the same shape and for the
-    same reason (contract 05 §3.3 `mcp_install_held`). One registry and
-    one `/opt/mcp` serve every family, so a declared server nobody can
-    install belongs to all of them. A caller that passes none raises the
-    fault on nobody: `apply-once` files no MCP request."""
+    interval to probe over and may not claim the PEP answered."""
     report = registry.reports.get(family_name)
     if report is None or not has_family_file(registry, family_name):
         raise FamilyNotFoundError(family_name)
@@ -265,7 +257,6 @@ def reconcile_family(
     folded = (
         *steps.read_faults(state_root, family_name, tuple(one.id for one in live)),
         *_pep_faults(watch),
-        *_mcp_faults(mcp),
     )
     applied = read_applied(state_root, family_name)
 
@@ -296,7 +287,6 @@ def reconcile_family(
         spend=spend,
         stop=stop,
         chaperone=watch,
-        mcp=mcp,
     )
 
 
@@ -317,7 +307,6 @@ def _converge(
     spend: SpendRead,
     stop: StopCheck,
     chaperone: PepReport,
-    mcp: McpReport | None,
 ) -> ReconcileResult:
     ran: list[str] = []
     faults = list(folded)
@@ -453,7 +442,6 @@ def _converge(
     faults = [
         *steps.read_faults(state_root, family.name, tuple(one.id for one in records)),
         *_pep_faults(chaperone),
-        *_mcp_faults(mcp),
         *key_faults,
         *timer_faults,
         *sandbox_faults,
@@ -1015,23 +1003,6 @@ def _pep_faults(chaperone: PepReport) -> tuple[FaultEntry, ...]:
     that fires during an outage runs a turn that burns model spend with
     no tools."""
     fault = chaperone.fault()
-
-    return (fault,) if fault is not None else ()
-
-
-def _mcp_faults(mcp: McpReport | None) -> tuple[FaultEntry, ...]:
-    """Contract 05 §3.3's `mcp_install_held`, raised on EVERY family.
-
-    A declared MCP server is not installed, and root has already
-    answered the release that would install it, so `caregiver` files no
-    new request until the question changes or the floor runs out
-    (`mcp_release` rule 3). Without this row the only trace would be a
-    log line, and a log line every twenty seconds is the silence
-    `pep_unreachable` was added to end.
-
-    It does NOT block turns. A family whose grants name that server has
-    one tool fewer, and every other turn it takes is unaffected."""
-    fault = mcp.fault() if mcp is not None else None
 
     return (fault,) if fault is not None else ()
 

@@ -217,10 +217,6 @@ def fake_host(tmp_path: Path, run: FakeRun) -> Host:
         user_unit_dir=tmp_path / "user-units",
         sessions_root=tmp_path / "sessions",
         install_roots=(tmp_path / "components",),
-        # The roster root writes at the end of an `mcp-servers` release.
-        # Without it here, any test that switches that
-        # component writes into the real `/srv/agents/state/rework/`.
-        roster_file=tmp_path / "state" / "upstreams.yaml",
         # Contract 01b §4.2's root, which the visit makes before any
         # release runs. Here so a server that keeps state
         # never reaches for the real `/var/lib/agent-mcp`.

@@ -65,8 +65,6 @@ from .applied import read_applied
 from .chaperone_watch import PepReport, PepWatch, unwatched
 from .delete import delete_family
 from .images import SandboxImages
-from .mcp_release import McpPaths
-from .mcp_wire import McpReport, mcp_pass
 from .reconcile import Actors, SpendRead, has_family_file, reconcile_family
 from .released import ReleasedImages
 from .rotate import settle
@@ -362,17 +360,6 @@ class LoopConfig:
     heartbeat_s: float = HEARTBEAT_S
     spend_interval_s: float = SPEND_INTERVAL_S
     host: HostFacts | None = None
-    #: `stage7-releases.md` §4.1 step 3's paths. None means this manager
-    #: files no MCP release request: the spool is root's and is created by
-    #: hand. A default that
-    #: pointed at the real paths would have a manager on a host without
-    #: them writing into a directory that is not there, every two seconds,
-    #: for nobody.
-    mcp: McpPaths | None = None
-    #: Wall clock, for the request's `ts` and the marker's age. The loop's
-    #: own intervals use `time.monotonic` and are unaffected: a request the
-    #: executor reads has to carry a time a human can compare with a ledger.
-    clock: Callable[[], float] = time.time
     #: How many passes may run at once, and how long a stop waits for the steps
     #: already in flight. Both are `serve` flags: the right number depends
     #: on the host, not on this file.
@@ -426,14 +413,6 @@ class LoopState:
         #: The registry revision the last look read. Fleet-wide: it is the
         #: content hash of the whole tree.
         self.revision: str = ""
-        #: What the last MCP pass said (`stage7-releases.md` §4.1 step 3).
-        #: It is the log line's source and the one thing a caller can read
-        #: back, so a test reads what the REAL pass did instead of running
-        #: a second one.
-        self.mcp: McpReport = McpReport()
-        #: The MCP line the loop last logged, so the same state is logged
-        #: once, when it began, and not on every pass it lasts.
-        self.mcp_line: str = ""
         #: Every error a guard caught, and how often. It lives here
         #: because it is exactly what this class is for: something the
         #: loop remembers between looks, and losing it costs one extra
@@ -626,8 +605,8 @@ def _one_shot(
     A sweep starts at most the bound, so a fleet larger than the bound
     needs more than one. `done` is what makes it one pass each: a family
     this look already ran is skipped by the next sweep, however stale its
-    document now looks. The tail — deletes, the MCP pass, the revision —
-    runs once, after the last sweep, exactly as it does in `serve`."""
+    document now looks. The tail — deletes, the revision — runs once,
+    after the last sweep, exactly as it does in `serve`."""
     ready = _begin(config, state, passes)
     if ready is None:
         return ()
@@ -746,21 +725,16 @@ def _finish(
     passes: Passes,
     revision: str,
 ) -> None:
-    """The tail of a look: the deletes, the MCP pass, the revision.
+    """The tail of a look: the deletes, the revision.
 
-    Each of the two steps has a guard of its own, so one that raises does
-    not stop the other. The revision is recorded whatever they did. A look
-    that left it unrecorded would read every later tick as an edit, and an
-    edit reads the whole registry and clears each create backoff."""
+    The deletes have a guard of their own. The revision is recorded
+    whatever they did. A look that left it unrecorded would read every
+    later tick as an edit, and an edit reads the whole registry and clears
+    each create backoff."""
     try:
         _forget_deleted(config, actors, registry, state, passes)
     except Exception as exc:
         state.said.say("deleted families", exc)
-
-    try:
-        _mcp_servers(config, registry, state)
-    except Exception as exc:
-        state.said.say("mcp", exc)
 
     state.revision = revision
 
@@ -918,52 +892,6 @@ def _keep_fresh(config: LoopConfig, name: str) -> bool:
     return path.is_file()
 
 
-def _mcp_servers(config: LoopConfig, registry: Registry, state: LoopState) -> None:
-    """Invariant 18's near end (`stage7-releases.md` §4.1 step 3).
-
-    It runs AFTER the families, and its result changes nothing the loop
-    returns: an MCP server is not a family, and a request that could not be
-    filed must not hold up the pass that converges five of them.
-
-    One thing it does change: a HELD request is contract 05 §3.3's
-    `mcp_install_held`, which lives in every family's document. A verdict
-    that moved therefore forces the next look to pass every family, for
-    the reason `_watch_pep` gives — `restamp_status` carries the old
-    content forward, so a fault left to the heartbeat is a fault nobody
-    sees. A held verdict is stable between passes (its `since` is a time
-    on disk), so this fires when it appears and when it clears, never in
-    between.
-    """
-    if config.mcp is None:
-        return
-
-    report = mcp_pass(registry, config.mcp, config.clock())
-    held_moved = report.held != state.mcp.held
-    state.mcp = report
-    if held_moved:
-        state.force_pass()
-
-    line = report.log_line()
-    if line == state.mcp_line:
-        # The same line as the last pass says nothing new: ten open gaps
-        # would log the same `secret gaps open` line every twenty seconds,
-        # 4300 times a day, while the gaps wait on ten taps of a phone. A
-        # change is logged; a state that stays is one line at the moment
-        # it began.
-        return
-
-    state.mcp_line = line
-    if not line:
-        return
-
-    if report.problems:
-        log.warning("mcp: %s", line)
-
-        return
-
-    log.info("mcp: %s", line)
-
-
 def _spend_due(config: LoopConfig, slot: FamilyLoop) -> SpendRead:
     """Contract 05 §7: one spend read per family per minute. Per family,
     because the families do not share a look."""
@@ -1007,7 +935,6 @@ def _pass(
                 spend=spend,
                 stop=stop,
                 chaperone=_pep_report(config),
-                mcp=state.mcp,
             )
         except Exception as exc:
             # `Exception`, not `(OSError, RuntimeError)`. Anything else

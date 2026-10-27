@@ -18,8 +18,7 @@ Contract 04 §8.4's four rules, and where each lands here:
 
 Rule 4 is where a release differs from a PEP call, and the reason is
 structural. The PEP owns an HTTP server, so Node-RED calls it back at
-`POST /approval/<gate>`. Root's executor owns none: the one root listener
-is the secret intake, a unit of its own. So root polls. The one
+`POST /approval/<gate>`. Root's executor owns none. So root polls. The one
 thing root must never do is read the verdict out of a file the operator can
 write: that would let the requester approve its own release and take
 invariant 10 with it. Polling the hook keeps the decision behind the

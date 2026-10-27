@@ -134,8 +134,8 @@ def test_the_mcp_root_a_first_release_makes_is_traversable(tmp_path: Path) -> No
 
 def test_the_mcp_root_gains_no_write_bit(tmp_path: Path) -> None:
     """Traversable is not writable. `/opt/mcp` is where root decides which
-    binary the most privileged process on the host starts (`roster.py` rule
-    1), so a second writer of that directory is that decision moved."""
+    binary the most privileged process on the host starts, so a second
+    writer of that directory is that decision moved."""
     builder, work, source = _builder(tmp_path, McpFake())
 
     with tight_umask():

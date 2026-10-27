@@ -30,8 +30,7 @@ SOPS=/usr/local/bin/sops
 # The site's own sops file. It is no file of this tree: the deployment puts
 # it at this path, or links this path to a file in its own tree. Root judges
 # and decrypts the file a link names, never the link, so the path is
-# resolved before `require_root_owned` sees it. The intake wrapper reads the
-# same file.
+# resolved before `require_root_owned` sees it.
 SITE_SECRETS=/etc/creche/secrets.enc.env
 SECRETS="$(readlink -f "$SITE_SECRETS" 2>/dev/null)" || SECRETS="$SITE_SECRETS"
 EXECUTOR=/opt/components/handover/bin/handover-exec

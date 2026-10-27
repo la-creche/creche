@@ -221,7 +221,6 @@ class ExitStack(ChaperoneRsStack):
         stand-in. The `sbx` stand-in holds each `exec` until `start` lets it go.
         """
         self.prepare_install(self.tree.attendance_socket)
-        self.tree.release_root.mkdir(parents=True, exist_ok=True)
         write_server_file(self.tree, RS_UPSTREAM, (ECHO_TOOL, GATED_TOOL))
         publish_family(self.tree, caller_body())
         publish_family(self.tree, target_body())

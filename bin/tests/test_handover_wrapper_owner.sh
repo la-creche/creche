@@ -68,7 +68,7 @@ FAKE_STAT="root:root 755" require_root_owned "$WORK/absent"
 # is a file they can swap after the guard looked, so every one of them up to
 # `/` must be root's too. The fake `stat` answers $FAKE_STAT_DIR for a
 # directory when that is set.
-for script in "$SCRIPT" "$HERE/../creche-handover-intake"; do
+for script in "$SCRIPT"; do
   CHAIN="$(sed -n '/^require_root_chain()/,/^}/p' "$script")"
   [[ -n "$CHAIN" ]] || { fail "require_root_chain() not found in $(basename "$script")"; continue; }
   eval "$CHAIN"
@@ -98,7 +98,7 @@ done
 
 # Every path root executes or decrypts must reach BOTH guards, not only
 # the first one: the file's own owner and mode, and every directory above
-# it. The release wrapper names each path; the intake loops over `$path`.
+# it. The release wrapper names each path.
 for name in SOPS SECRETS EXECUTOR; do
   grep -q "require_root_owned \"\$$name\"" "$SCRIPT" \
     && pass "the release wrapper guards \$$name" \
@@ -108,16 +108,10 @@ for name in SOPS SECRETS EXECUTOR; do
     || fail "the release wrapper never guards the directories above \$$name"
 done
 
-INTAKE_SCRIPT="$HERE/../creche-handover-intake"
-grep -q '^for path in "$INTAKE" "$SOPS" "$SECRETS"; do$' "$INTAKE_SCRIPT" \
-  && grep -q 'require_root_owned "$path" || ! require_root_chain "$path"' "$INTAKE_SCRIPT" \
-  && pass "the intake wrapper guards every path and the directories above it" \
-  || fail "the intake wrapper leaves a path or a directory chain unguarded"
-
 # The sops file is the site's, at one path no checkout holds. Root judges
 # the file a link there names: the guard must get the resolved path, and
-# neither wrapper may read a file of the deployed tree.
-for script in "$SCRIPT" "$INTAKE_SCRIPT"; do
+# the wrapper may read no file of the deployed tree.
+for script in "$SCRIPT"; do
   name="$(basename "$script")"
   grep -q '^SITE_SECRETS=/etc/creche/secrets.enc.env$' "$script" \
     && pass "$name reads the site's sops file" \

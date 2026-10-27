@@ -14,10 +14,9 @@ from agent_family.registry import FAMILY_FILE
 #: Rework runtime state.
 STATE_ROOT: Final = Path("/srv/agents/state/rework")
 
-#: Root's own root: the release spool, the sealed secrets and the roster,
-#: every ancestor root's. `handover.executor.layout`'s `RELEASE_ROOT`
-#: spelled a second time, because the two packages share no module.
-#: `handover/tests/test_handover_r7h_roster.py` holds the two equal.
+#: Root's own root: the release spool, every ancestor root's.
+#: `handover.executor.layout`'s `RELEASE_ROOT` spelled a second time,
+#: because the two packages share no module.
 RELEASE_ROOT: Final = Path("/var/lib/creche-handover")
 
 #: Contract 03 §7.1: outside

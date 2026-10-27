@@ -191,38 +191,6 @@ def test_the_plan_of_serve_names_no_directory_with_no_family_file(
     assert "families: chat\n" in capsys.readouterr().out
 
 
-def test_serve_names_the_release_root_it_would_use(
-    bench: Bench, capsys: pytest.CaptureFixture[str]
-) -> None:
-    bench.run(
-        "serve",
-        str(bench.registry_root),
-        "--image",
-        IMAGE,
-        "--state-root",
-        str(bench.state_root),
-    )
-    assert f"release root: {paths.RELEASE_ROOT}" in capsys.readouterr().out
-
-
-def test_serve_refuses_a_scratch_state_root_beside_roots_real_spool(bench: Bench) -> None:
-    """`caregiver` has two roots. A scratch `--state-root`
-    with the DEFAULT release root would file the scratch run's requests
-    into the spool root drains for real, so `--write` refuses it before
-    anything starts."""
-    code = bench.run(
-        "serve",
-        str(bench.registry_root),
-        "--image",
-        IMAGE,
-        "--state-root",
-        str(bench.state_root),
-        "--write",
-    )
-    assert code == EXIT_USAGE
-    assert bench.driver.calls == []
-
-
 # --- a verb with no master key ------------------------------------------------------
 
 
@@ -240,12 +208,12 @@ class NoSignals:
         del seconds
 
 
-def _words_with_no_key(bench: Bench, tmp_path: Path, verb: str) -> list[str]:
+def _words_with_no_key(bench: Bench, verb: str) -> list[str]:
     """The words of one verb that acts, with each address given."""
     state = ["--state-root", str(bench.state_root), "--litellm-base-url", LITELLM_URL, "--write"]
     watch = [str(bench.registry_root), "--image", IMAGE, "--sessiond-url", ATTENDANCE_URL]
     words = {
-        "serve": ["serve", *watch, "--release-root", str(tmp_path / "release"), "--pep-url", ""],
+        "serve": ["serve", *watch, "--pep-url", ""],
         "reconcile-once": ["reconcile-once", *watch, "chat"],
         "apply-once": ["apply-once", *watch, "chat"],
         "rotate": ["rotate", str(bench.registry_root), "chat"],
@@ -258,7 +226,6 @@ def _words_with_no_key(bench: Bench, tmp_path: Path, verb: str) -> list[str]:
 @pytest.mark.parametrize("verb", ["serve", "reconcile-once", "apply-once", "rotate", "delete"])
 def test_a_verb_that_acts_refuses_to_start_with_no_master_key(
     bench: Bench,
-    tmp_path: Path,
     verb: str,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -270,7 +237,7 @@ def test_a_verb_that_acts_refuses_to_start_with_no_master_key(
     monkeypatch.setattr(cli, "SignalControl", NoSignals)
 
     code = main(
-        _words_with_no_key(bench, tmp_path, verb),
+        _words_with_no_key(bench, verb),
         driver=bench.driver,
         switch=bench.switch,
         units=bench.units,

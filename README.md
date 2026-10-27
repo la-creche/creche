@@ -52,7 +52,7 @@ turn. The `attendance` service takes that call from four doors.
 | `caregiver/` | `caregiver` | `creche-caregiver.service`, user | The reconciler. It converges every family to its file. | [caregiver/AGENTS.md](caregiver/AGENTS.md) |
 | `noticeboard/` | `noticeboard` | `creche-noticeboard.service`, user | The one view: every family, sandbox, session and audit line. | [noticeboard/AGENTS.md](noticeboard/AGENTS.md) |
 | `playpen/` | `playpen` | none, an OCI image | The sandbox image: the ACP facade and the agent module. | [playpen/AGENTS.md](playpen/AGENTS.md) |
-| `handover/` | `handover` | `creche-handover.{path,service}`, system, root. `creche-follow.{service,timer}`, user | The release tool: resolver, tag allocator, executor, requester, follower, secret intake. | [handover/AGENTS.md](handover/AGENTS.md) |
+| `handover/` | `handover` | `creche-handover.{path,service}`, system, root. `creche-follow.{service,timer}`, user | The release tool: resolver, tag allocator, executor, requester, follower. | [handover/AGENTS.md](handover/AGENTS.md) |
 | `family/` | in `caregiver` | none, a library | The `family.toml` and `server.toml` schemas, the validator, the registry loader. | [family/AGENTS.md](family/AGENTS.md) |
 | `library/` | none | `index@.timer`, user | The retrieval index builder. Not an agent. | [library/AGENTS.md](library/AGENTS.md) |
 

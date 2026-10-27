@@ -43,7 +43,6 @@ own module.
    | `uv sync --frozen --no-editable --no-dev` | `mcp-<name>` | Same, for
      the `agent-mcp` distribution. |
    | `chown` | root | Taking the tree back at the end. |
-   | `systemctl kill -s HUP` | root | Signalling the PEP is root's alone. |
 
    The modes are not a child at all (assumption 11).
 
@@ -151,7 +150,7 @@ own module.
     the tree is built, and before anything swaps. A swap, a restore and a
     failed release all leave it: state is the point, and removing it is a
     bigger verb than a release, which is also why a removed server's tree
-    stays. The roster hands its path to the server (`roster.py` rule 5).
+    stays.
 
     ```
     /var/lib/agent-mcp          root:root 0755   the visit makes it
@@ -179,13 +178,12 @@ from typing import Final
 
 from ..errors import Refusal, RefusalCode, safe_token
 from ..mcpserver import ServerFile, Source
-from .host import As, Command, Host, Result
+from .host import As, Command, Host
 from .install import (
     BUILD_TIMEOUT_S,
     INSTALL,
     NEW_SUFFIX,
     SHORT_TIMEOUT_S,
-    SYSTEMCTL,
     UV,
     VENV_ENV_NAME,
     StepFailed,
@@ -279,15 +277,6 @@ LOCK_FILE: Final = "install.lock"
 #: closure to put it in the ledger, and to prove the lock pins the
 #: requirement the file declared (contract 01b §3.4 rule 5).
 HASH_MARKER: Final = "--hash=sha256:"
-
-#: The unit that holds every MCP child. Step 9's last action for an
-#: `mcp-servers` release is one signal to it (`stage7-releases.md` §4.4).
-CHAPERONE_UNIT: Final = "creche-chaperone.service"
-
-#: `reload_pool.TRIGGER`, as an argv list. `systemctl kill` and not a PID
-#: root looked up: the unit name is the only thing root has to be right
-#: about, and systemd resolves it to the running process.
-HUP_ARGV: Final = (SYSTEMCTL, "kill", "-s", "HUP", CHAPERONE_UNIT)
 
 
 @dataclass(frozen=True)
@@ -746,9 +735,7 @@ class McpBuilder:
         **A FIRST install has no `<prev>`, and taking the tree away IS the
         restore.** Every new server hits this the day it ships. Returning
         early would leave the new tree live at `/opt/mcp/<name>` after a
-        release that failed its own verify, with the roster already put
-        back — so root's own two records of what is installed would
-        disagree.
+        release that failed its own verify.
 
         The tree goes where every other failed tree goes, `<name>.new`,
         and `run` removes it: a tree this run built minutes ago from a
@@ -760,11 +747,6 @@ class McpBuilder:
 
         if build.paths.prev.is_dir():
             os.rename(build.paths.prev, build.paths.to)
-
-    def reload_chaperone(self) -> Result:
-        """§4.4 step 1, and step 9's last action for an `mcp-servers`
-        release. One signal, by unit name, as an argv list."""
-        return self.host.run(Command(argv=HUP_ARGV, identity=As.ROOT, timeout_s=SHORT_TIMEOUT_S))
 
     # -- plumbing --------------------------------------------------------
 

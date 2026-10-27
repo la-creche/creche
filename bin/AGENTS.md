@@ -27,7 +27,7 @@ A reader must not infer it from the `id -u` guard. A root script asserts
 | Family | Files | Contract |
 |---|---|---|
 | Setup | `provision-library.sh` | Idempotent, not a no-op. Every step checks before it writes. A value that has a current answer is upserted in place. A token minted once is never replaced in silence. |
-| Operations | `creche-deploy`, `creche-handover`, `creche-handover-intake`, `rework-watchdog.sh`, `rework-registry-sync.sh`, `sbx-drift-check.sh`, `sync-code-corpus.sh` | Run unattended from units and timers. Fail loudly into the journal. |
+| Operations | `creche-deploy`, `creche-handover`, `rework-watchdog.sh`, `rework-registry-sync.sh`, `sbx-drift-check.sh`, `sync-code-corpus.sh` | Run unattended from units and timers. Fail loudly into the journal. |
 | Checks | `quality-gate.sh`, `systemd-proof.sh` | Run from the hooks and from CI. `systemd-proof.sh` runs in CI only. No unit runs them. They use `set -euo pipefail`. The first failed check stops the run. |
 | Library | `lib/envfile.sh`, `lib/docsrule.sh` | Sourced only, never executed. Say "Sourced only" in the header. That marker exempts the file from the mode rule below. |
 | Tools | `yaml-to-toml.py`, `chaperone-install-draft.py` | Run by hand on a development machine, and from a test in CI. No unit runs a tool, and the host does not need one. A tool reads the files that its command names and changes no file. `chaperone-install-draft.py --out-dir` makes one new directory and writes only into it. |
@@ -78,7 +78,6 @@ through a file or a health endpoint, and give a short in-VM command a
 |---|---|---|
 | `creche-deploy` | ROOT, the single sudoers entry | Puts this repository at `/opt/creche` and the site at `/opt/private-docs`, fills the venv. It restarts no unit. Origin is the operator's checkout, so root needs no GitHub credential. It installs no MCP server. |
 | `creche-handover` | ROOT, from `creche-handover.path` | Decrypts the site's sops file and execs `handover-exec` under it. Installed to `/usr/local/sbin` by hand, never by a release. Refuses a path another account can write. |
-| `creche-handover-intake` | ROOT, from `creche-handover-intake.service` | The same, for the secret intake. |
 | `rework-watchdog.sh` | OPERATOR, every minute | The outage alarm. Checks the chaperone's `/healthz`, `caregiver`'s freshness, `attendance`'s socket and `is-failed` for the units. Pushes once per change of verdict. `--last` prints the verdict. Shares no fate with what it watches. The unit check also reads each firing unit. After the checks, the script sends one notice for each service, surface and rule that a notice file records. "The watchdog" has the two rules. |
 | `rework-registry-sync.sh` | OPERATOR, every minute | `git fetch --prune`, then `git merge --ff-only`, on the registry checkout. Never rebases, resets, cleans or pushes. |
 | `sbx-drift-check.sh` | OPERATOR, daily | Read-only. Alarms when the global sbx policy holds any network allow, or when a per-sandbox rule allows a host that is not the LAN address and not in the seeded allowlist. |
@@ -291,7 +290,7 @@ scope of `release.yml` ask it.
 | `test_git_config_dropped.py` | No `git` child of a test run reads the config file of a person or of the system. The same holds for the ignore file and the attributes file of a person. The root `conftest.py` sets the variables that do this. The registry writer of the noticeboard, `noticeboard/src/noticeboard/registrywrite.py`, starts `git` with `HOME` and with none of those variables. The root `conftest.py` gives each test under `noticeboard/tests` an empty home directory. That child then starts no program that a config file below `HOME` names, but it still reads the config file of the system. |
 | `test_git_background_dropped.py` | No `git` command that inherits the environment of a test run starts the maintenance that `git` does not wait for. That holds for a commit, a merge, a fetch and a repository that receives a push. The root `conftest.py` sets the two settings that do this. A fixture that asks for the maintenance gets it in the foreground. |
 | `test_ignored_signal_kept.py` | A test run that starts with SIGINT, SIGTERM or SIGHUP ignored passes the same tests, and the signal stays ignored. The fixture of the root `conftest.py` still fails a handler that a test leaves. |
-| `test_creche_deploy.py`, `test_rework_watchdog.py`, `test_rework_registry_sync.py`, `test_sbx_drift_check.py`, `test_sync_code_corpus.py`, `test_provision_library.py`, `test_rework_intake_unit.py` | Each script, against binstubs and a temp root. |
+| `test_creche_deploy.py`, `test_rework_watchdog.py`, `test_rework_registry_sync.py`, `test_sbx_drift_check.py`, `test_sync_code_corpus.py`, `test_provision_library.py` | Each script, against binstubs and a temp root. |
 
 ## Adding a script
 

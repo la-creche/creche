@@ -31,15 +31,15 @@ host where something has gone wrong.
 | `switch.py` | the one call this service makes to `attendance` |
 | `applied.py`, `steps.py`, `reconcile.py`, `sandboxes.py` | the live snapshot, one function per step, one pass, the one create path |
 | `rotate.py`, `loop.py`, `apply.py`, `delete.py` | rotate, serve, the one-shot apply, the teardown |
-| `mcp_wire.py`, `mcp_release.py`, `live_manifest.py` | one `mcp-servers` request per pass, and the ledger it reads |
+| `live_manifest.py` | the ledger of root, read |
 | `cli.py` | `serve`, `reconcile-once`, `rotate`, `apply-once`, `status`, `delete` |
 | `verify.py` | `caregiver-verify` |
 
 ## Rules
 
 - **Layers talk to the layer below, never sideways.** `apply.py`,
-  `reconcile.py`, `rotate.py`, `sandboxes.py`, `loop.py`, `mcp_wire.py` and
-  `delete.py` call more than one sibling. `policy_fleet.py` calls
+  `reconcile.py`, `rotate.py`, `sandboxes.py`, `loop.py` and `delete.py`
+  call more than one sibling. `policy_fleet.py` calls
   `policy_file.py`. Every other module talks only to `paths.py`,
   `clock.py` and `atomic.py`.
 - Every external dependency sits behind a Protocol with a fake. Add a third
@@ -47,9 +47,9 @@ host where something has gone wrong.
 - `atomic.py` is the only place that writes a file another process reads.
 - `atomic.read_json` reads a JSON file. It answers `None` for content that
   it cannot read. It does not raise on content.
-- `mcp_release.py`, `live_manifest.py` and `verify.py` keep a read of
-  their own. Each one refuses an integer past the digit limit and nesting
-  past the limit of the parser. Each one refuses bytes that are not UTF-8.
+- `live_manifest.py` and `verify.py` keep a read of their own. Each one
+  refuses an integer past the digit limit and nesting past the limit of
+  the parser. Each one refuses bytes that are not UTF-8.
 - A client maps each failure of its transport and of its answer to its own
   error: `DriverError`, `LiteLLMError`, `SwitchError`. A step names that
   error in its handler, with two exceptions.
@@ -70,10 +70,6 @@ host where something has gone wrong.
   503 or answers another body is a probe that did not answer. A moved
   verdict forces a pass.
 - `chaperone.watch: off` is a value, not a silence. `status` prints it.
-- Root's answer to a release request is said, not only logged. `mcp_release`
-  holds an identical request while `done/<id>.json` stands, and the hold
-  reaches every status document as `mcp_install_held`.
-- The marker is written before the request. Every field in it is hostile.
 - No status field claims what this service cannot observe. It cannot count
   running turns, so it does not.
 - The table of the family follows what it should hold, not the family
@@ -199,7 +195,7 @@ the next look. A family in a create backoff keeps its wait. `SIGTERM` stops
 the loop after the look in flight.
 
 Each step of a look ends in a handler of the loop: a dispatch, a pass, a
-delete, the MCP pass. The handler writes the first error with its
+delete. The handler writes the first error with its
 traceback. It counts each repeat. The loop continues, and each other
 family gets its pass.
 
@@ -306,18 +302,12 @@ settle of the loop and `delete`.
    the check, `/opt/components/chaperone/bin/chaperone` by default.
    `creche-caregiver.service` gives both.
 
-## `mcp_release.py`
+## MCP servers
 
-1. It installs nothing and reads no secret value.
-2. A secret gap goes into a file root drains, never to the phone.
-3. One request per gap, not one per tick.
-4. The pass never raises. A host with no spool is silent.
-5. A secret two servers name opens a gap for neither, unless both files
-   declare the sharing under `shared_secrets`.
-6. What is served is root's roster, not the install trees.
-7. The roster reader has two limits for merge keys: a chain of 128 keys,
-   and 65,536 copied pairs for one file. A merged value with no pair counts
-   as one pair. A roster past a limit reads as a roster with no row.
+`caregiver` files no `mcp-servers` request and opens no secret gap. A
+release request for `mcp-servers` comes from the follower of `handover` or
+from the operator (`handover request`). The operator adds a server to the
+chaperone by hand (`handover/AGENTS.md`, "An `mcp-servers` release").
 
 ## Use
 
@@ -404,13 +394,6 @@ Nothing here touches a real sandbox or LiteLLM.
 - Two fragments that each pass the check alone and fail together, such as
   two apps with one token digest, stop every write of `policy.toml`. The
   last file stays, and no family is left out (`policy_fleet.py`).
-- `CONTRACT-QUESTION` in `mcp_release.py`. `stage7-releases.md` §4.4 gives
-  no limit for a merge key in the roster. The roster reader uses the two
-  limits of the Rust reader of a component manifest.
-- The two merge limits bound the memory of a roster read. They do not
-  bound its time. `MAX_ROSTER_BYTES` is the one bound on the time. A
-  roster at that cap took 2 to 18 seconds in the measured reads, and 221 MB
-  at most. The MCP pass runs on the loop thread (`mcp_release.py`).
 - Each pass and the `rotate` verb publish `rotation_state: settled`, also
   during the overlap of a token. Contract 05 §6.3 gives `rotating` until
   the overlap ends (`steps.py`).

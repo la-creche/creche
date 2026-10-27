@@ -10,16 +10,12 @@ parser as it was, and a caller that catches `Refusal` did not catch it.
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 import pytest
 from handover.allocate import TagOutcome, plan_tags
 from handover.catalog import Repo
 from handover.errors import Refusal, RefusalCode
 from handover.executor.provenance import check_monotonic
 from handover.executor.source import newest_tagged_version
-from handover.intake.store import recipients_of
 from handover.manifest import MAX_MANIFEST_BYTES, Markup, parse_manifest
 from handover.mcpserver import parse_server
 from handover.state import MAX_STATE_BYTES, parse_state
@@ -181,7 +177,7 @@ def test_the_monotonic_rule_refuses_a_version_too_long_to_read(version: str) -> 
         assert caught.value.detail == "cannot compare the target with the installed version"
 
 
-# -- server.yaml and the sops file --------------------------------------------
+# -- server.yaml --------------------------------------------------------------
 
 
 @pytest.mark.parametrize("value", ["!!int abc", "!!bool x", "!!timestamp x", "2001-99-99"])
@@ -192,16 +188,3 @@ def test_a_server_file_that_the_reader_cannot_build_is_refused(value: str) -> No
 
     assert caught.value.code is RefusalCode.SERVER
     assert caught.value.detail == "server.yaml is not readable YAML"
-
-
-@pytest.mark.parametrize("value", ["!!int abc", "!!bool x", "2001-99-99"])
-def test_a_sops_file_that_the_reader_cannot_build_names_no_recipient(
-    tmp_path: Path, value: str
-) -> None:
-    """The intake reads this file before its loop starts. An error here
-    ended the process, and the unit started it again."""
-    path = tmp_path / ".sops.yaml"
-    path.write_text(f"creation_rules: {value}\n", encoding="utf-8")
-    path.chmod(0o600)
-
-    assert recipients_of(path, "secrets/mcp/kagi.env", owner_uid=os.getuid()) == ()

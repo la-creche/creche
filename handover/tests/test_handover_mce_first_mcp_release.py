@@ -1,14 +1,12 @@
 """The FIRST MCP server release, on a host where none has run yet.
 
-`mcp-servers` moves one component tree AND eleven per-server trees, reads
-a second repository's declarations, and writes the file the PEP serves
-from.
+`mcp-servers` moves one component tree AND eleven per-server trees, and
+reads a second repository's declarations.
 
 | What the host had on 2026-09-22 | What this module does |
 |---|---|
 | `/opt/mcp` `root:root 0755`, EMPTY | the directory, and nothing under it |
 | no `/var/lib/agent-mcp` | the root `0755`, empty, as the visit makes it |
-| `/srv/.../secrets` EMPTY, nine gaps open | no `<name>.enc`, nine `<name>.json` |
 | eleven `mcp/<name>/server.yaml` | **the eleven declarations in TOML, comments removed** |
 | `mcp-servers-v0.1.0` on agent-mcp `a1b2c3d` | one tag, one SHA, that tag |
 | `caregiver`'s `mcp-servers=latest` request | the same body, alone in the spool |
@@ -19,8 +17,8 @@ that was in use, with its comments removed and its site's values replaced.
 A registry written for a test would hide every rule below: each one is a
 field in a file nobody wrote for a test.
 
-**Three rules, each held against the real files.** Each one is a
-refusal at step 8 when broken, with nothing swapped.
+**Three rules, each held against the real files.** Each is a refusal at
+step 8 when broken, with nothing swapped.
 
 1. A fence's `arg` may be contract 01b §7.2's composite `owner/repo`, so
    both GitHub servers parse. The console-script pattern holds no `/`.
@@ -38,8 +36,8 @@ install's restore takes the new trees away.
 agent-mcp source fetch (`GitFake`), `uv` and `curl` (`McpFake`),
 `systemctl` (a recorded argv) and the phone (a granting transport). Every
 one is an edge the design already puts a fake at. Nothing else is: the
-spool, the request parser, the resolver, the registry reader, the
-per-server build and the roster writer are the real code.
+spool, the request parser, the resolver, the registry reader and the
+per-server build are the real code.
 
 **What this rehearsal cannot see**, and the real host will:
 
@@ -48,12 +46,10 @@ per-server build and the roster writer are the real code.
    so a distribution that will not install is invisible here.
 2. A real `runuser`. `As.MCP` is recorded, never executed, so a missing
    `mcp-<name>` account fails on the host and not here.
-3. A real `SIGHUP` to a running PEP. The signal is a recorded argv, and
-   no PEP reads the roster here.
-4. A real phone, a real Node-RED flow and a real tap.
-5. The modes a real `UMask=0027` root unit leaves. One test sets the
+3. A real phone, a real Node-RED flow and a real tap.
+4. The modes a real `UMask=0027` root unit leaves. One test sets the
    umask itself and asserts the directories that decide it.
-6. The PEP's mount namespace. That the PEP unit's `ReadWritePaths`
+5. The PEP's mount namespace. That the PEP unit's `ReadWritePaths`
    binds `/var/lib/agent-mcp` writable for a server is systemd's to prove
    on the host, and a real `install -d` giving the directory
    to `mcp-<name>` is too: `McpFake` makes it and owns it as the test user.
@@ -61,21 +57,15 @@ per-server build and the roster writer are the real code.
 
 from __future__ import annotations
 
-import http.client
 import json
 import os
 import shutil
-import ssl
 import stat
-import subprocess
-from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Final, cast
-from urllib.parse import urlencode, urlsplit
 
 import pytest
-import yaml
 from handover.catalog import CATALOG_BY_NAME
 from handover.errors import Refusal
 from handover.executor.approval import Decision, Summary
@@ -83,17 +73,9 @@ from handover.executor.drain import Counter, handle
 from handover.executor.host import As, Command
 from handover.executor.host import Result as RunResult
 from handover.executor.install import INSTALL, normalize_dir
-from handover.executor.mcpbuild import HUP_ARGV, STATE_DIR_MODE
-from handover.executor.roster import rows as roster_rows
+from handover.executor.mcpbuild import STATE_DIR_MODE
 from handover.executor.spool import DONE_DIR, REQUESTS_DIR, Spool
 from handover.executor.steps import MAX_SERVERS, REGISTRY_MCP_DIR, Wiring
-from handover.intake.gaps import GapDirectory
-from handover.intake.notify import make_push
-from handover.intake.run import MAX_PUSHES_PER_PASS, Listener, Watch, one_pass
-from handover.intake.run import Wiring as IntakeWiring
-from handover.intake.service import Intake
-from handover.intake.store import SecretStore
-from handover.intake.token import Tokens
 from handover.mcpserver import SERVER_FILE_NAME, ServerFile, Source, read_registry
 from handover_executor_fixtures import (
     FakeRun,
@@ -125,7 +107,7 @@ TAG: Final = f"{COMPONENT}-v{FIRST_VERSION}"
 #: the 40 lowercase hex the manifest's pattern wants.
 AGENT_MCP_SHA: Final = "a1b2c3d" + "0" * 33
 
-#: The request `caregiver` holds, as `mcp_release._file_request` writes one.
+#: The id of the one request in the spool.
 CAREGIVER_ID: Final = "01K5J8M2Q7V3X9R4T6N0B8C2DJ"
 
 #: The registry's `mcp/` directory, copied out of agent-registry's `main`
@@ -145,42 +127,6 @@ DECLARED: Final = (
     "vikunja-home-assistant",
     "vikunja-networking",
 )
-
-#: The nine gaps open under `secret-gaps/` on 2026-09-22, and the reason
-#: there were nine where eleven servers name ten secrets:
-#: `mcp_wire._secrets_by_server` then dropped a name two servers claim
-#: from BOTH of them, so `ha_read_token` got no gap and no phone push.
-#: Contract 01b §4.3 declares that pair, `mcp_wire._agreed` now keeps it,
-#: and `mcp_release.open_gaps` writes ONE gap for it.
-OPEN_GAPS: Final = (
-    "github_token_code",
-    "github_token_platform",
-    "kagi_api_key",
-    "smtp_password",
-    "vikunja_token_agent_control",
-    "vikunja_token_finance",
-    "vikunja_token_home_assistant",
-    "vikunja_token_networking",
-    "vikunja_token_scrum_lead",
-)
-
-#: Which server each open gap belongs to, as `caregiver._write_gap` wrote
-#: it on 2026-09-21. One file per secret, and the server name is what the
-#: phone push and the intake page show beside it.
-GAP_OWNER: Final = {
-    "github_token_code": "github-code",
-    "github_token_platform": "github-platform",
-    "kagi_api_key": "kagi",
-    "smtp_password": "mail",
-    "vikunja_token_agent_control": "vikunja-agent-control",
-    "vikunja_token_finance": "vikunja-finance",
-    "vikunja_token_home_assistant": "vikunja-home-assistant",
-    "vikunja_token_networking": "vikunja-networking",
-    "vikunja_token_scrum_lead": "board-lead",
-}
-
-#: When the reconciler wrote them. It decides nothing (`gaps.py` rule 6).
-GAP_WRITTEN_AT: Final = 1_758_400_000.0
 
 #: The name `ha` and `ha-read` both bind. It is rule 2's whole subject.
 SHARED_SECRET: Final = "ha_read_token"
@@ -268,20 +214,6 @@ UNIT_UMASK: Final = 0o027
 OPEN_DIR_MODE: Final = 0o755
 CLOSED_DIR_MODE: Final = 0o750
 
-#: The intake, bound where a test may bind: loopback on an ephemeral
-#: port. Production is the host's LAN address, port 8380, and `owner_uid=0`, which is the
-#: same code with two different numbers.
-LOOPBACK: Final = "127.0.0.1"
-PASTE_S: Final = 10.0
-CERT_TIMEOUT_S: Final = 60.0
-HTTP_OK: Final = 200
-
-#: The one secret the operator pastes in this rehearsal, and an obviously fake
-#: value. Every assertion about it is that it reached exactly one file.
-PASTED_SECRET: Final = "kagi_api_key"
-PASTED_VALUE: Final = "pasted-by-the-operator-at-step-4"
-
-
 # -- the bench ----------------------------------------------------------
 
 
@@ -296,9 +228,6 @@ class Bench:
     components: Path
     registry: Path
     mcp_root: Path
-    roster: Path
-    secrets: Path
-    gaps: Path
     state_root: Path
 
     # -- what the run left behind ---------------------------------------
@@ -329,24 +258,10 @@ class Bench:
 
         return [str(one) for one in cast("list[object]", lines)]
 
-    def signalled(self) -> int:
-        return sum(1 for one in self.run.seen if tuple(one.argv) == HUP_ARGV)
-
-    def served(self) -> dict[str, object]:
-        if not self.roster.is_file():
-            return {}
-
-        loaded: object = yaml.safe_load(self.roster.read_text(encoding="utf-8"))
-
-        return cast("dict[str, object]", loaded) if isinstance(loaded, dict) else {}
-
     def installed(self) -> list[str]:
         """The server trees. `.python`, the shared interpreters root put
         beside them (`mcpbuild.PYTHON_DIR_NAME`), is not a server."""
         return sorted(one.name for one in self.mcp_root.iterdir() if not one.name.startswith("."))
-
-    def open_gaps(self) -> tuple[str, ...]:
-        return tuple(sorted(one.stem for one in self.gaps.glob("*.json")))
 
     # -- what a merged registry pull request would change ----------------
 
@@ -357,18 +272,6 @@ class Bench:
         assert old in text, f"{name}/{SERVER_FILE_NAME} no longer holds {old!r}"
 
         path.write_text(text.replace(old, new), encoding="utf-8")
-
-    def seal(self, secret: str) -> None:
-        """What the intake leaves when the operator pastes one value: a
-        `<name>.enc` root wrote, and the gap closed.
-
-        The sealing itself is `test_handover_r7g_intake_whole.py`'s, with a
-        real `sops`. This module is about what the RELEASE does with a
-        name that has a value and a name that has not, and neither branch
-        reads a byte of the file.
-        """
-        (self.secrets / f"{secret}.enc").write_bytes(b"ENC[sealed by the intake]\n")
-        (self.gaps / f"{secret}.json").unlink(missing_ok=True)
 
 
 # -- the host ------------------------------------------------------------
@@ -533,23 +436,6 @@ def bench(tmp_path: Path) -> Bench:
     state_root = tmp_path / "var-lib-agent-mcp"
     state_root.mkdir()
     state_root.chmod(OPEN_DIR_MODE)
-    roster = tmp_path / "state" / "upstreams.yaml"
-    secrets = tmp_path / "secrets"
-    secrets.mkdir()
-    # The store refuses a directory that group or other may write, and a
-    # bare `mkdir` takes the machine's umask: 0775 under the host's 002, which
-    # answered 500 to the paste on the Linux probe. `chmod` is not masked.
-    secrets.chmod(CLOSED_DIR_MODE)
-    gaps = tmp_path / "secret-gaps"
-    gaps.mkdir()
-    for secret in OPEN_GAPS:
-        # The three keys `gaps.GAP_KEYS` allows, as `caregiver._write_gap`
-        # writes them. Root reads this directory as hostile input, so a
-        # fixture with a key set of its own would test the refusal path
-        # rather than the gap path.
-        body = {"server": GAP_OWNER[secret], "secret": secret, "at": GAP_WRITTEN_AT}
-        (gaps / f"{secret}.json").write_text(json.dumps(body), encoding="utf-8")
-
     _teach(run, McpFake(asset_bytes=ASSET), components, _manifest(components))
 
     return Bench(
@@ -560,7 +446,6 @@ def bench(tmp_path: Path) -> Bench:
                 host,
                 install_roots=(components,),
                 mcp_root=mcp_root,
-                roster_file=roster,
                 mcp_state_root=state_root,
             ),
             transport=grant_transport(),
@@ -573,9 +458,6 @@ def bench(tmp_path: Path) -> Bench:
         components=components,
         registry=registry,
         mcp_root=mcp_root,
-        roster=roster,
-        secrets=secrets,
-        gaps=gaps,
         state_root=state_root,
     )
 
@@ -637,8 +519,7 @@ def test_rule_1_the_composite_fence_contract_01b_defines_parses(
 
     assert found["github-code"].arg_denies[0].arg == COMPOSITE_ARG
     assert found["github-platform"].arg_allows[0].arg == COMPOSITE_ARG
-    # The deny covers every declared tool, expanded by the roster writer
-    # because the PEP's reader has no word for `all`.
+    # The deny covers every declared tool.
     assert found["github-code"].arg_denies[0].tools is None
 
 
@@ -674,26 +555,6 @@ def test_rule_2_an_undeclared_duplicate_is_still_refused(bench: Bench) -> None:
 
     assert refused.value.subject == "mcp/ha"
     assert "does not declare sharing ha_read_token with ha-read" in refused.value.detail
-
-
-def test_the_tenth_gap_waits_on_the_manager_s_own_half(bench: Bench) -> None:
-    """Why the host had nine gaps where eleven servers name ten secrets.
-
-    On 2026-09-22 `mcp_wire._secrets_by_server` dropped a name two
-    servers claim from BOTH of them, so `ha_read_token` reached
-    `open_gaps` under neither and no link was pushed. Contract 01b §4.3
-    declares the pair, `mcp_wire._agreed` now keeps it, and
-    `mcp_release.open_gaps` writes ONE gap when it is handed the name.
-
-    Nothing about the RELEASE waits on it: the release never reads the
-    secrets directory.
-    """
-    declared = {secret for one in _read_servers(bench) for secret in one.secrets}
-
-    assert bench.open_gaps() == OPEN_GAPS
-    assert SHARED_SECRET in declared
-    assert SHARED_SECRET not in bench.open_gaps()
-    assert sorted(declared - {SHARED_SECRET}) == list(OPEN_GAPS)
 
 
 def test_rule_3_no_agent_mcp_server_names_a_version_of_its_own(
@@ -734,7 +595,6 @@ def test_an_agent_mcp_server_that_still_names_a_ref_is_refused(
     # §2.4 row 8: the refusal lands before any swap, so the host is
     # exactly as it was.
     assert bench.installed() == []
-    assert bench.served() == {}
     assert not (bench.components / COMPONENT).exists()
 
 
@@ -768,8 +628,7 @@ def test_the_whole_registry_installs(
     Eleven servers install: three `pypi` from their committed closures,
     two `github-release` from one hash-pinned asset, six `agent-mcp` from
     the checkout this release already fetched. The component's own tree
-    lands under the install root, the roster names eleven upstreams, and
-    the PEP is signalled once.
+    lands under the install root.
     """
 
     result = _release(bench)
@@ -779,8 +638,6 @@ def test_the_whole_registry_installs(
     assert bench.ledger()["previous"] == {COMPONENT: None}
     assert bench.installed() == list(DECLARED)
     assert (bench.components / COMPONENT / "bin" / VERIFY_HOOK).is_file()
-    assert sorted(bench.served()) == list(DECLARED)
-    assert bench.signalled() == 1
 
 
 def test_the_seven_rows_the_operator_reads_before_the_tap(bench: Bench) -> None:
@@ -792,8 +649,7 @@ def test_the_seven_rows_the_operator_reads_before_the_tap(bench: Bench) -> None:
     requires one of contract 06 §3's six (rule C5 says why: an MCP pin
     bump should drag nothing else along). `restarts` says `no unit`
     because an MCP server is not a daemon — the PEP spawns one on demand
-    — so step 9 restarts nothing and the reload is the only thing that
-    moves.
+    — so step 9 restarts nothing.
 
     `review` is `safe` and not `suspect`, unlike `noticeboard`'s first release:
     root read no manifest at an unverified commit here. The unstamped
@@ -846,59 +702,6 @@ def test_the_ledger_names_the_artifact_and_the_closure_of_each_server(
     assert "secret:" not in "\n".join(f"{one}" for one in lines if one.startswith("staged "))
 
 
-def test_an_open_secret_gap_installs_the_tree_and_rosters_the_name(
-    bench: Bench,
-) -> None:
-    """Whether an open gap holds the install back, answered against the
-    code rather than the document.
-
-    Every server still has an OPEN gap: the secrets directory is empty.
-    The release installs all eleven anyway and writes a roster row for
-    each, carrying `secret:<name>` as a NAME. Nothing in the release reads
-    the secrets directory, and `caregiver` takes the same reading: filing
-    early is the better behaviour, and contract 01b §4.1
-    rule 4 turns the missing value into a visible `running: false` rather
-    than an invisible nothing.
-
-    §4.3 does not say otherwise. Its five rules are about how a value
-    travels, not about when a tree installs.
-    """
-
-    _release(bench)
-
-    assert not any(bench.secrets.iterdir()), "no secret was ever sealed"
-    assert bench.open_gaps() == OPEN_GAPS
-    kagi = cast("dict[str, object]", bench.served()["kagi"])
-
-    assert kagi["env"] == {"KAGI_API_KEY": "secret:kagi_api_key"}
-    assert (bench.mcp_root / "kagi" / "bin" / "kagimcp").is_file()
-
-
-def test_a_pasted_secret_changes_nothing_the_release_does(bench: Bench) -> None:
-    """The second half of question 2: one secret pasted, then a release.
-
-    Nothing the release does moves. The roster is what the writer would
-    have written with the gap still open, because the writer never opens
-    the secrets directory — and a release that behaved differently would
-    make a secret an input to an install, which is the coupling §4.3 rule
-    4 exists to prevent.
-    """
-    bench.seal("kagi_api_key")
-
-    _release(bench)
-    served = bench.served()
-
-    assert "kagi_api_key" not in bench.open_gaps()
-    assert (bench.secrets / "kagi_api_key.enc").is_file()
-    assert served == yaml.safe_load(
-        yaml.safe_dump(
-            roster_rows(_read_servers(bench), bench.mcp_root, bench.state_root),
-            sort_keys=True,
-            default_flow_style=False,
-        )
-    )
-
-
 def test_the_next_tag_needs_no_registry_edit(bench: Bench) -> None:
     """Why the rule is "no version" and not "the right version".
 
@@ -923,249 +726,6 @@ def test_the_next_tag_needs_no_registry_edit(bench: Bench) -> None:
     assert "succeeded" in result, bench.ledger()["reason"]
     assert f"staged board-lead: agent-mcp@{next_tag}" in bench.log()
     assert bench.installed() == list(DECLARED)
-
-
-# -- the secret, pasted through root's own intake ------------------------
-
-
-class _Phone:
-    """The fake phone. It keeps each push whole, which is how a test learns
-    a token: no route of the intake ever answers with one."""
-
-    def __init__(self) -> None:
-        self.sent: list[dict[str, object]] = []
-
-    def summaries(self) -> list[str]:
-        return [str(one["summary"]) for one in self.sent]
-
-    def link_for(self, secret: str) -> str:
-        for body in self.sent:
-            fields = cast("dict[str, object]", body["fields"])
-            if fields["secret"] == secret:
-                return str(fields["link"])
-
-        raise AssertionError(f"no push named {secret}")
-
-    def __call__(self, body: dict[str, object]) -> bool:
-        self.sent.append(body)
-
-        return True
-
-
-def _sealed(plaintext: bytes) -> bytes | None:
-    """The fake `sops`. A real seal is `test_handover_r7g_sealer_sops.py`,
-    and the question here is what the RELEASE does with the file, not
-    what is inside it."""
-    del plaintext
-
-    return b"-----BEGIN AGE ENCRYPTED FILE-----\nsealed\n"
-
-
-@dataclass
-class _Intake:
-    """Root's intake, bound on loopback, with its own gap directory."""
-
-    wiring: IntakeWiring
-    listener: Listener
-    phone: _Phone
-
-
-def _stand_up_the_intake(bench: Bench) -> _Intake:
-    certfile, keyfile = _certificate(bench.tmp_path)
-    clock = _frozen_clock()
-    phone = _Phone()
-    tokens = Tokens(clock)
-    directory = GapDirectory(bench.gaps, os.getuid())
-    store = SecretStore(bench.secrets, _sealed, owner_uid=os.getuid())
-    intake = Intake(tokens=tokens, store=store, close_gap=directory.close_named)
-    listener = Listener(intake, certfile, keyfile, LOOPBACK, 0)
-
-    return _Intake(
-        wiring=IntakeWiring(
-            gaps=directory,
-            store=store,
-            tokens=tokens,
-            push=make_push("https://hook.invalid", "bearer", f"https://{LOOPBACK}:0", phone),
-            watch=Watch(clock),
-            listener=listener,
-            say=lambda line: None,
-        ),
-        listener=listener,
-        phone=phone,
-    )
-
-
-def _frozen_clock() -> Callable[[], float]:
-    return lambda: GAP_WRITTEN_AT + 60.0
-
-
-def _certificate(tmp_path: Path) -> tuple[str, str]:
-    """A throwaway self-signed certificate for loopback, made the way the
-    host's own is: `openssl`, by hand, once."""
-    openssl = shutil.which("openssl")
-    if openssl is None:
-        pytest.skip("openssl is not on this machine, so no TLS listener can be built here")
-
-    cert, key = tmp_path / "intake.crt", tmp_path / "intake.key"
-    subprocess.run(
-        [
-            openssl,
-            "req",
-            "-x509",
-            "-newkey",
-            "rsa:2048",
-            "-nodes",
-            "-keyout",
-            str(key),
-            "-out",
-            str(cert),
-            "-days",
-            "1",
-            "-subj",
-            "/CN=agent-intake",
-            "-addext",
-            f"subjectAltName=IP:{LOOPBACK}",
-        ],
-        capture_output=True,
-        timeout=CERT_TIMEOUT_S,
-        check=True,
-    )
-
-    return str(cert), str(key)
-
-
-def _paste(port: int, token: str, secret: str, value: str) -> int:
-    """What the operator's browser posts: a form body, over TLS, to root."""
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    context.check_hostname = False
-    context.verify_mode = ssl.CERT_NONE
-    connection = http.client.HTTPSConnection(LOOPBACK, port, context=context, timeout=PASTE_S)
-    try:
-        connection.request(
-            "POST",
-            "/secret",
-            body=urlencode({"token": token, "name": secret, "value": value}),
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-
-        return connection.getresponse().status
-    finally:
-        connection.close()
-
-
-def test_nine_gaps_take_two_intake_passes(bench: Bench) -> None:
-    """§4.3 step 2, against the nine gaps the host really has.
-
-    `run.MAX_PUSHES_PER_PASS` is 8, so the first pass mints eight and says
-    one is waiting. The ninth is not held for an hour — the cooldown paces
-    a gap that was already pushed, and this one was not — so the very next
-    pass sends it. The operator reads nine links, in two bursts.
-    """
-    intake = _stand_up_the_intake(bench)
-    try:
-        first = one_pass(intake.wiring)
-        second = one_pass(intake.wiring)
-    finally:
-        intake.listener.close()
-
-    assert first == (MAX_PUSHES_PER_PASS, 0)
-    assert second == (len(OPEN_GAPS) - MAX_PUSHES_PER_PASS, 0)
-    assert sorted(intake.phone.summaries()) == sorted(
-        f"{GAP_OWNER[secret]} needs the secret {secret}" for secret in OPEN_GAPS
-    )
-
-
-def test_one_secret_pasted_through_the_intake_then_the_release(
-    bench: Bench,
-) -> None:
-    """§4.1 steps 4 and 5, in order, with root's own intake in between.
-
-    The operator opens one link, pastes one value, and root seals it. Then the
-    release runs — and this is the assertion the whole of §4.3 exists for,
-    now over an ELEVEN-server release: the value is in no roster row, no
-    ledger entry, no log line and no argv word root built. The roster
-    carries `secret:kagi_api_key`, which is a name.
-
-    What the release does NOT do is pick the value up. It never reads the
-    secrets directory. The PEP does, at its next reload, which is why the
-    two taps are independent and why one can be answered days after the
-    other.
-    """
-    intake = _stand_up_the_intake(bench)
-    try:
-        one_pass(intake.wiring)
-        token = urlsplit(intake.phone.link_for(PASTED_SECRET)).path.strip("/").split("/")[-1]
-
-        assert _paste(intake.listener.port, token, PASTED_SECRET, PASTED_VALUE) == HTTP_OK
-    finally:
-        intake.listener.close()
-
-    assert (bench.secrets / f"{PASTED_SECRET}.enc").is_file()
-    assert PASTED_SECRET not in bench.open_gaps()
-
-    result = _release(bench)
-
-    assert "succeeded" in result, bench.ledger()["reason"]
-    kagi = cast("dict[str, object]", bench.served()["kagi"])
-
-    assert kagi["env"] == {"KAGI_API_KEY": f"secret:{PASTED_SECRET}"}
-    assert PASTED_VALUE not in bench.roster.read_text(encoding="utf-8")
-    assert PASTED_VALUE not in json.dumps(bench.ledger())
-    assert not [one for one in bench.run.argv_lines() if PASTED_VALUE in one]
-
-
-# -- the roster root writes ---------------------------------------------
-
-
-def test_the_roster_root_writes_carries_every_declared_row(bench: Bench) -> None:
-    """The rows root writes for the eleven real declarations."""
-
-    _release(bench)
-    served = bench.served()
-    kagi = cast("dict[str, object]", served["kagi"])
-    github = cast("dict[str, list[object]]", served["github-code"])
-    denies = cast("list[dict[str, list[object]]]", github["arg_denies"])
-    board = cast("dict[str, dict[str, object]]", served["board-lead"])
-
-    assert sorted(served) == list(DECLARED)
-    assert kagi["command"] == str(bench.mcp_root / "kagi" / "bin" / "kagimcp")
-    assert github["args"] == [
-        "stdio",
-        "--toolsets=context,repos,pull_requests,issues",
-        "--lockdown-mode",
-    ]
-    # `tools: all` is expanded by the writer, because the PEP's reader
-    # takes a list and has no word for `all`.
-    assert sorted(map(str, denies[0]["tools"])) == sorted(map(str, github["tools"]))
-    assert board["env"]["VIKUNJA_TOKEN"] == "secret:vikunja_token_scrum_lead"
-
-
-def test_the_declared_allow_fence_is_reported_and_not_written(bench: Bench) -> None:
-    """`github-platform` declares `arg_allows`, the PEP's roster row has
-    no field for it, and a roster carrying one would be refused whole. Root
-    says so under `manual` rather than dropping it in silence."""
-
-    _release(bench)
-
-    assert "arg_allows is declared and not applied for: github-platform" in bench.manual()
-    assert "arg_allows" not in bench.roster.read_text(encoding="utf-8")
-
-
-def test_root_builds_every_roster_command_from_the_validated_name(
-    bench: Bench,
-) -> None:
-    """§6 row 9. Not one `command` in the roster comes out of a file: each
-    is `<mcp root>/<name>/bin/<entrypoint>`, joined by root from two
-    values that each matched a pattern with no slash in it."""
-
-    _release(bench)
-    served = bench.served()
-
-    assert _server_names(bench) == DECLARED
-    for name in DECLARED:
-        row = cast("dict[str, object]", served[name])
-
-        assert row["command"] == str(bench.mcp_root / name / "bin" / ENTRYPOINTS[name])
 
 
 # -- the state directories -----------------------------------------------
@@ -1212,23 +772,6 @@ def test_ha_and_ha_read_each_get_a_directory_of_their_own(bench: Bench) -> None:
         said = lines.index(f"  state {name}: {path}")
         live = next(n for n, one in enumerate(lines) if one.startswith(f"live {name}: "))
         assert said < live
-
-
-def test_only_the_two_rows_carry_a_state_directory(bench: Bench) -> None:
-    """The roster is how the PEP learns the path. `ha` and `ha-read` carry
-    their declared environment plus one variable naming two different
-    directories; the other nine carry exactly what they declared."""
-    _release(bench)
-    declared = {one.name: dict(one.env) for one in _read_servers(bench)}
-    served = bench.served()
-
-    for name in DECLARED:
-        env = cast("dict[str, object]", served[name])["env"]
-        if name not in STATEFUL:
-            assert env == declared[name], name
-            continue
-
-        assert env == {**declared[name], HA_STATE_ENV: str(bench.state_root / name)}
 
 
 def test_the_next_release_keeps_what_the_server_wrote(bench: Bench) -> None:
@@ -1278,7 +821,6 @@ def test_today_s_host_is_refused_until_the_visit_makes_the_root(bench: Bench) ->
     assert "bin/rework-release-visit.sh" in str(bench.ledger()["reason"])
     assert bench.step("stage")["status"] == "refused"
     assert bench.installed() == []
-    assert bench.served() == {}
     assert not bench.state_root.exists()
 
 
@@ -1299,15 +841,10 @@ def test_the_caregiver_request_is_the_only_one_in_the_spool(bench: Bench) -> Non
     ]
 
 
-def test_a_failed_verify_puts_every_server_tree_and_the_roster_back(
-    bench: Bench,
-) -> None:
+def test_a_failed_verify_puts_every_server_tree_back(bench: Bench) -> None:
     """Contract 06 §5.1 over a set that is one component and eleven server
     trees. The component's verify fails, step 10 walks `deployed`, and the
-    server trees and the roster go back with it.
-
-    Two signals, not one: the switch sent the first, and the restore sends
-    the second so the PEP reads the roster root put back.
+    server trees go back with it.
     """
     bench.run.fails[VERIFY_HOOK] = 1
 
@@ -1315,9 +852,7 @@ def test_a_failed_verify_puts_every_server_tree_and_the_roster_back(
 
     assert "succeeded" not in result
     assert bench.ledger()["status"] in ("failed", "restored")
-    assert bench.served() == {}
     assert bench.installed() == [], "a server tree was left live"
-    assert bench.signalled() == 2
 
 
 def test_the_mcp_root_and_the_work_root_stay_traversable_under_the_umask(

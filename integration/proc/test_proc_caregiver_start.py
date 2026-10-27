@@ -57,7 +57,6 @@ NEXT_SANDBOX = "chat-s2"
 NEW_INSTRUCTIONS = "Answer only in metric units.\n"
 LAN_VARIABLE = "AGENT_LAN_ADDRESS"
 KEY_VARIABLE = "LITELLM_MASTER_KEY"
-RELEASE_ROOT_FLAG = "--release-root"
 
 #: A look so rare that only a signal can cause one inside a test.
 RARE_LOOK = ("--poll-interval-s", "300")
@@ -81,21 +80,6 @@ def test_serve_prints_a_plan_and_starts_nothing_with_no_write_flag(
     done = caregiver_prepared.run_caregiver(*words)
 
     assert done.exit_code == EXIT_OK, done.stderr
-    _nothing_was_touched(caregiver_prepared, done)
-
-
-def test_serve_refuses_the_release_root_of_the_host(caregiver_prepared: CaregiverStack) -> None:
-    """A state root of a test, with the release root of the host, is a usage mistake.
-
-    `caregiver` files release requests under the release root. A run with a
-    state root of its own must not file one where the host reads them.
-    """
-    words = _serve(caregiver_prepared)
-    at = words.index(RELEASE_ROOT_FLAG)
-
-    done = caregiver_prepared.run_caregiver(*words[:at], *words[at + 2 :])
-
-    assert done.exit_code == EXIT_USAGE
     _nothing_was_touched(caregiver_prepared, done)
 
 
