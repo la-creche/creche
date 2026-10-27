@@ -13,7 +13,7 @@ one reads it from there:
         AGENT_OPERATOR_HOME=/home/operator   that account's home, which holds
                                              the user units and their trees
         AGENT_LAN_ADDRESS=192.0.2.10         the host's LAN address, which
-                                             the intake binds and links to
+                                             each service binds
         AGENT_GITHUB_REPO_AGENT_CONTROL=...  optional, one per repository:
                                              its name on GitHub, when that
                                              is not the catalog's name
@@ -24,13 +24,13 @@ one reads it from there:
                                              verifier in a transient unit
 
 The same file is every unit's `EnvironmentFile`, and that is how a service
-reads the values it needs. This module reads only what root's executor, the
-requester and the intake need, because none of those is started with the
-file in its environment.
+reads the values it needs. This module reads only what root's executor and
+the requester need, because neither of those is started with the file in
+its environment.
 
 The file holds no secret. It is root-owned and world-readable, because root's
-executor, the operator's requester and the PEP's release door all read it,
-and each must get the same answer.
+executor, the operator's requester and the watchdog (`bin/rework-watchdog.sh`)
+all read it, and each must get the same answer.
 
 A required value that is missing, and each value that is malformed, refuses
 with the `site` code. A required value never falls back to a default: a
@@ -330,8 +330,9 @@ def operator_account() -> pwd.struct_passwd:
 
 
 def lan_address() -> str:
-    """The host's LAN address. The intake binds it and the link the
-    operator taps names it."""
+    """The host's LAN address. Each service binds it and reads it from its
+    unit's `EnvironmentFile`. The executor reads it only to refuse a site
+    file that does not hold it (`require_complete`)."""
     return read(SiteKey.LAN_ADDRESS)
 
 
