@@ -11,11 +11,10 @@ kind: venv
 # is listed under `manual` and silently never restarted (§1 rule 7).
 unit: creche-attendance.service
 runs_as: operator
-# All four packages, because `attendance` depends on none of the doors
+# All three packages, because `attendance` depends on none of the doors
 # and four units run from this one tree. `--package` repeats: measured
 # against uv 0.12.17 on 2026-09-20, one sync fills one environment with all
-# of them. `agent-door-tui` is here too — `agent-tui` is a command the operator runs,
-# from the same tree, at the same version as the API it speaks to.
+# of them.
 # `agent-door-acp` forwards to attendance's own `WS /acp/{family}`, so it
 # ships at the version of that API too.
 # `--no-editable`: contract 06 §8.2. Four units run from this one tree, so
@@ -23,7 +22,6 @@ runs_as: operator
 build:
   - ["/usr/local/bin/uv", "sync", "--frozen", "--no-editable",
      "--package", "attendance",
-     "--package", "agent-door-tui",
      "--package", "agent-door-trigger",
      "--package", "agent-door-acp"]
 install:

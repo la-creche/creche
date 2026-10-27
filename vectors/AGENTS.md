@@ -57,7 +57,7 @@ directory is not a workspace package, so a change here does not change
 | `surfaces/channel.py` | `channel.frame`. The files of `channel.parse` and `channel.build` are frozen |
 | `surfaces/grants.py` | `grants.parse`, `grants.write`, `chaperone.call_body`, `chaperone.approval_body`, `chaperone.verb` |
 | `surfaces/audit.py` | `chaperone.audit_line`, `chaperone.unidentified_line`, `chaperone.reason` |
-| `surfaces/status.py` | the four readers of `status.json`: `status.<reader>` |
+| `surfaces/status.py` | the three readers of `status.json`: `status.<reader>` |
 | `surfaces/status_files.py` | the writer of `status.json`, the fault files and the outcome record: `status.write`, `status.fault_file.<package>`, `status.outcome.noticeboard` |
 | `surfaces/config.py` | the site file, the roster, the mount files and three env readers: `config.<name>` |
 | `surfaces/manifest_cases.py` | the written `component.yaml` inputs |
@@ -362,9 +362,8 @@ did not.
 - One token reader is a private function: `_read_token` of
   `attendance.auth`. A `runtime.token` surface calls its public caller,
   `TokenBook.load`.
-- No vector covers `_read_token` of `agent_door_tui.config` or of
-  `agent_door_trigger.config`. Each one was a copy of the reader that the
-  frozen file `runtime/token.door.json` holds.
+- No vector covers `_read_token` of `agent_door_trigger.config`. It was a
+  copy of the reader that the frozen file `runtime/token.door.json` holds.
 - No surface covers `read_api` of `attendance.owui_copy`, which reads the
   key of Open WebUI. It reads UTF-8 text, removes the whitespace of Python
   `str.strip` from the two ends and has no least count of bytes.

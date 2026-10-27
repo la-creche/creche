@@ -45,7 +45,6 @@ from proc_services import (
 from proc_stack import Stack
 from proc_tree import Tree, make_root, remove_root, socket_path_fits
 from proc_trigger import TriggerStack
-from proc_tui import TuiStack
 
 _HERE = Path(__file__).resolve().parent
 
@@ -252,23 +251,6 @@ def trigger(trigger_prepared: TriggerStack) -> TriggerStack:
     trigger_prepared.start()
 
     return trigger_prepared
-
-
-@pytest.fixture
-def tui_prepared(tree: Tree, supervisor: Supervisor) -> TuiStack:
-    """The sixth topology on disk, with no service started."""
-    stack = TuiStack(tree, supervisor)
-    stack.prepare()
-
-    return stack
-
-
-@pytest.fixture
-def tui(tui_prepared: TuiStack) -> TuiStack:
-    """The sixth topology, serving. A test opens each terminal itself."""
-    tui_prepared.start()
-
-    return tui_prepared
 
 
 @pytest.fixture

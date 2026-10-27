@@ -19,7 +19,6 @@ from re import Pattern
 from typing import Final
 
 from agent_door_trigger import ulid as trigger_ulid
-from agent_door_tui import ids as tui_ids
 from agent_family import grammar as family_grammar
 from chaperone.family_grants import parse_grants
 from handover.executor import host as executor_host
@@ -519,7 +518,6 @@ GRAMMARS: Final = (
                         _predicate(chaperone_ids.is_family_name),
                     ),
                     _grant_copy("family", lambda text: _grant_accepts(text)),
-                    Copy("door_tui", "agent_door_tui.ids.is_family", _predicate(tui_ids.is_family)),
                     _pattern_copy(
                         "family_file",
                         "agent_family.grammar.FAMILY_NAME",
@@ -653,9 +651,6 @@ GRAMMARS: Final = (
                         _claimed_session,
                         (NOTE_CLAIMED,),
                     ),
-                    Copy(
-                        "door_tui", "agent_door_tui.ids.is_session", _predicate(tui_ids.is_session)
-                    ),
                     _pattern_copy(
                         "handover_executor",
                         "handover.executor.request.SESSION_ID_RE",
@@ -684,7 +679,6 @@ GRAMMARS: Final = (
                         _claimed_turn,
                         (NOTE_CLAIMED,),
                     ),
-                    Copy("door_tui", "agent_door_tui.ids.is_ulid", _predicate(tui_ids.is_ulid)),
                     Copy(
                         "door_trigger",
                         "agent_door_trigger.ulid.ULID_PATTERN.match",
@@ -723,9 +717,6 @@ GRAMMARS: Final = (
                         "attendance",
                         "attendance.ids.is_sandbox",
                         _predicate(attendance_ids.is_sandbox),
-                    ),
-                    Copy(
-                        "door_tui", "agent_door_tui.ids.is_sandbox", _predicate(tui_ids.is_sandbox)
                     ),
                 ),
             ),
