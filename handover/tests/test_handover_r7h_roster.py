@@ -3,14 +3,8 @@
 Without that writer, the `SIGHUP` the executor sends makes the PEP re-read
 a file nothing updates, and the reload computes `added=()`.
 
-Two halves are under test here, and the third — that the PEP then adds the
-upstream and answers with the pasted value — is
-`test_handover_r7h_invariant18.py`.
-
-1. `executor/roster.py`: what root writes, and that it writes it safely.
-2. `RosterSource`: that the PEP reads both files and that a generated row
-   supersedes a base one of the same name
-   (`chaperone/tests/test_chaperone_mcf_roster_wins.py` holds the reason).
+Under test here is `executor/roster.py`: what root writes, and that it
+writes it safely.
 
 The rule every case comes back to is WHO writes it. `caregiver` runs as
 the operator, and the roster names commands the PEP executes, so a roster the operator
@@ -25,8 +19,6 @@ from typing import Final, cast
 
 import pytest
 import yaml
-from chaperone.mcp_client import UpstreamError
-from chaperone.reload_wiring import RosterSource
 from handover.errors import Refusal
 from handover.executor.ledger import Entry
 from handover.executor.mcpbuild import McpBuilder, ServerBuild, ServerPaths
@@ -118,7 +110,7 @@ def test_a_secret_reference_travels_as_a_name() -> None:
 
 
 def test_all_is_expanded_because_the_pep_has_no_word_for_it() -> None:
-    """Contract 01b §7 allows `tools: all`. `mcp_client._parse_arg_denies`
+    """Contract 01b §7 allows `tools: all`. The PEP's roster reader
     takes a non-empty LIST and refuses the string, so an unexpanded `all`
     would make the whole roster unparseable and the reload would keep the
     old set — a deny that silently became no upstream at all."""
@@ -134,19 +126,6 @@ def test_a_server_with_no_tools_writes_no_tools_key() -> None:
     row = rows((_server(tools=(), arg_denies=()),), MCP_ROOT)[SERVER]
 
     assert "tools" not in row
-
-
-def test_what_root_writes_is_what_the_pep_can_read(tmp_path: Path) -> None:
-    """The two ends, against each other. A roster the PEP's own reader
-    refuses is a roster that leaves the old pool serving for ever."""
-    path = tmp_path / "upstreams.yaml"
-    write(path, (_server(),), MCP_ROOT)
-
-    specs = RosterSource(upstreams_file=path).upstreams()
-
-    assert specs[SERVER].command == "/opt/mcp/weather/bin/weather-mcp"
-    assert specs[SERVER].tools == ("forecast", "observations")
-    assert specs[SERVER].arg_denies[0].values == frozenset({"area-51"})
 
 
 # --- how it is written -------------------------------------------------------
@@ -169,7 +148,7 @@ def test_the_first_roster_a_release_ever_wrote_is_removed_by_its_restore(
     release, and leaving this one behind would leave the PEP a file
     naming servers the same restore had just taken off the host.
 
-    A missing generated roster is what `RosterSource` already reads as
+    A missing generated roster is what the PEP's roster reader reads as
     "no such release has run", which is the state being restored.
     """
     path = tmp_path / "upstreams.yaml"
@@ -214,76 +193,6 @@ def test_a_name_that_leaves_the_mcp_root_is_refused() -> None:
     slash in it, so reaching this means a pattern changed."""
     with pytest.raises(Refusal):
         rows((_server(name="../etc"),), MCP_ROOT)
-
-
-# --- the PEP's two files -----------------------------------------------------
-
-
-def _base(tmp_path: Path, body: dict[str, object]) -> Path:
-    path = tmp_path / "base.yaml"
-    path.write_text(yaml.safe_dump(body), encoding="utf-8")
-
-    return path
-
-
-GITHUB_ROW: Final = {
-    "command": "/opt/agent-pep-mcp/mcp/bin/github-mcp-server",
-    "args": ["stdio"],
-    "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "secret:github_token"},
-}
-
-
-def test_both_files_are_read(tmp_path: Path) -> None:
-    base = _base(tmp_path, {"github": GITHUB_ROW})
-    generated = tmp_path / "upstreams.yaml"
-    write(generated, (_server(),), MCP_ROOT)
-
-    specs = RosterSource(upstreams_file=base, generated_file=generated).upstreams()
-
-    assert sorted(specs) == ["github", SERVER]
-
-
-def test_a_generated_row_supersedes_a_base_row(tmp_path: Path) -> None:
-    """A registry writer does not write this file: root does, at step 9
-    of a release the operator tapped, from the tree it just installed, with the
-    command built from a validated name. So its row wins a collision with
-    a base row.
-
-    The real base roster holds no row. Where a base file
-    holds one, it serves while the generated roster is absent, and an
-    unreadable generated roster raises (the next two cases).
-    """
-    base = _base(tmp_path, {"github": GITHUB_ROW})
-    generated = tmp_path / "upstreams.yaml"
-    write(generated, (_server(name="github"),), MCP_ROOT)
-
-    specs = RosterSource(upstreams_file=base, generated_file=generated).upstreams()
-
-    assert specs["github"].command == str(MCP_ROOT / "github" / "bin" / "weather-mcp")
-    assert specs["github"].command != GITHUB_ROW["command"]
-
-
-def test_a_missing_generated_file_is_not_an_error(tmp_path: Path) -> None:
-    """Every deployment before the first `mcp-servers` release."""
-    base = _base(tmp_path, {"github": GITHUB_ROW})
-
-    specs = RosterSource(upstreams_file=base, generated_file=tmp_path / "gone.yaml").upstreams()
-
-    assert sorted(specs) == ["github"]
-
-
-def test_an_unparseable_generated_file_raises_so_the_old_pool_keeps_serving(
-    tmp_path: Path,
-) -> None:
-    """`reload_once` catches `UpstreamError` and logs it, and the live pool
-    is untouched. Reading the base alone instead would REMOVE every
-    released upstream on the strength of one bad file."""
-    base = _base(tmp_path, {"github": GITHUB_ROW})
-    generated = tmp_path / "upstreams.yaml"
-    generated.write_text("weather: [not a mapping]\n", encoding="utf-8")
-
-    with pytest.raises(UpstreamError):
-        RosterSource(upstreams_file=base, generated_file=generated).upstreams()
 
 
 # --- the reader's own refusals ----------------------------------------------

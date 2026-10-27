@@ -6,7 +6,6 @@ name = "agent-control-workspace"
 version = "0.0.0"
 requires-python = ">=3.12"
 dependencies = [
-    "chaperone",
     "library",
     "agent-family",
     "caregiver",
@@ -24,10 +23,9 @@ dependencies = [
 package = false
 
 [tool.uv.workspace]
-members = ["chaperone", "library", "family", "caregiver", "attendance", "door-owui", "door-tui", "door-trigger", "door-acp", "noticeboard", "handover", "env"]
+members = ["library", "family", "caregiver", "attendance", "door-owui", "door-tui", "door-trigger", "door-acp", "noticeboard", "handover", "env"]
 
 [tool.uv.sources]
-chaperone = { workspace = true }
 library = { workspace = true }
 agent-family = { workspace = true }
 caregiver = { workspace = true }
@@ -50,6 +48,10 @@ dev = [
     "pytest-asyncio>=0.24",
     "pytest-xdist>=3.8.0",
     "websockets>=15",
+    # starlette's TestClient imports this package for its types. The
+    # Python PEP's `mcp` brought it in before. The tests of the services
+    # that use the TestClient need it.
+    "httpx2>=2.12.0",
 ]
 
 [tool.pytest.ini_options]
@@ -58,7 +60,6 @@ dev = [
 # pytest collects only test_*.py there and ignores the .sh siblings.
 testpaths = [
     "bin/tests",
-    "chaperone/tests",
     "library/tests",
     "family/tests",
     "caregiver/tests",
@@ -103,7 +104,6 @@ known-third-party = ["conftest"]
 [tool.coverage.run]
 branch = true
 source = [
-    "chaperone",
     "library",
     "agent_family",
     "caregiver",

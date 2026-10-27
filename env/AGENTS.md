@@ -147,17 +147,14 @@ command prints `<file>: cannot be read: <reason>` and exits with status 78.
   2. `config::site` of `creche-contracts`: `SITE_FILE`, `MAX_SITE_BYTES`,
      `ROOT_UID`, `OTHERS_WRITE` and `check_trust`. The packets
      `envfile-reader-rust` and `handover-site-keys` remove them.
-  3. `chaperone.site.SITE_FILE` and the verify command of
-     `chaperone/component.yaml`. The packet `chaperone-site-keys` removes
-     them.
-  4. The path of the site file in `bin/provision-library.sh`,
+  3. The path of the site file in `bin/provision-library.sh`,
      `bin/rework-watchdog.sh` and `bin/sbx-drift-check.sh`. The packet
      `bin-site-keys` removes it.
-  5. The path of the site file in `playpen/bin/playpen-build`. The packet
+  4. The path of the site file in `playpen/bin/playpen-build`. The packet
      `playpen-site-keys` removes it.
-  6. The `EnvironmentFile=` line of each unit under `systemd/`. The packet
+  5. The `EnvironmentFile=` line of each unit under `systemd/`. The packet
      `units-site-keys` removes it.
-  7. The path of the site file in the text of a config error of
+  6. The path of the site file in the text of a config error of
      `attendance`, `caregiver`, `noticeboard` and `door-trigger`. The
      change that moves each program removes it.
 - `Problem` keeps its fields public, so each module can make one. The

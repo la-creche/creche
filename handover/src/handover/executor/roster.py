@@ -37,8 +37,8 @@ Five rules follow from it, and each is a test.
    the declared set, because the PEP's reader has no word for `all`.
 4. **This roster is the ONLY source for a declared server.** The PEP also
    reads the base roster the deployed checkout carries
-   (`reload_wiring.RosterSource`), and that file holds no row
-   (`chaperone/upstreams.yaml`). A name in both would take the generated row,
+   (`reload_wiring.RosterSource`), and that file holds no row.
+   A name in both would take the generated row,
    because this file is root's, written at step 9 of a release the operator
    approved, from the tree root just installed. So a PEP that starts with
    no readable generated roster serves no MCP server, and a reload onto an
@@ -53,9 +53,8 @@ Five rules follow from it, and each is a test.
 ## What is NOT here
 
 `arg_allows`. Contract 01b §7 declares both fences and `UpstreamSpec`
-carries only `arg_denies` (`chaperone/src/chaperone/fences.py` says why: no
-family holds an allow rule yet). Writing one into the roster would make
-the file unparseable, so `steps._say_unapplied_allows` puts one `manual`
+carries only `arg_denies` (no family holds an allow rule yet). Writing one
+into the roster would make the file unparseable, so `steps._say_unapplied_allows` puts one `manual`
 line in the ledger naming every server whose allows are not applied.
 
 **Where the file lives** is `host.ROSTER_FILE`, beside the other paths

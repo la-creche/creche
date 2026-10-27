@@ -45,7 +45,6 @@ class Service(StrEnum):
     DOOR_ACP = "door-acp"
     DOOR_TUI = "door-tui"
     CAREGIVER = "caregiver"
-    CHAPERONE = "chaperone"
     CHAPERONE_RS = "chaperone-rs"
     NOTICEBOARD = "noticeboard"
     NOTICEBOARD_VERIFY = "noticeboard-verify"
@@ -131,12 +130,6 @@ SERVICES: Final[dict[Service, StartEntry]] = {
         selector=(),
         override="CRECHE_PROC_CAREGIVER",
         units=("creche-caregiver.service",),
-    ),
-    Service.CHAPERONE: StartEntry(
-        program="chaperone",
-        selector=(),
-        override="CRECHE_PROC_CHAPERONE",
-        units=("creche-chaperone.service",),
     ),
     # The Rust chaperone (plan row 29). No unit of this repository runs it.
     # Its default is the build of the commit in `chaperone.pin`, and the

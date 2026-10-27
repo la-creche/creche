@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 import pytest
-from chaperone.family_ids import FAMILY_NAME_RE
+from agent_family.grammar import FAMILY_NAME
 from noticeboard.strictjson import Rule
 
 from noticeboard import notices
@@ -382,7 +382,6 @@ class Rig:
         self.sync_stamp = self.state / "registry-sync/last-success"
 
         self.notices = self.state / "notices"
-        self.pep_notices = self.state / "faults/pep/_notices.json"
         self.sent = self.state / "watchdog/notices-sent"
 
         self.hooks = self.state / "hooks.env"
@@ -504,10 +503,6 @@ class Rig:
         _write_notice(path, whole.replace(valid, line))
 
         return path
-
-    def pep_notice(self, *tokens: str) -> None:
-        """The notice file of the chaperone, in its fault directory."""
-        _write_notice(self.pep_notices, notice_document("chaperone", tokens).encode())
 
     def json_summaries(self) -> list[str]:
         """The summary of each notice of a refused JSON text, in send order."""
@@ -1165,9 +1160,9 @@ def _number(name: str) -> int:
 
 def test_the_family_pattern_equals_its_source() -> None:
     """The instance of a firing unit is the name of a family. The script
-    cannot import the chaperone, so it has a copy of the pattern of a family
-    name. This case fails when the pattern of the chaperone moves."""
-    source = FAMILY_NAME_RE.pattern
+    cannot import `agent_family`, so it has a copy of the pattern of a family
+    name. This case fails when the pattern of `agent_family` moves."""
+    source = FAMILY_NAME.pattern
     assert source.startswith("^")
     assert source.endswith(r"\Z")
 
@@ -1182,7 +1177,7 @@ def test_both_unit_patterns_come_from_the_same_constants() -> None:
     names = ("FIRING_UNIT_HEAD", "FIRING_UNIT_TAIL", "FAMILY_NAME", "FIRING_UNITS")
     program = "\n".join(_constant(one) for one in (*names, "FIRING_UNIT_NAME"))
     program += '\nprintf \'%s\\n\' "$FIRING_UNITS" "$FIRING_UNIT_NAME"\n'
-    family = FAMILY_NAME_RE.pattern.removeprefix("^").removesuffix(r"\Z")
+    family = FAMILY_NAME.pattern.removeprefix("^").removesuffix(r"\Z")
 
     done = subprocess.run(["bash", "-c", program], capture_output=True, text=True, timeout=60)
 
@@ -1350,28 +1345,19 @@ def test_a_second_token_in_the_file_sends_one_more(rig: Rig) -> None:
 def test_one_pair_two_times_in_a_line_is_one_notice(rig: Rig) -> None:
     """The pattern of the line permits one pair two times. The second token
     is no news with the same time. With a newer time, the limit of one
-    service, surface and rule holds it, also in the same run. The file of
-    the chaperone and a file with the name of the chaperone are one service."""
+    service, surface and rule holds it, also in the same run."""
     pair = "status.document:syntax"
     rig.notice("noticeboard", token(pair), token(pair), token(pair, REFUSED_AT + MINUTE_S))
-    rig.pep_notice(token("grants.file:syntax"))
-    _write_notice(
-        rig.notices / "chaperone.json",
-        notice_document("chaperone", [token("grants.file:syntax", REFUSED_AT + 1)]).encode(),
-    )
 
     first = rig.run()
 
-    assert rig.json_summaries() == [
-        f"{JSON_WORD} chaperone grants.file syntax",
-        f"{JSON_WORD} noticeboard status.document syntax",
-    ]
-    assert "2 sent, 1 held" in first.stdout
+    assert rig.json_summaries() == [f"{JSON_WORD} noticeboard status.document syntax"]
+    assert "1 sent, 1 held" in first.stdout
 
     rig.run_later(DAY_S + MINUTE_S)
 
-    assert len(rig.json_summaries()) == 3
-    assert rig.json_summaries()[2] == f"{JSON_WORD} noticeboard status.document syntax"
+    assert len(rig.json_summaries()) == 2
+    assert rig.json_summaries()[1] == f"{JSON_WORD} noticeboard status.document syntax"
 
 
 def test_the_same_pair_of_two_services_is_two_notices(rig: Rig) -> None:
@@ -1414,16 +1400,6 @@ def test_six_json_notices_in_one_hour_for_all_services(rig: Rig, spread: tuple[i
 
     assert len(rig.json_summaries()) == 7
     assert set(rig.json_summaries()) == expected
-
-
-def test_the_chaperone_file_is_read_as_the_chaperone(rig: Rig) -> None:
-    """The chaperone keeps its notice file in its fault directory. The
-    service name of that file is the word `chaperone`."""
-    rig.pep_notice(token("grants.file:duplicate_key"))
-
-    rig.run()
-
-    assert rig.json_summaries() == [f"{JSON_WORD} chaperone grants.file duplicate_key"]
 
 
 def test_a_run_that_moves_the_verdict_sends_the_json_notice(rig: Rig) -> None:
@@ -2310,7 +2286,6 @@ def test_the_notice_step_changes_no_verdict_and_no_status(
     full = Rig(tmp_path / "full")
     full.notice("noticeboard", *[token(one) for one in SEVEN_PAIRS])
     full.notice_with_line("caregiver", BROKEN_PUSH_LINES["nul-byte"])
-    full.pep_notice(token("grants.file:syntax"))
 
     for _ in range(3):
         expected = bare.run(**state)

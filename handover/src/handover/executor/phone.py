@@ -3,8 +3,8 @@
 `stage7-releases.md` §2.5 and contract 04 §8. This module is the
 production `Transport` and the production `Notifier`, and it is **not a
 second approval system**: it posts to the same protected Node-RED hook, in
-the same body shape, under the same kind of bearer, as
-`chaperone/src/chaperone/gatekeeper.py`'s `HttpApprovalNotifier`.
+the same body shape, under the same kind of bearer, as the PEP's
+`HttpApprovalNotifier`.
 
 Contract 04 §8.4's four rules, and where each lands here:
 

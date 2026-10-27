@@ -11,9 +11,9 @@
       v
     the `pi` stand-in program         found through AGENT_PI_BIN
 
-A topology adds the service in front: a door in `proc_owui.py`, the chaperone
-in `proc_delegate.py`. A test reaches each service through a socket and
-through the files under the root. It holds no object of a service.
+A topology adds the service in front: a door in `proc_owui.py`. A test
+reaches each service through a socket and through the files under the root.
+It holds no object of a service.
 """
 
 from __future__ import annotations

@@ -26,9 +26,9 @@ the reason it is a package of its own rather than four lines in `cli.py`.
    refuses with a reason the operator can act on. A requester that refused to FILE
    because a fetch failed would turn a network blip into a command the operator
    cannot run at all.
-4. **`chaperone/` never imports it.** The PEP's `release` verb runs as `chaperone`, which
+4. **The PEP never imports it.** The PEP's `release` verb runs as `chaperone`, which
    owns no corpus and holds no credential, and this module starts children.
-   `handover/tests/test_handover_r7j_freshness.py` asserts the absence.
+   `handover/tests/test_handover_r7j_freshness.py` asserts it for `requester/`.
 5. **It has a second child, `curl`, and a second root, the store.**
    `artifacts.py` fetches the two assets of the Release of a binary
    component into the store of artifacts below the home of the operator

@@ -19,8 +19,8 @@ that was in use, with its comments removed and its site's values replaced.
 A registry written for a test would hide every rule below: each one is a
 field in a file nobody wrote for a test.
 
-**Four rules, each held against the real files.** The first three are
-refusals at step 8 when broken, each with nothing swapped.
+**Three rules, each held against the real files.** Each one is a
+refusal at step 8 when broken, with nothing swapped.
 
 1. A fence's `arg` may be contract 01b §7.2's composite `owner/repo`, so
    both GitHub servers parse. The console-script pattern holds no `/`.
@@ -30,9 +30,6 @@ refusals at step 8 when broken, each with nothing swapped.
 3. A `source: agent-mcp` file names no `install.ref`: the component tag
    is every such server's version (§3.3), and agent-mcp's own release
    tags are a namespace the release never deploys.
-4. The released row wins a collision, and the base roster holds no row
-   at all: the roster root writes is the only source for a declared
-   server.
 
 Two more hold in this package: a refusal names its server, and a FIRST
 install's restore takes the new trees away.
@@ -42,8 +39,7 @@ agent-mcp source fetch (`GitFake`), `uv` and `curl` (`McpFake`),
 `systemctl` (a recorded argv) and the phone (a granting transport). Every
 one is an edge the design already puts a fake at. Nothing else is: the
 spool, the request parser, the resolver, the registry reader, the
-per-server build, the roster writer and the PEP's own roster parser are
-the real code.
+per-server build and the roster writer are the real code.
 
 **What this rehearsal cannot see**, and the real host will:
 
@@ -53,11 +49,11 @@ the real code.
 2. A real `runuser`. `As.MCP` is recorded, never executed, so a missing
    `mcp-<name>` account fails on the host and not here.
 3. A real `SIGHUP` to a running PEP. The signal is a recorded argv, and
-   the reload is driven against the PEP's PARSER, not its process.
+   no PEP reads the roster here.
 4. A real phone, a real Node-RED flow and a real tap.
 5. The modes a real `UMask=0027` root unit leaves. One test sets the
    umask itself and asserts the directories that decide it.
-6. The PEP's mount namespace. That `creche-chaperone.service`'s `ReadWritePaths`
+6. The PEP's mount namespace. That the PEP unit's `ReadWritePaths`
    binds `/var/lib/agent-mcp` writable for a server is systemd's to prove
    on the host, and a real `install -d` giving the directory
    to `mcp-<name>` is too: `McpFake` makes it and owns it as the test user.
@@ -80,10 +76,6 @@ from urllib.parse import urlencode, urlsplit
 
 import pytest
 import yaml
-from chaperone.family_ids import MCP_TOOL_SEPARATOR
-from chaperone.mcp_client import Launcher, UpstreamError, load_upstreams, resolve_env
-from chaperone.reload_wiring import RosterSource
-from chaperone.run_as import child_env as server_env
 from handover.catalog import CATALOG_BY_NAME
 from handover.errors import Refusal
 from handover.executor.approval import Decision, Summary
@@ -213,10 +205,6 @@ AGENT_MCP_SOURCE: Final = 'install.source = "agent-mcp"'
 COMPOSITE_SERVERS: Final = ("github-code", "github-platform")
 COMPOSITE_ARG: Final = "owner/repo"
 
-#: One call name, as a family grant carries it and `family_app` splits
-#: it. After the release it reaches `/opt/mcp/kagi`.
-KAGI_CALL: Final = f"kagi{MCP_TOOL_SEPARATOR}kagi_search_fetch"
-
 #: The checksum both GitHub servers declare: what GitHub published for
 #: github-mcp-server 1.12.0's Linux x86_64 asset.
 PUBLISHED_SHA256: Final = "f34de295acd8f1012c7f2c0e3b909d87361d0993b9489b57ee92ac72b85d7cca"
@@ -266,12 +254,6 @@ ENTRYPOINTS: Final = {
     "vikunja-home-assistant": "vikunja-mcp",
     "vikunja-networking": "vikunja-mcp",
 }
-
-#: The base roster, the file `creche-chaperone.service` names as
-#: `PEP_UPSTREAMS`. Read from this repository rather than typed, because
-#: its overlap with the registry's eleven is what rule 4 checks and a
-#: typed list would answer it with whatever the typist remembered.
-BASE_ROSTER: Final = Path(__file__).resolve().parents[2] / "chaperone" / "upstreams.yaml"
 
 #: `component.yaml`'s own build line, as agent-mcp merged it at `a1b2c3d`:
 #: one `uv sync --frozen` at the repository root.
@@ -643,8 +625,8 @@ def test_rule_1_the_composite_fence_contract_01b_defines_parses(
     arguments joined by
     `/` as one string, because matching `repo` alone lets
     `someone-else/agent-control` pass a fence meant for
-    `<owner>/agent-control`. `chaperone/src/chaperone/fences.py` implements it
-    (`COMPOSITE_SEPARATOR`) and contract 01b §8.2's own example uses it.
+    `<owner>/agent-control`. The PEP implements it, and contract 01b §8.2's
+    own example uses it.
 
     Both files that carry `docs/rework/spec.md` §4.4's github split declare
     it, and an ALLOW refused is worse than a DENY refused: an allow is
@@ -900,17 +882,11 @@ def test_a_pasted_secret_changes_nothing_the_release_does(bench: Bench) -> None:
     the secrets directory — and a release that behaved differently would
     make a secret an input to an install, which is the coupling §4.3 rule
     4 exists to prevent.
-
-    What the paste DOES change is one function, and it is the PEP's:
-    `resolve_env` refuses a spec whose `secret:` name it cannot find and
-    answers the value when it can. That is where "the operator taps twice" meets
-    "the upstream serves".
     """
     bench.seal("kagi_api_key")
 
     _release(bench)
     served = bench.served()
-    spec = load_upstreams(bench.roster)["kagi"]
 
     assert "kagi_api_key" not in bench.open_gaps()
     assert (bench.secrets / "kagi_api_key.enc").is_file()
@@ -921,10 +897,6 @@ def test_a_pasted_secret_changes_nothing_the_release_does(bench: Bench) -> None:
             default_flow_style=False,
         )
     )
-    with pytest.raises(UpstreamError):
-        resolve_env(spec, {})
-
-    assert resolve_env(spec, {"kagi_api_key": "a-value"}) == {"KAGI_API_KEY": "a-value"}
 
 
 def test_the_next_tag_needs_no_registry_edit(bench: Bench) -> None:
@@ -1142,125 +1114,41 @@ def test_one_secret_pasted_through_the_intake_then_the_release(
     assert not [one for one in bench.run.argv_lines() if PASTED_VALUE in one]
 
 
-# -- the roster, read by the PEP's own parser ----------------------------
+# -- the roster root writes ---------------------------------------------
 
 
-def test_the_roster_root_writes_is_what_the_peps_parser_reads(bench: Bench) -> None:
-    """The two shapes, against each other. `load_upstreams` is the PEP's
-    own reader, imported here because reading `chaperone/` is allowed and
-    changing it is not this package's.
-
-    A roster the PEP refuses does not install nothing — it leaves the OLD
-    pool serving with one line in a log, so a disagreement would be
-    invisible until somebody wondered why the new upstreams never came.
-    """
+def test_the_roster_root_writes_carries_every_declared_row(bench: Bench) -> None:
+    """The rows root writes for the eleven real declarations."""
 
     _release(bench)
-    specs = load_upstreams(bench.roster)
+    served = bench.served()
+    kagi = cast("dict[str, object]", served["kagi"])
+    github = cast("dict[str, list[object]]", served["github-code"])
+    denies = cast("list[dict[str, list[object]]]", github["arg_denies"])
+    board = cast("dict[str, dict[str, object]]", served["board-lead"])
 
-    assert sorted(specs) == list(DECLARED)
-    assert specs["kagi"].command == str(bench.mcp_root / "kagi" / "bin" / "kagimcp")
-    assert specs["github-code"].args == (
+    assert sorted(served) == list(DECLARED)
+    assert kagi["command"] == str(bench.mcp_root / "kagi" / "bin" / "kagimcp")
+    assert github["args"] == [
         "stdio",
         "--toolsets=context,repos,pull_requests,issues",
         "--lockdown-mode",
-    )
+    ]
     # `tools: all` is expanded by the writer, because the PEP's reader
     # takes a list and has no word for `all`.
-    assert specs["github-code"].arg_denies[0].tools == frozenset(specs["github-code"].tools)
-    assert specs["board-lead"].env["VIKUNJA_TOKEN"] == "secret:vikunja_token_scrum_lead"
+    assert sorted(map(str, denies[0]["tools"])) == sorted(map(str, github["tools"]))
+    assert board["env"]["VIKUNJA_TOKEN"] == "secret:vikunja_token_scrum_lead"
 
 
 def test_the_declared_allow_fence_is_reported_and_not_written(bench: Bench) -> None:
-    """`github-platform` declares `arg_allows`, `UpstreamSpec` has no
-    field for it, and a roster carrying one would be refused whole. Root
+    """`github-platform` declares `arg_allows`, the PEP's roster row has
+    no field for it, and a roster carrying one would be refused whole. Root
     says so under `manual` rather than dropping it in silence."""
 
     _release(bench)
 
     assert "arg_allows is declared and not applied for: github-platform" in bench.manual()
     assert "arg_allows" not in bench.roster.read_text(encoding="utf-8")
-
-
-def test_rule_4_every_released_server_serves_from_the_tree_it_installed(
-    bench: Bench,
-) -> None:
-    """Rule 4, against the REAL base roster of this repository.
-
-    A generated roster adds to the pool rather than REPLACING it, and a
-    released row wins a name collision. The base file holds no row
-    (`stage7-releases.md` §4.4). Two facts together are the rule:
-
-    1. Every declared name serves root's own command.
-    2. The base names none of them, so no declared name serves from a
-       tree no release installed.
-    """
-    _release(bench)
-    base = _base_names()
-
-    specs = RosterSource(upstreams_file=BASE_ROSTER, generated_file=bench.roster).upstreams()
-
-    assert not base & set(DECLARED), "the base roster declares a server the registry declares"
-    assert set(specs) == set(DECLARED), "a name serves that no release installed"
-    for name in DECLARED:
-        assert specs[name].command == str(bench.mcp_root / name / "bin" / ENTRYPOINTS[name])
-
-
-def test_rule_4_the_call_name_a_grant_carries_reaches_the_released_tree(
-    bench: Bench,
-) -> None:
-    """The proof in the words a family grant uses. `kagi__kagi_search_fetch`
-    is what a sandbox asks for and what `family_app` splits on `__`, and
-    after this release its server half resolves to `/opt/mcp/kagi`."""
-    _release(bench)
-
-    specs = RosterSource(upstreams_file=BASE_ROSTER, generated_file=bench.roster).upstreams()
-    server, _, tool = KAGI_CALL.partition(MCP_TOOL_SEPARATOR)
-
-    assert tool in specs[server].tools
-    assert specs[server].command == str(bench.mcp_root / "kagi" / "bin" / "kagimcp")
-    assert specs[server].command != "/opt/agent-pep-mcp/mcp/bin/kagimcp"
-
-
-def test_rule_4_no_command_the_pep_starts_is_outside_the_mcp_root(
-    bench: Bench,
-) -> None:
-    """The base roster holds no row, so after the release every command
-    the PEP would start is inside the tree root installed."""
-    _release(bench)
-
-    specs = RosterSource(upstreams_file=BASE_ROSTER, generated_file=bench.roster).upstreams()
-
-    assert _base_names() == set()
-    for name, spec in specs.items():
-        assert spec.command.startswith(f"{bench.mcp_root}/"), name
-
-
-def test_a_generated_name_the_base_does_not_hold_is_the_one_that_serves(
-    bench: Bench,
-) -> None:
-    """The other side of rule 4: a name the base roster does NOT hold
-    comes through, with root's own command.
-
-    `weather` is not in `chaperone/upstreams.yaml`, so a twelfth declaration
-    serves on its first release.
-    """
-    _release(bench)
-    written = yaml.safe_load(bench.roster.read_text(encoding="utf-8"))
-    written["weather"] = written.pop("kagi")
-    bench.roster.write_text(yaml.safe_dump(written), encoding="utf-8")
-
-    specs = RosterSource(upstreams_file=BASE_ROSTER, generated_file=bench.roster).upstreams()
-
-    assert "weather" in specs
-    assert specs["weather"].command == str(bench.mcp_root / "kagi" / "bin" / "kagimcp")
-
-
-def _base_names() -> set[str]:
-    loaded: object = yaml.safe_load(BASE_ROSTER.read_text(encoding="utf-8"))
-    assert isinstance(loaded, dict)
-
-    return {str(one) for one in cast("dict[object, object]", loaded)}
 
 
 def test_root_builds_every_roster_command_from_the_validated_name(
@@ -1341,20 +1229,6 @@ def test_only_the_two_rows_carry_a_state_directory(bench: Bench) -> None:
             continue
 
         assert env == {**declared[name], HA_STATE_ENV: str(bench.state_root / name)}
-
-
-def test_the_pep_hands_the_path_to_the_server_as_it_is(bench: Bench) -> None:
-    """A child's environment is exactly its row's `env`, so the PEP
-    needs no change. The path is a literal, `resolve_env` passes a
-    literal through, and what the launcher decodes after the switch is the
-    environment the server execs with."""
-    _release(bench)
-    spec = load_upstreams(bench.roster)["ha-read"]
-
-    params = Launcher(("chaperone-as",)).params(spec, resolve_env(spec, {SHARED_SECRET: "x"}))
-    execs_with = server_env(cast("dict[str, str]", params.env))
-
-    assert execs_with[HA_STATE_ENV] == str(bench.state_root / "ha-read")
 
 
 def test_the_next_release_keeps_what_the_server_wrote(bench: Bench) -> None:

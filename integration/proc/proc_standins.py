@@ -88,8 +88,7 @@ from proc_tree import Tree, repo_root
 SBX: Final = "sbx"
 PI: Final = "pi"
 SYSTEMCTL: Final = "systemctl"
-#: The program `caregiver` runs as `--chaperone-bin`. It is not named
-#: `chaperone`: the Python chaperone of a scenario has that name.
+#: The program `caregiver` runs as `--chaperone-bin`.
 CHAPERONE_CHECK: Final = "chaperone-check"
 #: The file name of the stand-in program of `chaperone check`.
 CHAPERONE: Final = "chaperone"

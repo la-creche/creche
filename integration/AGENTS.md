@@ -55,8 +55,8 @@ before you push a change to this directory.
 ## What runs
 
 `tests_manager/` runs the real `caregiver` writers against the real
-readers: the PEP family path, the playpen mounts and the status document
-that `attendance` reads. The Node drivers under `node/` start the real
+readers: the playpen mounts and the status document that `attendance`
+reads. The Node drivers under `node/` start the real
 playpen readers.
 
 ## The process-level suite

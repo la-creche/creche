@@ -1,11 +1,7 @@
-"""The cap of a grant file is one number in two packages.
+"""The caregiver writes a grant file of the cap and no larger file.
 
-Contract 04 §1.2 gives the cap. Two packages hold it: the caregiver writes
-the file, and the chaperone reads it. The first test fails when the two
-numbers differ.
-
-One more test holds the two packages together. The caregiver writes the
-largest file that it can write, and the chaperone reads that file.
+Contract 04 §1.2 gives the cap. The caregiver writes the largest file that
+it can write, and refuses a file of one byte more.
 """
 
 from __future__ import annotations
@@ -20,8 +16,6 @@ from caregiver.grants import (
     GrantFileTooLargeError,
     write_grant_file,
 )
-from chaperone.family_grants import MAX_GRANT_FILE_BYTES, FamilyStore
-from chaperone.faults import FaultWriter
 
 FAMILY = "chat"
 SERVER = "kagi"
@@ -67,17 +61,11 @@ def tools_for(scratch: Path, size: int) -> list[str]:
     return [*(tool(index) for index in range(lines + 1)), "f" * (rest + 1)]
 
 
-def test_the_caregiver_and_the_chaperone_hold_one_cap() -> None:
-    assert GRANT_FILE_MAX_BYTES == MAX_GRANT_FILE_BYTES
-
-
-def test_the_chaperone_reads_the_largest_grant_file_of_the_caregiver(tmp_path: Path) -> None:
-    """The two packages compare a size with the cap in the same direction.
-    The caregiver writes a file of the cap, and the chaperone reads it. The
-    caregiver writes no file of one byte more."""
+def test_the_caregiver_writes_a_grant_file_of_the_cap(tmp_path: Path) -> None:
+    """The caregiver writes a file of the cap. It writes no file of one byte
+    more."""
     scratch = tmp_path / "scratch"
-    grants_dir = tmp_path / "grants"
-    path = grants_dir / f"{FAMILY}.json"
+    path = tmp_path / "grants" / f"{FAMILY}.json"
     at_cap = tools_for(scratch, GRANT_FILE_MAX_BYTES)
     over_cap = [*at_cap[:-1], at_cap[-1] + "f"]
     assert all(TOOL_NAME.fullmatch(name) is not None for name in over_cap)
@@ -85,10 +73,6 @@ def test_the_chaperone_reads_the_largest_grant_file_of_the_caregiver(tmp_path: P
     write_grant_file(path, grant(at_cap))
 
     assert path.stat().st_size == GRANT_FILE_MAX_BYTES
-    store = FamilyStore(grants_dir, FaultWriter(tmp_path / "faults"))
-    served = store.current(FAMILY)
-    assert served is not None
-    assert served.tools == {SERVER: tuple(at_cap)}
 
     with pytest.raises(GrantFileTooLargeError):
         write_grant_file(path, grant(over_cap))

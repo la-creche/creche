@@ -102,7 +102,7 @@ NOTICE_SERVICE: Final = "handover-exec"
 GIT_READ_TIMEOUT_S: Final = 30.0
 
 #: §3.1's second requester writes through the PEP, which runs as this user
-#: (`systemd/creche-chaperone.service`). Root accepts a file it owns and still
+#: (`creche-chaperone.service`). Root accepts a file it owns and still
 #: believes nothing the file says.
 CHAPERONE_USER: Final = "chaperone"
 

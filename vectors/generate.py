@@ -38,14 +38,12 @@ from vectors.core import (
     render,
 )
 from vectors.surfaces import (
-    audit,
     channel,
     classify,
     config,
     envfile,
     family_cli,
     family_file,
-    grants,
     ids,
     library,
     manifest,
@@ -103,8 +101,6 @@ GROUPS: Final[dict[str, Callable[[], tuple[Surface, ...]]]] = {
     "classify": classify.surfaces,
     "family_cli": family_cli.surfaces,
     "channel": channel.surfaces,
-    "chaperone": grants.surfaces,
-    "audit": audit.surfaces,
     "status": status.surfaces,
     "status_files": status_files.surfaces,
     "config": config.surfaces,

@@ -21,7 +21,6 @@ topology with one writes only the registry and the token files, and
       state/door-owui.key                contract 02 §3 rule 7
       state/grants/<family>.json         contract 04 §1, the grant file
       state/faults/<writer>/<family>.json          contract 05 §3.3.1
-      state/audit/<day>.jsonl            contract 04 §6, written by the Python chaperone
       chaperone/audit.jsonl              the audit file of the Rust chaperone
       state/outcomes/<family>/<id>.json  contract 02 §13.1, written by `attendance`
       state/triggers/webhooks/<family>/<name>.token   contract 05 §6.4
@@ -35,7 +34,6 @@ topology with one writes only the registry and the token files, and
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import shutil
@@ -129,10 +127,7 @@ AUDIT_RUN: Final = "07" * 16
 #: The SHA-256 of `{}`, the canonical form of no arguments.
 NO_ARGUMENTS_SHA256: Final = "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
 
-#: Contract 04 §1.2: the two defaults `caregiver` writes, and the default of
-#: the family file for `max_inflight_delegations`.
-GRANT_LIMITS: Final = {"pep_rpm": 60, "max_inflight_delegations": 2, "max_open_gates": 10}
-GRANT_VERSION: Final = 2
+#: The mode of the grant file that `caregiver` writes.
 GRANT_MODE: Final = 0o640
 
 #: Contract 02 §3.1, one token file per row.
@@ -272,10 +267,6 @@ class Tree:
         return self.root / "sock" / _SOCKET_NAME
 
     @property
-    def audit_dir(self) -> Path:
-        return self.state_root / "audit"
-
-    @property
     def audit_file(self) -> Path:
         """The audit file of the Rust chaperone. The noticeboard reads it."""
         return self.root / "chaperone" / "audit.jsonl"
@@ -385,16 +376,6 @@ class Tree:
         directory = self.sessions_root / family
 
         return sorted(entry.name for entry in directory.iterdir() if entry.is_dir())
-
-    def audit_lines(self) -> list[dict[str, Any]]:
-        """Every audit record the chaperone wrote, in file order (contract 04 §6)."""
-        lines: list[dict[str, Any]] = []
-
-        for path in sorted(self.audit_dir.glob("*.jsonl")):
-            complete = path.read_bytes().split(b"\n")[:-1]
-            lines.extend(json.loads(line) for line in complete if line.strip())
-
-        return lines
 
     def session_dir(self, session: str, family: str = FAMILY) -> Path:
         return self.sessions_root / family / session
@@ -805,8 +786,8 @@ def write_creds(tree: Tree, family: str = FAMILY, pep_token: str | None = None) 
     """The credential file the playpen reads at each pi start (contract 03 §12).
 
     `pep_token` is the bearer of the family at its chaperone. The default is
-    the fixture token of the Python chaperone. A topology of the Rust
-    chaperone gives the token that `chaperone token new` minted.
+    a fixture token. A topology of the Rust chaperone gives the token that
+    `chaperone token new` minted.
     """
     document = {
         "epoch": CRED_EPOCH,
@@ -836,30 +817,6 @@ def write_instructions(tree: Tree, family: str = FAMILY, text: str = INSTRUCTION
     (contract 03 §7.1).
     """
     _atomic_write(tree.mounts(family).config / "instructions.md", text, STATUS_MODE)
-
-
-def write_grants(tree: Tree, family: str, *, rev: str, delegates: tuple[str, ...]) -> None:
-    """The grant file of one family (contract 04 §1.2), by temp file and rename.
-
-    It holds the digest of the family token and never the token (§2.2). No
-    MCP server and no verb is granted: `delegates` is the one reach a
-    scenario of this suite needs.
-    """
-    digest = hashlib.sha256(pep_token_of(family).encode("utf-8")).hexdigest()
-    document: dict[str, Any] = {
-        "version": GRANT_VERSION,
-        "family": family,
-        "rev": rev,
-        "token_sha256": [digest],
-        "model_alias": MODEL_ALIAS,
-        "tools": {},
-        "verbs": {},
-        "delegates": list(delegates),
-        "approval": [],
-        "limits": dict(GRANT_LIMITS),
-    }
-
-    _atomic_write(tree.grant_file(family), json.dumps(document) + "\n", GRANT_MODE)
 
 
 def webhook_token_of(family: str, name: str) -> str:

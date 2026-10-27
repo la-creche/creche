@@ -1,13 +1,11 @@
 """The files of contract 05 beside the five readers of `status.json`.
 
-Five surfaces:
+Four surfaces:
 
 - `status.write`: the fields of one status document to the bytes that
   `caregiver` writes.
 - `status.fault_file.attendance`: the open faults of one family to the bytes
   of the fault file that `attendance` writes.
-- `status.fault_file.chaperone`: the same, for the fault file of the
-  chaperone.
 - `status.fault_file.caregiver`: the bytes of one fault file to what
   `caregiver` takes from it.
 - `status.outcome.noticeboard`: the bytes of one outcome record to the row
@@ -21,7 +19,7 @@ from __future__ import annotations
 
 import json
 import tempfile
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -50,7 +48,6 @@ from caregiver.status import (
     ValidationBlock,
 )
 from caregiver.webhook_tokens import WebhookToken
-from chaperone.faults import FaultWriter
 
 from attendance import faults as attendance_faults
 from attendance import outcomes
@@ -66,7 +63,6 @@ from vectors.core import (
     bytes_input,
     expand,
     normalize,
-    quiet_logs,
     raised,
     refused,
     repeat_input,
@@ -697,64 +693,14 @@ def _reported_vector(reported: Reported, scratch: Path) -> Vector:
 
 # --- the fault file of the chaperone ----------------------------------------------
 
-#: `chaperone.faults.FAULT_REFRESH_S` is 30 seconds. A second call with the
-#: same message after this long writes the file again and keeps `since`.
-_REFRESHED_AFTER: Final = timedelta(seconds=45)
-
-
-@dataclass(frozen=True)
-class Stale:
-    """The calls that bring one fault file of the chaperone to its last form."""
-
-    id: str
-    family: str = FAMILY
-    message: str = "the grant file did not parse"
-    rev: str | None = _REV
-    #: The fault is raised a second time, after the refresh interval.
-    refreshed: bool = False
-    #: The fault is cleared after it is raised.
-    cleared: bool = False
-
-
-STALE: Final[tuple[Stale, ...]] = (
-    Stale("raised"),
-    Stale("never-parsed", rev=None),
-    Stale("refreshed", refreshed=True),
-    Stale("cleared", cleared=True),
-    Stale("message-empty", message=""),
-    Stale("text-escapes", message=_ODD_TEXT),
-    Stale("family-not-a-name", family="Chat"),
+#: The bytes of one fault file that the fault writer of the Python chaperone
+#: made. That writer left this repository. These bytes stay an input of the
+#: reader.
+_OF_CHAPERONE: Final = (
+    b'{"family": "chat", "source": "pep", "written_at": "2999-01-01T00:00:00Z", "faults": '
+    b'[{"code": "grants_stale", "blocks_turns": true, "since": "2999-01-01T00:00:00Z", '
+    b'"source": "pep", "message": "not read", "rev": "reg-9f21c4"}]}\n'
 )
-
-
-def _stale_vector(stale: Stale, scratch: Path) -> Vector:
-    directory = scratch / "chaperone" / stale.id
-    since = _CLOCK_START
-    written_at = since + _REFRESHED_AFTER if stale.refreshed or stale.cleared else since
-    times: Iterator[datetime] = iter((since, written_at))
-    faults: list[dict[str, object]] = []
-    with quiet_logs():
-        writer = FaultWriter(directory, clock=lambda: next(times))
-        writer.raise_stale(stale.family, stale.message, stale.rev)
-        if stale.refreshed:
-            writer.raise_stale(stale.family, stale.message, stale.rev)
-
-        if stale.cleared:
-            writer.clear(stale.family)
-
-    if not stale.cleared:
-        faults.append({"since": since, "message": stale.message, "rev": stale.rev})
-
-    args: dict[str, Json] = {
-        "family": stale.family,
-        "written_at": normalize(written_at),
-        "faults": normalize(faults),
-    }
-    target = directory / f"{stale.family}.json"
-    if not target.is_file():
-        return refused(stale.id, {"args": args})
-
-    return accepted(stale.id, {"args": args}, output=bytes_input(target.read_bytes()))
 
 
 # --- the reader of a fault file -----------------------------------------------------
@@ -814,15 +760,12 @@ def _written_fault_files(scratch: Path) -> tuple[FaultDocument, ...]:
     from the directory of the other writer."""
     each_code = next(one for one in REPORTED if one.id == "each-code")
     _, of_attendance = _reported_file(each_code, scratch / "written" / "attendance")
-    directory = scratch / "written" / "chaperone"
-    FaultWriter(directory, clock=lambda: _CLOCK_START).raise_stale(FAMILY, "not read", _REV)
-    of_chaperone = (directory / f"{FAMILY}.json").read_bytes()
 
     return (
         FaultDocument("written-by-attendance", of_attendance),
         FaultDocument("written-by-attendance-read-as-pep", of_attendance, SOURCE_PEP),
-        FaultDocument("written-by-chaperone", of_chaperone, SOURCE_PEP),
-        FaultDocument("written-by-chaperone-read-as-sessiond", of_chaperone),
+        FaultDocument("written-by-chaperone", _OF_CHAPERONE, SOURCE_PEP),
+        FaultDocument("written-by-chaperone-read-as-sessiond", _OF_CHAPERONE),
     )
 
 
@@ -1156,22 +1099,6 @@ def surfaces() -> tuple[Surface, ...]:
                     "output is the bytes of the file.",
                 ),
                 vectors=tuple(_reported_vector(one, scratch) for one in REPORTED),
-            ),
-            Surface(
-                name="status.fault_file.chaperone",
-                path="status/fault_file.chaperone.json",
-                entry="chaperone.faults.FaultWriter.raise_stale",
-                contract=f"{CONTRACT} §3.3, §3.3.1",
-                notes=(
-                    _NOTE_FAULT_ARGS,
-                    "The one code of this writer is grants_stale. Each fault of args.faults "
-                    "holds the message and the revision of that fault.",
-                    "A refused vector is a family for which the writer writes no file.",
-                    _NOTE_ARGS_ORDER,
-                    "output is the bytes of the file. The writer does not escape a character "
-                    "outside ASCII.",
-                ),
-                vectors=tuple(_stale_vector(one, scratch) for one in STALE),
             ),
             Surface(
                 name="status.fault_file.caregiver",

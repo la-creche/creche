@@ -1,7 +1,7 @@
 """The edge of each listener: a request that no handler takes, and a signal.
 
-Five services listen: `attendance`, the Open WebUI door, the chaperone, the
-noticeboard and the webhook listener of the trigger door. Each one answers
+Four services listen: `attendance`, the Open WebUI door, the noticeboard
+and the webhook listener of the trigger door. Each one answers
 some requests before a handler of the service runs: an unknown path, a wrong
 method, a path with a final slash, `HEAD`. Each one ends at some signals with
 no code of the service. No suite that hosts a service in the test process can
@@ -47,9 +47,7 @@ from proc_chat import (
     chat_id,
     message_id,
     owui_headers,
-    session_of,
 )
-from proc_delegate import TARGET, DelegateStack
 from proc_harness import (
     Address,
     Child,
@@ -64,20 +62,17 @@ from proc_stack import Stack
 from proc_tree import FAMILY
 from proc_trigger import TriggerStack, hook_path
 
-#: The five services that listen. The other two rows of the service table,
+#: The four services that listen. The other two rows of the service table,
 #: the terminal door and `caregiver`, do not listen.
 LISTENERS = (
     Service.ATTENDANCE,
     Service.DOOR_OWUI,
-    Service.CHAPERONE,
     Service.NOTICEBOARD,
     Service.DOOR_TRIGGER,
 )
 
 #: A path that is a route of no listener.
 NO_ROUTE = "/no-such-route"
-
-CALL_PATH = "/call"
 
 #: The job listing of `attendance` (contract 02 §13.4.2). It reads a JSON
 #: body after the bearer. Its other routes need a facade, which this stack
@@ -90,7 +85,6 @@ HEALTH_PATH = "/healthz"
 WRONG_METHOD = {
     Service.ATTENDANCE: ("GET", JOBS_PATH),
     Service.DOOR_OWUI: ("GET", CHAT_PATH),
-    Service.CHAPERONE: ("GET", CALL_PATH),
     Service.NOTICEBOARD: ("DELETE", HEALTH_PATH),
     Service.DOOR_TRIGGER: ("GET", hook_path()),
 }
@@ -99,13 +93,12 @@ WRONG_METHOD = {
 #: listener and `attendance` have none: each of their routes takes `POST`.
 GET_ROUTE = {
     Service.DOOR_OWUI: MODELS_PATH,
-    Service.CHAPERONE: HEALTH_PATH,
     Service.NOTICEBOARD: HEALTH_PATH,
 }
 
 #: The listeners that read a JSON body, with no scenario for such a body in
 #: another file. `test_proc_trigger_webhooks.py` holds the webhook listener.
-READ_JSON = (Service.ATTENDANCE, Service.DOOR_OWUI, Service.CHAPERONE)
+READ_JSON = (Service.ATTENDANCE, Service.DOOR_OWUI)
 
 #: The two listeners that have no reload at `SIGHUP` in each configuration.
 NO_RELOAD = (Service.DOOR_OWUI, Service.NOTICEBOARD)
@@ -127,10 +120,6 @@ NOT_JSON = {
     "not-utf-8": b"\xff\xfe\xfd",
     "deep-nesting": b"[" * NESTING + b"]" * NESTING,
 }
-
-#: What the caller of the chaperone sends (contract 04 §7.1).
-INVOKE_AGENT = "invoke_agent"
-SESSION_HEADER = "X-Session-Id"
 
 #: The prompt of each turn that a scenario starts.
 PROMPT = "is the heating on"
@@ -160,13 +149,12 @@ EXIT_DEADLINE_S = 30.0
 #: `TimeoutStopSec`, unless the manager of the host sets another default.
 SYSTEMD_STOP_LIMIT_S = 90.0
 
-#: `TimeoutStopSec` of the unit of each listener, in seconds. The unit of the
-#: chaperone names none. `test_each_stop_limit_is_that_of_its_unit` holds
-#: this table against the unit files.
+#: `TimeoutStopSec` of the unit of each listener, in seconds.
+#: `test_each_stop_limit_is_that_of_its_unit` holds this table against the
+#: unit files.
 STOP_LIMIT_S = {
     Service.ATTENDANCE: 60.0,
     Service.DOOR_OWUI: 30.0,
-    Service.CHAPERONE: SYSTEMD_STOP_LIMIT_S,
     Service.NOTICEBOARD: 20.0,
     Service.DOOR_TRIGGER: 30.0,
 }
@@ -230,15 +218,6 @@ def _door_owui(request: pytest.FixtureRequest) -> Listener:
     return Listener(Service.DOOR_OWUI, stack, _running(stack.door), address, stack.door_client)
 
 
-def _chaperone(request: pytest.FixtureRequest) -> Listener:
-    stack: DelegateStack = request.getfixturevalue("delegate")
-    address = TcpAddress(stack.chaperone_port)
-
-    return Listener(
-        Service.CHAPERONE, stack, _running(stack.chaperone), address, stack.sandbox_client
-    )
-
-
 def _noticeboard(request: pytest.FixtureRequest) -> Listener:
     stack: BoardStack = request.getfixturevalue("board_alone")
     address = TcpAddress(stack.board_port)
@@ -258,7 +237,6 @@ def _door_trigger(request: pytest.FixtureRequest) -> Listener:
 _LISTENER_OF: dict[Service, Callable[[pytest.FixtureRequest], Listener]] = {
     Service.ATTENDANCE: _attendance,
     Service.DOOR_OWUI: _door_owui,
-    Service.CHAPERONE: _chaperone,
     Service.NOTICEBOARD: _noticeboard,
     Service.DOOR_TRIGGER: _door_trigger,
 }
@@ -298,13 +276,11 @@ async def test_a_wrong_method_gets_405(listener: Listener) -> None:
 
 # CONTRACT-QUESTION: contract 02 §14 gives `attendance` the code
 # `bad_request` with status 400 for a malformed field. No contract gives the
-# door or the chaperone an answer to a body that is not JSON: contract 04 §5
-# has no row for it. No contract gives a body a limit on its nesting.
-# Reading taken: one assertion for the three listeners and for each body of
-# `NOT_JSON`, a status of the 4xx class, and no work started. Today
-# `attendance` answers 400 with `bad_request` to each body, and the door
-# answers 400 with `bad_body` to each body. The chaperone answers 422 to the
-# text and 400 to the other two bodies. A change to one status for each
+# door an answer to a body that is not JSON. No contract gives a body a limit
+# on its nesting. Reading taken: one assertion for the two listeners and for
+# each body of `NOT_JSON`, a status of the 4xx class, and no work started.
+# Today `attendance` answers 400 with `bad_request` to each body, and the door
+# answers 400 with `bad_body` to each body. A change to one status for each
 # listener costs one assertion here.
 @pytest.mark.parametrize("body", list(NOT_JSON.values()), ids=list(NOT_JSON))
 @pytest.mark.parametrize("listener", READ_JSON, indirect=True)
@@ -391,9 +367,6 @@ def test_sigint_ends_a_listener(listener: Listener) -> None:
 # signal ends the process, and its port closes. The other reading is a
 # listener that ignores the signal. A change to that reading costs the two
 # assertions here.
-#
-# The chaperone has a reload only with a roster source. The chaperone of this
-# suite has none, so `SIGHUP` ends it too. No scenario holds either case.
 @pytest.mark.parametrize("listener", NO_RELOAD, indirect=True)
 def test_sighup_ends_a_listener_with_no_reload(listener: Listener) -> None:
     """The process ends inside the stop limit of its unit, and its port closes.
@@ -422,8 +395,6 @@ def test_each_stop_limit_is_that_of_its_unit() -> None:
 
 def work_of(service: Service) -> Work:
     """The request of one listener that reads a JSON body."""
-    session = session_of(chat_id())
-
     if service is Service.ATTENDANCE:
         # Contract 02 §13.4.2: the jobs of one caller family.
         return Work(JOBS_PATH, {}, {"caller_family": FAMILY})
@@ -433,15 +404,6 @@ def work_of(service: Service) -> Work:
         headers = owui_headers(chat_id(), message_id())
 
         return Work(CHAT_PATH, headers, chat_body(PROMPT, stream=False))
-
-    if service is Service.CHAPERONE:
-        # Contract 04 §7.1: one job turn in the thin family.
-        body: dict[str, object] = {
-            "tool": INVOKE_AGENT,
-            "args": {"family": TARGET, "message": PROMPT},
-        }
-
-        return Work(CALL_PATH, {SESSION_HEADER: session}, body)
 
     raise AssertionError(f"{service.value} takes no request that starts work")
 

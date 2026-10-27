@@ -59,7 +59,7 @@ PROC_PYTEST=(uv run pytest "$PROC_DIR" -m slow -n 4)
 PROC_NO_SKIP="CRECHE_PROC_NO_SKIP"
 
 # The suites the full run collects, one per line: pyproject.toml's
-# testpaths, e.g. "chaperone/tests". A suite missing from disk is left out.
+# testpaths, e.g. "caregiver/tests". A suite missing from disk is left out.
 list_suites() {
   local suite
 
@@ -72,7 +72,7 @@ list_suites() {
 }
 
 # in_package PATH SUITES: whether PATH sits in the package of one of SUITES.
-# A package is the directory above its suite: chaperone/ for chaperone/tests.
+# A package is the directory above its suite: caregiver/ for caregiver/tests.
 in_package() {
   local suite
 

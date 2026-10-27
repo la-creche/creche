@@ -9,19 +9,10 @@
       | writes the status document, the grant file, the credential file,
       | the config mount and the env file of each sandbox
       | runs the stand-in of `chaperone check`, then writes `policy.toml`
-      | POST /internal/switch-sandbox over the Unix socket
-      v
-    attendance and the stand-ins      `proc_stack.py`
+      | POST /internal/switch-sandbox over the Unix socket of `attendance`
 
-Two forms exist:
-
-alone
-    `caregiver` and its three stand-ins. No `attendance` answers the switch
-    call, so each sandbox stays `creating` (contract 05 §4.2 rule 4). A
-    scenario that reads a grant through the chaperone adds the chaperone.
-the house
-    `caregiver`, `attendance`, the Open WebUI door and the chaperone. A test
-    plays Open WebUI at the door, and it plays a sandbox at the chaperone.
+`caregiver` runs with its three stand-ins. No `attendance` answers the
+switch call, so each sandbox stays `creating` (contract 05 §4.2 rule 4).
 
 No file of a family comes from this suite. A test writes the registry, and
 `caregiver` publishes each family from it.
@@ -49,12 +40,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
-import httpx
-from proc_delegate import chaperone_env
 from proc_harness import LOOPBACK, Child, Finished
-from proc_owui import door_env
 from proc_services import Service
-from proc_stack import CLIENT_TIMEOUT, Stack, base_env
+from proc_stack import Stack, base_env
 from proc_standins import (
     MASTER_KEY,
     chaperone_check_program,
@@ -65,7 +53,6 @@ from proc_standins import (
     start_litellm,
 )
 from proc_tree import (
-    DOOR_KEY,
     FAMILY,
     IMAGE,
     LAN_ADDRESS,
@@ -109,7 +96,6 @@ RECONCILING: Final = "reconciling"
 INVALID: Final = "invalid"
 DEGRADED: Final = "degraded"
 CREATING: Final = "creating"
-READY: Final = "ready"
 
 #: The exit codes that `caregiver/AGENTS.md` gives each verb.
 EXIT_OK: Final = 0
@@ -187,15 +173,11 @@ def litellm_url(port: int) -> str:
 
 @dataclass(slots=True)
 class CaregiverStack(Stack):
-    """`caregiver`, its stand-ins, and the services that a scenario adds."""
+    """`caregiver` and its stand-ins."""
 
     caregiver: Child | None = None
     litellm: Child | None = None
     litellm_port: int = 0
-    door: Child | None = None
-    door_port: int = 0
-    chaperone: Child | None = None
-    chaperone_port: int = 0
 
     # ------------------------------------------------------------------ start
 
@@ -219,10 +201,12 @@ class CaregiverStack(Stack):
             self.tree, self.supervisor, base_env(self.tree)
         )
 
-    def spawn_caregiver(self, *more: str, pep_url: str | None = None) -> Child:
-        """Start `caregiver serve`. `more` adds arguments after those of the unit."""
-        url = self.pep_url() if pep_url is None else pep_url
-        words = [*serve_words(self.tree, self.litellm_port, url), *more]
+    def spawn_caregiver(self, *more: str) -> Child:
+        """Start `caregiver serve`, with the watch off.
+
+        `more` adds arguments after those of the unit.
+        """
+        words = [*serve_words(self.tree, self.litellm_port, WATCH_OFF), *more]
         self.caregiver = self.spawn(Service.CAREGIVER, caregiver_env(), *words)
 
         return self.caregiver
@@ -230,27 +214,6 @@ class CaregiverStack(Stack):
     def run_caregiver(self, *words: str, env: dict[str, str] | None = None) -> Finished:
         """Run one verb of `caregiver` to its end."""
         return self.run(Service.CAREGIVER, caregiver_env() if env is None else env, *words)
-
-    def start_chaperone(self) -> None:
-        """Start the chaperone on a free loopback port, and wait for it."""
-        self.chaperone, self.chaperone_port = self.start_on_port(
-            Service.CHAPERONE, lambda bind: chaperone_env(self.tree, bind)
-        )
-
-    def start_house(self) -> None:
-        """Start `attendance`, the door and the chaperone. Then start `caregiver`.
-
-        `caregiver` asks `attendance` for the first handshake in its first
-        pass. So `attendance` answers before `caregiver` starts.
-        """
-        self.spawn_attendance()
-        self.door, self.door_port = self.start_on_port(
-            Service.DOOR_OWUI, lambda bind: door_env(self.tree, bind)
-        )
-        self.start_chaperone()
-        self.start_litellm()
-        self.await_attendance()
-        self.spawn_caregiver()
 
     def await_published(self, family: str = FAMILY) -> None:
         """Wait until `caregiver` alone ends its first pass for one family.
@@ -264,40 +227,6 @@ class CaregiverStack(Stack):
             f"{family} to be {IN_SYNC} with {box} {CREATING}",
         )
 
-    def await_serving(self, family: str = FAMILY, sandbox: str | None = None) -> None:
-        """Wait until one family of the house is `in_sync` on one `ready` sandbox."""
-        box = sandbox or first_sandbox(family)
-        wait_until(lambda: self.serves(family, box), f"{family} to be {IN_SYNC} with {box} {READY}")
-
-    def pep_url(self) -> str:
-        """Where the chaperone of this test answers, or the value that turns the watch off."""
-        if self.chaperone is None:
-            return WATCH_OFF
-
-        return f"http://{LOOPBACK}:{self.chaperone_port}"
-
-    # ---------------------------------------------------------------- clients
-
-    def door_client(self) -> httpx.AsyncClient:
-        """A client that plays Open WebUI: the door's key, the door's port."""
-        return httpx.AsyncClient(
-            base_url=f"http://{LOOPBACK}:{self.door_port}",
-            headers={"Authorization": f"Bearer {DOOR_KEY}"},
-            timeout=CLIENT_TIMEOUT,
-        )
-
-    def sandbox_client(self, family: str = FAMILY) -> httpx.AsyncClient:
-        """A client that plays one family's sandbox at the chaperone.
-
-        The bearer is the token that `caregiver` minted. It is in the
-        credential file, which the sandbox mounts (contract 03 §12).
-        """
-        return httpx.AsyncClient(
-            base_url=self.pep_url(),
-            headers={"Authorization": f"Bearer {self.credentials(family)['pep_token']}"},
-            timeout=CLIENT_TIMEOUT,
-        )
-
     # -------------------------------------------------- what crossed a boundary
 
     def credentials(self, family: str = FAMILY) -> dict[str, Any]:
@@ -307,7 +236,7 @@ class CaregiverStack(Stack):
         return document
 
     def grants(self, family: str = FAMILY) -> dict[str, Any]:
-        """The grant file of one family, as the chaperone reads it."""
+        """The grant file of one family."""
         document: dict[str, Any] = _read_json(self.tree.grant_file(family))
 
         return document
@@ -326,12 +255,6 @@ class CaregiverStack(Stack):
         document = self.tree.status(family)
 
         return None if document is None else str(document["state"])
-
-    def serves(self, family: str = FAMILY, sandbox: str | None = None) -> bool:
-        """True when the family is `in_sync` on one `ready` sandbox."""
-        box = sandbox or first_sandbox(family)
-
-        return self.state(family) == IN_SYNC and self.sandboxes(family) == [(box, READY)]
 
     def sbx_commands(self) -> list[tuple[str, ...]]:
         """The arguments of each `sbx` command that is not `exec`, in call order.

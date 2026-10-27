@@ -1,4 +1,4 @@
-"""Invariant 18, with both wires in: one file becomes a callable tool.
+"""Invariant 18, with both wires in: one file becomes a roster row.
 
 `test_handover_r7f_invariant18.py`, read against the rule "is every step
 real where it can be, and does each fake stand exactly where the design
@@ -7,7 +7,8 @@ of them can hide a missing wire each: a test that calls the reconciler
 directly cannot see that nothing else calls it, and a test that writes the
 roster cannot see that nothing else writes it.
 
-This is the same seven steps with those three closed.
+This is root's steps with those three closed. The test stops where
+root's work ends: at the roster and the signal to the PEP.
 
 | Step | Design | Here | The fake stands where |
 |---|---|---|---|
@@ -17,7 +18,6 @@ This is the same seven steps with those three closed.
 | 4 the operator pastes | a human, ROOT seals | **the real intake, TLS, real `sops`** | a human |
 | 5 the operator taps | a human | a granting transport | a human |
 | 6 the PEP reloads | root writes the roster | **`executor.roster`, the real one** | nothing |
-| 7 a family is granted | data | `decide_family`, real | nothing |
 
 What is still faked, and why each one has to be: `uv` and `curl`
 (`McpFake` — no test installs a real PyPI distribution), `systemctl` (a
@@ -26,22 +26,19 @@ recorder, because the link is how a test learns a token that no route
 ever answers with).
 
 Then the same path BACKWARDS, which nothing had ever run: the operator deletes
-the file, the loop asks for a release again, root writes a roster without
-that row, the reload removes the upstream, and the tool is denied.
+the file, the loop asks for a release again, and root writes a roster
+without that row.
 """
 
 from __future__ import annotations
 
-import asyncio
 import http.client
 import json
 import os
 import shutil
 import ssl
 import subprocess
-import sys
 from dataclasses import replace
-from functools import partial
 from pathlib import Path
 from typing import Final, cast
 from urllib.parse import urlencode, urlsplit
@@ -57,11 +54,6 @@ from caregiver.policy_fleet import FakeChecker, FleetPolicy, PolicyTarget
 from caregiver.reconcile import Actors
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
-from chaperone.family_decisions import decide_family
-from chaperone.family_grants import FamilyGrants, token_digest
-from chaperone.mcp_client import Launcher, StdioUpstreamPool
-from chaperone.reload_pool import ReloadablePool
-from chaperone.reload_wiring import ReloadTrigger, RosterSource
 from handover.catalog import CATALOG_BY_NAME
 from handover.executor.approval import Decision, Summary, Verdict
 from handover.executor.drain import Counter, handle
@@ -105,19 +97,9 @@ LOOPBACK: Final = "127.0.0.1"
 CLIENT_TIMEOUT_S: Final = 10.0
 
 #: What the operator pastes at step 4. Obviously fake, and this test proves it
-#: reaches exactly one place: the child's environment.
+#: reaches no ledger, no roster and no argv word root builds.
 PASTED: Final = "pasted-by-the-operator-at-step-4"
 NOW: Final = 1_758_153_600.0
-
-STUB: Final = Path(__file__).resolve().parent.parent.parent / "chaperone/tests/stub_mcp_server.py"
-
-#: The PEP starts every upstream through `chaperone-as`, as its own
-#: `mcp-<name>` user, which a test cannot become. This is that launcher
-#: with the switch faked, for every generation the pool builds.
-AS_TEST_USER: Final = partial(
-    StdioUpstreamPool,
-    launcher=Launcher((sys.executable, str(STUB.with_name("fake_run_as.py")), "--")),
-)
 
 #: The one file the operator writes (§4.1 step 1), and the lock the same pull
 #: request reviewed beside it (contract 01b §3.4).
@@ -140,13 +122,6 @@ tools = [
 #: `mcp-servers` as contract 06 §1 row 6 has it: one venv, no unit, so
 #: nothing restarts for it and the reload is the only thing that moves.
 BUILD_LINE: Final = 'build:\n  - ["/usr/local/bin/uv", "sync", "--frozen"]\ninstall:'
-
-#: What `McpFake` writes as the installed console script. It is a real
-#: wrapper around the stub MCP server, so the command ROOT put in the
-#: roster is the command the PEP actually executes. `exec` never returns,
-#: so the `exit 0` the fake appends is dead text.
-STUB_WRAPPER: Final = f'#!/bin/sh\nexec "{sys.executable}" "{STUB}" "$@"\n'
-
 
 # --- the bench ---------------------------------------------------------------
 
@@ -210,7 +185,7 @@ class Bench:
     def release(self, request: Path, live: str, wanted: str) -> str:
         """The real executor, over the real spool, into this temp root."""
         run = FakeRun(answers=git_host_answers())
-        mcp = McpFake(shebang=STUB_WRAPPER, entrypoint="kagimcp")
+        mcp = McpFake(entrypoint="kagimcp")
         _teach(run, mcp, self.components, _manifest(self.components))
         host = replace(
             fake_host(self.tmp, run),
@@ -448,40 +423,14 @@ def _client(port: int) -> http.client.HTTPSConnection:
     return http.client.HTTPSConnection(LOOPBACK, port, context=context, timeout=CLIENT_TIMEOUT_S)
 
 
-# --- step 7's family file ----------------------------------------------------
-
-FAMILY_TOKEN: Final = "test-family-token-chat"
-
-
-def _grants(tools: dict[str, list[str]]) -> FamilyGrants:
-    return FamilyGrants.model_validate(
-        {
-            "version": 2,
-            "family": "chat",
-            "rev": "01K5J9QW3R7T0ZP4YB2H6N8M1D",
-            "token_sha256": [token_digest(FAMILY_TOKEN)],
-            "model_alias": "agent-router",
-            "tools": tools,
-            "verbs": {},
-            "delegates": [],
-            "approval": [],
-            "limits": {"pep_rpm": 60, "max_inflight_delegations": 2, "max_open_gates": 10},
-        }
-    )
-
-
 # --- the test ----------------------------------------------------------------
 
 
-@pytest.mark.anyio
-async def test_one_file_one_secret_one_tap_and_then_the_same_backwards(
+def test_one_file_one_secret_one_tap_and_then_the_same_backwards(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     bench = Bench(tmp_path)
-    recipient, key_file = _age_key(tmp_path, monkeypatch)
-    # The PEP's own key. `secrets._decrypt_one` runs `sops -d <path>` and
-    # reads this from the environment, exactly as its unit sets it.
-    monkeypatch.setenv("SOPS_AGE_KEY_FILE", str(key_file))
+    recipient, _ = _age_key(tmp_path, monkeypatch)
 
     # -- step 1: the operator writes one file ---------------------------
     _write_server(bench.registry)
@@ -510,66 +459,19 @@ async def test_one_file_one_secret_one_tap_and_then_the_same_backwards(
     assert list(written) == [SERVER]
     assert written[SERVER]["command"] == str(bench.installed / SERVER / "bin" / "kagimcp")
 
-    # -- step 6b: the PEP reloads. Nothing restarts -----------------------
-    base = tmp_path / "base-upstreams.yaml"
-    base.write_text(yaml.safe_dump({}), encoding="utf-8")
-    source = RosterSource(
-        upstreams_file=base, secrets_dir=bench.secrets, generated_file=bench.roster
-    )
-    pool = ReloadablePool({}, {}, make_pool=AS_TEST_USER)
-    await pool.start()
-    trigger = ReloadTrigger(pool, source)
-    try:
-        report = await asyncio.wait_for(trigger.reload_once(), 30.0)
+    # -- backwards: the operator deletes the file -------------------------
+    shutil.rmtree(bench.registry / "mcp" / SERVER)
+    bench.now += 1.0
+    bench.reconcile()
+    removal = [one for one in bench.requests()]
 
-        assert report is not None
-        assert report.added == (SERVER,), f"failed: {[one.detail for one in report.failed]}"
+    assert len(removal) == 1, "a removed server file asked for no release"
 
-        # -- step 7: a family file grants it. Data, no release ------------
-        grants = _grants({SERVER: [TOOL]})
-        decision = decide_family(
-            grants,
-            f"{SERVER}__{TOOL}",
-            {"text": "hi"},
-            rate_exceeded=False,
-            known_servers=frozenset(pool.live_specs),
-        )
+    outcome = bench.release(removal[0], NEW_VERSION, NEXT_VERSION)
 
-        assert decision.allow, decision.reason
-        # The whole point: the value the operator pasted, sealed by a real `sops`
-        # and read back by the PEP's own loader, is in the child's
-        # environment. `stub_mcp_server` echoes `STUB_SECRET` back.
-        assert await pool.call(SERVER, TOOL, {"text": "hi"}) == f"{PASTED}:hi"
-
-        # -- backwards: the operator deletes the file ---------------------
-        shutil.rmtree(bench.registry / "mcp" / SERVER)
-        bench.now += 1.0
-        bench.reconcile()
-        removal = [one for one in bench.requests()]
-
-        assert len(removal) == 1, "a removed server file asked for no release"
-
-        outcome = bench.release(removal[0], NEW_VERSION, NEXT_VERSION)
-
-        assert outcome.endswith("succeeded"), outcome
-        assert yaml.safe_load(bench.roster.read_text(encoding="utf-8")) == {}
-        assert bench.signals, "root never signalled the PEP for the removal"
-
-        report = await asyncio.wait_for(trigger.reload_once(), 30.0)
-
-        assert report is not None
-        assert report.removed == (SERVER,)
-        # The tool is denied, and by the PEP rather than by the family
-        # file: the grant is untouched and the upstream is simply gone.
-        assert not decide_family(
-            grants,
-            f"{SERVER}__{TOOL}",
-            {"text": "hi"},
-            rate_exceeded=False,
-            known_servers=frozenset(pool.live_specs),
-        ).allow
-    finally:
-        await pool.stop()
+    assert outcome.endswith("succeeded"), outcome
+    assert yaml.safe_load(bench.roster.read_text(encoding="utf-8")) == {}
+    assert bench.signals, "root never signalled the PEP for the removal"
 
     # Invariant 13, over the whole path: the pasted value is in no ledger,
     # no roster, no gap file and no argv word root ever built.

@@ -46,7 +46,6 @@ turn. The `attendance` service takes that call from four doors.
 
 | Directory | Component | Unit | What it owns | Read |
 |---|---|---|---|---|
-| `chaperone/` | `chaperone` | `creche-chaperone.service`, system, own user | Every action outside a sandbox. The one hardened unit. | [chaperone/AGENTS.md](chaperone/AGENTS.md) |
 | `attendance/` | `attendance` | `creche-attendance.service`, user | Every session, turn, journal and event stream. | [attendance/AGENTS.md](attendance/AGENTS.md) |
 | `door-owui/` | in `attendance` | `creche-door-owui.service`, user | The Open WebUI door: an OpenAI-compatible surface. | [door-owui/AGENTS.md](door-owui/AGENTS.md) |
 | `door-tui/` | in `attendance` | none, a command | The terminal door: `agent-tui <family>`. | [door-tui/AGENTS.md](door-tui/AGENTS.md) |
@@ -59,6 +58,9 @@ turn. The `attendance` service takes that call from four doors.
 | `family/` | in `caregiver` | none, a library | The `family.toml` and `server.toml` schemas, the validator, the registry loader. | [family/AGENTS.md](family/AGENTS.md) |
 | `library/` | none | `index@.timer`, user | The retrieval index builder. Not an agent. | [library/AGENTS.md](library/AGENTS.md) |
 | `toybox/` | none | none | The one pi version pin. | [toybox/AGENTS.md](toybox/AGENTS.md) |
+
+The chaperone is the Rust program of the `chaperone` repository. Its unit,
+`creche-chaperone.service`, ships from that repository.
 
 The other directories:
 
@@ -75,8 +77,7 @@ The other directories:
 
 | You want to | Look in |
 |---|---|
-| Decide whether a tool call is allowed | `chaperone/src/chaperone/family_decisions.py` |
-| Add a verb the chaperone executes itself | `chaperone/src/chaperone/verbs.py`, then `family_app.py` |
+| Change what the chaperone lets a family call | `caregiver/src/caregiver/policy_file.py`, `policy_fleet.py` |
 | Change what a family file may say | `family/src/agent_family/model.py` (shape), `validate.py` (values) |
 | Change how a family change is priced as live or replace | `family/src/agent_family/classify.py` |
 | Change a reconcile step | `caregiver/src/caregiver/steps.py`, `reconcile.py` |
@@ -118,9 +119,9 @@ The playpen build needs `AGENT_LAN_ADDRESS` in the environment. CI sets
 
 The two verbs differ, and the difference is a security property.
 
-- **A deploy** puts this repository at `/opt/creche`, fills its venv and
-  restarts one unit: the chaperone. `sudo creche-deploy <ref>` is the single
-  sudoers entry on the host.
+- **A deploy** puts this repository at `/opt/creche` and fills its venv. It
+  restarts no unit. `sudo creche-deploy <ref>` is the single sudoers entry
+  on the host.
 - **A release** replaces one component tree under `/opt/components/<name>`
   or `~/.local/components/<name>`, then restarts that component's unit.
   The `handover` executor does this as root, from a request file, after a
