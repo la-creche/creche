@@ -133,8 +133,6 @@ NO_ARGUMENTS_SHA256: Final = "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310
 #: service that reads another name cannot start there. A change costs this
 #: one name.
 PRINCIPALS: Final = (
-    "door-owui",
-    "door-tui",
     "door-delegate",
     "door-dispatch",
     "door-trigger",

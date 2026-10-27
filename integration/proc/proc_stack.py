@@ -171,7 +171,7 @@ class Stack:
 
     # ---------------------------------------------------------------- clients
 
-    def attendance_client(self, principal: str = "door-owui") -> httpx.AsyncClient:
+    def attendance_client(self, principal: str = "door-trigger") -> httpx.AsyncClient:
         """A client to `attendance` that holds the token of one principal."""
         return httpx.AsyncClient(
             base_url=_UDS_BASE_URL,
