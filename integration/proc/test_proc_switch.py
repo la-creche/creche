@@ -9,7 +9,7 @@ cannot start, which come before the handshake succeeds.
 from __future__ import annotations
 
 import httpx
-from proc_owui import OwuiStack
+from proc_stack import Stack
 from proc_tree import FAMILY, SANDBOX, Tree, write_playpen_env, write_status
 
 SWITCH_PATH = "/internal/switch-sandbox"
@@ -24,37 +24,37 @@ HTTP_FORBIDDEN = 403
 HTTP_UNAVAILABLE = 503
 
 
-async def test_the_caregiver_token_clears_the_internal_check(owui: OwuiStack) -> None:
+async def test_the_caregiver_token_clears_the_internal_check(attended: Stack) -> None:
     """Contract 02 §3.1 and contract 05 §5.3 rule 8.
 
     The token authenticates and may make an internal call. Only the pair is
     refused, because `from` and `to` name one sandbox.
     """
-    response = await _switch(owui, DRAIN, to=SANDBOX)
+    response = await _switch(attended, DRAIN, to=SANDBOX)
 
     assert response.status_code == HTTP_BAD_REQUEST
     assert response.json()["error"]["code"] == "bad_request"
 
 
-async def test_no_door_token_reaches_the_internal_call(owui: OwuiStack) -> None:
+async def test_no_door_token_reaches_the_internal_call(attended: Stack) -> None:
     """Contract 02 §3.1: no door token reaches `/internal/*`."""
-    _publish_incoming(owui.tree)
+    _publish_incoming(attended.tree)
 
-    response = await _switch(owui, DRAIN, principal="door-owui")
+    response = await _switch(attended, DRAIN, principal="door-trigger")
 
     assert response.status_code == HTTP_FORBIDDEN
     assert response.json()["error"]["code"] == "forbidden"
-    assert len(owui.sbx_calls()) == 0, "a refused call dialled a sandbox"
+    assert len(attended.sbx_calls()) == 0, "a refused call dialled a sandbox"
 
 
-async def test_a_switch_onto_a_sandbox_that_cannot_start_is_refused(owui: OwuiStack) -> None:
+async def test_a_switch_onto_a_sandbox_that_cannot_start_is_refused(attended: Stack) -> None:
     """Contract 05 §5.3 rule 8: the handshake runs before anything moves.
 
     The incoming sandbox runs no facade, so ACP `initialize` gets no answer.
     The call is refused, and nothing moves.
     """
-    _publish_incoming(owui.tree)
-    response = await _switch(owui, DRAIN)
+    _publish_incoming(attended.tree)
+    response = await _switch(attended, DRAIN)
 
     assert response.status_code == HTTP_UNAVAILABLE
     assert response.json()["error"]["code"] == "sandbox_unavailable"
@@ -67,7 +67,7 @@ def _publish_incoming(tree: Tree) -> None:
 
 
 async def _switch(
-    owui: OwuiStack,
+    attended: Stack,
     mode: str,
     *,
     to: str = NEXT_SANDBOX,
@@ -77,5 +77,5 @@ async def _switch(
     """One switch call (contract 05 §5.1), with the token of one principal."""
     body = {"family": FAMILY, "from": SANDBOX, "to": to, "mode": mode, "reason": reason}
 
-    async with owui.attendance_client(principal) as client:
+    async with attended.attendance_client(principal) as client:
         return await client.post(SWITCH_PATH, json=body)

@@ -13,15 +13,9 @@
       v
     attendance and the stand-ins      `proc_stack.py`
 
-Two forms exist:
-
-alone
-    `caregiver` and its three stand-ins. No `attendance` answers the switch
-    call, so each sandbox stays `creating` (contract 05 §4.2 rule 4). A
-    scenario that reads a grant through the chaperone adds the chaperone.
-the house
-    `caregiver`, `attendance`, the Open WebUI door and the chaperone. A test
-    plays Open WebUI at the door, and it plays a sandbox at the chaperone.
+`caregiver` runs with its three stand-ins. No `attendance` answers the
+switch call, so each sandbox stays `creating` (contract 05 §4.2 rule 4). A
+scenario that reads a grant through the chaperone adds the chaperone.
 
 No file of a family comes from this suite. A test writes the registry, and
 `caregiver` publishes each family from it.
@@ -52,7 +46,6 @@ from typing import Any, Final
 import httpx
 from proc_delegate import chaperone_env
 from proc_harness import LOOPBACK, Child, Finished
-from proc_owui import door_env
 from proc_services import Service
 from proc_stack import CLIENT_TIMEOUT, Stack, base_env
 from proc_standins import (
@@ -64,7 +57,6 @@ from proc_standins import (
     start_litellm,
 )
 from proc_tree import (
-    DOOR_KEY,
     FAMILY,
     IMAGE,
     LAN_ADDRESS,
@@ -196,8 +188,6 @@ class CaregiverStack(Stack):
     caregiver: Child | None = None
     litellm: Child | None = None
     litellm_port: int = 0
-    door: Child | None = None
-    door_port: int = 0
     chaperone: Child | None = None
     chaperone_port: int = 0
 
@@ -240,21 +230,6 @@ class CaregiverStack(Stack):
             Service.CHAPERONE, lambda bind: chaperone_env(self.tree, bind)
         )
 
-    def start_house(self) -> None:
-        """Start `attendance`, the door and the chaperone. Then start `caregiver`.
-
-        `caregiver` asks `attendance` for the first handshake in its first
-        pass. So `attendance` answers before `caregiver` starts.
-        """
-        self.spawn_attendance()
-        self.door, self.door_port = self.start_on_port(
-            Service.DOOR_OWUI, lambda bind: door_env(self.tree, bind)
-        )
-        self.start_chaperone()
-        self.start_litellm()
-        self.await_attendance()
-        self.spawn_caregiver()
-
     def await_published(self, family: str = FAMILY) -> None:
         """Wait until `caregiver` alone ends its first pass for one family.
 
@@ -268,7 +243,7 @@ class CaregiverStack(Stack):
         )
 
     def await_serving(self, family: str = FAMILY, sandbox: str | None = None) -> None:
-        """Wait until one family of the house is `in_sync` on one `ready` sandbox."""
+        """Wait until one family is `in_sync` on one `ready` sandbox."""
         box = sandbox or first_sandbox(family)
         wait_until(lambda: self.serves(family, box), f"{family} to be {IN_SYNC} with {box} {READY}")
 
@@ -280,14 +255,6 @@ class CaregiverStack(Stack):
         return f"http://{LOOPBACK}:{self.chaperone_port}"
 
     # ---------------------------------------------------------------- clients
-
-    def door_client(self) -> httpx.AsyncClient:
-        """A client that plays Open WebUI: the door's key, the door's port."""
-        return httpx.AsyncClient(
-            base_url=f"http://{LOOPBACK}:{self.door_port}",
-            headers={"Authorization": f"Bearer {DOOR_KEY}"},
-            timeout=CLIENT_TIMEOUT,
-        )
 
     def sandbox_client(self, family: str = FAMILY) -> httpx.AsyncClient:
         """A client that plays one family's sandbox at the chaperone.

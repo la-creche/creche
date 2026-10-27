@@ -18,9 +18,6 @@ from dataclasses import dataclass
 from re import Pattern
 from typing import Final
 
-from agent_door_owui import headers as owui_headers
-from agent_door_owui import openai_api as owui_api
-from agent_door_owui.errors import DoorError
 from agent_door_trigger import ulid as trigger_ulid
 from agent_door_tui import ids as tui_ids
 from agent_family import grammar as family_grammar
@@ -179,28 +176,6 @@ NOTE_CLAIMED: Final = (
     "absent. It denies no call."
 )
 
-# --- door-owui: an id from a request header, and a family from a model name ---
-
-_OWUI_MESSAGE_ID: Final = "m1"
-
-
-def _owui_chat_id(text: str) -> Outcome:
-    given = {owui_headers.CHAT_ID_HEADER: text, owui_headers.MESSAGE_ID_HEADER: _OWUI_MESSAGE_ID}
-    try:
-        ids = owui_headers.read_ids(given)
-    except DoorError as exc:
-        return False, {"code": exc.code}
-
-    return True, {"chat_id": ids.chat_id, "session": ids.session}
-
-
-def _owui_family_of(text: str) -> Outcome:
-    try:
-        return True, owui_api.family_of(text)
-    except DoorError as exc:
-        return False, {"code": exc.code}
-
-
 # --- handover: a tag, through the function that reads the newest version ---
 
 
@@ -276,33 +251,6 @@ SESSION_CASES: Final = (
     ("owui-prefix-133-chars", "owui-" + "a" * 128),
     ("leading-newline", "\na"),
     ("crlf", "a\r\n"),
-)
-
-#: Every character that `str.strip` removes under each supported Python: the
-#: `White_Space` property of Unicode and the four separators U+001C to U+001F.
-#: `str::trim` of Rust leaves those four in place.
-_STRIPPED: Final = (
-    "\t\n\x0b\x0c\r\x1c\x1d\x1e\x1f \x85\xa0\u1680"
-    "\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
-    "\u2028\u2029\u202f\u205f\u3000"
-)
-
-#: The white space at the ends of a header value. The Open WebUI door strips
-#: it before it validates the id.
-HEADER_SPACE_CASES: Final = (
-    ("every-stripped-character", _STRIPPED + "a" + _STRIPPED),
-    ("leading-unit-separator", "\x1fa"),
-    ("trailing-no-break-space", "a\u00a0"),
-    ("zero-width-space", "a\u200b"),
-    ("mongolian-vowel-separator", "a\u180e"),
-    ("byte-order-mark", "\ufeffa"),
-)
-
-#: The cap of a chat id. The Open WebUI door puts `owui-` before the id, and
-#: the session id that results has 128 characters or less.
-OWUI_CHAT_CASES: Final = (
-    ("max-123-chars", "a" * 123),
-    ("over-124-chars", "a" * 124),
 )
 
 _ULID: Final = "01J9ZQ5V7Y8X4W3T2S1R0QPNMK"
@@ -572,11 +520,6 @@ GRAMMARS: Final = (
                     ),
                     _grant_copy("family", lambda text: _grant_accepts(text)),
                     Copy("door_tui", "agent_door_tui.ids.is_family", _predicate(tui_ids.is_family)),
-                    Copy(
-                        "door_owui",
-                        "agent_door_owui.openai_api.is_family_name",
-                        _predicate(owui_api.is_family_name),
-                    ),
                     _pattern_copy(
                         "family_file",
                         "agent_family.grammar.FAMILY_NAME",
@@ -717,58 +660,6 @@ GRAMMARS: Final = (
                         "handover_executor",
                         "handover.executor.request.SESSION_ID_RE",
                         executor_request.SESSION_ID_RE,
-                    ),
-                ),
-            ),
-        ),
-    ),
-    Grammar(
-        "owui_chat_id",
-        "3f2b1c9e-8a55-4c1e-9f0a-2b6d7e8f9a12",
-        "a",
-        SESSION_CASES + HEADER_SPACE_CASES + OWUI_CHAT_CASES,
-        (
-            Concept(
-                "owui_chat_id",
-                "contract 02 §2",
-                (
-                    Copy(
-                        "door_owui",
-                        "agent_door_owui.headers.read_ids, header x-owui-chat-id",
-                        _owui_chat_id,
-                        (
-                            "The input is the header value. The entry point strips white space "
-                            "from both ends before it validates.",
-                            "The value holds the chat id and the session id that the door makes "
-                            "from it. The session id is 5 characters longer than the chat id.",
-                            "The door refuses a chat id of more than 123 characters. The session "
-                            "id of such a chat id has more than 128 characters.",
-                        ),
-                    ),
-                ),
-            ),
-        ),
-    ),
-    Grammar(
-        "owui_model",
-        "agent:vault-2",
-        "a",
-        (
-            *((slug, f"agent:{text}") for slug, text in NAME_CASES),
-            ("no-prefix", "chat"),
-            ("upper-prefix", "Agent:chat"),
-            ("prefix-only", "agent:"),
-        ),
-        (
-            Concept(
-                "owui_model",
-                "contract 02 §2",
-                (
-                    Copy(
-                        "door_owui",
-                        "agent_door_owui.openai_api.family_of",
-                        _owui_family_of,
-                        ("The input is a model name. The value is the family name inside it.",),
                     ),
                 ),
             ),

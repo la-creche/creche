@@ -118,7 +118,7 @@ CATALOG: tuple[CatalogRow, ...] = (
         "attendance",
         Kind.VENV,
         Releases.YES,
-        ("door-acp", "door-owui", "door-tui", "door-trigger", "family"),
+        ("door-acp", "door-tui", "door-trigger", "family"),
     ),
     CatalogRow("caregiver", Repo.AGENT_CONTROL, "caregiver", Kind.VENV, Releases.YES, ("family",)),
     CatalogRow(

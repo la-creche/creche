@@ -50,11 +50,10 @@ if TYPE_CHECKING:
 REPO_ROOT: Final = Path(__file__).resolve().parents[2]
 SCRIPT: Final = REPO_ROOT / "bin" / "rework-watchdog.sh"
 
-#: The five units the script asks `systemctl --user is-failed` about.
+#: The four units the script asks `systemctl --user is-failed` about.
 UNITS: Final = (
     "creche-attendance.service",
     "creche-caregiver.service",
-    "creche-door-owui.service",
     "creche-trigger-webhooks.service",
     "creche-noticeboard.service",
 )

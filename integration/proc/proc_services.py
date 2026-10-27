@@ -40,7 +40,6 @@ class Service(StrEnum):
     """Every program of this repository that the suite can start."""
 
     ATTENDANCE = "attendance"
-    DOOR_OWUI = "door-owui"
     DOOR_TRIGGER = "door-trigger"
     DOOR_ACP = "door-acp"
     DOOR_TUI = "door-tui"
@@ -101,12 +100,6 @@ SERVICES: Final[dict[Service, StartEntry]] = {
         selector=("-m", "attendance"),
         override="CRECHE_PROC_ATTENDANCE",
         units=("creche-attendance.service",),
-    ),
-    Service.DOOR_OWUI: StartEntry(
-        program="python",
-        selector=("-m", "agent_door_owui"),
-        override="CRECHE_PROC_DOOR_OWUI",
-        units=("creche-door-owui.service",),
     ),
     Service.DOOR_TRIGGER: StartEntry(
         program="agent-trigger",

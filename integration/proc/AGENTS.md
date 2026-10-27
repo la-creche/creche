@@ -63,7 +63,7 @@ the variable.
 | TEI | The embedding service that the index builder dials. It gives one vector for each text. |
 | topology | The services that one fixture starts together. |
 | terminal | A pseudo-terminal. A test holds the master side. A program holds the other side as its controlling terminal. |
-| listener | A service that listens for HTTP requests: `attendance`, the Open WebUI door, the chaperone, the noticeboard, and the `serve` command of the trigger door. |
+| listener | A service that listens for HTTP requests: `attendance`, the chaperone, the noticeboard, and the `serve` command of the trigger door. |
 | judged command | The command that a run starts for a service: the default command, or the value of the variable of the service. |
 | reference | The default command of a service, when a scenario runs it beside the judged command. |
 
@@ -75,7 +75,6 @@ command and the name of one environment variable.
 | Service | Default command | Variable |
 |---|---|---|
 | `attendance` | `python -m attendance` | `CRECHE_PROC_ATTENDANCE` |
-| `door-owui` | `python -m agent_door_owui` | `CRECHE_PROC_DOOR_OWUI` |
 | `door-trigger` | `agent-trigger` | `CRECHE_PROC_DOOR_TRIGGER` |
 | `door-acp` | `agent-door-acp` | `CRECHE_PROC_DOOR_ACP` |
 | `door-tui` | `agent-tui` | `CRECHE_PROC_DOOR_TUI` |
@@ -194,11 +193,11 @@ Nine topologies exist. `attendance` and the `sbx` stand-in are in the
 first two.
 
 ```
-a test (plays Open WebUI)                a test (plays the bridge in a sandbox)
-  | HTTP, loopback port                    | HTTP, loopback port
-  v                                        v
-door-owui                                chaperone
-  | HTTP over a Unix socket                | reads the grant file at each call
+a test (plays a door)                    a test (plays the bridge in a sandbox)
+  | HTTP over a Unix socket                | HTTP, loopback port
+  |                                        v
+  |                                      chaperone
+  |                                        | reads the grant file at each call
   v                                        | HTTP over a Unix socket
 attendance  <------------------------------+
   | stdio, ACP v1
@@ -207,8 +206,8 @@ sbx exec --env-file <env file> <sandbox> -- creche-facade
              the sbx stand-in, found through PATH
 ```
 
-The third topology starts `caregiver`. It has two forms: `caregiver` alone,
-and the house. A scenario can add the chaperone to the first form.
+The third topology starts `caregiver` alone. A scenario can add the
+chaperone.
 
 ```
 a test (edits one file of the registry)
@@ -220,7 +219,7 @@ caregiver ---- sbx create, policy, rm ---> the sbx stand-in, with state
   | the config mount and the env file of each sandbox
   | POST /internal/switch-sandbox, over the Unix socket
   v
-attendance, door-owui and the chaperone      only in the house
+no `attendance`: each sandbox stays `creating`
 ```
 
 The table gives the fourth, the fifth and the sixth topology. Each one
@@ -231,7 +230,7 @@ starts `attendance` with the stand-in of the first picture. None starts
 |---|---|---|
 | The fourth, `proc_trigger.py`: the trigger door and `attendance` | an automation on the LAN, over HTTP on a loopback port, and a systemd timer, which runs `agent-trigger fire` to its end | reads the registry, the status documents, the webhook bearer files and the outcome records. Dials `attendance` as `door-trigger`. |
 | The fifth, `proc_board.py`: the noticeboard and `attendance` | the reverse proxy and a browser, over HTTP on a loopback port | reads the status documents, the report, the outcome records and the audit files. Dials `attendance` as `view-ro`. Writes one git commit in the registry of the root. |
-| The sixth, `proc_tui.py`: the terminal door, the Open WebUI door and `attendance` | the operator at a keyboard, on a terminal | dials `attendance` as `door-tui`. Reads the status document. Each scenario is a refusal before `sbx exec -it`: the image holds no launcher. |
+| The sixth, `proc_tui.py`: the terminal door and `attendance` | the operator at a keyboard, on a terminal | dials `attendance` as `door-tui`. Reads the status document. Each scenario is a refusal before `sbx exec -it`: the image holds no launcher. |
 
 The fifth topology has a second program: the verify hook of the
 noticeboard. A test plays the release executor. It writes the env file of
@@ -352,13 +351,11 @@ each one, and each one runs to its end.
 
 | File | Topology | What the scenarios check |
 |---|---|---|
-| `test_proc_owui_turns.py` | door and `attendance` | the two stage 1 scenarios that run no turn: the model list and an empty chat id. The other eleven ran a turn over the session API, which left `attendance` in phase 2 row 21 |
-| `test_proc_owui_start.py` | door and `attendance` | a start, a refused start, the socket mode, a token reload |
-| `test_proc_switch.py` | door and `attendance` | the refusals of the switch call of contract 05 §5. The handshake runs over ACP since phase 2 row 20 |
+| `test_proc_switch.py` | `attendance` alone | the refusals of the switch call of contract 05 §5. The handshake runs over ACP since phase 2 row 20 |
 | `test_proc_delegate.py` | chaperone and `attendance` | the manifest and the refusals of contract 04 §7. The job runs over ACP since phase 2 row 18 |
-| `test_proc_caregiver_start.py` | `caregiver` alone, and the house | a start, a refused start, a signal, a kill, and the verbs that run to an end |
-| `test_proc_caregiver_files.py` | `caregiver` alone, `caregiver` with the chaperone, and the house | each file that `caregiver` publishes, read as the next program reads it, and the seams of `integration/tests_manager` that assert on a file |
-| `test_proc_override.py` | door and `attendance`, and the last four topologies | a service starts through its variable: one that serves, one that runs to its end, one on a terminal |
+| `test_proc_caregiver_start.py` | `caregiver` alone | a start, a refused start, a signal, a kill, and the verbs that run to an end |
+| `test_proc_caregiver_files.py` | `caregiver` alone, and `caregiver` with the chaperone | each file that `caregiver` publishes, read as the next program reads it, and the seams of `integration/tests_manager` that assert on a file |
+| `test_proc_override.py` | `attendance` alone, and the last four topologies | a service starts through its variable: one that serves, one that runs to its end, one on a terminal |
 | `test_proc_trigger_fire.py` | trigger door and `attendance` | the timer command: a refused family, `attendance` down, `--check`, a refused start. The jobs ran over the session API and left in phase 2 row 21 |
 | `test_proc_trigger_webhooks.py` | trigger door and `attendance` | the listener: the one 404, a body the door refuses, the bearer files, a start, a refused start, `SIGTERM`. The jobs ran over the session API and left in phase 2 row 21 |
 | `test_proc_board_pages.py` | noticeboard and `attendance` | each page of `docs/rework/spec.md` §8.1 that reads no session, a bad route parameter, the access key |
@@ -465,9 +462,9 @@ each one, and each one runs to its end.
 
 ## The `caregiver` topology
 
-`proc_caregiver.py` holds the topology. The fixtures are `caregiver_alone`
-and `house`. `caregiver_prepared` and `house_prepared` write the root and
-start no service, for a scenario that changes the registry first.
+`proc_caregiver.py` holds the topology. The fixture is `caregiver_alone`.
+`caregiver_prepared` writes the root and starts no service, for a scenario
+that changes the registry first.
 
 1. A test changes the registry and nothing else. `caregiver` publishes each
    family from it. Do not write a status document, a grant file, a
@@ -752,7 +749,7 @@ the text of the failure. Work down this list.
   `proc_tree.py`.
 - **CONTRACT-QUESTION, the exit code of a refused start.** Contract 02 §3
   rule 7 names no exit code. The suite accepts each code that is not 0. A
-  change to one fixed code costs one assertion in `test_proc_owui_start.py`.
+  change to one fixed code costs one assertion per start scenario.
 - **CONTRACT-QUESTION, the exit codes of `caregiver`.** No contract names
   one. `caregiver/AGENTS.md` gives three codes: 0, 1 and 2. The suite holds
   those three where `caregiver` selects one. Two cases are different: a
@@ -824,7 +821,7 @@ the text of the failure. Work down this list.
   says that the family keeps serving after a refused switch. The suite holds
   `false` for the fault of an incoming sandbox while another sandbox serves.
   No scenario holds it since phase 2 row 20: the switch handshake runs
-  over ACP, and the house has no facade.
+  over ACP, and no topology with `caregiver` has a facade.
 - **CONTRACT-QUESTION, a registry with no family.** No contract says what
   it means. The suite holds the rule of `caregiver/AGENTS.md`: an empty
   registry deletes no family. A change costs one scenario in
@@ -884,11 +881,10 @@ the text of the failure. Work down this list.
   "Awaiting permission" text as a tool error. Phase 3 needs one check by
   hand with a real model.
 - **The doors of the session API have no scenario that runs work.** The
-  Open WebUI door, the trigger door and the terminal door call
-  `/v1/sessions*`, which left `attendance` in phase 2 row 21. Each
-  scenario of those doors that created a session, ran a turn, held a lease
-  or read a journal left with it. Phase 3 deletes `door-owui` and
-  `door-tui` and moves `door-trigger` to ACP.
+  trigger door and the terminal door call `/v1/sessions*`, which left
+  `attendance` in phase 2 row 21. Each scenario of those doors that created
+  a session, ran a turn, held a lease or read a journal left with it.
+  Phase 3 deletes `door-tui` and moves `door-trigger` to ACP.
 - **A webhook call while `attendance` is down has no scenario.** No contract
   gives the answer of the listener for that case.
 - **CONTRACT-QUESTION, the exit code of a refused start of the noticeboard.**
@@ -1135,7 +1131,6 @@ the text of the failure. Work down this list.
   | Service | Unknown path | Wrong method | Final slash | `HEAD` on a `GET` route |
   |---|---|---|---|---|
   | `attendance` | 404, `application/json` | 405, `application/json` | 307, no content type | no `GET` route |
-  | `door-owui` | 404, `application/json` | 405, `application/json` | 307, no content type | 405, `application/json` |
   | `chaperone` | 404, `application/json` | 405, `application/json` | 307, no content type | 405, `application/json` |
   | `noticeboard` | 404, `application/json` | 405, `application/json` | 307, no content type | 405, `application/json` |
   | `door-trigger` | 404, `application/json` | 405, `application/json` | 307, no content type | no `GET` route |
@@ -1151,21 +1146,20 @@ the text of the failure. Work down this list.
     credential, each other listener answers 404.
 - **CONTRACT-QUESTION, a body that is not JSON.** Contract 02 §14 gives
   `attendance` the code `bad_request` with status 400. No contract gives the
-  Open WebUI door or the chaperone an answer, and contract 04 §5 has no row
-  for such a body. The suite holds one thing for the three services: a
+  chaperone an answer, and contract 04 §5 has no row for such a body. The
+  suite holds one thing for the two services: a
   status of the 4xx class, with no session and no turn. A change costs one
   assertion in `test_proc_edges.py`. `attendance` gets the bodies on
   `POST /dispatch/jobs`.
 
-  The scenario sends three bodies to each of the three services:
+  The scenario sends three bodies to each of the two services:
   - A text that is not JSON.
   - Three bytes that are not UTF-8.
   - 100,000 arrays, one inside the next. No contract gives a body a limit
     on its nesting. A reader with a limit refuses this body. A reader with
     no limit finds an array, and each request of the scenario is an object.
 
-  Today `attendance` answers 400 to each body. The door answers 400 with the
-  code `bad_body` to each body. The chaperone answers 422 to the text and
+  Today `attendance` answers 400 to each body. The chaperone answers 422 to the text and
   400 to the other two bodies.
 - **CONTRACT-QUESTION, a listener at a signal.** No contract says what a
   listener does at `SIGINT`, at `SIGHUP` with no reload, or at a stop with an
@@ -1173,15 +1167,14 @@ the text of the failure. Work down this list.
   `test_proc_edges.py` holds two things:
   - `SIGINT` ends each listener inside the `TimeoutStopSec` of its unit.
     Nothing answers at its address after that.
-  - `SIGHUP` ends the Open WebUI door and the noticeboard, and the port of
-    each one closes. Neither service has a reload.
+  - `SIGHUP` ends the noticeboard, and its port closes. It has no
+    reload.
 
   No scenario there reads an exit code. The services differ today:
   - After `SIGTERM`, `attendance` exits with code 0. The signal ends each
     other listener, so none of them has an exit code.
   - After `SIGINT`, each listener exits with code 0.
-  - `SIGHUP` ends the door and the noticeboard immediately. Neither has an
-    exit code.
+  - `SIGHUP` ends the noticeboard immediately. It has no exit code.
   - The chaperone has a reload only with a roster source. The chaperone of
     this suite has none, so `SIGHUP` ends it too. No scenario holds either
     case.
@@ -1367,9 +1360,9 @@ the text of the failure. Work down this list.
 | `acp_client.py` | the ACP client of a test: a WebSocket, as the web build of Panda opens it |
 | `reader_store.mjs` | the Node program that reads one index store with the statements of the bridge |
 | `proc_stack.py` | `attendance`, its environment, and the start of a service on a free port |
-| `proc_owui.py`, `proc_delegate.py`, `proc_caregiver.py`, `proc_trigger.py`, `proc_board.py`, `proc_tui.py`, `proc_library.py`, `proc_chaperone_rs.py`, `proc_exit.py` | one topology each |
+| `proc_delegate.py`, `proc_caregiver.py`, `proc_trigger.py`, `proc_board.py`, `proc_tui.py`, `proc_library.py`, `proc_chaperone_rs.py`, `proc_exit.py` | one topology each |
 | `proc_chaperone_pin.py`, `chaperone.pin` | the commit of the Rust chaperone, its build and its cache |
 | `proc_board_reports.py` | a start of the noticeboard with a changed environment, the readers of a report, of a paging link and of the cookie, the check of a JSON body, and a post of an exact size |
-| `proc_chat.py`, `proc_sse.py` | what Open WebUI sends, and how a test reads the SSE stream back |
+| `proc_chat.py`, `proc_sse.py` | the session id of a chat and `until`, and how a test reads the SSE stream back |
 | `proc_report.py` | what a failed test carries, and the end of the processes of one test |
 | `conftest.py` | the fixtures, the `slow` mark, the report hook, the check of the variables |

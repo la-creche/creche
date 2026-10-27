@@ -19,7 +19,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
 
-from agent_door_owui import families as owui_families
 from agent_door_trigger import families as trigger_families
 from agent_door_tui import status as tui_status
 from agent_door_tui.errors import DoorError
@@ -493,10 +492,6 @@ def _read_door_trigger(root: Path) -> tuple[bool, object]:
     return FAMILY in trigger_families.StatusFiles(root / FAMILIES_DIR).servable(), None
 
 
-def _read_door_owui(root: Path) -> tuple[bool, object]:
-    return FAMILY in owui_families.StatusFiles(root / FAMILIES_DIR).serving(), None
-
-
 _NOTE_PATH: Final = (
     "The input is the bytes of the status document of the family chat. The generator writes "
     "it to <root>/families/chat/status.json and gives the reader that root."
@@ -545,12 +540,6 @@ READERS: Final[tuple[Reader, ...]] = (
         "agent_door_trigger.families.StatusFiles.servable",
         _read_door_trigger,
         ("accepted means that the reader lists the family as one a trigger may start.",),
-    ),
-    Reader(
-        "door_owui",
-        "agent_door_owui.families.StatusFiles.serving",
-        _read_door_owui,
-        ("accepted means that the reader lists the family in the model picker.",),
     ),
 )
 

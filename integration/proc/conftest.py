@@ -33,7 +33,6 @@ from proc_delegate import DelegateStack
 from proc_exit import FACADE_PROGRAMS, ExitStack, facade_bin
 from proc_harness import Supervisor, end_leaked_groups
 from proc_library import LibraryStack, node_has_sqlite
-from proc_owui import OwuiStack
 from proc_report import describe, end_processes
 from proc_services import (
     KEEP_ROOTS_ENV,
@@ -43,6 +42,7 @@ from proc_services import (
     describe_table,
     unknown_variables,
 )
+from proc_stack import Stack
 from proc_tree import Tree, make_root, remove_root, socket_path_fits
 from proc_trigger import TriggerStack
 from proc_tui import TuiStack
@@ -150,34 +150,21 @@ def supervisor(tree: Tree, request: pytest.FixtureRequest) -> Iterator[Superviso
 
 
 @pytest.fixture
-def owui_prepared(tree: Tree, supervisor: Supervisor) -> OwuiStack:
-    """The first topology on disk, with no service started."""
-    stack = OwuiStack(tree, supervisor)
+def attended_prepared(tree: Tree, supervisor: Supervisor) -> Stack:
+    """`attendance` and the `sbx` stand-in on disk, with no service started."""
+    stack = Stack(tree, supervisor)
     stack.prepare()
 
     return stack
 
 
 @pytest.fixture
-def owui(owui_prepared: OwuiStack) -> OwuiStack:
-    """The first topology, serving. The `supervisor` fixture ends it."""
-    owui_prepared.start()
+def attended(attended_prepared: Stack) -> Stack:
+    """`attendance` alone, serving. The `supervisor` fixture ends it."""
+    attended_prepared.spawn_attendance()
+    attended_prepared.await_attendance()
 
-    return owui_prepared
-
-
-@pytest.fixture
-async def door(owui: OwuiStack) -> AsyncIterator[httpx.AsyncClient]:
-    """A client that plays Open WebUI against the door."""
-    async with owui.door_client() as client:
-        yield client
-
-
-@pytest.fixture
-async def attendance_api(owui: OwuiStack) -> AsyncIterator[httpx.AsyncClient]:
-    """A client to `attendance`, with the token the Open WebUI door holds."""
-    async with owui.attendance_client() as client:
-        yield client
+    return attended_prepared
 
 
 @pytest.fixture
@@ -214,31 +201,6 @@ def caregiver_alone(caregiver_prepared: CaregiverStack) -> CaregiverStack:
     caregiver_prepared.await_published()
 
     return caregiver_prepared
-
-
-@pytest.fixture
-def house_prepared(tree: Tree, supervisor: Supervisor) -> CaregiverStack:
-    """The house on disk, with no service started. A test changes the registry first."""
-    stack = CaregiverStack(tree, supervisor)
-    stack.prepare()
-
-    return stack
-
-
-@pytest.fixture
-def house(house_prepared: CaregiverStack) -> CaregiverStack:
-    """The house, serving one attended family. The `supervisor` fixture ends it."""
-    house_prepared.start_house()
-    house_prepared.await_serving()
-
-    return house_prepared
-
-
-@pytest.fixture
-async def house_door(house: CaregiverStack) -> AsyncIterator[httpx.AsyncClient]:
-    """A client that plays Open WebUI against the door of the house."""
-    async with house.door_client() as client:
-        yield client
 
 
 @pytest.fixture
