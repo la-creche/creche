@@ -53,6 +53,7 @@ from proc_standins import (
     litellm_keys,
     sbx_rows,
     sbx_sandboxes,
+    set_sbx_view,
     start_litellm,
     start_tei,
     tei_calls,
@@ -293,6 +294,29 @@ def test_sbx_exec_gives_no_mount_when_a_test_says_so(
     )
 
     assert done.stdout.strip() == f"|{BOX}"
+
+
+def test_sbx_exec_gives_the_env_file_as_the_vm_sees_the_host(
+    programs: Tree, supervisor: Supervisor
+) -> None:
+    """Rule 5: a value that starts with a key of the view starts with its value instead."""
+    _create(programs, supervisor)
+    set_sbx_view(programs, {"/a/": "/the-root/a/", "http://192.0.2.10:8300": "http://127.0.0.1:9"})
+    env_file = _env_file(programs)
+    env_file.write_text(
+        env_file.read_text(encoding="utf-8") + "AGENT_PEP_URL=http://192.0.2.10:8300\n",
+        encoding="utf-8",
+    )
+    show = 'echo "$AGENT_CONTROL_DIR|$AGENT_SANDBOX|$AGENT_PEP_URL"'
+
+    done = _sbx(
+        programs,
+        supervisor,
+        *("exec", "--env-file", str(env_file), BOX, "--", "/bin/sh", "-c", show),
+    )
+
+    assert done.exit_code == 0, done.stderr
+    assert done.stdout.strip() == f"/the-root/a/control|{BOX}|http://127.0.0.1:9"
 
 
 def test_sbx_exec_gives_each_sandbox_a_tmpdir_of_its_own(

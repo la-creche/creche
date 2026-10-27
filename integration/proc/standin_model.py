@@ -16,7 +16,7 @@ URL holds none, and the client appends `/chat/completions`.
 The test writes the script and the key. Every fact is a file under the
 state directory:
 
-    key           the one bearer this program takes
+    key           the bearers this program takes, one on each line
     turns.json    the script: a list of turns, read again at each request
     calls.jsonl   one line for each request, in arrival order: path and body
     tune/         what a test writes to change one answer
@@ -39,7 +39,7 @@ finish reason, then `[DONE]`. A tool call is one chunk.
 Four things here take the strict reading:
 
 1. A route that this program does not know gets 404.
-2. A request with no bearer, or another bearer, gets 401.
+2. A request with no bearer, or a bearer that `key` does not hold, gets 401.
 3. A body that is not a JSON object with `"stream": true` gets 400. The
    agent module always streams.
 4. A request with a body and no `Content-Length` header gets 411.
@@ -95,8 +95,10 @@ class Script:
         self._lock = threading.Lock()
         self._taken = 0
 
-    def key(self) -> str:
-        return (self._state / KEY_FILE).read_text(encoding="utf-8").strip()
+    def bearers(self) -> frozenset[str]:
+        lines = (self._state / KEY_FILE).read_text(encoding="utf-8").split("\n")
+
+        return frozenset(line.strip() for line in lines if line.strip())
 
     def model(self) -> str:
         try:
@@ -214,7 +216,7 @@ def _handler_for(script: Script) -> type[BaseHTTPRequestHandler]:
         def _refused(self) -> bool:
             sent = self.headers.get("Authorization", "")
 
-            if sent.startswith(_BEARER) and sent.removeprefix(_BEARER) == script.key():
+            if sent.startswith(_BEARER) and sent.removeprefix(_BEARER) in script.bearers():
                 return False
 
             self._json(HTTP_UNAUTHORIZED, {"error": {"message": "wrong bearer"}})
