@@ -11,7 +11,7 @@
 #
 # So this watchdog SHARES NO FATE with what it watches. It is a oneshot
 # under the user manager, it holds no rework code, it dials no rework
-# service for permission, and it works when all four units are dead.
+# service for permission, and it works when all five units are dead.
 # `caregiver`'s own `pep_unreachable` fault (contract 05 §3.3) covers the
 # PEP from INSIDE `caregiver`, which is no help when `caregiver` is the dead
 # one. This is the outside half.
@@ -30,7 +30,7 @@
 #                or 200. A GET without a bearer gets 401, which proves a
 #                listener and needs no token (invariant 13).  5 s
 #   4. units     `systemctl --user is-failed` must be false for each of the
-#                four rework user units.  5 s
+#                five rework user units.  5 s
 #                The check also reads each firing unit, an instance of
 #                `creche-trigger@`. `systemctl --user list-units` names the
 #                instances, and one `systemctl --user show` call for each
@@ -205,13 +205,14 @@ HEALTH_PATH=/healthz
 HTTP_OK=200
 HTTP_UNAUTHORIZED=401
 
-# The four ALWAYS-ON user units `bin/rework-cutover.sh up` installs, in start
-# order. A long-running unit added there is added here. The two oneshots it
-# also installs are not: this alarm's own, and `registry-sync.service`, which
+# The five ALWAYS-ON user units of `systemd/`. A long-running user unit
+# added there is added here. Two oneshots are not here: this alarm's own,
+# and `registry-sync.service`, which
 # check 5 below reads by its RESULT rather than by `is-failed` — a oneshot
 # that is meant to exit says more about itself that way.
 UNITS="creche-attendance.service creche-caregiver.service \
-creche-trigger-webhooks.service creche-noticeboard.service"
+creche-trigger-webhooks.service creche-noticeboard.service \
+creche-door-acp.service"
 
 # The firing units: each instance of this template unit runs one cron
 # trigger of one family and ends. The name of an instance is the name of a

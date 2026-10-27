@@ -50,12 +50,16 @@ if TYPE_CHECKING:
 REPO_ROOT: Final = Path(__file__).resolve().parents[2]
 SCRIPT: Final = REPO_ROOT / "bin" / "rework-watchdog.sh"
 
-#: The four units the script asks `systemctl --user is-failed` about.
+#: The ACP door. It is a long-running user unit, so the script watches it.
+ACP_DOOR_UNIT: Final = "creche-door-acp.service"
+
+#: The five units the script asks `systemctl --user is-failed` about.
 UNITS: Final = (
     "creche-attendance.service",
     "creche-caregiver.service",
     "creche-trigger-webhooks.service",
     "creche-noticeboard.service",
+    ACP_DOOR_UNIT,
 )
 
 #: The registry's door (check 5). The sync is what pulls
@@ -757,6 +761,15 @@ def test_a_failed_unit_is_found_and_named(rig: Rig) -> None:
     assert done.returncode == 1
     assert rig.stored() == "units"
     assert "creche-noticeboard.service" in rig.posts()[0]
+
+
+def test_a_failed_acp_door_is_found_and_named(rig: Rig) -> None:
+    rig.run(WD_FAILED_UNITS=ACP_DOOR_UNIT)
+    done = rig.run(WD_FAILED_UNITS=ACP_DOOR_UNIT)
+
+    assert done.returncode == 1
+    assert rig.stored() == "units"
+    assert ACP_DOOR_UNIT in rig.posts()[0]
 
 
 # --- check 5: the registry still reaches this host ---------------------------
