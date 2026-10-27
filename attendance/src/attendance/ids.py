@@ -7,7 +7,6 @@ so a bad one is a path problem, not only a data problem.
 
 from __future__ import annotations
 
-import hashlib
 import re
 import secrets
 import threading
@@ -28,8 +27,7 @@ _MILLIS_PER_SECOND = 1000
 
 # Contract 02 §2 caps a session id at 128 characters. It becomes a directory
 # name and arrives from a door, so it needs a bound (invariant 14). 128 holds
-# every prefixed form the contract names with room to spare: `owui-<uuid>`
-# is 41 characters and `tui-<ulid>` is 30.
+# every prefixed form with room to spare: `auto-<ulid>` is 31 characters.
 SESSION_ID_MAX = 128
 
 _FAMILY_RE = re.compile(r"^[a-z][a-z0-9-]{1,30}\Z")
@@ -43,8 +41,6 @@ _DOT_NAMES = frozenset({".", ".."})
 class SessionPrefix(StrEnum):
     """Which door made a session (contract 02 §2)."""
 
-    OWUI = "owui-"
-    TUI = "tui-"
     JOB = "job-"
     AUTO = "auto-"
 
@@ -81,15 +77,6 @@ def is_attachment(value: str) -> bool:
         return False
 
     return bool(_ATTACHMENT_RE.match(value))
-
-
-def session_prefix(value: str) -> SessionPrefix | None:
-    """Which door a session id claims to come from. None when it claims none."""
-    for prefix in SessionPrefix:
-        if value.startswith(prefix.value):
-            return prefix
-
-    return None
 
 
 def _encode(value: int, chars: int) -> str:
@@ -140,13 +127,3 @@ _FACTORY = UlidFactory()
 def new_ulid() -> str:
     """A fresh ULID from the process-wide factory."""
     return _FACTORY.mint()
-
-
-def sha256_hex(text: str) -> str:
-    """The digest behind `persona_hash` and the stored prompt digest.
-
-    A digest stands in for text the service must compare but need not keep:
-    the persona of a turn, and the prompt of an idempotency key (contract 02
-    §4.2, §6 rule 5).
-    """
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()

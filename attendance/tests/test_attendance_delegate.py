@@ -38,7 +38,7 @@ from fake_facade import ANSWER, ERROR_MESSAGE, FacadeFleet, FakeFacade, PromptMo
 from attendance.service import SessionService  # isort: skip
 
 DELEGATE = Principal.DOOR_DELEGATE
-OWUI = Principal.DOOR_OWUI
+DISPATCH = Principal.DOOR_DISPATCH
 
 ORACLE = "vault-oracle"
 ORACLE_SANDBOX = "vault-oracle-s1"
@@ -272,7 +272,7 @@ async def test_only_the_delegate_door_may_call_it(tmp_path: Path) -> None:
     harness = DelegateHarness(tmp_path)
 
     with pytest.raises(ApiError) as refused:
-        await harness.service.run_delegate(OWUI, harness.call())
+        await harness.service.run_delegate(DISPATCH, harness.call())
 
     assert refused.value.code is ErrorCode.FORBIDDEN
     await harness.stop()

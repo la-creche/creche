@@ -56,7 +56,7 @@ def test_check_passes_with_every_token(
     printed = capsys.readouterr().out
     assert "tcp           off" in printed
     assert "sessiond.sock" in printed
-    assert "door-owui" not in printed
+    assert "door-trigger" not in printed
 
 
 def test_check_reports_the_lan_bind(
@@ -74,7 +74,7 @@ def test_check_fails_closed_on_a_short_token(
 ) -> None:
     """Contract 02 §3 rule 7. The service must not start weak."""
     write_tokens(tmp_path / "state")
-    token_file(tmp_path / "state", Principal.DOOR_OWUI.value).write_text("short")
+    token_file(tmp_path / "state", Principal.DOOR_TRIGGER.value).write_text("short")
     use_env(monkeypatch, env_for(tmp_path))
 
     assert main(["--check"]) == EXIT_BAD_CONFIG

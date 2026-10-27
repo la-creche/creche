@@ -1188,14 +1188,14 @@ _NOTE_TEXT: Final = (
 TOKEN_READERS: Final[tuple[TokenReader, ...]] = (
     TokenReader(
         name="attendance",
-        entry="attendance.auth.TokenBook.load, the token file of door-owui",
+        entry="attendance.auth.TokenBook.load, the token file of door-trigger",
         contract="contract 02 §3 rules 5 and 7",
-        prepare=_book(Principal.DOOR_OWUI),
+        prepare=_book(Principal.DOOR_TRIGGER),
         returns=Returns.NOTHING,
         files=(*TEXT_FILES, *OTHER_FILES),
         refusal=TokenError,
         kinds=_BOOK_KINDS,
-        about=f"token file for {Principal.DOOR_OWUI.value} ",
+        about=f"token file for {Principal.DOOR_TRIGGER.value} ",
         notes=(
             _NOTE_BOOK,
             _NOTE_NO_VALUE,
@@ -1518,7 +1518,7 @@ class Gate(Protocol):
 
 
 class _AttendanceGate:
-    """`attendance` with a stand-in service. The token is the one of door-owui."""
+    """`attendance` with a stand-in service. The token is the one of door-trigger."""
 
     ASK: Final = Ask(
         "POST",
@@ -1531,7 +1531,7 @@ class _AttendanceGate:
         for other in Principal:
             _write(token_file(scratch, other.value), FILLER, MODE_OWNER)
 
-        _write(token_file(scratch, Principal.DOOR_OWUI.value), token.encode("utf-8"), MODE_OWNER)
+        _write(token_file(scratch, Principal.DOOR_TRIGGER.value), token.encode("utf-8"), MODE_OWNER)
         book = TokenBook(scratch)
         book.load()
         self._service = StandIn()
@@ -1659,7 +1659,7 @@ COPIES: Final[tuple[Copy, ...]] = (
         build=_AttendanceGate,
         notes=(
             "The service holds one token for each principal. context.token is the token of "
-            f"{Principal.DOOR_OWUI.value}. Each other principal has another token.",
+            f"{Principal.DOOR_TRIGGER.value}. Each other principal has another token.",
             "An accepted vector is a request that the entry point finds a principal for. "
             "value.principal is that principal. A refused vector gets HTTP 401.",
             _NOTE_STRIP,

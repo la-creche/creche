@@ -88,7 +88,7 @@ async def test_the_view_token_reaches_no_route(rig: Rig) -> None:
 async def test_the_session_api_is_gone(rig: Rig, path: str) -> None:
     """Phase 2 plan, row 21. An ACP client speaks to `WS /acp/{family}`."""
     listed = await rig.client.get(path, headers=rig.head(Principal.VIEW_RO))
-    posted = await rig.client.post(path, json={}, headers=rig.head(Principal.DOOR_OWUI))
+    posted = await rig.client.post(path, json={}, headers=rig.head(Principal.DOOR_TRIGGER))
 
     assert listed.status_code == HTTP_NOT_FOUND
     assert posted.status_code == HTTP_NOT_FOUND

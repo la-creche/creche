@@ -205,7 +205,7 @@ uv run python -m attendance           # serve
 | `SESSIOND_ACP_RELAY_COMMAND` | how one ACP door connection reaches the facade. `{env_file}` comes from the status document. |
 | `SESSIOND_FACADE_COMMAND` | how the supervisor link starts each sandbox's facade. `{env_file}` comes from the status document. |
 
-Eight token files sit under `<state root>/tokens/`. Six are mode 0600. The
+Six token files sit under `<state root>/tokens/`. Four are mode 0600. The
 delegate and dispatch tokens are mode 0640, group `agents`, because the
 chaperone reads them as another user. `SIGHUP` reloads them.
 
@@ -274,8 +274,6 @@ is marked `slow`.
   from the work root (`service.py`).
 - No chat session lives here since row 21, so nothing deletes a chat's
   `code-sandbox` directory (`workspace.py`).
-- The principals `door-owui` and `door-tui` reach no route since row 21.
-  Their token files are still required at start (`auth.py`).
 - No contract names `/trigger`. The phase 3 plan, row 14, names the route.
   Its body and its answer are this package's (`requests.py`).
 - The facade's `session/list` row carries `sessionId`, `cwd`, `title` and

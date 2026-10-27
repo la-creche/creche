@@ -173,9 +173,22 @@ def test_a_missing_token_file_stops_the_service(tmp_path: Path) -> None:
         book.load()
 
 
+def test_the_service_starts_with_the_live_token_files_only(tmp_path: Path) -> None:
+    """No route takes `door-owui` or `door-tui`, so the host keeps no file for them."""
+    live = ("door-delegate", "door-dispatch", "door-trigger", "view-ro", "door-acp", "managerd")
+
+    for name in live:
+        path = token_file(tmp_path, name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"{name}-{'x' * MIN_TOKEN_BYTES}\n", encoding="utf-8")
+        os.chmod(path, 0o600)
+
+    TokenBook(tmp_path).load()  # must not raise
+
+
 def test_an_empty_token_file_stops_the_service(tmp_path: Path) -> None:
     write_tokens(tmp_path)
-    path = token_file(tmp_path, Principal.DOOR_OWUI.value)
+    path = token_file(tmp_path, Principal.DOOR_TRIGGER.value)
     path.write_text("", encoding="utf-8")
 
     with pytest.raises(TokenError):
@@ -184,7 +197,7 @@ def test_an_empty_token_file_stops_the_service(tmp_path: Path) -> None:
 
 def test_a_short_token_file_stops_the_service(tmp_path: Path) -> None:
     write_tokens(tmp_path)
-    path = token_file(tmp_path, Principal.DOOR_TUI.value)
+    path = token_file(tmp_path, Principal.DOOR_ACP.value)
     path.write_text("short", encoding="utf-8")
 
     with pytest.raises(TokenError):
@@ -232,7 +245,7 @@ def test_the_delegate_token_still_refuses_group_write(tmp_path: Path) -> None:
 def test_a_non_delegate_token_still_refuses_group_read(tmp_path: Path) -> None:
     """The exception is `door-delegate` alone. Every other file stays 0600."""
     write_tokens(tmp_path)
-    path = token_file(tmp_path, Principal.DOOR_OWUI.value)
+    path = token_file(tmp_path, Principal.DOOR_TRIGGER.value)
     os.chmod(path, 0o640)
 
     with pytest.raises(TokenError):
@@ -265,16 +278,16 @@ def test_reload_picks_up_a_rotated_token(tmp_path: Path) -> None:
     book = TokenBook(tmp_path)
     book.load()
 
-    path = token_file(tmp_path, Principal.DOOR_OWUI.value)
+    path = token_file(tmp_path, Principal.DOOR_TRIGGER.value)
     rotated = "rotated-" + "y" * MIN_TOKEN_BYTES
     path.write_text(rotated, encoding="utf-8")
     os.chmod(path, 0o600)
     book.reload()
 
-    assert book.identify(f"Bearer {rotated}") is Principal.DOOR_OWUI
+    assert book.identify(f"Bearer {rotated}") is Principal.DOOR_TRIGGER
 
     with pytest.raises(ApiError):
-        book.identify(f"Bearer {made[Principal.DOOR_OWUI]}")
+        book.identify(f"Bearer {made[Principal.DOOR_TRIGGER]}")
 
 
 def test_the_view_token_never_writes() -> None:
@@ -288,7 +301,7 @@ def test_the_view_token_never_writes() -> None:
 
 def test_a_door_token_never_reaches_internal() -> None:
     with pytest.raises(ApiError):
-        check_access(Principal.DOOR_OWUI, Access.INTERNAL)
+        check_access(Principal.DOOR_TRIGGER, Access.INTERNAL)
 
     check_access(Principal.CAREGIVER, Access.INTERNAL)
 
@@ -299,14 +312,14 @@ def test_the_caregiver_token_never_reads_sessions() -> None:
 
 
 def test_a_writer_may_also_read() -> None:
-    check_access(Principal.DOOR_OWUI, Access.READ)
+    check_access(Principal.DOOR_TRIGGER, Access.READ)
 
 
 def test_a_door_token_is_pinned_to_one_family_kind() -> None:
-    check_family_kind(Principal.DOOR_OWUI, "chat", SessionKind.ATTENDED)
+    check_family_kind(Principal.DOOR_ACP, "chat", SessionKind.ATTENDED)
 
     with pytest.raises(ApiError) as caught:
-        check_family_kind(Principal.DOOR_OWUI, "code-sandbox", SessionKind.THIN)
+        check_family_kind(Principal.DOOR_ACP, "code-sandbox", SessionKind.THIN)
 
     assert caught.value.code is ErrorCode.FORBIDDEN
 
