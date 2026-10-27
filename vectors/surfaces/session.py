@@ -103,10 +103,10 @@ class StandIn:
 
 
 class _Tokens:
-    """Stands for `TokenBook`: each caller is the Open WebUI door."""
+    """Stands for `TokenBook`: each caller is the trigger door."""
 
     def identify(self, header: str | None) -> Principal:
-        return Principal.DOOR_OWUI
+        return Principal.DOOR_TRIGGER
 
 
 @dataclass(frozen=True)

@@ -15,7 +15,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from attendance.auth import Principal
 from attendance.channel import SandboxDial
 from attendance.config import DEFAULT_FACADE_COMMAND
 from attendance.exec_channel import build_argv
@@ -31,7 +30,6 @@ SESSION = "owui-3f2a9c41-77b0-4a1e-9a4c-1d0e5f8b2c33"
 SANDBOX = "chat-s1"
 PROMPT = "Which sensor dropped out last night?"
 DOOR = "owui-1"
-OWUI = Principal.DOOR_OWUI
 
 #: Long enough to prove a wait happens, short enough not to cost a minute.
 COLD_START_WAIT_S = 1.0

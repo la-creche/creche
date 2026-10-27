@@ -19,7 +19,6 @@ from typing import Any, cast
 
 JsonObject = dict[str, Any]
 
-MODE_PRIVATE = 0o600
 MODE_GROUP_READ = 0o640
 MODE_PUBLIC_READ = 0o644
 DIR_MODE_GROUP = 0o750

@@ -37,8 +37,6 @@ _BEARER = "Bearer "
 class Principal(StrEnum):
     """One row of contract 02 §3.1. The token file is named after it."""
 
-    DOOR_OWUI = "door-owui"
-    DOOR_TUI = "door-tui"
     DOOR_DELEGATE = "door-delegate"
     #: The PEP's second token (contract 02 §3.1, §13.4). It is not a widened
     #: `door-delegate`, so one stolen bearer reaches one family kind.
@@ -79,8 +77,6 @@ class Grant:
 
 # Deny by default (invariant 11): a principal reaches exactly its own row.
 _GRANTS: dict[Principal, Grant] = {
-    Principal.DOOR_OWUI: Grant(Access.WRITE, SessionKind.ATTENDED),
-    Principal.DOOR_TUI: Grant(Access.WRITE, SessionKind.ATTENDED),
     Principal.DOOR_DELEGATE: Grant(Access.WRITE, SessionKind.THIN),
     Principal.DOOR_DISPATCH: Grant(Access.WRITE, SessionKind.AUTONOMOUS),
     Principal.DOOR_TRIGGER: Grant(Access.WRITE, SessionKind.AUTONOMOUS),

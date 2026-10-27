@@ -47,10 +47,6 @@ JOBS_LIMIT_MAX = 200
 # Contract 04 §4.1: `idempotency_key` deduplicates a retry for one hour.
 IDEMPOTENCY_WINDOW = timedelta(hours=1)
 
-# Contract 02 §13.4.3. The ledger is swept on the audit's schedule, because a
-# 90-day-old standup is still readable and neither file names a secret.
-RETENTION_DAYS = 180
-
 
 class LedgerDoor(StrEnum):
     """The door that started the jobs of a ledger. Each door has a ledger."""

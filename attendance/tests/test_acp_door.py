@@ -111,7 +111,7 @@ async def close_code(connection: ClientConnection) -> int | None:
 @pytest.mark.slow
 @pytest.mark.parametrize(
     ("bearer", "code"),
-    [(None, 4401), (SHORT_TOKEN, 4401), (Principal.DOOR_OWUI, 4403)],
+    [(None, 4401), (SHORT_TOKEN, 4401), (Principal.DOOR_TRIGGER, 4403)],
     ids=["missing", "wrong", "other_door"],
 )
 async def test_a_bad_bearer_closes_before_any_exec(

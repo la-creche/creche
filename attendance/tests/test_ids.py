@@ -7,7 +7,6 @@ from collections.abc import Callable
 import pytest
 from attendance.ids import (
     SESSION_ID_MAX,
-    SessionPrefix,
     UlidFactory,
     is_attachment,
     is_family,
@@ -15,7 +14,6 @@ from attendance.ids import (
     is_session,
     is_ulid,
     new_ulid,
-    session_prefix,
 )
 
 ULID_LENGTH = 26
@@ -40,12 +38,6 @@ def test_session_form() -> None:
     assert not is_session("-leading-dash")
     assert not is_session("has/slash")
     assert not is_session("a" * (SESSION_ID_MAX + 1))
-
-
-def test_session_prefix() -> None:
-    assert session_prefix("owui-abc") is SessionPrefix.OWUI
-    assert session_prefix("job-01JB") is SessionPrefix.JOB
-    assert session_prefix("nothing") is None
 
 
 def test_sandbox_and_attachment_forms() -> None:
