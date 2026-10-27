@@ -3,7 +3,7 @@ section 12, contract 05 section 6.2).
 
 The token names the family and nothing narrower. `caregiver` mints it, hands
 it to the sandbox through a mounted file, and keeps only its digest in the
-grant file (contract 04 section 2.2). It never appears on argv, in a URL or
+table of the family in `policy.toml`. It never appears on argv, in a URL or
 in a log line (invariant 13)."""
 
 from __future__ import annotations
@@ -42,8 +42,8 @@ def is_token(text: str) -> bool:
 
 
 def token_sha256(token: str) -> str:
-    """What the grant file stores. The PEP never sees the token itself
-    (contract 04 section 2.2 rule 2)."""
+    """What the table of the family in `policy.toml` stores. The chaperone
+    never sees the token itself."""
     return hashlib.sha256(token.encode("ascii")).hexdigest()
 
 
@@ -61,10 +61,10 @@ class Credentials:
     pep_token: str
     written_at: str
     #: The token the previous epoch used, and when it stops being accepted
-    #: (contract 05 §6.3 graceful, step 5). The grant file carries BOTH
-    #: digests until then, so a turn that started under the old epoch
-    #: finishes. It lives here and not in a second file because the grant
-    #: file is rebuilt from `creds.json` on every reconcile pass, and a
+    #: (contract 05 §6.3 graceful, step 5). The table of the family in
+    #: `policy.toml` carries BOTH digests until then, so a turn that started
+    #: under the old epoch finishes. It lives here and not in a second file
+    #: because the table is rebuilt from `creds.json` on a reconcile pass, and a
     #: fact split over two files is a fact that can disagree with itself.
     previous_pep_token: str | None = None
     previous_expires_at: str | None = None
@@ -107,8 +107,8 @@ def read_creds(path: Path) -> Credentials | None:
     chaperone accepts no such token, so the next pass mints a new one.
 
     A `previous_pep_token` that `is_token` refuses reads as no overlap. The
-    current token stays, and the grant file lists no digest for the
-    previous one."""
+    current token stays, and the table lists no digest for the previous
+    one."""
     fields = read_json(path)
     if fields is None:
         return None

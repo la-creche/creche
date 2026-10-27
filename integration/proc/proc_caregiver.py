@@ -6,7 +6,7 @@
       | sbx create, sbx policy, sbx rm      the `sbx` stand-in, found through PATH
       | systemctl --user                    the `systemctl` stand-in, found through PATH
       | HTTP, loopback port                 the LiteLLM stand-in
-      | writes the status document, the grant file, the credential file,
+      | writes the status document, the credential file,
       | the config mount and the env file of each sandbox
       | runs the stand-in of `chaperone check`, then writes `policy.toml`
       | POST /internal/switch-sandbox over the Unix socket of `attendance`
@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import time
+import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -184,8 +185,8 @@ class CaregiverStack(Stack):
     def prepare(self) -> None:
         """Write the tree, the registry and each stand-in program. Start nothing.
 
-        The registry holds one attended family. No status document, no grant
-        file and no credential file exists: `caregiver` writes each one.
+        The registry holds one attended family. No status document and no
+        credential file exists: `caregiver` writes each one.
         """
         build_bare_tree(self.tree)
         self.tree.release_root.mkdir(parents=True, exist_ok=True)
@@ -235,11 +236,16 @@ class CaregiverStack(Stack):
 
         return document
 
-    def grants(self, family: str = FAMILY) -> dict[str, Any]:
-        """The grant file of one family."""
-        document: dict[str, Any] = _read_json(self.tree.grant_file(family))
+    def apps(self) -> dict[str, Any]:
+        """Each app table of `policy.toml`, by family. Empty with no file."""
+        try:
+            text = self.tree.policy_file.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return {}
 
-        return document
+        apps: dict[str, Any] = tomllib.loads(text).get("apps", {})
+
+        return apps
 
     def sandboxes(self, family: str = FAMILY) -> list[tuple[str, str]]:
         """Each sandbox of the status document, as its id and its state."""

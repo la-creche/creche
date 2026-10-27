@@ -195,12 +195,12 @@ def test_an_unconfigured_flavor_does_not_stop_the_family_serving(fleet: Fleet) -
     assert not result.status.faults[0].blocks_turns
 
 
-def test_an_unconfigured_flavor_still_writes_the_grant_file(fleet: Fleet) -> None:
-    """The sandbox axis is what stops. The PEP denies every call for a
-    family with no grant file, and that is a worse outage than no
-    sandbox."""
+def test_an_unconfigured_flavor_still_writes_the_fragment(fleet: Fleet) -> None:
+    """The sandbox axis is what stops. The chaperone denies every call for
+    a family with no table in `policy.toml`, and that is a worse outage
+    than no sandbox."""
     unconfigured(fleet).run()
-    assert paths.grant_path(fleet.state_root, FAMILY).is_file()
+    assert paths.policy_fragment_path(fleet.state_root, FAMILY).is_file()
 
 
 def test_a_family_already_serving_keeps_its_sandbox(fleet: Fleet) -> None:

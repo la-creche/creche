@@ -9,7 +9,7 @@ family config mount, contract 01 §6.1 rule 1).
 
 `read_json` reads a JSON object from a file. Each module of this package
 that has no read of its own goes through it, so "content that does not read
-is a refusal, not an exception" is one implementation for them. `grants.py`,
+is a refusal, not an exception" is one implementation for them.
 `mcp_release.py`, `live_manifest.py` and `verify.py` keep a read of their
 own."""
 

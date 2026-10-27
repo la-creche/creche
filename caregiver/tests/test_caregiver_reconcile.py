@@ -35,7 +35,13 @@ from caregiver.reconcile import (
 )
 from caregiver.switch import FakeSwitchClient, SwitchRequest
 from caregiver.timers import FakeUnits
-from caregiver_helpers import fake_policy, toml_text, write_no_file_dir, write_registry
+from caregiver_helpers import (
+    fake_policy,
+    fragment_table,
+    toml_text,
+    write_no_file_dir,
+    write_registry,
+)
 
 from caregiver import paths, sandboxes
 
@@ -418,42 +424,43 @@ def test_a_budget_change_is_in_sync_at_once(fleet: Fleet) -> None:
 # --- the live axes: grants and config --------------------------------------------
 
 
-def test_a_verb_grant_rewrites_the_grant_file(fleet: Fleet) -> None:
-    fleet.run()
-    before = paths.grant_path(fleet.state_root, FAMILY).read_text(encoding="utf-8")
-    fleet.write(verbs={"embed": {}})
-    fleet.run()
-    after = paths.grant_path(fleet.state_root, FAMILY).read_text(encoding="utf-8")
-    assert "embed" not in before
-    assert "embed" in after
+def fragment_text(fleet: Fleet) -> str:
+    return paths.policy_fragment_path(fleet.state_root, FAMILY).read_text(encoding="utf-8")
 
 
-def test_a_missing_grant_file_is_written_again(fleet: Fleet) -> None:
-    """Without the file the PEP refuses every call for this family, and no
-    diff would ever ask for it: the family file did not move."""
+def test_a_tool_grant_rewrites_the_fragment(fleet: Fleet) -> None:
+    write_server(fleet.registry_root, ("search",))
     fleet.run()
-    paths.grant_path(fleet.state_root, FAMILY).unlink()
+    before = fragment_text(fleet)
+    fleet.write(tools={SERVER: ["search"]})
+    fleet.run()
+    after = fragment_text(fleet)
+    assert SERVER not in before
+    assert SERVER in after
+
+
+def test_a_missing_fragment_is_written_again(fleet: Fleet) -> None:
+    """Without the table the chaperone refuses every call for this family,
+    and no diff would ever ask for it: the family file did not move."""
+    fleet.run()
+    paths.policy_fragment_path(fleet.state_root, FAMILY).unlink()
     result = fleet.run()
-    assert paths.grant_path(fleet.state_root, FAMILY).is_file()
+    assert paths.policy_fragment_path(fleet.state_root, FAMILY).is_file()
     assert result.status.state is FamilyState.IN_SYNC
 
 
-def test_an_unchanged_pass_does_not_rewrite_the_grant_file(fleet: Fleet) -> None:
-    """`write_grants` mints a fresh `rev` on every call and the loop looks
-    every two seconds."""
+def test_an_unchanged_pass_does_not_rewrite_the_fragment(fleet: Fleet) -> None:
     fleet.run()
-    before = paths.grant_path(fleet.state_root, FAMILY).read_text(encoding="utf-8")
+    before = fragment_text(fleet)
     fleet.run()
-    assert paths.grant_path(fleet.state_root, FAMILY).read_text(encoding="utf-8") == before
+    assert fragment_text(fleet) == before
 
 
-def test_a_malformed_grant_file_is_written_again(fleet: Fleet) -> None:
-    """The PEP refuses every call on a file it cannot parse (contract 04
-    §1.4), exactly as on a missing one."""
+def test_a_malformed_fragment_is_written_again(fleet: Fleet) -> None:
     fleet.run()
-    paths.grant_path(fleet.state_root, FAMILY).write_text("{not json", encoding="utf-8")
+    paths.policy_fragment_path(fleet.state_root, FAMILY).write_text("{not toml", encoding="utf-8")
     result = fleet.run()
-    assert granted(fleet)["family"] == FAMILY
+    assert fragment_table(fleet.state_root, FAMILY)["token_sha256"]
     assert result.status.state is FamilyState.IN_SYNC
 
 
@@ -471,8 +478,9 @@ def write_server(registry_root: Path, tools: tuple[str, ...], identity: str = "S
     (directory / "server.toml").write_text(toml_text(body), encoding="utf-8")
 
 
-def granted(fleet: Fleet) -> dict[str, object]:
-    return json.loads(paths.grant_path(fleet.state_root, FAMILY).read_text(encoding="utf-8"))
+def granted_tools(fleet: Fleet) -> set[str]:
+    """The tools of the server that the table of the family grants."""
+    return set(fragment_table(fleet.state_root, FAMILY)["grants"][SERVER]["tools"])
 
 
 def test_a_tool_a_server_file_drops_leaves_an_all_grant(fleet: Fleet) -> None:
@@ -486,7 +494,7 @@ def test_a_tool_a_server_file_drops_leaves_an_all_grant(fleet: Fleet) -> None:
     fleet.run()
     write_server(fleet.registry_root, ("search",))
     result = fleet.run()
-    assert granted(fleet)["tools"] == {SERVER: ["search"]}
+    assert granted_tools(fleet) == {"search"}
     assert result.status.state is FamilyState.IN_SYNC
 
 
@@ -496,32 +504,18 @@ def test_a_tool_a_server_file_adds_reaches_an_all_grant(fleet: Fleet) -> None:
     fleet.run()
     write_server(fleet.registry_root, ("search", "extract"))
     fleet.run()
-    assert granted(fleet)["tools"] == {SERVER: ["search", "extract"]}
+    assert granted_tools(fleet) == {"search", "extract"}
 
 
 def test_a_server_edit_that_moves_no_grant_rewrites_nothing(fleet: Fleet) -> None:
-    """The revision moved, the grant did not, so neither does its `rev`."""
+    """The revision moved, the grant did not, so the fragment stays."""
     write_server(fleet.registry_root, ("search",))
     fleet.write(tools={SERVER: "all"})
     fleet.run()
-    before = paths.grant_path(fleet.state_root, FAMILY).read_text(encoding="utf-8")
+    before = fragment_text(fleet)
     write_server(fleet.registry_root, ("search",), identity="Search, and nothing else.")
     fleet.run()
-    assert paths.grant_path(fleet.state_root, FAMILY).read_text(encoding="utf-8") == before
-
-
-def test_a_pass_leaves_the_token_digests_to_rotation(fleet: Fleet) -> None:
-    """`rotate` runs in its own process and writes `creds.json`, then a
-    grant file with two digests (contract 04 §2.3). A pass that read the
-    credentials before that must not write the second digest away, so a
-    pass compares the grants and never the digests."""
-    fleet.run()
-    body = granted(fleet)
-    overlap = [*body["token_sha256"], "0" * 64]  # type: ignore[misc]
-    body["token_sha256"] = overlap
-    paths.grant_path(fleet.state_root, FAMILY).write_text(json.dumps(body), encoding="utf-8")
-    fleet.run()
-    assert granted(fleet)["token_sha256"] == overlap
+    assert fragment_text(fleet) == before
 
 
 def test_a_shell_change_rewrites_the_config_mount(fleet: Fleet) -> None:
@@ -1009,30 +1003,15 @@ def test_a_attendance_fault_folds_into_the_document(fleet: Fleet) -> None:
     assert result.status.state is FamilyState.DEGRADED
 
 
-def test_a_pep_fault_about_the_current_grant_file_degrades(fleet: Fleet) -> None:
-    """Contract 05 section 3.3.1 rule 9 drops a complaint about a grant file
-    that is gone. A complaint about the one on disk stops turns, as section
-    3.3's table says."""
+def test_a_pep_fault_folds_into_the_document(fleet: Fleet) -> None:
+    """A fault of the PEP stops turns, as section 3.3's table says."""
     fleet.run()
-    written_at = paths.grant_path(fleet.state_root, FAMILY).stat().st_mtime
-    write_fault_file(fleet.state_root, "pep", "grants_stale", since=written_at + 5)
+    write_fault_file(fleet.state_root, "pep", "grants_stale")
 
     result = fleet.run()
 
     assert [one.code for one in result.status.faults] == ["grants_stale"]
     assert result.status.state is FamilyState.DEGRADED
-
-
-def test_a_fault_older_than_the_grant_file_is_not_current(fleet: Fleet) -> None:
-    """`grants_stale` stops every turn. A complaint from before the grant
-    file was written is not about that file, and publishing it would hold
-    the family down for nothing."""
-    write_fault_file(fleet.state_root, "pep", "grants_stale")
-
-    result = fleet.run()
-
-    assert result.status.faults == ()
-    assert result.status.state is FamilyState.IN_SYNC
 
 
 def test_a_cleared_fault_file_clears_the_document(fleet: Fleet) -> None:

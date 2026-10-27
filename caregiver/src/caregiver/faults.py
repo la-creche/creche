@@ -62,16 +62,6 @@ BLOCKS_TURNS_BY_CODE: Final[dict[str, bool]] = {
 #: Contract 05 section 3.3.1 rule 7.
 FAULT_STALE_AFTER_S: Final = 90
 
-#: The code section 3.3.1 rule 9 is about, and the writer that raises it.
-GRANTS_STALE: Final = "grants_stale"
-PEP_SOURCE: Final = "pep"
-
-#: Section 3.3's `since` is second-resolution, and the PEP truncates rather
-#: than rounds, so a fault raised 0.4 s AFTER a write reads as 0.6 s before
-#: it. One second is the whole error, and it only ever keeps a fault that
-#: might still hold -- never drops one that does.
-FAULT_CLOCK_SLACK_S: Final = 1.0
-
 _KNOWN_KEYS: Final = frozenset({"code", "blocks_turns", "since", "source", "stale"})
 
 
@@ -158,66 +148,6 @@ def rescope_by_fleet(
         return faults
 
     return tuple(_downgraded(one, live_sandboxes) for one in faults)
-
-
-def drop_superseded(faults: tuple[FaultEntry, ...], grant_path: Path) -> tuple[FaultEntry, ...]:
-    """Drop each `grants_stale` the PEP raised BEFORE this grant file was
-    written (contract 05 section 3.3.1 rule 9).
-
-    The PEP's fault names one file. Once `caregiver` has written that file
-    again, a complaint from before the write describes a revision that is no
-    longer on disk, and publishing it reports a failure this pass already
-    repaired. A preflight probe that leaves the fault behind, then a pass
-    that writes the real grant file, would bring the family up `degraded`
-    with a turn-blocking fault nothing could clear.
-
-        probe raises      caregiver writes      PEP's sweep re-reads
-        grants_stale  ->  grants/chat.json ->  and clears or renews
-             |                   |
-             `-- since ----------'  older => this fault is not about that file
-
-    Same host, one clock, so the two times compare directly. Every other code
-    is kept: a channel fault or a sandbox fault says nothing about a grant
-    file, so a grant file's write time says nothing about it.
-
-    The drop hides nothing. If the fault still holds, the PEP's sweep raises
-    it again within its interval, with a `since` this rule keeps.
-    """
-    try:
-        written_at = grant_path.stat().st_mtime
-    except OSError:
-        # No file to compare against. A revoked family keeps every fault.
-        return faults
-
-    kept = tuple(one for one in faults if not _predates(one, written_at))
-    for dropped in faults:
-        if dropped not in kept:
-            # The journal keeps what the document no longer says, so an
-            # operator reading `in_sync` can still find out a fault was there.
-            log.info(
-                "%s raised %s at %s, before %s was written; not current",
-                dropped.source,
-                dropped.code,
-                dropped.since,
-                grant_path,
-            )
-
-    return kept
-
-
-def _predates(entry: FaultEntry, written_at: float) -> bool:
-    if entry.code != GRANTS_STALE or entry.source != PEP_SOURCE:
-        return False
-
-    try:
-        since = datetime.fromisoformat(entry.since)
-    except ValueError:
-        return False  # unparseable is untrusted; keep the fault
-
-    if since.tzinfo is None:
-        since = since.replace(tzinfo=UTC)
-
-    return since.timestamp() + FAULT_CLOCK_SLACK_S <= written_at
 
 
 def _downgraded(entry: FaultEntry, live_sandboxes: tuple[str, ...]) -> FaultEntry:

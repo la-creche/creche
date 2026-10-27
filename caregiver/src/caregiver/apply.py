@@ -89,9 +89,8 @@ def apply_once(
     switch: SwitchClient | None = None,
 ) -> ApplyResult:
     """Validate, then -- only if the file is valid -- mint or refresh
-    credentials, write the grant file, the table of `policy.toml` and the
-    config mount, create the sandbox if none exists yet, and publish the
-    status document.
+    credentials, write the table of `policy.toml` and the config mount,
+    create the sandbox if none exists yet, and publish the status document.
 
     A table that `chaperone check` refuses, for its shape or in the
     assembly, stops the apply as an invalid file does. Its one error line
@@ -99,7 +98,7 @@ def apply_once(
 
     On an invalid file: write the validation report, write a status
     document reporting `invalid`, and stop (invariant 19). Nothing this
-    family already had (its grant file, its config mount, its
+    family already had (its table of `policy.toml`, its config mount, its
     credentials, its sandbox) is touched, so the last good definition
     keeps serving."""
     registry = load_registry(registry_root, host)
@@ -242,7 +241,6 @@ def _apply_valid(
             family, report, registry_revision, state_root, all_faults, credentials_block
         )
 
-    steps.write_grants(family, index, state_root, creds)
     standing = steps.land_policy(family, index, state_root, creds, policy, rev=registry_revision)
     if isinstance(standing, LeftOut):
         return refuse(standing.reason)
@@ -254,12 +252,8 @@ def _apply_valid(
     webhooks = ensure_webhooks(family, state_root)
 
     record, sandbox_faults = _ensure_sandbox(family, state_root, images, driver, egress)
-    # Both fault files are read AGAIN, now the grant file this pass wrote is
-    # on disk. Contract 05 §3.3.1 rule 9 can only tell a complaint about the
-    # file this pass REPLACED from one about the file it wrote once that file
-    # exists to compare against. Reading only at the top would publish the
-    # probe's leftover `grants_stale` as if it were current, and
-    # `grants_stale` stops every turn.
+    # Both fault files are read AGAIN, after the sandbox step, so the
+    # document holds the faults of the fleet as it stands now.
     all_faults = (
         *steps.read_faults(state_root, family.name, _live_ids(state_root, family.name)),
         *key_faults,

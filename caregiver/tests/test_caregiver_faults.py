@@ -4,12 +4,11 @@ dropped rather than trusted or raised (contract 05 section 3.3.1)."""
 from __future__ import annotations
 
 import json
-import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from caregiver.faults import FaultEntry, drop_superseded, read_fault_file, rescope_by_fleet
+from caregiver.faults import read_fault_file, rescope_by_fleet
 from caregiver_helpers import UNREADABLE_JSON
 
 NOW = datetime(2026, 9, 19, 12, 0, 0, tzinfo=UTC)
@@ -317,77 +316,3 @@ def test_the_fleet_rule_touches_no_other_code(tmp_path: Path) -> None:
     rescoped = rescope_by_fleet(read.faults, ("chat-s1", "chat-s2"))
 
     assert rescoped[0].blocks_turns is True
-
-
-# --- a fault raised before the grant file this pass wrote --------------------
-
-
-def _stamp(when: datetime) -> str:
-    return when.isoformat().replace("+00:00", "Z")
-
-
-def _pep_fault(since: datetime, code: str = "grants_stale", source: str = "pep") -> FaultEntry:
-    return FaultEntry(code=code, blocks_turns=True, since=_stamp(since), source=source)
-
-
-def _grant_file(tmp_path: Path, written_at: datetime) -> Path:
-    path = tmp_path / "chat-grants.json"
-    write(path, {"version": 2, "family": "chat"})
-    stamp = written_at.timestamp()
-    os.utime(path, (stamp, stamp))
-    return path
-
-
-def test_a_fault_older_than_the_grant_file_is_dropped(tmp_path: Path) -> None:
-    """A preflight probe leaves `grants_stale` behind and `caregiver` then
-    writes the real grant file: publishing the fault would show `degraded`
-    over a complaint about a file that no longer exists."""
-    path = _grant_file(tmp_path, NOW)
-
-    assert drop_superseded((_pep_fault(NOW - timedelta(seconds=30)),), path) == ()
-
-
-def test_a_fault_after_the_write_still_holds(tmp_path: Path) -> None:
-    """The PEP read the file this pass wrote and would not serve it. That is
-    the failure the code is for."""
-    path = _grant_file(tmp_path, NOW - timedelta(seconds=30))
-    faults = (_pep_fault(NOW),)
-
-    assert drop_superseded(faults, path) == faults
-
-
-def test_a_fault_inside_the_same_second_is_kept(tmp_path: Path) -> None:
-    """`since` is second-resolution (contract 05 section 3.3), so a fault
-    raised 0.4 s AFTER the write can read as 0.6 s before it. Keeping it is
-    the conservative answer: the PEP's sweep clears it a moment later."""
-    path = _grant_file(tmp_path, NOW)
-    faults = (_pep_fault(NOW - timedelta(milliseconds=600)),)
-
-    assert drop_superseded(faults, path) == faults
-
-
-def test_no_grant_file_keeps_every_fault(tmp_path: Path) -> None:
-    """Nothing to compare against. A revoked family keeps its fault."""
-    faults = (_pep_fault(NOW - timedelta(seconds=30)),)
-
-    assert drop_superseded(faults, tmp_path / "gone.json") == faults
-
-
-def test_an_unparseable_since_keeps_its_fault(tmp_path: Path) -> None:
-    path = _grant_file(tmp_path, NOW)
-    faults = (FaultEntry(code="grants_stale", blocks_turns=True, since="x", source="pep"),)
-
-    assert drop_superseded(faults, path) == faults
-
-
-def test_the_rule_touches_only_the_peps_own_code(tmp_path: Path) -> None:
-    """A channel fault says nothing about a grant file, so a grant file's
-    write time says nothing about it."""
-    path = _grant_file(tmp_path, NOW)
-    old = NOW - timedelta(seconds=30)
-    faults = (
-        _pep_fault(old, code="protocol_mismatch", source="sessiond"),
-        _pep_fault(old, source="sessiond"),
-    )
-
-    assert drop_superseded(faults, path) == faults

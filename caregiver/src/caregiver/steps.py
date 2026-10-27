@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import logging
 import os
-import uuid
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -25,15 +24,7 @@ from .config_mount import RuntimeConfig, config_mount_matches, write_config_moun
 from .credentials import Credentials, mint_token, read_creds, token_sha256, write_creds
 from .driver import DriverError, SandboxDriver
 from .egress import EgressConfig
-from .faults import FaultEntry, drop_superseded, read_fault_file, rescope_by_fleet
-from .grants import (
-    build_grant_file,
-    grant_file_bytes,
-    grant_file_matches,
-    holds_grants,
-    rewrite_digests,
-    write_grant_file,
-)
+from .faults import FaultEntry, read_fault_file, rescope_by_fleet
 from .lan import Port, url
 from .litellm_keys import LiteLLMError, LiteLLMKeys
 from .playpen_env import write_playpen_env
@@ -63,8 +54,8 @@ WHOLE_FILE: Final = "<document>"
 #: Contract 05 §3.3.1: the two services that write a fault file.
 FAULT_SOURCES: Final = ("sessiond", "pep")
 
-#: A digest for a count of bytes: the key step gives a family with no
-#: `creds.json` one token, and each digest has the length of this one.
+#: One digest, for a check of the shape of an app table before the key
+#: step gives the family its token.
 _ONE_DIGEST: Final = token_sha256("")
 
 
@@ -79,20 +70,14 @@ def read_faults(
     `live_sandboxes` is the family's fleet, which decides `blocks_turns` for
     the one code §3.3 states fleet-wide (`faults.rescope_by_fleet`). A caller
     that passes none gets the per-code value, which is the conservative
-    reading: a fault that stops turns rather than one that does not.
-
-    A `grants_stale` older than the grant file on disk is dropped here, not
-    reported: it names a revision this pass already replaced (§3.3.1 rule 9,
-    `faults.drop_superseded`)."""
+    reading: a fault that stops turns rather than one that does not."""
     collected: list[FaultEntry] = []
     for source in FAULT_SOURCES:
         fault_file = read_fault_file(paths.fault_path(state_root, source, family_name), source)
         if fault_file is not None:
             collected.extend(fault_file.faults)
 
-    current = drop_superseded(tuple(collected), paths.grant_path(state_root, family_name))
-
-    return rescope_by_fleet(current, live_sandboxes)
+    return rescope_by_fleet(tuple(collected), live_sandboxes)
 
 
 class KeyRefresh(StrEnum):
@@ -197,64 +182,12 @@ def kept_credentials(family_name: str, state_root: Path) -> CredentialsBlock | N
     return credentials_block(family_name, creds)
 
 
-def write_grants(family: FamilyFile, index: Index, state_root: Path, creds: Credentials) -> None:
-    """Contract 05 §3.4's `write_grants`. The PEP re-reads the file per
-    call, so a rewrite IS the change landing (contract 01 §6).
-
-    Every digest the file lists is accepted (contract 04 §2.2). During a
-    graceful token rotation that is two: the new one and the one the
-    previous epoch used, until its overlap runs out (contract 05 §6.3
-    step 5). `accepted_tokens` decides which, from `creds.json` alone.
-
-    A file over the cap of contract 04 §1.2 is not written:
-    `write_grant_file` raises `GrantFileTooLargeError`, and this step does
-    not catch it. A pass turns it into an issue of the family."""
-    grant = build_grant_file(
-        family, index, rev=grant_revision(), token_sha256=_accepted_digests(creds)
-    )
-    write_grant_file(paths.grant_path(state_root, family.name), grant)
-
-
-def check_grants(family: FamilyFile, index: Index, state_root: Path) -> None:
-    """The size check of `write_grants`, with no write and no key.
-
-    It raises `GrantFileTooLargeError` for a grant file over the cap of
-    contract 04 §1.2. A pass calls it before the key step. A family whose
-    file is refused thus keeps its key, its `creds.json` and its last grant
-    file as they are.
-
-    The count holds a `rev` of `grant_revision` and each digest that
-    `creds.json` gives now. A family with no `creds.json` that reads gets
-    one token at the key step, so the count holds one digest for it."""
-    creds = read_creds(paths.creds_path(state_root, family.name))
-    digests = _accepted_digests(creds) if creds is not None else (_ONE_DIGEST,)
-    grant_file_bytes(build_grant_file(family, index, rev=grant_revision(), token_sha256=digests))
-
-
-def write_digests(family_name: str, state_root: Path, creds: Credentials) -> bool:
-    """The digests `write_grants` would list, in the grant file as it
-    stands. No family file goes in, so no grant moves (contract 05 §6.3
-    step 5). Answers False when there is no grant file to keep."""
-    return rewrite_digests(
-        paths.grant_path(state_root, family_name),
-        family_name,
-        rev=grant_revision(),
-        token_sha256=_accepted_digests(creds),
-    )
-
-
-def has_grants(family_name: str, state_root: Path) -> bool:
-    """Would `write_digests` find a grant file to keep?"""
-    return holds_grants(paths.grant_path(state_root, family_name), family_name)
-
-
 def check_policy(family: FamilyFile, index: Index) -> None:
     """The shape check of `land_policy`, with no write and no key.
 
     It raises `PolicyShapeError` for an app table that `chaperone check`
     would refuse for its shape alone, for example an exposed tool name over
-    50 characters. A pass calls it before the key step, as it calls
-    `check_grants`."""
+    50 characters. A pass calls it before the key step."""
     build_app(family, index, (_ONE_DIGEST,), rev="")
 
 
@@ -270,7 +203,7 @@ def land_policy(
     """The table of the family in the one `policy.toml` of the Rust
     chaperone: its grants from the family file, and each digest that
     `creds.json` accepts now. `rev` is the registry revision, kept in the
-    note. The JSON grant file of `write_grants` stays beside it."""
+    note."""
     app = build_app(family, index, _accepted_digests(creds), rev=rev)
     return land_app(state_root, policy, family.name, app)
 
@@ -284,24 +217,13 @@ def policy_digests(
     return land_digests(state_root, policy, family_name, _accepted_digests(creds))
 
 
+def has_policy(family_name: str, state_root: Path) -> bool:
+    """Would `policy_digests` find a fragment to keep?"""
+    return paths.policy_fragment_path(state_root, family_name).is_file()
+
+
 def _accepted_digests(creds: Credentials) -> tuple[str, ...]:
     return tuple(token_sha256(one) for one in creds.accepted_tokens(now_rfc3339()))
-
-
-def grants_current(family: FamilyFile, index: Index, state_root: Path) -> bool:
-    """Is the grant file what `write_grants` would write now, `rev` and the
-    token digests aside? `all` expands against the server files at read
-    time (contract 01 §3.4 rule 4), so a server file moves a family's grants
-    while its own file stays put, and no diff of the family file sees it."""
-    grant = build_grant_file(family, index, rev="", token_sha256=())
-    return grant_file_matches(paths.grant_path(state_root, family.name), grant)
-
-
-def grant_revision() -> str:
-    """Contract 04 §1.2: "opaque, changes on every write." A fresh value
-    each call satisfies that literally, with no format the contract does
-    not actually require."""
-    return uuid.uuid4().hex
 
 
 def write_config(

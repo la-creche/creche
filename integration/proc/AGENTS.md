@@ -225,8 +225,8 @@ a test (edits one file of the registry)
 caregiver ---- sbx create, policy, rm ---> the sbx stand-in, with state
   |       ---- systemctl --user ---------> the systemctl stand-in
   |       ---- HTTP, loopback port ------> the LiteLLM stand-in
-  | writes the status document, the grant file, the credential file,
-  | the config mount and the env file of each sandbox
+  | writes the status document, the credential file, the config mount,
+  | the env file of each sandbox and `policy.toml`
   | POST /internal/switch-sandbox, over the Unix socket
   v
 no process answers
@@ -451,7 +451,7 @@ each one, and each one runs to its end.
 that changes the registry first.
 
 1. A test changes the registry and nothing else. `caregiver` publishes each
-   family from it. Do not write a status document, a grant file, a
+   family from it. Do not write a status document, a policy file, a
    credential file or an env file in this topology.
 2. An edit to one registry file is the one action of a scenario. Do not send
    a signal to make `caregiver` look, unless the signal is the scenario.
@@ -460,11 +460,11 @@ that changes the registry first.
      `write_registry_file` replace one file by rename.
    - `publish_family` adds one family: its prose first, then its file.
    - `remove_family` removes the directory of one family in one rename.
-4. Wait for a file that `caregiver` writes: the status document or the grant
-   file. Use `wait_until`.
+4. Wait for a file that `caregiver` writes: the status document or
+   `policy.toml`. Use `wait_until`.
 5. Assert on a boundary of `caregiver`:
    - the status document
-   - the grant file
+   - `policy.toml` and the fragment of each family
    - the credential file
    - the config mount
    - an env file
@@ -819,8 +819,8 @@ the text of the failure. Work down this list.
   scenario here.
 - **The epoch after `rotate`.** Contract 05 §6.3 step 3 publishes the new
   epoch in the status document. The `rotate` verb writes the credential
-  file, the grant file and the credentials block of the document. The
-  scenario of `rotate` does not read the document.
+  file, the token digests of the policy and the credentials block of the
+  document. The scenario of `rotate` does not read the document.
 - **CONTRACT-QUESTION, the exit code of a refusal of the terminal door.** No
   contract names one. For a refusal of the door itself the suite accepts
   each code that is not 0. A change costs one assertion per scenario in

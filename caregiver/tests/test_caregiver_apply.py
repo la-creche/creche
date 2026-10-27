@@ -6,9 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
-import time
 from dataclasses import replace
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -21,7 +19,14 @@ from caregiver.litellm_keys import FakeLiteLLMKeys, LiteLLMError, key_alias
 from caregiver.playpen_env import read_playpen_env
 from caregiver.status import now_rfc3339
 from caregiver.switch import FakeSwitchClient, SwitchClient
-from caregiver_helpers import UNREADABLE_JSON, fake_policy, write_no_file_dir, write_registry
+from caregiver_helpers import (
+    UNREADABLE_JSON,
+    accepted_digests,
+    current_digest,
+    fake_policy,
+    write_no_file_dir,
+    write_registry,
+)
 
 from caregiver import paths
 
@@ -82,11 +87,9 @@ def test_it_writes_creds_json(registry_root: Path, state_root: Path) -> None:
     assert creds.epoch == 1
 
 
-def test_it_writes_the_grant_file(registry_root: Path, state_root: Path) -> None:
+def test_it_writes_the_table_of_policy_toml(registry_root: Path, state_root: Path) -> None:
     apply_chat(registry_root, state_root)
-    body = json.loads(paths.grant_path(state_root, "chat").read_text(encoding="utf-8"))
-    assert body["family"] == "chat"
-    assert body["model_alias"] == "agent-router"
+    assert accepted_digests(state_root) == [current_digest(state_root)]
 
 
 def test_it_writes_the_config_mount(registry_root: Path, state_root: Path) -> None:
@@ -475,16 +478,16 @@ def test_a_family_thats_never_validated_publishes_no_credentials(
     assert result.status.credentials is None
 
 
-def test_an_invalid_revision_does_not_touch_the_existing_grant_file(
+def test_an_invalid_revision_does_not_touch_the_existing_fragment(
     registry_root: Path, state_root: Path
 ) -> None:
     apply_chat(registry_root, state_root)
-    before = paths.grant_path(state_root, "chat").read_text(encoding="utf-8")
+    before = paths.policy_fragment_path(state_root, "chat").read_text(encoding="utf-8")
 
     write_registry(registry_root, kind="not-a-real-kind")
     apply_chat(registry_root, state_root)
 
-    after = paths.grant_path(state_root, "chat").read_text(encoding="utf-8")
+    after = paths.policy_fragment_path(state_root, "chat").read_text(encoding="utf-8")
     assert before == after
 
 
@@ -519,9 +522,9 @@ def test_a_litellm_failure_degrades_and_raises_no_exception(
     assert result.status.faults[0].blocks_turns is True
 
 
-def test_a_litellm_failure_writes_no_grant_file(registry_root: Path, state_root: Path) -> None:
+def test_a_litellm_failure_writes_no_fragment(registry_root: Path, state_root: Path) -> None:
     apply_chat(registry_root, state_root, litellm=FailingLiteLLM())
-    assert not paths.grant_path(state_root, "chat").exists()
+    assert not paths.policy_fragment_path(state_root, "chat").exists()
 
 
 def test_a_litellm_failure_creates_no_sandbox(registry_root: Path, state_root: Path) -> None:
@@ -544,14 +547,10 @@ def test_a_sandbox_failure_degrades_but_keeps_the_credentials_and_grants(
     assert result.status.state is FamilyState.DEGRADED
     assert result.status.faults[0].code == "sandbox_start_failed"
     assert litellm.minted == 1
-    assert paths.grant_path(state_root, "chat").exists()
+    assert paths.policy_fragment_path(state_root, "chat").exists()
 
 
 # --- folded faults (contract 05 section 3.3.1) -------------------------------
-
-
-def _rfc3339(epoch_s: float) -> str:
-    return datetime.fromtimestamp(epoch_s, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def write_pep_fault(state_root: Path, family: str, code: str, since: str | None = None) -> None:
@@ -572,33 +571,16 @@ def write_pep_fault(state_root: Path, family: str, code: str, since: str | None 
 def test_a_folded_pep_fault_marks_an_otherwise_healthy_family_degraded(
     registry_root: Path, state_root: Path
 ) -> None:
-    """A complaint about the grant file that is on disk now (contract 05
-    section 3.3.1 rule 9). `since` is after the write, so it is current."""
+    """A fault file of the PEP folds into the document (contract 05
+    section 3.3.1)."""
     apply_chat(registry_root, state_root)
-    written_at = paths.grant_path(state_root, "chat").stat().st_mtime
-    write_pep_fault(state_root, "chat", "grants_stale", since=_rfc3339(written_at + 5))
+    write_pep_fault(state_root, "chat", "grants_stale")
 
     result = apply_chat(registry_root, state_root)
 
     assert result.status.state is FamilyState.DEGRADED
     assert result.status.faults[0].code == "grants_stale"
     assert result.status.faults[0].source == "pep"
-
-
-def test_a_fault_about_the_replaced_grant_file_is_dropped(
-    registry_root: Path, state_root: Path
-) -> None:
-    """A preflight probe leaves `grants_stale` behind and the pass writes the
-    real grant file: publishing the fault would show `degraded` with a
-    turn-blocking fault that no turn could ever clear. One second between
-    the two is all rule 9 needs."""
-    write_pep_fault(state_root, "chat", "grants_stale", since=_rfc3339(time.time() - 60))
-
-    result = apply_chat(registry_root, state_root)
-
-    assert result.ok is True
-    assert result.status.faults == ()
-    assert result.status.state is FamilyState.IN_SYNC
 
 
 def test_a_folded_fault_still_lets_credentials_and_the_sandbox_apply(

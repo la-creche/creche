@@ -1058,8 +1058,8 @@ def _settle_rotation(config: LoopConfig, actors: Actors, name: str) -> None:
     step 5). A grace period is a fact over time, which is exactly what a
     one-shot verb cannot hold and this loop can.
 
-    It runs BEFORE the pass, so the pass's own `write_grants` and this
-    never disagree about which digests the file should carry.
+    It runs BEFORE the pass, so the pass's own `land_policy` and this
+    never disagree about which digests the table should carry.
 
     CONTRACT-QUESTION: contract 05 §6.3 step 5 ends the overlap when its
     grace runs out, and §3.1 touches nothing while a file is invalid. This

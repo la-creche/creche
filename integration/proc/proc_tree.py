@@ -19,7 +19,7 @@ topology with one writes only the registry and the token files, and
       state/families/<family>/control/<id>/        contract 03 §7.1
       state/tokens/<principal>.token     contract 02 §3 rule 5
       state/door-owui.key                contract 02 §3 rule 7
-      state/grants/<family>.json         contract 04 §1, the grant file
+      state/grants/<family>.toml         the app table of `caregiver` for `policy.toml`
       state/faults/<writer>/<family>.json          contract 05 §3.3.1
       chaperone/audit.jsonl              the audit file of the Rust chaperone
       state/outcomes/<family>/<id>.json  contract 02 §13.1, written by `attendance`
@@ -127,9 +127,6 @@ AUDIT_RUN: Final = "07" * 16
 #: The SHA-256 of `{}`, the canonical form of no arguments.
 NO_ARGUMENTS_SHA256: Final = "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
 
-#: The mode of the grant file that `caregiver` writes.
-GRANT_MODE: Final = 0o640
-
 #: Contract 02 §3.1, one token file per row.
 #:
 #: CONTRACT-QUESTION: contract 02 §3.1 names the last token `caregiver`.
@@ -234,6 +231,11 @@ class Tree:
         """The configuration directory of chaperone: `install.toml`, and the
         `policy.toml` that `caregiver` writes."""
         return self.root / "etc-chaperone"
+
+    @property
+    def policy_file(self) -> Path:
+        """The `policy.toml` that `caregiver` writes for chaperone."""
+        return self.chaperone_config_dir / "policy.toml"
 
     @property
     def registry_root(self) -> Path:
@@ -368,8 +370,9 @@ class Tree:
         """The lease of contract 03 §11.1, in the control directory."""
         return self.mounts(family, sandbox).control / "supervisor.lock"
 
-    def grant_file(self, family: str = FAMILY) -> Path:
-        return self.state_root / "grants" / f"{family}.json"
+    def policy_fragment(self, family: str = FAMILY) -> Path:
+        """The app table of one family. `caregiver` joins each one into `policy.toml`."""
+        return self.state_root / "grants" / f"{family}.toml"
 
     def sessions_of(self, family: str) -> list[str]:
         """Every session directory one family has on disk now."""

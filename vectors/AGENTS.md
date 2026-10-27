@@ -166,8 +166,6 @@ did not.
   such a command line holds the exit status only.
 - `server_file.toml` and `family_file.cli` have no host. No vector covers the
   program with a model router or with a mount that is a symbolic link.
-- No vector covers `rewrite_digests` or `grant_file_matches` of the
-  caregiver.
 - No vector covers the size cap of a status reader, of the fault file
   reader or of the outcome reader.
 - No vector covers a status document that is UTF-16. Each reader of the
