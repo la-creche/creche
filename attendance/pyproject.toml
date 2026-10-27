@@ -1,7 +1,7 @@
 [project]
 name = "attendance"
 version = "0.1.0"
-description = "Session service: sessions, turns, journal, event streams (docs/rework/contracts/02, 03)."
+description = "The host side of each family's facade: the supervisor link, the jobs over ACP, the ACP door and the view (contract 02)."
 requires-python = ">=3.12"
 dependencies = ["fastapi>=0.115", "uvicorn>=0.30", "httpx>=0.27", "websockets==17.2"]
 

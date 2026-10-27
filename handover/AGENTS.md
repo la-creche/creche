@@ -563,8 +563,9 @@ that wants a refusal changes one field.
   `pep-grant` is then a line `not verified`, and not a refusal
   (`contracts.py`).
 - The manifest of the Rust `chaperone` names `creche-chaperone.service`.
-  The clone of the chaperone repository holds no unit file, so step 9
-  keeps the installed unit.
+  The clone of the chaperone repository holds
+  `systemd/creche-chaperone.service`. Step 8 stages that file and step 9
+  installs it (`executor/steps.py`).
 - PyYAML reads a digit that is not ASCII in a number with the tag `!!int`.
   A whole number of a manifest can thus hold one. Contract 06 §8 names no
   YAML form for a number (`manifest.py`).

@@ -28,7 +28,7 @@ install:
   to: ~/.local/components/attendance
   prev: ~/.local/components/attendance.prev
 provides:
-  # Contract 02: create, list, run turn, attach, stop, the journal, events.
+  # Contract 02: the delegate, dispatch and trigger doors, the view and /busy.
   - { contract: session-api, major: 0, minor: 12 }
 requires:
   # Contract 05: it reads caregiver's status document and writes a fault file.
