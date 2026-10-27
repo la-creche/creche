@@ -58,6 +58,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shlex
+import signal
 import time
 import tomllib
 from collections.abc import Callable, Generator
@@ -151,6 +152,10 @@ LOGS: Final = {
 _POLL_S: Final = 0.05
 _WAIT_S: Final = 30.0
 
+#: How often `ExitStack.await_pass` sends `caregiver serve` a new `SIGHUP`.
+#: One pass of the two families takes less than this on an idle machine.
+LOOK_EVERY_S: Final = 1.0
+
 
 def facade_bin(program: str) -> Path:
     """One program of the built facade. `pnpm run build` in `facade/` writes it."""
@@ -174,7 +179,7 @@ def wait_until[T](found: Callable[[], T | None], what: str, *logs: str) -> T:
             return value
 
         if time.monotonic() > deadline:
-            raise ProcError(f"no {what} in {_WAIT_S} s. " + explain(*logs))
+            raise ProcError(f"timed out after {_WAIT_S} s waiting for {what}. " + explain(*logs))
 
         time.sleep(_POLL_S)
 
@@ -295,6 +300,34 @@ class ExitStack(ChaperoneRsStack):
             *self.chaperone_flags(),
             WRITE_FLAG,
         )
+
+    def await_pass[T](self, found: Callable[[], T | None], what: str) -> T:
+        """Send `caregiver serve` a `SIGHUP` until `found` gives a value.
+
+        The `ExecReload` of `creche-caregiver.service` sends the same signal.
+        `caregiver serve` then starts a pass of each family at its next look,
+        and does not wait for the heartbeat of 20 seconds. A pass that runs
+        when the signal comes can cancel the forced pass. So the wait sends a
+        new signal each `LOOK_EVERY_S`.
+        """
+        caregiver = self.caregiver
+
+        if caregiver is None:
+            raise ProcError("no caregiver serve to signal: call start first")
+
+        sent = time.monotonic() - LOOK_EVERY_S
+
+        def look() -> T | None:
+            nonlocal sent
+            value = found()
+
+            if value is None and time.monotonic() - sent >= LOOK_EVERY_S:
+                caregiver.send(signal.SIGHUP)
+                sent = time.monotonic()
+
+            return value
+
+        return wait_until(look, what, "caregiver")
 
     # ---------------------------------------------------------------- clients
 
