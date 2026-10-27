@@ -185,8 +185,6 @@ a shell builtin, so the value reaches no argv. It never prints the value.
 | `creche-follow.{service,timer}` | the `handover` tree | the timer, when the tree is there |
 
 `creche-door-owui.service` is not in the list. The ACP door replaces it.
-attendance still requires a token file for `door-owui` and for `door-tui`,
-so `up` mints both.
 
 ## 7. Invariants
 

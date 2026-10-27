@@ -98,7 +98,7 @@ SOCK_DIR_MODE=2750
 # One token file for each principal of `attendance.auth.Principal`.
 # attendance refuses to start when one of them is missing, empty or short.
 # `bin/tests/test_fleet_up.py` holds this list equal to the enum.
-PRINCIPALS="door-owui door-tui door-delegate door-dispatch door-trigger view-ro door-acp managerd"
+PRINCIPALS="door-delegate door-dispatch door-trigger view-ro door-acp managerd"
 SECRET_BYTES=48
 
 # Each user unit, in the order `up` installs and starts it. attendance comes
