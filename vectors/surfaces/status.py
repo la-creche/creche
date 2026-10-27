@@ -19,10 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
 
-from agent_door_owui import families as owui_families
 from agent_door_trigger import families as trigger_families
-from agent_door_tui import status as tui_status
-from agent_door_tui.errors import DoorError
 from attendance.family_status import StatusReader
 
 from noticeboard import statusdocs
@@ -54,9 +51,6 @@ FRESH: Final = "2999-01-01T00:00:00Z"
 OLD: Final = "2020-01-01T00:00:00Z"
 #: The `now` the noticeboard is given: 30 seconds after `FRESH`.
 NOW: Final = datetime(2999, 1, 1, 0, 0, 30, tzinfo=UTC)
-
-#: What stands for the temporary directory in a message that names it.
-ROOT_MARK: Final = "<root>"
 
 VERY_DEEP: Final = 400_000
 HUGE_DIGITS: Final = 5_000
@@ -479,31 +473,13 @@ def _read_noticeboard(root: Path) -> tuple[bool, object]:
     return not row.problem, row
 
 
-def _read_door_tui(root: Path) -> tuple[bool, object]:
-    try:
-        serving = tui_status.StatusFiles(root / FAMILIES_DIR).serving(FAMILY)
-    except DoorError as exc:
-        message = exc.message.replace(str(root), ROOT_MARK)
-        return False, {"exit": exc.code.name.lower(), "message": message}
-
-    return True, serving
-
-
 def _read_door_trigger(root: Path) -> tuple[bool, object]:
     return FAMILY in trigger_families.StatusFiles(root / FAMILIES_DIR).servable(), None
-
-
-def _read_door_owui(root: Path) -> tuple[bool, object]:
-    return FAMILY in owui_families.StatusFiles(root / FAMILIES_DIR).serving(), None
 
 
 _NOTE_PATH: Final = (
     "The input is the bytes of the status document of the family chat. The generator writes "
     "it to <root>/families/chat/status.json and gives the reader that root."
-)
-_NOTE_CLOCK: Final = (
-    "This reader asks the real clock. A written_at in the year 2999 is never stale, and one "
-    "in the year 2020 is always stale."
 )
 
 READERS: Final[tuple[Reader, ...]] = (
@@ -531,26 +507,10 @@ READERS: Final[tuple[Reader, ...]] = (
         ),
     ),
     Reader(
-        "door_tui",
-        "agent_door_tui.status.StatusFiles.serving",
-        _read_door_tui,
-        (
-            "value is the sandbox the terminal door attaches to. refusal holds the exit code "
-            f"name and the message. {ROOT_MARK} in a message stands for the root directory.",
-            _NOTE_CLOCK,
-        ),
-    ),
-    Reader(
         "door_trigger",
         "agent_door_trigger.families.StatusFiles.servable",
         _read_door_trigger,
         ("accepted means that the reader lists the family as one a trigger may start.",),
-    ),
-    Reader(
-        "door_owui",
-        "agent_door_owui.families.StatusFiles.serving",
-        _read_door_owui,
-        ("accepted means that the reader lists the family in the model picker.",),
     ),
 )
 

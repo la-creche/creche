@@ -11,7 +11,7 @@
 #
 # So this watchdog SHARES NO FATE with what it watches. It is a oneshot
 # under the user manager, it holds no rework code, it dials no rework
-# service for permission, and it works when all five units are dead.
+# service for permission, and it works when all four units are dead.
 # `caregiver`'s own `pep_unreachable` fault (contract 05 §3.3) covers the
 # PEP from INSIDE `caregiver`, which is no help when `caregiver` is the dead
 # one. This is the outside half.
@@ -26,11 +26,11 @@
 #                document at least every 30 s, and §2 rule 5 makes a reader
 #                call one older than 90 s `unknown`, so 180 s is two of
 #                those and cannot fire on a manager that is running.  5 s
-#   3. attendance  the Unix socket must exist AND answer. An unauthenticated
-#                GET returns 401, which proves a listener and needs no
-#                token (invariant 13).  5 s
+#   3. attendance  the Unix socket must exist AND answer GET /busy with 401
+#                or 200. A GET without a bearer gets 401, which proves a
+#                listener and needs no token (invariant 13).  5 s
 #   4. units     `systemctl --user is-failed` must be false for each of the
-#                five rework user units.  5 s
+#                four rework user units.  5 s
 #                The check also reads each firing unit, an instance of
 #                `creche-trigger@`. `systemctl --user list-units` names the
 #                instances, and one `systemctl --user show` call for each
@@ -205,12 +205,12 @@ HEALTH_PATH=/healthz
 HTTP_OK=200
 HTTP_UNAUTHORIZED=401
 
-# The five ALWAYS-ON user units `bin/rework-cutover.sh up` installs, in start
+# The four ALWAYS-ON user units `bin/rework-cutover.sh up` installs, in start
 # order. A long-running unit added there is added here. The two oneshots it
 # also installs are not: this alarm's own, and `registry-sync.service`, which
 # check 5 below reads by its RESULT rather than by `is-failed` — a oneshot
 # that is meant to exit says more about itself that way.
-UNITS="creche-attendance.service creche-caregiver.service creche-door-owui.service \
+UNITS="creche-attendance.service creche-caregiver.service \
 creche-trigger-webhooks.service creche-noticeboard.service"
 
 # The firing units: each instance of this template unit runs one cron
@@ -517,10 +517,12 @@ check_attendance() {
     return 0
   fi
 
-  # 401 is the answer to an unauthenticated list, and an answer is the
-  # point: it proves a listener without presenting a token.
+  # `/busy` is a route of attendance. It answers 401 to a GET without a
+  # bearer and 200 to a GET with the bearer of `view-ro`. An answer is the
+  # point: it proves a listener without presenting a token. A path that
+  # attendance does not route answers 404, and 404 is no proof.
   code="$(curl -s -o /dev/null -w '%{http_code}' -m "$CHECK_TIMEOUT_S" \
-    --unix-socket "$SOCKET" http://sessiond/v1/sessions 2>/dev/null)"
+    --unix-socket "$SOCKET" http://sessiond/busy 2>/dev/null)"
 
   if [[ "$code" == "$HTTP_UNAUTHORIZED" || "$code" == "$HTTP_OK" ]]; then
     say "ok: attendance answers on its socket"

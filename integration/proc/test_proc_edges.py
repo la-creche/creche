@@ -1,7 +1,7 @@
 """The edge of each listener: a request that no handler takes, and a signal.
 
-Four services listen: `attendance`, the Open WebUI door, the noticeboard
-and the webhook listener of the trigger door. Each one answers
+Three services listen: `attendance`, the noticeboard and the webhook
+listener of the trigger door. Each one answers
 some requests before a handler of the service runs: an unknown path, a wrong
 method, a path with a final slash, `HEAD`. Each one ends at some signals with
 no code of the service. No suite that hosts a service in the test process can
@@ -40,14 +40,6 @@ from pathlib import Path
 import httpx
 import pytest
 from proc_board import BoardStack
-from proc_chat import (
-    CHAT_PATH,
-    MODELS_PATH,
-    chat_body,
-    chat_id,
-    message_id,
-    owui_headers,
-)
 from proc_harness import (
     Address,
     Child,
@@ -56,17 +48,14 @@ from proc_harness import (
     answers_http,
     is_listening,
 )
-from proc_owui import OwuiStack
 from proc_services import SERVICES, Service
 from proc_stack import Stack
 from proc_tree import FAMILY
 from proc_trigger import TriggerStack, hook_path
 
-#: The four services that listen. The other two rows of the service table,
-#: the terminal door and `caregiver`, do not listen.
+#: The three services that listen. `caregiver` does not listen.
 LISTENERS = (
     Service.ATTENDANCE,
-    Service.DOOR_OWUI,
     Service.NOTICEBOARD,
     Service.DOOR_TRIGGER,
 )
@@ -84,7 +73,6 @@ HEALTH_PATH = "/healthz"
 #: take. No method here carries a body.
 WRONG_METHOD = {
     Service.ATTENDANCE: ("GET", JOBS_PATH),
-    Service.DOOR_OWUI: ("GET", CHAT_PATH),
     Service.NOTICEBOARD: ("DELETE", HEALTH_PATH),
     Service.DOOR_TRIGGER: ("GET", hook_path()),
 }
@@ -92,16 +80,15 @@ WRONG_METHOD = {
 #: One route that takes `GET`, for each listener that has one. The webhook
 #: listener and `attendance` have none: each of their routes takes `POST`.
 GET_ROUTE = {
-    Service.DOOR_OWUI: MODELS_PATH,
     Service.NOTICEBOARD: HEALTH_PATH,
 }
 
 #: The listeners that read a JSON body, with no scenario for such a body in
 #: another file. `test_proc_trigger_webhooks.py` holds the webhook listener.
-READ_JSON = (Service.ATTENDANCE, Service.DOOR_OWUI)
+READ_JSON = (Service.ATTENDANCE,)
 
-#: The two listeners that have no reload at `SIGHUP` in each configuration.
-NO_RELOAD = (Service.DOOR_OWUI, Service.NOTICEBOARD)
+#: The listener that has no reload at `SIGHUP` in each configuration.
+NO_RELOAD = (Service.NOTICEBOARD,)
 
 FINAL_SLASH = "/"
 JSON_TYPE = {"Content-Type": "application/json"}
@@ -123,9 +110,6 @@ NOT_JSON = {
 
 #: The prompt of each turn that a scenario starts.
 PROMPT = "is the heating on"
-
-#: A turn long enough to act inside: 60 deltas, 30 ms apart.
-LONG_TURN = {"events": 60, "delay_ms": 30}
 
 #: The header that makes a service close the connection after one answer
 #: (RFC 9112 §9.6). A test then reads the answer to the end of the connection.
@@ -154,7 +138,6 @@ SYSTEMD_STOP_LIMIT_S = 90.0
 #: unit files.
 STOP_LIMIT_S = {
     Service.ATTENDANCE: 60.0,
-    Service.DOOR_OWUI: 30.0,
     Service.NOTICEBOARD: 20.0,
     Service.DOOR_TRIGGER: 30.0,
 }
@@ -203,19 +186,12 @@ def listener(request: pytest.FixtureRequest) -> Listener:
 
 
 def _attendance(request: pytest.FixtureRequest) -> Listener:
-    stack: OwuiStack = request.getfixturevalue("owui")
+    stack: Stack = request.getfixturevalue("attended")
     address = UnixAddress(stack.tree.attendance_socket)
 
     return Listener(
         Service.ATTENDANCE, stack, _running(stack.attendance), address, stack.attendance_client
     )
-
-
-def _door_owui(request: pytest.FixtureRequest) -> Listener:
-    stack: OwuiStack = request.getfixturevalue("owui")
-    address = TcpAddress(stack.door_port)
-
-    return Listener(Service.DOOR_OWUI, stack, _running(stack.door), address, stack.door_client)
 
 
 def _noticeboard(request: pytest.FixtureRequest) -> Listener:
@@ -236,7 +212,6 @@ def _door_trigger(request: pytest.FixtureRequest) -> Listener:
 
 _LISTENER_OF: dict[Service, Callable[[pytest.FixtureRequest], Listener]] = {
     Service.ATTENDANCE: _attendance,
-    Service.DOOR_OWUI: _door_owui,
     Service.NOTICEBOARD: _noticeboard,
     Service.DOOR_TRIGGER: _door_trigger,
 }
@@ -275,13 +250,11 @@ async def test_a_wrong_method_gets_405(listener: Listener) -> None:
 
 
 # CONTRACT-QUESTION: contract 02 §14 gives `attendance` the code
-# `bad_request` with status 400 for a malformed field. No contract gives the
-# door an answer to a body that is not JSON. No contract gives a body a limit
-# on its nesting. Reading taken: one assertion for the two listeners and for
-# each body of `NOT_JSON`, a status of the 4xx class, and no work started.
-# Today `attendance` answers 400 with `bad_request` to each body, and the door
-# answers 400 with `bad_body` to each body. A change to one status for each
-# listener costs one assertion here.
+# `bad_request` with status 400 for a malformed field. No contract gives a
+# body a limit on its nesting. Reading taken: one assertion for each body of
+# `NOT_JSON`, a status of the 4xx class, and no work started. Today
+# `attendance` answers 400 with `bad_request` to each body. A change to that
+# status costs one assertion here.
 @pytest.mark.parametrize("body", list(NOT_JSON.values()), ids=list(NOT_JSON))
 @pytest.mark.parametrize("listener", READ_JSON, indirect=True)
 async def test_a_body_that_is_not_json_is_refused(listener: Listener, body: bytes) -> None:
@@ -321,17 +294,17 @@ async def test_head_on_a_get_route_has_no_body(listener: Listener) -> None:
 
 
 def test_attendance_starts_on_the_socket_file_of_a_killed_process(
-    owui_prepared: OwuiStack,
+    attended_prepared: Stack,
 ) -> None:
     """`Restart=always` of the unit, after a kill. Contract 02 §3 rule 1 gives the path.
 
     A killed process removes nothing. Its socket file stays at the path that
     the next process binds, and that process must start.
     """
-    tree = owui_prepared.tree
+    tree = attended_prepared.tree
     address = UnixAddress(tree.attendance_socket)
-    killed = owui_prepared.spawn_attendance()
-    owui_prepared.await_attendance()
+    killed = attended_prepared.spawn_attendance()
+    attended_prepared.await_attendance()
 
     os.killpg(killed.pgid, signal.SIGKILL)
     killed.wait(EXIT_DEADLINE_S)
@@ -339,8 +312,8 @@ def test_attendance_starts_on_the_socket_file_of_a_killed_process(
     assert tree.attendance_socket.is_socket(), "the kill left no socket file"
     assert not is_listening(address)
 
-    started = owui_prepared.spawn_attendance()
-    owui_prepared.await_attendance()
+    started = attended_prepared.spawn_attendance()
+    attended_prepared.await_attendance()
 
     assert started.exit_code() is None
     assert answers_http(address)
@@ -363,7 +336,7 @@ def test_sigint_ends_a_listener(listener: Listener) -> None:
 
 # CONTRACT-QUESTION: contract 02 §3 rule 8 gives `SIGHUP` a reload in
 # `attendance`. No contract says what a listener with no reload does at the
-# signal. Reading taken: what the door and the noticeboard do today. The
+# signal. Reading taken: what the noticeboard does today. The
 # signal ends the process, and its port closes. The other reading is a
 # listener that ignores the signal. A change to that reading costs the two
 # assertions here.
@@ -399,12 +372,6 @@ def work_of(service: Service) -> Work:
         # Contract 02 §13.4.2: the jobs of one caller family.
         return Work(JOBS_PATH, {}, {"caller_family": FAMILY})
 
-    if service is Service.DOOR_OWUI:
-        # One whole turn, and the answer comes after the turn settled.
-        headers = owui_headers(chat_id(), message_id())
-
-        return Work(CHAT_PATH, headers, chat_body(PROMPT, stream=False))
-
     raise AssertionError(f"{service.value} takes no request that starts work")
 
 
@@ -415,10 +382,10 @@ def work_done(stack: Stack) -> list[str]:
 
     1. A session in the session store, while the session exists.
     2. An outcome record, after a job ended and its session went.
-    3. The record of the pi stand-in, for each pi process that started.
+    3. The record of the `sbx` stand-in, for each sandbox command that started.
     """
     tree = stack.tree
-    done = [f"pi process {call.pid}" for call in stack.pi_starts()]
+    done = [f"sandbox command {call.pid}" for call in stack.sbx_calls()]
 
     for family in sorted(entry.name for entry in tree.sessions_root.iterdir()):
         done.extend(f"session {family}/{session}" for session in tree.sessions_of(family))

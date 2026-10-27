@@ -196,12 +196,12 @@ A push with no other path runs no other suite. One test of `bin/tests` reads
 `integration/proc/proc_services.py`. CI runs it.
 
 - The gate sets `CRECHE_PROC_NO_SKIP=1` for that run, as the `proc` job does.
-  A test that needs the playpen bundle then fails when the bundle is missing.
-- Build the bundle before the push. `integration/proc/AGENTS.md` gives the
+  A test that needs the facade build then fails when the build is missing.
+- Build the facade before the push. `integration/proc/AGENTS.md` gives the
   command.
 - Prose under `integration/proc/` picks no suite, because no test reads it.
   A push of a package and one line of `integration/proc/AGENTS.md` then
-  needs no bundle.
+  needs no build.
 - `--tests` does not run the process-level suite. CI runs it for each code
   change.
 

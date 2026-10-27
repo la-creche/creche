@@ -14,9 +14,9 @@
 # `attendance` release, and a unit that ran from anywhere else would relaunch
 # the old code after a release the ledger called a success.
 #
-# The three doors that ship inside this same component (contract 06 §1 rule
-# 1) run from the same tree: `creche-door-owui.service` and
-# `creche-trigger-webhooks.service` name this venv's own bin.
+# The doors that ship inside this same component (contract 06 §1 rule 1)
+# run from the same tree: `creche-trigger-webhooks.service` and
+# `creche-door-acp.service` name this venv's own bin.
 [Unit]
 Description=attendance, the rework session service
 After=network-online.target

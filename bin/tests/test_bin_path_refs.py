@@ -186,7 +186,14 @@ def test_no_workflow_names_a_path_the_deletion_removed(path: Path) -> None:
     body = _text(path)
     # The `schema-v*` TAGS stay: a tag prefix is not a path, so it does not
     # match here.
-    for prefix in ("materializer", "runner", "shim", "statusboard", "ui", "models", "schema"):
+    for prefix in (
+        "materializer",
+        "runner",
+        "shim",
+        "statusboard",
+        "ui",
+        "models",
+        "schema",
+        "toybox",
+    ):
         assert f"{prefix}/" not in body, f"{path.name} names {prefix}/"
-
-    assert "toybox/" not in body or (REPO / "toybox").exists()

@@ -1,8 +1,8 @@
-// A port of `playpen/src/planes.ts`: the grammar of a plane URL. A plane is a
-// service of the host that each sandbox calls: the chaperone and LiteLLM.
+// The grammar of a plane URL. A plane is a service of the host that each
+// sandbox calls: the chaperone and LiteLLM.
 //
 // A plane URL is `http://<host>:<port>` and no other byte. The grammar is
-// the grammar of the Rust type `PlaneUrl`, which the playpen cites
+// the grammar of the Rust type `PlaneUrl`
 // (`rust/crates/creche-contracts/src/config/endpoints.rs`). The host is an
 // IPv4 address or a host name and keeps its letter case. The port is 1 to
 // 65535, decimal, with no sign and no zero at the start.

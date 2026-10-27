@@ -15,8 +15,7 @@ until the prose is fixed. This is the most important rule in this file.
 
 1. Run `git config core.hooksPath githooks` once per clone.
 2. Run `uv sync` once.
-3. For `playpen/`, `agent/` and `facade/`, run `pnpm install` in that
-   directory.
+3. For `agent/` and `facade/`, run `pnpm install` in that directory.
 
 ## Every change
 
@@ -86,9 +85,9 @@ text with no UTC offset is not a time.
 | `family/` | `family/AGENTS.md` |
 | `attendance/` | `attendance/AGENTS.md` |
 | `caregiver/` | `caregiver/AGENTS.md` |
-| `door-owui/`, `door-tui/`, `door-trigger/`, `door-acp/` | the door's own `AGENTS.md` |
+| `door-trigger/`, `door-acp/` | the door's own `AGENTS.md` |
 | `noticeboard/` | `noticeboard/AGENTS.md` |
-| `playpen/`, `toybox/` | `playpen/AGENTS.md`, `toybox/AGENTS.md` |
+| `playpen/` | `playpen/AGENTS.md` |
 | `agent/` | `agent/AGENTS.md` |
 | `facade/` | `facade/AGENTS.md` |
 | `handover/` | `handover/AGENTS.md` |

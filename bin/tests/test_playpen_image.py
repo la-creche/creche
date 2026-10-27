@@ -44,7 +44,7 @@ def _facade_bins() -> dict[str, str]:
 
 
 def test_the_targets_are_the_flavors_the_release_builds() -> None:
-    """playpen/AGENTS.md rule 52: the targets and the flavors are one list."""
+    """playpen/AGENTS.md rule 6: the targets and the flavors are one list."""
     targets = [name for name in STAGE_RE.findall(_text()) if name != "build"]
     flavors = re.search(r'^FLAVORS="([^"]*)"$', BUILD.read_text(encoding="utf-8"), re.MULTILINE)
 

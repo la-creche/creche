@@ -1,5 +1,5 @@
-// A stand-in for LiteLLM's OpenAI-compatible endpoint. A port of
-// `playpen/test/fake-model.ts`. It binds 127.0.0.1 on an ephemeral port.
+// A stand-in for LiteLLM's OpenAI-compatible endpoint. It binds 127.0.0.1
+// on an ephemeral port.
 //
 // It is NOT a model. It answers request N with reply N of a fixed script,
 // and every request after the script with the last reply. A reply is one

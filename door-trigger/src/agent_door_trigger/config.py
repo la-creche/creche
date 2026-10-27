@@ -21,8 +21,7 @@ MIN_TOKEN_BYTES = 32
 #: Contract 02 §3 rule 1. `attendance` is a systemd USER unit, so its own
 #: runtime directory sits under `/run/user/<uid>`, which the hardened PEP
 #: unit cannot reach — the socket lives on the state root instead, as in
-#: `attendance/src/attendance/config.py` and door-owui's and door-tui's
-#: own `DEFAULT_ATTENDANCE_SOCKET`.
+#: `attendance/src/attendance/config.py`.
 DEFAULT_ATTENDANCE_SOCKET = "/srv/agents/state/rework/sock/sessiond.sock"
 #: gate-1a.md's token layout.
 DEFAULT_ATTENDANCE_TOKEN_FILE = "/srv/agents/state/rework/tokens/door-trigger.token"

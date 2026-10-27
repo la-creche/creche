@@ -107,8 +107,8 @@ validate the config and exit.
 uv run pytest door-trigger/tests
 ```
 
-`trigger_fake_attendance.py` is named that way because `fake_attendance.py`
-is `door-owui`'s. Basenames are unique across the workspace. Run
+`trigger_fake_attendance.py` has a name of its own because basenames are
+unique across the workspace. Run
 `uv run pytest -n auto` before you trust a new test file's name.
 
 ## Known gaps

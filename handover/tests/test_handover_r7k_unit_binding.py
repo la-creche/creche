@@ -532,12 +532,11 @@ def test_the_repositorys_own_units_start_the_trees_their_manifests_install() -> 
     assert found == UNITS_THAT_DO_NOT_START_THEIR_TREE
 
 
-#: `attendance`'s four door units, which run out of its tree
+#: `attendance`'s three door units, which run out of its tree
 #: (`install.py` rule 8).
 ATTENDANCE_DOORS = frozenset(
     {
         "creche-door-acp.service",
-        "creche-door-owui.service",
         "creche-trigger-webhooks.service",
         "creche-trigger@.service",
     }
@@ -557,7 +556,7 @@ def test_every_unit_that_starts_a_tree_travels_with_its_component(tmp_path: Path
     `stage_unit`. Every shipped unit is installed on a fake host, and a
     stage out of this repository must carry exactly the units that start
     the component's tree: its `unit:` and its siblings. So `attendance`'s
-    four doors are siblings of `attendance`."""
+    three doors are siblings of `attendance`."""
     shipped = sorted((REPO_ROOT / "systemd").glob("*.service"))
     staged_for: dict[str, set[str]] = {}
     for path in sorted(REPO_ROOT.glob("*/component.yaml")):
