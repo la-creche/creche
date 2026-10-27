@@ -346,21 +346,18 @@ def _signals_kept() -> Iterator[None]:
 #: Names the site file every test reads (handover/src/handover/site.py).
 SITE_FILE_ENV = "AGENT_SITE_FILE"
 
-#: A site that is nobody's: the values a test may rely on. The addresses
-#: are TEST-NET-1 (RFC 5737), which no host ever holds.
+#: A site that is nobody's: the values a test may rely on. The address is
+#: in TEST-NET-1 (RFC 5737), which no host ever holds.
 EXAMPLE_LAN_ADDRESS = "192.0.2.10"
-EXAMPLE_HA_URL = "http://192.0.2.20:8123"
 EXAMPLE_SITE = f"""\
 AGENT_GITHUB_OWNER=example-owner
 AGENT_OPERATOR_USER=operator
 AGENT_OPERATOR_HOME=/home/operator
 AGENT_LAN_ADDRESS={EXAMPLE_LAN_ADDRESS}
-AGENT_HA_URL={EXAMPLE_HA_URL}
 """
 
 #: What a unit's `EnvironmentFile` hands a service from that same file.
 LAN_ADDRESS_ENV = "AGENT_LAN_ADDRESS"
-HA_URL_ENV = "AGENT_HA_URL"
 
 #: The example site file of this process, written once in `pytest_configure`.
 _example_site_file: list[Path] = []
@@ -376,11 +373,10 @@ def _site_is_the_example(monkeypatch: pytest.MonkeyPatch) -> None:
     that needs another site sets the variable again.
 
     A service gets the same values from its unit's `EnvironmentFile`, so the
-    two a service reads are in the environment too.
+    one a service reads is in the environment too.
     """
     monkeypatch.setenv(SITE_FILE_ENV, str(_example_site_file[0]))
     monkeypatch.setenv(LAN_ADDRESS_ENV, EXAMPLE_LAN_ADDRESS)
-    monkeypatch.setenv(HA_URL_ENV, EXAMPLE_HA_URL)
 
 
 @pytest.fixture
