@@ -10,6 +10,7 @@ topology with one writes only the registry and the token files, and
     <root>/
       registry/families/<family>/family.toml       contract 01 §1
       registry/families/<family>/instructions.md   contract 01 §1
+      registry/mcp/<server>/server.toml            contract 01b
       sessions/<family>/                 contract 02 §9, the session store
       state/families/<family>/status.json          contract 05 §2
       state/families/<family>/validation.json      contract 05 §3.2
@@ -22,7 +23,8 @@ topology with one writes only the registry and the token files, and
       state/grants/<family>.json         contract 04 §1, the grant file
       state/faults/<writer>/<family>.json          contract 05 §3.3.1
       state/audit/<day>.jsonl            contract 04 §6, written by the Python chaperone
-      chaperone/audit.jsonl              the audit file of the Rust chaperone
+      chaperone-rs/config/               the configuration directory of the Rust chaperone
+      chaperone-rs/audit.jsonl           the audit file of the Rust chaperone
       state/outcomes/<family>/<id>.json  contract 02 §13.1, written by `attendance`
       state/triggers/webhooks/<family>/<name>.token   contract 05 §6.4
       state/view.key                     the key of the noticeboard
@@ -358,6 +360,10 @@ class Tree:
     def family_file(self, family: str = FAMILY) -> Path:
         return self.registry_family_dir(family) / "family.toml"
 
+    def server_file(self, server: str) -> Path:
+        """The server file of one MCP server (contract 01b)."""
+        return self.registry_root / "mcp" / server / "server.toml"
+
     def family_prose_file(self, family: str = FAMILY) -> Path:
         """The `instructions.md` of one family in the registry (contract 01 §1)."""
         return self.registry_family_dir(family) / "instructions.md"
@@ -528,6 +534,28 @@ def publish_family(tree: Tree, body: Mapping[str, Any], prose: str = INSTRUCTION
     """Add one family to the registry: its prose first, then its file."""
     write_family_prose(tree, str(body["name"]), prose)
     write_family_file(tree, body)
+
+
+def write_server_file(tree: Tree, server: str, tools: tuple[str, ...]) -> None:
+    """Put one server file in the registry (contract 01b): a PyPI pin and the catalog of tools.
+
+    `caregiver` reads the catalog when it expands a grant, and it installs
+    nothing. So the pin names a package that no index holds.
+    """
+    body = {
+        "name": server,
+        "identity": f"The {server} server of the process suite. It holds no credential.",
+        "install": {
+            "source": "pypi",
+            "package": f"proc-{server}",
+            "version": "1.0.0",
+            "lock": f"mcp/{server}/install.lock",
+        },
+        "run": {"entrypoint": f"proc-{server}"},
+        "tools": [{"name": tool, "description": f"The tool {tool}."} for tool in tools],
+    }
+
+    write_registry_file(tree, tree.server_file(server), toml_text(body))
 
 
 def write_skill(tree: Tree, skill: str, text: str) -> None:
@@ -772,52 +800,32 @@ def write_playpen_env(tree: Tree, family: str = FAMILY, sandbox: str | None = No
     _atomic_write(tree.playpen_env(family, box), "\n".join(lines) + "\n", PLAYPEN_ENV_MODE)
 
 
-def write_facade_env(tree: Tree, family: str, *, pep_url: str, litellm_url: str) -> None:
-    """The env file of the first sandbox of one family, for `creche-facade`.
-
-    The four lines of `write_playpen_env`, and the three more that the agent
-    module reads (`agent/src/config.ts`): the sessions mount and the two
-    plane URLs. Phase 2 plan correction 11: the fixtures write
-    `AGENT_SESSIONS_DIR` in phase 2, and `caregiver` writes it in phase 3.
-
-    CONTRACT-QUESTION: contract 03 §7 gives the two plane URLs as values of
-    the image, and the agent module reads each from its environment. The
-    env file is the one way a value of this suite reaches the sandbox
-    (contract 03 §7.1), so the URLs go there.
-    """
-    box = first_sandbox(family)
-    mounts = tree.mounts(family, box)
-    mounts.control.mkdir(parents=True, exist_ok=True)
-    lines = [
-        f"AGENT_SESSIONS_DIR={mounts.sessions}",
-        f"AGENT_CRED_DIR={mounts.creds}",
-        f"AGENT_FAMILY_CONFIG_DIR={mounts.config}",
-        f"AGENT_CONTROL_DIR={mounts.control}",
-        f"AGENT_SANDBOX={box}",
-        f"AGENT_PEP_URL={pep_url}",
-        f"AGENT_LITELLM_BASE_URL={litellm_url}",
-    ]
-
-    _atomic_write(tree.playpen_env(family, box), "\n".join(lines) + "\n", PLAYPEN_ENV_MODE)
-
-
-def write_creds(tree: Tree, family: str = FAMILY, pep_token: str | None = None) -> None:
-    """The credential file the playpen reads at each pi start (contract 03 §12).
-
-    `pep_token` is the bearer of the family at its chaperone. The default is
-    the fixture token of the Python chaperone. A topology of the Rust
-    chaperone gives the token that `chaperone token new` minted.
-    """
+def write_creds(tree: Tree, family: str = FAMILY) -> None:
+    """The credential file the playpen reads at each pi start (contract 03 §12)."""
     document = {
         "epoch": CRED_EPOCH,
         "litellm_key": FIXTURE_LITELLM_KEY,
-        "pep_token": pep_token if pep_token is not None else pep_token_of(family),
+        "pep_token": pep_token_of(family),
         "written_at": _rfc3339(),
     }
 
     _atomic_write(
         tree.mounts(family).creds / "creds.json", json.dumps(document) + "\n", SECRET_MODE
     )
+
+
+def end_token_overlap(tree: Tree, family: str) -> None:
+    """Move the end of the token overlap of one family to a past time (contract 05 §6.3 step 5).
+
+    `caregiver` wrote the credential file. This writer changes one value of
+    it, `previous_expires_at`, as the 300 seconds of the overlap would, and
+    keeps the mode.
+    """
+    path = tree.creds_file(family)
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document["previous_expires_at"] = _PAST
+
+    _atomic_write(path, json.dumps(document) + "\n", SECRET_MODE)
 
 
 def write_runtime(tree: Tree, family: str = FAMILY) -> None:
@@ -1055,6 +1063,10 @@ def _atomic_write(path: Path, text: str, mode: int) -> None:
     temp.replace(path)
 
 
+#: A time before each test: the end of an overlap that is over.
+_PAST: Final = "2000-01-01T00:00:00Z"
+
+
 def _rfc3339() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -1103,10 +1115,6 @@ RS_ATTENDANCE_SECRETS: Final = {
     "DELEGATE_TOKEN": "door-delegate",
     "DISPATCH_TOKEN": "door-dispatch",
 }
-
-#: The bound of a delegate call, which §12 asks of each app instance that
-#: delegates.
-RS_DELEGATE_TIMEOUT_S: Final = 120
 
 #: The plugin of §12 that files a release request: an effect half and no
 #: fence. Its program, as the manifest in the chaperone repository names
@@ -1198,7 +1206,11 @@ class RsFiles:
 
     @property
     def plugins_dir(self) -> Path:
-        return self.root / "chaperone-rs" / "plugins"
+        """Inside the configuration directory, as `/etc/chaperone/plugins` on the host.
+
+        `caregiver` checks its `policy.toml` against the plugin tree of that place.
+        """
+        return self.config_dir / "plugins"
 
     @property
     def secrets_dir(self) -> Path:
@@ -1217,16 +1229,13 @@ class RsFiles:
         return self.config_dir / name
 
 
-def rs_policy_text(
-    families: tuple[str, ...] = RS_FAMILIES, delegates: Mapping[str, tuple[str, ...]] | None = None
-) -> str:
+def rs_policy_text(families: tuple[str, ...] = RS_FAMILIES) -> str:
     """The policy file before `chaperone token new` adds a digest (§6, §9).
 
     Each app instance may call `echo`, and `gated_echo` with an approval.
-    An app instance in `delegates` may also call `attendance__invoke_agent`
-    for each family of its list, with the bound of §12.
+    `test_proc_chaperone_rs.py` serves this file. The exit test serves the
+    file that `caregiver` writes.
     """
-    reach = delegates or {}
     parts = [
         "# The policy file of the Rust chaperone in one test (chaperone design §6).\n"
         "# `chaperone token new` adds the one digest of each app instance.\n"
@@ -1242,16 +1251,6 @@ def rs_policy_text(
             "echo = {}\n"
             'gated_echo = { approval = "required" }\n'
         )
-
-        if family in reach:
-            parts.append(
-                f"\n[apps.{family}.grants.{RS_ATTENDANCE}]\n"
-                f"timeout_s = {RS_DELEGATE_TIMEOUT_S}\n"
-                f"\n[apps.{family}.grants.{RS_ATTENDANCE}.tools]\n"
-                "invoke_agent = {}\n"
-                f"\n[apps.{family}.plugins.{RS_ATTENDANCE}]\n"
-                f"delegates = {json.dumps(list(reach[family]))}\n"
-            )
 
     return "".join(parts)
 
@@ -1282,22 +1281,18 @@ def rs_manifest(
     return "\n".join(lines) + "\n"
 
 
-def write_rs_tree(
-    files: RsFiles,
-    upstream: Path,
-    approval: Path,
-    attendance: tuple[Path, Mapping[str, tuple[str, ...]]] | None = None,
+def write_rs_install(
+    files: RsFiles, upstream: Path, approval: Path, attendance: Path | None = None
 ) -> None:
-    """Write the plugin tree, the secrets and both configuration files of the chaperone.
+    """Write the plugin tree, the secrets and `install.toml` of the chaperone. No policy file.
 
     `upstream` and `approval` are the absolute programs of the two effect
     stand-ins. The chaperone runs the program of an effect manifest as it
     is (§7.7).
 
-    `attendance` is the Unix socket of `attendance` and the delegates of
-    each app instance. With it, the tree holds both halves of the plugin
-    `attendance` (§12), the install entry gives the effect half `--socket`
-    and its two door tokens, and the policy grants `invoke_agent`.
+    `attendance` is the Unix socket of `attendance`. With it, the tree
+    holds both halves of the plugin `attendance` (§12), and the install
+    entry gives the effect half `--socket` and its two door tokens.
     """
     _write_rs_defaults(files)
     added = files.plugins_dir / "effect" / "added"
@@ -1315,14 +1310,16 @@ def write_rs_tree(
     _atomic_write(files.secrets_dir / RS_SECRET_NAME, RS_SECRET_VALUE, _SECRET_MODE)
 
     install = RS_INSTALL
-    delegates: Mapping[str, tuple[str, ...]] = {}
 
     if attendance is not None:
-        socket, delegates = attendance
-        install += _write_rs_attendance(files, socket)
+        install += _write_rs_attendance(files, attendance)
 
     _atomic_write(files.config_file("install.toml"), install, 0o644)
-    _atomic_write(files.config_file("policy.toml"), rs_policy_text(delegates=delegates), 0o644)
+
+
+def write_rs_policy(files: RsFiles) -> None:
+    """Write `rs_policy_text` as `policy.toml`, for `chaperone token new` to complete."""
+    _atomic_write(files.config_file("policy.toml"), rs_policy_text(), 0o644)
 
 
 def write_rs_fleet_tree(

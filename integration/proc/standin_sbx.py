@@ -21,9 +21,10 @@ test reads the same files that the next call reads:
     vms/<id>.json                 what `create` was given
     policy/<id>/allow/<host>      one file for each allow row
     policy/<id>/deny/<host>       one file for each deny row
+    view.json                     what each VM sees of the host
     tune/                         what a test writes to change one call
 
-Four things here copy what the real program does on the host:
+Five things here copy what the real program does on the host:
 
 1. `create` gives each sandbox the allow row of the `shell` kit. Only a deny
    row takes that host away. `policy rm` leaves the allow row of the kit.
@@ -31,6 +32,12 @@ Four things here copy what the real program does on the host:
    allow row, and a host with no row is denied.
 3. `rm` removes the sandbox and leaves its policy rows.
 4. `exec` starts nothing in a sandbox that `create` did not make.
+5. A VM mounts each host path at the same path, and it reaches the LAN
+   address of the host. The suite keeps each path in the root and binds
+   loopback ports. So `exec` gives the command the env file as the VM sees
+   it: each value that starts with a key of `view.json` starts with the
+   value of that key instead. With no `view.json`, the env file is as
+   `caregiver` wrote it.
 
 A test tunes one call with a file under `tune/`:
 
@@ -72,6 +79,9 @@ NOT_FOUND: Final = "not found"
 READ_ONLY_SUFFIX: Final = ":ro"
 
 VMS_DIR: Final = "vms"
+VIEW_FILE: Final = "view.json"
+VIEW_DIR: Final = "view"
+ENV_FILE_FLAG: Final = "--env-file"
 POLICY_DIR: Final = "policy"
 TUNE_DIR: Final = "tune"
 ALLOW: Final = "allow"
@@ -288,14 +298,40 @@ def _exec(state: Path, rest: list[str]) -> int:
 
     words = list(rest)
 
-    if (state / TUNE_DIR / "no-mounts" / name).exists():
-        at = words.index("--env-file") + 1
-        words[at] = str(_env_with_no_mounts(state, name))
+    # With no env file, `fake_sbx.py` refuses the command.
+    if ENV_FILE_FLAG in before:
+        at = words.index(ENV_FILE_FLAG) + 1
+
+        if (state / VIEW_FILE).exists():
+            words[at] = str(_env_in_view(state, name, Path(words[at])))
+
+        if (state / TUNE_DIR / "no-mounts" / name).exists():
+            words[at] = str(_env_with_no_mounts(state, name))
 
     program = Path(__file__).resolve().parents[1] / "tests" / "fake_sbx.py"
     os.execv(sys.executable, [sys.executable, str(program), "exec", *words])
 
     return EXIT_USAGE
+
+
+def _env_in_view(state: Path, name: str, source: Path) -> Path:
+    """The env file of one sandbox as its VM sees the host (rule 5)."""
+    view: dict[str, str] = json.loads((state / VIEW_FILE).read_text(encoding="utf-8"))
+    lines: list[str] = []
+
+    for line in source.read_text(encoding="utf-8").splitlines():
+        variable, sign, value = line.partition("=")
+        host = next((key for key in view if value.startswith(key)), None)
+
+        if host is not None:
+            value = view[host] + value.removeprefix(host)
+
+        lines.append(f"{variable}{sign}{value}")
+
+    path = state / VIEW_DIR / f"{name}.env"
+    _write_whole(path, "\n".join(lines) + "\n")
+
+    return path
 
 
 def _env_with_no_mounts(state: Path, name: str) -> Path:
