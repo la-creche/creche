@@ -441,10 +441,9 @@ def test_a_rotation_serves_two_digests_until_it_settles(exit_stack: ExitStack) -
     The rotation puts both digests into the table of `vault-oracle`, and a
     call of `echo` runs with each token. The overlap lasts 300 seconds, and no flag
     of `caregiver` changes that. So the test moves its end into the past, as
-    the 300 seconds would. The next pass of `caregiver serve` settles the
-    rotation: one digest stays, and the chaperone denies a call with the old
-    token.
-    The next pass comes 20 seconds after the last one at most.
+    the 300 seconds would. A `SIGHUP` starts the next pass of `caregiver
+    serve`, and that pass settles the rotation: one digest stays, and the
+    chaperone denies a call with the old token.
     """
     old = exit_stack.tokens[TARGET]
     done = exit_stack.rotate(TARGET)
@@ -453,10 +452,9 @@ def test_a_rotation_serves_two_digests_until_it_settles(exit_stack: ExitStack) -
     during = [_echo_as(exit_stack, token) for token in (old, new)]
 
     end_token_overlap(exit_stack.tree, TARGET)
-    wait_until(
+    exit_stack.await_pass(
         lambda: _digests(exit_stack, TARGET) == [token_digest(new)] or None,
         f"the settle of {TARGET}",
-        "caregiver",
     )
     after = [_echo_as(exit_stack, token) for token in (old, new)]
 

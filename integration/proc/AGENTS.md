@@ -758,8 +758,8 @@ the text of the failure. Work down this list.
 - **No flag for the grace of a rotation.** `ROTATION_GRACE_S` in
   `caregiver/src/caregiver/rotate.py` is 300 seconds. The rotation scenario
   of `test_proc_exit.py` moves the end of the overlap into the past with
-  `end_token_overlap`, then waits for the next pass of `caregiver serve`:
-  20 seconds at most.
+  `end_token_overlap`. Then it sends `caregiver serve` a `SIGHUP`, as the
+  `ExecReload` of the unit does, until a pass settles the rotation.
 - **The stand-ins copy facts that no test of this suite can check.** The
   `sbx` stand-in follows the facts that `caregiver/src/caregiver/driver.py`
   records about the real program. The `systemctl` stand-in refuses a
