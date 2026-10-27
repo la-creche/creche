@@ -5,9 +5,9 @@ this suite with no test change. Each test here is the proof that the
 variable reaches the process a scenario talks to: each service starts
 through a program that the command of the run never runs by itself.
 
-A service has three ways to start in this suite: as a process that serves,
-as a command that runs to its end, and as a program on a terminal. Each way
-reads the same table, and each has its proof here.
+A service has two ways to start in this suite: as a process that serves,
+and as a command that runs to its end. Each way reads the same table, and
+each has its proof here.
 """
 
 from __future__ import annotations
@@ -24,10 +24,8 @@ from proc_services import SERVICES, Service, command_of
 from proc_stack import Stack
 from proc_tree import FAMILY, Tree
 from proc_trigger import REVIEW, TriggerStack, hook_path
-from proc_tui import TuiStack
 
 CHECK_FLAG = "--check"
-EXIT_DEADLINE_S = 30.0
 
 
 async def test_an_override_starts_attendance(
@@ -114,22 +112,6 @@ def test_an_override_starts_the_verify_hook_of_the_noticeboard(
 
     assert checked.exit_code == 0, checked.stdout + checked.stderr
     assert ran.read_text(encoding="utf-8").split() == ["noticeboard-verify"]
-
-
-def test_an_override_starts_the_terminal_door_on_a_terminal(
-    tree: Tree, supervisor: Supervisor, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    ran = tree.root / "override-ran"
-    monkeypatch.setenv(
-        SERVICES[Service.DOOR_TUI].override, str(_other_program(tree, Service.DOOR_TUI, ran))
-    )
-    stack = TuiStack(tree, supervisor)
-    stack.prepare()
-
-    child, _ = stack.open_terminal(CHECK_FLAG)
-
-    assert child.wait(EXIT_DEADLINE_S) == 0, child.output()
-    assert ran.read_text(encoding="utf-8").split() == ["door-tui"]
 
 
 def test_an_override_starts_the_index_builder(

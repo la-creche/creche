@@ -45,7 +45,6 @@ from agent_door_trigger.errors import AttendanceError
 from agent_door_trigger.routes import Route
 from agent_door_trigger.tokens import read_webhook_token
 from agent_door_trigger.webhooks import create_app as create_trigger_app
-from agent_door_tui import untrusted as tui_untrusted
 from attendance.api import build_app as build_attendance_app
 from attendance.auth import Principal, TokenBook, TokenError
 from attendance.paths import token_file
@@ -250,7 +249,6 @@ def _capped(
 
 
 _TRIGGER: Final = "agent_door_trigger.untrusted"
-_TUI: Final = "agent_door_tui.untrusted"
 _BOARD: Final = "noticeboard.jsonfiles"
 _ATTENDANCE: Final = "attendance.atomic"
 
@@ -261,13 +259,6 @@ HELPERS: Final[tuple[Helper, ...]] = (
     _value("door_trigger", _TRIGGER, trigger_untrusted.as_object, "as_object"),
     _value("door_trigger", _TRIGGER, trigger_untrusted.as_text, "as_text"),
     _field("door_trigger", _TRIGGER, trigger_untrusted.field_text, "field_text"),
-    _value("door_tui", _TUI, tui_untrusted.is_object, "is_object"),
-    _value("door_tui", _TUI, tui_untrusted.is_list, "is_list"),
-    _value("door_tui", _TUI, tui_untrusted.as_object, "as_object"),
-    _value("door_tui", _TUI, tui_untrusted.as_list, "as_list"),
-    _value("door_tui", _TUI, tui_untrusted.as_text, "as_text"),
-    _field("door_tui", _TUI, tui_untrusted.field_text, "field_text"),
-    _field("door_tui", _TUI, tui_untrusted.field_int, "field_int"),
     _field("noticeboard", _BOARD, jsonfiles.text, "text"),
     _field("noticeboard", _BOARD, jsonfiles.whole, "whole"),
     _field("noticeboard", _BOARD, jsonfiles.integer, "integer"),
