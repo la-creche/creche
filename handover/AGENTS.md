@@ -486,7 +486,7 @@ The executor runs as root from `creche-handover.path`, through the wrapper
 | `requester/`, `corpus/` | one request file, one `git fetch`, and the fetch of the two assets of a binary component into the store (`corpus/artifacts.py`) |
 | `follow/` | the set a newer tag moves, the marker, the decision |
 | `executor/spool.py`, `request.py`, `live_state.py`, `provenance.py` | the five directories, the request, the built document, P1 to P6 |
-| `executor/approval.py`, `phone.py`, `notice.py`, `quiesce.py`, `quiet.py` | the gate, the transport, the outcome push, step 7, the quiet minutes |
+| `executor/approval.py`, `phone.py`, `notice.py`, `quiet.py` | the gate, the transport, the outcome push, the busy check of step 7 and the quiet minutes |
 | `executor/host.py`, `install.py`, `mcpbuild.py`, `self_switch.py` | the one spawn and the unit of the verifier, steps 8 to 10, a server tree, the self-release |
 | `executor/unpack.py`, `artifact.py` | the unpack of a tar archive and the member list of a component archive, root's copy of the two assets of a binary component and the digest of its archive |
 | `executor/ledger.py`, `steps.py`, `drain.py` | the entry, the ten steps, the unit's entry point |

@@ -365,7 +365,6 @@ class Host:
     source_owner_gid: int = 0
     system_unit_dir: Path = Path("/etc/systemd/system")
     user_unit_dir: Path = field(default_factory=_user_unit_dir)
-    sessions_root: Path = Path("/srv/agents/sessions")
     install_roots: tuple[Path, ...] = field(default_factory=default_install_roots)
     mcp_root: Path = Path(MCP_ROOT)
     #: `MCP_STATE_ROOT`, a field so a test points it inside `tmp_path`.

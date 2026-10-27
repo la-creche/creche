@@ -16,7 +16,6 @@ Module map, in the order one release walks through them:
 | `live_state` | Contract 06 §11's document, held to the version stamps. |
 | `provenance` | P1 to P5 against the GitHub API, and P6 with the verifier, fail closed. |
 | `approval` | The gate id, the summary, the transport seam. |
-| `quiesce` | Step 7: no turn mid-start. |
 | `host` | The one place a child process starts. No shell, ever. |
 | `install` | Steps 8 to 10 for one component. |
 | `ledger` | §2.6's entry. |

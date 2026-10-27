@@ -45,8 +45,6 @@ OPERATOR_BY_DESIGN: Final = {
     "source_root": "the corpus, read by SHA",
     # Written as the operator, by a child running as the operator.
     "user_unit_dir": "the operator's own units, written as the operator",
-    # A signal: planted records can only make root WAIT (`quiesce.py`).
-    "sessions_root": "a quiet-window signal that can only delay",
     # §2.8's signal, read O_NOFOLLOW off the open descriptor (`quiet.py`).
     "attendance_socket": "a quiet-window signal that can only delay",
     "view_token_file": "a quiet-window signal that can only delay",

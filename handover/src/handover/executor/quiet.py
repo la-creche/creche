@@ -156,6 +156,9 @@ class Busy(StrEnum):
 #: out the hour instead of recreating `ai-litellm` under live calls.
 BusySeenFn = Callable[[], float | None]
 
+#: What `attendance` answers now. Step 7 reads it.
+BusyNowFn = Callable[[], Busy]
+
 
 def needs_window(recreates: Iterable[str]) -> bool:
     """§2.8: a diff that leaves LiteLLM alone needs no window.

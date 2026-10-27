@@ -52,7 +52,7 @@ from .notice import notice_of, say_nothing
 from .phone import TOKEN_ENV as APPROVAL_TOKEN_ENV
 from .phone import URL_ENV, build_phone
 from .provenance import ApiGetFn, github_api, newest_version, tag_commit
-from .quiet import attendance_signal
+from .quiet import ask_attendance, attendance_signal
 from .request import Request, request_id_of
 from .self_switch import settle, switch_in
 from .source import git_env, input_digest, require_trusted
@@ -394,6 +394,7 @@ def build_wiring(operator_uid: int, secrets: Secrets, operator_gid: int = 0) -> 
         last_busy_seen=attendance_signal(
             host.attendance_socket, host.view_token_file, operator_uid, host.clock
         ),
+        busy_now=lambda: ask_attendance(host.attendance_socket, host.view_token_file, operator_uid),
     )
 
 
