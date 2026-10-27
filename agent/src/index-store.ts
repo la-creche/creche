@@ -1,7 +1,7 @@
-// A port of `playpen/bridge/index-store.ts`. One corpus index, read over the
-// family's read-only mount, `AGENT_INDEX_ROOT`. The library writes the store
-// and this file reads it, so the schema is a cross-language contract
-// (`library/AGENTS.md`, "Store schema"). Keep the two readers equal:
+// One corpus index, read over the family's read-only mount,
+// `AGENT_INDEX_ROOT`. The library writes the store and this file reads it, so
+// the schema is a cross-language contract (`library/AGENTS.md`, "Store
+// schema"). Keep the two readers equal:
 //
 //   <index root>/<name>/store.db
 //     meta(key, value)            embed_model, dims

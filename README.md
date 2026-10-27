@@ -54,7 +54,7 @@ turn. The `attendance` service takes that call from four doors.
 | `door-acp/` | in `attendance` | `creche-door-acp.service`, user | The ACP door: `WS /acp/<family>`, forwarded to `attendance`. Also `creche-acp-connect`. | [door-acp/AGENTS.md](door-acp/AGENTS.md) |
 | `caregiver/` | `caregiver` | `creche-caregiver.service`, user | The reconciler. It converges every family to its file. | [caregiver/AGENTS.md](caregiver/AGENTS.md) |
 | `noticeboard/` | `noticeboard` | `creche-noticeboard.service`, user | The one view: every family, sandbox, session and audit line. | [noticeboard/AGENTS.md](noticeboard/AGENTS.md) |
-| `playpen/` | `playpen` | none, an OCI image | The process inside each sandbox, the pi bridge and the terminal launcher. | [playpen/AGENTS.md](playpen/AGENTS.md) |
+| `playpen/` | `playpen` | none, an OCI image | The sandbox image: the ACP facade and the agent module. | [playpen/AGENTS.md](playpen/AGENTS.md) |
 | `handover/` | `handover` | `creche-handover.{path,service}`, system, root. `creche-follow.{service,timer}`, user | The release tool: resolver, tag allocator, executor, requester, follower, secret intake. | [handover/AGENTS.md](handover/AGENTS.md) |
 | `family/` | in `caregiver` | none, a library | The `family.toml` and `server.toml` schemas, the validator, the registry loader. | [family/AGENTS.md](family/AGENTS.md) |
 | `library/` | none | `index@.timer`, user | The retrieval index builder. Not an agent. | [library/AGENTS.md](library/AGENTS.md) |
@@ -83,9 +83,7 @@ The other directories:
 | Change the sbx commands the host runs | `caregiver/src/caregiver/driver.py` |
 | Change a delegate job, a dispatched job or the switch | `attendance/src/attendance/service.py`, `acp_jobs.py` |
 | Change the ACP link, host side | `attendance/src/attendance/acp_link.py` |
-| Change the channel protocol, sandbox side | `playpen/src/protocol.ts`, `playpen.ts` |
-| Change how pi is started | `playpen/src/pi-args.ts`, the one builder |
-| Change how a manifest becomes pi tools | `playpen/bridge/tools.ts` |
+| Change the sandbox image | `playpen/Dockerfile` |
 | Change a page or the edit form | `noticeboard/src/noticeboard/pages.py`, `familyform.py` |
 | Change the release steps | `handover/src/handover/executor/steps.py` |
 | Change what a `component.yaml` may say | `handover/src/handover/manifest.py` |
@@ -93,26 +91,24 @@ The other directories:
 | Change when a new tag files a request | `handover/src/handover/follow/`, `systemd/creche-follow.service` |
 | Change what a deploy does | `bin/creche-deploy` |
 | Change the quality gate or the docs rule | `bin/quality-gate.sh`, `bin/lib/docsrule.sh` |
-| Change the index schema | `library/src/library/library.py` and `playpen/bridge/index-store.ts`, together |
+| Change the index schema | `library/src/library/library.py` and `agent/src/index-store.ts`, together |
 
 ## 5. Develop
 
-Prerequisites: Python 3.12, `uv`, and for `playpen/` Node 24 with `pnpm`.
+Prerequisites: Python 3.12, `uv`, and for `agent/` and `facade/` Node 24
+with `pnpm`.
 
 ```bash
 git config core.hooksPath githooks     # once per clone
 uv sync                                # every workspace member, one venv
 bin/quality-gate.sh                    # ruff, ruff format, pyright
 uv run pytest -n auto                  # every Python suite in pyproject.toml
-cd playpen && pnpm install && pnpm test && pnpm run typecheck && pnpm run build
-uv run pytest integration/proc -m slow    # the process-level suite, after pnpm build
+cd facade && pnpm install && pnpm test && pnpm run typecheck && cd ..
+uv run pytest integration/proc -m slow    # the process-level suite, after the facade build
 ```
 
 No test needs a host, a sandbox, LiteLLM or a model. Every external thing
 has a fake behind a small protocol. Keep it that way.
-
-The playpen build needs `AGENT_LAN_ADDRESS` in the environment. CI sets
-`192.0.2.10` and throws the bundle away.
 
 ## 6. Deploy and release
 

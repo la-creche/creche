@@ -6,7 +6,7 @@ sandbox image names, or by an address in an argument. So a stand-in here is
 an executable file under the test's root, and the only thing a test reads
 back is what that program left on disk.
 
-Nine stand-ins exist, and none is under test:
+Eight stand-ins exist, and none is under test:
 
 `sbx`
     Two forms. The first is `integration/tests/fake_sbx.py`, unchanged,
@@ -17,11 +17,6 @@ Nine stand-ins exist, and none is under test:
     environment. It drops `-it` after the record: the real `sbx exec -it`
     gives the command the terminal of the caller, and a program that becomes
     the command keeps that terminal with no flag.
-`pi`
-    `playpen/test/fake-pi.mjs`, the playpen's own double, behind a wrapper.
-    The playpen reaches it through `AGENT_PI_BIN`. The wrapper gives the
-    double `--mode=rpc` as one word, so that no playpen of another sandbox
-    counts it as a pi process of its own sandbox.
 `systemctl`
     `standin_systemctl.py`, behind a wrapper. `caregiver` finds it through
     `PATH`.
@@ -87,7 +82,6 @@ from proc_harness import (
 from proc_tree import Tree, repo_root
 
 SBX: Final = "sbx"
-PI: Final = "pi"
 SYSTEMCTL: Final = "systemctl"
 #: The program `caregiver` runs as `--chaperone-bin`. It is not named
 #: `chaperone`: the Python chaperone of a scenario has that name.
@@ -102,7 +96,7 @@ APPROVAL: Final = "approval"
 
 #: Each stand-in that a wrapper starts. The teardown waits for each recorded
 #: process of these.
-_WRAPPED: Final = (SBX, PI, SYSTEMCTL, UPSTREAM, APPROVAL)
+_WRAPPED: Final = (SBX, SYSTEMCTL, UPSTREAM, APPROVAL)
 
 #: The two kinds of policy row that the `sbx` stand-in keeps.
 ALLOW: Final = "allow"
@@ -143,7 +137,7 @@ SESSIONS_MOUNT_ENV: Final = "SESSIOND_SANDBOX_SESSIONS_MOUNT"
 
 #: The variables that stand for what the sandbox image supplies. `fake_sbx.py`
 #: forwards these by name and forwards nothing else of its own environment.
-_IMAGE_SEAMS: Final = ("AGENT_PI_BIN", "AGENT_LOCK_BEAT_MS", SESSIONS_MOUNT_ENV)
+_IMAGE_SEAMS: Final = ("AGENT_LOCK_BEAT_MS", SESSIONS_MOUNT_ENV)
 
 #: What `sbx exec` takes to give the command the terminal of the caller.
 TERMINAL_FLAG: Final = "-it"
@@ -164,44 +158,12 @@ class SandboxTmp(StrEnum):
 #: The word that ends the words of `sbx` and starts the command.
 _COMMAND_SEPARATOR: Final = "--"
 
-#: A tuning of the pi stand-in for a turn of about 10 seconds: 250 deltas,
-#: 40 ms apart. A scenario acts while that turn runs.
-HELD_TURN: Final = {"events": 250, "delay_ms": 40}
-
 #: How many ports one start of a stand-in may try.
 _BIND_ATTEMPTS: Final = 3
 
 #: How long a stand-in process has to end after its service ended. The
-#: playpen exits when its stdin closes, and pi exits when the playpen does.
+#: facade exits when its stdin closes.
 _EXIT_DEADLINE_S: Final = 10.0
-
-#: The part of the pi wrapper that joins the words `--mode` and `rpc` into
-#: `--mode=rpc` for the program that runs.
-#:
-#: A sandbox on the host is a microVM with a process table of its own. A
-#: sandbox of a test has none: each playpen of the machine is in one table.
-#: On Linux the playpen counts each process of that table whose arguments
-#: hold `--mode` and `rpc` as two words, and it reports the count as the pi
-#: processes that an earlier channel left (contract 03 §3 rule 4). With the
-#: two words, the pi stand-in of one sandbox is such a process for the
-#: playpen of another sandbox, and each replacement of a sandbox with a
-#: resident pi process ends with the fault `orphan_processes`. With one
-#: word, no playpen counts a pi stand-in. The double of pi reads only
-#: `--session-id`, so it runs the same.
-_ONE_MODE_WORD: Final = (
-    "n=$#\n"
-    'while [ "$n" -gt 0 ]; do\n'
-    "  word=$1\n"
-    "  shift\n"
-    "  n=$((n - 1))\n"
-    '  if [ "$word" = --mode ] && [ "$n" -gt 0 ]; then\n'
-    '    word="--mode=$1"\n'
-    "    shift\n"
-    "    n=$((n - 1))\n"
-    "  fi\n"
-    '  set -- "$@" "$word"\n'
-    "done\n"
-)
 
 _ORDER_FILE: Final = "order"
 _ARGV_SUFFIX: Final = ".argv"
@@ -225,11 +187,6 @@ def fake_sbx_script() -> Path:
     return repo_root() / "integration" / "tests" / "fake_sbx.py"
 
 
-def fake_pi_script() -> Path:
-    """The double for `pi --mode rpc` that belongs to `playpen/`."""
-    return repo_root() / "playpen" / "test" / "fake-pi.mjs"
-
-
 def standin_script(name: str) -> Path:
     """A stand-in program of this directory. Each has its own docstring."""
     return Path(__file__).resolve().with_name(f"standin_{name}.py")
@@ -238,7 +195,7 @@ def standin_script(name: str) -> Path:
 def install_sbx(tree: Tree, tmp: SandboxTmp = SandboxTmp.SHARED) -> None:
     """Put `sbx` in the root's `bin`, the first directory of a service's PATH.
 
-    This form knows `exec` only. It starts a playpen for each sandbox id, so
+    This form knows `exec` only. It starts a facade for each sandbox id, so
     a topology with no `caregiver` needs no `create`.
 
     `SandboxTmp.OWN` gives each sandbox a `TMPDIR` of its own, under
@@ -253,7 +210,7 @@ def install_sbx(tree: Tree, tmp: SandboxTmp = SandboxTmp.SHARED) -> None:
 def install_sbx_verbs(tree: Tree, tmp: SandboxTmp = SandboxTmp.SHARED) -> None:
     """Put the `sbx` with each verb of `caregiver` in the root's `bin`.
 
-    `exec` starts a playpen only for a sandbox that `create` made. `tmp` is
+    `exec` starts a facade only for a sandbox that `create` made. `tmp` is
     as `install_sbx` takes it.
     """
     state_dir(tree, SBX).mkdir(parents=True, exist_ok=True)
@@ -282,7 +239,6 @@ def vm_tmp(tree: Tree, sandbox: str) -> Path:
 
 def _install_sbx(tree: Tree, program: list[str], tmp: SandboxTmp = SandboxTmp.SHARED) -> None:
     seams = {
-        "AGENT_PI_BIN": str(_program(tree, PI)),
         "AGENT_LOCK_BEAT_MS": str(LOCK_BEAT_MS),
         "FAKE_SBX_IMAGE_ENV": ",".join(_IMAGE_SEAMS),
     }
@@ -489,42 +445,6 @@ def _lines_of(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in raw.split(b"\n")[:-1] if line.strip()]
 
 
-def install_pi(tree: Tree) -> None:
-    """Write the program `AGENT_PI_BIN` names.
-
-    It reads `pi-env.sh` at every start, because the playpen passes a fixed
-    set of names to pi and no `FAKE_PI_*` name is in it. `set_pi_env`
-    rewrites that file.
-
-    The program gets `--mode=rpc` as one word. `_ONE_MODE_WORD` says why.
-    The record keeps the words that the playpen sent.
-    """
-    set_pi_env(tree)
-    env_file = shlex.quote(str(_pi_env_file(tree)))
-    target = shlex.join(["node", str(fake_pi_script())])
-    head = f"{_recorder(tree, PI)}. {env_file}\n{_ONE_MODE_WORD}"
-
-    _write_program(tree, PI, f'{head}exec {target} "$@"\n')
-
-
-def set_pi_env(tree: Tree, **values: int | str) -> None:
-    """Tune the fake pi for the next process that starts.
-
-    `events` is the delta count and `delay_ms` is the gap between two
-    deltas. A scenario that acts during a turn makes the turn long first.
-
-    `raw_line` is a text. The fake pi writes it as one record in each turn,
-    with no change. The shell that reads the file gets the text in quotes,
-    so each character of it reaches the fake pi.
-    """
-    lines = [
-        f"export FAKE_PI_{name.upper()}={shlex.quote(str(value))}" for name, value in values.items()
-    ]
-    temp = _pi_env_file(tree).with_suffix(".tmp")
-    temp.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    temp.replace(_pi_env_file(tree))
-
-
 def calls_of(tree: Tree, name: str) -> list[Call]:
     """Every start of one stand-in, in call order."""
     directory = _record_dir(tree, name)
@@ -728,10 +648,6 @@ def _record_dir(tree: Tree, name: str) -> Path:
 
 def _program(tree: Tree, name: str) -> Path:
     return tree.bin_dir / name
-
-
-def _pi_env_file(tree: Tree) -> Path:
-    return tree.standins / "pi-env.sh"
 
 
 def _write_program(tree: Tree, name: str, text: str) -> None:

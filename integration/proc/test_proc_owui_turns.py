@@ -53,4 +53,4 @@ async def test_an_empty_chat_id_is_refused(owui: OwuiStack, door: httpx.AsyncCli
 
     # Nothing may fall back to a shared session: every chat would be in it.
     assert list(owui.tree.mounts().sessions.iterdir()) == []
-    assert owui.pi_starts() == []
+    assert owui.sbx_calls() == []

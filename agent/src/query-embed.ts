@@ -1,7 +1,6 @@
-// A port of `playpen/bridge/query-embed.ts`: the one network touch of the
-// vector half of `index_search`. One text goes in. Contract 04 §4.1's answer
-// comes back: `embedding`, `model`, `dims`. `index-search.ts` compares the
-// model with the one each index recorded.
+// The one network touch of the vector half of `index_search`. One text goes
+// in. Contract 04 §4.1's answer comes back: `embedding`, `model`, `dims`.
+// `index-search.ts` compares the model with the one each index recorded.
 //
 // CONTRACT-QUESTION: contract 04 §4.1 put `embed` behind the PEP. The owner's
 // round 8 (Q38) drops `embed` from the chaperone, and no contract names the

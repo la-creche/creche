@@ -1,5 +1,5 @@
-# The image every family's microVM runs: pi, the playpen and the PEP
-# bridge. Contract 06 §1 row 5. One release replaces every family's sandbox
+# The image every family's microVM runs: the ACP facade and the agent
+# module. Contract 06 §1 row 5. One release replaces every family's sandbox
 # (§1 rule 5), so a component has one live version and the manifest carries
 # no range (§2.2).
 #

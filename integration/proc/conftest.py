@@ -8,7 +8,7 @@ Four rules are enforced here and not left to a test:
 1. Every process of a test ends with the test. A teardown that had to kill
    one fails the test.
 2. A failed test carries the stdout and the stderr of every process it
-   started, and every playpen log. A failed teardown carries them in its
+   started, and every sandbox log. A failed teardown carries them in its
    own text, because the root is gone when pytest makes that report.
 3. The session ends with no process left. `no_process_left` is that check.
 4. A run says which command it judged. A variable with the suite's prefix
@@ -43,12 +43,11 @@ from proc_services import (
     describe_table,
     unknown_variables,
 )
-from proc_tree import Tree, make_root, playpen_bundle, remove_root, socket_path_fits
+from proc_tree import Tree, make_root, remove_root, socket_path_fits
 from proc_trigger import TriggerStack
-from proc_tui import TuiStack, launch_bundle
+from proc_tui import TuiStack
 
 _HERE = Path(__file__).resolve().parent
-_BUILD_HINT = "run `pnpm install && pnpm run build` in playpen/ first"
 
 #: What a failed test adds to its report. One callable per test.
 _REPORT = pytest.StashKey[Callable[[], str]]()
@@ -108,31 +107,6 @@ def pytest_runtest_makereport(
     return report
 
 
-@pytest.fixture(scope="session")
-def bundle() -> Path:
-    """The built playpen. A test that needs it and has none skips.
-
-    Skip rather than fail. A silent pass would be worse than either.
-    """
-    path = playpen_bundle()
-
-    if not path.exists():
-        _skip(f"{path} is missing: {_BUILD_HINT}")
-
-    return path
-
-
-@pytest.fixture(scope="session")
-def launcher(bundle: Path) -> Path:
-    """The built launcher of the terminal door. The same build writes both bundles."""
-    path = launch_bundle()
-
-    if not path.exists():
-        _skip(f"{path} is missing: {_BUILD_HINT}")
-
-    return path
-
-
 @pytest.fixture(scope="session", autouse=True)
 def no_process_left() -> Iterator[None]:
     """The check at session end: no test left a process behind."""
@@ -185,7 +159,7 @@ def owui_prepared(tree: Tree, supervisor: Supervisor) -> OwuiStack:
 
 
 @pytest.fixture
-def owui(owui_prepared: OwuiStack, bundle: Path) -> OwuiStack:
+def owui(owui_prepared: OwuiStack) -> OwuiStack:
     """The first topology, serving. The `supervisor` fixture ends it."""
     owui_prepared.start()
 
@@ -207,7 +181,7 @@ async def attendance_api(owui: OwuiStack) -> AsyncIterator[httpx.AsyncClient]:
 
 
 @pytest.fixture
-def delegate(tree: Tree, supervisor: Supervisor, bundle: Path) -> DelegateStack:
+def delegate(tree: Tree, supervisor: Supervisor) -> DelegateStack:
     """The second topology, serving. The `supervisor` fixture ends it."""
     stack = DelegateStack(tree, supervisor)
     stack.prepare()
@@ -243,7 +217,7 @@ def caregiver_alone(caregiver_prepared: CaregiverStack) -> CaregiverStack:
 
 
 @pytest.fixture
-def house_prepared(tree: Tree, supervisor: Supervisor, bundle: Path) -> CaregiverStack:
+def house_prepared(tree: Tree, supervisor: Supervisor) -> CaregiverStack:
     """The house on disk, with no service started. A test changes the registry first."""
     stack = CaregiverStack(tree, supervisor)
     stack.prepare()
@@ -277,7 +251,7 @@ def board_prepared(tree: Tree, supervisor: Supervisor) -> BoardStack:
 
 
 @pytest.fixture
-def board(board_prepared: BoardStack, bundle: Path) -> BoardStack:
+def board(board_prepared: BoardStack) -> BoardStack:
     """The fifth topology, serving. The `supervisor` fixture ends it."""
     board_prepared.start()
 
@@ -286,7 +260,7 @@ def board(board_prepared: BoardStack, bundle: Path) -> BoardStack:
 
 @pytest.fixture
 def board_alone(board_prepared: BoardStack) -> BoardStack:
-    """The noticeboard with no `attendance` beside it. It needs no bundle."""
+    """The noticeboard with no `attendance` beside it."""
     board_prepared.start_board()
 
     return board_prepared
@@ -302,7 +276,7 @@ def trigger_prepared(tree: Tree, supervisor: Supervisor) -> TriggerStack:
 
 
 @pytest.fixture
-def timer(trigger_prepared: TriggerStack, bundle: Path) -> TriggerStack:
+def timer(trigger_prepared: TriggerStack) -> TriggerStack:
     """`attendance` alone. A test runs the timer command of the trigger door."""
     trigger_prepared.spawn_attendance()
     trigger_prepared.await_attendance()
@@ -311,7 +285,7 @@ def timer(trigger_prepared: TriggerStack, bundle: Path) -> TriggerStack:
 
 
 @pytest.fixture
-def trigger(trigger_prepared: TriggerStack, bundle: Path) -> TriggerStack:
+def trigger(trigger_prepared: TriggerStack) -> TriggerStack:
     """The fourth topology, serving: `attendance` and the webhook listener."""
     trigger_prepared.start()
 
@@ -328,7 +302,7 @@ def tui_prepared(tree: Tree, supervisor: Supervisor) -> TuiStack:
 
 
 @pytest.fixture
-def tui(tui_prepared: TuiStack, launcher: Path) -> TuiStack:
+def tui(tui_prepared: TuiStack) -> TuiStack:
     """The sixth topology, serving. A test opens each terminal itself."""
     tui_prepared.start()
 
@@ -337,7 +311,7 @@ def tui(tui_prepared: TuiStack, launcher: Path) -> TuiStack:
 
 @pytest.fixture
 def library_prepared(tree: Tree, supervisor: Supervisor) -> LibraryStack:
-    """The seventh topology on disk, with no TEI stand-in. It needs no bundle."""
+    """The seventh topology on disk, with no TEI stand-in."""
     stack = LibraryStack(tree, supervisor)
     stack.prepare()
 
@@ -420,7 +394,7 @@ def node_sqlite() -> None:
     """The `node` of the run can read a store. A test that needs it and has none skips.
 
     The reader of a store is a Node program that imports `node:sqlite`, as
-    the bridge of the playpen does. A Node with no such module cannot run
+    the index reader of the agent module does. A Node with no such module cannot run
     it.
     """
     if not node_has_sqlite():

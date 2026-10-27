@@ -1,6 +1,6 @@
-// A port of `playpen/bridge/search.ts`: `index_search`, one of the two
-// tools of the agent outside `mcp__ch__`. Hybrid retrieval over every corpus
-// index that the family mounts at `AGENT_INDEX_ROOT`:
+// `index_search`, one of the two tools of the agent outside `mcp__ch__`.
+// Hybrid retrieval over every corpus index that the family mounts at
+// `AGENT_INDEX_ROOT`:
 //
 //   query ─┬─► chunks_fts MATCH, best bm25 first, per index ─────────┐
 //          └─► embed ─► chunks_emb, nearest first, all indexes ──────┴─► reciprocal rank fusion

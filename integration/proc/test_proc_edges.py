@@ -135,9 +135,6 @@ SESSION_HEADER = "X-Session-Id"
 #: The prompt of each turn that a scenario starts.
 PROMPT = "is the heating on"
 
-#: A turn long enough to act inside: 60 deltas, 30 ms apart.
-LONG_TURN = {"events": 60, "delay_ms": 30}
-
 #: The header that makes a service close the connection after one answer
 #: (RFC 9112 §9.6). A test then reads the answer to the end of the connection.
 CLOSE = {"Connection": "close"}
@@ -453,10 +450,10 @@ def work_done(stack: Stack) -> list[str]:
 
     1. A session in the session store, while the session exists.
     2. An outcome record, after a job ended and its session went.
-    3. The record of the pi stand-in, for each pi process that started.
+    3. The record of the `sbx` stand-in, for each sandbox command that started.
     """
     tree = stack.tree
-    done = [f"pi process {call.pid}" for call in stack.pi_starts()]
+    done = [f"sandbox command {call.pid}" for call in stack.sbx_calls()]
 
     for family in sorted(entry.name for entry in tree.sessions_root.iterdir()):
         done.extend(f"session {family}/{session}" for session in tree.sessions_of(family))

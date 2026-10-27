@@ -1,5 +1,5 @@
-// Strict JSON, for each line that the facade writes on stdout. A port of
-// `playpen/src/strict-json.ts`, with no change to the code.
+// Strict JSON, for each line that the facade writes on stdout. The module
+// doc of `noticeboard/src/noticeboard/strictjson.py` has the rules.
 //
 //   value ──► checkValue ──► null             the text of the value is strict
 //                        └─► Rule             the rule that the text breaks

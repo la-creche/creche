@@ -179,11 +179,6 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def playpen_bundle() -> Path:
-    """The built playpen. `pnpm run build` in `playpen/` writes it."""
-    return repo_root() / "playpen" / "dist" / "playpen.js"
-
-
 @dataclass(frozen=True, slots=True)
 class Mounts:
     """The four directories of contract 03 §7.1, for one sandbox."""

@@ -23,8 +23,7 @@ directory does not start it.
 ## Run it
 
 ```bash
-cd playpen && pnpm install && AGENT_LAN_ADDRESS=192.0.2.10 pnpm run build && cd ..   # once, and after any playpen change
-cd facade && pnpm install --frozen-lockfile && pnpm run build && cd ..               # once, and after any agent or facade change
+cd facade && pnpm install --frozen-lockfile && pnpm run build && cd ..   # once, and after any agent or facade change
 uv run pytest integration/proc -m slow
 ```
 
@@ -34,11 +33,9 @@ Add `-n 4` to run the tests on four workers. Each run prints the command of
 each service before its result line. Each line ends with the origin of the
 command: `default` or `override`.
 
-A test that needs `playpen/dist/playpen.js` skips itself when the file is
-missing. A silent pass would be worse than a skip. The same applies to
-`playpen/dist/agent-pi-launch.js`, which the same build writes, and to the
-build of `facade/`, which the exit topology starts. The suite
-needs `node` and `git` on `PATH`. Every test is marked `slow` in
+A test that needs the build of `facade/`, which the exit topology starts,
+skips itself when the build is missing. A silent pass would be worse than
+a skip. The suite needs `node` and `git` on `PATH`. Every test is marked `slow` in
 `conftest.py`.
 
 The scenarios of the Rust chaperone need `cargo` on `PATH` too, for the
@@ -61,7 +58,7 @@ the variable.
 |---|---|
 | service | A program of this repository that the suite starts: one row of the service table. |
 | root | The temporary directory of one test. Every file and every Unix socket of the test is in it. |
-| stand-in | A program that takes the place of a program the suite cannot run: `sbx`, `pi`, `systemctl`, the LiteLLM key API, TEI, a model, and an upstream and the approval channel of the Rust chaperone. |
+| stand-in | A program that takes the place of a program the suite cannot run: `sbx`, `systemctl`, the LiteLLM key API, TEI, a model, and an upstream and the approval channel of the Rust chaperone. |
 | ACP | The Agent Client Protocol, version 1. A client and an agent send JSON-RPC 2.0 messages. |
 | TEI | The embedding service that the index builder dials. It gives one vector for each text. |
 | topology | The services that one fixture starts together. |
@@ -193,8 +190,8 @@ It does not print the reference.
 
 ## What runs
 
-Nine topologies exist. `attendance`, the `sbx` stand-in and the `pi`
-stand-in are in the first two.
+Nine topologies exist. `attendance` and the `sbx` stand-in are in the
+first two.
 
 ```
 a test (plays Open WebUI)                a test (plays the bridge in a sandbox)
@@ -204,15 +201,10 @@ door-owui                                chaperone
   | HTTP over a Unix socket                | reads the grant file at each call
   v                                        | HTTP over a Unix socket
 attendance  <------------------------------+
-  | stdio, the channel protocol
+  | stdio, ACP v1
   v
-sbx exec --env-file <env file> <sandbox> -- node playpen.js --sandbox <id>
-  |          the sbx stand-in, found through PATH
-  v
-node playpen/dist/playpen.js             the real bundle
-  | stdio, pi rpc
-  v
-the pi stand-in                          found through AGENT_PI_BIN
+sbx exec --env-file <env file> <sandbox> -- creche-facade
+             the sbx stand-in, found through PATH
 ```
 
 The third topology starts `caregiver`. It has two forms: `caregiver` alone,
@@ -232,14 +224,14 @@ attendance, door-owui and the chaperone      only in the house
 ```
 
 The table gives the fourth, the fifth and the sixth topology. Each one
-starts `attendance` with the two stand-ins of the first picture. None starts
+starts `attendance` with the stand-in of the first picture. None starts
 `caregiver`.
 
 | Topology | A test plays | The service |
 |---|---|---|
 | The fourth, `proc_trigger.py`: the trigger door and `attendance` | an automation on the LAN, over HTTP on a loopback port, and a systemd timer, which runs `agent-trigger fire` to its end | reads the registry, the status documents, the webhook bearer files and the outcome records. Dials `attendance` as `door-trigger`. |
 | The fifth, `proc_board.py`: the noticeboard and `attendance` | the reverse proxy and a browser, over HTTP on a loopback port | reads the status documents, the report, the outcome records and the audit files. Dials `attendance` as `view-ro`. Writes one git commit in the registry of the root. |
-| The sixth, `proc_tui.py`: the terminal door, the Open WebUI door and `attendance` | the operator at a keyboard, on a terminal | dials `attendance` as `door-tui`. Reads the status document. Runs `sbx exec -it` with the real launcher bundle, which starts the pi stand-in on the terminal. |
+| The sixth, `proc_tui.py`: the terminal door, the Open WebUI door and `attendance` | the operator at a keyboard, on a terminal | dials `attendance` as `door-tui`. Reads the status document. Each scenario is a refusal before `sbx exec -it`: the image holds no launcher. |
 
 The fifth topology has a second program: the verify hook of the
 noticeboard. A test plays the release executor. It writes the env file of
@@ -356,7 +348,7 @@ each one, and each one runs to its end.
 | Program | A test starts it through | What it does |
 |---|---|---|
 | the reference | `run_reference` | It writes or updates a store, as the program does. |
-| `reader_store.mjs` | `read_as_bridge` | It reads one store with the statements of the bridge of the playpen, through `node:sqlite`. |
+| `reader_store.mjs` | `read_as_bridge` | It reads one store with the statements of the bridge of the agent module, through `node:sqlite`. |
 
 | File | Topology | What the scenarios check |
 |---|---|---|
@@ -447,10 +439,8 @@ each one, and each one runs to its end.
 11. No test leaves a process behind. A teardown that had to kill a process
     fails the test. This applies to each process of a group, not only to the
     service. A group that no teardown ended fails the session.
-12. A scenario that acts during a turn slows the pi stand-in first, with
-    `set_pi_env`. The tuning reaches the next pi process that starts. A
-    session keeps its pi process, so set the tuning before the first turn of
-    the session.
+12. Retired with the pi stand-in. The number stays, so that other
+    documents keep their references.
 13. Wait for the journal, not for the stream. The `turn_settled` line comes
     after the client's `[DONE]`.
 14. Assert on a contract. When a contract is silent, take the most
@@ -530,7 +520,7 @@ that needs a second pass with no edit takes 20 seconds or more.
 `proc_library.py` holds the topology. The fixture `library` starts the TEI
 stand-in. The fixture `library_prepared` starts nothing. A test runs the
 program itself: `run_index` runs it to its end, and `start_index` returns
-while it runs. Neither fixture needs the playpen bundle.
+while it runs. Neither fixture needs the facade build.
 
 1. Give the program `PATH` and one address variable. The program needs no
    other variable of the image of an index sandbox. The default command
@@ -589,7 +579,7 @@ while it runs. Neither fixture needs the playpen bundle.
     the store of a run.
 
 `reader_store.mjs` is not a stand-in. No service starts it or dials it. It
-holds the five statements that `playpen/bridge/index-store.ts` runs on a
+holds the five statements that `agent/src/index-store.ts` runs on a
 store. Change the two files together.
 `test_the_reader_statements_are_those_of_the_bridge` compares four things
 of the two files:
@@ -614,8 +604,8 @@ that the suite cannot run. Add one only when a scenario needs it.
 1. Decide how the service finds the real program. It finds it by name
    through `PATH`, by a path in a variable, or by an address in a variable.
 2. Write the stand-in as a program. Put its source in this directory, or use
-   a program that another package owns. This suite uses `fake_sbx.py` and
-   `fake-pi.mjs` that way.
+   a program that another package owns. This suite uses `fake_sbx.py` that
+   way.
 3. Add an `install_` function to `proc_standins.py`. It writes a wrapper into
    the `bin` directory of the root. The wrapper records the call, then runs
    `exec` on the stand-in. The recorded pid is then the pid of the stand-in.
@@ -626,17 +616,11 @@ that the suite cannot run. Add one only when a scenario needs it.
 6. Give a stand-in that listens a Unix socket in the root or a loopback port
    from `Supervisor.free_port`.
 
-Do not grow `fake-pi.mjs` here. It belongs to `playpen/`.
-
-`set_pi_env` gives the pi stand-in its tunings. A number tunes a turn, for
-example `events` and `delay_ms`. The tuning `raw_line` is a text. The pi
-stand-in writes that text as one record in each turn, with no change.
-
 The `sbx` wrapper does two more things for the terminal door. It drops `-it`
 after it recorded the call, because `fake_sbx.py` takes no such word. It
 sets `SESSIOND_SANDBOX_SESSIONS_MOUNT` from the family of the sandbox id,
 because the launcher finds the session store through it (contract 03 §7.6
-rule 4). The launcher itself is the real bundle, not a stand-in.
+rule 4). The image holds no launcher, so no scenario reaches it.
 
 ### The stand-in programs of this directory
 
@@ -734,19 +718,19 @@ code for this suite.
 ## Reading a failure
 
 A failed test carries a section named `processes at call`. It holds the root
-path, the stdout and the stderr of each process, each playpen log and each
+path, the stdout and the stderr of each process, each sandbox log and each
 status document. A program on a terminal has one part there, named
 `terminal`. A test that fails in its teardown carries the same output in
 the text of the failure. Work down this list.
 
-1. Every topology test skips: the bundle is missing. Build it. With
+1. Every exit test skips: the facade build is missing. Build it. With
    `CRECHE_PROC_NO_SKIP=1`, each of these tests fails with the same text.
 2. `exited N before it was ready`: the service refused to start. Read its
    stderr in the same message.
 3. `was not ready in 30.0 s`: the service runs and does not answer HTTP at
    its address. Read its stderr.
 4. The stream ends with an error chunk: read the journal of the session
-   under `sessions/` in the root, and the playpen log.
+   under `sessions/` in the root, and the sandbox log.
 5. `the teardown had to end a process`: a service ignored `SIGTERM`, a
    process of its group outlived it, or a stand-in outlived its service.
    The line `names a process outside this test` has one of two causes. A
@@ -850,36 +834,21 @@ the text of the failure. Work down this list.
   after the handshake. `caregiver` publishes that document before the
   destroy. No scenario holds the document at that moment since phase 2
   row 20.
-- **One process table for each sandbox of a test.** A sandbox on the host
-  is a microVM with a process table of its own. A test has no microVM, so
-  each playpen of the machine is in one table. On Linux the playpen counts
-  each process of that table whose arguments hold `--mode` and `rpc` as two
-  words (contract 03 §3 rule 4). The pi wrapper gives its program one word,
-  `--mode=rpc`, so no playpen counts the pi stand-in of another sandbox.
-  Without that, each replacement of a sandbox with a resident pi process
-  ends `degraded` with the fault `orphan_processes` on Linux, and `in_sync`
-  on macOS. The cost is that no scenario can show that fault.
 - **No scenario for `apply-once`.** It is a verb of `caregiver` with no
   scenario here.
 - **The epoch after `rotate`.** Contract 05 §6.3 step 3 publishes the new
   epoch in the status document. The `rotate` verb writes the credential
   file, the grant file and the credentials block of the document. The
   scenario of `rotate` does not read the document.
-- **The two seams of `integration/tests_manager` with a bridge are not
-  here.** `test_bridge_to_chaperone.py` and `test_cp_approval_to_chaperone.py`
-  need stand-ins that do not exist: the embedding service, Home Assistant
-  and the approval hook.
+- **The approval seam of `integration/tests_manager` is not here.**
+  `test_cp_approval_to_chaperone.py` needs stand-ins that do not exist:
+  Home Assistant and the approval hook.
 - **No bridge on the path.** In `test_proc_delegate.py` a test sends the
-  requests that the bridge sends. The playpen bundle fixes `PEP_URL` at build
-  time: the LAN address of the site, port 8300. A pi process under the real
-  playpen cannot dial a chaperone on another port.
+  requests that the bridge sent. The image holds no bridge.
 - **CONTRACT-QUESTION, the exit code of a refusal of the terminal door.** No
   contract names one. For a refusal of the door itself the suite accepts
   each code that is not 0. A change costs one assertion per scenario in
   `test_proc_tui_start.py`.
-- **The pi stand-in is not the interactive pi.** On a terminal it reads one
-  command per line, and it ends at the end of the input. No scenario says
-  what the real pi does with a key.
 - **CONTRACT-QUESTION, the exit code of `agent-trigger fire`.** No contract
   names one. The suite reads 0 as a firing that `attendance` accepted or
   that the quiet check skipped. It reads each other code as a firing that
@@ -1369,8 +1338,8 @@ the text of the failure. Work down this list.
   statements of the bridge, and one test holds them against the text of
   the bridge. The reader program runs no code of the bridge: not the
   ranking, not the check of a row, not the search for the nearest vectors.
-  `playpen/test/index-search.test.ts` holds that code, with stores that
-  the test builds itself.
+  `agent/test/index-search.test.ts` holds that code, with stores that the
+  test builds itself.
 - **The reader program runs on the Node of the test machine.** The bridge
   runs on the Node of the sandbox image. The two can have different
   versions of SQLite.

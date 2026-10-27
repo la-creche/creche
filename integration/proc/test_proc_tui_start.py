@@ -13,8 +13,6 @@ one assertion per scenario here.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 from proc_tree import (
     FAMILY,
@@ -70,7 +68,7 @@ def test_a_command_that_names_no_one_session_is_a_usage_error(
     assert tui_prepared.terminal_calls() == []
 
 
-def test_attendance_down_is_a_refusal(tui_prepared: TuiStack, launcher: Path) -> None:
+def test_attendance_down_is_a_refusal(tui_prepared: TuiStack) -> None:
     """The socket does not answer. The door runs no `sbx`."""
     child, _ = tui_prepared.open_terminal(FAMILY, ARG_NEW)
 

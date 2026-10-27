@@ -1,4 +1,4 @@
-// Reads one index store as the bridge of the playpen reads it.
+// Reads one index store as the bridge of the agent module reads it.
 //
 //   node reader_store.mjs <store.db> <match> <limit>
 //
@@ -8,7 +8,7 @@
 // bridge can read it. This program does: it opens one store as the bridge
 // opens it, and it runs the statements of the bridge.
 //
-// The bridge is `playpen/bridge/index-store.ts`. The comment above each
+// The bridge is `agent/src/index-store.ts`. The comment above each
 // statement here names the lines of that file. Each statement here has the
 // string literals of the bridge. The bridge writes two of its statements in
 // parts: it joins three literals for one, and it puts `VECTOR_TABLE` into a

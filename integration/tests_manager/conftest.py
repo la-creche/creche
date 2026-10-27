@@ -13,19 +13,13 @@ things that would touch a host are faked: the sandbox driver (`FakeDriver`)
 and LiteLLM (`FakeLiteLLMKeys`). Nothing dials the host's LAN address and nothing
 needs the host.
 
-Every test in this directory is marked `slow`: the ones that are not slow
-today share a root with the ones that spawn Node, and one marker over the
+Every test in this directory is marked `slow`: one marker over the
 directory beats a reader guessing which is which.
 """
 
 from __future__ import annotations
 
-import json
-import os
-import shutil
-import subprocess
 import sys
-from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
@@ -53,7 +47,6 @@ IMAGE: Final = "sha256:000000000000000000000000000000000000000000000000000000000
 #: The repo root, four levels up from this file
 #: (integration/tests_manager/conftest.py).
 REPO_ROOT: Final = Path(__file__).resolve().parents[2]
-PLAYPEN_DIR: Final = REPO_ROOT / "playpen"
 
 # `attendance/tests/attendance_harness.py` holds the far side of the channel: a
 # playpen that speaks contract 03. Seam 4 reuses it rather than writing a
@@ -202,94 +195,3 @@ def applied(registry_root: Path, tmp_path: Path) -> Applied:
     applied = run_apply(registry_root, tmp_path / "state", tmp_path / "sessions")
     assert applied.result.ok, f"apply_once failed: {applied.result.status.faults}"
     return applied
-
-
-# --- Node, for the two seams that drive real TypeScript -------------------
-
-
-def _node_or_skip() -> str:
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("node is not on PATH")
-    return node
-
-
-@pytest.fixture(scope="session")
-def node_bin() -> str:
-    return _node_or_skip()
-
-
-#: The root conftest's example site address (TEST-NET-1, RFC 5737). The two
-#: session fixtures below build before any test's environment is set, so
-#: they pass it themselves: a playpen bundle fixes it at build time.
-EXAMPLE_LAN_ADDRESS = "192.0.2.10"
-
-
-@pytest.fixture(scope="session")
-def playpen_build() -> Path:
-    """`playpen/`, installed and built with its own documented commands
-    (`playpen/README.md`: `pnpm install`, `pnpm build`). Session-scoped:
-    the install is the expensive part and nothing here mutates it."""
-    _node_or_skip()
-    pnpm = shutil.which("pnpm")
-    if pnpm is None:
-        pytest.skip("pnpm is not on PATH")
-
-    bundle = PLAYPEN_DIR / "dist" / "pep-bridge.js"
-    _run([pnpm, "install", "--frozen-lockfile"], PLAYPEN_DIR, "pnpm install")
-    build_env = {**os.environ, "AGENT_LAN_ADDRESS": EXAMPLE_LAN_ADDRESS}
-    _run([pnpm, "build"], PLAYPEN_DIR, "pnpm build", build_env)
-    assert bundle.is_file(), f"pnpm build wrote no {bundle}"
-    return PLAYPEN_DIR
-
-
-def _run(args: list[str], cwd: Path, what: str, env: dict[str, str] | None = None) -> None:
-    done = subprocess.run(
-        args, cwd=cwd, env=env, capture_output=True, text=True, check=False, timeout=600
-    )
-    if done.returncode != 0:
-        pytest.fail(f"{what} failed ({done.returncode}):\n{done.stdout}\n{done.stderr}")
-
-
-@pytest.fixture(scope="session")
-def playpen_driver(playpen_build: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """`node/playpen_driver.ts`, bundled with `playpen/`'s own esbuild.
-
-    The playpen's composition root hardcodes the three sandbox mount
-    points, so it cannot be pointed anywhere else. The driver replaces that
-    one file and imports every other module from `playpen/src/`. It is
-    bundled into a temporary directory, so this package writes nothing into
-    `playpen/`.
-
-    esbuild checks no types. `playpen/`'s `pnpm typecheck` checks this
-    driver: its `tsconfig.json` includes `node/`.
-    """
-    esbuild = playpen_build / "node_modules" / ".bin" / "esbuild"
-    if not esbuild.is_file():
-        pytest.skip("playpen/node_modules holds no esbuild")
-
-    source = Path(__file__).parent / "node" / "playpen_driver.ts"
-    bundle = tmp_path_factory.mktemp("playpen-driver") / "playpen_driver.mjs"
-    _run(
-        [
-            str(esbuild),
-            str(source),
-            "--bundle",
-            "--platform=node",
-            "--target=node24",
-            "--format=esm",
-            f"--define:__AGENT_LAN_ADDRESS__={json.dumps(EXAMPLE_LAN_ADDRESS)}",
-            f"--outfile={bundle}",
-        ],
-        REPO_ROOT,
-        "esbuild playpen_driver.ts",
-    )
-    return bundle
-
-
-@pytest.fixture
-def scratch(tmp_path: Path) -> Iterator[Path]:
-    """A directory for a driver's argv and its report file."""
-    directory = tmp_path / "scratch"
-    directory.mkdir()
-    yield directory

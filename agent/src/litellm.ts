@@ -1,7 +1,7 @@
 // The family's one model provider: LiteLLM's OpenAI-compatible endpoint,
-// built with pi's `createProvider` and handed to Flue's `start()`. A port of
-// `playpen/src/models-json.ts`, without the file: Flue takes the provider
-// object, so no `models.json` exists and no credential lands on a disk.
+// built with pi's `createProvider` and handed to Flue's `start()`. Flue takes
+// the provider object, so no `models.json` exists and no credential lands on
+// a disk.
 //
 //   FamilyConfig.planes.litellm ──► baseUrl   (the OpenAI SDK appends
 //                                              `/chat/completions`)
@@ -25,7 +25,7 @@ export const LITELLM_PROVIDER = "litellm";
 /** The wire protocol this LiteLLM answers in production. */
 const PROVIDER_API = "openai-completions";
 
-/** The values of `playpen/src/models-json.ts`. LiteLLM knows the real ones. */
+/** Fixed values. LiteLLM knows the real ones. */
 const CONTEXT_WINDOW = 128000;
 const MAX_TOKENS = 16384;
 

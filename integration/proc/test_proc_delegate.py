@@ -79,7 +79,7 @@ async def test_an_empty_delegates_list_hides_the_tool(
     assert refused.status_code == HTTP_FORBIDDEN
     assert refused.json()["reason"] == "tool_not_granted"
     assert delegate.tree.sessions_of(TARGET) == []
-    assert delegate.pi_starts() == []
+    assert delegate.sbx_calls() == []
 
 
 async def test_an_unknown_token_is_refused(delegate: DelegateStack) -> None:
@@ -103,7 +103,7 @@ async def test_a_target_outside_delegates_is_refused(
     assert response.status_code == HTTP_FORBIDDEN
     assert response.json()["reason"] == "tool_not_granted"
     assert delegate.tree.sessions_of(TARGET) == []
-    assert delegate.pi_starts() == []
+    assert delegate.sbx_calls() == []
 
     line = _delegate_lines(delegate)[-1]
     assert line["decision"] == "deny"

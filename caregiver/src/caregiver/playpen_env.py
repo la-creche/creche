@@ -46,14 +46,14 @@ from .atomic import atomic_write
 PLAYPEN_ENV_MODE: Final = 0o640
 
 #: The names `agent/src/mounts.ts` reads, and `AGENT_SANDBOX`, which
-#: `playpen/src/index.ts` takes when `--sandbox` is absent.
+#: `agent/src/config.ts` reads.
 SESSIONS_DIR_VAR: Final = "AGENT_SESSIONS_DIR"
 CRED_DIR_VAR: Final = "AGENT_CRED_DIR"
 CONFIG_DIR_VAR: Final = "AGENT_FAMILY_CONFIG_DIR"
 CONTROL_DIR_VAR: Final = "AGENT_CONTROL_DIR"
 # Contract 05 §4.1.1's spelling.
 SANDBOX_VAR: Final = "AGENT_SANDBOX"
-#: The names `playpen/src/planes.ts` reads: the URL of the chaperone and the
+#: The names `agent/src/config.ts` reads: the URL of the chaperone and the
 #: base URL of LiteLLM.
 PEP_URL_VAR: Final = "AGENT_PEP_URL"
 LITELLM_BASE_URL_VAR: Final = "AGENT_LITELLM_BASE_URL"

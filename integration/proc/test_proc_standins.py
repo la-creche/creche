@@ -19,9 +19,9 @@ import pytest
 from proc_harness import Supervisor, pid_is_alive, pids_gone_by
 from proc_stack import Stack
 from proc_standins import (
-    PI,
     SBX,
     SESSIONS_MOUNT_ENV,
+    SYSTEMCTL,
     TERMINAL_FLAG,
     calls_of,
     end_standins,
@@ -39,7 +39,7 @@ SHORT_DEADLINE_S = 0.2
 def test_a_standin_that_outlives_its_service_is_killed(tree: Tree, supervisor: Supervisor) -> None:
     """A recorded pid in a session of the test is a process of the test."""
     child = supervisor.spawn("stays", [SH, "-c", IDLE], BASE_ENV, tree.root)
-    _record(tree, PI, child.popen.pid)
+    _record(tree, SYSTEMCTL, child.popen.pid)
 
     problems = end_standins(tree, supervisor.sessions(), SHORT_DEADLINE_S)
 
@@ -52,7 +52,7 @@ def test_a_recorded_pid_of_another_program_gets_no_signal(
 ) -> None:
     """The stand-in ended, and its pid names a program of no session here."""
     other = supervisor.spawn("other-program", [SH, "-c", IDLE], BASE_ENV, tree.root)
-    _record(tree, PI, other.popen.pid)
+    _record(tree, SYSTEMCTL, other.popen.pid)
 
     problems = end_standins(tree, frozenset(), SHORT_DEADLINE_S)
 
