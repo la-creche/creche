@@ -18,7 +18,7 @@ from attendance.__main__ import serve
 from attendance.acp_door import MAX_FRAME_BYTES, Close
 from attendance.api import Listener, build_app
 from attendance.auth import Principal, TokenBook
-from attendance.config import DEFAULT_RELAY_COMMAND, Config
+from attendance.config import DEFAULT_FACADE_COMMAND, DEFAULT_RELAY_COMMAND, Config
 from attendance.service import SessionService
 from attendance_harness import FAMILY, make_config, write_status, write_tokens
 from websockets.asyncio.client import ClientConnection, connect, unix_connect
@@ -27,6 +27,7 @@ from websockets.exceptions import ConnectionClosed
 REPO = Path(__file__).resolve().parents[2]
 FAKE_SBX = REPO / "integration" / "tests" / "fake_sbx.py"
 FAKE_RELAY = Path(__file__).resolve().parent / "fake_relay.py"
+FAKE_FACADE = Path(__file__).resolve().parent / "fake_facade.py"
 DOOR_PATH = f"ws://attendance/acp/{FAMILY}"
 SHORT_TOKEN = "x" * 32
 HTTP_FORBIDDEN = 403
@@ -58,6 +59,12 @@ def relay_command() -> str:
     return command.replace("acp-relay", f"{sys.executable} -I {FAKE_RELAY}")
 
 
+def facade_command() -> str:
+    """`DEFAULT_FACADE_COMMAND`, with `fake_sbx.py` for `sbx` and the fake facade."""
+    command = DEFAULT_FACADE_COMMAND.replace("sbx", f"{sys.executable} -I {FAKE_SBX}", 1)
+    return command.replace("creche-facade", f"{sys.executable} -I {FAKE_FACADE}")
+
+
 async def start_door(
     tmp_path: Path, socket_dir: Path, mode: str
 ) -> tuple[Door, asyncio.Task[None]]:
@@ -68,6 +75,7 @@ async def start_door(
         make_config(tmp_path),
         socket_path=socket_dir / "sessiond.sock",
         acp_relay_command=relay_command(),
+        facade_command=facade_command(),
     )
     write_status(config.state_root, playpen_env=str(env_file))
     made = write_tokens(config.state_root)

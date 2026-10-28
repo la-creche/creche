@@ -25,12 +25,15 @@ inside the sandbox image, which carries Node.
 5. Serves the dispatch door: `enqueue` and `job_status`. Each job runs over
    ACP on the target's facade. Only an autonomous family has a limit and a
    queue.
-6. Beats each ACP door connection. The door sends `_creche/beat` on the
-   relay every 30 s, with the string ids `creche-beat-<n>`. The prefix is
-   reserved. The door takes the facade's answers, so no answer reaches the
-   client. Each other line passes as it is. A relay that leaves two beats
-   unanswered closes with code 4408 (`Close.NO_BEAT`). An error answer
-   counts as no answer (`acp_door.py`).
+6. Starts the family's facade before the `acp-relay` of each ACP door
+   connection, on the sandbox that the relay goes to. A facade that cannot
+   start closes the connection with 4503 (`sandbox_unavailable`), and no
+   relay starts. Beats each ACP door connection. The door sends
+   `_creche/beat` on the relay every 30 s, with the string ids
+   `creche-beat-<n>`. The prefix is reserved. The door takes the facade's
+   answers, so no answer reaches the client. Each other line passes as it
+   is. A relay that leaves two beats unanswered closes with code 4408
+   (`Close.NO_BEAT`). An error answer counts as no answer (`acp_door.py`).
 7. Serves the view for `view-ro`. Each view request opens one relay of its
    own, sends `initialize` and one read method, and closes it. It never
    sends `session/prompt` (`acp_view.py`).

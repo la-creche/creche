@@ -191,11 +191,21 @@ class SessionService:
 
         The same checks as a job: the family must serve, the door must
         reach its kind, and the sandbox is the one its jobs go to.
+
+        `acp-relay` only pipes to the facade's in-VM socket, so the facade
+        must run before the relay starts. An idle family has none: its
+        supervisor link starts one here. A facade that cannot start is
+        `sandbox_unavailable`, and no relay starts.
         """
         check_access(principal, Access.ACP)
         status = self._status.require(family)
         check_may_serve(status)
         check_family_kind(principal, family, served_kind(status))
+        info = self._sandbox_for(family, status)
+
+        if info is not None:
+            await self._acp_link_for(family, status, info.id)
+
         return await self._start_relay(family, status)
 
     async def _start_relay(self, family: str, status: FamilyStatus) -> Channel:
