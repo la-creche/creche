@@ -268,6 +268,36 @@ async def test_the_exec_channel_round_trips_through_a_real_process() -> None:
     await channel.close()
 
 
+#: A child that says one line, leaves a descendant that holds its stdout,
+#: says the descendant's pid and exits, with its stdin still open.
+EXIT_WITH_A_HELD_STDOUT = "sh -c 'echo said; sleep 30 & echo $!; exit 1'"
+
+#: The time a channel may take to see that its child exited.
+EXIT_SEEN_S = 2.0
+
+
+@pytest.mark.slow
+async def test_a_child_that_exits_ends_the_stream_while_a_descendant_holds_it() -> None:
+    """`sbx exec` can exit while a process it started still holds its stdout.
+
+    The stream must end at the exit, and the lines before it must arrive.
+    """
+    channel = ExecChannel(dial=dial(), command=EXIT_WITH_A_HELD_STDOUT)
+    await channel.start()
+    said = await asyncio.wait_for(channel.receive(), 5.0)
+    pid = await asyncio.wait_for(channel.receive(), 5.0)
+    assert said is not None
+    assert said.text == "said"
+    assert pid is not None
+    assert pid.text is not None
+
+    try:
+        assert await asyncio.wait_for(channel.receive(), EXIT_SEEN_S) is None
+    finally:
+        os.kill(int(pid.text), 9)
+        await channel.close()
+
+
 #: A child that writes one stderr line of 200,000 bytes, then one short line,
 #: then waits on stdin. The stream reader of the host holds 65,536 bytes.
 LONG_STDERR_LINE = (

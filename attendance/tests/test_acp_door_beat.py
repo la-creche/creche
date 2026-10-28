@@ -46,7 +46,7 @@ class FakeSocket:
     async def send_text(self, text: str) -> None:
         await self.sent.put(text)
 
-    async def close(self, code: int = 1000) -> None:
+    async def close(self, code: int = 1000, reason: str | None = None) -> None:
         if not self.closed.done():
             self.closed.set_result(code)
 

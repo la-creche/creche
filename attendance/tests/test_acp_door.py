@@ -6,7 +6,9 @@ import asyncio
 import contextlib
 import dataclasses
 import json
+import os
 import shutil
+import signal
 import sys
 import tempfile
 from collections.abc import AsyncIterator
@@ -15,10 +17,10 @@ from pathlib import Path
 import httpx
 import pytest
 from attendance.__main__ import serve
-from attendance.acp_door import MAX_FRAME_BYTES, Close
+from attendance.acp_door import MAX_FRAME_BYTES, RELAY_ENDED, Close
 from attendance.api import Listener, build_app
 from attendance.auth import Principal, TokenBook
-from attendance.config import DEFAULT_RELAY_COMMAND, Config
+from attendance.config import DEFAULT_FACADE_COMMAND, DEFAULT_RELAY_COMMAND, Config
 from attendance.service import SessionService
 from attendance_harness import FAMILY, make_config, write_status, write_tokens
 from websockets.asyncio.client import ClientConnection, connect, unix_connect
@@ -27,6 +29,7 @@ from websockets.exceptions import ConnectionClosed
 REPO = Path(__file__).resolve().parents[2]
 FAKE_SBX = REPO / "integration" / "tests" / "fake_sbx.py"
 FAKE_RELAY = Path(__file__).resolve().parent / "fake_relay.py"
+FAKE_FACADE = Path(__file__).resolve().parent / "fake_facade.py"
 DOOR_PATH = f"ws://attendance/acp/{FAMILY}"
 SHORT_TOKEN = "x" * 32
 HTTP_FORBIDDEN = 403
@@ -58,6 +61,12 @@ def relay_command() -> str:
     return command.replace("acp-relay", f"{sys.executable} -I {FAKE_RELAY}")
 
 
+def facade_command() -> str:
+    """`DEFAULT_FACADE_COMMAND`, with `fake_sbx.py` for `sbx` and the fake facade."""
+    command = DEFAULT_FACADE_COMMAND.replace("sbx", f"{sys.executable} -I {FAKE_SBX}", 1)
+    return command.replace("creche-facade", f"{sys.executable} -I {FAKE_FACADE}")
+
+
 async def start_door(
     tmp_path: Path, socket_dir: Path, mode: str
 ) -> tuple[Door, asyncio.Task[None]]:
@@ -68,6 +77,7 @@ async def start_door(
         make_config(tmp_path),
         socket_path=socket_dir / "sessiond.sock",
         acp_relay_command=relay_command(),
+        facade_command=facade_command(),
     )
     write_status(config.state_root, playpen_env=str(env_file))
     made = write_tokens(config.state_root)
@@ -161,6 +171,33 @@ async def test_the_relay_exit_closes_the_websocket(door: Door) -> None:
         await connection.send(FRAME)
         assert await asyncio.wait_for(connection.recv(), 5) == FRAME
         assert await close_code(connection) == Close.RELAY_GONE
+
+
+#: The time a client may wait for the close of a relay that exited. The
+#: beat is 30 s and a reap of a held pipe is 10 s, so neither fits in it.
+RELAY_EXIT_SEEN_S = 3.0
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("door", ["orphan"], indirect=True)
+async def test_a_relay_exit_closes_at_once_while_its_stdout_is_held(door: Door) -> None:
+    """`sbx exec` can exit while a process it started holds its stdout."""
+    async with door.door_acp() as connection:
+        await connection.send(FRAME)
+        assert await asyncio.wait_for(connection.recv(), 5) == FRAME
+
+        try:
+            with pytest.raises(ConnectionClosed) as closed:
+                await asyncio.wait_for(connection.recv(), RELAY_EXIT_SEEN_S)
+        finally:
+            for line in door.record.read_text().splitlines():
+                if line.startswith("orphan "):
+                    os.kill(int(line.split()[1]), signal.SIGKILL)
+
+    received = closed.value.rcvd
+    assert received is not None
+    assert received.code == Close.RELAY_GONE
+    assert received.reason == RELAY_ENDED
 
 
 @pytest.mark.slow
