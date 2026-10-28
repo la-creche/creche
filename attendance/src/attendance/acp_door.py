@@ -69,6 +69,10 @@ _LINE_BREAKS = ("\n", "\r")
 #: that uses this prefix can lose an answer. The prefix is reserved.
 BEAT_ID_PREFIX = "creche-beat-"
 
+#: The reason of a `Close.RELAY_GONE`. The door-acp service sends its own
+#: 1001 too, so the reason says that the relay is what ended.
+RELAY_ENDED = "the relay ended"
+
 
 class Close(IntEnum):
     """Why the pipe closed, as a WebSocket close code (RFC 6455 §7.4.1)."""
@@ -243,23 +247,32 @@ async def pipe(
         }
 
         try:
-            done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        finally:
-            for task in tasks:
-                task.cancel()
+            try:
+                done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                for task in tasks:
+                    task.cancel()
 
-            await asyncio.gather(*tasks, return_exceptions=True)
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+            # The client hears of the end first. The reap of a relay can
+            # wait out a pipe that a descendant of `sbx exec` still holds.
+            await _close_client(websocket, done.pop())
+        finally:
             await relay.close()
 
-    finished = done.pop()
+
+async def _close_client(websocket: WebSocket, finished: asyncio.Task[Close]) -> None:
     why = finished.result() if finished.exception() is None else Close.RELAY_GONE
 
     if why is Close.CLIENT_GONE:
         return
 
+    reason = RELAY_ENDED if why is Close.RELAY_GONE else None
+
     # The client can leave in the same moment. A second close is no error.
     with contextlib.suppress(RuntimeError, OSError):
-        await websocket.close(code=why)
+        await websocket.close(code=why, reason=reason)
 
 
 async def _to_relay(websocket: WebSocket, relay: Channel, prompts: _OpenPrompts) -> Close:

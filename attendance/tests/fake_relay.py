@@ -4,12 +4,19 @@
 
 - `FAKE_RELAY_RECORD=<path>` appends `started` to the file at start.
 - `FAKE_RELAY_MODE=one` exits after the first line.
+- `FAKE_RELAY_MODE=orphan` exits after the first line, and leaves a
+  descendant that holds its stdout, as `sbx exec` can. The descendant's pid
+  goes to the record file as `orphan <pid>`.
 """
 
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
+
+#: How long the descendant of `orphan` holds stdout. The test kills it first.
+ORPHAN_HOLD_S = "30"
 
 
 def main() -> int:
@@ -23,7 +30,15 @@ def main() -> int:
         sys.stdout.buffer.write(line)
         sys.stdout.buffer.flush()
 
-        if os.environ.get("FAKE_RELAY_MODE") == "one":
+        mode = os.environ.get("FAKE_RELAY_MODE")
+
+        if mode == "orphan":
+            orphan = subprocess.Popen(["sleep", ORPHAN_HOLD_S], stdin=subprocess.DEVNULL)
+
+            with open(record, "a", encoding="utf-8") as handle:
+                handle.write(f"orphan {orphan.pid}\n")
+
+        if mode in ("one", "orphan"):
             return 0
 
     return 0

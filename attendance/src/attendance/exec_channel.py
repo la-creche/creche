@@ -43,6 +43,11 @@ _STDERR_DROPPED = b"(a line over the limit of the reader was dropped)"
 #: one before `close` gives up on it. A healthy `sbx exec` exits at once.
 _EXIT_WAIT_S = 5.0
 
+#: How often a read looks for the exit of the child, and how long it waits
+#: after the exit for the bytes still in the pipe.
+_EXIT_POLL_S = 0.25
+_EXIT_GRACE_S = 0.5
+
 
 def build_argv(template: str, dial: SandboxDial) -> list[str]:
     """Fill the dial into the command template, then split it safely.
@@ -181,10 +186,18 @@ class ExecChannel:
         if process is None or process.stdout is None:
             return b""
 
+        read = asyncio.ensure_future(process.stdout.read(READ_CHUNK_BYTES))
+
         try:
-            return await process.stdout.read(READ_CHUNK_BYTES)
+            await _read_or_exit(read, process)
+            return read.result() if read.done() else b""
         except (ConnectionResetError, asyncio.IncompleteReadError):
             return b""
+        finally:
+            # A cancelled read keeps the reader's waiter until it runs, and
+            # the next read would then raise. So it runs to its end here.
+            read.cancel()
+            await asyncio.wait({read})
 
     async def _drain_stderr(self) -> None:
         """stderr is free text. It reaches a log file and never the protocol."""
@@ -220,6 +233,27 @@ class ExecChannel:
                 handle.write(f"[{self._sandbox}] ".encode() + chunk.rstrip(b"\n") + b"\n")
         except OSError:
             return
+
+
+async def _read_or_exit(read: asyncio.Future[bytes], process: asyncio.subprocess.Process) -> None:
+    """Return when `read` is done, or when the child has exited and its grace ended.
+
+    A child that exits closes its stdout, unless a descendant still holds
+    the pipe. `sbx exec` can leave one. The pipe then never ends, and only
+    the exit says that the far side is gone. The child wrote its last bytes
+    before it exited, so they are in the pipe already: the grace is short.
+
+    The exit is read from `returncode`, not from `wait()`. On Python 3.12,
+    the host's version, `wait()` returns only when every pipe has ended.
+    Python 3.13 changed that (gh-119710).
+    """
+    while process.returncode is None:
+        await asyncio.wait({read}, timeout=_EXIT_POLL_S)
+
+        if read.done():
+            return
+
+    await asyncio.wait({read}, timeout=_EXIT_GRACE_S)
 
 
 async def _drained(reader: asyncio.StreamReader | None) -> None:

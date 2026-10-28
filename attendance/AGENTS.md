@@ -34,6 +34,10 @@ inside the sandbox image, which carries Node.
    answers, so no answer reaches the client. Each other line passes as it
    is. A relay that leaves two beats unanswered closes with code 4408
    (`Close.NO_BEAT`). An error answer counts as no answer (`acp_door.py`).
+   A relay that exits closes the connection at once with code 1001 and the
+   reason `the relay ended`. The exit of the child ends its stream, also
+   when a descendant of `sbx exec` still holds its stdout
+   (`exec_channel.py`).
 7. Serves the view for `view-ro`. Each view request opens one relay of its
    own, sends `initialize` and one read method, and closes it. It never
    sends `session/prompt` (`acp_view.py`).
