@@ -1,10 +1,13 @@
 """The byte pipe between one ACP door connection and one `acp-relay`.
 
-One WebSocket text frame is one JSON-RPC line. Each frame and each relay
-line gets the envelope check and nothing else: UTF-8 under the size cap,
-one line, strict JSON, an object with `"jsonrpc": "2.0"`. Nothing is
-translated. A frame reaches the relay as its exact bytes plus one LF, and a
-relay line reaches the WebSocket as its exact text.
+One WebSocket text frame is one JSON-RPC line. A client frame may end in
+one line ending, one LF or one CR LF. The door strips it first. Each frame
+and each relay line then gets the envelope check and nothing else: UTF-8
+under the size cap, one line, strict JSON, an object with
+`"jsonrpc": "2.0"`. Each other line break closes the connection. Nothing
+is translated. A frame reaches the relay as its exact bytes, without its
+line ending, plus one LF. A relay line reaches the WebSocket as its exact
+text.
 
 Either end that closes or fails closes the other one.
 
@@ -63,6 +66,9 @@ MAX_FRAME_BYTES = MAX_ACP_LINE_BYTES
 _REFUSAL_BASE = 4000
 
 _LINE_BREAKS = ("\n", "\r")
+
+#: The one line ending that a client frame may carry. CR LF is tried first.
+_LINE_ENDINGS = ("\r\n", "\n")
 
 #: The ids of the door's beats are strings with this prefix. The facade's
 #: answers to the client's own requests carry the client's ids, so a client
@@ -207,6 +213,20 @@ def refusal_code(error: ApiError) -> int:
     return _REFUSAL_BASE + error.status
 
 
+def strip_line_end(text: str) -> str:
+    """A client frame without its one line ending: one LF or one CR LF.
+
+    Some clients end each frame in a line break. Agmente does. Each other
+    line break stays, so `check_frame` refuses it. The door adds its own LF
+    for the relay, so an ending that stayed would also make an empty line.
+    """
+    for ending in _LINE_ENDINGS:
+        if text.endswith(ending):
+            return text.removesuffix(ending)
+
+    return text
+
+
 def check_frame(text: str) -> Close | None:
     """The envelope check. None when the frame may pass."""
     if len(text.encode("utf-8", "surrogatepass")) > MAX_FRAME_BYTES:
@@ -286,18 +306,19 @@ async def _to_relay(websocket: WebSocket, relay: Channel, prompts: _OpenPrompts)
         if not isinstance(text, str):
             return Close.BAD_FRAME
 
-        refused = check_frame(text)
+        line = strip_line_end(text)
+        refused = check_frame(line)
 
         if refused is not None:
             return refused
 
-        refused = prompts.sent(text)
+        refused = prompts.sent(line)
 
         if refused is not None:
             return refused
 
         try:
-            await relay.send(text + "\n")
+            await relay.send(line + "\n")
         except ChannelClosed:
             return Close.RELAY_GONE
 

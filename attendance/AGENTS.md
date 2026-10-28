@@ -125,7 +125,9 @@ conversation and the one-writer rule (Flue's queue).
 8. Frame every byte stream from a sandbox with `lines.LineSplitter`: LF
    only, a cap per line, a refusal for a line over the cap or not UTF-8.
 9. The ACP door translates nothing. It checks the envelope and the size of
-   a frame, and pipes the bytes. It keys a prompt id as the JavaScript
+   a frame, and pipes the bytes. A client frame may end in one LF or one
+   CR LF. The door strips that ending before the check. Each other line
+   break closes the connection. It keys a prompt id as the JavaScript
    facade reads it: a number by its double, a string apart from a number.
    It closes on a prompt whose number id is past the double range.
 

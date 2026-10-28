@@ -53,6 +53,10 @@ attendance's token. attendance reads its token from
    attendance's envelope check: UTF-8 at most 1 MiB, one line, strict JSON,
    an object with `"jsonrpc": "2.0"`. A frame over the cap closes both sides
    with 1009. Any other bad frame, or a binary frame, closes both with 1007.
+   A client frame may end in one line ending, one LF or one CR LF: the
+   door strips it before the check and forwards the frame without it.
+   Agmente ends each frame so. Each other line break is a bad frame. A
+   frame from attendance gets no allowance.
 4. When one side closes, the door closes the other side with the same code
    and reason. A close with no code becomes 1000, and a lost link 1001. A
    lost link to attendance closes the client with 1014.

@@ -146,6 +146,21 @@ async def test_a_frame_round_trips_byte_for_byte(door: Door) -> None:
 
 
 @pytest.mark.slow
+@pytest.mark.parametrize("ending", ["\n", "\r\n"], ids=["lf", "crlf"])
+async def test_one_line_ending_of_a_client_frame_is_stripped(door: Door, ending: str) -> None:
+    """A client can end each frame in one line break. Agmente does.
+
+    The door adds its own LF for the relay, so a frame it did not strip
+    would also reach the relay as an empty line.
+    """
+    async with door.door_acp() as connection:
+        await connection.send(FRAME + ending)
+        assert await asyncio.wait_for(connection.recv(), 5) == FRAME
+        await connection.send(FRAME)
+        assert await asyncio.wait_for(connection.recv(), 5) == FRAME
+
+
+@pytest.mark.slow
 @pytest.mark.parametrize(
     ("frame", "code"),
     [
@@ -155,8 +170,25 @@ async def test_a_frame_round_trips_byte_for_byte(door: Door) -> None:
         ('{"jsonrpc":"2.0","id":NaN}', Close.BAD_FRAME),
         ('{"id":1}', Close.BAD_FRAME),
         ('{"jsonrpc":"2.0","id":1e999,"method":"session/prompt"}', Close.BAD_FRAME),
+        (FRAME + "\r", Close.BAD_FRAME),
+        (FRAME + "\n\n", Close.BAD_FRAME),
+        (FRAME + "\r\n\n", Close.BAD_FRAME),
+        ("\n", Close.BAD_FRAME),
+        ("\r\n", Close.BAD_FRAME),
     ],
-    ids=["over_the_cap", "not_json", "two_lines", "nan", "no_envelope", "prompt_id_past_double"],
+    ids=[
+        "over_the_cap",
+        "not_json",
+        "two_lines",
+        "nan",
+        "no_envelope",
+        "prompt_id_past_double",
+        "lone_cr",
+        "two_lf",
+        "crlf_then_lf",
+        "only_lf",
+        "only_crlf",
+    ],
 )
 async def test_a_bad_frame_closes_the_connection(door: Door, frame: str, code: int) -> None:
     async with door.door_acp() as connection:
