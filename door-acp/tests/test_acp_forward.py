@@ -56,6 +56,9 @@ class FakeAttendance:
         if self.mode == "oversize":
             await connection.send(OVERSIZE)
 
+        if self.mode == "newline":
+            await connection.send(FRAME + "\n")
+
         # The door can close first, for a bad frame. That ends this loop.
         with contextlib.suppress(ConnectionClosed):
             async for frame in connection:
@@ -152,6 +155,55 @@ async def test_a_frame_over_the_cap_closes_1009(
         if mode == "echo":
             await client.send(OVERSIZE)
         assert (await close_of(client))[0] == Close.TOO_LARGE
+
+
+@pytest.mark.parametrize("ending", ["\n", "\r\n"], ids=["lf", "crlf"])
+async def test_one_line_ending_of_a_client_frame_is_stripped(
+    door: str, attendance: FakeAttendance, ending: str
+) -> None:
+    """A client can end each frame in one line break. Agmente does."""
+    async with connect(door, additional_headers=GOOD) as client:
+        await client.send(FRAME + ending)
+        echoed = await asyncio.wait_for(client.recv(decode=False), 5)
+
+    assert echoed == FRAME.encode("utf-8")
+
+
+@pytest.mark.parametrize(
+    "frame",
+    [
+        '{"jsonrpc":"2.0",\n"id":1}',
+        FRAME + "\r",
+        FRAME + "\n\n",
+        FRAME + "\r\n\n",
+        FRAME + "\n\r\n",
+        "\n",
+        "\r\n",
+    ],
+    ids=[
+        "in_the_middle",
+        "lone_cr",
+        "two_lf",
+        "crlf_then_lf",
+        "lf_then_crlf",
+        "only_lf",
+        "only_crlf",
+    ],
+)
+async def test_any_other_line_break_in_a_client_frame_closes_1007(door: str, frame: str) -> None:
+    async with connect(door, additional_headers=GOOD) as client:
+        await client.send(frame)
+        assert (await close_of(client))[0] == Close.BAD_FRAME
+
+
+async def test_a_line_ending_from_attendance_closes_1007(
+    door: str, attendance: FakeAttendance
+) -> None:
+    """The allowance is for a client frame only."""
+    attendance.mode = "newline"
+
+    async with connect(door, additional_headers=GOOD) as client:
+        assert (await close_of(client))[0] == Close.BAD_FRAME
 
 
 async def test_a_bad_frame_closes_1007(door: str) -> None:

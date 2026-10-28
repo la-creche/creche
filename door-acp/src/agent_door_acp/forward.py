@@ -1,9 +1,12 @@
 """The forward: one client WebSocket to one attendance WebSocket.
 
-Each text frame passes as it is, in both directions. Each frame gets the
-envelope check of attendance's ACP door and nothing else: UTF-8 under the
-size cap, one line, strict JSON, an object with `"jsonrpc": "2.0"`. Nothing
-is translated. When one side closes, the door closes the other side with the
+Each text frame passes as it is, in both directions. A client frame may
+end in one line ending, one LF or one CR LF. The door strips it, and the
+frame passes without it. Each frame then gets the envelope check of
+attendance's ACP door and nothing else: UTF-8 under the size cap, one line,
+strict JSON, an object with `"jsonrpc": "2.0"`. Each other line break is a
+bad frame. A frame from attendance gets no allowance. Nothing is
+translated. When one side closes, the door closes the other side with the
 same code and reason.
 """
 
@@ -31,6 +34,9 @@ UNREACHABLE_REASON = "attendance unreachable"
 
 _JSONRPC = "2.0"
 _LINE_BREAKS = ("\n", "\r")
+
+#: The one line ending that a client frame may carry. CR LF is tried first.
+_LINE_ENDINGS = ("\r\n", "\n")
 _NO_STATUS = 1005
 
 
@@ -70,6 +76,19 @@ class End:
 
 class _Malformed(Exception):
     pass
+
+
+def strip_line_end(text: str) -> str:
+    """A client frame without its one line ending: one LF or one CR LF.
+
+    Some clients end each frame in a line break. Agmente does. Each other
+    line break stays, so `check_frame` refuses it.
+    """
+    for ending in _LINE_ENDINGS:
+        if text.endswith(ending):
+            return text.removesuffix(ending)
+
+    return text
 
 
 def check_frame(text: str) -> Close | None:
@@ -145,12 +164,13 @@ async def _to_attendance(client: WebSocket, attendance: ClientConnection) -> End
         if not isinstance(text, str):
             return End(Side.DOOR, Close.BAD_FRAME)
 
-        refused = check_frame(text)
+        line = strip_line_end(text)
+        refused = check_frame(line)
         if refused is not None:
             return End(Side.DOOR, refused)
 
         try:
-            await attendance.send(text)
+            await attendance.send(line)
         except ConnectionClosed as closed:
             return _attendance_end(closed)
 
