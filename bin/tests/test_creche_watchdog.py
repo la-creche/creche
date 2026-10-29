@@ -1,4 +1,4 @@
-"""What `bin/rework-watchdog.sh` can be held to without the host.
+"""What `bin/creche-watchdog.sh` can be held to without the host.
 
 A rework service can die in silence, and nothing else would tell the operator.
 This script tells the operator's phone inside five minutes, so the cases that matter
@@ -48,7 +48,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
 REPO_ROOT: Final = Path(__file__).resolve().parents[2]
-SCRIPT: Final = REPO_ROOT / "bin" / "rework-watchdog.sh"
+SCRIPT: Final = REPO_ROOT / "bin" / "creche-watchdog.sh"
 
 #: The ACP door. It is a long-running user unit, so the script watches it.
 ACP_DOOR_UNIT: Final = "creche-door-acp.service"
@@ -426,7 +426,7 @@ class Rig:
         _write(self.families / family / "status.json", json.dumps(body, indent=2) + "\n")
 
     def sync_ran(self, minutes_ago: int) -> None:
-        """The stamp `bin/rework-registry-sync.sh` writes when a run ended
+        """The stamp `bin/creche-registry-sync.sh` writes when a run ended
         well. Its AGE is what check 5 reads, so the mtime is set here
         rather than the text: the check asks `find -mmin`, which needs no
         `date` parsing and reads the same on both platforms."""

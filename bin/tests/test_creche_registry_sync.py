@@ -1,4 +1,4 @@
-"""What `bin/rework-registry-sync.sh` can be held to without the host.
+"""What `bin/creche-registry-sync.sh` can be held to without the host.
 
 This script is the one thing that pulls `/srv/agents/registry`. When
 nothing pulls, the checkout freezes, the host does not know, and every
@@ -29,7 +29,7 @@ Six behaviours, each with its own reason to exist.
 6. **Two runs never overlap.** `flock` on a dedicated descriptor.
 
 Every external binary that macOS lacks is a PATH-injected binstub, the way
-`bin/tests/test_rework_watchdog.py` already does it. `git` is the REAL one:
+`bin/tests/test_creche_watchdog.py` already does it. `git` is the REAL one:
 a test of a git operation runs against a real repository under `tmp_path`,
 never against a stub and never over the network.
 
@@ -53,7 +53,7 @@ from typing import Final
 import pytest
 
 REPO_ROOT: Final = Path(__file__).resolve().parents[2]
-SCRIPT: Final = REPO_ROOT / "bin" / "rework-registry-sync.sh"
+SCRIPT: Final = REPO_ROOT / "bin" / "creche-registry-sync.sh"
 
 #: The derived file `caregiver` would write into the checkout (contract 06 §3.4).
 MANIFEST: Final = "live-manifest.json"

@@ -213,7 +213,7 @@ tree_is_there() {  # tree_is_there <tree>
     attendance|caregiver|noticeboard) [[ -f "$COMPONENT_ROOT/$1/$STAMP" ]] ;;
     handover) [[ -f "$INSTALL_ROOT/handover/$STAMP" ]] ;;
     registry) [[ -d "$REGISTRY/.git" ]] ;;
-    product) [[ -f "$TREE/bin/rework-watchdog.sh" && -f "$TREE/bin/rework-registry-sync.sh" ]] ;;
+    product) [[ -f "$TREE/bin/creche-watchdog.sh" && -f "$TREE/bin/creche-registry-sync.sh" ]] ;;
     *) return 1 ;;
   esac
 }
@@ -690,7 +690,7 @@ check_root() {
   item "R2 cosign at $COSIGN" test -x "$COSIGN"
   item "R2 uv $UV_MINIMUM or newer at $UV (found: $(uv_version))" uv_is_new
   item "R2 sbx on PATH" has_program sbx
-  item "R3 deployed checkout at $PRODUCT_ROOT" test -f "$PRODUCT_ROOT/bin/rework-watchdog.sh"
+  item "R3 deployed checkout at $PRODUCT_ROOT" test -f "$PRODUCT_ROOT/bin/creche-watchdog.sh"
   item "R3 handover tree at $INSTALL_ROOT/handover" test -f "$INSTALL_ROOT/handover/$STAMP"
   item "R4 group chaperone exists and holds $me" group_has_me chaperone
   item "R4 group $STATE_GROUP exists and holds $me" group_has_me "$STATE_GROUP"

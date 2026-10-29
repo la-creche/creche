@@ -30,7 +30,7 @@
 # The two bearers come from /srv/agents/state/rework/hooks.env, which
 # `bin/rework-cutover.sh up` writes. The old system's env file is a
 # FALLBACK, and every read of it logs one DEPRECATED line
-# (`bin/lib/envfile.sh`, `bin/rework-watchdog.sh`).
+# (`bin/lib/envfile.sh`, `bin/creche-watchdog.sh`).
 #
 # The host's LAN address is AGENT_LAN_ADDRESS in /etc/creche/site.env
 # (handover/src/handover/site.py). Without it the script stops before it
