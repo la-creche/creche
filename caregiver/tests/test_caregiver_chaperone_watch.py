@@ -129,7 +129,7 @@ def test_past_the_threshold_the_fault_is_raised_on_this_family() -> None:
     assert report.reach is PepReach.UNREACHABLE
     assert fault is not None
     assert fault.code == PEP_UNREACHABLE
-    assert fault.source == "managerd"
+    assert fault.source == "caregiver"
     # The contract's own row carries the reason.
     assert fault.blocks_turns is False
     assert fault.since == report.unreachable_since

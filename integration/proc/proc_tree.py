@@ -62,7 +62,7 @@ BUDGET_USD: Final = 15
 
 #: Contract 05 §3.3.1: the directory of the fault files that `attendance`
 #: writes.
-FAULTS_OF_ATTENDANCE: Final = "sessiond"
+FAULTS_OF_ATTENDANCE: Final = "attendance"
 
 
 class Validity(StrEnum):
@@ -684,7 +684,7 @@ def status_fault(code: Fault) -> dict[str, Any]:
         "code": code.value,
         "blocks_turns": _BLOCKS_TURNS[code],
         "since": _rfc3339(),
-        "source": "managerd",
+        "source": "caregiver",
     }
 
 

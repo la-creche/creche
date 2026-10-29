@@ -95,7 +95,7 @@ def test_sandbox_id_form() -> None:
 
 def test_fault_path_is_keyed_by_source_and_family() -> None:
     assert fault_path(ROOT, "pep", "chat") == ROOT / "faults" / "pep" / "chat.json"
-    assert fault_path(ROOT, "sessiond", "chat") == ROOT / "faults" / "sessiond" / "chat.json"
+    assert fault_path(ROOT, "attendance", "chat") == ROOT / "faults" / "attendance" / "chat.json"
 
 
 def test_every_family_path_lives_under_the_family_directory() -> None:

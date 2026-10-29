@@ -22,7 +22,7 @@ log = logging.getLogger("caregiver.faults")
 #: itself raises the other six codes of section 3.3's table directly, from
 #: its own reconcile loop, never through a fault file.
 FAULT_CODES_BY_SOURCE: Final[dict[str, frozenset[str]]] = {
-    "sessiond": frozenset(
+    "attendance": frozenset(
         {
             "protocol_mismatch",
             "protocol_violation",

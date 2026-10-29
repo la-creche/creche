@@ -79,9 +79,9 @@ _PEP_URL: Final = "http://192.0.2.10:8300"
 #: More levels than the JSON parser of each supported Python version reads.
 VERY_DEEP: Final = 400_000
 
-SOURCE_SESSIOND: Final = "sessiond"
+SOURCE_ATTENDANCE: Final = "attendance"
 SOURCE_PEP: Final = "pep"
-SOURCE_MANAGERD: Final = "managerd"
+SOURCE_CAREGIVER: Final = "caregiver"
 
 #: Each character class that a JSON writer treats in its own way: a letter
 #: outside ASCII, a character outside the first plane, a line separator, a
@@ -172,7 +172,12 @@ def _reconcile(
 
 
 def _fault(
-    code: str, *, blocks: bool, source: str = SOURCE_MANAGERD, stale: bool = False, **detail: object
+    code: str,
+    *,
+    blocks: bool,
+    source: str = SOURCE_CAREGIVER,
+    stale: bool = False,
+    **detail: object,
 ) -> FaultEntry:
     return FaultEntry(
         code=code, blocks_turns=blocks, since=FRESH, source=source, stale=stale, detail=detail
@@ -337,7 +342,9 @@ WRITTEN: Final[tuple[Written, ...]] = (
             config_rev=_OLD_REV,
             validation=_validation(ok=False, error_count=1, first_error="egress: bad host"),
             faults=(
-                _fault("orphan_processes", blocks=False, source=SOURCE_SESSIOND, sandbox="chat-s1"),
+                _fault(
+                    "orphan_processes", blocks=False, source=SOURCE_ATTENDANCE, sandbox="chat-s1"
+                ),
             ),
         ),
     ),
@@ -384,14 +391,14 @@ WRITTEN: Final[tuple[Written, ...]] = (
             _fault(
                 "orphan_processes",
                 blocks=False,
-                source=SOURCE_SESSIOND,
+                source=SOURCE_ATTENDANCE,
                 stale=True,
                 message="foreign_pi_processes=2",
                 sandbox="chat-s3",
             ),
-            _fault("protocol_mismatch", blocks=True, source=SOURCE_SESSIOND),
-            _fault("protocol_violation", blocks=True, source=SOURCE_SESSIOND),
-            _fault("audit_unreadable", blocks=False, source=SOURCE_SESSIOND),
+            _fault("protocol_mismatch", blocks=True, source=SOURCE_ATTENDANCE),
+            _fault("protocol_violation", blocks=True, source=SOURCE_ATTENDANCE),
+            _fault("audit_unreadable", blocks=False, source=SOURCE_ATTENDANCE),
             _fault("grants_stale", blocks=True, source=SOURCE_PEP, message="not read", rev=None),
         ),
     ),
@@ -448,7 +455,7 @@ WRITTEN: Final[tuple[Written, ...]] = (
             _fault(
                 "sandbox_start_failed",
                 blocks=False,
-                source=SOURCE_SESSIOND,
+                source=SOURCE_ATTENDANCE,
                 message="the playpen answered fatal",
                 sandbox="chat-s2",
             ),
@@ -499,7 +506,7 @@ WRITTEN: Final[tuple[Written, ...]] = (
     Written("lax-fault-blocks-against-table", _degraded(_fault("key_mint_failed", blocks=False))),
     Written(
         "lax-fault-of-other-writer",
-        _degraded(_fault("grants_stale", blocks=True, source=SOURCE_SESSIOND)),
+        _degraded(_fault("grants_stale", blocks=True, source=SOURCE_ATTENDANCE)),
     ),
     Written(
         "lax-fault-source-unknown", _degraded(_fault("spend_unknown", blocks=False, source="root"))
@@ -712,7 +719,7 @@ class FaultDocument:
 
     id: str
     raw: bytes
-    source: str = SOURCE_SESSIOND
+    source: str = SOURCE_ATTENDANCE
     #: The input form when the bytes are a long text. Empty means `raw`.
     parts: tuple[tuple[str, int], ...] = ()
 
@@ -728,7 +735,7 @@ def _entry(code: object = "orphan_processes", **fields: object) -> dict[str, obj
         "code": code,
         "blocks_turns": False,
         "since": FRESH,
-        "source": SOURCE_SESSIOND,
+        "source": SOURCE_ATTENDANCE,
         **fields,
     }
 
@@ -737,14 +744,14 @@ def _file(**fields: object) -> dict[str, object]:
     """A fault file of `attendance` with one open fault, but for `fields`."""
     return {
         "family": FAMILY,
-        "source": SOURCE_SESSIOND,
+        "source": SOURCE_ATTENDANCE,
         "written_at": FRESH,
         "faults": [_entry()],
         **fields,
     }
 
 
-def _fault_doc(doc_id: str, read_as: str = SOURCE_SESSIOND, **fields: object) -> FaultDocument:
+def _fault_doc(doc_id: str, read_as: str = SOURCE_ATTENDANCE, **fields: object) -> FaultDocument:
     return FaultDocument(doc_id, json.dumps(_file(**fields)).encode("utf-8"), read_as)
 
 
@@ -765,7 +772,7 @@ def _written_fault_files(scratch: Path) -> tuple[FaultDocument, ...]:
         FaultDocument("written-by-attendance", of_attendance),
         FaultDocument("written-by-attendance-read-as-pep", of_attendance, SOURCE_PEP),
         FaultDocument("written-by-chaperone", _OF_CHAPERONE, SOURCE_PEP),
-        FaultDocument("written-by-chaperone-read-as-sessiond", _OF_CHAPERONE),
+        FaultDocument("written-by-chaperone-read-as-attendance", _OF_CHAPERONE),
     )
 
 
@@ -774,7 +781,7 @@ _FAULT_TEXT: Final = json.dumps(_file())
 FAULT_DOCUMENTS: Final[tuple[FaultDocument, ...]] = (
     _fault_doc("one-fault"),
     _fault_doc("no-fault", faults=[]),
-    _fault_doc("read-as-managerd", SOURCE_MANAGERD),
+    _fault_doc("read-as-caregiver", SOURCE_CAREGIVER),
     _fault_doc("source-key-of-other-writer", source=SOURCE_PEP),
     _fault_doc("family-other-name", family="code"),
     _fault_doc("family-not-a-name", family="Not A Family"),
