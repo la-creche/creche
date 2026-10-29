@@ -6,7 +6,7 @@ reads a second repository's declarations.
 | What the host had on 2026-09-22 | What this module does |
 |---|---|
 | `/opt/mcp` `root:root 0755`, EMPTY | the directory, and nothing under it |
-| no `/var/lib/agent-mcp` | the root `0755`, empty, as the visit makes it |
+| no `/var/lib/mcp` | the root `0755`, empty, as the visit makes it |
 | eleven `mcp/<name>/server.yaml` | **the eleven declarations in TOML, comments removed** |
 | `mcp-servers-v0.1.0` on agent-mcp `a1b2c3d` | one tag, one SHA, that tag |
 | `caregiver`'s `mcp-servers=latest` request | the same body, alone in the spool |
@@ -50,7 +50,7 @@ per-server build are the real code.
 4. The modes a real `UMask=0027` root unit leaves. One test sets the
    umask itself and asserts the directories that decide it.
 5. The PEP's mount namespace. That the PEP unit's `ReadWritePaths`
-   binds `/var/lib/agent-mcp` writable for a server is systemd's to prove
+   binds `/var/lib/mcp` writable for a server is systemd's to prove
    on the host, and a real `install -d` giving the directory
    to `mcp-<name>` is too: `McpFake` makes it and owns it as the test user.
 """
@@ -806,7 +806,7 @@ def test_a_failed_verify_takes_the_trees_and_leaves_the_state(bench: Bench) -> N
 
 
 def test_today_s_host_is_refused_until_the_visit_makes_the_root(bench: Bench) -> None:
-    """The host on 2026-09-22 had no `/var/lib/agent-mcp`, and two of the
+    """The host on 2026-09-22 had no `/var/lib/mcp`, and two of the
     eleven files declare `run.state_dir`. The release refuses at step 8
     with nothing staged and names the command that makes the root. It does
     not make the root itself: the PEP's `ReadWritePaths` binds only a path

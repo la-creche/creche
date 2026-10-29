@@ -286,10 +286,12 @@ def _plan_report(resolution: Resolution, manifests: ManifestSet) -> Document:
 
 
 #: Said once when a root is still incomplete right after a fetch: the
-#: hourly `code-corpus-sync.timer` is the more likely cause than a missing
-#: merge, and this names the one command the operator runs instead of guessing.
+#: hourly `creche-code-corpus-sync.timer` is the more likely cause than a
+#: missing merge, and this names the one command the operator runs instead of
+#: guessing.
 CORPUS_SYNC_HINT = (
-    "the merge may not be in the corpus yet: run systemctl --user start code-corpus-sync.service"
+    "the merge may not be in the corpus yet: "
+    "run systemctl --user start creche-code-corpus-sync.service"
 )
 
 

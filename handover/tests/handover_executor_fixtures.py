@@ -218,7 +218,7 @@ def fake_host(tmp_path: Path, run: FakeRun) -> Host:
         install_roots=(tmp_path / "components",),
         # Contract 01b §4.2's root, which the visit makes before any
         # release runs. Here so a server that keeps state
-        # never reaches for the real `/var/lib/agent-mcp`.
+        # never reaches for the real `/var/lib/mcp`.
         mcp_state_root=tmp_path / "mcp-state",
     )
 

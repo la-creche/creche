@@ -29,7 +29,7 @@ OPERATOR_OWNED: Final = (Path("/srv/agents"), Path("/home/operator"))
 #: ancestors are system directories (`/`, `/var`, `/var/lib`, `/opt`, `/etc`).
 ROOT_OWNED: Final = (
     Path(layout.RELEASE_ROOT),
-    Path("/var/lib/agent-mcp"),
+    Path("/var/lib/mcp"),
     Path("/opt/components"),
     Path("/opt/mcp"),
     Path("/etc/systemd/system"),

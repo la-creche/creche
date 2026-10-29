@@ -93,7 +93,7 @@ MCP_ROOT: Final = "/opt/mcp"
 #: The root itself is NOT a release's: `bin/rework-release-visit.sh` makes it
 #: `root:root 0755` and `creche-chaperone.service` names it in `ReadWritePaths`,
 #: which binds it writable only if it exists when the PEP starts.
-MCP_STATE_ROOT: Final = "/var/lib/agent-mcp"
+MCP_STATE_ROOT: Final = "/var/lib/mcp"
 
 #: §2.8's signal, and the two paths root READS and never writes. They are
 #: the operator's, and `bin/rework-cutover.sh up` makes both: the socket 0660 in a
