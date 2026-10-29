@@ -19,16 +19,16 @@ def run(monkeypatch: pytest.MonkeyPatch, values: dict[str, str], *argv: str) -> 
 
 def env(tmp_path: Path) -> dict[str, str]:
     return {
-        "VIEW_BIND": "127.0.0.1",
-        "VIEW_STATE_ROOT": str(tmp_path / "state"),
-        "VIEW_REGISTRY_DIR": str(tmp_path / "registry"),
+        "NOTICEBOARD_BIND": "127.0.0.1",
+        "NOTICEBOARD_STATE_ROOT": str(tmp_path / "state"),
+        "NOTICEBOARD_REGISTRY_DIR": str(tmp_path / "registry"),
     }
 
 
 def test_a_bad_configuration_fails_with_one_check(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    code = run(monkeypatch, {"VIEW_BIND": "192.0.2.10"}, "--json")
+    code = run(monkeypatch, {"NOTICEBOARD_BIND": "192.0.2.10"}, "--json")
 
     assert code == EXIT_FAILED
     body = json.loads(capsys.readouterr().out)
@@ -53,7 +53,7 @@ def test_the_hook_never_prints_the_key(
 ) -> None:
     """Invariant 13. /healthz is keyless, so the hook needs no secret."""
     values = env(tmp_path)
-    values["VIEW_ACCESS_KEY"] = KEY
+    values["NOTICEBOARD_ACCESS_KEY"] = KEY
 
     run(monkeypatch, values, "--json")
 
@@ -79,13 +79,14 @@ def test_an_env_file_supplies_what_the_process_env_does_not(
     refusal (an unkeyed LAN bind) for the wrong reason on every release —
     `--env-file` is what lets this check pass with the same key the unit
     itself has."""
-    env_file = tmp_path / "view.env"
+    env_file = tmp_path / "noticeboard.env"
     # The state root is pointed at a directory that does not exist, so the
     # `families` check fails on EVERY machine. Without that line the hook
     # passed on the host itself (a real state root and a live noticeboard), and the
     # exit-code assertion below held only on a machine that is not the host.
     env_file.write_text(
-        f"VIEW_BIND=192.0.2.10\nVIEW_ACCESS_KEY={KEY}\nVIEW_STATE_ROOT={tmp_path / 'absent'}\n",
+        f"NOTICEBOARD_BIND=192.0.2.10\nNOTICEBOARD_ACCESS_KEY={KEY}\n"
+        f"NOTICEBOARD_STATE_ROOT={tmp_path / 'absent'}\n",
         encoding="utf-8",
     )
 
@@ -140,11 +141,11 @@ def test_a_healthy_service_passes_every_check(
         code = run(
             monkeypatch,
             {
-                "VIEW_BIND": "127.0.0.1",
-                "VIEW_PORT": str(server.server_port),
-                "VIEW_STATE_ROOT": str(state),
-                "VIEW_REGISTRY_DIR": str(registry),
-                "VIEW_AUDIT_FILE": str(state / AUDIT_FILE),
+                "NOTICEBOARD_BIND": "127.0.0.1",
+                "NOTICEBOARD_PORT": str(server.server_port),
+                "NOTICEBOARD_STATE_ROOT": str(state),
+                "NOTICEBOARD_REGISTRY_DIR": str(registry),
+                "NOTICEBOARD_AUDIT_FILE": str(state / AUDIT_FILE),
             },
             "--json",
         )

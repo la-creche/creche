@@ -21,7 +21,7 @@ def _site(**extra: str) -> dict[str, str]:
 
 
 def test_defaults_bind_the_lan_address() -> None:
-    config = from_env(_site(VIEW_ACCESS_KEY=LONG_KEY))
+    config = from_env(_site(NOTICEBOARD_ACCESS_KEY=LONG_KEY))
 
     assert config.bind == os.environ[LAN_ADDRESS_ENV]
     assert config.port == DEFAULT_PORT
@@ -29,29 +29,29 @@ def test_defaults_bind_the_lan_address() -> None:
 
 
 def test_an_explicit_bind_still_wins() -> None:
-    config = from_env({"VIEW_BIND": LAN_BIND, "VIEW_ACCESS_KEY": LONG_KEY})
+    config = from_env({"NOTICEBOARD_BIND": LAN_BIND, "NOTICEBOARD_ACCESS_KEY": LONG_KEY})
 
     assert config.bind == LAN_BIND
 
 
 def test_a_missing_lan_address_names_the_variable() -> None:
     with pytest.raises(ConfigError, match=LAN_ADDRESS_ENV):
-        from_env({"VIEW_ACCESS_KEY": LONG_KEY})
+        from_env({"NOTICEBOARD_ACCESS_KEY": LONG_KEY})
 
 
 def test_lan_bind_with_no_key_refuses_to_start() -> None:
     """An unkeyed LAN bind would be an open admin surface."""
     with pytest.raises(ConfigError, match="unkeyed admin surface"):
-        from_env({"VIEW_BIND": LAN_BIND, "VIEW_ACCESS_KEY": ""})
+        from_env({"NOTICEBOARD_BIND": LAN_BIND, "NOTICEBOARD_ACCESS_KEY": ""})
 
 
 def test_lan_bind_with_a_short_key_refuses_to_start() -> None:
     with pytest.raises(ConfigError, match="under 32 bytes"):
-        from_env({"VIEW_BIND": LAN_BIND, "VIEW_ACCESS_KEY": "short"})
+        from_env({"NOTICEBOARD_BIND": LAN_BIND, "NOTICEBOARD_ACCESS_KEY": "short"})
 
 
 def test_loopback_bind_with_no_key_starts() -> None:
-    config = from_env({"VIEW_BIND": "127.0.0.1", "VIEW_ACCESS_KEY": ""})
+    config = from_env({"NOTICEBOARD_BIND": "127.0.0.1", "NOTICEBOARD_ACCESS_KEY": ""})
 
     assert config.on_loopback
     assert config.access_key == ""
@@ -60,21 +60,21 @@ def test_loopback_bind_with_no_key_starts() -> None:
 @pytest.mark.parametrize("bind", ["0.0.0.0", "::", "*"])
 def test_wildcard_bind_is_refused(bind: str) -> None:
     with pytest.raises(ConfigError, match="never a wildcard"):
-        from_env({"VIEW_BIND": bind, "VIEW_ACCESS_KEY": LONG_KEY})
+        from_env({"NOTICEBOARD_BIND": bind, "NOTICEBOARD_ACCESS_KEY": LONG_KEY})
 
 
 def test_key_file_wins_over_the_literal_value(tmp_path: Path) -> None:
     path = tmp_path / "noticeboard.key"
     path.write_text("f" * 40 + "\n", encoding="utf-8")
 
-    config = from_env(_site(VIEW_ACCESS_KEY_FILE=str(path), VIEW_ACCESS_KEY=LONG_KEY))
+    config = from_env(_site(NOTICEBOARD_ACCESS_KEY_FILE=str(path), NOTICEBOARD_ACCESS_KEY=LONG_KEY))
 
     assert config.access_key == "f" * 40
 
 
 def test_unreadable_key_file_refuses_to_start(tmp_path: Path) -> None:
     with pytest.raises(ConfigError, match="cannot be read"):
-        from_env(_site(VIEW_ACCESS_KEY_FILE=str(tmp_path / "missing")))
+        from_env(_site(NOTICEBOARD_ACCESS_KEY_FILE=str(tmp_path / "missing")))
 
 
 def test_a_key_file_that_is_not_utf8_refuses_to_start(tmp_path: Path) -> None:
@@ -82,25 +82,25 @@ def test_a_key_file_that_is_not_utf8_refuses_to_start(tmp_path: Path) -> None:
     path.write_bytes(b"\xff" * 40)
 
     with pytest.raises(ConfigError, match="cannot be read"):
-        from_env(_site(VIEW_ACCESS_KEY_FILE=str(path)))
+        from_env(_site(NOTICEBOARD_ACCESS_KEY_FILE=str(path)))
 
 
 def test_a_key_file_name_that_names_no_file_refuses_to_start() -> None:
     """No file has a NUL character in its name."""
     with pytest.raises(ConfigError, match="cannot be read"):
-        from_env(_site(VIEW_ACCESS_KEY_FILE="noticeboard\x00.key"))
+        from_env(_site(NOTICEBOARD_ACCESS_KEY_FILE="noticeboard\x00.key"))
 
 
 def test_bad_port_refuses_to_start() -> None:
     with pytest.raises(ConfigError, match="outside 1 to 65535"):
-        from_env(_site(VIEW_ACCESS_KEY=LONG_KEY, VIEW_PORT="0"))
+        from_env(_site(NOTICEBOARD_ACCESS_KEY=LONG_KEY, NOTICEBOARD_PORT="0"))
 
     with pytest.raises(ConfigError, match="not a number"):
-        from_env(_site(VIEW_ACCESS_KEY=LONG_KEY, VIEW_PORT="eight"))
+        from_env(_site(NOTICEBOARD_ACCESS_KEY=LONG_KEY, NOTICEBOARD_PORT="eight"))
 
 
 def test_state_paths_come_off_one_root(tmp_path: Path) -> None:
-    config = from_env({"VIEW_BIND": "127.0.0.1", "VIEW_STATE_ROOT": str(tmp_path)})
+    config = from_env({"NOTICEBOARD_BIND": "127.0.0.1", "NOTICEBOARD_STATE_ROOT": str(tmp_path)})
 
     assert config.families_dir == tmp_path / "families"
     assert config.outcomes_dir == tmp_path / "outcomes"
@@ -109,7 +109,7 @@ def test_state_paths_come_off_one_root(tmp_path: Path) -> None:
 
 def test_a_attendance_url_replaces_the_socket() -> None:
     url = f"http://{LAN_BIND}:8350"
-    config = from_env({"VIEW_BIND": "127.0.0.1", "VIEW_SESSIOND_URL": url})
+    config = from_env({"NOTICEBOARD_BIND": "127.0.0.1", "NOTICEBOARD_ATTENDANCE_URL": url})
 
     assert config.attendance_socket is None
     assert config.attendance_url == url

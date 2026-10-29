@@ -1,7 +1,7 @@
 """Which families the webhook listener may ever open a route for.
 
 Contract 05 §2: `caregiver` writes
-`/srv/agents/state/rework/families/<family>/status.json` and is its only
+`/srv/agents/state/creche/families/<family>/status.json` and is its only
 writer. This module reads that document to answer one question per family:
 has `caregiver` ever applied a valid definition for it, and is it
 `autonomous`? Both must hold before this door will even look at what the

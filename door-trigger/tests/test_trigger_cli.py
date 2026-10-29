@@ -99,8 +99,8 @@ def test_fire_check_validates_config_and_never_calls_attendance(
 def test_fire_with_no_token_file_refuses_to_start(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.delenv("DOOR_TRIGGER_SESSIOND_TOKEN_FILE", raising=False)
-    monkeypatch.setenv("DOOR_TRIGGER_SESSIOND_TOKEN_FILE", "/no/such/file/anywhere")
+    monkeypatch.delenv("DOOR_TRIGGER_ATTENDANCE_TOKEN_FILE", raising=False)
+    monkeypatch.setenv("DOOR_TRIGGER_ATTENDANCE_TOKEN_FILE", "/no/such/file/anywhere")
 
     code = main(["fire", "chat", "--check"])
 
@@ -163,7 +163,7 @@ def test_fire_cannot_reach_attendance_is_a_usage_error(
     for key, value in _env(tmp_path).items():
         monkeypatch.setenv(key, value)
     # No attendance is listening on the default socket inside a test sandbox.
-    monkeypatch.setenv("DOOR_TRIGGER_SESSIOND_SOCKET", str(tmp_path / "no-such.sock"))
+    monkeypatch.setenv("DOOR_TRIGGER_ATTENDANCE_SOCKET", str(tmp_path / "no-such.sock"))
 
     code = main(["fire", "chat"])
 

@@ -83,13 +83,13 @@ def attendance_env(tree: Tree) -> dict[str, str]:
     """The variables `creche-attendance.service` reads from its two files."""
     return {
         "AGENT_LAN_ADDRESS": LAN_ADDRESS,
-        "SESSIOND_SESSIONS_ROOT": str(tree.sessions_root),
-        "SESSIOND_STATE_ROOT": str(tree.state_root),
-        "SESSIOND_WORK_ROOT": str(tree.work_root),
-        "SESSIOND_SOCKET": str(tree.attendance_socket),
-        "SESSIOND_LOG_DIR": str(tree.log_dir),
-        "SESSIOND_LOCK_STALE_S": str(LOCK_STALE_S),
-        "SESSIOND_LOCK_POLL_S": str(LOCK_POLL_S),
+        "ATTENDANCE_SESSIONS_ROOT": str(tree.sessions_root),
+        "ATTENDANCE_STATE_ROOT": str(tree.state_root),
+        "ATTENDANCE_WORK_ROOT": str(tree.work_root),
+        "ATTENDANCE_SOCKET": str(tree.attendance_socket),
+        "ATTENDANCE_LOG_DIR": str(tree.log_dir),
+        "ATTENDANCE_LOCK_STALE_S": str(LOCK_STALE_S),
+        "ATTENDANCE_LOCK_POLL_S": str(LOCK_POLL_S),
     }
 
 

@@ -39,7 +39,7 @@ Environment=XDG_CONFIG_HOME=%h/.config
 # No secret in this unit. Every credential this service reads is a file
 # under the state root's `tokens/` directory, at mode 0600, and the env file
 # names paths only. It is written 0600 by `bin/rework-cutover.sh up`.
-EnvironmentFile=/srv/agents/state/rework/sessiond.env
+EnvironmentFile=/srv/agents/state/creche/attendance.env
 # The site's AGENT_LAN_ADDRESS: the address a LAN bind uses.
 EnvironmentFile=/etc/creche/site.env
 ExecStart=%h/.local/components/attendance/bin/python -m attendance

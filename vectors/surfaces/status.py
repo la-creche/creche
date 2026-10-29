@@ -55,7 +55,7 @@ NOW: Final = datetime(2999, 1, 1, 0, 0, 30, tzinfo=UTC)
 VERY_DEEP: Final = 400_000
 HUGE_DIGITS: Final = 5_000
 
-_STATE_DIR: Final = "/srv/agents/state/rework/families/chat"
+_STATE_DIR: Final = "/srv/agents/state/creche/families/chat"
 _IMAGE: Final = "registry.example/playpen@sha256:" + "0123456789abcdef" * 4
 
 

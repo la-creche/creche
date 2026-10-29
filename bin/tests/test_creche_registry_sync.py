@@ -125,7 +125,7 @@ class Rig:
         self.tmp = tmp_path
         self.prefix = tmp_path / "host"
         self.registry = self.prefix / "srv/agents/registry"
-        self.state = self.prefix / "srv/agents/state/rework"
+        self.state = self.prefix / "srv/agents/state/creche"
         self.stamp = self.state / "registry-sync/last-success"
         self.stub_log = tmp_path / "stub.log"
 

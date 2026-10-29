@@ -599,7 +599,7 @@ def _creds_surfaces(scratch: Path) -> tuple[Surface, ...]:
 
 PLAYPEN_ENV_CONTRACT: Final = "contract 03 §7.1"
 
-_STATE_ROOT: Final = "/srv/agents/state/rework"
+_STATE_ROOT: Final = "/srv/agents/state/creche"
 
 #: The URL of each plane in an env file, on a TEST-NET-1 address (RFC 5737).
 _PEP_URL: Final = "http://192.0.2.10:8300"
@@ -744,7 +744,7 @@ def _playpen_env_surfaces(scratch: Path) -> tuple[Surface, ...]:
 LAN: Final = "192.0.2.10"
 
 #: A key of 32 bytes. It is text of a test.
-VIEW_KEY: Final = "0123456789abcdef0123456789abcdef"
+NOTICEBOARD_KEY: Final = "0123456789abcdef0123456789abcdef"
 
 
 @dataclass(frozen=True)
@@ -768,7 +768,7 @@ def _named(error: Exception) -> dict[str, str]:
 
 def _attendance(env_id: str, **variables: str) -> Environment:
     """An environment of `attendance` with the LAN address of the site file."""
-    prefixed = {f"SESSIOND_{name}": value for name, value in variables.items()}
+    prefixed = {f"ATTENDANCE_{name}": value for name, value in variables.items()}
 
     return Environment(env_id, {"AGENT_LAN_ADDRESS": LAN, **prefixed})
 
@@ -777,7 +777,7 @@ ATTENDANCE_ENVS: Final[tuple[Environment, ...]] = (
     _attendance("site-only"),
     Environment("no-variable", {}),
     Environment("lan-address-empty", {"AGENT_LAN_ADDRESS": "  "}),
-    Environment("lan-address-of-the-service", {"SESSIOND_LAN_ADDRESS": "127.0.0.1"}),
+    Environment("lan-address-of-the-service", {"ATTENDANCE_LAN_ADDRESS": "127.0.0.1"}),
     _attendance("lan-address-of-the-service-wins", LAN_ADDRESS="192.0.2.11"),
     _attendance("lan-address-space", LAN_ADDRESS=" 192.0.2.11\n"),
     _attendance("lan-address-ipv6", LAN_ADDRESS="::1"),
@@ -787,7 +787,7 @@ ATTENDANCE_ENVS: Final[tuple[Environment, ...]] = (
         SESSIONS_ROOT="/tmp/root/sessions",
         STATE_ROOT="/tmp/root/state",
         WORK_ROOT="/tmp/root/work",
-        SOCKET="/tmp/root/sessiond.sock",
+        SOCKET="/tmp/root/attendance.sock",
         BIND_LAN="yes",
         LAN_ADDRESS="127.0.0.1",
         LAN_PORT="18350",
@@ -808,7 +808,7 @@ ATTENDANCE_ENVS: Final[tuple[Environment, ...]] = (
     _attendance("path-double-root", STATE_ROOT="//tmp/root"),
     _attendance("path-dot-segments", STATE_ROOT="/tmp/./root/../state"),
     _attendance("path-nul-byte", STATE_ROOT="/tmp/root\x00/state"),
-    _attendance("socket-nul-byte", SOCKET="/tmp/root/sessiond.sock\x00"),
+    _attendance("socket-nul-byte", SOCKET="/tmp/root/attendance.sock\x00"),
     _attendance("socket-107-bytes", SOCKET="/" + "a" * 106),
     # --- the bind ---
     _attendance("bind-true", BIND_LAN="true"),
@@ -889,44 +889,49 @@ def _plain(value: object) -> object:
 
 def _noticeboard(env_id: str, **variables: str) -> Environment:
     """An environment of the noticeboard on loopback, which needs no key."""
-    prefixed = {f"VIEW_{name}": value for name, value in variables.items()}
+    prefixed = {f"NOTICEBOARD_{name}": value for name, value in variables.items()}
 
-    return Environment(env_id, {"VIEW_BIND": "127.0.0.1", **prefixed})
+    return Environment(env_id, {"NOTICEBOARD_BIND": "127.0.0.1", **prefixed})
 
 
 def _lan_board(env_id: str, **variables: str) -> Environment:
     """An environment of the noticeboard on the LAN address, with a key."""
-    prefixed = {f"VIEW_{name}": value for name, value in variables.items()}
+    prefixed = {f"NOTICEBOARD_{name}": value for name, value in variables.items()}
 
-    return Environment(env_id, {"AGENT_LAN_ADDRESS": LAN, "VIEW_ACCESS_KEY": VIEW_KEY, **prefixed})
+    return Environment(
+        env_id, {"AGENT_LAN_ADDRESS": LAN, "NOTICEBOARD_ACCESS_KEY": NOTICEBOARD_KEY, **prefixed}
+    )
 
 
 NOTICEBOARD_ENVS: Final[tuple[Environment, ...]] = (
     _noticeboard("loopback-no-key"),
     _lan_board("lan-with-key"),
     Environment("no-variable", {}),
-    Environment("key-and-no-address", {"VIEW_ACCESS_KEY": VIEW_KEY}),
+    Environment("key-and-no-address", {"NOTICEBOARD_ACCESS_KEY": NOTICEBOARD_KEY}),
     _lan_board(
         "each-variable",
         BIND="192.0.2.11",
         PORT="18370",
         STATE_ROOT="/tmp/root/state",
         REGISTRY_DIR="/tmp/root/registry",
-        SESSIOND_SOCKET="/tmp/root/sessiond.sock",
+        ATTENDANCE_SOCKET="/tmp/root/attendance.sock",
         PAGE_SIZE="25",
         COOKIE_SECURE="0",
     ),
     _noticeboard("empty-values", PORT=" ", STATE_ROOT="", PAGE_SIZE="", COOKIE_SECURE=""),
     # --- the bind and the key ---
     Environment("lan-no-key", {"AGENT_LAN_ADDRESS": LAN}),
-    Environment("lan-key-31-bytes", {"AGENT_LAN_ADDRESS": LAN, "VIEW_ACCESS_KEY": VIEW_KEY[1:]}),
+    Environment(
+        "lan-key-31-bytes",
+        {"AGENT_LAN_ADDRESS": LAN, "NOTICEBOARD_ACCESS_KEY": NOTICEBOARD_KEY[1:]},
+    ),
     Environment(
         "lan-key-32-bytes-with-space",
-        {"AGENT_LAN_ADDRESS": LAN, "VIEW_ACCESS_KEY": f"  {VIEW_KEY}\n"},
+        {"AGENT_LAN_ADDRESS": LAN, "NOTICEBOARD_ACCESS_KEY": f"  {NOTICEBOARD_KEY}\n"},
     ),
     Environment(
         "lan-key-16-chars-32-bytes",
-        {"AGENT_LAN_ADDRESS": LAN, "VIEW_ACCESS_KEY": "\u00e9" * 16},
+        {"AGENT_LAN_ADDRESS": LAN, "NOTICEBOARD_ACCESS_KEY": "\u00e9" * 16},
     ),
     _noticeboard("loopback-short-key", ACCESS_KEY="short"),
     _noticeboard("loopback-ipv6", BIND="::1"),
@@ -939,7 +944,8 @@ NOTICEBOARD_ENVS: Final[tuple[Environment, ...]] = (
     _lan_board("bind-each-interface-ipv6", BIND="::"),
     _lan_board("bind-star", BIND="*"),
     Environment(
-        "site-each-interface", {"AGENT_LAN_ADDRESS": "0.0.0.0", "VIEW_ACCESS_KEY": VIEW_KEY}
+        "site-each-interface",
+        {"AGENT_LAN_ADDRESS": "0.0.0.0", "NOTICEBOARD_ACCESS_KEY": NOTICEBOARD_KEY},
     ),
     # --- the port and the page size ---
     _noticeboard("port-one", PORT="1"),
@@ -965,11 +971,11 @@ NOTICEBOARD_ENVS: Final[tuple[Environment, ...]] = (
     _noticeboard("cookie-one", COOKIE_SECURE="1"),
     _noticeboard("cookie-other-word", COOKIE_SECURE="maybe"),
     # --- attendance ---
-    _noticeboard("url-wins-over-the-socket", SESSIOND_URL="http://192.0.2.10:8350"),
+    _noticeboard("url-wins-over-the-socket", ATTENDANCE_URL="http://192.0.2.10:8350"),
     _noticeboard(
-        "url-and-socket", SESSIOND_URL="http://192.0.2.10:8350", SESSIOND_SOCKET="/tmp/s.sock"
+        "url-and-socket", ATTENDANCE_URL="http://192.0.2.10:8350", ATTENDANCE_SOCKET="/tmp/s.sock"
     ),
-    _noticeboard("url-final-slash", SESSIOND_URL="http://192.0.2.10:8350/"),
+    _noticeboard("url-final-slash", ATTENDANCE_URL="http://192.0.2.10:8350/"),
     _noticeboard("registry-final-slash", REGISTRY_DIR="/tmp/root/registry/"),
 )
 
@@ -1021,7 +1027,7 @@ def _env_surfaces() -> tuple[Surface, ...]:
                     _NOTE_ENV,
                     "value holds each field of noticeboard.config.Config. A path is its text. "
                     "attendance_socket is null when a URL wins.",
-                    "No vector names VIEW_ACCESS_KEY_FILE: the entry point reads that file. "
+                    "No vector names NOTICEBOARD_ACCESS_KEY_FILE: the entry point reads that file. "
                     "Each key here is text of a test.",
                     _NOTE_VARIABLE,
                 ),

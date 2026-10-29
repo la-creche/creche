@@ -63,7 +63,7 @@ from proc_harness import LOOPBACK, TcpAddress, is_listening
 from proc_services import Service
 from proc_tree import (
     FAMILY,
-    VIEW_KEY,
+    NOTICEBOARD_KEY,
     Fault,
     append_audit_lines,
     audit_line,
@@ -96,7 +96,7 @@ RFC3339 = "%Y-%m-%dT%H:%M:%SZ"
 #: Contract 05 §3.4: one step of a pass. No other part of a page holds it.
 STEP = "create_sandbox"
 
-#: `VIEW_PAGE_SIZE` of the paging scenario, and the tool of each call that
+#: `NOTICEBOARD_PAGE_SIZE` of the paging scenario, and the tool of each call that
 #: the scenario writes, the oldest first.
 PAGE_SIZE = 2
 CALLS = ["tool__call_1", "tool__call_2", "tool__call_3", "tool__call_4", "tool__call_5"]
@@ -133,7 +133,7 @@ KEY_BYTES = 32
 LITERAL_KEY = "literal-view-key-".ljust(KEY_BYTES, "k")
 OTHER_KEY = "another-view-key-" + "a" * 32
 
-#: The value of `VIEW_COOKIE_SECURE` for a run with no TLS.
+#: The value of `NOTICEBOARD_COOKIE_SECURE` for a run with no TLS.
 NOT_SECURE = "0"
 
 #: 1 MiB: the longest body of a post that the noticeboard reads.
@@ -468,7 +468,7 @@ async def test_the_body_of_a_refusal_is_json_with_no_key(
 
     assert answer.status_code == httpx.codes.FORBIDDEN
     assert is_json(answer.content), answer.text
-    assert VIEW_KEY not in answer.text
+    assert NOTICEBOARD_KEY not in answer.text
     assert WRONG_KEY not in answer.text
 
 
@@ -478,7 +478,7 @@ async def test_the_cookie_has_secure_with_no_variable(board_alone: BoardStack) -
     CONTRACT-QUESTION: §8.3 rule 3 gives the cookie `SameSite=Strict` and
     `HttpOnly`. No contract gives `Secure`, `Path` or a variable for one.
     Reading taken: the cookie as the noticeboard sets it. It has `Secure`
-    unless `VIEW_COOKIE_SECURE` is `0`, and it has `Path=/`. The header of
+    unless `NOTICEBOARD_COOKIE_SECURE` is `0`, and it has `Path=/`. The header of
     the noticeboard ends in `HttpOnly; Path=/; SameSite=strict; Secure`. A
     change costs the three cookie scenarios.
     """
@@ -559,12 +559,12 @@ async def test_a_post_at_the_body_limit_is_a_save(board_alone: BoardStack) -> No
 
 
 async def test_a_literal_key_in_the_environment_is_the_key(board_prepared: BoardStack) -> None:
-    """`VIEW_ACCESS_KEY` holds the key when no variable names a key file.
+    """`NOTICEBOARD_ACCESS_KEY` holds the key when no variable names a key file.
 
     CONTRACT-QUESTION: §8.3 names the key. No contract says where the
     process reads it. Reading taken: the two variables of
-    `noticeboard/AGENTS.md`. `VIEW_ACCESS_KEY` holds the key itself, and
-    `VIEW_ACCESS_KEY_FILE` names a file that holds it. A final newline of
+    `noticeboard/AGENTS.md`. `NOTICEBOARD_ACCESS_KEY` holds the key itself, and
+    `NOTICEBOARD_ACCESS_KEY_FILE` names a file that holds it. A final newline of
     the file is no part of the key. The noticeboard removes each white space
     at the two ends of the text. A change costs two scenarios.
     """
@@ -624,7 +624,7 @@ def test_a_value_that_is_not_valid_refuses_to_start(
 ) -> None:
     """Fail closed. A config that is not valid refuses to start.
 
-    CONTRACT-QUESTION: no contract names `VIEW_PORT` or `VIEW_PAGE_SIZE`, a
+    CONTRACT-QUESTION: no contract names `NOTICEBOARD_PORT` or `NOTICEBOARD_PAGE_SIZE`, a
     range for one, or an exit code for a value outside it. Reading taken: a
     port that is no number and a page size of 0 each refuse to start, with
     a code that is not 0, as for each other refused start of this suite.

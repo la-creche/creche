@@ -132,7 +132,7 @@ LOCK_POLL_S: Final = 0.05
 #: sandbox. On the host the path in the sandbox is the path on the host, and
 #: nothing sets the variable. The launcher of the terminal door reads it
 #: (contract 03 §7.6 rule 4). The playpen does not: `attendance` tells it.
-SESSIONS_MOUNT_ENV: Final = "SESSIOND_SANDBOX_SESSIONS_MOUNT"
+SESSIONS_MOUNT_ENV: Final = "ATTENDANCE_SANDBOX_SESSIONS_MOUNT"
 
 #: The variables that stand for what the sandbox image supplies. `fake_sbx.py`
 #: forwards these by name and forwards nothing else of its own environment.
@@ -222,7 +222,7 @@ def set_sbx_view(tree: Tree, view: Mapping[str, str]) -> None:
     Each key is the start of a value in an env file: a URL on the LAN
     address, or a host path. Its value is the place of the root that plays it.
     """
-    path = state_dir(tree, SBX) / standin_sbx.VIEW_FILE
+    path = state_dir(tree, SBX) / standin_sbx.NOTICEBOARD_FILE
     temp = path.with_name(f".{path.name}.tmp")
     temp.write_text(json.dumps(dict(view)), encoding="utf-8")
     temp.replace(path)

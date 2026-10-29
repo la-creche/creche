@@ -23,10 +23,10 @@ DEFAULT_PORT: Final = 8370
 
 #: Services on this host bind the LAN IP (`noticeboard/AGENTS.md` rule 2). The
 #: default bind is the site's, from the unit's
-#: `EnvironmentFile=/etc/creche/site.env`. `VIEW_BIND` overrides it.
+#: `EnvironmentFile=/etc/creche/site.env`. `NOTICEBOARD_BIND` overrides it.
 LAN_ADDRESS_ENV: Final = "AGENT_LAN_ADDRESS"
 
-DEFAULT_STATE_ROOT: Final = "/srv/agents/state/rework"
+DEFAULT_STATE_ROOT: Final = "/srv/agents/state/creche"
 DEFAULT_REGISTRY_DIR: Final = "/srv/agents/registry"
 
 #: The one audit file of the chaperone. The noticeboard reads it as a member
@@ -35,13 +35,13 @@ DEFAULT_AUDIT_FILE: Final = "/var/lib/chaperone/audit.jsonl"
 
 #: Contract 02 §3 rule 1: the socket lives on the production state root,
 #: because a hardened unit cannot reach `/run/user/<uid>`.
-DEFAULT_ATTENDANCE_SOCKET: Final = "/srv/agents/state/rework/sock/sessiond.sock"
+DEFAULT_ATTENDANCE_SOCKET: Final = "/srv/agents/state/creche/sock/attendance.sock"
 
 #: A Unix-socket client still needs a base URL for the path and the Host
 #: header. The name is never resolved.
 SOCKET_BASE_URL: Final = "http://sessiond"
 
-ENV_PREFIX: Final = "VIEW_"
+ENV_PREFIX: Final = "NOTICEBOARD_"
 
 #: Contract 02 §3 rule 7's floor, applied to this service's own key. A
 #: one-character key on a LAN bind is not meaningfully better than none.
@@ -80,7 +80,7 @@ class Config:
     #: The chaperone's audit file (`auditfiles.py`).
     audit_file: Path
     #: `Secure` on the CSRF cookie. The proxy terminates TLS, so a browser
-    #: only ever sees https. Set `VIEW_COOKIE_SECURE=0` for a plain-HTTP
+    #: only ever sees https. Set `NOTICEBOARD_COOKIE_SECURE=0` for a plain-HTTP
     #: dev run: with it on, the browser sends no cookie over http and
     #: every form post is refused for a missing token.
     cookie_secure: bool = True
@@ -119,8 +119,8 @@ def from_env(environ: dict[str, str] | None = None) -> Config:
     _refuse_wildcard(bind)
     _refuse_open_on_lan(bind, key)
 
-    socket_path = _text(source, "SESSIOND_SOCKET", DEFAULT_ATTENDANCE_SOCKET)
-    url = _text(source, "SESSIOND_URL", "")
+    socket_path = _text(source, "ATTENDANCE_SOCKET", DEFAULT_ATTENDANCE_SOCKET)
+    url = _text(source, "ATTENDANCE_URL", "")
 
     return Config(
         bind=bind,
@@ -139,7 +139,7 @@ def from_env(environ: dict[str, str] | None = None) -> Config:
 
 
 def _bind(source: dict[str, str]) -> str:
-    """`VIEW_BIND` when set, else the site's LAN address. No default: a
+    """`NOTICEBOARD_BIND` when set, else the site's LAN address. No default: a
     default would be somebody's host."""
     bind = _text(source, "BIND", source.get(LAN_ADDRESS_ENV, "").strip())
     if bind:

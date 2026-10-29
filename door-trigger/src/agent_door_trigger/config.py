@@ -22,12 +22,12 @@ MIN_TOKEN_BYTES = 32
 #: runtime directory sits under `/run/user/<uid>`, which the hardened PEP
 #: unit cannot reach — the socket lives on the state root instead, as in
 #: `attendance/src/attendance/config.py`.
-DEFAULT_ATTENDANCE_SOCKET = "/srv/agents/state/rework/sock/sessiond.sock"
+DEFAULT_ATTENDANCE_SOCKET = "/srv/agents/state/creche/sock/attendance.sock"
 #: gate-1a.md's token layout.
-DEFAULT_ATTENDANCE_TOKEN_FILE = "/srv/agents/state/rework/tokens/door-trigger.token"
+DEFAULT_ATTENDANCE_TOKEN_FILE = "/srv/agents/state/creche/tokens/door-trigger.token"
 
 #: Contract 05 §2's status document directory.
-DEFAULT_FAMILIES_DIR = "/srv/agents/state/rework/families"
+DEFAULT_FAMILIES_DIR = "/srv/agents/state/creche/families"
 
 #: The registry root `creche-caregiver.service` itself is started with
 #: (`systemd/creche-caregiver.service`). Not a contract value: this door
@@ -37,11 +37,11 @@ DEFAULT_REGISTRY_ROOT = "/srv/agents/registry"
 
 #: Contract 05 §6.4's directory for each webhook's own bearer token,
 #: under the shared rework state root.
-DEFAULT_WEBHOOKS_DIR = "/srv/agents/state/rework/triggers/webhooks"
+DEFAULT_WEBHOOKS_DIR = "/srv/agents/state/creche/triggers/webhooks"
 
 #: The shared rework state root: `attendance`'s outcome records and the
 #: quiet check's own records sit under it.
-DEFAULT_STATE_ROOT = "/srv/agents/state/rework"
+DEFAULT_STATE_ROOT = "/srv/agents/state/creche"
 
 #: The chaperone's audit file. The quiet check reads it as a member of the
 #: group `chaperone`.
@@ -71,15 +71,15 @@ DEFAULT_REFRESH_S = 30.0
 #: request line against. Nothing resolves this name.
 UDS_BASE_URL = "http://sessiond"
 
-ENV_ATTENDANCE_SOCKET = "DOOR_TRIGGER_SESSIOND_SOCKET"
-ENV_ATTENDANCE_URL = "DOOR_TRIGGER_SESSIOND_URL"
-ENV_ATTENDANCE_TOKEN_FILE = "DOOR_TRIGGER_SESSIOND_TOKEN_FILE"
+ENV_ATTENDANCE_SOCKET = "DOOR_TRIGGER_ATTENDANCE_SOCKET"
+ENV_ATTENDANCE_URL = "DOOR_TRIGGER_ATTENDANCE_URL"
+ENV_ATTENDANCE_TOKEN_FILE = "DOOR_TRIGGER_ATTENDANCE_TOKEN_FILE"
 ENV_BIND = "DOOR_TRIGGER_BIND"
-ENV_FAMILIES_DIR = "DOOR_TRIGGER_FAMILIES_DIR"
+ENV_FAMILIES_DIR = "DOOR_TRIGGER_FAMILY_STATUS_DIR"
 ENV_REGISTRY_ROOT = "DOOR_TRIGGER_REGISTRY_ROOT"
-ENV_WEBHOOKS_DIR = "DOOR_TRIGGER_WEBHOOKS_DIR"
+ENV_WEBHOOKS_DIR = "DOOR_TRIGGER_WEBHOOK_DIR"
 ENV_REFRESH_S = "DOOR_TRIGGER_REFRESH_S"
-ENV_STATE_ROOT = "DOOR_TRIGGER_STATE_ROOT"
+ENV_STATE_ROOT = "DOOR_TRIGGER_PRODUCT_STATE_ROOT"
 ENV_PEP_URL = "DOOR_TRIGGER_PEP_URL"
 ENV_AUDIT_FILE = "DOOR_TRIGGER_AUDIT_FILE"
 

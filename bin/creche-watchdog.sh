@@ -21,7 +21,7 @@
 #                Loopback answers nothing on that host: every service
 #                binds the LAN address (README).
 #   2. caregiver the newest `written_at` under
-#                /srv/agents/state/rework/families/*/status.json must be
+#                /srv/agents/state/creche/families/*/status.json must be
 #                younger than 180 s. Contract 05 §2 rule 4 rewrites each
 #                document at least every 30 s, and §2 rule 5 makes a reader
 #                call one older than 90 s `unknown`, so 180 s is two of
@@ -82,7 +82,7 @@
 # A notice file is the place where a service records each JSON text that it
 # refused. This script is the one sender of the notice, so no service holds
 # the bearer of the hook.
-#   - The notice files are /srv/agents/state/rework/notices/<service>.json.
+#   - The notice files are /srv/agents/state/creche/notices/<service>.json.
 #   - The script reads 65,536 bytes of a file at most. It takes the one line
 #     of the key `push` and holds that line to an exact pattern. A token of
 #     the line is `<surface>:<rule>:<seconds>`. The script evaluates no byte
@@ -101,7 +101,7 @@
 #   - A run that is older than NOTICE_STEP_BUDGET_S seconds starts no send,
 #     so a hook that answers slowly does not hold the run. A later run
 #     sends the notices that are left.
-#   - /srv/agents/state/rework/watchdog/notices-sent is the record of the
+#   - /srv/agents/state/creche/watchdog/notices-sent is the record of the
 #     sent notices, one line for each service, surface and rule. Both limits
 #     come from it. The line of a notice goes to the record before the
 #     send, so a fault after the send gives no second notice. A run stops
@@ -136,7 +136,7 @@
 #     the unit.
 #
 # WHERE THE TWO BEARERS COME FROM. `APPROVAL_URL` and `APPROVAL_TOKEN` are
-# read from /srv/agents/state/rework/hooks.env, which `bin/rework-cutover.sh
+# read from /srv/agents/state/creche/hooks.env, which `bin/rework-cutover.sh
 # up` writes and owns. The OLD system's /srv/agents/state/materializer/env
 # is a FALLBACK: nothing writes it any more, and every read of it puts one
 # DEPRECATED line in the journal. `bin/sbx-drift-check.sh` reads the same
@@ -144,7 +144,7 @@
 #
 # Prerequisites, copy-pasteable:
 #   command -v curl date grep find systemctl mktemp timeout head tr awk mv rm mkdir
-#   [ -r /srv/agents/state/rework/hooks.env ]   # APPROVAL_URL/APPROVAL_TOKEN
+#   [ -r /srv/agents/state/creche/hooks.env ]   # APPROVAL_URL/APPROVAL_TOKEN
 #   [ -r /etc/creche/site.env ]          # AGENT_LAN_ADDRESS
 #
 # RUN IT AS THE OPERATOR, never as root. There is no `id -u` refusal, because a
@@ -153,7 +153,7 @@
 # The cost of getting it wrong is that root owns the verdict file, the operator's
 # runs can no longer write it, and every run then reads the verdict as
 # "nothing known" and pushes again. `remember` says so in the journal when
-# it cannot write. `chown -R <operator>: /srv/agents/state/rework/watchdog` is
+# it cannot write. `chown -R <operator>: /srv/agents/state/creche/watchdog` is
 # the repair.
 #
 # NOT -e: a failed check must COUNT, not abort the run. A watchdog that
@@ -169,9 +169,9 @@ SECONDS=0
 # including on the host.
 TEST_PREFIX="${WATCHDOG_TEST_PREFIX:-}"
 
-STATE_ROOT="$TEST_PREFIX/srv/agents/state/rework"
+STATE_ROOT="$TEST_PREFIX/srv/agents/state/creche"
 FAMILIES_DIR="$STATE_ROOT/families"
-SOCKET="$STATE_ROOT/sock/sessiond.sock"
+SOCKET="$STATE_ROOT/sock/attendance.sock"
 # This script's own memory: two lines, 0700 directory, 0600 file, both under
 # `umask`, never a chmod after the write (bin/AGENTS.md, Secrets). Line 1 is the
 # last CONFIRMED verdict's key (what `--last` prints and a push claims).

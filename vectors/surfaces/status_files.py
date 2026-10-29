@@ -69,7 +69,7 @@ from vectors.core import (
 )
 from vectors.surfaces.status import CONTRACT, FAMILY, FRESH, HUGE_DIGITS, NOW, OLD
 
-STATE_ROOT: Final = "/srv/agents/state/rework"
+STATE_ROOT: Final = "/srv/agents/state/creche"
 _FAMILY_DIR: Final = f"{STATE_ROOT}/families/{FAMILY}"
 _IMAGE: Final = "registry.example/playpen@sha256:" + "0123456789abcdef" * 4
 _REV: Final = "reg-9f21c4"

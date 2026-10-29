@@ -969,7 +969,7 @@ def _check_view(principal: Principal) -> None:
     """
     check_access(principal, Access.READ)
 
-    if principal is not Principal.VIEW_RO:
+    if principal is not Principal.NOTICEBOARD_RO:
         raise ApiError(
             ErrorCode.FORBIDDEN,
             f"{principal.value} is not the view principal",

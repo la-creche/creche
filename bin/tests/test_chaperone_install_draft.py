@@ -137,7 +137,7 @@ def test_the_roots_come_from_the_flags(tmp_path: Path) -> None:
     install: dict[str, Any] = tomllib.loads(files["install.toml"])
     manifest = tomllib.loads(files["plugins/effect/added/sample/plugin.toml"])
 
-    assert install["plugins"]["attendance"]["args"] == ["--socket", "/state/sock/sessiond.sock"]
+    assert install["plugins"]["attendance"]["args"] == ["--socket", "/state/sock/attendance.sock"]
     assert manifest["command"] == [
         "/usr/bin/env",
         "SAMPLE_URL=http://127.0.0.1:9",

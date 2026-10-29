@@ -76,7 +76,7 @@ async def test_a_request_without_a_token_is_unauthorized(rig: Rig) -> None:
 
 async def test_the_view_token_reaches_no_route(rig: Rig) -> None:
     answer = await rig.client.post(
-        JOBS, json={"caller_family": FAMILY}, headers=rig.head(Principal.VIEW_RO)
+        JOBS, json={"caller_family": FAMILY}, headers=rig.head(Principal.NOTICEBOARD_RO)
     )
 
     assert answer.status_code == HTTP_FORBIDDEN
@@ -87,7 +87,7 @@ async def test_the_view_token_reaches_no_route(rig: Rig) -> None:
 )
 async def test_the_session_api_is_gone(rig: Rig, path: str) -> None:
     """Phase 2 plan, row 21. An ACP client speaks to `WS /acp/{family}`."""
-    listed = await rig.client.get(path, headers=rig.head(Principal.VIEW_RO))
+    listed = await rig.client.get(path, headers=rig.head(Principal.NOTICEBOARD_RO))
     posted = await rig.client.post(path, json={}, headers=rig.head(Principal.DOOR_TRIGGER))
 
     assert listed.status_code == HTTP_NOT_FOUND

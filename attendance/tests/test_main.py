@@ -21,11 +21,11 @@ from attendance_harness import wait_until, write_tokens
 
 def env_for(tmp_path: Path, **extra: str) -> dict[str, str]:
     values = {
-        "SESSIOND_SESSIONS_ROOT": str(tmp_path / "sessions"),
-        "SESSIOND_STATE_ROOT": str(tmp_path / "state"),
-        "SESSIOND_WORK_ROOT": str(tmp_path / "work"),
-        "SESSIOND_SOCKET": str(tmp_path / "sessiond.sock"),
-        "SESSIOND_LOG_DIR": str(tmp_path / "log"),
+        "ATTENDANCE_SESSIONS_ROOT": str(tmp_path / "sessions"),
+        "ATTENDANCE_STATE_ROOT": str(tmp_path / "state"),
+        "ATTENDANCE_WORK_ROOT": str(tmp_path / "work"),
+        "ATTENDANCE_SOCKET": str(tmp_path / "attendance.sock"),
+        "ATTENDANCE_LOG_DIR": str(tmp_path / "log"),
         LAN_ADDRESS_ENV: os.environ[LAN_ADDRESS_ENV],
     }
     values.update(extra)
@@ -55,7 +55,7 @@ def test_check_passes_with_every_token(
 
     printed = capsys.readouterr().out
     assert "tcp           off" in printed
-    assert "sessiond.sock" in printed
+    assert "attendance.sock" in printed
     assert "door-trigger" not in printed
 
 
@@ -63,7 +63,7 @@ def test_check_reports_the_lan_bind(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     write_tokens(tmp_path / "state")
-    use_env(monkeypatch, env_for(tmp_path, SESSIOND_BIND_LAN="true"))
+    use_env(monkeypatch, env_for(tmp_path, ATTENDANCE_BIND_LAN="true"))
 
     assert main(["--check"]) == EXIT_OK
     assert f"{os.environ[LAN_ADDRESS_ENV]}:8350" in capsys.readouterr().out
@@ -85,7 +85,7 @@ def test_check_fails_closed_on_a_bad_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     write_tokens(tmp_path / "state")
-    use_env(monkeypatch, env_for(tmp_path, SESSIOND_LAN_PORT="nope"))
+    use_env(monkeypatch, env_for(tmp_path, ATTENDANCE_LAN_PORT="nope"))
 
     assert main(["--check"]) == EXIT_BAD_CONFIG
 
@@ -107,7 +107,7 @@ async def test_serve_binds_the_socket_at_0660_under_a_setgid_dir(tmp_path: Path)
     # already close to that on its own.
     socket_dir = Path(tempfile.mkdtemp(prefix="attendance-sock-"))
     try:
-        config = from_env(env_for(tmp_path, SESSIOND_SOCKET=str(socket_dir / "sessiond.sock")))
+        config = from_env(env_for(tmp_path, ATTENDANCE_SOCKET=str(socket_dir / "attendance.sock")))
         tokens = TokenBook(config.state_root)
         tokens.load()
 

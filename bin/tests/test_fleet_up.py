@@ -34,7 +34,7 @@ REPO_ROOT: Final = Path(__file__).resolve().parents[2]
 SCRIPT: Final = REPO_ROOT / "bin" / "fleet-up"
 UNIT_SOURCE: Final = REPO_ROOT / "systemd"
 
-STATE: Final = "srv/agents/state/rework"
+STATE: Final = "srv/agents/state/creche"
 MASTER_KEY: Final = "sk-fleet-up-test-master-key-0123456789abcdef"
 IMAGE_BASE: Final = "127.0.0.1:5000/agent-sandbox@sha256:" + "a" * 64
 IMAGE_PYTHON: Final = "127.0.0.1:5000/agent-sandbox-python@sha256:" + "b" * 64
@@ -92,7 +92,7 @@ DIRS: Final = (
     "sock",
 )
 
-ENV_FILES: Final = ("sessiond.env", "view.env", "managerd.env")
+ENV_FILES: Final = ("attendance.env", "noticeboard.env", "caregiver.env")
 
 #: The `systemctl` verbs that change nothing.
 READ_ONLY_VERBS: Final = frozenset({"is-enabled", "is-active", "show"})
@@ -381,16 +381,16 @@ def test_up_writes_the_env_files_at_0600(ready: Host) -> None:
     for name in ENV_FILES:
         assert _mode(ready.state / name) == 0o600, name
 
-    managerd = (ready.state / "managerd.env").read_text(encoding="utf-8")
+    managerd = (ready.state / "caregiver.env").read_text(encoding="utf-8")
     assert f"LITELLM_MASTER_KEY={MASTER_KEY}\n" in managerd
     assert f"AGENT_SANDBOX_IMAGE={IMAGE_BASE}\n" in managerd
     assert f"AGENT_SANDBOX_PYTHON_IMAGE={IMAGE_PYTHON}\n" in managerd
     assert "AGENT_PEP_URL=http://192.0.2.10:8300\n" in managerd
 
-    view = (ready.state / "view.env").read_text(encoding="utf-8")
-    assert f"VIEW_ACCESS_KEY_FILE={ready.tokens}/view-access.key\n" in view
+    view = (ready.state / "noticeboard.env").read_text(encoding="utf-8")
+    assert f"NOTICEBOARD_ACCESS_KEY_FILE={ready.tokens}/view-access.key\n" in view
 
-    for name in ("sessiond.env", "view.env"):
+    for name in ("attendance.env", "noticeboard.env"):
         text = (ready.state / name).read_text(encoding="utf-8")
         assert "KEY=" not in text.replace("ACCESS_KEY_FILE=", ""), name
 
@@ -413,7 +413,7 @@ def test_up_without_a_master_key_waits_for_the_root_step(ready: Host) -> None:
     assert "LITELLM_MASTER_KEY" in done.stdout
     assert "sops -d" in done.stdout
     assert not (ready.state / "hooks.env").exists()
-    managerd = (ready.state / "managerd.env").read_text(encoding="utf-8")
+    managerd = (ready.state / "caregiver.env").read_text(encoding="utf-8")
     assert "LITELLM_MASTER_KEY" not in managerd
     assert (ready.unit_dir / "creche-caregiver.service").exists()
     assert "creche-caregiver.service" not in ready.enabled.read_text(encoding="utf-8")
@@ -499,7 +499,7 @@ def test_the_record_is_json_and_names_each_path(ready: Host) -> None:
     record = json.loads(ready.record.read_text(encoding="utf-8"))
     paths = {entry["path"] for entry in record["entries"]}
     assert str(ready.tokens / "door-acp.token") in paths
-    assert str(ready.state / "managerd.env") in paths
+    assert str(ready.state / "caregiver.env") in paths
     assert str(ready.unit_dir / "creche-attendance.service") in paths
     assert "creche-attendance.service" in paths
     assert str(ready.state / "hooks.env") not in paths

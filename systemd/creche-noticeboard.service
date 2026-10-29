@@ -7,7 +7,7 @@
 # caregiver watches the registry and converges (contract 05 §5).
 #
 # LAN bind on the host's LAN address, port 8370, fronted by NPM + Authentik, which inject
-# X-View-Key. VIEW_ACCESS_KEY makes that header mandatory, so a direct LAN
+# X-View-Key. NOTICEBOARD_ACCESS_KEY makes that header mandatory, so a direct LAN
 # hit without it is 403 and Authentik is the only working door. The service
 # REFUSES TO START with an empty key on a non-loopback bind: a "key not
 # configured, skip the check" branch would let an env wipe turn a LAN admin
@@ -28,12 +28,12 @@ Type=simple
 WorkingDirectory=/opt/creche
 Environment=HOME=%h
 Environment=XDG_CONFIG_HOME=%h/.config
-# invariant 13: VIEW_ACCESS_KEY never rides on argv or in a log line. This
+# invariant 13: NOTICEBOARD_ACCESS_KEY never rides on argv or in a log line. This
 # file is root-owned and mode 0600, and the unit only names it. Point
-# VIEW_ACCESS_KEY_FILE at a mode-0600 file to keep the value out of
+# NOTICEBOARD_ACCESS_KEY_FILE at a mode-0600 file to keep the value out of
 # `systemctl show` as well.
-EnvironmentFile=/srv/agents/state/rework/view.env
-# The site's AGENT_LAN_ADDRESS: the bind when view.env sets no VIEW_BIND.
+EnvironmentFile=/srv/agents/state/creche/noticeboard.env
+# The site's AGENT_LAN_ADDRESS: the bind when noticeboard.env sets no NOTICEBOARD_BIND.
 EnvironmentFile=/etc/creche/site.env
 # The component tree contract 06 §1 row 4 fixes (`noticeboard`), not
 # /opt/creche's shared workspace venv. The release executor swaps

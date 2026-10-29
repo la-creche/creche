@@ -41,11 +41,11 @@ from proc_tree import Tree
 
 #: The variables of `noticeboard/AGENTS.md` that a scenario sets, replaces or
 #: removes.
-KEY_ENV: Final = "VIEW_ACCESS_KEY"
-KEY_FILE_ENV: Final = "VIEW_ACCESS_KEY_FILE"
-COOKIE_SECURE_ENV: Final = "VIEW_COOKIE_SECURE"
-PAGE_SIZE_ENV: Final = "VIEW_PAGE_SIZE"
-PORT_ENV: Final = "VIEW_PORT"
+KEY_ENV: Final = "NOTICEBOARD_ACCESS_KEY"
+KEY_FILE_ENV: Final = "NOTICEBOARD_ACCESS_KEY_FILE"
+COOKIE_SECURE_ENV: Final = "NOTICEBOARD_COOKIE_SECURE"
+PAGE_SIZE_ENV: Final = "NOTICEBOARD_PAGE_SIZE"
+PORT_ENV: Final = "NOTICEBOARD_PORT"
 
 #: The classes of a report on a page, and of a mark beside a value. The one
 #: stylesheet of the noticeboard names each one.

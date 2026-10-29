@@ -68,10 +68,10 @@ def test_an_explicit_pep_url_still_wins(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.delenv(LAN_ADDRESS_ENV)
-    socket = str(tmp_path / "sessiond.sock")
+    socket = str(tmp_path / "attendance.sock")
 
     code = _serve_plan(
-        tmp_path, "--pep-url", "http://chaperone.test:1", "--sessiond-socket", socket
+        tmp_path, "--pep-url", "http://chaperone.test:1", "--attendance-socket", socket
     )
 
     assert code == EXIT_OK

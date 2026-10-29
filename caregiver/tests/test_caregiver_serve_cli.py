@@ -211,7 +211,7 @@ class NoSignals:
 def _words_with_no_key(bench: Bench, verb: str) -> list[str]:
     """The words of one verb that acts, with each address given."""
     state = ["--state-root", str(bench.state_root), "--litellm-base-url", LITELLM_URL, "--write"]
-    watch = [str(bench.registry_root), "--image", IMAGE, "--sessiond-url", ATTENDANCE_URL]
+    watch = [str(bench.registry_root), "--image", IMAGE, "--attendance-url", ATTENDANCE_URL]
     words = {
         "serve": ["serve", *watch, "--pep-url", ""],
         "reconcile-once": ["reconcile-once", *watch, "chat"],

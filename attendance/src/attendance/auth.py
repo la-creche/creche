@@ -42,7 +42,7 @@ class Principal(StrEnum):
     #: `door-delegate`, so one stolen bearer reaches one family kind.
     DOOR_DISPATCH = "door-dispatch"
     DOOR_TRIGGER = "door-trigger"
-    VIEW_RO = "view-ro"
+    NOTICEBOARD_RO = "view-ro"
     #: The ACP door (phase 2 plan, row 17). It reaches `WS /acp/{family}` and
     #: nothing else.
     DOOR_ACP = "door-acp"
@@ -80,7 +80,7 @@ _GRANTS: dict[Principal, Grant] = {
     Principal.DOOR_DELEGATE: Grant(Access.WRITE, SessionKind.THIN),
     Principal.DOOR_DISPATCH: Grant(Access.WRITE, SessionKind.AUTONOMOUS),
     Principal.DOOR_TRIGGER: Grant(Access.WRITE, SessionKind.AUTONOMOUS),
-    Principal.VIEW_RO: Grant(Access.READ, None),
+    Principal.NOTICEBOARD_RO: Grant(Access.READ, None),
     # CONTRACT-QUESTION: the phase 2 plan names no family kind for the ACP
     # door. Reading taken: attended families only, the kind of the two doors
     # it replaces. A change costs this one row.

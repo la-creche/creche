@@ -79,8 +79,8 @@ NOT_FOUND: Final = "not found"
 READ_ONLY_SUFFIX: Final = ":ro"
 
 VMS_DIR: Final = "vms"
-VIEW_FILE: Final = "view.json"
-VIEW_DIR: Final = "view"
+NOTICEBOARD_FILE: Final = "view.json"
+NOTICEBOARD_DIR: Final = "view"
 ENV_FILE_FLAG: Final = "--env-file"
 POLICY_DIR: Final = "policy"
 TUNE_DIR: Final = "tune"
@@ -302,7 +302,7 @@ def _exec(state: Path, rest: list[str]) -> int:
     if ENV_FILE_FLAG in before:
         at = words.index(ENV_FILE_FLAG) + 1
 
-        if (state / VIEW_FILE).exists():
+        if (state / NOTICEBOARD_FILE).exists():
             words[at] = str(_env_in_view(state, name, Path(words[at])))
 
         if (state / TUNE_DIR / "no-mounts" / name).exists():
@@ -316,7 +316,7 @@ def _exec(state: Path, rest: list[str]) -> int:
 
 def _env_in_view(state: Path, name: str, source: Path) -> Path:
     """The env file of one sandbox as its VM sees the host (rule 5)."""
-    view: dict[str, str] = json.loads((state / VIEW_FILE).read_text(encoding="utf-8"))
+    view: dict[str, str] = json.loads((state / NOTICEBOARD_FILE).read_text(encoding="utf-8"))
     lines: list[str] = []
 
     for line in source.read_text(encoding="utf-8").splitlines():
@@ -328,7 +328,7 @@ def _env_in_view(state: Path, name: str, source: Path) -> Path:
 
         lines.append(f"{variable}{sign}{value}")
 
-    path = state / VIEW_DIR / f"{name}.env"
+    path = state / NOTICEBOARD_DIR / f"{name}.env"
     _write_whole(path, "\n".join(lines) + "\n")
 
     return path

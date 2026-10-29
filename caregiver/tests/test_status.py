@@ -41,7 +41,7 @@ VALIDATION = ValidationBlock(
     never_valid=False,
     error_count=0,
     warning_count=0,
-    report_path="/srv/agents/state/rework/families/chat/validation.json",
+    report_path="/srv/agents/state/creche/families/chat/validation.json",
     first_error=None,
 )
 
@@ -54,7 +54,7 @@ def test_validation_block_as_json() -> None:
         "never_valid": False,
         "error_count": 0,
         "warning_count": 0,
-        "report_path": "/srv/agents/state/rework/families/chat/validation.json",
+        "report_path": "/srv/agents/state/creche/families/chat/validation.json",
         "first_error": None,
     }
 

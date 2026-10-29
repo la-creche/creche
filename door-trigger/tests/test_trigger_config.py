@@ -57,7 +57,7 @@ def _without_site(tmp_path: Path, **overrides: str) -> dict[str, str]:
 def test_a_unix_socket_is_the_default_attendance_target(tmp_path: Path) -> None:
     config = fire_config_from_env(_env(tmp_path))
 
-    assert config.attendance.socket == Path("/srv/agents/state/rework/sock/sessiond.sock")
+    assert config.attendance.socket == Path("/srv/agents/state/creche/sock/attendance.sock")
     assert config.attendance.token == GOOD_TOKEN
 
 

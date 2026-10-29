@@ -254,8 +254,8 @@ def test_each_environment_of_a_check_names_each_path() -> None:
     for case in cases.CHECKS:
         named = case.variables.keys()
 
-        assert {"VIEW_STATE_ROOT", "VIEW_REGISTRY_DIR"} <= named, case.id
-        assert {"VIEW_SESSIOND_SOCKET", "VIEW_SESSIOND_URL"} & named, case.id
+        assert {"NOTICEBOARD_STATE_ROOT", "NOTICEBOARD_REGISTRY_DIR"} <= named, case.id
+        assert {"NOTICEBOARD_ATTENDANCE_SOCKET", "NOTICEBOARD_ATTENDANCE_URL"} & named, case.id
         for value in case.variables.values():
             if value.startswith("/"):
                 assert value.startswith(cases.NO_ROOT), case.id

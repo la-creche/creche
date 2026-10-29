@@ -22,7 +22,7 @@ Wants=network-online.target
 #
 # WHY NO START LIMIT. With StartLimitIntervalSec=120 and StartLimitBurst=5,
 # five crashes in 25 seconds and systemd gives up. A root script that leaves
-# /srv/agents/state/rework/releases/ root:root 0750 is enough: caregiver runs
+# /srv/agents/state/creche/releases/ root:root 0750 is enough: caregiver runs
 # as the operator, a PermissionError leaves the reconcile loop, five crashes, then
 # `failed`. Fixing the mode twenty minutes later starts nothing, so caregiver
 # stays dead until somebody notices, and every status document still says
@@ -59,20 +59,20 @@ Environment=HOME=%h
 Environment=XDG_CONFIG_HOME=%h/.config
 # invariant 13: the LiteLLM master key never rides on argv, in a URL or in a
 # log line. This file is root-owned and mode 0600; the unit only names it.
-EnvironmentFile=/srv/agents/state/rework/managerd.env
+EnvironmentFile=/srv/agents/state/creche/caregiver.env
 # The site's AGENT_LAN_ADDRESS: where LiteLLM, attendance and the PEP answer.
 EnvironmentFile=/etc/creche/site.env
 # The component tree contract 06 §1 row 3 fixes, not /opt/creche's
 # shared workspace venv. The release executor swaps `<install.to>` and
 # restarts this unit, so a unit that ran from anywhere else would relaunch
 # the old code after a release the ledger called a success.
-# `--sessiond-socket`: `attendance` answers on its Unix socket and nowhere else
+# `--attendance-socket`: `attendance` answers on its Unix socket and nowhere else
 # (its LAN listener is off), and `serve`'s default is a LAN URL. Without this
 # line every `ready` handshake is refused with ConnectError, and every sandbox
 # stays `creating` for ever: families `in_sync`, no fault, none `ready`.
 # `--image-python`: contract 01 §3.9's second flavor. `playpen/Dockerfile`
 # builds both targets and `bin/rework-cutover.sh` writes both values into
-# managerd.env. An empty value is allowed and means this host has no python
+# caregiver.env. An empty value is allowed and means this host has no python
 # image: a family with `sandbox.image: python` then raises
 # `image_flavor_unconfigured` and gets no sandbox, rather than a base one.
 # `--pep-url`: contract 05 §3.3. The PEP is the one door to every action, and
@@ -80,7 +80,7 @@ EnvironmentFile=/etc/creche/site.env
 # `in_sync`. The reconciler probes /healthz for the
 # whole fleet and raises `pep_unreachable` after 90 s of silence. The PEP
 # binds the LAN address and loopback answers NOTHING there, so this is the
-# LAN URL; `bin/rework-cutover.sh` writes the same value into managerd.env.
+# LAN URL; `bin/rework-cutover.sh` writes the same value into caregiver.env.
 # An empty value turns the watch off and every document then says so.
 # `--chaperone-config-dir` and `--chaperone-bin`: the one policy.toml of the
 # Rust chaperone. caregiver writes it into /etc/chaperone (root:agents 1775,
@@ -94,8 +94,8 @@ ExecStart=%h/.local/components/caregiver/bin/caregiver serve \
   /srv/agents/registry \
   --image ${AGENT_SANDBOX_IMAGE} \
   --image-python ${AGENT_SANDBOX_PYTHON_IMAGE} \
-  --state-root /srv/agents/state/rework \
-  --sessiond-socket /srv/agents/state/rework/sock/sessiond.sock \
+  --state-root /srv/agents/state/creche \
+  --attendance-socket /srv/agents/state/creche/sock/attendance.sock \
   --chaperone-config-dir /etc/chaperone \
   --chaperone-bin %h/chaperone-rel/bin/chaperone \
   --pep-url ${AGENT_PEP_URL} \

@@ -254,7 +254,7 @@ did not.
   and `mounts.ts` are TypeScript and have no Python entry point.
 - `config.site_file` has no vector for a file that another account owns. The
   generator cannot change the owner of a file.
-- `config.noticeboard.env` names no `VIEW_ACCESS_KEY_FILE`. The entry point
+- `config.noticeboard.env` names no `NOTICEBOARD_ACCESS_KEY_FILE`. The entry point
   reads that file. `noticeboard.cli.check` holds the vectors of a key file.
 - Three `config.` surfaces have no vector for some values that the Python
   reader takes: `config.site_file`, `config.attendance.env` and

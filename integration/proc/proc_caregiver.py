@@ -129,7 +129,7 @@ def watch_flags(tree: Tree, litellm_port: int, chaperone: list[str] | None = Non
         PYTHON_IMAGE,
         "--state-root",
         str(tree.state_root),
-        "--sessiond-socket",
+        "--attendance-socket",
         str(tree.attendance_socket),
         "--litellm-base-url",
         litellm_url(litellm_port),

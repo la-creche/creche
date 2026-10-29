@@ -63,9 +63,9 @@ def test_noticeboard_attendance_and_caregiver_each_name_a_real_env_file() -> Non
     """The literal paths, so a bug in the drift-proof test above (both
     sides silently None) cannot pass unnoticed."""
     expected = {
-        "noticeboard": "/srv/agents/state/rework/view.env",
-        "attendance": "/srv/agents/state/rework/sessiond.env",
-        "caregiver": "/srv/agents/state/rework/managerd.env",
+        "noticeboard": "/srv/agents/state/creche/noticeboard.env",
+        "attendance": "/srv/agents/state/creche/attendance.env",
+        "caregiver": "/srv/agents/state/creche/caregiver.env",
     }
     for component, path in expected.items():
         manifest = read_one(REPO_ROOT, component).manifest

@@ -6,7 +6,7 @@ target path, so no fixed in-VM path exists for the playpen to fall back
 to, and `sbx exec` forwards no host environment either. One file closes
 both gaps:
 
-    /srv/agents/state/rework/families/<family>/supervisor-<family>-s<N>.env
+    /srv/agents/state/creche/families/<family>/supervisor-<family>-s<N>.env
         AGENT_SESSIONS_DIR=/srv/agents/sessions/<family>
         AGENT_CRED_DIR=.../families/<family>/creds
         AGENT_FAMILY_CONFIG_DIR=.../families/<family>/config

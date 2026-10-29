@@ -190,7 +190,7 @@ conversation and the one-writer rule (Flue's queue).
 ## Mount rules
 
 1. Never name a fixed in-VM path. A mount's path inside the VM is its host
-   path. `SESSIOND_SANDBOX_SESSIONS_MOUNT` is the one override, and only the
+   path. `ATTENDANCE_SANDBOX_SESSIONS_MOUNT` is the one override, and only the
    integration harness sets it.
 2. Never dial without an env file. The path comes from the status document,
    per sandbox. A document without it raises `sandbox_start_failed`.
@@ -204,15 +204,15 @@ uv run python -m attendance           # serve
 
 | Variable | Meaning |
 |---|---|
-| `SESSIOND_SESSIONS_ROOT` | the root of each family's sessions mount, the cwd of a job |
-| `SESSIOND_STATE_ROOT` | tokens, faults, family status, outcome records, the dispatch ledger |
-| `SESSIOND_WORK_ROOT` | the `code-sandbox` work root |
-| `SESSIOND_SOCKET` | the Unix socket |
-| `SESSIOND_BIND_LAN`, `SESSIOND_LAN_ADDRESS`, `SESSIOND_LAN_PORT` | the optional TCP listener, port 8350 |
-| `SESSIOND_LOG_DIR` | where the stderr of each `sbx exec` of a family lands |
-| `SESSIOND_LOCK_STALE_S`, `SESSIOND_LOCK_POLL_S` | the lock beat window and its poll |
-| `SESSIOND_ACP_RELAY_COMMAND` | how one ACP door connection reaches the facade. `{env_file}` comes from the status document. |
-| `SESSIOND_FACADE_COMMAND` | how the supervisor link starts each sandbox's facade. `{env_file}` comes from the status document. |
+| `ATTENDANCE_SESSIONS_ROOT` | the root of each family's sessions mount, the cwd of a job |
+| `ATTENDANCE_STATE_ROOT` | tokens, faults, family status, outcome records, the dispatch ledger |
+| `ATTENDANCE_WORK_ROOT` | the `code-sandbox` work root |
+| `ATTENDANCE_SOCKET` | the Unix socket |
+| `ATTENDANCE_BIND_LAN`, `ATTENDANCE_LAN_ADDRESS`, `ATTENDANCE_LAN_PORT` | the optional TCP listener, port 8350 |
+| `ATTENDANCE_LOG_DIR` | where the stderr of each `sbx exec` of a family lands |
+| `ATTENDANCE_LOCK_STALE_S`, `ATTENDANCE_LOCK_POLL_S` | the lock beat window and its poll |
+| `ATTENDANCE_ACP_RELAY_COMMAND` | how one ACP door connection reaches the facade. `{env_file}` comes from the status document. |
+| `ATTENDANCE_FACADE_COMMAND` | how the supervisor link starts each sandbox's facade. `{env_file}` comes from the status document. |
 
 Six token files sit under `<state root>/tokens/`. Four are mode 0600. The
 delegate and dispatch tokens are mode 0640, group `agents`, because the

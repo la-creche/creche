@@ -44,7 +44,7 @@
 #
 #   OLD_FILE is /srv/agents/state/materializer/env. Nothing writes it any
 #   more; `bin/rework-cutover.sh up` copies what it holds into
-#   /srv/agents/state/rework/hooks.env, after which this fallback reads
+#   /srv/agents/state/creche/hooks.env, after which this fallback reads
 #   nothing.
 #
 # creche_env_get KEY [OPTION ...] and creche_env_check [OPTION ...]

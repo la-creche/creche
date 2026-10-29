@@ -45,7 +45,7 @@ from proc_tree import (
     AUTONOMOUS,
     FAMILY,
     LAN_ADDRESS,
-    VIEW_KEY,
+    NOTICEBOARD_KEY,
     Tree,
     add_family,
     append_audit,
@@ -86,9 +86,9 @@ SITE_ADDRESS_ENV: Final = "AGENT_LAN_ADDRESS"
 #: Three variables of the env file of the unit that a scenario changes: the
 #: key itself, the file that holds the key, and the state directory. The
 #: unit names one of the first two.
-KEY_ENV: Final = "VIEW_ACCESS_KEY"
-KEY_FILE_ENV: Final = "VIEW_ACCESS_KEY_FILE"
-STATE_ROOT_ENV: Final = "VIEW_STATE_ROOT"
+KEY_ENV: Final = "NOTICEBOARD_ACCESS_KEY"
+KEY_FILE_ENV: Final = "NOTICEBOARD_ACCESS_KEY_FILE"
+STATE_ROOT_ENV: Final = "NOTICEBOARD_STATE_ROOT"
 
 #: The tool of the one audit record of `BoardStack.write_audit_record`: an
 #: exposed name of the Rust chaperone.
@@ -113,13 +113,13 @@ def board_env(tree: Tree, host: str, port: int) -> dict[str, str]:
     """
     return {
         SITE_ADDRESS_ENV: LAN_ADDRESS,
-        "VIEW_BIND": host,
-        "VIEW_PORT": str(port),
+        "NOTICEBOARD_BIND": host,
+        "NOTICEBOARD_PORT": str(port),
         KEY_FILE_ENV: str(tree.view_key_file),
         STATE_ROOT_ENV: str(tree.state_root),
-        "VIEW_REGISTRY_DIR": str(tree.registry_root),
-        "VIEW_SESSIOND_SOCKET": str(tree.attendance_socket),
-        "VIEW_AUDIT_FILE": str(tree.audit_file),
+        "NOTICEBOARD_REGISTRY_DIR": str(tree.registry_root),
+        "NOTICEBOARD_ATTENDANCE_SOCKET": str(tree.attendance_socket),
+        "NOTICEBOARD_AUDIT_FILE": str(tree.audit_file),
     }
 
 
@@ -240,7 +240,7 @@ class BoardStack(Stack):
         """The `Host` header a browser sends."""
         return f"{LOOPBACK}:{self.board_port}"
 
-    def client(self, key: str | None = VIEW_KEY) -> httpx.AsyncClient:
+    def client(self, key: str | None = NOTICEBOARD_KEY) -> httpx.AsyncClient:
         """A client behind the reverse proxy: it adds the key to each request.
 
         It follows no redirect and keeps no cookie. A scenario reads the

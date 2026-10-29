@@ -54,7 +54,7 @@ from handover_executor_fixtures import (
 )
 from handover_fixtures import manifest_text, write_manifest
 
-STATE_FILE = "/srv/agents/state/rework/releases/live-state.json"
+STATE_FILE = "/srv/agents/state/creche/releases/live-state.json"
 SOME_UID = 1000
 
 LIVE_VERSION = "2.0.3"

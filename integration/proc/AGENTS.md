@@ -600,7 +600,7 @@ that the suite cannot run. Add one only when a scenario needs it.
 
 The `sbx` wrapper does two more things that the real `sbx` does. It drops
 `-it` after it recorded the call, because `fake_sbx.py` takes no such word.
-It sets `SESSIOND_SANDBOX_SESSIONS_MOUNT` from the family of the sandbox id
+It sets `ATTENDANCE_SANDBOX_SESSIONS_MOUNT` from the family of the sandbox id
 (contract 03 §7.6 rule 4). No service of the suite runs `sbx exec -it`
 now. `test_proc_standins.py` holds both.
 
@@ -940,7 +940,7 @@ the text of the failure. Work down this list.
   `docs/rework/spec.md` §8.3 rule 3 gives `SameSite=Strict` and `HttpOnly`.
   No contract gives `Secure`, `Path` or a variable for one of the two. The
   suite holds the cookie of the noticeboard as it is. The cookie has
-  `Secure` unless `VIEW_COOKIE_SECURE` is `0`, and it has `Path=/`. A change
+  `Secure` unless `NOTICEBOARD_COOKIE_SECURE` is `0`, and it has `Path=/`. A change
   costs three scenarios in `test_proc_board_reports.py`.
 - **CONTRACT-QUESTION, a post to the noticeboard that is too long.** No
   contract gives a limit for the body of a post, or the answer to a longer
@@ -957,8 +957,8 @@ the text of the failure. Work down this list.
 - **CONTRACT-QUESTION, where the noticeboard reads its key.**
   `docs/rework/spec.md` §8.3 names the key and no source of it. The suite
   holds the two variables that `noticeboard/AGENTS.md` names:
-  - `VIEW_ACCESS_KEY` holds the key when no variable names a key file.
-  - `VIEW_ACCESS_KEY_FILE` names a file that holds the key. A final newline
+  - `NOTICEBOARD_ACCESS_KEY` holds the key when no variable names a key file.
+  - `NOTICEBOARD_ACCESS_KEY_FILE` names a file that holds the key. A final newline
     of the file is no part of the key.
 
   A change costs two scenarios in `test_proc_board_reports.py`.
@@ -970,8 +970,8 @@ the text of the failure. Work down this list.
   then needs no key. A change costs one scenario in
   `test_proc_board_reports.py`.
 - **CONTRACT-QUESTION, a port or a page size that is not valid.** No
-  contract names `VIEW_PORT` or `VIEW_PAGE_SIZE`, or a range for one. The
-  suite holds that `VIEW_PORT=abc` and `VIEW_PAGE_SIZE=0` each refuse to
+  contract names `NOTICEBOARD_PORT` or `NOTICEBOARD_PAGE_SIZE`, or a range for one. The
+  suite holds that `NOTICEBOARD_PORT=abc` and `NOTICEBOARD_PAGE_SIZE=0` each refuse to
   start, with a code that is not 0. The noticeboard exits with the code of
   each other start that its config refuses. A change to one fixed code
   costs one assertion in `test_proc_board_reports.py`.

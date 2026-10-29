@@ -61,10 +61,10 @@ EXIT_OK: Final = 0
 EXIT_REFUSED: Final = 2
 
 #: The host paths. `--state-root` and `--mcp-root` replace the first two.
-STATE_ROOT: Final = "/srv/agents/state/rework"
+STATE_ROOT: Final = "/srv/agents/state/creche"
 MCP_ROOT: Final = "/opt/mcp"
 MCP_STATE_ROOT: Final = PurePosixPath("/var/lib/agent-mcp")
-SOCKET: Final = "sock/sessiond.sock"
+SOCKET: Final = "sock/attendance.sock"
 REQUESTS_DIR: Final = "/var/lib/creche-handover/releases/requests"
 REQUESTED_BY: Final = "agent-control"
 HOOK_URL: Final = "http://127.0.0.1:1881/hook/approval"

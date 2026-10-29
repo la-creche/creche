@@ -19,7 +19,7 @@ import pytest
 from proc_board import BoardStack, board_env
 from proc_harness import LOOPBACK, TcpAddress, is_listening
 from proc_services import Service
-from proc_tree import LAN_ADDRESS, SECRET_MODE, VIEW_KEY, token_of
+from proc_tree import LAN_ADDRESS, NOTICEBOARD_KEY, SECRET_MODE, token_of
 
 CHECK_FLAG = "--check"
 EVERY_INTERFACE = "0.0.0.0"
@@ -34,8 +34,8 @@ SHORT_KEY = "short-view-key"
 #: `creche-noticeboard.service`: `TimeoutStopSec`. A stop takes less.
 STOP_DEADLINE_S = 20.0
 
-KEY_FILE_ENV = "VIEW_ACCESS_KEY_FILE"
-BIND_ENV = "VIEW_BIND"
+KEY_FILE_ENV = "NOTICEBOARD_ACCESS_KEY_FILE"
+BIND_ENV = "NOTICEBOARD_BIND"
 
 
 def test_the_check_validates_and_binds_nothing(board_prepared: BoardStack) -> None:
@@ -48,7 +48,7 @@ def test_the_check_validates_and_binds_nothing(board_prepared: BoardStack) -> No
     assert child.wait(EXIT_DEADLINE_S) == 0, child.output()
     assert not is_listening(TcpAddress(port))
     # Invariant 13: the check says whether a key is set, never what it is.
-    assert VIEW_KEY not in child.output()
+    assert NOTICEBOARD_KEY not in child.output()
     assert token_of("view-ro") not in child.output()
 
 
@@ -87,7 +87,7 @@ def test_a_wildcard_bind_refuses_to_start(board_prepared: BoardStack) -> None:
 
     assert child.wait(EXIT_DEADLINE_S) != 0
     assert not is_listening(TcpAddress(port))
-    assert VIEW_KEY not in child.output()
+    assert NOTICEBOARD_KEY not in child.output()
 
 
 def test_a_key_file_that_is_not_there_refuses_to_start(board_prepared: BoardStack) -> None:

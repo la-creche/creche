@@ -30,7 +30,7 @@ import pytest
 from proc_board import KEY_ENV, KEY_FILE_ENV, STATE_ROOT_ENV, BoardStack, view_env
 from proc_harness import Finished
 from proc_stack import base_env
-from proc_tree import VIEW_KEY, token_of
+from proc_tree import NOTICEBOARD_KEY, token_of
 
 #: Two paths in the root of a test that no fixture makes.
 NO_STATE_ROOT = "no-such-state"
@@ -135,11 +135,11 @@ def test_the_hook_prints_no_key_and_no_token(serving: BoardStack, key_in: str) -
 
     if key_in == "the-env-file":
         del values[KEY_FILE_ENV]
-        values[KEY_ENV] = VIEW_KEY
+        values[KEY_ENV] = NOTICEBOARD_KEY
 
     done = serving.verify(serving.write_view_env(values))
     printed = done.stdout + done.stderr
 
     assert done.exit_code == 0, printed
-    assert VIEW_KEY not in printed
+    assert NOTICEBOARD_KEY not in printed
     assert token_of("view-ro") not in printed
