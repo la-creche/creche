@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # OPERATOR — pull the registry checkout onto agent-registry's `main`. Runs every
 # minute from `registry-sync.timer` on the host, as the operator:
-#   /opt/creche/bin/rework-registry-sync.sh
-#   /opt/creche/bin/rework-registry-sync.sh --last   # HEAD and its age
+#   /opt/creche/bin/creche-registry-sync.sh
+#   /opt/creche/bin/creche-registry-sync.sh --last   # HEAD and its age
 #
 # WHY IT EXISTS. `caregiver` reads the registry out of the checkout at
 # /srv/agents/registry and applies a change within one pass, and it never
@@ -74,7 +74,7 @@
 #   ssh -T git@github.com                      # the key that fetches
 #
 # RUN IT AS THE OPERATOR, never as root. There is no `id -u` refusal — the same call
-# `bin/rework-watchdog.sh` makes, and for the same reason: a sync that
+# `bin/creche-watchdog.sh` makes, and for the same reason: a sync that
 # refuses is a sync that is silent, which is the failure this file exists to
 # end. The cost of getting it wrong is a root-owned object in the operator's
 # checkout, which the next operator-run fetch reports as a refusal.
@@ -84,7 +84,7 @@
 # line that says which refusal it was.
 set -uo pipefail
 
-# A TEST SEAM, not a permission. `bin/tests/test_rework_registry_sync.py`
+# A TEST SEAM, not a permission. `bin/tests/test_creche_registry_sync.py`
 # points every absolute root inside a temp directory. Empty everywhere else,
 # including on the host.
 TEST_PREFIX="${REGISTRY_SYNC_TEST_PREFIX:-}"
@@ -98,7 +98,7 @@ STATE_ROOT="$TEST_PREFIX/srv/agents/state/rework"
 # `umask` and never a chmod after the write (bin/AGENTS.md, Secrets).
 SYNC_DIR="$STATE_ROOT/registry-sync"
 LOCK_FILE="$SYNC_DIR/lock"
-# Written on every run that ENDED WELL. `bin/rework-watchdog.sh`'s fifth
+# Written on every run that ENDED WELL. `bin/creche-watchdog.sh`'s fifth
 # check reads its AGE, which is how a timer that stopped firing is found
 # without dialling GitHub.
 STAMP_FILE="$SYNC_DIR/last-success"
@@ -187,7 +187,7 @@ detail() {  # detail <file>
 
 # --- what `bin/rework-cutover.sh status` prints -----------------------------
 
-# `HEAD` and its age, in one line, the way `bin/rework-watchdog.sh --last`
+# `HEAD` and its age, in one line, the way `bin/creche-watchdog.sh --last`
 # answers with its verdict. Git computes the age itself (`--date=relative`),
 # so no `date` parsing happens here and the line reads the same on both
 # platforms.
@@ -205,7 +205,7 @@ if [[ "${1:-}" == "--last" ]]; then
 fi
 
 if [[ $# -gt 0 ]]; then
-  say "usage: rework-registry-sync.sh [--last]"
+  say "usage: creche-registry-sync.sh [--last]"
   exit 2
 fi
 
@@ -304,7 +304,7 @@ clear_derived
 
 # A dirty tracked file. STRICTER THAN GIT on purpose: git fast-forwards
 # straight over a dirty path the incoming commits do not touch (measured,
-# `bin/tests/test_rework_registry_sync.py`), which would leave somebody's
+# `bin/tests/test_creche_registry_sync.py`), which would leave somebody's
 # half-finished edit sitting on top of a tree that moved under it. Reported
 # and left alone, like a local commit.
 DIRTY="$(reg_git "$GIT_TIMEOUT_S" diff --name-only HEAD -- 2>/dev/null | head -5 | tr '\n' ' ')"

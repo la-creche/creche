@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # OPERATOR rework outage alarm. Runs every minute from
 # `creche-watchdog.timer` on the host, as the operator:
-#   /opt/creche/bin/rework-watchdog.sh
-#   /opt/creche/bin/rework-watchdog.sh --last   # print the verdict
+#   /opt/creche/bin/creche-watchdog.sh
+#   /opt/creche/bin/creche-watchdog.sh --last   # print the verdict
 #
 # WHY IT EXISTS. A rework service can die in silence: a SIGHUP that arrives
 # before the PEP's handler is installed is a clean exit to systemd, and a
@@ -164,7 +164,7 @@ set -uo pipefail
 # from the environment, so the count starts here, before the five checks.
 SECONDS=0
 
-# A TEST SEAM, not a permission. `bin/tests/test_rework_watchdog.py` points
+# A TEST SEAM, not a permission. `bin/tests/test_creche_watchdog.py` points
 # every absolute root inside a temp directory. Empty everywhere else,
 # including on the host.
 TEST_PREFIX="${WATCHDOG_TEST_PREFIX:-}"
@@ -217,7 +217,7 @@ creche-door-acp.service"
 # The firing units: each instance of this template unit runs one cron
 # trigger of one family and ends. The name of an instance is the name of a
 # family. FAMILY_NAME is the form of that name, and a test in
-# bin/tests/test_rework_watchdog.py holds it equal to the pattern of
+# bin/tests/test_creche_watchdog.py holds it equal to the pattern of
 # agent_family. FIRING_UNITS is what `list-units` gets. FIRING_UNIT_NAME is the
 # exact form of a whole unit name, for `matches`: the two backslashes put
 # one backslash before the dot of the tail.
@@ -236,7 +236,7 @@ TIMED_OUT_STATUS=124
 STALE_AFTER_S=180
 
 # The registry's door. `bin/rework-cutover.sh up` installs both
-# units and `bin/rework-registry-sync.sh` owns the stamp's path; it is
+# units and `bin/creche-registry-sync.sh` owns the stamp's path; it is
 # spelled once more here because this script must work when that one does
 # not run at all.
 SYNC_SERVICE=registry-sync.service
@@ -268,7 +268,7 @@ NOTICE_TIMEOUT_S=10
 # keeps the line of that notice, so that notice is missed. So a hook that
 # refuses the bearer misses each JSON notice. The journal line of each
 # failed send names the HTTP code. A change costs NOT_REACHED_CURL and its
-# tests in bin/tests/test_rework_watchdog.py.
+# tests in bin/tests/test_creche_watchdog.py.
 NOT_REACHED=2
 NOT_REACHED_CURL=' 6 7 '
 
@@ -280,7 +280,7 @@ ALL_WELL=up
 # alarms must not overwrite each other.
 NOTICE_JOB_ID=yyyyyyyyyyyyyyyyyyyyyyyyyy
 NOTICE_GATE_ID=0000000000000001
-NOTICE_AGENT=rework-watchdog
+NOTICE_AGENT=creche-watchdog
 
 # The notice of a refused JSON text. A service has its notice file in
 # NOTICES_DIR. A lock
@@ -298,7 +298,7 @@ NOTICE_READ_CAP=65536
 # name has 64 characters at most, and a line has NOTICE_TOKENS_MAX tokens at
 # most. A `<seconds>` that is more than HOUR_S after the time of the run
 # gets no notice. A change costs these patterns, NOTICE_PLAN and their tests
-# in bin/tests/test_rework_watchdog.py.
+# in bin/tests/test_creche_watchdog.py.
 SERVICE_NAME='[a-z0-9-]{1,64}'
 NOTICE_NAME='[a-z0-9_.]{1,64}'
 NOTICE_SECONDS='[0-9]{1,12}'
@@ -361,7 +361,7 @@ if [[ "${1:-}" == "--last" ]]; then
 fi
 
 if [[ $# -gt 0 ]]; then
-  say "usage: rework-watchdog.sh [--last]"
+  say "usage: creche-watchdog.sh [--last]"
   exit 2
 fi
 
@@ -372,7 +372,7 @@ fi
 if [[ -z "$PEP_URL" ]]; then
   LAN_ADDRESS="$(envfile_value "$SITE_FILE" AGENT_LAN_ADDRESS)"
   if [[ -z "$LAN_ADDRESS" ]]; then
-    printf 'rework-watchdog: no AGENT_LAN_ADDRESS in %s\n' "$SITE_FILE" >&2
+    printf 'creche-watchdog: no AGENT_LAN_ADDRESS in %s\n' "$SITE_FILE" >&2
     exit 1
   fi
 
@@ -592,7 +592,7 @@ check_units() {
 # stays up, and every family change reaches nothing.
 #
 # Two readings, both cheap and both local:
-#   1. the stamp `bin/rework-registry-sync.sh` writes when a run ENDED WELL
+#   1. the stamp `bin/creche-registry-sync.sh` writes when a run ENDED WELL
 #      is younger than 5 minutes. Read with `find -mmin`, so no clock and no
 #      parsing: GNU and BSD `find` both have it, which `stat` cannot say.
 #   2. the last run's `Result` is `success`. A run that REFUSED — a diverged

@@ -33,7 +33,7 @@ DEPRECATED_ENV = "/srv/agents/state/materializer/env"
 
 #: The scripts that read one of the three values at run time. The script
 #: that writes the file is the site's, and so is its test.
-READERS = ("rework-watchdog.sh", "sbx-drift-check.sh")
+READERS = ("creche-watchdog.sh", "sbx-drift-check.sh")
 
 
 def _body(name: str) -> str:
