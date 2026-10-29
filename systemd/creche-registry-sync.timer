@@ -1,7 +1,7 @@
-# Fires registry-sync.service every minute. USER timer, as the operator.
+# Fires creche-registry-sync.service every minute. USER timer, as the operator.
 #
-# Installed and enabled by `bin/rework-cutover.sh up`, removed by its
-# `rollback`.
+# Installed and enabled by `bin/fleet-up up`, and removed by `bin/fleet-up
+# down`.
 #
 # WHY A MINUTE. A poll cannot bring a merge to the host in seconds, and it
 # does not need to: the thing waiting at the other end is the operator, who merges a
@@ -26,7 +26,7 @@ AccuracySec=10s
 # NO Persistent=true. A missed run is a minute of not pulling, and OnBootSec
 # above already covers the reboot case. Catching up would only fire a second
 # run into the one the boot offset starts.
-Unit=registry-sync.service
+Unit=creche-registry-sync.service
 
 [Install]
 WantedBy=timers.target

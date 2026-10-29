@@ -53,8 +53,14 @@ UNITS: Final = (
     "creche-trigger@.service",
     "creche-watchdog.service",
     "creche-watchdog.timer",
-    "registry-sync.service",
-    "registry-sync.timer",
+    "creche-registry-sync.service",
+    "creche-registry-sync.timer",
+    "creche-code-corpus-sync.service",
+    "creche-code-corpus-sync.timer",
+    "creche-sbx-drift.service",
+    "creche-sbx-drift.timer",
+    "creche-library@.service",
+    "creche-library@.timer",
     "creche-follow.service",
     "creche-follow.timer",
 )
@@ -68,7 +74,9 @@ ENABLED: Final = (
     "creche-door-acp.service",
     "creche-trigger-webhooks.service",
     "creche-watchdog.timer",
-    "registry-sync.timer",
+    "creche-registry-sync.timer",
+    "creche-code-corpus-sync.timer",
+    "creche-sbx-drift.timer",
     "creche-follow.timer",
 )
 

@@ -11,7 +11,7 @@
 # The alarm pushes on a CHANGE of verdict only, so a five-hour outage is one
 # push and one "recovered" push, not three hundred.
 [Unit]
-Description=Check every minute that the rework services are alive
+Description=Check every minute that the creche services are alive
 
 [Timer]
 # Two minutes after boot, so the five units have had their own start.

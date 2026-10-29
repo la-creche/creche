@@ -19,7 +19,7 @@
 # The timer is its retry: restarting a failed run would double the checks
 # and tell systemd nothing new.
 [Unit]
-Description=Check that every rework service is alive, and say so once when one is not
+Description=Check that every creche service is alive, and say so once when one is not
 After=network-online.target
 Wants=network-online.target
 

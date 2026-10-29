@@ -105,13 +105,15 @@ SECRET_BYTES=48
 # first: each door and the caregiver dial it.
 UNITS="creche-attendance.service creche-caregiver.service creche-noticeboard.service \
 creche-door-acp.service creche-trigger-webhooks.service creche-trigger@.service \
-creche-watchdog.service creche-watchdog.timer registry-sync.service registry-sync.timer \
-creche-follow.service creche-follow.timer"
+creche-watchdog.service creche-watchdog.timer creche-registry-sync.service creche-registry-sync.timer \
+creche-code-corpus-sync.service creche-code-corpus-sync.timer creche-sbx-drift.service creche-sbx-drift.timer \
+creche-library@.service creche-library@.timer creche-follow.service creche-follow.timer"
 # The units `up` enables with `--now`. A template, and a service that a
-# timer starts, are installed only.
+# timer starts, are installed only. `bin/provision-library.sh` enables one
+# `creche-library@<scope>.timer` for each scope.
 ENABLED_UNITS="creche-attendance.service creche-caregiver.service creche-noticeboard.service \
 creche-door-acp.service creche-trigger-webhooks.service creche-watchdog.timer \
-registry-sync.timer creche-follow.timer"
+creche-registry-sync.timer creche-code-corpus-sync.timer creche-sbx-drift.timer creche-follow.timer"
 
 UV_MINIMUM=0.12.17
 CHAPERONE_DIR_MODE=1775
@@ -202,8 +204,11 @@ unit_tree() {  # unit_tree <unit>: which tree the unit runs from
     creche-caregiver.service) say caregiver ;;
     creche-noticeboard.service) say noticeboard ;;
     creche-follow.service|creche-follow.timer) say handover ;;
-    registry-sync.service|registry-sync.timer) say registry ;;
+    creche-registry-sync.service|creche-registry-sync.timer) say registry ;;
     creche-watchdog.service|creche-watchdog.timer) say product ;;
+    creche-code-corpus-sync.service|creche-code-corpus-sync.timer) say product ;;
+    creche-sbx-drift.service|creche-sbx-drift.timer) say product ;;
+    creche-library@.service|creche-library@.timer) say product ;;
     *) return 1 ;;
   esac
 }

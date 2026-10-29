@@ -56,7 +56,7 @@ index-scope <corpus-path> <index-dir> [vault]          # TEI_URL env
 ./bin/provision-library.sh <name> [vault|test]         # image, sandbox, egress, timer
 ```
 
-Live, it runs from `index@<scope>.timer` every 15 minutes, inside a sandbox
+Live, it runs from `creche-library@<scope>.timer` every 15 minutes, inside a sandbox
 that mounts the corpus read-only. A TEI preflight embeds a canary first. An
 unreachable embedder leaves the corpus untouched.
 

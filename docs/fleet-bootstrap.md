@@ -181,7 +181,10 @@ a shell builtin, so the value reaches no argv. It never prints the value.
 | `creche-trigger-webhooks.service` | the `attendance` tree | yes |
 | `creche-trigger@.service` | the `attendance` tree | no, it is a template |
 | `creche-watchdog.{service,timer}` | `/opt/creche/bin` | the timer |
-| `registry-sync.{service,timer}` | `/opt/creche/bin`, on the registry checkout | the timer, when the checkout is there |
+| `creche-registry-sync.{service,timer}` | `/opt/creche/bin`, on the registry checkout | the timer, when the checkout is there |
+| `creche-code-corpus-sync.{service,timer}` | `/opt/creche/bin` | the timer |
+| `creche-sbx-drift.{service,timer}` | `/opt/creche/bin` | the timer |
+| `creche-library@.{service,timer}` | a sandbox `index-<scope>` | no, it is a template. `bin/provision-library.sh` enables one timer for each scope |
 | `creche-follow.{service,timer}` | the `handover` tree | the timer, when the tree is there |
 
 `creche-door-owui.service` is not in the list. The ACP door replaces it.

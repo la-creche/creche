@@ -52,7 +52,7 @@ NOT_IN_THE_UNIT = {"--litellm-base-url", "--poll-interval-s"}
 
 #: The unit that runs the index builder in a sandbox, and the profile word
 #: that it gives. None is a unit that gives no such word.
-INDEX_UNITS: dict[str, Profile | None] = {"index@.service": None}
+INDEX_UNITS: dict[str, Profile | None] = {"creche-library@.service": None}
 
 #: The words of an `ExecStart` that give a shell its command text.
 SHELL = ("sh", "-c")

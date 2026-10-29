@@ -1,9 +1,9 @@
 # Pull the registry checkout onto agent-registry's `main`.
-# USER unit, as the operator. ONESHOT: one run per firing of registry-sync.timer.
+# USER unit, as the operator. ONESHOT: one run per firing of creche-registry-sync.timer.
 #
-# Installed, enabled and proven once by `bin/rework-cutover.sh up`, removed
-# by its `rollback`, and `bin/rework-cutover.sh status` prints the checkout's
-# HEAD and its age.
+# Installed by `bin/fleet-up up`, which enables its timer and records both.
+# `bin/creche-registry-sync.sh --last` prints the checkout's HEAD and its
+# age.
 #
 # WHY IT EXISTS. `caregiver` reads the registry out of /srv/agents/registry
 # and applies a change within one pass, and nothing else on the host pulls
@@ -13,11 +13,11 @@
 # NO Restart= AND NO START LIMIT, on purpose. THE REWORK RESTART POLICY in
 # `systemd/creche-caregiver.service` is for always-on services. This one is
 # MEANT to exit, and it exits non-zero on a refusal so that
-# `systemctl --user status registry-sync` shows it. The timer is its retry:
+# `systemctl --user status creche-registry-sync` shows it. The timer is its retry:
 # restarting a refused run would repeat the same refusal a second sooner and
 # tell systemd nothing new.
 [Unit]
-Description=Fast-forward the registry checkout onto agent-registry's main
+Description=Fast-forward the registry checkout onto the registry repository's main
 After=network-online.target
 Wants=network-online.target
 
