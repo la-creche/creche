@@ -103,7 +103,7 @@ SERVICES: Final[dict[Service, StartEntry]] = {
         program="agent-trigger",
         selector=(),
         override="CRECHE_PROC_DOOR_TRIGGER",
-        units=("creche-trigger-webhooks.service", "creche-trigger@.service"),
+        units=("creche-door-trigger.service", "creche-door-trigger@.service"),
     ),
     Service.DOOR_ACP: StartEntry(
         program="agent-door-acp",

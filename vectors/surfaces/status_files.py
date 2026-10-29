@@ -434,7 +434,7 @@ WRITTEN: Final[tuple[Written, ...]] = (
             _fault(
                 "timer_enable_failed",
                 blocks=False,
-                timers=["creche-trigger-chat-0.timer", "creche-trigger-chat-1.timer"],
+                timers=["creche-door-trigger-chat-0.timer", "creche-door-trigger-chat-1.timer"],
                 message="systemd does not report 2 timers as enabled",
             ),
             _fault(

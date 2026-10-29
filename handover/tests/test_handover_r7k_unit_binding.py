@@ -537,8 +537,8 @@ def test_the_repositorys_own_units_start_the_trees_their_manifests_install() -> 
 ATTENDANCE_DOORS = frozenset(
     {
         "creche-door-acp.service",
-        "creche-trigger-webhooks.service",
-        "creche-trigger@.service",
+        "creche-door-trigger.service",
+        "creche-door-trigger@.service",
     }
 )
 

@@ -579,7 +579,7 @@ def test_an_autonomous_family_gets_its_timer(bench: Bench) -> None:
         triggers=[{"cron": "0 * * * *"}],
     )
     bench.look()
-    assert "creche-trigger-ops-t1.timer" in bench.units.names()
+    assert "creche-door-trigger-ops-t1.timer" in bench.units.names()
 
 
 def test_a_deleted_family_loses_its_timer_too(bench: Bench) -> None:

@@ -104,7 +104,7 @@ SECRET_BYTES=48
 # Each user unit, in the order `up` installs and starts it. attendance comes
 # first: each door and the caregiver dial it.
 UNITS="creche-attendance.service creche-caregiver.service creche-noticeboard.service \
-creche-door-acp.service creche-trigger-webhooks.service creche-trigger@.service \
+creche-door-acp.service creche-door-trigger.service creche-door-trigger@.service \
 creche-watchdog.service creche-watchdog.timer creche-registry-sync.service creche-registry-sync.timer \
 creche-code-corpus-sync.service creche-code-corpus-sync.timer creche-sbx-drift.service creche-sbx-drift.timer \
 creche-library@.service creche-library@.timer creche-follow.service creche-follow.timer"
@@ -112,7 +112,7 @@ creche-library@.service creche-library@.timer creche-follow.service creche-follo
 # timer starts, are installed only. `bin/provision-library.sh` enables one
 # `creche-library@<scope>.timer` for each scope.
 ENABLED_UNITS="creche-attendance.service creche-caregiver.service creche-noticeboard.service \
-creche-door-acp.service creche-trigger-webhooks.service creche-watchdog.timer \
+creche-door-acp.service creche-door-trigger.service creche-watchdog.timer \
 creche-registry-sync.timer creche-code-corpus-sync.timer creche-sbx-drift.timer creche-follow.timer"
 
 UV_MINIMUM=0.12.17
@@ -199,7 +199,7 @@ version_at_least() {  # version_at_least <have> <want>
 
 unit_tree() {  # unit_tree <unit>: which tree the unit runs from
   case "$1" in
-    creche-attendance.service|creche-door-acp.service|creche-trigger-webhooks.service|creche-trigger@.service)
+    creche-attendance.service|creche-door-acp.service|creche-door-trigger.service|creche-door-trigger@.service)
       say attendance ;;
     creche-caregiver.service) say caregiver ;;
     creche-noticeboard.service) say noticeboard ;;

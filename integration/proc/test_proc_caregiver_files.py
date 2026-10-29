@@ -533,7 +533,7 @@ def test_a_cron_trigger_becomes_an_enabled_timer(caregiver_prepared: CaregiverSt
     service of the family, and `systemctl --user` enabled it.
     """
     stack = caregiver_prepared
-    unit = f"creche-trigger-{WAKER}-t1.timer"
+    unit = f"creche-door-trigger-{WAKER}-t1.timer"
     publish_family(stack.tree, _autonomous([{"cron": CRON}]))
 
     stack.spawn_caregiver()
@@ -541,7 +541,7 @@ def test_a_cron_trigger_becomes_an_enabled_timer(caregiver_prepared: CaregiverSt
     text = (stack.tree.unit_dir / unit).read_text(encoding="utf-8")
 
     assert ON_CALENDAR in text.splitlines()
-    assert f"Unit=creche-trigger@{WAKER}.service" in text.splitlines()
+    assert f"Unit=creche-door-trigger@{WAKER}.service" in text.splitlines()
     assert enabled_units(stack.tree) == [unit]
     assert _systemctl(stack)[:2] == [
         ("--user", "daemon-reload"),
@@ -557,7 +557,7 @@ def test_a_removed_trigger_disables_its_timer(caregiver_prepared: CaregiverStack
     document names the file and never the bearer (contract 05 §6.4).
     """
     stack = caregiver_prepared
-    unit = f"creche-trigger-{WAKER}-t1.timer"
+    unit = f"creche-door-trigger-{WAKER}-t1.timer"
     publish_family(stack.tree, _autonomous([{"cron": CRON}]))
     stack.spawn_caregiver()
     stack.await_published(WAKER)
@@ -581,7 +581,7 @@ def test_a_timer_that_does_not_enable_is_a_fault(caregiver_prepared: CaregiverSt
     The fault stops no turn: a lost wake is no permission.
     """
     stack = caregiver_prepared
-    unit = f"creche-trigger-{WAKER}-t1.timer"
+    unit = f"creche-door-trigger-{WAKER}-t1.timer"
     tune(stack.tree, SYSTEMCTL, f"refuse-enable-{unit}")
     publish_family(stack.tree, _autonomous([{"cron": CRON}]))
 

@@ -162,7 +162,7 @@ root.
   by hand. That run then sends.
 
 **Rule 2: a firing unit fails only with status 78.** A firing unit is an
-instance of `creche-trigger@`. Check 4 reads the status of the last run of
+instance of `creche-door-trigger@`. Check 4 reads the status of the last run of
 each instance.
 
 - Status 78 counts as a failed unit. A program ends with that status when
@@ -171,7 +171,7 @@ each instance.
   the session service refuses the job, and no config causes that.
 - The failure pushes after two runs in a row, as each other check does.
 - The script gives a unit name to `systemctl show` only when the name has
-  the exact form `creche-trigger@<family>.service`.
+  the exact form `creche-door-trigger@<family>.service`.
 - Each `systemctl` call has the time limit of the other checks. One call
   with no answer in that time ends the read of the firing units for the run.
 

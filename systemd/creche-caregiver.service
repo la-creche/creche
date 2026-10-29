@@ -17,7 +17,7 @@ After=network-online.target
 Wants=network-online.target
 # THE REWORK RESTART POLICY. Decided once, argued here, and named by the
 # other four always-on rework units (`creche-attendance`,
-# `creche-noticeboard`, `creche-trigger-webhooks`, `creche-chaperone`). Change it here and
+# `creche-noticeboard`, `creche-door-trigger`, `creche-chaperone`). Change it here and
 # in all five, or `bin/tests/test_rework_unit_restart.py` fails.
 #
 # WHY NO START LIMIT. With StartLimitIntervalSec=120 and StartLimitBurst=5,

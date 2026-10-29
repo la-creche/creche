@@ -57,7 +57,7 @@ ACP_DOOR_UNIT: Final = "creche-door-acp.service"
 UNITS: Final = (
     "creche-attendance.service",
     "creche-caregiver.service",
-    "creche-trigger-webhooks.service",
+    "creche-door-trigger.service",
     "creche-noticeboard.service",
     ACP_DOOR_UNIT,
 )
@@ -1081,18 +1081,18 @@ def test_an_unknown_argument_is_refused(rig: Rig) -> None:
 
 # --- check 4: a firing unit that ended with status 78 -------------------------
 
-FIRING: Final = "creche-trigger@standup.service"
+FIRING: Final = "creche-door-trigger@standup.service"
 
 
 def test_check_4_reads_each_firing_unit(rig: Rig) -> None:
     """The words of the two calls, and one `show` call for each instance."""
-    other = "creche-trigger@ops.service"
+    other = "creche-door-trigger@ops.service"
 
     done = rig.run(WD_FIRINGS=f"{FIRING}=0 {other}=0")
     lines = rig.stub_log.read_text(encoding="utf-8").splitlines()
 
     assert done.returncode == 0, done.stdout + done.stderr
-    listing = "systemctl --user list-units --all --plain --no-legend creche-trigger@*.service"
+    listing = "systemctl --user list-units --all --plain --no-legend creche-door-trigger@*.service"
     assert lines.count(listing) == 1
     for unit in (FIRING, other):
         assert lines.count(f"systemctl --user show {unit} -p ExecMainStatus --value") == 1
@@ -1135,7 +1135,7 @@ def test_a_show_call_with_no_answer_ends_the_read(rig: Rig) -> None:
     the limit stopped, the run reads no other firing unit: a user manager
     that does not answer costs the run one time limit, not one for each
     instance. A call with no answer is no failure, as in the rest of check 4."""
-    units = ("creche-trigger@ops.service", FIRING, "creche-trigger@vault.service")
+    units = ("creche-door-trigger@ops.service", FIRING, "creche-door-trigger@vault.service")
 
     done = rig.run(WD_FIRINGS=" ".join(f"{one}=78" for one in units), WD_SHOW_EXIT="124")
     calls = [
@@ -1164,12 +1164,12 @@ def test_a_firing_and_a_failed_unit_are_one_units_failure(rig: Rig) -> None:
 @pytest.mark.parametrize(
     "unit",
     [
-        "creche-trigger@Standup.service",
-        "creche-trigger@s.service",
-        "creche-trigger@-standup.service",
-        "creche-trigger@standup.timer",
-        "creche-trigger@stand.up.service",
-        "creche-trigger@" + "a" * 32 + ".service",
+        "creche-door-trigger@Standup.service",
+        "creche-door-trigger@s.service",
+        "creche-door-trigger@-standup.service",
+        "creche-door-trigger@standup.timer",
+        "creche-door-trigger@stand.up.service",
+        "creche-door-trigger@" + "a" * 32 + ".service",
         "creche-other@standup.service",
         "--version",
     ],
@@ -1227,8 +1227,8 @@ def test_both_unit_patterns_come_from_the_same_constants() -> None:
 
     assert done.returncode == 0, done.stderr
     assert done.stdout.splitlines() == [
-        "creche-trigger@*.service",
-        f"creche-trigger@{family}\\.service",
+        "creche-door-trigger@*.service",
+        f"creche-door-trigger@{family}\\.service",
     ]
 
 

@@ -47,7 +47,7 @@ turn. The `attendance` service takes that call from four doors.
 | Directory | Component | Unit | What it owns | Read |
 |---|---|---|---|---|
 | `attendance/` | `attendance` | `creche-attendance.service`, user | Every session, turn, journal and event stream. | [attendance/AGENTS.md](attendance/AGENTS.md) |
-| `door-trigger/` | in `attendance` | `creche-trigger-webhooks.service`, `creche-trigger@.service`, user | The trigger door: timers and webhooks. | [door-trigger/AGENTS.md](door-trigger/AGENTS.md) |
+| `door-trigger/` | in `attendance` | `creche-door-trigger.service`, `creche-door-trigger@.service`, user | The trigger door: timers and webhooks. | [door-trigger/AGENTS.md](door-trigger/AGENTS.md) |
 | `door-acp/` | in `attendance` | `creche-door-acp.service`, user | The ACP door: `WS /acp/<family>`, forwarded to `attendance`. Also `creche-acp-connect`. | [door-acp/AGENTS.md](door-acp/AGENTS.md) |
 | `caregiver/` | `caregiver` | `creche-caregiver.service`, user | The reconciler. It converges every family to its file. | [caregiver/AGENTS.md](caregiver/AGENTS.md) |
 | `noticeboard/` | `noticeboard` | `creche-noticeboard.service`, user | The one view: every family, sandbox, session and audit line. | [noticeboard/AGENTS.md](noticeboard/AGENTS.md) |

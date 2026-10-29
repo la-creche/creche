@@ -7,9 +7,9 @@ from this directory at run time. The root `AGENTS.md` applies here too.
 | Unit | Scope | Installed by |
 |---|---|---|
 | `creche-handover.{service,path}` | system, root | by hand only, never by a release |
-| `creche-attendance.service`, `creche-caregiver.service`, `creche-trigger-webhooks.service`, `creche-noticeboard.service` | user | the cutover script, in the private repository |
+| `creche-attendance.service`, `creche-caregiver.service`, `creche-door-trigger.service`, `creche-noticeboard.service` | user | the cutover script, in the private repository |
 | `creche-door-acp.service` | user | no script yet. The door ships in `attendance` |
-| `creche-trigger@.service` | user, templated | the cutover script, only when the host has none |
+| `creche-door-trigger@.service` | user, templated | the cutover script, only when the host has none |
 | `creche-watchdog.{service,timer}`, `creche-registry-sync.{service,timer}` | user | `bin/fleet-up up` |
 | `creche-follow.{service,timer}` | user | the cutover script |
 | `creche-library@.{service,timer}` | user, templated | `bin/fleet-up up` installs the template. `bin/provision-library.sh` enables one timer for each scope |
@@ -41,9 +41,9 @@ installed unit file in place and never runs an installer.
   sets `AGENT_LAN_ADDRESS` and the other site values. No unit names an
   address.
 - **Per-family timer units are generated, not stored here.**
-  `caregiver/src/caregiver/timers.py` writes `creche-trigger-<family>-t<N>.timer`
+  `caregiver/src/caregiver/timers.py` writes `creche-door-trigger-<family>-t<N>.timer`
   into the user's unit directory. Each carries a "do not hand-edit" header
-  and points at `creche-trigger@.service` with `Unit=`.
+  and points at `creche-door-trigger@.service` with `Unit=`.
 - **Mount-namespace hardening needs a system unit.** On a host with
   `apparmor_restrict_unprivileged_userns=1`, a user unit cannot use
   `ProtectSystem`, `ProtectHome`, `PrivateTmp` or `ProtectProc`. The unit

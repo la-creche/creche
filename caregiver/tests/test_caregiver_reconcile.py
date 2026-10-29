@@ -932,21 +932,21 @@ def test_a_changed_kind_is_refused_and_nothing_moves(fleet: Fleet) -> None:
 def test_a_timer_that_will_not_enable_raises_a_fault(fleet: Fleet) -> None:
     """A generated timer that is not enabled never fires, and nothing else
     says so."""
-    fleet.units.refuse.add("creche-trigger-chat-t1.timer")
+    fleet.units.refuse.add("creche-door-trigger-chat-t1.timer")
     fleet.write(kind="autonomous", triggers=[{"cron": HOURLY}])
 
     result = fleet.run()
 
     faults = [one for one in result.status.faults if one.code == "timer_enable_failed"]
     assert len(faults) == 1
-    assert faults[0].detail["timers"] == ["creche-trigger-chat-t1.timer"]
+    assert faults[0].detail["timers"] == ["creche-door-trigger-chat-t1.timer"]
     assert result.status.state is FamilyState.DEGRADED
 
 
 def test_a_timer_that_will_not_enable_does_not_stop_turns(fleet: Fleet) -> None:
     """A schedule that does not fire is not a permission. Blocking every
     turn over it would take a family off the air for a missed wake."""
-    fleet.units.refuse.add("creche-trigger-chat-t1.timer")
+    fleet.units.refuse.add("creche-door-trigger-chat-t1.timer")
     fleet.write(kind="autonomous", triggers=[{"cron": HOURLY}])
 
     result = fleet.run()

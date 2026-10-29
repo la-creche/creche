@@ -15,7 +15,7 @@
 # the old code after a release the ledger called a success.
 #
 # The doors that ship inside this same component (contract 06 §1 rule 1)
-# run from the same tree: `creche-trigger-webhooks.service` and
+# run from the same tree: `creche-door-trigger.service` and
 # `creche-door-acp.service` name this venv's own bin.
 [Unit]
 Description=attendance, the rework session service

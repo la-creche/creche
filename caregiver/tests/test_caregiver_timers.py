@@ -103,21 +103,21 @@ def test_a_text_that_is_no_ascii_number_is_refused(case: str) -> None:
 def test_the_timer_points_at_the_one_template_service() -> None:
     units = FakeUnits()
     apply_timers(autonomous(), units)  # type: ignore[arg-type]
-    text = units.files["creche-trigger-chat-t1.timer"]
-    assert "Unit=creche-trigger@chat.service" in text
+    text = units.files["creche-door-trigger-chat-t1.timer"]
+    assert "Unit=creche-door-trigger@chat.service" in text
     assert "OnCalendar=*-*-* *:00:00" in text
 
 
 def test_the_timer_says_not_to_hand_edit_it() -> None:
     units = FakeUnits()
     apply_timers(autonomous(), units)  # type: ignore[arg-type]
-    assert "Do not hand-edit" in units.files["creche-trigger-chat-t1.timer"]
+    assert "Do not hand-edit" in units.files["creche-door-trigger-chat-t1.timer"]
 
 
 def test_a_missed_firing_is_caught_up_after_a_reboot() -> None:
     units = FakeUnits()
     apply_timers(autonomous(), units)  # type: ignore[arg-type]
-    assert "Persistent=true" in units.files["creche-trigger-chat-t1.timer"]
+    assert "Persistent=true" in units.files["creche-door-trigger-chat-t1.timer"]
 
 
 # --- converging the set ---------------------------------------------------------------
@@ -126,7 +126,10 @@ def test_a_missed_firing_is_caught_up_after_a_reboot() -> None:
 def test_one_timer_per_cron_trigger() -> None:
     units = FakeUnits()
     apply_timers(autonomous(triggers=[{"cron": HOURLY}, {"cron": WEEKDAYS}]), units)  # type: ignore[arg-type]
-    assert units.names() == ("creche-trigger-chat-t1.timer", "creche-trigger-chat-t2.timer")
+    assert units.names() == (
+        "creche-door-trigger-chat-t1.timer",
+        "creche-door-trigger-chat-t2.timer",
+    )
 
 
 def test_a_webhook_trigger_gets_no_timer() -> None:
@@ -140,15 +143,15 @@ def test_a_changed_schedule_rewrites_the_same_unit() -> None:
     units = FakeUnits()
     apply_timers(autonomous(), units)  # type: ignore[arg-type]
     apply_timers(autonomous(triggers=[{"cron": WEEKDAYS}]), units)  # type: ignore[arg-type]
-    assert units.names() == ("creche-trigger-chat-t1.timer",)
-    assert "Mon..Fri" in units.files["creche-trigger-chat-t1.timer"]
+    assert units.names() == ("creche-door-trigger-chat-t1.timer",)
+    assert "Mon..Fri" in units.files["creche-door-trigger-chat-t1.timer"]
 
 
 def test_a_removed_trigger_removes_its_unit() -> None:
     units = FakeUnits()
     apply_timers(autonomous(triggers=[{"cron": HOURLY}, {"cron": WEEKDAYS}]), units)  # type: ignore[arg-type]
     apply_timers(autonomous(triggers=[{"cron": HOURLY}]), units)  # type: ignore[arg-type]
-    assert units.names() == ("creche-trigger-chat-t1.timer",)
+    assert units.names() == ("creche-door-trigger-chat-t1.timer",)
 
 
 def test_a_removal_runs_before_any_write() -> None:
@@ -159,8 +162,8 @@ def test_a_removal_runs_before_any_write() -> None:
     units.calls.clear()
     apply_timers(autonomous(triggers=[{"cron": WEEKDAYS}]), units)  # type: ignore[arg-type]
     assert units.calls == [
-        "remove creche-trigger-chat-t2.timer",
-        "write creche-trigger-chat-t1.timer",
+        "remove creche-door-trigger-chat-t2.timer",
+        "write creche-door-trigger-chat-t1.timer",
     ]
 
 
@@ -168,12 +171,12 @@ def test_a_timer_under_the_old_prefix_is_swapped_removal_first() -> None:
     """The first pass after the rename removes the old name before it
     writes the new one, so the schedule never fires twice."""
     units = FakeUnits()
-    units.write("agent-trigger-chat-t1.timer", "old")
+    units.write("creche-trigger-chat-t1.timer", "old")
     units.calls.clear()
     apply_timers(autonomous(), units)  # type: ignore[arg-type]
     assert units.calls == [
-        "remove agent-trigger-chat-t1.timer",
-        "write creche-trigger-chat-t1.timer",
+        "remove creche-trigger-chat-t1.timer",
+        "write creche-door-trigger-chat-t1.timer",
     ]
 
 
@@ -185,27 +188,27 @@ def test_an_unchanged_set_reports_no_change() -> None:
 
 def test_an_attended_family_has_no_timers() -> None:
     units = FakeUnits()
-    units.write("creche-trigger-chat-t1.timer", "stale")
+    units.write("creche-door-trigger-chat-t1.timer", "stale")
     apply_timers(chat_family(), units)  # type: ignore[arg-type]
     assert units.names() == ()
 
 
 def test_another_familys_timer_is_never_touched() -> None:
     units = FakeUnits()
-    units.write("creche-trigger-ops-t1.timer", "not mine")
+    units.write("creche-door-trigger-ops-t1.timer", "not mine")
     apply_timers(chat_family(), units)  # type: ignore[arg-type]
-    assert units.names() == ("creche-trigger-ops-t1.timer",)
+    assert units.names() == ("creche-door-trigger-ops-t1.timer",)
 
 
 def test_a_deleted_family_loses_every_timer() -> None:
     units = FakeUnits()
     apply_timers(autonomous(triggers=[{"cron": HOURLY}, {"cron": WEEKDAYS}]), units)  # type: ignore[arg-type]
-    units.write("creche-trigger-ops-t1.timer", "not mine")
+    units.write("creche-door-trigger-ops-t1.timer", "not mine")
     assert remove_timers("chat", units) == (
-        "creche-trigger-chat-t1.timer",
-        "creche-trigger-chat-t2.timer",
+        "creche-door-trigger-chat-t1.timer",
+        "creche-door-trigger-chat-t2.timer",
     )
-    assert units.names() == ("creche-trigger-ops-t1.timer",)
+    assert units.names() == ("creche-door-trigger-ops-t1.timer",)
 
 
 def test_an_unspellable_trigger_is_reported_and_written_nowhere() -> None:
@@ -222,7 +225,7 @@ def test_a_trigger_with_no_ascii_number_gets_no_unit(case: str) -> None:
     triggers = [{"cron": NOT_ASCII_NUMBERS[case]}, {"cron": HOURLY}]
     outcome = apply_timers(autonomous(triggers=triggers), units)  # type: ignore[arg-type]
     assert outcome.refused == (NOT_ASCII_NUMBERS[case],)
-    assert units.names() == ("creche-trigger-chat-t2.timer",)
+    assert units.names() == ("creche-door-trigger-chat-t2.timer",)
     assert all(text.isascii() for text in units.files.values())
 
 
@@ -231,7 +234,10 @@ def test_one_unspellable_trigger_does_not_lose_the_others() -> None:
     triggers = [{"cron": HOURLY}, {"cron": "0 9 1 * 1"}, {"cron": WEEKDAYS}]
     outcome = apply_timers(autonomous(triggers=triggers), units)  # type: ignore[arg-type]
     assert len(outcome.refused) == 1
-    assert units.names() == ("creche-trigger-chat-t1.timer", "creche-trigger-chat-t3.timer")
+    assert units.names() == (
+        "creche-door-trigger-chat-t1.timer",
+        "creche-door-trigger-chat-t3.timer",
+    )
 
 
 # --- the ENABLED state, not only the file ------------------------------------------------
@@ -253,9 +259,9 @@ def test_a_timer_the_file_matches_but_nothing_enabled_is_enabled(tmp_path: Path)
 
     outcome = apply_timers(autonomous(), units)  # type: ignore[arg-type]
 
-    assert outcome.enabled == ("creche-trigger-chat-t1.timer",)
+    assert outcome.enabled == ("creche-door-trigger-chat-t1.timer",)
     assert outcome.changed is True
-    assert units.calls == ["enable creche-trigger-chat-t1.timer"]
+    assert units.calls == ["enable creche-door-trigger-chat-t1.timer"]
 
 
 def test_an_enabled_timer_is_not_enabled_again(tmp_path: Path) -> None:
@@ -274,11 +280,11 @@ def test_an_enabled_timer_is_not_enabled_again(tmp_path: Path) -> None:
 
 def test_a_timer_that_will_not_enable_is_reported(tmp_path: Path) -> None:
     units = FakeUnits()
-    units.refuse.add("creche-trigger-chat-t1.timer")
+    units.refuse.add("creche-door-trigger-chat-t1.timer")
 
     outcome = apply_timers(autonomous(), units)  # type: ignore[arg-type]
 
-    assert outcome.unenabled == ("creche-trigger-chat-t1.timer",)
+    assert outcome.unenabled == ("creche-door-trigger-chat-t1.timer",)
     assert outcome.enabled == ()
 
 
@@ -310,7 +316,7 @@ def test_the_probe_and_the_enable_are_the_real_systemctl_argv(tmp_path: Path) ->
     systemctl = FakeSystemctl()
     units = UserUnits(tmp_path, systemctl)
     # The kill: the exact file this family wants, on disk, never enabled.
-    (tmp_path / "creche-trigger-chat-t1.timer").write_text(
+    (tmp_path / "creche-door-trigger-chat-t1.timer").write_text(
         timer_text("chat", cron_to_oncalendar(HOURLY)), encoding="utf-8"
     )
     systemctl.calls.clear()
@@ -318,9 +324,9 @@ def test_the_probe_and_the_enable_are_the_real_systemctl_argv(tmp_path: Path) ->
     apply_timers(autonomous(), units)  # type: ignore[arg-type]
 
     assert systemctl.calls == [
-        "is-enabled creche-trigger-chat-t1.timer",
-        "enable --now creche-trigger-chat-t1.timer",
-        "is-enabled creche-trigger-chat-t1.timer",
+        "is-enabled creche-door-trigger-chat-t1.timer",
+        "enable --now creche-door-trigger-chat-t1.timer",
+        "is-enabled creche-door-trigger-chat-t1.timer",
     ]
 
 
@@ -329,10 +335,10 @@ def test_the_writer_reads_systemds_own_answer(tmp_path: Path) -> None:
     answer is stdout, never the exit code."""
     systemctl = FakeSystemctl()
     units = UserUnits(tmp_path, systemctl)
-    assert units.is_enabled("creche-trigger-chat-t1.timer") is False
+    assert units.is_enabled("creche-door-trigger-chat-t1.timer") is False
 
-    units.enable("creche-trigger-chat-t1.timer")
-    assert units.is_enabled("creche-trigger-chat-t1.timer") is True
+    units.enable("creche-door-trigger-chat-t1.timer")
+    assert units.is_enabled("creche-door-trigger-chat-t1.timer") is True
 
 
 # --- the real writer, without systemctl ------------------------------------------------
@@ -340,15 +346,15 @@ def test_the_writer_reads_systemds_own_answer(tmp_path: Path) -> None:
 
 def test_the_user_writer_puts_a_unit_where_systemd_reads_it(tmp_path: Path) -> None:
     units = UserUnits(tmp_path / "systemd" / "user", FakeSystemctl())
-    units.write("creche-trigger-chat-t1.timer", "text\n")
-    assert (tmp_path / "systemd" / "user" / "creche-trigger-chat-t1.timer").exists()
+    units.write("creche-door-trigger-chat-t1.timer", "text\n")
+    assert (tmp_path / "systemd" / "user" / "creche-door-trigger-chat-t1.timer").exists()
 
 
 def test_a_written_unit_is_enabled(tmp_path: Path) -> None:
     """A timer file nothing enabled never fires, and nothing complains."""
     systemctl = FakeSystemctl()
-    UserUnits(tmp_path, systemctl).write("creche-trigger-chat-t1.timer", "text\n")
-    assert systemctl.calls == ["daemon-reload", "enable --now creche-trigger-chat-t1.timer"]
+    UserUnits(tmp_path, systemctl).write("creche-door-trigger-chat-t1.timer", "text\n")
+    assert systemctl.calls == ["daemon-reload", "enable --now creche-door-trigger-chat-t1.timer"]
 
 
 def test_an_unchanged_pass_writes_nothing(tmp_path: Path) -> None:
@@ -363,7 +369,7 @@ def test_an_unchanged_pass_writes_nothing(tmp_path: Path) -> None:
 
     outcome = apply_timers(autonomous(), units)  # type: ignore[arg-type]
     assert outcome.changed is False
-    assert systemctl.calls == ["is-enabled creche-trigger-chat-t1.timer"]
+    assert systemctl.calls == ["is-enabled creche-door-trigger-chat-t1.timer"]
 
 
 def test_a_removed_unit_is_disabled_before_it_is_unlinked(tmp_path: Path) -> None:
@@ -371,20 +377,20 @@ def test_a_removed_unit_is_disabled_before_it_is_unlinked(tmp_path: Path) -> Non
     `timers.target.wants`."""
     systemctl = FakeSystemctl()
     units = UserUnits(tmp_path, systemctl)
-    units.write("creche-trigger-chat-t1.timer", "text\n")
+    units.write("creche-door-trigger-chat-t1.timer", "text\n")
     systemctl.calls.clear()
-    units.remove("creche-trigger-chat-t1.timer")
-    assert systemctl.calls[0] == "disable --now creche-trigger-chat-t1.timer"
+    units.remove("creche-door-trigger-chat-t1.timer")
+    assert systemctl.calls[0] == "disable --now creche-door-trigger-chat-t1.timer"
     assert units.names() == ()
 
 
 def test_the_user_writer_lists_only_its_own_units(tmp_path: Path) -> None:
     root = tmp_path / "systemd" / "user"
     root.mkdir(parents=True)
-    (root / "creche-trigger-chat-t1.timer").write_text("mine\n", encoding="utf-8")
-    (root / "agent-trigger-chat-t1.timer").write_text("mine, old\n", encoding="utf-8")
+    (root / "creche-door-trigger-chat-t1.timer").write_text("mine\n", encoding="utf-8")
+    (root / "creche-trigger-chat-t1.timer").write_text("mine, old\n", encoding="utf-8")
     (root / "shim.service").write_text("someone else's\n", encoding="utf-8")
     assert UserUnits(root, FakeSystemctl()).names() == (
-        "agent-trigger-chat-t1.timer",
+        "creche-door-trigger-chat-t1.timer",
         "creche-trigger-chat-t1.timer",
     )
