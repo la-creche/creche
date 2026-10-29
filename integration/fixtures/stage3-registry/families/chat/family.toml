@@ -17,14 +17,14 @@ model.router = "agent-router"
 model.budget_usd_per_day = 15
 
 files = [
-    # The per-chat code-sandbox work root, so no copy step stands between this
-    # family and its code-sandbox jobs (docs/rework/spec.md §7.2).
-    { path = "/srv/agents/work/code-sandbox", mode = "rw" },
+    # The per-chat coding-sandbox work root, so no copy step stands between this
+    # family and its coding-sandbox jobs (docs/rework/spec.md §7.2).
+    { path = "/srv/agents/work/coding-sandbox", mode = "rw" },
 ]
 
 verbs.embed = {}
 
-delegates = ["vault-oracle", "code-sandbox"]
+delegates = ["vault-oracle", "coding-sandbox"]
 
 egress = [] # every reach goes through the PEP, so every reach is audited
 

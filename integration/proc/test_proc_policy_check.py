@@ -43,9 +43,13 @@ UNKNOWN_UPSTREAM: Final = "weather"
 
 #: The app instances of the fixture registry that delegate, and the one
 #: target that each of them names. No target delegates.
-DELEGATE_CALLER: Final = "agent-control"
+DELEGATE_CALLER: Final = "code"
 DELEGATE_TARGET: Final = "vault-oracle"
-SECOND_HOP: Final = "code-sandbox"
+SECOND_HOP: Final = "coding-sandbox"
+
+#: The caller that the refusal names: the check reads the apps in name
+#: order, and `chat` delegates to the same target before `code` does.
+FIRST_CALLER: Final = "chat"
 
 
 def golden_files() -> list[Path]:
@@ -127,6 +131,6 @@ def test_a_two_hop_delegate_fails_check(chaperone_rs_files: ChaperoneRsStack) ->
 
     assert check_fails(chaperone_rs_files, policy) == (
         "policy.toml: the fence attendance refuses the policy: "
-        f"the caller app {DELEGATE_CALLER} and the target app {DELEGATE_TARGET} break a rule: "
+        f"the caller app {FIRST_CALLER} and the target app {DELEGATE_TARGET} break a rule: "
         "one_hop: an app instance that another app instance delegates to must not delegate"
     )

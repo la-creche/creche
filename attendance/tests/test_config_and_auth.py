@@ -326,7 +326,7 @@ def test_a_door_token_is_pinned_to_one_family_kind() -> None:
     check_family_kind(Principal.DOOR_ACP, "chat", SessionKind.ATTENDED)
 
     with pytest.raises(ApiError) as caught:
-        check_family_kind(Principal.DOOR_ACP, "code-sandbox", SessionKind.THIN)
+        check_family_kind(Principal.DOOR_ACP, "coding-sandbox", SessionKind.THIN)
 
     assert caught.value.code is ErrorCode.FORBIDDEN
 

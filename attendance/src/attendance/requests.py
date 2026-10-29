@@ -113,7 +113,7 @@ class SwitchRequest:
 def read_delegate(raw: dict[str, Any]) -> DelegateRequest:
     """Contract 04 §7.3. The PEP is another process, so this is untrusted.
 
-    `claimed_session_id` is advisory for the audit, and for `code-sandbox` it
+    `claimed_session_id` is advisory for the audit, and for `coding-sandbox` it
     also becomes a path component (contract 02 §12.1). A malformed one is
     refused here rather than dropped, because dropping it would silently run
     a job in the wrong directory.

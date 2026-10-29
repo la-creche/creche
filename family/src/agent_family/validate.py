@@ -41,8 +41,6 @@ from .grammar import (
     MODEL_ALIAS,
     MOUNT_PATH,
     PLATFORM_ALLOWLIST,
-    PLATFORM_MIRRORS,
-    PLATFORM_ROOT,
     PLATFORM_SERVER,
     PLATFORM_WITHHELD,
     PROBE_FAMILY,
@@ -301,40 +299,6 @@ def _check_one_root(family: FamilyFile, path: str, loc: str, issues: Issues) -> 
         )
         return
 
-    # The fence runs both ways (§5.5). Outbound: nobody else reaches the
-    # platform root. Inbound: a family that does reach it mounts nothing else,
-    # because `docs/rework/spec.md` §4.4 locks agent-control to the platform
-    # root "and nothing else".
-    inside = is_under(path, PLATFORM_ROOT)
-    allowlisted = family.name in PLATFORM_ALLOWLIST
-    if inside and not allowlisted:
-        issues.error(
-            f"{loc}.path",
-            f"'{path}' is under the platform fence; only {', '.join(sorted(PLATFORM_ALLOWLIST))} "
-            "may mount the platform root or hold the 'release' verb",
-        )
-        return
-
-    if not inside and allowlisted and not _is_platform_mirror(family, path):
-        issues.error(
-            f"{loc}.path",
-            f"'{family.name}' reaches only the platform root, so it may not mount '{path}'; "
-            "a family that edits the platform holds no other mount",
-        )
-
-
-def _is_platform_mirror(family: FamilyFile, path: str) -> bool:
-    """§5.5 rule 6: one of the host's own clones of the four platform repos,
-    and every mount of it in this file is read-only. The mode is read off the
-    file's own entries, because `_check_one_root` is also handed a RESOLVED
-    path, and a symlink's target has no entry of its own: it is a mirror only
-    when it is itself one of the four."""
-    if path not in PLATFORM_MIRRORS:
-        return False
-
-    modes = {one.mode for one in family.files if one.path == path}
-    return modes <= {Mode.RO.value}
-
 
 def _check_tools(family: FamilyFile, index: Index, issues: Issues) -> None:
     kind = _kind_of(family)
@@ -368,6 +332,14 @@ def _check_withheld(
     `all` is checked through its expansion: a server file that declares the
     merge again must not re-grant it quietly."""
     if server != PLATFORM_SERVER:
+        return
+
+    if family.name not in PLATFORM_ALLOWLIST:
+        issues.error(
+            loc,
+            f"'{family.name}' is outside the platform fence; only "
+            f"{', '.join(sorted(PLATFORM_ALLOWLIST))} may hold '{server}'",
+        )
         return
 
     reason = "a platform change lands only when the operator merges it (§5.5 rule 7)"
@@ -484,8 +456,7 @@ def _check_release(family: FamilyFile, issues: Issues) -> None:
         issues.error(
             "verbs.release",
             f"'{family.name}' is outside the platform fence; only "
-            f"{', '.join(sorted(PLATFORM_ALLOWLIST))} may hold the 'release' verb or mount "
-            "the platform root",
+            f"{', '.join(sorted(PLATFORM_ALLOWLIST))} may hold the 'release' verb",
         )
 
     if fence is None or not fence.components:

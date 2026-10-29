@@ -26,7 +26,7 @@ CAREGIVER = Principal.CAREGIVER
 DELEGATE = Principal.CHAPERONE_DELEGATE
 
 NEXT_SANDBOX = "chat-s2"
-REASON = "mounts changed: added /srv/agents/work/code-sandbox rw"
+REASON = "mounts changed: added /srv/agents/work/coding-sandbox rw"
 NOT_YET_S = 0.05
 
 #: The kind of the family here. A delegate job reaches a thin family only.

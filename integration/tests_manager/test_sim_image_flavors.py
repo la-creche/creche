@@ -1,7 +1,7 @@
 """Seam 6: the image flavor a family file names reaches `sbx create`.
 
 Packet SIM. `playpen/Dockerfile` has built two targets since stage 1
-and nothing pulled the second one, so `code-sandbox` — `egress: []`, no
+and nothing pulled the second one, so `coding-sandbox` — `egress: []`, no
 way to install anything — answered "plot my spending by month" with
 `ModuleNotFoundError: No module named 'pandas'`.
 

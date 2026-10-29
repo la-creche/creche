@@ -1,6 +1,6 @@
-"""The per-chat `code-sandbox` directory (contract 02 §12.1, contract 03 §7.2).
+"""The per-chat `coding-sandbox` directory (contract 02 §12.1, contract 03 §7.2).
 
-A mount cannot join a running sandbox, so the `code-sandbox` family mounts one
+A mount cannot join a running sandbox, so the `coding-sandbox` family mounts one
 parent — the work root — and each calling chat gets a directory under it
 (`docs/rework/spec.md` §7.2). This service creates that directory at the
 chat's first delegate call. No job deletes it. With no chat session here,
@@ -19,20 +19,20 @@ from typing import Any
 from .atomic import DIR_MODE_PRIVATE, ensure_dir
 from .errors import ApiError, ErrorCode
 from .ids import is_session
-from .paths import code_sandbox_dir
+from .paths import coding_sandbox_dir
 
 # The one thin family that works in the caller's directory
 # (`docs/rework/spec.md` §7.2).
-CODE_SANDBOX_FAMILY = "code-sandbox"
+CODING_SANDBOX_FAMILY = "coding-sandbox"
 
 # Contract 03 §7.2's `workspace.kind`. One kind exists.
-WORKSPACE_KIND = "code-sandbox"
+WORKSPACE_KIND = "coding-sandbox"
 
 
 def owner_dir(work_root: Path, owner_session: str) -> Path:
     """Where one calling chat's files live. The id is checked first."""
     _check_owner(owner_session)
-    return code_sandbox_dir(work_root, owner_session)
+    return coding_sandbox_dir(work_root, owner_session)
 
 
 def make_owner_dir(work_root: Path, owner_session: str) -> Path:
@@ -53,7 +53,7 @@ def workspace_of(family: str, owner_session: str | None) -> dict[str, Any] | Non
     It carries no host path. The playpen derives the target from its own
     mount, so a compromised host message cannot aim the link elsewhere.
     """
-    if family != CODE_SANDBOX_FAMILY or owner_session is None:
+    if family != CODING_SANDBOX_FAMILY or owner_session is None:
         return None
 
     _check_owner(owner_session)

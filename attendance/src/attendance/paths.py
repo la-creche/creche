@@ -23,7 +23,7 @@ _OUTCOMES = "outcomes"
 _DISPATCH = "dispatch"
 _TRIGGER_JOBS = "trigger-jobs"
 _AUDIT = "audit"
-_CODE_SANDBOX = "code-sandbox"
+_CODING_SANDBOX = "coding-sandbox"
 
 # What the sandbox sees. sbx mounts /srv/agents/sessions/<family>/ at that
 # SAME path inside the VM (contract 03 §7.1), so a path sent on the link is
@@ -147,6 +147,6 @@ def audit_file(state_root: Path, day: str) -> Path:
     return state_root / _AUDIT / f"{day}.jsonl"
 
 
-def code_sandbox_dir(work_root: Path, owner_session: str) -> Path:
-    """The per-chat code-sandbox directory (contract 02 §12.1)."""
-    return work_root / _CODE_SANDBOX / owner_session
+def coding_sandbox_dir(work_root: Path, owner_session: str) -> Path:
+    """The per-chat coding-sandbox directory (contract 02 §12.1)."""
+    return work_root / _CODING_SANDBOX / owner_session
