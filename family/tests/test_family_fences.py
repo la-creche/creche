@@ -334,11 +334,11 @@ PLATFORM_RW = {"path": "/srv/agents/work/platform", "mode": "rw"}
 
 def test_the_platform_family_may_read_the_hosts_copies_of_its_own_repos() -> None:
     """§5.5 rule 6. The sandbox holds no git
-    credential and the three repos are private, so `git fetch origin` cannot
+    credential and the four repos are private, so `git fetch origin` cannot
     work and the working copies could never follow `main`. Nothing on the host
     may run git inside `work/platform` either: a sandbox can write
     `.git/config` there. The host's OWN clones under `/srv/agents/code` are
-    the fetch source, read-only. They are the same three repos, so "the three
+    the fetch source, read-only. They are the same four repos, so "the
     platform repos. Nothing else." still holds."""
     report = check(
         "agent-control",
@@ -347,6 +347,7 @@ def test_the_platform_family_may_read_the_hosts_copies_of_its_own_repos() -> Non
             {"path": "/srv/agents/code/agent-control", "mode": "ro"},
             {"path": "/srv/agents/code/agent-mcp", "mode": "ro"},
             {"path": "/srv/agents/code/agent-registry", "mode": "ro"},
+            {"path": "/srv/agents/code/chaperone", "mode": "ro"},
         ],
     )
     assert not errors(report)
@@ -355,7 +356,8 @@ def test_the_platform_family_may_read_the_hosts_copies_of_its_own_repos() -> Non
 MIRROR_REFUSALS: tuple[tuple[dict[str, str], str], ...] = (
     # Read-only is the whole exception.
     ({"path": "/srv/agents/code/agent-control", "mode": "rw"}, "reaches only the platform root"),
-    # A fourth repo is still a fourth repo.
+    ({"path": "/srv/agents/code/chaperone", "mode": "rw"}, "reaches only the platform root"),
+    # A fifth repo is still a fifth repo.
     (
         {"path": "/srv/agents/code/example-analytics", "mode": "ro"},
         "reaches only the platform root",

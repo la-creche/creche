@@ -242,18 +242,19 @@ PLATFORM_ROOT: Final = "/srv/agents/work/platform"
 #: never a registry file. A fence the fenced thing can edit is not a fence.
 PLATFORM_ALLOWLIST: Final = frozenset({"agent-control"})
 
-#: Contract 01 §5.5 rule 6. The host's OWN clones of the three platform repos,
-#: which a platform family may mount READ-ONLY as the fetch source for its
-#: working copies. The sandbox holds no git credential, the repos are private,
-#: and nothing on the host may run git inside `work/platform` (a sandbox can
-#: write `.git/config` there). Same three repos, so `docs/rework/spec.md`
-#: §4.4's "nothing else" still holds. Exact paths: no corpus root, no fourth
-#: repo, no sub-path.
+#: Contract 01 §5.5 rule 6. The host's OWN clones of the four platform repos
+#: (creche, mcp, registry and chaperone), which a platform family may mount
+#: READ-ONLY as the fetch source for its working copies. The sandbox holds no
+#: git credential, the repos are private, and nothing on the host may run git
+#: inside `work/platform` (a sandbox can write `.git/config` there). The same
+#: four repos that the platform family edits, so "the platform repos, nothing
+#: else" still holds. Exact paths: no corpus root, no fifth repo, no sub-path.
 PLATFORM_MIRRORS: Final = frozenset(
     {
         "/srv/agents/code/agent-control",
         "/srv/agents/code/agent-mcp",
         "/srv/agents/code/agent-registry",
+        "/srv/agents/code/chaperone",
     }
 )
 
