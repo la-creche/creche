@@ -8,7 +8,7 @@ guard = "host-firewall"
 
 [plugins.attendance]
 args = ["--socket", "/srv/agents/state/creche/sock/attendance.sock"]
-secrets = { DELEGATE_TOKEN = "door-delegate", DISPATCH_TOKEN = "door-dispatch" }
+secrets = { DELEGATE_TOKEN = "chaperone-delegate", DISPATCH_TOKEN = "chaperone-dispatch" }
 
 [plugins.release]
 args = ["--requests-dir", "/var/lib/creche-handover/releases/requests", "--requested-by", "agent-control"]

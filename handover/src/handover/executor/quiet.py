@@ -14,7 +14,7 @@ has proved it works.
 **Quiet means: `attendance` has reported nothing busy for five consecutive
 minutes.** Every model call an agent makes belongs to a prompt, and
 `attendance` counts every prompt in flight. Root asks `GET /busy` over the
-operator's socket, with the `view-ro` bearer.
+operator's socket, with the `noticeboard` bearer.
 
 **Why not an nftables counter.** A named counter on `hook input` matching
 `ip daddr 192.0.2.10 tcp dport 4000` never sees the traffic. Measured on the
@@ -31,7 +31,7 @@ talks to LiteLLM inside the Docker network, where no host hook sees it.
 
 **How root asks without becoming a confused deputy.** Root is the caller and
 both the socket and the token file are the operator's. If root opened
-`view-ro.token` by path and sent its bytes to a socket the operator controls, a
+`noticeboard.token` by path and sent its bytes to a socket the operator controls, a
 operator-side process could swap that path for a symlink to a root-only file
 and have the file's contents delivered to its own socket. So root opens with
 `O_NOFOLLOW` and believes the file only after `fstat` on the OPEN descriptor
@@ -125,7 +125,7 @@ MIN_TOKEN_BYTES: Final = 32
 MAX_TOKEN_BYTES: Final = 4096
 
 #: The open of a file whose descriptor root checks before the first read:
-#: the `view-ro` token here, and the store and the copy of `artifact.py`.
+#: the `noticeboard` token here, and the store and the copy of `artifact.py`.
 #: `O_NOFOLLOW` refuses a link at the last part of the path. `O_NONBLOCK`
 #: and `O_NOCTTY` keep a FIFO or a terminal at the path from blocking root
 #: before `fstat` gets a word in.
@@ -202,7 +202,7 @@ def wait_for_quiet(
 
 
 def read_view_token(path: Path, owner_uid: int) -> bytes | None:
-    """The `view-ro` bearer, or None when root will not vouch for the file.
+    """The `noticeboard` bearer, or None when root will not vouch for the file.
 
     Every check runs on the OPEN descriptor, so nothing can be swapped
     between the check and the read. `O_NOFOLLOW` refuses a symlink at the
@@ -236,7 +236,7 @@ def _token_of(handle: int, owner_uid: int) -> bytes | None:
     if facts.st_uid != owner_uid:
         return None
 
-    # Contract 02 §3 rule 5: `view-ro` is not one of the two tokens the PEP
+    # Contract 02 §3 rule 5: `noticeboard` is not one of the two tokens the PEP
     # reads, so nothing wider than 0600 is this file.
     if stat.S_IMODE(facts.st_mode) & GROUP_OTHER_BITS:
         return None

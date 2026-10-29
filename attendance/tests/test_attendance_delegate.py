@@ -37,8 +37,8 @@ from fake_facade import ANSWER, ERROR_MESSAGE, FacadeFleet, FakeFacade, PromptMo
 
 from attendance.service import SessionService  # isort: skip
 
-DELEGATE = Principal.DOOR_DELEGATE
-DISPATCH = Principal.DOOR_DISPATCH
+DELEGATE = Principal.CHAPERONE_DELEGATE
+DISPATCH = Principal.CHAPERONE_DISPATCH
 
 ORACLE = "vault-oracle"
 ORACLE_SANDBOX = "vault-oracle-s1"

@@ -208,7 +208,7 @@ async def test_an_attended_family_is_refused(harness: TriggerHarness) -> None:
     assert harness.jobs(family=CHAT_FAMILY) == []
 
 
-@pytest.mark.parametrize("principal", [Principal.DOOR_DISPATCH, Principal.DOOR_ACP])
+@pytest.mark.parametrize("principal", [Principal.CHAPERONE_DISPATCH, Principal.DOOR_ACP])
 async def test_only_the_trigger_door_fires(harness: TriggerHarness, principal: Principal) -> None:
     with pytest.raises(ApiError) as raised:
         await harness.service.run_trigger(principal, _request())
@@ -287,7 +287,7 @@ async def test_the_routes_answer_json(tmp_path: Path, harness: TriggerHarness) -
         read = await client.post(
             "/trigger/jobs", json={"family": FAMILY, "session": session}, headers=head
         )
-        other = {"Authorization": f"Bearer {tokens[Principal.DOOR_DISPATCH]}"}
+        other = {"Authorization": f"Bearer {tokens[Principal.CHAPERONE_DISPATCH]}"}
         refused = await client.post("/trigger", json=body, headers=other)
 
     assert fired.status_code == HTTP_OK

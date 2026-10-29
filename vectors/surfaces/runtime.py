@@ -1206,14 +1206,14 @@ TOKEN_READERS: Final[tuple[TokenReader, ...]] = (
     ),
     TokenReader(
         name="attendance_pep_read",
-        entry="attendance.auth.TokenBook.load, the token file of door-delegate",
+        entry="attendance.auth.TokenBook.load, the token file of chaperone-delegate",
         contract="contract 02 §3 rules 5 and 7",
-        prepare=_book(Principal.DOOR_DELEGATE),
+        prepare=_book(Principal.CHAPERONE_DELEGATE),
         returns=Returns.NOTHING,
         files=(*TEXT_FILES, *OTHER_FILES),
         refusal=TokenError,
         kinds=_BOOK_KINDS,
-        about=f"token file for {Principal.DOOR_DELEGATE.value} ",
+        about=f"token file for {Principal.CHAPERONE_DELEGATE.value} ",
         notes=(
             _NOTE_BOOK,
             _NOTE_NO_VALUE,
@@ -1811,7 +1811,7 @@ def _noticeboard_app(scratch: Path) -> FastAPI:
     )
     # No request of the surface gets to a page that reads a session.
     reader = SessionReader(
-        transport=cast("Transport", object()), token_file=scratch / "view-ro.token"
+        transport=cast("Transport", object()), token_file=scratch / "noticeboard.token"
     )
 
     return build_noticeboard_app(config, reader)

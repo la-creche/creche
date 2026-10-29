@@ -49,7 +49,7 @@ def test_the_check_validates_and_binds_nothing(board_prepared: BoardStack) -> No
     assert not is_listening(TcpAddress(port))
     # Invariant 13: the check says whether a key is set, never what it is.
     assert NOTICEBOARD_KEY not in child.output()
-    assert token_of("view-ro") not in child.output()
+    assert token_of("noticeboard") not in child.output()
 
 
 @pytest.mark.parametrize("key", [None, "", SHORT_KEY], ids=["missing", "empty", "short"])

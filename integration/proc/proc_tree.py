@@ -128,21 +128,21 @@ NO_ARGUMENTS_SHA256: Final = "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310
 #: Contract 02 §3.1, one token file per row.
 #:
 #: CONTRACT-QUESTION: contract 02 §3.1 names the last token `caregiver`.
-#: `attendance` reads `tokens/managerd.token`, and contract 05 §4.1 names the
+#: `attendance` reads `tokens/caregiver.token`, and contract 05 §4.1 names the
 #: principal `managerd`. Reading taken: the file name the host has, because a
 #: service that reads another name cannot start there. A change costs this
 #: one name.
 PRINCIPALS: Final = (
-    "door-delegate",
-    "door-dispatch",
+    "chaperone-delegate",
+    "chaperone-dispatch",
     "door-trigger",
-    "view-ro",
+    "noticeboard",
     "door-acp",
-    "managerd",
+    "caregiver",
 )
 
 #: The two tokens the chaperone reads as another user (contract 02 §3 rule 5).
-GROUP_READ_PRINCIPALS: Final = frozenset({"door-delegate", "door-dispatch"})
+GROUP_READ_PRINCIPALS: Final = frozenset({"chaperone-delegate", "chaperone-dispatch"})
 
 SECRET_MODE: Final = 0o600
 GROUP_READ_MODE: Final = 0o640
@@ -1047,8 +1047,8 @@ RS_ATTENDANCE_PROGRAM: Final = "chaperone-attendance"
 #: Each secret parameter of the effect half, and the principal of
 #: `attendance` whose token file holds its value (contract 02 §3.1).
 RS_ATTENDANCE_SECRETS: Final = {
-    "DELEGATE_TOKEN": "door-delegate",
-    "DISPATCH_TOKEN": "door-dispatch",
+    "DELEGATE_TOKEN": "chaperone-delegate",
+    "DISPATCH_TOKEN": "chaperone-dispatch",
 }
 
 #: The plugin of §12 that files a release request: an effect half and no

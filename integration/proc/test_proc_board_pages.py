@@ -6,7 +6,7 @@ HTML reader (`proc_html.py`). No scenario compares a whole page with a text.
 
 The sources are the ones contract 05 §8 names: the status documents, the
 validation report, the outcome records, the audit files and `attendance` as
-`view-ro`. The suite writes the files that `caregiver` and the chaperone
+`noticeboard`. The suite writes the files that `caregiver` and the chaperone
 write on the host. The session API left `attendance` in the phase 2 plan,
 row 21, so a page that reads a session shows a problem. The scenarios that
 read a session or an outcome record that `attendance` wrote left with it.
@@ -264,7 +264,7 @@ async def test_a_page_without_the_key_is_refused(board_alone: BoardStack, key: s
 async def test_no_page_shows_a_secret(board: BoardStack) -> None:
     """Invariant 13. No key and no token is on a page."""
     paths = ["/", f"/families/{FAMILY}", "/audit"]
-    secrets = [NOTICEBOARD_KEY, token_of("view-ro"), token_of("door-acp")]
+    secrets = [NOTICEBOARD_KEY, token_of("noticeboard"), token_of("door-acp")]
 
     async with board.client() as browser:
         for path in paths:

@@ -328,8 +328,8 @@ class FakeAttendance:
 
 
 def write_token(root: Path, value: str = "v" * 40) -> Path:
-    """The `view-ro` bearer file (contract 02 §3 rule 5)."""
-    path = root / "tokens" / "view-ro.token"
+    """The `noticeboard` bearer file (contract 02 §3 rule 5)."""
+    path = root / "tokens" / "noticeboard.token"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(value + "\n", encoding="utf-8")
     return path

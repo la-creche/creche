@@ -1,6 +1,6 @@
-"""`attendance` as the noticeboard reads it: principal `view-ro`.
+"""`attendance` as the noticeboard reads it: principal `noticeboard`.
 
-The noticeboard holds the weakest token in the system. `view-ro` reads
+The noticeboard holds the weakest token in the system. `noticeboard` reads
 every family and writes nothing, so this module offers two calls and no
 third: list the sessions of one family, and read one page of the
 transcript of one session. Nothing here can create, steer, stop or delete,
@@ -173,7 +173,7 @@ class TranscriptPage:
 
 @dataclass
 class SessionReader:
-    """The two calls `view-ro` may make."""
+    """The two calls `noticeboard` may make."""
 
     transport: Transport
     token_file: Path
@@ -257,7 +257,7 @@ class SessionReader:
         return self.transport.get(path, params, token)
 
     def _bearer(self) -> tuple[str, str]:
-        """The `view-ro` token, read once (contract 02 §3 rules 4 and 5)."""
+        """The `noticeboard` token, read once (contract 02 §3 rules 4 and 5)."""
         if self._token:
             return self._token, ""
 

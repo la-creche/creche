@@ -41,7 +41,7 @@ async def test_an_override_starts_attendance(
     stack.spawn_attendance()
     stack.await_attendance()
 
-    async with stack.attendance_client("door-dispatch") as api:
+    async with stack.attendance_client("chaperone-dispatch") as api:
         jobs = await api.post("/dispatch/jobs", json={"caller_family": FAMILY})
 
     assert jobs.status_code == httpx.codes.OK, jobs.text

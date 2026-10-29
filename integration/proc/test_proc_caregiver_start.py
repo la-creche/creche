@@ -114,7 +114,7 @@ def test_serve_refuses_a_bad_token_file(
     A `caregiver` that sent an empty bearer would ask `attendance` to accept
     one.
     """
-    replace_secret(caregiver_prepared.tree.token_file("managerd"), content)
+    replace_secret(caregiver_prepared.tree.token_file("caregiver"), content)
 
     done = caregiver_prepared.run_caregiver(*_serve(caregiver_prepared))
 

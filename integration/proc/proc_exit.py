@@ -18,7 +18,7 @@
       | MCP over stdio --> the upstream stand-in: echo, gated_echo
       | MCP over stdio --> the approval stand-in: approve
       | MCP over stdio --> chaperone-attendance --> POST /delegate on the
-      |                    socket of attendance, the token `door-delegate`
+      |                    socket of attendance, the token `chaperone-delegate`
       v
     chaperone-rs/audit.jsonl
 

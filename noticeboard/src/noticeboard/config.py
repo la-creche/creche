@@ -105,9 +105,9 @@ class Config:
 
     @property
     def view_token_file(self) -> Path:
-        """Contract 02 §3 rule 5: the `view-ro` bearer. `attendance` mints it;
+        """Contract 02 §3 rule 5: the `noticeboard` bearer. `attendance` mints it;
         this service only reads it."""
-        return self.state_root / "tokens" / "view-ro.token"
+        return self.state_root / "tokens" / "noticeboard.token"
 
 
 def from_env(environ: dict[str, str] | None = None) -> Config:

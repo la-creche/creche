@@ -60,7 +60,7 @@ WEBHOOK_TOKEN_SUFFIX: Final = ".token"
 
 #: Contract 02 §3.1's principal name for this service. It keeps the old
 #: name, because the host minted the token file under it.
-CAREGIVER_PRINCIPAL: Final = "managerd"
+CAREGIVER_PRINCIPAL: Final = "caregiver"
 
 STATUS_FILE: Final = "status.json"
 VALIDATION_FILE: Final = "validation.json"

@@ -13,7 +13,7 @@ from proc_stack import Stack
 from proc_tree import FAMILY, PRINCIPALS, SANDBOX, Tree, write_playpen_env, write_status
 
 SWITCH_PATH = "/internal/switch-sandbox"
-CAREGIVER = "managerd"
+CAREGIVER = "caregiver"
 NEXT_SANDBOX = "chat-s2"
 
 DRAIN = "drain"

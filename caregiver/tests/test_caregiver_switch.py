@@ -165,7 +165,7 @@ def test_an_answer_that_does_not_read_raises_switch_error(raw: bytes) -> None:
 
 
 def test_it_reads_the_token_from_a_file(tmp_path: Path) -> None:
-    path = tmp_path / "managerd.token"
+    path = tmp_path / "caregiver.token"
     path.write_text(f"{TOKEN}\n", encoding="utf-8")
     assert read_token(path) == TOKEN
 
@@ -178,14 +178,14 @@ def test_a_missing_token_file_raises(tmp_path: Path) -> None:
 def test_an_empty_token_file_raises(tmp_path: Path) -> None:
     """An empty key once turned a LAN admin surface into an open one. A
     caller that would send `Bearer ` fails before it sends anything."""
-    path = tmp_path / "managerd.token"
+    path = tmp_path / "caregiver.token"
     path.write_text("\n", encoding="utf-8")
     with pytest.raises(SwitchError):
         read_token(path)
 
 
 def test_a_token_file_that_is_not_utf8_raises(tmp_path: Path) -> None:
-    path = tmp_path / "managerd.token"
+    path = tmp_path / "caregiver.token"
     path.write_bytes(b"\xff\xfe\n")
     with pytest.raises(SwitchError):
         read_token(path)

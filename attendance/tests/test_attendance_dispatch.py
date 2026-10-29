@@ -34,7 +34,7 @@ from attendance_harness import make_config, wait_until, write_status
 from creche_vectors import meta_key, value_fields
 from fake_facade import FacadeFleet, FakeFacade, PromptMode
 
-DISPATCH_DOOR = Principal.DOOR_DISPATCH
+DISPATCH_DOOR = Principal.CHAPERONE_DISPATCH
 TRIGGER_DOOR = Principal.DOOR_TRIGGER
 CALLER = "scrum-lead"
 TARGET = "issue-worker"
