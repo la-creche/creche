@@ -55,8 +55,12 @@ while IFS= read -r line || [[ -n "$line" ]]; do
   if [[ -d "$dest/.git" ]]; then
     # ff-only: the corpus never carries local commits, so a diverged clone is
     # a problem to look at, not to merge away.
+    # One line only when the clone moves: the timer runs each minute, and a
+    # run that finds nothing new says nothing.
+    before="$(git -C "$dest" rev-parse --short HEAD 2>/dev/null)"
     if git -C "$dest" pull --ff-only --quiet; then
-      echo "updated $name -> $(git -C "$dest" rev-parse --short HEAD)"
+      after="$(git -C "$dest" rev-parse --short HEAD)"
+      [[ "$before" == "$after" ]] || echo "updated $name $before -> $after"
     else
       echo "FAILED pull $name" >&2; fails=$((fails + 1))
     fi
@@ -67,5 +71,4 @@ while IFS= read -r line || [[ -n "$line" ]]; do
   fi
 done < "$REPO_LIST"
 
-echo "corpus at $CORPUS_ROOT; provision new repos with:  ./bin/provision-library.sh <name> code"
 exit "$fails"

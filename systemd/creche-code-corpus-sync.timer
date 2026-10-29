@@ -1,10 +1,19 @@
+# Fires creche-code-corpus-sync.service every minute. USER timer, as the
+# operator.
+#
+# WHY A MINUTE. The platform family reads its repositories from these
+# clones and has no copy of its own, so a clone that lags is a family that
+# works on an old tree. A run that finds nothing new is one `git fetch` per
+# repository that transfers nothing, like the registry pull. systemd starts
+# no second run while one is still going.
 [Unit]
-Description=Periodic code corpus refresh
+Description=Refresh the code corpus clones every minute
 
 [Timer]
 OnBootSec=4min
-OnUnitActiveSec=1h
-RandomizedDelaySec=120
+OnUnitActiveSec=1min
+# The default would spread these over a minute, which is the whole interval.
+AccuracySec=10s
 
 [Install]
 WantedBy=timers.target
