@@ -53,7 +53,7 @@ def _summary() -> Summary:
         contracts="6 contracts satisfied",
         restarts="creche-chaperone.service",
         restore="automatic",
-        requested_by="agent-control",
+        requested_by="creche",
         manifest="6b84c0e5aa10",
     )
 

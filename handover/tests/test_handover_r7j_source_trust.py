@@ -1,8 +1,8 @@
 """What root reads a repository out of, and on what terms.
 
 The hazard this file pins: an `Installer.fetch` that runs git AS ROOT
-inside `/srv/agents/work/platform/<repo>`, which is the `agent-control`
-family's READ-WRITE mount (the registry's `families/agent-control/family.yaml`,
+inside `/srv/agents/work/platform/<repo>`, which is the `creche`
+family's READ-WRITE mount (the registry's `families/creche/family.yaml`,
 `docs/rework/spec.md` §4.4). A model in that sandbox writes `.git/config`,
 `.git/hooks` and `.git/objects/info/alternates` of all three checkouts. The
 SHA pins WHAT root builds. It does not pin what root's `git` process DOES
@@ -81,7 +81,7 @@ def hostile(tmp_path: Path) -> dict[str, object]:
     """
     markers = tmp_path / "markers"
     markers.mkdir()
-    source = tmp_path / "corpus" / "agent-control"
+    source = tmp_path / "corpus" / "creche"
     source.mkdir(parents=True)
     _git("init", "-q", "-b", "main", ".", cwd=source)
     _git("config", "user.email", "t@example.com", cwd=source)
@@ -150,9 +150,9 @@ def test_a_hostile_source_config_runs_nothing_when_root_fetches(
 ) -> None:
     """The whole fetch, real git, hostile source, and not one marker."""
     host = _real_host(tmp_path, Path(str(hostile["root"])))
-    into = tmp_path / "work" / "01" / "agent-control"
+    into = tmp_path / "work" / "01" / "creche"
 
-    Installer(host).fetch("agent-control", str(hostile["sha"]), into)
+    Installer(host).fetch("creche", str(hostile["sha"]), into)
 
     markers = Path(str(hostile["markers"]))
     left = sorted(one.name for one in markers.iterdir())
@@ -164,9 +164,9 @@ def test_the_fetched_tree_is_at_the_resolved_sha(
     hostile: dict[str, object], tmp_path: Path
 ) -> None:
     host = _real_host(tmp_path, Path(str(hostile["root"])))
-    into = tmp_path / "work" / "01" / "agent-control"
+    into = tmp_path / "work" / "01" / "creche"
 
-    Installer(host).fetch("agent-control", str(hostile["sha"]), into)
+    Installer(host).fetch("creche", str(hostile["sha"]), into)
 
     head = subprocess.run(
         [GIT, "rev-parse", "HEAD"], cwd=into, capture_output=True, text=True, check=True
@@ -187,7 +187,7 @@ def test_the_clone_does_not_inherit_the_sources_alternates(
     host = _real_host(tmp_path, Path(str(hostile["root"])))
 
     with pytest.raises(Refusal) as raised:
-        Installer(host).fetch("agent-control", str(hostile["sha"]), tmp_path / "work" / "x")
+        Installer(host).fetch("creche", str(hostile["sha"]), tmp_path / "work" / "x")
 
     assert raised.value.code is RefusalCode.SOURCE
     assert "alternates" in raised.value.detail
@@ -198,7 +198,7 @@ def test_the_clone_does_not_inherit_the_sources_alternates(
 
 def _corpus(tmp_path: Path) -> Path:
     root = tmp_path / "corpus"
-    repo = root / "agent-control"
+    repo = root / "creche"
     (repo / ".git").mkdir(parents=True)
 
     return root
@@ -207,14 +207,14 @@ def _corpus(tmp_path: Path) -> Path:
 def test_a_trusted_source_passes(tmp_path: Path) -> None:
     root = _corpus(tmp_path)
 
-    require_trusted("agent-control", root / "agent-control", os.getuid(), os.getgid())
+    require_trusted("creche", root / "creche", os.getuid(), os.getgid())
 
 
 def test_a_source_owned_by_a_third_account_is_refused(tmp_path: Path) -> None:
     root = _corpus(tmp_path)
 
     with pytest.raises(Refusal) as raised:
-        require_trusted("agent-control", root / "agent-control", os.getuid() + 1, os.getgid())
+        require_trusted("creche", root / "creche", os.getuid() + 1, os.getgid())
 
     assert raised.value.code is RefusalCode.SOURCE
     assert "owner" in raised.value.detail
@@ -222,11 +222,11 @@ def test_a_source_owned_by_a_third_account_is_refused(tmp_path: Path) -> None:
 
 def test_a_world_writable_source_is_refused(tmp_path: Path) -> None:
     root = _corpus(tmp_path)
-    repo = root / "agent-control"
+    repo = root / "creche"
     repo.chmod(0o777)
 
     with pytest.raises(Refusal) as raised:
-        require_trusted("agent-control", repo, os.getuid(), os.getgid())
+        require_trusted("creche", repo, os.getuid(), os.getgid())
 
     assert raised.value.code is RefusalCode.SOURCE
     assert "other" in raised.value.detail
@@ -237,41 +237,41 @@ def test_a_group_writable_source_passes_only_for_the_owners_own_group(tmp_path: 
     on the host today, and no sandbox user is in that group. Group write is therefore allowed for
     the owner's OWN group and for no other."""
     root = _corpus(tmp_path)
-    repo = root / "agent-control"
+    repo = root / "creche"
     repo.chmod(0o775)
 
-    require_trusted("agent-control", repo, os.getuid(), os.getgid())
+    require_trusted("creche", repo, os.getuid(), os.getgid())
 
     with pytest.raises(Refusal) as raised:
-        require_trusted("agent-control", repo, os.getuid(), os.getgid() + 1)
+        require_trusted("creche", repo, os.getuid(), os.getgid() + 1)
 
     assert "group" in raised.value.detail
 
 
 def test_a_world_writable_git_directory_is_refused(tmp_path: Path) -> None:
     root = _corpus(tmp_path)
-    repo = root / "agent-control"
+    repo = root / "creche"
     (repo / ".git").chmod(0o777)
 
     with pytest.raises(Refusal) as raised:
-        require_trusted("agent-control", repo, os.getuid(), os.getgid())
+        require_trusted("creche", repo, os.getuid(), os.getgid())
 
     assert ".git" in raised.value.detail
 
 
 def test_a_symlinked_source_is_refused(tmp_path: Path) -> None:
     root = _corpus(tmp_path)
-    (root / "agent-mcp").symlink_to(root / "agent-control")
+    (root / "mcp").symlink_to(root / "creche")
 
     with pytest.raises(Refusal) as raised:
-        require_trusted("agent-mcp", root / "agent-mcp", os.getuid(), os.getgid())
+        require_trusted("mcp", root / "mcp", os.getuid(), os.getgid())
 
     assert raised.value.code is RefusalCode.SOURCE
 
 
 def test_a_missing_source_is_refused(tmp_path: Path) -> None:
     with pytest.raises(Refusal) as raised:
-        require_trusted("agent-mcp", tmp_path / "corpus" / "agent-mcp", os.getuid(), os.getgid())
+        require_trusted("mcp", tmp_path / "corpus" / "mcp", os.getuid(), os.getgid())
 
     assert raised.value.code is RefusalCode.SOURCE
 
@@ -280,12 +280,12 @@ def test_a_git_file_instead_of_a_git_directory_is_refused(tmp_path: Path) -> Non
     """A `.git` FILE names a gitdir somewhere else, and that directory is not
     the one this check just read."""
     root = tmp_path / "corpus"
-    repo = root / "agent-control"
+    repo = root / "creche"
     repo.mkdir(parents=True)
     (repo / ".git").write_text("gitdir: /tmp/elsewhere\n", encoding="utf-8")
 
     with pytest.raises(Refusal) as raised:
-        require_trusted("agent-control", repo, os.getuid(), os.getgid())
+        require_trusted("creche", repo, os.getuid(), os.getgid())
 
     assert raised.value.code is RefusalCode.SOURCE
 
@@ -294,10 +294,10 @@ def test_the_refusal_names_no_path_it_did_not_validate(tmp_path: Path) -> None:
     """§3.2 rule 4: a refusal's detail is built from the component NAME and
     fixed words, never from a path an attacker chose."""
     root = _corpus(tmp_path)
-    (root / "agent-control").chmod(0o777)
+    (root / "creche").chmod(0o777)
 
     with pytest.raises(Refusal) as raised:
-        require_trusted("agent-control", root / "agent-control", os.getuid(), os.getgid())
+        require_trusted("creche", root / "creche", os.getuid(), os.getgid())
 
     assert str(tmp_path) not in raised.value.detail
 
@@ -308,11 +308,11 @@ def test_the_refusal_names_no_path_it_did_not_validate(tmp_path: Path) -> None:
 def test_root_starts_no_child_in_a_source_it_refuses(tmp_path: Path) -> None:
     run = FakeRun()
     host = fake_host(tmp_path, run)
-    (host.source_root / "agent-control" / ".git").mkdir(parents=True, exist_ok=True)
-    (host.source_root / "agent-control").chmod(0o777)
+    (host.source_root / "creche" / ".git").mkdir(parents=True, exist_ok=True)
+    (host.source_root / "creche").chmod(0o777)
 
     with pytest.raises(Refusal):
-        Installer(host).fetch("agent-control", "0" * 40, tmp_path / "work" / "x")
+        Installer(host).fetch("creche", "0" * 40, tmp_path / "work" / "x")
 
     assert run.seen == []
 
@@ -321,13 +321,13 @@ def test_root_starts_no_child_in_a_source_it_refuses(tmp_path: Path) -> None:
 
 
 def test_the_ground_names_every_setting_that_can_run_a_command() -> None:
-    words = git_ground(Path("/srv/agents/code/agent-control"))
+    words = git_ground(Path("/srv/agents/code/creche"))
     text = " ".join(words)
 
-    assert "safe.directory=/srv/agents/code/agent-control" in text
+    assert "safe.directory=/srv/agents/code/creche" in text
     # Measured: `-c safe.directory=<worktree>` unlocks `cat-file` and does
     # NOT unlock `clone --local`, which checks the GITDIR.
-    assert "safe.directory=/srv/agents/code/agent-control/.git" in text
+    assert "safe.directory=/srv/agents/code/creche/.git" in text
     for setting in (
         "core.hooksPath=/dev/null",
         "core.fsmonitor=false",
@@ -353,9 +353,9 @@ def test_every_git_call_of_a_fetch_carries_the_ground(tmp_path: Path) -> None:
     git = GitFake(lambda directory, _: None)
     run = FakeRun(dynamic=git)
     host = fake_host(tmp_path, run)
-    (host.source_root / "agent-control" / ".git").mkdir(parents=True, exist_ok=True)
+    (host.source_root / "creche" / ".git").mkdir(parents=True, exist_ok=True)
 
-    Installer(host).fetch("agent-control", "a" * 40, tmp_path / "work" / "x")
+    Installer(host).fetch("creche", "a" * 40, tmp_path / "work" / "x")
 
     assert run.seen, "the fetch started no child at all"
     for command in run.seen:
@@ -373,7 +373,7 @@ def test_a_sha_the_corpus_does_not_hold_names_the_command_that_fixes_it(
     host = _real_host(tmp_path, Path(str(hostile["root"])))
 
     with pytest.raises(StepFailed) as raised:
-        Installer(host).fetch("agent-control", "b" * 40, tmp_path / "work" / "x")
+        Installer(host).fetch("creche", "b" * 40, tmp_path / "work" / "x")
 
     assert REFRESH_COMMAND in raised.value.detail
 
@@ -381,7 +381,7 @@ def test_a_sha_the_corpus_does_not_hold_names_the_command_that_fixes_it(
 def test_the_corpus_root_is_the_hosts_own_clones() -> None:
     """Contract 01 §5.5 rule 6's platform mirror: the operator's OWN clones, which
     every sandbox sees read-only. NOT `/srv/agents/work/platform`, which is
-    the `agent-control` family's rw mount."""
+    the `creche` family's rw mount."""
     assert CORPUS_ROOT == "/srv/agents/code"
     assert Host(run=lambda _: Result(0)).source_root == Path(CORPUS_ROOT)
 
@@ -429,6 +429,6 @@ def test_the_source_directory_mode_helper_reads_the_real_bits(tmp_path: Path) ->
     """A guard on the guard: `require_trusted` must read `lstat`, so a
     symlink is the link's own mode and not its target's."""
     root = _corpus(tmp_path)
-    repo = root / "agent-control"
+    repo = root / "creche"
 
     assert stat.S_ISDIR(os.lstat(repo).st_mode)

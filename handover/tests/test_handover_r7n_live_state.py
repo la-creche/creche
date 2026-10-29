@@ -92,9 +92,9 @@ def _run_git(argv: list[str], cwd: Path) -> str | None:
 
 
 def _make_clone(tmp_path: Path, *, lock: str = "one\n") -> Path:
-    """A repository shaped like agent-control: a `noticeboard/` subtree, a
+    """A repository shaped like creche: a `noticeboard/` subtree, a
     `uv.lock` beside it, and a file under neither."""
-    repo = tmp_path / "agent-control"
+    repo = tmp_path / "creche"
     (repo / SUBTREE).mkdir(parents=True)
     repo.chmod(0o755)
     (repo / SUBTREE / "component.yaml").write_text("name: noticeboard\n", encoding="utf-8")
@@ -240,7 +240,7 @@ def test_a_planted_tag_in_the_clone_stops_at_the_predicate(tmp_path: Path) -> No
 
 
 def _refs(*names: str) -> FakeApi:
-    base = "/repos/example-owner/agent-control/git/matching-refs/tags/noticeboard-v"
+    base = "/repos/example-owner/creche/git/matching-refs/tags/noticeboard-v"
 
     return FakeApi({base: [{"ref": f"refs/tags/{one}"} for one in names]})
 
@@ -251,22 +251,20 @@ def test_root_reads_the_newest_matching_ref(tmp_path: Path) -> None:
     assert newest_version(
         _refs("noticeboard-v0.1.0", "noticeboard-v0.10.0", "noticeboard-v0.9.0"),
         "noticeboard",
-        "agent-control",
+        "creche",
     )
 
 
 def test_a_component_with_no_tag_answers_nothing() -> None:
     """A component with no tag at all is not a failure: `latest` names
     nothing and `resolve` refuses the request with its own reason."""
-    assert newest_version(_refs(), "noticeboard", "agent-control") is None
+    assert newest_version(_refs(), "noticeboard", "creche") is None
 
 
 def test_a_ref_that_is_not_this_components_tag_is_ignored() -> None:
     """The repository's own history holds `v*` and `schema-v*`, which
     contract 06 §2 does not reuse."""
-    assert (
-        newest_version(_refs("v0.13.5", "schema-v0.11.3"), "noticeboard", "agent-control") is None
-    )
+    assert newest_version(_refs("v0.13.5", "schema-v0.11.3"), "noticeboard", "creche") is None
 
 
 def test_a_full_page_of_refs_is_refused_rather_than_guessed() -> None:
@@ -276,7 +274,7 @@ def test_a_full_page_of_refs_is_refused_rather_than_guessed() -> None:
     many = _refs(*[f"noticeboard-v0.0.{index}" for index in range(REFS_MAX)])
 
     with pytest.raises(Refusal) as raised:
-        newest_version(many, "noticeboard", "agent-control")
+        newest_version(many, "noticeboard", "creche")
 
     assert raised.value.code is RefusalCode.STATE
     assert "one page" in raised.value.detail
@@ -291,7 +289,7 @@ def test_an_unreachable_api_is_a_refusal_and_never_an_empty_answer() -> None:
         raise OSError("no route to host")
 
     with pytest.raises(Refusal) as raised:
-        newest_version(unreachable, "noticeboard", "agent-control")
+        newest_version(unreachable, "noticeboard", "creche")
 
     assert raised.value.code is RefusalCode.STATE
 

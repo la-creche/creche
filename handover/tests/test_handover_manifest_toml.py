@@ -657,7 +657,7 @@ def _release(tmp_path: Path, markup: Markup) -> Path:
         host=fake_host(tmp_path, run),
         transport=grant_transport(),
         readers=fake_readers(latest={"caregiver": NEW_VERSION}),
-        api=green_api("agent-control", f"caregiver-v{NEW_VERSION}", SHA_OF["caregiver"]),
+        api=green_api("creche", f"caregiver-v{NEW_VERSION}", SHA_OF["caregiver"]),
     )
     stamp_tree(components, "caregiver", LIVE_VERSION)
 

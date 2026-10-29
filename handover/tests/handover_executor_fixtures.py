@@ -260,7 +260,7 @@ def request_body(
     *,
     request_id: str = REQUEST_ID,
     kind: str = "release",
-    requested_by: str = "agent-control",
+    requested_by: str = "creche",
 ) -> dict[str, object]:
     """§2.3's seven fields, all valid. A test breaks exactly one."""
     return {

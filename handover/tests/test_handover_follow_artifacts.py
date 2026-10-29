@@ -208,7 +208,7 @@ def _make_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Host:
     corpus = tmp_path / "corpus"
     corpus.mkdir()
     corpus.chmod(0o755)
-    for repo in (Repo.AGENT_CONTROL, Repo.AGENT_MCP):
+    for repo in (Repo.CRECHE, Repo.MCP):
         clone = corpus / str(repo)
         clone.mkdir()
         clone.chmod(0o755)
@@ -563,13 +563,13 @@ def test_the_follower_removes_each_tag_below_the_live_version(
     for version in (OLDER, LIVE, NEXT):
         _write_tag(host.tag_dir(BOARD, version))
 
-    control = host.store / str(Repo.AGENT_CONTROL)
+    control = host.store / str(Repo.CRECHE)
     (control / "notes").mkdir()
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     (elsewhere / "kept").write_bytes(b"x")
     (control / f"{BOARD}-v0.0.8").symlink_to(elsewhere)
-    (host.store / str(Repo.AGENT_MCP) / f"{BOARD}-v0.0.1").mkdir(parents=True)
+    (host.store / str(Repo.MCP) / f"{BOARD}-v0.0.1").mkdir(parents=True)
     capsys.readouterr()
 
     host.follow(BOARD)
@@ -578,7 +578,7 @@ def test_the_follower_removes_each_tag_below_the_live_version(
         [f"{BOARD}-v0.0.8", f"{BOARD}-v{LIVE}", f"{BOARD}-v{NEXT}", "notes"]
     )
     assert (elsewhere / "kept").exists()
-    assert (host.store / str(Repo.AGENT_MCP) / f"{BOARD}-v0.0.1").is_dir()
+    assert (host.store / str(Repo.MCP) / f"{BOARD}-v0.0.1").is_dir()
     note = f"note: removed the artifacts of {BOARD}-v{OLDER} from the store"
     assert capsys.readouterr().err.splitlines() == [note]
 
@@ -596,12 +596,12 @@ def test_a_tag_directory_that_holds_a_directory_stays(host: _Host) -> None:
 
 def test_a_store_that_is_a_link_is_not_read(host: _Host, tmp_path: Path) -> None:
     elsewhere = tmp_path / "elsewhere"
-    _write_tag(elsewhere / str(Repo.AGENT_CONTROL) / f"{BOARD}-v{OLDER}")
+    _write_tag(elsewhere / str(Repo.CRECHE) / f"{BOARD}-v{OLDER}")
     host.store.parent.mkdir(parents=True)
     host.store.symlink_to(elsewhere)
 
     assert prune_artifacts(host.store, {BOARD: LIVE}) == ()
-    assert (elsewhere / str(Repo.AGENT_CONTROL) / f"{BOARD}-v{OLDER}").is_dir()
+    assert (elsewhere / str(Repo.CRECHE) / f"{BOARD}-v{OLDER}").is_dir()
 
 
 def test_the_prune_as_root_removes_nothing(host: _Host, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -620,7 +620,7 @@ def test_the_store_directories_are_the_operators_alone(host: _Host) -> None:
 
     host.follow(BOARD)
 
-    for path in (host.store, host.store / str(Repo.AGENT_CONTROL), host.tag_dir(BOARD, NEXT)):
+    for path in (host.store, host.store / str(Repo.CRECHE), host.tag_dir(BOARD, NEXT)):
         assert os.lstat(path).st_mode & 0o777 == 0o700, path
 
 

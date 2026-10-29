@@ -8,7 +8,7 @@ reads a second repository's declarations.
 | `/opt/mcp` `root:root 0755`, EMPTY | the directory, and nothing under it |
 | no `/var/lib/mcp` | the root `0755`, empty, as the visit makes it |
 | eleven `mcp/<name>/server.yaml` | **the eleven declarations in TOML, comments removed** |
-| `mcp-servers-v0.1.0` on agent-mcp `a1b2c3d` | one tag, one SHA, that tag |
+| `mcp-servers-v0.1.0` on mcp `a1b2c3d` | one tag, one SHA, that tag |
 | `caregiver`'s `mcp-servers=latest` request | the same body, alone in the spool |
 | no `/opt/components/mcp-servers` | `handover` and `chaperone` only |
 
@@ -26,14 +26,14 @@ step 8 when broken, with nothing swapped.
    the pair (contract 01b §4.3), agreed by both, and an undeclared
    duplicate is still refused (§6 row 8).
 3. A `source: agent-mcp` file names no `install.ref`: the component tag
-   is every such server's version (§3.3), and agent-mcp's own release
+   is every such server's version (§3.3), and mcp's own release
    tags are a namespace the release never deploys.
 
 Two more hold in this package: a refusal names its server, and a FIRST
 install's restore takes the new trees away.
 
 **What is faked, and where it stands.** The GitHub API (`green_api`), the
-agent-mcp source fetch (`GitFake`), `uv` and `curl` (`McpFake`),
+mcp source fetch (`GitFake`), `uv` and `curl` (`McpFake`),
 `systemctl` (a recorded argv) and the phone (a granting transport). Every
 one is an edge the design already puts a fake at. Nothing else is: the
 spool, the request parser, the resolver, the registry reader and the
@@ -41,7 +41,7 @@ per-server build are the real code.
 
 **What this rehearsal cannot see**, and the real host will:
 
-1. A real `uv sync --frozen` of agent-mcp as `mcp-<name>`. `McpFake`
+1. A real `uv sync --frozen` of mcp as `mcp-<name>`. `McpFake`
    writes the console script the build would leave and resolves nothing,
    so a distribution that will not install is invisible here.
 2. A real `runuser`. `As.MCP` is recorded, never executed, so a missing
@@ -98,19 +98,19 @@ pytestmark = pytest.mark.slow
 
 COMPONENT: Final = "mcp-servers"
 
-#: What `allocate-tags.sh`'s first run in agent-mcp made: one component,
+#: What `allocate-tags.sh`'s first run in mcp made: one component,
 #: one version, one commit.
 FIRST_VERSION: Final = "0.1.0"
 TAG: Final = f"{COMPONENT}-v{FIRST_VERSION}"
 
-#: agent-mcp `a1b2c3d`, the commit `component.yaml` merged at, padded to
+#: mcp `a1b2c3d`, the commit `component.yaml` merged at, padded to
 #: the 40 lowercase hex the manifest's pattern wants.
 AGENT_MCP_SHA: Final = "a1b2c3d" + "0" * 33
 
 #: The id of the one request in the spool.
 CAREGIVER_ID: Final = "01K5J8M2Q7V3X9R4T6N0B8C2DJ"
 
-#: The registry's `mcp/` directory, copied out of agent-registry's `main`
+#: The registry's `mcp/` directory, copied out of registry's `main`
 #: on 2026-09-22. Eleven declarations, unedited.
 REGISTRY_FIXTURE: Final = Path(__file__).resolve().parent / "handover_mce_registry"
 
@@ -131,8 +131,8 @@ DECLARED: Final = (
 #: The name `ha` and `ha-read` both bind. It is rule 2's whole subject.
 SHARED_SECRET: Final = "ha_read_token"
 
-#: The six servers whose `install.source` is `agent-mcp`. They declare no
-#: version at all (§3.3): `ref: v0.4.6` is agent-mcp's OWN release tag,
+#: The six servers whose `install.source` is `mcp`. They declare no
+#: version at all (§3.3): `ref: v0.4.6` is mcp's OWN release tag,
 #: which this release cannot deploy.
 AGENT_MCP_SERVERS: Final = (
     "board-lead",
@@ -144,7 +144,7 @@ AGENT_MCP_SERVERS: Final = (
 )
 DECLARED_REF: Final = "v0.4.6"
 
-#: The line of an `agent-mcp` server file that names its source.
+#: The line of an `mcp` server file that names its source.
 AGENT_MCP_SOURCE: Final = 'install.source = "agent-mcp"'
 
 #: The two servers whose fence is contract 01b §7.2's composite argument.
@@ -201,7 +201,7 @@ ENTRYPOINTS: Final = {
     "vikunja-networking": "vikunja-mcp",
 }
 
-#: `component.yaml`'s own build line, as agent-mcp merged it at `a1b2c3d`:
+#: `component.yaml`'s own build line, as mcp merged it at `a1b2c3d`:
 #: one `uv sync --frozen` at the repository root.
 BUILD_LINE: Final = 'build:\n  - ["/usr/local/bin/uv", "sync", "--frozen"]\ninstall:'
 
@@ -278,10 +278,10 @@ class Bench:
 
 
 def _registry_tree(corpus: Path) -> Path:
-    """The agent-registry checkout root reads: the REAL declarations, a
+    """The registry checkout root reads: the REAL declarations, a
     committed closure beside each `pypi` one, and the two `github-release`
     pins pointed at this bench's own asset."""
-    registry = corpus / "agent-registry"
+    registry = corpus / "registry"
     shutil.copytree(REGISTRY_FIXTURE / REGISTRY_MCP_DIR, registry / REGISTRY_MCP_DIR)
     for name, (requirement, hashes) in LOCK_PINS.items():
         (registry / REGISTRY_MCP_DIR / name / "install.lock").write_text(
@@ -329,7 +329,7 @@ def _asset_url() -> str:
 
 
 def _manifest(components: Path) -> str:
-    """agent-mcp's own `component.yaml` at `a1b2c3d`, with its install path
+    """mcp's own `component.yaml` at `a1b2c3d`, with its install path
     under the bench: `kind: venv`, `unit: null`, one `uv sync --frozen`,
     and a verify hook that runs as root."""
     text = manifest_text(COMPONENT).replace("/opt/components", str(components))
@@ -400,7 +400,7 @@ def _entrypoint_for(command: Command) -> str:
     """Which console script `McpFake` leaves behind. One fake serves one
     build and this release runs eleven, so the name is read off the staged
     tree's own path — in the argv for a `pypi` build, in the environment
-    for an `agent-mcp` one, whose argv is `uv sync --frozen` and holds no
+    for an `mcp` one, whose argv is `uv sync --frozen` and holds no
     path at all.
     """
     words = [*command.argv, *(value for _name, value in command.env)]
@@ -452,7 +452,7 @@ def bench(tmp_path: Path) -> Bench:
             readers=fake_readers(
                 latest={COMPONENT: FIRST_VERSION}, known={COMPONENT: AGENT_MCP_SHA}
             ),
-            api=green_api("agent-mcp", TAG, AGENT_MCP_SHA),
+            api=green_api("mcp", TAG, AGENT_MCP_SHA),
         ),
         run=run,
         components=components,
@@ -506,8 +506,8 @@ def test_rule_1_the_composite_fence_contract_01b_defines_parses(
     01b §7.2 is a composite argument: `arg: owner/repo` compares two
     arguments joined by
     `/` as one string, because matching `repo` alone lets
-    `someone-else/agent-control` pass a fence meant for
-    `<owner>/agent-control`. The PEP implements it, and contract 01b §8.2's
+    `someone-else/creche` pass a fence meant for
+    `<owner>/creche`. The PEP implements it, and contract 01b §8.2's
     own example uses it.
 
     Both files that carry `docs/rework/spec.md` §4.4's github split declare
@@ -562,7 +562,7 @@ def test_rule_3_no_agent_mcp_server_names_a_version_of_its_own(
 ) -> None:
     """Rule 3, contract 01b §3.3.
 
-    agent-mcp carries two tag namespaces: its own release tags, such as
+    mcp carries two tag namespaces: its own release tags, such as
     `v0.4.6`, which `release.yml` moves on every merge, and the COMPONENT
     tag this release deploys, `mcp-servers-v0.1.0`, which the tag
     workflow makes. A per-server ref would compare across them. So the six
@@ -626,7 +626,7 @@ def test_the_whole_registry_installs(
     with both registry pull requests merged.
 
     Eleven servers install: three `pypi` from their committed closures,
-    two `github-release` from one hash-pinned asset, six `agent-mcp` from
+    two `github-release` from one hash-pinned asset, six `mcp` from
     the checkout this release already fetched. The component's own tree
     lands under the install root.
     """
@@ -653,8 +653,8 @@ def test_the_seven_rows_the_operator_reads_before_the_tap(bench: Bench) -> None:
 
     `review` is `safe` and not `suspect`, unlike `noticeboard`'s first release:
     root read no manifest at an unverified commit here. The unstamped
-    agent-control trees land under `manual` instead, because an
-    `mcp-servers` release fetches agent-mcp alone and root then has no
+    creche trees land under `manual` instead, because an
+    `mcp-servers` release fetches mcp alone and root then has no
     clone of theirs to read (contract 06 §10.2's fifth row, the other
     branch).
     """
@@ -707,9 +707,9 @@ def test_the_next_tag_needs_no_registry_edit(bench: Bench) -> None:
 
     Pinning the six at `mcp-servers-v0.1.0` would have worked once.
     `caregiver` files `{"mcp-servers": "latest"}` unattended, so the day
-    agent-mcp carries `mcp-servers-v0.1.1` the same request would refuse
+    mcp carries `mcp-servers-v0.1.1` the same request would refuse
     again, on the same line, until somebody edited six files in
-    agent-registry. A pin that has to be rewritten on every release of
+    registry. A pin that has to be rewritten on every release of
     the thing it pins is not a pin.
 
     With no version declared, the next tag releases itself.
@@ -718,7 +718,7 @@ def test_the_next_tag_needs_no_registry_edit(bench: Bench) -> None:
     bench.wiring = replace(
         bench.wiring,
         readers=fake_readers(latest={COMPONENT: "0.1.1"}, known={COMPONENT: AGENT_MCP_SHA}),
-        api=green_api("agent-mcp", next_tag, AGENT_MCP_SHA),
+        api=green_api("mcp", next_tag, AGENT_MCP_SHA),
     )
 
     result = _release(bench)
@@ -783,7 +783,7 @@ def test_the_next_release_keeps_what_the_server_wrote(bench: Bench) -> None:
     bench.wiring = replace(
         bench.wiring,
         readers=fake_readers(latest={COMPONENT: NEXT_VERSION}, known={COMPONENT: AGENT_MCP_SHA}),
-        api=green_api("agent-mcp", f"{COMPONENT}-v{NEXT_VERSION}", AGENT_MCP_SHA),
+        api=green_api("mcp", f"{COMPONENT}-v{NEXT_VERSION}", AGENT_MCP_SHA),
     )
 
     result = _release(bench, SECOND_ID)
@@ -865,7 +865,7 @@ def test_the_mcp_root_and_the_work_root_stay_traversable_under_the_umask(
     directories decide whether a build child can run at all: the MCP root
     every server traverses, each staged tree, and `<work root>/<request
     id>/`, which holds both the closure a `pypi` child reads and the
-    checkout an `agent-mcp` child runs in.
+    checkout an `mcp` child runs in.
 
     `stage7-releases.md` §4.2 still says the third one is not opened. It
     is: `install.fetch` calls `normalize_dir(into.parent)`.

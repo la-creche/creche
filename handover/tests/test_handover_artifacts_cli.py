@@ -144,7 +144,7 @@ def test_the_limits_and_the_names_of_the_catalog() -> None:
     assert BINARY_TARGET == "x86_64-unknown-linux-musl"
     assert BINARY_INSTALL_ENV == "CARGO_INSTALL_ROOT"
     assert MAIN_BRANCH == "main"
-    assert RELEASE_WORKFLOW == {Repo.AGENT_CONTROL: "release.yml", Repo.CHAPERONE: "release.yml"}
+    assert RELEASE_WORKFLOW == {Repo.CRECHE: "release.yml", Repo.CHAPERONE: "release.yml"}
     assert ARCHIVE_MAX_BYTES == 256 * 1024 * 1024
     assert BUNDLE_MAX_BYTES == 1024 * 1024
     assert ARCHIVE_MAX_MEMBERS == 64
@@ -218,7 +218,7 @@ def test_a_download_url_refuses_each_part_that_is_not_plain(
 
 
 def test_the_policy_names_the_workflow_of_the_map_and_the_main_ref() -> None:
-    policy = signer_policy(Repo.AGENT_CONTROL, OWNER, HOSTED, COMMIT)
+    policy = signer_policy(Repo.CRECHE, OWNER, HOSTED, COMMIT)
 
     assert (policy.owner, policy.repo, policy.workflow, policy.commit) == (
         OWNER,
@@ -232,7 +232,7 @@ def test_the_policy_names_the_workflow_of_the_map_and_the_main_ref() -> None:
     )
 
 
-@pytest.mark.parametrize("repo", [Repo.AGENT_MCP, Repo.AGENT_REGISTRY])
+@pytest.mark.parametrize("repo", [Repo.MCP, Repo.REGISTRY])
 def test_a_repository_with_no_release_workflow_has_no_policy(repo: Repo) -> None:
     refusal = _refusal(lambda: signer_policy(repo, OWNER, HOSTED, COMMIT))
 
@@ -265,14 +265,14 @@ def test_a_repository_with_no_release_workflow_has_no_policy(repo: Repo) -> None
     ],
 )
 def test_each_refusal_of_a_signer_policy(owner: str, name: str, commit: str, subject: str) -> None:
-    refusal = _refusal(lambda: signer_policy(Repo.AGENT_CONTROL, owner, name, commit))
+    refusal = _refusal(lambda: signer_policy(Repo.CRECHE, owner, name, commit))
 
     assert refusal.code is RefusalCode.REQUEST
     assert refusal.subject == subject
 
 
 def test_the_longest_owner_and_name_make_a_policy() -> None:
-    policy = signer_policy(Repo.AGENT_CONTROL, "o" * 39, "c" * 100, COMMIT)
+    policy = signer_policy(Repo.CRECHE, "o" * 39, "c" * 100, COMMIT)
 
     assert policy.repository() == f"{'o' * 39}/{'c' * 100}"
 
@@ -291,7 +291,7 @@ def test_a_copy_of_a_policy_holds_the_rules_of_the_maker(
 ) -> None:
     """`dataclasses.replace` makes a policy through the type, and the type
     checks each field."""
-    policy = signer_policy(Repo.AGENT_CONTROL, OWNER, HOSTED, COMMIT)
+    policy = signer_policy(Repo.CRECHE, OWNER, HOSTED, COMMIT)
 
     refusal = _refusal(lambda: replace(policy, made=artifacts._MADE, **change))
 
@@ -300,7 +300,7 @@ def test_a_copy_of_a_policy_holds_the_rules_of_the_maker(
 
 
 def test_a_valid_copy_of_a_policy_is_a_policy() -> None:
-    policy = signer_policy(Repo.AGENT_CONTROL, OWNER, HOSTED, COMMIT)
+    policy = signer_policy(Repo.CRECHE, OWNER, HOSTED, COMMIT)
     other = "f" * 40
 
     assert replace(policy, made=artifacts._MADE, _commit=other).commit == other
@@ -309,14 +309,14 @@ def test_a_valid_copy_of_a_policy_is_a_policy() -> None:
 @pytest.mark.parametrize("made", [None, artifacts._Made()])
 def test_only_the_maker_makes_a_policy(made: object) -> None:
     """The private value of the module is the one key to the type."""
-    policy = signer_policy(Repo.AGENT_CONTROL, OWNER, HOSTED, COMMIT)
+    policy = signer_policy(Repo.CRECHE, OWNER, HOSTED, COMMIT)
 
     with pytest.raises(TypeError):
         replace(policy, made=made)
 
 
 def test_the_words_without_a_trust_root() -> None:
-    policy = signer_policy(Repo.AGENT_CONTROL, OWNER, HOSTED, COMMIT)
+    policy = signer_policy(Repo.CRECHE, OWNER, HOSTED, COMMIT)
 
     assert verify_words(policy, ARCHIVE, BUNDLE, None) == WORDS
 
@@ -324,7 +324,7 @@ def test_the_words_without_a_trust_root() -> None:
 def test_the_words_with_a_trust_root() -> None:
     """The two words of the trust root follow the bundle, as the probe ran
     them."""
-    policy = signer_policy(Repo.AGENT_CONTROL, OWNER, HOSTED, COMMIT)
+    policy = signer_policy(Repo.CRECHE, OWNER, HOSTED, COMMIT)
 
     assert verify_words(policy, ARCHIVE, BUNDLE, TRUSTED_ROOT) == (
         *WORDS[:3],
@@ -354,7 +354,7 @@ def test_the_words_with_a_trust_root() -> None:
 def test_the_words_refuse_a_path_that_is_not_absolute_or_not_one_line(
     archive: str, bundle: str, trusted_root: str | None, subject: str
 ) -> None:
-    policy = signer_policy(Repo.AGENT_CONTROL, OWNER, HOSTED, COMMIT)
+    policy = signer_policy(Repo.CRECHE, OWNER, HOSTED, COMMIT)
 
     refusal = _refusal(lambda: verify_words(policy, archive, bundle, trusted_root))
 
@@ -367,7 +367,7 @@ def _words_argv(*extra: str) -> list[str]:
         "artifacts",
         "--verify-words",
         "--repo",
-        "agent-control",
+        "creche",
         "--github-repository",
         f"{OWNER}/{HOSTED}",
         "--sha",
@@ -392,7 +392,7 @@ def test_the_command_prints_one_word_on_each_line(capsys: pytest.CaptureFixture[
 @pytest.mark.parametrize(
     ("argv", "check"),
     [
-        (["--repo", "agent-mcp"], "catalog"),
+        (["--repo", "mcp"], "catalog"),
         (["--github-repository", OWNER], "request"),
         (["--github-repository", f"{OWNER}/{HOSTED}/x"], "request"),
         (["--sha", COMMIT.upper()], "request"),
@@ -413,7 +413,7 @@ def test_the_command_refuses_what_the_policy_and_the_words_refuse(
 
 
 def test_no_row_with_the_catalog_of_today(capsys: pytest.CaptureFixture[str]) -> None:
-    assert _out(capsys, "artifacts", "--repo", "agent-control", "--root", str(REPO_ROOT)) == (
+    assert _out(capsys, "artifacts", "--repo", "creche", "--root", str(REPO_ROOT)) == (
         EXIT_OK,
         [],
     )
@@ -451,7 +451,7 @@ def test_one_row_with_a_catalog_that_holds_one_binary_row(
 ) -> None:
     root = _binary_root(tmp_path, monkeypatch)
 
-    code, lines = _out(capsys, "artifacts", "--repo", "agent-control", "--root", str(root))
+    code, lines = _out(capsys, "artifacts", "--repo", "creche", "--root", str(root))
 
     assert code == EXIT_OK
     assert lines == [
@@ -476,7 +476,7 @@ def test_each_command_is_a_count_and_one_word_on_each_line(
     text = binary_manifest_text(tmp_path / "components").replace("install:", second, 1)
     root = _binary_root(tmp_path, monkeypatch, text)
 
-    code, lines = _out(capsys, "artifacts", "--repo", "agent-control", "--root", str(root))
+    code, lines = _out(capsys, "artifacts", "--repo", "creche", "--root", str(root))
 
     assert code == EXIT_OK
     assert lines[len(ROW_HEAD) :] == [
@@ -500,7 +500,7 @@ def test_another_repository_has_no_row(
 ) -> None:
     root = _binary_root(tmp_path, monkeypatch)
 
-    assert _out(capsys, "artifacts", "--repo", "agent-mcp", "--root", str(root)) == (EXIT_OK, [])
+    assert _out(capsys, "artifacts", "--repo", "mcp", "--root", str(root)) == (EXIT_OK, [])
 
 
 def test_a_binary_row_with_no_manifest_is_refused(
@@ -510,7 +510,7 @@ def test_a_binary_row_with_no_manifest_is_refused(
     root = tmp_path / "root"
     write_manifest(root, "caregiver", manifest_text("caregiver"))
 
-    code = main(["artifacts", "--repo", "agent-control", "--root", str(root)])
+    code = main(["artifacts", "--repo", "creche", "--root", str(root)])
 
     assert code == EXIT_REFUSED
     assert capsys.readouterr().err.startswith(f"refused [catalog] {BINARY_NAME}:")
@@ -522,7 +522,7 @@ def test_a_binary_manifest_with_no_build_is_refused(
     text = binary_manifest_text(tmp_path / "components").replace(BUILD_LINE, "install:")
     root = _binary_root(tmp_path, monkeypatch, text)
 
-    code = main(["artifacts", "--repo", "agent-control", "--root", str(root)])
+    code = main(["artifacts", "--repo", "creche", "--root", str(root)])
 
     assert code == EXIT_REFUSED
     assert "no build command" in capsys.readouterr().err
@@ -537,7 +537,7 @@ def test_a_manifest_of_another_kind_makes_no_row(
     text = binary_manifest_text(tmp_path / "components", kind=Kind.VENV)
     manifest = parse_manifest(text, "noticeboard/component.yaml", Markup.YAML)
 
-    refusal = _refusal(lambda: rows({BINARY_NAME: manifest}, Repo.AGENT_CONTROL))
+    refusal = _refusal(lambda: rows({BINARY_NAME: manifest}, Repo.CRECHE))
 
     assert refusal.code is RefusalCode.CATALOG
     assert refusal.subject == BINARY_NAME
@@ -550,8 +550,8 @@ def test_a_component_that_leaves_or_comes_into_the_catalog_has_no_row(
     use_binary_catalog(monkeypatch)
     monkeypatch.setattr(artifacts, moving, frozenset({BINARY_NAME}))
 
-    assert artifacts.archive_components(Repo.AGENT_CONTROL) == ()
-    assert rows({}, Repo.AGENT_CONTROL) == ()
+    assert artifacts.archive_components(Repo.CRECHE) == ()
+    assert rows({}, Repo.CRECHE) == ()
 
 
 # ---- one crate row ----------------------------------------------------------
@@ -704,7 +704,7 @@ def test_the_command_refuses_a_bad_crate_directory(capsys: pytest.CaptureFixture
     ("argv", "said"),
     [
         (["artifacts"], "needs --repo"),
-        (["artifacts", "--repo", "agent-control", "--sha", COMMIT], "takes no --sha"),
+        (["artifacts", "--repo", "creche", "--sha", COMMIT], "takes no --sha"),
         (["artifacts", "--crate-dir", "rust/crates/x"], "takes no --crate-dir"),
         (["artifacts", "--crate-row", "x-y"], "needs --crate-dir"),
         (
@@ -715,11 +715,11 @@ def test_the_command_refuses_a_bad_crate_directory(capsys: pytest.CaptureFixture
                 "--crate-dir",
                 "rust/crates/x",
                 "--repo",
-                "agent-control",
+                "creche",
             ],
             "takes no --repo",
         ),
-        (["artifacts", "--verify-words", "--repo", "agent-control"], "needs --archive"),
+        (["artifacts", "--verify-words", "--repo", "creche"], "needs --archive"),
         ([*_words_argv(), "--root", "."], "takes no --root"),
         ([*_words_argv(), "--crate-row", "x-y"], "takes no --crate-row"),
     ],
@@ -758,7 +758,7 @@ def test_a_binary_component_has_two_assets_with_their_limits(
     use_binary_catalog(monkeypatch)
     names = asset_names(BINARY_NAME)
 
-    code, lines = _out(capsys, "allocate-tags", "--repo", "agent-control", "--assets", BINARY_NAME)
+    code, lines = _out(capsys, "allocate-tags", "--repo", "creche", "--assets", BINARY_NAME)
 
     assert code == EXIT_OK
     assert lines == [f"{names.archive} 268435456", f"{names.bundle} 1048576"]
@@ -766,7 +766,7 @@ def test_a_binary_component_has_two_assets_with_their_limits(
 
 @pytest.mark.parametrize(
     ("repo", "name"),
-    [("agent-control", "nobody"), ("agent-control", "mcp-servers"), ("agent-mcp", "chaperone")],
+    [("creche", "nobody"), ("creche", "mcp-servers"), ("mcp", "chaperone")],
 )
 def test_a_name_that_the_catalog_of_the_repository_does_not_hold_is_refused(
     capsys: pytest.CaptureFixture[str], repo: str, name: str
@@ -791,7 +791,7 @@ def test_a_name_that_the_catalog_of_the_repository_does_not_hold_is_refused(
 def test_the_assets_take_no_input_of_a_plan(
     capsys: pytest.CaptureFixture[str], extra: list[str]
 ) -> None:
-    code = main(["allocate-tags", "--repo", "agent-control", "--assets", "chaperone", *extra])
+    code = main(["allocate-tags", "--repo", "creche", "--assets", "chaperone", *extra])
 
     assert code == EXIT_USAGE
     assert "--assets takes no" in capsys.readouterr().err

@@ -153,7 +153,7 @@ def bench(tmp_path: Path) -> Bench:
         host=fake_host(tmp_path, run),
         transport=grant_transport(),
         readers=fake_readers(latest={COMPONENT: NEW_VERSION}),
-        api=green_api("agent-control", f"{COMPONENT}-v{NEW_VERSION}", SHA_OF[COMPONENT]),
+        api=green_api("creche", f"{COMPONENT}-v{NEW_VERSION}", SHA_OF[COMPONENT]),
     )
     built = Bench(spool_root, wiring, run, tmp_path / "components")
     stamp_tree(built.components, COMPONENT, LIVE_VERSION)

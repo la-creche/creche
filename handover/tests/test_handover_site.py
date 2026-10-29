@@ -117,9 +117,9 @@ def test_provenance_asks_github_about_the_sites_owner(site_file: Path) -> None:
         return provenance.ApiReply(status=404, body=None)
 
     with pytest.raises(Refusal):
-        provenance.check_release(api, "chaperone", "agent-control", "chaperone-v0.1.0")
+        provenance.check_release(api, "chaperone", "creche", "chaperone-v0.1.0")
 
-    assert asked == ["/repos/some-org/agent-control/releases/tags/chaperone-v0.1.0"]
+    assert asked == ["/repos/some-org/creche/releases/tags/chaperone-v0.1.0"]
 
 
 def test_the_operator_is_read_from_the_site_file(site_file: Path) -> None:
@@ -201,33 +201,33 @@ def test_a_repository_keeps_its_catalog_name_when_the_site_names_no_other(
 ) -> None:
     site_file.write_text("AGENT_GITHUB_OWNER=some-org\n", encoding="utf-8")
 
-    assert site.github_repo("agent-control") == "agent-control"
+    assert site.github_repo("creche") == "creche"
 
 
 def test_the_site_may_give_a_repository_another_name_on_github(site_file: Path) -> None:
     """The catalog's name is this code's own. What the repository is called
     where it is hosted is the site's to say."""
-    lines = ["AGENT_GITHUB_REPO_AGENT_CONTROL=some-product", "AGENT_GITHUB_REPO_AGENT_MCP=servers"]
+    lines = ["AGENT_GITHUB_REPO_CRECHE=some-product", "AGENT_GITHUB_REPO_MCP=servers"]
     site_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    assert site.github_repo("agent-control") == "some-product"
-    assert site.github_repo("agent-mcp") == "servers"
-    assert site.github_repo("agent-registry") == "agent-registry"
+    assert site.github_repo("creche") == "some-product"
+    assert site.github_repo("mcp") == "servers"
+    assert site.github_repo("registry") == "registry"
 
 
 @pytest.mark.parametrize("value", ["", "has/slash", "..", ".", "a b", "-leading", "x" * 101])
 def test_a_repository_name_github_could_not_hold_refuses(site_file: Path, value: str) -> None:
     """The name is spliced into an API path, as the owner is."""
-    site_file.write_text(f"AGENT_GITHUB_REPO_AGENT_CONTROL={value}\n", encoding="utf-8")
+    site_file.write_text(f"AGENT_GITHUB_REPO_CRECHE={value}\n", encoding="utf-8")
 
     with pytest.raises(Refusal) as caught:
-        site.github_repo("agent-control")
+        site.github_repo("creche")
 
     assert caught.value.code is RefusalCode.SITE
 
 
 def test_provenance_asks_github_about_the_sites_name_for_a_repository(site_file: Path) -> None:
-    lines = ["AGENT_GITHUB_OWNER=some-org", "AGENT_GITHUB_REPO_AGENT_CONTROL=some-product"]
+    lines = ["AGENT_GITHUB_OWNER=some-org", "AGENT_GITHUB_REPO_CRECHE=some-product"]
     site_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
     asked: list[str] = []
 
@@ -237,7 +237,7 @@ def test_provenance_asks_github_about_the_sites_name_for_a_repository(site_file:
         return provenance.ApiReply(status=404, body=None)
 
     with pytest.raises(Refusal):
-        provenance.check_release(api, "chaperone", "agent-control", "chaperone-v0.1.0")
+        provenance.check_release(api, "chaperone", "creche", "chaperone-v0.1.0")
 
     assert asked == ["/repos/some-org/some-product/releases/tags/chaperone-v0.1.0"]
 

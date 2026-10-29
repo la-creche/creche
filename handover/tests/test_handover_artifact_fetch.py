@@ -80,7 +80,7 @@ LATER = 1_000_000.0
 
 def _url(asset: str) -> str:
     """The download URL, built here from the two constants of the pure half."""
-    repo = str(Repo.AGENT_CONTROL)
+    repo = str(Repo.CRECHE)
 
     return f"{HTTPS}{CODE_HOST}/{OWNER}/{repo}/releases/download/{TAG}/{asset}"
 
@@ -155,7 +155,7 @@ def _fetch(
 
 
 def _tag_dir(store: Path) -> Path:
-    return store / str(Repo.AGENT_CONTROL) / TAG
+    return store / str(Repo.CRECHE) / TAG
 
 
 def _mode(path: Path) -> int:
@@ -454,7 +454,7 @@ def test_the_modes_are_exact_whatever_the_umask(store: Path, curl: _Curl) -> Non
     finally:
         os.umask(old)
 
-    for path in (store, store / str(Repo.AGENT_CONTROL), _tag_dir(store)):
+    for path in (store, store / str(Repo.CRECHE), _tag_dir(store)):
         assert _mode(path) == DIR_MODE, path
 
     for name in (NAMES.archive, NAMES.bundle):
@@ -830,7 +830,7 @@ def _desk(tmp_path: Path, live: tuple[str, ...]) -> _Desk:
     options = ["--root", str(roots), "--partial", "--corpus", str(corpus)]
     options += ["--install-root", str(installs), "--spool", str(spool)]
 
-    return _Desk(options, spool, corpus / str(Repo.AGENT_CONTROL))
+    return _Desk(options, spool, corpus / str(Repo.CRECHE))
 
 
 @dataclass

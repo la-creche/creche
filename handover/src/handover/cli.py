@@ -71,7 +71,7 @@ from .artifacts import (
     signer_policy,
     verify_words,
 )
-from .catalog import Action, Kind, Repo, releasable_names
+from .catalog import OLD_REPO_NAMES, Action, Kind, Repo, releasable_names, repo_named
 from .contracts import ContractRow
 from .corpus import (
     BEHIND_NOTE,
@@ -399,7 +399,7 @@ def _run_cut(args: argparse.Namespace) -> int:
     UTF-8 still has a first segment, so it is decoded and never refused.
     """
     with Path(args.cut).open(encoding="utf-8", errors="replace") as changed:
-        for line in cut_paths((raw.rstrip("\n") for raw in changed), Repo(args.repo)):
+        for line in cut_paths((raw.rstrip("\n") for raw in changed), repo_named(args.repo)):
             print(line)
 
     return EXIT_OK
@@ -432,7 +432,7 @@ def _run_assets(args: argparse.Namespace) -> int:
     if extra:
         return _usage(f"--assets takes no {', '.join(extra)}")
 
-    row = repo_row(args.assets, Repo(args.repo))
+    row = repo_row(args.assets, repo_named(args.repo))
     for asset in asset_limits(row.name, row.kind):
         print(f"{asset.name} {asset.max_bytes}")
 
@@ -452,7 +452,7 @@ def _run_allocate(args: argparse.Namespace) -> int:
         levels=_lines_of(args.levels, "bump levels"),
         tags=_lines_of(args.tags, "tags"),
         at_sha=_lines_of(args.at_sha, "tags at this commit"),
-        repo=Repo(args.repo),
+        repo=repo_named(args.repo),
     )
 
     if args.json:
@@ -535,7 +535,7 @@ def _run_artifact_rows(args: argparse.Namespace) -> int:
     read as `check --partial` reads them, and only when the catalog of that
     repository holds a binary component: with none, nothing is read and
     nothing is printed."""
-    repo = Repo(args.repo)
+    repo = repo_named(args.repo)
     if not archive_components(repo):
         return EXIT_OK
 
@@ -559,7 +559,7 @@ def _run_verify_words(args: argparse.Namespace) -> int:
     line. `--github-repository` is `<owner>/<name>`, as the code service
     names the repository."""
     owner, _, name = args.github_repository.partition("/")
-    policy = signer_policy(Repo(args.repo), owner, name, args.sha)
+    policy = signer_policy(repo_named(args.repo), owner, name, args.sha)
     _print_lines(verify_words(policy, args.archive, args.bundle, args.trusted_root))
 
     return EXIT_OK
@@ -1210,8 +1210,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="plan nothing: print the name and the size limit in bytes of each asset "
         "that the Release of this component holds, one per line",
     )
-    repos = [str(item) for item in Repo]
-    tags.add_argument("--repo", default=str(Repo.AGENT_CONTROL), choices=repos)
+    repos = [str(item) for item in Repo] + list(OLD_REPO_NAMES)
+    tags.add_argument("--repo", default=str(Repo.CRECHE), choices=repos)
     tags.add_argument("--json", action="store_true", help="one JSON object instead of a table")
     tags.set_defaults(handler=_run_allocate)
 

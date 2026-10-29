@@ -231,7 +231,7 @@ def _note(bench: Bench) -> SelfNote:
         prev=str(bench.components / f"{SELF}.prev"),
         to_version=NEW,
         from_version=LIVE,
-        requested_by="agent-control",
+        requested_by="creche",
         verify=VerifyHook((str(bench.components / SELF / "bin" / HOOK), "--json"), "operator", 60),
     )
 

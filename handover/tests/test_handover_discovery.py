@@ -28,7 +28,7 @@ CONTROL_NAMES = (
 
 
 def _control_repo(root: Path) -> Path:
-    """A fixture tree holding every agent-control component."""
+    """A fixture tree holding every creche component."""
     for name in CONTROL_NAMES:
         write_manifest(root, name, manifest_text(name))
 
@@ -68,8 +68,8 @@ def test_require_complete_refuses_and_names_them(tmp_path: Path) -> None:
 
 
 def _all_four(tmp_path: Path, control_names: tuple[str, ...]) -> list[Path]:
-    """Four roots, with the agent-control components `control_names` lists."""
-    control = tmp_path / "agent-control"
+    """Four roots, with the creche components `control_names` lists."""
+    control = tmp_path / "creche"
     for name in control_names:
         write_manifest(control, name, manifest_text(name))
 
@@ -79,7 +79,7 @@ def _all_four(tmp_path: Path, control_names: tuple[str, ...]) -> list[Path]:
 def _other_roots(tmp_path: Path) -> list[Path]:
     """The roots of the three other repositories, each with its manifest."""
     roots: list[Path] = []
-    for repo, name in (("agent-mcp", "mcp-servers"), ("agent-registry", "registry-data")):
+    for repo, name in (("mcp", "mcp-servers"), ("registry", "registry-data")):
         roots.append(tmp_path / repo)
         write_manifest(roots[-1], name, manifest_text(name))
 
@@ -127,7 +127,7 @@ def test_only_a_retiring_component_may_be_absent(tmp_path: Path) -> None:
 
 
 def test_a_complete_pair_of_roots_is_complete(tmp_path: Path) -> None:
-    control = _control_repo(tmp_path / "agent-control")
+    control = _control_repo(tmp_path / "creche")
 
     require_complete(discover([control, *_other_roots(tmp_path)]))
 
@@ -152,13 +152,13 @@ def test_a_declared_path_must_match_the_directory(tmp_path: Path) -> None:
 
 
 def test_a_declared_repo_must_match_the_catalog(tmp_path: Path) -> None:
-    text = manifest_text("noticeboard").replace("repo: agent-control", "repo: agent-mcp")
+    text = manifest_text("noticeboard").replace("repo: creche", "repo: mcp")
     write_manifest(tmp_path, "noticeboard", text)
 
     refusal = _refusal([tmp_path])
 
     assert refusal.code is RefusalCode.CATALOG
-    assert "lives in agent-control" in refusal.detail
+    assert "lives in creche" in refusal.detail
 
 
 def test_a_data_component_cannot_declare_itself_releasable(tmp_path: Path) -> None:

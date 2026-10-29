@@ -29,25 +29,25 @@ from handover.discovery import discover
 from handover.executor.source import digest_paths, input_digest
 from handover_bin_fixtures import BINARY_NAME, NESTED_BUNDLE, use_binary_catalog
 
-#: Every agent-control component a run may tag, at its first version. A
+#: Every creche component a run may tag, at its first version. A
 #: repository in this state has no first tag left to make, so the path rule
 #: alone decides.
 ALL_TAGGED = tuple(
     f"{row.name}-v0.1.0"
     for row in CATALOG
-    if row.repo is Repo.AGENT_CONTROL and row.name not in RETIRING | ARRIVING
+    if row.repo is Repo.CRECHE and row.name not in RETIRING | ARRIVING
 )
 
 PYTHON_LOCK = "uv.lock"
 
 #: The Cargo workspace files of this repository.
-WORKSPACE_FILES = BINARY_BUILD_FILES[Repo.AGENT_CONTROL]
+WORKSPACE_FILES = BINARY_BUILD_FILES[Repo.CRECHE]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _plan(paths: tuple[str, ...], levels: tuple[str, ...] = ()) -> tuple[TagPlan, ...]:
-    return plan_tags(paths, levels, ALL_TAGGED, (), Repo.AGENT_CONTROL)
+    return plan_tags(paths, levels, ALL_TAGGED, (), Repo.CRECHE)
 
 
 def _moved(paths: tuple[str, ...]) -> set[str]:
@@ -68,14 +68,14 @@ def test_the_workspace_files_are_the_three_under_rust() -> None:
 def test_the_workspace_files_move_no_component_of_todays_catalog() -> None:
     """No row is a binary component, so a change to the Cargo workspace
     files is a merge that tags nothing."""
-    assert touched(WORKSPACE_FILES, Repo.AGENT_CONTROL) == ()
+    assert touched(WORKSPACE_FILES, Repo.CRECHE) == ()
     assert _plan(WORKSPACE_FILES) == ()
 
 
 def test_a_change_under_rust_moves_no_component_of_todays_catalog() -> None:
     changed = (f"{NESTED_BUNDLE}/src/lib.rs", "rust/crates/other/Cargo.toml", "rust/deny.toml")
 
-    assert touched(changed, Repo.AGENT_CONTROL) == ()
+    assert touched(changed, Repo.CRECHE) == ()
 
 
 def test_each_manifest_declares_the_kind_of_its_catalog_row() -> None:
@@ -112,15 +112,15 @@ def test_the_workspace_files_move_no_venv_component(monkeypatch: pytest.MonkeyPa
     venvs = {row.name for row in CATALOG if row.kind is Kind.VENV} - {BINARY_NAME}
 
     assert venvs
-    assert touched(WORKSPACE_FILES, Repo.AGENT_CONTROL) == (BINARY_NAME,)
-    assert not venvs & set(touched(WORKSPACE_FILES, Repo.AGENT_CONTROL))
+    assert touched(WORKSPACE_FILES, Repo.CRECHE) == (BINARY_NAME,)
+    assert not venvs & set(touched(WORKSPACE_FILES, Repo.CRECHE))
 
 
 def test_the_python_lock_file_moves_no_binary_component(monkeypatch: pytest.MonkeyPatch) -> None:
     """A binary build reads no `uv.lock`, so a Python dependency upgrade
     must not release a binary component. Every venv component still moves."""
     use_binary_catalog(monkeypatch)
-    ours = [row for row in CATALOG if row.repo is Repo.AGENT_CONTROL and row.name not in RETIRING]
+    ours = [row for row in CATALOG if row.repo is Repo.CRECHE and row.name not in RETIRING]
     venvs = {row.name for row in ours if row.kind is Kind.VENV} - {BINARY_NAME}
 
     assert _moved((PYTHON_LOCK,)) == venvs
@@ -225,7 +225,7 @@ def _run_git(argv: list[str], cwd: Path) -> str | None:
 def _clone(tmp_path: Path) -> Path:
     """A repository with a component directory, a Cargo workspace and a
     Python lock file."""
-    repo = tmp_path / "agent-control"
+    repo = tmp_path / "creche"
     for name in (BINARY_NAME, "caregiver", "rust"):
         (repo / name).mkdir(parents=True)
 

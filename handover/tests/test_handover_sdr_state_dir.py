@@ -86,7 +86,7 @@ def _bench(tmp_path: Path, fake: McpFake) -> tuple[McpBuilder, Path, Fetched]:
     mcp_root.mkdir()
     work = tmp_path / "work"
     work.mkdir()
-    registry = tmp_path / "agent-registry"
+    registry = tmp_path / "registry"
     committed = registry / KAGI_LOCK_PATH
     committed.parent.mkdir(parents=True)
     committed.write_text(LOCK_TEXT, encoding="utf-8")
@@ -95,7 +95,7 @@ def _bench(tmp_path: Path, fake: McpFake) -> tuple[McpBuilder, Path, Fetched]:
     return (
         McpBuilder(host, mcp_root),
         work,
-        Fetched(registry=registry, tree=tmp_path / "agent-mcp", tag=TAG),
+        Fetched(registry=registry, tree=tmp_path / "mcp", tag=TAG),
     )
 
 

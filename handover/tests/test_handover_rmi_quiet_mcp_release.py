@@ -128,7 +128,7 @@ def _teach(run: FakeRun, components: Path) -> None:
 
 
 def _registry(tmp_path: Path, servers: tuple[str, ...]) -> None:
-    mcp = tmp_path / "corpus" / "agent-registry" / "mcp"
+    mcp = tmp_path / "corpus" / "registry" / "mcp"
     mcp.mkdir(parents=True, exist_ok=True)
     for name in servers:
         directory = mcp / name

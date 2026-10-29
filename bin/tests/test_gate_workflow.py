@@ -163,7 +163,7 @@ SYSTEMD_ASKED = {
 }
 
 #: The catalog's name for this repository (`handover/src/handover/catalog.py`).
-THIS_REPOSITORY = str(Repo.AGENT_CONTROL)
+THIS_REPOSITORY = str(Repo.CRECHE)
 
 #: The jobs of each file with no rule of their own. The verdict needs a
 #: success from each of them in each scope.

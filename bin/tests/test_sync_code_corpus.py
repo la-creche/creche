@@ -77,15 +77,15 @@ def test_a_line_with_no_name_clones_under_the_urls_own_name(tmp_path: Path, host
 
 
 def test_a_line_may_name_the_directory(tmp_path: Path, hosted: Path) -> None:
-    done = _sync(tmp_path, [f"file://{hosted} agent-control  # hosted under another name"])
+    done = _sync(tmp_path, [f"file://{hosted} creche  # hosted under another name"])
 
     assert done.returncode == 0, done.stderr
-    assert (tmp_path / "corpus" / "agent-control" / "file").is_file()
+    assert (tmp_path / "corpus" / "creche" / "file").is_file()
     assert not (tmp_path / "corpus" / "some-product").exists()
 
 
 def test_a_second_run_pulls_the_named_directory(tmp_path: Path, hosted: Path) -> None:
-    lines = [f"file://{hosted} agent-control"]
+    lines = [f"file://{hosted} creche"]
     assert _sync(tmp_path, lines).returncode == 0
     work = tmp_path / "work"
     (work / "file").write_text("two\n", encoding="utf-8")
@@ -95,8 +95,8 @@ def test_a_second_run_pulls_the_named_directory(tmp_path: Path, hosted: Path) ->
     done = _sync(tmp_path, lines)
 
     assert done.returncode == 0, done.stderr
-    assert "updated agent-control" in done.stdout
-    assert (tmp_path / "corpus" / "agent-control" / "file").read_text(encoding="utf-8") == "two\n"
+    assert "updated creche" in done.stdout
+    assert (tmp_path / "corpus" / "creche" / "file").read_text(encoding="utf-8") == "two\n"
 
 
 @pytest.mark.parametrize("name", ["..", ".", "a/b", "../escape", "-flag", ".git"])
@@ -112,17 +112,17 @@ def test_a_name_that_is_no_plain_directory_name_is_refused(
 
 
 def test_a_line_with_a_third_word_is_refused(tmp_path: Path, hosted: Path) -> None:
-    done = _sync(tmp_path, [f"file://{hosted} agent-control extra"])
+    done = _sync(tmp_path, [f"file://{hosted} creche extra"])
 
     assert done.returncode != 0
-    assert not (tmp_path / "corpus" / "agent-control").exists()
+    assert not (tmp_path / "corpus" / "creche").exists()
 
 
 def test_a_last_line_with_no_newline_is_still_read(tmp_path: Path, hosted: Path) -> None:
     """`read` answers non-zero on a final line that has no newline, and a
     loop that stops there skips the last repository without a word."""
     listing = tmp_path / "code-repos.txt"
-    listing.write_text(f"file://{hosted} agent-control", encoding="utf-8")
+    listing.write_text(f"file://{hosted} creche", encoding="utf-8")
     env = {
         **os.environ,
         **GIT_ENV,
@@ -133,4 +133,4 @@ def test_a_last_line_with_no_newline_is_still_read(tmp_path: Path, hosted: Path)
     done = subprocess.run(["bash", str(SCRIPT)], env=env, capture_output=True, text=True)
 
     assert done.returncode == 0, done.stderr
-    assert (tmp_path / "corpus" / "agent-control" / "file").is_file()
+    assert (tmp_path / "corpus" / "creche" / "file").is_file()

@@ -33,20 +33,18 @@ from handover.catalog import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "handover" / "bin" / "allocate-tags.sh"
 
-#: Contract 06 §1's agent-control rows, in catalog order, minus a retiring
+#: Contract 06 §1's creche rows, in catalog order, minus a retiring
 #: or an arriving one: the planner never tags either.
 COMPONENTS = tuple(
-    row.name
-    for row in CATALOG
-    if row.repo is Repo.AGENT_CONTROL and row.name not in RETIRING | ARRIVING
+    row.name for row in CATALOG if row.repo is Repo.CRECHE and row.name not in RETIRING | ARRIVING
 )
 
 #: Every one of them at its first version, sorted as `_tags` returns them.
 FIRST_TAGS = sorted(f"{name}-v0.1.0" for name in COMPONENTS)
 
-#: Contract 06 §1's agent-mcp rows. One today, `mcp-servers`, whose `path` is
+#: Contract 06 §1's mcp rows. One today, `mcp-servers`, whose `path` is
 #: `.`: the whole repository, so any change at all reaches it.
-MCP_COMPONENTS = tuple(row.name for row in CATALOG if row.repo is Repo.AGENT_MCP)
+MCP_COMPONENTS = tuple(row.name for row in CATALOG if row.repo is Repo.MCP)
 
 MCP_FIRST_TAGS = sorted(f"{name}-v0.1.0" for name in MCP_COMPONENTS)
 
@@ -161,12 +159,12 @@ def repo(tmp_path: Path) -> Path:
 def other_repo(tmp_path: Path) -> Path:
     """A second checkout, with no copy of the script and its own origin.
 
-    agent-mcp's workflow is exactly this shape: agent-control is checked out
-    beside agent-mcp's own tree and its script tags THAT tree. The origin is
-    named `agent-mcp.git` so the run can also find the repository name with
+    mcp's workflow is exactly this shape: creche is checked out
+    beside mcp's own tree and its script tags THAT tree. The origin is
+    named `mcp.git` so the run can also find the repository name with
     no `GITHUB_REPOSITORY` set, the way a developer's checkout does.
     """
-    origin = tmp_path / "agent-mcp.git"
+    origin = tmp_path / "mcp.git"
     subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
 
     work = tmp_path / "mcp-work"
@@ -196,7 +194,7 @@ def shims(tmp_path: Path) -> Path:
 #: `_run`'s default repository. `None` unsets `GITHUB_REPOSITORY` instead,
 #: which is a developer's own checkout: the script then reads the tagged
 #: tree's `origin` remote.
-DEFAULT_REPOSITORY = "example-owner/agent-control"
+DEFAULT_REPOSITORY = "example-owner/creche"
 
 
 def _run(
@@ -795,9 +793,9 @@ def test_a_first_tags_body_says_it_has_no_range(repo: Path, shims: Path, tmp_pat
 # ---- the repository the run tags -------------------------------------------
 #
 # `allocate.plan_tags` scopes every decision to one `Repo`, and the script
-# passes `--repo`, so the CLI default `agent-control` does not stand wherever
-# it runs. These are the two halves of that: agent-control never reaches
-# `mcp-servers`, and a run in agent-mcp reaches nothing else.
+# passes `--repo`, so the CLI default `creche` does not stand wherever
+# it runs. These are the two halves of that: creche never reaches
+# `mcp-servers`, and a run in mcp reaches nothing else.
 
 
 @pytest.mark.slow
@@ -823,7 +821,7 @@ def test_a_run_in_agent_mcp_tags_mcp_servers_and_nothing_else(
     release request."""
     _commit(repo, "src/agent_mcp/one.py")
 
-    done = _run(repo, shims, tmp_path, repository="example-owner/agent-mcp")
+    done = _run(repo, shims, tmp_path, repository="example-owner/mcp")
 
     assert done.returncode == 0, done.stderr
     assert "released mcp-servers-v0.1.0" in done.stdout
@@ -837,15 +835,15 @@ def test_agent_mcp_bumps_its_one_component_on_the_next_run(
     """`mcp-servers`'s path is `.`, so every merge moves it once it has a
     first tag. A re-run on one commit still creates nothing."""
     _commit(repo, "src/agent_mcp/one.py")
-    assert _run(repo, shims, tmp_path, repository="example-owner/agent-mcp").returncode == 0
+    assert _run(repo, shims, tmp_path, repository="example-owner/mcp").returncode == 0
 
     _commit(repo, "src/agent_mcp/two.py")
-    done = _run(repo, shims, tmp_path, repository="example-owner/agent-mcp")
+    done = _run(repo, shims, tmp_path, repository="example-owner/mcp")
 
     assert done.returncode == 0, done.stderr
     assert _tags(repo) == sorted([*MCP_FIRST_TAGS, "mcp-servers-v0.1.1"])
 
-    again = _run(repo, shims, tmp_path, repository="example-owner/agent-mcp")
+    again = _run(repo, shims, tmp_path, repository="example-owner/mcp")
 
     assert again.returncode == 0, again.stderr
     assert "allocate-tags: 0 created" in again.stdout
@@ -856,7 +854,7 @@ def test_agent_mcp_bumps_its_one_component_on_the_next_run(
 def test_a_repository_the_catalog_does_not_know_stops_the_run(
     repo: Path, shims: Path, tmp_path: Path
 ) -> None:
-    """Falling back to agent-control's components in somebody else's
+    """Falling back to creche's components in somebody else's
     checkout is how a tag lands in the wrong repository. Refuse instead."""
     _commit(repo, "caregiver/src/one.py")
 
@@ -881,16 +879,16 @@ def test_tag_repo_names_the_catalogs_repository_when_its_host_does_not(
         shims,
         tmp_path,
         repository="example-owner/some-product",
-        tag_repo="agent-control",
+        tag_repo="creche",
         pr="yes",
     )
 
     assert done.returncode == 0, done.stderr
-    assert "repo:    agent-control" in done.stdout
+    assert "repo:    creche" in done.stdout
     assert "caregiver-v0.1.0" in _tags(repo)
     log = (tmp_path / "gh.log").read_text(encoding="utf-8")
     assert "--repo example-owner/some-product" in log
-    assert "example-owner/agent-control" not in log
+    assert "example-owner/creche" not in log
 
 
 @pytest.mark.slow
@@ -911,14 +909,14 @@ def test_the_origin_remote_names_the_repository_when_ci_does_not(
     repo: Path, shims: Path, other_repo: Path, tmp_path: Path
 ) -> None:
     """A developer's checkout sets no `GITHUB_REPOSITORY`. The tagged tree's
-    own origin answers, so a dry run from an agent-mcp checkout plans
-    agent-mcp and never agent-control."""
+    own origin answers, so a dry run from an mcp checkout plans
+    mcp and never creche."""
     _commit(other_repo, "src/agent_mcp/one.py")
 
     done = _run(repo, shims, tmp_path, "--dry-run", repository=None, tree=other_repo)
 
     assert done.returncode == 0, done.stderr
-    assert "repo:    agent-mcp" in done.stdout
+    assert "repo:    mcp" in done.stdout
     assert "would create mcp-servers-v0.1.0" in done.stdout
     assert "caregiver" not in done.stdout
 
@@ -930,15 +928,13 @@ def test_the_origin_remote_names_the_repository_when_ci_does_not(
 def test_the_script_tags_the_tree_it_is_pointed_at(
     repo: Path, shims: Path, other_repo: Path, tmp_path: Path
 ) -> None:
-    """agent-mcp's workflow, proved here because it never runs from this
+    """mcp's workflow, proved here because it never runs from this
     branch: the script reads and tags the borrowing checkout, and leaves its
     own alone."""
     _commit(other_repo, "src/agent_mcp/one.py")
     _commit(repo, "caregiver/src/one.py")
 
-    done = _run(
-        repo, shims, tmp_path, repository="example-owner/agent-mcp", tree=other_repo, pr="yes"
-    )
+    done = _run(repo, shims, tmp_path, repository="example-owner/mcp", tree=other_repo, pr="yes")
 
     assert done.returncode == 0, done.stderr
     assert _tags(other_repo) == MCP_FIRST_TAGS
@@ -952,10 +948,10 @@ def test_a_borrowed_run_pushes_to_the_borrowers_origin(
     """The tag must reach the borrower's remote, not the script's own."""
     _commit(other_repo, "src/agent_mcp/one.py")
 
-    done = _run(repo, shims, tmp_path, repository="example-owner/agent-mcp", tree=other_repo)
+    done = _run(repo, shims, tmp_path, repository="example-owner/mcp", tree=other_repo)
 
     assert done.returncode == 0, done.stderr
-    assert _tags(tmp_path / "agent-mcp.git") == MCP_FIRST_TAGS
+    assert _tags(tmp_path / "mcp.git") == MCP_FIRST_TAGS
     assert _tags(tmp_path / "origin.git") == []
 
 
@@ -967,13 +963,11 @@ def test_the_release_names_its_repository(
     directory, which for a borrowed run is the wrong one."""
     _commit(other_repo, "src/agent_mcp/one.py")
 
-    done = _run(
-        repo, shims, tmp_path, repository="example-owner/agent-mcp", tree=other_repo, pr="yes"
-    )
+    done = _run(repo, shims, tmp_path, repository="example-owner/mcp", tree=other_repo, pr="yes")
 
     assert done.returncode == 0, done.stderr
     log = (tmp_path / "gh.log").read_text(encoding="utf-8")
-    assert "--repo example-owner/agent-mcp" in log
+    assert "--repo example-owner/mcp" in log
 
 
 @pytest.mark.slow
@@ -1000,7 +994,7 @@ def test_a_failed_pull_request_read_is_no_pull_request(
     """`gh api` prints the error BODY on stdout and exits non-zero, and the
     script only swallowed the exit code. A token that cannot read pull
     requests therefore turned a 401 body into the labels and into the
-    Release notes. Two tokens are now in play (agent-mcp's workflow adds a
+    Release notes. Two tokens are now in play (mcp's workflow adds a
     PAT), so a read that failed must read as no pull request at all."""
     _commit(repo, "caregiver/src/one.py")
 
@@ -1196,8 +1190,7 @@ def test_a_binary_component_releases_its_two_assets(
         "--certificate-oidc-issuer",
         "https://token.actions.githubusercontent.com",
         "--certificate-identity",
-        "https://github.com/example-owner/agent-control/.github/workflows/release.yml"
-        "@refs/heads/main",
+        "https://github.com/example-owner/creche/.github/workflows/release.yml@refs/heads/main",
         "--certificate-github-workflow-repository",
         DEFAULT_REPOSITORY,
         "--certificate-github-workflow-ref",

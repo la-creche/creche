@@ -140,7 +140,7 @@ def bench(tmp_path: Path) -> Bench:
         host=host,
         transport=grant_transport(),
         readers=fake_readers(latest={"caregiver": NEW_VERSION}),
-        api=green_api("agent-control", f"caregiver-v{NEW_VERSION}", SHA_OF["caregiver"]),
+        api=green_api("creche", f"caregiver-v{NEW_VERSION}", SHA_OF["caregiver"]),
     )
     built = Bench(tmp_path, spool_root, wiring, run, tmp_path / "components")
     stamp_tree(built.components, "caregiver", LIVE_VERSION)
@@ -326,7 +326,7 @@ def test_the_phone_summary_comes_from_roots_own_resolution(bench: Bench) -> None
     summary = shown[0].as_dict()
     assert summary["components"] == f"caregiver {LIVE_VERSION} → {NEW_VERSION}"
     assert summary["restore"] == "automatic"
-    assert summary["requested_by"] == "agent-control"
+    assert summary["requested_by"] == "creche"
     manifest = bench.ledger()["manifest"]
     assert isinstance(manifest, dict)
     assert str(manifest["manifest_sha256"]).endswith(summary["manifest"]) or summary[  # pyright: ignore[reportUnknownArgumentType]
@@ -619,9 +619,9 @@ def test_a_ninth_request_from_one_requester_is_refused_as_rate(bench: Bench) -> 
     never reached."""
     counter = Counter()
     for _ in range(8):
-        assert not counter.over_limit("agent-control")
+        assert not counter.over_limit("creche")
 
-    assert counter.over_limit("agent-control")
+    assert counter.over_limit("creche")
     assert not counter.over_limit("ci")
 
 

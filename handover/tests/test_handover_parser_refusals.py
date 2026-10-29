@@ -159,7 +159,7 @@ def test_a_tag_number_too_long_to_read_is_no_version(version: str) -> None:
 @pytest.mark.parametrize("version", LONG_VERSIONS)
 def test_the_allocator_does_not_count_from_a_tag_too_long_to_read(version: str) -> None:
     tags = ("caregiver-v0.1.0", f"caregiver-v{version}")
-    plans = plan_tags(("caregiver/src/x.py",), (), tags, (), Repo.AGENT_CONTROL)
+    plans = plan_tags(("caregiver/src/x.py",), (), tags, (), Repo.CRECHE)
     plan = next(one for one in plans if one.component == "caregiver")
 
     assert plan.outcome is TagOutcome.CREATE

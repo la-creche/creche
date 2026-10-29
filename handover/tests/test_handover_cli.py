@@ -202,7 +202,7 @@ def test_resolve_json_carries_the_document(
         "--id",
         RELEASE_ID,
         "--requested-by",
-        "agent-control",
+        "creche",
         "--json",
     ]
 
@@ -211,7 +211,7 @@ def test_resolve_json_carries_the_document(
 
     assert code == EXIT_OK
     assert report["manifest"]["id"] == RELEASE_ID
-    assert report["manifest"]["requested_by"] == "agent-control"
+    assert report["manifest"]["requested_by"] == "creche"
     assert report["manifest"]["order"] == ["chaperone"]
 
 

@@ -318,7 +318,7 @@ def signed_bundle(
     name: str | None = None,
 ) -> bytes:
     """The bundle that `STAND_IN` passes for `archive`: a signature of the
-    release workflow of `agent-control`, hosted as `<owner>/<name>`, at
+    release workflow of `creche`, hosted as `<owner>/<name>`, at
     `commit`. `name` is the catalog name when it is None."""
     row = CATALOG_BY_NAME[BINARY_NAME]
     hosted = name if name is not None else str(row.repo)

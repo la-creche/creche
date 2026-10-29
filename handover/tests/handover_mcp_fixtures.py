@@ -59,7 +59,7 @@ tools:
     description: Read one file.
 """
 
-#: Contract 01b §3.3: an `agent-mcp` server declares NO ref. The
+#: Contract 01b §3.3: an `mcp` server declares NO ref. The
 #: `mcp-servers` component tag is the version of every server the
 #: repository ships.
 VIKUNJA_YAML = """
@@ -268,7 +268,7 @@ class McpFake:
 
     def _sync(self, argv: list[str]) -> RunResult | None:
         """`uv sync --frozen --no-editable`, which is how a `source:
-        agent-mcp` server is installed: from that tree's own committed
+        mcp` server is installed: from that tree's own committed
         `uv.lock`, built into the tree."""
         if "sync" not in argv:
             return None

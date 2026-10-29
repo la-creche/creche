@@ -24,7 +24,7 @@ from handover_bin_fixtures import BINARY_NAME, NESTED_BUNDLE, catalog_with, use_
 
 from handover import allocate
 
-CONTROL = Repo.AGENT_CONTROL
+CONTROL = Repo.CRECHE
 
 #: The Cargo workspace files of this repository.
 WORKSPACE_FILES = BINARY_BUILD_FILES[CONTROL]
@@ -144,7 +144,7 @@ def test_another_repositorys_nested_path_does_not_shape_the_cut(
     """The cut is scoped by repository, as every decision of the planner is."""
     use_binary_catalog(monkeypatch)
 
-    assert cut_path(f"{NESTED_BUNDLE}/src/lib.rs", Repo.AGENT_MCP) == "rust"
+    assert cut_path(f"{NESTED_BUNDLE}/src/lib.rs", Repo.MCP) == "rust"
 
 
 # -- many lines in, few lines out --------------------------------------------
@@ -270,8 +270,8 @@ def test_a_document_under_tests_or_fixtures_is_not_prose() -> None:
 def test_prose_at_the_root_moves_no_whole_repository_component() -> None:
     """`mcp-servers` is the whole MCP repository, so each path reaches it.
     Its README must not."""
-    assert cut_paths(["README.md", "docs/servers.md"], Repo.AGENT_MCP) == ()
-    assert cut_paths(["README.md", "src/agent_mcp/x.py"], Repo.AGENT_MCP) == ("src",)
+    assert cut_paths(["README.md", "docs/servers.md"], Repo.MCP) == ()
+    assert cut_paths(["README.md", "src/agent_mcp/x.py"], Repo.MCP) == ("src",)
 
 
 def _hook_calls_it_prose(path: str) -> bool:

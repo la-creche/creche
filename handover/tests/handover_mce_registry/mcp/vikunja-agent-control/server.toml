@@ -1,5 +1,5 @@
 name = "vikunja-agent-control"
-identity = "The Vikunja bot `bot-agent-control`. It writes as that actor, on the `agent-control` epic, in the House project, and cannot reach another epic."
+identity = "The Vikunja bot `bot-agent-control`. It writes as that actor, on the `creche` epic, in the House project, and cannot reach another epic."
 
 install.source = "agent-mcp"
 
@@ -7,7 +7,7 @@ run.entrypoint = "vikunja-mcp"
 run.env.VIKUNJA_URL = "http://127.0.0.1:3456"
 run.env.VIKUNJA_TOKEN = "secret:vikunja_token_agent_control"
 run.env.VIKUNJA_ACTOR = "bot-agent-control"
-run.env.VIKUNJA_EPIC = "agent-control"
+run.env.VIKUNJA_EPIC = "creche"
 run.env.VIKUNJA_PROJECT = "House"
 
 tools = [

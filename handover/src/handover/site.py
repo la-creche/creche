@@ -14,7 +14,7 @@ one reads it from there:
                                              the user units and their trees
         AGENT_LAN_ADDRESS=192.0.2.10         the host's LAN address, which
                                              each service binds
-        AGENT_GITHUB_REPO_AGENT_CONTROL=...  optional, one per repository:
+        AGENT_GITHUB_REPO_CRECHE=...  optional, one per repository:
                                              its name on GitHub, when that
                                              is not the catalog's name
         AGENT_COSIGN_PROGRAM=...             optional: the verifier of the
@@ -127,7 +127,7 @@ _SHAPES: Final[dict[SiteKey, re.Pattern[str]]] = {
 
 #: Starts the optional key that renames one repository on GitHub. The rest
 #: of the key is the catalog's name for it, in capitals with `_` for `-`:
-#: `agent-control` is `AGENT_GITHUB_REPO_AGENT_CONTROL`.
+#: `creche` is `AGENT_GITHUB_REPO_CRECHE`.
 REPO_KEY_PREFIX: Final = "AGENT_GITHUB_REPO_"
 
 #: A GitHub repository name: letters, digits, `.`, `_` and `-`, at most 100

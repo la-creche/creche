@@ -384,7 +384,7 @@ def test_a_rewritten_manifest_never_blocks_a_family_change(rig: Rig) -> None:
 
 
 def test_an_untracked_manifest_the_merge_adds_is_removed(rig: Rig) -> None:
-    """The other half, and the one that is live TODAY: agent-registry does
+    """The other half, and the one that is live TODAY: registry does
     not track the file, so `caregiver`'s copy is untracked. The first commit
     that adds it upstream would otherwise abort every merge with "untracked
     working tree files would be overwritten"."""
