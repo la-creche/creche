@@ -140,7 +140,7 @@ def test_the_fire_summary_carries_no_secret(tmp_path: Path) -> None:
 def test_fire_needs_only_a_token_file_by_default(tmp_path: Path) -> None:
     # No DOOR_TRIGGER_* var but the token file: matches the systemd unit,
     # which sets no environment beyond HOME and XDG_CONFIG_HOME
-    # (systemd/creche-trigger@.service). The default token path is absolute
+    # (systemd/creche-door-trigger@.service). The default token path is absolute
     # and cannot be pointed at tmp_path, so this only proves the socket and
     # families/registry settings need no override to construct.
     config = fire_config_from_env(_env(tmp_path))

@@ -1,9 +1,9 @@
 """`agent-trigger`: the `fire` and `serve` subcommands.
 
-`fire` is what `systemd/creche-trigger@.service` runs on a cron tick, and
+`fire` is what `systemd/creche-door-trigger@.service` runs on a cron tick, and
 what the webhook listener's own logic is built from (`fire.py`). `serve`
 runs the webhook listener (`webhooks.py`) under
-`systemd/creche-trigger-webhooks.service`.
+`systemd/creche-door-trigger.service`.
 """
 
 from __future__ import annotations

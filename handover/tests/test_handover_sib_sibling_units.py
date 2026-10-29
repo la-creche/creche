@@ -62,7 +62,7 @@ NOTICEBOARD_UNIT = "creche-noticeboard.service"
 #: Sibling names, shaped like `attendance`'s three doors.
 DOOR = "agent-door-a.service"
 TRIGGER = "agent-trigger-b.service"
-TEMPLATE = "creche-trigger@.service"
+TEMPLATE = "creche-door-trigger@.service"
 IDLE = "agent-door-idle.service"
 OTHER = "agent-other.service"
 

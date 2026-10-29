@@ -1,6 +1,6 @@
 """The timer command of the trigger door: `agent-trigger fire <family>`.
 
-`creche-trigger@.service` runs it once for each tick of a generated timer.
+`creche-door-trigger@.service` runs it once for each tick of a generated timer.
 A test is the clock here: it runs the command to its end, then reads what
 `attendance` did with the firing.
 

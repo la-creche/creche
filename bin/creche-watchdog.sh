@@ -32,7 +32,7 @@
 #   4. units     `systemctl --user is-failed` must be false for each of the
 #                five rework user units.  5 s
 #                The check also reads each firing unit, an instance of
-#                `creche-trigger@`. `systemctl --user list-units` names the
+#                `creche-door-trigger@`. `systemctl --user list-units` names the
 #                instances, and one `systemctl --user show` call for each
 #                instance gives the status of its last run. Status 78 is
 #                the status of a start that the config refuses, and it
@@ -211,7 +211,7 @@ HTTP_UNAUTHORIZED=401
 # check 5 below reads by its RESULT rather than by `is-failed` — a oneshot
 # that is meant to exit says more about itself that way.
 UNITS="creche-attendance.service creche-caregiver.service \
-creche-trigger-webhooks.service creche-noticeboard.service \
+creche-door-trigger.service creche-noticeboard.service \
 creche-door-acp.service"
 
 # The firing units: each instance of this template unit runs one cron
@@ -221,7 +221,7 @@ creche-door-acp.service"
 # agent_family. FIRING_UNITS is what `list-units` gets. FIRING_UNIT_NAME is the
 # exact form of a whole unit name, for `matches`: the two backslashes put
 # one backslash before the dot of the tail.
-FIRING_UNIT_HEAD='creche-trigger@'
+FIRING_UNIT_HEAD='creche-door-trigger@'
 FIRING_UNIT_TAIL='.service'
 FAMILY_NAME='[a-z][a-z0-9-]{1,30}'
 FIRING_UNITS="$FIRING_UNIT_HEAD*$FIRING_UNIT_TAIL"

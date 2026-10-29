@@ -178,8 +178,8 @@ a shell builtin, so the value reaches no argv. It never prints the value.
 | `creche-caregiver.service` | the `caregiver` tree | yes, when `caregiver.env` holds the master key and both images |
 | `creche-noticeboard.service` | the `noticeboard` tree | yes |
 | `creche-door-acp.service` | the `attendance` tree | yes |
-| `creche-trigger-webhooks.service` | the `attendance` tree | yes |
-| `creche-trigger@.service` | the `attendance` tree | no, it is a template |
+| `creche-door-trigger.service` | the `attendance` tree | yes |
+| `creche-door-trigger@.service` | the `attendance` tree | no, it is a template |
 | `creche-watchdog.{service,timer}` | `/opt/creche/bin` | the timer |
 | `creche-registry-sync.{service,timer}` | `/opt/creche/bin`, on the registry checkout | the timer, when the checkout is there |
 | `creche-code-corpus-sync.{service,timer}` | `/opt/creche/bin` | the timer |

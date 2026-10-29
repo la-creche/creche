@@ -9,9 +9,9 @@ Two processes, one shared core:
 
 - `agent-trigger fire <family> [--trigger NAME] [--payload-file FILE]
   [--force]`: one firing, then exit. `caregiver`'s generated timers run it
-  through `creche-trigger@.service`.
+  through `creche-door-trigger@.service`.
 - `agent-trigger serve`: the webhook listener, `POST /triggers/<family>/<name>`,
-  from `creche-trigger-webhooks.service`.
+  from `creche-door-trigger.service`.
 
 ## Rules
 

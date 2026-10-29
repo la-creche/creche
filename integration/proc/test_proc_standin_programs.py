@@ -64,7 +64,7 @@ BOX = "chat-s1"
 KIT_HOST = "openrouter.ai"
 A_HOST = "192.0.2.10:4000"
 ALIAS = "family-chat"
-UNIT = "creche-trigger-chat-t1.timer"
+UNIT = "creche-door-trigger-chat-t1.timer"
 
 GENERATE = "/key/generate"
 UPDATE = "/key/update"

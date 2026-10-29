@@ -242,7 +242,7 @@ MAX_SIBLINGS: Final = 16
 #: Rule 8's test 2: the only unit type a sibling can be.
 SERVICE_SUFFIX: Final = ".service"
 
-#: A template unit (`creche-trigger@.service`) has no instance of its own, so
+#: A template unit (`creche-door-trigger@.service`) has no instance of its own, so
 #: it is refreshed and never restarted.
 TEMPLATE_MARK: Final = "@."
 

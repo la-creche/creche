@@ -12,7 +12,7 @@
       runs one `auto-<ulid>` job in the autonomous family
 
 The door is two commands of one program, as its two units run it:
-`creche-trigger-webhooks.service` runs `serve`, and `creche-trigger@.service`
+`creche-door-trigger.service` runs `serve`, and `creche-door-trigger@.service`
 runs `fire <family>` once for each tick of a generated timer. This suite is
 the clock: a test decides when the timer fires.
 

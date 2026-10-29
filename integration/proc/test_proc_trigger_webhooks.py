@@ -1,6 +1,6 @@
 """The webhook listener of the trigger door: `agent-trigger serve`.
 
-`creche-trigger-webhooks.service` runs it. A test plays an automation on the
+`creche-door-trigger.service` runs it. A test plays an automation on the
 LAN: it posts to `/triggers/<family>/<name>` with the bearer of that webhook
 (`docs/rework/spec.md` §7.3, §11.5), then reads what `attendance` did.
 
@@ -59,7 +59,7 @@ RELOAD_DEADLINE_S = 15.0
 RELOAD_POLL_S = 0.05
 EXIT_DEADLINE_S = 30.0
 
-#: `creche-trigger-webhooks.service`: `TimeoutStopSec`. A stop takes less.
+#: `creche-door-trigger.service`: `TimeoutStopSec`. A stop takes less.
 STOP_DEADLINE_S = 30.0
 
 EVERY_INTERFACE = "0.0.0.0"
