@@ -324,11 +324,11 @@ def _check_one_root(family: FamilyFile, path: str, loc: str, issues: Issues) -> 
 
 
 def _is_platform_mirror(family: FamilyFile, path: str) -> bool:
-    """§5.5 rule 6: one of the host's own clones of the three platform repos,
+    """§5.5 rule 6: one of the host's own clones of the four platform repos,
     and every mount of it in this file is read-only. The mode is read off the
     file's own entries, because `_check_one_root` is also handed a RESOLVED
     path, and a symlink's target has no entry of its own: it is a mirror only
-    when it is itself one of the three."""
+    when it is itself one of the four."""
     if path not in PLATFORM_MIRRORS:
         return False
 
