@@ -407,7 +407,7 @@ steps:
 
 1. Add the chaperone repository to `/srv/agents/state/code-repos.txt`, with
    the directory name `chaperone`.
-2. Start `code-corpus-sync.service`. Then make sure that
+2. Start `creche-code-corpus-sync.service`. Then make sure that
    `/srv/agents/code/chaperone` exists.
 3. Give the token of root read access to the contents and the Actions of
    the chaperone repository. Checks P1 to P5 read them.

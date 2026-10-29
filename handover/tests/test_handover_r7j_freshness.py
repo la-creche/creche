@@ -436,7 +436,7 @@ def test_a_root_still_missing_after_the_fetch_names_the_sync_command(
     printed = capsys.readouterr().err
     assert "mcp-servers" in printed
     assert "the merge may not be in the corpus yet" in printed
-    assert "systemctl --user start code-corpus-sync.service" in printed
+    assert "systemctl --user start creche-code-corpus-sync.service" in printed
 
 
 def test_dry_run_never_gets_the_sync_hint(

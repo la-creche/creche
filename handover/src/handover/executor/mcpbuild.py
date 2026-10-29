@@ -153,8 +153,8 @@ own module.
     stays.
 
     ```
-    /var/lib/agent-mcp          root:root 0755   the visit makes it
-    /var/lib/agent-mcp/<name>   mcp-<name> 0700  step 8 makes it
+    /var/lib/mcp          root:root 0755   the visit makes it
+    /var/lib/mcp/<name>   mcp-<name> 0700  step 8 makes it
     ```
 
     **The root is never a release's.** The PEP's children inherit its

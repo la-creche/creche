@@ -167,7 +167,7 @@ def test_a_state_dir_names_its_variable_last(tmp_path: Path) -> None:
     files = _files(_run("--approval-listen", LISTEN, _registry(tmp_path, text)).stdout)
     manifest = tomllib.loads(files["plugins/effect/added/sample/plugin.toml"])
 
-    assert "STATE=/var/lib/agent-mcp/sample" in manifest["command"]
+    assert "STATE=/var/lib/mcp/sample" in manifest["command"]
     assert "STATE=/tmp/shared" not in manifest["command"]
 
 

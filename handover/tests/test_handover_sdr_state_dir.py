@@ -10,8 +10,8 @@ of one binary reach for one directory, which §4.2 forbids.
 Root makes it at step 8, beside the per-server tree, and it outlives every
 release:
 
-    /var/lib/agent-mcp          root:root 0755      the visit makes it
-    /var/lib/agent-mcp/<name>   mcp-<name> 0700     step 8 makes it
+    /var/lib/mcp          root:root 0755      the visit makes it
+    /var/lib/mcp/<name>   mcp-<name> 0700     step 8 makes it
 
 These drive `McpBuilder` against `McpFake`. The
 eleven real declarations are `test_handover_mce_first_mcp_release.py`'s.
