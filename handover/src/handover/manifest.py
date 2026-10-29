@@ -49,7 +49,6 @@ from .catalog import (
     RestoreMode,
     RunsAs,
     VerifyUser,
-    repo_named,
 )
 from .errors import Refusal, RefusalCode, safe_token
 from .site import operator_home, operator_user
@@ -251,19 +250,6 @@ class _Reader:
 
         try:
             return allowed(value)
-        except ValueError:
-            detail = f"field '{field}' is not one of its values: {safe_token(value)}"
-            raise self.refuse(detail) from None
-
-    def repo(self, field: str) -> Repo:
-        """`whole` for the one field whose old values still read, for one
-        release (`catalog.OLD_REPO_NAMES`)."""
-        value = self._body.get(field)
-        if not isinstance(value, str):
-            raise self.refuse(f"field '{field}' must be a string")
-
-        try:
-            return repo_named(value)
         except ValueError:
             detail = f"field '{field}' is not one of its values: {safe_token(value)}"
             raise self.refuse(detail) from None
@@ -600,7 +586,7 @@ def parse_manifest(text: str, subject: str, markup: Markup) -> ComponentManifest
     # the refusal of the first one. `build` needs the kind.
     manifest_version = _check_manifest_version(declared, subject)
     name = reader.text("name", NAME_RE)
-    repo = reader.repo("repo")
+    repo = reader.whole("repo", Repo)
     path = check_repo_path(reader.text("path", ANY_TEXT_RE), subject)
     kind = reader.whole("kind", Kind)
 

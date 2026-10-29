@@ -3,7 +3,7 @@
 # version from the session API it serves, so it is not its own component.
 manifest_version: "0.4"
 name: attendance
-repo: agent-control
+repo: creche
 path: attendance
 kind: venv
 # `creche-attendance.service`, like every other user unit on the rework plane.
