@@ -388,6 +388,10 @@ def test_up_writes_the_env_files_at_0600(ready: Host) -> None:
 
     view = (ready.state / "noticeboard.env").read_text(encoding="utf-8")
     assert f"NOTICEBOARD_ACCESS_KEY_FILE={ready.tokens}/noticeboard-access.key\n" in view
+    # The verify hook reads this file alone, so the bind is in it.
+    assert "NOTICEBOARD_BIND=192.0.2.10\n" in view
+    assert "NOTICEBOARD_PORT=8370\n" in view
+    assert "NOTICEBOARD_COOKIE_SECURE=1\n" in view
 
     for name in ("attendance.env", "noticeboard.env"):
         text = (ready.state / name).read_text(encoding="utf-8")

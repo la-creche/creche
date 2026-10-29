@@ -391,7 +391,7 @@ up_secrets() {
 }
 
 up_env_files() {
-  local pep_url base python key
+  local pep_url base python key value
   hdr "3. env files"
   pep_url="$(creche_env_get AGENT_PEP_URL --env "$SITE_FILE")" \
     || die "creche-env cannot read AGENT_PEP_URL from $SITE_FILE"
@@ -406,6 +406,16 @@ up_env_files() {
   env_set "$NOTICEBOARD_ENV" NOTICEBOARD_REGISTRY_DIR "$REGISTRY"
   env_set "$NOTICEBOARD_ENV" NOTICEBOARD_ATTENDANCE_SOCKET "$SOCKET"
   env_set "$NOTICEBOARD_ENV" NOTICEBOARD_ACCESS_KEY_FILE "$NOTICEBOARD_KEY_FILE"
+
+  # The verify hook of the noticeboard reads this file alone, with no site
+  # file (noticeboard/component.yaml). So the file holds the bind, the port
+  # and the cookie flag that the service would read from the catalog.
+  for key in NOTICEBOARD_BIND NOTICEBOARD_PORT NOTICEBOARD_COOKIE_SECURE; do
+    value="$(creche_env_get "$key" --env "$SITE_FILE")" \
+      || die "creche-env cannot read $key from $SITE_FILE"
+    [[ -n "$value" ]] || die "$key has no value in $SITE_FILE"
+    env_set "$NOTICEBOARD_ENV" "$key" "$value"
+  done
 
   env_set "$CAREGIVER_ENV" CAREGIVER_STATE_ROOT "$STATE_ROOT"
   env_set "$CAREGIVER_ENV" AGENT_PEP_URL "$pep_url"
