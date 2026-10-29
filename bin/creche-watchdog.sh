@@ -519,7 +519,7 @@ check_attendance() {
   fi
 
   # `/busy` is a route of attendance. It answers 401 to a GET without a
-  # bearer and 200 to a GET with the bearer of `view-ro`. An answer is the
+  # bearer and 200 to a GET with the bearer of `noticeboard`. An answer is the
   # point: it proves a listener without presenting a token. A path that
   # attendance does not route answers 404, and 404 is no proof.
   code="$(curl -s -o /dev/null -w '%{http_code}' -m "$CHECK_TIMEOUT_S" \

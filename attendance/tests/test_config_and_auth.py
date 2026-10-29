@@ -166,7 +166,7 @@ def test_roots_come_from_the_environment(tmp_path: Path) -> None:
 
 
 def test_a_missing_token_file_stops_the_service(tmp_path: Path) -> None:
-    write_tokens(tmp_path, skip=Principal.NOTICEBOARD_RO)
+    write_tokens(tmp_path, skip=Principal.NOTICEBOARD)
     book = TokenBook(tmp_path)
 
     with pytest.raises(TokenError):
@@ -175,7 +175,14 @@ def test_a_missing_token_file_stops_the_service(tmp_path: Path) -> None:
 
 def test_the_service_starts_with_the_live_token_files_only(tmp_path: Path) -> None:
     """No route takes `door-owui` or `door-tui`, so the host keeps no file for them."""
-    live = ("door-delegate", "door-dispatch", "door-trigger", "view-ro", "door-acp", "managerd")
+    live = (
+        "chaperone-delegate",
+        "chaperone-dispatch",
+        "door-trigger",
+        "noticeboard",
+        "door-acp",
+        "caregiver",
+    )
 
     for name in live:
         path = token_file(tmp_path, name)
@@ -214,10 +221,10 @@ def test_a_readable_token_file_stops_the_service(tmp_path: Path) -> None:
 
 
 def test_the_delegate_token_may_be_group_readable(tmp_path: Path) -> None:
-    """Contract 02 §3 rule 5's exception: the PEP reads `door-delegate.token`
+    """Contract 02 §3 rule 5's exception: the PEP reads `chaperone-delegate.token`
     as user `chaperone`, so this file may carry the group-read bit."""
     write_tokens(tmp_path)
-    path = token_file(tmp_path, Principal.DOOR_DELEGATE.value)
+    path = token_file(tmp_path, Principal.CHAPERONE_DELEGATE.value)
     os.chmod(path, 0o640)
 
     TokenBook(tmp_path).load()  # must not raise
@@ -225,7 +232,7 @@ def test_the_delegate_token_may_be_group_readable(tmp_path: Path) -> None:
 
 def test_the_delegate_token_still_refuses_a_world_bit(tmp_path: Path) -> None:
     write_tokens(tmp_path)
-    path = token_file(tmp_path, Principal.DOOR_DELEGATE.value)
+    path = token_file(tmp_path, Principal.CHAPERONE_DELEGATE.value)
     os.chmod(path, 0o644)
 
     with pytest.raises(TokenError):
@@ -235,7 +242,7 @@ def test_the_delegate_token_still_refuses_a_world_bit(tmp_path: Path) -> None:
 def test_the_delegate_token_still_refuses_group_write(tmp_path: Path) -> None:
     """0640 is the ceiling: group READ, never group write."""
     write_tokens(tmp_path)
-    path = token_file(tmp_path, Principal.DOOR_DELEGATE.value)
+    path = token_file(tmp_path, Principal.CHAPERONE_DELEGATE.value)
     os.chmod(path, 0o660)
 
     with pytest.raises(TokenError):
@@ -243,7 +250,7 @@ def test_the_delegate_token_still_refuses_group_write(tmp_path: Path) -> None:
 
 
 def test_a_non_delegate_token_still_refuses_group_read(tmp_path: Path) -> None:
-    """The exception is `door-delegate` alone. Every other file stays 0600."""
+    """The exception is `chaperone-delegate` alone. Every other file stays 0600."""
     write_tokens(tmp_path)
     path = token_file(tmp_path, Principal.DOOR_TRIGGER.value)
     os.chmod(path, 0o640)
@@ -291,10 +298,10 @@ def test_reload_picks_up_a_rotated_token(tmp_path: Path) -> None:
 
 
 def test_the_view_token_never_writes() -> None:
-    check_access(Principal.NOTICEBOARD_RO, Access.READ)
+    check_access(Principal.NOTICEBOARD, Access.READ)
 
     with pytest.raises(ApiError) as caught:
-        check_access(Principal.NOTICEBOARD_RO, Access.WRITE)
+        check_access(Principal.NOTICEBOARD, Access.WRITE)
 
     assert caught.value.code is ErrorCode.FORBIDDEN
 
@@ -342,4 +349,4 @@ def test_the_refusal_reads_the_same_for_every_kind() -> None:
 
 def test_the_view_token_sees_every_kind() -> None:
     for kind in SessionKind:
-        check_family_kind(Principal.NOTICEBOARD_RO, "chat", kind)
+        check_family_kind(Principal.NOTICEBOARD, "chat", kind)

@@ -76,7 +76,7 @@ async def test_a_request_without_a_token_is_unauthorized(rig: Rig) -> None:
 
 async def test_the_view_token_reaches_no_route(rig: Rig) -> None:
     answer = await rig.client.post(
-        JOBS, json={"caller_family": FAMILY}, headers=rig.head(Principal.NOTICEBOARD_RO)
+        JOBS, json={"caller_family": FAMILY}, headers=rig.head(Principal.NOTICEBOARD)
     )
 
     assert answer.status_code == HTTP_FORBIDDEN
@@ -87,7 +87,7 @@ async def test_the_view_token_reaches_no_route(rig: Rig) -> None:
 )
 async def test_the_session_api_is_gone(rig: Rig, path: str) -> None:
     """Phase 2 plan, row 21. An ACP client speaks to `WS /acp/{family}`."""
-    listed = await rig.client.get(path, headers=rig.head(Principal.NOTICEBOARD_RO))
+    listed = await rig.client.get(path, headers=rig.head(Principal.NOTICEBOARD))
     posted = await rig.client.post(path, json={}, headers=rig.head(Principal.DOOR_TRIGGER))
 
     assert listed.status_code == HTTP_NOT_FOUND
@@ -96,7 +96,7 @@ async def test_the_session_api_is_gone(rig: Rig, path: str) -> None:
 
 async def test_a_malformed_body_is_bad_request(rig: Rig) -> None:
     answer = await rig.client.post(
-        JOBS, content=b"{nope", headers=rig.head(Principal.DOOR_DISPATCH)
+        JOBS, content=b"{nope", headers=rig.head(Principal.CHAPERONE_DISPATCH)
     )
 
     assert answer.status_code == HTTP_BAD_REQUEST
@@ -106,7 +106,7 @@ async def test_a_malformed_body_is_bad_request(rig: Rig) -> None:
 async def test_a_body_nested_too_deep_is_bad_request(rig: Rig) -> None:
     """The JSON reader raises RecursionError on this body, not ValueError."""
     answer = await rig.client.post(
-        JOBS, content=b"[" * 200_000, headers=rig.head(Principal.DOOR_DISPATCH)
+        JOBS, content=b"[" * 200_000, headers=rig.head(Principal.CHAPERONE_DISPATCH)
     )
 
     assert answer.status_code == HTTP_BAD_REQUEST
@@ -131,7 +131,7 @@ async def test_an_exception_no_route_expects_is_internal(
 
     async with httpx.AsyncClient(transport=transport, base_url="http://sessiond") as client:
         answer = await client.post(
-            JOBS, json={"caller_family": FAMILY}, headers=rig.head(Principal.DOOR_DISPATCH)
+            JOBS, json={"caller_family": FAMILY}, headers=rig.head(Principal.CHAPERONE_DISPATCH)
         )
 
     assert answer.status_code == HTTP_INTERNAL
@@ -151,7 +151,9 @@ async def test_an_exception_no_route_expects_is_internal(
 async def test_switch_sandbox_takes_only_the_caregiver_token(rig: Rig) -> None:
     """Contract 02 §3.1: no door reaches `/internal/*`."""
     body = {"family": FAMILY, "from": SANDBOX, "to": "chat-s2", "mode": "drain", "reason": "x"}
-    refused = await rig.client.post(SWITCH, json=body, headers=rig.head(Principal.DOOR_DISPATCH))
+    refused = await rig.client.post(
+        SWITCH, json=body, headers=rig.head(Principal.CHAPERONE_DISPATCH)
+    )
     # The rig publishes one sandbox, so `to` is not one this service would
     # dial and contract 05 §5.3 rule 8 refuses it. The token reached it.
     reached = await rig.client.post(SWITCH, json=body, headers=rig.head(Principal.CAREGIVER))
@@ -191,22 +193,22 @@ def _body(**fields: object) -> bytes:
 # One route, the token that reaches it and one body for each text of the
 # route. No such body needs a session.
 OTHER_TEXTS: dict[str, tuple[str, Principal, dict[str, object]]] = {
-    "delegate_message": ("/delegate", Principal.DOOR_DELEGATE, {**DELEGATION, "message": "@"}),
+    "delegate_message": ("/delegate", Principal.CHAPERONE_DELEGATE, {**DELEGATION, "message": "@"}),
     "delegate_caller": (
         "/delegate",
-        Principal.DOOR_DELEGATE,
+        Principal.CHAPERONE_DELEGATE,
         {**DELEGATION, "caller_family": "chat@"},
     ),
-    "dispatch_message": ("/dispatch", Principal.DOOR_DISPATCH, {**DELEGATION, "message": "@"}),
+    "dispatch_message": ("/dispatch", Principal.CHAPERONE_DISPATCH, {**DELEGATION, "message": "@"}),
     "dispatch_target": (
         "/dispatch",
-        Principal.DOOR_DISPATCH,
+        Principal.CHAPERONE_DISPATCH,
         {**DELEGATION, "target_family": "chat@"},
     ),
-    "jobs_caller": ("/dispatch/jobs", Principal.DOOR_DISPATCH, {"caller_family": "chat@"}),
+    "jobs_caller": ("/dispatch/jobs", Principal.CHAPERONE_DISPATCH, {"caller_family": "chat@"}),
     "jobs_session": (
         "/dispatch/jobs",
-        Principal.DOOR_DISPATCH,
+        Principal.CHAPERONE_DISPATCH,
         {"caller_family": FAMILY, "session": "auto-@"},
     ),
     "switch_family": (
@@ -251,7 +253,7 @@ async def test_a_dispatch_key_with_no_utf8_form_is_read(rig: Rig) -> None:
         sandboxes=((JOB_SANDBOX, "ready"),),
         accepts_dispatch=True,
     )
-    head = rig.head(Principal.DOOR_DISPATCH)
+    head = rig.head(Principal.CHAPERONE_DISPATCH)
     body = _body(**{**DELEGATION, "target_family": JOB_FAMILY, "idempotency_key": "morning-@"})
     first = await rig.client.post("/dispatch", content=body, headers=head)
     second = await rig.client.post("/dispatch", content=body, headers=head)
@@ -277,7 +279,7 @@ async def test_a_text_with_a_whole_surrogate_pair_is_read(rig: Rig) -> None:
     fields = {**DELEGATION, "target_family": JOB_FAMILY, "message": "smile @"}
     body = json.dumps(fields).replace("@", "\\ud83d\\ude00").encode()
     answer = await rig.client.post(
-        "/dispatch", content=body, headers=rig.head(Principal.DOOR_DISPATCH)
+        "/dispatch", content=body, headers=rig.head(Principal.CHAPERONE_DISPATCH)
     )
 
     assert answer.status_code == HTTP_OK

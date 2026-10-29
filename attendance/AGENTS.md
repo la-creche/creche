@@ -38,10 +38,10 @@ inside the sandbox image, which carries Node.
    reason `the relay ended`. The exit of the child ends its stream, also
    when a descendant of `sbx exec` still holds its stdout
    (`exec_channel.py`).
-7. Serves the view for `view-ro`. Each view request opens one relay of its
+7. Serves the view for `noticeboard`. Each view request opens one relay of its
    own, sends `initialize` and one read method, and closes it. It never
    sends `session/prompt` (`acp_view.py`).
-8. Serves `GET /busy` for `view-ro`: the release tool's quiet window reads
+8. Serves `GET /busy` for `noticeboard`: the release tool's quiet window reads
    it in place of the session API.
 9. Serves the trigger door for `door-trigger`. Each firing is one job in
    an autonomous family's `JobQueue`, beside the dispatched jobs.
@@ -74,7 +74,7 @@ an autonomous family only. The ACP door takes an attended family only.
 
 ## The view and `/busy`
 
-Each route takes the `view-ro` token and no other. A family with no sandbox
+Each route takes the `noticeboard` token and no other. A family with no sandbox
 to relay to, a relay that ends, a line that is not strict JSON-RPC and a
 read past 30 s each answer 503 `sandbox_unavailable`.
 
@@ -178,7 +178,7 @@ conversation and the one-writer rule (Flue's queue).
 1. Only an autonomous family has a limit and a queue.
 2. `queue_full` is checked before anything is written.
 3. The target's own status document decides whether it may be dispatched to.
-4. `door-dispatch` is its own principal.
+4. `chaperone-dispatch` is its own principal.
 5. A caller never names itself. `caller_family` comes from the token.
 6. A dispatched job runs over ACP (`JobQueue`, `acp_jobs.py`). Its ledger
    entry is written only after every refusal, so a refusal leaves none.

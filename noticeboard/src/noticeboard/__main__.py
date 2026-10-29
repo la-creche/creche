@@ -4,7 +4,7 @@
 long enough, names every directory it would read, and exits. It opens no
 socket, so a deploy can run it before it swaps a unit.
 
-It never prints the access key, the `view-ro` token or any part of
+It never prints the access key, the `noticeboard` token or any part of
 either. It prints whether the file exists and whether it is empty, which
 is what a deploy needs to know (invariant 13).
 """
@@ -82,7 +82,7 @@ def _report(config: Config) -> None:
     print(f"audit         {_where(config.audit_file)}")
     print(f"outcomes      {_where(config.outcomes_dir)}")
     print(f"registry      {_where(config.registry_dir)}")
-    print(f"view-ro token {_where(config.view_token_file)}")
+    print(f"noticeboard token {_where(config.view_token_file)}")
     print(f"attendance      {_attendance(config)}")
 
 

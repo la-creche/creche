@@ -1,4 +1,4 @@
-"""`attendance` read as `view-ro`, over its two read-only view routes."""
+"""`attendance` read as `noticeboard`, over its two read-only view routes."""
 
 from __future__ import annotations
 

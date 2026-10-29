@@ -21,7 +21,7 @@ view that also applied would be a second writer to the same state.
 | why a family is invalid | the validation report |
 | what an autonomous run did | the outcome records |
 | every tool call and its decision | the chaperone's audit file, `/var/lib/chaperone/audit.jsonl` |
-| the sessions of a family, one page of a transcript | the two view routes of `attendance`, as the principal `view-ro` |
+| the sessions of a family, one page of a transcript | the two view routes of `attendance`, as the principal `noticeboard` |
 | the family file behind the form | the registry checkout |
 
 ## Perimeter rules
@@ -144,7 +144,7 @@ and `Referer` unchanged. `/healthz` and `/static/*` stay keyless.
 | `strictjson.py` | the strict reader and the strict writer of a JSON text. The file is a copy, and `bin/tests/test_strictjson_copies.py` holds each copy to the same bytes |
 | `notices.py` | the notice of a refused JSON text: one log line, and one row in the notice file that `bin/rework-watchdog.sh` reads. The file is a copy, and `bin/tests/test_strictjson_copies.py` holds each copy to the same bytes |
 | `rfc3339.py` | the one reader of a time text. The file is a copy, and `bin/tests/test_rfc3339_copies.py` holds each copy to the same bytes |
-| `sessions.py`, `attendancehttp.py` | the view routes of `attendance` as `view-ro`, and the wire |
+| `sessions.py`, `attendancehttp.py` | the view routes of `attendance` as `noticeboard`, and the wire |
 | `familyform.py`, `tomlout.py`, `tomlkeep.py`, `registrywrite.py` | the form, the whole file, the patched file, the commit |
 | `pages.py`, `app.py` | what each page needs, and the routes |
 | `verify.py` | `noticeboard-verify` |
@@ -162,7 +162,7 @@ prefixed `test_noticeboard_`.
 
 ## Known gaps
 
-- No contract says how a view running as another user reads `view-ro.token`
+- No contract says how a view running as another user reads `noticeboard.token`
   (`config.py`).
 - The base URL over the Unix socket is `http://sessiond`, never resolved
   (`config.py`).

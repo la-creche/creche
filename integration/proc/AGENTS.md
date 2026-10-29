@@ -225,7 +225,7 @@ starts `attendance` with the stand-in of the first picture. None starts
 | Topology | A test plays | The service |
 |---|---|---|
 | The fourth, `proc_trigger.py`: the trigger door and `attendance` | an automation on the LAN, over HTTP on a loopback port, and a systemd timer, which runs `agent-trigger fire` to its end | reads the registry, the status documents, the webhook bearer files and the outcome records. Dials `attendance` as `door-trigger`. |
-| The fifth, `proc_board.py`: the noticeboard and `attendance` | the reverse proxy and a browser, over HTTP on a loopback port | reads the status documents, the report, the outcome records and the audit files. Dials `attendance` as `view-ro`. Writes one git commit in the registry of the root. |
+| The fifth, `proc_board.py`: the noticeboard and `attendance` | the reverse proxy and a browser, over HTTP on a loopback port | reads the status documents, the report, the outcome records and the audit files. Dials `attendance` as `noticeboard`. Writes one git commit in the registry of the root. |
 
 The fifth topology has a second program: the verify hook of the
 noticeboard. A test plays the release executor. It writes the env file of
@@ -727,9 +727,9 @@ the text of the failure. Work down this list.
 ## Known gaps
 
 - **CONTRACT-QUESTION, the name of the `caregiver` token.** Contract 02 §3.1
-  names the token `caregiver`. `attendance` reads `tokens/managerd.token`,
+  names the token `caregiver`. `attendance` reads `tokens/caregiver.token`,
   and contract 05 §4.1 names the principal `managerd`. The suite writes
-  `managerd.token`, the name on the host. A change costs one name in
+  `caregiver.token`, the name on the host. A change costs one name in
   `proc_tree.py`.
 - **CONTRACT-QUESTION, the exit code of a refused start.** Contract 02 §3
   rule 7 names no exit code. The suite accepts each code that is not 0. A

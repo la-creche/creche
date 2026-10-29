@@ -23,7 +23,7 @@ from attendance_harness import FAMILY, SANDBOX, make_config, wait_until, write_s
 from fake_facade import FacadeFleet, PromptMode
 
 CAREGIVER = Principal.CAREGIVER
-DELEGATE = Principal.DOOR_DELEGATE
+DELEGATE = Principal.CHAPERONE_DELEGATE
 
 NEXT_SANDBOX = "chat-s2"
 REASON = "mounts changed: added /srv/agents/work/code-sandbox rw"

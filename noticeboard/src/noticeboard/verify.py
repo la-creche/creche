@@ -12,7 +12,7 @@ and 2).
 It is runnable at any time, not only after a release, because the
 platform doctor calls it too (§4 rule 5).
 
-It never prints the access key, the `view-ro` token or any part of
+It never prints the access key, the `noticeboard` token or any part of
 either. `/healthz` is the keyless path, so the hook needs no secret to
 make its one call (invariant 13).
 
@@ -120,7 +120,7 @@ def _checks(config: Config) -> list[Check]:
         _readable("families", config.families_dir),
         _readable("audit", config.audit_file),
         _readable("registry", config.registry_dir),
-        _readable("view-ro token", config.view_token_file),
+        _readable("noticeboard token", config.view_token_file),
         _healthy(config),
     ]
 

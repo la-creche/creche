@@ -11,7 +11,7 @@ The signal here is the one root can actually get: **`attendance` has
 reported nothing busy for five consecutive minutes**. Every model call an
 agent makes belongs to a prompt, and `attendance` counts every prompt in
 flight. Root asks `GET /busy` over the operator's socket, with the
-`view-ro` bearer.
+`noticeboard` bearer.
 
 Root is the caller and both files are the operator's, so the confused-deputy case is
 the first thing these tests pin: root opens the token with `O_NOFOLLOW` and
@@ -52,12 +52,12 @@ NOW: Final = 1_758_153_590.0
 
 #: Long enough to pass contract 02 §3 rule 7's floor, and it is not a secret:
 #: no host reads this file.
-TOKEN: Final = "r7q-view-ro-token-0123456789abcdef"
+TOKEN: Final = "r7q-noticeboard-token-0123456789abcdef"
 
 #: Short enough for `AF_UNIX` on macOS, which caps the path near 104 bytes.
 #: pytest's `tmp_path` is longer than that on its own.
 SOCKET_NAME: Final = "attendance.sock"
-TOKEN_NAME: Final = "view-ro.token"
+TOKEN_NAME: Final = "noticeboard.token"
 
 #: One fake answer must not hold a test for the production timeout.
 FAST_TIMEOUT_S: Final = 0.5
@@ -212,7 +212,7 @@ def test_a_token_owned_by_somebody_else_is_refused(rig: Rig) -> None:
 
 
 def test_a_token_wider_than_0600_is_refused(rig: Rig) -> None:
-    """Contract 02 §3 rule 5: `view-ro` is not one of the PEP's two tokens,
+    """Contract 02 §3 rule 5: `noticeboard` is not one of the PEP's two tokens,
     so nothing but 0600 is this file."""
     rig.token_path.chmod(0o640)
 

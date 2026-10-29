@@ -344,7 +344,7 @@ class SessionService:
         The write grant alone is not enough. Three other doors hold it, and
         none of them may mint a job session in a thin family.
         """
-        if principal is Principal.DOOR_DELEGATE:
+        if principal is Principal.CHAPERONE_DELEGATE:
             return
 
         raise ApiError(
@@ -363,7 +363,7 @@ class SessionService:
         what became of each one.
         """
         check_access(principal, Access.WRITE)
-        _check_door(principal, Principal.DOOR_DISPATCH)
+        _check_door(principal, Principal.CHAPERONE_DISPATCH)
         target = request.target_family
         status = self._status.require(target)
         # The dispatch door's grant is `autonomous`, so a thin or attended
@@ -442,7 +442,7 @@ class SessionService:
         (rule 2). No id ever leaks.
         """
         check_access(principal, Access.WRITE)
-        _check_door(principal, Principal.DOOR_DISPATCH)
+        _check_door(principal, Principal.CHAPERONE_DISPATCH)
         return self._read_ledger(self._dispatches, query)
 
     def read_trigger_jobs(self, principal: Principal, query: JobQuery) -> dict[str, Any]:
@@ -963,13 +963,13 @@ class SessionService:
 
 
 def _check_view(principal: Principal) -> None:
-    """The view routes and `/busy` take `view-ro` only.
+    """The view routes and `/busy` take `noticeboard` only.
 
     The read grant alone is not enough: each door that writes holds it too.
     """
     check_access(principal, Access.READ)
 
-    if principal is not Principal.NOTICEBOARD_RO:
+    if principal is not Principal.NOTICEBOARD:
         raise ApiError(
             ErrorCode.FORBIDDEN,
             f"{principal.value} is not the view principal",
@@ -981,7 +981,7 @@ def _check_door(principal: Principal, door: Principal) -> None:
     """Contract 02 §13.4: each door that starts a job serves its own paths.
 
     The write grant alone is not enough, and neither is being the PEP:
-    `door-delegate` holds both and may not create an autonomous session.
+    `chaperone-delegate` holds both and may not create an autonomous session.
     """
     if principal is door:
         return

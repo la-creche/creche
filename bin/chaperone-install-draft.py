@@ -71,8 +71,8 @@ HOOK_URL: Final = "http://127.0.0.1:1881/hook/approval"
 
 #: The secret parameter of each fixed plugin, and the name of its secret file.
 ATTENDANCE_SECRETS: Final = (
-    ("DELEGATE_TOKEN", "door-delegate"),
-    ("DISPATCH_TOKEN", "door-dispatch"),
+    ("DELEGATE_TOKEN", "chaperone-delegate"),
+    ("DISPATCH_TOKEN", "chaperone-dispatch"),
 )
 APPROVAL_SECRETS: Final = (("APPROVAL_TOKEN", "approval-token"), ("RESUME_TOKEN", "resume-token"))
 

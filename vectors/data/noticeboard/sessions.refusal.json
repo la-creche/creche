@@ -8,7 +8,7 @@
  "vectors": [
   {"id":"not-found","input":{"text":"{\"error\":{\"code\":\"not_found\",\"message\":\"no such session\"}}"},"params":{"status":404},"refusal":{"class":"refused","text":"attendance refused: not_found (404) no such session"},"result":"refused"},
   {"id":"unauthorized","input":{"text":"{\"error\":{\"code\":\"unauthorized\",\"message\":\"unknown token\"}}"},"params":{"status":401},"refusal":{"class":"refused","text":"attendance refused: unauthorized (401) unknown token"},"result":"refused"},
-  {"id":"forbidden","input":{"text":"{\"error\":{\"code\":\"forbidden\",\"message\":\"view-ro reads only\"}}"},"params":{"status":403},"refusal":{"class":"refused","text":"attendance refused: forbidden (403) view-ro reads only"},"result":"refused"},
+  {"id":"forbidden","input":{"text":"{\"error\":{\"code\":\"forbidden\",\"message\":\"noticeboard reads only\"}}"},"params":{"status":403},"refusal":{"class":"refused","text":"attendance refused: forbidden (403) noticeboard reads only"},"result":"refused"},
   {"id":"unavailable","input":{"text":"{\"error\":{\"code\":\"unavailable\",\"message\":\"starting\"}}"},"params":{"status":503},"refusal":{"class":"refused","text":"attendance refused: unavailable (503) starting"},"result":"refused"},
   {"id":"detail","input":{"text":"{\"error\":{\"code\":\"conflict\",\"message\":\"busy\",\"detail\":{\"a\":1}}}"},"params":{"status":409},"refusal":{"class":"refused","text":"attendance refused: conflict (409) busy"},"result":"refused"},
   {"id":"status-201","input":{"text":"{\"sessions\":[]}"},"params":{"status":201},"refusal":{"class":"refused","text":"attendance answered 201 with no error code"},"result":"refused"},

@@ -61,7 +61,7 @@ HOOKS_ENV="$STATE_ROOT/hooks.env"
 ATTENDANCE_ENV="$STATE_ROOT/attendance.env"
 NOTICEBOARD_ENV="$STATE_ROOT/noticeboard.env"
 CAREGIVER_ENV="$STATE_ROOT/caregiver.env"
-NOTICEBOARD_KEY_FILE="$TOKENS_DIR/view-access.key"
+NOTICEBOARD_KEY_FILE="$TOKENS_DIR/noticeboard-access.key"
 DOOR_ACP_ACCESS_KEY_FILE="$STATE_ROOT/door-acp.key"
 
 SESSIONS_ROOT="$PREFIX/srv/agents/sessions"
@@ -98,7 +98,7 @@ SOCK_DIR_MODE=2750
 # One token file for each principal of `attendance.auth.Principal`.
 # attendance refuses to start when one of them is missing, empty or short.
 # `bin/tests/test_fleet_up.py` holds this list equal to the enum.
-PRINCIPALS="door-delegate door-dispatch door-trigger view-ro door-acp managerd"
+PRINCIPALS="chaperone-delegate chaperone-dispatch door-trigger noticeboard door-acp caregiver"
 SECRET_BYTES=48
 
 # Each user unit, in the order `up` installs and starts it. attendance comes
@@ -442,7 +442,7 @@ up_env_files() {
 
 # caregiver refuses to start with no master key, and its unit passes both
 # image flags. A start before the file is whole only fills the journal.
-managerd_is_whole() {
+caregiver_is_whole() {
   local key
   for key in LITELLM_MASTER_KEY AGENT_SANDBOX_IMAGE AGENT_SANDBOX_PYTHON_IMAGE; do
     [[ -n "$(envfile_value "$CAREGIVER_ENV" "$key")" ]] || return 1
@@ -491,7 +491,7 @@ up_units() {
   for unit in $installed; do
     in_words "$unit" "$ENABLED_UNITS" || continue
     systemctl --user is-enabled "$unit" >/dev/null 2>&1 && continue
-    if [[ "$unit" == creche-caregiver.service ]] && ! managerd_is_whole; then
+    if [[ "$unit" == creche-caregiver.service ]] && ! caregiver_is_whole; then
       say "  not started: $unit. $CAREGIVER_ENV has no master key or no image yet."
       continue
     fi

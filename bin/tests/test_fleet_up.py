@@ -313,7 +313,7 @@ def test_check_on_an_empty_tree_lists_every_missing_item(empty: Host) -> None:
     for principal in Principal:
         assert f"tokens/{principal.value}.token" in fails, principal
 
-    for name in ("tokens/view-access.key", "door-acp.key", *ENV_FILES, *UNITS):
+    for name in ("tokens/noticeboard-access.key", "door-acp.key", *ENV_FILES, *UNITS):
         assert name in fails, f"no FAIL line names {name!r}:\n{done.stdout}"
 
     for name in DIRS:
@@ -388,7 +388,7 @@ def test_up_writes_the_env_files_at_0600(ready: Host) -> None:
     assert "AGENT_PEP_URL=http://192.0.2.10:8300\n" in managerd
 
     view = (ready.state / "noticeboard.env").read_text(encoding="utf-8")
-    assert f"NOTICEBOARD_ACCESS_KEY_FILE={ready.tokens}/view-access.key\n" in view
+    assert f"NOTICEBOARD_ACCESS_KEY_FILE={ready.tokens}/noticeboard-access.key\n" in view
 
     for name in ("attendance.env", "noticeboard.env"):
         text = (ready.state / name).read_text(encoding="utf-8")
@@ -548,7 +548,7 @@ def test_a_key_that_existed_before_up_survives_down(ready: Host) -> None:
     assert token.read_text(encoding="utf-8") == "y" * 48
     assert key.read_text(encoding="utf-8") == "z" * 48
     assert ready.tokens.is_dir()
-    assert not (ready.tokens / "door-dispatch.token").exists()
+    assert not (ready.tokens / "chaperone-dispatch.token").exists()
 
 
 def test_down_keeps_a_recorded_directory_that_holds_another_file(ready: Host) -> None:

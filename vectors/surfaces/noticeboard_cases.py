@@ -819,7 +819,9 @@ def _error(body_id: str, status: int = 404, **fields: object) -> Answer:
 REFUSALS: Final[tuple[Answer, ...]] = (
     _refusal("not-found", 404, _NOT_FOUND),
     _refusal("unauthorized", 401, {"error": {"code": "unauthorized", "message": "unknown token"}}),
-    _refusal("forbidden", 403, {"error": {"code": "forbidden", "message": "view-ro reads only"}}),
+    _refusal(
+        "forbidden", 403, {"error": {"code": "forbidden", "message": "noticeboard reads only"}}
+    ),
     _refusal("unavailable", 503, {"error": {"code": "unavailable", "message": "starting"}}),
     _refusal("detail", 409, {"error": {"code": "conflict", "message": "busy", "detail": {"a": 1}}}),
     # --- a status that is not 200 ---
@@ -1376,14 +1378,14 @@ CHECKS: Final[tuple[CheckCase, ...]] = (
         _ROOT_PATHS,
         ("state/families", "state/audit", "state/outcomes", "state/tokens", "registry"),
         {
-            "state/tokens/view-ro.token": NOTICEBOARD_TOKEN.encode("ascii") + b"\n",
+            "state/tokens/noticeboard.token": NOTICEBOARD_TOKEN.encode("ascii") + b"\n",
             "attendance.sock": b"",
         },
     ),
     CheckCase("state-root-present", _ROOT_PATHS, ("state",)),
     CheckCase("families-and-registry-present", _ROOT_PATHS, ("state/families", "registry")),
     CheckCase(
-        "token-file-empty", _ROOT_PATHS, ("state/tokens",), {"state/tokens/view-ro.token": b""}
+        "token-file-empty", _ROOT_PATHS, ("state/tokens",), {"state/tokens/noticeboard.token": b""}
     ),
     CheckCase(
         "a-file-in-place-of-a-directory",

@@ -129,7 +129,7 @@ def test_the_hook_prints_no_key_and_no_token(serving: BoardStack, key_in: str) -
 
     The unit can name a key file, or its env file can hold the key itself.
     The hook reads the key in both cases. It finds the token file of the
-    `view-ro` principal in the state directory.
+    `noticeboard` principal in the state directory.
     """
     values = view_env(serving.tree, serving.board_port)
 
@@ -142,4 +142,4 @@ def test_the_hook_prints_no_key_and_no_token(serving: BoardStack, key_in: str) -
 
     assert done.exit_code == 0, printed
     assert NOTICEBOARD_KEY not in printed
-    assert token_of("view-ro") not in printed
+    assert token_of("noticeboard") not in printed

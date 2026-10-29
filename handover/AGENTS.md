@@ -254,7 +254,7 @@ has the name of the markup of the manifest: `.component.toml` or
     descriptor: regular file, the operator's uid, mode 0600, bounded size.
     Root must not act as the operator's deputy against a file the operator
     cannot read. The rule has two cases:
-    1. The `view-ro` token of the quiet window (`quiet.py`).
+    1. The `noticeboard` token of the quiet window (`quiet.py`).
     2. The archive and the bundle of a binary component in the store
        (`executor/artifact.py`). Root also opens each directory below the
        operator home with no link followed, and the operator must own each

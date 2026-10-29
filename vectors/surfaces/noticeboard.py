@@ -97,7 +97,7 @@ HTTP_NOT_FOUND: Final = 404
 MODE_OWNER: Final = 0o600
 
 #: The name of the token file of the reader.
-TOKEN_NAME: Final = "view-ro.token"
+TOKEN_NAME: Final = "noticeboard.token"
 
 #: The start of the name of the temporary directory. No vector holds a path
 #: of that directory, so no vector holds this text.

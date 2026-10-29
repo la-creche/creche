@@ -7,7 +7,7 @@
       | reads state/families/<family>/status.json and validation.json
       | reads state/outcomes/ and chaperone/audit.jsonl
       | writes one git commit in <root>/registry
-      | HTTP over a Unix socket, the `view-ro` token
+      | HTTP over a Unix socket, the `noticeboard` token
       v
     attendance and the stand-ins      `proc_stack.py`
 

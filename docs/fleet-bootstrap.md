@@ -18,7 +18,7 @@ the first layer only.
 |---|---|
 | The record of `fleet-up` | `/srv/agents/state/creche/fleet/record.json` |
 | One token file for each principal of attendance | `/srv/agents/state/creche/tokens/` |
-| The access key of the noticeboard | `/srv/agents/state/creche/tokens/view-access.key` |
+| The access key of the noticeboard | `/srv/agents/state/creche/tokens/noticeboard-access.key` |
 | The key of the ACP door | `/srv/agents/state/creche/door-acp.key` |
 | Three env files | `/srv/agents/state/creche/{sessiond,view,managerd}.env` |
 | The state directories | `families/`, `leases/`, `faults/`, `triggers/webhooks/`, `log/`, `sock/` under the state root |
@@ -93,7 +93,7 @@ holds each command.
 | R7 | Install the unit of the Rust chaperone and its drop-in (A7, C2). Put the release binary at `~/chaperone-rel/bin/chaperone` (A6). | The binary at that path or at `/opt/components/chaperone/bin/chaperone`. A listener on port 8310. |
 | R8 | The first release of `playpen`. | `/opt/components/playpen/images.env`. |
 | R9 | Put `LITELLM_MASTER_KEY` into `hooks.env`. `docs/rework/cutover.md` §4.1 gives the one command. | The key in `hooks.env` or in `caregiver.env`. The value is never printed. |
-| R10 | After the first `up`: copy `tokens/door-delegate.token` and `tokens/door-dispatch.token` into `/etc/chaperone/secrets`. Mint `approval-token` and `resume-token` there (A6). | Nothing. The operator cannot read `secrets/`. |
+| R10 | After the first `up`: copy `tokens/chaperone-delegate.token` and `tokens/chaperone-dispatch.token` into `/etc/chaperone/secrets`. Mint `approval-token` and `resume-token` there (A6). | Nothing. The operator cannot read `secrets/`. |
 | R11 | Review the firewall (A10). | Nothing. |
 
 The owner steps:
@@ -115,7 +115,7 @@ each recorded path in reverse order and nothing else.
 | The record | `.../rework/fleet/record.json` | operator, 0600 in a 0700 directory | Last, when `down` kept no path. Else `down` writes the kept paths into it. |
 | `tokens/` | `.../rework/tokens/` | operator, 0700 | Only when `up` made it and it is empty. |
 | Eight principal token files | `.../rework/tokens/<principal>.token` | operator, 0600 | Only when `up` minted it. |
-| The access key of the noticeboard | `.../rework/tokens/view-access.key` | operator, 0600 | Only when `up` minted it. |
+| The access key of the noticeboard | `.../rework/tokens/noticeboard-access.key` | operator, 0600 | Only when `up` minted it. |
 | The key of the ACP door | `.../rework/door-acp.key` | operator, 0600 | Only when `up` minted it. |
 | Three env files | `.../rework/{sessiond,view,managerd}.env` | operator, 0600 | Only when `up` made the file. |
 | `families/`, `leases/`, `faults/`, `triggers/`, `triggers/webhooks/`, `log/` | under the state root | operator, 0750 | Only when `up` made it and it is empty. |
@@ -219,5 +219,5 @@ a shell builtin, so the value reaches no argv. It never prints the value.
 - `bin/creche-watchdog.sh` does not watch `creche-door-acp.service`.
 - `systemd/AGENTS.md` names the old cutover script as the installer of the
   user units. That changes when the owner takes this design.
-- The tokens of `door-delegate` and `door-dispatch` are 0600. The Python
+- The tokens of `chaperone-delegate` and `chaperone-dispatch` are 0600. The Python
   chaperone read them at 0640. The Rust chaperone reads the copies of R10.

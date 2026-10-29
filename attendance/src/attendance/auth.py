@@ -37,23 +37,22 @@ _BEARER = "Bearer "
 class Principal(StrEnum):
     """One row of contract 02 §3.1. The token file is named after it."""
 
-    DOOR_DELEGATE = "door-delegate"
+    CHAPERONE_DELEGATE = "chaperone-delegate"
     #: The PEP's second token (contract 02 §3.1, §13.4). It is not a widened
-    #: `door-delegate`, so one stolen bearer reaches one family kind.
-    DOOR_DISPATCH = "door-dispatch"
+    #: `chaperone-delegate`, so one stolen bearer reaches one family kind.
+    CHAPERONE_DISPATCH = "chaperone-dispatch"
     DOOR_TRIGGER = "door-trigger"
-    NOTICEBOARD_RO = "view-ro"
+    NOTICEBOARD = "noticeboard"
     #: The ACP door (phase 2 plan, row 17). It reaches `WS /acp/{family}` and
     #: nothing else.
     DOOR_ACP = "door-acp"
-    #: The old name: the host minted `tokens/managerd.token` under it.
-    CAREGIVER = "managerd"
+    CAREGIVER = "caregiver"
 
 
 #: The two token files the PEP reads as user `chaperone`, and the only ones rule 5's
 #: mode exception covers (contract 02 §3 rule 5).
 PEP_READ_TOKENS: frozenset[Principal] = frozenset(
-    {Principal.DOOR_DELEGATE, Principal.DOOR_DISPATCH}
+    {Principal.CHAPERONE_DELEGATE, Principal.CHAPERONE_DISPATCH}
 )
 
 
@@ -77,10 +76,10 @@ class Grant:
 
 # Deny by default (invariant 11): a principal reaches exactly its own row.
 _GRANTS: dict[Principal, Grant] = {
-    Principal.DOOR_DELEGATE: Grant(Access.WRITE, SessionKind.THIN),
-    Principal.DOOR_DISPATCH: Grant(Access.WRITE, SessionKind.AUTONOMOUS),
+    Principal.CHAPERONE_DELEGATE: Grant(Access.WRITE, SessionKind.THIN),
+    Principal.CHAPERONE_DISPATCH: Grant(Access.WRITE, SessionKind.AUTONOMOUS),
     Principal.DOOR_TRIGGER: Grant(Access.WRITE, SessionKind.AUTONOMOUS),
-    Principal.NOTICEBOARD_RO: Grant(Access.READ, None),
+    Principal.NOTICEBOARD: Grant(Access.READ, None),
     # CONTRACT-QUESTION: the phase 2 plan names no family kind for the ACP
     # door. Reading taken: attended families only, the kind of the two doors
     # it replaces. A change costs this one row.

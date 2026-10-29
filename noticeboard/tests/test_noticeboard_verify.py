@@ -132,7 +132,7 @@ def test_a_healthy_service_passes_every_check(
 
     state = make_state_root(tmp_path)
     (state / "tokens").mkdir(parents=True, exist_ok=True)
-    (state / "tokens" / "view-ro.token").write_text("v" * 40, encoding="utf-8")
+    (state / "tokens" / "noticeboard.token").write_text("v" * 40, encoding="utf-8")
     registry = make_registry(tmp_path)
     server = HTTPServer(("127.0.0.1", 0), Healthz)
     threading.Thread(target=server.serve_forever, daemon=True).start()

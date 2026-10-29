@@ -104,7 +104,7 @@ def test_state_paths_come_off_one_root(tmp_path: Path) -> None:
 
     assert config.families_dir == tmp_path / "families"
     assert config.outcomes_dir == tmp_path / "outcomes"
-    assert config.view_token_file == tmp_path / "tokens" / "view-ro.token"
+    assert config.view_token_file == tmp_path / "tokens" / "noticeboard.token"
 
 
 def test_a_attendance_url_replaces_the_socket() -> None:

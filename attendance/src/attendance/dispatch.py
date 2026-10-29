@@ -51,7 +51,7 @@ IDEMPOTENCY_WINDOW = timedelta(hours=1)
 class LedgerDoor(StrEnum):
     """The door that started the jobs of a ledger. Each door has a ledger."""
 
-    DISPATCH = "door-dispatch"
+    DISPATCH = "chaperone-dispatch"
     TRIGGER = "door-trigger"
 
 

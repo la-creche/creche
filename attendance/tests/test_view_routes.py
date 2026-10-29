@@ -82,12 +82,10 @@ class Rig:
     tokens: dict[Principal, str]
     facades: FacadeFleet
 
-    def head(self, principal: Principal = Principal.NOTICEBOARD_RO) -> dict[str, str]:
+    def head(self, principal: Principal = Principal.NOTICEBOARD) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.tokens[principal]}"}
 
-    async def get(
-        self, path: str, principal: Principal = Principal.NOTICEBOARD_RO
-    ) -> httpx.Response:
+    async def get(self, path: str, principal: Principal = Principal.NOTICEBOARD) -> httpx.Response:
         return await self.client.get(path, headers=self.head(principal))
 
 
@@ -293,7 +291,7 @@ async def test_a_relay_with_no_facade_is_unavailable(rig: Rig) -> None:
 
 @pytest.mark.parametrize("path", [SESSIONS, ONE, "/busy"])
 @pytest.mark.parametrize(
-    "principal", [Principal.DOOR_DISPATCH, Principal.DOOR_ACP, Principal.CAREGIVER]
+    "principal", [Principal.CHAPERONE_DISPATCH, Principal.DOOR_ACP, Principal.CAREGIVER]
 )
 async def test_each_other_principal_is_forbidden(rig: Rig, path: str, principal: Principal) -> None:
     answer = await rig.get(path, principal)
@@ -332,7 +330,7 @@ async def test_busy_counts_running_and_queued_jobs(rig: Rig) -> None:
 
     for _ in range(2):
         sent = await rig.client.post(
-            "/dispatch", json=body, headers=rig.head(Principal.DOOR_DISPATCH)
+            "/dispatch", json=body, headers=rig.head(Principal.CHAPERONE_DISPATCH)
         )
         assert sent.status_code == HTTP_OK
 

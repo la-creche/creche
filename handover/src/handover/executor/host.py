@@ -100,7 +100,7 @@ MCP_STATE_ROOT: Final = "/var/lib/agent-mcp"
 #: 2750 directory, the token 0600. `executor/quiet.py` carries why root may
 #: open an operator-owned token at all and how it avoids being the operator's deputy.
 ATTENDANCE_SOCKET: Final = "/srv/agents/state/creche/sock/attendance.sock"
-NOTICEBOARD_TOKEN_FILE: Final = "/srv/agents/state/creche/tokens/view-ro.token"
+NOTICEBOARD_TOKEN_FILE: Final = "/srv/agents/state/creche/tokens/noticeboard.token"
 
 
 class As(StrEnum):

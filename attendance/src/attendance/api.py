@@ -1,7 +1,7 @@
 """The HTTP surface (contract 02 §3, §12, §13.4, contract 05 §5).
 
 Three operations for the PEP's two doors, two for the trigger door, the
-single internal path `caregiver` calls, the read-only view and `/busy` for `view-ro`, and the
+single internal path `caregiver` calls, the read-only view and `/busy` for `noticeboard`, and the
 ACP door on the Unix socket. The shapes come from the contract, not from a
 framework: every body is parsed by `requests.py` so one refusal table
 serves every route.
