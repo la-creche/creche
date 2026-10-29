@@ -504,7 +504,7 @@ def _sandboxes_pass(
     ran: list[str] = []
     _retire_planned(state_root, family.name, actors.driver)
     records = sandboxes.read_ledger(state_root, family.name)
-    serving = _serving(records, applied)
+    serving = _serving(records, applied, state_root)
 
     if _needs(diff, Step.SET_EGRESS) and serving is not None:
         _halt_if(stop, ran)
@@ -520,7 +520,7 @@ def _sandboxes_pass(
 
         sandboxes.set_allow(state_root, family.name, actors.egress.allowed(family.egress))
         records = sandboxes.read_ledger(state_root, family.name)
-        serving = _serving(records, applied)
+        serving = _serving(records, applied, state_root)
 
     if serving is None:
         created, create_faults, ran_now = _first_sandbox(
@@ -531,7 +531,7 @@ def _sandboxes_pass(
 
         serving = created
 
-    if serving.spec_hash == sandboxes.spec_hash_of(family, image):
+    if serving.spec_hash == sandboxes.spec_hash_of(family, image, state_root):
         return _promote(
             family=family,
             serving=serving,
@@ -649,7 +649,7 @@ def _replace(
     An ADDITION drains — running turns finish on the outgoing sandbox. A
     REMOVAL interrupts at once, because a turn that still holds the reach
     the edit removed must not be allowed to finish (§5.3 rule 3)."""
-    wanted = sandboxes.spec_hash_of(family, image)
+    wanted = sandboxes.spec_hash_of(family, image, state_root)
     incoming = _with_hash(records, wanted, besides=serving.id)
     if incoming is None:
         _halt_if(stop, ran)
@@ -1096,7 +1096,7 @@ def _live_records(state_root: Path, family_name: str) -> tuple[SandboxRecord, ..
 
 
 def _serving(
-    records: tuple[SandboxRecord, ...], applied: AppliedState | None
+    records: tuple[SandboxRecord, ...], applied: AppliedState | None, state_root: Path
 ) -> SandboxRecord | None:
     """The sandbox that carries the revision now live.
 
@@ -1105,7 +1105,9 @@ def _serving(
     is then what serves, and adopting it is what makes the next pass
     converge instead of building a third."""
     if applied is not None:
-        match = _with_hash(records, sandboxes.spec_hash_of(applied.family, applied.image))
+        match = _with_hash(
+            records, sandboxes.spec_hash_of(applied.family, applied.image, state_root)
+        )
         if match is not None:
             return match
 
