@@ -32,7 +32,7 @@ def write_status(root: Path, family: str, written_at: datetime) -> None:
 
 
 def run(monkeypatch: pytest.MonkeyPatch, root: Path) -> int:
-    monkeypatch.setenv("MANAGERD_STATE_ROOT", str(root))
+    monkeypatch.setenv("CAREGIVER_STATE_ROOT", str(root))
     monkeypatch.setattr("caregiver.verify.datetime", _FixedClock)
 
     return main(["--json"])
@@ -106,12 +106,12 @@ def test_an_env_file_supplies_the_state_root(
     own `EnvironmentFile=`. `--env-file` is the same file the unit's own
     `EnvironmentFile=` names, read by this hook itself — never the
     process env alone."""
-    monkeypatch.delenv("MANAGERD_STATE_ROOT", raising=False)
+    monkeypatch.delenv("CAREGIVER_STATE_ROOT", raising=False)
     monkeypatch.setattr("caregiver.verify.datetime", _FixedClock)
     root = state_root(tmp_path)
     write_status(root, "chat", NOW - timedelta(seconds=5))
-    env_file = tmp_path / "managerd.env"
-    env_file.write_text(f"MANAGERD_STATE_ROOT={root}\n", encoding="utf-8")
+    env_file = tmp_path / "caregiver.env"
+    env_file.write_text(f"CAREGIVER_STATE_ROOT={root}\n", encoding="utf-8")
 
     code = main(["--json", "--env-file", str(env_file)])
 
@@ -124,7 +124,7 @@ def test_a_missing_env_file_fails_closed(
 ) -> None:
     """A file the manifest promised and the host does not have is a hook
     failure, never a silent fall-back to `paths.STATE_ROOT`."""
-    monkeypatch.delenv("MANAGERD_STATE_ROOT", raising=False)
+    monkeypatch.delenv("CAREGIVER_STATE_ROOT", raising=False)
 
     code = main(["--json", "--env-file", str(tmp_path / "absent.env")])
 

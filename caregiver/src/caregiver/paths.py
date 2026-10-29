@@ -12,7 +12,7 @@ from agent_family import FamilyFile
 from agent_family.registry import FAMILY_FILE
 
 #: Rework runtime state.
-STATE_ROOT: Final = Path("/srv/agents/state/rework")
+STATE_ROOT: Final = Path("/srv/agents/state/creche")
 
 #: Root's own root: the release spool, every ancestor root's.
 #: `handover.executor.layout`'s `RELEASE_ROOT` spelled a second time,
@@ -53,7 +53,7 @@ GRANTS_DIR: Final = "grants"
 FAULTS_DIR: Final = "faults"
 TOKENS_DIR: Final = "tokens"
 #: Contract 05 §6.4. `door-trigger` reads the same two names from its own
-#: `DOOR_TRIGGER_WEBHOOKS_DIR` default, so a change here is a change there.
+#: `DOOR_TRIGGER_WEBHOOK_DIR` default, so a change here is a change there.
 TRIGGERS_DIR: Final = "triggers"
 WEBHOOKS_DIR: Final = "webhooks"
 WEBHOOK_TOKEN_SUFFIX: Final = ".token"
@@ -77,7 +77,7 @@ POLICY_LOCK_FILE: Final = "policy.lock"
 
 
 def family_dir(root: Path, family: str) -> Path:
-    """`/srv/agents/state/rework/families/<family>/` — this family's own
+    """`/srv/agents/state/creche/families/<family>/` — this family's own
     runtime state: status, validation report, credentials, config mount,
     control directory, sandbox counter."""
     return root / FAMILIES_DIR / family
@@ -199,7 +199,7 @@ def sandbox_id(family: str, sequence: int) -> str:
 
 def policy_fragment_path(root: Path, family: str) -> Path:
     """The app table of one family for the Rust chaperone:
-    `/srv/agents/state/rework/grants/<family>.toml`. `policy_fleet.py`
+    `/srv/agents/state/creche/grants/<family>.toml`. `policy_fleet.py`
     joins every fragment into one `policy.toml`."""
     return policy_fragments_dir(root) / f"{family}{POLICY_FRAGMENT_SUFFIX}"
 

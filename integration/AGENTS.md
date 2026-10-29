@@ -97,7 +97,7 @@ Run each suite in its own pytest command.
 14. Never put a playpen mount path in this process's environment. The three
     directories arrive only through `--env-file`.
 15. The env file is written by `caregiver`'s own writer.
-16. A multi-family scenario must not set `SESSIOND_SANDBOX_SESSIONS_MOUNT`.
+16. A multi-family scenario must not set `ATTENDANCE_SANDBOX_SESSIONS_MOUNT`.
 17. Write a webhook's token file before the listener starts.
 18. Retired with the in-process stack (phase 2 plan, row 21). The
     number stays, so that other documents keep their references.

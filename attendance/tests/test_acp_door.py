@@ -75,7 +75,7 @@ async def start_door(
     env_file.write_text(f"FAKE_RELAY_RECORD={record}\nFAKE_RELAY_MODE={mode}\n")
     config = dataclasses.replace(
         make_config(tmp_path),
-        socket_path=socket_dir / "sessiond.sock",
+        socket_path=socket_dir / "attendance.sock",
         acp_relay_command=relay_command(),
         facade_command=facade_command(),
     )

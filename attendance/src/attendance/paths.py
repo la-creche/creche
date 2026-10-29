@@ -32,7 +32,7 @@ _CODE_SANDBOX = "code-sandbox"
 # The integration harness runs the playpen as a plain child process on a
 # Mac, under a temp directory no sbx mount put there, so it overrides the root
 # below. Nothing else sets this, on the host or anywhere.
-SANDBOX_MOUNT_ENV = "SESSIOND_SANDBOX_SESSIONS_MOUNT"
+SANDBOX_MOUNT_ENV = "ATTENDANCE_SANDBOX_SESSIONS_MOUNT"
 
 
 def family_sessions_dir(sessions_root: Path, family: str) -> Path:

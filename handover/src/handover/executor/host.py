@@ -99,8 +99,8 @@ MCP_STATE_ROOT: Final = "/var/lib/agent-mcp"
 #: the operator's, and `bin/rework-cutover.sh up` makes both: the socket 0660 in a
 #: 2750 directory, the token 0600. `executor/quiet.py` carries why root may
 #: open an operator-owned token at all and how it avoids being the operator's deputy.
-ATTENDANCE_SOCKET: Final = "/srv/agents/state/rework/sock/sessiond.sock"
-VIEW_TOKEN_FILE: Final = "/srv/agents/state/rework/tokens/view-ro.token"
+ATTENDANCE_SOCKET: Final = "/srv/agents/state/creche/sock/attendance.sock"
+NOTICEBOARD_TOKEN_FILE: Final = "/srv/agents/state/creche/tokens/view-ro.token"
 
 
 class As(StrEnum):
@@ -372,7 +372,7 @@ class Host:
     #: §2.8's signal. Fields rather than constants at the call site, so a
     #: test points the quiet window at a socket of its own.
     attendance_socket: Path = Path(ATTENDANCE_SOCKET)
-    view_token_file: Path = Path(VIEW_TOKEN_FILE)
+    view_token_file: Path = Path(NOTICEBOARD_TOKEN_FILE)
 
 
 #: An `As.MCP` child's `PATH`. No sbin and no `~operator/.local/bin`: this user

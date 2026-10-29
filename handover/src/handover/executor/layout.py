@@ -6,7 +6,7 @@
 
 THE RULE. Root reads only from roots root owns, and that is a fact about the
 PATH: every ancestor of these paths is root's — `/`, `/var`, `/var/lib` and
-this directory. Until ROOTS three of them sat under `/srv/agents/state/rework`
+this directory. Until ROOTS three of them sat under `/srv/agents/state/creche`
 and the fourth under `/srv/agents/work`, both the operator's, group `agents`. An operator-side
 process could `mv` either root aside and make its own in its place, and root
 would then fetch into, stage from and install a system unit out of a tree
@@ -38,7 +38,7 @@ from typing import Final
 #: of this module is below it. The follower of the release tool runs as the
 #: operator, and it writes its notice file below this directory, as each
 #: other program of the operator account does.
-STATE_ROOT: Final = "/srv/agents/state/rework"
+STATE_ROOT: Final = "/srv/agents/state/creche"
 
 #: The state directory of the release tool below the home of the operator.
 #: The marker of the follower is in it, and so is the store of artifacts.

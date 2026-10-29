@@ -7,7 +7,7 @@ version = 1
 guard = "host-firewall"
 
 [plugins.attendance]
-args = ["--socket", "/srv/agents/state/rework/sock/sessiond.sock"]
+args = ["--socket", "/srv/agents/state/creche/sock/attendance.sock"]
 secrets = { DELEGATE_TOKEN = "door-delegate", DISPATCH_TOKEN = "door-dispatch" }
 
 [plugins.release]

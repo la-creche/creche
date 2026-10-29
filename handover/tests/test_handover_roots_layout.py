@@ -1,7 +1,7 @@
 """Root reads only from roots root owns.
 
 Until ROOTS the spool, the work root, the sealed secrets and the roster sat
-under `/srv/agents/state/rework` and `/srv/agents/work`, both the operator's. A
+under `/srv/agents/state/creche` and `/srv/agents/work`, both the operator's. A
 operator-side process could rename either root aside and plant its own, and
 root would fetch into, stage from and install out of a tree the operator chose.
 

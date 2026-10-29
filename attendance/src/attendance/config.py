@@ -24,21 +24,21 @@ from .supervisor_lock import LOCK_POLL_S, LOCK_STALE_S
 # PEP unit cannot reach -- the socket lives on the production state root
 # instead. `__main__.py` makes `sock/` setgid and the socket itself 0660
 # after bind, so the PEP's group can connect.
-DEFAULT_SOCKET = "/srv/agents/state/rework/sock/sessiond.sock"
+DEFAULT_SOCKET = "/srv/agents/state/creche/sock/attendance.sock"
 
 # Contract 02 §3 rule 2: TCP binds the LAN address and nothing else. Loopback
 # answers nothing on this host, and 0.0.0.0 would publish the service. The
 # address is the site's: the unit's `EnvironmentFile=/etc/creche/site.env`
-# sets it, and `SESSIOND_LAN_ADDRESS` overrides it. No default: a default
+# sets it, and `ATTENDANCE_LAN_ADDRESS` overrides it. No default: a default
 # would be somebody's host. Contract 02 §3 rule 9 gives the optional LAN
 # port 8350.
 LAN_ADDRESS_ENV = "AGENT_LAN_ADDRESS"
 DEFAULT_LAN_PORT = 8350
 
 DEFAULT_SESSIONS_ROOT = "/srv/agents/sessions"
-DEFAULT_STATE_ROOT = "/srv/agents/state/rework"
+DEFAULT_STATE_ROOT = "/srv/agents/state/creche"
 DEFAULT_WORK_ROOT = "/srv/agents/work"
-DEFAULT_LOG_DIR = "/var/log/sessiond"
+DEFAULT_LOG_DIR = "/var/log/attendance"
 
 #: The playpen's `sbx exec` shape, for the relay into the facade's socket.
 DEFAULT_RELAY_COMMAND = "sbx exec --env-file {env_file} {sandbox} -- acp-relay"
@@ -46,7 +46,7 @@ DEFAULT_RELAY_COMMAND = "sbx exec --env-file {env_file} {sandbox} -- acp-relay"
 #: The same shape, for the one supervisor exec of each sandbox's facade.
 DEFAULT_FACADE_COMMAND = "sbx exec --env-file {env_file} {sandbox} -- creche-facade"
 
-ENV_PREFIX = "SESSIOND_"
+ENV_PREFIX = "ATTENDANCE_"
 
 _TRUE_WORDS = frozenset({"1", "true", "yes", "on"})
 _FALSE_WORDS = frozenset({"0", "false", "no", "off"})
@@ -165,7 +165,7 @@ def _path(source: dict[str, str], name: str, fallback: str) -> Path:
 
 
 def _lan_address(source: dict[str, str]) -> str:
-    """`SESSIOND_LAN_ADDRESS` when set, else the site's `AGENT_LAN_ADDRESS`."""
+    """`ATTENDANCE_LAN_ADDRESS` when set, else the site's `AGENT_LAN_ADDRESS`."""
     own = _text(source, "LAN_ADDRESS", "")
     name = ENV_PREFIX + "LAN_ADDRESS" if own else LAN_ADDRESS_ENV
     value = own or source.get(LAN_ADDRESS_ENV, "").strip()

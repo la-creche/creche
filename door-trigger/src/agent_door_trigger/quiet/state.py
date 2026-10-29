@@ -1,6 +1,6 @@
 """The gate's own record, one small file per family:
 
-    /srv/agents/state/rework/triggers/quiet/<family>.json
+    /srv/agents/state/creche/triggers/quiet/<family>.json
     {"fired": <wake> | null, "good": <wake> | null}
     <wake> = {"session", "at", "board", "ended"}
 

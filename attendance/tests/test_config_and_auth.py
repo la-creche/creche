@@ -51,11 +51,11 @@ def test_defaults_bind_socket_only() -> None:
 
     assert config.bind is Bind.SOCKET_ONLY
     assert config.binds_lan is False
-    assert str(config.socket_path).endswith("sessiond.sock")
+    assert str(config.socket_path).endswith("attendance.sock")
 
 
 def test_bind_lan_reads_the_lan_address() -> None:
-    config = from_env(_site(SESSIOND_BIND_LAN="true", SESSIOND_LAN_PORT="8350"))
+    config = from_env(_site(ATTENDANCE_BIND_LAN="true", ATTENDANCE_LAN_PORT="8350"))
 
     assert config.bind is Bind.SOCKET_AND_LAN
     assert config.lan_address == os.environ[LAN_ADDRESS_ENV]
@@ -63,7 +63,7 @@ def test_bind_lan_reads_the_lan_address() -> None:
 
 
 def test_an_explicit_lan_address_still_wins() -> None:
-    config = from_env({"SESSIOND_LAN_ADDRESS": "192.0.2.99"})
+    config = from_env({"ATTENDANCE_LAN_ADDRESS": "192.0.2.99"})
 
     assert config.lan_address == "192.0.2.99"
 
@@ -114,8 +114,8 @@ ONE_INTERFACE = (
 def test_the_address_of_each_interface_is_refused(address: str) -> None:
     """Never bind `0.0.0.0` (contract 02 §3 rule 2). The error names the
     variable that holds the address."""
-    with pytest.raises(ConfigError, match=r"\ASESSIOND_LAN_ADDRESS is the address of each"):
-        from_env(_site(SESSIOND_LAN_ADDRESS=address))
+    with pytest.raises(ConfigError, match=r"\AATTENDANCE_LAN_ADDRESS is the address of each"):
+        from_env(_site(ATTENDANCE_LAN_ADDRESS=address))
 
     with pytest.raises(ConfigError, match=rf"\A{LAN_ADDRESS_ENV} is the address of each"):
         from_env({LAN_ADDRESS_ENV: address})
@@ -123,21 +123,21 @@ def test_the_address_of_each_interface_is_refused(address: str) -> None:
 
 @pytest.mark.parametrize("address", ONE_INTERFACE)
 def test_an_address_of_one_interface_is_read(address: str) -> None:
-    assert from_env(_site(SESSIOND_LAN_ADDRESS=address)).lan_address == address
+    assert from_env(_site(ATTENDANCE_LAN_ADDRESS=address)).lan_address == address
     assert from_env({LAN_ADDRESS_ENV: address}).lan_address == address
 
 
 def test_a_nonsense_bind_flag_refuses() -> None:
     with pytest.raises(ConfigError):
-        from_env(_site(SESSIOND_BIND_LAN="maybe"))
+        from_env(_site(ATTENDANCE_BIND_LAN="maybe"))
 
 
 def test_a_port_outside_the_range_refuses() -> None:
     with pytest.raises(ConfigError):
-        from_env(_site(SESSIOND_LAN_PORT="70000"))
+        from_env(_site(ATTENDANCE_LAN_PORT="70000"))
 
 
-@pytest.mark.parametrize("name", ["SESSIOND_LOCK_STALE_S", "SESSIOND_LOCK_POLL_S"])
+@pytest.mark.parametrize("name", ["ATTENDANCE_LOCK_STALE_S", "ATTENDANCE_LOCK_POLL_S"])
 @pytest.mark.parametrize("count", ["nan", "NaN", "inf", "+Infinity", "1e999"])
 def test_a_count_of_seconds_that_is_not_finite_refuses(name: str, count: str) -> None:
     """With such a count the lock of a playpen never goes stale."""
@@ -146,7 +146,7 @@ def test_a_count_of_seconds_that_is_not_finite_refuses(name: str, count: str) ->
 
 
 def test_a_finite_count_of_seconds_is_read() -> None:
-    config = from_env(_site(SESSIOND_LOCK_STALE_S="1e3", SESSIOND_LOCK_POLL_S=".5"))
+    config = from_env(_site(ATTENDANCE_LOCK_STALE_S="1e3", ATTENDANCE_LOCK_POLL_S=".5"))
 
     assert config.lock_stale_s == 1000.0
     assert config.lock_poll_s == 0.5
@@ -155,18 +155,18 @@ def test_a_finite_count_of_seconds_is_read() -> None:
 @pytest.mark.parametrize("name", ["SESSIONS_ROOT", "STATE_ROOT", "WORK_ROOT", "SOCKET", "LOG_DIR"])
 def test_a_path_with_a_nul_byte_refuses(name: str) -> None:
     """No path holds that byte. The config refuses it before a first use."""
-    with pytest.raises(ConfigError, match=rf"\ASESSIOND_{name} "):
-        from_env(_site(**{f"SESSIOND_{name}": "/tmp/root\x00/state"}))
+    with pytest.raises(ConfigError, match=rf"\AATTENDANCE_{name} "):
+        from_env(_site(**{f"ATTENDANCE_{name}": "/tmp/root\x00/state"}))
 
 
 def test_roots_come_from_the_environment(tmp_path: Path) -> None:
-    config = from_env(_site(SESSIOND_SESSIONS_ROOT=str(tmp_path / "s")))
+    config = from_env(_site(ATTENDANCE_SESSIONS_ROOT=str(tmp_path / "s")))
 
     assert config.sessions_root == tmp_path / "s"
 
 
 def test_a_missing_token_file_stops_the_service(tmp_path: Path) -> None:
-    write_tokens(tmp_path, skip=Principal.VIEW_RO)
+    write_tokens(tmp_path, skip=Principal.NOTICEBOARD_RO)
     book = TokenBook(tmp_path)
 
     with pytest.raises(TokenError):
@@ -291,10 +291,10 @@ def test_reload_picks_up_a_rotated_token(tmp_path: Path) -> None:
 
 
 def test_the_view_token_never_writes() -> None:
-    check_access(Principal.VIEW_RO, Access.READ)
+    check_access(Principal.NOTICEBOARD_RO, Access.READ)
 
     with pytest.raises(ApiError) as caught:
-        check_access(Principal.VIEW_RO, Access.WRITE)
+        check_access(Principal.NOTICEBOARD_RO, Access.WRITE)
 
     assert caught.value.code is ErrorCode.FORBIDDEN
 
@@ -342,4 +342,4 @@ def test_the_refusal_reads_the_same_for_every_kind() -> None:
 
 def test_the_view_token_sees_every_kind() -> None:
     for kind in SessionKind:
-        check_family_kind(Principal.VIEW_RO, "chat", kind)
+        check_family_kind(Principal.NOTICEBOARD_RO, "chat", kind)

@@ -69,7 +69,7 @@ EXIT_USAGE: Final = 2
 # LiteLLM:  `--litellm-base-url`, else `url(Port.LITELLM)`.
 #
 # attendance: contract 02 §3 rules 1 and 2. It binds a Unix socket and, when
-#           configured, the LAN address at 8350. `--sessiond-url`, else
+#           configured, the LAN address at 8350. `--attendance-url`, else
 #           `url(Port.ATTENDANCE)`.
 #
 # PEP:      where it answers `/healthz` (contract 05 §3.3). The production
@@ -254,14 +254,14 @@ def _attendance_args(parser: argparse.ArgumentParser) -> None:
     declares BOTH, in one place: `apply-once` once read `args.attendance_url`
     without declaring it, and died on the first host that had a token file."""
     # The flags keep the old name: the installed caregiver unit passes
-    # `--sessiond-socket`, and that unit changes only by a host step.
-    parser.add_argument("--sessiond-url", dest="attendance_url", default=None)
+    # `--attendance-socket`, and that unit changes only by a host step.
+    parser.add_argument("--attendance-url", dest="attendance_url", default=None)
     parser.add_argument(
-        "--sessiond-socket",
+        "--attendance-socket",
         dest="attendance_socket",
         type=Path,
         default=None,
-        help="attendance's Unix socket. When given, it wins over --sessiond-url",
+        help="attendance's Unix socket. When given, it wins over --attendance-url",
     )
 
 

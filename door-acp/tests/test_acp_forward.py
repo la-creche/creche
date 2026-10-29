@@ -81,7 +81,7 @@ class _Server(uvicorn.Server):
 async def attendance() -> AsyncIterator[FakeAttendance]:
     # AF_UNIX cannot bind past about 104 bytes on macOS. tmp_path is close.
     socket_dir = Path(tempfile.mkdtemp(prefix="door-acp-"))
-    fake = FakeAttendance(socket_dir / "sessiond.sock")
+    fake = FakeAttendance(socket_dir / "attendance.sock")
 
     async with unix_serve(fake.handle, str(fake.socket), max_size=None):
         yield fake

@@ -16,11 +16,11 @@ the first layer only.
 
 | Part | Where |
 |---|---|
-| The record of `fleet-up` | `/srv/agents/state/rework/fleet/record.json` |
-| One token file for each principal of attendance | `/srv/agents/state/rework/tokens/` |
-| The access key of the noticeboard | `/srv/agents/state/rework/tokens/view-access.key` |
-| The key of the ACP door | `/srv/agents/state/rework/door-acp.key` |
-| Three env files | `/srv/agents/state/rework/{sessiond,view,managerd}.env` |
+| The record of `fleet-up` | `/srv/agents/state/creche/fleet/record.json` |
+| One token file for each principal of attendance | `/srv/agents/state/creche/tokens/` |
+| The access key of the noticeboard | `/srv/agents/state/creche/tokens/view-access.key` |
+| The key of the ACP door | `/srv/agents/state/creche/door-acp.key` |
+| Three env files | `/srv/agents/state/creche/{sessiond,view,managerd}.env` |
 | The state directories | `families/`, `leases/`, `faults/`, `triggers/webhooks/`, `log/`, `sock/` under the state root |
 | The user units | `~/.config/systemd/user/` |
 
@@ -43,7 +43,7 @@ The fleet layer also holds two parts that `fleet-up` does not make:
 - The system units: `creche-chaperone.service`, `creche-handover.path`
   and `creche-handover.service`.
 - The compose stack: LiteLLM, CouchDB and the other containers.
-- The state root `/srv/agents/state/rework` itself, and the sessions root
+- The state root `/srv/agents/state/creche` itself, and the sessions root
   `/srv/agents/sessions`.
 - `cosign`, `uv` and the firewall.
 
@@ -92,7 +92,7 @@ holds each command.
 | R6 | Add `CHAPERONE_LISTEN` and `AGENT_COSIGN_PROGRAM` to the site file (A8). | `creche-env check` of the site file. The file sets `CHAPERONE_LISTEN`. |
 | R7 | Install the unit of the Rust chaperone and its drop-in (A7, C2). Put the release binary at `~/chaperone-rel/bin/chaperone` (A6). | The binary at that path or at `/opt/components/chaperone/bin/chaperone`. A listener on port 8310. |
 | R8 | The first release of `playpen`. | `/opt/components/playpen/images.env`. |
-| R9 | Put `LITELLM_MASTER_KEY` into `hooks.env`. `docs/rework/cutover.md` §4.1 gives the one command. | The key in `hooks.env` or in `managerd.env`. The value is never printed. |
+| R9 | Put `LITELLM_MASTER_KEY` into `hooks.env`. `docs/rework/cutover.md` §4.1 gives the one command. | The key in `hooks.env` or in `caregiver.env`. The value is never printed. |
 | R10 | After the first `up`: copy `tokens/door-delegate.token` and `tokens/door-dispatch.token` into `/etc/chaperone/secrets`. Mint `approval-token` and `resume-token` there (A6). | Nothing. The operator cannot read `secrets/`. |
 | R11 | Review the firewall (A10). | Nothing. |
 
@@ -164,8 +164,8 @@ each family before `down`.
    watchdog and of the drift check.
 
 `fleet-up` reads one value of `hooks.env`: `LITELLM_MASTER_KEY`. The
-caregiver reads the key from its environment, so `managerd.env` must hold
-it. `up` copies the value into `managerd.env` once. It writes the value with
+caregiver reads the key from its environment, so `caregiver.env` must hold
+it. `up` copies the value into `caregiver.env` once. It writes the value with
 a shell builtin, so the value reaches no argv. It never prints the value.
 
 ## 6. The units and their trees
@@ -175,7 +175,7 @@ a shell builtin, so the value reaches no argv. It never prints the value.
 | Unit | Runs from | `up` starts it |
 |---|---|---|
 | `creche-attendance.service` | the `attendance` tree | yes, first |
-| `creche-caregiver.service` | the `caregiver` tree | yes, when `managerd.env` holds the master key and both images |
+| `creche-caregiver.service` | the `caregiver` tree | yes, when `caregiver.env` holds the master key and both images |
 | `creche-noticeboard.service` | the `noticeboard` tree | yes |
 | `creche-door-acp.service` | the `attendance` tree | yes |
 | `creche-trigger-webhooks.service` | the `attendance` tree | yes |

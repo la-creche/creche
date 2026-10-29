@@ -84,7 +84,7 @@ def status_doc(
             "never_valid": False,
             "error_count": 0,
             "warning_count": 0,
-            "report_path": f"/srv/agents/state/rework/families/{family}/validation.json",
+            "report_path": f"/srv/agents/state/creche/families/{family}/validation.json",
             "first_error": None,
         },
         "faults": [],
@@ -125,7 +125,7 @@ def sandbox_doc(sandbox_id: str, state: str = "ready", **extra: Any) -> dict[str
         "ready_at": stamp(590),
         "channel": "open",
         "supervisor_env": (
-            f"/srv/agents/state/rework/families/{family}/supervisor-{sandbox_id}.env"
+            f"/srv/agents/state/creche/families/{family}/supervisor-{sandbox_id}.env"
         ),
     }
     row.update(extra)

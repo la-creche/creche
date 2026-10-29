@@ -380,9 +380,9 @@ class Rig:
     def __init__(self, tmp_path: Path) -> None:
         self.tmp = tmp_path
         self.prefix = tmp_path / "host"
-        self.state = self.prefix / "srv/agents/state/rework"
+        self.state = self.prefix / "srv/agents/state/creche"
         self.families = self.state / "families"
-        self.socket = self.state / "sock/sessiond.sock"
+        self.socket = self.state / "sock/attendance.sock"
         self.verdict = self.state / "watchdog/verdict"
         self.stub_log = tmp_path / "stub.log"
         self.post_log = tmp_path / "post.log"

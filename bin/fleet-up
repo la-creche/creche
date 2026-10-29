@@ -22,7 +22,7 @@
 # the compose stack. It never writes `hooks.env`. It never prints a secret
 # and never puts one on argv. It keeps each token, key and file that exists
 # before it runs, and `down` leaves each of them. It reads one secret it did
-# not mint: LITELLM_MASTER_KEY of `hooks.env`, which `managerd.env` must hold.
+# not mint: LITELLM_MASTER_KEY of `hooks.env`, which `caregiver.env` must hold.
 #
 # THE RECORD. `<state root>/fleet/record.json`, 0600 in a 0700 directory.
 # One entry for each directory, file and unit file that `up` made, and for
@@ -50,19 +50,19 @@ PREFIX="${FLEET_TEST_PREFIX:-}"
 TREE="$(CDPATH="" cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 UNIT_SOURCE_DIR="$TREE/systemd"
 
-STATE_ROOT="$PREFIX/srv/agents/state/rework"
+STATE_ROOT="$PREFIX/srv/agents/state/creche"
 TOKENS_DIR="$STATE_ROOT/tokens"
 SOCK_DIR="$STATE_ROOT/sock"
 LOG_DIR="$STATE_ROOT/log"
-SOCKET="$SOCK_DIR/sessiond.sock"
+SOCKET="$SOCK_DIR/attendance.sock"
 FLEET_DIR="$STATE_ROOT/fleet"
 RECORD_FILE="$FLEET_DIR/record.json"
 HOOKS_ENV="$STATE_ROOT/hooks.env"
-SESSIOND_ENV="$STATE_ROOT/sessiond.env"
-VIEW_ENV="$STATE_ROOT/view.env"
-MANAGERD_ENV="$STATE_ROOT/managerd.env"
-VIEW_KEY_FILE="$TOKENS_DIR/view-access.key"
-DOOR_ACP_KEY_FILE="$STATE_ROOT/door-acp.key"
+ATTENDANCE_ENV="$STATE_ROOT/attendance.env"
+NOTICEBOARD_ENV="$STATE_ROOT/noticeboard.env"
+CAREGIVER_ENV="$STATE_ROOT/caregiver.env"
+NOTICEBOARD_KEY_FILE="$TOKENS_DIR/view-access.key"
+DOOR_ACP_ACCESS_KEY_FILE="$STATE_ROOT/door-acp.key"
 
 SESSIONS_ROOT="$PREFIX/srv/agents/sessions"
 REGISTRY="$PREFIX/srv/agents/registry"
@@ -388,8 +388,8 @@ up_secrets() {
     mint_secret "$TOKENS_DIR/$principal.token"
   done
 
-  mint_secret "$VIEW_KEY_FILE"
-  mint_secret "$DOOR_ACP_KEY_FILE"
+  mint_secret "$NOTICEBOARD_KEY_FILE"
+  mint_secret "$DOOR_ACP_ACCESS_KEY_FILE"
 }
 
 up_env_files() {
@@ -399,26 +399,26 @@ up_env_files() {
     || die "creche-env cannot read AGENT_PEP_URL from $SITE_FILE"
   [[ -n "$pep_url" ]] || die "AGENT_PEP_URL has no value in $SITE_FILE"
 
-  env_set "$SESSIOND_ENV" SESSIOND_STATE_ROOT "$STATE_ROOT"
-  env_set "$SESSIOND_ENV" SESSIOND_SESSIONS_ROOT "$SESSIONS_ROOT"
-  env_set "$SESSIOND_ENV" SESSIOND_SOCKET "$SOCKET"
-  env_set "$SESSIOND_ENV" SESSIOND_LOG_DIR "$LOG_DIR"
+  env_set "$ATTENDANCE_ENV" ATTENDANCE_STATE_ROOT "$STATE_ROOT"
+  env_set "$ATTENDANCE_ENV" ATTENDANCE_SESSIONS_ROOT "$SESSIONS_ROOT"
+  env_set "$ATTENDANCE_ENV" ATTENDANCE_SOCKET "$SOCKET"
+  env_set "$ATTENDANCE_ENV" ATTENDANCE_LOG_DIR "$LOG_DIR"
 
-  env_set "$VIEW_ENV" VIEW_STATE_ROOT "$STATE_ROOT"
-  env_set "$VIEW_ENV" VIEW_REGISTRY_DIR "$REGISTRY"
-  env_set "$VIEW_ENV" VIEW_SESSIOND_SOCKET "$SOCKET"
-  env_set "$VIEW_ENV" VIEW_ACCESS_KEY_FILE "$VIEW_KEY_FILE"
+  env_set "$NOTICEBOARD_ENV" NOTICEBOARD_STATE_ROOT "$STATE_ROOT"
+  env_set "$NOTICEBOARD_ENV" NOTICEBOARD_REGISTRY_DIR "$REGISTRY"
+  env_set "$NOTICEBOARD_ENV" NOTICEBOARD_ATTENDANCE_SOCKET "$SOCKET"
+  env_set "$NOTICEBOARD_ENV" NOTICEBOARD_ACCESS_KEY_FILE "$NOTICEBOARD_KEY_FILE"
 
-  env_set "$MANAGERD_ENV" MANAGERD_STATE_ROOT "$STATE_ROOT"
-  env_set "$MANAGERD_ENV" AGENT_PEP_URL "$pep_url"
+  env_set "$CAREGIVER_ENV" CAREGIVER_STATE_ROOT "$STATE_ROOT"
+  env_set "$CAREGIVER_ENV" AGENT_PEP_URL "$pep_url"
 
   # The images of the last playpen release. caregiver reads that file
   # itself and its references win. The unit still passes both flags.
   base="$(envfile_value "$IMAGES_ENV" base)"
   python="$(envfile_value "$IMAGES_ENV" python)"
   if [[ -n "$base" && -n "$python" ]]; then
-    env_set "$MANAGERD_ENV" AGENT_SANDBOX_IMAGE "$base"
-    env_set "$MANAGERD_ENV" AGENT_SANDBOX_PYTHON_IMAGE "$python"
+    env_set "$CAREGIVER_ENV" AGENT_SANDBOX_IMAGE "$base"
+    env_set "$CAREGIVER_ENV" AGENT_SANDBOX_PYTHON_IMAGE "$python"
   else
     pending "no image in $IMAGES_ENV: release playpen first (handover request playpen)"
   fi
@@ -426,7 +426,7 @@ up_env_files() {
   # The one secret fleet-up does not mint. It reads the value from
   # hooks.env and never writes hooks.env. `envfile_append_once` writes with
   # printf, a builtin, so the value reaches no argv.
-  [[ -n "$(envfile_value "$MANAGERD_ENV" LITELLM_MASTER_KEY)" ]] && return 0
+  [[ -n "$(envfile_value "$CAREGIVER_ENV" LITELLM_MASTER_KEY)" ]] && return 0
 
   key="$(envfile_value "$HOOKS_ENV" LITELLM_MASTER_KEY)"
   if [[ -z "$key" ]]; then
@@ -436,8 +436,8 @@ up_env_files() {
     return 0
   fi
 
-  envfile_append_once "$MANAGERD_ENV" LITELLM_MASTER_KEY "$key"
-  say "  set LITELLM_MASTER_KEY in $MANAGERD_ENV (from $HOOKS_ENV, the value is never printed)"
+  envfile_append_once "$CAREGIVER_ENV" LITELLM_MASTER_KEY "$key"
+  say "  set LITELLM_MASTER_KEY in $CAREGIVER_ENV (from $HOOKS_ENV, the value is never printed)"
 }
 
 # caregiver refuses to start with no master key, and its unit passes both
@@ -445,7 +445,7 @@ up_env_files() {
 managerd_is_whole() {
   local key
   for key in LITELLM_MASTER_KEY AGENT_SANDBOX_IMAGE AGENT_SANDBOX_PYTHON_IMAGE; do
-    [[ -n "$(envfile_value "$MANAGERD_ENV" "$key")" ]] || return 1
+    [[ -n "$(envfile_value "$CAREGIVER_ENV" "$key")" ]] || return 1
   done
 }
 
@@ -492,7 +492,7 @@ up_units() {
     in_words "$unit" "$ENABLED_UNITS" || continue
     systemctl --user is-enabled "$unit" >/dev/null 2>&1 && continue
     if [[ "$unit" == creche-caregiver.service ]] && ! managerd_is_whole; then
-      say "  not started: $unit. $MANAGERD_ENV has no master key or no image yet."
+      say "  not started: $unit. $CAREGIVER_ENV has no master key or no image yet."
       continue
     fi
 
@@ -671,7 +671,7 @@ dir_is_writable() {  # dir_is_writable <path>
 }
 
 master_key_is_there() {
-  [[ -n "$(envfile_value "$HOOKS_ENV" LITELLM_MASTER_KEY)$(envfile_value "$MANAGERD_ENV" LITELLM_MASTER_KEY)" ]]
+  [[ -n "$(envfile_value "$HOOKS_ENV" LITELLM_MASTER_KEY)$(envfile_value "$CAREGIVER_ENV" LITELLM_MASTER_KEY)" ]]
 }
 
 has_program() {  # has_program <name>
@@ -711,7 +711,7 @@ check_root() {
   item "R7 a listener on port $APPROVAL_PORT (ha-approval, after the chaperone release)" \
     port_listens "$APPROVAL_PORT"
   item "R8 playpen images at $IMAGES_ENV (the first playpen release)" test -f "$IMAGES_ENV"
-  item "R9 LITELLM_MASTER_KEY in hooks.env or managerd.env (the value is never printed)" \
+  item "R9 LITELLM_MASTER_KEY in hooks.env or caregiver.env (the value is never printed)" \
     master_key_is_there
   item "O1 registry checkout at $REGISTRY" test -d "$REGISTRY/.git"
 
@@ -732,10 +732,10 @@ check_fleet() {
     item "token $TOKENS_DIR/$name.token" test -s "$TOKENS_DIR/$name.token"
   done
 
-  item "key $VIEW_KEY_FILE" test -s "$VIEW_KEY_FILE"
-  item "key $DOOR_ACP_KEY_FILE" test -s "$DOOR_ACP_KEY_FILE"
+  item "key $NOTICEBOARD_KEY_FILE" test -s "$NOTICEBOARD_KEY_FILE"
+  item "key $DOOR_ACP_ACCESS_KEY_FILE" test -s "$DOOR_ACP_ACCESS_KEY_FILE"
 
-  for name in "$SESSIOND_ENV" "$VIEW_ENV" "$MANAGERD_ENV"; do
+  for name in "$ATTENDANCE_ENV" "$NOTICEBOARD_ENV" "$CAREGIVER_ENV"; do
     item "env file $name, mode 0600" private_file "$name"
   done
 

@@ -77,15 +77,15 @@ did.
 
 | Variable | Meaning | Used by |
 |---|---|---|
-| `DOOR_TRIGGER_SESSIOND_TOKEN_FILE` | this door's `attendance` bearer token | both |
-| `DOOR_TRIGGER_SESSIOND_SOCKET`, `DOOR_TRIGGER_SESSIOND_URL` | the transport. Set one, not both. | both |
+| `DOOR_TRIGGER_ATTENDANCE_TOKEN_FILE` | this door's `attendance` bearer token | both |
+| `DOOR_TRIGGER_ATTENDANCE_SOCKET`, `DOOR_TRIGGER_ATTENDANCE_URL` | the transport. Set one, not both. | both |
 | `DOOR_TRIGGER_BIND` | the listen address, port 8360 on the LAN address. Refuses `0.0.0.0`. | serve |
-| `DOOR_TRIGGER_FAMILIES_DIR` | where `caregiver` publishes status documents and `creds.json` | both |
+| `DOOR_TRIGGER_FAMILY_STATUS_DIR` | where `caregiver` publishes status documents and `creds.json` | both |
 | `DOOR_TRIGGER_REGISTRY_ROOT` | the registry, read for webhook names and `quiet:` only | both |
-| `DOOR_TRIGGER_STATE_ROOT` | where the quiet check reads outcomes and keeps its record | fire |
+| `DOOR_TRIGGER_PRODUCT_STATE_ROOT` | where the quiet check reads outcomes and keeps its record | fire |
 | `DOOR_TRIGGER_PEP_URL` | the chaperone the quiet check calls as the family. The client adds `/mcp`. | fire |
 | `DOOR_TRIGGER_AUDIT_FILE` | the chaperone's audit file, default `/var/lib/chaperone/audit.jsonl` | fire |
-| `DOOR_TRIGGER_WEBHOOKS_DIR` | one `<family>/<name>.token` per declared webhook. `caregiver` mints them. | serve |
+| `DOOR_TRIGGER_WEBHOOK_DIR` | one `<family>/<name>.token` per declared webhook. `caregiver` mints them. | serve |
 | `DOOR_TRIGGER_REFRESH_S` | how often the route table re-reads, default 30 | serve |
 
 `agent-trigger fire <family> --check` and `agent-trigger serve --check`

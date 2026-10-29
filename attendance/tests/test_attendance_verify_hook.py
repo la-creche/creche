@@ -22,7 +22,7 @@ from attendance.verify import (
 from attendance_harness import make_config, write_tokens
 from fastapi.testclient import TestClient
 
-SOCKET_NAME = "sessiond.sock"
+SOCKET_NAME = "attendance.sock"
 
 
 def bound_socket(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
@@ -57,7 +57,7 @@ def refusing() -> object:
 
 
 def run(monkeypatch: pytest.MonkeyPatch, socket_path: Path, transport: object) -> int:
-    monkeypatch.setenv("SESSIOND_SOCKET", str(socket_path))
+    monkeypatch.setenv("ATTENDANCE_SOCKET", str(socket_path))
     monkeypatch.setattr("attendance.verify.httpx.HTTPTransport", transport)
 
     return main(["--json"])
@@ -104,7 +104,7 @@ def test_a_missing_socket_fails_with_one_check(
 def test_a_plain_file_where_the_socket_belongs_fails(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    planted = tmp_path / "sessiond.sock"
+    planted = tmp_path / "attendance.sock"
     planted.write_text("not a socket", encoding="utf-8")
 
     code = run(monkeypatch, planted, replying(HTTP_UNAUTHORIZED))
@@ -121,10 +121,10 @@ def test_an_env_file_supplies_the_socket_path(
     `EnvironmentFile=`. `--env-file` is the same file the unit's own
     `EnvironmentFile=` names, read by this hook itself — never the process
     env alone."""
-    monkeypatch.delenv("SESSIOND_SOCKET", raising=False)
+    monkeypatch.delenv("ATTENDANCE_SOCKET", raising=False)
     socket_path = bound_socket(monkeypatch, tmp_path)
-    env_file = tmp_path / "sessiond.env"
-    env_file.write_text(f"SESSIOND_SOCKET={socket_path}\n", encoding="utf-8")
+    env_file = tmp_path / "attendance.env"
+    env_file.write_text(f"ATTENDANCE_SOCKET={socket_path}\n", encoding="utf-8")
     monkeypatch.setattr("attendance.verify.httpx.HTTPTransport", replying(HTTP_UNAUTHORIZED))
 
     code = main(["--json", "--env-file", str(env_file)])
@@ -138,7 +138,7 @@ def test_a_missing_env_file_fails_closed(
 ) -> None:
     """A file the manifest promised and the host does not have is a hook
     failure, never a silent fall-back to `DEFAULT_SOCKET`."""
-    monkeypatch.delenv("SESSIOND_SOCKET", raising=False)
+    monkeypatch.delenv("ATTENDANCE_SOCKET", raising=False)
 
     code = main(["--json", "--env-file", str(tmp_path / "absent.env")])
 

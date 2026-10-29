@@ -26,7 +26,7 @@ SANDBOX = "chat-s1"
 # and `attendance` refuses to dial without it. An obvious fixture path: nothing
 # in these tests opens the file, because `sbx exec --env-file` is what reads
 # it on the real host.
-PLAYPEN_ENV = "/srv/agents/state/rework/families/chat/supervisor.env"
+PLAYPEN_ENV = "/srv/agents/state/creche/families/chat/supervisor.env"
 CHAT_SESSION = "owui-3f2a9c41-77b0-4a1e-9a4c-1d0e5f8b2c33"
 CONFIG_REV = "reg-9f21c4"
 EPOCH = 7
@@ -103,7 +103,7 @@ def make_config(tmp_path: Path) -> Config:
         sessions_root=tmp_path / "sessions",
         state_root=tmp_path / "state",
         work_root=tmp_path / "work",
-        socket_path=tmp_path / "sessiond.sock",
+        socket_path=tmp_path / "attendance.sock",
         bind=Bind.SOCKET_ONLY,
         lan_address="192.0.2.10",
         lan_port=8350,

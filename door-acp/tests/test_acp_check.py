@@ -172,7 +172,7 @@ def test_the_unit_checks_the_config_then_runs_the_door() -> None:
     assert check == [start[0], "--check"]
     assert "Environment=HOME=%h" in lines
     assert (
-        f"Environment={ENV_ATTENDANCE_TOKEN_FILE}=/srv/agents/state/rework/tokens/door-acp.token"
+        f"Environment={ENV_ATTENDANCE_TOKEN_FILE}=/srv/agents/state/creche/tokens/door-acp.token"
         in lines
     )
     assert "Environment=XDG_CONFIG_HOME=%h/.config" in lines

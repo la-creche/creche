@@ -89,7 +89,7 @@ PAGES: Final = "spec.md §8.1"
 SESSION_API: Final = "contract 02"
 
 #: The module of `attendance` that serves the two view routes.
-VIEW_ROUTES: Final = "attendance/src/attendance/acp_view.py"
+NOTICEBOARD_ROUTES: Final = "attendance/src/attendance/acp_view.py"
 
 HTTP_OK: Final = 200
 HTTP_NOT_FOUND: Final = 404
@@ -420,7 +420,7 @@ def _write(path: Path, raw: bytes, mode: int = MODE_OWNER) -> Path:
 
 def _token_file(scratch: Path) -> Path:
     """The token file of each reader that a surface does not give another one."""
-    return _write(scratch / TOKEN_NAME, cases.VIEW_TOKEN.encode("ascii") + b"\n")
+    return _write(scratch / TOKEN_NAME, cases.NOTICEBOARD_TOKEN.encode("ascii") + b"\n")
 
 
 def _answered(answer: cases.Answer) -> StandIn:
@@ -935,7 +935,7 @@ def _list_surface(token_file: Path) -> Surface:
     return _surface(
         "sessions.list",
         "noticeboard.sessions.SessionReader.sessions",
-        f"{VIEW_ROUTES}, GET /families/{{family}}/sessions",
+        f"{NOTICEBOARD_ROUTES}, GET /families/{{family}}/sessions",
         (
             _NOTE_ANSWER,
             "params.family and params.cursor are the arguments of the entry point. An empty "
@@ -996,7 +996,7 @@ def _transcript_surface(token_file: Path) -> Surface:
     return _surface(
         "sessions.transcript",
         "noticeboard.sessions.SessionReader.transcript",
-        f"{VIEW_ROUTES}, GET /families/{{family}}/sessions/{{id}}",
+        f"{NOTICEBOARD_ROUTES}, GET /families/{{family}}/sessions/{{id}}",
         (
             _NOTE_ANSWER,
             "params.family, params.session and params.start are the arguments of the entry "
@@ -1313,7 +1313,7 @@ def _env_file_vector(case: cases.EnvFileCase, scratch: Path) -> Vector:
     given = _file_input(case.raw)
     environ = {**cases.NO_PATHS, **case.inherited}
     params: dict[str, Json] = {"environ": dict(environ)}
-    path = scratch / case.id / "view.env"
+    path = scratch / case.id / "noticeboard.env"
     path.parent.mkdir(parents=True)
     if case.raw is not None:
         path.write_bytes(case.raw)

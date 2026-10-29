@@ -36,8 +36,8 @@ then the bearer is the only check.
 
 | Secret | File | Who sends it | To whom |
 |---|---|---|---|
-| The door key | `DOOR_ACP_KEY_FILE` | NPM, or a terminal client | the door |
-| attendance's `door-acp` token | `DOOR_ACP_ATTENDANCE_TOKEN_FILE` | the door | attendance's `WS /acp/{family}` |
+| The door key | `DOOR_ACP_ACCESS_KEY_FILE` | NPM, or a terminal client | the door |
+| attendance's `door-acp` token | `DOOR_ACP_BEARER_FILE` | the door | attendance's `WS /acp/{family}` |
 
 The door refuses to start when both files hold one key. A client never sees
 attendance's token. attendance reads its token from
@@ -90,9 +90,9 @@ Any other path under `/acp/` gets `404` before the upgrade.
 
 | Variable | Meaning |
 |---|---|
-| `DOOR_ACP_KEY_FILE` | the door's own bearer key. Mode 0600, 32 bytes or more. No default. |
-| `DOOR_ACP_ATTENDANCE_TOKEN_FILE` | attendance's `door-acp` token. The same file rules. No default. |
-| `DOOR_ACP_ATTENDANCE_SOCKET` | attendance's Unix socket. The default is `/srv/agents/state/rework/sock/sessiond.sock`. |
+| `DOOR_ACP_ACCESS_KEY_FILE` | the door's own bearer key. Mode 0600, 32 bytes or more. No default. |
+| `DOOR_ACP_BEARER_FILE` | attendance's `door-acp` token. The same file rules. No default. |
+| `DOOR_ACP_SOCKET_FILE` | attendance's Unix socket. The default is `/srv/agents/state/creche/sock/attendance.sock`. |
 | `DOOR_ACP_REQUIRE_AUTHENTIK` | `true` or `false`. The default is `false`. The chat-UI deployment sets `true`. |
 | `DOOR_ACP_BIND` | the listen address, `host:port`. The default is port 8390 on `AGENT_LAN_ADDRESS`. |
 | `AGENT_LAN_ADDRESS` | the host's LAN address, from the site file. |

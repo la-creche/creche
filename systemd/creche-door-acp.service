@@ -27,10 +27,10 @@ Environment=XDG_CONFIG_HOME=%h/.config
 EnvironmentFile=/etc/creche/site.env
 # Two secrets. The unit names each path, never a key. Each file is mode 0600.
 # The client bearer: NPM sends it for a browser, a terminal client sends it.
-Environment=DOOR_ACP_KEY_FILE=/srv/agents/state/rework/door-acp.key
+Environment=DOOR_ACP_ACCESS_KEY_FILE=/srv/agents/state/creche/door-acp.key
 # attendance's door-acp token: the door sends it on attendance's socket.
-Environment=DOOR_ACP_ATTENDANCE_TOKEN_FILE=/srv/agents/state/rework/tokens/door-acp.token
-# DOOR_ACP_ATTENDANCE_SOCKET defaults to attendance's socket on the state root.
+Environment=DOOR_ACP_BEARER_FILE=/srv/agents/state/creche/tokens/door-acp.token
+# DOOR_ACP_SOCKET_FILE defaults to attendance's socket on the state root.
 # DOOR_ACP_REQUIRE_AUTHENTIK defaults to false: the bearer is the only check.
 # The chat-UI deployment, where the browser reaches the door through NPM and
 # Authentik, sets it to true in a drop-in. A client without the Authentik

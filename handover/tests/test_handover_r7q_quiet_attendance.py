@@ -56,7 +56,7 @@ TOKEN: Final = "r7q-view-ro-token-0123456789abcdef"
 
 #: Short enough for `AF_UNIX` on macOS, which caps the path near 104 bytes.
 #: pytest's `tmp_path` is longer than that on its own.
-SOCKET_NAME: Final = "sessiond.sock"
+SOCKET_NAME: Final = "attendance.sock"
 TOKEN_NAME: Final = "view-ro.token"
 
 #: One fake answer must not hold a test for the production timeout.

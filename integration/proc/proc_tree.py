@@ -26,7 +26,7 @@ topology with one writes only the registry and the token files, and
       state/outcomes/<family>/<id>.json  contract 02 §13.1, written by `attendance`
       state/triggers/webhooks/<family>/<name>.token   contract 05 §6.4
       state/view.key                     the key of the noticeboard
-      state/view.env                     contract 06 §4 rule 7, the env file of a unit
+      state/noticeboard.env                     contract 06 §4 rule 7, the env file of a unit
       sock/                              contract 02 §3 rule 1
       home/.config/systemd/user/         the unit directory of a user manager
       work/  log/  home/  bin/  standins/  proc-logs/
@@ -103,7 +103,7 @@ _TOKEN_FILL: Final = "x" * 32
 
 #: The key that the reverse proxy puts in `X-View-Key`. An obvious fixture,
 #: long enough to pass the 32-byte floor of the noticeboard.
-VIEW_KEY: Final = "fixture-view-key-" + "v" * 32
+NOTICEBOARD_KEY: Final = "fixture-view-key-" + "v" * 32
 
 #: Contract 01 §3.12: the default limit of one thin job, in seconds.
 JOB_TIMEOUT_S: Final = 120
@@ -157,7 +157,7 @@ LAN_ADDRESS: Final = "192.0.2.10"
 MAX_SOCKET_PATH: Final = 100
 
 _ROOT_PREFIX: Final = "cp"
-_SOCKET_NAME: Final = "sessiond.sock"
+_SOCKET_NAME: Final = "attendance.sock"
 
 
 def repo_root() -> Path:
@@ -266,7 +266,7 @@ class Tree:
     @property
     def view_env_file(self) -> Path:
         """The env file that the unit of the noticeboard and its verify hook both read."""
-        return self.state_root / "view.env"
+        return self.state_root / "noticeboard.env"
 
     def webhook_token_file(self, family: str, name: str) -> Path:
         return self.webhooks_dir / family / f"{name}.token"
@@ -823,7 +823,7 @@ def write_webhook_token(tree: Tree, family: str, name: str, token: str | None = 
 
 def write_view_key(tree: Tree) -> None:
     """The key file that the unit of the noticeboard names. Mode 0600."""
-    _atomic_write(tree.view_key_file, VIEW_KEY + "\n", SECRET_MODE)
+    _atomic_write(tree.view_key_file, NOTICEBOARD_KEY + "\n", SECRET_MODE)
 
 
 def write_env_file(path: Path, values: Mapping[str, str]) -> None:

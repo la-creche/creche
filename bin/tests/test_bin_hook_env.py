@@ -3,7 +3,7 @@
 Nothing writes `/srv/agents/state/materializer/env` any more. Three values
 that file carried are still needed: `LITELLM_MASTER_KEY`, `APPROVAL_URL`
 and `APPROVAL_TOKEN`.
-They live at `/srv/agents/state/rework/hooks.env` now, which the site's
+They live at `/srv/agents/state/creche/hooks.env` now, which the site's
 own cutover script writes.
 
 This module pins the SHAPE of that move, across the scripts of this tree
@@ -28,7 +28,7 @@ import pytest
 
 BIN = Path(__file__).resolve().parents[1]
 
-HOOKS_ENV = "/srv/agents/state/rework/hooks.env"
+HOOKS_ENV = "/srv/agents/state/creche/hooks.env"
 DEPRECATED_ENV = "/srv/agents/state/materializer/env"
 
 #: The scripts that read one of the three values at run time. The script

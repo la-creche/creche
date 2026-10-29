@@ -80,9 +80,9 @@ def trigger_env(tree: Tree) -> dict[str, str]:
     """
     return {
         "AGENT_LAN_ADDRESS": LAN_ADDRESS,
-        "DOOR_TRIGGER_SESSIOND_TOKEN_FILE": str(tree.token_file("door-trigger")),
-        "DOOR_TRIGGER_SESSIOND_SOCKET": str(tree.attendance_socket),
-        "DOOR_TRIGGER_FAMILIES_DIR": str(tree.families_dir),
+        "DOOR_TRIGGER_ATTENDANCE_TOKEN_FILE": str(tree.token_file("door-trigger")),
+        "DOOR_TRIGGER_ATTENDANCE_SOCKET": str(tree.attendance_socket),
+        "DOOR_TRIGGER_FAMILY_STATUS_DIR": str(tree.families_dir),
         "DOOR_TRIGGER_REGISTRY_ROOT": str(tree.registry_root),
     }
 
@@ -91,7 +91,7 @@ def serve_env(tree: Tree, bind: str, refresh_s: float = REFRESH_S) -> dict[str, 
     """The variables of `agent-trigger serve`."""
     return trigger_env(tree) | {
         "DOOR_TRIGGER_BIND": bind,
-        "DOOR_TRIGGER_WEBHOOKS_DIR": str(tree.webhooks_dir),
+        "DOOR_TRIGGER_WEBHOOK_DIR": str(tree.webhooks_dir),
         "DOOR_TRIGGER_REFRESH_S": str(refresh_s),
     }
 
@@ -99,7 +99,7 @@ def serve_env(tree: Tree, bind: str, refresh_s: float = REFRESH_S) -> dict[str, 
 def fire_env(tree: Tree) -> dict[str, str]:
     """The variables of `agent-trigger fire`."""
     return trigger_env(tree) | {
-        "DOOR_TRIGGER_STATE_ROOT": str(tree.state_root),
+        "DOOR_TRIGGER_PRODUCT_STATE_ROOT": str(tree.state_root),
         "DOOR_TRIGGER_PEP_URL": NO_CHAPERONE_URL,
         "DOOR_TRIGGER_AUDIT_FILE": str(tree.state_root / NO_AUDIT_FILE),
     }

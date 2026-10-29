@@ -48,7 +48,7 @@ from .status import STALE_AFTER_S
 EXIT_OK: Final = 0
 EXIT_FAILED: Final = 1
 
-STATE_ROOT_ENV: Final = "MANAGERD_STATE_ROOT"
+STATE_ROOT_ENV: Final = "CAREGIVER_STATE_ROOT"
 
 #: A shell variable name (POSIX `Name`), which is what `envfile_upsert`
 #: (`bin/lib/envfile.sh`) writes to the left of `=`.

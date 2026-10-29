@@ -82,10 +82,12 @@ class Rig:
     tokens: dict[Principal, str]
     facades: FacadeFleet
 
-    def head(self, principal: Principal = Principal.VIEW_RO) -> dict[str, str]:
+    def head(self, principal: Principal = Principal.NOTICEBOARD_RO) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.tokens[principal]}"}
 
-    async def get(self, path: str, principal: Principal = Principal.VIEW_RO) -> httpx.Response:
+    async def get(
+        self, path: str, principal: Principal = Principal.NOTICEBOARD_RO
+    ) -> httpx.Response:
         return await self.client.get(path, headers=self.head(principal))
 
 

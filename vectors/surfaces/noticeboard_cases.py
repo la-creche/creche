@@ -22,7 +22,7 @@ from typing import Any, Final
 
 from noticeboard import auditfiles, jsonfiles, security, sessions, statusdocs
 from vectors.surfaces import ids
-from vectors.surfaces.config import INT_DIGITS_MAX, LAN, VIEW_KEY
+from vectors.surfaces.config import INT_DIGITS_MAX, LAN, NOTICEBOARD_KEY
 from vectors.surfaces.session_cases import (
     FAMILY,
     JOB_SESSION,
@@ -62,7 +62,7 @@ def _long(body_id: str, *parts: tuple[str, int]) -> Body:
 
 # --- the access key (spec.md §8.3 rule 1) ----------------------------------------------
 
-_K: Final = VIEW_KEY.encode("ascii")
+_K: Final = NOTICEBOARD_KEY.encode("ascii")
 
 #: A key of 32 bytes with each character outside ASCII.
 KEY_OUTSIDE: Final = "\u00e9" * 16
@@ -79,7 +79,7 @@ class KeyCase:
     #: The bytes of the header value. None stands for a request with no header.
     offered: bytes | None
     #: The key of the service. An empty text is a loopback service with no key.
-    expected: str = VIEW_KEY
+    expected: str = NOTICEBOARD_KEY
 
 
 KEYS: Final[tuple[KeyCase, ...]] = (
@@ -875,7 +875,7 @@ REFUSALS: Final[tuple[Answer, ...]] = (
 # --- the token file of the reader (contract 02 §3 rule 5) -------------------------------
 
 #: A token of 43 characters. It is the token of no deployment.
-VIEW_TOKEN: Final = "vectors-view-token-0123456789abcdefghijklmn"
+NOTICEBOARD_TOKEN: Final = "vectors-view-token-0123456789abcdefghijklmn"
 
 
 @dataclass(frozen=True)
@@ -887,7 +887,7 @@ class TokenCase:
     raw: bytes | None
 
 
-_V: Final = VIEW_TOKEN.encode("ascii")
+_V: Final = NOTICEBOARD_TOKEN.encode("ascii")
 
 TOKENS: Final[tuple[TokenCase, ...]] = (
     TokenCase("token", _V),
@@ -1210,12 +1210,12 @@ LOOPBACK: Final = "127.0.0.1"
 
 #: The paths that each environment of a hook or of a check names. None exists.
 NO_PATHS: Final[dict[str, str]] = {
-    "VIEW_STATE_ROOT": f"{NO_ROOT}/state",
-    "VIEW_REGISTRY_DIR": f"{NO_ROOT}/registry",
-    "VIEW_SESSIOND_SOCKET": f"{NO_ROOT}/sessiond.sock",
+    "NOTICEBOARD_STATE_ROOT": f"{NO_ROOT}/state",
+    "NOTICEBOARD_REGISTRY_DIR": f"{NO_ROOT}/registry",
+    "NOTICEBOARD_ATTENDANCE_SOCKET": f"{NO_ROOT}/attendance.sock",
 }
 
-_BIND: Final = f"VIEW_BIND={LOOPBACK}\n"
+_BIND: Final = f"NOTICEBOARD_BIND={LOOPBACK}\n"
 
 
 @dataclass(frozen=True)
@@ -1234,58 +1234,76 @@ def _env(case_id: str, text: str, **inherited: str) -> EnvFileCase:
 
 
 ENV_FILES: Final[tuple[EnvFileCase, ...]] = (
-    _env("bind-and-port", _BIND + "VIEW_PORT=8371\n"),
+    _env("bind-and-port", _BIND + "NOTICEBOARD_PORT=8371\n"),
     _env("bind-only", _BIND),
-    _env("no-final-line-end", _BIND + "VIEW_PORT=8371"),
-    _env("cr-lf", f"VIEW_BIND={LOOPBACK}\r\nVIEW_PORT=8371\r\n"),
+    _env("no-final-line-end", _BIND + "NOTICEBOARD_PORT=8371"),
+    _env("cr-lf", f"NOTICEBOARD_BIND={LOOPBACK}\r\nNOTICEBOARD_PORT=8371\r\n"),
     _env("empty-file", ""),
     EnvFileCase("absent", None),
     # --- the caller and the file ---
-    _env("caller-alone", "", VIEW_BIND=LOOPBACK, VIEW_PORT="8372"),
-    _env("file-wins-over-the-caller", "VIEW_PORT=8371\n", VIEW_BIND=LOOPBACK, VIEW_PORT="8372"),
-    _env("file-and-caller", "VIEW_PORT=8371\n", VIEW_BIND=LOOPBACK),
-    _env("empty-value-wins-over-the-caller", "VIEW_PORT=\n", VIEW_BIND=LOOPBACK, VIEW_PORT="8372"),
+    _env("caller-alone", "", NOTICEBOARD_BIND=LOOPBACK, NOTICEBOARD_PORT="8372"),
+    _env(
+        "file-wins-over-the-caller",
+        "NOTICEBOARD_PORT=8371\n",
+        NOTICEBOARD_BIND=LOOPBACK,
+        NOTICEBOARD_PORT="8372",
+    ),
+    _env("file-and-caller", "NOTICEBOARD_PORT=8371\n", NOTICEBOARD_BIND=LOOPBACK),
+    _env(
+        "empty-value-wins-over-the-caller",
+        "NOTICEBOARD_PORT=\n",
+        NOTICEBOARD_BIND=LOOPBACK,
+        NOTICEBOARD_PORT="8372",
+    ),
     # --- a line that holds no variable ---
     _env(
-        "comment-and-blank-lines", "# the bind\n\n   \n" + _BIND + "  # indented\nVIEW_PORT=8371\n"
+        "comment-and-blank-lines",
+        "# the bind\n\n   \n" + _BIND + "  # indented\nNOTICEBOARD_PORT=8371\n",
     ),
-    _env("comment-holds-a-variable", _BIND + "#VIEW_PORT=8371\n"),
-    _env("no-equals", _BIND + "VIEW_PORT\n"),
+    _env("comment-holds-a-variable", _BIND + "#NOTICEBOARD_PORT=8371\n"),
+    _env("no-equals", _BIND + "NOTICEBOARD_PORT\n"),
     _env("no-name", _BIND + "=8371\n"),
-    _env("export", _BIND + "export VIEW_PORT=8371\n"),
-    _env("space-before-the-equals", _BIND + "VIEW_PORT =8371\n"),
-    _env("name-starts-with-a-digit", _BIND + "1VIEW_PORT=8371\nVIEW_PORT1=8371\n"),
+    _env("export", _BIND + "export NOTICEBOARD_PORT=8371\n"),
+    _env("space-before-the-equals", _BIND + "NOTICEBOARD_PORT =8371\n"),
+    _env("name-starts-with-a-digit", _BIND + "1NOTICEBOARD_PORT=8371\nNOTICEBOARD_PORT1=8371\n"),
     _env("name-with-a-hyphen", _BIND + "VIEW-PORT=8371\n"),
-    _env("name-outside-ascii", _BIND + "VIEW_P\u00d6RT=8371\n"),
+    _env("name-outside-ascii", _BIND + "NOTICEBOARD_P\u00d6RT=8371\n"),
     _env("name-lower-case", _BIND + "view_port=8371\n"),
-    _env("byte-order-mark", "\ufeffVIEW_PORT=8371\n" + _BIND),
+    _env("byte-order-mark", "\ufeffNOTICEBOARD_PORT=8371\n" + _BIND),
     # --- the value ---
-    _env("empty-value", _BIND + "VIEW_PORT=\n"),
-    _env("space-after-the-equals", _BIND + "VIEW_PORT= 8371\n"),
-    _env("spaces-around-the-line", "  " + _BIND + "\tVIEW_PORT=8371  \n"),
-    _env("u00a0-around-the-line", _BIND + "\u00a0VIEW_PORT=8371\u00a0\n"),
-    _env("double-quotes", _BIND + 'VIEW_PORT="8371"\n'),
-    _env("single-quotes", _BIND + "VIEW_PORT='8371'\n"),
-    _env("comment-after-the-value", _BIND + "VIEW_PORT=8371 # the port\n"),
+    _env("empty-value", _BIND + "NOTICEBOARD_PORT=\n"),
+    _env("space-after-the-equals", _BIND + "NOTICEBOARD_PORT= 8371\n"),
+    _env("spaces-around-the-line", "  " + _BIND + "\tNOTICEBOARD_PORT=8371  \n"),
+    _env("u00a0-around-the-line", _BIND + "\u00a0NOTICEBOARD_PORT=8371\u00a0\n"),
+    _env("double-quotes", _BIND + 'NOTICEBOARD_PORT="8371"\n'),
+    _env("single-quotes", _BIND + "NOTICEBOARD_PORT='8371'\n"),
+    _env("comment-after-the-value", _BIND + "NOTICEBOARD_PORT=8371 # the port\n"),
     _env(
         "equals-inside-the-value",
-        f"AGENT_LAN_ADDRESS={LAN}\nVIEW_ACCESS_KEY={VIEW_KEY[:16]}={VIEW_KEY[16:]}\n",
+        f"AGENT_LAN_ADDRESS={LAN}\nNOTICEBOARD_ACCESS_KEY={NOTICEBOARD_KEY[:16]}={NOTICEBOARD_KEY[16:]}\n",
     ),
-    _env("variable-two-times", _BIND + "VIEW_PORT=8371\nVIEW_PORT=8373\n"),
-    _env("variable-two-times-last-empty", _BIND + "VIEW_PORT=8371\nVIEW_PORT=\n"),
-    _env("site-address", f"AGENT_LAN_ADDRESS={LAN}\nVIEW_ACCESS_KEY={VIEW_KEY}\n"),
+    _env("variable-two-times", _BIND + "NOTICEBOARD_PORT=8371\nNOTICEBOARD_PORT=8373\n"),
+    _env("variable-two-times-last-empty", _BIND + "NOTICEBOARD_PORT=8371\nNOTICEBOARD_PORT=\n"),
+    _env("site-address", f"AGENT_LAN_ADDRESS={LAN}\nNOTICEBOARD_ACCESS_KEY={NOTICEBOARD_KEY}\n"),
     # --- each other character that ends a line for `str.splitlines` ---
-    _env("vertical-tab-between-two-variables", f"VIEW_BIND={LOOPBACK}\x0bVIEW_PORT=8371\n"),
-    _env("form-feed-between-two-variables", f"VIEW_BIND={LOOPBACK}\x0cVIEW_PORT=8371\n"),
-    _env("u001c-between-two-variables", f"VIEW_BIND={LOOPBACK}\x1cVIEW_PORT=8371\n"),
-    _env("u0085-between-two-variables", f"VIEW_BIND={LOOPBACK}\x85VIEW_PORT=8371\n"),
-    _env("u2028-between-two-variables", f"VIEW_BIND={LOOPBACK}\u2028VIEW_PORT=8371\n"),
-    _env("cr-between-two-variables", f"VIEW_BIND={LOOPBACK}\rVIEW_PORT=8371\n"),
+    _env(
+        "vertical-tab-between-two-variables",
+        f"NOTICEBOARD_BIND={LOOPBACK}\x0bNOTICEBOARD_PORT=8371\n",
+    ),
+    _env(
+        "form-feed-between-two-variables", f"NOTICEBOARD_BIND={LOOPBACK}\x0cNOTICEBOARD_PORT=8371\n"
+    ),
+    _env("u001c-between-two-variables", f"NOTICEBOARD_BIND={LOOPBACK}\x1cNOTICEBOARD_PORT=8371\n"),
+    _env("u0085-between-two-variables", f"NOTICEBOARD_BIND={LOOPBACK}\x85NOTICEBOARD_PORT=8371\n"),
+    _env(
+        "u2028-between-two-variables", f"NOTICEBOARD_BIND={LOOPBACK}\u2028NOTICEBOARD_PORT=8371\n"
+    ),
+    _env("cr-between-two-variables", f"NOTICEBOARD_BIND={LOOPBACK}\rNOTICEBOARD_PORT=8371\n"),
     # --- a config that the hook refuses ---
-    _env("no-bind", "VIEW_PORT=8371\n"),
-    _env("port-word", _BIND + "VIEW_PORT=http\n"),
-    _env("port-zero", _BIND + "VIEW_PORT=0\n"),
-    _env("wildcard-bind", "VIEW_BIND=0.0.0.0\n"),
+    _env("no-bind", "NOTICEBOARD_PORT=8371\n"),
+    _env("port-word", _BIND + "NOTICEBOARD_PORT=http\n"),
+    _env("port-zero", _BIND + "NOTICEBOARD_PORT=0\n"),
+    _env("wildcard-bind", "NOTICEBOARD_BIND=0.0.0.0\n"),
     _env("site-address-and-no-key", f"AGENT_LAN_ADDRESS={LAN}\n"),
 )
 
@@ -1307,17 +1325,17 @@ class CheckCase:
 
 def _check(case_id: str, **variables: str) -> CheckCase:
     """An environment with a loopback bind and no path that exists."""
-    return CheckCase(case_id, {"VIEW_BIND": LOOPBACK, **NO_PATHS, **variables})
+    return CheckCase(case_id, {"NOTICEBOARD_BIND": LOOPBACK, **NO_PATHS, **variables})
 
 
 _ROOT_PATHS: Final[dict[str, str]] = {
-    "VIEW_BIND": LOOPBACK,
-    "VIEW_STATE_ROOT": f"{ROOT}/state",
-    "VIEW_REGISTRY_DIR": f"{ROOT}/registry",
-    "VIEW_SESSIOND_SOCKET": f"{ROOT}/sessiond.sock",
+    "NOTICEBOARD_BIND": LOOPBACK,
+    "NOTICEBOARD_STATE_ROOT": f"{ROOT}/state",
+    "NOTICEBOARD_REGISTRY_DIR": f"{ROOT}/registry",
+    "NOTICEBOARD_ATTENDANCE_SOCKET": f"{ROOT}/attendance.sock",
 }
 _KEY_FILE: Final = "view.key"
-_KEY_FILE_VARIABLE: Final = {"VIEW_ACCESS_KEY_FILE": f"{ROOT}/{_KEY_FILE}"}
+_KEY_FILE_VARIABLE: Final = {"NOTICEBOARD_ACCESS_KEY_FILE": f"{ROOT}/{_KEY_FILE}"}
 
 
 def _key_file(case_id: str, raw: bytes | None, **variables: str) -> CheckCase:
@@ -1333,26 +1351,34 @@ _LAN_BIND: Final = {"AGENT_LAN_ADDRESS": LAN}
 
 CHECKS: Final[tuple[CheckCase, ...]] = (
     _check("loopback-no-key"),
-    _check("loopback-short-key", VIEW_ACCESS_KEY=SHORT_KEY),
-    _check("loopback-ipv6", VIEW_BIND="::1"),
-    _check("loopback-name", VIEW_BIND="localhost"),
-    CheckCase("lan-with-key", {**NO_PATHS, **_LAN_BIND, "VIEW_ACCESS_KEY": VIEW_KEY}),
+    _check("loopback-short-key", NOTICEBOARD_ACCESS_KEY=SHORT_KEY),
+    _check("loopback-ipv6", NOTICEBOARD_BIND="::1"),
+    _check("loopback-name", NOTICEBOARD_BIND="localhost"),
+    CheckCase("lan-with-key", {**NO_PATHS, **_LAN_BIND, "NOTICEBOARD_ACCESS_KEY": NOTICEBOARD_KEY}),
     CheckCase(
         "bind-wins-over-the-site-address",
-        {**NO_PATHS, **_LAN_BIND, "VIEW_BIND": "192.0.2.11", "VIEW_ACCESS_KEY": VIEW_KEY},
+        {
+            **NO_PATHS,
+            **_LAN_BIND,
+            "NOTICEBOARD_BIND": "192.0.2.11",
+            "NOTICEBOARD_ACCESS_KEY": NOTICEBOARD_KEY,
+        },
     ),
-    _check("port", VIEW_PORT="18370"),
-    _check("page-size", VIEW_PAGE_SIZE="25"),
-    _check("cookie-off", VIEW_COOKIE_SECURE="0"),
-    _check("cookie-on", VIEW_COOKIE_SECURE="1"),
-    _check("url-wins-over-the-socket", VIEW_SESSIOND_URL="http://192.0.2.10:8350"),
-    _check("another-variable", VIEW_UNKNOWN="1", OTHER_PORT="9"),
+    _check("port", NOTICEBOARD_PORT="18370"),
+    _check("page-size", NOTICEBOARD_PAGE_SIZE="25"),
+    _check("cookie-off", NOTICEBOARD_COOKIE_SECURE="0"),
+    _check("cookie-on", NOTICEBOARD_COOKIE_SECURE="1"),
+    _check("url-wins-over-the-socket", NOTICEBOARD_ATTENDANCE_URL="http://192.0.2.10:8350"),
+    _check("another-variable", NOTICEBOARD_UNKNOWN="1", OTHER_PORT="9"),
     # --- paths that exist ---
     CheckCase(
         "each-path-present",
         _ROOT_PATHS,
         ("state/families", "state/audit", "state/outcomes", "state/tokens", "registry"),
-        {"state/tokens/view-ro.token": VIEW_TOKEN.encode("ascii") + b"\n", "sessiond.sock": b""},
+        {
+            "state/tokens/view-ro.token": NOTICEBOARD_TOKEN.encode("ascii") + b"\n",
+            "attendance.sock": b"",
+        },
     ),
     CheckCase("state-root-present", _ROOT_PATHS, ("state",)),
     CheckCase("families-and-registry-present", _ROOT_PATHS, ("state/families", "registry")),
@@ -1366,31 +1392,39 @@ CHECKS: Final[tuple[CheckCase, ...]] = (
         {"state/families": b"", "registry": b""},
     ),
     # --- the key file ---
-    _key_file("key-file", VIEW_KEY.encode("ascii")),
-    _key_file("key-file-final-line-feed", VIEW_KEY.encode("ascii") + b"\n"),
-    _key_file("key-file-on-the-lan", VIEW_KEY.encode("ascii") + b"\n", VIEW_BIND="192.0.2.11"),
+    _key_file("key-file", NOTICEBOARD_KEY.encode("ascii")),
+    _key_file("key-file-final-line-feed", NOTICEBOARD_KEY.encode("ascii") + b"\n"),
     _key_file(
-        "key-file-wins-over-the-variable", VIEW_KEY.encode("ascii"), VIEW_ACCESS_KEY=SHORT_KEY
+        "key-file-on-the-lan",
+        NOTICEBOARD_KEY.encode("ascii") + b"\n",
+        NOTICEBOARD_BIND="192.0.2.11",
+    ),
+    _key_file(
+        "key-file-wins-over-the-variable",
+        NOTICEBOARD_KEY.encode("ascii"),
+        NOTICEBOARD_ACCESS_KEY=SHORT_KEY,
     ),
     _key_file("key-file-empty-on-loopback", b""),
     _key_file("key-file-spaces-on-loopback", b"  \n"),
     _key_file("key-file-short-on-loopback", SHORT_KEY.encode("ascii")),
-    _key_file("key-file-empty-on-the-lan", b"", VIEW_BIND="192.0.2.11"),
+    _key_file("key-file-empty-on-the-lan", b"", NOTICEBOARD_BIND="192.0.2.11"),
     _key_file(
         "key-file-empty-wins-over-the-variable",
         b"",
-        VIEW_BIND="192.0.2.11",
-        VIEW_ACCESS_KEY=VIEW_KEY,
+        NOTICEBOARD_BIND="192.0.2.11",
+        NOTICEBOARD_ACCESS_KEY=NOTICEBOARD_KEY,
     ),
-    _key_file("key-file-short-on-the-lan", SHORT_KEY.encode("ascii"), VIEW_BIND="192.0.2.11"),
+    _key_file(
+        "key-file-short-on-the-lan", SHORT_KEY.encode("ascii"), NOTICEBOARD_BIND="192.0.2.11"
+    ),
     _key_file("key-file-absent", None),
-    _key_file("key-file-not-utf8", b"\xff" + VIEW_KEY.encode("ascii")),
+    _key_file("key-file-not-utf8", b"\xff" + NOTICEBOARD_KEY.encode("ascii")),
     # --- a config that the service refuses ---
     CheckCase("no-bind", dict(NO_PATHS)),
     CheckCase("lan-no-key", {**NO_PATHS, **_LAN_BIND}),
-    CheckCase("lan-short-key", {**NO_PATHS, **_LAN_BIND, "VIEW_ACCESS_KEY": SHORT_KEY}),
-    _check("wildcard-bind", VIEW_BIND="0.0.0.0"),
-    _check("port-word", VIEW_PORT="http"),
-    _check("port-zero", VIEW_PORT="0"),
-    _check("page-size-501", VIEW_PAGE_SIZE="501"),
+    CheckCase("lan-short-key", {**NO_PATHS, **_LAN_BIND, "NOTICEBOARD_ACCESS_KEY": SHORT_KEY}),
+    _check("wildcard-bind", NOTICEBOARD_BIND="0.0.0.0"),
+    _check("port-word", NOTICEBOARD_PORT="http"),
+    _check("port-zero", NOTICEBOARD_PORT="0"),
+    _check("page-size-501", NOTICEBOARD_PAGE_SIZE="501"),
 )

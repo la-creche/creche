@@ -92,7 +92,7 @@ TEST_PREFIX="${REGISTRY_SYNC_TEST_PREFIX:-}"
 # The REAL registry checkout. `caregiver` watches it, the trigger door reads
 # it, and the noticeboard commits into it.
 REGISTRY="$TEST_PREFIX/srv/agents/registry"
-STATE_ROOT="$TEST_PREFIX/srv/agents/state/rework"
+STATE_ROOT="$TEST_PREFIX/srv/agents/state/creche"
 
 # This script's own two files, 0700 directory and 0600 files, both under
 # `umask` and never a chmod after the write (bin/AGENTS.md, Secrets).

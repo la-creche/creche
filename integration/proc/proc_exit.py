@@ -396,9 +396,9 @@ def door_env(tree: Tree, bind: str) -> dict[str, str]:
     return {
         "AGENT_LAN_ADDRESS": LAN_ADDRESS,
         "DOOR_ACP_BIND": bind,
-        "DOOR_ACP_KEY_FILE": str(_door_key_file(tree)),
-        "DOOR_ACP_ATTENDANCE_TOKEN_FILE": str(tree.token_file("door-acp")),
-        "DOOR_ACP_ATTENDANCE_SOCKET": str(tree.attendance_socket),
+        "DOOR_ACP_ACCESS_KEY_FILE": str(_door_key_file(tree)),
+        "DOOR_ACP_BEARER_FILE": str(tree.token_file("door-acp")),
+        "DOOR_ACP_SOCKET_FILE": str(tree.attendance_socket),
         "DOOR_ACP_REQUIRE_AUTHENTIK": "false",
     }
 

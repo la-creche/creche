@@ -27,7 +27,7 @@
 # is an alarm, not a gate. Exit 1 on any drift so the unit shows failed in
 # systemctl too.
 #
-# The two bearers come from /srv/agents/state/rework/hooks.env, which
+# The two bearers come from /srv/agents/state/creche/hooks.env, which
 # `bin/rework-cutover.sh up` writes. The old system's env file is a
 # FALLBACK, and every read of it logs one DEPRECATED line
 # (`bin/lib/envfile.sh`, `bin/creche-watchdog.sh`).
@@ -46,7 +46,7 @@ export PATH="$HOME/.local/bin:$PATH"
 # the host. It moves only the two env files, which is all a test of this
 # script's credential source needs — `sbx` itself is a binstub.
 DRIFT_TEST_PREFIX="${SBX_DRIFT_TEST_PREFIX:-}"
-HOOKS_ENV="$DRIFT_TEST_PREFIX/srv/agents/state/rework/hooks.env"
+HOOKS_ENV="$DRIFT_TEST_PREFIX/srv/agents/state/creche/hooks.env"
 DEPRECATED_ENV="$DRIFT_TEST_PREFIX/srv/agents/state/materializer/env"
 . "$(dirname -- "${BASH_SOURCE[0]}")/lib/envfile.sh"
 # Two values, never `set -a` and a `source`: that file holds every other

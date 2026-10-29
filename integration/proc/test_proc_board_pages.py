@@ -31,8 +31,8 @@ from proc_html import table_rows
 from proc_tree import (
     FAMILY,
     NO_ARGUMENTS_SHA256,
+    NOTICEBOARD_KEY,
     SANDBOX,
-    VIEW_KEY,
     Validity,
     append_audit,
     audit_record,
@@ -256,7 +256,7 @@ async def test_a_page_without_the_key_is_refused(board_alone: BoardStack, key: s
 
     for path, response in answers.items():
         assert response.status_code == httpx.codes.FORBIDDEN, path
-        assert VIEW_KEY not in response.text
+        assert NOTICEBOARD_KEY not in response.text
         assert WRONG_KEY not in response.text
         assert FAMILY not in response.text
 
@@ -264,7 +264,7 @@ async def test_a_page_without_the_key_is_refused(board_alone: BoardStack, key: s
 async def test_no_page_shows_a_secret(board: BoardStack) -> None:
     """Invariant 13. No key and no token is on a page."""
     paths = ["/", f"/families/{FAMILY}", "/audit"]
-    secrets = [VIEW_KEY, token_of("view-ro"), token_of("door-acp")]
+    secrets = [NOTICEBOARD_KEY, token_of("view-ro"), token_of("door-acp")]
 
     async with board.client() as browser:
         for path in paths:

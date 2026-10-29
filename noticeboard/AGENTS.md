@@ -116,20 +116,20 @@ A family file is TOML. A block control shows its text in TOML:
 
 ```bash
 uv run noticeboard --check                      # validate the environment, print, exit
-VIEW_BIND=127.0.0.1 VIEW_STATE_ROOT=/tmp/rework uv run noticeboard
+NOTICEBOARD_BIND=127.0.0.1 NOTICEBOARD_STATE_ROOT=/tmp/rework uv run noticeboard
 uv run noticeboard-verify --json                # the component's verify hook
 ```
 
 | Variable | Meaning |
 |---|---|
-| `VIEW_BIND`, `VIEW_PORT` | the listen address and port 8370. Never a wildcard. |
-| `VIEW_ACCESS_KEY`, `VIEW_ACCESS_KEY_FILE` | the `X-View-Key` value the proxy injects. The file wins. |
-| `VIEW_STATE_ROOT` | families, outcomes, tokens, and the notice file `notices/noticeboard.json` |
-| `VIEW_AUDIT_FILE` | the chaperone's audit file. The service reads it as a member of the group `chaperone`. |
-| `VIEW_REGISTRY_DIR` | the git checkout the form commits in |
-| `VIEW_SESSIOND_SOCKET`, `VIEW_SESSIOND_URL` | `attendance`, over a socket or TCP |
-| `VIEW_PAGE_SIZE` | audit calls and sessions per page |
-| `VIEW_COOKIE_SECURE` | `Secure` on the CSRF cookie. Set `0` only for a plain-HTTP dev run. |
+| `NOTICEBOARD_BIND`, `NOTICEBOARD_PORT` | the listen address and port 8370. Never a wildcard. |
+| `NOTICEBOARD_ACCESS_KEY`, `NOTICEBOARD_ACCESS_KEY_FILE` | the `X-View-Key` value the proxy injects. The file wins. |
+| `NOTICEBOARD_STATE_ROOT` | families, outcomes, tokens, and the notice file `notices/noticeboard.json` |
+| `NOTICEBOARD_AUDIT_FILE` | the chaperone's audit file. The service reads it as a member of the group `chaperone`. |
+| `NOTICEBOARD_REGISTRY_DIR` | the git checkout the form commits in |
+| `NOTICEBOARD_ATTENDANCE_SOCKET`, `NOTICEBOARD_ATTENDANCE_URL` | `attendance`, over a socket or TCP |
+| `NOTICEBOARD_PAGE_SIZE` | audit calls and sessions per page |
+| `NOTICEBOARD_COOKIE_SECURE` | `Secure` on the CSRF cookie. Set `0` only for a plain-HTTP dev run. |
 
 A LAN bind with no key refuses to start, exit 2. The reverse proxy injects
 `X-View-Key` inside its `location /` block and forwards `Cookie`, `Origin`
