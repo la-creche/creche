@@ -9,7 +9,7 @@ import json
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import caregiver.sandboxes as sandboxes_module
 import pytest
@@ -367,26 +367,37 @@ def test_destroy_keeps_the_counter(state_root: Path, family: FamilyFile) -> None
 
 # --- spec hash ----------------------------------------------------------------
 
+#: A state root for the hash. No file is read under it.
+ROOT: Final = Path("/srv/agents/state/a-root")
+
 
 def test_the_spec_hash_moves_with_the_image(family: FamilyFile) -> None:
-    assert spec_hash_of(family, "sha256:one") != spec_hash_of(family, "sha256:two")
+    assert spec_hash_of(family, "sha256:one", ROOT) != spec_hash_of(family, "sha256:two", ROOT)
 
 
 def test_the_spec_hash_moves_with_the_resources(family: FamilyFile) -> None:
     bigger = chat_family(sandbox={"cpus": 8, "memory": "8g"})
-    assert spec_hash_of(family, IMAGE) != spec_hash_of(bigger, IMAGE)
+    assert spec_hash_of(family, IMAGE, ROOT) != spec_hash_of(bigger, IMAGE, ROOT)
 
 
 def test_the_spec_hash_moves_with_the_mounts(family: FamilyFile) -> None:
     mounted = chat_family(files=[{"path": "/srv/agents/vault", "mode": "rw"}])
-    assert spec_hash_of(family, IMAGE) != spec_hash_of(mounted, IMAGE)
+    assert spec_hash_of(family, IMAGE, ROOT) != spec_hash_of(mounted, IMAGE, ROOT)
+
+
+def test_the_spec_hash_moves_with_the_state_root(family: FamilyFile) -> None:
+    """The creds, config and control mounts sit under the state root. A
+    sandbox made under a root that has since moved cannot start, so the
+    move forces a new one."""
+    moved = Path("/srv/agents/state/creche")
+    assert spec_hash_of(family, IMAGE, ROOT) != spec_hash_of(family, IMAGE, moved)
 
 
 def test_the_spec_hash_ignores_a_live_field(family: FamilyFile) -> None:
     """`spec_hash` covers exactly the fields that force a replacement
     (§4.1). A description is not one of them."""
     reworded = chat_family(description="Reworded.")
-    assert spec_hash_of(family, IMAGE) == spec_hash_of(reworded, IMAGE)
+    assert spec_hash_of(family, IMAGE, ROOT) == spec_hash_of(reworded, IMAGE, ROOT)
 
 
 # --- the spec itself ------------------------------------------------------------

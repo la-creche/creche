@@ -125,12 +125,18 @@ class CreateOutcome:
     fault: FaultEntry | None
 
 
-def spec_hash_of(family: FamilyFile, image: str) -> str:
+def spec_hash_of(family: FamilyFile, image: str, state_root: Path) -> str:
     """Contract 05 §4.1: "hash of the fields that force a replacement" —
     §3.5's last row, and nothing else. A change here forces a new sandbox,
-    so a field that lands live must never reach this hash."""
+    so a field that lands live must never reach this hash.
+
+    The state root is one of them. `sandbox_spec` mounts the creds, config
+    and control directories from under it, and a sandbox keeps the paths
+    it was made with. A sandbox made under a root that has since moved
+    cannot start."""
     material = {
         "image": image,
+        "state_root": str(state_root),
         "cpus": family.sandbox.cpus,
         "memory": family.sandbox.memory,
         "max_resident_processes": family.sandbox.max_resident_processes,
@@ -179,7 +185,7 @@ def create_sandbox(
         id=name,
         state=SandboxLifecycle.PLANNED,
         image=image,
-        spec_hash=spec_hash_of(family, image),
+        spec_hash=spec_hash_of(family, image, state_root),
         cpus=family.sandbox.cpus,
         memory=family.sandbox.memory,
         created_at=now_rfc3339(),
