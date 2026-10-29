@@ -24,7 +24,7 @@ from .atomic import DIR_MODE_GROUP, MODE_GROUP_READ, ensure_dir, write_json
 from .clock import now, rfc3339
 from .paths import fault_file, faults_dir
 
-FAULT_SOURCE = "sessiond"
+FAULT_SOURCE = "attendance"
 
 
 class FaultCode(StrEnum):

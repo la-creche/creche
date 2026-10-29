@@ -968,7 +968,7 @@ def _spend_block(
                 code="spend_unknown",
                 blocks_turns=False,
                 since=now_rfc3339(),
-                source="managerd",
+                source="caregiver",
                 detail={"message": str(exc)},
             )
         )
@@ -1028,7 +1028,7 @@ def _timer_faults(family: FamilyFile, timers: TimerOutcome) -> list[FaultEntry]:
             code=TIMER_ENABLE_FAILED,
             blocks_turns=False,
             since=now_rfc3339(),
-            source="managerd",
+            source="caregiver",
             detail={
                 "timers": list(timers.unenabled),
                 "message": (

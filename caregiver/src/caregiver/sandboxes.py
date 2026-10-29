@@ -228,7 +228,7 @@ def unconfigured_image_fault(family: FamilyFile, images: SandboxImages) -> Fault
         code=IMAGE_FLAVOR_UNCONFIGURED,
         blocks_turns=False,
         since=now_rfc3339(),
-        source="managerd",
+        source="caregiver",
         detail={
             "flavor": family.sandbox.image,
             "configured": list(images.configured()),
@@ -562,7 +562,7 @@ def _failed(
         code="sandbox_start_failed",
         blocks_turns=True,
         since=now_rfc3339(),
-        source="managerd",
+        source="caregiver",
         detail={"message": str(exc), "sandbox": record.id},
     )
     return CreateOutcome(record=None, fault=fault)

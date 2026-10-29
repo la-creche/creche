@@ -200,7 +200,7 @@ class PepReport:
             code=PEP_UNREACHABLE,
             blocks_turns=False,
             since=self.unreachable_since or now_rfc3339(),
-            source="managerd",
+            source="caregiver",
             detail={
                 "url": self.url,
                 "message": (

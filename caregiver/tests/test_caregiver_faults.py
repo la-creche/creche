@@ -93,20 +93,20 @@ def test_attendance_may_report_an_unreadable_audit(tmp_path: Path) -> None:
         path,
         {
             "family": "chat",
-            "source": "sessiond",
+            "source": "attendance",
             "written_at": "2026-09-19T11:59:00Z",
             "faults": [
                 {
                     "code": "audit_unreadable",
                     "blocks_turns": False,
                     "since": "2026-09-19T11:58:41Z",
-                    "source": "sessiond",
+                    "source": "attendance",
                     "message": "cannot read the PEP's audit at /srv/.../2026-09-19.jsonl",
                 }
             ],
         },
     )
-    result = read_fault_file(path, "sessiond", now=NOW)
+    result = read_fault_file(path, "attendance", now=NOW)
     assert result is not None
     assert len(result.faults) == 1
     assert result.faults[0].code == "audit_unreadable"
@@ -157,10 +157,10 @@ def test_a_code_belonging_to_a_different_source_is_dropped(tmp_path: Path) -> No
         {
             "family": "chat",
             "written_at": "2026-09-19T11:59:00Z",
-            "faults": [{"code": "grants_stale", "since": "x", "source": "sessiond"}],
+            "faults": [{"code": "grants_stale", "since": "x", "source": "attendance"}],
         },
     )
-    result = read_fault_file(path, "sessiond", now=NOW)
+    result = read_fault_file(path, "attendance", now=NOW)
     assert result is not None
     assert result.faults == ()
 
@@ -174,12 +174,16 @@ def test_one_malformed_entry_does_not_drop_the_rest(tmp_path: Path) -> None:
             "written_at": "2026-09-19T11:59:00Z",
             "faults": [
                 "not even an object",
-                {"code": "orphan_processes", "since": "2026-09-19T11:58:00Z", "source": "sessiond"},
+                {
+                    "code": "orphan_processes",
+                    "since": "2026-09-19T11:58:00Z",
+                    "source": "attendance",
+                },
                 {"blocks_turns": True},  # no code
             ],
         },
     )
-    result = read_fault_file(path, "sessiond", now=NOW)
+    result = read_fault_file(path, "attendance", now=NOW)
     assert result is not None
     assert [f.code for f in result.faults] == ["orphan_processes"]
 
@@ -237,14 +241,14 @@ def attendance_file(path: Path, sandbox: str) -> None:
         path,
         {
             "family": "chat",
-            "source": "sessiond",
+            "source": "attendance",
             "written_at": (NOW - timedelta(seconds=5)).isoformat().replace("+00:00", "Z"),
             "faults": [
                 {
                     "code": "sandbox_start_failed",
                     "blocks_turns": True,
                     "since": "2026-09-19T11:58:41Z",
-                    "source": "sessiond",
+                    "source": "attendance",
                     "message": "playpen answered fatal: mount_dir_unset",
                     "sandbox": sandbox,
                 }
@@ -260,7 +264,7 @@ def test_attendance_may_raise_sandbox_start_failed(tmp_path: Path) -> None:
     path = tmp_path / "chat.json"
     attendance_file(path, "chat-s1")
 
-    result = read_fault_file(path, "sessiond", now=NOW)
+    result = read_fault_file(path, "attendance", now=NOW)
 
     assert result is not None
     assert [one.code for one in result.faults] == ["sandbox_start_failed"]
@@ -272,7 +276,7 @@ def test_the_lone_sandbox_failing_blocks_turns(tmp_path: Path) -> None:
     sandbox, and that one fatal, means the family cannot serve."""
     path = tmp_path / "chat.json"
     attendance_file(path, "chat-s1")
-    read = read_fault_file(path, "sessiond", now=NOW)
+    read = read_fault_file(path, "attendance", now=NOW)
     assert read is not None
 
     rescoped = rescope_by_fleet(read.faults, ("chat-s1",))
@@ -287,7 +291,7 @@ def test_a_replacement_failing_keeps_the_family_up(tmp_path: Path) -> None:
     keeps serving. So `blocks_turns` comes from the fleet, not the code."""
     path = tmp_path / "chat.json"
     attendance_file(path, "chat-s2")
-    read = read_fault_file(path, "sessiond", now=NOW)
+    read = read_fault_file(path, "attendance", now=NOW)
     assert read is not None
 
     rescoped = rescope_by_fleet(read.faults, ("chat-s1", "chat-s2"))
@@ -307,10 +311,10 @@ def test_the_fleet_rule_touches_no_other_code(tmp_path: Path) -> None:
         {
             "family": "chat",
             "written_at": (NOW - timedelta(seconds=5)).isoformat().replace("+00:00", "Z"),
-            "faults": [{"code": "protocol_mismatch", "since": "x", "source": "sessiond"}],
+            "faults": [{"code": "protocol_mismatch", "since": "x", "source": "attendance"}],
         },
     )
-    read = read_fault_file(path, "sessiond", now=NOW)
+    read = read_fault_file(path, "attendance", now=NOW)
     assert read is not None
 
     rescoped = rescope_by_fleet(read.faults, ("chat-s1", "chat-s2"))

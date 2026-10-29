@@ -997,7 +997,7 @@ def test_a_failed_replacement_keeps_the_outgoing_sandbox(fleet: Fleet) -> None:
 
 
 def test_a_attendance_fault_folds_into_the_document(fleet: Fleet) -> None:
-    write_fault_file(fleet.state_root, "sessiond", "protocol_mismatch")
+    write_fault_file(fleet.state_root, "attendance", "protocol_mismatch")
     result = fleet.run()
     assert [one.code for one in result.status.faults] == ["protocol_mismatch"]
     assert result.status.state is FamilyState.DEGRADED

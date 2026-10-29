@@ -52,7 +52,7 @@ log = logging.getLogger("caregiver.steps")
 WHOLE_FILE: Final = "<document>"
 
 #: Contract 05 §3.3.1: the two services that write a fault file.
-FAULT_SOURCES: Final = ("sessiond", "pep")
+FAULT_SOURCES: Final = ("attendance", "pep")
 
 #: One digest, for a check of the shape of an app table before the key
 #: step gives the family its token.
@@ -307,7 +307,7 @@ def apply_egress(
             code="egress_assert_failed",
             blocks_turns=True,
             since=now_rfc3339(),
-            source="managerd",
+            source="caregiver",
             detail={"message": str(exc)},
         )
         return (fault,)
@@ -338,6 +338,6 @@ def _key_fault(exc: LiteLLMError) -> FaultEntry:
         code="key_mint_failed",
         blocks_turns=True,
         since=now_rfc3339(),
-        source="managerd",
+        source="caregiver",
         detail={"message": str(exc)},
     )

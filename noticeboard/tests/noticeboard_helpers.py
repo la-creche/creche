@@ -139,7 +139,7 @@ def fault_doc(
         "code": code,
         "blocks_turns": blocks_turns,
         "since": stamp(120),
-        "source": "managerd",
+        "source": "caregiver",
         "message": "LiteLLM did not answer a spend read",
     }
     row.update(extra)
