@@ -148,7 +148,7 @@ command prints `<file>: cannot be read: <reason>` and exits with status 78.
      `ROOT_UID`, `OTHERS_WRITE` and `check_trust`. The packets
      `envfile-reader-rust` and `handover-site-keys` remove them.
   3. The path of the site file in `bin/provision-library.sh`,
-     `bin/rework-watchdog.sh`, `bin/sbx-drift-check.sh` and `bin/fleet-up`.
+     `bin/creche-watchdog.sh`, `bin/sbx-drift-check.sh` and `bin/fleet-up`.
      The packet `bin-site-keys` removes it.
   4. The path of the site file in `playpen/bin/playpen-build`. The packet
      `playpen-site-keys` removes it.

@@ -2,7 +2,7 @@
 
 A reader that refuses a text that is not strict JSON calls `record`. The
 operator then learns of the refusal from a push. This module sends no push:
-the host script `bin/rework-watchdog.sh` reads the notice file of each
+the host script `bin/creche-watchdog.sh` reads the notice file of each
 program and sends one. So the module reads no variable, and it holds no
 client and no token.
 

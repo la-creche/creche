@@ -32,7 +32,7 @@ Wants=network-online.target
 # a service nothing else watches that is the worst available answer: it
 # turns a transient fault — a wrong mode for twenty minutes, LiteLLM
 # restarting, a full disk for a minute — into a permanent outage. So this
-# unit restarts for ever, and `bin/rework-watchdog.sh` is what says the
+# unit restarts for ever, and `bin/creche-watchdog.sh` is what says the
 # service is not well. `systemctl --user status` still shows NRestarts, so
 # a crash loop is as visible as it was.
 #
@@ -82,14 +82,11 @@ EnvironmentFile=/etc/creche/site.env
 # binds the LAN address and loopback answers NOTHING there, so this is the
 # LAN URL; `bin/rework-cutover.sh` writes the same value into caregiver.env.
 # An empty value turns the watch off and every document then says so.
-# `--chaperone-config-dir` and `--chaperone-bin`: the one policy.toml of the
-# Rust chaperone. caregiver writes it into /etc/chaperone (root:agents 1775,
-# so it replaces its own file and not root's install.toml), and runs
-# `<bin> check` on each new text before the rename. Until the cutover,
-# /opt/components/chaperone holds the Python PEP, so the binary is the
-# release binary in ~/chaperone-rel. After the cutover, the default
-# /opt/components/chaperone/bin/chaperone is the Rust binary, and the flag
-# can go.
+# `--chaperone-config-dir`: the one policy.toml of the chaperone. caregiver
+# writes it into /etc/chaperone (root:chaperone 1775, so it replaces its own
+# file and not root's install.toml), and runs `chaperone check` on each new
+# text before the rename. The binary is the default of `--chaperone-bin`,
+# /opt/components/chaperone/bin/chaperone, the released tree.
 ExecStart=%h/.local/components/caregiver/bin/caregiver serve \
   /srv/agents/registry \
   --image ${AGENT_SANDBOX_IMAGE} \
@@ -97,7 +94,6 @@ ExecStart=%h/.local/components/caregiver/bin/caregiver serve \
   --state-root /srv/agents/state/creche \
   --attendance-socket /srv/agents/state/creche/sock/attendance.sock \
   --chaperone-config-dir /etc/chaperone \
-  --chaperone-bin %h/chaperone-rel/bin/chaperone \
   --pep-url ${AGENT_PEP_URL} \
   --write
 ExecReload=/bin/kill -HUP $MAINPID

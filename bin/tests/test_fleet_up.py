@@ -102,7 +102,6 @@ ROOT_ITEMS: Final = (
     "cosign",
     "uv 0.12.17",
     "group chaperone",
-    "group agents",
     "/etc/chaperone mode 1775",
     "/etc/chaperone/install.toml",
     "/etc/chaperone/secrets",

@@ -24,7 +24,7 @@ Wants=network-online.target
 # THE REWORK RESTART POLICY, argued in full in
 # `systemd/creche-caregiver.service`: no start limit, so a transient fault
 # cannot end this service for good, and a back-off so restarting for ever
-# stays cheap. `bin/rework-watchdog.sh` is what says the service is not well;
+# stays cheap. `bin/creche-watchdog.sh` is what says the service is not well;
 # `systemctl --user status` still shows NRestarts.
 StartLimitIntervalSec=0
 

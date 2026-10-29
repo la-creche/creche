@@ -87,10 +87,10 @@ holds each command.
 | R1 | Make the state root and the sessions root, owned by the operator. | The owner of the state root. The sessions root is writable. |
 | R2 | Install `cosign` (runbook A1) and `uv` 0.12.17 or newer (A2). Install `sbx`. | `/usr/local/bin/cosign`, `uv --version`, `sbx` on `PATH`. |
 | R3 | Run `sudo creche-deploy`. Install the handover tree and its root wrapper by hand. | `/opt/creche/bin/creche-watchdog.sh`, the stamp of `/opt/components/handover`. |
-| R4 | Make the group `chaperone`. Add the operator to `chaperone` and to `agents` (A5). Restart the user manager. | `getent group`, and `id -nG` of this login. |
-| R5 | Make `/etc/chaperone`, mode 1775, group `agents`, with `plugins/`, `secrets/` and `install.toml` (A6). | The mode and the group. Each of the three paths is there. |
+| R4 | Make the group `chaperone`. Add the operator to `chaperone` (A5). Restart the user manager. | `getent group`, and `id -nG` of this login. |
+| R5 | Make `/etc/chaperone`, mode 1775, group `chaperone`, with `plugins/`, `secrets/` and `install.toml` (A6). | The mode and the group. Each of the three paths is there. |
 | R6 | Add `CHAPERONE_LISTEN` and `AGENT_COSIGN_PROGRAM` to the site file (A8). | `creche-env check` of the site file. The file sets `CHAPERONE_LISTEN`. |
-| R7 | Install the unit of the Rust chaperone and its drop-in (A7, C2). Put the release binary at `~/chaperone-rel/bin/chaperone` (A6). | The binary at that path or at `/opt/components/chaperone/bin/chaperone`. A listener on port 8310. |
+| R7 | Install the unit of the Rust chaperone and its drop-in (A7, C2). Release the chaperone. | The binary at `/opt/components/chaperone/bin/chaperone`. A listener on port 8310. |
 | R8 | The first release of `playpen`. | `/opt/components/playpen/images.env`. |
 | R9 | Put `LITELLM_MASTER_KEY` into `hooks.env`. `docs/rework/cutover.md` §4.1 gives the one command. | The key in `hooks.env` or in `caregiver.env`. The value is never printed. |
 | R10 | After the first `up`: copy `tokens/chaperone-delegate.token` and `tokens/chaperone-dispatch.token` into `/etc/chaperone/secrets`. Mint `approval-token` and `resume-token` there (A6). | Nothing. The operator cannot read `secrets/`. |

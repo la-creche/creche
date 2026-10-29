@@ -35,7 +35,7 @@ SURFACE = "status.document"
 FILE_MODE = 0o640
 DIR_MODE = 0o750
 
-#: The pattern of the line of the key `push`, as `bin/rework-watchdog.sh`
+#: The pattern of the line of the key `push`, as `bin/creche-watchdog.sh`
 #: holds it: `PUSH_LINE`, with each token `<surface>:<rule>:<seconds>`.
 NAME = r"[a-z0-9_.]{1,64}"
 TOKEN = rf"{NAME}:{NAME}:[0-9]{{1,12}}"
