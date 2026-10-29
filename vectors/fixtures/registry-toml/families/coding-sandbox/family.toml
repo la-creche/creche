@@ -1,4 +1,4 @@
-name = "code-sandbox"
+name = "coding-sandbox"
 kind = "thin"
 description = "Runs code for one chat, inside that chat's own directory."
 
@@ -11,7 +11,7 @@ files = [
     # The work root, not one chat's directory: mounts are fixed when the sandbox
     # is created, so the per-chat directory is made inside it and linked by the
     # playpen at job start (`spec.md` §7.2).
-    { path = "/srv/agents/work/code-sandbox", mode = "rw" },
+    { path = "/srv/agents/work/coding-sandbox", mode = "rw" },
 ]
 
 tools = {}

@@ -174,8 +174,8 @@ refuses each one, and so does the validator.
 |---|---|
 | Unknown fields | refused on every model |
 | `name` | `[a-z][a-z0-9-]{1,30}`, equal to the directory name |
-| Mounts | absolute, no glob, under an allowed root. The platform root is fenced to one family. |
-| `tools` | the server is declared, and each tool is in its catalog |
+| Mounts | absolute, no glob, under an allowed root. No root holds a working copy of the platform. |
+| `tools` | the server is declared, and each tool is in its catalog. Only a family of `PLATFORM_ALLOWLIST` holds `github-platform` |
 | Tool name | `[A-Za-z][A-Za-z0-9_-]{0,63}`, in a family file and in a server file |
 | `run.env` name | `[A-Z][A-Z0-9_]{0,63}` |
 | `install.version` | `[0-9][0-9A-Za-z.]{0,63}`: no `+`, no `-` and no range sign |

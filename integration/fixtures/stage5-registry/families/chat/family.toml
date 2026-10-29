@@ -2,7 +2,7 @@
 #
 # Stage 5 needs it for two scenarios and nothing else: a trigger that names an
 # attended family is refused (contract 02 §3.1), and an attended family is
-# never queued (§13 rule 5). It is stage 3's `chat` with the `code-sandbox`
+# never queued (§13 rule 5). It is stage 3's `chat` with the `coding-sandbox`
 # delegate and the work-root mount dropped, because neither is on stage 5's
 # path.
 name = "chat"

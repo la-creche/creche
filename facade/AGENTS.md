@@ -156,4 +156,4 @@ facade.
   one-hop bound at run time. `src/sessions.ts` holds the
   `CONTRACT-QUESTION`.
 - The workspace is one directory for every session. The playpen gave
-  `code-sandbox` one directory per chat (Phase 2 plan, risk 6).
+  `coding-sandbox` one directory per chat (Phase 2 plan, risk 6).

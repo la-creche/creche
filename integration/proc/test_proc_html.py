@@ -38,7 +38,7 @@ FORM = """<form method="post" action="/families/chat/edit">
 <input type="checkbox" name="codemode" checked>
 <input type="checkbox" name="locked" checked disabled>
 <textarea name="delegates">vault-oracle
-code-sandbox
+coding-sandbox
 </textarea>
 <textarea name="egress">
 example.org</textarea>
@@ -103,6 +103,6 @@ def test_a_form_posts_what_a_browser_posts() -> None:
         "csrf_token": "tok&en",
         "description": 'a "quoted" value',
         "codemode": "on",
-        "delegates": "vault-oracle\ncode-sandbox\n",
+        "delegates": "vault-oracle\ncoding-sandbox\n",
         "egress": "example.org",
     }

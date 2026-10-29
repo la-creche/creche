@@ -320,7 +320,7 @@ class SessionService:
     def _job_cwd(self, family: str, owner: str | None) -> str:
         """The cwd of one job inside the VM (contract 02 §12.1 rule 3).
 
-        `code-sandbox` works in the calling chat's directory. Every other job
+        `coding-sandbox` works in the calling chat's directory. Every other job
         works in the family's sessions mount. Each is a host path, and sbx
         mounts it at the same path inside the VM.
         """
@@ -330,7 +330,7 @@ class SessionService:
         return sandbox_sessions_mount(self._config.sessions_root, family)
 
     def _prepare_work_dir(self, family: str, owner: str | None) -> None:
-        """Contract 02 §12.1 rule 2. `code-sandbox` works in the chat's own
+        """Contract 02 §12.1 rule 2. `coding-sandbox` works in the chat's own
         directory, made at that chat's first delegate call and at no other
         moment. The id is validated before it becomes a path component."""
         if workspace_of(family, owner) is None or owner is None:

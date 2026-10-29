@@ -52,5 +52,5 @@ start_ticket = {}
 submit_for_verification = {}
 
 [apps.chat.plugins.attendance]
-delegates = ["code-sandbox", "vault-oracle"]
+delegates = ["coding-sandbox", "vault-oracle"]
 enqueue_targets = ["scrum-lead"]

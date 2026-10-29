@@ -148,7 +148,7 @@ def test_same_verb_narrower_fence_is_both() -> None:
 
 def test_delegate_added() -> None:
     old, new = built(
-        "chat", {"delegates": ["vault-oracle"]}, {"delegates": ["vault-oracle", "code-sandbox"]}
+        "chat", {"delegates": ["vault-oracle"]}, {"delegates": ["vault-oracle", "coding-sandbox"]}
     )
     change = change_for(classify(old, new), "delegates")
     assert change.direction is Direction.ADD
@@ -157,7 +157,7 @@ def test_delegate_added() -> None:
 
 def test_delegate_removed() -> None:
     old, new = built(
-        "chat", {"delegates": ["vault-oracle", "code-sandbox"]}, {"delegates": ["vault-oracle"]}
+        "chat", {"delegates": ["vault-oracle", "coding-sandbox"]}, {"delegates": ["vault-oracle"]}
     )
     assert change_for(classify(old, new), "delegates").direction is Direction.REMOVE
 

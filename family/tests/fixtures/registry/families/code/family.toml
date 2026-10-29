@@ -1,6 +1,6 @@
 name = "code"
 kind = "attended"
-description = "Coding agent for every repository that is not the platform."
+description = "Coding agent for every repository, the platform included."
 
 model.router = "code-router"
 model.budget_usd_per_day = 100
@@ -17,10 +17,21 @@ tools.kagi = ["kagi_search_fetch", "kagi_extract"]
 # The credential behind this server cannot reach the three platform repos
 # (contract 01b §8.2): the credential half of `spec.md` §4.4.
 tools.github-code = "all"
+tools.github-platform = "all"
+tools.vikunja-agent-control = "all"
 tools.vikunja-home-assistant = "all"
 tools.vikunja-networking = "all"
 
-verbs = {}
+verbs.release.components = [
+    "chaperone",
+    "attendance",
+    "caregiver",
+    "noticeboard",
+    "playpen",
+    "mcp-servers",
+    "infra",
+    "handover",
+]
 
 delegates = ["vault-oracle"]
 
@@ -38,7 +49,7 @@ egress = [
 ]
 
 shell = true
-sandbox_tools = ["read", "grep", "glob", "write", "edit"]
+sandbox_tools = ["read", "grep", "glob", "write", "edit", "bash"]
 sandbox.cpus = 8
 sandbox.memory = "16g"
 

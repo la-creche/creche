@@ -162,7 +162,8 @@ FILES_CASES = (
     ([{"path": "/srv/agents/vault/$HOME", "mode": "ro"}], "a character outside"),
     ([{"path": "/srv/agents/sessions/chat", "mode": "rw"}], "is the session store"),
     ([{"path": "/etc", "mode": "ro"}], "is under no allowed root"),
-    ([{"path": "/srv/agents/work/platform", "mode": "ro"}], "under the platform fence"),
+    # No root holds a working copy: the platform family reads the corpus.
+    ([{"path": "/srv/agents/work/platform", "mode": "ro"}], "is under no allowed root"),
 )
 
 
@@ -288,7 +289,7 @@ def test_release_fences_on_chat(verbs: dict[str, object], expect: str) -> None:
 
 
 def test_release_is_allowed_for_the_platform_family() -> None:
-    report = check("agent-control", verbs={"release": {"components": ["chaperone", "caregiver"]}})
+    report = check("code", verbs={"release": {"components": ["chaperone", "caregiver"]}})
     assert not errors(report)
 
 
@@ -297,95 +298,39 @@ def test_an_old_component_name_is_refused(old_name: str) -> None:
     """The names the packages had before the renames. The fence took them
     for one cycle while the registry's family file still said them, and
     refuses them now like any stranger."""
-    old = check("agent-control", verbs={"release": {"components": [old_name]}})
+    old = check("code", verbs={"release": {"components": [old_name]}})
     assert "not a releasable component" in messages(old)
 
 
-def test_the_platform_family_mounts_nothing_else() -> None:
-    """§5.5 rule 5: the fence runs both ways. `docs/rework/spec.md` §4.4
-    locks `agent-control` to the platform root, "and nothing else", so a
-    fourth repo under another allowed root is an error even though that root
-    is allowed for every other family."""
+def test_the_platform_family_mounts_every_root_it_needs() -> None:
+    """`code` edits every repository, the platform included. It reads them
+    from the read-only corpus, works in the projects root, and reads the
+    vault, like any attended family."""
     report = check(
-        "agent-control",
+        "code",
         files=[
-            {"path": "/srv/agents/work/platform", "mode": "rw"},
-            {"path": "/srv/agents/work/projects/example-analytics", "mode": "rw"},
+            {"path": "/srv/agents/code", "mode": "ro"},
+            {"path": "/srv/agents/work/projects", "mode": "rw"},
+            {"path": "/srv/agents/vault", "mode": "ro"},
         ],
     )
-    assert "reaches only the platform root" in messages(report)
+    assert not errors(report), messages(report)
 
 
-def test_the_platform_family_may_mount_under_the_root() -> None:
-    """One repo of the three is a mount like any other. The fence compares
-    resolved paths by prefix (§5.5 rule 2), so it must not refuse these."""
-    report = check(
-        "agent-control",
-        files=[
-            {"path": "/srv/agents/work/platform/agent-control", "mode": "rw"},
-            {"path": "/srv/agents/work/platform/agent-registry", "mode": "rw"},
-        ],
-    )
-    assert not errors(report)
+def test_no_family_mounts_a_working_copy_of_the_platform() -> None:
+    """The platform family keeps no copy of its own: a copy that only the
+    family can update drifts from `main`. So the root that held one is gone,
+    for `code` as for every other family."""
+    report = check("code", files=[{"path": "/srv/agents/work/platform", "mode": "rw"}])
+    assert "is under no allowed root" in messages(report)
 
 
-PLATFORM_RW = {"path": "/srv/agents/work/platform", "mode": "rw"}
-
-
-def test_the_platform_family_may_read_the_hosts_copies_of_its_own_repos() -> None:
-    """§5.5 rule 6. The sandbox holds no git
-    credential and the four repos are private, so `git fetch origin` cannot
-    work and the working copies could never follow `main`. Nothing on the host
-    may run git inside `work/platform` either: a sandbox can write
-    `.git/config` there. The host's OWN clones under `/srv/agents/code` are
-    the fetch source, read-only. They are the same four repos, so "the
-    platform repos. Nothing else." still holds."""
-    report = check(
-        "agent-control",
-        files=[
-            PLATFORM_RW,
-            {"path": "/srv/agents/code/agent-control", "mode": "ro"},
-            {"path": "/srv/agents/code/agent-mcp", "mode": "ro"},
-            {"path": "/srv/agents/code/agent-registry", "mode": "ro"},
-            {"path": "/srv/agents/code/chaperone", "mode": "ro"},
-        ],
-    )
-    assert not errors(report)
-
-
-MIRROR_REFUSALS: tuple[tuple[dict[str, str], str], ...] = (
-    # Read-only is the whole exception.
-    ({"path": "/srv/agents/code/agent-control", "mode": "rw"}, "reaches only the platform root"),
-    ({"path": "/srv/agents/code/chaperone", "mode": "rw"}, "reaches only the platform root"),
-    # A fifth repo is still a fifth repo.
-    (
-        {"path": "/srv/agents/code/example-analytics", "mode": "ro"},
-        "reaches only the platform root",
-    ),
-    # The corpus root holds every other repo as well.
-    ({"path": "/srv/agents/code", "mode": "ro"}, "reaches only the platform root"),
-    # Exactly the repo, so nobody has to reason about what sits beside it.
-    (
-        {"path": "/srv/agents/code/agent-control/docs", "mode": "ro"},
-        "reaches only the platform root",
-    ),
-    # Every other root stays shut, read-only or not.
-    ({"path": "/srv/agents/vault", "mode": "ro"}, "reaches only the platform root"),
-    ({"path": "/srv/agents/work/projects/agent-control", "mode": "ro"}, "reaches only"),
-)
-
-
-@pytest.mark.parametrize(("mount", "expect"), MIRROR_REFUSALS)
-def test_the_mirror_exception_opens_nothing_else(mount: dict[str, str], expect: str) -> None:
-    report = check("agent-control", files=[PLATFORM_RW, mount])
-    assert expect in messages(report)
-
-
-def test_the_mirror_exception_is_for_the_platform_family_only() -> None:
-    """Any other family already may read the corpus. This must not change
-    what `chat` is told about the platform root."""
-    report = check("chat", files=[{"path": "/srv/agents/work/platform", "mode": "ro"}])
-    assert "under the platform fence" in messages(report)
+def test_the_platform_server_is_for_the_platform_family_only() -> None:
+    """§5.5 rule 1: only a family of the allowlist holds the platform's
+    GitHub server. The allowlist is a constant in code, so a registry edit
+    cannot add a family to it."""
+    report = check("chat", tools={PLATFORM_SERVER: "all"})
+    assert "outside the platform fence" in messages(report)
 
 
 # --- 5.5 rule 7: the operator lands every platform change ---------------------
@@ -414,7 +359,7 @@ def test_the_platform_merge_is_never_granted_by_name() -> None:
     """`main` may carry no branch protection, so a family that could merge on
     agent-registry would land its own grants, and `caregiver` would apply them
     with nobody looking."""
-    report = _check_against(_merge_declared(), "agent-control", tools={PLATFORM_SERVER: [MERGE]})
+    report = _check_against(_merge_declared(), "code", tools={PLATFORM_SERVER: [MERGE]})
     assert "never granted" in messages(report)
     assert f"tools.{PLATFORM_SERVER}[0]" in {issue.loc for issue in errors(report)}
 
@@ -422,27 +367,28 @@ def test_the_platform_merge_is_never_granted_by_name() -> None:
 def test_the_platform_merge_is_never_granted_through_all() -> None:
     """`all` expands against the server file at read time (§3.4 rule 4), so a
     server file that declares the merge again must not re-grant it quietly."""
-    report = _check_against(_merge_declared(), "agent-control", tools={PLATFORM_SERVER: "all"})
+    report = _check_against(_merge_declared(), "code", tools={PLATFORM_SERVER: "all"})
     assert "never granted" in messages(report)
 
 
 def test_no_family_holds_the_platform_merge() -> None:
-    """The rule fences the server, not the allowlist."""
+    """A family outside the allowlist does not get as far as the merge: it may
+    not hold the server at all."""
     report = _check_against(_merge_declared(), "chat", tools={PLATFORM_SERVER: [MERGE]})
-    assert "never granted" in messages(report)
+    assert "outside the platform fence" in messages(report)
 
 
 def test_the_platform_family_keeps_every_other_github_tool() -> None:
     """The real shape: the platform server declares no merge tool, and `all`
     grants every tool it does declare."""
-    report = check("agent-control")
+    report = check("code")
     assert not errors(report), messages(report)
     assert MERGE not in load_server(PLATFORM_SERVER).tool_names()
 
 
 def test_github_code_keeps_its_merge() -> None:
     """Rule 7 fences the platform's server only. `github-code` cannot reach
-    the three platform repos at all (contract 01b §8.2)."""
+    the platform repos at all (contract 01b §8.2)."""
     report = check("code", tools={"github-code": [MERGE]})
     assert not errors(report), messages(report)
 
@@ -457,7 +403,7 @@ DELEGATE_CASES = (
 
 
 def test_thin_family_delegates_must_be_empty() -> None:
-    report = check("vault-oracle", delegates=["code-sandbox"])
+    report = check("vault-oracle", delegates=["coding-sandbox"])
     assert "delegates must be empty" in messages(report)
 
 
@@ -663,7 +609,7 @@ def test_skills_fences(skills: list[str], expect: str) -> None:
 
 
 def test_approval_duplicate_entry_is_an_error() -> None:
-    report = check("agent-control", approval=["release", "release"])
+    report = check("code", approval=["release", "release"])
     assert "is listed twice" in messages(report)
 
 

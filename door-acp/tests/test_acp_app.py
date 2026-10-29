@@ -99,7 +99,7 @@ def test_a_bad_family_is_refused_before_the_upgrade(client: TestClient, path: st
     assert _refused(client, path, GOOD) == 404
 
 
-@pytest.mark.parametrize("family", ["ch", "chat", "code-sandbox", "c" * 31])
+@pytest.mark.parametrize("family", ["ch", "chat", "coding-sandbox", "c" * 31])
 def test_an_unreachable_attendance_closes_with_the_fixed_code(
     client: TestClient, family: str
 ) -> None:

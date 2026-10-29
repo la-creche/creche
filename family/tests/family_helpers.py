@@ -26,9 +26,8 @@ FIXTURES = Path(__file__).parent / "fixtures" / "registry"
 CONTRACT_FAMILIES = (
     "chat",
     "code",
-    "agent-control",
     "vault-oracle",
-    "code-sandbox",
+    "coding-sandbox",
     "scrum-lead",
 )
 

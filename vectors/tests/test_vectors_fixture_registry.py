@@ -25,7 +25,7 @@ FAMILY_ROOT = REPO_ROOT / FAMILY_REGISTRY
 TOML_ROOT = REPO_ROOT / TOML_REGISTRY
 
 #: The count of family files and of server files of the registry today.
-FAMILY_FILES: Final = 10
+FAMILY_FILES: Final = 9
 SERVER_FILES: Final = 11
 
 FAMILY_ROOT_FILES = registry_files(FAMILY_ROOT)
@@ -44,7 +44,7 @@ def test_each_file_has_one_twin_and_no_twin_is_left_over() -> None:
     assert [_twin_path(path) for path in FAMILY_ROOT_FILES] == registry_files(TOML_ROOT)
 
 
-def test_the_registry_holds_ten_family_files_and_eleven_server_files() -> None:
+def test_the_registry_holds_nine_family_files_and_eleven_server_files() -> None:
     names = [path.name for path in FAMILY_ROOT_FILES]
 
     assert names.count(FAMILY_FILE) == FAMILY_FILES

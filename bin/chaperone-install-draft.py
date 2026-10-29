@@ -66,7 +66,7 @@ MCP_ROOT: Final = "/opt/mcp"
 MCP_STATE_ROOT: Final = PurePosixPath("/var/lib/mcp")
 SOCKET: Final = "sock/attendance.sock"
 REQUESTS_DIR: Final = "/var/lib/creche-handover/releases/requests"
-REQUESTED_BY: Final = "agent-control"
+REQUESTED_BY: Final = "code"
 HOOK_URL: Final = "http://127.0.0.1:1881/hook/approval"
 
 #: The secret parameter of each fixed plugin, and the name of its secret file.

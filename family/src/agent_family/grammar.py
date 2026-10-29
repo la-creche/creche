@@ -232,31 +232,16 @@ ALLOWED_ROOTS: Final = (
     "/srv/agents/code",
     "/srv/agents/state/index",
     "/srv/agents/work/projects",
-    "/srv/agents/work/platform",
-    "/srv/agents/work/code-sandbox",
+    "/srv/agents/work/coding-sandbox",
 )
-
-PLATFORM_ROOT: Final = "/srv/agents/work/platform"
 
 #: Contract 01 §5.5 rule 1: a constant in code, released with `caregiver`, and
 #: never a registry file. A fence the fenced thing can edit is not a fence.
-PLATFORM_ALLOWLIST: Final = frozenset({"agent-control"})
-
-#: Contract 01 §5.5 rule 6. The host's OWN clones of the four platform repos
-#: (creche, mcp, registry and chaperone), which a platform family may mount
-#: READ-ONLY as the fetch source for its working copies. The sandbox holds no
-#: git credential, the repos are private, and nothing on the host may run git
-#: inside `work/platform` (a sandbox can write `.git/config` there). The same
-#: four repos that the platform family edits, so "the platform repos, nothing
-#: else" still holds. Exact paths: no corpus root, no fifth repo, no sub-path.
-PLATFORM_MIRRORS: Final = frozenset(
-    {
-        "/srv/agents/code/agent-control",
-        "/srv/agents/code/agent-mcp",
-        "/srv/agents/code/agent-registry",
-        "/srv/agents/code/chaperone",
-    }
-)
+#: `code` is the one family that edits the platform: it alone may hold the
+#: platform's GitHub server and the `release` verb. It reads every repository
+#: from the host's read-only clones under /srv/agents/code and keeps no copy of
+#: its own, so no root for a working copy exists.
+PLATFORM_ALLOWLIST: Final = frozenset({"code"})
 
 #: Contract 01 §5.5 rule 7: the platform's own GitHub server, and the tools no
 #: family is ever granted from it. A registry's `main` may carry no branch

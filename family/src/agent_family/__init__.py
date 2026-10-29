@@ -8,7 +8,6 @@ from .classify import Diff, Direction, FieldChange, Landing, Step, SwitchMode, c
 from .grammar import (
     ALLOWED_ROOTS,
     PLATFORM_ALLOWLIST,
-    PLATFORM_ROOT,
     SANDBOX_FLAVORS,
     SURVEY_TOOL,
     InstallSource,
@@ -39,7 +38,6 @@ __all__ = [
     "ALLOWED_ROOTS",
     "CALL_SEPARATOR",
     "PLATFORM_ALLOWLIST",
-    "PLATFORM_ROOT",
     "SANDBOX_FLAVORS",
     "SURVEY_TOOL",
     "DailyCall",

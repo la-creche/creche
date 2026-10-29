@@ -120,7 +120,7 @@ def test_the_sbx_wrapper_keeps_the_words_of_the_command(tree: Tree, supervisor: 
 
 
 @pytest.mark.parametrize(
-    ("sandbox", "family"), [(SANDBOX, FAMILY), ("code-sandbox-s12", "code-sandbox")]
+    ("sandbox", "family"), [(SANDBOX, FAMILY), ("coding-sandbox-s12", "coding-sandbox")]
 )
 def test_the_sbx_wrapper_names_the_sessions_mount_of_the_family(
     tree: Tree, supervisor: Supervisor, sandbox: str, family: str

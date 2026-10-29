@@ -224,7 +224,7 @@ def fence(arg: str, values: list[str], tools: list[str] | str = "all") -> FenceE
 
 
 def test_an_owner_repo_allow_splits_into_two_allows() -> None:
-    tools = tools_of(_REGISTRY.families["agent-control"], "github-platform")
+    tools = tools_of(_REGISTRY.families["code"], "github-platform")
     assert tools["get_file_contents"] == {
         "arguments": {
             "owner": {"allow": ["example-owner"]},

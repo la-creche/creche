@@ -37,8 +37,8 @@ def test_each_family_gets_its_own_root(monkeypatch: pytest.MonkeyPatch) -> None:
     """`caregiver` mounts `/srv/agents/sessions/<family>/`, one per family."""
     monkeypatch.delenv(SANDBOX_MOUNT_ENV, raising=False)
 
-    assert sandbox_sessions_mount(SESSIONS_ROOT, "code-sandbox") == (
-        "/srv/agents/sessions/code-sandbox"
+    assert sandbox_sessions_mount(SESSIONS_ROOT, "coding-sandbox") == (
+        "/srv/agents/sessions/coding-sandbox"
     )
 
 

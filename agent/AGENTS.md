@@ -114,5 +114,5 @@ connection and the `auth` of the LiteLLM provider unwrap it.
   definition (`src/codemode.ts`), with Flue's client package at Flue's
   pin. The script gets the chaperone's names, `tools.<upstream>__<tool>`.
 - The facade chooses the workspace of the granted sandbox tools:
-  `$AGENT_SESSIONS_DIR/workspace`. The playpen gave `code-sandbox` one
+  `$AGENT_SESSIONS_DIR/workspace`. The playpen gave `coding-sandbox` one
   directory for each chat. The agent has no chat id (plan risk 6).
