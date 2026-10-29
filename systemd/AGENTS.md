@@ -64,7 +64,7 @@ installed unit file in place and never runs an installer.
 | Timer | Cadence | Why |
 |---|---|---|
 | `creche-library@<scope>` | 15 min | bounds retrieval staleness |
-| `creche-code-corpus-sync` | 1 h | pull only |
+| `creche-code-corpus-sync` | 1 min | pull only. The platform family reads these clones |
 | `creche-sbx-drift` | daily | the global policy must hold zero network allows |
 | `creche-watchdog` | 1 min | the thresholds set how fast an outage is seen, not the cadence |
 | `creche-registry-sync` | 1 min | an unchanged run is one `git fetch` that transfers nothing |
