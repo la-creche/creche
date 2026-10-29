@@ -18,7 +18,7 @@ CORPUS="${2:-vault}"
 # UNIT empty = no timer: a gate fixture does not need recurring background
 # work forever, and the reaper already ignores non-vault, non-code roots.
 case "$CORPUS" in
-  vault) SCOPE_DIR="/srv/agents/vault/$NAME"; IDX_NAME="$NAME";      UNIT="index" ;;
+  vault) SCOPE_DIR="/srv/agents/vault/$NAME"; IDX_NAME="$NAME";      UNIT="creche-library" ;;
   test)  SCOPE_DIR="/srv/agents/test/$NAME";  IDX_NAME="test-$NAME"; UNIT="" ;;
   *) echo "unknown corpus $CORPUS; use vault or test" >&2; exit 2 ;;
 esac

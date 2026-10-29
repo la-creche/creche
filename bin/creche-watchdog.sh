@@ -41,7 +41,7 @@
 #                service refuses the job, and no config causes that.
 #                5 s for each call. One call with no answer in that time
 #                ends the read of the firing units for the run.
-#   5. registry  `registry-sync.service` must have ended well inside the
+#   5. registry  `creche-registry-sync.service` must have ended well inside the
 #                last 5 minutes. It is what pulls /srv/agents/registry,
 #                and a fleet that ignores every merge looks exactly like a
 #                quiet morning from in here.  5 s
@@ -207,7 +207,7 @@ HTTP_UNAUTHORIZED=401
 
 # The five ALWAYS-ON user units of `systemd/`. A long-running user unit
 # added there is added here. Two oneshots are not here: this alarm's own,
-# and `registry-sync.service`, which
+# and `creche-registry-sync.service`, which
 # check 5 below reads by its RESULT rather than by `is-failed` — a oneshot
 # that is meant to exit says more about itself that way.
 UNITS="creche-attendance.service creche-caregiver.service \
@@ -235,12 +235,12 @@ TIMED_OUT_STATUS=124
 # who is running has looked.
 STALE_AFTER_S=180
 
-# The registry's door. `bin/rework-cutover.sh up` installs both
+# The registry's door. `bin/fleet-up up` installs both
 # units and `bin/creche-registry-sync.sh` owns the stamp's path; it is
 # spelled once more here because this script must work when that one does
 # not run at all.
-SYNC_SERVICE=registry-sync.service
-SYNC_TIMER=registry-sync.timer
+SYNC_SERVICE=creche-registry-sync.service
+SYNC_TIMER=creche-registry-sync.timer
 SYNC_STAMP="$STATE_ROOT/registry-sync/last-success"
 # The timer fires every minute, so five is four missed firings. That is well
 # past a slow fetch and well inside the brief's "tell the operator within five

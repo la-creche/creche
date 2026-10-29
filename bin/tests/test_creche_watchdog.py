@@ -65,8 +65,8 @@ UNITS: Final = (
 #: The registry's door (check 5). The sync is what pulls
 #: `/srv/agents/registry`, and a timer that stopped firing looks exactly
 #: like a fleet that ignored every merge.
-SYNC_TIMER: Final = "registry-sync.timer"
-SYNC_SERVICE: Final = "registry-sync.service"
+SYNC_TIMER: Final = "creche-registry-sync.timer"
+SYNC_SERVICE: Final = "creche-registry-sync.service"
 
 #: A value that must never reach argv or stdout.
 TOKEN: Final = "WATCHDOG-SECRET-MUST-NEVER-APPEAR"
