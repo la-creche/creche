@@ -81,8 +81,6 @@ ROOT_SECRETS=/etc/creche/secrets.enc.env
 COMPONENT_ROOT="$HOME/.local/components"
 USER_CONFIG="$HOME/.config"
 USER_UNIT_DIR="$USER_CONFIG/systemd/user"
-# `creche-caregiver.service` passes this path as `--chaperone-bin`.
-CHAPERONE_REL="$HOME/chaperone-rel/bin/chaperone"
 
 # The file the release executor stamps into a tree at its switch. A tree
 # with the stamp is a released tree.
@@ -92,7 +90,7 @@ STAMP=.release-version
 # record directory is not in the list: `down` removes it last, by hand.
 PRIVATE_DIRS="tokens"
 SHARED_DIRS="families leases faults triggers triggers/webhooks log sock"
-STATE_GROUP=agents
+STATE_GROUP=chaperone
 SOCK_DIR_MODE=2750
 
 # One token file for each principal of `attendance.auth.Principal`.
@@ -654,10 +652,6 @@ site_sets() {  # site_sets <key>
   [[ -n "$(envfile_value "$SITE_FILE" "$1")" ]]
 }
 
-chaperone_binary_is_there() {
-  [[ -x "$CHAPERONE_REL" || -x "$CHAPERONE_INSTALLED" ]]
-}
-
 port_listens() {  # port_listens <port>
   ss -ltn 2>/dev/null | grep -Eq "[:.]$1([[:space:]]|\$)"
 }
@@ -698,7 +692,6 @@ check_root() {
   item "R3 deployed checkout at $PRODUCT_ROOT" test -f "$PRODUCT_ROOT/bin/creche-watchdog.sh"
   item "R3 handover tree at $INSTALL_ROOT/handover" test -f "$INSTALL_ROOT/handover/$STAMP"
   item "R4 group chaperone exists and holds $me" group_has_me chaperone
-  item "R4 group $STATE_GROUP exists and holds $me" group_has_me "$STATE_GROUP"
   item "R4 this login has the group chaperone (restart the user manager after usermod)" \
     login_has_group chaperone
   item "R5 $CHAPERONE_DIR mode $CHAPERONE_DIR_MODE, group $STATE_GROUP" chaperone_dir_is_set
@@ -707,7 +700,7 @@ check_root() {
   item "R5 $CHAPERONE_DIR/secrets" test -d "$CHAPERONE_DIR/secrets"
   item "R6 site file $SITE_FILE passes creche-env check" site_is_valid
   item "R6 the site file sets CHAPERONE_LISTEN" site_sets CHAPERONE_LISTEN
-  item "R7 chaperone binary at $CHAPERONE_REL or $CHAPERONE_INSTALLED" chaperone_binary_is_there
+  item "R7 chaperone binary at $CHAPERONE_INSTALLED" test -x "$CHAPERONE_INSTALLED"
   item "R7 a listener on port $APPROVAL_PORT (ha-approval, after the chaperone release)" \
     port_listens "$APPROVAL_PORT"
   item "R8 playpen images at $IMAGES_ENV (the first playpen release)" test -f "$IMAGES_ENV"

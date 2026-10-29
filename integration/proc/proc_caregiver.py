@@ -138,7 +138,11 @@ def watch_flags(tree: Tree, litellm_port: int, chaperone: list[str] | None = Non
 
 
 def chaperone_flags(tree: Tree) -> list[str]:
-    """Where `caregiver` writes `policy.toml`, and the stand-in that checks it."""
+    """Where `caregiver` writes `policy.toml`, and the stand-in that checks it.
+
+    The unit passes no `--chaperone-bin`: on the host the default is the
+    released tree. The suite names its stand-in, because the test has no
+    such tree."""
     return [
         "--chaperone-config-dir",
         str(tree.chaperone_config_dir),

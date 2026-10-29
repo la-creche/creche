@@ -142,7 +142,7 @@ and `Referer` unchanged. `/healthz` and `/static/*` stay keyless.
 | `config.py`, `security.py` | the environment and the two starts it refuses, the key and CSRF checks |
 | `jsonfiles.py`, `statusdocs.py`, `auditfiles.py` | reading another process's files without raising |
 | `strictjson.py` | the strict reader and the strict writer of a JSON text. The file is a copy, and `bin/tests/test_strictjson_copies.py` holds each copy to the same bytes |
-| `notices.py` | the notice of a refused JSON text: one log line, and one row in the notice file that `bin/rework-watchdog.sh` reads. The file is a copy, and `bin/tests/test_strictjson_copies.py` holds each copy to the same bytes |
+| `notices.py` | the notice of a refused JSON text: one log line, and one row in the notice file that `bin/creche-watchdog.sh` reads. The file is a copy, and `bin/tests/test_strictjson_copies.py` holds each copy to the same bytes |
 | `rfc3339.py` | the one reader of a time text. The file is a copy, and `bin/tests/test_rfc3339_copies.py` holds each copy to the same bytes |
 | `sessions.py`, `attendancehttp.py` | the view routes of `attendance` as `noticeboard`, and the wire |
 | `familyform.py`, `tomlout.py`, `tomlkeep.py`, `registrywrite.py` | the form, the whole file, the patched file, the commit |
