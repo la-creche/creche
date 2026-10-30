@@ -30,6 +30,13 @@ UPDATE_PATH: Final = "/key/update"
 DELETE_PATH: Final = "/key/delete"
 INFO_PATH: Final = "/key/info"
 
+#: What `/key/delete` answers when no key has the alias. The key is gone,
+#: which is what a delete asks for, so a delete takes this answer as done.
+#: Seen on 2026-10-30: the families `agent-control` and
+#: `agent-control-worker` had no key, and `caregiver delete` stopped before
+#: it removed their sandboxes and their state.
+NO_SUCH_KEY_STATUS: Final = 404
+
 REQUEST_TIMEOUT_S: Final = 15
 
 #: Contract 05 §7: the family key's budget renews daily, so the window the
@@ -78,7 +85,10 @@ class LiteLLMKeys(Protocol):
     def delete_key(self, family: str) -> None:
         """Delete by alias: the caller may not hold the raw key (it never
         persists past the process that minted it, if that process is not
-        this one), so alias is the only handle guaranteed to work."""
+        this one), so alias is the only handle guaranteed to work.
+
+        A family with no key is done: the delete returns. Any other
+        failure raises `LiteLLMError`."""
         ...
 
     def read_spend(self, key: str) -> Spend:
@@ -169,7 +179,7 @@ class HttpLiteLLMKeys:
             self._headers,
             {"key_aliases": [key_alias(family)]},
         )
-        if resp.status_code != 200:
+        if resp.status_code not in (200, NO_SUCH_KEY_STATUS):
             raise LiteLLMError(f"key delete failed for {family!r}: HTTP {resp.status_code}")
 
     def read_spend(self, key: str) -> Spend:
