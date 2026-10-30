@@ -14,7 +14,7 @@
 # images by digest. The version is the stamp beside `images.env`.
 manifest_version: "0.4"
 name: playpen
-repo: agent-control
+repo: creche
 path: playpen
 kind: oci-image
 unit: null

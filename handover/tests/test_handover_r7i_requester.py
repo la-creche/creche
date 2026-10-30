@@ -278,7 +278,7 @@ def test_a_planted_file_with_the_same_name_is_never_replaced(tmp_path: Path) -> 
 
 
 def test_root_reads_a_file_from_either_requester(tmp_path: Path) -> None:
-    """§3.1 names the operator and the `agent-control` family. The operator types
+    """§3.1 names the operator and the `creche` family. The operator types
     `handover request`; the family's path is the PEP's `release`
     verb, and the PEP runs as `chaperone`, so the file it writes is chaperone-owned.
 
@@ -286,7 +286,7 @@ def test_root_reads_a_file_from_either_requester(tmp_path: Path) -> None:
     requester a path that cannot work.
     """
     root = make_spool_dirs(tmp_path)
-    planned = plan_request({"chaperone": "2.1.0"}, requested_by="agent-control", now=NOW)
+    planned = plan_request({"chaperone": "2.1.0"}, requested_by="creche", now=NOW)
     file_request(planned, str(root / REQUESTS_DIR))
 
     spool = Spool(str(root), _ANOTHER_UID, also_owned_by=frozenset({os.getuid()}))
@@ -300,7 +300,7 @@ def test_root_refuses_a_file_from_a_third_account(tmp_path: Path) -> None:
     """The set is root's own configuration, so a fourth account that can
     write into `requests/` still files nothing."""
     root = make_spool_dirs(tmp_path)
-    planned = plan_request({"chaperone": "2.1.0"}, requested_by="agent-control", now=NOW)
+    planned = plan_request({"chaperone": "2.1.0"}, requested_by="creche", now=NOW)
     file_request(planned, str(root / REQUESTS_DIR))
 
     spool = Spool(str(root), _ANOTHER_UID, also_owned_by=frozenset({_ANOTHER_UID + 1}))

@@ -58,7 +58,7 @@ class _Host:
 
     options: list[str]
     spool: Path
-    #: The agent-control clone, where `noticeboard` and `chaperone` are tagged.
+    #: The creche clone, where `noticeboard` and `chaperone` are tagged.
     control: Path
 
 
@@ -102,7 +102,7 @@ def _host(tmp_path: Path, live: dict[str, str]) -> _Host:
         str(spool),
     ]
 
-    return _Host(options, spool, corpus / str(Repo.AGENT_CONTROL))
+    return _Host(options, spool, corpus / str(Repo.CRECHE))
 
 
 class _GitHub:

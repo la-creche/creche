@@ -274,8 +274,8 @@ def test_a_component_with_no_facts_reads_null_and_not_a_refusal() -> None:
 
     A document that refused unless EVERY one of the nine carried a `sha`
     and an `input_digest` could not be built on a host where a component
-    has no tag: a first release can run with none in agent-mcp or
-    agent-registry, so `mcp-servers` and `registry-data` resolve nothing.
+    has no tag: a first release can run with none in mcp or
+    registry, so `mcp-servers` and `registry-data` resolve nothing.
 
     So the columns are nullable, and the rule is where they are non-null:
     the components root resolved a tag for. Root still refuses to FETCH a

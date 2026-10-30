@@ -44,7 +44,7 @@ from pathlib import Path
 from typing import Final, cast
 
 from ..artifacts import ArtifactRefusal, archive_expected, signer_policy
-from ..catalog import CATALOG_BY_NAME, Kind
+from ..catalog import CATALOG_BY_NAME, Kind, Repo
 from ..discovery import read_one
 from ..errors import Refusal, RefusalCode
 from ..manifest import ComponentManifest
@@ -134,7 +134,7 @@ MCP_COMPONENT: Final = "mcp-servers"
 #: Where the registry checkout keeps the server files (contract 01b §1).
 #: Root reads them out of the tree an operator-side process keeps current, the
 #: same way it reads a component's source: by path, never by fetching.
-REGISTRY_REPO: Final = "agent-registry"
+REGISTRY_REPO: Final = str(Repo.REGISTRY)
 REGISTRY_MCP_DIR: Final = "mcp"
 
 #: §3.2's caps, applied to the registry too. Twenty servers is well past

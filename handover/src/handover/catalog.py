@@ -14,9 +14,12 @@ from enum import StrEnum
 
 
 class Repo(StrEnum):
-    AGENT_CONTROL = "agent-control"
-    AGENT_MCP = "agent-mcp"
-    AGENT_REGISTRY = "agent-registry"
+    """A repository by its name on GitHub. The value also names its clone,
+    `/srv/agents/code/<value>`, and its optional site key."""
+
+    CRECHE = "creche"
+    MCP = "mcp"
+    REGISTRY = "registry"
     CHAPERONE = "chaperone"
 
 
@@ -114,23 +117,21 @@ CATALOG: tuple[CatalogRow, ...] = (
     CatalogRow("chaperone", Repo.CHAPERONE, ".", Kind.BINARY, Releases.YES),
     CatalogRow(
         "attendance",
-        Repo.AGENT_CONTROL,
+        Repo.CRECHE,
         "attendance",
         Kind.VENV,
         Releases.YES,
         ("door-acp", "door-trigger", "family"),
     ),
-    CatalogRow("caregiver", Repo.AGENT_CONTROL, "caregiver", Kind.VENV, Releases.YES, ("family",)),
+    CatalogRow("caregiver", Repo.CRECHE, "caregiver", Kind.VENV, Releases.YES, ("family",)),
+    CatalogRow("noticeboard", Repo.CRECHE, "noticeboard", Kind.VENV, Releases.YES, ("family",)),
     CatalogRow(
-        "noticeboard", Repo.AGENT_CONTROL, "noticeboard", Kind.VENV, Releases.YES, ("family",)
+        "playpen", Repo.CRECHE, "playpen", Kind.OCI_IMAGE, Releases.YES, ("agent", "facade")
     ),
-    CatalogRow(
-        "playpen", Repo.AGENT_CONTROL, "playpen", Kind.OCI_IMAGE, Releases.YES, ("agent", "facade")
-    ),
-    CatalogRow("mcp-servers", Repo.AGENT_MCP, ".", Kind.VENV, Releases.YES),
-    CatalogRow("infra", Repo.AGENT_CONTROL, "infra", Kind.COMPOSE, Releases.YES),
-    CatalogRow("handover", Repo.AGENT_CONTROL, "handover", Kind.VENV, Releases.YES),
-    CatalogRow("registry-data", Repo.AGENT_REGISTRY, ".", Kind.DATA, Releases.NO),
+    CatalogRow("mcp-servers", Repo.MCP, ".", Kind.VENV, Releases.YES),
+    CatalogRow("infra", Repo.CRECHE, "infra", Kind.COMPOSE, Releases.YES),
+    CatalogRow("handover", Repo.CRECHE, "handover", Kind.VENV, Releases.YES),
+    CatalogRow("registry-data", Repo.REGISTRY, ".", Kind.DATA, Releases.NO),
 )
 
 CATALOG_BY_NAME: dict[str, CatalogRow] = {row.name: row for row in CATALOG}
@@ -153,7 +154,7 @@ CATALOG_BY_NAME: dict[str, CatalogRow] = {row.name: row for row in CATALOG}
 #: the list. A wider list costs a release of every binary component for
 #: each change to the added file.
 BINARY_BUILD_FILES: dict[Repo, tuple[str, ...]] = {
-    Repo.AGENT_CONTROL: ("rust/Cargo.lock", "rust/Cargo.toml", "rust/rust-toolchain.toml"),
+    Repo.CRECHE: ("rust/Cargo.lock", "rust/Cargo.toml", "rust/rust-toolchain.toml"),
     Repo.CHAPERONE: ("Cargo.lock", "Cargo.toml", "rust-toolchain.toml"),
 }
 
@@ -183,7 +184,7 @@ BINARY_INSTALL_ENV = "CARGO_INSTALL_ROOT"
 #: of each signature names this file. A repository with no entry has no
 #: signer, so a binary component of that repository gets no tag.
 RELEASE_WORKFLOW: dict[Repo, str] = {
-    Repo.AGENT_CONTROL: "release.yml",
+    Repo.CRECHE: "release.yml",
     Repo.CHAPERONE: "release.yml",
 }
 

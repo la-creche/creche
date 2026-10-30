@@ -37,7 +37,7 @@ CANNOT_EXECUTE: Final = (126, 127)
 NEW_SUFFIX: Final = ".new"
 
 #: One package with one console script, which is the shape every `pypi` and
-#: `agent-mcp` server has: `run.entrypoint` names exactly such a script.
+#: `mcp` server has: `run.entrypoint` names exactly such a script.
 PYPROJECT: Final = """
 [project]
 name = "servervenvprobe"
@@ -86,7 +86,7 @@ def _project(root: Path) -> Path:
 
 
 def _install(project: Path, into: Path, relocatable: bool) -> None:
-    """What `McpBuilder` does for a `pypi` or `agent-mcp` server: make the
+    """What `McpBuilder` does for a `pypi` or `mcp` server: make the
     environment, then fill it from the pin."""
     if relocatable:
         subprocess.run(

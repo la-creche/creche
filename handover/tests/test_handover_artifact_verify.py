@@ -503,7 +503,7 @@ def _copy(tmp_path: Path, raw: bytes) -> Copied:
 
 
 def _policy() -> SignerPolicy:
-    return signer_policy(Repo.AGENT_CONTROL, OWNER, "agent-control", SHA)
+    return signer_policy(Repo.CRECHE, OWNER, "creche", SHA)
 
 
 def _refusal(run: Recorded, copy: Copied) -> Refusal:
@@ -765,7 +765,7 @@ def test_the_signer_has_the_owner_and_the_name_of_the_site_file(
     name of the repository as the site file gives them, with their letter
     case, and the signature passes."""
     home = tmp_path_factory.mktemp("home")
-    hosted = f"AGENT_GITHUB_REPO_AGENT_CONTROL={HOSTED_NAME}\n"
+    hosted = f"AGENT_GITHUB_REPO_CRECHE={HOSTED_NAME}\n"
     _site(tmp_path_factory, monkeypatch, site_text(home, owner=MIXED_OWNER) + hosted)
 
     with _releasing(tmp_path, home, MIXED_OWNER, HOSTED_NAME) as release:

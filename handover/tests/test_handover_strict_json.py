@@ -88,7 +88,7 @@ NOT_STRICT_REQUESTS = {
         REQUEST_TEXT.replace('"ts": 1758153590.0', '"ts": ' + "9" * 21),
         "integer_range",
     ),
-    "a-lone-surrogate": (REQUEST_TEXT.replace('"agent-control"', '"\\ud800"'), "lone_surrogate"),
+    "a-lone-surrogate": (REQUEST_TEXT.replace('"creche"', '"\\ud800"'), "lone_surrogate"),
 }
 
 
@@ -313,7 +313,7 @@ def _tag_commit(monkeypatch: pytest.MonkeyPatch, answer: bytes) -> str:
     monkeypatch.setattr(_Connection, "answer", answer)
     api = provenance.github_api("token")
 
-    return provenance.tag_commit(api, "chaperone", "agent-control", "chaperone-v2.1.0")
+    return provenance.tag_commit(api, "chaperone", "creche", "chaperone-v2.1.0")
 
 
 SHA = "a" * 40

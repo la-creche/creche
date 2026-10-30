@@ -70,9 +70,9 @@ def _builder(
     mcp_root.mkdir()
     work = tmp_path / "work"
     work.mkdir()
-    tree = tmp_path / "agent-mcp"
+    tree = tmp_path / "mcp"
     tree.mkdir()
-    registry = tmp_path / "agent-registry"
+    registry = tmp_path / "registry"
     if lock is not None:
         committed = registry / KAGI_LOCK_PATH
         committed.parent.mkdir(parents=True)
@@ -328,7 +328,7 @@ def test_a_server_tree_that_reads_code_outside_itself_is_refused(tmp_path: Path)
     on the host was refused because the COMPONENT tree held
     `_editable_impl_agent_mcp.pth`; every server tree was about to get the
     same file, naming root's work tree, and nothing checked them."""
-    elsewhere = tmp_path / "work" / "01ELSEWHERE" / "agent-mcp" / "src"
+    elsewhere = tmp_path / "work" / "01ELSEWHERE" / "mcp" / "src"
     fake = McpFake(entrypoint="vikunja-mcp", pth_outside=str(elsewhere))
     builder, work, source = _builder(tmp_path, fake)
 

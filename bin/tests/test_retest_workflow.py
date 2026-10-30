@@ -55,7 +55,7 @@ def _run(tmp_path: Path, comment: str, runs: str) -> tuple[list[str], str]:
         env={
             "PATH": f"{tmp_path}:/usr/bin:/bin",
             "GH_LOG": str(log),
-            "GH_REPO": "example/agent-control",
+            "GH_REPO": "example/creche",
             "PR": "163",
             "COMMENT": comment,
             "STUB_SHA": SHA,

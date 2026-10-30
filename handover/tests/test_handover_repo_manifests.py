@@ -30,7 +30,7 @@ from handover.state import ReleaseState
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-#: The three components that live in repositories agent-control cannot
+#: The three components that live in repositories creche cannot
 #: write (contract 06 §10.1), in catalog order.
 ELSEWHERE = ("chaperone", "mcp-servers", "registry-data")
 
@@ -53,7 +53,7 @@ def test_every_agent_control_component_declares_itself(found: ManifestSet) -> No
     """All but a retiring one, whose directory has left this tree
     (`catalog.RETIRING`), and an arriving one, whose directory has not
     reached it yet (`catalog.ARRIVING`)."""
-    here = {row.name for row in CATALOG_BY_NAME.values() if row.repo is Repo.AGENT_CONTROL}
+    here = {row.name for row in CATALOG_BY_NAME.values() if row.repo is Repo.CRECHE}
 
     assert set(found.manifests()) == here - RETIRING - ARRIVING
 

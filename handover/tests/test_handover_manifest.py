@@ -14,7 +14,7 @@ from handover import site
 GOOD = """
 manifest_version: "0.4"
 name: attendance
-repo: agent-control
+repo: creche
 path: attendance
 kind: venv
 unit: attendance.service
@@ -53,7 +53,7 @@ def test_good_manifest_round_trips() -> None:
     parsed = _parse(GOOD)
 
     assert parsed.name == "attendance"
-    assert parsed.repo is Repo.AGENT_CONTROL
+    assert parsed.repo is Repo.CRECHE
     assert parsed.kind is Kind.VENV
     assert parsed.runs_as is RunsAs.OPERATOR
     assert parsed.release is Releases.YES

@@ -79,7 +79,7 @@ class _Host:
 
     @property
     def clone(self) -> Path:
-        return self.root / "corpus" / str(Repo.AGENT_CONTROL)
+        return self.root / "corpus" / str(Repo.CRECHE)
 
     def clone_of(self, name: str) -> Path:
         return self.root / "corpus" / str(CATALOG_BY_NAME[name].repo)
@@ -160,7 +160,7 @@ def host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Host:
     corpus = tmp_path / "corpus"
     corpus.mkdir()
     corpus.chmod(0o755)
-    for repo in (Repo.AGENT_CONTROL, Repo.AGENT_MCP):
+    for repo in (Repo.CRECHE, Repo.MCP):
         clone = corpus / str(repo)
         clone.mkdir()
         clone.chmod(0o755)
@@ -206,7 +206,7 @@ def test_every_run_fetches_the_repository_it_follows(host: _Host) -> None:
 
     host.follow(BOARD)
 
-    assert host.fetches == [(str(Repo.AGENT_CONTROL),)]
+    assert host.fetches == [(str(Repo.CRECHE),)]
 
 
 def test_no_new_tag_files_nothing_and_writes_no_marker(host: _Host) -> None:
@@ -256,7 +256,7 @@ def test_components_of_two_repositories_file_as_one_set(host: _Host) -> None:
     host.follow(BOARD, SERVERS)
     host.follow(BOARD, SERVERS)
 
-    assert host.fetches[0] == (str(Repo.AGENT_CONTROL), str(Repo.AGENT_MCP))
+    assert host.fetches[0] == (str(Repo.CRECHE), str(Repo.MCP))
     assert [item["components"] for item in host.filed()] == [{BOARD: NEXT, SERVERS: NEXT}]
 
 

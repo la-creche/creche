@@ -1211,7 +1211,7 @@ def build_parser() -> argparse.ArgumentParser:
         "that the Release of this component holds, one per line",
     )
     repos = [str(item) for item in Repo]
-    tags.add_argument("--repo", default=str(Repo.AGENT_CONTROL), choices=repos)
+    tags.add_argument("--repo", default=str(Repo.CRECHE), choices=repos)
     tags.add_argument("--json", action="store_true", help="one JSON object instead of a table")
     tags.set_defaults(handler=_run_allocate)
 

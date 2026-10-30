@@ -6,7 +6,7 @@
 # `ExecStart=` path and the verify command path keep the shape a venv has.
 manifest_version: "0.4"
 name: noticeboard
-repo: agent-control
+repo: creche
 path: noticeboard
 kind: binary
 unit: creche-noticeboard.service

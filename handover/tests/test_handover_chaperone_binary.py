@@ -141,8 +141,8 @@ def test_the_chaperone_repository_signs_with_its_release_workflow() -> None:
 def test_the_build_files_are_those_of_each_repository() -> None:
     """The Cargo workspace of the chaperone repository is at its root."""
     assert BINARY_BUILD_FILES[Repo.CHAPERONE] == ("Cargo.lock", "Cargo.toml", "rust-toolchain.toml")
-    assert Repo.AGENT_MCP not in BINARY_BUILD_FILES
-    assert Repo.AGENT_REGISTRY not in BINARY_BUILD_FILES
+    assert Repo.MCP not in BINARY_BUILD_FILES
+    assert Repo.REGISTRY not in BINARY_BUILD_FILES
 
 
 def test_each_path_of_the_chaperone_repository_moves_chaperone() -> None:
@@ -152,7 +152,7 @@ def test_each_path_of_the_chaperone_repository_moves_chaperone() -> None:
 
 
 def test_a_path_of_this_repository_no_longer_moves_chaperone() -> None:
-    assert touched(("chaperone/src/chaperone/call.py",), Repo.AGENT_CONTROL) == ()
+    assert touched(("chaperone/src/chaperone/call.py",), Repo.CRECHE) == ()
 
 
 def test_the_digest_of_chaperone_is_its_whole_repository() -> None:

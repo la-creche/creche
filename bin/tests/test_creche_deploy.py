@@ -81,7 +81,7 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
 @pytest.fixture
 def deployed(tmp_path: Path) -> Path:
     """The fake `/opt/creche`, committed, with its leftovers in place."""
-    repo = tmp_path / "opt" / "agent-control"
+    repo = tmp_path / "opt" / "creche"
     repo.mkdir(parents=True)
     assert _git(repo, "init", "-q").returncode == 0
     for name, body in FIXTURE.items():
@@ -224,7 +224,7 @@ def test_a_failed_clean_does_not_end_the_deploy() -> None:
 # ---- the old MCP install ----------------------------------------------------
 
 #: The parent the deploy built three MCP trees under: the
-#: agent-mcp + kagimcp venv, the ha-mcp venv and the github-mcp-server
+#: mcp + kagimcp venv, the ha-mcp venv and the github-mcp-server
 #: binary. An `mcp-servers` release builds every MCP server now, into
 #: `/opt/mcp/<name>` (`docs/rework/stage7-releases.md` §4.2).
 OLD_MCP_PARENT = "/opt/agent-pep-mcp"
@@ -299,15 +299,15 @@ def _commit(repo: Path, name: str, body: str) -> None:
 def host(tmp_path: Path) -> Path:
     """A host: the operator's two checkouts under `code/`, and root's clone
     of the product under `opt/` with its origin where bootstrap leaves it."""
-    for name in ("agent-control", "private-docs"):
+    for name in ("creche", "private-docs"):
         repo = tmp_path / "code" / name
         repo.mkdir(parents=True)
         assert _git(repo, "init", "-q", "-b", "main").returncode == 0
         _commit(repo, "README.md", name)
 
-    product = tmp_path / "opt" / "agent-control"
+    product = tmp_path / "opt" / "creche"
     cloned = subprocess.run(
-        ["git", "clone", "-q", str(tmp_path / "code" / "agent-control"), str(product)],
+        ["git", "clone", "-q", str(tmp_path / "code" / "creche"), str(product)],
         capture_output=True,
         text=True,
         timeout=120,
@@ -331,7 +331,7 @@ def _deploy_site(host: Path) -> subprocess.CompletedProcess[str]:
             "-c",
             program,
             "deploy",
-            str(host / "opt/agent-control"),
+            str(host / "opt/creche"),
             str(host / "opt/private-docs"),
         ],
         capture_output=True,

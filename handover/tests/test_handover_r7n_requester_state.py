@@ -49,7 +49,7 @@ def _git(repo: Path, *args: str) -> None:
 
 
 def _corpus(tmp_path: Path, *, tags: tuple[str, ...]) -> Path:
-    """The three clones, with the tags CI would have made in agent-control."""
+    """The three clones, with the tags CI would have made in creche."""
     root = tmp_path / "corpus"
     root.mkdir()
     root.chmod(0o755)
@@ -63,7 +63,7 @@ def _corpus(tmp_path: Path, *, tags: tuple[str, ...]) -> Path:
         _git(clone, "commit", "-q", "-m", "first")
 
     for tag in tags:
-        _git(root / str(Repo.AGENT_CONTROL), "tag", tag)
+        _git(root / str(Repo.CRECHE), "tag", tag)
 
     return root
 
@@ -191,4 +191,4 @@ def test_the_corpus_is_fetched_before_the_tags_are_read(tmp_path: Path) -> None:
     # resolver refuses with its own reason rather than filing a request.
     assert main(argv) != EXIT_OK
     assert sorted(spool.glob("*.json")) == []
-    assert CATALOG_BY_NAME[COMPONENT].repo is Repo.AGENT_CONTROL
+    assert CATALOG_BY_NAME[COMPONENT].repo is Repo.CRECHE

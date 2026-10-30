@@ -101,7 +101,7 @@ def test_a_tag_with_another_digit_is_not_the_newest_version() -> None:
 def test_the_allocator_does_not_count_from_such_a_tag() -> None:
     """The next tag follows the newest tag that is a version."""
     tags = ("caregiver-v0.1.0", "caregiver-v\u0669.0.0")
-    plans = plan_tags(("caregiver/src/x.py",), (), tags, (), Repo.AGENT_CONTROL)
+    plans = plan_tags(("caregiver/src/x.py",), (), tags, (), Repo.CRECHE)
     plan = next(one for one in plans if one.component == "caregiver")
 
     assert plan.outcome is TagOutcome.CREATE
@@ -110,7 +110,7 @@ def test_the_allocator_does_not_count_from_such_a_tag() -> None:
 
 
 def test_such_a_tag_alone_leaves_the_component_untagged() -> None:
-    assert "caregiver" in allocate.untagged((f"caregiver-v{ARABIC_ONE}.0.0",), Repo.AGENT_CONTROL)
+    assert "caregiver" in allocate.untagged((f"caregiver-v{ARABIC_ONE}.0.0",), Repo.CRECHE)
 
 
 # -- each parser ---------------------------------------------------------------

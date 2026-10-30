@@ -451,5 +451,5 @@ jobs:
       - name: tag and release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG_REPO: agent-control
+          TAG_REPO: creche
         run: handover/bin/allocate-tags.sh

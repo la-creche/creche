@@ -12,7 +12,7 @@ So this module stands up that host and changes nothing else.
 | trees the cutover made, none stamped | the directories, and no `.release-version` |
 | no live-state document anywhere | writes none, and once writes a hostile one |
 | seven `-v0.1.0` tags on ONE commit | one version and one SHA per component |
-| no tag in agent-mcp or agent-registry | two components resolve to nothing |
+| no tag in mcp or registry | two components resolve to nothing |
 
 The REAL `component.yaml` files of this repository are served, with their
 install paths moved under `tmp_path`. A fixture manifest would hide what
@@ -70,7 +70,7 @@ from handover_executor_fixtures import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 #: What `handover/bin/allocate-tags.sh` gives every component on its first
-#: run: one version, one commit, seven tags in agent-control.
+#: run: one version, one commit, seven tags in creche.
 FIRST_VERSION = "0.1.0"
 FIRST_SHA = "7c1b0d9a2e45f6837b0c4d1e9a53f2068d7be431"
 
@@ -138,7 +138,7 @@ REVIEW_ROW = "suspect: 3 manifest(s) not verified (attendance, caregiver, handov
 CONTRACTS_ROW = "4 satisfied, 1 not verified"
 
 #: The second request the real spool held: `caregiver` asked for
-#: `mcp-servers=latest` while agent-mcp carried no `mcp-servers-v*` tag,
+#: `mcp-servers=latest` while mcp carried no `mcp-servers-v*` tag,
 #: so root refuses it. A later ULID than the operator's, so the drain reaches it
 #: second.
 CAREGIVER_ID = "01K5J8M2Q7V3X9R4T6N0B8C2DM"
@@ -188,10 +188,10 @@ class First:
 
 def _repo_manifest(components: Path, name: str) -> str | None:
     """This repository's own `component.yaml`, with its install paths moved
-    under the bench. Only agent-control holds one, which is contract 06
+    under the bench. Only creche holds one, which is contract 06
     §10.1 and the reason two components resolve to nothing here."""
     row = CATALOG_BY_NAME[name]
-    if row.repo is not Repo.AGENT_CONTROL:
+    if row.repo is not Repo.CRECHE:
         return None
 
     where = REPO_ROOT if row.path == "." else REPO_ROOT / row.path
@@ -217,7 +217,7 @@ EditFn = Callable[[str, str], str]
 
 
 def _serve_the_repository(bench: First, edit: EditFn | None = None) -> None:
-    """What the fake `git clone` leaves behind: the whole agent-control
+    """What the fake `git clone` leaves behind: the whole creche
     tree's manifests at one commit, and the unit file step 9 refreshes."""
 
     def write_tree(destination: Path, name: str) -> None:
@@ -251,14 +251,14 @@ def _first_readers() -> Readers:
     repositories. It is what `allocate-tags.sh`'s first run leaves."""
 
     def newest(component: str) -> str | None:
-        if CATALOG_BY_NAME[component].repo is not Repo.AGENT_CONTROL:
+        if CATALOG_BY_NAME[component].repo is not Repo.CRECHE:
             return None
 
         return FIRST_VERSION
 
     def tag_sha(component: str, version: str) -> str | None:
         del version
-        if CATALOG_BY_NAME[component].repo is not Repo.AGENT_CONTROL:
+        if CATALOG_BY_NAME[component].repo is not Repo.CRECHE:
             return None
 
         return FIRST_SHA
@@ -293,7 +293,7 @@ def first(tmp_path: Path) -> First:
             host=host,
             transport=grant_transport(),
             readers=_first_readers(),
-            api=green_api("agent-control", f"{COMPONENT}-v{FIRST_VERSION}", FIRST_SHA),
+            api=green_api("creche", f"{COMPONENT}-v{FIRST_VERSION}", FIRST_SHA),
         ),
         run=run,
         components=components,
@@ -335,7 +335,7 @@ def _manual_lines(bench: First) -> list[str]:
 
 
 def _repo_manifests(bench: First) -> dict[str, ComponentManifest]:
-    """Every agent-control manifest, parsed, as the requester's `--root`
+    """Every creche manifest, parsed, as the requester's `--root`
     walk would hand them over. It is the same text the fake clone serves."""
     found: dict[str, ComponentManifest] = {}
     for row in CATALOG:
@@ -421,7 +421,7 @@ def test_only_the_released_component_carries_source_facts(first: First) -> None:
 
     Root fetched one source and ran the predicate over one tag, so one row
     carries a `sha` and an `input_digest`. `mcp-servers` has no tag in
-    agent-mcp on this host, and the document still builds: only a
+    mcp on this host, and the document still builds: only a
     component this release resolved a tag for carries facts.
     """
     _release(first, {COMPONENT: FIRST_VERSION})
@@ -551,7 +551,7 @@ def test_the_preview_and_root_give_one_answer(first: First) -> None:
 
 def test_two_requests_in_one_pass_each_get_their_own_entry(first: First) -> None:
     """The real spool held two: the operator's `noticeboard`, and `caregiver`'s
-    `mcp-servers=latest`, which root correctly refuses because agent-mcp
+    `mcp-servers=latest`, which root correctly refuses because mcp
     carries no `mcp-servers-v*` tag.
 
     One drain, in ULID order, two ledger entries, two pushes. A pass that

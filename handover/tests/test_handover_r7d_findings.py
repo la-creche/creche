@@ -494,7 +494,7 @@ def _release_bench(tmp_path: Path) -> ReleaseBench:
         host=fake_host(tmp_path, run),
         transport=watching,
         readers=fake_readers(latest={"caregiver": NEW_VERSION}),
-        api=green_api("agent-control", f"caregiver-v{NEW_VERSION}", SHA_OF["caregiver"]),
+        api=green_api("creche", f"caregiver-v{NEW_VERSION}", SHA_OF["caregiver"]),
     )
     bench = ReleaseBench(tmp_path, spool_root, tmp_path / "components", run, wiring, seen)
     tree = stamp_tree(bench.components, "caregiver", LIVE_VERSION)
@@ -526,7 +526,7 @@ def _text_with_install(name: str, to: str, prev: str) -> str:
     return f"""
 manifest_version: "0.4"
 name: {name}
-repo: agent-control
+repo: creche
 path: {name}
 kind: venv
 unit: creche-{name}.service

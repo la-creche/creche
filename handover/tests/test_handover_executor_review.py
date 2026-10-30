@@ -128,7 +128,7 @@ def test_read_one_takes_the_component_out_of_a_whole_repository(tmp_path: Path) 
 
 def test_a_release_lands_when_every_clone_is_a_whole_repository(tmp_path: Path) -> None:
     """`bin/rework-release-gate.sh` section 1, against the trees a real
-    fetch makes. A step 2 that clones `agent-control` once per component
+    fetch makes. A step 2 that clones `creche` once per component
     and then walks all seven raises `infra is declared twice` at the
     second clone, and EVERY release refuses before the tap."""
     spool_root = make_spool_dirs(tmp_path)
@@ -138,7 +138,7 @@ def test_a_release_lands_when_every_clone_is_a_whole_repository(tmp_path: Path) 
         host=fake_host(tmp_path, run),
         transport=grant_transport(),
         readers=fake_readers(latest={"caregiver": NEW_VERSION}),
-        api=green_api("agent-control", f"caregiver-v{NEW_VERSION}", SHA_OF["caregiver"]),
+        api=green_api("creche", f"caregiver-v{NEW_VERSION}", SHA_OF["caregiver"]),
     )
     stamp_tree(components, "caregiver", LIVE_VERSION)
     run.dynamic = GitFake(lambda into, name: _repo_tree(into, name, components))

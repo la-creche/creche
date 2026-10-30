@@ -64,7 +64,7 @@ tools:
 """
 
 #: Contract 01b §8.4's pin. It carries NO `ref`: the `mcp-servers`
-#: component tag is the version of every server agent-mcp ships (§3.3).
+#: component tag is the version of every server mcp ships (§3.3).
 VIKUNJA = """
 name: vikunja-finance
 identity: "The Vikunja bot bot-finance, on the finance epic."
@@ -283,7 +283,7 @@ def test_an_agent_mcp_pin_that_carries_a_ref_is_refused(ref: str) -> None:
 
 def test_an_agent_mcp_pin_may_not_borrow_another_source_s_fields() -> None:
     """The rule that makes §3's table closed is unchanged by dropping
-    `ref`: `agent-mcp` requires nothing and therefore refuses everything
+    `ref`: `mcp` requires nothing and therefore refuses everything
     except the shared `python`."""
     body: dict[str, object] = yaml.safe_load(VIKUNJA)
     install: dict[str, object] = body["install"]  # type: ignore[assignment]
@@ -405,11 +405,9 @@ def test_the_two_github_fences_of_contract_01b_parse() -> None:
     """§8.2's deny and §8.3's allow, both on `owner/repo`. Refusing either
     is refusing the fleet's whole github split (`docs/rework/spec.md` §4.4)."""
     body: dict[str, object] = yaml.safe_load(GITHUB_CODE)
-    body["arg_denies"] = [
-        {"tools": "all", "arg": "owner/repo", "values": ["example-owner/agent-control"]}
-    ]
+    body["arg_denies"] = [{"tools": "all", "arg": "owner/repo", "values": ["example-owner/creche"]}]
     body["arg_allows"] = [
-        {"tools": ["get_file_contents"], "arg": "owner/repo", "values": ["example-owner/agent-mcp"]}
+        {"tools": ["get_file_contents"], "arg": "owner/repo", "values": ["example-owner/mcp"]}
     ]
     server = _parse(body, "github-code")
 

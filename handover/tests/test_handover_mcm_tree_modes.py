@@ -16,7 +16,7 @@ and the PEP enters the finished tree as a third user again.
    ledger says `succeeded`, and no server can start.
 2. **The staging tree**, which the `uv pip install` child reads its pinned
    `install.lock` out of.
-3. **The `agent-mcp` checkout**, which the `uv sync --frozen` child runs
+3. **The `mcp` checkout**, which the `uv sync --frozen` child runs
    in.
 
 A fourth mode is here too: the staged tree's own modes rest on
@@ -102,7 +102,7 @@ def _builder(tmp_path: Path, run: RunFn) -> tuple[McpBuilder, Path, Fetched]:
     On the host the first `mcp-servers` release makes `/opt/mcp`, and every
     release makes its own `<work root>/<request id>/mcp`.
     """
-    registry = tmp_path / "agent-registry"
+    registry = tmp_path / "registry"
     committed = registry / KAGI_LOCK_PATH
     committed.parent.mkdir(parents=True)
     committed.write_text(LOCK_TEXT, encoding="utf-8")
@@ -112,7 +112,7 @@ def _builder(tmp_path: Path, run: RunFn) -> tuple[McpBuilder, Path, Fetched]:
             Host(run=run, clock=lambda: 0.0, sleep=lambda _: None), tmp_path / MCP_ROOT_NAME
         ),
         tmp_path / "work" / "req" / "mcp",
-        Fetched(registry=registry, tree=tmp_path / "agent-mcp", tag=TAG),
+        Fetched(registry=registry, tree=tmp_path / "mcp", tag=TAG),
     )
 
 
@@ -165,7 +165,7 @@ def test_the_build_child_can_read_the_closure_it_installs_from(tmp_path: Path) -
 
 def test_the_agent_mcp_tree_the_sync_child_runs_in_is_readable(tmp_path: Path) -> None:
     """`uv sync --frozen` runs as `mcp-vikunja-finance` with `cwd` set to
-    the `agent-mcp` checkout this release fetched. Root cloned that tree, so
+    the `mcp` checkout this release fetched. Root cloned that tree, so
     its umask left it root's alone, and the child reads `pyproject.toml`,
     `uv.lock` and every source file in it."""
     builder, work, source = _builder(tmp_path, McpFake(entrypoint="vikunja-mcp"))
@@ -261,7 +261,7 @@ SHA = "e" * 40
 
 
 def test_the_request_directory_a_fetch_makes_is_traversable(tmp_path: Path) -> None:
-    """The one above `/work/<request id>/mcp` and above the `agent-mcp`
+    """The one above `/work/<request id>/mcp` and above the `mcp`
     checkout: `install.fetch` makes it with
     `Path.mkdir`, so the release unit's `UMask=0027` leaves it `root:root
     0750`.
@@ -279,7 +279,7 @@ def test_the_request_directory_a_fetch_makes_is_traversable(tmp_path: Path) -> N
     into = host.work_root / "01K5J8M2Q7V3X9R4T6N0B8C2DG" / "mcp-servers"
 
     with tight_umask():
-        Installer(host).fetch(str(Repo.AGENT_MCP), SHA, into)
+        Installer(host).fetch(str(Repo.MCP), SHA, into)
 
     assert _mode(into.parent) == DIR_MODE
 
@@ -293,6 +293,6 @@ def test_the_request_directory_gains_no_write_bit(tmp_path: Path) -> None:
     into = host.work_root / "01K5J8M2Q7V3X9R4T6N0B8C2DH" / "mcp-servers"
 
     with tight_umask():
-        Installer(host).fetch(str(Repo.AGENT_MCP), SHA, into)
+        Installer(host).fetch(str(Repo.MCP), SHA, into)
 
     assert _mode(into.parent) & WRITE_BITS == 0

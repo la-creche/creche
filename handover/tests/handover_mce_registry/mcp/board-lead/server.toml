@@ -1,5 +1,5 @@
 name = "board-lead"
-identity = "The Vikunja bot `bot-scrum-lead`, whole-board on the House project. It shapes tickets in every epic and classifies into home-assistant, agent-control, networking and finance. It cannot promote, close or re-open: those moves are the operator's and the binary serves no tool for them."
+identity = "The Vikunja bot `bot-scrum-lead`, whole-board on the House project. It shapes tickets in every epic and classifies into home-assistant, creche, networking and finance. It cannot promote, close or re-open: those moves are the operator's and the binary serves no tool for them."
 
 install.source = "agent-mcp"
 
@@ -7,7 +7,7 @@ run.entrypoint = "board-lead-mcp"
 run.env.VIKUNJA_URL = "http://127.0.0.1:3456"
 run.env.VIKUNJA_TOKEN = "secret:vikunja_token_scrum_lead"
 run.env.VIKUNJA_ACTOR = "bot-scrum-lead"
-run.env.VIKUNJA_EPICS = "home-assistant,agent-control,networking,finance"
+run.env.VIKUNJA_EPICS = "home-assistant,creche,networking,finance"
 run.env.VIKUNJA_PROJECT = "House"
 
 tools = [

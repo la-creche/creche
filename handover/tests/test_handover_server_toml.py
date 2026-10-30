@@ -39,7 +39,7 @@ from handover.tomlfile import (
 FIXTURE = Path(__file__).resolve().parent / "handover_mce_registry" / "mcp"
 
 #: The YAML form of three files of the fixture registry: one `pypi`, one
-#: `github-release` and one `agent-mcp` server. A line longer than 100
+#: `github-release` and one `mcp` server. A line longer than 100
 #: characters is folded, and the value of the fold is the value of the line.
 YAML_FORMS = {
     "ha": """\
@@ -76,8 +76,8 @@ shared_secrets:
 """,
     "github-platform": """\
 name: github-platform
-identity: "Fine-grained PAT scoped to agent-control, agent-registry and agent-mcp, and to
-  nothing else. Only the agent-control family is granted this server."
+identity: "Fine-grained PAT scoped to creche, registry and mcp, and to
+  nothing else. Only the creche family is granted this server."
 
 install:
   source: github-release
@@ -99,9 +99,9 @@ arg_allows:
   - tools: all
     arg: owner/repo
     values:
-      - example-owner/agent-control
-      - example-owner/agent-registry
-      - example-owner/agent-mcp
+      - example-owner/creche
+      - example-owner/registry
+      - example-owner/mcp
 
 arg_denies:
   - tools:

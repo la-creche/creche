@@ -31,14 +31,12 @@ from handover import allocate, discovery
 #: §2 keeps them as history and reuses neither prefix.
 OLD_TAGS = ("v0.12.43", "v0.12.42", "schema-v0.11.3")
 
-#: Every agent-control component at its first version. A repository in this
+#: Every creche component at its first version. A repository in this
 #: state has nothing left to bootstrap, so the path rule alone decides.
-#: The components a run in agent-control may tag: its rows, minus a retiring
+#: The components a run in creche may tag: its rows, minus a retiring
 #: or an arriving one, which is never tagged.
 TAGGED = tuple(
-    row.name
-    for row in CATALOG
-    if row.repo is Repo.AGENT_CONTROL and row.name not in RETIRING | ARRIVING
+    row.name for row in CATALOG if row.repo is Repo.CRECHE and row.name not in RETIRING | ARRIVING
 )
 ALL_TAGGED = tuple(f"{name}-v0.1.0" for name in TAGGED)
 
@@ -49,7 +47,7 @@ def _plan(
     levels: tuple[str, ...] = (),
     at_sha: tuple[str, ...] = (),
 ) -> tuple[TagPlan, ...]:
-    return plan_tags(paths, levels, tags, at_sha, Repo.AGENT_CONTROL)
+    return plan_tags(paths, levels, tags, at_sha, Repo.CRECHE)
 
 
 def _one(plans: tuple[TagPlan, ...], component: str) -> TagPlan:
@@ -57,32 +55,30 @@ def _one(plans: tuple[TagPlan, ...], component: str) -> TagPlan:
 
 
 def test_a_changed_file_names_its_component() -> None:
-    assert touched(("caregiver/src/caregiver/call.py",), Repo.AGENT_CONTROL) == ("caregiver",)
+    assert touched(("caregiver/src/caregiver/call.py",), Repo.CRECHE) == ("caregiver",)
 
 
 def test_the_view_directory_is_the_ui_component() -> None:
-    assert touched(("noticeboard/src/noticeboard/__init__.py",), Repo.AGENT_CONTROL) == (
-        "noticeboard",
-    )
+    assert touched(("noticeboard/src/noticeboard/__init__.py",), Repo.CRECHE) == ("noticeboard",)
 
 
 def test_a_docs_only_change_touches_nothing() -> None:
-    assert touched(("docs/rework/design.md", "README.md"), Repo.AGENT_CONTROL) == ()
+    assert touched(("docs/rework/design.md", "README.md"), Repo.CRECHE) == ()
 
 
 def test_a_whole_repo_component_takes_every_path() -> None:
-    assert touched(("anything/at/all.py",), Repo.AGENT_MCP) == ("mcp-servers",)
+    assert touched(("anything/at/all.py",), Repo.MCP) == ("mcp-servers",)
 
 
 def test_components_come_back_in_catalog_order() -> None:
     changed = ("handover/src/x.py", "caregiver/src/y.py", "infra/compose.yaml")
 
-    assert touched(changed, Repo.AGENT_CONTROL) == ("caregiver", "infra", "handover")
+    assert touched(changed, Repo.CRECHE) == ("caregiver", "infra", "handover")
 
 
 def test_a_path_that_climbs_out_is_refused() -> None:
     with pytest.raises(Refusal) as caught:
-        touched(("../other-repo/caregiver/x.py",), Repo.AGENT_CONTROL)
+        touched(("../other-repo/caregiver/x.py",), Repo.CRECHE)
 
     assert caught.value.code is RefusalCode.REQUEST
     assert "not repo-relative" in caught.value.detail
@@ -90,7 +86,7 @@ def test_a_path_that_climbs_out_is_refused() -> None:
 
 def test_an_absolute_path_is_refused() -> None:
     with pytest.raises(Refusal):
-        touched(("/etc/passwd",), Repo.AGENT_CONTROL)
+        touched(("/etc/passwd",), Repo.CRECHE)
 
 
 def test_the_default_level_is_patch() -> None:
@@ -259,7 +255,7 @@ def test_the_lock_file_moves_every_venv_component_and_no_other() -> None:
     tag, and shipped only when something else changed the component."""
     plans = _plan(("uv.lock",), tags=ALL_TAGGED)
 
-    ours = [row for row in CATALOG if row.repo is Repo.AGENT_CONTROL and row.name not in ARRIVING]
+    ours = [row for row in CATALOG if row.repo is Repo.CRECHE and row.name not in ARRIVING]
     venvs = {row.name for row in ours if row.kind is Kind.VENV}
 
     assert {plan.component for plan in plans} == venvs
@@ -283,22 +279,22 @@ def test_a_merge_that_touches_nothing_plans_nothing() -> None:
 
 
 def test_a_repository_with_no_component_tag_has_them_all_untagged() -> None:
-    assert untagged(OLD_TAGS, Repo.AGENT_CONTROL) == tuple(
-        row.name for row in CATALOG if row.repo is Repo.AGENT_CONTROL
+    assert untagged(OLD_TAGS, Repo.CRECHE) == tuple(
+        row.name for row in CATALOG if row.repo is Repo.CRECHE
     )
 
 
 def test_a_component_that_carries_a_tag_is_not_untagged() -> None:
-    assert "caregiver" not in untagged((*OLD_TAGS, "caregiver-v0.1.0"), Repo.AGENT_CONTROL)
+    assert "caregiver" not in untagged((*OLD_TAGS, "caregiver-v0.1.0"), Repo.CRECHE)
 
 
 def test_another_repositorys_components_are_never_bootstrapped() -> None:
-    """`touched` is scoped by repo and so is this. A run in agent-control
+    """`touched` is scoped by repo and so is this. A run in creche
     must not invent a tag for `mcp-servers`, whose repo it cannot write."""
-    assert untagged((), Repo.AGENT_CONTROL) == tuple(
-        row.name for row in CATALOG if row.repo is Repo.AGENT_CONTROL
+    assert untagged((), Repo.CRECHE) == tuple(
+        row.name for row in CATALOG if row.repo is Repo.CRECHE
     )
-    assert untagged((), Repo.AGENT_MCP) == ("mcp-servers",)
+    assert untagged((), Repo.MCP) == ("mcp-servers",)
 
 
 def test_the_first_run_tags_every_component_the_commit_did_not_touch() -> None:
@@ -339,9 +335,7 @@ def test_an_arriving_component_reads_absent_and_is_never_tagged(
     monkeypatch.setattr(allocate, "ARRIVING", frozenset({arriving}))
     monkeypatch.setattr(discovery, "ARRIVING", frozenset({arriving}))
     row = CATALOG_BY_NAME[arriving]
-    present = tuple(
-        one.name for one in CATALOG if one.repo is Repo.AGENT_CONTROL and one.name != arriving
-    )
+    present = tuple(one.name for one in CATALOG if one.repo is Repo.CRECHE and one.name != arriving)
     for name in present:
         write_manifest(tmp_path, name, manifest_text(name))
 
@@ -397,7 +391,7 @@ def test_a_rerun_before_the_tags_are_fetched_is_still_a_noop() -> None:
 def test_a_component_added_later_gets_its_first_tag_unasked() -> None:
     """The reason this is not a `--bootstrap` flag. A catalog row added in a
     year is untagged, and the next run tags it with no flag to remember."""
-    every = tuple(row.name for row in CATALOG if row.repo is Repo.AGENT_CONTROL)
+    every = tuple(row.name for row in CATALOG if row.repo is Repo.CRECHE)
     already = tuple(f"{name}-v1.0.0" for name in every if name != "noticeboard")
 
     plans = _plan(("docs/rework/design.md",), tags=already)
@@ -429,13 +423,13 @@ def test_read_lines_caps_one_lines_length() -> None:
 def test_a_line_that_names_a_component_counts_for_that_one_only() -> None:
     """A line of `<component>`, a TAB and a path is one line of that
     component's OWN range, not of the head commit's diff."""
-    assert touched(("caregiver\tcaregiver",), Repo.AGENT_CONTROL) == ("caregiver",)
+    assert touched(("caregiver\tcaregiver",), Repo.CRECHE) == ("caregiver",)
 
 
 def test_a_range_line_whose_path_is_another_components_counts_nothing() -> None:
     """`attendance`'s range holds a change under `caregiver/`. That is a change to
     `caregiver` that happened inside `attendance`'s window, and it tags neither."""
-    assert touched(("attendance\tcaregiver",), Repo.AGENT_CONTROL) == ()
+    assert touched(("attendance\tcaregiver",), Repo.CRECHE) == ()
 
 
 def test_two_ranges_in_one_file_each_tag_their_own_component() -> None:
@@ -446,12 +440,12 @@ def test_two_ranges_in_one_file_each_tag_their_own_component() -> None:
         "noticeboard\tdocs",
     )
 
-    assert touched(lines, Repo.AGENT_CONTROL) == ("caregiver", "noticeboard")
+    assert touched(lines, Repo.CRECHE) == ("caregiver", "noticeboard")
 
 
 def test_a_range_lines_path_is_checked_like_any_other() -> None:
     with pytest.raises(Refusal) as caught:
-        touched(("caregiver\t../other-repo/caregiver/x.py",), Repo.AGENT_CONTROL)
+        touched(("caregiver\t../other-repo/caregiver/x.py",), Repo.CRECHE)
 
     assert "not repo-relative" in caught.value.detail
 
@@ -459,8 +453,8 @@ def test_a_range_lines_path_is_checked_like_any_other() -> None:
 def test_a_prefix_this_repo_does_not_own_is_read_as_a_path() -> None:
     """Only a component of THIS repo is a prefix. Everything else stays the
     bare path every caller writes."""
-    assert touched(("mcp-servers\tanything",), Repo.AGENT_CONTROL) == ()
-    assert touched(("mcp-servers\tanything",), Repo.AGENT_MCP) == ("mcp-servers",)
+    assert touched(("mcp-servers\tanything",), Repo.CRECHE) == ()
+    assert touched(("mcp-servers\tanything",), Repo.MCP) == ("mcp-servers",)
 
 
 def test_the_gap_a_missed_dispatch_leaves() -> None:
@@ -493,21 +487,21 @@ def test_a_door_change_tags_attendance() -> None:
     """Contract 06 §1 rule 1: the doors ship inside `attendance`'s tree."""
     changed = ("door-trigger/src/agent_door_trigger/cli.py",)
 
-    assert touched(changed, Repo.AGENT_CONTROL) == ("attendance",)
+    assert touched(changed, Repo.CRECHE) == ("attendance",)
 
 
 def test_an_acp_door_change_tags_attendance() -> None:
     """`door-acp` ships inside `attendance`'s tree, as each other door does."""
     changed = ("door-acp/src/agent_door_acp/forward.py",)
 
-    assert touched(changed, Repo.AGENT_CONTROL) == ("attendance",)
+    assert touched(changed, Repo.CRECHE) == ("attendance",)
 
 
 def test_a_family_change_tags_every_component_that_installs_it() -> None:
     """`agent-family` is in `attendance`'s, `caregiver`'s and `noticeboard`'s trees."""
     changed = ("family/src/agent_family/model.py",)
 
-    assert touched(changed, Repo.AGENT_CONTROL) == ("attendance", "caregiver", "noticeboard")
+    assert touched(changed, Repo.CRECHE) == ("attendance", "caregiver", "noticeboard")
 
 
 def test_a_handover_package_change_tags_handover_alone() -> None:
@@ -515,7 +509,7 @@ def test_a_handover_package_change_tags_handover_alone() -> None:
     component. The Python `chaperone` did, and its row is gone."""
     changed = ("handover/src/handover/requester/file.py",)
 
-    assert touched(changed, Repo.AGENT_CONTROL) == ("handover",)
+    assert touched(changed, Repo.CRECHE) == ("handover",)
 
 
 def test_a_range_that_changed_only_installed_packages_still_tags() -> None:
@@ -551,12 +545,12 @@ def test_a_component_tagged_on_this_commit_is_still_reported() -> None:
 
 
 def test_tagged_here_is_scoped_by_repo() -> None:
-    assert tagged_here(("mcp-servers-v0.1.0",), Repo.AGENT_CONTROL) == ()
-    assert tagged_here(("mcp-servers-v0.1.0",), Repo.AGENT_MCP) == ("mcp-servers",)
+    assert tagged_here(("mcp-servers-v0.1.0",), Repo.CRECHE) == ()
+    assert tagged_here(("mcp-servers-v0.1.0",), Repo.MCP) == ("mcp-servers",)
 
 
 def test_tagged_here_reads_no_old_scheme_tag() -> None:
-    assert tagged_here(OLD_TAGS, Repo.AGENT_CONTROL) == ()
+    assert tagged_here(OLD_TAGS, Repo.CRECHE) == ()
 
 
 # ---- the cut the script's reduction needs -----------------------------------
