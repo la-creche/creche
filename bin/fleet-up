@@ -531,8 +531,8 @@ waiting_line() {  # waiting_line <trees>
 
   [[ -n "$components" ]] || return 0
   pending "no released tree for:$components. File the release first, then run fleet-up up again:
-    $HANDOVER request$components --root $CODE_ROOT/agent-control --root $CODE_ROOT/agent-mcp --root $CODE_ROOT/agent-registry --root $CODE_ROOT/chaperone --dry-run
-    $HANDOVER request$components --root $CODE_ROOT/agent-control --root $CODE_ROOT/agent-mcp --root $CODE_ROOT/agent-registry --root $CODE_ROOT/chaperone --wait"
+    $HANDOVER request$components --root $CODE_ROOT/creche --root $CODE_ROOT/mcp --root $CODE_ROOT/registry --root $CODE_ROOT/chaperone --dry-run
+    $HANDOVER request$components --root $CODE_ROOT/creche --root $CODE_ROOT/mcp --root $CODE_ROOT/registry --root $CODE_ROOT/chaperone --wait"
 }
 
 verb_up() {
