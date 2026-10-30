@@ -1,4 +1,4 @@
-"""The per-chat `coding-sandbox` directory (contract 02 §12.1, contract 03 §7.2)."""
+"""The per-chat directory of a thin family (contract 02 §12.1, contract 03 §7.2)."""
 
 from __future__ import annotations
 
@@ -8,25 +8,19 @@ from pathlib import Path
 
 import pytest
 from attendance.errors import ApiError, ErrorCode
-from attendance.workspace import (
-    CODING_SANDBOX_FAMILY,
-    WORKSPACE_KIND,
-    make_owner_dir,
-    owner_dir,
-    workspace_of,
-)
+from attendance.workspace import make_owner_dir, owner_dir
 
 OWNER = "owui-3f2a9c41-77b0-4a1e-9a4c-1d0e5f8b2c33"
 
-# Every one of these would leave the work root if it became a path component.
+# Every one of these would leave the caller root if it became a path component.
 HOSTILE_IDS = ("..", ".", "../../etc", "a/b", "", "/srv", "owui-" + chr(0), "." * 4)
 
 
-def test_the_directory_sits_under_the_work_root(tmp_path: Path) -> None:
+def test_the_directory_sits_under_the_caller_root(tmp_path: Path) -> None:
     made = make_owner_dir(tmp_path, OWNER)
 
     assert made == owner_dir(tmp_path, OWNER)
-    assert made == tmp_path / CODING_SANDBOX_FAMILY / OWNER
+    assert made == tmp_path / OWNER
     assert made.is_dir()
 
 
@@ -62,21 +56,3 @@ def test_a_hostile_owner_id_is_refused_by_every_door(tmp_path: Path, owner: str)
     for call in (owner_dir, make_owner_dir):
         with pytest.raises(ApiError):
             call(tmp_path, owner)
-
-
-def test_only_the_coding_sandbox_family_gets_a_workspace() -> None:
-    """Contract 03 §7.2. One kind, and one family that carries it."""
-    assert workspace_of(CODING_SANDBOX_FAMILY, OWNER) == {
-        "kind": WORKSPACE_KIND,
-        "owner_session": OWNER,
-    }
-    assert workspace_of("vault-oracle", OWNER) is None
-    assert workspace_of(CODING_SANDBOX_FAMILY, None) is None
-
-
-def test_the_workspace_carries_no_host_path() -> None:
-    """The playpen derives the target from its own mount (§7.2)."""
-    body = workspace_of(CODING_SANDBOX_FAMILY, OWNER)
-
-    assert body is not None
-    assert set(body) == {"kind", "owner_session"}

@@ -23,7 +23,6 @@ def env_for(tmp_path: Path, **extra: str) -> dict[str, str]:
     values = {
         "ATTENDANCE_SESSIONS_ROOT": str(tmp_path / "sessions"),
         "ATTENDANCE_STATE_ROOT": str(tmp_path / "state"),
-        "ATTENDANCE_WORK_ROOT": str(tmp_path / "work"),
         "ATTENDANCE_SOCKET": str(tmp_path / "attendance.sock"),
         "ATTENDANCE_LOG_DIR": str(tmp_path / "log"),
         LAN_ADDRESS_ENV: os.environ[LAN_ADDRESS_ENV],

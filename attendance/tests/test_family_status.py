@@ -241,6 +241,37 @@ def test_junk_fields_take_their_defaults(tmp_path: Path) -> None:
     assert status.blocking_fault is None
 
 
+def test_the_caller_root_reads_from_limits(tmp_path: Path) -> None:
+    root = "/srv/agents/work/runner"
+    status = _publish(tmp_path, limits={"caller_root": root}).read(_FAMILY)
+
+    assert status is not None
+    assert status.caller_root == Path(root)
+
+
+@pytest.mark.parametrize(
+    "root",
+    [
+        None,
+        7,
+        "",
+        "relative/dir",
+        "/",
+        "/srv//work",
+        "/srv/../etc",
+        "/srv/./work",
+        "/srv/work/",
+        "/a\x00b",
+    ],
+)
+def test_a_caller_root_of_another_shape_reads_as_none(tmp_path: Path, root: object) -> None:
+    """A job runs under it, so a path that can leave its own segments is no root."""
+    status = _publish(tmp_path, limits={"caller_root": root}).read(_FAMILY)
+
+    assert status is not None
+    assert status.caller_root is None
+
+
 def test_a_stated_kind_is_the_served_kind(tmp_path: Path) -> None:
     status = _publish(tmp_path, kind="thin").read(_FAMILY)
 

@@ -1,10 +1,11 @@
-"""The per-chat `coding-sandbox` directory (contract 02 §12.1, contract 03 §7.2).
+"""The per-chat directory of a thin family (contract 02 §12.1, contract 03 §7.2).
 
-A mount cannot join a running sandbox, so the `coding-sandbox` family mounts one
-parent — the work root — and each calling chat gets a directory under it
-(`docs/rework/spec.md` §7.2). This service creates that directory at the
-chat's first delegate call. No job deletes it. With no chat session here,
-nothing deletes it either.
+A mount cannot join a running sandbox. So a thin family that names
+`job.caller_root` in its family file mounts that one root, and each calling
+chat gets a directory under it (`docs/rework/spec.md` §7.2). `caregiver`
+copies the root into the `limits` block of the status document. This service
+creates the directory of a chat at its first delegate call. No job deletes
+it. With no chat session here, nothing deletes it either.
 
 The owner session id arrives from the PEP and becomes a path component, so it
 is validated here and nowhere else. Every door into this module checks it
@@ -14,50 +15,28 @@ first, because a path built once without the check is the whole hole.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 from .atomic import DIR_MODE_PRIVATE, ensure_dir
 from .errors import ApiError, ErrorCode
 from .ids import is_session
-from .paths import coding_sandbox_dir
-
-# The one thin family that works in the caller's directory
-# (`docs/rework/spec.md` §7.2).
-CODING_SANDBOX_FAMILY = "coding-sandbox"
-
-# Contract 03 §7.2's `workspace.kind`. One kind exists.
-WORKSPACE_KIND = "coding-sandbox"
 
 
-def owner_dir(work_root: Path, owner_session: str) -> Path:
+def owner_dir(caller_root: Path, owner_session: str) -> Path:
     """Where one calling chat's files live. The id is checked first."""
     _check_owner(owner_session)
-    return coding_sandbox_dir(work_root, owner_session)
+    return caller_root / owner_session
 
 
-def make_owner_dir(work_root: Path, owner_session: str) -> Path:
+def make_owner_dir(caller_root: Path, owner_session: str) -> Path:
     """Contract 02 §12.1 rule 2: create it at the first delegate call.
 
     Mode 0700, so a job run for one chat cannot read another chat's files
     (`docs/rework/spec.md` §7.2). Creating it again is a no-op:
     the directory outlives every job that ever used it.
     """
-    path = owner_dir(work_root, owner_session)
+    path = owner_dir(caller_root, owner_session)
     ensure_dir(path, DIR_MODE_PRIVATE)
     return path
-
-
-def workspace_of(family: str, owner_session: str | None) -> dict[str, Any] | None:
-    """`start_turn.workspace` for a job, or None (contract 03 §7.2).
-
-    It carries no host path. The playpen derives the target from its own
-    mount, so a compromised host message cannot aim the link elsewhere.
-    """
-    if family != CODING_SANDBOX_FAMILY or owner_session is None:
-        return None
-
-    _check_owner(owner_session)
-    return {"kind": WORKSPACE_KIND, "owner_session": owner_session}
 
 
 def _check_owner(owner_session: str) -> None:

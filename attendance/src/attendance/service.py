@@ -16,6 +16,7 @@ import asyncio
 import functools
 import logging
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import Any
 
 from . import acp_view, dispatch, jobs, outcomes
@@ -67,7 +68,7 @@ from .requests import (
 )
 from .switching import SwitchBook, SwitchKey, SwitchOutcome, SwitchRun, SwitchTally, switch_key
 from .tasks import report_failure
-from .workspace import make_owner_dir, owner_dir, workspace_of
+from .workspace import make_owner_dir, owner_dir
 
 _LOG = logging.getLogger("attendance")
 
@@ -303,13 +304,13 @@ class SessionService:
         check_may_serve(status)
 
         owner = request.claimed_session_id
-        self._prepare_work_dir(family, owner)
+        self._prepare_work_dir(status.caller_root, owner)
         link = await self._acp_link_for(family, status)
         job = jobs.new_job_session()
         delegation = {"id": request.delegation_id, "caller_session": owner}
         plan = JobPlan(
             job=job,
-            cwd=self._job_cwd(family, owner),
+            cwd=self._job_cwd(family, status.caller_root, owner),
             message=request.message,
             deadline_s=jobs.job_timeout_s(status.job_timeout_s),
             prompt_meta={META_DELEGATION: delegation},
@@ -317,26 +318,27 @@ class SessionService:
         )
         return jobs.answer(job, await run_job(link, plan))
 
-    def _job_cwd(self, family: str, owner: str | None) -> str:
+    def _job_cwd(self, family: str, caller_root: Path | None, owner: str | None) -> str:
         """The cwd of one job inside the VM (contract 02 §12.1 rule 3).
 
-        `coding-sandbox` works in the calling chat's directory. Every other job
-        works in the family's sessions mount. Each is a host path, and sbx
-        mounts it at the same path inside the VM.
+        A family with a caller root works in the calling chat's directory.
+        Every other job works in the family's sessions mount. Each is a host
+        path, and sbx mounts it at the same path inside the VM.
         """
-        if owner is not None and workspace_of(family, owner) is not None:
-            return str(owner_dir(self._config.work_root, owner))
+        if caller_root is not None and owner is not None:
+            return str(owner_dir(caller_root, owner))
 
         return sandbox_sessions_mount(self._config.sessions_root, family)
 
-    def _prepare_work_dir(self, family: str, owner: str | None) -> None:
-        """Contract 02 §12.1 rule 2. `coding-sandbox` works in the chat's own
-        directory, made at that chat's first delegate call and at no other
-        moment. The id is validated before it becomes a path component."""
-        if workspace_of(family, owner) is None or owner is None:
+    def _prepare_work_dir(self, caller_root: Path | None, owner: str | None) -> None:
+        """Contract 02 §12.1 rule 2. A family with a caller root works in the
+        chat's own directory, made at that chat's first delegate call and at
+        no other moment. The id is validated before it becomes a path
+        component."""
+        if caller_root is None or owner is None:
             return
 
-        make_owner_dir(self._config.work_root, owner)
+        make_owner_dir(caller_root, owner)
 
     def _check_delegate_door(self, principal: Principal) -> None:
         """Contract 02 §1: the delegate door serves this one path.
