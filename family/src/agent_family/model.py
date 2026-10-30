@@ -62,6 +62,10 @@ class SandboxBlock(Strict):
 
 class JobBlock(Strict):
     timeout: str = DEFAULT_JOB_TIMEOUT
+    # Contract 02 §12.1: each calling chat gets its own directory under this
+    # mount, and its jobs run there. None: each job runs in the sessions
+    # mount of the family. `validate.py` holds it to an `rw` entry of `files`.
+    caller_root: str | None = None
 
 
 class Trigger(Strict):

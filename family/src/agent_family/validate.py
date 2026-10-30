@@ -696,6 +696,7 @@ def _check_job(family: FamilyFile, kind: Kind, issues: Issues) -> None:
         issues.error("job", f"'job' is thin only; this family is '{kind}'")
         return
 
+    _check_caller_root(family, family.job.caller_root, issues)
     seconds = duration_s(family.job.timeout)
     if seconds is None:
         issues.error("job.timeout", f"'{family.job.timeout}' must match [1-9][0-9]*[smh]")
@@ -711,6 +712,18 @@ def _check_job(family: FamilyFile, kind: Kind, issues: Issues) -> None:
             f"'{family.job.timeout}' is past the PEP's {DELEGATE_LIMIT_S}s delegate limit; the "
             "caller gives up first",
         )
+
+
+def _check_caller_root(family: FamilyFile, root: str | None, issues: Issues) -> None:
+    """Contract 02 §12.1: a job of a chat runs in a directory under this
+    path. The path must be a mount the family may write, or the directory
+    is not inside the sandbox."""
+    if root is None:
+        return
+
+    writable = {mount.path for mount in family.files if mount.mode == Mode.RW}
+    if root not in writable:
+        issues.error("job.caller_root", f"'{root}' is not the path of an 'rw' entry of files")
 
 
 def _check_triggers(family: FamilyFile, kind: Kind, issues: Issues) -> None:

@@ -310,6 +310,18 @@ def _kind_fields(old: FamilyFile, new: FamilyFile, changes: list[FieldChange]) -
             f"job.timeout changed: {old_timeout} to {new_timeout}, read per job",
         )
 
+    old_root = old.job.caller_root if old.job is not None else None
+    new_root = new.job.caller_root if new.job is not None else None
+    if old_root != new_root:
+        _add(
+            changes,
+            "job.caller_root",
+            Landing.LIVE,
+            Direction.CHANGE,
+            Step.NONE,
+            f"job.caller_root changed: {old_root} to {new_root}, read per job",
+        )
+
     if old.triggers != new.triggers:
         _add(
             changes,

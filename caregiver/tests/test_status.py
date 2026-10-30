@@ -9,7 +9,7 @@ import stat
 from pathlib import Path
 
 import pytest
-from agent_family import FamilyState, Issue, Report, Severity
+from agent_family import FamilyState, Issue, Markup, Report, Severity, parse_family
 from caregiver.faults import FaultEntry
 from caregiver.status import (
     STATUS_FILE_MODE,
@@ -27,7 +27,8 @@ from caregiver.status import (
     write_status,
     write_validation_report,
 )
-from caregiver_helpers import UNREADABLE_JSON
+from caregiver.steps import limits_for
+from caregiver_helpers import FAMILY_BODY, UNREADABLE_JSON, toml_text
 
 
 def test_now_rfc3339_matches_the_contracts_examples() -> None:
@@ -103,7 +104,19 @@ def test_limits_block_defaults_max_queued_turns_to_100() -> None:
         "max_running_turns": None,
         "max_queued_turns": 100,
         "job_timeout_s": None,
+        "caller_root": None,
     }
+
+
+@pytest.mark.parametrize("job", [{"caller_root": "/srv/agents/work/projects"}, {}])
+def test_limits_carry_the_caller_root_of_a_thin_family(job: dict[str, str]) -> None:
+    """Contract 02 §12.1: attendance reads the per-chat root from here."""
+    body = FAMILY_BODY | {"kind": "thin", "job": job}
+    family, issues = parse_family(toml_text(body), Markup.TOML)
+    assert family is not None, issues
+    limits = limits_for(family).as_json()
+    assert limits["caller_root"] == job.get("caller_root")
+    assert limits["job_timeout_s"] == 120
 
 
 def test_status_document_assembles_the_full_shape() -> None:
@@ -138,6 +151,7 @@ def test_status_document_assembles_the_full_shape() -> None:
         "max_running_turns": None,
         "max_queued_turns": 100,
         "job_timeout_s": None,
+        "caller_root": None,
     }
 
 

@@ -327,8 +327,10 @@ def limits_for(family: FamilyFile) -> LimitsBlock:
         return LimitsBlock(max_running_turns=turns)
 
     if family.kind == Kind.THIN:
-        timeout = family.job.timeout if family.job is not None else f"{DEFAULT_JOB_TIMEOUT_S}s"
-        return LimitsBlock(job_timeout_s=duration_s(timeout))
+        job = family.job
+        timeout = job.timeout if job is not None else f"{DEFAULT_JOB_TIMEOUT_S}s"
+        root = job.caller_root if job is not None else None
+        return LimitsBlock(job_timeout_s=duration_s(timeout), caller_root=root)
 
     return LimitsBlock()
 
