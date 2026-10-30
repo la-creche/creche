@@ -117,12 +117,17 @@ def _make_primary(path: str) -> None:
     has no terminal to answer it, and the create fails with `ERROR: user
     cancelled operation`. Seen on 2026-10-30: `code-worker` and
     `coding-sandbox` had no `/srv/agents/sessions/<family>/`, and every
-    pass failed. An existing directory keeps its mode."""
+    pass failed. An existing directory keeps its mode.
+
+    A primary that cannot be made is logged, and `sbx create` runs as it
+    did before this step. Its own error then becomes the fault. The proc
+    tests rely on this: their runner has no `/srv/agents/sessions`, and
+    their `sbx` stand-in touches no host path."""
     try:
         Path(path).mkdir(mode=PRIMARY_MODE, exist_ok=True)
     except OSError as exc:
         said = f"{type(exc).__name__}: {exc}"[:DID_NOT_RUN_CHARS]
-        raise DriverError(f"primary workspace {path} cannot be made: {said}") from exc
+        log.warning("primary workspace %s cannot be made: %s", path, said)
 
 
 class SbxDriver:

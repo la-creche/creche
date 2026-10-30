@@ -131,16 +131,18 @@ def test_create_keeps_an_existing_primary_as_it_is(
     assert (primary / "flue.db").read_text() == "chats"
 
 
-def test_a_primary_that_cannot_be_made_stops_before_sbx(
-    fake_run: FakeProcess, tmp_path: Path
+def test_a_primary_that_cannot_be_made_is_left_to_sbx(
+    fake_run: FakeProcess, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """The parent is missing. The driver makes no parent: a missing
-    sessions root is a host that is not set up, not a new family."""
-    with pytest.raises(DriverError, match=r"primary workspace .* cannot be made"):
+    sessions root is a host that is not set up, not a new family. `sbx`
+    runs as before, and its own error is the fault."""
+    with caplog.at_level("WARNING", logger="caregiver.driver"):
         SbxDriver().create(spec_at(tmp_path / "no-root" / "chat"))
 
     assert not (tmp_path / "no-root").exists()
-    assert fake_run.calls == []
+    assert len(fake_run.calls) == 1
+    assert "cannot be made" in caplog.text
 
 
 def test_every_call_disables_sbx_telemetry(fake_run: FakeProcess, spec: SandboxSpec) -> None:
