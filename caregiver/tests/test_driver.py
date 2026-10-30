@@ -4,13 +4,16 @@ sandbox."""
 
 from __future__ import annotations
 
+import stat
 import subprocess
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 import pytest
 from caregiver.driver import (
     KIT_EXTRA_EGRESS,
+    PRIMARY_MODE,
     SBX_ENV,
     DriverError,
     FakeDriver,
@@ -52,26 +55,37 @@ def fake_run(monkeypatch: pytest.MonkeyPatch) -> FakeProcess:
     return fake
 
 
-SPEC = SandboxSpec(
-    name="chat-s1",
-    image="sha256:deadbeef",
-    mounts=(
-        Mount("/srv/agents/sessions/chat", readonly=False),
-        Mount("/srv/agents/vault", readonly=True),
-    ),
-    cpus=4,
-    memory="8g",
-)
+def spec_at(primary: Path | str) -> SandboxSpec:
+    return SandboxSpec(
+        name="chat-s1",
+        image="sha256:deadbeef",
+        mounts=(
+            Mount(str(primary), readonly=False),
+            Mount("/srv/agents/vault", readonly=True),
+        ),
+        cpus=4,
+        memory="8g",
+    )
 
 
-def test_create_issues_the_proven_sbx_command(fake_run: FakeProcess) -> None:
-    SbxDriver().create(SPEC)
+#: For `FakeDriver`, which touches no directory.
+SPEC = spec_at("/srv/agents/sessions/chat")
+
+
+@pytest.fixture
+def spec(tmp_path: Path) -> SandboxSpec:
+    """`SbxDriver.create` makes the primary, so its parent must exist."""
+    return spec_at(tmp_path / "chat")
+
+
+def test_create_issues_the_proven_sbx_command(fake_run: FakeProcess, spec: SandboxSpec) -> None:
+    SbxDriver().create(spec)
     assert fake_run.calls == [
         [
             "sbx",
             "create",
             "shell",
-            "/srv/agents/sessions/chat",
+            spec.mounts[0].path,
             "/srv/agents/vault:ro",
             "-t",
             "sha256:deadbeef",
@@ -88,18 +102,59 @@ def test_create_issues_the_proven_sbx_command(fake_run: FakeProcess) -> None:
     ]
 
 
-def test_every_call_disables_sbx_telemetry(fake_run: FakeProcess) -> None:
-    SbxDriver().create(SPEC)
+def test_create_makes_a_missing_primary_before_sbx(
+    fake_run: FakeProcess, spec: SandboxSpec
+) -> None:
+    """A missing primary made `sbx create` fail with `user cancelled
+    operation` for `code-worker` and `coding-sandbox` on 2026-10-30."""
+    primary = Path(spec.mounts[0].path)
+    assert not primary.exists()
+
+    SbxDriver().create(spec)
+
+    assert primary.is_dir()
+    assert stat.S_IMODE(primary.stat().st_mode) == PRIMARY_MODE
+    assert len(fake_run.calls) == 1
+
+
+def test_create_keeps_an_existing_primary_as_it_is(
+    fake_run: FakeProcess, spec: SandboxSpec
+) -> None:
+    primary = Path(spec.mounts[0].path)
+    primary.mkdir()
+    primary.chmod(0o775)
+    (primary / "flue.db").write_text("chats")
+
+    SbxDriver().create(spec)
+
+    assert stat.S_IMODE(primary.stat().st_mode) == 0o775
+    assert (primary / "flue.db").read_text() == "chats"
+
+
+def test_a_primary_that_cannot_be_made_stops_before_sbx(
+    fake_run: FakeProcess, tmp_path: Path
+) -> None:
+    """The parent is missing. The driver makes no parent: a missing
+    sessions root is a host that is not set up, not a new family."""
+    with pytest.raises(DriverError, match=r"primary workspace .* cannot be made"):
+        SbxDriver().create(spec_at(tmp_path / "no-root" / "chat"))
+
+    assert not (tmp_path / "no-root").exists()
+    assert fake_run.calls == []
+
+
+def test_every_call_disables_sbx_telemetry(fake_run: FakeProcess, spec: SandboxSpec) -> None:
+    SbxDriver().create(spec)
     assert fake_run.envs[0]["SBX_NO_TELEMETRY"] == SBX_ENV["SBX_NO_TELEMETRY"]
 
 
-def test_create_failure_raises_with_stderr(fake_run: FakeProcess) -> None:
+def test_create_failure_raises_with_stderr(fake_run: FakeProcess, spec: SandboxSpec) -> None:
     fake_run.answer(
         ["sbx", "create"],
         subprocess.CompletedProcess([], 1, stdout="", stderr="template pull timed out"),
     )
     with pytest.raises(DriverError, match="template pull timed out"):
-        SbxDriver().create(SPEC)
+        SbxDriver().create(spec)
 
 
 def test_set_egress_allows_then_denies_the_kit_hole(fake_run: FakeProcess) -> None:
@@ -195,10 +250,12 @@ def test_list_names_answers_empty_on_a_wedged_daemon(monkeypatch: pytest.MonkeyP
     assert SbxDriver().list_names() == set()
 
 
-def test_a_wedged_daemon_names_the_recovery_command(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_wedged_daemon_names_the_recovery_command(
+    monkeypatch: pytest.MonkeyPatch, spec: SandboxSpec
+) -> None:
     monkeypatch.setattr(subprocess, "run", _raise_timeout)
     with pytest.raises(DriverError, match="sbx daemon restart"):
-        SbxDriver().create(SPEC)
+        SbxDriver().create(spec)
 
 
 @pytest.mark.parametrize(
@@ -217,7 +274,7 @@ def test_a_wedged_daemon_names_the_recovery_command(monkeypatch: pytest.MonkeyPa
     ids=["no-program", "no-permission", "bad-argument", "output-not-utf8"],
 )
 def test_a_command_that_does_not_run_is_a_driver_error(
-    monkeypatch: pytest.MonkeyPatch, error: Exception, said: str
+    monkeypatch: pytest.MonkeyPatch, spec: SandboxSpec, error: Exception, said: str
 ) -> None:
     """Each caller names `DriverError` in its handler and turns it into a
     fault. An error of another class would leave the step and the pass
@@ -228,7 +285,7 @@ def test_a_command_that_does_not_run_is_a_driver_error(
 
     monkeypatch.setattr(subprocess, "run", refuse)
     with pytest.raises(DriverError, match=f"sbx create shell… {said}"):
-        SbxDriver().create(SPEC)
+        SbxDriver().create(spec)
 
     assert SbxDriver().list_names() == set()
 
