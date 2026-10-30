@@ -118,7 +118,8 @@ def test_reconcile_writes_the_fragment_and_assembles(fleet: Fleet) -> None:
     assert result.status.state is FamilyState.IN_SYNC
     assert fleet.fragment().is_file()
     assert fleet.digests() == [token_sha256(fleet.token())]
-    assert len(fleet.checker.checked) == 1
+    # The new table alone, then the joined file.
+    assert len(fleet.checker.checked) == 2
 
 
 def test_a_pass_writes_no_json_grant_file(fleet: Fleet) -> None:
@@ -131,8 +132,9 @@ def test_a_pass_writes_no_json_grant_file(fleet: Fleet) -> None:
 
 def test_a_pass_that_moves_nothing_checks_nothing(fleet: Fleet) -> None:
     fleet.run()
+    checked = len(fleet.checker.checked)
     fleet.run()
-    assert len(fleet.checker.checked) == 1
+    assert len(fleet.checker.checked) == checked
 
 
 def test_a_server_edit_moves_the_fragment(fleet: Fleet) -> None:
@@ -171,6 +173,36 @@ def test_a_left_out_family_comes_back_once_the_check_passes(fleet: Fleet) -> Non
     result = fleet.run()
     assert result.status.state is FamilyState.IN_SYNC
     assert FAMILY in fleet.apps()
+
+
+def test_a_refused_edit_keeps_the_last_good_table(fleet: Fleet) -> None:
+    write_server(fleet.registry_root, ("search", "extract"))
+    write_registry(fleet.registry_root, tools={SERVER: ["search"]})
+    fleet.run()
+    last = fleet.fragment().read_text(encoding="utf-8")
+
+    write_registry(fleet.registry_root, tools={SERVER: ["search", "extract"]})
+    fleet.checker.refused_apps = frozenset({FAMILY})
+    result = fleet.run()
+
+    assert result.status.state is FamilyState.INVALID
+    assert fleet.fragment().read_text(encoding="utf-8") == last
+    assert sorted(fleet.apps()[FAMILY]["grants"][SERVER]["tools"]) == ["search"]
+
+
+def test_a_check_that_does_not_run_moves_no_fragment(fleet: Fleet) -> None:
+    write_server(fleet.registry_root, ("search", "extract"))
+    write_registry(fleet.registry_root, tools={SERVER: ["search"]})
+    fleet.run()
+    last = fleet.fragment().read_text(encoding="utf-8")
+
+    write_registry(fleet.registry_root, tools={SERVER: ["search", "extract"]})
+    fleet.checker.unavailable = True
+    result = fleet.run()
+
+    assert result.status.state is FamilyState.INVALID
+    assert fleet.fragment().read_text(encoding="utf-8") == last
+    assert sorted(fleet.apps()[FAMILY]["grants"][SERVER]["tools"]) == ["search"]
 
 
 def test_a_check_that_does_not_run_leaves_the_family_invalid(fleet: Fleet) -> None:

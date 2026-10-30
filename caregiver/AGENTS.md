@@ -272,13 +272,17 @@ settle of the loop and `delete`.
 11. `land_app` writes the fragment when its table moved, the note aside.
     It assembles when the fragment moved or when `policy.toml` does not
     hold the fragment. A pass that moves nothing runs no check.
-12. `land_app` and `land_digests` answer `Held` or `LeftOut`, from what
+12. Before it writes a moved fragment, `land_app` checks the new table
+    alone. A refusal, or a check that does not run, writes nothing. The
+    last good fragment stays, and `policy.toml` keeps the last good table
+    of the family. A family that never passed has no table.
+13. `land_app` and `land_digests` answer `Held` or `LeftOut`, from what
     `policy.toml` holds after the assembly. `LeftOut` carries one line:
     the error of the family, or the error of the assembly.
-13. `land_digests` moves the `token_sha256` line of a fragment and no
+14. `land_digests` moves the `token_sha256` line of a fragment and no
     other key. `rotate_serving` and `settle` call it, because they take no
     family file.
-14. `withdraw_app` removes the fragment, then assembles. It answers why
+15. `withdraw_app` removes the fragment, then assembles. It answers why
     `policy.toml` still holds the table, or `None`.
 
 ### The wire
@@ -290,8 +294,9 @@ settle of the loop and `delete`.
    validation report, and the pass runs no step.
 3. A family that `land_policy` leaves out reads `invalid`. Its first error
    is the one line of `LeftOut`. The pass stops after the policy step, and
-   the applied snapshot does not move. Each later pass assembles again, so
-   the family comes back once the check passes.
+   the applied snapshot does not move. The last good table of the family
+   stays in `policy.toml`. Each later pass checks again, so the new table
+   lands once the check passes.
 4. A rotation writes the digests into the fragment: two during the
    overlap, one after. A rotation or a settle that `policy.toml` does not take is
    one error line. It does not undo `creds.json`.
