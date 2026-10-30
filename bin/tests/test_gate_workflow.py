@@ -175,7 +175,7 @@ TAG_ENV = {"GH_TOKEN": "${{ github.token }}", "TAG_REPO": THIS_REPOSITORY}
 
 #: The whole test command of the `proc` job, as `integration/proc/AGENTS.md`
 #: gives it.
-PROC_RUN = "uv run pytest integration/proc -m slow"
+PROC_RUN = "uv run pytest integration/proc -m slow -n 4"
 
 #: The switch that makes a skip a failure, and the file that reads it.
 PROC_ENV = {"CRECHE_PROC_NO_SKIP": "1"}

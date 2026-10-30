@@ -198,7 +198,10 @@ jobs:
   #
   # The time limit: a teardown waits 20 s for each process group. A fault
   # in the harness can cost every test that wait, and a job has 6 hours by
-  # default. On a laptop the suite runs in about 5 minutes.
+  # default.
+  #
+  # Four workers (-n 4): the runner has 4 vCPU and 16 GB. A run of four
+  # workers peaks near 1.3 GB. On one worker the suite took 175 s here.
   proc:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
@@ -238,7 +241,7 @@ jobs:
           path: ~/.cache/creche-proc/chaperone-rs
           key: proc-chaperone-rs-${{ runner.os }}-${{ hashFiles('integration/proc/chaperone.pin', 'integration/proc/proc_chaperone_pin.py') }}
 
-      - run: uv run pytest integration/proc -m slow
+      - run: uv run pytest integration/proc -m slow -n 4
         env:
           CRECHE_PROC_NO_SKIP: "1"
 

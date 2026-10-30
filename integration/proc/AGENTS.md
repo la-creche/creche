@@ -24,12 +24,16 @@ directory does not start it.
 
 ```bash
 cd facade && pnpm install --frozen-lockfile && pnpm run build && cd ..   # once, and after any agent or facade change
-uv run pytest integration/proc -m slow
+uv run pytest integration/proc -m slow -n 4
 ```
 
 Run this suite in its own pytest command.
 
-Add `-n 4` to run the tests on four workers. Each run prints the command of
+`-n 4` runs the tests on four workers. CI and the pre-push hook use that
+command. Each test takes its own ports and its own root. The one thing the
+workers share is the build of the Rust chaperone, and a lock lets one
+worker build it. On a machine with more cores, `-n auto` takes one worker for
+each core. Each run prints the command of
 each service before its result line. Each line ends with the origin of the
 command: `default` or `override`.
 

@@ -49,7 +49,7 @@ NO_PRODUCT=("bin/tests" "$VECTORS_SUITE")
 #: The process-level suite (integration/proc/AGENTS.md). No testpaths entry
 #: holds it, so the full run does not hold it. It runs in a pytest process of
 #: its own, with the command of that document: four workers. The `proc` job
-#: of CI runs the same suite on one worker (.github/workflows/gate.yml).
+#: of CI runs the same command (.github/workflows/gate.yml).
 PROC_DIR="integration/proc"
 PROC_PYTEST=(uv run pytest "$PROC_DIR" -m slow -n 4)
 
