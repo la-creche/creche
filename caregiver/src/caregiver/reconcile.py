@@ -350,10 +350,11 @@ def _converge(
 
     # The table of the family in `policy.toml` is landed on each pass. A
     # server file moves what `all` grants while the family file stays put,
-    # and `land_policy` writes nothing when the table did not move. A family
-    # that the assembly leaves out has no table, so the chaperone refuses
-    # each of its calls: it reads `invalid` with the one error line of the
-    # assembly, and the pass goes no further.
+    # and `land_policy` writes nothing when the table did not move. A new
+    # table that the check refuses is not written, so the last good table
+    # stays in `policy.toml`. A family left out reads `invalid` with the one
+    # error line of the check or of the assembly, and the pass goes no
+    # further.
     standing = steps.land_policy(
         family, index, state_root, creds, actors.policy, rev=registry.revision
     )

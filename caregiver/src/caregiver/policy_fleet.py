@@ -15,8 +15,11 @@ this module writes no file that the check did not pass.
    it replaces stays as `policy.toml.prev`.
 
 A verb lands a family with `land_app` or `land_digests`, and removes one
-with `withdraw_app`. Each answers what `policy.toml` holds for the family
-after the assembly, not what the verb wrote.
+with `withdraw_app`. `land_app` checks a new table alone before it writes
+the fragment. A refused table never replaces the last good fragment, so
+`policy.toml` keeps the table that the family had. Each verb answers what
+`policy.toml` holds for the family after the assembly, not what the verb
+wrote.
 
 The configuration directory of chaperone also holds the operator's
 `install.toml`. This module writes the two names of `TargetFile` there and
@@ -234,9 +237,10 @@ class Held:
 
 @dataclass(frozen=True)
 class LeftOut:
-    """`policy.toml` does not hold the current table of the family. The
-    chaperone refuses each call of the family. `reason` is the one error
-    line of the assembly."""
+    """`policy.toml` does not hold the current table of the family. It
+    holds the last good table of the family, or no table. With no table,
+    the chaperone refuses each call of the family. `reason` is the one
+    error line of the check or of the assembly."""
 
     reason: str
 
@@ -250,14 +254,32 @@ def land_app(root: Path, policy: FleetPolicy, family: str, app: App) -> Standing
     The fragment is written when its table moved. A note that moved alone
     is not a move. The file is assembled when the fragment moved, or when
     `policy.toml` does not hold the fragment. So a pass that moves nothing
-    runs no check."""
+    runs no check. A table that the check refuses alone is not written:
+    the last good fragment stays."""
     wanted = _table(render_app(family, app), family, keep_note=False)
     if wanted != _fragment_table(root, family, keep_note=False):
+        refusal = _refusal_alone(policy.checker, family, app)
+        if refusal is not None:
+            log.warning("%s: the new table is refused, the last one stays: %s", family, refusal)
+            return LeftOut(refusal)
+
         write_fragment(root, family, app)
     elif holds(root, policy.target, family):
         return Held()
 
     return _assemble_for(root, policy, family)
+
+
+def _refusal_alone(checker: PolicyChecker, family: str, app: App) -> str | None:
+    """Why the check refuses the new table of one family alone, or `None`
+    when it passes. A check that does not run is a refusal too: no
+    fragment moves without a verdict."""
+    try:
+        verdict = _check(_join({family: render_app(family, app)}), checker)
+    except CheckerError as error:
+        return str(error)
+
+    return verdict.reason if isinstance(verdict, Refused) else None
 
 
 def land_digests(
