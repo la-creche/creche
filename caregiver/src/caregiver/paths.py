@@ -177,7 +177,8 @@ def read_sandbox_sequence(root: Path, family: str) -> int:
 
 def session_dir(family: str) -> Path:
     """`/srv/agents/sessions/<family>/`, mounted rw at this same path inside
-    the VM. It is the primary workspace (contract 03 §7.1)."""
+    the VM. It is the primary workspace (contract 03 §7.1). `SbxDriver`
+    makes it when it is missing, so a new or renamed family gets one."""
     return SESSIONS_ROOT / family
 
 

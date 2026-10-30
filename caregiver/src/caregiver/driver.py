@@ -12,6 +12,7 @@ import os
 import subprocess
 import threading
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Final, Protocol
 
 log = logging.getLogger("caregiver.driver")
@@ -38,6 +39,10 @@ CREATE_TIMEOUT_S: Final = 300
 POLICY_TIMEOUT_S: Final = 30
 DESTROY_TIMEOUT_S: Final = 60
 LIST_TIMEOUT_S: Final = 30
+
+#: The mode of a primary workspace this driver makes. Only its owner reads
+#: it: the session store holds every chat of the family.
+PRIMARY_MODE: Final = 0o700
 
 #: How much of the error text a command that did not run puts in its
 #: `DriverError`. The other messages of this module cap `stderr` the same way.
@@ -105,11 +110,34 @@ def _run(args: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
         raise DriverError(f"{' '.join(args[:3])}… did not run: {said}") from exc
 
 
+def _make_primary(path: str) -> None:
+    """Make the primary workspace when it is missing. Its parent must exist.
+
+    For a missing primary, `sbx create` probably asks a question. caregiver
+    has no terminal to answer it, and the create fails with `ERROR: user
+    cancelled operation`. Seen on 2026-10-30: `code-worker` and
+    `coding-sandbox` had no `/srv/agents/sessions/<family>/`, and every
+    pass failed. An existing directory keeps its mode.
+
+    A primary that cannot be made is logged, and `sbx create` runs as it
+    did before this step. Its own error then becomes the fault. The proc
+    tests rely on this: their runner has no `/srv/agents/sessions`, and
+    their `sbx` stand-in touches no host path."""
+    try:
+        Path(path).mkdir(mode=PRIMARY_MODE, exist_ok=True)
+    except OSError as exc:
+        said = f"{type(exc).__name__}: {exc}"[:DID_NOT_RUN_CHARS]
+        log.warning("primary workspace %s cannot be made: %s", path, said)
+
+
 class SbxDriver:
     """Shells to `sbx`. Every command is the exact sequence README §6
     proves works; this class adds no policy of its own."""
 
     def create(self, spec: SandboxSpec) -> None:
+        if spec.mounts:
+            _make_primary(spec.mounts[0].path)
+
         args = ["sbx", "create", "shell"]
         for mount in spec.mounts:
             args.append(f"{mount.path}:ro" if mount.readonly else mount.path)
