@@ -106,6 +106,22 @@ def test_each_example_value_is_a_value_of_its_type(
         site.forget()
 
 
+def test_the_site_file_sets_the_two_fences() -> None:
+    """caregiver reads the two fences from the site file. They have no
+    default, so a host that sets neither gives neither."""
+    pair = pair_in(PAIR_DIR)
+    fences = "AGENT_MOUNT_ROOTS=/srv/agents/vault,/srv/agents/code\nAGENT_PLATFORM_FAMILIES=code\n"
+    home = {"operator": EXAMPLE_HOME}.get
+
+    bare = load(pair, Text(".env", _example_env().encode()), home)
+    fenced = load(pair, Text(".env", (_example_env() + fences).encode()), home)
+
+    assert "AGENT_MOUNT_ROOTS" not in bare.values
+    assert "AGENT_PLATFORM_FAMILIES" not in bare.values
+    assert fenced.values["AGENT_MOUNT_ROOTS"] == "/srv/agents/vault,/srv/agents/code"
+    assert fenced.values["AGENT_PLATFORM_FAMILIES"] == "code"
+
+
 def test_the_cutover_keys_have_the_defaults_of_their_programs() -> None:
     settings = load(
         pair_in(PAIR_DIR),
