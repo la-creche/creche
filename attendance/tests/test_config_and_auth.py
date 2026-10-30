@@ -152,7 +152,7 @@ def test_a_finite_count_of_seconds_is_read() -> None:
     assert config.lock_poll_s == 0.5
 
 
-@pytest.mark.parametrize("name", ["SESSIONS_ROOT", "STATE_ROOT", "WORK_ROOT", "SOCKET", "LOG_DIR"])
+@pytest.mark.parametrize("name", ["SESSIONS_ROOT", "STATE_ROOT", "SOCKET", "LOG_DIR"])
 def test_a_path_with_a_nul_byte_refuses(name: str) -> None:
     """No path holds that byte. The config refuses it before a first use."""
     with pytest.raises(ConfigError, match=rf"\AATTENDANCE_{name} "):

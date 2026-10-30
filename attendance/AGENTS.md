@@ -189,6 +189,11 @@ conversation and the one-writer rule (Flue's queue).
 
 ## Mount rules
 
+The per-chat directory of a thin family is `<caller_root>/<owner session>`.
+`caller_root` is the `job.caller_root` of the family file. `caregiver`
+copies it into the `limits` block of the status document. A family with
+none runs each job in its sessions mount. No family name is in this code.
+
 1. Never name a fixed in-VM path. A mount's path inside the VM is its host
    path. `ATTENDANCE_SANDBOX_SESSIONS_MOUNT` is the one override, and only the
    integration harness sets it.
@@ -206,7 +211,6 @@ uv run python -m attendance           # serve
 |---|---|
 | `ATTENDANCE_SESSIONS_ROOT` | the root of each family's sessions mount, the cwd of a job |
 | `ATTENDANCE_STATE_ROOT` | tokens, faults, family status, outcome records, the dispatch ledger |
-| `ATTENDANCE_WORK_ROOT` | the `coding-sandbox` work root |
 | `ATTENDANCE_SOCKET` | the Unix socket |
 | `ATTENDANCE_BIND_LAN`, `ATTENDANCE_LAN_ADDRESS`, `ATTENDANCE_LAN_PORT` | the optional TCP listener, port 8350 |
 | `ATTENDANCE_LOG_DIR` | where the stderr of each `sbx exec` of a family lands |
@@ -278,11 +282,11 @@ is marked `slow`.
 - `caregiver` writes the status document's `channel` field from its own
   ledger. This service does not publish its `LinkStatus` there: it never
   calls `caregiver`, and contract 05 names `caregiver` the one writer.
-- `X-Session-Id` is caller-set, so a model can aim a `coding-sandbox` job at
-  another chat's directory of the same family. The grammar stops any escape
-  from the work root (`service.py`).
-- No chat session lives here since row 21, so nothing deletes a chat's
-  `coding-sandbox` directory (`workspace.py`).
+- `X-Session-Id` is caller-set, so a model can aim a job of a family with a
+  caller root at another chat's directory of the same family. The grammar
+  stops any escape from the caller root (`service.py`).
+- No chat session lives here since row 21, so nothing deletes the directory
+  of a chat under a caller root (`workspace.py`).
 - No contract names `/trigger`. The phase 3 plan, row 14, names the route.
   Its body and its answer are this package's (`requests.py`).
 - The facade's `session/list` row carries `sessionId`, `cwd`, `title` and

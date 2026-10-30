@@ -85,7 +85,6 @@ def attendance_env(tree: Tree) -> dict[str, str]:
         "AGENT_LAN_ADDRESS": LAN_ADDRESS,
         "ATTENDANCE_SESSIONS_ROOT": str(tree.sessions_root),
         "ATTENDANCE_STATE_ROOT": str(tree.state_root),
-        "ATTENDANCE_WORK_ROOT": str(tree.work_root),
         "ATTENDANCE_SOCKET": str(tree.attendance_socket),
         "ATTENDANCE_LOG_DIR": str(tree.log_dir),
         "ATTENDANCE_LOCK_STALE_S": str(LOCK_STALE_S),

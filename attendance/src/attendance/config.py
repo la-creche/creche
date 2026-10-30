@@ -37,7 +37,6 @@ DEFAULT_LAN_PORT = 8350
 
 DEFAULT_SESSIONS_ROOT = "/srv/agents/sessions"
 DEFAULT_STATE_ROOT = "/srv/agents/state/creche"
-DEFAULT_WORK_ROOT = "/srv/agents/work"
 DEFAULT_LOG_DIR = "/var/log/attendance"
 
 #: The playpen's `sbx exec` shape, for the relay into the facade's socket.
@@ -84,7 +83,6 @@ class Config:
 
     sessions_root: Path
     state_root: Path
-    work_root: Path
     socket_path: Path
     bind: Bind
     lan_address: str
@@ -116,7 +114,6 @@ def from_env(environ: dict[str, str] | None = None) -> Config:
     return Config(
         sessions_root=_path(source, "SESSIONS_ROOT", DEFAULT_SESSIONS_ROOT),
         state_root=_path(source, "STATE_ROOT", DEFAULT_STATE_ROOT),
-        work_root=_path(source, "WORK_ROOT", DEFAULT_WORK_ROOT),
         socket_path=_path(source, "SOCKET", DEFAULT_SOCKET),
         bind=_bind(source),
         lan_address=_lan_address(source),

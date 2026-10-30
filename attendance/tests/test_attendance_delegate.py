@@ -24,7 +24,7 @@ from attendance.jobs import (
 )
 from attendance.paths import sandbox_sessions_mount
 from attendance.requests import DelegateRequest, read_delegate
-from attendance.workspace import CODING_SANDBOX_FAMILY, owner_dir
+from attendance.workspace import owner_dir
 from attendance_harness import (
     CHAT_SESSION,
     FAMILY,
@@ -42,6 +42,7 @@ DISPATCH = Principal.CHAPERONE_DISPATCH
 
 ORACLE = "vault-oracle"
 ORACLE_SANDBOX = "vault-oracle-s1"
+CODING_SANDBOX_FAMILY = "coding-sandbox"
 CODING_SANDBOX = "coding-sandbox-s1"
 
 MESSAGE = "Which note holds the boiler service date?"
@@ -58,15 +59,21 @@ class DelegateHarness:
         mode: PromptMode = PromptMode.OK,
     ) -> None:
         self.config = make_config(tmp_path)
+        #: The `job.caller_root` of `coding-sandbox`. `vault-oracle` has none.
+        self.caller_root = tmp_path / "work" / CODING_SANDBOX_FAMILY
         write_status(self.config.state_root)
 
-        for family, sandbox in ((ORACLE, ORACLE_SANDBOX), (CODING_SANDBOX_FAMILY, CODING_SANDBOX)):
+        for family, sandbox, root in (
+            (ORACLE, ORACLE_SANDBOX, None),
+            (CODING_SANDBOX_FAMILY, CODING_SANDBOX, self.caller_root),
+        ):
             write_status(
                 self.config.state_root,
                 family=family,
                 kind="thin",
                 sandboxes=((sandbox, "ready"),),
                 job_timeout_s=job_timeout_s,
+                caller_root=root,
             )
 
         self.facades = FacadeFleet(prompt_mode=mode)
@@ -263,7 +270,7 @@ async def test_a_family_of_no_known_kind_takes_no_delegate_call(tmp_path: Path) 
     assert refused.value.code is ErrorCode.FORBIDDEN
     assert refused.value.detail == {"kind": None}
     assert harness.facades.dials == []
-    assert not owner_dir(harness.config.work_root, CHAT_SESSION).exists()
+    assert not owner_dir(harness.caller_root, CHAT_SESSION).exists()
     await harness.stop()
 
 
@@ -288,7 +295,7 @@ async def test_a_hostile_calling_session_id_is_refused(tmp_path: Path, owner: st
 
     assert refused.value.code is ErrorCode.BAD_REQUEST
     assert harness.facades.dials == []
-    assert not (harness.config.work_root / CODING_SANDBOX_FAMILY).exists()
+    assert not harness.caller_root.exists()
     await harness.stop()
 
 
@@ -296,7 +303,7 @@ async def test_coding_sandbox_works_in_the_calling_chats_directory(tmp_path: Pat
     """Contract 02 §12.1 rules 2 and 3. The chat's directory is the cwd."""
     harness = DelegateHarness(tmp_path)
     await harness.delegate(harness.call(target=CODING_SANDBOX_FAMILY))
-    made = owner_dir(harness.config.work_root, CHAT_SESSION)
+    made = owner_dir(harness.caller_root, CHAT_SESSION)
 
     assert made.is_dir()
     assert harness.new_session_params(CODING_SANDBOX)["cwd"] == str(made)
@@ -314,12 +321,33 @@ async def test_coding_sandbox_with_no_calling_chat_works_in_the_family_mount(
     await harness.stop()
 
 
+async def test_any_thin_family_with_a_caller_root_works_in_the_chats_directory(
+    tmp_path: Path,
+) -> None:
+    """The caller root comes from the status document, not from a family name."""
+    harness = DelegateHarness(tmp_path)
+    root = tmp_path / "work" / ORACLE
+    write_status(
+        harness.config.state_root,
+        family=ORACLE,
+        kind="thin",
+        sandboxes=((ORACLE_SANDBOX, "ready"),),
+        caller_root=root,
+    )
+    await harness.delegate(harness.call(target=ORACLE))
+    made = owner_dir(root, CHAT_SESSION)
+
+    assert made.is_dir()
+    assert harness.new_session_params(ORACLE_SANDBOX)["cwd"] == str(made)
+    await harness.stop()
+
+
 async def test_the_chat_directory_outlives_the_job(tmp_path: Path) -> None:
     """§12.1 rule 4. The directory belongs to the chat, not to the job."""
     harness = DelegateHarness(tmp_path)
     await harness.delegate(harness.call(target=CODING_SANDBOX_FAMILY))
 
-    made = owner_dir(harness.config.work_root, CHAT_SESSION)
+    made = owner_dir(harness.caller_root, CHAT_SESSION)
     (made / "clean.py").write_text("import pandas", encoding="utf-8")
 
     await harness.delegate(harness.call(target=CODING_SANDBOX_FAMILY))

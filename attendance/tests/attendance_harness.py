@@ -68,11 +68,14 @@ def write_status(
     max_running_turns: int | None = None,
     config_rev: str = CONFIG_REV,
     accepts_dispatch: bool = False,
+    caller_root: Path | None = None,
 ) -> None:
     """One status document, as `caregiver` writes it (contract 05 §2)."""
     path = status_file(state_root, family)
     path.parent.mkdir(parents=True, exist_ok=True)
     limits: dict[str, Any] = {} if job_timeout_s is None else {"job_timeout_s": job_timeout_s}
+    if caller_root is not None:
+        limits["caller_root"] = str(caller_root)
 
     if max_running_turns is not None:
         limits["max_running_turns"] = max_running_turns
@@ -102,7 +105,6 @@ def make_config(tmp_path: Path) -> Config:
     return Config(
         sessions_root=tmp_path / "sessions",
         state_root=tmp_path / "state",
-        work_root=tmp_path / "work",
         socket_path=tmp_path / "attendance.sock",
         bind=Bind.SOCKET_ONLY,
         lan_address="192.0.2.10",
