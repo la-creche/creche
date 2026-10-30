@@ -664,6 +664,28 @@ def test_job_on_a_non_thin_family_is_an_error() -> None:
     assert "'job' is thin only" in messages(report)
 
 
+WORK_ROOT = "/srv/agents/work/projects"
+
+
+def test_a_caller_root_on_an_rw_mount_is_valid() -> None:
+    files = [{"path": WORK_ROOT, "mode": "rw"}]
+    report = check("vault-oracle", files=files, job={"caller_root": WORK_ROOT})
+    assert not errors(report), messages(report)
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        [{"path": WORK_ROOT, "mode": "ro"}],
+        [{"path": f"{WORK_ROOT}/one", "mode": "rw"}],
+        [],
+    ],
+)
+def test_a_caller_root_that_is_no_rw_mount_is_an_error(files: list[dict[str, str]]) -> None:
+    report = check("vault-oracle", files=files, job={"caller_root": WORK_ROOT})
+    assert "is not the path of an 'rw' entry of files" in messages(report)
+
+
 def test_job_timeout_past_the_delegate_limit_is_a_warning() -> None:
     report = check("vault-oracle", job={"timeout": "180s"})
     assert not errors(report)

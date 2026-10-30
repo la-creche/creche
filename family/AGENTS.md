@@ -182,6 +182,7 @@ refuses each one, and so does the validator.
 | `tools: all` on `autonomous` | refused |
 | `delegates` | each target exists and is `kind: thin` |
 | `max_inflight_delegations` | 1 to 8, default 2 |
+| `job.caller_root` | thin only. The path of an `rw` entry of `files`. Each calling chat gets a directory under it. |
 | `egress` | no IP literal, no wildcard, port 1 to 65535 |
 | `sandbox_tools` | Flue's six names only: `read`, `write`, `edit`, `bash`, `grep`, `glob`. No name two times. The default is empty. `codemode` is not a name: the agent mounts it for every family. |
 | `triggers` cron | five fields of ASCII digits and `*`, `,`, `-`, `/`, or one of the three short forms |

@@ -265,6 +265,14 @@ def test_job_timeout_decrease_removes() -> None:
     assert change_for(classify(old, new), "job.timeout").direction is Direction.REMOVE
 
 
+def test_caller_root_change_is_live() -> None:
+    old, new = built("vault-oracle", {"job": {}}, {"job": {"caller_root": "/srv/agents/vault"}})
+    change = change_for(classify(old, new), "job.caller_root")
+    assert change.landing is Landing.LIVE
+    assert change.direction is Direction.CHANGE
+    assert change.step is Step.NONE
+
+
 def test_trigger_added() -> None:
     old, new = built(
         "scrum-lead",
