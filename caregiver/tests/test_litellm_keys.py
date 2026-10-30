@@ -161,6 +161,13 @@ def test_delete_key_deletes_by_alias() -> None:
     assert json.loads(seen[0].content) == {"key_aliases": ["family-chat"]}
 
 
+def test_delete_key_of_a_family_with_no_key_is_done() -> None:
+    keys = HttpLiteLLMKeys(
+        "http://x", "sk-master", client=client_with(lambda r: httpx.Response(404))
+    )
+    keys.delete_key("agent-control")
+
+
 def test_delete_key_raises_on_a_bad_status() -> None:
     keys = HttpLiteLLMKeys(
         "http://x", "sk-master", client=client_with(lambda r: httpx.Response(500))
