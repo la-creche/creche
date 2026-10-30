@@ -18,7 +18,7 @@
 # right after it, as a child of the executor that swapped.
 manifest_version: "0.4"
 name: handover
-repo: creche
+repo: agent-control
 path: handover
 kind: venv
 unit: null

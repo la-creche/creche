@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from types import MappingProxyType
+from typing import Final
 
 
 class Repo(StrEnum):
@@ -21,6 +23,28 @@ class Repo(StrEnum):
     MCP = "mcp"
     REGISTRY = "registry"
     CHAPERONE = "chaperone"
+
+
+#: The names of three repositories before the rename, for one release only.
+#: The handover that is installed releases this one, and it reads the old
+#: names in every manifest. The release that moves every manifest to the new
+#: names removes this map.
+OLD_REPO_NAMES: Final = MappingProxyType(
+    {
+        "agent-control": Repo.CRECHE,
+        "agent-mcp": Repo.MCP,
+        "agent-registry": Repo.REGISTRY,
+    }
+)
+
+
+def repo_named(text: str) -> Repo:
+    """The repository that `text` names: a value of `Repo`, or one of
+    `OLD_REPO_NAMES`.
+
+    Raises ValueError for any other text, as `Repo(text)` does."""
+    old = OLD_REPO_NAMES.get(text)
+    return old if old is not None else Repo(text)
 
 
 class Kind(StrEnum):

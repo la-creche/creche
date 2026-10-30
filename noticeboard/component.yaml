@@ -3,7 +3,7 @@
 # the host.
 manifest_version: "0.4"
 name: noticeboard
-repo: creche
+repo: agent-control
 path: noticeboard
 kind: venv
 unit: creche-noticeboard.service
