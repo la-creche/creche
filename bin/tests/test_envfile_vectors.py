@@ -40,7 +40,6 @@ EX_CONFIG: Final = os.EX_CONFIG
 REPO: Final = Path(__file__).resolve().parents[2]
 DATA: Final = REPO / "vectors" / "data" / "envfile"
 LIBRARY: Final = REPO / "bin" / "lib" / "envfile.sh"
-PROGRAM: Final = REPO / ".venv" / "bin" / "creche-env"
 
 #: The names that a vector gives its files.
 DEFAULT_NAME: Final = "default.env"
@@ -222,7 +221,6 @@ def test_some_vectors_ask_no_account() -> None:
 def test_the_library_gives_each_vector_that_asks_no_account(
     vector: dict[str, Any], tmp_path: Path
 ) -> None:
-    assert PROGRAM.is_file(), "run `uv sync`: the venv has no creche-env"
     files = Files(tmp_path, vector["input"]["args"])
 
     run = _bash(LIBRARY, 'creche_env_check "$@"', *files.options())

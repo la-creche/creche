@@ -23,6 +23,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Final
 
@@ -44,7 +45,15 @@ from handover import site
 
 REPO: Final = Path(__file__).resolve().parents[2]
 PAIR_DIR: Final = REPO / "env" / "src" / "creche_env"
-PROGRAM: Final = REPO / ".venv" / "bin" / "creche-env"
+# The command runs the module, not the console script. The console script
+# exists only in the `.venv` that a host `uv sync` fills. The module runs
+# the same entry point of `creche-env` in the venv of the image and on the
+# host. `PYTHONPATH` puts the package of this clone on the path of the
+# child, so the test runs the code of the tree under test.
+os.environ["PYTHONPATH"] = os.pathsep.join(
+    filter(None, (str(REPO / "env" / "src"), os.environ.get("PYTHONPATH")))
+)
+PROGRAM: Final = [sys.executable, "-m", "creche_env"]
 DEFAULT_PATH: Final = f"env/src/creche_env/{DEFAULT_FILE}"
 
 #: The branch that a pull request merges into.
@@ -179,13 +188,12 @@ def test_the_keys_of_the_python_pep_are_not_in_the_catalog() -> None:
 
 
 def test_a_site_file_that_sets_pep_secrets_is_refused(tmp_path: Path) -> None:
-    assert PROGRAM.is_file(), "run `uv sync`: the venv has no creche-env"
     site_file = tmp_path / "site.env"
     site_file.write_text(_example_env() + "PEP_SECRETS=/etc/agent-pep/secrets\n", encoding="utf-8")
     site_file.chmod(0o600)
 
     run = subprocess.run(
-        [str(PROGRAM), "check", "--env", str(site_file)],
+        [*PROGRAM, "check", "--env", str(site_file)],
         capture_output=True,
         text=True,
         check=False,
@@ -209,14 +217,13 @@ def test_the_ha_url_of_the_site_is_not_in_the_catalog() -> None:
 
 
 def test_a_site_file_that_sets_the_ha_url_is_refused(tmp_path: Path) -> None:
-    assert PROGRAM.is_file(), "run `uv sync`: the venv has no creche-env"
     site_file = tmp_path / "site.env"
     text = _example_env() + f"{HA_URL_KEY}=http://192.0.2.20:8123\n"
     site_file.write_text(text, encoding="utf-8")
     site_file.chmod(0o600)
 
     run = subprocess.run(
-        [str(PROGRAM), "check", "--env", str(site_file)],
+        [*PROGRAM, "check", "--env", str(site_file)],
         capture_output=True,
         text=True,
         check=False,
@@ -289,13 +296,12 @@ def test_no_default_differs_from_an_earlier_value() -> None:
 
 
 def test_a_copy_of_example_env_names_each_required_key(tmp_path: Path) -> None:
-    assert PROGRAM.is_file(), "run `uv sync`: the venv has no creche-env"
     copy = tmp_path / "site.env"
     shutil.copy(PAIR_DIR / EXAMPLE_FILE, copy)
     copy.chmod(0o600)
 
     run = subprocess.run(
-        [str(PROGRAM), "check", "--env", str(copy)],
+        [*PROGRAM, "check", "--env", str(copy)],
         capture_output=True,
         text=True,
         check=False,
