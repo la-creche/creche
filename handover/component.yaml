@@ -57,4 +57,5 @@ restore:
   mode: automatic
   keep: 3
 secrets: []
+# Opts the component into the release pipeline; see the resolver notes above.
 release: yes
