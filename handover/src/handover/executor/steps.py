@@ -96,7 +96,7 @@ from .live_state import (
 )
 from .mcpbuild import Fetched, McpBuilder, ServerBuild
 from .notice import Notifier, say_nothing
-from .provenance import ApiGetFn, VerifiedArtifact, check_artifact, check_monotonic
+from .provenance import ApiGetFn, VerifiedArtifact, check_artifact, check_monotonic, verify_commit
 from .provenance import verify as check_provenance
 from .quiet import NO_WINDOW, Busy, BusyNowFn, BusySeenFn, needs_window, wait_for_quiet
 from .request import Kind as RequestKind
@@ -900,6 +900,15 @@ class Release:
                 self.verified[name] = self._check_archive(plan, name, manifest)
 
             found.append(f"{name} PR #{reply.pr}")
+
+        # The registry commit the manifest binds (contract 06 §9.2 rule 4):
+        # a merged pull request into `main` with green CI, as any commit
+        # root installs from. A registry `main` is unprotected, so a commit
+        # pushed straight to it stops here.
+        registry_sha = plan.registry_sha()
+        if registry_sha is not None:
+            reply = verify_commit(self.wiring.api, REGISTRY_DATA, REGISTRY_REPO, registry_sha)
+            found.append(f"{REGISTRY_DATA} PR #{reply.pr}")
 
         checks = ALL_CHECKS if self.verified else HOST_CHECKS
 

@@ -79,6 +79,7 @@ from handover.executor.steps import MAX_SERVERS, REGISTRY_MCP_DIR, Wiring
 from handover.mcpserver import SERVER_FILE_NAME, ServerFile, Source, read_registry
 from handover_executor_fixtures import (
     REGISTRY_SHA,
+    FakeApi,
     FakeRun,
     GitFake,
     fake_host,
@@ -673,6 +674,35 @@ def test_a_set_with_no_registry_commit_builds_nothing(bench: Bench) -> None:
     assert "no registry commit was approved" in str(bench.ledger()["reason"])
     assert bench.installed() == []
     assert not (bench.components / COMPONENT).exists()
+
+
+def test_the_registry_commit_passes_p3_to_p5(bench: Bench) -> None:
+    """Contract 06 §9.2 rule 4: root asks GitHub about the registry commit
+    the manifest binds, as it asks about every commit it installs from."""
+    result = _release(bench)
+
+    assert "succeeded" in result, bench.ledger()["reason"]
+    asked = cast(FakeApi, bench.wiring.api).asked
+    assert any(f"/registry/commits/{REGISTRY_SHA}/pulls" in path for path in asked)
+    assert any("/registry/actions/runs" in path for path in asked)
+
+
+def test_a_registry_commit_no_pull_request_merged_is_refused(bench: Bench) -> None:
+    """A registry `main` is unprotected. A commit pushed straight to it is
+    the merge of no pull request, so P4 refuses it before the tap, and
+    nothing is installed."""
+    api = cast(FakeApi, bench.wiring.api)
+    api.bodies[f"/repos/example-owner/registry/commits/{REGISTRY_SHA}/pulls"] = []
+
+    result = _release(bench)
+
+    assert "succeeded" not in result
+    assert bench.ledger()["refused_check"] == "P4"
+    # `mcp-servers` passed its own P4 first, so the refusal is the registry's.
+    pulls = [path for path in api.asked if "/pulls" in path]
+    assert pulls[-1] == f"/repos/example-owner/registry/commits/{REGISTRY_SHA}/pulls"
+    assert len(pulls) == 2
+    assert bench.installed() == []
 
 
 def test_the_seven_rows_the_operator_reads_before_the_tap(bench: Bench) -> None:

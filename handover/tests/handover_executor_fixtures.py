@@ -393,9 +393,38 @@ class FakeApi:
         return ApiReply(404, "not found")
 
 
+def _merged_commit(base: str, sha: str) -> dict[str, object]:
+    """P3 to P5's answers for a commit that is the green merge of a PR."""
+    return {
+        f"{base}/compare/main...{sha}": {"status": "behind"},
+        f"{base}/commits/{sha}/pulls": [
+            {
+                "number": PR_NUMBER,
+                "merged_at": "2026-09-19T10:00:00Z",
+                "base": {"ref": "main"},
+                "merge_commit_sha": sha,
+                "head": {"sha": HEAD_SHA},
+            }
+        ],
+        f"{base}/actions/runs": {
+            "total_count": 1,
+            "workflow_runs": [
+                {
+                    "name": "ci",
+                    "head_sha": HEAD_SHA,
+                    "status": "completed",
+                    "conclusion": "success",
+                }
+            ],
+        },
+    }
+
+
 def green_api(repo: str, tag: str, sha: str, owner: str = "example-owner") -> FakeApi:
     """Every provenance answer a merged, CI-green, bot-cut Release gives,
-    for the repository that the code host calls `<owner>/<repo>`."""
+    for the repository that the code host calls `<owner>/<repo>`. The
+    registry's `REGISTRY_SHA` answers as a green merge too, because a set
+    that deploys `mcp-servers` checks it (contract 06 §9.2 rule 4)."""
     base = f"/repos/{owner}/{repo}"
 
     return FakeApi(
@@ -410,27 +439,8 @@ def green_api(repo: str, tag: str, sha: str, owner: str = "example-owner") -> Fa
                 "ref": f"refs/tags/{tag}",
                 "object": {"type": "commit", "sha": sha},
             },
-            f"{base}/compare/main...{sha}": {"status": "behind"},
-            f"{base}/commits/{sha}/pulls": [
-                {
-                    "number": PR_NUMBER,
-                    "merged_at": "2026-09-19T10:00:00Z",
-                    "base": {"ref": "main"},
-                    "merge_commit_sha": sha,
-                    "head": {"sha": HEAD_SHA},
-                }
-            ],
-            f"{base}/actions/runs": {
-                "total_count": 1,
-                "workflow_runs": [
-                    {
-                        "name": "ci",
-                        "head_sha": HEAD_SHA,
-                        "status": "completed",
-                        "conclusion": "success",
-                    }
-                ],
-            },
+            **_merged_commit(base, sha),
+            **_merged_commit(f"/repos/{owner}/{Repo.REGISTRY}", REGISTRY_SHA),
         }
     )
 
