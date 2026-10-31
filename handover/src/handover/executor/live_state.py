@@ -35,6 +35,7 @@ and stop a release it has nothing to do with.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -118,9 +119,31 @@ def write_stamp(tree: Path, version: str) -> None:
 REGISTRY_STAMP_FILE: Final = ".registry-rev"
 
 
+#: What `.registry-rev` holds: one commit, 40 lowercase hex.
+REGISTRY_STAMP_RE: Final = re.compile(r"[0-9a-f]{40}")
+
+
 def write_registry_stamp(tree: Path, sha: str) -> None:
     """Stamp a staged `mcp-servers` tree with its registry commit."""
     (tree / REGISTRY_STAMP_FILE).write_text(f"{sha}\n", encoding="utf-8")
+
+
+def installed_registry_rev(tree: Path) -> str | None:
+    """The registry commit stamped under a live tree, or None.
+
+    None for no stamp, and for a stamp that is not one commit. Both read as
+    "a different `mcp` tree" (contract 06 §9.2 rule 3), so a bad stamp can
+    only let a redeploy through to the tap, never refuse one."""
+    stamp = tree / REGISTRY_STAMP_FILE
+    try:
+        if stamp.is_symlink() or stamp.stat().st_size > MAX_STAMP_BYTES:
+            return None
+
+        text = stamp.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+
+    return text if REGISTRY_STAMP_RE.fullmatch(text) else None
 
 
 def stamp_name(markup: Markup) -> str:
@@ -286,6 +309,8 @@ class LiveTree:
     #: The manifest the last release stamped in, parsed. None where no
     #: release has stamped one: a tree the cutover or the visit made.
     manifest: ComponentManifest | None = None
+    #: `<install.to>/.registry-rev`: `mcp-servers` only, None elsewhere.
+    registry_rev: str | None = None
 
 
 @dataclass(frozen=True)
@@ -327,6 +352,7 @@ def _one_tree(roots: tuple[Path, ...], name: str) -> LiveTree:
             present=True,
             version=installed_version(tree),
             manifest=_stamped_manifest(tree, name),
+            registry_rev=installed_registry_rev(tree) if name == MCP_SERVERS else None,
         )
 
     return LiveTree()

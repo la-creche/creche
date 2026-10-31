@@ -12,7 +12,13 @@ import subprocess
 from pathlib import Path
 from typing import cast
 
-from handover.executor.live_state import Readers, build_state
+from handover.executor.live_state import (
+    REGISTRY_STAMP_FILE,
+    Readers,
+    build_state,
+    installed_registry_rev,
+    write_registry_stamp,
+)
 from handover.executor.source import head_commit, input_digest
 from handover.executor.steps import Plan
 from handover.resolve import Resolution
@@ -175,3 +181,32 @@ def test_the_plan_names_the_approved_registry_commit() -> None:
 def test_a_plan_with_a_null_registry_row_names_none() -> None:
     assert _plan([{"name": "registry-data", "sha": None}]).registry_sha() is None
     assert _plan([]).registry_sha() is None
+
+
+# -- the installed stamp --------------------------------------------------
+
+
+def test_the_registry_stamp_reads_back_as_its_commit(tmp_path: Path) -> None:
+    write_registry_stamp(tmp_path, REGISTRY_SHA)
+
+    assert installed_registry_rev(tmp_path) == REGISTRY_SHA
+
+
+def test_no_stamp_reads_as_none(tmp_path: Path) -> None:
+    assert installed_registry_rev(tmp_path) is None
+
+
+def test_a_stamp_that_is_not_one_commit_reads_as_none(tmp_path: Path) -> None:
+    """A bad stamp reads as "a different tree" (contract 06 §9.2 rule 3), so
+    it can only send a redeploy to the tap, never refuse one."""
+    (tmp_path / REGISTRY_STAMP_FILE).write_text("HEAD\n", encoding="utf-8")
+
+    assert installed_registry_rev(tmp_path) is None
+
+
+def test_a_stamp_that_is_a_symlink_reads_as_none(tmp_path: Path) -> None:
+    target = tmp_path / "elsewhere"
+    target.write_text(f"{REGISTRY_SHA}\n", encoding="utf-8")
+    (tmp_path / REGISTRY_STAMP_FILE).symlink_to(target)
+
+    assert installed_registry_rev(tmp_path) is None

@@ -148,6 +148,12 @@ SELF_AFTER: Final = f"{SELF_COMPONENT} switches after the ledger (contract 06 §
 NOT_BUILT_ROLLBACK: Final = "kind rollback is not built"
 NOTHING_TO_DO: Final = "the request moves no component"
 
+#: Contract 06 §9.2 rule 3: the registry's `mcp` tree is the one installed.
+NOTHING_REDEPLOYS: Final = "nothing would deploy: the registry's mcp tree is the one installed"
+
+#: A redeploy with no registry commit has no `mcp` tree to compare.
+NO_REGISTRY_TO_REDEPLOY: Final = "no registry commit to redeploy"
+
 #: §2.6's closed list again: root could not resolve this component's tag to
 #: a commit, so it has no source to fetch. A fixed string, because the only
 #: values that would vary are a component name and a tag, and both are
@@ -651,6 +657,9 @@ class Release:
 
             return "set resolved, contract check pending"
 
+        # After `resolve`, so a redeploy at the wrong version gets rule 1's
+        # reason and not this one.
+        self._require_registry_moved(state)
         plan = self._plan_of(resolution, manifests, state)
         self.plan = plan
         for name in self.unverified:
@@ -668,6 +677,28 @@ class Release:
         self.entry.previous = {name: plan.from_version(name) for name in plan.order}
 
         return ", ".join(plan.moves())
+
+    def _require_registry_moved(self, state: ReleaseState) -> None:
+        """Contract 06 §9.2 rule 3: refuse a redeploy that changes nothing.
+
+        The `registry-data` digest is a hash over the git object id of
+        `mcp` (`source.digest_paths`), so two equal digests are two equal
+        trees. The installed side is the commit in `.registry-rev`. A tree
+        with no stamp, or a stamped commit the clone does not hold, reads as
+        different: the redeploy then goes to the tap."""
+        if self.request.kind is not RequestKind.REDEPLOY:
+            return
+
+        head = state.facts.get(REGISTRY_DATA)
+        if head is None or head.input_digest is None:
+            raise Refusal(RefusalCode.REQUEST, "request", NO_REGISTRY_TO_REDEPLOY)
+
+        installed = self.trees.get(MCP_COMPONENT, LiveTree()).registry_rev
+        if installed is None:
+            return
+
+        if self.wiring.readers.input_digest(REGISTRY_DATA, installed) == head.input_digest:
+            raise Refusal(RefusalCode.REQUEST, "request", NOTHING_REDEPLOYS)
 
     def _build_state(self, registry_sha: str | None = None) -> ReleaseState:
         """Contract 06 §11's document, built by root out of its own reads.

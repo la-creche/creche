@@ -420,6 +420,11 @@ def _merged_commit(base: str, sha: str) -> dict[str, object]:
     }
 
 
+def merge_registry(api: FakeApi, sha: str, owner: str = "example-owner") -> None:
+    """P3 to P5's answers for a second registry commit, a green merge."""
+    api.bodies.update(_merged_commit(f"/repos/{owner}/{Repo.REGISTRY}", sha))
+
+
 def green_api(repo: str, tag: str, sha: str, owner: str = "example-owner") -> FakeApi:
     """Every provenance answer a merged, CI-green, bot-cut Release gives,
     for the repository that the code host calls `<owner>/<repo>`. The
