@@ -16,6 +16,7 @@ command and an environment, and gives back a `Child`:
 6. A process that ended is no process of a group, and its pid is not alive.
    The system keeps such a process until its parent reaps it, and a signal
    still finds it. `/proc` on Linux and `ps` on macOS give its state.
+7. `time_limit` raises `TimeLimitError` where a test waits too long.
 
 The registry at the bottom is the suite's check at session end: a group that
 no teardown confirmed gone is a leak.
@@ -31,10 +32,12 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Generator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import FrameType
 from typing import Final
 
 #: How long a start may take. A cold Python import of a service is about one
@@ -51,7 +54,16 @@ STOP_GRACE_S: Final = 20.0
 #: How long a killed group has to leave the process table.
 REAP_DEADLINE_S: Final = 10.0
 
+#: The time of one test: its setup, its call and its teardown. The longest
+#: wait of a test is the 120 s of `INDEX_DEADLINE_S` in `proc_library.py`.
+#: A teardown takes 30 s at most: `STOP_GRACE_S` and `REAP_DEADLINE_S`.
+TEST_LIMIT_S: Final = 180
+
+
 _POLL_S: Final = 0.02
+
+#: The timer of an outer limit that passed while an inner one ran.
+_FIRE_NOW_S: Final = 0.001
 _PROBE_TIMEOUT_S: Final = 1.0
 _PROBE_REQUEST: Final = b"GET / HTTP/1.1\r\nHost: probe\r\nConnection: close\r\n\r\n"
 _HTTP_ANSWER: Final = b"HTTP/"
@@ -98,6 +110,43 @@ _IS_MACOS: Final = sys.platform == "darwin"
 
 class ProcError(Exception):
     """A child did not do what the harness needed. The message holds its output."""
+
+
+class TimeLimitError(Exception):
+    """A test ran past its time limit. Its traceback shows where it waited."""
+
+
+@contextlib.contextmanager
+def time_limit(seconds: float) -> Generator[None]:
+    """Raise `TimeLimitError` in the code that runs when `seconds` pass.
+
+    SIGALRM does it, so the error comes in the main thread, and the fixtures
+    of the test still end its processes. The handler stays from the start to
+    the end, and the old handler comes back at the end. A check of the signal
+    handlers inside a test sees one handler from its setup to its teardown.
+
+    A limit inside a limit gives the outer one back its time left. An outer
+    limit that passed meanwhile fires at once.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        raise RuntimeError("a time limit needs the main thread: only that thread takes SIGALRM")
+
+    def expire(_signum: int, _frame: FrameType | None) -> None:
+        raise TimeLimitError(f"the test ran past its limit of {seconds} s")
+
+    previous = signal.signal(signal.SIGALRM, expire)
+    start = time.monotonic()
+    outer_left, _interval = signal.setitimer(signal.ITIMER_REAL, seconds)
+
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, signal.SIG_DFL if previous is None else previous)
+
+        if outer_left > 0:
+            left = outer_left - (time.monotonic() - start)
+            signal.setitimer(signal.ITIMER_REAL, max(left, _FIRE_NOW_S))
 
 
 @dataclass(frozen=True, slots=True)

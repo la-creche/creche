@@ -18,8 +18,10 @@ from pathlib import Path
 import proc_harness
 import pytest
 from proc_harness import (
+    TEST_LIMIT_S,
     ProcError,
     Supervisor,
+    TimeLimitError,
     UnixAddress,
     end_leaked_groups,
     hold_port,
@@ -584,3 +586,33 @@ def _read_when_written(path: Path) -> str:
         time.sleep(0.01)
 
     raise AssertionError(f"{path} was never written")
+
+
+#: How long a test of `time_limit` gives the code that it stops.
+SHORT_LIMIT_S = 0.2
+
+
+def test_each_test_runs_under_the_time_limit() -> None:
+    """`conftest.py` puts each test under `TEST_LIMIT_S`: the timer runs now."""
+    left, _interval = signal.getitimer(signal.ITIMER_REAL)
+
+    assert 0 < left <= TEST_LIMIT_S
+
+
+def test_a_wait_past_the_limit_raises_where_it_waits() -> None:
+    """The error comes in the code that waits, and the handler of the test comes back."""
+    outer = signal.getsignal(signal.SIGALRM)
+    start = time.monotonic()
+
+    with (
+        pytest.raises(TimeLimitError, match=f"limit of {SHORT_LIMIT_S} s") as raised,
+        proc_harness.time_limit(SHORT_LIMIT_S),
+    ):
+        time.sleep(MARK_DEADLINE_S)
+
+    assert time.monotonic() - start < MARK_DEADLINE_S
+    assert raised.traceback[-1].name == "expire"
+    assert raised.traceback[-2].name == test_a_wait_past_the_limit_raises_where_it_waits.__name__
+    assert signal.getsignal(signal.SIGALRM) is outer
+    left, _interval = signal.getitimer(signal.ITIMER_REAL)
+    assert 0 < left <= TEST_LIMIT_S

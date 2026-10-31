@@ -66,7 +66,7 @@ format and pyright.
 | a path under a package, for example `attendance/app.py` | that package's suite, `--tests-for`. For a product package, also `vectors/tests` |
 | a path in no package, for example `uv.lock` or `pyproject.toml` | the full suite. The hook passes `--tests-for`, and the gate runs every suite |
 | a path under `vectors/`, for example `vectors/data/index.json` | `vectors/tests` |
-| a path under `integration/proc/`, for example `integration/proc/proc_tree.py` | the process-level suite on four workers, and no other suite for that path. A test that skips is a failure, as in the `proc` job of CI. A Markdown file there, outside `tests/` and `fixtures/`, picks no suite |
+| a path under `integration/proc/`, for example `integration/proc/proc_tree.py` | the process-level suite on one worker for each core, and no other suite for that path. A test that skips is a failure, as in the `proc` job of CI. A Markdown file there, outside `tests/` and `fixtures/`, picks no suite |
 | Markdown only, outside `tests/` and `fixtures/` | the tests marked `docs`, `--docs` |
 | nothing, or a deleted branch | no test |
 

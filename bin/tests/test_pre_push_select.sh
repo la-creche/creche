@@ -143,10 +143,10 @@ for stray in uv.lock pyproject.toml docs/host-release.md .github/workflows/gate.
     || fail "$stray: rc=$RC, pytest line '$PYTEST'"
 done
 
-# The process-level suite, as integration/proc/AGENTS.md runs it on four
-# workers: a pytest process of its own. Each skip is a failure, as in the
+# The process-level suite, on one worker for each core: a pytest process of
+# its own. Each skip is a failure, as in the
 # `proc` job of CI (.github/workflows/gate.yml).
-PROC="run pytest integration/proc -m slow -n 4"
+PROC="run pytest integration/proc -m slow -n auto"
 
 gate --tests-for integration/proc/proc_tree.py integration/proc/test_proc_table.py
 [[ "$RC" == "0" && "$PYTEST" == "$PROC" ]] \
