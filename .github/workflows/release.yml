@@ -66,15 +66,15 @@
 #
 # agent-mcp has a SIBLING of the `release` job, in its own
 # rework-component-tags.yml. `mcp-servers` is its component, not
-# agent-control's (contract 06 §1 row 6), and the planner scopes every
+# creche's (contract 06 §1 row 6), and the planner scopes every
 # decision to one repository, so this run never tags it. That workflow
-# checks agent-control out at a pinned commit and runs the same script
+# checks creche out at a pinned commit and runs the same script
 # against agent-mcp's tree.
 #
 # `workflow_dispatch` starts the same run by hand, for a commit a missed run
 # left behind. Read the plan first, from any checkout:
 #
-#   GITHUB_REPOSITORY=<owner>/agent-control GITHUB_SHA=$(git rev-parse HEAD) \
+#   GITHUB_REPOSITORY=<owner>/creche GITHUB_SHA=$(git rev-parse HEAD) \
 #     handover/bin/allocate-tags.sh --dry-run
 name: release
 

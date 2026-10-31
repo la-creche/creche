@@ -1,16 +1,16 @@
 # FIXTURE ONLY. Contract 01b's examples cover one vikunja-* server (§8.4).
 # Contract 01 §8 grants three more, so this file repeats that shape with this
 # epic's own bot. It is a test fixture, not a contract example.
-name = "vikunja-agent-control"
-identity = "The Vikunja bot `bot-agent-control`. It writes as that actor, on the `agent-control` epic, in the House project, and cannot reach another epic."
+name = "vikunja-code"
+identity = "The Vikunja bot `bot-code`. It writes as that actor, on the `code` epic, in the House project, and cannot reach another epic."
 
 install.source = "agent-mcp"
 
 run.entrypoint = "vikunja-mcp"
 run.env.VIKUNJA_URL = "http://127.0.0.1:3456"
-run.env.VIKUNJA_TOKEN = "secret:vikunja_token_agent_control"
-run.env.VIKUNJA_ACTOR = "bot-agent-control"
-run.env.VIKUNJA_EPIC = "agent-control"
+run.env.VIKUNJA_TOKEN = "secret:vikunja_token_code"
+run.env.VIKUNJA_ACTOR = "bot-code"
+run.env.VIKUNJA_EPIC = "code"
 run.env.VIKUNJA_PROJECT = "House"
 
 tools = [

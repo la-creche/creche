@@ -28,4 +28,4 @@ survey_board = {}
 send_standup_email = {}
 
 [apps.scrum-lead.plugins.attendance]
-enqueue_targets = ["agent-control-worker", "finance-worker", "home-assistant-worker", "networking-worker"]
+enqueue_targets = ["code-worker", "finance-worker", "home-assistant-worker", "networking-worker"]

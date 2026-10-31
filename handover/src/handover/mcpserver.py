@@ -166,7 +166,7 @@ ARG_NAME_RE: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
 #: Contract 01b §7.2: one argument name, or exactly two joined by a single
 #: `/`. The composite is the whole point of the field — `owner/repo` fences
 #: the half that carries the identity, and `repo` alone lets
-#: `someone-else/agent-control` through a deny meant for `<owner>/`. It
+#: `someone-else/creche` through a deny meant for `<owner>/`. It
 #: is not `ENTRYPOINT_RE`, which holds no `/` and would refuse both GitHub
 #: servers.
 FENCE_ARG_RE: Final = re.compile(rf"{ARG_NAME_RE.pattern}(/{ARG_NAME_RE.pattern})?")

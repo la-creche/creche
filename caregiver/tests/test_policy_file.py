@@ -91,7 +91,7 @@ def test_policy_app_scrum_lead() -> None:
         "send_standup_email = {}\n"
         "\n"
         "[apps.scrum-lead.plugins.attendance]\n"
-        'enqueue_targets = ["agent-control-worker", "finance-worker", '
+        'enqueue_targets = ["code-worker", "finance-worker", '
         '"home-assistant-worker", "networking-worker"]\n'
     )
 
@@ -228,16 +228,14 @@ def test_an_owner_repo_allow_splits_into_two_allows() -> None:
     assert tools["get_file_contents"] == {
         "arguments": {
             "owner": {"allow": ["example-owner"]},
-            "repo": {"allow": ["agent-control", "agent-mcp", "agent-registry"]},
+            "repo": {"allow": ["creche", "mcp", "registry"]},
         }
     }
 
 
 def test_an_owner_repo_deny_denies_the_repo_names() -> None:
     tools = tools_of(_REGISTRY.families["code"], "github-code")
-    assert tools["search_code"] == {
-        "arguments": {"repo": {"deny": ["agent-control", "agent-mcp", "agent-registry"]}}
-    }
+    assert tools["search_code"] == {"arguments": {"repo": {"deny": ["creche", "mcp", "registry"]}}}
 
 
 def test_a_fence_on_named_tools_reaches_those_tools_only() -> None:

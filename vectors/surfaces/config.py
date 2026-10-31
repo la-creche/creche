@@ -61,7 +61,7 @@ SITE_FILE_NAME: Final = "site.env"
 SITE_MODE: Final = 0o600
 
 #: The repository that `github_repo` is asked for.
-CATALOG_REPO: Final = "agent-control"
+CATALOG_REPO: Final = "creche"
 
 #: What a refusal of the whole file says, and the class a vector records.
 _FILE_REFUSALS: Final = (
@@ -197,15 +197,15 @@ SITE_DOCUMENTS: Final[tuple[SiteDocument, ...]] = (
     _with("lan-ipv6", "AGENT_LAN_ADDRESS", "::1"),
     _with("lan-digit-not-ascii", "AGENT_LAN_ADDRESS", "\uff11\uff19\uff12.0.2.10"),
     # --- the name of a repository ---
-    _with("repo-renamed", "AGENT_GITHUB_REPO_AGENT_CONTROL", "creche"),
-    _with("repo-plain-bytes", "AGENT_GITHUB_REPO_AGENT_CONTROL", "_a.b-c"),
-    _with("repo-100-chars", "AGENT_GITHUB_REPO_AGENT_CONTROL", "a" * 100),
-    _with("repo-101-chars", "AGENT_GITHUB_REPO_AGENT_CONTROL", "a" * 101),
-    _with("repo-parent", "AGENT_GITHUB_REPO_AGENT_CONTROL", ".."),
-    _with("repo-with-slash", "AGENT_GITHUB_REPO_AGENT_CONTROL", "owner/creche"),
-    _with("repo-empty", "AGENT_GITHUB_REPO_AGENT_CONTROL", ""),
-    _with("repo-key-lower", "agent_github_repo_agent_control", "creche"),
-    _with("repo-key-with-hyphen", "AGENT_GITHUB_REPO_AGENT-CONTROL", "creche"),
+    _with("repo-renamed", "AGENT_GITHUB_REPO_CRECHE", "some-product"),
+    _with("repo-plain-bytes", "AGENT_GITHUB_REPO_CRECHE", "_a.b-c"),
+    _with("repo-100-chars", "AGENT_GITHUB_REPO_CRECHE", "a" * 100),
+    _with("repo-101-chars", "AGENT_GITHUB_REPO_CRECHE", "a" * 101),
+    _with("repo-parent", "AGENT_GITHUB_REPO_CRECHE", ".."),
+    _with("repo-with-slash", "AGENT_GITHUB_REPO_CRECHE", "owner/creche"),
+    _with("repo-empty", "AGENT_GITHUB_REPO_CRECHE", ""),
+    _with("repo-key-lower", "agent_github_repo_creche", "creche"),
+    _with("repo-key-with-hyphen", "AGENT_GITHUB_REPO_CRE-CHE", "creche"),
 )
 
 #: The readers of one site file, in the order of a vector's value.

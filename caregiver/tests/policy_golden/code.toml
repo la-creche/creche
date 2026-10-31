@@ -13,53 +13,53 @@ max_inflight = 2
 invoke_agent = {}
 
 [apps.code.grants.github-code.tools]
-add_comment_to_pending_review = { arguments = { repo = { deny = ["agent-control", "agent-mcp", "agent-registry"] } } }
-add_issue_comment = { arguments = { repo = { deny = ["agent-control", "agent-mcp", "agent-registry"] } } }
-add_reply_to_pull_request_comment = { arguments = { repo = { deny = ["agent-control", "agent-mcp", "agent-registry"] } } }
-create_branch = { arguments = { branch = { deny = ["main", "master"] }, repo = { deny = ["agent-control", "agent-mcp", "agent-registry"] } } }
-create_or_update_file = { arguments = { branch = { deny = ["main", "master"] }, repo = { deny = ["agent-control", "agent-mcp", "agent-registry"] } } }
-create_pull_request = { arguments = { repo = { deny = ["agent-control", "agent-mcp", "agent-registry"] } } }
-delete_file = { arguments = { branch = { deny = ["main", "master"] }, repo = { deny = ["agent-control", "agent-mcp", "agent-registry"] } } }
-get_commit = { arguments = { repo = { deny = ["agent-control", "agent-mcp", "agent-registry"] } } }
-get_file_contents = { arguments = { repo = { deny = ["agent-control", "agent-mcp", "agent-registry"] } } }
-get_label = { arguments = { repo = { deny = ["agent-control", "agent-mcp", "agent-registry"] } } }
-get_latest_release = { arguments = { repo = { deny = ["agent-control", "agent-mcp", "agent-registry"] } } }
-list_branches = { arguments = { repo = { deny = ["agent-control", "agent-mcp", "agent-registry"] } } }
-list_commits = { arguments = { repo = { deny = ["agent-control", "agent-mcp", "agent-registry"] } } }
-list_pull_requests = { arguments = { repo = { deny = ["agent-control", "agent-mcp", "agent-registry"] } } }
-list_tags = { arguments = { repo = { deny = ["agent-control", "agent-mcp", "agent-registry"] } } }
-merge_pull_request = { arguments = { repo = { deny = ["agent-control", "agent-mcp", "agent-registry"] } } }
-pull_request_read = { arguments = { repo = { deny = ["agent-control", "agent-mcp", "agent-registry"] } } }
-pull_request_review_write = { arguments = { repo = { deny = ["agent-control", "agent-mcp", "agent-registry"] } } }
-push_files = { arguments = { branch = { deny = ["main", "master"] }, repo = { deny = ["agent-control", "agent-mcp", "agent-registry"] } } }
-search_code = { arguments = { repo = { deny = ["agent-control", "agent-mcp", "agent-registry"] } } }
-search_commits = { arguments = { repo = { deny = ["agent-control", "agent-mcp", "agent-registry"] } } }
-search_pull_requests = { arguments = { repo = { deny = ["agent-control", "agent-mcp", "agent-registry"] } } }
-search_repositories = { arguments = { repo = { deny = ["agent-control", "agent-mcp", "agent-registry"] } } }
-update_pull_request = { arguments = { repo = { deny = ["agent-control", "agent-mcp", "agent-registry"] } } }
-update_pull_request_branch = { arguments = { branch = { deny = ["main", "master"] }, repo = { deny = ["agent-control", "agent-mcp", "agent-registry"] } } }
+add_comment_to_pending_review = { arguments = { repo = { deny = ["creche", "mcp", "registry"] } } }
+add_issue_comment = { arguments = { repo = { deny = ["creche", "mcp", "registry"] } } }
+add_reply_to_pull_request_comment = { arguments = { repo = { deny = ["creche", "mcp", "registry"] } } }
+create_branch = { arguments = { branch = { deny = ["main", "master"] }, repo = { deny = ["creche", "mcp", "registry"] } } }
+create_or_update_file = { arguments = { branch = { deny = ["main", "master"] }, repo = { deny = ["creche", "mcp", "registry"] } } }
+create_pull_request = { arguments = { repo = { deny = ["creche", "mcp", "registry"] } } }
+delete_file = { arguments = { branch = { deny = ["main", "master"] }, repo = { deny = ["creche", "mcp", "registry"] } } }
+get_commit = { arguments = { repo = { deny = ["creche", "mcp", "registry"] } } }
+get_file_contents = { arguments = { repo = { deny = ["creche", "mcp", "registry"] } } }
+get_label = { arguments = { repo = { deny = ["creche", "mcp", "registry"] } } }
+get_latest_release = { arguments = { repo = { deny = ["creche", "mcp", "registry"] } } }
+list_branches = { arguments = { repo = { deny = ["creche", "mcp", "registry"] } } }
+list_commits = { arguments = { repo = { deny = ["creche", "mcp", "registry"] } } }
+list_pull_requests = { arguments = { repo = { deny = ["creche", "mcp", "registry"] } } }
+list_tags = { arguments = { repo = { deny = ["creche", "mcp", "registry"] } } }
+merge_pull_request = { arguments = { repo = { deny = ["creche", "mcp", "registry"] } } }
+pull_request_read = { arguments = { repo = { deny = ["creche", "mcp", "registry"] } } }
+pull_request_review_write = { arguments = { repo = { deny = ["creche", "mcp", "registry"] } } }
+push_files = { arguments = { branch = { deny = ["main", "master"] }, repo = { deny = ["creche", "mcp", "registry"] } } }
+search_code = { arguments = { repo = { deny = ["creche", "mcp", "registry"] } } }
+search_commits = { arguments = { repo = { deny = ["creche", "mcp", "registry"] } } }
+search_pull_requests = { arguments = { repo = { deny = ["creche", "mcp", "registry"] } } }
+search_repositories = { arguments = { repo = { deny = ["creche", "mcp", "registry"] } } }
+update_pull_request = { arguments = { repo = { deny = ["creche", "mcp", "registry"] } } }
+update_pull_request_branch = { arguments = { branch = { deny = ["main", "master"] }, repo = { deny = ["creche", "mcp", "registry"] } } }
 
 [apps.code.grants.github-platform.tools]
-add_comment_to_pending_review = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
-add_issue_comment = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
-add_reply_to_pull_request_comment = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
-create_branch = { arguments = { branch = { deny = ["main", "master"] }, owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
-create_or_update_file = { arguments = { branch = { deny = ["main", "master"] }, owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
-create_pull_request = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
-delete_file = { arguments = { branch = { deny = ["main", "master"] }, owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
-get_commit = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
-get_file_contents = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
-get_label = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
-get_latest_release = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
-list_branches = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
-list_commits = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
-list_pull_requests = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
-list_tags = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
-pull_request_read = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
-pull_request_review_write = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
-push_files = { arguments = { branch = { deny = ["main", "master"] }, owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
-update_pull_request = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
-update_pull_request_branch = { arguments = { branch = { deny = ["main", "master"] }, owner = { allow = ["example-owner"] }, repo = { allow = ["agent-control", "agent-mcp", "agent-registry"] } } }
+add_comment_to_pending_review = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["creche", "mcp", "registry"] } } }
+add_issue_comment = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["creche", "mcp", "registry"] } } }
+add_reply_to_pull_request_comment = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["creche", "mcp", "registry"] } } }
+create_branch = { arguments = { branch = { deny = ["main", "master"] }, owner = { allow = ["example-owner"] }, repo = { allow = ["creche", "mcp", "registry"] } } }
+create_or_update_file = { arguments = { branch = { deny = ["main", "master"] }, owner = { allow = ["example-owner"] }, repo = { allow = ["creche", "mcp", "registry"] } } }
+create_pull_request = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["creche", "mcp", "registry"] } } }
+delete_file = { arguments = { branch = { deny = ["main", "master"] }, owner = { allow = ["example-owner"] }, repo = { allow = ["creche", "mcp", "registry"] } } }
+get_commit = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["creche", "mcp", "registry"] } } }
+get_file_contents = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["creche", "mcp", "registry"] } } }
+get_label = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["creche", "mcp", "registry"] } } }
+get_latest_release = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["creche", "mcp", "registry"] } } }
+list_branches = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["creche", "mcp", "registry"] } } }
+list_commits = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["creche", "mcp", "registry"] } } }
+list_pull_requests = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["creche", "mcp", "registry"] } } }
+list_tags = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["creche", "mcp", "registry"] } } }
+pull_request_read = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["creche", "mcp", "registry"] } } }
+pull_request_review_write = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["creche", "mcp", "registry"] } } }
+push_files = { arguments = { branch = { deny = ["main", "master"] }, owner = { allow = ["example-owner"] }, repo = { allow = ["creche", "mcp", "registry"] } } }
+update_pull_request = { arguments = { owner = { allow = ["example-owner"] }, repo = { allow = ["creche", "mcp", "registry"] } } }
+update_pull_request_branch = { arguments = { branch = { deny = ["main", "master"] }, owner = { allow = ["example-owner"] }, repo = { allow = ["creche", "mcp", "registry"] } } }
 
 [apps.code.grants.kagi.tools]
 kagi_extract = {}
@@ -68,7 +68,7 @@ kagi_search_fetch = {}
 [apps.code.grants.release.tools]
 request = {}
 
-[apps.code.grants.vikunja-agent-control.tools]
+[apps.code.grants.vikunja-code.tools]
 comment_on_ticket = {}
 create_triage_ticket = {}
 get_ticket = {}

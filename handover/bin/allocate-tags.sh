@@ -4,15 +4,15 @@
 # never as root: it writes tags and Releases in GitHub, nothing on the host.
 #   handover/bin/allocate-tags.sh [--dry-run]
 #
-# TWO REPOSITORIES RUN IT. agent-control's workflow runs it from
-# its own checkout. agent-mcp's workflow checks agent-control out beside its
+# TWO REPOSITORIES RUN IT. creche's workflow runs it from
+# its own checkout. agent-mcp's workflow checks creche out beside its
 # own tree and borrows this script, because contract 06 §1 gives `mcp-servers`
 # to agent-mcp and the allocator that knows that lives here. Two environment
-# variables carry the difference, and both default to the agent-control case:
+# variables carry the difference, and both default to the creche case:
 #   TAG_REPO_ROOT  the checkout to READ and TAG. Default: this script's own
 #                  repository. Every `git` call below reads it.
 #   TAG_REPO       the catalog's name for the repository this run tags, e.g.
-#                  agent-control. Default: the name part of GITHUB_REPOSITORY,
+#                  creche. Default: the name part of GITHUB_REPOSITORY,
 #                  else of the tagged tree's origin.
 #   RELEASE_CLI    the resolver command. Default: `uv run` against the
 #                  `handover` project beside this script, wherever it sits.
@@ -25,7 +25,7 @@
 #
 # THE DRY RUN NEEDS NO WRITE SCOPE, and it says what the next merge would
 # tag. It prints every component's range. From a developer's own checkout:
-#   GITHUB_REPOSITORY=<owner>/agent-control GITHUB_SHA=$(git rev-parse HEAD) \
+#   GITHUB_REPOSITORY=<owner>/creche GITHUB_SHA=$(git rev-parse HEAD) \
 #     handover/bin/allocate-tags.sh --dry-run
 # Both variables are optional. Without GITHUB_SHA the checkout's HEAD stands.
 # Without GITHUB_REPOSITORY the tagged tree's `origin` remote names the
@@ -36,8 +36,8 @@
 # WHICH COMPONENTS A RUN MAY TAG. Contract 06 §1 gives every component one
 # repository, and `--repo` is what scopes the plan to it (`allocate.plan_tags`
 # keeps `row.repo is repo` on every decision). Without it the CLI default
-# `agent-control` would stand wherever the script ran: a run inside an
-# agent-mcp checkout would plan agent-control's seven components and push
+# `creche` would stand wherever the script ran: a run inside an
+# agent-mcp checkout would plan creche's seven components and push
 # `chaperone-v0.1.0` into agent-mcp. The repository name comes from the
 # environment, and the planner refuses a name the catalog does not hold.
 #
@@ -100,7 +100,7 @@ die() { printf '::error::%s\n' "$*" >&2; exit 1; }
 # stays one line and the planner reads one path for one name.
 lines() { tr '\n\0' '?\n'; }
 
-# Two roots, and in agent-control they are one directory. SELF_ROOT is where
+# Two roots, and in creche they are one directory. SELF_ROOT is where
 # this script and the `handover` project live, and it is used for nothing else.
 # REPO_ROOT is the checkout this run reads and tags, which agent-mcp's
 # workflow points at its own tree. Splitting them is what lets one allocator
@@ -141,7 +141,7 @@ mkdir -p "$WORK/ranges"
 # it: the name part of `<owner>/<name>`. CI always sets GITHUB_REPOSITORY. A
 # developer's checkout usually does not, so the TAGGED TREE's own origin
 # answers — its own, never this script's, so a borrowed run cannot read
-# agent-control's remote and plan agent-control's components. Neither source
+# creche's remote and plan creche's components. Neither source
 # is trusted: probe 1 below hands the name to the planner, which holds the
 # catalog and refuses anything else.
 #

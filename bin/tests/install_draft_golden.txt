@@ -52,10 +52,10 @@ user = "mcp-mail"
 secret_delivery = "env"
 secrets = { SMTP_PASSWORD = "smtp_password_standup" }
 
-[plugins.vikunja-agent-control]
-user = "mcp-vikunja-agent-control"
+[plugins.vikunja-code]
+user = "mcp-vikunja-code"
 secret_delivery = "env"
-secrets = { VIKUNJA_TOKEN = "vikunja_token_agent_control" }
+secrets = { VIKUNJA_TOKEN = "vikunja_token_code" }
 
 [plugins.vikunja-finance]
 user = "mcp-vikunja-finance"
@@ -156,19 +156,19 @@ command = [
     "SMTP_HOST=127.0.0.1",
     "/opt/mcp/mail/bin/mail-mcp",
 ]
---- plugins/effect/added/vikunja-agent-control/plugin.toml
-name = "vikunja-agent-control"
+--- plugins/effect/added/vikunja-code/plugin.toml
+name = "vikunja-code"
 version = "1.0.0"
 kind = "effect"
 hooks = ["upstream"]
 secrets = ["VIKUNJA_TOKEN"]
 command = [
     "/usr/bin/env",
-    "VIKUNJA_ACTOR=bot-agent-control",
-    "VIKUNJA_EPIC=agent-control",
+    "VIKUNJA_ACTOR=bot-code",
+    "VIKUNJA_EPIC=code",
     "VIKUNJA_PROJECT=House",
     "VIKUNJA_URL=http://127.0.0.1:3456",
-    "/opt/mcp/vikunja-agent-control/bin/vikunja-mcp",
+    "/opt/mcp/vikunja-code/bin/vikunja-mcp",
 ]
 --- plugins/effect/added/vikunja-finance/plugin.toml
 name = "vikunja-finance"

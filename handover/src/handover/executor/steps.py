@@ -812,7 +812,7 @@ class Release:
         """One clone per component, because each resolves to its own SHA.
 
         Each clone is a WHOLE repository, and seven components share
-        `agent-control`: a walk of every clone would find each manifest
+        `creche`: a walk of every clone would find each manifest
         seven times and refuse the set. `read_one` takes the one file the
         catalog places in that clone.
         """

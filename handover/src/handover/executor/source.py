@@ -1,8 +1,8 @@
 """Where root reads a repository from, and on what terms.
 
 Root never runs git inside `/srv/agents/work/platform/<repo>`. That directory
-is the `agent-control` family's READ-WRITE mount — the registry's
-`families/agent-control/family.yaml` says so and `docs/rework/spec.md` §4.4
+is the `creche` family's READ-WRITE mount — the registry's
+`families/creche/family.yaml` says so and `docs/rework/spec.md` §4.4
 fences it — so a model in that sandbox writes `.git/config`, `.git/hooks` and
 `.git/objects/info/alternates` of all three checkouts. The SHA pins WHAT root
 builds: it comes from GitHub through the P1 to P5 predicate, not from the
@@ -16,7 +16,7 @@ that sees it at all (contract 01 §5.5 rule 6, the platform mirror; the family
 file's own comment says "the sandbox holds no git credential ... and nothing
 on the host may run git inside `work/platform`"). Root already trusts a
 checkout the operator owns — `bin/creche-deploy` fetches `/opt/creche`
-from the operator's `~/code/agent-control` — so an operator-owned clone no sandbox can
+from the operator's `~/code/creche` — so an operator-owned clone no sandbox can
 write is inside a trust root already has. A sandbox-writable one is not.
 
 Two controls, and neither replaces the other.

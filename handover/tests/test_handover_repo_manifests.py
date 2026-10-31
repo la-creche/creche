@@ -49,7 +49,7 @@ def _provided(found: ManifestSet) -> dict[ContractId, tuple[int, int]]:
     }
 
 
-def test_every_agent_control_component_declares_itself(found: ManifestSet) -> None:
+def test_every_creche_component_declares_itself(found: ManifestSet) -> None:
     """All but a retiring one, whose directory has left this tree
     (`catalog.RETIRING`), and an arriving one, whose directory has not
     reached it yet (`catalog.ARRIVING`)."""

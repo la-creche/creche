@@ -48,7 +48,7 @@ run.args = ["stdio", "--lockdown-mode"]
 run.env.GITHUB_PERSONAL_ACCESS_TOKEN = "secret:github_token_code"
 
 arg_denies = [
-    { tools = "all", arg = "owner/repo", values = ["example-owner/agent-control"] },
+    { tools = "all", arg = "owner/repo", values = ["example-owner/creche"] },
     { tools = ["push_files"], arg = "branch", values = ["main", "master"] },
 ]
 

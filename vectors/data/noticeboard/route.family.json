@@ -32,7 +32,7 @@
   {"id":"leading-hyphen","input":{"text":"-chat"},"refusal":{"edit":404,"family":404,"session":404},"result":"refused"},
   {"id":"upper-first","input":{"text":"Chat"},"refusal":{"edit":404,"family":404,"session":404},"result":"refused"},
   {"id":"upper-last","input":{"text":"chaT"},"refusal":{"edit":404,"family":404,"session":404},"result":"refused"},
-  {"id":"underscore","input":{"text":"agent_control"},"refusal":{"edit":404,"family":404,"session":404},"result":"refused"},
+  {"id":"underscore","input":{"text":"code_worker"},"refusal":{"edit":404,"family":404,"session":404},"result":"refused"},
   {"id":"double-underscore","input":{"text":"a__b"},"refusal":{"edit":404,"family":404,"session":404},"result":"refused"},
   {"id":"dot","input":{"text":"a.b"},"refusal":{"edit":404,"family":404,"session":404},"result":"refused"},
   {"id":"slash","input":{"text":"a%2Fb"},"refusal":{"edit":404,"family":404,"session":404},"result":"refused"},

@@ -62,7 +62,7 @@ def test_order_titles_and_assignees_do_not_move_it() -> None:
 MOVES: tuple[tuple[str, Any], ...] = (
     ("points", 5),
     ("refined", False),
-    ("epic", "agent-control"),
+    ("epic", "code"),
 )
 
 

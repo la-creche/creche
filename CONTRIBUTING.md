@@ -141,7 +141,7 @@ component's own newest tag.
 Read the plan before a merge, from any checkout:
 
 ```bash
-GITHUB_REPOSITORY=<owner>/agent-control GITHUB_SHA=$(git rev-parse HEAD) handover/bin/allocate-tags.sh --dry-run
+GITHUB_REPOSITORY=<owner>/creche GITHUB_SHA=$(git rev-parse HEAD) handover/bin/allocate-tags.sh --dry-run
 ```
 
 One release per merged change. A request names the components to move. Root

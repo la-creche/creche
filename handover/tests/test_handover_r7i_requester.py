@@ -163,7 +163,7 @@ def test_a_release_carrying_a_rollback_target_is_refused() -> None:
 
 def test_a_requested_by_that_is_not_a_name_is_refused() -> None:
     with pytest.raises(Refusal):
-        _plan({"chaperone": "2.1.0"}, requested_by="Agent Control")
+        _plan({"chaperone": "2.1.0"}, requested_by="Creche Family")
 
 
 def test_a_session_id_with_a_newline_is_refused() -> None:

@@ -3,10 +3,10 @@
 #
 # Note the fence: this family is NOT in the platform allowlist (§5.5), so it
 # holds no mount under /srv/agents/work/platform and no `release` verb. Only
-# the `agent-control` family does.
-name = "agent-control-worker"
+# the `code` family does.
+name = "code-worker"
 kind = "autonomous"
-description = "Works one agent-control ticket per wake, on that epic only."
+description = "Works one code ticket per wake, on that epic only."
 
 model.router = "agent-router"
 model.budget_usd_per_day = 5
@@ -15,7 +15,7 @@ files = [
     { path = "/srv/agents/vault/house", mode = "ro" },
 ]
 
-tools.vikunja-agent-control = [
+tools.vikunja-code = [
     "list_ready_tickets",
     "get_ticket",
     "start_ticket",
@@ -35,7 +35,7 @@ sandbox.memory = "2g"
 skills = []
 
 triggers = [
-    { webhook = "agent-control-dispatch" },
+    { webhook = "code-dispatch" },
 ]
 
 max_running_turns = 1
