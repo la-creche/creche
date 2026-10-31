@@ -3,7 +3,7 @@
 Every test here starts real processes and is marked `slow` for that reason.
 The mark is applied once, here, so no scenario can forget it.
 
-Four rules are enforced here and not left to a test:
+Five rules are enforced here and not left to a test:
 
 1. Every process of a test ends with the test. A teardown that had to kill
    one fails the test.
@@ -14,6 +14,10 @@ Four rules are enforced here and not left to a test:
 4. A run says which command it judged. A variable with the suite's prefix
    that the suite does not read stops the run, and each run prints the
    command of each service before its result line.
+5. Each test has `TEST_LIMIT_S` seconds for its setup, its call and its
+   teardown. A test that hangs fails with the stack of the hang, and the
+   run goes on. The pinned build of the Rust chaperone runs before the
+   first test, so no test's time holds a build.
 """
 
 from __future__ import annotations
@@ -29,7 +33,7 @@ from proc_caregiver import CaregiverStack
 from proc_chaperone_pin import BuildError, NoToolchain, build_pinned
 from proc_chaperone_rs import ChaperoneRsStack
 from proc_exit import FACADE_PROGRAMS, ExitStack, facade_bin
-from proc_harness import Supervisor, end_leaked_groups
+from proc_harness import TEST_LIMIT_S, Supervisor, end_leaked_groups, time_limit
 from proc_library import LibraryStack, node_has_sqlite
 from proc_report import describe, end_processes
 from proc_services import (
@@ -51,6 +55,13 @@ _REPORT = pytest.StashKey[Callable[[], str]]()
 
 #: The phase of a test in which pytest ends its fixtures.
 _TEARDOWN = "teardown"
+
+#: The fixture that needs the pinned build of the Rust chaperone.
+_BUILD_FIXTURE = "chaperone_rs_binary"
+
+#: A failed pinned build, made at the end of the collection. The fixture
+#: reports it and does not build again under a test's time.
+_BUILD_FAILED = pytest.StashKey[BuildError]()
 
 
 def pytest_configure() -> None:
@@ -84,6 +95,37 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     for item in items:
         if _HERE in item.path.parents:
             item.add_marker(pytest.mark.slow)
+
+
+def pytest_collection_finish(session: pytest.Session) -> None:
+    """Build the pinned Rust chaperone before the first test, when a test needs it.
+
+    A cold build takes minutes. Here no test's time limit holds it. Each
+    worker of `-n` gets here, and the lock of the build lets one build. A run
+    with `--collect-only` builds nothing.
+    """
+    if session.config.option.collectonly or SERVICES[Service.CHAPERONE_RS].override in os.environ:
+        return
+
+    if not any(_BUILD_FIXTURE in getattr(item, "fixturenames", ()) for item in session.items):
+        return
+
+    try:
+        build_pinned()
+    except NoToolchain:
+        return
+    except BuildError as error:
+        session.config.stash[_BUILD_FAILED] = error
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_protocol(item: pytest.Item) -> Generator[None, object, object]:
+    """Rule 5: the setup, the call and the teardown of one test share one limit."""
+    if _HERE not in item.path.parents:
+        return (yield)
+
+    with time_limit(TEST_LIMIT_S):
+        return (yield)
 
 
 @pytest.hookimpl(wrapper=True)
@@ -252,15 +294,20 @@ def library(library_prepared: LibraryStack) -> LibraryStack:
 
 
 @pytest.fixture(scope="session")
-def chaperone_rs_binary() -> None:
+def chaperone_rs_binary(pytestconfig: pytest.Config) -> None:
     """The Rust chaperone of the run: the variable of the row, or the pinned build.
 
-    With no variable, the first test that needs it builds the commit of
+    With no variable, `pytest_collection_finish` builds the commit of
     `chaperone.pin`, once for the run. A machine with no `git` or no
     `cargo` skips. A build that fails fails the test.
     """
     if SERVICES[Service.CHAPERONE_RS].override in os.environ:
         return
+
+    failed = pytestconfig.stash.get(_BUILD_FAILED, None)
+
+    if failed is not None:
+        pytest.fail(f"the pinned build of the Rust chaperone failed: {failed}")
 
     try:
         build_pinned()

@@ -48,10 +48,10 @@ NO_PRODUCT=("bin/tests" "$VECTORS_SUITE")
 
 #: The process-level suite (integration/proc/AGENTS.md). No testpaths entry
 #: holds it, so the full run does not hold it. It runs in a pytest process of
-#: its own, with the command of that document: four workers. The `proc` job
-#: of CI runs the same suite on one worker (.github/workflows/gate.yml).
+#: its own, on one worker for each core. The `proc` job of CI runs four
+#: workers, one for each vCPU of the runner (.github/workflows/gate.yml).
 PROC_DIR="integration/proc"
-PROC_PYTEST=(uv run pytest "$PROC_DIR" -m slow -n 4)
+PROC_PYTEST=(uv run pytest "$PROC_DIR" -m slow -n auto)
 
 #: The variable that makes each skip of that suite a failure. The `proc` job
 #: sets it too. A test there skips itself when the facade build is missing,

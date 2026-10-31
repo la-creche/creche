@@ -24,14 +24,20 @@ directory does not start it.
 
 ```bash
 cd facade && pnpm install --frozen-lockfile && pnpm run build && cd ..   # once, and after any agent or facade change
-uv run pytest integration/proc -m slow
+uv run pytest integration/proc -m slow -n 4
 ```
 
 Run this suite in its own pytest command.
 
-Add `-n 4` to run the tests on four workers. Each run prints the command of
-each service before its result line. Each line ends with the origin of the
-command: `default` or `override`.
+`-n 4` runs the tests on four workers. CI uses that command. The pre-push
+hook uses `-n auto`, one worker for each core. Each test takes its own
+ports and its own root. The one thing the workers share is the build of the
+Rust chaperone, and a lock lets one worker build it.
+
+Each test has 180 seconds for its setup, its call and its teardown (rule 22).
+
+Each run prints the command of each service before its result line. Each
+line ends with the origin of the command: `default` or `override`.
 
 A test that needs the build of `facade/`, which the exit topology starts,
 skips itself when the build is missing. A silent pass would be worse than
@@ -101,8 +107,11 @@ The row of `chaperone-rs` names no unit. It is the Rust chaperone of the
 repository `chaperone`, and the venv does not hold it. Its default is a
 build of the commit in `chaperone.pin`:
 
-1. The first test that needs the program builds it, once for the run.
-   `proc_chaperone_pin.py` fetches the commit and runs `cargo install` for
+1. The run builds the program before its first test, when a test of the run
+   needs it. The build is in no test's time limit (rule 22). Each worker
+   of `-n` takes the lock of the build, so one worker builds and the others
+   wait. A build that fails fails each test that needs it, and no test
+   builds again. `proc_chaperone_pin.py` fetches the commit and runs `cargo install` for
    two programs: `chaperone`, and `chaperone-attendance`, the effect half
    of the plugin `attendance`. The chaperone finds that program next to
    its own binary (chaperone `docs/design.md` §7.7).
@@ -448,6 +457,13 @@ each one, and each one runs to its end.
 21. Read a value of a family file through `load_family` of
     `proc_registry.py`. Write the text of a block of the edit form with
     `block_text` of that module. No test reads the markup of a family file.
+22. A test has `TEST_LIMIT_S` of `proc_harness.py`, 180 seconds, for its
+    setup, its call and its teardown. `conftest.py` puts each test under
+    `time_limit`. At the limit, SIGALRM raises `TimeLimitError` in the code
+    that waits, so the test fails with the line of the hang. Its fixtures
+    still end its processes, and the run goes on. A wait of a test has a
+    deadline of its own under the limit: the 120 s of `INDEX_DEADLINE_S` is
+    the longest. A test sets SIGALRM and its timer only through `time_limit`.
 
 ## The `caregiver` topology
 
