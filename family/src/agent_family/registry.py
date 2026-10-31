@@ -14,11 +14,12 @@ from typing import Final
 
 from . import grammar, tomlfile
 from .fences import Fences
-from .model import FamilyFile
+from .model import FamilyFile, SkillContent
 from .parse import parse_family_toml, parse_server_toml
 from .report import FamilyState, Issue, Issues, Report
 from .server import McpServerFile
 from .serverrules import check_server
+from .skillmd import parse_declared_files
 from .validate import HostFacts, Index, check_family
 
 #: The name of a family file and the name of a server file. `grammar.py`
@@ -48,6 +49,7 @@ class Registry:
     families: Mapping[str, FamilyFile]
     servers: Mapping[str, McpServerFile]
     skills: frozenset[str]
+    skill_texts: Mapping[str, SkillContent]
     reports: Mapping[str, Report]
     server_reports: Mapping[str, Report]
 
@@ -77,10 +79,12 @@ def load_registry(
     servers, server_reports = _read_servers(root)
     parsed, per_family, files = _read_families(root)
     skills = _read_skills(root)
+    skill_texts = _read_skill_texts(root)
     index = Index(
         kinds={name: family.kind for name, family in parsed.items()},
         servers=servers,
         skills=skills,
+        skill_texts=skill_texts,
     )
 
     reports: dict[str, Report] = {}
@@ -102,6 +106,7 @@ def load_registry(
         families=parsed,
         servers=servers,
         skills=skills,
+        skill_texts=skill_texts,
         reports=reports,
         server_reports=server_reports,
     )
@@ -247,6 +252,45 @@ def _read_skills(root: Path) -> frozenset[str]:
         for directory in _subdirectories(root / SKILLS_DIR)
         if (directory / SKILL_FILE).is_file()
     )
+
+
+def _read_skill_texts(root: Path) -> dict[str, SkillContent]:
+    """Every skill directory's staged texts and faults (contract 01 §6.1).
+
+    A skill stages its SKILL.md plus every helper its frontmatter declares.
+    A declaration the directory does not honor — a helper missing, a stray
+    file undeclared, a frontmatter the parser cannot read — is a fault for
+    the validator, never a silent loss and never a raise."""
+    texts: dict[str, SkillContent] = {}
+    for directory in _subdirectories(root / SKILLS_DIR):
+        text, fault = _read(directory / SKILL_FILE)
+        if fault is not None:
+            # No readable SKILL.md is no skill at all: `_read_skills` leaves
+            # the name out and the validator reports the grant against it.
+            continue
+
+        files = {SKILL_FILE: text}
+        faults: list[str] = []
+        declared, parse_faults = parse_declared_files(text)
+        faults.extend(parse_faults)
+        for relative in declared:
+            if not (directory / relative).is_file():
+                faults.append(f"declares '{relative}', which the skill directory does not hold")
+                continue
+            helper, helper_fault = _read(directory / relative)
+            if helper_fault is not None:
+                faults.append(f"has an unreadable helper '{relative}' ({helper_fault})")
+                continue
+            files[relative] = helper
+
+        held = {
+            str(path.relative_to(directory)) for path in directory.rglob("*") if path.is_file()
+        } - files.keys()
+        for extra in sorted(held):
+            faults.append(f"holds '{extra}', which its frontmatter does not declare")
+        texts[directory.name] = SkillContent(files=files, faults=tuple(faults))
+
+    return texts
 
 
 def _check_webhooks(families: Mapping[str, FamilyFile], reports: dict[str, Report]) -> None:
