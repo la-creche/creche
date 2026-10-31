@@ -322,3 +322,39 @@ def test_the_kind_survives_the_round_trip(tmp_path: Path) -> None:
 
     assert back.kind is Kind.ROLLBACK
     assert back.rollback_of == target
+
+
+# -- a redeploy (contract 06 §9.2 rule 1) -----------------------------------------
+
+
+def test_a_redeploy_of_mcp_servers_at_a_version_parses() -> None:
+    planned = _plan({"mcp-servers": "0.1.12"}, kind="redeploy")
+
+    assert planned.kind is Kind.REDEPLOY
+    assert planned.redeploys() == frozenset({"mcp-servers"})
+
+
+def test_a_release_redeploys_nothing() -> None:
+    assert _plan({"mcp-servers": "0.1.12"}).redeploys() == frozenset()
+
+
+@pytest.mark.parametrize(
+    "components",
+    [
+        {"mcp-servers": "latest"},
+        {"chaperone": "2.1.0"},
+        {"mcp-servers": "0.1.12", "chaperone": "2.1.0"},
+    ],
+)
+def test_a_redeploy_of_anything_else_is_refused(components: dict[str, str]) -> None:
+    with pytest.raises(Refusal) as raised:
+        _plan(components, kind="redeploy")
+
+    assert raised.value.detail == "a redeploy names mcp-servers alone, at a version"
+
+
+def test_a_redeploy_carrying_a_rollback_target_is_refused() -> None:
+    with pytest.raises(Refusal) as raised:
+        _plan({"mcp-servers": "0.1.12"}, kind="redeploy", rollback_of="01K5J8M2Q7V3X9R4T6N0B8C2DE")
+
+    assert raised.value.detail == "field 'rollback_of' is set on a redeploy"

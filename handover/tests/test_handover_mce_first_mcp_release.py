@@ -705,6 +705,61 @@ def test_a_registry_commit_no_pull_request_merged_is_refused(bench: Bench) -> No
     assert bench.installed() == []
 
 
+def _redeploy(bench: Bench, version: str) -> str:
+    """The follower's request after a registry merge: `mcp-servers` alone,
+    at a version, kind `redeploy` (contract 06 §9.2 rule 1)."""
+    body = request_body({COMPONENT: version}, request_id=SECOND_ID, kind="redeploy")
+    write_request(bench.spool_root, SECOND_ID, body)
+    spool = Spool(str(bench.spool_root), this_uid())
+    try:
+        return handle(spool, f"{SECOND_ID}.json", bench.wiring, Counter())
+    finally:
+        spool.close()
+
+
+def _second_ledger(bench: Bench) -> dict[str, object]:
+    path = bench.spool_root / DONE_DIR / f"{SECOND_ID}.json"
+
+    return cast("dict[str, object]", json.loads(path.read_text(encoding="utf-8")))
+
+
+def test_a_redeploy_installs_the_registry_at_the_live_version(bench: Bench) -> None:
+    """Rule 5: the `mcp-servers` row reads `deploy` from the live version to
+    the same version, and the release installs every server again."""
+    assert "succeeded" in _release(bench), bench.ledger()["reason"]
+
+    result = _redeploy(bench, FIRST_VERSION)
+
+    ledger = _second_ledger(bench)
+    assert "succeeded" in result, ledger["reason"]
+    assert ledger["kind"] == "redeploy"
+    manifest = cast("dict[str, object]", ledger["manifest"])
+    rows = cast("list[dict[str, object]]", manifest["components"])
+    row = next(one for one in rows if one["name"] == COMPONENT)
+    assert (row["action"], row["from_version"], row["to_version"]) == (
+        "deploy",
+        FIRST_VERSION,
+        FIRST_VERSION,
+    )
+    # Each server tree was swapped: the first release's tree is its `.prev`.
+    assert bench.installed() == sorted([*DECLARED, *(f"{name}.prev" for name in DECLARED)])
+    stamp = bench.components / COMPONENT / ".registry-rev"
+    assert stamp.read_text(encoding="utf-8") == f"{REGISTRY_SHA}\n"
+
+
+def test_a_redeploy_at_another_version_is_refused(bench: Bench) -> None:
+    """Rule 1: a redeploy that names a version other than the live one is
+    refused at step 2, before the tap."""
+    assert "succeeded" in _release(bench), bench.ledger()["reason"]
+
+    result = _redeploy(bench, NEXT_VERSION)
+
+    ledger = _second_ledger(bench)
+    assert "succeeded" not in result
+    assert ledger["refused_check"] == "request"
+    assert "a redeploy names the live version" in str(ledger["reason"])
+
+
 def test_the_seven_rows_the_operator_reads_before_the_tap(bench: Bench) -> None:
     """§2.5's seven fields, for THIS release, as the phone shows them.
 

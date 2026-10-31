@@ -629,7 +629,7 @@ class Release:
     def _intake(self) -> str:
         """The bytes are already validated (`spool.read_request`). What is
         left is the kind root does not perform: `rollback`."""
-        if self.request.kind is not RequestKind.RELEASE:
+        if self.request.kind is RequestKind.ROLLBACK:
             raise Refusal(RefusalCode.REQUEST, "request", NOT_BUILT_ROLLBACK)
 
         return f"{len(self.request.components)} component(s)"
@@ -641,7 +641,7 @@ class Release:
         manifests = self._read_manifests(state)
         state = self._copy_artifacts(state, manifests)
         try:
-            resolution = resolve(manifests, state, self.request.wanted())
+            resolution = resolve(manifests, state, self.request.wanted(), self.request.redeploys())
         except Refusal as refusal:
             if refusal.code not in CONTRACT_CODES:
                 raise
@@ -685,6 +685,7 @@ class Release:
             self.request.wanted(),
             self.wiring.readers,
             registry_sha=registry_sha,
+            redeploy=self.request.redeploys(),
         )
         self.trees = built.trees
         for line in built.notes:
@@ -748,7 +749,7 @@ class Release:
         for "the manifest at a commit". Two implementations of that
         decision is how a preview promises what root refuses.
         """
-        deploying = deploying_names(state, self.request.wanted())
+        deploying = deploying_names(state, self.request.wanted(), self.request.redeploys())
         chosen = select_manifests(deploying, self.trees, self._at_commit(state, deploying))
         self.unverified = list(chosen.unverified)
         for name in chosen.unverified:
@@ -778,7 +779,8 @@ class Release:
         """
         work = self.wiring.host.work_root / self.request.id
         facts = dict(state.facts)
-        for name, version in sorted(deploying_versions(state, self.request.wanted()).items()):
+        wanted, redeploy = self.request.wanted(), self.request.redeploys()
+        for name, version in sorted(deploying_versions(state, wanted, redeploy).items()):
             manifest = manifests.get(name)
             if manifest is None or not archive_expected(manifest.kind):
                 continue
@@ -1067,7 +1069,7 @@ class Release:
         # clone's `HEAD`: a registry merge after the tap waits for the
         # next release, and is not drift (contract 06 §9.2 rule 6).
         state = self._copy_artifacts(self._build_state(plan.registry_sha()), plan.manifests)
-        again = resolve(plan.manifests, state, self.request.wanted())
+        again = resolve(plan.manifests, state, self.request.wanted(), self.request.redeploys())
         # The same clock as step 2, so the compare is over the SET and not
         # over the seconds between the two resolutions.
         document = build_document(

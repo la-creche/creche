@@ -164,6 +164,39 @@ def test_requesting_the_live_version_changes_nothing() -> None:
     assert resolution.order == ()
 
 
+# -- a redeploy (contract 06 §9.2) -----------------------------------------
+
+REDEPLOY = frozenset({"mcp-servers"})
+
+
+def test_a_redeploy_deploys_at_the_live_version() -> None:
+    """Rule 5: `deploy`, with `from_version` equal to `to_version`."""
+    resolution = resolve(_rows(), _state(), {"mcp-servers": "0.9.3"}, REDEPLOY)
+    row = next(item for item in resolution.components if item.name == "mcp-servers")
+
+    assert (row.action, row.from_version, row.to_version) == (Action.DEPLOY, "0.9.3", "0.9.3")
+    assert resolution.order == ("mcp-servers",)
+
+
+@pytest.mark.parametrize("version", ["0.9.4", "0.9.2"])
+def test_a_redeploy_at_another_version_is_refused(version: str) -> None:
+    """Rule 1: a redeploy moves no version, up or down."""
+    with pytest.raises(Refusal) as caught:
+        resolve(_rows(), _state(), {"mcp-servers": version}, REDEPLOY)
+
+    assert caught.value.code is RefusalCode.REQUEST
+    assert caught.value.detail == "mcp-servers: a redeploy names the live version"
+
+
+def test_a_redeploy_of_a_component_not_installed_is_refused() -> None:
+    live = {name: version for name, version in LIVE.items() if name != "mcp-servers"}
+
+    with pytest.raises(Refusal) as caught:
+        resolve(_rows(), _state(live=live), {"mcp-servers": "0.9.3"}, REDEPLOY)
+
+    assert "a redeploy names the live version" in caught.value.detail
+
+
 def test_every_component_appears_in_name_order() -> None:
     resolution = resolve(_rows(), _state(), {"chaperone": "2.1.0"})
     names = [item.name for item in resolution.components]
