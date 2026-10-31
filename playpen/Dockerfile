@@ -11,11 +11,15 @@
 # image installs them from the facade's lockfile, so the Flue pin is the one
 # that `facade/pnpm-lock.yaml` holds and no second copy exists.
 #
-# Two targets:
+# Two image targets and one build-only stage:
 #   agent-sandbox         every family
-#   agent-sandbox-python  the code-sandbox family, plus pandas, numpy,
-#                         matplotlib, all installed at BUILD time so a run
-#                         needs no network
+#   agent-sandbox-python  the python flavor: pandas, numpy and matplotlib
+#                         for the analysis stack, plus the 3.12 test venv
+#                         that runs this repository's own test suites. All
+#                         installed at BUILD time, so a run needs no network
+#   creche-test-venv      build-only: it resolves uv.lock and installs the
+#                         test venv and the 3.12 interpreter. It ships in
+#                         no image, and neither does uv
 ARG NODE_TAG=24-bookworm
 
 # --- The facade, deployed with its production dependencies ------------------
@@ -46,6 +50,11 @@ RUN pnpm run build \
 
 # --- agent-sandbox ----------------------------------------------------------
 FROM node:${NODE_TAG} AS agent-sandbox
+
+# Python 3.11 rides in with the node parent image (buildpack-deps). It is an
+# accident of the parent, not a tool of this image: it has no pip and it
+# cannot build a venv. A family that needs Python asks for the `python`
+# flavor (contract 01 §3.9).
 
 # Flue's `grep` runs ripgrep when `rg --version` answers, else grep. Its
 # `glob` runs find. Nothing else is added: a shell exists because the image
@@ -87,6 +96,79 @@ RUN acp-relay </dev/null; [ "$?" = "1" ]
 # This CMD only keeps PID 1 alive.
 CMD ["sleep", "infinity"]
 
+# --- creche-test-venv -------------------------------------------------------
+# Build-only stage. It resolves the Python workspace of this repository
+# from uv.lock and installs its test environment into /opt/test, on
+# CPython 3.12. The workspace needs 3.12: its code uses PEP 695 type
+# parameters, which 3.11 cannot read.
+#
+# The pins are the pins of uv.lock, the same file the host's test
+# environment uses. A dependency change for the test venv is a lockfile
+# change plus a playpen release, never an install inside a sandbox.
+ARG UV_VERSION=0.13.6
+FROM python:3.12-slim-bookworm AS creche-test-venv
+ARG UV_VERSION
+
+# uv exists in this stage only. No image ships it.
+RUN pip install --no-cache-dir "uv==${UV_VERSION}"
+
+WORKDIR /src
+# The workspace definition: the root pyproject names the members, and each
+# member's pyproject carries its dependencies. The source stays out: a
+# test imports the code from the clone under test, never from the image.
+COPY pyproject.toml uv.lock ./
+COPY library/pyproject.toml library/
+COPY family/pyproject.toml family/
+COPY caregiver/pyproject.toml caregiver/
+COPY attendance/pyproject.toml attendance/
+COPY door-trigger/pyproject.toml door-trigger/
+COPY door-acp/pyproject.toml door-acp/
+COPY noticeboard/pyproject.toml noticeboard/
+COPY handover/pyproject.toml handover/
+COPY env/pyproject.toml env/
+
+# --locked installs the locked versions and hashes, and refuses a lockfile
+# that the workspace definition has outrun: a dependency change without a
+# lockfile change fails this build. --no-install-workspace installs no
+# member of the workspace: the venv holds the third-party dependencies and
+# the dev group, nothing else.
+RUN UV_PROJECT_ENVIRONMENT=/opt/test uv sync --locked --all-groups --no-install-workspace
+
+# One wrapper per console script of the workspace members. A wrapper runs
+# the entry point of its name, and the entry point comes from the clone
+# that the session's path file names, so the wrapper of the image runs the
+# code of the tree under test. A host run finds the same names in its own
+# `.venv`, which `uv sync` fills the same way.
+RUN printf '%s\n' \
+    'index-scope=library.__main__:main' \
+    'agent-family=agent_family.cli:main' \
+    'caregiver=caregiver.cli:main' \
+    'caregiver-verify=caregiver.verify:main' \
+    'attendance-verify=attendance.verify:main' \
+    'agent-trigger=agent_door_trigger.cli:main' \
+    'agent-door-acp=agent_door_acp.__main__:main' \
+    'creche-acp-connect=agent_door_acp.connect:main' \
+    'noticeboard=noticeboard.__main__:main' \
+    'noticeboard-verify=noticeboard.verify:main' \
+    'handover=handover.cli:main' \
+    'handover-exec=handover.executor.drain:main' \
+    'creche-env=creche_env.cli:main' \
+    | while IFS== read -r name entry; do \
+        printf '#!/bin/sh\nexec /opt/test/bin/python -c "from %s import %s as f; raise SystemExit(f())" "$@"\n' \
+          "${entry%%:*}" "${entry#*:}" > "/opt/test/bin/$name" \
+          && chmod 0755 "/opt/test/bin/$name" \
+          || exit 1; \
+      done
+
+# The interpreter ships without an installer. pip and its friends leave
+# the site-packages of the stage, and ensurepip leaves the stdlib, so no
+# venv of the image can rebuild pip from its bundled wheels either.
+RUN rm -rf /usr/local/lib/python3.12/site-packages/pip* \
+           /usr/local/lib/python3.12/site-packages/setuptools* \
+           /usr/local/lib/python3.12/site-packages/wheel* \
+           /usr/local/lib/python3.12/ensurepip \
+    && /opt/test/bin/pytest --version
+
 # --- agent-sandbox-python ---------------------------------------------------
 # The code-sandbox family runs analysis code in a per-chat directory. Every
 # wheel is installed here, at build time, so a turn needs no network.
@@ -107,13 +189,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # A venv rather than --break-system-packages: bookworm marks its python3 as
 # externally managed (PEP 668), and one prefix on PATH is simpler to reason
-# about than a patched system site-packages.
+# about than a patched system site-packages. The venv ships with no pip:
+# the same RUN installs the wheels and removes the installer, so no layer
+# of the image holds one. A sandbox runs code; a sandbox installs nothing.
 RUN python3 -m venv /opt/py \
-    && /opt/py/bin/pip install --no-cache-dir --upgrade pip \
     && /opt/py/bin/pip install --no-cache-dir \
     "numpy==${NUMPY_VERSION}" \
     "pandas==${PANDAS_VERSION}" \
-    "matplotlib==${MATPLOTLIB_VERSION}"
+    "matplotlib==${MATPLOTLIB_VERSION}" \
+    && /opt/py/bin/pip uninstall -y pip \
+    && [ ! -e /opt/py/bin/pip ]
 ENV PATH="/opt/py/bin:${PATH}"
 
 # Agg because no sandbox has a display, and a writable config dir because
@@ -123,5 +208,42 @@ ENV MPLBACKEND=Agg
 ENV MPLCONFIGDIR=/var/cache/matplotlib
 RUN mkdir -p "${MPLCONFIGDIR}" \
     && python3 -c "import matplotlib.pyplot, pandas, numpy"
+
+# --- The test venv of this repository's own workspace -----------------------
+# A second venv, /opt/test, holds CPython 3.12 and the locked test
+# dependencies of this repository: pytest, its plugins, and the third-party
+# dependencies the suites import. The creche-test-venv stage built it and
+# stripped the interpreter it needs. `/opt/test/bin/pytest` runs it; on
+# PATH, `pytest` finds it and `python3` stays the 3.11 analysis venv above.
+#
+# The copied files are the ones the interpreter needs: the binary, its
+# stdlib and shared library, the OpenSSL libraries it links, and the
+# SQLite runtime library of the stdlib module. The loader cache learns
+# them in the self-test below.
+COPY --from=creche-test-venv /usr/local/bin/python3.12 /usr/local/bin/
+COPY --from=creche-test-venv /usr/local/lib/python3.12 /usr/local/lib/python3.12
+COPY --from=creche-test-venv /usr/local/lib/libpython3.12.so.1.0 /usr/local/lib/
+COPY --from=creche-test-venv /usr/local/lib/libssl.so.3 /usr/local/lib/
+COPY --from=creche-test-venv /usr/local/lib/libcrypto.so.3 /usr/local/lib/
+COPY --from=creche-test-venv /usr/lib/x86_64-linux-gnu/libsqlite3.so.0 \
+     /usr/lib/x86_64-linux-gnu/
+COPY --from=creche-test-venv /opt/test /opt/test
+ENV PATH="/opt/py/bin:/opt/test/bin:${PATH}"
+
+# Fail the BUILD, not the first switch: pytest loads, the interpreter
+# imports its two most load-bearing extension modules, a wrapper's entry
+# point imports, and no installer ships in the image. `python3.12 -m pip`
+# must fail, because pip is gone from the stdlib's site-packages and
+# ensurepip is gone from the stdlib.
+RUN ldconfig \
+    && /opt/test/bin/pytest --version \
+    && /usr/local/bin/python3.12 -c "import sqlite3, ssl" \
+    && /opt/test/bin/python -c "from creche_env.cli import main" \
+    && if /usr/local/bin/python3.12 -m pip --version >/dev/null 2>&1; then \
+         echo "the image ships pip in /usr/local" >&2; exit 1; \
+       fi \
+    && if [ -e /opt/test/bin/pip ]; then \
+         echo "the test venv ships pip" >&2; exit 1; \
+       fi
 
 CMD ["sleep", "infinity"]

@@ -69,6 +69,22 @@ testpaths = [
 ]
 addopts = "-q"
 asyncio_mode = "auto"
+# A run in a sandbox imports the code of the clone under test: the test
+# venv of the image installs no member of the workspace (playpen/
+# Dockerfile, the `creche-test-venv` stage). On the host, `uv sync`
+# installs the members from these same trees, so the entries name the same
+# files and change no host run.
+pythonpath = [
+    "library/src",
+    "family/src",
+    "caregiver/src",
+    "attendance/src",
+    "door-trigger/src",
+    "door-acp/src",
+    "noticeboard/src",
+    "handover/src",
+    "env/src",
+]
 markers = [
     "slow: spawns real subprocesses",
     "docs: reads a doc or checks one exists, so a docs-only change runs it (bin/lib/docsrule.sh)",
