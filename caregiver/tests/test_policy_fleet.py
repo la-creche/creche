@@ -103,6 +103,23 @@ def test_fragments_that_clash_write_nothing(root: Path, target: PolicyTarget) ->
     assert not target.path(TargetFile.PREV).exists()
 
 
+def test_named_clashing_apps_are_left_out_and_the_rest_written(
+    root: Path, target: PolicyTarget
+) -> None:
+    """`chaperone check` 0.4.0 names each app it refuses. Those apps are
+    left out, and one clash no longer stops the write of the others."""
+    for family in ("chat", "code", "ops"):
+        write_fragment(root, family, app_of(family))
+    checker = FakeChecker(clashes=(frozenset({"chat", "code"}),), names_clashes=True)
+
+    result = assemble_policy(root, target, checker)
+
+    assert result.outcome is FleetOutcome.WRITTEN
+    assert set(result.left_out) == {"chat", "code"}
+    assert result.left_out["chat"] == "the app chat is refused: the apps chat and code clash"
+    assert set(tomllib.loads(policy_text(target))["apps"]) == {"ops"}
+
+
 def test_a_refused_base_marks_no_family(root: Path, target: PolicyTarget) -> None:
     write_fragment(root, "chat", app_of("chat"))
     result = assemble_policy(root, target, FakeChecker(broken="install.toml: bad"))
@@ -290,6 +307,27 @@ def test_the_real_checker_reads_the_first_error_line(tmp_path: Path, target: Pol
     stub = write_stub(tmp_path, body)
     checker = ChaperoneChecker(binary=stub, config_dir=target.config_dir, plugins_dir=tmp_path)
     assert checker.check("version = 1\n") == Refused("policy.toml: the app chat is bad")
+
+
+def test_the_real_checker_reads_each_refused_app(tmp_path: Path, target: PolicyTarget) -> None:
+    """The output of `chaperone check` 0.4.0 for a policy that refuses two
+    apps: one line for each, the first with the file name."""
+    body = (
+        "#!/bin/sh\n"
+        "echo 'policy.toml: the app chat is refused: the app chat grants tools of x' >&2\n"
+        "echo 'the app code is refused: the apps code and chat share a token digest' >&2\n"
+        "exit 1\n"
+    )
+    stub = write_stub(tmp_path, body)
+    checker = ChaperoneChecker(binary=stub, config_dir=target.config_dir, plugins_dir=tmp_path)
+
+    verdict = checker.check("version = 1\n")
+
+    assert isinstance(verdict, Refused)
+    assert dict(verdict.apps) == {
+        "chat": "the app chat is refused: the app chat grants tools of x",
+        "code": "the app code is refused: the apps code and chat share a token digest",
+    }
 
 
 def test_a_checker_that_cannot_run_raises(tmp_path: Path, target: PolicyTarget) -> None:
