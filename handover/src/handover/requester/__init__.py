@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from ..executor.live_state import (
     INSTALL_ROOT,
+    REGISTRY_DATA,
     BuiltState,
     Chosen,
     Readers,
@@ -31,6 +32,7 @@ from ..executor.live_state import (
 )
 from .file import (
     MAX_PENDING,
+    REDEPLOY_KIND,
     REQUEST_FILE_MODE,
     REQUESTS_PATH,
     RequesterError,
@@ -53,6 +55,8 @@ from .preview import Preview, preview_of
 __all__ = [
     "INSTALL_ROOT",
     "MAX_PENDING",
+    "REDEPLOY_KIND",
+    "REGISTRY_DATA",
     "REQUESTS_PATH",
     "REQUEST_FILE_MODE",
     "BuiltState",

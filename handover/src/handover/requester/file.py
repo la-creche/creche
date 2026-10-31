@@ -85,6 +85,7 @@ _CREATE_FLAGS: Final = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os
 #: §2.3's `kind` values. Spelled here rather than imported as an enum so a
 #: caller that holds a plain string from a JSON schema needs no conversion.
 RELEASE_KIND: Final = "release"
+REDEPLOY_KIND: Final = "redeploy"
 
 
 class RequesterError(Exception):

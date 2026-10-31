@@ -10,7 +10,7 @@ It is a requester like the other three (§3.1), and root believes it no more
 than it believes them: the request carries intent only, and `requested_by`
 is a claim.
 
-Seven rules hold its shape, each with the reason it is a rule.
+Eight rules hold its shape, each with the reason it is a rule.
 
 1. **It moves a tree forward and never makes the first one.** A component
    is followed only while its tree carries a release stamp. A first release
@@ -41,6 +41,16 @@ Seven rules hold its shape, each with the reason it is a rule.
    of the run, so one network fault costs no refusal and stops no other
    member. `cli.py` asks the store, and `gate_artifacts` takes the answer as
    data. When the files arrive later, the member is part of a new set.
+8. **The registry watch** (`stage7-releases.md` §3.3 rule 7). A registry
+   merge can change `mcp/` with no new `mcp-servers` tag. When the `mcp`
+   tree at the registry `HEAD` differs from the one at the commit in
+   `.registry-rev`, the run files one `redeploy` of `mcp-servers` at its
+   live version. Rules 1 to 6 hold, with a set of one key: `mcp`, whose
+   value is the `registry-data` digest at `HEAD`. That digest is a hash
+   over the git object id of `mcp`, so it moves when the tree moves and
+   only then. The set has its own marker beside the first. A newer tag
+   wins: its release installs the same tree, so no `redeploy` is filed
+   beside it.
 
 This package reads one ledger entry and writes one marker. When the ledger
 entry or the marker is not strict JSON (`strictjson.py`), the follower also
@@ -88,6 +98,8 @@ MAX_ASKS: Final = 4
 #: the file `0600`: nothing but this module reads it.
 MARKER_DIR: Final = OPERATOR_STATE_DIR
 MARKER_NAME: Final = "follow.json"
+#: The registry watch's marker (rule 8): `follow.registry.json` beside it.
+REGISTRY_MARKER_INFIX: Final = ".registry"
 MARKER_FILE_MODE: Final = 0o600
 MARKER_DIR_MODE: Final = 0o700
 
@@ -224,6 +236,11 @@ def default_marker() -> Path:
     return Path.home() / MARKER_DIR / MARKER_NAME
 
 
+def registry_marker_of(marker: Path) -> Path:
+    """The registry watch's marker, beside the marker of the tags (rule 8)."""
+    return marker.with_name(f"{marker.stem}{REGISTRY_MARKER_INFIX}{marker.suffix}")
+
+
 def done_dir_of(requests_dir: str) -> Path:
     """The ledger directory beside `requests/` (`executor/spool.py`)."""
     return Path(requests_dir).parent / DONE_DIR
@@ -266,6 +283,29 @@ def moving_of(state: ReleaseState, names: Iterable[str]) -> tuple[Moving, tuple[
         moving[name] = newest
 
     return moving, tuple(notes)
+
+
+#: The one component a registry merge moves, and the key of its set (rule 8).
+REDEPLOYED: Final = "mcp-servers"
+REGISTRY_KEY: Final = "mcp"
+
+
+def registry_moving(
+    tags: Mapping[str, str], live: str | None, head: str | None, installed: str | None
+) -> Moving:
+    """The registry watch's set (rule 8), or an empty one.
+
+    `tags` is what `moving_of` returned this run. `live` is the stamped
+    `mcp-servers` version. `head` is the `registry-data` digest at the
+    registry `HEAD`, and `installed` the one at the commit in
+    `.registry-rev`. Each digest is None where the clone cannot say. A
+    tree with no stamp reads as different, as root reads it (contract 06
+    §9.2 rule 3).
+    """
+    if live is None or REDEPLOYED in tags or head is None or head == installed:
+        return {}
+
+    return {REGISTRY_KEY: head}
 
 
 def decide(moving: Mapping[str, str], marker: Marker, answer: Answer, now: float) -> Step:
@@ -550,6 +590,8 @@ __all__ = [
     "NOTICES_FILE",
     "NOTICE_SERVICE",
     "OMITTED",
+    "REDEPLOYED",
+    "REGISTRY_KEY",
     "REQUESTED_BY",
     "RUN_DEADLINE_S",
     "WAITING",
@@ -568,6 +610,8 @@ __all__ = [
     "moving_of",
     "read_answer",
     "read_marker",
+    "registry_marker_of",
+    "registry_moving",
     "seen_marker",
     "write_marker",
 ]

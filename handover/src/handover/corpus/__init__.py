@@ -57,13 +57,14 @@ from typing import Final
 
 from ..catalog import CATALOG_BY_NAME
 from ..errors import Refusal
-from ..executor.live_state import Readers
+from ..executor.live_state import REGISTRY_DATA, Readers
 from ..executor.source import (
     CORPUS_ROOT,
     GIT,
     REFRESH_COMMAND,
     git_env,
     git_ground,
+    head_commit,
     input_digest,
     newest_tagged_version,
     require_trusted,
@@ -356,7 +357,21 @@ def local_readers(root: Path = Path(CORPUS_ROOT)) -> Readers:
 
         return input_digest(read_git, path, component, sha)
 
-    return Readers(newest_version=newest, tag_sha=sha_of, input_digest=digest)
+    def registry_head() -> str | None:
+        """The commit at `HEAD` of the registry clone (contract 06 §9.2
+        rule 2), the commit root reads at step 2."""
+        path = _repo_of(REGISTRY_DATA)
+        if path is None:
+            return None
+
+        return head_commit(read_git, path)
+
+    return Readers(
+        newest_version=newest,
+        tag_sha=sha_of,
+        input_digest=digest,
+        registry_head=registry_head,
+    )
 
 
 __all__ = [

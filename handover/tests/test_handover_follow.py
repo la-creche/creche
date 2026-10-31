@@ -23,7 +23,7 @@ from handover.catalog import CATALOG_BY_NAME, RETIRING, Repo, releasable_names
 from handover.corpus import CorpusReport
 from handover.executor.approval import Verdict, not_granted
 from handover.executor.ledger import Entry, Outcome
-from handover.executor.live_state import write_stamp
+from handover.executor.live_state import write_registry_stamp, write_stamp
 from handover.executor.request import parse_request
 from handover.follow import (
     AGAIN_S,
@@ -35,6 +35,7 @@ from handover.follow import (
     Marker,
     Step,
     decide,
+    registry_moving,
 )
 
 from handover import cli, notices
@@ -656,3 +657,122 @@ def test_the_service_follows_every_component_a_release_can_deploy() -> None:
 
 def test_the_timer_starts_the_service() -> None:
     assert _unit_value("creche-follow.timer", "Unit") == "creche-follow.service"
+
+
+# -- rule 8: the registry watch (stage7 §3.3 rule 7) --------------------------
+
+
+def _registry(host: _Host) -> Path:
+    """The registry clone of the corpus: `mcp/` and `families/`, one commit."""
+    clone = host.root / "corpus" / str(Repo.REGISTRY)
+    clone.mkdir()
+    clone.chmod(0o755)
+    _git(clone, "init", "-q", "-b", "main")
+    _merge(clone, "mcp/kagi/server.toml", "one\n")
+    _merge(clone, "families/chat/family.toml", "one\n")
+
+    return clone
+
+
+def _merge(clone: Path, path: str, text: str) -> str:
+    """One registry merge: a commit at `HEAD` that writes one file."""
+    file = clone / path
+    file.parent.mkdir(parents=True, exist_ok=True)
+    file.write_text(text, encoding="utf-8")
+    _git(clone, "add", "-A")
+    _git(clone, "commit", "-q", "-m", path)
+
+    return subprocess.run(
+        ["git", "-C", str(clone), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+
+def _stamp_registry(host: _Host, clone: Path) -> None:
+    """The live `mcp-servers` tree installed the registry at its `HEAD`."""
+    sha = _merge(clone, "mcp/kagi/README.md", "installed\n")
+    write_registry_stamp(host.root / "components" / SERVERS, sha)
+
+
+def test_a_registry_merge_is_seen_once_and_filed_as_a_redeploy(host: _Host) -> None:
+    """A server file merged with no new tag. The second run files one
+    `redeploy` of `mcp-servers` at its live version, and names no commit."""
+    host.install(SERVERS, LIVE)
+    clone = _registry(host)
+    _stamp_registry(host, clone)
+    _merge(clone, "mcp/headroom/server.toml", "new\n")
+
+    assert host.follow(SERVERS) == cli.EXIT_OK
+    assert host.filed() == []
+    assert (host.root / "state" / "follow.registry.json").is_file()
+
+    assert host.follow(SERVERS) == cli.EXIT_OK
+    filed = host.filed()
+    assert [(item["kind"], item["components"]) for item in filed] == [("redeploy", {SERVERS: LIVE})]
+    assert filed[0]["requested_by"] == REQUESTED_BY
+
+
+def test_a_filed_redeploy_is_not_filed_again(host: _Host) -> None:
+    host.install(SERVERS, LIVE)
+    clone = _registry(host)
+    _stamp_registry(host, clone)
+    _merge(clone, "mcp/headroom/server.toml", "new\n")
+
+    for _ in range(5):
+        host.now += 120
+        assert host.follow(SERVERS) == cli.EXIT_OK
+
+    assert len(host.filed()) == 1
+
+
+def test_a_merge_that_changes_no_server_file_files_nothing(host: _Host) -> None:
+    """The `mcp` tree is the one installed: root would refuse the redeploy."""
+    host.install(SERVERS, LIVE)
+    clone = _registry(host)
+    _stamp_registry(host, clone)
+    _merge(clone, "families/chat/family.toml", "two\n")
+
+    host.follow(SERVERS)
+    host.follow(SERVERS)
+
+    assert host.filed() == []
+    assert not (host.root / "state" / "follow.registry.json").exists()
+
+
+def test_a_newer_tag_wins_over_a_redeploy(host: _Host) -> None:
+    """The tag's release installs the same `mcp` tree, so no redeploy is
+    filed beside it."""
+    host.install(SERVERS, LIVE)
+    clone = _registry(host)
+    _stamp_registry(host, clone)
+    _merge(clone, "mcp/headroom/server.toml", "new\n")
+    host.tag(SERVERS, NEXT)
+
+    host.follow(SERVERS)
+    host.follow(SERVERS)
+
+    assert [(item["kind"], item["components"]) for item in host.filed()] == [
+        ("release", {SERVERS: NEXT})
+    ]
+
+
+@pytest.mark.parametrize(
+    ("tags", "live", "head", "installed", "moving"),
+    [
+        ({}, LIVE, "sha256:b", "sha256:a", {"mcp": "sha256:b"}),
+        ({}, LIVE, "sha256:b", None, {"mcp": "sha256:b"}),
+        ({}, LIVE, "sha256:a", "sha256:a", {}),
+        ({}, LIVE, None, "sha256:a", {}),
+        ({}, None, "sha256:b", None, {}),
+        ({SERVERS: NEXT}, LIVE, "sha256:b", "sha256:a", {}),
+    ],
+)
+def test_the_registry_set(
+    tags: dict[str, str],
+    live: str | None,
+    head: str | None,
+    installed: str | None,
+    moving: dict[str, str],
+) -> None:
+    """A tree with no stamp reads as different. A tree no release stamped
+    is never followed (rule 1). A newer tag wins."""
+    assert registry_moving(tags, live, head, installed) == moving
