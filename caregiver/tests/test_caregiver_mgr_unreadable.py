@@ -36,7 +36,7 @@ from caregiver.reconcile import Actors
 from caregiver.status import forget_published
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
-from caregiver_helpers import fake_policy, published, write_registry
+from caregiver_helpers import FENCES, fake_policy, published, write_registry
 
 from caregiver import loop as loop_module
 from caregiver import paths
@@ -69,6 +69,7 @@ class Bench:
             registry_root=self.registry_root,
             state_root=self.state_root,
             image=IMAGE,
+            fences=FENCES,
         )
 
     def actors(self) -> Actors:

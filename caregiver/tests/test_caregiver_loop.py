@@ -35,6 +35,7 @@ from caregiver.reconcile import Actors
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
 from caregiver_helpers import (
+    FENCES,
     KIND_MOVED,
     REFUSED_TOOLS,
     accepted_digests,
@@ -79,6 +80,7 @@ class Bench:
             "registry_root": self.registry_root,
             "state_root": self.state_root,
             "image": IMAGE,
+            "fences": FENCES,
         }
         fields.update(overrides)
         return LoopConfig(**fields)  # type: ignore[arg-type]

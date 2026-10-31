@@ -225,23 +225,8 @@ LOCAL_HOUR_MAX: Final = 23
 
 # --- host facts held by the manager, not by the registry ---
 
-#: Contract 01 §5.4. A family file cannot add a root. This lives in code
-#: because the registry must not be able to widen it.
-ALLOWED_ROOTS: Final = (
-    "/srv/agents/vault",
-    "/srv/agents/code",
-    "/srv/agents/state/index",
-    "/srv/agents/work/projects",
-    "/srv/agents/work/coding-sandbox",
-)
-
-#: Contract 01 §5.5 rule 1: a constant in code, released with `caregiver`, and
-#: never a registry file. A fence the fenced thing can edit is not a fence.
-#: `code` is the one family that edits the platform: it alone may hold the
-#: platform's GitHub server and the `release` verb. It reads every repository
-#: from the host's read-only clones under /srv/agents/code and keeps no copy of
-#: its own, so no root for a working copy exists.
-PLATFORM_ALLOWLIST: Final = frozenset({"code"})
+# The allowed mount roots (contract 01 §5.4) and the platform families
+# (§5.5 rule 1) are host config: `fences.py` reads them from the site file.
 
 #: Contract 01 §5.5 rule 7: the platform's own GitHub server, and the tools no
 #: family is ever granted from it. A registry's `main` may carry no branch

@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Final
 
 import pytest
+from agent_family import Fences
 from caregiver.apply import ApplyResult, apply_once
 from caregiver.credentials import read_creds
 from caregiver.driver import FakeDriver
@@ -32,6 +33,18 @@ from caregiver.policy_fleet import FakeChecker, FleetPolicy, PolicyTarget
 from noticeboard.tomlout import to_toml
 
 from caregiver import paths
+
+#: The fences of the test host (`agent_family.fences`).
+FENCES: Final = Fences(
+    mount_roots=(
+        "/srv/agents/vault",
+        "/srv/agents/code",
+        "/srv/agents/state/index",
+        "/srv/agents/work/projects",
+        "/srv/agents/work/coding-sandbox",
+    ),
+    platform_families=frozenset({"code"}),
+)
 
 FAMILY: Final = "chat"
 SKILL: Final = "kitchen"
@@ -157,6 +170,7 @@ def apply(
         registry_root,
         FAMILY,
         state_root=state_root,
+        fences=FENCES,
         policy=FleetPolicy(PolicyTarget(state_root.parent / "chaperone"), FakeChecker()),
         image=IMAGE,
         driver=driver,

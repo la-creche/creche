@@ -122,7 +122,7 @@
   {"accepted":2,"entry":"handover.executor.source.OBJECT_ID_RE.fullmatch","path":"ids/git_object_id.handover_source.json","raised":0,"refused":16,"surface":"id.git_object_id.handover_source","vectors":18},
   {"accepted":7,"entry":"attendance.ids.is_attachment","path":"ids/attachment_name.attendance.json","raised":0,"refused":18,"surface":"id.attachment_name.attendance","vectors":25},
   {"accepted":9,"entry":"agent_family.load_registry","path":"family_file.host.json","raised":0,"refused":3,"surface":"family_file.host","vectors":12},
-  {"accepted":50,"entry":"agent_family.load_registry","path":"family_file.toml.json","raised":0,"refused":136,"surface":"family_file.toml","vectors":186},
+  {"accepted":52,"entry":"agent_family.load_registry","path":"family_file.toml.json","raised":0,"refused":134,"surface":"family_file.toml","vectors":186},
   {"accepted":47,"entry":"agent_family.load_registry","path":"server_file.toml.json","raised":0,"refused":118,"surface":"server_file.toml","vectors":165},
   {"accepted":86,"entry":"agent_family.classify","path":"family_file.classify.json","raised":0,"refused":0,"surface":"family_file.classify","vectors":86},
   {"accepted":27,"entry":"agent_family.cli.main","path":"family_file.cli.json","raised":0,"refused":19,"surface":"family_file.cli","vectors":46},

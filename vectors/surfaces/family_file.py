@@ -7,8 +7,9 @@ names the registry it sits in and its directory under `families/`. The
 generator copies that registry to a temporary directory, writes the input
 there and reads the report of that one family back.
 
-Two surfaces. `family_file.toml` has no host: the two checks that need one
-downgrade to a warning. `family_file.host` has a written host. Each input of
+Two surfaces. `family_file.toml` has no host and no fences: the checks that
+need them downgrade to a warning. `family_file.host` has a written host and
+the fences of a host. Each input of
 the two is a TOML text in a copy of `TOML_REGISTRY`. The surface
 `family_file` held YAML texts. Its file is frozen, because the YAML reader
 left this repository.
@@ -24,7 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final
 
-from agent_family import Registry, load_registry
+from agent_family import Fences, Registry, load_registry
 from agent_family.registry import FAMILY_FILE as TOML_FILE
 from agent_family.validate import HostFacts
 
@@ -136,6 +137,19 @@ def registry_files(base: Path) -> list[Path]:
     )
 
 
+#: The fences of the written host (`agent_family.fences`).
+HOST_FENCES: Final = Fences(
+    mount_roots=(
+        "/srv/agents/vault",
+        "/srv/agents/code",
+        "/srv/agents/state/index",
+        "/srv/agents/work/projects",
+        "/srv/agents/work/coding-sandbox",
+    ),
+    platform_families=frozenset({"code"}),
+)
+
+
 @dataclass(frozen=True)
 class WrittenHost:
     """A host as data: the aliases it serves and where its links point."""
@@ -230,8 +244,9 @@ def _vector(
 ) -> Vector:
     given = bytes_input(case.text_bytes())
     params = _params(registry, case)
+    fences = HOST_FENCES if host is not None else None
     with _staged(registry, case, scratch, file) as root:
-        loaded = attempt(lambda: load_registry(root, host))
+        loaded = attempt(lambda: load_registry(root, host, fences))
 
     if isinstance(loaded, Raised):
         return raised(case.id, given, loaded.exc, params=params)
@@ -246,7 +261,7 @@ def _fixture_vectors(registry: str, host: HostFacts | None, file: str = TOML_FIL
     One load serves them all. The input is the file the registry already
     holds, so a copy with the input written into it is the same registry.
     """
-    loaded = load_registry(REPO_ROOT / registry, host)
+    loaded = load_registry(REPO_ROOT / registry, host, HOST_FENCES if host is not None else None)
 
     return [
         _outcome(case, loaded, bytes_input(case.text_bytes()), _params(registry, case))
@@ -325,7 +340,14 @@ def surfaces() -> tuple[Surface, ...]:
         for case in TOML_CASES:
             toml.append(_vector(TOML_REGISTRY, case, scratch / "toml", None, TOML_FILE))
 
-    host_context = normalize({"model_aliases": sorted(HOST_ALIASES), "links": HOST_LINKS})
+    host_context = normalize(
+        {
+            "model_aliases": sorted(HOST_ALIASES),
+            "links": HOST_LINKS,
+            "mount_roots": list(HOST_FENCES.mount_roots),
+            "platform_families": sorted(HOST_FENCES.platform_families),
+        }
+    )
 
     return (
         Surface(
@@ -335,8 +357,8 @@ def surfaces() -> tuple[Surface, ...]:
             contract=CONTRACT,
             notes=(
                 *NOTES,
-                "context.host is the host: the aliases it serves, and the paths that are "
-                "symbolic links with the path each one resolves to.",
+                "context.host is the host: the aliases it serves, the paths that are "
+                "symbolic links with the path each one resolves to, and its two fences.",
             ),
             context={"host": host_context},
             vectors=tuple(hosted),
@@ -348,7 +370,8 @@ def surfaces() -> tuple[Surface, ...]:
             contract=CONTRACT,
             notes=(
                 *_notes(TOML_FILE),
-                "No host: the checks that need one are warnings with downgraded true.",
+                "No host and no fences: the checks that need them are warnings with "
+                "downgraded true.",
             ),
             vectors=tuple(toml),
         ),

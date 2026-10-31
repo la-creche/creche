@@ -11,6 +11,7 @@ import tomllib
 from pathlib import Path
 from typing import Any, cast
 
+from agent_family.fences import Fences
 from agent_family.model import FamilyFile
 from agent_family.parse import Markup, parse_family, parse_server
 from agent_family.registry import load_registry
@@ -20,6 +21,19 @@ from agent_family.serverrules import check_server
 from agent_family.validate import Index, check_family
 
 FIXTURES = Path(__file__).parent / "fixtures" / "registry"
+
+#: The fences of the test host (`agent_family.fences`): the roots and the
+#: platform family that the fixture registry uses.
+FENCES = Fences(
+    mount_roots=(
+        "/srv/agents/vault",
+        "/srv/agents/code",
+        "/srv/agents/state/index",
+        "/srv/agents/work/projects",
+        "/srv/agents/work/coding-sandbox",
+    ),
+    platform_families=frozenset({"code"}),
+)
 
 #: The six files contract 01 §8 writes out. The fixture holds more, and
 #: `fixtures/registry/families/finance-worker/family.toml` says why.
@@ -121,7 +135,7 @@ def messages(report: Report) -> str:
 #: One read of the fixture registry, for the cross-reference checks a fence
 #: test needs (a delegate that exists, a server that is declared). Module
 #: level: the fixtures are read-only, so every test shares one parse.
-_REGISTRY = load_registry(FIXTURES, host())
+_REGISTRY = load_registry(FIXTURES, host(), FENCES)
 
 
 def full_index() -> Index:
@@ -139,7 +153,7 @@ def check(fixture: str, **changes: Any) -> Report:
     fixture registry with a host present (contract 01 §5)."""
     family = edited(fixture, **changes)
     issues = Issues()
-    check_family(family, fixture, full_index(), issues, host())
+    check_family(family, fixture, full_index(), issues, host(), FENCES)
     return Report(family.name, f"families/{fixture}/family.toml", issues.frozen())
 
 
@@ -148,7 +162,7 @@ def check_no_host(fixture: str, **changes: Any) -> Report:
     to a warning without one (contract 01 §5.1, §5.4)."""
     family = edited(fixture, **changes)
     issues = Issues()
-    check_family(family, fixture, full_index(), issues, None)
+    check_family(family, fixture, full_index(), issues, None, FENCES)
     return Report(family.name, f"families/{fixture}/family.toml", issues.frozen())
 
 

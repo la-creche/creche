@@ -5,9 +5,8 @@ what is wrong with it in a report rather than an exception (invariant 19), and
 answers what a change to it costs: a live update, or a new sandbox."""
 
 from .classify import Diff, Direction, FieldChange, Landing, Step, SwitchMode, classify
+from .fences import FenceError, Fences, read_fences
 from .grammar import (
-    ALLOWED_ROOTS,
-    PLATFORM_ALLOWLIST,
     SANDBOX_FLAVORS,
     SURVEY_TOOL,
     InstallSource,
@@ -35,9 +34,7 @@ from .server import McpServerFile, ToolEntry
 from .validate import CALL_SEPARATOR, HostFacts, Index, check_family
 
 __all__ = [
-    "ALLOWED_ROOTS",
     "CALL_SEPARATOR",
-    "PLATFORM_ALLOWLIST",
     "SANDBOX_FLAVORS",
     "SURVEY_TOOL",
     "DailyCall",
@@ -45,6 +42,8 @@ __all__ = [
     "Direction",
     "FamilyFile",
     "FamilyState",
+    "FenceError",
+    "Fences",
     "FieldChange",
     "FileMount",
     "HostFacts",
@@ -77,5 +76,6 @@ __all__ = [
     "memory_mb",
     "parse_family",
     "parse_server",
+    "read_fences",
     "revision_of",
 ]

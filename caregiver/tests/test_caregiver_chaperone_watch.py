@@ -31,7 +31,7 @@ from caregiver.loop import LoopConfig, LoopState, look
 from caregiver.reconcile import Actors
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
-from caregiver_helpers import fake_policy, write_registry
+from caregiver_helpers import FENCES, fake_policy, write_registry
 
 from caregiver import paths
 
@@ -312,6 +312,7 @@ class Fleet:
             registry_root=self.registry_root,
             state_root=self.state_root,
             image=IMAGE,
+            fences=FENCES,
             chaperone=self.watch,
         )
         look(config, self.actors, self.state)

@@ -34,7 +34,7 @@ from caregiver.rotate import (
 from caregiver.steps import WHOLE_FILE
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
-from caregiver_helpers import expire_overlap, toml_text, write_registry
+from caregiver_helpers import FENCE_ENV, expire_overlap, toml_text, write_registry
 
 from caregiver import paths
 
@@ -322,6 +322,7 @@ def test_reconcile_once_writes_policy_toml_into_the_named_directory(
         switch=FakeSwitchClient(),
         units=FakeUnits(),
         checker=fleet.checker,
+        environ=FENCE_ENV,
     )
     assert code == 0
     assert FAMILY in tomllib.loads((named / TargetFile.POLICY).read_text(encoding="utf-8"))["apps"]
@@ -345,5 +346,6 @@ def test_a_run_with_a_state_root_of_its_own_writes_inside_that_root(fleet: Fleet
         switch=FakeSwitchClient(),
         units=FakeUnits(),
         checker=fleet.checker,
+        environ=FENCE_ENV,
     )
     assert (fleet.state_root / paths.CHAPERONE_SCRATCH_DIR / TargetFile.POLICY).is_file()

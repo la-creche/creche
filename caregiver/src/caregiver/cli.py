@@ -16,11 +16,11 @@ import json
 import logging
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final, cast
 
-from agent_family import Index, Registry, Report, load_registry
+from agent_family import FenceError, Fences, Index, Registry, Report, load_registry, read_fences
 
 from . import paths
 from .apply import apply_once
@@ -61,6 +61,9 @@ from .timers import UnitWriter, UserUnits
 EXIT_OK: Final = 0
 EXIT_PROBLEM: Final = 1
 EXIT_USAGE: Final = 2
+#: The fences of the host do not read: the exit status of `creche-env` for a
+#: fault of the env files. Each verb that applies the registry needs them.
+EXIT_CONFIG: Final = 78
 
 # The three plane URLs below default to the site's LAN address (`lan.py`),
 # never loopback, built when a verb needs one: a verb that reaches no plane
@@ -362,11 +365,12 @@ def _apply_plan(state_root: Path, family: str, report: Report) -> list[str]:
 
 def _apply_once_command(
     args: argparse.Namespace,
+    fences: Fences,
     driver: SandboxDriver | None,
     litellm: LiteLLMKeys | None,
     checker: PolicyChecker | None,
 ) -> int:
-    registry = load_registry(args.registry)
+    registry = load_registry(args.registry, fences=fences)
     report = registry.reports.get(args.family)
     if report is None or not has_family_file(registry, args.family):
         print(f"caregiver: no family '{args.family}' in {args.registry}", file=sys.stderr)
@@ -390,6 +394,7 @@ def _apply_once_command(
         state_root=args.state_root,
         image=args.image,
         python_image=args.image_python,
+        fences=fences,
         driver=resolved_driver,
         litellm=resolved_litellm,
         policy=_fleet_policy(args, checker),
@@ -500,13 +505,14 @@ def _attendance_address(args: argparse.Namespace) -> str:
 
 def _serve_command(
     args: argparse.Namespace,
+    fences: Fences,
     driver: SandboxDriver | None,
     litellm: LiteLLMKeys | None,
     switch: SwitchClient | None,
     units: UnitWriter | None,
     checker: PolicyChecker | None,
 ) -> int:
-    registry = load_registry(args.registry)
+    registry = load_registry(args.registry, fences=fences)
     families = sorted(name for name in registry.reports if has_family_file(registry, name))
     for line in _watch_plan(args, families):
         print(line)
@@ -529,6 +535,7 @@ def _serve_command(
         registry_root=args.registry,
         state_root=args.state_root,
         image=args.image,
+        fences=fences,
         python_image=args.image_python,
         released=_released(args),
         poll_interval_s=args.poll_interval_s,
@@ -547,13 +554,14 @@ def _serve_command(
 
 def _reconcile_once_command(
     args: argparse.Namespace,
+    fences: Fences,
     driver: SandboxDriver | None,
     litellm: LiteLLMKeys | None,
     switch: SwitchClient | None,
     units: UnitWriter | None,
     checker: PolicyChecker | None,
 ) -> int:
-    registry = load_registry(args.registry)
+    registry = load_registry(args.registry, fences=fences)
     if not has_family_file(registry, args.family):
         print(f"caregiver: no family '{args.family}' in {args.registry}", file=sys.stderr)
         return EXIT_USAGE
@@ -587,9 +595,12 @@ def _reconcile_once_command(
 
 
 def _rotate_command(
-    args: argparse.Namespace, litellm: LiteLLMKeys | None, checker: PolicyChecker | None
+    args: argparse.Namespace,
+    fences: Fences,
+    litellm: LiteLLMKeys | None,
+    checker: PolicyChecker | None,
 ) -> int:
-    registry = load_registry(args.registry)
+    registry = load_registry(args.registry, fences=fences)
     family = valid_family(registry, args.family, state_root=args.state_root)
     serving = serving_family(registry, args.family, state_root=args.state_root)
     if family is None and serving is None:
@@ -821,13 +832,15 @@ def main(
     switch: SwitchClient | None = None,
     units: UnitWriter | None = None,
     checker: PolicyChecker | None = None,
+    environ: Mapping[str, str] | None = None,
 ) -> int:
-    """The five keyword arguments are for a test to inject fakes. The real
-    CLI never passes them: each `--write` path builds the live client
-    itself, once it knows the action will actually run."""
+    """The six keyword arguments are for a test to inject fakes and an
+    environment. The real CLI never passes them: each `--write` path builds
+    the live client itself, once it knows the action will actually run, and
+    the fences come from the environment of the process."""
     args = _parser().parse_args(argv)
     try:
-        return _run(args, driver, litellm, switch, units, checker)
+        return _run(args, driver, litellm, switch, units, checker, environ)
     except ConfigError as exc:
         print(f"caregiver: {exc}", file=sys.stderr)
         return EXIT_USAGE
@@ -847,27 +860,42 @@ def _run(
     switch: SwitchClient | None,
     units: UnitWriter | None,
     checker: PolicyChecker | None,
+    environ: Mapping[str, str] | None,
 ) -> int:
     """The verb `args` names."""
-    if args.command == "serve":
-        return _serve_command(args, driver, litellm, switch, units, checker)
-
-    if args.command == "reconcile-once":
-        return _reconcile_once_command(args, driver, litellm, switch, units, checker)
-
-    if args.command == "rotate":
-        return _rotate_command(args, litellm, checker)
-
-    if args.command == "apply-once":
-        return _apply_once_command(args, driver, litellm, checker)
-
     if args.command == "status":
         return _status_command(args)
 
     if args.command == "delete":
         return _delete_command(args, driver, litellm, checker)
 
+    fences = _fences(environ if environ is not None else os.environ)
+    if fences is None:
+        return EXIT_CONFIG
+
+    if args.command == "serve":
+        return _serve_command(args, fences, driver, litellm, switch, units, checker)
+
+    if args.command == "reconcile-once":
+        return _reconcile_once_command(args, fences, driver, litellm, switch, units, checker)
+
+    if args.command == "rotate":
+        return _rotate_command(args, fences, litellm, checker)
+
+    if args.command == "apply-once":
+        return _apply_once_command(args, fences, driver, litellm, checker)
+
     return EXIT_USAGE  # unreachable: the subparsers group is required=True
+
+
+def _fences(environ: Mapping[str, str]) -> Fences | None:
+    """The fences of the host (`agent_family.fences`), or None after one
+    line that names the fault. The unit reads them from the site file."""
+    try:
+        return read_fences(environ)
+    except FenceError as error:
+        print(f"caregiver: {error}", file=sys.stderr)
+        return None
 
 
 if __name__ == "__main__":

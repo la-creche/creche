@@ -17,6 +17,7 @@ from typing import Any
 from agent_family import (
     FamilyFile,
     FamilyState,
+    Fences,
     HostFacts,
     Index,
     Issue,
@@ -78,6 +79,9 @@ def apply_once(
     # Empty means this host was given none, and a family that asks for it
     # gets `image_flavor_unconfigured` rather than a base sandbox.
     python_image: str = "",
+    # The fences of the host (`agent_family.fences`). Required: an apply
+    # with no fences would apply a family that the fences refuse.
+    fences: Fences,
     driver: SandboxDriver,
     litellm: LiteLLMKeys,
     policy: FleetPolicy,
@@ -101,7 +105,7 @@ def apply_once(
     family already had (its table of `policy.toml`, its config mount, its
     credentials, its sandbox) is touched, so the last good definition
     keeps serving."""
-    registry = load_registry(registry_root, host)
+    registry = load_registry(registry_root, host, fences)
     report = registry.reports.get(family_name)
     if report is None or (report.ok and family_name not in registry.families):
         raise FamilyNotFoundError(family_name)
