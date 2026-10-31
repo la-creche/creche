@@ -281,6 +281,12 @@ MAX_TAG_LINES: Final = 4096
 LOCK_FILE: Final = "uv.lock"
 WHOLE_REPO: Final = "."
 
+#: `registry-data` takes no release, so its row's digest is not over its
+#: own tree. It is over the one path an `mcp-servers` release installs
+#: from: the server declarations and their closures (contract 06 §9).
+REGISTRY_DATA: Final = "registry-data"
+REGISTRY_MCP_PATH: Final = "mcp"
+
 #: A path that does not exist at that commit. It is written down rather than
 #: skipped, so the digest of a component that GAINS a lock file differs from
 #: the digest of the same subtree before it.
@@ -362,6 +368,9 @@ def tag_sha(run: GitRunFn, repo: Path, component: str, version: str) -> str | No
 
 def digest_paths(component: str) -> tuple[str, ...]:
     """Contract 06 §9's digest inputs for one component, in a fixed order."""
+    if component == REGISTRY_DATA:
+        return (REGISTRY_MCP_PATH,)
+
     row = CATALOG_BY_NAME[component]
     path = row.path
     if path == WHOLE_REPO:
@@ -390,6 +399,23 @@ def has_commit(run: GitRunFn, repo: Path, sha: str) -> bool:
     argv = [GIT, *git_ground(repo), "-C", str(repo), "cat-file", "-e", f"{sha}^{{commit}}"]
 
     return run(argv, repo) is not None
+
+
+def head_commit(run: GitRunFn, repo: Path) -> str | None:
+    """The commit the clone's `HEAD` names, or None.
+
+    The registry has no tag, so its commit comes from the corpus clone
+    root already trusts (contract 06 §9.2 rule 2). The corpus only fast
+    forwards, so `HEAD` is the newest commit of `main` it has fetched.
+    """
+    argv = [GIT, *git_ground(repo), "-C", str(repo), "rev-parse", "--verify", "HEAD^{commit}"]
+    printed = run(argv, repo)
+    if printed is None:
+        return None
+
+    found = printed.strip()
+
+    return found if OBJECT_ID_RE.fullmatch(found) else None
 
 
 def object_id(run: GitRunFn, repo: Path, sha: str, path: str) -> str | None:

@@ -185,8 +185,14 @@ def test_a_binary_digest_covers_the_workspace_files(monkeypatch: pytest.MonkeyPa
 
 def test_every_other_kind_keeps_its_digest_paths() -> None:
     """The digest of every component of today's catalog is over the same
-    paths as before: its subtree and `uv.lock`, or the whole repository."""
+    paths as before: its subtree and `uv.lock`, or the whole repository.
+    `registry-data` is the one exception: its row's digest is over `mcp`
+    alone (contract 06 §9)."""
     for row in CATALOG:
+        if row.name == "registry-data":
+            assert digest_paths(row.name) == ("mcp",)
+            continue
+
         expected = (".",) if row.path == "." else tuple(sorted((row.path, PYTHON_LOCK)))
 
         assert digest_paths(row.name) == expected, row.name

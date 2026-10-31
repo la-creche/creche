@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Final
 
 from .. import notices
-from ..catalog import CATALOG_BY_NAME
+from ..catalog import CATALOG_BY_NAME, Repo
 from ..errors import Refusal, RefusalCode
 from ..resolve import TAG_FORMAT
 from ..site import operator_account
@@ -47,7 +47,7 @@ from .approval import deny_all
 from .host import As, Command, Host, make_runner
 from .install import StepFailed
 from .ledger import Entry, Outcome, Step, StepName, StepStatus
-from .live_state import InputDigestFn, Readers
+from .live_state import InputDigestFn, Readers, RegistryHeadFn
 from .notice import notice_of, say_nothing
 from .phone import TOKEN_ENV as APPROVAL_TOKEN_ENV
 from .phone import URL_ENV, build_phone
@@ -55,7 +55,7 @@ from .provenance import ApiGetFn, github_api, newest_version, tag_commit
 from .quiet import ask_attendance, attendance_signal
 from .request import Request, request_id_of
 from .self_switch import settle, switch_in
-from .source import git_env, input_digest, require_trusted
+from .source import GitRunFn, git_env, head_commit, input_digest, require_trusted
 from .spool import (
     MAX_PENDING_PER_REQUESTER,
     MAX_REQUESTS_PER_PASS,
@@ -417,7 +417,7 @@ def root_readers(host: Host, api: ApiGetFn | None) -> Readers:
     fail-closed end `api=None` gives step 3.
     """
     if api is None:
-        return Readers(input_digest=_digest_reader(host))
+        return Readers(input_digest=_digest_reader(host), registry_head=_registry_head_reader(host))
 
     def newest(component: str) -> str | None:
         return newest_version(api, component, str(CATALOG_BY_NAME[component].repo))
@@ -427,11 +427,16 @@ def root_readers(host: Host, api: ApiGetFn | None) -> Readers:
 
         return tag_commit(api, component, repo, TAG_FORMAT.format(name=component, version=version))
 
-    return Readers(newest_version=newest, tag_sha=sha_of, input_digest=_digest_reader(host))
+    return Readers(
+        newest_version=newest,
+        tag_sha=sha_of,
+        input_digest=_digest_reader(host),
+        registry_head=_registry_head_reader(host),
+    )
 
 
-def _digest_reader(host: Host) -> InputDigestFn:
-    """`source.input_digest`, run through root's one child starter."""
+def _git_reader(host: Host) -> GitRunFn:
+    """One read-only git child, as root, through root's one child starter."""
 
     def run_git(argv: Sequence[str], cwd: Path) -> str | None:
         command = Command(
@@ -454,6 +459,13 @@ def _digest_reader(host: Host) -> InputDigestFn:
 
         return result.stdout
 
+    return run_git
+
+
+def _digest_reader(host: Host) -> InputDigestFn:
+    """`source.input_digest`, run through root's one child starter."""
+    run_git = _git_reader(host)
+
     def digest(component: str, sha: str) -> str | None:
         repo = str(CATALOG_BY_NAME[component].repo)
         path = host.source_root / repo
@@ -462,6 +474,21 @@ def _digest_reader(host: Host) -> InputDigestFn:
         return input_digest(run_git, path, component, sha)
 
     return digest
+
+
+def _registry_head_reader(host: Host) -> RegistryHeadFn:
+    """`source.head_commit` of the registry corpus clone (contract 06 §9.2
+    rule 2), vetted by `require_trusted` before any git child starts."""
+    run_git = _git_reader(host)
+
+    def head() -> str | None:
+        repo = str(Repo.REGISTRY)
+        path = host.source_root / repo
+        require_trusted(repo, path, host.source_owner_uid, host.source_owner_gid)
+
+        return head_commit(run_git, path)
+
+    return head
 
 
 @dataclass(frozen=True)
