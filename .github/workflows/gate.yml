@@ -196,17 +196,17 @@ jobs:
   # build is missing. A run in which every test skips is green and judged
   # nothing, so here a skip is a failure.
   #
-  # The time limit: a teardown waits 20 s for each process group. A fault
-  # in the harness can cost every test that wait, and a job has 6 hours by
-  # default.
-  #
   # Four workers (-n 4): the runner has 4 vCPU and 16 GB. A run of four
   # workers peaks near 1.3 GB. On one worker the suite took 175 s here.
+  #
+  # The time limit: each test has 180 s (integration/proc/AGENTS.md, rule
+  # 22), and a hung test fails while the run goes on. A job has 6 hours by
+  # default. A cold build of the Rust chaperone adds about 1 minute.
   proc:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -262,7 +262,8 @@ jobs:
   # suite that ran no test and for a report that is missing. It prints the
   # counts and the time of the suite.
   #
-  # The time limit is the limit of the `proc` job.
+  # The time limit: the stack of a test waits for each listener and for each
+  # child at its teardown, and the suite has no limit for one test.
   suites:
     needs: scope
     if: needs.scope.outputs.scope == 'code'

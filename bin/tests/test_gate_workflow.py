@@ -232,6 +232,10 @@ SUITES_KEYS = {"needs", "if", "runs-on", "timeout-minutes", "steps"}
 #: The time limit of the job in minutes: the limit of the `proc` job.
 SUITES_MINUTES = 20
 
+#: The time limit of the `proc` job. Each test of that suite has a limit of
+#: its own, so a hang fails one test and the job ends.
+PROC_MINUTES = 10
+
 #: One small test file for each kind of pytest run that the last step judges.
 SMALL_RUNS = {
     "ran": "def test_one():\n    pass\n",
@@ -530,9 +534,9 @@ def test_a_skip_in_the_proc_job_is_a_failure(jobs: dict[str, dict[str, Any]], la
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
 def test_the_proc_job_has_a_time_limit(jobs: dict[str, dict[str, Any]], last: str) -> None:
-    """A teardown waits for each process group. A fault in the harness can
-    cost every test that wait, and a job with no limit has six hours."""
-    assert 0 < jobs["proc"]["timeout-minutes"] <= 30
+    """A job with no limit has six hours. Each test of the suite has 180 s, so
+    the job needs no more than its own run and a cold build."""
+    assert jobs["proc"]["timeout-minutes"] == PROC_MINUTES
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
@@ -643,13 +647,10 @@ def test_the_last_step_of_the_suites_job_reads_the_report_of_each_suite(
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
-def test_the_suites_job_has_the_time_limit_of_the_proc_job(
-    jobs: dict[str, dict[str, Any]], last: str
-) -> None:
+def test_the_suites_job_has_a_time_limit(jobs: dict[str, dict[str, Any]], last: str) -> None:
     """The stack of a test waits for each listener and for each child at its
     teardown. A fault there can cost each test that wait."""
     assert jobs[SUITES_JOB]["timeout-minutes"] == SUITES_MINUTES
-    assert jobs["proc"]["timeout-minutes"] == SUITES_MINUTES
 
 
 @pytest.fixture(scope="module")
