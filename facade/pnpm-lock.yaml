@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  '@flue/runtime@2.3.0': 36813f8d2dee3514ffe3c963eb0c7564dc8384b9f1285fe9fb9fe5b3a3a815bd
+
 importers:
 
   .:
@@ -13,7 +16,7 @@ importers:
         version: 2.0.2(zod@4.6.7)
       '@flue/runtime':
         specifier: 2.3.0
-        version: 2.3.0(@aws-sdk/credential-provider-node@3.972.88)(@smithy/signature-v4@5.7.4)(typescript@5.9.3)(ws@8.22.0)(zod@4.6.7)
+        version: 2.3.0(patch_hash=36813f8d2dee3514ffe3c963eb0c7564dc8384b9f1285fe9fb9fe5b3a3a815bd)(@aws-sdk/credential-provider-node@3.972.88)(@smithy/signature-v4@5.7.4)(typescript@5.9.3)(ws@8.22.0)(zod@4.6.7)
       agent:
         specifier: workspace:*
         version: link:../agent
@@ -44,7 +47,7 @@ importers:
         version: 1.4.0
       '@flue/runtime':
         specifier: 2.3.0
-        version: 2.3.0(@aws-sdk/credential-provider-node@3.972.88)(@smithy/signature-v4@5.7.4)(typescript@5.9.3)(ws@8.22.0)(zod@4.6.7)
+        version: 2.3.0(patch_hash=36813f8d2dee3514ffe3c963eb0c7564dc8384b9f1285fe9fb9fe5b3a3a815bd)(@aws-sdk/credential-provider-node@3.972.88)(@smithy/signature-v4@5.7.4)(typescript@5.9.3)(ws@8.22.0)(zod@4.6.7)
       '@modelcontextprotocol/client':
         specifier: 2.0.0
         version: 2.0.0
@@ -1402,7 +1405,7 @@ snapshots:
   '@esbuild/win32-x64@0.28.2':
     optional: true
 
-  '@flue/runtime@2.3.0(@aws-sdk/credential-provider-node@3.972.88)(@smithy/signature-v4@5.7.4)(typescript@5.9.3)(ws@8.22.0)(zod@4.6.7)':
+  '@flue/runtime@2.3.0(patch_hash=36813f8d2dee3514ffe3c963eb0c7564dc8384b9f1285fe9fb9fe5b3a3a815bd)(@aws-sdk/credential-provider-node@3.972.88)(@smithy/signature-v4@5.7.4)(typescript@5.9.3)(ws@8.22.0)(zod@4.6.7)':
     dependencies:
       '@earendil-works/pi-agent-core': 1.4.0(@aws-sdk/credential-provider-node@3.972.88)(@smithy/signature-v4@5.7.4)(ws@8.22.0)(zod@4.6.7)
       '@earendil-works/pi-ai': 1.4.0(@aws-sdk/credential-provider-node@3.972.88)(@smithy/signature-v4@5.7.4)(ws@8.22.0)(zod@4.6.7)

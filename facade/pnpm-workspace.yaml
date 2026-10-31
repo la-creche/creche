@@ -14,3 +14,6 @@ allowBuilds:
 packages:
   - '.'
   - '../agent'
+
+patchedDependencies:
+  '@flue/runtime@2.3.0': patches/@flue__runtime@2.3.0.patch

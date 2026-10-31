@@ -83,6 +83,7 @@ def test_the_facade_installs_from_its_frozen_lockfile() -> None:
 
     assert "COPY facade/package.json facade/pnpm-lock.yaml facade/pnpm-workspace.yaml ./" in stage
     assert "RUN pnpm install --frozen-lockfile\n" in stage
+    assert stage.index("COPY facade/patches ./patches") < stage.index("RUN pnpm install")
     assert f"deploy --prod --frozen-lockfile {DEPLOYED}" in stage
     assert "toybox/" not in _text()
 

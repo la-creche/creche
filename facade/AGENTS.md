@@ -132,9 +132,22 @@ position follow it.
 7. Only `src/flue-history.ts` imports `@flue/runtime/internal`.
    `test/flue-history.test.ts` pins each fact that it reads. When that
    test fails after a Flue change, fix the module, not the test.
-8. Never serve without the lock. `lock.ts` never throws. Keep its pid and
+8. Change Flue only through `patches/@flue__runtime@2.3.0.patch`. Both
+   `pnpm-workspace.yaml` files name it, so the agent's tests and the
+   sandbox image run the same Flue. The patch does two things, each in
+   `runModelTurnWithRecovery` and its helpers:
+   - Between two tool calls, it ends the run when the next model call would
+     pass the compaction threshold. It compacts, then resumes the run. At
+     most 8 times per submission.
+   - After a reply that stops at the output limit, it compacts when the
+     context is full, then continues with one short user prompt. At most 2
+     times per submission.
+   A Flue upgrade drops the patch. Check that Flue does both, or port the
+   patch, before you move the pin. `agent/test/compaction.test.ts` fails
+   when either part is missing.
+9. Never serve without the lock. `lock.ts` never throws. Keep its pid and
    its beat: attendance reads the beat with its own clock.
-9. Never make stdin EOF the only way the process ends. A client-side kill
+10. Never make stdin EOF the only way the process ends. A client-side kill
    of `sbx exec` does not reach the VM. The beat deadline ends the process.
 
 ## Relay connections
