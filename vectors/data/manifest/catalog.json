@@ -19,7 +19,7 @@
   {"id":"binary-install-env","input":{"args":{}},"result":"accepted","value":"CARGO_INSTALL_ROOT"},
   {"id":"release-workflow","input":{"args":{}},"result":"accepted","value":{"chaperone":"release.yml","creche":"release.yml"}},
   {"id":"main-branch","input":{"args":{}},"result":"accepted","value":"main"},
-  {"id":"manifest-contract-version","input":{"args":{}},"result":"accepted","value":{"major":0,"minor":19}},
+  {"id":"manifest-contract-version","input":{"args":{}},"result":"accepted","value":{"major":0,"minor":20}},
   {"id":"last-in-order","input":{"args":{}},"result":"accepted","value":"handover"},
   {"id":"max-request-components","input":{"args":{}},"result":"accepted","value":8},
   {"id":"archive-max-bytes","input":{"args":{}},"result":"accepted","value":268435456},
