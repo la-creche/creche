@@ -1,0 +1,120 @@
+diff --git a/dist/conversation-stream-store-CXrgv-b0.mjs b/dist/conversation-stream-store-CXrgv-b0.mjs
+index 28be2fc98bba07dfc9628da831dbbe6a029ba970..0da740d0311ef75bad52c9ed93ea93ecf6cbf9fc 100644
+--- a/dist/conversation-stream-store-CXrgv-b0.mjs
++++ b/dist/conversation-stream-store-CXrgv-b0.mjs
+@@ -10,6 +10,13 @@ import { r as migrateFlueSqlSchema, s as createAttachmentRef } from "./format-ve
+ import { createInitialSystemMessage, getCurrentSystemPrompt, getCurrentTools, toToolDeclaration } from "@earendil-works/pi-ai";
+ import * as v from "valibot";
+ import { Agent } from "@earendil-works/pi-agent-core";
++//#region creche patch
++/** Mid-run compactions per submission. Past this, the run is not ended early. */
++const CRECHE_MAX_MID_RUN_COMPACTIONS = 8;
++/** Automatic continues after a length stop, per submission. */
++const CRECHE_MAX_LENGTH_CONTINUES = 2;
++const CRECHE_LENGTH_CONTINUE_PROMPT = "Your last reply stopped at the output limit. Continue the task from where it stopped. Do not repeat what you already wrote.";
++//#endregion
+ //#region src/agent-execution-store.ts
+ /** Default maximum total attempts before terminalization. */
+ const DURABILITY_DEFAULT_MAX_ATTEMPTS = 10;
+@@ -2216,6 +2223,7 @@ var Session = class {
+ 			steeringMode: "all",
+ 			followUpMode: "all",
+ 			sessionId: this.affinityKey,
++			finishTurn: (turn) => this.finishTurnForCompaction(turn),
+ 			...options.rerender ? { prepareNextTurnWithContext: (turn) => this.prepareRerenderTurn(turn) } : {}
+ 		});
+ 		this.eventCallback = options.onAgentEvent;
+@@ -4091,10 +4099,36 @@ var Session = class {
+ 			if (options.signal.aborted) throw abortErrorFor(options.signal);
+ 			if (this.activeTimeoutAt !== void 0 && Date.now() >= this.activeTimeoutAt) throw new SubmissionTimeoutError();
+ 		};
++		// creche patch: compaction between tool calls, and continue after a length stop.
++		this.midRunCompactionsLeft = CRECHE_MAX_MID_RUN_COMPACTIONS;
++		this.midRunCompactionRequested = false;
++		let lengthContinuesLeft = CRECHE_MAX_LENGTH_CONTINUES;
++		try {
+ 		while (true) {
+-			const overflow = assistant !== void 0 && isAssistantContextOverflow(assistant, this.agentLoop.state.model.contextWindow ?? 0);
+-			const retryable = !overflow && assistant !== void 0 && isRetryableModelError(assistant);
+-			if (turnCompleted && !overflow && !retryable) {
++			let resumeRun = false;
++			if (turnCompleted && this.midRunCompactionRequested) {
++				this.midRunCompactionRequested = false;
++				throwIfHalted();
++				this.internalLog("info", "[flue:compaction] Threshold reached between tool calls, compacting before the next model call");
++				await this.rebuildCanonicalContext();
++				await this.runCompaction("threshold");
++				start = () => this.resumeAfterCompaction();
++				resumeRun = true;
++			} else if (turnCompleted && assistant?.stopReason === "length" && lengthContinuesLeft > 0) {
++				lengthContinuesLeft -= 1;
++				throwIfHalted();
++				const contextWindow = this.agentLoop.state.model.contextWindow ?? 0;
++				const settings = this.resolveCompactionSettings(this.agentLoop.state.model);
++				const full = isAssistantContextOverflow(assistant, contextWindow) || shouldCompact(calculateContextTokens(assistant.usage), contextWindow, settings);
++				this.internalLog("info", "[flue:length] The model stopped at its output limit, continuing", { compact: full });
++				await this.rebuildCanonicalContext();
++				if (full) await this.runCompaction("overflow");
++				start = () => this.resumeAfterCompaction();
++				resumeRun = true;
++			}
++			const overflow = !resumeRun && assistant !== void 0 && isAssistantContextOverflow(assistant, this.agentLoop.state.model.contextWindow ?? 0);
++			const retryable = !resumeRun && !overflow && assistant !== void 0 && isRetryableModelError(assistant);
++			if (!resumeRun && turnCompleted && !overflow && !retryable) {
+ 				const settledAssistant = assistant ?? this.agentLoop.state.messages.findLast((message) => message.role === "assistant");
+ 				if (settledAssistant !== void 0) await this.checkCompaction(settledAssistant);
+ 				if (assistant?.stopReason === "error" || assistant?.stopReason === "aborted") await this.rebuildCanonicalContext();
+@@ -4144,6 +4178,11 @@ var Session = class {
+ 			const latest = messages[messages.length - 1];
+ 			assistant = latest?.role === "assistant" ? latest : void 0;
+ 		}
++		} finally {
++			// Outside this loop nothing resumes a run, so no run may end early.
++			this.midRunCompactionsLeft = 0;
++			this.midRunCompactionRequested = false;
++		}
+ 	}
+ 	async waitForTransientModelRetry(assistant, attempt) {
+ 		if (attempt > MAX_TRANSIENT_MODEL_RETRIES) {
+@@ -4170,6 +4209,41 @@ var Session = class {
+ 		}
+ 		return true;
+ 	}
++	/**
++	* creche patch. pi calls this after each assistant turn and its tool
++	* results. When the next model call would pass the compaction threshold,
++	* end the run here; the run loop compacts and resumes it. A turn with no
++	* tool call ends the run anyway, and the end-of-turn check covers it.
++	*/
++	finishTurnForCompaction(turn) {
++		if (turn.toolResults.length === 0) return void 0;
++		if (!(this.midRunCompactionsLeft > 0)) return void 0;
++		const model = this.agentLoop.state.model;
++		const settings = this.resolveCompactionSettings(model);
++		if (!settings.enabled) return void 0;
++		const usage = turn.message.usage;
++		if (!usage) return void 0;
++		let toolChars = 0;
++		for (const result of turn.toolResults) for (const block of result.content ?? []) {
++			if (block.type === "text") toolChars += block.text.length;
++			else if (block.type === "image") toolChars += 4800;
++		}
++		const nextTokens = calculateContextTokens(usage) + Math.ceil(toolChars / 4);
++		if (!shouldCompact(nextTokens, model.contextWindow ?? 0, settings)) return void 0;
++		this.midRunCompactionsLeft -= 1;
++		this.midRunCompactionRequested = true;
++		return { action: "end" };
++	}
++	/**
++	* creche patch. Resume a run that ended early. A transcript that ends in
++	* a tool result continues as it is. One that ends in an assistant
++	* message (a length stop) gets a short user prompt, as Flue's own result
++	* follow-up does.
++	*/
++	resumeAfterCompaction() {
++		if (this.agentLoop.state.messages.at(-1)?.role === "assistant") return this.agentLoop.prompt(CRECHE_LENGTH_CONTINUE_PROMPT);
++		return this.agentLoop.continue();
++	}
+ 	async checkCompaction(assistantMessage) {
+ 		if (assistantMessage.stopReason === "aborted" || assistantMessage.stopReason === "error") return;
+ 		const model = this.agentLoop.state.model;

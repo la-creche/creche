@@ -27,6 +27,8 @@ ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 RUN corepack enable
 WORKDIR /src/facade
 COPY facade/package.json facade/pnpm-lock.yaml facade/pnpm-workspace.yaml ./
+# The facade's patch of Flue: the install applies it (facade/AGENTS.md rule 8).
+COPY facade/patches ./patches
 COPY agent/package.json /src/agent/
 RUN pnpm install --frozen-lockfile
 COPY agent/tsconfig.json agent/tsconfig.build.json /src/agent/

@@ -7,3 +7,8 @@ allowBuilds:
   '@google/genai': false
   esbuild: true
   protobufjs: false
+
+# The facade's patch of Flue (facade/patches/), so the agent's tests run the
+# same Flue that the sandbox image ships.
+patchedDependencies:
+  '@flue/runtime@2.3.0': ../facade/patches/@flue__runtime@2.3.0.patch
