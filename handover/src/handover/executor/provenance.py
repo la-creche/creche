@@ -347,6 +347,17 @@ def verify(api: ApiGetFn, component: str, repo: str, tag: str, sha: str) -> Veri
     return Verified(component=component, pr=number, head_sha=head_sha)
 
 
+def verify_commit(api: ApiGetFn, component: str, repo: str, sha: str) -> Verified:
+    """P3 to P5 for a commit that has no tag: the registry commit an
+    `mcp-servers` release installs from (contract 06 §9.2 rule 4). It has
+    no Release and no tag, so P1 and P2 have nothing to ask."""
+    check_on_main(api, component, repo, sha)
+    number, head_sha = merged_pr(api, component, repo, sha)
+    check_runs_green(api, component, repo, head_sha)
+
+    return Verified(component=component, pr=number, head_sha=head_sha)
+
+
 #: The trust root that child 1 of P6 writes into the state directory of
 #: the verifier, and that child 2 reads with no network. Probe run
 #: 38943722125 measured the path with the verifier of the release workflow.
