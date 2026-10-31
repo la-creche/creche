@@ -419,6 +419,10 @@ class AcpLink:
         self._ended_sessions: deque[str] = deque(maxlen=MAX_RETIRED)
 
     @property
+    def family(self) -> str:
+        return self._family
+
+    @property
     def status(self) -> LinkStatus:
         sandbox = self._channel.sandbox if self._channel is not None else None
         return LinkStatus(state=self._state, sandbox=sandbox, agent=self._agent)
@@ -605,6 +609,10 @@ class AcpLink:
             if response.error is not None:
                 raise Malformed("a refused beat")
 
+            # One answer proves the facade alive and retires every beat in
+            # flight. A facade that was busy for a beat answers the next one
+            # too: that answer is to a retired beat, dropped like any other.
+            self._dropped_ids.extend(self._beats)
             self._beats.clear()
             return
 
