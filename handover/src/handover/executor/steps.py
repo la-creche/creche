@@ -91,6 +91,7 @@ from .live_state import (
     build_state,
     select_manifests,
     write_manifest_stamp,
+    write_registry_stamp,
     write_stamp,
 )
 from .mcpbuild import Fetched, McpBuilder, ServerBuild
@@ -100,7 +101,6 @@ from .provenance import verify as check_provenance
 from .quiet import NO_WINDOW, Busy, BusyNowFn, BusySeenFn, needs_window, wait_for_quiet
 from .request import Kind as RequestKind
 from .request import Request
-from .source import require_trusted
 from .spool import SelfNote, Spool, SwitchNote, VerifyHook, acquire, release_lock
 
 #: The step detail of step 3: the checks of the code host, and those with
@@ -1084,9 +1084,12 @@ class Release:
         # verify out of the new tree and change nothing that runs. Refusing
         # here leaves the host exactly as it was (contract 06 §1 rule 8).
         self.installer.check_unit_binds(manifest, source)
+        registry_sha = self._approved_registry_sha(plan) if name == MCP_COMPONENT else None
         self.paths[name] = paths
         self.installer.build(manifest, source, paths, self.verified.get(name))
         write_stamp(paths.new, plan.to_version(name))
+        if registry_sha is not None:
+            write_registry_stamp(paths.new, registry_sha)
         # The manifest goes into the artifact beside the version stamp, so
         # the NEXT release reads this component's interface out of a tree
         # root owns rather than at a SHA a document claimed.
@@ -1106,10 +1109,20 @@ class Release:
             # this to decide whether it must wait for a quiet window.
             self.recreates[name] = self.installer.compose_recreates(manifest, source)
 
-        if name == MCP_COMPONENT:
-            self._stage_servers(plan, source)
+        if registry_sha is not None:
+            self._stage_servers(plan, source, registry_sha)
 
-    def _stage_servers(self, plan: Plan, source: Path) -> None:
+    def _approved_registry_sha(self, plan: Plan) -> str:
+        """The registry commit David approved (contract 06 §9). A set that
+        deploys `mcp-servers` must name one: without it the tap bound no
+        server file, so nothing is built and nothing is swapped."""
+        sha = plan.registry_sha()
+        if sha is None:
+            raise StepFailed("no registry commit was approved for mcp-servers")
+
+        return sha
+
+    def _stage_servers(self, plan: Plan, source: Path, registry_sha: str) -> None:
         """§4.2, once per declared server. Still step 8: every `<name>.new`
         is built and NOTHING is swapped, so a hash that does not match
         leaves the host exactly as it was (`mcpbuild` assumption 10).
@@ -1120,19 +1133,14 @@ class Release:
         `pypi` server installs from the closure committed beside its own
         declaration in the registry checkout (contract 01b §3.4).
         """
-        # The corpus, not the platform root. The platform root is a rw
-        # sandbox mount, so the declarations that decide which `mcp-<name>`
-        # runs which pinned package would come out of a directory a model
-        # could rewrite between the tap and the build. The trust check
-        # runs here too, because this read is not a git call and would
-        # otherwise be the one door left open.
-        registry = self.wiring.host.source_root / REGISTRY_REPO
-        require_trusted(
-            REGISTRY_REPO,
-            registry,
-            self.wiring.host.source_owner_uid,
-            self.wiring.host.source_owner_gid,
-        )
+        # The registry at the commit David approved (contract 06 §9.2 rule
+        # 6), never the clone's working tree: the sync moves that tree every
+        # minute, and the tap bound this commit. `fetch` reads the corpus,
+        # not the platform root, which is a rw sandbox mount. It runs the
+        # trust check before its first git child, and it proves the
+        # checkout is at this commit and no other.
+        registry = self.wiring.host.work_root / self.request.id / REGISTRY_REPO
+        self.installer.fetch(REGISTRY_REPO, registry_sha, registry)
         self.servers = read_registry(registry / REGISTRY_MCP_DIR, MAX_SERVERS)
         work = self.wiring.host.work_root / self.request.id / REGISTRY_MCP_DIR
         fetched = Fetched(registry=registry, tree=source, tag=plan.tag(MCP_COMPONENT))

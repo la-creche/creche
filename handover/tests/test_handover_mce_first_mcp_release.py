@@ -78,6 +78,7 @@ from handover.executor.spool import DONE_DIR, REQUESTS_DIR, Spool
 from handover.executor.steps import MAX_SERVERS, REGISTRY_MCP_DIR, Wiring
 from handover.mcpserver import SERVER_FILE_NAME, ServerFile, Source, read_registry
 from handover_executor_fixtures import (
+    REGISTRY_SHA,
     FakeRun,
     GitFake,
     fake_host,
@@ -638,6 +639,40 @@ def test_the_whole_registry_installs(
     assert bench.ledger()["previous"] == {COMPONENT: None}
     assert bench.installed() == list(DECLARED)
     assert (bench.components / COMPONENT / "bin" / VERIFY_HOOK).is_file()
+
+
+def test_the_release_installs_the_registry_at_the_approved_commit(bench: Bench) -> None:
+    """Contract 06 §9.2 rules 6 and 7: the manifest binds the registry
+    commit, step 8 checks that commit out into root's own work tree, and the
+    installed tree is stamped with it."""
+    result = _release(bench)
+
+    assert "succeeded" in result, bench.ledger()["reason"]
+    manifest = cast("dict[str, object]", bench.ledger()["manifest"])
+    rows = cast("list[dict[str, object]]", manifest["components"])
+    registry_row = next(row for row in rows if row["name"] == "registry-data")
+    assert registry_row["sha"] == REGISTRY_SHA
+    assert any(
+        "checkout" in line and line.endswith(REGISTRY_SHA) and "/registry " in line
+        for line in bench.run.argv_lines()
+    )
+    stamp = bench.components / COMPONENT / ".registry-rev"
+    assert stamp.read_text(encoding="utf-8") == f"{REGISTRY_SHA}\n"
+
+
+def test_a_set_with_no_registry_commit_builds_nothing(bench: Bench) -> None:
+    """No registry commit in the manifest means the tap bound no server
+    file. Step 8 fails before it builds, and nothing is installed."""
+    bench.wiring = replace(
+        bench.wiring, readers=replace(bench.wiring.readers, registry_head=lambda: None)
+    )
+
+    result = _release(bench)
+
+    assert "succeeded" not in result
+    assert "no registry commit was approved" in str(bench.ledger()["reason"])
+    assert bench.installed() == []
+    assert not (bench.components / COMPONENT).exists()
 
 
 def test_the_seven_rows_the_operator_reads_before_the_tap(bench: Bench) -> None:
