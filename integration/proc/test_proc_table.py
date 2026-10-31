@@ -291,10 +291,10 @@ def test_a_pin_with_no_one_commit_is_an_error(text: str) -> None:
 @pytest.mark.parametrize(
     "origin",
     [
-        "https://github.com/example-owner/agent-control",
-        "https://github.com/example-owner/agent-control.git",
-        "git@github.com:example-owner/agent-control.git",
-        "ssh://git@github.com/example-owner/agent-control.git",
+        "https://github.com/example-owner/creche",
+        "https://github.com/example-owner/creche.git",
+        "git@github.com:example-owner/creche.git",
+        "ssh://git@github.com/example-owner/creche.git",
     ],
 )
 def test_the_chaperone_repository_is_beside_the_origin(origin: str) -> None:
@@ -304,7 +304,7 @@ def test_the_chaperone_repository_is_beside_the_origin(origin: str) -> None:
 
 def test_an_origin_off_github_is_an_error() -> None:
     with pytest.raises(BuildError, match="CRECHE_PROC_CHAPERONE_RS"):
-        repository_url("https://git.example.invalid/example-owner/agent-control.git")
+        repository_url("https://git.example.invalid/example-owner/creche.git")
 
 
 def test_every_switch_of_the_suite_is_known() -> None:

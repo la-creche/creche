@@ -409,7 +409,7 @@ REQUEST_FIELDS: Final[dict[str, object]] = {
     "kind": "release",
     "components": {"chaperone": "2.1.0"},
     "rollback_of": None,
-    "requested_by": "agent-control",
+    "requested_by": "creche",
     "requester_session": "tui-01K5J7Z9R0P2M4C6H8K1N3V5W7",
     "ts": 1758153590.0,
 }
@@ -492,7 +492,7 @@ REQUEST_FILES: Final[tuple[RequestFile, ...]] = (
     RequestFile("compact", json.dumps(REQUEST_FIELDS, separators=(",", ":")).encode("utf-8")),
     RequestFile("spaces-around", b" \r\n\t" + _REQUEST_TEXT.encode("utf-8") + b"\n \t\r"),
     RequestFile("keys-in-reverse", json.dumps(dict(reversed(REQUEST_FIELDS.items()))).encode()),
-    _req_raw("escaped-text", '"agent-control"', '"\\u0061gent-control"'),
+    _req_raw("escaped-text", '"creche"', '"\\u0063reche"'),
     _req_raw("escaped-key", '"kind"', '"k\\u0069nd"'),
     _req_raw("duplicate-key-bad-then-good", '"kind": "release"', '"kind": 5, "kind": "release"'),
     _req_raw(
@@ -543,9 +543,9 @@ REQUEST_FILES: Final[tuple[RequestFile, ...]] = (
     RequestFile("json-single-quotes", _REQUEST_TEXT.replace('"', "'").encode("utf-8")),
     RequestFile("json-trailing-comma", _REQUEST_TEXT[:-1].encode("utf-8") + b",}"),
     RequestFile("json-comment", b"// a request\n" + _REQUEST_TEXT.encode("utf-8")),
-    _req_raw("json-raw-tab-in-text", '"agent-control"', '"agent\tcontrol"'),
-    _req_raw("json-bad-escape", '"agent-control"', '"agent\\qcontrol"'),
-    _req_raw("json-short-unicode-escape", '"agent-control"', '"agent\\u00"'),
+    _req_raw("json-raw-tab-in-text", '"creche"', '"cre\tche"'),
+    _req_raw("json-bad-escape", '"creche"', '"cre\\qche"'),
+    _req_raw("json-short-unicode-escape", '"creche"', '"cre\\u00"'),
     _req_raw("json-key-not-text", '"kind":', "5:"),
     _req_ts("json-leading-zero", "01"),
     _req_ts("json-plus-sign", "+1"),
@@ -634,7 +634,7 @@ REQUEST_FILES: Final[tuple[RequestFile, ...]] = (
     _req("requested-by-upper", requested_by="Human"),
     _req("requested-by-one-char", requested_by="h"),
     _req("requested-by-32-chars", requested_by="a" * 32),
-    _req("requested-by-underscore", requested_by="agent_control"),
+    _req("requested-by-underscore", requested_by="code_worker"),
     _req("requested-by-final-newline", requested_by="human\n"),
     _req("requested-by-number", requested_by=5),
     _req("requested-by-null", requested_by=None),
@@ -774,7 +774,7 @@ PLANS: Final[tuple[Plan, ...]] = (
     Plan("latest", {"attendance": "latest"}),
     Plan("not-sorted", {"noticeboard": "1.0.0", "attendance": "latest", "chaperone": "0.0.1"}),
     Plan("eight", _EIGHT),
-    Plan("requested-by-family", _ONE, requested_by="agent-control"),
+    Plan("requested-by-family", _ONE, requested_by="creche"),
     Plan("with-session", _ONE, requester_session="tui-01K5J7Z9R0P2M4C6H8K1N3V5W7"),
     Plan("rollback", _ONE, kind="rollback", rollback_of=OTHER_ULID),
     Plan("now-zero", _ONE, now_bits=_bits(0.0)),
@@ -1138,7 +1138,7 @@ class Resolved:
     contracts: tuple[Contract, ...] = ()
     facts: Mapping[str, Fact] | None = None
     release_id: str = ULID
-    requested_by: str = "agent-control"
+    requested_by: str = "creche"
     resolved_at_bits: str = _bits(1758153600.0)
 
     def args(self) -> dict[str, Json]:
@@ -1423,7 +1423,7 @@ _SHORT_SUMMARY: Final[dict[str, str]] = {
     "contracts": "6 contracts satisfied",
     "restarts": "creche-chaperone.service",
     "restore": "automatic",
-    "requested_by": "agent-control",
+    "requested_by": "creche",
     "manifest": "0123456789ab",
 }
 

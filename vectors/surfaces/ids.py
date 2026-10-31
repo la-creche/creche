@@ -140,7 +140,7 @@ NAME_CASES: Final = (
     ("leading-hyphen", "-chat"),
     ("upper-first", "Chat"),
     ("upper-last", "chaT"),
-    ("underscore", "agent_control"),
+    ("underscore", "code_worker"),
     ("double-underscore", "a__b"),
     ("dot", "a.b"),
     ("slash", "a/b"),

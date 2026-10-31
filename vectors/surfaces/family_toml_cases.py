@@ -27,7 +27,7 @@ from typing import Final
 PLACEHOLDER: Final = "%NAME%"
 
 #: The family the platform fence allows (contract 01 §5.5).
-PLATFORM_FAMILY: Final = "agent-control"
+PLATFORM_FAMILY: Final = "creche"
 
 #: A tool name of 65 characters, one more than the limit of a tool name.
 LONG_TOOL_NAME: Final = "a" * 65
@@ -457,7 +457,7 @@ files = [
     { path = "/srv/agents/vault/a b", mode = "ro" },
     { path = "/srv/agents/vault-other", mode = "ro" },
     { path = "/srv/agents/sessions", mode = "ro" },
-    { path = "/srv/agents/code/agent-control", mode = "ro" },
+    { path = "/srv/agents/code/creche", mode = "ro" },
     { path = "/", mode = "ro" },
     { path = "", mode = "ro" },
     { path = "/srv/agents/vault/x", mode = "RO" },
@@ -477,7 +477,7 @@ files = [
         ATTENDED_HEAD
         + "files = [\n"
         + '    { path = "/srv/agents/work/platform", mode = "rw" },\n'
-        + '    { path = "/srv/agents/code/agent-control", mode = "ro" },\n'
+        + '    { path = "/srv/agents/code/creche", mode = "ro" },\n'
         + '    { path = "/srv/agents/code/agent-mcp", mode = "ro" },\n]\n',
         directory=PLATFORM_FAMILY,
     ),
@@ -486,7 +486,7 @@ files = [
         ATTENDED_HEAD
         + "files = [\n"
         + '    { path = "/srv/agents/code/agent-registry", mode = "rw" },\n'
-        + '    { path = "/srv/agents/code/agent-control/src", mode = "ro" },\n]\n',
+        + '    { path = "/srv/agents/code/creche/src", mode = "ro" },\n]\n',
         directory=PLATFORM_FAMILY,
     ),
     _case(

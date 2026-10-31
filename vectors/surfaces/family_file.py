@@ -109,7 +109,7 @@ HOST_ALIASES: Final = ("agent-router", "code-router", "fast")
 HOST_LINKS: Final = {
     "/srv/agents/vault/linked-out": "/etc/shadow",
     "/srv/agents/vault/linked-in": "/srv/agents/code/example",
-    "/srv/agents/vault/linked-platform": "/srv/agents/work/platform/agent-control",
+    "/srv/agents/vault/linked-platform": "/srv/agents/work/platform/creche",
     "/srv/agents/sessions/linked-store": "/etc/shadow",
 }
 

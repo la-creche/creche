@@ -18,7 +18,7 @@ tools.kagi = ["kagi_search_fetch", "kagi_extract"]
 # (contract 01b §8.2): the credential half of `spec.md` §4.4.
 tools.github-code = "all"
 tools.github-platform = "all"
-tools.vikunja-agent-control = "all"
+tools.vikunja-code = "all"
 tools.vikunja-home-assistant = "all"
 tools.vikunja-networking = "all"
 

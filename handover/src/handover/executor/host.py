@@ -64,7 +64,7 @@ WORK_ROOT: Final = layout.WORK_ROOT
 #: read BY SHA. A SHA is content addressed, so where it travelled cannot
 #: change what it is.
 #:
-#: Not `/srv/agents/work/platform`: that root is the `agent-control`
+#: Not `/srv/agents/work/platform`: that root is the `creche`
 #: family's READ-WRITE mount, so a model in that sandbox would write the
 #: `.git/config` root's own git process reads.
 #: `executor/source.py` carries the whole argument and the trust rule.

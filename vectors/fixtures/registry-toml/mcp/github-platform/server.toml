@@ -1,5 +1,5 @@
 name = "github-platform"
-identity = "Fine-grained PAT scoped to agent-control, agent-registry and agent-mcp, and to nothing else. Only the agent-control family is granted this server."
+identity = "Fine-grained PAT scoped to creche, registry and mcp, and to nothing else. Only the code family is granted this server."
 
 install.source = "github-release"
 install.repo = "github/github-mcp-server"
@@ -18,7 +18,7 @@ run.env.GITHUB_PERSONAL_ACCESS_TOKEN = "secret:github_token_platform"
 arg_allows = [
     # Deny by default: a call naming any other repository is denied, and so is a
     # call that names no repository at all (§7.1.3).
-    { tools = "all", arg = "owner/repo", values = ["example-owner/agent-control", "example-owner/agent-registry", "example-owner/agent-mcp"] },
+    { tools = "all", arg = "owner/repo", values = ["example-owner/creche", "example-owner/registry", "example-owner/mcp"] },
 ]
 
 arg_denies = [

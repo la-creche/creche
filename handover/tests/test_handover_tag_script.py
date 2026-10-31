@@ -799,9 +799,7 @@ def test_a_first_tags_body_says_it_has_no_range(repo: Path, shims: Path, tmp_pat
 
 
 @pytest.mark.slow
-def test_a_run_in_agent_control_never_tags_mcp_servers(
-    repo: Path, shims: Path, tmp_path: Path
-) -> None:
+def test_a_run_in_creche_never_tags_mcp_servers(repo: Path, shims: Path, tmp_path: Path) -> None:
     """The catalog's rule, seen from the script. `mcp-servers` lives in
     another repository, which this run cannot write and must not name."""
     _commit(repo, "src/agent_mcp/one.py")

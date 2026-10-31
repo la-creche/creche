@@ -5,7 +5,7 @@
 # the harness: the scenario asks the PEP which tools each family's grant file
 # holds, and the answer is what the fence promises.
 name = "github-code"
-identity = "Fine-grained PAT for every repository except the platform three. Its repository list excludes agent-control, agent-registry and agent-mcp."
+identity = "Fine-grained PAT for every repository except the platform three. Its repository list excludes creche, registry and mcp."
 
 install.source = "github-release"
 install.repo = "github/github-mcp-server"
@@ -28,7 +28,7 @@ run.env.GITHUB_PERSONAL_ACCESS_TOKEN = "secret:github_token_code"
 arg_denies = [
     # Layer two of the credential fence (docs/rework/spec.md §4.4). The PAT's
     # repository list is layer one.
-    { tools = "all", arg = "owner/repo", values = ["example-owner/agent-control", "example-owner/agent-registry", "example-owner/agent-mcp"] },
+    { tools = "all", arg = "owner/repo", values = ["example-owner/creche", "example-owner/registry", "example-owner/mcp"] },
     # `main` may carry no branch protection, so the write verbs are fenced off it
     # here. `create_branch`'s `from_branch` is deliberately not fenced, because
     # branching FROM main is the point.

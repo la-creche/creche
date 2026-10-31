@@ -499,7 +499,7 @@ def keep_only_the_secrets(environ: MutableMapping[str, str]) -> Secrets:
 def _chaperone_uids() -> frozenset[int]:
     """The PEP's accounts that this host has.
 
-    §3.1's second requester is the `agent-control` family, and its path is
+    §3.1's second requester is the `creche` family, and its path is
     the PEP's `release` verb. The PEP runs as `chaperone`, so the file it
     writes is chaperone-owned and root must accept that owner or the verb can
     file nothing. An absent account is not an error: a host with no PEP

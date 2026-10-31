@@ -32,8 +32,8 @@ INFO_PATH: Final = "/key/info"
 
 #: What `/key/delete` answers when no key has the alias. The key is gone,
 #: which is what a delete asks for, so a delete takes this answer as done.
-#: Seen on 2026-10-30: the families `agent-control` and
-#: `agent-control-worker` had no key, and `caregiver delete` stopped before
+#: Seen on 2026-10-30: the families `creche` and
+#: `code-worker` had no key, and `caregiver delete` stopped before
 #: it removed their sandboxes and their state.
 NO_SUCH_KEY_STATUS: Final = 404
 

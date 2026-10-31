@@ -22,7 +22,7 @@ _MINT_COUNT = 5000
 
 def test_family_form() -> None:
     assert is_family("chat")
-    assert is_family("agent-control")
+    assert is_family("creche")
     assert not is_family("Chat")
     assert not is_family("9chat")
     assert not is_family("c")

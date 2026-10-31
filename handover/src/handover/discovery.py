@@ -230,7 +230,7 @@ def read_one(root: Path, name: str) -> FoundManifest:
     `discover` walks a whole repository, which is what the CLI wants from a
     checkout. The executor wants the opposite: it fetches one clone PER
     COMPONENT (`stage7-releases.md` §2.4 row 2, each at its own tag), so
-    seven clones of `agent-control` each hold all seven manifests and a walk
+    seven clones of `creche` each hold all seven manifests and a walk
     of the second one refuses the set as a duplicate declaration.
 
     Contract 06 §10's "a catalogued component with no file" lands here, per

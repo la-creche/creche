@@ -32,7 +32,7 @@ verbs.ha_call.allow = [
     { domain = "notify", service = "mobile_app_example_phone" },
 ]
 verbs.enqueue.targets = [
-    "agent-control-worker",
+    "code-worker",
     "finance-worker",
     "home-assistant-worker",
     "networking-worker",

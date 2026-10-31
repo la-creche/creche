@@ -98,7 +98,7 @@ LEDGER_FILE_MODE: Final = 0o640
 #: still drains them, so systemd's start limit is never reached.
 MAX_PENDING_PER_REQUESTER: Final = 8
 
-#: §3.1: the operator, the `agent-control` family and CI. "No other path exists."
+#: §3.1: the operator, the `creche` family and CI. "No other path exists."
 MAX_REQUESTERS: Final = 3
 
 #: The backstop §3.2 rule 8 needs. Its own cap counts per `requested_by`,

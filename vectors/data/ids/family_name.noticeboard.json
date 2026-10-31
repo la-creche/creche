@@ -32,7 +32,7 @@
   {"id":"leading-hyphen","input":{"text":"-chat"},"result":"refused"},
   {"id":"upper-first","input":{"text":"Chat"},"result":"refused"},
   {"id":"upper-last","input":{"text":"chaT"},"result":"refused"},
-  {"id":"underscore","input":{"text":"agent_control"},"result":"refused"},
+  {"id":"underscore","input":{"text":"code_worker"},"result":"refused"},
   {"id":"double-underscore","input":{"text":"a__b"},"result":"refused"},
   {"id":"dot","input":{"text":"a.b"},"result":"refused"},
   {"id":"slash","input":{"text":"a/b"},"result":"refused"},

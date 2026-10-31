@@ -26,7 +26,7 @@ of this file that `caregiver` has rewritten (its `clear_derived`).
 Two consumers, both named in contract 06 §3.4's table.
 
 1. agent-registry CI cannot read a ledger on the LAN, so it needs the
-   `caregiver` version in a committed file to know which agent-control to
+   `caregiver` version in a committed file to know which creche to
    check out when it validates family files. `live-manifest.json` is that
    file, and its human writer is what this replaces.
 2. The noticeboard reads the ledger directly and needs nothing from here.

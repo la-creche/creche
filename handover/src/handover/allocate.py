@@ -283,7 +283,7 @@ def _split_range(line: str, names: frozenset[str]) -> tuple[str | None, str]:
 
     Anything else is the whole line as one path. The prefix must be a name
     this repo owns, so a path that happens to hold a tab cannot invent a
-    component, and a run in agent-control cannot be handed a line for
+    component, and a run in creche cannot be handed a line for
     `mcp-servers`.
     """
     head, found, rest = line.partition(RANGE_SEPARATOR)
@@ -356,7 +356,7 @@ def levels_of(levels: tuple[str, ...], repo: Repo) -> dict[str, tuple[str, ...]]
 def untagged(tags: tuple[str, ...], repo: Repo) -> tuple[str, ...]:
     """This repo's components that carry no tag at all, in catalog order.
 
-    Scoped by repo exactly as `touched` is: a run in agent-control must not
+    Scoped by repo exactly as `touched` is: a run in creche must not
     invent a tag for `mcp-servers`, whose repository it cannot write.
     """
     rows = [row for row in CATALOG if row.repo is repo]

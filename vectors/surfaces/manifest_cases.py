@@ -54,7 +54,7 @@ class Case:
 FIELDS: Final[dict[str, str]] = {
     "manifest_version": f'manifest_version: "{NEWEST_VERSION}"',
     "name": "name: attendance",
-    "repo": "repo: agent-control",
+    "repo": "repo: creche",
     "path": "path: attendance",
     "kind": "kind: venv",
     "unit": "unit: creche-attendance.service",
@@ -322,12 +322,12 @@ CASES: Final[tuple[Case, ...]] = (
     _with("repo-agent-mcp", repo="repo: agent-mcp"),
     _with("repo-agent-registry", repo="repo: agent-registry"),
     _with("repo-other", repo="repo: agent-other"),
-    _with("repo-upper", repo="repo: Agent-Control"),
+    _with("repo-upper", repo="repo: Creche"),
     _with("repo-unsafe", repo='repo: "not a repo"'),
     _with("repo-bool", repo="repo: yes"),
     _with("repo-number", repo="repo: 7"),
     _with("repo-65-chars", repo="repo: " + "r" * 65),
-    _with("repo-final-newline", repo='repo: "agent-control\\n"'),
+    _with("repo-final-newline", repo='repo: "creche\\n"'),
     _with("kind-other", kind="kind: wheel"),
     _with("kind-upper", kind="kind: Venv"),
     _with("kind-null", kind="kind: ~"),
@@ -813,7 +813,7 @@ CASES: Final[tuple[Case, ...]] = (
     _with("yaml-tab-indent", install="install:\n\tto: /opt/x\n\tprev: /opt/x.prev"),
     _with("yaml-tab-after-colon", name="name:\tattendance"),
     _with("yaml-tab-before-comment", name="name: attendance\t# a tab"),
-    _with("yaml-bad-indent", name="name: attendance\n  repo: agent-control"),
+    _with("yaml-bad-indent", name="name: attendance\n  repo: creche"),
     _with("yaml-dedent-sequence", depends_on="depends_on:\n- chaperone\n- caregiver"),
     _with(
         "yaml-flow-mapping-multiline", install="install: {\n  to: /opt/x,\n  prev: /opt/x.prev\n}"
@@ -849,7 +849,7 @@ CASES: Final[tuple[Case, ...]] = (
             [
                 f'manifest_version: "{NEWEST_VERSION}"',
                 "name: attendance",
-                "repo: agent-control",
+                "repo: creche",
                 "path: attendance",
                 "kind: venv",
                 "unit: ~",
