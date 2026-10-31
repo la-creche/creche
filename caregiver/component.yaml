@@ -25,7 +25,7 @@ provides:
 requires:
   # Contract 02: it asks attendance to drain a session before a replacement.
   - { contract: session-api, major: 0, min_minor: 12 }
-depends_on: [chaperone, infra]
+depends_on: [chaperone]
 verify:
   # --env-file: root's executor hands the hook none of the unit's
   # environment (contract 06 §4 rule 7). The same file

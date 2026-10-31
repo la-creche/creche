@@ -416,9 +416,11 @@ REQUEST_FIELDS: Final[dict[str, object]] = {
 
 _REQUEST_TEXT: Final = json.dumps(REQUEST_FIELDS)
 
-#: Every releasable component, which is the largest set that a request names.
-_EIGHT: Final = {name: "latest" for name in catalog.releasable_names()}
-_NINE: Final = {**_EIGHT, "registry-data": "latest"}
+#: As many names as a request may hold (`MAX_REQUEST_COMPONENTS`): every
+#: releasable component, then `registry-data`. The parser reads the count
+#: and the shape of each name, and no catalog.
+_EIGHT: Final = {name: "latest" for name in (*catalog.releasable_names(), "registry-data")}
+_NINE: Final = {**_EIGHT, "one-more": "latest"}
 
 
 @dataclass(frozen=True)
@@ -1202,7 +1204,6 @@ _UNCHANGED: Final[tuple[Row, ...]] = (
     ("caregiver", "unchanged", "1.2.0", "1.2.0"),
     ("chaperone", "deploy", "2.0.3", "2.1.0"),
     ("handover", "unchanged", "0.3.0", "0.3.0"),
-    ("infra", "unchanged", None, None),
     ("mcp-servers", "unchanged", "0.9.3", "0.9.3"),
     ("noticeboard", "unchanged", "0.7.0", "0.7.0"),
     ("playpen", "unchanged", "3.1.2", "3.1.2"),
@@ -1227,9 +1228,7 @@ _CONTRACTS: Final[tuple[Contract, ...]] = (
 _ONE_ROW: Final[tuple[Row, ...]] = (("chaperone", "deploy", "2.0.3", "2.1.0"),)
 
 _FIRST_INSTALL: Final[tuple[Row, ...]] = tuple(
-    (name, "unchanged", None, None)
-    if name in {"infra", "registry-data"}
-    else (name, "deploy", None, "1.0.0")
+    (name, "unchanged", None, None) if name == "registry-data" else (name, "deploy", None, "1.0.0")
     for name, _, _, _ in _UNCHANGED
 )
 
@@ -1269,9 +1268,9 @@ RESOLVED: Final[tuple[Resolved, ...]] = (
         "release-a-set",
         (
             ("attendance", "deploy", "1.4.7", "1.5.0"),
-            *_UNCHANGED[1:7],
+            *_UNCHANGED[1:6],
             ("playpen", "deploy", "3.1.2", "3.2.0"),
-            _UNCHANGED[8],
+            _UNCHANGED[7],
         ),
         ("playpen", "chaperone", "attendance"),
         _CONTRACTS,

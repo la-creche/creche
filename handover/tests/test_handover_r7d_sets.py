@@ -375,6 +375,12 @@ def test_a_diff_that_changes_a_watched_service_waits(service: str) -> None:
     assert needs_window([service, "ai-openwebui"])
 
 
+#: `infra` left the catalog, and it was the one `kind: compose` row. The
+#: quiet window stays (`executor/quiet.py`, `steps.py`), and these three
+#: tests keep its end-to-end proof until a decision on the mechanism.
+_NO_COMPOSE_ROW = pytest.mark.skip(reason="no catalog row is kind compose")
+
+
 @pytest.fixture
 def compose(tmp_path: Path) -> SetBench:
     """`infra` alone, whose dry run the fake child answers."""
@@ -388,6 +394,7 @@ def compose(tmp_path: Path) -> SetBench:
     return bench
 
 
+@_NO_COMPOSE_ROW
 def test_an_infra_release_that_recreates_litellm_waits_then_lands(compose: SetBench) -> None:
     """The gate's own case: a turn in flight blocks the switch, then the
     host goes quiet and the release lands."""
@@ -406,6 +413,7 @@ def test_an_infra_release_that_recreates_litellm_waits_then_lands(compose: SetBe
     assert any("quiet window" in line for line in _log(compose))
 
 
+@_NO_COMPOSE_ROW
 def test_an_infra_release_with_no_quiet_window_fails_the_switch(compose: SetBench) -> None:
     """§2.8: an hour with no window is `failed, step: switch`. The default
     reader answers None, which is never quiet — a host whose session service
@@ -420,6 +428,7 @@ def test_an_infra_release_with_no_quiet_window_fails_the_switch(compose: SetBenc
     assert "no quiet window" in str(entry["reason"])
 
 
+@_NO_COMPOSE_ROW
 def test_an_infra_diff_that_leaves_litellm_alone_never_waits(compose: SetBench) -> None:
     compose.run.answers["sync"] = "Recreate ai-openwebui\n"
     compose.busy_seen[0] = compose.wiring.host.clock()

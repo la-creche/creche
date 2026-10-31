@@ -433,7 +433,8 @@ def test_a_component_of_another_kind_starts_no_child(store: Path, curl: _Curl) -
 
 def test_only_a_binary_row_ships_an_archive(home: Path) -> None:
     assert ships_archive(BINARY_NAME)
-    assert [name for name in ("attendance", "playpen", "infra") if ships_archive(name)] == []
+    others = ("attendance", "playpen", "registry-data")
+    assert [name for name in others if ships_archive(name)] == []
 
 
 def test_a_held_component_starts_no_child(store: Path, curl: _Curl) -> None:

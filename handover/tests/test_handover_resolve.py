@@ -32,7 +32,6 @@ EDGES: dict[str, tuple[str, str, str]] = {
     "noticeboard": ("", requires_entry("pep-grant", 2, 0), "attendance"),
     "caregiver": ("", "", ""),
     "playpen": ("", "", ""),
-    "infra": ("", "", ""),
     "handover": ("", "", ""),
     "mcp-servers": ("", "", ""),
     "registry-data": ("", "", ""),
@@ -44,13 +43,12 @@ LIVE = {
     "noticeboard": "0.7.0",
     "caregiver": "1.2.0",
     "playpen": "3.1.2",
-    "infra": "0.4.1",
     "handover": "0.3.0",
     "mcp-servers": "0.9.3",
 }
 
 
-def _nine() -> dict[str, ComponentManifest]:
+def _rows() -> dict[str, ComponentManifest]:
     manifests: dict[str, ComponentManifest] = {}
     for row in CATALOG:
         provides, requires, depends = EDGES[row.name]
@@ -83,7 +81,7 @@ def _state(**changes: object) -> ReleaseState:
 
 def _refusal(request: dict[str, str], state: ReleaseState | None = None) -> Refusal:
     with pytest.raises(Refusal) as caught:
-        resolve(_nine(), state if state is not None else _state(), request)
+        resolve(_rows(), state if state is not None else _state(), request)
 
     return caught.value
 
@@ -136,7 +134,7 @@ def test_the_data_component_can_never_be_released() -> None:
 
 
 def test_a_component_with_no_manifest_is_refused() -> None:
-    manifests = _nine()
+    manifests = _rows()
     del manifests["chaperone"]
 
     with pytest.raises(Refusal) as caught:
@@ -150,7 +148,7 @@ def test_latest_needs_a_live_state_entry() -> None:
 
 
 def test_latest_resolves_to_the_newest_version() -> None:
-    resolution = resolve(_nine(), _state(), {"chaperone": "latest"})
+    resolution = resolve(_rows(), _state(), {"chaperone": "latest"})
     chaperone = next(item for item in resolution.components if item.name == "chaperone")
 
     assert chaperone.action is Action.DEPLOY
@@ -159,7 +157,7 @@ def test_latest_resolves_to_the_newest_version() -> None:
 
 
 def test_requesting_the_live_version_changes_nothing() -> None:
-    resolution = resolve(_nine(), _state(), {"chaperone": "2.0.3"})
+    resolution = resolve(_rows(), _state(), {"chaperone": "2.0.3"})
     chaperone = next(item for item in resolution.components if item.name == "chaperone")
 
     assert chaperone.action is Action.UNCHANGED
@@ -167,7 +165,7 @@ def test_requesting_the_live_version_changes_nothing() -> None:
 
 
 def test_every_component_appears_in_name_order() -> None:
-    resolution = resolve(_nine(), _state(), {"chaperone": "2.1.0"})
+    resolution = resolve(_rows(), _state(), {"chaperone": "2.1.0"})
     names = [item.name for item in resolution.components]
 
     assert names == sorted(names)
@@ -175,7 +173,7 @@ def test_every_component_appears_in_name_order() -> None:
 
 
 def test_the_data_component_carries_no_version_or_tag() -> None:
-    resolution = resolve(_nine(), _state(), {"chaperone": "2.1.0"})
+    resolution = resolve(_rows(), _state(), {"chaperone": "2.1.0"})
     data = next(item for item in resolution.components if item.name == "registry-data")
 
     assert data.action is Action.UNCHANGED
@@ -185,14 +183,14 @@ def test_the_data_component_carries_no_version_or_tag() -> None:
 
 
 def test_a_set_deploys_dependencies_first() -> None:
-    resolution = resolve(_nine(), _state(), {"chaperone": "2.1.0", "attendance": "1.5.0"})
+    resolution = resolve(_rows(), _state(), {"chaperone": "2.1.0", "attendance": "1.5.0"})
 
     assert resolution.order == ("chaperone", "attendance")
     assert resolution.deploying == frozenset({"chaperone", "attendance"})
 
 
 def test_the_contract_table_names_every_consumer() -> None:
-    resolution = resolve(_nine(), _state(), {"chaperone": "2.1.0"})
+    resolution = resolve(_rows(), _state(), {"chaperone": "2.1.0"})
     grant = next(row for row in resolution.contracts if row.contract is ContractId.PEP_GRANT)
 
     assert grant.provider == "chaperone"
@@ -202,7 +200,7 @@ def test_the_contract_table_names_every_consumer() -> None:
 def _document(request: dict[str, str]) -> dict[str, object]:
     state = _state()
 
-    return build_document(resolve(_nine(), state, request), state, RELEASE_ID, "human", RESOLVED_AT)
+    return build_document(resolve(_rows(), state, request), state, RELEASE_ID, "human", RESOLVED_AT)
 
 
 def test_the_document_has_contract_06_paragraph_9_fields() -> None:
@@ -225,14 +223,16 @@ def test_the_document_has_contract_06_paragraph_9_fields() -> None:
 #: it. The approval binds to the hash, so the strict writer gives each
 #: strict document the bytes of before. Each document holds the version
 #: text of the manifest contract, 0.19, so a new version moves both hashes.
-HASH_OF_TWO = "sha256:b9d4682f03246806efc8b5501eb8969732252039d461c1df645be98f4ca36101"
-HASH_OF_A_FRACTION = "sha256:2f2600b140298d68c9bcf89a937902bac1092e448863abdc3d4be206e71a6322"
+#: Each document also lists every row of the catalog, so a row that leaves
+#: or arrives moves both hashes too.
+HASH_OF_TWO = "sha256:8c962c71e35dcd6f16546e91f761cb60ae71520ff5551abaac7e539c193fabd0"
+HASH_OF_A_FRACTION = "sha256:bb5fb1326c63f28e748f965771188c5a6d02ee5b8aca923e4c5efabb915e2f9e"
 
 
 def test_the_hash_of_a_document_is_the_hash_of_before() -> None:
     state = _state()
     one = build_document(
-        resolve(_nine(), state, {"chaperone": "2.1.0"}),
+        resolve(_rows(), state, {"chaperone": "2.1.0"}),
         state,
         RELEASE_ID,
         "agent-control",
@@ -285,7 +285,7 @@ def test_a_component_with_no_facts_reads_null_and_not_a_refusal() -> None:
     state = _state(facts={})
 
     document = build_document(
-        resolve(_nine(), state, {"chaperone": "2.1.0"}), state, RELEASE_ID, "human", RESOLVED_AT
+        resolve(_rows(), state, {"chaperone": "2.1.0"}), state, RELEASE_ID, "human", RESOLVED_AT
     )
 
     rows = document["components"]
@@ -299,7 +299,7 @@ def test_a_lower_case_ulid_is_refused() -> None:
     state = _state()
 
     with pytest.raises(Refusal) as caught:
-        build_document(resolve(_nine(), state, {}), state, RELEASE_ID.lower(), "human", RESOLVED_AT)
+        build_document(resolve(_rows(), state, {}), state, RELEASE_ID.lower(), "human", RESOLVED_AT)
 
     assert "26 upper-case Crockford characters" in caught.value.detail
 
@@ -308,6 +308,6 @@ def test_a_requested_by_with_a_space_is_refused() -> None:
     state = _state()
 
     with pytest.raises(Refusal) as caught:
-        build_document(resolve(_nine(), state, {}), state, RELEASE_ID, "a family", RESOLVED_AT)
+        build_document(resolve(_rows(), state, {}), state, RELEASE_ID, "a family", RESOLVED_AT)
 
     assert "requested_by must be" in caught.value.detail
