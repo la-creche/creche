@@ -112,6 +112,17 @@ def write_stamp(tree: Path, version: str) -> None:
     (tree / STAMP_FILE).write_text(f"{version}\n", encoding="utf-8")
 
 
+#: `mcp-servers` only: the registry commit whose `mcp/` tree the release
+#: installed (contract 06 §2). It lives in the tree, so a restore puts the
+#: previous one back with the previous tree (§9.2 rule 7).
+REGISTRY_STAMP_FILE: Final = ".registry-rev"
+
+
+def write_registry_stamp(tree: Path, sha: str) -> None:
+    """Stamp a staged `mcp-servers` tree with its registry commit."""
+    (tree / REGISTRY_STAMP_FILE).write_text(f"{sha}\n", encoding="utf-8")
+
+
 def stamp_name(markup: Markup) -> str:
     """The name of the manifest stamp of a text in `markup`."""
     return MANIFEST_STAMP if markup is Markup.TOML else MANIFEST_STAMP_YAML

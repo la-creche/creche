@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -45,6 +46,10 @@ SHA_OF = {
 }
 
 DIGEST = "sha256:" + "ab" * 32
+
+#: The commit at the `HEAD` of the fake registry clone. A set that deploys
+#: `mcp-servers` binds it (contract 06 §9), and step 8 checks it out.
+REGISTRY_SHA = "fe" * 20
 
 #: A valid upper-case Crockford ULID, contract 06 §9's pattern.
 REQUEST_ID = "01K5J8M2Q7V3X9R4T6N0B8C2DE"
@@ -148,6 +153,13 @@ class GitFake:
 
         if "clone" in argv:
             destination = Path(argv[-1])
+            if destination.name == str(Repo.REGISTRY):
+                # The registry is no component: its clone is the corpus
+                # directory as the test wrote it, which a local clone copies.
+                shutil.copytree(Path(argv[-2]), destination, dirs_exist_ok=True)
+
+                return RunResult(0, "", "")
+
             destination.mkdir(parents=True, exist_ok=True)
             self.write_tree(destination, destination.name)
 
@@ -324,7 +336,12 @@ def fake_readers(
 
         return DIGEST
 
-    return Readers(newest_version=newest, tag_sha=tag_sha, input_digest=digest)
+    return Readers(
+        newest_version=newest,
+        tag_sha=tag_sha,
+        input_digest=digest,
+        registry_head=lambda: REGISTRY_SHA,
+    )
 
 
 #: The one directory that makes a tree a venv. `uv venv` always writes it,
