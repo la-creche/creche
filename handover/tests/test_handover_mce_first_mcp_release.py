@@ -78,6 +78,7 @@ from handover.executor.spool import DONE_DIR, REQUESTS_DIR, Spool
 from handover.executor.steps import MAX_SERVERS, REGISTRY_MCP_DIR, Wiring
 from handover.mcpserver import SERVER_FILE_NAME, ServerFile, Source, read_registry
 from handover_executor_fixtures import (
+    DIGEST,
     REGISTRY_SHA,
     FakeApi,
     FakeRun,
@@ -88,6 +89,7 @@ from handover_executor_fixtures import (
     grant_transport,
     green_api,
     make_spool_dirs,
+    merge_registry,
     request_body,
     stamp_tree,
     this_uid,
@@ -717,6 +719,28 @@ def _redeploy(bench: Bench, version: str) -> str:
         spool.close()
 
 
+#: The registry commit a merge after the first release makes.
+MERGED_SHA: Final = "be" * 20
+
+#: The `registry-data` digest of a merge that changed a server file.
+MOVED_DIGEST: Final = "sha256:" + "cd" * 32
+
+
+def _merge_registry(bench: Bench, digest: str) -> None:
+    """A registry merge lands after the first release: the clone's `HEAD`
+    is `MERGED_SHA`, and its `mcp` tree has `digest`."""
+    readers = bench.wiring.readers
+
+    def input_digest(component: str, sha: str) -> str | None:
+        return digest if sha == MERGED_SHA else readers.input_digest(component, sha)
+
+    merge_registry(cast(FakeApi, bench.wiring.api), MERGED_SHA)
+    bench.wiring = replace(
+        bench.wiring,
+        readers=replace(readers, input_digest=input_digest, registry_head=lambda: MERGED_SHA),
+    )
+
+
 def _second_ledger(bench: Bench) -> dict[str, object]:
     path = bench.spool_root / DONE_DIR / f"{SECOND_ID}.json"
 
@@ -727,6 +751,7 @@ def test_a_redeploy_installs_the_registry_at_the_live_version(bench: Bench) -> N
     """Rule 5: the `mcp-servers` row reads `deploy` from the live version to
     the same version, and the release installs every server again."""
     assert "succeeded" in _release(bench), bench.ledger()["reason"]
+    _merge_registry(bench, MOVED_DIGEST)
 
     result = _redeploy(bench, FIRST_VERSION)
 
@@ -744,13 +769,42 @@ def test_a_redeploy_installs_the_registry_at_the_live_version(bench: Bench) -> N
     # Each server tree was swapped: the first release's tree is its `.prev`.
     assert bench.installed() == sorted([*DECLARED, *(f"{name}.prev" for name in DECLARED)])
     stamp = bench.components / COMPONENT / ".registry-rev"
-    assert stamp.read_text(encoding="utf-8") == f"{REGISTRY_SHA}\n"
+    assert stamp.read_text(encoding="utf-8") == f"{MERGED_SHA}\n"
+
+
+def test_a_redeploy_that_changes_no_server_file_is_refused(bench: Bench) -> None:
+    """Rule 3: a registry merge that changed only `families/` leaves the
+    `mcp` tree as it is. The redeploy is refused at step 2, before the tap,
+    and nothing is swapped."""
+    assert "succeeded" in _release(bench), bench.ledger()["reason"]
+    _merge_registry(bench, DIGEST)
+
+    result = _redeploy(bench, FIRST_VERSION)
+
+    ledger = _second_ledger(bench)
+    assert "succeeded" not in result
+    assert ledger["refused_check"] == "request"
+    assert ledger["reason"] == "nothing would deploy: the registry's mcp tree is the one installed"
+    assert bench.installed() == list(DECLARED)
+
+
+def test_a_tree_with_no_registry_stamp_reads_as_different(bench: Bench) -> None:
+    """Rule 3's last sentence: an `mcp-servers` tree from before `.registry-rev`
+    existed has no stamp, so the redeploy goes to the tap."""
+    assert "succeeded" in _release(bench), bench.ledger()["reason"]
+    (bench.components / COMPONENT / ".registry-rev").unlink()
+
+    result = _redeploy(bench, FIRST_VERSION)
+
+    assert "succeeded" in result, _second_ledger(bench)["reason"]
 
 
 def test_a_redeploy_at_another_version_is_refused(bench: Bench) -> None:
     """Rule 1: a redeploy that names a version other than the live one is
     refused at step 2, before the tap."""
     assert "succeeded" in _release(bench), bench.ledger()["reason"]
+
+    _merge_registry(bench, MOVED_DIGEST)
 
     result = _redeploy(bench, NEXT_VERSION)
 
