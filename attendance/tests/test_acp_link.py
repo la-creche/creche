@@ -459,3 +459,26 @@ async def test_a_new_session_answer_without_an_id_ends_the_link(
 
     await until(lambda: fleet.lost != [])
     assert fleet.lost == [SANDBOX]
+
+
+async def test_two_late_beat_answers_keep_the_link(tmp_path: Path) -> None:
+    """A facade that was busy for one beat answers two beats in a row.
+
+    The first answer proves the facade alive and retires every beat in
+    flight. The second is the answer to a retired beat, not a protocol
+    violation: the link stays ready and records no fault.
+    """
+    fleet = Fleet(tmp_path)
+    link = await open_link(tmp_path, fleet, beat_interval_s=SHORT_S)
+    channel = fleet.channels[SANDBOX]
+
+    first = json.loads(await channel.next_host_line())
+    second = json.loads(await channel.next_host_line())
+    for beat in (first, second):
+        await channel.feed(json.dumps({"jsonrpc": "2.0", "id": beat["id"], "result": {}}))
+    await asyncio.sleep(SHORT_S / 2)
+
+    assert first["method"] == second["method"] == METHOD_BEAT
+    assert fleet.lost == []
+    assert link.status.state is LinkState.READY
+    await link.stop()

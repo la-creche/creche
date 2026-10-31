@@ -9,6 +9,7 @@ to. A facade that cannot start refuses the connection with
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -80,3 +81,36 @@ async def test_a_facade_that_cannot_start_starts_no_relay(rig: Rig) -> None:
     assert refused.value.code is ErrorCode.SANDBOX_UNAVAILABLE
     assert refusal_code(refused.value) == SANDBOX_UNAVAILABLE_CLOSE
     assert rig.facades.relays == []
+
+
+async def test_a_lost_link_is_dialled_again_and_its_fault_cleared(tmp_path: Path) -> None:
+    """A protocol violation loses the link and raises a fault that blocks
+    turns, which refuses every door connection. The service dials the
+    sandbox again on its own, and the new handshake clears the fault."""
+    config = make_config(tmp_path)
+    write_status(config.state_root)
+    facades = FacadeFleet()
+    service = SessionService(
+        config,
+        acp_factory=facades.factory,
+        relay_factory=facades.relay,
+        cold_start_wait_s=1.0,
+        redial_delays_s=(0.01,),
+    )
+    service.start()
+    relay = await service.open_acp_relay(Principal.DOOR_ACP, FAMILY)
+    await relay.close()
+
+    stray = '{"jsonrpc": "2.0", "id": 987654, "result": {}}'
+    await facades.channels[SANDBOX].feed(stray)
+
+    async with asyncio.timeout(2.0):
+        while facades.dials != [SANDBOX, SANDBOX] or service.faults.open_faults(FAMILY):
+            await asyncio.sleep(0.01)
+
+    link = service.acp_link(SANDBOX)
+    assert link is not None
+    assert link.status.state is LinkState.READY
+
+    await service.close()
+    await facades.stop()

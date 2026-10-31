@@ -78,6 +78,13 @@ _LOG = logging.getLogger("attendance")
 COLD_START_WAIT_S = 60.0
 COLD_START_POLL_S = 0.25
 
+#: The waits before each dial of a lost supervisor link. A blocking fault
+#: refuses every job and every door connection, so without these nothing would
+#: dial the sandbox again and nothing could clear the fault (`start`). A
+#: completed handshake is the evidence that clears it (contract 05 §3.3.1).
+#: Three tries, then the fault stays for a human.
+REDIAL_DELAYS_S: tuple[float, ...] = (5.0, 30.0, 120.0)
+
 # How often the upkeep loop tries the head of each dispatch queue again.
 PUMP_INTERVAL_S = 1.0
 
@@ -93,6 +100,7 @@ class SessionService:
         cancel_wait_s: float = CANCEL_WAIT_S,
         max_queued_turns: int = MAX_QUEUED_TURNS,
         relay_factory: ChannelFactory | None = None,
+        redial_delays_s: tuple[float, ...] = REDIAL_DELAYS_S,
     ) -> None:
         self._config = config
         self._faults = FaultReporter(config.state_root)
@@ -109,6 +117,8 @@ class SessionService:
         self.door_prompts = DoorPrompts()
         self._acp_links: dict[str, AcpLink] = {}
         self._acp_dials: dict[str, asyncio.Lock] = {}
+        self._redial_delays_s = redial_delays_s
+        self._redials: dict[str, asyncio.Task[None]] = {}
         self._cancel_wait_s = cancel_wait_s
         # Phase 2 plan, row 19. The dispatch door's jobs, their limit and FIFO.
         self._jobs: JobQueue[DispatchJob] = JobQueue(max_queued_turns)
@@ -174,6 +184,12 @@ class SessionService:
         # Nothing about a switch is on disk, so the restart converges on the
         # status document (contract 05 §5.3 rule 1).
         self._switches.cancel_all()
+
+        for redial in list(self._redials.values()):
+            redial.cancel()
+
+        await asyncio.gather(*self._redials.values(), return_exceptions=True)
+        self._redials.clear()
 
         for job in list(self._job_tasks):
             job.cancel()
@@ -948,11 +964,45 @@ class SessionService:
             return link
 
     async def _acp_lost(self, sandbox: str) -> None:
-        """Forget a lost link. The next job dials the sandbox again."""
+        """Forget a lost link, and dial the sandbox again (`REDIAL_DELAYS_S`)."""
         link = self._acp_links.get(sandbox)
 
-        if link is not None and link.status.state is not LinkState.READY:
-            del self._acp_links[sandbox]
+        if link is None or link.status.state is LinkState.READY:
+            return
+
+        del self._acp_links[sandbox]
+
+        if sandbox not in self._redials and self._redial_delays_s:
+            task = asyncio.create_task(self._redial(link.family, sandbox), name=f"redial {sandbox}")
+            self._redials[sandbox] = task
+            task.add_done_callback(report_failure)
+
+    async def _redial(self, family: str, sandbox: str) -> None:
+        """Dial a lost link's sandbox after each wait, until one handshake completes.
+
+        It skips `check_may_serve`: the fault this link raised is what that
+        check refuses, and only a new handshake can clear it.
+        """
+        try:
+            for delay in self._redial_delays_s:
+                await asyncio.sleep(delay)
+                link = self._acp_links.get(sandbox)
+
+                if link is not None and link.status.state is LinkState.READY:
+                    return
+
+                try:
+                    await self._acp_link_for(family, self._status.require(family), sandbox)
+                except ApiError as error:
+                    _LOG.warning("family=%s sandbox=%s redial failed: %s", family, sandbox, error)
+                    continue
+
+                _LOG.warning("family=%s sandbox=%s acp link dialled again", family, sandbox)
+                return
+
+            _LOG.warning("family=%s sandbox=%s redial gave up; the fault stays", family, sandbox)
+        finally:
+            self._redials.pop(sandbox, None)
 
     # ------------------------------------------------------------ for tests
 
