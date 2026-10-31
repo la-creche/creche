@@ -59,6 +59,12 @@ MANIFEST_VERSION = f"{MANIFEST_CONTRACT_MAJOR}.{MANIFEST_CONTRACT_MINOR}"
 #: The refusal of a `resolved_at` that strict JSON cannot hold.
 RESOLVED_AT_NOT_FINITE = "resolved_at must be a finite number"
 
+#: Contract 06 §9.2 rule 1: a redeploy names the version that runs.
+REDEPLOY_NOT_LIVE = "{name}: a redeploy names the live version"
+
+#: The components no request may name as a set of their own. Empty.
+NO_REDEPLOY: frozenset[str] = frozenset()
+
 
 @dataclass(frozen=True)
 class ResolvedComponent:
@@ -146,8 +152,13 @@ def _target_version(name: str, wanted: str, state: ReleaseState) -> str:
     return newest
 
 
-def _one_component(name: str, request: dict[str, str], state: ReleaseState) -> ResolvedComponent:
-    """Contract 06 §9's action, from_version and to_version for one row."""
+def _one_component(
+    name: str, request: dict[str, str], state: ReleaseState, redeploy: frozenset[str]
+) -> ResolvedComponent:
+    """Contract 06 §9's action, from_version and to_version for one row.
+
+    A name in `redeploy` deploys at the version that runs (contract 06
+    §9.2 rule 5), and any other version is refused (rule 1)."""
     live = state.live.get(name)
     if CATALOG_BY_NAME[name].releases is Releases.NO:
         # Contract 06 §9.1: a data component carries no version and no tag.
@@ -158,6 +169,12 @@ def _one_component(name: str, request: dict[str, str], state: ReleaseState) -> R
         return ResolvedComponent(name, Action.UNCHANGED, live, live)
 
     target = _target_version(name, wanted, state)
+    if name in redeploy:
+        if live is None or target != live:
+            raise Refusal(RefusalCode.REQUEST, "request", REDEPLOY_NOT_LIVE.format(name=name))
+
+        return ResolvedComponent(name, Action.DEPLOY, live, target)
+
     # A request that names the version already live changes nothing. Saying
     # `unchanged` keeps step 9 from restarting a unit for no reason.
     action = Action.UNCHANGED if target == live else Action.DEPLOY
@@ -165,7 +182,9 @@ def _one_component(name: str, request: dict[str, str], state: ReleaseState) -> R
     return ResolvedComponent(name, action, live, target)
 
 
-def deploying_versions(state: ReleaseState, request: dict[str, str]) -> dict[str, str]:
+def deploying_versions(
+    state: ReleaseState, request: dict[str, str], redeploy: frozenset[str] = NO_REDEPLOY
+) -> dict[str, str]:
     """Which components this request would MOVE, and to what version.
 
     `resolve` needs a manifest per component, and the executor needs to know
@@ -186,7 +205,7 @@ def deploying_versions(state: ReleaseState, request: dict[str, str]) -> dict[str
             continue
 
         try:
-            row = _one_component(name, request, state)
+            row = _one_component(name, request, state, redeploy)
         except Refusal:
             continue
 
@@ -196,21 +215,27 @@ def deploying_versions(state: ReleaseState, request: dict[str, str]) -> dict[str
     return found
 
 
-def deploying_names(state: ReleaseState, request: dict[str, str]) -> frozenset[str]:
+def deploying_names(
+    state: ReleaseState, request: dict[str, str], redeploy: frozenset[str] = NO_REDEPLOY
+) -> frozenset[str]:
     """`deploying_versions` when only the names are wanted."""
-    return frozenset(deploying_versions(state, request))
+    return frozenset(deploying_versions(state, request, redeploy))
 
 
 def resolve(
     manifests: dict[str, ComponentManifest],
     state: ReleaseState,
     request: dict[str, str],
+    redeploy: frozenset[str] = NO_REDEPLOY,
 ) -> Resolution:
-    """Decide what this release does, or refuse the set with one report."""
+    """Decide what this release does, or refuse the set with one report.
+
+    `redeploy` names the components that deploy at their live version
+    (contract 06 §9.2). It is empty for a `release`."""
     for name in sorted(request):
         _check_requested(name, manifests)
 
-    components = tuple(_one_component(row.name, request, state) for row in CATALOG)
+    components = tuple(_one_component(row.name, request, state, redeploy) for row in CATALOG)
     ordered = tuple(sorted(components, key=lambda item: item.name))
     deploying = frozenset(item.name for item in ordered if item.action is Action.DEPLOY)
 

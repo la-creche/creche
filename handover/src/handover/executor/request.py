@@ -74,6 +74,16 @@ class Kind(StrEnum):
     #: built: a deliberate reversal of a release that verified green is
     #: rarer and more dangerous than an automatic restore.
     ROLLBACK = "rollback"
+    #: Contract 06 §9.2: install a registry `mcp/` change at the live
+    #: `mcp-servers` version. It names that one component, at a number.
+    REDEPLOY = "redeploy"
+
+
+#: The one component a `redeploy` names (contract 06 §9.2 rule 1).
+REDEPLOY_COMPONENT: Final = "mcp-servers"
+
+#: The refusal of a `redeploy` that names anything else.
+REDEPLOY_SHAPE: Final = f"a redeploy names {REDEPLOY_COMPONENT} alone, at a version"
 
 
 @dataclass(frozen=True)
@@ -91,6 +101,13 @@ class Request:
 
     def wanted(self) -> dict[str, str]:
         return dict(self.components)
+
+    def redeploys(self) -> frozenset[str]:
+        """The components this request deploys at their live version."""
+        if self.kind is Kind.REDEPLOY:
+            return frozenset(name for name, _ in self.components)
+
+        return frozenset()
 
     def as_dict(self) -> dict[str, object]:
         """What root re-serializes into `running/`. Root never copies the
@@ -216,13 +233,27 @@ def _kind(value: Any) -> Kind:
 def _rollback_of(body: dict[str, Any], kind: Kind) -> str | None:
     """§2.3: non-null only for `kind: rollback`, and null for it is a lie."""
     target = _optional_text(body, "rollback_of", ULID_RE)
-    if kind is Kind.RELEASE and target is not None:
-        raise _refuse("field 'rollback_of' is set on a release")
+    if kind is not Kind.ROLLBACK and target is not None:
+        raise _refuse(f"field 'rollback_of' is set on a {kind}")
 
     if kind is Kind.ROLLBACK and target is None:
         raise _refuse("field 'rollback_of' is unset on a rollback")
 
     return target
+
+
+def _redeploy_shape(kind: Kind, components: tuple[tuple[str, str], ...]) -> None:
+    """Contract 06 §9.2 rule 1: `mcp-servers` alone, at a number.
+
+    Whether the number is the LIVE version is root's question at step 2,
+    because only root reads the install roots."""
+    if kind is not Kind.REDEPLOY:
+        return
+
+    names = tuple(name for name, _ in components)
+    versions = tuple(version for _, version in components)
+    if names != (REDEPLOY_COMPONENT,) or versions == (LATEST,):
+        raise _refuse(REDEPLOY_SHAPE)
 
 
 def parse_request(raw: bytes, request_id: str) -> Request:
@@ -247,11 +278,13 @@ def parse_request(raw: bytes, request_id: str) -> Request:
         raise malformed("id")
 
     kind = _kind(body["kind"])
+    components = _components(body["components"])
+    _redeploy_shape(kind, components)
 
     return Request(
         id=request_id,
         kind=kind,
-        components=_components(body["components"]),
+        components=components,
         rollback_of=_rollback_of(body, kind),
         requested_by=_text(body, "requested_by", REQUESTED_BY_RE),
         requester_session=_optional_text(body, "requester_session", SESSION_ID_RE),

@@ -49,7 +49,7 @@ from ..manifest import (
     Markup,
     parse_manifest,
 )
-from ..resolve import LATEST, TAG_FORMAT, deploying_versions
+from ..resolve import LATEST, NO_REDEPLOY, TAG_FORMAT, deploying_versions
 from ..silent import silent_manifest
 from ..site import operator_home
 from ..state import ReleaseState, SourceFacts
@@ -587,6 +587,7 @@ def build_state(
     wanted: Mapping[str, str],
     readers: Readers,
     registry_sha: str | None = None,
+    redeploy: frozenset[str] = NO_REDEPLOY,
 ) -> BuiltState:
     """Contract 06 §11's document, built from root's own reads.
 
@@ -596,6 +597,8 @@ def build_state(
     which components need a tag resolved into source facts.
 
     `registry_sha` is step 8's approved registry commit, and None at step 2.
+    `redeploy` names the components that deploy at their live version
+    (contract 06 §9.2).
     """
     trees = read_trees(roots)
     live = _live_of(trees)
@@ -603,7 +606,7 @@ def build_state(
     latest, notes = _latest_of(wanted, readers)
     partial = ReleaseState(live=live, provided=provided, latest=latest)
 
-    targets = dict(deploying_versions(partial, dict(wanted)))
+    targets = dict(deploying_versions(partial, dict(wanted), redeploy))
     deploying = frozenset(targets)
     for name in unstamped_names(trees, deploying):
         version = trees[name].version
