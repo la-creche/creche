@@ -62,6 +62,13 @@ host where something has gone wrong.
   inside the fake driver.
 - No secret on argv, in a URL or in a log line. The master key comes from
   `LITELLM_MASTER_KEY` in the environment.
+- Each verb that applies the registry (`serve`, `reconcile-once`,
+  `rotate`, `apply-once`) reads the fences of the host from its environment:
+  `AGENT_MOUNT_ROOTS` and `AGENT_PLATFORM_FAMILIES`
+  (`agent_family.fences`). The unit reads them from the site file. With no
+  `AGENT_MOUNT_ROOTS`, or an entry of the wrong shape, the verb writes one
+  line that names the key, and its exit code is 78. `LoopConfig` and
+  `apply_once` take the fences, with no default.
 - A verb that acts refuses to start with no master key. It writes one
   line that names the variable, and its exit code is 1.
 - The chaperone watch probes once per interval for the whole fleet. A probe
@@ -325,7 +332,8 @@ caregiver delete chat --write
 ```
 
 Every mutating verb prints its plan. `--write` turns the plan into action.
-Exit codes: 0 ok, 1 degraded or refused, 2 a usage mistake.
+Exit codes: 0 ok, 1 degraded or refused, 2 a usage mistake, 78 the fences
+of the host do not read.
 
 ## Tests
 

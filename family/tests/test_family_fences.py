@@ -21,6 +21,7 @@ from agent_family.registry import load_registry
 from agent_family.report import Issues, Report
 from agent_family.validate import Index, check_family
 from family_helpers import (
+    FENCES,
     FIXTURES,
     FakeHost,
     check,
@@ -194,7 +195,7 @@ def test_a_symlink_escaping_its_root_is_an_error() -> None:
     )
     sneaky = FakeHost(("agent-router",), links={"/srv/agents/vault/escape": "/etc/passwd"})
     issues = Issues()
-    check_family(family, "chat", full_index(), issues, sneaky)
+    check_family(family, "chat", full_index(), issues, sneaky, FENCES)
     assert any("under no allowed root" in issue.msg for issue in issues.frozen())
 
 
@@ -351,7 +352,7 @@ def _merge_declared() -> Index:
 def _check_against(index: Index, fixture: str, **changes: Any) -> Report:
     family = edited(fixture, **changes)
     issues = Issues()
-    check_family(family, fixture, index, issues, host())
+    check_family(family, fixture, index, issues, host(), FENCES)
     return Report(family.name, f"families/{fixture}/family.toml", issues.frozen())
 
 
@@ -764,7 +765,7 @@ def test_an_enqueue_trigger_nobody_targets_is_a_warning(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    targeted = load_registry(registry_copy, host())
+    targeted = load_registry(registry_copy, host(), FENCES)
     assert targeted.reports["finance-worker"].ok
     assert "no family enqueues" not in messages(targeted.reports["finance-worker"])
 
@@ -773,7 +774,7 @@ def test_an_enqueue_trigger_nobody_targets_is_a_warning(tmp_path: Path) -> None:
         lead.read_text(encoding="utf-8").replace('    "finance-worker",\n', ""), encoding="utf-8"
     )
 
-    orphaned = load_registry(registry_copy, host())
+    orphaned = load_registry(registry_copy, host(), FENCES)
     assert orphaned.reports["finance-worker"].ok  # a warning never blocks an apply
     assert "no family enqueues" in messages(orphaned.reports["finance-worker"])
 
@@ -784,7 +785,7 @@ def test_two_families_cannot_claim_the_same_webhook(tmp_path: Path) -> None:
     registry, never the shared fixtures other tests read."""
     registry_copy = tmp_path / "registry"
     shutil.copytree(FIXTURES, registry_copy)
-    clean = load_registry(registry_copy, host())
+    clean = load_registry(registry_copy, host(), FENCES)
     assert clean.reports["finance-worker"].ok  # today's fixture: no collision yet
 
     target = registry_copy / "families" / "networking-worker" / "family.toml"
@@ -795,7 +796,7 @@ def test_two_families_cannot_claim_the_same_webhook(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    collided = load_registry(registry_copy, host())
+    collided = load_registry(registry_copy, host(), FENCES)
     assert "also claimed by" in messages(collided.reports["finance-worker"])
     assert "also claimed by" in messages(collided.reports["networking-worker"])
 
@@ -927,7 +928,7 @@ def test_one_file_with_no_value_does_not_stop_the_registry_read(tmp_path: Path) 
         _HEAD + "max_inflight_delegations = " + "9" * 5000 + "\n", encoding="utf-8"
     )
 
-    loaded = load_registry(registry_copy, host())
+    loaded = load_registry(registry_copy, host(), FENCES)
     assert "not TOML 1.0" in messages(loaded.reports["no-value"])
     assert not loaded.reports["no-value"].ok
     assert "no-value" not in loaded.families

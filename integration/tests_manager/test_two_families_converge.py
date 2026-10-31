@@ -35,7 +35,7 @@ from caregiver.reconcile import Actors
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
 
-from .conftest import CHAT_FAMILY, FAMILY, IMAGE, write_family
+from .conftest import CHAT_FAMILY, FAMILY, FENCES, IMAGE, write_family
 
 #: The second family. Same shape as `chat`, another name, so the only
 #: difference between the two is which one the driver holds.
@@ -84,7 +84,9 @@ def test_the_second_family_serves_while_the_first_is_held(
     the other family's sandbox is doing."""
     state_root = tmp_path / "state"
     driver = HoldingDriver(hold=FAMILY)
-    config = LoopConfig(registry_root=two_families, state_root=state_root, image=IMAGE)
+    config = LoopConfig(
+        registry_root=two_families, state_root=state_root, image=IMAGE, fences=FENCES
+    )
     actors = Actors(
         driver,
         FakeLiteLLMKeys(),

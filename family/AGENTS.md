@@ -42,10 +42,14 @@ instead of the first.
 - A field that needs a regex, a range or another file's content is a value
   rule. It is never a pydantic field validator.
 - One pattern per identifier, in `grammar.py`.
-- `ALLOWED_ROOTS` and `PLATFORM_ALLOWLIST` are constants in code. A fence the
-  fenced family could edit is not a fence.
+- The allowed mount roots and the platform families are host config, not
+  code and not registry files. A fence the fenced family could edit is not a
+  fence. `fences.py` reads them from the site keys `AGENT_MOUNT_ROOTS` and
+  `AGENT_PLATFORM_FAMILIES`. No family name is in this package.
 - The two host-dependent checks downgrade, never skip. With no `HostFacts`
-  they report a warning with `downgraded=True`.
+  they report a warning with `downgraded=True`. The two fence checks do the
+  same with no `Fences`. Only the reader that applies the registry passes
+  them: `caregiver`.
 - `classify.py` stays pure. No clock, no disk, no import of `validate.py`.
 - An `approval` entry only narrows. Adding one removes reach. Do not treat
   `approval` like `tools` or `egress`.
@@ -175,7 +179,7 @@ refuses each one, and so does the validator.
 | Unknown fields | refused on every model |
 | `name` | `[a-z][a-z0-9-]{1,30}`, equal to the directory name |
 | Mounts | absolute, no glob, under an allowed root. No root holds a working copy of the platform. |
-| `tools` | the server is declared, and each tool is in its catalog. Only a family of `PLATFORM_ALLOWLIST` holds `github-platform` |
+| `tools` | the server is declared, and each tool is in its catalog. Only a platform family of the host holds `github-platform` |
 | Tool name | `[A-Za-z][A-Za-z0-9_-]{0,63}`, in a family file and in a server file |
 | `run.env` name | `[A-Z][A-Z0-9_]{0,63}` |
 | `install.version` | `[0-9][0-9A-Za-z.]{0,63}`: no `+`, no `-` and no range sign |

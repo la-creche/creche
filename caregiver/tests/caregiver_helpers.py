@@ -12,9 +12,9 @@ import tomllib
 from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Final, cast
 
-from agent_family import FamilyFile, Markup, parse_family
+from agent_family import FamilyFile, Fences, Markup, parse_family
 from caregiver.cli import main as cli_main
 from caregiver.credentials import read_creds, token_sha256, write_creds
 from caregiver.driver import SandboxDriver
@@ -25,6 +25,25 @@ from caregiver.switch import SwitchClient
 from caregiver.timers import UnitWriter
 
 from caregiver import paths
+
+#: The fences of the test host (`agent_family.fences`): the roots and the
+#: platform family that the fixture registries use.
+FENCES: Final = Fences(
+    mount_roots=(
+        "/srv/agents/vault",
+        "/srv/agents/code",
+        "/srv/agents/state/index",
+        "/srv/agents/work/projects",
+        "/srv/agents/work/coding-sandbox",
+    ),
+    platform_families=frozenset({"code"}),
+)
+
+#: The same fences as the site file gives them to the process.
+FENCE_ENV: Final = {
+    "AGENT_MOUNT_ROOTS": ",".join(FENCES.mount_roots),
+    "AGENT_PLATFORM_FAMILIES": ",".join(sorted(FENCES.platform_families)),
+}
 
 FAMILY_BODY: dict[str, Any] = {
     "name": "chat",
@@ -166,9 +185,10 @@ def main(
     switch: SwitchClient | None = None,
     units: UnitWriter | None = None,
     checker: PolicyChecker | None = None,
+    environ: dict[str, str] | None = None,
 ) -> int:
     """`caregiver.cli.main` with a checker that passes each text, so that no
-    test runs a `chaperone` binary."""
+    test runs a `chaperone` binary, and the fences of the test host."""
     return cli_main(
         argv,
         driver=driver,
@@ -176,6 +196,7 @@ def main(
         switch=switch,
         units=units,
         checker=checker if checker is not None else FakeChecker(),
+        environ=environ if environ is not None else FENCE_ENV,
     )
 
 

@@ -5,7 +5,9 @@ accumulator, so one parse reports every violation it can see.
 
 Two checks need facts only the host has: the model alias list (§5.1) and the
 resolved path behind a mount (§5.4, §3.3 rule 5). Without a host they report a
-downgraded warning and the report says which check was downgraded."""
+downgraded warning and the report says which check was downgraded. Two more
+need the fences of the host (`fences.py`): the allowed mount roots and the
+platform families. Without them, each reports one downgraded warning."""
 
 from __future__ import annotations
 
@@ -14,9 +16,9 @@ from dataclasses import dataclass, field
 from typing import Final, Protocol
 from zoneinfo import ZoneInfo
 
+from .fences import Fences
 from .grammar import (
     ALL_TOOLS,
-    ALLOWED_ROOTS,
     BUDGET_USD_MAX,
     CPUS_MAX,
     CPUS_MIN,
@@ -40,7 +42,6 @@ from .grammar import (
     MEMORY_MIN_MB,
     MODEL_ALIAS,
     MOUNT_PATH,
-    PLATFORM_ALLOWLIST,
     PLATFORM_SERVER,
     PLATFORM_WITHHELD,
     PROBE_FAMILY,
@@ -135,14 +136,19 @@ class Index:
 
 
 def check_family(
-    family: FamilyFile, directory: str, index: Index, issues: Issues, host: HostFacts | None
+    family: FamilyFile,
+    directory: str,
+    index: Index,
+    issues: Issues,
+    host: HostFacts | None,
+    fences: Fences | None = None,
 ) -> None:
     """Every rule contract 01 states for one file, in file order."""
     _check_identity(family, directory, issues)
     _check_model(family, issues, host)
-    _check_files(family, issues, host)
-    _check_tools(family, index, issues)
-    _check_verbs(family, index, issues)
+    _check_files(family, issues, host, fences)
+    _check_tools(family, index, issues, fences)
+    _check_verbs(family, index, issues, fences)
     _check_delegates(family, index, issues)
     _check_inflight_delegations(family, issues)
     _check_egress(family, issues)
@@ -220,7 +226,9 @@ def _check_model(family: FamilyFile, issues: Issues, host: HostFacts | None) -> 
         issues.error("model.router", f"'{router}' is not an alias LiteLLM serves")
 
 
-def _check_files(family: FamilyFile, issues: Issues, host: HostFacts | None) -> None:
+def _check_files(
+    family: FamilyFile, issues: Issues, host: HostFacts | None, fences: Fences | None
+) -> None:
     seen: set[str] = set()
     for index, mount in enumerate(family.files):
         loc = f"files[{index}]"
@@ -234,12 +242,15 @@ def _check_files(family: FamilyFile, issues: Issues, host: HostFacts | None) -> 
         if not _path_shape_ok(mount.path, loc, issues):
             continue
 
-        _check_root(family, mount.path, loc, issues, host)
+        _check_root(mount.path, loc, issues, host, fences)
 
     # §5.4 and §3.3 rule 5: resolving a symlink needs the host, so without one
     # the complete check downgrades. One line per family, not one per mount.
     if host is None and family.files:
         issues.warn("files", "no host context: no mount's symlinks were resolved", downgraded=True)
+
+    if fences is None and family.files:
+        issues.warn("files", "no host fences: no mount root was checked", downgraded=True)
 
 
 def _path_shape_ok(path: str, loc: str, issues: Issues) -> bool:
@@ -268,7 +279,7 @@ def _path_shape_ok(path: str, loc: str, issues: Issues) -> bool:
 
 
 def _check_root(
-    family: FamilyFile, path: str, loc: str, issues: Issues, host: HostFacts | None
+    path: str, loc: str, issues: Issues, host: HostFacts | None, fences: Fences | None
 ) -> None:
     """§5.4 the allowed roots, §5.5 the platform fence, §3.3 rule 6 the
     session store. The literal path is checked with or without a host. The
@@ -282,25 +293,27 @@ def _check_root(
         )
         return
 
-    _check_one_root(family, path, loc, issues)
+    if fences is None:
+        return
+
+    _check_one_root(path, loc, issues, fences)
     if host is None:
         return
 
     resolved = host.real_path(path)
     if resolved != path:
-        _check_one_root(family, resolved, loc, issues)
+        _check_one_root(resolved, loc, issues, fences)
 
 
-def _check_one_root(family: FamilyFile, path: str, loc: str, issues: Issues) -> None:
-    if not any(is_under(path, root) for root in ALLOWED_ROOTS):
+def _check_one_root(path: str, loc: str, issues: Issues, fences: Fences) -> None:
+    if not any(is_under(path, root) for root in fences.mount_roots):
         issues.error(
             f"{loc}.path",
-            f"'{path}' is under no allowed root; the roots are {', '.join(ALLOWED_ROOTS)}",
+            f"'{path}' is under no allowed root; the roots are {', '.join(fences.mount_roots)}",
         )
-        return
 
 
-def _check_tools(family: FamilyFile, index: Index, issues: Issues) -> None:
+def _check_tools(family: FamilyFile, index: Index, issues: Issues, fences: Fences | None) -> None:
     kind = _kind_of(family)
     for server, grant in sorted(family.tools.items()):
         loc = f"tools.{server}"
@@ -315,7 +328,7 @@ def _check_tools(family: FamilyFile, index: Index, issues: Issues) -> None:
         if declared is None:
             issues.error(loc, f"'{server}' has no mcp/{server}/{SERVER_FILE}")
 
-        _check_withheld(family, index, server, loc, issues)
+        _check_withheld(family, index, server, loc, issues, fences)
         if isinstance(grant, str):
             _check_all_grant(grant, kind, loc, issues)
             continue
@@ -324,7 +337,7 @@ def _check_tools(family: FamilyFile, index: Index, issues: Issues) -> None:
 
 
 def _check_withheld(
-    family: FamilyFile, index: Index, server: str, loc: str, issues: Issues
+    family: FamilyFile, index: Index, server: str, loc: str, issues: Issues, fences: Fences | None
 ) -> None:
     """§5.5 rule 7: the operator lands every platform change. `main` may carry no
     branch protection, so a family holding the platform server's merge could land
@@ -334,12 +347,7 @@ def _check_withheld(
     if server != PLATFORM_SERVER:
         return
 
-    if family.name not in PLATFORM_ALLOWLIST:
-        issues.error(
-            loc,
-            f"'{family.name}' is outside the platform fence; only "
-            f"{', '.join(sorted(PLATFORM_ALLOWLIST))} may hold '{server}'",
-        )
+    if not _inside_platform_fence(family, loc, f"'{server}'", issues, fences):
         return
 
     reason = "a platform change lands only when the operator merges it (§5.5 rule 7)"
@@ -360,6 +368,26 @@ def _check_withheld(
             continue
 
         issues.error(f"{loc}[{position}]", f"'{tool}' is never granted from '{server}': {reason}")
+
+
+def _inside_platform_fence(
+    family: FamilyFile, loc: str, what: str, issues: Issues, fences: Fences | None
+) -> bool:
+    """§5.5 rule 1. False when the family is outside the platform fence of
+    the host. With no fences, a downgraded warning, and True."""
+    if fences is None:
+        issues.warn(loc, f"no host fences: who may hold {what} was not checked", downgraded=True)
+        return True
+
+    if family.name in fences.platform_families:
+        return True
+
+    holders = ", ".join(sorted(fences.platform_families)) or "no family"
+    issues.error(
+        loc,
+        f"'{family.name}' is outside the platform fence; only {holders} may hold {what}",
+    )
+    return False
 
 
 def _check_all_grant(grant: str, kind: Kind | None, loc: str, issues: Issues) -> None:
@@ -395,7 +423,7 @@ def _check_named_tools(
             issues.error(at, f"'{tool}' is not declared in mcp/{server}/{SERVER_FILE}")
 
 
-def _check_verbs(family: FamilyFile, index: Index, issues: Issues) -> None:
+def _check_verbs(family: FamilyFile, index: Index, issues: Issues, fences: Fences | None) -> None:
     verbs = family.verbs
     if verbs.ha_call is not None:
         _check_ha_call(family, issues)
@@ -411,7 +439,7 @@ def _check_verbs(family: FamilyFile, index: Index, issues: Issues) -> None:
         )
 
     if verbs.release is not None:
-        _check_release(family, issues)
+        _check_release(family, issues, fences)
 
 
 def _check_ha_call(family: FamilyFile, issues: Issues) -> None:
@@ -450,14 +478,9 @@ def _check_enqueue(family: FamilyFile, index: Index, issues: Issues) -> None:
             issues.error(loc, f"'{target}' is '{kind}'; an enqueue target must be autonomous")
 
 
-def _check_release(family: FamilyFile, issues: Issues) -> None:
+def _check_release(family: FamilyFile, issues: Issues, fences: Fences | None) -> None:
     fence = family.verbs.release
-    if family.name not in PLATFORM_ALLOWLIST:
-        issues.error(
-            "verbs.release",
-            f"'{family.name}' is outside the platform fence; only "
-            f"{', '.join(sorted(PLATFORM_ALLOWLIST))} may hold the 'release' verb",
-        )
+    _inside_platform_fence(family, "verbs.release", "the 'release' verb", issues, fences)
 
     if fence is None or not fence.components:
         issues.error("verbs.release.components", "release needs at least one component name")

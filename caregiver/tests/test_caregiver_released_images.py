@@ -21,7 +21,7 @@ from caregiver.reconcile import Actors
 from caregiver.released import MAX_BYTES, ReleasedImages, parse_images, read_images
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
-from caregiver_helpers import fake_policy, main, write_registry
+from caregiver_helpers import FENCES, fake_policy, main, write_registry
 
 REGISTRY = "127.0.0.1:5000"
 BASE = f"{REGISTRY}/agent-sandbox@sha256:{'a' * 64}"
@@ -164,6 +164,7 @@ def test_a_pass_creates_the_sandbox_from_the_released_image(tmp_path: Path) -> N
         registry_root=tmp_path / "registry",
         state_root=tmp_path / "state",
         image=GIVEN.base,
+        fences=FENCES,
         released=ReleasedImages(path),
     )
     actors = Actors(
@@ -182,7 +183,10 @@ def test_a_pass_creates_the_sandbox_from_the_released_image(tmp_path: Path) -> N
 
 def test_a_manager_with_no_released_file_uses_the_flags(tmp_path: Path) -> None:
     config = LoopConfig(
-        registry_root=tmp_path / "registry", state_root=tmp_path / "state", image=GIVEN.base
+        registry_root=tmp_path / "registry",
+        state_root=tmp_path / "state",
+        image=GIVEN.base,
+        fences=FENCES,
     )
 
     assert images_now(config) == GIVEN

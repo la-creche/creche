@@ -20,6 +20,7 @@ from caregiver.playpen_env import read_playpen_env
 from caregiver.status import now_rfc3339
 from caregiver.switch import FakeSwitchClient, SwitchClient
 from caregiver_helpers import (
+    FENCES,
     UNREADABLE_JSON,
     accepted_digests,
     current_digest,
@@ -55,6 +56,7 @@ def apply_chat(
         registry_root,
         "chat",
         state_root=state_root,
+        fences=FENCES,
         policy=fake_policy(state_root),
         image="sha256:deadbeef",
         driver=driver if driver is not None else FakeDriver(),
@@ -362,6 +364,7 @@ def test_family_not_in_the_registry_raises(registry_root: Path, state_root: Path
             registry_root,
             "no-such-family",
             state_root=state_root,
+            fences=FENCES,
             policy=fake_policy(state_root),
             image="x",
             driver=FakeDriver(),
@@ -379,6 +382,7 @@ def test_a_directory_with_no_family_file_raises(registry_root: Path, state_root:
             registry_root,
             "stray",
             state_root=state_root,
+            fences=FENCES,
             policy=fake_policy(state_root),
             image="x",
             driver=FakeDriver(),

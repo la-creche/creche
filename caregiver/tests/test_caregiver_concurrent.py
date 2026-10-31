@@ -35,7 +35,7 @@ from caregiver.reconcile import Actors
 from caregiver.status import SandboxLifecycle, forget_published, restamp_status
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
-from caregiver_helpers import fake_policy, write_registry
+from caregiver_helpers import FENCES, fake_policy, write_registry
 
 from caregiver import loop as loop_module
 from caregiver import paths, sandboxes
@@ -118,6 +118,7 @@ class Bench:
             "registry_root": self.registry_root,
             "state_root": self.state_root,
             "image": IMAGE,
+            "fences": FENCES,
         }
         fields.update(overrides)
         return LoopConfig(**fields)  # type: ignore[arg-type]
@@ -521,10 +522,10 @@ def count_reads(bench: Bench, monkeypatch: pytest.MonkeyPatch) -> Callable[[], i
     reads = 0
     real = loop_module.load_registry
 
-    def counted(root: Path, host: object = None) -> Registry:
+    def counted(root: Path, host: object = None, fences: object = None) -> Registry:
         nonlocal reads
         reads += 1
-        return real(root, host)  # type: ignore[arg-type]
+        return real(root, host, fences)  # type: ignore[arg-type]
 
     monkeypatch.setattr(loop_module, "load_registry", counted)
     del bench
@@ -771,6 +772,7 @@ def test_apply_once_never_adopts_a_planned_sandbox_either(bench: Bench) -> None:
         bench.registry_root,
         "chat",
         state_root=bench.state_root,
+        fences=FENCES,
         policy=fake_policy(bench.state_root),
         image=IMAGE,
         driver=bench.driver,

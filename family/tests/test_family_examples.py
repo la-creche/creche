@@ -8,13 +8,13 @@ from __future__ import annotations
 import pytest
 from agent_family.registry import load_registry
 from agent_family.report import FamilyState
-from family_helpers import CONTRACT_FAMILIES, FIXTURES, host, messages
+from family_helpers import CONTRACT_FAMILIES, FENCES, FIXTURES, host, messages
 
 CONTRACT_SERVERS = ("kagi", "github-code", "github-platform", "vikunja-finance")
 
 
 def test_registry_is_clean_on_host() -> None:
-    registry = load_registry(FIXTURES, host())
+    registry = load_registry(FIXTURES, host(), FENCES)
     for report in registry.all_reports():
         assert report.ok, f"{report.family}: {messages(report)}"
 
@@ -23,7 +23,7 @@ def test_registry_is_clean_on_host() -> None:
 
 @pytest.mark.parametrize("name", CONTRACT_FAMILIES)
 def test_contract_family_validates(name: str) -> None:
-    registry = load_registry(FIXTURES, host())
+    registry = load_registry(FIXTURES, host(), FENCES)
     report = registry.reports[name]
     assert report.errors == 0, messages(report)
     assert report.warnings == 0, messages(report)
@@ -32,7 +32,7 @@ def test_contract_family_validates(name: str) -> None:
 
 @pytest.mark.parametrize("name", CONTRACT_SERVERS)
 def test_contract_server_validates(name: str) -> None:
-    registry = load_registry(FIXTURES, host())
+    registry = load_registry(FIXTURES, host(), FENCES)
     assert registry.server_reports[name].ok, messages(registry.server_reports[name])
     assert registry.servers[name].name == name
 
@@ -52,14 +52,14 @@ def test_no_host_downgrades_two_checks() -> None:
 def test_unknown_alias_is_an_error_with_a_host() -> None:
     from family_helpers import FakeHost
 
-    registry = load_registry(FIXTURES, FakeHost(("fast",)))
+    registry = load_registry(FIXTURES, FakeHost(("fast",)), FENCES)
     report = registry.reports["chat"]
     assert "is not an alias LiteLLM serves" in messages(report)
     assert report.state is FamilyState.INVALID
 
 
 def test_the_registry_carries_its_parts() -> None:
-    registry = load_registry(FIXTURES, host())
+    registry = load_registry(FIXTURES, host(), FENCES)
     assert registry.skills == frozenset({"grill-me", "handoff", "memory-writing"})
     assert registry.instructions("chat").is_file()
     assert registry.skill_file("handoff").is_file()

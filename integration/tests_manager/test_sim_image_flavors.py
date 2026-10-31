@@ -43,7 +43,7 @@ from caregiver.timers import FakeUnits
 
 from caregiver import paths
 
-from .conftest import CHAT_FAMILY, FAMILY, IMAGE, write_family
+from .conftest import CHAT_FAMILY, FAMILY, FENCES, IMAGE, write_family
 
 #: The family that needs pandas. The name is the point of the packet.
 PLOTS: Final = "plots"
@@ -97,6 +97,7 @@ def _converge(registry: Path, state_root: Path, driver: FakeDriver) -> None:
         registry_root=registry,
         state_root=state_root,
         image=IMAGE,
+        fences=FENCES,
         python_image=PYTHON_IMAGE,
     )
     actors = Actors(

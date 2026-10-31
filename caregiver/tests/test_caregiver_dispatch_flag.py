@@ -16,7 +16,7 @@ from caregiver.apply import apply_once
 from caregiver.driver import FakeDriver
 from caregiver.litellm_keys import FakeLiteLLMKeys
 from caregiver.status import TriggersBlock
-from caregiver_helpers import fake_policy, write_registry
+from caregiver_helpers import FENCES, fake_policy, write_registry
 
 from caregiver import paths
 
@@ -33,6 +33,7 @@ def _published_triggers(tmp_path: Path, triggers: list[dict[str, object]]) -> di
         registry,
         WORKER,
         state_root=state_root,
+        fences=FENCES,
         policy=fake_policy(state_root),
         image=IMAGE,
         driver=FakeDriver(),

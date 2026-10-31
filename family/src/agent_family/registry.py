@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Final
 
 from . import grammar, tomlfile
+from .fences import Fences
 from .model import FamilyFile
 from .parse import parse_family_toml, parse_server_toml
 from .report import FamilyState, Issue, Issues, Report
@@ -67,8 +68,12 @@ class Registry:
         return self.root / SKILLS_DIR / skill / SKILL_FILE
 
 
-def load_registry(root: Path, host: HostFacts | None = None) -> Registry:
-    """Read, parse and cross-reference one registry. Never raises on content."""
+def load_registry(
+    root: Path, host: HostFacts | None = None, fences: Fences | None = None
+) -> Registry:
+    """Read, parse and cross-reference one registry. Never raises on content.
+    With no `fences`, each fence check is a downgraded warning: the reader
+    that applies the registry passes the fences of its host."""
     servers, server_reports = _read_servers(root)
     parsed, per_family, files = _read_families(root)
     skills = _read_skills(root)
@@ -81,7 +86,7 @@ def load_registry(root: Path, host: HostFacts | None = None) -> Registry:
     reports: dict[str, Report] = {}
     for name, family in parsed.items():
         issues = Issues(list(per_family[name]))
-        check_family(family, name, index, issues, host)
+        check_family(family, name, index, issues, host, fences)
         reports[name] = _report(name, f"{FAMILIES_DIR}/{name}/{files[name]}", issues.frozen())
 
     # Directories whose file failed to parse still get their report.

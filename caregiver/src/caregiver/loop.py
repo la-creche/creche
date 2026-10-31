@@ -58,7 +58,7 @@ from pathlib import Path
 from types import FrameType
 from typing import Any, Final, Protocol
 
-from agent_family import HostFacts, Registry, load_registry, revision_of
+from agent_family import Fences, HostFacts, Registry, load_registry, revision_of
 
 from . import paths
 from .applied import read_applied
@@ -348,6 +348,10 @@ class LoopConfig:
     registry_root: Path
     state_root: Path
     image: str
+    #: The allowed mount roots and the platform families of the host
+    #: (`agent_family.fences`). Required: a loop with no fences would apply
+    #: a family that the fences refuse.
+    fences: Fences
     #: The second flavor's reference (contract 01 §3.9). Empty means this
     #: host was given none, and a family that asks for it is faulted
     #: rather than built from `base`.
@@ -663,7 +667,7 @@ def _begin(config: LoopConfig, state: LoopState, passes: Passes) -> tuple[str, R
     if moved:
         state.clear_backoff()
 
-    return revision, load_registry(config.registry_root, config.host)
+    return revision, load_registry(config.registry_root, config.host, config.fences)
 
 
 def _watch_pep(config: LoopConfig) -> bool:
