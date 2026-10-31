@@ -27,7 +27,11 @@ import { chaperoneConnection } from "./chaperone.js";
 import { codemodeTool } from "./codemode.js";
 import type { FamilyConfig } from "./config.js";
 import { indexSearchFor } from "./index-search.js";
-import { litellmModel } from "./litellm.js";
+import { FALLBACK_LIMITS, litellmModel } from "./litellm.js";
+import type { ModelLimits } from "./litellm.js";
+
+export { readModelLimits } from "./litellm.js";
+export type { LimitsFault, LimitsRead, ModelLimits } from "./litellm.js";
 import { queryEmbedder } from "./query-embed.js";
 import { grantedSandbox } from "./sandbox-tools.js";
 import { readSkills } from "./skills.js";
@@ -83,10 +87,14 @@ function readInstructions(path: string | null): string | null | undefined {
 /**
  * `workspace` is the working directory of the granted sandbox tools. The
  * caller chooses it. With an empty grant, no sandbox is attached, so the
- * directory is not read.
+ * directory is not read. `limits` is what `readModelLimits` gave.
  */
-export function composeAgent(config: FamilyConfig, workspace: string): ComposeRead {
-  const model = litellmModel(config);
+export function composeAgent(
+  config: FamilyConfig,
+  workspace: string,
+  limits: ModelLimits = FALLBACK_LIMITS,
+): ComposeRead {
+  const model = litellmModel(config, limits);
   if (!model.ok) {
     return model;
   }

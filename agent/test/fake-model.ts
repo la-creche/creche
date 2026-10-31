@@ -31,6 +31,9 @@ interface CompletionBody {
 
 const CALL_ID = "call_fake_1";
 
+/** The path that pi's OpenAI client posts each request to. */
+const COMPLETIONS_PATH = "/chat/completions";
+
 function readBody(request: IncomingMessage): Promise<string> {
   return new Promise((resolve) => {
     let text = "";
@@ -78,6 +81,14 @@ export class FakeModel {
   /** Binds 127.0.0.1 and answers with the base URL, `http://127.0.0.1:<port>`. */
   public async start(): Promise<string> {
     const server = createServer((request, response) => {
+      // Only a chat completions request takes a reply of the script. The
+      // model list that the facade reads at start gets 404, so the agent
+      // keeps its fallback limits.
+      if (request.method !== "POST" || !(request.url ?? "").endsWith(COMPLETIONS_PATH)) {
+        response.writeHead(404).end();
+        return;
+      }
+
       void readBody(request).then((text) => {
         const body = JSON.parse(text || "{}") as CompletionBody;
         this.seen.push({

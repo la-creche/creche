@@ -46,9 +46,19 @@ at process start:
 
 ```ts
 const read = await readFamilyConfig(process.env);       // src/config.ts
-const composed = composeAgent(read.config, workspace);  // src/agent.ts
+const limits = await readModelLimits(read.config);      // src/litellm.ts
+const composed = composeAgent(read.config, workspace, limits.limits);  // src/agent.ts
 await start({ agents: [composed.agent], db: composed.db, providers: composed.providers });
 ```
+
+`readModelLimits` reads the alias's `max_input_tokens` and
+`max_output_tokens` from LiteLLM's `GET /v1/model/info`, with the family
+key. They become the model's context window and its output limit, which
+pi's request clamp and Flue's compaction threshold use. The output limit
+is at most 16384 per request. When LiteLLM does not answer, or names no
+window for the alias, the read gives a 128000-token window and a fault,
+and the facade writes the fault to stderr. A router alias has no window of
+its own: the LiteLLM config sets it in the alias's `model_info`.
 
 Each step gives a typed refusal, not an exception. The store of
 `start()` is `<AGENT_SESSIONS_DIR>/flue.db`. The facade writes the names
