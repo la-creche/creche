@@ -8,8 +8,8 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { start } from "@flue/runtime/node";
-import { AGENT_NAME, composeAgent, storePath } from "agent/agent";
-import type { ComposedAgent, ComposeRead } from "agent/agent";
+import { AGENT_NAME, composeAgent, readModelLimits, storePath } from "agent/agent";
+import type { ComposedAgent, ComposeRead, LimitsRead } from "agent/agent";
 import { readFamilyConfig } from "agent/config";
 import type { ConfigRefusal, FamilyConfig } from "agent/config";
 
@@ -37,6 +37,8 @@ export interface Family {
   readonly config: FamilyConfig;
   readonly composed: ComposedAgent;
   readonly workspace: string;
+  /** The model's limits from LiteLLM, or the fallback and its fault. */
+  readonly limits: LimitsRead;
 }
 
 export type FamilyRead =
@@ -57,10 +59,11 @@ export async function readFamily(env: NodeJS.ProcessEnv): Promise<FamilyRead> {
   }
 
   const workspace = join(read.config.mounts.sessions, "workspace");
-  const composed = composeAgent(read.config, workspace);
+  const limits = await readModelLimits(read.config);
+  const composed = composeAgent(read.config, workspace, limits.limits);
 
   return composed.ok
-    ? { ok: true, family: { config: read.config, composed: composed.composed, workspace } }
+    ? { ok: true, family: { config: read.config, composed: composed.composed, workspace, limits } }
     : { ok: false, exitCode: EXIT_BY_REFUSAL[composed.reason], detail: composed.reason };
 }
 

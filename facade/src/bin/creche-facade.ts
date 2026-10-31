@@ -20,6 +20,13 @@ if (read.ok) {
     say(`skill ${name} is not valid; skipped`);
   }
 
+  const { limits } = family;
+  say(
+    limits.ok
+      ? `model window ${limits.limits.contextWindow} tokens, output ${limits.limits.maxTokens}`
+      : `model limits not read (${limits.fault}); window ${limits.limits.contextWindow} tokens`,
+  );
+
   void runSupervisor({
     input: process.stdin,
     stdout,
