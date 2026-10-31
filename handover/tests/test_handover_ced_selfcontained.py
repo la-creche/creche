@@ -327,19 +327,19 @@ def test_a_self_contained_staged_tree_builds(tmp_path: Path) -> None:
 def test_a_component_that_is_not_a_venv_is_not_walked(tmp_path: Path) -> None:
     """A compose project and an image tree have no site-packages, and the
     walk would refuse both for the one reason that does not apply to them."""
-    manifest = _manifest(tmp_path, "infra")
+    manifest = _manifest(tmp_path, "noticeboard", **{"kind: venv": "kind: compose"})
     assert manifest.kind is Kind.COMPOSE
 
     paths = paths_of(manifest, (tmp_path / "components",))
 
     def make(_: object) -> None:
         (paths.new / "bin").mkdir(parents=True, exist_ok=True)
-        hook = paths.new / "bin" / "infra-verify"
+        hook = paths.new / "bin" / "noticeboard-verify"
         hook.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         hook.chmod(0o755)
 
     run = FakeRun(answers=git_host_answers(), hooks={"sync": make})
-    source = tmp_path / "work" / "infra"
+    source = tmp_path / "work" / "noticeboard"
     source.mkdir(parents=True)
     Installer(fake_host(tmp_path, run)).build(manifest, source, paths)
 

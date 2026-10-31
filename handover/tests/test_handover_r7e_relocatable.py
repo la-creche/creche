@@ -232,7 +232,7 @@ def test_the_executor_creates_the_environment_before_the_build(tmp_path: Path) -
 def test_a_compose_component_gets_no_environment(tmp_path: Path) -> None:
     """A compose project has no console script to break, and a `uv venv`
     there would create a directory its own build has to work around."""
-    manifest = _manifest(tmp_path, "infra", Kind.COMPOSE)
+    manifest = _manifest(tmp_path, "noticeboard", Kind.COMPOSE)
     run = FakeRun(answers=git_host_answers())
     source = tmp_path / "src"
     source.mkdir()

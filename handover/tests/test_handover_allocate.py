@@ -71,9 +71,9 @@ def test_a_whole_repo_component_takes_every_path() -> None:
 
 
 def test_components_come_back_in_catalog_order() -> None:
-    changed = ("handover/src/x.py", "caregiver/src/y.py", "infra/compose.yaml")
+    changed = ("handover/src/x.py", "caregiver/src/y.py", "attendance/src/z.py")
 
-    assert touched(changed, Repo.CRECHE) == ("caregiver", "infra", "handover")
+    assert touched(changed, Repo.CRECHE) == ("attendance", "caregiver", "handover")
 
 
 def test_a_path_that_climbs_out_is_refused() -> None:
@@ -259,7 +259,7 @@ def test_the_lock_file_moves_every_venv_component_and_no_other() -> None:
     venvs = {row.name for row in ours if row.kind is Kind.VENV}
 
     assert {plan.component for plan in plans} == venvs
-    assert "playpen" not in venvs and "infra" not in venvs
+    assert "playpen" not in venvs
 
 
 def test_a_members_lock_file_is_not_the_roots() -> None:
@@ -307,16 +307,19 @@ def test_the_first_run_tags_every_component_the_commit_did_not_touch() -> None:
     assert all(item.outcome is TagOutcome.CREATE for item in plans)
 
 
-def test_a_retiring_component_is_never_tagged() -> None:
+def test_a_retiring_component_is_never_tagged(monkeypatch: pytest.MonkeyPatch) -> None:
     """A tag is a version somebody can release. A component on its way out
     of the catalog gets no new one: not a first tag, and not a bump when a
     file under its path changes (deleting its directory changes them all).
-    The one that still has a row is the one with a path to change."""
-    (retiring,) = {name for name in RETIRING if name in CATALOG_BY_NAME}
+    The set is empty today, so the test fills it with a row that has a path
+    to change."""
+    assert frozenset() == RETIRING
+    retiring = "caregiver"
+    monkeypatch.setattr(allocate, "RETIRING", frozenset({retiring}))
     row = CATALOG_BY_NAME[retiring]
 
     first = _plan(("pyproject.toml",), tags=OLD_TAGS)
-    bumped = _plan((f"{row.path}/compose.yaml",), tags=ALL_TAGGED)
+    bumped = _plan((f"{row.path}/src/x.py",), tags=ALL_TAGGED)
 
     assert retiring not in {item.component for item in first}
     assert retiring not in {item.component for item in bumped}

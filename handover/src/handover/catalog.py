@@ -129,7 +129,6 @@ CATALOG: tuple[CatalogRow, ...] = (
         "playpen", Repo.CRECHE, "playpen", Kind.OCI_IMAGE, Releases.YES, ("agent", "facade")
     ),
     CatalogRow("mcp-servers", Repo.MCP, ".", Kind.VENV, Releases.YES),
-    CatalogRow("infra", Repo.CRECHE, "infra", Kind.COMPOSE, Releases.YES),
     CatalogRow("handover", Repo.CRECHE, "handover", Kind.VENV, Releases.YES),
     CatalogRow("registry-data", Repo.REGISTRY, ".", Kind.DATA, Releases.NO),
 )
@@ -197,7 +196,7 @@ MAIN_BRANCH = "main"
 #: commits, this entry first and the directory's deletion second, so the
 #: requester a host already runs keeps planning across the second one. The
 #: row goes once no installed requester expects the file.
-RETIRING: frozenset[str] = frozenset({"infra"})
+RETIRING: frozenset[str] = frozenset()
 
 #: Components on their way INTO the catalog, the opposite of `RETIRING`. The
 #: row lands before the directory, so a checkout carries the manifest or not,

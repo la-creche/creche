@@ -379,7 +379,7 @@ def test_a_component_with_no_install_tree_declares_nothing() -> None:
 def test_a_silent_manifest_passes_the_real_parser() -> None:
     """It is built as YAML and parsed, so it is not the one manifest in the
     system with no validation behind it."""
-    for name in ("chaperone", "infra", "playpen", "registry-data"):
+    for name in ("chaperone", "playpen", "registry-data"):
         assert silent_manifest(name).name == name
 
 
@@ -423,21 +423,21 @@ def test_an_unstamped_live_tree_puts_suspect_in_front_of_the_operator(tmp_path: 
     before manifests were stamped has none, so root reads the document's
     SHA and §2.5's first field says so BEFORE the tap."""
     bench = _release_bench(tmp_path)
-    stamp_tree(bench.components, "infra", "1.0.0")
+    stamp_tree(bench.components, "noticeboard", "1.0.0")
 
     _drive_one(bench)
 
     assert bench.summaries
     assert bench.summaries[0].review.startswith("suspect:")
-    assert "infra" in bench.summaries[0].review
+    assert "noticeboard" in bench.summaries[0].review
 
 
 def test_a_stamped_live_tree_reads_as_safe(tmp_path: Path) -> None:
     """The same tree WITH the manifest root stamped into it is a fact, so
     the verdict goes back to `safe`."""
     bench = _release_bench(tmp_path)
-    tree = stamp_tree(bench.components, "infra", "1.0.0")
-    write_manifest_stamp(tree, _bench_manifest(bench, "infra"), Markup.YAML)
+    tree = stamp_tree(bench.components, "noticeboard", "1.0.0")
+    write_manifest_stamp(tree, _bench_manifest(bench, "noticeboard"), Markup.YAML)
 
     _drive_one(bench)
 

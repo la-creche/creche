@@ -24,7 +24,7 @@ def _green_set() -> dict[str, ComponentManifest]:
         "chaperone": _manifest("chaperone", provides=provides_entry("pep-grant", 2, 1)),
         "attendance": _manifest("attendance", requires=requires_entry("pep-grant", 2, 0)),
         "noticeboard": _manifest("noticeboard", requires=requires_entry("pep-grant", 2, 0)),
-        "infra": _manifest("infra"),
+        "mcp-servers": _manifest("mcp-servers"),
     }
 
 
@@ -50,9 +50,9 @@ def test_a_green_set_returns_one_row_per_contract() -> None:
 
 
 def test_a_component_with_neither_list_is_in_no_row() -> None:
-    rows = build_table(_green_set(), frozenset({"infra"}), PEP_GRANT_LIVE).rows
+    rows = build_table(_green_set(), frozenset({"mcp-servers"}), PEP_GRANT_LIVE).rows
 
-    assert all(item.name != "infra" for row in rows for item in row.consumers)
+    assert all(item.name != "mcp-servers" for row in rows for item in row.consumers)
 
 
 def test_rows_come_back_in_contract_id_order() -> None:
@@ -194,7 +194,7 @@ def test_c4_ignores_a_provider_this_release_leaves_alone() -> None:
     manifests["attendance"] = _manifest("attendance", requires=requires_entry("pep-grant", 3, 0))
     manifests["noticeboard"] = _manifest("noticeboard", requires=requires_entry("pep-grant", 3, 0))
 
-    table = build_table(manifests, frozenset({"infra"}), PEP_GRANT_LIVE)
+    table = build_table(manifests, frozenset({"mcp-servers"}), PEP_GRANT_LIVE)
     rows: tuple[ContractRow, ...] = table.rows
 
     assert rows[0].version() == "3.0"

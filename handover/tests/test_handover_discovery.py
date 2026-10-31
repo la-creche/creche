@@ -17,12 +17,13 @@ from handover.errors import Refusal, RefusalCode
 from handover.manifest import MAX_MANIFEST_BYTES
 from handover_fixtures import manifest_text, write_manifest
 
+from handover import discovery
+
 CONTROL_NAMES = (
     "attendance",
     "caregiver",
     "noticeboard",
     "playpen",
-    "infra",
     "handover",
 )
 
@@ -89,17 +90,25 @@ def _other_roots(tmp_path: Path) -> list[Path]:
     return roots
 
 
-def _retiring_with_a_row() -> tuple[str, ...]:
-    """`RETIRING` also holds `releasectl`, whose row left with its directory
-    (`catalog.RETIRING`). Only a name with a row has a manifest to read."""
-    return tuple(name for name in sorted(RETIRING) if name in CATALOG_BY_NAME)
+def _retire(monkeypatch: pytest.MonkeyPatch) -> str:
+    """Put one creche component into `RETIRING` for one test. The set is
+    empty today (`catalog.RETIRING`), and only a name with a row has a
+    manifest to read."""
+    assert frozenset() == RETIRING
+    retiring = "noticeboard"
+    assert retiring in CATALOG_BY_NAME
+    monkeypatch.setattr(discovery, "RETIRING", frozenset({retiring}))
+
+    return retiring
 
 
-def test_a_retiring_component_may_be_absent(tmp_path: Path) -> None:
+def test_a_retiring_component_may_be_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A component leaves in two commits: this code first, then the commit
     that deletes its directory. A requester already installed must plan
     over both trees, so the absent manifest is not `missing`."""
-    (retiring,) = _retiring_with_a_row()
+    retiring = _retire(monkeypatch)
     kept = tuple(name for name in CONTROL_NAMES if name != retiring)
 
     found = discover(_all_four(tmp_path, kept))
@@ -109,8 +118,10 @@ def test_a_retiring_component_may_be_absent(tmp_path: Path) -> None:
     require_complete(found)
 
 
-def test_a_retiring_component_still_reads_when_it_is_present(tmp_path: Path) -> None:
-    (retiring,) = _retiring_with_a_row()
+def test_a_retiring_component_still_reads_when_it_is_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    retiring = _retire(monkeypatch)
 
     found = discover(_all_four(tmp_path, CONTROL_NAMES))
 
