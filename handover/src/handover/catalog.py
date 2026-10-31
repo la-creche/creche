@@ -197,3 +197,59 @@ RELEASE_WORKFLOW: dict[Repo, str] = {
 #: The one branch that a release comes from. A signature names the ref of
 #: this branch, and the merge of a release is a merge into it.
 MAIN_BRANCH = "main"
+
+#: Components on their way out of the catalog. A checkout may carry such a
+#: component's manifest or not, and both read. A component leaves in two
+#: commits, this entry first and the directory's deletion second, so the
+#: requester a host already runs keeps planning across the second one. The
+#: row goes once no installed requester expects the file.
+RETIRING: frozenset[str] = frozenset()
+
+#: Components on their way INTO the catalog, the opposite of `RETIRING`. The
+#: row lands before the directory, so a checkout carries the manifest or not,
+#: and both read. Discovery tolerates the absent file and the allocator tags
+#: none of them: a tag is a version somebody can release, and there is no
+#: tree to release yet. A name leaves this set in the commit that adds its
+#: directory. Empty now: `handover` arrived with its directory.
+ARRIVING: frozenset[str] = frozenset()
+
+#: Contract 06 §3's provider column. Rule C3 refuses any other claimant.
+CONTRACT_OWNER: dict[ContractId, str] = {
+    ContractId.FAMILY_FILE: "caregiver",
+    ContractId.SESSION_API: "attendance",
+    ContractId.CHANNEL: "playpen",
+    ContractId.PEP_GRANT: "chaperone",
+    ContractId.MANAGER_STATUS: "caregiver",
+    ContractId.COMPONENT_MANIFEST: "handover",
+}
+
+#: The newest version of the `component-manifest` contract that this reader
+#: takes, as its two numbers. A manifest that declares `0.MINOR` reads when
+#: its MINOR is at or below this one (contract 06 §3.1). The one source of
+#: the two numbers is the `provides` row of `handover/component.yaml`.
+#: `tests/test_handover_contract_version.py` fails when they differ from it.
+MANIFEST_CONTRACT_MAJOR = 0
+MANIFEST_CONTRACT_MINOR = 20
+
+#: `handover` deploys last whatever `depends_on` says (contract 06 §1.1).
+LAST_IN_ORDER = "handover"
+
+#: stage7-releases.md §2.3: at most eight entries, the catalog minus
+#: `registry-data`, which never releases.
+MAX_REQUEST_COMPONENTS = 8
+
+#: The limits of the two assets of a binary component. CI refuses an
+#: archive past a limit before it signs it, and each reader of the archive
+#: refuses it too. The size of the archive and of its bundle, in bytes.
+ARCHIVE_MAX_BYTES = 256 * 1024 * 1024
+BUNDLE_MAX_BYTES = 1024 * 1024
+
+#: The count of members of an archive, and the bytes of those members after
+#: the unpack.
+ARCHIVE_MAX_MEMBERS = 64
+ARCHIVE_MAX_UNPACKED_BYTES = 512 * 1024 * 1024
+
+
+def releasable_names() -> tuple[str, ...]:
+    """Every component a request may name, in catalog order."""
+    return tuple(row.name for row in CATALOG if row.releases is Releases.YES)
