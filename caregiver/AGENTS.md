@@ -264,7 +264,10 @@ settle of the loop and `delete`.
    assembly writes nothing and leaves no family out.
 6. Otherwise each fragment is checked alone. A fragment that fails alone
    is left out, with the first error line of the check for its family. The
-   rest is checked again.
+   rest is checked again. When that check refuses the text and names apps
+   (`the app <id> is refused: ...`, from `chaperone check` 0.4.0), those
+   apps are left out with their lines, and the rest is checked again. A
+   check that names no app writes nothing, as before.
 7. Never rename an unchecked file into place. A check that does not run
    raises `CheckerError`, and the assembly writes nothing.
 8. The cap of `policy.toml` is `POLICY_FILE_MAX_BYTES`, 1 MiB, equal to
@@ -405,8 +408,10 @@ Nothing here touches a real sandbox or LiteLLM.
   of `caregiver` fails while the directory stays as it is. The other
   reading deletes its key and its sandboxes.
 - Two fragments that each pass the check alone and fail together, such as
-  two apps with one token digest, stop every write of `policy.toml`. The
-  last file stays, and no family is left out (`policy_fleet.py`).
+  two apps with one token digest, are left out together when the check
+  names them. Their last good tables are not kept, as the chaperone
+  itself refuses both apps of such a file. A chaperone before 0.4.0 names
+  no app, and then no write of `policy.toml` happens (`policy_fleet.py`).
 - Each pass and the `rotate` verb publish `rotation_state: settled`, also
   during the overlap of a token. Contract 05 §6.3 gives `rotating` until
   the overlap ends (`steps.py`).

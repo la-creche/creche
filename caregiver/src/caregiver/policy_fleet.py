@@ -10,7 +10,9 @@ this module writes no file that the check did not pass.
    once, then each fragment in family order.
 3. A `PolicyChecker` checks the joined text. When the check refuses it,
    each fragment is checked alone. A fragment that fails alone is left
-   out, with one error for its family. The rest is checked again.
+   out, with one error for its family. The rest is checked again. When
+   that check refuses the text and names the apps it refuses, those apps
+   are left out too, and the rest is checked again.
 4. The checked text replaces `policy.toml` with an atomic rename. The file
    it replaces stays as `policy.toml.prev`.
 
@@ -29,6 +31,7 @@ from __future__ import annotations
 
 import fcntl
 import logging
+import re
 import shutil
 import subprocess
 import tempfile
@@ -70,6 +73,12 @@ CHECK_TIMEOUT_S: Final = 30.0
 #: The longest reason that a refusal keeps from the output of the check.
 _REASON_MAX: Final = 500
 
+#: One line of `chaperone check` for an app that the policy refuses: the
+#: first line has the prefix `policy.toml: `, each other line has none.
+_REFUSED_APP: Final = re.compile(
+    r"(?:policy\.toml: )?the app ([a-z][a-z0-9-]{1,30}) is refused: .*\Z"
+)
+
 _HEADER: Final = f"version = {POLICY_VERSION}\n"
 _APPS_KEY: Final = "apps"
 _NOTE_KEY: Final = "note"
@@ -110,9 +119,11 @@ class Passed:
 @dataclass(frozen=True)
 class Refused:
     """`chaperone check` refused the text. The reason is its first error
-    line."""
+    line. `apps` names each app that the check refuses, with its line, when
+    the check names them. A chaperone before 0.4.0 names none."""
 
     reason: str
+    apps: Mapping[str, str] = field(default_factory=dict[str, str])
 
 
 Verdict = Passed | Refused
@@ -170,7 +181,18 @@ class ChaperoneChecker:
 
         lines = done.stderr.decode("utf-8", errors="replace").strip().splitlines()
         reason = lines[0] if lines else f"chaperone check exited with {done.returncode}"
-        return Refused(reason[:_REASON_MAX])
+        return Refused(reason[:_REASON_MAX], _refused_apps(lines))
+
+
+def _refused_apps(lines: list[str]) -> dict[str, str]:
+    """Each app that a line of the check names as refused, with its line."""
+    apps: dict[str, str] = {}
+    for line in lines:
+        match = _REFUSED_APP.fullmatch(line)
+        if match is not None:
+            apps.setdefault(match.group(1), line.removeprefix("policy.toml: ")[:_REASON_MAX])
+
+    return apps
 
 
 @dataclass
@@ -181,6 +203,8 @@ class FakeChecker:
     broken: str | None = None
     refused_apps: frozenset[str] = frozenset()
     clashes: tuple[frozenset[str], ...] = ()
+    #: Whether a clash names its apps, as `chaperone check` 0.4.0 does.
+    names_clashes: bool = False
     unavailable: bool = False
     checked: list[str] = field(default_factory=list[str])
 
@@ -199,7 +223,9 @@ class FakeChecker:
 
         for clash in self.clashes:
             if clash <= apps:
-                return Refused(f"the apps {' and '.join(sorted(clash))} clash")
+                reason = f"the apps {' and '.join(sorted(clash))} clash"
+                named = {app: f"the app {app} is refused: {reason}" for app in clash}
+                return Refused(reason, named if self.names_clashes else {})
 
         return Passed()
 
@@ -446,8 +472,7 @@ def _assemble(
             if isinstance(alone, Refused):
                 left_out[family] = alone.reason
 
-        text = _join({name: body for name, body in fragments.items() if name not in left_out})
-        verdict = _check(text, checker)
+        text, verdict = _without_named(fragments, left_out, checker)
 
     if isinstance(verdict, Refused):
         log.warning("policy.toml: refused, the last file stays: %s", verdict.reason)
@@ -462,6 +487,27 @@ def _assemble(
         )
 
     return Assembly(outcome, left_out)
+
+
+def _without_named(
+    fragments: Mapping[str, str], left_out: dict[str, str], checker: PolicyChecker
+) -> tuple[str, Verdict]:
+    """The fragments that are not left out, joined and checked. While the
+    check refuses the text and names apps of it, those apps are left out
+    with the line of each, and the rest is checked again. Each round
+    leaves out one app at least, so the loop ends."""
+    while True:
+        kept = {name: body for name, body in fragments.items() if name not in left_out}
+        text = _join(kept)
+        verdict = _check(text, checker)
+        if not isinstance(verdict, Refused):
+            return text, verdict
+
+        named = {app: line for app, line in verdict.apps.items() if app in kept}
+        if not named:
+            return text, verdict
+
+        left_out.update(named)
 
 
 def _check(text: str, checker: PolicyChecker) -> Verdict:
