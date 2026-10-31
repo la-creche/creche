@@ -12,7 +12,8 @@ The install file holds one effect plugin for each server of the fixture
 registry, plus the plugins `attendance` and `release` (chaperone
 `docs/design.md` §12). `chaperone check` is the only judge of the two files
 (§6). Each negative scenario changes one thing in the joined file and reads
-the error line of the check.
+the error lines of the check. The check refuses each bad app on its own
+line and keeps the other apps.
 """
 
 from __future__ import annotations
@@ -47,8 +48,8 @@ DELEGATE_CALLER: Final = "code"
 DELEGATE_TARGET: Final = "vault-oracle"
 SECOND_HOP: Final = "coding-sandbox"
 
-#: The caller that the refusal names: the check reads the apps in name
-#: order, and `chat` delegates to the same target before `code` does.
+#: The other caller that delegates to the same target. The check names the
+#: refused apps in name order, so `chat` comes before `code`.
 FIRST_CALLER: Final = "chat"
 
 
@@ -81,7 +82,7 @@ def check_fleet(stack: ChaperoneRsStack, policy: str) -> tuple[Finished, Finishe
 
 
 def check_fails(stack: ChaperoneRsStack, policy: str) -> str:
-    """The error line of a policy file that the check refuses. The install file passes."""
+    """The error lines of a policy file that the check refuses. The install file passes."""
     install, checked = check_fleet(stack, policy)
 
     assert install.exit_code == 0, install.stderr
@@ -107,7 +108,8 @@ def test_a_digest_of_two_apps_fails_check(chaperone_rs_files: ChaperoneRsStack) 
     shared = policy.replace(apps["code"]["token_sha256"][0], apps["chat"]["token_sha256"][0])
 
     assert check_fails(chaperone_rs_files, shared) == (
-        "policy.toml: the apps chat and code share a token digest"
+        "policy.toml: the app chat is refused: the apps chat and code share a token digest\n"
+        "the app code is refused: the apps chat and code share a token digest"
     )
 
 
@@ -116,7 +118,7 @@ def test_a_grant_of_an_unknown_upstream_fails_check(chaperone_rs_files: Chaperon
     policy = fleet_policy() + f"\n[apps.chat.grants.{UNKNOWN_UPSTREAM}.tools]\nforecast = {{}}\n"
 
     assert check_fails(chaperone_rs_files, policy) == (
-        f"policy.toml: the app chat grants tools of {UNKNOWN_UPSTREAM}, "
+        f"policy.toml: the app chat is refused: the app chat grants tools of {UNKNOWN_UPSTREAM}, "
         "which is not an active upstream"
     )
 
@@ -129,8 +131,15 @@ def test_a_two_hop_delegate_fails_check(chaperone_rs_files: ChaperoneRsStack) ->
     }
     policy += f'\n[apps.{DELEGATE_TARGET}.plugins.attendance]\ndelegates = ["{SECOND_HOP}"]\n'
 
+    rule = "one_hop: an app instance that another app instance delegates to must not delegate"
+
     assert check_fails(chaperone_rs_files, policy) == (
-        "policy.toml: the fence attendance refuses the policy: "
-        f"the caller app {FIRST_CALLER} and the target app {DELEGATE_TARGET} break a rule: "
-        "one_hop: an app instance that another app instance delegates to must not delegate"
+        f"policy.toml: the app {FIRST_CALLER} is refused: "
+        f"the fence attendance refuses the app {FIRST_CALLER}: "
+        f"the caller app {FIRST_CALLER} and the target app {DELEGATE_TARGET} "
+        f"break a rule: {rule}\n"
+        f"the app {DELEGATE_CALLER} is refused: "
+        f"the fence attendance refuses the app {DELEGATE_CALLER}: "
+        f"the caller app {DELEGATE_CALLER} and the target app {DELEGATE_TARGET} "
+        f"break a rule: {rule}"
     )
