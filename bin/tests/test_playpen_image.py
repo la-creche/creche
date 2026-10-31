@@ -25,6 +25,10 @@ DEPLOYED = "/opt/creche-facade"
 #: `FROM <image> AS <stage>`.
 STAGE_RE = re.compile(r"^FROM \S+ AS (\S+)$", re.MULTILINE)
 
+#: Stages that build a tool for a later stage. A build-only stage ships in
+#: no image, so it is not a flavor target.
+BUILD_ONLY_STAGES = ("build", "creche-test-venv")
+
 
 def _text() -> str:
     return DOCKERFILE.read_text(encoding="utf-8")
@@ -45,7 +49,7 @@ def _facade_bins() -> dict[str, str]:
 
 def test_the_targets_are_the_flavors_the_release_builds() -> None:
     """playpen/AGENTS.md rule 6: the targets and the flavors are one list."""
-    targets = [name for name in STAGE_RE.findall(_text()) if name != "build"]
+    targets = [name for name in STAGE_RE.findall(_text()) if name not in BUILD_ONLY_STAGES]
     flavors = re.search(r'^FLAVORS="([^"]*)"$', BUILD.read_text(encoding="utf-8"), re.MULTILINE)
 
     assert flavors is not None
@@ -100,3 +104,33 @@ def test_the_image_fixes_no_address() -> None:
     """A sandbox reads the two plane URLs from its env file."""
     assert "AGENT_LAN_ADDRESS" not in _text()
     assert "--build-arg" not in BUILD.read_text(encoding="utf-8")
+
+
+def test_the_test_venv_installs_the_locked_dependencies() -> None:
+    """The python flavor holds a second venv, /opt/test: CPython 3.12 and
+    the locked test dependencies of this workspace. The pins come from
+    uv.lock, installed at build time, and the workspace's own code stays
+    out, so a test imports the code of the clone under test."""
+    stage = _stage("creche-test-venv")
+
+    assert "COPY pyproject.toml uv.lock ./" in stage
+    assert "uv sync --locked --all-groups --no-install-workspace" in stage
+    assert "COPY --from=creche-test-venv /opt/test /opt/test" in _text()
+    assert "FROM python:3.12-slim-bookworm AS creche-test-venv" in _text()
+
+
+def test_the_image_ships_no_installer() -> None:
+    """A sandbox runs code and installs nothing. pip leaves the analysis
+    venv in the RUN that installs its wheels, and uv, pip and ensurepip
+    leave the interpreter the test venv uses. The self-test fails the
+    build when one of them comes back."""
+    stage = _stage("agent-sandbox-python")
+    venv_stage = _stage("creche-test-venv")
+
+    assert "/opt/py/bin/pip uninstall -y pip" in stage
+    assert "rm -rf /usr/local/lib/python3.12/site-packages/pip*" in venv_stage
+    assert "/usr/local/lib/python3.12/ensurepip" in venv_stage
+    assert 'ENV PATH="/opt/py/bin:/opt/test/bin:${PATH}"' in stage
+    assert "/opt/test/bin/pytest --version" in stage
+    assert "the image ships pip in /usr/local" in stage
+    assert "the test venv ships pip" in stage
