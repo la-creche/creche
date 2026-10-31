@@ -1053,10 +1053,9 @@ RS_ATTENDANCE_SECRETS: Final = {
 
 #: The plugin of §12 that files a release request: an effect half and no
 #: fence. Its program, as the manifest in the chaperone repository names
-#: it, and the family that its requests name.
+#: it. The plugin reads the requester from the app ID of the call.
 RS_RELEASE: Final = "release"
 RS_RELEASE_PROGRAM: Final = "chaperone-release"
-RS_RELEASE_REQUESTER: Final = "agent-control"
 
 #: The approval plugin of §12 in `effect/included`: its manifest, as the
 #: chaperone repository holds it. The draft of `bin/chaperone-install-draft.py`
@@ -1322,10 +1321,10 @@ def _write_rs_defaults(files: RsFiles) -> None:
 
 
 def _rs_release_args(files: RsFiles) -> list[str]:
-    """The words of the `release` plugin: where it files a request, and for whom."""
+    """The words of the `release` plugin: where it files a request."""
     requests = files.root / "chaperone-rs" / "release-requests"
 
-    return ["--requests-dir", str(requests), "--requested-by", RS_RELEASE_REQUESTER]
+    return ["--requests-dir", str(requests)]
 
 
 def _write_rs_attendance(files: RsFiles, socket: Path) -> str:
