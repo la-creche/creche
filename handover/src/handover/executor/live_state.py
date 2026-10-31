@@ -212,6 +212,10 @@ TagShaFn = Callable[[str, str], str | None]
 #: clone holding the source does not have that commit yet.
 InputDigestFn = Callable[[str, str], str | None]
 
+#: `()` to the commit at the `HEAD` of root's registry clone, or None when
+#: the clone cannot say (contract 06 §9.2 rule 2).
+RegistryHeadFn = Callable[[], str | None]
+
 
 def _no_version(component: str) -> str | None:
     del component
@@ -231,6 +235,10 @@ def _no_digest(component: str, sha: str) -> str | None:
     return None
 
 
+def _no_head() -> str | None:
+    return None
+
+
 @dataclass(frozen=True)
 class Readers:
     """Everything the document needs and the disk cannot answer.
@@ -243,6 +251,7 @@ class Readers:
     newest_version: NewestVersionFn = _no_version
     tag_sha: TagShaFn = _no_sha
     input_digest: InputDigestFn = _no_digest
+    registry_head: RegistryHeadFn = _no_head
 
 
 @dataclass(frozen=True)
@@ -530,13 +539,52 @@ def _facts_of(
     return facts, tuple(notes)
 
 
-def build_state(roots: tuple[Path, ...], wanted: Mapping[str, str], readers: Readers) -> BuiltState:
+#: The component whose servers come from the registry, and the registry's
+#: own row (contract 06 §9).
+MCP_SERVERS: Final = "mcp-servers"
+REGISTRY_DATA: Final = "registry-data"
+
+
+def _registry_facts(
+    deploying: frozenset[str], readers: Readers, pinned: str | None
+) -> tuple[dict[str, SourceFacts], tuple[str, ...]]:
+    """The `registry-data` row of a set that deploys `mcp-servers`.
+
+    Contract 06 §9: its `sha` is the registry commit the release reads
+    `mcp/` at, and its digest is over `mcp` at that commit. So the manifest
+    hash, and the tap, bind the server files. Step 2 reads the commit at
+    the clone's `HEAD`. Step 8 passes the approved commit as `pinned`, so a
+    registry merge after the tap is not drift (§9.2 rule 6). Every other
+    set gets no row, as before.
+    """
+    if MCP_SERVERS not in deploying:
+        return {}, ()
+
+    sha = pinned if pinned is not None else readers.registry_head()
+    if sha is None:
+        return {}, ("no registry commit: the mcp/ files are not bound",)
+
+    digest = readers.input_digest(REGISTRY_DATA, sha)
+    if digest is None:
+        return {}, (f"no registry commit {sha[:12]} in the corpus: the mcp/ files are not bound",)
+
+    return {REGISTRY_DATA: SourceFacts(sha=sha, input_digest=digest, artifact_digest=None)}, ()
+
+
+def build_state(
+    roots: tuple[Path, ...],
+    wanted: Mapping[str, str],
+    readers: Readers,
+    registry_sha: str | None = None,
+) -> BuiltState:
     """Contract 06 §11's document, built from root's own reads.
 
     The order is forced by what each part needs. `live` and `provided` come
     off the disk. `latest` turns the request's `latest` words into numbers.
     Only then is it known what would DEPLOY, and only then is it known
     which components need a tag resolved into source facts.
+
+    `registry_sha` is step 8's approved registry commit, and None at step 2.
     """
     trees = read_trees(roots)
     live = _live_of(trees)
@@ -552,9 +600,11 @@ def build_state(roots: tuple[Path, ...], wanted: Mapping[str, str], readers: Rea
             targets[name] = version
 
     facts, more = _facts_of(targets, readers)
+    registry, why = _registry_facts(deploying, readers, registry_sha)
+    facts.update(registry)
 
     return BuiltState(
         state=ReleaseState(live=live, provided=provided, latest=latest, facts=facts),
         trees=trees,
-        notes=notes + more,
+        notes=notes + more + why,
     )

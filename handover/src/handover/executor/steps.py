@@ -84,6 +84,7 @@ from .install import (
 )
 from .ledger import Entry, Outcome, Step, StepName, StepStatus
 from .live_state import (
+    REGISTRY_DATA,
     AtCommitFn,
     LiveTree,
     Readers,
@@ -320,6 +321,23 @@ class Plan:
 
     def hash(self) -> str:
         return str(self.document["manifest_sha256"])
+
+    def registry_sha(self) -> str | None:
+        """The registry commit the approved manifest names (contract 06
+        §9), or None for a set that does not deploy `mcp-servers`."""
+        rows = self.document.get("components")
+        if not isinstance(rows, list):
+            return None
+
+        for row in cast(list[object], rows):
+            if isinstance(row, dict):
+                fields = cast(dict[str, object], row)
+                if fields.get("name") == REGISTRY_DATA:
+                    sha = fields.get("sha")
+
+                    return sha if isinstance(sha, str) else None
+
+        return None
 
     def resolved_at(self) -> float:
         stamp = self.document["resolved_at"]
@@ -651,7 +669,7 @@ class Release:
 
         return ", ".join(plan.moves())
 
-    def _build_state(self) -> ReleaseState:
+    def _build_state(self, registry_sha: str | None = None) -> ReleaseState:
         """Contract 06 §11's document, built by root out of its own reads.
 
         Nothing is read off disk: a document file would be an operator-written
@@ -663,7 +681,10 @@ class Release:
         reason.
         """
         built = build_state(
-            self.wiring.host.install_roots, self.request.wanted(), self.wiring.readers
+            self.wiring.host.install_roots,
+            self.request.wanted(),
+            self.wiring.readers,
+            registry_sha=registry_sha,
         )
         self.trees = built.trees
         for line in built.notes:
@@ -1033,7 +1054,10 @@ class Release:
         fail closed and audited, with nothing swapped.
         """
         plan = self._require_plan()
-        state = self._copy_artifacts(self._build_state(), plan.manifests)
+        # The registry is read at the commit David approved, not at the
+        # clone's `HEAD`: a registry merge after the tap waits for the
+        # next release, and is not drift (contract 06 §9.2 rule 6).
+        state = self._copy_artifacts(self._build_state(plan.registry_sha()), plan.manifests)
         again = resolve(plan.manifests, state, self.request.wanted())
         # The same clock as step 2, so the compare is over the SET and not
         # over the seconds between the two resolutions.
