@@ -17,8 +17,9 @@ writes nothing else. The operator reviews the draft and installs it as root.
 1. `mcp-http` with the guard `host-firewall`: the sandboxes dial the LAN
    address.
 2. `attendance` with its socket and its two door tokens, `release` with its
-   spool and its one requester, and `ha-approval` with its hook and the
-   address of `--approval-listen`.
+   spool, and `ha-approval` with its hook and the address of
+   `--approval-listen`. `release` takes the requester of each request from
+   the app ID of its call, so the draft names no family.
 3. The slot `approval_channel`, filled by `ha-approval`.
 4. One entry for each server: the user `mcp-<name>`, `secret_delivery =
    "env"`, and each secret of the server.
@@ -66,7 +67,6 @@ MCP_ROOT: Final = "/opt/mcp"
 MCP_STATE_ROOT: Final = PurePosixPath("/var/lib/mcp")
 SOCKET: Final = "sock/attendance.sock"
 REQUESTS_DIR: Final = "/var/lib/creche-handover/releases/requests"
-REQUESTED_BY: Final = "code"
 HOOK_URL: Final = "http://127.0.0.1:1881/hook/approval"
 
 #: The secret parameter of each fixed plugin, and the name of its secret file.
@@ -261,8 +261,7 @@ def render_install(servers: Sequence[Server], roots: Roots, listen: str) -> str:
         '\n[plugins.mcp-http]\nguard = "host-firewall"\n',
         f"\n[plugins.attendance]\nargs = {_array(['--socket', socket])}\n"
         f"secrets = {_inline(ATTENDANCE_SECRETS)}\n",
-        "\n[plugins.release]\n"
-        f"args = {_array(['--requests-dir', REQUESTS_DIR, '--requested-by', REQUESTED_BY])}\n",
+        f"\n[plugins.release]\nargs = {_array(['--requests-dir', REQUESTS_DIR])}\n",
         "\n[plugins.ha-approval]\n"
         f"args = {_array(['--hook-url', HOOK_URL, '--listen', listen])}\n"
         f"secrets = {_inline(APPROVAL_SECRETS)}\n",

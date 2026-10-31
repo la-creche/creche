@@ -11,7 +11,7 @@ args = ["--socket", "/srv/agents/state/creche/sock/attendance.sock"]
 secrets = { DELEGATE_TOKEN = "chaperone-delegate", DISPATCH_TOKEN = "chaperone-dispatch" }
 
 [plugins.release]
-args = ["--requests-dir", "/var/lib/creche-handover/releases/requests", "--requested-by", "code"]
+args = ["--requests-dir", "/var/lib/creche-handover/releases/requests"]
 
 [plugins.ha-approval]
 args = ["--hook-url", "http://127.0.0.1:1881/hook/approval", "--listen", "192.0.2.10:8310"]
