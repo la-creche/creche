@@ -196,7 +196,9 @@ def test_the_tree_imports_its_own_code_with_the_source_gone(
     `handover` can come from is the tree. The interpreter runs from a
     directory that is neither, because `python -c` puts the working
     directory on `sys.path` and running inside the source would prove
-    nothing.
+    nothing. It also runs without `PYTHONPATH`: a run that names the
+    source trees there, as a sandbox run does, would put the source on
+    `sys.path` in the same way.
     """
     source, tree = built
     src = source / COMPONENT_DIR / "src"
@@ -210,6 +212,7 @@ def test_the_tree_imports_its_own_code_with_the_source_gone(
                 f"import {PACKAGE}; print({PACKAGE}.__file__)",
             ],
             cwd=tmp_path,
+            env={key: value for key, value in os.environ.items() if key != "PYTHONPATH"},
             capture_output=True,
             text=True,
             check=False,

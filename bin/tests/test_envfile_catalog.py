@@ -48,12 +48,19 @@ PAIR_DIR: Final = REPO / "env" / "src" / "creche_env"
 # The command runs the module, not the console script. The console script
 # exists only in the `.venv` that a host `uv sync` fills. The module runs
 # the same entry point of `creche-env` in the venv of the image and on the
-# host. `PYTHONPATH` puts the package of this clone on the path of the
-# child, so the test runs the code of the tree under test.
-os.environ["PYTHONPATH"] = os.pathsep.join(
-    filter(None, (str(REPO / "env" / "src"), os.environ.get("PYTHONPATH")))
-)
+# host.
 PROGRAM: Final = [sys.executable, "-m", "creche_env"]
+
+
+def _program_env() -> dict[str, str]:
+    """The environment of the command. `PYTHONPATH` puts the package of
+    this clone first, so the child runs the code of the tree under test.
+    Only the command gets it: a change to the environment of this process
+    would reach the child of every later test."""
+    paths = (str(REPO / "env" / "src"), os.environ.get("PYTHONPATH", ""))
+    return {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, paths))}
+
+
 DEFAULT_PATH: Final = f"env/src/creche_env/{DEFAULT_FILE}"
 
 #: The branch that a pull request merges into.
@@ -198,6 +205,7 @@ def test_a_site_file_that_sets_pep_secrets_is_refused(tmp_path: Path) -> None:
         text=True,
         check=False,
         timeout=60,
+        env=_program_env(),
     )
 
     assert (run.returncode, run.stdout) == (os.EX_CONFIG, "")
@@ -228,6 +236,7 @@ def test_a_site_file_that_sets_the_ha_url_is_refused(tmp_path: Path) -> None:
         text=True,
         check=False,
         timeout=60,
+        env=_program_env(),
     )
 
     assert (run.returncode, run.stdout) == (os.EX_CONFIG, "")
@@ -306,6 +315,7 @@ def test_a_copy_of_example_env_names_each_required_key(tmp_path: Path) -> None:
         text=True,
         check=False,
         timeout=60,
+        env=_program_env(),
     )
 
     assert (run.returncode, run.stdout) == (os.EX_CONFIG, "")
