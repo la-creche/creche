@@ -2,9 +2,11 @@
 # OPERATOR drift alarm, run from sbx-drift.timer on the host.
 #
 # Two checks, both read-only (no `sbx policy rm`, no mutation):
-#   1. Global local-policy must hold ZERO network allows — every egress
-#      grant is per-sandbox.
-#   2. Per-sandbox + kit rules (`sbx policy ls --wide`) must not allow a
+#   1. Every network allow must name one sandbox. A rule that names no
+#      sandbox applies to all of them, and every egress grant is per-sandbox.
+#   Both checks read `sbx policy ls --json`. A listing that does not read is
+#   drift: a check that cannot see must not pass.
+#   2. Per-sandbox + kit rules (`sbx policy ls --json`) must not allow a
 #      host other than the host's LAN address (LiteLLM/PEP/TEI) or the seeded allowlist:
 #      every sandbox is created from sbx's built-in `shell` kit, which
 #      attaches its own `kit:<name>` network rule set —
@@ -69,18 +71,68 @@ DRIFT_LINES=()
 
 say() { echo "$*"; }
 
-# --- Check 1: global local-policy must be empty -----------------------
-# Same extraction the bootstrap reset uses: one removable rule per line.
-mapfile -t RULES < <(sbx policy inspect local-policy 2>/dev/null \
-  | grep -oE 'sbx policy rm network --id [0-9a-f-]+' || true)
-COUNT="${#RULES[@]}"
+# --- Read every rule once ------------------------------------------------
+# `sbx policy ls --json` lists the global and the per-sandbox rules. sbx
+# v0.43 and v0.48 give it the same fields: {"rules": [{"applies_to",
+# "resource_type", "decision", "resources": [...]}, ...]}. The text tables
+# changed their columns in v0.48, so this script reads no table.
+#
+# The filter prints one line for each network resource:
+#   <applies_to> TAB <decision> TAB <resource>
+# A text of another shape stops it with status 1, and both checks fail.
+# Single quotes: the program holds no quote of that kind.
+ROWS_PROGRAM='
+import json, sys
+try:
+    doc = json.load(sys.stdin)
+except ValueError as exc:
+    sys.exit(f"not JSON: {exc}")
+rules = doc.get("rules") if isinstance(doc, dict) else None
+if not isinstance(rules, list):
+    sys.exit("no list named rules")
+def word(value):
+    return isinstance(value, str) and value != "" and not any(c in value for c in "\t\n\r")
+for rule in rules:
+    if not isinstance(rule, dict):
+        sys.exit("a rule is not an object")
+    if rule.get("resource_type") != "network":
+        continue
+    scope, decision, resources = rule.get("applies_to"), rule.get("decision"), rule.get("resources")
+    if not word(scope) or decision not in ("allow", "deny") or not isinstance(resources, list):
+        sys.exit("a network rule of another shape")
+    for resource in resources:
+        if not word(resource):
+            sys.exit("a resource that is not one word")
+        print(f"{scope}\t{decision}\t{resource}")
+'
+RULES_JSON="$(sbx policy ls --json 2>/dev/null)"
+LS_STATUS=$?
+ROWS_TEXT="$(printf '%s' "$RULES_JSON" | python3 -I -c "$ROWS_PROGRAM")"
+ROWS_STATUS=$?
 
-if [[ "$COUNT" -eq 0 ]]; then
-  say "sbx global policy clean: 0 network allows"
+if [[ "$LS_STATUS" -ne 0 || "$ROWS_STATUS" -ne 0 ]]; then
+  say "DRIFT: cannot read 'sbx policy ls --json' (sbx status $LS_STATUS, filter status $ROWS_STATUS); no rule was checked"
+  DRIFT_LINES+=("UNREADABLE: sbx policy ls --json")
+  FAILS=1
+  ROWS_TEXT=""
+fi
+mapfile -t ROWS <<< "$ROWS_TEXT"
+
+# --- Check 1: no global network allow ------------------------------------
+# A rule that names no sandbox applies to every sandbox.
+GLOBAL_ALLOWS=()
+for row in "${ROWS[@]}"; do
+  IFS=$'\t' read -r scope decision resource <<< "$row"
+  [[ -z "$row" || "$scope" == sandbox:* || "$decision" != allow ]] && continue
+  GLOBAL_ALLOWS+=("$scope allow $resource")
+done
+
+if [[ "${#GLOBAL_ALLOWS[@]}" -eq 0 ]]; then
+  [[ "$FAILS" -eq 0 ]] && say "sbx global policy clean: 0 network allows"
 else
-  say "DRIFT: $COUNT global network allow rule(s) in local-policy:"
-  sbx policy inspect local-policy 2>/dev/null || true
-  DRIFT_LINES+=("GLOBAL: $COUNT network allow rule(s) in local-policy")
+  say "DRIFT: ${#GLOBAL_ALLOWS[@]} global network allow(s):"
+  printf '  %s\n' "${GLOBAL_ALLOWS[@]}"
+  DRIFT_LINES+=("GLOBAL: ${#GLOBAL_ALLOWS[@]} network allow(s) that name no sandbox")
   FAILS=1
 fi
 
@@ -96,34 +148,20 @@ else
   say "NOTE: $ALLOWLIST_FILE not found; no exceptions beyond $ALLOWED_HOST are honoured"
 fi
 
-# `sbx policy ls --wide` is the one view that lists per-sandbox AND
-# kit-sourced rules together; local-policy (check 1) does not show either.
-# The exact column layout is not documented anywhere in this repo, so the
-# parse below only looks for an "allow <host>[:<port>]" token on each line
-# and is tolerant of whatever precedes it (rule id, sandbox name, "kit:foo",
-# "local", ...). Re-check this regex against a live `sbx policy ls --wide`
-# if sbx's output format ever changes.
-WIDE="$(sbx policy ls --wide 2>/dev/null || true)"
-if [[ -z "$WIDE" ]]; then
-  say "WARNING: 'sbx policy ls --wide' returned nothing; per-sandbox/kit rules were not checked"
-else
+# Each allow row that names a sandbox. A deny row needs no check.
+if [[ -n "$ROWS_TEXT" ]]; then
   OPENROUTER_HOLES=()
   BAD_ALLOWS=()
-  while IFS= read -r line; do
-    [[ -z "$line" ]] && continue
-    host="$(echo "$line" | grep -oiE 'allow[[:space:]]+[A-Za-z0-9._-]+(:[0-9]+)?' | awk '{print $2}')"
-    [[ -z "$host" ]] && continue
-    hostonly="${host%%:*}"
+  for row in "${ROWS[@]}"; do
+    IFS=$'\t' read -r scope decision resource <<< "$row"
+    [[ -z "$row" || "$scope" != sandbox:* || "$decision" != allow ]] && continue
+    line="$scope allow $resource"
+    hostonly="${resource%%:*}"
 
     if [[ "$hostonly" == "openrouter.ai" ]]; then
-      # This line itself is the "allow" (that's how we found it); the "deny
-      # beats allow" escape hatch is a SEPARATE line for the same sandbox,
-      # so look for one instead of grepping this line for "deny" (which,
-      # having already matched "allow ...", can never be true).
-      sbx_id="$(echo "$line" | grep -oE 'sandbox:[A-Za-z0-9_.-]+' || true)"
-      if [[ -n "$sbx_id" ]] \
-         && echo "$WIDE" | grep -F "$sbx_id" | grep -i 'deny' | grep -qi 'openrouter'; then
-        continue # a per-sandbox deny for openrouter.ai is present — fine
+      # Deny beats allow: a deny row for the same sandbox closes this one.
+      if grep -qxF "$scope"$'\t'"deny"$'\t'"openrouter.ai" <<< "$ROWS_TEXT"; then
+        continue
       fi
       OPENROUTER_HOLES+=("$line")
       continue
@@ -138,7 +176,7 @@ else
     [[ "$allowed" -eq 1 ]] && continue
 
     BAD_ALLOWS+=("$line")
-  done <<< "$WIDE"
+  done
 
   if [[ "${#OPENROUTER_HOLES[@]}" -gt 0 ]]; then
     say "DRIFT: openrouter.ai egress present without a per-sandbox deny:"
