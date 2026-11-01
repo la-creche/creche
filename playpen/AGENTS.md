@@ -39,6 +39,7 @@ The image holds no pi, no fd, no playpen bundle, no PEP bridge, no
 
 The image is built on the host, from the repository root, with
 `playpen/Dockerfile`. Do not build it on a development machine.
+CI builds the full Python flavor on each code change.
 
 ## The release
 
@@ -73,6 +74,4 @@ The image is built on the host, from the repository root, with
 
 - The verify hook does not start an image. The image build runs each program
   once and stops on a program that does not load (`bin/playpen-verify`).
-- No test builds an image. The tests give `bin/playpen-build` a stub
-  `docker` (`bin/tests/test_playpen_release.py`).
 - A release never removes an image from the registry (`bin/playpen-build`).

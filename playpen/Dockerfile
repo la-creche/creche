@@ -20,13 +20,16 @@
 #   creche-test-venv      build-only: it resolves uv.lock and installs the
 #                         test venv and the 3.12 interpreter. It ships in
 #                         no image, and neither does uv
-ARG NODE_TAG=24-bookworm
+ARG NODE_IMAGE=node:24-bookworm@sha256:e7add2a490bb17d97b485b8641bd88455fff7839ade0f5eba493c3508124d413
+ARG PYTHON_IMAGE=python:3.12-slim-bookworm@sha256:e697c81897302a4c4333bade000d98038fbb21eb064f8ee1fd42d02ebcd9d337
+ARG UV_VERSION=0.13.6
+ARG UV_WHEEL_SHA256=22759b8895e1103578de6fb4cd27e94b4399d021023378d29f01333717751fba
 
 # --- The facade, deployed with its production dependencies ------------------
 # facade/pnpm-workspace.yaml names `../agent`, so one install in facade/
 # installs both, and `pnpm run build` builds agent/ first. The two
 # directories sit side by side here as they do in the repository.
-FROM node:${NODE_TAG} AS build
+FROM ${NODE_IMAGE} AS build
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 RUN corepack enable
 WORKDIR /src/facade
@@ -49,7 +52,7 @@ RUN pnpm run build \
        deploy --prod --frozen-lockfile /opt/creche-facade
 
 # --- agent-sandbox ----------------------------------------------------------
-FROM node:${NODE_TAG} AS agent-sandbox
+FROM ${NODE_IMAGE} AS agent-sandbox
 
 # Python 3.11 rides in with the node parent image (buildpack-deps). It is an
 # accident of the parent, not a tool of this image: it has no pip and it
@@ -105,12 +108,17 @@ CMD ["sleep", "infinity"]
 # The pins are the pins of uv.lock, the same file the host's test
 # environment uses. A dependency change for the test venv is a lockfile
 # change plus a playpen release, never an install inside a sandbox.
-ARG UV_VERSION=0.13.6
-FROM python:3.12-slim-bookworm AS creche-test-venv
+FROM ${PYTHON_IMAGE} AS creche-test-venv
 ARG UV_VERSION
+ARG UV_WHEEL_SHA256
 
-# uv exists in this stage only. No image ships it.
-RUN pip install --no-cache-dir "uv==${UV_VERSION}"
+# Download one wheel for the amd64 image. Check its content before pip reads
+# it. uv exists in this stage only. No image ships it.
+RUN uv_wheel="/tmp/uv-${UV_VERSION}-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl" \
+    && pip download --no-deps --only-binary=:all: --dest /tmp "uv==${UV_VERSION}" \
+    && printf '%s  %s\n' "${UV_WHEEL_SHA256}" "${uv_wheel}" | sha256sum -c - \
+    && pip install --no-cache-dir --no-deps "${uv_wheel}" \
+    && rm -f "${uv_wheel}"
 
 WORKDIR /src
 # The workspace definition: the root pyproject names the members, and each
@@ -131,7 +139,7 @@ COPY env/pyproject.toml env/
 # that the workspace definition has outrun. --no-install-workspace installs
 # no member of the workspace. The sandbox-test group excludes lint tools and
 # nodeenv, so the venv holds no installer for another runtime.
-RUN UV_PROJECT_ENVIRONMENT=/opt/test uv sync --locked --no-default-groups --group sandbox-test --no-install-workspace
+RUN UV_PROJECT_ENVIRONMENT=/opt/test uv sync --locked --no-build --no-default-groups --group sandbox-test --no-install-workspace
 
 # One wrapper per console script of the workspace members. A wrapper runs
 # the entry point of its name, and the entry point comes from the clone
@@ -153,7 +161,7 @@ RUN printf '%s\n' \
     'handover-exec=handover.executor.drain:main' \
     'creche-env=creche_env.cli:main' \
     | while IFS== read -r name entry; do \
-        printf '#!/bin/sh\nexec /opt/test/bin/python -c "from %s import %s as f; raise SystemExit(f())" "$@"\n' \
+        printf '#!/bin/sh\nexec /opt/test/bin/python -P -c "from %s import %s as f; raise SystemExit(f())" "$@"\n' \
           "${entry%%:*}" "${entry#*:}" > "/opt/test/bin/$name" \
           && chmod 0755 "/opt/test/bin/$name" \
           || exit 1; \
@@ -189,7 +197,8 @@ ARG MATPLOTLIB_VERSION=3.10.7
 # the same RUN installs the venv, removes its pip, and removes Debian's
 # ensurepip and seed wheels. No layer of the image holds an installer.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends python3 python3-venv \
+    && apt-get install -y --no-install-recommends \
+       python3 python3-venv libssl3 libsqlite3-0 \
     && python3 -m venv /opt/py \
     && /opt/py/bin/pip install --no-cache-dir \
     "numpy==${NUMPY_VERSION}" \
@@ -220,28 +229,23 @@ RUN mkdir -p "${MPLCONFIGDIR}" \
 # stripped the interpreter it needs. `/opt/test/bin/pytest` runs it; on
 # PATH, `pytest` finds it and `python3` stays the 3.11 analysis venv above.
 #
-# The copied files are the ones the interpreter needs: the binary, its
-# stdlib and shared library, the OpenSSL libraries it links, and the
-# SQLite runtime library of the stdlib module. The loader cache learns
-# them in the self-test below.
+# Copy only files that the Python image owns below /usr/local. The final
+# stage installs its Debian runtime libraries above. The loader cache learns
+# the Python shared library in the self-test below.
 COPY --from=creche-test-venv /usr/local/bin/python3.12 /usr/local/bin/
 COPY --from=creche-test-venv /usr/local/lib/python3.12 /usr/local/lib/python3.12
 COPY --from=creche-test-venv /usr/local/lib/libpython3.12.so.1.0 /usr/local/lib/
-COPY --from=creche-test-venv /usr/local/lib/libssl.so.3 /usr/local/lib/
-COPY --from=creche-test-venv /usr/local/lib/libcrypto.so.3 /usr/local/lib/
-COPY --from=creche-test-venv /usr/lib/x86_64-linux-gnu/libsqlite3.so.0 \
-     /usr/lib/x86_64-linux-gnu/
 COPY --from=creche-test-venv /opt/test /opt/test
 ENV PATH="/opt/py/bin:/opt/test/bin:${PATH}"
 
 # Fail the BUILD, not the first switch: pytest loads, the interpreter
-# imports its two most load-bearing extension modules, a wrapper's entry
-# point imports, and no Python installer ships in the image. pip, uv,
-# ensurepip and nodeenv must all stay unavailable.
+# imports its two most load-bearing extension modules, each wrapper ignores
+# the current directory for imports, and no Python installer ships in the
+# image. pip, uv, ensurepip and nodeenv must all stay unavailable.
 RUN ldconfig \
     && /opt/test/bin/pytest --version \
     && /usr/local/bin/python3.12 -c "import sqlite3, ssl" \
-    && /opt/test/bin/python -c "from creche_env.cli import main" \
+    && grep -F 'exec /opt/test/bin/python -P -c' /opt/test/bin/creche-env >/dev/null \
     && if /usr/local/bin/python3.12 -m pip --version >/dev/null 2>&1; then \
          echo "the image ships pip in /usr/local" >&2; exit 1; \
        fi \

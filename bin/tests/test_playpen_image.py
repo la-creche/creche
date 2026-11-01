@@ -119,7 +119,8 @@ def test_the_test_venv_installs_the_locked_dependencies() -> None:
 
     assert "COPY pyproject.toml uv.lock ./" in stage
     assert (
-        "uv sync --locked --no-default-groups --group sandbox-test --no-install-workspace" in stage
+        "uv sync --locked --no-build --no-default-groups --group sandbox-test "
+        "--no-install-workspace" in stage
     )
     assert {"include-group": "sandbox-test"} in groups["dev"]
     assert all(
@@ -127,7 +128,41 @@ def test_the_test_venv_installs_the_locked_dependencies() -> None:
         for requirement in groups["sandbox-test"]
     )
     assert "COPY --from=creche-test-venv /opt/test /opt/test" in _text()
-    assert "FROM python:3.12-slim-bookworm AS creche-test-venv" in _text()
+    assert "FROM ${PYTHON_IMAGE} AS creche-test-venv" in _text()
+
+
+def test_the_build_inputs_are_content_pinned() -> None:
+    text = _text()
+    venv_stage = _stage("creche-test-venv")
+
+    assert re.search(r"^ARG NODE_IMAGE=node:24-bookworm@sha256:[0-9a-f]{64}$", text, re.MULTILINE)
+    assert re.search(
+        r"^ARG PYTHON_IMAGE=python:3\.12-slim-bookworm@sha256:[0-9a-f]{64}$",
+        text,
+        re.MULTILINE,
+    )
+    assert "FROM ${NODE_IMAGE} AS build" in text
+    assert "FROM ${NODE_IMAGE} AS agent-sandbox" in text
+    assert re.search(r"^ARG UV_WHEEL_SHA256=[0-9a-f]{64}$", text, re.MULTILINE)
+    assert "sha256sum -c -" in venv_stage
+    assert "pip install --no-cache-dir --no-deps" in venv_stage
+
+
+def test_the_final_stage_uses_its_own_system_libraries() -> None:
+    stage = _stage("agent-sandbox-python")
+
+    assert "libssl3 libsqlite3-0" in stage
+    assert "COPY --from=creche-test-venv /usr/local/lib/libssl.so.3" not in stage
+    assert "COPY --from=creche-test-venv /usr/local/lib/libcrypto.so.3" not in stage
+    assert "COPY --from=creche-test-venv /usr/lib/x86_64-linux-gnu/libsqlite3.so.0" not in stage
+
+
+def test_the_wrappers_do_not_import_from_the_current_directory() -> None:
+    venv_stage = _stage("creche-test-venv")
+    final_stage = _stage("agent-sandbox-python")
+
+    assert "exec /opt/test/bin/python -P -c" in venv_stage
+    assert "from creche_env.cli import main" not in final_stage
 
 
 def test_the_test_venv_dependencies_hold_the_security_fixes() -> None:

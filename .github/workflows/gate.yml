@@ -10,6 +10,8 @@
 #           │                      as a process, on the built facade
 #           ├── suites      code   the old suite of integration/, in a
 #           │                      pytest run of its own
+#           ├── playpen-image
+#           │              code   the full Python flavor image
 #           └── systemd-proof
 #                           code   the restart rule of the daemon units, on
 #                                  the systemd of the runner, for a change
@@ -324,6 +326,20 @@ jobs:
 
           sys.exit(1 if red else 0)
 
+  # Build the final target that the playpen release publishes. This run
+  # catches a missing source file and an import that only the image sees.
+  playpen-image:
+    needs: scope
+    if: needs.scope.outputs.scope == 'code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - run: docker build --platform linux/amd64 -f playpen/Dockerfile --target agent-sandbox-python .
+
   # The restart rule of the daemon units: bin/systemd-proof.sh. A unit with
   # `RestartPreventExitStatus=78` must stay stopped after exit status 78, and
   # only systemd can prove that. The script makes three units of its own on
@@ -360,7 +376,7 @@ jobs:
   # The one check a session reads. `always()`: a job that needs a failed job
   # is skipped by default, and a skipped `gate` would not read as red.
   gate:
-    needs: [scope, lint, tests, agent, facade, proc, suites, systemd-proof]
+    needs: [scope, lint, tests, agent, facade, proc, suites, playpen-image, systemd-proof]
     if: always()
     runs-on: ubuntu-24.04
     steps:
