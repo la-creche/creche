@@ -229,9 +229,11 @@ RUN mkdir -p "${MPLCONFIGDIR}" \
 # stripped the interpreter it needs. `/opt/test/bin/pytest` runs it; on
 # PATH, `pytest` finds it and `python3` stays the 3.11 analysis venv above.
 #
-# Copy only files that the Python image owns below /usr/local. The final
-# stage installs its Debian runtime libraries above. The loader cache learns
-# the Python shared library in the self-test below.
+# Copy only files that the Python image owns below /usr/local. Keep the two
+# interpreter links that the venv uses. The final stage installs its Debian
+# runtime libraries above. The self-test updates the loader cache.
+COPY --from=creche-test-venv /usr/local/bin/python /usr/local/bin/
+COPY --from=creche-test-venv /usr/local/bin/python3 /usr/local/bin/
 COPY --from=creche-test-venv /usr/local/bin/python3.12 /usr/local/bin/
 COPY --from=creche-test-venv /usr/local/lib/python3.12 /usr/local/lib/python3.12
 COPY --from=creche-test-venv /usr/local/lib/libpython3.12.so.1.0 /usr/local/lib/

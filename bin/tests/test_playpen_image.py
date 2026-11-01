@@ -157,6 +157,14 @@ def test_the_final_stage_uses_its_own_system_libraries() -> None:
     assert "COPY --from=creche-test-venv /usr/lib/x86_64-linux-gnu/libsqlite3.so.0" not in stage
 
 
+def test_the_final_stage_keeps_the_interpreter_links() -> None:
+    stage = _stage("agent-sandbox-python")
+
+    assert "COPY --from=creche-test-venv /usr/local/bin/python /usr/local/bin/" in stage
+    assert "COPY --from=creche-test-venv /usr/local/bin/python3 /usr/local/bin/" in stage
+    assert "COPY --from=creche-test-venv /usr/local/bin/python3.12 /usr/local/bin/" in stage
+
+
 def test_the_wrappers_do_not_import_from_the_current_directory() -> None:
     venv_stage = _stage("creche-test-venv")
     final_stage = _stage("agent-sandbox-python")
