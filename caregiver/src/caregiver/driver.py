@@ -35,6 +35,12 @@ KIT_EXTRA_EGRESS: Final = ("openrouter.ai",)
 #: version`). Every `sbx` call this driver makes sets it off.
 SBX_ENV: Final = {"SBX_NO_TELEMETRY": "1"}
 
+#: The removal of one policy row. From sbx v0.48, `sbx policy rm` asks for
+#: a confirmation. With no terminal it fails: "stdin is not a terminal; pass
+#: --force to skip the confirmation". `caregiver` has no terminal. sbx v0.43
+#: has no `--force` here, so this driver needs sbx v0.48 or later.
+POLICY_RM: Final = ("sbx", "policy", "rm", "network", "--force")
+
 CREATE_TIMEOUT_S: Final = 300
 POLICY_TIMEOUT_S: Final = 30
 DESTROY_TIMEOUT_S: Final = 60
@@ -175,10 +181,7 @@ class SbxDriver:
         §6, grants-probe), which is what lets an egress removal apply at
         once without replacing the sandbox (contract 05 §3.5)."""
         for dest in hosts:
-            proc = _run(
-                ["sbx", "policy", "rm", "network", "--sandbox", name, "--resource", dest],
-                POLICY_TIMEOUT_S,
-            )
+            proc = _run([*POLICY_RM, "--sandbox", name, "--resource", dest], POLICY_TIMEOUT_S)
             if proc.returncode != 0:
                 raise DriverError(f"policy rm {dest} for {name}: {proc.stderr.strip()[:200]}")
 
@@ -210,10 +213,7 @@ class SbxDriver:
         -f` does not remove a sandbox's policy rows as a side effect
         (README §6), so a caller that skips this leaks them."""
         for dest in allow:
-            _run(
-                ["sbx", "policy", "rm", "network", "--sandbox", name, "--resource", dest],
-                POLICY_TIMEOUT_S,
-            )
+            _run([*POLICY_RM, "--sandbox", name, "--resource", dest], POLICY_TIMEOUT_S)
 
         proc = _run(["sbx", "rm", "-f", name], DESTROY_TIMEOUT_S)
         if proc.returncode != 0 and "not found" not in (proc.stderr + proc.stdout).lower():

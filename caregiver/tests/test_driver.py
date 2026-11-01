@@ -173,7 +173,17 @@ def test_remove_egress_drops_one_row_per_host(fake_run: FakeProcess) -> None:
     (contract 05 §3.5). No sandbox is replaced for it."""
     SbxDriver().remove_egress("chat-s1", ("github.com",))
     assert fake_run.calls == [
-        ["sbx", "policy", "rm", "network", "--sandbox", "chat-s1", "--resource", "github.com"]
+        [
+            "sbx",
+            "policy",
+            "rm",
+            "network",
+            "--force",
+            "--sandbox",
+            "chat-s1",
+            "--resource",
+            "github.com",
+        ]
     ]
 
 
@@ -221,7 +231,17 @@ def test_assert_egress_always_probes_the_kit_hole_as_denied(fake_run: FakeProces
 def test_destroy_removes_policy_rows_before_the_vm(fake_run: FakeProcess) -> None:
     SbxDriver().destroy("chat-s1", ("github.com",))
     assert fake_run.calls == [
-        ["sbx", "policy", "rm", "network", "--sandbox", "chat-s1", "--resource", "github.com"],
+        [
+            "sbx",
+            "policy",
+            "rm",
+            "network",
+            "--force",
+            "--sandbox",
+            "chat-s1",
+            "--resource",
+            "github.com",
+        ],
         ["sbx", "rm", "-f", "chat-s1"],
     ]
 
