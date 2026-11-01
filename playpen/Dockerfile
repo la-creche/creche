@@ -128,11 +128,10 @@ COPY handover/pyproject.toml handover/
 COPY env/pyproject.toml env/
 
 # --locked installs the locked versions and hashes, and refuses a lockfile
-# that the workspace definition has outrun: a dependency change without a
-# lockfile change fails this build. --no-install-workspace installs no
-# member of the workspace: the venv holds the third-party dependencies and
-# the dev group, nothing else.
-RUN UV_PROJECT_ENVIRONMENT=/opt/test uv sync --locked --all-groups --no-install-workspace
+# that the workspace definition has outrun. --no-install-workspace installs
+# no member of the workspace. The sandbox-test group excludes lint tools and
+# nodeenv, so the venv holds no installer for another runtime.
+RUN UV_PROJECT_ENVIRONMENT=/opt/test uv sync --locked --no-default-groups --group sandbox-test --no-install-workspace
 
 # One wrapper per console script of the workspace members. A wrapper runs
 # the entry point of its name, and the entry point comes from the clone
@@ -165,6 +164,7 @@ RUN printf '%s\n' \
 # venv of the image can rebuild pip from its bundled wheels either.
 RUN rm -rf /usr/local/lib/python3.12/site-packages/pip* \
            /usr/local/lib/python3.12/site-packages/setuptools* \
+           /usr/local/lib/python3.12/site-packages/uv* \
            /usr/local/lib/python3.12/site-packages/wheel* \
            /usr/local/lib/python3.12/ensurepip \
     && /opt/test/bin/pytest --version
@@ -183,21 +183,25 @@ ARG PANDAS_VERSION=2.3.3
 ARG NUMPY_VERSION=2.3.4
 ARG MATPLOTLIB_VERSION=3.10.7
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-venv \
-    && rm -rf /var/lib/apt/lists/*
-
 # A venv rather than --break-system-packages: bookworm marks its python3 as
 # externally managed (PEP 668), and one prefix on PATH is simpler to reason
 # about than a patched system site-packages. The venv ships with no pip:
-# the same RUN installs the wheels and removes the installer, so no layer
-# of the image holds one. A sandbox runs code; a sandbox installs nothing.
-RUN python3 -m venv /opt/py \
+# the same RUN installs the venv, removes its pip, and removes Debian's
+# ensurepip and seed wheels. No layer of the image holds an installer.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 python3-venv \
+    && python3 -m venv /opt/py \
     && /opt/py/bin/pip install --no-cache-dir \
     "numpy==${NUMPY_VERSION}" \
     "pandas==${PANDAS_VERSION}" \
     "matplotlib==${MATPLOTLIB_VERSION}" \
     && /opt/py/bin/pip uninstall -y pip \
+    && apt-get purge -y --auto-remove \
+       python3-venv python3.11-venv \
+       python3-pip-whl python3-setuptools-whl \
+    && rm -rf /var/lib/apt/lists/* \
+              /usr/lib/python3.11/ensurepip \
+              /usr/share/python-wheels \
     && [ ! -e /opt/py/bin/pip ]
 ENV PATH="/opt/py/bin:${PATH}"
 
@@ -232,9 +236,8 @@ ENV PATH="/opt/py/bin:/opt/test/bin:${PATH}"
 
 # Fail the BUILD, not the first switch: pytest loads, the interpreter
 # imports its two most load-bearing extension modules, a wrapper's entry
-# point imports, and no installer ships in the image. `python3.12 -m pip`
-# must fail, because pip is gone from the stdlib's site-packages and
-# ensurepip is gone from the stdlib.
+# point imports, and no Python installer ships in the image. pip, uv,
+# ensurepip and nodeenv must all stay unavailable.
 RUN ldconfig \
     && /opt/test/bin/pytest --version \
     && /usr/local/bin/python3.12 -c "import sqlite3, ssl" \
@@ -242,8 +245,17 @@ RUN ldconfig \
     && if /usr/local/bin/python3.12 -m pip --version >/dev/null 2>&1; then \
          echo "the image ships pip in /usr/local" >&2; exit 1; \
        fi \
+    && if /usr/local/bin/python3.12 -m uv --version >/dev/null 2>&1; then \
+         echo "the image ships uv in /usr/local" >&2; exit 1; \
+       fi \
     && if [ -e /opt/test/bin/pip ]; then \
          echo "the test venv ships pip" >&2; exit 1; \
+       fi \
+    && if python3 -m ensurepip --version >/dev/null 2>&1; then \
+         echo "the analysis interpreter ships ensurepip" >&2; exit 1; \
+       fi \
+    && if command -v nodeenv >/dev/null 2>&1; then \
+         echo "the test venv ships nodeenv" >&2; exit 1; \
        fi
 
 CMD ["sleep", "infinity"]

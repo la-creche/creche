@@ -20,22 +20,22 @@ The Flue pin is the one in `facade/pnpm-lock.yaml`. The image fixes no
 address: a sandbox reads the two plane URLs from the env file that
 `caregiver` writes. The `python` flavor adds pandas, numpy and matplotlib.
 
-The `python` flavor also adds a second venv, `/opt/test`: CPython 3.12,
-`pytest`, and the locked dependencies of this repository's Python
-workspace. The workspace needs 3.12: its code uses PEP 695 type
-parameters. On `PATH`, `pytest` runs the venv, and `python3` stays the
-3.11 interpreter of the analysis stack.
+The `python` flavor also adds a second venv, `/opt/test`. It has CPython
+3.12, `pytest`, and the locked test dependencies of the Python workspace.
+The workspace needs 3.12 because its code uses PEP 695 type parameters.
+On `PATH`, `pytest` runs the venv. `python3` stays the 3.11 interpreter of
+the analysis stack.
 
-No image ships an installer. `pip`, `uv` and `ensurepip` exist in build
-stages only, so a sandbox runs code and installs nothing. A dependency
-change for a venv is a lockfile change plus a playpen release.
+The Python flavor ships no Python package installer. `pip`, `uv` and
+`ensurepip` exist in build steps only. The test venv excludes `nodeenv`.
+A dependency change for a venv is a lockfile change plus a playpen release.
 
 Python 3.11 also rides in with the node parent image. It is an accident
 of the parent, not a tool of this image: it has no `pip` and it cannot
 build a venv.
 
 The image holds no pi, no fd, no playpen bundle, no PEP bridge, no
-`agent-pi-launch` and no package installer.
+`agent-pi-launch` and no Python package installer.
 
 The image is built on the host, from the repository root, with
 `playpen/Dockerfile`. Do not build it on a development machine.

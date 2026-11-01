@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+import tomllib
 from pathlib import Path
 from typing import cast
 
@@ -18,6 +19,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DOCKERFILE = REPO_ROOT / "playpen" / "Dockerfile"
 BUILD = REPO_ROOT / "playpen" / "bin" / "playpen-build"
 FACADE_PACKAGE = REPO_ROOT / "facade" / "package.json"
+PYPROJECT = REPO_ROOT / "pyproject.toml"
+UV_LOCK = REPO_ROOT / "uv.lock"
 
 #: Where the build stage deploys the facade, and where each shim points.
 DEPLOYED = "/opt/creche-facade"
@@ -112,11 +115,30 @@ def test_the_test_venv_installs_the_locked_dependencies() -> None:
     uv.lock, installed at build time, and the workspace's own code stays
     out, so a test imports the code of the clone under test."""
     stage = _stage("creche-test-venv")
+    groups = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["dependency-groups"]
 
     assert "COPY pyproject.toml uv.lock ./" in stage
-    assert "uv sync --locked --all-groups --no-install-workspace" in stage
+    assert (
+        "uv sync --locked --no-default-groups --group sandbox-test --no-install-workspace" in stage
+    )
+    assert {"include-group": "sandbox-test"} in groups["dev"]
+    assert all(
+        not requirement.startswith(("nodeenv", "pyright", "ruff"))
+        for requirement in groups["sandbox-test"]
+    )
     assert "COPY --from=creche-test-venv /opt/test /opt/test" in _text()
     assert "FROM python:3.12-slim-bookworm AS creche-test-venv" in _text()
+
+
+def test_the_test_venv_dependencies_hold_the_security_fixes() -> None:
+    packages = {
+        package["name"]: package["version"]
+        for package in tomllib.loads(UV_LOCK.read_text(encoding="utf-8"))["package"]
+        if "version" in package
+    }
+
+    assert tuple(map(int, packages["certifi"].split("."))) >= (2026, 10, 18)
+    assert tuple(map(int, packages["pypdf"].split("."))) >= (6, 21, 4)
 
 
 def test_the_image_ships_no_installer() -> None:
@@ -128,9 +150,18 @@ def test_the_image_ships_no_installer() -> None:
     venv_stage = _stage("creche-test-venv")
 
     assert "/opt/py/bin/pip uninstall -y pip" in stage
+    assert "apt-get purge -y --auto-remove" in stage
+    assert "python3-venv python3.11-venv" in stage
+    assert "python3-pip-whl python3-setuptools-whl" in stage
+    assert "/usr/lib/python3.11/ensurepip" in stage
+    assert "/usr/share/python-wheels" in stage
     assert "rm -rf /usr/local/lib/python3.12/site-packages/pip*" in venv_stage
+    assert "/usr/local/lib/python3.12/site-packages/uv*" in venv_stage
     assert "/usr/local/lib/python3.12/ensurepip" in venv_stage
     assert 'ENV PATH="/opt/py/bin:/opt/test/bin:${PATH}"' in stage
     assert "/opt/test/bin/pytest --version" in stage
     assert "the image ships pip in /usr/local" in stage
+    assert "the image ships uv in /usr/local" in stage
     assert "the test venv ships pip" in stage
+    assert "the analysis interpreter ships ensurepip" in stage
+    assert "the test venv ships nodeenv" in stage
