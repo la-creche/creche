@@ -99,9 +99,7 @@ from .follow import (
     NOTICES_FILE as FOLLOW_NOTICES,
 )
 from .follow import (
-    REQUESTED_BY as FOLLOWED_BY,
-)
-from .follow import (
+    REDEPLOYED,
     RUN_DEADLINE_S,
     Answer,
     Marker,
@@ -114,13 +112,21 @@ from .follow import (
     moving_of,
     read_answer,
     read_marker,
+    registry_marker_of,
+    registry_moving,
     seen_marker,
     write_marker,
 )
+from .follow import (
+    REQUESTED_BY as FOLLOWED_BY,
+)
 from .requester import (
+    REDEPLOY_KIND,
+    REGISTRY_DATA,
     REQUESTS_PATH,
     BuiltState,
     Chosen,
+    Readers,
     RequesterError,
     build_state,
     default_install_roots,
@@ -1000,22 +1006,39 @@ def _keep_waits(args: argparse.Namespace, path: Path, marker: Marker, read: Mark
 
 def _run_follow(args: argparse.Namespace) -> int:
     """One run of the timer: fetch, read what a newer tag moves, and file
-    one request for a set that is new (`follow/`, rules 2 to 7)."""
+    one request for a set that is new (`follow/`, rules 2 to 7). Then the
+    registry watch (rule 8)."""
     wanted = dict.fromkeys(args.components, LATEST)
     corpus = Path(args.corpus)
     # A failed fetch is a printed line, and the run reads the corpus as it
     # is: the next firing fetches again.
     _note_failed(refresh(repos_of(wanted), corpus))
-    built = build_state(tuple(_install_roots(args)), wanted, local_readers(corpus))
+    readers = local_readers(corpus)
+    built = build_state(tuple(_install_roots(args)), wanted, readers)
     moving, notes = moving_of(built.state, wanted)
     for line in notes:
         print(f"note: {line}", file=sys.stderr)
 
+    _follow_tags(args, built, wanted, moving)
+    if REDEPLOYED in wanted:
+        _follow_registry(args, built, readers, moving)
+
+    return EXIT_OK
+
+
+def _marker_file(args: argparse.Namespace) -> Path:
+    return Path(args.marker) if args.marker else default_marker()
+
+
+def _follow_tags(
+    args: argparse.Namespace, built: BuiltState, wanted: dict[str, str], moving: dict[str, str]
+) -> None:
+    """Rules 2 to 7: one request for the set the newer tags move."""
     ready = _ready_members(moving)
     if not args.dry_run:
         _prune_store(wanted, built.state)
 
-    marker_file = Path(args.marker) if args.marker else default_marker()
+    marker_file = _marker_file(args)
     read = read_marker(marker_file)
     now = wall_time()
     gate = gate_artifacts(moving, ready, read.waits, now)
@@ -1026,7 +1049,7 @@ def _run_follow(args: argparse.Namespace) -> int:
     if gate.waiting:
         _keep_waits(args, marker_file, marker, read)
 
-        return EXIT_OK
+        return
 
     moving = gate.moving
     answer = Answer.NONE
@@ -1038,13 +1061,13 @@ def _run_follow(args: argparse.Namespace) -> int:
         _keep_waits(args, marker_file, marker, read)
         print("nothing new")
 
-        return EXIT_OK
+        return
 
     if step is Step.HELD:
         _keep_waits(args, marker_file, marker, read)
         print(f"held: {_set_text(moving)} is asked already, as {marker.request_id}")
 
-        return EXIT_OK
+        return
 
     if step is Step.SEEN:
         if not args.dry_run:
@@ -1052,20 +1075,76 @@ def _run_follow(args: argparse.Namespace) -> int:
 
         print(f"seen: {_set_text(moving)}. The next run files it if it reads the same set")
 
-        return EXIT_OK
+        return
 
     request = plan_request(moving, requested_by=FOLLOWED_BY, now=now)
     if args.dry_run:
         print(f"dry run: would file {_set_text(moving)}")
 
-        return EXIT_OK
+        return
 
     # The marker FIRST (`follow/`, rule 6).
     write_marker(marker_file, asked_marker(moving, marker, request.id, now))
     filed = file_request(request, args.spool)
     print(f"filed: {_set_text(moving)} as {filed}")
 
-    return EXIT_OK
+
+def _registry_set(built: BuiltState, readers: Readers, tags: dict[str, str]) -> dict[str, str]:
+    """`follow.registry_moving`'s four inputs, read off the corpus and the
+    live tree."""
+    head_sha = readers.registry_head()
+    head = readers.input_digest(REGISTRY_DATA, head_sha) if head_sha is not None else None
+    tree = built.trees.get(REDEPLOYED)
+    stamped = tree.registry_rev if tree is not None else None
+    installed = readers.input_digest(REGISTRY_DATA, stamped) if stamped is not None else None
+
+    return registry_moving(tags, built.state.live.get(REDEPLOYED), head, installed)
+
+
+def _follow_registry(
+    args: argparse.Namespace, built: BuiltState, readers: Readers, tags: dict[str, str]
+) -> None:
+    """Rule 8: one `redeploy` of `mcp-servers` per `mcp` tree, with rules 2
+    to 6 and a marker of its own. A run with nothing to do prints nothing."""
+    moving = _registry_set(built, readers, tags)
+    marker_file = registry_marker_of(_marker_file(args))
+    marker = read_marker(marker_file)
+    now = wall_time()
+    answer = Answer.NONE
+    if moving and moving == marker.asked:
+        answer = read_answer(done_dir_of(args.spool), marker.request_id)
+
+    step = decide(moving, marker, answer, now)
+    if step is Step.IDLE:
+        return
+
+    if step is Step.HELD:
+        print(f"registry: held: the mcp tree is asked already, as {marker.request_id}")
+
+        return
+
+    if step is Step.SEEN:
+        if not args.dry_run:
+            write_marker(marker_file, seen_marker(moving, marker))
+
+        print("registry: seen: the mcp tree moved. The next run files a redeploy")
+
+        return
+
+    live = built.state.live.get(REDEPLOYED)
+    assert live is not None, "registry_moving names no set for a tree with no stamp"
+    request = plan_request(
+        {REDEPLOYED: live}, requested_by=FOLLOWED_BY, now=now, kind=REDEPLOY_KIND
+    )
+    if args.dry_run:
+        print(f"dry run: would file a redeploy of {REDEPLOYED} {live}")
+
+        return
+
+    # The marker FIRST (`follow/`, rule 6).
+    write_marker(marker_file, asked_marker(moving, marker, request.id, now))
+    filed = file_request(request, args.spool)
+    print(f"registry: filed: a redeploy of {REDEPLOYED} {live} as {filed}")
 
 
 def _add_shared(parser: argparse.ArgumentParser) -> None:
