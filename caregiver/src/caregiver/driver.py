@@ -146,10 +146,13 @@ class SbxDriver:
         for host in KIT_EXTRA_EGRESS:
             args += ["--deny-network", host]
 
-        args.append("-q")
+        # No quiet flag. sbx v0.43 knows only `-q`, and v0.48 and later know
+        # only `--no-progress`, so either flag fails on one of them. Without
+        # it, progress text can come before the error, so the message keeps
+        # the END of stderr.
         proc = _run(args, CREATE_TIMEOUT_S)
         if proc.returncode != 0:
-            raise DriverError(f"sbx create {spec.name} failed: {proc.stderr.strip()[:300]}")
+            raise DriverError(f"sbx create {spec.name} failed: {proc.stderr.strip()[-300:]}")
 
     def set_egress(self, name: str, allow: tuple[str, ...]) -> None:
         for dest in allow:
