@@ -32,6 +32,7 @@ runs:
                 "facade",
                 "proc",
                 "suites",
+                "playpen-image",
                 "systemd-proof",
             ]
         }

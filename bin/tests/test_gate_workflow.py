@@ -54,6 +54,9 @@ On any other code change it skips its one step after the checkout and is
 still a success. The job runs on the runner itself, with no container: only
 there is systemd process 1. The script answers which change needs the proof,
 and the scope runs the proof when the script gives no answer.
+
+The `playpen-image` job builds the full Python flavor. Both workflows run
+that build before their final job can pass.
 """
 
 from __future__ import annotations
@@ -131,6 +134,12 @@ ONLY_CODE = "needs.scope.outputs.scope == 'code'"
 #: of the proof: one script.
 SYSTEMD_JOB = "systemd-proof"
 SYSTEMD_RUN = "bin/systemd-proof.sh"
+
+#: The job that builds the image which the playpen release publishes.
+PLAYPEN_JOB = "playpen-image"
+PLAYPEN_RUN = (
+    "docker build --platform linux/amd64 -f playpen/Dockerfile --target agent-sandbox-python ."
+)
 
 #: The step of that job that a change with no file of the proof skips. Only
 #: the answer `false` skips it. An answer that is missing, or that a rename
@@ -408,6 +417,7 @@ def test_the_docs_scope_runs_no_shard_and_no_node_job(
         FACADE_JOB,
         "proc",
         SUITES_JOB,
+        PLAYPEN_JOB,
         SYSTEMD_JOB,
     }
     assert only_code == set(DOCS), "the verdict table of this file names other jobs"
@@ -427,7 +437,15 @@ def test_the_release_runs_the_gates_test_jobs() -> None:
     """A change to one file's shards, node steps, process suite, old suites
     or systemd proof that misses the other would let a merge pass a release
     its PR could not, or the reverse."""
-    for name in ("tests", AGENT_JOB, FACADE_JOB, "proc", SUITES_JOB, SYSTEMD_JOB):
+    for name in (
+        "tests",
+        AGENT_JOB,
+        FACADE_JOB,
+        "proc",
+        SUITES_JOB,
+        PLAYPEN_JOB,
+        SYSTEMD_JOB,
+    ):
         assert RELEASE_JOBS[name] == JOBS[name], f"release.yml's {name} job is not gate.yml's"
 
 
@@ -517,6 +535,22 @@ def test_the_facade_job_tests_and_typechecks_the_facade(
     assert [one["uses"].split("@")[0] for one in _node_steps(jobs[FACADE_JOB])] == [
         name.rstrip("@") for name in NODE_ACTIONS
     ]
+
+
+@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
+def test_the_playpen_job_builds_the_published_image(
+    jobs: dict[str, dict[str, Any]], last: str
+) -> None:
+    job = jobs[PLAYPEN_JOB]
+    checkout, build = job["steps"]
+
+    assert job["needs"] == "scope"
+    assert job["if"] == ONLY_CODE
+    assert job["runs-on"] == "ubuntu-24.04"
+    assert job["timeout-minutes"] == 20
+    assert checkout["uses"].startswith("actions/checkout@")
+    assert checkout["with"] == {"fetch-depth": 0}
+    assert build == {"run": PLAYPEN_RUN}
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
@@ -940,6 +974,7 @@ DOCS = {
     FACADE_JOB: "skipped",
     "proc": "skipped",
     SUITES_JOB: "skipped",
+    PLAYPEN_JOB: "skipped",
     SYSTEMD_JOB: "skipped",
 }
 
@@ -960,6 +995,8 @@ CASES: list[tuple[str | None, dict[str, str], bool]] = [
     ("code", {"proc": "failure"}, False),
     ("code", {SYSTEMD_JOB: "failure"}, False),
     ("code", {SYSTEMD_JOB: "cancelled"}, False),
+    ("code", {PLAYPEN_JOB: "failure"}, False),
+    ("code", {PLAYPEN_JOB: "skipped"}, False),
     ("code", {"lint": "failure"}, False),
     ("docs", DOCS | {"lint": "failure"}, False),
     # A suite that did not run on a code PR is red, not skipped.

@@ -249,16 +249,20 @@ def test_a_level_line_the_script_would_never_write_is_refused(line: str) -> None
         _plan(("caregiver/src/x.py",), tags=ALL_TAGGED, levels=(line,))
 
 
-def test_the_lock_file_moves_every_venv_component_and_no_other() -> None:
+def test_the_lock_file_moves_every_venv_component_and_the_playpen_image() -> None:
     """`uv sync --frozen` installs what `uv.lock` pins, into every venv
     tree. A dependency upgrade that changed nothing else used to move no
-    tag, and shipped only when something else changed the component."""
+    tag, and shipped only when something else changed the component.
+
+    The playpen image moves with them: its test venv resolves the lock,
+    so the wheels it pins are bytes of the image. It is the one image
+    component the lock moves."""
     plans = _plan(("uv.lock",), tags=ALL_TAGGED)
 
     ours = [row for row in CATALOG if row.repo is Repo.CRECHE and row.name not in ARRIVING]
     venvs = {row.name for row in ours if row.kind is Kind.VENV}
 
-    assert {plan.component for plan in plans} == venvs
+    assert {plan.component for plan in plans} == venvs | {"playpen"}
     assert "playpen" not in venvs
 
 

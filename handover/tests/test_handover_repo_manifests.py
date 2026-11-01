@@ -243,20 +243,41 @@ def _installed(build: tuple[tuple[str, ...], ...], packages: dict[str, Package])
 COPY_WORD = "COPY"
 FROM_STAGE = "--from="
 
+#: The build-only stage that resolves the test venv. Its copies name the
+#: inputs of `uv.lock`, and the lock itself is what the playpen row
+#: bundles: the stage ships no file it copies, so its copies move no tag
+#: that the lock does not already move.
+VENV_STAGE = "creche-test-venv"
+
 
 def _copied(dockerfile: Path) -> set[str]:
     """Every top directory of the repository an image build copies from.
 
     The context is the repository root (`playpen/Dockerfile`'s own header),
     so the first part of a copied path is a directory of this repository.
+    The copies of the venv stage stay out, with one exception: that stage
+    ships no file it copies, and the lock pins what it resolves, so only
+    the root definition files it reads, `pyproject.toml` and `uv.lock`,
+    count as inputs the row must bundle.
     """
     tops: set[str] = set()
+    in_venv_stage = False
     for line in dockerfile.read_text(encoding="utf-8").splitlines():
+        if line.startswith("FROM ") and line.rstrip().endswith(f" AS {VENV_STAGE}"):
+            in_venv_stage = True
+            continue
+        if line.startswith("FROM "):
+            in_venv_stage = False
+            continue
+
         words = line.split()
         if not words or words[0] != COPY_WORD or any(w.startswith(FROM_STAGE) for w in words):
             continue
 
-        tops.update(source.split("/", 1)[0] for source in words[1:-1])
+        if in_venv_stage:
+            tops.update(source for source in words[1:-1] if "/" not in source)
+        else:
+            tops.update(source.split("/", 1)[0] for source in words[1:-1])
 
     return tops
 

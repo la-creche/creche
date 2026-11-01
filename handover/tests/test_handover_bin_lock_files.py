@@ -5,8 +5,9 @@ sync --frozen` installs what it pins, so a change to it moves their tags.
 A binary build reads three files of the Cargo workspace in the same way.
 
 Two properties are held here. A binary component moves when one of those
-files moves. No component of another kind moves, and that includes every
-component of today's catalog.
+files moves. No component of another kind moves, with one exception: the
+playpen image resolves the lock for its test venv, so the lock moves it
+with the venv components.
 """
 
 from __future__ import annotations
@@ -118,12 +119,18 @@ def test_the_workspace_files_move_no_venv_component(monkeypatch: pytest.MonkeyPa
 
 def test_the_python_lock_file_moves_no_binary_component(monkeypatch: pytest.MonkeyPatch) -> None:
     """A binary build reads no `uv.lock`, so a Python dependency upgrade
-    must not release a binary component. Every venv component still moves."""
+    must not release a binary component. Every venv component still moves.
+
+    The playpen image is the one exception: its test venv resolves the
+    lock, so the wheels it pins are bytes of the image, and a lock change
+    moves the image tag with the venv tags. The mock binary component of
+    this suite reads only the Cargo workspace files, and moves for none
+    of the lock."""
     use_binary_catalog(monkeypatch)
     ours = [row for row in CATALOG if row.repo is Repo.CRECHE and row.name not in RETIRING]
     venvs = {row.name for row in ours if row.kind is Kind.VENV} - {BINARY_NAME}
 
-    assert _moved((PYTHON_LOCK,)) == venvs
+    assert _moved((PYTHON_LOCK,)) == venvs | {"playpen"}
 
 
 @pytest.mark.parametrize(

@@ -106,8 +106,10 @@ class CatalogRow:
 #: `bundles` follows each build through `uv.lock`: `attendance` installs the
 #: doors, and `agent-door-trigger` brings `agent-family`. `playpen`'s build
 #: is an image build, and `playpen/Dockerfile` copies `agent/` and
-#: `facade/` and installs them from the facade's lockfile, so a change to
-#: either one, the Flue pin included, is a new image.
+#: `facade/` into the image. Its test venv resolves the workspace from
+#: `pyproject.toml` and `uv.lock`, so the row bundles those two files: the
+#: pins of the venv are the pins of the lock, and no member's code is in
+#: the image.
 #: `test_each_component_bundles_what_its_build_installs` holds it equal.
 #:
 #: `chaperone` is the Rust program of the chaperone repository, and its
@@ -126,7 +128,12 @@ CATALOG: tuple[CatalogRow, ...] = (
     CatalogRow("caregiver", Repo.CRECHE, "caregiver", Kind.VENV, Releases.YES, ("family",)),
     CatalogRow("noticeboard", Repo.CRECHE, "noticeboard", Kind.VENV, Releases.YES, ("family",)),
     CatalogRow(
-        "playpen", Repo.CRECHE, "playpen", Kind.OCI_IMAGE, Releases.YES, ("agent", "facade")
+        "playpen",
+        Repo.CRECHE,
+        "playpen",
+        Kind.OCI_IMAGE,
+        Releases.YES,
+        ("agent", "facade", "pyproject.toml", "uv.lock"),
     ),
     CatalogRow("mcp-servers", Repo.MCP, ".", Kind.VENV, Releases.YES),
     CatalogRow("handover", Repo.CRECHE, "handover", Kind.VENV, Releases.YES),
