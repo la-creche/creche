@@ -192,3 +192,82 @@ def _require(
 
 def _refuse(component: str, detail: str) -> NoReturn:
     raise Refusal(RefusalCode.UNIT, component, detail)
+
+
+class Change(StrEnum):
+    """How one unit file of the tree that goes live differs from the file of
+    the same path in the tree that was live (contract 06 §8.3 item 6)."""
+
+    #: The tree that was live has no such file, or there was no tree.
+    NEW = "new"
+    #: The two files hold other bytes.
+    CHANGED = "changed"
+    #: The two files hold the same bytes.
+    SAME = "same"
+
+
+#: The end of the name of a timer. §8.3 item 6 starts a new timer and
+#: restarts a changed one. A service runs its new file at its next start.
+TIMER_SUFFIX: Final = ".timer"
+
+#: The mark of a template unit (`creche-library@.timer`). A template has no
+#: instance of its own, so root does not start, restart, stop or disable it.
+#: `creche-release`'s `bin/host-verify` skips a template timer too.
+TEMPLATE_MARK: Final = "@."
+
+
+@dataclass(frozen=True)
+class UnitsDiff:
+    """What one swap of a `units` tree does to its unit files."""
+
+    #: Each unit file of the tree that goes live, with its change.
+    now: tuple[tuple[UnitFile, Change], ...]
+    #: Each unit file of the tree that was live and not of the tree that
+    #: goes live (§8.3 item 4).
+    gone: tuple[UnitFile, ...]
+
+
+def units_diff(component: str, before: Path | None, now: Path) -> UnitsDiff:
+    """Compare the unit files of the two trees, before the swap.
+
+    `before` is the tree that is live now, or None when there is none.
+    `now` is the tree that goes live: the staged tree at the switch, the
+    previous tree at a restore. Both are root's own trees, and step 8 read
+    the layout of each one when it staged it.
+    """
+    now_files = unit_files(component, now, frozenset())
+    before_files = unit_files(component, before, frozenset()) if before is not None else ()
+    before_paths = {one.relative for one in before_files}
+    now_paths = {one.relative for one in now_files}
+    changes = tuple((one, _change(one.relative, before, now, before_paths)) for one in now_files)
+    gone = tuple(one for one in before_files if one.relative not in now_paths)
+
+    return UnitsDiff(changes, gone)
+
+
+def _change(
+    relative: PurePosixPath, before: Path | None, now: Path, before_paths: set[PurePosixPath]
+) -> Change:
+    if before is None or relative not in before_paths:
+        return Change.NEW
+
+    if (before / relative).read_bytes() != (now / relative).read_bytes():
+        return Change.CHANGED
+
+    return Change.SAME
+
+
+def is_timer(one: UnitFile) -> bool:
+    """A user timer that root starts, restarts, stops and disables: not a
+    template, and not a drop-in."""
+    return (
+        one.scope is Scope.USER
+        and one.unit.endswith(TIMER_SUFFIX)
+        and TEMPLATE_MARK not in one.unit
+    )
+
+
+def is_stoppable(one: UnitFile) -> bool:
+    """A user unit that root stops and disables when its file goes (§8.3
+    item 4): not a template, and not a drop-in."""
+    return one.scope is Scope.USER and TEMPLATE_MARK not in one.unit

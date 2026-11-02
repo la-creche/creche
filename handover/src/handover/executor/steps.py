@@ -102,7 +102,7 @@ from .quiet import NO_WINDOW, Busy, BusyNowFn, BusySeenFn, needs_window, wait_fo
 from .request import Kind as RequestKind
 from .request import Request
 from .spool import SelfNote, Spool, SwitchNote, VerifyHook, acquire, release_lock
-from .units import component_units, unit_files
+from .units import UnitsDiff, component_units, unit_files, units_diff
 
 #: The step detail of step 3: the checks of the code host, and those with
 #: the check of an archive, for a set that holds a `kind: binary`
@@ -1252,6 +1252,7 @@ class Release:
         manifest = plan.manifest(name)
         paths = self._require_paths(name)
         self._wait_for_window(name)
+        units = self._retire_units(manifest, paths.to, paths.new)
         kept = self._keep_unit(name, manifest, paths.new)
         siblings = self._keep_siblings(name, manifest, paths.new)
 
@@ -1273,6 +1274,10 @@ class Release:
         )
         self.spool.note_switch(self.request.id, note)
         self._swap(name, paths)
+        if units is not None:
+            # Contract 06 §8.3 items 2 to 6, out of the tree that is now
+            # live, before the verify hook reads the timers.
+            self.installer.link_units(name, units, paths.to)
 
         # From the LIVE tree, never the clone: the unit's owner installs it
         # (`install.py` rule 7).
@@ -1328,6 +1333,22 @@ class Release:
             raise
 
         self.deployed.append(name)
+
+    def _retire_units(
+        self, manifest: ComponentManifest, live: Path, coming: Path
+    ) -> UnitsDiff | None:
+        """Contract 06 §8.3, the half that runs BEFORE a swap of a `units`
+        tree: the diff of the live tree and the tree `coming` in, and the
+        stop of each unit whose file goes (item 4). None for each other
+        kind. `live` is `<install.to>`. The switch passes the staged tree
+        as `coming`, a restore the previous one."""
+        if manifest.kind is not Kind.UNITS:
+            return None
+
+        diff = units_diff(manifest.name, live if live.is_dir() else None, coming)
+        self.installer.retire_units(diff.gone, live)
+
+        return diff
 
     def _keep_unit(self, name: str, manifest: ComponentManifest, staged: Path) -> Path | None:
         """`install.py` rule 6, before the note: the unit file this switch
@@ -1452,7 +1473,14 @@ class Release:
         # stay live behind that refusal. The component's tree is one thing
         # to put back; the server trees are another, and the second must
         # not depend on the first succeeding.
+        # Contract 06 §8.3 item 2: a restore runs items 4 to 6 again, over
+        # the previous tree. With no previous tree, `swap_back` stops the
+        # restore and no unit moves.
+        units = self._retire_units(manifest, paths.to, paths.prev) if paths.prev.is_dir() else None
         self._move_back(name, paths)
+        if units is not None:
+            self.installer.link_units(name, units, paths.to)
+
         # `swap_back` moves the tree that failed verify to `.new`, and it
         # does not stay: `run` removes every tree this release staged,
         # because a kept tree stops the next cutover (`_remove_staged`).

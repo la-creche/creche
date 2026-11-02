@@ -13,12 +13,15 @@ yet.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import cast
 
 import pytest
 from handover.catalog import CATALOG
 from handover.executor.drain import Counter, handle
+from handover.executor.host import Command
+from handover.executor.install import LN, RM
 from handover.executor.live_state import STAMP_FILE
 from handover.executor.spool import DONE_DIR, Spool
 from handover.executor.steps import Wiring
@@ -49,20 +52,29 @@ HOOK = f"bin/{HOST}-verify"
 
 
 def _release(
-    tmp_path: Path, files: tuple[str, ...], installed: dict[str, str] | None = None
+    tmp_path: Path,
+    files: tuple[str, ...],
+    installed: dict[str, str] | None = None,
+    run: FakeRun | None = None,
+    live_files: dict[str, str] | None = None,
 ) -> tuple[dict[str, object], Path]:
     """File one request for `host` at `NEW`, run it, and return the ledger
     entry and the components root. The fetched tree holds the manifest,
     the verify hook and `files`. `installed` maps a user unit name to the
-    text of the file that the host already has."""
+    text of the file that the host already has. `live_files` maps a path
+    of the live tree to its text."""
     spool_root = make_spool_dirs(tmp_path)
-    run = FakeRun(answers=git_host_answers())
+    run = run if run is not None else FakeRun(answers=git_host_answers())
     host = fake_host(tmp_path, run)
     for unit, text in (installed or {}).items():
         (host.user_unit_dir / unit).write_text(text, encoding="utf-8")
 
     components = tmp_path / "components"
-    stamp_tree(components, HOST, LIVE)
+    live = stamp_tree(components, HOST, LIVE)
+    for name, text in (live_files or {}).items():
+        (live / name).parent.mkdir(parents=True, exist_ok=True)
+        (live / name).write_text(text, encoding="utf-8")
+
     manifests = {
         row.name: manifest_text(row.name).replace("/opt/components", str(components))
         for row in CATALOG
@@ -152,3 +164,59 @@ def test_a_unit_installed_by_hand_with_other_bytes_is_refused(tmp_path: Path) ->
     assert (tmp_path / "user-units" / "creche-follow.timer").read_text(encoding="utf-8") == (
         "[Timer]\n"
     )
+
+
+# ---- step 9 links the units, and step 10 puts them back -------------------------
+
+OTHER_TIMER = "units/user/creche-watchdog.timer"
+
+
+def _linking_run() -> FakeRun:
+    """A run whose `ln` and `rm` act on the real files, so each later check
+    reads what the host would hold."""
+    run = FakeRun(answers=git_host_answers())
+
+    def link(command: Command) -> None:
+        target, place = command.argv[-2], Path(command.argv[-1])
+        place.unlink(missing_ok=True)
+        place.symlink_to(target)
+
+    def remove(command: Command) -> None:
+        Path(command.argv[-1]).unlink(missing_ok=True)
+
+    run.hooks[LN] = link
+    run.hooks[RM] = remove
+
+    return run
+
+
+def test_the_switch_links_each_unit_and_starts_each_new_timer(tmp_path: Path) -> None:
+    run = _linking_run()
+    entry, components = _release(tmp_path, (TIMER,), run=run)
+
+    assert entry["status"] == "succeeded", entry
+    place = tmp_path / "user-units" / "creche-follow.timer"
+    assert os.readlink(place) == str(components / HOST / TIMER)
+    lines = run.argv_lines()
+    enable = lines.index("/usr/bin/systemctl --user enable --now creche-follow.timer")
+    assert enable < next(i for i, line in enumerate(lines) if HOOK in line)
+
+
+def test_a_restore_puts_the_units_of_the_previous_tree_back(tmp_path: Path) -> None:
+    """Contract 06 §8.3 item 2: a restore runs items 4 to 6 again, over the
+    previous tree. The new timer goes, and the changed one restarts."""
+    run = _linking_run()
+    run.fails[HOOK] = 1
+    live_files = {TIMER: "[Timer]\nOnCalendar=hourly\n"}
+    place = tmp_path / "user-units" / "creche-follow.timer"
+
+    entry, components = _release(tmp_path, (TIMER, OTHER_TIMER), run=run, live_files=live_files)
+
+    assert entry["status"] != "succeeded", entry
+    lines = run.argv_lines()
+    assert "/usr/bin/systemctl --user enable --now creche-watchdog.timer" in lines
+    assert "/usr/bin/systemctl --user disable --now creche-watchdog.timer" in lines
+    assert lines.count("/usr/bin/systemctl --user restart creche-follow.timer") == 2
+    assert not (tmp_path / "user-units" / "creche-watchdog.timer").is_symlink()
+    assert os.readlink(place) == str(components / HOST / TIMER)
+    assert (components / HOST / TIMER).read_text(encoding="utf-8") == live_files[TIMER]
