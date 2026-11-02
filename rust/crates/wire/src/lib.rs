@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
 mod schema;
+#[cfg(test)]
+mod vectors;
 
 /// The length of a session id: 32 hex digits and 4 hyphens.
 const SESSION_ID_LEN: usize = 36;
@@ -144,27 +146,6 @@ mod tests {
         let text = "3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4aé";
 
         assert!(text.parse::<SessionId>().is_err());
-    }
-
-    #[test]
-    fn a_session_id_is_a_json_string_both_ways() {
-        let json = format!("\"{GOOD}\"");
-        let id: SessionId = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(id.as_str(), GOOD);
-        assert_eq!(serde_json::to_string(&id).unwrap(), json);
-    }
-
-    #[test]
-    fn a_json_string_of_the_wrong_form_is_refused() {
-        for json in [
-            "\"3F2B8C1E-9D4A-4E6B-8A7C-0B1D2E3F4A5B\"",
-            "\"\"",
-            "42",
-            "null",
-        ] {
-            assert!(serde_json::from_str::<SessionId>(json).is_err(), "{json}");
-        }
     }
 
     #[test]

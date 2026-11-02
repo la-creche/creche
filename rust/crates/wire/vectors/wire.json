@@ -1,0 +1,99 @@
+{
+  "SessionId": [
+    {
+      "json": "\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"",
+      "written": "\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"",
+      "note": "a lowercase UUID"
+    },
+    {
+      "json": "\"\\u0033f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"",
+      "written": "\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"",
+      "note": "a JSON escape of the first digit reads as the digit"
+    },
+    {
+      "json": "\"\"",
+      "written": null,
+      "note": "the empty text"
+    },
+    {
+      "json": "\"3f2b8c1e\"",
+      "written": null,
+      "note": "too short"
+    },
+    {
+      "json": "\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b0\"",
+      "written": null,
+      "note": "too long"
+    },
+    {
+      "json": "\"3F2B8C1E-9D4A-4E6B-8A7C-0B1D2E3F4A5B\"",
+      "written": null,
+      "note": "uppercase hex"
+    },
+    {
+      "json": "\"3f2b8c1e99d4a-4e6b-8a7c-0b1d2e3f4a5b\"",
+      "written": null,
+      "note": "a digit where a hyphen belongs"
+    },
+    {
+      "json": "\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5g\"",
+      "written": null,
+      "note": "a letter past f"
+    },
+    {
+      "json": "\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a/b\"",
+      "written": null,
+      "note": "a slash"
+    },
+    {
+      "json": "\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4aé\"",
+      "written": null,
+      "note": "36 bytes, but one character is two bytes"
+    },
+    {
+      "json": "\"３f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"",
+      "written": null,
+      "note": "a fullwidth digit"
+    },
+    {
+      "json": "\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\\n\"",
+      "written": null,
+      "note": "a trailing newline"
+    },
+    {
+      "json": "\" f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"",
+      "written": null,
+      "note": "a leading space"
+    },
+    {
+      "json": "\"\\ud800\"",
+      "written": null,
+      "note": "a lone surrogate"
+    },
+    {
+      "json": "42",
+      "written": null,
+      "note": "a number"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    },
+    {
+      "json": "true",
+      "written": null,
+      "note": "a boolean"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an array"
+    },
+    {
+      "json": "{}",
+      "written": null,
+      "note": "an object"
+    }
+  ]
+}

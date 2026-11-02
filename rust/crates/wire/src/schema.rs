@@ -21,7 +21,7 @@ const SCHEMA_FILE: &str = "schema/wire.json";
 
 /// The schema of every wire type, as one document with a `$defs` entry per
 /// type. The contract is the one of a reader: what a reader accepts.
-fn wire_schema() -> Value {
+pub(super) fn wire_schema() -> Value {
     let mut generator = SchemaSettings::draft2020_12()
         .for_deserialize()
         .into_generator();
