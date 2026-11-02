@@ -1131,10 +1131,11 @@ class Release:
         self.paths[name] = paths
         self.installer.build(manifest, source, paths, self.verified.get(name))
         if manifest.kind is Kind.UNITS:
-            # Contract 06 §1 rule 12 and §8.3 item 1, on the staged tree and
-            # before the swap. The other manifests name the units of the
-            # other components.
-            unit_files(name, paths.new, component_units(plan.manifests.values()))
+            # Contract 06 §1 rule 12 and §8.3 items 1 and 3, on the staged
+            # tree and before the swap. The other manifests name the units
+            # of the other components.
+            files = unit_files(name, paths.new, component_units(plan.manifests.values()))
+            self.installer.check_adopt(name, files, paths.new, paths.to)
 
         write_stamp(paths.new, plan.to_version(name))
         if registry_sha is not None:

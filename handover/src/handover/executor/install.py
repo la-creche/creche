@@ -111,6 +111,7 @@ from .quiet import WATCHED_SERVICES
 from .selfcontained import check_binary_tree, check_tree
 from .source import GIT, REFRESH_COMMAND, git_env, git_ground, require_trusted
 from .spool import VerifyHook
+from .units import UnitFile
 from .unpack import UnpackRefused, extract_tar
 
 if TYPE_CHECKING:
@@ -299,6 +300,19 @@ VERIFY_STDOUT_MAX_BYTES: Final = 8 * 1024
 #: a unit refresh, a fetch. Without it `cannot restart creche-noticeboard.service
 #: (exit 1)` drops the one line `systemctl` printed to explain itself.
 STDERR_TAIL_LINES: Final = 40
+
+
+class Adopt(StrEnum):
+    """What is at the place of one unit file of a `units` tree, before step
+    9 links it (contract 06 §8.3 item 3)."""
+
+    #: Nothing. Step 9 makes the link.
+    ABSENT = "absent"
+    #: The link step 9 would make, to the file in the live tree.
+    LINKED = "linked"
+    #: A regular file with the bytes of the tree's file. Step 9 replaces it
+    #: with the link.
+    SAME_BYTES = "same-bytes"
 
 
 class Swapped(StrEnum):
@@ -954,6 +968,77 @@ class Installer:
         )
 
         return installed
+
+    def check_adopt(
+        self, component: str, files: tuple[UnitFile, ...], staged: Path, live: Path
+    ) -> tuple[Adopt, ...]:
+        """Contract 06 §8.3 item 3, one answer for each of `files`.
+
+        `staged` is `<install.to>.new`, which holds the bytes of each file.
+        `live` is `<install.to>`, which each link names (§8.3 item 2).
+        Root refuses with code `unit` when the place of a file holds one of
+        these, and the host is as it was:
+
+        1. a regular file with other bytes, or one root cannot read,
+        2. a link to anything but the file in the live tree,
+        3. anything that is not a regular file or a link.
+
+        So a unit that nobody put in creche-release is never overwritten.
+
+        Root opens only the places that the release names, as rule 8 does
+        in the operator's unit directory. It follows no link: it reads the
+        target of a link and does not open it.
+
+        CONTRACT-QUESTION: contract 06 §8.3 item 3 says step 8 refuses
+        "before it builds anything". The reading taken runs the check after
+        the copy of rule 10, which is the one build of a `units` tree, and
+        before the swap. Another component of the set can be built by then.
+        No tree is swapped, so the host is still as it was.
+
+        CONTRACT-QUESTION: item 3 refuses "a link into another tree". The
+        reading taken refuses every link that does not name the file in the
+        live tree, also a link to another file of the `host` tree.
+        """
+        return tuple(self._adopt_one(component, one, staged, live) for one in files)
+
+    def _adopt_one(self, component: str, one: UnitFile, staged: Path, live: Path) -> Adopt:
+        place = one.installed(self.host.user_unit_dir, self.host.system_unit_dir)
+        shown = safe_token(str(one.relative))
+        try:
+            mode = os.lstat(place).st_mode
+        except FileNotFoundError:
+            return Adopt.ABSENT
+        except OSError:
+            raise Refusal(
+                RefusalCode.UNIT, component, f"{shown}: root cannot read its installed place"
+            ) from None
+
+        if stat.S_ISLNK(mode):
+            if os.readlink(place) == str(live / one.relative):
+                return Adopt.LINKED
+
+            raise Refusal(
+                RefusalCode.UNIT,
+                component,
+                f"{shown}: the installed place is a link that root did not make",
+            )
+
+        if not stat.S_ISREG(mode):
+            raise Refusal(
+                RefusalCode.UNIT,
+                component,
+                f"{shown}: the installed place is not a regular file or a link",
+            )
+
+        installed = _read_unit(place)
+        if installed is None or installed != (staged / one.relative).read_bytes():
+            raise Refusal(
+                RefusalCode.UNIT,
+                component,
+                f"{shown}: the installed file holds other bytes, so root does not replace it",
+            )
+
+        return Adopt.SAME_BYTES
 
     def unit_by_hand(self, kept: Path) -> str:
         """What `manual` says when `restore_unit` could not: the same
