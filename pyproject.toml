@@ -40,6 +40,10 @@ dev = [
     "ruff>=0.6",
     "pyright>=1.1.380",
     "types-pyyaml>=6",
+    # Generates the pydantic models of the wire types from
+    # rust/crates/wire/schema/wire.json (decision CH9-1). An exact pin, so
+    # the generated module only changes when this line does.
+    "datamodel-code-generator==0.87.0",
 ]
 sandbox-test = [
     "pytest>=8",
