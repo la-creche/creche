@@ -111,7 +111,15 @@ from .quiet import WATCHED_SERVICES
 from .selfcontained import check_binary_tree, check_tree
 from .source import GIT, REFRESH_COMMAND, git_env, git_ground, require_trusted
 from .spool import VerifyHook
-from .units import Change, Scope, UnitFile, UnitsDiff, is_stoppable, is_timer
+from .units import (
+    Change,
+    Scope,
+    UnitFile,
+    UnitsDiff,
+    drop_in_restarts,
+    is_stoppable,
+    is_timer,
+)
 from .unpack import UnpackRefused, extract_tar
 
 if TYPE_CHECKING:
@@ -1087,11 +1095,10 @@ class Installer:
         5. Enable and start each new timer. Restart each changed timer
            (item 6).
 
-        CONTRACT-QUESTION: item 6 restarts a unit whose drop-in was added,
-        changed or removed, and §2.5's `restarts` row names it before the
-        tap. This release does neither. A drop-in change reaches its unit at
-        the next restart of that unit. The other reading costs the row in
-        the summary that the tap shows.
+        6. Restart each unit whose drop-in was added, changed or removed
+           (item 6). Step 5 named each one in §2.5's `restarts` row, and
+           step 9 checked the list against that row before the swap. A
+           unit that is not installed is not restarted.
         """
         for one in diff.gone:
             if self._is_our_link(one, live):
@@ -1128,6 +1135,9 @@ class Installer:
                     RESTART_TIMEOUT_S,
                     f"cannot start {one.unit}",
                 )
+
+        for unit in drop_in_restarts(diff):
+            self.restart_unit(unit)
 
     def _link(self, one: UnitFile, live: Path) -> None:
         place = self._place(one)

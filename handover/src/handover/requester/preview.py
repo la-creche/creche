@@ -6,7 +6,8 @@ fields and never a gate id, and it says plainly which two rows root will
 recompute. A requester that printed a gate would be claiming the approval
 binds to its own arithmetic, which is exactly what §2.5 exists to stop.
 
-Two rows differ from root's, always, and both say so on the line:
+Two rows differ from root's, always, and both say so on the line. A third
+differs for a `units` component:
 
 1. `review`. Root's says `safe:` only after the provenance predicate (§2.4
    step 3) has passed at the tag. This side has run no predicate, so it says
@@ -15,6 +16,9 @@ Two rows differ from root's, always, and both say so on the line:
    `manifest_sha256`, so root's clock alone makes its hash a different one.
    The local value is printed as an aid to reading the ledger afterwards,
    never as something to compare a tap against.
+3. `restarts`, for a `units` component. Root names each unit whose drop-in
+   the release changes, from the tree it fetched (contract 06 §8.3 item 6).
+   This side reads no such tree, so it says that root names them.
 
 `Summary` itself comes from `executor/approval.py`, so the field list and the
 120-character cut are the executor's own and not a second copy.
@@ -25,7 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final
 
-from ..catalog import Action, RestoreMode
+from ..catalog import Action, Kind, RestoreMode
 from ..executor.approval import Summary, contracts_row
 from ..executor.live_state import Chosen
 from ..manifest import ComponentManifest
@@ -35,6 +39,10 @@ from ..resolve import Resolution
 HASH_CHARS: Final = 12
 
 NO_UNIT: Final = "no unit"
+
+#: The part of the `restarts` row for a `units` component. Root reads the
+#: drop-ins it changes, and this side does not.
+UNITS_RESTARTS: Final = "each unit whose drop-in changes, named by root"
 
 #: The one line above the table. It is not a field: it is what keeps the two
 #: recomputed rows from reading as promises.
@@ -134,11 +142,17 @@ def _moves(resolution: Resolution) -> list[str]:
 
 
 def _units(resolution: Resolution, manifests: dict[str, ComponentManifest]) -> list[str]:
-    return [
-        manifests[name].unit or f"{name}: {NO_UNIT}"
-        for name in resolution.order
-        if name in manifests
-    ]
+    return [_unit_of(name, manifests[name]) for name in resolution.order if name in manifests]
+
+
+def _unit_of(name: str, manifest: ComponentManifest) -> str:
+    """A `units` component restarts each unit whose drop-in it changes
+    (contract 06 §8.3 item 6). Root names those at step 5, from the tree it
+    fetched. This side reads no such tree, so it says who names them."""
+    if manifest.kind is Kind.UNITS:
+        return f"{name}: {UNITS_RESTARTS}"
+
+    return manifest.unit or f"{name}: {NO_UNIT}"
 
 
 def _restore(resolution: Resolution, manifests: dict[str, ComponentManifest]) -> str:
