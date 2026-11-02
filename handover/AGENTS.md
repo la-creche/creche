@@ -439,7 +439,12 @@ units that belong to no component, and the scripts that they run (contract
    `units/system/<unit>.d/<name>.conf`, a handover unit, or a user unit that
    another manifest names as its `unit`. creche-release's `bin/check-tree`
    runs the same layout rules in its gate. Change both together.
-6. Step 9 does not link the unit files yet. A `host` release swaps the tree
+6. Step 8 then checks the place of each unit file on the host
+   (`Installer.check_adopt`). The place may hold nothing, the link to the
+   file in the live tree, or a regular file with the same bytes. Anything
+   else is refused with code `unit`, so root never overwrites a unit that
+   nobody put in creche-release.
+7. Step 9 does not link the unit files yet. A `host` release swaps the tree
    and runs the verify hook. No unit changes.
 
 ## The server file (`mcpserver.py`)
@@ -676,6 +681,19 @@ that wants a refusal changes one field.
 - Contract 06 §8.2 names no rule for a staged venv tree that is a link. The
   walk reports the link as a fault with the code `editable`
   (`executor/selfcontained.py`).
+- Contract 06 §8.3 names no rule for a link in a `units` tree. Step 8
+  refuses each link, also one that stays inside the tree. It leaves out the
+  clone's top-level `.git` and nothing else (`executor/install.py`).
+- Contract 06 §1 rule 12 says "the reader refuses" a `units` tree that holds
+  a wrong file, and names no step. Step 8 refuses it, on the staged tree.
+  The check knows only the units that the manifests of the release name. A
+  sibling unit, and the unit of a component with no install tree, are not
+  in that set (`executor/units.py`).
+- Contract 06 §8.3 item 3 says step 8 refuses a unit file "before it builds
+  anything". The check runs after the copy of the `host` tree and before
+  the swap. Another component of the set can be built by then. It refuses
+  every link that does not name the file in the live tree, also a link to
+  another file of the `host` tree (`executor/install.py`).
 - Contract 06 §8.2 and PEP 610 name no size for a `direct_url.json` record.
   Root reads 64 KiB of such a record at most. A larger record is a record
   that root cannot read, and the walk reports it as a fault

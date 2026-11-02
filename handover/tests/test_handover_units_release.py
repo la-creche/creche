@@ -48,13 +48,19 @@ DROP_IN = "units/system/creche-chaperone.service.d/creche.conf"
 HOOK = f"bin/{HOST}-verify"
 
 
-def _release(tmp_path: Path, files: tuple[str, ...]) -> tuple[dict[str, object], Path]:
+def _release(
+    tmp_path: Path, files: tuple[str, ...], installed: dict[str, str] | None = None
+) -> tuple[dict[str, object], Path]:
     """File one request for `host` at `NEW`, run it, and return the ledger
     entry and the components root. The fetched tree holds the manifest,
-    the verify hook and `files`."""
+    the verify hook and `files`. `installed` maps a user unit name to the
+    text of the file that the host already has."""
     spool_root = make_spool_dirs(tmp_path)
     run = FakeRun(answers=git_host_answers())
     host = fake_host(tmp_path, run)
+    for unit, text in (installed or {}).items():
+        (host.user_unit_dir / unit).write_text(text, encoding="utf-8")
+
     components = tmp_path / "components"
     stamp_tree(components, HOST, LIVE)
     manifests = {
@@ -124,3 +130,25 @@ def test_a_tree_with_a_wrong_unit_file_is_refused_and_the_host_is_unchanged(
     assert detail in str(entry["reason"])
     assert (components / HOST / STAMP_FILE).read_text(encoding="utf-8").strip() == LIVE
     assert not (components / f"{HOST}.new").exists()
+
+
+def test_a_unit_installed_by_hand_with_the_same_bytes_lets_the_release_land(
+    tmp_path: Path,
+) -> None:
+    """The first `host` release meets the units installed by hand
+    (contract 06 §8.3 item 3)."""
+    entry, _ = _release(tmp_path, (TIMER,), {"creche-follow.timer": f"# {TIMER}\n"})
+
+    assert entry["status"] == "succeeded", entry
+
+
+def test_a_unit_installed_by_hand_with_other_bytes_is_refused(tmp_path: Path) -> None:
+    entry, components = _release(tmp_path, (TIMER,), {"creche-follow.timer": "[Timer]\n"})
+
+    assert entry["status"] == "refused", entry
+    assert entry["refused_check"] == "unit"
+    assert "holds other bytes" in str(entry["reason"])
+    assert (components / HOST / STAMP_FILE).read_text(encoding="utf-8").strip() == LIVE
+    assert (tmp_path / "user-units" / "creche-follow.timer").read_text(encoding="utf-8") == (
+        "[Timer]\n"
+    )
