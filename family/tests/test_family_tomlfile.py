@@ -25,6 +25,7 @@ LIMITS = {
     FileKind.SERVER: 65536,
     FileKind.MANIFEST: 16384,
     FileKind.ROSTER: 1048576,
+    FileKind.POLICY: 8192,
 }
 
 #: The name of the byte limit of a kind, for a write that must fail.

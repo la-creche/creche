@@ -75,6 +75,7 @@ class FileKind(Enum):
     SERVER = ("server", 65536)
     MANIFEST = ("manifest", 16384)
     ROSTER = ("roster", 1048576)
+    POLICY = ("policy", 8192)
 
     @property
     def byte_limit(self) -> int:

@@ -32,7 +32,10 @@ Seven subcommands. Only `request` and `follow` write anything.
    line and exits 0. A text that is not strict JSON leaves one row in its
    notice file (`--notices`), because a timer starts it and the operator
    does not watch its log. `--dry-run` writes no notice file, and a run as
-   root writes none.
+   root writes none. With no names, it reads the names, their ceilings and
+   the registry watch from `host.toml` in the live `host` tree
+   (`follow/policy.py`). A run with no names and no such file files
+   nothing and exits 2.
 6. `artifacts` prints what CI builds for each binary component, in a line
    form that a `read` loop of bash reads (`artifacts.ArtifactRow`).
    `--crate-row` prints one such row for a crate that need not be a
@@ -120,6 +123,7 @@ from .follow import (
 from .follow import (
     REQUESTED_BY as FOLLOWED_BY,
 )
+from .follow.policy import PolicyError, Registry, read_policy
 from .requester import (
     REDEPLOY_KIND,
     REGISTRY_DATA,
@@ -1004,23 +1008,43 @@ def _keep_waits(args: argparse.Namespace, path: Path, marker: Marker, read: Mark
         write_marker(path, marker)
 
 
+def _followed(args: argparse.Namespace) -> tuple[dict[str, str | None], bool]:
+    """The followed names with their ceilings, and whether the registry
+    watch runs. Names on the command line follow each new tag, and the
+    watch runs when they name `mcp-servers`. With no names, both come from
+    the live `host.toml` (`follow/` rule 9)."""
+    if args.components:
+        return dict.fromkeys(args.components), REDEPLOYED in args.components
+
+    policy = read_policy(tuple(_install_roots(args)))
+
+    return dict(policy.follow), policy.registry is Registry.FOLLOW
+
+
 def _run_follow(args: argparse.Namespace) -> int:
     """One run of the timer: fetch, read what a newer tag moves, and file
     one request for a set that is new (`follow/`, rules 2 to 7). Then the
     registry watch (rule 8)."""
-    wanted = dict.fromkeys(args.components, LATEST)
+    try:
+        ceilings, watch = _followed(args)
+    except PolicyError as error:
+        print(f"{PROG}: {error}", file=sys.stderr)
+
+        return EXIT_USAGE
+
+    wanted = dict.fromkeys(ceilings, LATEST)
     corpus = Path(args.corpus)
     # A failed fetch is a printed line, and the run reads the corpus as it
     # is: the next firing fetches again.
     _note_failed(refresh(repos_of(wanted), corpus))
     readers = local_readers(corpus)
     built = build_state(tuple(_install_roots(args)), wanted, readers)
-    moving, notes = moving_of(built.state, wanted)
+    moving, notes = moving_of(built.state, ceilings)
     for line in notes:
         print(f"note: {line}", file=sys.stderr)
 
     _follow_tags(args, built, wanted, moving)
-    if REDEPLOYED in wanted:
+    if watch:
         _follow_registry(args, built, readers, moving)
 
     return EXIT_OK
@@ -1209,8 +1233,9 @@ def _add_request(ask: argparse.ArgumentParser) -> None:
 
 def _add_follow(watch: argparse.ArgumentParser) -> None:
     """`request` on a timer. It takes names and no version: the version is
-    the newest tag, and that is the whole point."""
-    watch.add_argument("components", nargs="+", metavar="NAME", choices=releasable_names())
+    the newest tag, and that is the whole point. With no names, it reads
+    the names and their ceilings from the live `host.toml`."""
+    watch.add_argument("components", nargs="*", metavar="NAME", choices=releasable_names())
     watch.add_argument(
         "--install-root",
         dest="install_root",

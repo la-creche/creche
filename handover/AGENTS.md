@@ -221,8 +221,8 @@ has the name of the markup of the manifest: `.component.toml` or
    `the verifier was not available`.
 6. The marker is written before the request. A marker that cannot be
    written costs no request.
-7. A followed name is a releasable component of the catalog. It carries no
-   version: the version is the newest tag.
+7. A followed name is a releasable component of the catalog. A name on the
+   command line carries no version: the version is the newest tag.
 8. A member that ships an archive is ready when the store holds its two
    files. While a member is not ready and its 600 seconds are not over, the
    run files nothing. The 600 seconds start at the first run that read the
@@ -230,6 +230,13 @@ has the name of the markup of the manifest: `.component.toml` or
    to 6, and the run prints one line. The marker keeps the version and the
    time of that first run, under the key `waits`. When the files arrive
    later, the member is part of a new set.
+9. With no names on the command line, the follower reads `host.toml` in
+   the live `host` tree (`follow/policy.py`). It never reads a clone, so a
+   change to what is followed waits for a tapped `host` release. A version
+   in `[follow]` is a ceiling: the follower moves the component up to it
+   and never above it, and it prints one note for each newer tag the
+   ceiling holds back. A file that breaks one of the five rules of
+   `policy.py` stops the run before the fetch, with exit 2.
 
 ## Rules `mcpbuild.py` adds
 
@@ -506,6 +513,7 @@ uv run handover check --partial                     # this repository's manifest
 uv run handover resolve chaperone=2.1.0 --root . --state live-state.json --id <ULID>
 uv run handover request attendance chaperone@2.1.0 --root . --dry-run
 uv run handover follow attendance chaperone --dry-run   # what the timer would do
+uv run handover follow --dry-run                     # the same, from the live host.toml
 ```
 
 `--partial` is what this repository needs: four of the catalog's components
@@ -558,6 +566,10 @@ that wants a refusal changes one field.
 
 ## Known gaps
 
+- A `host.toml` that breaks a rule of `follow/policy.py` fails
+  `creche-follow.service` with exit 2. The follower writes no row in its
+  notice file for it, so the operator learns of it only from the failed
+  unit.
 - The checker runs C2, C3, C4, then C1 (`contracts.py`).
 - A component named at its live version is `unchanged`, and step 9 restarts
   nothing (`resolve.py`).
