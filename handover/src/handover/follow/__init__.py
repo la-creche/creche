@@ -10,7 +10,7 @@ It is a requester like the other three (§3.1), and root believes it no more
 than it believes them: the request carries intent only, and `requested_by`
 is a claim.
 
-Eight rules hold its shape, each with the reason it is a rule.
+Nine rules hold its shape, each with the reason it is a rule.
 
 1. **It moves a tree forward and never makes the first one.** A component
    is followed only while its tree carries a release stamp. A first release
@@ -51,6 +51,13 @@ Eight rules hold its shape, each with the reason it is a rule.
    only then. The set has its own marker beside the first. A newer tag
    wins: its release installs the same tree, so no `redeploy` is filed
    beside it.
+9. **The policy** (`policy.py`). With no names on the command line, the
+   followed components and their ceilings come from `host.toml` in the
+   live `host` tree, and so does the registry watch. A tapped `host`
+   release installs that file, so a change to what is followed waits for
+   a tap too. A ceiling moves a component up to its version and never
+   above it. The run prints one note for each newer tag a ceiling holds
+   back, so a hold is never silent.
 
 This package reads one ledger entry and writes one marker. When the ledger
 entry or the marker is not strict JSON (`strictjson.py`), the follower also
@@ -66,7 +73,7 @@ from __future__ import annotations
 import contextlib
 import os
 import stat
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -265,22 +272,34 @@ def _is_newer(target: str, live: str) -> bool:
     return new > old
 
 
-def moving_of(state: ReleaseState, names: Iterable[str]) -> tuple[Moving, tuple[str, ...]]:
+def moving_of(
+    state: ReleaseState, ceilings: Mapping[str, str | None]
+) -> tuple[Moving, tuple[str, ...]]:
     """The followed components a release would move, and one note for each
-    name rule 1 leaves out."""
+    name rule 1 leaves out and each tag a ceiling holds back (rule 9).
+
+    `ceilings` maps each followed name to its ceiling, or to None to follow
+    each new tag."""
     moving: Moving = {}
     notes: list[str] = []
-    for name in sorted(names):
+    for name in sorted(ceilings):
         live = state.live.get(name)
         if live is None:
             notes.append(f"{name} has had no release: its first one is filed by hand")
             continue
 
         newest = state.latest.get(name)
-        if newest is None or not _is_newer(newest, live):
+        if newest is None:
             continue
 
-        moving[name] = newest
+        target = newest
+        ceiling = ceilings[name]
+        if ceiling is not None and _is_newer(newest, ceiling):
+            notes.append(f"{name} is held at {ceiling}: {newest} is not followed")
+            target = ceiling
+
+        if _is_newer(target, live):
+            moving[name] = target
 
     return moving, tuple(notes)
 

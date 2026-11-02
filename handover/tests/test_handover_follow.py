@@ -786,3 +786,110 @@ def test_the_registry_set(
     """A tree with no stamp reads as different. A tree no release stamped
     is never followed (rule 1). A newer tag wins."""
     assert registry_moving(tags, live, head, installed) == moving
+
+
+# -- the policy (rule 9) ------------------------------------------------------
+
+
+def _policy(host: _Host, follow: dict[str, str], mcp: str = "hold") -> None:
+    """The live `host` tree, with its `host.toml`."""
+    tree = host.root / "components" / "host"
+    tree.mkdir(parents=True, exist_ok=True)
+    rows = "".join(f'{name} = "{value}"\n' for name, value in follow.items())
+    text = f'[follow]\n{rows}\n[registry]\nmcp = "{mcp}"\n'
+    (tree / "host.toml").write_text(text, encoding="utf-8")
+
+
+def test_a_run_with_no_names_follows_the_live_policy(host: _Host) -> None:
+    host.install(BOARD, LIVE)
+    host.install(CARE, LIVE)
+    host.tag(BOARD, NEXT)
+    host.tag(CARE, NEXT)
+    _policy(host, {BOARD: "newest"})
+
+    host.follow()
+    assert host.follow() == cli.EXIT_OK
+
+    assert [item["components"] for item in host.filed()] == [{BOARD: NEXT}]
+
+
+def test_a_ceiling_files_its_version_and_says_what_it_holds_back(
+    host: _Host, capsys: pytest.CaptureFixture[str]
+) -> None:
+    host.install(BOARD, LIVE)
+    host.tag(BOARD, NEXT)
+    host.tag(BOARD, LATER)
+    _policy(host, {BOARD: NEXT})
+
+    host.follow()
+    host.follow()
+
+    assert [item["components"] for item in host.filed()] == [{BOARD: NEXT}]
+    assert f"note: {BOARD} is held at {NEXT}: {LATER} is not followed" in capsys.readouterr().err
+
+
+def test_a_component_at_its_ceiling_files_nothing(host: _Host) -> None:
+    host.install(BOARD, NEXT)
+    host.tag(BOARD, LATER)
+    _policy(host, {BOARD: NEXT})
+
+    host.follow()
+    host.follow()
+
+    assert host.filed() == []
+
+
+def test_names_on_the_command_line_win_over_the_policy(host: _Host) -> None:
+    """The unit decides: names follow each new tag, whatever the file says."""
+    host.install(BOARD, LIVE)
+    host.tag(BOARD, NEXT)
+    host.tag(BOARD, LATER)
+    _policy(host, {BOARD: NEXT})
+
+    host.follow(BOARD)
+    host.follow(BOARD)
+
+    assert [item["components"] for item in host.filed()] == [{BOARD: LATER}]
+
+
+def test_a_run_with_no_names_and_no_host_tree_files_nothing(
+    host: _Host, capsys: pytest.CaptureFixture[str]
+) -> None:
+    host.install(BOARD, LIVE)
+    host.tag(BOARD, NEXT)
+
+    assert host.follow() == cli.EXIT_USAGE
+    assert host.follow() == cli.EXIT_USAGE
+
+    assert host.filed() == []
+    assert host.fetches == []
+    assert not host.marker.exists()
+    assert "no install root holds a host tree" in capsys.readouterr().err
+
+
+def test_a_policy_that_breaks_a_rule_files_nothing(
+    host: _Host, capsys: pytest.CaptureFixture[str]
+) -> None:
+    host.install(BOARD, LIVE)
+    host.tag(BOARD, NEXT)
+    _policy(host, {BOARD: "latest"})
+
+    assert host.follow() == cli.EXIT_USAGE
+    assert host.follow() == cli.EXIT_USAGE
+
+    assert host.filed() == []
+    assert f"{BOARD} is latest, not newest" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(("mcp", "filed"), [("follow", 1), ("hold", 0)])
+def test_the_policy_runs_or_holds_the_registry_watch(host: _Host, mcp: str, filed: int) -> None:
+    host.install(SERVERS, LIVE)
+    clone = _registry(host)
+    _stamp_registry(host, clone)
+    _merge(clone, "mcp/headroom/server.toml", "new\n")
+    _policy(host, {SERVERS: "newest"}, mcp)
+
+    host.follow()
+    host.follow()
+
+    assert len(host.filed()) == filed
