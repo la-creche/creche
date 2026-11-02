@@ -9,7 +9,7 @@ runs these commands, and `attendance` runs `exec`:
            [--deny-network <host>]... -q
     policy allow network --sandbox <id> <host>
     policy deny network --sandbox <id> <host>
-    policy rm network --sandbox <id> --resource <host>
+    policy rm network --force --sandbox <id> --resource <host>
     policy check network --sandbox <id> <host>
     rm -f <id>
     ls
@@ -24,7 +24,7 @@ test reads the same files that the next call reads:
     view.json                     what each VM sees of the host
     tune/                         what a test writes to change one call
 
-Five things here copy what the real program does on the host:
+Six things here copy what the real program does on the host:
 
 1. `create` gives each sandbox the allow row of the `shell` kit. Only a deny
    row takes that host away. `policy rm` leaves the allow row of the kit.
@@ -38,6 +38,8 @@ Five things here copy what the real program does on the host:
    it: each value that starts with a key of `view.json` starts with the
    value of that key instead. With no `view.json`, the env file is as
    `caregiver` wrote it.
+6. `policy rm` with no `--force` fails. From v0.48, `sbx` asks before a
+   removal, and with no terminal it refuses the removal.
 
 A test tunes one call with a file under `tune/`:
 
@@ -82,6 +84,7 @@ VMS_DIR: Final = "vms"
 NOTICEBOARD_FILE: Final = "view.json"
 NOTICEBOARD_DIR: Final = "view"
 ENV_FILE_FLAG: Final = "--env-file"
+FORCE_FLAG: Final = "--force"
 POLICY_DIR: Final = "policy"
 TUNE_DIR: Final = "tune"
 ALLOW: Final = "allow"
@@ -204,6 +207,9 @@ def _policy(state: Path, rest: list[str]) -> int:
     name = _one(flags, "--sandbox")
 
     if action == "rm":
+        if FORCE_FLAG not in flags:
+            raise Refused("stdin is not a terminal; pass --force to skip the confirmation")
+
         return _policy_remove(state, name, _one(flags, "--resource"))
 
     if not _vm_file(state, name).exists():

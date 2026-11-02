@@ -222,7 +222,16 @@ def test_sbx_rm_leaves_the_policy_rows(programs: Tree, supervisor: Supervisor) -
     assert A_HOST in sbx_rows(programs, BOX, ALLOW)
 
     row = _sbx(
-        programs, supervisor, "policy", "rm", "network", "--sandbox", BOX, "--resource", A_HOST
+        programs,
+        supervisor,
+        "policy",
+        "rm",
+        "network",
+        "--force",
+        "--sandbox",
+        BOX,
+        "--resource",
+        A_HOST,
     )
 
     assert row.exit_code == 0, row.stderr
@@ -387,8 +396,8 @@ def test_sbx_policy_rm_leaves_the_allow_row_of_the_kit(
     """No command removes the allow row of the kit. A removed deny row opens the host again."""
     _create(programs, supervisor, deny=KIT_HOST)
 
-    removed = _policy(programs, supervisor, "rm", "--resource", KIT_HOST)
-    again = _policy(programs, supervisor, "rm", "--resource", KIT_HOST)
+    removed = _policy(programs, supervisor, "rm", "--force", "--resource", KIT_HOST)
+    again = _policy(programs, supervisor, "rm", "--force", "--resource", KIT_HOST)
     check = _policy(programs, supervisor, "check", KIT_HOST)
 
     assert removed.exit_code == 0, removed.stderr
@@ -403,8 +412,19 @@ def test_sbx_policy_rm_refuses_a_row_that_does_not_exist(
 ) -> None:
     _create(programs, supervisor)
 
-    assert _policy(programs, supervisor, "rm", "--resource", A_HOST).exit_code != 0
+    assert _policy(programs, supervisor, "rm", "--force", "--resource", A_HOST).exit_code != 0
     assert sbx_rows(programs, BOX, ALLOW) == [KIT_HOST]
+
+
+def test_sbx_policy_rm_without_force_is_refused(programs: Tree, supervisor: Supervisor) -> None:
+    """From v0.48, `sbx` asks before a removal. With no terminal it refuses it."""
+    _create(programs, supervisor, deny=KIT_HOST)
+
+    done = _policy(programs, supervisor, "rm", "--resource", KIT_HOST)
+
+    assert done.exit_code != 0
+    assert "--force" in done.stderr
+    assert sbx_rows(programs, BOX, DENY) == [KIT_HOST]
 
 
 def test_sbx_policy_refuses_a_sandbox_that_no_create_made(

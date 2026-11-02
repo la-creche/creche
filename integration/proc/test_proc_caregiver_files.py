@@ -359,7 +359,7 @@ def test_an_egress_edit_lands_on_the_running_sandbox(caregiver_prepared: Caregiv
     )
     commands = stack.sbx_commands()
     removed = commands.index(
-        ("policy", "rm", "network", "--sandbox", SANDBOX, "--resource", FIRST_HOST)
+        ("policy", "rm", "network", "--force", "--sandbox", SANDBOX, "--resource", FIRST_HOST)
     )
     added = commands.index(("policy", "allow", "network", "--sandbox", SANDBOX, SECOND_HOST))
 
