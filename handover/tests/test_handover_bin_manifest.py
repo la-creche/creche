@@ -163,8 +163,10 @@ def test_the_output_field_is_still_refused() -> None:
     assert "unknown field: output" in caught.value.detail
 
 
-def test_the_kinds_are_the_four_old_ones_and_binary() -> None:
-    assert {str(one) for one in Kind} == {"venv", "binary", "oci-image", "compose", "data"}
+def test_the_kinds_are_the_old_ones_binary_and_units() -> None:
+    expected = {"venv", "binary", "oci-image", "compose", "data", "units"}
+
+    assert {str(one) for one in Kind} == expected
 
 
 def test_only_chaperone_is_binary() -> None:

@@ -417,9 +417,10 @@ REQUEST_FIELDS: Final[dict[str, object]] = {
 _REQUEST_TEXT: Final = json.dumps(REQUEST_FIELDS)
 
 #: As many names as a request may hold (`MAX_REQUEST_COMPONENTS`): every
-#: releasable component, then `registry-data`. The parser reads the count
-#: and the shape of each name, and no catalog.
-_EIGHT: Final = {name: "latest" for name in (*catalog.releasable_names(), "registry-data")}
+#: releasable component, then `registry-data`, cut to the cap. The parser
+#: reads the count and the shape of each name, and no catalog.
+_AT_CAP: Final = (*catalog.releasable_names(), "registry-data")[: catalog.MAX_REQUEST_COMPONENTS]
+_EIGHT: Final = {name: "latest" for name in _AT_CAP}
 _NINE: Final = {**_EIGHT, "one-more": "latest"}
 
 

@@ -130,6 +130,7 @@ def test_only_a_binary_component_ships_an_archive() -> None:
         Kind.OCI_IMAGE: False,
         Kind.COMPOSE: False,
         Kind.DATA: False,
+        Kind.UNITS: False,
     }
 
 

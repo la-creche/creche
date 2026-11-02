@@ -23,7 +23,7 @@ from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path
 
-from .catalog import ARRIVING, CATALOG, CATALOG_BY_NAME, RETIRING, Releases
+from .catalog import ARRIVING, ARRIVING_REPOS, CATALOG, CATALOG_BY_NAME, RETIRING, Releases
 from .errors import Refusal, RefusalCode, safe_token
 from .manifest import (
     EITHER_MANIFEST_NAME,
@@ -287,10 +287,16 @@ def discover(roots: list[Path]) -> ManifestSet:
 
             found[manifest.name] = entry
 
-    absent = (row.name for row in CATALOG if row.name not in found)
-    missing = tuple(name for name in absent if name not in RETIRING | ARRIVING)
+    absent = (row for row in CATALOG if row.name not in found)
+    missing = tuple(row.name for row in absent if not _may_be_absent(row.name))
 
     return ManifestSet(found=found, missing=missing)
+
+
+def _may_be_absent(name: str) -> bool:
+    """A retiring or arriving name, or a component of a repository that a
+    host may not have cloned yet (`catalog.ARRIVING_REPOS`)."""
+    return name in RETIRING | ARRIVING or CATALOG_BY_NAME[name].repo in ARRIVING_REPOS
 
 
 def require_complete(manifests: ManifestSet) -> None:

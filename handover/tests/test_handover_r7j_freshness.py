@@ -23,7 +23,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from handover.catalog import CATALOG, Repo
+from handover.catalog import ARRIVING_REPOS, CATALOG, Repo
 from handover.corpus import (
     FETCH_NOTE,
     CorpusReport,
@@ -334,7 +334,8 @@ def _repo_roots(tmp_path: Path, *, omit: str) -> tuple[Path, Path, Path, Path]:
     `registry-data` and `chaperone` each declare `path: "."` (repo root), so
     writing two under one directory makes the second overwrite the first's
     `component.yaml`. `omit` names the one component left unwritten,
-    everywhere."""
+    everywhere. A host has no clone of a repository in `ARRIVING_REPOS`
+    yet, so no root holds its components."""
     control = tmp_path / "creche"
     mcp = tmp_path / "mcp"
     registry = tmp_path / "registry"
@@ -346,7 +347,7 @@ def _repo_roots(tmp_path: Path, *, omit: str) -> tuple[Path, Path, Path, Path]:
         Repo.CHAPERONE: chaperone,
     }
     for row in CATALOG:
-        if row.name == omit:
+        if row.name == omit or row.repo in ARRIVING_REPOS:
             continue
 
         write_manifest(homes[row.repo], row.name, manifest_text(row.name))
