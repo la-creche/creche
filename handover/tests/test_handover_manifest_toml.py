@@ -115,6 +115,7 @@ ARGUMENT_SETS: tuple[tuple[str, dict[str, str]], ...] = (
     ("chaperone", {"provides": provides_entry("pep-grant", 2, 1)}),
     ("chaperone", {"provides": provides_entry("pep-grant", 3, 0)}),
     ("handover", {}),
+    ("host", {}),
     ("mcp-servers", {}),
     ("noticeboard", {}),
     ("noticeboard", {"depends_on": "attendance"}),

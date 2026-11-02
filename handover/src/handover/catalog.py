@@ -21,6 +21,7 @@ class Repo(StrEnum):
     MCP = "mcp"
     REGISTRY = "registry"
     CHAPERONE = "chaperone"
+    CRECHE_RELEASE = "creche-release"
 
 
 class Kind(StrEnum):
@@ -35,6 +36,10 @@ class Kind(StrEnum):
     OCI_IMAGE = "oci-image"
     COMPOSE = "compose"
     DATA = "data"
+    #: A tree of unit files and the scripts they run (contract 06 §8.3).
+    #: It has no `build` and names no `unit`. Root copies the fetched tree,
+    #: and step 9 links each unit file of the live tree into place.
+    UNITS = "units"
 
 
 class RunsAs(StrEnum):
@@ -112,6 +117,9 @@ class CatalogRow:
 #: the image.
 #: `test_each_component_bundles_what_its_build_installs` holds it equal.
 #:
+#: `host` is the whole creche-release repository: the units that belong to
+#: no component, and the scripts they run (contract 06 §1 rule 12).
+#:
 #: `chaperone` is the Rust program of the chaperone repository, and its
 #: manifest is at the root of that repository. Its row replaced the row of
 #: the Python `chaperone` of this repository.
@@ -138,6 +146,7 @@ CATALOG: tuple[CatalogRow, ...] = (
     CatalogRow("mcp-servers", Repo.MCP, ".", Kind.VENV, Releases.YES),
     CatalogRow("handover", Repo.CRECHE, "handover", Kind.VENV, Releases.YES),
     CatalogRow("registry-data", Repo.REGISTRY, ".", Kind.DATA, Releases.NO),
+    CatalogRow("host", Repo.CRECHE_RELEASE, ".", Kind.UNITS, Releases.YES),
 )
 
 CATALOG_BY_NAME: dict[str, CatalogRow] = {row.name: row for row in CATALOG}
@@ -212,6 +221,14 @@ RETIRING: frozenset[str] = frozenset()
 #: tree to release yet. A name leaves this set in the commit that adds its
 #: directory. Empty now: `handover` arrived with its directory.
 ARRIVING: frozenset[str] = frozenset()
+
+#: Repositories that a host may not have cloned yet. Discovery tolerates the
+#: absent manifest of each component of such a repository, as it does for a
+#: name in `ARRIVING`. The allocator tags each one as usual: the repository
+#: holds the tree, so a tag is a version somebody can release. A repository
+#: leaves this set in the commit that makes its clone on the host a
+#: requirement.
+ARRIVING_REPOS: frozenset[Repo] = frozenset({Repo.CRECHE_RELEASE})
 
 #: Contract 06 §3's provider column. Rule C3 refuses any other claimant.
 CONTRACT_OWNER: dict[ContractId, str] = {

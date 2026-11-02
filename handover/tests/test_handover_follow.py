@@ -19,7 +19,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
-from handover.catalog import CATALOG_BY_NAME, RETIRING, Repo, releasable_names
+from handover.catalog import (
+    ARRIVING_REPOS,
+    CATALOG,
+    CATALOG_BY_NAME,
+    RETIRING,
+    Repo,
+    releasable_names,
+)
 from handover.corpus import CorpusReport
 from handover.executor.approval import Verdict, not_granted
 from handover.executor.ledger import Entry, Outcome
@@ -647,11 +654,14 @@ def test_the_service_runs_follow_out_of_the_handover_tree() -> None:
 
 def test_the_service_follows_every_component_a_release_can_deploy() -> None:
     """Every releasable component of the catalog, less the one on its way
-    out. A name that is absent here waits for a typed command for ever."""
+    out and each one of a repository that the host has not cloned yet. A
+    name that is absent here waits for a typed command for ever."""
     argv = _unit_value("creche-follow.service", "ExecStart").split()
     followed = cli.build_parser().parse_args(argv[1:]).components
 
-    assert set(followed) == set(releasable_names()) - RETIRING
+    uncloned = {row.name for row in CATALOG if row.repo in ARRIVING_REPOS}
+
+    assert set(followed) == set(releasable_names()) - RETIRING - uncloned
     assert len(followed) == len(set(followed))
 
 

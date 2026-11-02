@@ -416,6 +416,23 @@ steps:
    repository has another name on GitHub.
 6. Release `handover` alone ("Binary builds", rule 10).
 
+## The host component of creche-release
+
+The catalog row of `host` is `CatalogRow("host", Repo.CRECHE_RELEASE, ".",
+Kind.UNITS, Releases.YES)`. It is the whole creche-release repository: the
+units that belong to no component, and the scripts that they run (contract
+06 §1 rule 12).
+
+1. `host` is the one `kind: units` component. The reader refuses a `units`
+   manifest that names a `unit` or that has a `build` (contract 06 §8.3).
+2. `tests/test_handover_host_component.py` holds a copy of the manifest of
+   creche-release. Change the copy when that manifest changes.
+3. A host can have no clone of creche-release yet. `catalog.ARRIVING_REPOS`
+   holds `Repo.CRECHE_RELEASE`, so discovery accepts a set of roots with no
+   `host` manifest. The allocator still tags `host` in creche-release.
+4. The executor does not install a `units` tree yet. Step 8 of a `host`
+   release stages no tree and fails, and the host does not change.
+
 ## The server file (`mcpserver.py`)
 
 Root reads each server file again at an `mcp-servers` release. It trusts no
@@ -460,7 +477,7 @@ uv run handover request attendance chaperone@2.1.0 --root . --dry-run
 uv run handover follow attendance chaperone --dry-run   # what the timer would do
 ```
 
-`--partial` is what this repository needs: three of the catalog's components
+`--partial` is what this repository needs: four of the catalog's components
 live in other repositories. Exit codes: 0 pass, 1 refusal, 2 a usage mistake.
 
 The follower runs as the operator from `creche-follow.timer`, out of the

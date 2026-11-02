@@ -111,6 +111,10 @@ BUILD_FIELD = "build"
 #: key is the TOML form of `unit: null`.
 UNIT_FIELD = "unit"
 
+#: The two refusals of a `kind: units` manifest (contract 06 §8.3).
+UNITS_NAME_NO_UNIT = "a units component names no unit"
+UNITS_HAVE_NO_BUILD = "a units component has no build"
+
 #: Contract 06 §8's field table, exactly. The key set is closed: an unknown
 #: key is a refusal, not a warning.
 REQUIRED_FIELDS = frozenset(
@@ -522,6 +526,21 @@ def _read_release(reader: _Reader, markup: Markup) -> Releases:
     return reader.whole("release", Releases)
 
 
+def _check_units(
+    reader: _Reader, kind: Kind, unit: str | None, build: tuple[tuple[str, ...], ...]
+) -> None:
+    """Contract 06 §8.3: a `kind: units` component has no `build` and names
+    no `unit`. Step 9 links the unit files of its tree instead."""
+    if kind is not Kind.UNITS:
+        return
+
+    if unit is not None:
+        raise reader.refuse(UNITS_NAME_NO_UNIT)
+
+    if build:
+        raise reader.refuse(UNITS_HAVE_NO_BUILD)
+
+
 def _check_manifest_version(value: str, subject: str) -> str:
     """This contract's major, at or below its minor. §3.1's `provides` rule."""
     matched = CONTRACT_VERSION_RE.fullmatch(value)
@@ -589,6 +608,10 @@ def parse_manifest(text: str, subject: str, markup: Markup) -> ComponentManifest
     repo = reader.whole("repo", Repo)
     path = check_repo_path(reader.text("path", ANY_TEXT_RE), subject)
     kind = reader.whole("kind", Kind)
+    unit = _read_unit(reader)
+    runs_as = _read_account(reader, "runs_as", RunsAs)
+    build = _read_build(reader, kind)
+    _check_units(reader, kind, unit, build)
 
     return ComponentManifest(
         manifest_version=manifest_version,
@@ -596,9 +619,9 @@ def parse_manifest(text: str, subject: str, markup: Markup) -> ComponentManifest
         repo=repo,
         path=path,
         kind=kind,
-        unit=_read_unit(reader),
-        runs_as=_read_account(reader, "runs_as", RunsAs),
-        build=_read_build(reader, kind),
+        unit=unit,
+        runs_as=runs_as,
+        build=build,
         install=_read_install(reader, subject),
         provides=tuple(Provided(item, major, minor) for item, major, minor in provides),
         requires=tuple(Required(item, major, floor) for item, major, floor in requires),
