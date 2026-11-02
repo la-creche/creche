@@ -141,6 +141,17 @@ PLAYPEN_RUN = (
     "docker build --platform linux/amd64 -f playpen/Dockerfile --target agent-sandbox-python ."
 )
 
+#: The job that checks the Cargo workspace, and the three checks it runs in
+#: rust/, in this order. `--locked`: a build that would change
+#: rust/Cargo.lock fails.
+RUST_JOB = "rust"
+RUST_DIR = "rust"
+RUST_RUNS = [
+    "cargo fmt --check",
+    "cargo clippy --all-targets --locked -- -D warnings",
+    "cargo test --locked",
+]
+
 #: The step of that job that a change with no file of the proof skips. Only
 #: the answer `false` skips it. An answer that is missing, or that a rename
 #: lost, runs the proof.
@@ -418,6 +429,7 @@ def test_the_docs_scope_runs_no_shard_and_no_node_job(
         "proc",
         SUITES_JOB,
         PLAYPEN_JOB,
+        RUST_JOB,
         SYSTEMD_JOB,
     }
     assert only_code == set(DOCS), "the verdict table of this file names other jobs"
@@ -444,6 +456,7 @@ def test_the_release_runs_the_gates_test_jobs() -> None:
         "proc",
         SUITES_JOB,
         PLAYPEN_JOB,
+        RUST_JOB,
         SYSTEMD_JOB,
     ):
         assert RELEASE_JOBS[name] == JOBS[name], f"release.yml's {name} job is not gate.yml's"
@@ -551,6 +564,24 @@ def test_the_playpen_job_builds_the_published_image(
     assert checkout["uses"].startswith("actions/checkout@")
     assert checkout["with"] == {"fetch-depth": 0}
     assert build == {"run": PLAYPEN_RUN}
+
+
+@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
+def test_the_rust_job_formats_lints_and_tests_the_workspace(
+    jobs: dict[str, dict[str, Any]], last: str
+) -> None:
+    """The toolchain step installs what rust/rust-toolchain.toml names. The
+    three checks then run in rust/, and a lint warning fails the job."""
+    job = jobs[RUST_JOB]
+    checkout, toolchain, *checks = job["steps"]
+
+    assert job["needs"] == "scope"
+    assert job["if"] == ONLY_CODE
+    assert job["env"] == {"CARGO_INCREMENTAL": 0}
+    assert checkout["with"] == {"fetch-depth": 0}
+    assert toolchain["working-directory"] == RUST_DIR
+    assert "rustup toolchain install --no-self-update" in toolchain["run"]
+    assert checks == [{"run": run, "working-directory": RUST_DIR} for run in RUST_RUNS]
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
@@ -975,6 +1006,7 @@ DOCS = {
     "proc": "skipped",
     SUITES_JOB: "skipped",
     PLAYPEN_JOB: "skipped",
+    RUST_JOB: "skipped",
     SYSTEMD_JOB: "skipped",
 }
 
