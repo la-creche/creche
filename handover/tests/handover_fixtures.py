@@ -30,6 +30,26 @@ _INSTALL_ROOT = "/opt/components"
 _RELEASE_WORDS = {"yes": "true", "no": "false"}
 
 
+#: The text of `component.toml` at the root of the creche-release
+#: repository. Change this copy when that manifest changes.
+HOST_MANIFEST = """\
+manifest_version = "0.21"
+name = "host"
+repo = "creche-release"
+path = "."
+kind = "units"
+runs_as = "none"
+install.to = "/opt/components/host"
+install.prev = "/opt/components/host.prev"
+verify.command = ["/opt/components/host/bin/host-verify", "/opt/components/host/units/user"]
+verify.user = "operator"
+verify.timeout_s = 60
+restore.mode = "automatic"
+restore.keep = 3
+release = true
+"""
+
+
 def manifest_text(
     name: str,
     *,
