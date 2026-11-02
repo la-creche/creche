@@ -111,7 +111,7 @@ from .quiet import WATCHED_SERVICES
 from .selfcontained import check_binary_tree, check_tree
 from .source import GIT, REFRESH_COMMAND, git_env, git_ground, require_trusted
 from .spool import VerifyHook
-from .units import UnitFile
+from .units import Change, Scope, UnitFile, UnitsDiff, is_stoppable, is_timer
 from .unpack import UnpackRefused, extract_tar
 
 if TYPE_CHECKING:
@@ -155,6 +155,20 @@ PROGRAM_KINDS: Final = frozenset({Kind.VENV, Kind.BINARY})
 
 SYSTEMCTL: Final = "/usr/bin/systemctl"
 INSTALL: Final = "/usr/bin/install"
+
+#: Contract 06 §8.3 item 2: each unit file of a `units` tree is a link.
+#: `-s` makes a link, `-f` replaces a file of the same bytes (item 3), and
+#: `-T` makes the link at the place itself, never inside a directory there.
+LN: Final = "/usr/bin/ln"
+LINK_FLAGS: Final = "-sfT"
+
+#: Removes a link of §8.3 item 4. `-f` so a link that is already gone is no
+#: failure.
+RM: Final = "/usr/bin/rm"
+
+#: The mode of a drop-in directory that root makes in the system unit
+#: directory.
+DROP_IN_DIR_MODE: Final = "0755"
 
 #: Absolute, like `GIT` and `SYSTEMCTL`: a child's `PATH` is built by
 #: `host.child_env` and is not promised to hold whatever `uv` the caller
@@ -1039,6 +1053,116 @@ class Installer:
             )
 
         return Adopt.SAME_BYTES
+
+    def retire_units(self, gone: tuple[UnitFile, ...], live: Path) -> None:
+        """Contract 06 §8.3 item 4, its first half, BEFORE the swap: stop and
+        disable each unit whose file goes. Before, because systemd disables
+        a unit by its file, and after the swap the link names no file.
+
+        Only a unit whose place is root's link to `live` (`<install.to>`)
+        is stopped. A file root did not link stays as it is, and so does
+        what it runs. A template and a drop-in have nothing to stop.
+        """
+        for one in gone:
+            if is_stoppable(one) and self._is_our_link(one, live):
+                self._must(
+                    [SYSTEMCTL, "--user", "disable", "--now", one.unit],
+                    As.OPERATOR,
+                    RESTART_TIMEOUT_S,
+                    f"cannot stop and disable {one.unit}",
+                )
+
+    def link_units(self, component: str, diff: UnitsDiff, live: Path) -> None:
+        """Contract 06 §8.3 items 2 to 6, AFTER the swap. `live` is
+        `<install.to>`, which now holds the tree of `diff.now`.
+
+        1. Remove root's link of each file that went (item 4).
+        2. Check the place of each file again, as step 8 did (item 3). A
+           place that changed since step 8 fails the switch, so step 10
+           restores. It is a failure and not a refusal: the swap is done.
+        3. Link each file whose place is not already the link (items 2
+           and 3). A user file is linked as the operator, in their own unit
+           directory. A drop-in is linked as root.
+        4. Reload both managers (item 5).
+        5. Enable and start each new timer. Restart each changed timer
+           (item 6).
+
+        CONTRACT-QUESTION: item 6 restarts a unit whose drop-in was added,
+        changed or removed, and §2.5's `restarts` row names it before the
+        tap. This release does neither. A drop-in change reaches its unit at
+        the next restart of that unit. The other reading costs the row in
+        the summary that the tap shows.
+        """
+        for one in diff.gone:
+            if self._is_our_link(one, live):
+                self._must(
+                    [RM, "-f", "--", str(self._place(one))],
+                    self._identity_of(one),
+                    SHORT_TIMEOUT_S,
+                    f"cannot unlink {one.relative}",
+                )
+
+        files = tuple(one for one, _ in diff.now)
+        try:
+            places = self.check_adopt(component, files, live, live)
+        except Refusal as refusal:
+            raise StepFailed(f"{component}: {refusal.detail}") from None
+
+        for one, place in zip(files, places, strict=True):
+            if place is not Adopt.LINKED:
+                self._link(one, live)
+
+        self._must([SYSTEMCTL, "daemon-reload"], As.ROOT, SHORT_TIMEOUT_S, "daemon-reload")
+        self._must(
+            [SYSTEMCTL, "--user", "daemon-reload"],
+            As.OPERATOR,
+            SHORT_TIMEOUT_S,
+            "daemon-reload of the user manager",
+        )
+        for one, change in diff.now:
+            if is_timer(one) and change is not Change.SAME:
+                verb = ["enable", "--now"] if change is Change.NEW else ["restart"]
+                self._must(
+                    [SYSTEMCTL, "--user", *verb, one.unit],
+                    As.OPERATOR,
+                    RESTART_TIMEOUT_S,
+                    f"cannot start {one.unit}",
+                )
+
+    def _link(self, one: UnitFile, live: Path) -> None:
+        place = self._place(one)
+        identity = self._identity_of(one)
+        if one.scope is Scope.SYSTEM:
+            self._must(
+                [INSTALL, "-d", "-m", DROP_IN_DIR_MODE, str(place.parent)],
+                identity,
+                SHORT_TIMEOUT_S,
+                f"cannot make the directory of {one.relative}",
+            )
+
+        self._must(
+            [LN, LINK_FLAGS, str(live / one.relative), str(place)],
+            identity,
+            SHORT_TIMEOUT_S,
+            f"cannot link {one.relative}",
+        )
+
+    def _place(self, one: UnitFile) -> Path:
+        return one.installed(self.host.user_unit_dir, self.host.system_unit_dir)
+
+    def _identity_of(self, one: UnitFile) -> As:
+        """Root writes in the system unit directory, the operator in their
+        own (rule 8)."""
+        return As.ROOT if one.scope is Scope.SYSTEM else As.OPERATOR
+
+    def _is_our_link(self, one: UnitFile, live: Path) -> bool:
+        """The place of `one` is root's link to the file in `live`. Read
+        with `lstat` and `readlink`: no link is followed."""
+        place = self._place(one)
+        try:
+            return place.is_symlink() and os.readlink(place) == str(live / one.relative)
+        except OSError:
+            return False
 
     def unit_by_hand(self, kept: Path) -> str:
         """What `manual` says when `restore_unit` could not: the same

@@ -444,8 +444,18 @@ units that belong to no component, and the scripts that they run (contract
    file in the live tree, or a regular file with the same bytes. Anything
    else is refused with code `unit`, so root never overwrites a unit that
    nobody put in creche-release.
-7. Step 9 does not link the unit files yet. A `host` release swaps the tree
-   and runs the verify hook. No unit changes.
+7. Step 9 links the unit files (contract 06 §8.3 items 2 to 6). Before the
+   swap, root compares the live tree with the staged tree
+   (`units.units_diff`). It stops and disables each user unit whose file
+   goes, when the place of that file is root's own link. After the swap,
+   root removes those links, checks each place again, and links each file
+   to `<install.to>/units/...`. The operator writes in their own unit
+   directory, and root writes the drop-ins. Then root reloads both
+   managers, enables and starts each new timer, and restarts each changed
+   timer. A template unit is linked, and never started or stopped.
+8. A restore runs the same steps again, from the failed tree to the
+   previous tree. With no previous tree, the restore stops and no unit
+   moves.
 
 ## The server file (`mcpserver.py`)
 
@@ -694,6 +704,12 @@ that wants a refusal changes one field.
   the swap. Another component of the set can be built by then. It refuses
   every link that does not name the file in the live tree, also a link to
   another file of the `host` tree (`executor/install.py`).
+- Contract 06 §8.3 item 6 restarts a unit whose drop-in was added, changed
+  or removed, and §2.5's `restarts` row names that unit before the tap. A
+  `host` release does neither. A drop-in change reaches its unit at the next
+  restart of that unit (`executor/install.py`).
+- A repair after a crash in the switch of a `host` tree puts the tree back
+  and does not link the unit files again (`executor/steps.py`).
 - Contract 06 §8.2 and PEP 610 name no size for a `direct_url.json` record.
   Root reads 64 KiB of such a record at most. A larger record is a record
   that root cannot read, and the walk reports it as a fault
