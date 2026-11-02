@@ -7,6 +7,9 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(test)]
+mod schema;
+
 /// The length of a session id: 32 hex digits and 4 hyphens.
 const SESSION_ID_LEN: usize = 36;
 
