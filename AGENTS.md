@@ -16,6 +16,8 @@ until the prose is fixed. This is the most important rule in this file.
 1. Run `git config core.hooksPath githooks` once per clone.
 2. Run `uv sync` once.
 3. For `agent/` and `facade/`, run `pnpm install` in that directory.
+4. For `rust/`, run cargo in that directory. rustup installs the toolchain
+   that `rust/rust-toolchain.toml` names.
 
 ## Every change
 

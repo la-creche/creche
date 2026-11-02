@@ -12,6 +12,7 @@
 #           │                      pytest run of its own
 #           ├── playpen-image
 #           │              code   the full Python flavor image
+#           ├── rust        code   cargo fmt, clippy and test of rust/
 #           └── systemd-proof
 #                           code   the restart rule of the daemon units, on
 #                                  the systemd of the runner, for a push
@@ -52,8 +53,8 @@
 # A docs-only push onto a commit whose own run passed runs only the tests
 # marked `docs`, as gate.yml does (bin/lib/docsrule.sh). The tag step still
 # runs.
-# The `tests`, `agent`, `facade`, `proc`, `suites`, `playpen-image` and `systemd-proof`
-# jobs are gate.yml's, and bin/tests/test_gate_workflow.py
+# The `tests`, `agent`, `facade`, `proc`, `suites`, `playpen-image`, `rust`
+# and `systemd-proof` jobs are gate.yml's, and bin/tests/test_gate_workflow.py
 # holds the two files to the same shard command — diff the two when changing
 # either.
 #
@@ -390,6 +391,44 @@ jobs:
 
       - run: docker build --platform linux/amd64 -f playpen/Dockerfile --target agent-sandbox-python .
 
+  # The Cargo workspace under rust/ (rust/Cargo.toml): the format check,
+  # the lint gate and the tests. The runner has rustup, so no action
+  # installs the toolchain. `rustup toolchain install` with no name installs
+  # what rust/rust-toolchain.toml names, with rustfmt and clippy.
+  #
+  # `--locked`: a build that would change rust/Cargo.lock fails.
+  #
+  # The time limit: the workspace builds in seconds today, and a job has 6
+  # hours by default.
+  rust:
+    needs: scope
+    if: needs.scope.outputs.scope == 'code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      # A CI build starts from nothing, never from the last build of the
+      # same tree, so the incremental state is only weight.
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: toolchain
+        working-directory: rust
+        run: |
+          rustup toolchain install --no-self-update
+          cargo --version
+
+      - run: cargo fmt --check
+        working-directory: rust
+
+      - run: cargo clippy --all-targets --locked -- -D warnings
+        working-directory: rust
+
+      - run: cargo test --locked
+        working-directory: rust
+
   # The restart rule of the daemon units: bin/systemd-proof.sh. A unit with
   # `RestartPreventExitStatus=78` must stay stopped after exit status 78, and
   # only systemd can prove that. The script makes three units of its own on
@@ -424,11 +463,11 @@ jobs:
         if: needs.scope.outputs.systemd != 'false'
 
   # `always()`: on a docs push `tests`, `agent`, `facade`, `proc`, `suites`,
-  # `playpen-image` and `systemd-proof` are skipped. A job that needs one is
+  # `playpen-image`, `rust` and `systemd-proof` are skipped. A job that needs one is
   # skipped by default. The verdict step is
   # what holds the tags back when a job failed.
   release:
-    needs: [scope, lint, tests, agent, facade, proc, suites, playpen-image, systemd-proof]
+    needs: [scope, lint, tests, agent, facade, proc, suites, playpen-image, rust, systemd-proof]
     if: always()
     runs-on: ubuntu-24.04
     permissions:

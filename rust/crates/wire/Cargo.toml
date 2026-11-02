@@ -1,0 +1,11 @@
+# The wire types of the VM owner, defined once (decision CH9). The Python
+# clients get generated copies of these types in a later change.
+[package]
+name = "creche-wire"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

@@ -1,7 +1,7 @@
 # PR gate: lint, the full suite, the agent module's vitest suite, the ACP
 # facade's vitest suite, the process-level suite, the two old integration
-# suites and the systemd proof, as jobs that run at once on separate
-# runners.
+# suites, the Rust checks and the systemd proof, as jobs that run at once on
+# separate runners.
 #
 #   scope ──┬── tests (1..N)   code   the full suite, one shard per job
 #           ├── agent       code   the agent module's suite and types
@@ -12,6 +12,7 @@
 #           │                      pytest run of its own
 #           ├── playpen-image
 #           │              code   the full Python flavor image
+#           ├── rust        code   cargo fmt, clippy and test of rust/
 #           └── systemd-proof
 #                           code   the restart rule of the daemon units, on
 #                                  the systemd of the runner, for a change
@@ -34,8 +35,8 @@
 #
 # A PR of nothing but docs runs `bin/quality-gate.sh --docs` in the lint job,
 # lint and only the tests that read a doc: no shard, no agent job, no
-# facade job, no proc job, no suites job and no systemd-proof job
-# (bin/lib/docsrule.sh, the rule the hook reads too).
+# facade job, no proc job, no suites job, no rust job and no systemd-proof
+# job (bin/lib/docsrule.sh, the rule the hook reads too).
 #
 # Every shard runs the whole of pyproject.toml's `testpaths` with
 # `--shard K/N` (conftest.py): a test's own id puts it in exactly one shard.
@@ -44,8 +45,8 @@
 #
 # Actions are SHA-pinned with the tag as a comment, as agent-registry's
 # validate.yml does.
-# release.yml runs the same `tests`, `agent`, `facade`, `proc`, `suites`
-# and `systemd-proof` jobs after the merge.
+# release.yml runs the same `tests`, `agent`, `facade`, `proc`, `suites`,
+# `rust` and `systemd-proof` jobs after the merge.
 # agent-mcp carries its own gate.yml, with no JS steps. Diff the files when
 # changing one.
 name: gate
@@ -340,6 +341,44 @@ jobs:
 
       - run: docker build --platform linux/amd64 -f playpen/Dockerfile --target agent-sandbox-python .
 
+  # The Cargo workspace under rust/ (rust/Cargo.toml): the format check,
+  # the lint gate and the tests. The runner has rustup, so no action
+  # installs the toolchain. `rustup toolchain install` with no name installs
+  # what rust/rust-toolchain.toml names, with rustfmt and clippy.
+  #
+  # `--locked`: a build that would change rust/Cargo.lock fails.
+  #
+  # The time limit: the workspace builds in seconds today, and a job has 6
+  # hours by default.
+  rust:
+    needs: scope
+    if: needs.scope.outputs.scope == 'code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      # A CI build starts from nothing, never from the last build of the
+      # same tree, so the incremental state is only weight.
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: toolchain
+        working-directory: rust
+        run: |
+          rustup toolchain install --no-self-update
+          cargo --version
+
+      - run: cargo fmt --check
+        working-directory: rust
+
+      - run: cargo clippy --all-targets --locked -- -D warnings
+        working-directory: rust
+
+      - run: cargo test --locked
+        working-directory: rust
+
   # The restart rule of the daemon units: bin/systemd-proof.sh. A unit with
   # `RestartPreventExitStatus=78` must stay stopped after exit status 78, and
   # only systemd can prove that. The script makes three units of its own on
@@ -376,7 +415,7 @@ jobs:
   # The one check a session reads. `always()`: a job that needs a failed job
   # is skipped by default, and a skipped `gate` would not read as red.
   gate:
-    needs: [scope, lint, tests, agent, facade, proc, suites, playpen-image, systemd-proof]
+    needs: [scope, lint, tests, agent, facade, proc, suites, playpen-image, rust, systemd-proof]
     if: always()
     runs-on: ubuntu-24.04
     steps:
