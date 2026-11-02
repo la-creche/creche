@@ -97,7 +97,6 @@ def test_create_issues_the_proven_sbx_command(fake_run: FakeProcess, spec: Sandb
             "8g",
             "--deny-network",
             "openrouter.ai",
-            "-q",
         ]
     ]
 
@@ -156,6 +155,19 @@ def test_create_failure_raises_with_stderr(fake_run: FakeProcess, spec: SandboxS
         subprocess.CompletedProcess([], 1, stdout="", stderr="template pull timed out"),
     )
     with pytest.raises(DriverError, match="template pull timed out"):
+        SbxDriver().create(spec)
+
+
+def test_create_failure_keeps_the_error_after_progress_text(
+    fake_run: FakeProcess, spec: SandboxSpec
+) -> None:
+    """Without a quiet flag, sbx can write progress before the error."""
+    progress = "pulling layer\n" * 100
+    fake_run.answer(
+        ["sbx", "create"],
+        subprocess.CompletedProcess([], 1, stdout="", stderr=progress + "user cancelled operation"),
+    )
+    with pytest.raises(DriverError, match="user cancelled operation"):
         SbxDriver().create(spec)
 
 

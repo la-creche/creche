@@ -53,7 +53,8 @@ if ! sbx ls 2>/dev/null | grep -q "^$SBX "; then
   # scope is READ-ONLY to the library; only the external index dir is rw.
   # sbx requires the PRIMARY (first) workspace to be read/write, so the
   # index dir leads and the scope rides second with :ro.
-  sbx create shell "$IDX_DIR" "$SCOPE_DIR:ro" -t "$IMG" --name "$SBX" -m 1g --cpus 2 -q
+  # No quiet flag: sbx v0.43 knows only -q, v0.48 and later only --no-progress.
+  sbx create shell "$IDX_DIR" "$SCOPE_DIR:ro" -t "$IMG" --name "$SBX" -m 1g --cpus 2
 fi
 sbx policy allow network --sandbox "$SBX" "$LAN_ADDRESS:8085" >/dev/null 2>&1 || true
 # The built-in `shell` kit attaches its own `allow openrouter.ai` to every
