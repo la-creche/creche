@@ -453,9 +453,16 @@ units that belong to no component, and the scripts that they run (contract
    directory, and root writes the drop-ins. Then root reloads both
    managers, enables and starts each new timer, and restarts each changed
    timer. A template unit is linked, and never started or stopped.
+   Last, root restarts each installed unit whose drop-in was added, changed
+   or removed (contract 06 §8.3 item 6).
 8. A restore runs the same steps again, from the failed tree to the
    previous tree. With no previous tree, the restore stops and no unit
    moves.
+9. Step 5 names each unit whose drop-in the release changes in §2.5's
+   `restarts` row, as `host: <unit>, ...`, from the live tree and the
+   fetched tree. Step 9 compares its own list with that row before it moves
+   anything of `host`. A different list fails the switch. The requester's
+   preview says that root names these units.
 
 ## The server file (`mcpserver.py`)
 
@@ -704,10 +711,6 @@ that wants a refusal changes one field.
   the swap. Another component of the set can be built by then. It refuses
   every link that does not name the file in the live tree, also a link to
   another file of the `host` tree (`executor/install.py`).
-- Contract 06 §8.3 item 6 restarts a unit whose drop-in was added, changed
-  or removed, and §2.5's `restarts` row names that unit before the tap. A
-  `host` release does neither. A drop-in change reaches its unit at the next
-  restart of that unit (`executor/install.py`).
 - A repair after a crash in the switch of a `host` tree puts the tree back
   and does not link the unit files again (`executor/steps.py`).
 - Contract 06 §8.2 and PEP 610 name no size for a `direct_url.json` record.

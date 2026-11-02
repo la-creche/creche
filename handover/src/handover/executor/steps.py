@@ -102,7 +102,7 @@ from .quiet import NO_WINDOW, Busy, BusyNowFn, BusySeenFn, needs_window, wait_fo
 from .request import Kind as RequestKind
 from .request import Request
 from .spool import SelfNote, Spool, SwitchNote, VerifyHook, acquire, release_lock
-from .units import UnitsDiff, component_units, unit_files, units_diff
+from .units import UnitsDiff, component_units, drop_in_restarts, unit_files, units_diff
 
 #: The step detail of step 3: the checks of the code host, and those with
 #: the check of an archive, for a set that holds a `kind: binary`
@@ -182,6 +182,25 @@ def _no_answer() -> Busy:
 #: input. These two are the ends step 10 can reach without restoring.
 MANUAL_RESTORE: Final = "restore mode is manual"
 NO_PLAN: Final = "the switch ran with no resolved plan"
+
+#: §2.5's `restarts` row says `<component>: no unit` for a component that
+#: restarts nothing.
+NO_UNIT: Final = "no unit"
+
+#: Contract 06 §8.3 item 6: the drop-ins a `units` switch would restart
+#: units for are not the ones step 5 named before the tap.
+DROP_INS_MOVED: Final = "the drop-in restarts differ from the ones the tap approved"
+
+
+class Direction(StrEnum):
+    """Which way a swap of a `units` tree goes."""
+
+    #: Step 9: the staged tree goes live. Its drop-in restarts were approved.
+    SWITCH = "switch"
+    #: Step 10: the previous tree goes live again.
+    RESTORE = "restore"
+
+
 NOTHING_SWAPPED: Final = "the switch failed before it swapped anything"
 
 #: A step raises `Refusal` or `StepFailed` for each end it knows. This is
@@ -445,6 +464,10 @@ class Release:
         #: What step 8's compose dry run said each `kind: compose`
         #: component would recreate. Step 9 reads it for §2.8's window.
         self.recreates: dict[str, tuple[str, ...]] = {}
+        #: The units whose drop-in each `units` component changes, as step
+        #: 5 named them in §2.5's `restarts` row (contract 06 §8.3 item 6).
+        #: Step 9 restarts these and no other.
+        self.drop_in_restarts: dict[str, tuple[str, ...]] = {}
         #: `handover`'s switch, noted at step 9 and performed by the
         #: drain after the entry and the lock (contract 06 §1.1 rule 2).
         self.self_note: SelfNote | None = None
@@ -1030,7 +1053,7 @@ class Release:
         reverse — and the operator must see it before the tap, not after.
         """
         manual = [name for name in plan.order if not restorable(plan.manifest(name))]
-        units = [plan.manifest(name).unit or f"{name}: no unit" for name in plan.order]
+        units = [self._restarts_of(plan, name) for name in plan.order]
 
         return Summary(
             review=self._review(plan),
@@ -1041,6 +1064,26 @@ class Release:
             requested_by=self.request.requested_by,
             manifest=plan.hash().removeprefix("sha256:")[:12],
         )
+
+    def _restarts_of(self, plan: Plan, name: str) -> str:
+        """One component's part of §2.5's `restarts` row.
+
+        A `units` component names no unit of its own. Its part is each unit
+        whose drop-in the release adds, changes or removes (contract 06
+        §8.3 item 6): the live tree against the tree step 2 fetched. Step 9
+        restarts exactly these.
+        """
+        manifest = plan.manifest(name)
+        if manifest.kind is not Kind.UNITS:
+            return manifest.unit or f"{name}: {NO_UNIT}"
+
+        live = paths_of(manifest, self.wiring.host.install_roots).to
+        fetched = self.wiring.host.work_root / self.request.id / name
+        diff = units_diff(name, live if live.is_dir() else None, fetched)
+        restarts = drop_in_restarts(diff)
+        self.drop_in_restarts[name] = restarts
+
+        return f"{name}: {', '.join(restarts) or NO_UNIT}"
 
     def _review(self, plan: Plan) -> str:
         """§2.5's first field: the adversarial verdict, before anything
@@ -1252,7 +1295,7 @@ class Release:
         manifest = plan.manifest(name)
         paths = self._require_paths(name)
         self._wait_for_window(name)
-        units = self._retire_units(manifest, paths.to, paths.new)
+        units = self._retire_units(manifest, paths.to, paths.new, Direction.SWITCH)
         kept = self._keep_unit(name, manifest, paths.new)
         siblings = self._keep_siblings(name, manifest, paths.new)
 
@@ -1335,17 +1378,27 @@ class Release:
         self.deployed.append(name)
 
     def _retire_units(
-        self, manifest: ComponentManifest, live: Path, coming: Path
+        self, manifest: ComponentManifest, live: Path, coming: Path, direction: Direction
     ) -> UnitsDiff | None:
         """Contract 06 §8.3, the half that runs BEFORE a swap of a `units`
         tree: the diff of the live tree and the tree `coming` in, and the
         stop of each unit whose file goes (item 4). None for each other
         kind. `live` is `<install.to>`. The switch passes the staged tree
-        as `coming`, a restore the previous one."""
+        as `coming`, a restore the previous one.
+
+        The switch first checks the drop-in restarts against the ones step 5
+        named before the tap. A difference fails the switch of this
+        component before anything of it moves. A restore is not approved,
+        so it has no such check."""
         if manifest.kind is not Kind.UNITS:
             return None
 
         diff = units_diff(manifest.name, live if live.is_dir() else None, coming)
+        if direction is Direction.SWITCH:
+            approved = self.drop_in_restarts.get(manifest.name, ())
+            if drop_in_restarts(diff) != approved:
+                raise StepFailed(f"{manifest.name}: {DROP_INS_MOVED}")
+
         self.installer.retire_units(diff.gone, live)
 
         return diff
@@ -1476,7 +1529,11 @@ class Release:
         # Contract 06 §8.3 item 2: a restore runs items 4 to 6 again, over
         # the previous tree. With no previous tree, `swap_back` stops the
         # restore and no unit moves.
-        units = self._retire_units(manifest, paths.to, paths.prev) if paths.prev.is_dir() else None
+        units = (
+            self._retire_units(manifest, paths.to, paths.prev, Direction.RESTORE)
+            if paths.prev.is_dir()
+            else None
+        )
         self._move_back(name, paths)
         if units is not None:
             self.installer.link_units(name, units, paths.to)

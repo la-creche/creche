@@ -14,15 +14,19 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
 import pytest
 from handover.catalog import CATALOG
+from handover.executor.approval import Decision, Summary, Verdict
 from handover.executor.drain import Counter, handle
 from handover.executor.host import Command
-from handover.executor.install import LN, RM
+from handover.executor.install import INSTALL, LN, RM
 from handover.executor.live_state import STAMP_FILE
+from handover.executor.quiet import Busy
 from handover.executor.spool import DONE_DIR, Spool
 from handover.executor.steps import Wiring
 from handover_executor_fixtures import (
@@ -57,12 +61,13 @@ def _release(
     installed: dict[str, str] | None = None,
     run: FakeRun | None = None,
     live_files: dict[str, str] | None = None,
+    edit: Callable[[Wiring], Wiring] | None = None,
 ) -> tuple[dict[str, object], Path]:
     """File one request for `host` at `NEW`, run it, and return the ledger
     entry and the components root. The fetched tree holds the manifest,
     the verify hook and `files`. `installed` maps a user unit name to the
     text of the file that the host already has. `live_files` maps a path
-    of the live tree to its text."""
+    of the live tree to its text. `edit` changes the wiring."""
     spool_root = make_spool_dirs(tmp_path)
     run = run if run is not None else FakeRun(answers=git_host_answers())
     host = fake_host(tmp_path, run)
@@ -101,6 +106,7 @@ def _release(
         readers=fake_readers(latest={HOST: NEW}),
         api=green_api("creche-release", f"{HOST}-v{NEW}", SHA_OF[HOST]),
     )
+    wiring = edit(wiring) if edit is not None else wiring
     write_request(spool_root, REQUEST_ID, request_body({HOST: NEW}))
     spool = Spool(str(spool_root), this_uid())
     try:
@@ -172,8 +178,8 @@ OTHER_TIMER = "units/user/creche-watchdog.timer"
 
 
 def _linking_run() -> FakeRun:
-    """A run whose `ln` and `rm` act on the real files, so each later check
-    reads what the host would hold."""
+    """A run whose `ln`, `rm` and `install -d` act on the real files, so each
+    later check reads what the host would hold."""
     run = FakeRun(answers=git_host_answers())
 
     def link(command: Command) -> None:
@@ -184,8 +190,13 @@ def _linking_run() -> FakeRun:
     def remove(command: Command) -> None:
         Path(command.argv[-1]).unlink(missing_ok=True)
 
+    def make_dir(command: Command) -> None:
+        if "-d" in command.argv:
+            Path(command.argv[-1]).mkdir(parents=True, exist_ok=True)
+
     run.hooks[LN] = link
     run.hooks[RM] = remove
+    run.hooks[INSTALL] = make_dir
 
     return run
 
@@ -220,3 +231,81 @@ def test_a_restore_puts_the_units_of_the_previous_tree_back(tmp_path: Path) -> N
     assert not (tmp_path / "user-units" / "creche-watchdog.timer").is_symlink()
     assert os.readlink(place) == str(components / HOST / TIMER)
     assert (components / HOST / TIMER).read_text(encoding="utf-8") == live_files[TIMER]
+
+
+# ---- a drop-in change restarts its unit, named before the tap ---------------------
+
+CHAPERONE = "creche-chaperone.service"
+
+
+def _showing(shown: list[Summary]) -> Callable[[Wiring], Wiring]:
+    """A phone that keeps each summary it shows, then taps yes."""
+
+    def transport(action_id: str, gate: str, summary: Summary, wait_s: float) -> Decision:
+        del action_id, wait_s
+        shown.append(summary)
+
+        return Decision(Verdict.GRANTED, gate, 1758153712.0)
+
+    return lambda wiring: replace(wiring, transport=transport)
+
+
+def _chaperone_installed(tmp_path: Path) -> None:
+    (tmp_path / "system-units").mkdir(exist_ok=True)
+    (tmp_path / "system-units" / CHAPERONE).write_text("[Service]\n", encoding="utf-8")
+
+
+def test_a_new_drop_in_is_named_before_the_tap_and_restarts_its_unit(tmp_path: Path) -> None:
+    shown: list[Summary] = []
+    run = _linking_run()
+    _chaperone_installed(tmp_path)
+
+    entry, _ = _release(tmp_path, (TIMER, DROP_IN), run=run, edit=_showing(shown))
+
+    assert entry["status"] == "succeeded", entry
+    assert [summary.restarts for summary in shown] == [f"{HOST}: {CHAPERONE}"]
+    assert f"/usr/bin/systemctl restart {CHAPERONE}" in run.argv_lines()
+
+
+def test_an_unchanged_drop_in_restarts_nothing(tmp_path: Path) -> None:
+    shown: list[Summary] = []
+    run = _linking_run()
+    _chaperone_installed(tmp_path)
+    place = tmp_path / "system-units" / f"{CHAPERONE}.d" / "creche.conf"
+    place.parent.mkdir(parents=True)
+    place.symlink_to(tmp_path / "components" / HOST / DROP_IN)
+
+    entry, _ = _release(
+        tmp_path, (DROP_IN,), run=run, live_files={DROP_IN: f"# {DROP_IN}\n"}, edit=_showing(shown)
+    )
+
+    assert entry["status"] == "succeeded", entry
+    assert [summary.restarts for summary in shown] == [f"{HOST}: no unit"]
+    assert not run.ran(f"restart {CHAPERONE}")
+
+
+def test_a_drop_in_that_moves_after_the_tap_fails_the_switch(tmp_path: Path) -> None:
+    """The live tree changes between step 5 and step 9. Step 9 would then
+    restart a unit the tap did not name, so it moves nothing of `host`."""
+    run = _linking_run()
+    _chaperone_installed(tmp_path)
+
+    def busy_now() -> Busy:
+        live = tmp_path / "components" / HOST / DROP_IN
+        live.parent.mkdir(parents=True, exist_ok=True)
+        live.write_text("[Service]\nEnvironment=MOVED=1\n", encoding="utf-8")
+
+        return Busy.NO
+
+    entry, components = _release(
+        tmp_path,
+        (DROP_IN,),
+        run=run,
+        live_files={DROP_IN: f"# {DROP_IN}\n"},
+        edit=lambda wiring: replace(wiring, busy_now=busy_now),
+    )
+
+    assert entry["status"] != "succeeded", entry
+    assert "the drop-in restarts differ" in str(entry["reason"])
+    assert (components / HOST / STAMP_FILE).read_text(encoding="utf-8").strip() == LIVE
+    assert not run.ran(LN)

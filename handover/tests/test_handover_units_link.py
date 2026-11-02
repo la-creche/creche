@@ -18,8 +18,8 @@ from pathlib import Path
 import pytest
 from handover.executor.host import As, Command, Host
 from handover.executor.install import INSTALL, LN, RM, Installer, StepFailed
-from handover.executor.units import Change, units_diff
-from handover_executor_fixtures import FakeRun, fake_host
+from handover.executor.units import Change, drop_in_restarts, units_diff
+from handover_executor_fixtures import FakeRun, fake_host, git_host_answers
 
 HOST = "host"
 TIMER = "units/user/creche-follow.timer"
@@ -62,7 +62,7 @@ def _real_links(run: FakeRun) -> None:
 
 
 def _bench(tmp_path: Path) -> tuple[Host, FakeRun, Path]:
-    run = FakeRun()
+    run = FakeRun(answers=git_host_answers())
     _real_links(run)
 
     return fake_host(tmp_path, run), run, tmp_path / "components" / HOST
@@ -255,3 +255,48 @@ def test_a_failing_link_fails_the_switch(tmp_path: Path) -> None:
 
     with pytest.raises(StepFailed, match=re.escape(f"cannot link {TIMER}")):
         Installer(host).link_units(HOST, units_diff(HOST, None, live), live)
+
+
+# ---- a drop-in change restarts its unit (§8.3 item 6) -------------------------------
+
+CHAPERONE = "creche-chaperone.service"
+OTHER_DROP_IN = "units/system/creche-attendance.service.d/creche.conf"
+
+
+def test_the_drop_in_restarts_are_the_units_whose_drop_in_moves(tmp_path: Path) -> None:
+    before = _write(
+        tmp_path / "before", {DROP_IN: OLD, OTHER_DROP_IN: OLD, TIMER: OLD, TEMPLATE: OLD}
+    )
+    now = _write(tmp_path / "now", {DROP_IN: NEW, TIMER: NEW})
+
+    assert drop_in_restarts(units_diff(HOST, before, now)) == (
+        "creche-attendance.service",
+        CHAPERONE,
+    )
+
+
+def test_a_same_drop_in_restarts_nothing(tmp_path: Path) -> None:
+    before = _write(tmp_path / "before", {DROP_IN: OLD})
+    now = _write(tmp_path / "now", {DROP_IN: OLD, TIMER: NEW})
+
+    assert drop_in_restarts(units_diff(HOST, before, now)) == ()
+
+
+def test_a_changed_drop_in_restarts_its_installed_unit_as_root(tmp_path: Path) -> None:
+    host, run, live = _bench(tmp_path)
+    (host.system_unit_dir / CHAPERONE).write_text("[Service]\n", encoding="utf-8")
+    _write(live, {DROP_IN: NEW})
+
+    Installer(host).link_units(HOST, units_diff(HOST, None, live), live)
+
+    assert f"/usr/bin/systemctl restart {CHAPERONE}" in run.argv_lines()
+    assert _identities(run, CHAPERONE) == {As.ROOT}
+
+
+def test_a_drop_in_of_a_unit_that_is_not_installed_restarts_nothing(tmp_path: Path) -> None:
+    host, run, live = _bench(tmp_path)
+    _write(live, {DROP_IN: NEW})
+
+    Installer(host).link_units(HOST, units_diff(HOST, None, live), live)
+
+    assert not run.ran("restart")

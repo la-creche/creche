@@ -271,3 +271,17 @@ def is_stoppable(one: UnitFile) -> bool:
     """A user unit that root stops and disables when its file goes (§8.3
     item 4): not a template, and not a drop-in."""
     return one.scope is Scope.USER and TEMPLATE_MARK not in one.unit
+
+
+def drop_in_restarts(diff: UnitsDiff) -> tuple[str, ...]:
+    """Contract 06 §8.3 item 6: each unit whose drop-in the swap adds,
+    changes or removes, sorted, each once. Step 5 names these in §2.5's
+    `restarts` row before the tap, and step 9 restarts exactly these."""
+    changed = {
+        one.unit
+        for one, change in diff.now
+        if one.scope is Scope.SYSTEM and change is not Change.SAME
+    }
+    removed = {one.unit for one in diff.gone if one.scope is Scope.SYSTEM}
+
+    return tuple(sorted(changed | removed))
