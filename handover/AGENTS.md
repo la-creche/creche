@@ -433,7 +433,13 @@ units that belong to no component, and the scripts that they run (contract
 4. Step 8 of a `host` release copies the fetched tree into `host.new`
    (`install.py` rule 10). It leaves out the clone's `.git`. A link or any
    other entry that is not a directory or a regular file fails the stage.
-5. Step 9 does not link the unit files yet. A `host` release swaps the tree
+5. Step 8 then reads the unit files of the staged tree
+   (`executor/units.py`). It refuses with code `unit` any file under
+   `units/` that is not `units/user/<unit>` or
+   `units/system/<unit>.d/<name>.conf`, a handover unit, or a user unit that
+   another manifest names as its `unit`. creche-release's `bin/check-tree`
+   runs the same layout rules in its gate. Change both together.
+6. Step 9 does not link the unit files yet. A `host` release swaps the tree
    and runs the verify hook. No unit changes.
 
 ## The server file (`mcpserver.py`)

@@ -102,6 +102,7 @@ from .quiet import NO_WINDOW, Busy, BusyNowFn, BusySeenFn, needs_window, wait_fo
 from .request import Kind as RequestKind
 from .request import Request
 from .spool import SelfNote, Spool, SwitchNote, VerifyHook, acquire, release_lock
+from .units import component_units, unit_files
 
 #: The step detail of step 3: the checks of the code host, and those with
 #: the check of an archive, for a set that holds a `kind: binary`
@@ -1129,6 +1130,12 @@ class Release:
         registry_sha = self._approved_registry_sha(plan) if name == MCP_COMPONENT else None
         self.paths[name] = paths
         self.installer.build(manifest, source, paths, self.verified.get(name))
+        if manifest.kind is Kind.UNITS:
+            # Contract 06 §1 rule 12 and §8.3 item 1, on the staged tree and
+            # before the swap. The other manifests name the units of the
+            # other components.
+            unit_files(name, paths.new, component_units(plan.manifests.values()))
+
         write_stamp(paths.new, plan.to_version(name))
         if registry_sha is not None:
             write_registry_stamp(paths.new, registry_sha)
