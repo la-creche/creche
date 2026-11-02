@@ -9,7 +9,7 @@
                           <install.to>.prev   <------'  put back, verify again
 ```
 
-Nine rules this module exists to keep.
+Ten rules this module exists to keep.
 
 1. **Nothing is swapped until everything is built.** A failed `stage`
    removes the `.new` tree and nothing on the host has changed (§2.4 row 8).
@@ -83,6 +83,11 @@ Nine rules this module exists to keep.
    nothing outside itself (`selfcontained.check_binary_tree`). The verify
    hook cannot prove this: it runs while the fetched work tree is still on
    disk. A venv gets `selfcontained.check_tree` at the same point.
+10. **A `kind: units` tree is the fetched tree, copied.** Root runs no
+    build for it (contract 06 §8.3). It copies each directory and each
+    regular file of the fetched tree into `<install.to>.new`, and leaves
+    out the clone's `.git`. A link or any other entry stops the stage, so
+    no link in the tree can point a unit at a file outside it.
 """
 
 from __future__ import annotations
@@ -91,6 +96,7 @@ import os
 import shlex
 import shutil
 import stat
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -252,6 +258,13 @@ TRY_RESTART: Final = "try-restart"
 #: Opens a unit file root reads without following a link or blocking on a
 #: FIFO the operator planted in their own unit directory.
 _UNIT_READ_FLAGS: Final = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+
+#: Rule 10: the one entry of a fetched `units` tree that the stage leaves
+#: out. It is the git directory of the clone that `fetch` made.
+#: CONTRACT-QUESTION: contract 06 §8.3 says root copies the tree it fetched,
+#: and names no entry that stays out. The reading taken leaves out only the
+#: clone's own git directory, which is no part of the repository's tree.
+FETCHED_GIT_DIR: Final = ".git"
 
 GIT_TIMEOUT_S: Final = 300.0
 BUILD_TIMEOUT_S: Final = 2400.0
@@ -528,14 +541,17 @@ class Installer:
         """Fill `<install.to>.new`, then prove the hook is there.
 
         A `kind: binary` component gets the unpack of its `verified`
-        archive, and no command of its `build` runs. Each other kind runs
-        its `build` there. `source` is the fetched work tree in both cases:
-        the walk of a binary tree looks for its path.
+        archive, and no command of its `build` runs. A `kind: units`
+        component gets a copy of the fetched tree (rule 10). Each other kind
+        runs its `build` there. `source` is the fetched work tree in each
+        case: the walk of a binary tree looks for its path.
         """
         remove_tree(paths.new)
         paths.new.parent.mkdir(parents=True, exist_ok=True)
         if manifest.kind is Kind.BINARY:
             _unpack(manifest, paths, verified)
+        elif manifest.kind is Kind.UNITS:
+            copy_units_tree(manifest.name, source, paths.new)
         else:
             self._run_build(manifest, source, paths)
 
@@ -1218,6 +1234,48 @@ def _unpack(manifest: ComponentManifest, paths: Paths, verified: VerifiedArtifac
     except OSError as exc:
         detail = f"{manifest.name}: the archive could not be unpacked: {type(exc).__name__}"
         raise StepFailed(detail) from None
+
+
+def copy_units_tree(component: str, source: Path, new: Path) -> None:
+    """Rule 10: copy the fetched tree `source` to the staged tree `new`.
+
+    Each directory and each regular file is copied, with its mode, and
+    `normalize_modes` sets the final modes later. The walk follows no link.
+    A link, a FIFO, a socket or a device anywhere in the tree stops the
+    stage, and the caller removes `new`: nothing on the host has changed.
+
+    CONTRACT-QUESTION: contract 06 §8.3 names no rule for a link in a
+    `units` tree. The reading taken refuses each link, as `failed`, step
+    `stage`, the end that §8.2 gives the two older checks. creche-release
+    holds no link today. A relative link that stays inside the tree costs a
+    walk like `selfcontained.check_binary_tree`.
+    """
+    new.mkdir()
+    for top, dirs, files in os.walk(source):
+        here = Path(top)
+        relative = here.relative_to(source)
+        if relative == Path("."):
+            dirs[:] = [name for name in dirs if name != FETCHED_GIT_DIR]
+            files = [name for name in files if name != FETCHED_GIT_DIR]
+
+        for name in sorted(dirs):
+            _require_kind(component, here / name, relative / name, stat.S_ISDIR)
+            (new / relative / name).mkdir()
+
+        for name in sorted(files):
+            _require_kind(component, here / name, relative / name, stat.S_ISREG)
+            shutil.copy2(here / name, new / relative / name, follow_symlinks=False)
+
+
+def _require_kind(component: str, path: Path, relative: Path, kind: Callable[[int], bool]) -> None:
+    """Stop the stage unless `path`, NOT followed, is of `kind`. `os.walk`
+    lists a link to a directory among the directories, so each name is
+    checked again here."""
+    if not kind(os.lstat(path).st_mode):
+        raise StepFailed(
+            f"{component}: the fetched tree holds {safe_token(str(relative))},"
+            " which is not a directory or a regular file"
+        )
 
 
 def restorable(manifest: ComponentManifest) -> bool:

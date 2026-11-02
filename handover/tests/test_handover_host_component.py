@@ -16,28 +16,9 @@ from handover.catalog import ARRIVING_REPOS, CATALOG, CATALOG_BY_NAME, Kind, Rep
 from handover.discovery import discover, read_one
 from handover.errors import Refusal, RefusalCode
 from handover.manifest import UNITS_HAVE_NO_BUILD, UNITS_NAME_NO_UNIT, Markup, parse_manifest
-from handover_fixtures import manifest_text, write_manifest
+from handover_fixtures import HOST_MANIFEST, manifest_text, write_manifest
 
 HOST = "host"
-
-#: The text of `component.toml` at the root of the creche-release
-#: repository.
-HOST_MANIFEST = """\
-manifest_version = "0.21"
-name = "host"
-repo = "creche-release"
-path = "."
-kind = "units"
-runs_as = "none"
-install.to = "/opt/components/host"
-install.prev = "/opt/components/host.prev"
-verify.command = ["/opt/components/host/bin/host-verify", "/opt/components/host/units/user"]
-verify.user = "operator"
-verify.timeout_s = 60
-restore.mode = "automatic"
-restore.keep = 3
-release = true
-"""
 
 SUBJECT = "component.toml"
 

@@ -430,8 +430,11 @@ units that belong to no component, and the scripts that they run (contract
 3. A host can have no clone of creche-release yet. `catalog.ARRIVING_REPOS`
    holds `Repo.CRECHE_RELEASE`, so discovery accepts a set of roots with no
    `host` manifest. The allocator still tags `host` in creche-release.
-4. The executor does not install a `units` tree yet. Step 8 of a `host`
-   release stages no tree and fails, and the host does not change.
+4. Step 8 of a `host` release copies the fetched tree into `host.new`
+   (`install.py` rule 10). It leaves out the clone's `.git`. A link or any
+   other entry that is not a directory or a regular file fails the stage.
+5. Step 9 does not link the unit files yet. A `host` release swaps the tree
+   and runs the verify hook. No unit changes.
 
 ## The server file (`mcpserver.py`)
 
