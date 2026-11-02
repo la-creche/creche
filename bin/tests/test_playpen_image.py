@@ -131,6 +131,19 @@ def test_the_test_venv_installs_the_locked_dependencies() -> None:
     assert "FROM ${PYTHON_IMAGE} AS creche-test-venv" in _text()
 
 
+def test_the_test_venv_copies_every_workspace_member() -> None:
+    """`uv sync --locked` resolves the whole workspace. A member whose
+    pyproject.toml the stage does not copy is a source with no member, and
+    uv refuses the sync, so the image does not build."""
+    stage = _stage("creche-test-venv")
+    members = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["tool"]["uv"]["workspace"][
+        "members"
+    ]
+
+    for member in members:
+        assert f"COPY {member}/pyproject.toml {member}/" in stage, member
+
+
 def test_the_build_inputs_are_content_pinned() -> None:
     text = _text()
     venv_stage = _stage("creche-test-venv")

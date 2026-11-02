@@ -15,13 +15,14 @@ dependencies = [
     "noticeboard",
     "handover",
     "creche-env",
+    "creche-wire",
 ]
 
 [tool.uv]
 package = false
 
 [tool.uv.workspace]
-members = ["library", "family", "caregiver", "attendance", "door-trigger", "door-acp", "noticeboard", "handover", "env"]
+members = ["library", "family", "caregiver", "attendance", "door-trigger", "door-acp", "noticeboard", "handover", "env", "wire"]
 
 [tool.uv.sources]
 library = { workspace = true }
@@ -33,6 +34,7 @@ agent-door-acp = { workspace = true }
 noticeboard = { workspace = true }
 handover = { workspace = true }
 creche-env = { workspace = true }
+creche-wire = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -72,6 +74,7 @@ testpaths = [
     "noticeboard/tests",
     "handover/tests",
     "env/tests",
+    "wire/tests",
     "vectors/tests",
 ]
 addopts = "-q"
@@ -91,6 +94,7 @@ pythonpath = [
     "noticeboard/src",
     "handover/src",
     "env/src",
+    "wire/src",
 ]
 markers = [
     "slow: spawns real subprocesses",
@@ -111,6 +115,8 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "TC004", "TC005"]
 
 [tool.ruff.lint.per-file-ignores]
 "*/tests/*" = ["RUF059"]
+# Generated (wire/AGENTS.md): a schema description is one string literal.
+"wire/src/creche_wire/models.py" = ["E501"]
 
 [tool.ruff.lint.isort]
 # The root conftest.py makes `conftest` look first-party. A suite that
@@ -130,4 +136,26 @@ source = [
     "noticeboard",
     "handover",
     "creche_env",
+    "creche_wire",
 ]
+
+# The pydantic models of the wire types (decision CH9-1, wire/AGENTS.md).
+# `uv run datamodel-codegen` writes wire/src/creche_wire/models.py from the
+# schema the Rust crate commits, and `--check` (bin/quality-gate.sh) fails
+# when the committed module differs from what this section writes.
+[tool.datamodel-codegen]
+input = "rust/crates/wire/schema/wire.json"
+input-file-type = "jsonschema"
+output = "wire/src/creche_wire/models.py"
+output-model-type = "pydantic_v2.BaseModel"
+target-python-version = "3.12"
+# The schema is one document of `$defs`. Its root is no type of its own.
+skip-root-model = true
+use-annotated = true
+use-schema-description = true
+use-double-quotes = true
+keep-model-order = true
+disable-timestamp = true
+formatters = ["ruff-format", "ruff-check"]
+custom-file-header = """# Generated from rust/crates/wire/schema/wire.json. Do not edit.
+# To write it again, run `uv run datamodel-codegen` at the root of the repository."""

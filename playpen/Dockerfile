@@ -134,6 +134,7 @@ COPY door-acp/pyproject.toml door-acp/
 COPY noticeboard/pyproject.toml noticeboard/
 COPY handover/pyproject.toml handover/
 COPY env/pyproject.toml env/
+COPY wire/pyproject.toml wire/
 
 # --locked installs the locked versions and hashes, and refuses a lockfile
 # that the workspace definition has outrun. --no-install-workspace installs
