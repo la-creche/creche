@@ -94,6 +94,7 @@ text with no UTC offset is not a time.
 | `facade/` | `facade/AGENTS.md` |
 | `handover/` | `handover/AGENTS.md` |
 | `env/` | `env/AGENTS.md` |
+| `wire/` | `wire/AGENTS.md` |
 | `library/` | `library/AGENTS.md` |
 | `integration/` | `integration/AGENTS.md` |
 | `bin/` | `bin/AGENTS.md` |

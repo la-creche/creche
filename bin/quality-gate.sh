@@ -4,6 +4,8 @@
 #   ruff check .           lint
 #   ruff format --check .  formatting
 #   pyright                strict types (pyrightconfig.json)
+#   datamodel-codegen      --check: wire/src/creche_wire/models.py is what
+#                          the wire schema generates (wire/AGENTS.md)
 #   pytest                 --tests: the full suite (pre-push, for a path in
 #                          no package; CI runs the same suite as shards,
 #                          with no flag here for its lint job: gate.yml,
@@ -264,6 +266,7 @@ command -v uv >/dev/null || { echo "quality-gate: uv not on PATH" >&2; exit 1; }
 uv run ruff check .
 uv run ruff format --check .
 uv run pyright
+uv run datamodel-codegen --check
 
 case "$MODE" in
   --tests) "${PYTEST[@]}" ;;
