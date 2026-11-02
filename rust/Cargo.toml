@@ -18,6 +18,17 @@ rust-version = "1.92"
 license = "MIT"
 publish = false
 
+# Each entry turns the default features off and names each feature that the
+# code needs. A feature that no code needs adds crates that no person here
+# reviews.
+[workspace.dependencies]
+serde = { version = "1.0.229", default-features = false, features = ["std", "derive"] }
+serde_json = { version = "1.0.154", default-features = false, features = ["std"] }
+# Only tests of creche-wire use it: a test writes the JSON Schema of the wire
+# types, and the Python models are generated from that schema (decision
+# CH9-1).
+schemars = { version = "1.2.3", default-features = false, features = ["std", "derive"] }
+
 # The lint gate. A crate inherits it with `[lints] workspace = true`. An
 # exception is written `#[expect(clippy::<lint>, reason = "...")]` at the one
 # item, never `#[allow]`.
