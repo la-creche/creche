@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use schemars::generate::SchemaSettings;
 use serde_json::{Value, json};
 
-use super::SessionId;
+use super::{AutoJobId, DelegationId, JobId, SessionId};
 
 /// The variable that makes the test write the file instead of checking it.
 const WRITE_VAR: &str = "CRECHE_WIRE_SCHEMA";
@@ -26,6 +26,9 @@ pub(super) fn wire_schema() -> Value {
         .for_deserialize()
         .into_generator();
     let _ = generator.subschema_for::<SessionId>();
+    let _ = generator.subschema_for::<JobId>();
+    let _ = generator.subschema_for::<AutoJobId>();
+    let _ = generator.subschema_for::<DelegationId>();
 
     json!({
         "$schema": "https://json-schema.org/draft/2020-12/schema",

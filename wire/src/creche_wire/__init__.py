@@ -5,8 +5,8 @@ it by hand. `wire/AGENTS.md` has the command that writes it.
 
 `read` is the one way to read a wire text (`reader.py`)."""
 
-from .models import SessionId
+from .models import AutoJobId, DelegationId, JobId, SessionId
 from .reader import read
 from .strictjson import NotStrictJson
 
-__all__ = ["NotStrictJson", "SessionId", "read"]
+__all__ = ["AutoJobId", "DelegationId", "JobId", "NotStrictJson", "SessionId", "read"]

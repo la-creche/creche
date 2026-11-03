@@ -8,6 +8,36 @@ from typing import Annotated
 from pydantic import Field, RootModel, StrictStr
 
 
+class AutoJobId(RootModel[StrictStr]):
+    root: Annotated[
+        StrictStr,
+        Field(
+            description="The id that attendance gives an autonomous job of a trigger or of the\ndispatch door: `auto-<ulid>` (contract 02 §2 and §13). Contract 02 calls\nit a session id. The `SessionId` of the job's row on the host session\nlist is a separate value.",
+            pattern="^auto-[0-9A-HJKMNP-TV-Z]{26}$",
+        ),
+    ]
+
+
+class DelegationId(RootModel[StrictStr]):
+    root: Annotated[
+        StrictStr,
+        Field(
+            description="The id the PEP mints for one delegation, a ULID (contract 04 §7.4).",
+            pattern="^[0-9A-HJKMNP-TV-Z]{26}$",
+        ),
+    ]
+
+
+class JobId(RootModel[StrictStr]):
+    root: Annotated[
+        StrictStr,
+        Field(
+            description="The id that attendance gives a thin job of the delegate door:\n`job-<ulid>` (contract 02 §2 and §12). Contract 02 calls it a session\nid. The `SessionId` of the job's row on the host session list is a\nseparate value.",
+            pattern="^job-[0-9A-HJKMNP-TV-Z]{26}$",
+        ),
+    ]
+
+
 class SessionId(RootModel[StrictStr]):
     root: Annotated[
         StrictStr,

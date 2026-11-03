@@ -1,4 +1,110 @@
 {
+  "AutoJobId": [
+    {
+      "json": "\"auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\"",
+      "written": "\"auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\"",
+      "note": "auto- and a ULID"
+    },
+    {
+      "json": "\"job-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\"",
+      "written": null,
+      "note": "the prefix of a thin job"
+    },
+    {
+      "json": "\"auto-01jbq7zz9d6m0q4rxt2j8hyvbk\"",
+      "written": null,
+      "note": "a lowercase ULID"
+    },
+    {
+      "json": "\"auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK0\"",
+      "written": null,
+      "note": "a ULID of 27 characters"
+    },
+    {
+      "json": "\"auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\\n\"",
+      "written": null,
+      "note": "a trailing newline"
+    }
+  ],
+  "DelegationId": [
+    {
+      "json": "\"01K5J9QWB2M4N6Q8S0V2W4Y6A8\"",
+      "written": "\"01K5J9QWB2M4N6Q8S0V2W4Y6A8\"",
+      "note": "a ULID"
+    },
+    {
+      "json": "\"0123456789ABCDEFGHJKMNPQRS\"",
+      "written": "\"0123456789ABCDEFGHJKMNPQRS\"",
+      "note": "the digits and the letters A to S of the alphabet"
+    },
+    {
+      "json": "\"00000000000000000000TVWXYZ\"",
+      "written": "\"00000000000000000000TVWXYZ\"",
+      "note": "the letters T to Z of the alphabet"
+    },
+    {
+      "json": "\"01K5J9QWB2M4N6Q8S0V2W4Y6AU\"",
+      "written": null,
+      "note": "U is not in the Crockford alphabet"
+    },
+    {
+      "json": "\"01K5J9QWB2M4N6Q8S0V2W4Y6A80\"",
+      "written": null,
+      "note": "27 characters"
+    },
+    {
+      "json": "\"job-01K5J9QWB2M4N6Q8S0V2W4Y6A8\"",
+      "written": null,
+      "note": "a prefix"
+    },
+    {
+      "json": "\"01K5J9QWB2M4N6Q8S0V2W4Y6AI\"",
+      "written": null,
+      "note": "I is not in the Crockford alphabet"
+    },
+    {
+      "json": "\"01K5J9QWB2M4N6Q8S0V2W4Y6AL\"",
+      "written": null,
+      "note": "L is not in the Crockford alphabet"
+    },
+    {
+      "json": "\"01K5J9QWB2M4N6Q8S0V2W4Y6AO\"",
+      "written": null,
+      "note": "O is not in the Crockford alphabet"
+    }
+  ],
+  "JobId": [
+    {
+      "json": "\"job-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\"",
+      "written": "\"job-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\"",
+      "note": "job- and a ULID"
+    },
+    {
+      "json": "\"01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\"",
+      "written": null,
+      "note": "a ULID with no prefix"
+    },
+    {
+      "json": "\"job-01JBQ7ZZ9D6M0Q4RXT2J8HYVB\"",
+      "written": null,
+      "note": "a ULID of 25 characters"
+    },
+    {
+      "json": "\"job-01JBQ7ZZ9D6M0Q4RXT2J8HYVB\\u00e9\"",
+      "written": null,
+      "note": "a character of two bytes"
+    },
+    {
+      "json": "\"job-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK0\"",
+      "written": null,
+      "note": "a ULID of 27 characters"
+    },
+    {
+      "json": "\"job-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\\n\"",
+      "written": null,
+      "note": "a trailing newline"
+    }
+  ],
   "SessionId": [
     {
       "json": "\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"",
