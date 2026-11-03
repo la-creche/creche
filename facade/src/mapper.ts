@@ -7,10 +7,10 @@
 // breaks the build here, not the wire.
 
 import type { ConversationStreamChunk } from "@flue/runtime";
+import { stringifyStrict } from "agent/strict-json";
 
 import type { SessionUpdate } from "./acp.js";
 import { cutToBytes } from "./line.js";
-import { stringifyStrict } from "./strict-json.js";
 
 /** The largest forwarded text, in UTF-8 bytes: the playpen's entry cap. */
 export const MAX_TEXT_BYTES = 65_536;

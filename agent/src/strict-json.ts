@@ -1,11 +1,15 @@
-// Strict JSON, for each line that the facade writes on stdout. The module
-// doc of `noticeboard/src/noticeboard/strictjson.py` has the rules.
+// Strict JSON, for each line that the facade writes on stdout and for each
+// wire text that it reads (decision CH22 rule 1). The module doc of
+// `noticeboard/src/noticeboard/strictjson.py` has the rules.
 //
 //   value ──► checkValue ──► null             the text of the value is strict
 //                        └─► Rule             the rule that the text breaks
 //
 //   value ──► stringifyStrict ──► { text }    one strict JSON text
 //                             └─► { rule }    no text
+//
+//   text  ──► parseStrict ──► { value }       the value of a strict text
+//                         └─► { rule }        the ReadRule the text breaks
 //
 // A strict text has one value for each reader. This file holds the rules
 // that a value of JavaScript can break when `JSON.stringify` writes it:
@@ -16,7 +20,8 @@
 //   4. The value has no JSON text.
 //
 // `checkValue` names rule 1, 2 or 4. `stringifyStrict` writes a number of
-// rule 3 with an exponent, so that rule refuses no value.
+// rule 3 with an exponent, so that rule refuses no value. `parseStrict` has
+// rules of its own, at `ReadRule`.
 //
 // The file imports nothing. A value with a `toJSON` method is outside the
 // two functions: `JSON.stringify` writes what that method gives, and
@@ -195,4 +200,150 @@ export function stringifyStrict(value: unknown): StrictText {
   const text = exponent ? JSON.stringify(value, withExponent) : JSON.stringify(value);
 
   return { ok: true, text };
+}
+
+/**
+ * The rule that a text breaks when `parseStrict` reads it. The first six
+ * words are words of the Rust enum `Rule` of `creche_contracts::json`.
+ * `IntegerRange` has a lower bound here than there. A JavaScript number
+ * cannot tell `1.0` from `1`, or `-0` from `0`, so the last two rules refuse
+ * at the read what the Rust and Python types refuse as a float for an
+ * integer. No other reader has their words.
+ */
+export enum ReadRule {
+  /** `JSON.parse` refuses the text. */
+  Syntax = "syntax",
+  /** Arrays and objects nest deeper than `DEPTH_MAX` levels. */
+  TooDeep = "too_deep",
+  /** One object holds a key two times, after the decode of each escape. */
+  DuplicateKey = "duplicate_key",
+  /** A text or a key holds one half of a surrogate pair with no partner. */
+  LoneSurrogate = "lone_surrogate",
+  /** An integer token is past 2^53 - 1 from zero. JavaScript reads no larger integer exactly. */
+  IntegerRange = "integer_range",
+  /** A number with a fraction or an exponent is not finite. */
+  FloatRange = "float_range",
+  /** A number with a fraction or an exponent has an integer value, as `1.0` and `1e3` have. */
+  IntegralFloat = "integral_float",
+  /** An integer token is `-0`. */
+  NegativeZero = "negative_zero",
+}
+
+/** What `parseStrict` gives: the value of a strict text, or the rule that refuses it. */
+export type StrictValue =
+  | { readonly ok: true; readonly value: unknown }
+  | { readonly ok: false; readonly rule: ReadRule };
+
+/** A number token: the run of characters that `JSON.parse` read as a number. */
+const NUMBER = /[-+.eE0-9]+/y;
+
+/** The rule that the number token `token` breaks, or null. */
+function numberRule(token: string): ReadRule | null {
+  const value = Number(token);
+  if (/^-?[0-9]+$/.test(token)) {
+    if (!Number.isSafeInteger(value)) {
+      return ReadRule.IntegerRange;
+    }
+
+    return Object.is(value, -0) ? ReadRule.NegativeZero : null;
+  }
+
+  if (!Number.isFinite(value)) {
+    return ReadRule.FloatRange;
+  }
+
+  return Number.isInteger(value) ? ReadRule.IntegralFloat : null;
+}
+
+/** The index just past the string token that starts at `start`. */
+function stringEnd(text: string, start: number): number {
+  let at = start + 1;
+  while (text[at] !== '"') {
+    at += text[at] === "\\" ? 2 : 1;
+  }
+
+  return at + 1;
+}
+
+/**
+ * Reads the tokens of `text`, a text that `JSON.parse` takes, for the rules
+ * that `JSON.parse` does not hold. Each open object keeps the set of its
+ * keys, and `key` is true where the next string is a key.
+ */
+function scanText(text: string): ReadRule | null {
+  const objects: (Set<string> | null)[] = [];
+  let key = false;
+  let at = 0;
+
+  while (at < text.length) {
+    const char = text[at] ?? "";
+    if (char === "{" || char === "[") {
+      if (objects.length >= DEPTH_MAX) {
+        return ReadRule.TooDeep;
+      }
+
+      objects.push(char === "{" ? new Set() : null);
+      key = char === "{";
+      at += 1;
+    } else if (char === "}" || char === "]") {
+      objects.pop();
+      at += 1;
+    } else if (char === ",") {
+      key = objects.at(-1) instanceof Set;
+      at += 1;
+    } else if (char === '"') {
+      const end = stringEnd(text, at);
+      const decoded = JSON.parse(text.slice(at, end)) as string;
+      if (!decoded.isWellFormed()) {
+        return ReadRule.LoneSurrogate;
+      }
+
+      const keys = objects.at(-1);
+      if (key && keys instanceof Set) {
+        if (keys.has(decoded)) {
+          return ReadRule.DuplicateKey;
+        }
+
+        keys.add(decoded);
+      }
+
+      key = false;
+      at = end;
+    } else if (char === "-" || (char >= "0" && char <= "9")) {
+      NUMBER.lastIndex = at;
+      const token = NUMBER.exec(text)?.[0] ?? char;
+      const rule = numberRule(token);
+      if (rule !== null) {
+        return rule;
+      }
+
+      at += token.length;
+    } else {
+      // White space, `:`, and the letters of `true`, `false` and `null`.
+      at += 1;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * The value of the strict text `text`, or the first rule that it breaks.
+ *
+ * `JSON.parse` checks the grammar: RFC 8259, no byte order mark, no `NaN`
+ * and nothing after the value. A scan of the tokens then checks the depth,
+ * the keys of each object, each text and each number. The caller checks the
+ * kind of the value and the size of the text.
+ */
+export function parseStrict(text: string): StrictValue {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return { ok: false, rule: ReadRule.Syntax };
+  }
+
+  const rule = scanText(text);
+
+  return rule === null ? { ok: true, value } : { ok: false, rule };
 }

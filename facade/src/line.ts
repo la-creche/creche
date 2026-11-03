@@ -3,8 +3,9 @@
 //   value ──► encodeLine ──► { line }       the text and its LF
 //                        └─► { refusal }    not strict, or over the cap
 
+import { Rule, stringifyStrict } from "agent/strict-json";
+
 import { MAX_LINE_BYTES } from "./vectors.js";
-import { Rule, stringifyStrict } from "./strict-json.js";
 
 /** The largest free-text line on stderr, in bytes. */
 export const MAX_LOG_BYTES = 4096;
