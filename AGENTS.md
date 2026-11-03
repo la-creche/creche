@@ -76,7 +76,12 @@ rule.
 
 ## Time
 
-A time in a file or in a wire message is a `date-time` of RFC 3339,
+A time in a message of the wire types (`rust/crates/wire`, `creche_wire`,
+`agent/src/wire.ts`) is an integer: milliseconds since
+1970-01-01T00:00:00Z, at most 2^53 - 1 (`UnixMillis`, decision CH22-1). It
+is never a date string. `wire/AGENTS.md` has the rule.
+
+Any other time in a file or in a message is a `date-time` of RFC 3339,
 section 5.6. A writer writes each time in UTC, with `Z` as the offset. A
 text with no UTC offset is not a time.
 
