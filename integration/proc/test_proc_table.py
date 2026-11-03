@@ -50,9 +50,16 @@ FLAG = "--"
 #: The three flags of `caregiver serve` that the suite adds to those of the unit.
 NOT_IN_THE_UNIT = {"--litellm-base-url", "--poll-interval-s", "--chaperone-bin"}
 
-#: The unit that runs the index builder in a sandbox, and the profile word
-#: that it gives. None is a unit that gives no such word.
-INDEX_UNITS: dict[str, Profile | None] = {"creche-library@.service": None}
+#: The `ExecStart` of each unit that runs the index builder in a sandbox, and
+#: the profile word that it gives. None is a unit that gives no such word.
+#: The unit file is creche-release's `units/user/creche-library@.service`, so
+#: this is a copy of its `ExecStart`, with the continuation line joined.
+#: Change both together.
+INDEX_UNITS: dict[str, Profile | None] = {
+    "/usr/bin/timeout --signal=KILL 1500 sbx exec index-%i -- "
+    "sh -c 'index-scope /srv/agents/vault/%i /srv/agents/state/index/%i;"
+    " rc=$?; sleep 8; exit $rc'": None,
+}
 
 #: The words of an `ExecStart` that give a shell its command text.
 SHELL = ("sh", "-c")
@@ -120,7 +127,7 @@ def test_the_index_units_run_the_program_of_the_library_row() -> None:
     the same words: `index_words` of `proc_library.py`.
     """
     for unit, profile in INDEX_UNITS.items():
-        words = shlex.split(_exec_start(unit))
+        words = shlex.split(unit)
         text_at = _index_after(words, SHELL)
         command = shlex.split(words[text_at].partition(END_OF_COMMAND)[0])
         suite = index_words(Path(command[1]), Path(command[2]), profile)
