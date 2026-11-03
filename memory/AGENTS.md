@@ -12,11 +12,13 @@ service of the vault. The service hosts the memory store and answers the
 | `src/creche_memory/wire.py` | The wire types of the socket: each request, each reply, the refusal codes and the newtypes. |
 | `src/creche_memory/vault.py` | `Vault`: it reads one note or lists one folder, inside the vault root. |
 | `src/creche_memory/writes.py` | `Writer`: it creates inbox notes and rewrites whole files in the agent areas. |
+| `src/creche_memory/store.py` | `StoreSettings` and `configure`: the settings of the memory store, as the env that Cognee reads. |
 | `src/creche_memory/server.py` | `MemoryServer`: the socket server. It checks the peer uid and answers one line per connection. |
 | `vectors/wire.json` | The shared wire vectors. |
 | `tests/test_memory_wire_vectors.py` | The test that runs the shared wire vectors through the models. |
 | `tests/test_memory_vault.py` | The tests of the reads: the caps, the refusals and the symlink rules. |
 | `tests/test_memory_writes.py` | The tests of the writes: the areas, the digest check, the modes and the symlink rules. |
+| `tests/test_memory_store.py` | The tests of the settings. One test imports Cognee in a process of its own and reads its settings back. |
 | `tests/test_memory_server.py` | The tests of the socket: the peer check, the line rules and the dispatch. |
 
 ## One definition per type
@@ -79,6 +81,18 @@ after it reads `json`, or `null` when the type refuses `json`.
 3. A listing returns notes and folders only. It skips a symlink, a hidden
    entry, a file that is not a note and a name that the wire types refuse.
    A folder of more than 2,000 entries is refused.
+
+## The memory store
+
+1. Cognee reads its settings from the env at its first import. Call
+   `configure` before any import of Cognee. It refuses to run after one.
+2. Every folder of the store is under `store_root`: the databases, the
+   files, the cache and the logs. Nothing goes to the home folder.
+3. Telemetry is off. The tokenizer comes from a local cache, offline.
+4. The model is the `fast` alias of LiteLLM, with reasoning off, at 40
+   requests per minute. The model provider limits every family on one
+   account.
+5. The LiteLLM key is in no repr and on no command line.
 
 ## Not a workspace member
 
