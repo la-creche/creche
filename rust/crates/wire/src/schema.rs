@@ -12,7 +12,10 @@ use schemars::generate::SchemaSettings;
 use schemars::transform::transform_subschemas;
 use serde_json::{Value, json};
 
-use super::{AutoJobId, DelegationId, JS_INTEGER_MAX, JobId, SessionId, SessionOrigin, UnixMillis};
+use super::{
+    AutoJobId, DelegationId, JS_INTEGER_MAX, JobId, SessionId, SessionOrigin, SessionRow,
+    UnixMillis,
+};
 
 /// The variable that makes the test write the file instead of checking it.
 const WRITE_VAR: &str = "CRECHE_WIRE_SCHEMA";
@@ -34,6 +37,7 @@ pub(super) fn wire_schema() -> Value {
     let _ = generator.subschema_for::<DelegationId>();
     let _ = generator.subschema_for::<SessionOrigin>();
     let _ = generator.subschema_for::<UnixMillis>();
+    let _ = generator.subschema_for::<SessionRow>();
 
     json!({
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -78,6 +82,19 @@ fn bound_integers(schema: &mut Schema) {
     );
 }
 
+/// List each property of `schema` in its `required`. schemars leaves out a
+/// field of type `Option`, because a derived reader takes a missing key as
+/// `None`. A struct whose `Option` fields read with `Option::deserialize`
+/// refuses a missing key, and this transform makes its schema say so.
+pub(super) fn require_each_key(schema: &mut Schema) {
+    let keys: Vec<Value> = schema
+        .get("properties")
+        .and_then(Value::as_object)
+        .map(|properties| properties.keys().cloned().map(Value::String).collect())
+        .unwrap_or_default();
+    schema.insert("required".to_owned(), Value::Array(keys));
+}
+
 /// True when `schema` admits an integer: its type is `"integer"`, or an array
 /// that holds `"integer"`.
 fn is_integer(schema: &Schema) -> bool {
@@ -116,6 +133,49 @@ fn each_wire_type_has_one_definition() {
     let schema = wire_schema();
 
     assert_eq!(schema["$defs"]["SessionId"]["type"], "string");
+}
+
+/// The paths of the objects in `node` that leave a property out of
+/// `required` (`wire/AGENTS.md`, "A struct on the wire", rule 4).
+fn optional_keys(node: &Value, path: &str, found: &mut Vec<String>) {
+    match node {
+        Value::Object(map) => {
+            if let Some(Value::Object(properties)) = map.get("properties") {
+                let required = map.get("required").and_then(Value::as_array);
+                for key in properties.keys() {
+                    if !required.is_some_and(|keys| keys.contains(&json!(key))) {
+                        found.push(format!("{path}/{key}"));
+                    }
+                }
+            }
+            for (key, child) in map {
+                optional_keys(child, &format!("{path}/{key}"), found);
+            }
+        }
+        Value::Array(items) => {
+            for (index, child) in items.iter().enumerate() {
+                optional_keys(child, &format!("{path}/{index}"), found);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[test]
+fn each_key_of_each_wire_object_is_required() {
+    let mut found = Vec::new();
+    optional_keys(&wire_schema(), "", &mut found);
+
+    assert!(found.is_empty(), "keys not in `required`: {found:?}");
+}
+
+#[test]
+fn a_key_left_out_of_required_is_found() {
+    let mut found = Vec::new();
+    let node = json!({"$defs": {"A": {"properties": {"a": {}, "b": {}}, "required": ["a"]}}});
+    optional_keys(&node, "", &mut found);
+
+    assert_eq!(found, ["/$defs/A/b"]);
 }
 
 #[test]

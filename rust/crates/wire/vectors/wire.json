@@ -432,6 +432,83 @@
       "note": "a trailing newline"
     }
   ],
+  "SessionCwd": [
+    {
+      "json": "\"/home/david/code/lacreche\"",
+      "written": "\"/home/david/code/lacreche\"",
+      "note": "an absolute path"
+    },
+    {
+      "json": "\"/\"",
+      "written": "\"/\"",
+      "note": "the root"
+    },
+    {
+      "json": "\"/Users/david/Ça va\"",
+      "written": "\"/Users/david/Ça va\"",
+      "note": "a space and a character of 2 bytes"
+    },
+    {
+      "json": "\"/tmp/a\\nb\"",
+      "written": "\"/tmp/a\\nb\"",
+      "note": "a line feed: a path may hold one, and no code refuses it today"
+    },
+    {
+      "json": "\"/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+      "written": "\"/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+      "note": "4096 characters, the cap"
+    },
+    {
+      "json": "\"/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+      "written": null,
+      "note": "4097 characters, past the cap"
+    },
+    {
+      "json": "\"/ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé\"",
+      "written": "\"/ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé\"",
+      "note": "4096 characters of up to 2 bytes each: the cap counts characters"
+    },
+    {
+      "json": "\"\"",
+      "written": null,
+      "note": "empty"
+    },
+    {
+      "json": "\"home/david\"",
+      "written": null,
+      "note": "a relative path"
+    },
+    {
+      "json": "\"~/code\"",
+      "written": null,
+      "note": "a home path that a shell expands"
+    },
+    {
+      "json": "\"C:\\\\Users\\\\david\"",
+      "written": null,
+      "note": "a Windows path"
+    },
+    {
+      "json": "\" /home/david\"",
+      "written": null,
+      "note": "a space first"
+    },
+    {
+      "json": "\"/tmp/a\\u0000b\"",
+      "written": null,
+      "note": "a NUL, which no path holds"
+    },
+    {
+      "json": "1",
+      "written": null,
+      "note": "a number"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    }
+  ],
   "SessionId": [
     {
       "json": "\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"",
@@ -634,6 +711,340 @@
       "json": "{\"auto\":{\"job\":\"auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\",\"trigger\":{\"webhook\":{\"chain\":[\"chat\"],\"name\":\"boiler-alert\"}}}}",
       "written": null,
       "note": "an autonomous job of a webhook with a chain"
+    }
+  ],
+  "SessionRow": [
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}",
+      "written": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}",
+      "note": "a door session after its first turn"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":null,\"updated_at\":1793577600000}",
+      "written": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":null,\"updated_at\":1793577600000}",
+      "note": "a new session: no title yet, and the updated time is the created time"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"scrum-lead\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"auto\":{\"job\":\"auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\",\"trigger\":{\"dispatch\":{\"chain\":[\"chat\",\"scrum-lead\"],\"name\":\"chat\"}}}},\"title\":null,\"updated_at\":1793577600000}",
+      "written": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"scrum-lead\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"auto\":{\"job\":\"auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\",\"trigger\":{\"dispatch\":{\"chain\":[\"chat\",\"scrum-lead\"],\"name\":\"chat\"}}}},\"title\":null,\"updated_at\":1793577600000}",
+      "note": "an autonomous job of a dispatch"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":9007199254740991}",
+      "written": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":9007199254740991}",
+      "note": "the largest updated time"
+    },
+    {
+      "json": "{\"updated_at\":1793577660000,\"title\":\"Fix the boiler alert\",\"origin\":{\"door\":{}},\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"family\":\"chat\",\"cwd\":\"/home/david/code/lacreche\",\"created_at\":1793577600000}",
+      "written": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}",
+      "note": "its keys in any order"
+    },
+    {
+      "json": "[1793577600000,\"/home/david/code/lacreche\",\"chat\",\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",{\"door\":{}},\"Fix the boiler alert\",1793577660000]",
+      "written": null,
+      "note": "the fields in order as an array, the array form of a struct"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an empty array"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"updated_at\":1793577660000}",
+      "written": null,
+      "note": "no title key: null is the one form of no title"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\"}",
+      "written": null,
+      "note": "no updated_at key"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":null}",
+      "written": null,
+      "note": "a title with a null updated time: each row has an updated time"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":null,\"updated_at\":null}",
+      "written": null,
+      "note": "a null updated time before the first turn: the vmm sets it to the created time"
+    },
+    {
+      "json": "{\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}",
+      "written": null,
+      "note": "no created time"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}",
+      "written": null,
+      "note": "no cwd"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}",
+      "written": null,
+      "note": "no family"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}",
+      "written": null,
+      "note": "no id"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}",
+      "written": null,
+      "note": "no origin"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000,\"order\":1}",
+      "written": null,
+      "note": "an order key: the list order is no field (CH21-5)"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000,\"sessionId\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}",
+      "written": null,
+      "note": "the ACP key sessionId"
+    },
+    {
+      "json": "{\"created_at\":\"2026-11-02T00:00:00Z\",\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}",
+      "written": null,
+      "note": "a created time as a date-time string"
+    },
+    {
+      "json": "{\"created_at\":9007199254740992,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}",
+      "written": null,
+      "note": "a created time of 2^53, past the cap"
+    },
+    {
+      "json": "{\"created_at\":-1,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}",
+      "written": null,
+      "note": "a negative created time"
+    },
+    {
+      "json": "{\"created_at\":1793577600000.0,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}",
+      "written": null,
+      "note": "a created time written as a float"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":\"1793577660000\"}",
+      "written": null,
+      "note": "an updated time as a string"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"\",\"updated_at\":1793577660000}",
+      "written": null,
+      "note": "an empty title"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":1,\"updated_at\":1793577660000}",
+      "written": null,
+      "note": "a title that is a number"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"home/david\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}",
+      "written": null,
+      "note": "a relative cwd"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"Chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}",
+      "written": null,
+      "note": "a family name with a capital letter"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3F2B8C1E-9D4A-4E6B-8A7C-0B1D2E3F4A5B\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}",
+      "written": null,
+      "note": "an uppercase id"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":\"door\",\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}",
+      "written": null,
+      "note": "an origin as a string"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{},\"delegate\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}",
+      "written": null,
+      "note": "an origin with two variants"
+    }
+  ],
+  "SessionTitle": [
+    {
+      "json": "\"Fix the boiler alert\"",
+      "written": "\"Fix the boiler alert\"",
+      "note": "words one space apart"
+    },
+    {
+      "json": "\"a\"",
+      "written": "\"a\"",
+      "note": "one character"
+    },
+    {
+      "json": "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+      "written": "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+      "note": "256 characters, the cap"
+    },
+    {
+      "json": "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+      "written": null,
+      "note": "257 characters, past the cap"
+    },
+    {
+      "json": "\"éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé\"",
+      "written": "\"éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé\"",
+      "note": "256 characters of 2 bytes each: the cap counts characters, not bytes"
+    },
+    {
+      "json": "\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"",
+      "written": "\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"",
+      "note": "256 characters outside the BMP: the cap counts code points, not UTF-16 units"
+    },
+    {
+      "json": "\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\"",
+      "written": null,
+      "note": "257 characters outside the BMP"
+    },
+    {
+      "json": "\"\\u0046ix it\"",
+      "written": "\"Fix it\"",
+      "note": "an escaped character"
+    },
+    {
+      "json": "\"run \\u001b[1m now\"",
+      "written": "\"run \\u001b[1m now\"",
+      "note": "ESC: titleOf keeps a control character that is not white space"
+    },
+    {
+      "json": "\"ab\"",
+      "written": "\"ab\"",
+      "note": "U+0085 is not white space to JavaScript, so titleOf keeps it"
+    },
+    {
+      "json": "\"Fix\\u200bit\"",
+      "written": "\"Fix​it\"",
+      "note": "U+200B is not white space to JavaScript, so titleOf keeps it"
+    },
+    {
+      "json": "\"Fix\\u180eit\"",
+      "written": "\"Fix᠎it\"",
+      "note": "U+180E is not white space to JavaScript, so titleOf keeps it"
+    },
+    {
+      "json": "\"\"",
+      "written": null,
+      "note": "empty: the facade sets no title then"
+    },
+    {
+      "json": "\" Fix\"",
+      "written": null,
+      "note": "a space first: titleOf trims"
+    },
+    {
+      "json": "\"Fix \"",
+      "written": null,
+      "note": "a space last: the facade trims the end after the cut"
+    },
+    {
+      "json": "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \"",
+      "written": null,
+      "note": "titleOf of 255 a, a space and b: the 256-byte cut ends in a space, which the facade trims"
+    },
+    {
+      "json": "\"Fix  it\"",
+      "written": null,
+      "note": "two spaces: titleOf folds white space to one space"
+    },
+    {
+      "json": "\"Fix\\tit\"",
+      "written": null,
+      "note": "a tab: titleOf folds it to a space"
+    },
+    {
+      "json": "\"Fix\\nit\"",
+      "written": null,
+      "note": "a line feed: titleOf keeps one line"
+    },
+    {
+      "json": "\"Fix\\u000bit\"",
+      "written": null,
+      "note": "U+000B, a vertical tab, white space to JavaScript"
+    },
+    {
+      "json": "\"Fix\\u000cit\"",
+      "written": null,
+      "note": "U+000C, a form feed, white space to JavaScript"
+    },
+    {
+      "json": "\"Fix\\u000dit\"",
+      "written": null,
+      "note": "U+000D, a carriage return, white space to JavaScript"
+    },
+    {
+      "json": "\"Fix\\u1680it\"",
+      "written": null,
+      "note": "U+1680, the first of its range, white space to JavaScript"
+    },
+    {
+      "json": "\"Fix\\u2000it\"",
+      "written": null,
+      "note": "U+2000, the first of its range, white space to JavaScript"
+    },
+    {
+      "json": "\"Fix\\u200ait\"",
+      "written": null,
+      "note": "U+200A, the last of its range, white space to JavaScript"
+    },
+    {
+      "json": "\"Fix\\u2029it\"",
+      "written": null,
+      "note": "U+2029, a line terminator to JavaScript"
+    },
+    {
+      "json": "\"Fix\\u202fit\"",
+      "written": null,
+      "note": "U+202F, white space to JavaScript"
+    },
+    {
+      "json": "\"Fix\\u205fit\"",
+      "written": null,
+      "note": "U+205F, white space to JavaScript"
+    },
+    {
+      "json": "\"Fix it\"",
+      "written": null,
+      "note": "U+00A0, white space to JavaScript"
+    },
+    {
+      "json": "\"Fix it\"",
+      "written": null,
+      "note": "U+2028, a line terminator to JavaScript"
+    },
+    {
+      "json": "\"Fix　it\"",
+      "written": null,
+      "note": "U+3000, white space to JavaScript"
+    },
+    {
+      "json": "\"﻿Fix\"",
+      "written": null,
+      "note": "U+FEFF, white space to JavaScript"
+    },
+    {
+      "json": "\"\\ud800\"",
+      "written": null,
+      "note": "a lone surrogate"
+    },
+    {
+      "json": "1",
+      "written": null,
+      "note": "a number"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    },
+    {
+      "json": "[\"Fix\"]",
+      "written": null,
+      "note": "an array"
     }
   ],
   "Timer": [

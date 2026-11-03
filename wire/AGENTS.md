@@ -116,6 +116,10 @@ model take only an object.
 3. Make the payload of an enum variant a struct type of its own. The class
    of an inline struct variant gets the name of its key, and a later type
    with the same name changes that name.
+4. Give a field that may be `null` the type `Option` and
+   `#[serde(deserialize_with = "Option::deserialize")]`, and give its struct
+   `schemars(transform = schema::require_each_key)`. The key is then
+   required in both languages, and `null` is the one form of no value.
 
 ## Change a wire type
 
