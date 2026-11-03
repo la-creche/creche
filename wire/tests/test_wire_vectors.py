@@ -97,20 +97,36 @@ def _nodes(value: object) -> list[dict[str, object]]:
     return [node] + [found for item in node.values() for found in _nodes(item)]
 
 
+#: The largest integer that JavaScript reads exactly, 2^53 - 1 (CH22 rule 3).
+JS_INTEGER_MAX = (1 << 53) - 1
+
+
+def _within(node: dict[str, object], key: str) -> bool:
+    bound = node.get(key)
+
+    return isinstance(bound, int) and abs(bound) <= JS_INTEGER_MAX
+
+
+def _is_integer(node: dict[str, object]) -> bool:
+    """A nullable integer has the type `["integer", "null"]`."""
+    kind = node.get("type")
+
+    return kind == "integer" or (isinstance(kind, list) and "integer" in kind)
+
+
 def _unchecked(schema: object) -> list[str]:
-    """Each node of the schema whose generated model is wider than the Rust
-    type.
+    """Each node of the schema that breaks the integer and time rules.
 
     datamodel-codegen drops `format` for an integer, so an integer without
     `minimum` and `maximum` reads a value past the width of the Rust type.
-    pydantic reads a date in forms that RFC 3339 refuses, so a `date-time`
-    needs a `pattern` of its form."""
+    A bound past 2^53 - 1 lets through an integer that JavaScript rounds.
+    A time on the wire is `UnixMillis`, never a `date-time` (CH22-1)."""
     found: list[str] = []
     for node in _nodes(schema):
-        if node.get("type") == "integer" and not {"minimum", "maximum"} <= node.keys():
-            found.append(f"an integer without bounds: {node}")
-        if node.get("format") == "date-time" and "pattern" not in node:
-            found.append(f"a date-time without a pattern: {node}")
+        if _is_integer(node) and not (_within(node, "minimum") and _within(node, "maximum")):
+            found.append(f"an integer without bounds within 2^53 - 1: {node}")
+        if node.get("format") == "date-time":
+            found.append(f"a date-time: {node}")
 
     return found
 
@@ -123,11 +139,13 @@ def test_an_unchecked_integer_or_date_is_found() -> None:
     schema = {
         "$defs": {
             "A": {"type": "integer", "format": "uint8", "minimum": 0},
-            "B": {"type": "string", "format": "date-time"},
+            "B": {"type": "string", "format": "date-time", "pattern": "^.*Z$"},
+            "C": {"type": "integer", "minimum": 0, "maximum": JS_INTEGER_MAX + 1},
+            "D": {"type": ["integer", "null"], "minimum": 0},
         }
     }
 
-    assert len(_unchecked(schema)) == 2
+    assert len(_unchecked(schema)) == 4
 
 
 #: The core schema types of a scalar that a lax model converts.

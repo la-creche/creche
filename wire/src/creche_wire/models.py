@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, RootModel, StrictInt, StrictStr
 
 
 class Auto(BaseModel):
@@ -222,6 +222,17 @@ class TimerTrigger(BaseModel):
         extra="forbid",
     )
     timer: Timer
+
+
+class UnixMillis(RootModel[StrictInt]):
+    root: Annotated[
+        StrictInt,
+        Field(
+            description="A time on the wire: whole milliseconds since 1970-01-01T00:00:00Z, UTC\n(decision CH22-1). It is the one wire form of a time. No wire type holds\na `date-time` string.\n\nOn the wire it is a JSON integer from 0 to 2^53 - 1, so JavaScript reads\nit exactly. A larger integer, a negative integer, a float such as `1.0`\nor `1e3`, and a string are refused.",
+            ge=0,
+            le=9007199254740991,
+        ),
+    ]
 
 
 class Webhook(BaseModel):

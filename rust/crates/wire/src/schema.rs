@@ -7,10 +7,12 @@
 
 use std::path::PathBuf;
 
+use schemars::Schema;
 use schemars::generate::SchemaSettings;
+use schemars::transform::transform_subschemas;
 use serde_json::{Value, json};
 
-use super::{AutoJobId, DelegationId, JobId, SessionId, SessionOrigin};
+use super::{AutoJobId, DelegationId, JS_INTEGER_MAX, JobId, SessionId, SessionOrigin, UnixMillis};
 
 /// The variable that makes the test write the file instead of checking it.
 const WRITE_VAR: &str = "CRECHE_WIRE_SCHEMA";
@@ -24,17 +26,66 @@ const SCHEMA_FILE: &str = "schema/wire.json";
 pub(super) fn wire_schema() -> Value {
     let mut generator = SchemaSettings::draft2020_12()
         .for_deserialize()
+        .with_transform(bound_integers)
         .into_generator();
     let _ = generator.subschema_for::<SessionId>();
     let _ = generator.subschema_for::<JobId>();
     let _ = generator.subschema_for::<AutoJobId>();
     let _ = generator.subschema_for::<DelegationId>();
     let _ = generator.subschema_for::<SessionOrigin>();
+    let _ = generator.subschema_for::<UnixMillis>();
 
     json!({
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$defs": generator.take_definitions(true),
     })
+}
+
+/// Give each integer of `schema` its `minimum` and `maximum` (decision CH22
+/// rule 3). datamodel-codegen drops the `format` that schemars writes, so
+/// the bounds are the only width the generated model checks.
+///
+/// schemars bounds an integer of 8 or 16 bits itself. This transform gives
+/// an integer of 32 bits the bounds of its width. Any other integer (`u64`,
+/// `i64`, `usize`, `isize`) needs bounds of its own type, at most 2^53 - 1
+/// from zero, or the schema test fails. JavaScript reads no larger integer
+/// exactly.
+///
+/// A nullable integer (`Option<u64>`) has the type `["integer", "null"]`, so
+/// the transform checks it too.
+fn bound_integers(schema: &mut Schema) {
+    transform_subschemas(&mut bound_integers, schema);
+    if !is_integer(schema) {
+        return;
+    }
+
+    let width = match schema.get("format").and_then(Value::as_str) {
+        Some("uint32") => Some((0, i64::from(u32::MAX))),
+        Some("int32") => Some((i64::from(i32::MIN), i64::from(i32::MAX))),
+        _ => None,
+    };
+    if let (Some((min, max)), Some(node)) = (width, schema.as_object_mut()) {
+        node.entry("minimum").or_insert(json!(min));
+        node.entry("maximum").or_insert(json!(max));
+    }
+
+    let limit = i64::try_from(JS_INTEGER_MAX).unwrap();
+    let bound = |key: &str| schema.get(key).and_then(Value::as_i64);
+    assert!(
+        bound("minimum").is_some_and(|min| min >= -limit)
+            && bound("maximum").is_some_and(|max| max <= limit),
+        "an integer of a wire type needs a minimum and a maximum within 2^53 - 1 of zero: {schema:?}"
+    );
+}
+
+/// True when `schema` admits an integer: its type is `"integer"`, or an array
+/// that holds `"integer"`.
+fn is_integer(schema: &Schema) -> bool {
+    match schema.get("type") {
+        Some(Value::String(name)) => name == "integer",
+        Some(Value::Array(names)) => names.iter().any(|name| name == "integer"),
+        _ => false,
+    }
 }
 
 fn rendered() -> String {
@@ -65,4 +116,50 @@ fn each_wire_type_has_one_definition() {
     let schema = wire_schema();
 
     assert_eq!(schema["$defs"]["SessionId"]["type"], "string");
+}
+
+#[test]
+fn an_integer_of_32_bits_gets_the_bounds_of_its_width() {
+    let cases = [
+        (schemars::schema_for!(u32), 0, i64::from(u32::MAX)),
+        (
+            schemars::schema_for!(i32),
+            i64::from(i32::MIN),
+            i64::from(i32::MAX),
+        ),
+        (schemars::schema_for!(Option<u32>), 0, i64::from(u32::MAX)),
+    ];
+
+    for (mut schema, min, max) in cases {
+        bound_integers(&mut schema);
+
+        assert_eq!(schema.get("minimum"), Some(&json!(min)), "{schema:?}");
+        assert_eq!(schema.get("maximum"), Some(&json!(max)), "{schema:?}");
+    }
+}
+
+#[test]
+#[should_panic(expected = "within 2^53 - 1 of zero")]
+fn an_integer_of_64_bits_without_a_maximum_fails() {
+    bound_integers(&mut schemars::schema_for!(u64));
+}
+
+#[test]
+#[should_panic(expected = "within 2^53 - 1 of zero")]
+fn a_nullable_integer_of_64_bits_without_a_maximum_fails() {
+    bound_integers(&mut schemars::schema_for!(Option<u64>));
+}
+
+#[test]
+#[should_panic(expected = "within 2^53 - 1 of zero")]
+fn an_integer_with_a_minimum_past_the_cap_fails() {
+    let limit = i64::try_from(JS_INTEGER_MAX).unwrap();
+    let mut schema = Schema::try_from(json!({
+        "type": "integer",
+        "minimum": -limit - 1,
+        "maximum": 0,
+    }))
+    .unwrap();
+
+    bound_integers(&mut schema);
 }
