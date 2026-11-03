@@ -434,9 +434,10 @@ units that belong to no component, and the scripts that they run (contract
    manifest that names a `unit` or that has a `build` (contract 06 §8.3).
 2. `tests/test_handover_host_component.py` holds a copy of the manifest of
    creche-release. Change the copy when that manifest changes.
-3. A host can have no clone of creche-release yet. `catalog.ARRIVING_REPOS`
-   holds `Repo.CRECHE_RELEASE`, so discovery accepts a set of roots with no
-   `host` manifest. The allocator still tags `host` in creche-release.
+3. A host must hold a clone of creche-release at
+   `/srv/agents/code/creche-release`. Root reads the source of a `host`
+   release there. `catalog.ARRIVING_REPOS` is empty, so a typed `request`,
+   `check` or `resolve` needs a `--root` for creche-release as well.
 4. Step 8 of a `host` release copies the fetched tree into `host.new`
    (`install.py` rule 10). It leaves out the clone's `.git`. A link or any
    other entry that is not a directory or a regular file fails the stage.
@@ -570,6 +571,9 @@ that wants a refusal changes one field.
   `creche-follow.service` with exit 2. The follower writes no row in its
   notice file for it, so the operator learns of it only from the failed
   unit.
+- `follow` fetches four repositories in turn, each capped at 120 s.
+  `creche-follow.service` stops a run at 300 s, so a run with three or more
+  hung fetches ends with no request. The next firing fetches again.
 - The checker runs C2, C3, C4, then C1 (`contracts.py`).
 - A component named at its live version is `unchanged`, and step 9 restarts
   nothing (`resolve.py`).

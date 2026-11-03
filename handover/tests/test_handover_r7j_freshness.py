@@ -23,7 +23,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from handover.catalog import ARRIVING_REPOS, CATALOG, Repo
+from handover.catalog import CATALOG, Repo
 from handover.corpus import (
     FETCH_NOTE,
     CorpusReport,
@@ -328,31 +328,26 @@ def _state_file(tmp_path: Path) -> str:
     return str(path)
 
 
-def _repo_roots(tmp_path: Path, *, omit: str) -> tuple[Path, Path, Path, Path]:
-    """One directory per repo, the way a real request names four with
+def _repo_roots(tmp_path: Path, *, omit: str) -> dict[Repo, Path]:
+    """One directory per repo, the way a real request names five with
     `--root ...` each. One shared root would not do: `mcp-servers`,
-    `registry-data` and `chaperone` each declare `path: "."` (repo root), so
-    writing two under one directory makes the second overwrite the first's
-    `component.yaml`. `omit` names the one component left unwritten,
-    everywhere. A host has no clone of a repository in `ARRIVING_REPOS`
-    yet, so no root holds its components."""
-    control = tmp_path / "creche"
-    mcp = tmp_path / "mcp"
-    registry = tmp_path / "registry"
-    chaperone = tmp_path / "chaperone"
-    homes = {
-        Repo.CRECHE: control,
-        Repo.MCP: mcp,
-        Repo.REGISTRY: registry,
-        Repo.CHAPERONE: chaperone,
-    }
+    `registry-data`, `chaperone` and `host` each declare `path: "."` (repo
+    root), so writing two under one directory makes the second overwrite the
+    first's manifest. `omit` names the one component left unwritten,
+    everywhere."""
+    homes = {repo: tmp_path / str(repo) for repo in Repo}
     for row in CATALOG:
-        if row.name == omit or row.repo in ARRIVING_REPOS:
+        if row.name == omit:
             continue
 
         write_manifest(homes[row.repo], row.name, manifest_text(row.name))
 
-    return control, mcp, registry, chaperone
+    return homes
+
+
+def _root_args(homes: dict[Repo, Path]) -> list[str]:
+    """`--root` once for each repository."""
+    return [arg for home in homes.values() for arg in ("--root", str(home))]
 
 
 def test_the_roots_are_read_after_the_fetch_not_before(
@@ -365,7 +360,8 @@ def test_the_roots_are_read_after_the_fetch_not_before(
 
     This fake corpus only grows the missing manifest when "fetched", so
     the request can only succeed if the fetch really does run first."""
-    control, mcp, registry, chaperone = _repo_roots(tmp_path, omit="mcp-servers")
+    homes = _repo_roots(tmp_path, omit="mcp-servers")
+    mcp = homes[Repo.MCP]
     # mcp-servers' component.yaml does not exist yet: the merge "has not
     # reached" this root.
 
@@ -381,14 +377,7 @@ def test_the_roots_are_read_after_the_fetch_not_before(
         [
             "request",
             "caregiver",
-            "--root",
-            str(control),
-            "--root",
-            str(mcp),
-            "--root",
-            str(registry),
-            "--root",
-            str(chaperone),
+            *_root_args(homes),
             "--state",
             _state_file(tmp_path),
             "--spool",
@@ -406,7 +395,7 @@ def test_a_root_still_missing_after_the_fetch_names_the_sync_command(
     """The fetch ran and `mcp-servers` is STILL missing: the merge may
     simply not be in the corpus yet, and the refusal says the one command
     that catches it up rather than leaving the operator to guess."""
-    control, mcp, registry, chaperone = _repo_roots(tmp_path, omit="mcp-servers")
+    homes = _repo_roots(tmp_path, omit="mcp-servers")
 
     monkeypatch.setattr(
         cli, "refresh", lambda repos, *a, **k: CorpusReport(True, [f"fetched {n}" for n in repos])
@@ -418,14 +407,7 @@ def test_a_root_still_missing_after_the_fetch_names_the_sync_command(
         [
             "request",
             "caregiver",
-            "--root",
-            str(control),
-            "--root",
-            str(mcp),
-            "--root",
-            str(registry),
-            "--root",
-            str(chaperone),
+            *_root_args(homes),
             "--state",
             _state_file(tmp_path),
             "--spool",
@@ -445,20 +427,13 @@ def test_dry_run_never_gets_the_sync_hint(
 ) -> None:
     """No fetch is attempted on a dry run, so a missing root is the plain
     contract 06 §10 refusal: nothing here claims a fetch that did not run."""
-    control, mcp, registry, chaperone = _repo_roots(tmp_path, omit="mcp-servers")
+    homes = _repo_roots(tmp_path, omit="mcp-servers")
 
     code = cli.main(
         [
             "request",
             "caregiver",
-            "--root",
-            str(control),
-            "--root",
-            str(mcp),
-            "--root",
-            str(registry),
-            "--root",
-            str(chaperone),
+            *_root_args(homes),
             "--state",
             _state_file(tmp_path),
             "--dry-run",

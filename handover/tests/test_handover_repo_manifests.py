@@ -30,9 +30,9 @@ from handover.state import ReleaseState
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-#: The three components that live in repositories creche cannot
+#: The four components that live in repositories creche cannot
 #: write (contract 06 §10.1), in catalog order.
-ELSEWHERE = ("chaperone", "mcp-servers", "registry-data")
+ELSEWHERE = ("chaperone", "mcp-servers", "registry-data", "host")
 
 
 @pytest.fixture(scope="module")

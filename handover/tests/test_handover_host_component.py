@@ -1,9 +1,9 @@
 """The `host` component of creche-release (contract 06 §1 row 10, §8.3).
 
 It is the one `kind: units` component. Its manifest has no `build` and
-names no `unit`. A host may not have a clone of creche-release yet, so
-discovery tolerates its absence (`catalog.ARRIVING_REPOS`). The allocator
-still tags it in its own repository.
+names no `unit`. A host must hold a clone of creche-release: discovery
+reports `host` missing without one. The allocator tags it in its own
+repository.
 """
 
 from __future__ import annotations
@@ -62,15 +62,14 @@ def test_a_units_manifest_with_a_build_is_refused() -> None:
     assert (refusal.code, refusal.detail) == (RefusalCode.MANIFEST, UNITS_HAVE_NO_BUILD)
 
 
-# ---- a host with no clone of creche-release -----------------------------------
+# ---- the clone of creche-release on a host ------------------------------------
 
 
-def _clones(tmp_path: Path, omit: str = "") -> list[Path]:
-    """One root per repository, as on a host. No root for a repository in
-    `ARRIVING_REPOS`."""
+def _clones(tmp_path: Path, omit: Repo | None = None) -> list[Path]:
+    """One root per repository, as on a host, less the clone of `omit`."""
     roots: dict[Repo, Path] = {}
     for row in CATALOG:
-        if row.repo in ARRIVING_REPOS or row.name == omit:
+        if row.repo == omit:
             continue
 
         root = roots.setdefault(row.repo, tmp_path / str(row.repo))
@@ -79,12 +78,16 @@ def _clones(tmp_path: Path, omit: str = "") -> list[Path]:
     return list(roots.values())
 
 
-def test_a_host_with_no_clone_of_creche_release_reads_complete(tmp_path: Path) -> None:
+def test_creche_release_is_no_longer_arriving() -> None:
+    assert Repo.CRECHE_RELEASE not in ARRIVING_REPOS
+
+
+def test_a_host_with_every_clone_reads_complete(tmp_path: Path) -> None:
     assert discover(_clones(tmp_path)).missing == ()
 
 
-def test_another_absent_component_is_still_missing(tmp_path: Path) -> None:
-    assert discover(_clones(tmp_path, omit="handover")).missing == ("handover",)
+def test_a_host_with_no_clone_of_creche_release_misses_host(tmp_path: Path) -> None:
+    assert discover(_clones(tmp_path, omit=Repo.CRECHE_RELEASE)).missing == (HOST,)
 
 
 # ---- the tags of creche-release ------------------------------------------------
