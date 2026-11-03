@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 from creche_memory.server import MAX_LINE_BYTES, SOCKET_MODE, MemoryServer, answer
 from creche_memory.vault import Vault
+from creche_memory.writes import Writer
 
 NOTE = "# Dentist\n\nThe one on Oak St.\n"
 
@@ -30,7 +31,7 @@ def vault() -> Iterator[Path]:
 
 def _serve(root: Path, peer: int) -> tuple[MemoryServer, Path]:
     path = root / "memory.sock"
-    server = MemoryServer(path, Vault(root / "vault"), peer)
+    server = MemoryServer(path, Vault(root / "vault"), Writer(root / "vault"), peer)
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
     return server, path
@@ -111,7 +112,7 @@ def test_a_stale_socket_is_replaced_and_a_file_stops_the_start(vault: Path) -> N
     path.unlink()
     path.write_text("not a socket", encoding="utf-8")
     with pytest.raises(FileExistsError):
-        MemoryServer(path, Vault(vault / "vault"), os.getuid())
+        MemoryServer(path, Vault(vault / "vault"), Writer(vault / "vault"), os.getuid())
 
 
 @pytest.mark.parametrize(
@@ -120,20 +121,21 @@ def test_a_stale_socket_is_replaced_and_a_file_stops_the_start(vault: Path) -> N
         (b"{not json\n", "bad_request"),
         (_request("delete", path="a.md"), "bad_request"),
         (_request("search", query="dentist", k=3), "not_ready"),
-        (_request("create", slug="a", title="A", body="x"), "not_ready"),
-        (_request("rewrite", path="a.md", text="x", if_match="new"), "not_ready"),
+        (_request("rewrite", path="a.md", text="x", if_match="new"), "not_allowed_here"),
     ],
-    ids=["not JSON", "an unknown op", "search", "create", "rewrite"],
+    ids=["not JSON", "an unknown op", "search", "a rewrite outside the agent areas"],
 )
 def test_answer_refuses_what_it_does_not_serve(vault: Path, line: bytes, refused: str) -> None:
-    reply = answer(line, Vault(vault / "vault"))
+    reply = answer(line, Vault(vault / "vault"), Writer(vault / "vault"))
 
     assert json.loads(reply.model_dump_json())["refused"] == refused
 
 
 def test_answer_lists_a_folder(vault: Path) -> None:
     reply = json.loads(
-        answer(_request("list", folder="profile"), Vault(vault / "vault")).model_dump_json()
+        answer(
+            _request("list", folder="profile"), Vault(vault / "vault"), Writer(vault / "vault")
+        ).model_dump_json()
     )
 
     assert [note["path"] for note in reply["notes"]] == ["profile/dentist.md"]

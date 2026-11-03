@@ -28,7 +28,9 @@ from .wire import (
     Request,
     RewriteRequest,
     SearchRequest,
+    WriteReply,
 )
+from .writes import Writer
 
 #: The longest request line, newline included. The largest request is a
 #: rewrite: 512 KiB of text, escaped as JSON.
@@ -49,7 +51,7 @@ XUCRED_HEAD = struct.Struct("2I")
 XUCRED_SIZE = 76
 SOL_LOCAL = 0
 
-type Answer = ReadReply | ListReply | RefusedReply
+type Answer = ReadReply | ListReply | WriteReply | RefusedReply
 
 
 def _refused(code: Refusal, reason: str) -> RefusedReply:
@@ -70,7 +72,7 @@ def peer_uid(sock: socket.socket) -> int:
     raise OSError(f"no peer credentials on {sys.platform}")
 
 
-def answer(line: bytes, vault: Vault) -> Answer:
+def answer(line: bytes, vault: Vault, writer: Writer) -> Answer:
     """The reply to one request line."""
     try:
         request = Request.model_validate_json(line).root
@@ -82,8 +84,12 @@ def answer(line: bytes, vault: Vault) -> Answer:
             return vault.read_note(request.path)
         case ListRequest():
             return vault.list_folder(request.folder)
-        case SearchRequest() | CreateRequest() | RewriteRequest():
-            return _refused(Refusal.NOT_READY, f"this service does not serve {request.op} yet")
+        case CreateRequest():
+            return writer.create(request)
+        case RewriteRequest():
+            return writer.rewrite(request)
+        case SearchRequest():
+            return _refused(Refusal.NOT_READY, "this service does not serve search yet")
         case _:
             assert_never(request)
 
@@ -110,7 +116,11 @@ class _Handler(socketserver.StreamRequestHandler):
                 return
 
             line = _read_line(self)
-            reply = line if isinstance(line, RefusedReply) else answer(line, server.vault)
+            reply = (
+                line
+                if isinstance(line, RefusedReply)
+                else answer(line, server.vault, server.writer)
+            )
             self.wfile.write(reply.model_dump_json().encode() + b"\n")
         except OSError:
             return
@@ -121,9 +131,10 @@ class MemoryServer(socketserver.ThreadingUnixStreamServer):
 
     daemon_threads = True
 
-    def __init__(self, path: Path, vault: Vault, peer: int) -> None:
+    def __init__(self, path: Path, vault: Vault, writer: Writer, peer: int) -> None:
         _remove_stale(path)
         self.vault = vault
+        self.writer = writer
         self.peer = peer
         super().__init__(str(path), _Handler)
         os.chmod(path, SOCKET_MODE)
