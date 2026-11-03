@@ -13,12 +13,14 @@ service of the vault. The service hosts the memory store and answers the
 | `src/creche_memory/vault.py` | `Vault`: it reads one note or lists one folder, inside the vault root. |
 | `src/creche_memory/writes.py` | `Writer`: it creates inbox notes and rewrites whole files in the agent areas. |
 | `src/creche_memory/store.py` | `StoreSettings` and `configure`: the settings of the memory store, as the env that Cognee reads. |
+| `src/creche_memory/sync.py` | `Syncer`: the checks of the vault and the syncs into the store. |
 | `src/creche_memory/server.py` | `MemoryServer`: the socket server. It checks the peer uid and answers one line per connection. |
 | `vectors/wire.json` | The shared wire vectors. |
 | `tests/test_memory_wire_vectors.py` | The test that runs the shared wire vectors through the models. |
 | `tests/test_memory_vault.py` | The tests of the reads: the caps, the refusals and the symlink rules. |
 | `tests/test_memory_writes.py` | The tests of the writes: the areas, the digest check, the modes and the symlink rules. |
 | `tests/test_memory_store.py` | The tests of the settings. One test imports Cognee in a process of its own and reads its settings back. |
+| `tests/test_memory_sync.py` | The tests of the sync: the folders, the stamp, the quiet time, a write and a failure. |
 | `tests/test_memory_server.py` | The tests of the socket: the peer check, the line rules and the dispatch. |
 
 ## One definition per type
@@ -93,6 +95,22 @@ after it reads `json`, or `null` when the type refuses `json`.
    requests per minute. The model provider limits every family on one
    account.
 5. The LiteLLM key is in no repr and on no command line.
+
+## The sync
+
+1. The loop checks the vault every 30 seconds. It syncs once the vault
+   stays the same for 30 seconds. After a confirmed write, it syncs at the
+   next check.
+2. The store reads every folder except `house/ha` and `house/scrum`. Cognee
+   takes only the folders to read, so the loop lists them at each check:
+   each top-level folder, and each folder beside a skipped one.
+3. A note directly in `house/`, or at the vault root, is not read.
+4. A stamp of each note's path, size and time tells the loop that the
+   vault changed. A change in a skipped folder does not move it.
+5. A failed sync prints only the type of the error, because a message can
+   hold a URL. The next check tries again. `ready` is set after the first
+   sync that ends well.
+6. The sync calls `remember` with batches of one note and four chunks.
 
 ## Not a workspace member
 
