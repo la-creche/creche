@@ -19,10 +19,14 @@ from which TypeBox gives the static types and the runtime checks
 | `src/creche_wire/models.py` | The generated models. Never edit this file. |
 | `src/creche_wire/__init__.py` | The names a caller imports. |
 | `src/creche_wire/reader.py` | `read`, the one read of a wire text. |
+| `src/creche_wire/route.py` | `JsonRoute`, the type of a route constant. |
+| `src/creche_wire/routes.py` | The generated route constants. Never edit this file. |
+| `src/creche_wire/_route_typing.py` | The wrong uses of a route that pyright must refuse. |
 | `src/creche_wire/strictjson.py` | A copy of the strict JSON reader. Never edit one copy alone. |
 | `tests/test_wire_vectors.py` | The test that runs the shared wire vectors through `read`. |
 | `tests/test_wire_read.py` | The test that shows `read` is strict. |
 | `tests/test_wire_grammar.py` | The test that holds each name pattern equal to `family/grammar.py`. |
+| `tests/test_wire_routes.py` | The test that holds each route constant equal to `x-routes`. |
 
 `family/grammar.py` stays the authority for a name of the family file
 (decision CH23 rule 5). A wire type of such a name copies its pattern, and
@@ -188,6 +192,17 @@ its error type.
    CH33 rule 8). The repo holds a frozen copy of that subset per number,
    and CI fails on a change that keeps the number. That check is not built
    yet (see "Known gaps").
+7. The schema test also writes `src/creche_wire/routes.py`. It holds the
+   protocol, its header and one `JsonRoute` constant per route, named as
+   the route in capitals: `CREATE`. pyright then refuses a wrong request,
+   reply or error model on a Python client.
+8. `JsonRoute.encode` takes only the request model of its route. It also
+   keeps the request type invariant, so do not remove it.
+   `src/creche_wire/_route_typing.py` holds the proof. Each wrong use there
+   carries an ignore of its pyright error, and the file fails pyright when
+   an ignore is unnecessary. A wider `JsonRoute` then fails the gate.
+9. A caller imports a route from `creche_wire.routes`. The route constants
+   and `JsonRoute` are not in `__all__`, because they are no wire type.
 
 To add a route, add its marker and its line in `route_table!`. Then follow
 the steps below.
@@ -222,7 +237,8 @@ type holds them yet (see "Known gaps").
 
 1. Change the type in `rust/crates/wire/src/`.
 2. In `rust/`, run `CRECHE_WIRE_SCHEMA=write cargo test -p creche-wire`. The
-   test writes `schema/wire.json` and `agent/src/wire.ts`.
+   test writes `schema/wire.json`, `agent/src/wire.ts` and
+   `src/creche_wire/routes.py`.
 3. At the root of the repository, run `uv run datamodel-codegen`. It writes
    `src/creche_wire/models.py`. The `[tool.datamodel-codegen]` section of the
    root `pyproject.toml` holds its settings.
@@ -233,7 +249,7 @@ type holds them yet (see "Known gaps").
 
 `bin/quality-gate.sh` runs `uv run datamodel-codegen --check`. The check
 fails when `models.py` is not what the schema generates. The Rust test fails
-when `wire.json` or `wire.ts` is not the schema of the Rust types.
+when `wire.json`, `wire.ts` or `routes.py` is not what the Rust types give.
 
 ## Who uses it
 
