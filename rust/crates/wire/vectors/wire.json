@@ -1,4 +1,46 @@
 {
+  "Auto": [
+    {
+      "json": "{\"job\":\"auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\",\"trigger\":{\"timer\":{}}}",
+      "written": "{\"job\":\"auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\",\"trigger\":{\"timer\":{}}}",
+      "note": "an autonomous job of a timer"
+    },
+    {
+      "json": "{\"trigger\":{\"dispatch\":{\"chain\":[\"chat\",\"scrum-lead\"],\"name\":\"chat\"}},\"job\":\"auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\"}",
+      "written": "{\"job\":\"auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\",\"trigger\":{\"dispatch\":{\"chain\":[\"chat\",\"scrum-lead\"],\"name\":\"chat\"}}}",
+      "note": "its keys in any order"
+    },
+    {
+      "json": "[\"auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\",{\"timer\":{}}]",
+      "written": null,
+      "note": "the fields in order as an array, the array form of a struct"
+    },
+    {
+      "json": "{\"job\":\"auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\"}",
+      "written": null,
+      "note": "no trigger"
+    },
+    {
+      "json": "{\"trigger\":{\"timer\":{}}}",
+      "written": null,
+      "note": "no job"
+    },
+    {
+      "json": "{\"job\":\"job-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\",\"trigger\":{\"timer\":{}}}",
+      "written": null,
+      "note": "the job id of a thin job"
+    },
+    {
+      "json": "{\"job\":\"auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\",\"trigger\":{\"timer\":{}},\"fired_at\":\"2026-09-19T06:00:00Z\"}",
+      "written": null,
+      "note": "a fired time"
+    },
+    {
+      "json": "{\"job\":\"auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\",\"trigger\":{\"timer\":{\"name\":\"boiler-alert\"}}}",
+      "written": null,
+      "note": "a timer with a name"
+    }
+  ],
   "AutoJobId": [
     {
       "json": "\"auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\"",
@@ -88,6 +130,53 @@
       "json": "\"01K5J9QWB2M4N6Q8S0V2W4Y6AO\"",
       "written": null,
       "note": "O is not in the Crockford alphabet"
+    }
+  ],
+  "Dispatch": [
+    {
+      "json": "{\"chain\":[\"chat\",\"scrum-lead\"],\"name\":\"chat\"}",
+      "written": "{\"chain\":[\"chat\",\"scrum-lead\"],\"name\":\"chat\"}",
+      "note": "a chain and the calling family"
+    },
+    {
+      "json": "{\"name\":\"chat\",\"chain\":[\"chat\",\"scrum-lead\"]}",
+      "written": "{\"chain\":[\"chat\",\"scrum-lead\"],\"name\":\"chat\"}",
+      "note": "its keys in any order"
+    },
+    {
+      "json": "[[\"chat\",\"scrum-lead\"],\"chat\"]",
+      "written": null,
+      "note": "the fields in order as an array, the array form of a struct"
+    },
+    {
+      "json": "{\"name\":\"chat\"}",
+      "written": null,
+      "note": "a dispatch with no chain"
+    },
+    {
+      "json": "{\"chain\":[\"chat\",\"scrum-lead\"]}",
+      "written": null,
+      "note": "a dispatch with no name"
+    },
+    {
+      "json": "{\"chain\":[],\"name\":\"chat\"}",
+      "written": null,
+      "note": "an empty chain"
+    },
+    {
+      "json": "{\"chain\":null,\"name\":\"chat\"}",
+      "written": null,
+      "note": "a null chain"
+    },
+    {
+      "json": "{\"chain\":[\"chat\",\"scrum-lead\"],\"name\":\"Chat\"}",
+      "written": null,
+      "note": "a name that is not a family name"
+    },
+    {
+      "json": "{\"chain\":[\"chat\",\"scrum-lead\"],\"name\":\"chat\",\"fired_at\":\"2026-09-19T06:00:00Z\"}",
+      "written": null,
+      "note": "a fired time"
     }
   ],
   "DispatchChain": [
@@ -452,6 +541,11 @@
       "note": "a delegate job, its keys in any order"
     },
     {
+      "json": "{\"auto\":{\"job\":\"auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\",\"trigger\":{\"webhook\":{\"name\":\"boiler-alert\"}}}}",
+      "written": "{\"auto\":{\"job\":\"auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\",\"trigger\":{\"webhook\":{\"name\":\"boiler-alert\"}}}}",
+      "note": "an autonomous job of a webhook"
+    },
+    {
       "json": "\"door\"",
       "written": null,
       "note": "a variant as a string"
@@ -479,7 +573,7 @@
     {
       "json": "{\"auto\":{\"job\":\"auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\"}}",
       "written": null,
-      "note": "a variant this type does not have yet"
+      "note": "an autonomous job with no trigger"
     },
     {
       "json": "{\"door\":[]}",
@@ -530,6 +624,172 @@
       "json": "{\"Door\":{}}",
       "written": null,
       "note": "a variant name in the wrong case"
+    },
+    {
+      "json": "{\"auto\":[\"auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\",{\"timer\":{}}]}",
+      "written": null,
+      "note": "an auto as an array of its fields in order"
+    },
+    {
+      "json": "{\"auto\":{\"job\":\"auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\",\"trigger\":{\"webhook\":{\"chain\":[\"chat\"],\"name\":\"boiler-alert\"}}}}",
+      "written": null,
+      "note": "an autonomous job of a webhook with a chain"
+    }
+  ],
+  "Timer": [
+    {
+      "json": "{}",
+      "written": "{}",
+      "note": "the empty object"
+    },
+    {
+      "json": "{\"name\":\"boiler-alert\"}",
+      "written": null,
+      "note": "a timer with a name"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an empty array, the array form of a struct"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    }
+  ],
+  "Trigger": [
+    {
+      "json": "{\"timer\":{}}",
+      "written": "{\"timer\":{}}",
+      "note": "a timer"
+    },
+    {
+      "json": "{\"webhook\":{\"name\":\"boiler-alert\"}}",
+      "written": "{\"webhook\":{\"name\":\"boiler-alert\"}}",
+      "note": "a webhook"
+    },
+    {
+      "json": "{\"dispatch\":{\"chain\":[\"chat\",\"scrum-lead\"],\"name\":\"chat\"}}",
+      "written": "{\"dispatch\":{\"chain\":[\"chat\",\"scrum-lead\"],\"name\":\"chat\"}}",
+      "note": "a dispatch"
+    },
+    {
+      "json": "{\"timer\":{\"name\":\"boiler-alert\"}}",
+      "written": null,
+      "note": "a timer with a name"
+    },
+    {
+      "json": "{\"webhook\":{\"chain\":[\"chat\"],\"name\":\"boiler-alert\"}}",
+      "written": null,
+      "note": "a webhook with a chain"
+    },
+    {
+      "json": "{\"dispatch\":{\"chain\":[],\"name\":\"chat\"}}",
+      "written": null,
+      "note": "a dispatch with an empty chain"
+    },
+    {
+      "json": "{\"dispatch\":{\"name\":\"chat\"}}",
+      "written": null,
+      "note": "a dispatch with no chain"
+    },
+    {
+      "json": "{\"webhook\":{\"name\":\"boiler_alert\"}}",
+      "written": null,
+      "note": "a webhook name with an underscore"
+    },
+    {
+      "json": "{\"timer\":[]}",
+      "written": null,
+      "note": "a timer as an array, the array form of a struct"
+    },
+    {
+      "json": "{\"webhook\":[\"boiler-alert\"]}",
+      "written": null,
+      "note": "a webhook as an array of its fields in order"
+    },
+    {
+      "json": "{\"dispatch\":[[\"chat\",\"scrum-lead\"],\"chat\"]}",
+      "written": null,
+      "note": "a dispatch as an array of its fields in order"
+    },
+    {
+      "json": "{\"kind\":\"webhook\",\"name\":\"boiler-alert\",\"fired_at\":\"2026-09-19T06:00:00Z\"}",
+      "written": null,
+      "note": "the flat form of contract 02 with a kind key"
+    },
+    {
+      "json": "{\"timer\":{},\"webhook\":{\"name\":\"boiler-alert\"}}",
+      "written": null,
+      "note": "two variants"
+    },
+    {
+      "json": "{\"cron\":{}}",
+      "written": null,
+      "note": "a tag this type does not have"
+    },
+    {
+      "json": "{\"Timer\":{}}",
+      "written": null,
+      "note": "a variant name in the wrong case"
+    },
+    {
+      "json": "\"timer\"",
+      "written": null,
+      "note": "a variant as a string"
+    },
+    {
+      "json": "{\"timer\":null}",
+      "written": null,
+      "note": "a timer as null"
+    },
+    {
+      "json": "{}",
+      "written": null,
+      "note": "an object with no variant"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    }
+  ],
+  "Webhook": [
+    {
+      "json": "{\"name\":\"boiler-alert\"}",
+      "written": "{\"name\":\"boiler-alert\"}",
+      "note": "a webhook name"
+    },
+    {
+      "json": "[\"boiler-alert\"]",
+      "written": null,
+      "note": "the fields in order as an array, the array form of a struct"
+    },
+    {
+      "json": "{}",
+      "written": null,
+      "note": "no name"
+    },
+    {
+      "json": "{\"name\":null}",
+      "written": null,
+      "note": "a null name"
+    },
+    {
+      "json": "{\"name\":\"Boiler\"}",
+      "written": null,
+      "note": "a name that is not a webhook name"
+    },
+    {
+      "json": "{\"chain\":[\"chat\"],\"name\":\"boiler-alert\"}",
+      "written": null,
+      "note": "a webhook with a chain"
+    },
+    {
+      "json": "{\"fired_at\":\"2026-09-19T06:00:00Z\",\"name\":\"boiler-alert\"}",
+      "written": null,
+      "note": "a fired time"
     }
   ],
   "WebhookName": [

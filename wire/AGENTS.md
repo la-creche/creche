@@ -27,6 +27,11 @@ The Rust crate `rust/crates/wire` defines each wire type. Its test writes
 family pattern and its chain cap equal to the wire types. The facade's
 `FAMILY` and `MAX_CHAIN` are TypeScript, so no test here reaches them.
 
+A `dispatch` trigger needs a chain of 1 to 8 names. attendance today stores
+a dispatch with no chain when `POST /dispatch` carries none. Before
+attendance writes the `auto` origin, a PR of its own makes attendance refuse
+a missing or empty chain, at the request and in the ledger reader.
+
 ## Read a wire text
 
 Read a wire text only with `creche_wire.read(Model, data, cap=...)`.
