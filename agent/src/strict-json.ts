@@ -8,7 +8,7 @@
 //   value ──► stringifyStrict ──► { text }    one strict JSON text
 //                             └─► { rule }    no text
 //
-//   text  ──► parseStrict ──► { value }       the value of a strict text
+//   bytes ──► parseStrict ──► { value }       the value of a strict text
 //                         └─► { rule }        the ReadRule the text breaks
 //
 // A strict text has one value for each reader. This file holds the rules
@@ -203,26 +203,43 @@ export function stringifyStrict(value: unknown): StrictText {
 }
 
 /**
- * The rule that a text breaks when `parseStrict` reads it. The first six
- * words are words of the Rust enum `Rule` of `creche_contracts::json`.
- * `IntegerRange` has a lower bound here than there. A JavaScript number
- * cannot tell `1.0` from `1`, or `-0` from `0`, so the last two rules refuse
- * at the read what the Rust and Python types refuse as a float for an
- * integer. No other reader has their words.
+ * The rule that a text breaks when `parseStrict` reads it. Each word up to
+ * `FloatRange`, and `NegativeZero`, is a word of the enum `Rule` of the
+ * Python `strictjson` copies. The vector surface `runtime.strict_json`
+ * holds them (`test/strict-json-vectors.test.ts`).
+ *
+ * A JavaScript number cannot tell `1.0` from `1` or `-0` from `0`, and
+ * reads no integer past 2^53 - 1 exactly. So the last three rules refuse
+ * at the read what the Rust types refuse as a float for an integer, or
+ * what JavaScript cannot hold. Python `strictjson` refuses `-0` too, with
+ * the same word (decision CH22-3). No other reader has the words
+ * `unsafe_integer` and `integral_float` (decision CH22-2).
  */
 export enum ReadRule {
-  /** `JSON.parse` refuses the text. */
+  /** The text has more bytes than the cap of its surface. */
+  TooLarge = "too_large",
+  /** The bytes are not UTF-8. */
+  NotUtf8 = "not_utf8",
+  /** The first character is a byte order mark. */
+  ByteOrderMark = "byte_order_mark",
+  /** The text is no JSON text, for a reason that no other rule names. */
   Syntax = "syntax",
+  /** The text holds `NaN`, `Infinity` or `-Infinity`. */
+  Constant = "constant",
+  /** Something other than white space follows the value. */
+  TrailingData = "trailing_data",
   /** Arrays and objects nest deeper than `DEPTH_MAX` levels. */
   TooDeep = "too_deep",
   /** One object holds a key two times, after the decode of each escape. */
   DuplicateKey = "duplicate_key",
   /** A text or a key holds one half of a surrogate pair with no partner. */
   LoneSurrogate = "lone_surrogate",
-  /** An integer token is past 2^53 - 1 from zero. JavaScript reads no larger integer exactly. */
+  /** An integer token is outside the range of 64 bits, as for `stringifyStrict`. */
   IntegerRange = "integer_range",
   /** A number with a fraction or an exponent is not finite. */
   FloatRange = "float_range",
+  /** An integer token inside the range of 64 bits is past 2^53 - 1 from zero. */
+  UnsafeInteger = "unsafe_integer",
   /** A number with a fraction or an exponent has an integer value, as `1.0` and `1e3` have. */
   IntegralFloat = "integral_float",
   /** An integer token is `-0`. */
@@ -237,17 +254,33 @@ export type StrictValue =
 /** A number token: the run of characters that `JSON.parse` read as a number. */
 const NUMBER = /[-+.eE0-9]+/y;
 
+/** A string token, closed. */
+const STRING = /"(?:[^"\\]|\\[\s\S])*"/y;
+
+/** A scalar token at the start of a text: a literal or the run of a number. */
+const SCALAR = /true|false|null|[-+.eE0-9]+/y;
+
+/** The bounds of an integer token: those of `stringifyStrict`, and of JavaScript. */
+const INTEGER_MIN = -(2n ** 63n);
+const INTEGER_MAX = 2n ** 64n - 1n;
+const SAFE_MAX = BigInt(Number.MAX_SAFE_INTEGER);
+
 /** The rule that the number token `token` breaks, or null. */
 function numberRule(token: string): ReadRule | null {
-  const value = Number(token);
   if (/^-?[0-9]+$/.test(token)) {
-    if (!Number.isSafeInteger(value)) {
+    const integer = BigInt(token);
+    if (integer < INTEGER_MIN || integer > INTEGER_MAX) {
       return ReadRule.IntegerRange;
     }
 
-    return Object.is(value, -0) ? ReadRule.NegativeZero : null;
+    if (integer < -SAFE_MAX || integer > SAFE_MAX) {
+      return ReadRule.UnsafeInteger;
+    }
+
+    return token.startsWith("-") && integer === 0n ? ReadRule.NegativeZero : null;
   }
 
+  const value = Number(token);
   if (!Number.isFinite(value)) {
     return ReadRule.FloatRange;
   }
@@ -327,23 +360,99 @@ function scanText(text: string): ReadRule | null {
   return null;
 }
 
+/** The index just past the token of `pattern` at `at`, or -1. */
+function tokenEnd(pattern: RegExp, text: string, at: number): number {
+  pattern.lastIndex = at;
+
+  return pattern.test(text) ? pattern.lastIndex : -1;
+}
+
 /**
- * The value of the strict text `text`, or the first rule that it breaks.
- *
- * `JSON.parse` checks the grammar: RFC 8259, no byte order mark, no `NaN`
- * and nothing after the value. A scan of the tokens then checks the depth,
- * the keys of each object, each text and each number. The caller checks the
- * kind of the value and the size of the text.
+ * The index just past the first value of `text`, or -1. It reads only
+ * brackets, strings and the scalar at the start, so `JSON.parse` of the
+ * part up to that index says whether a value ends there.
  */
-export function parseStrict(text: string): StrictValue {
-  let value: unknown;
+function firstValueEnd(text: string): number {
+  let at = /^[ \t\n\r]*/.exec(text)?.[0].length ?? 0;
+  let depth = 0;
+  do {
+    const char = text[at];
+    if (char === '"') {
+      at = tokenEnd(STRING, text, at);
+    } else if (char === "{" || char === "[" || char === "}" || char === "]") {
+      depth += char === "{" || char === "[" ? 1 : -1;
+      at += 1;
+    } else {
+      at = depth === 0 ? tokenEnd(SCALAR, text, at) : at + 1;
+    }
+  } while (at > 0 && depth > 0 && at < text.length);
+
+  return depth === 0 ? at : -1;
+}
+
+/** The value of `text`, or undefined when `JSON.parse` refuses it. */
+function parsed(text: string): { readonly value: unknown } | undefined {
   try {
-    value = JSON.parse(text);
+    return { value: JSON.parse(text) };
   } catch {
-    return { ok: false, rule: ReadRule.Syntax };
+    return undefined;
+  }
+}
+
+/**
+ * The rule of a text that `JSON.parse` refuses. A first value that
+ * `JSON.parse` takes, with more after it, is trailing data, or the rule
+ * that the value breaks first. A text that holds a refusal of one rule gets
+ * the word of Python `strictjson`. A text that breaks two rules can get
+ * another word than Python gives, never another result.
+ */
+function grammarRule(text: string): ReadRule {
+  const end = firstValueEnd(text);
+  const first = end > 0 ? text.slice(0, end) : "";
+  if (parsed(first) !== undefined) {
+    return scanText(first) ?? ReadRule.TrailingData;
+  }
+
+  const outside = text.replace(/"(?:[^"\\]|\\[\s\S])*"/g, '""');
+
+  return /NaN|Infinity/.test(outside) ? ReadRule.Constant : ReadRule.Syntax;
+}
+
+/** The decoder of a text: UTF-8 only, with the byte order mark kept. */
+const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+
+/**
+ * The value of the strict text `data`, or the first rule that it breaks.
+ *
+ * `cap` is the most bytes that a text of the caller's surface has. The
+ * caller gives it, because the cap is a rule of the surface. The checks run
+ * in the sequence of the Python reader: the size, the encoding, the byte
+ * order mark, then `JSON.parse` for the grammar. A scan of the tokens then
+ * checks the depth, the keys of each object, each text and each number. The
+ * caller checks the kind of the value.
+ */
+export function parseStrict(data: Uint8Array, cap: number): StrictValue {
+  if (data.byteLength > cap) {
+    return { ok: false, rule: ReadRule.TooLarge };
+  }
+
+  let text: string;
+  try {
+    text = UTF8.decode(data);
+  } catch {
+    return { ok: false, rule: ReadRule.NotUtf8 };
+  }
+
+  if (text.startsWith("\uFEFF")) {
+    return { ok: false, rule: ReadRule.ByteOrderMark };
+  }
+
+  const read = parsed(text);
+  if (read === undefined) {
+    return { ok: false, rule: grammarRule(text) };
   }
 
   const rule = scanText(text);
 
-  return rule === null ? { ok: true, value } : { ok: false, rule };
+  return rule === null ? { ok: true, value: read.value } : { ok: false, rule };
 }

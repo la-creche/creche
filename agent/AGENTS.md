@@ -25,16 +25,24 @@ reads.
 schema test of `rust/crates/wire` writes it (`wire/AGENTS.md`). Never edit
 it.
 
-`parseStrict` of `src/strict-json.ts` is the strict reader of a wire text
-(decision CH22 rule 1). It gives the value, or a refusal that names a rule.
+`parseStrict(data, cap)` of `src/strict-json.ts` is the strict reader of
+a wire text (decision CH22 rule 1). It gives the value, or a refusal that
+names a rule. Up to `float_range`, and `negative_zero`, each word is a word
+of Python `strictjson`.
+`test/strict-json-vectors.test.ts` holds it to the shared vectors
+(`runtime.strict_json`).
 
 1. JavaScript reads `1.0` as `1` and `-0` as `0`. So `parseStrict` refuses
-   a number with a fraction or an exponent that has an integer value, and
-   the integer `-0`. No wire type has a float field. A float field needs
-   an owner decision first, because `parseStrict` refuses `1.0` for it too.
-2. `parseStrict` refuses an integer past 2^53 - 1 from zero, two equal
-   keys in one object, a lone surrogate and a nesting deeper than 64.
-3. The caller checks the size of the text against the cap of its surface.
+   a number with a fraction or an exponent that has an integer value
+   (`integral_float`), and the integer `-0` (`negative_zero`, as Python
+   `strictjson` does since decision CH22-3). No wire type has a float
+   field. A float field needs an owner decision first, because
+   `parseStrict` refuses `1.0` for it too.
+2. JavaScript reads no integer past 2^53 - 1 from zero exactly. So
+   `parseStrict` refuses such an integer inside the range of 64 bits as
+   `unsafe_integer`. Rust and Python take it.
+3. `cap` is the most bytes of a text of the caller's surface. A text over
+   it is `too_large`, before the decode.
 
 The tests use `sqlite()` with no path, an in-memory store, and pi's
 `fauxProvider()`. A test needs no network and no model key.
