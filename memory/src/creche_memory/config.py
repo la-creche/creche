@@ -1,0 +1,115 @@
+"""What the memory service reads from its environment.
+
+The unit reads two files: `/etc/creche/site.env` for the site values, and
+the service's own mode-0600 env file for the LiteLLM key. A value that is
+missing or bad stops the start. No setting has a silent fallback that could
+point the service at another vault or another store."""
+
+import os
+import pwd
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from .store import StoreSettings
+
+LAN_ADDRESS_ENV = "AGENT_LAN_ADDRESS"
+LITELLM_URL_ENV = "AGENT_LITELLM_BASE_URL"
+TEI_URL_ENV = "TEI_URL"
+KEY_ENV = "MEMORY_LITELLM_KEY"
+VAULT_ENV = "MEMORY_VAULT_ROOT"
+STORE_ENV = "MEMORY_STORE_ROOT"
+SOCKET_ENV = "MEMORY_SOCKET"
+PEER_ENV = "MEMORY_PEER_USER"
+
+#: The ports of the catalog defaults of `env/src/creche_env/default.env`, for
+#: a site file that sets only the LAN address.
+LITELLM_PORT = 4000
+TEI_PORT = 8085
+
+DEFAULT_VAULT = "/srv/agents/vault"
+DEFAULT_STORE = "/srv/agents/state/memory"
+DEFAULT_SOCKET = "/var/lib/creche-memory/memory.sock"
+DEFAULT_PEER = "mcp-memory"
+
+#: The Hugging Face hub cache of the tokenizer, inside the store.
+TOKENIZER_CACHE = Path("hf") / "hub"
+
+
+class ConfigError(Exception):
+    """The environment does not describe a service that may start."""
+
+
+@dataclass(frozen=True)
+class Config:
+    vault_root: Path
+    socket_path: Path
+    peer_uid: int
+    store: StoreSettings = field(repr=False)
+
+
+def _base_url(source: dict[str, str], name: str, port: int) -> str:
+    explicit = source.get(name, "").strip()
+    if explicit:
+        return explicit
+
+    address = source.get(LAN_ADDRESS_ENV, "").strip()
+    if not address:
+        raise ConfigError(f"set {name} or {LAN_ADDRESS_ENV} (/etc/creche/site.env)")
+
+    return f"http://{address}:{port}"
+
+
+def _path(source: dict[str, str], name: str, default: str) -> Path:
+    path = Path(source.get(name, "").strip() or default)
+    if not path.is_absolute():
+        raise ConfigError(f"{name} is not an absolute path: {path}")
+
+    return path
+
+
+def _peer_uid(name: str) -> int:
+    try:
+        return pwd.getpwnam(name).pw_uid
+    except KeyError:
+        raise ConfigError(f"no user {name}: create it first (the root steps)") from None
+
+
+def from_env(environ: dict[str, str] | None = None) -> Config:
+    source = environ if environ is not None else dict(os.environ)
+    key = source.get(KEY_ENV, "").strip()
+    if not key:
+        raise ConfigError(f"{KEY_ENV} is not set (the env file of the unit)")
+
+    store_root = _path(source, STORE_ENV, DEFAULT_STORE)
+    try:
+        store = StoreSettings(
+            store_root=store_root,
+            llm_base_url=_base_url(source, LITELLM_URL_ENV, LITELLM_PORT),
+            llm_key=key,
+            embedding_base_url=_base_url(source, TEI_URL_ENV, TEI_PORT),
+            tokenizer_cache=store_root / TOKENIZER_CACHE,
+        )
+    except ValueError as error:
+        raise ConfigError(str(error)) from None
+
+    return Config(
+        vault_root=_path(source, VAULT_ENV, DEFAULT_VAULT),
+        socket_path=_path(source, SOCKET_ENV, DEFAULT_SOCKET),
+        peer_uid=_peer_uid(source.get(PEER_ENV, "").strip() or DEFAULT_PEER),
+        store=store,
+    )
+
+
+def check(config: Config) -> list[str]:
+    """What stops a start on this host. An empty list means none."""
+    problems: list[str] = []
+    if not config.vault_root.is_dir():
+        problems.append(f"no vault folder at {config.vault_root}")
+
+    if not config.socket_path.parent.is_dir():
+        problems.append(f"no socket folder at {config.socket_path.parent} (the root steps)")
+
+    if not config.store.tokenizer_cache.is_dir():
+        problems.append(f"no tokenizer cache at {config.store.tokenizer_cache}")
+
+    return problems

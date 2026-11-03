@@ -7,6 +7,9 @@ requires-python = ">=3.12"
 # change (the store format can move with the version).
 dependencies = ["pydantic>=2.8", "cognee==1.6.6"]
 
+[project.scripts]
+creche-memory = "creche_memory.cli:main"
+
 [dependency-groups]
 dev = ["pytest>=8", "pyright>=1.1.380"]
 
