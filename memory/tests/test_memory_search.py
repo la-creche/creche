@@ -20,6 +20,8 @@ PATHS = {
     "doc-printer": "house/memories/printer.md",
     "doc-dentist": "profile/memories/dentist.md",
     "doc-hidden": ".obsidian/app.md",
+    "doc-bylaws": "house/01 - Governance/Bylaws.pdf",
+    "doc-scan": "house/scan.png",
 }
 
 
@@ -81,6 +83,14 @@ def test_each_hit_carries_the_path_of_its_note() -> None:
         "profile/memories/dentist.md",
     ]
     assert len(reply.passages[1].snippet) == MAX_SNIPPET_CHARS
+
+
+def test_a_hit_from_a_pdf_carries_the_path_of_its_pdf() -> None:
+    hits = [Hit("doc-bylaws", "Article 4: pets"), Hit("doc-scan", "neither a note nor a PDF")]
+    reply = _run(_searcher(hits), _request())
+
+    assert isinstance(reply, SearchReply)
+    assert [passage.path.root for passage in reply.passages] == ["house/01 - Governance/Bylaws.pdf"]
 
 
 def test_a_search_keeps_k_passages_and_caps_the_facts() -> None:

@@ -10,7 +10,10 @@ agents generate (decision MM8). Cognee's Obsidian connector takes only the
 folders to read, so the loop lists them at each check: each top-level folder,
 and each folder beside a skipped one. A note directly in a folder that holds
 a skipped folder, such as `house/<note>.md`, is not read. Nor is a note at
-the vault root."""
+the vault root.
+
+The PDFs of the same folders go in as a second source beside the notes
+(`pdf.py`)."""
 
 import asyncio
 import hashlib
@@ -22,6 +25,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
+
+from .pdf import PDF_SUFFIX, PdfTexts, pdf_source
 
 POLL_S = 30.0
 QUIET_S = 30.0
@@ -91,13 +96,16 @@ def ingest_folders(root: Path) -> list[str]:
 
 def vault_stamp(root: Path, folders: list[str]) -> str:
     """A digest of the folder list and of the path, size and time of each
-    note in it. An edit, a new note and a removed note each change it."""
+    note and each PDF in it. An edit, a new file and a removed file each
+    change it."""
     digest = hashlib.sha256("\n".join(folders).encode())
     for folder in folders:
         for directory, subdirs, files in os.walk(root / folder):
             subdirs[:] = sorted(name for name in subdirs if not name.startswith("."))
             for name in sorted(files):
-                if name.startswith(".") or not name.endswith(NOTE_SUFFIX):
+                if name.startswith(".") or not (
+                    name.endswith(NOTE_SUFFIX) or name.lower().endswith(PDF_SUFFIX)
+                ):
                     continue
 
                 path = Path(directory, name)
@@ -134,27 +142,41 @@ class Debounce:
         self.synced = stamp
 
 
+async def _remember(source: object) -> None:
+    import cognee
+
+    # The type of `remember` leaves out the dlt resource that the Obsidian
+    # connector returns, and that the connector's own docs pass to it.
+    await cognee.remember(  # pyright: ignore[reportUnknownMemberType]
+        source,  # pyright: ignore[reportArgumentType]
+        dataset_name=DATASET,
+        self_improvement=False,
+        primary_key="id",
+        write_disposition="merge",
+        max_rows_per_table=0,
+        data_per_batch=DATA_PER_BATCH,
+        chunks_per_batch=CHUNKS_PER_BATCH,
+    )
+
+
 def cognee_ingest(root: Path) -> Ingest:
-    """The sync through Cognee's Obsidian connector. An edited note replaces
-    its old document, and a removed note is forgotten."""
+    """The sync through Cognee's Obsidian connector, then the PDFs. An edited
+    note or PDF replaces its old document, and a removed one is forgotten."""
+    texts = PdfTexts()
 
     async def ingest(folders: list[str]) -> None:
-        import cognee
         from cognee.tasks.ingestion.connectors import obsidian_source
 
-        source = obsidian_source(vault_path=root, resource_name=RESOURCE, folders=folders)
-        # The type of `remember` leaves out the dlt resource that the Obsidian
-        # connector returns, and that the connector's own docs pass to it.
-        await cognee.remember(  # pyright: ignore[reportUnknownMemberType]
-            source,  # pyright: ignore[reportArgumentType]
-            dataset_name=DATASET,
-            self_improvement=False,
-            primary_key="id",
-            write_disposition="merge",
-            max_rows_per_table=0,
-            data_per_batch=DATA_PER_BATCH,
-            chunks_per_batch=CHUNKS_PER_BATCH,
-        )
+        await _remember(obsidian_source(vault_path=root, resource_name=RESOURCE, folders=folders))
+
+        # Each PDF is read in a child process. The reads run in a worker
+        # thread first, so the store loop keeps answering searches.
+        cut = texts.cut
+        await asyncio.to_thread(texts.warm, root, folders)
+        if texts.cut > cut:
+            print(f"memory: {texts.cut - cut} PDF(s) cut at the character cap", file=sys.stderr)
+
+        await _remember(pdf_source(root, folders, texts))
 
     return ingest
 

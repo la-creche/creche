@@ -5,7 +5,7 @@ description = "creche-memory: the memory service of the vault, and the wire type
 requires-python = ">=3.12"
 # An exact pin: the service owns the memory store, and an upgrade is its own
 # change (the store format can move with the version).
-dependencies = ["pydantic>=2.8", "cognee==1.6.6"]
+dependencies = ["pydantic>=2.8", "cognee==1.6.6", "pypdf>=6.21.4"]
 
 [project.scripts]
 creche-memory = "creche_memory.cli:main"
