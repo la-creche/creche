@@ -24,16 +24,10 @@ packages = ["src/creche_memory"]
 # cached for this directory (handover/tests/test_handover_ced_uv_guard.py).
 cache-keys = [{ file = "pyproject.toml" }, { file = "src/**" }]
 
-# The memory job of the gate runs pyright and pytest in this venv
+# The memory job of the gate runs pytest in this venv
 # (.github/workflows/gate.yml). The root checks do not see this package.
-[tool.pyright]
-include = ["src"]
-typeCheckingMode = "strict"
-pythonVersion = "3.12"
-venvPath = "."
-venv = ".venv"
-reportMissingTypeStubs = false
-
+# pyright reads memory/pyrightconfig.json, not a [tool.pyright] section: it
+# finds a pyrightconfig.json in a parent folder before it reads this file.
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"

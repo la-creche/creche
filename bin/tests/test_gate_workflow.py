@@ -608,6 +608,18 @@ def test_the_memory_job_checks_the_package_in_its_own_venv(
     assert UV_SYNC not in [step.get("uses") for step in steps]
 
 
+def test_pyright_in_the_memory_job_reads_the_config_of_the_package() -> None:
+    """pyright looks for a `pyrightconfig.json` in each parent folder before
+    it reads `[tool.pyright]` of `pyproject.toml`. With no such file in
+    `memory/`, a run there loads the root file and checks the whole
+    workspace, which the memory venv cannot import."""
+    config = json.loads((REPO / MEMORY_DIR / "pyrightconfig.json").read_text(encoding="utf-8"))
+    package = tomllib.loads((REPO / MEMORY_DIR / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert config["include"] == ["src"]
+    assert "pyright" not in package.get("tool", {})
+
+
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
 def test_a_skip_in_the_proc_job_is_a_failure(jobs: dict[str, dict[str, Any]], last: str) -> None:
     """A test that starts the facade skips itself when the build is missing. The

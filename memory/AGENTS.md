@@ -90,8 +90,10 @@ root `uv.lock`, because a change there moves every venv component
 1. The package has its own lock, `memory/uv.lock`.
 2. The root checks do not see the package, except ruff and ruff format.
 3. The `memory` job of the gate syncs the lock, then runs pyright and pytest
-   in `memory/`. The `[tool.pyright]` and `[tool.pytest.ini_options]`
-   sections of `memory/pyproject.toml` hold their settings.
+   in `memory/`. `memory/pyrightconfig.json` holds the pyright settings.
+   The file must stay: without it, pyright in `memory/` loads the root
+   `pyrightconfig.json`. The `[tool.pytest.ini_options]` section of
+   `memory/pyproject.toml` holds the pytest settings.
 4. Run the same checks before a push, in `memory/`: `uv sync --locked`, then
    `uv run pyright`, then `uv run pytest`.
 
