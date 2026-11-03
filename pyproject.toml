@@ -75,7 +75,6 @@ testpaths = [
     "handover/tests",
     "env/tests",
     "wire/tests",
-    "memory/tests",
     "vectors/tests",
 ]
 addopts = "-q"
@@ -96,7 +95,6 @@ pythonpath = [
     "handover/src",
     "env/src",
     "wire/src",
-    "memory/src",
 ]
 markers = [
     "slow: spawns real subprocesses",
@@ -139,7 +137,6 @@ source = [
     "handover",
     "creche_env",
     "creche_wire",
-    "creche_memory",
 ]
 
 # The pydantic models of the wire types (decision CH9-1, wire/AGENTS.md).

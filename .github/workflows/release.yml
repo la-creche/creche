@@ -377,6 +377,31 @@ jobs:
 
           sys.exit(1 if red else 0)
 
+  # The memory package (memory/AGENTS.md). It is not a workspace member: it
+  # has its own lock, because the memory store it pins is too large for the
+  # root venv. So it gets a venv, a pyright run and a pytest run of its own.
+  memory:
+    needs: scope
+    if: needs.scope.outputs.scope == 'code'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          enable-cache: false
+
+      - run: uv sync --locked
+        working-directory: memory
+
+      - run: uv run pyright
+        working-directory: memory
+
+      - run: uv run pytest
+        working-directory: memory
+
   # Build the final target that the playpen release publishes. This run
   # catches a missing source file and an import that only the image sees.
   playpen-image:
@@ -467,7 +492,7 @@ jobs:
   # skipped by default. The verdict step is
   # what holds the tags back when a job failed.
   release:
-    needs: [scope, lint, tests, agent, facade, proc, suites, playpen-image, rust, systemd-proof]
+    needs: [scope, lint, tests, agent, facade, proc, suites, memory, playpen-image, rust, systemd-proof]
     if: always()
     runs-on: ubuntu-24.04
     permissions:

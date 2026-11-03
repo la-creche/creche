@@ -3,7 +3,12 @@ name = "creche-memory"
 version = "0.1.0"
 description = "creche-memory: the memory service of the vault, and the wire types of its socket."
 requires-python = ">=3.12"
-dependencies = ["pydantic>=2.8"]
+# An exact pin: the service owns the memory store, and an upgrade is its own
+# change (the store format can move with the version).
+dependencies = ["pydantic>=2.8", "cognee==1.6.6"]
+
+[dependency-groups]
+dev = ["pytest>=8", "pyright>=1.1.380"]
 
 [build-system]
 requires = ["hatchling"]
@@ -18,3 +23,17 @@ packages = ["src/creche_memory"]
 # source in the key, a non-editable build installs the FIRST wheel uv ever
 # cached for this directory (handover/tests/test_handover_ced_uv_guard.py).
 cache-keys = [{ file = "pyproject.toml" }, { file = "src/**" }]
+
+# The memory job of the gate runs pyright and pytest in this venv
+# (.github/workflows/gate.yml). The root checks do not see this package.
+[tool.pyright]
+include = ["src"]
+typeCheckingMode = "strict"
+pythonVersion = "3.12"
+venvPath = "."
+venv = ".venv"
+reportMissingTypeStubs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
