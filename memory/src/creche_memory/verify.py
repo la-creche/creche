@@ -10,8 +10,9 @@ It checks four things:
 2. The vault, the socket folder and the tokenizer cache exist (the same
    check as `creche-memory --check`).
 3. The peer user exists.
-4. The socket of the service accepts a connection. The service answers only
-   the peer user, so it closes this connection at once, and that is a pass.
+4. The socket of the service accepts a connection within 10 seconds. The
+   service answers only the peer user, so it closes this connection at
+   once, and that is a pass.
 
 **The environment.** The executor gives the hook a small, fixed
 environment, with nothing of the unit's own (§4 rule 7). `--env-file`
@@ -24,6 +25,7 @@ import os
 import re
 import socket
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -32,8 +34,14 @@ from .config import ConfigError, check, key_from_env, places_from_env
 EXIT_OK = 0
 EXIT_FAILED = 1
 
-#: The seconds the hook waits for the socket.
+#: The seconds of one connect.
 SOCKET_TIMEOUT_S = 5.0
+
+#: The seconds the hook tries the socket for. The executor runs the hook
+#: right after it restarts the unit, and the service binds its socket about
+#: a second later. Well under the hook's 30 s limit.
+SOCKET_WAIT_S = 10.0
+SOCKET_RETRY_S = 0.5
 
 #: The most bytes of the env file.
 MAX_ENV_BYTES = 64 * 1024
@@ -70,15 +78,25 @@ def read_env_file(path: Path) -> dict[str, str]:
     return values
 
 
-def _socket_answers(path: Path) -> Result:
-    try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-            client.settimeout(SOCKET_TIMEOUT_S)
-            client.connect(str(path))
-    except OSError as error:
-        return Result("socket", False, f"{path}: {type(error).__name__}")
+def _connect(path: Path) -> None:
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.settimeout(SOCKET_TIMEOUT_S)
+        client.connect(str(path))
 
-    return Result("socket", True, f"{path} accepts a connection")
+
+def _socket_answers(path: Path) -> Result:
+    deadline = time.monotonic() + SOCKET_WAIT_S
+    while True:
+        try:
+            _connect(path)
+        except OSError as error:
+            if time.monotonic() >= deadline:
+                return Result("socket", False, f"{path}: {type(error).__name__}")
+
+            time.sleep(SOCKET_RETRY_S)
+            continue
+
+        return Result("socket", True, f"{path} accepts a connection")
 
 
 def run(env_file: Path) -> list[Result]:
