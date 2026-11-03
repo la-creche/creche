@@ -17,6 +17,8 @@ service of the vault. The service hosts the memory store and answers the
 | `src/creche_memory/writes.py` | `Writer`: it creates inbox notes and rewrites whole files in the agent areas. |
 | `src/creche_memory/store.py` | `StoreSettings` and `configure`: the settings of the memory store, as the env that Cognee reads. |
 | `src/creche_memory/sync.py` | `Syncer`: the checks of the vault and the syncs into the store. |
+| `src/creche_memory/pdf.py` | The PDFs of the vault as a second source of the store: the listing, the rows, the cache of texts. |
+| `src/creche_memory/pdftext.py` | The child process that reads the text of one PDF, with its limits. |
 | `src/creche_memory/search.py` | `Searcher` and `StoreLoop`: the search, and the one asyncio loop in which Cognee runs. |
 | `src/creche_memory/cognee_search.py` | The two Cognee searches and the map from a document to its note. pyright checks it in basic mode. |
 | `src/creche_memory/server.py` | `MemoryServer` and `Service`: the socket server. It checks the peer uid and answers one line per connection. |
@@ -28,6 +30,7 @@ service of the vault. The service hosts the memory store and answers the
 | `tests/test_memory_writes.py` | The tests of the writes: the areas, the digest check, the modes and the symlink rules. |
 | `tests/test_memory_store.py` | The tests of the settings. One test imports Cognee in a process of its own and reads its settings back. |
 | `tests/test_memory_sync.py` | The tests of the sync: the folders, the stamp, the quiet time, a write and a failure. |
+| `tests/test_memory_pdf.py` | The tests of the PDFs: the listing, the rows, the cap, the cache, the child and the real source. |
 | `tests/test_memory_search.py` | The tests of the search: `not_ready`, the paths, the caps, a slow search and a failed one. |
 | `tests/test_memory_server.py` | The tests of the socket: the peer check, the line rules and the dispatch. |
 
@@ -147,9 +150,10 @@ after it reads `json`, or `null` when the type refuses `json`.
 1. A search makes no LLM call (decision MM9). It asks Cognee for the graph
    facts near the query (`GRAPH_COMPLETION` with `only_context`) and for
    the matching passages (`CHUNKS`).
-2. Each passage maps to its note through the external id of its document,
-   `obsidian:<path>`. A passage with no note, or with a path that the wire
-   types refuse, is left out.
+2. Each passage maps to its note or PDF through the external id of its
+   document, `obsidian:<path>`. A passage with no source, or with a path that
+   the wire types refuse, is left out. A passage path is a `SourcePath`: a
+   `.md` note or a `.pdf`. `read` and `rewrite` still take notes only.
 3. A search before the first sync ends gets `not_ready`.
 4. Every call into Cognee runs in the loop of `StoreLoop`. A search from a
    connection waits at most 15 seconds, then gets `internal`. A failed
@@ -172,6 +176,29 @@ after it reads `json`, or `null` when the type refuses `json`.
    hold a URL. The next check tries again. `ready` is set after the first
    sync that ends well.
 6. The sync calls `remember` with batches of one note and four chunks.
+
+## The PDFs
+
+The Obsidian connector reads only `.md` notes. `pdf.py` gives the store the
+PDFs of the same folders, as a second `remember` after the notes.
+
+1. Each PDF is one document, with the id `obsidian:<path>` and its file name
+   as the title. Its table and sync state are `vault_pdf`. Cognee scopes its
+   cleanup by source and table, so neither source forgets the other's
+   documents.
+2. The service never parses a PDF. `pdftext.py` reads each one in a child
+   process: `python -I`, an empty env, 120 seconds, and on Linux 512 MiB of
+   address space and 60 CPU seconds. A PDF over 64 MiB is not read.
+3. The store takes the first 200,000 characters of each PDF (David,
+   2026-11-03). The sync prints how many PDFs it cut. `index_search` still
+   finds the rest of a long PDF.
+4. A PDF with no text, such as a scan that the OCR job has not processed, is
+   not a document. A PDF that cannot be read keeps what the store holds. A
+   removed PDF is forgotten.
+5. The text of each PDF is kept while its size and time stay the same. The
+   reads run in a worker thread before `remember`, so the store loop keeps
+   answering searches.
+6. The vault stamp counts PDFs too, so a new PDF starts a sync.
 
 ## Not a workspace member
 

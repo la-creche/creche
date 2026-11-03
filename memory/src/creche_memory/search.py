@@ -2,7 +2,7 @@
 
 A search asks Cognee twice. Graph completion with `only_context` gives the
 facts of the knowledge graph near the query. Chunk search gives the matching
-passages, and each passage maps back to its note through its document. The
+passages, and each passage maps back to its note or PDF through its document. The
 calling agent reads both and reasons over them itself.
 
 Cognee runs in one asyncio loop in one thread, `StoreLoop`. The syncer runs
@@ -25,7 +25,7 @@ from .wire import (
     RefusedReply,
     SearchReply,
     SearchRequest,
-    VaultPath,
+    SourcePath,
 )
 
 #: The longest text of graph facts that a reply carries.
@@ -65,7 +65,7 @@ def _passages(hits: list[Hit], paths: dict[str, str], count: int) -> list[Passag
             continue
 
         try:
-            passages.append(Passage(path=VaultPath(path), snippet=hit.text[:MAX_SNIPPET_CHARS]))
+            passages.append(Passage(path=SourcePath(path), snippet=hit.text[:MAX_SNIPPET_CHARS]))
         except ValidationError:
             continue
 

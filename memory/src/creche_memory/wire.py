@@ -26,6 +26,7 @@ MAX_REASON_CHARS = 500
 MAX_LIST_ENTRIES = 2000
 
 NOTE_SUFFIX = ".md"
+PDF_SUFFIX = ".pdf"
 
 FAMILY_RE = re.compile(r"[a-z][a-z0-9-]{0,62}")
 SLUG_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
@@ -70,6 +71,13 @@ def _note(text: str) -> str:
     return _folder(text)
 
 
+def _source(text: str) -> str:
+    if text == "" or not (text.endswith(NOTE_SUFFIX) or text.lower().endswith(PDF_SUFFIX)):
+        raise ValueError(f"does not end in {NOTE_SUFFIX} or {PDF_SUFFIX}")
+
+    return _folder(text)
+
+
 def _max_bytes(limit: int) -> Callable[[str], str]:
     def check(text: str) -> str:
         if len(text.encode()) > limit:
@@ -104,6 +112,13 @@ class VaultPath(RootModel[str]):
     """A note, relative to the vault root. No part is `.`, `..` or hidden."""
 
     root: Annotated[str, AfterValidator(_note)]
+
+
+class SourcePath(RootModel[str]):
+    """A note or a PDF, relative to the vault root: what a search passage
+    came from. A PDF cannot be read or written over the socket."""
+
+    root: Annotated[str, AfterValidator(_source)]
 
 
 class FolderPath(RootModel[str]):
@@ -205,7 +220,7 @@ class Request(RootModel[AnyRequest]):
 
 
 class Passage(_Wire):
-    path: VaultPath
+    path: SourcePath
     snippet: Annotated[str, Field(max_length=MAX_SNIPPET_CHARS)]
 
 

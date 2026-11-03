@@ -2,7 +2,18 @@
 
 `wire.py` holds the one definition of each wire type of the memory socket."""
 
-from .wire import Family, FolderPath, IfMatch, Refusal, Reply, Request, Sha256, Slug, VaultPath
+from .wire import (
+    Family,
+    FolderPath,
+    IfMatch,
+    Refusal,
+    Reply,
+    Request,
+    Sha256,
+    Slug,
+    SourcePath,
+    VaultPath,
+)
 
 __all__ = [
     "Family",
@@ -13,5 +24,6 @@ __all__ = [
     "Request",
     "Sha256",
     "Slug",
+    "SourcePath",
     "VaultPath",
 ]

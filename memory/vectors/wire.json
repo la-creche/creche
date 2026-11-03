@@ -21,6 +21,16 @@
     {"json": "\"\"", "written": null, "note": "refused: the empty text"},
     {"json": "3", "written": null, "note": "refused: not a string"}
   ],
+  "SourcePath": [
+    {"json": "\"house/01 - Governance/Bylaws.pdf\"", "written": "\"house/01 - Governance/Bylaws.pdf\"", "note": "a PDF in a folder"},
+    {"json": "\"finance/Statement.PDF\"", "written": "\"finance/Statement.PDF\"", "note": "a PDF with an upper-case suffix"},
+    {"json": "\"profile/memories/dentist.md\"", "written": "\"profile/memories/dentist.md\"", "note": "a note"},
+    {"json": "\"house/scan.png\"", "written": null, "note": "refused: neither a note nor a PDF"},
+    {"json": "\"house/../finance/a.pdf\"", "written": null, "note": "refused: a .. part"},
+    {"json": "\".trash/a.pdf\"", "written": null, "note": "refused: a hidden folder"},
+    {"json": "\".pdf\"", "written": null, "note": "refused: a hidden file"},
+    {"json": "\"\"", "written": null, "note": "refused: the empty text"}
+  ],
   "FolderPath": [
     {"json": "\"\"", "written": "\"\"", "note": "the vault root"},
     {"json": "\"house/ha\"", "written": "\"house/ha\"", "note": "a folder"},
@@ -70,6 +80,7 @@
   ],
   "Reply": [
     {"json": "{\"ok\":true,\"op\":\"search\",\"facts\":\"Epson ET-2850 uses 522 ink.\",\"passages\":[{\"path\":\"house/memories/printer.md\",\"snippet\":\"Epson 522 ink bottles\"}]}", "written": "{\"ok\":true,\"op\":\"search\",\"facts\":\"Epson ET-2850 uses 522 ink.\",\"passages\":[{\"path\":\"house/memories/printer.md\",\"snippet\":\"Epson 522 ink bottles\"}]}", "note": "search"},
+    {"json": "{\"ok\":true,\"op\":\"search\",\"facts\":\"\",\"passages\":[{\"path\":\"house/01 - Governance/Bylaws.pdf\",\"snippet\":\"Article 4: pets\"}]}", "written": "{\"ok\":true,\"op\":\"search\",\"facts\":\"\",\"passages\":[{\"path\":\"house/01 - Governance/Bylaws.pdf\",\"snippet\":\"Article 4: pets\"}]}", "note": "search, with a passage from a PDF"},
     {"json": "{\"ok\":true,\"op\":\"read\",\"path\":\"a.md\",\"text\":\"t\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"bytes\":1,\"modified\":\"2026-11-02T08:30:00Z\"}", "written": "{\"ok\":true,\"op\":\"read\",\"path\":\"a.md\",\"text\":\"t\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"bytes\":1,\"modified\":\"2026-11-02T08:30:00Z\"}", "note": "read"},
     {"json": "{\"ok\":true,\"op\":\"read\",\"path\":\"a.md\",\"text\":\"t\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"bytes\":1,\"modified\":\"2026-11-02T08:30:00+00:00\"}", "written": "{\"ok\":true,\"op\":\"read\",\"path\":\"a.md\",\"text\":\"t\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"bytes\":1,\"modified\":\"2026-11-02T08:30:00Z\"}", "note": "read: a UTC offset of +00:00 is written as Z"},
     {"json": "{\"ok\":true,\"op\":\"list\",\"notes\":[{\"path\":\"house/a.md\",\"bytes\":10,\"modified\":\"2026-11-02T08:30:00Z\"}],\"folders\":[\"house/ha\"]}", "written": "{\"ok\":true,\"op\":\"list\",\"notes\":[{\"path\":\"house/a.md\",\"bytes\":10,\"modified\":\"2026-11-02T08:30:00Z\"}],\"folders\":[\"house/ha\"]}", "note": "list"},
