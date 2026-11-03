@@ -11,9 +11,11 @@ service of the vault. The service hosts the memory store and answers the
 |---|---|
 | `src/creche_memory/wire.py` | The wire types of the socket: each request, each reply, the refusal codes and the newtypes. |
 | `src/creche_memory/vault.py` | `Vault`: it reads one note or lists one folder, inside the vault root. |
+| `src/creche_memory/server.py` | `MemoryServer`: the socket server. It checks the peer uid and answers one line per connection. |
 | `vectors/wire.json` | The shared wire vectors. |
 | `tests/test_memory_wire_vectors.py` | The test that runs the shared wire vectors through the models. |
 | `tests/test_memory_vault.py` | The tests of the reads: the caps, the refusals and the symlink rules. |
+| `tests/test_memory_server.py` | The tests of the socket: the peer check, the line rules and the dispatch. |
 
 ## One definition per type
 
@@ -38,6 +40,17 @@ after it reads `json`, or `null` when the type refuses `json`.
 5. The tests of the upstream in the `mcp` repository hold the same request
    texts as their accepted cases.
 
+## The socket
+
+1. The server reads the uid of each peer (`SO_PEERCRED` on Linux). A peer
+   with a uid other than the configured one gets no reply.
+2. A peer sends one request line within 10 seconds. A line over 640 KiB,
+   or a line with no newline, gets a refusal.
+3. The server answers `read` and `list`. It refuses `search`, `create` and
+   `rewrite` with `not_ready` until their changes land.
+4. At start, the server removes the socket of an earlier run. Any other
+   file at the path stops the start. The socket file gets mode 0660.
+
 ## Vault reads
 
 1. `Vault` opens the vault root, then each folder of the path relative to
@@ -59,6 +72,6 @@ root venv supplies `pydantic`.
 
 ## Known gaps
 
-1. The package has no socket server yet.
+1. The package has no command and no unit yet. Nothing starts the server.
 2. The package has no lock of its own yet. The change that adds the memory
    store adds the lock.
