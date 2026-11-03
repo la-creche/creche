@@ -51,18 +51,6 @@ UNITS: Final = (
     "creche-door-acp.service",
     "creche-door-trigger.service",
     "creche-door-trigger@.service",
-    "creche-watchdog.service",
-    "creche-watchdog.timer",
-    "creche-registry-sync.service",
-    "creche-registry-sync.timer",
-    "creche-code-corpus-sync.service",
-    "creche-code-corpus-sync.timer",
-    "creche-sbx-drift.service",
-    "creche-sbx-drift.timer",
-    "creche-library@.service",
-    "creche-library@.timer",
-    "creche-follow.service",
-    "creche-follow.timer",
 )
 
 #: The units `up` enables and starts. A template and a service that a
@@ -73,11 +61,6 @@ ENABLED: Final = (
     "creche-noticeboard.service",
     "creche-door-acp.service",
     "creche-door-trigger.service",
-    "creche-watchdog.timer",
-    "creche-registry-sync.timer",
-    "creche-code-corpus-sync.timer",
-    "creche-sbx-drift.timer",
-    "creche-follow.timer",
 )
 
 DIRS: Final = (
@@ -603,3 +586,23 @@ def test_up_after_down_makes_the_same_layer(ready: Host) -> None:
 
     again = sorted(json.loads(ready.record.read_text("utf-8"))["entries"], key=str)
     assert again == first
+
+
+def test_down_keeps_a_recorded_unit_that_a_host_release_links(ready: Host) -> None:
+    """An older `up` installed the host's units as copies and recorded them.
+    A `host` release then replaced each copy with a link into its tree. That
+    link is the release's, so `down` keeps it."""
+    assert ready.run("up").returncode == 0
+    linked = ready.unit_dir / "creche-attendance.service"
+    target = ready.prefix / "opt/components/host/units/user/creche-attendance.service"
+    target.parent.mkdir(parents=True)
+    target.write_text("[Unit]\n", encoding="utf-8")
+    linked.unlink()
+    linked.symlink_to(target)
+
+    done = ready.run("down")
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert linked.is_symlink()
+    assert f"kept {linked}: a host release links it now" in done.stdout
+    assert not (ready.unit_dir / "creche-noticeboard.service").exists()

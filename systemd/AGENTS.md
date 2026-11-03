@@ -10,10 +10,10 @@ from this directory at run time. The root `AGENTS.md` applies here too.
 | `creche-attendance.service`, `creche-caregiver.service`, `creche-door-trigger.service`, `creche-noticeboard.service` | user | the cutover script, in the private repository |
 | `creche-door-acp.service` | user | no script yet. The door ships in `attendance` |
 | `creche-door-trigger@.service` | user, templated | the cutover script, only when the host has none |
-| `creche-watchdog.{service,timer}`, `creche-registry-sync.{service,timer}` | user | `bin/fleet-up up` |
-| `creche-follow.{service,timer}` | user | the cutover script |
-| `creche-library@.{service,timer}` | user, templated | `bin/fleet-up up` installs the template. `bin/provision-library.sh` enables one timer for each scope |
-| `creche-code-corpus-sync.*`, `creche-sbx-drift.*` | user | `bin/fleet-up up` |
+The host's own units are not here: the watchdog, the registry sync, the
+corpus sync, the drift check, `creche-library@` and follow. They are files
+of creche-release (`units/user/`), and a `host` release links each one into
+the operator's unit directory.
 
 Installing a unit stays an installer's job. A release refreshes an already
 installed unit file in place and never runs an installer.
@@ -26,11 +26,6 @@ installed unit file in place and never runs an installer.
   relaunch the old code, and the ledger would record a success. The three
   door units run from the `attendance` tree. The two long-running doors
   carry `PartOf=creche-attendance.service`.
-- **A unit that runs a repository script points into `/opt/creche/bin`**, the
-  root-owned deployed checkout. The watchdog and `creche-registry-sync` do this.
-- **`creche-follow.service` runs `handover follow` out of the `handover`
-  tree.** A `handover` release changes what the timer runs. A release does
-  not refresh the unit file, because `handover` names no unit.
 - **Every user unit carries both lines:**
   ```
   Environment=HOME=%h
@@ -54,24 +49,13 @@ installed unit file in place and never runs an installer.
   `LockPersonality`. `SystemCallFilter` and `MemoryDenyWriteExecute` are not
   set on the user units. They shell out to `sbx`, and neither option has been
   tested against that.
-- **`sleep 8` in the index template stays.** `sbx exec`'s attach races
-  process exit. Keep `TimeoutStartSec` above the `timeout` value.
 - **The release executor's service has no mount-namespace sandboxing.** Its
   `code` step is the deploy.
 
-## Timer cadences
+## Timers
 
-| Timer | Cadence | Why |
-|---|---|---|
-| `creche-library@<scope>` | 15 min | bounds retrieval staleness |
-| `creche-code-corpus-sync` | 1 min | pull only. The platform family reads these clones |
-| `creche-sbx-drift` | daily | the global policy must hold zero network allows |
-| `creche-watchdog` | 1 min | the thresholds set how fast an outage is seen, not the cadence |
-| `creche-registry-sync` | 1 min | an unchanged run is one `git fetch` that transfers nothing |
-| `creche-follow` | 2 min | a tag lands about four minutes after its merge |
-
-A drop-in under the user's unit directory survives a reinstall, so these
-cadences are defaults. `systemctl --user cat <unit>` shows what runs.
+The host's timers and their cadences are in creche-release. The per-family
+timers are generated, as the rules say.
 
 Timers hold no authority, so `caregiver` may create and retire them. A family
 file's removal is always a human verb.
@@ -82,5 +66,6 @@ file's removal is always a human verb.
    it, and why it exists.
 2. Install it from a script, not by hand.
 3. A user unit gets the two `Environment=` lines.
-4. A unit that runs a repository script uses `ExecStart=/opt/creche/bin/<name>`.
+4. A unit of the host itself, one that no component ships, goes in
+   creche-release, not here.
 5. Name it in the root `README.md`, section 3.

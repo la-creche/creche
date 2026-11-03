@@ -139,7 +139,8 @@ ARTIFACT_WAIT_S: Final = 600
 
 #: The time of one run, from the start of the process. The fetch of the
 #: artifacts gets what is left of it. The unit gives a run more time than
-#: this (`systemd/creche-follow.service`, `TimeoutStartSec=`).
+#: this (creche-release's `units/user/creche-follow.service`,
+#: `TimeoutStartSec=`).
 RUN_DEADLINE_S: Final = 270
 
 #: The two lines of the wait rule (rule 7).

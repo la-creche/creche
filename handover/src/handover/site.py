@@ -29,8 +29,8 @@ the requester need, because neither of those is started with the file in
 its environment.
 
 The file holds no secret. It is root-owned and world-readable, because root's
-executor, the operator's requester and the watchdog (`bin/creche-watchdog.sh`)
-all read it, and each must get the same answer.
+executor, the operator's requester and the watchdog (creche-release's
+`bin/creche-watchdog.sh`) all read it, and each must get the same answer.
 
 A required value that is missing, and each value that is malformed, refuses
 with the `site` code. A required value never falls back to a default: a
