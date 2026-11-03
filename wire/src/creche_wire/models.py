@@ -287,6 +287,74 @@ class TimerTrigger(BaseModel):
     timer: Timer
 
 
+class TurnEnd(BaseModel):
+    """
+    A turn ended: it completed, the client cancelled it, or it failed. The
+    facade makes both fields as it makes them today, at the end of each
+    turn (`facade/src/turns.ts:139-151`).
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    title: Annotated[
+        SessionTitle,
+        Field(
+            description="The title that `titleOf` makes from the prompt of this turn, with the\nend trimmed after the cut. The facade refuses a prompt with no text\nbefore the turn starts, so each turn has a title. The vmm stores it\nonly while the row's title is `null`, so the first title stays."
+        ),
+    ]
+    updated_at: Annotated[
+        UnixMillis,
+        Field(
+            description="The time of the last Flue record of this turn, or the facade's clock\nwhen the turn wrote no record. The vmm stores it at each end."
+        ),
+    ]
+
+
+class TurnEndEvent(BaseModel):
+    """
+    A turn ended.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    end: TurnEnd
+
+
+class TurnStart(BaseModel):
+    """
+    A turn started. It carries nothing.
+
+    It is a type of its own so that the generated Python model is a class
+    with no field, as `Door` is.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+
+class TurnStartEvent(BaseModel):
+    """
+    A turn started.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    start: TurnStart
+
+
+class TurnEvent(RootModel[TurnStartEvent | TurnEndEvent]):
+    root: Annotated[
+        TurnStartEvent | TurnEndEvent,
+        Field(
+            description="What the facade tells guest init at each turn start and turn end, and\nwhat guest init relays to the vmm on control link 1200 (decision CH21).\nAt each end the vmm sets the row's `updated_at`, and it sets the row's\n`title` only while that is `null`, as `nameOnce` does today. It\nsnapshots a VM only between an end and the next start (decision CH19\nrule 6).\n\nThe event names no session: a VM serves one session (decision CH1), and\nthe link names the VM. On the wire the variant name is the one key of an\nobject, and each variant has a `title` for its class name."
+        ),
+    ]
+
+
 class UnixMillis(RootModel[StrictInt]):
     root: Annotated[
         StrictInt,

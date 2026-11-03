@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 
 use super::{
     AutoJobId, DelegationId, JS_INTEGER_MAX, JobId, SessionId, SessionOrigin, SessionRow,
-    UnixMillis,
+    TurnEvent, UnixMillis,
 };
 
 /// The variable that makes the test write the file instead of checking it.
@@ -38,6 +38,7 @@ pub(super) fn wire_schema() -> Value {
     let _ = generator.subschema_for::<SessionOrigin>();
     let _ = generator.subschema_for::<UnixMillis>();
     let _ = generator.subschema_for::<SessionRow>();
+    let _ = generator.subschema_for::<TurnEvent>();
 
     json!({
         "$schema": "https://json-schema.org/draft/2020-12/schema",
