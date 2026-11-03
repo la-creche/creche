@@ -6,32 +6,34 @@ what the Rust type does with each one. The Rust crate reads the same file
 the Rust parser. The Rust crate is the authority. A failure here is a defect
 of the generation, never a reason to edit a case."""
 
-import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import creche_wire
 import pytest
+from creche_wire import strictjson
 from pydantic import BaseModel, ValidationError
 
 WIRE = Path(__file__).resolve().parents[2] / "rust" / "crates" / "wire"
 VECTOR_FILE = WIRE / "vectors" / "wire.json"
 SCHEMA_FILE = WIRE / "schema" / "wire.json"
 
+#: A cap above each file and each case here. The wire has no cap yet: each
+#: caller of `creche_wire.read` gives the cap of its own surface.
+CAP = 1 << 20
 
-def _refuse_repeats(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    """`json.loads` keeps the last of two equal keys, and so does serde_json in
-    the Rust test. A second block of one type would drop the first block's
-    cases from both tests, so a repeated key fails here."""
-    keys = [key for key, _ in pairs]
-    repeated = sorted({key for key in keys if keys.count(key) > 1})
-    assert not repeated, f"repeated keys: {repeated}"
-
-    return dict(pairs)
+#: The names of the package that are no wire type.
+READER = {"NotStrictJson", "read"}
 
 
 def _load(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_refuse_repeats)
+    """serde_json in the Rust test keeps the last of two equal keys. A second
+    block of one type would drop the first block's cases there, so strict JSON
+    refuses the file here."""
+    value = strictjson.loads(path.read_bytes(), cap=CAP)
+    assert isinstance(value, dict)
+
+    return cast(dict[str, Any], value)
 
 
 VECTORS: dict[str, list[dict[str, Any]]] = _load(VECTOR_FILE)
@@ -51,8 +53,8 @@ def _model(type_name: str) -> type[BaseModel]:
 
 def _read_and_write(type_name: str, text: str) -> str | None:
     try:
-        value = _model(type_name).model_validate_json(text)
-    except ValidationError:
+        value = creche_wire.read(_model(type_name), text.encode("utf-8"), cap=CAP)
+    except (creche_wire.NotStrictJson, ValidationError):
         return None
 
     return value.model_dump_json()
@@ -68,4 +70,66 @@ def test_each_wire_type_has_cases_and_a_model() -> None:
     defined = sorted(_load(SCHEMA_FILE)["$defs"])
 
     assert sorted(VECTORS) == defined
-    assert sorted(creche_wire.__all__) == defined
+    assert sorted(set(creche_wire.__all__) - READER) == defined
+
+
+def _nodes(value: object) -> list[dict[str, object]]:
+    """Each JSON object in `value`, at any depth, `value` too."""
+    if isinstance(value, list):
+        return [node for item in cast(list[object], value) for node in _nodes(item)]
+    if not isinstance(value, dict):
+        return []
+    node = cast(dict[str, object], value)
+
+    return [node] + [found for item in node.values() for found in _nodes(item)]
+
+
+def _unchecked(schema: object) -> list[str]:
+    """Each node of the schema whose generated model is wider than the Rust
+    type.
+
+    datamodel-codegen drops `format` for an integer, so an integer without
+    `minimum` and `maximum` reads a value past the width of the Rust type.
+    pydantic reads a date in forms that RFC 3339 refuses, so a `date-time`
+    needs a `pattern` of its form."""
+    found: list[str] = []
+    for node in _nodes(schema):
+        if node.get("type") == "integer" and not {"minimum", "maximum"} <= node.keys():
+            found.append(f"an integer without bounds: {node}")
+        if node.get("format") == "date-time" and "pattern" not in node:
+            found.append(f"a date-time without a pattern: {node}")
+
+    return found
+
+
+def test_each_integer_and_date_of_the_schema_is_checked() -> None:
+    assert _unchecked(_load(SCHEMA_FILE)) == []
+
+
+def test_an_unchecked_integer_or_date_is_found() -> None:
+    schema = {
+        "$defs": {
+            "A": {"type": "integer", "format": "uint8", "minimum": 0},
+            "B": {"type": "string", "format": "date-time"},
+        }
+    }
+
+    assert len(_unchecked(schema)) == 2
+
+
+#: The core schema types of a scalar that a lax model converts.
+SCALARS = {"str", "bytes", "int", "float", "bool"}
+
+
+@pytest.mark.parametrize("name", sorted(set(creche_wire.__all__) - READER))
+def test_each_scalar_of_a_wire_model_is_strict_without_read(name: str) -> None:
+    """`strict-types` in the codegen settings holds a direct `model_validate`
+    strict too. A lax str takes bytes, so this check fails without it."""
+    schema = getattr(creche_wire, name).__pydantic_core_schema__
+    lax = [
+        node["type"]
+        for node in _nodes(schema)
+        if node.get("type") in SCALARS and node.get("strict") is not True
+    ]
+
+    assert lax == []
