@@ -10,11 +10,14 @@ from .models import (
     Delegate,
     DelegateOrigin,
     DelegationId,
+    DispatchChain,
     Door,
     DoorOrigin,
+    FamilyName,
     JobId,
     SessionId,
     SessionOrigin,
+    WebhookName,
 )
 from .reader import read
 from .strictjson import NotStrictJson
@@ -24,11 +27,14 @@ __all__ = [
     "Delegate",
     "DelegateOrigin",
     "DelegationId",
+    "DispatchChain",
     "Door",
     "DoorOrigin",
+    "FamilyName",
     "JobId",
     "NotStrictJson",
     "SessionId",
     "SessionOrigin",
+    "WebhookName",
     "read",
 ]

@@ -90,6 +90,63 @@
       "note": "O is not in the Crockford alphabet"
     }
   ],
+  "DispatchChain": [
+    {
+      "json": "[\"chat\",\"scrum-lead\"]",
+      "written": "[\"chat\",\"scrum-lead\"]",
+      "note": "a caller and a target"
+    },
+    {
+      "json": "[\"chat\"]",
+      "written": "[\"chat\"]",
+      "note": "one family"
+    },
+    {
+      "json": "[\"chat\",\"scrum-lead\",\"issue-worker\",\"a1\",\"a2\",\"a3\",\"a4\",\"a5\"]",
+      "written": "[\"chat\",\"scrum-lead\",\"issue-worker\",\"a1\",\"a2\",\"a3\",\"a4\",\"a5\"]",
+      "note": "8 families, the most"
+    },
+    {
+      "json": "[\"chat\",\"chat\"]",
+      "written": "[\"chat\",\"chat\"]",
+      "note": "a family twice"
+    },
+    {
+      "json": "[\"chat\",\"scrum-lead\",\"issue-worker\",\"a1\",\"a2\",\"a3\",\"a4\",\"a5\",\"a6\"]",
+      "written": null,
+      "note": "9 families"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an empty chain"
+    },
+    {
+      "json": "[\"chat\",\"Chat\"]",
+      "written": null,
+      "note": "a name that is not a family name"
+    },
+    {
+      "json": "[null]",
+      "written": null,
+      "note": "null for a name"
+    },
+    {
+      "json": "\"chat\"",
+      "written": null,
+      "note": "a string, not a list"
+    },
+    {
+      "json": "{}",
+      "written": null,
+      "note": "an object"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    }
+  ],
   "Door": [
     {
       "json": "{}",
@@ -110,6 +167,148 @@
       "json": "[]",
       "written": null,
       "note": "an empty array, the array form of a struct"
+    }
+  ],
+  "FamilyName": [
+    {
+      "json": "\"chat\"",
+      "written": "\"chat\"",
+      "note": "a family name"
+    },
+    {
+      "json": "\"ab\"",
+      "written": "\"ab\"",
+      "note": "2 characters, the shortest"
+    },
+    {
+      "json": "\"abbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"",
+      "written": "\"abbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"",
+      "note": "31 characters, the longest"
+    },
+    {
+      "json": "\"scrum-lead\"",
+      "written": "\"scrum-lead\"",
+      "note": "a hyphen"
+    },
+    {
+      "json": "\"a-\"",
+      "written": "\"a-\"",
+      "note": "a hyphen at the end, as the grammar allows"
+    },
+    {
+      "json": "\"a1\"",
+      "written": "\"a1\"",
+      "note": "a digit after the first character"
+    },
+    {
+      "json": "\"abcdefghijklmnopqrstuvwxyz\"",
+      "written": "\"abcdefghijklmnopqrstuvwxyz\"",
+      "note": "every lowercase letter after the first"
+    },
+    {
+      "json": "\"a0123456789-\"",
+      "written": "\"a0123456789-\"",
+      "note": "every digit and the hyphen after the first"
+    },
+    {
+      "json": "\"a\"",
+      "written": null,
+      "note": "1 character"
+    },
+    {
+      "json": "\"abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"",
+      "written": null,
+      "note": "32 characters"
+    },
+    {
+      "json": "\"\"",
+      "written": null,
+      "note": "the empty text"
+    },
+    {
+      "json": "\"Chat\"",
+      "written": null,
+      "note": "an uppercase letter"
+    },
+    {
+      "json": "\"1chat\"",
+      "written": null,
+      "note": "a digit first"
+    },
+    {
+      "json": "\"-chat\"",
+      "written": null,
+      "note": "a hyphen first"
+    },
+    {
+      "json": "\"chat_bot\"",
+      "written": null,
+      "note": "an underscore"
+    },
+    {
+      "json": "\"cHat\"",
+      "written": null,
+      "note": "an uppercase letter after the first"
+    },
+    {
+      "json": "\"aZ\"",
+      "written": null,
+      "note": "Z, the last uppercase letter, after the first"
+    },
+    {
+      "json": "\"a.\"",
+      "written": null,
+      "note": "a dot, next to the hyphen and the digits"
+    },
+    {
+      "json": "\"a/\"",
+      "written": null,
+      "note": "a slash, next to the digits"
+    },
+    {
+      "json": "\"a:\"",
+      "written": null,
+      "note": "a colon, next to the digits"
+    },
+    {
+      "json": "\"a`\"",
+      "written": null,
+      "note": "a backtick, next to the lowercase letters"
+    },
+    {
+      "json": "\"a{\"",
+      "written": null,
+      "note": "a brace, next to the lowercase letters"
+    },
+    {
+      "json": "\"chat bot\"",
+      "written": null,
+      "note": "a space"
+    },
+    {
+      "json": "\"chat\\n\"",
+      "written": null,
+      "note": "a trailing newline"
+    },
+    {
+      "json": "\"chaé\"",
+      "written": null,
+      "note": "a character of two bytes"
+    },
+    {
+      "json": "42",
+      "written": null,
+      "note": "a number"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an array"
     }
   ],
   "JobId": [
@@ -331,6 +530,58 @@
       "json": "{\"Door\":{}}",
       "written": null,
       "note": "a variant name in the wrong case"
+    }
+  ],
+  "WebhookName": [
+    {
+      "json": "\"boiler-alert\"",
+      "written": "\"boiler-alert\"",
+      "note": "a webhook name"
+    },
+    {
+      "json": "\"abbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"",
+      "written": "\"abbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"",
+      "note": "31 characters, the longest"
+    },
+    {
+      "json": "\"b\"",
+      "written": null,
+      "note": "1 character"
+    },
+    {
+      "json": "\"abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"",
+      "written": null,
+      "note": "32 characters"
+    },
+    {
+      "json": "\"Boiler-alert\"",
+      "written": null,
+      "note": "an uppercase letter"
+    },
+    {
+      "json": "\"boiler_alert\"",
+      "written": null,
+      "note": "an underscore"
+    },
+    {
+      "json": "\"bOiler-alert\"",
+      "written": null,
+      "note": "an uppercase letter after the first"
+    },
+    {
+      "json": "\"boiler.alert\"",
+      "written": null,
+      "note": "a dot"
+    },
+    {
+      "json": "\"boiler-alert\\n\"",
+      "written": null,
+      "note": "a trailing newline"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
     }
   ]
 }

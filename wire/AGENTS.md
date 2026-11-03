@@ -19,6 +19,13 @@ The Rust crate `rust/crates/wire` defines each wire type. Its test writes
 | `src/creche_wire/strictjson.py` | A copy of the strict JSON reader. Never edit one copy alone. |
 | `tests/test_wire_vectors.py` | The test that runs the shared wire vectors through `read`. |
 | `tests/test_wire_read.py` | The test that shows `read` is strict. |
+| `tests/test_wire_grammar.py` | The test that holds each name pattern equal to `family/grammar.py`. |
+
+`family/grammar.py` stays the authority for a name of the family file
+(decision CH23 rule 5). A wire type of such a name copies its pattern, and
+`tests/test_wire_grammar.py` names the pair. The same test holds attendance's
+family pattern and its chain cap equal to the wire types. The facade's
+`FAMILY` and `MAX_CHAIN` are TypeScript, so no test here reaches them.
 
 ## Read a wire text
 
