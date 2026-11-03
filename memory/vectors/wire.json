@@ -1,0 +1,52 @@
+{
+  "Family": [
+    {"json": "\"chat\"", "written": "\"chat\"", "note": "a family name"},
+    {"json": "\"ha-review\"", "written": "\"ha-review\"", "note": "a family name with a hyphen"},
+    {"json": "\"Chat\"", "written": null, "note": "refused: an upper-case letter"},
+    {"json": "\"9chat\"", "written": null, "note": "refused: starts with a digit"},
+    {"json": "\"chat\\n\"", "written": null, "note": "refused: a final newline"}
+  ],
+  "VaultPath": [
+    {"json": "\"profile/memories/dentist.md\"", "written": "\"profile/memories/dentist.md\"", "note": "a note in a folder"},
+    {"json": "\"Read me.md\"", "written": "\"Read me.md\"", "note": "a note at the root, with a space"},
+    {"json": "\"house/café.md\"", "written": "\"house/café.md\"", "note": "a note with a non-ASCII name"},
+    {"json": "\"house/notes.txt\"", "written": null, "note": "refused: not a .md file"},
+    {"json": "\"/house/a.md\"", "written": null, "note": "refused: an absolute path"},
+    {"json": "\"house/../profile/a.md\"", "written": null, "note": "refused: a .. part"},
+    {"json": "\"house/./a.md\"", "written": null, "note": "refused: a . part"},
+    {"json": "\".obsidian/a.md\"", "written": null, "note": "refused: a hidden folder"},
+    {"json": "\"house//a.md\"", "written": null, "note": "refused: an empty part"},
+    {"json": "\"house\\\\a.md\"", "written": null, "note": "refused: a backslash"},
+    {"json": "\"house/a\\n.md\"", "written": null, "note": "refused: a control character"},
+    {"json": "\"\"", "written": null, "note": "refused: the empty text"},
+    {"json": "3", "written": null, "note": "refused: not a string"}
+  ],
+  "FolderPath": [
+    {"json": "\"\"", "written": "\"\"", "note": "the vault root"},
+    {"json": "\"house/ha\"", "written": "\"house/ha\"", "note": "a folder"},
+    {"json": "\"house/\"", "written": null, "note": "refused: a trailing slash"},
+    {"json": "\"house/.trash\"", "written": null, "note": "refused: a hidden folder"},
+    {"json": "\"../etc\"", "written": null, "note": "refused: a .. part"}
+  ],
+  "Slug": [
+    {"json": "\"new-dentist\"", "written": "\"new-dentist\"", "note": "a slug"},
+    {"json": "\"-dentist\"", "written": null, "note": "refused: starts with a hyphen"},
+    {"json": "\"Dentist\"", "written": null, "note": "refused: an upper-case letter"},
+    {"json": "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"", "written": null, "note": "refused: 65 characters"},
+    {"json": "\"dentist\\n\"", "written": null, "note": "refused: a final newline"}
+  ],
+  "Sha256": [
+    {"json": "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"", "written": "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"", "note": "a digest"},
+    {"json": "\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"", "written": null, "note": "refused: upper-case hex"},
+    {"json": "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"", "written": null, "note": "refused: 63 characters"}
+  ],
+  "IfMatch": [
+    {"json": "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"", "written": "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"", "note": "a digest"},
+    {"json": "\"new\"", "written": "\"new\"", "note": "a file that must not exist"},
+    {"json": "\"old\"", "written": null, "note": "refused: neither a digest nor new"}
+  ],
+  "Refusal": [
+    {"json": "\"changed\"", "written": "\"changed\"", "note": "a refusal"},
+    {"json": "\"service_down\"", "written": null, "note": "refused: the upstream's own reason, never on the wire"}
+  ]
+}

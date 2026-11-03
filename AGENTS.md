@@ -95,6 +95,7 @@ text with no UTC offset is not a time.
 | `handover/` | `handover/AGENTS.md` |
 | `env/` | `env/AGENTS.md` |
 | `wire/` | `wire/AGENTS.md` |
+| `memory/` | `memory/AGENTS.md` |
 | `library/` | `library/AGENTS.md` |
 | `integration/` | `integration/AGENTS.md` |
 | `bin/` | `bin/AGENTS.md` |
