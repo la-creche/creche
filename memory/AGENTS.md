@@ -10,6 +10,7 @@ service of the vault. The service hosts the memory store and answers the
 | File | What it holds |
 |---|---|
 | `src/creche_memory/cli.py` | The command `creche-memory`, and `creche-memory --check`. |
+| `src/creche_memory/verify.py` | The verify hook `creche-memory-verify` (contract 06 §4). |
 | `src/creche_memory/config.py` | What the service reads from its environment, and the host check. |
 | `src/creche_memory/wire.py` | The wire types of the socket: each request, each reply, the refusal codes and the newtypes. |
 | `src/creche_memory/vault.py` | `Vault`: it reads one note or lists one folder, inside the vault root. |
@@ -21,6 +22,7 @@ service of the vault. The service hosts the memory store and answers the
 | `src/creche_memory/server.py` | `MemoryServer` and `Service`: the socket server. It checks the peer uid and answers one line per connection. |
 | `vectors/wire.json` | The shared wire vectors. |
 | `tests/test_memory_config.py` | The tests of the config and of the command. One test starts the command, reads a note over its socket and stops it. |
+| `tests/test_memory_verify.py` | The tests of the verify hook. |
 | `tests/test_memory_wire_vectors.py` | The test that runs the shared wire vectors through the models. |
 | `tests/test_memory_vault.py` | The tests of the reads: the caps, the refusals and the symlink rules. |
 | `tests/test_memory_writes.py` | The tests of the writes: the areas, the digest check, the modes and the symlink rules. |
@@ -102,6 +104,21 @@ after it reads `json`, or `null` when the type refuses `json`.
    account.
 5. The LiteLLM key is in no repr and on no command line.
 
+## The component
+
+`memory/component.yaml` is the manifest of the component `memory`
+(contract 06 §1 row 11 and rule 13).
+
+1. The build is `uv sync --frozen --no-editable --no-dev --project memory`.
+   It syncs `memory/uv.lock` into `~/.local/components/memory`, with no dev
+   package. The tree is about 1 GB.
+2. The catalog row has `Lock.OWN`, so a change to the root `uv.lock` moves
+   no `memory` tag.
+3. The verify hook, `creche-memory-verify --json --env-file
+   /srv/agents/state/creche/memory.env`, checks the key, the folders, the
+   peer user and the socket. The socket must accept a connection, so the
+   unit must run before a release can pass.
+
 ## The command
 
 1. `creche-memory` starts the store loop, the syncer and the socket server.
@@ -175,4 +192,5 @@ root `uv.lock`, because a change there moves every venv component
 
 ## Known gaps
 
-1. No component ships the tree yet, so nothing installs the unit.
+1. No script installs the unit yet. The operator installs it once, before
+   the first release of the component.

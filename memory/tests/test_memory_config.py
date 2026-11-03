@@ -51,9 +51,9 @@ def test_the_addresses_default_to_the_lan_address(host: Path) -> None:
 
     assert config.store.llm_base_url == "http://192.0.2.10:4000"
     assert config.store.embedding_base_url == "http://192.0.2.10:8085"
-    assert config.peer_uid == os.getuid()
+    assert config.places.peer_uid == os.getuid()
     assert config.store.tokenizer_cache == host / "store" / "hf" / "hub"
-    assert check(config) == []
+    assert check(config.places) == []
 
 
 def test_an_explicit_address_wins(host: Path) -> None:
@@ -89,7 +89,7 @@ def test_check_names_each_missing_folder(host: Path) -> None:
     config = from_env(_env(host, MEMORY_VAULT_ROOT=str(host / "none")))
     (host / "store" / "hf" / "hub").rmdir()
 
-    problems = check(config)
+    problems = check(config.places)
 
     assert len(problems) == 2
     assert any("vault" in one for one in problems)

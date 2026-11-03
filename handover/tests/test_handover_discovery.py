@@ -25,6 +25,7 @@ CONTROL_NAMES = (
     "noticeboard",
     "playpen",
     "handover",
+    "memory",
 )
 
 

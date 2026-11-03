@@ -131,7 +131,9 @@ def test_the_python_lock_file_moves_no_binary_component(monkeypatch: pytest.Monk
     of the lock."""
     use_binary_catalog(monkeypatch)
     ours = [row for row in CATALOG if row.repo is Repo.CRECHE and row.name not in RETIRING]
-    venvs = {row.name for row in ours if row.kind is Kind.VENV} - {BINARY_NAME}
+    venvs = {row.name for row in ours if row.kind is Kind.VENV and row.lock is Lock.WORKSPACE} - {
+        BINARY_NAME
+    }
 
     assert _moved((PYTHON_LOCK,)) == venvs | {"playpen"}
 
@@ -203,7 +205,12 @@ def test_every_other_kind_keeps_its_digest_paths() -> None:
             assert digest_paths(row.name) == ("mcp",)
             continue
 
-        expected = (".",) if row.path == "." else tuple(sorted((row.path, PYTHON_LOCK)))
+        if row.path == ".":
+            expected: tuple[str, ...] = (".",)
+        elif row.lock is Lock.OWN:
+            expected = (row.path,)
+        else:
+            expected = tuple(sorted((row.path, PYTHON_LOCK)))
 
         assert digest_paths(row.name) == expected, row.name
 

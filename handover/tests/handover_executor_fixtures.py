@@ -44,6 +44,7 @@ SHA_OF = {
     "handover": "b6e2a90d47c1f3825ae0db6194c73f08251ad6e7",
     "registry-data": "77aa10c4e2b8936df05174c3ab29e6108dd4f3b2",
     "host": "3d81c0e6a95f2b4719ce08d6f3a2b5c7e1940a8d",
+    "memory": "9a4e2c71d08b5f36e1a7c94b20d5e8f3a61c07b2",
 }
 
 DIGEST = "sha256:" + "ab" * 32
