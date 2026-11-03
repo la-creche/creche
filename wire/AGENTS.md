@@ -57,6 +57,8 @@ that does needs a decision of the owner before its vector cases are added:
 
 1. A nesting depth of 65 to 128. The Rust limit is 128.
 2. Two equal keys in an object read as a map. serde_json keeps the last one.
+   `FamilySkills` reads its map itself and refuses a key given twice, so it
+   does not meet this text.
 3. An integer past 64 bits for a float. serde_json reads it as an `f64`.
 4. A text over the cap. The Rust crate has no cap.
 
@@ -124,6 +126,19 @@ model take only an object.
    `#[serde(deserialize_with = "Option::deserialize")]`, and give its struct
    `schemars(transform = schema::require_each_key)`. The key is then
    required in both languages, and `null` is the one form of no value.
+
+## An enum on the wire
+
+Decision CH22 rule 3 sets rules 1 and 2. Decision CH31 limits rule 2 to an
+enum that carries data, and makes `system_prompt` a plain string enum, as
+rule 3 allows.
+
+1. An internally tagged enum writes a unit variant as `V {}`.
+2. An externally tagged enum that carries data has no unit variant. The
+   variant name is the one key of an object, and its value is the payload.
+   A variant that carries nothing holds an empty struct of its own.
+3. An enum that carries no data may be a plain string enum. Each variant
+   is a JSON string, in `snake_case`. `SystemPrompt` is one.
 
 ## Change a wire type
 

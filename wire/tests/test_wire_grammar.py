@@ -1,4 +1,5 @@
-"""Each wire name type has the pattern of its name in `family/grammar.py`.
+"""Each wire name type has the pattern of its name in `family/grammar.py`, and
+each wire set of names has the members of its set there.
 
 The grammar stays the authority for the family file (decision CH23 rule 5).
 Registry CI cannot install `creche-wire`, so the grammar cannot import the
@@ -32,12 +33,30 @@ def _definitions() -> dict[str, dict[str, Any]]:
 
 @pytest.mark.parametrize(
     ("wire_name", "pattern"),
-    [("FamilyName", grammar.FAMILY_NAME), ("WebhookName", grammar.WEBHOOK_NAME)],
+    [
+        ("FamilyName", grammar.FAMILY_NAME),
+        ("WebhookName", grammar.WEBHOOK_NAME),
+        ("SkillName", grammar.SKILL_NAME),
+        ("ModelAlias", grammar.MODEL_ALIAS),
+    ],
 )
 def test_each_wire_name_has_the_pattern_of_the_grammar(
     wire_name: str, pattern: re.Pattern[str]
 ) -> None:
     assert _definitions()[wire_name]["pattern"] == _schema_form(pattern)
+
+
+def test_the_sandbox_grant_has_the_tools_of_the_grammar() -> None:
+    grant = _definitions()["SandboxGrant"]
+
+    assert sorted(grant["properties"]) == sorted(grammar.SandboxTool)
+    assert sorted(grant["required"]) == sorted(grammar.SandboxTool)
+
+
+def test_the_system_prompt_has_the_modes_of_the_grammar() -> None:
+    mode = _definitions()["FamilyConfig"]["properties"]["system_prompt"]
+
+    assert mode["enum"] == list(grammar.SystemPrompt)
 
 
 def test_the_family_name_has_the_pattern_of_attendance() -> None:

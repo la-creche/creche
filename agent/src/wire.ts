@@ -85,15 +85,107 @@ export const wire = {
       "description": "The origin of a session that a door client opened. It carries nothing.\n\nIt is a type of its own so that the generated Python model is a class\nwith no field. An inline empty object generates a `dict` with lax keys.",
       "type": "object"
     },
+    "FamilyConfig": {
+      "additionalProperties": false,
+      "description": "The family's part of `config/` that the guest reads: what caregiver writes\nin `write_config` (`steps.py:229-249`). Instructions, skills, sandbox\ntools and the model change at the next prompt of a running session\n(decision CH5c).\n\n`shell` of `runtime.json` is not here: the agent reads it and grants\nnothing with it (`agent/src/runtime-config.ts:18`).\n\n`model_live_at` of `runtime.json` is not here either. The vmm reads it\nand holds the reply until the host time passes it, at most 10 s\n(decisions CH23-1, CH31). The guest never waits on it.",
+      "properties": {
+        "instructions": {
+          "description": "The text of `config/instructions.md`. The agent trims it, and an empty\ntext gives no instructions, as today (`agent/src/agent.ts:72-85`).",
+          "type": "string"
+        },
+        "model_alias": {
+          "$ref": "#/$defs/ModelAlias",
+          "description": "The alias of the model."
+        },
+        "sandbox_tools": {
+          "$ref": "#/$defs/SandboxGrant",
+          "description": "The granted sandbox tools."
+        },
+        "skills": {
+          "$ref": "#/$defs/FamilySkills",
+          "description": "The granted skills."
+        },
+        "system_prompt": {
+          "description": "How the instructions meet the agent's own prompt. caregiver leaves\n`system_prompt` out of `runtime.json` for `append`\n(`config_mount.py:54`), so the vmm reads a missing key as `append`.",
+          "enum": [
+            "append",
+            "replace"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "instructions",
+        "model_alias",
+        "sandbox_tools",
+        "skills",
+        "system_prompt"
+      ],
+      "type": "object"
+    },
     "FamilyName": {
       "description": "The name of a family: `FAMILY_NAME` of `family/grammar.py`.",
       "pattern": "^[a-z][a-z0-9-]{1,30}$",
       "type": "string"
     },
+    "FamilySkills": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "The granted skills: each name, and the text of its `SKILL.md`.",
+      "propertyNames": {
+        "$ref": "#/$defs/SkillName"
+      },
+      "type": "object"
+    },
     "JobId": {
       "description": "The id that attendance gives a thin job of the delegate door:\n`job-<ulid>` (contract 02 §2 and §12). Contract 02 calls it a session\nid. The `SessionId` of the job's row on the host session list is a\nseparate value.",
       "pattern": "^job-[0-9A-HJKMNP-TV-Z]{26}$",
       "type": "string"
+    },
+    "ModelAlias": {
+      "description": "The LiteLLM alias of the family's model: `model.router` of the family\nfile, which caregiver writes as `model_alias` in `config/runtime.json`\n(`steps.py:242`).",
+      "pattern": "^[a-z0-9][a-z0-9._/-]*$",
+      "type": "string"
+    },
+    "SandboxGrant": {
+      "additionalProperties": false,
+      "description": "The built-in sandbox tools of Flue that the family grants: `sandbox_tools`\nof the family file, a subset of `SandboxTool` of `family/grammar.py`. The\nvalidator refuses a tool listed twice, so a grant is a set, and each tool\nis one key here. An empty grant gives no sandbox.",
+      "properties": {
+        "bash": {
+          "description": "`bash`, the one way to run commands.",
+          "type": "boolean"
+        },
+        "edit": {
+          "description": "`edit`.",
+          "type": "boolean"
+        },
+        "glob": {
+          "description": "`glob`.",
+          "type": "boolean"
+        },
+        "grep": {
+          "description": "`grep`.",
+          "type": "boolean"
+        },
+        "read": {
+          "description": "`read`.",
+          "type": "boolean"
+        },
+        "write": {
+          "description": "`write`.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "bash",
+        "edit",
+        "glob",
+        "grep",
+        "read",
+        "write"
+      ],
+      "type": "object"
     },
     "SessionCwd": {
       "description": "The `cwd` of a session: the absolute path that the client sent in\n`session/new`, or that attendance chose for a job. It is a display\nvalue and a `session/list` filter, never a guest path (decision CH5e,\nCH21-4).",
@@ -209,6 +301,11 @@ export const wire = {
       "maxLength": 256,
       "minLength": 1,
       "pattern": "^[^\\u0009-\\u000D\\u0020\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000\\uFEFF]+( [^\\u0009-\\u000D\\u0020\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000\\uFEFF]+)*$",
+      "type": "string"
+    },
+    "SkillName": {
+      "description": "The name of a granted skill: `SKILL_NAME` of `family/grammar.py`,\nwhich has the rule of a family name.",
+      "pattern": "^[a-z][a-z0-9-]{1,30}$",
       "type": "string"
     },
     "Timer": {
