@@ -845,9 +845,195 @@ pub enum TurnEvent {
     End(TurnEnd),
 }
 
+family_name!(
+    /// The name of a granted skill: `SKILL_NAME` of `family/grammar.py`,
+    /// which has the rule of a family name.
+    SkillName
+);
+
+/// The rule of `is_model_alias` as a regular expression, for the JSON Schema.
+/// It is `MODEL_ALIAS` of `family/grammar.py` with `$` for `\Z`.
+/// `wire/tests` holds the two equal.
+#[cfg(test)]
+const MODEL_ALIAS_PATTERN: &str = "^[a-z0-9][a-z0-9._/-]*$";
+
+/// Whether `text` is a LiteLLM alias: a lowercase letter or a digit, then
+/// lowercase letters, digits, `.`, `_`, `/` or `-`.
+fn is_model_alias(text: &str) -> bool {
+    let mut characters = text.chars();
+
+    characters
+        .next()
+        .is_some_and(|first| matches!(first, 'a'..='z' | '0'..='9'))
+        && characters
+            .all(|character| matches!(character, 'a'..='z' | '0'..='9' | '.' | '_' | '/' | '-'))
+}
+
+checked_text!(
+    /// The LiteLLM alias of the family's model: `model.router` of the family
+    /// file, which caregiver writes as `model_alias` in `config/runtime.json`
+    /// (`steps.py:242`).
+    ModelAlias,
+    is_model_alias,
+    "a model alias is a lowercase letter or digit, then lowercase letters, digits, '.', '_', '/' or '-'",
+    "pattern" = MODEL_ALIAS_PATTERN
+);
+
+/// How the family's instructions meet the agent's own prompt: `SystemPrompt`
+/// of `family/grammar.py`. On the wire it is the name of a mode, a JSON
+/// string. The schema holds it inline in `FamilyConfig`, so the generated
+/// Python is a field of a model, which `creche_wire.read` takes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[cfg_attr(test, schemars(inline))]
+pub enum SystemPrompt {
+    Append,
+    Replace,
+}
+
+/// The built-in sandbox tools of Flue that the family grants: `sandbox_tools`
+/// of the family file, a subset of `SandboxTool` of `family/grammar.py`. The
+/// validator refuses a tool listed twice, so a grant is a set, and each tool
+/// is one key here. An empty grant gives no sandbox.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "one bool per tool of a closed set of six"
+)]
+pub struct SandboxGrant {
+    /// `bash`, the one way to run commands.
+    pub bash: bool,
+    /// `edit`.
+    pub edit: bool,
+    /// `glob`.
+    pub glob: bool,
+    /// `grep`.
+    pub grep: bool,
+    /// `read`.
+    pub read: bool,
+    /// `write`.
+    pub write: bool,
+}
+
+object_only!(SandboxGrant);
+
+/// The granted skills: each name, and the text of its `SKILL.md`, in the
+/// order of the wire. caregiver writes `config/skills/<name>/SKILL.md` and
+/// no other file (`config_mount.py:76-81`).
+///
+/// On the wire it is a JSON object from name to text. A name given twice is
+/// refused, as `creche_wire.read` refuses it. The order is kept, as the
+/// generated Python model keeps it.
+///
+/// The vmm writes the skills in ascending name order, the order the agent
+/// loads them in today (`agent/src/skills.ts:122`). A reader compares two
+/// sets of skills by name, not by order, as `==` here and a Python `dict` do.
+#[derive(Debug, Clone)]
+pub struct FamilySkills(Vec<(SkillName, String)>);
+
+impl PartialEq for FamilySkills {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.len() == other.0.len() && self.0.iter().all(|skill| other.0.contains(skill))
+    }
+}
+
+impl Eq for FamilySkills {}
+
+impl FamilySkills {
+    /// Each skill's name and `SKILL.md` text, in the order of the wire.
+    #[must_use]
+    pub fn skills(&self) -> &[(SkillName, String)] {
+        &self.0
+    }
+}
+
+impl Serialize for FamilySkills {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_map(self.0.iter().map(|(name, text)| (name, text)))
+    }
+}
+
+impl<'de> Deserialize<'de> for FamilySkills {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct SkillsVisitor;
+
+        impl<'de> Visitor<'de> for SkillsVisitor {
+            type Value = FamilySkills;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a JSON object from skill name to SKILL.md text")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<FamilySkills, A::Error> {
+                let mut skills: Vec<(SkillName, String)> = Vec::new();
+                while let Some((name, text)) = map.next_entry::<SkillName, String>()? {
+                    if skills.iter().any(|(seen, _)| *seen == name) {
+                        return Err(serde::de::Error::custom("a skill is named twice"));
+                    }
+                    skills.push((name, text));
+                }
+                Ok(FamilySkills(skills))
+            }
+        }
+
+        deserializer.deserialize_map(SkillsVisitor)
+    }
+}
+
+#[cfg(test)]
+impl schemars::JsonSchema for FamilySkills {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "FamilySkills".into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "description": "The granted skills: each name, and the text of its `SKILL.md`.",
+            "type": "object",
+            "propertyNames": generator.subschema_for::<SkillName>(),
+            "additionalProperties": { "type": "string" },
+        })
+    }
+}
+
+/// The family's part of `config/` that the guest reads: what caregiver writes
+/// in `write_config` (`steps.py:229-249`). Instructions, skills, sandbox
+/// tools and the model change at the next prompt of a running session
+/// (decision CH5c).
+///
+/// `shell` of `runtime.json` is not here: the agent reads it and grants
+/// nothing with it (`agent/src/runtime-config.ts:18`).
+///
+/// `model_live_at` of `runtime.json` is not here either. The vmm reads it
+/// and holds the reply until the host time passes it, at most 10 s
+/// (decisions CH23-1, CH31). The guest never waits on it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct FamilyConfig {
+    /// The text of `config/instructions.md`. The agent trims it, and an empty
+    /// text gives no instructions, as today (`agent/src/agent.ts:72-85`).
+    pub instructions: String,
+    /// The alias of the model.
+    pub model_alias: ModelAlias,
+    /// The granted sandbox tools.
+    pub sandbox_tools: SandboxGrant,
+    /// The granted skills.
+    pub skills: FamilySkills,
+    /// How the instructions meet the agent's own prompt. caregiver leaves
+    /// `system_prompt` out of `runtime.json` for `append`
+    /// (`config_mount.py:54`), so the vmm reads a missing key as `append`.
+    pub system_prompt: SystemPrompt,
+}
+
+object_only!(FamilyConfig);
+
 #[cfg(test)]
 mod tests {
-    use super::{SESSION_ID_PATTERN, SessionId, SessionIdError};
+    use super::{FamilySkills, SESSION_ID_PATTERN, SessionId, SessionIdError};
 
     const GOOD: &str = "3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b";
 
@@ -883,6 +1069,21 @@ mod tests {
         let text = "3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4aé";
 
         assert!(text.parse::<SessionId>().is_err());
+    }
+
+    #[test]
+    fn two_sets_of_skills_compare_by_name_not_by_order() {
+        let read = |json: &str| serde_json::from_str::<FamilySkills>(json).unwrap();
+
+        assert_eq!(
+            read(r#"{"ha":"x","vault":"y"}"#),
+            read(r#"{"vault":"y","ha":"x"}"#)
+        );
+        assert_ne!(
+            read(r#"{"ha":"x","vault":"y"}"#),
+            read(r#"{"ha":"x","vault":"z"}"#)
+        );
+        assert_ne!(read(r#"{"ha":"x"}"#), read(r#"{"ha":"x","vault":"y"}"#));
     }
 
     #[test]

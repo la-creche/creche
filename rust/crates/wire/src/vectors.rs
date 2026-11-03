@@ -13,9 +13,10 @@ use serde::Deserialize;
 
 use super::schema::wire_schema;
 use super::{
-    Auto, AutoJobId, Delegate, DelegationId, Dispatch, DispatchChain, Door, FamilyName, JobId,
-    SessionCwd, SessionId, SessionOrigin, SessionRow, SessionTitle, Timer, Trigger, TurnEnd,
-    TurnEvent, TurnStart, UnixMillis, Webhook, WebhookName,
+    Auto, AutoJobId, Delegate, DelegationId, Dispatch, DispatchChain, Door, FamilyConfig,
+    FamilyName, FamilySkills, JobId, ModelAlias, SandboxGrant, SessionCwd, SessionId,
+    SessionOrigin, SessionRow, SessionTitle, SkillName, Timer, Trigger, TurnEnd, TurnEvent,
+    TurnStart, UnixMillis, Webhook, WebhookName,
 };
 
 /// The file, relative to the crate.
@@ -61,13 +62,18 @@ fn read_and_write(type_name: &str, json: &str) -> Option<String> {
         "Dispatch" => round_trip::<Dispatch>(json),
         "DispatchChain" => round_trip::<DispatchChain>(json),
         "Door" => round_trip::<Door>(json),
+        "FamilyConfig" => round_trip::<FamilyConfig>(json),
         "FamilyName" => round_trip::<FamilyName>(json),
+        "FamilySkills" => round_trip::<FamilySkills>(json),
         "JobId" => round_trip::<JobId>(json),
+        "ModelAlias" => round_trip::<ModelAlias>(json),
+        "SandboxGrant" => round_trip::<SandboxGrant>(json),
         "SessionCwd" => round_trip::<SessionCwd>(json),
         "SessionId" => round_trip::<SessionId>(json),
         "SessionOrigin" => round_trip::<SessionOrigin>(json),
         "SessionRow" => round_trip::<SessionRow>(json),
         "SessionTitle" => round_trip::<SessionTitle>(json),
+        "SkillName" => round_trip::<SkillName>(json),
         "Timer" => round_trip::<Timer>(json),
         "Trigger" => round_trip::<Trigger>(json),
         "TurnEnd" => round_trip::<TurnEnd>(json),

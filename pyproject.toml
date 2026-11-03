@@ -162,6 +162,9 @@ use-title-as-name = true
 # int even when a caller skips `creche_wire.read` (wire/AGENTS.md).
 strict-types = ["str", "bytes", "int", "float", "bool"]
 disable-timestamp = true
+# An enum member in capitals, as `family/grammar.py` names it. A member in
+# lowercase can shadow a method of `str`, such as `replace`.
+capitalise-enum-members = true
 formatters = ["ruff-format", "ruff-check"]
 custom-file-header = """# Generated from rust/crates/wire/schema/wire.json. Do not edit.
 # To write it again, run `uv run datamodel-codegen` at the root of the repository."""

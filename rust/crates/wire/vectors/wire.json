@@ -258,6 +258,108 @@
       "note": "an empty array, the array form of a struct"
     }
   ],
+  "FamilyConfig": [
+    {
+      "json": "{\"instructions\":\"Answer in the user's language. Café hours are 8 to 5.\\n\",\"model_alias\":\"agent-router\",\"sandbox_tools\":{\"bash\":false,\"edit\":false,\"glob\":true,\"grep\":true,\"read\":true,\"write\":false},\"skills\":{\"vault-notes\":\"---\\nname: vault-notes\\ndescription: Keep notes in the vault\\n---\\nWrite one note per topic.\"},\"system_prompt\":\"append\"}",
+      "written": "{\"instructions\":\"Answer in the user's language. Café hours are 8 to 5.\\n\",\"model_alias\":\"agent-router\",\"sandbox_tools\":{\"bash\":false,\"edit\":false,\"glob\":true,\"grep\":true,\"read\":true,\"write\":false},\"skills\":{\"vault-notes\":\"---\\nname: vault-notes\\ndescription: Keep notes in the vault\\n---\\nWrite one note per topic.\"},\"system_prompt\":\"append\"}",
+      "note": "a config with each field"
+    },
+    {
+      "json": "{\"system_prompt\":\"replace\",\"skills\":{},\"sandbox_tools\":{\"bash\":false,\"edit\":false,\"glob\":false,\"grep\":false,\"read\":false,\"write\":false},\"model_alias\":\"litellm/claude-opus-5.5\",\"instructions\":\"\"}",
+      "written": "{\"instructions\":\"\",\"model_alias\":\"litellm/claude-opus-5.5\",\"sandbox_tools\":{\"bash\":false,\"edit\":false,\"glob\":false,\"grep\":false,\"read\":false,\"write\":false},\"skills\":{},\"system_prompt\":\"replace\"}",
+      "note": "no skill, no grant, empty instructions, its keys in any order"
+    },
+    {
+      "json": "{\"instructions\":\"Answer in the user's language. Café hours are 8 to 5.\\n\",\"model_alias\":\"agent-router\",\"sandbox_tools\":{\"bash\":false,\"edit\":false,\"glob\":true,\"grep\":true,\"read\":true,\"write\":false},\"skills\":{\"vault-notes\":\"---\\nname: vault-notes\\ndescription: Keep notes in the vault\\n---\\nWrite one note per topic.\"}}",
+      "written": null,
+      "note": "system_prompt left out: the vmm writes the default"
+    },
+    {
+      "json": "{\"model_alias\":\"agent-router\",\"sandbox_tools\":{\"bash\":false,\"edit\":false,\"glob\":true,\"grep\":true,\"read\":true,\"write\":false},\"skills\":{\"vault-notes\":\"---\\nname: vault-notes\\ndescription: Keep notes in the vault\\n---\\nWrite one note per topic.\"},\"system_prompt\":\"append\"}",
+      "written": null,
+      "note": "instructions left out"
+    },
+    {
+      "json": "{\"instructions\":\"Answer in the user's language. Café hours are 8 to 5.\\n\",\"sandbox_tools\":{\"bash\":false,\"edit\":false,\"glob\":true,\"grep\":true,\"read\":true,\"write\":false},\"skills\":{\"vault-notes\":\"---\\nname: vault-notes\\ndescription: Keep notes in the vault\\n---\\nWrite one note per topic.\"},\"system_prompt\":\"append\"}",
+      "written": null,
+      "note": "model_alias left out"
+    },
+    {
+      "json": "{\"instructions\":\"Answer in the user's language. Café hours are 8 to 5.\\n\",\"model_alias\":\"agent-router\",\"skills\":{\"vault-notes\":\"---\\nname: vault-notes\\ndescription: Keep notes in the vault\\n---\\nWrite one note per topic.\"},\"system_prompt\":\"append\"}",
+      "written": null,
+      "note": "sandbox_tools left out"
+    },
+    {
+      "json": "{\"instructions\":\"Answer in the user's language. Café hours are 8 to 5.\\n\",\"model_alias\":\"agent-router\",\"sandbox_tools\":{\"bash\":false,\"edit\":false,\"glob\":true,\"grep\":true,\"read\":true,\"write\":false},\"system_prompt\":\"append\"}",
+      "written": null,
+      "note": "skills left out"
+    },
+    {
+      "json": "{\"instructions\":null,\"model_alias\":\"agent-router\",\"sandbox_tools\":{\"bash\":false,\"edit\":false,\"glob\":true,\"grep\":true,\"read\":true,\"write\":false},\"skills\":{\"vault-notes\":\"---\\nname: vault-notes\\ndescription: Keep notes in the vault\\n---\\nWrite one note per topic.\"},\"system_prompt\":\"append\"}",
+      "written": null,
+      "note": "null for instructions, which has no null form"
+    },
+    {
+      "json": "{\"instructions\":\"Answer in the user's language. Café hours are 8 to 5.\\n\",\"model_alias\":null,\"sandbox_tools\":{\"bash\":false,\"edit\":false,\"glob\":true,\"grep\":true,\"read\":true,\"write\":false},\"skills\":{\"vault-notes\":\"---\\nname: vault-notes\\ndescription: Keep notes in the vault\\n---\\nWrite one note per topic.\"},\"system_prompt\":\"append\"}",
+      "written": null,
+      "note": "null for model_alias, which has no null form"
+    },
+    {
+      "json": "{\"instructions\":\"Answer in the user's language. Café hours are 8 to 5.\\n\",\"model_alias\":\"agent-router\",\"sandbox_tools\":null,\"skills\":{\"vault-notes\":\"---\\nname: vault-notes\\ndescription: Keep notes in the vault\\n---\\nWrite one note per topic.\"},\"system_prompt\":\"append\"}",
+      "written": null,
+      "note": "null for sandbox_tools, which has no null form"
+    },
+    {
+      "json": "{\"instructions\":\"Answer in the user's language. Café hours are 8 to 5.\\n\",\"model_alias\":\"agent-router\",\"sandbox_tools\":{\"bash\":false,\"edit\":false,\"glob\":true,\"grep\":true,\"read\":true,\"write\":false},\"skills\":null,\"system_prompt\":\"append\"}",
+      "written": null,
+      "note": "null for skills, which has no null form"
+    },
+    {
+      "json": "{\"instructions\":\"Answer in the user's language. Café hours are 8 to 5.\\n\",\"model_alias\":\"agent-router\",\"sandbox_tools\":{\"bash\":false,\"edit\":false,\"glob\":true,\"grep\":true,\"read\":true,\"write\":false},\"skills\":{\"vault-notes\":\"---\\nname: vault-notes\\ndescription: Keep notes in the vault\\n---\\nWrite one note per topic.\"},\"system_prompt\":\"Append\"}",
+      "written": null,
+      "note": "a system prompt mode in capitals"
+    },
+    {
+      "json": "{\"instructions\":\"Answer in the user's language. Café hours are 8 to 5.\\n\",\"model_alias\":\"agent-router\",\"sandbox_tools\":{\"bash\":false,\"edit\":false,\"glob\":true,\"grep\":true,\"read\":true,\"write\":false},\"skills\":{\"vault-notes\":\"---\\nname: vault-notes\\ndescription: Keep notes in the vault\\n---\\nWrite one note per topic.\"},\"system_prompt\":\"prepend\"}",
+      "written": null,
+      "note": "a system prompt mode the grammar does not name"
+    },
+    {
+      "json": "{\"instructions\":\"Answer in the user's language. Café hours are 8 to 5.\\n\",\"model_alias\":\"agent-router\",\"sandbox_tools\":[\"read\",\"grep\",\"glob\"],\"skills\":{\"vault-notes\":\"---\\nname: vault-notes\\ndescription: Keep notes in the vault\\n---\\nWrite one note per topic.\"},\"system_prompt\":\"append\"}",
+      "written": null,
+      "note": "sandbox tools as the list of runtime.json"
+    },
+    {
+      "json": "{\"instructions\":\"Answer in the user's language. Café hours are 8 to 5.\\n\",\"model_alias\":\"agent-router\",\"sandbox_tools\":{\"bash\":false,\"edit\":false,\"glob\":true,\"grep\":true,\"read\":true,\"write\":false},\"skills\":{\"vault-notes\":\"---\\nname: vault-notes\\ndescription: Keep notes in the vault\\n---\\nWrite one note per topic.\"},\"system_prompt\":\"append\",\"shell\":false}",
+      "written": null,
+      "note": "the shell key of runtime.json, which the guest does not read"
+    },
+    {
+      "json": "{\"instructions\":\"Answer in the user's language. Café hours are 8 to 5.\\n\",\"model_alias\":\"agent-router\",\"sandbox_tools\":{\"bash\":false,\"edit\":false,\"glob\":true,\"grep\":true,\"read\":true,\"write\":false},\"skills\":{\"vault-notes\":\"---\\nname: vault-notes\\ndescription: Keep notes in the vault\\n---\\nWrite one note per topic.\"},\"system_prompt\":\"append\",\"model_live_at\":1793577660000}",
+      "written": null,
+      "note": "model_live_at, which the vmm holds back and the guest does not read (decision CH31)"
+    },
+    {
+      "json": "{\"instructions\":\"Answer in the user's language. Café hours are 8 to 5.\\n\",\"model_alias\":\"agent-router\",\"sandbox_tools\":{\"bash\":false,\"edit\":false,\"glob\":true,\"grep\":true,\"read\":true,\"write\":false},\"skills\":{\"vault-notes\":\"---\\nname: vault-notes\\ndescription: Keep notes in the vault\\n---\\nWrite one note per topic.\"},\"system_prompt\":\"append\",\"epoch\":3}",
+      "written": null,
+      "note": "an unknown key"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an empty array, the array form of a struct"
+    },
+    {
+      "json": "[\"\",\"agent-router\",null,{\"bash\":false,\"edit\":false,\"glob\":false,\"grep\":false,\"read\":false,\"write\":false},{},\"append\"]",
+      "written": null,
+      "note": "the fields in order, the array form of a struct"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    }
+  ],
   "FamilyName": [
     {
       "json": "\"chat\"",
@@ -400,6 +502,68 @@
       "note": "an array"
     }
   ],
+  "FamilySkills": [
+    {
+      "json": "{}",
+      "written": "{}",
+      "note": "no skill"
+    },
+    {
+      "json": "{\"vault-notes\":\"---\\nname: vault-notes\\ndescription: Keep notes in the vault\\n---\\nWrite one note per topic.\",\"ha\":\"x\"}",
+      "written": "{\"vault-notes\":\"---\\nname: vault-notes\\ndescription: Keep notes in the vault\\n---\\nWrite one note per topic.\",\"ha\":\"x\"}",
+      "note": "two skills, kept in the order of the wire"
+    },
+    {
+      "json": "{\"ha\":\"x\",\"vault-notes\":\"---\\nname: vault-notes\\ndescription: Keep notes in the vault\\n---\\nWrite one note per topic.\"}",
+      "written": "{\"ha\":\"x\",\"vault-notes\":\"---\\nname: vault-notes\\ndescription: Keep notes in the vault\\n---\\nWrite one note per topic.\"}",
+      "note": "two skills in ascending name order, the order the vmm writes"
+    },
+    {
+      "json": "{\"ha\":\"\"}",
+      "written": "{\"ha\":\"\"}",
+      "note": "an empty SKILL.md text"
+    },
+    {
+      "json": "{\"ha\":\"x\",\"ha\":\"y\"}",
+      "written": null,
+      "note": "a skill named twice"
+    },
+    {
+      "json": "{\"Vault-notes\":\"x\"}",
+      "written": null,
+      "note": "a name in capitals"
+    },
+    {
+      "json": "{\"vault_notes\":\"x\"}",
+      "written": null,
+      "note": "a name with an underscore"
+    },
+    {
+      "json": "{\"v\":\"x\"}",
+      "written": null,
+      "note": "a name of one character"
+    },
+    {
+      "json": "{\"vault-notes\":1}",
+      "written": null,
+      "note": "a text that is no string"
+    },
+    {
+      "json": "{\"vault-notes\":null}",
+      "written": null,
+      "note": "a null text"
+    },
+    {
+      "json": "[[\"vault-notes\",\"x\"]]",
+      "written": null,
+      "note": "an array of pairs"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    }
+  ],
   "JobId": [
     {
       "json": "\"job-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\"",
@@ -430,6 +594,180 @@
       "json": "\"job-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\\n\"",
       "written": null,
       "note": "a trailing newline"
+    }
+  ],
+  "ModelAlias": [
+    {
+      "json": "\"agent-router\"",
+      "written": "\"agent-router\"",
+      "note": "a router alias"
+    },
+    {
+      "json": "\"litellm/claude-opus-5.5\"",
+      "written": "\"litellm/claude-opus-5.5\"",
+      "note": "an alias with the provider prefix, a dot and a slash"
+    },
+    {
+      "json": "\"9b_q4\"",
+      "written": "\"9b_q4\"",
+      "note": "a digit first, an underscore"
+    },
+    {
+      "json": "\"a\"",
+      "written": "\"a\"",
+      "note": "one character"
+    },
+    {
+      "json": "\"zabcdefghijklmnopqrstuvwxyz\"",
+      "written": "\"zabcdefghijklmnopqrstuvwxyz\"",
+      "note": "z first, then every lowercase letter"
+    },
+    {
+      "json": "\"a0123456789._/-\"",
+      "written": "\"a0123456789._/-\"",
+      "note": "every digit and each mark after the first"
+    },
+    {
+      "json": "\"\"",
+      "written": null,
+      "note": "the empty text"
+    },
+    {
+      "json": "\"Agent-router\"",
+      "written": null,
+      "note": "a capital"
+    },
+    {
+      "json": "\"-router\"",
+      "written": null,
+      "note": "a hyphen first"
+    },
+    {
+      "json": "\"/router\"",
+      "written": null,
+      "note": "a slash first"
+    },
+    {
+      "json": "\"agent-*\"",
+      "written": null,
+      "note": "a wildcard"
+    },
+    {
+      "json": "\"agent router\"",
+      "written": null,
+      "note": "a space"
+    },
+    {
+      "json": "\"agent-router\\n\"",
+      "written": null,
+      "note": "a newline at the end, which a Python $ would take"
+    },
+    {
+      "json": "\"agent-Router\"",
+      "written": null,
+      "note": "a capital after the first character"
+    },
+    {
+      "json": "\"aZ\"",
+      "written": null,
+      "note": "Z, the last capital, after the first character"
+    },
+    {
+      "json": "\"_router\"",
+      "written": null,
+      "note": "an underscore first"
+    },
+    {
+      "json": "\".router\"",
+      "written": null,
+      "note": "a dot first"
+    },
+    {
+      "json": "\"agent,router\"",
+      "written": null,
+      "note": "a comma, next to the hyphen"
+    },
+    {
+      "json": "\"agent:router\"",
+      "written": null,
+      "note": "a colon, next to the digits"
+    },
+    {
+      "json": "\"agent@router\"",
+      "written": null,
+      "note": "an at sign, next to the capitals"
+    },
+    {
+      "json": "\"agent^router\"",
+      "written": null,
+      "note": "a caret, next to the underscore"
+    },
+    {
+      "json": "\"agent`router\"",
+      "written": null,
+      "note": "a backtick, next to the underscore and the lowercase letters"
+    },
+    {
+      "json": "\"agent{router\"",
+      "written": null,
+      "note": "a brace, next to the lowercase letters"
+    },
+    {
+      "json": "1",
+      "written": null,
+      "note": "a number"
+    }
+  ],
+  "SandboxGrant": [
+    {
+      "json": "{\"bash\":false,\"edit\":false,\"glob\":false,\"grep\":false,\"read\":false,\"write\":false}",
+      "written": "{\"bash\":false,\"edit\":false,\"glob\":false,\"grep\":false,\"read\":false,\"write\":false}",
+      "note": "no tool"
+    },
+    {
+      "json": "{\"write\":true,\"read\":true,\"grep\":true,\"glob\":true,\"edit\":true,\"bash\":true}",
+      "written": "{\"bash\":true,\"edit\":true,\"glob\":true,\"grep\":true,\"read\":true,\"write\":true}",
+      "note": "each tool, its keys in any order"
+    },
+    {
+      "json": "{\"edit\":false,\"glob\":false,\"grep\":false,\"read\":false,\"write\":false}",
+      "written": null,
+      "note": "a tool left out"
+    },
+    {
+      "json": "{\"bash\":false,\"edit\":false,\"glob\":false,\"grep\":false,\"read\":false,\"write\":false,\"codemode\":true}",
+      "written": null,
+      "note": "codemode, which every family gets and no grant names"
+    },
+    {
+      "json": "{\"bash\":false,\"edit\":false,\"glob\":false,\"grep\":false,\"read\":\"true\",\"write\":false}",
+      "written": null,
+      "note": "a string for a bool"
+    },
+    {
+      "json": "{\"bash\":false,\"edit\":false,\"glob\":false,\"grep\":false,\"read\":1,\"write\":false}",
+      "written": null,
+      "note": "a number for a bool"
+    },
+    {
+      "json": "{\"bash\":false,\"edit\":false,\"glob\":false,\"grep\":false,\"read\":null,\"write\":false}",
+      "written": null,
+      "note": "null for a bool"
+    },
+    {
+      "json": "[\"read\",\"grep\"]",
+      "written": null,
+      "note": "a list of names"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an empty array, the array form of a struct"
+    },
+    {
+      "json": "[false,false,false,false,true,false]",
+      "written": null,
+      "note": "the fields in order, the array form of a struct"
     }
   ],
   "SessionCwd": [
@@ -1045,6 +1383,53 @@
       "json": "[\"Fix\"]",
       "written": null,
       "note": "an array"
+    }
+  ],
+  "SkillName": [
+    {
+      "json": "\"vault-notes\"",
+      "written": "\"vault-notes\"",
+      "note": "a skill name"
+    },
+    {
+      "json": "\"ha\"",
+      "written": "\"ha\"",
+      "note": "two characters"
+    },
+    {
+      "json": "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+      "written": "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+      "note": "31 characters"
+    },
+    {
+      "json": "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+      "written": null,
+      "note": "32 characters"
+    },
+    {
+      "json": "\"v\"",
+      "written": null,
+      "note": "one character"
+    },
+    {
+      "json": "\"9notes\"",
+      "written": null,
+      "note": "a digit first"
+    },
+    {
+      "json": "\"vault_notes\"",
+      "written": null,
+      "note": "an underscore"
+    },
+    {
+      "json": "\"Vault-notes\"",
+      "written": null,
+      "note": "a capital"
+    },
+    {
+      "json": "\"vault-notes\\n\"",
+      "written": null,
+      "note": "a newline at the end, which a Python $ would take"
     }
   ],
   "Timer": [
