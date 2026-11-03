@@ -6,8 +6,10 @@
 # Usage: sudo creche-deploy [ref]     (default: main from the operator's tree)
 set -euo pipefail
 
-# The product's root-owned checkout, and the site's beside it. The site's
-# configuration is in /etc/creche, which every unit and wrapper reads.
+# The product's root-owned checkout, and the site's beside it. Since
+# 2026-11-03 the site's two files in /etc/creche link into the `host`
+# release of creche-release, not into this checkout. The site checkout still
+# serves the compose stack and the personal units, until they move as well.
 PRODUCT=/opt/creche
 SITE=/opt/private-docs
 
@@ -16,8 +18,8 @@ SITE_REF=main
 
 # deploy_site PRODUCT SITE: bring SITE to its origin's SITE_REF.
 #
-# The site is this deployment's own repository: the docs, the secret
-# ciphertext, the compose stack, the personal scripts and units. It follows
+# The site is this deployment's own repository: the docs, the compose
+# stack, the personal scripts and units. It follows
 # the product's rule, so root needs no GitHub credential for it either: its
 # origin is the checkout BESIDE the product's origin.
 #
@@ -111,8 +113,9 @@ if [[ -z "${CRECHE_DEPLOY_REEXEC:-}" ]] && ! cmp -s "$NEW" "$SELF"; then
 fi
 
 # After the self-update, so the copy that knows the site is the one that
-# deploys it. Not fatal YET: nothing on the host reads the site until the
-# files it holds leave this tree, and that change makes this line fatal.
+# deploys it. Not fatal: no release, no wrapper and no /etc/creche link
+# reads this checkout. A failure leaves the compose stack and the personal
+# units on the tree they already run.
 deploy_site "$PRODUCT" "$SITE" \
   || echo "WARNING: the site at $SITE could not be brought up to date; the product is deployed either way" >&2
 
