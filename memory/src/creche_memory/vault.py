@@ -40,7 +40,7 @@ def _refused(code: Refusal, reason: str) -> RefusedReply:
     return RefusedReply(ok=False, refused=code, reason=reason)
 
 
-def _open_refusal(error: OSError) -> RefusedReply:
+def open_refusal(error: OSError) -> RefusedReply:
     if error.errno in MISSING:
         return _refused(Refusal.NOT_FOUND, "no such file or folder")
 
@@ -86,7 +86,7 @@ class Vault:
         try:
             fd = self._open_file(folders, name)
         except OSError as error:
-            return _open_refusal(error)
+            return open_refusal(error)
 
         with os.fdopen(fd, "rb") as file:
             info = os.fstat(file.fileno())
@@ -120,7 +120,7 @@ class Vault:
         try:
             fd = self._open_folder(parts)
         except OSError as error:
-            return _open_refusal(error)
+            return open_refusal(error)
 
         notes: list[Note] = []
         folders: list[FolderPath] = []

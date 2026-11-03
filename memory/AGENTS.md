@@ -11,10 +11,12 @@ service of the vault. The service hosts the memory store and answers the
 |---|---|
 | `src/creche_memory/wire.py` | The wire types of the socket: each request, each reply, the refusal codes and the newtypes. |
 | `src/creche_memory/vault.py` | `Vault`: it reads one note or lists one folder, inside the vault root. |
+| `src/creche_memory/writes.py` | `Writer`: it creates inbox notes and rewrites whole files in the agent areas. |
 | `src/creche_memory/server.py` | `MemoryServer`: the socket server. It checks the peer uid and answers one line per connection. |
 | `vectors/wire.json` | The shared wire vectors. |
 | `tests/test_memory_wire_vectors.py` | The test that runs the shared wire vectors through the models. |
 | `tests/test_memory_vault.py` | The tests of the reads: the caps, the refusals and the symlink rules. |
+| `tests/test_memory_writes.py` | The tests of the writes: the areas, the digest check, the modes and the symlink rules. |
 | `tests/test_memory_server.py` | The tests of the socket: the peer check, the line rules and the dispatch. |
 
 ## One definition per type
@@ -46,10 +48,27 @@ after it reads `json`, or `null` when the type refuses `json`.
    with a uid other than the configured one gets no reply.
 2. A peer sends one request line within 10 seconds. A line over 640 KiB,
    or a line with no newline, gets a refusal.
-3. The server answers `read` and `list`. It refuses `search`, `create` and
-   `rewrite` with `not_ready` until their changes land.
+3. The server answers `read`, `list`, `create` and `rewrite`. It refuses
+   `search` with `not_ready` until its change lands.
 4. At start, the server removes the socket of an earlier run. Any other
    file at the path stops the start. The socket file gets mode 0660.
+
+## Vault writes
+
+1. `create` writes `inbox/<YYYY-MM-DD>-<slug>.md`, with the date in UTC.
+   The note starts with frontmatter that names the family and the time,
+   then a `# Title` line, then the body.
+2. `rewrite` writes a whole file under `inbox/`, `house/ha/` or
+   `house/scrum/` only. Any other path is refused.
+3. A rewrite carries the SHA-256 of the file as the agent read it. A file
+   that changed since then is refused. `new` writes a file that must not
+   exist yet, and it makes a folder that is missing.
+4. One lock holds each write. Each write goes to a temp file in the same
+   folder first, then `fsync`. A new file is linked into place, so an
+   existing file stops it. A rewrite renames the temp file over the old
+   one.
+5. Each file gets mode 0644, and each new folder 0755. The service user
+   owns them.
 
 ## Vault reads
 
