@@ -126,7 +126,7 @@ class Debounce:
             self.seen, self.seen_at = stamp, now
 
         if trigger is Trigger.WRITE:
-            return True
+            return stamp != self.synced
 
         return stamp != self.synced and now - self.seen_at >= self.quiet_s
 
@@ -189,12 +189,14 @@ class Syncer:
         if not folders:
             return Outcome.NOTHING_TO_READ
 
+        # Clear the flag each time it is read. A write that does not move the
+        # stamp would otherwise keep it set, and the loop would never sleep.
         trigger = Trigger.WRITE if self._wrote.is_set() else Trigger.POLL
+        self._wrote.clear()
         stamp = vault_stamp(self._root, folders)
         if not self._debounce.due(stamp, self._clock(), trigger):
             return Outcome.UNCHANGED if stamp == self._debounce.synced else Outcome.WAITING
 
-        self._wrote.clear()
         try:
             await self._ingest(folders)
         except Exception as error:

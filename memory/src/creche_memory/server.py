@@ -11,6 +11,8 @@ import socketserver
 import stat
 import struct
 import sys
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import assert_never
 
@@ -27,6 +29,7 @@ from .wire import (
     RefusedReply,
     Request,
     RewriteRequest,
+    SearchReply,
     SearchRequest,
     WriteReply,
 )
@@ -51,7 +54,7 @@ XUCRED_HEAD = struct.Struct("2I")
 XUCRED_SIZE = 76
 SOL_LOCAL = 0
 
-type Answer = ReadReply | ListReply | WriteReply | RefusedReply
+type Answer = ReadReply | ListReply | WriteReply | SearchReply | RefusedReply
 
 
 def _refused(code: Refusal, reason: str) -> RefusedReply:
@@ -72,7 +75,26 @@ def peer_uid(sock: socket.socket) -> int:
     raise OSError(f"no peer credentials on {sys.platform}")
 
 
-def answer(line: bytes, vault: Vault, writer: Writer) -> Answer:
+@dataclass(frozen=True)
+class Service:
+    """What the server answers with."""
+
+    vault: Vault
+    writer: Writer
+    #: One search, run on the loop of the store.
+    search: Callable[[SearchRequest], SearchReply | RefusedReply]
+    #: Called after each write that ends well, so the store syncs at once.
+    wrote: Callable[[], None]
+
+
+def _after_write(reply: WriteReply | RefusedReply, service: Service) -> Answer:
+    if isinstance(reply, WriteReply):
+        service.wrote()
+
+    return reply
+
+
+def answer(line: bytes, service: Service) -> Answer:
     """The reply to one request line."""
     try:
         request = Request.model_validate_json(line).root
@@ -81,15 +103,15 @@ def answer(line: bytes, vault: Vault, writer: Writer) -> Answer:
 
     match request:
         case ReadRequest():
-            return vault.read_note(request.path)
+            return service.vault.read_note(request.path)
         case ListRequest():
-            return vault.list_folder(request.folder)
+            return service.vault.list_folder(request.folder)
         case CreateRequest():
-            return writer.create(request)
+            return _after_write(service.writer.create(request), service)
         case RewriteRequest():
-            return writer.rewrite(request)
+            return _after_write(service.writer.rewrite(request), service)
         case SearchRequest():
-            return _refused(Refusal.NOT_READY, "this service does not serve search yet")
+            return service.search(request)
         case _:
             assert_never(request)
 
@@ -116,11 +138,7 @@ class _Handler(socketserver.StreamRequestHandler):
                 return
 
             line = _read_line(self)
-            reply = (
-                line
-                if isinstance(line, RefusedReply)
-                else answer(line, server.vault, server.writer)
-            )
+            reply = line if isinstance(line, RefusedReply) else answer(line, server.service)
             self.wfile.write(reply.model_dump_json().encode() + b"\n")
         except OSError:
             return
@@ -131,10 +149,9 @@ class MemoryServer(socketserver.ThreadingUnixStreamServer):
 
     daemon_threads = True
 
-    def __init__(self, path: Path, vault: Vault, writer: Writer, peer: int) -> None:
+    def __init__(self, path: Path, service: Service, peer: int) -> None:
         _remove_stale(path)
-        self.vault = vault
-        self.writer = writer
+        self.service = service
         self.peer = peer
         super().__init__(str(path), _Handler)
         os.chmod(path, SOCKET_MODE)

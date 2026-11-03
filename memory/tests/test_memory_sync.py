@@ -4,6 +4,7 @@ import asyncio
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -115,6 +116,7 @@ def test_a_poll_waits_for_a_quiet_vault_and_a_write_does_not() -> None:
     debounce.done("b")
 
     assert not debounce.due("b", 500.0, Trigger.POLL)
+    assert not debounce.due("b", 500.0, Trigger.WRITE)
     assert debounce.due("c", 501.0, Trigger.WRITE)
 
 
@@ -206,3 +208,24 @@ def test_the_connector_takes_the_arguments_of_the_sync(vault: Path) -> None:
 
     assert done.returncode == 0, done.stderr[-2000:]
     assert done.stdout.strip().splitlines()[-1] == "DltResource"
+
+
+def test_a_write_to_a_skipped_folder_neither_syncs_nor_spins(vault: Path) -> None:
+    clock, ingests = Clock(), Ingests()
+    syncer = Syncer(vault, ingests, poll_s=60.0, quiet_s=0.0, clock=clock)
+    assert _step(syncer) is Outcome.SYNCED
+
+    (vault / "house" / "scrum" / "STATE.md").write_text("an hour later", encoding="utf-8")
+    syncer.request()
+    assert _step(syncer) is Outcome.UNCHANGED
+
+    checks: list[float] = []
+    counted = Syncer(vault, ingests, poll_s=60.0, quiet_s=0.0, clock=lambda: checks.append(0) or 0)
+    counted.request()
+    stop = threading.Event()
+    threading.Timer(0.3, stop.set).start()
+    threading.Timer(0.3, counted.request).start()
+    asyncio.run(counted.run(stop))
+
+    assert len(ingests.calls) == 2
+    assert len(checks) <= 3
