@@ -124,6 +124,37 @@ class ControlReady(BaseModel):
     facade: Annotated[FacadeState, Field(description="The facade.")]
 
 
+class CreateSession(BaseModel):
+    """
+    What attendance sends to the vmm to make a row of the host session list
+    (decisions CH21-4, CH25 rule 2). It is a `SessionRow` without `title`
+    and `updated_at`. The vmm sets `title` to `null` and `updated_at` to
+    `created_at`. It makes no session disk at create (decision CH21-4).
+
+    Two creates are the same when their typed values are equal
+    (`PartialEq`), not when their bytes are equal. A client retries after
+    ENOENT, ECONNREFUSED or EOF (decision CH20). attendance stores the create
+    before it sends it the first time. A retry resends the same `created_at`,
+    so the repeat is the same create.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    created_at: Annotated[UnixMillis, Field(description="When attendance created the session.")]
+    cwd: Annotated[
+        SessionCwd,
+        Field(
+            description="The `cwd` that the client sent in `session/new`, or that attendance\nchose for a job."
+        ),
+    ]
+    family: Annotated[FamilyName, Field(description="The family that serves the session.")]
+    id: Annotated[
+        SessionId, Field(description="The id that attendance chose (decision CH25 rule 2).")
+    ]
+    origin: Annotated[SessionOrigin, Field(description="Who made the session.")]
+
+
 class CredsMissing(BaseModel):
     """
     The reply of a pull when `creds.json` is absent. It carries nothing.

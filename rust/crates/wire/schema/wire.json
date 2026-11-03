@@ -62,6 +62,40 @@
       ],
       "type": "object"
     },
+    "CreateSession": {
+      "additionalProperties": false,
+      "description": "What attendance sends to the vmm to make a row of the host session list\n(decisions CH21-4, CH25 rule 2). It is a `SessionRow` without `title`\nand `updated_at`. The vmm sets `title` to `null` and `updated_at` to\n`created_at`. It makes no session disk at create (decision CH21-4).\n\nTwo creates are the same when their typed values are equal\n(`PartialEq`), not when their bytes are equal. A client retries after\nENOENT, ECONNREFUSED or EOF (decision CH20). attendance stores the create\nbefore it sends it the first time. A retry resends the same `created_at`,\nso the repeat is the same create.",
+      "properties": {
+        "created_at": {
+          "$ref": "#/$defs/UnixMillis",
+          "description": "When attendance created the session."
+        },
+        "cwd": {
+          "$ref": "#/$defs/SessionCwd",
+          "description": "The `cwd` that the client sent in `session/new`, or that attendance\nchose for a job."
+        },
+        "family": {
+          "$ref": "#/$defs/FamilyName",
+          "description": "The family that serves the session."
+        },
+        "id": {
+          "$ref": "#/$defs/SessionId",
+          "description": "The id that attendance chose (decision CH25 rule 2)."
+        },
+        "origin": {
+          "$ref": "#/$defs/SessionOrigin",
+          "description": "Who made the session."
+        }
+      },
+      "required": [
+        "created_at",
+        "cwd",
+        "family",
+        "id",
+        "origin"
+      ],
+      "type": "object"
+    },
     "CredsMissing": {
       "additionalProperties": false,
       "description": "The reply of a pull when `creds.json` is absent. It carries nothing.\nWhen `config/` is absent too, this reply wins.",
