@@ -155,6 +155,9 @@ use-annotated = true
 use-schema-description = true
 use-double-quotes = true
 keep-model-order = true
+# A `oneOf` member gets the class name of its `title`, not a name by its
+# position (`SessionOrigin1`). The Rust crate sets each title.
+use-title-as-name = true
 # Each scalar is a strict type, so a model refuses "1" or 1.0 or true for an
 # int even when a caller skips `creche_wire.read` (wire/AGENTS.md).
 strict-types = ["str", "bytes", "int", "float", "bool"]

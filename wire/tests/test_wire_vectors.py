@@ -66,11 +66,24 @@ def test_each_case_does_what_the_file_says(type_name: str, case: dict[str, Any])
     assert _read_and_write(type_name, case["json"]) == case["written"]
 
 
+def _variant_titles(schema: dict[str, Any]) -> list[str]:
+    """The `title` of each `oneOf` member. datamodel-codegen names the class
+    of a variant by it, and a caller needs that class to build the enum."""
+    definitions = cast(dict[str, dict[str, Any]], schema["$defs"])
+
+    return [
+        member["title"]
+        for definition in definitions.values()
+        for member in definition.get("oneOf", [])
+    ]
+
+
 def test_each_wire_type_has_cases_and_a_model() -> None:
-    defined = sorted(_load(SCHEMA_FILE)["$defs"])
+    schema = _load(SCHEMA_FILE)
+    defined = sorted(schema["$defs"])
 
     assert sorted(VECTORS) == defined
-    assert sorted(set(creche_wire.__all__) - READER) == defined
+    assert sorted(set(creche_wire.__all__) - READER) == sorted(defined + _variant_titles(schema))
 
 
 def _nodes(value: object) -> list[dict[str, object]]:

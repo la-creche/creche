@@ -78,6 +78,21 @@ same file.
    last block of a type, and the strict reader of the Python test refuses
    two equal keys.
 
+## A struct on the wire
+
+A derived `Deserialize` of a struct also reads a JSON array, its fields in
+order. `deny_unknown_fields` does not stop it. The schema and the generated
+model take only an object.
+
+1. Derive `Serialize` and `Deserialize` with `#[serde(remote = "Self")]`,
+   and add the line `object_only!(Name);` in `rust/crates/wire/src/lib.rs`.
+   The macro reads the struct only from a JSON object.
+2. Add a refused case with the array form: `[]`, or the fields in order.
+   Add the same case where an enum variant holds the struct.
+3. Make the payload of an enum variant a struct type of its own. The class
+   of an inline struct variant gets the name of its key, and a later type
+   with the same name changes that name.
+
 ## Change a wire type
 
 1. Change the type in `rust/crates/wire/src/`.
