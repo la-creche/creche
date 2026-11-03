@@ -57,18 +57,30 @@ that does needs a decision of the owner before its vector cases are added:
 3. An integer past 64 bits for a float. serde_json reads it as an `f64`.
 4. A text over the cap. The Rust crate has no cap.
 
-The generated model is wider than the Rust type in two places. The test
-`test_each_integer_and_date_of_the_schema_is_checked` fails when the schema
-holds one of them:
-
-1. An integer without `minimum` and `maximum`. datamodel-codegen drops the
-   `format` that schemars writes, so a `u8` field would take 300.
-2. A `date-time` without a `pattern`. pydantic takes dates that RFC 3339
-   refuses, for example `"2026-11-02 00:00:00Z"`. It also keeps only 6
-   digits of a fraction, so a date with nanoseconds cannot round-trip.
-
 `bin/tests/test_strictjson_copies.py` fails when `strictjson.py` differs from
 the copy in another package. Change each copy in one commit.
+
+## Integers and times
+
+1. Every integer of a wire type has a `minimum` and a `maximum`, at most
+   2^53 - 1 from zero (decision CH22 rule 3). JavaScript reads no larger
+   integer exactly. datamodel-codegen drops the `format` that schemars
+   writes, so the bounds are the only width check of the generated model.
+2. schemars bounds an integer of 8 or 16 bits itself. `bound_integers` in
+   `rust/crates/wire/src/schema.rs` gives an integer of 32 bits the bounds
+   of its width. A `u64`, `i64`, `usize` or `isize` needs bounds of its own
+   type, or the schema test fails. A nullable integer, with the type
+   `["integer", "null"]`, follows the same rules.
+3. A time on the wire is `UnixMillis`: integer milliseconds since
+   1970-01-01T00:00:00Z, UTC (decision CH22-1). No wire type holds a
+   `date-time` string. This rule replaces the time rule of the root
+   `AGENTS.md` for wire types only.
+4. `test_each_integer_and_date_of_the_schema_is_checked` holds the committed
+   schema to rules 1 and 3.
+
+`read` takes `-0` for an integer, and gives `0`. serde_json reads `-0` as a
+float, so the Rust type refuses it. No vector case holds `-0` until the
+owner decides which language changes.
 
 ## The shared wire vectors
 

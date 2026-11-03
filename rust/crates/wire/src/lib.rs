@@ -527,6 +527,67 @@ pub enum SessionOrigin {
     Auto(Auto),
 }
 
+/// The largest integer that a JavaScript number holds exactly: 2^53 - 1,
+/// `Number.MAX_SAFE_INTEGER`. No wire integer is larger (decision CH22 rule
+/// 3). The schema test fails on an integer that can be larger.
+const JS_INTEGER_MAX: u64 = (1 << 53) - 1;
+
+/// A time on the wire: whole milliseconds since 1970-01-01T00:00:00Z, UTC
+/// (decision CH22-1). It is the one wire form of a time. No wire type holds
+/// a `date-time` string.
+///
+/// On the wire it is a JSON integer from 0 to 2^53 - 1, so JavaScript reads
+/// it exactly. A larger integer, a negative integer, a float such as `1.0`
+/// or `1e3`, and a string are refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(try_from = "u64", into = "u64")]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[cfg_attr(test, schemars(extend("minimum" = 0, "maximum" = JS_INTEGER_MAX)))]
+pub struct UnixMillis(u64);
+
+/// Why an integer is not a `UnixMillis`: it is larger than 2^53 - 1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnixMillisError;
+
+impl UnixMillis {
+    /// The milliseconds since 1970-01-01T00:00:00Z.
+    #[must_use]
+    pub fn as_u64(self) -> u64 {
+        self.0
+    }
+}
+
+impl TryFrom<u64> for UnixMillis {
+    type Error = UnixMillisError;
+
+    fn try_from(millis: u64) -> Result<Self, Self::Error> {
+        if millis > JS_INTEGER_MAX {
+            return Err(UnixMillisError);
+        }
+        Ok(Self(millis))
+    }
+}
+
+impl From<UnixMillis> for u64 {
+    fn from(time: UnixMillis) -> Self {
+        time.0
+    }
+}
+
+impl fmt::Display for UnixMillis {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}", self.0)
+    }
+}
+
+impl fmt::Display for UnixMillisError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a wire time is 0 to 2^53 - 1 milliseconds since 1970-01-01T00:00:00Z")
+    }
+}
+
+impl std::error::Error for UnixMillisError {}
+
 #[cfg(test)]
 mod tests {
     use super::{SESSION_ID_PATTERN, SessionId, SessionIdError};

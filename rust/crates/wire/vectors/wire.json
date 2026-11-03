@@ -755,6 +755,83 @@
       "note": "null"
     }
   ],
+  "UnixMillis": [
+    {
+      "json": "0",
+      "written": "0",
+      "note": "the first millisecond of 1970-01-01, UTC"
+    },
+    {
+      "json": "1",
+      "written": "1",
+      "note": "one millisecond after"
+    },
+    {
+      "json": "1793577600000",
+      "written": "1793577600000",
+      "note": "2026-11-02T00:00:00Z"
+    },
+    {
+      "json": "9007199254740991",
+      "written": "9007199254740991",
+      "note": "2^53 - 1, the largest integer JavaScript reads exactly"
+    },
+    {
+      "json": "9007199254740992",
+      "written": null,
+      "note": "2^53, past the cap"
+    },
+    {
+      "json": "18446744073709551615",
+      "written": null,
+      "note": "the largest u64"
+    },
+    {
+      "json": "18446744073709551616",
+      "written": null,
+      "note": "2^64, past 64 bits"
+    },
+    {
+      "json": "-9223372036854775809",
+      "written": null,
+      "note": "one below the smallest i64"
+    },
+    {
+      "json": "-1",
+      "written": null,
+      "note": "a negative integer"
+    },
+    {
+      "json": "1.0",
+      "written": null,
+      "note": "an integer written as a float"
+    },
+    {
+      "json": "1e3",
+      "written": null,
+      "note": "an integer written with an exponent"
+    },
+    {
+      "json": "\"1\"",
+      "written": null,
+      "note": "a string"
+    },
+    {
+      "json": "\"2026-11-02T00:00:00Z\"",
+      "written": null,
+      "note": "a date-time string"
+    },
+    {
+      "json": "true",
+      "written": null,
+      "note": "a bool"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    }
+  ],
   "Webhook": [
     {
       "json": "{\"name\":\"boiler-alert\"}",

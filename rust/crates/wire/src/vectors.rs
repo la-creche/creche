@@ -14,7 +14,7 @@ use serde::Deserialize;
 use super::schema::wire_schema;
 use super::{
     Auto, AutoJobId, Delegate, DelegationId, Dispatch, DispatchChain, Door, FamilyName, JobId,
-    SessionId, SessionOrigin, Timer, Trigger, Webhook, WebhookName,
+    SessionId, SessionOrigin, Timer, Trigger, UnixMillis, Webhook, WebhookName,
 };
 
 /// The file, relative to the crate.
@@ -66,6 +66,7 @@ fn read_and_write(type_name: &str, json: &str) -> Option<String> {
         "SessionOrigin" => round_trip::<SessionOrigin>(json),
         "Timer" => round_trip::<Timer>(json),
         "Trigger" => round_trip::<Trigger>(json),
+        "UnixMillis" => round_trip::<UnixMillis>(json),
         "Webhook" => round_trip::<Webhook>(json),
         "WebhookName" => round_trip::<WebhookName>(json),
         other => panic!("{VECTOR_FILE} names {other}, and this test reads no such type"),
