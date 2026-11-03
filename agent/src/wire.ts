@@ -28,6 +28,16 @@ export const wire = {
       "pattern": "^auto-[0-9A-HJKMNP-TV-Z]{26}$",
       "type": "string"
     },
+    "ConfigMissing": {
+      "additionalProperties": false,
+      "description": "The reply of a pull when `config/` is absent. It carries nothing.",
+      "type": "object"
+    },
+    "CredsMissing": {
+      "additionalProperties": false,
+      "description": "The reply of a pull when `creds.json` is absent. It carries nothing.\nWhen `config/` is absent too, this reply wins.",
+      "type": "object"
+    },
     "Delegate": {
       "additionalProperties": false,
       "description": "The origin of a session that the delegate door opened for one thin job.\n\nIt is a type of its own so that the generated Python class has a name\nof its own. An inline struct variant gets the class name of its key.",
@@ -87,7 +97,7 @@ export const wire = {
     },
     "FamilyConfig": {
       "additionalProperties": false,
-      "description": "The family's part of `config/` that the guest reads: what caregiver writes\nin `write_config` (`steps.py:229-249`). Instructions, skills, sandbox\ntools and the model change at the next prompt of a running session\n(decision CH5c).\n\n`shell` of `runtime.json` is not here: the agent reads it and grants\nnothing with it (`agent/src/runtime-config.ts:18`).\n\n`model_live_at` of `runtime.json` is not here either. The vmm reads it\nand holds the reply until the host time passes it, at most 10 s\n(decisions CH23-1, CH31). The guest never waits on it.",
+      "description": "The family's part of `config/` that the guest reads: what caregiver writes\nin `write_config` (`steps.py:229-249`). Instructions, skills, sandbox\ntools and the model change at the next prompt of a running session\n(decision CH5c).\n\n`shell` of `runtime.json` is not here: the agent reads it and grants\nnothing with it (`agent/src/runtime-config.ts:18`).\n\n`model_live_at` of `runtime.json` is not here either. The vmm holds the\nreply on it (`FamilyStateReply`).",
       "properties": {
         "instructions": {
           "description": "The text of `config/instructions.md`. The agent trims it, and an empty\ntext gives no instructions, as today (`agent/src/agent.ts:72-85`).",
@@ -123,6 +133,25 @@ export const wire = {
       ],
       "type": "object"
     },
+    "FamilyCreds": {
+      "additionalProperties": false,
+      "description": "The family's part of `creds.json` that the guest reads (decision CH23\ndefault 1). `epoch`, `written_at`, `previous_pep_token` and\n`previous_expires_at` stay on the host, so the old token never sits in\nguest memory or in a snapshot.",
+      "properties": {
+        "litellm_key": {
+          "$ref": "#/$defs/LitellmKey",
+          "description": "The key for the LiteLLM plane."
+        },
+        "pep_token": {
+          "$ref": "#/$defs/PepToken",
+          "description": "The token for the chaperone plane."
+        }
+      },
+      "required": [
+        "litellm_key",
+        "pep_token"
+      ],
+      "type": "object"
+    },
     "FamilyName": {
       "description": "The name of a family: `FAMILY_NAME` of `family/grammar.py`.",
       "pattern": "^[a-z][a-z0-9-]{1,30}$",
@@ -138,14 +167,118 @@ export const wire = {
       },
       "type": "object"
     },
+    "FamilyState": {
+      "additionalProperties": false,
+      "description": "The whole family state of one pull: the full typed state, every time\n(decision CH23). The facade compares the fields itself.",
+      "properties": {
+        "config": {
+          "$ref": "#/$defs/FamilyConfig",
+          "description": "What the vmm read from `config/`."
+        },
+        "creds": {
+          "$ref": "#/$defs/FamilyCreds",
+          "description": "What the vmm read from `creds.json`."
+        }
+      },
+      "required": [
+        "config",
+        "creds"
+      ],
+      "type": "object"
+    },
+    "FamilyStateReply": {
+      "description": "What the vmm answers on host port 1100 when the facade pulls the family\nstate, before each prompt (decisions CH5a, CH5b, CH23). The vmm reads\ncaregiver's `creds.json` and `config/` at each pull.\n\nA read failure is a typed reply, and the link stays open (decision CH23\ndefault 2). The facade fails that prompt and keeps running. At start it\npulls again with a backoff, and never exits on a typed error. When\n`creds.json` and `config/` are both absent, `creds_missing` wins\n(decision CH31).\n\nA reply text has a cap of 256 KiB (decision CH23 default 4). The cap is\na rule of the read surface, not of this type: the vmm's writer and the\n`cap` of `creche_wire.read` hold it, because JSON Schema counts code\npoints, not bytes. A `state` reply over the cap is `too_large`, not\n`not_valid` (decision CH31).\n\nThe vmm reads `model_live_at` from `config/runtime.json` (decision\nCH23-1). It holds the `state` reply until the host time passes that\ntime, for at most 10 s (decision CH31). No wire type carries\n`model_live_at`, and the guest needs no clock for it. A held pull can\ntake up to 10 s longer.\n\nOn the wire the variant name is the one key of an object, and each\nvariant has a `title` for its class name.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "The vmm read the whole state.",
+          "properties": {
+            "state": {
+              "$ref": "#/$defs/FamilyState"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "title": "StateReply",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`creds.json` is absent.",
+          "properties": {
+            "creds_missing": {
+              "$ref": "#/$defs/CredsMissing"
+            }
+          },
+          "required": [
+            "creds_missing"
+          ],
+          "title": "CredsMissingReply",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`config/` is absent.",
+          "properties": {
+            "config_missing": {
+              "$ref": "#/$defs/ConfigMissing"
+            }
+          },
+          "required": [
+            "config_missing"
+          ],
+          "title": "ConfigMissingReply",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A file is present and does not read.",
+          "properties": {
+            "not_valid": {
+              "$ref": "#/$defs/StateNotValid"
+            }
+          },
+          "required": [
+            "not_valid"
+          ],
+          "title": "NotValidReply",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The `state` reply is over the cap.",
+          "properties": {
+            "too_large": {
+              "$ref": "#/$defs/StateTooLarge"
+            }
+          },
+          "required": [
+            "too_large"
+          ],
+          "title": "TooLargeReply",
+          "type": "object"
+        }
+      ]
+    },
     "JobId": {
       "description": "The id that attendance gives a thin job of the delegate door:\n`job-<ulid>` (contract 02 §2 and §12). Contract 02 calls it a session\nid. The `SessionId` of the job's row on the host session list is a\nseparate value.",
       "pattern": "^job-[0-9A-HJKMNP-TV-Z]{26}$",
       "type": "string"
     },
+    "LitellmKey": {
+      "description": "The family's LiteLLM key, `litellm_key` of `creds.json`. caregiver\nkeeps only a key that starts with `sk-` (`litellm_keys.py:155`). The\nrest is visible ASCII, with no space or control character, so the key\ncannot break the header that carries it. Decision CH31 keeps this rule\nand gives caregiver's check the same rule in a later change.",
+      "pattern": "^sk-[!-~]*$",
+      "type": "string"
+    },
     "ModelAlias": {
       "description": "The LiteLLM alias of the family's model: `model.router` of the family\nfile, which caregiver writes as `model_alias` in `config/runtime.json`\n(`steps.py:242`).",
       "pattern": "^[a-z0-9][a-z0-9._/-]*$",
+      "type": "string"
+    },
+    "PepToken": {
+      "description": "The family token for the chaperone, `pep_token` of `creds.json`: 32\nbytes as 64 lowercase hex digits, the one form the chaperone takes\n(`credentials.py:21-25`).",
+      "pattern": "^[0-9a-f]{64}$",
       "type": "string"
     },
     "SandboxGrant": {
@@ -307,6 +440,16 @@ export const wire = {
       "description": "The name of a granted skill: `SKILL_NAME` of `family/grammar.py`,\nwhich has the rule of a family name.",
       "pattern": "^[a-z][a-z0-9-]{1,30}$",
       "type": "string"
+    },
+    "StateNotValid": {
+      "additionalProperties": false,
+      "description": "The reply of a pull when `creds.json` or `config/` is present and does\nnot read as `FamilyState`. It carries nothing, so it holds no value of\nthe files. The vmm names the file that failed in its host log only.",
+      "type": "object"
+    },
+    "StateTooLarge": {
+      "additionalProperties": false,
+      "description": "The reply of a pull when the files read, and the `state` reply is over\nthe cap of 256 KiB (decision CH31). It carries nothing, not even the\nsize. The vmm writes the size in its host log only.",
+      "type": "object"
     },
     "Timer": {
       "additionalProperties": false,

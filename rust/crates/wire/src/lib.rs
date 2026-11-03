@@ -1007,9 +1007,8 @@ impl schemars::JsonSchema for FamilySkills {
 /// `shell` of `runtime.json` is not here: the agent reads it and grants
 /// nothing with it (`agent/src/runtime-config.ts:18`).
 ///
-/// `model_live_at` of `runtime.json` is not here either. The vmm reads it
-/// and holds the reply until the host time passes it, at most 10 s
-/// (decisions CH23-1, CH31). The guest never waits on it.
+/// `model_live_at` of `runtime.json` is not here either. The vmm holds the
+/// reply on it (`FamilyStateReply`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(remote = "Self", deny_unknown_fields)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
@@ -1031,9 +1030,198 @@ pub struct FamilyConfig {
 
 object_only!(FamilyConfig);
 
+/// A secret text that `$check` accepts. On the wire it is a JSON string with
+/// the schema pattern `$pattern`, and a string that breaks the rule is
+/// refused. Its `Debug` writes no value and it has no `Display`, so a log
+/// line or an error never holds the secret (invariant 13). The generated
+/// Python model does not keep this rule (`wire/AGENTS.md`).
+macro_rules! secret_text {
+    ($(#[$doc:meta])* $name:ident, $check:expr, $rule:literal, $pattern:expr) => {
+        $(#[$doc])*
+        #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+        #[serde(try_from = "String", into = "String")]
+        #[cfg_attr(test, derive(schemars::JsonSchema))]
+        #[cfg_attr(test, schemars(extend("pattern" = $pattern)))]
+        pub struct $name(String);
+
+        impl $name {
+            /// The secret as text, for the one header that carries it.
+            #[must_use]
+            pub fn reveal(&self) -> &str {
+                &self.0
+            }
+        }
+
+        impl TryFrom<String> for $name {
+            type Error = TextError;
+
+            fn try_from(text: String) -> Result<Self, Self::Error> {
+                if !$check(&text) {
+                    return Err(TextError($rule));
+                }
+                Ok(Self(text))
+            }
+        }
+
+        impl From<$name> for String {
+            fn from(secret: $name) -> Self {
+                secret.0
+            }
+        }
+
+        impl fmt::Debug for $name {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str(concat!(stringify!($name), "(..)"))
+            }
+        }
+    };
+}
+
+/// The length of a family token: 32 bytes as lowercase hex.
+const PEP_TOKEN_LEN: usize = 64;
+
+secret_text!(
+    /// The family's LiteLLM key, `litellm_key` of `creds.json`. caregiver
+    /// keeps only a key that starts with `sk-` (`litellm_keys.py:155`). The
+    /// rest is visible ASCII, with no space or control character, so the key
+    /// cannot break the header that carries it. Decision CH31 keeps this rule
+    /// and gives caregiver's check the same rule in a later change.
+    LitellmKey,
+    |text: &str| text
+        .strip_prefix("sk-")
+        .is_some_and(|rest| rest.chars().all(|character| matches!(character, '!'..='~'))),
+    "a LiteLLM key is sk- and then visible ASCII",
+    "^sk-[!-~]*$"
+);
+
+secret_text!(
+    /// The family token for the chaperone, `pep_token` of `creds.json`: 32
+    /// bytes as 64 lowercase hex digits, the one form the chaperone takes
+    /// (`credentials.py:21-25`).
+    PepToken,
+    |text: &str| text.len() == PEP_TOKEN_LEN
+        && text.chars().all(|character| matches!(character, '0'..='9' | 'a'..='f')),
+    "a family token is 64 lowercase hex digits",
+    "^[0-9a-f]{64}$"
+);
+
+/// The family's part of `creds.json` that the guest reads (decision CH23
+/// default 1). `epoch`, `written_at`, `previous_pep_token` and
+/// `previous_expires_at` stay on the host, so the old token never sits in
+/// guest memory or in a snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct FamilyCreds {
+    /// The key for the LiteLLM plane.
+    pub litellm_key: LitellmKey,
+    /// The token for the chaperone plane.
+    pub pep_token: PepToken,
+}
+
+object_only!(FamilyCreds);
+
+/// The whole family state of one pull: the full typed state, every time
+/// (decision CH23). The facade compares the fields itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct FamilyState {
+    /// What the vmm read from `config/`.
+    pub config: FamilyConfig,
+    /// What the vmm read from `creds.json`.
+    pub creds: FamilyCreds,
+}
+
+object_only!(FamilyState);
+
+/// The reply of a pull when `creds.json` is absent. It carries nothing.
+/// When `config/` is absent too, this reply wins.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct CredsMissing {}
+
+object_only!(CredsMissing);
+
+/// The reply of a pull when `config/` is absent. It carries nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct ConfigMissing {}
+
+object_only!(ConfigMissing);
+
+/// The reply of a pull when `creds.json` or `config/` is present and does
+/// not read as `FamilyState`. It carries nothing, so it holds no value of
+/// the files. The vmm names the file that failed in its host log only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct StateNotValid {}
+
+object_only!(StateNotValid);
+
+/// The reply of a pull when the files read, and the `state` reply is over
+/// the cap of 256 KiB (decision CH31). It carries nothing, not even the
+/// size. The vmm writes the size in its host log only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct StateTooLarge {}
+
+object_only!(StateTooLarge);
+
+/// What the vmm answers on host port 1100 when the facade pulls the family
+/// state, before each prompt (decisions CH5a, CH5b, CH23). The vmm reads
+/// caregiver's `creds.json` and `config/` at each pull.
+///
+/// A read failure is a typed reply, and the link stays open (decision CH23
+/// default 2). The facade fails that prompt and keeps running. At start it
+/// pulls again with a backoff, and never exits on a typed error. When
+/// `creds.json` and `config/` are both absent, `creds_missing` wins
+/// (decision CH31).
+///
+/// A reply text has a cap of 256 KiB (decision CH23 default 4). The cap is
+/// a rule of the read surface, not of this type: the vmm's writer and the
+/// `cap` of `creche_wire.read` hold it, because JSON Schema counts code
+/// points, not bytes. A `state` reply over the cap is `too_large`, not
+/// `not_valid` (decision CH31).
+///
+/// The vmm reads `model_live_at` from `config/runtime.json` (decision
+/// CH23-1). It holds the `state` reply until the host time passes that
+/// time, for at most 10 s (decision CH31). No wire type carries
+/// `model_live_at`, and the guest needs no clock for it. A held pull can
+/// take up to 10 s longer.
+///
+/// On the wire the variant name is the one key of an object, and each
+/// variant has a `title` for its class name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub enum FamilyStateReply {
+    /// The vmm read the whole state.
+    #[cfg_attr(test, schemars(title = "StateReply"))]
+    State(FamilyState),
+    /// `creds.json` is absent.
+    #[cfg_attr(test, schemars(title = "CredsMissingReply"))]
+    CredsMissing(CredsMissing),
+    /// `config/` is absent.
+    #[cfg_attr(test, schemars(title = "ConfigMissingReply"))]
+    ConfigMissing(ConfigMissing),
+    /// A file is present and does not read.
+    #[cfg_attr(test, schemars(title = "NotValidReply"))]
+    NotValid(StateNotValid),
+    /// The `state` reply is over the cap.
+    #[cfg_attr(test, schemars(title = "TooLargeReply"))]
+    TooLarge(StateTooLarge),
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{FamilySkills, SESSION_ID_PATTERN, SessionId, SessionIdError};
+    use super::{
+        FamilySkills, LitellmKey, PepToken, SESSION_ID_PATTERN, SessionId, SessionIdError,
+    };
 
     const GOOD: &str = "3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b";
 
@@ -1084,6 +1272,14 @@ mod tests {
             read(r#"{"ha":"x","vault":"z"}"#)
         );
         assert_ne!(read(r#"{"ha":"x"}"#), read(r#"{"ha":"x","vault":"y"}"#));
+    }
+
+    #[test]
+    fn the_debug_of_a_secret_holds_no_value() {
+        let key = LitellmKey::try_from("sk-test-key-0001".to_owned()).unwrap();
+        let token = PepToken::try_from("9c1e".repeat(16)).unwrap();
+
+        assert_eq!(format!("{key:?} {token:?}"), "LitellmKey(..) PepToken(..)");
     }
 
     #[test]

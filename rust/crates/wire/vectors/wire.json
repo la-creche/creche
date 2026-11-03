@@ -68,6 +68,50 @@
       "note": "a trailing newline"
     }
   ],
+  "ConfigMissing": [
+    {
+      "json": "{}",
+      "written": "{}",
+      "note": "the empty object"
+    },
+    {
+      "json": "{\"field\":\"pep_token\"}",
+      "written": null,
+      "note": "a key"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an empty array, the array form of a struct"
+    }
+  ],
+  "CredsMissing": [
+    {
+      "json": "{}",
+      "written": "{}",
+      "note": "the empty object"
+    },
+    {
+      "json": "{\"field\":\"pep_token\"}",
+      "written": null,
+      "note": "a key"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an empty array, the array form of a struct"
+    }
+  ],
   "Delegate": [
     {
       "json": "{\"delegation\":\"01K5J9QWB2M4N6Q8S0V2W4Y6A8\",\"job\":\"job-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\"}",
@@ -360,6 +404,58 @@
       "note": "null"
     }
   ],
+  "FamilyCreds": [
+    {
+      "json": "{\"litellm_key\":\"sk-test-key-0001\",\"pep_token\":\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e\"}",
+      "written": "{\"litellm_key\":\"sk-test-key-0001\",\"pep_token\":\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e\"}",
+      "note": "a key and a token"
+    },
+    {
+      "json": "{\"pep_token\":\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e\",\"litellm_key\":\"sk-test-key-0001\"}",
+      "written": "{\"litellm_key\":\"sk-test-key-0001\",\"pep_token\":\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e\"}",
+      "note": "its keys in any order"
+    },
+    {
+      "json": "{\"litellm_key\":\"sk-test-key-0001\"}",
+      "written": null,
+      "note": "no token"
+    },
+    {
+      "json": "{\"pep_token\":\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e\"}",
+      "written": null,
+      "note": "no key"
+    },
+    {
+      "json": "{\"litellm_key\":\"sk-test-key-0001\",\"pep_token\":\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e\",\"epoch\":4}",
+      "written": null,
+      "note": "the epoch of creds.json, which stays on the host"
+    },
+    {
+      "json": "{\"litellm_key\":\"sk-test-key-0001\",\"pep_token\":\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e\",\"previous_pep_token\":\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e\"}",
+      "written": null,
+      "note": "the old token, which stays on the host"
+    },
+    {
+      "json": "{\"litellm_key\":\"sk-test-key-0001\",\"pep_token\":\"sk-test-key-0001\"}",
+      "written": null,
+      "note": "a token of the wrong form"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an empty array, the array form of a struct"
+    },
+    {
+      "json": "[\"sk-test-key-0001\",\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e\"]",
+      "written": null,
+      "note": "the fields in order, the array form of a struct"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    }
+  ],
   "FamilyName": [
     {
       "json": "\"chat\"",
@@ -564,6 +660,145 @@
       "note": "null"
     }
   ],
+  "FamilyState": [
+    {
+      "json": "{\"config\":{\"instructions\":\"You work on the creche repository.\",\"model_alias\":\"code-router\",\"sandbox_tools\":{\"bash\":true,\"edit\":true,\"glob\":true,\"grep\":true,\"read\":true,\"write\":true},\"skills\":{},\"system_prompt\":\"replace\"},\"creds\":{\"litellm_key\":\"sk-test-key-0001\",\"pep_token\":\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e\"}}",
+      "written": "{\"config\":{\"instructions\":\"You work on the creche repository.\",\"model_alias\":\"code-router\",\"sandbox_tools\":{\"bash\":true,\"edit\":true,\"glob\":true,\"grep\":true,\"read\":true,\"write\":true},\"skills\":{},\"system_prompt\":\"replace\"},\"creds\":{\"litellm_key\":\"sk-test-key-0001\",\"pep_token\":\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e\"}}",
+      "note": "a config and creds"
+    },
+    {
+      "json": "{\"creds\":{\"litellm_key\":\"sk-test-key-0001\",\"pep_token\":\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e\"},\"config\":{\"instructions\":\"You work on the creche repository.\",\"model_alias\":\"code-router\",\"sandbox_tools\":{\"bash\":true,\"edit\":true,\"glob\":true,\"grep\":true,\"read\":true,\"write\":true},\"skills\":{},\"system_prompt\":\"replace\"}}",
+      "written": "{\"config\":{\"instructions\":\"You work on the creche repository.\",\"model_alias\":\"code-router\",\"sandbox_tools\":{\"bash\":true,\"edit\":true,\"glob\":true,\"grep\":true,\"read\":true,\"write\":true},\"skills\":{},\"system_prompt\":\"replace\"},\"creds\":{\"litellm_key\":\"sk-test-key-0001\",\"pep_token\":\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e\"}}",
+      "note": "its keys in any order"
+    },
+    {
+      "json": "{\"creds\":{\"litellm_key\":\"sk-test-key-0001\",\"pep_token\":\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e\"}}",
+      "written": null,
+      "note": "no config"
+    },
+    {
+      "json": "{\"config\":{\"instructions\":\"You work on the creche repository.\",\"model_alias\":\"code-router\",\"sandbox_tools\":{\"bash\":true,\"edit\":true,\"glob\":true,\"grep\":true,\"read\":true,\"write\":true},\"skills\":{},\"system_prompt\":\"replace\"}}",
+      "written": null,
+      "note": "no creds"
+    },
+    {
+      "json": "{\"config\":{\"instructions\":\"You work on the creche repository.\",\"model_alias\":\"code-router\",\"sandbox_tools\":{\"bash\":true,\"edit\":true,\"glob\":true,\"grep\":true,\"read\":true,\"write\":true},\"skills\":{},\"system_prompt\":\"replace\"},\"creds\":{\"litellm_key\":\"sk-test-key-0001\",\"pep_token\":\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e\"},\"revision\":7}",
+      "written": null,
+      "note": "a revision, which the reply has not"
+    },
+    {
+      "json": "{\"config\":null,\"creds\":{\"litellm_key\":\"sk-test-key-0001\",\"pep_token\":\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e\"}}",
+      "written": null,
+      "note": "a null config"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an empty array, the array form of a struct"
+    },
+    {
+      "json": "[{\"instructions\":\"You work on the creche repository.\",\"model_alias\":\"code-router\",\"sandbox_tools\":{\"bash\":true,\"edit\":true,\"glob\":true,\"grep\":true,\"read\":true,\"write\":true},\"skills\":{},\"system_prompt\":\"replace\"},{\"litellm_key\":\"sk-test-key-0001\",\"pep_token\":\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e\"}]",
+      "written": null,
+      "note": "the fields in order, the array form of a struct"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    }
+  ],
+  "FamilyStateReply": [
+    {
+      "json": "{\"state\":{\"config\":{\"instructions\":\"You work on the creche repository.\",\"model_alias\":\"code-router\",\"sandbox_tools\":{\"bash\":true,\"edit\":true,\"glob\":true,\"grep\":true,\"read\":true,\"write\":true},\"skills\":{},\"system_prompt\":\"replace\"},\"creds\":{\"litellm_key\":\"sk-test-key-0001\",\"pep_token\":\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e\"}}}",
+      "written": "{\"state\":{\"config\":{\"instructions\":\"You work on the creche repository.\",\"model_alias\":\"code-router\",\"sandbox_tools\":{\"bash\":true,\"edit\":true,\"glob\":true,\"grep\":true,\"read\":true,\"write\":true},\"skills\":{},\"system_prompt\":\"replace\"},\"creds\":{\"litellm_key\":\"sk-test-key-0001\",\"pep_token\":\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e\"}}}",
+      "note": "the whole state"
+    },
+    {
+      "json": "{\"creds_missing\":{}}",
+      "written": "{\"creds_missing\":{}}",
+      "note": "no creds.json"
+    },
+    {
+      "json": "{\"config_missing\":{}}",
+      "written": "{\"config_missing\":{}}",
+      "note": "no config/"
+    },
+    {
+      "json": "{\"not_valid\":{}}",
+      "written": "{\"not_valid\":{}}",
+      "note": "a present file that does not read"
+    },
+    {
+      "json": "{\"too_large\":{}}",
+      "written": "{\"too_large\":{}}",
+      "note": "a state over the 256 KiB cap"
+    },
+    {
+      "json": "\"not_valid\"",
+      "written": null,
+      "note": "a variant as a string"
+    },
+    {
+      "json": "{\"not_valid\":{\"field\":\"pep_token\"}}",
+      "written": null,
+      "note": "an error that names a field"
+    },
+    {
+      "json": "{\"too_large\":{\"bytes\":262145}}",
+      "written": null,
+      "note": "a too_large reply that names its size"
+    },
+    {
+      "json": "{\"not_valid\":[]}",
+      "written": null,
+      "note": "an empty array, the array form of a struct in a variant"
+    },
+    {
+      "json": "{\"creds_missing\":[]}",
+      "written": null,
+      "note": "an empty array for creds_missing, the array form of a struct in a variant"
+    },
+    {
+      "json": "{\"config_missing\":[]}",
+      "written": null,
+      "note": "an empty array for config_missing, the array form of a struct in a variant"
+    },
+    {
+      "json": "{\"too_large\":[]}",
+      "written": null,
+      "note": "an empty array for too_large, the array form of a struct in a variant"
+    },
+    {
+      "json": "{\"state\":[{\"instructions\":\"You work on the creche repository.\",\"model_alias\":\"code-router\",\"sandbox_tools\":{\"bash\":true,\"edit\":true,\"glob\":true,\"grep\":true,\"read\":true,\"write\":true},\"skills\":{},\"system_prompt\":\"replace\"},{\"litellm_key\":\"sk-test-key-0001\",\"pep_token\":\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e\"}]}",
+      "written": null,
+      "note": "the fields in order, the array form of a struct in a variant"
+    },
+    {
+      "json": "{\"unchanged\":{}}",
+      "written": null,
+      "note": "an unchanged reply, which CH23 drops"
+    },
+    {
+      "json": "{\"creds_missing\":{},\"config_missing\":{}}",
+      "written": null,
+      "note": "two variants"
+    },
+    {
+      "json": "{}",
+      "written": null,
+      "note": "no variant"
+    },
+    {
+      "json": "{\"state\":{\"config\":{\"instructions\":\"You work on the creche repository.\",\"model_alias\":\"code-router\",\"sandbox_tools\":{\"bash\":true,\"edit\":true,\"glob\":true,\"grep\":true,\"read\":true,\"write\":true},\"skills\":{},\"system_prompt\":\"replace\"},\"creds\":{\"litellm_key\":\"sk-test-key-0001\",\"pep_token\":\"9C1E9C1E9C1E9C1E9C1E9C1E9C1E9C1E9C1E9C1E9C1E9C1E9C1E9C1E9C1E9C1E\"}}}",
+      "written": null,
+      "note": "a state with a token of the wrong form"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    }
+  ],
   "JobId": [
     {
       "json": "\"job-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\"",
@@ -594,6 +829,93 @@
       "json": "\"job-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\\n\"",
       "written": null,
       "note": "a trailing newline"
+    }
+  ],
+  "LitellmKey": [
+    {
+      "json": "\"sk-test-key-0001\"",
+      "written": "\"sk-test-key-0001\"",
+      "note": "a key"
+    },
+    {
+      "json": "\"sk-fake-family-chat-1\"",
+      "written": "\"sk-fake-family-chat-1\"",
+      "note": "the key of caregiver's fake LiteLLM"
+    },
+    {
+      "json": "\"sk-\"",
+      "written": "\"sk-\"",
+      "note": "the prefix alone, which caregiver keeps too"
+    },
+    {
+      "json": "\"sk-!~\"",
+      "written": "\"sk-!~\"",
+      "note": "the first and the last visible ASCII character"
+    },
+    {
+      "json": "\"\"",
+      "written": null,
+      "note": "the empty text"
+    },
+    {
+      "json": "\"SK-test-key-0001\"",
+      "written": null,
+      "note": "the prefix in capitals"
+    },
+    {
+      "json": "\"Bearer sk-test-key-0001\"",
+      "written": null,
+      "note": "a header value"
+    },
+    {
+      "json": "\"test-key-0001\"",
+      "written": null,
+      "note": "no prefix"
+    },
+    {
+      "json": "\"sk\"",
+      "written": null,
+      "note": "the prefix without its dash"
+    },
+    {
+      "json": "\"sk_test-key-0001\"",
+      "written": null,
+      "note": "an underscore for the dash"
+    },
+    {
+      "json": "\"sk-test key\"",
+      "written": null,
+      "note": "a space, which no header value of a key holds"
+    },
+    {
+      "json": "\"sk-a\\r\\nX: y\"",
+      "written": null,
+      "note": "a line break, which would add a header"
+    },
+    {
+      "json": "\"sk-test-key-0001\\n\"",
+      "written": null,
+      "note": "a newline at the end, which a Python $ would take"
+    },
+    {
+      "json": "\"sk-test\\u007f\"",
+      "written": null,
+      "note": "DEL, the control character after the last visible one"
+    },
+    {
+      "json": "\"sk-café\"",
+      "written": null,
+      "note": "a character past ASCII"
+    },
+    {
+      "json": "1",
+      "written": null,
+      "note": "a number"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
     }
   ],
   "ModelAlias": [
@@ -716,6 +1038,73 @@
       "json": "1",
       "written": null,
       "note": "a number"
+    }
+  ],
+  "PepToken": [
+    {
+      "json": "\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e\"",
+      "written": "\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e\"",
+      "note": "64 lowercase hex digits"
+    },
+    {
+      "json": "\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"",
+      "written": "\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"",
+      "note": "every hex digit"
+    },
+    {
+      "json": "\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1\"",
+      "written": null,
+      "note": "63 digits"
+    },
+    {
+      "json": "\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e0\"",
+      "written": null,
+      "note": "65 digits"
+    },
+    {
+      "json": "\"9C1E9C1E9C1E9C1E9C1E9C1E9C1E9C1E9C1E9C1E9C1E9C1E9C1E9C1E9C1E9C1E\"",
+      "written": null,
+      "note": "hex in capitals"
+    },
+    {
+      "json": "\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1g\"",
+      "written": null,
+      "note": "a character past f"
+    },
+    {
+      "json": "\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e\\n\"",
+      "written": null,
+      "note": "a newline at the end, which a Python $ would take"
+    },
+    {
+      "json": "\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1/\"",
+      "written": null,
+      "note": "a slash, next to the digits"
+    },
+    {
+      "json": "\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1:\"",
+      "written": null,
+      "note": "a colon, next to the digits"
+    },
+    {
+      "json": "\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1`\"",
+      "written": null,
+      "note": "a backtick, next to a"
+    },
+    {
+      "json": "\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1G\"",
+      "written": null,
+      "note": "a capital G, past F"
+    },
+    {
+      "json": "\"\"",
+      "written": null,
+      "note": "the empty text"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
     }
   ],
   "SandboxGrant": [
@@ -1430,6 +1819,50 @@
       "json": "\"vault-notes\\n\"",
       "written": null,
       "note": "a newline at the end, which a Python $ would take"
+    }
+  ],
+  "StateNotValid": [
+    {
+      "json": "{}",
+      "written": "{}",
+      "note": "the empty object"
+    },
+    {
+      "json": "{\"field\":\"pep_token\"}",
+      "written": null,
+      "note": "a key"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an empty array, the array form of a struct"
+    }
+  ],
+  "StateTooLarge": [
+    {
+      "json": "{}",
+      "written": "{}",
+      "note": "the empty object"
+    },
+    {
+      "json": "{\"bytes\":262145}",
+      "written": null,
+      "note": "a key"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an empty array, the array form of a struct"
     }
   ],
   "Timer": [

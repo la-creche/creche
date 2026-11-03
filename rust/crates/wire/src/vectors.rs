@@ -13,10 +13,11 @@ use serde::Deserialize;
 
 use super::schema::wire_schema;
 use super::{
-    Auto, AutoJobId, Delegate, DelegationId, Dispatch, DispatchChain, Door, FamilyConfig,
-    FamilyName, FamilySkills, JobId, ModelAlias, SandboxGrant, SessionCwd, SessionId,
-    SessionOrigin, SessionRow, SessionTitle, SkillName, Timer, Trigger, TurnEnd, TurnEvent,
-    TurnStart, UnixMillis, Webhook, WebhookName,
+    Auto, AutoJobId, ConfigMissing, CredsMissing, Delegate, DelegationId, Dispatch, DispatchChain,
+    Door, FamilyConfig, FamilyCreds, FamilyName, FamilySkills, FamilyState, FamilyStateReply,
+    JobId, LitellmKey, ModelAlias, PepToken, SandboxGrant, SessionCwd, SessionId, SessionOrigin,
+    SessionRow, SessionTitle, SkillName, StateNotValid, StateTooLarge, Timer, Trigger, TurnEnd,
+    TurnEvent, TurnStart, UnixMillis, Webhook, WebhookName,
 };
 
 /// The file, relative to the crate.
@@ -60,13 +61,20 @@ fn read_and_write(type_name: &str, json: &str) -> Option<String> {
         "Delegate" => round_trip::<Delegate>(json),
         "DelegationId" => round_trip::<DelegationId>(json),
         "Dispatch" => round_trip::<Dispatch>(json),
+        "ConfigMissing" => round_trip::<ConfigMissing>(json),
+        "CredsMissing" => round_trip::<CredsMissing>(json),
         "DispatchChain" => round_trip::<DispatchChain>(json),
         "Door" => round_trip::<Door>(json),
         "FamilyConfig" => round_trip::<FamilyConfig>(json),
+        "FamilyCreds" => round_trip::<FamilyCreds>(json),
         "FamilyName" => round_trip::<FamilyName>(json),
         "FamilySkills" => round_trip::<FamilySkills>(json),
+        "FamilyState" => round_trip::<FamilyState>(json),
+        "FamilyStateReply" => round_trip::<FamilyStateReply>(json),
         "JobId" => round_trip::<JobId>(json),
+        "LitellmKey" => round_trip::<LitellmKey>(json),
         "ModelAlias" => round_trip::<ModelAlias>(json),
+        "PepToken" => round_trip::<PepToken>(json),
         "SandboxGrant" => round_trip::<SandboxGrant>(json),
         "SessionCwd" => round_trip::<SessionCwd>(json),
         "SessionId" => round_trip::<SessionId>(json),
@@ -74,6 +82,8 @@ fn read_and_write(type_name: &str, json: &str) -> Option<String> {
         "SessionRow" => round_trip::<SessionRow>(json),
         "SessionTitle" => round_trip::<SessionTitle>(json),
         "SkillName" => round_trip::<SkillName>(json),
+        "StateNotValid" => round_trip::<StateNotValid>(json),
+        "StateTooLarge" => round_trip::<StateTooLarge>(json),
         "Timer" => round_trip::<Timer>(json),
         "Trigger" => round_trip::<Trigger>(json),
         "TurnEnd" => round_trip::<TurnEnd>(json),
