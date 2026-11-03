@@ -83,6 +83,34 @@ class DoorOrigin(BaseModel):
     door: Door
 
 
+class FamilyName(RootModel[StrictStr]):
+    root: Annotated[
+        StrictStr,
+        Field(
+            description="The name of a family: `FAMILY_NAME` of `family/grammar.py`.",
+            pattern="^[a-z][a-z0-9-]{1,30}$",
+        ),
+    ]
+
+
+class DispatchChain(RootModel[list[FamilyName]]):
+    """
+    The delegation chain that reached a dispatched job, caller first and the
+    job's family last (contract 02 §13.2 rule 6). It holds 1 to 8 family
+    names. The PEP builds it from the delegations it minted (contract 04
+    §6.3).
+    """
+
+    root: Annotated[
+        list[FamilyName],
+        Field(
+            description="The delegation chain that reached a dispatched job, caller first and the\njob's family last (contract 02 §13.2 rule 6). It holds 1 to 8 family\nnames. The PEP builds it from the delegations it minted (contract 04\n§6.3).",
+            max_length=8,
+            min_length=1,
+        ),
+    ]
+
+
 class JobId(RootModel[StrictStr]):
     root: Annotated[
         StrictStr,
@@ -108,5 +136,15 @@ class SessionOrigin(RootModel[DoorOrigin | DelegateOrigin]):
         DoorOrigin | DelegateOrigin,
         Field(
             description="Who made a session, kept on its row of the host session list (decision\nCH21-4). On the wire the variant name is the one key of an object.\n\nEach variant has a `title`. datamodel-codegen names a class of a `oneOf`\nmember by its title, and by its position without one."
+        ),
+    ]
+
+
+class WebhookName(RootModel[StrictStr]):
+    root: Annotated[
+        StrictStr,
+        Field(
+            description="The name of a declared webhook trigger: `WEBHOOK_NAME` of\n`family/grammar.py`, which has the rule of a family name.",
+            pattern="^[a-z][a-z0-9-]{1,30}$",
         ),
     ]

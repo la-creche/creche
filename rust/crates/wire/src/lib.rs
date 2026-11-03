@@ -220,6 +220,155 @@ ulid_id!(
     ""
 );
 
+/// The rule of `is_family_name` as a regular expression, for the JSON Schema.
+/// It is `FAMILY_NAME` of `family/grammar.py`, the authority for the family
+/// file (decision CH23 rule 5), with `$` for `\Z`. `wire/tests` holds the
+/// two equal.
+#[cfg(test)]
+const FAMILY_NAME_PATTERN: &str = "^[a-z][a-z0-9-]{1,30}$";
+
+/// The length of a family name, in characters: 2 to 31.
+const FAMILY_NAME_LEN: std::ops::RangeInclusive<usize> = 2..=31;
+
+/// Whether `text` is a family name: a lowercase letter, then 1 to 30
+/// lowercase letters, digits or hyphens.
+fn is_family_name(text: &str) -> bool {
+    let mut characters = text.chars();
+
+    FAMILY_NAME_LEN.contains(&text.len())
+        && characters
+            .next()
+            .is_some_and(|first| first.is_ascii_lowercase())
+        && characters.all(|character| matches!(character, 'a'..='z' | '0'..='9' | '-'))
+}
+
+/// Why a text is not a family name or a webhook name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NameError;
+
+impl fmt::Display for NameError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(
+            "a name is a lowercase letter, then 1 to 30 lowercase letters, digits or hyphens",
+        )
+    }
+}
+
+impl std::error::Error for NameError {}
+
+/// A name with the rule of a family name. On the wire it is a JSON string,
+/// and a string of any other form is refused.
+macro_rules! family_name {
+    ($(#[$doc:meta])* $name:ident) => {
+        $(#[$doc])*
+        #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+        #[serde(try_from = "String", into = "String")]
+        #[cfg_attr(test, derive(schemars::JsonSchema))]
+        #[cfg_attr(test, schemars(extend("pattern" = FAMILY_NAME_PATTERN)))]
+        pub struct $name(String);
+
+        impl $name {
+            /// The name as text.
+            #[must_use]
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+        }
+
+        impl FromStr for $name {
+            type Err = NameError;
+
+            fn from_str(text: &str) -> Result<Self, Self::Err> {
+                if !is_family_name(text) {
+                    return Err(NameError);
+                }
+                Ok(Self(text.to_owned()))
+            }
+        }
+
+        impl TryFrom<String> for $name {
+            type Error = NameError;
+
+            fn try_from(text: String) -> Result<Self, Self::Error> {
+                text.parse()
+            }
+        }
+
+        impl From<$name> for String {
+            fn from(name: $name) -> Self {
+                name.0
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str(&self.0)
+            }
+        }
+    };
+}
+
+family_name!(
+    /// The name of a family: `FAMILY_NAME` of `family/grammar.py`.
+    FamilyName
+);
+
+family_name!(
+    /// The name of a declared webhook trigger: `WEBHOOK_NAME` of
+    /// `family/grammar.py`, which has the rule of a family name.
+    WebhookName
+);
+
+/// The most families a dispatch chain holds (contract 02 §13.2 rule 6).
+const CHAIN_MAX: usize = 8;
+
+/// Why a list of family names is not a dispatch chain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChainError;
+
+impl fmt::Display for ChainError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a dispatch chain holds 1 to 8 family names")
+    }
+}
+
+impl std::error::Error for ChainError {}
+
+/// The delegation chain that reached a dispatched job, caller first and the
+/// job's family last (contract 02 §13.2 rule 6). It holds 1 to 8 family
+/// names. The PEP builds it from the delegations it minted (contract 04
+/// §6.3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "Vec<FamilyName>", into = "Vec<FamilyName>")]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[cfg_attr(test, schemars(extend("minItems" = 1, "maxItems" = CHAIN_MAX)))]
+pub struct DispatchChain(Vec<FamilyName>);
+
+impl DispatchChain {
+    /// The families of the chain, caller first.
+    #[must_use]
+    pub fn families(&self) -> &[FamilyName] {
+        &self.0
+    }
+}
+
+impl TryFrom<Vec<FamilyName>> for DispatchChain {
+    type Error = ChainError;
+
+    fn try_from(families: Vec<FamilyName>) -> Result<Self, Self::Error> {
+        if families.is_empty() || families.len() > CHAIN_MAX {
+            return Err(ChainError);
+        }
+        Ok(Self(families))
+    }
+}
+
+impl From<DispatchChain> for Vec<FamilyName> {
+    fn from(chain: DispatchChain) -> Self {
+        chain.0
+    }
+}
+
 /// The `Serialize` and `Deserialize` of a struct on the wire. The struct
 /// derives both with `#[serde(remote = "Self")]`, so the derived code is a
 /// pair of inherent functions, and these trait impls call them.

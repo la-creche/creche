@@ -29,10 +29,24 @@
       "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
       "type": "string"
     },
+    "DispatchChain": {
+      "description": "The delegation chain that reached a dispatched job, caller first and the\njob's family last (contract 02 §13.2 rule 6). It holds 1 to 8 family\nnames. The PEP builds it from the delegations it minted (contract 04\n§6.3).",
+      "items": {
+        "$ref": "#/$defs/FamilyName"
+      },
+      "maxItems": 8,
+      "minItems": 1,
+      "type": "array"
+    },
     "Door": {
       "additionalProperties": false,
       "description": "The origin of a session that a door client opened. It carries nothing.\n\nIt is a type of its own so that the generated Python model is a class\nwith no field. An inline empty object generates a `dict` with lax keys.",
       "type": "object"
+    },
+    "FamilyName": {
+      "description": "The name of a family: `FAMILY_NAME` of `family/grammar.py`.",
+      "pattern": "^[a-z][a-z0-9-]{1,30}$",
+      "type": "string"
     },
     "JobId": {
       "description": "The id that attendance gives a thin job of the delegate door:\n`job-<ulid>` (contract 02 §2 and §12). Contract 02 calls it a session\nid. The `SessionId` of the job's row on the host session list is a\nseparate value.",
@@ -76,6 +90,11 @@
           "type": "object"
         }
       ]
+    },
+    "WebhookName": {
+      "description": "The name of a declared webhook trigger: `WEBHOOK_NAME` of\n`family/grammar.py`, which has the rule of a family name.",
+      "pattern": "^[a-z][a-z0-9-]{1,30}$",
+      "type": "string"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema"
