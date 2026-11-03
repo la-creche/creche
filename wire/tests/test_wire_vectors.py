@@ -78,12 +78,28 @@ def _variant_titles(schema: dict[str, Any]) -> list[str]:
     ]
 
 
+def _inline_enum_titles(schema: dict[str, Any]) -> list[str]:
+    """The `title` of each enum held inline in a property. datamodel-codegen
+    names its class by it, and a caller needs that class to build the value.
+    An inline enum without a title gets the name of its key, which a later
+    type with the same name changes, so a missing title fails here."""
+    definitions = cast(dict[str, dict[str, Any]], schema["$defs"])
+
+    return [
+        prop["title"]
+        for definition in definitions.values()
+        for prop in cast(dict[str, dict[str, Any]], definition.get("properties", {})).values()
+        if "enum" in prop
+    ]
+
+
 def test_each_wire_type_has_cases_and_a_model() -> None:
     schema = _load(SCHEMA_FILE)
     defined = sorted(schema["$defs"])
+    named = defined + _variant_titles(schema) + _inline_enum_titles(schema)
 
     assert sorted(VECTORS) == defined
-    assert sorted(set(creche_wire.__all__) - READER) == sorted(defined + _variant_titles(schema))
+    assert sorted(set(creche_wire.__all__) - READER) == sorted(named)
 
 
 def _nodes(value: object) -> list[dict[str, object]]:
@@ -152,7 +168,15 @@ def test_an_unchecked_integer_or_date_is_found() -> None:
 SCALARS = {"str", "bytes", "int", "float", "bool"}
 
 
-@pytest.mark.parametrize("name", sorted(set(creche_wire.__all__) - READER))
+#: The names of the package that are a model, not an enum.
+MODELS = sorted(
+    name
+    for name in set(creche_wire.__all__) - READER
+    if issubclass(getattr(creche_wire, name), BaseModel)
+)
+
+
+@pytest.mark.parametrize("name", MODELS)
 def test_each_scalar_of_a_wire_model_is_strict_without_read(name: str) -> None:
     """`strict-types` in the codegen settings holds a direct `model_validate`
     strict too. A lax str takes bytes, so this check fails without it."""

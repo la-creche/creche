@@ -121,6 +121,7 @@ export const wire = {
             "append",
             "replace"
           ],
+          "title": "SystemPrompt",
           "type": "string"
         }
       },
