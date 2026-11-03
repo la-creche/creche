@@ -183,6 +183,17 @@ class JobId(RootModel[StrictStr]):
     ]
 
 
+class SessionCwd(RootModel[StrictStr]):
+    root: Annotated[
+        StrictStr,
+        Field(
+            description="The `cwd` of a session: the absolute path that the client sent in\n`session/new`, or that attendance chose for a job. It is a display\nvalue and a `session/list` filter, never a guest path (decision CH5e,\nCH21-4).",
+            max_length=4096,
+            pattern="^/[^\\u0000]*$",
+        ),
+    ]
+
+
 class SessionId(RootModel[StrictStr]):
     root: Annotated[
         StrictStr,
@@ -198,6 +209,58 @@ class SessionOrigin(RootModel[DoorOrigin | DelegateOrigin | AutoOrigin]):
         DoorOrigin | DelegateOrigin | AutoOrigin,
         Field(
             description="Who made a session, kept on its row of the host session list (decision\nCH21-4). On the wire the variant name is the one key of an object.\n\nEach variant has a `title`. datamodel-codegen names a class of a `oneOf`\nmember by its title, and by its position without one."
+        ),
+    ]
+
+
+class SessionRow(BaseModel):
+    """
+    One row of the host session list (decision CH1, CH21, CH21-4). The vmm
+    keeps it, so `session/list` and the noticeboard need no VM boot.
+
+    The list holds the rows in the order the vmm stored them, newest first,
+    as `session-index.ts:130-158` does today with its `rowid` (decision
+    CH21-5). Two creates can share a millisecond, so the order is not the
+    order of `created_at`. The list reply carries an opaque cursor on that
+    stored order. The order is no field of the row.
+
+    Each key is required. A field that may be `null` reads with
+    `Option::deserialize`, so a missing key is refused, and the schema lists
+    it in `required`.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    created_at: Annotated[UnixMillis, Field(description="When attendance created the session.")]
+    cwd: Annotated[SessionCwd, Field(description="The `cwd` that attendance sent in the create.")]
+    family: Annotated[FamilyName, Field(description="The family that serves the session.")]
+    id: Annotated[
+        SessionId, Field(description="The id that attendance chose (decision CH25 rule 2).")
+    ]
+    origin: Annotated[SessionOrigin, Field(description="Who made the session.")]
+    title: Annotated[
+        SessionTitle | None,
+        Field(
+            description="The first title from the facade, or `null` before a turn names the\nsession. The vmm sets it only while it is `null`, so the first title\nstays, as `nameOnce` keeps it today (`session-index.ts:122-125`)."
+        ),
+    ]
+    updated_at: Annotated[
+        UnixMillis,
+        Field(
+            description="The time of the last Flue record of the last turn, from the facade.\nAt create the vmm sets it to `created_at`, as `SessionIndex.create`\ndoes today. Each turn end sets it again."
+        ),
+    ]
+
+
+class SessionTitle(RootModel[StrictStr]):
+    root: Annotated[
+        StrictStr,
+        Field(
+            description="The title of a session on the host session list (decision CH21). The\nfacade makes it at the end of each turn, as `titleOf` makes it today,\nwith a trim of the end after the cut: the first line of the prompt\nwith words, white space folded to one space, cut to 256 bytes, then\ntrimmed.",
+            max_length=256,
+            min_length=1,
+            pattern="^[^\\u0009-\\u000D\\u0020\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000\\uFEFF]+( [^\\u0009-\\u000D\\u0020\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000\\uFEFF]+)*$",
         ),
     ]
 

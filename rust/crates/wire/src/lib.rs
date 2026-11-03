@@ -588,6 +588,211 @@ impl fmt::Display for UnixMillisError {
 
 impl std::error::Error for UnixMillisError {}
 
+/// Why a text is not a session title or a session cwd. It holds the rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TextError(&'static str);
+
+impl fmt::Display for TextError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.0)
+    }
+}
+
+impl std::error::Error for TextError {}
+
+/// A text that `$check` accepts. On the wire it is a JSON string with the
+/// schema keys `$key = $value`, and a string that breaks the rule is refused.
+macro_rules! checked_text {
+    ($(#[$doc:meta])* $name:ident, $check:ident, $rule:literal, $($key:literal = $value:expr),+) => {
+        $(#[$doc])*
+        #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+        #[serde(try_from = "String", into = "String")]
+        #[cfg_attr(test, derive(schemars::JsonSchema))]
+        #[cfg_attr(test, schemars(extend($($key = $value),+)))]
+        pub struct $name(String);
+
+        impl $name {
+            /// The text.
+            #[must_use]
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+        }
+
+        impl FromStr for $name {
+            type Err = TextError;
+
+            fn from_str(text: &str) -> Result<Self, Self::Err> {
+                if !$check(text) {
+                    return Err(TextError($rule));
+                }
+                Ok(Self(text.to_owned()))
+            }
+        }
+
+        impl TryFrom<String> for $name {
+            type Error = TextError;
+
+            fn try_from(text: String) -> Result<Self, Self::Error> {
+                text.parse()
+            }
+        }
+
+        impl From<$name> for String {
+            fn from(text: $name) -> Self {
+                text.0
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str(&self.0)
+            }
+        }
+    };
+}
+
+/// The most characters of a session title. `titleOf` in
+/// `facade/src/sessions.ts` cuts a title to 256 bytes of UTF-8, and a
+/// character takes at least one byte, so no title it cuts passes this cap.
+const TITLE_MAX: usize = 256;
+
+/// White space to JavaScript, as ranges of code points: the set of `\s` and
+/// of `trim`, which `titleOf` folds. It is not Rust's `char::is_whitespace`,
+/// which holds U+0085 and not U+FEFF. `is_js_space` and `title_pattern` read
+/// this one table, so the Rust rule and the schema rule cannot differ.
+const JS_SPACE: &[(char, char)] = &[
+    ('\u{9}', '\u{D}'),
+    ('\u{20}', '\u{20}'),
+    ('\u{A0}', '\u{A0}'),
+    ('\u{1680}', '\u{1680}'),
+    ('\u{2000}', '\u{200A}'),
+    ('\u{2028}', '\u{2028}'),
+    ('\u{2029}', '\u{2029}'),
+    ('\u{202F}', '\u{202F}'),
+    ('\u{205F}', '\u{205F}'),
+    ('\u{3000}', '\u{3000}'),
+    ('\u{FEFF}', '\u{FEFF}'),
+];
+
+/// Whether `character` is white space to JavaScript (`JS_SPACE`).
+fn is_js_space(character: char) -> bool {
+    JS_SPACE
+        .iter()
+        .any(|&(first, last)| (first..=last).contains(&character))
+}
+
+/// The rule of `is_session_title` as a regular expression, for the JSON
+/// Schema: words with no character of `JS_SPACE`, one space apart.
+#[cfg(test)]
+fn title_pattern() -> String {
+    let class: String = JS_SPACE
+        .iter()
+        .map(|&(first, last)| {
+            let (first, last) = (u32::from(first), u32::from(last));
+            if first == last {
+                format!("\\u{first:04X}")
+            } else {
+                format!("\\u{first:04X}-\\u{last:04X}")
+            }
+        })
+        .collect();
+    format!("^[^{class}]+( [^{class}]+)*$")
+}
+
+/// Whether `text` is a session title: 1 to 256 characters, words with no
+/// white space, one U+0020 between two words. It is what `titleOf` makes
+/// when the facade also trims the end after the cut. Today `titleOf` cuts
+/// after it folds, so a cut can end in a space, and this rule refuses that
+/// title. The facade adds the trim before it sends a turn event (plan
+/// phase 6, PR 6).
+fn is_session_title(text: &str) -> bool {
+    text.chars().count() <= TITLE_MAX
+        && text
+            .split(' ')
+            .all(|word| !word.is_empty() && !word.chars().any(is_js_space))
+}
+
+checked_text!(
+    /// The title of a session on the host session list (decision CH21). The
+    /// facade makes it at the end of each turn, as `titleOf` makes it today,
+    /// with a trim of the end after the cut: the first line of the prompt
+    /// with words, white space folded to one space, cut to 256 bytes, then
+    /// trimmed.
+    SessionTitle,
+    is_session_title,
+    "a session title is 1 to 256 characters of words one space apart",
+    "minLength" = 1,
+    "maxLength" = TITLE_MAX,
+    "pattern" = title_pattern()
+);
+
+/// The most characters of a session cwd: `PATH_MAX` of Linux, 4096 bytes. A
+/// character takes at least one byte, so each path Linux names fits.
+const CWD_MAX: usize = 4096;
+
+/// The rule of `is_session_cwd` as a regular expression, for the JSON Schema.
+#[cfg(test)]
+const CWD_PATTERN: &str = "^/[^\\u0000]*$";
+
+/// Whether `text` is an absolute path: a slash first, no NUL, at most 4096
+/// characters.
+fn is_session_cwd(text: &str) -> bool {
+    text.starts_with('/') && !text.contains('\0') && text.chars().count() <= CWD_MAX
+}
+
+checked_text!(
+    /// The `cwd` of a session: the absolute path that the client sent in
+    /// `session/new`, or that attendance chose for a job. It is a display
+    /// value and a `session/list` filter, never a guest path (decision CH5e,
+    /// CH21-4).
+    SessionCwd,
+    is_session_cwd,
+    "a session cwd is an absolute path of at most 4096 characters, with no NUL",
+    "maxLength" = CWD_MAX,
+    "pattern" = CWD_PATTERN
+);
+
+/// One row of the host session list (decision CH1, CH21, CH21-4). The vmm
+/// keeps it, so `session/list` and the noticeboard need no VM boot.
+///
+/// The list holds the rows in the order the vmm stored them, newest first,
+/// as `session-index.ts:130-158` does today with its `rowid` (decision
+/// CH21-5). Two creates can share a millisecond, so the order is not the
+/// order of `created_at`. The list reply carries an opaque cursor on that
+/// stored order. The order is no field of the row.
+///
+/// Each key is required. A field that may be `null` reads with
+/// `Option::deserialize`, so a missing key is refused, and the schema lists
+/// it in `required`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[cfg_attr(test, schemars(transform = schema::require_each_key))]
+pub struct SessionRow {
+    /// When attendance created the session.
+    pub created_at: UnixMillis,
+    /// The `cwd` that attendance sent in the create.
+    pub cwd: SessionCwd,
+    /// The family that serves the session.
+    pub family: FamilyName,
+    /// The id that attendance chose (decision CH25 rule 2).
+    pub id: SessionId,
+    /// Who made the session.
+    pub origin: SessionOrigin,
+    /// The first title from the facade, or `null` before a turn names the
+    /// session. The vmm sets it only while it is `null`, so the first title
+    /// stays, as `nameOnce` keeps it today (`session-index.ts:122-125`).
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub title: Option<SessionTitle>,
+    /// The time of the last Flue record of the last turn, from the facade.
+    /// At create the vmm sets it to `created_at`, as `SessionIndex.create`
+    /// does today. Each turn end sets it again.
+    pub updated_at: UnixMillis,
+}
+
+object_only!(SessionRow);
+
 #[cfg(test)]
 mod tests {
     use super::{SESSION_ID_PATTERN, SessionId, SessionIdError};

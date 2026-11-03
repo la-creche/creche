@@ -91,6 +91,12 @@
       "pattern": "^job-[0-9A-HJKMNP-TV-Z]{26}$",
       "type": "string"
     },
+    "SessionCwd": {
+      "description": "The `cwd` of a session: the absolute path that the client sent in\n`session/new`, or that attendance chose for a job. It is a display\nvalue and a `session/list` filter, never a guest path (decision CH5e,\nCH21-4).",
+      "maxLength": 4096,
+      "pattern": "^/[^\\u0000]*$",
+      "type": "string"
+    },
     "SessionId": {
       "description": "The id of one session, and of the VM that serves it (decision CH1).\n\nThe host mints the id at `session/new`. The text is a UUID in its\nlowercase hyphenated form, the form the facade mints today with\n`randomUUID`. A value of this type is always in that form. On the wire it\nis a JSON string, and a string of any other form is refused.",
       "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
@@ -142,6 +148,64 @@
           "type": "object"
         }
       ]
+    },
+    "SessionRow": {
+      "additionalProperties": false,
+      "description": "One row of the host session list (decision CH1, CH21, CH21-4). The vmm\nkeeps it, so `session/list` and the noticeboard need no VM boot.\n\nThe list holds the rows in the order the vmm stored them, newest first,\nas `session-index.ts:130-158` does today with its `rowid` (decision\nCH21-5). Two creates can share a millisecond, so the order is not the\norder of `created_at`. The list reply carries an opaque cursor on that\nstored order. The order is no field of the row.\n\nEach key is required. A field that may be `null` reads with\n`Option::deserialize`, so a missing key is refused, and the schema lists\nit in `required`.",
+      "properties": {
+        "created_at": {
+          "$ref": "#/$defs/UnixMillis",
+          "description": "When attendance created the session."
+        },
+        "cwd": {
+          "$ref": "#/$defs/SessionCwd",
+          "description": "The `cwd` that attendance sent in the create."
+        },
+        "family": {
+          "$ref": "#/$defs/FamilyName",
+          "description": "The family that serves the session."
+        },
+        "id": {
+          "$ref": "#/$defs/SessionId",
+          "description": "The id that attendance chose (decision CH25 rule 2)."
+        },
+        "origin": {
+          "$ref": "#/$defs/SessionOrigin",
+          "description": "Who made the session."
+        },
+        "title": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionTitle"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The first title from the facade, or `null` before a turn names the\nsession. The vmm sets it only while it is `null`, so the first title\nstays, as `nameOnce` keeps it today (`session-index.ts:122-125`)."
+        },
+        "updated_at": {
+          "$ref": "#/$defs/UnixMillis",
+          "description": "The time of the last Flue record of the last turn, from the facade.\nAt create the vmm sets it to `created_at`, as `SessionIndex.create`\ndoes today. Each turn end sets it again."
+        }
+      },
+      "required": [
+        "created_at",
+        "cwd",
+        "family",
+        "id",
+        "origin",
+        "title",
+        "updated_at"
+      ],
+      "type": "object"
+    },
+    "SessionTitle": {
+      "description": "The title of a session on the host session list (decision CH21). The\nfacade makes it at the end of each turn, as `titleOf` makes it today,\nwith a trim of the end after the cut: the first line of the prompt\nwith words, white space folded to one space, cut to 256 bytes, then\ntrimmed.",
+      "maxLength": 256,
+      "minLength": 1,
+      "pattern": "^[^\\u0009-\\u000D\\u0020\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000\\uFEFF]+( [^\\u0009-\\u000D\\u0020\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000\\uFEFF]+)*$",
+      "type": "string"
     },
     "Timer": {
       "additionalProperties": false,
