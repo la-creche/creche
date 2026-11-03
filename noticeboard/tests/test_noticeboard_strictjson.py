@@ -52,7 +52,7 @@ def nested(count: int, opener: str, inside: str, closer: str) -> bytes:
 # --- the rule words --------------------------------------------------------------------
 
 
-def test_the_words_are_the_eleven_words_of_the_rust_enum() -> None:
+def test_the_words_are_the_twelve_words_of_the_rules() -> None:
     assert [rule.value for rule in Rule] == [
         "too_large",
         "not_utf8",
@@ -64,6 +64,7 @@ def test_the_words_are_the_eleven_words_of_the_rust_enum() -> None:
         "duplicate_key",
         "lone_surrogate",
         "integer_range",
+        "negative_zero",
         "float_range",
     ]
 
@@ -753,11 +754,49 @@ def test_the_range_has_the_limits_of_64_bits() -> None:
     assert strictjson.INTEGER_MAX == 18446744073709551615
 
 
-def test_minus_zero_is_the_integer_zero() -> None:
-    got = strictjson.loads(b"-0", cap=ROOMY)
+def test_zero_is_the_integer_zero() -> None:
+    got = strictjson.loads(b"0", cap=ROOMY)
 
     assert type(got) is int
     assert got == 0
+    assert strictjson.loads(b'{"a": [0, -1]}', cap=ROOMY) == {"a": [0, -1]}
+
+
+#: The integer `-0`, with the offset of its minus sign.
+NEGATIVE_ZERO: tuple[tuple[bytes, int], ...] = (
+    (b"-0", 0),
+    (b" -0 ", 1),
+    (b"[-0]", 1),
+    (b'{"a":-0}', 5),
+    (b'{"a": [1, -0]}', 10),
+    (b"[18446744073709551615,-0]", 22),
+    # Each white space character before the minus sign.
+    (b"[\n-0]", 2),
+    (b'{"a":\t-0}', 6),
+    (b"\r-0", 1),
+)
+
+
+def test_the_integer_minus_zero_is_refused_at_its_minus_sign() -> None:
+    for data, offset in NEGATIVE_ZERO:
+        refused = refusal(data)
+
+        assert (refused.rule, refused.offset) == (Rule.NEGATIVE_ZERO, offset), data
+
+
+def test_minus_zero_with_a_fraction_or_an_exponent_is_a_float() -> None:
+    for text in ("-0.0", "-0e0", "-0E+0", "-0.0e-5", "-0.5"):
+        got = strictjson.loads(text.encode(), cap=ROOMY)
+
+        assert type(got) is float, text
+        assert repr(got) == repr(float(text)), text
+
+    assert repr(strictjson.loads(b"[-0.0,-0e0]", cap=ROOMY)) == "[-0.0, -0.0]"
+
+
+def test_minus_zero_in_a_string_or_an_exponent_is_no_integer() -> None:
+    for text in ('"-0"', '"2026-01-05"', '{"-0": "a -0 b"}', "1e-0", "[1E-0,2e-00]"):
+        assert strictjson.loads(text.encode(), cap=ROOMY) == json.loads(text), text
 
 
 #: An integer outside the range.
@@ -1158,11 +1197,19 @@ def test_a_text_with_two_faults_gets_the_fault_at_the_lowest_offset() -> None:
         (b'"a\x01\\ud800"', Rule.SYNTAX, 2),
         # A number out of range before a later fault.
         (b"[18446744073709551616,", Rule.INTEGER_RANGE, 1),
+        (b"[-0,]", Rule.NEGATIVE_ZERO, 1),
+        (b"[-0] x", Rule.NEGATIVE_ZERO, 1),
+        (b"-0x", Rule.NEGATIVE_ZERO, 0),
+        (b"[-0x]", Rule.NEGATIVE_ZERO, 1),
+        (b'{"a":1,"a":-0}', Rule.DUPLICATE_KEY, 7),
+        (b"[NaN,-0]", Rule.CONSTANT, 1),
         (b"18446744073709551616x", Rule.INTEGER_RANGE, 0),
         (b"1e999 1", Rule.FLOAT_RANGE, 0),
         (b"[1e999, NaN]", Rule.FLOAT_RANGE, 1),
         # The run of a number is whole before its range.
         (b"1e999e5", Rule.SYNTAX, 5),
+        (b"[-00]", Rule.SYNTAX, 3),
+        (b"[-0.]", Rule.SYNTAX, 4),
         (b"18446744073709551616.", Rule.SYNTAX, 21),
         # A fault after the value before a lone surrogate after it.
         (rb'[1, 2] "\ud800"', Rule.TRAILING_DATA, 7),
@@ -1340,6 +1387,12 @@ def test_the_writer_never_writes_null_for_a_float_that_is_not_finite() -> None:
     assert json.dumps([math.nan]) == "[NaN]"
     with pytest.raises(NotStrictJson):
         strictjson.dumps([math.nan])
+
+
+def test_the_writer_never_writes_the_integer_minus_zero() -> None:
+    """A Python `int` has no `-0`. The float `-0.0` keeps its fraction."""
+    assert strictjson.dumps([int("-0"), -0.0]) == "[0, -0.0]"
+    assert strictjson.loads(strictjson.dumps([int("-0"), -0.0]).encode(), cap=ROOMY) == [0, -0.0]
 
 
 def test_the_writer_refuses_separators_that_make_no_json_text() -> None:

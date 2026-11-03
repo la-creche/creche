@@ -55,6 +55,7 @@ REFUSED: tuple[tuple[Rule, bytes], ...] = (
     (Rule.DUPLICATE_KEY, b'{"model_id": "a", "model_id": "b"}'),
     (Rule.LONE_SURROGATE, b'["\\ud800"]'),
     (Rule.INTEGER_RANGE, f"[{INTEGER_MAX + 1}]".encode()),
+    (Rule.NEGATIVE_ZERO, b"[-0]"),
     (Rule.FLOAT_RANGE, b"[1e999]"),
 )
 

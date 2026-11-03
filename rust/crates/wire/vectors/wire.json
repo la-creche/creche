@@ -1414,6 +1414,16 @@
       "note": "a negative integer"
     },
     {
+      "json": "-0",
+      "written": null,
+      "note": "the integer -0, which serde_json reads as a float"
+    },
+    {
+      "json": "-0.0",
+      "written": null,
+      "note": "zero with a minus sign, written as a float"
+    },
+    {
       "json": "1.0",
       "written": null,
       "note": "an integer written as a float"

@@ -529,7 +529,6 @@ STRICT_ACCEPTED: Final[tuple[Document, ...]] = (
     _doc("false", "false"),
     # --- an integer: a number with no fraction and no exponent ---
     _doc("integer-zero", "0"),
-    _doc("integer-minus-zero", "-0"),
     _doc("integer-negative", "-7"),
     _doc("integer-past-53-bits", "9007199254740993"),
     _doc("integer-19-digits", "1234567890123456789"),
@@ -539,6 +538,7 @@ STRICT_ACCEPTED: Final[tuple[Document, ...]] = (
     # --- a float: each other number ---
     _doc("float", "1.5"),
     _doc("float-minus-zero", "-0.0"),
+    _doc("float-minus-zero-exponent", "-0e0"),
     _doc("float-exponent", "1e3"),
     _doc("float-exponent-upper-case-plus", "1E+3"),
     _doc("float-exponent-minus", "1E-3"),
@@ -765,6 +765,12 @@ STRICT_REFUSED: Final[dict[strictjson.Rule, tuple[Document, ...]]] = {
         _doc("integer-past-the-largest-in-array", "[1,18446744073709551616]"),
         _doc("integer-below-the-least-in-object", '{"a":-9223372036854775809}'),
     ),
+    strictjson.Rule.NEGATIVE_ZERO: (
+        _doc("integer-minus-zero", "-0"),
+        _doc("integer-minus-zero-in-array", "[1,-0]"),
+        _doc("integer-minus-zero-in-object", '{"a":-0}'),
+        _doc("integer-minus-zero-after-a-newline", "[\n-0]"),
+    ),
     strictjson.Rule.FLOAT_RANGE: (
         _doc("float-past-the-largest", "1e999"),
         _doc("float-negative-past-the-largest", "-1e999"),
@@ -816,17 +822,17 @@ def _strict_surface() -> Surface:
         name=f"{GROUP}.{tail}",
         path=f"{GROUP}/{tail}.json",
         entry="noticeboard.strictjson.loads",
-        contract='no contract: the rules of rust/AGENTS.md, "JSON"',
+        contract="no contract: the rules of the module docstring of strictjson.py",
         notes=(
             "The input is the bytes of one JSON text. The entry point also takes the most "
             "bytes of a text. The generator gives it context.cap.",
             "An accepted vector is a strict text. value is the value of the text. A value of "
             "null is the value of the text null.",
             "A number of a value is an integer when its token has no fraction and no exponent. "
-            "Each other number is a float. The token -0 is the integer 0.",
+            "Each other number is a float. The integer token -0 is refused.",
             "A refused vector is a text that is not strict. refusal is the word of the rule "
             "that the text breaks. The text breaks that one rule and no other rule.",
-            "The words are the words of the enum Rule of the Rust module creche_contracts::json. "
+            "The words are the words of the enum Rule of strictjson.py. "
             "Each copy of the strict reader gives the same result and the same word.",
         ),
         context={"cap": STRICT_CAP},

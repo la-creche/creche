@@ -112,7 +112,7 @@ A fake embedder. No TEI, no sandbox. The tests of the TEI client give
 
 ## Known gaps
 
-- `strictjson.py` names the rule of the Rust check for a refused text of
+- `strictjson.py` names the rule of its own pass for a refused text of
   1 MiB or less. An answer of TEI can have up to `ANSWER_MAX_BYTES` bytes.
   For a longer refused answer, `strictjson.py` names the fault that the
   standard decoder finds, and the two words can differ.
