@@ -1,0 +1,15 @@
+"""The memory service of the vault (`memory/AGENTS.md`).
+
+`wire.py` holds the one definition of each wire type of the memory socket."""
+
+from .wire import Family, FolderPath, IfMatch, Refusal, Sha256, Slug, VaultPath
+
+__all__ = [
+    "Family",
+    "FolderPath",
+    "IfMatch",
+    "Refusal",
+    "Sha256",
+    "Slug",
+    "VaultPath",
+]
