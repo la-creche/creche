@@ -164,6 +164,50 @@ def test_a_failed_sync_prints_no_message_and_tries_again(
     assert _step(syncer) is Outcome.SYNCED
 
 
+class SlowIngests(Ingests):
+    """Each sync moves the clock on by 125 seconds."""
+
+    def __init__(self, clock: Clock) -> None:
+        super().__init__()
+        self.clock = clock
+
+    async def __call__(self, folders: list[str]) -> None:
+        self.clock.now += 125.0
+        await super().__call__(folders)
+
+
+def test_each_sync_logs_its_start_and_end_and_the_first_says_search_is_ready(
+    vault: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    clock = Clock()
+    syncer = Syncer(vault, SlowIngests(clock), quiet_s=0.0, clock=clock)
+    folders = len(ingest_folders(vault))
+
+    assert _step(syncer) is Outcome.SYNCED
+    assert capsys.readouterr().err.splitlines() == [
+        f"memory: sync started: {folders} folders",
+        "memory: sync done in 125 s; search is ready",
+    ]
+
+    (vault / "docs" / "new.md").write_text("new\n")
+    assert _step(syncer) is Outcome.SYNCED
+    assert capsys.readouterr().err.splitlines()[-1] == "memory: sync done in 125 s"
+
+
+def test_a_failed_sync_logs_its_time_and_the_type_only(
+    vault: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    clock = Clock()
+    ingests = SlowIngests(clock)
+    ingests.fail = True
+    syncer = Syncer(vault, ingests, quiet_s=0.0, clock=clock)
+
+    assert _step(syncer) is Outcome.FAILED
+    assert capsys.readouterr().err.splitlines()[-1] == (
+        "memory: sync failed after 125 s: ConnectionError"
+    )
+
+
 def test_a_vault_with_no_folder_to_read_is_never_synced(tmp_path: Path) -> None:
     ingests = Ingests()
     syncer = Syncer(tmp_path, ingests, quiet_s=0.0, clock=Clock())

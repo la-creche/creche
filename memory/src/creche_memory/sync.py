@@ -159,6 +159,10 @@ def cognee_ingest(root: Path) -> Ingest:
     return ingest
 
 
+def _say(line: str) -> None:
+    print(f"memory: {line}", file=sys.stderr, flush=True)
+
+
 class Syncer:
     """Runs the checks and the syncs of one vault."""
 
@@ -203,16 +207,23 @@ class Syncer:
         if not self._debounce.due(stamp, self._clock(), trigger):
             return Outcome.UNCHANGED if stamp == self._debounce.synced else Outcome.WAITING
 
+        # One line when a sync starts and one when it ends, so the journal
+        # says when search is ready. The first sync takes many minutes.
+        started = self._clock()
+        _say(f"sync started: {len(folders)} folders")
         try:
             await self._ingest(folders)
         except Exception as error:
             # A failed sync must not stop the loop. The next check tries
             # again. Only the type is printed: a message can hold a URL.
-            print(f"memory: sync failed: {type(error).__name__}", file=sys.stderr)
+            _say(f"sync failed after {self._clock() - started:.0f} s: {type(error).__name__}")
             return Outcome.FAILED
 
         self._debounce.done(stamp)
+        first = not self.ready.is_set()
         self.ready.set()
+        ready = "; search is ready" if first else ""
+        _say(f"sync done in {self._clock() - started:.0f} s{ready}")
 
         return Outcome.SYNCED
 
