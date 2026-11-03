@@ -108,6 +108,116 @@ impl fmt::Display for SessionIdError {
 
 impl std::error::Error for SessionIdError {}
 
+/// The length of a ULID.
+const ULID_LEN: usize = 26;
+
+/// Whether `text` is a ULID: 26 characters of upper-case Crockford base32,
+/// with no I, L, O or U (contract 02 §2).
+fn is_ulid(text: &str) -> bool {
+    text.len() == ULID_LEN
+        && text.chars().all(|character| {
+            matches!(character, '0'..='9' | 'A'..='H' | 'J' | 'K' | 'M' | 'N' | 'P'..='T' | 'V'..='Z')
+        })
+}
+
+/// Why a text is not a job id or a delegation id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UlidIdError {
+    /// The text does not start with the prefix of its kind.
+    Prefix,
+    /// The text after the prefix is not a ULID.
+    Ulid,
+}
+
+impl fmt::Display for UlidIdError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let reason = match self {
+            Self::Prefix => "the id does not start with the prefix of its kind",
+            Self::Ulid => "the id does not end with a ULID",
+        };
+        formatter.write_str(reason)
+    }
+}
+
+impl std::error::Error for UlidIdError {}
+
+/// A text id made of a fixed prefix and a ULID. On the wire it is a JSON
+/// string, and a string of any other form is refused.
+macro_rules! ulid_id {
+    ($(#[$doc:meta])* $name:ident, $prefix:literal) => {
+        $(#[$doc])*
+        #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+        #[serde(try_from = "String", into = "String")]
+        #[cfg_attr(test, derive(schemars::JsonSchema))]
+        #[cfg_attr(test, schemars(extend("pattern" = concat!("^", $prefix, "[0-9A-HJKMNP-TV-Z]{26}$"))))]
+        pub struct $name(String);
+
+        impl $name {
+            /// The id as text.
+            #[must_use]
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+        }
+
+        impl FromStr for $name {
+            type Err = UlidIdError;
+
+            fn from_str(text: &str) -> Result<Self, Self::Err> {
+                let ulid = text.strip_prefix($prefix).ok_or(UlidIdError::Prefix)?;
+                if !is_ulid(ulid) {
+                    return Err(UlidIdError::Ulid);
+                }
+                Ok(Self(text.to_owned()))
+            }
+        }
+
+        impl TryFrom<String> for $name {
+            type Error = UlidIdError;
+
+            fn try_from(text: String) -> Result<Self, Self::Error> {
+                text.parse()
+            }
+        }
+
+        impl From<$name> for String {
+            fn from(id: $name) -> Self {
+                id.0
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str(&self.0)
+            }
+        }
+    };
+}
+
+ulid_id!(
+    /// The id that attendance gives a thin job of the delegate door:
+    /// `job-<ulid>` (contract 02 §2 and §12). Contract 02 calls it a session
+    /// id. The `SessionId` of the job's row on the host session list is a
+    /// separate value.
+    JobId,
+    "job-"
+);
+
+ulid_id!(
+    /// The id that attendance gives an autonomous job of a trigger or of the
+    /// dispatch door: `auto-<ulid>` (contract 02 §2 and §13). Contract 02 calls
+    /// it a session id. The `SessionId` of the job's row on the host session
+    /// list is a separate value.
+    AutoJobId,
+    "auto-"
+);
+
+ulid_id!(
+    /// The id the PEP mints for one delegation, a ULID (contract 04 §7.4).
+    DelegationId,
+    ""
+);
+
 #[cfg(test)]
 mod tests {
     use super::{SESSION_ID_PATTERN, SessionId, SessionIdError};
