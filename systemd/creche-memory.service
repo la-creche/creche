@@ -1,0 +1,62 @@
+# creche-memory: the memory service of the vault. USER unit, as the operator.
+#
+# It hosts the memory store, syncs the vault into it, answers searches, and
+# applies every vault write that an agent asks for (memory/AGENTS.md). Agents
+# reach it only through the `memory` upstream of the chaperone, which runs as
+# its own user and connects to the socket below. The server answers that
+# user's uid and no other.
+#
+# It runs as the operator, the owner of the vault, so every file it writes
+# stays the operator's. Writes reach each Obsidian device within seconds.
+#
+# Installed by: no script yet. The release of the component that ships the
+# memory tree installs it.
+[Unit]
+Description=creche-memory, the memory service of the vault
+After=network-online.target
+Wants=network-online.target
+# THE REWORK RESTART POLICY, argued in full in
+# `systemd/creche-caregiver.service`: no start limit, and a back-off.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=%h
+Environment=HOME=%h
+Environment=XDG_CONFIG_HOME=%h/.config
+# MEMORY_LITELLM_KEY: the `memory` key of LiteLLM. The file is the
+# operator's, mode 0600. The key never rides on argv or in a log line.
+EnvironmentFile=/srv/agents/state/creche/memory.env
+# The site's AGENT_LAN_ADDRESS, which the LiteLLM and TEI addresses default to.
+EnvironmentFile=/etc/creche/site.env
+# The tree of the component, not the shared workspace venv
+# (systemd/AGENTS.md).
+ExecStart=%h/.local/components/memory/bin/creche-memory
+# A deploy runs this before it swaps the unit. It opens no socket.
+ExecStartPre=%h/.local/components/memory/bin/creche-memory --check
+Restart=always
+RestartSec=5s
+RestartSteps=5
+RestartMaxDelaySec=120s
+# Exit 78: the config or the host stops the start. Restarting changes
+# nothing until the operator fixes it (bin/systemd-proof.sh, the rule).
+RestartPreventExitStatus=78
+KillSignal=SIGTERM
+TimeoutStopSec=20
+# The store and Cognee's tree. The spike did not measure the memory use, so
+# this is a first limit, to tune after the first full sync.
+MemoryMax=2G
+
+# A user unit on this host cannot use mount-namespace options
+# (apparmor_restrict_unprivileged_userns=1), but seccomp, prctl and rlimit
+# options need no namespace (systemd/AGENTS.md).
+NoNewPrivileges=yes
+SystemCallArchitectures=native
+RestrictRealtime=yes
+LockPersonality=yes
+# 0077: the store is the operator's alone. Each vault file gets mode 0644
+# and the socket gets 0660 from the service itself.
+UMask=0077
+
+[Install]
+WantedBy=default.target

@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -229,3 +230,18 @@ def test_a_write_to_a_skipped_folder_neither_syncs_nor_spins(vault: Path) -> Non
 
     assert len(ingests.calls) == 2
     assert len(checks) <= 3
+
+
+def test_wake_ends_the_wait_of_run_at_once(vault: Path) -> None:
+    syncer = Syncer(vault, Ingests(), poll_s=60.0, quiet_s=60.0, clock=Clock())
+    stop = threading.Event()
+
+    def end() -> None:
+        stop.set()
+        syncer.wake()
+
+    threading.Timer(0.2, end).start()
+    started = time.monotonic()
+    asyncio.run(syncer.run(stop))
+
+    assert time.monotonic() - started < 5.0

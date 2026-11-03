@@ -9,6 +9,8 @@ service of the vault. The service hosts the memory store and answers the
 
 | File | What it holds |
 |---|---|
+| `src/creche_memory/cli.py` | The command `creche-memory`, and `creche-memory --check`. |
+| `src/creche_memory/config.py` | What the service reads from its environment, and the host check. |
 | `src/creche_memory/wire.py` | The wire types of the socket: each request, each reply, the refusal codes and the newtypes. |
 | `src/creche_memory/vault.py` | `Vault`: it reads one note or lists one folder, inside the vault root. |
 | `src/creche_memory/writes.py` | `Writer`: it creates inbox notes and rewrites whole files in the agent areas. |
@@ -18,6 +20,7 @@ service of the vault. The service hosts the memory store and answers the
 | `src/creche_memory/cognee_search.py` | The two Cognee searches and the map from a document to its note. pyright checks it in basic mode. |
 | `src/creche_memory/server.py` | `MemoryServer` and `Service`: the socket server. It checks the peer uid and answers one line per connection. |
 | `vectors/wire.json` | The shared wire vectors. |
+| `tests/test_memory_config.py` | The tests of the config and of the command. One test starts the command, reads a note over its socket and stops it. |
 | `tests/test_memory_wire_vectors.py` | The test that runs the shared wire vectors through the models. |
 | `tests/test_memory_vault.py` | The tests of the reads: the caps, the refusals and the symlink rules. |
 | `tests/test_memory_writes.py` | The tests of the writes: the areas, the digest check, the modes and the symlink rules. |
@@ -99,6 +102,29 @@ after it reads `json`, or `null` when the type refuses `json`.
    account.
 5. The LiteLLM key is in no repr and on no command line.
 
+## The command
+
+1. `creche-memory` starts the store loop, the syncer and the socket server.
+   SIGTERM or SIGINT stops each one in turn, and the command exits 0.
+2. `creche-memory --check` reads the config and checks the host. It opens
+   no socket. The unit runs it as `ExecStartPre`.
+3. A config or a host that stops the start exits 78. The unit holds
+   `RestartPreventExitStatus=78`, so systemd does not restart it in a loop.
+4. The environment:
+
+   | Key | Default | What it is |
+   |---|---|---|
+   | `MEMORY_LITELLM_KEY` | none, required | The `memory` key of LiteLLM, from the unit's mode-0600 env file. |
+   | `AGENT_LITELLM_BASE_URL` | port 4000 on `AGENT_LAN_ADDRESS` | LiteLLM, with no `/v1`. |
+   | `TEI_URL` | port 8085 on `AGENT_LAN_ADDRESS` | The embedding server, with no `/v1`. |
+   | `MEMORY_VAULT_ROOT` | `/srv/agents/vault` | The vault. |
+   | `MEMORY_STORE_ROOT` | `/srv/agents/state/memory` | The store. The command makes it, mode 0700. |
+   | `MEMORY_SOCKET` | `/var/lib/creche-memory/memory.sock` | The socket. Root makes its folder. |
+   | `MEMORY_PEER_USER` | `mcp-memory` | The one user whose connections the server answers. |
+
+5. The tokenizer cache is `<store>/hf/hub`. It must exist before the start.
+   The operator copies the tokenizer of the embedding model into it once.
+
 ## The search
 
 1. A search makes no LLM call (decision MM9). It asks Cognee for the graph
@@ -149,4 +175,4 @@ root `uv.lock`, because a change there moves every venv component
 
 ## Known gaps
 
-1. The package has no command and no unit yet. Nothing starts the server.
+1. No component ships the tree yet, so nothing installs the unit.

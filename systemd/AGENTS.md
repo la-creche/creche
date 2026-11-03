@@ -9,6 +9,7 @@ from this directory at run time. The root `AGENTS.md` applies here too.
 | `creche-handover.{service,path}` | system, root | by hand only, never by a release |
 | `creche-attendance.service`, `creche-caregiver.service`, `creche-door-trigger.service`, `creche-noticeboard.service` | user | the cutover script, in the private repository |
 | `creche-door-acp.service` | user | no script yet. The door ships in `attendance` |
+| `creche-memory.service` | user | no script yet. The memory component ships it |
 | `creche-door-trigger@.service` | user, templated | the cutover script, only when the host has none |
 The host's own units are not here: the watchdog, the registry sync, the
 corpus sync, the drift check, `creche-library@` and follow. They are files

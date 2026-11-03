@@ -54,6 +54,7 @@ turn. The `attendance` service takes that call from four doors.
 | `playpen/` | `playpen` | none, an OCI image | The sandbox image: the ACP facade and the agent module. | [playpen/AGENTS.md](playpen/AGENTS.md) |
 | `handover/` | `handover` | `creche-handover.{path,service}`, system, root | The release tool: resolver, tag allocator, executor, requester, follower. | [handover/AGENTS.md](handover/AGENTS.md) |
 | `family/` | in `caregiver` | none, a library | The `family.toml` and `server.toml` schemas, the validator, the registry loader. | [family/AGENTS.md](family/AGENTS.md) |
+| `memory/` | none yet | `creche-memory.service`, user | The memory service: the store of the vault, its sync, the search and every agent write. | [memory/AGENTS.md](memory/AGENTS.md) |
 | `library/` | none | none here. creche-release's `creche-library@.timer` runs it | The retrieval index builder. Not an agent. | [library/AGENTS.md](library/AGENTS.md) |
 
 The chaperone is the Rust program of the `chaperone` repository. Its unit,

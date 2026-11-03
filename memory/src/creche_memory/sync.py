@@ -177,12 +177,18 @@ class Syncer:
         self._clock = clock
         self._debounce = Debounce(quiet_s)
         self._wrote = threading.Event()
+        self._wake = threading.Event()
         #: Set after the first sync that ends well. Search waits for it.
         self.ready = threading.Event()
 
     def request(self) -> None:
         """Ask for a sync at once, after a confirmed write. Any thread."""
         self._wrote.set()
+        self._wake.set()
+
+    def wake(self) -> None:
+        """End the wait of `run` at once, so a stop is seen. Any thread."""
+        self._wake.set()
 
     async def step(self) -> Outcome:
         folders = ingest_folders(self._root)
@@ -212,5 +218,8 @@ class Syncer:
 
     async def run(self, stop: threading.Event) -> None:
         while not stop.is_set():
+            # Clear before the check: a request during the check then ends
+            # the next wait at once.
+            self._wake.clear()
             await self.step()
-            await asyncio.to_thread(self._wrote.wait, self._poll_s)
+            await asyncio.to_thread(self._wake.wait, self._poll_s)
