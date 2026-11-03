@@ -10,8 +10,10 @@ service of the vault. The service hosts the memory store and answers the
 | File | What it holds |
 |---|---|
 | `src/creche_memory/wire.py` | The wire types of the socket: each request, each reply, the refusal codes and the newtypes. |
+| `src/creche_memory/vault.py` | `Vault`: it reads one note or lists one folder, inside the vault root. |
 | `vectors/wire.json` | The shared wire vectors. |
 | `tests/test_memory_wire_vectors.py` | The test that runs the shared wire vectors through the models. |
+| `tests/test_memory_vault.py` | The tests of the reads: the caps, the refusals and the symlink rules. |
 
 ## One definition per type
 
@@ -35,6 +37,16 @@ after it reads `json`, or `null` when the type refuses `json`.
 4. Each exported type has at least one accepted case and one refused case.
 5. The tests of the upstream in the `mcp` repository hold the same request
    texts as their accepted cases.
+
+## Vault reads
+
+1. `Vault` opens the vault root, then each folder of the path relative to
+   the folder before it, with `O_NOFOLLOW`. A symlink on the path fails the
+   open. The wire types refuse a `.`, `..` or hidden part.
+2. A read returns only a regular file of 512 KiB or less, in UTF-8.
+3. A listing returns notes and folders only. It skips a symlink, a hidden
+   entry, a file that is not a note and a name that the wire types refuse.
+   A folder of more than 2,000 entries is refused.
 
 ## Not a workspace member
 
