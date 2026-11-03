@@ -227,7 +227,8 @@ class FamilyConfig(BaseModel):
     system_prompt: Annotated[
         SystemPrompt,
         Field(
-            description="How the instructions meet the agent's own prompt. caregiver leaves\n`system_prompt` out of `runtime.json` for `append`\n(`config_mount.py:54`), so the vmm reads a missing key as `append`."
+            description="How the instructions meet the agent's own prompt. caregiver leaves\n`system_prompt` out of `runtime.json` for `append`\n(`config_mount.py:54`), so the vmm reads a missing key as `append`.",
+            title="SystemPrompt",
         ),
     ]
 

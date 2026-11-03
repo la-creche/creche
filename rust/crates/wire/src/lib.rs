@@ -882,11 +882,12 @@ checked_text!(
 /// How the family's instructions meet the agent's own prompt: `SystemPrompt`
 /// of `family/grammar.py`. On the wire it is the name of a mode, a JSON
 /// string. The schema holds it inline in `FamilyConfig`, so the generated
-/// Python is a field of a model, which `creche_wire.read` takes.
+/// Python is a field of a model, which `creche_wire.read` takes. Its `title`
+/// names the generated class, so a later wire type cannot rename it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
-#[cfg_attr(test, schemars(inline))]
+#[cfg_attr(test, schemars(inline, title = "SystemPrompt"))]
 pub enum SystemPrompt {
     Append,
     Replace,

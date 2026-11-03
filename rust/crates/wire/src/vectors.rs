@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use serde::Deserialize;
+use serde_json::Value;
 
 use super::schema::wire_schema;
 use super::{
@@ -128,5 +129,36 @@ fn each_wire_type_has_cases_and_each_case_a_wire_type() {
             type_cases.iter().any(|case| case.written.is_none()),
             "{type_name}: no case is refused"
         );
+    }
+}
+
+/// Each accepted object case, with one key of its type's `required` left
+/// out, is refused. `require_each_key` lists each key whatever serde does,
+/// so a `#[serde(default)]` on a field would read a missing key in Rust,
+/// while the generated model refuses it, and no schema test would see it.
+#[test]
+fn a_case_without_a_required_key_is_refused() {
+    let schema = wire_schema();
+
+    for (type_name, type_cases) in cases() {
+        let Some(required) = schema["$defs"][&type_name]["required"].as_array() else {
+            continue;
+        };
+        for case in type_cases.iter().filter(|case| case.written.is_some()) {
+            let Ok(Value::Object(object)) = serde_json::from_str::<Value>(&case.json) else {
+                continue;
+            };
+            for key in required.iter().filter_map(Value::as_str) {
+                let mut fewer = object.clone();
+                fewer.remove(key);
+                let json = Value::Object(fewer).to_string();
+
+                assert_eq!(
+                    read_and_write(&type_name, &json),
+                    None,
+                    "{type_name}: {json}"
+                );
+            }
+        }
     }
 }
