@@ -4,10 +4,10 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import { checkValue } from "agent/strict-json";
 import { afterEach, describe, expect, it } from "vitest";
 
 import vectors from "../vectors/creche-extensions.json" with { type: "json" };
-import { checkValue } from "../src/strict-json.js";
 import { startFacade } from "./facade-process.js";
 import type { FacadeProcess } from "./facade-process.js";
 

@@ -1,11 +1,11 @@
 // The writer of stdout: a strict text under the cap, or a refusal that
 // never reaches the wire as it is.
 
+import { checkValue, DEPTH_MAX, Rule } from "agent/strict-json";
 import { describe, expect, it } from "vitest";
 
 import { strictWriter } from "../src/acp.js";
 import { byteLength, cutToBytes, encodeLine } from "../src/line.js";
-import { checkValue, DEPTH_MAX, Rule } from "../src/strict-json.js";
 import { MAX_LINE_BYTES } from "../src/vectors.js";
 
 const LONE = "\ud800";

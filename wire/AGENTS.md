@@ -82,8 +82,9 @@ the copy in another package. Change each copy in one commit.
    schema to rules 1 and 3.
 
 `read` takes `-0` for an integer, and gives `0`. serde_json reads `-0` as a
-float, so the Rust type refuses it. No vector case holds `-0` until the
-owner decides which language changes.
+float, so the Rust type refuses it, and so does `parseStrict` of
+`agent/src/strict-json.ts`. No vector case holds `-0` until the owner
+decides which language changes.
 
 ## The shared wire vectors
 

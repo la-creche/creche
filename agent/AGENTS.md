@@ -16,13 +16,25 @@ pnpm run typecheck
 pnpm run build     # src/ to dist/ with declarations, for the facade
 ```
 
-The facade imports `agent/agent` and `agent/config` from `dist/`
-(`package.json` `exports`). Its `build` and `typecheck` run this build
-first. `agent/wire` is exported too, for the facade's later reads.
+The facade imports `agent/agent`, `agent/config` and `agent/strict-json`
+from `dist/` (`package.json` `exports`). Its `build` and `typecheck` run
+this build first. `agent/wire` is exported too, for the facade's later
+reads.
 
 `src/wire.ts` is the JSON Schema of the wire types of the VM owner. The
 schema test of `rust/crates/wire` writes it (`wire/AGENTS.md`). Never edit
 it.
+
+`parseStrict` of `src/strict-json.ts` is the strict reader of a wire text
+(decision CH22 rule 1). It gives the value, or a refusal that names a rule.
+
+1. JavaScript reads `1.0` as `1` and `-0` as `0`. So `parseStrict` refuses
+   a number with a fraction or an exponent that has an integer value, and
+   the integer `-0`. No wire type has a float field. A float field needs
+   an owner decision first, because `parseStrict` refuses `1.0` for it too.
+2. `parseStrict` refuses an integer past 2^53 - 1 from zero, two equal
+   keys in one object, a lone surrogate and a nesting deeper than 64.
+3. The caller checks the size of the text against the cap of its surface.
 
 The tests use `sqlite()` with no path, an in-memory store, and pi's
 `fauxProvider()`. A test needs no network and no model key.

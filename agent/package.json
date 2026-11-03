@@ -16,6 +16,10 @@
       "types": "./dist/config.d.ts",
       "default": "./dist/config.js"
     },
+    "./strict-json": {
+      "types": "./dist/strict-json.d.ts",
+      "default": "./dist/strict-json.js"
+    },
     "./wire": {
       "types": "./dist/wire.d.ts",
       "default": "./dist/wire.js"
