@@ -57,9 +57,10 @@ from .layout import ARTIFACT_STORE_DIR, OPERATOR_STATE_DIR
 CORPUS_ROOT: Final = "/srv/agents/code"
 
 #: The one command the operator runs when the corpus does not hold a SHA yet. It is
-#: `bin/sync-code-corpus.sh`'s deployed path: ff-only, as the operator, over the
-#: repositories `/srv/agents/state/code-repos.txt` names.
-REFRESH_COMMAND: Final = "/opt/creche/bin/sync-code-corpus.sh"
+#: creche-release's `bin/sync-code-corpus.sh`, where a `host` release installs
+#: it: ff-only, as the operator, over the repositories
+#: `/srv/agents/state/code-repos.txt` names.
+REFRESH_COMMAND: Final = "/opt/components/host/bin/sync-code-corpus.sh"
 
 #: Where git reads a source's borrowed object stores. Measured on git 2.54.0:
 #: `clone --local` copies this file VERBATIM into the clone, so a source that

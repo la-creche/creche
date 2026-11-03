@@ -86,7 +86,7 @@ holds each command.
 |---|---|---|
 | R1 | Make the state root and the sessions root, owned by the operator. | The owner of the state root. The sessions root is writable. |
 | R2 | Install `cosign` (runbook A1) and `uv` 0.12.17 or newer (A2). Install `sbx`. | `/usr/local/bin/cosign`, `uv --version`, `sbx` on `PATH`. |
-| R3 | Run `sudo creche-deploy`. Install the handover tree and its root wrapper by hand. | `/opt/creche/bin/creche-watchdog.sh`, the stamp of `/opt/components/handover`. |
+| R3 | Run `sudo creche-deploy`. Install the handover tree and its root wrapper by hand. | `/opt/creche/bin/fleet-up`, the stamp of `/opt/components/handover`. |
 | R4 | Make the group `chaperone`. Add the operator to `chaperone` (A5). Restart the user manager. | `getent group`, and `id -nG` of this login. |
 | R5 | Make `/etc/chaperone`, mode 1775, group `chaperone`, with `plugins/`, `secrets/` and `install.toml` (A6). | The mode and the group. Each of the three paths is there. |
 | R6 | Add `CHAPERONE_LISTEN` and `AGENT_COSIGN_PROGRAM` to the site file (A8). | `creche-env check` of the site file. The file sets `CHAPERONE_LISTEN`. |
@@ -180,14 +180,14 @@ a shell builtin, so the value reaches no argv. It never prints the value.
 | `creche-door-acp.service` | the `attendance` tree | yes |
 | `creche-door-trigger.service` | the `attendance` tree | yes |
 | `creche-door-trigger@.service` | the `attendance` tree | no, it is a template |
-| `creche-watchdog.{service,timer}` | `/opt/creche/bin` | the timer |
-| `creche-registry-sync.{service,timer}` | `/opt/creche/bin`, on the registry checkout | the timer, when the checkout is there |
-| `creche-code-corpus-sync.{service,timer}` | `/opt/creche/bin` | the timer |
-| `creche-sbx-drift.{service,timer}` | `/opt/creche/bin` | the timer |
-| `creche-library@.{service,timer}` | a sandbox `index-<scope>` | no, it is a template. `bin/provision-library.sh` enables one timer for each scope |
-| `creche-follow.{service,timer}` | the `handover` tree | the timer, when the tree is there |
 
 `creche-door-owui.service` is not in the list. The ACP door replaces it.
+
+The host's own units are not in the list either: the watchdog, the registry
+sync, the corpus sync, the drift check, `creche-library@` and follow. They
+are files of creche-release, and a `host` release links each one into
+`~/.config/systemd/user`. `down` keeps a recorded unit file that is now such
+a link.
 
 ## 7. Invariants
 
@@ -216,7 +216,7 @@ a shell builtin, so the value reaches no argv. It never prints the value.
 
 - `fleet-up` reads `CHAPERONE_LISTEN` from the site file with
   `envfile_value`. `env/AGENTS.md` lists this read as a known gap.
-- `bin/creche-watchdog.sh` does not watch `creche-door-acp.service`.
+- creche-release's `bin/creche-watchdog.sh` does not watch `creche-door-acp.service`.
 - `systemd/AGENTS.md` names the old cutover script as the installer of the
   user units. That changes when the owner takes this design.
 - The tokens of `chaperone-delegate` and `chaperone-dispatch` are 0600. The Python

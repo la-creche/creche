@@ -62,7 +62,7 @@ sbx policy allow network --sandbox "$SBX" "$LAN_ADDRESS:8085" >/dev/null 2>&1 ||
 # (caregiver/src/caregiver/driver.py, KIT_EXTRA_EGRESS). Deny beats
 # allow. Unguarded on purpose: a repeat deny exits 0 ("Already covered"), so
 # a failure here is real, and a sandbox left without it is exactly what
-# sbx-drift-check.sh alarms on.
+# creche-release's sbx-drift-check.sh alarms on.
 sbx policy deny network --sandbox "$SBX" openrouter.ai >/dev/null
 # `sbx policy check` exits non-zero on Denied, so under `set -euo pipefail`
 # the checks must be captured (the denied ones are the DESIRED outcome).

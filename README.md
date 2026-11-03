@@ -52,12 +52,15 @@ turn. The `attendance` service takes that call from four doors.
 | `caregiver/` | `caregiver` | `creche-caregiver.service`, user | The reconciler. It converges every family to its file. | [caregiver/AGENTS.md](caregiver/AGENTS.md) |
 | `noticeboard/` | `noticeboard` | `creche-noticeboard.service`, user | The one view: every family, sandbox, session and audit line. | [noticeboard/AGENTS.md](noticeboard/AGENTS.md) |
 | `playpen/` | `playpen` | none, an OCI image | The sandbox image: the ACP facade and the agent module. | [playpen/AGENTS.md](playpen/AGENTS.md) |
-| `handover/` | `handover` | `creche-handover.{path,service}`, system, root. `creche-follow.{service,timer}`, user | The release tool: resolver, tag allocator, executor, requester, follower. | [handover/AGENTS.md](handover/AGENTS.md) |
+| `handover/` | `handover` | `creche-handover.{path,service}`, system, root | The release tool: resolver, tag allocator, executor, requester, follower. | [handover/AGENTS.md](handover/AGENTS.md) |
 | `family/` | in `caregiver` | none, a library | The `family.toml` and `server.toml` schemas, the validator, the registry loader. | [family/AGENTS.md](family/AGENTS.md) |
-| `library/` | none | `creche-library@.timer`, user | The retrieval index builder. Not an agent. | [library/AGENTS.md](library/AGENTS.md) |
+| `library/` | none | none here. creche-release's `creche-library@.timer` runs it | The retrieval index builder. Not an agent. | [library/AGENTS.md](library/AGENTS.md) |
 
 The chaperone is the Rust program of the `chaperone` repository. Its unit,
 `creche-chaperone.service`, ships from that repository.
+
+The host's own units, and the scripts they run, ship from creche-release
+as the `host` component.
 
 The other directories:
 
@@ -86,7 +89,7 @@ The other directories:
 | Change the release steps | `handover/src/handover/executor/steps.py` |
 | Change what a `component.yaml` may say | `handover/src/handover/manifest.py` |
 | Change how a merge allocates a tag | `handover/src/handover/allocate.py`, `handover/bin/allocate-tags.sh` |
-| Change when a new tag files a request | `handover/src/handover/follow/`, `systemd/creche-follow.service` |
+| Change when a new tag files a request | `handover/src/handover/follow/`, and creche-release's `host.toml` and `units/user/creche-follow.service` |
 | Change what a deploy does | `bin/creche-deploy` |
 | Change the quality gate or the docs rule | `bin/quality-gate.sh`, `bin/lib/docsrule.sh` |
 | Change the index schema | `library/src/library/library.py` and `agent/src/index-store.ts`, together |

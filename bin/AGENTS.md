@@ -27,7 +27,7 @@ A reader must not infer it from the `id -u` guard. A root script asserts
 | Family | Files | Contract |
 |---|---|---|
 | Setup | `provision-library.sh`, `fleet-up` | Idempotent, not a no-op. Every step checks before it writes. A value that has a current answer is upserted in place. A token minted once is never replaced in silence. |
-| Operations | `creche-deploy`, `creche-handover`, `creche-watchdog.sh`, `creche-registry-sync.sh`, `sbx-drift-check.sh`, `sync-code-corpus.sh` | Run unattended from units and timers. Fail loudly into the journal. |
+| Operations | `creche-deploy`, `creche-handover` | Run unattended from units and timers. Fail loudly into the journal. |
 | Checks | `quality-gate.sh`, `systemd-proof.sh` | Run from the hooks and from CI. `systemd-proof.sh` runs in CI only. No unit runs them. They use `set -euo pipefail`. The first failed check stops the run. |
 | Library | `lib/envfile.sh`, `lib/docsrule.sh` | Sourced only, never executed. Say "Sourced only" in the header. That marker exempts the file from the mode rule below. |
 | Tools | `yaml-to-toml.py`, `chaperone-install-draft.py` | Run by hand on a development machine, and from a test in CI. No unit runs a tool, and the host does not need one. A tool reads the files that its command names and changes no file. `chaperone-install-draft.py --out-dir` makes one new directory and writes only into it. |
@@ -78,10 +78,6 @@ through a file or a health endpoint, and give a short in-VM command a
 |---|---|---|
 | `creche-deploy` | ROOT, the single sudoers entry | Puts this repository at `/opt/creche` and the site at `/opt/private-docs`, fills the venv. It restarts no unit. Origin is the operator's checkout, so root needs no GitHub credential. It installs no MCP server. |
 | `creche-handover` | ROOT, from `creche-handover.path` | Decrypts the site's sops file and execs `handover-exec` under it. Installed to `/usr/local/sbin` by hand, never by a release. Refuses a path another account can write. |
-| `creche-watchdog.sh` | OPERATOR, every minute | The outage alarm. Checks the chaperone's `/healthz`, `caregiver`'s freshness, `attendance`'s socket and `is-failed` for the units. Pushes once per change of verdict. `--last` prints the verdict. Shares no fate with what it watches. The unit check also reads each firing unit. After the checks, the script sends one notice for each service, surface and rule that a notice file records. "The watchdog" has the two rules. |
-| `creche-registry-sync.sh` | OPERATOR, every minute | `git fetch --prune`, then `git merge --ff-only`, on the registry checkout. Never rebases, resets, cleans or pushes. |
-| `sbx-drift-check.sh` | OPERATOR, daily | Read-only. Reads `sbx policy ls --json`. Alarms when a network allow names no sandbox, or when a per-sandbox rule allows a host that is not the LAN address and not in the seeded allowlist. Alarms when the listing does not read. |
-| `sync-code-corpus.sh` | OPERATOR, every minute | Refreshes the dedicated code clones. `handover` reads the source tree of a release from them. The repository list lives outside the corpus. |
 | `provision-library.sh` | OPERATOR | One corpus: the image, the sandbox, TEI-only egress, the timer. Needs `AGENT_LAN_ADDRESS` from the site file. |
 | `fleet-up` | OPERATOR | Draft. `check`, `up`, `down` of the fleet layer: the tokens, the keys, the env files, the state directories and the user units. `check` is read-only and lists the root checklist. `up` records each write, and `down` removes only a recorded path. `docs/fleet-bootstrap.md` is the design. |
 | `quality-gate.sh` | OPERATOR, from the hooks and CI | ruff, ruff format, pyright, then pytest as asked: `--tests`, `--tests-for PATH...` or `--docs`. For a push that changes a file under `integration/proc/` that is not prose, it runs the process-level suite. |
@@ -92,88 +88,10 @@ through a file or a health endpoint, and give a short in-VM command a
 Production runs these scripts from `/opt/creche/bin/`. A change here is live
 only after `sudo creche-deploy`. The host does not run `yaml-to-toml.py`.
 
-## The watchdog
-
-`creche-watchdog.sh` makes five checks. Then it reads the notice files. Two
-rules apply to these two parts.
-
-**Rule 1: a notice file is untrusted input, and only the watchdog sends its
-notice.** A notice file is the place where a service records each JSON text
-that it refused. The files are `notices/<service>.json` under the state
-root.
-
-- The script reads only a regular file whose name ends in `.json`. A lock
-  file and a temporary file can be beside a notice file. Their names have
-  another end.
-- The script reads 65,536 bytes of a file at most. It holds the line of the
-  key `push` to an exact pattern. A token of that line is
-  `<surface>:<rule>:<seconds>`.
-- The script evaluates no byte of a file. It never gives a file to `source`.
-- The script calls no `jq` and no Python, because it must run while a
-  component tree is in a release. Its header lists each program that it
-  needs. Add a new program to that list.
-- A line that breaks the pattern gets one line in the journal and no notice.
-- The summary of a notice is `json_not_strict <service> <surface> <rule>`.
-  The notice goes through `send_notice`, so the bearer is on no command
-  line. No service holds that bearer.
-- The script sends a notice for a token that it did not send, and for a
-  token with a newer `<seconds>`.
-- Two limits apply. The script sends one notice for one service, surface and
-  rule in 24 hours. It sends 6 notices of this kind at most in one hour, for
-  all services together. A later run sends a notice that a limit holds.
-  Both limits count in the wall-clock time of the host, so a jump of that
-  clock can reset the count of one hour.
-- A token whose `<seconds>` is more than one hour after the time of the run
-  gets no notice. The journal gets one line with the count of such tokens.
-- A run that is older than `NOTICE_STEP_BUDGET_S` seconds starts no send. A
-  later run sends the notices that are left.
-- The file `watchdog/notices-sent` under the state root is the record of the
-  sent notices. It has the modes of the verdict file. The line of a notice
-  goes to the record before the send. A run stops the step at the first
-  send that fails.
-- A send that surely did not reach the hook puts the old record back, and
-  a later run sends that notice. Two cases prove it: the host has no hook,
-  or curl ends with status 6 or 7. When the script cannot write the old
-  record back, that notice is missed.
-- No other status proves that the hook took no notice, so the script counts
-  the notice as taken. The record keeps the line of that notice, and that
-  notice is missed. So a fault gives a missed notice of this kind, never a
-  second one. The outage notice keeps its rule: the next run sends it again
-  after each failed send.
-- The journal line of a failed send names the curl status and the HTTP
-  code: `(curl exit <status>, HTTP <code>)`. When curl writes no code, the
-  line says `HTTP nothing`.
-- Both limits come from the record. A run that cannot read the record, or
-  cannot write it, sends no notice of this kind. A record that holds bytes
-  and no record line counts as a record that the run cannot read. The
-  script reads 262,144 bytes of the record at most, and it writes no larger
-  record.
-- A record that holds bytes and no record line stops the step in each run.
-  The operator removes `watchdog/notices-sent` to repair it. After that,
-  each service, surface and rule of the notice files can get one more
-  notice, 6 in one hour at most.
-- The step changes no verdict and no exit status. It runs in a shell of its
-  own, after the script wrote the verdict.
-- Only a run of the unit sends a notice of this kind. systemd gives each run
-  of a unit an `INVOCATION_ID` of 32 hex digits. A run with no value of
-  this form sends none and writes one line in the journal. A run by hand
-  can overlap a run of the timer, and both runs would read the same record.
-- A shell that systemd started can give its own `INVOCATION_ID` to a run
-  by hand. That run then sends.
-
-**Rule 2: a firing unit fails only with status 78.** A firing unit is an
-instance of `creche-door-trigger@`. Check 4 reads the status of the last run of
-each instance.
-
-- Status 78 counts as a failed unit. A program ends with that status when
-  its config is not valid.
-- Each other status counts as no failure. A firing ends with status 1 when
-  the session service refuses the job, and no config causes that.
-- The failure pushes after two runs in a row, as each other check does.
-- The script gives a unit name to `systemctl show` only when the name has
-  the exact form `creche-door-trigger@<family>.service`.
-- Each `systemctl` call has the time limit of the other checks. One call
-  with no answer in that time ends the read of the firing units for the run.
+The scripts of the host's own units are not here: the watchdog, the registry
+sync, the corpus sync and the drift check. They are files of creche-release,
+with their tests, and a `host` release installs them at
+`/opt/components/host/bin`.
 
 ## Quality gate
 
@@ -277,7 +195,7 @@ scope of `release.yml` ask it.
 | `test_bin_path_refs.py` | Every repository path, console script and sibling a script or unit names is in the tree. Marked `docs`. |
 | `test_chaperone_install_draft.py` | The print for the fixture registry of `family` equals `install_draft_golden.txt`. `--out-dir` writes the same files, and refuses a directory that exists. A secret reference is a secret and never a word of the command. A state directory names its variable last. Each refusal of a server file. `integration/proc/test_proc_install_draft.py` gives the golden file to the real `chaperone check`. |
 | `test_yaml_to_toml.py` | The layout that `yaml-to-toml.py` writes, each refusal, the proof of `--check` and each exit status. The test holds its own YAML texts. It also converts each tracked YAML file of the three kinds and checks each pair. A tree with no such file passes. The values of each TOML text equal what `yaml.safe_load` gives for the YAML text. |
-| `test_bin_hook_env.py`, `test_env_upsert.sh` | A re-run never drops another key from a shared env file. |
+| `test_envfile_shell.py`, `test_env_upsert.sh` | A re-run never drops another key from a shared env file. |
 | `test_envfile_vectors.py` | The command `creche-env` gives the result of each vector of `envfile.layer` and `envfile.raw`. `creche_env_check` and `creche_env_get` of `lib/envfile.sh` give it too, for each vector whose pair asks no account. Each function runs the command of its own tree, with its words, and keeps status 78. A `cd` after the source does not change that tree. |
 | `test_envfile_catalog.py` | The catalog of the product: the example value of each required key is a value of its type. The two files name no IPv4 address outside 192.0.2.0/24 and 127.0.0.0/8. Each key of `root-keys.txt` is a catalog key. No key of `default.env` has another value than in an earlier version of the file on the base branch. A copy of `example.env` stops the command with status 78 and names each required key. |
 | `test_pre_push_select.sh`, `test_pre_push_scope.py` | What a push tests. |
@@ -292,7 +210,7 @@ scope of `release.yml` ask it.
 | `test_git_config_dropped.py` | No `git` child of a test run reads the config file of a person or of the system. The same holds for the ignore file and the attributes file of a person. The root `conftest.py` sets the variables that do this. The registry writer of the noticeboard, `noticeboard/src/noticeboard/registrywrite.py`, starts `git` with `HOME` and with none of those variables. The root `conftest.py` gives each test under `noticeboard/tests` an empty home directory. That child then starts no program that a config file below `HOME` names, but it still reads the config file of the system. |
 | `test_git_background_dropped.py` | No `git` command that inherits the environment of a test run starts the maintenance that `git` does not wait for. That holds for a commit, a merge, a fetch and a repository that receives a push. The root `conftest.py` sets the two settings that do this. A fixture that asks for the maintenance gets it in the foreground. |
 | `test_ignored_signal_kept.py` | A test run that starts with SIGINT, SIGTERM or SIGHUP ignored passes the same tests, and the signal stays ignored. The fixture of the root `conftest.py` still fails a handler that a test leaves. |
-| `test_creche_deploy.py`, `test_creche_watchdog.py`, `test_creche_registry_sync.py`, `test_sbx_drift_check.py`, `test_sync_code_corpus.py`, `test_provision_library.py` | Each script, against binstubs and a temp root. |
+| `test_creche_deploy.py`, `test_provision_library.py` | Each script, against binstubs and a temp root. |
 
 ## Adding a script
 
@@ -313,22 +231,6 @@ stays in the git log.
 
 ## Known gaps
 
-- `creche-watchdog.sh`, the form of a notice file. No contract text gives
-  that form yet. The script takes this reading: the key `push` is on a line
-  of its own, behind one space, with one space after the colon. A JSON
-  writer with sorted keys and an indent of one space writes that line. A
-  service name has 64 characters at most, and one line has 256 tokens at
-  most. A `<seconds>` that is more than one hour after the time of the run
-  gets no notice. A change costs the patterns of the script and their tests.
-- `creche-watchdog.sh`, a failed send of a JSON notice. No contract text
-  says which failed send the hook can have taken. The script takes this
-  reading: only two cases count as proof that the hook took no notice. The
-  two cases are a host with no hook, and curl status 6 or 7. A curl status
-  of 22 means that the hook answered with an HTTP error. The owner of the
-  repository decided this case. The record keeps the line of that notice,
-  so that notice is missed. So a hook that refuses the bearer misses each
-  JSON notice. The journal line of each failed send names the HTTP code. A
-  change costs the list of statuses and its tests.
 - `yaml-to-toml.py`, a null value in a list. TOML has no null. The script
   drops a null value of a mapping key and names it on stderr. No rule says
   what a null item of a list becomes, and no tracked file holds one. The

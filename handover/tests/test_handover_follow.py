@@ -20,12 +20,8 @@ from pathlib import Path
 
 import pytest
 from handover.catalog import (
-    ARRIVING_REPOS,
-    CATALOG,
     CATALOG_BY_NAME,
-    RETIRING,
     Repo,
-    releasable_names,
 )
 from handover.corpus import CorpusReport
 from handover.executor.approval import Verdict, not_granted
@@ -629,44 +625,6 @@ def test_follow_imports_only_the_executors_pure_modules() -> None:
         for line in module.read_text(encoding="utf-8").splitlines():
             if "executor" in line and line.startswith(("from", "import")):
                 assert line.startswith(allowed), (module.name, line)
-
-
-# -- the units ----------------------------------------------------------------
-
-_SYSTEMD = _PACKAGE.parents[2] / "systemd"
-
-
-def _unit_value(name: str, key: str) -> str:
-    lines = (_SYSTEMD / name).read_text(encoding="utf-8").splitlines()
-    found = [line.partition("=")[2] for line in lines if line.startswith(f"{key}=")]
-    assert len(found) == 1, (name, key, found)
-
-    return found[0]
-
-
-def test_the_service_runs_follow_out_of_the_handover_tree() -> None:
-    """A `handover` release then changes what the timer runs, with no deploy."""
-    argv = _unit_value("creche-follow.service", "ExecStart").split()
-
-    assert argv[:2] == ["/opt/components/handover/bin/handover", "follow"]
-    assert cli.build_parser().parse_args(argv[1:]).command == "follow"
-
-
-def test_the_service_follows_every_component_a_release_can_deploy() -> None:
-    """Every releasable component of the catalog, less the one on its way
-    out and each one of a repository that the host has not cloned yet. A
-    name that is absent here waits for a typed command for ever."""
-    argv = _unit_value("creche-follow.service", "ExecStart").split()
-    followed = cli.build_parser().parse_args(argv[1:]).components
-
-    uncloned = {row.name for row in CATALOG if row.repo in ARRIVING_REPOS}
-
-    assert set(followed) == set(releasable_names()) - RETIRING - uncloned
-    assert len(followed) == len(set(followed))
-
-
-def test_the_timer_starts_the_service() -> None:
-    assert _unit_value("creche-follow.timer", "Unit") == "creche-follow.service"
 
 
 # -- rule 8: the registry watch (stage7 §3.3 rule 7) --------------------------

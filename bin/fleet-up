@@ -100,18 +100,14 @@ PRINCIPALS="chaperone-delegate chaperone-dispatch door-trigger noticeboard door-
 SECRET_BYTES=48
 
 # Each user unit, in the order `up` installs and starts it. attendance comes
-# first: each door and the caregiver dial it.
+# first: each door and the caregiver dial it. The host's own units (the
+# watchdog, the syncs, the drift check, `library@` and follow) are no unit of
+# this list: a `host` release of creche-release links them.
 UNITS="creche-attendance.service creche-caregiver.service creche-noticeboard.service \
-creche-door-acp.service creche-door-trigger.service creche-door-trigger@.service \
-creche-watchdog.service creche-watchdog.timer creche-registry-sync.service creche-registry-sync.timer \
-creche-code-corpus-sync.service creche-code-corpus-sync.timer creche-sbx-drift.service creche-sbx-drift.timer \
-creche-library@.service creche-library@.timer creche-follow.service creche-follow.timer"
-# The units `up` enables with `--now`. A template, and a service that a
-# timer starts, are installed only. `bin/provision-library.sh` enables one
-# `creche-library@<scope>.timer` for each scope.
+creche-door-acp.service creche-door-trigger.service creche-door-trigger@.service"
+# The units `up` enables with `--now`. A template is installed only.
 ENABLED_UNITS="creche-attendance.service creche-caregiver.service creche-noticeboard.service \
-creche-door-acp.service creche-door-trigger.service creche-watchdog.timer \
-creche-registry-sync.timer creche-code-corpus-sync.timer creche-sbx-drift.timer creche-follow.timer"
+creche-door-acp.service creche-door-trigger.service"
 
 UV_MINIMUM=0.12.17
 CHAPERONE_DIR_MODE=1775
@@ -201,12 +197,6 @@ unit_tree() {  # unit_tree <unit>: which tree the unit runs from
       say attendance ;;
     creche-caregiver.service) say caregiver ;;
     creche-noticeboard.service) say noticeboard ;;
-    creche-follow.service|creche-follow.timer) say handover ;;
-    creche-registry-sync.service|creche-registry-sync.timer) say registry ;;
-    creche-watchdog.service|creche-watchdog.timer) say product ;;
-    creche-code-corpus-sync.service|creche-code-corpus-sync.timer) say product ;;
-    creche-sbx-drift.service|creche-sbx-drift.timer) say product ;;
-    creche-library@.service|creche-library@.timer) say product ;;
     *) return 1 ;;
   esac
 }
@@ -214,9 +204,6 @@ unit_tree() {  # unit_tree <unit>: which tree the unit runs from
 tree_is_there() {  # tree_is_there <tree>
   case "$1" in
     attendance|caregiver|noticeboard) [[ -f "$COMPONENT_ROOT/$1/$STAMP" ]] ;;
-    handover) [[ -f "$INSTALL_ROOT/handover/$STAMP" ]] ;;
-    registry) [[ -d "$REGISTRY/.git" ]] ;;
-    product) [[ -f "$TREE/bin/creche-watchdog.sh" && -f "$TREE/bin/creche-registry-sync.sh" ]] ;;
     *) return 1 ;;
   esac
 }
@@ -523,9 +510,6 @@ waiting_line() {  # waiting_line <trees>
   for tree in $1; do
     case "$tree" in
       attendance|caregiver|noticeboard) components="$components $tree" ;;
-      handover) pending "no handover tree at $INSTALL_ROOT/handover: root installs it (docs/fleet-bootstrap.md, root step R3)" ;;
-      registry) pending "no registry checkout at $REGISTRY: the owner clones it (docs/fleet-bootstrap.md, owner step O1)" ;;
-      product) pending "no deployed checkout: sudo creche-deploy" ;;
     esac
   done
 
@@ -570,6 +554,10 @@ remove_entry() {  # remove_entry <kind> <path>: 0 when removed or gone, 1 when k
       say "  disabled and stopped $2" ;;
     unit|file)
       [[ -e "$2" || -L "$2" ]] || return 0
+      if [[ "$1" == unit ]] && host_owns "$2"; then
+        say "  kept $2: a host release links it now"
+        return 1
+      fi
       if [[ -d "$2" && ! -L "$2" ]]; then
         say "  kept $2: it is a directory now"
         return 1
@@ -586,6 +574,16 @@ remove_entry() {  # remove_entry <kind> <path>: 0 when removed or gone, 1 when k
   esac
 
   return 0
+}
+
+# A unit file that is a link into the `host` tree. An older `up` installed
+# the host's units as copies and recorded them. A `host` release replaced
+# each copy with a link, and the link is the release's, not this script's.
+host_owns() {  # host_owns <path>
+  local target
+  [[ -L "$1" ]] || return 1
+  target="$(readlink -- "$1")" || return 1
+  [[ "$target" == "$INSTALL_ROOT/host/"* ]]
 }
 
 verb_down() {
@@ -699,7 +697,7 @@ check_root() {
   item "R2 cosign at $COSIGN" test -x "$COSIGN"
   item "R2 uv $UV_MINIMUM or newer at $UV (found: $(uv_version))" uv_is_new
   item "R2 sbx on PATH" has_program sbx
-  item "R3 deployed checkout at $PRODUCT_ROOT" test -f "$PRODUCT_ROOT/bin/creche-watchdog.sh"
+  item "R3 deployed checkout at $PRODUCT_ROOT" test -f "$PRODUCT_ROOT/bin/fleet-up"
   item "R3 handover tree at $INSTALL_ROOT/handover" test -f "$INSTALL_ROOT/handover/$STAMP"
   item "R4 group chaperone exists and holds $me" group_has_me chaperone
   item "R4 this login has the group chaperone (restart the user manager after usermod)" \

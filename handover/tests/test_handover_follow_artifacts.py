@@ -67,8 +67,6 @@ START = 1_760_000_000.0
 WAITING = f"waiting: the artifact of {BOARD} {NEXT} is not in the store"
 OMITTED = f"omitted: {BOARD} {NEXT} has no artifact after {ARTIFACT_WAIT_S} s"
 
-_UNIT = Path(__file__).resolve().parents[2] / "systemd" / "creche-follow.service"
-
 
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(
@@ -375,14 +373,15 @@ def test_a_run_gets_the_time_that_is_left_of_its_deadline(host: _Host) -> None:
     assert argv[argv.index("--max-time") + 1] == str(min(RUN_DEADLINE_S, CHILD_MAX_S))
 
 
+#: `TimeoutStartSec` of `units/user/creche-follow.service` in creche-release.
+#: The unit file left this repository. Change both together.
+FOLLOW_UNIT_TIMEOUT_S = 300
+
+
 def test_the_deadline_of_a_run_is_below_the_time_limit_of_the_unit() -> None:
     """The unit stops a run that is still active at its limit. The fetch
     must end before that, so a run ends with its own line."""
-    lines = _UNIT.read_text(encoding="utf-8").splitlines()
-    found = [line.partition("=")[2] for line in lines if line.startswith("TimeoutStartSec=")]
-
-    assert len(found) == 1
-    assert int(found[0]) > RUN_DEADLINE_S
+    assert FOLLOW_UNIT_TIMEOUT_S > RUN_DEADLINE_S
 
 
 # -- a set with no binary member ------------------------------------------------
