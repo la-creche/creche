@@ -23,7 +23,10 @@ from handover.catalog import (
     CATALOG,
     CATALOG_BY_NAME,
     RETIRING,
+    CatalogRow,
     Kind,
+    Lock,
+    Releases,
     Repo,
 )
 from handover.discovery import discover
@@ -297,3 +300,14 @@ def test_a_workspace_file_does_not_change_a_venv_digest(tmp_path: Path, changed:
 
     assert before is not None
     assert _digest_after(repo, "caregiver", changed) == before
+
+
+def test_a_venv_with_its_own_lock_digests_its_subtree_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Contract 06 §9: the lock of such a component is under its path, so
+    its digest inputs add no lock file."""
+    row = CatalogRow("own-lock", Repo.CRECHE, "own-lock", Kind.VENV, Releases.YES, (), Lock.OWN)
+    monkeypatch.setitem(CATALOG_BY_NAME, row.name, row)
+
+    assert digest_paths(row.name) == ("own-lock",)
