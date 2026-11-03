@@ -48,5 +48,36 @@
   "Refusal": [
     {"json": "\"changed\"", "written": "\"changed\"", "note": "a refusal"},
     {"json": "\"service_down\"", "written": null, "note": "refused: the upstream's own reason, never on the wire"}
+  ],
+  "Request": [
+    {"json": "{\"v\":1,\"op\":\"search\",\"caller\":\"chat\",\"query\":\"printer ink\",\"k\":6}", "written": "{\"v\":1,\"op\":\"search\",\"caller\":\"chat\",\"query\":\"printer ink\",\"k\":6}", "note": "search"},
+    {"json": "{\"v\":1,\"op\":\"read\",\"caller\":\"ha-review\",\"path\":\"house/ha/report.md\"}", "written": "{\"v\":1,\"op\":\"read\",\"caller\":\"ha-review\",\"path\":\"house/ha/report.md\"}", "note": "read"},
+    {"json": "{\"v\":1,\"op\":\"list\",\"caller\":\"scrum-lead\",\"folder\":\"\"}", "written": "{\"v\":1,\"op\":\"list\",\"caller\":\"scrum-lead\",\"folder\":\"\"}", "note": "list the vault root"},
+    {"json": "{\"v\":1,\"op\":\"create\",\"caller\":\"chat\",\"slug\":\"dentist\",\"title\":\"Dentist\",\"body\":\"Prefers the dentist on Oak St.\"}", "written": "{\"v\":1,\"op\":\"create\",\"caller\":\"chat\",\"slug\":\"dentist\",\"title\":\"Dentist\",\"body\":\"Prefers the dentist on Oak St.\"}", "note": "create"},
+    {"json": "{\"v\":1,\"op\":\"rewrite\",\"caller\":\"scrum-lead\",\"path\":\"house/scrum/STATE.md\",\"text\":\"# State\\n\",\"if_match\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}", "written": "{\"v\":1,\"op\":\"rewrite\",\"caller\":\"scrum-lead\",\"path\":\"house/scrum/STATE.md\",\"text\":\"# State\\n\",\"if_match\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}", "note": "rewrite"},
+    {"json": "{\"v\":1,\"op\":\"rewrite\",\"caller\":\"ha-review\",\"path\":\"house/ha/new.md\",\"text\":\"x\",\"if_match\":\"new\"}", "written": "{\"v\":1,\"op\":\"rewrite\",\"caller\":\"ha-review\",\"path\":\"house/ha/new.md\",\"text\":\"x\",\"if_match\":\"new\"}", "note": "rewrite a new file"},
+    {"json": "{\"v\":2,\"op\":\"read\",\"caller\":\"chat\",\"path\":\"a.md\"}", "written": null, "note": "refused: an unknown version"},
+    {"json": "{\"v\":1,\"op\":\"delete\",\"caller\":\"chat\",\"path\":\"a.md\"}", "written": null, "note": "refused: an unknown op"},
+    {"json": "{\"v\":1,\"op\":\"read\",\"caller\":\"chat\",\"path\":\"a.md\",\"extra\":1}", "written": null, "note": "refused: an extra key"},
+    {"json": "{\"v\":1,\"op\":\"read\",\"path\":\"a.md\"}", "written": null, "note": "refused: no caller"},
+    {"json": "{\"v\":1,\"op\":\"read\",\"caller\":\"Chat\",\"path\":\"a.md\"}", "written": null, "note": "refused: a caller that is not a family name"},
+    {"json": "{\"v\":1,\"op\":\"search\",\"caller\":\"chat\",\"query\":\"x\",\"k\":6}", "written": null, "note": "refused: a query of 1 character"},
+    {"json": "{\"v\":1,\"op\":\"search\",\"caller\":\"chat\",\"query\":\"ink\",\"k\":13}", "written": null, "note": "refused: k over 12"},
+    {"json": "{\"v\":1,\"op\":\"search\",\"caller\":\"chat\",\"query\":\"ink\",\"k\":\"6\"}", "written": null, "note": "refused: k as a string"},
+    {"json": "{\"v\":1,\"op\":\"search\",\"caller\":\"chat\",\"query\":\"ink\",\"k\":true}", "written": null, "note": "refused: k as a boolean"},
+    {"json": "{\"v\":1,\"op\":\"create\",\"caller\":\"chat\",\"slug\":\"a\",\"title\":\"Two\\nlines\",\"body\":\"x\"}", "written": null, "note": "refused: a title of two lines"},
+    {"json": "{\"v\":1,\"op\":\"rewrite\",\"caller\":\"chat\",\"path\":\"a.md\",\"text\":\"x\"}", "written": null, "note": "refused: no if_match"}
+  ],
+  "Reply": [
+    {"json": "{\"ok\":true,\"op\":\"search\",\"facts\":\"Epson ET-2850 uses 522 ink.\",\"passages\":[{\"path\":\"house/memories/printer.md\",\"snippet\":\"Epson 522 ink bottles\"}]}", "written": "{\"ok\":true,\"op\":\"search\",\"facts\":\"Epson ET-2850 uses 522 ink.\",\"passages\":[{\"path\":\"house/memories/printer.md\",\"snippet\":\"Epson 522 ink bottles\"}]}", "note": "search"},
+    {"json": "{\"ok\":true,\"op\":\"read\",\"path\":\"a.md\",\"text\":\"t\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"bytes\":1,\"modified\":\"2026-11-02T08:30:00Z\"}", "written": "{\"ok\":true,\"op\":\"read\",\"path\":\"a.md\",\"text\":\"t\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"bytes\":1,\"modified\":\"2026-11-02T08:30:00Z\"}", "note": "read"},
+    {"json": "{\"ok\":true,\"op\":\"read\",\"path\":\"a.md\",\"text\":\"t\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"bytes\":1,\"modified\":\"2026-11-02T08:30:00+00:00\"}", "written": "{\"ok\":true,\"op\":\"read\",\"path\":\"a.md\",\"text\":\"t\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"bytes\":1,\"modified\":\"2026-11-02T08:30:00Z\"}", "note": "read: a UTC offset of +00:00 is written as Z"},
+    {"json": "{\"ok\":true,\"op\":\"list\",\"notes\":[{\"path\":\"house/a.md\",\"bytes\":10,\"modified\":\"2026-11-02T08:30:00Z\"}],\"folders\":[\"house/ha\"]}", "written": "{\"ok\":true,\"op\":\"list\",\"notes\":[{\"path\":\"house/a.md\",\"bytes\":10,\"modified\":\"2026-11-02T08:30:00Z\"}],\"folders\":[\"house/ha\"]}", "note": "list"},
+    {"json": "{\"ok\":true,\"op\":\"create\",\"path\":\"inbox/2026-11-02-dentist.md\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}", "written": "{\"ok\":true,\"op\":\"create\",\"path\":\"inbox/2026-11-02-dentist.md\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}", "note": "create"},
+    {"json": "{\"ok\":false,\"refused\":\"changed\",\"reason\":\"the file changed since it was read\"}", "written": "{\"ok\":false,\"refused\":\"changed\",\"reason\":\"the file changed since it was read\"}", "note": "a refusal"},
+    {"json": "{\"ok\":true,\"op\":\"read\",\"path\":\"a.md\",\"text\":\"t\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"bytes\":1,\"modified\":\"2026-11-02T08:30:00\"}", "written": null, "note": "refused: a time with no UTC offset"},
+    {"json": "{\"ok\":true,\"op\":\"read\",\"path\":\"a.md\",\"text\":\"t\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"bytes\":1,\"modified\":\"2026-11-02T08:30:00-05:00\"}", "written": null, "note": "refused: a time not in UTC"},
+    {"json": "{\"ok\":false,\"refused\":\"service_down\",\"reason\":\"x\"}", "written": null, "note": "refused: the upstream's own reason"},
+    {"json": "{\"ok\":true,\"refused\":\"changed\",\"reason\":\"x\"}", "written": null, "note": "refused: a refusal with ok true"}
   ]
 }

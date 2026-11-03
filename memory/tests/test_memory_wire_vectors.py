@@ -10,6 +10,7 @@ from typing import Any
 
 import creche_memory
 import pytest
+from creche_memory.wire import MAX_BODY_BYTES
 from pydantic import TypeAdapter, ValidationError
 
 VECTOR_FILE = Path(__file__).resolve().parents[1] / "vectors" / "wire.json"
@@ -58,3 +59,18 @@ def test_each_wire_type_has_both_kinds_of_case() -> None:
         written = [case["written"] for case in cases]
         assert any(text is not None for text in written), type_name
         assert any(text is None for text in written), type_name
+
+
+BODY_CASES = [(MAX_BODY_BYTES, "accepted"), (MAX_BODY_BYTES + 1, "refused")]
+
+
+@pytest.mark.parametrize(("size", "outcome"), BODY_CASES)
+def test_the_body_cap_counts_bytes(size: int, outcome: str) -> None:
+    body = "é" * (size // 2) + "x" * (size % 2)
+    line = json.dumps(
+        {"v": 1, "op": "create", "caller": "chat", "slug": "a", "title": "A", "body": body}
+    )
+    written = _read_and_write("Request", line)
+
+    assert len(body.encode()) == size
+    assert ("accepted" if written is not None else "refused") == outcome
