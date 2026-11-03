@@ -20,7 +20,17 @@ from handover.allocate import (
     touched,
     untagged,
 )
-from handover.catalog import ARRIVING, CATALOG, CATALOG_BY_NAME, RETIRING, Kind, Repo
+from handover.catalog import (
+    ARRIVING,
+    CATALOG,
+    CATALOG_BY_NAME,
+    RETIRING,
+    CatalogRow,
+    Kind,
+    Lock,
+    Releases,
+    Repo,
+)
 from handover.discovery import discover
 from handover.errors import Refusal, RefusalCode
 from handover_fixtures import manifest_text, write_manifest
@@ -272,6 +282,31 @@ def test_a_members_lock_file_is_not_the_roots() -> None:
     plans = _plan(("playpen/uv.lock",), tags=ALL_TAGGED)
 
     assert {plan.component for plan in plans} == {"playpen"}
+
+
+#: A venv row with a lock of its own, beside the real rows (contract 06 §1
+#: rule 10). Its build reads `<path>/uv.lock`, not the root one.
+OWN_LOCK_ROW = CatalogRow(
+    "own-lock", Repo.CRECHE, "own-lock", Kind.VENV, Releases.YES, (), Lock.OWN
+)
+
+
+def test_the_root_lock_does_not_move_a_venv_with_its_own_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A venv component outside the root workspace builds from its own
+    lock. A change to the root `uv.lock` changes nothing it installs, so it
+    moves the workspace's venv rows and not that one. Its own lock is under
+    its path, so a change there moves it."""
+    monkeypatch.setattr(allocate, "CATALOG", (*CATALOG, OWN_LOCK_ROW))
+    tags = (*ALL_TAGGED, "own-lock-v0.1.0")
+
+    root = {plan.component for plan in _plan(("uv.lock",), tags=tags)}
+    own = {plan.component for plan in _plan(("own-lock/uv.lock",), tags=tags)}
+
+    assert "own-lock" not in root
+    assert "attendance" in root
+    assert own == {"own-lock"}
 
 
 def test_a_merge_that_touches_nothing_plans_nothing() -> None:

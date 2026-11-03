@@ -44,7 +44,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Final
 
-from ..catalog import BINARY_BUILD_FILES, CATALOG_BY_NAME, Kind
+from ..catalog import BINARY_BUILD_FILES, CATALOG_BY_NAME, Kind, Lock
 from ..errors import Refusal, RefusalCode
 from ..resolve import TAG_FORMAT
 from ..site import operator_home
@@ -381,6 +381,11 @@ def digest_paths(component: str) -> tuple[str, ...]:
     # those are its lock files (`catalog.BINARY_BUILD_FILES`).
     if row.kind is Kind.BINARY:
         return tuple(sorted((path, *BINARY_BUILD_FILES.get(row.repo, ()))))
+
+    # A venv with its own lock reads `<path>/uv.lock`, which is in its
+    # subtree already (contract 06 §1 rule 10).
+    if row.kind is Kind.VENV and row.lock is Lock.OWN:
+        return (path,)
 
     return tuple(sorted((path, LOCK_FILE)))
 

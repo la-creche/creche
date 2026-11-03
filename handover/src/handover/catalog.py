@@ -88,6 +88,17 @@ class Releases(StrEnum):
     NO = "no"
 
 
+class Lock(StrEnum):
+    """Contract 06 §1 rule 10: which lock file a venv row's build reads."""
+
+    #: The root `uv.lock`. The root workspace builds the row, so a change to
+    #: that lock moves its tag.
+    WORKSPACE = "workspace"
+    #: `<path>/uv.lock`, under the row's own path. The row is no workspace
+    #: member, and the root `uv.lock` moves no tag of it.
+    OWN = "own"
+
+
 @dataclass(frozen=True)
 class CatalogRow:
     """One row of contract 06 §1. `path` is repo-relative, `.` for a whole repo.
@@ -95,6 +106,9 @@ class CatalogRow:
     `bundles` is every other workspace directory the component's `build`
     installs (contract 06 §1 rule 9). A change there changes the artifact,
     so it moves the component's tag exactly as a change under `path` does.
+
+    `lock` is the lock file that a venv build reads (contract 06 §1 rule
+    10). Only a `kind: venv` row reads it.
     """
 
     name: str
@@ -103,6 +117,7 @@ class CatalogRow:
     kind: Kind
     releases: Releases
     bundles: tuple[str, ...] = ()
+    lock: Lock = Lock.WORKSPACE
 
 
 #: Contract 06 §1, in its own order. `caregiver` sits at `caregiver/`,

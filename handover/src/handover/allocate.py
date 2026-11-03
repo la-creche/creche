@@ -26,7 +26,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 
-from .catalog import ARRIVING, BINARY_BUILD_FILES, CATALOG, RETIRING, CatalogRow, Kind, Repo
+from .catalog import ARRIVING, BINARY_BUILD_FILES, CATALOG, RETIRING, CatalogRow, Kind, Lock, Repo
 from .errors import Refusal, RefusalCode, safe_token
 
 #: Contract 06 §2: one expression reads every component tag, in every repo.
@@ -181,8 +181,10 @@ def _matches(path: str, row: CatalogRow) -> bool:
     if row.path == REPO_ROOT_PATH:
         return True
 
-    # The lock file pins what every venv build installs (`LOCK_FILE`).
-    if row.kind is Kind.VENV and path == LOCK_FILE:
+    # The root lock file pins what each venv build of the root workspace
+    # installs (`LOCK_FILE`). A row with its own lock reads a file under its
+    # path, which the last rule below already holds (contract 06 §1 rule 10).
+    if row.kind is Kind.VENV and row.lock is Lock.WORKSPACE and path == LOCK_FILE:
         return True
 
     # The Cargo workspace files decide what every binary build makes, and
