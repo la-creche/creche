@@ -17,8 +17,8 @@ use schemars::transform::transform_subschemas;
 use serde_json::{Value, json};
 
 use super::{
-    AutoJobId, DelegationId, FamilyConfig, FamilyStateReply, JS_INTEGER_MAX, JobId, SessionId,
-    SessionOrigin, SessionRow, TurnEvent, UnixMillis,
+    AutoJobId, ControlHello, ControlReady, DelegationId, FamilyConfig, FamilyStateReply,
+    JS_INTEGER_MAX, JobId, SessionId, SessionOrigin, SessionRow, TurnEvent, UnixMillis,
 };
 
 /// The variable that makes the test write the file instead of checking it.
@@ -56,6 +56,8 @@ pub(super) fn wire_schema() -> Value {
     let _ = generator.subschema_for::<TurnEvent>();
     let _ = generator.subschema_for::<FamilyConfig>();
     let _ = generator.subschema_for::<FamilyStateReply>();
+    let _ = generator.subschema_for::<ControlHello>();
+    let _ = generator.subschema_for::<ControlReady>();
 
     json!({
         "$schema": "https://json-schema.org/draft/2020-12/schema",

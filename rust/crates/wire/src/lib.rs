@@ -3,6 +3,7 @@
 //! init, caregiver and attendance.
 
 use std::fmt;
+use std::num::NonZeroU32;
 use std::str::FromStr;
 
 use serde::de::value::MapAccessDeserializer;
@@ -844,6 +845,221 @@ pub enum TurnEvent {
     #[cfg_attr(test, schemars(title = "TurnEndEvent"))]
     End(TurnEnd),
 }
+
+/// What the vmm sends first on each new control link, guest port 1200
+/// (decisions CH13, CH14). A new link replaces the old one (decision CH19
+/// rule 2). Guest init sets `CLOCK_REALTIME` to `sent_at` with
+/// `clock_settime` before it answers with `ControlReady` (decision CH28),
+/// because after a restore the guest clock is behind by the time the VM
+/// spent as a snapshot (fact 73).
+///
+/// The hello carries no family name and no protocol version (decision CH32
+/// rules 1 and 2). The vmm writes guest init at each cold boot (decision
+/// CH7-6). A restore brings back the guest init of the snapshot, so the
+/// vmm restores a snapshot only when its key holds the same guest-init
+/// protocol version (decision CH7-6). So the two never skew in protocol.
+/// A later hello can name a session that differs from the first one. Guest
+/// init then closes the link, and the vmm records a fault and cold-boots
+/// the VM (decision CH32 rule 3). No wire type carries that case.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct ControlHello {
+    /// The wall time of the vmm when it sent the hello.
+    pub sent_at: UnixMillis,
+    /// The session that the VM serves (decisions CH1, CH5e). The facade
+    /// opens this one session at start, and creates it when it is new
+    /// (decisions CH21-8, CH25 rule 2).
+    pub session: SessionId,
+}
+
+object_only!(ControlHello);
+
+/// How many times guest init started the facade since the VM booted
+/// (decision CH19 rule 1). A restore keeps guest init's memory, so it keeps
+/// the count. It is at least 1: a facade that never started has no count.
+///
+/// On the wire it is a JSON integer from 1 to 2^53 - 1, so JavaScript reads
+/// it exactly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(try_from = "u64", into = "u64")]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[cfg_attr(test, schemars(extend("minimum" = 1, "maximum" = JS_INTEGER_MAX)))]
+pub struct StartCount(u64);
+
+/// Why an integer is not a `StartCount`: it is 0 or larger than 2^53 - 1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StartCountError;
+
+impl StartCount {
+    /// The count.
+    #[must_use]
+    pub fn get(self) -> u64 {
+        self.0
+    }
+}
+
+impl TryFrom<u64> for StartCount {
+    type Error = StartCountError;
+
+    fn try_from(count: u64) -> Result<Self, Self::Error> {
+        if count == 0 || count > JS_INTEGER_MAX {
+            return Err(StartCountError);
+        }
+        Ok(Self(count))
+    }
+}
+
+impl From<StartCount> for u64 {
+    fn from(count: StartCount) -> Self {
+        count.0
+    }
+}
+
+impl fmt::Display for StartCountError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a start count is 1 to 2^53 - 1")
+    }
+}
+
+impl std::error::Error for StartCountError {}
+
+/// The facade before guest init starts it the first time. It carries
+/// nothing: no turn can end before a facade starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct FacadeNotStarted {}
+
+object_only!(FacadeNotStarted);
+
+/// A facade process that guest init started, which did not open its local
+/// link to guest init yet (decision CH32 rule 6). Guest init gets no turn
+/// event before that link opens, so this state has no turn flag.
+///
+/// Each key is required. `last_turn_end` reads with `Option::deserialize`,
+/// so a missing key is refused.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[cfg_attr(test, schemars(transform = schema::require_each_key))]
+pub struct FacadeStarting {
+    /// The last turn end that guest init got since the VM booted, or `null`
+    /// when no turn ended. A facade that exited and starts again keeps it,
+    /// because guest init keeps it. On the first start (`starts` 1) it is
+    /// always `null`, because no local link opened yet (decision CH32 rule
+    /// 7). The type does not refuse a value there. `FacadeState` says how
+    /// the vmm applies it.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub last_turn_end: Option<TurnEnd>,
+    /// The pid of the facade in the guest, as in `FacadeRunning`.
+    pub pid: NonZeroU32,
+    /// How many times guest init started the facade, this start too.
+    pub starts: StartCount,
+}
+
+object_only!(FacadeStarting);
+
+/// A facade process that runs and opened its local link to guest init.
+///
+/// Each key is required. `last_turn_end` reads with `Option::deserialize`,
+/// so a missing key is refused.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[cfg_attr(test, schemars(transform = schema::require_each_key))]
+pub struct FacadeRunning {
+    /// The last turn end that guest init got since the VM booted, or `null`
+    /// when no turn ended. `FacadeState` says how the vmm applies it.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub last_turn_end: Option<TurnEnd>,
+    /// The pid of the facade in the guest. Guest init is pid 1, and a
+    /// 64-bit Linux keeps each pid below 2^22, so the facade's pid is 2 to
+    /// 2^22 - 1. The type accepts 1 to 2^32 - 1, the range of `Child::id`.
+    pub pid: NonZeroU32,
+    /// How many times guest init started the facade, this start too.
+    pub starts: StartCount,
+    /// True when the facade sent a turn start and no turn end after it
+    /// (decision CH21).
+    pub turn_running: bool,
+}
+
+object_only!(FacadeRunning);
+
+/// A facade that exited: `waitpid` reported it gone, and guest init did not
+/// start the next one yet (decision CH19 rule 1). No turn runs.
+///
+/// Each key is required. `last_turn_end` reads with `Option::deserialize`,
+/// so a missing key is refused.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[cfg_attr(test, schemars(transform = schema::require_each_key))]
+pub struct FacadeExited {
+    /// The last turn end that guest init got since the VM booted, or `null`
+    /// when no turn ended. `FacadeState` says how the vmm applies it.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub last_turn_end: Option<TurnEnd>,
+    /// How many times guest init started the facade.
+    pub starts: StartCount,
+}
+
+object_only!(FacadeExited);
+
+/// The facade as guest init sees it (decision CH19 rule 2). Only a live
+/// facade has a pid, only a running facade has a turn, and a facade that
+/// never started has no start count.
+///
+/// The facade is up for decision CH19 rule 6 only in `running`. So the vmm
+/// snapshots a VM only when the facade is `running` and `turn_running` is
+/// false. A `starting` facade is not up: guest init cannot see its turns
+/// yet, so the vmm never snapshots a turn that guest init cannot see
+/// (decision CH32 rule 6). When the local link of a live facade closes,
+/// guest init kills the facade, and the state moves to `exited` after
+/// `waitpid` (decision CH32 rule 7). So a facade never goes back from
+/// `running` to `starting`.
+///
+/// Each state after the first start holds `last_turn_end`, so
+/// `not_started` cannot carry one (decision CH32 rule 5). A restore can
+/// drop a turn event on the old link (fact 45), so guest init reports the
+/// last `TurnEnd`, not a current title (decision CH32 rule 4). The vmm
+/// applies it as it applies `TurnEvent::End`: it sets the row's
+/// `updated_at`, and it sets the row's title only while that is `null`.
+/// So an end that a restore dropped still arrives.
+///
+/// On the wire the variant name is the one key of an object, and each
+/// variant has a `title` for its class name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub enum FacadeState {
+    /// Guest init did not start the facade yet.
+    #[cfg_attr(test, schemars(title = "FacadeNotStartedState"))]
+    NotStarted(FacadeNotStarted),
+    /// The facade process is alive and did not open its local link yet.
+    #[cfg_attr(test, schemars(title = "FacadeStartingState"))]
+    Starting(FacadeStarting),
+    /// The facade runs and opened its local link.
+    #[cfg_attr(test, schemars(title = "FacadeRunningState"))]
+    Running(FacadeRunning),
+    /// The facade exited, and the next one did not start yet.
+    #[cfg_attr(test, schemars(title = "FacadeExitedState"))]
+    Exited(FacadeExited),
+}
+
+/// What guest init answers to `ControlHello`, after it sets its clock
+/// (decisions CH28, CH32). It holds the facade state (decision CH19 rule 2).
+/// The last turn end sits in the facade state. The answer stays an object,
+/// so a later field has a place.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct ControlReady {
+    /// The facade.
+    pub facade: FacadeState,
+}
+
+object_only!(ControlReady);
 
 family_name!(
     /// The name of a granted skill: `SKILL_NAME` of `family/grammar.py`,
