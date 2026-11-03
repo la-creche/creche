@@ -69,6 +69,10 @@ def test_another_uid_gets_no_reply(vault: Path) -> None:
     server, path = _serve(vault, os.getuid() + 1)
     try:
         reply = _call(path, _request("read", path="profile/dentist.md"))
+    except ConnectionResetError:
+        # Linux resets the connection, because the server closes it with
+        # the request unread. A reset carries no reply either.
+        reply = b""
     finally:
         server.shutdown()
         server.server_close()
