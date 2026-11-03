@@ -1,7 +1,7 @@
 """§2.8's quiet window: do not drop every model call on the host.
 
-Recreating `ai-litellm` drops every in-flight model call: sandboxes, Open
-WebUI and the TUI alike. `ai-postgres` and `ai-redis` drag it along,
+Recreating `creche-litellm` drops every in-flight model call: sandboxes, Open
+WebUI and the TUI alike. `creche-postgres` and `creche-redis` drag it along,
 because it depends on them. So when step 8's compose dry run lists any of
 those three, step 9 waits for five consecutive quiet minutes **before it
 switches `infra`, and not before**.
@@ -18,7 +18,7 @@ operator's socket, with the `noticeboard` bearer.
 
 **Why not an nftables counter.** A named counter on `hook input` matching
 `ip daddr 192.0.2.10 tcp dport 4000` never sees the traffic. Measured on the
-host 2026-09-21: `ai-litellm` is a BRIDGED container,
+host 2026-09-21: `creche-litellm` is a BRIDGED container,
 `192.0.2.10:4000 -> <its bridge address>:4000`, with `docker-proxy` listening. Docker
 DNATs that traffic in `prerouting` and in `output`, so after NAT it is
 forwarded to the container and never passes the `input` hook. The counter
@@ -88,7 +88,7 @@ QUIET_POLL_S: Final = 30.0
 QUIET_MAX_WAIT_S: Final = 3600.0
 
 #: §2.8's three services. Recreating any of them drops model calls.
-WATCHED_SERVICES: Final = ("ai-litellm", "ai-postgres", "ai-redis")
+WATCHED_SERVICES: Final = ("creche-litellm", "creche-postgres", "creche-redis")
 
 #: §2.8's own words, as a fixed reason (§3.2 rule 4).
 NO_WINDOW: Final = f"no quiet window in {QUIET_MAX_WAIT_S:.0f}s"
@@ -153,7 +153,7 @@ class Busy(StrEnum):
 
 #: When root last saw the host busy, or None when root could not look.
 #: `wait_for_quiet` treats None as busy, so a signal root cannot read waits
-#: out the hour instead of recreating `ai-litellm` under live calls.
+#: out the hour instead of recreating `creche-litellm` under live calls.
 BusySeenFn = Callable[[], float | None]
 
 #: What `attendance` answers now. Step 7 reads it.

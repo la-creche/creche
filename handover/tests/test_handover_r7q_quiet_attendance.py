@@ -1,7 +1,7 @@
 """§2.8's quiet window, read from `attendance` over its Unix socket.
 
 Why not an nftables counter: on the real host (measured 2026-09-21)
-`ai-litellm` is a BRIDGED container. Docker DNATs `192.0.2.10:4000` in
+`creche-litellm` is a BRIDGED container. Docker DNATs `192.0.2.10:4000` in
 `prerouting` and in `output`, so the traffic is forwarded to the container
 and never passes an `input` hook. A counter there never moves, "never moved
 for five minutes" is always true, and the window opens at once while turns
@@ -439,7 +439,7 @@ def test_a_host_that_never_goes_quiet_fails_the_switch(rig: Rig) -> None:
 def test_a_attendance_that_is_down_for_the_hour_fails_the_switch(rig: Rig) -> None:
     """The fail-closed end, and the one the nftables counter got wrong: a
     signal root cannot read waits out the hour instead of recreating
-    `ai-litellm` under live calls."""
+    `creche-litellm` under live calls."""
     clock = _Clock()
     rig.token_path.unlink()
 

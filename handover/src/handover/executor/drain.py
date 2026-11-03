@@ -370,7 +370,7 @@ def build_wiring(operator_uid: int, secrets: Secrets, operator_gid: int = 0) -> 
     §2.8's signal is `attendance`: no turn in flight for five consecutive
     minutes. A host whose session service root cannot reach reads nothing,
     and nothing is never quiet, so `infra` waits out its hour and fails the
-    switch instead of recreating `ai-litellm` under live calls. `operator_uid`
+    switch instead of recreating `creche-litellm` under live calls. `operator_uid`
     is the owner root demands of both the socket and the `noticeboard` token.
 
     `operator_gid` defaults to root's, which refuses every operator-owned corpus

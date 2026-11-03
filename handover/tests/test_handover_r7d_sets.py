@@ -74,7 +74,7 @@ SPEC: dict[str, tuple[str, str, str]] = {
     "attendance": ("venv", "creche-attendance.service", ""),
     "caregiver": ("venv", "creche-caregiver.service", ""),
     "noticeboard": ("venv", "creche-noticeboard.service", "attendance"),
-    "infra": ("compose", "ai-stack.service", ""),
+    "infra": ("compose", "creche-stack.service", ""),
     "playpen": ("oci-image", "null", ""),
     "handover": ("venv", "creche-handover.service", ""),
     "mcp-servers": ("venv", "null", ""),
@@ -366,13 +366,13 @@ def test_the_phone_summary_names_every_component_of_the_set(two: SetBench) -> No
 def test_a_diff_that_leaves_litellm_alone_needs_no_window() -> None:
     """§2.8: the check is on the SERVICE, because a service that goes away
     drops every in-flight model call whatever the verb was."""
-    assert not needs_window(["ai-openwebui"])
+    assert not needs_window(["creche-openwebui"])
     assert not needs_window([])
 
 
 @pytest.mark.parametrize("service", WATCHED_SERVICES)
 def test_a_diff_that_changes_a_watched_service_waits(service: str) -> None:
-    assert needs_window([service, "ai-openwebui"])
+    assert needs_window([service, "creche-openwebui"])
 
 
 #: `infra` left the catalog, and it was the one `kind: compose` row. The
@@ -398,7 +398,7 @@ def compose(tmp_path: Path) -> SetBench:
 def test_an_infra_release_that_recreates_litellm_waits_then_lands(compose: SetBench) -> None:
     """The gate's own case: a turn in flight blocks the switch, then the
     host goes quiet and the release lands."""
-    compose.run.answers["sync"] = "Recreate ai-litellm\nRecreate ai-redis\n"
+    compose.run.answers["sync"] = "Recreate creche-litellm\nRecreate creche-redis\n"
     # A turn seen just now: not quiet.
     compose.busy_seen[0] = compose.wiring.host.clock()
 
@@ -418,7 +418,7 @@ def test_an_infra_release_with_no_quiet_window_fails_the_switch(compose: SetBenc
     """§2.8: an hour with no window is `failed, step: switch`. The default
     reader answers None, which is never quiet — a host whose session service
     root cannot reach is not an idle host."""
-    compose.run.answers["sync"] = "Recreate ai-litellm\n"
+    compose.run.answers["sync"] = "Recreate creche-litellm\n"
     compose.busy_seen[0] = None
 
     _run(compose, {"infra": INFRA_NEW})
@@ -430,7 +430,7 @@ def test_an_infra_release_with_no_quiet_window_fails_the_switch(compose: SetBenc
 
 @_NO_COMPOSE_ROW
 def test_an_infra_diff_that_leaves_litellm_alone_never_waits(compose: SetBench) -> None:
-    compose.run.answers["sync"] = "Recreate ai-openwebui\n"
+    compose.run.answers["sync"] = "Recreate creche-openwebui\n"
     compose.busy_seen[0] = compose.wiring.host.clock()
 
     result = _run(compose, {"infra": INFRA_NEW})
