@@ -2,7 +2,11 @@
 //! file equal to it (decision CH9-1). The Python models are generated from
 //! that file, so a wire type that changes without the file fails here.
 //!
-//! To write the file after a change of a wire type, run
+//! The same test writes `agent/src/wire.ts`, a TypeScript copy of the
+//! schema, from which TypeBox gives the facade its static types and its
+//! runtime checks (decision CH22).
+//!
+//! To write the files after a change of a wire type, run
 //! `CRECHE_WIRE_SCHEMA=write cargo test -p creche-wire` in rust/.
 
 use std::path::PathBuf;
@@ -23,6 +27,17 @@ const WRITE: &str = "write";
 
 /// The committed file, relative to the crate.
 const SCHEMA_FILE: &str = "schema/wire.json";
+
+/// The committed TypeScript copy of the schema, relative to the crate.
+const TYPESCRIPT_FILE: &str = "../../../agent/src/wire.ts";
+
+/// The lines before the schema in the TypeScript copy.
+const TYPESCRIPT_HEAD: &str = "\
+// The JSON Schema of the wire types, a copy of rust/crates/wire/schema/wire.json
+// (decision CH22). The schema test of rust/crates/wire writes this file. Never
+// edit it: run `CRECHE_WIRE_SCHEMA=write cargo test -p creche-wire` in rust/.
+
+export const wire = ";
 
 /// The schema of every wire type, as one document with a `$defs` entry per
 /// type. The contract is the one of a reader: what a reader accepts.
@@ -106,27 +121,34 @@ fn is_integer(schema: &Schema) -> bool {
     }
 }
 
-fn rendered() -> String {
-    let mut text = serde_json::to_string_pretty(&wire_schema()).unwrap();
-    text.push('\n');
-    text
+/// Each committed file, relative to the crate, and the text it must hold.
+fn rendered() -> [(&'static str, String); 2] {
+    let json = serde_json::to_string_pretty(&wire_schema()).unwrap();
+    let typescript = format!("{TYPESCRIPT_HEAD}{json} as const;\n");
+
+    [
+        (SCHEMA_FILE, format!("{json}\n")),
+        (TYPESCRIPT_FILE, typescript),
+    ]
 }
 
 #[test]
 fn the_committed_schema_is_the_schema_of_the_wire_types() {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(SCHEMA_FILE);
-    let text = rendered();
+    let write = std::env::var(WRITE_VAR).as_deref() == Ok(WRITE);
 
-    if std::env::var(WRITE_VAR).as_deref() == Ok(WRITE) {
-        std::fs::write(&path, &text).unwrap();
-        return;
+    for (file, text) in rendered() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(file);
+        if write {
+            std::fs::write(&path, &text).unwrap();
+            continue;
+        }
+
+        let committed = std::fs::read_to_string(&path).unwrap_or_default();
+        assert!(
+            committed == text,
+            "{file} is not the schema of the wire types. Run `{WRITE_VAR}={WRITE} cargo test -p creche-wire` in rust/ and commit the file."
+        );
     }
-
-    let committed = std::fs::read_to_string(&path).unwrap_or_default();
-    assert!(
-        committed == text,
-        "{SCHEMA_FILE} is not the schema of the wire types. Run `{WRITE_VAR}={WRITE} cargo test -p creche-wire` in rust/ and commit the file."
-    );
 }
 
 #[test]

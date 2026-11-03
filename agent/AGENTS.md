@@ -18,7 +18,11 @@ pnpm run build     # src/ to dist/ with declarations, for the facade
 
 The facade imports `agent/agent` and `agent/config` from `dist/`
 (`package.json` `exports`). Its `build` and `typecheck` run this build
-first.
+first. `agent/wire` is exported too, for the facade's later reads.
+
+`src/wire.ts` is the JSON Schema of the wire types of the VM owner. The
+schema test of `rust/crates/wire` writes it (`wire/AGENTS.md`). Never edit
+it.
 
 The tests use `sqlite()` with no path, an in-memory store, and pi's
 `fauxProvider()`. A test needs no network and no model key.
