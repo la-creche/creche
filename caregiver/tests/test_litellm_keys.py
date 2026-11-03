@@ -287,7 +287,7 @@ def never_answer(request: httpx.Request) -> httpx.Response:
 def test_a_litellm_that_is_away_is_a_litellm_error(
     verb: str, call: KeysCall, away: Handler
 ) -> None:
-    """`sudo systemctl restart ai-stack` takes LiteLLM away for about half a
+    """`sudo systemctl restart creche-stack` takes LiteLLM away for about half a
     minute. A raw `httpx.ConnectError` from a spend read reaches no caller
     that catches it and would leave `serve` through the top of its loop.
     Every caller already turns a

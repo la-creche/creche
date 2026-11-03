@@ -1051,7 +1051,7 @@ def test_a_failed_spend_read_reaches_the_document_as_a_fault(fleet: Fleet) -> No
 
 
 def test_a_litellm_that_is_away_is_a_fault_and_never_the_end_of_the_pass(fleet: Fleet) -> None:
-    """An `ai-stack` restart refuses the real client's connection mid-read.
+    """A `creche-stack` restart refuses the real client's connection mid-read.
     A pass that cannot read the spend publishes the fault and goes on."""
     fleet.litellm = AwaySpend()
     result = fleet.run(spend=SpendRead.READ)

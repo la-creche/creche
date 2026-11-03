@@ -124,7 +124,7 @@ class HttpLiteLLMKeys:
         `LiteLLMError` like any other refusal, and every caller already turns
         that into a fault the status document carries.
 
-        `sudo systemctl restart ai-stack` takes LiteLLM away for about half a
+        `sudo systemctl restart creche-stack` takes LiteLLM away for about half a
         minute. A raw `httpx.ConnectError` from a spend read then would reach
         no caller that catches it and leave `serve` through the top of its
         loop. The message names the error's class and nothing the error
