@@ -76,7 +76,7 @@ through a file or a health endpoint, and give a short in-VM command a
 
 | Script | Runs as | What it does |
 |---|---|---|
-| `creche-deploy` | ROOT, the single sudoers entry | Puts this repository at `/opt/creche` and the site at `/opt/private-docs`, fills the venv. It restarts no unit. Origin is the operator's checkout, so root needs no GitHub credential. It installs no MCP server. |
+| `creche-deploy` | ROOT, the single sudoers entry | Puts this repository at `/opt/creche` and the site at `/opt/private-docs`, fills the venv. The site checkout serves the compose stack and the personal units. `/etc/creche` links into the `host` release instead. It restarts no unit. Origin is the operator's checkout, so root needs no GitHub credential. It installs no MCP server. |
 | `creche-handover` | ROOT, from `creche-handover.path` | Decrypts the site's sops file and execs `handover-exec` under it. Installed to `/usr/local/sbin` by hand, never by a release. Refuses a path another account can write. |
 | `provision-library.sh` | OPERATOR | One corpus: the image, the sandbox, TEI-only egress, the timer. Needs `AGENT_LAN_ADDRESS` from the site file. |
 | `fleet-up` | OPERATOR | Draft. `check`, `up`, `down` of the fleet layer: the tokens, the keys, the env files, the state directories and the user units. `check` is read-only and lists the root checklist. `up` records each write, and `down` removes only a recorded path. `docs/fleet-bootstrap.md` is the design. |
