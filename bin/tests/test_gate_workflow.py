@@ -219,6 +219,11 @@ AGENT_DIR = "agent"
 #: The job that runs the suite and the type check of `facade/`.
 FACADE_JOB = "facade"
 
+#: The job of the memory package, which has its own venv (memory/AGENTS.md).
+MEMORY_JOB = "memory"
+MEMORY_DIR = "memory"
+MEMORY_RUNS = ["uv sync --locked", "uv run pyright", "uv run pytest"]
+
 #: The whole run of that job, and where it runs. `pnpm test` builds first.
 FACADE_RUN = AGENT_RUN
 FACADE_DIR = "facade"
@@ -428,6 +433,7 @@ def test_the_docs_scope_runs_no_shard_and_no_node_job(
         FACADE_JOB,
         "proc",
         SUITES_JOB,
+        MEMORY_JOB,
         PLAYPEN_JOB,
         RUST_JOB,
         SYSTEMD_JOB,
@@ -455,6 +461,7 @@ def test_the_release_runs_the_gates_test_jobs() -> None:
         FACADE_JOB,
         "proc",
         SUITES_JOB,
+        MEMORY_JOB,
         PLAYPEN_JOB,
         RUST_JOB,
         SYSTEMD_JOB,
@@ -582,6 +589,35 @@ def test_the_rust_job_formats_lints_and_tests_the_workspace(
     assert toolchain["working-directory"] == RUST_DIR
     assert "rustup toolchain install --no-self-update" in toolchain["run"]
     assert checks == [{"run": run, "working-directory": RUST_DIR} for run in RUST_RUNS]
+
+
+@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
+def test_the_memory_job_checks_the_package_in_its_own_venv(
+    jobs: dict[str, dict[str, Any]], last: str
+) -> None:
+    """The memory package is not a workspace member, so no shard and no lint
+    run sees its store code. Its job syncs its own lock, then runs pyright
+    and pytest there."""
+    steps = jobs[MEMORY_JOB]["steps"]
+    runs = [step for step in steps if "run" in step]
+
+    assert jobs[MEMORY_JOB]["if"] == ONLY_CODE
+    assert steps[0]["with"] == {"fetch-depth": 0}
+    assert [step["run"] for step in runs] == MEMORY_RUNS
+    assert {step["working-directory"] for step in runs} == {MEMORY_DIR}
+    assert UV_SYNC not in [step.get("uses") for step in steps]
+
+
+def test_pyright_in_the_memory_job_reads_the_config_of_the_package() -> None:
+    """pyright looks for a `pyrightconfig.json` in each parent folder before
+    it reads `[tool.pyright]` of `pyproject.toml`. With no such file in
+    `memory/`, a run there loads the root file and checks the whole
+    workspace, which the memory venv cannot import."""
+    config = json.loads((REPO / MEMORY_DIR / "pyrightconfig.json").read_text(encoding="utf-8"))
+    package = tomllib.loads((REPO / MEMORY_DIR / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert config["include"] == ["src"]
+    assert "pyright" not in package.get("tool", {})
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
@@ -1005,6 +1041,7 @@ DOCS = {
     FACADE_JOB: "skipped",
     "proc": "skipped",
     SUITES_JOB: "skipped",
+    MEMORY_JOB: "skipped",
     PLAYPEN_JOB: "skipped",
     RUST_JOB: "skipped",
     SYSTEMD_JOB: "skipped",

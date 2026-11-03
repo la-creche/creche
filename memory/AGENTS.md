@@ -82,15 +82,21 @@ after it reads `json`, or `null` when the type refuses `json`.
 
 ## Not a workspace member
 
-The package is not a member of the uv workspace. The service will need the
-memory store, which has a large dependency tree. That tree must not go into
-the root `uv.lock`, because a change there moves every venv component
-(`CONTRIBUTING.md`). The root `pyproject.toml` names `memory/src` and
-`memory/tests` for pytest, and `pyrightconfig.json` names `memory/src`. The
-root venv supplies `pydantic`.
+The package is not a member of the uv workspace. It pins the memory store,
+`cognee`, which has a large dependency tree. That tree must not go into the
+root `uv.lock`, because a change there moves every venv component
+(`CONTRIBUTING.md`).
+
+1. The package has its own lock, `memory/uv.lock`.
+2. The root checks do not see the package, except ruff and ruff format.
+3. The `memory` job of the gate syncs the lock, then runs pyright and pytest
+   in `memory/`. `memory/pyrightconfig.json` holds the pyright settings.
+   The file must stay: without it, pyright in `memory/` loads the root
+   `pyrightconfig.json`. The `[tool.pytest.ini_options]` section of
+   `memory/pyproject.toml` holds the pytest settings.
+4. Run the same checks before a push, in `memory/`: `uv sync --locked`, then
+   `uv run pyright`, then `uv run pytest`.
 
 ## Known gaps
 
 1. The package has no command and no unit yet. Nothing starts the server.
-2. The package has no lock of its own yet. The change that adds the memory
-   store adds the lock.
