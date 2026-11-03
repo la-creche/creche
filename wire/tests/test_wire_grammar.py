@@ -5,7 +5,8 @@ The grammar stays the authority for the family file (decision CH23 rule 5).
 Registry CI cannot install `creche-wire`, so the grammar cannot import the
 wire types, and this test holds the two equal instead. attendance writes the
 `auto` origin, so the test also holds its family pattern and its chain cap
-equal to the wire types.
+equal to the wire types. caregiver mints the family token, so the test holds
+its form equal to the wire type too.
 
 The grammar ends a pattern with `\\Z` for Python's `re`. The schema ends it
 with `$`, which the Rust `regex` crate of pydantic-core reads as the end of
@@ -20,6 +21,7 @@ from agent_family import grammar
 from creche_wire import strictjson
 
 from attendance import ids, models
+from caregiver import credentials
 
 WIRE = Path(__file__).resolve().parents[2] / "rust" / "crates" / "wire"
 SCHEMA_FILE = WIRE / "schema" / "wire.json"
@@ -57,6 +59,10 @@ def test_the_system_prompt_has_the_modes_of_the_grammar() -> None:
     mode = _definitions()["FamilyConfig"]["properties"]["system_prompt"]
 
     assert mode["enum"] == list(grammar.SystemPrompt)
+
+
+def test_the_family_token_has_the_form_that_caregiver_mints() -> None:
+    assert _definitions()["PepToken"]["pattern"] == f"^{credentials._TOKEN.pattern}$"
 
 
 def test_the_family_name_has_the_pattern_of_attendance() -> None:

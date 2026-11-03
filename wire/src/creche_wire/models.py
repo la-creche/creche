@@ -56,6 +56,49 @@ class AutoOrigin(BaseModel):
     auto: Auto
 
 
+class ConfigMissing(BaseModel):
+    """
+    The reply of a pull when `config/` is absent. It carries nothing.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+
+class ConfigMissingReply(BaseModel):
+    """
+    `config/` is absent.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    config_missing: ConfigMissing
+
+
+class CredsMissing(BaseModel):
+    """
+    The reply of a pull when `creds.json` is absent. It carries nothing.
+    When `config/` is absent too, this reply wins.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+
+class CredsMissingReply(BaseModel):
+    """
+    `creds.json` is absent.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    creds_missing: CredsMissing
+
+
 class Delegate(BaseModel):
     """
     The origin of a session that the delegate door opened for one thin job.
@@ -165,9 +208,8 @@ class FamilyConfig(BaseModel):
     `shell` of `runtime.json` is not here: the agent reads it and grants
     nothing with it (`agent/src/runtime-config.ts:18`).
 
-    `model_live_at` of `runtime.json` is not here either. The vmm reads it
-    and holds the reply until the host time passes it, at most 10 s
-    (decisions CH23-1, CH31). The guest never waits on it.
+    `model_live_at` of `runtime.json` is not here either. The vmm holds the
+    reply on it (`FamilyStateReply`).
     """
 
     model_config = ConfigDict(
@@ -188,6 +230,21 @@ class FamilyConfig(BaseModel):
             description="How the instructions meet the agent's own prompt. caregiver leaves\n`system_prompt` out of `runtime.json` for `append`\n(`config_mount.py:54`), so the vmm reads a missing key as `append`."
         ),
     ]
+
+
+class FamilyCreds(BaseModel):
+    """
+    The family's part of `creds.json` that the guest reads (decision CH23
+    default 1). `epoch`, `written_at`, `previous_pep_token` and
+    `previous_expires_at` stay on the host, so the old token never sits in
+    guest memory or in a snapshot.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    litellm_key: Annotated[LitellmKey, Field(description="The key for the LiteLLM plane.")]
+    pep_token: Annotated[PepToken, Field(description="The token for the chaperone plane.")]
 
 
 class FamilyName(RootModel[StrictStr]):
@@ -218,6 +275,19 @@ class DispatchChain(RootModel[list[FamilyName]]):
     ]
 
 
+class FamilyState(BaseModel):
+    """
+    The whole family state of one pull: the full typed state, every time
+    (decision CH23). The facade compares the fields itself.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    config: Annotated[FamilyConfig, Field(description="What the vmm read from `config/`.")]
+    creds: Annotated[FamilyCreds, Field(description="What the vmm read from `creds.json`.")]
+
+
 class JobId(RootModel[StrictStr]):
     root: Annotated[
         StrictStr,
@@ -228,12 +298,43 @@ class JobId(RootModel[StrictStr]):
     ]
 
 
+class LitellmKey(RootModel[StrictStr]):
+    root: Annotated[
+        StrictStr,
+        Field(
+            description="The family's LiteLLM key, `litellm_key` of `creds.json`. caregiver\nkeeps only a key that starts with `sk-` (`litellm_keys.py:155`). The\nrest is visible ASCII, with no space or control character, so the key\ncannot break the header that carries it. Decision CH31 keeps this rule\nand gives caregiver's check the same rule in a later change.",
+            pattern="^sk-[!-~]*$",
+        ),
+    ]
+
+
 class ModelAlias(RootModel[StrictStr]):
     root: Annotated[
         StrictStr,
         Field(
             description="The LiteLLM alias of the family's model: `model.router` of the family\nfile, which caregiver writes as `model_alias` in `config/runtime.json`\n(`steps.py:242`).",
             pattern="^[a-z0-9][a-z0-9._/-]*$",
+        ),
+    ]
+
+
+class NotValidReply(BaseModel):
+    """
+    A file is present and does not read.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    not_valid: StateNotValid
+
+
+class PepToken(RootModel[StrictStr]):
+    root: Annotated[
+        StrictStr,
+        Field(
+            description="The family token for the chaperone, `pep_token` of `creds.json`: 32\nbytes as 64 lowercase hex digits, the one form the chaperone takes\n(`credentials.py:21-25`).",
+            pattern="^[0-9a-f]{64}$",
         ),
     ]
 
@@ -366,6 +467,41 @@ class FamilySkills(
     ]
 
 
+class StateNotValid(BaseModel):
+    """
+    The reply of a pull when `creds.json` or `config/` is present and does
+    not read as `FamilyState`. It carries nothing, so it holds no value of
+    the files. The vmm names the file that failed in its host log only.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+
+class StateReply(BaseModel):
+    """
+    The vmm read the whole state.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    state: FamilyState
+
+
+class StateTooLarge(BaseModel):
+    """
+    The reply of a pull when the files read, and the `state` reply is over
+    the cap of 256 KiB (decision CH31). It carries nothing, not even the
+    size. The vmm writes the size in its host log only.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+
 class SystemPrompt(StrEnum):
     """
     How the instructions meet the agent's own prompt. caregiver leaves
@@ -397,6 +533,28 @@ class TimerTrigger(BaseModel):
         extra="forbid",
     )
     timer: Timer
+
+
+class TooLargeReply(BaseModel):
+    """
+    The `state` reply is over the cap.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    too_large: StateTooLarge
+
+
+class FamilyStateReply(
+    RootModel[StateReply | CredsMissingReply | ConfigMissingReply | NotValidReply | TooLargeReply]
+):
+    root: Annotated[
+        StateReply | CredsMissingReply | ConfigMissingReply | NotValidReply | TooLargeReply,
+        Field(
+            description="What the vmm answers on host port 1100 when the facade pulls the family\nstate, before each prompt (decisions CH5a, CH5b, CH23). The vmm reads\ncaregiver's `creds.json` and `config/` at each pull.\n\nA read failure is a typed reply, and the link stays open (decision CH23\ndefault 2). The facade fails that prompt and keeps running. At start it\npulls again with a backoff, and never exits on a typed error. When\n`creds.json` and `config/` are both absent, `creds_missing` wins\n(decision CH31).\n\nA reply text has a cap of 256 KiB (decision CH23 default 4). The cap is\na rule of the read surface, not of this type: the vmm's writer and the\n`cap` of `creche_wire.read` hold it, because JSON Schema counts code\npoints, not bytes. A `state` reply over the cap is `too_large`, not\n`not_valid` (decision CH31).\n\nThe vmm reads `model_live_at` from `config/runtime.json` (decision\nCH23-1). It holds the `state` reply until the host time passes that\ntime, for at most 10 s (decision CH31). No wire type carries\n`model_live_at`, and the guest needs no clock for it. A held pull can\ntake up to 10 s longer.\n\nOn the wire the variant name is the one key of an object, and each\nvariant has a `title` for its class name."
+        ),
+    ]
 
 
 class TurnEnd(BaseModel):

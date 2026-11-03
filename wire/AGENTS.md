@@ -67,6 +67,20 @@ that does needs a decision of the owner before its vector cases are added:
 `bin/tests/test_strictjson_copies.py` fails when `strictjson.py` differs from
 the copy in another package. Change each copy in one commit.
 
+## Secrets
+
+`LitellmKey` and `PepToken` hold secrets. The `Debug` of the Rust types
+writes no value. The generated Python models do not keep this rule:
+
+1. The `repr` of `LitellmKey`, `PepToken`, `FamilyCreds`, `FamilyState`,
+   `StateReply` and `FamilyStateReply` shows the secret.
+2. The text of a `ValidationError` for a refused secret shows most of it.
+
+A Python caller never logs one of these values or such an error. No Python
+caller reads them today. datamodel-codegen writes `SecretStr` for
+`format: password`, but it then drops the pattern, so the models keep a
+plain string.
+
 ## Integers and times
 
 1. Every integer of a wire type has a `minimum` and a `maximum`, at most
