@@ -1,5 +1,24 @@
 {
   "$defs": {
+    "Auto": {
+      "additionalProperties": false,
+      "description": "The origin of a session that attendance opened for one autonomous job.",
+      "properties": {
+        "job": {
+          "$ref": "#/$defs/AutoJobId",
+          "description": "The id that attendance gives the job. The `SessionId` of the row is a\nseparate value."
+        },
+        "trigger": {
+          "$ref": "#/$defs/Trigger",
+          "description": "What fired the job."
+        }
+      },
+      "required": [
+        "job",
+        "trigger"
+      ],
+      "type": "object"
+    },
     "AutoJobId": {
       "description": "The id that attendance gives an autonomous job of a trigger or of the\ndispatch door: `auto-<ulid>` (contract 02 §2 and §13). Contract 02 calls\nit a session id. The `SessionId` of the job's row on the host session\nlist is a separate value.",
       "pattern": "^auto-[0-9A-HJKMNP-TV-Z]{26}$",
@@ -28,6 +47,25 @@
       "description": "The id the PEP mints for one delegation, a ULID (contract 04 §7.4).",
       "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
       "type": "string"
+    },
+    "Dispatch": {
+      "additionalProperties": false,
+      "description": "The trigger of a dispatch: the `enqueue` verb of another family started\nthe job (contract 01 §3.13, contract 02 §13.4).",
+      "properties": {
+        "chain": {
+          "$ref": "#/$defs/DispatchChain",
+          "description": "The delegation chain that reached the job. attendance today stores a\ndispatch with no chain when `POST /dispatch` carries none, so it must\nrefuse a missing or empty chain before it writes this origin."
+        },
+        "name": {
+          "$ref": "#/$defs/FamilyName",
+          "description": "The calling family. attendance takes it from the family token, never\nfrom the request body (contract 02 §13.2 rule 5)."
+        }
+      },
+      "required": [
+        "chain",
+        "name"
+      ],
+      "type": "object"
     },
     "DispatchChain": {
       "description": "The delegation chain that reached a dispatched job, caller first and the\njob's family last (contract 02 §13.2 rule 6). It holds 1 to 8 family\nnames. The PEP builds it from the delegations it minted (contract 04\n§6.3).",
@@ -88,8 +126,88 @@
           ],
           "title": "DelegateOrigin",
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "attendance opened the session for one autonomous job.",
+          "properties": {
+            "auto": {
+              "$ref": "#/$defs/Auto"
+            }
+          },
+          "required": [
+            "auto"
+          ],
+          "title": "AutoOrigin",
+          "type": "object"
         }
       ]
+    },
+    "Timer": {
+      "additionalProperties": false,
+      "description": "The trigger of a cron firing. It carries nothing, because a timer has no\nname (contract 02 §13.2).",
+      "type": "object"
+    },
+    "Trigger": {
+      "description": "What fired an autonomous job, typed per kind (decision CH21-4a). A timer\nhas no name, and only a dispatch has a chain. There is no fired time: the\ncreated time of the row stands in for it.\n\nOn the wire the variant name is the one key of an object, as in\n`SessionOrigin`, and each variant has a `title` for its class name.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "A cron firing.",
+          "properties": {
+            "timer": {
+              "$ref": "#/$defs/Timer"
+            }
+          },
+          "required": [
+            "timer"
+          ],
+          "title": "TimerTrigger",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A webhook firing.",
+          "properties": {
+            "webhook": {
+              "$ref": "#/$defs/Webhook"
+            }
+          },
+          "required": [
+            "webhook"
+          ],
+          "title": "WebhookTrigger",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A dispatch from another family.",
+          "properties": {
+            "dispatch": {
+              "$ref": "#/$defs/Dispatch"
+            }
+          },
+          "required": [
+            "dispatch"
+          ],
+          "title": "DispatchTrigger",
+          "type": "object"
+        }
+      ]
+    },
+    "Webhook": {
+      "additionalProperties": false,
+      "description": "The trigger of a webhook firing.",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/WebhookName",
+          "description": "The name of the webhook that the family declares."
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
     },
     "WebhookName": {
       "description": "The name of a declared webhook trigger: `WEBHOOK_NAME` of\n`family/grammar.py`, which has the rule of a family name.",

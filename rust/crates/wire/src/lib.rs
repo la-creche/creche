@@ -435,6 +435,78 @@ pub struct Delegate {
 
 object_only!(Delegate);
 
+/// The trigger of a cron firing. It carries nothing, because a timer has no
+/// name (contract 02 §13.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct Timer {}
+
+object_only!(Timer);
+
+/// The trigger of a webhook firing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct Webhook {
+    /// The name of the webhook that the family declares.
+    pub name: WebhookName,
+}
+
+object_only!(Webhook);
+
+/// The trigger of a dispatch: the `enqueue` verb of another family started
+/// the job (contract 01 §3.13, contract 02 §13.4).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct Dispatch {
+    /// The delegation chain that reached the job. attendance today stores a
+    /// dispatch with no chain when `POST /dispatch` carries none, so it must
+    /// refuse a missing or empty chain before it writes this origin.
+    pub chain: DispatchChain,
+    /// The calling family. attendance takes it from the family token, never
+    /// from the request body (contract 02 §13.2 rule 5).
+    pub name: FamilyName,
+}
+
+object_only!(Dispatch);
+
+/// What fired an autonomous job, typed per kind (decision CH21-4a). A timer
+/// has no name, and only a dispatch has a chain. There is no fired time: the
+/// created time of the row stands in for it.
+///
+/// On the wire the variant name is the one key of an object, as in
+/// `SessionOrigin`, and each variant has a `title` for its class name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub enum Trigger {
+    /// A cron firing.
+    #[cfg_attr(test, schemars(title = "TimerTrigger"))]
+    Timer(Timer),
+    /// A webhook firing.
+    #[cfg_attr(test, schemars(title = "WebhookTrigger"))]
+    Webhook(Webhook),
+    /// A dispatch from another family.
+    #[cfg_attr(test, schemars(title = "DispatchTrigger"))]
+    Dispatch(Dispatch),
+}
+
+/// The origin of a session that attendance opened for one autonomous job.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct Auto {
+    /// The id that attendance gives the job. The `SessionId` of the row is a
+    /// separate value.
+    pub job: AutoJobId,
+    /// What fired the job.
+    pub trigger: Trigger,
+}
+
+object_only!(Auto);
+
 /// Who made a session, kept on its row of the host session list (decision
 /// CH21-4). On the wire the variant name is the one key of an object.
 ///
@@ -450,6 +522,9 @@ pub enum SessionOrigin {
     /// The delegate door opened the session for one thin job.
     #[cfg_attr(test, schemars(title = "DelegateOrigin"))]
     Delegate(Delegate),
+    /// attendance opened the session for one autonomous job.
+    #[cfg_attr(test, schemars(title = "AutoOrigin"))]
+    Auto(Auto),
 }
 
 #[cfg(test)]

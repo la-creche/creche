@@ -8,6 +8,23 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field, RootModel, StrictStr
 
 
+class Auto(BaseModel):
+    """
+    The origin of a session that attendance opened for one autonomous job.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    job: Annotated[
+        AutoJobId,
+        Field(
+            description="The id that attendance gives the job. The `SessionId` of the row is a\nseparate value."
+        ),
+    ]
+    trigger: Annotated[Trigger, Field(description="What fired the job.")]
+
+
 class AutoJobId(RootModel[StrictStr]):
     root: Annotated[
         StrictStr,
@@ -16,6 +33,17 @@ class AutoJobId(RootModel[StrictStr]):
             pattern="^auto-[0-9A-HJKMNP-TV-Z]{26}$",
         ),
     ]
+
+
+class AutoOrigin(BaseModel):
+    """
+    attendance opened the session for one autonomous job.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    auto: Auto
 
 
 class Delegate(BaseModel):
@@ -57,6 +85,40 @@ class DelegationId(RootModel[StrictStr]):
             pattern="^[0-9A-HJKMNP-TV-Z]{26}$",
         ),
     ]
+
+
+class Dispatch(BaseModel):
+    """
+    The trigger of a dispatch: the `enqueue` verb of another family started
+    the job (contract 01 §3.13, contract 02 §13.4).
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    chain: Annotated[
+        DispatchChain,
+        Field(
+            description="The delegation chain that reached the job. attendance today stores a\ndispatch with no chain when `POST /dispatch` carries none, so it must\nrefuse a missing or empty chain before it writes this origin."
+        ),
+    ]
+    name: Annotated[
+        FamilyName,
+        Field(
+            description="The calling family. attendance takes it from the family token, never\nfrom the request body (contract 02 §13.2 rule 5)."
+        ),
+    ]
+
+
+class DispatchTrigger(BaseModel):
+    """
+    A dispatch from another family.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    dispatch: Dispatch
 
 
 class Door(BaseModel):
@@ -131,12 +193,47 @@ class SessionId(RootModel[StrictStr]):
     ]
 
 
-class SessionOrigin(RootModel[DoorOrigin | DelegateOrigin]):
+class SessionOrigin(RootModel[DoorOrigin | DelegateOrigin | AutoOrigin]):
     root: Annotated[
-        DoorOrigin | DelegateOrigin,
+        DoorOrigin | DelegateOrigin | AutoOrigin,
         Field(
             description="Who made a session, kept on its row of the host session list (decision\nCH21-4). On the wire the variant name is the one key of an object.\n\nEach variant has a `title`. datamodel-codegen names a class of a `oneOf`\nmember by its title, and by its position without one."
         ),
+    ]
+
+
+class Timer(BaseModel):
+    """
+    The trigger of a cron firing. It carries nothing, because a timer has no
+    name (contract 02 §13.2).
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+
+class TimerTrigger(BaseModel):
+    """
+    A cron firing.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    timer: Timer
+
+
+class Webhook(BaseModel):
+    """
+    The trigger of a webhook firing.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    name: Annotated[
+        WebhookName, Field(description="The name of the webhook that the family declares.")
     ]
 
 
@@ -146,5 +243,25 @@ class WebhookName(RootModel[StrictStr]):
         Field(
             description="The name of a declared webhook trigger: `WEBHOOK_NAME` of\n`family/grammar.py`, which has the rule of a family name.",
             pattern="^[a-z][a-z0-9-]{1,30}$",
+        ),
+    ]
+
+
+class WebhookTrigger(BaseModel):
+    """
+    A webhook firing.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    webhook: Webhook
+
+
+class Trigger(RootModel[TimerTrigger | WebhookTrigger | DispatchTrigger]):
+    root: Annotated[
+        TimerTrigger | WebhookTrigger | DispatchTrigger,
+        Field(
+            description="What fired an autonomous job, typed per kind (decision CH21-4a). A timer\nhas no name, and only a dispatch has a chain. There is no fired time: the\ncreated time of the row stands in for it.\n\nOn the wire the variant name is the one key of an object, as in\n`SessionOrigin`, and each variant has a `title` for its class name."
         ),
     ]

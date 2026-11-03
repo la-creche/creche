@@ -13,8 +13,8 @@ use serde::Deserialize;
 
 use super::schema::wire_schema;
 use super::{
-    AutoJobId, Delegate, DelegationId, DispatchChain, Door, FamilyName, JobId, SessionId,
-    SessionOrigin, WebhookName,
+    Auto, AutoJobId, Delegate, DelegationId, Dispatch, DispatchChain, Door, FamilyName, JobId,
+    SessionId, SessionOrigin, Timer, Trigger, Webhook, WebhookName,
 };
 
 /// The file, relative to the crate.
@@ -53,15 +53,20 @@ where
 /// One entry per wire type. A new wire type needs a line here.
 fn read_and_write(type_name: &str, json: &str) -> Option<String> {
     match type_name {
+        "Auto" => round_trip::<Auto>(json),
         "AutoJobId" => round_trip::<AutoJobId>(json),
         "Delegate" => round_trip::<Delegate>(json),
         "DelegationId" => round_trip::<DelegationId>(json),
+        "Dispatch" => round_trip::<Dispatch>(json),
         "DispatchChain" => round_trip::<DispatchChain>(json),
         "Door" => round_trip::<Door>(json),
         "FamilyName" => round_trip::<FamilyName>(json),
         "JobId" => round_trip::<JobId>(json),
         "SessionId" => round_trip::<SessionId>(json),
         "SessionOrigin" => round_trip::<SessionOrigin>(json),
+        "Timer" => round_trip::<Timer>(json),
+        "Trigger" => round_trip::<Trigger>(json),
+        "Webhook" => round_trip::<Webhook>(json),
         "WebhookName" => round_trip::<WebhookName>(json),
         other => panic!("{VECTOR_FILE} names {other}, and this test reads no such type"),
     }
