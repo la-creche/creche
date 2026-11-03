@@ -1,0 +1,35 @@
+# The memory service of the vault. Contract 06 §1 row 11 and rule 13: this
+# component owns `creche-memory.service`, the user unit that runs it on the
+# host. It builds from its own lock, `memory/uv.lock`, because the memory
+# store's dependency tree must not enter the root `uv.lock`.
+manifest_version: "0.4"
+name: memory
+repo: creche
+path: memory
+kind: venv
+unit: creche-memory.service
+runs_as: operator
+# `--project memory`: the package is no workspace member, so the build syncs
+# its own lock. `--no-dev`: pytest and pyright stay out of the tree.
+build:
+  - ["/usr/local/bin/uv", "sync", "--frozen", "--no-editable", "--no-dev",
+     "--project", "memory"]
+install:
+  to: ~/.local/components/memory
+  prev: ~/.local/components/memory.prev
+provides: []
+requires: []
+depends_on: []
+verify:
+  # --env-file: the same file as the first EnvironmentFile= of
+  # systemd/creche-memory.service, read by the hook itself as the operator.
+  # Pinned equal by handover/tests/test_handover_r7r_verify_env.py.
+  command: ["~/.local/components/memory/bin/creche-memory-verify", "--json",
+            "--env-file", "/srv/agents/state/creche/memory.env"]
+  user: operator
+  timeout_s: 30
+restore:
+  mode: automatic
+  keep: 3
+secrets: []
+release: yes

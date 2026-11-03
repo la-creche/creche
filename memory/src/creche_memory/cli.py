@@ -38,19 +38,20 @@ def _fail(reason: str) -> int:
 def _serve(config: Config) -> int:
     from .cognee_search import cognee_backend, cognee_paths
 
-    config.store.store_root.mkdir(mode=STORE_MODE, exist_ok=True)
+    places = config.places
+    places.store_root.mkdir(mode=STORE_MODE, exist_ok=True)
     configure(config.store)
 
     loop = StoreLoop()
-    syncer = Syncer(config.vault_root, cognee_ingest(config.vault_root))
+    syncer = Syncer(places.vault_root, cognee_ingest(places.vault_root))
     searcher = Searcher(syncer.ready, cognee_backend, cognee_paths)
 
     def search(request: SearchRequest) -> SearchReply | RefusedReply:
         return loop.search(searcher, request)
 
     service = Service(
-        vault=Vault(config.vault_root),
-        writer=Writer(config.vault_root),
+        vault=Vault(places.vault_root),
+        writer=Writer(places.vault_root),
         search=search,
         wrote=syncer.request,
     )
@@ -64,10 +65,10 @@ def _serve(config: Config) -> int:
 
     loop.start()
     syncing = loop.spawn(syncer.run(stop))
-    server = MemoryServer(config.socket_path, service, config.peer_uid)
+    server = MemoryServer(places.socket_path, service, places.peer_uid)
     serving = threading.Thread(target=server.serve_forever, daemon=True)
     serving.start()
-    print(f"creche-memory: serving {config.vault_root} on {config.socket_path}")
+    print(f"creche-memory: serving {places.vault_root} on {places.socket_path}")
 
     stop.wait()
     server.shutdown()
@@ -91,7 +92,7 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as error:
         return _fail(str(error))
 
-    problems = check(config)
+    problems = check(config.places)
     if problems:
         return _fail("; ".join(problems))
 

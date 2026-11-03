@@ -9,6 +9,7 @@ dependencies = ["pydantic>=2.8", "cognee==1.6.6"]
 
 [project.scripts]
 creche-memory = "creche_memory.cli:main"
+creche-memory-verify = "creche_memory.verify:main"
 
 [dependency-groups]
 dev = ["pytest>=8", "pyright>=1.1.380"]

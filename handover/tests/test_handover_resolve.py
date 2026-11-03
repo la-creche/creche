@@ -36,6 +36,7 @@ EDGES: dict[str, tuple[str, str, str]] = {
     "mcp-servers": ("", "", ""),
     "registry-data": ("", "", ""),
     "host": ("", "", ""),
+    "memory": ("", "", ""),
 }
 
 LIVE = {
@@ -256,11 +257,11 @@ def test_the_document_has_contract_06_paragraph_9_fields() -> None:
 #: The hash of two documents, as the writer before the strict writer gave
 #: it. The approval binds to the hash, so the strict writer gives each
 #: strict document the bytes of before. Each document holds the version
-#: text of the manifest contract, 0.21, so a new version moves both hashes.
+#: text of the manifest contract, 0.22, so a new version moves both hashes.
 #: Each document also lists every row of the catalog, so a row that leaves
 #: or arrives moves both hashes too.
-HASH_OF_TWO = "sha256:877d0be5cb5f794aca13f018f522aa68ac89621ed217ca18b9f36b73fe3ceee9"
-HASH_OF_A_FRACTION = "sha256:8b5900979f22dd2f76c7bfc6e568daec6683b99decaf25f9d0588133e4480a21"
+HASH_OF_TWO = "sha256:8637002b97a1d26905b9e6df36834772613d0fdb456f3c2a67946a5aa3072ab5"
+HASH_OF_A_FRACTION = "sha256:79b806c9801f16093cde09e0bcd225a0d702bc41b60b20ecac947fdec4cfafe1"
 
 
 def test_the_hash_of_a_document_is_the_hash_of_before() -> None:

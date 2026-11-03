@@ -270,7 +270,7 @@ def test_the_lock_file_moves_every_venv_component_and_the_playpen_image() -> Non
     plans = _plan(("uv.lock",), tags=ALL_TAGGED)
 
     ours = [row for row in CATALOG if row.repo is Repo.CRECHE and row.name not in ARRIVING]
-    venvs = {row.name for row in ours if row.kind is Kind.VENV}
+    venvs = {row.name for row in ours if row.kind is Kind.VENV and row.lock is Lock.WORKSPACE}
 
     assert {plan.component for plan in plans} == venvs | {"playpen"}
     assert "playpen" not in venvs

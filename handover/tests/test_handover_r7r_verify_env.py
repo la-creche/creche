@@ -29,6 +29,7 @@ UNIT_OF = {
     "noticeboard": "creche-noticeboard.service",
     "attendance": "creche-attendance.service",
     "caregiver": "creche-caregiver.service",
+    "memory": "creche-memory.service",
 }
 
 
@@ -66,6 +67,7 @@ def test_noticeboard_attendance_and_caregiver_each_name_a_real_env_file() -> Non
         "noticeboard": "/srv/agents/state/creche/noticeboard.env",
         "attendance": "/srv/agents/state/creche/attendance.env",
         "caregiver": "/srv/agents/state/creche/caregiver.env",
+        "memory": "/srv/agents/state/creche/memory.env",
     }
     for component, path in expected.items():
         manifest = read_one(REPO_ROOT, component).manifest
