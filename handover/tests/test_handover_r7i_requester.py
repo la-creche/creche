@@ -18,6 +18,7 @@ import stat
 from pathlib import Path
 
 import pytest
+from handover.catalog import MAX_REQUEST_COMPONENTS
 from handover.errors import Refusal, RefusalCode
 from handover.executor.request import MAX_REQUEST_BYTES, Kind, Request, parse_request
 from handover.executor.spool import (
@@ -144,9 +145,9 @@ def test_a_version_that_is_not_a_version_is_refused() -> None:
 
 
 def test_more_components_than_the_cap_are_refused() -> None:
-    """§2.3: at most eight entries."""
+    """spec §9: at most `MAX_REQUEST_COMPONENTS` entries."""
     with pytest.raises(Refusal):
-        _plan({f"comp{index}": "latest" for index in range(9)})
+        _plan({f"comp{index}": "latest" for index in range(MAX_REQUEST_COMPONENTS + 1)})
 
 
 def test_a_rollback_with_no_target_is_refused() -> None:

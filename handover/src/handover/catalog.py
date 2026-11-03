@@ -266,9 +266,10 @@ MANIFEST_CONTRACT_MINOR = 21
 #: `handover` deploys last whatever `depends_on` says (contract 06 §1.1).
 LAST_IN_ORDER = "handover"
 
-#: stage7-releases.md §2.3: at most eight entries, the catalog minus
-#: `registry-data`, which never releases.
-MAX_REQUEST_COMPONENTS = 8
+#: spec §9: at most ten entries. The catalog minus `registry-data`, which
+#: never releases, is nine rows with the coming `memory` row, and ten with
+#: the `vmm` row (CH7-5).
+MAX_REQUEST_COMPONENTS = 10
 
 #: The limits of the two assets of a binary component. CI refuses an
 #: archive past a limit before it signs it, and each reader of the archive

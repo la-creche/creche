@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from handover.catalog import CATALOG, Action, ContractId
+from handover.catalog import CATALOG, MAX_REQUEST_COMPONENTS, Action, ContractId
 from handover.errors import Refusal, RefusalCode
 from handover.manifest import ComponentManifest, Markup, parse_manifest
 from handover.resolve import (
@@ -118,9 +118,9 @@ def test_parse_request_refuses_a_two_number_version() -> None:
 
 def test_parse_request_caps_the_component_count() -> None:
     with pytest.raises(Refusal) as caught:
-        parse_request([f"c{index}=1.0.0" for index in range(9)])
+        parse_request([f"c{index}=1.0.0" for index in range(MAX_REQUEST_COMPONENTS + 1)])
 
-    assert "more than 8 components" in caught.value.detail
+    assert f"more than {MAX_REQUEST_COMPONENTS} components" in caught.value.detail
 
 
 def test_a_name_outside_the_catalog_is_refused() -> None:
