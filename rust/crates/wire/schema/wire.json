@@ -259,6 +259,63 @@
         }
       ]
     },
+    "TurnEnd": {
+      "additionalProperties": false,
+      "description": "A turn ended: it completed, the client cancelled it, or it failed. The\nfacade makes both fields as it makes them today, at the end of each\nturn (`facade/src/turns.ts:139-151`).",
+      "properties": {
+        "title": {
+          "$ref": "#/$defs/SessionTitle",
+          "description": "The title that `titleOf` makes from the prompt of this turn, with the\nend trimmed after the cut. The facade refuses a prompt with no text\nbefore the turn starts, so each turn has a title. The vmm stores it\nonly while the row's title is `null`, so the first title stays."
+        },
+        "updated_at": {
+          "$ref": "#/$defs/UnixMillis",
+          "description": "The time of the last Flue record of this turn, or the facade's clock\nwhen the turn wrote no record. The vmm stores it at each end."
+        }
+      },
+      "required": [
+        "title",
+        "updated_at"
+      ],
+      "type": "object"
+    },
+    "TurnEvent": {
+      "description": "What the facade tells guest init at each turn start and turn end, and\nwhat guest init relays to the vmm on control link 1200 (decision CH21).\nAt each end the vmm sets the row's `updated_at`, and it sets the row's\n`title` only while that is `null`, as `nameOnce` does today. It\nsnapshots a VM only between an end and the next start (decision CH19\nrule 6).\n\nThe event names no session: a VM serves one session (decision CH1), and\nthe link names the VM. On the wire the variant name is the one key of an\nobject, and each variant has a `title` for its class name.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "A turn started.",
+          "properties": {
+            "start": {
+              "$ref": "#/$defs/TurnStart"
+            }
+          },
+          "required": [
+            "start"
+          ],
+          "title": "TurnStartEvent",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A turn ended.",
+          "properties": {
+            "end": {
+              "$ref": "#/$defs/TurnEnd"
+            }
+          },
+          "required": [
+            "end"
+          ],
+          "title": "TurnEndEvent",
+          "type": "object"
+        }
+      ]
+    },
+    "TurnStart": {
+      "additionalProperties": false,
+      "description": "A turn started. It carries nothing.\n\nIt is a type of its own so that the generated Python model is a class\nwith no field, as `Door` is.",
+      "type": "object"
+    },
     "UnixMillis": {
       "description": "A time on the wire: whole milliseconds since 1970-01-01T00:00:00Z, UTC\n(decision CH22-1). It is the one wire form of a time. No wire type holds\na `date-time` string.\n\nOn the wire it is a JSON integer from 0 to 2^53 - 1, so JavaScript reads\nit exactly. A larger integer, a negative integer, a float such as `1.0`\nor `1e3`, and a string are refused.",
       "format": "uint64",

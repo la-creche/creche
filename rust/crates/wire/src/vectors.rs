@@ -14,8 +14,8 @@ use serde::Deserialize;
 use super::schema::wire_schema;
 use super::{
     Auto, AutoJobId, Delegate, DelegationId, Dispatch, DispatchChain, Door, FamilyName, JobId,
-    SessionCwd, SessionId, SessionOrigin, SessionRow, SessionTitle, Timer, Trigger, UnixMillis,
-    Webhook, WebhookName,
+    SessionCwd, SessionId, SessionOrigin, SessionRow, SessionTitle, Timer, Trigger, TurnEnd,
+    TurnEvent, TurnStart, UnixMillis, Webhook, WebhookName,
 };
 
 /// The file, relative to the crate.
@@ -70,6 +70,9 @@ fn read_and_write(type_name: &str, json: &str) -> Option<String> {
         "SessionTitle" => round_trip::<SessionTitle>(json),
         "Timer" => round_trip::<Timer>(json),
         "Trigger" => round_trip::<Trigger>(json),
+        "TurnEnd" => round_trip::<TurnEnd>(json),
+        "TurnEvent" => round_trip::<TurnEvent>(json),
+        "TurnStart" => round_trip::<TurnStart>(json),
         "UnixMillis" => round_trip::<UnixMillis>(json),
         "Webhook" => round_trip::<Webhook>(json),
         "WebhookName" => round_trip::<WebhookName>(json),

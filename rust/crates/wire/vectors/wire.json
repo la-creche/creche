@@ -1166,6 +1166,207 @@
       "note": "null"
     }
   ],
+  "TurnEnd": [
+    {
+      "json": "{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}",
+      "written": "{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}",
+      "note": "a turn end"
+    },
+    {
+      "json": "{\"updated_at\":1793577660000,\"title\":\"Fix the boiler alert\"}",
+      "written": "{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}",
+      "note": "its keys in any order"
+    },
+    {
+      "json": "{\"title\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa b\",\"updated_at\":0}",
+      "written": "{\"title\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa b\",\"updated_at\":0}",
+      "note": "a title of 256 characters and the first millisecond"
+    },
+    {
+      "json": "{\"title\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"updated_at\":1793577660000}",
+      "written": null,
+      "note": "a title of 257 characters"
+    },
+    {
+      "json": "{\"title\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \",\"updated_at\":1793577660000}",
+      "written": null,
+      "note": "a title that ends in a space, which titleOf makes when its byte cut ends after a space: the facade trims the end after the cut"
+    },
+    {
+      "json": "{\"title\":\"\",\"updated_at\":1793577660000}",
+      "written": null,
+      "note": "an empty title"
+    },
+    {
+      "json": "{\"title\":null,\"updated_at\":1793577660000}",
+      "written": null,
+      "note": "a null title"
+    },
+    {
+      "json": "{\"title\":\"Fix the boiler alert\",\"updated_at\":null}",
+      "written": null,
+      "note": "a null time"
+    },
+    {
+      "json": "{\"updated_at\":1793577660000}",
+      "written": null,
+      "note": "no title key"
+    },
+    {
+      "json": "{\"title\":\"Fix the boiler alert\"}",
+      "written": null,
+      "note": "no time key"
+    },
+    {
+      "json": "{\"title\":\"Fix the boiler alert\",\"updated_at\":-1}",
+      "written": null,
+      "note": "a negative time"
+    },
+    {
+      "json": "{\"title\":\"Fix the boiler alert\",\"updated_at\":9007199254740992}",
+      "written": null,
+      "note": "a time of 2^53, past the cap"
+    },
+    {
+      "json": "{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000.0}",
+      "written": null,
+      "note": "a time written as a float"
+    },
+    {
+      "json": "{\"title\":\"Fix the boiler alert\",\"updated_at\":\"2026-11-02T00:01:00Z\"}",
+      "written": null,
+      "note": "a date-time string"
+    },
+    {
+      "json": "{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000,\"x\":1}",
+      "written": null,
+      "note": "an unknown key"
+    },
+    {
+      "json": "[\"Fix the boiler alert\",1793577660000]",
+      "written": null,
+      "note": "an array of its fields in order"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an empty array, the array form of a struct"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    }
+  ],
+  "TurnEvent": [
+    {
+      "json": "{\"start\":{}}",
+      "written": "{\"start\":{}}",
+      "note": "a turn start"
+    },
+    {
+      "json": "{\"end\":{\"updated_at\":1793577660000,\"title\":\"Fix the boiler alert\"}}",
+      "written": "{\"end\":{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}}",
+      "note": "a turn end, its keys in any order"
+    },
+    {
+      "json": "\"start\"",
+      "written": null,
+      "note": "a variant as a string"
+    },
+    {
+      "json": "{\"start\":{},\"end\":{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}}",
+      "written": null,
+      "note": "two variants"
+    },
+    {
+      "json": "{}",
+      "written": null,
+      "note": "an object with no variant"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an empty array"
+    },
+    {
+      "json": "{\"start\":null}",
+      "written": null,
+      "note": "a start as null"
+    },
+    {
+      "json": "{\"start\":[]}",
+      "written": null,
+      "note": "a start as an array, the array form of a struct"
+    },
+    {
+      "json": "{\"start\":{\"x\":1}}",
+      "written": null,
+      "note": "a start with a key"
+    },
+    {
+      "json": "{\"end\":null}",
+      "written": null,
+      "note": "an end as null"
+    },
+    {
+      "json": "{\"end\":[\"Fix the boiler alert\",1793577660000]}",
+      "written": null,
+      "note": "an end as an array of its fields in order"
+    },
+    {
+      "json": "{\"end\":{}}",
+      "written": null,
+      "note": "an end with no field"
+    },
+    {
+      "json": "{\"end\":{\"title\":\"Fix the boiler alert\"}}",
+      "written": null,
+      "note": "an end with no time"
+    },
+    {
+      "json": "{\"end\":{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000,\"x\":1}}",
+      "written": null,
+      "note": "an end with an unknown key"
+    },
+    {
+      "json": "{\"Start\":{}}",
+      "written": null,
+      "note": "a variant name in the wrong case"
+    },
+    {
+      "json": "{\"stop\":{}}",
+      "written": null,
+      "note": "an unknown variant"
+    }
+  ],
+  "TurnStart": [
+    {
+      "json": "{}",
+      "written": "{}",
+      "note": "the empty object"
+    },
+    {
+      "json": "{\"title\":\"Fix the boiler alert\"}",
+      "written": null,
+      "note": "a key"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an empty array, the array form of a struct"
+    }
+  ],
   "UnixMillis": [
     {
       "json": "0",

@@ -793,6 +793,58 @@ pub struct SessionRow {
 
 object_only!(SessionRow);
 
+/// A turn started. It carries nothing.
+///
+/// It is a type of its own so that the generated Python model is a class
+/// with no field, as `Door` is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct TurnStart {}
+
+object_only!(TurnStart);
+
+/// A turn ended: it completed, the client cancelled it, or it failed. The
+/// facade makes both fields as it makes them today, at the end of each
+/// turn (`facade/src/turns.ts:139-151`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct TurnEnd {
+    /// The title that `titleOf` makes from the prompt of this turn, with the
+    /// end trimmed after the cut. The facade refuses a prompt with no text
+    /// before the turn starts, so each turn has a title. The vmm stores it
+    /// only while the row's title is `null`, so the first title stays.
+    pub title: SessionTitle,
+    /// The time of the last Flue record of this turn, or the facade's clock
+    /// when the turn wrote no record. The vmm stores it at each end.
+    pub updated_at: UnixMillis,
+}
+
+object_only!(TurnEnd);
+
+/// What the facade tells guest init at each turn start and turn end, and
+/// what guest init relays to the vmm on control link 1200 (decision CH21).
+/// At each end the vmm sets the row's `updated_at`, and it sets the row's
+/// `title` only while that is `null`, as `nameOnce` does today. It
+/// snapshots a VM only between an end and the next start (decision CH19
+/// rule 6).
+///
+/// The event names no session: a VM serves one session (decision CH1), and
+/// the link names the VM. On the wire the variant name is the one key of an
+/// object, and each variant has a `title` for its class name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub enum TurnEvent {
+    /// A turn started.
+    #[cfg_attr(test, schemars(title = "TurnStartEvent"))]
+    Start(TurnStart),
+    /// A turn ended.
+    #[cfg_attr(test, schemars(title = "TurnEndEvent"))]
+    End(TurnEnd),
+}
+
 #[cfg(test)]
 mod tests {
     use super::{SESSION_ID_PATTERN, SessionId, SessionIdError};
