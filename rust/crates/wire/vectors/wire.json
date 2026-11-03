@@ -90,6 +90,185 @@
       "note": "an empty array, the array form of a struct"
     }
   ],
+  "ControlHello": [
+    {
+      "json": "{\"sent_at\":1793577660000,\"session\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}",
+      "written": "{\"sent_at\":1793577660000,\"session\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}",
+      "note": "a hello"
+    },
+    {
+      "json": "{\"session\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"sent_at\":0}",
+      "written": "{\"sent_at\":0,\"session\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}",
+      "note": "its keys in any order, and the first millisecond"
+    },
+    {
+      "json": "{\"sent_at\":1793577660000}",
+      "written": null,
+      "note": "no session"
+    },
+    {
+      "json": "{\"session\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}",
+      "written": null,
+      "note": "no time"
+    },
+    {
+      "json": "{\"sent_at\":null,\"session\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}",
+      "written": null,
+      "note": "a null time"
+    },
+    {
+      "json": "{\"sent_at\":1793577660000,\"session\":null}",
+      "written": null,
+      "note": "a null session"
+    },
+    {
+      "json": "{\"sent_at\":1793577660000,\"session\":\"3F2B8C1E-9D4A-4E6B-8A7C-0B1D2E3F4A5B\"}",
+      "written": null,
+      "note": "a session id in upper case"
+    },
+    {
+      "json": "{\"sent_at\":-1,\"session\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}",
+      "written": null,
+      "note": "a negative time"
+    },
+    {
+      "json": "{\"sent_at\":9007199254740992,\"session\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}",
+      "written": null,
+      "note": "a time of 2^53, past the cap"
+    },
+    {
+      "json": "{\"sent_at\":1793577660000.0,\"session\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}",
+      "written": null,
+      "note": "a time written as a float"
+    },
+    {
+      "json": "{\"sent_at\":\"2026-11-03T00:01:00Z\",\"session\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}",
+      "written": null,
+      "note": "a date-time string"
+    },
+    {
+      "json": "{\"family\":\"chat\",\"sent_at\":1793577660000,\"session\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}",
+      "written": null,
+      "note": "an unknown key"
+    },
+    {
+      "json": "[1793577660000,\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"]",
+      "written": null,
+      "note": "an array of its fields in order"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an empty array, the array form of a struct"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    }
+  ],
+  "ControlReady": [
+    {
+      "json": "{\"facade\":{\"not_started\":{}}}",
+      "written": "{\"facade\":{\"not_started\":{}}}",
+      "note": "a cold boot: no facade and no turn end yet"
+    },
+    {
+      "json": "{\"facade\":{\"starting\":{\"last_turn_end\":{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000},\"pid\":413,\"starts\":2}}}",
+      "written": "{\"facade\":{\"starting\":{\"last_turn_end\":{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000},\"pid\":413,\"starts\":2}}}",
+      "note": "a restarted facade before its local link opens"
+    },
+    {
+      "json": "{\"facade\":{\"running\":{\"turn_running\":false,\"starts\":1,\"pid\":412,\"last_turn_end\":{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}}}}",
+      "written": "{\"facade\":{\"running\":{\"last_turn_end\":{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000},\"pid\":412,\"starts\":1,\"turn_running\":false}}}",
+      "note": "a running facade after a turn end, its keys in any order"
+    },
+    {
+      "json": "{\"facade\":{\"exited\":{\"last_turn_end\":{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000},\"starts\":1}}}",
+      "written": "{\"facade\":{\"exited\":{\"last_turn_end\":{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000},\"starts\":1}}}",
+      "note": "an exited facade keeps the last turn end"
+    },
+    {
+      "json": "{\"facade\":{\"not_started\":{}},\"last_turn_end\":null}",
+      "written": null,
+      "note": "a last_turn_end beside the facade"
+    },
+    {
+      "json": "{\"facade\":{\"running\":{\"pid\":412,\"starts\":1,\"turn_running\":false}},\"last_turn_end\":{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}}",
+      "written": null,
+      "note": "a turn end beside the facade, not in it"
+    },
+    {
+      "json": "{}",
+      "written": null,
+      "note": "no facade"
+    },
+    {
+      "json": "{\"facade\":null}",
+      "written": null,
+      "note": "a null facade"
+    },
+    {
+      "json": "{\"facade\":\"not_started\"}",
+      "written": null,
+      "note": "a facade as a string"
+    },
+    {
+      "json": "{\"facade\":{\"not_started\":{\"last_turn_end\":null}}}",
+      "written": null,
+      "note": "a facade that never started, with a null last_turn_end"
+    },
+    {
+      "json": "{\"facade\":{\"starting\":{\"last_turn_end\":null,\"pid\":412,\"starts\":1,\"turn_running\":false}}}",
+      "written": null,
+      "note": "a starting facade with a turn flag"
+    },
+    {
+      "json": "{\"facade\":{\"exited\":{\"last_turn_end\":null,\"pid\":412,\"starts\":1}}}",
+      "written": null,
+      "note": "an exited facade with a pid"
+    },
+    {
+      "json": "{\"facade\":{\"exited\":{\"last_turn_end\":{\"title\":null,\"updated_at\":1793577660000},\"starts\":1}}}",
+      "written": null,
+      "note": "a turn end with a null title"
+    },
+    {
+      "json": "{\"facade\":{\"exited\":{\"last_turn_end\":{\"updated_at\":1793577660000},\"starts\":1}}}",
+      "written": null,
+      "note": "a turn end with no title"
+    },
+    {
+      "json": "{\"facade\":{\"exited\":{\"last_turn_end\":{\"title\":\"Fix the boiler alert\"},\"starts\":1}}}",
+      "written": null,
+      "note": "a turn end with no time"
+    },
+    {
+      "json": "{\"facade\":{\"exited\":{\"last_turn_end\":{\"end\":{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}},\"starts\":1}}}",
+      "written": null,
+      "note": "a turn end as a turn event"
+    },
+    {
+      "json": "{\"facade\":{\"not_started\":{}},\"x\":1}",
+      "written": null,
+      "note": "an unknown key"
+    },
+    {
+      "json": "[{\"not_started\":{}}]",
+      "written": null,
+      "note": "an array of its fields in order"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an empty array, the array form of a struct"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    }
+  ],
   "CredsMissing": [
     {
       "json": "{}",
@@ -300,6 +479,451 @@
       "json": "[]",
       "written": null,
       "note": "an empty array, the array form of a struct"
+    }
+  ],
+  "FacadeExited": [
+    {
+      "json": "{\"last_turn_end\":null,\"starts\":1}",
+      "written": "{\"last_turn_end\":null,\"starts\":1}",
+      "note": "the first facade exited"
+    },
+    {
+      "json": "{\"last_turn_end\":null,\"starts\":9007199254740991}",
+      "written": "{\"last_turn_end\":null,\"starts\":9007199254740991}",
+      "note": "the largest count"
+    },
+    {
+      "json": "{\"last_turn_end\":{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000},\"starts\":2}",
+      "written": "{\"last_turn_end\":{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000},\"starts\":2}",
+      "note": "an exited facade keeps the last turn end"
+    },
+    {
+      "json": "{\"last_turn_end\":null,\"starts\":0}",
+      "written": null,
+      "note": "a count of 0: an exited facade started"
+    },
+    {
+      "json": "{\"last_turn_end\":null,\"starts\":9007199254740992}",
+      "written": null,
+      "note": "a count of 2^53, past the cap"
+    },
+    {
+      "json": "{\"last_turn_end\":null,\"starts\":null}",
+      "written": null,
+      "note": "a null count"
+    },
+    {
+      "json": "{\"last_turn_end\":null}",
+      "written": null,
+      "note": "no count"
+    },
+    {
+      "json": "{\"starts\":1}",
+      "written": null,
+      "note": "no last_turn_end key"
+    },
+    {
+      "json": "{\"last_turn_end\":null,\"pid\":412,\"starts\":1}",
+      "written": null,
+      "note": "a pid, which an exited facade has not"
+    },
+    {
+      "json": "{\"last_turn_end\":null,\"starts\":1,\"turn_running\":true}",
+      "written": null,
+      "note": "a running turn, which an exited facade has not"
+    },
+    {
+      "json": "[null,1]",
+      "written": null,
+      "note": "an array of its fields in order"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an empty array, the array form of a struct"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    }
+  ],
+  "FacadeNotStarted": [
+    {
+      "json": "{}",
+      "written": "{}",
+      "note": "a facade that never started"
+    },
+    {
+      "json": "{\"starts\":1}",
+      "written": null,
+      "note": "a start count, which a facade that never started has not"
+    },
+    {
+      "json": "{\"pid\":412}",
+      "written": null,
+      "note": "a pid, which a facade that never started has not"
+    },
+    {
+      "json": "{\"last_turn_end\":null}",
+      "written": null,
+      "note": "a null last_turn_end, which a facade that never started has not"
+    },
+    {
+      "json": "{\"last_turn_end\":{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}}",
+      "written": null,
+      "note": "a turn end, which a facade that never started has not"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an empty array, the array form of a struct"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    }
+  ],
+  "FacadeRunning": [
+    {
+      "json": "{\"last_turn_end\":null,\"pid\":412,\"starts\":1,\"turn_running\":false}",
+      "written": "{\"last_turn_end\":null,\"pid\":412,\"starts\":1,\"turn_running\":false}",
+      "note": "a running facade with no turn and no turn end yet"
+    },
+    {
+      "json": "{\"turn_running\":true,\"starts\":3,\"pid\":412,\"last_turn_end\":{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}}",
+      "written": "{\"last_turn_end\":{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000},\"pid\":412,\"starts\":3,\"turn_running\":true}",
+      "note": "a turn runs after an earlier turn end, its keys in any order"
+    },
+    {
+      "json": "{\"last_turn_end\":null,\"pid\":4294967295,\"starts\":9007199254740991,\"turn_running\":false}",
+      "written": "{\"last_turn_end\":null,\"pid\":4294967295,\"starts\":9007199254740991,\"turn_running\":false}",
+      "note": "the largest pid and the largest count"
+    },
+    {
+      "json": "{\"last_turn_end\":null,\"pid\":0,\"starts\":1,\"turn_running\":false}",
+      "written": null,
+      "note": "a pid of 0"
+    },
+    {
+      "json": "{\"last_turn_end\":null,\"pid\":-1,\"starts\":1,\"turn_running\":false}",
+      "written": null,
+      "note": "a negative pid"
+    },
+    {
+      "json": "{\"last_turn_end\":null,\"pid\":4294967296,\"starts\":1,\"turn_running\":false}",
+      "written": null,
+      "note": "a pid of 2^32, past u32"
+    },
+    {
+      "json": "{\"last_turn_end\":null,\"pid\":412.0,\"starts\":1,\"turn_running\":false}",
+      "written": null,
+      "note": "a pid written as a float"
+    },
+    {
+      "json": "{\"last_turn_end\":null,\"pid\":\"412\",\"starts\":1,\"turn_running\":false}",
+      "written": null,
+      "note": "a pid as a string"
+    },
+    {
+      "json": "{\"last_turn_end\":null,\"pid\":null,\"starts\":1,\"turn_running\":false}",
+      "written": null,
+      "note": "a null pid"
+    },
+    {
+      "json": "{\"last_turn_end\":null,\"pid\":412,\"starts\":0,\"turn_running\":false}",
+      "written": null,
+      "note": "a count of 0 for a running facade"
+    },
+    {
+      "json": "{\"last_turn_end\":null,\"pid\":412,\"starts\":9007199254740992,\"turn_running\":false}",
+      "written": null,
+      "note": "a count of 2^53, past the cap"
+    },
+    {
+      "json": "{\"last_turn_end\":null,\"pid\":412,\"starts\":null,\"turn_running\":false}",
+      "written": null,
+      "note": "a null count"
+    },
+    {
+      "json": "{\"last_turn_end\":null,\"pid\":412,\"starts\":1,\"turn_running\":null}",
+      "written": null,
+      "note": "a null turn flag"
+    },
+    {
+      "json": "{\"last_turn_end\":null,\"pid\":412,\"starts\":1,\"turn_running\":1}",
+      "written": null,
+      "note": "a turn flag as an integer"
+    },
+    {
+      "json": "{\"last_turn_end\":null,\"pid\":412,\"starts\":1,\"turn_running\":\"true\"}",
+      "written": null,
+      "note": "a turn flag as a string"
+    },
+    {
+      "json": "{\"last_turn_end\":null,\"starts\":1,\"turn_running\":false}",
+      "written": null,
+      "note": "no pid: a running facade has one"
+    },
+    {
+      "json": "{\"pid\":412,\"starts\":1,\"turn_running\":false}",
+      "written": null,
+      "note": "no last_turn_end key"
+    },
+    {
+      "json": "{\"last_turn_end\":{\"title\":null,\"updated_at\":1793577660000},\"pid\":412,\"starts\":1,\"turn_running\":false}",
+      "written": null,
+      "note": "a turn end with a null title"
+    },
+    {
+      "json": "{\"last_turn_end\":null,\"pid\":412,\"starts\":1,\"turn_running\":false,\"x\":1}",
+      "written": null,
+      "note": "an unknown key"
+    },
+    {
+      "json": "[null,412,1,false]",
+      "written": null,
+      "note": "an array of its fields in order"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an empty array, the array form of a struct"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    }
+  ],
+  "FacadeStarting": [
+    {
+      "json": "{\"last_turn_end\":null,\"pid\":412,\"starts\":1}",
+      "written": "{\"last_turn_end\":null,\"pid\":412,\"starts\":1}",
+      "note": "the first start, before its local link opens"
+    },
+    {
+      "json": "{\"starts\":2,\"pid\":413,\"last_turn_end\":{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}}",
+      "written": "{\"last_turn_end\":{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000},\"pid\":413,\"starts\":2}",
+      "note": "a restart keeps the last turn end, its keys in any order"
+    },
+    {
+      "json": "{\"last_turn_end\":null,\"pid\":412,\"starts\":1,\"turn_running\":false}",
+      "written": null,
+      "note": "a turn flag, which a starting facade has not"
+    },
+    {
+      "json": "{\"pid\":412,\"starts\":1}",
+      "written": null,
+      "note": "no last_turn_end key"
+    },
+    {
+      "json": "{\"last_turn_end\":null,\"starts\":1}",
+      "written": null,
+      "note": "no pid: a starting facade has one"
+    },
+    {
+      "json": "{\"last_turn_end\":null,\"pid\":412}",
+      "written": null,
+      "note": "no count"
+    },
+    {
+      "json": "{\"last_turn_end\":null,\"pid\":0,\"starts\":1}",
+      "written": null,
+      "note": "a pid of 0"
+    },
+    {
+      "json": "{\"last_turn_end\":null,\"pid\":null,\"starts\":1}",
+      "written": null,
+      "note": "a null pid"
+    },
+    {
+      "json": "{\"last_turn_end\":null,\"pid\":412,\"starts\":0}",
+      "written": null,
+      "note": "a count of 0 for a starting facade"
+    },
+    {
+      "json": "{\"last_turn_end\":{\"title\":null,\"updated_at\":1793577660000},\"pid\":412,\"starts\":1}",
+      "written": null,
+      "note": "a turn end with a null title"
+    },
+    {
+      "json": "{\"last_turn_end\":{\"end\":{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}},\"pid\":412,\"starts\":1}",
+      "written": null,
+      "note": "a turn end as a turn event"
+    },
+    {
+      "json": "{\"last_turn_end\":null,\"pid\":412,\"starts\":1,\"x\":1}",
+      "written": null,
+      "note": "an unknown key"
+    },
+    {
+      "json": "[null,412,1]",
+      "written": null,
+      "note": "an array of its fields in order"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an empty array, the array form of a struct"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    }
+  ],
+  "FacadeState": [
+    {
+      "json": "{\"not_started\":{}}",
+      "written": "{\"not_started\":{}}",
+      "note": "a facade that never started"
+    },
+    {
+      "json": "{\"starting\":{\"last_turn_end\":null,\"pid\":412,\"starts\":1}}",
+      "written": "{\"starting\":{\"last_turn_end\":null,\"pid\":412,\"starts\":1}}",
+      "note": "a starting facade"
+    },
+    {
+      "json": "{\"starting\":{\"last_turn_end\":{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000},\"pid\":413,\"starts\":2}}",
+      "written": "{\"starting\":{\"last_turn_end\":{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000},\"pid\":413,\"starts\":2}}",
+      "note": "a restarted facade keeps the last turn end"
+    },
+    {
+      "json": "{\"running\":{\"last_turn_end\":null,\"pid\":412,\"starts\":1,\"turn_running\":false}}",
+      "written": "{\"running\":{\"last_turn_end\":null,\"pid\":412,\"starts\":1,\"turn_running\":false}}",
+      "note": "a running facade"
+    },
+    {
+      "json": "{\"exited\":{\"last_turn_end\":{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000},\"starts\":2}}",
+      "written": "{\"exited\":{\"last_turn_end\":{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000},\"starts\":2}}",
+      "note": "an exited facade"
+    },
+    {
+      "json": "\"running\"",
+      "written": null,
+      "note": "a variant as a string"
+    },
+    {
+      "json": "{\"Running\":{\"last_turn_end\":null,\"pid\":412,\"starts\":1,\"turn_running\":false}}",
+      "written": null,
+      "note": "a variant name in the wrong case"
+    },
+    {
+      "json": "{\"stopped\":{}}",
+      "written": null,
+      "note": "an unknown variant"
+    },
+    {
+      "json": "{\"not_started\":{},\"exited\":{\"last_turn_end\":null,\"starts\":1}}",
+      "written": null,
+      "note": "two variants"
+    },
+    {
+      "json": "{}",
+      "written": null,
+      "note": "an object with no variant"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an empty array"
+    },
+    {
+      "json": "{\"not_started\":null}",
+      "written": null,
+      "note": "a not_started as null"
+    },
+    {
+      "json": "{\"not_started\":[]}",
+      "written": null,
+      "note": "a not_started as an array, the array form of a struct"
+    },
+    {
+      "json": "{\"not_started\":{\"starts\":1}}",
+      "written": null,
+      "note": "a facade that never started, with a count"
+    },
+    {
+      "json": "{\"not_started\":{\"last_turn_end\":{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}}}",
+      "written": null,
+      "note": "a facade that never started, with a turn end"
+    },
+    {
+      "json": "{\"starting\":{\"last_turn_end\":null,\"pid\":412,\"starts\":1,\"turn_running\":true}}",
+      "written": null,
+      "note": "a starting facade with a running turn"
+    },
+    {
+      "json": "{\"starting\":{\"last_turn_end\":null,\"starts\":1}}",
+      "written": null,
+      "note": "a starting facade with no pid"
+    },
+    {
+      "json": "{\"starting\":{\"pid\":412,\"starts\":1}}",
+      "written": null,
+      "note": "a starting facade with no last_turn_end key"
+    },
+    {
+      "json": "{\"starting\":[null,412,1]}",
+      "written": null,
+      "note": "a starting as an array of its fields in order"
+    },
+    {
+      "json": "{\"starting\":null}",
+      "written": null,
+      "note": "a starting as null"
+    },
+    {
+      "json": "{\"running\":{\"last_turn_end\":null,\"starts\":1,\"turn_running\":true}}",
+      "written": null,
+      "note": "a running turn with no pid"
+    },
+    {
+      "json": "{\"running\":{\"pid\":412,\"starts\":1,\"turn_running\":false}}",
+      "written": null,
+      "note": "a running facade with no last_turn_end key"
+    },
+    {
+      "json": "{\"running\":[null,412,1,false]}",
+      "written": null,
+      "note": "a running as an array of its fields in order"
+    },
+    {
+      "json": "{\"running\":null}",
+      "written": null,
+      "note": "a running as null"
+    },
+    {
+      "json": "{\"exited\":{\"last_turn_end\":null,\"pid\":412,\"starts\":1}}",
+      "written": null,
+      "note": "an exited facade with a pid"
+    },
+    {
+      "json": "{\"exited\":{\"last_turn_end\":null,\"starts\":1,\"turn_running\":true}}",
+      "written": null,
+      "note": "an exited facade with a running turn"
+    },
+    {
+      "json": "{\"exited\":{\"starts\":1}}",
+      "written": null,
+      "note": "an exited facade with no last_turn_end key"
+    },
+    {
+      "json": "{\"exited\":[null,1]}",
+      "written": null,
+      "note": "an exited as an array of its fields in order"
+    },
+    {
+      "json": "{\"exited\":null}",
+      "written": null,
+      "note": "an exited as null"
     }
   ],
   "FamilyConfig": [
@@ -1839,6 +2463,58 @@
       "json": "\"vault-notes\\n\"",
       "written": null,
       "note": "a newline at the end, which a Python $ would take"
+    }
+  ],
+  "StartCount": [
+    {
+      "json": "1",
+      "written": "1",
+      "note": "the first start"
+    },
+    {
+      "json": "9007199254740991",
+      "written": "9007199254740991",
+      "note": "2^53 - 1, the cap"
+    },
+    {
+      "json": "0",
+      "written": null,
+      "note": "zero: a facade that never started has no count"
+    },
+    {
+      "json": "-1",
+      "written": null,
+      "note": "a negative count"
+    },
+    {
+      "json": "9007199254740992",
+      "written": null,
+      "note": "2^53, past the cap"
+    },
+    {
+      "json": "1.0",
+      "written": null,
+      "note": "a count written as a float"
+    },
+    {
+      "json": "1e3",
+      "written": null,
+      "note": "a count written with an exponent"
+    },
+    {
+      "json": "\"1\"",
+      "written": null,
+      "note": "a count as a string"
+    },
+    {
+      "json": "true",
+      "written": null,
+      "note": "a bool"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
     }
   ],
   "StateNotValid": [

@@ -29,6 +29,39 @@
       "description": "The reply of a pull when `config/` is absent. It carries nothing.",
       "type": "object"
     },
+    "ControlHello": {
+      "additionalProperties": false,
+      "description": "What the vmm sends first on each new control link, guest port 1200\n(decisions CH13, CH14). A new link replaces the old one (decision CH19\nrule 2). Guest init sets `CLOCK_REALTIME` to `sent_at` with\n`clock_settime` before it answers with `ControlReady` (decision CH28),\nbecause after a restore the guest clock is behind by the time the VM\nspent as a snapshot (fact 73).\n\nThe hello carries no family name and no protocol version (decision CH32\nrules 1 and 2). The vmm writes guest init at each cold boot (decision\nCH7-6). A restore brings back the guest init of the snapshot, so the\nvmm restores a snapshot only when its key holds the same guest-init\nprotocol version (decision CH7-6). So the two never skew in protocol.\nA later hello can name a session that differs from the first one. Guest\ninit then closes the link, and the vmm records a fault and cold-boots\nthe VM (decision CH32 rule 3). No wire type carries that case.",
+      "properties": {
+        "sent_at": {
+          "$ref": "#/$defs/UnixMillis",
+          "description": "The wall time of the vmm when it sent the hello."
+        },
+        "session": {
+          "$ref": "#/$defs/SessionId",
+          "description": "The session that the VM serves (decisions CH1, CH5e). The facade\nopens this one session at start, and creates it when it is new\n(decisions CH21-8, CH25 rule 2)."
+        }
+      },
+      "required": [
+        "sent_at",
+        "session"
+      ],
+      "type": "object"
+    },
+    "ControlReady": {
+      "additionalProperties": false,
+      "description": "What guest init answers to `ControlHello`, after it sets its clock\n(decisions CH28, CH32). It holds the facade state (decision CH19 rule 2).\nThe last turn end sits in the facade state. The answer stays an object,\nso a later field has a place.",
+      "properties": {
+        "facade": {
+          "$ref": "#/$defs/FacadeState",
+          "description": "The facade."
+        }
+      },
+      "required": [
+        "facade"
+      ],
+      "type": "object"
+    },
     "CredsMissing": {
       "additionalProperties": false,
       "description": "The reply of a pull when `creds.json` is absent. It carries nothing.\nWhen `config/` is absent too, this reply wins.",
@@ -90,6 +123,171 @@
       "additionalProperties": false,
       "description": "The origin of a session that a door client opened. It carries nothing.\n\nIt is a type of its own so that the generated Python model is a class\nwith no field. An inline empty object generates a `dict` with lax keys.",
       "type": "object"
+    },
+    "FacadeExited": {
+      "additionalProperties": false,
+      "description": "A facade that exited: `waitpid` reported it gone, and guest init did not\nstart the next one yet (decision CH19 rule 1). No turn runs.\n\nEach key is required. `last_turn_end` reads with `Option::deserialize`,\nso a missing key is refused.",
+      "properties": {
+        "last_turn_end": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TurnEnd"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The last turn end that guest init got since the VM booted, or `null`\nwhen no turn ended. `FacadeState` says how the vmm applies it."
+        },
+        "starts": {
+          "$ref": "#/$defs/StartCount",
+          "description": "How many times guest init started the facade."
+        }
+      },
+      "required": [
+        "last_turn_end",
+        "starts"
+      ],
+      "type": "object"
+    },
+    "FacadeNotStarted": {
+      "additionalProperties": false,
+      "description": "The facade before guest init starts it the first time. It carries\nnothing: no turn can end before a facade starts.",
+      "type": "object"
+    },
+    "FacadeRunning": {
+      "additionalProperties": false,
+      "description": "A facade process that runs and opened its local link to guest init.\n\nEach key is required. `last_turn_end` reads with `Option::deserialize`,\nso a missing key is refused.",
+      "properties": {
+        "last_turn_end": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TurnEnd"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The last turn end that guest init got since the VM booted, or `null`\nwhen no turn ended. `FacadeState` says how the vmm applies it."
+        },
+        "pid": {
+          "description": "The pid of the facade in the guest. Guest init is pid 1, and a\n64-bit Linux keeps each pid below 2^22, so the facade's pid is 2 to\n2^22 - 1. The type accepts 1 to 2^32 - 1, the range of `Child::id`.",
+          "format": "uint32",
+          "maximum": 4294967295,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "starts": {
+          "$ref": "#/$defs/StartCount",
+          "description": "How many times guest init started the facade, this start too."
+        },
+        "turn_running": {
+          "description": "True when the facade sent a turn start and no turn end after it\n(decision CH21).",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "last_turn_end",
+        "pid",
+        "starts",
+        "turn_running"
+      ],
+      "type": "object"
+    },
+    "FacadeStarting": {
+      "additionalProperties": false,
+      "description": "A facade process that guest init started, which did not open its local\nlink to guest init yet (decision CH32 rule 6). Guest init gets no turn\nevent before that link opens, so this state has no turn flag.\n\nEach key is required. `last_turn_end` reads with `Option::deserialize`,\nso a missing key is refused.",
+      "properties": {
+        "last_turn_end": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TurnEnd"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The last turn end that guest init got since the VM booted, or `null`\nwhen no turn ended. A facade that exited and starts again keeps it,\nbecause guest init keeps it. On the first start (`starts` 1) it is\nalways `null`, because no local link opened yet (decision CH32 rule\n7). The type does not refuse a value there. `FacadeState` says how\nthe vmm applies it."
+        },
+        "pid": {
+          "description": "The pid of the facade in the guest, as in `FacadeRunning`.",
+          "format": "uint32",
+          "maximum": 4294967295,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "starts": {
+          "$ref": "#/$defs/StartCount",
+          "description": "How many times guest init started the facade, this start too."
+        }
+      },
+      "required": [
+        "last_turn_end",
+        "pid",
+        "starts"
+      ],
+      "type": "object"
+    },
+    "FacadeState": {
+      "description": "The facade as guest init sees it (decision CH19 rule 2). Only a live\nfacade has a pid, only a running facade has a turn, and a facade that\nnever started has no start count.\n\nThe facade is up for decision CH19 rule 6 only in `running`. So the vmm\nsnapshots a VM only when the facade is `running` and `turn_running` is\nfalse. A `starting` facade is not up: guest init cannot see its turns\nyet, so the vmm never snapshots a turn that guest init cannot see\n(decision CH32 rule 6). When the local link of a live facade closes,\nguest init kills the facade, and the state moves to `exited` after\n`waitpid` (decision CH32 rule 7). So a facade never goes back from\n`running` to `starting`.\n\nEach state after the first start holds `last_turn_end`, so\n`not_started` cannot carry one (decision CH32 rule 5). A restore can\ndrop a turn event on the old link (fact 45), so guest init reports the\nlast `TurnEnd`, not a current title (decision CH32 rule 4). The vmm\napplies it as it applies `TurnEvent::End`: it sets the row's\n`updated_at`, and it sets the row's title only while that is `null`.\nSo an end that a restore dropped still arrives.\n\nOn the wire the variant name is the one key of an object, and each\nvariant has a `title` for its class name.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Guest init did not start the facade yet.",
+          "properties": {
+            "not_started": {
+              "$ref": "#/$defs/FacadeNotStarted"
+            }
+          },
+          "required": [
+            "not_started"
+          ],
+          "title": "FacadeNotStartedState",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The facade process is alive and did not open its local link yet.",
+          "properties": {
+            "starting": {
+              "$ref": "#/$defs/FacadeStarting"
+            }
+          },
+          "required": [
+            "starting"
+          ],
+          "title": "FacadeStartingState",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The facade runs and opened its local link.",
+          "properties": {
+            "running": {
+              "$ref": "#/$defs/FacadeRunning"
+            }
+          },
+          "required": [
+            "running"
+          ],
+          "title": "FacadeRunningState",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The facade exited, and the next one did not start yet.",
+          "properties": {
+            "exited": {
+              "$ref": "#/$defs/FacadeExited"
+            }
+          },
+          "required": [
+            "exited"
+          ],
+          "title": "FacadeExitedState",
+          "type": "object"
+        }
+      ]
     },
     "FamilyConfig": {
       "additionalProperties": false,
@@ -437,6 +635,13 @@
       "description": "The name of a granted skill: `SKILL_NAME` of `family/grammar.py`,\nwhich has the rule of a family name.",
       "pattern": "^[a-z][a-z0-9-]{1,30}$",
       "type": "string"
+    },
+    "StartCount": {
+      "description": "How many times guest init started the facade since the VM booted\n(decision CH19 rule 1). A restore keeps guest init's memory, so it keeps\nthe count. It is at least 1: a facade that never started has no count.\n\nOn the wire it is a JSON integer from 1 to 2^53 - 1, so JavaScript reads\nit exactly.",
+      "format": "uint64",
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "type": "integer"
     },
     "StateNotValid": {
       "additionalProperties": false,

@@ -14,11 +14,12 @@ use serde_json::Value;
 
 use super::schema::wire_schema;
 use super::{
-    Auto, AutoJobId, ConfigMissing, CredsMissing, Delegate, DelegationId, Dispatch, DispatchChain,
-    Door, FamilyConfig, FamilyCreds, FamilyName, FamilySkills, FamilyState, FamilyStateReply,
-    JobId, LitellmKey, ModelAlias, PepToken, SandboxGrant, SessionCwd, SessionId, SessionOrigin,
-    SessionRow, SessionTitle, SkillName, StateNotValid, StateTooLarge, Timer, Trigger, TurnEnd,
-    TurnEvent, TurnStart, UnixMillis, Webhook, WebhookName,
+    Auto, AutoJobId, ConfigMissing, ControlHello, ControlReady, CredsMissing, Delegate,
+    DelegationId, Dispatch, DispatchChain, Door, FacadeExited, FacadeNotStarted, FacadeRunning,
+    FacadeStarting, FacadeState, FamilyConfig, FamilyCreds, FamilyName, FamilySkills, FamilyState,
+    FamilyStateReply, JobId, LitellmKey, ModelAlias, PepToken, SandboxGrant, SessionCwd, SessionId,
+    SessionOrigin, SessionRow, SessionTitle, SkillName, StartCount, StateNotValid, StateTooLarge,
+    Timer, Trigger, TurnEnd, TurnEvent, TurnStart, UnixMillis, Webhook, WebhookName,
 };
 
 /// The file, relative to the crate.
@@ -63,9 +64,16 @@ fn read_and_write(type_name: &str, json: &str) -> Option<String> {
         "DelegationId" => round_trip::<DelegationId>(json),
         "Dispatch" => round_trip::<Dispatch>(json),
         "ConfigMissing" => round_trip::<ConfigMissing>(json),
+        "ControlHello" => round_trip::<ControlHello>(json),
+        "ControlReady" => round_trip::<ControlReady>(json),
         "CredsMissing" => round_trip::<CredsMissing>(json),
         "DispatchChain" => round_trip::<DispatchChain>(json),
         "Door" => round_trip::<Door>(json),
+        "FacadeExited" => round_trip::<FacadeExited>(json),
+        "FacadeNotStarted" => round_trip::<FacadeNotStarted>(json),
+        "FacadeRunning" => round_trip::<FacadeRunning>(json),
+        "FacadeStarting" => round_trip::<FacadeStarting>(json),
+        "FacadeState" => round_trip::<FacadeState>(json),
         "FamilyConfig" => round_trip::<FamilyConfig>(json),
         "FamilyCreds" => round_trip::<FamilyCreds>(json),
         "FamilyName" => round_trip::<FamilyName>(json),
@@ -83,6 +91,7 @@ fn read_and_write(type_name: &str, json: &str) -> Option<String> {
         "SessionRow" => round_trip::<SessionRow>(json),
         "SessionTitle" => round_trip::<SessionTitle>(json),
         "SkillName" => round_trip::<SkillName>(json),
+        "StartCount" => round_trip::<StartCount>(json),
         "StateNotValid" => round_trip::<StateNotValid>(json),
         "StateTooLarge" => round_trip::<StateTooLarge>(json),
         "Timer" => round_trip::<Timer>(json),

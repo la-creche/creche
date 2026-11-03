@@ -77,6 +77,53 @@ class ConfigMissingReply(BaseModel):
     config_missing: ConfigMissing
 
 
+class ControlHello(BaseModel):
+    """
+    What the vmm sends first on each new control link, guest port 1200
+    (decisions CH13, CH14). A new link replaces the old one (decision CH19
+    rule 2). Guest init sets `CLOCK_REALTIME` to `sent_at` with
+    `clock_settime` before it answers with `ControlReady` (decision CH28),
+    because after a restore the guest clock is behind by the time the VM
+    spent as a snapshot (fact 73).
+
+    The hello carries no family name and no protocol version (decision CH32
+    rules 1 and 2). The vmm writes guest init at each cold boot (decision
+    CH7-6). A restore brings back the guest init of the snapshot, so the
+    vmm restores a snapshot only when its key holds the same guest-init
+    protocol version (decision CH7-6). So the two never skew in protocol.
+    A later hello can name a session that differs from the first one. Guest
+    init then closes the link, and the vmm records a fault and cold-boots
+    the VM (decision CH32 rule 3). No wire type carries that case.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    sent_at: Annotated[
+        UnixMillis, Field(description="The wall time of the vmm when it sent the hello.")
+    ]
+    session: Annotated[
+        SessionId,
+        Field(
+            description="The session that the VM serves (decisions CH1, CH5e). The facade\nopens this one session at start, and creates it when it is new\n(decisions CH21-8, CH25 rule 2)."
+        ),
+    ]
+
+
+class ControlReady(BaseModel):
+    """
+    What guest init answers to `ControlHello`, after it sets its clock
+    (decisions CH28, CH32). It holds the facade state (decision CH19 rule 2).
+    The last turn end sits in the facade state. The answer stays an object,
+    so a later field has a place.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    facade: Annotated[FacadeState, Field(description="The facade.")]
+
+
 class CredsMissing(BaseModel):
     """
     The reply of a pull when `creds.json` is absent. It carries nothing.
@@ -196,6 +243,165 @@ class DoorOrigin(BaseModel):
         extra="forbid",
     )
     door: Door
+
+
+class FacadeExited(BaseModel):
+    """
+    A facade that exited: `waitpid` reported it gone, and guest init did not
+    start the next one yet (decision CH19 rule 1). No turn runs.
+
+    Each key is required. `last_turn_end` reads with `Option::deserialize`,
+    so a missing key is refused.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    last_turn_end: Annotated[
+        TurnEnd | None,
+        Field(
+            description="The last turn end that guest init got since the VM booted, or `null`\nwhen no turn ended. `FacadeState` says how the vmm applies it."
+        ),
+    ]
+    starts: Annotated[
+        StartCount, Field(description="How many times guest init started the facade.")
+    ]
+
+
+class FacadeExitedState(BaseModel):
+    """
+    The facade exited, and the next one did not start yet.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    exited: FacadeExited
+
+
+class FacadeNotStarted(BaseModel):
+    """
+    The facade before guest init starts it the first time. It carries
+    nothing: no turn can end before a facade starts.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+
+class FacadeNotStartedState(BaseModel):
+    """
+    Guest init did not start the facade yet.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    not_started: FacadeNotStarted
+
+
+class FacadeRunning(BaseModel):
+    """
+    A facade process that runs and opened its local link to guest init.
+
+    Each key is required. `last_turn_end` reads with `Option::deserialize`,
+    so a missing key is refused.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    last_turn_end: Annotated[
+        TurnEnd | None,
+        Field(
+            description="The last turn end that guest init got since the VM booted, or `null`\nwhen no turn ended. `FacadeState` says how the vmm applies it."
+        ),
+    ]
+    pid: Annotated[
+        StrictInt,
+        Field(
+            description="The pid of the facade in the guest. Guest init is pid 1, and a\n64-bit Linux keeps each pid below 2^22, so the facade's pid is 2 to\n2^22 - 1. The type accepts 1 to 2^32 - 1, the range of `Child::id`.",
+            ge=1,
+            le=4294967295,
+        ),
+    ]
+    starts: Annotated[
+        StartCount,
+        Field(description="How many times guest init started the facade, this start too."),
+    ]
+    turn_running: Annotated[
+        StrictBool,
+        Field(
+            description="True when the facade sent a turn start and no turn end after it\n(decision CH21)."
+        ),
+    ]
+
+
+class FacadeRunningState(BaseModel):
+    """
+    The facade runs and opened its local link.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    running: FacadeRunning
+
+
+class FacadeStarting(BaseModel):
+    """
+    A facade process that guest init started, which did not open its local
+    link to guest init yet (decision CH32 rule 6). Guest init gets no turn
+    event before that link opens, so this state has no turn flag.
+
+    Each key is required. `last_turn_end` reads with `Option::deserialize`,
+    so a missing key is refused.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    last_turn_end: Annotated[
+        TurnEnd | None,
+        Field(
+            description="The last turn end that guest init got since the VM booted, or `null`\nwhen no turn ended. A facade that exited and starts again keeps it,\nbecause guest init keeps it. On the first start (`starts` 1) it is\nalways `null`, because no local link opened yet (decision CH32 rule\n7). The type does not refuse a value there. `FacadeState` says how\nthe vmm applies it."
+        ),
+    ]
+    pid: Annotated[
+        StrictInt,
+        Field(
+            description="The pid of the facade in the guest, as in `FacadeRunning`.",
+            ge=1,
+            le=4294967295,
+        ),
+    ]
+    starts: Annotated[
+        StartCount,
+        Field(description="How many times guest init started the facade, this start too."),
+    ]
+
+
+class FacadeStartingState(BaseModel):
+    """
+    The facade process is alive and did not open its local link yet.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    starting: FacadeStarting
+
+
+class FacadeState(
+    RootModel[FacadeNotStartedState | FacadeStartingState | FacadeRunningState | FacadeExitedState]
+):
+    root: Annotated[
+        FacadeNotStartedState | FacadeStartingState | FacadeRunningState | FacadeExitedState,
+        Field(
+            description="The facade as guest init sees it (decision CH19 rule 2). Only a live\nfacade has a pid, only a running facade has a turn, and a facade that\nnever started has no start count.\n\nThe facade is up for decision CH19 rule 6 only in `running`. So the vmm\nsnapshots a VM only when the facade is `running` and `turn_running` is\nfalse. A `starting` facade is not up: guest init cannot see its turns\nyet, so the vmm never snapshots a turn that guest init cannot see\n(decision CH32 rule 6). When the local link of a live facade closes,\nguest init kills the facade, and the state moves to `exited` after\n`waitpid` (decision CH32 rule 7). So a facade never goes back from\n`running` to `starting`.\n\nEach state after the first start holds `last_turn_end`, so\n`not_started` cannot carry one (decision CH32 rule 5). A restore can\ndrop a turn event on the old link (fact 45), so guest init reports the\nlast `TurnEnd`, not a current title (decision CH32 rule 4). The vmm\napplies it as it applies `TurnEvent::End`: it sets the row's\n`updated_at`, and it sets the row's title only while that is `null`.\nSo an end that a restore dropped still arrives.\n\nOn the wire the variant name is the one key of an object, and each\nvariant has a `title` for its class name."
+        ),
+    ]
 
 
 class FamilyConfig(BaseModel):
@@ -465,6 +671,17 @@ class FamilySkills(
             StrictStr,
         ],
         Field(description="The granted skills: each name, and the text of its `SKILL.md`."),
+    ]
+
+
+class StartCount(RootModel[StrictInt]):
+    root: Annotated[
+        StrictInt,
+        Field(
+            description="How many times guest init started the facade since the VM booted\n(decision CH19 rule 1). A restore keeps guest init's memory, so it keeps\nthe count. It is at least 1: a facade that never started has no count.\n\nOn the wire it is a JSON integer from 1 to 2^53 - 1, so JavaScript reads\nit exactly.",
+            ge=1,
+            le=9007199254740991,
+        ),
     ]
 
 
