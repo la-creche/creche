@@ -62,6 +62,39 @@
       ],
       "type": "object"
     },
+    "CreateError": {
+      "description": "The error of the route `create`.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "A row with this id exists, and it was made from a different\nrequest (decisions CH25 rule 2, CH33 rule 12). Two requests\ndiffer when their typed values differ, not their bytes.",
+          "properties": {
+            "code": {
+              "const": "conflict",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The family has no `config/` dir, so the vmm refuses the create\n(decision CH33 rule 3). caregiver removes the family files\nbefore it drops the family.",
+          "properties": {
+            "code": {
+              "const": "unknown_family",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "CreateSession": {
       "additionalProperties": false,
       "description": "What attendance sends to the vmm to make a row of the host session list\n(decisions CH21-4, CH25 rule 2). It is a `SessionRow` without `title`\nand `updated_at`. The vmm sets `title` to `null` and `updated_at` to\n`created_at`. It makes no session disk at create (decision CH21-4).\n\nTwo creates are the same when their typed values are equal\n(`PartialEq`), not when their bytes are equal. A client retries after\nENOENT, ECONNREFUSED or EOF (decision CH20). attendance stores the create\nbefore it sends it the first time. A retry resends the same `created_at`,\nso the repeat is the same create.",
@@ -829,9 +862,14 @@
     "protocol": 1,
     "routes": {
       "create": {
+        "error": "CreateError",
         "kind": "json",
         "reply": "SessionRow",
-        "request": "CreateSession"
+        "request": "CreateSession",
+        "statuses": {
+          "conflict": 409,
+          "unknown_family": 404
+        }
       }
     }
   }

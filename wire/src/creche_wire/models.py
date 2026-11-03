@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import (
     BaseModel,
@@ -122,6 +122,38 @@ class ControlReady(BaseModel):
         extra="forbid",
     )
     facade: Annotated[FacadeState, Field(description="The facade.")]
+
+
+class CreateError1(BaseModel):
+    """
+    A row with this id exists, and it was made from a different
+    request (decisions CH25 rule 2, CH33 rule 12). Two requests
+    differ when their typed values differ, not their bytes.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["conflict"]
+
+
+class CreateError2(BaseModel):
+    """
+    The family has no `config/` dir, so the vmm refuses the create
+    (decision CH33 rule 3). caregiver removes the family files
+    before it drops the family.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["unknown_family"]
+
+
+class CreateError(RootModel[CreateError1 | CreateError2]):
+    root: Annotated[
+        CreateError1 | CreateError2, Field(description="The error of the route `create`.")
+    ]
 
 
 class CreateSession(BaseModel):

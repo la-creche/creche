@@ -66,14 +66,28 @@ def test_each_case_does_what_the_file_says(type_name: str, case: dict[str, Any])
     assert _read_and_write(type_name, case["json"]) == case["written"]
 
 
+def _route_errors(schema: dict[str, Any]) -> list[str]:
+    """The name of the error type of each route of `x-routes`."""
+    routes = cast(dict[str, dict[str, Any]], schema["x-routes"]["routes"])
+
+    return sorted({route["error"] for route in routes.values()})
+
+
 def _variant_titles(schema: dict[str, Any]) -> list[str]:
     """The `title` of each `oneOf` member. datamodel-codegen names the class
-    of a variant by it, and a caller needs that class to build the enum."""
+    of a variant by it, and a caller needs that class to build the enum.
+
+    A route error has no titles (decision CH25 rule 3). Its classes get
+    names by position, so the package exports only the error type, and a
+    caller matches its `code`. Every other member needs its title, so a
+    missing one fails here."""
     definitions = cast(dict[str, dict[str, Any]], schema["$defs"])
+    errors = _route_errors(schema)
 
     return [
         member["title"]
-        for definition in definitions.values()
+        for name, definition in definitions.items()
+        if name not in errors
         for member in definition.get("oneOf", [])
     ]
 
@@ -100,6 +114,23 @@ def test_each_wire_type_has_cases_and_a_model() -> None:
 
     assert sorted(VECTORS) == defined
     assert sorted(set(creche_wire.__all__) - READER) == sorted(named)
+
+
+ERROR_CASES = [
+    pytest.param(type_name, case, id=f"{type_name}: {case['note']}")
+    for type_name in _route_errors(_load(SCHEMA_FILE))
+    for case in VECTORS[type_name]
+    if case["written"] is not None
+]
+
+
+@pytest.mark.parametrize(("type_name", "case"), ERROR_CASES)
+def test_a_caller_matches_a_route_error_on_its_code(type_name: str, case: dict[str, Any]) -> None:
+    """A route error is a `RootModel` of untitled classes, so a caller reads
+    `.root.code` and never names a class such as `CreateError1`."""
+    value: Any = creche_wire.read(_model(type_name), case["json"].encode("utf-8"), cap=CAP)
+
+    assert value.root.code == strictjson.loads(case["json"].encode("utf-8"), cap=CAP)["code"]
 
 
 def _nodes(value: object) -> list[dict[str, object]]:

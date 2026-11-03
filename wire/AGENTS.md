@@ -166,7 +166,8 @@ rule 3 allows.
 
 The vmm host API has one route table (decision CH25). It is
 `rust/crates/wire/src/routes.rs`. Each route is `POST /<name>` with a JSON
-body. The table pairs the route with its request type and its reply type.
+body. The table pairs the route with its request type, its reply type and
+its error type.
 
 1. A route is a marker type, an empty enum named `<Name>Route`, with an
    impl of `JsonRoute`. `NAME` is in `snake_case`.
@@ -182,12 +183,40 @@ body. The table pairs the route with its request type and its reply type.
    that names a new type adds that type to `$defs`. Run
    `uv run datamodel-codegen` after each change of a route.
 6. A client sends `HOST_API_PROTOCOL` in the header `HOST_API_HEADER`. The
-   vmm checks it before it reads the body, and the match is exact. No rule
-   says yet which change needs a new number. Until the owner sets that
-   rule, the number stays 1 (see "Known gaps").
+   vmm checks it before it reads the body, and the match is exact. A change
+   of the schema subset that the routes reach needs a new number (decision
+   CH33 rule 8). The repo holds a frozen copy of that subset per number,
+   and CI fails on a change that keeps the number. That check is not built
+   yet (see "Known gaps").
 
 To add a route, add its marker and its line in `route_table!`. Then follow
 the steps below.
+
+## A route error on the wire
+
+Each route has a typed error (decision CH26 rule 4). A caller matches it on
+its `code` (decision CH25 rule 3).
+
+1. Declare the error only with `route_error!` in `routes.rs`, as
+   `Name = "code" => status` per variant. The wire form of a variant is
+   `{"code":"<code>"}`. A variant carries nothing, and the macro writes it
+   `V {}`.
+2. Each code has one HTTP status, 4xx or 5xx (decision CH33). A status
+   outside 400 to 599 fails to compile. `RouteError::STATUSES` lists each
+   code with its status, and `status` gives the status of a value. The
+   entry of each route in `x-routes` maps each code to its status under
+   `statuses`.
+3. No variant has a schema title. datamodel-codegen names each class by
+   its position: `CreateError1`, `CreateError2`. A new code shifts these
+   names. Export only the error type, such as `CreateError`, from
+   `src/creche_wire/__init__.py`.
+4. A Python caller matches `error.root.code`. Never name a class such as
+   `CreateError1`.
+5. Add a refused case with the array form, an unknown code and an extra
+   key.
+
+Decision CH33 rule 13 names the codes that each route shares. No error
+type holds them yet (see "Known gaps").
 
 ## Change a wire type
 
@@ -214,8 +243,11 @@ a dependency.
 
 ## Known gaps
 
-- `CONTRACT-QUESTION` in `rust/crates/wire/src/routes.rs`,
-  `HOST_API_PROTOCOL`. Decision CH25 rule 1 sets an exact match, but no
-  rule says which change needs a new number (gap G8 of the route table
-  plan). The number stays 1. A later rule may add a CI check, and a
-  client of an older number then gets the mismatch reply.
+- `HOST_API_PROTOCOL` in `rust/crates/wire/src/routes.rs`: decided
+  (decision CH33 rule 8), not built yet. A change of the schema subset
+  that the routes reach needs a new number. The frozen copy per number and
+  its CI check come in a later PR (PR 10 of the route table plan). Until
+  then no check stops a change that keeps the number 1.
+- Decision CH33 rule 13 names the codes that each route shares, in the
+  CH26 check order, each with its status. No error type holds them yet.
+  A later change adds them to each error type.

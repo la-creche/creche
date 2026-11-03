@@ -16,7 +16,9 @@ mod schema;
 #[cfg(test)]
 mod vectors;
 
-pub use routes::{Body, CreateRoute, HOST_API_HEADER, HOST_API_PROTOCOL, JsonRoute};
+pub use routes::{
+    Body, CreateError, CreateRoute, HOST_API_HEADER, HOST_API_PROTOCOL, JsonRoute, RouteError,
+};
 
 /// The length of a session id: 32 hex digits and 4 hyphens.
 const SESSION_ID_LEN: usize = 36;
@@ -410,6 +412,8 @@ macro_rules! object_only {
         }
     };
 }
+
+pub(crate) use object_only;
 
 /// The origin of a session that a door client opened. It carries nothing.
 ///
