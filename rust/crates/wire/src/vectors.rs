@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use serde::Deserialize;
 
 use super::schema::wire_schema;
-use super::{AutoJobId, DelegationId, JobId, SessionId};
+use super::{AutoJobId, Delegate, DelegationId, Door, JobId, SessionId, SessionOrigin};
 
 /// The file, relative to the crate.
 const VECTOR_FILE: &str = "vectors/wire.json";
@@ -51,9 +51,12 @@ where
 fn read_and_write(type_name: &str, json: &str) -> Option<String> {
     match type_name {
         "AutoJobId" => round_trip::<AutoJobId>(json),
+        "Delegate" => round_trip::<Delegate>(json),
         "DelegationId" => round_trip::<DelegationId>(json),
+        "Door" => round_trip::<Door>(json),
         "JobId" => round_trip::<JobId>(json),
         "SessionId" => round_trip::<SessionId>(json),
+        "SessionOrigin" => round_trip::<SessionOrigin>(json),
         other => panic!("{VECTOR_FILE} names {other}, and this test reads no such type"),
     }
 }

@@ -5,7 +5,9 @@
 use std::fmt;
 use std::str::FromStr;
 
-use serde::{Deserialize, Serialize};
+use serde::de::value::MapAccessDeserializer;
+use serde::de::{MapAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 #[cfg(test)]
 mod schema;
@@ -217,6 +219,89 @@ ulid_id!(
     DelegationId,
     ""
 );
+
+/// The `Serialize` and `Deserialize` of a struct on the wire. The struct
+/// derives both with `#[serde(remote = "Self")]`, so the derived code is a
+/// pair of inherent functions, and these trait impls call them.
+///
+/// The `Deserialize` runs the derived reader only on a JSON object. A
+/// derived reader of a struct also reads a JSON array, its fields in order,
+/// and `deny_unknown_fields` does not stop that. The schema and the
+/// generated Python model take only an object (wire/AGENTS.md).
+macro_rules! object_only {
+    ($name:ident) => {
+        impl Serialize for $name {
+            fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                $name::serialize(self, serializer)
+            }
+        }
+
+        impl<'de> Deserialize<'de> for $name {
+            fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                struct ObjectVisitor;
+
+                impl<'de> Visitor<'de> for ObjectVisitor {
+                    type Value = $name;
+
+                    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                        formatter.write_str(concat!("a JSON object for ", stringify!($name)))
+                    }
+
+                    fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<$name, A::Error> {
+                        $name::deserialize(MapAccessDeserializer::new(map))
+                    }
+                }
+
+                deserializer.deserialize_map(ObjectVisitor)
+            }
+        }
+    };
+}
+
+/// The origin of a session that a door client opened. It carries nothing.
+///
+/// It is a type of its own so that the generated Python model is a class
+/// with no field. An inline empty object generates a `dict` with lax keys.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct Door {}
+
+object_only!(Door);
+
+/// The origin of a session that the delegate door opened for one thin job.
+///
+/// It is a type of its own so that the generated Python class has a name
+/// of its own. An inline struct variant gets the class name of its key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct Delegate {
+    /// The delegation that asked for the job.
+    pub delegation: DelegationId,
+    /// The id that attendance gives the job. The `SessionId` of the row is a
+    /// separate value.
+    pub job: JobId,
+}
+
+object_only!(Delegate);
+
+/// Who made a session, kept on its row of the host session list (decision
+/// CH21-4). On the wire the variant name is the one key of an object.
+///
+/// Each variant has a `title`. datamodel-codegen names a class of a `oneOf`
+/// member by its title, and by its position without one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub enum SessionOrigin {
+    /// A door client opened the session. No job owns it.
+    #[cfg_attr(test, schemars(title = "DoorOrigin"))]
+    Door(Door),
+    /// The delegate door opened the session for one thin job.
+    #[cfg_attr(test, schemars(title = "DelegateOrigin"))]
+    Delegate(Delegate),
+}
 
 #[cfg(test)]
 mod tests {

@@ -26,6 +26,23 @@
       "note": "a trailing newline"
     }
   ],
+  "Delegate": [
+    {
+      "json": "{\"delegation\":\"01K5J9QWB2M4N6Q8S0V2W4Y6A8\",\"job\":\"job-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\"}",
+      "written": "{\"delegation\":\"01K5J9QWB2M4N6Q8S0V2W4Y6A8\",\"job\":\"job-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\"}",
+      "note": "a delegation and a job"
+    },
+    {
+      "json": "[\"01K5J9QWB2M4N6Q8S0V2W4Y6A8\",\"job-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\"]",
+      "written": null,
+      "note": "the fields in order as an array, the array form of a struct"
+    },
+    {
+      "json": "{\"delegation\":\"01K5J9QWB2M4N6Q8S0V2W4Y6A8\",\"job\":\"job-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\",\"x\":1}",
+      "written": null,
+      "note": "an unknown key"
+    }
+  ],
   "DelegationId": [
     {
       "json": "\"01K5J9QWB2M4N6Q8S0V2W4Y6A8\"",
@@ -71,6 +88,28 @@
       "json": "\"01K5J9QWB2M4N6Q8S0V2W4Y6AO\"",
       "written": null,
       "note": "O is not in the Crockford alphabet"
+    }
+  ],
+  "Door": [
+    {
+      "json": "{}",
+      "written": "{}",
+      "note": "the empty object"
+    },
+    {
+      "json": "{\"job\":\"job-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\"}",
+      "written": null,
+      "note": "a key"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an empty array, the array form of a struct"
     }
   ],
   "JobId": [
@@ -200,6 +239,98 @@
       "json": "{}",
       "written": null,
       "note": "an object"
+    }
+  ],
+  "SessionOrigin": [
+    {
+      "json": "{\"door\":{}}",
+      "written": "{\"door\":{}}",
+      "note": "a door client"
+    },
+    {
+      "json": "{\"delegate\":{\"job\":\"job-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\",\"delegation\":\"01K5J9QWB2M4N6Q8S0V2W4Y6A8\"}}",
+      "written": "{\"delegate\":{\"delegation\":\"01K5J9QWB2M4N6Q8S0V2W4Y6A8\",\"job\":\"job-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\"}}",
+      "note": "a delegate job, its keys in any order"
+    },
+    {
+      "json": "\"door\"",
+      "written": null,
+      "note": "a variant as a string"
+    },
+    {
+      "json": "{\"door\":{},\"delegate\":{\"delegation\":\"01K5J9QWB2M4N6Q8S0V2W4Y6A8\",\"job\":\"job-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\"}}",
+      "written": null,
+      "note": "two variants"
+    },
+    {
+      "json": "{\"delegate\":{\"delegation\":\"01K5J9QWB2M4N6Q8S0V2W4Y6A8\"}}",
+      "written": null,
+      "note": "a delegate with no job"
+    },
+    {
+      "json": "{\"delegate\":{\"delegation\":\"01K5J9QWB2M4N6Q8S0V2W4Y6A8\",\"job\":\"auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\"}}",
+      "written": null,
+      "note": "the job id of an autonomous job"
+    },
+    {
+      "json": "{\"delegate\":{\"delegation\":\"01K5J9QWB2M4N6Q8S0V2W4Y6A8\",\"job\":\"job-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\",\"x\":1}}",
+      "written": null,
+      "note": "an unknown key"
+    },
+    {
+      "json": "{\"auto\":{\"job\":\"auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\"}}",
+      "written": null,
+      "note": "a variant this type does not have yet"
+    },
+    {
+      "json": "{\"door\":[]}",
+      "written": null,
+      "note": "a door as an array, the array form of a struct"
+    },
+    {
+      "json": "{\"delegate\":[\"01K5J9QWB2M4N6Q8S0V2W4Y6A8\",\"job-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\"]}",
+      "written": null,
+      "note": "a delegate as an array of its fields in order"
+    },
+    {
+      "json": "{\"delegate\":{\"job\":\"job-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\"}}",
+      "written": null,
+      "note": "a delegate with no delegation"
+    },
+    {
+      "json": "{\"delegate\":{\"delegation\":null,\"job\":\"job-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\"}}",
+      "written": null,
+      "note": "a delegate with a null delegation"
+    },
+    {
+      "json": "{\"delegate\":{\"delegation\":\"01K5J9QWB2M4N6Q8S0V2W4Y6A8\",\"job\":\"job-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\",\"job\":\"job-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\"}}",
+      "written": null,
+      "note": "a delegate with two job keys"
+    },
+    {
+      "json": "{}",
+      "written": null,
+      "note": "an object with no variant"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    },
+    {
+      "json": "{\"door\":null}",
+      "written": null,
+      "note": "a door as null"
+    },
+    {
+      "json": "{\"door\":{\"x\":1}}",
+      "written": null,
+      "note": "a door with a key"
+    },
+    {
+      "json": "{\"Door\":{}}",
+      "written": null,
+      "note": "a variant name in the wrong case"
     }
   ]
 }
