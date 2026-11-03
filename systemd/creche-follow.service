@@ -29,12 +29,13 @@ EnvironmentFile=/etc/creche/site.env
 # THE COMPONENT TREE, not the deployed checkout. A `handover` release then
 # changes what this unit runs, and the next firing runs the new tree.
 #
-# The names are every component a release can deploy: six of this
-# repository, and `mcp-servers` of the MCP repository. A component with no
-# release stamp is skipped whatever this line says, so `playpen` is followed
-# only after its first release, which the operator files by hand. One line,
-# with no continuation: a test reads it.
-ExecStart=/opt/components/handover/bin/handover follow chaperone attendance caregiver noticeboard playpen handover mcp-servers
+# The names are every component a release can deploy: five of this
+# repository, `chaperone` of the chaperone repository, `mcp-servers` of the
+# MCP repository and `host` of creche-release. A component with no release
+# stamp is skipped whatever this line says, so `host` is followed only after
+# its first release, which the operator files by hand. One line, with no
+# continuation: a test reads it.
+ExecStart=/opt/components/handover/bin/handover follow chaperone attendance caregiver noticeboard playpen handover mcp-servers host
 
 # A user unit on this host cannot use mount-namespace options
 # (apparmor_restrict_unprivileged_userns=1), but seccomp, prctl and rlimit
@@ -46,8 +47,9 @@ LockPersonality=yes
 # 0077: the marker and the request are the operator's and root's alone. Both
 # writers set their own mode as well.
 UMask=0077
-# The names are in two repositories, and one fetch is capped at 120 s
-# (`handover/src/handover/corpus/`). The reads after the two fetches take
-# seconds. This is the ceiling above them. A run that is still active when
-# the timer fires again is not started twice.
+# The names are in four repositories. The run fetches each one in turn, and
+# one fetch is capped at 120 s (`handover/src/handover/corpus/`). A fetch
+# usually takes seconds. A run with hung fetches can pass this ceiling:
+# systemd stops it, and the next firing fetches again. A run that is still
+# active when the timer fires again is not started twice.
 TimeoutStartSec=300

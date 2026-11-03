@@ -53,7 +53,7 @@ def test_discover_finds_every_manifest(tmp_path: Path) -> None:
 def test_missing_names_what_no_root_held(tmp_path: Path) -> None:
     found = discover([_control_repo(tmp_path)])
 
-    assert found.missing == ("chaperone", "mcp-servers", "registry-data")
+    assert found.missing == ("chaperone", "mcp-servers", "registry-data", "host")
 
 
 def test_require_complete_refuses_and_names_them(tmp_path: Path) -> None:
@@ -68,8 +68,8 @@ def test_require_complete_refuses_and_names_them(tmp_path: Path) -> None:
     assert "registry-data" in caught.value.detail
 
 
-def _all_four(tmp_path: Path, control_names: tuple[str, ...]) -> list[Path]:
-    """Four roots, with the creche components `control_names` lists."""
+def _all_five(tmp_path: Path, control_names: tuple[str, ...]) -> list[Path]:
+    """Five roots, with the creche components `control_names` lists."""
     control = tmp_path / "creche"
     for name in control_names:
         write_manifest(control, name, manifest_text(name))
@@ -78,9 +78,13 @@ def _all_four(tmp_path: Path, control_names: tuple[str, ...]) -> list[Path]:
 
 
 def _other_roots(tmp_path: Path) -> list[Path]:
-    """The roots of the three other repositories, each with its manifest."""
+    """The roots of the four other repositories, each with its manifest."""
     roots: list[Path] = []
-    for repo, name in (("mcp", "mcp-servers"), ("registry", "registry-data")):
+    for repo, name in (
+        ("mcp", "mcp-servers"),
+        ("registry", "registry-data"),
+        ("creche-release", "host"),
+    ):
         roots.append(tmp_path / repo)
         write_manifest(roots[-1], name, manifest_text(name))
 
@@ -111,7 +115,7 @@ def test_a_retiring_component_may_be_absent(
     retiring = _retire(monkeypatch)
     kept = tuple(name for name in CONTROL_NAMES if name != retiring)
 
-    found = discover(_all_four(tmp_path, kept))
+    found = discover(_all_five(tmp_path, kept))
 
     assert retiring not in found.manifests()
     assert found.missing == ()
@@ -123,7 +127,7 @@ def test_a_retiring_component_still_reads_when_it_is_present(
 ) -> None:
     retiring = _retire(monkeypatch)
 
-    found = discover(_all_four(tmp_path, CONTROL_NAMES))
+    found = discover(_all_five(tmp_path, CONTROL_NAMES))
 
     assert retiring in found.manifests()
     require_complete(found)
@@ -132,7 +136,7 @@ def test_a_retiring_component_still_reads_when_it_is_present(
 def test_only_a_retiring_component_may_be_absent(tmp_path: Path) -> None:
     kept = tuple(name for name in CONTROL_NAMES if name != "noticeboard")
 
-    found = discover(_all_four(tmp_path, kept))
+    found = discover(_all_five(tmp_path, kept))
 
     assert found.missing == ("noticeboard",)
 

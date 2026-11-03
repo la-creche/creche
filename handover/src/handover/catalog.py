@@ -227,8 +227,8 @@ ARRIVING: frozenset[str] = frozenset()
 #: name in `ARRIVING`. The allocator tags each one as usual: the repository
 #: holds the tree, so a tag is a version somebody can release. A repository
 #: leaves this set in the commit that makes its clone on the host a
-#: requirement.
-ARRIVING_REPOS: frozenset[Repo] = frozenset({Repo.CRECHE_RELEASE})
+#: requirement. Empty now: `creche-release` left it when the host cloned it.
+ARRIVING_REPOS: frozenset[Repo] = frozenset()
 
 #: Contract 06 §3's provider column. Rule C3 refuses any other claimant.
 CONTRACT_OWNER: dict[ContractId, str] = {
