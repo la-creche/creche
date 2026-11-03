@@ -10,10 +10,13 @@ use serde::de::value::MapAccessDeserializer;
 use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+mod routes;
 #[cfg(test)]
 mod schema;
 #[cfg(test)]
 mod vectors;
+
+pub use routes::{Body, CreateRoute, HOST_API_HEADER, HOST_API_PROTOCOL, JsonRoute};
 
 /// The length of a session id: 32 hex digits and 4 hyphens.
 const SESSION_ID_LEN: usize = 36;

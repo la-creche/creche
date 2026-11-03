@@ -162,6 +162,33 @@ rule 3 allows.
 3. An enum that carries no data may be a plain string enum. Each variant
    is a JSON string, in `snake_case`. `SystemPrompt` is one.
 
+## A route on the wire
+
+The vmm host API has one route table (decision CH25). It is
+`rust/crates/wire/src/routes.rs`. Each route is `POST /<name>` with a JSON
+body. The table pairs the route with its request type and its reply type.
+
+1. A route is a marker type, an empty enum named `<Name>Route`, with an
+   impl of `JsonRoute`. `NAME` is in `snake_case`.
+2. The macro `route_table!` is the one list of the routes. It calls a
+   macro of the caller once per route. The schema test expands it, and the
+   vmm router expands it later. Do not write a second list.
+3. The traits carry serde bounds only. The `JsonSchema` bounds stay on the
+   schema test, so a crate that depends on `creche-wire` needs no schemars.
+4. The schema test writes the table into the schema, under the root key
+   `x-routes`. Each type is the name of a `$defs` entry. A route type needs
+   no `subschema_for` line of its own.
+5. datamodel-codegen and TypeBox ignore the key `x-routes` itself. A route
+   that names a new type adds that type to `$defs`. Run
+   `uv run datamodel-codegen` after each change of a route.
+6. A client sends `HOST_API_PROTOCOL` in the header `HOST_API_HEADER`. The
+   vmm checks it before it reads the body, and the match is exact. No rule
+   says yet which change needs a new number. Until the owner sets that
+   rule, the number stays 1 (see "Known gaps").
+
+To add a route, add its marker and its line in `route_table!`. Then follow
+the steps below.
+
 ## Change a wire type
 
 1. Change the type in `rust/crates/wire/src/`.
@@ -184,3 +211,11 @@ when `wire.json` or `wire.ts` is not the schema of the Rust types.
 No program imports the package yet. caregiver and attendance become its
 callers when they talk to the VM owner. Each one then names `creche-wire` as
 a dependency.
+
+## Known gaps
+
+- `CONTRACT-QUESTION` in `rust/crates/wire/src/routes.rs`,
+  `HOST_API_PROTOCOL`. Decision CH25 rule 1 sets an exact match, but no
+  rule says which change needs a new number (gap G8 of the route table
+  plan). The number stays 1. A later rule may add a CI check, and a
+  client of an older number then gets the mismatch reply.
