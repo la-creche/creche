@@ -754,6 +754,35 @@ checked_text!(
     "pattern" = CWD_PATTERN
 );
 
+/// What attendance sends to the vmm to make a row of the host session list
+/// (decisions CH21-4, CH25 rule 2). It is a `SessionRow` without `title`
+/// and `updated_at`. The vmm sets `title` to `null` and `updated_at` to
+/// `created_at`. It makes no session disk at create (decision CH21-4).
+///
+/// Two creates are the same when their typed values are equal
+/// (`PartialEq`), not when their bytes are equal. A client retries after
+/// ENOENT, ECONNREFUSED or EOF (decision CH20). attendance stores the create
+/// before it sends it the first time. A retry resends the same `created_at`,
+/// so the repeat is the same create.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct CreateSession {
+    /// When attendance created the session.
+    pub created_at: UnixMillis,
+    /// The `cwd` that the client sent in `session/new`, or that attendance
+    /// chose for a job.
+    pub cwd: SessionCwd,
+    /// The family that serves the session.
+    pub family: FamilyName,
+    /// The id that attendance chose (decision CH25 rule 2).
+    pub id: SessionId,
+    /// Who made the session.
+    pub origin: SessionOrigin,
+}
+
+object_only!(CreateSession);
+
 /// One row of the host session list (decision CH1, CH21, CH21-4). The vmm
 /// keeps it, so `session/list` and the noticeboard need no VM boot.
 ///

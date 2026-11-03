@@ -269,6 +269,93 @@
       "note": "null"
     }
   ],
+  "CreateSession": [
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}}}",
+      "written": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}}}",
+      "note": "a door session"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"delegate\":{\"delegation\":\"01K5J9QWB2M4N6Q8S0V2W4Y6A8\",\"job\":\"job-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\"}}}",
+      "written": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"delegate\":{\"delegation\":\"01K5J9QWB2M4N6Q8S0V2W4Y6A8\",\"job\":\"job-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\"}}}",
+      "note": "a delegated job"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"scrum-lead\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"auto\":{\"job\":\"auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\",\"trigger\":{\"dispatch\":{\"chain\":[\"chat\",\"scrum-lead\"],\"name\":\"chat\"}}}}}",
+      "written": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"scrum-lead\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"auto\":{\"job\":\"auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\",\"trigger\":{\"dispatch\":{\"chain\":[\"chat\",\"scrum-lead\"],\"name\":\"chat\"}}}}}",
+      "note": "an autonomous job of a dispatch"
+    },
+    {
+      "json": "{\"origin\":{\"door\":{}},\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"family\":\"chat\",\"cwd\":\"/home/david/code/lacreche\",\"created_at\":1793577600000}",
+      "written": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}}}",
+      "note": "its keys in any order"
+    },
+    {
+      "json": "[1793577600000,\"/home/david/code/lacreche\",\"chat\",\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",{\"door\":{}}]",
+      "written": null,
+      "note": "the fields in order as an array, the array form of a struct"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an empty array"
+    },
+    {
+      "json": "{\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}}}",
+      "written": null,
+      "note": "no created time"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}}}",
+      "written": null,
+      "note": "no cwd"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}}}",
+      "written": null,
+      "note": "no family"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"origin\":{\"door\":{}}}",
+      "written": null,
+      "note": "no id: attendance chooses it"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}",
+      "written": null,
+      "note": "no origin"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":null}",
+      "written": null,
+      "note": "a title key: the vmm sets the title, not the create"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"updated_at\":1793577600000}",
+      "written": null,
+      "note": "an updated_at key: the vmm sets it to the created time"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"sessionId\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}",
+      "written": null,
+      "note": "the ACP key sessionId"
+    },
+    {
+      "json": "{\"created_at\":\"2026-11-02T00:00:00Z\",\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}}}",
+      "written": null,
+      "note": "a created time as a date-time string"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"home/david\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}}}",
+      "written": null,
+      "note": "a relative cwd"
+    },
+    {
+      "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":\"door\"}",
+      "written": null,
+      "note": "an origin as a string"
+    }
+  ],
   "CredsMissing": [
     {
       "json": "{}",

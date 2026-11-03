@@ -14,12 +14,13 @@ use serde_json::Value;
 
 use super::schema::wire_schema;
 use super::{
-    Auto, AutoJobId, ConfigMissing, ControlHello, ControlReady, CredsMissing, Delegate,
-    DelegationId, Dispatch, DispatchChain, Door, FacadeExited, FacadeNotStarted, FacadeRunning,
-    FacadeStarting, FacadeState, FamilyConfig, FamilyCreds, FamilyName, FamilySkills, FamilyState,
-    FamilyStateReply, JobId, LitellmKey, ModelAlias, PepToken, SandboxGrant, SessionCwd, SessionId,
-    SessionOrigin, SessionRow, SessionTitle, SkillName, StartCount, StateNotValid, StateTooLarge,
-    Timer, Trigger, TurnEnd, TurnEvent, TurnStart, UnixMillis, Webhook, WebhookName,
+    Auto, AutoJobId, ConfigMissing, ControlHello, ControlReady, CreateSession, CredsMissing,
+    Delegate, DelegationId, Dispatch, DispatchChain, Door, FacadeExited, FacadeNotStarted,
+    FacadeRunning, FacadeStarting, FacadeState, FamilyConfig, FamilyCreds, FamilyName,
+    FamilySkills, FamilyState, FamilyStateReply, JobId, LitellmKey, ModelAlias, PepToken,
+    SandboxGrant, SessionCwd, SessionId, SessionOrigin, SessionRow, SessionTitle, SkillName,
+    StartCount, StateNotValid, StateTooLarge, Timer, Trigger, TurnEnd, TurnEvent, TurnStart,
+    UnixMillis, Webhook, WebhookName,
 };
 
 /// The file, relative to the crate.
@@ -66,6 +67,7 @@ fn read_and_write(type_name: &str, json: &str) -> Option<String> {
         "ConfigMissing" => round_trip::<ConfigMissing>(json),
         "ControlHello" => round_trip::<ControlHello>(json),
         "ControlReady" => round_trip::<ControlReady>(json),
+        "CreateSession" => round_trip::<CreateSession>(json),
         "CredsMissing" => round_trip::<CredsMissing>(json),
         "DispatchChain" => round_trip::<DispatchChain>(json),
         "Door" => round_trip::<Door>(json),
