@@ -18,19 +18,22 @@ pnpm run build     # src/ to dist/ with declarations, for the facade
 
 The facade imports `agent/agent`, `agent/config` and `agent/strict-json`
 from `dist/` (`package.json` `exports`). Its `build` and `typecheck` run
-this build first. `agent/wire` is exported too, for the facade's later
-reads.
+this build first. `agent/wire` and `agent/wire-read` are exported too,
+for the facade's later reads.
 
 `src/wire.ts` is the JSON Schema of the wire types of the VM owner. The
 schema test of `rust/crates/wire` writes it (`wire/AGENTS.md`). Never edit
 it.
 
-`parseStrict(data, cap)` of `src/strict-json.ts` is the strict reader of
-a wire text (decision CH22 rule 1). It gives the value, or a refusal that
-names a rule. Up to `float_range`, and `negative_zero`, each word is a word
-of Python `strictjson`.
-`test/strict-json-vectors.test.ts` holds it to the shared vectors
-(`runtime.strict_json`).
+Read a wire text only with `read(name, data, { cap })` of
+`src/wire-read.ts` (decision CH22). `parseStrict(data, cap)` of
+`src/strict-json.ts` checks the text first, then the TypeBox validator of
+the wire type checks the value. The result is the static type
+`Wire<name>`, or a refusal that names a rule. Up to `float_range`, and
+`negative_zero`, each word of `parseStrict` is a word of Python
+`strictjson`. `test/strict-json-vectors.test.ts` holds `parseStrict` to
+the shared vectors (`runtime.strict_json`), and
+`test/wire-vectors.test.ts` holds `read` to the shared wire vectors.
 
 1. JavaScript reads `1.0` as `1` and `-0` as `0`. So `parseStrict` refuses
    a number with a fraction or an exponent that has an integer value
@@ -43,6 +46,10 @@ of Python `strictjson`.
    `unsafe_integer`. Rust and Python take it.
 3. `cap` is the most bytes of a text of the caller's surface. A text over
    it is `too_large`, before the decode.
+4. JSON Schema, Rust and Python count the length of a text in code
+   points. TypeBox 1.3.27 counts grapheme clusters, so `"e"` and 300
+   combining accents is one. `read` therefore compiles each `minLength`
+   and `maxLength` as a pattern of code points.
 
 The tests use `sqlite()` with no path, an in-memory store, and pi's
 `fauxProvider()`. A test needs no network and no model key.

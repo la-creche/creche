@@ -23,6 +23,10 @@
     "./wire": {
       "types": "./dist/wire.d.ts",
       "default": "./dist/wire.js"
+    },
+    "./wire-read": {
+      "types": "./dist/wire-read.d.ts",
+      "default": "./dist/wire-read.js"
     }
   },
   "scripts": {

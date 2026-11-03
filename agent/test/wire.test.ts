@@ -5,16 +5,13 @@
 
 import { readFileSync } from "node:fs";
 
-import type { Static } from "typebox";
 import Schema from "typebox/schema";
 import { describe, expect, expectTypeOf, it } from "vitest";
 
 import { wire } from "../src/wire.js";
+import type { Wire } from "../src/wire-read.js";
 
 const SCHEMA_FILE = new URL("../../rust/crates/wire/schema/wire.json", import.meta.url);
-
-type Defs = typeof wire.$defs;
-type Wire<N extends keyof Defs> = Static<{ readonly $defs: Defs; readonly $ref: `#/$defs/${N}` }>;
 
 const ROW: Wire<"SessionRow"> = {
   created_at: 1_700_000_000_000,

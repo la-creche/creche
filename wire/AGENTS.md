@@ -67,6 +67,10 @@ that does needs a decision of the owner before its vector cases are added:
 `bin/tests/test_strictjson_copies.py` fails when `strictjson.py` differs from
 the copy in another package. Change each copy in one commit.
 
+TypeScript reads a wire text with `read` of `agent/src/wire-read.ts`, and
+`agent/test/wire-vectors.test.ts` runs the shared wire vectors through it
+(`agent/AGENTS.md`).
+
 ## Secrets
 
 `LitellmKey` and `PepToken` hold secrets. The `Debug` of the Rust types
