@@ -67,6 +67,7 @@ NOT_STRICT = [
     (b'"\\ud800"', strictjson.Rule.LONE_SURROGATE),
     (b"NaN", strictjson.Rule.CONSTANT),
     (b"18446744073709551616", strictjson.Rule.INTEGER_RANGE),
+    (b"-0", strictjson.Rule.NEGATIVE_ZERO),
     (b"7 7", strictjson.Rule.TRAILING_DATA),
     (b"7" * (CAP + 1), strictjson.Rule.TOO_LARGE),
 ]
@@ -78,3 +79,30 @@ def test_a_text_that_is_not_strict_json_is_refused(data: bytes, rule: strictjson
         read(_Count, data, cap=CAP)
 
     assert refused.value.rule == rule
+
+
+class _Real(RootModel[float]):
+    root: float
+
+
+def test_the_integer_minus_zero_is_refused_at_its_minus_sign() -> None:
+    assert read(_Count, b"0", cap=CAP).root == 0
+    for model, data, offset in (
+        (_Count, b"-0", 0),
+        (_Scratch, GOOD.replace('"count": 1', '"count": -0').encode(), 10),
+        (_Real, b"-0", 0),
+    ):
+        with pytest.raises(NotStrictJson) as refused:
+            read(model, data, cap=CAP)
+
+        assert (refused.value.rule, refused.value.offset) == (
+            strictjson.Rule.NEGATIVE_ZERO,
+            offset,
+        )
+
+
+def test_minus_zero_with_a_fraction_is_a_float_and_no_integer() -> None:
+    assert repr(read(_Real, b"-0.0", cap=CAP).root) == "-0.0"
+    assert repr(read(_Real, b"-0e0", cap=CAP).root) == "-0.0"
+    with pytest.raises(ValidationError):
+        read(_Count, b"-0.0", cap=CAP)

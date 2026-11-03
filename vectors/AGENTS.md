@@ -298,13 +298,13 @@ did not.
   The rule of the refusal goes to the notice only.
 - `runtime.strict_json` holds no text that breaks more than one rule.
   `noticeboard/tests` holds such texts. For a refused text of 1 MiB or less,
-  the Python reader names the fault at the lowest byte offset, as the Rust
-  reader does. For a longer text, the Python reader names the fault that the
-  standard decoder finds, and the two words can differ. The docstring of
+  the Python reader names the fault at the lowest byte offset. For a longer
+  text, the Python reader names the fault that the standard decoder finds,
+  and the two words can differ. The docstring of
   `noticeboard/src/noticeboard/strictjson.py` has the rule.
 - A refused vector of `runtime.strict_json` holds no offset.
-  `noticeboard/tests` holds the rule and the offset of each refused text of
-  the tests of the Rust check.
+  `noticeboard/tests` holds the rule and the offset of each refused text.
+  The module docstring of `strictjson.py` gives the offset of each rule.
 - No vector covers the strict writer, `dumps` of `noticeboard.strictjson`.
   `noticeboard/tests` holds that writer.
 - `runtime.time` records the copy of the time reader in the noticeboard,

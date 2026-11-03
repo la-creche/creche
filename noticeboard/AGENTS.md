@@ -173,10 +173,11 @@ prefixed `test_noticeboard_`.
 - No contract gives a range for a count. `jsonfiles.integer` has no range
   of its own. Each reader reads strict JSON, so the function gets an integer
   of 64 bits at most.
-- `strictjson.py` names the rule and the offset of the Rust check for a
-  refused text of 1 MiB or less. For a longer refused text, it names the
-  fault that the standard decoder finds, with no offset, and the two words
-  can differ. An answer of `attendance` has a cap of 4 MiB.
+- `strictjson.py` names the rule and the offset of its own pass for a
+  refused text of 1 MiB or less. The module docstring gives the offset of
+  each rule. For a longer refused text, it names the fault that the
+  standard decoder finds, with no offset, and the two words can differ. An
+  answer of `attendance` has a cap of 4 MiB.
 - No contract names the surface word of the validation report in a notice.
   `jsonfiles.Surface` gives the report the word `status.report`
   (`jsonfiles.py`).

@@ -40,8 +40,8 @@ a missing or empty chain, at the request and in the ledger reader.
 Read a wire text only with `creche_wire.read(Model, data, cap=...)`.
 
 1. `strictjson.loads` checks the text first. It refuses two equal keys, a
-   lone surrogate, `NaN`, an integer out of range and a text over the cap.
-   The error is `NotStrictJson`.
+   lone surrogate, `NaN`, an integer out of range, the integer `-0` and a
+   text over the cap. The error is `NotStrictJson`.
 2. The model then reads the text in strict mode. An int refuses `"1"`, `1.0`
    and `true`. The error is `pydantic.ValidationError`.
 3. The caller gives the cap. It is the cap of the caller's surface, so the
@@ -61,6 +61,8 @@ that does needs a decision of the owner before its vector cases are added:
    does not meet this text.
 3. An integer past 64 bits for a float. serde_json reads it as an `f64`.
 4. A text over the cap. The Rust crate has no cap.
+5. The integer token `-0` for a float. serde_json reads it as the `f64`
+   value -0.0.
 
 `bin/tests/test_strictjson_copies.py` fails when `strictjson.py` differs from
 the copy in another package. Change each copy in one commit.
@@ -83,10 +85,12 @@ the copy in another package. Change each copy in one commit.
 4. `test_each_integer_and_date_of_the_schema_is_checked` holds the committed
    schema to rules 1 and 3.
 
-`read` takes `-0` for an integer, and gives `0`. serde_json reads `-0` as a
-float, so the Rust type refuses it, and so does `parseStrict` of
-`agent/src/strict-json.ts`. No vector case holds `-0` until the owner
-decides which language changes.
+`read` refuses the integer `-0` with the rule `negative_zero` (decision
+CH22-3). serde_json reads `-0` as a float, so the Rust type refuses it too.
+`parseStrict` of `agent/src/strict-json.ts` refuses it with the same word.
+`-0.0` is a float. The Rust type and the model of an integer refuse it.
+`parseStrict` refuses it at the read, as it refuses `1.0`. The `UnixMillis`
+block of the shared vectors holds a case for `-0` and for `-0.0`.
 
 ## The shared wire vectors
 

@@ -21,7 +21,9 @@ A text is strict when each of these eight rules holds:
    code points are equal after the decode of each escape.
 6. Depth. `DEPTH_MAX` arrays and objects are open at one point, or less.
 7. Integers. A number with no fraction and no exponent is in the range from
-   `INTEGER_MIN` to `INTEGER_MAX`.
+   `INTEGER_MIN` to `INTEGER_MAX`, and it is not `-0`. serde_json reads `-0`
+   as a float, so a Rust integer type refuses it. `-0.0` and `-0e0` are
+   floats.
 8. Floats. Each other number is finite as a float of 64 bits. `1e-999` is 0.
 
 A value of each kind is a strict text. A caller that needs an object checks
@@ -31,28 +33,43 @@ A number is the longest run of digits and of the characters `+`, `-`, `.`,
 `e` and `E`. A run that is no number of RFC 8259 breaks rule 3, for example
 `01`, `1.` and `1.5.2`. A number in such a run is thus never out of range.
 
-The source of the rules is the Rust module `creche_contracts::json`, in
-`rust/crates/creche-contracts/src/json.rs`. Each word of `Rule` is a word of
-the enum `Rule` there. The vector surface `runtime.strict_json` records the
-reader of the noticeboard copy. A test of the Rust module gives each input of
-that surface to the Rust reader.
+The words of `Rule` and the offset of each refusal are the rules of this
+module. No Rust reader checks them. `parseStrict` in `agent/src/strict-json.ts`
+gives the word `negative_zero` for the integer `-0` too. The vector surface
+`runtime.strict_json` records the reader of the noticeboard copy.
 
-A refusal names the rule and the byte offset that the Rust check names. A
-text can break more than one rule, and the refusal then names the fault at
-the lowest offset. The checks run in this sequence:
+A refusal names the rule and a byte offset. A text can break more than one
+rule, and the refusal then names the fault at the lowest offset. The checks
+run in this sequence:
 
 1. The size. The offset is the cap.
 2. The encoding: UTF-8 first, then the mark. The offset is the first byte
    that is not UTF-8, or 0 for the mark.
 3. The read of the standard decoder. It decides if the text is strict, and
    no loop of this module reads each character of a strict text.
-4. For a refused text only, one more pass: the pass of the Rust check, in
-   Python code. It reads the text from the start and stops at the first
-   fault. The module doc of the Rust module has the offset of each rule.
+4. For a refused text only, one more pass. It reads the text from the
+   start and stops at the first fault. The list below gives the offset of
+   each rule.
+
+The offset of each rule:
+
+- `too_large`: the cap.
+- `not_utf8`: the first byte that is not UTF-8.
+- `byte_order_mark`: 0.
+- `syntax`: the first byte that no JSON text can have there. For a text that
+  ends too early, the count of its bytes. For an escape, the backslash of
+  the escape.
+- `constant`: the first byte of `NaN`, of `Infinity` or of `-Infinity`.
+- `trailing_data`: the first byte after the value that is not white space.
+- `too_deep`: the bracket that opens one level more than `DEPTH_MAX`.
+- `duplicate_key`: the first quote of the second key.
+- `lone_surrogate`: the backslash of the escape that has no partner.
+- `integer_range`, `negative_zero` and `float_range`: the first byte of the
+  number.
 
 The pass of step 4 reads `SCAN_MAX` bytes at most. A refused text that is
 longer keeps the word that the standard decoder gives, and its offset is
-`None`. The word can then differ from the word of the Rust check.
+`None`. The word can then differ from the word of the pass.
 
 This file is a copy. Each package that needs these rules holds a file with
 the same bytes, and `bin/tests/test_strictjson_copies.py` fails when two
@@ -86,7 +103,7 @@ class Rule(enum.StrEnum):
     """The rule that a refused text breaks. The set is closed.
 
     The value of a member is the word of the rule in a log line and in a
-    notice. Each word is a word of the Rust enum `Rule`.
+    notice.
     """
 
     TOO_LARGE = "too_large"
@@ -99,6 +116,7 @@ class Rule(enum.StrEnum):
     DUPLICATE_KEY = "duplicate_key"
     LONE_SURROGATE = "lone_surrogate"
     INTEGER_RANGE = "integer_range"
+    NEGATIVE_ZERO = "negative_zero"
     FLOAT_RANGE = "float_range"
 
 
@@ -110,9 +128,9 @@ class NotStrictJson(ValueError):
     a secret.
 
     `offset` is a count of bytes from the start of the text, or `None`. For
-    a refusal of `loads`, it is the offset that the Rust check gives. It is
-    `None` for a refused text of more than `SCAN_MAX` bytes, and for each
-    refusal of `dumps`.
+    a refusal of `loads`, it is the offset that the module docstring gives
+    for the rule. It is `None` for a refused text of more than `SCAN_MAX`
+    bytes, and for each refusal of `dumps`.
     """
 
     def __init__(self, rule: Rule, offset: int | None) -> None:
@@ -155,6 +173,14 @@ _WIDE_NUMBER_MARKS: Final = (b"0" * 19, b"e000")
 #: The most characters of an integer in the range of rule 7.
 _INTEGER_CHARS_MAX: Final = len(str(INTEGER_MIN))
 
+#: The integer token that rule 7 refuses inside the range.
+_MINUS_ZERO: Final = "-0"
+
+#: A place where the text can hold the integer token `-0`. In a JSON text,
+#: the minus sign of a number follows no digit and no `e`. A match inside a
+#: string costs only the hooks of the decoder.
+_MINUS_ZERO_MARK: Final = re.compile(rb"(?<![0-9eE])-0(?![0-9.eE])")
+
 _BACKSLASH: Final = b"\\"
 _QUOTE: Final = b'"'
 
@@ -192,21 +218,22 @@ def _members(pairs: list[tuple[str, object]]) -> dict[str, object]:
 
 
 class _Numbers:
-    """The hooks of the standard decoder for a text with a wide number.
+    """The hooks of the standard decoder for a text with a wide number or
+    with `-0`.
 
     A hook for a number cannot refuse the text at once. The decoder takes the
     longest number that it can, so the hook does not see the next character.
     That character can make the run a text that is no number, and the fault
-    is then `SYNTAX` and not a range. The hook thus keeps the range fault,
-    and the next step of the read settles it.
+    is then `SYNTAX` and not the fault of the number. The hook thus keeps the
+    fault of the number, and the next step of the read settles it.
     """
 
     def __init__(self) -> None:
-        #: The first range fault of the read, with the token of its number.
+        #: The first fault of a number in the read, with the token of the number.
         self.held: tuple[Rule, str] | None = None
 
     def settle(self) -> None:
-        """Refuses the text when a number before this place is out of range."""
+        """Refuses the text when a number before this place breaks rule 7 or 8."""
         if self.held is not None:
             raise NotStrictJson(self.held[0], None)
 
@@ -216,10 +243,11 @@ class _Numbers:
 
     def integer(self, token: str) -> int:
         self.settle()
-        if _is_in_range(token):
+        rule = _integer_rule(token)
+        if rule is None:
             return int(token)
 
-        self.held = (Rule.INTEGER_RANGE, token)
+        self.held = (rule, token)
 
         return 0
 
@@ -252,6 +280,17 @@ def _is_in_range(token: str) -> bool:
     return len(token) <= _INTEGER_CHARS_MAX and INTEGER_MIN <= int(token) <= INTEGER_MAX
 
 
+def _integer_rule(token: str) -> Rule | None:
+    """The rule that the integer token `token` breaks. `None` for a strict token."""
+    if token == _MINUS_ZERO:
+        return Rule.NEGATIVE_ZERO
+
+    if not _is_in_range(token):
+        return Rule.INTEGER_RANGE
+
+    return None
+
+
 def _in_number(text: str, at: int) -> bool:
     """Whether the character at `at` can be in the run of a number."""
     return at < len(text) and text[at] in _NUMBER_CHARS
@@ -262,6 +301,11 @@ def _has_wide_number(data: bytes) -> bool:
     flat = data.translate(_AS_ZERO_AND_E, _PLUS)
 
     return any(mark in flat for mark in _WIDE_NUMBER_MARKS)
+
+
+def _has_minus_zero(data: bytes) -> bool:
+    """Whether the text can hold the integer token `-0`."""
+    return _MINUS_ZERO.encode("ascii") in data and _MINUS_ZERO_MARK.search(data) is not None
 
 
 def _after_white_space(text: str, at: int) -> int:
@@ -320,7 +364,7 @@ def _read(text: str, data: bytes) -> object:
     later rule.
     """
     numbers: _Numbers | None = None
-    if _has_wide_number(data):
+    if _has_wide_number(data) or _has_minus_zero(data):
         numbers = _Numbers()
         decoder = json.JSONDecoder(
             parse_constant=numbers.constant,
@@ -329,8 +373,8 @@ def _read(text: str, data: bytes) -> object:
             object_pairs_hook=numbers.members,
         )
     else:
-        # Most texts hold no wide number. The decoder then reads each number
-        # with no call of this module.
+        # Most texts hold no wide number and no `-0`. The decoder then reads
+        # each number with no call of this module.
         decoder = json.JSONDecoder(parse_constant=_refuse_constant, object_pairs_hook=_members)
 
     value: object = None
@@ -412,7 +456,7 @@ def loads(data: bytes, *, cap: int) -> object:
 
 
 def _at_lowest_offset(data: bytes, found: NotStrictJson) -> NotStrictJson:
-    """The refusal of the Rust check for `data`, which the decoder refused.
+    """The refusal of the pass for `data`, which the decoder refused.
 
     `found` is the refusal of the standard decoder. It stays for a text of
     more than `SCAN_MAX` bytes. It also stays when the pass finds no fault,
@@ -483,12 +527,11 @@ _PLAIN_RUN: Final = re.compile(rb'[^"\\\x00-\x1f]*')
 
 
 class _Scan:
-    """The pass of the Rust check over a text that is UTF-8 with no mark.
+    """The pass over a text that is UTF-8 with no mark.
 
     The pass reads the text one time, from the start, and raises the
-    refusal of the first fault. It holds the grammar of `json/scan.rs` in
-    the crate `creche-contracts`, function for function, with the same
-    offset for each refusal. A run of white space, of digits or of plain
+    refusal of the first fault, at the offset that the module docstring
+    gives for its rule. A run of white space, of digits or of plain
     characters is one step of a pattern, so most steps take more than one
     byte.
 
@@ -606,8 +649,9 @@ class _Scan:
 
         token = self._data[start : self._at].decode("ascii")
         if not any(mark in token for mark in ".eE"):
-            if not _is_in_range(token):
-                self._refuse(Rule.INTEGER_RANGE, start)
+            rule = _integer_rule(token)
+            if rule is not None:
+                self._refuse(rule, start)
         elif not math.isfinite(float(token)):
             self._refuse(Rule.FLOAT_RANGE, start)
 
