@@ -15,7 +15,48 @@ The Rust crate `rust/crates/wire` defines each wire type. Its test writes
 |---|---|
 | `src/creche_wire/models.py` | The generated models. Never edit this file. |
 | `src/creche_wire/__init__.py` | The names a caller imports. |
-| `tests/test_wire_vectors.py` | The test that runs the shared wire vectors through the models. |
+| `src/creche_wire/reader.py` | `read`, the one read of a wire text. |
+| `src/creche_wire/strictjson.py` | A copy of the strict JSON reader. Never edit one copy alone. |
+| `tests/test_wire_vectors.py` | The test that runs the shared wire vectors through `read`. |
+| `tests/test_wire_read.py` | The test that shows `read` is strict. |
+
+## Read a wire text
+
+Read a wire text only with `creche_wire.read(Model, data, cap=...)`.
+
+1. `strictjson.loads` checks the text first. It refuses two equal keys, a
+   lone surrogate, `NaN`, an integer out of range and a text over the cap.
+   The error is `NotStrictJson`.
+2. The model then reads the text in strict mode. An int refuses `"1"`, `1.0`
+   and `true`. The error is `pydantic.ValidationError`.
+3. The caller gives the cap. It is the cap of the caller's surface, so the
+   package has no default.
+
+`strict-types` in `[tool.datamodel-codegen]` makes each scalar of a model
+strict too. A direct `model_validate_json` then still refuses `"1"` for an
+int. It does not check the rules of step 1.
+
+`read` refuses some texts that the Rust crate reads with
+`serde_json::from_str`. No wire type meets these texts today. A wire type
+that does needs a decision of the owner before its vector cases are added:
+
+1. A nesting depth of 65 to 128. The Rust limit is 128.
+2. Two equal keys in an object read as a map. serde_json keeps the last one.
+3. An integer past 64 bits for a float. serde_json reads it as an `f64`.
+4. A text over the cap. The Rust crate has no cap.
+
+The generated model is wider than the Rust type in two places. The test
+`test_each_integer_and_date_of_the_schema_is_checked` fails when the schema
+holds one of them:
+
+1. An integer without `minimum` and `maximum`. datamodel-codegen drops the
+   `format` that schemars writes, so a `u8` field would take 300.
+2. A `date-time` without a `pattern`. pydantic takes dates that RFC 3339
+   refuses, for example `"2026-11-02 00:00:00Z"`. It also keeps only 6
+   digits of a fraction, so a date with nanoseconds cannot round-trip.
+
+`bin/tests/test_strictjson_copies.py` fails when `strictjson.py` differs from
+the copy in another package. Change each copy in one commit.
 
 ## The shared wire vectors
 
@@ -33,8 +74,9 @@ same file.
 3. Never change a case to make a Python test pass. A Python failure is a
    defect of the generation.
 4. Each wire type has at least one accepted case and one refused case.
-5. Each wire type has one block. A second block of the same type fails the
-   Python test, because both JSON readers keep only the last one.
+5. Each wire type has one block. serde_json in the Rust test keeps only the
+   last block of a type, and the strict reader of the Python test refuses
+   two equal keys.
 
 ## Change a wire type
 
