@@ -9,7 +9,7 @@ service of the vault. The service hosts the memory store and answers the
 
 | File | What it holds |
 |---|---|
-| `src/creche_memory/wire.py` | The wire types of the socket. Today it holds the newtypes and the refusal codes. |
+| `src/creche_memory/wire.py` | The wire types of the socket: each request, each reply, the refusal codes and the newtypes. |
 | `vectors/wire.json` | The shared wire vectors. |
 | `tests/test_memory_wire_vectors.py` | The test that runs the shared wire vectors through the models. |
 
@@ -47,6 +47,6 @@ root venv supplies `pydantic`.
 
 ## Known gaps
 
-1. The package has no request or reply types and no socket server yet.
+1. The package has no socket server yet.
 2. The package has no lock of its own yet. The change that adds the memory
    store adds the lock.

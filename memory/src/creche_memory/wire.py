@@ -1,20 +1,29 @@
 """The wire types of the memory socket.
 
-The `memory` upstream of the `mcp` repository sends requests to the service
-over one Unix socket. This module is the one definition of each wire type.
-The upstream writes its requests by hand, and the parser here is the judge
-(`memory/AGENTS.md`). This module holds the newtypes and the refusal codes.
-The request and reply types use them."""
+The `memory` upstream of the `mcp` repository writes one `Request` line on a
+connection. The service answers with one `Reply` line. This module is the one
+definition of each type. The upstream writes the request shapes by hand, and
+the parser here is the judge (`memory/AGENTS.md`)."""
 
 import re
 from collections.abc import Callable
+from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, RootModel
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, RootModel
 
 MAX_PATH_BYTES = 512
 MAX_PART_BYTES = 255
+MAX_QUERY_CHARS = 512
+MIN_QUERY_CHARS = 2
+MAX_RESULTS = 12
+MAX_TITLE_CHARS = 200
+MAX_BODY_BYTES = 16 * 1024
+MAX_TEXT_BYTES = 512 * 1024
+MAX_SNIPPET_CHARS = 500
+MAX_REASON_CHARS = 500
+MAX_LIST_ENTRIES = 2000
 
 NOTE_SUFFIX = ".md"
 
@@ -61,6 +70,30 @@ def _note(text: str) -> str:
     return _folder(text)
 
 
+def _max_bytes(limit: int) -> Callable[[str], str]:
+    def check(text: str) -> str:
+        if len(text.encode()) > limit:
+            raise ValueError(f"longer than {limit} bytes")
+
+        return text
+
+    return check
+
+
+def _one_line(text: str) -> str:
+    if CONTROL_RE.search(text):
+        raise ValueError("holds a control character")
+
+    return text
+
+
+def _utc(value: datetime) -> datetime:
+    if value.utcoffset() != timedelta(0):
+        raise ValueError("is not in UTC")
+
+    return value
+
+
 class Family(RootModel[str]):
     """The app ID of the caller, from `_meta["chaperone.app"]` (D1.2)."""
 
@@ -95,6 +128,19 @@ class IfMatch(RootModel[Sha256 | Literal["new"]]):
     """The `sha256` the agent read, or `new` for a file that must not exist."""
 
 
+Query = Annotated[str, Field(min_length=MIN_QUERY_CHARS, max_length=MAX_QUERY_CHARS)]
+Count = Annotated[int, Field(ge=1, le=MAX_RESULTS)]
+Title = Annotated[str, Field(min_length=1, max_length=MAX_TITLE_CHARS), AfterValidator(_one_line)]
+Body = Annotated[str, AfterValidator(_max_bytes(MAX_BODY_BYTES))]
+Text = Annotated[str, AfterValidator(_max_bytes(MAX_TEXT_BYTES))]
+UtcTime = Annotated[datetime, AfterValidator(_utc)]
+Bytes = Annotated[int, Field(ge=0)]
+
+
+class _Wire(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+
 class Refusal(StrEnum):
     """Why the service refused a request. `service_down` is the upstream's own."""
 
@@ -106,3 +152,108 @@ class Refusal(StrEnum):
     TOO_LARGE = "too_large"
     NOT_READY = "not_ready"
     INTERNAL = "internal"
+
+
+class SearchRequest(_Wire):
+    v: Literal[1]
+    op: Literal["search"]
+    caller: Family
+    query: Query
+    k: Count
+
+
+class ReadRequest(_Wire):
+    v: Literal[1]
+    op: Literal["read"]
+    caller: Family
+    path: VaultPath
+
+
+class ListRequest(_Wire):
+    v: Literal[1]
+    op: Literal["list"]
+    caller: Family
+    folder: FolderPath
+
+
+class CreateRequest(_Wire):
+    v: Literal[1]
+    op: Literal["create"]
+    caller: Family
+    slug: Slug
+    title: Title
+    body: Body
+
+
+class RewriteRequest(_Wire):
+    v: Literal[1]
+    op: Literal["rewrite"]
+    caller: Family
+    path: VaultPath
+    text: Text
+    if_match: IfMatch
+
+
+AnyRequest = Annotated[
+    SearchRequest | ReadRequest | ListRequest | CreateRequest | RewriteRequest,
+    Field(discriminator="op"),
+]
+
+
+class Request(RootModel[AnyRequest]):
+    """One request line. The `op` field picks the shape."""
+
+
+class Passage(_Wire):
+    path: VaultPath
+    snippet: Annotated[str, Field(max_length=MAX_SNIPPET_CHARS)]
+
+
+class SearchReply(_Wire):
+    ok: Literal[True]
+    op: Literal["search"]
+    facts: Text
+    passages: Annotated[list[Passage], Field(max_length=MAX_RESULTS)]
+
+
+class ReadReply(_Wire):
+    ok: Literal[True]
+    op: Literal["read"]
+    path: VaultPath
+    text: Text
+    sha256: Sha256
+    bytes: Bytes
+    modified: UtcTime
+
+
+class Note(_Wire):
+    path: VaultPath
+    bytes: Bytes
+    modified: UtcTime
+
+
+class ListReply(_Wire):
+    ok: Literal[True]
+    op: Literal["list"]
+    notes: Annotated[list[Note], Field(max_length=MAX_LIST_ENTRIES)]
+    folders: Annotated[list[FolderPath], Field(max_length=MAX_LIST_ENTRIES)]
+
+
+class WriteReply(_Wire):
+    ok: Literal[True]
+    op: Literal["create", "rewrite"]
+    path: VaultPath
+    sha256: Sha256
+
+
+class RefusedReply(_Wire):
+    ok: Literal[False]
+    refused: Refusal
+    reason: Annotated[str, Field(max_length=MAX_REASON_CHARS)]
+
+
+AnyReply = SearchReply | ReadReply | ListReply | WriteReply | RefusedReply
+
+
+class Reply(RootModel[AnyReply]):
+    """One reply line: one result shape for each op, or a refusal."""
