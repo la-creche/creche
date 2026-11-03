@@ -21,7 +21,7 @@
   {"id":"main-branch","input":{"args":{}},"result":"accepted","value":"main"},
   {"id":"manifest-contract-version","input":{"args":{}},"result":"accepted","value":{"major":0,"minor":21}},
   {"id":"last-in-order","input":{"args":{}},"result":"accepted","value":"handover"},
-  {"id":"max-request-components","input":{"args":{}},"result":"accepted","value":8},
+  {"id":"max-request-components","input":{"args":{}},"result":"accepted","value":10},
   {"id":"archive-max-bytes","input":{"args":{}},"result":"accepted","value":268435456},
   {"id":"bundle-max-bytes","input":{"args":{}},"result":"accepted","value":1048576},
   {"id":"archive-max-members","input":{"args":{}},"result":"accepted","value":64},

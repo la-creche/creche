@@ -19,6 +19,7 @@ import os
 from pathlib import Path
 
 import pytest
+from handover.catalog import MAX_REQUEST_COMPONENTS
 from handover.errors import Refusal, RefusalCode
 from handover.executor.live_state import Readers, build_state
 from handover.executor.request import MAX_REQUEST_BYTES, parse_request, request_id_of
@@ -97,9 +98,9 @@ def test_a_component_name_with_a_traversal_is_refused() -> None:
         parse_request(_raw(request_body({"../../etc/chaperone": "2.1.0"})), REQUEST_ID)
 
 
-def test_a_request_naming_more_than_eight_components_is_refused() -> None:
-    """§2.3: at most 8 entries, the catalog minus `registry-data`."""
-    many = {f"c{index}": "1.0.0" for index in range(9)}
+def test_a_request_naming_more_components_than_the_cap_is_refused() -> None:
+    """spec §9: at most `MAX_REQUEST_COMPONENTS` entries."""
+    many = {f"c{index}": "1.0.0" for index in range(MAX_REQUEST_COMPONENTS + 1)}
     with pytest.raises(Refusal):
         parse_request(_raw(request_body(many)), REQUEST_ID)
 
