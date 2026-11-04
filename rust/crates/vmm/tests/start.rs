@@ -12,7 +12,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::spawn;
 use std::time::{Duration, Instant, SystemTime};
 use std::{fs, io};
@@ -29,6 +29,7 @@ use creche_vmm_confine::family::FamilyRoot;
 use creche_vmm_confine::faults::{FaultBook, FaultDir};
 use creche_vmm_confine::launch::{Launch, Program};
 use creche_vmm_confine::spawner::SpawnError;
+use creche_vmm_store::ch_remote::{ChRemoteError, VmInfo};
 use creche_vmm_store::images::{ImageDigest, ImageStore};
 use creche_vmm_store::key::{CheckedCh, SnapshotKey, check_cloud_hypervisor, write_key};
 use creche_vmm_store::layout::{RunRoot, SessionDir, SnapshotGeneration, StateRoot, VmRunDir};
@@ -209,15 +210,18 @@ struct FakeApi<const DEVICES: bool = true> {
 impl<const DEVICES: bool> ChApi for FakeApi<DEVICES> {
     const READS_DEVICES: bool = DEVICES;
 
-    fn info(&self, _vm: &VmRunDir) -> Result<Vec<u8>, String> {
+    /// Reads the reply as `ChRemote::info` reads the stdout of CH.
+    fn info(&self, _vm: &VmRunDir) -> Result<VmInfo, ChRemoteError> {
         self.infos.fetch_add(1, Ordering::SeqCst);
         let fails = self.fails.load(Ordering::SeqCst);
         if fails > 0 {
             self.fails.store(fails - 1, Ordering::SeqCst);
-            return Err("no api.sock yet".to_owned());
+            let source = io::ErrorKind::NotFound.into();
+            let program = PathBuf::from("ch-remote");
+            return Err(ChRemoteError::Io { program, source });
         }
-        let reply = self.reply.lock().map_err(|_| "poisoned".to_owned())?;
-        Ok(reply.clone().into_bytes())
+        let reply = self.reply.lock().unwrap_or_else(PoisonError::into_inner);
+        serde_json::from_str(&reply).map_err(ChRemoteError::NotInfo)
     }
 
     fn resume(&self, _vm: &VmRunDir) -> Result<(), String> {
@@ -502,23 +506,36 @@ impl<const DEVICES: bool> Test<DEVICES> {
         dir
     }
 
-    /// Sets the `info` reply of a restore of row `index`: `state`, the
-    /// two disks and the vsock socket of the VM, then `extra` fields.
-    fn reply(&self, index: usize, state: &str, extra: &[(&str, serde_json::Value)]) {
+    /// The two disk entries of row `index` in the shape of the CH v54
+    /// `info` reply: the root disk, then the session disk.
+    fn disks(&self, index: usize) -> [serde_json::Value; 2] {
         let id = &self.rows[index].id;
         let root = self.dir.join(format!("state/store/{EMPTY}"));
         let disk = self.dir.join(format!("state/sessions/{id}/disk.ext4"));
+        [(root, true, "_disk0"), (disk, false, "_disk1")].map(|(path, readonly, name)| {
+            serde_json::json!({"path": path, "readonly": readonly, "direct": false,
+                "num_queues": 1, "queue_size": 128, "vhost_user": false,
+                "id": name, "pci_segment": 0, "sparse": true, "image_type": "Raw"})
+        })
+    }
+
+    /// Sets the `info` reply of a restore of row `index` in the shape of
+    /// CH v54: `state`, the two disks and the vsock socket of the VM, then
+    /// `extra` fields.
+    fn reply(&self, index: usize, state: &str, extra: &[(&str, serde_json::Value)]) {
+        let id = &self.rows[index].id;
         let vsock = self.dir.join(format!("run/vm/{id}/vsock.sock"));
         let mut config = serde_json::json!({
-            "cpus": {"boot_vcpus": 1},
-            "disks": [{"path": root}, {"path": disk}],
-            "net": null,
-            "vsock": {"cid": 3, "socket": vsock},
+            "cpus": {"boot_vcpus": 1, "max_vcpus": 1},
+            "memory": {"size": 536_870_912, "shared": false},
+            "disks": self.disks(index),
+            "serial": {"file": self.dir.join(format!("run/vm/{id}/serial.log")), "mode": "File"},
+            "vsock": {"cid": 3, "socket": vsock, "id": "_vsock0", "pci_segment": 0},
         });
         for (field, value) in extra {
             config[*field] = value.clone();
         }
-        let reply = serde_json::json!({"state": state, "config": config});
+        let reply = serde_json::json!({"state": state, "config": config, "memory_actual_size": 0});
         *self.api.reply.lock().unwrap() = reply.to_string();
     }
 
@@ -708,36 +725,48 @@ type Extra<'a> = Vec<(&'a str, serde_json::Value)>;
 /// A restored VM that is not paused, or that has a device past the fixed
 /// set, never resumes. The fault is `egress_assert_failed`, the VM stops,
 /// and its generation is no longer in use (decisions CH42 rule 2, CH50
-/// rule 10).
+/// rule 10). Each entry has the shape of CH v54.
 #[test]
 fn a_refused_device_set_stops_the_restore() {
-    let other = serde_json::json!({"cid": 3, "socket": "/tmp/other.sock"});
-    let extra_disk = serde_json::json!([{"path": "/a"}, {"path": "/b"}, {"path": "/c"}]);
-    let cases: [(&str, &str, Extra); 6] = [
+    let other = serde_json::json!({"cid": 3, "socket": "/tmp/other.sock", "id": "_vsock0"});
+    let net = serde_json::json!([{"tap": "tap0", "num_queues": 2, "queue_size": 256,
+        "vhost_user": false, "vhost_mode": "Client", "id": "_net0", "pci_segment": 0}]);
+    let user = serde_json::json!([{"socket": "/tmp/u.sock", "id": "_user0", "pci_segment": 0}]);
+    let tpm = serde_json::json!({"socket": "/tmp/tpm.sock"});
+    let cases: [(&str, &str, Extra); 8] = [
         ("running", "Running", vec![]),
-        (
-            "net",
-            "Paused",
-            vec![("net", serde_json::json!([{"tap": "t"}]))],
-        ),
-        (
-            "user",
-            "Paused",
-            vec![("user_devices", serde_json::json!([{}]))],
-        ),
-        (
-            "tpm",
-            "Paused",
-            vec![("tpm", serde_json::json!({"socket": "/t"}))],
-        ),
-        ("disks", "Paused", vec![("disks", extra_disk)]),
+        ("net", "Paused", vec![("net", net)]),
+        ("user", "Paused", vec![("user_devices", user)]),
+        ("tpm", "Paused", vec![("tpm", tpm)]),
+        // The two cases below get their disks from the test dir.
+        ("disks", "Paused", vec![]),
+        ("vhost", "Paused", vec![]),
         ("vsock", "Paused", vec![("vsock", other)]),
+        // A vsock with no socket is not a VM info.
+        (
+            "shape",
+            "Paused",
+            vec![("vsock", serde_json::json!({"cid": 3}))],
+        ),
     ];
-    for (name, state, extra) in cases {
+    for (name, state, mut extra) in cases {
         let test = Test::new(&format!("refuse-{name}"), |_| {});
+        let [root, session] = test.disks(0);
+        if name == "disks" {
+            let mut third = session.clone();
+            third["path"] = serde_json::json!("/tmp/third.img");
+            extra.push(("disks", serde_json::json!([root, session, third])));
+        } else if name == "vhost" {
+            // CH v54 opens the socket and ignores the path (PR D15).
+            let mut vhost = root;
+            vhost["vhost_user"] = serde_json::json!(true);
+            vhost["vhost_socket"] = serde_json::json!("/tmp/vhost.sock");
+            extra.push(("disks", serde_json::json!([vhost, session])));
+        }
         test.snapshot(0, Some(&test.key()));
         test.reply(0, state, &extra);
         assert_eq!(test.start(0), Err(StartFault::EgressAssertFailed), "{name}");
+        assert_eq!(test.api.infos.load(Ordering::SeqCst), 1, "{name}");
         assert_eq!(test.api.resumes.load(Ordering::SeqCst), 0, "{name}");
         assert_eq!(test.fault_codes(), ["egress_assert_failed"], "{name}");
         assert!(test.stopped(0), "{name}");

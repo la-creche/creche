@@ -8,19 +8,18 @@
 //! see a device that the snapshot holds. The device check refuses each
 //! device kind that reaches the host: `net`, `generic_vhost_user`, `fs`,
 //! `user_devices`, `vdpa`, `devices`, `pmem` and `tpm`. It refuses any
-//! disk beyond the fixed two (the root disk, then the session disk), and
-//! a vsock path other than the VM's own.
+//! disk beyond the fixed two (the root disk, then the session disk), a
+//! vhost-user disk, and a vsock path other than the VM's own. It reads
+//! `VmInfo` of `creche-vmm-store` (PR D15).
 
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use creche_vmm_store::ch_remote::{ChRemote, VmState};
+use creche_vmm_store::ch_remote::{ChRemote, ChRemoteError, VmInfo, VmState};
 use creche_vmm_store::key::SnapshotKey;
 use creche_vmm_store::layout::{SessionDir, SnapshotGeneration, VmRunDir};
 use creche_vmm_store::snapshot::Snapshotter;
-use serde::Deserialize;
-use serde::de::IgnoredAny;
 
 use crate::sleep::{EVICT_SNAPSHOT, take_keyed};
 
@@ -37,18 +36,20 @@ pub const RESUME_TIMEOUT: Duration = Duration::from_secs(5);
 /// test gives a fake. Each call blocks, so the start runs it in
 /// `spawn_blocking`.
 pub trait ChApi: Send + Sync + 'static {
-    /// True when `info` gives the whole reply, so the device check can
+    /// True when `info` gives the device set, so the device check can
     /// run. A restore with no device check never resumes, so the start
     /// cold-boots instead (decision CH50 rule 10).
     const READS_DEVICES: bool;
 
-    /// The stdout of `ch-remote info`.
+    /// The reply of `ch-remote info`: the state and the device set.
     ///
     /// # Errors
     ///
-    /// Why the call failed. Before Cloud Hypervisor serves its API, the
-    /// call fails, and the start tries again inside `READY_WAIT`.
-    fn info(&self, vm: &VmRunDir) -> Result<Vec<u8>, String>;
+    /// The `ChRemoteError` of the call. Before Cloud Hypervisor serves its
+    /// API, the call fails, and the start tries again inside
+    /// `READY_WAIT`. `NotInfo` is a reply that CH gave, so the start
+    /// tries no more.
+    fn info(&self, vm: &VmRunDir) -> Result<VmInfo, ChRemoteError>;
 
     /// `ch-remote resume`.
     ///
@@ -80,21 +81,13 @@ pub struct ChTools {
     pub snapshotter: Snapshotter,
 }
 
-// CONTRACT-QUESTION (decision CH50 rule 10, plan PR L17 "through ch-remote
-// info (D8)"): `ChRemote::info` of PR D8 returns `VmInfo`, which holds
-// only `state` and drops every other field. So the vmm cannot read the
-// device set through it, and this crate may not edit the store crate.
-// The narrowest reading: no restore resumes without the device check, so
-// `READS_DEVICES` is false for `ChTools` and every start cold-boots (the claim still
-// consumes the snapshot, decision CH19 (5)). A store PR that gives the
-// whole `info` reply (or the device fields) costs about 10 lines there
-// and 3 lines here.
-// `INFO_TIMEOUT` is the timeout of that call.
+// PR D15 gives the device set in `VmInfo`, so the vmm restores (plan PR
+// L18b). `INFO_TIMEOUT` is the timeout of the call.
 impl ChApi for ChTools {
-    const READS_DEVICES: bool = false;
+    const READS_DEVICES: bool = true;
 
-    fn info(&self, _vm: &VmRunDir) -> Result<Vec<u8>, String> {
-        Err("ChRemote::info gives no device set".to_owned())
+    fn info(&self, vm: &VmRunDir) -> Result<VmInfo, ChRemoteError> {
+        self.remote.info(vm, INFO_TIMEOUT)
     }
 
     fn resume(&self, vm: &VmRunDir) -> Result<(), String> {
@@ -113,53 +106,18 @@ impl ChApi for ChTools {
     }
 }
 
-/// The part of the `info` reply that the check reads. Every other field
-/// is skipped. A field of the wrong type fails the read.
-#[derive(Debug, Deserialize)]
-struct Info {
-    state: VmState,
-    config: Config,
-}
-
-/// The devices of the VM config, as Cloud Hypervisor v54 names them. A
-/// missing field and `null` are both no device.
-#[derive(Debug, Deserialize)]
-struct Config {
-    disks: Option<Vec<Disk>>,
-    vsock: Option<Vsock>,
-    net: Option<Vec<IgnoredAny>>,
-    generic_vhost_user: Option<Vec<IgnoredAny>>,
-    fs: Option<Vec<IgnoredAny>>,
-    user_devices: Option<Vec<IgnoredAny>>,
-    vdpa: Option<Vec<IgnoredAny>>,
-    devices: Option<Vec<IgnoredAny>>,
-    pmem: Option<Vec<IgnoredAny>>,
-    tpm: Option<IgnoredAny>,
-}
-
-/// One disk of the config.
-#[derive(Debug, Deserialize)]
-struct Disk {
-    path: Option<PathBuf>,
-}
-
-/// The vsock device of the config.
-#[derive(Debug, Deserialize)]
-struct Vsock {
-    socket: PathBuf,
-}
-
 /// Why a restored VM may not resume.
 #[derive(Debug)]
 pub enum DeviceError {
-    /// The reply is not a VM info.
-    NotInfo(serde_json::Error),
     /// The VM is not paused, so a vCPU may have run before the check.
     NotPaused(VmState),
     /// The VM has a device of this kind.
     Device(&'static str),
     /// The disks are not the root disk, then the session disk.
     Disks,
+    /// A disk is a vhost-user disk. CH v54 opens its socket and ignores
+    /// its path (PR D15).
+    VhostDisk,
     /// The vsock socket is not the one of the VM.
     Vsock(PathBuf),
 }
@@ -167,10 +125,10 @@ pub enum DeviceError {
 impl fmt::Display for DeviceError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NotInfo(error) => write!(formatter, "the info reply is not a VM info: {error}"),
             Self::NotPaused(state) => write!(formatter, "the restored VM is {state:?}, not Paused"),
             Self::Device(kind) => write!(formatter, "the restored VM has a {kind} device"),
             Self::Disks => formatter.write_str("the restored VM has other disks than the two"),
+            Self::VhostDisk => formatter.write_str("the restored VM has a vhost-user disk"),
             Self::Vsock(path) => write!(formatter, "the restored vsock is {}", path.display()),
         }
     }
@@ -196,34 +154,36 @@ pub struct Expected {
 /// # Errors
 ///
 /// The first `DeviceError` that the check finds.
-pub fn check_devices(reply: &[u8], expected: &Expected) -> Result<(), DeviceError> {
-    let info: Info = serde_json::from_slice(reply).map_err(DeviceError::NotInfo)?;
+pub fn check_devices(info: &VmInfo, expected: &Expected) -> Result<(), DeviceError> {
     if info.state != VmState::Paused {
         return Err(DeviceError::NotPaused(info.state));
     }
-    let config = info.config;
+    let config = &info.config;
     let lists = [
-        ("net", config.net),
-        ("generic_vhost_user", config.generic_vhost_user),
-        ("fs", config.fs),
-        ("user_devices", config.user_devices),
-        ("vdpa", config.vdpa),
-        ("devices", config.devices),
-        ("pmem", config.pmem),
+        ("net", config.net.len()),
+        ("generic_vhost_user", config.generic_vhost_user.len()),
+        ("fs", config.fs.len()),
+        ("user_devices", config.user_devices.len()),
+        ("vdpa", config.vdpa.len()),
+        ("devices", config.devices.len()),
+        ("pmem", config.pmem.len()),
+        ("tpm", usize::from(config.tpm.is_some())),
     ];
-    if let Some((kind, _)) = lists
-        .iter()
-        .find(|(_, list)| list.as_ref().is_some_and(|list| !list.is_empty()))
-    {
+    if let Some((kind, _)) = lists.iter().find(|(_, count)| *count > 0) {
         return Err(DeviceError::Device(kind));
     }
-    if config.tpm.is_some() {
-        return Err(DeviceError::Device("tpm"));
+    // CH v54 opens the socket of a vhost-user disk and ignores its path
+    // (PR D15), so a fixed path does not make such a disk safe.
+    if config
+        .disks
+        .iter()
+        .any(|disk| disk.vhost_user || disk.vhost_socket.is_some())
+    {
+        return Err(DeviceError::VhostDisk);
     }
     let disks: Vec<Option<&Path>> = config
         .disks
         .iter()
-        .flatten()
         .map(|disk| disk.path.as_deref())
         .collect();
     if disks
@@ -234,8 +194,10 @@ pub fn check_devices(reply: &[u8], expected: &Expected) -> Result<(), DeviceErro
     {
         return Err(DeviceError::Disks);
     }
-    match config.vsock {
-        Some(vsock) if vsock.socket != expected.vsock => Err(DeviceError::Vsock(vsock.socket)),
+    match &config.vsock {
+        Some(vsock) if vsock.socket != expected.vsock => {
+            Err(DeviceError::Vsock(vsock.socket.clone()))
+        }
         _ => Ok(()),
     }
 }
@@ -244,6 +206,7 @@ pub fn check_devices(reply: &[u8], expected: &Expected) -> Result<(), DeviceErro
 mod tests {
     use std::path::PathBuf;
 
+    use creche_vmm_store::ch_remote::VmInfo;
     use serde_json::{Value, json};
 
     use super::{DeviceError, Expected, check_devices};
@@ -256,48 +219,117 @@ mod tests {
         }
     }
 
-    fn reply(field: &str, value: Value) -> Vec<u8> {
-        let mut config = json!({
-            "disks": [{"path": "/s/root"}, {"path": "/s/disk"}],
-            "vsock": {"cid": 3, "socket": "/r/vsock.sock"},
-        });
-        config[field] = value;
-        json!({"state": "Paused", "config": config})
-            .to_string()
-            .into_bytes()
+    /// A disk entry of `path` in the shape of the CH v54 `info` reply.
+    fn disk(path: &str, id: &str) -> Value {
+        json!({"path": path, "readonly": false, "direct": false,
+            "num_queues": 1, "queue_size": 128, "vhost_user": false,
+            "id": id, "pci_segment": 0, "sparse": true, "image_type": "Raw"})
     }
 
-    /// Each host-reaching list kind is refused, and an empty list or
-    /// `null` is no device (decision CH50 rule 10).
+    /// The v54 `info` reply of a paused VM with the two disks and the
+    /// vsock, with `value` at `field` of the config.
+    fn reply(field: &str, value: Value) -> VmInfo {
+        let mut config = json!({
+            "cpus": {"boot_vcpus": 1, "max_vcpus": 1},
+            "memory": {"size": 536_870_912, "shared": false},
+            "disks": [disk("/s/root", "_disk0"), disk("/s/disk", "_disk1")],
+            "serial": {"file": "/r/serial.log", "mode": "File"},
+            "vsock": {"cid": 3, "socket": "/r/vsock.sock", "id": "_vsock0",
+                "pci_segment": 0},
+        });
+        config[field] = value;
+        let reply = json!({"state": "Paused", "config": config, "memory_actual_size": 0});
+        serde_json::from_value(reply).unwrap()
+    }
+
+    /// One v54 entry of each refused kind (decision CH50 rule 10).
+    fn refused() -> [(&'static str, Value); 8] {
+        [
+            (
+                "net",
+                json!([{"tap": "tap0", "num_queues": 2, "queue_size": 256,
+                "vhost_user": false, "vhost_mode": "Client", "id": "_net0"}]),
+            ),
+            ("generic_vhost_user", json!([{"socket": "/g", "id": "_g0"}])),
+            (
+                "fs",
+                json!([{"tag": "t", "socket": "/s", "num_queues": 1,
+                "queue_size": 1024, "id": "_fs0"}]),
+            ),
+            ("user_devices", json!([{"socket": "/u", "id": "_user0"}])),
+            (
+                "vdpa",
+                json!([{"path": "/dev/vhost-vdpa-0", "num_queues": 1,
+                "id": "_vdpa0"}]),
+            ),
+            (
+                "devices",
+                json!([{"path": "/sys/bus/pci/devices/0000:01:00.0",
+                "iommu": false, "id": "_vfio0"}]),
+            ),
+            (
+                "pmem",
+                json!([{"file": "/p", "discard_writes": false,
+                "id": "_pmem0"}]),
+            ),
+            ("tpm", json!({"socket": "/t"})),
+        ]
+    }
+
+    /// Each refused kind is refused, and an empty list or `null` is no
+    /// device (decision CH50 rule 10).
     #[test]
-    fn each_listed_kind_is_refused() {
-        let kinds = [
-            "net",
-            "generic_vhost_user",
-            "fs",
-            "user_devices",
-            "vdpa",
-            "devices",
-            "pmem",
-        ];
-        for kind in kinds {
-            let found = check_devices(&reply(kind, json!([{}])), &expected());
+    fn each_refused_kind_is_refused() {
+        assert!(check_devices(&reply("net", Value::Null), &expected()).is_ok());
+        for (kind, entry) in refused() {
+            let found = check_devices(&reply(kind, entry), &expected());
             assert!(
                 matches!(found, Err(DeviceError::Device(k)) if k == kind),
                 "{kind}"
             );
-            assert!(check_devices(&reply(kind, json!([])), &expected()).is_ok());
+            if kind != "tpm" {
+                assert!(check_devices(&reply(kind, json!([])), &expected()).is_ok());
+            }
             assert!(check_devices(&reply(kind, Value::Null), &expected()).is_ok());
         }
     }
 
-    /// A reply with no config, or a disk list in the wrong order, fails.
+    /// A disk list in the wrong order or with a third disk fails, and so
+    /// does a vhost-user disk on the path of the root disk (PR D15).
     #[test]
-    fn a_bad_reply_or_disk_order_fails() {
-        let found = check_devices(br#"{"state":"Paused"}"#, &expected());
-        assert!(matches!(found, Err(DeviceError::NotInfo(_))));
-        let swapped = json!([{"path": "/s/disk"}, {"path": "/s/root"}]);
+    fn a_bad_disk_list_fails() {
+        let swapped = json!([disk("/s/disk", "_disk0"), disk("/s/root", "_disk1")]);
         let found = check_devices(&reply("disks", swapped), &expected());
         assert!(matches!(found, Err(DeviceError::Disks)));
+        let third = json!([
+            disk("/s/root", "_disk0"),
+            disk("/s/disk", "_disk1"),
+            disk("/x", "_disk2")
+        ]);
+        let found = check_devices(&reply("disks", third), &expected());
+        assert!(matches!(found, Err(DeviceError::Disks)));
+        for (field, value) in [
+            ("vhost_user", json!(true)),
+            ("vhost_socket", json!("/x.sock")),
+        ] {
+            let mut root = disk("/s/root", "_disk0");
+            root[field] = value;
+            let disks = json!([root, disk("/s/disk", "_disk1")]);
+            let found = check_devices(&reply("disks", disks), &expected());
+            assert!(matches!(found, Err(DeviceError::VhostDisk)), "{field}");
+        }
+    }
+
+    /// A vsock socket of another VM fails, and a VM that is not paused
+    /// fails before the devices.
+    #[test]
+    fn another_vsock_or_a_running_vm_fails() {
+        let other = json!({"cid": 3, "socket": "/r/other.sock", "id": "_vsock0"});
+        let found = check_devices(&reply("vsock", other), &expected());
+        assert!(matches!(found, Err(DeviceError::Vsock(_))));
+        let mut info = reply("net", Value::Null);
+        info.state = creche_vmm_store::ch_remote::VmState::Running;
+        let found = check_devices(&info, &expected());
+        assert!(matches!(found, Err(DeviceError::NotPaused(_))));
     }
 }
