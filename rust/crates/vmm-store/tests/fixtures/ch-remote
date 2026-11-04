@@ -1,0 +1,13 @@
+#!/bin/sh
+# A stub of ch-remote for tests/ch_remote.rs. The argv is
+# `--api-socket <socket> <command> [<arg>]`. The files of the test in the
+# dir of the socket set what the stub does.
+dir=$(dirname "$2")
+printf '%s\n' "$@" > "$dir/argv"
+if [ -f "$dir/stdout" ]; then cat "$dir/stdout"; fi
+if [ -f "$dir/stderr" ]; then cat "$dir/stderr" >&2; fi
+# A hang writes the pid first. `exec` keeps the pid, so the test can prove
+# that the timeout killed and reaped the process.
+if [ -f "$dir/hang" ]; then echo $$ > "$dir/pid"; exec sleep 30; fi
+if [ -f "$dir/exit" ]; then exit "$(cat "$dir/exit")"; fi
+exit 0
