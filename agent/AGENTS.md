@@ -61,6 +61,8 @@ The tests use `sqlite()` with no path, an in-memory store, and pi's
 2. Do not put a credential in `useInitialData`. Flue writes that value one
    time into `flue.db`, on a mount that the agent can write, and never
    rotates it. Read the credentials from the mounts at process start.
+   The file backend of `src/family-state.ts` reads them again for each
+   prompt.
 3. Give the model only the tools of the grant. This rule applies also to
    the built-in tools of Flue's `local()`.
 4. Do not write prose to stdout. The facade owns stdout for ACP. Free text
@@ -72,15 +74,26 @@ The tests use `sqlite()` with no path, an in-memory store, and pi's
 
 ## Use
 
-The facade reads the edge, composes the agent and starts Flue, one time,
-at process start:
+The facade reads the edge, composes the agent and starts Flue at process
+start. Then it pulls the family state before each `session/prompt`
+(decision CH5a):
 
 ```ts
 const read = await readFamilyConfig(process.env);       // src/config.ts
 const limits = await readModelLimits(read.config);      // src/litellm.ts
 const composed = composeAgent(read.config, workspace, limits.limits);  // src/agent.ts
 await start({ agents: [composed.agent], db: composed.db, providers: composed.providers });
+const backend = fileBackend(read.config.mounts, composed.state.config);  // src/family-state.ts
+
+// Before each prompt of the session `sessionId`:
+const pulled = await backend.pull();
+if (pulled.ok) composed.state.apply(pulled.state, sessionId);
 ```
+
+Each LiteLLM request and each `ch` request reads the creds of the latest
+pull. Each render of a session reads the config of that session's last
+pull. A creds fault fails the prompt. A config fault keeps the last good
+config, and `pulled.stale` names the fault at the first pull that fails.
 
 `readModelLimits` reads the alias's `max_input_tokens` and
 `max_output_tokens` from LiteLLM's `GET /v1/model/info`, with the family
@@ -128,6 +141,18 @@ Dockerfile only, not the built env with the parent image's names.
 
 ## Known gaps
 
+- Decision CH23 rule 2 fails a prompt when the family state does not
+  read. The file backend fails a prompt only for `creds.json`. For
+  `config/` it keeps the last good config. On sbx a config edit leaves
+  the mount of `config/` dead until the sandbox is made again (decision
+  CH52 rule 1). So a failed prompt each time is an outage
+  (`src/family-state.ts`).
+- At start a skill gets its supporting files. The family state carries
+  only the text of each `SKILL.md`. A skill whose text changes after the
+  start has no supporting files until the facade starts again.
+  caregiver writes no supporting file today (`src/skills.ts`).
+- The agent keeps the model of its start. Phase 6 PR 3 switches the
+  model at the next prompt (decision CH5c).
 - Contract 03 §7 gives the two plane URLs as fixed values. The playpen
   takes the URL of its build for a plane variable that is absent or not
   valid. The agent has no build URL, so it refuses (`src/config.ts`).
