@@ -105,9 +105,11 @@ RUN --mount=type=bind,source=playpen/bin/creche-env-write,target=/run/creche-env
     && sh /run/creche-env-write HOME NODE_ENV NODE_VERSION PATH TMPDIR YARN_VERSION \
        > /etc/creche/env
 
-# The VM stays up because the host holds one long-lived `sbx exec` open.
-# This CMD only keeps PID 1 alive.
-CMD ["sleep", "infinity"]
+# No CMD (fact 59). sbx v0.50.1 gives each sandbox its own command, a fixed
+# `sh -c "trap ...; sleep infinity & wait"` in its binary, so the image CMD
+# never runs. A Cloud Hypervisor guest boots guest init as PID 1 from a root
+# disk that carries no image config. The node parent's CMD, `node`, stays in
+# the config, and neither runtime reads it.
 
 # --- creche-test-venv -------------------------------------------------------
 # Build-only stage. It resolves the Python workspace of this repository
@@ -280,5 +282,3 @@ RUN ldconfig \
 RUN --mount=type=bind,source=playpen/bin/creche-env-write,target=/run/creche-env-write \
     sh /run/creche-env-write HOME MPLBACKEND MPLCONFIGDIR NODE_ENV NODE_VERSION PATH \
        TMPDIR YARN_VERSION > /etc/creche/env
-
-CMD ["sleep", "infinity"]

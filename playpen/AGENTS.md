@@ -78,6 +78,7 @@ CI builds each flavor on each code change (`bin/playpen-ci`).
 | `bin/playpen-build`, `bin/playpen-verify`, `bin/lib/registry.sh` | the release build, the verify hook, the one registry question |
 | `bin/creche-env-write`, `bin/playpen-env-check` | `/etc/creche/env` in each flavor's last step, and the CI check that it equals the image config env |
 | `bin/playpen-ci` | the steps of the `playpen-image` CI job: build each flavor, then check it |
+| `bin/playpen-rootfs` | the tar export of one flavor, the input of its root disk |
 
 ## Known gaps
 

@@ -225,3 +225,9 @@ def test_the_image_ships_no_installer() -> None:
     assert "the test venv ships pip" in stage
     assert "the analysis interpreter ships ensurepip" in stage
     assert "the test venv ships nodeenv" in stage
+
+
+def test_no_flavor_sets_a_cmd() -> None:
+    """Fact 59: sbx gives each sandbox its own command, and a root disk
+    carries no image config, so a CMD line would only mislead."""
+    assert re.search(r"^CMD ", _text(), re.MULTILINE) is None

@@ -10,6 +10,10 @@
 #      the first.
 #   2. `playpen-env-check` on each image: `/etc/creche/env` equals the
 #      image config env (CH7-7, CH49).
+#   3. `playpen-rootfs` of each target: the tar export that a root disk
+#      is made from builds, holds `/etc/creche/env` and holds no
+#      `.dockerenv` (CH7-2, fact 59). The export reuses the build cache, and
+#      the script removes each tar after the check.
 #
 # The job keeps its steps here, so a new check of the image changes this
 # file and not the two workflow files.
@@ -21,6 +25,9 @@ die() { printf 'playpen-ci: %s\n' "$*" >&2; exit 1; }
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 PLATFORM=linux/amd64
 
+work="$(mktemp -d)"
+trap 'rm -rf -- "$work"' EXIT
+
 # The flavors of playpen-build, in the same order (playpen/AGENTS.md rule 6).
 FLAVORS="base:agent-sandbox python:agent-sandbox-python"
 
@@ -31,4 +38,6 @@ for pair in $FLAVORS; do
   docker build --platform "$PLATFORM" -f "$ROOT/playpen/Dockerfile" --target "$target" \
     -t "$image" "$ROOT" || die "the $target build failed"
   "$ROOT/playpen/bin/playpen-env-check" "$image"
+  "$ROOT/playpen/bin/playpen-rootfs" "$target" "$work/$target.tar"
+  rm -f -- "$work/$target.tar"
 done
