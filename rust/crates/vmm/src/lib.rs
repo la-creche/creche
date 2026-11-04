@@ -21,17 +21,22 @@ impl fmt::Display for ServeError {
     }
 }
 
-/// Runs the host API server until it stops.
-pub fn serve() -> Result<(), ServeError> {
+/// Runs the host API server until it stops. The caller runs it on the
+/// multi-thread tokio runtime (decision CH36, gap G21). Blocking work goes
+/// to `spawn_blocking`.
+pub async fn serve() -> Result<(), ServeError> {
     Err(ServeError::NotBuilt)
 }
 
 #[cfg(test)]
 mod tests {
+    use tokio::runtime::Builder;
+
     use super::{ServeError, serve};
 
     #[test]
     fn serve_refuses_until_built() {
-        assert_eq!(serve(), Err(ServeError::NotBuilt));
+        let runtime = Builder::new_current_thread().build().unwrap();
+        assert_eq!(runtime.block_on(serve()), Err(ServeError::NotBuilt));
     }
 }
