@@ -34,6 +34,11 @@ rule 1). `server::run` answers each request that passes with `no_route`
 until the server has routes. `Stop` stops the server through
 `tokio::sync` (decision CH26 rule 2).
 
+`server::BodyCheck` holds the body checks that follow the route, in the
+order of decisions CH26 and CH33 rule 13: `Content-Type`, then the 1 MiB
+cap, then strict JSON. Each refusal writes the reply of a shared code.
+The cap binds the JSON body only (decision CH34 rule 3).
+
 `examples/upgrade_echo/` is a server with one handler that echoes after
 101. `tests/upgrade_body.rs` and `integration/proc/test_proc_vmm_upgrade.py`
 use it to prove that the JSON body of an Upgrade request crosses
