@@ -17,6 +17,12 @@ table of the three vmm crates.
   path from the vmm config (owner env rule, decision CH36 G5): the
   `systemd-run` program of `launch::Launch`, from the existing key
   `AGENT_SYSTEMD_RUN_PROGRAM`.
+- Every launch step forks from the one spawner thread (decision CH19 (4),
+  fact 76). The vmm keeps its `Spawner` for its whole life. A drop ends
+  the thread, and the kernel then kills every payload it started.
+- The launch step reads its plan only from a pipe that already holds it.
+  The spawner writes the whole plan, at most 64 KiB, before the spawn,
+  and never blocks on a full pipe.
 
 ## Known gaps
 

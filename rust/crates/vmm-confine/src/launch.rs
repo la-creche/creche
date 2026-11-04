@@ -133,6 +133,13 @@ impl Launch {
     }
 }
 
+/// The most bytes in a plan: the default pipe capacity of Linux. It is an
+/// upper bound, not a guarantee. Linux gives a new pipe only 8 KiB when an
+/// unprivileged user is over `fs.pipe-user-pages-soft`. So the spawner
+/// writes the whole plan without blocking, before the spawn, and a plan
+/// that does not fit fails with `SpawnError::TooLarge`.
+pub(crate) const PLAN_MAX: usize = 65_536;
+
 /// The plan that the spawner writes on fd 0 of the launch step.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
