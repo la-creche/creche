@@ -6,6 +6,9 @@
 //!   spawner on `/proc/self/exe`, launches the program, prints its pid and
 //!   waits to be killed. `<root>` is the state root and the run root of
 //!   the VM files, with the root disk at `<root>/root.img`.
+//! - `hold` reads one `Launch` as JSON on stdin and runs it as `spawn`
+//!   does. The kvm_ test of PR C16 makes the whole `Launch`, so the role
+//!   runs any boot or restore through the real `systemd-run`.
 //! - `--user ...` is a fake `systemd-run` for a host with no systemd. It
 //!   execs the arguments after `--`.
 //! - `probe <run dir> <root disk> <session disk> <outside file> <port>`
@@ -41,9 +44,10 @@ fn main() -> ExitCode {
             .map(|never| match never {})
             .map_err(Failure::from),
         Some((role, rest)) if role == "spawn" => spawn(rest),
+        Some((role, [])) if role == "hold" => hold(),
         Some((role, rest)) if role == "--user" => fake_systemd_run(rest),
         Some((role, rest)) if role == "probe" => probe(rest),
-        _ => Err("usage: launch_chain launch | spawn ... | --user ... | probe ...".into()),
+        _ => Err("usage: launch_chain launch | spawn ... | hold | --user ... | probe ...".into()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -74,6 +78,18 @@ fn spawn(args: &[OsString]) -> Result<(), Failure> {
     let systemd_run = Program::new(PathBuf::from(systemd_run))?;
     let launch = Launch::new(systemd_run, scope, payload, files);
 
+    run_and_wait(launch)
+}
+
+/// The hold role. It returns only on an error.
+fn hold() -> Result<(), Failure> {
+    let launch: Launch = serde_json::from_reader(io::stdin().lock())?;
+    run_and_wait(launch)
+}
+
+/// Starts a spawner on `/proc/self/exe`, launches `launch`, prints the
+/// pid and waits to be killed. It returns only on an error.
+fn run_and_wait(launch: Launch) -> Result<(), Failure> {
     let spawner = Spawner::start(PathBuf::from(SELF_EXE))?;
     let launched = spawner.launch(launch)?;
     writeln!(io::stdout(), "{}", launched.id())?;

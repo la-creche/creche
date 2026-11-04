@@ -121,6 +121,15 @@ table of the three vmm crates.
   profile, and its `--tpm socket=` connect reaches a `vsock.sock_<port>`
   listener, but not `vmm.sock` or the user bus. The other kvm_ tests run
   the copy in `CRECHE_KVM_DIR`, which no profile confines.
+- `tests/kvm_vm.rs` runs one VM through the crate and the store (decision
+  CH8-4, plan PR C16). The example `launch_chain` in its role `hold` plays
+  the vmm with the real `systemd-run`: a cold boot in the scope with the
+  C4 limits and under the ruleset, a snapshot with dug holes, the key and
+  the claim, a copy-on-write restore, a second snapshot, then a restore
+  and a SIGKILL of the stand-in, which takes CH and its scope down. A
+  runner step may have no `XDG_RUNTIME_DIR`, so the test sets it for each
+  program that talks to the user manager. Under the unit the user manager
+  sets it.
 
 ## Known gaps
 
@@ -149,6 +158,16 @@ table of the three vmm crates.
   dir). The ruleset grants no right to make a dir, so the vmm must also
   make each `snapshots/<generation>/` before CH writes a snapshot there.
   Plan PRs L16 (cold boot) and D9 (snapshot) own these steps.
+- Lifecycle must remove `vsock.sock`, `api.sock` and `api.sock.lock` of
+  the VM run dir before each start after a CH exit. The ruleset grants no
+  right to remove a file, so CH cannot unlink its own sockets, and a stale
+  `vsock.sock` fails the next boot or restore (fact 75). Plan PRs L16 and
+  L17 own the step. `tests/kvm_vm.rs` does it before each restore.
+- The upstream CH asset of fact 71 may print its git tag to `--version`,
+  not the `v54.0.0` of a `--rev` build (fact 78). `tests/kvm_vm.rs` then
+  makes the `CheckedCh` of the key from a stand-in that prints
+  `CH_VERSION`, after it checks that the asset names v54.0. The CI-built
+  CH of phase 4 ends the stand-in (decision CH36 G19).
 - Decision CH42 rule 2: on a restore the CH command line shows no
   device, so `deny::check` cannot see a network card that the snapshot
   holds. The check trusts that a snapshot comes only from a boot that

@@ -16,7 +16,8 @@ pub const MARKER: &str = "CRECHE-KVM-BOOTED";
 /// A boot takes about 0.6 s on the runner (fact 79).
 pub const BOOT: Duration = Duration::from_secs(30);
 
-/// A CH process, killed on drop, so a failed test leaves no VM.
+/// A CH process, or a vmm stand-in that holds one, killed on drop, so a
+/// failed test leaves no VM.
 pub struct Vm(pub Child);
 
 impl Drop for Vm {
