@@ -138,6 +138,19 @@ gives the door of a session for the sleep gate (decision CH19 (6)): open
 from the claim to its end, then the time of the close. A drop clears the
 time.
 
+## The stop
+
+`src/stop.rs` stops one VM (decisions CH19 (3), CH34 rule 5). It sends
+`stop` on the control link and waits `DROP_STOP_WAIT` (30 s) for Cloud
+Hypervisor to exit. Then it sends SIGTERM through the `Launched` handle
+of `creche-vmm-confine` and waits `DROP_SIGTERM_GRACE` (5 s). Then it
+sends SIGKILL. Both waits come from `creche-wire`. A kill is a power cut
+for the guest, and no error: `Stopped::Killed`. After the exit it runs
+`remove_stale` of `creche-vmm-store` in `spawn_blocking`, which removes
+`api.sock.lock` (fact 75) and the `vsock.sock` that a kill leaves. A stop
+takes no snapshot, so the next start is a cold boot (decision CH19 (5)).
+`StopLink` and `VmProcess` let `tests/stop.rs` give fakes on paused time.
+
 ## Rules
 
 - Each new dependency is its own pull request, with its lock delta
@@ -168,3 +181,9 @@ time.
    relay reads the rows narrowly: it closes the client stream and writes
    no fault file (decision CH21-1 names start faults only). The client
    sees an EOF (`src/relay.rs`).
+4. CONTRACT-QUESTION: no decision row says what a stop does when the
+   `stop` line does not go out (no open control link, or a failed write),
+   or when SIGTERM fails. Each wait of decision CH34 rule 5 gives its step
+   time to work. The stop reads the rows narrowly: it skips the wait of a
+   step that did not go out and goes to the next step at once
+   (`src/stop.rs`).
