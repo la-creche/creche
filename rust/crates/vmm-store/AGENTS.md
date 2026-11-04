@@ -85,12 +85,11 @@ The second file has the table of the three vmm crates.
   `admission::Gate::Idle`. Admission snapshots an idle VM sooner than
   `IDLE_TIMEOUT` (decision CH8-6), and the doc of `Gate::Idle` says
   "may sleep now". L17 maps the two.
-- CONTRACT-QUESTION (PR D13, `retention.rs`): no decision row says
-  whether a newest generation with the `consumed` mark and no VM on it
-  drops at once. It never restores again (decision CH19 (5)). The
-  narrowest reading: it stays until the age or the budget drops it.
 - Caller duties (PR D13, `retention.rs`), for lifecycle (L18): (a) name
-  in `InUse` each generation that a running VM restored from, from the
-  key check of its start until its Cloud Hypervisor ends (fact 55). (b)
-  pass the budget from the vmm config. L20 reads it from an env key
-  with `BUDGET` as the default (CH36 G14).
+  in `InUse` each generation that a VM restores from, from the key check
+  of its start until its Cloud Hypervisor ends (fact 55, decision CH50
+  rule 8). The key check comes before the claim. A sweep drops a
+  consumed newest generation that is not in `InUse`, so a miss here can
+  remove the files of a restore that is starting. (b) pass the budget
+  from the vmm config. L20 reads it from an env key with `BUDGET` as the
+  default (CH36 G14).
