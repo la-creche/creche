@@ -57,13 +57,41 @@ jobs:
       - name: Set up (no sudo)
         run: '"$C3_SPIKE_ROOT/setup.sh"'
       - name: Load the spike profiles (runner sudo)
-        run: time sudo apparmor_parser -r "$C3_SPIKE_ROOT/c3spike-slots.profile"
+        run: |
+          # Diagnosis: the 128 load lines use up the printk burst, so later
+          # DENIED lines are dropped. Turn the rate limit off first.
+          sudo sysctl -q -w kernel.printk_ratelimit=0 kernel.printk_ratelimit_burst=100000
+          time sudo apparmor_parser -r "$C3_SPIKE_ROOT/c3spike-slots.profile"
       - name: Run the probes (no sudo)
         run: '"$C3_SPIKE_ROOT/probes.sh"'
+      - name: Find the rule that refuses CH its API socket (A/B)
+        if: always()
+        run: |
+          set -u
+          K=$C3_SPIKE_ROOT
+          [[ -x "$K/bin/cloud-hypervisor" ]] || { echo "no CH, setup failed"; exit 0; }
+          base=$(awk '/^profile creche-c3spike-xslot-0 \{/,/^\}/' "$K/c3spike-slots.profile")
+          sock="$K/runx/slot/0/api.sock"
+          for v in asis nodeny nopeer; do
+            case $v in
+              asis) body=$base ;;
+              nodeny) body=$(grep -vE '^  (audit )?deny unix' <<< "$base") ;;
+              nopeer) body=$(grep -vE '^  (audit )?deny unix peer=' <<< "$base") ;;
+            esac
+            printf 'abi <abi/4.0>,\n%s\n' "${body/creche-c3spike-xslot-0/c3diag-$v}" > "$K/tmp/c3diag-$v.profile"
+            sudo apparmor_parser -r "$K/tmp/c3diag-$v.profile"
+            rm -f "$sock" "$sock.lock"
+            timeout 3 aa-exec -p "c3diag-$v" -- "$K/bin/cloud-hypervisor" --api-socket "path=$sock" \
+              > "$K/tmp/c3diag-$v.log" 2>&1 || true
+            if [[ -S "$sock" ]]; then made=yes; else made=no; fi
+            echo "variant $v: api.sock made=$made | $(grep -oE 'Fatal error: [^(]*' "$K/tmp/c3diag-$v.log" | head -n 1)"
+            sudo apparmor_parser -R "$K/tmp/c3diag-$v.profile" || true
+          done
+          rm -f "$sock" "$sock.lock"
       - name: Show the AppArmor denials and the CH logs
         if: always()
         run: |
-          sudo dmesg | grep -iE 'apparmor|audit' | tail -n 80 || true
+          sudo dmesg | grep -E 'apparmor="(DENIED|ALLOWED|AUDIT)"' | tail -n 80 || true
           sudo journalctl -k --no-pager | grep -iE 'apparmor=' | tail -n 40 || true
           for f in "$C3_SPIKE_ROOT"/results/logs/*; do
             [[ -f "$f" ]] || continue
