@@ -55,6 +55,11 @@ table of the three vmm crates.
   time is RFC 3339 in UTC to the second, from `faults::rfc3339`.
 - The process tests need Landlock ABI 4 and `/dev/kvm`. The host and the
   ubuntu-24.04 runner have both (facts 77, 79).
+- A test that boots CH has a name that holds `kvm_` and carries
+  `#[ignore]` (decisions CH8-4, CH36 G19). The job `kvm` of gate.yml runs
+  every such test of the workspace after `bin/vm-smoke-setup.sh`. The test
+  reads CH, ch-remote, the kernel and the busybox initramfs from the
+  directory in `CRECHE_KVM_DIR`, and fails when it is not set.
 
 ## Known gaps
 

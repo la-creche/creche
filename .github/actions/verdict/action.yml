@@ -36,6 +36,7 @@ runs:
                 "playpen-image",
                 "rust",
                 "systemd-proof",
+                "kvm",
             ]
         }
 
