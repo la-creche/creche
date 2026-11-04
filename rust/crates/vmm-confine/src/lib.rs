@@ -12,6 +12,7 @@ pub mod landlock;
 pub mod launch;
 pub mod leftovers;
 pub mod limits;
+pub mod output;
 pub mod rfc3339;
 pub mod scope;
 pub mod spawner;
