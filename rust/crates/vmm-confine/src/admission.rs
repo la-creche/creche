@@ -5,22 +5,27 @@
 //! sleep-gate result of each and the free bytes. It runs each eviction
 //! that the answer names, then starts the VM. The rules:
 //!
-//! 1. The free bytes of the state root are below the floor: `HostFull`.
+//! 1. The free bytes of the state root are below the floor: `HostFull`
+//!    with `Full::Disk`.
 //! 2. The configured guest RAM of the running VMs plus the RAM wanted is at
 //!    or below the cap: `Admit`.
-//! 3. Else the idle VMs, least recently used first, free enough RAM:
-//!    `EvictFirst` with the shortest such prefix of that order.
-//! 4. Else `HostFull`. The vmm never queues (decision CH21-3). It answers
-//!    `host_full` (503) before 101 (decisions CH21-9, CH34 rule 6).
+//! 3. Else the idle VMs, least recently used first, free enough RAM, and
+//!    the floor holds after the writes of the shortest such prefix of
+//!    that order: `EvictFirst` with that prefix. The snapshot of an
+//!    evicted VM writes its whole guest RAM to disk (fact 72). So the free
+//!    bytes minus the guest RAM of each evicted VM must stay at or above
+//!    the floor (decision CH42 rule 3).
+//! 4. Else the shortest prefix that frees enough RAM breaks the floor:
+//!    `HostFull` with `Full::Disk`. A longer prefix writes no fewer bytes,
+//!    so no prefix frees enough RAM and holds the floor.
+//! 5. Else `HostFull` with `Full::Ram`. The vmm never queues (decision
+//!    CH21-3). It answers `host_full` (503) before 101 (decisions CH21-9,
+//!    CH34 rule 6).
 //!
-//! A partial eviction never happens: when the idle VMs cannot free enough
-//! RAM, the answer is `HostFull` and no VM stops.
-//!
-//! CONTRACT-QUESTION (decision CH8-7): rule 1 reads the free bytes before
-//! the start. The snapshot of an evicted VM first writes its whole guest
-//! RAM to disk (fact 72), and the new session disk grows later. No row
-//! says whether the floor must still hold after those writes. AGENTS.md
-//! lists this in Known gaps.
+//! A partial eviction never happens: when no prefix of the idle VMs frees
+//! enough RAM and holds the floor, the answer is `HostFull` and no VM
+//! stops. A start with no eviction writes no snapshot, so rule 1 alone
+//! checks its floor.
 
 use std::io;
 use std::path::Path;
@@ -83,7 +88,8 @@ pub struct Running {
 /// Why a start gets `host_full`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Full {
-    /// The free bytes are below the floor (decision CH8-7).
+    /// The free bytes are below the floor, or the snapshots of the
+    /// evictions would take them below it (decisions CH8-7, CH42 rule 3).
     Disk,
     /// No set of idle VMs frees enough RAM (decision CH8-6).
     Ram,
@@ -122,7 +128,16 @@ pub fn decide(wanted: u64, running: &[Running], free: u64, limits: Limits) -> Ad
         freed = freed.saturating_add(vm.guest_ram);
         evict.push(vm.session.clone());
         if freed >= need {
-            return Admission::EvictFirst(evict);
+            // Each snapshot writes the whole guest RAM of its VM, so the
+            // bytes written equal the RAM freed (decision CH42 rule 3).
+            let holds = free
+                .checked_sub(freed)
+                .is_some_and(|left| left >= limits.free_floor);
+            return if holds {
+                Admission::EvictFirst(evict)
+            } else {
+                Admission::HostFull(Full::Disk)
+            };
         }
     }
     Admission::HostFull(Full::Ram)
