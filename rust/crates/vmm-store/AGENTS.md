@@ -85,10 +85,6 @@ The second file has the table of the three vmm crates.
   `admission::Gate::Idle`. Admission snapshots an idle VM sooner than
   `IDLE_TIMEOUT` (decision CH8-6), and the doc of `Gate::Idle` says
   "may sleep now". L17 maps the two.
-- CONTRACT-QUESTION (PR D13, `retention.rs`): no decision row names the
-  start of the 7 days of decision CH2. The narrowest reading: the take.
-  The age runs from the last write of `memory-ranges`, and from the dir
-  time when the file is absent.
 - CONTRACT-QUESTION (PR D13, `retention.rs`): no decision row says
   whether a newest generation with the `consumed` mark and no VM on it
   drops at once. It never restores again (decision CH19 (5)). The

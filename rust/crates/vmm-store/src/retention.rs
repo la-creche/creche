@@ -20,7 +20,7 @@
 //! 2 GiB `memory-ranges` takes about 100 MB (fact 72).
 //!
 //! The age of a generation is the time since the last write of its
-//! `memory-ranges`. The take writes that file, and a restore never writes
+//! `memory-ranges` (decision CH50 rule 7). The take writes that file, and a restore never writes
 //! it (fact 55). A generation without the file takes the time of its dir.
 //! The dir time does not serve for all, because a claim adds the
 //! `consumed` mark and so changes it.
@@ -185,9 +185,9 @@ fn first_pass(
             }
         };
         let used = in_use.contains(&(id.clone(), generation));
-        // CONTRACT-QUESTION: no decision row names the start of the 7 days
-        // of CH2. The narrowest reading: the take, so the age runs from the
-        // last write of `memory-ranges`. A time after `now` gives age 0.
+        // Decision CH50 rule 7: the 7 days of CH2 run from the take, so the
+        // age runs from the last write of `memory-ranges`. A time after
+        // `now` gives age 0.
         let age = now.duration_since(taken).unwrap_or(Duration::ZERO);
         // CONTRACT-QUESTION: no decision row says whether a newest
         // generation with the `consumed` mark and no VM on it drops at
