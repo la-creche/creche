@@ -21,14 +21,19 @@
 //! does not read, drops the snapshot, and the VM cold-boots from its
 //! session disk (decision CH7-6).
 //!
-//! Only the newest generation is a restore candidate. The session disk
-//! moved on past every older one, so after a stop with no fresh snapshot
-//! the next start cold-boots (decision CH19 (5)). So a drop removes every
-//! generation, the oldest first and the newest last. A crash during the
-//! drop leaves the newest one, and the next check drops it again. An older
-//! generation never becomes the newest one with a key that matches.
-//! While the newest key matches, retention removes the older ones (PR
-//! D13).
+//! CONTRACT-QUESTION: CH7-6 says a mismatch drops the snapshot. No row
+//! decides whether a drop removes the older generations too. This code
+//! removes every generation, the oldest first and the newest last, and it
+//! reads no older key. The reason: only the newest generation is a restore
+//! candidate. The session disk moved on past every older one (decision
+//! CH19 (5)), so an older one must never become the newest and restore. A
+//! crash during the drop leaves the newest one, and the next check drops
+//! it again. While the newest key matches, retention removes the older
+//! ones (PR D13). `AGENTS.md`, Known gaps, holds the question.
+//!
+//! Caller duties (`AGENTS.md`, Known gaps): lifecycle runs `write_key`
+//! after each `Snapshotter::take`, and it runs `check_cloud_hypervisor` at
+//! the vmm start. No plan PR has either step yet.
 
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
@@ -124,8 +129,9 @@ impl std::error::Error for ChVersionError {
 
 /// Runs `<program> --version` and accepts it only when stdout is
 /// `CH_VERSION`, alone or after `cloud-hypervisor`. A `v54.0.0-dirty` or a
-/// `v54.0` from a tag build fails. The vmm runs this at its start and does
-/// not start on an error (gap G10). The caller passes the timeout, as for
+/// `v54.0` from a tag build fails. Gap G10 option A has the vmm run this at
+/// its start and refuse to start on an error. No plan PR calls it yet
+/// (`AGENTS.md`, Known gaps). The caller passes the timeout, as for
 /// each `ch-remote` call (`AGENTS.md`, Known gaps, PR D8).
 ///
 /// # Errors
@@ -222,7 +228,9 @@ fn io_at(path: &Path) -> impl FnOnce(io::Error) -> KeyError {
 }
 
 /// Writes `key` into the dir of `generation` through a temp file and a
-/// rename, then syncs the dir. Run it right after the take.
+/// rename, then syncs the dir. Lifecycle runs it right after each take:
+/// a snapshot with no key drops at the next check (`AGENTS.md`, Known
+/// gaps).
 ///
 /// # Errors
 ///
@@ -305,7 +313,8 @@ pub enum KeyCheck {
 }
 
 /// Compares the key of the newest generation of `session` with `current`.
-/// A mismatch removes every generation (decision CH7-6, CH19 (5)). Run it
+/// A mismatch removes every generation (decision CH7-6). CONTRACT-QUESTION:
+/// the removal of the older ones is a reading of CH19 (5), not a row. Run it
 /// only while no VM of the session runs, so that no VM maps a snapshot
 /// that it removes (fact 55).
 ///
