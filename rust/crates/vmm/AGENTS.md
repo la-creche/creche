@@ -407,7 +407,9 @@ stop future kills the VM and puts it back (`Eviction`), and a second stop
 that waits then reads the slot again. A start of a session under a stop
 gets `host_full` (Known gaps 4). `tests/start.rs` proves a drop through
 the hook, a failed stop that keeps the row and the RAM, two stops that
-overlap, a stop during a launch, and the RAM of a VM under a stop.
+overlap, a stop during a launch, and the RAM of a VM under a stop. It
+also proves a start of the session under a stop (`host_full`, one
+launch) and a stop that waits for an idle sleep whose retire fails.
 
 ## Rules
 
