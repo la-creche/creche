@@ -175,6 +175,31 @@ fn control_ready_writes_an_empty_list() {
 }
 
 #[test]
+fn a_failed_clear_keeps_the_faults_for_a_retry() {
+    let root = Root::new("clear-fails");
+    let mut book = root.book(SINCE);
+    book.raise(
+        &chat(),
+        FaultCode::SandboxStartFailed,
+        MESSAGE.to_owned(),
+        at(SINCE),
+    )
+    .unwrap();
+    let vmm = root.0.join("vmm");
+    fs::set_permissions(&vmm, fs::Permissions::from_mode(0o500)).unwrap();
+    assert!(book.clear(&chat(), at(WRITTEN)).is_err());
+    fs::set_permissions(&vmm, fs::Permissions::from_mode(0o750)).unwrap();
+    // The book still knows the fault, so a refresh rewrites it.
+    book.refresh(at(WRITTEN)).unwrap();
+    assert_eq!(
+        root.read("chat")["faults"][0]["code"],
+        "sandbox_start_failed"
+    );
+    book.clear(&chat(), at(WRITTEN)).unwrap();
+    assert_eq!(root.read("chat")["faults"], serde_json::json!([]));
+}
+
+#[test]
 fn a_refresh_rewrites_inside_90_seconds() {
     assert!(REFRESH < Duration::from_secs(90));
     let root = Root::new("refresh");

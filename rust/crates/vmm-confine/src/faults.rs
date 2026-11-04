@@ -221,12 +221,15 @@ impl FaultBook {
     ///
     /// # Errors
     ///
-    /// The error of the write.
+    /// The error of the write. The book keeps the faults, so the file
+    /// never lists a fault that the book forgot: the next `refresh` writes
+    /// them again, and a later `clear` tries again.
     pub fn clear(&mut self, family: &FamilyName, now: SystemTime) -> io::Result<()> {
-        match self.open.remove(family) {
-            Some(_) => self.dir.write(family, &[], now),
-            None => Ok(()),
+        if self.open.contains_key(family) {
+            self.dir.write(family, &[], now)?;
+            self.open.remove(family);
         }
+        Ok(())
     }
 
     /// Rewrites the file of each family with an open fault, so it gets a
