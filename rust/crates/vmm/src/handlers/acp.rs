@@ -1,6 +1,6 @@
 //! The `acp` Upgrade route (decisions CH20, CH21-7). It admits or refuses
 //! an Upgrade before 101 in the order of decision CH34 rule 7: the
-//! session (`not_found`, `busy`), then the start of the VM (admission,
+//! session (`not_found`, then `busy`), then the start of the VM (admission,
 //! start, the first `ControlReady`). Every refusal is a typed reply
 //! before 101 (decisions CH21-9, CH33 rule 6).
 
@@ -102,11 +102,12 @@ impl<S: StartVm> ServeUpgrade<AcpRoute> for Acp<S> {
     type Relay = AcpRelay;
 
     async fn admit(&self, request: OpenAcp) -> Result<AcpRelay, AcpError> {
-        // The claim comes before the row read. A drop marks the session
-        // before it removes the row (`Relays::mark_drop`). So a drop that
-        // ends between the two steps leaves no row, and this Upgrade gets
-        // `not_found`, never a VM. An id with no row has no open relay, so
-        // this order gives each request the code of CH34 rule 7.
+        // The session comes first, then `busy` (decision CH34 rule 7). An
+        // unknown id gets `not_found` with no boot (decision CH21-9). An id
+        // of another family gets `not_found` too and never touches the
+        // claim of the owner, so it learns nothing of the session
+        // (decision CH33 rule 5).
+        self.row(&request)?;
         let mut claim = self
             .relays
             .claim(&request.id)
@@ -114,7 +115,10 @@ impl<S: StartVm> ServeUpgrade<AcpRoute> for Acp<S> {
                 Taken::Busy => AcpError::Busy {},
                 Taken::Dropping => AcpError::NotFound {},
             })?;
-        // An unknown id gets `not_found` with no boot (decision CH21-9).
+        // A drop marks the session before it removes the row, and keeps
+        // the mark until the row is gone (`Relays::mark_drop`). So a drop
+        // that ended between the first read and the claim left no row, and
+        // this second read gives `not_found`, never a VM.
         let row = self.row(&request)?;
         let vsock = self.start.start(&row).await.map_err(StartFault::error)?;
         // A drop that began during the start stopped the claim. The

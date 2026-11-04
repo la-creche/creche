@@ -353,18 +353,42 @@ fn a_second_upgrade_gets_busy_until_the_first_ends() {
     server.end();
 }
 
+/// Another family gets `not_found` while the owner holds the session, so
+/// it learns nothing of the session (decisions CH33 rule 5, CH34 rule 7).
+/// Its Upgrade starts no VM and leaves the claim of the owner in place.
+#[test]
+fn another_family_gets_not_found_while_the_owner_holds_the_session() {
+    let server = Server::start("acp-foreign");
+    let (status, _, _first) = server.upgrade("chat", A);
+    assert_eq!(status, 101);
+    server.refused("code", A, AcpError::NotFound {});
+    server.refused("chat", A, AcpError::Busy {});
+    assert_eq!(server.starts(), 1);
+    server.end();
+}
+
 #[test]
 fn a_start_fault_answers_before_101() {
     let server = Server::start("acp-fault");
+    // Each code is written out, so a wrong map in `StartFault::error`
+    // fails the body check (decision CH34 rule 6).
     let faults = [
-        (StartFault::HostFull, 503),
-        (StartFault::SandboxStartFailed, 502),
-        (StartFault::EgressAssertFailed, 502),
+        (StartFault::HostFull, AcpError::HostFull {}, 503),
+        (
+            StartFault::SandboxStartFailed,
+            AcpError::SandboxStartFailed {},
+            502,
+        ),
+        (
+            StartFault::EgressAssertFailed,
+            AcpError::EgressAssertFailed {},
+            502,
+        ),
     ];
-    for (fault, status) in faults {
+    for (fault, error, status) in faults {
         server.hook.0.lock().unwrap().fault = Some(fault);
-        assert_eq!(fault.error().status(), status);
-        server.refused("chat", A, fault.error());
+        assert_eq!(error.status(), status);
+        server.refused("chat", A, error);
     }
     assert_eq!(server.starts(), 3);
     // A refusal frees the session at once.
