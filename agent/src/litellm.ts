@@ -233,7 +233,7 @@ export function litellmModel(
  * the alias never changes after start.
  */
 export class LiveModel {
-  private readonly served = new Map<string, ModelLimits>();
+  private served = new Map<string, ModelLimits>();
   private last: Promise<unknown> = Promise.resolve();
   private current: string;
   private latest: Provider;
@@ -274,10 +274,14 @@ export class LiveModel {
     }
 
     const read = await readModelLimits(this.config, alias, key);
+    // The state changes only once the new provider is in Flue. A throw
+    // leaves the old alias current, so the next pull tries again.
+    const served = new Map(this.served).set(alias, read.limits);
+    const provider = providerOf(this.config, served, this.creds);
+    setProvider(provider);
+    this.served = served;
+    this.latest = provider;
     this.current = alias;
-    this.served.set(alias, read.limits);
-    this.latest = providerOf(this.config, this.served, this.creds);
-    setProvider(this.latest);
 
     return read;
   }
