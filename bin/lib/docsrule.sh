@@ -1,7 +1,6 @@
 # Sourced only (bin/AGENTS.md, Library): the one copy of "does this change
-# touch nothing but prose?", shared by githooks/pre-push (per push),
-# .github/workflows/gate.yml (per PR) and release.yml (per merge), so the
-# three cannot drift.
+# touch nothing but prose?", shared by .github/workflows/gate.yml (per PR)
+# and release.yml (per merge), so the two cannot drift.
 #
 # A docs-only change runs `bin/quality-gate.sh --docs`: lint, and only the
 # tests marked `docs`, the ones that read a doc or check one exists. No
@@ -21,7 +20,7 @@
 # `is_prose`). `handover/tests/test_handover_bin_path_cut.py` holds the two
 # equal: change both, or neither.
 #
-# Bash 3.2-clean: macOS runs the hook too.
+# Bash 3.2-clean, so a Mac can source it too.
 
 # docs_path PATH: whether PATH is prose, e.g. docs/rework/spec.md or
 # caregiver/AGENTS.md, and not a fixture's instructions.md.
