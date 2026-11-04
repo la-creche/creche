@@ -63,7 +63,7 @@ const RESTORE: &[&str] = &[
     "--api-socket",
     "path=<root>/run/vm/0123abcd-0000-4000-8000-00000000c7c7/api.sock",
     "--restore",
-    "source_url=file://<root>/state/sessions/0123abcd-0000-4000-8000-00000000c7c7/snapshots/1,memory_restore_mode=copyonwrite,resume=true",
+    "source_url=file://<root>/state/sessions/0123abcd-0000-4000-8000-00000000c7c7/snapshots/1,memory_restore_mode=copyonwrite,resume=false",
 ];
 
 /// A state root with a kernel, a root disk and a session disk, and a run
