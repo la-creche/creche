@@ -3,7 +3,7 @@
 #   CRECHE_KVM_DIR=<dir> bin/vm-smoke-setup.sh
 # The job `kvm` of gate.yml and of release.yml runs it. No hook and no unit
 # runs it. It refuses to run outside GitHub Actions: it uses sudo, and CH36
-# G20 allows sudo on GitHub's throwaway runners only, never on Hyperion.
+# G20 allows sudo on GitHub's throwaway runners only, never on the host.
 #
 # The method is the one the C0 spike proved (design note fact 79):
 #   1. /dev/kvm must exist. No KVM fails here, loudly (CH36 G19).
