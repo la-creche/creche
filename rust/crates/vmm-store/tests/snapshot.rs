@@ -3,7 +3,8 @@
 //! CH2, CH29, section 4 item 5.7).
 //!
 //! `tests/fixtures/ch-remote-snapshot` and `tests/fixtures/fallocate` stand
-//! in for the programs. Both log to `<root>/calls`, so a test reads the
+//! in for the programs. `tests/fixtures/fallocate-lock` also locks
+//! `snapshots/` against a read. Both log to `<root>/calls`, so a test reads the
 //! call order. The last test runs the host `fallocate`, a Linux tool, so it
 //! is Linux only. C16 takes a real snapshot.
 
@@ -215,6 +216,30 @@ fn a_failed_dig_leaves_no_generation() {
         Some("shutdown-vmm")
     );
     let left = fs::read_dir(temp.session.snapshots()).expect("the dir");
+    assert_eq!(left.count(), 0);
+}
+
+/// Mode 0300 keeps the rename into `snapshots/` but fails the open for
+/// its sync. Then `take` removes the renamed dir (decision CH44 rule 4).
+/// Root ignores the mode, so the test skips when a probe dir opens.
+#[test]
+fn a_failed_sync_after_the_rename_leaves_no_generation() {
+    let temp = Temp::new("no-sync");
+    let probe = temp.root.join("probe");
+    fs::create_dir(&probe).expect("the probe");
+    fs::set_permissions(&probe, fs::Permissions::from_mode(0o300)).expect("a mode");
+    if fs::File::open(&probe).is_ok() {
+        return;
+    }
+    let taken = temp.take(&fixture("fallocate-lock"));
+    let snapshots = temp.session.snapshots();
+    fs::set_permissions(&snapshots, fs::Permissions::from_mode(0o700)).expect("a mode");
+    let error = taken.expect_err("a failure");
+    let SnapshotError::Io { path, .. } = error else {
+        panic!("not Io: {error}");
+    };
+    assert_eq!(path, snapshots);
+    let left = fs::read_dir(&snapshots).expect("the dir");
     assert_eq!(left.count(), 0);
 }
 

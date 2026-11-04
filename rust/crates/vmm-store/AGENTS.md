@@ -21,7 +21,9 @@ The second file has the table of the three vmm crates.
   fails, `Snapshotter::take` removes its temp dir and changes nothing
   else. It resumes nothing and stops nothing more. The caller decides.
   After a failure past `shutdown-vmm` the VM is gone, and the next start
-  cold-boots (decision CH19 (5)).
+  cold-boots (decision CH19 (5)). The code reads a rename that the sync
+  of `snapshots/` cannot make durable as a failed step too, so `take`
+  removes `snapshots/<n>` and returns the sync error.
 
 ## Known gaps
 
@@ -32,7 +34,8 @@ The second file has the table of the three vmm crates.
   it. Without it, a dropped or a consumed snapshot cold-boots from a
   session disk that may lack the last guest writes.
 - Host program (PR D9, `snapshot.rs`): the vmm execs the host
-  `fallocate` (decision CH29). No row names it as an exec of the vmm.
-  Track C must allow that exec, as the CH39 note asks for `zstd` and
-  `mke2fs` (C6). L20 needs a config key for its path (the owner env
-  rule). Its list has no such key yet.
+  `fallocate` (decision CH29). The exec needs no Landlock rule. Item 42
+  notes that the vmm process itself is not under Landlock, because C6
+  confines only the CH launch. L20 needs a config key for its path (the
+  owner env rule). Its list has no such key yet. Item 42 lists config
+  keys for `fallocate`, `zstd` and `mke2fs` as a lifecycle duty.
