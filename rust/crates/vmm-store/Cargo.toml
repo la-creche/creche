@@ -1,0 +1,16 @@
+# The store of the vmm: what the vmm keeps per session on the host disk.
+# It is the bottom layer of the three vmm crates (rust/crates/vmm/AGENTS.md).
+[package]
+name = "creche-vmm-store"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+creche-wire = { path = "../wire" }
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
