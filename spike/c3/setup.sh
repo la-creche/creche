@@ -118,7 +118,14 @@ main() {
   find "$RUN/vm" "$RUNX/vm" -mindepth 1 -printf '%p -> %l\n'
 
   say "check the profile file and compile it without loading it"
-  python3 -I "$K/gen-profiles.py" --slots "$SLOTS" --root "$K" --check "$PROFILE_FILE"
+  if [[ "${C3_SPIKE_AUDIT:-0}" == 1 ]]; then
+    # CI diagnosis: the file has each deny rule marked audit (c3-slot-spike.yml).
+    python3 -I "$K/gen-profiles.py" --slots "$SLOTS" --root "$K" |
+      sed 's/^  deny /  audit deny /' | cmp - "$PROFILE_FILE"
+    say "$PROFILE_FILE equals the generator output with audit deny rules"
+  else
+    python3 -I "$K/gen-profiles.py" --slots "$SLOTS" --root "$K" --check "$PROFILE_FILE"
+  fi
   local start end out
   start=$(date +%s%N)
   if out=$(apparmor_parser -Q -K -o "$K/tmp/c3spike-slots.bin" "$PROFILE_FILE" 2>&1); then

@@ -25,6 +25,7 @@ jobs:
     env:
       C3_SPIKE_ROOT: /home/runner/c3-spike
       C3_SPIKE_USER: runner
+      C3_SPIKE_AUDIT: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -48,6 +49,11 @@ jobs:
           chmod 0755 "$C3_SPIKE_ROOT"/*.sh "$C3_SPIKE_ROOT"/*.py
           python3 -I "$C3_SPIKE_ROOT/gen-profiles.py" --slots 64 --root "$C3_SPIKE_ROOT" \
             > "$C3_SPIKE_ROOT/c3spike-slots.profile"
+          # Diagnosis only: a deny rule is quiet, so mark each one audit to
+          # see which rule refuses CH. setup.sh checks the file against the
+          # generator, so it gets the same edit there through C3_SPIKE_AUDIT.
+          sed -i 's/^  deny /  audit deny /' "$C3_SPIKE_ROOT/c3spike-slots.profile"
+          grep -c '^  audit deny ' "$C3_SPIKE_ROOT/c3spike-slots.profile"
       - name: Set up (no sudo)
         run: '"$C3_SPIKE_ROOT/setup.sh"'
       - name: Load the spike profiles (runner sudo)
@@ -57,7 +63,8 @@ jobs:
       - name: Show the AppArmor denials and the CH logs
         if: always()
         run: |
-          sudo dmesg | grep -E 'apparmor="(DENIED|ALLOWED)"' | tail -n 80 || true
+          sudo dmesg | grep -iE 'apparmor|audit' | tail -n 80 || true
+          sudo journalctl -k --no-pager | grep -iE 'apparmor=' | tail -n 40 || true
           for f in "$C3_SPIKE_ROOT"/results/logs/*; do
             [[ -f "$f" ]] || continue
             echo "== ${f##*/}"
