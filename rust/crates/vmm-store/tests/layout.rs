@@ -25,6 +25,11 @@ fn state_paths_are_pinned() {
         state.row_file(&id()),
         Path::new(&format!("/var/lib/vmm/rows/{ID}.json"))
     );
+    assert_eq!(state.rows_dir(), Path::new("/var/lib/vmm/rows"));
+    assert_eq!(
+        state.row_temp_file(&id()),
+        Path::new(&format!("/var/lib/vmm/rows/{ID}.json.tmp"))
+    );
     assert_eq!(
         session.path(),
         Path::new(&format!("/var/lib/vmm/sessions/{ID}"))
