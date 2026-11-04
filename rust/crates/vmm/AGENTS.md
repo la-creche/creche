@@ -75,8 +75,13 @@ then sends `ControlHello` with the wall time of the vmm (decision CH28)
 and reads one `ControlReady` with the strict reader. `READY_WAIT` (10 s,
 decision CH36 G26) bounds the whole open. A close before `ControlReady`
 is a fault of the VM: `ControlError::needs_cold_boot` is true (decision
-CH32 rule 3). Each other error ends the open with a reported fault and
-no cold boot (decision CH43 rule 6).
+CH32 rule 3). Decision CH43 rule 6 allows a cold boot only when guest
+init closes the link before `ControlReady`. The rule names four cases
+that end the open with a reported fault and no cold boot: a bad line, a
+timeout, a refused `CONNECT` and a failed dial. The rule does not name
+`Io` (a failed read or write) or `Clock`. The code reads "only" to cover
+every other error too, so each of them also ends the open with a
+reported fault and no cold boot.
 
 `control::ControlState` keeps the current link and the last facade state
 of each VM. Each change names its `LinkId`, and only the current link
