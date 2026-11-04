@@ -218,7 +218,9 @@ the steps below.
 `x-routes` holds it under `body_cap`.
 
 1. It caps each request body and each reply body of each route. A body of
-   exactly the cap is under it.
+   exactly the cap is under it. It binds each JSON body of the host API (a
+   request, a reply, an error), and no ACP byte after 101 (decision CH34
+   rule 3).
 2. The vmm refuses a larger request with `too_large`. A client reads each
    reply with `read(..., cap=HOST_API_BODY_CAP)`.
 3. A page of the list route ends early when one more row would take the
@@ -230,7 +232,7 @@ the steps below.
 
 `list` reads one page of the host session list of one family (decisions
 CH21-5, CH21-7). The family key comes from the list entry of the route
-table plan, and no decision names it (see "Known gaps"). The request is
+table plan, and it is required (decision CH34 rule 4). The request is
 `ListSessions`, the reply is `SessionPage`, and the error is `ListError`.
 
 1. `cursor` is `null` for the first page. A later page sends the `next` of
@@ -256,9 +258,10 @@ CH21-2, CH21-10, CH27). The request is `DropTarget`, the reply is
    rule 5). It then stops every VM of the target at once (decision CH33
    rule 11). Each VM gets the graceful stop of decision CH19 (3) for up
    to 30 s (`DROP_STOP_WAIT`), then SIGTERM, then SIGKILL after 5 s
-   (`DROP_SIGTERM_GRACE`). A kill is no error. Last the vmm removes each
+   (`DROP_SIGTERM_GRACE`, decision CH34 rule 5). A kill is no error. Last the vmm removes each
    snapshot, session disk and row, and answers `Dropped`.
-5. A client waits 60 s for the reply (`DROP_CLIENT_TIMEOUT`). It retries
+5. A client waits 60 s for the reply (`DROP_CLIENT_TIMEOUT`, decision
+   CH34 rule 5). It retries
    a timeout as a transient. A retry after the session is gone gets
    `not_found`, and the client counts that as done. `x-routes` holds the
    client timeout as `client_timeout_s` of the entry `drop`, and
@@ -279,20 +282,27 @@ guest port 1201 (decision CH13).
    (`AcpRoute::TOKEN`, `ACP.token`). The body is `OpenAcp`, `{family, id}`
    (decision CH33 rule 5).
 2. Without the token in `Upgrade`, the vmm answers `upgrade_required` 426
-   (decision CH26 rule 3).
-3. The vmm answers `not_found` 404 when no row has the id, when the row
-   belongs to another family, and while a drop of the session runs
-   (decisions CH21-9, CH33 rule 5).
+   (decisions CH26 rule 3, CH34 rule 6).
+3. The vmm answers `not_found` 404 when no row has the id and when the row
+   belongs to another family (decisions CH21-9, CH33 rule 5, CH34 rule 6).
+   It also answers `not_found` while a drop of the session runs (decision
+   CH34 rule 6).
 4. A second Upgrade for a session with an open stream gets `busy` 409
    (decision CH33 rule 7).
 5. With no room on the host, the vmm answers `host_full` 503 at once
-   (decisions CH8-6, CH21-3). The client retries.
+   (decisions CH8-6, CH21-3, CH34 rule 6). The client retries.
 6. The vmm answers 101 only after `ControlReady` (decision CH33 rule 6).
-   When the VM does not run, it boots or restores it first. A failed start
-   answers `sandbox_start_failed` or `egress_assert_failed` 502, and the
-   vmm also writes the fault file (decision CH21-1).
+   The 101 follows the first `ControlReady` of the start, whatever
+   `FacadeState` it reports (decision CH34 rule 7). When the VM does not
+   run, the vmm boots or restores it first. A failed start answers
+   `sandbox_start_failed` or `egress_assert_failed` 502 (decision CH34
+   rule 6). The vmm also writes the fault file (decision CH21-1).
 7. After 101 each failure is the end of the stream. The client learns the
    cause from the error of its next Upgrade.
+8. The vmm checks a request in this order (decision CH34 rule 7): the
+   protocol header, the route and the method, the `Upgrade` header, the
+   body (`Content-Type`, cap, JSON, type), the session (`not_found`,
+   `busy`), admission (`host_full`), the start of the VM.
 
 ## A route error on the wire
 
@@ -354,7 +364,9 @@ route can miss one. List only the codes of the route in `route_error!`.
 
 The vmm checks the header `HOST_API_HEADER` first, before the route and the
 body (decisions CH25 rule 1, CH26). A request without the header, or with
-another protocol number, gets one reply (decision CH33 rule 1):
+another protocol number, gets one reply (decision CH33 rule 1). So does a
+value that is not the exact decimal text of `HOST_API_PROTOCOL`, such as
+`01`, ` 1` or `x`, and a header given twice (decision CH34 rule 1):
 
 | Status | Body |
 |---|---|
@@ -385,9 +397,12 @@ A client reads each answer of the vmm in this order:
    its `code`.
 
 The retry rule (decision CH33 rule 10): after a mismatch, attendance tries
-3 times, 2 s apart. When each try gets the mismatch, attendance records the
-fault `vmm_protocol_mismatch`. The rule lives in the client. This package
-holds no code for it (see "Known gaps").
+3 times, 2 s apart. The 3 tries are 3 requests in all, the first one
+included, so the fault comes 4 s after the first mismatch (decision CH34
+rule 2). When each try gets the mismatch, attendance records the fault
+`vmm_protocol_mismatch`. caregiver keeps decision CH25 rule 1 (retry a few
+times, then report a named fault), with no fixed numbers. The rule lives in
+the client. This package holds no code for it.
 
 ## The protocol number
 
@@ -396,8 +411,11 @@ A change of the schema subset that the routes reach needs a new
 key or an added route too, because the match of the number is exact.
 
 1. `rust/crates/wire/schema/host-api-<N>.json` holds a frozen copy of that
-   subset for the number N. The subset is `x-routes` and each `$defs` entry
-   that a route type reaches through `$ref`, with no `description` text.
+   subset for the number N. The subset is the whole `x-routes` and each
+   `$defs` entry that a route type reaches through `$ref`,
+   `ProtocolMismatch` too (decision CH34 rule 8). A `title` stays, because
+   it names a generated class. A `description` goes. So a new route or
+   status also needs a new number.
 2. The schema test fails when the subset differs from the file of the
    current number. The `rust` job of CI runs that test.
 3. Write mode never writes over the file of the current number. It writes
@@ -441,68 +459,7 @@ a dependency.
 
 ## Known gaps
 
-- `CONTRACT-QUESTION` in `rust/crates/wire/src/routes.rs`, `AcpError`.
-  Decision CH21-9 names `not_found` and `host_full`, decision CH26 rule 3 a
-  typed error for a wrong `Upgrade` header, and decision CH33 rule 6 typed
-  start faults, with no code or status. Decision CH33 rule 7 fixes `busy`
-  409 only. The reading taken: `upgrade_required` 426, the HTTP status for
-  a needed upgrade. `host_full` 503. The start faults keep the fault names
-  of decision CH6-3, `sandbox_start_failed` and `egress_assert_failed`,
-  each 502. An Upgrade that comes while a drop of its session runs gets
-  `not_found`.
-- `CONTRACT-QUESTION` in `rust/crates/wire/src/routes.rs`, `AcpRoute`.
-  Decision CH26 orders the checks of a request, and decision CH33 rule 6
-  puts every refusal of `acp` before 101. Neither places the check of the
-  `Upgrade` header or orders the refusals of the route. The reading taken:
-  the protocol header, the route and the method, then the `Upgrade` header
-  (`upgrade_required`), then the body (`Content-Type`, cap, JSON, type),
-  then the session (`not_found`, `busy`), then admission (`host_full`),
-  then the start of the VM. Rule 6 names `ControlReady`, not a facade
-  state, so the 101 follows the first `ControlReady` of the start, whatever
-  `FacadeState` it reports.
 - The `acp` request sends a JSON body with an Upgrade. Not proved yet: that
   hyper 1.x reads that body before it sends 101, and that httpx 0.28.1
   sends it. The CH20 stub check sent no body. The first vmm server PR of
   phase 2 proves both. If either fails, the fallback needs the owner's OK.
-
-- `CONTRACT-QUESTION` in `rust/crates/wire/src/routes.rs`,
-  `DROP_SIGTERM_GRACE`. Decision CH33 rule 11 fixes a SIGTERM grace and a
-  drop of about 35 s at most, but names neither the grace nor the client
-  timeout. The reading taken, from the recommended option of gap G11: a
-  grace of 5 s after the 30 s stop wait of decision CH19 (3), so the stop
-  of each VM takes 35 s at most. The removal of disks and rows comes on
-  top. A client waits 60 s for the reply, and retries a timeout as a
-  transient.
-- `CONTRACT-QUESTION` in `rust/crates/wire/src/routes.rs`,
-  `HOST_API_BODY_CAP`. Decision CH33 rule 2 caps each reply, and decision
-  CH26 caps each request. Neither says whether the cap binds the ACP bytes
-  that an Upgrade route carries after 101. The reading taken: the cap binds
-  each JSON body of the host API (a request, a reply, an error), and no ACP
-  byte after 101.
-
-- `CONTRACT-QUESTION` in `rust/crates/wire/src/lib.rs`, `ListSessions`.
-  No decision names the key `family` of the list request. Decision CH33
-  rule 5 covers the session-scoped requests only. The key comes from the
-  list entry of `reframe/route-table-plan.json`. The reading taken: the
-  narrowest one, a required family, so one request never reads the rows of
-  two families.
-- `CONTRACT-QUESTION` in `rust/crates/wire/src/schema.rs`,
-  `frozen_host_api`. Decision CH33 rule 8 names the reached schema subset
-  but not its parts. The reading taken: the whole `x-routes` (route names,
-  kinds, tokens, statuses, client timeouts, header, body cap, mismatch
-  reply) and each reached `$defs` entry, `ProtocolMismatch` too. A `title` stays, because
-  it names a generated class. A `description` goes, because no reader
-  checks it. Another reading needs a new protocol number only if it
-  changes the file.
-- `CONTRACT-QUESTION` in `rust/crates/wire/src/routes.rs`,
-  `HOST_API_HEADER`. Decision CH33 rule 1 names a missing header and
-  another protocol number. It does not name a value that is no number, such
-  as `01`, ` 1` or `x`, or the header given twice. The reading taken: the
-  vmm answers the mismatch reply to each value that is not the exact
-  decimal text of `HOST_API_PROTOCOL`, and to a header given twice.
-- `CONTRACT-QUESTION` in `rust/crates/wire/src/routes.rs`,
-  `MISMATCH_STATUS`. Decision CH33 rule 10 says attendance tries 3 times
-  2 s apart. The reading taken: 3 requests in all, the first one included,
-  so the fault comes 4 s after the first mismatch. The rule names attendance
-  only. caregiver keeps decision CH25 rule 1 (retry a few times, then
-  report a named fault), and no decision gives it numbers.
