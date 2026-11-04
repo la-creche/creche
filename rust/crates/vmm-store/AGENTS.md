@@ -49,5 +49,6 @@ The second file has the table of the three vmm crates.
   as `Unreadable`. L17 and L19 snapshot but name no key write. (b) run
   `check_cloud_hypervisor` at the vmm start and refuse to start on an
   error (gap G10 option A). No lifecycle PR (L17, L20) calls it yet.
-  Another option for (a): `take` writes `key.json` into the temp dir
-  before the rename, so no snapshot exists without a key.
+  Item 42 notes a better way for (a) and gives it to a later PR: `take`
+  writes `key.json` into its temp dir before the rename, so no snapshot
+  exists without a key.
