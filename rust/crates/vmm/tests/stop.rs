@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use creche_vmm::control::ControlError;
-use creche_vmm::stop::{StopLink, Stopped, VmProcess, stop};
+use creche_vmm::stop::{StopError, StopLink, Stopped, VmProcess, stop};
 use creche_vmm_store::layout::{RunRoot, VmRunDir};
 use tokio::runtime::Builder;
 use tokio::time::Instant;
@@ -21,13 +21,21 @@ const ID: &str = "0f8e2a4c-1b3d-4e5f-8a9b-0c1d2e3f4a5b";
 /// One step of a stop, and when it came after the start.
 type Log = Arc<Mutex<Vec<(&'static str, Duration)>>>;
 
+/// The steps that fail in a `Fake`. A failed step is not in the log.
+#[derive(Debug, Clone, Copy, Default)]
+struct Fails {
+    send: bool,
+    term: bool,
+    kill: bool,
+}
+
 /// A fake VM. Its process exits at the step `exits_on`.
 #[derive(Debug, Clone)]
 struct Fake {
     start: Instant,
     log: Log,
     exits_on: &'static str,
-    send_fails: bool,
+    fails: Fails,
 }
 
 /// The process of a `Fake`.
@@ -58,11 +66,17 @@ impl VmProcess for FakeProcess {
     }
 
     fn terminate(&mut self) -> io::Result<()> {
+        if self.0.fails.term {
+            return Err(io::ErrorKind::PermissionDenied.into());
+        }
         self.0.record("term");
         Ok(())
     }
 
     fn kill(&mut self) -> io::Result<()> {
+        if self.0.fails.kill {
+            return Err(io::ErrorKind::PermissionDenied.into());
+        }
         self.0.record("kill");
         Ok(())
     }
@@ -70,7 +84,7 @@ impl VmProcess for FakeProcess {
 
 impl StopLink for FakeLink {
     async fn send_stop(&self) -> Result<(), ControlError> {
-        if self.0.send_fails {
+        if self.0.fails.send {
             return Err(ControlError::Io(io::ErrorKind::BrokenPipe));
         }
         self.0.record("stop");
@@ -103,13 +117,18 @@ impl Drop for TempRun {
     }
 }
 
-/// Stops a fake VM on paused time. Returns the result and the steps.
+/// What a stop of a fake VM gave: the result, the steps, and whether
+/// `api.sock.lock` stays.
+type Outcome = (
+    Result<Stopped, StopError>,
+    Vec<(&'static str, Duration)>,
+    bool,
+);
+
+/// Stops a fake VM on paused time, with a control link when `link` is
+/// set.
 #[cfg(test)]
-fn stop_fake(
-    name: &str,
-    exits_on: &'static str,
-    link: Option<bool>,
-) -> (Stopped, Vec<(&'static str, Duration)>) {
+fn try_stop(name: &str, exits_on: &'static str, link: bool, fails: Fails) -> Outcome {
     let runtime = Builder::new_current_thread()
         .enable_time()
         .start_paused(true)
@@ -117,20 +136,37 @@ fn stop_fake(
         .unwrap();
     let run = TempRun::new(name);
     let vm = &run.1;
-    let stopped = runtime.block_on(async {
+    let (stopped, steps) = runtime.block_on(async {
         let fake = Fake {
             start: Instant::now(),
             log: Log::default(),
             exits_on,
-            send_fails: link == Some(true),
+            fails,
         };
-        let link = link.map(|_| FakeLink(fake.clone()));
+        let link = link.then(|| FakeLink(fake.clone()));
         let mut process = FakeProcess(fake.clone());
-        let stopped = stop(link.as_ref(), &mut process, vm).await.unwrap();
+        let stopped = stop(link.as_ref(), &mut process, vm).await;
         (stopped, fake.steps())
     });
-    assert!(!vm.api_socket_lock().exists(), "api.sock.lock stays");
-    stopped
+    (stopped, steps, vm.api_socket_lock().exists())
+}
+
+/// Stops a fake VM on paused time, and checks that the stop worked and
+/// removed `api.sock.lock`. `link` is `Some(fails)` for a control link
+/// whose send fails when `fails` is set.
+#[cfg(test)]
+fn stop_fake(
+    name: &str,
+    exits_on: &'static str,
+    link: Option<bool>,
+) -> (Stopped, Vec<(&'static str, Duration)>) {
+    let fails = Fails {
+        send: link == Some(true),
+        ..Fails::default()
+    };
+    let (stopped, steps, lock) = try_stop(name, exits_on, link.is_some(), fails);
+    assert!(!lock, "api.sock.lock stays");
+    (stopped.unwrap(), steps)
 }
 
 const fn secs(secs: u64) -> Duration {
@@ -168,6 +204,33 @@ fn a_stop_that_does_not_go_out_skips_its_wait() {
         assert_eq!(stopped, Stopped::Killed);
         assert_eq!(steps, [("term", secs(0)), ("kill", secs(5))]);
     }
+}
+
+/// A failed SIGTERM skips its 5 s wait, so SIGKILL follows at once.
+#[test]
+fn a_failed_sigterm_skips_its_wait() {
+    let fails = Fails {
+        term: true,
+        ..Fails::default()
+    };
+    let (stopped, steps, lock) = try_stop("termfails", "kill", true, fails);
+    assert_eq!(stopped.unwrap(), Stopped::Killed);
+    assert_eq!(steps, [("stop", secs(0)), ("kill", secs(30))]);
+    assert!(!lock, "api.sock.lock stays");
+}
+
+/// A failed SIGKILL is an error, and the files of a process that may
+/// still run stay.
+#[test]
+fn a_failed_sigkill_is_an_error() {
+    let fails = Fails {
+        kill: true,
+        ..Fails::default()
+    };
+    let (stopped, steps, lock) = try_stop("killfails", "kill", true, fails);
+    assert!(matches!(stopped, Err(StopError::Kill(_))), "{stopped:?}");
+    assert_eq!(steps, [("stop", secs(0)), ("term", secs(30))]);
+    assert!(lock, "api.sock.lock is gone");
 }
 
 #[test]
