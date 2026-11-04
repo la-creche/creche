@@ -205,11 +205,20 @@ fn another_guest_init_protocol_drops_the_snapshot() {
 fn an_unreadable_key_drops_the_snapshot() {
     let temp = Temp::new("unreadable");
     let key = temp.session.snapshot_key(FIRST);
-    let cases: [(&str, &dyn Fn()); 5] = [
+    let outside = temp.root.join("outside-key.json");
+    let cases: [(&str, &dyn Fn()); 6] = [
         ("absent", &|| fs::remove_file(&key).expect("a remove")),
         ("not JSON", &|| fs::write(&key, "{").expect("a write")),
+        // A valid key with trailing spaces fails only on the size cap.
         ("too large", &|| {
-            fs::write(&key, " ".repeat(5000)).expect("a write");
+            let mut text = fs::read(&key).expect("the key");
+            text.extend(b" ".repeat(5000));
+            fs::write(&key, text).expect("a write");
+        }),
+        // The link names a matching key, so only the link check drops it.
+        ("a link", &|| {
+            fs::rename(&key, &outside).expect("a move");
+            symlink(&outside, &key).expect("a link");
         }),
         ("a dir", &|| {
             fs::remove_file(&key).expect("a remove");
