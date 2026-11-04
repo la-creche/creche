@@ -3,6 +3,11 @@
 // the mount boundary, so the read retries for a short time. Keep the retry.
 //
 // A refusal names a field, never a value.
+//
+// The reader takes `litellm_key` and `pep_token`, the two fields of the wire
+// `FamilyCreds`, and ignores every other key. `caregiver` still writes
+// `epoch`, but no reader compares it with anything (contract 03 section 12
+// rule 3, decision CH5b, fact 36).
 
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -15,10 +20,9 @@ const CRED_FILE = "creds.json";
 export const CRED_RETRY_MS = 250;
 const CRED_POLL_MS = 5;
 
-export type CredField = "epoch" | "litellm_key" | "pep_token";
+export type CredField = "litellm_key" | "pep_token";
 
 export interface FamilyCreds {
-  readonly epoch: number;
   readonly litellmKey: Secret;
   readonly pepToken: Secret;
 }
@@ -41,13 +45,8 @@ function parseCreds(text: string): CredsRead {
   }
 
   const raw = parsed as Record<string, unknown>;
-  const epoch = raw["epoch"];
   const key = raw["litellm_key"];
   const token = raw["pep_token"];
-  if (typeof epoch !== "number" || !Number.isSafeInteger(epoch) || epoch < 0) {
-    return { ok: false, field: "epoch" };
-  }
-
   if (typeof key !== "string" || key.length === 0) {
     return { ok: false, field: "litellm_key" };
   }
@@ -56,7 +55,7 @@ function parseCreds(text: string): CredsRead {
     return { ok: false, field: "pep_token" };
   }
 
-  return { ok: true, creds: { epoch, litellmKey: Secret.of(key), pepToken: Secret.of(token) } };
+  return { ok: true, creds: { litellmKey: Secret.of(key), pepToken: Secret.of(token) } };
 }
 
 async function readOnce(path: string): Promise<CredsRead> {

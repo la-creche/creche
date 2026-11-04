@@ -1,8 +1,10 @@
 """Reading `caregiver`'s status document (contract 05 §2, §3, §4).
 
 `attendance` never calls `caregiver`. Everything it needs about a family arrives
-through this one file: the family's kind, whether it may serve turns, which
-sandbox is ready, and the credential epoch it must put on the channel.
+through this one file: the family's kind, whether it may serve turns, and
+which sandbox is ready. It reads no credential epoch, because no reader
+compares one with anything (contract 03 section 12 rule 3, decision CH5b,
+fact 36).
 
 The document comes from another process, so every field is a claim until it
 is validated (invariants 12 and 14).
@@ -24,7 +26,6 @@ from .paths import families_dir, status_file
 from .states import SessionKind
 
 STALE_AFTER_S = 90.0
-FIRST_EPOCH = 1
 
 #: A caller root holds no NUL: the OS cuts a path there.
 _NUL = "\x00"
@@ -94,7 +95,6 @@ class FamilyStatus:
     state: FamilyState | None
     written_at: datetime | None
     config_rev: str = ""
-    epoch: int = FIRST_EPOCH
     never_valid: bool = False
     blocking_fault: str | None = None
     #: Every open fault's code, blocking or not. `blocking_fault` answers
@@ -314,7 +314,6 @@ def _status_from_file(raw: dict[str, Any], family: str) -> FamilyStatus:
     None, and `served_kind` and `state_text` say what follows.
     """
     validation = as_object(raw.get("validation")) or {}
-    credentials = as_object(raw.get("credentials")) or {}
     limits = as_object(raw.get("limits")) or {}
     triggers = as_object(raw.get("triggers")) or {}
 
@@ -324,7 +323,6 @@ def _status_from_file(raw: dict[str, Any], family: str) -> FamilyStatus:
         state=_enum(raw.get("state"), FamilyState),
         written_at=_time(raw.get("written_at")),
         config_rev=_text(raw.get("config_rev")) or "",
-        epoch=_positive_int(credentials.get("epoch"), FIRST_EPOCH),
         never_valid=validation.get("never_valid") is True,
         blocking_fault=_blocking_fault(raw.get("faults")),
         fault_codes=_fault_codes(raw.get("faults")),
@@ -424,13 +422,6 @@ def _text(value: object) -> str | None:
 
 def _time(value: object) -> datetime | None:
     return parse_rfc3339(value) if isinstance(value, str) else None
-
-
-def _positive_int(value: object, fallback: int) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        return fallback
-
-    return value
 
 
 def _caller_root(value: object) -> Path | None:

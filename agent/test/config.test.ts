@@ -34,6 +34,7 @@ function mounts(creds: unknown): NodeJS.ProcessEnv {
   };
 }
 
+// `caregiver` still writes `epoch`. The reader ignores it.
 const VALID = { epoch: 3, litellm_key: KEY, pep_token: TOKEN };
 
 describe("readFamilyConfig", () => {
@@ -50,7 +51,7 @@ describe("readFamilyConfig", () => {
   });
 
   it("refuses a creds.json with no pep_token by name and echoes no value", async () => {
-    const read = await readFamilyConfig(mounts({ epoch: 3, litellm_key: KEY }), NO_RETRY_MS);
+    const read = await readFamilyConfig(mounts({ litellm_key: KEY }), NO_RETRY_MS);
 
     expect(read).toEqual({ ok: false, refusal: { reason: "creds_not_valid", field: "pep_token" } });
     expect(JSON.stringify(read)).not.toContain(KEY);
@@ -86,9 +87,20 @@ describe("readFamilyConfig", () => {
     expect(config.mounts.creds).toBe(env["AGENT_CRED_DIR"]);
     expect(config.mounts.indexRoot).toBeNull();
     expect(config.planes.pep.text).toBe("http://192.0.2.10:8300");
-    expect(config.creds.epoch).toBe(3);
+    expect(revealSecret(config.creds.litellmKey)).toBe(KEY);
     expect(revealSecret(config.creds.pepToken)).toBe(TOKEN);
     expect(config.runtime.modelAlias).toBe("chat");
+  });
+
+  it("reads a creds.json with no epoch", async () => {
+    const creds = { litellm_key: KEY, pep_token: TOKEN };
+    const read = await readFamilyConfig(mounts(creds), NO_RETRY_MS);
+    if (!read.ok) {
+      throw new Error(read.refusal.reason);
+    }
+
+    expect(revealSecret(read.config.creds.litellmKey)).toBe(KEY);
+    expect(read.config.creds).not.toHaveProperty("epoch");
   });
 
   it("never shows a secret as text", async () => {

@@ -58,7 +58,6 @@ def test_reads_the_fields_this_service_needs(tmp_path: Path) -> None:
     assert status is not None
     assert status.kind is SessionKind.ATTENDED
     assert status.state is FamilyState.IN_SYNC
-    assert status.epoch == 7
     assert status.config_rev == "reg-9f21c4"
     assert status.is_stale() is False
 
@@ -236,7 +235,6 @@ def test_junk_fields_take_their_defaults(tmp_path: Path) -> None:
     # attended doors, and a default state reports a health nobody published.
     assert status.kind is None
     assert status.state is None
-    assert status.epoch == 1
     assert status.sandboxes == []
     assert status.blocking_fault is None
 

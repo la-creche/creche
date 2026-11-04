@@ -31,7 +31,7 @@ export function familyEnv(fixture: FamilyFixture): Record<string, string> {
   const dir = (name: string): string => mkdtempSync(join(root, name));
   const credDir = dir("creds");
   const configDir = dir("config");
-  const creds = { epoch: 1, litellm_key: FIXTURE_KEY, pep_token: FIXTURE_TOKEN };
+  const creds = { litellm_key: FIXTURE_KEY, pep_token: FIXTURE_TOKEN };
   writeFileSync(join(credDir, "creds.json"), JSON.stringify(creds));
   writeFileSync(join(configDir, "runtime.json"), JSON.stringify(fixture.runtime ?? {}));
   for (const [name, text] of Object.entries(fixture.configFiles ?? {})) {
