@@ -558,8 +558,8 @@ fn a_network_card_fails_the_deny_check() {
 /// A snapshot with the current key restores paused: `info` is read until
 /// CH answers, the device check passes, then `resume` (decisions CH2,
 /// CH50 rule 10). The claim marks the snapshot consumed, and the
-/// generation is in use while the VM runs (decisions CH19 (5), CH50 rule
-/// 8).
+/// generation is in use while the VM runs and no longer after it exited
+/// (decisions CH19 (5), CH50 rule 8).
 #[test]
 fn a_keyed_snapshot_restores_paused_then_resumes() {
     let test = Test::new("restore", |_| {});
@@ -574,6 +574,15 @@ fn a_keyed_snapshot_restores_paused_then_resumes() {
     let id = test.rows[0].id.clone();
     assert!(test.hook.in_use().contains(&(id, SnapshotGeneration(1))));
     assert!(test.fault_codes().is_empty());
+
+    // The CH of the restore exits, and a sweep drops the consumed
+    // generation. The next start finds the VM gone, which releases the
+    // generation (decision CH50 rule 8), and cold-boots.
+    test.fake.vms.lock().unwrap()[0].store(true, Ordering::SeqCst);
+    fs::remove_dir_all(&dir).unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    assert!(!test.restored(1));
+    assert!(test.hook.in_use().is_empty());
 }
 
 /// Fields that a test adds to the config of an `info` reply.
