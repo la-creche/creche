@@ -20,6 +20,11 @@ table of the three vmm crates.
   `leftovers::stop_all`, from the existing key `AGENT_SYSTEMCTL_PROGRAM`,
   and the faults root of `faults::FaultDir::open`, the `faults` dir of
   the creche state root that caregiver reads (contract 05 §3.3.1).
+- `limits::VmLimits` maps the family VM shape to the VM sizes and the
+  scope limits (decision CH8-5): `--cpus boot=N`, `CPUQuota=N×100%`,
+  `--memory size=<guest RAM>M`, `MemoryMax` = guest RAM + 512 MiB, the
+  balloon with free page reporting and deflate on OOM, and
+  `TasksMax=256`. The 512 MiB is a first value. Phase 8 measures it.
 - Every launch step forks from the one spawner thread (decision CH19 (4),
   fact 76). The vmm keeps its `Spawner` for its whole life. A drop ends
   the thread, and the kernel then kills every payload it started.

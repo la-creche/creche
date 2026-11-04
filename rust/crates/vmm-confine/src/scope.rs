@@ -14,8 +14,8 @@ use crate::launch::Payload;
 /// The most tasks in one VM scope (decision CH8-5).
 pub const TASKS_MAX: u32 = 256;
 
-/// The scope of the VM of one session and its limits. PR C4 maps the
-/// family VM shape to these limits.
+/// The scope of the VM of one session and its limits.
+/// `limits::VmLimits::scope` makes it from the family VM shape.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Scope {
