@@ -304,7 +304,9 @@ fn set_death_signal() -> Result<(), LaunchError> {
 /// It stays through the exec of `systemd-run` and of the payload.
 #[cfg(target_os = "linux")]
 fn restrict(launch: &Launch) -> Result<(), LaunchError> {
-    crate::landlock::restrict(&crate::landlock::rules(launch)).map_err(LaunchError::Landlock)
+    let rules =
+        crate::landlock::rules(&launch.files, &launch.systemd_run, launch.payload.program());
+    crate::landlock::restrict(&rules).map_err(LaunchError::Landlock)
 }
 
 /// No other host has Landlock (decision CH38).
