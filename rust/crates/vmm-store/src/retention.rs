@@ -10,8 +10,9 @@
 //! 2. Remove each generation that is not the newest of its session. Only
 //!    the newest one may restore, because the session disk moved on past
 //!    every older one (decision CH19 (5), `key.rs`).
-//! 3. Remove the newest generation when it is older than `MAX_AGE`
-//!    (decision CH2).
+//! 3. Remove the newest generation when a claim consumed it (decision
+//!    CH50 rule 8). It never restores again (decision CH19 (5)). Also
+//!    remove it when it is older than `MAX_AGE` (decision CH2).
 //! 4. While the snapshots that stay take more than the budget, remove the
 //!    oldest one first (decision CH8-7, fact 63).
 //!
@@ -20,7 +21,7 @@
 //! 2 GiB `memory-ranges` takes about 100 MB (fact 72).
 //!
 //! The age of a generation is the time since the last write of its
-//! `memory-ranges`. The take writes that file, and a restore never writes
+//! `memory-ranges` (decision CH50 rule 7). The take writes that file, and a restore never writes
 //! it (fact 55). A generation without the file takes the time of its dir.
 //! The dir time does not serve for all, because a claim adds the
 //! `consumed` mark and so changes it.
@@ -41,6 +42,7 @@ use std::time::{Duration, SystemTime};
 
 use creche_wire::SessionId;
 
+use crate::claim::CONSUMED;
 use crate::key::remove_generation;
 use crate::layout::{SessionDir, SnapshotGeneration, StateRoot};
 use crate::snapshot::{MEMORY_RANGES, generations};
@@ -65,6 +67,9 @@ pub type InUse = HashSet<(SessionId, SnapshotGeneration)>;
 pub enum Reason {
     /// A newer generation of the session exists (step 2).
     Superseded,
+    /// The newest generation holds the consumed mark (step 3, decision
+    /// CH50 rule 8).
+    Consumed,
     /// The generation is older than `MAX_AGE` (step 3).
     Aged,
     /// The snapshots took more than the budget (step 4).
@@ -176,7 +181,11 @@ fn first_pass(
     let mut older_stays = false;
     for &generation in list {
         let dir = session.snapshot(generation);
-        let (taken, bytes) = match measure(&dir) {
+        let Measured {
+            taken,
+            bytes,
+            consumed,
+        } = match measure(&dir) {
             Ok(found) => found,
             Err(source) => {
                 swept.failures.push(Failure { path: dir, source });
@@ -185,18 +194,20 @@ fn first_pass(
             }
         };
         let used = in_use.contains(&(id.clone(), generation));
-        // CONTRACT-QUESTION: no decision row names the start of the 7 days
-        // of CH2. The narrowest reading: the take, so the age runs from the
-        // last write of `memory-ranges`. A time after `now` gives age 0.
+        // Decision CH50 rule 7: the 7 days of CH2 run from the take, so the
+        // age runs from the last write of `memory-ranges`. A time after
+        // `now` gives age 0.
         let age = now.duration_since(taken).unwrap_or(Duration::ZERO);
-        // CONTRACT-QUESTION: no decision row says whether a newest
-        // generation with the `consumed` mark and no VM on it drops at
-        // once. It never restores again (decision CH19 (5)). The narrowest
-        // reading: it stays until steps 3 or 4 drop it.
+        // Decision CH50 rule 8: a consumed newest generation with no VM on
+        // it drops at this sweep. Lifecycle names a generation in `in_use`
+        // from the key check until its Cloud Hypervisor ends, so a restore
+        // that starts keeps its files.
         let reason = if used || older_stays {
             None
         } else if Some(generation) != newest {
             Some(Reason::Superseded)
+        } else if consumed {
+            Some(Reason::Consumed)
         } else if age > MAX_AGE {
             Some(Reason::Aged)
         } else {
@@ -272,12 +283,26 @@ fn sessions(state: &StateRoot) -> io::Result<Vec<SessionId>> {
     Ok(found)
 }
 
-/// The time of the last write of `memory-ranges` (or of the dir without
-/// it) and the allocated bytes of the entries of `dir`.
-fn measure(dir: &Path) -> io::Result<(SystemTime, u64)> {
+/// What `measure` reads of one generation dir.
+struct Measured {
+    /// The time of the last write of `memory-ranges`, or of the dir
+    /// without it.
+    taken: SystemTime,
+    /// The allocated bytes of the entries of the dir.
+    bytes: u64,
+    /// True when the dir holds the consumed mark of a claim.
+    consumed: bool,
+}
+
+/// Reads the take time, the allocated bytes and the consumed mark of
+/// `dir`.
+fn measure(dir: &Path) -> io::Result<Measured> {
     let mut bytes = 0_u64;
+    let mut consumed = false;
     for entry in fs::read_dir(dir)? {
-        let blocks = entry?.metadata()?.blocks();
+        let entry = entry?;
+        consumed |= entry.file_name() == CONSUMED;
+        let blocks = entry.metadata()?.blocks();
         bytes = bytes.saturating_add(blocks.saturating_mul(512));
     }
     let taken = match fs::symlink_metadata(dir.join(MEMORY_RANGES)) {
@@ -288,7 +313,11 @@ fn measure(dir: &Path) -> io::Result<(SystemTime, u64)> {
         }
         Err(error) => return Err(error),
     };
-    Ok((taken, bytes))
+    Ok(Measured {
+        taken,
+        bytes,
+        consumed,
+    })
 }
 
 /// Step 1: removes each `<n>.retired` dir of `session` and syncs

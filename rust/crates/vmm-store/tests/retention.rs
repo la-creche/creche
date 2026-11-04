@@ -1,6 +1,6 @@
 //! Retention drops snapshots by age and by a budget of allocated bytes,
 //! skips the ones in use and keeps the session disks (decisions CH2,
-//! CH8-7, CH36 G13, CH44 rule 6).
+//! CH8-7, CH36 G13, CH44 rule 6, CH50 rule 8).
 //!
 //! A fixed `NOW` is the clock. Each test sets the time of each
 //! `memory-ranges` relative to it.
@@ -10,6 +10,7 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
+use creche_vmm_store::claim::CONSUMED;
 use creche_vmm_store::layout::{SessionDir, SnapshotGeneration, StateRoot};
 use creche_vmm_store::retention::{BUDGET, InUse, MAX_AGE, Reason, Swept, sweep};
 use creche_vmm_store::snapshot::{MEMORY_RANGES, generations};
@@ -204,6 +205,36 @@ fn a_snapshot_in_use_stays() {
     assert_eq!(dropped(&swept), [(B.to_owned(), 1, Reason::Budget)]);
     assert!(used.exists());
     assert_eq!(swept.kept_bytes, allocated(&used));
+}
+
+/// A consumed newest generation with no VM on it never restores again, so
+/// it drops at once (decisions CH19 (5), CH50 rule 8).
+#[test]
+fn a_consumed_unused_newest_generation_drops() {
+    let temp = Temp::new("consumed");
+    let dir = temp.snapshot(A, FIRST, DAY);
+    fs::write(dir.join(CONSUMED), "").expect("the mark");
+    let kept = temp.snapshot(B, FIRST, DAY);
+    let swept = temp.sweep(BUDGET, &InUse::new());
+    assert_eq!(dropped(&swept), [(A.to_owned(), 1, Reason::Consumed)]);
+    assert!(swept.failures.is_empty(), "{:?}", swept.failures);
+    assert!(temp.session(A).disk().exists(), "the disk stays");
+    assert!(generations(&temp.session(A)).expect("a list").is_empty());
+    assert_eq!(swept.kept_bytes, allocated(&kept));
+}
+
+/// A consumed generation in use stays: a VM restored from it maps its
+/// files (fact 55, decision CH50 rule 8).
+#[test]
+fn a_consumed_generation_in_use_stays() {
+    let temp = Temp::new("consumed-in-use");
+    let dir = temp.snapshot(A, FIRST, DAY);
+    fs::write(dir.join(CONSUMED), "").expect("the mark");
+    let in_use = InUse::from([(parse(A), FIRST)]);
+    let swept = temp.sweep(BUDGET, &in_use);
+    assert!(swept.dropped.is_empty(), "{:?}", swept.dropped);
+    assert!(dir.join(MEMORY_RANGES).exists());
+    assert_eq!(swept.kept_bytes, allocated(&dir));
 }
 
 /// An older generation in use keeps every newer one, so the older one

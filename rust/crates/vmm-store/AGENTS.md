@@ -75,15 +75,15 @@ The second file has the table of the three vmm crates.
   Item 42 notes a better way for (a) and gives it to a later PR: `take`
   writes `key.json` into its temp dir before the rename, so no snapshot
   exists without a key.
-- CONTRACT-QUESTION (PR D12, `sleep_gate.rs`): no decision row names
-  the events that set `Activity::last_use`, the start of the idle time.
-  The narrowest reading: the VM start or restore, each turn event, and
-  each open and each close of a door link set it. L18 sets it.
-- CONTRACT-QUESTION (PR D12, `sleep_gate.rs`): no decision row says
-  whether an evictable VM with no door link goes before an older one
-  with a door link open (decisions CH8-6, CH19 (6)). The narrowest
-  reading: one order by `last_use` alone, as
-  `creche_vmm_confine::admission::decide` has.
+- Caller duty (PR D12, `sleep_gate.rs`), for lifecycle: set
+  `Activity::last_use`, the start of the idle time, at the VM start or
+  restore, at each turn event, and at each open and each close of a door
+  link (decision CH50 rule 5). L18 sets it.
+- Caller duty (PR D12, `sleep_gate.rs`), for lifecycle (L17): a VM with
+  an open door link counts as used now in the eviction order (decision
+  CH50 rule 6). When L17 builds the `Running` list for
+  `creche_vmm_confine::admission::decide`, it passes `last_use = now`
+  for each VM with an open door link. D12 and C9 stay as built.
 - Caller duties (PR D12, `sleep_gate.rs`), for lifecycle: (a) keep a
   `turn_seen` flag per VM that a turn event sets and each
   `ControlReady` clears, for decision CH43 rule 8.
@@ -92,16 +92,11 @@ The second file has the table of the three vmm crates.
   `admission::Gate::Idle`. Admission snapshots an idle VM sooner than
   `IDLE_TIMEOUT` (decision CH8-6), and the doc of `Gate::Idle` says
   "may sleep now". L17 maps the two.
-- CONTRACT-QUESTION (PR D13, `retention.rs`): no decision row names the
-  start of the 7 days of decision CH2. The narrowest reading: the take.
-  The age runs from the last write of `memory-ranges`, and from the dir
-  time when the file is absent.
-- CONTRACT-QUESTION (PR D13, `retention.rs`): no decision row says
-  whether a newest generation with the `consumed` mark and no VM on it
-  drops at once. It never restores again (decision CH19 (5)). The
-  narrowest reading: it stays until the age or the budget drops it.
 - Caller duties (PR D13, `retention.rs`), for lifecycle (L18): (a) name
-  in `InUse` each generation that a running VM restored from, from the
-  key check of its start until its Cloud Hypervisor ends (fact 55). (b)
-  pass the budget from the vmm config. L20 reads it from an env key
-  with `BUDGET` as the default (CH36 G14).
+  in `InUse` each generation that a VM restores from, from the key check
+  of its start until its Cloud Hypervisor ends (fact 55, decision CH50
+  rule 8). The key check comes before the claim. A sweep drops a
+  consumed newest generation that is not in `InUse`, so a miss here can
+  remove the files of a restore that is starting. (b) pass the budget
+  from the vmm config. L20 reads it from an env key with `BUDGET` as the
+  default (CH36 G14).

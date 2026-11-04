@@ -26,7 +26,11 @@
 //!    open door link does not count either: the vmm closes it first, and
 //!    the client reconnects with `session/load` (decision CH19 (6)).
 //!    Admission (`creche_vmm_confine::admission::decide`, PR C9) orders
-//!    the evictable VMs by `last_use`, least recently used first.
+//!    the evictable VMs by `last_use`, least recently used first. A VM
+//!    with an open door link counts as used now in that order (decision
+//!    CH50 rule 6). The gate does not apply that rule. L17 passes
+//!    `last_use = now` for each VM with an open door link when it builds
+//!    the admission `Running` list.
 
 use std::time::{Duration, Instant};
 
@@ -54,9 +58,8 @@ pub struct Activity<'a> {
     /// True when a door link (the ACP Upgrade) of the VM is open.
     pub door_open: bool,
     /// The last use of the VM. The smallest is the least recently used.
-    // CONTRACT-QUESTION: no decision row names the events that set the
-    // last use. The narrowest reading: the VM start or restore, each turn
-    // event, and each open and each close of a door link set it.
+    // Decision CH50 rule 5: the VM start or restore, each turn event, and
+    // each open and each close of a door link set the last use.
     pub last_use: Instant,
 }
 
@@ -81,9 +84,8 @@ impl Activity<'_> {
 
     /// Whether admission may evict the VM when the RAM cap needs room
     /// (decisions CH8-6, CH19 (6)).
-    // CONTRACT-QUESTION: no decision row says whether an idle VM with no
-    // door link goes before an older one with a door link open. The
-    // narrowest reading: one order by `last_use` alone, as admission has.
+    // Decision CH50 rule 6: an open door link changes only the eviction
+    // order, not this answer. L17 applies the order rule.
     #[must_use]
     pub fn may_evict(&self) -> bool {
         self.up() && !self.turn_running
