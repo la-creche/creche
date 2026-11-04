@@ -15,5 +15,13 @@ rustix.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
+# The landlock crate builds only on Linux. A Linux-only entry keeps
+# `cargo check --workspace` working on a macOS dev machine, so the code
+# that calls it (C6) sits behind cfg(target_os = "linux").
+# CONTRACT-QUESTION: no row decides whether the workspace must build on
+# macOS. This is the narrowest reading (AGENTS.md Known gaps).
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock.workspace = true
+
 [lints]
 workspace = true
