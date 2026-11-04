@@ -32,8 +32,11 @@ use crate::ServeError;
 const ACCEPT_PAUSE: Duration = Duration::from_millis(100);
 
 /// How long a client has to send the whole head of a request, the first
-/// one and each one on a kept-alive connection. Past it, the server closes
-/// the connection, so a silent client holds no file and no task for long.
+/// one and each one on a kept-alive connection. Past it, the server shuts
+/// the write half and closes the socket at most `LINGER_TIME` later, so a
+/// silent client holds no file and no task for long. Each open connection
+/// holds two file descriptors: the stream and its twin for the lingering
+/// close.
 /// hyper skips this timeout when the connection has no timer.
 // Decision CH40 rule 2: a request head must arrive within 30 s.
 const HEAD_TIMEOUT: Duration = Duration::from_secs(30);
