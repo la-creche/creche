@@ -5,14 +5,15 @@
 //! open relay, and an Upgrade under the mark gets `not_found` (decision
 //! CH34 rule 6).
 //!
-//! After 101 the relay dials guest port 1201 and copies the ACP bytes both
+//! The start dials guest port 1201 before 101 (decision CH50 rule 2), and
+//! the relay takes that link. After 101 the relay copies the ACP bytes both
 //! ways until both sides close (decisions CH13, CH20). It reads no ACP byte
 //! and caps none (decision CH34 rule 3).
 
 use std::collections::HashMap;
 use std::future::{Future, poll_fn};
-use std::path::PathBuf;
-use std::pin::{Pin, pin};
+use std::path::Path;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::task::{Context, Poll};
 
@@ -20,10 +21,11 @@ use creche_wire::{GuestPort, SessionId};
 use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::net::UnixStream;
 use tokio::sync::oneshot;
 use tokio::time::{Instant, timeout};
 
-use crate::control::{READY_WAIT, dial};
+use crate::control::{ControlError, READY_WAIT, dial};
 use crate::server::Relay;
 
 /// The bytes that one direction of the relay holds at most between a read
@@ -225,50 +227,67 @@ impl Drop for DropMark {
     }
 }
 
+/// A dialed link to guest port 1201, and the bytes that guest init sent
+/// right after `OK`. The `StartVm` hook dials it before 101 (decision CH50
+/// rule 2), and the relay copies both.
+#[derive(Debug)]
+pub struct AcpLink {
+    stream: UnixStream,
+    pending: Vec<u8>,
+}
+
+impl AcpLink {
+    /// Dials guest port 1201 through the vsock socket `vsock` of the VM
+    /// (`VmRunDir::vsock_socket`). The dial pauses 10 ms between two
+    /// tries, retries ECONNREFUSED, and `READY_WAIT` bounds it (decision
+    /// CH43 rules 5 and 7).
+    ///
+    /// # Errors
+    ///
+    /// `ControlError`: `Timeout` when no `OK` came within `READY_WAIT`,
+    /// or the error of the dial. The hook answers each one with
+    /// `StartFault::SandboxStartFailed` (decision CH50 rule 2).
+    // Decision CH50 rule 2 holds only if guest init accepts 1201 in every
+    // facade state. Phase 3 confirms that. If guest init refuses 1201
+    // until the facade runs, this dial makes 101 wait for the facade,
+    // against decision CH34 rule 7, and David decides again.
+    pub async fn dial(vsock: &Path) -> Result<Self, ControlError> {
+        let link = timeout(READY_WAIT, dial(vsock, GuestPort::Acp))
+            .await
+            .unwrap_or(Err(ControlError::Timeout))?;
+        let (stream, pending) = link.into_parts();
+        Ok(Self { stream, pending })
+    }
+}
+
 /// The relay of one admitted Upgrade. It holds the claim until the stream
 /// ends.
 #[derive(Debug)]
 pub struct AcpRelay {
     claim: Claim,
-    vsock: PathBuf,
+    link: AcpLink,
 }
 
 impl AcpRelay {
-    /// The relay that holds `claim` and dials the VM's vsock socket
-    /// `vsock`.
-    pub(crate) fn new(mut claim: Claim, vsock: PathBuf) -> Self {
+    /// The relay that holds `claim` and copies bytes over `link`.
+    pub(crate) fn new(mut claim: Claim, link: AcpLink) -> Self {
         claim.admit();
-        Self { claim, vsock }
+        Self { claim, link }
     }
 }
 
 impl Relay for AcpRelay {
-    /// Dials guest port 1201, then copies bytes both ways. An EOF in one
-    /// direction shuts down the write half of the other stream, and the
-    /// other direction runs on. The relay ends when both directions reach
-    /// EOF, when a read or a write fails, or when a drop stops it. Its end
-    /// drops both streams.
+    /// Copies bytes both ways over the link that the start dialed. An EOF
+    /// in one direction shuts down the write half of the other stream, and
+    /// the other direction runs on. The relay ends when both directions
+    /// reach EOF, when a read or a write fails, or when a drop stops it.
+    /// Its end drops both streams.
     async fn run(self, mut client: TokioIo<Upgraded>) {
-        let Self { mut claim, vsock } = self;
-        // Decision CH43 rules 5 and 7: the dial pauses 10 ms between two
-        // tries, retries ECONNREFUSED, and `READY_WAIT` bounds it.
-        // CONTRACT-QUESTION: no row says what a failed dial after 101 does.
-        // The relay closes the client stream and writes no fault. AGENTS.md
-        // lists it in Known gaps.
-        let mut dial = pin!(timeout(READY_WAIT, dial(&vsock, GuestPort::Acp)));
-        let link = poll_fn(|context| {
-            if Pin::new(&mut claim.stop).poll(context).is_ready() {
-                return Poll::Ready(None);
-            }
-            dial.as_mut()
-                .poll(context)
-                .map(|dialed| dialed.ok().and_then(Result::ok))
-        })
-        .await;
-        let Some(link) = link else {
-            return;
-        };
-        let (mut guest, pending) = link.into_parts();
+        let Self { mut claim, link } = self;
+        let AcpLink {
+            stream: mut guest,
+            pending,
+        } = link;
         // Guest init may send bytes right after `OK`. They go out first.
         let (mut up, mut down) = (Pipe::new(Vec::new()), Pipe::new(pending));
         poll_fn(|context| {

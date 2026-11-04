@@ -117,9 +117,12 @@ decision CH33 rule 7) and reads the row again. So another family never
 touches the claim of the owner. Then the `StartVm` hook starts the VM: admission, the
 boot or restore, and the first `ControlReady`, whatever facade state it
 reports. Each `StartFault` is a typed code before 101. An unknown id
-never reaches the hook, so it gets no boot. The hook returns the vsock
-socket of the VM. Plan PR L16 adds the hook of the vmm. `tests/acp.rs`
-fakes it, and a fake vsock socket plays guest port 1201.
+never reaches the hook, so it gets no boot. After `ControlReady` the
+hook dials guest port 1201 with `AcpLink::dial` and returns the link, so
+a failed dial is `sandbox_start_failed` before 101 (decision CH50 rule
+2). A drop during the start or the dial gives `not_found`, even when the
+drop made the dial fail. Plan PR L16 adds the hook of the vmm.
+`tests/acp.rs` fakes it, and a fake vsock socket plays guest port 1201.
 
 `src/relay.rs` holds the relay registry with a stop signal (decision
 CH26 rule 5). `Relays::claim` holds a session for one Upgrade until the
@@ -130,10 +133,11 @@ keeps its mark until the row is gone. The second row read comes after
 the claim, so a drop that ends between the first read and the claim
 leaves no row, and the Upgrade gets `not_found`.
 
-After 101, `AcpRelay` dials guest port 1201 with `control::dial`, the
-dial of the control link (decision CH13). It pauses 10 ms between two
-tries and retries ECONNREFUSED, and `READY_WAIT` bounds it (decision CH43
-rules 5 and 7). Then it copies bytes both ways (decision CH20). An EOF
+`AcpLink::dial` dials guest port 1201 with `control::dial`, the dial of
+the control link (decision CH13). It pauses 10 ms between two tries and
+retries ECONNREFUSED, and `READY_WAIT` bounds it (decision CH43 rules 5
+and 7). After 101, `AcpRelay` copies bytes both ways over that link and
+sends the bytes that came after `OK` first (decision CH20). An EOF
 in one direction shuts down the write half of the other stream, and the
 other direction runs on, as with `copy_bidirectional`. The relay ends
 when both directions reach EOF, a read or write fails, or the stop
@@ -177,27 +181,32 @@ takes no snapshot, so the next start is a cold boot (decision CH19 (5)).
    so a gate that reads only the ready would never snapshot it. The sleep
    gate is plan PR L18, a later PR, so this crate does not hold the rule
    yet.
-2. CONTRACT-QUESTION: no decision row bounds the whole start of an
-   `acp` Upgrade. Decision CH36 G26 bounds the wait for `ControlReady`
-   at 10 s, and `control::open` holds it (`READY_WAIT`). Admission and
-   an eviction under pressure (plan PR L17) come before the dial and
-   have no bound. The handler reads G26 narrowly: it adds no bound of
-   its own around the `StartVm` hook (`src/handlers/acp.rs`).
-3. CONTRACT-QUESTION: no decision row says what a failed dial of guest
-   port 1201 after 101 does. The 101 is out, so no typed code fits. The
-   relay reads the rows narrowly: it closes the client stream and writes
-   no fault file (decision CH21-1 names start faults only). The client
-   sees an EOF (`src/relay.rs`).
-4. CONTRACT-QUESTION: no decision row says what a stop does when the
+2. CONTRACT-QUESTION: no decision row says what a stop does when the
    `stop` line does not go out (no open control link, or a failed write),
    or when SIGTERM fails. Each wait of decision CH34 rule 5 gives its step
    time to work. The stop reads the rows narrowly: it skips the wait of a
    step that did not go out and goes to the next step at once
    (`src/stop.rs`).
-5. CONTRACT-QUESTION: no decision row says how long a stop waits for
+3. CONTRACT-QUESTION: no decision row says how long a stop waits for
    the exit after SIGKILL, or what it answers when the process outlives
    that wait (a process in the D state can). Decision CH33 rule 11
    bounds a drop at about 35 s, and decision CH34 rule 5 gives the
    client 60 s. The stop reads the rows narrowly: it waits `KILL_WAIT`
    (5 s) at most, so it ends within 40 s. Past it, it gives
    `StopError::Hung` and removes no file (`src/stop.rs`).
+
+## Caller duties
+
+1. Decision CH50 rule 1: the start of an `acp` Upgrade has no outer
+   bound, and the handler adds none around the `StartVm` hook
+   (`src/handlers/acp.rs`). Each step keeps its own bound. Plan PR L17
+   names the timeout of one eviction's snapshot. The bound of a start
+   grows with the number of VMs that its admission evicts.
+2. Decision CH50 rule 2: the `StartVm` hook of plan PR L16 dials guest
+   port 1201 with `AcpLink::dial` before it returns. It answers a failed
+   dial with `StartFault::SandboxStartFailed` and writes that fault to
+   the fault file (decision CH21-1). The handler writes no fault. The
+   rule holds only if guest init accepts 1201 in every facade state.
+   Phase 3 confirms that. If guest init refuses 1201 until the facade
+   runs, 101 waits for the facade, against decision CH34 rule 7, and
+   David decides again.
