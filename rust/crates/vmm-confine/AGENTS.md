@@ -45,6 +45,14 @@ table of the three vmm crates.
   (`EvictFirst`) or not (`HostFull`, and no VM stops). Lifecycle passes
   the sleep-gate result of each VM and runs the evictions. The vmm never
   queues (decision CH21-3).
+- `faults::FaultBook` writes the fault file of the vmm,
+  `<faults root>/vmm/<family>.json`, in the shape of contract 05 §3.3.1
+  with `source` `vmm` (decisions CH21-1, CH36 G18). It holds the two
+  start faults of decision CH6-3. Each change rewrites the whole file
+  atomically. Lifecycle calls `refresh` every `faults::REFRESH` (30 s)
+  while a fault is open, `clear` on a `ControlReady` of the family, and
+  `start` at vmm start, which writes an empty list into every file. Each
+  time is RFC 3339 in UTC to the second, from `faults::rfc3339`.
 - The process tests need Landlock ABI 4 and `/dev/kvm`. The host and the
   ubuntu-24.04 runner have both (facts 77, 79).
 
@@ -62,3 +70,9 @@ table of the three vmm crates.
   of an evicted VM first writes its whole guest RAM (fact 72), and the
   new session disk grows later. No row says whether the floor must still
   hold after those writes.
+- CONTRACT-QUESTION (decisions CH21-1, CH36 G18): contract 05 §3.3.1 has
+  no row for the vmm until its amendment. Open until then: the group of
+  `faults/vmm/` and its files (the vmm sets modes 0750 and 0640 only),
+  the value `vmm` in the `source` enum of §3.3, and the reader. caregiver
+  reads only the `attendance` and `pep` files today, so it ignores the
+  vmm file.
