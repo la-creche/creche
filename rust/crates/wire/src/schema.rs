@@ -6,20 +6,24 @@
 //! schema, from which TypeBox gives the facade its static types and its
 //! runtime checks (decision CH22).
 //!
+//! The schema also holds the route table under the root key `x-routes`
+//! (decision CH25). A route type needs no `subschema_for` line of its own:
+//! the route table reaches it.
+//!
 //! To write the files after a change of a wire type, run
 //! `CRECHE_WIRE_SCHEMA=write cargo test -p creche-wire` in rust/.
 
 use std::path::PathBuf;
 
-use schemars::Schema;
 use schemars::generate::SchemaSettings;
 use schemars::transform::transform_subschemas;
-use serde_json::{Value, json};
+use schemars::{JsonSchema, Schema, SchemaGenerator};
+use serde_json::{Map, Value, json};
 
 use super::{
-    AutoJobId, ControlHello, ControlReady, CreateSession, DelegationId, FamilyConfig,
-    FamilyStateReply, JS_INTEGER_MAX, JobId, SessionId, SessionOrigin, SessionRow, TurnEvent,
-    UnixMillis,
+    AutoJobId, ControlHello, ControlReady, DelegationId, FamilyConfig, FamilyStateReply,
+    HOST_API_HEADER, HOST_API_PROTOCOL, JS_INTEGER_MAX, JobId, JsonRoute, SessionId, SessionOrigin,
+    TurnEvent, UnixMillis,
 };
 
 /// The variable that makes the test write the file instead of checking it.
@@ -40,8 +44,12 @@ const TYPESCRIPT_HEAD: &str = "\
 
 export const wire = ";
 
+/// The root key of the route table in the schema.
+const ROUTES_KEY: &str = "x-routes";
+
 /// The schema of every wire type, as one document with a `$defs` entry per
-/// type. The contract is the one of a reader: what a reader accepts.
+/// type, and the route table under `x-routes`. The contract is the one of a
+/// reader: what a reader accepts.
 pub(super) fn wire_schema() -> Value {
     let mut generator = SchemaSettings::draft2020_12()
         .for_deserialize()
@@ -53,17 +61,56 @@ pub(super) fn wire_schema() -> Value {
     let _ = generator.subschema_for::<DelegationId>();
     let _ = generator.subschema_for::<SessionOrigin>();
     let _ = generator.subschema_for::<UnixMillis>();
-    let _ = generator.subschema_for::<CreateSession>();
-    let _ = generator.subschema_for::<SessionRow>();
     let _ = generator.subschema_for::<TurnEvent>();
     let _ = generator.subschema_for::<FamilyConfig>();
     let _ = generator.subschema_for::<FamilyStateReply>();
     let _ = generator.subschema_for::<ControlHello>();
     let _ = generator.subschema_for::<ControlReady>();
+    let routes = route_table(&mut generator);
 
     json!({
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$defs": generator.take_definitions(true),
+        ROUTES_KEY: routes,
+    })
+}
+
+/// The `x-routes` value: the host API protocol number, its header and one
+/// entry per route of `route_table!`, keyed by the route name. Each type is
+/// a plain name of a `$defs` entry, not a `$ref`, so datamodel-codegen and
+/// TypeBox do not read it as a schema.
+fn route_table(generator: &mut SchemaGenerator) -> Value {
+    let mut routes = Map::new();
+    macro_rules! describe {
+        (json $route:path) => {
+            let entry = json_route::<$route>(generator);
+            routes.insert(<$route as JsonRoute>::NAME.to_owned(), entry);
+        };
+    }
+    crate::route_table!(describe);
+
+    json!({
+        "header": HOST_API_HEADER,
+        "protocol": HOST_API_PROTOCOL,
+        "routes": routes,
+    })
+}
+
+/// The entry of one JSON route, and the `$defs` entries of its types. The
+/// `JsonSchema` bounds live here, not on `JsonRoute` (decision CH25).
+fn json_route<R>(generator: &mut SchemaGenerator) -> Value
+where
+    R: JsonRoute,
+    R::Request: JsonSchema,
+    R::Reply: JsonSchema,
+{
+    let _ = generator.subschema_for::<R::Request>();
+    let _ = generator.subschema_for::<R::Reply>();
+
+    json!({
+        "kind": "json",
+        "reply": R::Reply::schema_name(),
+        "request": R::Request::schema_name(),
     })
 }
 
@@ -162,6 +209,50 @@ fn each_wire_type_has_one_definition() {
     let schema = wire_schema();
 
     assert_eq!(schema["$defs"]["SessionId"]["type"], "string");
+}
+
+/// Each route of the schema, by name.
+fn schema_routes(schema: &Value) -> Map<String, Value> {
+    schema[ROUTES_KEY]["routes"].as_object().unwrap().clone()
+}
+
+#[test]
+fn each_route_name_is_snake_case() {
+    for name in schema_routes(&wire_schema()).keys() {
+        let first = name.chars().next();
+        assert!(
+            first.is_some_and(|character| character.is_ascii_lowercase())
+                && name
+                    .chars()
+                    .all(|character| character.is_ascii_lowercase() || character == '_'),
+            "route {name}: a route name matches ^[a-z][a-z_]*$"
+        );
+    }
+}
+
+#[test]
+fn each_route_type_is_a_wire_type() {
+    let schema = wire_schema();
+
+    for (name, entry) in schema_routes(&schema) {
+        for key in ["request", "reply"] {
+            let type_name = entry[key].as_str().unwrap();
+            assert!(
+                schema["$defs"].get(type_name).is_some(),
+                "route {name}: the {key} {type_name} is no $defs entry"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_route_table_holds_create() {
+    let routes = schema_routes(&wire_schema());
+
+    assert_eq!(
+        routes["create"],
+        json!({"kind": "json", "reply": "SessionRow", "request": "CreateSession"})
+    );
 }
 
 /// The paths of the objects in `node` that leave a property out of
