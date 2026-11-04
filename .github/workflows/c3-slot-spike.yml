@@ -54,6 +54,15 @@ jobs:
         run: time sudo apparmor_parser -r "$C3_SPIKE_ROOT/c3spike-slots.profile"
       - name: Run the probes (no sudo)
         run: '"$C3_SPIKE_ROOT/probes.sh"'
+      - name: Show the AppArmor denials and the CH logs
+        if: always()
+        run: |
+          sudo dmesg | grep -E 'apparmor="(DENIED|ALLOWED)"' | tail -n 80 || true
+          for f in "$C3_SPIKE_ROOT"/results/logs/*; do
+            [[ -f "$f" ]] || continue
+            echo "== ${f##*/}"
+            tail -n 15 "$f"
+          done
       - name: Unload the spike profiles (runner sudo)
         if: always()
         run: sudo apparmor_parser -R "$C3_SPIKE_ROOT/c3spike-slots.profile" || true
