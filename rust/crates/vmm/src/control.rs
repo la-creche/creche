@@ -127,6 +127,12 @@ impl ControlLink {
         Ok(())
     }
 
+    /// The stream and the bytes that came after the answer to `CONNECT`.
+    /// The ACP relay copies both (plan PR L13).
+    pub(crate) fn into_parts(self) -> (UnixStream, Vec<u8>) {
+        (self.stream, self.pending)
+    }
+
     /// Reads one line as `T` with the strict reader (rules 2 and 3 of "The
     /// vsock JSON links").
     pub(crate) async fn read<T: DeserializeOwned>(&mut self) -> Result<T, ControlError> {
@@ -240,13 +246,14 @@ async fn open_within(
 /// Dials `port` through the vsock socket of Cloud Hypervisor. It retries
 /// while the socket does not exist (ENOENT) and after an empty reply,
 /// because both come before the guest listener exists (fact 74). It
-/// retries on ECONNREFUSED too.
+/// retries on ECONNREFUSED too. It has no bound of its own, so the
+/// caller bounds it with `READY_WAIT`. Both guest ports use it (plan PR L13).
 // Decision CH43 rule 7: the dial retries ECONNREFUSED inside `READY_WAIT`,
 // the same way as ENOENT. A socket file exists from `bind` on, and a
 // connect gets ECONNREFUSED until Cloud Hypervisor calls `listen`. A
 // socket file that a dead Cloud Hypervisor left behind gets it too.
 // `READY_WAIT` still bounds the open, so a stale socket ends as `Timeout`.
-async fn dial(vsock: &Path, port: GuestPort) -> Result<ControlLink, ControlError> {
+pub(crate) async fn dial(vsock: &Path, port: GuestPort) -> Result<ControlLink, ControlError> {
     let connect = format!("CONNECT {}\n", port.number());
     loop {
         let stream = match UnixStream::connect(vsock).await {

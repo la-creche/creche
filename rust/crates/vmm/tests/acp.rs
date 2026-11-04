@@ -1,17 +1,22 @@
 //! The `acp` handler over raw bytes on a temp socket (decisions CH21-9,
-//! CH26 rule 5, CH33 rules 6 and 7, CH34 rules 6 and 7). A fake hook
-//! starts each VM, counts the starts, and fails with the fault that the
-//! test sets.
+//! CH26 rule 5, CH33 rules 6 and 7, CH34 rules 6 and 7, CH50 rule 2). A
+//! fake hook starts each VM, counts the starts, and fails with the fault
+//! that the test sets. Then it dials guest port 1201 before 101. A fake
+//! vsock socket plays Cloud Hypervisor and guest port 1201: it answers
+//! `CONNECT`, sends `hello`, then echoes (decisions CH13, CH20, CH34 rule
+//! 3).
 
 use std::io::{ErrorKind, Read, Write};
-use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+use std::net::Shutdown;
+use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::thread::sleep;
+use std::thread::{sleep, spawn};
 use std::time::{Duration, Instant};
 
+use creche_vmm::control::READY_WAIT;
 use creche_vmm::handlers::acp::{Acp, StartFault, StartVm};
-use creche_vmm::relay::{AcpRelay, DropMark, Relays};
+use creche_vmm::relay::{AcpLink, AcpRelay, Door, DropMark, Relays};
 use creche_vmm::server::{Stop, run_routes};
 use creche_vmm_store::layout::StateRoot;
 use creche_vmm_store::rows::Rows;
@@ -42,19 +47,32 @@ mod fake {
         /// mark here, as a drop that begins during the start.
         pub(super) drop_during: Option<Relays>,
         pub(super) marks: Vec<DropMark>,
+        /// The fake vsock socket that each start dials.
+        pub(super) vsock: PathBuf,
     }
 
     #[derive(Debug, Clone, Default)]
     pub(super) struct Hook(pub(super) Arc<Mutex<State>>);
 
     impl StartVm for Hook {
-        async fn start(&self, row: &SessionRow) -> Result<(), StartFault> {
-            let mut state = self.0.lock().unwrap();
-            state.starts += 1;
-            if let Some(relays) = state.drop_during.clone() {
-                state.marks.push(relays.mark_drop(&row.id));
-            }
-            state.fault.map_or(Ok(()), Err)
+        async fn start(&self, row: &SessionRow) -> Result<AcpLink, StartFault> {
+            let vsock = {
+                let mut state = self.0.lock().unwrap();
+                state.starts += 1;
+                if let Some(relays) = state.drop_during.clone() {
+                    let mark = relays.mark_drop(&row.id);
+                    state.marks.push(mark);
+                }
+                if let Some(fault) = state.fault {
+                    return Err(fault);
+                }
+                state.vsock.clone()
+            };
+            // The hook of plan PR L16 also writes the fault to the fault
+            // file (decision CH50 rule 2).
+            AcpLink::dial(&vsock)
+                .await
+                .map_err(|_| StartFault::SandboxStartFailed)
         }
     }
 
@@ -91,10 +109,83 @@ mod fake {
 
     creche_vmm::routes!(Set);
 
+    /// How the fake guest answers a `CONNECT`.
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+    pub(super) enum Answer {
+        /// `OK` and `hello` in one write, then an echo.
+        #[default]
+        Echo,
+        /// A line that is not `OK <port>`, so the dial fails at once.
+        Refuse,
+        /// No answer at all, so the dial waits.
+        Silent,
+        /// No answer until the test sets `Echo`, then as `Echo`.
+        Hold,
+    }
+
+    /// What the fake guest saw: each `CONNECT` line, and how many links
+    /// the vmm closed. `answer` sets the answer to the next `CONNECT`.
+    #[derive(Debug, Default)]
+    pub(super) struct Guest {
+        pub(super) connects: Vec<String>,
+        pub(super) closes: usize,
+        pub(super) answer: Answer,
+    }
+
+    /// Reads the `hello` that the fake guest sends right after `OK`.
+    pub(super) fn hello(stream: &mut UnixStream) {
+        let mut hello = [0_u8; 6];
+        stream.read_exact(&mut hello).unwrap();
+        assert_eq!(&hello, b"hello\n");
+    }
+
+    /// Plays Cloud Hypervisor and guest port 1201 on `path`. Each link
+    /// gets the answer that `Guest::answer` sets. Then the guest echoes
+    /// until the vmm closes the link.
+    fn guest(path: &Path, seen: Arc<Mutex<Guest>>) {
+        let listener = UnixListener::bind(path).unwrap();
+        spawn(move || {
+            for stream in listener.incoming() {
+                let (mut stream, seen) = (stream.unwrap(), seen.clone());
+                spawn(move || {
+                    let mut line = Vec::new();
+                    let mut byte = [0_u8];
+                    while line.last() != Some(&b'\n') && stream.read(&mut byte).unwrap() == 1 {
+                        line.push(byte[0]);
+                    }
+                    let line = String::from_utf8(line).unwrap();
+                    let mut answer = {
+                        let mut seen = seen.lock().unwrap();
+                        seen.connects.push(line);
+                        seen.answer
+                    };
+                    while answer == Answer::Hold {
+                        sleep(Duration::from_millis(10));
+                        answer = seen.lock().unwrap().answer;
+                    }
+                    match answer {
+                        Answer::Echo => stream.write_all(b"OK 1073741824\nhello\n").unwrap(),
+                        // The vmm may close the link before it reads this.
+                        Answer::Refuse => drop(stream.write_all(b"ERR\n")),
+                        Answer::Silent | Answer::Hold => {}
+                    }
+                    let mut buffer = [0_u8; 65536];
+                    while let Ok(read @ 1..) = stream.read(&mut buffer) {
+                        if stream.write_all(&buffer[..read]).is_err() {
+                            break;
+                        }
+                    }
+                    seen.lock().unwrap().closes += 1;
+                });
+            }
+        });
+    }
+
     /// The server of `Set` on a temp socket, with one row: `A` of `chat`.
     pub(super) struct Server {
         pub(super) hook: Hook,
         pub(super) relays: Relays,
+        pub(super) guest: Arc<Mutex<Guest>>,
         dir: PathBuf,
         path: PathBuf,
         runtime: Runtime,
@@ -115,6 +206,9 @@ mod fake {
             rows.create(serde_json::from_str(&create).unwrap()).unwrap();
 
             let (hook, relays) = (Hook::default(), Relays::default());
+            let seen = Arc::new(Mutex::new(Guest::default()));
+            hook.0.lock().unwrap().vsock = dir.join("vsock.sock");
+            guest(&dir.join("vsock.sock"), seen.clone());
             let set = Set(Acp::new(
                 Arc::new(Mutex::new(rows)),
                 relays.clone(),
@@ -134,6 +228,7 @@ mod fake {
             Self {
                 hook,
                 relays,
+                guest: seen,
                 dir,
                 path,
                 runtime,
@@ -156,9 +251,8 @@ mod fake {
                     connected => break connected.unwrap(),
                 }
             };
-            stream
-                .set_read_timeout(Some(Duration::from_secs(10)))
-                .unwrap();
+            // A dial with no answer takes `READY_WAIT` before the reply.
+            stream.set_read_timeout(Some(READY_WAIT * 2)).unwrap();
             let body = format!(r#"{{"family":"{family}","id":"{id}"}}"#);
             write!(
                 stream,
@@ -200,16 +294,161 @@ mod fake {
     }
 }
 
-use fake::Server;
+use fake::{Answer, Server, hello};
 
-/// Asserts that the relay closed `stream`.
+/// Asserts that the relay closed `stream`. The `hello` of the guest may
+/// come first.
 fn closed(mut stream: UnixStream) {
-    match stream.read(&mut [0_u8; 1]) {
-        Ok(read) => assert_eq!(read, 0),
-        Err(error) => assert_eq!(error.kind(), ErrorKind::ConnectionReset),
+    let mut bytes = [0_u8; 64];
+    loop {
+        match stream.read(&mut bytes) {
+            Ok(0) => return,
+            Ok(_) => {}
+            Err(error) => return assert_eq!(error.kind(), ErrorKind::ConnectionReset),
+        }
     }
 }
 
+/// Waits up to 10 s for `done`.
+fn eventually(done: impl Fn() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !done() {
+        assert!(Instant::now() < deadline, "no change within 10 s");
+        sleep(Duration::from_millis(10));
+    }
+}
+
+/// Bytes cross both ways with no cap, so 2 MiB pass the 1 MiB body cap
+/// (decision CH34 rule 3). The door stays open until the client closes.
+#[test]
+fn the_relay_carries_bytes_both_ways() {
+    let server = Server::start("acp-relay");
+    let (status, _, mut stream) = server.upgrade("chat", A);
+    assert_eq!(status, 101);
+    hello(&mut stream);
+    let sent: Vec<u8> = (0..2 << 20)
+        .map(|byte: u32| byte.to_le_bytes()[0])
+        .collect();
+    let mut writer = stream.try_clone().unwrap();
+    let write = spawn({
+        let sent = sent.clone();
+        move || writer.write_all(&sent).unwrap()
+    });
+    let mut echoed = vec![0_u8; sent.len()];
+    stream.read_exact(&mut echoed).unwrap();
+    write.join().unwrap();
+    assert!(echoed == sent);
+    assert_eq!(server.guest.lock().unwrap().connects, ["CONNECT 1201\n"]);
+
+    let id: SessionId = A.parse().unwrap();
+    assert_eq!(server.relays.door(&id), Door::Open);
+    drop(stream);
+    eventually(|| matches!(server.relays.door(&id), Door::ClosedAt(_)));
+    eventually(|| server.guest.lock().unwrap().closes == 1);
+    server.end();
+}
+
+/// A client that shuts down its write half after its last request still
+/// gets the echo of the guest, then an EOF. The guest sees the EOF and
+/// closes, and then the relay ends.
+#[test]
+fn a_half_close_keeps_the_reply_of_the_guest() {
+    let server = Server::start("acp-half");
+    let (status, _, mut stream) = server.upgrade("chat", A);
+    assert_eq!(status, 101);
+    hello(&mut stream);
+    stream.write_all(b"ping\n").unwrap();
+    stream.shutdown(Shutdown::Write).unwrap();
+    let mut reply = Vec::new();
+    stream.read_to_end(&mut reply).unwrap();
+    assert_eq!(reply, b"ping\n");
+    eventually(|| server.guest.lock().unwrap().closes == 1);
+    let id: SessionId = A.parse().unwrap();
+    eventually(|| matches!(server.relays.door(&id), Door::ClosedAt(_)));
+    server.end();
+}
+
+/// A dial of guest port 1201 that fails gets `sandbox_start_failed`
+/// before 101 and frees the session (decisions CH33 rule 6, CH50 rule 2).
+/// A refused Upgrade records no door close.
+#[test]
+fn a_failed_dial_gets_sandbox_start_failed_before_101() {
+    let server = Server::start("acp-dial-refused");
+    server.guest.lock().unwrap().answer = Answer::Refuse;
+    server.refused("chat", A, AcpError::SandboxStartFailed {});
+    let id: SessionId = A.parse().unwrap();
+    assert_eq!(server.relays.door(&id), Door::NotOpened);
+    eventually(|| server.guest.lock().unwrap().closes == 1);
+    server.guest.lock().unwrap().answer = Answer::Echo;
+    let (status, _, mut stream) = server.upgrade("chat", A);
+    assert_eq!(status, 101);
+    hello(&mut stream);
+    assert_eq!(server.guest.lock().unwrap().connects.len(), 2);
+    server.end();
+}
+
+/// A drop that marks the session during the dial gets `not_found`, and
+/// the dialed link closes (decision CH34 rule 6). A drop that makes the
+/// dial fail gets `not_found` too.
+#[test]
+fn a_drop_during_the_dial_gets_not_found() {
+    let server = Server::start("acp-dial-drop");
+    server.guest.lock().unwrap().answer = Answer::Hold;
+    let mark = spawn({
+        let (guest, relays) = (server.guest.clone(), server.relays.clone());
+        move || {
+            eventually(|| guest.lock().unwrap().connects.len() == 1);
+            let mark = relays.mark_drop(&A.parse().unwrap());
+            guest.lock().unwrap().answer = Answer::Echo;
+            mark
+        }
+    });
+    server.refused("chat", A, AcpError::NotFound {});
+    drop(mark.join().unwrap());
+    eventually(|| server.guest.lock().unwrap().closes == 1);
+
+    server.guest.lock().unwrap().answer = Answer::Refuse;
+    server.hook.0.lock().unwrap().drop_during = Some(server.relays.clone());
+    server.refused("chat", A, AcpError::NotFound {});
+    assert_eq!(server.starts(), 2);
+    assert_eq!(server.guest.lock().unwrap().connects.len(), 2);
+    server.end();
+}
+
+/// A guest that never answers the dial gets `READY_WAIT`, then
+/// `sandbox_start_failed` before 101 (decisions CH43 rule 5, CH50 rule 2).
+/// The test takes 10 s.
+#[test]
+fn a_dial_with_no_answer_fails_after_ready_wait() {
+    let server = Server::start("acp-dial-silent");
+    server.guest.lock().unwrap().answer = Answer::Silent;
+    let start = Instant::now();
+    server.refused("chat", A, AcpError::SandboxStartFailed {});
+    let waited = start.elapsed();
+    assert!(
+        waited > READY_WAIT / 2 && waited < READY_WAIT * 2,
+        "{waited:?}"
+    );
+    eventually(|| server.guest.lock().unwrap().closes == 1);
+    server.end();
+}
+
+/// The stop signal of a drop closes the client end and the guest end
+/// (decision CH26 rule 5).
+#[test]
+fn a_drop_closes_both_ends() {
+    let server = Server::start("acp-relay-drop");
+    let (status, _, mut stream) = server.upgrade("chat", A);
+    assert_eq!(status, 101);
+    hello(&mut stream);
+    let mark = server.relays.mark_drop(&A.parse().unwrap());
+    closed(stream);
+    eventually(|| server.guest.lock().unwrap().closes == 1);
+    drop(mark);
+    server.end();
+}
+
+/// A refused Upgrade records no door close (decision CH19 (6)).
 #[test]
 fn an_unknown_id_gets_not_found_with_no_start() {
     let server = Server::start("acp-unknown");
@@ -217,6 +456,8 @@ fn an_unknown_id_gets_not_found_with_no_start() {
     // Another family does not own the id (decision CH33 rule 5).
     server.refused("code", A, AcpError::NotFound {});
     assert_eq!(server.starts(), 0);
+    assert_eq!(server.relays.door(&B.parse().unwrap()), Door::NotOpened);
+    assert_eq!(server.relays.door(&A.parse().unwrap()), Door::NotOpened);
     server.end();
 }
 
@@ -252,6 +493,7 @@ fn another_family_gets_not_found_while_the_owner_holds_the_session() {
     server.refused("code", A, AcpError::NotFound {});
     server.refused("chat", A, AcpError::Busy {});
     assert_eq!(server.starts(), 1);
+    assert_eq!(server.relays.door(&A.parse().unwrap()), Door::Open);
     server.end();
 }
 
@@ -279,6 +521,9 @@ fn a_start_fault_answers_before_101() {
         server.refused("chat", A, error);
     }
     assert_eq!(server.starts(), 3);
+    // A start fault opened no door link, so it records no close (decision
+    // CH19 (6)).
+    assert_eq!(server.relays.door(&A.parse().unwrap()), Door::NotOpened);
     // A refusal frees the session at once.
     server.hook.0.lock().unwrap().fault = None;
     assert_eq!(server.upgrade("chat", A).0, 101);
@@ -310,5 +555,7 @@ fn a_drop_during_the_start_gets_not_found() {
     server.hook.0.lock().unwrap().drop_during = Some(server.relays.clone());
     server.refused("chat", A, AcpError::NotFound {});
     assert_eq!(server.starts(), 1);
+    // The handler drops the link that the start dialed.
+    eventually(|| server.guest.lock().unwrap().closes == 1);
     server.end();
 }
