@@ -1,0 +1,180 @@
+# C0 spike of the phase 2 plan (reframe/phase2-plan.json, track
+# "confinement, launch, host files and CI"): can a GitHub ubuntu-24.04
+# runner host Cloud Hypervisor for the kvm_ proofs? A draft PR, never
+# merged. Each answer becomes a fact in the design note, then the PR closes.
+#
+#   host          kernel, cpus, memory
+#   kvm           /dev/kvm and its mode, before and after a udev rule
+#   vhost_vsock   the module and /dev/vhost-vsock, before and after modprobe
+#   user manager  systemd-run --user --scope, before and after linger
+#   landlock      the Landlock ABI of the runner kernel
+#   apparmor      the LSM list, apparmor_parser, and one enforced profile
+#   cloud-hypervisor
+#                 CH v54.0 static and ch-remote, the fact 53 kernel, all
+#                 pinned by sha256 (fact 71). A busybox initramfs boots,
+#                 pauses, snapshots, restores copy-on-write and snapshots
+#                 again (CH8-4, CH2)
+#
+# Sudo: CH36 G20 allows sudo on GitHub's throwaway runners, as systemd-proof
+# does. It never reaches Hyperion.
+#
+# Each step after the first runs even when one before it failed, so one
+# run shows every answer. A red step is a "no". No usable /dev/kvm moves
+# every kvm_ proof to Hyperion spikes and goes back to David (G19).
+#
+# It runs only on a change to this file. It never reaches main, so the
+# release executor never reads its runs (P5). It uses no action: nothing
+# to pin.
+name: spike-kvm
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/spike-kvm.yml
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CH_URL: https://github.com/cloud-hypervisor/cloud-hypervisor/releases/download/v54.0
+      KERNEL_URL: https://github.com/cloud-hypervisor/linux/releases/download/ch-release-v7.2.8-20261009
+    steps:
+      - name: host
+        run: |
+          uname -a
+          head -n 2 /etc/os-release
+          nproc
+          free -m
+
+      - name: kvm
+        if: ${{ !cancelled() }}
+        run: |
+          ls -l /dev/kvm || true
+          id
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
+            sudo tee /etc/udev/rules.d/99-kvm-spike.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm
+
+      - name: vhost_vsock
+        if: ${{ !cancelled() }}
+        run: |
+          lsmod | grep -E 'vsock' || echo "no vsock module loaded"
+          ls -l /dev/vhost-vsock || true
+          sudo modprobe vhost_vsock
+          lsmod | grep -E 'vsock'
+          ls -l /dev/vhost-vsock
+
+      - name: user manager
+        if: ${{ !cancelled() }}
+        run: |
+          XDG_RUNTIME_DIR="/run/user/$(id -u)"
+          export XDG_RUNTIME_DIR
+          systemctl --user is-system-running || echo "no user manager before linger"
+          sudo loginctl enable-linger "$USER"
+          for _ in $(seq 1 50); do test -S "$XDG_RUNTIME_DIR/bus" && break; sleep 0.1; done
+          systemctl --user is-system-running || true
+          systemd-run --user --scope --collect -p MemoryMax=64M -p TasksMax=16 -- true
+
+      - name: landlock
+        if: ${{ !cancelled() }}
+        run: |
+          cat /sys/kernel/security/lsm
+          echo
+          # landlock_create_ruleset(NULL, 0, LANDLOCK_CREATE_RULESET_VERSION)
+          # is syscall 444 on x86_64. It returns the ABI, or -1.
+          python3 -c 'import ctypes; print("landlock abi", ctypes.CDLL(None).syscall(444, None, 0, 1))'
+
+      - name: apparmor
+        if: ${{ !cancelled() }}
+        run: |
+          apparmor_parser --version | head -n 1
+          sudo aa-status --enabled && echo "apparmor enabled"
+          profile="$RUNNER_TEMP/spike-kvm-probe"
+          printf '%s\n' 'abi <abi/4.0>,' 'include <tunables/global>' \
+            'profile spike-kvm-probe {' '  include <abstractions/base>' \
+            '  /usr/bin/cat mr,' '  /etc/hostname r,' '}' > "$profile"
+          sudo apparmor_parser -r "$profile"
+          sudo aa-exec -p spike-kvm-probe -- /usr/bin/cat /etc/hostname
+          if sudo aa-exec -p spike-kvm-probe -- /usr/bin/cat /etc/shells; then
+            echo "the profile did not deny /etc/shells"; exit 1
+          fi
+          sudo apparmor_parser -R "$profile"
+
+      - name: fetch
+        if: ${{ !cancelled() }}
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl -fsSLO "$CH_URL/cloud-hypervisor-static"
+          curl -fsSLO "$CH_URL/ch-remote-static"
+          curl -fsSLO "$KERNEL_URL/vmlinux-x86_64"
+          sha256sum -c <<'EOF'
+          4f4f98a3d661a40f3e5272627cc895a1b2e525f2f6bedf5f895f9cd21ba5c65b  cloud-hypervisor-static
+          acd5be240d5c73373effbe818908fc03e313ec8486237904bff11d93b71b1c83  ch-remote-static
+          edfeb8a8a6c04ff2979e9f1c700feaa29b8f564f952261834ef0b7d2e673a853  vmlinux-x86_64
+          EOF
+          chmod +x cloud-hypervisor-static ch-remote-static
+
+      - name: cloud-hypervisor
+        if: ${{ !cancelled() }}
+        working-directory: ${{ runner.temp }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq busybox-static cpio > /dev/null
+          mkdir -p initramfs/bin initramfs/proc snap1 snap2
+          cp /bin/busybox initramfs/bin/
+          printf '%s\n' '#!/bin/busybox sh' '/bin/busybox --install -s /bin' \
+            'mount -t proc proc /proc' 'echo SPIKE-BOOTED' \
+            'while :; do echo tick; sleep 1; done' > initramfs/init
+          chmod +x initramfs/init
+          (cd initramfs && find . | cpio -o -H newc --quiet) > initramfs.cpio
+          ch=./cloud-hypervisor-static
+          remote() { ./ch-remote-static --api-socket "$PWD/api.sock" "$@"; }
+          ticks() { local n; n=$(grep -c tick serial.log 2> /dev/null) || true; echo "${n:-0}"; }
+          wait_for() { for _ in $(seq 1 100); do "$@" && return 0; sleep 0.1; done; return 1; }
+          booted() { grep -q SPIKE-BOOTED serial.log 2> /dev/null; }
+          ticked() { test "$(ticks)" -gt "$before"; }
+          stop() { remote shutdown-vmm || kill "$1"; wait "$1" || true; rm -f api.sock vsock.sock; }
+          now() { date +%s%3N; }
+          trap 'tail -n 20 serial.log; kill $(jobs -p) 2> /dev/null || true' EXIT
+
+          start=$(now)
+          $ch --api-socket "path=$PWD/api.sock" --kernel vmlinux-x86_64 \
+            --initramfs initramfs.cpio --cmdline "console=ttyS0 rdinit=/init" \
+            --cpus boot=1 --memory size=256M --vsock "cid=3,socket=$PWD/vsock.sock" \
+            --serial "file=$PWD/serial.log" --console off &
+          pid=$!
+          wait_for booted
+          echo "boot ms $(($(now) - start))"
+
+          remote pause
+          start=$(now)
+          remote snapshot "file://$PWD/snap1"
+          echo "snapshot ms $(($(now) - start))"
+          stop "$pid"
+          du -sh snap1
+
+          # Copy-on-write: snap1 stays unchanged while the VM runs (fact 55).
+          start=$(now)
+          $ch --api-socket "path=$PWD/api.sock" \
+            --restore "source_url=file://$PWD/snap1,memory_restore_mode=copyonwrite,resume=true" &
+          pid=$!
+          wait_for test -S api.sock
+          before=$(ticks)
+          wait_for ticked
+          echo "restore to the next tick ms $(($(now) - start))"
+
+          remote pause
+          remote snapshot "file://$PWD/snap2"
+          echo "re-snapshot done"
+          stop "$pid"
