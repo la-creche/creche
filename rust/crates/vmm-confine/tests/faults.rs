@@ -84,6 +84,10 @@ fn the_bytes_match_the_caregiver_fixture() {
 
 #[test]
 fn a_write_is_atomic_with_the_contract_modes() {
+    // Several house units set UMask=0077. The modes must not depend on it.
+    // The umask is per process. Every mode that a test here reads is one
+    // that the code sets, so the other tests do not depend on it.
+    let umask = rustix::process::umask(rustix::fs::Mode::from_raw_mode(0o077));
     let root = Root::new("atomic");
     let mut book = root.book(SINCE);
     book.raise(
@@ -105,6 +109,17 @@ fn a_write_is_atomic_with_the_contract_modes() {
         "egress_assert_failed"
     );
     assert_eq!(root.read("chat")["faults"][0]["blocks_turns"], true);
+    rustix::process::umask(umask);
+}
+
+#[test]
+fn an_open_sets_the_mode_of_an_existing_dir() {
+    let root = Root::new("existing");
+    let vmm = root.0.join("vmm");
+    fs::create_dir(&vmm).unwrap();
+    fs::set_permissions(&vmm, fs::Permissions::from_mode(0o700)).unwrap();
+    FaultDir::open(&root.0).unwrap();
+    assert_eq!(mode(&vmm), 0o750);
 }
 
 #[test]

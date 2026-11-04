@@ -26,9 +26,9 @@
 //! gaps.
 
 use std::collections::BTreeMap;
-use std::fs::{self, DirBuilder, File, OpenOptions};
+use std::fs::{self, DirBuilder, File, OpenOptions, Permissions};
 use std::io::{self, Write};
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -48,6 +48,12 @@ pub const REFRESH: Duration = Duration::from_secs(30);
 
 /// The end of the temporary file of a write.
 const TEMP: &str = ".tmp";
+
+/// The mode of `<faults root>/vmm`. The group may list it.
+const DIR_MODE: u32 = 0o750;
+
+/// The mode of each fault file. The group may read it.
+const FILE_MODE: u32 = 0o640;
 
 /// A fault that the vmm raises (decision CH6-3). Both stop turns
 /// (contract 05 §3.3).
@@ -100,10 +106,15 @@ impl FaultDir {
             ));
         }
         let dir = faults_root.join(SOURCE);
-        match DirBuilder::new().mode(0o750).create(&dir) {
-            Err(error) if error.kind() != io::ErrorKind::AlreadyExists => Err(error),
-            _ => Ok(Self(dir)),
+        match DirBuilder::new().mode(DIR_MODE).create(&dir) {
+            Err(error) if error.kind() != io::ErrorKind::AlreadyExists => return Err(error),
+            _ => {}
         }
+        // The umask masks the mode of the create, and several house units
+        // set UMask=0077. So the mode is set again, whatever the umask
+        // says, as attendance's ensure_dir does.
+        fs::set_permissions(&dir, Permissions::from_mode(DIR_MODE))?;
+        Ok(Self(dir))
     }
 
     /// The fault file of `family`.
@@ -129,8 +140,10 @@ impl FaultDir {
             .write(true)
             .create(true)
             .truncate(true)
-            .mode(0o640)
+            .mode(FILE_MODE)
             .open(&temp)?;
+        // The umask masks the mode of the open too, so fchmod sets it.
+        file.set_permissions(Permissions::from_mode(FILE_MODE))?;
         file.write_all(&bytes)?;
         file.sync_all()?;
         fs::rename(&temp, &path)?;
