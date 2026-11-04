@@ -1,9 +1,10 @@
 //! The `acp` handler over raw bytes on a temp socket (decisions CH21-9,
-//! CH26 rule 5, CH33 rules 6 and 7, CH34 rules 6 and 7). A fake hook
-//! starts each VM, counts the starts, and fails with the fault that the
-//! test sets. A fake vsock socket plays Cloud Hypervisor and guest port
-//! 1201: it answers `CONNECT`, sends `hello`, then echoes (decisions
-//! CH13, CH20, CH34 rule 3).
+//! CH26 rule 5, CH33 rules 6 and 7, CH34 rules 6 and 7, CH50 rule 2). A
+//! fake hook starts each VM, counts the starts, and fails with the fault
+//! that the test sets. Then it dials guest port 1201 before 101. A fake
+//! vsock socket plays Cloud Hypervisor and guest port 1201: it answers
+//! `CONNECT`, sends `hello`, then echoes (decisions CH13, CH20, CH34 rule
+//! 3).
 
 use std::io::{ErrorKind, Read, Write};
 use std::net::Shutdown;
@@ -15,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use creche_vmm::control::READY_WAIT;
 use creche_vmm::handlers::acp::{Acp, StartFault, StartVm};
-use creche_vmm::relay::{AcpRelay, Door, DropMark, Relays};
+use creche_vmm::relay::{AcpLink, AcpRelay, Door, DropMark, Relays};
 use creche_vmm::server::{Stop, run_routes};
 use creche_vmm_store::layout::StateRoot;
 use creche_vmm_store::rows::Rows;
@@ -46,7 +47,7 @@ mod fake {
         /// mark here, as a drop that begins during the start.
         pub(super) drop_during: Option<Relays>,
         pub(super) marks: Vec<DropMark>,
-        /// The fake vsock socket that each start returns.
+        /// The fake vsock socket that each start dials.
         pub(super) vsock: PathBuf,
     }
 
@@ -54,13 +55,24 @@ mod fake {
     pub(super) struct Hook(pub(super) Arc<Mutex<State>>);
 
     impl StartVm for Hook {
-        async fn start(&self, row: &SessionRow) -> Result<PathBuf, StartFault> {
-            let mut state = self.0.lock().unwrap();
-            state.starts += 1;
-            if let Some(relays) = state.drop_during.clone() {
-                state.marks.push(relays.mark_drop(&row.id));
-            }
-            state.fault.map_or_else(|| Ok(state.vsock.clone()), Err)
+        async fn start(&self, row: &SessionRow) -> Result<AcpLink, StartFault> {
+            let vsock = {
+                let mut state = self.0.lock().unwrap();
+                state.starts += 1;
+                if let Some(relays) = state.drop_during.clone() {
+                    let mark = relays.mark_drop(&row.id);
+                    state.marks.push(mark);
+                }
+                if let Some(fault) = state.fault {
+                    return Err(fault);
+                }
+                state.vsock.clone()
+            };
+            // The hook of plan PR L16 also writes the fault to the fault
+            // file (decision CH50 rule 2).
+            AcpLink::dial(&vsock)
+                .await
+                .map_err(|_| StartFault::SandboxStartFailed)
         }
     }
 
@@ -107,6 +119,8 @@ mod fake {
         Refuse,
         /// No answer at all, so the dial waits.
         Silent,
+        /// No answer until the test sets `Echo`, then as `Echo`.
+        Hold,
     }
 
     /// What the fake guest saw: each `CONNECT` line, and how many links
@@ -140,16 +154,20 @@ mod fake {
                         line.push(byte[0]);
                     }
                     let line = String::from_utf8(line).unwrap();
-                    let answer = {
+                    let mut answer = {
                         let mut seen = seen.lock().unwrap();
                         seen.connects.push(line);
                         seen.answer
                     };
+                    while answer == Answer::Hold {
+                        sleep(Duration::from_millis(10));
+                        answer = seen.lock().unwrap().answer;
+                    }
                     match answer {
                         Answer::Echo => stream.write_all(b"OK 1073741824\nhello\n").unwrap(),
                         // The vmm may close the link before it reads this.
                         Answer::Refuse => drop(stream.write_all(b"ERR\n")),
-                        Answer::Silent => {}
+                        Answer::Silent | Answer::Hold => {}
                     }
                     let mut buffer = [0_u8; 65536];
                     while let Ok(read @ 1..) = stream.read(&mut buffer) {
@@ -233,9 +251,8 @@ mod fake {
                     connected => break connected.unwrap(),
                 }
             };
-            stream
-                .set_read_timeout(Some(Duration::from_secs(10)))
-                .unwrap();
+            // A dial with no answer takes `READY_WAIT` before the reply.
+            stream.set_read_timeout(Some(READY_WAIT * 2)).unwrap();
             let body = format!(r#"{{"family":"{family}","id":"{id}"}}"#);
             write!(
                 stream,
@@ -351,18 +368,17 @@ fn a_half_close_keeps_the_reply_of_the_guest() {
     server.end();
 }
 
-/// A dial of guest port 1201 that fails after 101 closes the client
-/// stream and frees the session. The door records the close.
-// The narrow reading of the CONTRACT-QUESTION in `AcpRelay::run`.
+/// A dial of guest port 1201 that fails gets `sandbox_start_failed`
+/// before 101 and frees the session (decisions CH33 rule 6, CH50 rule 2).
+/// A refused Upgrade records no door close.
 #[test]
-fn a_failed_dial_closes_the_client_stream() {
+fn a_failed_dial_gets_sandbox_start_failed_before_101() {
     let server = Server::start("acp-dial-refused");
     server.guest.lock().unwrap().answer = Answer::Refuse;
-    let (status, _, stream) = server.upgrade("chat", A);
-    assert_eq!(status, 101);
-    closed(stream);
+    server.refused("chat", A, AcpError::SandboxStartFailed {});
     let id: SessionId = A.parse().unwrap();
-    eventually(|| matches!(server.relays.door(&id), Door::ClosedAt(_)));
+    assert_eq!(server.relays.door(&id), Door::NotOpened);
+    eventually(|| server.guest.lock().unwrap().closes == 1);
     server.guest.lock().unwrap().answer = Answer::Echo;
     let (status, _, mut stream) = server.upgrade("chat", A);
     assert_eq!(status, 101);
@@ -371,35 +387,43 @@ fn a_failed_dial_closes_the_client_stream() {
     server.end();
 }
 
-/// A drop during the dial stops it at once, well before `READY_WAIT`
-/// (decision CH26 rule 5).
+/// A drop that marks the session during the dial gets `not_found`, and
+/// the dialed link closes (decision CH34 rule 6). A drop that makes the
+/// dial fail gets `not_found` too.
 #[test]
-fn a_drop_during_the_dial_closes_the_client_stream() {
+fn a_drop_during_the_dial_gets_not_found() {
     let server = Server::start("acp-dial-drop");
-    server.guest.lock().unwrap().answer = Answer::Silent;
-    let (status, _, stream) = server.upgrade("chat", A);
-    assert_eq!(status, 101);
-    eventually(|| server.guest.lock().unwrap().connects.len() == 1);
-    let start = Instant::now();
-    let mark = server.relays.mark_drop(&A.parse().unwrap());
-    closed(stream);
-    assert!(start.elapsed() < READY_WAIT / 2, "{:?}", start.elapsed());
+    server.guest.lock().unwrap().answer = Answer::Hold;
+    let mark = spawn({
+        let (guest, relays) = (server.guest.clone(), server.relays.clone());
+        move || {
+            eventually(|| guest.lock().unwrap().connects.len() == 1);
+            let mark = relays.mark_drop(&A.parse().unwrap());
+            guest.lock().unwrap().answer = Answer::Echo;
+            mark
+        }
+    });
+    server.refused("chat", A, AcpError::NotFound {});
+    drop(mark.join().unwrap());
     eventually(|| server.guest.lock().unwrap().closes == 1);
-    drop(mark);
+
+    server.guest.lock().unwrap().answer = Answer::Refuse;
+    server.hook.0.lock().unwrap().drop_during = Some(server.relays.clone());
+    server.refused("chat", A, AcpError::NotFound {});
+    assert_eq!(server.starts(), 2);
+    assert_eq!(server.guest.lock().unwrap().connects.len(), 2);
     server.end();
 }
 
-/// A guest that never answers the dial gets `READY_WAIT`, then the relay
-/// closes the client stream (decision CH43 rule 5). The test takes 10 s.
+/// A guest that never answers the dial gets `READY_WAIT`, then
+/// `sandbox_start_failed` before 101 (decisions CH43 rule 5, CH50 rule 2).
+/// The test takes 10 s.
 #[test]
-fn a_dial_with_no_answer_ends_after_ready_wait() {
+fn a_dial_with_no_answer_fails_after_ready_wait() {
     let server = Server::start("acp-dial-silent");
     server.guest.lock().unwrap().answer = Answer::Silent;
-    let (status, _, stream) = server.upgrade("chat", A);
-    assert_eq!(status, 101);
     let start = Instant::now();
-    stream.set_read_timeout(Some(READY_WAIT * 2)).unwrap();
-    closed(stream);
+    server.refused("chat", A, AcpError::SandboxStartFailed {});
     let waited = start.elapsed();
     assert!(
         waited > READY_WAIT / 2 && waited < READY_WAIT * 2,
@@ -531,5 +555,7 @@ fn a_drop_during_the_start_gets_not_found() {
     server.hook.0.lock().unwrap().drop_during = Some(server.relays.clone());
     server.refused("chat", A, AcpError::NotFound {});
     assert_eq!(server.starts(), 1);
+    // The handler drops the link that the start dialed.
+    eventually(|| server.guest.lock().unwrap().closes == 1);
     server.end();
 }
