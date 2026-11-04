@@ -1,0 +1,6 @@
+#!/bin/sh
+# A stub of fallocate for tests/snapshot.rs. The last argument is
+# <root>/sessions/<id>/snapshots/<generation>.tmp/memory-ranges. The stub
+# logs its argv to <root>/calls and digs no hole.
+for last; do :; done
+printf 'fallocate %s\n' "$*" >> "${last%/sessions/*}/calls"

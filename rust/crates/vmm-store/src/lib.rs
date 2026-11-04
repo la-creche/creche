@@ -11,4 +11,5 @@ pub mod images;
 pub mod layout;
 pub mod rows;
 pub mod session_disk;
+pub mod snapshot;
 pub mod stale;

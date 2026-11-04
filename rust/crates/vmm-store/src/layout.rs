@@ -168,6 +168,14 @@ impl SessionDir {
     pub fn snapshot(&self, generation: SnapshotGeneration) -> PathBuf {
         self.snapshots().join(generation.0.to_string())
     }
+
+    /// The temp dir that a snapshot renames over the dir of `generation`
+    /// (PR D9). A crash can leave it, and the next snapshot of that
+    /// generation removes it first.
+    #[must_use]
+    pub fn snapshot_temp(&self, generation: SnapshotGeneration) -> PathBuf {
+        self.snapshots().join(format!("{}.tmp", generation.0))
+    }
 }
 
 /// The run root: an absolute path with no `..` component, short enough

@@ -1,0 +1,9 @@
+#!/bin/sh
+# A stub of fallocate for tests/snapshot.rs. The last argument is
+# <root>/sessions/<id>/snapshots/<generation>.tmp/memory-ranges. The stub
+# sets snapshots/ to mode 0300, so the rename into it still works but the
+# open for its sync fails. It logs its argv to <root>/calls.
+for last; do :; done
+printf 'fallocate %s\n' "$*" >> "${last%/sessions/*}/calls"
+temp=${last%/*}
+chmod 0300 "${temp%/*}"
