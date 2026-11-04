@@ -123,12 +123,13 @@ impl Drop for TempRun {
     }
 }
 
-/// What a stop of a fake VM gave: the result, the steps, and whether
-/// `api.sock.lock` stays.
+/// What a stop of a fake VM gave: the result, the steps, whether
+/// `api.sock.lock` stays, and the paused time at the return of `stop`.
 type Outcome = (
     Result<Stopped, StopError>,
     Vec<(&'static str, Duration)>,
     bool,
+    Duration,
 );
 
 /// Stops a fake VM on paused time, with a control link when `link` is
@@ -142,9 +143,10 @@ fn try_stop(name: &str, exits_on: &'static str, link: bool, fails: Fails) -> Out
         .unwrap();
     let run = TempRun::new(name);
     let vm = &run.1;
-    let (stopped, steps) = runtime.block_on(async {
+    let (stopped, steps, elapsed) = runtime.block_on(async {
+        let start = Instant::now();
         let fake = Fake {
-            start: Instant::now(),
+            start,
             log: Log::default(),
             exits_on,
             fails,
@@ -152,9 +154,9 @@ fn try_stop(name: &str, exits_on: &'static str, link: bool, fails: Fails) -> Out
         let link = link.then(|| FakeLink(fake.clone()));
         let mut process = FakeProcess(fake.clone());
         let stopped = stop(link.as_ref(), &mut process, vm).await;
-        (stopped, fake.steps())
+        (stopped, fake.steps(), start.elapsed())
     });
-    (stopped, steps, vm.api_socket_lock().exists())
+    (stopped, steps, vm.api_socket_lock().exists(), elapsed)
 }
 
 /// Stops a fake VM on paused time, and checks that the stop worked and
@@ -170,7 +172,7 @@ fn stop_fake(
         send: link == Some(true),
         ..Fails::default()
     };
-    let (stopped, steps, lock) = try_stop(name, exits_on, link.is_some(), fails);
+    let (stopped, steps, lock, _) = try_stop(name, exits_on, link.is_some(), fails);
     assert!(!lock, "api.sock.lock stays");
     (stopped.unwrap(), steps)
 }
@@ -221,7 +223,7 @@ fn a_stalled_stop_write_gets_sigterm_at_30_s() {
         stall: true,
         ..Fails::default()
     };
-    let (stopped, steps, lock) = try_stop("stall", "term", true, fails);
+    let (stopped, steps, lock, _) = try_stop("stall", "term", true, fails);
     assert_eq!(stopped.unwrap(), Stopped::Terminated);
     assert_eq!(steps, [("term", secs(30))]);
     assert!(!lock, "api.sock.lock stays");
@@ -234,7 +236,7 @@ fn a_failed_sigterm_skips_its_wait() {
         term: true,
         ..Fails::default()
     };
-    let (stopped, steps, lock) = try_stop("termfails", "kill", true, fails);
+    let (stopped, steps, lock, _) = try_stop("termfails", "kill", true, fails);
     assert_eq!(stopped.unwrap(), Stopped::Killed);
     assert_eq!(steps, [("stop", secs(0)), ("kill", secs(30))]);
     assert!(!lock, "api.sock.lock stays");
@@ -248,24 +250,25 @@ fn a_failed_sigkill_is_an_error() {
         kill: true,
         ..Fails::default()
     };
-    let (stopped, steps, lock) = try_stop("killfails", "kill", true, fails);
+    let (stopped, steps, lock, _) = try_stop("killfails", "kill", true, fails);
     assert!(matches!(stopped, Err(StopError::Kill(_))), "{stopped:?}");
     assert_eq!(steps, [("stop", secs(0)), ("term", secs(30))]);
     assert!(lock, "api.sock.lock is gone");
 }
 
 /// A process that outlives SIGKILL gets `KILL_WAIT` (1 s), then the stop
-/// gives `Hung`, so it ends near 36 s, well within the 60 s wait of the
-/// client (decisions CH33 rule 11, CH34 rule 5, CH50 rule 4).
+/// gives `Hung` at 36 s, well within the 60 s wait of the client
+/// (decisions CH33 rule 11, CH34 rule 5, CH50 rule 4).
 #[test]
 fn a_process_that_outlives_sigkill_is_hung() {
-    let (stopped, steps, lock) = try_stop("hung", "never", true, Fails::default());
+    let (stopped, steps, lock, elapsed) = try_stop("hung", "never", true, Fails::default());
     assert!(matches!(stopped, Err(StopError::Hung)), "{stopped:?}");
     assert_eq!(
         steps,
         [("stop", secs(0)), ("term", secs(30)), ("kill", secs(35))]
     );
     assert_eq!(KILL_WAIT, secs(1));
+    assert_eq!(elapsed, secs(36));
     assert!(lock, "api.sock.lock is gone");
 }
 
