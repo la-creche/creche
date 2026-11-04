@@ -39,8 +39,8 @@ const OTHER_LINES: &[&str] = &[
     HEADER,
     "}",
     "unix type=stream,",
-    "deny unix addr=@**,",
-    "deny unix peer=(addr=@**),",
+    "deny unix (bind, connect) addr=@**,",
+    "deny unix (connect, send, receive) peer=(addr=@**),",
     "signal (receive) peer=unconfined,",
     "signal (send, receive) peer=creche-cloud-hypervisor,",
 ];
@@ -208,8 +208,8 @@ fn the_devices_are_those_of_the_landlock_rules() {
 fn no_inet_socket_and_no_abstract_unix_socket() {
     let lines: Vec<&str> = rule_lines().collect();
     assert!(lines.contains(&"unix type=stream,"));
-    assert!(lines.contains(&"deny unix addr=@**,"));
-    assert!(lines.contains(&"deny unix peer=(addr=@**),"));
+    assert!(lines.contains(&"deny unix (bind, connect) addr=@**,"));
+    assert!(lines.contains(&"deny unix (connect, send, receive) peer=(addr=@**),"));
 }
 
 #[test]
