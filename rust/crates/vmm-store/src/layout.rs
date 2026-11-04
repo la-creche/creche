@@ -176,6 +176,13 @@ impl SessionDir {
     pub fn snapshot_temp(&self, generation: SnapshotGeneration) -> PathBuf {
         self.snapshots().join(format!("{}.tmp", generation.0))
     }
+
+    /// The key file of one snapshot generation (PR D10). It sits in the
+    /// generation dir, so the names of decision CH39 rule 3 hold.
+    #[must_use]
+    pub fn snapshot_key(&self, generation: SnapshotGeneration) -> PathBuf {
+        self.snapshot(generation).join("key.json")
+    }
 }
 
 /// The run root: an absolute path with no `..` component, short enough

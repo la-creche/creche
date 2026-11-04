@@ -18,7 +18,7 @@ use std::ffi::OsString;
 use std::fmt;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Child, Command, ExitStatus, Output, Stdio};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -253,32 +253,43 @@ impl ChRemote {
             .stderr(Stdio::piped())
             .spawn()
             .map_err(io_error)?;
-        let waited = take_readers(&mut child)
-            .and_then(|readers| Ok((readers, wait_until(&mut child, timeout)?)));
-        let ((stdout, stderr), status) = match waited {
-            Ok((readers, Some(status))) => (readers, status),
-            Ok((_, None)) => {
-                // The readers end when the pipes close. The call does not
-                // wait for them.
-                stop(&mut child);
-                return Err(ChRemoteError::Timeout { command, timeout });
-            }
-            Err(source) => {
-                stop(&mut child);
-                return Err(io_error(source));
-            }
+        let Some(output) = output_until(&mut child, timeout).map_err(io_error)? else {
+            return Err(ChRemoteError::Timeout { command, timeout });
         };
-        let stdout = join(stdout).map_err(io_error)?;
-        let stderr = join(stderr).unwrap_or_default();
-        if !status.success() {
+        if !output.status.success() {
             return Err(ChRemoteError::Failed {
                 command,
-                status,
-                stderr: String::from_utf8_lossy(&stderr).into_owned(),
+                status: output.status,
+                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
             });
         }
-        Ok(stdout)
+        Ok(output.stdout)
     }
+}
+
+/// Waits up to `timeout` for `child` to end and returns its exit status,
+/// stdout and stderr, each cut at `REPLY_MAX`. `None` when the timeout
+/// passed first. A timeout or a failed wait kills and reaps `child`. The
+/// readers end when the pipes close, and the call does not wait for them.
+/// The key check of `cloud-hypervisor --version` uses it too (PR D10).
+pub(crate) fn output_until(child: &mut Child, timeout: Duration) -> io::Result<Option<Output>> {
+    let waited = take_readers(child).and_then(|readers| Ok((readers, wait_until(child, timeout)?)));
+    let ((stdout, stderr), status) = match waited {
+        Ok((readers, Some(status))) => (readers, status),
+        Ok((_, None)) => {
+            stop(child);
+            return Ok(None);
+        }
+        Err(error) => {
+            stop(child);
+            return Err(error);
+        }
+    };
+    Ok(Some(Output {
+        status,
+        stdout: join(stdout)?,
+        stderr: join(stderr).unwrap_or_default(),
+    }))
 }
 
 /// A thread that reads one pipe to its end.

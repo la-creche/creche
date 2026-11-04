@@ -41,6 +41,10 @@ fn state_paths_are_pinned() {
         session.snapshot(SnapshotGeneration(7)),
         session.path().join("snapshots/7")
     );
+    assert_eq!(
+        session.snapshot_key(SnapshotGeneration(7)),
+        session.path().join("snapshots/7/key.json")
+    );
 }
 
 #[test]
