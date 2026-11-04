@@ -9,6 +9,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -17,10 +18,10 @@ use super::{
     Auto, AutoJobId, ConfigMissing, ControlHello, ControlReady, CreateError, CreateSession,
     CredsMissing, Delegate, DelegationId, Dispatch, DispatchChain, Door, FacadeExited,
     FacadeNotStarted, FacadeRunning, FacadeStarting, FacadeState, FamilyConfig, FamilyCreds,
-    FamilyName, FamilySkills, FamilyState, FamilyStateReply, JobId, LitellmKey, ModelAlias,
-    PepToken, SandboxGrant, SessionCwd, SessionId, SessionOrigin, SessionRow, SessionTitle,
-    SkillName, StartCount, StateNotValid, StateTooLarge, Timer, Trigger, TurnEnd, TurnEvent,
-    TurnStart, UnixMillis, Webhook, WebhookName,
+    FamilyName, FamilySkills, FamilyState, FamilyStateReply, JobId, JsonRoute, LitellmKey,
+    ModelAlias, PepToken, RouteError, SHARED_CODES, SandboxGrant, SessionCwd, SessionId,
+    SessionOrigin, SessionRow, SessionTitle, SkillName, StartCount, StateNotValid, StateTooLarge,
+    Timer, Trigger, TurnEnd, TurnEvent, TurnStart, UnixMillis, Webhook, WebhookName,
 };
 
 /// The file, relative to the crate.
@@ -142,6 +143,52 @@ fn each_wire_type_has_cases_and_each_case_a_wire_type() {
             "{type_name}: no case is refused"
         );
     }
+}
+
+/// Each code of each route error has an accepted case `{"code":"<code>"}`
+/// that the error writes as the same text. Each route error also has a
+/// refused case of a shared code with an extra key. Python and TypeScript
+/// read only the codes that have a case, so a code with no case would
+/// never reach them.
+#[test]
+fn each_code_of_a_route_error_has_a_case() {
+    let vectors = cases();
+    macro_rules! check {
+        (json $route:path) => {
+            let error = <$route as JsonRoute>::Error::schema_name();
+            let statuses = <<$route as JsonRoute>::Error as RouteError>::STATUSES;
+            let error_cases = vectors
+                .get(&*error)
+                .unwrap_or_else(|| panic!("{VECTOR_FILE} has no cases for {error}"));
+
+            for (code, _) in statuses {
+                let json = format!("{{\"code\":\"{code}\"}}");
+                assert!(
+                    error_cases
+                        .iter()
+                        .any(|case| case.json == json && case.written.as_deref() == Some(&*json)),
+                    "{error}: no accepted case {json}"
+                );
+            }
+
+            let shared_with_a_key = error_cases.iter().any(|case| {
+                let Ok(Value::Object(object)) = serde_json::from_str::<Value>(&case.json) else {
+                    return false;
+                };
+                let shared = object
+                    .get("code")
+                    .and_then(Value::as_str)
+                    .is_some_and(|code| SHARED_CODES.iter().any(|(shared, _)| *shared == code));
+
+                case.written.is_none() && shared && object.len() > 1
+            });
+            assert!(
+                shared_with_a_key,
+                "{error}: no refused case of a shared code with an extra key"
+            );
+        };
+    }
+    crate::route_table!(check);
 }
 
 /// Each accepted object case, with one key of its type's `required` left

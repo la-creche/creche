@@ -96,6 +96,104 @@ export const wire = {
             "code"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "No route has this path.",
+          "properties": {
+            "code": {
+              "const": "no_route",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The route has this path, but the method is not `POST`.",
+          "properties": {
+            "code": {
+              "const": "bad_method",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The `Content-Type` is not `application/json`.",
+          "properties": {
+            "code": {
+              "const": "bad_content_type",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The body is over the cap.",
+          "properties": {
+            "code": {
+              "const": "too_large",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The body is not strict JSON.",
+          "properties": {
+            "code": {
+              "const": "not_json",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The body is JSON, but not the request type of the route.",
+          "properties": {
+            "code": {
+              "const": "not_valid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The vmm failed after it took the request. The vmm logs\nthe details.",
+          "properties": {
+            "code": {
+              "const": "internal",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -871,7 +969,14 @@ export const wire = {
         "reply": "SessionRow",
         "request": "CreateSession",
         "statuses": {
+          "bad_content_type": 415,
+          "bad_method": 405,
           "conflict": 409,
+          "internal": 500,
+          "no_route": 404,
+          "not_json": 400,
+          "not_valid": 400,
+          "too_large": 413,
           "unknown_family": 404
         }
       }
