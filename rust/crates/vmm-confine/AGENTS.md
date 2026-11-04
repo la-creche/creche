@@ -32,6 +32,12 @@ table of the three vmm crates.
   the launch. A missing path or a kernel below Landlock ABI 4 fails the
   launch. All Landlock calls sit behind `cfg(target_os = "linux")`
   (decision CH38).
+- `deny::check` is the proof of deny-by-default (decision CH6-3). The
+  CH command line has no `--net` argument. A boot has exactly one
+  `--vsock` and a restore none, because CH takes the devices of a restore
+  from the snapshot. The run dir holds exactly the `vsock.sock_<port>`
+  listeners of the host ports that the vmm bound for the family. Any
+  failure is the fault `egress_assert_failed`.
 - The process tests need Landlock ABI 4 and `/dev/kvm`. The host and the
   ubuntu-24.04 runner have both (facts 77, 79).
 
@@ -39,3 +45,8 @@ table of the three vmm crates.
 
 - Landlock ABI 4 covers neither UDP nor Unix sockets (fact 77). Until the
   AppArmor profile of PR C15, CH can reach both.
+- CONTRACT-QUESTION (decision CH6-3): on a restore the CH command line
+  shows no device, so `deny::check` cannot see a network card that the
+  snapshot holds. It relies on the snapshot of a boot that passed the
+  check. No row says whether the check must also read the device set of
+  a restored VM, for example from `ch-remote info`.
