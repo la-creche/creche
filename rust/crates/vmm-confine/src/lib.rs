@@ -5,6 +5,7 @@
 //! The code is synchronous and uses no async runtime. It reads the types
 //! of `creche-vmm-store` and never calls `creche-vmm`.
 
+pub mod deny;
 pub mod landlock;
 pub mod launch;
 pub mod leftovers;

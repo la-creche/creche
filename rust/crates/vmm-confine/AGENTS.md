@@ -38,6 +38,16 @@ table of the three vmm crates.
   the launch. A missing path or a kernel below Landlock ABI 4 fails the
   launch. All Landlock calls sit behind `cfg(target_os = "linux")`
   (decision CH38).
+- `deny::check` is the proof of deny-by-default (decision CH6-3). The
+  first argument of the command line is the payload program, so a pid
+  that still runs the launch step or `systemd-run`, or a CH zombie, fails
+  with `NotCh`. The CH command line has no `--net` argument. A boot has exactly one
+  `--vsock` and a restore none, because CH takes the devices of a restore
+  from the snapshot. The check trusts that a snapshot comes only from a
+  boot that passed the check (decision CH42 rule 2). The run dir holds
+  exactly the `vsock.sock_<port>` listeners of the host ports that the
+  vmm bound for the family. Any failure is the fault
+  `egress_assert_failed`.
 - The process tests need Landlock ABI 4 and `/dev/kvm`. The host and the
   ubuntu-24.04 runner have both (facts 77, 79).
 
@@ -53,3 +63,11 @@ table of the three vmm crates.
   dir). The ruleset grants no right to make a dir, so the vmm must also
   make each `snapshots/<generation>/` before CH writes a snapshot there.
   Plan PRs L16 (cold boot) and D9 (snapshot) own these steps.
+- Decision CH42 rule 2: on a restore the CH command line shows no
+  device, so `deny::check` cannot see a network card that the snapshot
+  holds. The check trusts that a snapshot comes only from a boot that
+  passed the check. Once the CH API (plan PR D8, `ch_remote`) is in, the
+  vmm also reads the restored VM's device set through `ch-remote info`
+  before the VM is ready. That device-set read is the step of plan PR
+  L17 (restore), under decision CH42 rule 2. No code does the
+  device-set read yet.
