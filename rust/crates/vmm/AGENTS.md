@@ -42,3 +42,10 @@ The root `AGENTS.md` applies here too.
   reading is one crate with private items, so the tracks share files. A
   change costs a merge of the three crates (`src/lib.rs`). Remove this
   entry when the owner answers.
+- G21, the flavor of the tokio runtime. Decision CH26 names only the
+  builder. The owner has not answered yet. This reading: `vmm serve` runs
+  on the multi-thread runtime, and blocking work goes to `spawn_blocking`.
+  The other reading is the current-thread runtime plus dedicated threads.
+  A change costs the builder in `src/main.rs`, the tokio feature list in
+  `rust/Cargo.toml` and a thread for each blocking job. Remove this entry
+  when the owner answers.

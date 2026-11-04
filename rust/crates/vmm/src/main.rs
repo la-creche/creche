@@ -62,6 +62,10 @@ fn dispatch(args: &[OsString]) -> ExitCode {
 /// Builds the tokio runtime and runs the host API server on it (decision
 /// CH26 rule 1). Only this mode builds a runtime.
 fn serve() -> ExitCode {
+    // CONTRACT-QUESTION: gap G21 of the phase 2 plan. CH26 names only the
+    // builder. This reading takes the multi-thread runtime, so one stray
+    // blocking call cannot stall every relay. A change to the current-thread
+    // runtime costs this builder, the tokio features and dedicated threads.
     let runtime = match Builder::new_multi_thread().build() {
         Ok(runtime) => runtime,
         Err(error) => return refuse(&error),
