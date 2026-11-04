@@ -7,6 +7,7 @@
 //! calls `creche-vmm-confine` or `creche-vmm`.
 
 pub mod ch_remote;
+pub mod claim;
 pub mod images;
 pub mod key;
 pub mod layout;
