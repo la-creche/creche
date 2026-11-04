@@ -68,11 +68,27 @@ mod tests {
     use std::ffi::OsString;
     use std::process::ExitCode;
 
-    use super::{EX_CONFIG, dispatch};
+    use super::{EX_CONFIG, Mode, dispatch};
 
-    fn status(args: &[&str]) -> ExitCode {
-        let args: Vec<OsString> = args.iter().map(OsString::from).collect();
-        dispatch(&args)
+    fn args(args: &[&str]) -> Vec<OsString> {
+        args.iter().map(OsString::from).collect()
+    }
+
+    fn status(list: &[&str]) -> ExitCode {
+        dispatch(&args(list))
+    }
+
+    #[test]
+    fn parse_names_each_mode() {
+        assert_eq!(Mode::parse(&args(&["serve"])), Some(Mode::Serve));
+        assert_eq!(Mode::parse(&args(&["launch"])), Some(Mode::Launch));
+    }
+
+    #[test]
+    fn parse_refuses_a_wrong_list() {
+        assert_eq!(Mode::parse(&args(&[])), None);
+        assert_eq!(Mode::parse(&args(&["start"])), None);
+        assert_eq!(Mode::parse(&args(&["serve", "extra"])), None);
     }
 
     #[test]
