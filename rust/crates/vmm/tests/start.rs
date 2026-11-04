@@ -9,10 +9,10 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::spawn;
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 use std::{fs, io};
 
 use creche_vmm::control::ControlState;
@@ -37,6 +37,8 @@ const CH: &str = "/opt/ch/cloud-hypervisor";
 const SHAPE: &str = r#"{"cpus":1,"flavor":"base","memory_mib":512}"#;
 const READY: &str =
     r#"{"facade":{"running":{"last_turn_end":null,"pid":42,"starts":1,"turn_running":false}}}"#;
+/// As `READY`, with the end of a turn that the row has not seen.
+const ENDED: &str = r#"{"facade":{"running":{"last_turn_end":{"title":"First","updated_at":1793577700000},"pid":42,"starts":1,"turn_running":false}}}"#;
 /// The SHA-256 of no bytes: the fake kernel and root disk are empty.
 const EMPTY: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
@@ -45,6 +47,8 @@ const EMPTY: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b785
 enum Guest {
     /// `ControlReady`, then `OK` on 1201.
     Ready,
+    /// As `Ready`, with a turn end in the ready.
+    Ended,
     /// A close after the hello, before `ControlReady`.
     Closes,
     /// `ControlReady`, then a refused `CONNECT 1201`.
@@ -82,6 +86,10 @@ struct Fake {
     net: AtomicBool,
     /// Fails each launch.
     fail: AtomicBool,
+    /// Holds each launch until the test clears it.
+    hold: AtomicBool,
+    /// The `stop` lines that guest init read on each control link.
+    stop_lines: Arc<AtomicUsize>,
     launches: Mutex<Vec<Launch>>,
     vms: Mutex<Vec<Arc<AtomicBool>>>,
 }
@@ -94,6 +102,9 @@ impl Launcher for Fake {
     fn launch(&self, launch: Launch) -> Result<FakeVm, SpawnError> {
         if self.fail.load(Ordering::SeqCst) {
             return Err(SpawnError::Stopped);
+        }
+        while self.hold.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(1));
         }
         Ok(self.record(launch))
     }
@@ -116,21 +127,33 @@ impl Fake {
         let vsock = launch.files().run_dir().path().join("vsock.sock");
         let listener = UnixListener::bind(vsock).unwrap();
         let guest = *self.guest.lock().unwrap();
-        spawn(move || play(&listener, guest));
+        let exited = Arc::new(AtomicBool::new(false));
+        let vm = Vm {
+            exited: Arc::clone(&exited),
+            stop_lines: Arc::clone(&self.stop_lines),
+        };
+        spawn(move || play(&listener, guest, &vm));
         let mut launches = self.launches.lock().unwrap();
         let number = launches.len();
         fs::write(self.dir.join(format!("cmdline-{number}")), args.join("\0")).unwrap();
         launches.push(launch);
-        let exited = Arc::new(AtomicBool::new(false));
         self.vms.lock().unwrap().push(Arc::clone(&exited));
         FakeVm { number, exited }
     }
 }
 
+/// What guest init changes in its fake VM.
+#[derive(Debug, Clone)]
+struct Vm {
+    exited: Arc<AtomicBool>,
+    stop_lines: Arc<AtomicUsize>,
+}
+
 /// Plays CH and guest init on each link: `CONNECT`, then the control
-/// link or the ACP link. Each link stays open until the test ends.
+/// link or the ACP link. Each link stays open until the test ends. A
+/// `stop` line on the control link powers the VM off (decision CH19 (3)).
 #[cfg(test)]
-fn play(listener: &UnixListener, guest: Guest) {
+fn play(listener: &UnixListener, guest: Guest, vm: &Vm) {
     let mut held = Vec::new();
     for stream in listener.incoming() {
         let mut reader = BufReader::new(stream.unwrap());
@@ -144,7 +167,17 @@ fn play(listener: &UnixListener, guest: Guest) {
                 if guest == Guest::Closes {
                     continue;
                 }
-                stream.write_all(format!("{READY}\n").as_bytes()).unwrap();
+                let ready = if guest == Guest::Ended { ENDED } else { READY };
+                stream.write_all(format!("{ready}\n").as_bytes()).unwrap();
+                let vm = vm.clone();
+                spawn(move || {
+                    for line in reader.lines() {
+                        if line.is_ok_and(|line| line.contains("stop")) {
+                            vm.stop_lines.fetch_add(1, Ordering::SeqCst);
+                            vm.exited.store(true, Ordering::SeqCst);
+                        }
+                    }
+                });
             }
             ("CONNECT 1201\n", Guest::RefusesAcp) => stream.write_all(b"NO\n").unwrap(),
             _ => stream.write_all(b"OK 2\n").unwrap(),
@@ -160,6 +193,7 @@ struct Test {
     hook: ColdBoot<Fake>,
     fake: Arc<Fake>,
     control: Arc<Mutex<ControlState>>,
+    store: Arc<Mutex<Rows>>,
     faults: PathBuf,
     rows: Vec<SessionRow>,
     runtime: Runtime,
@@ -220,14 +254,17 @@ impl Test {
             guest: Mutex::new(Guest::Ready),
             net: AtomicBool::new(false),
             fail: AtomicBool::new(false),
+            hold: AtomicBool::new(false),
+            stop_lines: Arc::default(),
             launches: Mutex::default(),
             vms: Mutex::default(),
         });
         let control = Arc::new(Mutex::new(ControlState::default()));
+        let store = Arc::new(Mutex::new(store));
         let hook = ColdBoot::new(
             config,
             Arc::clone(&fake),
-            Arc::new(Mutex::new(store)),
+            Arc::clone(&store),
             Arc::clone(&control),
             Arc::new(Mutex::new(book)),
         );
@@ -237,6 +274,7 @@ impl Test {
             hook,
             fake,
             control,
+            store,
             faults: path,
             rows,
             runtime,
@@ -269,6 +307,24 @@ impl Test {
     /// Whether launch `index` was stopped.
     fn stopped(&self, index: usize) -> bool {
         self.fake.vms.lock().unwrap()[index].load(Ordering::SeqCst)
+    }
+
+    /// How many `stop` lines guest init read.
+    fn stop_lines(&self) -> usize {
+        self.fake.stop_lines.load(Ordering::SeqCst)
+    }
+}
+
+/// Waits up to 5 s for `done`.
+#[cfg(test)]
+fn eventually(done: impl Fn() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !done() {
+        assert!(
+            Instant::now() < deadline,
+            "the condition did not hold in 5 s"
+        );
+        std::thread::sleep(Duration::from_millis(1));
     }
 }
 
@@ -372,14 +428,17 @@ fn a_bad_image_or_disk_faults_before_the_launch() {
 
 /// A guest that closes before `ControlReady`, and a refused dial of
 /// 1201, each fault and stop the VM (decisions CH33 rule 6, CH50 rule 2).
+/// After `ControlReady` the stop is the graceful one on the control link
+/// (decision CH19 (3)). Before it no link exists.
 #[test]
 fn a_guest_fault_stops_the_vm() {
-    for (name, guest) in [("closes", Guest::Closes), ("acp", Guest::RefusesAcp)] {
+    for (name, guest, graceful) in [("closes", Guest::Closes, 0), ("acp", Guest::RefusesAcp, 1)] {
         let test = Test::new(name, |_| {});
         *test.fake.guest.lock().unwrap() = guest;
         assert_eq!(test.start(0), Err(StartFault::SandboxStartFailed));
         assert_eq!(test.fault_codes(), ["sandbox_start_failed"]);
         assert!(test.stopped(0));
+        assert_eq!(test.stop_lines(), graceful, "{name}");
         assert!(!test.hook.running(&test.rows[0].id));
     }
 }
@@ -393,5 +452,43 @@ fn a_network_card_fails_the_deny_check() {
     assert_eq!(test.start(0), Err(StartFault::EgressAssertFailed));
     assert_eq!(test.fault_codes(), ["egress_assert_failed"]);
     assert!(test.stopped(0));
+    assert_eq!(test.stop_lines(), 1);
     assert!(!test.hook.running(&test.rows[0].id));
+}
+
+/// A start that is dropped during its launch leaves no CH outside the
+/// table. The launch output holds the process, and its drop kills the VM
+/// and keeps it in the table (decisions CH8-6, CH50 rule 4). The next
+/// admission reaps the exited VM, so a start of another session fits the
+/// cap of one VM.
+#[test]
+fn a_start_dropped_during_its_launch_kills_and_keeps_the_vm() {
+    let test = Test::new("cancel", |config| config.limits.ram_cap = 512 << 20);
+    test.fake.hold.store(true, Ordering::SeqCst);
+    let start = test.hook.start(&test.rows[0]);
+    let cut = test
+        .runtime
+        .block_on(async { tokio::time::timeout(Duration::from_millis(50), start).await });
+    assert!(cut.is_err());
+    test.fake.hold.store(false, Ordering::SeqCst);
+    eventually(|| test.hook.running(&test.rows[0].id));
+    assert!(test.stopped(0));
+    assert_eq!(test.start(1), Ok(()));
+    assert!(!test.hook.running(&test.rows[0].id));
+}
+
+/// The turn end of the first `ControlReady` goes to the row: its
+/// `updated_at` and its first title (decision CH32 rule 4).
+#[test]
+fn the_first_ready_writes_its_turn_end_to_the_row() {
+    let test = Test::new("ended", |_| {});
+    *test.fake.guest.lock().unwrap() = Guest::Ended;
+    assert_eq!(test.start(0), Ok(()));
+    let store = test.store.lock().unwrap();
+    let row = store.get(&test.rows[0].id).unwrap();
+    assert_eq!(
+        row.title.as_ref().map(ToString::to_string).as_deref(),
+        Some("First")
+    );
+    assert_ne!(row.updated_at, test.rows[0].updated_at);
 }
