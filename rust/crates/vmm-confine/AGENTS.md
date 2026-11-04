@@ -45,16 +45,22 @@ table of the three vmm crates.
   that still runs the launch step or `systemd-run`, or a CH zombie, fails
   with `NotCh`. The CH command line has no `--net` argument. A boot has exactly one
   `--vsock` and a restore none, because CH takes the devices of a restore
-  from the snapshot. The run dir holds exactly the `vsock.sock_<port>`
-  listeners of the host ports that the vmm bound for the family. Any
-  failure is the fault `egress_assert_failed`.
+  from the snapshot. The check trusts that a snapshot comes only from a
+  boot that passed the check (decision CH42 rule 2). The run dir holds
+  exactly the `vsock.sock_<port>` listeners of the host ports that the
+  vmm bound for the family. Any failure is the fault
+  `egress_assert_failed`.
 - `admission::decide` is a pure decision (decisions CH8-6, CH8-7). Free
   bytes below the floor give `HostFull`. The configured guest RAM of the
   running VMs plus the RAM wanted at or below the cap gives `Admit`. Else
   the idle VMs, least recently used first, either free enough RAM
-  (`EvictFirst`) or not (`HostFull`, and no VM stops). Lifecycle passes
-  the sleep-gate result of each VM and runs the evictions. The vmm never
-  queues (decision CH21-3).
+  (`EvictFirst`) or not (`HostFull`, and no VM stops). The floor must
+  hold after the writes that admission causes (decision CH42 rule 3).
+  The snapshot of each evicted VM writes its whole guest RAM (fact 72),
+  so admission subtracts that RAM from the free bytes before it compares
+  with the floor. An eviction that breaks the floor gives `HostFull`, and
+  no VM stops. Lifecycle passes the sleep-gate result of each VM and runs
+  the evictions. The vmm never queues (decision CH21-3).
 - `faults::FaultBook` writes the fault file of the vmm,
   `<faults root>/vmm/<family>.json`, in the shape of contract 05 §3.3.1
   with `source` `vmm` (decisions CH21-1, CH36 G18). It holds the two
@@ -83,16 +89,13 @@ table of the three vmm crates.
   dir). The ruleset grants no right to make a dir, so the vmm must also
   make each `snapshots/<generation>/` before CH writes a snapshot there.
   Plan PRs L16 (cold boot) and D9 (snapshot) own these steps.
-- CONTRACT-QUESTION (decision CH6-3): on a restore the CH command line
-  shows no device, so `deny::check` cannot see a network card that the
-  snapshot holds. It relies on the snapshot of a boot that passed the
-  check. No row says whether the check must also read the device set of
-  a restored VM, for example from `ch-remote info`.
-- CONTRACT-QUESTION (decision CH8-7): `admission::decide` checks the
-  free-space floor against the free bytes before the start. The snapshot
-  of an evicted VM first writes its whole guest RAM (fact 72), and the
-  new session disk grows later. No row says whether the floor must still
-  hold after those writes.
+- Decision CH42 rule 2: on a restore the CH command line shows no
+  device, so `deny::check` cannot see a network card that the snapshot
+  holds. The check trusts that a snapshot comes only from a boot that
+  passed the check. Once the CH API (plan PR D8, `ch_remote`) is in, the
+  vmm also reads the restored VM's device set through `ch-remote info`
+  before the VM is ready. The lifecycle work owns that follow-up. No
+  code does it yet.
 - CONTRACT-QUESTION (decisions CH21-1, CH36 G18): contract 05 §3.3.1 has
   no row for the vmm until its amendment. Open until then: the group of
   `faults/vmm/` and its files (the vmm sets modes 0750 and 0640 only),
