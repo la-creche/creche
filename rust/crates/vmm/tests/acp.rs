@@ -258,15 +258,25 @@ fn another_family_gets_not_found_while_the_owner_holds_the_session() {
 #[test]
 fn a_start_fault_answers_before_101() {
     let server = Server::start("acp-fault");
+    // Each code is written out, so a wrong map in `StartFault::error`
+    // fails the body check (decision CH34 rule 6).
     let faults = [
-        (StartFault::HostFull, 503),
-        (StartFault::SandboxStartFailed, 502),
-        (StartFault::EgressAssertFailed, 502),
+        (StartFault::HostFull, AcpError::HostFull {}, 503),
+        (
+            StartFault::SandboxStartFailed,
+            AcpError::SandboxStartFailed {},
+            502,
+        ),
+        (
+            StartFault::EgressAssertFailed,
+            AcpError::EgressAssertFailed {},
+            502,
+        ),
     ];
-    for (fault, status) in faults {
+    for (fault, error, status) in faults {
         server.hook.0.lock().unwrap().fault = Some(fault);
-        assert_eq!(fault.error().status(), status);
-        server.refused("chat", A, fault.error());
+        assert_eq!(error.status(), status);
+        server.refused("chat", A, error);
     }
     assert_eq!(server.starts(), 3);
     // A refusal frees the session at once.
