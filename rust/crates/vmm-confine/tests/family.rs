@@ -4,7 +4,10 @@
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::PathBuf;
-use std::time::Instant;
+use std::process::Command;
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use creche_vmm_confine::family::{
     FamilyError, FamilyRoot, READ_TRIES, RETRY_PAUSE, SHAPE_CAP, ShapeFault,
@@ -141,6 +144,23 @@ fn a_shape_file_that_is_no_regular_file_is_not_valid() {
     fs::remove_file(config.join("shape.json")).unwrap();
     fs::create_dir(config.join("shape.json")).unwrap();
     let read = root.families().read_shape(&code());
+    assert!(matches!(
+        read,
+        Err(FamilyError::NotValid(ShapeFault::NotFile))
+    ));
+    // A FIFO with no writer: only `O_NONBLOCK` keeps the open from waiting
+    // for a writer forever. The read runs on a thread, so a lost flag
+    // fails the test at the timeout and does not hang it.
+    fs::remove_dir(config.join("shape.json")).unwrap();
+    let made = Command::new("mkfifo")
+        .arg(config.join("shape.json"))
+        .status()
+        .unwrap();
+    assert!(made.success());
+    let families = root.families();
+    let (sent, got) = mpsc::channel();
+    thread::spawn(move || sent.send(families.read_shape(&code())));
+    let read = got.recv_timeout(Duration::from_secs(5)).unwrap();
     assert!(matches!(
         read,
         Err(FamilyError::NotValid(ShapeFault::NotFile))
