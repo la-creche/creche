@@ -8,6 +8,7 @@
 //! this one never needs schemars.
 
 use std::fmt;
+use std::future::Future;
 use std::time::Duration;
 
 use serde::de::value::MapAccessDeserializer;
@@ -333,6 +334,34 @@ pub trait UpgradeRoute {
     type Request: Body;
     /// What the vmm answers on a refusal, before 101.
     type Error: RouteError;
+    /// The error of a request whose `Upgrade` header does not name `TOKEN`
+    /// (decisions CH26 rule 3, CH34 rule 6). The vmm sends it with
+    /// `Upgrade: TOKEN`.
+    const UPGRADE_REQUIRED: Self::Error;
+}
+
+/// The vmm handler of the JSON route `R` (decision CH26 rule 4). The vmm
+/// router expands `route_table!` with the concrete type of each route, so
+/// a handler set that misses a route does not build (decision CH25).
+pub trait Serve<R: JsonRoute> {
+    /// The reply to one request that passed every check of the router.
+    fn serve(&self, request: R::Request)
+    -> impl Future<Output = Result<R::Reply, R::Error>> + Send;
+}
+
+/// The vmm handler of the Upgrade route `R` (decision CH26 rule 4). It
+/// admits or refuses a request before 101: every refusal is a typed error
+/// (decision CH33 rule 6).
+pub trait ServeUpgrade<R: UpgradeRoute> {
+    /// What runs on the byte stream after 101. The vmm owns the stream
+    /// and its IO, so this crate needs no IO trait.
+    type Relay: Send + 'static;
+
+    /// The relay of an admitted request, or the refusal.
+    fn admit(
+        &self,
+        request: R::Request,
+    ) -> impl Future<Output = Result<Self::Relay, R::Error>> + Send;
 }
 
 /// The route `create`: attendance makes a row of the host session list
@@ -467,6 +496,7 @@ impl UpgradeRoute for AcpRoute {
     const TOKEN: &'static str = "creche-acp";
     type Request = OpenAcp;
     type Error = AcpError;
+    const UPGRADE_REQUIRED: AcpError = AcpError::UpgradeRequired {};
 }
 
 route_error! {

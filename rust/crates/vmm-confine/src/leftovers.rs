@@ -4,7 +4,7 @@
 //! per-VM socket path.
 //!
 //! A scope whose payload ignores SIGTERM ends `failed` after its stop, and
-//! `systemd-run --unit` refuses that name until `reset-failed` (Hyperion
+//! `systemd-run --unit` refuses that name until `reset-failed` (host
 //! spike 2026-11-03, systemd 255.4). So a unit that is still listed after
 //! the stop gets `reset-failed`, and a unit that is still listed after that
 //! is an error.

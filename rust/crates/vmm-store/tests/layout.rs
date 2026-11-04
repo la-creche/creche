@@ -25,11 +25,17 @@ fn state_paths_are_pinned() {
         state.row_file(&id()),
         Path::new(&format!("/var/lib/vmm/rows/{ID}.json"))
     );
+    assert_eq!(state.rows_dir(), Path::new("/var/lib/vmm/rows"));
+    assert_eq!(
+        state.row_temp_file(&id()),
+        Path::new(&format!("/var/lib/vmm/rows/{ID}.json.tmp"))
+    );
     assert_eq!(
         session.path(),
         Path::new(&format!("/var/lib/vmm/sessions/{ID}"))
     );
     assert_eq!(session.disk(), session.path().join("disk.ext4"));
+    assert_eq!(session.disk_temp(), session.path().join("disk.ext4.tmp"));
     assert_eq!(session.snapshots(), session.path().join("snapshots"));
     assert_eq!(
         session.snapshot(SnapshotGeneration(7)),

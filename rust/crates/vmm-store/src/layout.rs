@@ -94,10 +94,30 @@ impl StateRoot {
     // rename costs a cold boot of every VM (plan risk 8) and an edit of the
     // confine rules that name these paths.
 
+    /// The directory of every session row file (PR D2).
+    #[must_use]
+    pub fn rows_dir(&self) -> PathBuf {
+        self.0.join("rows")
+    }
+
     /// The file of the session row of `id` (PR D2).
     #[must_use]
     pub fn row_file(&self, id: &SessionId) -> PathBuf {
-        self.0.join("rows").join(format!("{id}.json"))
+        self.rows_dir().join(format!("{id}.json"))
+    }
+
+    /// The temp file that a write of the row of `id` renames over the row
+    /// file (PR D2). A crash can leave it, and a load skips it.
+    #[must_use]
+    pub fn row_temp_file(&self, id: &SessionId) -> PathBuf {
+        self.rows_dir().join(format!("{id}.json.tmp"))
+    }
+
+    /// The digest store: one read-only copy of each root disk and kernel,
+    /// named by its SHA-256 (fact 56, PR D5).
+    #[must_use]
+    pub fn store_dir(&self) -> PathBuf {
+        self.0.join("store")
     }
 
     /// The directory of the session disk and the snapshots of `id`.
@@ -127,6 +147,14 @@ impl SessionDir {
     #[must_use]
     pub fn disk(&self) -> PathBuf {
         self.0.join("disk.ext4")
+    }
+
+    /// The temp file that the make of the session disk renames over the
+    /// disk (PR D7). A crash can leave it, and the next make starts it
+    /// again.
+    #[must_use]
+    pub fn disk_temp(&self) -> PathBuf {
+        self.0.join("disk.ext4.tmp")
     }
 
     /// The directory that holds every snapshot generation.
