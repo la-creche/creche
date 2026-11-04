@@ -34,6 +34,11 @@ rule 1). `server::run` answers each request that passes with `no_route`
 until the server has routes. `Stop` stops the server through
 `tokio::sync` (decision CH26 rule 2).
 
+`examples/upgrade_echo/` is a server with one handler that echoes after
+101. `tests/upgrade_body.rs` and `integration/proc/test_proc_vmm_upgrade.py`
+use it to prove that the JSON body of an Upgrade request crosses
+(`wire/AGENTS.md`, the `acp` route).
+
 ## Rules
 
 - Each new dependency is its own pull request, with its lock delta
