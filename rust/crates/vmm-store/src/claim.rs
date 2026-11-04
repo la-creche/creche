@@ -33,7 +33,9 @@
 //! cold-boot.
 //!
 //! Decision CH44 rule 6: a failed claim retires the generation, and the
-//! caller cold-boots. A failed retire fails the start. This keeps CH19 (5),
+//! caller cold-boots. If the rename fails too, the start fails. The row
+//! names only the rename. The code also counts a retire whose sync of
+//! `snapshots/` fails as a failed rename. This keeps CH19 (5),
 //! a single use. The name `<n>.retired` is not in the CH39 rule 3 names.
 //! D13 removes a leftover one.
 
