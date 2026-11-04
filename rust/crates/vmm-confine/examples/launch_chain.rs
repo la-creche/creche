@@ -1,4 +1,4 @@
-//! A stand-in for the vmm in the launch tests and the Hyperion spike. The
+//! A stand-in for the vmm in the launch tests and the host spike. The
 //! first argument picks the role:
 //!
 //! - `launch` is the launch step, as in `vmm launch`.
