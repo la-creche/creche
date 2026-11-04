@@ -1430,3 +1430,45 @@ fn a_refused_line_closes_the_control_link() {
     assert_eq!(test.stop_lines(), 0);
     assert!(test.stopped(0));
 }
+
+/// A start of the session under a stop finds its `Stopping` slot and gets
+/// `host_full` at once. It launches no second CH on the session disk
+/// (Known gaps 4).
+#[test]
+fn a_start_of_the_stopped_session_is_host_full() {
+    let test = Test::new("drop-same", |_| {});
+    *test.fake.guest.lock().unwrap() = Guest::Wedges;
+    assert_eq!(test.start(0), Ok(()));
+    let (stopped, started) = test
+        .runtime
+        .block_on(both(test.hook.stop(&test.rows[0].id), async {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            test.hook.start(&test.rows[0]).await.map(|_link| ())
+        }));
+    assert!(stopped.is_err());
+    assert_eq!(started, Err(StartFault::HostFull));
+    assert_eq!(test.launches(), 1);
+}
+
+/// A stop that finds the VM under an idle sleep waits for the retire. The
+/// take fails and the retire stop fails, so the VM goes back. The stop
+/// then fails too, and the VM still runs (decision CH50 rule 4).
+#[test]
+fn a_stop_during_a_sleep_waits_for_the_retire() {
+    let test = Test::new("drop-sleep", |_| {});
+    *test.fake.guest.lock().unwrap() = Guest::Wedges;
+    assert_eq!(test.start(0), Ok(()));
+    test.api.fail_take.store(true, Ordering::SeqCst);
+    let id = &test.rows[0].id;
+    let now = Instant::now() + PAST_IDLE;
+    let (slept, stopped) = test
+        .runtime
+        .block_on(both(test.hook.sleep_idle(now), async {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            test.hook.stop(id).await
+        }));
+    assert!(slept.is_empty());
+    assert!(stopped.is_err());
+    assert_eq!(test.stop_lines(), 1);
+    assert!(test.hook.running(id));
+}
