@@ -106,7 +106,20 @@ the same way, so an end that a restore dropped still arrives (fact 45).
 1. CONTRACT-QUESTION: no decision row sets the pause between two dials
    of a vsock guest port (`DIAL_PAUSE` in `src/control.rs`). Fact 74 saw
    `OK` 45 to 51 ms after the start of a restore. The reading is 10 ms.
-2. CONTRACT-QUESTION: after `ControlReady`, no message on the control
+2. CONTRACT-QUESTION: decision CH32 rule 3 asks for a cold boot only
+   when guest init closes the control link on a hello for another
+   session. No row decides whether a bad line, a timeout, a refused
+   `CONNECT`, a failed dial or a failed read or write before
+   `ControlReady` asks for one. The reading is the narrowest one:
+   `ControlError::needs_cold_boot` is true only for `Closed`. Each other
+   error ends the open with no cold boot, and the caller reports it.
+3. CONTRACT-QUESTION: fact 74 names only ENOENT and an empty reply as
+   the dial errors that the vmm retries. No row says whether it retries
+   on ECONNREFUSED. A socket file exists from `bind` on, and a connect
+   gets ECONNREFUSED until Cloud Hypervisor calls `listen`. The reading:
+   `dial` in `src/control.rs` retries ECONNREFUSED the same way as
+   ENOENT, inside `READY_WAIT`.
+4. CONTRACT-QUESTION: after `ControlReady`, no message on the control
    link reports a change of the facade state. A turn event shows that the
    facade runs (decision CH32 rule 6), but it carries no pid and no start
    count, and an exit sends nothing. The reading: `ControlState::facade`

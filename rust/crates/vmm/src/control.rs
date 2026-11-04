@@ -67,6 +67,13 @@ pub enum ControlError {
 impl ControlError {
     /// Whether the VM needs a cold boot. A hello that guest init refuses
     /// is a fault of the VM (decision CH32 rule 3).
+    // CONTRACT-QUESTION: decision CH32 rule 3 asks for a cold boot only
+    // when guest init closes the link on a hello for another session. No
+    // row decides whether a bad line, a timeout, a refused `CONNECT`, a
+    // failed dial or a failed read or write before `ControlReady` asks for
+    // one. The reading is the narrowest one: only `Closed` asks for a cold
+    // boot. Each other error ends the open with no cold boot, and the
+    // caller reports it.
     #[must_use]
     pub fn needs_cold_boot(self) -> bool {
         self == Self::Closed
@@ -198,6 +205,17 @@ pub async fn open(
     session: &SessionId,
     clock: impl FnOnce() -> Result<UnixMillis, ControlError>,
 ) -> Result<(ControlLink, ControlReady), ControlError> {
+    open_within(vsock, session, clock, READY_WAIT).await
+}
+
+/// `open` with the bound `wait` in place of `READY_WAIT`, so a test can
+/// hold the bound with a short wait.
+async fn open_within(
+    vsock: &Path,
+    session: &SessionId,
+    clock: impl FnOnce() -> Result<UnixMillis, ControlError>,
+    wait: Duration,
+) -> Result<(ControlLink, ControlReady), ControlError> {
     let open = async {
         let mut link = dial(vsock, GuestPort::Control).await?;
         let hello = ControlHello {
@@ -208,20 +226,32 @@ pub async fn open(
         let ready = link.read::<ControlReady>().await?;
         Ok((link, ready))
     };
-    timeout(READY_WAIT, open)
+    timeout(wait, open)
         .await
         .unwrap_or(Err(ControlError::Timeout))
 }
 
 /// Dials `port` through the vsock socket of Cloud Hypervisor. It retries
 /// while the socket does not exist (ENOENT) and after an empty reply,
-/// because both come before the guest listener exists (fact 74).
+/// because both come before the guest listener exists (fact 74). It
+/// retries on ECONNREFUSED too.
+// CONTRACT-QUESTION: fact 74 names only ENOENT and an empty reply. No
+// row says whether the vmm retries on ECONNREFUSED. A socket file exists
+// from `bind` on, and a connect gets ECONNREFUSED until Cloud Hypervisor
+// calls `listen`. A socket file that a dead Cloud Hypervisor left behind
+// gets it too. The reading: retry it the same way as ENOENT. `READY_WAIT`
+// still bounds the open, so a stale socket ends as `Timeout`.
 async fn dial(vsock: &Path, port: GuestPort) -> Result<ControlLink, ControlError> {
     let connect = format!("CONNECT {}\n", port.number());
     loop {
         let stream = match UnixStream::connect(vsock).await {
             Ok(stream) => stream,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
+                ) =>
+            {
                 sleep(DIAL_PAUSE).await;
                 continue;
             }
@@ -396,5 +426,55 @@ impl ControlState {
     #[must_use]
     pub fn turn_running(&self, vm: &SessionId) -> bool {
         self.vms.get(vm).is_some_and(|control| control.turn_running)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixListener;
+    use std::thread::spawn;
+    use std::time::Duration;
+
+    use creche_wire::UnixMillis;
+    use tokio::runtime::Builder;
+
+    use super::{ControlError, open_within};
+
+    /// A guest that takes the hello and never answers ends the open at
+    /// the bound (decision CH36 G26).
+    #[test]
+    fn a_silent_guest_ends_the_open_at_the_bound() {
+        let dir = std::env::temp_dir().join(format!("creche-vmm-{}-silent", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("vsock.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let guest = spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut byte = [0_u8];
+            while stream.read(&mut byte).unwrap() == 1 && byte != *b"\n" {}
+            stream.write_all(b"OK 1073741824\n").unwrap();
+            // Read the hello, then stay silent until the vmm closes.
+            while matches!(stream.read(&mut byte), Ok(1)) {}
+        });
+
+        let runtime = Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .build()
+            .unwrap();
+        let session = "3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b".parse().unwrap();
+        let clock = || UnixMillis::try_from(1_793_577_600_000).map_err(|_| ControlError::Clock);
+        // The outer 1 s bound ends the test early when the inner bound is
+        // gone.
+        let open = async {
+            let wait = Duration::from_millis(50);
+            let open = open_within(&path, &session, clock, wait);
+            tokio::time::timeout(Duration::from_secs(1), open).await
+        };
+        let error = runtime.block_on(open).unwrap().map(|_| ()).unwrap_err();
+        assert_eq!(error, ControlError::Timeout);
+        guest.join().unwrap();
     }
 }
