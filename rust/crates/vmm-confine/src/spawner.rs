@@ -28,7 +28,8 @@ pub enum SpawnError {
     Stopped,
     /// The plan did not serialize.
     Plan(serde_json::Error),
-    /// The plan has more bytes than `PLAN_MAX`. The value is its size.
+    /// The plan has more bytes than `PLAN_MAX`, or more than the pipe
+    /// holds. The value is its size.
     TooLarge(usize),
     /// The plan pipe or the launch step did not start.
     Spawn(io::Error),
@@ -130,7 +131,15 @@ fn spawn(program: &Path, launch: Launch) -> Result<Child, SpawnError> {
     // The whole plan goes in the pipe and the write end closes before the
     // spawn. The step then finds the plan at once and reads to EOF.
     let (reader, mut writer) = io::pipe().map_err(SpawnError::Spawn)?;
-    writer.write_all(&bytes).map_err(SpawnError::Spawn)?;
+    // No reader exists yet, so a blocking write of a plan larger than the
+    // pipe would hang this thread and every later launch. The kernel may
+    // give a pipe less than `PLAN_MAX`, so the write must not block.
+    rustix::fs::fcntl_setfl(&writer, rustix::fs::OFlags::NONBLOCK)
+        .map_err(|errno| SpawnError::Spawn(errno.into()))?;
+    writer.write_all(&bytes).map_err(|error| match error.kind() {
+        io::ErrorKind::WouldBlock => SpawnError::TooLarge(bytes.len()),
+        _ => SpawnError::Spawn(error),
+    })?;
     drop(writer);
     Command::new(program)
         .arg(MODE)

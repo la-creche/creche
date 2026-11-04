@@ -21,7 +21,8 @@ table of the three vmm crates.
   fact 76). The vmm keeps its `Spawner` for its whole life. A drop ends
   the thread, and the kernel then kills every payload it started.
 - The launch step reads its plan only from a pipe that already holds it.
-  The spawner writes the whole plan, at most 64 KiB, before the spawn.
+  The spawner writes the whole plan, at most 64 KiB, before the spawn,
+  and never blocks on a full pipe.
 
 ## Known gaps
 
