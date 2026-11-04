@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# CI: builds, walks, packs and checks the archive of each binary component.
-#   ARTIFACT_REPO=creche ARTIFACT_OUT=<dir> bin/build-artifacts.sh
+# CI: builds, walks, packs and checks the archive of each planned binary component.
+#   ARTIFACT_REPO=creche ARTIFACT_PLANNED=<names> ARTIFACT_OUT=<dir> bin/build-artifacts.sh
 # The job `artifacts` of release.yml runs it on a GitHub runner. No hook and
 # no unit runs it. The host never runs it: root builds nothing.
 #
@@ -12,19 +12,27 @@
 # each line. This script holds no copy of a target, a name or a limit.
 #
 # Variables:
-#   ARTIFACT_REPO  the catalog name of the repository.
-#   ARTIFACT_OUT   the output directory. It is absent or empty.
-#   RELEASE_CLI    the `handover` command. Default: `uv run` against the
-#                  `handover` project beside this script.
+#   ARTIFACT_REPO     the catalog name of the repository.
+#   ARTIFACT_PLANNED  the components that get a tag in this run, one word
+#                     each, from the job `plan` of release.yml. The script
+#                     builds only the rows of these components. Unset or
+#                     empty: no component is planned.
+#   ARTIFACT_OUT      the output directory. It is absent or empty.
+#   RELEASE_CLI       the `handover` command. Default: `uv run` against the
+#                     `handover` project beside this script.
 #   GITHUB_WORKSPACE, RUNNER_TEMP, HOME, GITHUB_OUTPUT: a runner sets them.
-#   CARGO_HOME     the cargo home. Default: $HOME/.cargo.
+#   CARGO_HOME        the cargo home. Default: $HOME/.cargo.
 # Each path of a variable is absolute: the script changes its directory.
 #
-# With no row the script starts no rustup and no cargo. It writes an empty
-# SHA256SUMS and an empty step output `digests`.
+# Each planned component must have a row. A planned name with no row stops
+# the run: the plan and the catalog do not agree.
 #
-# With a row or more it installs the toolchain of rust/rust-toolchain.toml
-# and adds the target of each row. Then, for each row:
+# With no planned row the script starts no rustup and no cargo. It writes an
+# empty SHA256SUMS and an empty step output `digests`.
+#
+# With a planned row or more it installs the toolchain of
+# rust/rust-toolchain.toml and adds the target of each planned row. Then,
+# for each planned row:
 #   1. It runs each command of the row in the repository root, as a list of
 #      words. The install variable of the row names an empty tree. The
 #      remap flags replace the three paths of the runner in each program.
@@ -104,9 +112,10 @@ TOOLCHAIN=""
 REMAP_FLAGS=""
 
 # install_toolchain: the toolchain of rust/rust-toolchain.toml, and the
-# target of each row for it. rustup reads the toolchain file only in rust/.
+# target of each planned row for it. rustup reads the toolchain file only in
+# rust/.
 install_toolchain() {
-  local active row other seen
+  local active at row other seen
 
   cd "$WORKSPACE/$RUST_DIR" || die "the checkout has no $RUST_DIR directory"
   rustup toolchain install --no-self-update < /dev/null || die "rustup did not install the toolchain"
@@ -115,10 +124,11 @@ install_toolchain() {
   [[ -n "$TOOLCHAIN" ]] || die "rustup named no active toolchain"
   say "toolchain: $TOOLCHAIN"
 
-  for ((row = 0; row < ${#ROW_TARGET[@]}; row++)); do
+  for ((at = 0; at < ${#SELECTED[@]}; at++)); do
+    row="${SELECTED[$at]}"
     seen=no
-    for ((other = 0; other < row; other++)); do
-      if [[ "${ROW_TARGET[$other]}" == "${ROW_TARGET[$row]}" ]]; then
+    for ((other = 0; other < at; other++)); do
+      if [[ "${ROW_TARGET[${SELECTED[$other]}]}" == "${ROW_TARGET[$row]}" ]]; then
         seen=yes
       fi
     done
@@ -235,6 +245,19 @@ build_row() {
   say "$archive: ${#MEMBERS[@]} programs, $UNPACKED bytes in the tree, $size bytes packed"
 }
 
+# is_planned COMPONENT: status 0 when ARTIFACT_PLANNED names COMPONENT.
+is_planned() {
+  local at
+
+  for ((at = 0; at < ${#PLANNED[@]}; at++)); do
+    if [[ "${PLANNED[$at]}" == "$1" ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 # write_digests TEXT: SHA256SUMS and the step output, each with TEXT.
 write_digests() {
   if [[ -n "$1" ]]; then
@@ -291,8 +314,35 @@ for ((ROW = 0; ROW < ${#ROW_ARCHIVE[@]}; ROW++)); do
     die "the archive of ${ROW_COMPONENT[$ROW]} has the name of the digest file"
 done
 
+# The planned components. `read -a` splits at each space and expands no
+# pattern. Each planned name must name a row.
+PLANNED=()
+read -r -a PLANNED <<< "${ARTIFACT_PLANNED:-}" || die "cannot read ARTIFACT_PLANNED"
+for ((AT = 0; AT < ${#PLANNED[@]}; AT++)); do
+  FOUND=no
+  for ((ROW = 0; ROW < ${#ROW_COMPONENT[@]}; ROW++)); do
+    if [[ "${ROW_COMPONENT[$ROW]}" == "${PLANNED[$AT]}" ]]; then
+      FOUND=yes
+    fi
+  done
+  [[ "$FOUND" == yes ]] || die "the planned component ${PLANNED[$AT]} has no row"
+done
+
+#: The rows to build: each planned row, in the order of the rows.
+SELECTED=()
+for ((ROW = 0; ROW < ${#ROW_COMPONENT[@]}; ROW++)); do
+  if is_planned "${ROW_COMPONENT[$ROW]}"; then
+    SELECTED+=("$ROW")
+  fi
+done
+
 if [[ "${#ROW_COMPONENT[@]}" -eq 0 ]]; then
   say "no binary component"
+  write_digests ""
+  exit 0
+fi
+if [[ "${#SELECTED[@]}" -eq 0 ]]; then
+  say "no planned binary component"
   write_digests ""
   exit 0
 fi
@@ -309,9 +359,9 @@ install_toolchain
 WORK="$(mktemp -d "$RUNNER_TEMP/build-artifacts.XXXXXX")" || die "cannot make a work directory"
 
 NAMES=()
-for ((ROW = 0; ROW < ${#ROW_COMPONENT[@]}; ROW++)); do
-  build_row "$ROW"
-  NAMES+=("${ROW_ARCHIVE[$ROW]}")
+for ((AT = 0; AT < ${#SELECTED[@]}; AT++)); do
+  build_row "${SELECTED[$AT]}"
+  NAMES+=("${ROW_ARCHIVE[${SELECTED[$AT]}]}")
 done
 
 SUMS="$(cd -- "$OUT" && sha256sum -- "${NAMES[@]}")" || die "sha256sum did not read an archive"
