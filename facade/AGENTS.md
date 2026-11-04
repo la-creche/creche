@@ -66,6 +66,12 @@ variable. The agent's store and the facade's `creche_sessions` share
 `$AGENT_SESSIONS_DIR/flue.db`. Flue starts only after the facade holds the
 lock.
 
+Before each `session/prompt`, the facade pulls the family state from the
+mounts into the agent (`src/turns.ts`, decision CH5a). A rotated key or
+token and an edited config reach that prompt. When `creds.json` does not
+read, the prompt fails and the facade serves on. When `config/` does not
+read, the last good config stays, with one stderr line.
+
 The workspace of the granted sandbox tools is
 `$AGENT_SESSIONS_DIR/workspace`: the one writable mount for the agent's
 files, with `flue.db` kept out of the listing that Flue puts in the prompt.
