@@ -31,21 +31,8 @@ The root `AGENTS.md` applies here too.
 - A library returns a typed error. Only `src/main.rs` turns an error into
   an exit status.
 - A crate exposes `pub` items only for the crates that list it in their
-  row. This rule is the reading of the open gap G24 (Known gaps).
+  row (decision CH36, gap G24 of the phase 2 plan).
 
 ## Known gaps
 
-- G24, `pub` items across the three vmm crates. The root `AGENTS.md` says
-  to ask before a change widens visibility. The owner has not answered
-  yet. This reading: `creche-vmm-store` and `creche-vmm-confine` expose
-  `pub` items, and `creche-vmm` is a library with `pub` items. The other
-  reading is one crate with private items, so the tracks share files. A
-  change costs a merge of the three crates (`src/lib.rs`). Remove this
-  entry when the owner answers.
-- G21, the flavor of the tokio runtime. Decision CH26 names only the
-  builder. The owner has not answered yet. This reading: `vmm serve` runs
-  on the multi-thread runtime, and blocking work goes to `spawn_blocking`.
-  The other reading is the current-thread runtime plus dedicated threads.
-  A change costs the builder in `src/main.rs`, the tokio feature list in
-  `rust/Cargo.toml` and a thread for each blocking job. Remove this entry
-  when the owner answers.
+None.
