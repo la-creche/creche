@@ -1,8 +1,9 @@
 //! The `acp` Upgrade route (decisions CH20, CH21-7). It admits or refuses
 //! an Upgrade before 101 in the order of decision CH34 rule 7: the
 //! session (`not_found`, then `busy`), then the start of the VM (admission,
-//! start, the first `ControlReady`). Every refusal is a typed reply
-//! before 101 (decisions CH21-9, CH33 rule 6).
+//! start, the first `ControlReady`, the dial of guest port 1201). Every
+//! refusal is a typed reply before 101 (decisions CH21-9, CH33 rule 6,
+//! CH50 rule 2).
 
 use std::future::Future;
 use std::sync::{Arc, Mutex};
@@ -10,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use creche_vmm_store::rows::Rows;
 use creche_wire::{AcpError, AcpRoute, OpenAcp, ServeUpgrade, SessionRow};
 
-use crate::relay::{AcpRelay, Relays, Taken};
+use crate::relay::{AcpLink, AcpRelay, Relays, Taken};
 
 /// Why a VM did not start. Each is a code of `AcpError` before 101.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,19 +40,24 @@ impl StartFault {
     }
 }
 
-/// The start of the VM of a session: admission, the boot or restore, and
-/// the wait for the first `ControlReady`. Plan PR L16 adds the hook of
-/// the vmm. The tests fake it.
+/// The start of the VM of a session: admission, the boot or restore, the
+/// wait for the first `ControlReady`, and the dial of guest port 1201.
+/// Plan PR L16 adds the hook of the vmm. The tests fake it.
 pub trait StartVm: Send + Sync + 'static {
     /// Starts the VM that serves `row`, or returns at once when it runs.
     /// `Ok` means the VM sent its first `ControlReady`, whatever facade
     /// state it reports (decision CH34 rule 7). The hook keeps that state
-    /// in `ControlState` (decision CH43 rule 8).
+    /// in `ControlState` (decision CH43 rule 8). Then the hook dials guest
+    /// port 1201 with `AcpLink::dial`, and `Ok` holds that link. The
+    /// relay copies its bytes after 101 (decision CH50 rule 2).
     ///
     /// The wait for `ControlReady` is `control::READY_WAIT` (decision
     /// CH36 G26: 10 s). `control::open` holds that bound. Past it the
-    /// hook returns `SandboxStartFailed`. The hook also writes each fault
-    /// to the fault file (decision CH21-1).
+    /// hook returns `SandboxStartFailed`. A failed dial of 1201 returns
+    /// `SandboxStartFailed` too, so the client gets a typed code before
+    /// 101 (decisions CH33 rule 6, CH50 rule 2). The hook of plan PR L16
+    /// writes each fault to the fault file, a failed dial included
+    /// (decision CH21-1). The handler writes no fault.
     ///
     /// # Errors
     ///
@@ -64,7 +70,7 @@ pub trait StartVm: Send + Sync + 'static {
     // evict several VMs in series, so the bound of the start grows with
     // the evictions. Plan PR L17 names the timeout of one eviction's
     // snapshot.
-    fn start(&self, row: &SessionRow) -> impl Future<Output = Result<(), StartFault>> + Send;
+    fn start(&self, row: &SessionRow) -> impl Future<Output = Result<AcpLink, StartFault>> + Send;
 }
 
 /// The handler of `acp`. It shares the rows and the relay registry with
@@ -119,12 +125,15 @@ impl<S: StartVm> ServeUpgrade<AcpRoute> for Acp<S> {
         // that ended between the first read and the claim left no row, and
         // this second read gives `not_found`, never a VM.
         let row = self.row(&request)?;
-        self.start.start(&row).await.map_err(StartFault::error)?;
-        // A drop that began during the start stopped the claim. The
-        // Upgrade then gets `not_found` (decision CH34 rule 6).
+        let started = self.start.start(&row).await;
+        // A drop that began during the start or the dial stopped the
+        // claim. The Upgrade then gets `not_found` (decision CH34 rule 6),
+        // even when the drop made the dial fail. A dialed link drops
+        // here, so the guest end closes.
         if claim.stopped() {
             return Err(AcpError::NotFound {});
         }
-        Ok(AcpRelay::new(claim))
+        let link = started.map_err(StartFault::error)?;
+        Ok(AcpRelay::new(claim, link))
     }
 }

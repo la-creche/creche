@@ -374,8 +374,12 @@ fn read_key(path: &Path) -> Result<Option<KeyFile>, KeyError> {
 }
 
 /// Removes the key file first, so a crash during the remove leaves a dir
-/// that the next check drops again. Then removes the dir.
-fn remove_generation(session: &SessionDir, generation: SnapshotGeneration) -> Result<(), KeyError> {
+/// that the next check drops again. Then removes the dir. Retention (PR
+/// D13) removes each generation with it too.
+pub(crate) fn remove_generation(
+    session: &SessionDir,
+    generation: SnapshotGeneration,
+) -> Result<(), KeyError> {
     let key = session.snapshot_key(generation);
     if fs::symlink_metadata(&key).is_ok_and(|meta| !meta.is_dir()) {
         fs::remove_file(&key).map_err(io_at(&key))?;

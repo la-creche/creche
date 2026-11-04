@@ -38,6 +38,16 @@ The second file has the table of the three vmm crates.
   `snapshots/` fails) as a failed rename too. D13 removes a leftover
   `<n>.retired`. CH39 rule 3 does not name it.
 
+- Decisions CH2, CH8-7, CH36 G13, CH44 rule 6 and CH50 rules 7 and 8
+  (PR D13, `retention.rs`): `sweep` removes leftover `<n>.retired` dirs,
+  every generation but the newest of a session, the newest one when a
+  claim consumed it, the newest one past `MAX_AGE` (7 days from the
+  take, the mtime of `memory-ranges`), and then the oldest first while
+  the allocated bytes (`st_blocks`) pass the budget. It never removes a
+  session disk or a generation in use. It never removes a generation
+  while an older one of the session stays, so an older one never becomes
+  the newest.
+
 ## Known gaps
 
 - Caller duty (PR D9, `snapshot.rs`): section 4 item 5.7 asks for a
@@ -77,3 +87,11 @@ The second file has the table of the three vmm crates.
   `admission::Gate::Idle`. Admission snapshots an idle VM sooner than
   `IDLE_TIMEOUT` (decision CH8-6), and the doc of `Gate::Idle` says
   "may sleep now". L17 maps the two.
+- Caller duties (PR D13, `retention.rs`), for lifecycle (L18): (a) name
+  in `InUse` each generation that a VM restores from, from the key check
+  of its start until its Cloud Hypervisor ends (fact 55, decision CH50
+  rule 8). The key check comes before the claim. A sweep drops a
+  consumed newest generation that is not in `InUse`, so a miss here can
+  remove the files of a restore that is starting. (b) pass the budget
+  from the vmm config. L20 reads it from an env key with `BUDGET` as the
+  default (CH36 G14).
