@@ -94,10 +94,23 @@ impl StateRoot {
     // rename costs a cold boot of every VM (plan risk 8) and an edit of the
     // confine rules that name these paths.
 
+    /// The directory of every session row file (PR D2).
+    #[must_use]
+    pub fn rows_dir(&self) -> PathBuf {
+        self.0.join("rows")
+    }
+
     /// The file of the session row of `id` (PR D2).
     #[must_use]
     pub fn row_file(&self, id: &SessionId) -> PathBuf {
-        self.0.join("rows").join(format!("{id}.json"))
+        self.rows_dir().join(format!("{id}.json"))
+    }
+
+    /// The temp file that a write of the row of `id` renames over the row
+    /// file (PR D2). A crash can leave it, and a load skips it.
+    #[must_use]
+    pub fn row_temp_file(&self, id: &SessionId) -> PathBuf {
+        self.rows_dir().join(format!("{id}.json.tmp"))
     }
 
     /// The directory of the session disk and the snapshots of `id`.

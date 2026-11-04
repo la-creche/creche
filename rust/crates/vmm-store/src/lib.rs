@@ -7,4 +7,5 @@
 //! calls `creche-vmm-confine` or `creche-vmm`.
 
 pub mod layout;
+pub mod rows;
 pub mod stale;
