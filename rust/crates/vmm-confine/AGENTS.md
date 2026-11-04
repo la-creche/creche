@@ -39,7 +39,9 @@ table of the three vmm crates.
   launch. All Landlock calls sit behind `cfg(target_os = "linux")`
   (decision CH38).
 - `deny::check` is the proof of deny-by-default (decision CH6-3). The
-  CH command line has no `--net` argument. A boot has exactly one
+  first argument of the command line is the payload program, so a pid
+  that still runs the launch step or `systemd-run`, or a CH zombie, fails
+  with `NotCh`. The CH command line has no `--net` argument. A boot has exactly one
   `--vsock` and a restore none, because CH takes the devices of a restore
   from the snapshot. The run dir holds exactly the `vsock.sock_<port>`
   listeners of the host ports that the vmm bound for the family. Any
