@@ -92,6 +92,27 @@ fn the_dial_waits_for_the_socket_and_sends_the_exact_hello() {
 }
 
 #[test]
+fn the_dial_retries_a_refused_connect() {
+    let path = socket("control-refused-connect").unwrap();
+    // A socket file with no listener behind it, as before Cloud Hypervisor
+    // calls `listen`: a connect gets ECONNREFUSED.
+    drop(UnixListener::bind(&path).unwrap());
+    let guest = spawn({
+        let path = path.clone();
+        move || {
+            sleep(Duration::from_millis(100));
+            std::fs::remove_file(&path)?;
+            let listener = UnixListener::bind(&path)?;
+            play(listener.accept()?.0, format!("{READY}\n").as_bytes())
+        }
+    });
+
+    let session = SESSION.parse().unwrap();
+    assert_eq!(open_on(&path, &session).unwrap(), Ok(ready(READY).unwrap()));
+    guest.join().unwrap().unwrap();
+}
+
+#[test]
 fn the_dial_retries_after_an_empty_reply() {
     let path = socket("control-empty").unwrap();
     let listener = UnixListener::bind(&path).unwrap();

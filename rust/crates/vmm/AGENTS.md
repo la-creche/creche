@@ -102,3 +102,9 @@ because it never stops the facade (decision CH19 (1)).
    `ControlReady` asks for one. The reading is the narrowest one:
    `ControlError::needs_cold_boot` is true only for `Closed`. Each other
    error ends the open with no cold boot, and the caller reports it.
+3. CONTRACT-QUESTION: fact 74 names only ENOENT and an empty reply as
+   the dial errors that the vmm retries. No row says whether it retries
+   on ECONNREFUSED. A socket file exists from `bind` on, and a connect
+   gets ECONNREFUSED until Cloud Hypervisor calls `listen`. The reading:
+   `dial` in `src/control.rs` retries ECONNREFUSED the same way as
+   ENOENT, inside `READY_WAIT`.

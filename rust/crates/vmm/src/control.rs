@@ -195,13 +195,25 @@ pub async fn open(
 
 /// Dials `port` through the vsock socket of Cloud Hypervisor. It retries
 /// while the socket does not exist (ENOENT) and after an empty reply,
-/// because both come before the guest listener exists (fact 74).
+/// because both come before the guest listener exists (fact 74). It
+/// retries on ECONNREFUSED too.
+// CONTRACT-QUESTION: fact 74 names only ENOENT and an empty reply. No
+// row says whether the vmm retries on ECONNREFUSED. A socket file exists
+// from `bind` on, and a connect gets ECONNREFUSED until Cloud Hypervisor
+// calls `listen`. A socket file that a dead Cloud Hypervisor left behind
+// gets it too. The reading: retry it the same way as ENOENT. `READY_WAIT`
+// still bounds the open, so a stale socket ends as `Timeout`.
 async fn dial(vsock: &Path, port: GuestPort) -> Result<ControlLink, ControlError> {
     let connect = format!("CONNECT {}\n", port.number());
     loop {
         let stream = match UnixStream::connect(vsock).await {
             Ok(stream) => stream,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
+                ) =>
+            {
                 sleep(DIAL_PAUSE).await;
                 continue;
             }
