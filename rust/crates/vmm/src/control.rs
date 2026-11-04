@@ -56,6 +56,10 @@ pub enum ControlError {
     /// the hello names another session than the VM serves (decision CH32
     /// rule 3).
     Closed,
+    /// Guest init closed the link at a line end after `ControlReady`. A
+    /// power-off after `stop` ends a link so, and so does a restore that
+    /// replaced the link (fact 74). It asks for no cold boot.
+    Ended,
     /// A line broke the framing or is not the type that the link expects.
     /// The vmm closes the link (`wire/AGENTS.md`, rule 6 of "The vsock
     /// JSON links").
@@ -138,10 +142,13 @@ impl ControlLink {
     ///
     /// # Errors
     ///
-    /// `Closed` when guest init closed the link at a line end. `Line` for
+    /// `Ended` when guest init closed the link at a line end. `Line` for
     /// a line that is not a `TurnEvent`. The caller then closes the link.
     pub async fn event(&mut self) -> Result<TurnEvent, ControlError> {
-        self.read().await
+        self.read().await.map_err(|error| match error {
+            ControlError::Closed => ControlError::Ended,
+            error => error,
+        })
     }
 
     /// Sends the graceful stop: guest init stops the facade, syncs and

@@ -340,8 +340,10 @@ fn turn_events_keep_the_first_title_and_move_updated_at() {
         }
     });
 
-    // Guest init closed the link after the last event.
-    assert_eq!(end, ControlError::Closed);
+    // Guest init closed the link after the last event. A close after
+    // ControlReady asks for no cold boot (decision CH32 rule 3).
+    assert_eq!(end, ControlError::Ended);
+    assert!(!end.needs_cold_boot());
     let first = (serde_json::json!("First"), serde_json::json!(2000));
     let later = (serde_json::json!("First"), serde_json::json!(3000));
     let untitled = (serde_json::Value::Null, serde_json::json!(1000));
