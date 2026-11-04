@@ -64,8 +64,12 @@ fn dispatch(args: &[OsString]) -> ExitCode {
 fn serve() -> ExitCode {
     // The multi-thread runtime (decision CH36, gap G21), so one stray
     // blocking call cannot stall every relay. The server needs the IO
-    // driver for its socket.
-    let runtime = match Builder::new_multi_thread().enable_io().build() {
+    // driver for its socket and the time driver for its timeouts.
+    let runtime = match Builder::new_multi_thread()
+        .enable_io()
+        .enable_time()
+        .build()
+    {
         Ok(runtime) => runtime,
         Err(error) => return refuse(&error),
     };
