@@ -4,18 +4,22 @@
 //! and session dirs, so a test sees each file that a drop leaves.
 
 use std::collections::HashSet;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::fs::{Permissions, set_permissions};
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, mpsc};
 use std::task::Poll;
 use std::time::Duration;
 
 use creche_vmm::handlers::acp::{Acp, StartFault, StartVm};
 use creche_vmm::handlers::drop::{Drops, StopVm, VmStopFailed};
-use creche_vmm::relay::{AcpLink, Relays};
+use creche_vmm::relay::{AcpLink, Relays, Taken};
 use creche_vmm::stop::StopError;
 use creche_vmm_store::layout::StateRoot;
 use creche_vmm_store::rows::Rows;
-use creche_wire::{AcpError, DropError, DropRoute, Dropped, Serve, ServeUpgrade as _, SessionId};
+use creche_wire::{
+    AcpError, DropError, DropRoute, Dropped, OpenAcp, Serve, ServeUpgrade as _, SessionId,
+};
 use tokio::runtime::Builder;
 use tokio::time::{Instant, sleep};
 
@@ -90,6 +94,7 @@ mod fake {
         pub(super) hook: Hook,
         pub(super) root: StateRoot,
         pub(super) rows: Arc<Mutex<Rows>>,
+        pub(super) relays: Relays,
         pub(super) drops: Drops<Hook>,
         pub(super) acp: Acp<Hook>,
     }
@@ -114,7 +119,8 @@ mod fake {
             let rows = Arc::new(Mutex::new(rows));
             Self {
                 drops: Drops::new(rows.clone(), relays.clone(), hook.clone()),
-                acp: Acp::new(rows.clone(), relays, hook.clone()),
+                acp: Acp::new(rows.clone(), relays.clone(), hook.clone()),
+                relays,
                 hook,
                 root,
                 rows,
@@ -180,9 +186,18 @@ mod fake {
     pub(super) fn target(json: &str) -> creche_wire::DropTarget {
         serde_json::from_str(json).unwrap()
     }
+
+    /// The `acp` request of session `id` of `chat`.
+    pub(super) fn open(id: &str) -> OpenAcp {
+        serde_json::from_str(&format!(r#"{{"family":"chat","id":"{id}"}}"#)).unwrap()
+    }
+
+    pub(super) fn set_mode(path: &Path, mode: u32) {
+        set_permissions(path, Permissions::from_mode(mode)).unwrap();
+    }
 }
 
-use fake::{Setup, both, run, target};
+use fake::{Setup, both, open, run, set_mode, target};
 
 /// A family drop stops each VM of the family at once, within 35 s, and
 /// leaves no file of the family. The other family keeps its session
@@ -302,4 +317,129 @@ fn a_drop_stops_the_vm_of_an_overlapped_start() {
     assert_eq!(vms.stops.len(), 1);
     assert!(vms.stops[0].1, "the stop came after the boot");
     assert!(vms.running.is_empty());
+}
+
+/// Two drops of one session overlap a start. The second mark carries the
+/// wait for the claim, so both stops come after the boot. One drop removes
+/// the row and answers `Dropped`. The other finds no row and answers
+/// `not_found` (decision CH33 rule 4). An Upgrade at the end of the stops
+/// gets `not_found` with no start: the marks last until the row is gone
+/// (decision CH34 rule 6).
+#[test]
+fn two_overlapping_drops_both_wait_for_the_start() {
+    let setup = Setup::new("twice", &[("chat", A)]);
+    {
+        let mut vms = setup.hook.0.lock().unwrap();
+        vms.boot = Duration::from_secs(5);
+        vms.wait = Duration::from_secs(1);
+    }
+    let chat = format!(r#"{{"session":{{"family":"chat","id":"{A}"}}}}"#);
+    let (drops, acp, chat) = (&setup.drops, &setup.acp, &chat);
+    let drop_at = |at: u64| async move {
+        sleep(Duration::from_secs(at)).await;
+        Serve::<DropRoute>::serve(drops, target(chat)).await
+    };
+    let admit_at = |at: u64| async move {
+        sleep(Duration::from_secs(at)).await;
+        acp.admit(open(A)).await.map(|_| ())
+    };
+    let (begun, ((first, one), (two, last))) = run(async {
+        let begun = Instant::now();
+        let ends = both(
+            both(admit_at(0), drop_at(1)),
+            // The stops end at 6 s, and this Upgrade comes in that tick.
+            both(drop_at(2), admit_at(6)),
+        );
+        (begun, ends.await)
+    });
+    assert_eq!(first, Err(AcpError::NotFound {}));
+    assert_eq!(last, Err(AcpError::NotFound {}));
+    let answers = [one, two];
+    assert!(answers.contains(&Ok(Dropped {})), "{answers:?}");
+    assert!(
+        answers.contains(&Err(DropError::NotFound {})),
+        "{answers:?}"
+    );
+    let vms = setup.hook.0.lock().unwrap();
+    assert_eq!(vms.starts, 1);
+    assert_eq!(vms.stops.len(), 2);
+    let booted = begun + Duration::from_secs(5);
+    assert!(
+        vms.stops.iter().all(|(_, _, at)| *at >= booted),
+        "{:?}",
+        vms.stops
+    );
+    assert!(setup.files().is_empty());
+}
+
+/// A family drop with one hung VM removes the other sessions and keeps
+/// only the hung one, with its row and files (decision CH50 rule 4). A
+/// retry after that VM ends finishes the drop.
+#[test]
+fn a_family_drop_with_a_hung_vm_keeps_only_that_session() {
+    let setup = Setup::new("partial", &[("chat", A), ("chat", B), ("chat", C)]);
+    setup.hook.0.lock().unwrap().hung = Some(B.parse().unwrap());
+    let family = || target(r#"{"family":{"family":"chat"}}"#);
+    let drop = || run(Serve::<DropRoute>::serve(&setup.drops, family()));
+    assert_eq!(drop(), Err(DropError::Internal {}));
+    assert!(setup.has_row(B) && !setup.has_row(A) && !setup.has_row(C));
+    assert_eq!(setup.files(), [B.to_owned(), format!("{B}.json")]);
+    setup.hook.0.lock().unwrap().hung = None;
+    assert_eq!(drop(), Ok(Dropped {}));
+    assert!(setup.files().is_empty());
+}
+
+/// A removal that fails answers `internal` and keeps the row (PR D14). A
+/// session dir with mode 0500 keeps its disk. A retry after the mode is
+/// back finishes the drop.
+#[test]
+fn a_failed_removal_keeps_the_row() {
+    let setup = Setup::new("removal", &[("chat", A)]);
+    let session = setup.root.session(&A.parse().unwrap());
+    let chat = format!(r#"{{"session":{{"family":"chat","id":"{A}"}}}}"#);
+    let drop = || run(Serve::<DropRoute>::serve(&setup.drops, target(&chat)));
+    set_mode(session.path(), 0o500);
+    assert_eq!(drop(), Err(DropError::Internal {}));
+    assert!(setup.has_row(A));
+    set_mode(session.path(), 0o700);
+    assert_eq!(drop(), Ok(Dropped {}));
+    assert!(setup.files().is_empty());
+}
+
+/// The marks last until the row is gone. While the removal waits for the
+/// lock of the rows, a claim of the session is refused (decision CH34
+/// rule 6). The test runs on real time: paused time does not advance
+/// while the removal blocks in `spawn_blocking`.
+#[test]
+fn the_marks_last_until_the_row_is_gone() {
+    let setup = Setup::new("marks", &[("chat", A)]);
+    setup.hook.0.lock().unwrap().wait = Duration::from_millis(50);
+    let chat = format!(r#"{{"session":{{"family":"chat","id":"{A}"}}}}"#);
+    let (lock, locked, free) = (mpsc::channel(), mpsc::channel(), mpsc::channel());
+    let rows = Arc::clone(&setup.rows);
+    let holder = std::thread::spawn(move || {
+        lock.1.recv().unwrap();
+        let _rows = rows.lock().unwrap();
+        locked.0.send(()).unwrap();
+        free.1.recv().unwrap();
+    });
+    let runtime = Builder::new_current_thread().enable_time().build().unwrap();
+    let (dropped, claimed) = runtime.block_on(both(
+        Serve::<DropRoute>::serve(&setup.drops, target(&chat)),
+        async {
+            // The drop read its rows and waits for its stop.
+            sleep(Duration::from_millis(10)).await;
+            lock.0.send(()).unwrap();
+            locked.1.recv().unwrap();
+            // The stop ended at 50 ms, and the removal waits for the rows.
+            sleep(Duration::from_millis(100)).await;
+            let claimed = setup.relays.claim(&A.parse().unwrap()).map(|_| ());
+            free.0.send(()).unwrap();
+            claimed
+        },
+    ));
+    holder.join().unwrap();
+    assert_eq!(claimed, Err(Taken::Dropping));
+    assert_eq!(dropped, Ok(Dropped {}));
+    assert!(setup.files().is_empty());
 }
