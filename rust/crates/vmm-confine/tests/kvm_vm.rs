@@ -182,7 +182,13 @@ impl Setup {
         // The real run root of decision CH20, as in `kvm_apparmor.rs`.
         let run = RunRoot::new(PathBuf::from(format!("/run/user/{uid}/vmm"))).unwrap();
         let vm = run.vm(&id);
-        let _ = fs::remove_dir_all(vm.path());
+        // A live vmm may own a VM dir under the real run root, so the test
+        // stops at one it did not make, and a drop removes only its own.
+        assert!(
+            fs::symlink_metadata(vm.path()).is_err(),
+            "{} exists: a vmm may be live, so the test stops",
+            vm.path().display()
+        );
         fs::create_dir_all(vm.path()).unwrap();
         let work = files.join(format!("kvm-vm-{}", std::process::id()));
         let _ = fs::remove_dir_all(&work);
