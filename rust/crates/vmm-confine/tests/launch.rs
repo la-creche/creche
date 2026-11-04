@@ -1,8 +1,11 @@
 //! The launch chain without systemd (decision CH19 (4), fact 76). The
 //! example `launch_chain` plays the vmm, the launch step and a fake
 //! `systemd-run`, so each payload runs after three execs: the launch step,
-//! the fake `systemd-run` and `/bin/sleep`.
+//! the fake `systemd-run` and `/bin/sleep`. The Landlock ruleset of the VM
+//! is in force from the second exec on.
 #![cfg(target_os = "linux")]
+
+mod common;
 
 use std::io::{self, BufRead, BufReader, Write};
 use std::num::{NonZeroU32, NonZeroU64};
@@ -16,22 +19,16 @@ use creche_vmm_confine::launch::{Launch, Payload, Program};
 use creche_vmm_confine::scope::Scope;
 use creche_vmm_confine::spawner::{Launched, Spawner};
 
+use common::{TempVm, example};
+
 const ID: &str = "0123abcd-0000-4000-8000-00000000c2c2";
 const SLEEP: &str = "/bin/sleep";
 
 // Each helper with `cfg(test)` may unwrap (rust/clippy.toml).
 
-/// The example binary. Cargo builds it next to the test's `deps` dir.
-#[cfg(test)]
-fn example() -> PathBuf {
-    let exe = std::env::current_exe().unwrap();
-    let debug = exe.parent().and_then(|deps| deps.parent()).unwrap();
-    debug.join("examples").join("launch_chain")
-}
-
 /// A launch of `sleep 60` through the fake `systemd-run`.
 #[cfg(test)]
-fn launch() -> Launch {
+fn launch(vm: &TempVm) -> Launch {
     let scope = Scope::new(
         ID.parse().unwrap(),
         NonZeroU64::new(1 << 30).unwrap(),
@@ -41,7 +38,8 @@ fn launch() -> Launch {
         Program::new(PathBuf::from(SLEEP)).unwrap(),
         vec!["60".to_owned()],
     );
-    Launch::new(Program::new(example()).unwrap(), scope, payload)
+    let systemd_run = Program::new(example()).unwrap();
+    Launch::new(systemd_run, scope, payload, vm.files.clone())
 }
 
 /// Whether `pid` runs and is not a zombie.
@@ -71,24 +69,30 @@ fn wait_for_payload(pid: u32) {
 }
 
 #[cfg(test)]
-fn launched(spawner: &Spawner) -> Launched {
-    let launched = spawner.launch(launch()).unwrap();
+fn launched(spawner: &Spawner, vm: &TempVm) -> Launched {
+    let launched = spawner.launch(launch(vm)).unwrap();
     wait_for_payload(launched.id());
     launched
 }
 
 #[test]
 fn the_payload_dies_with_the_spawner_thread() {
+    let vm = TempVm::new("thread", ID);
     let spawner = Spawner::start(example()).unwrap();
-    let mut payload = launched(&spawner);
+    let mut payload = launched(&spawner, &vm);
     drop(spawner);
     assert_eq!(payload.wait().unwrap().signal(), Some(9));
 }
 
 #[test]
 fn the_payload_dies_with_a_killed_vmm() {
+    let vm = TempVm::new("killed", ID);
     let mut vmm = Command::new(example())
-        .args(["spawn".as_ref(), example().as_os_str()])
+        .args([
+            "spawn".as_ref(),
+            example().as_os_str(),
+            vm.path().as_os_str(),
+        ])
         .args([ID, SLEEP, "60"])
         .stdout(Stdio::piped())
         .spawn()
@@ -107,8 +111,9 @@ fn the_payload_dies_with_a_killed_vmm() {
 
 #[test]
 fn terminate_sends_sigterm() {
+    let vm = TempVm::new("sigterm", ID);
     let spawner = Spawner::start(example()).unwrap();
-    let mut payload = launched(&spawner);
+    let mut payload = launched(&spawner, &vm);
     payload.terminate().unwrap();
     assert_eq!(payload.wait().unwrap().signal(), Some(15));
     payload.terminate().unwrap();
