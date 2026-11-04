@@ -22,7 +22,7 @@ from attendance.jobs import (
     JobStatus,
     job_timeout_s,
 )
-from attendance.paths import sandbox_sessions_mount
+from attendance.paths import SANDBOX_MOUNT_ENV, sandbox_sessions_mount
 from attendance.requests import DelegateRequest, read_delegate
 from attendance.workspace import owner_dir
 from attendance_harness import (
@@ -149,6 +149,22 @@ async def test_the_job_id_rides_on_session_new(tmp_path: Path) -> None:
     assert params["_meta"] == {meta_key("job"): body["session_id"]}
     assert params["cwd"] == sandbox_sessions_mount(harness.config.sessions_root, ORACLE)
     assert params["mcpServers"] == []
+    await harness.stop()
+
+
+@pytest.mark.parametrize("mount", ["sessions", "/" + "a" * 4096])
+async def test_a_cwd_that_the_wire_refuses_is_never_sent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mount: str
+) -> None:
+    """Decision CH21: `SessionCwd` is absolute, at most 4096 characters."""
+    monkeypatch.setenv(SANDBOX_MOUNT_ENV, mount)
+    harness = DelegateHarness(tmp_path)
+
+    with pytest.raises(ApiError) as refused:
+        await harness.delegate(harness.call())
+
+    assert refused.value.code is ErrorCode.INTERNAL
+    assert harness.facades.dials == []
     await harness.stop()
 
 

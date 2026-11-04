@@ -54,7 +54,14 @@ from .family_status import (
     served_kind,
 )
 from .faults import FaultCode, FaultReporter
-from .ids import SessionPrefix, is_sandbox, is_session, new_ulid
+from .ids import (
+    SESSION_CWD_MAX,
+    SessionPrefix,
+    is_sandbox,
+    is_session,
+    is_session_cwd,
+    new_ulid,
+)
 from .models import DEFAULT_DEADLINE_S, TriggerKind
 from .paths import outcome_file, sandbox_sessions_mount
 from .queueing import MAX_QUEUED_TURNS, JobQueue
@@ -274,8 +281,8 @@ class SessionService:
         if not is_session(session):
             raise ApiError(ErrorCode.BAD_REQUEST, "not a session id", family=family)
 
+        cwd = self._session_cwd(family, None, None)
         relay = await self._start_relay(family, self._status.require(family))
-        cwd = sandbox_sessions_mount(self._config.sessions_root, family)
 
         try:
             return await acp_view.load_transcript(relay, family, session, cwd, page)
@@ -320,13 +327,14 @@ class SessionService:
         check_may_serve(status)
 
         owner = request.claimed_session_id
+        cwd = self._session_cwd(family, status.caller_root, owner)
         self._prepare_work_dir(status.caller_root, owner)
         link = await self._acp_link_for(family, status)
         job = jobs.new_job_session()
         delegation = {"id": request.delegation_id, "caller_session": owner}
         plan = JobPlan(
             job=job,
-            cwd=self._job_cwd(family, status.caller_root, owner),
+            cwd=cwd,
             message=request.message,
             deadline_s=jobs.job_timeout_s(status.job_timeout_s),
             prompt_meta={META_DELEGATION: delegation},
@@ -334,17 +342,30 @@ class SessionService:
         )
         return jobs.answer(job, await run_job(link, plan))
 
-    def _job_cwd(self, family: str, caller_root: Path | None, owner: str | None) -> str:
-        """The cwd of one job inside the VM (contract 02 §12.1 rule 3).
+    def _session_cwd(self, family: str, caller_root: Path | None, owner: str | None) -> str:
+        """The cwd of one session inside the VM (contract 02 §12.1 rule 3).
 
         A family with a caller root works in the calling chat's directory.
-        Every other job works in the family's sessions mount. Each is a host
-        path, and sbx mounts it at the same path inside the VM.
+        Every other session works in the family's sessions mount. Each is a
+        host path, and sbx mounts it at the same path inside the VM. The
+        config makes it, so a cwd that the wire refuses (decision CH21) is
+        an internal fault.
         """
         if caller_root is not None and owner is not None:
-            return str(owner_dir(caller_root, owner))
+            cwd = str(owner_dir(caller_root, owner))
+        else:
+            cwd = sandbox_sessions_mount(self._config.sessions_root, family)
 
-        return sandbox_sessions_mount(self._config.sessions_root, family)
+        if not is_session_cwd(cwd):
+            raise ApiError(
+                ErrorCode.INTERNAL,
+                f"the session cwd is not an absolute path of at most {SESSION_CWD_MAX}"
+                " characters with no NUL",
+                family=family,
+                detail={"length": len(cwd)},
+            )
+
+        return cwd
 
     def _prepare_work_dir(self, caller_root: Path | None, owner: str | None) -> None:
         """Contract 02 §12.1 rule 2. A family with a caller root works in the
@@ -584,15 +605,16 @@ class SessionService:
     async def _dispatch_prompt(self, link: AcpLink | None, job: DispatchJob) -> JobEnd:
         entry = job.entry
 
-        if link is None:
-            try:
+        try:
+            cwd = self._session_cwd(entry.family, None, None)
+            if link is None:
                 link = await self._acp_link_for(entry.family, self._status.require(entry.family))
-            except ApiError as error:
-                return JobEnd(EndKind.FAILED, error=f"{error.code.value}: {error}")
+        except ApiError as error:
+            return JobEnd(EndKind.FAILED, error=f"{error.code.value}: {error}")
 
         plan = JobPlan(
             job=entry.session,
-            cwd=sandbox_sessions_mount(self._config.sessions_root, entry.family),
+            cwd=cwd,
             message=job.message,
             deadline_s=DEFAULT_DEADLINE_S,
             prompt_meta={META_TRIGGER: entry.trigger().to_api()},

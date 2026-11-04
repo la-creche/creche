@@ -18,6 +18,7 @@ from attendance.acp_door import Close, DoorPrompts
 from attendance.api import build_app
 from attendance.auth import Principal, TokenBook
 from attendance.config import Config
+from attendance.paths import SANDBOX_MOUNT_ENV
 from attendance.service import SessionService
 from attendance_harness import FAMILY, make_config, wait_until, write_status, write_tokens
 from creche_vectors import meta_key
@@ -32,6 +33,7 @@ HTTP_OK = 200
 HTTP_BAD_REQUEST = 400
 HTTP_FORBIDDEN = 403
 HTTP_NOT_FOUND = 404
+HTTP_INTERNAL = 500
 HTTP_UNAVAILABLE = 503
 JOB_FAMILY = "issue-worker"
 JOB_SANDBOX = "issue-worker-s1"
@@ -277,6 +279,19 @@ async def test_a_family_with_no_sandbox_is_unavailable(rig: Rig) -> None:
         assert answer.status_code == HTTP_UNAVAILABLE
         assert answer.json()["error"]["code"] == "sandbox_unavailable"
 
+    assert rig.facades.relays == []
+
+
+async def test_a_cwd_that_the_wire_refuses_starts_no_relay(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Decision CH21: the cwd is checked before the relay starts."""
+    monkeypatch.setenv(SANDBOX_MOUNT_ENV, "sessions")
+
+    answer = await rig.get(ONE)
+
+    assert answer.status_code == HTTP_INTERNAL
+    assert answer.json()["error"]["code"] == "internal"
     assert rig.facades.relays == []
 
 
