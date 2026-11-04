@@ -1,7 +1,7 @@
 # bin
 
 This directory holds the scripts that run on the host and the scripts of CI.
-It also holds two shell libraries, one tool for a development machine and
+It also holds three shell libraries, one tool for a development machine and
 the tests behind them. One house style across every file. The root
 `AGENTS.md` applies here too.
 
@@ -29,7 +29,7 @@ A reader must not infer it from the `id -u` guard. A root script asserts
 | Setup | `provision-library.sh`, `fleet-up` | Idempotent, not a no-op. Every step checks before it writes. A value that has a current answer is upserted in place. A token minted once is never replaced in silence. |
 | Operations | `creche-deploy`, `creche-handover` | Run unattended from units and timers. Fail loudly into the journal. |
 | Checks | `quality-gate.sh`, `systemd-proof.sh` | Run from the hooks and from CI. `systemd-proof.sh` runs in CI only. No unit runs them. They use `set -euo pipefail`. The first failed check stops the run. |
-| Library | `lib/envfile.sh`, `lib/docsrule.sh` | Sourced only, never executed. Say "Sourced only" in the header. That marker exempts the file from the mode rule below. |
+| Library | `lib/envfile.sh`, `lib/docsrule.sh`, `lib/artifactrows.sh` | Sourced only, never executed. Say "Sourced only" in the header. That marker exempts the file from the mode rule below. |
 | Tools | `yaml-to-toml.py`, `chaperone-install-draft.py` | Run by hand on a development machine, and from a test in CI. No unit runs a tool, and the host does not need one. A tool reads the files that its command names and changes no file. `chaperone-install-draft.py --out-dir` makes one new directory and writes only into it. |
 | Tests | `tests/test_*.py`, `tests/test_*.sh` | pytest collects the `.py` files. The `.sh` files run by hand: `bash bin/tests/<name>.sh`. None needs a host. |
 
@@ -168,6 +168,7 @@ scope of `release.yml` ask it.
 | Test | Pins |
 |---|---|
 | `test_bin_modes.py` | Every tracked file under `bin/` with a `#!` line is mode 100755 in the index. `creche-deploy` copies modes as they are. |
+| `test_artifactrows.py` | `read_rows` of `lib/artifactrows.sh`, sourced in bash, with `set -e` and without it. The rows are the real line form of `handover artifacts`. The reader keeps each word of each command, also for two commands in one row. A last row with no line feed is a whole row. Each text in another form is refused with its reason, and the reader exits no shell. |
 | `test_bin_path_refs.py` | Every repository path, console script and sibling a script or unit names is in the tree. Marked `docs`. |
 | `test_chaperone_install_draft.py` | The print for the fixture registry of `family` equals `install_draft_golden.txt`. `--out-dir` writes the same files, and refuses a directory that exists. A secret reference is a secret and never a word of the command. A state directory names its variable last. Each refusal of a server file. `integration/proc/test_proc_install_draft.py` gives the golden file to the real `chaperone check`. |
 | `test_yaml_to_toml.py` | The layout that `yaml-to-toml.py` writes, each refusal, the proof of `--check` and each exit status. The test holds its own YAML texts. It also converts each tracked YAML file of the three kinds and checks each pair. A tree with no such file passes. The values of each TOML text equal what `yaml.safe_load` gives for the YAML text. |
