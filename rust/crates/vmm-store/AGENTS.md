@@ -45,12 +45,13 @@ The second file has the table of the three vmm crates.
   (`st_blocks`) pass the budget. It never removes a session disk or a
   generation in use. It never removes a generation while an older one of
   the session stays, so an older one never becomes the newest.
-- Decisions CH27, CH21-10 and CH33 rule 4 (PR D14, `remove.rs`):
-  `remove_session` removes the generations oldest first, then the
-  session dir, then the row last. A failed step leaves the row, and a
-  retry finishes. It removes nothing when no row of the family has the
-  id. The caller (L15) stops the VM first and drops a family one row at
-  a time.
+- Decisions CH27 and CH21-10 (PR D14, `remove.rs`): `remove_session`
+  removes the generations oldest first, then the session dir, then the
+  row last. The row-last order comes from the plan entry of D14, not
+  from a decision row. A failed step leaves the row, and a retry
+  finishes. It removes nothing when no row of the family has the id, and
+  the route answers `not_found` (decision CH33 rules 4 and 5). The
+  caller (L15) stops the VM first and drops a family one row at a time.
 
 ## Known gaps
 
