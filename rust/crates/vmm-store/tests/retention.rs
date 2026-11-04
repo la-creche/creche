@@ -287,6 +287,23 @@ fn an_unreadable_older_generation_keeps_the_newer_one() {
     assert!(newer.exists(), "the newer generation stays");
 }
 
+/// A failed read of an older generation keeps a consumed newer one too.
+/// So the older one never becomes the newest (decisions CH19 (5), CH50
+/// rule 8).
+#[test]
+fn an_unreadable_older_generation_keeps_a_consumed_newer_one() {
+    let temp = Temp::new("unreadable-consumed");
+    let older = temp.snapshot(A, FIRST, DAY);
+    let newer = temp.snapshot(A, SECOND, DAY);
+    fs::write(newer.join(CONSUMED), "").expect("the mark");
+    set_mode(&older, 0o000);
+    let swept = temp.sweep(BUDGET, &InUse::new());
+    set_mode(&older, 0o755);
+    assert_eq!(swept.failures.len(), 1, "{:?}", swept.failures);
+    assert!(swept.dropped.is_empty(), "{:?}", swept.dropped);
+    assert!(newer.exists(), "the newer generation stays");
+}
+
 /// A failed budget drop keeps its bytes in `kept_bytes`.
 #[test]
 fn a_failed_budget_drop_counts_its_bytes() {
