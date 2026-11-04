@@ -15,5 +15,4 @@ table of the three vmm crates.
 
 ## Known gaps
 
-- G24, `pub` items across the three vmm crates. The gap is open.
-  `rust/crates/vmm/AGENTS.md` has the reading.
+None.
