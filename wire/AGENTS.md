@@ -178,8 +178,9 @@ its error type.
    impl of `JsonRoute` or `UpgradeRoute`. `NAME` is in `snake_case`. An
    upgrade route also has a `TOKEN` and no reply type.
 2. The macro `route_table!` is the one list of the routes. It calls a
-   macro of the caller once per route, with the kind `json` or `upgrade`. The schema test expands it, and the
-   vmm router expands it later. Do not write a second list.
+   macro of the caller once per route, with the kind `json` or `upgrade`.
+   The schema test expands it, and `creche_vmm::routes!` expands it for
+   the vmm router. Do not write a second list.
 3. The traits carry serde bounds only. The `JsonSchema` bounds stay on the
    schema test, so a crate that depends on `creche-wire` needs no schemars.
 4. The schema test writes the table into the schema, under the root key
@@ -208,6 +209,11 @@ its error type.
    an ignore is unnecessary. A wider `JsonRoute` then fails the gate.
 9. A caller imports a route from `creche_wire.routes`. The route constants
    and `JsonRoute` are not in `__all__`, because they are no wire type.
+10. The vmm handler of a route implements `Serve<R>` or `ServeUpgrade<R>`
+    (decision CH26 rule 4). A handler set that misses a route does not
+    build. `ServeUpgrade` admits or refuses before 101 and returns a relay
+    that the vmm runs. `UpgradeRoute::UPGRADE_REQUIRED` is the error of a
+    request whose `Upgrade` header does not name `TOKEN`.
 
 To add a route, add its marker and its line in `route_table!`. Then follow
 the steps below.
@@ -280,7 +286,10 @@ guest port 1201 (decision CH13).
 1. The client sends `POST /acp` with the protocol header, `Content-Type:
    application/json`, `Connection: Upgrade` and `Upgrade: creche-acp`
    (`AcpRoute::TOKEN`, `ACP.token`). The body is `OpenAcp`, `{family, id}`
-   (decision CH33 rule 5).
+   (decision CH33 rule 5). Two tests prove that this body crosses: hyper
+   reads it before it answers 101 (`rust/crates/vmm/tests/upgrade_body.rs`),
+   and httpx 0.28.1 over `uds=` sends it, then reads and writes raw bytes
+   after 101 (`integration/proc/test_proc_vmm_upgrade.py`).
 2. Without the token in `Upgrade`, the vmm answers `upgrade_required` 426
    (decisions CH26 rule 3, CH34 rule 6).
 3. The vmm answers `not_found` 404 when no row has the id and when the row
@@ -459,7 +468,4 @@ a dependency.
 
 ## Known gaps
 
-- The `acp` request sends a JSON body with an Upgrade. Not proved yet: that
-  hyper 1.x reads that body before it sends 101, and that httpx 0.28.1
-  sends it. The CH20 stub check sent no body. The first vmm server PR of
-  phase 2 proves both. If either fails, the fallback needs the owner's OK.
+None.
