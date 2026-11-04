@@ -27,6 +27,8 @@ struct Fails {
     send: bool,
     /// The write of `stop` never completes, as on a full send buffer.
     stall: bool,
+    /// The write of `stop` takes this long, then succeeds.
+    slow: Option<Duration>,
     term: bool,
     kill: bool,
 }
@@ -92,6 +94,9 @@ impl StopLink for FakeLink {
         }
         if self.0.fails.stall {
             std::future::pending::<()>().await;
+        }
+        if let Some(wait) = self.0.fails.slow {
+            tokio::time::sleep(wait).await;
         }
         self.0.record("stop");
         Ok(())
@@ -226,6 +231,21 @@ fn a_stalled_stop_write_gets_sigterm_at_30_s() {
     let (stopped, steps, lock, _) = try_stop("stall", "term", true, fails);
     assert_eq!(stopped.unwrap(), Stopped::Terminated);
     assert_eq!(steps, [("term", secs(30))]);
+    assert!(!lock, "api.sock.lock stays");
+}
+
+/// A slow write of `stop` that succeeds counts inside the 30 s. The exit
+/// wait ends 30 s after the start, not 30 s after the write, so SIGTERM
+/// follows at 30 s and not at 50 s (decision CH50 rule 3).
+#[test]
+fn a_slow_stop_write_counts_inside_the_30_s() {
+    let fails = Fails {
+        slow: Some(secs(20)),
+        ..Fails::default()
+    };
+    let (stopped, steps, lock, _) = try_stop("slow", "term", true, fails);
+    assert_eq!(stopped.unwrap(), Stopped::Terminated);
+    assert_eq!(steps, [("stop", secs(20)), ("term", secs(30))]);
     assert!(!lock, "api.sock.lock stays");
 }
 
