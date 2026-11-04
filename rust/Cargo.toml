@@ -42,6 +42,9 @@ hyper = { version = "1.12.0", default-features = false, features = ["server", "h
 # (decision CH26), so no `server-auto`. Shutdown uses tokio::sync (decision
 # CH26 rule 2), so no `server-graceful`.
 hyper-util = { version = "0.1.21", default-features = false, features = ["tokio"] }
+# The body helpers of the vmm host API (decision CH26 rule 1): Limited for
+# the 1 MiB body cap and Full for each reply. Both need no feature.
+http-body-util = { version = "0.1.5", default-features = false }
 
 # The lint gate. A crate inherits it with `[lints] workspace = true`. An
 # exception is written `#[expect(clippy::<lint>, reason = "...")]` at the one
