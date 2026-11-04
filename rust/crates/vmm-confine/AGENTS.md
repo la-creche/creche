@@ -104,11 +104,43 @@ table of the three vmm crates.
   every such test of the workspace after `bin/vm-smoke-setup.sh`. The test
   reads CH, ch-remote, the kernel and the busybox initramfs from the
   directory in `CRECHE_KVM_DIR`, and fails when it is not set.
+- `apparmor/cloud-hypervisor.profile` is the AppArmor profile
+  `creche-cloud-hypervisor` of `/opt/components/vmm/bin/cloud-hypervisor`
+  (decision CH8-1, gap G28). It allows Unix stream sockets, denies every
+  abstract address, and has no `network` rule, so CH gets no inet socket.
+  The file rules mediate a pathname socket, so the write rules are the
+  socket allow list: the VM run dir files of PR D1 under
+  `/run/user/<uid>/vmm/vm/*/`, with one `vsock.sock_*` pattern (decision
+  CH24), and the state names of decision CH39 rule 3. `tests/profile.rs`
+  holds each rule equal to the layout names. A rename there needs an edit
+  of the profile and David's sudo reload (design section 6.1 step 2).
+  Agents never install it on the host.
+- The job `kvm` installs CH at that path and loads the profile with the
+  runner's sudo (decision CH36 G20). `tests/kvm_apparmor.rs` starts the
+  installed CH through `setpriv --no-new-privs`: CH boots under the
+  profile, and its `--tpm socket=` connect reaches a `vsock.sock_<port>`
+  listener, but not `vmm.sock` or the user bus. The other kvm_ tests run
+  the copy in `CRECHE_KVM_DIR`, which no profile confines.
 
 ## Known gaps
 
-- Landlock ABI 4 covers neither UDP nor Unix sockets (fact 77). Until the
-  AppArmor profile of PR C15, CH can reach both.
+- Landlock ABI 4 covers neither UDP nor Unix sockets (fact 77). The
+  AppArmor profile closes both, but on the host only after David's sudo
+  install (design section 6.1 step 1). Phase 8 checks it with
+  `aa-status`. Until then CH on the host can reach both.
+- CONTRACT-QUESTION (decisions CH8-1, CH39 rule 3): no row sets the
+  default of the state root (plan PR L20). The state rules of the profile
+  match `store/*`, `sessions/*/disk.ext4` and `sessions/*/snapshots/**`
+  under any root. A rule that names the root needs a sudo reload.
+- CONTRACT-QUESTION (decision CH8-1): the launch step passes the stdout
+  and stderr of the vmm to CH. Under the unit they may be a stream socket
+  of the journal. AppArmor checks each inherited file at the exec, and no
+  rule names a journal socket, so the kernel may replace them with a null
+  file and drop the error lines of CH. No row decides whether CH may
+  write to the journal. The runner does not test it.
+- The profile reads only `store/*` for a kernel or an initramfs. Phase 3
+  writes the initramfs at VM start (decision CH7-6) in a place that no row
+  names yet. A file outside the store needs a rule and a sudo reload.
 - Lifecycle must make two dirs before each launch, because the ruleset
   opens each path and a missing one fails the launch with
   `RulesetError::Open`: the VM run dir `<run root>/vm/<id>/` and the

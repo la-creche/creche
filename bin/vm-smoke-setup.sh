@@ -16,6 +16,11 @@
 #   5. It builds a busybox initramfs from `apt-get download busybox-static`.
 #      Its init writes the line CRECHE-KVM-BOOTED to the serial port, then
 #      `tick` once a second.
+#   6. It installs CH at /opt/components/vmm/bin/cloud-hypervisor and loads
+#      the AppArmor profile of CH with the commands of design section 6.1
+#      step 1 (decision CH8-1, gap G28). A profile that does not load, or
+#      that is not in enforce mode, fails here. The copy in CRECHE_KVM_DIR
+#      stays unconfined, so each kvm_ test picks its path.
 # Phase 4 replaces the upstream files with the CI-built CH, kernel and disks
 # (CH36 G19).
 #
@@ -27,6 +32,9 @@
 set -euo pipefail
 export LC_ALL=C
 
+REPO=$(cd "$(dirname "$0")/.." && pwd)
+INSTALLED_CH=/opt/components/vmm/bin/cloud-hypervisor
+PROFILE=/etc/apparmor.d/opt.components.vmm.bin.cloud-hypervisor
 CH_URL=https://github.com/cloud-hypervisor/cloud-hypervisor/releases/download/v54.0
 KERNEL_URL=https://github.com/cloud-hypervisor/linux/releases/download/ch-release-v7.2.8-20261009
 
@@ -95,5 +103,13 @@ printf '%s\n' '#!/bin/busybox sh' '/bin/busybox --install -s /bin' \
 chmod 0755 "$work/root/init"
 (cd "$work/root" && find . | cpio -o -H newc --quiet) > initramfs.cpio
 rm -rf "$work"
+
+say "load the AppArmor profile of CH"
+[[ "$(cat /sys/module/apparmor/parameters/enabled)" == Y ]] || die "AppArmor is off on this runner"
+sudo install -D -m 0755 cloud-hypervisor "$INSTALLED_CH"
+sudo install -m 0644 "$REPO/rust/crates/vmm-confine/apparmor/cloud-hypervisor.profile" "$PROFILE"
+sudo apparmor_parser -r "$PROFILE"
+sudo grep -Fqx 'creche-cloud-hypervisor (enforce)' /sys/kernel/security/apparmor/profiles ||
+  die "the profile creche-cloud-hypervisor is not in enforce mode"
 
 say "ready in $dir"
