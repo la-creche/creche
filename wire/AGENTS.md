@@ -280,7 +280,10 @@ guest port 1201 (decision CH13).
 1. The client sends `POST /acp` with the protocol header, `Content-Type:
    application/json`, `Connection: Upgrade` and `Upgrade: creche-acp`
    (`AcpRoute::TOKEN`, `ACP.token`). The body is `OpenAcp`, `{family, id}`
-   (decision CH33 rule 5).
+   (decision CH33 rule 5). Two tests prove that this body crosses: hyper
+   reads it before it answers 101 (`rust/crates/vmm/tests/upgrade_body.rs`),
+   and httpx 0.28.1 over `uds=` sends it, then reads and writes raw bytes
+   after 101 (`integration/proc/test_proc_vmm_upgrade.py`).
 2. Without the token in `Upgrade`, the vmm answers `upgrade_required` 426
    (decisions CH26 rule 3, CH34 rule 6).
 3. The vmm answers `not_found` 404 when no row has the id and when the row
@@ -459,7 +462,4 @@ a dependency.
 
 ## Known gaps
 
-- The `acp` request sends a JSON body with an Upgrade. Not proved yet: that
-  hyper 1.x reads that body before it sends 101, and that httpx 0.28.1
-  sends it. The CH20 stub check sent no body. The first vmm server PR of
-  phase 2 proves both. If either fails, the fallback needs the owner's OK.
+None.
