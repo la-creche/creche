@@ -1,22 +1,24 @@
-//! The cold boot hook over fakes (plan PR L16). A fake launcher records
-//! each launch, writes a fake command line file and binds a fake vsock
-//! socket that plays CH and guest init. Every other step is the real one
-//! on a scratch dir in `/tmp`: the shape read, admission, the store
-//! check, the session disk (with `/usr/bin/true` as `mke2fs`), the deny
-//! check and the fault file.
+//! The start hook over fakes (plan PRs L16 and L17). A fake launcher
+//! records each launch, writes a fake command line file and binds a fake
+//! vsock socket that plays CH and guest init. A fake CH API answers
+//! `info` and `resume` of a restore. Every other step is the real one on
+//! a scratch dir in `/tmp`: the shape read, admission, the store check,
+//! the session disk (with `/usr/bin/true` as `mke2fs`), the key check,
+//! the claim, the deny check and the fault file.
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::spawn;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 use std::{fs, io};
 
 use creche_vmm::control::ControlState;
 use creche_vmm::handlers::acp::{StartFault, StartVm};
+use creche_vmm::restore::ChApi;
 use creche_vmm::start::{ColdBoot, Digests, Launcher, StartConfig};
 use creche_vmm::stop::VmProcess;
 use creche_vmm_confine::admission::{GIB, Limits};
@@ -25,7 +27,8 @@ use creche_vmm_confine::faults::{FaultBook, FaultDir};
 use creche_vmm_confine::launch::{Launch, Program};
 use creche_vmm_confine::spawner::SpawnError;
 use creche_vmm_store::images::{ImageDigest, ImageStore};
-use creche_vmm_store::layout::{RunRoot, StateRoot};
+use creche_vmm_store::key::{CheckedCh, SnapshotKey, check_cloud_hypervisor, write_key};
+use creche_vmm_store::layout::{RunRoot, SnapshotGeneration, StateRoot, VmRunDir};
 use creche_vmm_store::rows::Rows;
 use creche_vmm_store::session_disk::SessionDisks;
 use creche_wire::{FamilyName, SessionRow};
@@ -127,6 +130,38 @@ impl Fake {
     }
 }
 
+/// The fake CH API of a restore and what it saw.
+#[derive(Debug, Default)]
+struct FakeApi {
+    /// The `info` reply. `{state}` stands for the state.
+    reply: Mutex<String>,
+    /// The first this many `info` calls fail, as before CH serves its API.
+    fails: AtomicUsize,
+    infos: AtomicUsize,
+    resumes: AtomicUsize,
+}
+
+#[cfg(test)]
+impl ChApi for FakeApi {
+    const READS_DEVICES: bool = true;
+
+    fn info(&self, _vm: &VmRunDir) -> Result<Vec<u8>, String> {
+        self.infos.fetch_add(1, Ordering::SeqCst);
+        let fails = self.fails.load(Ordering::SeqCst);
+        if fails > 0 {
+            self.fails.store(fails - 1, Ordering::SeqCst);
+            return Err("no api.sock yet".to_owned());
+        }
+        let reply = self.reply.lock().map_err(|_| "poisoned".to_owned())?;
+        Ok(reply.clone().into_bytes())
+    }
+
+    fn resume(&self, _vm: &VmRunDir) -> Result<(), String> {
+        self.resumes.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
 /// Plays CH and guest init on each link: `CONNECT`, then the control
 /// link or the ACP link. Each link stays open until the test ends.
 #[cfg(test)]
@@ -157,8 +192,11 @@ fn play(listener: &UnixListener, guest: Guest) {
 #[derive(Debug)]
 struct Test {
     dir: PathBuf,
-    hook: ColdBoot<Fake>,
+    hook: ColdBoot<Fake, FakeApi>,
     fake: Arc<Fake>,
+    api: Arc<FakeApi>,
+    ch: CheckedCh,
+    state: StateRoot,
     control: Arc<Mutex<ControlState>>,
     faults: PathBuf,
     rows: Vec<SessionRow>,
@@ -188,6 +226,9 @@ impl Test {
                 store.create(serde_json::from_str(&create).unwrap()).unwrap()
             })
             .collect();
+        let stub =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cloud-hypervisor");
+        let ch = check_cloud_hypervisor(&stub, Duration::from_secs(10)).unwrap();
         let images = ImageStore::new(&state, PathBuf::from("/usr/bin/zstd"));
         let empty: ImageDigest = EMPTY.parse().unwrap();
         images.import(&dir.join("image"), empty).unwrap();
@@ -209,6 +250,7 @@ impl Test {
                 ram_cap: 80 * GIB,
                 free_floor: 0,
             },
+            ch_version: ch,
         };
         edit(&mut config);
 
@@ -224,9 +266,11 @@ impl Test {
             vms: Mutex::default(),
         });
         let control = Arc::new(Mutex::new(ControlState::default()));
+        let api = Arc::new(FakeApi::default());
         let hook = ColdBoot::new(
             config,
             Arc::clone(&fake),
+            Arc::clone(&api),
             Arc::new(Mutex::new(store)),
             Arc::clone(&control),
             Arc::new(Mutex::new(book)),
@@ -236,6 +280,9 @@ impl Test {
             dir,
             hook,
             fake,
+            api,
+            ch,
+            state,
             control,
             faults: path,
             rows,
@@ -269,6 +316,58 @@ impl Test {
     /// Whether launch `index` was stopped.
     fn stopped(&self, index: usize) -> bool {
         self.fake.vms.lock().unwrap()[index].load(Ordering::SeqCst)
+    }
+
+    /// Whether launch `index` was a restore.
+    fn restored(&self, index: usize) -> bool {
+        let launches = self.fake.launches.lock().unwrap();
+        let args = launches[index].payload().args();
+        args.contains(&"--restore".to_owned()) && !args.contains(&"--kernel".to_owned())
+    }
+
+    /// The key of a VM of `chat`: the fake kernel and root disk.
+    fn key(&self) -> SnapshotKey {
+        let images = ImageStore::new(&self.state, PathBuf::from("/usr/bin/zstd"));
+        let empty = images.check(EMPTY.parse().unwrap()).unwrap();
+        SnapshotKey::current(self.ch, &empty, &empty)
+    }
+
+    /// Makes generation 1 of row `index` with `key`, or with a key of
+    /// another CH rev when `key` is `None`.
+    fn snapshot(&self, index: usize, key: Option<&SnapshotKey>) -> PathBuf {
+        let session = self.state.session(&self.rows[index].id);
+        let dir = session.snapshot(SnapshotGeneration(1));
+        fs::create_dir_all(&dir).unwrap();
+        match key {
+            Some(key) => write_key(&session, SnapshotGeneration(1), key).unwrap(),
+            None => {
+                let other = format!(
+                    r#"{{"ch_rev":"0","kernel":"{EMPTY}","root_disk":"{EMPTY}","guest_init_protocol":1}}"#
+                );
+                fs::write(dir.join("key.json"), other).unwrap();
+            }
+        }
+        dir
+    }
+
+    /// Sets the `info` reply of a restore of row `index`: `state`, the
+    /// two disks and the vsock socket of the VM, then `extra` fields.
+    fn reply(&self, index: usize, state: &str, extra: &[(&str, serde_json::Value)]) {
+        let id = &self.rows[index].id;
+        let root = self.dir.join(format!("state/store/{EMPTY}"));
+        let disk = self.dir.join(format!("state/sessions/{id}/disk.ext4"));
+        let vsock = self.dir.join(format!("run/vm/{id}/vsock.sock"));
+        let mut config = serde_json::json!({
+            "cpus": {"boot_vcpus": 1},
+            "disks": [{"path": root}, {"path": disk}],
+            "net": null,
+            "vsock": {"cid": 3, "socket": vsock},
+        });
+        for (field, value) in extra {
+            config[*field] = value.clone();
+        }
+        let reply = serde_json::json!({"state": state, "config": config});
+        *self.api.reply.lock().unwrap() = reply.to_string();
     }
 }
 
@@ -394,4 +493,88 @@ fn a_network_card_fails_the_deny_check() {
     assert_eq!(test.fault_codes(), ["egress_assert_failed"]);
     assert!(test.stopped(0));
     assert!(!test.hook.running(&test.rows[0].id));
+}
+
+/// A snapshot with the current key restores paused: `info` is read until
+/// CH answers, the device check passes, then `resume` (decisions CH2,
+/// CH50 rule 10). The claim marks the snapshot consumed, and the
+/// generation is in use while the VM runs (decisions CH19 (5), CH50 rule
+/// 8).
+#[test]
+fn a_keyed_snapshot_restores_paused_then_resumes() {
+    let test = Test::new("restore", |_| {});
+    let dir = test.snapshot(0, Some(&test.key()));
+    test.reply(0, "Paused", &[]);
+    test.api.fails.store(2, Ordering::SeqCst);
+    assert_eq!(test.start(0), Ok(()));
+    assert!(test.restored(0));
+    assert_eq!(test.api.infos.load(Ordering::SeqCst), 3);
+    assert_eq!(test.api.resumes.load(Ordering::SeqCst), 1);
+    assert!(dir.join("consumed").is_file());
+    let id = test.rows[0].id.clone();
+    assert!(test.hook.in_use().contains(&(id, SnapshotGeneration(1))));
+    assert!(test.fault_codes().is_empty());
+}
+
+/// Fields that a test adds to the config of an `info` reply.
+type Extra<'a> = Vec<(&'a str, serde_json::Value)>;
+
+/// A restored VM that is not paused, or that has a device past the fixed
+/// set, never resumes. The fault is `egress_assert_failed`, the VM stops,
+/// and its generation is no longer in use (decisions CH42 rule 2, CH50
+/// rule 10).
+#[test]
+fn a_refused_device_set_stops_the_restore() {
+    let other = serde_json::json!({"cid": 3, "socket": "/tmp/other.sock"});
+    let extra_disk = serde_json::json!([{"path": "/a"}, {"path": "/b"}, {"path": "/c"}]);
+    let cases: [(&str, &str, Extra); 6] = [
+        ("running", "Running", vec![]),
+        (
+            "net",
+            "Paused",
+            vec![("net", serde_json::json!([{"tap": "t"}]))],
+        ),
+        (
+            "user",
+            "Paused",
+            vec![("user_devices", serde_json::json!([{}]))],
+        ),
+        (
+            "tpm",
+            "Paused",
+            vec![("tpm", serde_json::json!({"socket": "/t"}))],
+        ),
+        ("disks", "Paused", vec![("disks", extra_disk)]),
+        ("vsock", "Paused", vec![("vsock", other)]),
+    ];
+    for (name, state, extra) in cases {
+        let test = Test::new(&format!("refuse-{name}"), |_| {});
+        test.snapshot(0, Some(&test.key()));
+        test.reply(0, state, &extra);
+        assert_eq!(test.start(0), Err(StartFault::EgressAssertFailed), "{name}");
+        assert_eq!(test.api.resumes.load(Ordering::SeqCst), 0, "{name}");
+        assert_eq!(test.fault_codes(), ["egress_assert_failed"], "{name}");
+        assert!(test.stopped(0), "{name}");
+        assert!(test.hook.in_use().is_empty(), "{name}");
+    }
+}
+
+/// A key of another release drops the snapshot, and a consumed one is
+/// not restored again. Each start cold-boots (decisions CH7-6, CH19 (5),
+/// CH44 rule 5).
+#[test]
+fn a_key_mismatch_or_a_consumed_snapshot_cold_boots() {
+    let test = Test::new("mismatch", |_| {});
+    let dir = test.snapshot(0, None);
+    assert_eq!(test.start(0), Ok(()));
+    assert!(!test.restored(0));
+    assert!(!dir.exists());
+
+    let test = Test::new("consumed", |_| {});
+    let dir = test.snapshot(0, Some(&test.key()));
+    fs::write(dir.join("consumed"), b"").unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    assert!(!test.restored(0));
+    assert_eq!(test.api.infos.load(Ordering::SeqCst), 0);
+    assert!(test.hook.in_use().is_empty());
 }

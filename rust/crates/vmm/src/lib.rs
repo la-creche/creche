@@ -7,6 +7,7 @@ use std::{fmt, io};
 pub mod control;
 pub mod handlers;
 pub mod relay;
+pub mod restore;
 pub mod server;
 pub mod start;
 pub mod stop;
