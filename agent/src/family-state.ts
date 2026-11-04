@@ -196,9 +196,9 @@ function readConfigDir(dir: string, previous: readonly LiveSkill[]): ConfigRead 
     return { ok: false, fault: "not_valid" };
   }
 
-  // CONTRACT-QUESTION: the file backend counts the reply with empty creds
-  // texts, because it never holds their text. The key and the token add
-  // their own bytes. The vmm counts them.
+  // The file backend counts the reply with empty creds texts, because it
+  // never holds their text. The key and the token add their own bytes,
+  // which the vmm counts.
   const reply = JSON.stringify({ state: { config, creds: NO_CRED_TEXT } });
   if (Buffer.byteLength(reply, "utf8") > STATE_REPLY_CAP) {
     return { ok: false, fault: "too_large" };
@@ -228,10 +228,9 @@ export function inOrder(pull: () => Promise<StatePull>): () => Promise<StatePull
  * The file backend: `creds.json` on the creds mount, `config/` on the
  * config mount. `lastGood` is the config of the start.
  *
- * CONTRACT-QUESTION: on a config read failure the file backend keeps the
- * last good config instead of failing the prompt (CH23 rule 2), because
- * the spike (CH52 rule 1) shows a dead sbx mount after each config edit.
- * sbx bind-mounts `config/` itself. After caregiver swaps the folder, each
+ * On a config read failure the file backend keeps the last good config
+ * and logs one stderr line (decision CH53 rule 2). The spike of CH52
+ * rule 1 shows a dead sbx mount after each config edit. sbx bind-mounts `config/` itself. After caregiver swaps the folder, each
  * read in the VM gives EACCES until the sandbox is made again. A failed
  * prompt each time would turn a stale config into an outage. A creds
  * failure still fails the prompt: a file replaced in the creds mount is
