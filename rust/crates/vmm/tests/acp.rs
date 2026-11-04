@@ -1,17 +1,19 @@
 //! The `acp` handler over raw bytes on a temp socket (decisions CH21-9,
 //! CH26 rule 5, CH33 rules 6 and 7, CH34 rules 6 and 7). A fake hook
 //! starts each VM, counts the starts, and fails with the fault that the
-//! test sets.
+//! test sets. A fake vsock socket plays Cloud Hypervisor and guest port
+//! 1201: it answers `CONNECT`, sends `hello`, then echoes (decisions
+//! CH13, CH20, CH34 rule 3).
 
 use std::io::{ErrorKind, Read, Write};
-use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::thread::sleep;
+use std::thread::{sleep, spawn};
 use std::time::{Duration, Instant};
 
 use creche_vmm::handlers::acp::{Acp, StartFault, StartVm};
-use creche_vmm::relay::{AcpRelay, DropMark, Relays};
+use creche_vmm::relay::{AcpRelay, Door, DropMark, Relays};
 use creche_vmm::server::{Stop, run_routes};
 use creche_vmm_store::layout::StateRoot;
 use creche_vmm_store::rows::Rows;
@@ -42,19 +44,21 @@ mod fake {
         /// mark here, as a drop that begins during the start.
         pub(super) drop_during: Option<Relays>,
         pub(super) marks: Vec<DropMark>,
+        /// The fake vsock socket that each start returns.
+        pub(super) vsock: PathBuf,
     }
 
     #[derive(Debug, Clone, Default)]
     pub(super) struct Hook(pub(super) Arc<Mutex<State>>);
 
     impl StartVm for Hook {
-        async fn start(&self, row: &SessionRow) -> Result<(), StartFault> {
+        async fn start(&self, row: &SessionRow) -> Result<PathBuf, StartFault> {
             let mut state = self.0.lock().unwrap();
             state.starts += 1;
             if let Some(relays) = state.drop_during.clone() {
                 state.marks.push(relays.mark_drop(&row.id));
             }
-            state.fault.map_or(Ok(()), Err)
+            state.fault.map_or_else(|| Ok(state.vsock.clone()), Err)
         }
     }
 
@@ -91,10 +95,55 @@ mod fake {
 
     creche_vmm::routes!(Set);
 
+    /// What the fake guest saw: each `CONNECT` line, and how many links
+    /// the vmm closed.
+    #[derive(Debug, Default)]
+    pub(super) struct Guest {
+        pub(super) connects: Vec<String>,
+        pub(super) closes: usize,
+    }
+
+    /// Reads the `hello` that the fake guest sends right after `OK`.
+    pub(super) fn hello(stream: &mut UnixStream) {
+        let mut hello = [0_u8; 6];
+        stream.read_exact(&mut hello).unwrap();
+        assert_eq!(&hello, b"hello\n");
+    }
+
+    /// Plays Cloud Hypervisor and guest port 1201 on `path`: each link
+    /// gets `OK` and `hello` in one write, then an echo until the vmm
+    /// closes it.
+    fn guest(path: &Path, seen: Arc<Mutex<Guest>>) {
+        let listener = UnixListener::bind(path).unwrap();
+        spawn(move || {
+            for stream in listener.incoming() {
+                let (mut stream, seen) = (stream.unwrap(), seen.clone());
+                spawn(move || {
+                    let mut line = Vec::new();
+                    let mut byte = [0_u8];
+                    while line.last() != Some(&b'\n') && stream.read(&mut byte).unwrap() == 1 {
+                        line.push(byte[0]);
+                    }
+                    let line = String::from_utf8(line).unwrap();
+                    seen.lock().unwrap().connects.push(line);
+                    stream.write_all(b"OK 1073741824\nhello\n").unwrap();
+                    let mut buffer = [0_u8; 65536];
+                    while let Ok(read @ 1..) = stream.read(&mut buffer) {
+                        if stream.write_all(&buffer[..read]).is_err() {
+                            break;
+                        }
+                    }
+                    seen.lock().unwrap().closes += 1;
+                });
+            }
+        });
+    }
+
     /// The server of `Set` on a temp socket, with one row: `A` of `chat`.
     pub(super) struct Server {
         pub(super) hook: Hook,
         pub(super) relays: Relays,
+        pub(super) guest: Arc<Mutex<Guest>>,
         dir: PathBuf,
         path: PathBuf,
         runtime: Runtime,
@@ -115,6 +164,9 @@ mod fake {
             rows.create(serde_json::from_str(&create).unwrap()).unwrap();
 
             let (hook, relays) = (Hook::default(), Relays::default());
+            let seen = Arc::new(Mutex::new(Guest::default()));
+            hook.0.lock().unwrap().vsock = dir.join("vsock.sock");
+            guest(&dir.join("vsock.sock"), seen.clone());
             let set = Set(Acp::new(
                 Arc::new(Mutex::new(rows)),
                 relays.clone(),
@@ -134,6 +186,7 @@ mod fake {
             Self {
                 hook,
                 relays,
+                guest: seen,
                 dir,
                 path,
                 runtime,
@@ -200,14 +253,73 @@ mod fake {
     }
 }
 
-use fake::Server;
+use fake::{Server, hello};
 
-/// Asserts that the relay closed `stream`.
+/// Asserts that the relay closed `stream`. The `hello` of the guest may
+/// come first.
 fn closed(mut stream: UnixStream) {
-    match stream.read(&mut [0_u8; 1]) {
-        Ok(read) => assert_eq!(read, 0),
-        Err(error) => assert_eq!(error.kind(), ErrorKind::ConnectionReset),
+    let mut bytes = [0_u8; 64];
+    loop {
+        match stream.read(&mut bytes) {
+            Ok(0) => return,
+            Ok(_) => {}
+            Err(error) => return assert_eq!(error.kind(), ErrorKind::ConnectionReset),
+        }
     }
+}
+
+/// Waits up to 10 s for `done`.
+fn eventually(done: impl Fn() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !done() {
+        assert!(Instant::now() < deadline, "no change within 10 s");
+        sleep(Duration::from_millis(10));
+    }
+}
+
+/// Bytes cross both ways with no cap, so 2 MiB pass the 1 MiB body cap
+/// (decision CH34 rule 3). The door stays open until the client closes.
+#[test]
+fn the_relay_carries_bytes_both_ways() {
+    let server = Server::start("acp-relay");
+    let (status, _, mut stream) = server.upgrade("chat", A);
+    assert_eq!(status, 101);
+    hello(&mut stream);
+    let sent: Vec<u8> = (0..2 << 20)
+        .map(|byte: u32| byte.to_le_bytes()[0])
+        .collect();
+    let mut writer = stream.try_clone().unwrap();
+    let write = spawn({
+        let sent = sent.clone();
+        move || writer.write_all(&sent).unwrap()
+    });
+    let mut echoed = vec![0_u8; sent.len()];
+    stream.read_exact(&mut echoed).unwrap();
+    write.join().unwrap();
+    assert!(echoed == sent);
+    assert_eq!(server.guest.lock().unwrap().connects, ["CONNECT 1201\n"]);
+
+    let id: SessionId = A.parse().unwrap();
+    assert_eq!(server.relays.door(&id), Door::Open);
+    drop(stream);
+    eventually(|| matches!(server.relays.door(&id), Door::ClosedAt(_)));
+    eventually(|| server.guest.lock().unwrap().closes == 1);
+    server.end();
+}
+
+/// The stop signal of a drop closes the client end and the guest end
+/// (decision CH26 rule 5).
+#[test]
+fn a_drop_closes_both_ends() {
+    let server = Server::start("acp-relay-drop");
+    let (status, _, mut stream) = server.upgrade("chat", A);
+    assert_eq!(status, 101);
+    hello(&mut stream);
+    let mark = server.relays.mark_drop(&A.parse().unwrap());
+    closed(stream);
+    eventually(|| server.guest.lock().unwrap().closes == 1);
+    drop(mark);
+    server.end();
 }
 
 #[test]

@@ -5,6 +5,7 @@
 //! before 101 (decisions CH21-9, CH33 rule 6).
 
 use std::future::Future;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use creche_vmm_store::rows::Rows;
@@ -46,7 +47,9 @@ pub trait StartVm: Send + Sync + 'static {
     /// Starts the VM that serves `row`, or returns at once when it runs.
     /// `Ok` means the VM sent its first `ControlReady`, whatever facade
     /// state it reports (decision CH34 rule 7). The hook keeps that state
-    /// in `ControlState` (decision CH43 rule 8).
+    /// in `ControlState` (decision CH43 rule 8). `Ok` holds the vsock
+    /// socket of the VM (`VmRunDir::vsock_socket`). The relay dials guest
+    /// port 1201 there (plan PR L13).
     ///
     /// The wait for `ControlReady` is `control::READY_WAIT` (decision
     /// CH36 G26: 10 s). `control::open` holds that bound. Past it the
@@ -62,7 +65,7 @@ pub trait StartVm: Send + Sync + 'static {
     // narrowest reading adds no bound of the handler around this hook. A
     // row that bounds the whole start costs one `timeout` in `admit`.
     // AGENTS.md lists it in Known gaps.
-    fn start(&self, row: &SessionRow) -> impl Future<Output = Result<(), StartFault>> + Send;
+    fn start(&self, row: &SessionRow) -> impl Future<Output = Result<PathBuf, StartFault>> + Send;
 }
 
 /// The handler of `acp`. It shares the rows and the relay registry with
@@ -113,12 +116,12 @@ impl<S: StartVm> ServeUpgrade<AcpRoute> for Acp<S> {
             })?;
         // An unknown id gets `not_found` with no boot (decision CH21-9).
         let row = self.row(&request)?;
-        self.start.start(&row).await.map_err(StartFault::error)?;
+        let vsock = self.start.start(&row).await.map_err(StartFault::error)?;
         // A drop that began during the start stopped the claim. The
         // Upgrade then gets `not_found` (decision CH34 rule 6).
         if claim.stopped() {
             return Err(AcpError::NotFound {});
         }
-        Ok(AcpRelay::new(claim))
+        Ok(AcpRelay::new(claim, vsock))
     }
 }

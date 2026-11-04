@@ -116,8 +116,9 @@ registry (`busy` 409, decision CH33 rule 7), then reads the row
 CH33 rule 5). Then the `StartVm` hook starts the VM: admission, the
 boot or restore, and the first `ControlReady`, whatever facade state it
 reports. Each `StartFault` is a typed code before 101. An unknown id
-never reaches the hook, so it gets no boot. Plan PR L16 adds the hook
-of the vmm. `tests/acp.rs` fakes it.
+never reaches the hook, so it gets no boot. The hook returns the vsock
+socket of the VM. Plan PR L16 adds the hook of the vmm. `tests/acp.rs`
+fakes it, and a fake vsock socket plays guest port 1201.
 
 `src/relay.rs` holds the relay registry with a stop signal (decision
 CH26 rule 5). `Relays::claim` holds a session for one Upgrade until the
@@ -125,9 +126,17 @@ relay ends. `Relays::mark_drop` stops the open relay of a session and
 marks the drop. An Upgrade under the mark gets `not_found` (decision
 CH34 rule 6), and so does one whose start a drop overlapped. The drop
 keeps its mark until the row is gone. The claim comes before the row
-read, so a drop that ends between them leaves no row. Until plan PR
-L13 relays the bytes to guest port 1201, `AcpRelay` reads and drops the
-bytes of the client.
+read, so a drop that ends between them leaves no row.
+
+After 101, `AcpRelay` dials guest port 1201 with `control::dial`, the
+dial of the control link (decision CH13). It pauses 10 ms between two
+tries and retries ECONNREFUSED, and `READY_WAIT` bounds it (decision CH43
+rules 5 and 7). Then it copies bytes both ways until one side closes or
+the stop signal fires, and it drops both streams (decision CH20). It
+parses no ACP byte and caps none (decision CH34 rule 3). `Relays::door`
+gives the door of a session for the sleep gate (decision CH19 (6)): open
+from the claim to its end, then the time of the close. A drop clears the
+time.
 
 ## Rules
 
@@ -154,3 +163,8 @@ bytes of the client.
    an eviction under pressure (plan PR L17) come before the dial and
    have no bound. The handler reads G26 narrowly: it adds no bound of
    its own around the `StartVm` hook (`src/handlers/acp.rs`).
+3. CONTRACT-QUESTION: no decision row says what a failed dial of guest
+   port 1201 after 101 does. The 101 is out, so no typed code fits. The
+   relay reads the rows narrowly: it closes the client stream and writes
+   no fault file (decision CH21-1 names start faults only). The client
+   sees an EOF (`src/relay.rs`).
