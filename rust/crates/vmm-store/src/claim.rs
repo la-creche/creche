@@ -32,10 +32,10 @@
 //! the retire fails too, the caller fails the start and does not
 //! cold-boot.
 //!
-//! CONTRACT-QUESTION: no row decides what a failed claim does. The reading
-//! above keeps CH19 (5), a single use. The name `<n>.retired` is not in
-//! the CH39 rule 3 names, and D13 must remove a leftover one (`AGENTS.md`,
-//! Known gaps).
+//! Decision CH44 rule 6: a failed claim retires the generation, and the
+//! caller cold-boots. A failed retire fails the start. This keeps CH19 (5),
+//! a single use. The name `<n>.retired` is not in the CH39 rule 3 names.
+//! D13 removes a leftover one.
 
 use std::fmt;
 use std::fs::{self, File, OpenOptions};

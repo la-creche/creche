@@ -27,6 +27,12 @@ The second file has the table of the three vmm crates.
   newest. `check_newest` reads no older key. So an older generation
   never restores onto a session disk that moved on (decision CH19 (5)).
   This also takes part of the D13 job of removing older generations.
+- Decision CH44 rule 6 (PR D11, `claim.rs`): a failed make or sync of
+  the `consumed` mark leaves no durable mark. So the claim renames
+  `snapshots/<n>` to `snapshots/<n>.retired`, and the caller cold-boots
+  (`ClaimError::Retired`). When the rename or its sync fails too, the
+  caller fails the start (`ClaimError::Stuck`). D13 removes a leftover
+  `<n>.retired`. CH39 rule 3 does not name it.
 
 ## Known gaps
 
@@ -48,11 +54,3 @@ The second file has the table of the three vmm crates.
   error (gap G10 option A). No lifecycle PR (L17, L20) calls it yet.
   Another option for (a): `take` writes `key.json` into the temp dir
   before the rename, so no snapshot exists without a key.
-- CONTRACT-QUESTION (PR D11, `claim.rs`): no row decides what a failed
-  claim does. A failed make or sync of the `consumed` mark leaves no
-  durable mark, so a later start could restore stale RAM onto a session
-  disk that moved on. The reading that keeps CH19 (5): the claim renames
-  `snapshots/<n>` to `snapshots/<n>.retired` and the caller cold-boots
-  (`ClaimError::Retired`). When the rename or its sync fails, the caller
-  fails the start (`ClaimError::Stuck`). CH39 rule 3 does not name
-  `<n>.retired`. D13 must remove a leftover one.
