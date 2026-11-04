@@ -60,3 +60,20 @@ The second file has the table of the three vmm crates.
   Item 42 notes a better way for (a) and gives it to a later PR: `take`
   writes `key.json` into its temp dir before the rename, so no snapshot
   exists without a key.
+- CONTRACT-QUESTION (PR D12, `sleep_gate.rs`): no decision row names
+  the events that set `Activity::last_use`, the start of the idle time.
+  The narrowest reading: the VM start or restore, each turn event, and
+  each open and each close of a door link set it. L18 sets it.
+- CONTRACT-QUESTION (PR D12, `sleep_gate.rs`): no decision row says
+  whether an evictable VM with no door link goes before an older one
+  with a door link open (decisions CH8-6, CH19 (6)). The narrowest
+  reading: one order by `last_use` alone, as
+  `creche_vmm_confine::admission::decide` has.
+- Caller duties (PR D12, `sleep_gate.rs`), for lifecycle: (a) keep a
+  `turn_seen` flag per VM that a turn event sets and each
+  `ControlReady` clears, for decision CH43 rule 8.
+  `creche_vmm::control::ControlState` has no such flag yet. L18 needs
+  it. (b) pass `Activity::may_evict`, not `may_sleep`, as
+  `admission::Gate::Idle`. Admission snapshots an idle VM sooner than
+  `IDLE_TIMEOUT` (decision CH8-6), and the doc of `Gate::Idle` says
+  "may sleep now". L17 maps the two.

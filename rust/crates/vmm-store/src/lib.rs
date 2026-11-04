@@ -13,5 +13,6 @@ pub mod key;
 pub mod layout;
 pub mod rows;
 pub mod session_disk;
+pub mod sleep_gate;
 pub mod snapshot;
 pub mod stale;
