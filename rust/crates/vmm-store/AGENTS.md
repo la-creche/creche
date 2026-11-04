@@ -42,10 +42,11 @@ The second file has the table of the three vmm crates.
   (PR D13, `retention.rs`): `sweep` removes leftover `<n>.retired` dirs,
   every generation but the newest of a session, the newest one when a
   claim consumed it, the newest one past `MAX_AGE` (7 days from the
-  take, the mtime of `memory-ranges`), and then the oldest first while the allocated bytes
-  (`st_blocks`) pass the budget. It never removes a session disk or a
-  generation in use. It never removes a generation while an older one of
-  the session stays, so an older one never becomes the newest.
+  take, the mtime of `memory-ranges`), and then the oldest first while
+  the allocated bytes (`st_blocks`) pass the budget. It never removes a
+  session disk or a generation in use. It never removes a generation
+  while an older one of the session stays, so an older one never becomes
+  the newest.
 - Decisions CH27 and CH21-10 (PR D14, `remove.rs`): `remove_session`
   removes the generations oldest first, then the session dir, then the
   row last. The row-last order comes from the plan entry of D14, not
