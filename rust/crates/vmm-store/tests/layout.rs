@@ -35,6 +35,7 @@ fn state_paths_are_pinned() {
         Path::new(&format!("/var/lib/vmm/sessions/{ID}"))
     );
     assert_eq!(session.disk(), session.path().join("disk.ext4"));
+    assert_eq!(session.disk_temp(), session.path().join("disk.ext4.tmp"));
     assert_eq!(session.snapshots(), session.path().join("snapshots"));
     assert_eq!(
         session.snapshot(SnapshotGeneration(7)),

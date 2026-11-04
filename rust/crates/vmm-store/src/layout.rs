@@ -149,6 +149,14 @@ impl SessionDir {
         self.0.join("disk.ext4")
     }
 
+    /// The temp file that the make of the session disk renames over the
+    /// disk (PR D7). A crash can leave it, and the next make starts it
+    /// again.
+    #[must_use]
+    pub fn disk_temp(&self) -> PathBuf {
+        self.0.join("disk.ext4.tmp")
+    }
+
     /// The directory that holds every snapshot generation.
     #[must_use]
     pub fn snapshots(&self) -> PathBuf {
