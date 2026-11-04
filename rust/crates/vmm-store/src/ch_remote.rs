@@ -135,11 +135,21 @@ pub struct VmConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Present {}
 
-/// A disk by its host file. A vhost-user disk has no path.
+/// A disk by its host end: a file or a vhost-user socket. CH v54 opens
+/// the socket and ignores `path` when `vhost_user` is set, and it allows
+/// both fields together (`device_manager.rs`, `DiskConfig::validate`).
+/// So the check of a restore refuses a disk with `vhost_user` or with a
+/// `vhost_socket`, whatever its path (decisions CH42 rule 2, CH50 rule
+/// 10).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct DiskConfig {
     /// The host file.
     pub path: Option<PathBuf>,
+    /// The disk is a vhost-user disk.
+    #[serde(default)]
+    pub vhost_user: bool,
+    /// The vhost-user socket.
+    pub vhost_socket: Option<String>,
 }
 
 /// The vsock device by its host socket.

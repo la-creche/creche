@@ -165,6 +165,8 @@ fn info_of(name: &str, reply: &str) -> Result<VmInfo, ChRemoteError> {
 fn disk(path: &str) -> DiskConfig {
     DiskConfig {
         path: Some(PathBuf::from(path)),
+        vhost_user: false,
+        vhost_socket: None,
     }
 }
 
@@ -212,6 +214,25 @@ fn info_reads_a_network_card() {
     );
     let info = info_of("net", &reply).expect("the info");
     assert_eq!(info.config.net, [Present {}]);
+}
+
+/// A vhost-user disk on the path of the root disk keeps both vhost
+/// fields. CH v54 opens the socket and ignores the path, so the check
+/// refuses it (decisions CH42 rule 2, CH50 rule 10).
+#[test]
+fn info_reads_a_vhost_user_disk() {
+    let reply = V54_REPLY.replacen(
+        r#""vhost_user": false, "id": "_disk0""#,
+        r#""vhost_user": true, "vhost_socket": "/x.sock", "id": "_disk0""#,
+        1,
+    );
+    let info = info_of("vhost-disk", &reply).expect("the info");
+    let root = DiskConfig {
+        vhost_user: true,
+        vhost_socket: Some("/x.sock".to_owned()),
+        ..disk("/s/images/root.img")
+    };
+    assert_eq!(info.config.disks, [root, disk("/s/sessions/a/disk.img")]);
 }
 
 /// A list of `null` is no device. A device kind that `VmConfig` does not
