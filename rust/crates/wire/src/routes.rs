@@ -35,9 +35,10 @@ pub const HOST_API_PROTOCOL: u32 = 1;
 /// decimal text. It is lowercase, the form of an HTTP/1.1 header name that
 /// hyper takes as a constant.
 // The vmm answers `ProtocolMismatch` to each value that is not the exact
-// decimal text of HOST_API_PROTOCOL, such as "01", " 1" or "x", and to a
-// header given twice (decision CH34 rule 1). CH33 rule 1 names only a
-// missing header and another protocol number.
+// decimal text of HOST_API_PROTOCOL, such as "01", "1 2" or "x", and to a
+// header given twice (decision CH34 rule 1). HTTP/1.1 strips the spaces
+// around a value first, so " 1 " reads as "1" (decision CH40 rule 3). CH33
+// rule 1 names only a missing header and another protocol number.
 pub const HOST_API_HEADER: &str = "creche-host-api-protocol";
 
 /// The most bytes of a request body and of a reply body of each route

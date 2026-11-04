@@ -375,7 +375,9 @@ The vmm checks the header `HOST_API_HEADER` first, before the route and the
 body (decisions CH25 rule 1, CH26). A request without the header, or with
 another protocol number, gets one reply (decision CH33 rule 1). So does a
 value that is not the exact decimal text of `HOST_API_PROTOCOL`, such as
-`01`, ` 1` or `x`, and a header given twice (decision CH34 rule 1):
+`01`, `1 2` or `x`, and a header given twice (decision CH34 rule 1).
+HTTP/1.1 strips the spaces around a value first, so ` 1 ` reads as `1`
+(decision CH40 rule 3):
 
 | Status | Body |
 |---|---|
