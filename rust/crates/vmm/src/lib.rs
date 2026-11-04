@@ -1,7 +1,6 @@
 //! The vmm: the one process that owns every Cloud Hypervisor VM of the
 //! playpen (decision CH9). It serves the host API (decision CH20) and
-//! composes the two crates below it: `creche-vmm-confine` and
-//! `creche-vmm-store`.
+//! composes two libraries: `creche-vmm-confine` and `creche-vmm-store`.
 
 use std::fmt;
 

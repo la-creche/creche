@@ -3,7 +3,7 @@
 The crate `creche-vmm-confine`: the launch step, the limits and the access
 rules of each Cloud Hypervisor process of the vmm. The root `AGENTS.md`
 and `rust/crates/vmm/AGENTS.md` apply here too. The second file has the
-layer table of the three vmm crates.
+table of the three vmm crates.
 
 ## Rules
 
