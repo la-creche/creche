@@ -18,6 +18,7 @@ path = "src/main.rs"
 creche-vmm-confine = { path = "../vmm-confine" }
 creche-vmm-store = { path = "../vmm-store" }
 creche-wire = { path = "../wire" }
+http-body-util.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
 serde.workspace = true
