@@ -34,7 +34,9 @@ table of the three vmm crates.
   `unknown_family` (decision CH33 rule 3). A bad `config/shape.json` is
   `NotValid` (decisions CH36 G6, CH43 rule 3). The root has no default.
   Lifecycle passes it, and caregiver writes no `shape.json` before the cut
-  (decision CH45 rule 2).
+  (decision CH45 rule 2). Decision CH50 rule 9 sets `READ_TRIES` (5),
+  `RETRY_PAUSE` (10 ms) and `SHAPE_CAP` (4 KiB). A read blocks its thread
+  in `thread::sleep`, so a caller in tokio runs it in `spawn_blocking`.
 - `command::ChCommand` renders the CH argv from the checked store types
   only: `CheckedImage` (PR D6), `SessionDisk` (PR D7) and
   `ClaimedSnapshot` (PR D11). No input names a network card, and no
@@ -131,10 +133,6 @@ table of the three vmm crates.
   the value `vmm` in the `source` enum of §3.3, and the reader. caregiver
   reads only the `attendance` and `pep` files today, so it ignores the
   vmm file.
-- CONTRACT-QUESTION (decisions CH5b, CH23 (3)): no row sets how often
-  `family::FamilyRoot` reads `config/` again, the pause between two
-  tries, or the size cap of `shape.json`. The code uses `READ_TRIES` (5),
-  `RETRY_PAUSE` (10 ms) and `SHAPE_CAP` (4 KiB).
 - CONTRACT-QUESTION (decisions CH2, CH29): `command::ChCommand::restore`
   passes `resume=true`, so the restored VM runs at once, as in the spikes
   of facts 74 and 79. No row decides whether the vmm resumes the VM
