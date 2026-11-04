@@ -164,6 +164,14 @@ Dockerfile only, not the built env with the parent image's names.
   only the text of each `SKILL.md`. A skill whose text changes after the
   start has no supporting files until the facade starts again.
   caregiver writes no supporting file today (`src/skills.ts`).
+- After a model alias change, a failed limits read falls back to the
+  128000-token window and stays cached until the next alias change, as
+  at start. A short LiteLLM fault at the change pins the fallback for
+  that alias until a restart or another edit (`src/litellm.ts`).
+- The wire `ModelAlias` pattern accepts `litellm/`, whose bare alias is
+  empty. The file backend refuses it as `not_valid`, so the last good
+  config stays. The vmm backend needs the same check, or the wire
+  pattern refuses it (`src/family-state.ts`).
 - Contract 03 §7 gives the two plane URLs as fixed values. The playpen
   takes the URL of its build for a plane variable that is absent or not
   valid. The agent has no build URL, so it refuses (`src/config.ts`).
