@@ -25,6 +25,9 @@ const BUILD_ONLY = ["build", "creche-test-venv"];
 /** `FROM [--flag=...] <parent> AS <stage>`, and `ENV <pairs>`. Docker reads both words in any case. */
 const STAGE_RE = /^\s*FROM\s+(?:--\S+\s+)*(\S+)\s+AS\s+(\S+)\s*$/i;
 const ENV_RE = /^\s*ENV\s+(.*)$/i;
+const FROM_RE = /^\s*FROM\s/i;
+const COMMENT_RE = /^\s*#/;
+const CONTINUED_RE = /\\\s*$/;
 const PAIR_RE = /([A-Za-z_][A-Za-z0-9_]*)=("(?:[^"\\]|\\.)*"|'[^']*'|\S*)\s*/y;
 
 type EnvLine = { readonly ok: true; readonly names: readonly string[] } | { readonly ok: false };
@@ -45,12 +48,38 @@ function envNames(rest: string): EnvLine {
   return names.length > 0 ? { ok: true, names } : { ok: false };
 }
 
+/**
+ * Each instruction, with the number of its first line. Docker drops a
+ * comment line before it joins a continued line, and never continues a
+ * comment.
+ */
+function instructions(text: string): { readonly line: string; readonly number: number }[] {
+  const out: { line: string; number: number }[] = [];
+  let joined: { line: string; number: number } | null = null;
+  for (const [index, raw] of text.split("\n").entries()) {
+    if (COMMENT_RE.test(raw)) {
+      continue;
+    }
+
+    joined ??= { line: "", number: index + 1 };
+    if (CONTINUED_RE.test(raw)) {
+      joined.line += raw.replace(CONTINUED_RE, " ");
+      continue;
+    }
+
+    joined.line += raw;
+    out.push(joined);
+    joined = null;
+  }
+
+  return joined === null ? out : [...out, joined];
+}
+
 /** Each stage's `ENV` names, its parent's included when the parent is a stage. */
 function stageEnv(text: string): Map<string, Set<string>> {
   const stages = new Map<string, Set<string>>();
   let current: Set<string> | null = null;
-  const lines = text.replace(/\\\n/g, " ").split("\n");
-  for (const [index, line] of lines.entries()) {
+  for (const { line, number } of instructions(text)) {
     const from = STAGE_RE.exec(line);
     if (from?.[1] !== undefined && from[2] !== undefined) {
       current = new Set(stages.get(from[1]) ?? []);
@@ -58,11 +87,15 @@ function stageEnv(text: string): Map<string, Set<string>> {
       continue;
     }
 
+    if (FROM_RE.test(line)) {
+      throw new Error(`Dockerfile line ${number}: name each stage, FROM <image> AS <stage>`);
+    }
+
     const env = ENV_RE.exec(line);
     if (env?.[1] !== undefined && current !== null) {
       const read = envNames(env[1].trim());
       if (!read.ok) {
-        throw new Error(`Dockerfile line ${index + 1}: write ENV K=V, not the legacy ENV K V form`);
+        throw new Error(`Dockerfile line ${number}: write ENV K=V, not the legacy ENV K V form`);
       }
 
       read.names.forEach((name) => current?.add(name));
@@ -144,6 +177,16 @@ describe("the Dockerfile ENV reader", () => {
     const text = "from --platform=linux/amd64 x as a\n  env A=1\nENV\tB=2\n";
 
     expect([...(stageEnv(text).get("a") ?? [])]).toEqual(["A", "B"]);
+  });
+
+  it("drops a comment line before it joins a continued line", () => {
+    const text = "FROM x AS a\n# a comment \\\nENV A=1\nRUN true \\\n  # inside\n  && true\nENV B=2\n";
+
+    expect([...(stageEnv(text).get("a") ?? [])]).toEqual(["A", "B"]);
+  });
+
+  it("refuses a FROM line with no stage name", () => {
+    expect(() => stageEnv("FROM x AS a\nFROM scratch\nENV A=1\n")).toThrow("line 2: name each stage");
   });
 
   it("refuses the legacy ENV K V form", () => {
