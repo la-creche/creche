@@ -448,8 +448,8 @@ carries one JSON value per line.
 
 | Link | The vmm sends | The guest sends | Line cap |
 |---|---|---|---|
-| Control, guest port 1200 | `ControlHello`, then `ControlCommand` | Guest init sends `ControlReady`, then `TurnEvent` | `CONTROL_LINE_CAP`, 64 KiB |
-| Family state, host port 1100 | `FamilyStateReply` | The facade sends the pull (decision CH5a). No row sets its bytes (Known gap 3) | 256 KiB (decision CH23 default 4) |
+| Control, guest port 1200 | `ControlHello`, then `ControlCommand` | Guest init sends `ControlReady`, then `TurnEvent` | `CONTROL_LINE_CAP`, 64 KiB (decision CH43 rule 1) |
+| Family state, host port 1100 | `FamilyStateReply` | The facade sends the pull (decision CH5a). The pull has no wire type yet (decision CH43 rule 4) | 256 KiB (decision CH23 default 4) |
 
 1. A writer writes each value in the compact form of serde_json, then one
    LF. The compact form holds no LF, because JSON escapes an LF in a
@@ -469,12 +469,14 @@ carries one JSON value per line.
 5. `stop` of `ControlCommand` starts the graceful stop (decision CH19
    rule 3). `DROP_STOP_WAIT` and `DROP_SIGTERM_GRACE` bound it (see "The
    drop route").
-6. A refused line ends the link: the reader closes it and logs why. No
-   link carries an error reply for a line.
+6. A refused line ends the link: the reader closes it and logs why
+   (decision CH43 rule 2). No link carries an error reply for a line.
 7. The framing is part of the guest init protocol. Once guest init is
    deployed, a change of the framing or of a cap needs a new
    `GUEST_INIT_PROTOCOL` (decision CH14), so that an old snapshot
    cold-boots. No route reaches these types, so `HOST_API_PROTOCOL` stays.
+8. The pull on host port 1100 has no wire type yet (decision CH43 rule 4).
+   The phase 3 guest init PR that adds the pull defines its line.
 
 ## Change a wire type
 
@@ -503,19 +505,4 @@ a dependency.
 
 ## Known gaps
 
-1. CONTRACT-QUESTION: decision CH36 G11 sets a per-line cap on the
-   control link and no value. The reading is `CONTROL_LINE_CAP` = 64 KiB,
-   32 times the largest line (a `ControlReady` of about 1.7 KiB). A change
-   later needs a new `GUEST_INIT_PROTOCOL` once guest init is deployed.
-2. CONTRACT-QUESTION: no decision says what a reader does with a refused
-   line on a vsock JSON link. The reading is the narrowest one: the reader
-   closes the link and logs why (rule 6 of "The vsock JSON links"). A
-   typed error line instead needs a new wire type.
-3. CONTRACT-QUESTION: no decision sets the bytes of the pull that the
-   facade sends on host port 1100. Decision CH5a says the facade pulls
-   before each `session/prompt`, and decision CH23 says the pull carries
-   no revision. Rule 1 of "The vsock JSON links" still asks for one JSON
-   value per line, so the pull needs a wire type. The reading taken here
-   is none: this package defines no pull type yet. The PR that adds the
-   1100 server must decide one, for example an empty object `{}` and an
-   LF.
+None.
