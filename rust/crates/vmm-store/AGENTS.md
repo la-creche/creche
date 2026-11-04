@@ -11,8 +11,8 @@ The second file has the table of the three vmm crates.
 - The crate never calls `creche-vmm-confine` or `creche-vmm`.
 - Decision CH44 rule 2 (PR D6, `images.rs`): a store copy that fails
   the identity check at VM start fails the start. `ImageStore::check`
-  removes and repairs nothing. An operator step or a later re-import
-  fixes the copy.
+  removes and repairs nothing. Item 42 Q42-2 adds that an operator step
+  or a later re-import fixes the copy.
 - Decision CH44 rule 3 (PR D8, `ch_remote.rs`): the timeout of a
   `ch-remote` call comes from its caller. This crate names no value. A
   pause takes about 4 ms (fact 72) and a 16 GiB snapshot about 12 s
