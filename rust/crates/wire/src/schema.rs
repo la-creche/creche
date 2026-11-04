@@ -26,8 +26,8 @@ use serde_json::{Map, Value, json};
 
 use super::{
     AutoJobId, ControlHello, ControlReady, DelegationId, FamilyConfig, FamilyStateReply,
-    HOST_API_HEADER, HOST_API_PROTOCOL, JS_INTEGER_MAX, JobId, JsonRoute, RouteError, SessionId,
-    SessionOrigin, TurnEvent, UnixMillis,
+    HOST_API_HEADER, HOST_API_PROTOCOL, JS_INTEGER_MAX, JobId, JsonRoute, RouteError, SHARED_CODES,
+    SessionId, SessionOrigin, TurnEvent, UnixMillis,
 };
 
 /// The variable that makes the test write the file instead of checking it.
@@ -324,9 +324,72 @@ fn the_route_table_holds_create() {
             "kind": "json",
             "reply": "SessionRow",
             "request": "CreateSession",
-            "statuses": {"conflict": 409, "unknown_family": 404},
+            "statuses": {
+                "bad_content_type": 415,
+                "bad_method": 405,
+                "conflict": 409,
+                "internal": 500,
+                "no_route": 404,
+                "not_json": 400,
+                "not_valid": 400,
+                "too_large": 413,
+                "unknown_family": 404,
+            },
         })
     );
+}
+
+#[test]
+fn the_shared_codes_are_the_codes_of_ch33_in_the_check_order() {
+    assert_eq!(
+        SHARED_CODES,
+        [
+            ("no_route", 404),
+            ("bad_method", 405),
+            ("bad_content_type", 415),
+            ("too_large", 413),
+            ("not_json", 400),
+            ("not_valid", 400),
+            ("internal", 500),
+        ]
+    );
+}
+
+#[test]
+fn each_route_error_ends_with_the_shared_codes() {
+    macro_rules! check {
+        (json $route:path) => {
+            let name = <$route as JsonRoute>::NAME;
+            let statuses = <<$route as JsonRoute>::Error as RouteError>::STATUSES;
+            let own = statuses.len().checked_sub(SHARED_CODES.len());
+
+            assert_eq!(
+                own.map(|own| &statuses[own..]),
+                Some(SHARED_CODES),
+                "route {name}: the error does not end with the shared codes"
+            );
+        };
+    }
+    crate::route_table!(check);
+}
+
+#[test]
+fn no_code_of_a_route_is_a_shared_code() {
+    macro_rules! check {
+        (json $route:path) => {
+            let name = <$route as JsonRoute>::NAME;
+            let statuses = <<$route as JsonRoute>::Error as RouteError>::STATUSES;
+            let own = &statuses[..statuses.len() - SHARED_CODES.len()];
+
+            for (code, _) in own {
+                assert!(
+                    SHARED_CODES.iter().all(|(shared, _)| shared != code),
+                    "route {name}: the code {code} of the route is a shared code"
+                );
+            }
+        };
+    }
+    crate::route_table!(check);
 }
 
 /// The `code` of each `oneOf` member of an error schema, in order.

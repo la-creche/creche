@@ -227,11 +227,40 @@ its `code` (decision CH25 rule 3).
    `src/creche_wire/__init__.py`.
 4. A Python caller matches `error.root.code`. Never name a class such as
    `CreateError1`.
-5. Add a refused case with the array form, an unknown code and an extra
-   key.
+5. Add an accepted case for each code. Add a refused case with the array
+   form, an unknown code and an extra key.
+6. No error body holds free text (decision CH33 rule 13). A variant carries
+   nothing, so a body is only its code. The vmm logs the details.
 
-Decision CH33 rule 13 names the codes that each route shares. No error
-type holds them yet (see "Known gaps").
+### The shared codes
+
+Each route error holds the codes that every route shares (decision CH33
+rule 13). `route_error!` appends them after the codes of the route, so no
+route can miss one. List only the codes of the route in `route_error!`.
+`SHARED_CODES` lists them, in the order in which the vmm checks a request:
+
+| Code | Status | The vmm refuses a request when |
+|---|---|---|
+| `no_route` | 404 | no route has its path. |
+| `bad_method` | 405 | its method is not `POST`. |
+| `bad_content_type` | 415 | its `Content-Type` is not `application/json`. |
+| `too_large` | 413 | its body is over the cap. |
+| `not_json` | 400 | its body is not strict JSON. |
+| `not_valid` | 400 | its body is not the request type of the route. |
+| `internal` | 500 | the vmm fails after it takes the request. |
+
+1. Decision CH26 orders the checks after the protocol header: the
+   `Content-Type`, then the body cap, then the JSON. A request must first
+   reach a route, so `no_route` and `bad_method` come before them.
+   Decision CH33 rule 13 lists the codes in this order.
+2. A code of a route never repeats a shared code. A Rust test fails when
+   one does, and when an error does not end with `SHARED_CODES`.
+3. The protocol mismatch reply is in no route error (decision CH25 rule 1).
+4. The shared vectors hold an accepted case `{"code":"<code>"}` for each
+   code in each route error: the codes of the route and the shared codes.
+   They also hold a refused case of a shared code with an extra key. The
+   Rust test `each_code_of_a_route_error_has_a_case` fails when one is
+   missing.
 
 ## Change a wire type
 
@@ -264,6 +293,3 @@ a dependency.
   that the routes reach needs a new number. The frozen copy per number and
   its CI check come in a later PR (PR 10 of the route table plan). Until
   then no check stops a change that keeps the number 1.
-- Decision CH33 rule 13 names the codes that each route shares, in the
-  CH26 check order, each with its status. No error type holds them yet.
-  A later change adds them to each error type.

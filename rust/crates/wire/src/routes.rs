@@ -40,18 +40,73 @@ impl<T: Serialize + DeserializeOwned> Body for T {}
 /// `route_error!`.
 pub trait RouteError: Body {
     /// The `code` and the HTTP status of each variant, in the order of the
-    /// enum (decision CH33).
+    /// enum (decision CH33). The codes of the route come first, then
+    /// `SHARED_CODES`.
     const STATUSES: &'static [(&'static str, u16)];
 
     /// The HTTP status of this error.
     fn status(&self) -> u16;
 }
 
+/// Call `$then!` with the codes that every route shares (decision CH33
+/// rule 13), as `Name = "code" => status` per variant. The list is in the
+/// order in which the vmm checks a request.
+///
+/// Decision CH26 orders the checks after the protocol header: the
+/// `Content-Type`, then the body cap, then the JSON. A request must first
+/// reach a route, so `no_route` and `bad_method` come before them. The
+/// JSON check gives `not_json`, and the check of the request type gives
+/// `not_valid`. `internal` is a fault of the vmm after every check.
+///
+/// The protocol mismatch reply is in no route error (decision CH25 rule 1).
+// The order is the check order of decision CH33 rule 13. A change of the
+// order moves the oneOf order and the class names CreateErrorN.
+macro_rules! shared_codes {
+    ($then:ident! { $($head:tt)* }) => {
+        $then! {
+            $($head)*
+            [
+                /// No route has this path.
+                NoRoute = "no_route" => 404,
+                /// The route has this path, but the method is not `POST`.
+                BadMethod = "bad_method" => 405,
+                /// The `Content-Type` is not `application/json`.
+                BadContentType = "bad_content_type" => 415,
+                /// The body is over the cap.
+                TooLarge = "too_large" => 413,
+                /// The body is not strict JSON.
+                NotJson = "not_json" => 400,
+                /// The body is JSON, but not the request type of the route.
+                NotValid = "not_valid" => 400,
+                /// The vmm failed after it took the request. The vmm logs
+                /// the details.
+                Internal = "internal" => 500,
+            ]
+        }
+    };
+}
+
+/// Write `SHARED_CODES` from the list of `shared_codes!`.
+macro_rules! shared_list {
+    ([$($(#[$meta:meta])* $variant:ident = $code:literal => $status:literal,)+]) => {
+        /// The `code` and the HTTP status of each code that every route
+        /// shares (decision CH33 rule 13), in the order in which the vmm
+        /// checks a request. `route_error!` appends these codes to each
+        /// route error, after the codes of the route.
+        pub const SHARED_CODES: &[(&str, u16)] = &[$(($code, $status)),+];
+    };
+}
+
+shared_codes!(shared_list! {});
+
 /// Declare the error of a route, as `Name = "code" => status` per variant.
+/// List only the codes of the route. The macro appends the codes of
+/// `shared_codes!`, so no route can miss one (decision CH33 rule 13).
 ///
 /// The enum is internally tagged on `code`, so the wire form of a variant
 /// is `{"code":"<code>"}`. A variant carries nothing, so it is written
-/// `V {}` (decision CH22 rule 3). No variant has a schema title: a caller
+/// `V {}` (decision CH22 rule 3), and no error body holds free text
+/// (decision CH33 rule 13). No variant has a schema title: a caller
 /// matches the code, not a generated class (decision CH25 rule 3).
 /// `object_only!` refuses the array form that a derived reader takes. The
 /// one list writes the serde names, `STATUSES` and `status`. A status
@@ -60,11 +115,46 @@ macro_rules! route_error {
     (
         $(#[$meta:meta])*
         pub enum $name:ident {
+            $($route:tt)*
+        }
+    ) => {
+        shared_codes!(route_error! { @all $(#[$meta])* $name [$($route)*] });
+    };
+    (
+        @all
+        $(#[$meta:meta])*
+        $name:ident
+        [$(
+            $(#[$variant_meta:meta])*
+            $variant:ident = $code:literal => $status:literal,
+        )*]
+        [$(
+            $(#[$shared_meta:meta])*
+            $shared:ident = $shared_code:literal => $shared_status:literal,
+        )+]
+    ) => {
+        route_error! {
+            @enum
+            $(#[$meta])*
+            $name
             $(
-                $(#[$variant_meta:meta])*
-                $variant:ident = $code:literal => $status:literal,
+                $(#[$variant_meta])*
+                $variant = $code => $status,
+            )*
+            $(
+                $(#[$shared_meta])*
+                $shared = $shared_code => $shared_status,
             )+
         }
+    };
+    (
+        @enum
+        $(#[$meta:meta])*
+        $name:ident
+        $(
+            $(#[$variant_meta:meta])*
+            $variant:ident = $code:literal => $status:literal,
+        )+
     ) => {
         $(#[$meta])*
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

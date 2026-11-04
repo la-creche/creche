@@ -150,9 +150,108 @@ class CreateError2(BaseModel):
     code: Literal["unknown_family"]
 
 
-class CreateError(RootModel[CreateError1 | CreateError2]):
+class CreateError3(BaseModel):
+    """
+    No route has this path.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["no_route"]
+
+
+class CreateError4(BaseModel):
+    """
+    The route has this path, but the method is not `POST`.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["bad_method"]
+
+
+class CreateError5(BaseModel):
+    """
+    The `Content-Type` is not `application/json`.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["bad_content_type"]
+
+
+class CreateError6(BaseModel):
+    """
+    The body is over the cap.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["too_large"]
+
+
+class CreateError7(BaseModel):
+    """
+    The body is not strict JSON.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["not_json"]
+
+
+class CreateError8(BaseModel):
+    """
+    The body is JSON, but not the request type of the route.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["not_valid"]
+
+
+class CreateError9(BaseModel):
+    """
+    The vmm failed after it took the request. The vmm logs
+    the details.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["internal"]
+
+
+class CreateError(
+    RootModel[
+        CreateError1
+        | CreateError2
+        | CreateError3
+        | CreateError4
+        | CreateError5
+        | CreateError6
+        | CreateError7
+        | CreateError8
+        | CreateError9
+    ]
+):
     root: Annotated[
-        CreateError1 | CreateError2, Field(description="The error of the route `create`.")
+        CreateError1
+        | CreateError2
+        | CreateError3
+        | CreateError4
+        | CreateError5
+        | CreateError6
+        | CreateError7
+        | CreateError8
+        | CreateError9,
+        Field(description="The error of the route `create`."),
     ]
 
 

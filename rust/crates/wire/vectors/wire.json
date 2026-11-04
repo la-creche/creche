@@ -281,6 +281,41 @@
       "note": "a family with no config dir"
     },
     {
+      "json": "{\"code\":\"no_route\"}",
+      "written": "{\"code\":\"no_route\"}",
+      "note": "the shared code no_route: a path with no route"
+    },
+    {
+      "json": "{\"code\":\"bad_method\"}",
+      "written": "{\"code\":\"bad_method\"}",
+      "note": "the shared code bad_method: a method that is not POST"
+    },
+    {
+      "json": "{\"code\":\"bad_content_type\"}",
+      "written": "{\"code\":\"bad_content_type\"}",
+      "note": "the shared code bad_content_type: a Content-Type that is not JSON"
+    },
+    {
+      "json": "{\"code\":\"too_large\"}",
+      "written": "{\"code\":\"too_large\"}",
+      "note": "the shared code too_large: a body over the cap"
+    },
+    {
+      "json": "{\"code\":\"not_json\"}",
+      "written": "{\"code\":\"not_json\"}",
+      "note": "the shared code not_json: a body that is not strict JSON"
+    },
+    {
+      "json": "{\"code\":\"not_valid\"}",
+      "written": "{\"code\":\"not_valid\"}",
+      "note": "the shared code not_valid: a body that is not the request type"
+    },
+    {
+      "json": "{\"code\":\"internal\"}",
+      "written": "{\"code\":\"internal\"}",
+      "note": "the shared code internal: a fault of the vmm"
+    },
+    {
       "json": "[\"conflict\"]",
       "written": null,
       "note": "the array form"
@@ -319,6 +354,26 @@
       "json": "{\"code\":\"conflict\",\"message\":\"exists\"}",
       "written": null,
       "note": "free text"
+    },
+    {
+      "json": "{\"code\":\"not_valid\",\"field\":\"family\"}",
+      "written": null,
+      "note": "a shared code with an extra key"
+    },
+    {
+      "json": "{\"code\":\"internal\",\"message\":\"disk full\"}",
+      "written": null,
+      "note": "a shared code with free text"
+    },
+    {
+      "json": "[\"not_json\"]",
+      "written": null,
+      "note": "the array form of a shared code"
+    },
+    {
+      "json": "{\"code\":\"protocol_mismatch\"}",
+      "written": null,
+      "note": "the protocol mismatch, which is in no route error"
     },
     {
       "json": "{\"code\":\"unknown_family\",\"family\":\"chat\"}",
