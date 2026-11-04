@@ -6,3 +6,5 @@
 //! of `creche-vmm-store` and never calls `creche-vmm`.
 
 pub mod launch;
+pub mod scope;
+pub mod spawner;
