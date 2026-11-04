@@ -399,10 +399,9 @@ impl ImageStore {
     /// source, `digest` is the SHA-256 of the decompressed bytes
     /// (decision CH41 rule 1).
     ///
-    /// CONTRACT-QUESTION: no row decides what the vmm does with a copy
-    /// that fails the check. `import` returns the recorded entry and does
-    /// not copy again. The narrowest reading: the check removes and
-    /// repairs nothing, and the start fails (`AGENTS.md`, Known gaps).
+    /// Decision CH44 rule 2: a copy that fails the check fails the start.
+    /// The check removes and repairs nothing. `import` returns the recorded
+    /// entry and does not copy again.
     ///
     /// # Errors
     ///
