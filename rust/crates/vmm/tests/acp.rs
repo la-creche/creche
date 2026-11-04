@@ -322,6 +322,7 @@ fn a_drop_closes_both_ends() {
     server.end();
 }
 
+/// A refused Upgrade records no door close (decision CH19 (6)).
 #[test]
 fn an_unknown_id_gets_not_found_with_no_start() {
     let server = Server::start("acp-unknown");
@@ -329,6 +330,8 @@ fn an_unknown_id_gets_not_found_with_no_start() {
     // Another family does not own the id (decision CH33 rule 5).
     server.refused("code", A, AcpError::NotFound {});
     assert_eq!(server.starts(), 0);
+    assert_eq!(server.relays.door(&B.parse().unwrap()), Door::NotOpened);
+    assert_eq!(server.relays.door(&A.parse().unwrap()), Door::NotOpened);
     server.end();
 }
 
@@ -364,6 +367,7 @@ fn another_family_gets_not_found_while_the_owner_holds_the_session() {
     server.refused("code", A, AcpError::NotFound {});
     server.refused("chat", A, AcpError::Busy {});
     assert_eq!(server.starts(), 1);
+    assert_eq!(server.relays.door(&A.parse().unwrap()), Door::Open);
     server.end();
 }
 
@@ -391,6 +395,9 @@ fn a_start_fault_answers_before_101() {
         server.refused("chat", A, error);
     }
     assert_eq!(server.starts(), 3);
+    // A start fault opened no door link, so it records no close (decision
+    // CH19 (6)).
+    assert_eq!(server.relays.door(&A.parse().unwrap()), Door::NotOpened);
     // A refusal frees the session at once.
     server.hook.0.lock().unwrap().fault = None;
     assert_eq!(server.upgrade("chat", A).0, 101);

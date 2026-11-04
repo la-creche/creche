@@ -56,10 +56,10 @@ pub enum Taken {
 pub enum Door {
     /// An Upgrade holds the session: its VM starts, or its relay runs.
     Open,
-    /// The last Upgrade of the session ended at this time.
+    /// The last admitted Upgrade of the session ended at this time.
     ClosedAt(Instant),
-    /// No Upgrade of the session ended since the vmm started or since a
-    /// drop of the session began.
+    /// No admitted Upgrade of the session ended since the vmm started or
+    /// since a drop of the session began. A refused Upgrade adds no close.
     NotOpened,
 }
 
@@ -110,6 +110,7 @@ impl Relays {
             id: id.clone(),
             claim,
             stop,
+            admitted: false,
         })
     }
 
@@ -161,9 +162,17 @@ pub struct Claim {
     id: SessionId,
     claim: u64,
     stop: oneshot::Receiver<()>,
+    /// Whether the Upgrade passed each check and its VM started. Only an
+    /// admitted claim records a door close when it ends.
+    admitted: bool,
 }
 
 impl Claim {
+    /// Marks the claim admitted: its VM started and its relay follows.
+    pub(crate) fn admit(&mut self) {
+        self.admitted = true;
+    }
+
     /// Whether a drop stopped the claim. A sent stop and a dropped sender
     /// both count.
     pub fn stopped(&mut self) -> bool {
@@ -178,12 +187,17 @@ impl Drop for Claim {
     fn drop(&mut self) {
         let mut registry = self.relays.registry();
         // A drop can replace this claim's slot with its mark, and a later
-        // claim can follow the mark. Only this claim's own slot goes, and
-        // only then does the door close.
+        // claim can follow the mark. Only this claim's own slot goes.
         let own = |slot: &Slot| matches!(slot, Slot::Open { claim, .. } if *claim == self.claim);
         if registry.slots.get(&self.id).is_some_and(own) {
             registry.slots.remove(&self.id);
-            registry.closed.insert(self.id.clone(), Instant::now());
+            // Only an admitted claim closes a door (decision CH19 (6)). A
+            // refused Upgrade (a start fault, or a drop during the start)
+            // opened no door link. So it leaves the last close time as it
+            // was and adds no entry to `closed`.
+            if self.admitted {
+                registry.closed.insert(self.id.clone(), Instant::now());
+            }
         }
     }
 }
@@ -222,7 +236,8 @@ pub struct AcpRelay {
 impl AcpRelay {
     /// The relay that holds `claim` and dials the VM's vsock socket
     /// `vsock`.
-    pub(crate) fn new(claim: Claim, vsock: PathBuf) -> Self {
+    pub(crate) fn new(mut claim: Claim, vsock: PathBuf) -> Self {
+        claim.admit();
         Self { claim, vsock }
     }
 }
@@ -351,24 +366,43 @@ mod tests {
         assert!(relays.claim(&id).is_ok());
     }
 
-    /// A claim opens the door, and its end records the close. A drop
-    /// clears the record, and a stopped claim adds none (decision CH19
-    /// (6)).
+    /// A claim opens the door, and the end of an admitted claim records
+    /// the close. A drop clears the record, and a stopped claim adds none
+    /// (decision CH19 (6)).
     #[test]
     fn a_claim_opens_the_door_and_its_end_closes_it() {
         let relays = Relays::default();
         let id: SessionId = "3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b".parse().unwrap();
         assert_eq!(relays.door(&id), Door::NotOpened);
-        let claim = relays.claim(&id).unwrap();
+        let mut claim = relays.claim(&id).unwrap();
         assert_eq!(relays.door(&id), Door::Open);
+        claim.admit();
         let before = Instant::now();
         drop(claim);
         assert!(matches!(relays.door(&id), Door::ClosedAt(at) if at >= before));
 
-        let claim = relays.claim(&id).unwrap();
+        let mut claim = relays.claim(&id).unwrap();
+        claim.admit();
         let mark = relays.mark_drop(&id);
         drop(claim);
         drop(mark);
         assert_eq!(relays.door(&id), Door::NotOpened);
+    }
+
+    /// A claim that ends with no relay, as for a refused Upgrade, records
+    /// no close. It leaves an earlier close time as it was.
+    #[test]
+    fn a_refused_claim_records_no_close() {
+        let relays = Relays::default();
+        let id: SessionId = "3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b".parse().unwrap();
+        drop(relays.claim(&id).unwrap());
+        assert_eq!(relays.door(&id), Door::NotOpened);
+
+        let mut claim = relays.claim(&id).unwrap();
+        claim.admit();
+        drop(claim);
+        let closed = relays.door(&id);
+        drop(relays.claim(&id).unwrap());
+        assert_eq!(relays.door(&id), closed);
     }
 }

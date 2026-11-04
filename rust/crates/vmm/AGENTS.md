@@ -137,8 +137,9 @@ rules 5 and 7). Then it copies bytes both ways until one side closes or
 the stop signal fires, and it drops both streams (decision CH20). It
 parses no ACP byte and caps none (decision CH34 rule 3). `Relays::door`
 gives the door of a session for the sleep gate (decision CH19 (6)): open
-from the claim to its end, then the time of the close. A drop clears the
-time.
+from the claim to its end, then the time that the last admitted Upgrade
+ended. A refused Upgrade records no close, so the map of close times
+grows only with sessions that ran. A drop clears the time.
 
 ## Rules
 
