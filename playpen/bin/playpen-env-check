@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# CI — the `playpen-image` job runs it on each built flavor:
+#   playpen/bin/playpen-env-check <image>
+#
+# It holds `/etc/creche/env` of the image equal to the env of the image's
+# config, inherited names included (CH7-7, CH49). The config gives one
+# `NAME=value` line per variable. The file must hold the same lines, sorted
+# by name in byte order, with each PATH folder only once
+# (`creche-env-write`).
+#
+# Exit 0 when the two are equal. Exit 1, with a diff of the two, when they
+# differ or when docker cannot answer.
+set -euo pipefail
+
+die() { printf 'playpen-env-check: %s\n' "$*" >&2; exit 1; }
+
+[[ "$#" -eq 1 ]] || die "usage: playpen-env-check <image>"
+image="$1"
+
+work="$(mktemp -d)"
+trap 'rm -rf -- "$work"' EXIT
+
+docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$image" \
+  > "$work/config" || die "docker has no config for $image"
+docker run --rm --network none --entrypoint /bin/cat "$image" /etc/creche/env \
+  > "$work/file" || die "$image has no /etc/creche/env"
+
+name='^[A-Za-z_][A-Za-z0-9_]*='
+while IFS= read -r line; do
+  [[ -z "$line" ]] && continue
+  [[ "$line" =~ $name ]] || die "the config of $image holds a line that is no NAME=value line: $line"
+  if [[ "$line" == PATH=* ]]; then
+    line="PATH=$(printf '%s\n' "${line#PATH=}" | tr ':' '\n' | awk '!seen[$0]++' | paste -sd: -)"
+  fi
+  printf '%s\n' "$line"
+done < "$work/config" | LC_ALL=C sort -t= -k1,1 > "$work/expected"
+
+if ! diff -u --label "config of $image" --label "/etc/creche/env" "$work/expected" "$work/file"; then
+  die "/etc/creche/env of $image is not the env of its config. List each new name in the RUN of creche-env-write in playpen/Dockerfile."
+fi
+printf 'playpen-env-check: %s: /etc/creche/env equals the config env (%s names)\n' \
+  "$image" "$(wc -l < "$work/expected" | tr -d ' ')"

@@ -6,15 +6,21 @@
 //! and the thread lives as long as the `Spawner`. A drop of the `Spawner`
 //! ends the thread, and the kernel then sends SIGKILL to every payload it
 //! started. The vmm keeps its `Spawner` for its whole life.
+//!
+//! Each launch step gets one pipe for its stdout and stderr in place of
+//! the fds of the vmm (decision CH50 rule 12). The spawner starts the
+//! reader thread of `output` on the pipe before the fork.
 
 use std::fmt;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus};
+use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 
 use crate::launch::{Launch, MODE, PLAN_MAX, Plan};
+use crate::output::{self, Sink};
 
 /// The program of the launch step in production. The kernel resolves this
 /// link to the running vmm binary, even after a release renames its file to
@@ -31,7 +37,8 @@ pub enum SpawnError {
     /// The plan has more bytes than `PLAN_MAX`, or more than the pipe
     /// holds. The value is its size.
     TooLarge(usize),
-    /// The plan pipe or the launch step did not start.
+    /// The plan pipe, the output pipe, its reader thread or the launch
+    /// step did not start.
     Spawn(io::Error),
 }
 
@@ -63,16 +70,27 @@ pub struct Spawner {
 
 impl Spawner {
     /// Starts the spawner thread. Each launch runs `program launch`. The
-    /// vmm passes `SELF_EXE`.
+    /// vmm passes `SELF_EXE`. The lines of each CH go to the stderr of the
+    /// vmm (`output::stderr_sink`).
     ///
     /// # Errors
     ///
     /// The thread did not start.
     pub fn start(program: PathBuf) -> io::Result<Self> {
+        Self::with_sink(program, output::stderr_sink())
+    }
+
+    /// Starts the spawner thread as `start` does, with the lines of each
+    /// CH going to `sink`.
+    ///
+    /// # Errors
+    ///
+    /// The thread did not start.
+    pub fn with_sink(program: PathBuf, sink: Sink) -> io::Result<Self> {
         let (requests, queue) = mpsc::channel();
         let thread = thread::Builder::new()
             .name("vmm-spawner".to_owned())
-            .spawn(move || serve(&program, &queue))?;
+            .spawn(move || serve(&program, &sink, &queue))?;
         Ok(Self {
             requests: Some(requests),
             thread: Some(thread),
@@ -109,17 +127,19 @@ impl Drop for Spawner {
 }
 
 /// The body of the spawner thread. It ends when the `Spawner` is dropped.
-fn serve(program: &Path, queue: &Receiver<Request>) {
+fn serve(program: &Path, sink: &Sink, queue: &Receiver<Request>) {
     for request in queue {
         // A caller that stopped waiting drops its answer. Its child then
         // has no handle and dies with this thread.
-        let _ = request.reply.send(spawn(program, request.launch));
+        let _ = request.reply.send(spawn(program, sink, request.launch));
     }
 }
 
-/// Writes the plan into a new pipe, then forks one launch step from this
-/// thread with the pipe on fd 0.
-fn spawn(program: &Path, launch: Launch) -> Result<Child, SpawnError> {
+/// Writes the plan into a new pipe, starts the output reader on a second
+/// pipe, then forks one launch step from this thread with the plan pipe
+/// on fd 0 and the output pipe on fds 1 and 2.
+fn spawn(program: &Path, sink: &Sink, launch: Launch) -> Result<Child, SpawnError> {
+    let id = launch.scope().id().clone();
     let plan = Plan {
         spawner: std::process::id(),
         launch,
@@ -143,9 +163,16 @@ fn spawn(program: &Path, launch: Launch) -> Result<Child, SpawnError> {
             _ => SpawnError::Spawn(error),
         })?;
     drop(writer);
+    // The reader thread starts before the fork. If the fork fails, the
+    // write ends close with this function and the thread ends at once.
+    let (output, out) = io::pipe().map_err(SpawnError::Spawn)?;
+    let err = out.try_clone().map_err(SpawnError::Spawn)?;
+    output::start(id, output, Arc::clone(sink)).map_err(SpawnError::Spawn)?;
     Command::new(program)
         .arg(MODE)
         .stdin(reader)
+        .stdout(out)
+        .stderr(err)
         .spawn()
         .map_err(SpawnError::Spawn)
 }

@@ -37,14 +37,15 @@ build a venv.
 Each flavor's last step writes `/etc/creche/env`: one `NAME=value` line
 per variable of the image config, sorted, with each `PATH` folder once.
 Guest init reads it, because a root disk carries no image config (CH7-7,
-CH49). The step lists the names, so a new `ENV` name goes into the list.
+CH49). The step lists the names. `bin/playpen-env-check` compares the file
+with the built config in CI, so a new `ENV` name fails until it is listed.
 
 The image holds no pi, no fd, no playpen bundle, no PEP bridge, no
 `agent-pi-launch` and no Python package installer.
 
 The image is built on the host, from the repository root, with
 `playpen/Dockerfile`. Do not build it on a development machine.
-CI builds the full Python flavor on each code change.
+CI builds each flavor on each code change (`bin/playpen-ci`).
 
 ## The release
 
@@ -61,8 +62,9 @@ CI builds the full Python flavor on each code change.
    row bundles those.
 5. `bin/playpen-verify` changes nothing and reaches nothing outside the
    host. It asks the registry for each digest in `images.env`.
-6. Keep three lists equal: the targets of `Dockerfile`, the flavors in
-   `bin/playpen-build`, and `SandboxFlavor` in `family/`.
+6. Keep four lists equal: the targets of `Dockerfile`, the flavors in
+   `bin/playpen-build` and `bin/playpen-ci`, and `SandboxFlavor` in
+   `family/`.
 7. `bin/tests/test_playpen_release.py` runs both scripts against a stub
    `docker` and a stub registry. `bin/tests/test_playpen_image.py` reads the
    Dockerfile as text. No test builds an image.
@@ -74,7 +76,11 @@ CI builds the full Python flavor on each code change.
 | `Dockerfile` | the image: the build stage and the flavors |
 | `component.yaml` | the release manifest of the component |
 | `bin/playpen-build`, `bin/playpen-verify`, `bin/lib/registry.sh` | the release build, the verify hook, the one registry question |
-| `bin/creche-env-write` | `/etc/creche/env` in each flavor's last step |
+| `bin/creche-env-write`, `bin/playpen-env-check` | `/etc/creche/env` in each flavor's last step, and the CI check that it equals the image config env |
+| `bin/playpen-ci` | the steps of the `playpen-image` CI job: build each flavor, then check it |
+| `bin/playpen-rootfs` | the tar export of one flavor, the input of its root disk |
+| `bin/playpen-disk`, `disk/Dockerfile` | the root disk of one flavor from its tar, in the pinned trixie stage |
+| `bin/playpen-kernel` | the pinned CH guest kernel, compressed to ship like the disks |
 
 ## Known gaps
 

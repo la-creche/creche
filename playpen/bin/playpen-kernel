@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# CI — fetches the Cloud Hypervisor guest kernel and readies it to ship like
+# the root disks (CH7-3, CH7-2, CH41 rule 1):
+#   playpen/bin/playpen-kernel <out-dir>
+#
+# It fetches `vmlinux-x86_64` of the CH release ch-release-v7.2.8-20261009,
+# checks the SHA-256 that GitHub gives for the asset (fact 53), and writes
+# `<out-dir>/vmlinux-x86_64.zst`, compressed in the pinned trixie stage of
+# playpen/disk/Dockerfile. Its last stdout line is
+# `<sha256>  vmlinux-x86_64`: the SHA-256 of the decompressed kernel, the
+# bytes that Cloud Hypervisor reads. The release step that publishes the
+# line is the disk row's, not this script's.
+#
+# bin/vm-smoke-setup.sh pins the same kernel for the KVM smoke job. Change
+# the two pins together.
+#
+# Exit 0 with the kernel written. Exit 1 when the fetch fails or the bytes
+# are not the pinned ones. A failed run leaves no kernel.
+set -euo pipefail
+
+die() { printf 'playpen-kernel: %s\n' "$*" >&2; exit 1; }
+
+[[ "$#" -eq 1 ]] || die "usage: playpen-kernel <out-dir>"
+out="$1"
+[[ -d "$out" ]] || die "no folder at $out"
+# docker -v takes an absolute source only.
+out="$(cd -- "$out" && pwd)"
+
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+PLATFORM=linux/amd64
+TOOLS=playpen-disk-tools
+NAME=vmlinux-x86_64
+URL="https://github.com/cloud-hypervisor/linux/releases/download/ch-release-v7.2.8-20261009/$NAME"
+SHA256=edfeb8a8a6c04ff2979e9f1c700feaa29b8f564f952261834ef0b7d2e673a853
+
+work="$(mktemp -d "$out/.playpen-kernel.XXXXXX")"
+trap 'rm -rf -- "$work"' EXIT
+
+curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \
+  --output "$work/$NAME" "$URL" || die "the fetch of $URL failed"
+found="$(sha256sum "$work/$NAME" 2>/dev/null || shasum -a 256 "$work/$NAME")"
+found="${found%% *}"
+[[ "$found" == "$SHA256" ]] || die "$NAME has the SHA-256 $found, not $SHA256"
+
+docker build --platform "$PLATFORM" -q -t "$TOOLS" "$ROOT/playpen/disk" > /dev/null \
+  || die "the disk-tools build failed"
+docker run --rm --network none --platform "$PLATFORM" --user "$(id -u):$(id -g)" \
+  -v "$work:/out" "$TOOLS" zstd -q -T0 -10 -o "/out/$NAME.zst" "/out/$NAME" \
+  || die "the compression of $NAME failed"
+
+mv -f -- "$work/$NAME.zst" "$out/$NAME.zst"
+printf 'playpen-kernel: %s: %s bytes compressed\n' \
+  "$NAME" "$(wc -c < "$out/$NAME.zst" | tr -d ' ')" >&2
+printf '%s  %s\n' "$SHA256" "$NAME"
