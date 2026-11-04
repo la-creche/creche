@@ -15,11 +15,13 @@
 //!    `vsock.sock_<port>` of the host ports that the vmm bound for the
 //!    family (decisions CH14, CH24). That set is empty in phase 2.
 //!
-//! CONTRACT-QUESTION: on a restore the command line shows no device, so
+//! Decision CH42 rule 2: on a restore the command line shows no device, so
 //! part 1 cannot see a network card that the snapshot holds. The check
-//! relies on the snapshot of a boot that passed it. No decision row says
-//! whether the check must also read the device set of a restored VM, for
-//! example from `ch-remote info`. AGENTS.md lists this in Known gaps.
+//! trusts that a snapshot comes only from a boot that passed the check.
+//! Once the CH API (plan PR D8, `ch_remote`) is in, the vmm also reads the
+//! restored VM's device set through `ch-remote info` before the VM is
+//! ready. The lifecycle work owns that later step. This module does not
+//! do it. AGENTS.md lists it in Known gaps.
 
 use std::ffi::OsString;
 use std::fmt;

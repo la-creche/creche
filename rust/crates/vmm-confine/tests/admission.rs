@@ -1,5 +1,6 @@
 //! Table tests of admission: the RAM cap, the LRU idle order and the
-//! free-space floor (decisions CH8-6, CH8-7, CH21-3, CH36 G14).
+//! free-space floor (decisions CH8-6, CH8-7, CH21-3, CH36 G14, CH42
+//! rule 3).
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -132,6 +133,82 @@ fn the_floor_comes_before_an_eviction() {
     let running = [vm(1, 80, 600, Gate::Idle, now)];
     let low = decide(GIB, &running, FREE_FLOOR - 1, Limits::DESIGN);
     assert_eq!(low, Admission::HostFull(Full::Disk));
+}
+
+#[test]
+fn the_floor_holds_after_the_eviction_writes() {
+    let now = Instant::now() + Duration::from_secs(3600);
+    // 80 GiB running: two idle VMs of 16 GiB, one busy VM of 48 GiB.
+    let running = [
+        vm(1, 16, 10, Gate::Idle, now),
+        vm(2, 16, 300, Gate::Idle, now),
+        vm(3, 48, 900, Gate::Busy, now),
+    ];
+    let one = 16 * GIB;
+    let two = 32 * GIB;
+    let cases = [
+        (
+            "one snapshot leaves the floor",
+            GIB,
+            FREE_FLOOR + one,
+            Admission::EvictFirst(vec![id(2)]),
+        ),
+        (
+            "one snapshot breaks the floor by a byte",
+            GIB,
+            FREE_FLOOR + one - 1,
+            Admission::HostFull(Full::Disk),
+        ),
+        (
+            "two snapshots leave the floor",
+            one + 1,
+            FREE_FLOOR + two,
+            Admission::EvictFirst(vec![id(2), id(1)]),
+        ),
+        (
+            "two snapshots break the floor by a byte",
+            one + 1,
+            FREE_FLOOR + two - 1,
+            Admission::HostFull(Full::Disk),
+        ),
+        (
+            "a start with no eviction needs only the floor",
+            0,
+            FREE_FLOOR,
+            Admission::Admit,
+        ),
+        (
+            "too little RAM even with every idle VM",
+            two + 1,
+            ROOMY,
+            Admission::HostFull(Full::Ram),
+        ),
+    ];
+    for (name, wanted, free, answer) in cases {
+        assert_eq!(
+            decide(wanted, &running, free, Limits::DESIGN),
+            answer,
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn a_zero_floor_still_needs_room_for_the_snapshots() {
+    let now = Instant::now() + Duration::from_secs(3600);
+    let limits = Limits {
+        ram_cap: 8 * GIB,
+        free_floor: 0,
+    };
+    let running = [vm(1, 8, 60, Gate::Idle, now)];
+    assert_eq!(
+        decide(GIB, &running, 8 * GIB, limits),
+        Admission::EvictFirst(vec![id(1)])
+    );
+    assert_eq!(
+        decide(GIB, &running, 8 * GIB - 1, limits),
+        Admission::HostFull(Full::Disk)
+    );
 }
 
 #[test]
