@@ -1950,6 +1950,73 @@
       "note": "null"
     }
   ],
+  "ProtocolMismatch": [
+    {
+      "json": "{\"code\":\"protocol_mismatch\",\"protocol\":1}",
+      "written": "{\"code\":\"protocol_mismatch\",\"protocol\":1}",
+      "note": "the reply of a vmm of protocol 1, byte for byte"
+    },
+    {
+      "json": "{\"code\":\"protocol_mismatch\",\"protocol\":0}",
+      "written": "{\"code\":\"protocol_mismatch\",\"protocol\":0}",
+      "note": "the protocol 0"
+    },
+    {
+      "json": "{\"code\":\"protocol_mismatch\",\"protocol\":4294967295}",
+      "written": "{\"code\":\"protocol_mismatch\",\"protocol\":4294967295}",
+      "note": "the largest protocol"
+    },
+    {
+      "json": "{\"protocol\":1,\"code\":\"protocol_mismatch\"}",
+      "written": "{\"code\":\"protocol_mismatch\",\"protocol\":1}",
+      "note": "the keys in another order"
+    },
+    {
+      "json": "{\"protocol\":1}",
+      "written": null,
+      "note": "no code"
+    },
+    {
+      "json": "{\"code\":\"protocol_mismatch\"}",
+      "written": null,
+      "note": "no protocol"
+    },
+    {
+      "json": "{\"code\":\"conflict\",\"protocol\":1}",
+      "written": null,
+      "note": "another code"
+    },
+    {
+      "json": "{\"code\":\"protocol_mismatch\",\"protocol\":1,\"detail\":\"x\"}",
+      "written": null,
+      "note": "an extra key with free text"
+    },
+    {
+      "json": "{\"code\":\"protocol_mismatch\",\"protocol\":\"1\"}",
+      "written": null,
+      "note": "the protocol as text"
+    },
+    {
+      "json": "{\"code\":\"protocol_mismatch\",\"protocol\":-1}",
+      "written": null,
+      "note": "a negative protocol"
+    },
+    {
+      "json": "{\"code\":\"protocol_mismatch\",\"protocol\":4294967296}",
+      "written": null,
+      "note": "a protocol past 32 bits"
+    },
+    {
+      "json": "{\"code\":\"protocol_mismatch\",\"protocol\":1.0}",
+      "written": null,
+      "note": "the protocol as a float"
+    },
+    {
+      "json": "[\"protocol_mismatch\",1]",
+      "written": null,
+      "note": "the array form"
+    }
+  ],
   "SandboxGrant": [
     {
       "json": "{\"bash\":false,\"edit\":false,\"glob\":false,\"grep\":false,\"read\":false,\"write\":false}",

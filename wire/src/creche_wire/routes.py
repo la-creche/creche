@@ -15,6 +15,7 @@ from .route import JsonRoute
 
 HOST_API_PROTOCOL: Final = 1
 HOST_API_HEADER: Final = "creche-host-api-protocol"
+MISMATCH_STATUS: Final = 412
 
 CREATE: Final = JsonRoute(
     name="create",

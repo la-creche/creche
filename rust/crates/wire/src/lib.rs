@@ -17,8 +17,8 @@ mod schema;
 mod vectors;
 
 pub use routes::{
-    Body, CreateError, CreateRoute, HOST_API_HEADER, HOST_API_PROTOCOL, JsonRoute, RouteError,
-    SHARED_CODES,
+    Body, CreateError, CreateRoute, HOST_API_HEADER, HOST_API_PROTOCOL, JsonRoute, MISMATCH_STATUS,
+    ProtocolMismatch, RouteError, SHARED_CODES,
 };
 
 /// The length of a session id: 32 hex digits and 4 hyphens.

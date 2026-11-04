@@ -187,15 +187,16 @@ its error type.
    that names a new type adds that type to `$defs`. Run
    `uv run datamodel-codegen` after each change of a route.
 6. A client sends `HOST_API_PROTOCOL` in the header `HOST_API_HEADER`. The
-   vmm checks it before it reads the body, and the match is exact. A change
-   of the schema subset that the routes reach needs a new number (decision
-   CH33 rule 8). The repo holds a frozen copy of that subset per number,
-   and CI fails on a change that keeps the number. That check is not built
-   yet (see "Known gaps").
+   vmm checks it before it reads the body, and the match is exact. A
+   request that fails the check gets the mismatch reply (see "The protocol
+   mismatch reply"). A change of the schema subset that the routes reach
+   needs a new number (decision CH33 rule 8). The repo holds a frozen copy
+   of that subset per number, and CI fails on a change that keeps the
+   number. That check is not built yet (see "Known gaps").
 7. The schema test also writes `src/creche_wire/routes.py`. It holds the
-   protocol, its header and one `JsonRoute` constant per route, named as
-   the route in capitals: `CREATE`. pyright then refuses a wrong request,
-   reply or error model on a Python client.
+   protocol, its header, `MISMATCH_STATUS` and one `JsonRoute` constant
+   per route, named as the route in capitals: `CREATE`. pyright then
+   refuses a wrong request, reply or error model on a Python client.
 8. `JsonRoute.encode` takes only the request model of its route. It also
    keeps the request type invariant, so do not remove it.
    `src/creche_wire/_route_typing.py` holds the proof. Each wrong use there
@@ -256,11 +257,51 @@ route can miss one. List only the codes of the route in `route_error!`.
 2. A code of a route never repeats a shared code. A Rust test fails when
    one does, and when an error does not end with `SHARED_CODES`.
 3. The protocol mismatch reply is in no route error (decision CH25 rule 1).
+   See "The protocol mismatch reply".
 4. The shared vectors hold an accepted case `{"code":"<code>"}` for each
    code in each route error: the codes of the route and the shared codes.
    They also hold a refused case of a shared code with an extra key. The
    Rust test `each_code_of_a_route_error_has_a_case` fails when one is
    missing.
+
+## The protocol mismatch reply
+
+The vmm checks the header `HOST_API_HEADER` first, before the route and the
+body (decisions CH25 rule 1, CH26). A request without the header, or with
+another protocol number, gets one reply (decision CH33 rule 1):
+
+| Status | Body |
+|---|---|
+| 412, `MISMATCH_STATUS` | `{"code":"protocol_mismatch","protocol":<n>}` |
+
+`<n>` is the `HOST_API_PROTOCOL` of the vmm. The type is `ProtocolMismatch`.
+
+1. The reply is frozen for all protocol numbers. A new protocol number
+   never changes its body or its status, because a client of an older
+   protocol must still read it. The Rust test `the_mismatch_reply_is_frozen`
+   pins the bytes and the status. Never change that test or the
+   `ProtocolMismatch` cases to make a change pass.
+2. The reply is in no route error. No code of a route error is
+   `protocol_mismatch`, and no code has the status 412. A Rust test fails
+   when one does.
+3. `x-routes` names the reply and its status under `mismatch`.
+   `src/creche_wire/routes.py` holds `MISMATCH_STATUS`.
+
+### The client read order
+
+A client reads each answer of the vmm in this order:
+
+1. The status is `MISMATCH_STATUS`: read the body as `ProtocolMismatch`.
+   Then follow the retry rule below.
+2. The status is 2xx: read the body as the reply of the route. For an
+   Upgrade route, the status 101 starts the stream, with no JSON body.
+3. Any other status: read the body as the error of the route, and match
+   its `code`.
+
+The retry rule (decision CH33 rule 10): after a mismatch, attendance tries
+3 times, 2 s apart. When each try gets the mismatch, attendance records the
+fault `vmm_protocol_mismatch`. The rule lives in the client. This package
+holds no code for it (see "Known gaps").
 
 ## Change a wire type
 
@@ -293,3 +334,15 @@ a dependency.
   that the routes reach needs a new number. The frozen copy per number and
   its CI check come in a later PR (PR 10 of the route table plan). Until
   then no check stops a change that keeps the number 1.
+- `CONTRACT-QUESTION` in `rust/crates/wire/src/routes.rs`,
+  `HOST_API_HEADER`. Decision CH33 rule 1 names a missing header and
+  another protocol number. It does not name a value that is no number, such
+  as `01`, ` 1` or `x`, or the header given twice. The reading taken: the
+  vmm answers the mismatch reply to each value that is not the exact
+  decimal text of `HOST_API_PROTOCOL`, and to a header given twice.
+- `CONTRACT-QUESTION` in `rust/crates/wire/src/routes.rs`,
+  `MISMATCH_STATUS`. Decision CH33 rule 10 says attendance tries 3 times
+  2 s apart. The reading taken: 3 requests in all, the first one included,
+  so the fault comes 4 s after the first mismatch. The rule names attendance
+  only. caregiver keeps decision CH25 rule 1 (retry a few times, then
+  report a named fault), and no decision gives it numbers.
