@@ -22,21 +22,14 @@ The root `AGENTS.md` applies here too.
 
 ## The program
 
-`vmm` takes exactly one argument, the mode:
-
-1. `vmm serve` runs the host API server (decision CH20).
-2. `vmm launch` is the launch step of one Cloud Hypervisor process
-   (decision CH8-2). Only the vmm runs it.
-
-Any other argument list exits with status 78. A mode with no code also
-exits with status 78. An early install thus fails closed (owner item 86).
-`src/main.rs` holds the one definition of the status. A library returns a
-typed error, and `src/main.rs` turns each error into the status.
+`src/main.rs` documents the modes of `vmm` and the exit status 78.
 
 ## Rules
 
 - Each new dependency is its own pull request, with its lock delta
   (decision CH9-1).
+- A library returns a typed error. Only `src/main.rs` turns an error into
+  an exit status.
 - A crate exposes `pub` items only for the crates that list it in their
   row.
 

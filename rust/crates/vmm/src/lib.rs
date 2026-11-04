@@ -21,8 +21,6 @@ impl fmt::Display for ServeError {
     }
 }
 
-impl std::error::Error for ServeError {}
-
 /// Runs the host API server until it stops.
 pub fn serve() -> Result<(), ServeError> {
     Err(ServeError::NotBuilt)
