@@ -891,11 +891,9 @@ impl std::error::Error for ListCursorError {}
 /// error of its own.
 ///
 /// Each key is required, and `null` is the one form of no value.
-// CONTRACT-QUESTION: no decision names the key `family` of the list
-// request. CH33 rule 5 covers the session-scoped requests only. The key
-// comes from the list entry of reframe/route-table-plan.json. The reading
-// taken: the narrowest one, a required family, so one request never reads
-// the rows of two families.
+// The key `family` is required, so one request never reads the rows of
+// two families (decision CH34 rule 4). The key comes from the list entry
+// of reframe/route-table-plan.json.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(remote = "Self", deny_unknown_fields)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]

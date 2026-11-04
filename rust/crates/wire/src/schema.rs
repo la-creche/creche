@@ -356,12 +356,12 @@ fn the_committed_schema_is_the_schema_of_the_wire_types() {
 /// part of `schema` that a client of the host API reads (decision CH33 rule
 /// 8). That is `x-routes`, and each `$defs` entry that a type of
 /// `x-routes` reaches through `$ref`, with no `description` text.
-// CONTRACT-QUESTION: CH33 rule 8 names the reached schema subset but not
-// its parts. The reading taken: the whole `x-routes` (route names, kinds,
-// tokens, statuses, client timeouts, header, body cap, mismatch reply) and
-// each reached `$defs` entry, `ProtocolMismatch` too. A `title` stays, since it names a
-// generated class. A `description` goes, since no reader checks it.
-// Another reading needs a new protocol number only if it changes the file.
+// The subset holds the whole `x-routes` (route names, kinds, tokens,
+// statuses, client timeouts, header, body cap, mismatch reply) and each
+// reached `$defs` entry, `ProtocolMismatch` too (decision CH34 rule 8). A
+// `title` stays, since it names a generated class. A `description` goes,
+// since no reader checks it. So a new route or status also needs a new
+// protocol number (decision CH34 rule 8).
 fn frozen_host_api(schema: &Value) -> (String, String) {
     let table = &schema[ROUTES_KEY];
     let mut names: Vec<&str> = table["routes"]

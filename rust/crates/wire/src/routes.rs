@@ -33,21 +33,20 @@ pub const HOST_API_PROTOCOL: u32 = 1;
 /// The name of the request header that carries `HOST_API_PROTOCOL`, as
 /// decimal text. It is lowercase, the form of an HTTP/1.1 header name that
 /// hyper takes as a constant.
-// CONTRACT-QUESTION: CH33 rule 1 names a missing header and another
-// protocol number. It does not name a value that is no number, such as
-// "01", " 1" or "x", or the header given twice. The reading taken: the vmm
-// answers `ProtocolMismatch` to each value that is not the exact decimal
-// text of HOST_API_PROTOCOL, and to a header given twice.
+// The vmm answers `ProtocolMismatch` to each value that is not the exact
+// decimal text of HOST_API_PROTOCOL, such as "01", " 1" or "x", and to a
+// header given twice (decision CH34 rule 1). CH33 rule 1 names only a
+// missing header and another protocol number.
 pub const HOST_API_HEADER: &str = "creche-host-api-protocol";
 
 /// The most bytes of a request body and of a reply body of each route
 /// (decisions CH26, CH33 rule 2): 1 MiB. The vmm refuses a larger request
 /// with `too_large`. A client passes this cap to `read` for each reply. A
 /// body of exactly this size is under the cap.
-// CONTRACT-QUESTION: CH33 rule 2 caps each reply, and CH26 caps each
-// request. Neither says whether the cap binds the ACP bytes that an Upgrade
-// route carries after 101. The reading taken: the cap binds each JSON body
-// of the host API (a request, a reply, an error), and no ACP byte after 101.
+// The cap binds each JSON body of the host API (a request, a reply, an
+// error), and no ACP byte that an Upgrade route carries after 101
+// (decision CH34 rule 3). CH33 rule 2 caps each reply, and CH26 caps each
+// request.
 pub const HOST_API_BODY_CAP: usize = 1 << 20;
 
 /// The HTTP status of `ProtocolMismatch` (decision CH33 rule 1). No code of
@@ -56,12 +55,12 @@ pub const HOST_API_BODY_CAP: usize = 1 << 20;
 ///
 /// After a mismatch, the client retries (decision CH33 rule 10). The rule
 /// lives in the client, and `wire/AGENTS.md` states it.
-// CONTRACT-QUESTION: CH33 rule 10 says attendance tries 3 times 2 s apart,
-// then records the fault vmm_protocol_mismatch. The reading taken: 3
-// requests in all, the first one included, so the fault comes 4 s after
-// the first mismatch. The rule names attendance only. caregiver keeps the
-// rule of CH25 rule 1 (retry a few times, then report a named fault), and
-// no decision gives it numbers.
+// CH33 rule 10 says attendance tries 3 times 2 s apart, then records the
+// fault vmm_protocol_mismatch. The 3 tries are 3 requests in all, the
+// first one included, so the fault comes 4 s after the first mismatch
+// (decision CH34 rule 2). The rule names attendance only. caregiver keeps
+// CH25 rule 1 (retry a few times, then report a named fault), with no
+// fixed numbers.
 pub const MISMATCH_STATUS: u16 = 412;
 
 /// The one reply of the vmm when the protocol header of a request is
@@ -414,12 +413,11 @@ pub const DROP_STOP_WAIT: Duration = Duration::from_secs(30);
 
 /// How long the vmm waits after SIGTERM before it sends SIGKILL to a VM of
 /// a drop (decision CH33 rule 11).
-// CONTRACT-QUESTION: CH33 rule 11 fixes a SIGTERM grace and a drop of
-// about 35 s at most, but names neither the grace nor the client timeout.
-// The reading taken, from the recommended option of gap G11: a grace of
-// 5 s after the 30 s stop wait of CH19 (3), so the stop of each VM takes
-// 35 s at most. The removal of disks and rows comes on top. A client waits
-// 60 s for the reply, and retries a timeout as a transient.
+// The vmm waits 30 s for the graceful stop of CH19 (3), then sends
+// SIGTERM and waits 5 s, then sends SIGKILL (decision CH34 rule 5). So the
+// stop of each VM takes 35 s at most, as CH33 rule 11 asks. The removal of
+// disks and rows comes on top. A client waits 60 s for the reply, and
+// retries a timeout as a transient.
 pub const DROP_SIGTERM_GRACE: Duration = Duration::from_secs(5);
 
 /// How long a client waits for the reply of a drop before it retries it
@@ -454,15 +452,13 @@ route_error! {
 /// first, so the 101 can wait for a boot. A start fault is a typed error
 /// before 101. After 101 each failure is the end of the stream, and the
 /// client learns the cause from the error of its next Upgrade.
-// CONTRACT-QUESTION: CH26 orders the checks of a request, and CH33 rule 6
-// puts every refusal of acp before 101, but neither places the check of
-// the Upgrade header or the order of the refusals of the route. The
-// reading taken: the vmm checks the protocol header, the route and the
-// method, then the Upgrade header (upgrade_required), then the body
-// (Content-Type, cap, JSON, type), then the session (not_found, busy),
-// then admission (host_full), then the start of the VM. Rule 6 names
-// ControlReady, not a facade state, so the 101 follows the first
-// ControlReady of the start, whatever FacadeState it reports.
+// The vmm checks the protocol header, the route and the method, then the
+// Upgrade header (upgrade_required), then the body (Content-Type, cap,
+// JSON, type), then the session (not_found, busy), then admission
+// (host_full), then the start of the VM (decision CH34 rule 7). The 101
+// follows the first ControlReady of the start, whatever FacadeState it
+// reports (decision CH34 rule 7). CH33 rule 6 puts every refusal of acp
+// before 101.
 #[derive(Debug)]
 pub enum AcpRoute {}
 
@@ -475,13 +471,11 @@ impl UpgradeRoute for AcpRoute {
 
 route_error! {
     /// The error of the route `acp`. The vmm sends each code before 101.
-    // CONTRACT-QUESTION: CH21-9 names not_found and host_full, CH26 rule 3
-    // a typed error for a wrong Upgrade header, and CH33 rule 6 typed start
-    // faults, with no code or status. CH33 rule 7 fixes busy 409 only. The
-    // reading taken: upgrade_required 426, the HTTP status for a needed
-    // upgrade. host_full 503. The start faults keep the fault names of
-    // CH6-3 (sandbox_start_failed, egress_assert_failed), each 502. An
-    // Upgrade that comes while a drop of its session runs gets not_found.
+    // The codes and statuses follow decision CH34 rule 6: upgrade_required
+    // 426, not_found 404, busy 409, host_full 503, and the start faults
+    // sandbox_start_failed and egress_assert_failed (the fault names of
+    // CH6-3), each 502. An Upgrade that comes while a drop of its session
+    // runs gets not_found (decision CH34 rule 6).
     pub enum AcpError {
         /// The request has no `Upgrade` header, or the header does not
         /// name `AcpRoute::TOKEN` (decision CH26 rule 3). The vmm also
