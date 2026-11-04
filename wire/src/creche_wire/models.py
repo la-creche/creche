@@ -708,6 +708,37 @@ class PepToken(RootModel[StrictStr]):
     ]
 
 
+class ProtocolMismatch(BaseModel):
+    """
+    The one reply of the vmm when the protocol header of a request is
+    missing or names another protocol number (decisions CH25 rule 1, CH33
+    rule 1). The vmm checks the header before the route, so each route and
+    each path gets this reply. The wire form is
+    `{"code":"protocol_mismatch","protocol":<n>}`, with the status
+    `MISMATCH_STATUS`.
+
+    The reply is frozen for all protocol numbers: a new protocol number
+    never changes its body or its status. A client of an older protocol
+    must still read it. A test pins the bytes and the status.
+
+    It is in no route error. A client checks the status `MISMATCH_STATUS`
+    before it reads a route error.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Annotated[Literal["protocol_mismatch"], Field(description="Always `protocol_mismatch`.")]
+    protocol: Annotated[
+        StrictInt,
+        Field(
+            description="The host API protocol of the vmm that answers: its\n`HOST_API_PROTOCOL`.",
+            ge=0,
+            le=4294967295,
+        ),
+    ]
+
+
 class SandboxGrant(BaseModel):
     """
     The built-in sandbox tools of Flue that the family grants: `sandbox_tools`

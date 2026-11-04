@@ -28,7 +28,106 @@ pub const HOST_API_PROTOCOL: u32 = 1;
 /// The name of the request header that carries `HOST_API_PROTOCOL`, as
 /// decimal text. It is lowercase, the form of an HTTP/1.1 header name that
 /// hyper takes as a constant.
+// CONTRACT-QUESTION: CH33 rule 1 names a missing header and another
+// protocol number. It does not name a value that is no number, such as
+// "01", " 1" or "x", or the header given twice. The reading taken: the vmm
+// answers `ProtocolMismatch` to each value that is not the exact decimal
+// text of HOST_API_PROTOCOL, and to a header given twice.
 pub const HOST_API_HEADER: &str = "creche-host-api-protocol";
+
+/// The HTTP status of `ProtocolMismatch` (decision CH33 rule 1). No code of
+/// a route error has it, so a client of any protocol knows the mismatch
+/// from the status alone.
+///
+/// After a mismatch, the client retries (decision CH33 rule 10). The rule
+/// lives in the client, and `wire/AGENTS.md` states it.
+// CONTRACT-QUESTION: CH33 rule 10 says attendance tries 3 times 2 s apart,
+// then records the fault vmm_protocol_mismatch. The reading taken: 3
+// requests in all, the first one included, so the fault comes 4 s after
+// the first mismatch. The rule names attendance only. caregiver keeps the
+// rule of CH25 rule 1 (retry a few times, then report a named fault), and
+// no decision gives it numbers.
+pub const MISMATCH_STATUS: u16 = 412;
+
+/// The one reply of the vmm when the protocol header of a request is
+/// missing or names another protocol number (decisions CH25 rule 1, CH33
+/// rule 1). The vmm checks the header before the route, so each route and
+/// each path gets this reply. The wire form is
+/// `{"code":"protocol_mismatch","protocol":<n>}`, with the status
+/// `MISMATCH_STATUS`.
+///
+/// The reply is frozen for all protocol numbers: a new protocol number
+/// never changes its body or its status. A client of an older protocol
+/// must still read it. A test pins the bytes and the status.
+///
+/// It is in no route error. A client checks the status `MISMATCH_STATUS`
+/// before it reads a route error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct ProtocolMismatch {
+    /// Always `protocol_mismatch`.
+    code: MismatchCode,
+    /// The host API protocol of the vmm that answers: its
+    /// `HOST_API_PROTOCOL`.
+    pub protocol: u32,
+}
+
+object_only!(ProtocolMismatch);
+
+impl ProtocolMismatch {
+    /// The reply of a vmm of the protocol `protocol`. The vmm gives its own
+    /// `HOST_API_PROTOCOL`.
+    pub const fn new(protocol: u32) -> Self {
+        Self {
+            code: MismatchCode,
+            protocol,
+        }
+    }
+}
+
+/// The `code` of `ProtocolMismatch`: always the string `protocol_mismatch`.
+/// Its schema is a `const`, as the `code` of a route error is, so the
+/// Python model reads it as a `Literal`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MismatchCode;
+
+/// The text of `MismatchCode`.
+const MISMATCH_CODE: &str = "protocol_mismatch";
+
+impl Serialize for MismatchCode {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(MISMATCH_CODE)
+    }
+}
+
+impl<'de> Deserialize<'de> for MismatchCode {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let code = String::deserialize(deserializer)?;
+        if code == MISMATCH_CODE {
+            Ok(Self)
+        } else {
+            Err(serde::de::Error::custom(
+                "the code is not protocol_mismatch",
+            ))
+        }
+    }
+}
+
+#[cfg(test)]
+impl schemars::JsonSchema for MismatchCode {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "MismatchCode".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({ "const": MISMATCH_CODE, "type": "string" })
+    }
+}
 
 /// A JSON body of a route: a request or a reply.
 pub trait Body: Serialize + DeserializeOwned {}

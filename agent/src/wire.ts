@@ -645,6 +645,29 @@ export const wire = {
       "pattern": "^[0-9a-f]{64}$",
       "type": "string"
     },
+    "ProtocolMismatch": {
+      "additionalProperties": false,
+      "description": "The one reply of the vmm when the protocol header of a request is\nmissing or names another protocol number (decisions CH25 rule 1, CH33\nrule 1). The vmm checks the header before the route, so each route and\neach path gets this reply. The wire form is\n`{\"code\":\"protocol_mismatch\",\"protocol\":<n>}`, with the status\n`MISMATCH_STATUS`.\n\nThe reply is frozen for all protocol numbers: a new protocol number\nnever changes its body or its status. A client of an older protocol\nmust still read it. A test pins the bytes and the status.\n\nIt is in no route error. A client checks the status `MISMATCH_STATUS`\nbefore it reads a route error.",
+      "properties": {
+        "code": {
+          "const": "protocol_mismatch",
+          "description": "Always `protocol_mismatch`.",
+          "type": "string"
+        },
+        "protocol": {
+          "description": "The host API protocol of the vmm that answers: its\n`HOST_API_PROTOCOL`.",
+          "format": "uint32",
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "code",
+        "protocol"
+      ],
+      "type": "object"
+    },
     "SandboxGrant": {
       "additionalProperties": false,
       "description": "The built-in sandbox tools of Flue that the family grants: `sandbox_tools`\nof the family file, a subset of `SandboxTool` of `family/grammar.py`. The\nvalidator refuses a tool listed twice, so a grant is a set, and each tool\nis one key here. An empty grant gives no sandbox.",
@@ -961,6 +984,10 @@ export const wire = {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "x-routes": {
     "header": "creche-host-api-protocol",
+    "mismatch": {
+      "reply": "ProtocolMismatch",
+      "status": 412
+    },
     "protocol": 1,
     "routes": {
       "create": {

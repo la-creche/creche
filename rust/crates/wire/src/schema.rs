@@ -26,8 +26,8 @@ use serde_json::{Map, Value, json};
 
 use super::{
     AutoJobId, ControlHello, ControlReady, DelegationId, FamilyConfig, FamilyStateReply,
-    HOST_API_HEADER, HOST_API_PROTOCOL, JS_INTEGER_MAX, JobId, JsonRoute, RouteError, SHARED_CODES,
-    SessionId, SessionOrigin, TurnEvent, UnixMillis,
+    HOST_API_HEADER, HOST_API_PROTOCOL, JS_INTEGER_MAX, JobId, JsonRoute, MISMATCH_STATUS,
+    ProtocolMismatch, RouteError, SHARED_CODES, SessionId, SessionOrigin, TurnEvent, UnixMillis,
 };
 
 /// The variable that makes the test write the file instead of checking it.
@@ -95,8 +95,9 @@ pub(super) fn wire_schema() -> Value {
     })
 }
 
-/// The `x-routes` value: the host API protocol number, its header and one
-/// entry per route of `route_table!`, keyed by the route name. Each type is
+/// The `x-routes` value: the host API protocol number, its header, the
+/// mismatch reply with its status, and one entry per route of
+/// `route_table!`, keyed by the route name. Each type is
 /// a plain name of a `$defs` entry, not a `$ref`, so datamodel-codegen and
 /// TypeBox do not read it as a schema.
 fn route_table(generator: &mut SchemaGenerator) -> Value {
@@ -108,9 +109,14 @@ fn route_table(generator: &mut SchemaGenerator) -> Value {
         };
     }
     crate::route_table!(describe);
+    let _ = generator.subschema_for::<ProtocolMismatch>();
 
     json!({
         "header": HOST_API_HEADER,
+        "mismatch": {
+            "reply": ProtocolMismatch::schema_name(),
+            "status": MISMATCH_STATUS,
+        },
         "protocol": HOST_API_PROTOCOL,
         "routes": routes,
     })
@@ -203,8 +209,9 @@ fn is_integer(schema: &Schema) -> bool {
 }
 
 /// The Python constants of the route table `x-routes`: the protocol, its
-/// header and one `JsonRoute` per route. The writer uses only forms that
-/// `ruff format` keeps as they are, so the file passes the gate unchanged.
+/// header, the mismatch status and one `JsonRoute` per route. The writer
+/// uses only forms that `ruff format` keeps as they are, so the file passes
+/// the gate unchanged.
 fn python_routes(table: &Value) -> String {
     let routes = table["routes"].as_object().unwrap();
     let models: BTreeSet<&str> = routes
@@ -220,6 +227,8 @@ fn python_routes(table: &Value) -> String {
     text.push_str(")\nfrom .route import JsonRoute\n\n");
     writeln!(text, "HOST_API_PROTOCOL: Final = {}", table["protocol"]).unwrap();
     writeln!(text, "HOST_API_HEADER: Final = {}", table["header"]).unwrap();
+    let status = &table["mismatch"]["status"];
+    writeln!(text, "MISMATCH_STATUS: Final = {status}").unwrap();
 
     for (name, entry) in routes {
         let constant = name.to_ascii_uppercase();
@@ -337,6 +346,37 @@ fn the_route_table_holds_create() {
             },
         })
     );
+}
+
+#[test]
+fn the_route_table_holds_the_mismatch_reply() {
+    let schema = wire_schema();
+
+    assert_eq!(
+        schema[ROUTES_KEY]["mismatch"],
+        json!({"reply": "ProtocolMismatch", "status": 412})
+    );
+    assert!(schema["$defs"].get("ProtocolMismatch").is_some());
+}
+
+/// A client knows the mismatch from the status alone (decision CH33 rule
+/// 1), so no route error has its code or its status.
+#[test]
+fn no_route_error_has_the_mismatch_code_or_status() {
+    macro_rules! check {
+        (json $route:path) => {
+            let name = <$route as JsonRoute>::NAME;
+            let statuses = <<$route as JsonRoute>::Error as RouteError>::STATUSES;
+
+            for (code, status) in statuses {
+                assert!(
+                    *code != "protocol_mismatch" && *status != MISMATCH_STATUS,
+                    "route {name}: the code {code} has the mismatch code or status"
+                );
+            }
+        };
+    }
+    crate::route_table!(check);
 }
 
 #[test]

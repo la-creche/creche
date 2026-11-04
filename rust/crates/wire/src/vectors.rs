@@ -19,9 +19,10 @@ use super::{
     CredsMissing, Delegate, DelegationId, Dispatch, DispatchChain, Door, FacadeExited,
     FacadeNotStarted, FacadeRunning, FacadeStarting, FacadeState, FamilyConfig, FamilyCreds,
     FamilyName, FamilySkills, FamilyState, FamilyStateReply, JobId, JsonRoute, LitellmKey,
-    ModelAlias, PepToken, RouteError, SHARED_CODES, SandboxGrant, SessionCwd, SessionId,
-    SessionOrigin, SessionRow, SessionTitle, SkillName, StartCount, StateNotValid, StateTooLarge,
-    Timer, Trigger, TurnEnd, TurnEvent, TurnStart, UnixMillis, Webhook, WebhookName,
+    MISMATCH_STATUS, ModelAlias, PepToken, ProtocolMismatch, RouteError, SHARED_CODES,
+    SandboxGrant, SessionCwd, SessionId, SessionOrigin, SessionRow, SessionTitle, SkillName,
+    StartCount, StateNotValid, StateTooLarge, Timer, Trigger, TurnEnd, TurnEvent, TurnStart,
+    UnixMillis, Webhook, WebhookName,
 };
 
 /// The file, relative to the crate.
@@ -88,6 +89,7 @@ fn read_and_write(type_name: &str, json: &str) -> Option<String> {
         "LitellmKey" => round_trip::<LitellmKey>(json),
         "ModelAlias" => round_trip::<ModelAlias>(json),
         "PepToken" => round_trip::<PepToken>(json),
+        "ProtocolMismatch" => round_trip::<ProtocolMismatch>(json),
         "SandboxGrant" => round_trip::<SandboxGrant>(json),
         "SessionCwd" => round_trip::<SessionCwd>(json),
         "SessionId" => round_trip::<SessionId>(json),
@@ -141,6 +143,33 @@ fn each_wire_type_has_cases_and_each_case_a_wire_type() {
         assert!(
             type_cases.iter().any(|case| case.written.is_none()),
             "{type_name}: no case is refused"
+        );
+    }
+}
+
+/// The mismatch reply is frozen for all protocol numbers (decision CH33
+/// rule 1). A client of any protocol reads it, so a change of its bytes or
+/// its status fails here. Never change this test to make a change pass.
+#[test]
+fn the_mismatch_reply_is_frozen() {
+    let replies = [
+        (0, r#"{"code":"protocol_mismatch","protocol":0}"#),
+        (1, r#"{"code":"protocol_mismatch","protocol":1}"#),
+        (2, r#"{"code":"protocol_mismatch","protocol":2}"#),
+        (
+            u32::MAX,
+            r#"{"code":"protocol_mismatch","protocol":4294967295}"#,
+        ),
+    ];
+
+    assert_eq!(MISMATCH_STATUS, 412);
+    for (protocol, text) in replies {
+        let reply = ProtocolMismatch::new(protocol);
+
+        assert_eq!(serde_json::to_string(&reply).unwrap(), text);
+        assert_eq!(
+            serde_json::from_str::<ProtocolMismatch>(text).unwrap(),
+            reply
         );
     }
 }
