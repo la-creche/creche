@@ -170,11 +170,12 @@ table of the three vmm crates.
   dir). The ruleset grants no right to make a dir, so the vmm must also
   make each `snapshots/<generation>/` before CH writes a snapshot there.
   Plan PRs L16 (cold boot) and D9 (snapshot) own these steps.
-- Lifecycle must remove `vsock.sock`, `api.sock` and `api.sock.lock` of
-  the VM run dir before each start after a CH exit. The ruleset grants no
-  right to remove a file, so CH cannot unlink its own sockets, and a stale
-  `vsock.sock` fails the next boot or restore (fact 75). Plan PRs L16 and
-  L17 own the step. `tests/kvm_vm.rs` does it before each restore.
+- The ruleset grants no right to remove a file, so CH cannot unlink its
+  own sockets, and a stale `vsock.sock` fails the next boot or restore
+  (fact 75). Plan PRs L16 and L17 call `remove_stale` of PR D1 before
+  each start. It removes `vsock.sock` and `api.sock.lock`. A stale
+  `api.sock` alone does not block a start, so it stays.
+  `tests/kvm_vm.rs` calls `remove_stale` before each restore.
 - The upstream CH asset of fact 71 may print its git tag to `--version`,
   not the `v54.0.0` of a `--rev` build (fact 78). `tests/kvm_vm.rs` then
   makes the `CheckedCh` of the key from a stand-in that prints

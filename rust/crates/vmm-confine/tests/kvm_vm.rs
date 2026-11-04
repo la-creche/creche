@@ -49,6 +49,7 @@ use creche_vmm_store::key::{
 use creche_vmm_store::layout::{RunRoot, SessionDir, StateRoot, VmRunDir, scope_unit};
 use creche_vmm_store::session_disk::{SessionDisk, SessionDisks};
 use creche_vmm_store::snapshot::{MEMORY_RANGES, Snapshot, SnapshotTimeouts, Snapshotter};
+use creche_vmm_store::stale::remove_stale;
 use creche_wire::{FamilyShape, SessionId};
 
 use kvm::{BOOT, Vm, booted, files};
@@ -253,22 +254,18 @@ impl Setup {
 
     /// The launch of a restore of `snapshot`. CH under the ruleset cannot
     /// unlink, so its sockets stay after it exits, and a stale
-    /// `vsock.sock` fails the next start (fact 75). The test removes them
-    /// first, as the vmm must. It removes `serial.log` too, so each tick
-    /// it reads comes from the restored guest.
+    /// `vsock.sock` fails the next start (fact 75). The test calls
+    /// `remove_stale` of PR D1 first, as lifecycle does. A stale
+    /// `api.sock` alone does not block a start, so it stays. The test
+    /// also removes `serial.log`, so each tick it reads comes from the
+    /// restored guest.
     fn restore(&self, snapshot: ClaimedSnapshot) -> Launch {
-        let stale = [
-            self.vm.vsock_socket(),
-            self.vm.api_socket(),
-            self.vm.api_socket_lock(),
-            self.vm.serial_log(),
-        ];
-        for path in stale {
-            if let Err(error) = fs::remove_file(&path)
-                && error.kind() != ErrorKind::NotFound
-            {
-                panic!("remove {}: {error}", path.display());
-            }
+        remove_stale(&self.vm).unwrap();
+        let serial = self.vm.serial_log();
+        if let Err(error) = fs::remove_file(&serial)
+            && error.kind() != ErrorKind::NotFound
+        {
+            panic!("remove {}: {error}", serial.display());
         }
         let payload = ChCommand::restore(snapshot, &self.vm)
             .unwrap()
