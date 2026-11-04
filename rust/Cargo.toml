@@ -33,6 +33,10 @@ schemars = { version = "1.2.3", default-features = false, features = ["std", "de
 # call cannot stall every relay. The PR that first needs a further feature
 # adds it.
 tokio = { version = "1.54.1", default-features = false, features = ["rt", "rt-multi-thread"] }
+# The HTTP/1.1 server of the vmm host API (decisions CH20, CH26). `server`
+# and `http1` only: the vmm serves one Unix socket and owns its accept loop.
+# The version is the one in chaperone's Cargo.lock (decision CH26).
+hyper = { version = "1.12.0", default-features = false, features = ["server", "http1"] }
 # Safe system calls for vmm-confine (unsafe_code is forbid). `=1.1.5` is the
 # version in chaperone's lock. Without `=`, a fresh resolve takes 1.1.6,
 # which is less than two weeks old. `process`: PR_SET_PDEATHSIG, getppid,
