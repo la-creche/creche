@@ -1,0 +1,160 @@
+# SPIKE. This file is the phase 0 spike of decision CH7-4
+# (reframe/cloud-hypervisor-playpen-design.md, phase 0 step 2). It lives on
+# a draft PR that NEVER MERGES. Close the PR when the result is recorded.
+#
+# What it proves: `cargo install --locked --no-track --git` of Cloud
+# Hypervisor v54.0 builds `cloud-hypervisor` and `ch-remote` as static
+# x86_64 musl programs on a GitHub runner, with the Rust that rust/ pins.
+# A failed spike sends CH7-4 back to David.
+#
+#   tag      the tag v54.0 still names the pinned commit
+#   build    cargo install of the pinned commit, for the musl target
+#   check    per program: sha256sum, file, ldd and --version. Red when a
+#            program is dynamic or its version is not v54.0
+#   upload   both programs as one artifact, kept 7 days
+#
+# It signs nothing and releases nothing. Phase 4 PR "CI shipping 3" does
+# that, after this spike and the item 12 check.
+#
+# It is a second workflow on the PR head. The release executor (P5) reads
+# every run on a merged PR head, so this file must never reach main.
+#
+# Actions are SHA-pinned with the tag as a comment, as gate.yml does.
+name: spike-ch-musl
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/spike-ch-musl.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A new push to the PR stops the run of its old head.
+concurrency:
+  group: spike-ch-musl-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The time limit: CH builds its release profile with LTO and one codegen
+  # unit, which takes minutes. A job has 6 hours by default.
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CH_REPO: https://github.com/cloud-hypervisor/cloud-hypervisor
+      # The commit of the signed tag v54.0 (design note facts 54 and 71).
+      CH_REV: 038ce5a72d761380a02f714a4eb4ca63e0ea073d
+      CH_TAG: v54.0
+      TARGET: x86_64-unknown-linux-musl
+      # A CI build starts from nothing, so the incremental state is only
+      # weight.
+      CARGO_INCREMENTAL: 0
+    steps:
+      # The checkout gives rust/rust-toolchain.toml, the Rust this repo
+      # pins. Nothing else of the tree is built.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The rev is the pin. The tag is only the name a reader checks it by.
+      - name: tag
+        run: |
+          set -euo pipefail
+          peeled="$(git ls-remote "$CH_REPO" "refs/tags/$CH_TAG*" \
+            | awk -v ref="refs/tags/$CH_TAG^{}" '$2 == ref { print $1 }')"
+          echo "$CH_TAG peels to ${peeled:-nothing}"
+          if [[ "$peeled" != "$CH_REV" ]]; then
+            echo "::error::$CH_TAG names ${peeled:-nothing}, not $CH_REV"
+            exit 1
+          fi
+
+      # musl-gcc for any C a dependency builds, as CH's own release does.
+      # CH v54.0 asks for Rust 1.89.0 or newer (rust-version in its
+      # Cargo.toml). rust/ pins 1.92.0, so the build uses that. rustup reads
+      # rust/rust-toolchain.toml in rust/, so each cargo step runs there.
+      - name: toolchain
+        working-directory: rust
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends musl-tools
+          rustup toolchain install --no-self-update
+          rustup target add "$TARGET"
+          cargo --version
+          rustc --version
+
+      # The CH7-4 command. The workspace of CH has more than one package
+      # with programs, so the argv names the package `cloud-hypervisor`.
+      # `--bin` names each program of it.
+      - name: build
+        id: build
+        working-directory: rust
+        run: |
+          set -euo pipefail
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/target"
+          cargo install --locked --no-track \
+            --git "$CH_REPO" --rev "$CH_REV" \
+            --target "$TARGET" \
+            --root "$RUNNER_TEMP/ch" \
+            --bin cloud-hypervisor --bin ch-remote \
+            cloud-hypervisor
+
+      # glibc's ldd says "not a dynamic executable" or "statically linked"
+      # for a static program, and it exits 1 on the first. `file` must not
+      # name an interpreter. The version is the last word of `--version`:
+      # v54.0 when the build saw the tag, v54.0.0 (the crate version) when
+      # it did not. Any other word, `-dirty` included, is red.
+      - name: check
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/ch/bin"
+          found="$(cd "$bin" && find . -mindepth 1 | sed 's|^\./||' | sort)"
+          if [[ "$found" != "$(printf '%s\n' ch-remote cloud-hypervisor)" ]]; then
+            echo "::error::the install root holds other files: $found"
+            exit 1
+          fi
+          red=0
+          {
+            echo "| program | sha256 | file | ldd | --version |"
+            echo "| --- | --- | --- | --- | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for name in cloud-hypervisor ch-remote; do
+            path="$bin/$name"
+            echo "== $name"
+            digest="$(sha256sum "$path" | awk '{ print $1 }')"
+            kind="$(file --brief "$path")"
+            linked="$(ldd "$path" 2>&1 || true)"
+            version="$("$path" --version 2>&1 || true)"
+            echo "sha256sum: $digest"
+            echo "file: $kind"
+            echo "ldd: $linked"
+            echo "--version: $version"
+            if ! grep -Eq 'not a dynamic executable|statically linked' <<< "$linked"; then
+              echo "::error::$name is dynamic: ldd says $linked"
+              red=1
+            fi
+            if grep -Eq 'dynamically linked|interpreter' <<< "$kind"; then
+              echo "::error::$name is dynamic: file says $kind"
+              red=1
+            fi
+            word="${version##* }"
+            if [[ "$word" != "$CH_TAG" && "$word" != "$CH_TAG.0" ]]; then
+              echo "::error::$name --version says $version, not $CH_TAG"
+              red=1
+            fi
+            echo "| $name | \`$digest\` | $kind | ${linked//$'\n'/ } | $version |" >> "$GITHUB_STEP_SUMMARY"
+          done
+          exit "$red"
+
+      # The programs go up even when the check is red, so a dynamic one can
+      # be read. A failed build has nothing to upload.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        with:
+          name: ch-v54.0-x86_64-musl
+          path: ${{ runner.temp }}/ch/bin/
+          if-no-files-found: error
+          retention-days: 7
