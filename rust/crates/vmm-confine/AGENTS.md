@@ -7,7 +7,7 @@ layer table of the three vmm crates.
 
 ## Rules
 
-- The code is synchronous.
+- The code is synchronous. The crate uses no async runtime.
 - The crate reads the types of `creche-vmm-store`. It never calls
   `creche-vmm`.
 - `launch::run` is the mode `vmm launch`. `rust/crates/vmm/src/main.rs`
