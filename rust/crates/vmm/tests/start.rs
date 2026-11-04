@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::spawn;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 use std::{fs, io};
 
 use creche_vmm::control::ControlState;
@@ -44,6 +44,8 @@ const READY: &str =
     r#"{"facade":{"running":{"last_turn_end":null,"pid":42,"starts":1,"turn_running":false}}}"#;
 const TURN: &str =
     r#"{"facade":{"running":{"last_turn_end":null,"pid":42,"starts":1,"turn_running":true}}}"#;
+/// As `READY`, with the end of a turn that the row has not seen.
+const ENDED: &str = r#"{"facade":{"running":{"last_turn_end":{"title":"First","updated_at":1793577700000},"pid":42,"starts":1,"turn_running":false}}}"#;
 /// The SHA-256 of no bytes: the fake kernel and root disk are empty.
 const EMPTY: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
@@ -54,6 +56,8 @@ enum Guest {
     Ready,
     /// As `Ready`, with a turn running, so admission may not evict it.
     Turn,
+    /// As `Ready`, with a turn end in the ready.
+    Ended,
     /// A close after the hello, before `ControlReady`.
     Closes,
     /// `ControlReady`, then a refused `CONNECT 1201`.
@@ -91,6 +95,10 @@ struct Fake {
     net: AtomicBool,
     /// Fails each launch.
     fail: AtomicBool,
+    /// Holds each launch until the test clears it.
+    hold: AtomicBool,
+    /// The `stop` lines that guest init read on each control link.
+    stop_lines: Arc<AtomicUsize>,
     launches: Mutex<Vec<Launch>>,
     vms: Mutex<Vec<Arc<AtomicBool>>>,
 }
@@ -103,6 +111,9 @@ impl Launcher for Fake {
     fn launch(&self, launch: Launch) -> Result<FakeVm, SpawnError> {
         if self.fail.load(Ordering::SeqCst) {
             return Err(SpawnError::Stopped);
+        }
+        while self.hold.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(1));
         }
         Ok(self.record(launch))
     }
@@ -125,12 +136,16 @@ impl Fake {
         let vsock = launch.files().run_dir().path().join("vsock.sock");
         let listener = UnixListener::bind(vsock).unwrap();
         let guest = *self.guest.lock().unwrap();
-        spawn(move || play(&listener, guest));
+        let exited = Arc::new(AtomicBool::new(false));
+        let vm = Vm {
+            exited: Arc::clone(&exited),
+            stop_lines: Arc::clone(&self.stop_lines),
+        };
+        spawn(move || play(&listener, guest, &vm));
         let mut launches = self.launches.lock().unwrap();
         let number = launches.len();
         fs::write(self.dir.join(format!("cmdline-{number}")), args.join("\0")).unwrap();
         launches.push(launch);
-        let exited = Arc::new(AtomicBool::new(false));
         self.vms.lock().unwrap().push(Arc::clone(&exited));
         FakeVm { number, exited }
     }
@@ -193,10 +208,18 @@ impl ChApi for FakeApi {
     }
 }
 
+/// What guest init changes in its fake VM.
+#[derive(Debug, Clone)]
+struct Vm {
+    exited: Arc<AtomicBool>,
+    stop_lines: Arc<AtomicUsize>,
+}
+
 /// Plays CH and guest init on each link: `CONNECT`, then the control
-/// link or the ACP link. Each link stays open until the test ends.
+/// link or the ACP link. Each link stays open until the test ends. A
+/// `stop` line on the control link powers the VM off (decision CH19 (3)).
 #[cfg(test)]
-fn play(listener: &UnixListener, guest: Guest) {
+fn play(listener: &UnixListener, guest: Guest, vm: &Vm) {
     let mut held = Vec::new();
     for stream in listener.incoming() {
         let mut reader = BufReader::new(stream.unwrap());
@@ -210,8 +233,21 @@ fn play(listener: &UnixListener, guest: Guest) {
                 if guest == Guest::Closes {
                     continue;
                 }
-                let ready = if guest == Guest::Turn { TURN } else { READY };
+                let ready = match guest {
+                    Guest::Turn => TURN,
+                    Guest::Ended => ENDED,
+                    _ => READY,
+                };
                 stream.write_all(format!("{ready}\n").as_bytes()).unwrap();
+                let vm = vm.clone();
+                spawn(move || {
+                    for line in reader.lines() {
+                        if line.is_ok_and(|line| line.contains("stop")) {
+                            vm.stop_lines.fetch_add(1, Ordering::SeqCst);
+                            vm.exited.store(true, Ordering::SeqCst);
+                        }
+                    }
+                });
             }
             ("CONNECT 1201\n", Guest::RefusesAcp) => stream.write_all(b"NO\n").unwrap(),
             _ => stream.write_all(b"OK 2\n").unwrap(),
@@ -231,6 +267,7 @@ struct Test {
     ch: CheckedCh,
     state: StateRoot,
     control: Arc<Mutex<ControlState>>,
+    store: Arc<Mutex<Rows>>,
     faults: PathBuf,
     rows: Vec<SessionRow>,
     runtime: Runtime,
@@ -295,10 +332,13 @@ impl Test {
             guest: Mutex::new(Guest::Ready),
             net: AtomicBool::new(false),
             fail: AtomicBool::new(false),
+            hold: AtomicBool::new(false),
+            stop_lines: Arc::default(),
             launches: Mutex::default(),
             vms: Mutex::default(),
         });
         let control = Arc::new(Mutex::new(ControlState::default()));
+        let store = Arc::new(Mutex::new(store));
         let api = Arc::new(FakeApi {
             fake: Arc::clone(&fake),
             snapshots: Mutex::default(),
@@ -313,7 +353,7 @@ impl Test {
             Arc::clone(&fake),
             Arc::clone(&api),
             relays.clone(),
-            Arc::new(Mutex::new(store)),
+            Arc::clone(&store),
             Arc::clone(&control),
             Arc::new(Mutex::new(book)),
         );
@@ -327,6 +367,7 @@ impl Test {
             ch,
             state,
             control,
+            store,
             faults: path,
             rows,
             runtime,
@@ -411,6 +452,24 @@ impl Test {
         }
         let reply = serde_json::json!({"state": state, "config": config});
         *self.api.reply.lock().unwrap() = reply.to_string();
+    }
+
+    /// How many `stop` lines guest init read.
+    fn stop_lines(&self) -> usize {
+        self.fake.stop_lines.load(Ordering::SeqCst)
+    }
+}
+
+/// Waits up to 5 s for `done`.
+#[cfg(test)]
+fn eventually(done: impl Fn() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !done() {
+        assert!(
+            Instant::now() < deadline,
+            "the condition did not hold in 5 s"
+        );
+        std::thread::sleep(Duration::from_millis(1));
     }
 }
 
@@ -517,14 +576,17 @@ fn a_bad_image_or_disk_faults_before_the_launch() {
 
 /// A guest that closes before `ControlReady`, and a refused dial of
 /// 1201, each fault and stop the VM (decisions CH33 rule 6, CH50 rule 2).
+/// After `ControlReady` the stop is the graceful one on the control link
+/// (decision CH19 (3)). Before it no link exists.
 #[test]
 fn a_guest_fault_stops_the_vm() {
-    for (name, guest) in [("closes", Guest::Closes), ("acp", Guest::RefusesAcp)] {
+    for (name, guest, graceful) in [("closes", Guest::Closes, 0), ("acp", Guest::RefusesAcp, 1)] {
         let test = Test::new(name, |_| {});
         *test.fake.guest.lock().unwrap() = guest;
         assert_eq!(test.start(0), Err(StartFault::SandboxStartFailed));
         assert_eq!(test.fault_codes(), ["sandbox_start_failed"]);
         assert!(test.stopped(0));
+        assert_eq!(test.stop_lines(), graceful, "{name}");
         assert!(!test.hook.running(&test.rows[0].id));
     }
 }
@@ -538,14 +600,15 @@ fn a_network_card_fails_the_deny_check() {
     assert_eq!(test.start(0), Err(StartFault::EgressAssertFailed));
     assert_eq!(test.fault_codes(), ["egress_assert_failed"]);
     assert!(test.stopped(0));
+    assert_eq!(test.stop_lines(), 1);
     assert!(!test.hook.running(&test.rows[0].id));
 }
 
 /// A snapshot with the current key restores paused: `info` is read until
 /// CH answers, the device check passes, then `resume` (decisions CH2,
 /// CH50 rule 10). The claim marks the snapshot consumed, and the
-/// generation is in use while the VM runs (decisions CH19 (5), CH50 rule
-/// 8).
+/// generation is in use while the VM runs and no longer after it exited
+/// (decisions CH19 (5), CH50 rule 8).
 #[test]
 fn a_keyed_snapshot_restores_paused_then_resumes() {
     let test = Test::new("restore", |_| {});
@@ -560,6 +623,15 @@ fn a_keyed_snapshot_restores_paused_then_resumes() {
     let id = test.rows[0].id.clone();
     assert!(test.hook.in_use().contains(&(id, SnapshotGeneration(1))));
     assert!(test.fault_codes().is_empty());
+
+    // The CH of the restore exits, and a sweep drops the consumed
+    // generation. The next start finds the VM gone, which releases the
+    // generation (decision CH50 rule 8), and cold-boots.
+    test.fake.vms.lock().unwrap()[0].store(true, Ordering::SeqCst);
+    fs::remove_dir_all(&dir).unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    assert!(!test.restored(1));
+    assert!(test.hook.in_use().is_empty());
 }
 
 /// Fields that a test adds to the config of an `info` reply.
@@ -703,4 +775,41 @@ fn a_turn_before_the_close_keeps_the_vm() {
     assert!(test.hook.running(&test.rows[0].id));
     assert!(!test.hook.running(&test.rows[1].id));
     assert_eq!(test.launches(), 1);
+}
+
+/// A start that is dropped during its launch leaves no CH outside the
+/// table. The launch output holds the process, and its drop kills the VM
+/// and keeps it in the table (decisions CH8-6, CH50 rule 4). The next
+/// admission reaps the exited VM, so a start of another session fits the
+/// cap of one VM.
+#[test]
+fn a_start_dropped_during_its_launch_kills_and_keeps_the_vm() {
+    let test = Test::new("cancel", |config| config.limits.ram_cap = 512 << 20);
+    test.fake.hold.store(true, Ordering::SeqCst);
+    let start = test.hook.start(&test.rows[0]);
+    let cut = test
+        .runtime
+        .block_on(async { tokio::time::timeout(Duration::from_millis(50), start).await });
+    assert!(cut.is_err());
+    test.fake.hold.store(false, Ordering::SeqCst);
+    eventually(|| test.hook.running(&test.rows[0].id));
+    assert!(test.stopped(0));
+    assert_eq!(test.start(1), Ok(()));
+    assert!(!test.hook.running(&test.rows[0].id));
+}
+
+/// The turn end of the first `ControlReady` goes to the row: its
+/// `updated_at` and its first title (decision CH32 rule 4).
+#[test]
+fn the_first_ready_writes_its_turn_end_to_the_row() {
+    let test = Test::new("ended", |_| {});
+    *test.fake.guest.lock().unwrap() = Guest::Ended;
+    assert_eq!(test.start(0), Ok(()));
+    let store = test.store.lock().unwrap();
+    let row = store.get(&test.rows[0].id).unwrap();
+    assert_eq!(
+        row.title.as_ref().map(ToString::to_string).as_deref(),
+        Some("First")
+    );
+    assert_ne!(row.updated_at, test.rows[0].updated_at);
 }
