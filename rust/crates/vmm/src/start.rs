@@ -464,11 +464,9 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
     /// Checks a restored VM, then resumes it (decision CH50 rule 10). CH
     /// serves its API only after it starts, so a failed `info` is tried
     /// again inside `READY_WAIT`.
-    // CONTRACT-QUESTION (decision CH50 rule 10): no row names the fault of
-    // each step. The code reads a VM that is not `Paused`, or that has a
-    // refused device, as a failed deny check: `egress_assert_failed`
-    // (decisions CH6-3, CH42 rule 2). An `info` that never answers, or a
-    // failed resume, is `sandbox_start_failed`.
+    // Decision CH54 rule 3: a VM that is not `Paused`, or that has a
+    // refused device, gives `egress_assert_failed`. A CH that does not
+    // answer `info` or `resume` gives `sandbox_start_failed`.
     async fn resume_checked(
         &self,
         run: &VmRunDir,

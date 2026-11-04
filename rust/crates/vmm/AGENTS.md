@@ -326,11 +326,10 @@ set.
    `READS_DEVICES` is false for `ChRemote`, and no VM restores. A store
    PR that gives the whole `info` reply costs about 10 lines there and 3
    lines here.
-7. CONTRACT-QUESTION (decision CH50 rule 10, `src/start.rs`): no row
-   names the fault of each restore step. The code reads a VM that is not
-   `Paused`, or that has a refused device, as `egress_assert_failed`
-   (decisions CH6-3, CH42 rule 2). An `info` that never answers, or a
-   failed resume, is `sandbox_start_failed`.
+7. Closed by decision CH54 rule 3: a restore whose VM is not `Paused`,
+   or has a refused device, gives `egress_assert_failed`. A CH that does
+   not answer `info` or `resume` gives `sandbox_start_failed`
+   (`src/start.rs`).
 8. Decision CH43 rule 6: a guest that closes the link before
    `ControlReady` asks for a cold boot. After a restore the start does
    not cold-boot then. It faults, stops the VM, and the next start
