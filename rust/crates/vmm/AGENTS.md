@@ -216,14 +216,11 @@ and marks that last until the row is gone.
 
 ## Known gaps
 
-1. CONTRACT-QUESTION (plan PR L15, `src/handlers/drop.rs`): a drop
-   waits for a start that its mark overlapped, and the start has no
-   outer bound (decision CH50 rule 1). So a drop that overlaps a long
-   start can pass the "about 35 s" of decision CH33 rule 11 and the 60 s
-   wait of the client (decision CH34 rule 5). The client retries, and
-   the retry waits for the same start. No row bounds this wait. The
-   narrowest reading waits, because a drop must not remove the files of
-   a VM that a start then boots.
+1. Closed by decision CH54 rule 1: a drop waits for a start that its
+   mark overlapped, with no bound (`src/handlers/drop.rs`). So a drop
+   may outlast the 60 s wait of the client (decision CH34 rule 5). The
+   drop runs in its own task, so a client that hangs up cannot cancel
+   it, and the retry waits for the same start.
 2. Decision CH43 rule 8: no line on the control link reports a change
    of the facade state yet. The phase 3 guest init PR adds a line that
    reports each change. Until then the sleep gate treats a VM as up only
