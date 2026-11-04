@@ -178,8 +178,9 @@ its error type.
    impl of `JsonRoute` or `UpgradeRoute`. `NAME` is in `snake_case`. An
    upgrade route also has a `TOKEN` and no reply type.
 2. The macro `route_table!` is the one list of the routes. It calls a
-   macro of the caller once per route, with the kind `json` or `upgrade`. The schema test expands it, and the
-   vmm router expands it later. Do not write a second list.
+   macro of the caller once per route, with the kind `json` or `upgrade`.
+   The schema test expands it, and `creche_vmm::routes!` expands it for
+   the vmm router. Do not write a second list.
 3. The traits carry serde bounds only. The `JsonSchema` bounds stay on the
    schema test, so a crate that depends on `creche-wire` needs no schemars.
 4. The schema test writes the table into the schema, under the root key
@@ -208,6 +209,8 @@ its error type.
    an ignore is unnecessary. A wider `JsonRoute` then fails the gate.
 9. A caller imports a route from `creche_wire.routes`. The route constants
    and `JsonRoute` are not in `__all__`, because they are no wire type.
+10. The vmm handler of a JSON route implements `Serve<R>` (decision CH26
+    rule 4). A handler set that misses a JSON route does not build.
 
 To add a route, add its marker and its line in `route_table!`. Then follow
 the steps below.

@@ -8,6 +8,7 @@
 //! this one never needs schemars.
 
 use std::fmt;
+use std::future::Future;
 use std::time::Duration;
 
 use serde::de::value::MapAccessDeserializer;
@@ -333,6 +334,15 @@ pub trait UpgradeRoute {
     type Request: Body;
     /// What the vmm answers on a refusal, before 101.
     type Error: RouteError;
+}
+
+/// The vmm handler of the JSON route `R` (decision CH26 rule 4). The vmm
+/// router expands `route_table!` with the concrete type of each route, so
+/// a handler set that misses a route does not build (decision CH25).
+pub trait Serve<R: JsonRoute> {
+    /// The reply to one request that passed every check of the router.
+    fn serve(&self, request: R::Request)
+    -> impl Future<Output = Result<R::Reply, R::Error>> + Send;
 }
 
 /// The route `create`: attendance makes a row of the host session list

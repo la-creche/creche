@@ -30,9 +30,17 @@ The root `AGENTS.md` applies here too.
 `server::run_with` accepts on a socket path that its caller passes in and
 serves one HTTP/1.1 connection per accept, with upgrades on. The protocol
 header is the first check of each request (decisions CH33 rule 1, CH34
-rule 1). `server::run` answers each request that passes with `no_route`
-until the server has routes. `Stop` stops the server through
-`tokio::sync` (decision CH26 rule 2).
+rule 1). `server::run` serves no route: it answers each request that
+passes with `no_route`. `Stop` stops the server through `tokio::sync`
+(decision CH26 rule 2).
+
+`server::run_routes` serves the JSON routes of the one route table
+(decision CH25). A handler set implements `Serve<R>` of `creche-wire` for
+each JSON route. `creche_vmm::routes!` then expands `route_table!` for
+it, so a set that misses a JSON route does not build. The router checks
+the route and the method, then the body, then the request type
+(decision CH33 rule 13). An Upgrade route gets `no_route` until the
+change that adds `ServeUpgrade`.
 
 `server::BodyCheck` holds the body checks that follow the route, in the
 order of decisions CH26 and CH33 rule 13: `Content-Type`, then the 1 MiB
