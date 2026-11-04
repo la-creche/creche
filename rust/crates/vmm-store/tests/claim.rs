@@ -6,11 +6,11 @@
 //! `tests/fixtures` and checks the key first.
 
 use std::fs;
-use std::os::unix::fs::{MetadataExt, symlink};
+use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use creche_vmm_store::claim::{CONSUMED, claim};
+use creche_vmm_store::claim::{CONSUMED, ClaimError, claim};
 use creche_vmm_store::images::{CheckedImage, ImageDigest, ImageStore};
 use creche_vmm_store::key::{
     KeyCheck, KeyedSnapshot, SnapshotKey, check_cloud_hypervisor, check_newest, write_key,
@@ -190,4 +190,65 @@ fn a_fresh_snapshot_after_a_claim_restores_once() {
         .expect("a claimed snapshot");
     assert_eq!(claimed.generation(), SECOND);
     assert_eq!(claim(temp.keyed()).expect("the claim"), None);
+}
+
+/// Sets the mode of `path`.
+#[cfg(test)]
+fn set_mode(path: &Path, mode: u32) {
+    fs::set_permissions(path, fs::Permissions::from_mode(mode)).expect("a mode");
+}
+
+/// Whether a make in `dir` fails. A root user makes files in any dir, so a
+/// test that needs a failed make skips then.
+#[cfg(test)]
+fn make_fails(dir: &Path) -> bool {
+    let probe = dir.join("probe");
+    let made = fs::write(&probe, "").is_ok();
+    let _ = fs::remove_file(&probe);
+    !made
+}
+
+/// A failed make of the mark retires the generation, so no later check
+/// gives it as `Keyed` (decision CH19 (5)).
+#[test]
+fn a_failed_mark_retires_the_generation() {
+    let temp = Temp::new("retire");
+    temp.snapshot(FIRST);
+    let keyed = temp.keyed();
+    let dir = temp.session.snapshot(FIRST);
+    set_mode(&dir, 0o500);
+    if !make_fails(&dir) {
+        return;
+    }
+    let error = claim(keyed).expect_err("a failure");
+    assert!(matches!(error, ClaimError::Retired { .. }), "{error}");
+    let retired = dir.with_extension("retired");
+    if retired.exists() {
+        set_mode(&retired, 0o700);
+    }
+    let check = check_newest(&temp.session, &temp.key).expect("the check");
+    assert_eq!(check, KeyCheck::NoSnapshot);
+}
+
+/// A failed retire leaves a snapshot that may restore, so the claim
+/// reports `Stuck` and the caller fails the start.
+#[test]
+fn a_failed_retire_is_stuck() {
+    let temp = Temp::new("stuck");
+    temp.snapshot(FIRST);
+    let keyed = temp.keyed();
+    let dir = temp.session.snapshot(FIRST);
+    let snapshots = temp.session.snapshots();
+    set_mode(&dir, 0o500);
+    set_mode(&snapshots, 0o500);
+    let denied = make_fails(&dir) && make_fails(&snapshots);
+    let claimed = denied.then(|| claim(keyed));
+    set_mode(&snapshots, 0o700);
+    set_mode(&dir, 0o700);
+    let Some(claimed) = claimed else {
+        return;
+    };
+    let error = claimed.expect_err("a failure");
+    assert!(matches!(error, ClaimError::Stuck { .. }), "{error}");
+    assert_eq!(temp.keyed().generation(), FIRST);
 }

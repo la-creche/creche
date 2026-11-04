@@ -54,3 +54,11 @@ The second file has the table of the three vmm crates.
   error (gap G10 option A). No lifecycle PR (L17, L20) calls it yet.
   Another option for (a): `take` writes `key.json` into the temp dir
   before the rename, so no snapshot exists without a key.
+- CONTRACT-QUESTION (PR D11, `claim.rs`): no row decides what a failed
+  claim does. A failed make or sync of the `consumed` mark leaves no
+  durable mark, so a later start could restore stale RAM onto a session
+  disk that moved on. The reading that keeps CH19 (5): the claim renames
+  `snapshots/<n>` to `snapshots/<n>.retired` and the caller cold-boots
+  (`ClaimError::Retired`). When the rename or its sync fails, the caller
+  fails the start (`ClaimError::Stuck`). CH39 rule 3 does not name
+  `<n>.retired`. D13 must remove a leftover one.

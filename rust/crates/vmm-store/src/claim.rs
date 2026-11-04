@@ -23,9 +23,22 @@
 //! A claim removes nothing. A VM restored from the snapshot maps its files
 //! while it runs (fact 55), so the claimed generation stays until a newer
 //! one replaces it and retention removes it (PR D13).
+//!
+//! A claim fails closed. When the make or the sync of the mark fails, the
+//! snapshot has no durable mark, so a later start could restore it onto a
+//! session disk that moved on. So the claim retires the generation: it
+//! renames `snapshots/<n>` to `snapshots/<n>.retired`, which no generation
+//! list counts, and syncs `snapshots/`. Then the caller cold-boots. When
+//! the retire fails too, the caller fails the start and does not
+//! cold-boot.
+//!
+//! CONTRACT-QUESTION: no row decides what a failed claim does. The reading
+//! above keeps CH19 (5), a single use. The name `<n>.retired` is not in
+//! the CH39 rule 3 names, and D13 must remove a leftover one (`AGENTS.md`,
+//! Known gaps).
 
 use std::fmt;
-use std::fs::{File, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
@@ -61,28 +74,52 @@ impl ClaimedSnapshot {
     }
 }
 
-/// A failed make or sync of the consumed mark.
+/// Why a claim gave no `ClaimedSnapshot` and no `None`: the make or the
+/// sync of the consumed mark failed.
 #[derive(Debug)]
-pub struct ClaimError {
-    /// The file or dir that the step failed on.
-    pub path: PathBuf,
-    /// Why the step failed.
-    pub source: io::Error,
+pub enum ClaimError {
+    /// The claim retired the generation, so it never restores. The caller
+    /// cold-boots.
+    Retired {
+        /// The file or dir that the mark step failed on.
+        path: PathBuf,
+        /// Why the mark step failed.
+        source: io::Error,
+    },
+    /// The retire failed too, so the snapshot may restore at a later
+    /// start. The caller fails the start and does not cold-boot.
+    Stuck {
+        /// The file or dir that the mark step failed on.
+        path: PathBuf,
+        /// Why the mark step failed.
+        source: io::Error,
+        /// Why the retire failed.
+        retire: io::Error,
+    },
 }
 
 impl fmt::Display for ClaimError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "cannot mark the snapshot at {} as consumed",
-            self.path.display()
-        )
+        match self {
+            Self::Retired { path, .. } => write!(
+                formatter,
+                "cannot mark the snapshot at {} as consumed, so it is retired",
+                path.display()
+            ),
+            Self::Stuck { path, retire, .. } => write!(
+                formatter,
+                "cannot mark the snapshot at {} as consumed or retire it: {retire}",
+                path.display()
+            ),
+        }
     }
 }
 
 impl std::error::Error for ClaimError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.source)
+        match self {
+            Self::Retired { source, .. } | Self::Stuck { source, .. } => Some(source),
+        }
     }
 }
 
@@ -93,8 +130,10 @@ impl std::error::Error for ClaimError {
 ///
 /// # Errors
 ///
-/// A failed make of the mark, or a failed sync of the generation dir. The
-/// mark may then exist. The caller cold-boots and does not restore.
+/// A failed make of the mark, or a failed sync of the generation dir.
+/// `Retired` when the claim then retired the generation: the caller
+/// cold-boots. `Stuck` when the retire failed too: the caller fails the
+/// start, because a later start could restore the snapshot.
 pub fn claim(keyed: KeyedSnapshot) -> Result<Option<ClaimedSnapshot>, ClaimError> {
     let dir = keyed.dir().to_owned();
     let mark = dir.join(CONSUMED);
@@ -103,16 +142,39 @@ pub fn claim(keyed: KeyedSnapshot) -> Result<Option<ClaimedSnapshot>, ClaimError
         .create_new(true)
         .mode(MARK_MODE)
         .open(&mark);
-    match made {
-        Ok(_) => {}
+    let failed = match made {
+        Ok(_) => File::open(&dir)
+            .and_then(|handle| handle.sync_all())
+            .err()
+            .map(|source| (dir.clone(), source)),
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => return Ok(None),
-        Err(source) => return Err(ClaimError { path: mark, source }),
-    }
-    if let Err(source) = File::open(&dir).and_then(|handle| handle.sync_all()) {
-        return Err(ClaimError { path: dir, source });
+        Err(source) => Some((mark, source)),
+    };
+    if let Some((path, source)) = failed {
+        return Err(match retire(&dir) {
+            Ok(()) => ClaimError::Retired { path, source },
+            Err(retire) => ClaimError::Stuck {
+                path,
+                source,
+                retire,
+            },
+        });
     }
     Ok(Some(ClaimedSnapshot {
         generation: keyed.generation(),
         dir,
     }))
+}
+
+/// Renames the generation `dir` to `<n>.retired` and syncs `snapshots/`,
+/// so no later start restores it. Then it tries to remove the retired dir.
+/// A leftover one is no generation, and D13 removes it.
+fn retire(dir: &Path) -> io::Result<()> {
+    let retired = dir.with_extension("retired");
+    let _ = fs::remove_dir_all(&retired);
+    fs::rename(dir, &retired)?;
+    let snapshots = dir.parent().ok_or(io::ErrorKind::NotFound)?;
+    File::open(snapshots)?.sync_all()?;
+    let _ = fs::remove_dir_all(&retired);
+    Ok(())
 }
