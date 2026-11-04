@@ -1106,14 +1106,15 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         self.turn_end(id, change).await;
         self.book(family, FaultBook::clear).await;
 
-        // CONTRACT-QUESTION (decision CH6-3, plan PR L16): the check runs
-        // "before the VM is ready". The plan puts it before the wait for
-        // `ControlReady`, but until CH runs, the command line is the one
-        // of the launch step, and the check fails closed (`deny::check`).
-        // No row bounds a wait for the exec of CH. The code reads "ready"
-        // as the 101: the check runs after `ControlReady` and before the
-        // dial of 1201. A poll of the command line inside `READY_WAIT`
-        // before the open costs about 15 lines.
+        // CONTRACT-QUESTION (plan PR L16, decision CH42 rule 2): the plan
+        // order puts the check before the wait for `ControlReady`, and
+        // CH42 rule 2 says "before the VM is ready". Decision CH6-3 says
+        // only "at create and after each egress edit". But until CH runs,
+        // the command line is the one of the launch step, and the check
+        // fails closed (`deny::check`). No row bounds a wait for the exec
+        // of CH. The code reads "ready" as the 101: the check runs after
+        // `ControlReady` and before the dial of 1201. A poll of the command
+        // line inside `READY_WAIT` before the open costs about 15 lines.
         // Decision CH49 rule 3 binds 1104 from phase 7 on, so the bound
         // set is empty in phase 2.
         let (ch, run) = (self.config.ch.clone(), pending.run.clone());

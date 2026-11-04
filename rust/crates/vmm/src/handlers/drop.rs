@@ -56,13 +56,24 @@ pub trait StopVm: Send + Sync + 'static {
 pub struct Drops<S> {
     rows: Arc<Mutex<Rows>>,
     relays: Relays,
-    stop: S,
+    stop: Arc<S>,
 }
 
 impl<S: StopVm> Drops<S> {
     /// The handler over `rows` and `relays`, with the hook `stop`.
     pub fn new(rows: Arc<Mutex<Rows>>, relays: Relays, stop: S) -> Self {
+        let stop = Arc::new(stop);
         Self { rows, relays, stop }
+    }
+
+    /// A handle on the same rows, relays and hook, for the task of one
+    /// drop.
+    fn share(&self) -> Self {
+        Self {
+            rows: Arc::clone(&self.rows),
+            relays: self.relays.clone(),
+            stop: Arc::clone(&self.stop),
+        }
     }
 
     /// The family and the ids of `target`. A session that is absent or
@@ -121,7 +132,21 @@ impl<S: StopVm> Drops<S> {
 }
 
 impl<S: StopVm> Serve<DropRoute> for Drops<S> {
+    /// Runs the drop in a task of its own and waits for it. hyper drops
+    /// this future when the client hangs up, because `server/accept.rs`
+    /// leaves half-close off. The task runs on with its marks, so a retry
+    /// joins the live slot and waits for the same start, and no hang-up
+    /// stops a VM halfway. A task that panicked answers `internal`.
     async fn serve(&self, target: DropTarget) -> Result<Dropped, DropError> {
+        tokio::spawn(self.share().run(target))
+            .await
+            .unwrap_or(Err(DropError::Internal {}))
+    }
+}
+
+impl<S: StopVm> Drops<S> {
+    /// The body of one drop. It owns its handle, so it runs in a task.
+    async fn run(self, target: DropTarget) -> Result<Dropped, DropError> {
         let one = matches!(target, DropTarget::Session(_));
         let (family, ids) = self.ids(target)?;
         // The mark stops each open relay first (decision CH26 rule 5), and
