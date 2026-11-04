@@ -198,6 +198,23 @@ fn release(in_use: &Mutex<InUse>, id: &SessionId) {
     lock_in_use(in_use).retain(|(session, _)| session != id);
 }
 
+/// Removes each VM whose process exited from `table`, and its generation
+/// from `in_use`. Decision CH50 rule 4 keeps the RAM of a VM that may
+/// still run, and an exited one runs no more. A failed status check keeps
+/// the entry, so its RAM still counts.
+fn reap<P: VmProcess>(table: &mut HashMap<SessionId, Slot<P>>, in_use: &Mutex<InUse>) {
+    table.retain(|id, slot| {
+        let Slot::Running(vm) = slot else {
+            return true;
+        };
+        let exited = matches!(vm.process.exited(), Ok(true));
+        if exited {
+            release(in_use, id);
+        }
+        !exited
+    });
+}
+
 /// A start between admission and its VM entry. Its drop removes the
 /// reserved RAM. A process that it still holds gets SIGKILL and stays in
 /// the table, so admission counts its RAM and a later start reaps it.
@@ -334,6 +351,9 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
     /// Reserves `guest_ram` for `id` when admission admits it.
     fn admit(&self, id: &SessionId, guest_ram: u64, free: u64) -> Option<Pending<L::Process>> {
         let mut table = lock(&self.table);
+        // A start that was dropped, a failed stop or a guest crash leaves
+        // an entry whose process may have exited since.
+        reap(&mut table, &self.in_use);
         let now = Instant::now();
         // Plan PR L17 adds the sleep gate and runs the evictions. Until
         // then every VM counts as busy, so admission never names one.
@@ -403,13 +423,17 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         }
     }
 
-    /// Writes the fault, then stops the VM of `pending`. A faulted start
-    /// sends no graceful stop: SIGTERM, then SIGKILL (decision CH50 rule
-    /// 3). The link `link` stops changing the control state.
+    /// Writes the fault, then stops the VM of `pending`. After
+    /// `ControlReady` the start holds the control link `control`, and the
+    /// stop sends the graceful stop on it first (decision CH19 (3): a kill
+    /// is the fallback). Before `ControlReady` no link exists, so the stop
+    /// skips that wait (decision CH50 rule 3). The link `link` stops
+    /// changing the control state.
     async fn abort(
         &self,
         mut pending: Pending<L::Process>,
         link: LinkId,
+        control: Option<&ControlLink>,
         family: &FamilyName,
         code: FaultCode,
         message: String,
@@ -417,7 +441,7 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         self.control().closed(&pending.id, link);
         let fault = self.fault(family, code, message).await;
         if let Some(process) = pending.process.as_mut() {
-            match stop(None::<&ControlLink>, process, &pending.run).await {
+            match stop(control, process, &pending.run).await {
                 Ok(_) => pending.process = None,
                 // Decision CH50 rule 4: the drop of `pending` keeps the VM
                 // in the table, so admission counts its RAM.
@@ -683,27 +707,38 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
             Arc::clone(&self.in_use),
             id.clone(),
         );
-        let launched =
-            blocking(move || launch::<L, A>(&config, &*launcher, &in_use, &session, shape)).await;
-        let booted = match launched {
-            Ok(booted) => booted,
+        // The process goes into `pending` inside the closure. hyper drops
+        // this future when the client hangs up before 101, and the blocking
+        // step then ends with no one to take its output. The drop of that
+        // output kills the VM and keeps it in the table, so admission
+        // counts its RAM and no CH runs outside the table (decisions CH8-6,
+        // CH50 rule 4).
+        let launched = blocking(move || {
+            let booted = launch::<L, A>(&config, &*launcher, &in_use, &session, shape)?;
+            let cmdline = launcher.cmdline(&booted.process);
+            pending.process = Some(booted.process);
+            Ok((pending, booted.start, booted.restore, cmdline))
+        })
+        .await;
+        let (pending, start, restore, cmdline) = match launched {
+            Ok(launched) => launched,
             Err(message) => return Err(self.fault(family, sandbox, message).await),
         };
-        let (start, cmdline) = (booted.start, self.launcher.cmdline(&booted.process));
-        pending.process = Some(booted.process);
 
         let vsock = pending.run.vsock_socket();
         let link = self.control().replace(id);
-        if let Some(expected) = booted.restore
+        if let Some(expected) = restore
             && let Err((code, message)) = self.resume_checked(&pending.run, expected).await
         {
-            return Err(self.abort(pending, link, family, code, message).await);
+            return Err(self.abort(pending, link, None, family, code, message).await);
         }
         let (control, ready) = match open(&vsock, id, wall_time).await {
             Ok(opened) => opened,
             Err(error) => {
                 let message = format!("waiting for ControlReady: {error:?}");
-                return Err(self.abort(pending, link, family, sandbox, message).await);
+                return Err(self
+                    .abort(pending, link, None, family, sandbox, message)
+                    .await);
             }
         };
         let change = self.control().ready(id, link, ready);
@@ -727,13 +762,19 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         .await;
         if let Err(message) = denied {
             let egress = FaultCode::EgressAssertFailed;
-            return Err(self.abort(pending, link, family, egress, message).await);
+            let control = Some(&control);
+            return Err(self
+                .abort(pending, link, control, family, egress, message)
+                .await);
         }
         let acp = match AcpLink::dial(&vsock).await {
             Ok(acp) => acp,
             Err(error) => {
                 let message = dial_text(error);
-                return Err(self.abort(pending, link, family, sandbox, message).await);
+                let control = Some(&control);
+                return Err(self
+                    .abort(pending, link, control, family, sandbox, message)
+                    .await);
             }
         };
         pending.commit(control);

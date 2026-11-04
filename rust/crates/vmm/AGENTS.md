@@ -187,7 +187,9 @@ answers `Dropped`. Then the drop runs in this order:
    it.
 4. `remove_session` of `creche-vmm-store` removes the data of each
    session whose VM stopped, then its row (PR D14). It runs in
-   `spawn_blocking`, one row at a time.
+   `spawn_blocking`, one row at a time. The lock of the rows lasts one
+   removal, so the other handlers get it between two removals (decision
+   CH36 G21).
 5. The marks drop after the removal, so they last until the row is gone.
 
 A stop that fails gives `internal` 500 (decision CH50 rule 4). The row
@@ -195,7 +197,8 @@ and the files of that session stay, so a retried drop finishes the job.
 `StopError::Hung` is one such stop. The drop logs the pid of each VM
 that did not stop. A removal that fails gives `internal` too, and its
 row stays. `tests/drop.rs` runs the handler on paused time with fake
-VMs.
+VMs. It proves two drops that overlap a start, a family drop with one
+hung VM, a failed removal, and marks that last until the row is gone.
 
 ## The cold boot
 
@@ -229,10 +232,16 @@ table, and the start boots it again. A cold boot runs these steps:
 
 Each fault but `host_full` goes to the fault file of the family
 (decisions CH6-3, CH21-1). A fault after the launch stops the VM with
-SIGTERM, then SIGKILL, and sends no graceful stop. A VM whose stop
+`stop::stop`. After `ControlReady` the stop sends the graceful stop on
+the control link first (decision CH19 (3)). Before it no link exists,
+so the stop goes on to SIGTERM (decision CH50 rule 3). A VM whose stop
 failed stays in the table, so admission counts its RAM (decision CH50
 rule 4). A start that is dropped before its end sends SIGKILL to its VM
-and keeps the VM in the table for the same reason. The `Launcher` trait
+and keeps the VM in the table for the same reason. The launch step puts
+the process in the start's reservation inside `spawn_blocking`, so a
+start that hyper drops during the launch does the same. Admission first
+removes each VM whose process exited, so an exited VM holds no RAM.
+The `Launcher` trait
 lets `tests/start.rs` fake the launch, the command line file and the
 guest. Every other step there is the real one on a scratch dir.
 
