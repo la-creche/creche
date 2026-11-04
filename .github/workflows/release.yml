@@ -11,7 +11,7 @@
 #           ├── suites      code   the old suite of integration/, in a
 #           │                      pytest run of its own
 #           ├── playpen-image
-#           │              code   the full Python flavor image
+#           │              code   each flavor image and its env file
 #           ├── rust        code   cargo fmt, clippy and test of rust/
 #           ├── systemd-proof
 #           │               code   the restart rule of the daemon units, on
@@ -430,7 +430,9 @@ jobs:
       - run: uv run pytest
         working-directory: memory
 
-  # Build the final target that the playpen release publishes. This run
+  # Build each flavor that the playpen release publishes, then check what
+  # the build alone cannot: /etc/creche/env equals the image config env
+  # (CH7-7, CH49). The steps live in playpen/bin/playpen-ci. This run also
   # catches a missing source file and an import that only the image sees.
   playpen-image:
     needs: scope
@@ -442,7 +444,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - run: docker build --platform linux/amd64 -f playpen/Dockerfile --target agent-sandbox-python .
+      - run: playpen/bin/playpen-ci
 
   # The Cargo workspace under rust/ (rust/Cargo.toml): the format check,
   # the lint gate and the tests. The runner has rustup, so no action

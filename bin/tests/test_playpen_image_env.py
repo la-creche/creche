@@ -1,11 +1,16 @@
-"""`/etc/creche/env`: `playpen/bin/creche-env-write`, with no image
-(CH7-7, CH49). The writer runs here under a fixed env, and the Dockerfile is
-read as text.
+"""`/etc/creche/env`: `playpen/bin/creche-env-write` and
+`playpen/bin/playpen-env-check`, with no image (CH7-7, CH49).
+
+The writer runs here under a fixed env. The check runs against a `docker`
+stub on `PATH` that answers `image inspect` with a config env and `run`
+with a file. CI runs the same check on each built flavor.
 """
 
 from __future__ import annotations
 
+import os
 import re
+import stat
 import subprocess
 from pathlib import Path
 
@@ -13,6 +18,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WRITE = REPO_ROOT / "playpen" / "bin" / "creche-env-write"
+CHECK = REPO_ROOT / "playpen" / "bin" / "playpen-env-check"
 DOCKERFILE = REPO_ROOT / "playpen" / "Dockerfile"
 
 #: The config env of a built flavor, in the order `image inspect` gives it.
@@ -35,6 +41,15 @@ FILE = (
     "YARN_VERSION=1.22.22\n"
 )
 
+#: `docker image inspect` prints STUB_CONFIG, `docker run` prints STUB_FILE.
+DOCKER_STUB = """#!/usr/bin/env bash
+case "$1" in
+  image) cat "$STUB_CONFIG" ;;
+  run) cat "$STUB_FILE" ;;
+  *) exit 2 ;;
+esac
+"""
+
 
 def _config_env() -> dict[str, str]:
     pairs = (line.split("=", 1) for line in CONFIG.splitlines())
@@ -48,6 +63,25 @@ def _write(*names: str, env: dict[str, str] | None = None) -> subprocess.Complet
         capture_output=True,
         text=True,
         check=False,
+    )
+
+
+def _check(tmp_path: Path, config: str, file: str) -> subprocess.CompletedProcess[str]:
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+    docker = stubs / "docker"
+    docker.write_text(DOCKER_STUB, encoding="utf-8")
+    docker.chmod(docker.stat().st_mode | stat.S_IXUSR)
+    (tmp_path / "config").write_text(config, encoding="utf-8")
+    (tmp_path / "file").write_text(file, encoding="utf-8")
+    env = {
+        "PATH": f"{stubs}:/usr/bin:/bin",
+        "STUB_CONFIG": str(tmp_path / "config"),
+        "STUB_FILE": str(tmp_path / "file"),
+        "TMPDIR": os.environ.get("TMPDIR", "/tmp"),
+    }
+    return subprocess.run(
+        ["bash", str(CHECK), "image:tag"], env=env, capture_output=True, text=True, check=False
     )
 
 
@@ -89,6 +123,54 @@ def test_the_writer_refuses_what_guest_init_cannot_read(
     assert done.returncode == 1
     assert done.stdout == ""
     assert done.stderr == f"creche-env-write: {error}\n"
+
+
+def test_the_check_passes_the_file_that_the_writer_prints(tmp_path: Path) -> None:
+    done = _check(tmp_path, CONFIG, FILE)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert done.stdout == (
+        "playpen-env-check: image:tag: /etc/creche/env equals the config env (6 names)\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "file",
+    [
+        pytest.param(FILE.replace("YARN_VERSION=1.22.22\n", ""), id="a-name-is-missing"),
+        pytest.param(FILE + "EXTRA=1\n", id="an-extra-name"),
+        pytest.param(
+            FILE.replace("/opt/test/bin:", "/opt/test/bin:/opt/py/bin:"), id="a-path-folder-twice"
+        ),
+        pytest.param(
+            FILE.replace("NODE_ENV=production", "NODE_ENV=development"), id="a-value-differs"
+        ),
+        pytest.param("".join(reversed(FILE.splitlines(keepends=True))), id="not-sorted"),
+    ],
+)
+def test_the_check_fails_a_file_that_is_not_the_config_env(tmp_path: Path, file: str) -> None:
+    done = _check(tmp_path, CONFIG, file)
+
+    assert done.returncode == 1
+    assert "--- config of image:tag" in done.stdout
+    assert "is not the env of its config" in done.stderr
+
+
+def test_the_check_sorts_on_the_name_as_the_writer_does(tmp_path: Path) -> None:
+    """The writer prints `A=1` before `A1=2`. A whole-line sort would put
+    `A1=2` first and fail a correct file."""
+    written = _write("A1", "A", env={"A": "1", "A1": "2"})
+
+    done = _check(tmp_path, "A1=2\nA=1\n", written.stdout)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+
+
+def test_the_check_refuses_a_config_line_that_is_no_variable(tmp_path: Path) -> None:
+    done = _check(tmp_path, CONFIG + "not a variable\n", FILE)
+
+    assert done.returncode == 1
+    assert "no NAME=value line: not a variable" in done.stderr
 
 
 def _flavor_steps(stage: str) -> list[str]:

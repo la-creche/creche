@@ -97,8 +97,9 @@ RUN acp-relay </dev/null; [ "$?" = "1" ]
 
 # The image env for guest init, because a root disk carries no image config
 # (CH7-7, CH49): playpen/bin/creche-env-write. The list names every variable
-# of the image config, the parent image's too: a new ENV name goes into the
-# list. This RUN stays the last step of the flavor.
+# of the image config, the parent image's too. CI compares the file with the
+# built config (playpen/bin/playpen-env-check), so a new ENV name fails there
+# until it is listed. This RUN stays the last step of the flavor.
 RUN --mount=type=bind,source=playpen/bin/creche-env-write,target=/run/creche-env-write \
     mkdir -p /etc/creche \
     && sh /run/creche-env-write HOME NODE_ENV NODE_VERSION PATH TMPDIR YARN_VERSION \
