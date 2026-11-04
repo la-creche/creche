@@ -19,6 +19,7 @@ creche-vmm-confine = { path = "../vmm-confine" }
 creche-vmm-store = { path = "../vmm-store" }
 creche-wire = { path = "../wire" }
 hyper.workspace = true
+hyper-util.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
