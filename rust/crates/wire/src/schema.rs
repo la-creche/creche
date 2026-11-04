@@ -8,11 +8,15 @@
 //!
 //! The schema also holds the route table under the root key `x-routes`
 //! (decision CH25). A route type needs no `subschema_for` line of its own:
-//! the route table reaches it.
+//! the route table reaches it. The same test writes the table as Python
+//! constants in `wire/src/creche_wire/routes.py`, which datamodel-codegen
+//! does not write.
 //!
 //! To write the files after a change of a wire type, run
 //! `CRECHE_WIRE_SCHEMA=write cargo test -p creche-wire` in rust/.
 
+use std::collections::BTreeSet;
+use std::fmt::Write as _;
 use std::path::PathBuf;
 
 use schemars::generate::SchemaSettings;
@@ -43,6 +47,22 @@ const TYPESCRIPT_HEAD: &str = "\
 // edit it: run `CRECHE_WIRE_SCHEMA=write cargo test -p creche-wire` in rust/.
 
 export const wire = ";
+
+/// The committed Python constants of the route table, relative to the crate.
+const PYTHON_FILE: &str = "../../../wire/src/creche_wire/routes.py";
+
+/// The lines before the imports in the Python constants.
+const PYTHON_HEAD: &str = "\
+# Generated from the route table of rust/crates/wire (decision CH25). Do not edit.
+# To write it again, run `CRECHE_WIRE_SCHEMA=write cargo test -p creche-wire` in rust/.
+\"\"\"The routes of the vmm host API, each with its request, reply and error
+types (decision CH25). A client sends `HOST_API_PROTOCOL` in the header
+`HOST_API_HEADER`.\"\"\"
+
+";
+
+/// The keys of a route entry that name a `$defs` entry.
+const ROUTE_TYPES: [&str; 3] = ["request", "reply", "error"];
 
 /// The root key of the route table in the schema.
 const ROUTES_KEY: &str = "x-routes";
@@ -182,14 +202,48 @@ fn is_integer(schema: &Schema) -> bool {
     }
 }
 
+/// The Python constants of the route table `x-routes`: the protocol, its
+/// header and one `JsonRoute` per route. The writer uses only forms that
+/// `ruff format` keeps as they are, so the file passes the gate unchanged.
+fn python_routes(table: &Value) -> String {
+    let routes = table["routes"].as_object().unwrap();
+    let models: BTreeSet<&str> = routes
+        .values()
+        .flat_map(|entry| ROUTE_TYPES.map(|key| entry[key].as_str().unwrap()))
+        .collect();
+
+    let mut text = String::from(PYTHON_HEAD);
+    text.push_str("from typing import Final\n\nfrom .models import (\n");
+    for model in models {
+        writeln!(text, "    {model},").unwrap();
+    }
+    text.push_str(")\nfrom .route import JsonRoute\n\n");
+    writeln!(text, "HOST_API_PROTOCOL: Final = {}", table["protocol"]).unwrap();
+    writeln!(text, "HOST_API_HEADER: Final = {}", table["header"]).unwrap();
+
+    for (name, entry) in routes {
+        let constant = name.to_ascii_uppercase();
+        writeln!(text, "\n{constant}: Final = JsonRoute(").unwrap();
+        writeln!(text, "    name={},", json!(name)).unwrap();
+        for key in ROUTE_TYPES {
+            writeln!(text, "    {key}={},", entry[key].as_str().unwrap()).unwrap();
+        }
+        text.push_str(")\n");
+    }
+
+    text
+}
+
 /// Each committed file, relative to the crate, and the text it must hold.
-fn rendered() -> [(&'static str, String); 2] {
-    let json = serde_json::to_string_pretty(&wire_schema()).unwrap();
+fn rendered() -> [(&'static str, String); 3] {
+    let schema = wire_schema();
+    let json = serde_json::to_string_pretty(&schema).unwrap();
     let typescript = format!("{TYPESCRIPT_HEAD}{json} as const;\n");
 
     [
         (SCHEMA_FILE, format!("{json}\n")),
         (TYPESCRIPT_FILE, typescript),
+        (PYTHON_FILE, python_routes(&schema[ROUTES_KEY])),
     ]
 }
 
@@ -207,7 +261,7 @@ fn the_committed_schema_is_the_schema_of_the_wire_types() {
         let committed = std::fs::read_to_string(&path).unwrap_or_default();
         assert!(
             committed == text,
-            "{file} is not the schema of the wire types. Run `{WRITE_VAR}={WRITE} cargo test -p creche-wire` in rust/ and commit the file."
+            "{file} is not what the wire types give. Run `{WRITE_VAR}={WRITE} cargo test -p creche-wire` in rust/ and commit the file."
         );
     }
 }
@@ -249,7 +303,7 @@ fn each_route_type_is_a_wire_type() {
     let schema = wire_schema();
 
     for (name, entry) in schema_routes(&schema) {
-        for key in ["request", "reply", "error"] {
+        for key in ROUTE_TYPES {
             let type_name = entry[key].as_str().unwrap();
             assert!(
                 schema["$defs"].get(type_name).is_some(),
