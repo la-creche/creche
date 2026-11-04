@@ -9,19 +9,17 @@ The second file has the table of the three vmm crates.
 - The code is synchronous. It uses std, plus `creche-wire`, `serde`,
   `serde_json` and `sha2`. The crate uses no async runtime.
 - The crate never calls `creche-vmm-confine` or `creche-vmm`.
+- Decision CH44 rule 2 (PR D6, `images.rs`): a store copy that fails
+  the identity check at VM start fails the start. `ImageStore::check`
+  removes and repairs nothing. An operator step or a later re-import
+  fixes the copy.
+- Decision CH44 rule 3 (PR D8, `ch_remote.rs`): the timeout of a
+  `ch-remote` call comes from its caller. This crate names no value. A
+  pause takes about 4 ms (fact 72) and a 16 GiB snapshot about 12 s
+  (gap G16).
 
 ## Known gaps
 
-- CONTRACT-QUESTION (PR D6, `images.rs`): no row decides what the vmm
-  does with a store copy that fails the check at VM start. `import`
-  returns the recorded entry and does not copy again, so nothing repairs
-  the copy. The narrowest reading: `ImageStore::check` removes and
-  repairs nothing, and the start fails. The options are a re-import at
-  the next start or an operator step.
-- CONTRACT-QUESTION (PR D8, `ch_remote.rs`): no row decides the timeout
-  of a `ch-remote` call. A pause takes about 4 ms (fact 72) and a 16 GiB
-  snapshot about 12 s (gap G16). The narrowest reading: each call takes
-  its timeout from its caller, and this crate names no value.
 - CONTRACT-QUESTION (PR D9, `snapshot.rs`): no row decides what happens
   to the VM when a step of a snapshot fails. The narrowest reading:
   `Snapshotter::take` removes its temp dir, resumes nothing and stops
