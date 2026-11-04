@@ -22,8 +22,8 @@ use serde_json::{Map, Value, json};
 
 use super::{
     AutoJobId, ControlHello, ControlReady, DelegationId, FamilyConfig, FamilyStateReply,
-    HOST_API_HEADER, HOST_API_PROTOCOL, JS_INTEGER_MAX, JobId, JsonRoute, SessionId, SessionOrigin,
-    TurnEvent, UnixMillis,
+    HOST_API_HEADER, HOST_API_PROTOCOL, JS_INTEGER_MAX, JobId, JsonRoute, RouteError, SessionId,
+    SessionOrigin, TurnEvent, UnixMillis,
 };
 
 /// The variable that makes the test write the file instead of checking it.
@@ -103,14 +103,22 @@ where
     R: JsonRoute,
     R::Request: JsonSchema,
     R::Reply: JsonSchema,
+    R::Error: JsonSchema,
 {
     let _ = generator.subschema_for::<R::Request>();
     let _ = generator.subschema_for::<R::Reply>();
+    let _ = generator.subschema_for::<R::Error>();
+    let statuses: Map<String, Value> = R::Error::STATUSES
+        .iter()
+        .map(|(code, status)| ((*code).to_owned(), json!(status)))
+        .collect();
 
     json!({
+        "error": R::Error::schema_name(),
         "kind": "json",
         "reply": R::Reply::schema_name(),
         "request": R::Request::schema_name(),
+        "statuses": statuses,
     })
 }
 
@@ -216,15 +224,21 @@ fn schema_routes(schema: &Value) -> Map<String, Value> {
     schema[ROUTES_KEY]["routes"].as_object().unwrap().clone()
 }
 
+/// True when `name` matches `^[a-z][a-z_]*$`.
+fn is_snake_case(name: &str) -> bool {
+    let first = name.chars().next();
+
+    first.is_some_and(|character| character.is_ascii_lowercase())
+        && name
+            .chars()
+            .all(|character| character.is_ascii_lowercase() || character == '_')
+}
+
 #[test]
 fn each_route_name_is_snake_case() {
     for name in schema_routes(&wire_schema()).keys() {
-        let first = name.chars().next();
         assert!(
-            first.is_some_and(|character| character.is_ascii_lowercase())
-                && name
-                    .chars()
-                    .all(|character| character.is_ascii_lowercase() || character == '_'),
+            is_snake_case(name),
             "route {name}: a route name matches ^[a-z][a-z_]*$"
         );
     }
@@ -235,7 +249,7 @@ fn each_route_type_is_a_wire_type() {
     let schema = wire_schema();
 
     for (name, entry) in schema_routes(&schema) {
-        for key in ["request", "reply"] {
+        for key in ["request", "reply", "error"] {
             let type_name = entry[key].as_str().unwrap();
             assert!(
                 schema["$defs"].get(type_name).is_some(),
@@ -251,8 +265,96 @@ fn the_route_table_holds_create() {
 
     assert_eq!(
         routes["create"],
-        json!({"kind": "json", "reply": "SessionRow", "request": "CreateSession"})
+        json!({
+            "error": "CreateError",
+            "kind": "json",
+            "reply": "SessionRow",
+            "request": "CreateSession",
+            "statuses": {"conflict": 409, "unknown_family": 404},
+        })
     );
+}
+
+/// The `code` of each `oneOf` member of an error schema, in order.
+fn schema_codes(error: &Value) -> Vec<&str> {
+    error["oneOf"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|member| member["properties"]["code"]["const"].as_str().unwrap())
+        .collect()
+}
+
+#[test]
+fn each_error_code_is_a_code_of_the_schema() {
+    let schema = wire_schema();
+    macro_rules! check {
+        (json $route:path) => {
+            let name = <$route as JsonRoute>::NAME;
+            let error = <$route as JsonRoute>::Error::schema_name();
+            let statuses = <<$route as JsonRoute>::Error as RouteError>::STATUSES;
+            let codes: Vec<&str> = statuses.iter().map(|(code, _)| *code).collect();
+            let mut unique = codes.clone();
+            unique.sort_unstable();
+            unique.dedup();
+
+            assert_eq!(
+                schema_codes(&schema["$defs"][&*error]),
+                codes,
+                "route {name}"
+            );
+            assert_eq!(
+                unique.len(),
+                codes.len(),
+                "route {name}: a code is given twice"
+            );
+            assert!(
+                codes.iter().all(|code| is_snake_case(code)),
+                "route {name}: {codes:?}"
+            );
+            assert!(
+                schema["$defs"][&*error]["oneOf"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|member| member.get("title").is_none()),
+                "route {name}: a variant of {error} has a title"
+            );
+        };
+    }
+    crate::route_table!(check);
+}
+
+#[test]
+fn each_error_status_is_its_entry_in_the_route_table() {
+    let schema = wire_schema();
+    let routes = schema_routes(&schema);
+    macro_rules! check {
+        (json $route:path) => {{
+            type Error = <$route as JsonRoute>::Error;
+            let name = <$route as JsonRoute>::NAME;
+            let statuses = <Error as RouteError>::STATUSES;
+            let entry: Map<String, Value> = statuses
+                .iter()
+                .map(|(code, status)| ((*code).to_owned(), json!(status)))
+                .collect();
+
+            assert_eq!(
+                routes[name]["statuses"],
+                Value::Object(entry),
+                "route {name}"
+            );
+            for (code, status) in statuses {
+                assert!(
+                    (400..=599).contains(status),
+                    "route {name}: the status {status} of {code} is not 4xx or 5xx"
+                );
+                let value: Error = serde_json::from_value(json!({"code": code})).unwrap();
+                assert_eq!(value.status(), *status, "route {name}: {code}");
+            }
+        }};
+    }
+    crate::route_table!(check);
 }
 
 /// The paths of the objects in `node` that leave a property out of

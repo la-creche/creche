@@ -269,6 +269,83 @@
       "note": "null"
     }
   ],
+  "CreateError": [
+    {
+      "json": "{\"code\":\"conflict\"}",
+      "written": "{\"code\":\"conflict\"}",
+      "note": "the same id with a different request"
+    },
+    {
+      "json": "{\"code\":\"unknown_family\"}",
+      "written": "{\"code\":\"unknown_family\"}",
+      "note": "a family with no config dir"
+    },
+    {
+      "json": "[\"conflict\"]",
+      "written": null,
+      "note": "the array form"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an empty array"
+    },
+    {
+      "json": "{}",
+      "written": null,
+      "note": "no code"
+    },
+    {
+      "json": "{\"code\":\"busy\"}",
+      "written": null,
+      "note": "a code that the route does not have"
+    },
+    {
+      "json": "{\"code\":\"Conflict\"}",
+      "written": null,
+      "note": "a code in the wrong case"
+    },
+    {
+      "json": "{\"code\":null}",
+      "written": null,
+      "note": "a null code"
+    },
+    {
+      "json": "{\"code\":\"conflict\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}",
+      "written": null,
+      "note": "an extra key"
+    },
+    {
+      "json": "{\"code\":\"conflict\",\"message\":\"exists\"}",
+      "written": null,
+      "note": "free text"
+    },
+    {
+      "json": "{\"code\":\"unknown_family\",\"family\":\"chat\"}",
+      "written": null,
+      "note": "the family name in the error"
+    },
+    {
+      "json": "{\"code\":\"unknown-family\"}",
+      "written": null,
+      "note": "a code with a hyphen"
+    },
+    {
+      "json": "[\"unknown_family\"]",
+      "written": null,
+      "note": "the array form of unknown_family"
+    },
+    {
+      "json": "\"conflict\"",
+      "written": null,
+      "note": "the plain string form"
+    },
+    {
+      "json": "{\"conflict\":{}}",
+      "written": null,
+      "note": "the externally tagged form"
+    }
+  ],
   "CreateSession": [
     {
       "json": "{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}}}",
