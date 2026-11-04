@@ -21,6 +21,11 @@ impl fmt::Display for ServeError {
     }
 }
 
+// CONTRACT-QUESTION: gap G24 of the phase 2 plan. The root AGENTS.md says
+// to ask before a change widens visibility. This reading makes `serve` and
+// the other items of the three vmm crates `pub`. A change to one crate
+// with private items costs a merge of the three crates.
+
 /// Runs the host API server until it stops.
 pub fn serve() -> Result<(), ServeError> {
     Err(ServeError::NotBuilt)
