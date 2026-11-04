@@ -187,7 +187,9 @@ answers `Dropped`. Then the drop runs in this order:
    it.
 4. `remove_session` of `creche-vmm-store` removes the data of each
    session whose VM stopped, then its row (PR D14). It runs in
-   `spawn_blocking`, one row at a time.
+   `spawn_blocking`, one row at a time. The lock of the rows lasts one
+   removal, so the other handlers get it between two removals (decision
+   CH36 G21).
 5. The marks drop after the removal, so they last until the row is gone.
 
 A stop that fails gives `internal` 500 (decision CH50 rule 4). The row
@@ -195,7 +197,8 @@ and the files of that session stay, so a retried drop finishes the job.
 `StopError::Hung` is one such stop. The drop logs the pid of each VM
 that did not stop. A removal that fails gives `internal` too, and its
 row stays. `tests/drop.rs` runs the handler on paused time with fake
-VMs.
+VMs. It proves two drops that overlap a start, a family drop with one
+hung VM, a failed removal, and marks that last until the row is gone.
 
 ## Rules
 

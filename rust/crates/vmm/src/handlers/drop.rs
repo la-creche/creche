@@ -93,13 +93,16 @@ impl<S: StopVm> Drops<S> {
         // Each removal syncs files and dirs, so it runs off the runtime
         // (decision CH36 G21).
         spawn_blocking(move || {
-            let mut rows = rows.lock().map_err(|_| ())?;
             let (mut whole, mut removed) = (true, 0_usize);
             for id in ids {
                 let target = DropSession {
                     family: family.clone(),
                     id,
                 };
+                // The lock lasts one removal. The acp, create and list
+                // handlers lock the rows on a runtime worker (decision
+                // CH36 G21), so between two removals they get it.
+                let mut rows = rows.lock().map_err(|_| ())?;
                 match remove_session(&mut rows, &target) {
                     Ok(Some(_)) => removed = removed.saturating_add(1),
                     // A drop that overlapped this one removed the row.
