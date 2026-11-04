@@ -25,9 +25,12 @@ in the tree, full history in every checkout.
 it: the same shard command, a last job that needs every other one, and one
 shared verdict (`.github/actions/verdict`), so a PR and its release cannot
 judge the same results differently. Its tag step runs only after that
-verdict, one allocation at a time, and only its last job may write. The
-release builds no archive, so the tag step gets no variable of a binary
-component.
+verdict, one allocation at a time, and only its last job may write.
+
+The release has jobs that the gate has not. The `artifacts` job builds the
+archive of each binary component (`bin/build-artifacts.sh`), in each scope.
+Its steps are pinned as a whole. No job signs an archive yet, so the tag
+step gets no variable of a binary component.
 
 The `proc` job runs the process-level suite (`integration/proc`), which is
 in no shard: `testpaths` does not hold it. The job builds the facade first,
@@ -199,9 +202,54 @@ SYSTEMD_ASKED = {
 #: The catalog's name for this repository (`handover/src/handover/catalog.py`).
 THIS_REPOSITORY = str(Repo.CRECHE)
 
+#: The job of the release that builds the archive of each binary component.
+ARTIFACTS_JOB = "artifacts"
+
+#: The jobs that only the release has.
+RELEASE_ONLY = {ARTIFACTS_JOB}
+
 #: The jobs of each file with no rule of their own. The verdict needs a
 #: success from each of them in each scope.
-NO_RULE = {GATE_NAME: {"scope", "lint"}, RELEASE_NAME: {"scope", "lint"}}
+NO_RULE = {GATE_NAME: {"scope", "lint"}, RELEASE_NAME: {"scope", "lint", *RELEASE_ONLY}}
+
+#: The actions of the `artifacts` job, by their commit.
+CHECKOUT_ACTION = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+SETUP_UV = "astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4"
+UPLOAD_ACTION = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+
+#: The days that a workflow artifact stays.
+RETENTION_DAYS = 7
+
+#: Where the build puts the archives on a runner.
+ARTIFACT_DIR = "${{ runner.temp }}/artifacts"
+
+#: Each key of the `artifacts` job. No `if`: the job runs in each scope. No
+#: `permissions`: it holds the read-only token of its file.
+ARTIFACTS_KEYS = {"needs", "runs-on", "timeout-minutes", "outputs", "steps"}
+
+#: The one output of the job: the step output of the build.
+ARTIFACTS_OUTPUTS = {"digests": "${{ steps.build.outputs.digests }}"}
+
+#: The variables of the build step, each one.
+BUILD_STEP_ENV = {"ARTIFACT_REPO": THIS_REPOSITORY, "ARTIFACT_OUT": ARTIFACT_DIR}
+
+#: The steps of the job, as a whole. The checkout keeps no token in the
+#: clone, because a build script runs here. The step that takes uv keeps no
+#: cache: the bytes of an archive come from a clean build.
+ARTIFACTS_STEPS = [
+    {"uses": CHECKOUT_ACTION, "with": {"fetch-depth": 0, "persist-credentials": False}},
+    {"uses": SETUP_UV, "with": {"enable-cache": False}},
+    {"name": "build", "id": "build", "env": BUILD_STEP_ENV, "run": "bin/build-artifacts.sh"},
+    {
+        "uses": UPLOAD_ACTION,
+        "with": {
+            "name": ARTIFACTS_JOB,
+            "path": ARTIFACT_DIR,
+            "if-no-files-found": "error",
+            "retention-days": RETENTION_DAYS,
+        },
+    },
+]
 
 #: The variables of the tag step: the token and the catalog name. No
 #: ASSET_DIR and no COSIGN: this workflow builds no archive.
@@ -484,11 +532,54 @@ def test_the_release_runs_the_gates_test_jobs() -> None:
 
 
 def test_the_two_workflows_have_the_same_jobs() -> None:
-    """The release runs each job of the gate before its last job. A job that
-    enters one file alone fails here. So the last job of the release needs
-    as many jobs as the last job of the gate."""
-    assert set(JOBS) - {GATE_NAME} == set(RELEASE_JOBS) - {RELEASE_NAME}
-    assert len(RELEASE_JOBS[RELEASE_NAME]["needs"]) == len(JOBS[GATE_NAME]["needs"])
+    """The release runs each job of the gate before its last job, and the
+    jobs of RELEASE_ONLY. Another job that enters one file alone fails
+    here. So the last job of the release needs as many jobs more than the
+    last job of the gate as RELEASE_ONLY holds."""
+    assert set(JOBS) - {GATE_NAME} == set(RELEASE_JOBS) - {RELEASE_NAME, *RELEASE_ONLY}
+    assert not RELEASE_ONLY & set(JOBS)
+    assert len(RELEASE_JOBS[RELEASE_NAME]["needs"]) == len(JOBS[GATE_NAME]["needs"]) + len(
+        RELEASE_ONLY
+    )
+
+
+def test_the_artifacts_job_is_pinned_as_a_whole() -> None:
+    """Each key of the job and each step, in their order. The job has no
+    rule and no `permissions` key, and no step has a rule. One more step
+    can put another file into the upload, and one more key can let a failed
+    step pass. The checkout keeps no token, and the job keeps no cache."""
+    job = RELEASE_JOBS[ARTIFACTS_JOB]
+
+    assert set(job) == ARTIFACTS_KEYS
+    assert job["needs"] == "scope"
+    assert job["runs-on"] == "ubuntu-24.04"
+    assert 0 < job["timeout-minutes"] <= 30
+    assert job["outputs"] == ARTIFACTS_OUTPUTS
+    assert job["steps"] == ARTIFACTS_STEPS
+    assert (REPO / "bin" / "build-artifacts.sh").is_file()
+
+
+def test_the_artifacts_job_takes_uv_at_the_pin_of_the_release_job() -> None:
+    (pinned,) = [
+        step for step in RELEASE_JOBS[RELEASE_NAME]["steps"] if step.get("uses") == SETUP_UV
+    ]
+
+    assert pinned == {"uses": SETUP_UV}
+
+
+def test_each_upload_fails_with_no_file_and_stays_seven_days() -> None:
+    uploads = [
+        step
+        for job in RELEASE_JOBS.values()
+        for step in job["steps"]
+        if step.get("uses", "").startswith("actions/upload-artifact@")
+    ]
+
+    assert uploads
+    for step in uploads:
+        assert step["uses"] == UPLOAD_ACTION
+        assert step["with"]["if-no-files-found"] == "error"
+        assert step["with"]["retention-days"] == RETENTION_DAYS
 
 
 @pytest.mark.parametrize(
@@ -1107,11 +1198,26 @@ CASES: list[tuple[str | None, dict[str, str], bool]] = [
     (None, DOCS | {"scope": "failure"}, False),
 ]
 
+#: The cases of the jobs that only the release has. Each one runs in each
+#: scope, so a failed or skipped one holds back each tag of the run.
+RELEASE_CASES: list[tuple[str | None, dict[str, str], bool]] = [
+    ("code", {ARTIFACTS_JOB: "failure"}, False),
+    ("code", {ARTIFACTS_JOB: "skipped"}, False),
+    ("docs", DOCS | {ARTIFACTS_JOB: "success"}, True),
+    ("docs", DOCS | {ARTIFACTS_JOB: "skipped"}, False),
+]
+
 #: (what the jobs did, whether the last job is green)
 VERDICTS = [
-    (_needs(jobs, last, scope, results), green)
-    for jobs, last in WORKFLOW_JOBS
-    for scope, results, green in CASES
+    *[
+        (_needs(jobs, last, scope, results), green)
+        for jobs, last in WORKFLOW_JOBS
+        for scope, results, green in CASES
+    ],
+    *[
+        (_needs(RELEASE_JOBS, RELEASE_NAME, scope, results), green)
+        for scope, results, green in RELEASE_CASES
+    ],
 ]
 
 
