@@ -54,7 +54,14 @@ from .family_status import (
     served_kind,
 )
 from .faults import FaultCode, FaultReporter
-from .ids import SessionPrefix, is_sandbox, is_session, is_session_cwd, new_ulid
+from .ids import (
+    SESSION_CWD_MAX,
+    SessionPrefix,
+    is_sandbox,
+    is_session,
+    is_session_cwd,
+    new_ulid,
+)
 from .models import DEFAULT_DEADLINE_S, TriggerKind
 from .paths import outcome_file, sandbox_sessions_mount
 from .queueing import MAX_QUEUED_TURNS, JobQueue
@@ -352,7 +359,8 @@ class SessionService:
         if not is_session_cwd(cwd):
             raise ApiError(
                 ErrorCode.INTERNAL,
-                "the session cwd is not an absolute path of at most 4096 characters with no NUL",
+                f"the session cwd is not an absolute path of at most {SESSION_CWD_MAX}"
+                " characters with no NUL",
                 family=family,
                 detail={"length": len(cwd)},
             )
