@@ -12,7 +12,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use creche_vmm_store::ch_remote::{
-    ChCommand, ChRemote, ChRemoteError, DiskConfig, Present, VmInfo, VmState, VsockConfig,
+    ChCommand, ChRemote, ChRemoteError, DiskConfig, Present, VmConfig, VmInfo, VmState, VsockConfig,
 };
 use creche_vmm_store::layout::{RunRoot, VmRunDir};
 use creche_wire::SessionId;
@@ -235,21 +235,78 @@ fn info_reads_a_vhost_user_disk() {
     assert_eq!(info.config.disks, [root, disk("/s/sessions/a/disk.img")]);
 }
 
-/// A list of `null` is no device. A device kind that `VmConfig` does not
-/// name passes the read unseen, and the check of the caller never sees it
-/// (plan PR D15).
+/// The kinds that the check of a restore refuses, each with an entry in
+/// the v54 shape (decision CH50 rule 10). A key that the type misspells
+/// reads as no device, so each kind gets its own entry here.
+const REFUSED: [(&str, &str); 8] = [
+    ("net", r#"[{"tap": "tap0"}]"#),
+    ("generic_vhost_user", r#"[{"socket": "/g"}]"#),
+    ("fs", r#"[{"tag": "t", "socket": "/s"}]"#),
+    ("user_devices", r#"[{"socket": "/u"}]"#),
+    ("vdpa", r#"[{"path": "/v"}]"#),
+    ("devices", r#"[{"path": "/d"}]"#),
+    ("pmem", r#"[{"file": "/p"}]"#),
+    ("tpm", r#"{"socket": "/t"}"#),
+];
+
+/// The count of each refused kind in `config`, in the order of `REFUSED`.
+fn refused_counts(config: &VmConfig) -> [usize; 8] {
+    [
+        config.net.len(),
+        config.generic_vhost_user.len(),
+        config.fs.len(),
+        config.user_devices.len(),
+        config.vdpa.len(),
+        config.devices.len(),
+        config.pmem.len(),
+        usize::from(config.tpm.is_some()),
+    ]
+}
+
+/// Each refused kind reads into its own field and into no other.
 #[test]
-fn info_skips_null_lists_and_unknown_kinds() {
+fn info_reads_each_refused_kind() {
+    for (n, (key, entry)) in REFUSED.into_iter().enumerate() {
+        let spliced = format!(r#""{key}": {entry}, "pvpanic""#);
+        let reply = V54_REPLY.replacen(r#""pvpanic""#, &spliced, 1);
+        let info = info_of(&format!("kind{n}"), &reply).expect("the info");
+        let mut expected = [0; 8];
+        expected[n] = 1;
+        assert_eq!(refused_counts(&info.config), expected, "{key}");
+    }
+}
+
+/// `null` on each list, on the TPM and on the vsock reads as no device.
+/// CH v54 leaves out an absent field (`skip_serializing_none`), so this
+/// guards a reply that writes `null` instead.
+#[test]
+fn info_reads_null_as_no_device() {
+    let fields: Vec<String> = ["disks", "vsock"]
+        .into_iter()
+        .chain(REFUSED.map(|(key, _)| key))
+        .map(|key| format!(r#""{key}": null"#))
+        .collect();
+    let reply = format!(
+        r#"{{"config": {{{}}}, "state": "Paused"}}"#,
+        fields.join(", ")
+    );
+    let info = info_of("null", &reply).expect("the info");
+    assert_eq!(info.config, VmConfig::default());
+}
+
+/// A device kind that `VmConfig` does not name passes the read unseen,
+/// and the check of the caller never sees it (plan PR D15).
+#[test]
+fn info_skips_unknown_kinds() {
     let reply = V54_REPLY.replacen(
         r#""pvpanic""#,
-        r#""fs": null, "pmem": null,
-        "ivshmem": {"path": "/dev/shm/x", "size": 1048576},
+        r#""ivshmem": {"path": "/dev/shm/x", "size": 1048576},
         "pvpanic""#,
         1,
     );
     let info = info_of("unknown", &reply).expect("the info");
-    assert!(info.config.fs.is_empty() && info.config.pmem.is_empty());
     assert_eq!(info.config.disks.len(), 2);
+    assert_eq!(refused_counts(&info.config), [0; 8]);
 }
 
 /// A device field of the wrong type fails the read, and so does a reply
