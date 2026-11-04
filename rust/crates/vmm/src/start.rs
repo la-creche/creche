@@ -32,7 +32,7 @@
 //! The idle sleep and the snapshot sweep of plan PR L18 use the same
 //! table (`ColdBoot::sleep_idle`, `ColdBoot::sweep`, `sleep::run`).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{DirBuilder, OpenOptions, Permissions};
 use std::io;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
@@ -204,7 +204,14 @@ fn lock<P>(table: &Table<P>) -> MutexGuard<'_, HashMap<SessionId, Slot<P>>> {
     table.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// The lock of `in_use`. Each change is one insert or one remove.
+/// The lock of the claims. It guards no data, so a poisoned lock is
+/// whole.
+fn lock_claims(claims: &Mutex<()>) -> MutexGuard<'_, ()> {
+    claims.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The lock of `in_use`. Each change is one insert or one remove, and no
+/// holder keeps it across file work.
 fn lock_in_use(in_use: &Mutex<InUse>) -> MutexGuard<'_, InUse> {
     in_use.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -332,6 +339,115 @@ impl<P: VmProcess> Drop for Eviction<P> {
 /// An admitted start and the VMs that it evicts first, in order.
 type Admitted<P> = (Pending<P>, Vec<Eviction<P>>);
 
+/// Runs `job` in a task of its own and waits for it. hyper drops the
+/// start future when the client hangs up before 101. The task runs on,
+/// so each take and each stop ends as it began, and no drop of an
+/// `Eviction` kills a VM in the middle of its snapshot. A task that
+/// panicked dropped its evictions, which put their VMs back (decision
+/// CH50 rule 4).
+async fn detached(job: impl Future<Output = bool> + Send + 'static) -> bool {
+    tokio::spawn(job).await.unwrap_or(false)
+}
+
+/// The owned parts of a retire, so it runs in a task of its own.
+#[derive(Debug, Clone)]
+struct Retirer<A> {
+    api: Arc<A>,
+    /// Each take holds it to read, and the sweep holds it to write.
+    takes: Arc<RwLock<()>>,
+    in_use: Arc<Mutex<InUse>>,
+    relays: Relays,
+    control: Arc<Mutex<ControlState>>,
+    state: StateRoot,
+}
+
+impl<A: ChApi> Retirer<A> {
+    /// The control state of every VM.
+    fn control(&self) -> MutexGuard<'_, ControlState> {
+        self.control.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Evicts each VM of `evictions` in the order of admission: closes
+    /// its door link, then retires it (decisions CH8-6, CH19 (6)). After
+    /// one that fails, the rest go back. True when each one stopped.
+    async fn evict_all<P: VmProcess>(self, evictions: Vec<Eviction<P>>) -> bool {
+        let mut fits = true;
+        for eviction in evictions {
+            if fits {
+                self.relays.close(&eviction.id).await;
+                fits = self.retire(eviction).await;
+            } else {
+                eviction.put_back();
+            }
+        }
+        fits
+    }
+
+    /// Retires the idle VM of `eviction` (decisions CH2, CH19 (6)).
+    async fn sleep<P: VmProcess>(self, eviction: Eviction<P>) -> bool {
+        self.retire(eviction).await
+    }
+
+    /// Snapshots the VM of `eviction`, then stops it (decision CH19 (6)).
+    /// The take ends CH, so the stop finds it gone. With no device read
+    /// (`ChApi::READS_DEVICES`) it takes no snapshot and sends the graceful
+    /// stop. False when the VM still holds its RAM: a turn runs, or the
+    /// stop failed (decision CH50 rule 4).
+    async fn retire<P: VmProcess>(&self, mut eviction: Eviction<P>) -> bool {
+        let id = eviction.id.clone();
+        let key = eviction.vm.as_ref().and_then(|vm| vm.key.clone());
+        let turn = self.control().turn_running(&id);
+        let (Some(key), false) = (key, turn) else {
+            eviction.put_back();
+            return false;
+        };
+        let Some(vm) = eviction.vm.as_mut() else {
+            return false;
+        };
+        let (api, run, session) = (
+            Arc::clone(&self.api),
+            vm.run.clone(),
+            self.state.session(&id),
+        );
+        // Decision CH44 rule 4: the caller decides after a failed take.
+        // The VM stops anyway, so its RAM frees, and the session
+        // cold-boots from its disk later (decision CH19 (5)).
+        // An API that reads no device set restores no snapshot, and the
+        // next claim consumes it unused (Known gaps). A take ends CH with
+        // no guest power-off, so that cold boot would find its disk as a
+        // power cut left it. So with no device read the VM takes no
+        // snapshot, and the stop below is the graceful one (decision CH19
+        // (3)): guest init syncs and powers off.
+        if A::READS_DEVICES {
+            // The blocking step owns the read lock, so the lock lasts as
+            // long as the take (`retention::sweep`).
+            let take = Arc::clone(&self.takes).read_owned().await;
+            let taken = blocking(move || {
+                let _take = take;
+                api.snapshot(&run, &session, &key)
+            })
+            .await;
+            if let Err(message) = taken {
+                eprintln!("vmm: the snapshot of {id} failed: {message}");
+            }
+        }
+        if let Err(error) = stop(vm.link.as_ref(), &mut vm.process, &vm.run).await {
+            eprintln!("vmm: the VM of {id} did not stop after its snapshot: {error}");
+            vm.link = None;
+            eviction.put_back();
+            return false;
+        }
+        {
+            let mut control = self.control();
+            if let Some(link) = control.link(&id) {
+                control.closed(&id, link);
+            }
+        }
+        eviction.done(&self.in_use);
+        true
+    }
+}
+
 /// The `StartVm` hook of the vmm: a cold boot or a restore.
 #[derive(Debug)]
 pub struct ColdBoot<L: Launcher, A: ChApi> {
@@ -343,6 +459,9 @@ pub struct ColdBoot<L: Launcher, A: ChApi> {
     /// Each take holds it to read, and the sweep holds it to write, so no
     /// sweep runs while a take runs (`retention::sweep`).
     takes: Arc<RwLock<()>>,
+    /// Each key check and claim holds it, and so does the sweep, so no
+    /// generation joins `in_use` during a sweep (decision CH50 rule 8).
+    claims: Arc<Mutex<()>>,
     relays: Relays,
     rows: Arc<Mutex<Rows>>,
     control: Arc<Mutex<ControlState>>,
@@ -379,6 +498,7 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
             table: Arc::default(),
             in_use: Arc::default(),
             takes: Arc::default(),
+            claims: Arc::default(),
             relays,
             rows,
             control,
@@ -530,121 +650,86 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         Some((pending, evictions))
     }
 
-    /// Evicts one VM: closes its door link, then retires it (decisions
-    /// CH8-6, CH19 (6)).
-    async fn evict(&self, eviction: Eviction<L::Process>) -> bool {
-        self.relays.close(&eviction.id).await;
-        self.retire(eviction).await
-    }
-
-    /// Snapshots the VM of `eviction`, then stops it (decision CH19 (6)).
-    /// The take ends CH, so the stop finds it gone. With no device read
-    /// (`ChApi::READS_DEVICES`) it takes no snapshot and sends the graceful
-    /// stop. False when the VM still holds its RAM: a turn runs, or the
-    /// stop failed (decision CH50 rule 4).
-    async fn retire(&self, mut eviction: Eviction<L::Process>) -> bool {
-        let id = eviction.id.clone();
-        let key = eviction.vm.as_ref().and_then(|vm| vm.key.clone());
-        // The lock of the control state goes before the table lock below:
-        // admission takes the table lock first.
-        let turn = self.control().turn_running(&id);
-        let (Some(key), false) = (key, turn) else {
-            eviction.put_back();
-            return false;
-        };
-        let Some(vm) = eviction.vm.as_mut() else {
-            return false;
-        };
-        let (api, run, session) = (
-            Arc::clone(&self.api),
-            vm.run.clone(),
-            self.config.state.session(&id),
-        );
-        // Decision CH44 rule 4: the caller decides after a failed take.
-        // The VM stops anyway, so its RAM frees, and the session
-        // cold-boots from its disk later (decision CH19 (5)).
-        // An API that reads no device set restores no snapshot, and the
-        // next claim consumes it unused (Known gaps). A take ends CH with
-        // no guest power-off, so that cold boot would find its disk as a
-        // power cut left it. So with no device read the VM takes no
-        // snapshot, and the stop below is the graceful one (decision CH19
-        // (3)): guest init syncs and powers off.
-        if A::READS_DEVICES {
-            let taken = {
-                let _take = self.takes.read().await;
-                blocking(move || api.snapshot(&run, &session, &key)).await
-            };
-            if let Err(message) = taken {
-                eprintln!("vmm: the snapshot of {id} failed: {message}");
-            }
+    /// The owned parts of a retire, for a task of its own.
+    fn retirer(&self) -> Retirer<A> {
+        Retirer {
+            api: Arc::clone(&self.api),
+            takes: Arc::clone(&self.takes),
+            in_use: Arc::clone(&self.in_use),
+            relays: self.relays.clone(),
+            control: Arc::clone(&self.control),
+            state: self.config.state.clone(),
         }
-        if let Err(error) = stop(vm.link.as_ref(), &mut vm.process, &vm.run).await {
-            eprintln!("vmm: the VM of {id} did not stop after its snapshot: {error}");
-            vm.link = None;
-            eviction.put_back();
-            return false;
-        }
-        {
-            let mut control = self.control();
-            if let Some(link) = control.link(&id) {
-                control.closed(&id, link);
-            }
-        }
-        eviction.done(&self.in_use);
-        true
     }
 
     /// Puts each VM to sleep that `Activity::may_sleep` passes at `now`:
     /// its facade is up, no turn runs, no door link is open, and it is
-    /// idle past `IDLE_TIMEOUT` (decisions CH2, CH19 (6), CH36 G12). Each
-    /// one leaves the table as `Evicting` and is retired, one at a time.
-    /// Returns the sessions whose VM slept.
+    /// idle past `IDLE_TIMEOUT` (decisions CH2, CH19 (6), CH36 G12). It
+    /// takes out one VM, retires it, then reads the table again for the
+    /// next. So a VM waits as `Evicting` only for its own retire, and a VM
+    /// whose door opens meanwhile fails its gate and stays up. Returns
+    /// the sessions whose VM slept.
     // Decision CH19 (6): the gate and the take out run under the table
     // lock. An Upgrade claims its door before its start reads the table,
     // so a door that opens after the gate finds the VM `Evicting` and gets
     // `host_full` (Known gaps). The sleep closes no door.
     pub async fn sleep_idle(&self, now: Instant) -> Vec<SessionId> {
-        let idle: Vec<Eviction<L::Process>> = {
-            let mut table = lock(&self.table);
-            let sessions: Vec<SessionId> = table
-                .iter()
-                .filter_map(|(session, slot)| match slot {
-                    Slot::Running(vm) if self.gates(session, vm, now).sleep => {
+        let (mut tried, mut slept) = (HashSet::new(), Vec::new());
+        loop {
+            let next = {
+                let mut table = lock(&self.table);
+                let session = table.iter().find_map(|(session, slot)| match slot {
+                    Slot::Running(vm)
+                        if !tried.contains(session) && self.gates(session, vm, now).sleep =>
+                    {
                         Some(session.clone())
                     }
                     _ => None,
+                });
+                session.and_then(|session| {
+                    // A VM whose retire fails goes back and passes its gate
+                    // again, so each VM gets one try per pass.
+                    tried.insert(session.clone());
+                    self.take_out(&mut table, session)
                 })
-                .collect();
-            sessions
-                .into_iter()
-                .filter_map(|session| self.take_out(&mut table, session))
-                .collect()
-        };
-        let mut slept = Vec::new();
-        for eviction in idle {
+            };
+            let Some(eviction) = next else {
+                return slept;
+            };
             let id = eviction.id.clone();
-            if self.retire(eviction).await {
+            if detached(self.retirer().sleep(eviction)).await {
                 slept.push(id);
             }
         }
-        slept
     }
 
     /// Runs `retention::sweep` with `BUDGET` over the state root (PR D13,
-    /// decisions CH2, CH8-7). It holds the lock of the `InUse` set, so no
-    /// key check or claim runs, and it names each generation in use, so
-    /// it never removes the files of a restored VM (decision CH50 rule 8).
-    /// It waits for each take to end, and no take starts until it ends.
+    /// decisions CH2, CH8-7). It holds the lock of the claims, so no key
+    /// check or claim runs, and it names each generation in a copy of the
+    /// `InUse` set. A VM that ends meanwhile only shrinks the set, so the
+    /// copy names each generation in use, and the sweep never removes the
+    /// files of a restored VM (decision CH50 rule 8). It waits for each
+    /// take to end, and no take starts until it ends. The blocking step
+    /// owns both locks, so a dropped sweep future frees neither early.
     ///
     /// # Errors
     ///
     /// A failed read of `sessions/`, or a sweep that panicked.
     pub async fn sweep(&self) -> io::Result<Swept> {
-        let _takes = self.takes.write().await;
-        let (in_use, state) = (Arc::clone(&self.in_use), self.config.state.clone());
-        spawn_blocking(move || sweep(&state, SystemTime::now(), BUDGET, &lock_in_use(&in_use)))
-            .await
-            .unwrap_or_else(|_| Err(io::Error::other("the sweep panicked")))
+        let takes = Arc::clone(&self.takes).write_owned().await;
+        let (claims, in_use, state) = (
+            Arc::clone(&self.claims),
+            Arc::clone(&self.in_use),
+            self.config.state.clone(),
+        );
+        spawn_blocking(move || {
+            let _takes = takes;
+            let _claims = lock_claims(&claims);
+            let in_use = lock_in_use(&in_use).clone();
+            sweep(&state, SystemTime::now(), BUDGET, &in_use)
+        })
+        .await
+        .unwrap_or_else(|_| Err(io::Error::other("the sweep panicked")))
     }
 
     /// Writes `code` with `message` to the fault file of `family` and
@@ -815,23 +900,24 @@ fn make_dir(dir: &Path) -> Result<(), String> {
 /// device set (`ChApi::READS_DEVICES`), the claim still consumes the
 /// snapshot, because the cold boot moves the session disk on.
 ///
-/// The key check and the claim run under the lock of `in_use`, and the
-/// generation stays in it until CH ends (decision CH50 rule 8). So a
-/// sweep that holds the lock never removes a generation that a start
-/// restores.
+/// The key check and the claim run under the lock of the claims, and
+/// the generation stays in `in_use` until CH ends (decision CH50 rule 8).
+/// So a sweep that holds the lock of the claims never removes a
+/// generation that a start restores. The lock of `in_use` lasts one
+/// insert or one remove (decision CH36 G21).
 fn claim_newest<A: ChApi>(
     session: &SessionDir,
     key: &SnapshotKey,
-    in_use: &Mutex<InUse>,
+    (claims, in_use): (&Mutex<()>, &Mutex<InUse>),
     id: &SessionId,
 ) -> Result<Option<ClaimedSnapshot>, String> {
-    let mut in_use = lock_in_use(in_use);
+    let _claims = lock_claims(claims);
     let keyed = match check_newest(session, key).map_err(|error| error.to_string())? {
         KeyCheck::Keyed(keyed) => keyed,
         KeyCheck::NoSnapshot | KeyCheck::Dropped { .. } => return Ok(None),
     };
     let entry = (id.clone(), keyed.generation());
-    in_use.insert(entry.clone());
+    lock_in_use(in_use).insert(entry.clone());
     let claimed = match claim(keyed) {
         Ok(claimed) => claimed,
         Err(error @ ClaimError::Retired { .. }) => {
@@ -839,12 +925,12 @@ fn claim_newest<A: ChApi>(
             None
         }
         Err(error @ ClaimError::Stuck { .. }) => {
-            in_use.remove(&entry);
+            lock_in_use(in_use).remove(&entry);
             return Err(error.to_string());
         }
     };
     if claimed.is_none() || !A::READS_DEVICES {
-        in_use.remove(&entry);
+        lock_in_use(in_use).remove(&entry);
         return Ok(None);
     }
     Ok(claimed)
@@ -867,7 +953,7 @@ struct Booted<P> {
 fn launch<L: Launcher, A: ChApi>(
     config: &StartConfig,
     launcher: &L,
-    in_use: &Mutex<InUse>,
+    locks: (&Mutex<()>, &Mutex<InUse>),
     id: &SessionId,
     shape: FamilyShape,
 ) -> Result<Booted<L::Process>, String> {
@@ -900,7 +986,7 @@ fn launch<L: Launcher, A: ChApi>(
         .map_err(|error| format!("making {}: {error}", serial.display()))?;
     let limits = VmLimits::from(shape);
     let key = SnapshotKey::current(config.ch_version, &kernel, &root);
-    let (command, start, restore) = match claim_newest::<A>(&session, &key, in_use, id)? {
+    let (command, start, restore) = match claim_newest::<A>(&session, &key, locks, id)? {
         Some(snapshot) => {
             let command = ChCommand::restore(snapshot, &run).map_err(|error| error.to_string())?;
             let expected = Expected {
@@ -965,23 +1051,18 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         let (mut pending, evictions) = self
             .admit(id, guest_ram, free)
             .ok_or(StartFault::HostFull)?;
-        // The evictions run in the order of admission. After one that
-        // fails, the rest go back, and the start does not fit.
-        let mut fits = true;
-        for eviction in evictions {
-            if fits {
-                fits = self.evict(eviction).await;
-            } else {
-                eviction.put_back();
-            }
-        }
+        // The evictions run in the order of admission, in a task of their
+        // own. After one that fails, the rest go back, and the start does
+        // not fit.
+        let fits = evictions.is_empty() || detached(self.retirer().evict_all(evictions)).await;
         if !fits {
             return Err(StartFault::HostFull);
         }
 
-        let (config, launcher, in_use, session) = (
+        let (config, launcher, claims, in_use, session) = (
             Arc::clone(&self.config),
             Arc::clone(&self.launcher),
+            Arc::clone(&self.claims),
             Arc::clone(&self.in_use),
             id.clone(),
         );
@@ -992,7 +1073,8 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         // counts its RAM and no CH runs outside the table (decisions CH8-6,
         // CH50 rule 4).
         let launched = blocking(move || {
-            let booted = launch::<L, A>(&config, &*launcher, &in_use, &session, shape)?;
+            let locks = (&*claims, &*in_use);
+            let booted = launch::<L, A>(&config, &*launcher, locks, &session, shape)?;
             let cmdline = launcher.cmdline(&booted.process);
             pending.process = Some(booted.process);
             pending.key = Some(booted.key);
@@ -1106,7 +1188,8 @@ mod tests {
         write_key(&session, generation, &key).unwrap();
 
         let in_use = Mutex::new(InUse::new());
-        let claimed = claim_newest::<ChTools>(&session, &key, &in_use, &id).unwrap();
+        let claimed =
+            claim_newest::<ChTools>(&session, &key, (&Mutex::new(()), &in_use), &id).unwrap();
         assert!(claimed.is_none());
         assert!(session.snapshot(generation).join("consumed").is_file());
         assert!(in_use.lock().unwrap().is_empty());

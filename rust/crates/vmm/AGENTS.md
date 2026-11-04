@@ -259,7 +259,8 @@ checked kernel and root disk it gives the current `SnapshotKey`.
 2. `claim` marks a keyed snapshot consumed before CH starts (decision
    CH19 (5)). A consumed mark, or a retired claim, gives a cold boot. A
    claim that cannot retire fails the start (decision CH44 rule 6).
-3. The key check and the claim run under the lock of the `InUse` set.
+3. The key check and the claim run under the lock of the claims, which
+   the sweep holds too.
    The generation stays in the set from the key check until CH ends:
    the VM leaves the table, or its start ends with no process
    (decision CH50 rule 8). `ColdBoot::in_use` gives the set to the
@@ -307,6 +308,13 @@ admission:
    CH50 rule 4), and the start gets `host_full`. The VMs left in the
    list go back too.
 
+The list runs in a task of its own (`tokio::spawn`), and the start
+waits for it. hyper drops the start future when the client hangs up
+before 101. The task runs on, so no take or stop ends half way, and no
+drop of an `Eviction` kills a VM during its snapshot. The blocking step
+of a take owns its read lock of the takes, so the lock lasts as long as
+the take.
+
 The gate of each VM is `Activity::may_evict` of `creche-vmm-store`, not
 `may_sleep` (PR D12). Only a VM with a control link and a snapshot key
 may be evicted. Its last use is the later of its start and its last
@@ -334,13 +342,20 @@ the passes on paused time.
    control link and a key: the facade is up, no turn runs, no door link
    is open, and the VM is idle past `IDLE_TIMEOUT` (decisions CH2, CH19
    (6), CH36 G12). The gate and the take out run under the table lock.
-   Each VM that passes leaves the table as `Evicting` and is retired as
-   in step 2 to 4 of "The eviction". A sleep closes no door.
+   It takes out one VM, retires it in its own task as in step 2 to 4 of
+   "The eviction", then reads the table again for the next. So a VM
+   waits as `Evicting` only for its own retire, and a VM whose door
+   opens meanwhile stays up. Each VM gets one try per pass. A sleep
+   closes no door.
 2. `ColdBoot::sweep` runs `retention::sweep` of `creche-vmm-store` with
-   `BUDGET` under the lock of the `InUse` set (PR D13, decisions CH2,
-   CH8-7, CH50 rule 8). So no key check or claim runs, and no generation
-   of a restored VM goes. A lock of the takes keeps each take out of the
-   sweep, as `retention::sweep` asks.
+   `BUDGET` (PR D13, decisions CH2, CH8-7, CH50 rule 8). It holds the
+   lock of the claims, so no key check or claim runs, and it reads a
+   copy of the `InUse` set. A VM that ends meanwhile only shrinks the
+   set, so the copy names each generation in use, and no generation of
+   a restored VM goes. The lock of `InUse` lasts one insert or remove,
+   so no runtime worker waits behind the sweep (decision CH36 G21). The
+   write lock of the takes keeps each take out of the sweep, as
+   `retention::sweep` asks. The blocking step owns both locks.
 
 The last use of a VM is the latest of its start, its last door close
 and its last turn event (decision CH50 rule 5). `ControlState::turn`
@@ -348,8 +363,10 @@ keeps the time of each turn event and `turn_seen`: a turn event arrived
 after the last `ControlReady`. A ready clears `turn_seen`. So a VM is up
 only after a ready said `running` or a turn event arrived (decision CH43
 rule 8). Admission reads the same gates. `tests/start.rs` proves the
-sleep, a turn or an open door that keeps a VM awake, `turn_seen`, and a
-sweep that skips a generation in use.
+sleep, a turn or an open door that keeps a VM awake, `turn_seen` and its
+clear at a new ready, a door close through the acp handler as a use, a
+sweep that skips a generation in use, an eviction that outlives its
+dropped start, and an idle check that takes out one VM at a time.
 
 ## Rules
 
@@ -391,9 +408,14 @@ sweep that skips a generation in use.
    retries. A door that an eviction closes between the end of the start
    and the 101 gets `host_full` the same way (`relay::Stopped::Evict`).
    An Upgrade of a session whose VM goes to sleep gets `host_full` too.
-5. `ColdBoot` keeps the control link of each VM, and no code reads its
-   turn events yet. The `StopVm` hook of the vmm and its use of the
-   table of `ColdBoot` are not built yet either.
+5. Plan gap (CONTRACT-QUESTION, plan PRs L11, L15, L19, L20): two
+   production pieces have no plan PR. (1) No `impl StopVm for ColdBoot`
+   exists, and the table is private, so the drop route has no hook over
+   the VMs of the vmm. (2) No task runs a per-VM loop over
+   `ControlLink::event` and `ControlState::turn`. L11 gave the parts
+   only. L15 needs (1), L19 and L20 need both, and none names them. The
+   narrowest owner is one lifecycle PR before L19 that adds both. Until
+   then the plan owner decides.
 6. CONTRACT-QUESTION (decision CH50 rule 10, plan PR L17,
    `src/restore.rs`): the plan reads the device set "through ch-remote
    info (D8)". `ChRemote::info` returns `VmInfo`, which holds only
@@ -416,11 +438,12 @@ sweep that skips a generation in use.
    with no guest sync. `ChTools` takes none (gap 6), so the vmm stops
    each evicted or idle VM with the graceful stop until the store PR of gap 6
    lands.
-10. No code reads the turn events of a VM yet (gap 5), so no code calls
-    `ControlState::turn`, and `turn_seen` and the last turn time stay
-    unset (decisions CH43 rule 8, CH50 rule 5). A VM whose last ready did
-    not say `running` never sleeps and is never evicted until a reader of
-    the control link calls `turn`.
+10. No code reads the turn events of a VM yet (gap 5, part 2), so no
+    code calls `ControlState::turn`, and `turn_seen` and the last turn
+    time stay unset (decisions CH43 rule 8, CH50 rule 5). A VM whose last
+    ready did not say `running` never sleeps and is never evicted until a
+    reader of the control link calls `turn`. The lifecycle PR of gap 5
+    adds that reader.
 11. CONTRACT-QUESTION (decisions CH2, CH36 G12, plan PR L18,
     `src/sleep.rs`): no row names how often the idle timer checks. The
     code checks every 30 s, a tenth of `IDLE_TIMEOUT`. So a VM sleeps
