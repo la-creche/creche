@@ -6,13 +6,7 @@
 //! and no schema entry. A change of a port number needs a new
 //! `GUEST_INIT_PROTOCOL`, so that a VM with an old snapshot cold-boots.
 
-// CONTRACT-QUESTION: gap G25 of the phase 2 plan. CH7-6 and CH14 name no
-// home and no first value for this number. This reading: creche-wire,
-// beside the port enums, value 1, no serde. The other reading is one
-// constant in each program, held equal by a test. A change costs a move of
-// this constant and a test in each program. The owner has not answered
-// yet. Remove this comment when the owner answers.
-/// The number of the guest init protocol (decisions CH7-6, CH14). The vmm
+/// The number of the guest init protocol (decisions CH7-6, CH14, CH36). The vmm
 /// and the guest init of one release share it. It is part of the snapshot
 /// key: on a mismatch the vmm drops the snapshot and cold-boots. It is
 /// separate from `HOST_API_PROTOCOL`.
