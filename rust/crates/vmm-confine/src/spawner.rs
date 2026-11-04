@@ -136,10 +136,12 @@ fn spawn(program: &Path, launch: Launch) -> Result<Child, SpawnError> {
     // give a pipe less than `PLAN_MAX`, so the write must not block.
     rustix::fs::fcntl_setfl(&writer, rustix::fs::OFlags::NONBLOCK)
         .map_err(|errno| SpawnError::Spawn(errno.into()))?;
-    writer.write_all(&bytes).map_err(|error| match error.kind() {
-        io::ErrorKind::WouldBlock => SpawnError::TooLarge(bytes.len()),
-        _ => SpawnError::Spawn(error),
-    })?;
+    writer
+        .write_all(&bytes)
+        .map_err(|error| match error.kind() {
+            io::ErrorKind::WouldBlock => SpawnError::TooLarge(bytes.len()),
+            _ => SpawnError::Spawn(error),
+        })?;
     drop(writer);
     Command::new(program)
         .arg(MODE)
