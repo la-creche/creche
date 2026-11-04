@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use creche_vmm::control::ControlError;
-use creche_vmm::stop::{StopError, StopLink, Stopped, VmProcess, stop};
+use creche_vmm::stop::{KILL_WAIT, StopError, StopLink, Stopped, VmProcess, stop};
 use creche_vmm_store::layout::{RunRoot, VmRunDir};
 use tokio::runtime::Builder;
 use tokio::time::Instant;
@@ -29,7 +29,8 @@ struct Fails {
     kill: bool,
 }
 
-/// A fake VM. Its process exits at the step `exits_on`.
+/// A fake VM. Its process exits at the step `exits_on`, at once for
+/// `gone`, and never for any other name.
 #[derive(Debug, Clone)]
 struct Fake {
     start: Instant,
@@ -233,6 +234,21 @@ fn a_failed_sigkill_is_an_error() {
     assert!(lock, "api.sock.lock is gone");
 }
 
+/// A process that outlives SIGKILL gets `KILL_WAIT`, then the stop gives
+/// `Hung`, so it ends within the 60 s wait of the client (decisions CH33
+/// rule 11, CH34 rule 5).
+#[test]
+fn a_process_that_outlives_sigkill_is_hung() {
+    let (stopped, steps, lock) = try_stop("hung", "never", true, Fails::default());
+    assert!(matches!(stopped, Err(StopError::Hung)), "{stopped:?}");
+    assert_eq!(
+        steps,
+        [("stop", secs(0)), ("term", secs(30)), ("kill", secs(35))]
+    );
+    assert_eq!(KILL_WAIT, secs(5));
+    assert!(lock, "api.sock.lock is gone");
+}
+
 #[test]
 fn a_gone_process_gets_no_step() {
     let (stopped, steps) = stop_fake("gone", "gone", Some(false));
@@ -265,8 +281,12 @@ impl VmProcess for Shell {
         }
     }
 
+    /// Sends SIGKILL, then reaps the child. Paused time runs `KILL_WAIT`
+    /// at once, so the reap keeps the test from a race with the exit.
     fn kill(&mut self) -> io::Result<()> {
-        self.child.kill()
+        self.child.kill()?;
+        self.status = Some(self.child.wait()?);
+        Ok(())
     }
 }
 

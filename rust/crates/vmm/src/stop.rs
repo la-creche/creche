@@ -2,7 +2,8 @@
 //! `stop` on the control link and waits `DROP_STOP_WAIT` for Cloud
 //! Hypervisor to exit. Then it sends SIGTERM through the launch handle of
 //! `creche-vmm-confine` and waits `DROP_SIGTERM_GRACE`. Then it sends
-//! SIGKILL. A kill is a power cut for the guest, and no error.
+//! SIGKILL and waits `KILL_WAIT` at most. A kill is a power cut for the
+//! guest, and no error.
 //!
 //! After the exit the vmm removes `api.sock.lock`, which Cloud Hypervisor
 //! cannot remove under Landlock (fact 75). A stop takes no snapshot, so
@@ -24,6 +25,16 @@ use crate::control::{ControlError, ControlLink};
 /// The pause between two status checks of the process. No row sets it.
 /// Only the vmm reads it, so a change costs one constant.
 const EXIT_POLL: Duration = Duration::from_millis(10);
+
+/// The longest wait for the exit after SIGKILL. A process in the D state
+/// can outlive SIGKILL for a while.
+// CONTRACT-QUESTION: no row sets this wait, or what a stop answers when
+// the process outlives it. Decision CH33 rule 11 bounds a drop at about
+// 35 s, and decision CH34 rule 5 gives the client 60 s. The narrowest
+// reading bounds the wait, so a stop ends within 40 s, inside the wait of
+// the client. Past it the stop gives `StopError::Hung` and removes no
+// file. AGENTS.md lists it in Known gaps.
+pub const KILL_WAIT: Duration = Duration::from_secs(5);
 
 /// The link that carries the graceful stop. `ControlLink` is the one of
 /// the vmm, and a test gives a fake.
@@ -97,6 +108,8 @@ pub enum StopError {
     Wait(io::Error),
     /// SIGKILL failed, so the process may still run.
     Kill(io::Error),
+    /// The process did not exit within `KILL_WAIT` after SIGKILL.
+    Hung,
     /// The removal of a stale file failed.
     Stale(StaleError),
     /// The removal task panicked.
@@ -108,6 +121,7 @@ impl fmt::Display for StopError {
         match self {
             Self::Wait(error) => write!(formatter, "checking the VM process: {error}"),
             Self::Kill(error) => write!(formatter, "sending SIGKILL: {error}"),
+            Self::Hung => formatter.write_str("the VM process outlived SIGKILL"),
             Self::Stale(error) => write!(formatter, "after the stop: {error}"),
             Self::Removal => formatter.write_str("the removal of the stale files panicked"),
         }
@@ -161,11 +175,10 @@ async fn end(
         return Ok(Stopped::Terminated);
     }
     process.kill().map_err(StopError::Kill)?;
-    // SIGKILL ends the process, so this wait has no bound.
-    while !process.exited().map_err(StopError::Wait)? {
-        sleep(EXIT_POLL).await;
+    if exits_within(process, KILL_WAIT).await? {
+        return Ok(Stopped::Killed);
     }
-    Ok(Stopped::Killed)
+    Err(StopError::Hung)
 }
 
 /// Whether `process` exits within `wait`.

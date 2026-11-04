@@ -150,7 +150,8 @@ grows only with sessions that ran. A drop clears the time.
 `stop` on the control link and waits `DROP_STOP_WAIT` (30 s) for Cloud
 Hypervisor to exit. Then it sends SIGTERM through the `Launched` handle
 of `creche-vmm-confine` and waits `DROP_SIGTERM_GRACE` (5 s). Then it
-sends SIGKILL. Both waits come from `creche-wire`. A kill is a power cut
+sends SIGKILL and waits `KILL_WAIT` (5 s) at most. A process that
+outlives it gives `StopError::Hung`, and its files stay. Both waits come from `creche-wire`. A kill is a power cut
 for the guest, and no error: `Stopped::Killed`. After the exit it runs
 `remove_stale` of `creche-vmm-store` in `spawn_blocking`, which removes
 `api.sock.lock` (fact 75) and the `vsock.sock` that a kill leaves. A stop
@@ -193,3 +194,10 @@ takes no snapshot, so the next start is a cold boot (decision CH19 (5)).
    time to work. The stop reads the rows narrowly: it skips the wait of a
    step that did not go out and goes to the next step at once
    (`src/stop.rs`).
+5. CONTRACT-QUESTION: no decision row says how long a stop waits for
+   the exit after SIGKILL, or what it answers when the process outlives
+   that wait (a process in the D state can). Decision CH33 rule 11
+   bounds a drop at about 35 s, and decision CH34 rule 5 gives the
+   client 60 s. The stop reads the rows narrowly: it waits `KILL_WAIT`
+   (5 s) at most, so it ends within 40 s. Past it, it gives
+   `StopError::Hung` and removes no file (`src/stop.rs`).
