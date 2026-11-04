@@ -94,8 +94,9 @@ table of the three vmm crates.
   holds. The check trusts that a snapshot comes only from a boot that
   passed the check. Once the CH API (plan PR D8, `ch_remote`) is in, the
   vmm also reads the restored VM's device set through `ch-remote info`
-  before the VM is ready. The lifecycle work owns that follow-up. No
-  code does it yet.
+  before the VM is ready. That device-set read is the step of plan PR
+  L17 (restore), under decision CH42 rule 2. No code does the
+  device-set read yet.
 - CONTRACT-QUESTION (decisions CH21-1, CH36 G18): contract 05 §3.3.1 has
   no row for the vmm until its amendment. Open until then: the group of
   `faults/vmm/` and its files (the vmm sets modes 0750 and 0640 only),

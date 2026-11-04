@@ -20,8 +20,9 @@
 //! trusts that a snapshot comes only from a boot that passed the check.
 //! Once the CH API (plan PR D8, `ch_remote`) is in, the vmm also reads the
 //! restored VM's device set through `ch-remote info` before the VM is
-//! ready. The lifecycle work owns that later step. This module does not
-//! do it. AGENTS.md lists it in Known gaps.
+//! ready. That device-set read is the step of plan PR L17 (restore),
+//! under decision CH42 rule 2. This module does not do the device-set
+//! read. AGENTS.md lists it in Known gaps.
 
 use std::ffi::OsString;
 use std::fmt;
