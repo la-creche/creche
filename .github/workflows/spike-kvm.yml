@@ -149,10 +149,16 @@ jobs:
         if: ${{ !cancelled() }}
         working-directory: ${{ runner.temp }}
         run: |
+          # G19: busybox from apt-get download, as C14 ships it. Only the
+          # package index update needs sudo.
           sudo apt-get update -qq
-          sudo apt-get install -y -qq busybox-static cpio > /dev/null
-          mkdir -p initramfs/bin initramfs/proc snap1 snap2
-          cp /bin/busybox initramfs/bin/
+          mkdir -p bb-deb bb initramfs/bin initramfs/proc snap1 snap2
+          (cd bb-deb && apt-get download busybox-static)
+          dpkg-deb -x bb-deb/busybox-static_*.deb bb
+          busybox=$(find bb -type f -name busybox | head -n 1)
+          test -n "$busybox"
+          cp "$busybox" initramfs/bin/busybox
+          command -v cpio
           printf '%s\n' '#!/bin/busybox sh' '/bin/busybox --install -s /bin' \
             'mount -t proc proc /proc' 'echo SPIKE-BOOTED' \
             'while :; do echo tick; sleep 1; done' > initramfs/init
