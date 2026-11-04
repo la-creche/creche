@@ -165,7 +165,8 @@ describe("the record of a turn", () => {
       "a\u0085b",
       "\n \n",
     ];
-    const isTitle = (title: string): boolean => validator("SessionTitle").Check(title);
+    // TypeBox takes a lone surrogate, so the check below needs `isWellFormed` too.
+    const isTitle = (title: string): boolean => validator("SessionTitle").Check(title) && title.isWellFormed();
 
     for (const text of texts) {
       const title = titleOf(text);
@@ -173,5 +174,6 @@ describe("the record of a turn", () => {
     }
     expect(titleOf(`${spaces}one${spaces}two`)).toBe("one two");
     expect(titleOf(`${"a".repeat(254)}\u3000€`)).toBe("a".repeat(254));
+    expect(titleOf("\ud800 lone \udc00")).toBe("\ufffd lone \ufffd");
   });
 });
