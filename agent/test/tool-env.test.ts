@@ -1,0 +1,135 @@
+// The tool env lists (decision CH49 rules 1 and 2). Each `ENV` name of a
+// shipped playpen stage sits in exactly one list, and the agent copies only
+// the `TOOL_ENV` and `TOOL_RENAME` names that are set.
+//
+// This test reads the `ENV` lines of `playpen/Dockerfile` only. The built
+// env also holds the names of the parent image, such as `NODE_VERSION`.
+// No build writes that env to a file yet. Phase 4 PR 1 adds
+// `/etc/creche/env` and extends this test to read it.
+
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { describe, expect, it } from "vitest";
+
+import { FACADE_ENV, FLUE_ENV, readToolEnv, TOOL_ENV, TOOL_RENAME } from "../src/tool-env.js";
+
+const ROOT = join(import.meta.dirname, "..");
+const DOCKERFILE = join(ROOT, "..", "playpen", "Dockerfile");
+const FLUE_DIST = join(ROOT, "node_modules", "@flue", "runtime", "dist", "node", "index.mjs");
+
+/** The stages that ship, and the build-only stages of `bin/tests/test_playpen_image.py`. */
+const SHIPPED = ["agent-sandbox", "agent-sandbox-python"];
+const BUILD_ONLY = ["build", "creche-test-venv"];
+
+const STAGE_RE = /^FROM (\S+) AS (\S+)$/;
+const PAIR_RE = /([A-Za-z_][A-Za-z0-9_]*)=("(?:[^"\\]|\\.)*"|'[^']*'|\S*)\s*/y;
+
+type EnvLine = { readonly ok: true; readonly names: readonly string[] } | { readonly ok: false };
+
+/** `ENV K=V` or `ENV K=V K2=V2`. The legacy `ENV K V` form is a refusal. */
+function envNames(rest: string): EnvLine {
+  const names: string[] = [];
+  PAIR_RE.lastIndex = 0;
+  while (PAIR_RE.lastIndex < rest.length) {
+    const match = PAIR_RE.exec(rest);
+    if (match?.[1] === undefined) {
+      return { ok: false };
+    }
+
+    names.push(match[1]);
+  }
+
+  return names.length > 0 ? { ok: true, names } : { ok: false };
+}
+
+/** Each stage's `ENV` names, its parent's included when the parent is a stage. */
+function stageEnv(text: string): Map<string, Set<string>> {
+  const stages = new Map<string, Set<string>>();
+  let current: Set<string> | null = null;
+  const lines = text.replace(/\\\n/g, " ").split("\n");
+  for (const [index, line] of lines.entries()) {
+    const from = STAGE_RE.exec(line);
+    if (from?.[1] !== undefined && from[2] !== undefined) {
+      current = new Set(stages.get(from[1]) ?? []);
+      stages.set(from[2], current);
+    } else if (line.startsWith("ENV ") && current !== null) {
+      const read = envNames(line.slice(4).trim());
+      if (!read.ok) {
+        throw new Error(`Dockerfile line ${index + 1}: write ENV K=V, not the legacy ENV K V form`);
+      }
+
+      read.names.forEach((name) => current?.add(name));
+    }
+  }
+
+  return stages;
+}
+
+const LISTS: Readonly<Record<string, readonly string[]>> = {
+  FLUE_ENV,
+  TOOL_ENV,
+  TOOL_RENAME: Object.keys(TOOL_RENAME),
+  FACADE_ENV,
+};
+
+describe("the tool env lists", () => {
+  it("copies Flue's installed allowlist exactly", () => {
+    const list = /const DEFAULT_LOCAL_ENV_ALLOWLIST = \[([^\]]*)\]/.exec(readFileSync(FLUE_DIST, "utf8"));
+
+    expect(list?.[1]).toBeDefined();
+    expect([...(list?.[1] ?? "").matchAll(/"([^"]+)"/g)].map((match) => match[1])).toEqual([...FLUE_ENV]);
+  });
+
+  it("are disjoint", () => {
+    const all = Object.values(LISTS).flat();
+
+    expect(new Set(all).size).toBe(all.length);
+  });
+
+  it("place each ENV name of a shipped stage in exactly one list", () => {
+    const stages = stageEnv(readFileSync(DOCKERFILE, "utf8"));
+    expect([...stages.keys()].sort()).toEqual([...SHIPPED, ...BUILD_ONLY].sort());
+
+    const names = new Set(SHIPPED.flatMap((stage) => [...(stages.get(stage) ?? [])]));
+    expect([...names]).toEqual(
+      expect.arrayContaining(["NODE_ENV", "HOME", "TMPDIR", "PATH", "MPLBACKEND", "MPLCONFIGDIR"]),
+    );
+    for (const name of names) {
+      const homes = Object.keys(LISTS).filter((list) => LISTS[list]?.includes(name));
+      expect(homes, name).toHaveLength(1);
+    }
+  });
+});
+
+describe("the Dockerfile ENV reader", () => {
+  it("reads one pair, several pairs, a quoted value and a parent stage", () => {
+    const text = 'FROM x AS a\nENV A=1\nFROM a AS b\nENV B="p q" C=3 \\\n  D=4\n';
+
+    expect([...(stageEnv(text).get("b") ?? [])]).toEqual(["A", "B", "C", "D"]);
+  });
+
+  it("refuses the legacy ENV K V form", () => {
+    expect(() => stageEnv("FROM x AS a\nENV A 1\n")).toThrow("line 2: write ENV K=V");
+  });
+});
+
+describe("readToolEnv", () => {
+  it("copies a set TOOL_ENV name and nothing else", () => {
+    const env = { MPLBACKEND: "Agg", NODE_ENV: "production", MPLCONFIGDIR: "/c", AGENT_CRED_DIR: "/k" };
+
+    expect(readToolEnv(env)).toEqual({ MPLBACKEND: "Agg" });
+    expect(readToolEnv({ NODE_VERSION: "24" })).toEqual({});
+  });
+
+  it("copies a set rename source to each target", () => {
+    const rename = { CRECHE_TOOL_HTTPS_PROXY: ["HTTPS_PROXY", "https_proxy"] };
+    const env = { CRECHE_TOOL_HTTPS_PROXY: "http://10.0.0.1:3128" };
+
+    expect(readToolEnv(env, TOOL_ENV, rename)).toEqual({
+      HTTPS_PROXY: "http://10.0.0.1:3128",
+      https_proxy: "http://10.0.0.1:3128",
+    });
+    expect(readToolEnv({}, TOOL_ENV, rename)).toEqual({});
+  });
+});
