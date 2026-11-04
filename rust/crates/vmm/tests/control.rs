@@ -295,16 +295,23 @@ fn a_new_link_replaces_the_old_one() {
         &vm,
         state.ready(&vm, old, ready(READY).unwrap())
     ));
+    // A running facade with `turn_running` false runs no turn.
+    assert!(!state.turn_running(&vm));
 
     // A restore: the vmm opens a new link, and the old one ends later
-    // (fact 74).
+    // (fact 74). A ready of the old link writes nothing, not even its
+    // turn end.
     let new = state.replace(&vm);
     assert_eq!(state.link(&vm), Some(new));
+    let stale =
+        r#"{"facade":{"exited":{"last_turn_end":{"title":"Stale","updated_at":9000},"starts":2}}}"#;
     assert!(!apply(
         &mut rows,
         &vm,
-        state.ready(&vm, old, ready(EXITED).unwrap())
+        state.ready(&vm, old, ready(stale).unwrap())
     ));
+    let untitled = (serde_json::Value::Null, serde_json::json!(1000));
+    assert_eq!(title_and_time(&rows, &vm), untitled);
     assert!(!state.closed(&vm, old));
     assert_eq!(state.link(&vm), Some(new));
     assert_eq!(state.facade(&vm), Some(&ready(READY).unwrap().facade));
@@ -415,6 +422,27 @@ fn a_ready_applies_its_last_turn_end_once() {
         state.ready(&vm, new, ready(EXITED).unwrap())
     ));
     assert!(!state.turn_running(&vm));
+
+    // An exited facade and a facade that starts again carry their last
+    // turn end too (decision CH32 rule 5). The title stays the first one.
+    let exited = r#"{"facade":{"exited":{"last_turn_end":{"title":"Exited","updated_at":4000},"starts":2}}}"#;
+    let link = state.replace(&vm);
+    assert!(apply(
+        &mut rows,
+        &vm,
+        state.ready(&vm, link, ready(exited).unwrap())
+    ));
+    let moved = (serde_json::json!("First"), serde_json::json!(4000));
+    assert_eq!(title_and_time(&rows, &vm), moved);
+    let starting = r#"{"facade":{"starting":{"last_turn_end":{"title":"Starting","updated_at":5000},"pid":43,"starts":3}}}"#;
+    let link = state.replace(&vm);
+    assert!(apply(
+        &mut rows,
+        &vm,
+        state.ready(&vm, link, ready(starting).unwrap())
+    ));
+    let moved = (serde_json::json!("First"), serde_json::json!(5000));
+    assert_eq!(title_and_time(&rows, &vm), moved);
 }
 
 #[test]
