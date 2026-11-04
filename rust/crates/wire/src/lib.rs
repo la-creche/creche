@@ -1508,6 +1508,136 @@ pub struct FamilyConfig {
 
 object_only!(FamilyConfig);
 
+/// The name of the family VM shape file in the family's `config/`
+/// (decision CH36 G6). caregiver writes it in the same folder swap as the
+/// rest of `config/`, and the vmm reads it. The guest never reads it.
+// CONTRACT-QUESTION: decision CH36 G6 puts the shape in a separate file of
+// `config/` and gives the file no name. The reading here is `shape.json`.
+// Contract 01 §6.1 lists the entries of `config/` and needs an amendment
+// for it, as decision CH23-1 amended it for `model_live_at`. A change of
+// the name later changes caregiver and the vmm together.
+pub const FAMILY_SHAPE_FILE: &str = "shape.json";
+
+/// A size of the family VM shape, with the range of `family/grammar.py`.
+/// On the wire it is a JSON integer from `$min` to `$max`, and any other
+/// value is refused.
+macro_rules! shape_size {
+    ($(#[$doc:meta])* $name:ident, $error:ident, $int:ty, $min:literal, $max:literal, $rule:literal) => {
+        $(#[$doc])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+        #[serde(try_from = "u64", into = "u64")]
+        #[cfg_attr(test, derive(schemars::JsonSchema))]
+        #[cfg_attr(test, schemars(extend("minimum" = $min, "maximum" = $max)))]
+        pub struct $name($int);
+
+        #[doc = concat!("Why an integer is not a `", stringify!($name), "`: it is outside its range.")]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub struct $error;
+
+        impl $name {
+            /// The smallest value.
+            pub const MIN: $int = $min;
+            /// The largest value.
+            pub const MAX: $int = $max;
+
+            /// The value.
+            #[must_use]
+            pub fn get(self) -> $int {
+                self.0
+            }
+        }
+
+        impl TryFrom<u64> for $name {
+            type Error = $error;
+
+            fn try_from(value: u64) -> Result<Self, Self::Error> {
+                match <$int>::try_from(value) {
+                    Ok(value) if (Self::MIN..=Self::MAX).contains(&value) => Ok(Self(value)),
+                    _ => Err($error),
+                }
+            }
+        }
+
+        impl From<$name> for u64 {
+            fn from(size: $name) -> Self {
+                u64::from(size.0)
+            }
+        }
+
+        impl fmt::Display for $error {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str($rule)
+            }
+        }
+
+        impl std::error::Error for $error {}
+    };
+}
+
+shape_size!(
+    /// The vCPUs of the family VM: `sandbox.cpus` of the family file,
+    /// `CPUS_MIN` to `CPUS_MAX` of `family/grammar.py`. The vmm gives the
+    /// guest this many vCPUs and the scope this many CPUs of quota
+    /// (decision CH8-5).
+    FamilyCpus,
+    FamilyCpusError,
+    u8,
+    1,
+    8,
+    "the vCPUs of a family VM are 1 to 8"
+);
+
+shape_size!(
+    /// The guest RAM of the family VM in MiB: `sandbox.memory` of the
+    /// family file as `memory_mb` of `family/grammar.py` reads it, which
+    /// counts `1g` as 1024. The range is `MEMORY_MIN_MB` to
+    /// `MEMORY_MAX_MB` there. The scope gets a memory cap above it
+    /// (decision CH8-5).
+    FamilyMemoryMib,
+    FamilyMemoryMibError,
+    u16,
+    256,
+    16384,
+    "the guest RAM of a family VM is 256 to 16384 MiB"
+);
+
+/// The image flavor of the family VM: `sandbox.image` of the family file,
+/// `SandboxFlavor` of `family/grammar.py`. It names a flavor, never an
+/// image (contract 01 §3.9). On the wire it is the name of a flavor, a JSON
+/// string. The schema holds it inline in `FamilyShape`, as `SystemPrompt`
+/// is held in `FamilyConfig`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[cfg_attr(test, schemars(inline, title = "SandboxFlavor"))]
+pub enum SandboxFlavor {
+    Base,
+    Python,
+}
+
+/// The family VM shape: the file `FAMILY_SHAPE_FILE` in the family's
+/// `config/` (decision CH36 G6). caregiver writes it from the family file.
+/// The vmm reads it before it starts a VM of the family (decision CH8-5).
+///
+/// It is a file of its own, not a part of `runtime.json`, so the guest
+/// reads none of it. `family/grammar.py` stays the authority for the
+/// ranges and the flavors (decision CH23 rule 5).
+/// `wire/tests/test_wire_grammar.py` holds them equal. No route reaches
+/// the type, so it needs no new `HOST_API_PROTOCOL` (decision CH33 rule 8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct FamilyShape {
+    /// The vCPUs.
+    pub cpus: FamilyCpus,
+    /// The image flavor: `sandbox.image` of the family file.
+    pub flavor: SandboxFlavor,
+    /// The guest RAM in MiB.
+    pub memory_mib: FamilyMemoryMib,
+}
+
+object_only!(FamilyShape);
+
 /// A secret text that `$check` accepts. On the wire it is a JSON string with
 /// the schema pattern `$pattern`, and a string that breaks the rule is
 /// refused. Its `Debug` writes no value and it has no `Display`, so a log

@@ -1703,6 +1703,63 @@
       "note": "null"
     }
   ],
+  "FamilyCpus": [
+    {
+      "json": "1",
+      "written": "1",
+      "note": "one vCPU, the smallest"
+    },
+    {
+      "json": "8",
+      "written": "8",
+      "note": "eight vCPUs, the largest"
+    },
+    {
+      "json": "0",
+      "written": null,
+      "note": "zero"
+    },
+    {
+      "json": "9",
+      "written": null,
+      "note": "nine, past the range"
+    },
+    {
+      "json": "-1",
+      "written": null,
+      "note": "a negative count"
+    },
+    {
+      "json": "257",
+      "written": null,
+      "note": "past the range of a byte"
+    },
+    {
+      "json": "-0",
+      "written": null,
+      "note": "a negative zero"
+    },
+    {
+      "json": "2.0",
+      "written": null,
+      "note": "a count written as a float"
+    },
+    {
+      "json": "\"2\"",
+      "written": null,
+      "note": "a count as a string"
+    },
+    {
+      "json": "true",
+      "written": null,
+      "note": "a bool"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    }
+  ],
   "FamilyCreds": [
     {
       "json": "{\"litellm_key\":\"sk-test-key-0001\",\"pep_token\":\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e\"}",
@@ -1748,6 +1805,63 @@
       "json": "[\"sk-test-key-0001\",\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e\"]",
       "written": null,
       "note": "the fields in order, the array form of a struct"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    }
+  ],
+  "FamilyMemoryMib": [
+    {
+      "json": "256",
+      "written": "256",
+      "note": "256 MiB, the smallest, 256m in the family file"
+    },
+    {
+      "json": "2048",
+      "written": "2048",
+      "note": "2 GiB, the default 2g of the family file"
+    },
+    {
+      "json": "16384",
+      "written": "16384",
+      "note": "16 GiB, the largest, 16g in the family file"
+    },
+    {
+      "json": "255",
+      "written": null,
+      "note": "one MiB under the range"
+    },
+    {
+      "json": "16385",
+      "written": null,
+      "note": "one MiB past the range"
+    },
+    {
+      "json": "0",
+      "written": null,
+      "note": "zero"
+    },
+    {
+      "json": "65792",
+      "written": null,
+      "note": "past the range of 16 bits"
+    },
+    {
+      "json": "-1",
+      "written": null,
+      "note": "a negative size"
+    },
+    {
+      "json": "2048.0",
+      "written": null,
+      "note": "a size written as a float"
+    },
+    {
+      "json": "\"2g\"",
+      "written": null,
+      "note": "the spelling of the family file"
     },
     {
       "json": "null",
@@ -1895,6 +2009,88 @@
       "json": "[]",
       "written": null,
       "note": "an array"
+    }
+  ],
+  "FamilyShape": [
+    {
+      "json": "{\"cpus\":2,\"flavor\":\"base\",\"memory_mib\":2048}",
+      "written": "{\"cpus\":2,\"flavor\":\"base\",\"memory_mib\":2048}",
+      "note": "the defaults of the family file"
+    },
+    {
+      "json": "{\"memory_mib\": 16384, \"flavor\": \"python\", \"cpus\": 8}",
+      "written": "{\"cpus\":8,\"flavor\":\"python\",\"memory_mib\":16384}",
+      "note": "the largest shape, keys in another order, with whitespace"
+    },
+    {
+      "json": "{\"cpus\":1,\"flavor\":\"base\",\"memory_mib\":256}",
+      "written": "{\"cpus\":1,\"flavor\":\"base\",\"memory_mib\":256}",
+      "note": "the smallest shape"
+    },
+    {
+      "json": "{\"cpus\":9,\"flavor\":\"base\",\"memory_mib\":2048}",
+      "written": null,
+      "note": "too many vCPUs"
+    },
+    {
+      "json": "{\"cpus\":2,\"flavor\":\"base\",\"memory_mib\":128}",
+      "written": null,
+      "note": "too little guest RAM"
+    },
+    {
+      "json": "{\"cpus\":2,\"flavor\":\"base\",\"memory_mib\":\"2g\"}",
+      "written": null,
+      "note": "the guest RAM in the spelling of the family file"
+    },
+    {
+      "json": "{\"cpus\":2,\"flavor\":\"rust\",\"memory_mib\":2048}",
+      "written": null,
+      "note": "a flavor that is not in the set"
+    },
+    {
+      "json": "{\"cpus\":2,\"flavor\":\"Base\",\"memory_mib\":2048}",
+      "written": null,
+      "note": "a flavor in the wrong case"
+    },
+    {
+      "json": "{\"cpus\":2,\"flavor\":null,\"memory_mib\":2048}",
+      "written": null,
+      "note": "a flavor as null"
+    },
+    {
+      "json": "{\"cpus\":2,\"image\":\"base\",\"memory_mib\":2048}",
+      "written": null,
+      "note": "the key of the family file in place of flavor"
+    },
+    {
+      "json": "{\"cpus\":2,\"flavor\":\"base\",\"memory\":2048}",
+      "written": null,
+      "note": "the key of the family file in place of memory_mib"
+    },
+    {
+      "json": "{\"cpus\":2,\"flavor\":\"base\",\"memory_mib\":2048,\"shell\":false}",
+      "written": null,
+      "note": "an unknown key"
+    },
+    {
+      "json": "{\"cpus\":2,\"cpus\":2,\"flavor\":\"base\",\"memory_mib\":2048}",
+      "written": null,
+      "note": "a key given twice"
+    },
+    {
+      "json": "[2,\"base\",2048]",
+      "written": null,
+      "note": "the array form of a struct, the fields in order"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an empty array"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
     }
   ],
   "FamilySkills": [

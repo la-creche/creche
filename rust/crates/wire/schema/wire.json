@@ -892,6 +892,13 @@
       ],
       "type": "object"
     },
+    "FamilyCpus": {
+      "description": "The vCPUs of the family VM: `sandbox.cpus` of the family file,\n`CPUS_MIN` to `CPUS_MAX` of `family/grammar.py`. The vmm gives the\nguest this many vCPUs and the scope this many CPUs of quota\n(decision CH8-5).",
+      "format": "uint64",
+      "maximum": 8,
+      "minimum": 1,
+      "type": "integer"
+    },
     "FamilyCreds": {
       "additionalProperties": false,
       "description": "The family's part of `creds.json` that the guest reads (decision CH23\ndefault 1). `epoch`, `written_at`, `previous_pep_token` and\n`previous_expires_at` stay on the host, so the old token never sits in\nguest memory or in a snapshot.",
@@ -911,10 +918,46 @@
       ],
       "type": "object"
     },
+    "FamilyMemoryMib": {
+      "description": "The guest RAM of the family VM in MiB: `sandbox.memory` of the\nfamily file as `memory_mb` of `family/grammar.py` reads it, which\ncounts `1g` as 1024. The range is `MEMORY_MIN_MB` to\n`MEMORY_MAX_MB` there. The scope gets a memory cap above it\n(decision CH8-5).",
+      "format": "uint64",
+      "maximum": 16384,
+      "minimum": 256,
+      "type": "integer"
+    },
     "FamilyName": {
       "description": "The name of a family: `FAMILY_NAME` of `family/grammar.py`.",
       "pattern": "^[a-z][a-z0-9-]{1,30}$",
       "type": "string"
+    },
+    "FamilyShape": {
+      "additionalProperties": false,
+      "description": "The family VM shape: the file `FAMILY_SHAPE_FILE` in the family's\n`config/` (decision CH36 G6). caregiver writes it from the family file.\nThe vmm reads it before it starts a VM of the family (decision CH8-5).\n\nIt is a file of its own, not a part of `runtime.json`, so the guest\nreads none of it. `family/grammar.py` stays the authority for the\nranges and the flavors (decision CH23 rule 5).\n`wire/tests/test_wire_grammar.py` holds them equal. No route reaches\nthe type, so it needs no new `HOST_API_PROTOCOL` (decision CH33 rule 8).",
+      "properties": {
+        "cpus": {
+          "$ref": "#/$defs/FamilyCpus",
+          "description": "The vCPUs."
+        },
+        "flavor": {
+          "description": "The image flavor: `sandbox.image` of the family file.",
+          "enum": [
+            "base",
+            "python"
+          ],
+          "title": "SandboxFlavor",
+          "type": "string"
+        },
+        "memory_mib": {
+          "$ref": "#/$defs/FamilyMemoryMib",
+          "description": "The guest RAM in MiB."
+        }
+      },
+      "required": [
+        "cpus",
+        "flavor",
+        "memory_mib"
+      ],
+      "type": "object"
     },
     "FamilySkills": {
       "additionalProperties": {

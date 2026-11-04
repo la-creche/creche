@@ -438,8 +438,9 @@ key or an added route too, because the match of the number is exact.
    starts from. It fails when a change edits or deletes one, so a file
    deleted and written again fails too.
 6. A change of a type that no route reaches needs no new number:
-   `FamilyStateReply`, `TurnEvent`, `ControlHello`, `ControlCommand` and
-   the types that only they reach. A change of a `description` needs none either.
+   `FamilyStateReply`, `TurnEvent`, `ControlHello`, `ControlCommand`,
+   `FamilyShape` and the types that only they reach. A change of a
+   `description` needs none either.
 
 ## The vsock JSON links
 
@@ -511,3 +512,8 @@ a dependency.
    line on a vsock JSON link. The reading is the narrowest one: the reader
    closes the link and logs why (rule 6 of "The vsock JSON links"). A
    typed error line instead needs a new wire type.
+3. CONTRACT-QUESTION: decision CH36 G6 puts the family VM shape
+   (`FamilyShape`) in a separate file of `config/` and gives the file no
+   name. The reading is `FAMILY_SHAPE_FILE` = `shape.json`. Contract 01
+   §6.1 lists the entries of `config/` and needs an amendment for the
+   file, as decision CH23-1 amended it for `model_live_at`.

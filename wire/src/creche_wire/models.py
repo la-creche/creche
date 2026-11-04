@@ -980,6 +980,17 @@ class FamilyConfig(BaseModel):
     ]
 
 
+class FamilyCpus(RootModel[StrictInt]):
+    root: Annotated[
+        StrictInt,
+        Field(
+            description="The vCPUs of the family VM: `sandbox.cpus` of the family file,\n`CPUS_MIN` to `CPUS_MAX` of `family/grammar.py`. The vmm gives the\nguest this many vCPUs and the scope this many CPUs of quota\n(decision CH8-5).",
+            ge=1,
+            le=8,
+        ),
+    ]
+
+
 class FamilyCreds(BaseModel):
     """
     The family's part of `creds.json` that the guest reads (decision CH23
@@ -1004,6 +1015,17 @@ class FamilyDrop(BaseModel):
         extra="forbid",
     )
     family: DropFamily
+
+
+class FamilyMemoryMib(RootModel[StrictInt]):
+    root: Annotated[
+        StrictInt,
+        Field(
+            description="The guest RAM of the family VM in MiB: `sandbox.memory` of the\nfamily file as `memory_mb` of `family/grammar.py` reads it, which\ncounts `1g` as 1024. The range is `MEMORY_MIN_MB` to\n`MEMORY_MAX_MB` there. The scope gets a memory cap above it\n(decision CH8-5).",
+            ge=256,
+            le=16384,
+        ),
+    ]
 
 
 class FamilyName(RootModel[StrictStr]):
@@ -1032,6 +1054,33 @@ class DispatchChain(RootModel[list[FamilyName]]):
             min_length=1,
         ),
     ]
+
+
+class FamilyShape(BaseModel):
+    """
+    The family VM shape: the file `FAMILY_SHAPE_FILE` in the family's
+    `config/` (decision CH36 G6). caregiver writes it from the family file.
+    The vmm reads it before it starts a VM of the family (decision CH8-5).
+
+    It is a file of its own, not a part of `runtime.json`, so the guest
+    reads none of it. `family/grammar.py` stays the authority for the
+    ranges and the flavors (decision CH23 rule 5).
+    `wire/tests/test_wire_grammar.py` holds them equal. No route reaches
+    the type, so it needs no new `HOST_API_PROTOCOL` (decision CH33 rule 8).
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    cpus: Annotated[FamilyCpus, Field(description="The vCPUs.")]
+    flavor: Annotated[
+        SandboxFlavor,
+        Field(
+            description="The image flavor: `sandbox.image` of the family file.",
+            title="SandboxFlavor",
+        ),
+    ]
+    memory_mib: Annotated[FamilyMemoryMib, Field(description="The guest RAM in MiB.")]
 
 
 class FamilyState(BaseModel):
@@ -1272,6 +1321,15 @@ class ProtocolMismatch(BaseModel):
             le=4294967295,
         ),
     ]
+
+
+class SandboxFlavor(StrEnum):
+    """
+    The image flavor: `sandbox.image` of the family file.
+    """
+
+    BASE = "base"
+    PYTHON = "python"
 
 
 class SandboxGrant(BaseModel):

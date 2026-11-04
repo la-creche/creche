@@ -1,5 +1,6 @@
 """Each wire name type has the pattern of its name in `family/grammar.py`, and
-each wire set of names has the members of its set there.
+each wire set of names has the members of its set there. Each size of the
+family VM shape has the range of its size there.
 
 The grammar stays the authority for the family file (decision CH23 rule 5).
 Registry CI cannot install `creche-wire`, so the grammar cannot import the
@@ -59,6 +60,31 @@ def test_the_system_prompt_has_the_modes_of_the_grammar() -> None:
     mode = _definitions()["FamilyConfig"]["properties"]["system_prompt"]
 
     assert mode["enum"] == list(grammar.SystemPrompt)
+
+
+def test_the_family_shape_has_the_flavors_of_the_grammar() -> None:
+    flavor = _definitions()["FamilyShape"]["properties"]["flavor"]
+
+    assert flavor["enum"] == list(grammar.SandboxFlavor)
+
+
+@pytest.mark.parametrize(
+    ("wire_name", "low", "high"),
+    [
+        ("FamilyCpus", grammar.CPUS_MIN, grammar.CPUS_MAX),
+        ("FamilyMemoryMib", grammar.MEMORY_MIN_MB, grammar.MEMORY_MAX_MB),
+    ],
+)
+def test_each_shape_size_has_the_range_of_the_grammar(wire_name: str, low: int, high: int) -> None:
+    size = _definitions()[wire_name]
+
+    assert (size["minimum"], size["maximum"]) == (low, high)
+
+
+def test_the_grammar_counts_memory_in_mib() -> None:
+    """The wire counts the guest RAM in MiB. The grammar names its unit MB
+    and counts `1g` as 1024 of it, so the two units are one."""
+    assert grammar.memory_mb("1g") == 1024
 
 
 def test_the_family_token_has_the_form_that_caregiver_mints() -> None:
