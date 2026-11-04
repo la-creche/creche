@@ -168,6 +168,35 @@ rule 3). The write of `stop` has a timeout counted inside
 `DROP_STOP_WAIT`, so SIGTERM follows 30 s after the start at most.
 `StopLink` and `VmProcess` let `tests/stop.rs` give fakes on paused time.
 
+## The drop route
+
+`src/handlers/drop.rs` serves `drop` (decisions CH21-2, CH21-10,
+CH27). A session drop of an absent id, or of an id that another family
+owns, gets `not_found` and stops nothing (decision CH33 rules 4 and 5).
+A family drop takes the rows of the family, and a family with no rows
+answers `Dropped`. Then the drop runs in this order:
+
+1. `Relays::mark_drop` marks each session. The mark stops its open
+   relay (decision CH26 rule 5), and an Upgrade under the mark gets
+   `not_found` (decision CH34 rule 6).
+2. `DropMark::claim_ended` waits for the Upgrade that the mark stopped.
+   Its start may still boot a VM, so the drop waits for that start to
+   end. Then no Upgrade starts a VM of the session under the mark.
+3. The `StopVm` hook stops every VM of the target at once (decision
+   CH33 rule 11). The hook of the vmm calls `stop::stop`. The tests fake
+   it.
+4. `remove_session` of `creche-vmm-store` removes the data of each
+   session whose VM stopped, then its row (PR D14). It runs in
+   `spawn_blocking`, one row at a time.
+5. The marks drop after the removal, so they last until the row is gone.
+
+A stop that fails gives `internal` 500 (decision CH50 rule 4). The row
+and the files of that session stay, so a retried drop finishes the job.
+`StopError::Hung` is one such stop. The drop logs the pid of each VM
+that did not stop. A removal that fails gives `internal` too, and its
+row stays. `tests/drop.rs` runs the handler on paused time with fake
+VMs.
+
 ## Rules
 
 - Each new dependency is its own pull request, with its lock delta
@@ -179,7 +208,15 @@ rule 3). The write of `stop` has a timeout counted inside
 
 ## Known gaps
 
-1. Decision CH43 rule 8: no line on the control link reports a change
+1. CONTRACT-QUESTION (plan PR L15, `src/handlers/drop.rs`): a drop
+   waits for a start that its mark overlapped, and the start has no
+   outer bound (decision CH50 rule 1). So a drop that overlaps a long
+   start can pass the "about 35 s" of decision CH33 rule 11 and the 60 s
+   wait of the client (decision CH34 rule 5). The client retries, and
+   the retry waits for the same start. No row bounds this wait. The
+   narrowest reading waits, because a drop must not remove the files of
+   a VM that a start then boots.
+2. Decision CH43 rule 8: no line on the control link reports a change
    of the facade state yet. The phase 3 guest init PR adds a line that
    reports each change. Until then the sleep gate treats a VM as up only
    after a ready said `running` or a turn event arrived. A VM after a
@@ -203,7 +240,12 @@ rule 3). The write of `stop` has a timeout counted inside
    Phase 3 confirms that. If guest init refuses 1201 until the facade
    runs, 101 waits for the facade, against decision CH34 rule 7, and
    David decides again.
-3. Decision CH50 rule 4: the drop route of plan PR L15 maps
-   `StopError::Hung` to `internal` 500 and keeps the row, so a retried
-   drop finishes the job. The vmm logs the pid of the hung process.
-   Admission keeps counting the RAM of that VM (`src/stop.rs`).
+3. Decision CH50 rule 4: the drop route maps `StopError::Hung` to
+   `internal` 500, keeps the row and logs the pid
+   (`src/handlers/drop.rs`). The `StopVm` hook of the vmm keeps a VM
+   whose stop failed in its table, so admission keeps counting the RAM
+   of that VM.
+4. Two drops of one session can overlap. The `StopVm` hook of the vmm
+   makes a stop that finds a stop of the same VM running wait for it
+   and return its outcome. So no drop removes the files of a VM that
+   still runs.
