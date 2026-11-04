@@ -68,8 +68,8 @@ pub trait StartVm: Send + Sync + 'static {
     // `ch-remote` call sets its timeout (decision CH44 rule 3), and
     // `READY_WAIT` bounds the wait for `ControlReady`. One admission can
     // evict several VMs in series, so the bound of the start grows with
-    // the evictions. Plan PR L17 names the timeout of one eviction's
-    // snapshot.
+    // the evictions. `sleep::EVICT_SNAPSHOT` bounds the `ch-remote` calls
+    // of one eviction's snapshot.
     fn start(&self, row: &SessionRow) -> impl Future<Output = Result<AcpLink, StartFault>> + Send;
 }
 

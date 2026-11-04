@@ -16,9 +16,13 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use creche_vmm_store::ch_remote::{ChRemote, VmState};
-use creche_vmm_store::layout::VmRunDir;
+use creche_vmm_store::key::SnapshotKey;
+use creche_vmm_store::layout::{SessionDir, SnapshotGeneration, VmRunDir};
+use creche_vmm_store::snapshot::Snapshotter;
 use serde::Deserialize;
 use serde::de::IgnoredAny;
+
+use crate::sleep::{EVICT_SNAPSHOT, take_keyed};
 
 /// The timeout of one `ch-remote info` call (decision CH44 rule 3). An
 /// `info` reply is a few KiB, and Cloud Hypervisor answers it at once.
@@ -28,9 +32,10 @@ pub const INFO_TIMEOUT: Duration = Duration::from_secs(5);
 /// takes about as long as a pause, about 4 ms (fact 72).
 pub const RESUME_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// The Cloud Hypervisor API of a restored VM. `ChRemote` of
-/// `creche-vmm-store` is the one of the vmm, and a test gives a fake.
-/// Each call blocks, so the start runs it in `spawn_blocking`.
+/// The Cloud Hypervisor API that a start uses: the check of a restore and
+/// the snapshot of an eviction. `ChTools` is the one of the vmm, and a
+/// test gives a fake. Each call blocks, so the start runs it in
+/// `spawn_blocking`.
 pub trait ChApi: Send + Sync + 'static {
     /// True when `info` gives the whole reply, so the device check can
     /// run. A restore with no device check never resumes, so the start
@@ -51,6 +56,28 @@ pub trait ChApi: Send + Sync + 'static {
     ///
     /// Why the call failed.
     fn resume(&self, vm: &VmRunDir) -> Result<(), String>;
+
+    /// Snapshots the VM of `vm` into a new generation of `session` with
+    /// `key`, and ends its CH (`sleep::take_keyed`).
+    ///
+    /// # Errors
+    ///
+    /// Why the take failed (decision CH44 rule 4).
+    fn snapshot(
+        &self,
+        vm: &VmRunDir,
+        session: &SessionDir,
+        key: &SnapshotKey,
+    ) -> Result<SnapshotGeneration, String>;
+}
+
+/// The `ch-remote` and the snapshot step of the vmm (PRs D8, D9).
+#[derive(Debug, Clone)]
+pub struct ChTools {
+    /// The shipped `ch-remote`.
+    pub remote: ChRemote,
+    /// The snapshot step over the same `ch-remote`.
+    pub snapshotter: Snapshotter,
 }
 
 // CONTRACT-QUESTION (decision CH50 rule 10, plan PR L17 "through ch-remote
@@ -58,11 +85,12 @@ pub trait ChApi: Send + Sync + 'static {
 // only `state` and drops every other field. So the vmm cannot read the
 // device set through it, and this crate may not edit the store crate.
 // The narrowest reading: no restore resumes without the device check, so
-// `READS_DEVICES` is false and every start cold-boots (the claim still
+// `READS_DEVICES` is false for `ChTools` and every start cold-boots (the claim still
 // consumes the snapshot, decision CH19 (5)). A store PR that gives the
 // whole `info` reply (or the device fields) costs about 10 lines there
 // and 3 lines here.
-impl ChApi for ChRemote {
+// `INFO_TIMEOUT` is the timeout of that call.
+impl ChApi for ChTools {
     const READS_DEVICES: bool = false;
 
     fn info(&self, _vm: &VmRunDir) -> Result<Vec<u8>, String> {
@@ -70,7 +98,18 @@ impl ChApi for ChRemote {
     }
 
     fn resume(&self, vm: &VmRunDir) -> Result<(), String> {
-        Self::resume(self, vm, RESUME_TIMEOUT).map_err(|error| error.to_string())
+        self.remote
+            .resume(vm, RESUME_TIMEOUT)
+            .map_err(|error| error.to_string())
+    }
+
+    fn snapshot(
+        &self,
+        vm: &VmRunDir,
+        session: &SessionDir,
+        key: &SnapshotKey,
+    ) -> Result<SnapshotGeneration, String> {
+        take_keyed(&self.snapshotter, vm, session, key, EVICT_SNAPSHOT)
     }
 }
 

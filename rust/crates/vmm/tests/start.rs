@@ -1,7 +1,7 @@
 //! The start hook over fakes (plan PRs L16 and L17). A fake launcher
 //! records each launch, writes a fake command line file and binds a fake
 //! vsock socket that plays CH and guest init. A fake CH API answers
-//! `info` and `resume` of a restore. Every other step is the real one on
+//! `info` and `resume` of a restore, and its snapshot ends the fake VM. Every other step is the real one on
 //! a scratch dir in `/tmp`: the shape read, admission, the store check,
 //! the session disk (with `/usr/bin/true` as `mke2fs`), the key check,
 //! the claim, the deny check and the fault file.
@@ -18,6 +18,7 @@ use std::{fs, io};
 
 use creche_vmm::control::ControlState;
 use creche_vmm::handlers::acp::{StartFault, StartVm};
+use creche_vmm::relay::Relays;
 use creche_vmm::restore::ChApi;
 use creche_vmm::start::{ColdBoot, Digests, Launcher, StartConfig};
 use creche_vmm::stop::VmProcess;
@@ -28,7 +29,7 @@ use creche_vmm_confine::launch::{Launch, Program};
 use creche_vmm_confine::spawner::SpawnError;
 use creche_vmm_store::images::{ImageDigest, ImageStore};
 use creche_vmm_store::key::{CheckedCh, SnapshotKey, check_cloud_hypervisor, write_key};
-use creche_vmm_store::layout::{RunRoot, SnapshotGeneration, StateRoot, VmRunDir};
+use creche_vmm_store::layout::{RunRoot, SessionDir, SnapshotGeneration, StateRoot, VmRunDir};
 use creche_vmm_store::rows::Rows;
 use creche_vmm_store::session_disk::SessionDisks;
 use creche_wire::{FamilyName, SessionRow};
@@ -36,10 +37,13 @@ use tokio::runtime::{Builder, Runtime};
 
 const A: &str = "3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b";
 const B: &str = "1a2b3c4d-5e6f-4a1b-8c2d-3e4f5a6b7c8d";
+const C: &str = "5c6d7e8f-9a0b-4c1d-8e2f-3a4b5c6d7e8f";
 const CH: &str = "/opt/ch/cloud-hypervisor";
 const SHAPE: &str = r#"{"cpus":1,"flavor":"base","memory_mib":512}"#;
 const READY: &str =
     r#"{"facade":{"running":{"last_turn_end":null,"pid":42,"starts":1,"turn_running":false}}}"#;
+const TURN: &str =
+    r#"{"facade":{"running":{"last_turn_end":null,"pid":42,"starts":1,"turn_running":true}}}"#;
 /// The SHA-256 of no bytes: the fake kernel and root disk are empty.
 const EMPTY: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
@@ -48,6 +52,8 @@ const EMPTY: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b785
 enum Guest {
     /// `ControlReady`, then `OK` on 1201.
     Ready,
+    /// As `Ready`, with a turn running, so admission may not evict it.
+    Turn,
     /// A close after the hello, before `ControlReady`.
     Closes,
     /// `ControlReady`, then a refused `CONNECT 1201`.
@@ -130,9 +136,13 @@ impl Fake {
     }
 }
 
-/// The fake CH API of a restore and what it saw.
-#[derive(Debug, Default)]
+/// The fake CH API and what it saw.
+#[derive(Debug)]
 struct FakeApi {
+    /// The launcher, whose VM a snapshot ends.
+    fake: Arc<Fake>,
+    /// The run dir of each snapshot.
+    snapshots: Mutex<Vec<PathBuf>>,
     /// The `info` reply. `{state}` stands for the state.
     reply: Mutex<String>,
     /// The first this many `info` calls fail, as before CH serves its API.
@@ -160,6 +170,27 @@ impl ChApi for FakeApi {
         self.resumes.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
+
+    /// Ends the newest fake VM of `vm`, as `shutdown-vmm` ends CH.
+    fn snapshot(
+        &self,
+        vm: &VmRunDir,
+        _session: &SessionDir,
+        _key: &SnapshotKey,
+    ) -> Result<SnapshotGeneration, String> {
+        let launches = self.fake.launches.lock().map_err(|_| "poisoned")?;
+        let index = launches
+            .iter()
+            .rposition(|launch| launch.files().run_dir().path() == vm.path())
+            .ok_or("no such VM")?;
+        let vms = self.fake.vms.lock().map_err(|_| "poisoned")?;
+        vms.get(index)
+            .ok_or("no such VM")?
+            .store(true, Ordering::SeqCst);
+        let mut snapshots = self.snapshots.lock().map_err(|_| "poisoned")?;
+        snapshots.push(vm.path().to_owned());
+        Ok(SnapshotGeneration(1))
+    }
 }
 
 /// Plays CH and guest init on each link: `CONNECT`, then the control
@@ -179,7 +210,8 @@ fn play(listener: &UnixListener, guest: Guest) {
                 if guest == Guest::Closes {
                     continue;
                 }
-                stream.write_all(format!("{READY}\n").as_bytes()).unwrap();
+                let ready = if guest == Guest::Turn { TURN } else { READY };
+                stream.write_all(format!("{ready}\n").as_bytes()).unwrap();
             }
             ("CONNECT 1201\n", Guest::RefusesAcp) => stream.write_all(b"NO\n").unwrap(),
             _ => stream.write_all(b"OK 2\n").unwrap(),
@@ -195,6 +227,7 @@ struct Test {
     hook: ColdBoot<Fake, FakeApi>,
     fake: Arc<Fake>,
     api: Arc<FakeApi>,
+    relays: Relays,
     ch: CheckedCh,
     state: StateRoot,
     control: Arc<Mutex<ControlState>>,
@@ -217,7 +250,7 @@ impl Test {
 
         let state = StateRoot::new(dir.join("state")).unwrap();
         let mut store = Rows::open(state.clone()).unwrap();
-        let rows: Vec<SessionRow> = [A, B]
+        let rows: Vec<SessionRow> = [A, B, C]
             .iter()
             .map(|id| {
                 let create = format!(
@@ -266,11 +299,20 @@ impl Test {
             vms: Mutex::default(),
         });
         let control = Arc::new(Mutex::new(ControlState::default()));
-        let api = Arc::new(FakeApi::default());
+        let api = Arc::new(FakeApi {
+            fake: Arc::clone(&fake),
+            snapshots: Mutex::default(),
+            reply: Mutex::default(),
+            fails: AtomicUsize::new(0),
+            infos: AtomicUsize::new(0),
+            resumes: AtomicUsize::new(0),
+        });
+        let relays = Relays::default();
         let hook = ColdBoot::new(
             config,
             Arc::clone(&fake),
             Arc::clone(&api),
+            relays.clone(),
             Arc::new(Mutex::new(store)),
             Arc::clone(&control),
             Arc::new(Mutex::new(book)),
@@ -281,6 +323,7 @@ impl Test {
             hook,
             fake,
             api,
+            relays,
             ch,
             state,
             control,
@@ -427,15 +470,18 @@ fn a_running_vm_is_dialed_and_an_exited_one_boots_again() {
 }
 
 /// A VM that does not fit gets `host_full` with no fault and no launch
-/// (decisions CH8-6, CH21-3). The cap holds one VM of 512 MiB.
+/// when no VM may be evicted: a turn runs (decisions CH8-6, CH21-3). The
+/// cap holds one VM of 512 MiB.
 #[test]
 fn a_vm_past_the_cap_is_host_full() {
     let test = Test::new("full", |config| config.limits.ram_cap = 512 << 20);
+    *test.fake.guest.lock().unwrap() = Guest::Turn;
     assert_eq!(test.start(0), Ok(()));
     assert_eq!(test.start(1), Err(StartFault::HostFull));
     assert_eq!(test.launches(), 1);
     assert!(test.fault_codes().is_empty());
     assert!(!test.hook.running(&test.rows[1].id));
+    assert!(test.api.snapshots.lock().unwrap().is_empty());
 }
 
 /// A failed launch frees the RAM that admission reserved, so the next
@@ -577,4 +623,84 @@ fn a_key_mismatch_or_a_consumed_snapshot_cold_boots() {
     assert!(!test.restored(0));
     assert_eq!(test.api.infos.load(Ordering::SeqCst), 0);
     assert!(test.hook.in_use().is_empty());
+}
+
+#[cfg(test)]
+impl Test {
+    /// The session ids of the snapshots, in order.
+    fn snapshot_ids(&self) -> Vec<String> {
+        let snapshots = self.api.snapshots.lock().unwrap();
+        snapshots
+            .iter()
+            .map(|dir| dir.file_name().unwrap().to_str().unwrap().to_owned())
+            .collect()
+    }
+}
+
+/// Past the cap, admission evicts the least recently used idle VM: its
+/// snapshot ends it, and the new VM starts. A VM with an open door counts
+/// as used now (decisions CH8-6, CH50 rule 6).
+#[test]
+fn an_idle_vm_is_evicted_least_recently_used_first() {
+    let test = Test::new("evict", |config| config.limits.ram_cap = 1 << 30);
+    assert_eq!(test.start(0), Ok(()));
+    assert_eq!(test.start(1), Ok(()));
+    assert_eq!(test.start(2), Ok(()));
+    assert_eq!(test.snapshot_ids(), [A]);
+    assert!(!test.hook.running(&test.rows[0].id));
+    assert!(test.hook.running(&test.rows[1].id));
+
+    // B is older than C, but its door is open.
+    let _door = test.relays.claim(&test.rows[1].id).unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    assert_eq!(test.snapshot_ids(), [A, C]);
+    assert!(test.hook.running(&test.rows[1].id));
+    assert!(test.fault_codes().is_empty());
+}
+
+/// An eviction closes the open door link of the VM first, then takes
+/// the snapshot (decision CH19 (6)).
+#[test]
+fn an_eviction_closes_the_door_link_first() {
+    let test = Test::new("door", |config| config.limits.ram_cap = 512 << 20);
+    assert_eq!(test.start(0), Ok(()));
+    let mut door = test.relays.claim(&test.rows[0].id).unwrap();
+    // The relay of a door ends when the stop fires, and so does its claim.
+    let relay = spawn(move || {
+        while !door.stopped() {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    });
+    assert_eq!(test.start(1), Ok(()));
+    relay.join().unwrap();
+    assert_eq!(test.snapshot_ids(), [A]);
+    assert!(test.hook.running(&test.rows[1].id));
+}
+
+/// A turn that starts before the door link closes keeps the VM: it goes
+/// back with no snapshot, and the start gets `host_full` (decision CH19
+/// (6)).
+#[test]
+fn a_turn_before_the_close_keeps_the_vm() {
+    let test = Test::new("turn", |config| config.limits.ram_cap = 512 << 20);
+    assert_eq!(test.start(0), Ok(()));
+    let id = test.rows[0].id.clone();
+    let mut door = test.relays.claim(&id).unwrap();
+    let control = Arc::clone(&test.control);
+    let relay = spawn(move || {
+        while !door.stopped() {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        // The prompt that the door carried started a turn.
+        let mut control = control.lock().unwrap();
+        let link = control.link(&id).unwrap();
+        let start = serde_json::from_str(r#"{"start":{}}"#).unwrap();
+        let _ = control.turn(&id, link, &start);
+    });
+    assert_eq!(test.start(1), Err(StartFault::HostFull));
+    relay.join().unwrap();
+    assert!(test.api.snapshots.lock().unwrap().is_empty());
+    assert!(test.hook.running(&test.rows[0].id));
+    assert!(!test.hook.running(&test.rows[1].id));
+    assert_eq!(test.launches(), 1);
 }

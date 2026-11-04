@@ -140,6 +140,34 @@ impl Relays {
             .map_or(Door::NotOpened, |&at| Door::ClosedAt(at))
     }
 
+    /// Stops the open relay of `id`, if any, and waits until its claim
+    /// ends. Admission does so before it evicts the VM, and the client
+    /// reconnects with `session/load` (decision CH19 (6)). The slot goes
+    /// at once, so a new Upgrade may claim the session. Its start then
+    /// finds the VM under eviction.
+    pub async fn close(&self, id: &SessionId) {
+        let ended = {
+            let mut registry = self.registry();
+            match registry.slots.remove(id) {
+                Some(Slot::Open { stop, ended, .. }) => {
+                    // An Err means the relay ended already.
+                    let _ = stop.send(());
+                    Some(ended)
+                }
+                Some(slot) => {
+                    registry.slots.insert(id.clone(), slot);
+                    None
+                }
+                None => None,
+            }
+        };
+        if let Some(mut ended) = ended {
+            // No sender ever sends, so `changed` returns only when the
+            // claim drops its sender.
+            let _ = ended.changed().await;
+        }
+    }
+
     /// Marks a drop of `id` and stops its open relay, if any (decision
     /// CH26 rule 5). The mark lasts until `DropMark` drops. The drop
     /// keeps it until the row of `id` is gone, so no Upgrade starts a VM
