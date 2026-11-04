@@ -440,8 +440,9 @@ key or an added route too, because the match of the number is exact.
    starts from. It fails when a change edits or deletes one, so a file
    deleted and written again fails too.
 6. A change of a type that no route reaches needs no new number:
-   `FamilyStateReply`, `TurnEvent`, `ControlHello`, `ControlCommand` and
-   the types that only they reach. A change of a `description` needs none either.
+   `FamilyStateReply`, `TurnEvent`, `ControlHello`, `ControlCommand`,
+   `FamilyShape` and the types that only they reach. A change of a
+   `description` needs none either.
 
 ## The vsock JSON links
 
@@ -507,4 +508,7 @@ a dependency.
 
 ## Known gaps
 
-None.
+1. Decision CH43 rule 3 names the family VM shape file (`FamilyShape`)
+   `config/shape.json` (`FAMILY_SHAPE_FILE`). Contract 01 §6.1 lists the
+   entries of `config/` and needs an amendment for this file, as decision
+   CH23-1 amended it for `model_live_at`. That amendment is not made yet.

@@ -30,7 +30,7 @@ use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde_json::{Map, Value, json};
 
 use super::{
-    AutoJobId, ControlCommand, ControlHello, ControlReady, DelegationId, FamilyConfig,
+    AutoJobId, ControlCommand, ControlHello, ControlReady, DelegationId, FamilyConfig, FamilyShape,
     FamilyStateReply, HOST_API_BODY_CAP, HOST_API_HEADER, HOST_API_PROTOCOL, JS_INTEGER_MAX, JobId,
     JsonRoute, MISMATCH_STATUS, ProtocolMismatch, RouteError, SHARED_CODES, SessionId,
     SessionOrigin, TurnEvent, UnixMillis, UpgradeRoute, routes::TableRoute,
@@ -98,6 +98,7 @@ pub(super) fn wire_schema() -> Value {
     let _ = generator.subschema_for::<ControlHello>();
     let _ = generator.subschema_for::<ControlReady>();
     let _ = generator.subschema_for::<ControlCommand>();
+    let _ = generator.subschema_for::<FamilyShape>();
     let routes = route_table(&mut generator);
 
     json!({
