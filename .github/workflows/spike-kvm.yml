@@ -6,6 +6,7 @@
 #   host          kernel, cpus, memory
 #   kvm           /dev/kvm and its mode, before and after a udev rule
 #   vhost_vsock   the module and /dev/vhost-vsock, before and after modprobe
+#                 and a udev rule, then that the runner user can open it
 #   user manager  systemd-run --user --scope, before and after linger
 #   landlock      the Landlock ABI of the runner kernel, red below 4 (C6)
 #   apparmor      the LSM list, apparmor_parser, and one enforced profile
@@ -71,9 +72,18 @@ jobs:
         run: |
           lsmod | grep -E 'vsock' || echo "no vsock module loaded"
           ls -l /dev/vhost-vsock || true
+          id
+          # Stock udev makes the node root:kvm 0660 (fact 57). The runner
+          # user may not be in kvm, so open it up as the kvm step does.
+          echo 'KERNEL=="vhost-vsock", GROUP="kvm", MODE="0666"' |
+            sudo tee /etc/udev/rules.d/99-vhost-vsock-spike.rules
+          sudo udevadm control --reload-rules
           sudo modprobe vhost_vsock
+          sudo udevadm trigger --name-match=vhost-vsock
+          sudo udevadm settle
           lsmod | grep -E 'vsock'
           ls -l /dev/vhost-vsock
+          test -r /dev/vhost-vsock && test -w /dev/vhost-vsock
 
       - name: user manager
         if: ${{ !cancelled() }}
