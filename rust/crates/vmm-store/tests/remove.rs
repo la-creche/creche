@@ -180,3 +180,27 @@ fn a_failed_row_step_leaves_the_row_for_a_retry() {
     assert!(removed.is_some());
     assert_eq!(state.open().get(&parse(A)), None);
 }
+
+/// The generations go oldest first. A failed remove of generation 1 keeps
+/// generation 2, so generation 1 never becomes the newest (decision CH19
+/// (5)). Root ignores the mode, so the test skips when a probe file opens
+/// in the dir.
+#[test]
+fn a_failed_older_generation_keeps_the_newer_one() {
+    let state = TempState::new("oldest-first");
+    let mut rows = state.open();
+    let session = state.booted(&mut rows, A);
+    let older = session.snapshot(SnapshotGeneration(1));
+    set_mode(&older, 0o500);
+    if fs::write(older.join("probe"), "").is_ok() {
+        set_mode(&older, 0o755);
+        return;
+    }
+
+    let result = remove_session(&mut rows, &target("anna", A));
+    set_mode(&older, 0o755);
+
+    assert!(result.is_err(), "{result:?}");
+    assert!(session.snapshot(SnapshotGeneration(2)).exists());
+    assert!(rows.get(&parse(A)).is_some());
+}
