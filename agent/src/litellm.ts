@@ -39,7 +39,7 @@ const REQUEST_MAX_TOKENS = 16384;
 /** LiteLLM's model list, with the `model_info` of each deployment. */
 const MODEL_INFO_PATH = "/v1/model/info";
 
-/** The longest wait for the model list at process start. */
+/** The longest wait for the model list, at start and at a model change. */
 const MODEL_INFO_TIMEOUT_MS = 3000;
 
 /** The context window and the output limit that pi and Flue's compaction use. */
