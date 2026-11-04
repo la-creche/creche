@@ -4,20 +4,24 @@
 use std::convert::Infallible;
 use std::future::{Future, poll_fn};
 use std::io;
+use std::net::Shutdown;
+use std::os::fd::AsFd;
 use std::path::Path;
 use std::pin::{Pin, pin};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use hyper::Request;
+use creche_wire::HOST_API_BODY_CAP;
 use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
+use hyper::{Request, StatusCode};
 use hyper_util::rt::{TokioIo, TokioTimer};
-use tokio::net::UnixListener;
+use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::oneshot;
-use tokio::time::sleep;
+use tokio::time::{sleep, timeout};
 
 use super::Reply;
 use super::header::ProtocolCheck;
@@ -33,6 +37,25 @@ const ACCEPT_PAUSE: Duration = Duration::from_millis(100);
 /// hyper skips this timeout when the connection has no timer.
 // Decision CH40 rule 2: a request head must arrive within 30 s.
 const HEAD_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// The most request bytes that the server reads and drops after hyper
+/// ends a connection, so that the client still gets the last reply.
+/// LINGER_TIME bounds the same step in time.
+// Decision CH26: each refusal is a typed reply. The server can refuse a
+// request before it reads the body: a bad Content-Type, a Content-Length
+// over the cap, or a body that stops at the cap. If the socket then
+// closes with request bytes unread, Linux resets it. The client that
+// still writes gets EPIPE, and its read ends in ECONNRESET, so a client
+// such as httpx, which writes the whole request before it reads, loses
+// the reply. A client that sends more than LINGER_BYTES, or takes longer
+// than LINGER_TIME, can still get the reset.
+// CONTRACT-QUESTION: no row decides LINGER_BYTES (4 times the body cap)
+// or LINGER_TIME (5 s). See Known gaps in rust/crates/vmm/AGENTS.md.
+const LINGER_BYTES: usize = 4 * HOST_API_BODY_CAP;
+
+/// How long the server reads and drops request bytes after hyper ends a
+/// connection. See LINGER_BYTES.
+const LINGER_TIME: Duration = Duration::from_secs(5);
 
 /// Stops a running server, through `tokio::sync` (decision CH26 rule 2).
 /// A dropped `Stop` stops the server too.
@@ -60,6 +83,9 @@ impl Stop {
 /// Serves on a new socket at `path` until `stop` fires. Each request
 /// passes the protocol header check first, then goes to `handler`. The
 /// connection keeps upgrades on, for the `acp` route (decision CH20).
+/// A connection that ends without an upgrade ends with `linger`, so a
+/// client refused before its body still gets the typed reply (decision
+/// CH26).
 ///
 /// The run directory of the unit is the guard of the socket (decision
 /// CH20), so the bind refuses a path that exists. At the stop, open
@@ -80,17 +106,34 @@ where
     accept_each(accept, stop, |stream| {
         let handler = handler.clone();
         let check = Arc::clone(&check);
-        let service = service_fn(move |request| {
-            let refused = check.refuse(request.headers());
-            let handler = handler.clone();
-            async move {
-                Ok::<_, Infallible>(match refused {
-                    Some(reply) => reply,
-                    None => handler(request).await,
-                })
-            }
-        });
         tokio::spawn(async move {
+            // A second handle on the same socket, for the lingering close
+            // after hyper drops its own. A failed dup, such as EMFILE,
+            // serves the connection without it.
+            let twin = stream
+                .as_fd()
+                .try_clone_to_owned()
+                .ok()
+                .map(std::os::unix::net::UnixStream::from);
+            let upgraded = Arc::new(AtomicBool::new(false));
+            let service = service_fn({
+                let upgraded = Arc::clone(&upgraded);
+                move |request| {
+                    let refused = check.refuse(request.headers());
+                    let handler = handler.clone();
+                    let upgraded = Arc::clone(&upgraded);
+                    async move {
+                        let reply = match refused {
+                            Some(reply) => reply,
+                            None => handler(request).await,
+                        };
+                        if reply.status() == StatusCode::SWITCHING_PROTOCOLS {
+                            upgraded.store(true, Ordering::Relaxed);
+                        }
+                        Ok::<_, Infallible>(reply)
+                    }
+                }
+            });
             let connection = http1::Builder::new()
                 .timer(TokioTimer::new())
                 .header_read_timeout(HEAD_TIMEOUT)
@@ -99,10 +142,49 @@ where
             // An error ends this connection only. A client that hangs up
             // early is no fault of the server.
             let _ = connection.await;
+            // After 101 the upgrade owns the socket, so the twin only
+            // drops its handle.
+            if let Some(twin) = twin
+                && !upgraded.load(Ordering::Relaxed)
+            {
+                linger(twin).await;
+            }
         });
     })
     .await;
     Ok(())
+}
+
+/// Ends a connection that hyper has ended, so that the client gets the
+/// last reply whole (decision CH26). The server shuts its write half, so
+/// the client reads the end of the reply. It then reads and drops request
+/// bytes until the client closes, LINGER_BYTES, or LINGER_TIME. The drop
+/// of `twin` closes the socket.
+async fn linger(twin: std::os::unix::net::UnixStream) {
+    // hyper may have shut the write half already. A second shutdown, or
+    // one on a socket that the client closed, changes nothing.
+    let _ = twin.shutdown(Shutdown::Write);
+    let Ok(twin) = UnixStream::from_std(twin) else {
+        return;
+    };
+    let drain = async {
+        let mut scratch = vec![0_u8; 64 * 1024];
+        let mut left = LINGER_BYTES;
+        while left > 0 {
+            if twin.readable().await.is_err() {
+                return;
+            }
+            match twin.try_read(&mut scratch) {
+                // 0 is the close of the client. An error other than
+                // WouldBlock ends the connection too.
+                Ok(0) => return,
+                Ok(read) => left = left.saturating_sub(read),
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+                Err(_) => return,
+            }
+        }
+    };
+    let _ = timeout(LINGER_TIME, drain).await;
 }
 
 /// Gives each stream that `accept` yields to `serve`, until `stop` fires.
