@@ -11,7 +11,7 @@
 //! bytes while it copies, refuses a mismatch with the expected digest, sets
 //! mode 0444 and renames the temp file into place. Then it records the
 //! identity of the copy beside it. Each VM start compares that identity and
-//! hashes nothing (PR D6). This is the reading of CH8-8.
+//! hashes nothing (`ImageStore::check`). This is the reading of CH8-8.
 //!
 //! Root installs the signed `.zst` files unchanged, and the vmm
 //! decompresses them (decision CH35 rule 4). The import runs `zstd -d` as a
@@ -203,6 +203,103 @@ fn io_at(path: &Path) -> impl FnOnce(io::Error) -> ImportError {
     move |source| ImportError::Io { path, source }
 }
 
+/// The mode of a store copy with its file type bits: a regular file with
+/// mode 0444 (gap G8).
+const STORE_FILE_MODE: u32 = 0o100_000 | STORE_MODE;
+
+/// A store copy that passed the check at VM start (decision CH8-8 as read
+/// by CH36 with gap G8). Only `ImageStore::check` makes one, so only a
+/// checked copy can become a `--disk` or `--kernel` argument (PR C7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckedImage {
+    digest: ImageDigest,
+    path: PathBuf,
+}
+
+impl CheckedImage {
+    /// The SHA-256 of the bytes. A snapshot key holds it (PR D10).
+    #[must_use]
+    pub fn digest(&self) -> ImageDigest {
+        self.digest
+    }
+
+    /// The store copy.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+/// Why a store copy did not pass the check at VM start.
+#[derive(Debug)]
+pub enum CheckError {
+    /// A read or an open failed. A copy that was never imported gives
+    /// `NotFound` on its identity file.
+    Io {
+        /// The file that the step failed on.
+        path: PathBuf,
+        /// Why the step failed.
+        source: io::Error,
+    },
+    /// The identity file does not hold an identity.
+    Parse {
+        /// The identity file.
+        path: PathBuf,
+        /// Why the text is not an identity.
+        source: serde_json::Error,
+    },
+    /// The store path holds no regular file with mode 0444.
+    BadMode {
+        /// The store copy.
+        path: PathBuf,
+        /// The mode found, with the file type bits.
+        mode: u32,
+    },
+    /// The copy has another identity than the import recorded.
+    Changed {
+        /// The store copy.
+        path: PathBuf,
+        /// The identity that the import recorded. A box keeps the error
+        /// small.
+        recorded: Box<FileIdentity>,
+        /// The identity of the copy now.
+        found: Box<FileIdentity>,
+    },
+}
+
+impl fmt::Display for CheckError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io { path, .. } => write!(formatter, "cannot check {}", path.display()),
+            Self::Parse { path, .. } => write!(formatter, "{} holds no identity", path.display()),
+            Self::BadMode { path, mode } => write!(
+                formatter,
+                "{} has mode {mode:o}, not a regular file with mode 444",
+                path.display()
+            ),
+            Self::Changed { path, .. } => {
+                write!(formatter, "{} changed after its import", path.display())
+            }
+        }
+    }
+}
+
+impl std::error::Error for CheckError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io { source, .. } => Some(source),
+            Self::Parse { source, .. } => Some(source),
+            Self::BadMode { .. } | Self::Changed { .. } => None,
+        }
+    }
+}
+
+/// Maps an `io::Error` on `path` to a `CheckError`.
+fn check_io_at(path: &Path) -> impl FnOnce(io::Error) -> CheckError {
+    let path = path.to_owned();
+    move |source| CheckError::Io { path, source }
+}
+
 // Decision CH41 rule 1: for a `.zst` source the vmm checks the SHA-256 of
 // the decompressed bytes, the bytes that Cloud Hypervisor reads, and that
 // digest names the store copy. Root checks the signature of the `.zst` file
@@ -291,6 +388,58 @@ impl ImageStore {
             path,
             identity,
         })
+    }
+
+    /// Checks the store copy of `digest` at a VM start and hashes no byte
+    /// (decision CH36 with gap G8, the reading of CH8-8). The check reads
+    /// the identity that the import recorded. It refuses a store path that
+    /// holds no regular file with mode 0444, so a link, a dir or a FIFO is
+    /// never opened. Then it opens the copy read-only and compares device,
+    /// inode, size, mtime, ctime and mode with the record. For a `.zst`
+    /// source, `digest` is the SHA-256 of the decompressed bytes
+    /// (decision CH41 rule 1).
+    ///
+    /// CONTRACT-QUESTION: no row decides what the vmm does with a copy
+    /// that fails the check. `import` returns the recorded entry and does
+    /// not copy again. The narrowest reading: the check removes and
+    /// repairs nothing, and the start fails (`AGENTS.md`, Known gaps).
+    ///
+    /// # Errors
+    ///
+    /// `BadMode` for a wrong file type or mode, `Changed` for another
+    /// identity, `Io` or `Parse` on a failed read.
+    pub fn check(&self, digest: ImageDigest) -> Result<CheckedImage, CheckError> {
+        let identity_path = self.identity_path(&digest);
+        let text = fs::read(&identity_path).map_err(check_io_at(&identity_path))?;
+        let recorded: FileIdentity =
+            serde_json::from_slice(&text).map_err(|source| CheckError::Parse {
+                path: identity_path,
+                source,
+            })?;
+
+        let path = self.path(&digest);
+        let mode = fs::symlink_metadata(&path)
+            .map_err(check_io_at(&path))?
+            .mode();
+        if mode != STORE_FILE_MODE {
+            return Err(CheckError::BadMode { path, mode });
+        }
+        let file = File::open(&path).map_err(check_io_at(&path))?;
+        let found = FileIdentity::of(&file.metadata().map_err(check_io_at(&path))?);
+        if found.mode != STORE_FILE_MODE {
+            return Err(CheckError::BadMode {
+                path,
+                mode: found.mode,
+            });
+        }
+        if found != recorded {
+            return Err(CheckError::Changed {
+                path,
+                recorded: Box::new(recorded),
+                found: Box::new(found),
+            });
+        }
+        Ok(CheckedImage { digest, path })
     }
 
     /// Copies the bytes of `source` into `temp`, checks their digest, sets
