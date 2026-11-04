@@ -28,3 +28,14 @@ The second file has the table of the three vmm crates.
   nothing more. The VM stays as the failed step left it, and the caller
   decides. After a failure past `shutdown-vmm` the VM is gone, and the
   next start cold-boots (decision CH19 (5)).
+- Caller duty (PR D9, `snapshot.rs`): section 4 item 5.7 asks for a
+  guest `sync` before each snapshot. The store has no link to the guest,
+  so lifecycle syncs the guest through the control link before
+  `Snapshotter::take`. No plan PR has that step yet. L17 and L19 need
+  it. Without it, a dropped or a consumed snapshot cold-boots from a
+  session disk that may lack the last guest writes.
+- Host program (PR D9, `snapshot.rs`): the vmm execs the host
+  `fallocate` (decision CH29). No row names it as an exec of the vmm.
+  Track C must allow that exec, as the CH39 note asks for `zstd` and
+  `mke2fs` (C6). L20 needs a config key for its path (the owner env
+  rule). Its list has no such key yet.

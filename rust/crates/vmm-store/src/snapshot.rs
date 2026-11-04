@@ -23,8 +23,11 @@
 //!    `snapshots/<generation>` and sync `snapshots/`.
 //!
 //! The result holds the allocated bytes (`st_blocks`), the measure of the
-//! snapshot budget (decision CH36 with gap G13, PR D13). This crate has no
-//! link to the guest, so the guest `sync` of item 5.7 is not a step here.
+//! snapshot budget (decision CH36 with gap G13, PR D13).
+//!
+//! Item 5.7 also asks for a guest `sync` before each snapshot. This crate
+//! has no link to the guest, so the caller syncs the guest through the
+//! control link before `take` (`AGENTS.md`, Known gaps).
 //!
 //! CONTRACT-QUESTION: no row decides what happens to the VM when a step
 //! fails. The narrowest reading: `take` removes the temp dir, resumes
@@ -172,8 +175,10 @@ pub struct Snapshotter {
 }
 
 impl Snapshotter {
-    /// `fallocate` is the host program that digs the holes. The vmm config
-    /// passes it in, so no path is compiled in.
+    /// `fallocate` is the host program that digs the holes (decision CH29).
+    /// The caller passes its path, so no path is compiled in (the owner env
+    /// rule: a host path becomes a key with a default). No config key and
+    /// no exec rule name it yet (`AGENTS.md`, Known gaps).
     #[must_use]
     pub fn new(ch: ChRemote, fallocate: PathBuf) -> Self {
         Self { ch, fallocate }
