@@ -10,9 +10,9 @@ and pyright fails the gate.
 
 from pydantic import BaseModel
 
-from .models import CreateError, CreateSession, SessionRow
-from .route import JsonRoute
-from .routes import CREATE
+from .models import AcpError, CreateError, CreateSession, SessionRow
+from .route import JsonRoute, UpgradeRoute
+from .routes import ACP, CREATE
 
 
 def a_wrong_request(row: SessionRow) -> bytes:
@@ -29,3 +29,13 @@ def a_wider_request() -> JsonRoute[BaseModel, SessionRow, CreateError]:
     """`Request` is invariant, so a route does not pass for a route of a
     wider request model. `encode` makes it invariant."""
     return CREATE  # pyright: ignore[reportReturnType]
+
+
+def a_wrong_upgrade_request(row: SessionRow) -> bytes:
+    """`encode` of an upgrade route refuses a model that is not its request."""
+    return ACP.encode(row)  # pyright: ignore[reportArgumentType]
+
+
+def a_wider_upgrade_request() -> UpgradeRoute[BaseModel, AcpError]:
+    """`Request` of an upgrade route is invariant too."""
+    return ACP  # pyright: ignore[reportReturnType]

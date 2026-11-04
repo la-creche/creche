@@ -34,3 +34,26 @@ class JsonRoute[Request: BaseModel, Reply: BaseModel, Error: BaseModel]:
         `type[Request]` makes the parameter covariant, and pyright then takes
         a request of a different model."""
         return body.model_dump_json().encode()
+
+
+@dataclass(frozen=True, slots=True)
+class UpgradeRoute[Request: BaseModel, Error: BaseModel]:
+    """A route that takes a JSON request and, on success, turns the
+    connection into a raw byte stream (decisions CH20, CH25). The client
+    sends `Connection: Upgrade` and `Upgrade: <token>`. The vmm answers 101
+    with no JSON body, or a typed error before 101 (decision CH26 rule 3)."""
+
+    name: str
+    token: str
+    request: type[Request]
+    error: type[Error]
+
+    @property
+    def path(self) -> str:
+        """The path of the route. Each route is `POST /<name>`."""
+        return f"/{self.name}"
+
+    def encode(self, body: Request) -> bytes:
+        """The JSON text of `body`, the request of this route. It also makes
+        `Request` invariant, as `JsonRoute.encode` does."""
+        return body.model_dump_json().encode()

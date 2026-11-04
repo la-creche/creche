@@ -15,7 +15,7 @@ use serde::de::{DeserializeOwned, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::{
-    CreateSession, DropTarget, Dropped, ListSessions, SessionPage, SessionRow, object_only,
+    CreateSession, DropTarget, Dropped, ListSessions, OpenAcp, SessionPage, SessionRow, object_only,
 };
 
 /// The number of the host API protocol (decision CH25 rule 1). A client
@@ -318,6 +318,22 @@ pub trait JsonRoute {
     const CLIENT_TIMEOUT: Option<Duration> = None;
 }
 
+/// A route that takes a JSON request and, on success, turns the connection
+/// into a raw byte stream (decisions CH20, CH25). Its path is `/` and
+/// `NAME`. The client sends `Connection: Upgrade` and `Upgrade: TOKEN`. The
+/// vmm answers `101 Switching Protocols` with no JSON body, or a typed
+/// error before 101.
+pub trait UpgradeRoute {
+    /// The name of the route, in `snake_case`.
+    const NAME: &'static str;
+    /// The protocol name of the `Upgrade` header (decision CH26 rule 3).
+    const TOKEN: &'static str;
+    /// What the client sends.
+    type Request: Body;
+    /// What the vmm answers on a refusal, before 101.
+    type Error: RouteError;
+}
+
 /// The route `create`: attendance makes a row of the host session list
 /// (decisions CH21-4, CH25 rule 2). A repeat with the same request gives
 /// the same row.
@@ -427,12 +443,105 @@ route_error! {
     }
 }
 
+/// The route `acp`: attendance opens the ACP stream of one session
+/// (decisions CH20, CH21-7). After 101 the connection carries raw ACP
+/// bytes, which the vmm relays to guest port 1201 (decision CH13).
+///
+/// The vmm answers 101 only after `ControlReady` (decision CH33 rule 6).
+/// When the VM of the session does not run, the vmm boots or restores it
+/// first, so the 101 can wait for a boot. A start fault is a typed error
+/// before 101. After 101 each failure is the end of the stream, and the
+/// client learns the cause from the error of its next Upgrade.
+// CONTRACT-QUESTION: CH26 orders the checks of a request, and CH33 rule 6
+// puts every refusal of acp before 101, but neither places the check of
+// the Upgrade header or the order of the refusals of the route. The
+// reading taken: the vmm checks the protocol header, the route and the
+// method, then the Upgrade header (upgrade_required), then the body
+// (Content-Type, cap, JSON, type), then the session (not_found, busy),
+// then admission (host_full), then the start of the VM. Rule 6 names
+// ControlReady, not a facade state, so the 101 follows the first
+// ControlReady of the start, whatever FacadeState it reports.
+#[derive(Debug)]
+pub enum AcpRoute {}
+
+impl UpgradeRoute for AcpRoute {
+    const NAME: &'static str = "acp";
+    const TOKEN: &'static str = "creche-acp";
+    type Request = OpenAcp;
+    type Error = AcpError;
+}
+
+route_error! {
+    /// The error of the route `acp`. The vmm sends each code before 101.
+    // CONTRACT-QUESTION: CH21-9 names not_found and host_full, CH26 rule 3
+    // a typed error for a wrong Upgrade header, and CH33 rule 6 typed start
+    // faults, with no code or status. CH33 rule 7 fixes busy 409 only. The
+    // reading taken: upgrade_required 426, the HTTP status for a needed
+    // upgrade. host_full 503. The start faults keep the fault names of
+    // CH6-3 (sandbox_start_failed, egress_assert_failed), each 502. An
+    // Upgrade that comes while a drop of its session runs gets not_found.
+    pub enum AcpError {
+        /// The request has no `Upgrade` header, or the header does not
+        /// name `AcpRoute::TOKEN` (decision CH26 rule 3). The vmm also
+        /// sends `Upgrade: creche-acp` with this error (RFC 9110).
+        UpgradeRequired = "upgrade_required" => 426,
+        /// No row has the id, the row belongs to another family, or a drop
+        /// of the session runs (decisions CH21-9, CH33 rule 5).
+        NotFound = "not_found" => 404,
+        /// The session has an open ACP stream (decision CH33 rule 7).
+        /// attendance opens one stream per session.
+        Busy = "busy" => 409,
+        /// The VM does not fit on the host, and no idle VM can make room
+        /// (decisions CH8-6, CH21-3, CH21-9). The vmm never queues: the
+        /// client retries.
+        HostFull = "host_full" => 503,
+        /// The VM did not boot or restore, or guest init sent no
+        /// `ControlReady` (decisions CH6-3, CH33 rule 6). The vmm also
+        /// writes the fault to its fault file (decision CH21-1).
+        SandboxStartFailed = "sandbox_start_failed" => 502,
+        /// The VM failed the deny-by-default check of its start (decisions
+        /// CH6-3, CH33 rule 6). The vmm also writes the fault to its fault
+        /// file (decision CH21-1).
+        EgressAssertFailed = "egress_assert_failed" => 502,
+    }
+}
+
+/// What the tests read of each route of the table, of either kind: its
+/// name and its error.
+#[cfg(test)]
+pub(crate) trait TableRoute {
+    /// The `NAME` of the route.
+    const NAME: &'static str;
+    /// The `Error` of the route.
+    type Error: RouteError + schemars::JsonSchema;
+}
+
+/// Implement `TableRoute` for one route of `route_table!`.
+#[cfg(test)]
+macro_rules! table_route {
+    (json $route:path) => {
+        impl TableRoute for $route {
+            const NAME: &'static str = <$route as JsonRoute>::NAME;
+            type Error = <$route as JsonRoute>::Error;
+        }
+    };
+    (upgrade $route:path) => {
+        impl TableRoute for $route {
+            const NAME: &'static str = <$route as UpgradeRoute>::NAME;
+            type Error = <$route as UpgradeRoute>::Error;
+        }
+    };
+}
+
+#[cfg(test)]
+crate::route_table!(table_route);
+
 /// The one route table (decision CH25). The test-only schema generator and
 /// the vmm router both expand it, so no second list of routes exists.
 ///
 /// `$each` is a macro that the caller defines. The table calls it once per
-/// route, with the kind of the route and the path of its marker type, as
-/// in `$each!(json $crate::CreateRoute)`. The caller expands each route
+/// route, with the kind of the route (`json` or `upgrade`) and the path of
+/// its marker type, as in `$each!(json $crate::CreateRoute)`. The caller expands each route
 /// with its concrete type, so a bound that one route does not meet fails
 /// to compile.
 #[macro_export]
@@ -441,5 +550,6 @@ macro_rules! route_table {
         $each!(json $crate::CreateRoute);
         $each!(json $crate::ListRoute);
         $each!(json $crate::DropRoute);
+        $each!(upgrade $crate::AcpRoute);
     };
 }

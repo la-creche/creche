@@ -6,6 +6,7 @@ it by hand. `wire/AGENTS.md` has the command that writes it.
 `read` is the one way to read a wire text (`reader.py`)."""
 
 from .models import (
+    AcpError,
     Auto,
     AutoJobId,
     AutoOrigin,
@@ -53,6 +54,7 @@ from .models import (
     LitellmKey,
     ModelAlias,
     NotValidReply,
+    OpenAcp,
     PepToken,
     ProtocolMismatch,
     SandboxGrant,
@@ -87,6 +89,7 @@ from .reader import read
 from .strictjson import NotStrictJson
 
 __all__ = [
+    "AcpError",
     "Auto",
     "AutoJobId",
     "AutoOrigin",
@@ -135,6 +138,7 @@ __all__ = [
     "ModelAlias",
     "NotStrictJson",
     "NotValidReply",
+    "OpenAcp",
     "PepToken",
     "ProtocolMismatch",
     "SandboxGrant",

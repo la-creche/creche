@@ -17,9 +17,10 @@ mod schema;
 mod vectors;
 
 pub use routes::{
-    Body, CreateError, CreateRoute, DROP_CLIENT_TIMEOUT, DROP_SIGTERM_GRACE, DROP_STOP_WAIT,
-    DropError, DropRoute, HOST_API_BODY_CAP, HOST_API_HEADER, HOST_API_PROTOCOL, JsonRoute,
-    ListError, ListRoute, MISMATCH_STATUS, ProtocolMismatch, RouteError, SHARED_CODES,
+    AcpError, AcpRoute, Body, CreateError, CreateRoute, DROP_CLIENT_TIMEOUT, DROP_SIGTERM_GRACE,
+    DROP_STOP_WAIT, DropError, DropRoute, HOST_API_BODY_CAP, HOST_API_HEADER, HOST_API_PROTOCOL,
+    JsonRoute, ListError, ListRoute, MISMATCH_STATUS, ProtocolMismatch, RouteError, SHARED_CODES,
+    UpgradeRoute,
 };
 
 /// The length of a session id: 32 hex digits and 4 hyphens.
@@ -993,6 +994,23 @@ pub enum DropTarget {
 pub struct Dropped {}
 
 object_only!(Dropped);
+
+/// The session of an ACP stream: the request of the `acp` Upgrade route. It
+/// names the family that owns the session (decision CH33 rule 5). The vmm
+/// answers `not_found` when no row has the id, and when the row of the id
+/// belongs to another family. So a client learns nothing of the sessions
+/// of another family.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct OpenAcp {
+    /// The family that owns the session.
+    pub family: FamilyName,
+    /// The id of the session.
+    pub id: SessionId,
+}
+
+object_only!(OpenAcp);
 
 /// A turn started. It carries nothing.
 ///

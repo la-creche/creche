@@ -28,7 +28,7 @@ use super::{
     AutoJobId, ControlHello, ControlReady, DelegationId, FamilyConfig, FamilyStateReply,
     HOST_API_BODY_CAP, HOST_API_HEADER, HOST_API_PROTOCOL, JS_INTEGER_MAX, JobId, JsonRoute,
     MISMATCH_STATUS, ProtocolMismatch, RouteError, SHARED_CODES, SessionId, SessionOrigin,
-    TurnEvent, UnixMillis,
+    TurnEvent, UnixMillis, UpgradeRoute, routes::TableRoute,
 };
 
 /// The variable that makes the test write the file instead of checking it.
@@ -62,7 +62,8 @@ types (decision CH25). A client sends `HOST_API_PROTOCOL` in the header
 
 ";
 
-/// The keys of a route entry that name a `$defs` entry.
+/// The keys of a route entry that name a `$defs` entry. An upgrade route
+/// has no `reply`.
 const ROUTE_TYPES: [&str; 3] = ["request", "reply", "error"];
 
 /// The root key of the route table in the schema.
@@ -112,6 +113,10 @@ fn route_table(generator: &mut SchemaGenerator) -> Value {
             let entry = json_route::<$route>(generator);
             routes.insert(<$route as JsonRoute>::NAME.to_owned(), entry);
         };
+        (upgrade $route:path) => {
+            let entry = upgrade_route::<$route>(generator);
+            routes.insert(<$route as UpgradeRoute>::NAME.to_owned(), entry);
+        };
     }
     crate::route_table!(describe);
     let _ = generator.subschema_for::<ProtocolMismatch>();
@@ -140,17 +145,13 @@ where
     let _ = generator.subschema_for::<R::Request>();
     let _ = generator.subschema_for::<R::Reply>();
     let _ = generator.subschema_for::<R::Error>();
-    let statuses: Map<String, Value> = R::Error::STATUSES
-        .iter()
-        .map(|(code, status)| ((*code).to_owned(), json!(status)))
-        .collect();
 
     let mut entry = json!({
         "error": R::Error::schema_name(),
         "kind": "json",
         "reply": R::Reply::schema_name(),
         "request": R::Request::schema_name(),
-        "statuses": statuses,
+        "statuses": error_statuses::<R::Error>(),
     });
     if let Some(timeout) = R::CLIENT_TIMEOUT {
         assert_eq!(
@@ -162,6 +163,35 @@ where
     }
 
     entry
+}
+
+/// The entry of one upgrade route, and the `$defs` entries of its types. It
+/// has the `token` of the route and no `reply`: the vmm answers 101 with no
+/// JSON body.
+fn upgrade_route<R>(generator: &mut SchemaGenerator) -> Value
+where
+    R: UpgradeRoute,
+    R::Request: JsonSchema,
+    R::Error: JsonSchema,
+{
+    let _ = generator.subschema_for::<R::Request>();
+    let _ = generator.subschema_for::<R::Error>();
+
+    json!({
+        "error": R::Error::schema_name(),
+        "kind": "upgrade",
+        "request": R::Request::schema_name(),
+        "statuses": error_statuses::<R::Error>(),
+        "token": R::TOKEN,
+    })
+}
+
+/// Each code of `E` with its HTTP status, as the `statuses` of a route entry.
+fn error_statuses<E: RouteError>() -> Map<String, Value> {
+    E::STATUSES
+        .iter()
+        .map(|(code, status)| ((*code).to_owned(), json!(status)))
+        .collect()
 }
 
 /// Give each integer of `schema` its `minimum` and `maximum` (decision CH22
@@ -225,26 +255,29 @@ fn is_integer(schema: &Schema) -> bool {
 }
 
 /// The Python constants of the route table `x-routes`: the protocol, its
-/// header, the body cap, the mismatch status, one `JsonRoute` per route and
-/// `<NAME>_CLIENT_TIMEOUT_S` per route with a client timeout. The writer
-/// uses only forms that `ruff format` keeps as they are, so the file passes
-/// the gate unchanged.
+/// header, the body cap, the mismatch status, one `JsonRoute` or
+/// `UpgradeRoute` per route and `<NAME>_CLIENT_TIMEOUT_S` per route with a
+/// client timeout. The writer uses only forms that `ruff format` keeps as
+/// they are, so the file passes the gate unchanged.
 fn python_routes(table: &Value) -> String {
     let routes = table["routes"].as_object().unwrap();
     // ruff sorts an import list without regard to case: `Dropped` before
     // `DropTarget`.
     let models: BTreeSet<(String, &str)> = routes
         .values()
-        .flat_map(|entry| ROUTE_TYPES.map(|key| entry[key].as_str().unwrap()))
+        .flat_map(|entry| ROUTE_TYPES.into_iter().filter_map(|key| entry.get(key)))
+        .map(|model| model.as_str().unwrap())
         .map(|model| (model.to_ascii_lowercase(), model))
         .collect();
+    let classes: BTreeSet<&str> = routes.values().map(python_class).collect();
+    let classes: Vec<&str> = classes.into_iter().collect();
 
     let mut text = String::from(PYTHON_HEAD);
     text.push_str("from typing import Final\n\nfrom .models import (\n");
     for (_, model) in models {
         writeln!(text, "    {model},").unwrap();
     }
-    text.push_str(")\nfrom .route import JsonRoute\n\n");
+    writeln!(text, ")\nfrom .route import {}\n", classes.join(", ")).unwrap();
     writeln!(text, "HOST_API_PROTOCOL: Final = {}", table["protocol"]).unwrap();
     writeln!(text, "HOST_API_HEADER: Final = {}", table["header"]).unwrap();
     writeln!(text, "HOST_API_BODY_CAP: Final = {}", table["body_cap"]).unwrap();
@@ -253,10 +286,16 @@ fn python_routes(table: &Value) -> String {
 
     for (name, entry) in routes {
         let constant = name.to_ascii_uppercase();
-        writeln!(text, "\n{constant}: Final = JsonRoute(").unwrap();
+        let class = python_class(entry);
+        writeln!(text, "\n{constant}: Final = {class}(").unwrap();
         writeln!(text, "    name={},", json!(name)).unwrap();
+        if let Some(token) = entry.get("token") {
+            writeln!(text, "    token={token},").unwrap();
+        }
         for key in ROUTE_TYPES {
-            writeln!(text, "    {key}={},", entry[key].as_str().unwrap()).unwrap();
+            if let Some(model) = entry.get(key) {
+                writeln!(text, "    {key}={},", model.as_str().unwrap()).unwrap();
+            }
         }
         text.push_str(")\n");
         if let Some(timeout) = entry.get(CLIENT_TIMEOUT_KEY) {
@@ -265,6 +304,15 @@ fn python_routes(table: &Value) -> String {
     }
 
     text
+}
+
+/// The class in `route.py` of a route entry of the kind `json` or `upgrade`.
+fn python_class(entry: &Value) -> &'static str {
+    match entry["kind"].as_str() {
+        Some("json") => "JsonRoute",
+        Some("upgrade") => "UpgradeRoute",
+        kind => panic!("a route entry of the kind {kind:?}"),
+    }
 }
 
 /// Each committed file, relative to the crate, and the text it must hold.
@@ -336,7 +384,10 @@ fn each_route_type_is_a_wire_type() {
     let schema = wire_schema();
 
     for (name, entry) in schema_routes(&schema) {
-        for key in ROUTE_TYPES {
+        for key in ROUTE_TYPES
+            .into_iter()
+            .filter(|key| entry.get(key).is_some())
+        {
             let type_name = entry[key].as_str().unwrap();
             assert!(
                 schema["$defs"].get(type_name).is_some(),
@@ -425,6 +476,36 @@ fn the_route_table_holds_drop() {
 }
 
 #[test]
+fn the_route_table_holds_acp_with_a_token_and_no_reply() {
+    let routes = schema_routes(&wire_schema());
+    let mut statuses = Map::new();
+    for (code, status) in [
+        ("upgrade_required", 426),
+        ("not_found", 404),
+        ("busy", 409),
+        ("host_full", 503),
+        ("sandbox_start_failed", 502),
+        ("egress_assert_failed", 502),
+    ]
+    .into_iter()
+    .chain(SHARED_CODES.iter().copied())
+    {
+        statuses.insert(code.to_owned(), json!(status));
+    }
+
+    assert_eq!(
+        routes["acp"],
+        json!({
+            "error": "AcpError",
+            "kind": "upgrade",
+            "request": "OpenAcp",
+            "statuses": statuses,
+            "token": "creche-acp",
+        })
+    );
+}
+
+#[test]
 fn the_route_table_holds_the_mismatch_reply() {
     let schema = wire_schema();
 
@@ -440,9 +521,9 @@ fn the_route_table_holds_the_mismatch_reply() {
 #[test]
 fn no_route_error_has_the_mismatch_code_or_status() {
     macro_rules! check {
-        (json $route:path) => {
-            let name = <$route as JsonRoute>::NAME;
-            let statuses = <<$route as JsonRoute>::Error as RouteError>::STATUSES;
+        ($kind:ident $route:path) => {
+            let name = <$route as TableRoute>::NAME;
+            let statuses = <<$route as TableRoute>::Error as RouteError>::STATUSES;
 
             for (code, status) in statuses {
                 assert!(
@@ -474,9 +555,9 @@ fn the_shared_codes_are_the_codes_of_ch33_in_the_check_order() {
 #[test]
 fn each_route_error_ends_with_the_shared_codes() {
     macro_rules! check {
-        (json $route:path) => {
-            let name = <$route as JsonRoute>::NAME;
-            let statuses = <<$route as JsonRoute>::Error as RouteError>::STATUSES;
+        ($kind:ident $route:path) => {
+            let name = <$route as TableRoute>::NAME;
+            let statuses = <<$route as TableRoute>::Error as RouteError>::STATUSES;
             let own = statuses.len().checked_sub(SHARED_CODES.len());
 
             assert_eq!(
@@ -492,9 +573,9 @@ fn each_route_error_ends_with_the_shared_codes() {
 #[test]
 fn no_code_of_a_route_is_a_shared_code() {
     macro_rules! check {
-        (json $route:path) => {
-            let name = <$route as JsonRoute>::NAME;
-            let statuses = <<$route as JsonRoute>::Error as RouteError>::STATUSES;
+        ($kind:ident $route:path) => {
+            let name = <$route as TableRoute>::NAME;
+            let statuses = <<$route as TableRoute>::Error as RouteError>::STATUSES;
             let own = &statuses[..statuses.len() - SHARED_CODES.len()];
 
             for (code, _) in own {
@@ -522,10 +603,10 @@ fn schema_codes(error: &Value) -> Vec<&str> {
 fn each_error_code_is_a_code_of_the_schema() {
     let schema = wire_schema();
     macro_rules! check {
-        (json $route:path) => {
-            let name = <$route as JsonRoute>::NAME;
-            let error = <$route as JsonRoute>::Error::schema_name();
-            let statuses = <<$route as JsonRoute>::Error as RouteError>::STATUSES;
+        ($kind:ident $route:path) => {
+            let name = <$route as TableRoute>::NAME;
+            let error = <$route as TableRoute>::Error::schema_name();
+            let statuses = <<$route as TableRoute>::Error as RouteError>::STATUSES;
             let codes: Vec<&str> = statuses.iter().map(|(code, _)| *code).collect();
             let mut unique = codes.clone();
             unique.sort_unstable();
@@ -563,9 +644,9 @@ fn each_error_status_is_its_entry_in_the_route_table() {
     let schema = wire_schema();
     let routes = schema_routes(&schema);
     macro_rules! check {
-        (json $route:path) => {{
-            type Error = <$route as JsonRoute>::Error;
-            let name = <$route as JsonRoute>::NAME;
+        ($kind:ident $route:path) => {{
+            type Error = <$route as TableRoute>::Error;
+            let name = <$route as TableRoute>::NAME;
             let statuses = <Error as RouteError>::STATUSES;
             let entry: Map<String, Value> = statuses
                 .iter()

@@ -7,6 +7,7 @@ types (decision CH25). A client sends `HOST_API_PROTOCOL` in the header
 from typing import Final
 
 from .models import (
+    AcpError,
     CreateError,
     CreateSession,
     DropError,
@@ -14,15 +15,23 @@ from .models import (
     DropTarget,
     ListError,
     ListSessions,
+    OpenAcp,
     SessionPage,
     SessionRow,
 )
-from .route import JsonRoute
+from .route import JsonRoute, UpgradeRoute
 
 HOST_API_PROTOCOL: Final = 1
 HOST_API_HEADER: Final = "creche-host-api-protocol"
 HOST_API_BODY_CAP: Final = 1048576
 MISMATCH_STATUS: Final = 412
+
+ACP: Final = UpgradeRoute(
+    name="acp",
+    token="creche-acp",
+    request=OpenAcp,
+    error=AcpError,
+)
 
 CREATE: Final = JsonRoute(
     name="create",

@@ -175,15 +175,17 @@ body. The table pairs the route with its request type, its reply type and
 its error type.
 
 1. A route is a marker type, an empty enum named `<Name>Route`, with an
-   impl of `JsonRoute`. `NAME` is in `snake_case`.
+   impl of `JsonRoute` or `UpgradeRoute`. `NAME` is in `snake_case`. An
+   upgrade route also has a `TOKEN` and no reply type.
 2. The macro `route_table!` is the one list of the routes. It calls a
-   macro of the caller once per route. The schema test expands it, and the
+   macro of the caller once per route, with the kind `json` or `upgrade`. The schema test expands it, and the
    vmm router expands it later. Do not write a second list.
 3. The traits carry serde bounds only. The `JsonSchema` bounds stay on the
    schema test, so a crate that depends on `creche-wire` needs no schemars.
 4. The schema test writes the table into the schema, under the root key
    `x-routes`. Each type is the name of a `$defs` entry. A route type needs
-   no `subschema_for` line of its own.
+   no `subschema_for` line of its own. A `json` entry names a `reply`. An
+   `upgrade` entry names a `token` and no `reply`.
 5. datamodel-codegen and TypeBox ignore the key `x-routes` itself. A route
    that names a new type adds that type to `$defs`. Run
    `uv run datamodel-codegen` after each change of a route.
@@ -196,12 +198,12 @@ its error type.
    number. That check is not built yet (see "Known gaps").
 7. The schema test also writes `src/creche_wire/routes.py`. It holds the
    protocol, its header, `HOST_API_BODY_CAP`, `MISMATCH_STATUS` and one
-   `JsonRoute` constant per route, named as the route in capitals:
-   `CREATE`, `DROP`, `LIST`. pyright then
-   refuses a wrong request, reply or error model on a Python client. A
-   route with `JsonRoute::CLIENT_TIMEOUT` also gets `<NAME>_CLIENT_TIMEOUT_S`,
-   from `client_timeout_s` of its entry in `x-routes`.
-8. `JsonRoute.encode` takes only the request model of its route. It also
+   `JsonRoute` or `UpgradeRoute` constant per route, named as the route in
+   capitals: `ACP`, `CREATE`, `DROP`, `LIST`. pyright then refuses a wrong
+   request, reply or error model on a Python client. A route with
+   `JsonRoute::CLIENT_TIMEOUT` also gets `<NAME>_CLIENT_TIMEOUT_S`, from
+   `client_timeout_s` of its entry in `x-routes`.
+8. `encode` of each route takes only the request model of its route. It also
    keeps the request type invariant, so do not remove it.
    `src/creche_wire/_route_typing.py` holds the proof. Each wrong use there
    carries an ignore of its pyright error, and the file fails pyright when
@@ -266,6 +268,33 @@ CH21-2, CH21-10, CH27). The request is `DropTarget`, the reply is
    client reads it there and never writes 60 itself.
 6. `DROP_STOP_WAIT` and `DROP_SIGTERM_GRACE` are Rust constants only. The
    vmm alone applies them, so no client reads them.
+
+### The acp route
+
+`acp` opens the ACP stream of one session (decisions CH20, CH21-7). It is
+an upgrade route. The request is `OpenAcp`, and the error is `AcpError`.
+After 101 the connection carries raw ACP bytes, which the vmm relays to
+guest port 1201 (decision CH13).
+
+1. The client sends `POST /acp` with the protocol header, `Content-Type:
+   application/json`, `Connection: Upgrade` and `Upgrade: creche-acp`
+   (`AcpRoute::TOKEN`, `ACP.token`). The body is `OpenAcp`, `{family, id}`
+   (decision CH33 rule 5).
+2. Without the token in `Upgrade`, the vmm answers `upgrade_required` 426
+   (decision CH26 rule 3).
+3. The vmm answers `not_found` 404 when no row has the id, when the row
+   belongs to another family, and while a drop of the session runs
+   (decisions CH21-9, CH33 rule 5).
+4. A second Upgrade for a session with an open stream gets `busy` 409
+   (decision CH33 rule 7).
+5. With no room on the host, the vmm answers `host_full` 503 at once
+   (decisions CH8-6, CH21-3). The client retries.
+6. The vmm answers 101 only after `ControlReady` (decision CH33 rule 6).
+   When the VM does not run, it boots or restores it first. A failed start
+   answers `sandbox_start_failed` or `egress_assert_failed` 502, and the
+   vmm also writes the fault file (decision CH21-1).
+7. After 101 each failure is the end of the stream. The client learns the
+   cause from the error of its next Upgrade.
 
 ## A route error on the wire
 
@@ -387,6 +416,30 @@ callers when they talk to the VM owner. Each one then names `creche-wire` as
 a dependency.
 
 ## Known gaps
+
+- `CONTRACT-QUESTION` in `rust/crates/wire/src/routes.rs`, `AcpError`.
+  Decision CH21-9 names `not_found` and `host_full`, decision CH26 rule 3 a
+  typed error for a wrong `Upgrade` header, and decision CH33 rule 6 typed
+  start faults, with no code or status. Decision CH33 rule 7 fixes `busy`
+  409 only. The reading taken: `upgrade_required` 426, the HTTP status for
+  a needed upgrade. `host_full` 503. The start faults keep the fault names
+  of decision CH6-3, `sandbox_start_failed` and `egress_assert_failed`,
+  each 502. An Upgrade that comes while a drop of its session runs gets
+  `not_found`.
+- `CONTRACT-QUESTION` in `rust/crates/wire/src/routes.rs`, `AcpRoute`.
+  Decision CH26 orders the checks of a request, and decision CH33 rule 6
+  puts every refusal of `acp` before 101. Neither places the check of the
+  `Upgrade` header or orders the refusals of the route. The reading taken:
+  the protocol header, the route and the method, then the `Upgrade` header
+  (`upgrade_required`), then the body (`Content-Type`, cap, JSON, type),
+  then the session (`not_found`, `busy`), then admission (`host_full`),
+  then the start of the VM. Rule 6 names `ControlReady`, not a facade
+  state, so the 101 follows the first `ControlReady` of the start, whatever
+  `FacadeState` it reports.
+- The `acp` request sends a JSON body with an Upgrade. Not proved yet: that
+  hyper 1.x reads that body before it sends 101, and that httpx 0.28.1
+  sends it. The CH20 stub check sent no body. The first vmm server PR of
+  phase 2 proves both. If either fails, the fallback needs the owner's OK.
 
 - `CONTRACT-QUESTION` in `rust/crates/wire/src/routes.rs`,
   `DROP_SIGTERM_GRACE`. Decision CH33 rule 11 fixes a SIGTERM grace and a

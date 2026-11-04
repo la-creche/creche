@@ -15,15 +15,15 @@ use serde_json::Value;
 
 use super::schema::wire_schema;
 use super::{
-    Auto, AutoJobId, ConfigMissing, ControlHello, ControlReady, CreateError, CreateSession,
-    CredsMissing, Delegate, DelegationId, Dispatch, DispatchChain, Door, DropError, DropFamily,
-    DropSession, DropTarget, Dropped, FacadeExited, FacadeNotStarted, FacadeRunning,
+    AcpError, Auto, AutoJobId, ConfigMissing, ControlHello, ControlReady, CreateError,
+    CreateSession, CredsMissing, Delegate, DelegationId, Dispatch, DispatchChain, Door, DropError,
+    DropFamily, DropSession, DropTarget, Dropped, FacadeExited, FacadeNotStarted, FacadeRunning,
     FacadeStarting, FacadeState, FamilyConfig, FamilyCreds, FamilyName, FamilySkills, FamilyState,
-    FamilyStateReply, JobId, JsonRoute, ListCursor, ListError, ListSessions, LitellmKey,
-    MISMATCH_STATUS, ModelAlias, PepToken, ProtocolMismatch, RouteError, SHARED_CODES,
-    SandboxGrant, SessionCwd, SessionId, SessionOrigin, SessionPage, SessionRow, SessionTitle,
-    SkillName, StartCount, StateNotValid, StateTooLarge, Timer, Trigger, TurnEnd, TurnEvent,
-    TurnStart, UnixMillis, Webhook, WebhookName,
+    FamilyStateReply, JobId, ListCursor, ListError, ListSessions, LitellmKey, MISMATCH_STATUS,
+    ModelAlias, OpenAcp, PepToken, ProtocolMismatch, RouteError, SHARED_CODES, SandboxGrant,
+    SessionCwd, SessionId, SessionOrigin, SessionPage, SessionRow, SessionTitle, SkillName,
+    StartCount, StateNotValid, StateTooLarge, Timer, Trigger, TurnEnd, TurnEvent, TurnStart,
+    UnixMillis, Webhook, WebhookName, routes::TableRoute,
 };
 
 /// The file, relative to the crate.
@@ -62,6 +62,7 @@ where
 /// One entry per wire type. A new wire type needs a line here.
 fn read_and_write(type_name: &str, json: &str) -> Option<String> {
     match type_name {
+        "AcpError" => round_trip::<AcpError>(json),
         "Auto" => round_trip::<Auto>(json),
         "AutoJobId" => round_trip::<AutoJobId>(json),
         "Delegate" => round_trip::<Delegate>(json),
@@ -97,6 +98,7 @@ fn read_and_write(type_name: &str, json: &str) -> Option<String> {
         "ListSessions" => round_trip::<ListSessions>(json),
         "LitellmKey" => round_trip::<LitellmKey>(json),
         "ModelAlias" => round_trip::<ModelAlias>(json),
+        "OpenAcp" => round_trip::<OpenAcp>(json),
         "PepToken" => round_trip::<PepToken>(json),
         "ProtocolMismatch" => round_trip::<ProtocolMismatch>(json),
         "SandboxGrant" => round_trip::<SandboxGrant>(json),
@@ -193,9 +195,9 @@ fn the_mismatch_reply_is_frozen() {
 fn each_code_of_a_route_error_has_a_case() {
     let vectors = cases();
     macro_rules! check {
-        (json $route:path) => {
-            let error = <$route as JsonRoute>::Error::schema_name();
-            let statuses = <<$route as JsonRoute>::Error as RouteError>::STATUSES;
+        ($kind:ident $route:path) => {
+            let error = <$route as TableRoute>::Error::schema_name();
+            let statuses = <<$route as TableRoute>::Error as RouteError>::STATUSES;
             let error_cases = vectors
                 .get(&*error)
                 .unwrap_or_else(|| panic!("{VECTOR_FILE} has no cases for {error}"));
