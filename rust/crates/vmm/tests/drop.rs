@@ -21,7 +21,7 @@ use creche_wire::{
     AcpError, DropError, DropRoute, Dropped, OpenAcp, Serve, ServeUpgrade as _, SessionId,
 };
 use tokio::runtime::Builder;
-use tokio::time::{Instant, sleep};
+use tokio::time::{Instant, sleep, timeout};
 
 const A: &str = "3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b";
 const B: &str = "1a2b3c4d-5e6f-4a1b-8c2d-3e4f5a6b7c8d";
@@ -369,6 +369,63 @@ fn two_overlapping_drops_both_wait_for_the_start() {
         "{:?}",
         vms.stops
     );
+    assert!(setup.files().is_empty());
+}
+
+/// The client of a drop hangs up while the drop waits for a start, and
+/// hyper drops the serve future. The drop runs on in its own task with
+/// its marks. So the retry joins the live slot and waits for the same
+/// start, and nothing is removed while the start runs. Every stop comes
+/// after the boot, and no VM runs at the end (decisions CH33 rule 4, CH34
+/// rule 6).
+#[test]
+fn a_retry_after_a_hung_up_drop_waits_for_the_start() {
+    let setup = Setup::new("hangup", &[("chat", A)]);
+    {
+        let mut vms = setup.hook.0.lock().unwrap();
+        vms.boot = Duration::from_secs(5);
+        vms.wait = Duration::from_secs(1);
+    }
+    let chat = format!(r#"{{"session":{{"family":"chat","id":"{A}"}}}}"#);
+    let (drops, acp, chat) = (&setup.drops, &setup.acp, &chat);
+    let drop_now = || Serve::<DropRoute>::serve(drops, target(chat));
+    let (begun, ((admitted, retried), during)) = run(async {
+        let begun = Instant::now();
+        let ends = both(
+            both(async { acp.admit(open(A)).await.map(|_| ()) }, async {
+                sleep(Duration::from_secs(1)).await;
+                // The client hangs up at 2 s, so the serve future drops.
+                let hung_up = timeout(Duration::from_secs(1), drop_now()).await;
+                assert!(hung_up.is_err(), "{hung_up:?}");
+                sleep(Duration::from_secs(1)).await;
+                drop_now().await
+            }),
+            async {
+                // The retry began at 3 s, and the start runs until 5 s.
+                sleep(Duration::from_millis(4500)).await;
+                (setup.has_row(A), setup.files())
+            },
+        );
+        let ends = ends.await;
+        // The first drop's task ends in the tick of the retry.
+        sleep(Duration::from_secs(1)).await;
+        (begun, ends)
+    });
+    assert_eq!(admitted, Err(AcpError::NotFound {}));
+    assert!(
+        matches!(retried, Ok(Dropped {}) | Err(DropError::NotFound {})),
+        "{retried:?}"
+    );
+    assert_eq!(during, (true, vec![A.to_owned(), format!("{A}.json")]));
+    let vms = setup.hook.0.lock().unwrap();
+    assert_eq!(vms.starts, 1);
+    let booted = begun + Duration::from_secs(5);
+    assert!(
+        !vms.stops.is_empty() && vms.stops.iter().all(|(_, ran, at)| *ran && *at >= booted),
+        "{:?}",
+        vms.stops
+    );
+    assert!(vms.running.is_empty());
     assert!(setup.files().is_empty());
 }
 
