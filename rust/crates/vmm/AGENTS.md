@@ -133,8 +133,11 @@ leaves no row, and the Upgrade gets `not_found`.
 After 101, `AcpRelay` dials guest port 1201 with `control::dial`, the
 dial of the control link (decision CH13). It pauses 10 ms between two
 tries and retries ECONNREFUSED, and `READY_WAIT` bounds it (decision CH43
-rules 5 and 7). Then it copies bytes both ways until one side closes or
-the stop signal fires, and it drops both streams (decision CH20). It
+rules 5 and 7). Then it copies bytes both ways (decision CH20). An EOF
+in one direction shuts down the write half of the other stream, and the
+other direction runs on, as with `copy_bidirectional`. The relay ends
+when both directions reach EOF, a read or write fails, or the stop
+signal fires. Then it drops both streams. It
 parses no ACP byte and caps none (decision CH34 rule 3). `Relays::door`
 gives the door of a session for the sleep gate (decision CH19 (6)): open
 from the claim to its end, then the time that the last admitted Upgrade

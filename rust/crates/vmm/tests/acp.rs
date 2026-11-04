@@ -6,6 +6,7 @@
 //! CH13, CH20, CH34 rule 3).
 
 use std::io::{ErrorKind, Read, Write};
+use std::net::Shutdown;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -304,6 +305,26 @@ fn the_relay_carries_bytes_both_ways() {
     drop(stream);
     eventually(|| matches!(server.relays.door(&id), Door::ClosedAt(_)));
     eventually(|| server.guest.lock().unwrap().closes == 1);
+    server.end();
+}
+
+/// A client that shuts down its write half after its last request still
+/// gets the echo of the guest, then an EOF. The guest sees the EOF and
+/// closes, and then the relay ends.
+#[test]
+fn a_half_close_keeps_the_reply_of_the_guest() {
+    let server = Server::start("acp-half");
+    let (status, _, mut stream) = server.upgrade("chat", A);
+    assert_eq!(status, 101);
+    hello(&mut stream);
+    stream.write_all(b"ping\n").unwrap();
+    stream.shutdown(Shutdown::Write).unwrap();
+    let mut reply = Vec::new();
+    stream.read_to_end(&mut reply).unwrap();
+    assert_eq!(reply, b"ping\n");
+    eventually(|| server.guest.lock().unwrap().closes == 1);
+    let id: SessionId = A.parse().unwrap();
+    eventually(|| matches!(server.relays.door(&id), Door::ClosedAt(_)));
     server.end();
 }
 

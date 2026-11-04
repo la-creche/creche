@@ -6,7 +6,7 @@
 //! CH34 rule 6).
 //!
 //! After 101 the relay dials guest port 1201 and copies the ACP bytes both
-//! ways until one side closes (decisions CH13, CH20). It reads no ACP byte
+//! ways until both sides close (decisions CH13, CH20). It reads no ACP byte
 //! and caps none (decision CH34 rule 3).
 
 use std::collections::HashMap;
@@ -243,8 +243,11 @@ impl AcpRelay {
 }
 
 impl Relay for AcpRelay {
-    /// Dials guest port 1201, then copies bytes both ways. It ends when one
-    /// side closes or a drop stops the relay. Its end drops both streams.
+    /// Dials guest port 1201, then copies bytes both ways. An EOF in one
+    /// direction shuts down the write half of the other stream, and the
+    /// other direction runs on. The relay ends when both directions reach
+    /// EOF, when a read or a write fails, or when a drop stops it. Its end
+    /// drops both streams.
     async fn run(self, mut client: TokioIo<Upgraded>) {
         let Self { mut claim, vsock } = self;
         // Decision CH43 rules 5 and 7: the dial pauses 10 ms between two
@@ -272,15 +275,29 @@ impl Relay for AcpRelay {
             if Pin::new(&mut claim.stop).poll(context).is_ready() {
                 return Poll::Ready(());
             }
+            // A client that half-closes after its last request still gets
+            // each reply of the guest, as with `copy_bidirectional`.
             let sent = up.carry(context, &mut client, &mut guest);
             let received = down.carry(context, &mut guest, &mut client);
-            if sent.is_ready() || received.is_ready() {
-                return Poll::Ready(());
+            match (sent, received) {
+                (Poll::Ready(Carried::Failed), _)
+                | (_, Poll::Ready(Carried::Failed))
+                | (Poll::Ready(Carried::Shut), Poll::Ready(Carried::Shut)) => Poll::Ready(()),
+                _ => Poll::Pending,
             }
-            Poll::Pending
         })
         .await;
     }
+}
+
+/// How one direction of the relay ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Carried {
+    /// The source reached EOF, each byte reached the sink, and the write
+    /// half of the sink is shut down.
+    Shut,
+    /// A read, a write or the shutdown failed.
+    Failed,
 }
 
 /// One direction of the relay: the bytes read from one stream and not yet
@@ -290,7 +307,10 @@ struct Pipe {
     buffer: Vec<u8>,
     start: usize,
     end: usize,
+    /// The source reached EOF.
     closed: bool,
+    /// The write half of the sink is shut down.
+    shut: bool,
 }
 
 impl Pipe {
@@ -303,16 +323,21 @@ impl Pipe {
             start: 0,
             end,
             closed: false,
+            shut: false,
         }
     }
 
-    /// Moves bytes from `from` to `to`. Ready when `from` closed and each
-    /// byte reached `to`, or when a read or a write failed.
-    fn carry<R, W>(&mut self, context: &mut Context<'_>, from: &mut R, to: &mut W) -> Poll<()>
+    /// Moves bytes from `from` to `to`. After an EOF of `from` and the
+    /// last write, it shuts down the write half of `to`. A later call
+    /// gives `Shut` again and touches no stream.
+    fn carry<R, W>(&mut self, context: &mut Context<'_>, from: &mut R, to: &mut W) -> Poll<Carried>
     where
         R: AsyncRead + Unpin,
         W: AsyncWrite + Unpin,
     {
+        if self.shut {
+            return Poll::Ready(Carried::Shut);
+        }
         loop {
             if let Some(bytes) = self
                 .buffer
@@ -320,14 +345,25 @@ impl Pipe {
                 .filter(|b| !b.is_empty())
             {
                 match Pin::new(&mut *to).poll_write(context, bytes) {
-                    Poll::Ready(Ok(0) | Err(_)) => return Poll::Ready(()),
+                    Poll::Ready(Ok(0) | Err(_)) => return Poll::Ready(Carried::Failed),
                     Poll::Ready(Ok(written)) => self.start = self.start.saturating_add(written),
                     Poll::Pending => return Poll::Pending,
                 }
                 continue;
             }
             if self.closed {
-                return Pin::new(&mut *to).poll_flush(context).map(drop);
+                let shutdown = match Pin::new(&mut *to).poll_flush(context) {
+                    Poll::Ready(Ok(())) => Pin::new(&mut *to).poll_shutdown(context),
+                    flushed => flushed,
+                };
+                return shutdown.map(|shutdown| {
+                    self.shut = shutdown.is_ok();
+                    if self.shut {
+                        Carried::Shut
+                    } else {
+                        Carried::Failed
+                    }
+                });
             }
             let mut read = ReadBuf::new(&mut self.buffer);
             let polled = Pin::new(&mut *from).poll_read(context, &mut read);
@@ -336,7 +372,7 @@ impl Pipe {
                 Poll::Ready(Ok(())) => {
                     (self.start, self.end, self.closed) = (0, filled, filled == 0);
                 }
-                Poll::Ready(Err(_)) => return Poll::Ready(()),
+                Poll::Ready(Err(_)) => return Poll::Ready(Carried::Failed),
                 Poll::Pending => return Poll::Pending,
             }
         }
