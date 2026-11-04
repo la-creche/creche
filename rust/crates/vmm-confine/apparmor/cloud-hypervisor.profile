@@ -2,7 +2,9 @@
 # CH8-1). Landlock confines the files of each VM (decisions CH8-3, CH30),
 # but Landlock ABI 4 covers neither UDP nor Unix sockets (fact 77). This
 # profile closes both: CH gets no inet socket at all, and no Unix socket
-# but the sockets of its own VM run dir.
+# but the sockets of the VM run dirs under the run root. One static
+# profile cannot tell VMs apart, so each CH may reach the sockets of every
+# VM, not only its own (CONTRACT-QUESTION at the run dir rules).
 #
 # Install (design section 6.1 step 1, gap G28 option A). David runs it on
 # the host once, and again after each edit of this file:
@@ -45,16 +47,29 @@ profile creche-cloud-hypervisor /opt/components/vmm/bin/cloud-hypervisor {
   # names it (decision CH24). One pattern covers every host listener, so a
   # new port needs no reload (decision CH24). The rights follow the
   # Landlock run dir rules: no read of `serial.log` (gap G23).
+  #
+  # CONTRACT-QUESTION (decisions CH8-1, CH24): CH8-1 allows CH only "its
+  # own" vsock and API sockets. CH24 decides the port wildcard, but no row
+  # decides the VM id wildcard `vm/*/`. One static profile cannot name the
+  # id of one VM, and Landlock ABI 4 does not cover AF_UNIX (fact 77). So
+  # the CH of one family may connect to the `api.sock`, `vsock.sock` and
+  # `vsock.sock_<port>` listeners of another family's VM. David decides
+  # whether this reading of "its own" holds.
   owner /run/user/[0-9]*/vmm/vm/*/api.sock rw,
   owner /run/user/[0-9]*/vmm/vm/*/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/vm/*/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/vm/*/vsock.sock_* rw,
   owner /run/user/[0-9]*/vmm/vm/*/serial.log w,
 
-  # The state root names of decision CH39 rule 3. CONTRACT-QUESTION: no
-  # row sets the state root default (plan PR L20), so each rule matches
-  # its names under any root. The root disks and kernels are read only
-  # (decision CH8-8).
+  # The state root names of decision CH39 rule 3. CONTRACT-QUESTION
+  # (decisions CH8-1, CH39 rule 3): no row sets the state root default
+  # (plan PR L20), so each rule matches its names under any root. This
+  # widens the socket deny of CH8-1: `w` on a pathname socket allows a
+  # connect, so CH may connect to any socket of the owner that sits at a
+  # path `**/sessions/*/disk.ext4` or under `**/sessions/*/snapshots/`.
+  # A rule that names one root needs a fixed root or a variable that the
+  # install of design section 6.1 sets, and a sudo reload. The root disks
+  # and kernels are read only (decision CH8-8).
   owner /**/store/* rk,
   owner /**/sessions/*/disk.ext4 rwk,
   owner /**/sessions/*/snapshots/** rw,

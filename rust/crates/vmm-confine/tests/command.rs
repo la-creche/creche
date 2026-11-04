@@ -81,10 +81,15 @@ struct Temp {
 #[cfg(test)]
 impl Temp {
     fn new(name: &str) -> Self {
+        Self::with_state(name, "state")
+    }
+
+    /// The temp root `name` with its state root in the dir `state`.
+    fn with_state(name: &str, state: &str) -> Self {
         let root = PathBuf::from(format!("/tmp/vmm-command-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
-        let state = StateRoot::new(root.join("state")).unwrap();
+        let state = StateRoot::new(root.join(state)).unwrap();
         let store = ImageStore::new(&state, PathBuf::from("zstd"));
         let [kernel, root_disk] =
             [("kernel", KERNEL_DIGEST), ("disk", DISK_DIGEST)].map(|(text, digest)| {
@@ -235,6 +240,37 @@ fn a_path_with_option_syntax_is_refused() {
         let error = ChCommand::boot(temp.boot(None), &run).unwrap_err();
         assert_eq!(error, CommandError::OptionSyntax(run.api_socket()));
     }
+}
+
+#[test]
+fn a_state_path_with_option_syntax_is_refused() {
+    // The run root is clean, so the check of each state path decides.
+    let temp = Temp::with_state("syntax-state", "st,ate");
+    let error = ChCommand::boot(temp.boot(None), &temp.run).unwrap_err();
+    assert_eq!(
+        error,
+        CommandError::OptionSyntax(temp.kernel.path().to_owned())
+    );
+    let claimed = temp.claimed();
+    let dir = claimed.dir().to_owned();
+    let error = ChCommand::restore(claimed, &temp.run).unwrap_err();
+    assert_eq!(error, CommandError::OptionSyntax(dir));
+}
+
+#[test]
+fn a_session_disk_path_with_option_syntax_is_refused() {
+    // The kernel and the root disk are in a clean store.
+    let temp = Temp::new("syntax-disk");
+    let state = StateRoot::new(temp.root.join("st,ate")).unwrap();
+    let session = SessionDisks::new(&state, PathBuf::from(MKE2FS))
+        .for_boot(&id())
+        .unwrap();
+    let boot = Boot {
+        session: &session,
+        ..temp.boot(None)
+    };
+    let error = ChCommand::boot(boot, &temp.run).unwrap_err();
+    assert_eq!(error, CommandError::OptionSyntax(session.path().to_owned()));
 }
 
 #[test]

@@ -40,7 +40,8 @@ const SETPRIV: &str = "/usr/bin/setpriv";
 
 /// One VM: its run dir under the real run root `/run/user/<uid>/vmm`
 /// (decision CH20), and a state root with the kernel and the initramfs in
-/// its store. A drop removes both dirs.
+/// its store. The run dir must not exist before, so a drop removes only
+/// the two dirs that the setup made.
 struct Setup {
     run: RunRoot,
     vm: VmRunDir,
@@ -56,7 +57,7 @@ impl Setup {
         let uid = rustix::process::getuid().as_raw();
         let run = RunRoot::new(PathBuf::from(format!("/run/user/{uid}/vmm"))).unwrap();
         let vm = run.vm(&id.parse().unwrap());
-        let _ = fs::remove_dir_all(vm.path());
+        absent(vm.path());
         fs::create_dir_all(vm.path()).unwrap();
         let state = files.join(format!("apparmor-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&state);
@@ -147,13 +148,34 @@ impl Drop for Setup {
     }
 }
 
-/// A listener at `path`, which does not block on accept.
+/// Fails if `path` exists. The tests use the real run root, where a live
+/// vmm may own `vmm.sock` and its VM dirs, so a test removes only the
+/// paths it made and never one it found.
 #[cfg(test)]
-fn listen(path: &Path) -> UnixListener {
-    let _ = fs::remove_file(path);
+fn absent(path: &Path) {
+    assert!(
+        fs::symlink_metadata(path).is_err(),
+        "{} exists: a vmm may be live, so the test stops",
+        path.display()
+    );
+}
+
+/// A listener at a new path, which does not block on accept. A drop
+/// removes the path.
+struct Listener(UnixListener, PathBuf);
+
+impl Drop for Listener {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.1);
+    }
+}
+
+#[cfg(test)]
+fn listen(path: &Path) -> Listener {
+    absent(path);
     let listener = UnixListener::bind(path).unwrap();
     listener.set_nonblocking(true).unwrap();
-    listener
+    Listener(listener, path.to_owned())
 }
 
 #[test]
@@ -190,7 +212,7 @@ fn kvm_ch_connects_to_a_host_listener() {
     let setup = Setup::new("listener", "0123abcd-0000-4000-8000-0000000c15b1");
     let path = setup.vm.host_listener(HostPort::Chaperone);
     let listener = listen(&path);
-    let (status, stderr, connected) = setup.tpm(&path, Some(&listener));
+    let (status, stderr, connected) = setup.tpm(&path, Some(&listener.0));
     assert!(
         connected,
         "no connect to {}: {status}\n{stderr}",
@@ -204,8 +226,8 @@ fn kvm_ch_cannot_connect_to_vmm_sock() {
     let setup = Setup::new("vmm-sock", "0123abcd-0000-4000-8000-0000000c15b2");
     let path = setup.run.vmm_socket();
     let listener = listen(&path);
-    let (status, stderr, connected) = setup.tpm(&path, Some(&listener));
-    let _ = fs::remove_file(&path);
+    let (status, stderr, connected) = setup.tpm(&path, Some(&listener.0));
+    drop(listener);
     assert!(!connected, "CH reached {}", path.display());
     assert!(!status.success());
     assert!(stderr.contains("Permission denied"), "stderr:\n{stderr}");

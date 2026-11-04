@@ -1,8 +1,9 @@
 //! The AppArmor profile of CH against the names of plan PR D1 (decisions
 //! CH8-1, CH24, CH20 and CH39 rule 3). A pathname Unix socket is mediated
 //! by the file rules, so the write rules are the whole socket allow list.
-//! The test reads the file rules of the profile and matches each VM file
-//! with the AppArmor globs that the profile uses: `*`, `**` and `[0-9]`.
+//! The test reads every rule line of the profile, and fails on a line of a
+//! form it does not read. It matches each VM file with the AppArmor globs
+//! that the profile uses: `*`, `**` and `[0-9]`.
 
 use std::path::{Path, PathBuf};
 
@@ -27,19 +28,55 @@ struct FileRule<'a> {
     rights: &'a str,
 }
 
+/// The header line of the profile.
+const HEADER: &str = "profile creche-cloud-hypervisor /opt/components/vmm/bin/cloud-hypervisor {";
+
+/// The only lines of the profile that are not file rules. Any other line
+/// fails `file_rules`, so a rule of a form that this test does not read,
+/// such as `file,`, `allow …` or `network`, cannot pass.
+const OTHER_LINES: &[&str] = &[
+    "abi <abi/4.0>,",
+    HEADER,
+    "}",
+    "unix type=stream,",
+    "deny unix addr=@**,",
+    "deny unix peer=(addr=@**),",
+    "signal (receive) peer=unconfined,",
+    "signal (send, receive) peer=creche-cloud-hypervisor,",
+];
+
+/// The rule lines of the profile: each trimmed line that is not blank
+/// and is no comment.
+#[cfg(test)]
+fn rule_lines() -> impl Iterator<Item = &'static str> {
+    let lines = PROFILE.lines().map(str::trim);
+    lines.filter(|line| !line.is_empty() && !line.starts_with('#'))
+}
+
+/// The file rule of `line`: `[owner ]/<glob> <rights>,`, with a glob of
+/// no space and rights of `r`, `w`, `k` and `m` only.
+#[cfg(test)]
+fn file_rule(line: &'static str) -> Option<FileRule<'static>> {
+    let body = line.strip_prefix("owner ").unwrap_or(line);
+    let (glob, rights) = body.strip_suffix(',')?.split_once(' ')?;
+    let known = |right: char| "rwkm".contains(right);
+    let rule = glob.starts_with('/') && !rights.is_empty() && rights.chars().all(known);
+    rule.then_some(FileRule {
+        owner: body.len() < line.len(),
+        glob,
+        rights,
+    })
+}
+
+/// Every file rule of the profile. A rule line that is no file rule and
+/// not one of `OTHER_LINES` fails the test, so the rules here are all the
+/// rules that the profile holds.
 #[cfg(test)]
 fn file_rules() -> Vec<FileRule<'static>> {
-    let lines = PROFILE.lines().map(str::trim);
-    let rule = |line: &'static str| {
-        let body = line.strip_prefix("owner ").unwrap_or(line);
-        let (glob, rights) = body.strip_suffix(',')?.split_once(' ')?;
-        glob.starts_with('/').then_some(FileRule {
-            owner: body.len() < line.len(),
-            glob,
-            rights,
-        })
-    };
-    lines.filter_map(rule).collect()
+    let rules = rule_lines().filter(|line| !OTHER_LINES.contains(line));
+    let parse =
+        |line| file_rule(line).unwrap_or_else(|| panic!("a rule this test does not read: {line}"));
+    rules.map(parse).collect()
 }
 
 /// Whether `glob` matches `path`: `**` matches any bytes, `*` any bytes
@@ -90,8 +127,7 @@ fn vm() -> VmRunDir {
 
 #[test]
 fn the_profile_attaches_to_the_installed_binary() {
-    let header = "profile creche-cloud-hypervisor /opt/components/vmm/bin/cloud-hypervisor {";
-    assert!(PROFILE.lines().any(|line| line == header));
+    assert!(PROFILE.lines().any(|line| line == HEADER));
     assert_eq!(
         rights(Path::new("/opt/components/vmm/bin/cloud-hypervisor")),
         "mr"
@@ -170,9 +206,35 @@ fn the_devices_are_those_of_the_landlock_rules() {
 
 #[test]
 fn no_inet_socket_and_no_abstract_unix_socket() {
-    let lines: Vec<&str> = PROFILE.lines().map(str::trim).collect();
-    assert!(!lines.iter().any(|line| line.starts_with("network")));
+    let lines: Vec<&str> = rule_lines().collect();
     assert!(lines.contains(&"unix type=stream,"));
     assert!(lines.contains(&"deny unix addr=@**,"));
     assert!(lines.contains(&"deny unix peer=(addr=@**),"));
+}
+
+#[test]
+fn each_rule_line_has_a_form_this_test_reads() {
+    let rules = file_rules();
+    let others = rule_lines().filter(|line| OTHER_LINES.contains(line));
+    assert_eq!(rules.len() + others.count(), rule_lines().count());
+    for line in OTHER_LINES {
+        assert_eq!(
+            rule_lines().filter(|rule| rule == line).count(),
+            1,
+            "{line}"
+        );
+    }
+}
+
+#[test]
+fn no_rule_grants_all_files_or_a_network_socket() {
+    for line in rule_lines() {
+        let words: Vec<&str> = line
+            .split(|char: char| char.is_whitespace() || char == ',')
+            .collect();
+        assert!(!words.contains(&"file"), "{line}");
+        assert!(!words.contains(&"network"), "{line}");
+        assert!(!words.contains(&"allow"), "{line}");
+        assert!(!words.contains(&"audit"), "{line}");
+    }
 }
