@@ -1,6 +1,6 @@
 # The confinement of each Cloud Hypervisor process of the vmm: the launch
-# step, the limits and the access rules. It is the middle layer of the
-# three vmm crates (rust/crates/vmm/AGENTS.md).
+# step, the limits and the access rules. rust/crates/vmm/AGENTS.md has the
+# table of the three vmm crates.
 [package]
 name = "creche-vmm-confine"
 edition.workspace = true
