@@ -194,7 +194,9 @@ function readConfigDir(dir: string, previous: readonly LiveSkill[]): ConfigRead 
     system_prompt: systemPrompt,
   };
 
-  if (!validator("FamilyConfig").Check(config)) {
+  // The wire pattern takes `litellm/`, which names no model. The start
+  // refuses it (`model_alias_unset`), so a pull keeps the last good config.
+  if (!validator("FamilyConfig").Check(config) || bareAlias(modelAlias ?? "").length === 0) {
     return { ok: false, fault: "not_valid" };
   }
 

@@ -125,6 +125,18 @@ describe("fileBackend", () => {
     expect(shown(second)).toEqual(good);
   });
 
+  it("keeps the last good config when the alias is the bare prefix litellm/", async () => {
+    const dirs = mounts();
+    const backend = fileBackend(dirs, START, NO_RETRY_MS);
+    const good = shown(await backend.pull());
+
+    swapConfig(dirs.config, { "runtime.json": JSON.stringify({ model_alias: "litellm/" }) });
+    const pull = await backend.pull();
+
+    expect(pull.ok && pull.stale).toBe("not_valid");
+    expect(shown(pull)).toEqual({ ...(good as object), stale: "not_valid" });
+  });
+
   it("keeps the last good config when the folder gives EACCES, as a dead sbx mount does", async ({ skip }) => {
     skip(RUNS_AS_ROOT, "root reads a folder of mode 000");
     const dirs = mounts();
