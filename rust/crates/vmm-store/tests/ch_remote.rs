@@ -12,7 +12,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use creche_vmm_store::ch_remote::{
-    ChCommand, ChRemote, ChRemoteError, DiskConfig, NetConfig, VmInfo, VmState, VsockConfig,
+    ChCommand, ChRemote, ChRemoteError, DiskConfig, Present, VmInfo, VmState, VsockConfig,
 };
 use creche_vmm_store::layout::{RunRoot, VmRunDir};
 use creche_wire::SessionId;
@@ -191,7 +191,6 @@ fn info_reads_the_device_set_of_a_v54_reply() {
     assert_eq!(
         config.vsock,
         Some(VsockConfig {
-            cid: 3,
             socket: PathBuf::from("/r/a/vsock.sock"),
         })
     );
@@ -212,13 +211,7 @@ fn info_reads_a_network_card() {
         1,
     );
     let info = info_of("net", &reply).expect("the info");
-    assert_eq!(
-        info.config.net,
-        [NetConfig {
-            tap: Some("tap0".to_owned()),
-            vhost_socket: None,
-        }]
-    );
+    assert_eq!(info.config.net, [Present {}]);
 }
 
 /// A list of `null` is no device. A device kind that `VmConfig` does not

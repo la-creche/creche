@@ -93,6 +93,9 @@ pub struct VmInfo {
 /// The devices of a VM, with the names of the Cloud Hypervisor v54
 /// `VmConfig` (`vmm/src/vm_config.rs`). CH leaves out a field with no
 /// device, and a missing list and `null` both read as no device.
+///
+/// The check of a restore refuses each kind held as a list of `Present`
+/// (decision CH50 rule 10), so the type reads no field of those kinds.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 pub struct VmConfig {
     /// The disks, in the order of the guest (`/dev/vda` first).
@@ -102,28 +105,35 @@ pub struct VmConfig {
     pub vsock: Option<VsockConfig>,
     /// The network cards.
     #[serde(default, deserialize_with = "null_as_empty")]
-    pub net: Vec<NetConfig>,
+    pub net: Vec<Present>,
     /// The vhost-user devices of any type.
     #[serde(default, deserialize_with = "null_as_empty")]
-    pub generic_vhost_user: Vec<GenericVhostUserConfig>,
+    pub generic_vhost_user: Vec<Present>,
     /// The virtio-fs shares.
     #[serde(default, deserialize_with = "null_as_empty")]
-    pub fs: Vec<FsConfig>,
+    pub fs: Vec<Present>,
     /// The vfio-user devices.
     #[serde(default, deserialize_with = "null_as_empty")]
-    pub user_devices: Vec<UserDeviceConfig>,
+    pub user_devices: Vec<Present>,
     /// The vDPA devices.
     #[serde(default, deserialize_with = "null_as_empty")]
-    pub vdpa: Vec<VdpaConfig>,
+    pub vdpa: Vec<Present>,
     /// The VFIO devices.
     #[serde(default, deserialize_with = "null_as_empty")]
-    pub devices: Vec<DeviceConfig>,
+    pub devices: Vec<Present>,
     /// The persistent-memory devices.
     #[serde(default, deserialize_with = "null_as_empty")]
-    pub pmem: Vec<PmemConfig>,
+    pub pmem: Vec<Present>,
     /// The TPM.
-    pub tpm: Option<TpmConfig>,
+    pub tpm: Option<Present>,
 }
+
+/// One device of a kind that the check of a restore refuses (decision
+/// CH50 rule 10). The check needs only that the kind is present, so the
+/// type reads no field and takes an entry of any fields. The PR that
+/// first reads a field of the device adds it (decision CH44 rule 1).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Present {}
 
 /// A disk by its host file. A vhost-user disk has no path.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -132,72 +142,9 @@ pub struct DiskConfig {
     pub path: Option<PathBuf>,
 }
 
-/// The vsock device.
+/// The vsock device by its host socket.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct VsockConfig {
-    /// The guest CID.
-    pub cid: u32,
-    /// The host socket.
-    pub socket: PathBuf,
-}
-
-/// A network card by its host end: a tap or a vhost-user socket.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct NetConfig {
-    /// The host tap.
-    pub tap: Option<String>,
-    /// The vhost-user socket.
-    pub vhost_socket: Option<String>,
-}
-
-/// A vhost-user device by its host socket.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct GenericVhostUserConfig {
-    /// The host socket.
-    pub socket: PathBuf,
-}
-
-/// A virtio-fs share by its tag and its host socket.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct FsConfig {
-    /// The tag that the guest mounts.
-    pub tag: String,
-    /// The host socket.
-    pub socket: PathBuf,
-}
-
-/// A vfio-user device by its host socket.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct UserDeviceConfig {
-    /// The host socket.
-    pub socket: PathBuf,
-}
-
-/// A vDPA device by its host device.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct VdpaConfig {
-    /// The host device.
-    pub path: PathBuf,
-}
-
-/// A VFIO device by its host path. CH v54 can name it by an `fd`
-/// instead, and it writes no `fd` to a reply.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct DeviceConfig {
-    /// The host path.
-    pub path: Option<PathBuf>,
-}
-
-/// A persistent-memory device by its host file.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct PmemConfig {
-    /// The host file.
-    pub file: PathBuf,
-}
-
-/// The TPM by its host socket.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct TpmConfig {
     /// The host socket.
     pub socket: PathBuf,
 }
