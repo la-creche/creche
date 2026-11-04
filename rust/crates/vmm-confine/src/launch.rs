@@ -22,8 +22,6 @@ impl fmt::Display for LaunchError {
     }
 }
 
-impl std::error::Error for LaunchError {}
-
 /// Runs the launch step. A launch that works replaces this process with
 /// the next program, so this function returns only an error.
 pub fn run() -> Result<Infallible, LaunchError> {

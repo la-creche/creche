@@ -6,6 +6,12 @@
 //! and no schema entry. A change of a port number needs a new
 //! `GUEST_INIT_PROTOCOL`, so that a VM with an old snapshot cold-boots.
 
+// CONTRACT-QUESTION: gap G25 of the phase 2 plan. CH7-6 and CH14 name no
+// home and no first value for this number. This reading: creche-wire,
+// beside the port enums, value 1, no serde. The other reading is one
+// constant in each program, held equal by a test. A change costs a move of
+// this constant and a test in each program. The owner has not answered
+// yet. Remove this comment when the owner answers.
 /// The number of the guest init protocol (decisions CH7-6, CH14). The vmm
 /// and the guest init of one release share it. It is part of the snapshot
 /// key: on a mismatch the vmm drops the snapshot and cold-boots. It is
@@ -86,11 +92,24 @@ mod tests {
     // the same change (decision CH14).
     #[test]
     fn each_number_is_pinned() {
-        let host: Vec<u32> = HostPort::ALL.iter().map(|port| port.number()).collect();
-        let guest: Vec<u32> = GuestPort::ALL.iter().map(|port| port.number()).collect();
+        let host: Vec<_> = HostPort::ALL
+            .iter()
+            .map(|&port| (port, port.number()))
+            .collect();
+        let guest: Vec<_> = GuestPort::ALL
+            .iter()
+            .map(|&port| (port, port.number()))
+            .collect();
 
-        assert_eq!(host, [1100, 1101, 1102, 1103, 1104]);
-        assert_eq!(guest, [1200, 1201]);
+        let host_pins = [
+            (HostPort::FamilyState, 1100),
+            (HostPort::Litellm, 1101),
+            (HostPort::Chaperone, 1102),
+            (HostPort::GitMirror, 1103),
+            (HostPort::Egress, 1104),
+        ];
+        assert_eq!(host, host_pins);
+        assert_eq!(guest, [(GuestPort::Control, 1200), (GuestPort::Acp, 1201)]);
         assert_eq!(GUEST_INIT_PROTOCOL, 1);
     }
 

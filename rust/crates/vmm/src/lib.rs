@@ -1,7 +1,6 @@
 //! The vmm: the one process that owns every Cloud Hypervisor VM of the
 //! playpen (decision CH9). It serves the host API (decision CH20) and
-//! composes the two crates below it: `creche-vmm-confine` and
-//! `creche-vmm-store`.
+//! composes two libraries: `creche-vmm-confine` and `creche-vmm-store`.
 
 use std::fmt;
 
@@ -22,7 +21,10 @@ impl fmt::Display for ServeError {
     }
 }
 
-impl std::error::Error for ServeError {}
+// CONTRACT-QUESTION: gap G24 of the phase 2 plan. The root AGENTS.md says
+// to ask before a change widens visibility. This reading makes `serve` and
+// the other items of the three vmm crates `pub`. A change to one crate
+// with private items costs a merge of the three crates.
 
 /// Runs the host API server until it stops. The caller runs it on the
 /// multi-thread tokio runtime. Blocking work goes to `spawn_blocking`.
