@@ -6,6 +6,7 @@
 //! `serde_json` and `sha2`. It uses no async runtime. It never
 //! calls `creche-vmm-confine` or `creche-vmm`.
 
+pub mod ch_remote;
 pub mod images;
 pub mod layout;
 pub mod rows;
