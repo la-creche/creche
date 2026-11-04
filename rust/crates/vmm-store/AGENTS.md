@@ -64,11 +64,11 @@ The second file has the table of the three vmm crates.
   `Activity::last_use`, the start of the idle time, at the VM start or
   restore, at each turn event, and at each open and each close of a door
   link (decision CH50 rule 5). L18 sets it.
-- CONTRACT-QUESTION (PR D12, `sleep_gate.rs`): no decision row says
-  whether an evictable VM with no door link goes before an older one
-  with a door link open (decisions CH8-6, CH19 (6)). The narrowest
-  reading: one order by `last_use` alone, as
-  `creche_vmm_confine::admission::decide` has.
+- Caller duty (PR D12, `sleep_gate.rs`), for lifecycle (L17): a VM with
+  an open door link counts as used now in the eviction order (decision
+  CH50 rule 6). When L17 builds the `Running` list for
+  `creche_vmm_confine::admission::decide`, it passes `last_use = now`
+  for each VM with an open door link. D12 and C9 stay as built.
 - Caller duties (PR D12, `sleep_gate.rs`), for lifecycle: (a) keep a
   `turn_seen` flag per VM that a turn event sets and each
   `ControlReady` clears, for decision CH43 rule 8.
