@@ -73,6 +73,22 @@ const LISTS: Readonly<Record<string, readonly string[]>> = {
   FACADE_ENV,
 };
 
+/** Each rename target that a second source also names, or that another list holds. */
+function renameClashes(rename: Readonly<Record<string, readonly string[]>>): string[] {
+  const others: readonly string[] = [...FLUE_ENV, ...TOOL_ENV, ...FACADE_ENV];
+  const seen = new Set<string>();
+  const clashes: string[] = [];
+  for (const target of Object.values(rename).flat()) {
+    if (seen.has(target) || others.includes(target)) {
+      clashes.push(target);
+    }
+
+    seen.add(target);
+  }
+
+  return clashes;
+}
+
 describe("the tool env lists", () => {
   it("copies Flue's installed allowlist exactly", () => {
     const list = /const DEFAULT_LOCAL_ENV_ALLOWLIST = \[([^\]]*)\]/.exec(readFileSync(FLUE_DIST, "utf8"));
@@ -85,6 +101,15 @@ describe("the tool env lists", () => {
     const all = Object.values(LISTS).flat();
 
     expect(new Set(all).size).toBe(all.length);
+  });
+
+  it("give each rename target one source, outside the other lists", () => {
+    expect(renameClashes(TOOL_RENAME)).toEqual([]);
+    expect(renameClashes({ A: ["HTTPS_PROXY", "PATH"], B: ["HTTPS_PROXY"], C: ["NODE_ENV"] })).toEqual([
+      "PATH",
+      "HTTPS_PROXY",
+      "NODE_ENV",
+    ]);
   });
 
   it("place each ENV name of a shipped stage in exactly one list", () => {
