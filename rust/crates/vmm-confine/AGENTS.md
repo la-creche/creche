@@ -25,12 +25,46 @@ table of the three vmm crates.
   `--memory size=<guest RAM>M`, `MemoryMax` = guest RAM + 512 MiB, the
   balloon with free page reporting and deflate on OOM, and
   `TasksMax=256`. The 512 MiB is a first value. Phase 8 measures it.
+- `family::FamilyRoot` reads a family's `config/` as caregiver's one
+  writer leaves it (decisions CH5b, CH23 (3)). Each read opens `config/`
+  with `O_NOFOLLOW`, reads through that one handle, then compares its
+  device and inode with `fstatat(family_dir, "config")`. A swap or an
+  absent `config/` (the rename window) starts the read again. An absent
+  `config/` after every try is `Unknown`, which create answers with
+  `unknown_family` (decision CH33 rule 3). A bad `config/shape.json` is
+  `NotValid` (decisions CH36 G6, CH43 rule 3). The root has no default.
+  Lifecycle passes it, and caregiver writes no `shape.json` before the cut
+  (decision CH45 rule 2). Decision CH50 rule 9 sets `READ_TRIES` (5),
+  `RETRY_PAUSE` (10 ms) and `SHAPE_CAP` (4 KiB). A read blocks its thread
+  in `thread::sleep`, so a caller in tokio runs it in `spawn_blocking`.
+- `command::ChCommand` renders the CH argv from the checked store types
+  only: `CheckedImage` (PR D6), `SessionDisk` (PR D7) and
+  `ClaimedSnapshot` (PR D11). No input names a network card, and no
+  argument names `--seccomp` (decisions CH6-3, CH8-1, CH8-4). A boot
+  gives the root disk `readonly=on` as the first `--disk` (decision
+  CH8-8), the session disk the `DiskLimit::SESSION` rate limiter
+  (decisions CH8-7, CH36 G15), and `--serial file=` the `serial.log` of
+  the VM run dir with `--console off` (decisions CH36 G23, CH41 rule 2).
+  A restore gives only `--api-socket` and `--restore` with
+  `memory_restore_mode=copyonwrite`, because CH v54 takes the sizes and
+  devices from the snapshot (decisions CH2, CH29). The restore passes
+  `resume=false`, so the VM stays paused (decision CH50 rule 10). A
+  restore consumes the claim. A path with a comma, a bracket or a quote
+  fails, because the CH option parser reads them as syntax.
 - Every launch step forks from the one spawner thread (decision CH19 (4),
   fact 76). The vmm keeps its `Spawner` for its whole life. A drop ends
   the thread, and the kernel then kills every payload it started.
 - The launch step reads its plan only from a pipe that already holds it.
   The spawner writes the whole plan, at most 64 KiB, before the spawn,
   and never blocks on a full pipe.
+- The spawner gives each launch step one pipe for stdout and stderr in
+  place of the fds of the vmm, so CH inherits no journal socket (decision
+  CH50 rule 12). `output::start` reads it on one thread per VM and gives
+  each line to the sink tagged `ch <session id>`, under `LINE_CAP` bytes
+  per line and `RATE_LINES` lines per `RATE_WINDOW` (decision CH52 rule
+  6). It escapes each control char, so CH cannot write a vmm line. The vmm sink is the
+  stderr of the vmm with the prefix `vmm: `. The crate has no log crate,
+  and `rust/Cargo.lock` holds none.
 - `leftovers::stop_all` stops every user unit with the prefix
   `creche-vm-` and adopts none (decision CH19 (4), fact 76). The vmm calls
   it at start, before it binds or unlinks any per-VM socket path. A unit
@@ -94,17 +128,25 @@ table of the three vmm crates.
   dir). The ruleset grants no right to make a dir, so the vmm must also
   make each `snapshots/<generation>/` before CH writes a snapshot there.
   Plan PRs L16 (cold boot) and D9 (snapshot) own these steps.
-- Decision CH42 rule 2: on a restore the CH command line shows no
-  device, so `deny::check` cannot see a network card that the snapshot
-  holds. The check trusts that a snapshot comes only from a boot that
-  passed the check. Once the CH API (plan PR D8, `ch_remote`) is in, the
-  vmm also reads the restored VM's device set through `ch-remote info`
-  before the VM is ready. That device-set read is the step of plan PR
-  L17 (restore), under decision CH42 rule 2. No code does the
-  device-set read yet.
+- Decisions CH42 rule 2 and CH50 rule 10: on a restore the CH command
+  line shows no device, so `deny::check` cannot see a device that the
+  snapshot holds. The restore runs with `resume=false`. Plan PR L17
+  (restore) must then run these steps in order, and no code runs them
+  yet:
+  1. `ch-remote info`, whose `state` must be `Paused`.
+  2. The device check. It refuses `net`, `generic_vhost_user`, `fs`,
+     `user_devices`, `vdpa`, `devices`, `pmem` and `tpm`, any disk
+     beyond the fixed two, and a vsock path other than the VM's own.
+  3. `ch-remote resume`.
+  4. The wait for `ControlReady`.
 - CONTRACT-QUESTION (decisions CH21-1, CH36 G18): contract 05 §3.3.1 has
   no row for the vmm until its amendment. Open until then: the group of
   `faults/vmm/` and its files (the vmm sets modes 0750 and 0640 only),
   the value `vmm` in the `source` enum of §3.3, and the reader. caregiver
   reads only the `attendance` and `pep` files today, so it ignores the
   vmm file.
+- Gap G23 sets `serial.log` to mode 0600. CH makes the file with the
+  umask of the launch step, and the crate sets no umask. A `UMask=` in
+  the unit of plan PR C13, or a file that lifecycle makes first in plan
+  PR L16, must set it. Neither plan entry names the step yet. Until then
+  `RuntimeDirectoryMode=0700` of the run root keeps other users out.

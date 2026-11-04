@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# CI — builds the file tree of one flavor as a tar, the input of its root
+# disk (CH7-2, fact 59):
+#   playpen/bin/playpen-rootfs <target> <out.tar>
+#
+# `buildx --output type=tar` exports the files of the target and nothing
+# else: no image config, no `/.dockerenv`, no runtime `resolv.conf`. So the
+# env comes from `/etc/creche/env` (creche-env-write), and the script stops
+# when the tar does not hold it.
+#
+# SOURCE_DATE_EPOCH is the commit time of HEAD. BuildKit sets the time of
+# every file in the tar to it, so the tar does not carry the time of the
+# build. An exported SOURCE_DATE_EPOCH wins over the commit time.
+#
+# Exit 0 with the tar written. Exit 1 when the build fails or the tar holds
+# `.dockerenv` or no `etc/creche/env`. A failed run leaves no tar.
+set -euo pipefail
+
+die() { printf 'playpen-rootfs: %s\n' "$*" >&2; exit 1; }
+
+[[ "$#" -eq 2 ]] || die "usage: playpen-rootfs <target> <out.tar>"
+target="$1"
+out="$2"
+
+# A tar of an older run at the same path must not outlive a failed run.
+rm -f -- "$out"
+
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+PLATFORM=linux/amd64
+
+epoch="${SOURCE_DATE_EPOCH:-$(git -C "$ROOT" log -1 --format=%ct)}"
+[[ "$epoch" =~ ^[0-9]+$ ]] || die "SOURCE_DATE_EPOCH is not a count of seconds: $epoch"
+
+partial="$out.partial"
+trap 'rm -f -- "$partial"' EXIT
+
+docker buildx build --platform "$PLATFORM" -f "$ROOT/playpen/Dockerfile" --target "$target" \
+  --build-arg "SOURCE_DATE_EPOCH=$epoch" \
+  --output "type=tar,dest=$partial" "$ROOT" \
+  || die "the $target build failed"
+
+members="$(tar -tf "$partial")" || die "the $target tar does not read"
+grep -qxE '(\./)?etc/creche/env' <<< "$members" || die "the $target tar holds no etc/creche/env"
+if grep -qxE '(\./)?\.dockerenv' <<< "$members"; then
+  die "the $target tar holds .dockerenv"
+fi
+
+mv -f -- "$partial" "$out"
+printf 'playpen-rootfs: %s: %s (%s bytes, files at %s)\n' \
+  "$target" "$out" "$(wc -c < "$out" | tr -d ' ')" "$epoch"

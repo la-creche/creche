@@ -1,12 +1,15 @@
 // The family's grant of Flue's built-in sandbox tools. `local()` from
 // `@flue/runtime/node` gives every agent six tools on the host: `read`,
-// `write`, `edit`, `bash`, `grep`, `glob`. This factory wraps `local({cwd})`
+// `write`, `edit`, `bash`, `grep`, `glob`. This factory wraps `local()`
 // and its `tools()` returns only the tools that `runtime.json`'s
 // `sandbox_tools` grants. Flue replaces its built-in set with that list, so
 // an empty grant gives the model no built-in tool.
 //
 //   runtime.json sandbox_tools ──► SandboxToolName[] (src/runtime-config.ts)
 //                              ──► tools(sandbox) = the granted subset
+//
+// `env` holds the names that the agent adds to Flue's 14
+// (`src/tool-env.ts`, decision CH49).
 //
 // The framework group (`task`, `activate_skill`) is not part of the
 // built-in set. A grant does not change it.
@@ -23,6 +26,7 @@ import type { Sandbox, SandboxFactory, SandboxToolFactory } from "@flue/runtime"
 import { local } from "@flue/runtime/node";
 
 import type { SandboxToolName } from "./runtime-config.js";
+import type { ToolEnv } from "./tool-env.js";
 
 type ToolFactory = (sandbox: Sandbox) => ReturnType<SandboxToolFactory>[number];
 
@@ -36,9 +40,9 @@ const FACTORIES: { readonly [Name in SandboxToolName]: ToolFactory } = {
   glob: createGlobTool,
 };
 
-/** `local({cwd})`, with only the granted built-in tools. */
-export function grantedSandbox(grant: readonly SandboxToolName[], cwd: string): SandboxFactory {
-  const host = local({ cwd });
+/** `local({cwd, env})`, with only the granted built-in tools. */
+export function grantedSandbox(grant: readonly SandboxToolName[], cwd: string, env: ToolEnv): SandboxFactory {
+  const host = local({ cwd, env: { ...env } });
 
   return {
     createSandbox: (options) => host.createSandbox(options),

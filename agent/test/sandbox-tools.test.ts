@@ -15,6 +15,7 @@ import { litellmModel } from "../src/litellm.js";
 import { readRuntimeConfig } from "../src/runtime-config.js";
 import type { SandboxToolName } from "../src/runtime-config.js";
 import { grantedSandbox } from "../src/sandbox-tools.js";
+import { readToolEnv } from "../src/tool-env.js";
 import { FakeModel } from "./fake-model.js";
 import { familyConfig } from "./family.js";
 
@@ -36,7 +37,7 @@ function grantOf(runtime: string | null): readonly string[] | string {
 }
 
 async function toolNames(grant: readonly SandboxToolName[]): Promise<string[]> {
-  const factory = grantedSandbox(grant, mkdtempSync(join(tmpdir(), "agent-cwd-")));
+  const factory = grantedSandbox(grant, mkdtempSync(join(tmpdir(), "agent-cwd-")), {});
   const sandbox = await factory.createSandbox({ id: "agent-test" });
 
   return (factory.tools?.(sandbox, { subagents: {} }) ?? []).map((tool) => tool.name);
@@ -54,14 +55,14 @@ const { model } = read;
 
 function Empty(): string {
   useModel(model.spec);
-  useSandbox(grantedSandbox([], cwd));
+  useSandbox(grantedSandbox([], cwd, {}));
 
   return "Answer.";
 }
 
 function Granted(): string {
   useModel(model.spec);
-  useSandbox(grantedSandbox(GRANT, cwd));
+  useSandbox(grantedSandbox(GRANT, cwd, {}));
 
   return "Answer.";
 }
@@ -115,5 +116,24 @@ describe("grantedSandbox", () => {
   it("shows the model no built-in tool under an empty grant, and the grant under one", async () => {
     expect(await toolsSeen(Empty)).toEqual(["task"]);
     expect([...(await toolsSeen(Granted))].sort()).toEqual(["grep", "read", "task"]);
+  });
+
+  it("gives a tool process the tool env, and no facade name", async () => {
+    // A copy of process.env into the tool would show this sentinel.
+    const before = process.env["MPLCONFIGDIR"];
+    process.env["MPLCONFIGDIR"] = "/var/cache/matplotlib";
+    try {
+      const env = readToolEnv({ MPLBACKEND: "Agg", MPLCONFIGDIR: "/var/cache/matplotlib", NODE_VERSION: "24" });
+      const sandbox = await grantedSandbox(["bash"], cwd, env).createSandbox({ id: "agent-env" });
+      const seen = await sandbox.exec('printf %s "$MPLBACKEND,${MPLCONFIGDIR-unset},${NODE_VERSION-unset}"');
+
+      expect(seen.stdout).toBe("Agg,unset,unset");
+    } finally {
+      if (before === undefined) {
+        delete process.env["MPLCONFIGDIR"];
+      } else {
+        process.env["MPLCONFIGDIR"] = before;
+      }
+    }
   });
 });

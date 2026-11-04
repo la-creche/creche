@@ -14,6 +14,8 @@ import { PlaneUrl } from "./planes.js";
 import type { PlaneUrlFault } from "./planes.js";
 import { readRuntimeConfig } from "./runtime-config.js";
 import type { RuntimeConfig, RuntimeField } from "./runtime-config.js";
+import { readToolEnv } from "./tool-env.js";
+import type { ToolEnv } from "./tool-env.js";
 
 const SANDBOX_ENV = "AGENT_SANDBOX";
 const PLANE_ENV = { pep: "AGENT_PEP_URL", litellm: "AGENT_LITELLM_BASE_URL" } as const;
@@ -27,6 +29,8 @@ export interface FamilyConfig {
   readonly planes: { readonly pep: PlaneUrl; readonly litellm: PlaneUrl };
   readonly creds: FamilyCreds;
   readonly runtime: RuntimeConfig;
+  /** The names the agent adds to each tool's env (`src/tool-env.ts`). */
+  readonly toolEnv: ToolEnv;
 }
 
 export type ConfigRefusal =
@@ -105,6 +109,7 @@ export async function readFamilyConfig(
       planes: { pep: pep.url, litellm: litellm.url },
       creds: creds.creds,
       runtime: runtime.config,
+      toolEnv: readToolEnv(env),
     },
   };
 }

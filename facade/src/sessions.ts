@@ -51,15 +51,24 @@ import { META_CREATED, META_DELEGATION, META_JOB, META_TRIGGER } from "./vectors
 /** The longest title, in UTF-8 bytes. */
 export const MAX_TITLE_BYTES = 256;
 
+/** The longest cwd, in code points: `SessionCwd` of the wire (decision CH21). */
+export const MAX_CWD_CHARS = 4096;
+
 function refuse<T>(detail: string): Outcome<T> {
   return { ok: false, refusal: { kind: "invalid_params", detail } };
 }
 
-/** The first line of `text` with words, its white space folded, cut. */
+/**
+ * The first line of `text` with words, its white space folded, cut, or "".
+ * A title is a `SessionTitle` of the wire (decision CH21). JavaScript's `\s`
+ * and `trim` hold the white space of its pattern. The cut can end in a
+ * space, so the end is trimmed after the cut. A lone surrogate becomes
+ * U+FFFD, because no wire text holds one.
+ */
 export function titleOf(text: string): string {
-  const line = text.split("\n").find((one) => one.trim().length > 0) ?? "";
+  const line = text.toWellFormed().split("\n").find((one) => one.trim().length > 0) ?? "";
 
-  return cutToBytes(line.trim().replace(/\s+/g, " "), MAX_TITLE_BYTES);
+  return cutToBytes(line.trim().replace(/\s+/g, " "), MAX_TITLE_BYTES).trimEnd();
 }
 
 /**
@@ -70,6 +79,15 @@ export function titleOf(text: string): string {
 export function sessionFault(params: NewSessionRequest | LoadSessionRequest): string | null {
   if (!isAbsolute(params.cwd)) {
     return "cwd is not an absolute path";
+  }
+
+  // `SessionCwd` of the wire (decision CH21): no NUL, at most 4096 code points.
+  if (params.cwd.includes("\0")) {
+    return "cwd holds a NUL";
+  }
+
+  if ([...params.cwd].length > MAX_CWD_CHARS) {
+    return `cwd is over ${String(MAX_CWD_CHARS)} characters`;
   }
 
   if (params.mcpServers.length > 0) {

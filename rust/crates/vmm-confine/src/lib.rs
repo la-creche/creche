@@ -6,12 +6,15 @@
 //! of `creche-vmm-store` and never calls `creche-vmm`.
 
 pub mod admission;
+pub mod command;
 pub mod deny;
+pub mod family;
 pub mod faults;
 pub mod landlock;
 pub mod launch;
 pub mod leftovers;
 pub mod limits;
+pub mod output;
 pub mod rfc3339;
 pub mod scope;
 pub mod spawner;

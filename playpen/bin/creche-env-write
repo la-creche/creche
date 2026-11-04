@@ -1,0 +1,56 @@
+#!/bin/sh
+# BUILD — the last RUN of each flavor in playpen/Dockerfile runs it from a
+# bind mount, so the image keeps no copy:
+#   creche-env-write NAME... > /etc/creche/env
+#
+# It prints one `NAME=value` line for each name, from its own environment,
+# sorted by name in byte order. PATH keeps the first copy of each folder.
+#
+# WHY A FILE. A root disk made from `buildx --output type=tar` carries no
+# image config, so the guest has no `ENV` lines to read. Guest init reads
+# this file instead and parses it strictly (CH7-7, CH49).
+#
+# WHY A NAME LIST. A build step sees more than the image config: the `ARG`
+# values in scope, also from a parent stage, and a `HOME` that BuildKit
+# adds. So the file names only what the Dockerfile lists, and
+# `playpen-env-check` compares it with the built image's config in CI. A new
+# `ENV` name, or one that the parent image adds, fails there until it is
+# listed here.
+#
+# Exit 1 for a name that is not a variable name, a name listed twice, a name
+# that is unset, and a value with a line break.
+set -eu
+
+die() { printf 'creche-env-write: %s\n' "$*" >&2; exit 1; }
+
+[ "$#" -gt 0 ] || die "no name"
+
+newline='
+'
+# The lines go into a variable first: a `die` inside a pipe would end only
+# the pipe, and `sort` would still exit 0.
+lines=""
+listed=""
+for name in "$@"; do
+  case "$name" in
+    [!A-Za-z_]* | *[!A-Za-z0-9_]*) die "$name is not a variable name" ;;
+  esac
+  case " $listed " in
+    *" $name "*) die "$name is listed twice" ;;
+  esac
+  listed="$listed $name"
+  # The x keeps a line break at the end of the value: a command
+  # substitution drops trailing line breaks. printenv adds one, cut here.
+  value="$(printenv "$name" && printf x)" || die "$name is not set"
+  value="${value%x}"
+  value="${value%"$newline"}"
+  case "$value" in
+    *"$newline"*) die "the value of $name holds a line break" ;;
+  esac
+  if [ "$name" = PATH ]; then
+    value="$(printf '%s\n' "$value" | tr ':' '\n' | awk '!seen[$0]++' | paste -sd: -)"
+  fi
+  lines="$lines$name=$value$newline"
+done
+# Sort on the name alone: on the whole line, `A1=` sorts before `A=`.
+printf '%s' "$lines" | LC_ALL=C sort -t= -k1,1

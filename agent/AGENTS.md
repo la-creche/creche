@@ -116,6 +116,16 @@ A credential is a `Secret` (`src/secret.ts`). Only the `auth` of the `ch`
 connection and the `auth` of the LiteLLM provider unwrap it.
 `test/secret.test.ts` holds that list.
 
+## Environment of a tool process
+
+Flue's `local()` copies only 14 names from `process.env` into a tool
+process (`FLUE_ENV`). The agent adds the names of `TOOL_ENV` that are set,
+and the targets of `TOOL_RENAME` (`src/tool-env.ts`, decision CH49).
+`FACADE_ENV` names never reach a tool. `test/tool-env.test.ts` puts each
+`ENV` name of a shipped stage of `playpen/Dockerfile` in exactly one list.
+A new `ENV` line fails it until someone picks a list. The test reads the
+Dockerfile only, not the built env with the parent image's names.
+
 ## Known gaps
 
 - Contract 03 §7 gives the two plane URLs as fixed values. The playpen
