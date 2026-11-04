@@ -19,7 +19,10 @@ Cases:
 3. Each refusal: a tree with no program, a tree with another thing, a walk
    fault, a build fault, each of the three limits, a row that is not in the
    line form, and a path of a variable that is not absolute.
-4. `bin/lib/artifactrows.sh` is the one reader of the line form. Its own
+4. The plan: the script builds only the rows that `ARTIFACT_PLANNED` names.
+   No planned row builds nothing, and a planned name with no row stops the
+   run.
+5. `bin/lib/artifactrows.sh` is the one reader of the line form. Its own
    test, `test_artifactrows.py`, holds each text that it refuses.
 """
 
@@ -69,6 +72,7 @@ UNIT_SEPARATOR: Final = "\x1f"
 
 #: The first line that the script prints with no row.
 NO_ROW: Final = "build-artifacts: no binary component"
+NO_PLANNED_ROW: Final = "build-artifacts: no planned binary component"
 
 #: The step output with no row, and its form with a text.
 OUTPUT_END: Final = "END_OF_DIGESTS"
@@ -214,6 +218,7 @@ class Build:
             "RUNNER_TEMP": str(self.temp),
             "GITHUB_OUTPUT": str(self.output),
             "ARTIFACT_REPO": THIS_REPOSITORY,
+            "ARTIFACT_PLANNED": COMPONENT,
             "ARTIFACT_OUT": str(self.out),
             "RELEASE_CLI": str(cli),
             "STUB_LOG": str(self.log),
@@ -269,7 +274,7 @@ def test_no_row_builds_nothing_and_gives_an_empty_digest_list(tmp_path: Path) ->
     """The catalog of today holds no binary component. The job then prints
     one line and passes. Each upload holds `SHA256SUMS`, because the next
     job cannot download an artifact that does not exist."""
-    run = Build(tmp_path, "")
+    run = Build(tmp_path, "", ARTIFACT_PLANNED="")
 
     assert run.done.returncode == 0, run.said
     assert run.done.stdout == f"{NO_ROW}\n"
@@ -447,13 +452,58 @@ def test_no_word_of_a_command_passes_through_a_shell(tmp_path: Path) -> None:
 def test_two_rows_add_one_target_and_write_two_lines(tmp_path: Path) -> None:
     other = f"other-{BINARY_TARGET}{ARCHIVE_SUFFIX}"
     second = _row(component="other", archive=other, bundle=f"{other}{BUNDLE_SUFFIX}")
-    run = Build(tmp_path, _row() + second)
+    run = Build(tmp_path, _row() + second, ARTIFACT_PLANNED=f"other {COMPONENT}")
     adds = [call for call in run.calls("rustup") if call[2:4] == ["target", "add"]]
 
     assert run.done.returncode == 0, run.said
     assert len(adds) == 1
     assert len(run.calls("cargo")) == 2
     assert [line.split("  ")[1] for line in run.digests.splitlines()] == [ARCHIVE, other]
+
+
+@pytest.mark.parametrize("planned", [None, "", " "], ids=["unset", "empty", "a-space"])
+def test_no_planned_row_builds_nothing(tmp_path: Path, planned: str | None) -> None:
+    """The job `plan` names no binary component with a tag in this run. The
+    script then reads the rows, builds nothing and writes an empty digest
+    list, as with no row."""
+    run = Build(tmp_path, _row(), ARTIFACT_PLANNED=planned)
+
+    assert run.done.returncode == 0, run.said
+    assert run.done.stdout == f"{NO_PLANNED_ROW}\n"
+    assert len(run.calls("handover")) == 1
+    assert run.calls("rustup") == []
+    assert run.calls("cargo") == []
+    assert sorted(path.name for path in run.out.iterdir()) == ["SHA256SUMS"]
+    assert run.digests == ""
+    assert run.output.read_text(encoding="utf-8") == EMPTY_OUTPUT
+
+
+@needs_sha256sum
+def test_only_the_planned_rows_are_built(tmp_path: Path) -> None:
+    """Two rows, and the plan names one. Only its target is added, and only
+    its archive is in the digest list."""
+    other = f"other-{BINARY_TARGET}{ARCHIVE_SUFFIX}"
+    second = _row(component="other", archive=other, bundle=f"{other}{BUNDLE_SUFFIX}")
+    run = Build(tmp_path, _row() + second, ARTIFACT_PLANNED="other")
+    adds = [call[-1] for call in run.calls("rustup") if call[2:4] == ["target", "add"]]
+
+    assert run.done.returncode == 0, run.said
+    assert Path(run.tree()).name == "other"
+    assert adds == [BINARY_TARGET]
+    assert [line.split("  ")[1] for line in run.digests.splitlines()] == [other]
+    assert sorted(path.name for path in run.out.iterdir()) == sorted([other, "SHA256SUMS"])
+
+
+@pytest.mark.parametrize("planned", ["vmm", f"{COMPONENT} vmm", "*", "agent-*"])
+def test_a_planned_name_with_no_row_stops_the_run(tmp_path: Path, planned: str) -> None:
+    """The plan and the catalog do not agree. A name is a word and no
+    pattern: `*` names no row."""
+    run = Build(tmp_path, _row(), ARTIFACT_PLANNED=planned)
+
+    _refused(run)
+    assert run.done.stderr.startswith("build-artifacts: the planned component ")
+    assert run.done.stderr.endswith(" has no row\n")
+    assert run.calls("rustup") == []
 
 
 def test_the_build_takes_no_rustflags_of_its_caller(tmp_path: Path) -> None:
@@ -697,4 +747,7 @@ def test_the_script_is_a_ci_script_of_bash_3_2() -> None:
 
     assert head[0] == "#!/usr/bin/env bash"
     assert head[1].startswith("# CI:")
-    assert head[2].strip() == "#   ARTIFACT_REPO=creche ARTIFACT_OUT=<dir> bin/build-artifacts.sh"
+    assert head[2].strip() == (
+        "#   ARTIFACT_REPO=creche ARTIFACT_PLANNED=<names> ARTIFACT_OUT=<dir>"
+        " bin/build-artifacts.sh"
+    )

@@ -18,8 +18,10 @@
 #           │                      the systemd of the runner, for a push
 #           │                      that touches systemd/
 #           └── artifacts ── sign
-#                           the archive of each binary component, then the
-#                           keyless signature of each archive
+#                           the archive of each binary component that the
+#                           plan tags, then the keyless signature of each
+#                           archive
+#   plan ───────┘          the binary components that get a tag in this run
 #                                 └── release   tags + Releases, only when
 #                                               every job passed
 #
@@ -65,15 +67,16 @@
 # run passed, skips the one step of the `systemd-proof` job (`--unchanged` of
 # bin/systemd-proof.sh). The job is still a success.
 #
-# A BINARY COMPONENT SHIPS AN ARCHIVE AND ITS SIGNATURE. The `artifacts` job
-# builds the archive of each binary component of the catalog
+# A BINARY COMPONENT SHIPS AN ARCHIVE AND ITS SIGNATURE. The `plan` job
+# asks the dry run of the tag script which binary component gets a tag in
+# this run. The `artifacts` job builds the archive of each such component
 # (bin/build-artifacts.sh), at each push and in each scope. The `sign` job
 # signs each archive with a keyless Sigstore signature. The `release` job
 # takes both workflow artifacts, and the tag script attaches the two files to
 # the Release of the component after cosign passed the signature
-# (handover/bin/allocate-tags.sh). With no binary component the two jobs
-# build nothing, sign nothing and pass, and the `release` job fetches no
-# cosign.
+# (handover/bin/allocate-tags.sh). With no planned binary component the two
+# jobs build nothing, sign nothing and pass, and the `release` job fetches
+# no cosign.
 #
 # EACH SIGNATURE IS PUBLIC AND PERMANENT. It writes one record to the
 # transparency log of the public Sigstore instance. The record names this
@@ -541,14 +544,75 @@ jobs:
       - run: bin/systemd-proof.sh
         if: needs.scope.outputs.systemd != 'false'
 
-  # The archive of each binary component: bin/build-artifacts.sh. No pull
-  # request runs this job, and gate.yml has no copy of it. Each push builds
-  # each binary row, in each scope, because each run can tag a component
-  # that an older run missed (handover/bin/allocate-tags.sh). With no binary
-  # component the script prints one line, and the upload holds an empty
-  # SHA256SUMS.
+  # The plan gate: the binary components that get a tag in this run. The
+  # dry run of the tag script prints `would attach <asset> to
+  # <component>-vX.Y.Z` for each asset of each binary component that it
+  # would tag (handover/bin/allocate-tags.sh). The job output `components`
+  # names each such component, one word each, and the `artifacts` job builds
+  # only those. So CI builds and signs a binary component only when a tag of
+  # it is planned. The job holds no catalog copy: the tag script asks the
+  # catalog.
+  #
+  # The `release` job plans again when it tags. Tags only grow between the
+  # two plans, so the `release` job tags no binary component that this plan
+  # left out.
+  #
+  # A dry run that fails does not fail the job. The tag step reads the same
+  # tree, and it refuses each component that it cannot tag and tags each
+  # other one, as before this gate. A binary component that this plan left
+  # out has no archive, so the tag step refuses it and the run ends red.
+  #
+  # The dry run reads no pull request: the job has no token in its env. The
+  # level of a tag does not change whether the tag is planned.
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      components: ${{ steps.plan.outputs.components }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Every tag and the history: the newest tag of each component is
+          # the base of its range.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          enable-cache: false
+
+      # TAG_REPO: the catalog's name for this repository, as the tag step
+      # gives it.
+      - name: plan
+        id: plan
+        env:
+          TAG_REPO: creche
+        run: |
+          set -euo pipefail
+          status=0
+          handover/bin/allocate-tags.sh --dry-run > "$RUNNER_TEMP/plan" || status=$?
+          cat "$RUNNER_TEMP/plan"
+          if [[ "$status" != 0 ]]; then
+            echo "::warning::the dry run ended with status $status. The plan holds the lines that it printed."
+          fi
+          attach='^would attach [^ ]+ to ([a-z][a-z0-9-]*)-v[0-9]+[.][0-9]+[.][0-9]+$'
+          components=""
+          while IFS= read -r line; do
+            if [[ "$line" =~ $attach && " $components " != *" ${BASH_REMATCH[1]} "* ]]; then
+              components="${components:+$components }${BASH_REMATCH[1]}"
+            fi
+          done < "$RUNNER_TEMP/plan"
+          echo "components=$components" >> "$GITHUB_OUTPUT"
+          echo "plan: ${components:-no binary component}"
+
+  # The archive of each binary component that the plan tags:
+  # bin/build-artifacts.sh. No pull request runs this job, and gate.yml has
+  # no copy of it. Each push builds each planned row, in each scope, because
+  # each run can tag a component that an older run missed
+  # (handover/bin/allocate-tags.sh). With no planned row the script prints
+  # one line, and the upload holds an empty SHA256SUMS.
   artifacts:
-    needs: scope
+    needs: [scope, plan]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     outputs:
@@ -565,11 +629,13 @@ jobs:
           enable-cache: false
 
       # ARTIFACT_REPO: the catalog's name for this repository. TAG_REPO of
-      # the tag step holds the same name.
+      # the tag step holds the same name. ARTIFACT_PLANNED: the components
+      # of the plan.
       - name: build
         id: build
         env:
           ARTIFACT_REPO: creche
+          ARTIFACT_PLANNED: ${{ needs.plan.outputs.components }}
           ARTIFACT_OUT: ${{ runner.temp }}/artifacts
         run: bin/build-artifacts.sh
 
@@ -699,10 +765,10 @@ jobs:
   # `always()`: on a docs push `tests`, `agent`, `facade`, `proc`, `suites`,
   # `playpen-image`, `rust` and `systemd-proof` are skipped. A job that needs one is
   # skipped by default. The verdict step is
-  # what holds the tags back when a job failed. The `artifacts` job and the
-  # `sign` job run in each scope, so the verdict needs their success.
+  # what holds the tags back when a job failed. The `plan`, `artifacts` and
+  # `sign` jobs run in each scope, so the verdict needs their success.
   release:
-    needs: [scope, lint, tests, agent, facade, proc, suites, memory, playpen-image, rust, systemd-proof, artifacts, sign]
+    needs: [scope, lint, tests, agent, facade, proc, suites, memory, playpen-image, rust, systemd-proof, plan, artifacts, sign]
     if: always()
     runs-on: ubuntu-24.04
     permissions:

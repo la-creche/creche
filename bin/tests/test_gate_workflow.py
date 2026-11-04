@@ -27,8 +27,11 @@ shared verdict (`.github/actions/verdict`), so a PR and its release cannot
 judge the same results differently. Its tag step runs only after that
 verdict, one allocation at a time, and only its last job may write.
 
-The release has jobs that the gate has not. The `artifacts` job builds the
-archive of each binary component (`bin/build-artifacts.sh`), in each scope.
+The release has jobs that the gate has not. The `plan` job names each
+binary component that gets a tag in the run, from the dry run of the tag
+script. The `artifacts` job builds the archive of each such component
+(`bin/build-artifacts.sh`), in each scope. The tests run the text of the
+plan step against a stand-in dry run.
 The `sign` job signs each archive. It holds the identity token, and each
 word that it runs is in the workflow file. The `release` job takes both
 workflow artifacts and cosign, and the tag step gets `ASSET_DIR` and
@@ -221,8 +224,12 @@ ARTIFACTS_JOB = "artifacts"
 #: The job of the release that signs each archive.
 SIGN_JOB = "sign"
 
+#: The job of the release that names each binary component with a planned
+#: tag.
+PLAN_JOB = "plan"
+
 #: The jobs that only the release has.
-RELEASE_ONLY = {ARTIFACTS_JOB, SIGN_JOB}
+RELEASE_ONLY = {PLAN_JOB, ARTIFACTS_JOB, SIGN_JOB}
 
 #: The jobs of each file with no rule of their own. The verdict needs a
 #: success from each of them in each scope.
@@ -251,7 +258,11 @@ ARTIFACTS_KEYS = {"needs", "runs-on", "timeout-minutes", "outputs", "steps"}
 ARTIFACTS_OUTPUTS = {"digests": "${{ steps.build.outputs.digests }}"}
 
 #: The variables of the build step, each one.
-BUILD_STEP_ENV = {"ARTIFACT_REPO": THIS_REPOSITORY, "ARTIFACT_OUT": ARTIFACT_DIR}
+BUILD_STEP_ENV = {
+    "ARTIFACT_REPO": THIS_REPOSITORY,
+    "ARTIFACT_PLANNED": "${{ needs.plan.outputs.components }}",
+    "ARTIFACT_OUT": ARTIFACT_DIR,
+}
 
 #: The steps of the job, as a whole. The checkout keeps no token in the
 #: clone, because a build script runs here. The step that takes uv keeps no
@@ -269,6 +280,43 @@ ARTIFACTS_STEPS = [
             "retention-days": RETENTION_DAYS,
         },
     },
+]
+
+#: Each key of the `plan` job. No `needs` and no `if`: it runs in each scope,
+#: beside the scope job. No `permissions`: it holds the read-only token of
+#: its file.
+PLAN_KEYS = {"runs-on", "timeout-minutes", "outputs", "steps"}
+
+#: The one output of the job: the components of the plan step.
+PLAN_OUTPUTS = {"components": "${{ steps.plan.outputs.components }}"}
+
+#: The whole text of the plan step. A dry run that fails leaves the plan
+#: with the lines that it printed, and the tag step judges the rest.
+PLAN_RUN = """\
+set -euo pipefail
+status=0
+handover/bin/allocate-tags.sh --dry-run > "$RUNNER_TEMP/plan" || status=$?
+cat "$RUNNER_TEMP/plan"
+if [[ "$status" != 0 ]]; then
+  echo "::warning::the dry run ended with status $status. The plan holds the lines that it printed."
+fi
+attach='^would attach [^ ]+ to ([a-z][a-z0-9-]*)-v[0-9]+[.][0-9]+[.][0-9]+$'
+components=""
+while IFS= read -r line; do
+  if [[ "$line" =~ $attach && " $components " != *" ${BASH_REMATCH[1]} "* ]]; then
+    components="${components:+$components }${BASH_REMATCH[1]}"
+  fi
+done < "$RUNNER_TEMP/plan"
+echo "components=$components" >> "$GITHUB_OUTPUT"
+echo "plan: ${components:-no binary component}"
+"""
+
+#: The steps of the `plan` job, as a whole. The checkout takes every tag and
+#: keeps no token. The dry run gets the catalog name and no token.
+PLAN_STEPS = [
+    {"uses": CHECKOUT_ACTION, "with": {"fetch-depth": 0, "persist-credentials": False}},
+    {"uses": SETUP_UV, "with": {"enable-cache": False}},
+    {"name": PLAN_JOB, "id": PLAN_JOB, "env": {"TAG_REPO": THIS_REPOSITORY}, "run": PLAN_RUN},
 ]
 
 #: The text that takes cosign. The `sign` job and the `release` job hold it.
@@ -713,12 +761,103 @@ def test_the_artifacts_job_is_pinned_as_a_whole() -> None:
     job = RELEASE_JOBS[ARTIFACTS_JOB]
 
     assert set(job) == ARTIFACTS_KEYS
-    assert job["needs"] == "scope"
+    assert job["needs"] == ["scope", PLAN_JOB]
     assert job["runs-on"] == "ubuntu-24.04"
     assert 0 < job["timeout-minutes"] <= 30
     assert job["outputs"] == ARTIFACTS_OUTPUTS
     assert job["steps"] == ARTIFACTS_STEPS
     assert (REPO / "bin" / "build-artifacts.sh").is_file()
+
+
+def test_the_plan_job_is_pinned_as_a_whole() -> None:
+    """The job holds the whole text of its run step. It needs no job, so
+    no failed job before it can leave the plan out. The tag step and the
+    plan name one catalog repository."""
+    job = RELEASE_JOBS[PLAN_JOB]
+
+    assert set(job) == PLAN_KEYS
+    assert job["runs-on"] == "ubuntu-24.04"
+    assert 0 < job["timeout-minutes"] <= 10
+    assert job["outputs"] == PLAN_OUTPUTS
+    assert job["steps"] == PLAN_STEPS
+    assert _step(RELEASE_JOBS, RELEASE_NAME, TAG_STEP)["env"]["TAG_REPO"] == THIS_REPOSITORY
+
+
+#: A stand-in tag script: it prints the file STUB_PLAN and ends with
+#: STUB_STATUS.
+DRY_RUN_STUB = """#!/usr/bin/env bash
+[[ "$*" == "--dry-run" ]] || exit 9
+cat "$STUB_PLAN"
+exit "${STUB_STATUS:-0}"
+"""
+
+#: The lines of a dry run that plans one venv tag and one tag of `vmm`.
+VMM_PLAN = """\
+repo:    creche
+create caregiver-v0.1.67 0.1.66 patch
+create vmm-v0.1.0 - first
+would create caregiver-v0.1.67 on abc and publish its Release
+would create vmm-v0.1.0 on abc and publish its Release
+would attach vmm-x86_64-unknown-linux-musl.tar.gz to vmm-v0.1.0
+would attach vmm-x86_64-unknown-linux-musl.tar.gz.sigstore.json to vmm-v0.1.0
+"""
+
+#: (the lines of the dry run, its status, the output `components`).
+PLANS = {
+    "no-tag": ("allocate-tags: 0 created\n", "0", ""),
+    "a-venv-tag-only": (VMM_PLAN.split("would create vmm")[0], "0", ""),
+    "a-vmm-tag": (VMM_PLAN, "0", "vmm"),
+    "two-binary-tags": (
+        VMM_PLAN + "would attach other-x.tar.gz to other-v1.2.3\n",
+        "0",
+        "vmm other",
+    ),
+    "a-dry-run-that-fails-after-its-plan": (VMM_PLAN, "1", "vmm"),
+    "a-dry-run-that-fails-first": ("", "1", ""),
+    "lines-in-another-form": (
+        "would attach a b to vmm-v1.2.3\nwould attach a to vmm-v1.2\n"
+        "would attach a to Vmm-v1.2.3\n would attach a to vmm-v1.2.3\n",
+        "0",
+        "",
+    ),
+}
+
+
+@pytest.mark.parametrize(("lines", "status", "components"), PLANS.values(), ids=PLANS)
+def test_the_plan_step_names_each_binary_component_with_a_planned_tag(
+    tmp_path: Path, lines: str, status: str, components: str
+) -> None:
+    """The step reads the `would attach` lines of the dry run. A line in
+    another form names no component. The step passes also when the dry run
+    fails: the tag step judges the same tree."""
+    script = tmp_path / "handover" / "bin" / "allocate-tags.sh"
+    script.parent.mkdir(parents=True)
+    script.write_text(DRY_RUN_STUB, encoding="utf-8")
+    script.chmod(0o755)
+    plan = tmp_path / "given-plan"
+    plan.write_text(lines, encoding="utf-8")
+    output = tmp_path / "output"
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    done = subprocess.run(
+        ["bash", "-c", PLAN_RUN],
+        cwd=tmp_path,
+        env={
+            "PATH": os.environ["PATH"],
+            "RUNNER_TEMP": str(temp),
+            "GITHUB_OUTPUT": str(output),
+            "STUB_PLAN": str(plan),
+            "STUB_STATUS": status,
+        },
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert output.read_text(encoding="utf-8") == f"components={components}\n"
+    assert done.stdout.startswith(lines)
+    assert ("::warning::" in done.stdout) == (status != "0")
 
 
 def test_the_artifacts_job_takes_uv_at_the_pin_of_the_release_job() -> None:
@@ -1699,6 +1838,10 @@ RELEASE_CASES: list[tuple[str | None, dict[str, str], bool]] = [
     ("code", {SIGN_JOB: "skipped"}, False),
     ("docs", DOCS | {SIGN_JOB: "cancelled"}, False),
     ("docs", DOCS | {SIGN_JOB: "success"}, True),
+    # No plan: the archives of the run are not known.
+    ("code", {PLAN_JOB: "failure"}, False),
+    ("code", {PLAN_JOB: "skipped"}, False),
+    ("docs", DOCS | {PLAN_JOB: "success"}, True),
 ]
 
 #: (what the jobs did, whether the last job is green)
