@@ -254,9 +254,9 @@ fn a_failed_sigkill_is_an_error() {
     assert!(lock, "api.sock.lock is gone");
 }
 
-/// A process that outlives SIGKILL gets `KILL_WAIT`, then the stop gives
-/// `Hung`, so it ends within the 60 s wait of the client (decisions CH33
-/// rule 11, CH34 rule 5).
+/// A process that outlives SIGKILL gets `KILL_WAIT` (1 s), then the stop
+/// gives `Hung`, so it ends near 36 s, well within the 60 s wait of the
+/// client (decisions CH33 rule 11, CH34 rule 5, CH50 rule 4).
 #[test]
 fn a_process_that_outlives_sigkill_is_hung() {
     let (stopped, steps, lock) = try_stop("hung", "never", true, Fails::default());
@@ -265,7 +265,7 @@ fn a_process_that_outlives_sigkill_is_hung() {
         steps,
         [("stop", secs(0)), ("term", secs(30)), ("kill", secs(35))]
     );
-    assert_eq!(KILL_WAIT, secs(5));
+    assert_eq!(KILL_WAIT, secs(1));
     assert!(lock, "api.sock.lock is gone");
 }
 

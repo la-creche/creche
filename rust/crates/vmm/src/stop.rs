@@ -16,7 +16,7 @@ use std::time::Duration;
 use creche_vmm_confine::spawner::Launched;
 use creche_vmm_store::layout::VmRunDir;
 use creche_vmm_store::stale::{StaleError, remove_stale};
-use creche_wire::{DROP_SIGTERM_GRACE, DROP_STOP_WAIT};
+use creche_wire::{DROP_CLIENT_TIMEOUT, DROP_SIGTERM_GRACE, DROP_STOP_WAIT};
 use tokio::task::spawn_blocking;
 use tokio::time::{Instant, sleep, timeout_at};
 
@@ -26,15 +26,22 @@ use crate::control::{ControlError, ControlLink};
 /// Only the vmm reads it, so a change costs one constant.
 const EXIT_POLL: Duration = Duration::from_millis(10);
 
-/// The longest wait for the exit after SIGKILL. A process in the D state
-/// can outlive SIGKILL for a while.
-// CONTRACT-QUESTION: no row sets this wait, or what a stop answers when
-// the process outlives it. Decision CH33 rule 11 bounds a drop at about
-// 35 s, and decision CH34 rule 5 gives the client 60 s. The narrowest
-// reading bounds the wait, so a stop ends within 40 s, inside the wait of
-// the client. Past it the stop gives `StopError::Hung` and removes no
-// file. AGENTS.md lists it in Known gaps.
-pub const KILL_WAIT: Duration = Duration::from_secs(5);
+/// The longest wait for the exit after SIGKILL (decision CH50 rule 4:
+/// 1 s). A normal SIGKILL ends Cloud Hypervisor in milliseconds (facts 76
+/// and 80). Only a process in the D state outlives it. Past it the stop
+/// gives `StopError::Hung` and removes no file.
+pub const KILL_WAIT: Duration = Duration::from_secs(1);
+
+// Decision CH50 rule 4: the worst case of a stop is 30 + 5 + 1 = 36 s.
+// That is the "about 35 s at most" of decision CH33 rule 11, and it ends
+// well inside the 60 s wait of the client (decision CH34 rule 5). The
+// write of `stop` counts inside `DROP_STOP_WAIT` (decision CH50 rule 3),
+// so it adds no time.
+const _: () = assert!(
+    DROP_STOP_WAIT.as_secs() + DROP_SIGTERM_GRACE.as_secs() + KILL_WAIT.as_secs() <= 36
+        && DROP_CLIENT_TIMEOUT.as_secs() > 36,
+    "a stop ends within about 35 s, and a client waits longer",
+);
 
 /// The link that carries the graceful stop. `ControlLink` is the one of
 /// the vmm, and a test gives a fake.
@@ -108,7 +115,12 @@ pub enum StopError {
     Wait(io::Error),
     /// SIGKILL failed, so the process may still run.
     Kill(io::Error),
-    /// The process did not exit within `KILL_WAIT` after SIGKILL.
+    /// The process did not exit within `KILL_WAIT` after SIGKILL. The
+    /// process may still hold the guest RAM.
+    // Decision CH50 rule 4: the drop route of plan PR L15 maps `Hung` to
+    // `internal` 500 and keeps the row, so a retried drop finishes the
+    // job. The vmm logs the pid of the hung process, and admission keeps
+    // counting the RAM of the VM.
     Hung,
     /// The removal of a stale file failed.
     Stale(StaleError),
