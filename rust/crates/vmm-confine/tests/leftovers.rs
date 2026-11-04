@@ -112,6 +112,18 @@ fn a_failed_leftover_is_reset() {
 }
 
 #[test]
+fn every_failed_leftover_is_reset_in_one_call() {
+    let first = line(A, "active running") + &line(B, "active running");
+    let second = line(A, "failed failed") + &line(B, "failed failed");
+    let fake = Fake::new("reset-two", &[&first, &second, ""], 0);
+    assert_eq!(fake.stop_all().unwrap(), [A, B]);
+    let stop = format!("--user stop -- {A} {B}");
+    let reset = format!("--user reset-failed -- {A} {B}");
+    let expected = [LIST, stop.as_str(), LIST, reset.as_str(), LIST];
+    assert_eq!(fake.calls(), expected);
+}
+
+#[test]
 fn a_unit_still_loaded_at_the_end_is_an_error() {
     let first = line(A, "active running") + &line(B, "active running");
     let stuck = line(B, "failed failed");
@@ -120,6 +132,10 @@ fn a_unit_still_loaded_at_the_end_is_an_error() {
         Err(LeftoverError::Remaining(units)) => assert_eq!(units, [B]),
         other => panic!("expected Remaining, got {other:?}"),
     }
+    let stop = format!("--user stop -- {A} {B}");
+    let reset = format!("--user reset-failed -- {B}");
+    let expected = [LIST, stop.as_str(), LIST, reset.as_str(), LIST];
+    assert_eq!(fake.calls(), expected);
 }
 
 #[test]

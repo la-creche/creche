@@ -4,7 +4,8 @@
 //! egress edit. A failure is the fault `egress_assert_failed` (decisions
 //! CH6-3, CH21-1). The check has two parts:
 //!
-//! 1. The command line of the Cloud Hypervisor process has no argument
+//! 1. The first argument of the command line is the payload program, so
+//!    the process is the running CH. The command line has no argument
 //!    that starts with `--net` (decision CH8-1, fact 44). A boot has
 //!    exactly one `--vsock`. A restore has none, because CH v54 takes
 //!    every device of a restore from the snapshot and refuses a device
@@ -30,6 +31,7 @@ use creche_vmm_store::layout::VmRunDir;
 use creche_wire::HostPort;
 
 use crate::landlock::Start;
+use crate::launch::Program;
 
 /// The prefix of every argument that adds a network card (fact 44).
 const NET: &[u8] = b"--net";
@@ -43,6 +45,10 @@ const VSOCK: &[u8] = b"--vsock";
 pub enum EgressAssertFailed {
     /// The command line of the CH process did not read.
     Cmdline(io::Error),
+    /// The first argument is not the payload program. The pid still runs
+    /// the launch step or `systemd-run`, or CH has exited: the command
+    /// line of a zombie reads as empty.
+    NotCh,
     /// An argument starts with `--net` (decision CH8-1).
     Net,
     /// The command line has this many `--vsock` arguments. A boot needs
@@ -60,6 +66,7 @@ impl fmt::Display for EgressAssertFailed {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Cmdline(error) => write!(formatter, "reading the CH command line: {error}"),
+            Self::NotCh => formatter.write_str("the pid does not run the CH program"),
             Self::Net => formatter.write_str("the CH command line adds a network card"),
             Self::Vsock(count) => write!(formatter, "the CH command line has {count} --vsock"),
             Self::RunDir(error) => write!(formatter, "reading the VM run dir: {error}"),
@@ -79,27 +86,35 @@ pub fn cmdline_of(pid: u32) -> PathBuf {
 }
 
 /// Checks the CH process whose command line is in `cmdline` and the run
-/// directory `run` against the host ports in `bound`. Run it after CH is
-/// up: before its exec, the pid holds `vmm launch` with no `--vsock`, so a
-/// boot check fails closed.
+/// directory `run` against the host ports in `bound`. `payload` is the
+/// program of the launch, the CH binary. Run it after CH is up: before the
+/// exec of CH, and after CH exits, the first argument is not `payload`, so
+/// the check fails closed for a boot and for a restore.
 ///
 /// # Errors
 ///
 /// The first `EgressAssertFailed` that the check finds.
 pub fn check(
     cmdline: &Path,
+    payload: &Program,
     start: &Start,
     run: &VmRunDir,
     bound: &[HostPort],
 ) -> Result<(), EgressAssertFailed> {
     let bytes = fs::read(cmdline).map_err(EgressAssertFailed::Cmdline)?;
-    check_args(&bytes, start)?;
+    check_args(&bytes, payload, start)?;
     check_listeners(run, bound)
 }
 
 /// Part 1: the arguments, NUL-separated as in `/proc/<pid>/cmdline`.
-fn check_args(bytes: &[u8], start: &Start) -> Result<(), EgressAssertFailed> {
+fn check_args(bytes: &[u8], payload: &Program, start: &Start) -> Result<(), EgressAssertFailed> {
     let args = || bytes.split(|&byte| byte == 0);
+    // `systemd-run --scope` execs the payload with its full path as the
+    // first argument (`scope::Scope::systemd_run_args`).
+    let program = payload.path().as_os_str().as_encoded_bytes();
+    if bytes.is_empty() || args().next() != Some(program) {
+        return Err(EgressAssertFailed::NotCh);
+    }
     if args().any(|arg| arg.starts_with(NET)) {
         return Err(EgressAssertFailed::Net);
     }

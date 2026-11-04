@@ -6,8 +6,8 @@ The second file has the table of the three vmm crates.
 
 ## Rules
 
-- The code is synchronous. It uses std, plus `creche-wire`, `serde` and
-  `serde_json`. The PR D4 adds `sha2`. The crate uses no async runtime.
+- The code is synchronous. It uses std, plus `creche-wire`, `serde`,
+  `serde_json` and `sha2`. The crate uses no async runtime.
 - The crate never calls `creche-vmm-confine` or `creche-vmm`.
 
 ## Known gaps
