@@ -6,12 +6,14 @@ from collections.abc import Callable
 
 import pytest
 from attendance.ids import (
+    SESSION_CWD_MAX,
     SESSION_ID_MAX,
     UlidFactory,
     is_attachment,
     is_family,
     is_sandbox,
     is_session,
+    is_session_cwd,
     is_ulid,
     new_ulid,
 )
@@ -38,6 +40,17 @@ def test_session_form() -> None:
     assert not is_session("-leading-dash")
     assert not is_session("has/slash")
     assert not is_session("a" * (SESSION_ID_MAX + 1))
+
+
+def test_session_cwd_form() -> None:
+    """`SessionCwd` of the wire (decision CH21). The cap counts code points."""
+    astral = "/" + "\U0001d49c" * (SESSION_CWD_MAX - 1)
+
+    assert is_session_cwd("/")
+    assert is_session_cwd(astral)
+    assert not is_session_cwd("work")
+    assert not is_session_cwd("/a\0b")
+    assert not is_session_cwd(astral + "a")
 
 
 def test_sandbox_and_attachment_forms() -> None:

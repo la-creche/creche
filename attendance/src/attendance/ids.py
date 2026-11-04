@@ -30,6 +30,10 @@ _MILLIS_PER_SECOND = 1000
 # every prefixed form with room to spare: `auto-<ulid>` is 31 characters.
 SESSION_ID_MAX = 128
 
+# `SessionCwd` of the wire (decision CH21) caps a session cwd at 4096 code
+# points: `PATH_MAX` of Linux. `len` counts code points.
+SESSION_CWD_MAX = 4096
+
 _FAMILY_RE = re.compile(r"^[a-z][a-z0-9-]{1,30}\Z")
 _SESSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 _ULID_RE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}\Z")
@@ -127,3 +131,8 @@ _FACTORY = UlidFactory()
 def new_ulid() -> str:
     """A fresh ULID from the process-wide factory."""
     return _FACTORY.mint()
+
+
+def is_session_cwd(value: str) -> bool:
+    """A session cwd: a slash first, no NUL, at most SESSION_CWD_MAX code points."""
+    return value.startswith("/") and "\0" not in value and len(value) <= SESSION_CWD_MAX
