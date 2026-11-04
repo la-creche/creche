@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{sleep, spawn};
 use std::time::{Duration, Instant};
 
+use creche_vmm::control::READY_WAIT;
 use creche_vmm::handlers::acp::{Acp, StartFault, StartVm};
 use creche_vmm::relay::{AcpRelay, Door, DropMark, Relays};
 use creche_vmm::server::{Stop, run_routes};
@@ -96,12 +97,25 @@ mod fake {
 
     creche_vmm::routes!(Set);
 
+    /// How the fake guest answers a `CONNECT`.
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+    pub(super) enum Answer {
+        /// `OK` and `hello` in one write, then an echo.
+        #[default]
+        Echo,
+        /// A line that is not `OK <port>`, so the dial fails at once.
+        Refuse,
+        /// No answer at all, so the dial waits.
+        Silent,
+    }
+
     /// What the fake guest saw: each `CONNECT` line, and how many links
-    /// the vmm closed.
+    /// the vmm closed. `answer` sets the answer to the next `CONNECT`.
     #[derive(Debug, Default)]
     pub(super) struct Guest {
         pub(super) connects: Vec<String>,
         pub(super) closes: usize,
+        pub(super) answer: Answer,
     }
 
     /// Reads the `hello` that the fake guest sends right after `OK`.
@@ -111,9 +125,9 @@ mod fake {
         assert_eq!(&hello, b"hello\n");
     }
 
-    /// Plays Cloud Hypervisor and guest port 1201 on `path`: each link
-    /// gets `OK` and `hello` in one write, then an echo until the vmm
-    /// closes it.
+    /// Plays Cloud Hypervisor and guest port 1201 on `path`. Each link
+    /// gets the answer that `Guest::answer` sets. Then the guest echoes
+    /// until the vmm closes the link.
     fn guest(path: &Path, seen: Arc<Mutex<Guest>>) {
         let listener = UnixListener::bind(path).unwrap();
         spawn(move || {
@@ -126,8 +140,17 @@ mod fake {
                         line.push(byte[0]);
                     }
                     let line = String::from_utf8(line).unwrap();
-                    seen.lock().unwrap().connects.push(line);
-                    stream.write_all(b"OK 1073741824\nhello\n").unwrap();
+                    let answer = {
+                        let mut seen = seen.lock().unwrap();
+                        seen.connects.push(line);
+                        seen.answer
+                    };
+                    match answer {
+                        Answer::Echo => stream.write_all(b"OK 1073741824\nhello\n").unwrap(),
+                        // The vmm may close the link before it reads this.
+                        Answer::Refuse => drop(stream.write_all(b"ERR\n")),
+                        Answer::Silent => {}
+                    }
                     let mut buffer = [0_u8; 65536];
                     while let Ok(read @ 1..) = stream.read(&mut buffer) {
                         if stream.write_all(&buffer[..read]).is_err() {
@@ -254,7 +277,7 @@ mod fake {
     }
 }
 
-use fake::{Server, hello};
+use fake::{Answer, Server, hello};
 
 /// Asserts that the relay closed `stream`. The `hello` of the guest may
 /// come first.
@@ -325,6 +348,64 @@ fn a_half_close_keeps_the_reply_of_the_guest() {
     eventually(|| server.guest.lock().unwrap().closes == 1);
     let id: SessionId = A.parse().unwrap();
     eventually(|| matches!(server.relays.door(&id), Door::ClosedAt(_)));
+    server.end();
+}
+
+/// A dial of guest port 1201 that fails after 101 closes the client
+/// stream and frees the session. The door records the close.
+// The narrow reading of the CONTRACT-QUESTION in `AcpRelay::run`.
+#[test]
+fn a_failed_dial_closes_the_client_stream() {
+    let server = Server::start("acp-dial-refused");
+    server.guest.lock().unwrap().answer = Answer::Refuse;
+    let (status, _, stream) = server.upgrade("chat", A);
+    assert_eq!(status, 101);
+    closed(stream);
+    let id: SessionId = A.parse().unwrap();
+    eventually(|| matches!(server.relays.door(&id), Door::ClosedAt(_)));
+    server.guest.lock().unwrap().answer = Answer::Echo;
+    let (status, _, mut stream) = server.upgrade("chat", A);
+    assert_eq!(status, 101);
+    hello(&mut stream);
+    assert_eq!(server.guest.lock().unwrap().connects.len(), 2);
+    server.end();
+}
+
+/// A drop during the dial stops it at once, well before `READY_WAIT`
+/// (decision CH26 rule 5).
+#[test]
+fn a_drop_during_the_dial_closes_the_client_stream() {
+    let server = Server::start("acp-dial-drop");
+    server.guest.lock().unwrap().answer = Answer::Silent;
+    let (status, _, stream) = server.upgrade("chat", A);
+    assert_eq!(status, 101);
+    eventually(|| server.guest.lock().unwrap().connects.len() == 1);
+    let start = Instant::now();
+    let mark = server.relays.mark_drop(&A.parse().unwrap());
+    closed(stream);
+    assert!(start.elapsed() < READY_WAIT / 2, "{:?}", start.elapsed());
+    eventually(|| server.guest.lock().unwrap().closes == 1);
+    drop(mark);
+    server.end();
+}
+
+/// A guest that never answers the dial gets `READY_WAIT`, then the relay
+/// closes the client stream (decision CH43 rule 5). The test takes 10 s.
+#[test]
+fn a_dial_with_no_answer_ends_after_ready_wait() {
+    let server = Server::start("acp-dial-silent");
+    server.guest.lock().unwrap().answer = Answer::Silent;
+    let (status, _, stream) = server.upgrade("chat", A);
+    assert_eq!(status, 101);
+    let start = Instant::now();
+    stream.set_read_timeout(Some(READY_WAIT * 2)).unwrap();
+    closed(stream);
+    let waited = start.elapsed();
+    assert!(
+        waited > READY_WAIT / 2 && waited < READY_WAIT * 2,
+        "{waited:?}"
+    );
+    eventually(|| server.guest.lock().unwrap().closes == 1);
     server.end();
 }
 
