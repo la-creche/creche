@@ -1,0 +1,18 @@
+# The confinement of each Cloud Hypervisor process of the vmm: the launch
+# step, the limits and the access rules. rust/crates/vmm/AGENTS.md has the
+# table of the three vmm crates.
+[package]
+name = "creche-vmm-confine"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+creche-vmm-store = { path = "../vmm-store" }
+creche-wire = { path = "../wire" }
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

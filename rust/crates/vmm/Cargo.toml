@@ -1,0 +1,25 @@
+# The program `vmm`. One vmm process owns every Cloud Hypervisor VM of the
+# playpen (decisions CH9, CH7-5). The library holds the host API server.
+# main.rs only picks the mode.
+[package]
+name = "creche-vmm"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "vmm"
+path = "src/main.rs"
+
+# Every path edge of the three vmm crates is declared here now, so a later
+# change adds no lock entry for a path edge.
+[dependencies]
+creche-vmm-confine = { path = "../vmm-confine" }
+creche-vmm-store = { path = "../vmm-store" }
+creche-wire = { path = "../wire" }
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

@@ -3,6 +3,36 @@
 version = 4
 
 [[package]]
+name = "creche-vmm"
+version = "0.0.0"
+dependencies = [
+ "creche-vmm-confine",
+ "creche-vmm-store",
+ "creche-wire",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "creche-vmm-confine"
+version = "0.0.0"
+dependencies = [
+ "creche-vmm-store",
+ "creche-wire",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "creche-vmm-store"
+version = "0.0.0"
+dependencies = [
+ "creche-wire",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "creche-wire"
 version = "0.0.0"
 dependencies = [
