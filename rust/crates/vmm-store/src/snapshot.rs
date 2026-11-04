@@ -34,6 +34,10 @@
 //! stays as the failed step left it, and the caller decides. After a
 //! failure past `shutdown-vmm` the VM is gone, and the next start
 //! cold-boots (decision CH19 (5)).
+//!
+//! The code reads a rename that the sync of `snapshots/` cannot make
+//! durable as a failed step too. Then `take` removes `snapshots/<n>`, the
+//! renamed temp dir, and returns the sync error.
 
 use std::fmt;
 use std::fs::{self, DirBuilder, File};
@@ -79,7 +83,8 @@ pub struct Snapshot {
     pub allocated_bytes: u64,
 }
 
-/// Why a take made no snapshot. The snapshot dir then does not exist.
+/// Why a take made no snapshot. The snapshot dir then does not exist,
+/// unless its remove after a failed sync also failed (see `take`).
 #[derive(Debug)]
 pub enum SnapshotError {
     /// A make, a read, a mode set, a sync or a rename failed.
@@ -176,8 +181,10 @@ pub struct Snapshotter {
 impl Snapshotter {
     /// `fallocate` is the host program that digs the holes (decision CH29).
     /// The caller passes its path, so no path is compiled in (the owner env
-    /// rule: a host path becomes a key with a default). No config key and
-    /// no exec rule name it yet (`AGENTS.md`, Known gaps).
+    /// rule: a host path becomes a key with a default). No config key
+    /// names it yet (`AGENTS.md`, Known gaps). The exec needs no rule: the
+    /// vmm process is not under Landlock, and C6 confines only the CH
+    /// launch (item 42 notes).
     #[must_use]
     pub fn new(ch: ChRemote, fallocate: PathBuf) -> Self {
         Self { ch, fallocate }
@@ -192,7 +199,15 @@ impl Snapshotter {
     ///
     /// `Ch` when a `ch-remote` call fails, `NotAFile` for an entry that is
     /// no regular file, `Dig` when `fallocate` fails, `Io` on a failed
-    /// step. Then no snapshot dir exists for the new generation.
+    /// step. Then no snapshot dir exists for the new generation, except in
+    /// the case below.
+    ///
+    /// When the sync of `snapshots/` after the rename fails, `take`
+    /// removes `snapshots/<n>` and returns the sync error. If that remove
+    /// fails too, `take` still returns the sync error, and `snapshots/<n>`
+    /// may remain. That dir has no key, so it never restores. When it is
+    /// the newest generation, the key check of PR D10 drops every
+    /// generation (decision CH44 rule 5), and the next start cold-boots.
     pub fn take(
         &self,
         vm: &VmRunDir,
@@ -220,7 +235,10 @@ impl Snapshotter {
             let _ = fs::remove_dir_all(&temp);
         }
         let allocated_bytes = taken?;
-        sync_dir(&snapshots).map_err(io_at(&snapshots))?;
+        if let Err(error) = sync_dir(&snapshots) {
+            let _ = fs::remove_dir_all(&dir);
+            return Err(io_at(&snapshots)(error));
+        }
         Ok(Snapshot {
             generation,
             dir,

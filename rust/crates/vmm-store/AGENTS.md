@@ -11,8 +11,8 @@ The second file has the table of the three vmm crates.
 - The crate never calls `creche-vmm-confine` or `creche-vmm`.
 - Decision CH44 rule 2 (PR D6, `images.rs`): a store copy that fails
   the identity check at VM start fails the start. `ImageStore::check`
-  removes and repairs nothing. An operator step or a later re-import
-  fixes the copy.
+  removes and repairs nothing. Item 42 Q42-2 adds that an operator step
+  or a later re-import fixes the copy.
 - Decision CH44 rule 3 (PR D8, `ch_remote.rs`): the timeout of a
   `ch-remote` call comes from its caller. This crate names no value. A
   pause takes about 4 ms (fact 72) and a 16 GiB snapshot about 12 s
@@ -21,7 +21,9 @@ The second file has the table of the three vmm crates.
   fails, `Snapshotter::take` removes its temp dir and changes nothing
   else. It resumes nothing and stops nothing more. The caller decides.
   After a failure past `shutdown-vmm` the VM is gone, and the next start
-  cold-boots (decision CH19 (5)).
+  cold-boots (decision CH19 (5)). The code reads a rename that the sync
+  of `snapshots/` cannot make durable as a failed step too, so `take`
+  removes `snapshots/<n>` and returns the sync error.
 - Decision CH44 rule 5 (PR D10, `key.rs`): a key mismatch or an
   unreadable key drops every generation of the session, not only the
   newest. `check_newest` reads no older key. So an older generation
@@ -37,10 +39,11 @@ The second file has the table of the three vmm crates.
   it. Without it, a dropped or a consumed snapshot cold-boots from a
   session disk that may lack the last guest writes.
 - Host program (PR D9, `snapshot.rs`): the vmm execs the host
-  `fallocate` (decision CH29). No row names it as an exec of the vmm.
-  Track C must allow that exec, as the CH39 note asks for `zstd` and
-  `mke2fs` (C6). L20 needs a config key for its path (the owner env
-  rule). Its list has no such key yet.
+  `fallocate` (decision CH29). The exec needs no Landlock rule. Item 42
+  notes that the vmm process itself is not under Landlock, because C6
+  confines only the CH launch. L20 needs a config key for its path (the
+  owner env rule). Its list has no such key yet. Item 42 lists config
+  keys for `fallocate`, `zstd` and `mke2fs` as a lifecycle duty.
 - Caller duties (PR D10, `key.rs`), for lifecycle: (a) run `write_key`
   after every `Snapshotter::take`, or the next check drops the snapshot
   as `Unreadable`. L17 and L19 snapshot but name no key write. (b) run
