@@ -1,4 +1,5 @@
-//! A stale `vsock.sock` and `api.sock.lock` go, and every other file stays
+//! A stale `vsock.sock`, `api.sock` and `api.sock.lock` go, and every
+//! other file stays
 //! (decision CH19 (4), fact 75).
 
 use std::fs;
@@ -36,12 +37,8 @@ impl Drop for TempRun {
 #[test]
 fn stale_files_go_and_others_stay() {
     let (_run, vm) = TempRun::new("mixed");
-    let gone = [vm.vsock_socket(), vm.api_socket_lock()];
-    let kept = [
-        vm.api_socket(),
-        vm.serial_log(),
-        vm.host_listener(HostPort::Chaperone),
-    ];
+    let gone = [vm.vsock_socket(), vm.api_socket(), vm.api_socket_lock()];
+    let kept = [vm.serial_log(), vm.host_listener(HostPort::Chaperone)];
     for path in gone.iter().chain(&kept) {
         fs::write(path, b"").expect("a file");
     }
