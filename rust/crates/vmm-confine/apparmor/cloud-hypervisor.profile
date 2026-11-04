@@ -37,7 +37,7 @@ profile creche-cloud-hypervisor /opt/components/vmm/bin/cloud-hypervisor {
   unix type=stream,
   # The deny rules name only the permissions that carry an address. A
   # create has no address, so `deny unix addr=@**,` with no permission
-  # list also denied every Unix socket create (seen on the runner).
+  # list also denied every Unix socket create (C3 spike, PR #454).
   deny unix (bind, connect) addr=@**,
   deny unix (connect, send, receive) peer=(addr=@**),
 

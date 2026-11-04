@@ -95,9 +95,21 @@ RUN err="$(AGENT_SESSIONS_DIR=/nonexistent/sessions AGENT_CRED_DIR=/nonexistent/
 # No facade listens in a build, so the relay exits 1.
 RUN acp-relay </dev/null; [ "$?" = "1" ]
 
-# The VM stays up because the host holds one long-lived `sbx exec` open.
-# This CMD only keeps PID 1 alive.
-CMD ["sleep", "infinity"]
+# The image env for guest init, because a root disk carries no image config
+# (CH7-7, CH49): playpen/bin/creche-env-write. The list names every variable
+# of the image config, the parent image's too. CI compares the file with the
+# built config (playpen/bin/playpen-env-check), so a new ENV name fails there
+# until it is listed. This RUN stays the last step of the flavor.
+RUN --mount=type=bind,source=playpen/bin/creche-env-write,target=/run/creche-env-write \
+    mkdir -p /etc/creche \
+    && sh /run/creche-env-write HOME NODE_ENV NODE_VERSION PATH TMPDIR YARN_VERSION \
+       > /etc/creche/env
+
+# No CMD (fact 59). sbx v0.50.1 gives each sandbox its own command, a fixed
+# `sh -c "trap ...; sleep infinity & wait"` in its binary, so the image CMD
+# never runs. A Cloud Hypervisor guest boots guest init as PID 1 from a root
+# disk that carries no image config. The node parent's CMD, `node`, stays in
+# the config, and neither runtime reads it.
 
 # --- creche-test-venv -------------------------------------------------------
 # Build-only stage. It resolves the Python workspace of this repository
@@ -265,4 +277,8 @@ RUN ldconfig \
          echo "the test venv ships nodeenv" >&2; exit 1; \
        fi
 
-CMD ["sleep", "infinity"]
+# The image env for guest init, as in agent-sandbox, with the names this
+# flavor adds. This RUN stays the last step of the flavor.
+RUN --mount=type=bind,source=playpen/bin/creche-env-write,target=/run/creche-env-write \
+    sh /run/creche-env-write HOME MPLBACKEND MPLCONFIGDIR NODE_ENV NODE_VERSION PATH \
+       TMPDIR YARN_VERSION > /etc/creche/env

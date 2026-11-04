@@ -38,6 +38,23 @@ The second file has the table of the three vmm crates.
   `snapshots/` fails) as a failed rename too. D13 removes a leftover
   `<n>.retired`. CH39 rule 3 does not name it.
 
+- Decisions CH2, CH8-7, CH36 G13, CH44 rule 6 and CH50 rules 7 and 8
+  (PR D13, `retention.rs`): `sweep` removes leftover `<n>.retired` dirs,
+  every generation but the newest of a session, the newest one when a
+  claim consumed it, the newest one past `MAX_AGE` (7 days from the
+  take, the mtime of `memory-ranges`), and then the oldest first while
+  the allocated bytes (`st_blocks`) pass the budget. It never removes a
+  session disk or a generation in use. It never removes a generation
+  while an older one of the session stays, so an older one never becomes
+  the newest.
+- Decisions CH27 and CH21-10 (PR D14, `remove.rs`): `remove_session`
+  removes the generations oldest first, then the session dir, then the
+  row last. The row-last order comes from the plan entry of D14, not
+  from a decision row. A failed step leaves the row, and a retry
+  finishes. It removes nothing when no row of the family has the id, and
+  the route answers `not_found` (decision CH33 rules 4 and 5). The
+  caller (L15) stops the VM first and drops a family one row at a time.
+
 ## Known gaps
 
 - Caller duty (PR D9, `snapshot.rs`): section 4 item 5.7 asks for a
@@ -60,3 +77,28 @@ The second file has the table of the three vmm crates.
   Item 42 notes a better way for (a) and gives it to a later PR: `take`
   writes `key.json` into its temp dir before the rename, so no snapshot
   exists without a key.
+- Caller duty (PR D12, `sleep_gate.rs`), for lifecycle: set
+  `Activity::last_use`, the start of the idle time, at the VM start or
+  restore, at each turn event, and at each open and each close of a door
+  link (decision CH50 rule 5). L18 sets it.
+- Caller duty (PR D12, `sleep_gate.rs`), for lifecycle (L17): a VM with
+  an open door link counts as used now in the eviction order (decision
+  CH50 rule 6). When L17 builds the `Running` list for
+  `creche_vmm_confine::admission::decide`, it passes `last_use = now`
+  for each VM with an open door link. D12 and C9 stay as built.
+- Caller duties (PR D12, `sleep_gate.rs`), for lifecycle: (a) keep a
+  `turn_seen` flag per VM that a turn event sets and each
+  `ControlReady` clears, for decision CH43 rule 8.
+  `creche_vmm::control::ControlState` has no such flag yet. L18 needs
+  it. (b) pass `Activity::may_evict`, not `may_sleep`, as
+  `admission::Gate::Idle`. Admission snapshots an idle VM sooner than
+  `IDLE_TIMEOUT` (decision CH8-6), and the doc of `Gate::Idle` says
+  "may sleep now". L17 maps the two.
+- Caller duties (PR D13, `retention.rs`), for lifecycle (L18): (a) name
+  in `InUse` each generation that a VM restores from, from the key check
+  of its start until its Cloud Hypervisor ends (fact 55, decision CH50
+  rule 8). The key check comes before the claim. A sweep drops a
+  consumed newest generation that is not in `InUse`, so a miss here can
+  remove the files of a restore that is starting. (b) pass the budget
+  from the vmm config. L20 reads it from an env key with `BUDGET` as the
+  default (CH36 G14).

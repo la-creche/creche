@@ -15,7 +15,8 @@
 //!    CH8-5).
 //! 4. `--disk` with the root disk `readonly=on` first, so it is
 //!    `/dev/vda` (decision CH8-8), then the session disk with its rate
-//!    limiter (decision CH8-7, CH36 G15).
+//!    limiter (decision CH8-7, CH36 G15). Each names `image_type=raw`,
+//!    which CH v54 requires.
 //! 5. `--vsock cid=3,socket=<run>/vsock.sock` (decisions CH13, CH14).
 //! 6. `--serial file=<run>/serial.log` and `--console off` (decisions
 //!    CH36 G23, CH41 rule 2).
@@ -24,7 +25,9 @@
 //! the sizes and every device from the snapshot and refuses a device
 //! argument beside `--restore` (the spike of `deny.rs`). The restore maps
 //! `memory-ranges` copy-on-write, so the snapshot files stay unchanged
-//! while the VM runs (decisions CH2, CH29, facts 55, 79).
+//! while the VM runs (decisions CH2, CH29, facts 55, 79). The restore
+//! passes `resume=false`, so no vCPU runs before the vmm checks the
+//! device set of the restored VM (decision CH50 rule 10).
 
 use std::fmt;
 use std::num::NonZeroU64;
@@ -218,9 +221,15 @@ impl ChCommand {
         args.extend(boot.limits.ch_args());
         args.extend([
             "--disk".to_owned(),
-            format!("path={},readonly=on", text(boot.root.path())?),
+            // CH v54 refuses a disk with no `image_type` (ImageTypeRequired,
+            // seen in the kvm job). Both disks are raw ext4 images, and
+            // naming the type also stops CH from probing the format.
             format!(
-                "path={},{}",
+                "path={},readonly=on,image_type=raw",
+                text(boot.root.path())?
+            ),
+            format!(
+                "path={},image_type=raw,{}",
                 text(boot.session.path())?,
                 boot.disk.options()
             ),
@@ -238,9 +247,11 @@ impl ChCommand {
     /// `run`. The restore takes the claim, so one claim restores once
     /// (decision CH19 (5)).
     ///
-    /// CONTRACT-QUESTION: `resume=true` runs the VM at once, as in the
-    /// spikes of facts 74 and 79. No row decides whether the vmm resumes
-    /// it itself through `ch-remote`. AGENTS.md lists it in Known gaps.
+    /// The restore passes `resume=false`, so the VM stays paused after
+    /// the restore (decision CH50 rule 10). The caller then reads
+    /// `ch-remote info`, requires `state` `Paused`, checks the device
+    /// set, and only then runs `ch-remote resume`. AGENTS.md names the
+    /// steps.
     ///
     /// # Errors
     ///
@@ -250,7 +261,7 @@ impl ChCommand {
         args.extend([
             "--restore".to_owned(),
             format!(
-                "source_url=file://{},memory_restore_mode=copyonwrite,resume=true",
+                "source_url=file://{},memory_restore_mode=copyonwrite,resume=false",
                 text(snapshot.dir())?
             ),
         ]);

@@ -259,6 +259,8 @@ pub fn run() -> Result<Infallible, LaunchError> {
     let launch = plan.launch;
     restrict(&launch)?;
 
+    // Fds 1 and 2 stay the output pipe of the spawner, so `systemd-run`
+    // and CH write their lines there (decision CH50 rule 12).
     let error = Command::new(launch.systemd_run.path())
         .args(launch.scope.systemd_run_args(&launch.payload))
         .stdin(null)

@@ -13,6 +13,8 @@
 //!   execs the arguments after `--`.
 //! - `probe <run dir> <root disk> <session disk> <outside file> <port>`
 //!   tries five accesses and writes each result to `<run dir>/probe.txt`.
+//! - `say <text>` writes `<text> out` to stdout and `<text> err` to
+//!   stderr, as CH writes its log lines.
 
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
@@ -47,7 +49,11 @@ fn main() -> ExitCode {
         Some((role, [])) if role == "hold" => hold(),
         Some((role, rest)) if role == "--user" => fake_systemd_run(rest),
         Some((role, rest)) if role == "probe" => probe(rest),
-        _ => Err("usage: launch_chain launch | spawn ... | hold | --user ... | probe ...".into()),
+        Some((role, rest)) if role == "say" => say(rest),
+        _ => Err(
+            "usage: launch_chain launch | spawn ... | hold | --user ... | probe ... | say ..."
+                .into(),
+        ),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -115,6 +121,18 @@ fn vm_files(root: &Path, id: &SessionId) -> Result<VmFiles, Failure> {
     let run = RunRoot::new(root.to_path_buf())?.vm(id);
     let root_disk = HostPath::new(root.join("root.img"))?;
     Ok(VmFiles::new(Start::Restore, root_disk, &session, &run)?)
+}
+
+/// The say role: one line on stdout, then one on stderr.
+fn say(args: &[OsString]) -> Result<(), Failure> {
+    let [text] = args else {
+        return Err("say <text>".into());
+    };
+    let text = text.to_str().ok_or("not UTF-8")?;
+    writeln!(io::stdout(), "{text} out")?;
+    io::stdout().flush()?;
+    writeln!(io::stderr(), "{text} err")?;
+    Ok(())
 }
 
 /// The probe role. Each line of `probe.txt` is a name and `ok` or the
