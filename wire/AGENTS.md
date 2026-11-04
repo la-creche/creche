@@ -447,10 +447,10 @@ key or an added route too, because the match of the number is exact.
 Two vsock links carry wire types as JSON (decision CH36 G11). Each one
 carries one JSON value per line.
 
-| Link | The vmm sends | Guest init sends | Line cap |
+| Link | The vmm sends | The guest sends | Line cap |
 |---|---|---|---|
-| Control, guest port 1200 | `ControlHello`, then `ControlCommand` | `ControlReady`, then `TurnEvent` | `CONTROL_LINE_CAP`, 64 KiB |
-| Family state, host port 1100 | `FamilyStateReply` | the pull, no wire type | 256 KiB (decision CH23 default 4) |
+| Control, guest port 1200 | `ControlHello`, then `ControlCommand` | Guest init sends `ControlReady`, then `TurnEvent` | `CONTROL_LINE_CAP`, 64 KiB |
+| Family state, host port 1100 | `FamilyStateReply` | The facade sends the pull (decision CH5a). No row sets its bytes (Known gap 4) | 256 KiB (decision CH23 default 4) |
 
 1. A writer writes each value in the compact form of serde_json, then one
    LF. The compact form holds no LF, because JSON escapes an LF in a
@@ -517,3 +517,11 @@ a dependency.
    name. The reading is `FAMILY_SHAPE_FILE` = `shape.json`. Contract 01
    §6.1 lists the entries of `config/` and needs an amendment for the
    file, as decision CH23-1 amended it for `model_live_at`.
+4. CONTRACT-QUESTION: no decision sets the bytes of the pull that the
+   facade sends on host port 1100. Decision CH5a says the facade pulls
+   before each `session/prompt`, and decision CH23 says the pull carries
+   no revision. Rule 1 of "The vsock JSON links" still asks for one JSON
+   value per line, so the pull needs a wire type. The reading taken here
+   is none: this package defines no pull type yet. The PR that adds the
+   1100 server must decide one, for example an empty object `{}` and an
+   LF.
