@@ -1,12 +1,14 @@
 //! The host API server (decisions CH20, CH26). It accepts on `vmm.sock`
 //! and serves one HTTP/1.1 connection per accept, with upgrades on. The
 //! protocol header is the first check of each request (decisions CH25
-//! rule 1, CH33 rule 1, CH34 rule 1). The body checks follow the route
-//! (decisions CH26, CH33 rule 13).
+//! rule 1, CH33 rule 1, CH34 rule 1). The router comes from the one route
+//! table (decision CH25). The body checks follow the route (decisions
+//! CH26, CH33 rule 13).
 
 mod accept;
 mod check;
 mod header;
+mod router;
 
 use std::path::Path;
 
@@ -19,13 +21,18 @@ use crate::ServeError;
 
 pub use accept::{Stop, StopSignal, run_with};
 pub use check::BodyCheck;
+pub use router::{Route, Routes, run_routes};
+
+/// The wire crate, for the expansion of `routes!` in another crate.
+#[doc(hidden)]
+pub use creche_wire as wire;
 
 /// Each answer of the server. A JSON reply holds the whole body.
 pub type Reply = Response<http_body_util::Full<Bytes>>;
 
-/// Serves the host API on a new socket at `path` until `stop` fires. A
-/// request that passes the protocol header check gets `no_route` 404:
-/// the server has no route yet.
+/// Serves the host API with no route on a new socket at `path` until
+/// `stop` fires. A request that passes the protocol header check gets
+/// `no_route` 404. `run_routes` serves the route table.
 pub async fn run(path: &Path, stop: StopSignal) -> Result<(), ServeError> {
     let no_route = error_reply(&ListError::NoRoute {})?;
     let answer = move |_request| {
