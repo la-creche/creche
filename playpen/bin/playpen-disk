@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# CI — makes the root disk of one flavor from its tar (CH7-2, CH41 rule 1):
+#   playpen/bin/playpen-disk <rootfs.tar> <out-dir> <name>
+#
+# It writes `<out-dir>/<name>.ext4.zst`, the ext4 disk compressed with
+# zstd. Its last stdout line is `<sha256>  <name>.ext4`, as sha256sum
+# prints it: the SHA-256 of the decompressed disk, the bytes that Cloud
+# Hypervisor reads and the vmm checks (CH41 rule 1). The release step that
+# publishes the line is the disk row's, not this script's.
+#
+# The disk is made in the pinned trixie stage of playpen/disk/Dockerfile,
+# with no network: `mke2fs -d -` reads the tar on stdin, so each file keeps
+# its owner and mode and no step needs root on the host. `e2fsck -fn` then
+# reads the disk back, and `debugfs` reads `/etc/creche/env` from it. Only
+# the digest line goes to stdout.
+#
+# THE SAME TAR GIVES THE SAME DISK. The UUID and the directory hash seed
+# are fixed. The file system times are SOURCE_DATE_EPOCH, the commit time of
+# HEAD unless the caller exports one, and playpen-rootfs gives each file in
+# the tar the same time. The size follows from the tar size alone.
+#
+# Exit 0 with the disk written. Exit 1 when a step fails. A failed run
+# leaves no disk.
+set -euo pipefail
+
+die() { printf 'playpen-disk: %s\n' "$*" >&2; exit 1; }
+
+[[ "$#" -eq 3 ]] || die "usage: playpen-disk <rootfs.tar> <out-dir> <name>"
+tar="$1"
+out="$2"
+name="$3"
+[[ -f "$tar" ]] || die "no tar at $tar"
+[[ -d "$out" ]] || die "no folder at $out"
+[[ "$name" =~ ^[a-z][a-z0-9-]*$ ]] || die "the name $name is not a lowercase word"
+# docker -v takes an absolute source only.
+out="$(cd -- "$out" && pwd)"
+
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+PLATFORM=linux/amd64
+TOOLS=playpen-disk-tools
+# One UUID for every root disk: the vmm names a disk by its digest, and a VM
+# has one root disk.
+UUID=e40ec111-ff66-4afb-9226-7ea87cc0fe41
+MIB=$((1024 * 1024))
+
+epoch="${SOURCE_DATE_EPOCH:-$(git -C "$ROOT" log -1 --format=%ct)}"
+[[ "$epoch" =~ ^[0-9]+$ ]] || die "SOURCE_DATE_EPOCH is not a count of seconds: $epoch"
+
+# The tar size plus a half for block rounding and the inode tables, plus
+# 256 MiB, in whole MiB. A disk that is too small fails in mke2fs.
+bytes="$(wc -c < "$tar" | tr -d ' ')"
+size_mib=$(( (bytes + bytes / 2 + 256 * MIB + MIB - 1) / MIB ))
+
+docker build --platform "$PLATFORM" -q -t "$TOOLS" "$ROOT/playpen/disk" > /dev/null \
+  || die "the disk-tools build failed"
+
+work="$(mktemp -d "$out/.playpen-disk.XXXXXX")"
+trap 'rm -rf -- "$work"' EXIT
+
+# The container runs as the caller, so the files in $work stay the
+# caller's. The tar comes in on stdin. libarchive reads the UTF-8 names of
+# the tar only under a UTF-8 locale.
+docker run --rm -i --network none --platform "$PLATFORM" \
+  --user "$(id -u):$(id -g)" -e LC_ALL=C.UTF-8 \
+  -e "E2FSPROGS_FAKE_TIME=$epoch" -e "SOURCE_DATE_EPOCH=$epoch" \
+  -v "$work:/out" "$TOOLS" \
+  sh -euc '
+    mke2fs -q -F -t ext4 -b 4096 -L creche-root -U "$1" -E "hash_seed=$1" \
+      -d - "/out/$2.ext4" "$3M"
+    e2fsck -fn "/out/$2.ext4" > /dev/null 2>&1 || { e2fsck -fn "/out/$2.ext4" >&2; exit 1; }
+    debugfs -R "cat /etc/creche/env" "/out/$2.ext4" 2>/dev/null | grep -q "^PATH=" \
+      || { echo "the disk holds no /etc/creche/env with a PATH line" >&2; exit 1; }
+    zstd -q -T0 -10 -o "/out/$2.ext4.zst" "/out/$2.ext4"
+  ' disk "$UUID" "$name" "$size_mib" < "$tar" \
+  || die "the disk of $name failed"
+
+digest="$(sha256sum "$work/$name.ext4" 2>/dev/null || shasum -a 256 "$work/$name.ext4")"
+digest="${digest%% *}"
+[[ "$digest" =~ ^[0-9a-f]{64}$ ]] || die "no SHA-256 of $name.ext4"
+
+mv -f -- "$work/$name.ext4.zst" "$out/$name.ext4.zst"
+printf 'playpen-disk: %s: %s MiB, %s bytes compressed\n' \
+  "$name" "$size_mib" "$(wc -c < "$out/$name.ext4.zst" | tr -d ' ')" >&2
+printf '%s  %s.ext4\n' "$digest" "$name"

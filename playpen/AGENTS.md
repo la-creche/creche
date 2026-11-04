@@ -79,6 +79,7 @@ CI builds each flavor on each code change (`bin/playpen-ci`).
 | `bin/creche-env-write`, `bin/playpen-env-check` | `/etc/creche/env` in each flavor's last step, and the CI check that it equals the image config env |
 | `bin/playpen-ci` | the steps of the `playpen-image` CI job: build each flavor, then check it |
 | `bin/playpen-rootfs` | the tar export of one flavor, the input of its root disk |
+| `bin/playpen-disk`, `disk/Dockerfile` | the root disk of one flavor from its tar, in the pinned trixie stage |
 
 ## Known gaps
 
