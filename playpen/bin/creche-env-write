@@ -12,8 +12,10 @@
 #
 # WHY A NAME LIST. A build step sees more than the image config: the `ARG`
 # values in scope, also from a parent stage, and a `HOME` that BuildKit
-# adds. So the file names only what the Dockerfile lists, and the list must
-# hold every name of the built image's config, inherited ones included.
+# adds. So the file names only what the Dockerfile lists, and
+# `playpen-env-check` compares it with the built image's config in CI. A new
+# `ENV` name, or one that the parent image adds, fails there until it is
+# listed here.
 #
 # Exit 1 for a name that is not a variable name, a name listed twice, a name
 # that is unset, and a value with a line break.

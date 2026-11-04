@@ -64,8 +64,9 @@ still a success. The job runs on the runner itself, with no container: only
 there is systemd process 1. The script answers which change needs the proof,
 and the scope runs the proof when the script gives no answer.
 
-The `playpen-image` job builds the full Python flavor. Both workflows run
-that build before their final job can pass.
+The `playpen-image` job runs `playpen/bin/playpen-ci`: it builds each
+flavor and checks its env file. Both workflows run it before their final
+job can pass.
 
 The `kvm` job runs `bin/vm-smoke-setup.sh`, then each ignored test of
 rust/ whose name holds `kvm_` (decisions CH8-4, CH36 G19). The test run
@@ -162,9 +163,7 @@ SYSTEMD_RUN = "bin/systemd-proof.sh"
 
 #: The job that builds the image which the playpen release publishes.
 PLAYPEN_JOB = "playpen-image"
-PLAYPEN_RUN = (
-    "docker build --platform linux/amd64 -f playpen/Dockerfile --target agent-sandbox-python ."
-)
+PLAYPEN_RUN = "playpen/bin/playpen-ci"
 
 #: The job that checks the Cargo workspace, and the three checks it runs in
 #: rust/, in this order. `--locked`: a build that would change

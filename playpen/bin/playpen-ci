@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# CI — the `playpen-image` job of gate.yml and release.yml runs it from the
+# repository root:
+#   playpen/bin/playpen-ci
+#
+# It builds each flavor and checks what the build alone cannot check:
+#
+#   1. `docker build` of each target, tagged `playpen-ci/<target>`. The
+#      python flavor builds on the base flavor, so the second build reuses
+#      the first.
+#   2. `playpen-env-check` on each image: `/etc/creche/env` equals the
+#      image config env (CH7-7, CH49).
+#
+# The job keeps its steps here, so a new check of the image changes this
+# file and not the two workflow files.
+set -euo pipefail
+
+say() { printf '%s\n' "$*"; }
+die() { printf 'playpen-ci: %s\n' "$*" >&2; exit 1; }
+
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+PLATFORM=linux/amd64
+
+# The flavors of playpen-build, in the same order (playpen/AGENTS.md rule 6).
+FLAVORS="base:agent-sandbox python:agent-sandbox-python"
+
+for pair in $FLAVORS; do
+  target="${pair#*:}"
+  image="playpen-ci/$target"
+  say "building $target"
+  docker build --platform "$PLATFORM" -f "$ROOT/playpen/Dockerfile" --target "$target" \
+    -t "$image" "$ROOT" || die "the $target build failed"
+  "$ROOT/playpen/bin/playpen-env-check" "$image"
+done
