@@ -22,3 +22,9 @@ The second file has the table of the three vmm crates.
   of a `ch-remote` call. A pause takes about 4 ms (fact 72) and a 16 GiB
   snapshot about 12 s (gap G16). The narrowest reading: each call takes
   its timeout from its caller, and this crate names no value.
+- CONTRACT-QUESTION (PR D9, `snapshot.rs`): no row decides what happens
+  to the VM when a step of a snapshot fails. The narrowest reading:
+  `Snapshotter::take` removes its temp dir, resumes nothing and stops
+  nothing more. The VM stays as the failed step left it, and the caller
+  decides. After a failure past `shutdown-vmm` the VM is gone, and the
+  next start cold-boots (decision CH19 (5)).
