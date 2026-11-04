@@ -21,11 +21,16 @@
 #      step 1 (decision CH8-1, gap G28). A profile that does not load, or
 #      that is not in enforce mode, fails here. The copy in CRECHE_KVM_DIR
 #      stays unconfined, so each kvm_ test picks its path.
+#   7. SPIKE (decision CH51): it makes 64 hard links of the installed CH at
+#      /opt/components/vmm/bin/ch-slot/<k>/cloud-hypervisor. It renders
+#      the slot profiles creche-ch-slot-<k> with the example
+#      ch_slot_profiles and loads them. A slot profile that does not load,
+#      or that is not in enforce mode, fails here.
 # Phase 4 replaces the upstream files with the CI-built CH, kernel and disks
 # (CH36 G19).
 #
 # The files land in CRECHE_KVM_DIR, which is absent or empty:
-#   cloud-hypervisor  ch-remote  vmlinux  initramfs.cpio
+#   cloud-hypervisor  ch-remote  vmlinux  initramfs.cpio  ch-slots.profile
 # The kvm_ tests read the same variable.
 #
 # `set -euo pipefail`: the first fault stops the run.
@@ -35,6 +40,10 @@ export LC_ALL=C
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 INSTALLED_CH=/opt/components/vmm/bin/cloud-hypervisor
 PROFILE=/etc/apparmor.d/opt.components.vmm.bin.cloud-hypervisor
+# SPIKE (decision CH51): the slot pool. SLOTS is SLOTS of slot_profile.rs.
+SLOTS=64
+SLOT_ROOT=/opt/components/vmm/bin/ch-slot
+SLOT_PROFILE=/etc/apparmor.d/opt.components.vmm.bin.ch-slot
 CH_URL=https://github.com/cloud-hypervisor/cloud-hypervisor/releases/download/v54.0
 KERNEL_URL=https://github.com/cloud-hypervisor/linux/releases/download/ch-release-v7.2.8-20261009
 
@@ -111,5 +120,24 @@ sudo install -m 0644 "$REPO/rust/crates/vmm-confine/apparmor/cloud-hypervisor.pr
 sudo apparmor_parser -r "$PROFILE"
 sudo grep -Fqx 'creche-cloud-hypervisor (enforce)' /sys/kernel/security/apparmor/profiles ||
   die "the profile creche-cloud-hypervisor is not in enforce mode"
+
+# SPIKE (decision CH51, branch spike/c3-slot-pool, never merges): step 7.
+say "make the CH slot pool and load its profiles"
+(cd "$REPO/rust" && rustup toolchain install --no-self-update > /dev/null &&
+  cargo run --locked -q -p creche-vmm-confine --example ch_slot_profiles -- set "$SLOTS") > ch-slots.profile
+for ((k = 0; k < SLOTS; k++)); do
+  sudo install -d -m 0755 "$SLOT_ROOT/$k"
+  sudo ln "$INSTALLED_CH" "$SLOT_ROOT/$k/cloud-hypervisor"
+done
+sudo install -m 0644 ch-slots.profile "$SLOT_PROFILE"
+sudo apparmor_parser -r "$SLOT_PROFILE"
+loaded=$(sudo cat /sys/kernel/security/apparmor/profiles)
+for ((k = 0; k < SLOTS; k++)); do
+  grep -Fqx "creche-ch-slot-$k (enforce)" <<< "$loaded" ||
+    die "the profile creche-ch-slot-$k is not in enforce mode"
+done
+# No step unloads the slot profiles, as no step unloads the base profile:
+# the runner is a throwaway VM. An unload here would also run before the
+# tests, because this script is the second step of the job.
 
 say "ready in $dir"
