@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use creche_vmm_confine::deny::{EgressAssertFailed, check, cmdline_of};
 use creche_vmm_confine::landlock::{HostPath, Start};
+use creche_vmm_confine::launch::Program;
 use creche_vmm_store::layout::{RunRoot, VmRunDir};
 use creche_wire::HostPort;
 
@@ -32,6 +33,11 @@ struct Fake {
 #[cfg(test)]
 impl Fake {
     fn new(name: &str, args: &[&str]) -> Self {
+        Self::raw(name, &[&[CH], args].concat())
+    }
+
+    /// The fake with exactly `args` in the command line file.
+    fn raw(name: &str, args: &[&str]) -> Self {
         let root = PathBuf::from(format!("/tmp/vmm-deny-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         let run = RunRoot::new(root.clone()).unwrap().vm(&ID.parse().unwrap());
@@ -40,7 +46,7 @@ impl Fake {
             fs::write(file, "").unwrap();
         }
         let mut cmdline = Vec::new();
-        for arg in [CH].iter().chain(args) {
+        for arg in args {
             cmdline.extend_from_slice(arg.as_bytes());
             cmdline.push(0);
         }
@@ -55,7 +61,7 @@ impl Fake {
     }
 
     fn check(&self, start: &Start, bound: &[HostPort]) -> Result<(), EgressAssertFailed> {
-        check(&self.root.join("cmdline"), start, &self.run, bound)
+        check(&self.root.join("cmdline"), &ch(), start, &self.run, bound)
     }
 }
 
@@ -63,6 +69,11 @@ impl Drop for Fake {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.root);
     }
+}
+
+#[cfg(test)]
+fn ch() -> Program {
+    Program::new(PathBuf::from(CH)).unwrap()
 }
 
 #[cfg(test)]
@@ -177,7 +188,7 @@ fn a_restore_with_a_vsock_argument_fails() {
 fn a_missing_cmdline_or_run_dir_fails() {
     let fake = Fake::new("gone", BOOT);
     let missing = PathBuf::from("/nonexistent/cmdline");
-    let result = check(&missing, &boot(), &fake.run, &[]);
+    let result = check(&missing, &ch(), &boot(), &fake.run, &[]);
     assert!(matches!(result, Err(EgressAssertFailed::Cmdline(_))));
     fs::remove_dir_all(fake.run.path()).unwrap();
     assert!(matches!(
@@ -189,4 +200,30 @@ fn a_missing_cmdline_or_run_dir_fails() {
 #[test]
 fn the_cmdline_of_a_pid_is_under_proc() {
     assert_eq!(cmdline_of(4242), PathBuf::from("/proc/4242/cmdline"));
+}
+
+#[test]
+fn a_process_that_is_not_ch_fails() {
+    let systemd_run = [
+        &["/usr/bin/systemd-run", "--user", "--scope", "--", CH][..],
+        RESTORE,
+    ]
+    .concat();
+    let cases: [(&str, &[&str]); 4] = [
+        // A zombie CH: its command line reads as empty.
+        ("zombie", &[]),
+        ("launch", &["/proc/self/exe", "launch"]),
+        ("systemd-run", &systemd_run),
+        ("other", &[&format!("{CH}x"), "--vsock", "cid=3"]),
+    ];
+    for (name, args) in cases {
+        let fake = Fake::raw(name, args);
+        for start in [boot(), Start::Restore] {
+            let result = fake.check(&start, &[]);
+            assert!(
+                matches!(result, Err(EgressAssertFailed::NotCh)),
+                "{name}: {result:?}"
+            );
+        }
+    }
 }

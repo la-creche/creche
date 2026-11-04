@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use creche_vmm_store::layout::{SessionDir, VmRunDir};
 use serde::{Deserialize, Serialize};
 
-use crate::launch::{Launch, NotAbsolute};
+use crate::launch::{NotAbsolute, Program};
 
 /// The KVM device (fact 77).
 pub const KVM: &str = "/dev/kvm";
@@ -198,13 +198,13 @@ fn rule(path: impl Into<PathBuf>, rights: &'static [Right]) -> Rule {
     }
 }
 
-/// The rules of `launch` (fact 77, decision CH30).
+/// The rules of the VM of `files`, whose launch runs `systemd_run` and
+/// then `payload` (fact 77, decision CH30).
 #[must_use]
-pub fn rules(launch: &Launch) -> Vec<Rule> {
-    let files = launch.files();
+pub fn rules(files: &VmFiles, systemd_run: &Program, payload: &Program) -> Vec<Rule> {
     let mut rules = vec![
-        rule(launch.payload().program().path(), PROGRAM),
-        rule(launch.systemd_run().path(), PROGRAM),
+        rule(payload.path(), PROGRAM),
+        rule(systemd_run.path(), PROGRAM),
         rule(LOADER, PROGRAM),
         rule(LIBRARY_DIR, READ),
         rule(KVM, READ_WRITE),
@@ -301,14 +301,12 @@ pub(crate) fn restrict(rules: &[Rule]) -> Result<(), RulesetError> {
 
 #[cfg(test)]
 mod tests {
-    use std::num::{NonZeroU32, NonZeroU64};
     use std::path::PathBuf;
 
     use creche_vmm_store::layout::{RunRoot, StateRoot};
 
-    use super::{HostPath, Right, Rule, Start, VmFiles, rules};
-    use crate::launch::{Launch, Payload, Program};
-    use crate::scope::Scope;
+    use super::{HostPath, Right, Rule, Start, VmFiles};
+    use crate::launch::Program;
 
     const ID: &str = "0123abcd-0000-4000-8000-00000000c6c6";
     const CH: &str = "/opt/components/vmm/bin/cloud-hypervisor";
@@ -317,17 +315,17 @@ mod tests {
         HostPath::new(PathBuf::from(path)).unwrap()
     }
 
-    fn launch(start: Start) -> Launch {
+    /// The rules of a launch of CH through `/usr/bin/systemd-run`.
+    fn rules(start: Start) -> Vec<Rule> {
         let id = ID.parse().unwrap();
         let session = StateRoot::new(PathBuf::from("/state"))
             .unwrap()
             .session(&id);
         let run = RunRoot::new(PathBuf::from("/run/vmm")).unwrap().vm(&id);
         let files = VmFiles::new(start, host("/state/store/root"), &session, &run).unwrap();
-        let scope = Scope::new(id, NonZeroU64::MIN, NonZeroU32::MIN);
-        let payload = Payload::new(Program::new(PathBuf::from(CH)).unwrap(), Vec::new());
+        let payload = Program::new(PathBuf::from(CH)).unwrap();
         let systemd_run = Program::new(PathBuf::from("/usr/bin/systemd-run")).unwrap();
-        Launch::new(systemd_run, scope, payload, files)
+        super::rules(&files, &systemd_run, &payload)
     }
 
     fn table(rules: &[Rule]) -> Vec<(String, &'static [Right])> {
@@ -366,7 +364,7 @@ mod tests {
                 &[MakeReg, WriteFile, ReadFile],
             ),
         ];
-        assert_eq!(table(&rules(&launch(start))), expected);
+        assert_eq!(table(&rules(start)), expected);
     }
 
     #[test]
@@ -375,14 +373,14 @@ mod tests {
             kernel: host("/state/store/kernel"),
             initramfs: None,
         };
-        let mut boot = table(&rules(&launch(boot)));
+        let mut boot = table(&rules(boot));
         boot.retain(|(path, _)| path != "/state/store/kernel");
-        assert_eq!(table(&rules(&launch(Start::Restore))), boot);
+        assert_eq!(table(&rules(Start::Restore)), boot);
     }
 
     #[test]
     fn the_root_disk_is_read_only() {
-        let rules = rules(&launch(Start::Restore));
+        let rules = rules(Start::Restore);
         let root = rules.iter().find(|rule| rule.path.ends_with("root"));
         assert_eq!(root.map(|rule| rule.rights), Some(&[Right::ReadFile][..]));
     }
