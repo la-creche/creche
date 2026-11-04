@@ -73,6 +73,8 @@ def test_each_constant_is_its_entry(name: str) -> None:
     assert route.path == f"/{name}"
     for key in ROUTE_TYPES:
         assert getattr(route, key) is getattr(creche_wire, entry[key]), key
+    timeout = getattr(routes, f"{name.upper()}_CLIENT_TIMEOUT_S", None)
+    assert timeout == entry.get("client_timeout_s")
 
 
 ACCEPTED = [

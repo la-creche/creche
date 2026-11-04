@@ -68,6 +68,10 @@ const ROUTE_TYPES: [&str; 3] = ["request", "reply", "error"];
 /// The root key of the route table in the schema.
 const ROUTES_KEY: &str = "x-routes";
 
+/// The key of a route entry that holds `JsonRoute::CLIENT_TIMEOUT`, in
+/// whole seconds.
+const CLIENT_TIMEOUT_KEY: &str = "client_timeout_s";
+
 /// The schema of every wire type, as one document with a `$defs` entry per
 /// type, and the route table under `x-routes`. The contract is the one of a
 /// reader: what a reader accepts.
@@ -141,13 +145,23 @@ where
         .map(|(code, status)| ((*code).to_owned(), json!(status)))
         .collect();
 
-    json!({
+    let mut entry = json!({
         "error": R::Error::schema_name(),
         "kind": "json",
         "reply": R::Reply::schema_name(),
         "request": R::Request::schema_name(),
         "statuses": statuses,
-    })
+    });
+    if let Some(timeout) = R::CLIENT_TIMEOUT {
+        assert_eq!(
+            timeout.subsec_nanos(),
+            0,
+            "a client timeout is whole seconds"
+        );
+        entry[CLIENT_TIMEOUT_KEY] = json!(timeout.as_secs());
+    }
+
+    entry
 }
 
 /// Give each integer of `schema` its `minimum` and `maximum` (decision CH22
@@ -211,19 +225,23 @@ fn is_integer(schema: &Schema) -> bool {
 }
 
 /// The Python constants of the route table `x-routes`: the protocol, its
-/// header, the body cap, the mismatch status and one `JsonRoute` per route. The writer
+/// header, the body cap, the mismatch status, one `JsonRoute` per route and
+/// `<NAME>_CLIENT_TIMEOUT_S` per route with a client timeout. The writer
 /// uses only forms that `ruff format` keeps as they are, so the file passes
 /// the gate unchanged.
 fn python_routes(table: &Value) -> String {
     let routes = table["routes"].as_object().unwrap();
-    let models: BTreeSet<&str> = routes
+    // ruff sorts an import list without regard to case: `Dropped` before
+    // `DropTarget`.
+    let models: BTreeSet<(String, &str)> = routes
         .values()
         .flat_map(|entry| ROUTE_TYPES.map(|key| entry[key].as_str().unwrap()))
+        .map(|model| (model.to_ascii_lowercase(), model))
         .collect();
 
     let mut text = String::from(PYTHON_HEAD);
     text.push_str("from typing import Final\n\nfrom .models import (\n");
-    for model in models {
+    for (_, model) in models {
         writeln!(text, "    {model},").unwrap();
     }
     text.push_str(")\nfrom .route import JsonRoute\n\n");
@@ -241,6 +259,9 @@ fn python_routes(table: &Value) -> String {
             writeln!(text, "    {key}={},", entry[key].as_str().unwrap()).unwrap();
         }
         text.push_str(")\n");
+        if let Some(timeout) = entry.get(CLIENT_TIMEOUT_KEY) {
+            writeln!(text, "\n{constant}_CLIENT_TIMEOUT_S: Final = {timeout}").unwrap();
+        }
     }
 
     text
@@ -371,6 +392,36 @@ fn the_route_table_holds_list_with_the_shared_codes_only() {
         })
     );
     assert_eq!(schema[ROUTES_KEY]["body_cap"], json!(1_048_576));
+}
+
+#[test]
+fn the_route_table_holds_drop() {
+    let schema = wire_schema();
+    let routes = schema_routes(&schema);
+    let mut statuses = Map::new();
+    statuses.insert("not_found".to_owned(), json!(404));
+    for (code, status) in SHARED_CODES {
+        statuses.insert((*code).to_owned(), json!(status));
+    }
+
+    assert_eq!(
+        routes["drop"],
+        json!({
+            "client_timeout_s": 60,
+            "error": "DropError",
+            "kind": "json",
+            "reply": "Dropped",
+            "request": "DropTarget",
+            "statuses": statuses,
+        })
+    );
+    let titles: Vec<&Value> = schema["$defs"]["DropTarget"]["oneOf"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|member| &member["title"])
+        .collect();
+    assert_eq!(titles, [&json!("SessionDrop"), &json!("FamilyDrop")]);
 }
 
 #[test]
