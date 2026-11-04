@@ -24,6 +24,16 @@ The root `AGENTS.md` applies here too.
 
 `src/main.rs` documents the modes of `vmm` and the exit status 78.
 
+## The server
+
+`src/server/` holds the host API server (decisions CH20, CH26).
+`server::run_with` accepts on a socket path that its caller passes in and
+serves one HTTP/1.1 connection per accept, with upgrades on. The protocol
+header is the first check of each request (decisions CH33 rule 1, CH34
+rule 1). `server::run` answers each request that passes with `no_route`
+until the server has routes. `Stop` stops the server through
+`tokio::sync` (decision CH26 rule 2).
+
 ## Rules
 
 - Each new dependency is its own pull request, with its lock delta

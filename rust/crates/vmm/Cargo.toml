@@ -24,8 +24,10 @@ hyper-util.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 # `net` for the UnixListener of vmm.sock and `sync` for the stop signal
-# (decision CH26 rules 1 and 2).
-tokio = { workspace = true, features = ["net", "sync"] }
+# (decision CH26 rules 1 and 2). `time` for the pause after a failed accept
+# and the read timeouts. hyper-util `tokio` turns it on already, so it adds
+# no crate to the lock.
+tokio = { workspace = true, features = ["net", "sync", "time"] }
 
 [lints]
 workspace = true
