@@ -8,7 +8,7 @@
 //! is Linux only. C16 takes a real snapshot.
 
 use std::fs;
-use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -154,6 +154,53 @@ fn a_failed_snapshot_leaves_no_generation() {
     };
     assert_eq!(command, ChCommand::Snapshot);
     assert_eq!(temp.calls().len(), 2, "no shutdown, no dig");
+    let left = fs::read_dir(temp.session.snapshots()).expect("the dir");
+    assert_eq!(left.count(), 0);
+}
+
+/// A failed pause or a failed `shutdown-vmm` ends the take. Then no dig
+/// runs and no generation exists, so no generation names a snapshot of a
+/// Cloud Hypervisor that may still run.
+#[test]
+fn a_failed_pause_or_shutdown_leaves_no_generation() {
+    for (command, calls) in [(ChCommand::Pause, 1), (ChCommand::ShutdownVmm, 3)] {
+        let temp = Temp::new(command.name());
+        let fail = format!("fail-{}", command.name());
+        fs::write(temp.root.join(fail), "").expect("the fail file");
+        let error = temp.take(&fixture("fallocate")).expect_err("a failure");
+        let SnapshotError::Ch(ChRemoteError::Failed {
+            command: failed, ..
+        }) = error
+        else {
+            panic!("not Failed: {error}");
+        };
+        assert_eq!(failed, command);
+        let log = temp.calls();
+        assert_eq!(log.len(), calls, "{log:?}");
+        assert!(!log.iter().any(|call| call.starts_with("fallocate")));
+        let left = fs::read_dir(temp.session.snapshots()).expect("the dir");
+        assert_eq!(left.count(), 0);
+    }
+}
+
+/// A symlink from Cloud Hypervisor ends the take before any mode set
+/// follows it, so its target keeps its mode.
+#[test]
+fn a_planted_link_is_refused() {
+    let temp = Temp::new("link");
+    let target = temp.root.join("target");
+    fs::write(&target, "").expect("the target");
+    fs::set_permissions(&target, fs::Permissions::from_mode(0o644)).expect("a mode");
+    fs::write(temp.root.join("plant-link"), "").expect("the plant file");
+    let error = temp.take(&fixture("fallocate")).expect_err("a refusal");
+    let SnapshotError::NotAFile(path) = error else {
+        panic!("not NotAFile: {error}");
+    };
+    assert_eq!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some("link")
+    );
+    assert_eq!(mode(&target), 0o644);
     let left = fs::read_dir(temp.session.snapshots()).expect("the dir");
     assert_eq!(left.count(), 0);
 }

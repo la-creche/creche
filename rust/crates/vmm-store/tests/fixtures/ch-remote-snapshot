@@ -3,7 +3,8 @@
 # `--api-socket <root>/vm/<id>/api.sock <command> [<url>]`. The stub logs
 # each command to <root>/calls. A file <root>/fail-<command> makes that
 # command fail. A snapshot writes the three files of Cloud Hypervisor, with
-# 16 MiB of written zero bytes in memory-ranges (fact 72).
+# 16 MiB of written zero bytes in memory-ranges (fact 72). A file
+# <root>/plant-link makes it also write a symlink `link` to <root>/target.
 root=${2%/vm/*}
 printf '%s\n' "$3${4:+ $4}" >> "$root/calls"
 if [ -f "$root/fail-$3" ]; then exit 1; fi
@@ -13,4 +14,5 @@ if [ "$3" = snapshot ]; then
     printf '{}' > "$dir/config.json"
     printf '{}' > "$dir/state.json"
     dd if=/dev/zero of="$dir/memory-ranges" bs=1048576 count=16 2>/dev/null
+    if [ -f "$root/plant-link" ]; then ln -s "$root/target" "$dir/link"; fi
 fi

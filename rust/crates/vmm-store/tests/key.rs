@@ -9,7 +9,7 @@
 //! the stub when it runs.
 
 use std::fs;
-use std::os::unix::fs::{MetadataExt, symlink};
+use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -205,11 +205,20 @@ fn another_guest_init_protocol_drops_the_snapshot() {
 fn an_unreadable_key_drops_the_snapshot() {
     let temp = Temp::new("unreadable");
     let key = temp.session.snapshot_key(FIRST);
-    let cases: [(&str, &dyn Fn()); 5] = [
+    let outside = temp.root.join("outside-key.json");
+    let cases: [(&str, &dyn Fn()); 6] = [
         ("absent", &|| fs::remove_file(&key).expect("a remove")),
         ("not JSON", &|| fs::write(&key, "{").expect("a write")),
+        // A valid key with trailing spaces fails only on the size cap.
         ("too large", &|| {
-            fs::write(&key, " ".repeat(5000)).expect("a write");
+            let mut text = fs::read(&key).expect("the key");
+            text.extend(b" ".repeat(5000));
+            fs::write(&key, text).expect("a write");
+        }),
+        // The link names a matching key, so only the link check drops it.
+        ("a link", &|| {
+            fs::rename(&key, &outside).expect("a move");
+            symlink(&outside, &key).expect("a link");
         }),
         ("a dir", &|| {
             fs::remove_file(&key).expect("a remove");
@@ -230,6 +239,25 @@ fn an_unreadable_key_drops_the_snapshot() {
         assert_eq!(check, dropped, "{name}");
         assert!(!temp.session.snapshot(FIRST).exists(), "{name}");
     }
+}
+
+/// A key file that exists but does not open is no drop reason. The check
+/// fails and removes nothing (a root user opens any file, so it skips).
+#[test]
+fn a_failed_read_drops_nothing() {
+    let temp = Temp::new("denied");
+    temp.snapshot(FIRST, &temp.key(0, 1));
+    let key = temp.session.snapshot_key(FIRST);
+    fs::set_permissions(&key, fs::Permissions::from_mode(0o000)).expect("a mode");
+    if fs::File::open(&key).is_ok() {
+        return;
+    }
+    let error = check_newest(&temp.session, &temp.key(0, 1)).expect_err("a failure");
+    assert_eq!(error.path, key);
+    assert_eq!(error.source.kind(), std::io::ErrorKind::PermissionDenied);
+    fs::set_permissions(&key, fs::Permissions::from_mode(0o600)).expect("a mode");
+    let check = check_newest(&temp.session, &temp.key(0, 1)).expect("the check");
+    assert!(matches!(check, KeyCheck::Keyed(_)), "{check:?}");
 }
 
 #[test]
