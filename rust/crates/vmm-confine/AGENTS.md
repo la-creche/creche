@@ -15,9 +15,4 @@ table of the three vmm crates.
 
 ## Known gaps
 
-- CONTRACT-QUESTION (landlock on macOS): the landlock crate builds only on
-  Linux, and no row decides whether the workspace must build on macOS.
-  The narrowest reading: `landlock` is a Linux-only dependency in
-  `Cargo.toml`, and the code that calls it sits behind
-  `cfg(target_os = "linux")`. CI runs on Linux only. Open until David
-  decides.
+None.
