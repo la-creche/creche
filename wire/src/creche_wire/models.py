@@ -407,6 +407,163 @@ class DoorOrigin(BaseModel):
     door: Door
 
 
+class DropError1(BaseModel):
+    """
+    No row has the id of a `SessionDrop`, or the row belongs to
+    another family (decision CH33 rules 4 and 5). A drop of a family
+    never gives it.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["not_found"]
+
+
+class DropError2(BaseModel):
+    """
+    No route has this path.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["no_route"]
+
+
+class DropError3(BaseModel):
+    """
+    The route has this path, but the method is not `POST`.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["bad_method"]
+
+
+class DropError4(BaseModel):
+    """
+    The `Content-Type` is not `application/json`.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["bad_content_type"]
+
+
+class DropError5(BaseModel):
+    """
+    The body is over the cap.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["too_large"]
+
+
+class DropError6(BaseModel):
+    """
+    The body is not strict JSON.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["not_json"]
+
+
+class DropError7(BaseModel):
+    """
+    The body is JSON, but not the request type of the route.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["not_valid"]
+
+
+class DropError8(BaseModel):
+    """
+    The vmm failed after it took the request. The vmm logs
+    the details.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["internal"]
+
+
+class DropError(
+    RootModel[
+        DropError1
+        | DropError2
+        | DropError3
+        | DropError4
+        | DropError5
+        | DropError6
+        | DropError7
+        | DropError8
+    ]
+):
+    root: Annotated[
+        DropError1
+        | DropError2
+        | DropError3
+        | DropError4
+        | DropError5
+        | DropError6
+        | DropError7
+        | DropError8,
+        Field(description="The error of the route `drop`."),
+    ]
+
+
+class DropFamily(BaseModel):
+    """
+    Every session of one family (decision CH21-10). A family with no rows
+    gives `Dropped` too, so this drop has no `not_found`.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    family: Annotated[FamilyName, Field(description="The family whose sessions the vmm drops.")]
+
+
+class DropSession(BaseModel):
+    """
+    One session to drop. It names the family that owns the session (decision
+    CH33 rule 5). The vmm answers `not_found` when no row has the id, and
+    when the row of the id belongs to another family. So a client learns
+    nothing of the sessions of another family.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    family: Annotated[FamilyName, Field(description="The family that owns the session.")]
+    id: Annotated[SessionId, Field(description="The id of the session.")]
+
+
+class Dropped(BaseModel):
+    """
+    The reply of the drop route. It carries nothing: the vmm sends it after
+    the target has no VM, no snapshot, no session disk and no row.
+
+    It is a type of its own so that the generated Python model is a class
+    with no field. An inline empty object generates a `dict` with lax keys.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+
 class FacadeExited(BaseModel):
     """
     A facade that exited: `waitpid` reported it gone, and guest init did not
@@ -614,6 +771,17 @@ class FamilyCreds(BaseModel):
     )
     litellm_key: Annotated[LitellmKey, Field(description="The key for the LiteLLM plane.")]
     pep_token: Annotated[PepToken, Field(description="The token for the chaperone plane.")]
+
+
+class FamilyDrop(BaseModel):
+    """
+    Every session of one family.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    family: DropFamily
 
 
 class FamilyName(RootModel[StrictStr]):
@@ -894,6 +1062,26 @@ class SessionCwd(RootModel[StrictStr]):
             description="The `cwd` of a session: the absolute path that the client sent in\n`session/new`, or that attendance chose for a job. It is a display\nvalue and a `session/list` filter, never a guest path (decision CH5e,\nCH21-4).",
             max_length=4096,
             pattern="^/[^\\u0000]*$",
+        ),
+    ]
+
+
+class SessionDrop(BaseModel):
+    """
+    One session of one family.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    session: DropSession
+
+
+class DropTarget(RootModel[SessionDrop | FamilyDrop]):
+    root: Annotated[
+        SessionDrop | FamilyDrop,
+        Field(
+            description="What a client sends to the vmm to drop sessions: the request of the drop\nroute. On the wire the variant name is the one key of an object, as in\n`SessionOrigin`, and each variant has a `title` for its class name.\n\nattendance drops one session on an ACP `session/delete` (decision CH27)\nand at the end of a job (decision CH21-2). caregiver drops a family when\nit deletes the family (decision CH21-10)."
         ),
     ]
 

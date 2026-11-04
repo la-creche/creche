@@ -289,6 +289,194 @@
       "description": "The origin of a session that a door client opened. It carries nothing.\n\nIt is a type of its own so that the generated Python model is a class\nwith no field. An inline empty object generates a `dict` with lax keys.",
       "type": "object"
     },
+    "DropError": {
+      "description": "The error of the route `drop`.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "No row has the id of a `SessionDrop`, or the row belongs to\nanother family (decision CH33 rules 4 and 5). A drop of a family\nnever gives it.",
+          "properties": {
+            "code": {
+              "const": "not_found",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "No route has this path.",
+          "properties": {
+            "code": {
+              "const": "no_route",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The route has this path, but the method is not `POST`.",
+          "properties": {
+            "code": {
+              "const": "bad_method",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The `Content-Type` is not `application/json`.",
+          "properties": {
+            "code": {
+              "const": "bad_content_type",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The body is over the cap.",
+          "properties": {
+            "code": {
+              "const": "too_large",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The body is not strict JSON.",
+          "properties": {
+            "code": {
+              "const": "not_json",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The body is JSON, but not the request type of the route.",
+          "properties": {
+            "code": {
+              "const": "not_valid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The vmm failed after it took the request. The vmm logs\nthe details.",
+          "properties": {
+            "code": {
+              "const": "internal",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "DropFamily": {
+      "additionalProperties": false,
+      "description": "Every session of one family (decision CH21-10). A family with no rows\ngives `Dropped` too, so this drop has no `not_found`.",
+      "properties": {
+        "family": {
+          "$ref": "#/$defs/FamilyName",
+          "description": "The family whose sessions the vmm drops."
+        }
+      },
+      "required": [
+        "family"
+      ],
+      "type": "object"
+    },
+    "DropSession": {
+      "additionalProperties": false,
+      "description": "One session to drop. It names the family that owns the session (decision\nCH33 rule 5). The vmm answers `not_found` when no row has the id, and\nwhen the row of the id belongs to another family. So a client learns\nnothing of the sessions of another family.",
+      "properties": {
+        "family": {
+          "$ref": "#/$defs/FamilyName",
+          "description": "The family that owns the session."
+        },
+        "id": {
+          "$ref": "#/$defs/SessionId",
+          "description": "The id of the session."
+        }
+      },
+      "required": [
+        "family",
+        "id"
+      ],
+      "type": "object"
+    },
+    "DropTarget": {
+      "description": "What a client sends to the vmm to drop sessions: the request of the drop\nroute. On the wire the variant name is the one key of an object, as in\n`SessionOrigin`, and each variant has a `title` for its class name.\n\nattendance drops one session on an ACP `session/delete` (decision CH27)\nand at the end of a job (decision CH21-2). caregiver drops a family when\nit deletes the family (decision CH21-10).",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "One session of one family.",
+          "properties": {
+            "session": {
+              "$ref": "#/$defs/DropSession"
+            }
+          },
+          "required": [
+            "session"
+          ],
+          "title": "SessionDrop",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Every session of one family.",
+          "properties": {
+            "family": {
+              "$ref": "#/$defs/DropFamily"
+            }
+          },
+          "required": [
+            "family"
+          ],
+          "title": "FamilyDrop",
+          "type": "object"
+        }
+      ]
+    },
+    "Dropped": {
+      "additionalProperties": false,
+      "description": "The reply of the drop route. It carries nothing: the vmm sends it after\nthe target has no VM, no snapshot, no session disk and no row.\n\nIt is a type of its own so that the generated Python model is a class\nwith no field. An inline empty object generates a `dict` with lax keys.",
+      "type": "object"
+    },
     "FacadeExited": {
       "additionalProperties": false,
       "description": "A facade that exited: `waitpid` reported it gone, and guest init did not\nstart the next one yet (decision CH19 rule 1). No turn runs.\n\nEach key is required. `last_turn_end` reads with `Option::deserialize`,\nso a missing key is refused.",
@@ -1179,6 +1367,23 @@
           "not_valid": 400,
           "too_large": 413,
           "unknown_family": 404
+        }
+      },
+      "drop": {
+        "client_timeout_s": 60,
+        "error": "DropError",
+        "kind": "json",
+        "reply": "Dropped",
+        "request": "DropTarget",
+        "statuses": {
+          "bad_content_type": 415,
+          "bad_method": 405,
+          "internal": 500,
+          "no_route": 404,
+          "not_found": 404,
+          "not_json": 400,
+          "not_valid": 400,
+          "too_large": 413
         }
       },
       "list": {

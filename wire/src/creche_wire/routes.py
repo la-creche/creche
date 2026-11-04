@@ -9,6 +9,9 @@ from typing import Final
 from .models import (
     CreateError,
     CreateSession,
+    DropError,
+    Dropped,
+    DropTarget,
     ListError,
     ListSessions,
     SessionPage,
@@ -27,6 +30,15 @@ CREATE: Final = JsonRoute(
     reply=SessionRow,
     error=CreateError,
 )
+
+DROP: Final = JsonRoute(
+    name="drop",
+    request=DropTarget,
+    reply=Dropped,
+    error=DropError,
+)
+
+DROP_CLIENT_TIMEOUT_S: Final = 60
 
 LIST: Final = JsonRoute(
     name="list",

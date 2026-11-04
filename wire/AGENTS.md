@@ -197,8 +197,10 @@ its error type.
 7. The schema test also writes `src/creche_wire/routes.py`. It holds the
    protocol, its header, `HOST_API_BODY_CAP`, `MISMATCH_STATUS` and one
    `JsonRoute` constant per route, named as the route in capitals:
-   `CREATE`, `LIST`. pyright then
-   refuses a wrong request, reply or error model on a Python client.
+   `CREATE`, `DROP`, `LIST`. pyright then
+   refuses a wrong request, reply or error model on a Python client. A
+   route with `JsonRoute::CLIENT_TIMEOUT` also gets `<NAME>_CLIENT_TIMEOUT_S`,
+   from `client_timeout_s` of its entry in `x-routes`.
 8. `JsonRoute.encode` takes only the request model of its route. It also
    keeps the request type invariant, so do not remove it.
    `src/creche_wire/_route_typing.py` holds the proof. Each wrong use there
@@ -236,6 +238,34 @@ table plan, and no decision names it (see "Known gaps"). The request is
 2. `cwd` is `null` for every row, or a cwd that each row of the page has.
 3. A family with no rows, or one the vmm does not know, gives an empty
    page. Any cursor reads. So `ListError` holds the shared codes only.
+
+### The drop route
+
+`drop` drops one session or every session of one family (decisions
+CH21-2, CH21-10, CH27). The request is `DropTarget`, the reply is
+`Dropped`, and the error is `DropError`. A drop cannot be undone.
+
+1. `DropTarget` has one key: `session` (class `SessionDrop`) with
+   `{family, id}`, or `family` (class `FamilyDrop`) with `{family}`.
+2. A session drop names the family that owns the session (decision CH33
+   rule 5). The vmm answers `not_found` 404 when no row has the id, and
+   when the row belongs to another family (decision CH33 rule 4).
+3. A family drop of a family with no rows answers `Dropped`. It never
+   answers `not_found`.
+4. The vmm stops each open ACP relay of the target first (decision CH26
+   rule 5). It then stops every VM of the target at once (decision CH33
+   rule 11). Each VM gets the graceful stop of decision CH19 (3) for up
+   to 30 s (`DROP_STOP_WAIT`), then SIGTERM, then SIGKILL after 5 s
+   (`DROP_SIGTERM_GRACE`). A kill is no error. Last the vmm removes each
+   snapshot, session disk and row, and answers `Dropped`.
+5. A client waits 60 s for the reply (`DROP_CLIENT_TIMEOUT`). It retries
+   a timeout as a transient. A retry after the session is gone gets
+   `not_found`, and the client counts that as done. `x-routes` holds the
+   client timeout as `client_timeout_s` of the entry `drop`, and
+   `routes.py` holds it as `DROP_CLIENT_TIMEOUT_S`. A Python or TypeScript
+   client reads it there and never writes 60 itself.
+6. `DROP_STOP_WAIT` and `DROP_SIGTERM_GRACE` are Rust constants only. The
+   vmm alone applies them, so no client reads them.
 
 ## A route error on the wire
 
@@ -358,6 +388,14 @@ a dependency.
 
 ## Known gaps
 
+- `CONTRACT-QUESTION` in `rust/crates/wire/src/routes.rs`,
+  `DROP_SIGTERM_GRACE`. Decision CH33 rule 11 fixes a SIGTERM grace and a
+  drop of about 35 s at most, but names neither the grace nor the client
+  timeout. The reading taken, from the recommended option of gap G11: a
+  grace of 5 s after the 30 s stop wait of decision CH19 (3), so the stop
+  of each VM takes 35 s at most. The removal of disks and rows comes on
+  top. A client waits 60 s for the reply, and retries a timeout as a
+  transient.
 - `CONTRACT-QUESTION` in `rust/crates/wire/src/routes.rs`,
   `HOST_API_BODY_CAP`. Decision CH33 rule 2 caps each reply, and decision
   CH26 caps each request. Neither says whether the cap binds the ACP bytes

@@ -17,8 +17,9 @@ mod schema;
 mod vectors;
 
 pub use routes::{
-    Body, CreateError, CreateRoute, HOST_API_BODY_CAP, HOST_API_HEADER, HOST_API_PROTOCOL,
-    JsonRoute, ListError, ListRoute, MISMATCH_STATUS, ProtocolMismatch, RouteError, SHARED_CODES,
+    Body, CreateError, CreateRoute, DROP_CLIENT_TIMEOUT, DROP_SIGTERM_GRACE, DROP_STOP_WAIT,
+    DropError, DropRoute, HOST_API_BODY_CAP, HOST_API_HEADER, HOST_API_PROTOCOL, JsonRoute,
+    ListError, ListRoute, MISMATCH_STATUS, ProtocolMismatch, RouteError, SHARED_CODES,
 };
 
 /// The length of a session id: 32 hex digits and 4 hyphens.
@@ -933,6 +934,65 @@ pub struct SessionPage {
 }
 
 object_only!(SessionPage);
+
+/// One session to drop. It names the family that owns the session (decision
+/// CH33 rule 5). The vmm answers `not_found` when no row has the id, and
+/// when the row of the id belongs to another family. So a client learns
+/// nothing of the sessions of another family.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct DropSession {
+    /// The family that owns the session.
+    pub family: FamilyName,
+    /// The id of the session.
+    pub id: SessionId,
+}
+
+object_only!(DropSession);
+
+/// Every session of one family (decision CH21-10). A family with no rows
+/// gives `Dropped` too, so this drop has no `not_found`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct DropFamily {
+    /// The family whose sessions the vmm drops.
+    pub family: FamilyName,
+}
+
+object_only!(DropFamily);
+
+/// What a client sends to the vmm to drop sessions: the request of the drop
+/// route. On the wire the variant name is the one key of an object, as in
+/// `SessionOrigin`, and each variant has a `title` for its class name.
+///
+/// attendance drops one session on an ACP `session/delete` (decision CH27)
+/// and at the end of a job (decision CH21-2). caregiver drops a family when
+/// it deletes the family (decision CH21-10).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub enum DropTarget {
+    /// One session of one family.
+    #[cfg_attr(test, schemars(title = "SessionDrop"))]
+    Session(DropSession),
+    /// Every session of one family.
+    #[cfg_attr(test, schemars(title = "FamilyDrop"))]
+    Family(DropFamily),
+}
+
+/// The reply of the drop route. It carries nothing: the vmm sends it after
+/// the target has no VM, no snapshot, no session disk and no row.
+///
+/// It is a type of its own so that the generated Python model is a class
+/// with no field. An inline empty object generates a `dict` with lax keys.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct Dropped {}
+
+object_only!(Dropped);
 
 /// A turn started. It carries nothing.
 ///

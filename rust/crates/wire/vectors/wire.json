@@ -700,6 +700,256 @@
       "note": "an empty array, the array form of a struct"
     }
   ],
+  "DropError": [
+    {
+      "json": "{\"code\":\"not_found\"}",
+      "written": "{\"code\":\"not_found\"}",
+      "note": "not_found: an absent id, or the id of another family"
+    },
+    {
+      "json": "{\"code\":\"no_route\"}",
+      "written": "{\"code\":\"no_route\"}",
+      "note": "the shared code no_route: a path with no route"
+    },
+    {
+      "json": "{\"code\":\"bad_method\"}",
+      "written": "{\"code\":\"bad_method\"}",
+      "note": "the shared code bad_method: a method that is not POST"
+    },
+    {
+      "json": "{\"code\":\"bad_content_type\"}",
+      "written": "{\"code\":\"bad_content_type\"}",
+      "note": "the shared code bad_content_type: a Content-Type that is not JSON"
+    },
+    {
+      "json": "{\"code\":\"too_large\"}",
+      "written": "{\"code\":\"too_large\"}",
+      "note": "the shared code too_large: a body over the cap"
+    },
+    {
+      "json": "{\"code\":\"not_json\"}",
+      "written": "{\"code\":\"not_json\"}",
+      "note": "the shared code not_json: a body that is not strict JSON"
+    },
+    {
+      "json": "{\"code\":\"not_valid\"}",
+      "written": "{\"code\":\"not_valid\"}",
+      "note": "the shared code not_valid: a body that is not the request type"
+    },
+    {
+      "json": "{\"code\":\"internal\"}",
+      "written": "{\"code\":\"internal\"}",
+      "note": "the shared code internal: a fault of the vmm"
+    },
+    {
+      "json": "{\"code\":\"unknown_family\"}",
+      "written": null,
+      "note": "a code of create: a family drop of no rows gives Dropped"
+    },
+    {
+      "json": "{\"code\":\"conflict\"}",
+      "written": null,
+      "note": "a code of create"
+    },
+    {
+      "json": "{\"code\":\"busy\"}",
+      "written": null,
+      "note": "a code of no route here"
+    },
+    {
+      "json": "{\"code\":\"not_found\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}",
+      "written": null,
+      "note": "not_found with the id"
+    },
+    {
+      "json": "{\"code\":\"internal\",\"message\":\"disk full\"}",
+      "written": null,
+      "note": "a shared code with free text"
+    },
+    {
+      "json": "{\"code\":\"protocol_mismatch\"}",
+      "written": null,
+      "note": "the protocol mismatch, which is in no route error"
+    },
+    {
+      "json": "[\"not_found\"]",
+      "written": null,
+      "note": "the array form of a code"
+    },
+    {
+      "json": "{}",
+      "written": null,
+      "note": "no code"
+    },
+    {
+      "json": "\"not_found\"",
+      "written": null,
+      "note": "the plain string form"
+    }
+  ],
+  "DropFamily": [
+    {
+      "json": "{\"family\":\"chat\"}",
+      "written": "{\"family\":\"chat\"}",
+      "note": "a family"
+    },
+    {
+      "json": "{}",
+      "written": null,
+      "note": "no family"
+    },
+    {
+      "json": "{\"family\":null}",
+      "written": null,
+      "note": "a null family"
+    },
+    {
+      "json": "{\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}",
+      "written": null,
+      "note": "an id: a session drop is its own variant"
+    },
+    {
+      "json": "[\"chat\"]",
+      "written": null,
+      "note": "the field as an array, the array form of a struct"
+    }
+  ],
+  "DropSession": [
+    {
+      "json": "{\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}",
+      "written": "{\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}",
+      "note": "a session of a family"
+    },
+    {
+      "json": "{\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"family\":\"chat\"}",
+      "written": "{\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}",
+      "note": "its keys in any order"
+    },
+    {
+      "json": "{\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}",
+      "written": null,
+      "note": "no family: a session drop names the family that owns it"
+    },
+    {
+      "json": "{\"family\":\"chat\"}",
+      "written": null,
+      "note": "no id"
+    },
+    {
+      "json": "{\"family\":\"chat\",\"id\":null}",
+      "written": null,
+      "note": "a null id"
+    },
+    {
+      "json": "{\"family\":\"chat\",\"id\":\"3F2B8C1E-9D4A-4E6B-8A7C-0B1D2E3F4A5B\"}",
+      "written": null,
+      "note": "an id in capitals"
+    },
+    {
+      "json": "{\"family\":\"Chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}",
+      "written": null,
+      "note": "a family name in capitals"
+    },
+    {
+      "json": "{\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"cwd\":\"/home/david\"}",
+      "written": null,
+      "note": "an extra key"
+    },
+    {
+      "json": "[\"chat\",\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"]",
+      "written": null,
+      "note": "the fields in order as an array, the array form of a struct"
+    }
+  ],
+  "DropTarget": [
+    {
+      "json": "{\"session\":{\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}}",
+      "written": "{\"session\":{\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}}",
+      "note": "one session"
+    },
+    {
+      "json": "{\"family\":{\"family\":\"chat\"}}",
+      "written": "{\"family\":{\"family\":\"chat\"}}",
+      "note": "every session of a family"
+    },
+    {
+      "json": "{\"session\":{\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"},\"family\":{\"family\":\"chat\"}}",
+      "written": null,
+      "note": "both keys: one drop has one target"
+    },
+    {
+      "json": "{}",
+      "written": null,
+      "note": "an empty object: no target"
+    },
+    {
+      "json": "\"family\"",
+      "written": null,
+      "note": "a variant as a string"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    },
+    {
+      "json": "{\"session\":[\"chat\",\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"]}",
+      "written": null,
+      "note": "a session as an array of its fields in order"
+    },
+    {
+      "json": "{\"family\":[\"chat\"]}",
+      "written": null,
+      "note": "a family as an array of its field"
+    },
+    {
+      "json": "[\"session\",{\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}]",
+      "written": null,
+      "note": "the variant and its value as an array"
+    },
+    {
+      "json": "{\"session\":{\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}}",
+      "written": null,
+      "note": "a session with no family"
+    },
+    {
+      "json": "{\"session\":null}",
+      "written": null,
+      "note": "a null session"
+    },
+    {
+      "json": "{\"Family\":{\"family\":\"chat\"}}",
+      "written": null,
+      "note": "a variant name in the wrong case"
+    },
+    {
+      "json": "{\"family\":\"chat\"}",
+      "written": null,
+      "note": "a family name with no variant object"
+    }
+  ],
+  "Dropped": [
+    {
+      "json": "{}",
+      "written": "{}",
+      "note": "the empty object"
+    },
+    {
+      "json": "{\"sessions\":1}",
+      "written": null,
+      "note": "a count: the reply carries nothing"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an empty array, the array form of a struct"
+    }
+  ],
   "FacadeExited": [
     {
       "json": "{\"last_turn_end\":null,\"starts\":1}",

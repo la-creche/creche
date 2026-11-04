@@ -8,12 +8,15 @@
 //! this one never needs schemars.
 
 use std::fmt;
+use std::time::Duration;
 
 use serde::de::value::MapAccessDeserializer;
 use serde::de::{DeserializeOwned, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use super::{CreateSession, ListSessions, SessionPage, SessionRow, object_only};
+use super::{
+    CreateSession, DropTarget, Dropped, ListSessions, SessionPage, SessionRow, object_only,
+};
 
 /// The number of the host API protocol (decision CH25 rule 1). A client
 /// sends it in the header `HOST_API_HEADER`, and the vmm checks it before
@@ -309,6 +312,10 @@ pub trait JsonRoute {
     type Reply: Body;
     /// What the vmm answers on a refusal.
     type Error: RouteError;
+    /// How long a client waits for the reply, when the route fixes it. The
+    /// schema test writes it into `x-routes` in whole seconds, so each
+    /// client reads the one value.
+    const CLIENT_TIMEOUT: Option<Duration> = None;
 }
 
 /// The route `create`: attendance makes a row of the host session list
@@ -358,6 +365,68 @@ route_error! {
     pub enum ListError {}
 }
 
+/// The route `drop`: a client drops one session or every session of a
+/// family (decisions CH21-2, CH21-10, CH27). It cannot be undone.
+///
+/// The vmm first stops each open ACP relay of the target (decision CH26
+/// rule 5). It then stops every VM of the target at once (decision CH33
+/// rule 11), each with the graceful stop of decision CH19 (3): it waits up
+/// to `DROP_STOP_WAIT`, sends SIGTERM, waits up to `DROP_SIGTERM_GRACE`,
+/// then sends SIGKILL. A kill is no error: the drop goes on. Last it
+/// removes the snapshot, the session disk and the row of each session, and
+/// answers `Dropped`. A client waits up to `DROP_CLIENT_TIMEOUT` for the
+/// reply, and retries a drop that timed out. A retry of a dropped session
+/// gets `not_found` (decision CH33 rule 4), and the client counts it as
+/// done.
+#[derive(Debug)]
+pub enum DropRoute {}
+
+impl JsonRoute for DropRoute {
+    const NAME: &'static str = "drop";
+    type Request = DropTarget;
+    type Reply = Dropped;
+    type Error = DropError;
+    const CLIENT_TIMEOUT: Option<Duration> = Some(DROP_CLIENT_TIMEOUT);
+}
+
+/// How long the vmm waits for a VM to power off after the `stop` of
+/// decision CH19 (3), before it sends SIGTERM. Guest init gives a running
+/// turn up to 30 s.
+pub const DROP_STOP_WAIT: Duration = Duration::from_secs(30);
+
+/// How long the vmm waits after SIGTERM before it sends SIGKILL to a VM of
+/// a drop (decision CH33 rule 11).
+// CONTRACT-QUESTION: CH33 rule 11 fixes a SIGTERM grace and a drop of
+// about 35 s at most, but names neither the grace nor the client timeout.
+// The reading taken, from the recommended option of gap G11: a grace of
+// 5 s after the 30 s stop wait of CH19 (3), so the stop of each VM takes
+// 35 s at most. The removal of disks and rows comes on top. A client waits
+// 60 s for the reply, and retries a timeout as a transient.
+pub const DROP_SIGTERM_GRACE: Duration = Duration::from_secs(5);
+
+/// How long a client waits for the reply of a drop before it retries it
+/// (decision CH33 rule 11). It is above `DROP_STOP_WAIT` and
+/// `DROP_SIGTERM_GRACE` together, with room for the removal. caregiver and
+/// attendance are clients, so `x-routes` holds it as `client_timeout_s` of
+/// the route `drop`, and `routes.py` holds it as `DROP_CLIENT_TIMEOUT_S`.
+pub const DROP_CLIENT_TIMEOUT: Duration = Duration::from_secs(60);
+
+const _: () = assert!(
+    DROP_STOP_WAIT.as_secs() + DROP_SIGTERM_GRACE.as_secs() <= 35
+        && DROP_CLIENT_TIMEOUT.as_secs() > 35,
+    "a drop stops each VM in 35 s at most, and a client waits longer",
+);
+
+route_error! {
+    /// The error of the route `drop`.
+    pub enum DropError {
+        /// No row has the id of a `SessionDrop`, or the row belongs to
+        /// another family (decision CH33 rules 4 and 5). A drop of a family
+        /// never gives it.
+        NotFound = "not_found" => 404,
+    }
+}
+
 /// The one route table (decision CH25). The test-only schema generator and
 /// the vmm router both expand it, so no second list of routes exists.
 ///
@@ -371,5 +440,6 @@ macro_rules! route_table {
     ($each:ident) => {
         $each!(json $crate::CreateRoute);
         $each!(json $crate::ListRoute);
+        $each!(json $crate::DropRoute);
     };
 }
