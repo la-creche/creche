@@ -202,6 +202,78 @@
       "note": "an empty array, the array form of a struct"
     }
   ],
+  "ControlCommand": [
+    {
+      "json": "{\"stop\":{}}",
+      "written": "{\"stop\":{}}",
+      "note": "a stop"
+    },
+    {
+      "json": "{\"stop\": {} }",
+      "written": "{\"stop\":{}}",
+      "note": "a stop with whitespace"
+    },
+    {
+      "json": "\"stop\"",
+      "written": null,
+      "note": "a variant as a string, the unit form"
+    },
+    {
+      "json": "{}",
+      "written": null,
+      "note": "an object with no variant"
+    },
+    {
+      "json": "{\"stop\":{},\"stop\":{}}",
+      "written": null,
+      "note": "a variant given twice"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an empty array"
+    },
+    {
+      "json": "{\"stop\":null}",
+      "written": null,
+      "note": "a stop as null"
+    },
+    {
+      "json": "{\"stop\":[]}",
+      "written": null,
+      "note": "a stop as an array, the array form of a struct"
+    },
+    {
+      "json": "{\"stop\":true}",
+      "written": null,
+      "note": "a stop as a boolean"
+    },
+    {
+      "json": "{\"stop\":{\"x\":1}}",
+      "written": null,
+      "note": "a stop with a key"
+    },
+    {
+      "json": "{\"Stop\":{}}",
+      "written": null,
+      "note": "a variant name in the wrong case"
+    },
+    {
+      "json": "{\"start\":{}}",
+      "written": null,
+      "note": "a turn event, which guest init sends and the vmm never does"
+    },
+    {
+      "json": "{\"sent_at\":1793577660000,\"session\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}",
+      "written": null,
+      "note": "a hello, which comes before each command"
+    }
+  ],
   "ControlHello": [
     {
       "json": "{\"sent_at\":1793577660000,\"session\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}",
@@ -379,6 +451,28 @@
       "json": "null",
       "written": null,
       "note": "null"
+    }
+  ],
+  "ControlStop": [
+    {
+      "json": "{}",
+      "written": "{}",
+      "note": "the empty object"
+    },
+    {
+      "json": "{\"after_ms\":30000}",
+      "written": null,
+      "note": "a key"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an empty array, the array form of a struct"
     }
   ],
   "CreateError": [

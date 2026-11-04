@@ -1279,6 +1279,48 @@ pub struct ControlReady {
 
 object_only!(ControlReady);
 
+/// The most bytes of one line on control link 1200, the LF not counted
+/// (decision CH36 G11). A reader that gets this many bytes and no LF
+/// refuses the line. The largest line of each control link type is far
+/// under it. A test holds that.
+// Decision CH43 rule 1: the cap is 64 KiB. That is 32 times the largest
+// line, a `ControlReady` of about 1.7 KiB. A change of the value later is
+// a change of the framing, so it needs a new `GUEST_INIT_PROTOCOL` once
+// guest init is deployed (decision CH14).
+pub const CONTROL_LINE_CAP: usize = 64 << 10;
+
+/// The graceful stop. It carries nothing.
+///
+/// It is a type of its own so that the generated Python model is a class
+/// with no field, as `TurnStart` is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct ControlStop {}
+
+object_only!(ControlStop);
+
+/// What the vmm sends on control link 1200 after `ControlHello` (decision
+/// CH36 G11).
+///
+/// `stop` starts the graceful stop of decision CH19 rule 3. Guest init
+/// stops the facade, for up to 30 s when a turn runs. It then syncs the
+/// disks and powers the VM off. The vmm sends SIGTERM, then SIGKILL, only
+/// when the VM does not exit in time, because a kill is a power cut for
+/// the guest.
+///
+/// On the wire the variant name is the one key of an object, and each
+/// variant has a `title` for its class name. An externally tagged enum has
+/// no unit variant, so `stop` holds an empty object (decision CH22 rule 3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub enum ControlCommand {
+    /// Stop the facade, sync and power off.
+    #[cfg_attr(test, schemars(title = "ControlStopCommand"))]
+    Stop(ControlStop),
+}
+
 family_name!(
     /// The name of a granted skill: `SKILL_NAME` of `family/grammar.py`,
     /// which has the rule of a family name.
@@ -1655,8 +1697,9 @@ pub enum FamilyStateReply {
 #[cfg(test)]
 mod tests {
     use super::{
-        FamilySkills, HOST_API_BODY_CAP, JS_INTEGER_MAX, ListCursor, LitellmKey, PepToken,
-        SESSION_ID_PATTERN, SessionId, SessionIdError, SessionPage,
+        CONTROL_LINE_CAP, ControlReady, FamilySkills, HOST_API_BODY_CAP, JS_INTEGER_MAX,
+        ListCursor, LitellmKey, PepToken, SESSION_ID_PATTERN, SessionId, SessionIdError,
+        SessionPage,
     };
 
     const GOOD: &str = "3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b";
@@ -1685,6 +1728,26 @@ mod tests {
         let size = serde_json::to_vec(&page).unwrap().len();
 
         assert!(size < HOST_API_BODY_CAP / 32, "{size} bytes");
+    }
+
+    /// The largest line of the control link is under 1/32 of its cap
+    /// (decision CH36 G11). A running facade with a title of 256 control
+    /// characters is the largest `ControlReady`, and `ControlReady` is the
+    /// largest type of the link. serde_json writes no LF in a value, so
+    /// one value fills one line.
+    #[test]
+    fn the_largest_control_line_is_far_under_its_cap() {
+        let ready = serde_json::json!({"facade": {"running": {
+            "last_turn_end": {"title": "\u{1}".repeat(256), "updated_at": JS_INTEGER_MAX},
+            "pid": u32::MAX,
+            "starts": JS_INTEGER_MAX,
+            "turn_running": false,
+        }}});
+        let ready: ControlReady = serde_json::from_value(ready).unwrap();
+        let line = serde_json::to_vec(&ready).unwrap();
+
+        assert!(!line.contains(&b'\n'));
+        assert!(line.len() < CONTROL_LINE_CAP / 32, "{} bytes", line.len());
     }
 
     #[test]
