@@ -107,6 +107,30 @@ and turn events set `turn_running` (decision CH43 rule 8).
 `ControlLink::stop` sends the graceful stop
 `{"stop":{}}` (decision CH19 (3)).
 
+## The acp route
+
+`src/handlers/acp.rs` admits or refuses an `acp` Upgrade before 101, in
+the order of decision CH34 rule 7. It reads the row first (`not_found`
+404 for an unknown id or another family, decisions CH21-9, CH33 rule
+5). Then it claims the session in the relay registry (`busy` 409,
+decision CH33 rule 7) and reads the row again. So another family never
+touches the claim of the owner. Then the `StartVm` hook starts the VM: admission, the
+boot or restore, and the first `ControlReady`, whatever facade state it
+reports. Each `StartFault` is a typed code before 101. An unknown id
+never reaches the hook, so it gets no boot. Plan PR L16 adds the hook
+of the vmm. `tests/acp.rs` fakes it.
+
+`src/relay.rs` holds the relay registry with a stop signal (decision
+CH26 rule 5). `Relays::claim` holds a session for one Upgrade until the
+relay ends. `Relays::mark_drop` stops the open relay of a session and
+marks the drop. An Upgrade under the mark gets `not_found` (decision
+CH34 rule 6), and so does one whose start a drop overlapped. The drop
+keeps its mark until the row is gone. The second row read comes after
+the claim, so a drop that ends between the first read and the claim
+leaves no row, and the Upgrade gets `not_found`. Until plan PR
+L13 relays the bytes to guest port 1201, `AcpRelay` reads and drops the
+bytes of the client.
+
 ## Rules
 
 - Each new dependency is its own pull request, with its lock delta
@@ -126,3 +150,11 @@ and turn events set `turn_running` (decision CH43 rule 8).
    so a gate that reads only the ready would never snapshot it. The sleep
    gate is plan PR L18, a later PR, so this crate does not hold the rule
    yet.
+
+## Caller duties
+
+1. Decision CH50 rule 1: the start of an `acp` Upgrade has no outer
+   bound, and the handler adds none around the `StartVm` hook
+   (`src/handlers/acp.rs`). Each step keeps its own bound. Plan PR L17
+   names the timeout of one eviction's snapshot. The bound of a start
+   grows with the number of VMs that its admission evicts.
