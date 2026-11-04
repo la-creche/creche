@@ -306,9 +306,11 @@ it finds. An API with no device read restores no VM: the claim consumes
 the snapshot, and the start cold-boots. `ChApi::GUEST_SYNCS` is false
 for `ChTools`: the control link has no `sync` command until phase 3
 (item 5.7, the item 42 note of the design). So an eviction or a sleep
-takes no snapshot yet (caller duty 7). `tests/start.rs` gives a fake
-API with each value of each constant, and its `info` replies have the
-shape of CH v54.
+takes no snapshot yet (caller duty 7). So the vmm restores no VM that
+it put to sleep until the phase 3 PR. The restore path and the device
+check run only in the tests. `tests/start.rs` gives a fake API with
+each value of each constant, and its `info` replies have the shape of
+CH v54.
 
 ## The eviction
 
@@ -544,7 +546,7 @@ launch) and a stop that waits for an idle sleep whose retire fails.
    adds the `sync` command sets `ChTools::GUEST_SYNCS` true. In the same
    PR, `Retirer::retire` sends `sync` on the control link before each
    take. Each other take, such as the shutdown snapshots of plan PR L19,
-   reads the same gate. Until then a take ends CH with no guest sync, so
-   a cold boot after it (a key mismatch, a failed restore, an `Aged` or
-   a `Budget` sweep) would find the session disk as a power cut leaves
-   it.
+   reads the same gate. A gate set true before the sync would let a take
+   end CH with no guest sync, and a cold boot after it (a key mismatch,
+   a failed restore, an `Aged` or a `Budget` sweep) would find the
+   session disk as a power cut leaves it.
