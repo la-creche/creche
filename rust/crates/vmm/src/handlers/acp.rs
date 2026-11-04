@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use creche_vmm_store::rows::Rows;
 use creche_wire::{AcpError, AcpRoute, OpenAcp, ServeUpgrade, SessionRow};
 
-use crate::relay::{AcpLink, AcpRelay, Relays, Taken};
+use crate::relay::{AcpLink, AcpRelay, Relays, Stopped, Taken};
 
 /// Why a VM did not start. Each is a code of `AcpError` before 101.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,10 +128,14 @@ impl<S: StartVm> ServeUpgrade<AcpRoute> for Acp<S> {
         let started = self.start.start(&row).await;
         // A drop that began during the start or the dial stopped the
         // claim. The Upgrade then gets `not_found` (decision CH34 rule 6),
-        // even when the drop made the dial fail. A dialed link drops
-        // here, so the guest end closes.
-        if claim.stopped() {
-            return Err(AcpError::NotFound {});
+        // even when the drop made the dial fail. An eviction that closed
+        // the door after the start gets `host_full`, as an Upgrade of a
+        // session under eviction does (decisions CH19 (6), CH21-3). A
+        // dialed link drops here, so the guest end closes.
+        match claim.stop_reason() {
+            Some(Stopped::Drop) => return Err(AcpError::NotFound {}),
+            Some(Stopped::Evict) => return Err(AcpError::HostFull {}),
+            None => {}
         }
         let link = started.map_err(StartFault::error)?;
         Ok(AcpRelay::new(claim, link))

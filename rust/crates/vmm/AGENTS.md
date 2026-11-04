@@ -187,7 +187,9 @@ answers `Dropped`. Then the drop runs in this order:
    it.
 4. `remove_session` of `creche-vmm-store` removes the data of each
    session whose VM stopped, then its row (PR D14). It runs in
-   `spawn_blocking`, one row at a time.
+   `spawn_blocking`, one row at a time. The lock of the rows lasts one
+   removal, so the other handlers get it between two removals (decision
+   CH36 G21).
 5. The marks drop after the removal, so they last until the row is gone.
 
 A stop that fails gives `internal` 500 (decision CH50 rule 4). The row
@@ -195,7 +197,8 @@ and the files of that session stay, so a retried drop finishes the job.
 `StopError::Hung` is one such stop. The drop logs the pid of each VM
 that did not stop. A removal that fails gives `internal` too, and its
 row stays. `tests/drop.rs` runs the handler on paused time with fake
-VMs.
+VMs. It proves two drops that overlap a start, a family drop with one
+hung VM, a failed removal, and marks that last until the row is gone.
 
 ## The cold boot
 
@@ -230,10 +233,16 @@ table, and the start boots it again. A cold boot runs these steps:
 
 Each fault but `host_full` goes to the fault file of the family
 (decisions CH6-3, CH21-1). A fault after the launch stops the VM with
-SIGTERM, then SIGKILL, and sends no graceful stop. A VM whose stop
+`stop::stop`. After `ControlReady` the stop sends the graceful stop on
+the control link first (decision CH19 (3)). Before it no link exists,
+so the stop goes on to SIGTERM (decision CH50 rule 3). A VM whose stop
 failed stays in the table, so admission counts its RAM (decision CH50
 rule 4). A start that is dropped before its end sends SIGKILL to its VM
-and keeps the VM in the table for the same reason. The `Launcher` trait
+and keeps the VM in the table for the same reason. The launch step puts
+the process in the start's reservation inside `spawn_blocking`, so a
+start that hyper drops during the launch does the same. Admission first
+removes each VM whose process exited, so an exited VM holds no RAM.
+The `Launcher` trait
 lets `tests/start.rs` fake the launch, the command line file and the
 guest. Every other step there is the real one on a scratch dir.
 
@@ -268,8 +277,9 @@ checked kernel and root disk it gives the current `SnapshotKey`.
    argument.
 
 `ChApi::READS_DEVICES` is false for `restore::ChTools`, the API of the
-vmm, so the vmm restores no VM yet: the claim consumes the snapshot, and the start cold-boots
-(Known gaps). `tests/start.rs` gives a fake API that reads the device
+vmm, so the vmm restores no VM yet: the claim consumes the snapshot, and
+the start cold-boots (Known gaps). For the same reason an eviction takes
+no snapshot (see "The eviction"). `tests/start.rs` gives a fake API that reads the device
 set.
 
 ## The eviction
@@ -288,7 +298,10 @@ admission:
    bounds each `ch-remote` call of the take: pause 5 s, snapshot 60 s
    and `shutdown-vmm` 10 s (decisions CH44 rule 3, CH50 rule 1). The
    take ends CH. A failed take is logged, and the stop follows anyway
-   (decision CH44 rule 4).
+   (decision CH44 rule 4). An API with no device read
+   (`ChApi::READS_DEVICES` false) takes no snapshot: no snapshot would
+   restore, and a take ends CH with no guest power-off. The stop of
+   step 4 is then the graceful one (decision CH19 (3)).
 4. `stop::stop` with the control link of the VM. A VM that does not
    stop goes back with no link, so admission counts its RAM (decision
    CH50 rule 4), and the start gets `host_full`. The VMs left in the
@@ -298,8 +311,14 @@ The gate of each VM is `Activity::may_evict` of `creche-vmm-store`, not
 `may_sleep` (PR D12). Only a VM with a control link and a snapshot key
 may be evicted. Its last use is the later of its start and its last
 door close, and an open door counts as used now (decision CH50 rules 5
-and 6). An Upgrade of a session under eviction gets `host_full`.
-`tests/start.rs` proves the order, the door close and `host_full`.
+and 6). An Upgrade of a session under eviction gets `host_full`. So does
+an Upgrade whose door an eviction closes after its start: `Relays::close`
+stops the claim with `relay::Stopped::Evict`, and the acp handler answers
+it with `host_full`. A drop stops it with `Stopped::Drop`, which gets
+`not_found`. `tests/start.rs` proves the order, the door close,
+`host_full`, a failed take, a failed stop, a start under eviction and an
+eviction with no device read. `tests/acp.rs` proves the eviction during
+the dial.
 
 ## The sleep and the sweep
 
@@ -370,9 +389,8 @@ sweep that skips a generation in use.
    row names the reply to an Upgrade of a session under eviction. The VM
    still holds its RAM, so the code answers `host_full`, and attendance
    retries. A door that an eviction closes between the end of the start
-   and the 101 gives that Upgrade `not_found`, because the handler reads
-   a stopped claim as a drop. An Upgrade of a session whose VM goes to
-   sleep gets `host_full` the same way.
+   and the 101 gets `host_full` the same way (`relay::Stopped::Evict`).
+   An Upgrade of a session whose VM goes to sleep gets `host_full` too.
 5. `ColdBoot` keeps the control link of each VM, and no code reads its
    turn events yet. The `StopVm` hook of the vmm and its use of the
    table of `ColdBoot` are not built yet either.
@@ -394,7 +412,10 @@ sweep that skips a generation in use.
    cold-boots, because the claim consumed the snapshot.
 9. Item 5.7 of the design asks for a guest `sync` before each snapshot
    (`creche-vmm-store` Known gaps). The control link has no `sync`
-   line yet, so an eviction takes its snapshot with no guest sync.
+   line yet, so an API that reads the device set takes its snapshot
+   with no guest sync. `ChTools` takes none (gap 6), so the vmm stops
+   each evicted or idle VM with the graceful stop until the store PR of gap 6
+   lands.
 10. No code reads the turn events of a VM yet (gap 5), so no code calls
     `ControlState::turn`, and `turn_seen` and the last turn time stay
     unset (decisions CH43 rule 8, CH50 rule 5). A VM whose last ready did
