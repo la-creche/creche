@@ -66,6 +66,11 @@ and the scope runs the proof when the script gives no answer.
 
 The `playpen-image` job builds the full Python flavor. Both workflows run
 that build before their final job can pass.
+
+The `kvm` job runs `bin/vm-smoke-setup.sh`, then each ignored test of
+rust/ whose name holds `kvm_` (decisions CH8-4, CH36 G19). The test run
+names no crate and no file, so a new kvm_ test needs no workflow edit. A
+step before the run fails the job when no such test exists.
 """
 
 from __future__ import annotations
@@ -171,6 +176,22 @@ RUST_RUNS = [
     "cargo clippy --all-targets --locked -- -D warnings",
     "cargo test --locked",
 ]
+
+#: The KVM smoke job, the script that readies the runner, and the one test
+#: run: each ignored test whose name holds `kvm_`, in every crate.
+KVM_JOB = "kvm"
+KVM_SETUP = "bin/vm-smoke-setup.sh"
+KVM_RUN = "cargo test --locked -- --ignored kvm_"
+
+#: The step before the test run. `cargo test` exits 0 when its filter
+#: matches no test, so this list fails the job when no ignored kvm_ test
+#: exists.
+KVM_COUNT = (
+    "count=$(cargo test --locked -q -- --ignored --list kvm_ | grep -c ': test$' || true)\n"
+    'echo "ignored kvm_ tests: $count"\n'
+    'test "$count" -ge 1\n'
+)
+KVM_ENV = {"CRECHE_KVM_DIR": "${{ runner.temp }}/kvm"}
 
 #: The step of that job before the three checks. It refuses an edit or a
 #: deletion of a frozen host API file against the commit the change starts
@@ -716,6 +737,7 @@ def test_the_docs_scope_runs_no_shard_and_no_node_job(
         PLAYPEN_JOB,
         RUST_JOB,
         SYSTEMD_JOB,
+        KVM_JOB,
     }
     assert only_code == set(DOCS), "the verdict table of this file names other jobs"
     assert {name for name, rule in by_scope.items() if rule is None} == NO_RULE[last]
@@ -744,6 +766,7 @@ def test_the_release_runs_the_gates_test_jobs() -> None:
         PLAYPEN_JOB,
         RUST_JOB,
         SYSTEMD_JOB,
+        KVM_JOB,
     ):
         assert RELEASE_JOBS[name] == JOBS[name], f"release.yml's {name} job is not gate.yml's"
 
@@ -1364,6 +1387,31 @@ def test_the_rust_job_formats_lints_and_tests_the_workspace(
 
 
 @pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
+def test_the_kvm_job_readies_the_runner_then_runs_every_kvm_test(
+    jobs: dict[str, dict[str, Any]], last: str
+) -> None:
+    """The setup script runs before the build, on the runner itself. The
+    test run reads the same directory as the script, and no step has a
+    rule or `continue-on-error`: no KVM is a red job. A run that matches
+    no kvm_ test is red too, because the count step fails first."""
+    job = jobs[KVM_JOB]
+    checkout, setup, toolchain, count, run = job["steps"]
+
+    assert set(job) == {"needs", "if", "runs-on", "timeout-minutes", "env", "steps"}
+    assert job["needs"] == "scope"
+    assert job["if"] == ONLY_CODE
+    assert job["runs-on"] == "ubuntu-24.04"
+    assert job["env"] == {"CARGO_INCREMENTAL": 0}
+    assert checkout["with"] == {"fetch-depth": 0}
+    assert setup == {"run": KVM_SETUP, "env": KVM_ENV}
+    assert (REPO / KVM_SETUP).is_file()
+    assert toolchain["working-directory"] == RUST_DIR
+    assert "rustup toolchain install --no-self-update" in toolchain["run"]
+    assert count == {"name": "count the kvm tests", "working-directory": RUST_DIR, "run": KVM_COUNT}
+    assert run == {"run": KVM_RUN, "working-directory": RUST_DIR, "env": KVM_ENV}
+
+
+@pytest.mark.parametrize(("jobs", "last"), WORKFLOW_JOBS, ids=BY_NAME)
 def test_the_memory_job_checks_the_package_in_its_own_venv(
     jobs: dict[str, dict[str, Any]], last: str
 ) -> None:
@@ -1828,6 +1876,7 @@ DOCS = {
     PLAYPEN_JOB: "skipped",
     RUST_JOB: "skipped",
     SYSTEMD_JOB: "skipped",
+    KVM_JOB: "skipped",
 }
 
 #: (the scope, what the jobs did, whether the last job is green), for the
@@ -1849,6 +1898,10 @@ CASES: list[tuple[str | None, dict[str, str], bool]] = [
     ("code", {SYSTEMD_JOB: "cancelled"}, False),
     ("code", {PLAYPEN_JOB: "failure"}, False),
     ("code", {PLAYPEN_JOB: "skipped"}, False),
+    # No KVM on the runner fails the job. It never skips on a code PR.
+    ("code", {KVM_JOB: "failure"}, False),
+    ("code", {KVM_JOB: "skipped"}, False),
+    ("docs", DOCS | {KVM_JOB: "success"}, False),
     ("code", {"lint": "failure"}, False),
     ("docs", DOCS | {"lint": "failure"}, False),
     # A suite that did not run on a code PR is red, not skipped.

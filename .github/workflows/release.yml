@@ -17,6 +17,8 @@
 #           │               code   the restart rule of the daemon units, on
 #           │                      the systemd of the runner, for a push
 #           │                      that touches systemd/
+#           ├── kvm         code   the kvm_ tests of rust/, on the KVM of
+#           │                      the runner
 #           └── artifacts ── sign
 #                           the archive of each binary component that the
 #                           plan tags, then the keyless signature of each
@@ -58,8 +60,8 @@
 # A docs-only push onto a commit whose own run passed runs only the tests
 # marked `docs`, as gate.yml does (bin/lib/docsrule.sh). The tag step still
 # runs.
-# The `tests`, `agent`, `facade`, `proc`, `suites`, `playpen-image`, `rust`
-# and `systemd-proof` jobs are gate.yml's, and bin/tests/test_gate_workflow.py
+# The `tests`, `agent`, `facade`, `proc`, `suites`, `playpen-image`, `rust`,
+# `systemd-proof` and `kvm` jobs are gate.yml's, and bin/tests/test_gate_workflow.py
 # holds the two files to the same shard command — diff the two when changing
 # either.
 #
@@ -544,6 +546,56 @@ jobs:
       - run: bin/systemd-proof.sh
         if: needs.scope.outputs.systemd != 'false'
 
+  # The KVM smoke job (decisions CH8-4, CH36 G19 and G20). It runs each
+  # test whose name holds `kvm_` and that is `#[ignore]`d, in any crate of
+  # rust/, so a new kvm_ test needs no edit here. bin/vm-smoke-setup.sh
+  # first opens /dev/kvm and /dev/vhost-vsock with the runner's own sudo,
+  # starts the user manager, and fetches CH v54.0 and the guest kernel by
+  # their digests (facts 53, 71) and busybox from apt. The method is the
+  # one the C0 spike proved (fact 79).
+  #
+  # No KVM on the runner fails the job. It never skips: a job skipped on a
+  # code change reads as red in the verdict.
+  #
+  # The time limit: the setup takes under a minute and the build about as
+  # long as the rust job.
+  kvm:
+    needs: scope
+    if: needs.scope.outputs.scope == 'code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - run: bin/vm-smoke-setup.sh
+        env:
+          CRECHE_KVM_DIR: ${{ runner.temp }}/kvm
+
+      - name: toolchain
+        working-directory: rust
+        run: |
+          rustup toolchain install --no-self-update
+          cargo --version
+
+      # `cargo test` exits 0 when the filter matches no test. So a renamed
+      # test, a lost `#[ignore]` or a wrong cfg would leave the job green
+      # with no boot. This step fails when no ignored kvm_ test exists.
+      - name: count the kvm tests
+        working-directory: rust
+        run: |
+          count=$(cargo test --locked -q -- --ignored --list kvm_ | grep -c ': test$' || true)
+          echo "ignored kvm_ tests: $count"
+          test "$count" -ge 1
+
+      - run: cargo test --locked -- --ignored kvm_
+        working-directory: rust
+        env:
+          CRECHE_KVM_DIR: ${{ runner.temp }}/kvm
+
   # The plan gate: the binary components that get a tag in this run. The
   # dry run of the tag script prints `would attach <asset> to
   # <component>-vX.Y.Z` for each asset of each binary component that it
@@ -769,12 +821,12 @@ jobs:
           retention-days: 7
 
   # `always()`: on a docs push `tests`, `agent`, `facade`, `proc`, `suites`,
-  # `playpen-image`, `rust` and `systemd-proof` are skipped. A job that needs one is
+  # `playpen-image`, `rust`, `systemd-proof` and `kvm` are skipped. A job that needs one is
   # skipped by default. The verdict step is
   # what holds the tags back when a job failed. The `plan`, `artifacts` and
   # `sign` jobs run in each scope, so the verdict needs their success.
   release:
-    needs: [scope, lint, tests, agent, facade, proc, suites, memory, playpen-image, rust, systemd-proof, plan, artifacts, sign]
+    needs: [scope, lint, tests, agent, facade, proc, suites, memory, playpen-image, rust, systemd-proof, kvm, plan, artifacts, sign]
     if: always()
     runs-on: ubuntu-24.04
     permissions:
