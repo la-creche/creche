@@ -141,12 +141,12 @@ Dockerfile only, not the built env with the parent image's names.
 
 ## Known gaps
 
-- Decision CH23 rule 2 fails a prompt when the family state does not
-  read. The file backend fails a prompt only for `creds.json`. For
-  `config/` it keeps the last good config. On sbx a config edit leaves
-  the mount of `config/` dead until the sandbox is made again (decision
-  CH52 rule 1). So a failed prompt each time is an outage
-  (`src/family-state.ts`).
+- The file backend fails a prompt only for `creds.json`. For `config/`
+  it keeps the last good config and logs one stderr line (decision CH53
+  rule 2). On sbx a config edit leaves the mount of `config/` dead until
+  the sandbox is made again (decision CH52 rule 1), so a config edit
+  never reaches a running sandbox. Under CH the vmm reply has no such
+  fallback (`src/family-state.ts`).
 - At start a skill gets its supporting files. The family state carries
   only the text of each `SKILL.md`. A skill whose text changes after the
   start has no supporting files until the facade starts again.
