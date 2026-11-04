@@ -398,8 +398,9 @@ jobs:
           cargo --version
 
       # The frozen host API files (decision CH33 rule 8, wire/AGENTS.md "The
-      # protocol number"). A change may add a rust/crates/wire/schema/
-      # host-api-<N>.json, and never edit or delete one. The schema test
+      # protocol number"). A change may add a host-api-<N>.json of the wire
+      # crate, and never edit or delete one. The pathspec * also matches a
+      # slash, so it reaches the files in the schema dir. The schema test
       # cannot see a file that a change deleted and wrote again, so this
       # step diffs against the commit the change starts from: the merge
       # group's base, the PR's merge-base, or main before the push. A
@@ -425,7 +426,7 @@ jobs:
             exit 0
           fi
           git diff --no-renames --diff-filter=MDT --name-status --exit-code \
-            "$base" HEAD -- 'rust/crates/wire/schema/host-api-*.json'
+            "$base" HEAD -- 'rust/crates/wire/*host-api-*.json'
 
       - run: cargo fmt --check
         working-directory: rust
