@@ -274,8 +274,8 @@ class SessionService:
         if not is_session(session):
             raise ApiError(ErrorCode.BAD_REQUEST, "not a session id", family=family)
 
-        relay = await self._start_relay(family, self._status.require(family))
         cwd = self._session_cwd(family, None, None)
+        relay = await self._start_relay(family, self._status.require(family))
 
         try:
             return await acp_view.load_transcript(relay, family, session, cwd, page)
