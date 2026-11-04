@@ -450,6 +450,11 @@ impl<A: ChApi> Retirer<A> {
         // power cut left it. So with no device read the VM takes no
         // snapshot, and the stop below is the graceful one (decision CH19
         // (3)): guest init syncs and powers off.
+        // CONTRACT-QUESTION (Known gaps 9, item 5.7): the take below runs
+        // with no guest `sync`, because the control link has no `sync`
+        // line yet. No row makes that choice. Each cold boot after the
+        // take (a key mismatch, a failed restore, an Aged or a Budget
+        // sweep) finds the disk as a power cut left it.
         if A::READS_DEVICES {
             // The blocking step owns the read lock, so the lock lasts as
             // long as the take (`retention::sweep`).

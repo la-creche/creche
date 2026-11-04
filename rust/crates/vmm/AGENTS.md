@@ -476,14 +476,24 @@ launch) and a stop that waits for an idle sleep whose retire fails.
    `ControlReady` asks for a cold boot. After a restore the start does
    not cold-boot then. It faults, stops the VM, and the next start
    cold-boots, because the claim consumed the snapshot.
-9. Item 5.7 of the design asks for a guest `sync` before each snapshot
-   (`creche-vmm-store` Known gaps). The control link has no `sync`
-   line yet. Since plan PR L18b `ChTools` reads the device set, so the
-   vmm takes each eviction and sleep snapshot with no guest sync. A
-   restore resumes the memory and the disk of one moment. A snapshot that
-   a later start drops (a key mismatch, a failed restore) leaves the
-   session disk as a power cut leaves it. The phase 3 guest init PR adds
-   the line.
+9. CONTRACT-QUESTION (item 5.7 of the design, plan PR L18b,
+   `src/start.rs` `Retirer::retire`): item 5.7 asks for a guest `sync`
+   before each snapshot. The store gives that duty to lifecycle: it
+   syncs the guest through the control link before `Snapshotter::take`
+   (`creche-vmm-store` Known gaps, caller duty of PR D9). The control
+   link has no `sync` line yet. Since plan PR L18b `ChTools` reads the
+   device set, so the vmm takes each eviction and sleep snapshot with
+   no guest sync. No row makes that choice. Before L18b the retire took
+   no snapshot for this reason and sent the graceful stop. A restore
+   resumes the memory and the disk of one moment. Each cold boot after a
+   take finds the session disk as a power cut leaves it. A later start
+   drops a snapshot on a key mismatch or a failed restore. The retention
+   sweep also drops the newest generation as `Reason::Aged` after
+   `MAX_AGE` (7 days, decisions CH2, CH50 rule 7) or as
+   `Reason::Budget` (decision CH8-7). So each session idle for more
+   than 7 days cold-boots from a disk that may lack its last guest
+   writes. The phase 3 guest init PR adds the line. Until David answers,
+   plan PR L18b waits (plan rule 10).
 10. Closed by plan PR L18b: the turn reader calls `ControlState::turn`
     for each event, so `turn_seen` and the last turn time follow the
     guest (decisions CH43 rule 8, CH50 rule 5).
