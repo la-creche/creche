@@ -26,6 +26,12 @@ The workspace needs 3.12 because its code uses PEP 695 type parameters.
 On `PATH`, `pytest` runs the venv. `python3` stays the 3.11 interpreter of
 the analysis stack.
 
+The `coding` flavor of `code` and `creche` is the python flavor plus uv,
+pnpm through corepack, and cargo with Rust 1.92.0, rustfmt and clippy
+(CH7-1, for now). Agents install a repo's locked dependencies through the
+egress proxy and run its checks. It ships as a root disk only (CH53
+rule 1): no sbx image and no `SandboxFlavor` member.
+
 The Python flavor ships no Python package installer. `pip`, `uv` and
 `ensurepip` exist in build steps only. The test venv excludes `nodeenv`.
 A dependency change for a venv is a lockfile change plus a playpen release.
@@ -41,7 +47,7 @@ CH49). The step lists the names. `bin/playpen-env-check` compares the file
 with the built config in CI, so a new `ENV` name fails until it is listed.
 
 The image holds no pi, no fd, no playpen bundle, no PEP bridge, no
-`agent-pi-launch` and no Python package installer.
+`agent-pi-launch`. Only the `coding` flavor holds a package installer.
 
 The image is built on the host, from the repository root, with
 `playpen/Dockerfile`. Do not build it on a development machine.
@@ -62,9 +68,10 @@ CI builds each flavor on each code change (`bin/playpen-ci`).
    row bundles those.
 5. `bin/playpen-verify` changes nothing and reaches nothing outside the
    host. It asks the registry for each digest in `images.env`.
-6. Keep four lists equal: the targets of `Dockerfile`, the flavors in
-   `bin/playpen-build` and `bin/playpen-ci`, and `SandboxFlavor` in
-   `family/`.
+6. Keep the flavor lists equal: the flavors in `bin/playpen-build` and
+   `SandboxFlavor` in `family/`. `bin/playpen-ci` lists those, then the
+   flavors that ship as a root disk only (today `coding`). The targets of
+   `Dockerfile` are the `bin/playpen-ci` list.
 7. `bin/tests/test_playpen_release.py` runs both scripts against a stub
    `docker` and a stub registry. `bin/tests/test_playpen_image.py` reads the
    Dockerfile as text. No test builds an image.

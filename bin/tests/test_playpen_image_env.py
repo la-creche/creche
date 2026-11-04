@@ -183,7 +183,7 @@ def _flavor_steps(stage: str) -> list[str]:
     return [line for line in joined.splitlines()[1:] if line.strip() and not line.startswith("#")]
 
 
-@pytest.mark.parametrize("stage", ["agent-sandbox", "agent-sandbox-python"])
+@pytest.mark.parametrize("stage", ["agent-sandbox", "agent-sandbox-python", "agent-sandbox-coding"])
 def test_each_flavor_writes_the_env_file_in_its_last_step(stage: str) -> None:
     """An ENV line after the write would set a name the file does not hold."""
     steps = _flavor_steps(stage)
