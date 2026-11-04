@@ -12,10 +12,12 @@ use std::num::{NonZeroU32, NonZeroU64};
 use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::{Arc, mpsc};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use creche_vmm_confine::launch::{Launch, Payload, Program};
+use creche_vmm_confine::output::Sink;
 use creche_vmm_confine::scope::Scope;
 use creche_vmm_confine::spawner::{Launched, SpawnError, Spawner};
 
@@ -147,6 +149,35 @@ fn terminate_sends_sigterm() {
     payload.terminate().unwrap();
     assert_eq!(payload.wait().unwrap().signal(), Some(15));
     payload.terminate().unwrap();
+}
+
+#[test]
+fn the_payload_output_reaches_the_sink_tagged_with_the_session_id() {
+    let vm = TempVm::new("output", ID);
+    let (sender, lines) = mpsc::channel();
+    let sink: Sink = Arc::new(move |line| sender.send(line.to_owned()).unwrap());
+    let spawner = Spawner::with_sink(example(), sink).unwrap();
+    let scope = Scope::new(
+        ID.parse().unwrap(),
+        NonZeroU64::new(1 << 30).unwrap(),
+        NonZeroU32::new(100).unwrap(),
+    );
+    let payload = Payload::new(
+        Program::new(example()).unwrap(),
+        vec!["say".to_owned(), "hello".to_owned()],
+    );
+    let systemd_run = Program::new(example()).unwrap();
+    let launch = Launch::new(systemd_run, scope, payload, vm.files.clone());
+    let mut launched = spawner.launch(launch).unwrap();
+    assert!(launched.wait().unwrap().success());
+    let mut got: Vec<String> = (0..2)
+        .map(|_| lines.recv_timeout(Duration::from_secs(5)).unwrap())
+        .collect();
+    got.sort();
+    assert_eq!(
+        got,
+        [format!("ch {ID}: hello err"), format!("ch {ID}: hello out")]
+    );
 }
 
 /// The exit code and stderr of the launch step with `stdin`.

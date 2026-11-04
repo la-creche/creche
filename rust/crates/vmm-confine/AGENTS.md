@@ -57,6 +57,14 @@ table of the three vmm crates.
 - The launch step reads its plan only from a pipe that already holds it.
   The spawner writes the whole plan, at most 64 KiB, before the spawn,
   and never blocks on a full pipe.
+- The spawner gives each launch step one pipe for stdout and stderr in
+  place of the fds of the vmm, so CH inherits no journal socket (decision
+  CH50 rule 12). `output::start` reads it on one thread per VM and gives
+  each line to the sink tagged `ch <session id>`, under `LINE_CAP` bytes
+  per line and `RATE_LINES` lines per `RATE_WINDOW` (decision CH52 rule
+  6). It escapes each control char, so CH cannot write a vmm line. The vmm sink is the
+  stderr of the vmm with the prefix `vmm: `. The crate has no log crate,
+  and `rust/Cargo.lock` holds none.
 - `leftovers::stop_all` stops every user unit with the prefix
   `creche-vm-` and adopts none (decision CH19 (4), fact 76). The vmm calls
   it at start, before it binds or unlinks any per-VM socket path. A unit
