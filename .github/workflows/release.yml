@@ -13,10 +13,11 @@
 #           ├── playpen-image
 #           │              code   the full Python flavor image
 #           ├── rust        code   cargo fmt, clippy and test of rust/
-#           └── systemd-proof
-#                           code   the restart rule of the daemon units, on
-#                                  the systemd of the runner, for a push
-#                                  that touches systemd/
+#           ├── systemd-proof
+#           │               code   the restart rule of the daemon units, on
+#           │                      the systemd of the runner, for a push
+#           │                      that touches systemd/
+#           └── artifacts          the archive of each binary component
 #   every job above ── release   tags + Releases, only when every job
 #                                passed
 #
@@ -62,9 +63,10 @@
 # run passed, skips the one step of the `systemd-proof` job (`--unchanged` of
 # bin/systemd-proof.sh). The job is still a success.
 #
-# THIS WORKFLOW BUILDS NO ARCHIVE. The catalog has no binary component. A
-# binary component would get no tag here: the tag script refuses it when
-# ASSET_DIR names no directory, and the run ends red
+# THE `artifacts` JOB BUILDS THE ARCHIVE OF EACH BINARY COMPONENT
+# (bin/build-artifacts.sh), at each push and in each scope. No job signs
+# an archive yet. So a binary component still gets no tag here: the tag
+# script refuses it when ASSET_DIR names no directory, and the run ends red
 # (handover/bin/allocate-tags.sh).
 #
 # agent-mcp has a SIBLING of the `release` job, in its own
@@ -518,12 +520,55 @@ jobs:
       - run: bin/systemd-proof.sh
         if: needs.scope.outputs.systemd != 'false'
 
+  # The archive of each binary component: bin/build-artifacts.sh. No pull
+  # request runs this job, and gate.yml has no copy of it. Each push builds
+  # each binary row, in each scope, because each run can tag a component
+  # that an older run missed (handover/bin/allocate-tags.sh). With no binary
+  # component the script prints one line, and the upload holds an empty
+  # SHA256SUMS.
+  artifacts:
+    needs: scope
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      digests: ${{ steps.build.outputs.digests }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The `handover` command gives the rows and walks each tree.
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          enable-cache: false
+
+      # ARTIFACT_REPO: the catalog's name for this repository. TAG_REPO of
+      # the tag step holds the same name.
+      - name: build
+        id: build
+        env:
+          ARTIFACT_REPO: creche
+          ARTIFACT_OUT: ${{ runner.temp }}/artifacts
+        run: bin/build-artifacts.sh
+
+      # The script writes SHA256SUMS in each run, so the upload always has
+      # one file. The next job cannot download an artifact that does not
+      # exist.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: artifacts
+          path: ${{ runner.temp }}/artifacts
+          if-no-files-found: error
+          retention-days: 7
+
   # `always()`: on a docs push `tests`, `agent`, `facade`, `proc`, `suites`,
   # `playpen-image`, `rust` and `systemd-proof` are skipped. A job that needs one is
   # skipped by default. The verdict step is
-  # what holds the tags back when a job failed.
+  # what holds the tags back when a job failed. The `artifacts` job runs in
+  # each scope, so the verdict needs its success.
   release:
-    needs: [scope, lint, tests, agent, facade, proc, suites, memory, playpen-image, rust, systemd-proof]
+    needs: [scope, lint, tests, agent, facade, proc, suites, memory, playpen-image, rust, systemd-proof, artifacts]
     if: always()
     runs-on: ubuntu-24.04
     permissions:
