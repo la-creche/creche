@@ -2,23 +2,25 @@
 //! `route_table!` with the concrete type of each route, so a handler set
 //! needs a handler for each route of the one table.
 //!
-//! The order of the checks follows decisions CH26 and CH33 rule 13. The
-//! protocol header comes first, in `accept`. Then the route (`no_route`),
-//! the method (`bad_method`), the body checks of `BodyCheck`, and the
-//! request type (`not_valid`). The handler runs last.
-//!
-//! This router serves the JSON routes only. An Upgrade route gets
-//! `no_route` until the next change adds `ServeUpgrade` and its path
-//! (decisions CH26 rule 3, CH34 rule 7).
+//! The order of the checks follows decisions CH26, CH33 rule 13 and CH34
+//! rule 7. The protocol header comes first, in `accept`. Then the route
+//! (`no_route`), the method (`bad_method`), the `Upgrade` header of an
+//! Upgrade route (`upgrade_required`), the body checks of `BodyCheck`, and
+//! the request type (`not_valid`). The handler runs last.
 
 use std::future::Future;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use creche_wire::{Body, HOST_API_BODY_CAP, JsonRoute, ListError, RouteError, Serve};
+use creche_wire::{
+    Body, HOST_API_BODY_CAP, JsonRoute, ListError, RouteError, Serve, ServeUpgrade, UpgradeRoute,
+};
 use hyper::body::{Bytes, Incoming};
-use hyper::{Method, Request, StatusCode, Uri};
+use hyper::header::{CONNECTION, HeaderValue, UPGRADE};
+use hyper::upgrade::Upgraded;
+use hyper::{HeaderMap, Method, Request, Response, StatusCode, Uri};
+use hyper_util::rt::TokioIo;
 use serde::Serialize;
 
 use super::{BodyCheck, Reply, StopSignal, error_reply, json_reply, run_with};
@@ -29,6 +31,12 @@ use crate::ServeError;
 pub trait Routes: Send + Sync + Sized + 'static {
     /// The route named `name`, or `None` when the table has no such route.
     fn find(name: &str) -> Option<Route<Self>>;
+}
+
+/// What the vmm runs on the byte stream of an Upgrade route after 101.
+pub trait Relay: Send + 'static {
+    /// Relays the stream until either end closes it.
+    fn run(self, stream: TokioIo<Upgraded>) -> impl Future<Output = ()> + Send;
 }
 
 /// The answer of a route to one request.
@@ -56,11 +64,23 @@ impl<H: Routes> Route<H> {
             answer: answer_json::<H, R>,
         }
     }
+
+    /// The Upgrade route `R`, admitted by `H`.
+    #[doc(hidden)]
+    pub fn upgrade<R: UpgradeRoute>() -> Self
+    where
+        H: ServeUpgrade<R>,
+        <H as ServeUpgrade<R>>::Relay: Relay,
+    {
+        Self {
+            answer: answer_upgrade::<H, R>,
+        }
+    }
 }
 
 /// Implements `Routes` for the handler set `$handlers`. The expansion of
-/// `route_table!` names each JSON route with its concrete type, so a set
-/// that misses a handler does not build (decision CH25):
+/// `route_table!` names each route with its concrete type, so a set that
+/// misses a handler does not build (decision CH25):
 ///
 /// ```compile_fail,E0277
 /// use creche_wire::{CreateError, CreateRoute, CreateSession, Serve, SessionRow};
@@ -88,9 +108,13 @@ macro_rules! routes {
                             >());
                         }
                     };
-                    // An Upgrade route names no route yet: it gets
-                    // `no_route` until the next change serves it.
-                    (upgrade $route:path) => {};
+                    (upgrade $route:path) => {
+                        if name == <$route as $crate::server::wire::UpgradeRoute>::NAME {
+                            return ::core::option::Option::Some($crate::server::Route::upgrade::<
+                                $route,
+                            >());
+                        }
+                    };
                 }
                 $crate::server::wire::route_table!(each_route);
                 ::core::option::Option::None
@@ -176,6 +200,16 @@ impl<H: Routes> Router<H> {
             Err(_) => self.internal.clone(),
         }
     }
+
+    /// `upgrade_required` 426, with `Upgrade: TOKEN` (decisions CH26 rule
+    /// 3, CH34 rule 6, RFC 9110 section 15.5.22).
+    fn upgrade_required<R: UpgradeRoute>(&self) -> Reply {
+        let mut reply = self.error(&R::UPGRADE_REQUIRED);
+        match upgrade_headers(reply.headers_mut(), R::TOKEN) {
+            Some(()) => reply,
+            None => self.internal.clone(),
+        }
+    }
 }
 
 /// The route name of `uri`: its path after the first slash.
@@ -186,6 +220,26 @@ fn name(uri: &Uri) -> Option<&str> {
         return None;
     }
     uri.path().strip_prefix('/')
+}
+
+/// Whether the request gives one `Upgrade` header with exactly `token`.
+// Decision CH40 rule 10: only the exact token, given once and in that
+// case, names it. A list such as `a, creche-acp`, another letter case or
+// a header given twice gets `upgrade_required` 426 (decision CH26 rule 3).
+fn names_token(headers: &HeaderMap, token: &str) -> bool {
+    let mut values = headers.get_all(UPGRADE).iter();
+    matches!(
+        (values.next(), values.next()),
+        (Some(value), None) if value.as_bytes() == token.as_bytes()
+    )
+}
+
+/// Adds `Connection: upgrade` and `Upgrade: token`, or `None` when the
+/// token is no header value.
+fn upgrade_headers(headers: &mut HeaderMap, token: &str) -> Option<()> {
+    headers.insert(UPGRADE, HeaderValue::from_str(token).ok()?);
+    headers.insert(CONNECTION, HeaderValue::from_static("upgrade"));
+    Some(())
 }
 
 fn answer_json<H, R>(router: &Router<H>, request: Request<Incoming>) -> Answer<'_>
@@ -202,5 +256,41 @@ where
             Ok(reply) => router.reply(StatusCode::OK, &reply),
             Err(error) => router.error(&error),
         }
+    })
+}
+
+/// Every refusal comes before 101 (decision CH33 rule 6). After 101 the
+/// relay owns the stream, and no JSON cap binds it (decision CH34 rule 3).
+fn answer_upgrade<H, R>(router: &Router<H>, mut request: Request<Incoming>) -> Answer<'_>
+where
+    H: Routes + ServeUpgrade<R>,
+    R: UpgradeRoute,
+    <H as ServeUpgrade<R>>::Relay: Relay,
+{
+    Box::pin(async move {
+        if !names_token(request.headers(), R::TOKEN) {
+            return router.upgrade_required::<R>();
+        }
+        let upgrade = hyper::upgrade::on(&mut request);
+        let request = match router.request::<R::Request>(request).await {
+            Ok(request) => request,
+            Err(reply) => return reply,
+        };
+        let relay = match <H as ServeUpgrade<R>>::admit(&router.handlers, request).await {
+            Ok(relay) => relay,
+            Err(error) => return router.error(&error),
+        };
+        let mut reply = Response::new(http_body_util::Full::new(Bytes::new()));
+        *reply.status_mut() = StatusCode::SWITCHING_PROTOCOLS;
+        if upgrade_headers(reply.headers_mut(), R::TOKEN).is_none() {
+            return router.internal.clone();
+        }
+        tokio::spawn(async move {
+            // A client that leaves before the switch ends the relay unrun.
+            if let Ok(upgraded) = upgrade.await {
+                relay.run(TokioIo::new(upgraded)).await;
+            }
+        });
+        reply
     })
 }

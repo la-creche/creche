@@ -209,8 +209,11 @@ its error type.
    an ignore is unnecessary. A wider `JsonRoute` then fails the gate.
 9. A caller imports a route from `creche_wire.routes`. The route constants
    and `JsonRoute` are not in `__all__`, because they are no wire type.
-10. The vmm handler of a JSON route implements `Serve<R>` (decision CH26
-    rule 4). A handler set that misses a JSON route does not build.
+10. The vmm handler of a route implements `Serve<R>` or `ServeUpgrade<R>`
+    (decision CH26 rule 4). A handler set that misses a route does not
+    build. `ServeUpgrade` admits or refuses before 101 and returns a relay
+    that the vmm runs. `UpgradeRoute::UPGRADE_REQUIRED` is the error of a
+    request whose `Upgrade` header does not name `TOKEN`.
 
 To add a route, add its marker and its line in `route_table!`. Then follow
 the steps below.

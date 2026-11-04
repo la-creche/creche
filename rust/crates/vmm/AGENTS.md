@@ -34,13 +34,15 @@ rule 1). `server::run` serves no route: it answers each request that
 passes with `no_route`. `Stop` stops the server through `tokio::sync`
 (decision CH26 rule 2).
 
-`server::run_routes` serves the JSON routes of the one route table
-(decision CH25). A handler set implements `Serve<R>` of `creche-wire` for
-each JSON route. `creche_vmm::routes!` then expands `route_table!` for
-it, so a set that misses a JSON route does not build. The router checks
-the route and the method, then the body, then the request type
-(decision CH33 rule 13). An Upgrade route gets `no_route` until the
-change that adds `ServeUpgrade`.
+`server::run_routes` serves the one route table (decision CH25). A
+handler set implements `Serve<R>` of `creche-wire` for each JSON route
+and `ServeUpgrade<R>` for each Upgrade route. `creche_vmm::routes!` then
+expands `route_table!` for it, so a set that misses a route does not
+build. The router checks the route and the method, then the `Upgrade`
+header of an Upgrade route, then the body, then the request type
+(decisions CH26 rule 3, CH33 rule 13, CH34 rule 7). It answers 101 only
+after the handler admits the request. A `server::Relay` then owns the
+stream.
 
 `server::BodyCheck` holds the body checks that follow the route, in the
 order of decisions CH26 and CH33 rule 13: `Content-Type`, then the 1 MiB
