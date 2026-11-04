@@ -29,6 +29,14 @@ The second file has the table of the three vmm crates.
   newest. `check_newest` reads no older key. So an older generation
   never restores onto a session disk that moved on (decision CH19 (5)).
   This also takes part of the D13 job of removing older generations.
+- Decision CH44 rule 6 (PR D11, `claim.rs`): a failed make or sync of
+  the `consumed` mark leaves no durable mark. So the claim renames
+  `snapshots/<n>` to `snapshots/<n>.retired`, and the caller cold-boots
+  (`ClaimError::Retired`). When the rename fails too, the caller fails
+  the start (`ClaimError::Stuck`). The row names only the rename. The
+  code reads a rename that it cannot make durable (the sync of
+  `snapshots/` fails) as a failed rename too. D13 removes a leftover
+  `<n>.retired`. CH39 rule 3 does not name it.
 
 ## Known gaps
 
