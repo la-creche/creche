@@ -193,9 +193,7 @@ its error type.
    vmm checks it before it reads the body, and the match is exact. A
    request that fails the check gets the mismatch reply (see "The protocol
    mismatch reply"). A change of the schema subset that the routes reach
-   needs a new number (decision CH33 rule 8). The repo holds a frozen copy
-   of that subset per number, and CI fails on a change that keeps the
-   number. That check is not built yet (see "Known gaps").
+   needs a new number (see "The protocol number").
 7. The schema test also writes `src/creche_wire/routes.py`. It holds the
    protocol, its header, `HOST_API_BODY_CAP`, `MISMATCH_STATUS` and one
    `JsonRoute` or `UpgradeRoute` constant per route, named as the route in
@@ -391,12 +389,38 @@ The retry rule (decision CH33 rule 10): after a mismatch, attendance tries
 fault `vmm_protocol_mismatch`. The rule lives in the client. This package
 holds no code for it (see "Known gaps").
 
+## The protocol number
+
+A change of the schema subset that the routes reach needs a new
+`HOST_API_PROTOCOL` (decision CH33 rule 8). Any change counts, an added
+key or an added route too, because the match of the number is exact.
+
+1. `rust/crates/wire/schema/host-api-<N>.json` holds a frozen copy of that
+   subset for the number N. The subset is `x-routes` and each `$defs` entry
+   that a route type reaches through `$ref`, with no `description` text.
+2. The schema test fails when the subset differs from the file of the
+   current number. The `rust` job of CI runs that test.
+3. Write mode never writes over the file of the current number. It writes
+   a file only for a number that has none.
+4. To change a reached type, raise `HOST_API_PROTOCOL` by one. Then run
+   write mode, and commit the new file. Keep each older file. The test
+   `each_frozen_host_api_file_is_kept` fails when a file of a number up to
+   the current one is missing.
+5. Never edit a `host-api-<N>.json` file by hand. The step `frozen host
+   api` of the CI `rust` job diffs the files against the commit the change
+   starts from. It fails when a change edits or deletes one, so a file
+   deleted and written again fails too.
+6. A change of a type that no route reaches needs no new number:
+   `FamilyStateReply`, `TurnEvent`, `ControlHello` and the types that only
+   they reach. A change of a `description` needs none either.
+
 ## Change a wire type
 
 1. Change the type in `rust/crates/wire/src/`.
 2. In `rust/`, run `CRECHE_WIRE_SCHEMA=write cargo test -p creche-wire`. The
    test writes `schema/wire.json`, `agent/src/wire.ts` and
-   `src/creche_wire/routes.py`.
+   `src/creche_wire/routes.py`. When the routes reach the type, it fails
+   until you raise `HOST_API_PROTOCOL` (see "The protocol number").
 3. At the root of the repository, run `uv run datamodel-codegen`. It writes
    `src/creche_wire/models.py`. The `[tool.datamodel-codegen]` section of the
    root `pyproject.toml` holds its settings.
@@ -462,11 +486,14 @@ a dependency.
   list entry of `reframe/route-table-plan.json`. The reading taken: the
   narrowest one, a required family, so one request never reads the rows of
   two families.
-- `HOST_API_PROTOCOL` in `rust/crates/wire/src/routes.rs`: decided
-  (decision CH33 rule 8), not built yet. A change of the schema subset
-  that the routes reach needs a new number. The frozen copy per number and
-  its CI check come in a later PR (PR 10 of the route table plan). Until
-  then no check stops a change that keeps the number 1.
+- `CONTRACT-QUESTION` in `rust/crates/wire/src/schema.rs`,
+  `frozen_host_api`. Decision CH33 rule 8 names the reached schema subset
+  but not its parts. The reading taken: the whole `x-routes` (route names,
+  kinds, tokens, statuses, client timeouts, header, body cap, mismatch
+  reply) and each reached `$defs` entry, `ProtocolMismatch` too. A `title` stays, because
+  it names a generated class. A `description` goes, because no reader
+  checks it. Another reading needs a new protocol number only if it
+  changes the file.
 - `CONTRACT-QUESTION` in `rust/crates/wire/src/routes.rs`,
   `HOST_API_HEADER`. Decision CH33 rule 1 names a missing header and
   another protocol number. It does not name a value that is no number, such
