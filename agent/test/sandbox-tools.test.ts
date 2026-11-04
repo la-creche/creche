@@ -119,10 +119,21 @@ describe("grantedSandbox", () => {
   });
 
   it("gives a tool process the tool env, and no facade name", async () => {
-    const env = readToolEnv({ MPLBACKEND: "Agg", NODE_ENV: "production", MPLCONFIGDIR: "/var/cache/matplotlib" });
-    const sandbox = await grantedSandbox(["bash"], cwd, env).createSandbox({ id: "agent-env" });
-    const seen = await sandbox.exec('printf %s "$MPLBACKEND,${NODE_ENV-unset},${MPLCONFIGDIR-unset}"');
+    // A copy of process.env into the tool would show this sentinel.
+    const before = process.env["MPLCONFIGDIR"];
+    process.env["MPLCONFIGDIR"] = "/var/cache/matplotlib";
+    try {
+      const env = readToolEnv({ MPLBACKEND: "Agg", MPLCONFIGDIR: "/var/cache/matplotlib", NODE_VERSION: "24" });
+      const sandbox = await grantedSandbox(["bash"], cwd, env).createSandbox({ id: "agent-env" });
+      const seen = await sandbox.exec('printf %s "$MPLBACKEND,${MPLCONFIGDIR-unset},${NODE_VERSION-unset}"');
 
-    expect(seen.stdout).toBe("Agg,unset,unset");
+      expect(seen.stdout).toBe("Agg,unset,unset");
+    } finally {
+      if (before === undefined) {
+        delete process.env["MPLCONFIGDIR"];
+      } else {
+        process.env["MPLCONFIGDIR"] = before;
+      }
+    }
   });
 });
