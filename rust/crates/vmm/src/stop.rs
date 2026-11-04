@@ -18,7 +18,7 @@ use creche_vmm_store::layout::VmRunDir;
 use creche_vmm_store::stale::{StaleError, remove_stale};
 use creche_wire::{DROP_SIGTERM_GRACE, DROP_STOP_WAIT};
 use tokio::task::spawn_blocking;
-use tokio::time::{Instant, sleep};
+use tokio::time::{Instant, sleep, timeout_at};
 
 use crate::control::{ControlError, ControlLink};
 
@@ -153,10 +153,11 @@ pub async fn stop(
 }
 
 /// Ends the process: `stop`, SIGTERM, then SIGKILL (decision CH34 rule 5).
-// CONTRACT-QUESTION: no row says what a stop does when `stop` does not go
-// out (no open link, or a failed write) or SIGTERM fails. The wait after
-// a step only gives that step time to work. So this reading skips the wait
-// of a step that did not go out and goes to the next step at once.
+// Decision CH50 rule 3: a step that did not go out skips its wait. That
+// covers no open link, a failed write of `stop`, and a failed SIGTERM.
+// The write of `stop` gets a timeout counted inside `DROP_STOP_WAIT`: a
+// full send buffer can stall the write for ever. A stalled write counts as
+// not sent, and SIGTERM still follows `DROP_STOP_WAIT` after the start.
 async fn end(
     link: Option<&impl StopLink>,
     process: &mut impl VmProcess,
@@ -164,11 +165,12 @@ async fn end(
     if process.exited().map_err(StopError::Wait)? {
         return Ok(Stopped::Gone);
     }
+    let deadline = Instant::now() + DROP_STOP_WAIT;
     let sent = match link {
-        Some(link) => link.send_stop().await.is_ok(),
+        Some(link) => matches!(timeout_at(deadline, link.send_stop()).await, Ok(Ok(()))),
         None => false,
     };
-    if sent && exits_within(process, DROP_STOP_WAIT).await? {
+    if sent && exits_by(process, deadline).await? {
         return Ok(Stopped::PoweredOff);
     }
     if process.terminate().is_ok() && exits_within(process, DROP_SIGTERM_GRACE).await? {
@@ -183,7 +185,11 @@ async fn end(
 
 /// Whether `process` exits within `wait`.
 async fn exits_within(process: &mut impl VmProcess, wait: Duration) -> Result<bool, StopError> {
-    let deadline = Instant::now() + wait;
+    exits_by(process, Instant::now() + wait).await
+}
+
+/// Whether `process` exits by `deadline`.
+async fn exits_by(process: &mut impl VmProcess, deadline: Instant) -> Result<bool, StopError> {
     loop {
         if process.exited().map_err(StopError::Wait)? {
             return Ok(true);

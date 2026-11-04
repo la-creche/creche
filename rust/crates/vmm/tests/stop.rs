@@ -25,6 +25,8 @@ type Log = Arc<Mutex<Vec<(&'static str, Duration)>>>;
 #[derive(Debug, Clone, Copy, Default)]
 struct Fails {
     send: bool,
+    /// The write of `stop` never completes, as on a full send buffer.
+    stall: bool,
     term: bool,
     kill: bool,
 }
@@ -87,6 +89,9 @@ impl StopLink for FakeLink {
     async fn send_stop(&self) -> Result<(), ControlError> {
         if self.0.fails.send {
             return Err(ControlError::Io(io::ErrorKind::BrokenPipe));
+        }
+        if self.0.fails.stall {
+            std::future::pending::<()>().await;
         }
         self.0.record("stop");
         Ok(())
@@ -205,6 +210,21 @@ fn a_stop_that_does_not_go_out_skips_its_wait() {
         assert_eq!(stopped, Stopped::Killed);
         assert_eq!(steps, [("term", secs(0)), ("kill", secs(5))]);
     }
+}
+
+/// A write of `stop` that never completes counts as not sent. Its timeout
+/// counts inside the 30 s, so SIGTERM still follows 30 s after the start
+/// (decision CH50 rule 3).
+#[test]
+fn a_stalled_stop_write_gets_sigterm_at_30_s() {
+    let fails = Fails {
+        stall: true,
+        ..Fails::default()
+    };
+    let (stopped, steps, lock) = try_stop("stall", "term", true, fails);
+    assert_eq!(stopped.unwrap(), Stopped::Terminated);
+    assert_eq!(steps, [("term", secs(30))]);
+    assert!(!lock, "api.sock.lock stays");
 }
 
 /// A failed SIGTERM skips its 5 s wait, so SIGKILL follows at once.

@@ -160,6 +160,10 @@ for the guest, and no error: `Stopped::Killed`. After the exit it runs
 `remove_stale` of `creche-vmm-store` in `spawn_blocking`, which removes
 `api.sock.lock` (fact 75) and the `vsock.sock` that a kill leaves. A stop
 takes no snapshot, so the next start is a cold boot (decision CH19 (5)).
+A step that did not go out skips its wait: no open control link, a
+failed or stalled write of `stop`, or a failed SIGTERM (decision CH50
+rule 3). The write of `stop` has a timeout counted inside
+`DROP_STOP_WAIT`, so SIGTERM follows 30 s after the start at most.
 `StopLink` and `VmProcess` let `tests/stop.rs` give fakes on paused time.
 
 ## Rules
@@ -181,13 +185,7 @@ takes no snapshot, so the next start is a cold boot (decision CH19 (5)).
    so a gate that reads only the ready would never snapshot it. The sleep
    gate is plan PR L18, a later PR, so this crate does not hold the rule
    yet.
-2. CONTRACT-QUESTION: no decision row says what a stop does when the
-   `stop` line does not go out (no open control link, or a failed write),
-   or when SIGTERM fails. Each wait of decision CH34 rule 5 gives its step
-   time to work. The stop reads the rows narrowly: it skips the wait of a
-   step that did not go out and goes to the next step at once
-   (`src/stop.rs`).
-3. CONTRACT-QUESTION: no decision row says how long a stop waits for
+2. CONTRACT-QUESTION: no decision row says how long a stop waits for
    the exit after SIGKILL, or what it answers when the process outlives
    that wait (a process in the D state can). Decision CH33 rule 11
    bounds a drop at about 35 s, and decision CH34 rule 5 gives the
