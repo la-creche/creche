@@ -507,6 +507,16 @@ jobs:
           rustup toolchain install --no-self-update
           cargo --version
 
+      # `cargo test` exits 0 when the filter matches no test. So a renamed
+      # test, a lost `#[ignore]` or a wrong cfg would leave the job green
+      # with no boot. This step fails when no ignored kvm_ test exists.
+      - name: count the kvm tests
+        working-directory: rust
+        run: |
+          count=$(cargo test --locked -q -- --ignored --list kvm_ | grep -c ': test$' || true)
+          echo "ignored kvm_ tests: $count"
+          test "$count" -ge 1
+
       - run: cargo test --locked -- --ignored kvm_
         working-directory: rust
         env:

@@ -69,7 +69,8 @@ that build before their final job can pass.
 
 The `kvm` job runs `bin/vm-smoke-setup.sh`, then each ignored test of
 rust/ whose name holds `kvm_` (decisions CH8-4, CH36 G19). The test run
-names no crate and no file, so a new kvm_ test needs no workflow edit.
+names no crate and no file, so a new kvm_ test needs no workflow edit. A
+step before the run fails the job when no such test exists.
 """
 
 from __future__ import annotations
@@ -181,6 +182,15 @@ RUST_RUNS = [
 KVM_JOB = "kvm"
 KVM_SETUP = "bin/vm-smoke-setup.sh"
 KVM_RUN = "cargo test --locked -- --ignored kvm_"
+
+#: The step before the test run. `cargo test` exits 0 when its filter
+#: matches no test, so this list fails the job when no ignored kvm_ test
+#: exists.
+KVM_COUNT = (
+    "count=$(cargo test --locked -q -- --ignored --list kvm_ | grep -c ': test$' || true)\n"
+    'echo "ignored kvm_ tests: $count"\n'
+    'test "$count" -ge 1\n'
+)
 KVM_ENV = {"CRECHE_KVM_DIR": "${{ runner.temp }}/kvm"}
 
 #: The step of that job before the three checks. It refuses an edit or a
@@ -1382,9 +1392,10 @@ def test_the_kvm_job_readies_the_runner_then_runs_every_kvm_test(
 ) -> None:
     """The setup script runs before the build, on the runner itself. The
     test run reads the same directory as the script, and no step has a
-    rule or `continue-on-error`: no KVM is a red job."""
+    rule or `continue-on-error`: no KVM is a red job. A run that matches
+    no kvm_ test is red too, because the count step fails first."""
     job = jobs[KVM_JOB]
-    checkout, setup, toolchain, run = job["steps"]
+    checkout, setup, toolchain, count, run = job["steps"]
 
     assert set(job) == {"needs", "if", "runs-on", "timeout-minutes", "env", "steps"}
     assert job["needs"] == "scope"
@@ -1396,6 +1407,7 @@ def test_the_kvm_job_readies_the_runner_then_runs_every_kvm_test(
     assert (REPO / KVM_SETUP).is_file()
     assert toolchain["working-directory"] == RUST_DIR
     assert "rustup toolchain install --no-self-update" in toolchain["run"]
+    assert count == {"name": "count the kvm tests", "working-directory": RUST_DIR, "run": KVM_COUNT}
     assert run == {"run": KVM_RUN, "working-directory": RUST_DIR, "env": KVM_ENV}
 
 
