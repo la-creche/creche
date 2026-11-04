@@ -1,5 +1,192 @@
 {
   "$defs": {
+    "AcpError": {
+      "description": "The error of the route `acp`. The vmm sends each code before 101.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "The request has no `Upgrade` header, or the header does not\nname `AcpRoute::TOKEN` (decision CH26 rule 3). The vmm also\nsends `Upgrade: creche-acp` with this error (RFC 9110).",
+          "properties": {
+            "code": {
+              "const": "upgrade_required",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "No row has the id, the row belongs to another family, or a drop\nof the session runs (decisions CH21-9, CH33 rule 5).",
+          "properties": {
+            "code": {
+              "const": "not_found",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The session has an open ACP stream (decision CH33 rule 7).\nattendance opens one stream per session.",
+          "properties": {
+            "code": {
+              "const": "busy",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The VM does not fit on the host, and no idle VM can make room\n(decisions CH8-6, CH21-3, CH21-9). The vmm never queues: the\nclient retries.",
+          "properties": {
+            "code": {
+              "const": "host_full",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The VM did not boot or restore, or guest init sent no\n`ControlReady` (decisions CH6-3, CH33 rule 6). The vmm also\nwrites the fault to its fault file (decision CH21-1).",
+          "properties": {
+            "code": {
+              "const": "sandbox_start_failed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The VM failed the deny-by-default check of its start (decisions\nCH6-3, CH33 rule 6). The vmm also writes the fault to its fault\nfile (decision CH21-1).",
+          "properties": {
+            "code": {
+              "const": "egress_assert_failed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "No route has this path.",
+          "properties": {
+            "code": {
+              "const": "no_route",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The route has this path, but the method is not `POST`.",
+          "properties": {
+            "code": {
+              "const": "bad_method",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The `Content-Type` is not `application/json`.",
+          "properties": {
+            "code": {
+              "const": "bad_content_type",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The body is over the cap.",
+          "properties": {
+            "code": {
+              "const": "too_large",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The body is not strict JSON.",
+          "properties": {
+            "code": {
+              "const": "not_json",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The body is JSON, but not the request type of the route.",
+          "properties": {
+            "code": {
+              "const": "not_valid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The vmm failed after it took the request. The vmm logs\nthe details.",
+          "properties": {
+            "code": {
+              "const": "internal",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "Auto": {
       "additionalProperties": false,
       "description": "The origin of a session that attendance opened for one autonomous job.",
@@ -972,6 +1159,25 @@
       "pattern": "^[a-z0-9][a-z0-9._/-]*$",
       "type": "string"
     },
+    "OpenAcp": {
+      "additionalProperties": false,
+      "description": "The session of an ACP stream: the request of the `acp` Upgrade route. It\nnames the family that owns the session (decision CH33 rule 5). The vmm\nanswers `not_found` when no row has the id, and when the row of the id\nbelongs to another family. So a client learns nothing of the sessions\nof another family.",
+      "properties": {
+        "family": {
+          "$ref": "#/$defs/FamilyName",
+          "description": "The family that owns the session."
+        },
+        "id": {
+          "$ref": "#/$defs/SessionId",
+          "description": "The id of the session."
+        }
+      },
+      "required": [
+        "family",
+        "id"
+      ],
+      "type": "object"
+    },
     "PepToken": {
       "description": "The family token for the chaperone, `pep_token` of `creds.json`: 32\nbytes as 64 lowercase hex digits, the one form the chaperone takes\n(`credentials.py:21-25`).",
       "pattern": "^[0-9a-f]{64}$",
@@ -1352,6 +1558,27 @@
     },
     "protocol": 1,
     "routes": {
+      "acp": {
+        "error": "AcpError",
+        "kind": "upgrade",
+        "request": "OpenAcp",
+        "statuses": {
+          "bad_content_type": 415,
+          "bad_method": 405,
+          "busy": 409,
+          "egress_assert_failed": 502,
+          "host_full": 503,
+          "internal": 500,
+          "no_route": 404,
+          "not_found": 404,
+          "not_json": 400,
+          "not_valid": 400,
+          "sandbox_start_failed": 502,
+          "too_large": 413,
+          "upgrade_required": 426
+        },
+        "token": "creche-acp"
+      },
       "create": {
         "error": "CreateError",
         "kind": "json",

@@ -1,4 +1,116 @@
 {
+  "AcpError": [
+    {
+      "json": "{\"code\":\"upgrade_required\"}",
+      "written": "{\"code\":\"upgrade_required\"}",
+      "note": "upgrade_required: no Upgrade header, or another token"
+    },
+    {
+      "json": "{\"code\":\"not_found\"}",
+      "written": "{\"code\":\"not_found\"}",
+      "note": "not_found: an absent id, the id of another family, or a session being dropped"
+    },
+    {
+      "json": "{\"code\":\"busy\"}",
+      "written": "{\"code\":\"busy\"}",
+      "note": "busy: the session has an open ACP stream"
+    },
+    {
+      "json": "{\"code\":\"host_full\"}",
+      "written": "{\"code\":\"host_full\"}",
+      "note": "host_full: no room on the host"
+    },
+    {
+      "json": "{\"code\":\"sandbox_start_failed\"}",
+      "written": "{\"code\":\"sandbox_start_failed\"}",
+      "note": "sandbox_start_failed: the VM did not start"
+    },
+    {
+      "json": "{\"code\":\"egress_assert_failed\"}",
+      "written": "{\"code\":\"egress_assert_failed\"}",
+      "note": "egress_assert_failed: the VM failed the deny-by-default check"
+    },
+    {
+      "json": "{\"code\":\"no_route\"}",
+      "written": "{\"code\":\"no_route\"}",
+      "note": "the shared code no_route: a path with no route"
+    },
+    {
+      "json": "{\"code\":\"bad_method\"}",
+      "written": "{\"code\":\"bad_method\"}",
+      "note": "the shared code bad_method: a method that is not POST"
+    },
+    {
+      "json": "{\"code\":\"bad_content_type\"}",
+      "written": "{\"code\":\"bad_content_type\"}",
+      "note": "the shared code bad_content_type: a Content-Type that is not JSON"
+    },
+    {
+      "json": "{\"code\":\"too_large\"}",
+      "written": "{\"code\":\"too_large\"}",
+      "note": "the shared code too_large: a body over the cap"
+    },
+    {
+      "json": "{\"code\":\"not_json\"}",
+      "written": "{\"code\":\"not_json\"}",
+      "note": "the shared code not_json: a body that is not strict JSON"
+    },
+    {
+      "json": "{\"code\":\"not_valid\"}",
+      "written": "{\"code\":\"not_valid\"}",
+      "note": "the shared code not_valid: a body that is not the request type"
+    },
+    {
+      "json": "{\"code\":\"internal\"}",
+      "written": "{\"code\":\"internal\"}",
+      "note": "the shared code internal: a fault of the vmm"
+    },
+    {
+      "json": "{\"code\":\"conflict\"}",
+      "written": null,
+      "note": "a code of create"
+    },
+    {
+      "json": "{\"code\":\"unknown_family\"}",
+      "written": null,
+      "note": "a code of create"
+    },
+    {
+      "json": "{\"code\":\"busy\",\"session\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}",
+      "written": null,
+      "note": "busy with the id"
+    },
+    {
+      "json": "{\"code\":\"internal\",\"message\":\"boot failed\"}",
+      "written": null,
+      "note": "a shared code with free text"
+    },
+    {
+      "json": "{\"code\":\"protocol_mismatch\"}",
+      "written": null,
+      "note": "the protocol mismatch, which is in no route error"
+    },
+    {
+      "json": "{\"code\":\"start_failed\"}",
+      "written": null,
+      "note": "one start code for both start faults"
+    },
+    {
+      "json": "[\"host_full\"]",
+      "written": null,
+      "note": "the array form of a code"
+    },
+    {
+      "json": "{}",
+      "written": null,
+      "note": "no code"
+    },
+    {
+      "json": "\"host_full\"",
+      "written": null,
+      "note": "the plain string form"
+    }
+  ],
   "Auto": [
     {
       "json": "{\"job\":\"auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\",\"trigger\":{\"timer\":{}}}",
@@ -2337,6 +2449,53 @@
       "json": "1",
       "written": null,
       "note": "a number"
+    }
+  ],
+  "OpenAcp": [
+    {
+      "json": "{\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}",
+      "written": "{\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}",
+      "note": "a session of a family"
+    },
+    {
+      "json": "{\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"family\":\"chat\"}",
+      "written": "{\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}",
+      "note": "its keys in any order"
+    },
+    {
+      "json": "{\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}",
+      "written": null,
+      "note": "no family: the request names the family that owns the session"
+    },
+    {
+      "json": "{\"family\":\"chat\"}",
+      "written": null,
+      "note": "no id"
+    },
+    {
+      "json": "{\"family\":\"chat\",\"id\":null}",
+      "written": null,
+      "note": "a null id"
+    },
+    {
+      "json": "{\"family\":\"chat\",\"id\":\"3F2B8C1E-9D4A-4E6B-8A7C-0B1D2E3F4A5B\"}",
+      "written": null,
+      "note": "an id in capitals"
+    },
+    {
+      "json": "{\"family\":\"Chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}",
+      "written": null,
+      "note": "a family name in capitals"
+    },
+    {
+      "json": "{\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"token\":\"creche-acp\"}",
+      "written": null,
+      "note": "an extra key: the token is a header, not a key"
+    },
+    {
+      "json": "[\"chat\",\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"]",
+      "written": null,
+      "note": "the fields in order as an array, the array form of a struct"
     }
   ],
   "PepToken": [

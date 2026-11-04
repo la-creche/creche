@@ -18,6 +18,195 @@ from pydantic import (
 )
 
 
+class AcpError1(BaseModel):
+    """
+    The request has no `Upgrade` header, or the header does not
+    name `AcpRoute::TOKEN` (decision CH26 rule 3). The vmm also
+    sends `Upgrade: creche-acp` with this error (RFC 9110).
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["upgrade_required"]
+
+
+class AcpError10(BaseModel):
+    """
+    The body is over the cap.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["too_large"]
+
+
+class AcpError11(BaseModel):
+    """
+    The body is not strict JSON.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["not_json"]
+
+
+class AcpError12(BaseModel):
+    """
+    The body is JSON, but not the request type of the route.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["not_valid"]
+
+
+class AcpError13(BaseModel):
+    """
+    The vmm failed after it took the request. The vmm logs
+    the details.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["internal"]
+
+
+class AcpError2(BaseModel):
+    """
+    No row has the id, the row belongs to another family, or a drop
+    of the session runs (decisions CH21-9, CH33 rule 5).
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["not_found"]
+
+
+class AcpError3(BaseModel):
+    """
+    The session has an open ACP stream (decision CH33 rule 7).
+    attendance opens one stream per session.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["busy"]
+
+
+class AcpError4(BaseModel):
+    """
+    The VM does not fit on the host, and no idle VM can make room
+    (decisions CH8-6, CH21-3, CH21-9). The vmm never queues: the
+    client retries.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["host_full"]
+
+
+class AcpError5(BaseModel):
+    """
+    The VM did not boot or restore, or guest init sent no
+    `ControlReady` (decisions CH6-3, CH33 rule 6). The vmm also
+    writes the fault to its fault file (decision CH21-1).
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["sandbox_start_failed"]
+
+
+class AcpError6(BaseModel):
+    """
+    The VM failed the deny-by-default check of its start (decisions
+    CH6-3, CH33 rule 6). The vmm also writes the fault to its fault
+    file (decision CH21-1).
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["egress_assert_failed"]
+
+
+class AcpError7(BaseModel):
+    """
+    No route has this path.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["no_route"]
+
+
+class AcpError8(BaseModel):
+    """
+    The route has this path, but the method is not `POST`.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["bad_method"]
+
+
+class AcpError9(BaseModel):
+    """
+    The `Content-Type` is not `application/json`.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["bad_content_type"]
+
+
+class AcpError(
+    RootModel[
+        AcpError1
+        | AcpError2
+        | AcpError3
+        | AcpError4
+        | AcpError5
+        | AcpError6
+        | AcpError7
+        | AcpError8
+        | AcpError9
+        | AcpError10
+        | AcpError11
+        | AcpError12
+        | AcpError13
+    ]
+):
+    root: Annotated[
+        AcpError1
+        | AcpError2
+        | AcpError3
+        | AcpError4
+        | AcpError5
+        | AcpError6
+        | AcpError7
+        | AcpError8
+        | AcpError9
+        | AcpError10
+        | AcpError11
+        | AcpError12
+        | AcpError13,
+        Field(description="The error of the route `acp`. The vmm sends each code before 101."),
+    ]
+
+
 class Auto(BaseModel):
     """
     The origin of a session that attendance opened for one autonomous job.
@@ -993,6 +1182,22 @@ class NotValidReply(BaseModel):
         extra="forbid",
     )
     not_valid: StateNotValid
+
+
+class OpenAcp(BaseModel):
+    """
+    The session of an ACP stream: the request of the `acp` Upgrade route. It
+    names the family that owns the session (decision CH33 rule 5). The vmm
+    answers `not_found` when no row has the id, and when the row of the id
+    belongs to another family. So a client learns nothing of the sessions
+    of another family.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    family: Annotated[FamilyName, Field(description="The family that owns the session.")]
+    id: Annotated[SessionId, Field(description="The id of the session.")]
 
 
 class PepToken(RootModel[StrictStr]):
