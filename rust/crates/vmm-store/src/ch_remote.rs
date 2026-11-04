@@ -9,10 +9,9 @@
 //! passes. At the timeout the call kills `ch-remote` and fails. The kill
 //! does not cancel the request: Cloud Hypervisor may still complete it.
 //!
-//! CONTRACT-QUESTION: no row decides the timeout values. A pause takes
-//! about 4 ms (fact 72) and a 16 GiB snapshot about 12 s (gap G16). The
-//! narrowest reading: each call takes its timeout from its caller, and
-//! this crate names no value (`AGENTS.md`, Known gaps).
+//! Decision CH44 rule 3: the timeout of a call comes from its caller. This
+//! crate names no value. A pause takes about 4 ms (fact 72) and a 16 GiB
+//! snapshot about 12 s (gap G16).
 
 use std::ffi::OsString;
 use std::fmt;

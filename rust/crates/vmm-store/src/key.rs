@@ -21,15 +21,14 @@
 //! does not read, drops the snapshot, and the VM cold-boots from its
 //! session disk (decision CH7-6).
 //!
-//! CONTRACT-QUESTION: CH7-6 says a mismatch drops the snapshot. No row
-//! decides whether a drop removes the older generations too. This code
-//! removes every generation, the oldest first and the newest last, and it
-//! reads no older key. The reason: only the newest generation is a restore
-//! candidate. The session disk moved on past every older one (decision
-//! CH19 (5)), so an older one must never become the newest and restore. A
-//! crash during the drop leaves the newest one, and the next check drops
-//! it again. While the newest key matches, retention removes the older
-//! ones (PR D13). `AGENTS.md`, Known gaps, holds the question.
+//! Decision CH44 rule 5: a mismatch or an unreadable key drops every
+//! generation of the session. This code removes them, the oldest first and
+//! the newest last, and it reads no older key. The reason: only the newest
+//! generation is a restore candidate. The session disk moved on past every
+//! older one (decision CH19 (5)), so an older one must never become the
+//! newest and restore. A crash during the drop leaves the newest one, and
+//! the next check drops it again. While the newest key matches, retention
+//! removes the older ones (PR D13).
 //!
 //! Caller duties (`AGENTS.md`, Known gaps): lifecycle runs `write_key`
 //! after each `Snapshotter::take`, and it runs `check_cloud_hypervisor` at
@@ -132,7 +131,7 @@ impl std::error::Error for ChVersionError {
 /// `v54.0` from a tag build fails. Gap G10 option A has the vmm run this at
 /// its start and refuse to start on an error. No plan PR calls it yet
 /// (`AGENTS.md`, Known gaps). The caller passes the timeout, as for
-/// each `ch-remote` call (`AGENTS.md`, Known gaps, PR D8).
+/// each `ch-remote` call (decision CH44 rule 3).
 ///
 /// # Errors
 ///
@@ -313,10 +312,9 @@ pub enum KeyCheck {
 }
 
 /// Compares the key of the newest generation of `session` with `current`.
-/// A mismatch removes every generation (decision CH7-6). CONTRACT-QUESTION:
-/// the removal of the older ones is a reading of CH19 (5), not a row. Run it
-/// only while no VM of the session runs, so that no VM maps a snapshot
-/// that it removes (fact 55).
+/// A mismatch or an unreadable key removes every generation (decisions
+/// CH7-6 and CH44 rule 5). Run it only while no VM of the session runs,
+/// so that no VM maps a snapshot that it removes (fact 55).
 ///
 /// # Errors
 ///

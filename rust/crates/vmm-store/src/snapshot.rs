@@ -29,12 +29,11 @@
 //! has no link to the guest, so the caller syncs the guest through the
 //! control link before `take` (`AGENTS.md`, Known gaps).
 //!
-//! CONTRACT-QUESTION: no row decides what happens to the VM when a step
-//! fails. The narrowest reading: `take` removes the temp dir, resumes
-//! nothing and stops nothing more. The VM stays as the failed step left it,
-//! and the caller decides. After a failure past `shutdown-vmm` the VM is
-//! gone, and the next start cold-boots (decision CH19 (5)). `AGENTS.md`,
-//! Known gaps, holds the question.
+//! Decision CH44 rule 4: when a step fails, `take` removes the temp dir and
+//! changes nothing else. It resumes nothing and stops nothing more. The VM
+//! stays as the failed step left it, and the caller decides. After a
+//! failure past `shutdown-vmm` the VM is gone, and the next start
+//! cold-boots (decision CH19 (5)).
 
 use std::fmt;
 use std::fs::{self, DirBuilder, File};
@@ -57,7 +56,7 @@ const DIR_MODE: u32 = 0o700;
 const FILE_MODE: u32 = 0o600;
 
 /// The timeout of each `ch-remote` call of a take. The caller sets each
-/// one (`AGENTS.md`, Known gaps, PR D8).
+/// one (decision CH44 rule 3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SnapshotTimeouts {
     /// The timeout of `pause`.
