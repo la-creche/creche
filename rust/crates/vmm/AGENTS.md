@@ -95,3 +95,10 @@ because it never stops the facade (decision CH19 (1)).
 1. CONTRACT-QUESTION: no decision row sets the pause between two dials
    of a vsock guest port (`DIAL_PAUSE` in `src/control.rs`). Fact 74 saw
    `OK` 45 to 51 ms after the start of a restore. The reading is 10 ms.
+2. CONTRACT-QUESTION: decision CH32 rule 3 asks for a cold boot only
+   when guest init closes the control link on a hello for another
+   session. No row decides whether a bad line, a timeout, a refused
+   `CONNECT`, a failed dial or a failed read or write before
+   `ControlReady` asks for one. The reading is the narrowest one:
+   `ControlError::needs_cold_boot` is true only for `Closed`. Each other
+   error ends the open with no cold boot, and the caller reports it.

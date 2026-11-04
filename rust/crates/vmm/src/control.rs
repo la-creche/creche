@@ -61,6 +61,13 @@ pub enum ControlError {
 impl ControlError {
     /// Whether the VM needs a cold boot. A hello that guest init refuses
     /// is a fault of the VM (decision CH32 rule 3).
+    // CONTRACT-QUESTION: decision CH32 rule 3 asks for a cold boot only
+    // when guest init closes the link on a hello for another session. No
+    // row decides whether a bad line, a timeout, a refused `CONNECT`, a
+    // failed dial or a failed read or write before `ControlReady` asks for
+    // one. The reading is the narrowest one: only `Closed` asks for a cold
+    // boot. Each other error ends the open with no cold boot, and the
+    // caller reports it.
     #[must_use]
     pub fn needs_cold_boot(self) -> bool {
         self == Self::Closed
