@@ -60,10 +60,10 @@ The second file has the table of the three vmm crates.
   Item 42 notes a better way for (a) and gives it to a later PR: `take`
   writes `key.json` into its temp dir before the rename, so no snapshot
   exists without a key.
-- CONTRACT-QUESTION (PR D12, `sleep_gate.rs`): no decision row names
-  the events that set `Activity::last_use`, the start of the idle time.
-  The narrowest reading: the VM start or restore, each turn event, and
-  each open and each close of a door link set it. L18 sets it.
+- Caller duty (PR D12, `sleep_gate.rs`), for lifecycle: set
+  `Activity::last_use`, the start of the idle time, at the VM start or
+  restore, at each turn event, and at each open and each close of a door
+  link (decision CH50 rule 5). L18 sets it.
 - CONTRACT-QUESTION (PR D12, `sleep_gate.rs`): no decision row says
   whether an evictable VM with no door link goes before an older one
   with a door link open (decisions CH8-6, CH19 (6)). The narrowest

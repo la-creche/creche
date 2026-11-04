@@ -54,9 +54,8 @@ pub struct Activity<'a> {
     /// True when a door link (the ACP Upgrade) of the VM is open.
     pub door_open: bool,
     /// The last use of the VM. The smallest is the least recently used.
-    // CONTRACT-QUESTION: no decision row names the events that set the
-    // last use. The narrowest reading: the VM start or restore, each turn
-    // event, and each open and each close of a door link set it.
+    // Decision CH50 rule 5: the VM start or restore, each turn event, and
+    // each open and each close of a door link set the last use.
     pub last_use: Instant,
 }
 
