@@ -25,6 +25,18 @@ table of the three vmm crates.
   `--memory size=<guest RAM>M`, `MemoryMax` = guest RAM + 512 MiB, the
   balloon with free page reporting and deflate on OOM, and
   `TasksMax=256`. The 512 MiB is a first value. Phase 8 measures it.
+- `family::FamilyRoot` reads a family's `config/` as caregiver's one
+  writer leaves it (decisions CH5b, CH23 (3)). Each read opens `config/`
+  with `O_NOFOLLOW`, reads through that one handle, then compares its
+  device and inode with `fstatat(family_dir, "config")`. A swap or an
+  absent `config/` (the rename window) starts the read again. An absent
+  `config/` after every try is `Unknown`, which create answers with
+  `unknown_family` (decision CH33 rule 3). A bad `config/shape.json` is
+  `NotValid` (decisions CH36 G6, CH43 rule 3). The root has no default.
+  Lifecycle passes it, and caregiver writes no `shape.json` before the cut
+  (decision CH45 rule 2). Decision CH50 rule 9 sets `READ_TRIES` (5),
+  `RETRY_PAUSE` (10 ms) and `SHAPE_CAP` (4 KiB). A read blocks its thread
+  in `thread::sleep`, so a caller in tokio runs it in `spawn_blocking`.
 - Every launch step forks from the one spawner thread (decision CH19 (4),
   fact 76). The vmm keeps its `Spawner` for its whole life. A drop ends
   the thread, and the kernel then kills every payload it started.
