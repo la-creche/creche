@@ -81,6 +81,17 @@ changes the state. So the late EOF of a replaced link changes nothing
 (decision CH19 (2), fact 74). A link close keeps the facade state,
 because it never stops the facade (decision CH19 (1)).
 
+After `ControlReady`, `ControlLink::event` reads each turn event that
+guest init relays (decision CH21). `ControlState::turn` applies it: a
+start marks a turn running, and an end clears the mark and goes to
+`Rows::turn_end` of `creche-vmm-store`. That sets `updated_at`, and it
+sets the title only while the row has none (decision CH32 rule 4).
+`ControlState::ready` applies the last turn end of each `ControlReady`
+the same way, so an end that a restore dropped still arrives (fact 45).
+`ControlState::turn_running` is the turn state for the sleep gate
+(decision CH19 (6)). `ControlLink::stop` sends the graceful stop
+`{"stop":{}}` (decision CH19 (3)).
+
 ## Rules
 
 - Each new dependency is its own pull request, with its lock delta
@@ -95,3 +106,13 @@ because it never stops the facade (decision CH19 (1)).
 1. CONTRACT-QUESTION: no decision row sets the pause between two dials
    of a vsock guest port (`DIAL_PAUSE` in `src/control.rs`). Fact 74 saw
    `OK` 45 to 51 ms after the start of a restore. The reading is 10 ms.
+2. CONTRACT-QUESTION: after `ControlReady`, no message on the control
+   link reports a change of the facade state. A turn event shows that the
+   facade runs (decision CH32 rule 6), but it carries no pid and no start
+   count, and an exit sends nothing. The reading: `ControlState::facade`
+   stays the state of the last `ControlReady`, and
+   `ControlState::turn_running` follows the turn events. The sleep gate
+   (decision CH19 (6)) must say how it reads "the facade is up" from the
+   two. A VM after a cold boot reports `not_started` or `starting`
+   (decision CH34 rule 7), so a gate that reads only the ready never
+   snapshots it.
