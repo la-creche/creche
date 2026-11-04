@@ -34,6 +34,11 @@ Python 3.11 also rides in with the node parent image. It is an accident
 of the parent, not a tool of this image: it has no `pip` and it cannot
 build a venv.
 
+Each flavor's last step writes `/etc/creche/env`: one `NAME=value` line
+per variable of the image config, sorted, with each `PATH` folder once.
+Guest init reads it, because a root disk carries no image config (CH7-7,
+CH49). The step lists the names, so a new `ENV` name goes into the list.
+
 The image holds no pi, no fd, no playpen bundle, no PEP bridge, no
 `agent-pi-launch` and no Python package installer.
 
@@ -69,6 +74,7 @@ CI builds the full Python flavor on each code change.
 | `Dockerfile` | the image: the build stage and the flavors |
 | `component.yaml` | the release manifest of the component |
 | `bin/playpen-build`, `bin/playpen-verify`, `bin/lib/registry.sh` | the release build, the verify hook, the one registry question |
+| `bin/creche-env-write` | `/etc/creche/env` in each flavor's last step |
 
 ## Known gaps
 
