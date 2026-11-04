@@ -10,6 +10,8 @@
 //!    counts from here on, so two starts never pass the cap together.
 //!    Each VM that admission evicts loses its door link, then its
 //!    snapshot is taken and it stops (plan PR L17, decision CH19 (6)).
+//!    Until the guest can sync (`ChApi::GUEST_SYNCS`), the VM takes no
+//!    snapshot and gets the graceful stop.
 //! 3. In `spawn_blocking`: the stale sockets go (PR D1, decision CH19
 //!    (4)), the kernel and the root disk pass the store check (PR D6,
 //!    decision CH44 rule 2), the session disk exists (PR D7, decision
@@ -422,9 +424,10 @@ impl<A: ChApi> Retirer<A> {
 
     /// Snapshots the VM of `eviction`, then stops it (decision CH19 (6)).
     /// The take ends CH, so the stop finds it gone. With no device read
-    /// (`ChApi::READS_DEVICES`) it takes no snapshot and sends the graceful
-    /// stop. False when the VM still holds its RAM: a turn runs, or the
-    /// stop failed (decision CH50 rule 4).
+    /// (`ChApi::READS_DEVICES`) or no guest sync (`ChApi::GUEST_SYNCS`) it
+    /// takes no snapshot and sends the graceful stop. False when the VM
+    /// still holds its RAM: a turn runs, or the stop failed (decision CH50
+    /// rule 4).
     async fn retire<P: VmProcess>(&self, mut eviction: Eviction<P>) -> bool {
         let id = eviction.id.clone();
         let key = eviction.vm.as_ref().and_then(|vm| vm.key.clone());
@@ -445,17 +448,17 @@ impl<A: ChApi> Retirer<A> {
         // The VM stops anyway, so its RAM frees, and the session
         // cold-boots from its disk later (decision CH19 (5)).
         // An API that reads no device set restores no snapshot, and the
-        // next claim consumes it unused (`ChApi::READS_DEVICES`). A take ends CH with
-        // no guest power-off, so that cold boot would find its disk as a
-        // power cut left it. So with no device read the VM takes no
-        // snapshot, and the stop below is the graceful one (decision CH19
-        // (3)): guest init syncs and powers off.
-        // CONTRACT-QUESTION (Known gaps 9, item 5.7): the take below runs
-        // with no guest `sync`, because the control link has no `sync`
-        // line yet. No row makes that choice. Each cold boot after the
-        // take (a key mismatch, a failed restore, an Aged or a Budget
-        // sweep) finds the disk as a power cut left it.
-        if A::READS_DEVICES {
+        // next claim consumes it unused (`ChApi::READS_DEVICES`). A take
+        // ends CH with no guest power-off, so that cold boot would find its
+        // disk as a power cut left it. So with no device read the VM takes
+        // no snapshot, and the stop below is the graceful one (decision
+        // CH19 (3)): guest init syncs and powers off.
+        // Item 5.7 of the design asks for a guest `sync` before each take,
+        // and the item 42 note gives it to lifecycle. The control link has
+        // no `sync` command until phase 3, so with no guest sync
+        // (`ChApi::GUEST_SYNCS`) the VM takes no snapshot either. The
+        // phase 3 PR sends `sync` here before the take (caller duty 7).
+        if A::READS_DEVICES && A::GUEST_SYNCS {
             // The blocking step owns the read lock, so the lock lasts as
             // long as the take (`retention::sweep`).
             let take = Arc::clone(&self.takes).read_owned().await;
@@ -1342,6 +1345,7 @@ mod tests {
 
     impl crate::restore::ChApi for NoDevices {
         const READS_DEVICES: bool = false;
+        const GUEST_SYNCS: bool = false;
 
         fn info(
             &self,

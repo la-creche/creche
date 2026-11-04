@@ -185,9 +185,12 @@ impl Fake {
     }
 }
 
-/// The fake CH API and what it saw. `DEVICES` is its `READS_DEVICES`.
+/// The fake CH API and what it saw. `DEVICES` is its `READS_DEVICES`,
+/// and `SYNCS` is its `GUEST_SYNCS`. `SYNCS` is true by default, so the
+/// take path of an eviction and a sleep stays under test before the
+/// control link can sync the guest.
 #[derive(Debug)]
-struct FakeApi<const DEVICES: bool = true> {
+struct FakeApi<const DEVICES: bool = true, const SYNCS: bool = true> {
     /// The launcher, whose VM a snapshot ends.
     fake: Arc<Fake>,
     /// The run dir of each snapshot.
@@ -207,8 +210,9 @@ struct FakeApi<const DEVICES: bool = true> {
 }
 
 #[cfg(test)]
-impl<const DEVICES: bool> ChApi for FakeApi<DEVICES> {
+impl<const DEVICES: bool, const SYNCS: bool> ChApi for FakeApi<DEVICES, SYNCS> {
     const READS_DEVICES: bool = DEVICES;
+    const GUEST_SYNCS: bool = SYNCS;
 
     /// Reads the reply as `ChRemote::info` reads the stdout of CH.
     fn info(&self, _vm: &VmRunDir) -> Result<VmInfo, ChRemoteError> {
@@ -317,11 +321,11 @@ fn play(listener: &UnixListener, guest: Guest, vm: &Vm) {
 
 /// The hook on a scratch dir, with two rows of `chat`.
 #[derive(Debug)]
-struct Test<const DEVICES: bool = true> {
+struct Test<const DEVICES: bool = true, const SYNCS: bool = true> {
     dir: PathBuf,
-    hook: Arc<ColdBoot<Fake, FakeApi<DEVICES>>>,
+    hook: Arc<ColdBoot<Fake, FakeApi<DEVICES, SYNCS>>>,
     fake: Arc<Fake>,
-    api: Arc<FakeApi<DEVICES>>,
+    api: Arc<FakeApi<DEVICES, SYNCS>>,
     relays: Relays,
     ch: CheckedCh,
     state: StateRoot,
@@ -341,8 +345,9 @@ impl Test {
 }
 
 #[cfg(test)]
-impl<const DEVICES: bool> Test<DEVICES> {
-    /// The hook over a fake API whose `READS_DEVICES` is `DEVICES`.
+impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
+    /// The hook over a fake API whose `READS_DEVICES` is `DEVICES` and
+    /// whose `GUEST_SYNCS` is `SYNCS`.
     fn build(name: &str, edit: impl FnOnce(&mut StartConfig)) -> Self {
         let dir = PathBuf::from(format!("/tmp/vmm-start-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -558,7 +563,7 @@ fn eventually(done: impl Fn() -> bool) {
     }
 }
 
-impl<const DEVICES: bool> Drop for Test<DEVICES> {
+impl<const DEVICES: bool, const SYNCS: bool> Drop for Test<DEVICES, SYNCS> {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.dir);
     }
@@ -795,7 +800,7 @@ fn a_key_mismatch_or_a_consumed_snapshot_cold_boots() {
 }
 
 #[cfg(test)]
-impl<const DEVICES: bool> Test<DEVICES> {
+impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
     /// The session ids of the snapshots, in order.
     fn snapshot_ids(&self) -> Vec<String> {
         let snapshots = self.api.snapshots.lock().unwrap();
@@ -875,7 +880,7 @@ fn a_turn_before_the_close_keeps_the_vm() {
 }
 
 #[cfg(test)]
-impl<const DEVICES: bool> Test<DEVICES> {
+impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
     /// Runs the idle check `after` from now.
     fn sleep_after(&self, after: Duration) -> Vec<SessionId> {
         let now = Instant::now() + after;
@@ -1125,17 +1130,39 @@ fn with_no_device_read_an_eviction_stops_gracefully() {
     assert!(test.hook.running(&test.rows[1].id));
 }
 
+/// With no guest sync, a retire takes no snapshot: the control link has no
+/// `sync` command until phase 3 (item 5.7, the item 42 note of the
+/// design). An eviction and a sleep each send the graceful stop, and
+/// guest init syncs and powers off (decision CH19 (3)).
+#[test]
+fn with_no_guest_sync_a_retire_stops_gracefully() {
+    let test = Test::<true, false>::build("nosync", |config| config.limits.ram_cap = 512 << 20);
+    assert_eq!(test.start(0), Ok(()));
+    assert_eq!(test.start(1), Ok(()));
+    assert!(!test.api.entered.load(Ordering::SeqCst));
+    assert_eq!(test.stop_lines(), 1);
+    assert!(test.stopped(0));
+    assert!(test.hook.running(&test.rows[1].id));
+
+    assert_eq!(test.sleep_after(PAST_IDLE), [test.rows[1].id.clone()]);
+    assert!(!test.api.entered.load(Ordering::SeqCst));
+    assert!(test.api.snapshots.lock().unwrap().is_empty());
+    assert_eq!(test.stop_lines(), 2);
+    assert!(test.stopped(1));
+    assert!(!test.hook.running(&test.rows[1].id));
+}
+
 /// The hook behind an `Arc`, for the acp handler, which owns its hook.
 #[derive(Debug)]
-struct Shared<const DEVICES: bool>(Arc<ColdBoot<Fake, FakeApi<DEVICES>>>);
+struct Shared<const DEVICES: bool, const SYNCS: bool>(Arc<ColdBoot<Fake, FakeApi<DEVICES, SYNCS>>>);
 
-impl<const DEVICES: bool> StartVm for Shared<DEVICES> {
+impl<const DEVICES: bool, const SYNCS: bool> StartVm for Shared<DEVICES, SYNCS> {
     async fn start(&self, row: &SessionRow) -> Result<AcpLink, StartFault> {
         self.0.start(row).await
     }
 }
 
-impl<const DEVICES: bool> StopVm for Shared<DEVICES> {
+impl<const DEVICES: bool, const SYNCS: bool> StopVm for Shared<DEVICES, SYNCS> {
     async fn stop(&self, id: &SessionId) -> Result<(), VmStopFailed> {
         self.0.stop(id).await
     }
@@ -1360,7 +1387,7 @@ fn a_vm_under_a_stop_keeps_its_ram() {
 }
 
 #[cfg(test)]
-impl<const DEVICES: bool> Test<DEVICES> {
+impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
     /// Writes `line` on the guest end of the newest control link, as guest
     /// init relays a turn event (decision CH21).
     fn send(&self, line: &str) {

@@ -32,7 +32,7 @@ pub const INFO_TIMEOUT: Duration = Duration::from_secs(5);
 pub const RESUME_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The Cloud Hypervisor API that a start uses: the check of a restore and
-/// the snapshot of an eviction. `ChTools` is the one of the vmm, and a
+/// the snapshot of an eviction or a sleep. `ChTools` is the one of the vmm, and a
 /// test gives a fake. Each call blocks, so the start runs it in
 /// `spawn_blocking`.
 pub trait ChApi: Send + Sync + 'static {
@@ -40,6 +40,14 @@ pub trait ChApi: Send + Sync + 'static {
     /// run. A restore with no device check never resumes, so the start
     /// cold-boots instead (decision CH50 rule 10).
     const READS_DEVICES: bool;
+
+    /// True when lifecycle can sync the guest through the control link
+    /// before each take. Item 5.7 of the design asks for a guest `sync`
+    /// before each snapshot. The item 42 note of the design and the
+    /// `creche-vmm-store` Known gaps give that sync to lifecycle, before
+    /// `Snapshotter::take`. With it false, a retire takes no snapshot and
+    /// sends the graceful stop (decision CH19 (3)).
+    const GUEST_SYNCS: bool;
 
     /// The reply of `ch-remote info`: the state and the device set.
     ///
@@ -82,9 +90,13 @@ pub struct ChTools {
 }
 
 // PR D15 gives the device set in `VmInfo`, so the vmm restores (plan PR
-// L18b). `INFO_TIMEOUT` is the timeout of the call.
+// L18b). `INFO_TIMEOUT` is the timeout of the call. The control link has
+// no `sync` command until the phase 3 guest init PR adds one (item 5.7,
+// the item 42 note of the design). So the vmm takes no snapshot yet, and
+// the phase 3 PR sets `GUEST_SYNCS` true (caller duty 7 of AGENTS.md).
 impl ChApi for ChTools {
     const READS_DEVICES: bool = true;
+    const GUEST_SYNCS: bool = false;
 
     fn info(&self, vm: &VmRunDir) -> Result<VmInfo, ChRemoteError> {
         self.remote.info(vm, INFO_TIMEOUT)
