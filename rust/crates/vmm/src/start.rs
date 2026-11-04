@@ -60,12 +60,14 @@ use creche_vmm_store::session_disk::SessionDisks;
 use creche_vmm_store::sleep_gate::Activity;
 use creche_vmm_store::stale::remove_stale;
 use creche_wire::{FamilyName, FamilyShape, SandboxFlavor, SessionId, SessionRow};
+use tokio::net::UnixStream;
 use tokio::sync::{RwLock, watch};
 use tokio::task::spawn_blocking;
 use tokio::time::sleep;
 
 use crate::control::{
-    Change, ControlLink, ControlState, DIAL_PAUSE, LinkId, READY_WAIT, open, wall_time,
+    Change, ControlError, ControlLink, ControlState, DIAL_PAUSE, LinkId, READY_WAIT, StopSender,
+    open, wall_time,
 };
 use crate::handlers::acp::{StartFault, StartVm};
 use crate::handlers::drop::{StopVm, VmStopFailed};
@@ -174,7 +176,7 @@ struct Vm<P> {
     /// The configured guest RAM in bytes, for admission.
     guest_ram: u64,
     /// The control link after `ControlReady`. `None` after a failed stop.
-    link: Option<ControlLink>,
+    link: Option<StopSender>,
     /// The snapshot key of the VM. `None` after a failed stop.
     key: Option<SnapshotKey>,
     /// The last use, for the eviction order (decision CH50 rule 5).
@@ -284,7 +286,7 @@ struct Pending<P: VmProcess> {
 
 impl<P: VmProcess> Pending<P> {
     /// Makes the VM an entry of the table with its control link.
-    fn commit(mut self, link: ControlLink) {
+    fn commit(mut self, link: StopSender) {
         if let Some(process) = self.process.take() {
             let vm = Vm {
                 process,
@@ -603,7 +605,8 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
             door_open: door == Door::Open,
             last_use,
         };
-        let ready = vm.link.is_some() && vm.key.is_some();
+        // A link whose reader ended is closed (decision CH43 rule 2).
+        let ready = vm.link.as_ref().is_some_and(StopSender::is_open) && vm.key.is_some();
         Gates {
             last_use: if door == Door::Open { now } else { last_use },
             evict: ready && activity.may_evict(),
@@ -874,24 +877,63 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
             .await
             .map_err(|error| (sandbox, format!("resuming the VM: {error}")))
     }
+}
 
-    /// Writes the turn end of `change` to the row of `id` (decision CH32
-    /// rule 4). A failed write is logged: the next `ControlReady` carries
-    /// the end again.
-    async fn turn_end(&self, id: &SessionId, change: Change) {
-        let Change::Applied(Some(end)) = change else {
-            return;
-        };
-        let (rows, id) = (Arc::clone(&self.rows), id.clone());
-        let written = spawn_blocking(move || {
-            let mut rows = rows.lock().map_err(|_| ())?;
-            rows.turn_end(&id, &end).map(|_| ()).map_err(|_| ())
-        })
-        .await;
-        if !matches!(written, Ok(Ok(()))) {
-            eprintln!("vmm: the turn end of the first ready was not written");
-        }
+/// Writes the turn end of `change` to the row of `id` in `rows`
+/// (decision CH32 rule 4): `updated_at`, and the title only while the row
+/// has none. A failed write is logged: the next `ControlReady` carries the
+/// end again.
+async fn turn_end(rows: &Arc<Mutex<Rows>>, id: &SessionId, change: Change) {
+    let Change::Applied(Some(end)) = change else {
+        return;
+    };
+    let (rows, session) = (Arc::clone(rows), id.clone());
+    let written = spawn_blocking(move || {
+        let mut rows = rows.lock().map_err(|_| ())?;
+        rows.turn_end(&session, &end).map(|_| ()).map_err(|_| ())
+    })
+    .await;
+    if !matches!(written, Ok(Ok(()))) {
+        eprintln!("vmm: the turn end of {id} was not written");
     }
+}
+
+/// Reads the turn events of `events`, the control link `link` of the VM
+/// of `id`, until the link ends (plan PR L18b, decision CH21). Each event
+/// goes to `ControlState::turn`, which sets `turn_running` and `turn_seen`
+/// (decision CH43 rule 8) and the time of the last use (decision CH50 rule
+/// 5). Each turn end goes to the row (decision CH32 rule 4). A refused
+/// line ends the reader, which logs why (decision CH43 rule 2). The end
+/// drops the stream, so the link closes, and a stop then skips the
+/// graceful step (decision CH50 rule 3). An event of a replaced link ends
+/// the reader too.
+// CONTRACT-QUESTION (decision CH43 rule 2, Known gaps 11): no row says
+// what follows the close. The narrowest reading opens no new link, so the
+// VM never sleeps and is never evicted, and its stop goes to SIGTERM.
+async fn read_turns(
+    mut events: ControlLink<Arc<UnixStream>>,
+    (id, link): (SessionId, LinkId),
+    control: Arc<Mutex<ControlState>>,
+    rows: Arc<Mutex<Rows>>,
+) {
+    let lock = || control.lock().unwrap_or_else(PoisonError::into_inner);
+    loop {
+        let event = match events.event().await {
+            Ok(event) => event,
+            Err(ControlError::Ended) => break,
+            Err(error) => {
+                eprintln!("vmm: the control link of {id} closed: {error:?}");
+                break;
+            }
+        };
+        let change = lock().turn(&id, link, &event);
+        if change == Change::Stale {
+            break;
+        }
+        turn_end(&rows, &id, change).await;
+    }
+    drop(events);
+    lock().closed(&id, link);
 }
 
 impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
@@ -973,7 +1015,7 @@ impl<L: Launcher, A: ChApi> StopVm for ColdBoot<L, A> {
 }
 
 /// The fault text of a failed dial of guest port 1201.
-fn dial_text(error: crate::control::ControlError) -> String {
+fn dial_text(error: ControlError) -> String {
     format!("dialing guest port 1201: {error:?}")
 }
 
@@ -1219,7 +1261,7 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
             }
         };
         let change = self.control().ready(id, link, ready);
-        self.turn_end(id, change).await;
+        turn_end(&self.rows, id, change).await;
         self.book(family, FaultBook::clear).await;
 
         // CONTRACT-QUESTION (plan PR L16, decision CH42 rule 2): the plan
@@ -1255,7 +1297,12 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
                     .await);
             }
         };
-        pending.commit(control);
+        // The reader owns the stream, and the table keeps the sender of the
+        // graceful stop (decision CH19 (3)).
+        let (sender, events) = control.split();
+        let (control, rows) = (Arc::clone(&self.control), Arc::clone(&self.rows));
+        tokio::spawn(read_turns(events, (id.clone(), link), control, rows));
+        pending.commit(sender);
         Ok(acp)
     }
 }

@@ -20,7 +20,7 @@ use creche_wire::{DROP_CLIENT_TIMEOUT, DROP_SIGTERM_GRACE, DROP_STOP_WAIT};
 use tokio::task::spawn_blocking;
 use tokio::time::{Instant, sleep, timeout_at};
 
-use crate::control::{ControlError, ControlLink};
+use crate::control::{ControlError, ControlLink, StopSender};
 
 /// The pause between two status checks of the process. No row sets it.
 /// Only the vmm reads it, so a change costs one constant.
@@ -43,14 +43,21 @@ const _: () = assert!(
     "a stop ends within about 35 s, and a client waits longer",
 );
 
-/// The link that carries the graceful stop. `ControlLink` is the one of
-/// the vmm, and a test gives a fake.
+/// The link that carries the graceful stop. `StopSender` is the one of a
+/// VM in the table, `ControlLink` the one of a start, and a test gives a
+/// fake.
 pub trait StopLink {
     /// Sends `{"stop":{}}` (decision CH36 G11).
     fn send_stop(&self) -> impl Future<Output = Result<(), ControlError>> + Send;
 }
 
 impl StopLink for ControlLink {
+    fn send_stop(&self) -> impl Future<Output = Result<(), ControlError>> + Send {
+        self.stop()
+    }
+}
+
+impl StopLink for StopSender {
     fn send_stop(&self) -> impl Future<Output = Result<(), ControlError>> + Send {
         self.stop()
     }

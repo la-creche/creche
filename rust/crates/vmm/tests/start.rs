@@ -121,6 +121,8 @@ struct Fake {
     hold: AtomicBool,
     /// The `stop` lines that guest init read on each control link.
     stop_lines: Arc<AtomicUsize>,
+    /// The guest end of each control link, for the turn events.
+    links: Arc<Mutex<Vec<UnixStream>>>,
     launches: Mutex<Vec<Launch>>,
     vms: Mutex<Vec<Arc<AtomicBool>>>,
     broken: Mutex<Vec<Arc<AtomicBool>>>,
@@ -165,6 +167,7 @@ impl Fake {
             exited: Arc::clone(&exited),
             broken: Arc::clone(&broken),
             stop_lines: Arc::clone(&self.stop_lines),
+            links: Arc::clone(&self.links),
         };
         spawn(move || play(&listener, guest, &vm));
         let mut launches = self.launches.lock().unwrap();
@@ -257,6 +260,7 @@ struct Vm {
     exited: Arc<AtomicBool>,
     broken: Arc<AtomicBool>,
     stop_lines: Arc<AtomicUsize>,
+    links: Arc<Mutex<Vec<UnixStream>>>,
 }
 
 /// Plays CH and guest init on each link: `CONNECT`, then the control
@@ -284,6 +288,7 @@ fn play(listener: &UnixListener, guest: Guest, vm: &Vm) {
                     _ => READY,
                 };
                 stream.write_all(format!("{ready}\n").as_bytes()).unwrap();
+                vm.links.lock().unwrap().push(stream.try_clone().unwrap());
                 let vm = vm.clone();
                 spawn(move || {
                     for line in reader.lines() {
@@ -392,6 +397,7 @@ impl<const DEVICES: bool> Test<DEVICES> {
             fail: AtomicBool::new(false),
             hold: AtomicBool::new(false),
             stop_lines: Arc::default(),
+            links: Arc::default(),
             launches: Mutex::default(),
             vms: Mutex::default(),
             broken: Mutex::default(),
@@ -1322,4 +1328,76 @@ fn a_vm_under_a_stop_keeps_its_ram() {
     assert!(stopped.is_err());
     assert_eq!(started, Err(StartFault::HostFull));
     assert_eq!(test.launches(), 1);
+}
+
+#[cfg(test)]
+impl<const DEVICES: bool> Test<DEVICES> {
+    /// Writes `line` on the guest end of the newest control link, as guest
+    /// init relays a turn event (decision CH21).
+    fn send(&self, line: &str) {
+        let links = self.fake.links.lock().unwrap();
+        let mut link = links.last().unwrap();
+        link.write_all(format!("{line}\n").as_bytes()).unwrap();
+    }
+
+    /// Drives the runtime, so the reader of the control link runs, until
+    /// `done` holds. Fails after 5 s.
+    fn settle(&self, done: impl Fn(&Self) -> bool) {
+        eventually(|| {
+            let pause = async { tokio::time::sleep(Duration::from_millis(1)).await };
+            self.runtime.block_on(pause);
+            done(self)
+        });
+    }
+
+    /// The title of the row of `index`, and whether its `updated_at` moved.
+    fn title(&self, index: usize) -> (Option<String>, bool) {
+        let store = self.store.lock().unwrap();
+        let row = store.get(&self.rows[index].id).unwrap();
+        let title = row.title.as_ref().map(ToString::to_string);
+        (title, row.updated_at != self.rows[index].updated_at)
+    }
+}
+
+/// The reader of the control link applies each turn event (plan PR
+/// L18b). A VM whose ready said `starting` is up after its first event
+/// (decision CH43 rule 8). A start keeps it awake. An end clears the turn,
+/// writes the row (decision CH32 rule 4) and counts as a use (decision
+/// CH50 rule 5).
+#[test]
+fn the_reader_applies_each_turn_event() {
+    let test = Test::new("reader", |_| {});
+    *test.fake.guest.lock().unwrap() = Guest::Starting;
+    assert_eq!(test.start(0), Ok(()));
+    let id = test.rows[0].id.clone();
+    test.send(r#"{"start":{}}"#);
+    test.settle(|test| test.control.lock().unwrap().turn_running(&id));
+    assert!(test.control.lock().unwrap().turn_seen(&id));
+    assert!(test.sleep_after(PAST_IDLE).is_empty());
+
+    std::thread::sleep(Duration::from_millis(5));
+    let before = Instant::now();
+    test.send(r#"{"end":{"title":"First","updated_at":1793577700000}}"#);
+    test.settle(|test| test.title(0).0.is_some());
+    assert!(!test.control.lock().unwrap().turn_running(&id));
+    assert_eq!(test.title(0), (Some("First".to_owned()), true));
+    let now = before + IDLE_TIMEOUT;
+    assert!(test.runtime.block_on(test.hook.sleep_idle(now)).is_empty());
+    assert_eq!(test.sleep_after(PAST_IDLE), [id]);
+}
+
+/// A refused line ends the reader, and the link closes (decision CH43
+/// rule 2). The VM then never sleeps, and a drop skips the graceful stop
+/// (decision CH50 rule 3).
+#[test]
+fn a_refused_line_closes_the_control_link() {
+    let test = Test::new("refused", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    let id = test.rows[0].id.clone();
+    test.send("not a turn event");
+    test.settle(|test| test.control.lock().unwrap().link(&id).is_none());
+    assert!(test.sleep_after(PAST_IDLE).is_empty());
+    assert_eq!(test.drop_session(0), Ok(Dropped {}));
+    assert_eq!(test.stop_lines(), 0);
+    assert!(test.stopped(0));
 }

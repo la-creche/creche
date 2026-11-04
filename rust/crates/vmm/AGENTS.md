@@ -107,6 +107,21 @@ and turn events set `turn_running` (decision CH43 rule 8).
 `ControlLink::stop` sends the graceful stop
 `{"stop":{}}` (decision CH19 (3)).
 
+`ControlLink::split` splits a link after `ControlReady`: a reader of the
+turn events and a `StopSender` for the graceful stop (plan PR L18b).
+`ColdBoot` splits the link when a start commits its VM. The table keeps
+the sender, and one task per VM runs the reader. The reader passes each
+event to `ControlState::turn` and writes each turn end with
+`Rows::turn_end` in `spawn_blocking`, as for a ready (decision CH32 rule
+4). A refused line ends the reader, which logs why (decision CH43 rule
+2). So does the close of the link, or an event of a replaced link. The
+reader holds the only strong handle of the stream, so its end closes
+the link. The sender then sends nothing, and a stop skips the graceful
+step (decision CH50 rule 3). A VM whose link closed has no control link
+for the sleep gate, so it never sleeps and is never evicted.
+`tests/start.rs` proves the events, the row write, the gate and the
+close.
+
 ## The acp route
 
 `src/handlers/acp.rs` admits or refuses an `acp` Upgrade before 101, in
@@ -437,11 +452,9 @@ overlap, a stop during a launch, and the RAM of a VM under a stop.
    An Upgrade of a session whose VM goes to sleep gets `host_full` too,
    and so does one whose VM a stop holds. Under the mark of a drop no
    such Upgrade reaches the hook (decision CH34 rule 6).
-5. Plan gap (plan PRs L11, L15, L19, L20): plan PR L18b owns two
-   production pieces that no earlier plan PR named. (1) `impl StopVm
-   for ColdBoot` is done (see "The stop hook"). (2) No task runs a
-   per-VM loop over `ControlLink::event` and `ControlState::turn` yet.
-   The next PR of L18b adds it.
+5. Closed by plan PR L18b: the two production pieces that no earlier
+   plan PR named. `impl StopVm for ColdBoot` is "The stop hook", and the
+   turn reader is in "The control link".
 6. CONTRACT-QUESTION (decision CH50 rule 10, plan PR L17,
    `src/restore.rs`): the plan reads the device set "through ch-remote
    info (D8)". `ChRemote::info` returns `VmInfo`, which holds only
@@ -464,18 +477,21 @@ overlap, a stop during a launch, and the RAM of a VM under a stop.
    with no guest sync. `ChTools` takes none (gap 6), so the vmm stops
    each evicted or idle VM with the graceful stop until the store PR of gap 6
    lands.
-10. No code reads the turn events of a VM yet (gap 5, part 2), so no
-    code calls `ControlState::turn`, and `turn_seen` and the last turn
-    time stay unset (decisions CH43 rule 8, CH50 rule 5). A VM whose last
-    ready did not say `running` never sleeps and is never evicted until a
-    reader of the control link calls `turn`. The lifecycle PR of gap 5
-    adds that reader.
-11. CONTRACT-QUESTION (decisions CH2, CH36 G12, plan PR L18,
+10. Closed by plan PR L18b: the turn reader calls `ControlState::turn`
+    for each event, so `turn_seen` and the last turn time follow the
+    guest (decisions CH43 rule 8, CH50 rule 5).
+11. CONTRACT-QUESTION (decision CH43 rule 2, plan PR L18b,
+    `src/start.rs`): no row says what follows the close of a control link
+    after a refused line. The narrowest reading opens no new link: the VM
+    runs on with no control link, so it never sleeps and is never
+    evicted, and its stop goes to SIGTERM. A drop or the shutdown of plan
+    PR L19 stops it.
+12. CONTRACT-QUESTION (decisions CH2, CH36 G12, plan PR L18,
     `src/sleep.rs`): no row names how often the idle timer checks. The
     code checks every 30 s, a tenth of `IDLE_TIMEOUT`. So a VM sleeps
     between 5 min and 5 min 30 s after its last use. A change costs the
     constant `IDLE_CHECK`.
-12. CONTRACT-QUESTION (decisions CH2, CH8-7, CH50 rule 8, plan PR L18,
+13. CONTRACT-QUESTION (decisions CH2, CH8-7, CH50 rule 8, plan PR L18,
     `src/sleep.rs`): no row names how often the sweep runs. The code
     sweeps at the start of `sleep::run`, then each hour. A change costs
     the constant `SWEEP_EVERY`.

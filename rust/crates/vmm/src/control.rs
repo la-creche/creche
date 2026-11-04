@@ -6,11 +6,15 @@
 //!
 //! After `ControlReady`, guest init relays each turn event of the facade
 //! (decision CH21), and the vmm may send the graceful stop (decision CH19
-//! (3)). `ControlState` applies each turn end to the session row.
+//! (3)). `ControlLink::split` gives a reader of the turn events and a
+//! `StopSender` for the stop. `ControlState` applies each turn end to the
+//! session row.
 
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::io;
 use std::path::Path;
+use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use creche_wire::{
@@ -97,14 +101,40 @@ pub fn wall_time() -> Result<UnixMillis, ControlError> {
 }
 
 /// An open control link. It keeps the bytes that guest init sent after
-/// `ControlReady` for the next read.
+/// `ControlReady` for the next read. `S` holds the stream: the stream
+/// itself, or the `Arc` of the reader after `split`.
 #[derive(Debug)]
-pub struct ControlLink {
-    stream: UnixStream,
+pub struct ControlLink<S = UnixStream> {
+    stream: S,
     pending: Vec<u8>,
 }
 
 impl ControlLink {
+    /// The stream and the bytes that came after the answer to `CONNECT`.
+    /// The ACP relay copies both (plan PR L13).
+    pub(crate) fn into_parts(self) -> (UnixStream, Vec<u8>) {
+        (self.stream, self.pending)
+    }
+
+    /// Splits the link after `ControlReady`: the sender of the graceful
+    /// stop and the reader of the turn events (plan PR L18b). The reader
+    /// holds the only strong handle of the stream, so its end closes the
+    /// link (decision CH43 rule 2), and the sender then sends nothing.
+    #[must_use]
+    pub fn split(self) -> (StopSender, ControlLink<Arc<UnixStream>>) {
+        let stream = Arc::new(self.stream);
+        let sender = StopSender {
+            stream: Arc::downgrade(&stream),
+        };
+        let reader = ControlLink {
+            stream,
+            pending: self.pending,
+        };
+        (sender, reader)
+    }
+}
+
+impl<S: Borrow<UnixStream>> ControlLink<S> {
     /// Writes `value` as one compact JSON line (rule 1 of "The vsock JSON
     /// links").
     pub(crate) async fn write<T: Serialize>(&self, value: &T) -> Result<(), ControlError> {
@@ -117,20 +147,14 @@ impl ControlLink {
     async fn write_raw(&self, bytes: &[u8]) -> Result<(), ControlError> {
         let mut left = bytes;
         while !left.is_empty() {
-            self.stream.writable().await.map_err(io_error)?;
-            match self.stream.try_write(left) {
+            self.stream.borrow().writable().await.map_err(io_error)?;
+            match self.stream.borrow().try_write(left) {
                 Ok(written) => left = left.get(written..).unwrap_or_default(),
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
                 Err(error) => return Err(io_error(error)),
             }
         }
         Ok(())
-    }
-
-    /// The stream and the bytes that came after the answer to `CONNECT`.
-    /// The ACP relay copies both (plan PR L13).
-    pub(crate) fn into_parts(self) -> (UnixStream, Vec<u8>) {
-        (self.stream, self.pending)
     }
 
     /// Reads one line as `T` with the strict reader (rules 2 and 3 of "The
@@ -183,8 +207,8 @@ impl ControlLink {
             if self.pending.len() > cap {
                 return Err(ControlError::Line);
             }
-            self.stream.readable().await.map_err(io_error)?;
-            match self.stream.try_read(&mut chunk) {
+            self.stream.borrow().readable().await.map_err(io_error)?;
+            match self.stream.borrow().try_read(&mut chunk) {
                 Ok(0) if self.pending.is_empty() => return Err(ControlError::Closed),
                 Ok(0) => return Err(ControlError::Line),
                 Ok(read) => self
@@ -194,6 +218,39 @@ impl ControlLink {
                 Err(error) => return Err(io_error(error)),
             }
         }
+    }
+}
+
+/// The sender of the graceful stop of a split control link. It holds a
+/// weak handle, so the end of the reader closes the link.
+#[derive(Debug)]
+pub struct StopSender {
+    stream: Weak<UnixStream>,
+}
+
+impl StopSender {
+    /// Whether the reader of the link still runs, so the link is open.
+    #[must_use]
+    pub fn is_open(&self) -> bool {
+        self.stream.strong_count() > 0
+    }
+
+    /// Sends `{"stop":{}}` as `ControlLink::stop` does.
+    ///
+    /// # Errors
+    ///
+    /// `Io` with `NotConnected` when the reader ended and closed the link,
+    /// or when the write failed.
+    pub async fn stop(&self) -> Result<(), ControlError> {
+        let stream = self
+            .stream
+            .upgrade()
+            .ok_or(ControlError::Io(io::ErrorKind::NotConnected))?;
+        let link = ControlLink {
+            stream,
+            pending: Vec::new(),
+        };
+        link.stop().await
     }
 }
 
