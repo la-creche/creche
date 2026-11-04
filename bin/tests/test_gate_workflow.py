@@ -152,6 +152,20 @@ RUST_RUNS = [
     "cargo test --locked",
 ]
 
+#: The step of that job before the three checks. It refuses an edit or a
+#: deletion of a frozen host API file against the commit the change starts
+#: from (decision CH33 rule 8).
+FROZEN_STEP = "frozen host api"
+FROZEN_DIFF = (
+    "git diff --no-renames --diff-filter=MDT --name-status --exit-code \\\n"
+    "  \"$base\" HEAD -- 'rust/crates/wire/schema/host-api-*.json'"
+)
+FROZEN_ENV = {
+    "GROUP_BASE": "${{ github.event.merge_group.base_sha }}",
+    "BASE_REF": "${{ github.base_ref }}",
+    "BEFORE": "${{ github.event.before }}",
+}
+
 #: The step of that job that a change with no file of the proof skips. Only
 #: the answer `false` skips it. An answer that is missing, or that a rename
 #: lost, runs the proof.
@@ -578,9 +592,10 @@ def test_the_rust_job_formats_lints_and_tests_the_workspace(
     jobs: dict[str, dict[str, Any]], last: str
 ) -> None:
     """The toolchain step installs what rust/rust-toolchain.toml names. The
-    three checks then run in rust/, and a lint warning fails the job."""
+    frozen host API step diffs the frozen files against the base. The three
+    checks then run in rust/, and a lint warning fails the job."""
     job = jobs[RUST_JOB]
-    checkout, toolchain, *checks = job["steps"]
+    checkout, toolchain, frozen, *checks = job["steps"]
 
     assert job["needs"] == "scope"
     assert job["if"] == ONLY_CODE
@@ -588,6 +603,10 @@ def test_the_rust_job_formats_lints_and_tests_the_workspace(
     assert checkout["with"] == {"fetch-depth": 0}
     assert toolchain["working-directory"] == RUST_DIR
     assert "rustup toolchain install --no-self-update" in toolchain["run"]
+    assert frozen["name"] == FROZEN_STEP
+    assert frozen["env"] == FROZEN_ENV
+    assert frozen["run"].startswith("set -euo pipefail\n")
+    assert frozen["run"].endswith(FROZEN_DIFF + "\n")
     assert checks == [{"run": run, "working-directory": RUST_DIR} for run in RUST_RUNS]
 
 

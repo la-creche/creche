@@ -12,6 +12,11 @@
 //! constants in `wire/src/creche_wire/routes.py`, which datamodel-codegen
 //! does not write.
 //!
+//! It also holds `schema/host-api-<N>.json`, the frozen copy of the
+//! schema subset that the routes reach, for the protocol number N
+//! (decision CH33 rule 8). The test fails when that subset changes and the
+//! number stays.
+//!
 //! To write the files after a change of a wire type, run
 //! `CRECHE_WIRE_SCHEMA=write cargo test -p creche-wire` in rust/.
 
@@ -345,6 +350,193 @@ fn the_committed_schema_is_the_schema_of_the_wire_types() {
             "{file} is not what the wire types give. Run `{WRITE_VAR}={WRITE} cargo test -p creche-wire` in rust/ and commit the file."
         );
     }
+}
+
+/// The frozen file of the protocol `protocol` and the subset it holds: the
+/// part of `schema` that a client of the host API reads (decision CH33 rule
+/// 8). That is `x-routes`, and each `$defs` entry that a type of
+/// `x-routes` reaches through `$ref`, with no `description` text.
+// CONTRACT-QUESTION: CH33 rule 8 names the reached schema subset but not
+// its parts. The reading taken: the whole `x-routes` (route names, kinds,
+// tokens, statuses, client timeouts, header, body cap, mismatch reply) and
+// each reached `$defs` entry, `ProtocolMismatch` too. A `title` stays, since it names a
+// generated class. A `description` goes, since no reader checks it.
+// Another reading needs a new protocol number only if it changes the file.
+fn frozen_host_api(schema: &Value) -> (String, String) {
+    let table = &schema[ROUTES_KEY];
+    let mut names: Vec<&str> = table["routes"]
+        .as_object()
+        .unwrap()
+        .values()
+        .flat_map(|entry| ROUTE_TYPES.into_iter().filter_map(|key| entry.get(key)))
+        .chain([&table["mismatch"]["reply"]])
+        .map(|name| name.as_str().unwrap())
+        .collect();
+    let mut reached = Map::new();
+    while let Some(name) = names.pop() {
+        if reached.contains_key(name) {
+            continue;
+        }
+        let definition = &schema["$defs"][name];
+        references(definition, &mut names);
+        let mut definition = definition.clone();
+        strip_descriptions(&mut definition);
+        reached.insert(name.to_owned(), definition);
+    }
+
+    let subset = json!({"$defs": reached, ROUTES_KEY: table});
+    let file = frozen_file(table["protocol"].as_u64().unwrap());
+    (
+        file,
+        format!("{}\n", serde_json::to_string_pretty(&subset).unwrap()),
+    )
+}
+
+/// The frozen file of the protocol `protocol`, relative to the crate.
+fn frozen_file(protocol: u64) -> String {
+    format!("schema/host-api-{protocol}.json")
+}
+
+/// Add the `$defs` name of each `$ref` in `node` to `names`.
+fn references<'a>(node: &'a Value, names: &mut Vec<&'a str>) {
+    match node {
+        Value::Object(map) => {
+            for (key, child) in map {
+                match (key.as_str(), child.as_str()) {
+                    ("$ref", Some(target)) => names.extend(target.strip_prefix("#/$defs/")),
+                    _ => references(child, names),
+                }
+            }
+        }
+        Value::Array(items) => items.iter().for_each(|child| references(child, names)),
+        _ => {}
+    }
+}
+
+/// Remove each `description` text from `node`. A property named
+/// `description` holds a schema, not a text, so it stays.
+fn strip_descriptions(node: &mut Value) {
+    match node {
+        Value::Object(map) => {
+            if map.get("description").is_some_and(Value::is_string) {
+                map.remove("description");
+            }
+            map.values_mut().for_each(strip_descriptions);
+        }
+        Value::Array(items) => items.iter_mut().for_each(strip_descriptions),
+        _ => {}
+    }
+}
+
+/// What the test does with the frozen file `file`: `Ok(true)` writes it,
+/// and `Ok(false)` leaves it. It never writes over a file that holds
+/// another subset, so a reached change needs a new protocol number.
+fn guard_frozen(
+    file: &str,
+    subset: &str,
+    committed: Option<&str>,
+    write: bool,
+) -> Result<bool, String> {
+    match committed {
+        Some(text) if text == subset => Ok(false),
+        None if write => Ok(true),
+        None => Err(format!(
+            "{file} is missing. Run `{WRITE_VAR}={WRITE} cargo test -p creche-wire` in rust/ and commit the file."
+        )),
+        Some(_) => Err(format!(
+            "The routes reach a changed schema, and {file} holds the old one. Raise HOST_API_PROTOCOL by one, run `{WRITE_VAR}={WRITE} cargo test -p creche-wire` in rust/ and commit the new file. Never edit {file}."
+        )),
+    }
+}
+
+#[test]
+fn the_frozen_host_api_is_the_reached_subset() {
+    let write = std::env::var(WRITE_VAR).as_deref() == Ok(WRITE);
+    let (file, subset) = frozen_host_api(&wire_schema());
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(&file);
+    let committed = std::fs::read_to_string(&path).ok();
+
+    match guard_frozen(&file, &subset, committed.as_deref(), write) {
+        Ok(true) => std::fs::write(&path, &subset).unwrap(),
+        Ok(false) => {}
+        Err(message) => panic!("{message}"),
+    }
+}
+
+/// Each older protocol keeps its frozen file, and so does the current one
+/// outside write mode, where `the_frozen_host_api_is_the_reached_subset`
+/// writes a missing one. The test cannot see a file that a change deleted
+/// and wrote again: the `rust` job of CI diffs the files against the base.
+#[test]
+fn each_frozen_host_api_file_is_kept() {
+    let write = std::env::var(WRITE_VAR).as_deref() == Ok(WRITE);
+    let last = if write {
+        HOST_API_PROTOCOL - 1
+    } else {
+        HOST_API_PROTOCOL
+    };
+
+    for protocol in 1..=u64::from(last) {
+        let file = frozen_file(protocol);
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(&file);
+        assert!(
+            path.is_file(),
+            "{file} is missing. Restore it from git: a frozen file stays for each protocol number."
+        );
+    }
+}
+
+/// The frozen file and its subset after `change` of the wire schema.
+fn frozen_after(change: impl FnOnce(&mut Value)) -> (String, String) {
+    let mut schema = wire_schema();
+    change(&mut schema);
+    frozen_host_api(&schema)
+}
+
+/// A change of `Webhook`, which the routes reach through `SessionOrigin`.
+fn change_a_reached_type(schema: &mut Value) {
+    schema["$defs"]["Webhook"]["required"] = json!([]);
+}
+
+#[test]
+fn a_reached_change_that_keeps_the_number_fails() {
+    let (file, subset) = frozen_after(|_| {});
+    let (same_file, changed) = frozen_after(change_a_reached_type);
+
+    assert_eq!(same_file, file);
+    for write in [false, true] {
+        assert!(guard_frozen(&file, &changed, Some(&subset), write).is_err());
+    }
+}
+
+#[test]
+fn a_reached_change_with_a_new_number_writes_a_new_file() {
+    let (file, _) = frozen_after(|_| {});
+    let (new_file, changed) = frozen_after(|schema| {
+        change_a_reached_type(schema);
+        schema[ROUTES_KEY]["protocol"] = json!(HOST_API_PROTOCOL + 1);
+    });
+
+    assert_ne!(new_file, file);
+    assert!(guard_frozen(&new_file, &changed, None, false).is_err());
+    assert_eq!(guard_frozen(&new_file, &changed, None, true), Ok(true));
+    assert_eq!(
+        guard_frozen(&new_file, &changed, Some(&changed), false),
+        Ok(false)
+    );
+}
+
+#[test]
+fn a_change_of_an_unreached_type_or_a_description_passes() {
+    let (_, subset) = frozen_after(|_| {});
+    let (_, changed) = frozen_after(|schema| {
+        for name in ["FamilyStateReply", "TurnEvent", "ControlHello"] {
+            schema["$defs"][name] = json!({"type": "null"});
+        }
+        schema["$defs"]["SessionRow"]["description"] = json!("Another text.");
+    });
+
+    assert_eq!(changed, subset);
 }
 
 #[test]

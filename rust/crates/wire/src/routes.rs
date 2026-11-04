@@ -22,10 +22,12 @@ use super::{
 /// sends it in the header `HOST_API_HEADER`, and the vmm checks it before
 /// it reads the body. The match is exact. It is separate from the guest
 /// init version of decision CH7-6.
-// Decision CH33 rule 8 says which change needs a new number. The repo
-// holds a frozen copy of the schema subset that the routes reach, one per
-// number. CI fails when a change moves that subset and keeps the number.
-// A later PR adds that check (PR 10 of the route table plan).
+///
+/// A change of the schema subset that the routes reach needs a new number
+/// (decision CH33 rule 8). `schema/host-api-<N>.json` holds a frozen copy
+/// of that subset for the number N. The schema test fails when the subset
+/// differs from the file of this number, and it never writes over that
+/// file. Raise the number by one, and the test writes a new file.
 pub const HOST_API_PROTOCOL: u32 = 1;
 
 /// The name of the request header that carries `HOST_API_PROTOCOL`, as
