@@ -2,7 +2,8 @@
 // session A holds on a `ch` call while session B pulls a new alias. A's
 // next model request keeps A's model. B's prompt calls the new alias with
 // its limits from LiteLLM, and so does A's next prompt. A pull that rotates
-// the key and changes the alias reads the limits with the new key.
+// the key and changes the alias reads the limits with the new key. A
+// session that pulled the old alias before a change still resolves it.
 
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -92,6 +93,16 @@ describe("the model of each session", () => {
       NEW_LIMITS.maxTokens,
       NEW_LIMITS.maxTokens,
     ]);
+  });
+
+  it("still resolves the alias of a session that pulled it before another session's change", async () => {
+    await pullFor("session-x");
+    swapConfig(config.mounts.config, { "runtime.json": JSON.stringify({ model_alias: "chat" }) });
+    await pullFor("session-y");
+    const before = fake.seen.length;
+    await turn("session-x");
+
+    expect(fake.seen.slice(before).map((seen) => seen.model)).toEqual([NEW_ALIAS]);
   });
 
   it("reads the limits of a new alias with the key of the same pull", async () => {
