@@ -231,10 +231,16 @@ table, and the start boots it again. A cold boot runs these steps:
 
 Each fault but `host_full` goes to the fault file of the family
 (decisions CH6-3, CH21-1). A fault after the launch stops the VM with
-SIGTERM, then SIGKILL, and sends no graceful stop. A VM whose stop
+`stop::stop`. After `ControlReady` the stop sends the graceful stop on
+the control link first (decision CH19 (3)). Before it no link exists,
+so the stop goes on to SIGTERM (decision CH50 rule 3). A VM whose stop
 failed stays in the table, so admission counts its RAM (decision CH50
 rule 4). A start that is dropped before its end sends SIGKILL to its VM
-and keeps the VM in the table for the same reason. The `Launcher` trait
+and keeps the VM in the table for the same reason. The launch step puts
+the process in the start's reservation inside `spawn_blocking`, so a
+start that hyper drops during the launch does the same. Admission first
+removes each VM whose process exited, so an exited VM holds no RAM.
+The `Launcher` trait
 lets `tests/start.rs` fake the launch, the command line file and the
 guest. Every other step there is the real one on a scratch dir.
 

@@ -172,6 +172,16 @@ fn lock<P>(table: &Table<P>) -> MutexGuard<'_, HashMap<SessionId, Slot<P>>> {
     table.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// Removes each VM whose process exited from `table`. Decision CH50 rule
+/// 4 keeps the RAM of a VM that may still run, and an exited one runs no
+/// more. A failed status check keeps the entry, so its RAM still counts.
+fn reap<P: VmProcess>(table: &mut HashMap<SessionId, Slot<P>>) {
+    table.retain(|_, slot| match slot {
+        Slot::Running(vm) => !matches!(vm.process.exited(), Ok(true)),
+        Slot::Starting(_) => true,
+    });
+}
+
 /// A start between admission and its VM entry. Its drop removes the
 /// reserved RAM. A process that it still holds gets SIGKILL and stays in
 /// the table, so admission counts its RAM and a later start reaps it.
@@ -292,6 +302,9 @@ impl<L: Launcher> ColdBoot<L> {
     /// Reserves `guest_ram` for `id` when admission admits it.
     fn admit(&self, id: &SessionId, guest_ram: u64, free: u64) -> Option<Pending<L::Process>> {
         let mut table = lock(&self.table);
+        // A start that was dropped, a failed stop or a guest crash leaves
+        // an entry whose process may have exited since.
+        reap(&mut table);
         let now = Instant::now();
         // Plan PR L17 adds the sleep gate and runs the evictions. Until
         // then every VM counts as busy, so admission never names one.
@@ -360,13 +373,17 @@ impl<L: Launcher> ColdBoot<L> {
         }
     }
 
-    /// Writes the fault, then stops the VM of `pending`. A faulted start
-    /// sends no graceful stop: SIGTERM, then SIGKILL (decision CH50 rule
-    /// 3). The link `link` stops changing the control state.
+    /// Writes the fault, then stops the VM of `pending`. After
+    /// `ControlReady` the start holds the control link `control`, and the
+    /// stop sends the graceful stop on it first (decision CH19 (3): a kill
+    /// is the fallback). Before `ControlReady` no link exists, so the stop
+    /// skips that wait (decision CH50 rule 3). The link `link` stops
+    /// changing the control state.
     async fn abort(
         &self,
         mut pending: Pending<L::Process>,
         link: LinkId,
+        control: Option<&ControlLink>,
         family: &FamilyName,
         code: FaultCode,
         message: String,
@@ -374,7 +391,7 @@ impl<L: Launcher> ColdBoot<L> {
         self.control().closed(&pending.id, link);
         let fault = self.fault(family, code, message).await;
         if let Some(process) = pending.process.as_mut() {
-            match stop(None::<&ControlLink>, process, &pending.run).await {
+            match stop(control, process, &pending.run).await {
                 Ok(_) => pending.process = None,
                 // Decision CH50 rule 4: the drop of `pending` keeps the VM
                 // in the table, so admission counts its RAM.
@@ -535,13 +552,23 @@ impl<L: Launcher> StartVm for ColdBoot<L> {
             Arc::clone(&self.launcher),
             id.clone(),
         );
-        let launched = blocking(move || launch(&config, &*launcher, &session, shape)).await;
-        let (process, start) = match launched {
+        // The process goes into `pending` inside the closure. hyper drops
+        // this future when the client hangs up before 101, and the blocking
+        // step then ends with no one to take its output. The drop of that
+        // output kills the VM and keeps it in the table, so admission
+        // counts its RAM and no CH runs outside the table (decisions CH8-6,
+        // CH50 rule 4).
+        let launched = blocking(move || {
+            let (process, start) = launch(&config, &*launcher, &session, shape)?;
+            let cmdline = launcher.cmdline(&process);
+            pending.process = Some(process);
+            Ok((pending, start, cmdline))
+        })
+        .await;
+        let (pending, start, cmdline) = match launched {
             Ok(launched) => launched,
             Err(message) => return Err(self.fault(family, sandbox, message).await),
         };
-        let cmdline = self.launcher.cmdline(&process);
-        pending.process = Some(process);
 
         let vsock = pending.run.vsock_socket();
         let link = self.control().replace(id);
@@ -549,7 +576,9 @@ impl<L: Launcher> StartVm for ColdBoot<L> {
             Ok(opened) => opened,
             Err(error) => {
                 let message = format!("waiting for ControlReady: {error:?}");
-                return Err(self.abort(pending, link, family, sandbox, message).await);
+                return Err(self
+                    .abort(pending, link, None, family, sandbox, message)
+                    .await);
             }
         };
         let change = self.control().ready(id, link, ready);
@@ -573,13 +602,19 @@ impl<L: Launcher> StartVm for ColdBoot<L> {
         .await;
         if let Err(message) = denied {
             let egress = FaultCode::EgressAssertFailed;
-            return Err(self.abort(pending, link, family, egress, message).await);
+            let control = Some(&control);
+            return Err(self
+                .abort(pending, link, control, family, egress, message)
+                .await);
         }
         let acp = match AcpLink::dial(&vsock).await {
             Ok(acp) => acp,
             Err(error) => {
                 let message = dial_text(error);
-                return Err(self.abort(pending, link, family, sandbox, message).await);
+                let control = Some(&control);
+                return Err(self
+                    .abort(pending, link, control, family, sandbox, message)
+                    .await);
             }
         };
         pending.commit(control);
