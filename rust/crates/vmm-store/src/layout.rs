@@ -113,6 +113,13 @@ impl StateRoot {
         self.rows_dir().join(format!("{id}.json.tmp"))
     }
 
+    /// The digest store: one read-only copy of each root disk and kernel,
+    /// named by its SHA-256 (fact 56, PR D5).
+    #[must_use]
+    pub fn store_dir(&self) -> PathBuf {
+        self.0.join("store")
+    }
+
     /// The directory of the session disk and the snapshots of `id`.
     #[must_use]
     pub fn session(&self, id: &SessionId) -> SessionDir {
