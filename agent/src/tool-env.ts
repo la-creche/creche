@@ -44,8 +44,8 @@ export const TOOL_RENAME: Readonly<Record<string, readonly string[]>> = {};
 /**
  * The names that never reach a tool. npm and pnpm skip devDependencies
  * under `NODE_ENV=production`. `MPLCONFIGDIR` stays here until the guest
- * write layout gives it a writable path (CH49 rule 2, CH8-8). The root disk
- * is read-only.
+ * write layout gives it a writable path (CH52 rule 4, CH49 rule 2, CH8-8).
+ * The root disk is read-only.
  */
 export const FACADE_ENV = ["NODE_ENV", "NODE_VERSION", "YARN_VERSION", "MPLCONFIGDIR"] as const;
 
