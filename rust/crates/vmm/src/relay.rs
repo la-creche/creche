@@ -6,7 +6,7 @@
 //! CH34 rule 6).
 //!
 //! After 101 the relay dials guest port 1201 and copies the ACP bytes both
-//! ways until one side closes (decisions CH13, CH20). It reads no ACP byte
+//! ways until both sides close (decisions CH13, CH20). It reads no ACP byte
 //! and caps none (decision CH34 rule 3).
 
 use std::collections::HashMap;
@@ -56,10 +56,10 @@ pub enum Taken {
 pub enum Door {
     /// An Upgrade holds the session: its VM starts, or its relay runs.
     Open,
-    /// The last Upgrade of the session ended at this time.
+    /// The last admitted Upgrade of the session ended at this time.
     ClosedAt(Instant),
-    /// No Upgrade of the session ended since the vmm started or since a
-    /// drop of the session began.
+    /// No admitted Upgrade of the session ended since the vmm started or
+    /// since a drop of the session began. A refused Upgrade adds no close.
     NotOpened,
 }
 
@@ -110,6 +110,7 @@ impl Relays {
             id: id.clone(),
             claim,
             stop,
+            admitted: false,
         })
     }
 
@@ -161,9 +162,17 @@ pub struct Claim {
     id: SessionId,
     claim: u64,
     stop: oneshot::Receiver<()>,
+    /// Whether the Upgrade passed each check and its VM started. Only an
+    /// admitted claim records a door close when it ends.
+    admitted: bool,
 }
 
 impl Claim {
+    /// Marks the claim admitted: its VM started and its relay follows.
+    pub(crate) fn admit(&mut self) {
+        self.admitted = true;
+    }
+
     /// Whether a drop stopped the claim. A sent stop and a dropped sender
     /// both count.
     pub fn stopped(&mut self) -> bool {
@@ -178,12 +187,17 @@ impl Drop for Claim {
     fn drop(&mut self) {
         let mut registry = self.relays.registry();
         // A drop can replace this claim's slot with its mark, and a later
-        // claim can follow the mark. Only this claim's own slot goes, and
-        // only then does the door close.
+        // claim can follow the mark. Only this claim's own slot goes.
         let own = |slot: &Slot| matches!(slot, Slot::Open { claim, .. } if *claim == self.claim);
         if registry.slots.get(&self.id).is_some_and(own) {
             registry.slots.remove(&self.id);
-            registry.closed.insert(self.id.clone(), Instant::now());
+            // Only an admitted claim closes a door (decision CH19 (6)). A
+            // refused Upgrade (a start fault, or a drop during the start)
+            // opened no door link. So it leaves the last close time as it
+            // was and adds no entry to `closed`.
+            if self.admitted {
+                registry.closed.insert(self.id.clone(), Instant::now());
+            }
         }
     }
 }
@@ -222,14 +236,18 @@ pub struct AcpRelay {
 impl AcpRelay {
     /// The relay that holds `claim` and dials the VM's vsock socket
     /// `vsock`.
-    pub(crate) fn new(claim: Claim, vsock: PathBuf) -> Self {
+    pub(crate) fn new(mut claim: Claim, vsock: PathBuf) -> Self {
+        claim.admit();
         Self { claim, vsock }
     }
 }
 
 impl Relay for AcpRelay {
-    /// Dials guest port 1201, then copies bytes both ways. It ends when one
-    /// side closes or a drop stops the relay. Its end drops both streams.
+    /// Dials guest port 1201, then copies bytes both ways. An EOF in one
+    /// direction shuts down the write half of the other stream, and the
+    /// other direction runs on. The relay ends when both directions reach
+    /// EOF, when a read or a write fails, or when a drop stops it. Its end
+    /// drops both streams.
     async fn run(self, mut client: TokioIo<Upgraded>) {
         let Self { mut claim, vsock } = self;
         // Decision CH43 rules 5 and 7: the dial pauses 10 ms between two
@@ -257,15 +275,29 @@ impl Relay for AcpRelay {
             if Pin::new(&mut claim.stop).poll(context).is_ready() {
                 return Poll::Ready(());
             }
+            // A client that half-closes after its last request still gets
+            // each reply of the guest, as with `copy_bidirectional`.
             let sent = up.carry(context, &mut client, &mut guest);
             let received = down.carry(context, &mut guest, &mut client);
-            if sent.is_ready() || received.is_ready() {
-                return Poll::Ready(());
+            match (sent, received) {
+                (Poll::Ready(Carried::Failed), _)
+                | (_, Poll::Ready(Carried::Failed))
+                | (Poll::Ready(Carried::Shut), Poll::Ready(Carried::Shut)) => Poll::Ready(()),
+                _ => Poll::Pending,
             }
-            Poll::Pending
         })
         .await;
     }
+}
+
+/// How one direction of the relay ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Carried {
+    /// The source reached EOF, each byte reached the sink, and the write
+    /// half of the sink is shut down.
+    Shut,
+    /// A read, a write or the shutdown failed.
+    Failed,
 }
 
 /// One direction of the relay: the bytes read from one stream and not yet
@@ -275,7 +307,10 @@ struct Pipe {
     buffer: Vec<u8>,
     start: usize,
     end: usize,
+    /// The source reached EOF.
     closed: bool,
+    /// The write half of the sink is shut down.
+    shut: bool,
 }
 
 impl Pipe {
@@ -288,16 +323,21 @@ impl Pipe {
             start: 0,
             end,
             closed: false,
+            shut: false,
         }
     }
 
-    /// Moves bytes from `from` to `to`. Ready when `from` closed and each
-    /// byte reached `to`, or when a read or a write failed.
-    fn carry<R, W>(&mut self, context: &mut Context<'_>, from: &mut R, to: &mut W) -> Poll<()>
+    /// Moves bytes from `from` to `to`. After an EOF of `from` and the
+    /// last write, it shuts down the write half of `to`. A later call
+    /// gives `Shut` again and touches no stream.
+    fn carry<R, W>(&mut self, context: &mut Context<'_>, from: &mut R, to: &mut W) -> Poll<Carried>
     where
         R: AsyncRead + Unpin,
         W: AsyncWrite + Unpin,
     {
+        if self.shut {
+            return Poll::Ready(Carried::Shut);
+        }
         loop {
             if let Some(bytes) = self
                 .buffer
@@ -305,14 +345,25 @@ impl Pipe {
                 .filter(|b| !b.is_empty())
             {
                 match Pin::new(&mut *to).poll_write(context, bytes) {
-                    Poll::Ready(Ok(0) | Err(_)) => return Poll::Ready(()),
+                    Poll::Ready(Ok(0) | Err(_)) => return Poll::Ready(Carried::Failed),
                     Poll::Ready(Ok(written)) => self.start = self.start.saturating_add(written),
                     Poll::Pending => return Poll::Pending,
                 }
                 continue;
             }
             if self.closed {
-                return Pin::new(&mut *to).poll_flush(context).map(drop);
+                let shutdown = match Pin::new(&mut *to).poll_flush(context) {
+                    Poll::Ready(Ok(())) => Pin::new(&mut *to).poll_shutdown(context),
+                    flushed => flushed,
+                };
+                return shutdown.map(|shutdown| {
+                    self.shut = shutdown.is_ok();
+                    if self.shut {
+                        Carried::Shut
+                    } else {
+                        Carried::Failed
+                    }
+                });
             }
             let mut read = ReadBuf::new(&mut self.buffer);
             let polled = Pin::new(&mut *from).poll_read(context, &mut read);
@@ -321,7 +372,7 @@ impl Pipe {
                 Poll::Ready(Ok(())) => {
                     (self.start, self.end, self.closed) = (0, filled, filled == 0);
                 }
-                Poll::Ready(Err(_)) => return Poll::Ready(()),
+                Poll::Ready(Err(_)) => return Poll::Ready(Carried::Failed),
                 Poll::Pending => return Poll::Pending,
             }
         }
@@ -351,24 +402,43 @@ mod tests {
         assert!(relays.claim(&id).is_ok());
     }
 
-    /// A claim opens the door, and its end records the close. A drop
-    /// clears the record, and a stopped claim adds none (decision CH19
-    /// (6)).
+    /// A claim opens the door, and the end of an admitted claim records
+    /// the close. A drop clears the record, and a stopped claim adds none
+    /// (decision CH19 (6)).
     #[test]
     fn a_claim_opens_the_door_and_its_end_closes_it() {
         let relays = Relays::default();
         let id: SessionId = "3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b".parse().unwrap();
         assert_eq!(relays.door(&id), Door::NotOpened);
-        let claim = relays.claim(&id).unwrap();
+        let mut claim = relays.claim(&id).unwrap();
         assert_eq!(relays.door(&id), Door::Open);
+        claim.admit();
         let before = Instant::now();
         drop(claim);
         assert!(matches!(relays.door(&id), Door::ClosedAt(at) if at >= before));
 
-        let claim = relays.claim(&id).unwrap();
+        let mut claim = relays.claim(&id).unwrap();
+        claim.admit();
         let mark = relays.mark_drop(&id);
         drop(claim);
         drop(mark);
         assert_eq!(relays.door(&id), Door::NotOpened);
+    }
+
+    /// A claim that ends with no relay, as for a refused Upgrade, records
+    /// no close. It leaves an earlier close time as it was.
+    #[test]
+    fn a_refused_claim_records_no_close() {
+        let relays = Relays::default();
+        let id: SessionId = "3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b".parse().unwrap();
+        drop(relays.claim(&id).unwrap());
+        assert_eq!(relays.door(&id), Door::NotOpened);
+
+        let mut claim = relays.claim(&id).unwrap();
+        claim.admit();
+        drop(claim);
+        let closed = relays.door(&id);
+        drop(relays.claim(&id).unwrap());
+        assert_eq!(relays.door(&id), closed);
     }
 }

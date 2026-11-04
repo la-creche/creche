@@ -110,10 +110,11 @@ and turn events set `turn_running` (decision CH43 rule 8).
 ## The acp route
 
 `src/handlers/acp.rs` admits or refuses an `acp` Upgrade before 101, in
-the order of decision CH34 rule 7. It claims the session in the relay
-registry (`busy` 409, decision CH33 rule 7), then reads the row
-(`not_found` 404 for an unknown id or another family, decisions CH21-9,
-CH33 rule 5). Then the `StartVm` hook starts the VM: admission, the
+the order of decision CH34 rule 7. It reads the row first (`not_found`
+404 for an unknown id or another family, decisions CH21-9, CH33 rule
+5). Then it claims the session in the relay registry (`busy` 409,
+decision CH33 rule 7) and reads the row again. So another family never
+touches the claim of the owner. Then the `StartVm` hook starts the VM: admission, the
 boot or restore, and the first `ControlReady`, whatever facade state it
 reports. Each `StartFault` is a typed code before 101. An unknown id
 never reaches the hook, so it gets no boot. The hook returns the vsock
@@ -125,18 +126,23 @@ CH26 rule 5). `Relays::claim` holds a session for one Upgrade until the
 relay ends. `Relays::mark_drop` stops the open relay of a session and
 marks the drop. An Upgrade under the mark gets `not_found` (decision
 CH34 rule 6), and so does one whose start a drop overlapped. The drop
-keeps its mark until the row is gone. The claim comes before the row
-read, so a drop that ends between them leaves no row.
+keeps its mark until the row is gone. The second row read comes after
+the claim, so a drop that ends between the first read and the claim
+leaves no row, and the Upgrade gets `not_found`.
 
 After 101, `AcpRelay` dials guest port 1201 with `control::dial`, the
 dial of the control link (decision CH13). It pauses 10 ms between two
 tries and retries ECONNREFUSED, and `READY_WAIT` bounds it (decision CH43
-rules 5 and 7). Then it copies bytes both ways until one side closes or
-the stop signal fires, and it drops both streams (decision CH20). It
+rules 5 and 7). Then it copies bytes both ways (decision CH20). An EOF
+in one direction shuts down the write half of the other stream, and the
+other direction runs on, as with `copy_bidirectional`. The relay ends
+when both directions reach EOF, a read or write fails, or the stop
+signal fires. Then it drops both streams. It
 parses no ACP byte and caps none (decision CH34 rule 3). `Relays::door`
 gives the door of a session for the sleep gate (decision CH19 (6)): open
-from the claim to its end, then the time of the close. A drop clears the
-time.
+from the claim to its end, then the time that the last admitted Upgrade
+ended. A refused Upgrade records no close, so the map of close times
+grows only with sessions that ran. A drop clears the time.
 
 ## The stop
 
