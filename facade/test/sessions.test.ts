@@ -157,7 +157,8 @@ describe("the record of a turn", () => {
     const spaces = "\t\v\f\r \u00a0\u1680\u2000\u200a\u2028\u2029\u202f\u205f\u3000\ufeff";
     const texts = [
       `${"a".repeat(255)} b`,
-      `${"a".repeat(254)}\u3000b`,
+      // The fold makes 258 bytes. The cut lands inside the euro sign and backs to the space.
+      `${"a".repeat(254)}\u3000€`,
       "𝒜".repeat(256),
       `${spaces}one${spaces}two${spaces}\nthree`,
       "\ud800 lone \udc00",
@@ -171,5 +172,6 @@ describe("the record of a turn", () => {
       expect(title === "" || isTitle(title), JSON.stringify(text)).toBe(true);
     }
     expect(titleOf(`${spaces}one${spaces}two`)).toBe("one two");
+    expect(titleOf(`${"a".repeat(254)}\u3000€`)).toBe("a".repeat(254));
   });
 });
