@@ -241,6 +241,20 @@ fn a_second_upgrade_gets_busy_until_the_first_ends() {
     server.end();
 }
 
+/// Another family gets `not_found` while the owner holds the session, so
+/// it learns nothing of the session (decisions CH33 rule 5, CH34 rule 7).
+/// Its Upgrade starts no VM and leaves the claim of the owner in place.
+#[test]
+fn another_family_gets_not_found_while_the_owner_holds_the_session() {
+    let server = Server::start("acp-foreign");
+    let (status, _, _first) = server.upgrade("chat", A);
+    assert_eq!(status, 101);
+    server.refused("code", A, AcpError::NotFound {});
+    server.refused("chat", A, AcpError::Busy {});
+    assert_eq!(server.starts(), 1);
+    server.end();
+}
+
 #[test]
 fn a_start_fault_answers_before_101() {
     let server = Server::start("acp-fault");
