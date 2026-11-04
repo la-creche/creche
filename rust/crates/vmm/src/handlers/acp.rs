@@ -56,12 +56,14 @@ pub trait StartVm: Send + Sync + 'static {
     /// # Errors
     ///
     /// `StartFault` when the VM did not start.
-    // CONTRACT-QUESTION: decision CH36 G26 bounds only the wait for
-    // `ControlReady`. No row bounds the whole start: admission and an
-    // eviction under pressure (plan PR L17) come before the dial. The
-    // narrowest reading adds no bound of the handler around this hook. A
-    // row that bounds the whole start costs one `timeout` in `admit`.
-    // AGENTS.md lists it in Known gaps.
+    // Decision CH50 rule 1: the start has no outer bound, so the handler
+    // adds no `timeout` around this hook. Each step keeps its own bound:
+    // admission answers at once (decision CH21-3), the caller of each
+    // `ch-remote` call sets its timeout (decision CH44 rule 3), and
+    // `READY_WAIT` bounds the wait for `ControlReady`. One admission can
+    // evict several VMs in series, so the bound of the start grows with
+    // the evictions. Plan PR L17 names the timeout of one eviction's
+    // snapshot.
     fn start(&self, row: &SessionRow) -> impl Future<Output = Result<(), StartFault>> + Send;
 }
 

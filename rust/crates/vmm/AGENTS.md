@@ -150,9 +150,11 @@ bytes of the client.
    so a gate that reads only the ready would never snapshot it. The sleep
    gate is plan PR L18, a later PR, so this crate does not hold the rule
    yet.
-2. CONTRACT-QUESTION: no decision row bounds the whole start of an
-   `acp` Upgrade. Decision CH36 G26 bounds the wait for `ControlReady`
-   at 10 s, and `control::open` holds it (`READY_WAIT`). Admission and
-   an eviction under pressure (plan PR L17) come before the dial and
-   have no bound. The handler reads G26 narrowly: it adds no bound of
-   its own around the `StartVm` hook (`src/handlers/acp.rs`).
+
+## Caller duties
+
+1. Decision CH50 rule 1: the start of an `acp` Upgrade has no outer
+   bound, and the handler adds none around the `StartVm` hook
+   (`src/handlers/acp.rs`). Each step keeps its own bound. Plan PR L17
+   names the timeout of one eviction's snapshot. The bound of a start
+   grows with the number of VMs that its admission evicts.
