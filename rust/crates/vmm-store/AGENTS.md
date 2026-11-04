@@ -38,10 +38,11 @@ The second file has the table of the three vmm crates.
   `snapshots/` fails) as a failed rename too. D13 removes a leftover
   `<n>.retired`. CH39 rule 3 does not name it.
 
-- Decisions CH2, CH8-7, CH36 G13 and CH44 rule 6 (PR D13,
-  `retention.rs`): `sweep` removes leftover `<n>.retired` dirs, every
-  generation but the newest of a session, the newest one past `MAX_AGE`
-  (7 days), and then the oldest first while the allocated bytes
+- Decisions CH2, CH8-7, CH36 G13, CH44 rule 6 and CH50 rules 7 and 8
+  (PR D13, `retention.rs`): `sweep` removes leftover `<n>.retired` dirs,
+  every generation but the newest of a session, the newest one when a
+  claim consumed it, the newest one past `MAX_AGE` (7 days from the
+  take, the mtime of `memory-ranges`), and then the oldest first while the allocated bytes
   (`st_blocks`) pass the budget. It never removes a session disk or a
   generation in use. It never removes a generation while an older one of
   the session stays, so an older one never becomes the newest.
