@@ -4,10 +4,10 @@
 //
 // A refusal names a field, never a value.
 //
-// The reader takes `litellm_key` and `pep_token`, the two fields of the wire
-// `FamilyCreds`, and ignores every other key. `caregiver` still writes
-// `epoch`, but no reader compares it with anything (contract 03 section 12
-// rule 3, decision CH5b, fact 36).
+// The reader takes `litellm_key` and `pep_token` and ignores every other key.
+// It checks each one itself and does not use a wire validator. `caregiver`
+// still writes `epoch`, but no reader compares it with anything (contract 03
+// section 12 rule 3, decision CH5b, fact 36).
 
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
