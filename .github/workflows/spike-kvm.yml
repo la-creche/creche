@@ -7,7 +7,8 @@
 #   kvm           /dev/kvm and its mode, before and after a udev rule
 #   vhost_vsock   the module and /dev/vhost-vsock, before and after modprobe
 #                 and a udev rule, then that the runner user can open it
-#   user manager  systemd-run --user --scope, before and after linger
+#   user manager  systemd-run --user --scope, before and after linger, and
+#                 that its MemoryMax and TasksMax reach the scope cgroup
 #   landlock      the Landlock ABI of the runner kernel, red below 4 (C6)
 #   apparmor      the LSM list, apparmor_parser, and one enforced profile
 #   cloud-hypervisor
@@ -94,7 +95,14 @@ jobs:
           sudo loginctl enable-linger "$USER"
           for _ in $(seq 1 50); do test -S "$XDG_RUNTIME_DIR/bus" && break; sleep 0.1; done
           systemctl --user is-system-running || true
-          systemd-run --user --scope --collect -p MemoryMax=64M -p TasksMax=16 -- true
+          cat "/sys/fs/cgroup/user.slice/user-$(id -u).slice/user@$(id -u).service/cgroup.controllers" || true
+          # systemd accepts MemoryMax and TasksMax even with no memory or
+          # pids controller delegated, so read the limits back in the scope.
+          # shellcheck disable=SC2016
+          systemd-run --user --scope --collect -p MemoryMax=64M -p TasksMax=16 -- sh -c '
+            d=/sys/fs/cgroup$(cut -d: -f3 /proc/self/cgroup)
+            echo "$d memory.max $(cat "$d/memory.max") pids.max $(cat "$d/pids.max")"
+            test "$(cat "$d/memory.max")" = 67108864 && test "$(cat "$d/pids.max")" = 16'
 
       - name: landlock
         if: ${{ !cancelled() }}
