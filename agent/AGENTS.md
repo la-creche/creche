@@ -87,13 +87,26 @@ const backend = fileBackend(read.config.mounts, composed.state.config);  // src/
 
 // Before each prompt of the session `sessionId`:
 const pulled = await backend.pull();
-if (pulled.ok) composed.state.apply(pulled.state, sessionId);
+if (pulled.ok) {
+  await composed.model.follow(pulled.state.config.modelAlias);  // src/litellm.ts
+  composed.state.apply(pulled.state, sessionId);
+}
 ```
 
 Each LiteLLM request and each `ch` request reads the creds of the latest
 pull. Each render of a session reads the config of that session's last
 pull. A creds fault fails the prompt. A config fault keeps the last good
 config, and `pulled.stale` names the fault at the first pull that fails.
+
+`model.follow` switches the model when the pulled alias differs
+(decisions CH5c, CH5c-2). It reads the new alias's limits with the latest
+key, and replaces the `litellm` provider in Flue with `setProvider`. The
+provider keeps each alias it has served. Flue resolves the model when a
+submission starts, so a turn that runs keeps its model, and the next
+prompt of each session gets the new one. Under CH the vmm holds the
+`state` reply until `model_live_at` (decision CH31 rule 1), so the agent
+waits for nothing. On sbx a config edit never reaches a running sandbox
+(decision CH52 rule 1), so the alias stays the alias of the start.
 
 `readModelLimits` reads the alias's `max_input_tokens` and
 `max_output_tokens` from LiteLLM's `GET /v1/model/info`, with the family
@@ -151,8 +164,6 @@ Dockerfile only, not the built env with the parent image's names.
   only the text of each `SKILL.md`. A skill whose text changes after the
   start has no supporting files until the facade starts again.
   caregiver writes no supporting file today (`src/skills.ts`).
-- The agent keeps the model of its start. Phase 6 PR 3 switches the
-  model at the next prompt (decision CH5c).
 - Contract 03 §7 gives the two plane URLs as fixed values. The playpen
   takes the URL of its build for a plane variable that is absent or not
   valid. The agent has no build URL, so it refuses (`src/config.ts`).

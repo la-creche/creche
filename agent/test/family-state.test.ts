@@ -21,7 +21,7 @@ const NO_RETRY_MS = 0;
 const RUNS_AS_ROOT = process.getuid?.() === 0;
 const NO_ACCESS = 0o000;
 const OPEN = 0o700;
-const START: LiveConfig = { instructions: null, systemPrompt: "append", sandboxTools: [], skills: [] };
+const START: LiveConfig = { modelAlias: "chat", instructions: null, systemPrompt: "append", sandboxTools: [], skills: [] };
 const SKILL = "---\nname: weather-report\ndescription: Write a short weather report.\n---\nSearch first.\n";
 const RUNTIME = { model_alias: "chat", sandbox_tools: ["bash", "read"], system_prompt: "replace" };
 
@@ -83,6 +83,7 @@ describe("fileBackend", () => {
     }
 
     expect(shown(pull)).toEqual({
+      modelAlias: "chat",
       instructions: "FIXTURE-OLD",
       systemPrompt: "replace",
       sandboxTools: ["read", "bash"],
@@ -101,6 +102,7 @@ describe("fileBackend", () => {
     swapConfig(dirs.config, { "runtime.json": JSON.stringify({ model_alias: "chat" }), "instructions.md": "FIXTURE-NEW" });
 
     expect(shown(await backend.pull())).toEqual({
+      modelAlias: "chat",
       instructions: "FIXTURE-NEW",
       systemPrompt: "append",
       sandboxTools: [],

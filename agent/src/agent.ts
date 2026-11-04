@@ -4,7 +4,8 @@
 // the live state, which the facade pulls before each prompt
 // (`src/family-state.ts`, decision CH5a).
 //
-//   useModel          litellm/<model_alias>              src/litellm.ts
+//   useModel          litellm/<model_alias> of the session's last pull
+//                                                      src/litellm.ts
 //   useMcpConnection  ch, <pep>/mcp, family bearer        src/chaperone.ts
 //   useTool           codemode                            src/codemode.ts
 //   useTool           index_search, when an index is mounted   src/index-search.ts
@@ -15,8 +16,9 @@
 //   db                sqlite(<AGENT_SESSIONS_DIR>/flue.db)
 //
 // The agent function reads no file and no credential. Flue renders it again
-// at each model turn. Each render reads the instructions, the skills and
-// the sandbox grant of its session's last pull (decision CH5c). The id of
+// at each model turn. Each render reads the model, the instructions, the
+// skills and the sandbox grant of its session's last pull (decisions CH5c,
+// CH5c-2). Flue reads the model once, when a submission starts. The id of
 // a Flue instance is the facade's session id.
 
 import { readFileSync } from "node:fs";
@@ -32,10 +34,10 @@ import { codemodeTool } from "./codemode.js";
 import type { FamilyConfig } from "./config.js";
 import { StateHolder } from "./family-state.js";
 import { indexSearchFor } from "./index-search.js";
-import { FALLBACK_LIMITS, litellmModel } from "./litellm.js";
+import { bareAlias, FALLBACK_LIMITS, LiveModel, specOf } from "./litellm.js";
 import type { ModelLimits } from "./litellm.js";
 
-export { readModelLimits } from "./litellm.js";
+export { LiveModel, readModelLimits } from "./litellm.js";
 export type { LimitsFault, LimitsRead, ModelLimits } from "./litellm.js";
 export { fileBackend, StateHolder } from "./family-state.js";
 export type { PullFault, StateBackend, StatePull } from "./family-state.js";
@@ -72,6 +74,8 @@ export interface ComposedAgent {
   readonly skippedSkills: readonly string[];
   /** The live state, first from the start reads. The facade sets it before each prompt. */
   readonly state: StateHolder;
+  /** The model of the latest pull. The facade gives it each pulled alias before `state`. */
+  readonly model: LiveModel;
 }
 
 export type ComposeRead =
@@ -112,23 +116,24 @@ export function composeAgent(
   workspace: string,
   limits: ModelLimits = FALLBACK_LIMITS,
 ): ComposeRead {
-  // The provider reads `state` at each request, after it exists.
-  const model = litellmModel(config, limits, () => state.creds);
-  if (!model.ok) {
-    return model;
+  const alias = bareAlias(config.runtime.modelAlias ?? "");
+  if (alias.length === 0) {
+    return { ok: false, reason: "model_alias_unset" };
   }
+
+  // The provider reads `state` at each request, after it exists.
+  const model = new LiveModel(config, alias, limits, () => state.creds);
 
   const text = readInstructions(config.runtime.instructionsPath);
   if (text === undefined) {
     return { ok: false, reason: "instructions_unreadable" };
   }
 
-  const { spec, provider } = model.model;
   const skills = readSkills(config.runtime.skillsPath);
   const { systemPrompt, sandboxTools } = config.runtime;
   const state = new StateHolder({
     creds: config.creds,
-    config: { instructions: text, systemPrompt, sandboxTools, skills: skills.skills },
+    config: { modelAlias: alias, instructions: text, systemPrompt, sandboxTools, skills: skills.skills },
   });
   const ch = chaperoneConnection(config, () => state.creds);
   const codemode = codemodeTool(ch);
@@ -140,9 +145,8 @@ export function composeAgent(
     const live = state.configFor(instanceOf(props));
     const { instructions, sandboxTools: grant, skills: granted, systemPrompt: mode } = live;
     const replacement = mode === "replace" ? instructions : null;
-    // The model stays the model of the start. PR 3 of phase 6 (CH5c)
-    // switches it at the next prompt when the pulled alias differs.
-    useModel(spec);
+    // The `model` follow of the pull put this alias in Flue's provider.
+    useModel(specOf(live.modelAlias));
     useMcpConnection(ch);
     useTool(codemode);
     if (search !== null) {
@@ -170,10 +174,11 @@ export function composeAgent(
     ok: true,
     composed: {
       agent: FamilyAgent,
-      providers: [provider],
+      providers: [model.provider],
       db: sqlite(storePath(config)),
       skippedSkills: skills.skipped,
       state,
+      model,
     },
   };
 }

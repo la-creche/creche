@@ -3,7 +3,8 @@
 // stderr line. Once the supervisor holds the lock, `serveFamily` starts
 // Flue on `<AGENT_SESSIONS_DIR>/flue.db` and opens `creche_sessions` there.
 // Before each prompt the facade pulls the family state from the mounts
-// into the agent (decision CH5a).
+// into the agent (decision CH5a). A pulled `model_alias` that differs
+// switches the model at that prompt (decisions CH5c, CH5c-2).
 
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -11,7 +12,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import { start } from "@flue/runtime/node";
 import { AGENT_NAME, composeAgent, fileBackend, readModelLimits, storePath } from "agent/agent";
-import type { ComposedAgent, ComposeRead, LimitsRead, StateBackend, StateHolder } from "agent/agent";
+import type { ComposedAgent, ComposeRead, LimitsRead, StateBackend } from "agent/agent";
 import { readFamilyConfig } from "agent/config";
 import type { ConfigRefusal, FamilyConfig } from "agent/config";
 
@@ -71,11 +72,24 @@ export async function readFamily(env: NodeJS.ProcessEnv): Promise<FamilyRead> {
     : { ok: false, exitCode: EXIT_BY_REFUSAL[composed.reason], detail: composed.reason };
 }
 
+/** The stderr line of a limits read. `alias` names the new model of a change, and is null at start. */
+export function limitsLine(read: LimitsRead, alias: string | null = null): string {
+  const model = alias === null ? "model" : `model ${alias}`;
+  const { contextWindow, maxTokens } = read.limits;
+
+  return read.ok
+    ? `${model} window ${contextWindow} tokens, output ${maxTokens}`
+    : `${model} limits not read (${read.fault}); window ${contextWindow} tokens`;
+}
+
 /**
  * Each pull sets the latest state and the config of the session's turn. A
- * kept config is written to stderr once, when the read starts to fail.
+ * kept config is written to stderr once, when the read starts to fail. A
+ * new alias goes to Flue before the state, so the prompt resolves it. The
+ * facade waits for no `model_live_at`: under CH the vmm holds the reply
+ * until then (decision CH31 rule 1).
  */
-function refreshOf(backend: StateBackend, state: StateHolder): Refresh {
+function refreshOf(backend: StateBackend, { state, model }: ComposedAgent): Refresh {
   return async (sessionId) => {
     const pulled = await backend.pull();
     if (!pulled.ok) {
@@ -84,6 +98,12 @@ function refreshOf(backend: StateBackend, state: StateHolder): Refresh {
 
     if (pulled.stale !== null) {
       say(`the family config did not read (${pulled.stale}); the last good config stays`);
+    }
+
+    const { modelAlias } = pulled.state.config;
+    const switched = await model.follow(modelAlias);
+    if (switched !== null) {
+      say(limitsLine(switched, modelAlias));
     }
 
     state.apply(pulled.state, sessionId);
@@ -98,7 +118,7 @@ export async function serveFamily({ config, composed, workspace }: Family): Prom
     const tapped = tapStores(composed.db);
     const runtime = await start({ agents: [composed.agent], db: tapped.adapter, providers: composed.providers });
     const index = new SessionIndex(new DatabaseSync(storePath(config)));
-    const refresh = refreshOf(fileBackend(config.mounts, composed.state.config), composed.state);
+    const refresh = refreshOf(fileBackend(config.mounts, composed.state.config), composed);
     const sessions = sessionService({ agent: composed.agent, agentName: AGENT_NAME, index, store: tapped.store, refresh });
 
     return { ok: true, serving: { runtime, sessions } };
