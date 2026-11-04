@@ -25,10 +25,9 @@ use crate::server::strict;
 pub const READY_WAIT: Duration = Duration::from_secs(10);
 
 /// The pause between two dials.
-// CONTRACT-QUESTION: no decision row sets the pause between two dials
-// (fact 74 says only that the vmm retries). Fact 74 saw `OK` 45 to 51 ms
-// after the start of a restore, so the reading is 10 ms: about 5 tries per
-// restore. Only the vmm reads it, so a change costs one constant.
+// Decision CH43 rule 5: the pause is 10 ms. Fact 74 saw `OK` 45 to 51 ms
+// after the start of a restore, so that is about 5 tries per restore.
+// Only the vmm reads it, so a change costs one constant.
 const DIAL_PAUSE: Duration = Duration::from_millis(10);
 
 /// The most bytes of the answer of Cloud Hypervisor to `CONNECT`, the LF
@@ -51,8 +50,8 @@ pub enum ControlError {
     /// rule 3).
     Closed,
     /// A line broke the framing or is not the type that the link expects.
-    /// The vmm closes the link (`wire/AGENTS.md`, rule 6 of "The vsock
-    /// JSON links").
+    /// The vmm closes the link (decision CH43 rule 2, `wire/AGENTS.md`,
+    /// rule 6 of "The vsock JSON links").
     Line,
     /// A read or a write failed.
     Io(io::ErrorKind),
@@ -61,13 +60,10 @@ pub enum ControlError {
 impl ControlError {
     /// Whether the VM needs a cold boot. A hello that guest init refuses
     /// is a fault of the VM (decision CH32 rule 3).
-    // CONTRACT-QUESTION: decision CH32 rule 3 asks for a cold boot only
-    // when guest init closes the link on a hello for another session. No
-    // row decides whether a bad line, a timeout, a refused `CONNECT`, a
-    // failed dial or a failed read or write before `ControlReady` asks for
-    // one. The reading is the narrowest one: only `Closed` asks for a cold
-    // boot. Each other error ends the open with no cold boot, and the
-    // caller reports it.
+    // Decision CH43 rule 6: only `Closed` asks for a cold boot. A bad
+    // line, a timeout, a refused `CONNECT` or a failed dial ends the open
+    // with a reported fault and no cold boot. A failed read or write does
+    // the same, as the accepted reading of design item 41 said.
     #[must_use]
     pub fn needs_cold_boot(self) -> bool {
         self == Self::Closed
@@ -208,12 +204,11 @@ async fn open_within(
 /// while the socket does not exist (ENOENT) and after an empty reply,
 /// because both come before the guest listener exists (fact 74). It
 /// retries on ECONNREFUSED too.
-// CONTRACT-QUESTION: fact 74 names only ENOENT and an empty reply. No
-// row says whether the vmm retries on ECONNREFUSED. A socket file exists
-// from `bind` on, and a connect gets ECONNREFUSED until Cloud Hypervisor
-// calls `listen`. A socket file that a dead Cloud Hypervisor left behind
-// gets it too. The reading: retry it the same way as ENOENT. `READY_WAIT`
-// still bounds the open, so a stale socket ends as `Timeout`.
+// Decision CH43 rule 7: the dial retries ECONNREFUSED inside `READY_WAIT`,
+// the same way as ENOENT. A socket file exists from `bind` on, and a
+// connect gets ECONNREFUSED until Cloud Hypervisor calls `listen`. A
+// socket file that a dead Cloud Hypervisor left behind gets it too.
+// `READY_WAIT` still bounds the open, so a stale socket ends as `Timeout`.
 async fn dial(vsock: &Path, port: GuestPort) -> Result<ControlLink, ControlError> {
     let connect = format!("CONNECT {}\n", port.number());
     loop {
