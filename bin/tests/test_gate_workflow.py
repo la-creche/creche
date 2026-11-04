@@ -84,6 +84,7 @@ from typing import Any
 
 import pytest
 import yaml
+from handover.artifacts import asset_names
 from handover.catalog import ARCHIVE_SUFFIX, BUNDLE_SUFFIX, Repo
 
 REPO = Path(__file__).resolve().parents[2]
@@ -823,13 +824,11 @@ PLANS = {
 }
 
 
-@pytest.mark.parametrize(("lines", "status", "components"), PLANS.values(), ids=PLANS)
-def test_the_plan_step_names_each_binary_component_with_a_planned_tag(
-    tmp_path: Path, lines: str, status: str, components: str
-) -> None:
-    """The step reads the `would attach` lines of the dry run. A line in
-    another form names no component. The step passes also when the dry run
-    fails: the tag step judges the same tree."""
+def _run_plan(
+    tmp_path: Path, lines: str, status: str
+) -> tuple[subprocess.CompletedProcess[str], str]:
+    """Run the plan step against DRY_RUN_STUB that prints `lines` and ends
+    with `status`. Return the run and the text of GITHUB_OUTPUT."""
     script = tmp_path / "handover" / "bin" / "allocate-tags.sh"
     script.parent.mkdir(parents=True)
     script.write_text(DRY_RUN_STUB, encoding="utf-8")
@@ -853,11 +852,50 @@ def test_the_plan_step_names_each_binary_component_with_a_planned_tag(
         text=True,
         timeout=30,
     )
+    return done, output.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(("lines", "status", "components"), PLANS.values(), ids=PLANS)
+def test_the_plan_step_names_each_binary_component_with_a_planned_tag(
+    tmp_path: Path, lines: str, status: str, components: str
+) -> None:
+    """The step reads the `would attach` lines of the dry run. A line in
+    another form names no component. The step passes also when the dry run
+    fails: the tag step judges the same tree."""
+    done, output = _run_plan(tmp_path, lines, status)
 
     assert done.returncode == 0, done.stdout + done.stderr
-    assert output.read_text(encoding="utf-8") == f"components={components}\n"
+    assert output == f"components={components}\n"
     assert done.stdout.startswith(lines)
     assert ("::warning::" in done.stdout) == (status != "0")
+
+
+#: The one line of the tag script that names an asset in a dry run.
+ATTACH_LINE = 'say "would attach $name to $tag"'
+
+
+def test_the_plan_step_reads_the_attach_line_of_the_real_tag_script(tmp_path: Path) -> None:
+    """The plan step and the tag script agree on one line. The script holds
+    ATTACH_LINE and no other `would attach` line. That line, with the real
+    asset names of vmm, gives the attach lines of VMM_PLAN, and the plan step
+    names vmm from them. A change to the line in the script fails here, so
+    the plan never drops a binary component without a red test."""
+    script = (REPO / "handover" / "bin" / "allocate-tags.sh").read_text(encoding="utf-8")
+    said = [line.strip() for line in script.splitlines() if "would attach" in line]
+    assert said == [ATTACH_LINE]
+
+    template = ATTACH_LINE.removeprefix('say "').removesuffix('"')
+    names = asset_names("vmm")
+    lines = [
+        template.replace("$name", name).replace("$tag", "vmm-v0.1.0")
+        for name in (names.archive, names.bundle)
+    ]
+    assert lines == [line for line in VMM_PLAN.splitlines() if line.startswith("would attach")]
+
+    done, output = _run_plan(tmp_path, "".join(f"{line}\n" for line in lines), "0")
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert output == "components=vmm\n"
 
 
 def test_the_artifacts_job_takes_uv_at_the_pin_of_the_release_job() -> None:
