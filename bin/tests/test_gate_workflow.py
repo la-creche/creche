@@ -308,6 +308,12 @@ while IFS= read -r line; do
     components="${components:+$components }${BASH_REMATCH[1]}"
   fi
 done < "$RUNNER_TEMP/plan"
+# Only main signs: a manual run on another branch builds and signs
+# nothing, so it leaves no public transparency record.
+if [[ "${GITHUB_REF:-}" != refs/heads/main ]]; then
+  echo "plan: ${GITHUB_REF:-no ref} is not main, so no archive is built or signed"
+  components=""
+fi
 echo "components=$components" >> "$GITHUB_OUTPUT"
 echo "plan: ${components:-no binary component}"
 """
@@ -825,7 +831,7 @@ PLANS = {
 
 
 def _run_plan(
-    tmp_path: Path, lines: str, status: str
+    tmp_path: Path, lines: str, status: str, ref: str = "refs/heads/main"
 ) -> tuple[subprocess.CompletedProcess[str], str]:
     """Run the plan step against DRY_RUN_STUB that prints `lines` and ends
     with `status`. Return the run and the text of GITHUB_OUTPUT."""
@@ -847,6 +853,7 @@ def _run_plan(
             "GITHUB_OUTPUT": str(output),
             "STUB_PLAN": str(plan),
             "STUB_STATUS": status,
+            "GITHUB_REF": ref,
         },
         capture_output=True,
         text=True,
@@ -2106,3 +2113,13 @@ def test_every_action_is_pinned_or_in_the_tree(path: Path) -> None:
 
         assert PINNED.match(name), f"{path.name} uses {name}, not a commit"
         assert TAG_COMMENT.match(rest), f"{path.name} uses {name} with no `# vX.Y.Z` beside it"
+
+
+def test_the_plan_step_plans_nothing_off_main(tmp_path: Path) -> None:
+    """A manual run on another branch builds and signs nothing, even when
+    the dry run plans a binary tag. Only main writes a transparency record."""
+    done, output = _run_plan(tmp_path, VMM_PLAN, "0", ref="refs/heads/topic")
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert output == "components=\n"
+    assert "is not main" in done.stdout

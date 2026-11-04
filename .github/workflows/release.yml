@@ -602,6 +602,12 @@ jobs:
               components="${components:+$components }${BASH_REMATCH[1]}"
             fi
           done < "$RUNNER_TEMP/plan"
+          # Only main signs: a manual run on another branch builds and signs
+          # nothing, so it leaves no public transparency record.
+          if [[ "${GITHUB_REF:-}" != refs/heads/main ]]; then
+            echo "plan: ${GITHUB_REF:-no ref} is not main, so no archive is built or signed"
+            components=""
+          fi
           echo "components=$components" >> "$GITHUB_OUTPUT"
           echo "plan: ${components:-no binary component}"
 
