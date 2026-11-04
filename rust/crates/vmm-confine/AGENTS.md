@@ -48,6 +48,17 @@ table of the three vmm crates.
   exactly the `vsock.sock_<port>` listeners of the host ports that the
   vmm bound for the family. Any failure is the fault
   `egress_assert_failed`.
+- `admission::decide` is a pure decision (decisions CH8-6, CH8-7). Free
+  bytes below the floor give `HostFull`. The configured guest RAM of the
+  running VMs plus the RAM wanted at or below the cap gives `Admit`. Else
+  the idle VMs, least recently used first, either free enough RAM
+  (`EvictFirst`) or not (`HostFull`, and no VM stops). The floor must
+  hold after the writes that admission causes (decision CH42 rule 3).
+  The snapshot of each evicted VM writes its whole guest RAM (fact 72),
+  so admission subtracts that RAM from the free bytes before it compares
+  with the floor. An eviction that breaks the floor gives `HostFull`, and
+  no VM stops. Lifecycle passes the sleep-gate result of each VM and runs
+  the evictions. The vmm never queues (decision CH21-3).
 - The process tests need Landlock ABI 4 and `/dev/kvm`. The host and the
   ubuntu-24.04 runner have both (facts 77, 79).
 
