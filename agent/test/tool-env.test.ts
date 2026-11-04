@@ -22,7 +22,9 @@ const FLUE_DIST = join(ROOT, "node_modules", "@flue", "runtime", "dist", "node",
 const SHIPPED = ["agent-sandbox", "agent-sandbox-python"];
 const BUILD_ONLY = ["build", "creche-test-venv"];
 
-const STAGE_RE = /^FROM (\S+) AS (\S+)$/;
+/** `FROM [--flag=...] <parent> AS <stage>`, and `ENV <pairs>`. Docker reads both words in any case. */
+const STAGE_RE = /^\s*FROM\s+(?:--\S+\s+)*(\S+)\s+AS\s+(\S+)\s*$/i;
+const ENV_RE = /^\s*ENV\s+(.*)$/i;
 const PAIR_RE = /([A-Za-z_][A-Za-z0-9_]*)=("(?:[^"\\]|\\.)*"|'[^']*'|\S*)\s*/y;
 
 type EnvLine = { readonly ok: true; readonly names: readonly string[] } | { readonly ok: false };
@@ -53,8 +55,12 @@ function stageEnv(text: string): Map<string, Set<string>> {
     if (from?.[1] !== undefined && from[2] !== undefined) {
       current = new Set(stages.get(from[1]) ?? []);
       stages.set(from[2], current);
-    } else if (line.startsWith("ENV ") && current !== null) {
-      const read = envNames(line.slice(4).trim());
+      continue;
+    }
+
+    const env = ENV_RE.exec(line);
+    if (env?.[1] !== undefined && current !== null) {
+      const read = envNames(env[1].trim());
       if (!read.ok) {
         throw new Error(`Dockerfile line ${index + 1}: write ENV K=V, not the legacy ENV K V form`);
       }
@@ -132,6 +138,12 @@ describe("the Dockerfile ENV reader", () => {
     const text = 'FROM x AS a\nENV A=1\nFROM a AS b\nENV B="p q" C=3 \\\n  D=4\n';
 
     expect([...(stageEnv(text).get("b") ?? [])]).toEqual(["A", "B", "C", "D"]);
+  });
+
+  it("reads either case, a leading space, a tab and a FROM flag", () => {
+    const text = "from --platform=linux/amd64 x as a\n  env A=1\nENV\tB=2\n";
+
+    expect([...(stageEnv(text).get("a") ?? [])]).toEqual(["A", "B"]);
   });
 
   it("refuses the legacy ENV K V form", () => {
