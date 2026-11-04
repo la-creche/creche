@@ -26,7 +26,6 @@ on:
   pull_request:
     paths:
       - .github/workflows/spike-ch-musl.yml
-  workflow_dispatch:
 
 permissions:
   contents: read
