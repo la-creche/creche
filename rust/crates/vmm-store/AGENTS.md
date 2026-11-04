@@ -9,12 +9,7 @@ The second file has the table of the three vmm crates.
 - The code is synchronous. It uses std, plus `creche-wire`, `serde`,
   `serde_json` and `sha2`. The crate uses no async runtime.
 - The crate never calls `creche-vmm-confine` or `creche-vmm`.
-
-## Known gaps
-
-- CONTRACT-QUESTION (PR D6, `images.rs`): no row decides what the vmm
-  does with a store copy that fails the check at VM start. `import`
-  returns the recorded entry and does not copy again, so nothing repairs
-  the copy. The narrowest reading: `ImageStore::check` removes and
-  repairs nothing, and the start fails. The options are a re-import at
-  the next start or an operator step.
+- Decision CH44 rule 2 (PR D6, `images.rs`): a store copy that fails
+  the identity check at VM start fails the start. `ImageStore::check`
+  removes and repairs nothing. An operator step or a later re-import
+  fixes the copy.
