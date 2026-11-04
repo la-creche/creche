@@ -13,11 +13,16 @@ table of the three vmm crates.
 - `launch::run` is the mode `vmm launch`. `rust/crates/vmm/src/main.rs`
   calls it, so a change here never edits that file. `launch::MODE` holds
   the same word as main.rs. Lifecycle may make main.rs read it.
+- The crate reads no env key. Lifecycle (plan PR L20) passes each host
+  path from the vmm config (owner env rule, decision CH36 G5): the
+  `systemd-run` program of `launch::Launch`, from the existing key
+  `AGENT_SYSTEMD_RUN_PROGRAM`.
 - Every launch step forks from the one spawner thread (decision CH19 (4),
   fact 76). The vmm keeps its `Spawner` for its whole life. A drop ends
   the thread, and the kernel then kills every payload it started.
 - The launch step reads its plan only from a pipe that already holds it.
-  The spawner writes the whole plan, at most 64 KiB, before the spawn.
+  The spawner writes the whole plan, at most 64 KiB, before the spawn,
+  and never blocks on a full pipe.
 - The Landlock ruleset of a VM confines the launch step from its last
   step on, then `systemd-run` and Cloud Hypervisor (decisions CH8-3,
   CH30). The vmm process is never confined, so the `zstd` and `mke2fs`

@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use creche_vmm_confine::launch::{Launch, Payload, Program};
 use creche_vmm_confine::scope::Scope;
-use creche_vmm_confine::spawner::{Launched, Spawner};
+use creche_vmm_confine::spawner::{Launched, SpawnError, Spawner};
 
 use common::{TempVm, example};
 
@@ -29,15 +29,18 @@ const SLEEP: &str = "/bin/sleep";
 /// A launch of `sleep 60` through the fake `systemd-run`.
 #[cfg(test)]
 fn launch(vm: &TempVm) -> Launch {
+    launch_with(vm, vec!["60".to_owned()])
+}
+
+/// A launch of `sleep` with `args` through the fake `systemd-run`.
+#[cfg(test)]
+fn launch_with(vm: &TempVm, args: Vec<String>) -> Launch {
     let scope = Scope::new(
         ID.parse().unwrap(),
         NonZeroU64::new(1 << 30).unwrap(),
         NonZeroU32::new(100).unwrap(),
     );
-    let payload = Payload::new(
-        Program::new(PathBuf::from(SLEEP)).unwrap(),
-        vec!["60".to_owned()],
-    );
+    let payload = Payload::new(Program::new(PathBuf::from(SLEEP)).unwrap(), args);
     let systemd_run = Program::new(example()).unwrap();
     Launch::new(systemd_run, scope, payload, vm.files.clone())
 }
@@ -110,6 +113,33 @@ fn the_payload_dies_with_a_killed_vmm() {
 }
 
 #[test]
+fn the_payload_has_no_core_limit() {
+    let vm = TempVm::new("core", ID);
+    let spawner = Spawner::start(example()).unwrap();
+    let launched = launched(&spawner, &vm);
+    let limits = std::fs::read_to_string(format!("/proc/{}/limits", launched.id())).unwrap();
+    let core = limits
+        .lines()
+        .find(|line| line.starts_with("Max core file size"))
+        .unwrap();
+    let values: Vec<&str> = core.split_whitespace().skip(4).take(2).collect();
+    assert_eq!(values, ["0", "0"], "{core}");
+}
+
+#[test]
+fn a_plan_larger_than_the_pipe_fails_at_once() {
+    let vm = TempVm::new("large", ID);
+    let spawner = Spawner::start(example()).unwrap();
+    let launch = launch_with(&vm, vec!["x".repeat(70_000)]);
+    let result = spawner.launch(launch);
+    assert!(matches!(result, Err(SpawnError::TooLarge(_))), "{result:?}");
+    // The spawner thread still works after the refusal.
+    let mut payload = launched(&spawner, &vm);
+    payload.kill().unwrap();
+    payload.wait().unwrap();
+}
+
+#[test]
 fn terminate_sends_sigterm() {
     let vm = TempVm::new("sigterm", ID);
     let spawner = Spawner::start(example()).unwrap();
@@ -132,6 +162,22 @@ fn launch_step(stdin: Stdio) -> (Option<i32>, String) {
         output.status.code(),
         String::from_utf8(output.stderr).unwrap(),
     )
+}
+
+#[test]
+fn a_plan_from_another_spawner_is_refused() {
+    // Pid 1 is never the parent of the launch step in this test.
+    let vm = TempVm::new("parent", ID);
+    let plan = serde_json::json!({ "spawner": 1, "launch": launch(&vm) });
+    let (reader, mut writer) = io::pipe().unwrap();
+    writer.write_all(plan.to_string().as_bytes()).unwrap();
+    drop(writer);
+    let (code, stderr) = launch_step(reader.into());
+    assert_eq!(code, Some(78));
+    assert!(
+        stderr.contains("the vmm exited before the launch"),
+        "{stderr}"
+    );
 }
 
 #[test]
