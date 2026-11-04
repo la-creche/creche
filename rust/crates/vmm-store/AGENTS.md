@@ -11,5 +11,5 @@ The second file has the table of the three vmm crates.
 - The crate never calls `creche-vmm-confine` or `creche-vmm`.
 - Decision CH44 rule 2 (PR D6, `images.rs`): a store copy that fails
   the identity check at VM start fails the start. `ImageStore::check`
-  removes and repairs nothing. An operator step or a later re-import
-  fixes the copy.
+  removes and repairs nothing. Item 42 Q42-2 adds that an operator step
+  or a later re-import fixes the copy.
