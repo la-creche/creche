@@ -1,11 +1,16 @@
 //! The program `vmm` (decision CH7-5). The one argument picks the mode:
 //!
-//! - `vmm serve` runs the host API server.
-//! - `vmm launch` is the launch step of one Cloud Hypervisor process.
+//! - `vmm serve` runs the host API server on the multi-thread tokio
+//!   runtime.
+//! - `vmm launch` is the launch step of one Cloud Hypervisor process. It
+//!   runs on the main thread with no runtime, because the access rules of
+//!   Landlock bind only the thread that sets them.
 
 use std::ffi::OsString;
 use std::fmt;
 use std::process::ExitCode;
+
+use tokio::runtime::Builder;
 
 /// The exit status of a refused start (owner item 86). A unit with
 /// `RestartPreventExitStatus=78` then stays stopped, because a restart
@@ -46,14 +51,25 @@ fn dispatch(args: &[OsString]) -> ExitCode {
     };
 
     match mode {
-        Mode::Serve => match creche_vmm::serve() {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(error) => refuse(&error),
-        },
+        Mode::Serve => serve(),
         Mode::Launch => {
             let Err(error) = creche_vmm_confine::launch::run();
             refuse(&error)
         }
+    }
+}
+
+/// Builds the tokio runtime and runs the host API server on it (decision
+/// CH26 rule 1). Only this mode builds a runtime.
+fn serve() -> ExitCode {
+    let runtime = match Builder::new_multi_thread().build() {
+        Ok(runtime) => runtime,
+        Err(error) => return refuse(&error),
+    };
+
+    match runtime.block_on(creche_vmm::serve()) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => refuse(&error),
     }
 }
 
