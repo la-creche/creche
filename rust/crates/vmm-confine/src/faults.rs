@@ -15,8 +15,7 @@
 //!    completed handshake). The vmm start clears every file (rule 8).
 //!
 //! Every time is RFC 3339 in UTC with `Z`, to the second (root
-//! `AGENTS.md`, Time). A small formatter writes it, so the crate needs no
-//! date crate.
+//! `AGENTS.md`, Time), from `rfc3339::format`.
 //!
 //! CONTRACT-QUESTION (decisions CH21-1, CH36 G18): contract 05 §3.3.1 has
 //! no row for the vmm yet. Until its amendment, three things are open: the
@@ -31,10 +30,12 @@ use std::fs::{self, DirBuilder, File, OpenOptions};
 use std::io::{self, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Component, Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 
 use creche_wire::FamilyName;
 use serde::Serialize;
+
+use crate::rfc3339;
 
 /// The name of the writer: the directory under the faults root and the
 /// `source` of each fault.
@@ -78,34 +79,6 @@ struct Body<'a> {
     faults: &'a [Entry],
 }
 
-/// Writes `time` as RFC 3339 in UTC, to the second. A time before 1970
-/// writes as 1970-01-01T00:00:00Z: the host clock is never there.
-#[must_use]
-pub fn rfc3339(time: SystemTime) -> String {
-    let secs = time
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let (days, rest) = (secs / 86_400, secs % 86_400);
-    // The civil date of a day count (Howard Hinnant, `civil_from_days`).
-    let shifted = days + 719_468;
-    let era = shifted / 146_097;
-    let day_of_era = shifted % 146_097;
-    let year_of_era =
-        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_index = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * month_index + 2) / 5 + 1;
-    let month = if month_index < 10 {
-        month_index + 3
-    } else {
-        month_index - 9
-    };
-    let year = era * 400 + year_of_era + u64::from(month <= 2);
-    let (hour, minute, second) = (rest / 3600, rest % 3600 / 60, rest % 60);
-    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
-}
-
 /// The directory `<faults root>/vmm`. The vmm is its one writer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FaultDir(PathBuf);
@@ -145,7 +118,7 @@ impl FaultDir {
         let body = Body {
             family,
             source: SOURCE,
-            written_at: rfc3339(now),
+            written_at: rfc3339::format(now),
             faults,
         };
         let mut bytes = serde_json::to_vec_pretty(&body).map_err(io::Error::other)?;
@@ -221,7 +194,7 @@ impl FaultBook {
             None => faults.push(Entry {
                 code,
                 blocks_turns: true,
-                since: rfc3339(now),
+                since: rfc3339::format(now),
                 source: SOURCE,
                 message,
             }),

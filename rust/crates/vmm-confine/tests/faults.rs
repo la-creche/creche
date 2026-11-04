@@ -6,7 +6,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use creche_vmm_confine::faults::{FaultBook, FaultCode, FaultDir, REFRESH, rfc3339};
+use creche_vmm_confine::faults::{FaultBook, FaultCode, FaultDir, REFRESH};
 use creche_wire::FamilyName;
 use serde_json::Value;
 
@@ -64,21 +64,6 @@ fn chat() -> FamilyName {
 #[cfg(test)]
 fn mode(path: &Path) -> u32 {
     fs::metadata(path).unwrap().permissions().mode() & 0o777
-}
-
-#[test]
-fn rfc3339_writes_utc_with_z() {
-    assert_eq!(rfc3339(UNIX_EPOCH), "1970-01-01T00:00:00Z");
-    assert_eq!(rfc3339(at(1_835_438_400)), "2028-02-29T12:00:00Z");
-    assert_eq!(rfc3339(at(SINCE)), "2026-09-19T11:58:41Z");
-    assert_eq!(
-        rfc3339(at(SINCE) + Duration::from_millis(999)),
-        "2026-09-19T11:58:41Z"
-    );
-    assert_eq!(
-        rfc3339(UNIX_EPOCH - Duration::from_secs(1)),
-        "1970-01-01T00:00:00Z"
-    );
 }
 
 #[test]

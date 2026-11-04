@@ -60,7 +60,7 @@ table of the three vmm crates.
   atomically. Lifecycle calls `refresh` every `faults::REFRESH` (30 s)
   while a fault is open, `clear` on a `ControlReady` of the family, and
   `start` at vmm start, which writes an empty list into every file. Each
-  time is RFC 3339 in UTC to the second, from `faults::rfc3339`.
+  time is RFC 3339 in UTC to the second, from `rfc3339::format`.
 - The process tests need Landlock ABI 4 and `/dev/kvm`. The host and the
   ubuntu-24.04 runner have both (facts 77, 79).
 
