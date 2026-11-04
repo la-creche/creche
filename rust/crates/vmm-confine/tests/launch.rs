@@ -1,8 +1,11 @@
 //! The launch chain without systemd (decision CH19 (4), fact 76). The
 //! example `launch_chain` plays the vmm, the launch step and a fake
 //! `systemd-run`, so each payload runs after three execs: the launch step,
-//! the fake `systemd-run` and `/bin/sleep`.
+//! the fake `systemd-run` and `/bin/sleep`. The Landlock ruleset of the VM
+//! is in force from the second exec on.
 #![cfg(target_os = "linux")]
+
+mod common;
 
 use std::io::{self, BufRead, BufReader, Write};
 use std::num::{NonZeroU32, NonZeroU64};
@@ -16,35 +19,30 @@ use creche_vmm_confine::launch::{Launch, Payload, Program};
 use creche_vmm_confine::scope::Scope;
 use creche_vmm_confine::spawner::{Launched, SpawnError, Spawner};
 
+use common::{TempVm, example};
+
 const ID: &str = "0123abcd-0000-4000-8000-00000000c2c2";
 const SLEEP: &str = "/bin/sleep";
 
 // Each helper with `cfg(test)` may unwrap (rust/clippy.toml).
 
-/// The example binary. Cargo builds it next to the test's `deps` dir.
-#[cfg(test)]
-fn example() -> PathBuf {
-    let exe = std::env::current_exe().unwrap();
-    let debug = exe.parent().and_then(|deps| deps.parent()).unwrap();
-    debug.join("examples").join("launch_chain")
-}
-
 /// A launch of `sleep 60` through the fake `systemd-run`.
 #[cfg(test)]
-fn launch() -> Launch {
-    launch_with(vec!["60".to_owned()])
+fn launch(vm: &TempVm) -> Launch {
+    launch_with(vm, vec!["60".to_owned()])
 }
 
 /// A launch of `sleep` with `args` through the fake `systemd-run`.
 #[cfg(test)]
-fn launch_with(args: Vec<String>) -> Launch {
+fn launch_with(vm: &TempVm, args: Vec<String>) -> Launch {
     let scope = Scope::new(
         ID.parse().unwrap(),
         NonZeroU64::new(1 << 30).unwrap(),
         NonZeroU32::new(100).unwrap(),
     );
     let payload = Payload::new(Program::new(PathBuf::from(SLEEP)).unwrap(), args);
-    Launch::new(Program::new(example()).unwrap(), scope, payload)
+    let systemd_run = Program::new(example()).unwrap();
+    Launch::new(systemd_run, scope, payload, vm.files.clone())
 }
 
 /// Whether `pid` runs and is not a zombie.
@@ -74,24 +72,30 @@ fn wait_for_payload(pid: u32) {
 }
 
 #[cfg(test)]
-fn launched(spawner: &Spawner) -> Launched {
-    let launched = spawner.launch(launch()).unwrap();
+fn launched(spawner: &Spawner, vm: &TempVm) -> Launched {
+    let launched = spawner.launch(launch(vm)).unwrap();
     wait_for_payload(launched.id());
     launched
 }
 
 #[test]
 fn the_payload_dies_with_the_spawner_thread() {
+    let vm = TempVm::new("thread", ID);
     let spawner = Spawner::start(example()).unwrap();
-    let mut payload = launched(&spawner);
+    let mut payload = launched(&spawner, &vm);
     drop(spawner);
     assert_eq!(payload.wait().unwrap().signal(), Some(9));
 }
 
 #[test]
 fn the_payload_dies_with_a_killed_vmm() {
+    let vm = TempVm::new("killed", ID);
     let mut vmm = Command::new(example())
-        .args(["spawn".as_ref(), example().as_os_str()])
+        .args([
+            "spawn".as_ref(),
+            example().as_os_str(),
+            vm.path().as_os_str(),
+        ])
         .args([ID, SLEEP, "60"])
         .stdout(Stdio::piped())
         .spawn()
@@ -110,8 +114,9 @@ fn the_payload_dies_with_a_killed_vmm() {
 
 #[test]
 fn the_payload_has_no_core_limit() {
+    let vm = TempVm::new("core", ID);
     let spawner = Spawner::start(example()).unwrap();
-    let launched = launched(&spawner);
+    let launched = launched(&spawner, &vm);
     let limits = std::fs::read_to_string(format!("/proc/{}/limits", launched.id())).unwrap();
     let core = limits
         .lines()
@@ -123,20 +128,22 @@ fn the_payload_has_no_core_limit() {
 
 #[test]
 fn a_plan_larger_than_the_pipe_fails_at_once() {
+    let vm = TempVm::new("large", ID);
     let spawner = Spawner::start(example()).unwrap();
-    let launch = launch_with(vec!["x".repeat(70_000)]);
+    let launch = launch_with(&vm, vec!["x".repeat(70_000)]);
     let result = spawner.launch(launch);
     assert!(matches!(result, Err(SpawnError::TooLarge(_))), "{result:?}");
     // The spawner thread still works after the refusal.
-    let mut payload = launched(&spawner);
+    let mut payload = launched(&spawner, &vm);
     payload.kill().unwrap();
     payload.wait().unwrap();
 }
 
 #[test]
 fn terminate_sends_sigterm() {
+    let vm = TempVm::new("sigterm", ID);
     let spawner = Spawner::start(example()).unwrap();
-    let mut payload = launched(&spawner);
+    let mut payload = launched(&spawner, &vm);
     payload.terminate().unwrap();
     assert_eq!(payload.wait().unwrap().signal(), Some(15));
     payload.terminate().unwrap();
@@ -160,7 +167,8 @@ fn launch_step(stdin: Stdio) -> (Option<i32>, String) {
 #[test]
 fn a_plan_from_another_spawner_is_refused() {
     // Pid 1 is never the parent of the launch step in this test.
-    let plan = serde_json::json!({ "spawner": 1, "launch": launch() });
+    let vm = TempVm::new("parent", ID);
+    let plan = serde_json::json!({ "spawner": 1, "launch": launch(&vm) });
     let (reader, mut writer) = io::pipe().unwrap();
     writer.write_all(plan.to_string().as_bytes()).unwrap();
     drop(writer);

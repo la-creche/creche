@@ -23,7 +23,25 @@ table of the three vmm crates.
 - The launch step reads its plan only from a pipe that already holds it.
   The spawner writes the whole plan, at most 64 KiB, before the spawn,
   and never blocks on a full pipe.
+- The Landlock ruleset of a VM confines the launch step from its last
+  step on, then `systemd-run` and Cloud Hypervisor (decisions CH8-3,
+  CH30). The vmm process is never confined, so the `zstd` and `mke2fs`
+  that the store runs need no rule. Every path of a rule exists before
+  the launch. A missing path or a kernel below Landlock ABI 4 fails the
+  launch. All Landlock calls sit behind `cfg(target_os = "linux")`
+  (decision CH38).
+- The process tests need Landlock ABI 4 and `/dev/kvm`. The host and the
+  ubuntu-24.04 runner have both (facts 77, 79).
 
 ## Known gaps
 
-None.
+- Landlock ABI 4 covers neither UDP nor Unix sockets (fact 77). Until the
+  AppArmor profile of PR C15, CH can reach both.
+- Lifecycle must make two dirs before each launch, because the ruleset
+  opens each path and a missing one fails the launch with
+  `RulesetError::Open`: the VM run dir `<run root>/vm/<id>/` and the
+  snapshot dir `<state root>/sessions/<id>/snapshots/`. No code on main
+  makes either today (`SessionStore::for_boot` makes only the session
+  dir). The ruleset grants no right to make a dir, so the vmm must also
+  make each `snapshots/<generation>/` before CH writes a snapshot there.
+  Plan PRs L16 (cold boot) and D9 (snapshot) own these steps.

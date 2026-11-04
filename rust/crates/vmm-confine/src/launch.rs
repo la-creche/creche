@@ -4,27 +4,32 @@
 //!
 //! The step reads its plan as JSON on fd 0. It then sets
 //! `PR_SET_PDEATHSIG` to SIGKILL, checks that its parent is still the
-//! spawner, sets `RLIMIT_CORE` to 0 and execs `systemd-run` (decisions
-//! CH19 (4), CH8-5, CH36 G3 and G27). PR C6 adds the Landlock step before
-//! the exec (decision CH30).
+//! spawner, sets `RLIMIT_CORE` to 0, applies the Landlock ruleset of the
+//! VM and execs `systemd-run` (decisions CH19 (4), CH8-5, CH36 G3 and G27,
+//! CH30).
 
 use std::convert::Infallible;
 use std::fmt;
+use std::fs::File;
 use std::io::{self, Read};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
+use crate::landlock::VmFiles;
 use crate::scope::Scope;
 
 /// The argument of the launch mode. `rust/crates/vmm/src/main.rs` parses
 /// the same word.
 pub const MODE: &str = "launch";
 
+/// The stdin of `systemd-run` and the payload.
+const NULL: &str = "/dev/null";
+
 /// An absolute path of a program to exec. `systemd-run` and the Landlock
-/// rules of PR C6 need the full path, never a search of `PATH`.
+/// rules need the full path, never a search of `PATH`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "PathBuf", into = "PathBuf")]
 pub struct Program(PathBuf);
@@ -106,30 +111,52 @@ impl Payload {
 }
 
 /// What one launch starts: the payload in its scope, through the
-/// `systemd-run` at a path that the vmm config gives.
+/// `systemd-run` at a path that the vmm config gives, under the Landlock
+/// ruleset of `files`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Launch {
     systemd_run: Program,
     scope: Scope,
     payload: Payload,
+    files: VmFiles,
 }
 
 impl Launch {
-    /// The launch of `payload` in `scope` through `systemd_run`.
+    /// The launch of `payload` in `scope` through `systemd_run`, with
+    /// access to `files` only.
     #[must_use]
-    pub fn new(systemd_run: Program, scope: Scope, payload: Payload) -> Self {
+    pub fn new(systemd_run: Program, scope: Scope, payload: Payload, files: VmFiles) -> Self {
         Self {
             systemd_run,
             scope,
             payload,
+            files,
         }
+    }
+
+    /// The `systemd-run` program.
+    #[must_use]
+    pub fn systemd_run(&self) -> &Program {
+        &self.systemd_run
     }
 
     /// The scope of the launch.
     #[must_use]
     pub fn scope(&self) -> &Scope {
         &self.scope
+    }
+
+    /// The payload.
+    #[must_use]
+    pub fn payload(&self) -> &Payload {
+        &self.payload
+    }
+
+    /// The files of the VM that the ruleset names.
+    #[must_use]
+    pub fn files(&self) -> &VmFiles {
+        &self.files
     }
 }
 
@@ -172,6 +199,10 @@ pub enum LaunchError {
     SpawnerGone,
     /// The kernel refused `RLIMIT_CORE` 0.
     CoreLimit(io::Error),
+    /// The Landlock ruleset is not in force (decision CH30).
+    Landlock(crate::landlock::RulesetError),
+    /// The open of `/dev/null`, the stdin of `systemd-run`, failed.
+    NullInput(io::Error),
     /// The exec of `systemd-run` failed.
     Exec(io::Error),
 }
@@ -187,6 +218,8 @@ impl fmt::Display for LaunchError {
             Self::DeathSignal(error) => write!(formatter, "setting the death signal: {error}"),
             Self::SpawnerGone => formatter.write_str("the vmm exited before the launch"),
             Self::CoreLimit(error) => write!(formatter, "setting the core limit: {error}"),
+            Self::Landlock(error) => write!(formatter, "applying the Landlock ruleset: {error}"),
+            Self::NullInput(error) => write!(formatter, "opening {NULL}: {error}"),
             Self::Exec(error) => write!(formatter, "running systemd-run: {error}"),
         }
     }
@@ -219,10 +252,16 @@ pub fn run() -> Result<Infallible, LaunchError> {
     rustix::process::setrlimit(rustix::process::Resource::Core, no_core)
         .map_err(|errno| LaunchError::CoreLimit(errno.into()))?;
 
+    // The ruleset has no rule for /dev/null, so the step opens the new
+    // stdin first. The ruleset comes last, so no step before the exec
+    // runs under it.
+    let null = File::open(NULL).map_err(LaunchError::NullInput)?;
     let launch = plan.launch;
+    restrict(&launch)?;
+
     let error = Command::new(launch.systemd_run.path())
         .args(launch.scope.systemd_run_args(&launch.payload))
-        .stdin(Stdio::null())
+        .stdin(null)
         .exec();
     Err(LaunchError::Exec(error))
 }
@@ -258,6 +297,21 @@ fn set_death_signal() -> Result<(), LaunchError> {
 /// No other host has `PR_SET_PDEATHSIG`.
 #[cfg(not(target_os = "linux"))]
 fn set_death_signal() -> Result<(), LaunchError> {
+    Err(LaunchError::NotLinux)
+}
+
+/// Applies the Landlock ruleset of `launch` (decisions CH8-3 and CH30).
+/// It stays through the exec of `systemd-run` and of the payload.
+#[cfg(target_os = "linux")]
+fn restrict(launch: &Launch) -> Result<(), LaunchError> {
+    let rules =
+        crate::landlock::rules(&launch.files, &launch.systemd_run, launch.payload.program());
+    crate::landlock::restrict(&rules).map_err(LaunchError::Landlock)
+}
+
+/// No other host has Landlock (decision CH38).
+#[cfg(not(target_os = "linux"))]
+fn restrict(_launch: &Launch) -> Result<(), LaunchError> {
     Err(LaunchError::NotLinux)
 }
 

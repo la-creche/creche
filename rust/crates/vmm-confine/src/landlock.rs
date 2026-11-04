@@ -12,6 +12,8 @@
 //! Landlock ABI 4 covers neither UDP nor Unix sockets. The AppArmor
 //! profile of decision CH8-1 (PR C15) denies those.
 
+use std::fmt;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use creche_vmm_store::layout::{SessionDir, VmRunDir};
@@ -219,6 +221,82 @@ pub fn rules(files: &VmFiles, systemd_run: &Program, payload: &Program) -> Vec<R
         rule(files.snapshots.path(), SNAPSHOTS),
     ]);
     rules
+}
+
+/// Why the ruleset is not in force.
+#[derive(Debug)]
+pub enum RulesetError {
+    /// A path of a rule did not open. The value is the path.
+    Open(PathBuf, io::Error),
+    /// The landlock crate refused the ruleset, or the kernel has no
+    /// Landlock ABI 4.
+    #[cfg(target_os = "linux")]
+    Landlock(::landlock::RulesetError),
+    /// The kernel enforced less than the whole ruleset.
+    NotEnforced,
+}
+
+impl fmt::Display for RulesetError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Open(path, error) => write!(formatter, "opening {}: {error}", path.display()),
+            #[cfg(target_os = "linux")]
+            Self::Landlock(error) => write!(formatter, "{error}"),
+            Self::NotEnforced => formatter.write_str("the kernel did not enforce every rule"),
+        }
+    }
+}
+
+impl std::error::Error for RulesetError {}
+
+/// Restricts this thread and every program it execs to `rules`. A kernel
+/// below Landlock ABI 4 is an error, never a weaker ruleset.
+///
+/// # Errors
+///
+/// The `RulesetError` of the step that failed.
+#[cfg(target_os = "linux")]
+pub(crate) fn restrict(rules: &[Rule]) -> Result<(), RulesetError> {
+    use ::landlock::{
+        ABI, Access, AccessFs, AccessNet, CompatLevel, Compatible, PathBeneath, Ruleset,
+        RulesetAttr, RulesetCreatedAttr, RulesetStatus,
+    };
+    use rustix::fs::{Mode, OFlags};
+
+    const ABI_4: ABI = ABI::V4;
+    let mut ruleset = Ruleset::default()
+        .set_compatibility(CompatLevel::HardRequirement)
+        .handle_access(AccessFs::from_all(ABI_4))
+        .and_then(|ruleset| ruleset.handle_access(AccessNet::from_all(ABI_4)))
+        .and_then(Ruleset::create)
+        .map_err(RulesetError::Landlock)?;
+    for rule in rules {
+        let flags = OFlags::PATH | OFlags::CLOEXEC;
+        let fd = rustix::fs::open(&rule.path, flags, Mode::empty())
+            .map_err(|errno| RulesetError::Open(rule.path.clone(), errno.into()))?;
+        let access =
+            rule.rights
+                .iter()
+                .fold(::landlock::BitFlags::<AccessFs>::EMPTY, |all, right| {
+                    all | match right {
+                        Right::Execute => AccessFs::Execute,
+                        Right::ReadFile => AccessFs::ReadFile,
+                        Right::WriteFile => AccessFs::WriteFile,
+                        Right::Truncate => AccessFs::Truncate,
+                        Right::MakeReg => AccessFs::MakeReg,
+                        Right::MakeSock => AccessFs::MakeSock,
+                    }
+                });
+        ruleset = ruleset
+            .add_rule(PathBeneath::new(fd, access))
+            .map_err(RulesetError::Landlock)?;
+    }
+    let status = ruleset.restrict_self().map_err(RulesetError::Landlock)?;
+    if status.ruleset == RulesetStatus::FullyEnforced && status.no_new_privs {
+        Ok(())
+    } else {
+        Err(RulesetError::NotEnforced)
+    }
 }
 
 #[cfg(test)]
