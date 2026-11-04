@@ -61,10 +61,15 @@ profile creche-cloud-hypervisor /opt/components/vmm/bin/cloud-hypervisor {
   owner /run/user/[0-9]*/vmm/vm/*/vsock.sock_* rw,
   owner /run/user/[0-9]*/vmm/vm/*/serial.log w,
 
-  # The state root names of decision CH39 rule 3. CONTRACT-QUESTION: no
-  # row sets the state root default (plan PR L20), so each rule matches
-  # its names under any root. The root disks and kernels are read only
-  # (decision CH8-8).
+  # The state root names of decision CH39 rule 3. CONTRACT-QUESTION
+  # (decisions CH8-1, CH39 rule 3): no row sets the state root default
+  # (plan PR L20), so each rule matches its names under any root. This
+  # widens the socket deny of CH8-1: `w` on a pathname socket allows a
+  # connect, so CH may connect to any socket of the owner that sits at a
+  # path `**/sessions/*/disk.ext4` or under `**/sessions/*/snapshots/`.
+  # A rule that names one root needs a fixed root or a variable that the
+  # install of design section 6.1 sets, and a sudo reload. The root disks
+  # and kernels are read only (decision CH8-8).
   owner /**/store/* rk,
   owner /**/sessions/*/disk.ext4 rwk,
   owner /**/sessions/*/snapshots/** rw,

@@ -138,7 +138,12 @@ table of the three vmm crates.
 - CONTRACT-QUESTION (decisions CH8-1, CH39 rule 3): no row sets the
   default of the state root (plan PR L20). The state rules of the profile
   match `store/*`, `sessions/*/disk.ext4` and `sessions/*/snapshots/**`
-  under any root. A rule that names the root needs a sudo reload.
+  under any root. This widens the socket deny of CH8-1: `w` on a
+  pathname socket allows a connect, so CH may connect to any socket of
+  the owner at a path that matches `**/sessions/*/disk.ext4` or lies
+  under `**/sessions/*/snapshots/`. A rule that names one root needs a
+  fixed root (plan PR L20) or a variable that the install of design
+  section 6.1 sets, and a sudo reload.
 - CONTRACT-QUESTION (decision CH8-1): the launch step passes the stdout
   and stderr of the vmm to CH. Under the unit they may be a stream socket
   of the journal. AppArmor checks each inherited file at the exec, and no
