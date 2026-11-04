@@ -49,7 +49,8 @@ Read a wire text only with `creche_wire.read(Model, data, cap=...)`.
 2. The model then reads the text in strict mode. An int refuses `"1"`, `1.0`
    and `true`. The error is `pydantic.ValidationError`.
 3. The caller gives the cap. It is the cap of the caller's surface, so the
-   package has no default.
+   package has no default. A client of the vmm host API gives
+   `HOST_API_BODY_CAP` of `creche_wire.routes` (see "The body cap").
 
 `strict-types` in `[tool.datamodel-codegen]` makes each scalar of a model
 strict too. A direct `model_validate_json` then still refuses `"1"` for an
@@ -194,8 +195,9 @@ its error type.
    of that subset per number, and CI fails on a change that keeps the
    number. That check is not built yet (see "Known gaps").
 7. The schema test also writes `src/creche_wire/routes.py`. It holds the
-   protocol, its header, `MISMATCH_STATUS` and one `JsonRoute` constant
-   per route, named as the route in capitals: `CREATE`. pyright then
+   protocol, its header, `HOST_API_BODY_CAP`, `MISMATCH_STATUS` and one
+   `JsonRoute` constant per route, named as the route in capitals:
+   `CREATE`, `LIST`. pyright then
    refuses a wrong request, reply or error model on a Python client.
 8. `JsonRoute.encode` takes only the request model of its route. It also
    keeps the request type invariant, so do not remove it.
@@ -207,6 +209,33 @@ its error type.
 
 To add a route, add its marker and its line in `route_table!`. Then follow
 the steps below.
+
+### The body cap
+
+`HOST_API_BODY_CAP` is 1 MiB, 1048576 bytes (decisions CH26, CH33 rule 2).
+`x-routes` holds it under `body_cap`.
+
+1. It caps each request body and each reply body of each route. A body of
+   exactly the cap is under it.
+2. The vmm refuses a larger request with `too_large`. A client reads each
+   reply with `read(..., cap=HOST_API_BODY_CAP)`.
+3. A page of the list route ends early when one more row would take the
+   reply past the cap. `next` then points on, so the client loses no row.
+   The largest row is far under the cap, so such a page holds at least one
+   row. A Rust test holds that.
+
+### The list route
+
+`list` reads one page of the host session list of one family (decisions
+CH21-5, CH21-7). The family key comes from the list entry of the route
+table plan, and no decision names it (see "Known gaps"). The request is
+`ListSessions`, the reply is `SessionPage`, and the error is `ListError`.
+
+1. `cursor` is `null` for the first page. A later page sends the `next` of
+   the page before. `ListCursor` is opaque, an integer of 1 to 2^53 - 1.
+2. `cwd` is `null` for every row, or a cwd that each row of the page has.
+3. A family with no rows, or one the vmm does not know, gives an empty
+   page. Any cursor reads. So `ListError` holds the shared codes only.
 
 ## A route error on the wire
 
@@ -329,6 +358,19 @@ a dependency.
 
 ## Known gaps
 
+- `CONTRACT-QUESTION` in `rust/crates/wire/src/routes.rs`,
+  `HOST_API_BODY_CAP`. Decision CH33 rule 2 caps each reply, and decision
+  CH26 caps each request. Neither says whether the cap binds the ACP bytes
+  that an Upgrade route carries after 101. The reading taken: the cap binds
+  each JSON body of the host API (a request, a reply, an error), and no ACP
+  byte after 101.
+
+- `CONTRACT-QUESTION` in `rust/crates/wire/src/lib.rs`, `ListSessions`.
+  No decision names the key `family` of the list request. Decision CH33
+  rule 5 covers the session-scoped requests only. The key comes from the
+  list entry of `reframe/route-table-plan.json`. The reading taken: the
+  narrowest one, a required family, so one request never reads the rows of
+  two families.
 - `HOST_API_PROTOCOL` in `rust/crates/wire/src/routes.rs`: decided
   (decision CH33 rule 8), not built yet. A change of the schema subset
   that the routes reach needs a new number. The frozen copy per number and

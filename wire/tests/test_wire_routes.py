@@ -54,6 +54,7 @@ def _constants() -> dict[str, AnyRoute]:
 def test_the_protocol_is_the_one_of_the_table() -> None:
     assert TABLE["protocol"] == routes.HOST_API_PROTOCOL
     assert TABLE["header"] == routes.HOST_API_HEADER
+    assert TABLE["body_cap"] == routes.HOST_API_BODY_CAP
     assert TABLE["mismatch"]["status"] == routes.MISMATCH_STATUS
     assert getattr(creche_wire, TABLE["mismatch"]["reply"]) is creche_wire.ProtocolMismatch
 

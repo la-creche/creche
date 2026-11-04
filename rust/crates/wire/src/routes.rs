@@ -13,7 +13,7 @@ use serde::de::value::MapAccessDeserializer;
 use serde::de::{DeserializeOwned, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use super::{CreateSession, SessionRow, object_only};
+use super::{CreateSession, ListSessions, SessionPage, SessionRow, object_only};
 
 /// The number of the host API protocol (decision CH25 rule 1). A client
 /// sends it in the header `HOST_API_HEADER`, and the vmm checks it before
@@ -34,6 +34,16 @@ pub const HOST_API_PROTOCOL: u32 = 1;
 // answers `ProtocolMismatch` to each value that is not the exact decimal
 // text of HOST_API_PROTOCOL, and to a header given twice.
 pub const HOST_API_HEADER: &str = "creche-host-api-protocol";
+
+/// The most bytes of a request body and of a reply body of each route
+/// (decisions CH26, CH33 rule 2): 1 MiB. The vmm refuses a larger request
+/// with `too_large`. A client passes this cap to `read` for each reply. A
+/// body of exactly this size is under the cap.
+// CONTRACT-QUESTION: CH33 rule 2 caps each reply, and CH26 caps each
+// request. Neither says whether the cap binds the ACP bytes that an Upgrade
+// route carries after 101. The reading taken: the cap binds each JSON body
+// of the host API (a request, a reply, an error), and no ACP byte after 101.
+pub const HOST_API_BODY_CAP: usize = 1 << 20;
 
 /// The HTTP status of `ProtocolMismatch` (decision CH33 rule 1). No code of
 /// a route error has it, so a client of any protocol knows the mismatch
@@ -328,6 +338,26 @@ route_error! {
     }
 }
 
+/// The route `list`: a client reads one page of the host session list of a
+/// family (decisions CH21-5, CH21-7). The family key comes from the list
+/// entry of the route table plan (see `ListSessions`). The vmm needs no VM
+/// boot.
+#[derive(Debug)]
+pub enum ListRoute {}
+
+impl JsonRoute for ListRoute {
+    const NAME: &'static str = "list";
+    type Request = ListSessions;
+    type Reply = SessionPage;
+    type Error = ListError;
+}
+
+route_error! {
+    /// The error of the route `list`. It holds the shared codes only: a
+    /// family with no rows gives an empty page, and any cursor reads.
+    pub enum ListError {}
+}
+
 /// The one route table (decision CH25). The test-only schema generator and
 /// the vmm router both expand it, so no second list of routes exists.
 ///
@@ -340,5 +370,6 @@ route_error! {
 macro_rules! route_table {
     ($each:ident) => {
         $each!(json $crate::CreateRoute);
+        $each!(json $crate::ListRoute);
     };
 }

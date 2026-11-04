@@ -26,8 +26,9 @@ use serde_json::{Map, Value, json};
 
 use super::{
     AutoJobId, ControlHello, ControlReady, DelegationId, FamilyConfig, FamilyStateReply,
-    HOST_API_HEADER, HOST_API_PROTOCOL, JS_INTEGER_MAX, JobId, JsonRoute, MISMATCH_STATUS,
-    ProtocolMismatch, RouteError, SHARED_CODES, SessionId, SessionOrigin, TurnEvent, UnixMillis,
+    HOST_API_BODY_CAP, HOST_API_HEADER, HOST_API_PROTOCOL, JS_INTEGER_MAX, JobId, JsonRoute,
+    MISMATCH_STATUS, ProtocolMismatch, RouteError, SHARED_CODES, SessionId, SessionOrigin,
+    TurnEvent, UnixMillis,
 };
 
 /// The variable that makes the test write the file instead of checking it.
@@ -95,8 +96,8 @@ pub(super) fn wire_schema() -> Value {
     })
 }
 
-/// The `x-routes` value: the host API protocol number, its header, the
-/// mismatch reply with its status, and one entry per route of
+/// The `x-routes` value: the host API protocol number, its header, the body
+/// cap, the mismatch reply with its status, and one entry per route of
 /// `route_table!`, keyed by the route name. Each type is
 /// a plain name of a `$defs` entry, not a `$ref`, so datamodel-codegen and
 /// TypeBox do not read it as a schema.
@@ -112,6 +113,7 @@ fn route_table(generator: &mut SchemaGenerator) -> Value {
     let _ = generator.subschema_for::<ProtocolMismatch>();
 
     json!({
+        "body_cap": HOST_API_BODY_CAP,
         "header": HOST_API_HEADER,
         "mismatch": {
             "reply": ProtocolMismatch::schema_name(),
@@ -209,7 +211,7 @@ fn is_integer(schema: &Schema) -> bool {
 }
 
 /// The Python constants of the route table `x-routes`: the protocol, its
-/// header, the mismatch status and one `JsonRoute` per route. The writer
+/// header, the body cap, the mismatch status and one `JsonRoute` per route. The writer
 /// uses only forms that `ruff format` keeps as they are, so the file passes
 /// the gate unchanged.
 fn python_routes(table: &Value) -> String {
@@ -227,6 +229,7 @@ fn python_routes(table: &Value) -> String {
     text.push_str(")\nfrom .route import JsonRoute\n\n");
     writeln!(text, "HOST_API_PROTOCOL: Final = {}", table["protocol"]).unwrap();
     writeln!(text, "HOST_API_HEADER: Final = {}", table["header"]).unwrap();
+    writeln!(text, "HOST_API_BODY_CAP: Final = {}", table["body_cap"]).unwrap();
     let status = &table["mismatch"]["status"];
     writeln!(text, "MISMATCH_STATUS: Final = {status}").unwrap();
 
@@ -346,6 +349,28 @@ fn the_route_table_holds_create() {
             },
         })
     );
+}
+
+#[test]
+fn the_route_table_holds_list_with_the_shared_codes_only() {
+    let schema = wire_schema();
+    let routes = schema_routes(&schema);
+    let statuses: Map<String, Value> = SHARED_CODES
+        .iter()
+        .map(|(code, status)| ((*code).to_owned(), json!(status)))
+        .collect();
+
+    assert_eq!(
+        routes["list"],
+        json!({
+            "error": "ListError",
+            "kind": "json",
+            "reply": "SessionPage",
+            "request": "ListSessions",
+            "statuses": statuses,
+        })
+    );
+    assert_eq!(schema[ROUTES_KEY]["body_cap"], json!(1_048_576));
 }
 
 #[test]

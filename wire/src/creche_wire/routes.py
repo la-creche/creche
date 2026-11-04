@@ -9,12 +9,16 @@ from typing import Final
 from .models import (
     CreateError,
     CreateSession,
+    ListError,
+    ListSessions,
+    SessionPage,
     SessionRow,
 )
 from .route import JsonRoute
 
 HOST_API_PROTOCOL: Final = 1
 HOST_API_HEADER: Final = "creche-host-api-protocol"
+HOST_API_BODY_CAP: Final = 1048576
 MISMATCH_STATUS: Final = 412
 
 CREATE: Final = JsonRoute(
@@ -22,4 +26,11 @@ CREATE: Final = JsonRoute(
     request=CreateSession,
     reply=SessionRow,
     error=CreateError,
+)
+
+LIST: Final = JsonRoute(
+    name="list",
+    request=ListSessions,
+    reply=SessionPage,
+    error=ListError,
 )
