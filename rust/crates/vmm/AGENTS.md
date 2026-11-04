@@ -277,8 +277,9 @@ checked kernel and root disk it gives the current `SnapshotKey`.
    argument.
 
 `ChApi::READS_DEVICES` is false for `restore::ChTools`, the API of the
-vmm, so the vmm restores no VM yet: the claim consumes the snapshot, and the start cold-boots
-(Known gaps). `tests/start.rs` gives a fake API that reads the device
+vmm, so the vmm restores no VM yet: the claim consumes the snapshot, and
+the start cold-boots (Known gaps). For the same reason an eviction takes
+no snapshot (see "The eviction"). `tests/start.rs` gives a fake API that reads the device
 set.
 
 ## The eviction
@@ -297,7 +298,10 @@ admission:
    bounds each `ch-remote` call of the take: pause 5 s, snapshot 60 s
    and `shutdown-vmm` 10 s (decisions CH44 rule 3, CH50 rule 1). The
    take ends CH. A failed take is logged, and the stop follows anyway
-   (decision CH44 rule 4).
+   (decision CH44 rule 4). An API with no device read
+   (`ChApi::READS_DEVICES` false) takes no snapshot: no snapshot would
+   restore, and a take ends CH with no guest power-off. The stop of
+   step 4 is then the graceful one (decision CH19 (3)).
 4. `stop::stop` with the control link of the VM. A VM that does not
    stop goes back with no link, so admission counts its RAM (decision
    CH50 rule 4), and the start gets `host_full`. The VMs left in the
@@ -307,8 +311,14 @@ The gate of each VM is `Activity::may_evict` of `creche-vmm-store`, not
 `may_sleep` (PR D12). Only a VM with a control link and a snapshot key
 may be evicted. Its last use is the later of its start and its last
 door close, and an open door counts as used now (decision CH50 rules 5
-and 6). An Upgrade of a session under eviction gets `host_full`.
-`tests/start.rs` proves the order, the door close and `host_full`.
+and 6). An Upgrade of a session under eviction gets `host_full`. So does
+an Upgrade whose door an eviction closes after its start: `Relays::close`
+stops the claim with `relay::Stopped::Evict`, and the acp handler answers
+it with `host_full`. A drop stops it with `Stopped::Drop`, which gets
+`not_found`. `tests/start.rs` proves the order, the door close,
+`host_full`, a failed take, a failed stop, a start under eviction and an
+eviction with no device read. `tests/acp.rs` proves the eviction during
+the dial.
 
 ## Rules
 
@@ -349,8 +359,7 @@ and 6). An Upgrade of a session under eviction gets `host_full`.
    row names the reply to an Upgrade of a session under eviction. The VM
    still holds its RAM, so the code answers `host_full`, and attendance
    retries. A door that an eviction closes between the end of the start
-   and the 101 gives that Upgrade `not_found`, because the handler reads
-   a stopped claim as a drop.
+   and the 101 gets `host_full` the same way (`relay::Stopped::Evict`).
 5. `ColdBoot` keeps the control link of each VM, and no code reads its
    turn events yet. The `StopVm` hook of the vmm and its use of the
    table of `ColdBoot` are not built yet either.
@@ -372,7 +381,10 @@ and 6). An Upgrade of a session under eviction gets `host_full`.
    cold-boots, because the claim consumed the snapshot.
 9. Item 5.7 of the design asks for a guest `sync` before each snapshot
    (`creche-vmm-store` Known gaps). The control link has no `sync`
-   line yet, so an eviction takes its snapshot with no guest sync.
+   line yet, so an API that reads the device set takes its snapshot
+   with no guest sync. `ChTools` takes none (gap 6), so the vmm stops
+   each evicted VM with the graceful stop until the store PR of gap 6
+   lands.
 10. No code reads the turn events of a VM yet (gap 5), so the eviction
     gate passes `turn_seen` false (decision CH43 rule 8). A VM whose last
     ready did not say `running` is never evicted until plan PR L18 adds

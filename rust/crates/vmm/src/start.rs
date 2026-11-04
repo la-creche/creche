@@ -495,7 +495,8 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
 
     /// Evicts one VM: closes its door link, snapshots it, then stops it
     /// (decisions CH8-6, CH19 (6)). The take ends CH, so the stop finds it
-    /// gone. False when the VM still holds its RAM: a turn started before
+    /// gone. With no device read (`ChApi::READS_DEVICES`) it takes no
+    /// snapshot and sends the graceful stop. False when the VM still holds its RAM: a turn started before
     /// the close, or the stop failed (decision CH50 rule 4).
     async fn evict(&self, mut eviction: Eviction<L::Process>) -> bool {
         let id = eviction.id.clone();
@@ -519,7 +520,15 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         // Decision CH44 rule 4: the caller decides after a failed take.
         // The VM stops anyway, so its RAM frees, and the session
         // cold-boots from its disk later (decision CH19 (5)).
-        if let Err(message) = blocking(move || api.snapshot(&run, &session, &key)).await {
+        // An API that reads no device set restores no snapshot, and the
+        // next claim consumes it unused (Known gaps). A take ends CH with
+        // no guest power-off, so that cold boot would find its disk as a
+        // power cut left it. So with no device read the eviction takes no
+        // snapshot, and the stop below is the graceful one (decision CH19
+        // (3)): guest init syncs and powers off.
+        if A::READS_DEVICES
+            && let Err(message) = blocking(move || api.snapshot(&run, &session, &key)).await
+        {
             eprintln!("vmm: the eviction snapshot of {id} failed: {message}");
         }
         if let Err(error) = stop(vm.link.as_ref(), &mut vm.process, &vm.run).await {
