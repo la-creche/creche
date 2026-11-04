@@ -4,8 +4,8 @@
 //!
 //! `tests/fixtures/ch-remote-snapshot` and `tests/fixtures/fallocate` stand
 //! in for the programs. `tests/fixtures/fallocate-lock` also locks
-//! `snapshots/` against a read. Both log to `<root>/calls`, so a test reads the
-//! call order. The last test runs the host `fallocate`, a Linux tool, so it
+//! `snapshots/` against a read. Each logs to `<root>/calls`, so a test reads
+//! the call order. The last test runs the host `fallocate`, a Linux tool, so it
 //! is Linux only. C16 takes a real snapshot.
 
 use std::fs;
