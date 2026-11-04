@@ -44,6 +44,14 @@ header of an Upgrade route, then the body, then the request type
 after the handler admits the request. A `server::Relay` then owns the
 stream.
 
+After hyper ends a connection that it did not upgrade, the server shuts
+its write half, then reads and drops request bytes until the client
+closes, `LINGER_BYTES` or `LINGER_TIME` (`src/server/accept.rs`). A
+refusal can come before the server reads the body. Without this step,
+the close with bytes unread resets the socket on Linux, and a client that
+writes the whole request before it reads loses its typed reply (decision
+CH26).
+
 `server::BodyCheck` holds the body checks that follow the route, in the
 order of decisions CH26 and CH33 rule 13: `Content-Type`, then the 1 MiB
 cap, then strict JSON. Each refusal writes the reply of a shared code.
@@ -65,4 +73,7 @@ use it to prove that the JSON body of an Upgrade request crosses
 
 ## Known gaps
 
-None.
+- CONTRACT-QUESTION: no row decides the bounds of the lingering close in
+  `src/server/accept.rs`. `LINGER_BYTES` is 4 MiB (4 times the body cap)
+  and `LINGER_TIME` is 5 s. A client that sends more, or sends slower,
+  can still get a reset instead of its typed reply.
