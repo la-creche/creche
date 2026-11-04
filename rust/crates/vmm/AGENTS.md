@@ -97,7 +97,9 @@ write syncs a file and a dir, so the caller runs it in `spawn_blocking`
 (decision CH36 G21). A close of the link after `ControlReady` ends
 `event` with `ControlError::Ended`, which asks for no cold boot.
 `ControlState::turn_running` is the turn state for the sleep gate
-(decision CH19 (6)). `ControlLink::stop` sends the graceful stop
+(decision CH19 (6)). The vmm keeps the facade state of the last ready,
+and turn events set `turn_running` (decision CH43 rule 8).
+`ControlLink::stop` sends the graceful stop
 `{"stop":{}}` (decision CH19 (3)).
 
 ## Rules
@@ -111,13 +113,11 @@ write syncs a file and a dir, so the caller runs it in `spawn_blocking`
 
 ## Known gaps
 
-1. CONTRACT-QUESTION: after `ControlReady`, no message on the control
-   link reports a change of the facade state. A turn event shows that the
-   facade runs (decision CH32 rule 6), but it carries no pid and no start
-   count, and an exit sends nothing. The reading: `ControlState::facade`
-   stays the state of the last `ControlReady`, and
-   `ControlState::turn_running` follows the turn events. The sleep gate
-   (decision CH19 (6)) must say how it reads "the facade is up" from the
-   two. A VM after a cold boot reports `not_started` or `starting`
-   (decision CH34 rule 7), so a gate that reads only the ready never
-   snapshots it.
+1. Decision CH43 rule 8: no line on the control link reports a change
+   of the facade state yet. The phase 3 guest init PR adds a line that
+   reports each change. Until then the sleep gate treats a VM as up only
+   after a ready said `running` or a turn event arrived. A VM after a
+   cold boot reports `not_started` or `starting` (decision CH34 rule 7),
+   so a gate that reads only the ready would never snapshot it. The sleep
+   gate is plan PR L18, a later PR, so this crate does not hold the rule
+   yet.

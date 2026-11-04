@@ -401,13 +401,12 @@ impl ControlState {
 
     /// The last facade state that a current link of `vm` reported in its
     /// `ControlReady`. A turn event does not change it.
-    // CONTRACT-QUESTION: after `ControlReady`, no message on the link
-    // reports a change of the facade state. A turn event shows that the
-    // facade runs (decision CH32 rule 6), but it carries no pid and no
-    // start count, and an exit sends nothing. The reading: this stays the
-    // state of the last `ControlReady`, and `turn_running` follows the
-    // events. The sleep gate (decision CH19 (6)) must say how it reads
-    // "the facade is up" from the two.
+    // Decision CH43 rule 8: this stays the state of the last
+    // `ControlReady`, and `turn_running` follows the events. No line
+    // reports a change of the facade state yet. The phase 3 guest init PR
+    // adds one. Until then the sleep gate treats a VM as up only after a
+    // ready said `running` or a turn event arrived. The sleep gate is plan
+    // PR L18, a later PR.
     #[must_use]
     pub fn facade(&self, vm: &SessionId) -> Option<&FacadeState> {
         self.vms.get(vm).and_then(|control| control.facade.as_ref())
