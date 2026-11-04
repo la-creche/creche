@@ -7,7 +7,7 @@
 #   kvm           /dev/kvm and its mode, before and after a udev rule
 #   vhost_vsock   the module and /dev/vhost-vsock, before and after modprobe
 #   user manager  systemd-run --user --scope, before and after linger
-#   landlock      the Landlock ABI of the runner kernel
+#   landlock      the Landlock ABI of the runner kernel, red below 4 (C6)
 #   apparmor      the LSM list, apparmor_parser, and one enforced profile
 #   cloud-hypervisor
 #                 CH v54.0 static and ch-remote, the fact 53 kernel, all
@@ -93,7 +93,9 @@ jobs:
           echo
           # landlock_create_ruleset(NULL, 0, LANDLOCK_CREATE_RULESET_VERSION)
           # is syscall 444 on x86_64. It returns the ABI, or -1.
-          python3 -c 'import ctypes; print("landlock abi", ctypes.CDLL(None).syscall(444, None, 0, 1))'
+          # C6 needs ABI 4 (TCP rules) and fails closed below it, so this
+          # step goes red below 4.
+          python3 -c 'import ctypes, sys; a = ctypes.CDLL(None).syscall(444, None, 0, 1); print("landlock abi", a); sys.exit(a < 4)'
 
       - name: apparmor
         if: ${{ !cancelled() }}
