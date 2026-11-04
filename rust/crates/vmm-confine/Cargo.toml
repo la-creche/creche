@@ -11,6 +11,7 @@ publish.workspace = true
 [dependencies]
 creche-vmm-store = { path = "../vmm-store" }
 creche-wire = { path = "../wire" }
+rustix.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
