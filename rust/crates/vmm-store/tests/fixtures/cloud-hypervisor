@@ -1,0 +1,11 @@
+#!/bin/sh
+# A stub of cloud-hypervisor for tests/key.rs. A test runs it through a
+# symlink, and the link name sets the --version reply: `fail` exits 1,
+# `bare-<version>` prints <version>, and any other name prints
+# `cloud-hypervisor <name>`.
+name=${0##*/}
+case $name in
+    fail) echo 'no version' >&2; exit 1 ;;
+    bare-*) echo "${name#bare-}" ;;
+    *) echo "cloud-hypervisor $name" ;;
+esac

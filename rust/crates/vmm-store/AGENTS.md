@@ -24,6 +24,11 @@ The second file has the table of the three vmm crates.
   cold-boots (decision CH19 (5)). The code reads a rename that the sync
   of `snapshots/` cannot make durable as a failed step too, so `take`
   removes `snapshots/<n>` and returns the sync error.
+- Decision CH44 rule 5 (PR D10, `key.rs`): a key mismatch or an
+  unreadable key drops every generation of the session, not only the
+  newest. `check_newest` reads no older key. So an older generation
+  never restores onto a session disk that moved on (decision CH19 (5)).
+  This also takes part of the D13 job of removing older generations.
 
 ## Known gaps
 
@@ -39,3 +44,11 @@ The second file has the table of the three vmm crates.
   confines only the CH launch. L20 needs a config key for its path (the
   owner env rule). Its list has no such key yet. Item 42 lists config
   keys for `fallocate`, `zstd` and `mke2fs` as a lifecycle duty.
+- Caller duties (PR D10, `key.rs`), for lifecycle: (a) run `write_key`
+  after every `Snapshotter::take`, or the next check drops the snapshot
+  as `Unreadable`. L17 and L19 snapshot but name no key write. (b) run
+  `check_cloud_hypervisor` at the vmm start and refuse to start on an
+  error (gap G10 option A). No lifecycle PR (L17, L20) calls it yet.
+  Item 42 notes a better way for (a) and gives it to a later PR: `take`
+  writes `key.json` into its temp dir before the rename, so no snapshot
+  exists without a key.

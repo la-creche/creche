@@ -8,6 +8,7 @@
 
 pub mod ch_remote;
 pub mod images;
+pub mod key;
 pub mod layout;
 pub mod rows;
 pub mod session_disk;
