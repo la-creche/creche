@@ -37,3 +37,11 @@ table of the three vmm crates.
 
 - Landlock ABI 4 covers neither UDP nor Unix sockets (fact 77). Until the
   AppArmor profile of PR C15, CH can reach both.
+- Lifecycle must make two dirs before each launch, because the ruleset
+  opens each path and a missing one fails the launch with
+  `RulesetError::Open`: the VM run dir `<run root>/vm/<id>/` and the
+  snapshot dir `<state root>/sessions/<id>/snapshots/`. No code on main
+  makes either today (`SessionStore::for_boot` makes only the session
+  dir). The ruleset grants no right to make a dir, so the vmm must also
+  make each `snapshots/<generation>/` before CH writes a snapshot there.
+  Plan PRs L16 (cold boot) and D9 (snapshot) own these steps.
