@@ -216,11 +216,11 @@ export function litellmModel(
 
 /**
  * The model of the latest pull (decisions CH5c, CH5c-2). The facade gives
- * `follow` the alias of each pull before the agent applies it. On a change
- * it reads the new alias's limits with the latest key, and replaces the
- * provider in Flue with `setProvider`. Flue resolves the model when a
- * submission starts, so a turn that runs keeps its model. The next prompt
- * of each session resolves the new one.
+ * `follow` the alias and the key of each pull before the agent applies
+ * it. On a change it reads the new alias's limits with that key, and
+ * replaces the provider in Flue with `setProvider`. Flue resolves the
+ * model when a submission starts, so a turn that runs keeps its model.
+ * The next prompt of each session resolves the new one.
  *
  * The provider keeps each alias it has served. So a session that pulled
  * the old alias just before the change still resolves it. LiteLLM refuses
@@ -255,23 +255,25 @@ export class LiveModel {
   }
 
   /**
+   * `alias` and `key` are those of the pull. The holder gets the pull only
+   * after this call, so its creds are still those of the pull before.
    * Null: the alias is the alias of the last change. Else the limits read
    * of the new alias, with the fallback on a fault. The calls run one at a
    * time, so a pull applies only after its provider is in Flue.
    */
-  public follow(alias: string): Promise<LimitsRead | null> {
-    const next = this.last.then(() => this.switchTo(bareAlias(alias)));
+  public follow(alias: string, key: Secret): Promise<LimitsRead | null> {
+    const next = this.last.then(() => this.switchTo(bareAlias(alias), key));
     this.last = next.catch(() => undefined);
 
     return next;
   }
 
-  private async switchTo(alias: string): Promise<LimitsRead | null> {
+  private async switchTo(alias: string, key: Secret): Promise<LimitsRead | null> {
     if (alias === this.current) {
       return null;
     }
 
-    const read = await readModelLimits(this.config, alias, this.creds().litellmKey);
+    const read = await readModelLimits(this.config, alias, key);
     this.current = alias;
     this.served.set(alias, read.limits);
     this.latest = providerOf(this.config, this.served, this.creds);

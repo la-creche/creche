@@ -1,7 +1,8 @@
 // The live model under Flue's `start()` (decisions CH5c, CH5c-2). A turn of
 // session A holds on a `ch` call while session B pulls a new alias. A's
 // next model request keeps A's model. B's prompt calls the new alias with
-// its limits from LiteLLM, and so does A's next prompt.
+// its limits from LiteLLM, and so does A's next prompt. A pull that rotates
+// the key and changes the alias reads the limits with the new key.
 
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -17,11 +18,12 @@ import type { StateBackend } from "../src/family-state.js";
 import { FALLBACK_LIMITS } from "../src/litellm.js";
 import { FakeCh, SEARCH_TOOL } from "./fake-ch.js";
 import { FakeModel } from "./fake-model.js";
-import { familyConfig, FIXTURE_TOKEN, swapConfig } from "./family.js";
+import { familyConfig, FIXTURE_TOKEN, swapConfig, writeCreds } from "./family.js";
 
 const NO_RETRY_MS = 0;
 const NEW_ALIAS = "code-router";
 const NEW_LIMITS = { contextWindow: 64000, maxTokens: 4096 };
+const ROTATED_KEY = "sk-FIXTURE-ROTATED-KEY";
 
 const ch = new FakeCh(FIXTURE_TOKEN);
 const fake = new FakeModel([
@@ -54,7 +56,7 @@ async function pullFor(session: string): Promise<unknown> {
     throw new Error(pulled.fault);
   }
 
-  const switched = await composed.model.follow(pulled.state.config.modelAlias);
+  const switched = await composed.model.follow(pulled.state.config.modelAlias, pulled.state.creds.litellmKey);
   composed.state.apply(pulled.state, session);
 
   return switched;
@@ -90,5 +92,17 @@ describe("the model of each session", () => {
       NEW_LIMITS.maxTokens,
       NEW_LIMITS.maxTokens,
     ]);
+  });
+
+  it("reads the limits of a new alias with the key of the same pull", async () => {
+    swapConfig(config.mounts.config, { "runtime.json": JSON.stringify({ model_alias: "chat" }) });
+    await pullFor("session-a");
+
+    writeCreds(config.mounts.creds, { epoch: 2, litellm_key: ROTATED_KEY, pep_token: FIXTURE_TOKEN });
+    swapConfig(config.mounts.config, { "runtime.json": JSON.stringify({ model_alias: NEW_ALIAS }) });
+    const switched = await pullFor("session-a");
+
+    expect(switched).toEqual({ ok: true, limits: NEW_LIMITS });
+    expect(fake.infoAuthorizations.at(-1)).toBe(`Bearer ${ROTATED_KEY}`);
   });
 });

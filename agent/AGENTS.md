@@ -88,7 +88,7 @@ const backend = fileBackend(read.config.mounts, composed.state.config);  // src/
 // Before each prompt of the session `sessionId`:
 const pulled = await backend.pull();
 if (pulled.ok) {
-  await composed.model.follow(pulled.state.config.modelAlias);  // src/litellm.ts
+  await composed.model.follow(pulled.state.config.modelAlias, pulled.state.creds.litellmKey);  // src/litellm.ts
   composed.state.apply(pulled.state, sessionId);
 }
 ```
@@ -99,11 +99,11 @@ pull. A creds fault fails the prompt. A config fault keeps the last good
 config, and `pulled.stale` names the fault at the first pull that fails.
 
 `model.follow` switches the model when the pulled alias differs
-(decisions CH5c, CH5c-2). It reads the new alias's limits with the latest
-key, and replaces the `litellm` provider in Flue with `setProvider`. The
-provider keeps each alias it has served. Flue resolves the model when a
-submission starts, so a turn that runs keeps its model, and the next
-prompt of each session gets the new one. Under CH the vmm holds the
+(decisions CH5c, CH5c-2). It reads the new alias's limits with the key of
+the same pull, and replaces the `litellm` provider in Flue with
+`setProvider`. The provider keeps each alias it has served. Flue resolves
+the model when a submission starts, so a turn that runs keeps its model,
+and the next prompt of each session gets the new one. Under CH the vmm holds the
 `state` reply until `model_live_at` (decision CH31 rule 1), so the agent
 waits for nothing. On sbx a config edit never reaches a running sandbox
 (decision CH52 rule 1), so the alias stays the alias of the start.

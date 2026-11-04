@@ -101,7 +101,7 @@ function refreshOf(backend: StateBackend, { state, model }: ComposedAgent): Refr
     }
 
     const { modelAlias } = pulled.state.config;
-    const switched = await model.follow(modelAlias);
+    const switched = await model.follow(modelAlias, pulled.state.creds.litellmKey);
     if (switched !== null) {
       say(limitsLine(switched, modelAlias));
     }

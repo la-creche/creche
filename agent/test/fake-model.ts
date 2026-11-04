@@ -84,6 +84,9 @@ export class FakeModel {
   /** The body of `GET /v1/model/info`. Null: the list gets 404. */
   public modelInfo: unknown = null;
 
+  /** The `authorization` header of each model list request, in order. */
+  public readonly infoAuthorizations: string[] = [];
+
   private server: Server | null = null;
 
   public constructor(private readonly script: readonly FakeReply[]) {}
@@ -95,6 +98,7 @@ export class FakeModel {
       // model list gets `modelInfo`, or 404, so the agent keeps its
       // fallback limits.
       if (request.method === "GET" && request.url === MODEL_INFO_PATH && this.modelInfo !== null) {
+        this.infoAuthorizations.push(request.headers.authorization ?? "");
         response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(this.modelInfo));
         return;
       }
