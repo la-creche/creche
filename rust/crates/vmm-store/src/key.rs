@@ -283,7 +283,7 @@ pub enum DropReason {
     /// The key differs from the current key.
     Differs,
     /// The key file is absent, is no regular file, is too large or holds
-    /// no key.
+    /// no key. A failed read is no drop reason: it gives a `KeyError`.
     Unreadable,
 }
 
@@ -311,14 +311,16 @@ pub enum KeyCheck {
 ///
 /// # Errors
 ///
-/// A failed read of `snapshots/` or a failed remove.
+/// A failed read of `snapshots/` or of the key file, or a failed remove.
+/// A failed read removes nothing, so the caller fails the start or tries
+/// again, and a snapshot that may restore stays.
 pub fn check_newest(session: &SessionDir, current: &SnapshotKey) -> Result<KeyCheck, KeyError> {
     let snapshots = session.snapshots();
     let mut older = generations(session).map_err(io_at(&snapshots))?;
     let Some(generation) = older.pop() else {
         return Ok(KeyCheck::NoSnapshot);
     };
-    let reason = match read_key(&session.snapshot_key(generation)) {
+    let reason = match read_key(&session.snapshot_key(generation))? {
         Some(found) if found == current.0 => {
             return Ok(KeyCheck::Keyed(KeyedSnapshot {
                 generation,
@@ -335,21 +337,33 @@ pub fn check_newest(session: &SessionDir, current: &SnapshotKey) -> Result<KeyCh
     Ok(KeyCheck::Dropped { generation, reason })
 }
 
-/// The key in `path`. `None` for any failure: each one drops the snapshot.
-fn read_key(path: &Path) -> Option<KeyFile> {
-    if !fs::symlink_metadata(path).ok()?.is_file() {
-        return None;
+/// The key in `path`. `None` when the file is absent, is no regular file,
+/// is too large or holds no key: each one drops the snapshot. Any other
+/// failure, such as `EMFILE` or `EIO`, may pass, so it is an error and
+/// drops nothing.
+fn read_key(path: &Path) -> Result<Option<KeyFile>, KeyError> {
+    let absent = |error: &io::Error| error.kind() == io::ErrorKind::NotFound;
+    let meta = match fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(error) if absent(&error) => return Ok(None),
+        Err(error) => return Err(io_at(path)(error)),
+    };
+    if !meta.is_file() {
+        return Ok(None);
     }
+    let file = match File::open(path) {
+        Ok(file) => file,
+        Err(error) if absent(&error) => return Ok(None),
+        Err(error) => return Err(io_at(path)(error)),
+    };
     let mut text = Vec::new();
-    File::open(path)
-        .ok()?
-        .take(KEY_MAX.saturating_add(1))
+    file.take(KEY_MAX.saturating_add(1))
         .read_to_end(&mut text)
-        .ok()?;
-    if u64::try_from(text.len()).ok()? > KEY_MAX {
-        return None;
+        .map_err(io_at(path))?;
+    if u64::try_from(text.len()).map_or(true, |len| len > KEY_MAX) {
+        return Ok(None);
     }
-    serde_json::from_slice(&text).ok()
+    Ok(serde_json::from_slice(&text).ok())
 }
 
 /// Removes the key file first, so a crash during the remove leaves a dir

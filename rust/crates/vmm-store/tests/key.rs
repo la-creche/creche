@@ -9,7 +9,7 @@
 //! the stub when it runs.
 
 use std::fs;
-use std::os::unix::fs::{MetadataExt, symlink};
+use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -230,6 +230,25 @@ fn an_unreadable_key_drops_the_snapshot() {
         assert_eq!(check, dropped, "{name}");
         assert!(!temp.session.snapshot(FIRST).exists(), "{name}");
     }
+}
+
+/// A key file that exists but does not open is no drop reason. The check
+/// fails and removes nothing (a root user opens any file, so it skips).
+#[test]
+fn a_failed_read_drops_nothing() {
+    let temp = Temp::new("denied");
+    temp.snapshot(FIRST, &temp.key(0, 1));
+    let key = temp.session.snapshot_key(FIRST);
+    fs::set_permissions(&key, fs::Permissions::from_mode(0o000)).expect("a mode");
+    if fs::File::open(&key).is_ok() {
+        return;
+    }
+    let error = check_newest(&temp.session, &temp.key(0, 1)).expect_err("a failure");
+    assert_eq!(error.path, key);
+    assert_eq!(error.source.kind(), std::io::ErrorKind::PermissionDenied);
+    fs::set_permissions(&key, fs::Permissions::from_mode(0o600)).expect("a mode");
+    let check = check_newest(&temp.session, &temp.key(0, 1)).expect("the check");
+    assert!(matches!(check, KeyCheck::Keyed(_)), "{check:?}");
 }
 
 #[test]
