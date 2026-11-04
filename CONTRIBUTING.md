@@ -59,20 +59,9 @@ package.
 `githooks/pre-commit` runs `bin/quality-gate.sh` with no flag: ruff, ruff
 format and pyright.
 
-`githooks/pre-push` runs the same checks, then tests:
-
-| The push changes | The hook runs |
-|---|---|
-| a path under a package, for example `attendance/app.py` | that package's suite, `--tests-for`. For a product package, also `vectors/tests` |
-| a path in no package, for example `uv.lock` or `pyproject.toml` | the full suite. The hook passes `--tests-for`, and the gate runs every suite |
-| a path under `vectors/`, for example `vectors/data/index.json` | `vectors/tests` |
-| a path under `integration/proc/`, for example `integration/proc/proc_tree.py` | the process-level suite on one worker for each core, and no other suite for that path. A test that skips is a failure, as in the `proc` job of CI. A Markdown file there, outside `tests/` and `fixtures/`, picks no suite |
-| Markdown only, outside `tests/` and `fixtures/` | the tests marked `docs`, `--docs` |
-| nothing, or a deleted branch | no test |
-
-A package is the directory above a `testpaths` entry in the root
-`pyproject.toml`. A new suite needs no change to the hook. A product package
-is each package but `bin/` and `vectors/`.
+`githooks/pre-push` runs the same checks. No hook runs a test. CI runs
+every test on each pull request (`gate.yml`), and `gate` is the merge gate.
+To run the full suite before a push, run `bin/quality-gate.sh --tests`.
 
 No hook checks a commit message. Check the subject against the seven rules
 in `AGENTS.md` yourself.
@@ -232,8 +221,8 @@ Two points of this section wait for the owner of the repository:
 ## The docs rule
 
 A change of nothing but Markdown runs only the tests marked `docs`. The one
-copy of that rule is `bin/lib/docsrule.sh`. The pre-push hook, `gate.yml`
-and `release.yml` all source it. A new test that reads a document carries the
+copy of that rule is `bin/lib/docsrule.sh`. `gate.yml` and `release.yml`
+source it. A new test that reads a document carries the
 `docs` marker, or a docs-only change skips it.
 
 Every document is written in ASD-STE100 Simplified Technical English. Read

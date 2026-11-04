@@ -80,7 +80,7 @@ through a file or a health endpoint, and give a short in-VM command a
 | `creche-handover` | ROOT, from `creche-handover.path` | Decrypts the site's sops file and execs `handover-exec` under it. Installed to `/usr/local/sbin` by hand, never by a release. Refuses a path another account can write. |
 | `provision-library.sh` | OPERATOR | One corpus: the image, the sandbox, TEI-only egress, the timer. Needs `AGENT_LAN_ADDRESS` from the site file. |
 | `fleet-up` | OPERATOR | Draft. `check`, `up`, `down` of the fleet layer: the tokens, the keys, the env files, the state directories and the user units. `check` is read-only and lists the root checklist. `up` records each write, and `down` removes only a recorded path. `docs/fleet-bootstrap.md` is the design. |
-| `quality-gate.sh` | OPERATOR, from the hooks and CI | ruff, ruff format, pyright, then pytest as asked: `--tests`, `--tests-for PATH...` or `--docs`. For a push that changes a file under `integration/proc/` that is not prose, it runs the process-level suite. |
+| `quality-gate.sh` | OPERATOR, from the hooks and CI | ruff, ruff format, pyright, then pytest as asked: `--tests` or `--docs`. |
 | `systemd-proof.sh` | CI, from the `systemd-proof` job and from the scope of each workflow | Proves the restart rule of the daemon units on the systemd of the runner, with three transient units. Then gives each unit file under `systemd/` to `systemd-analyze verify`. `--unchanged FROM TO` says if a change needs no proof. |
 | `chaperone-install-draft.py` | OPERATOR on a development machine, and CI | Reads the server files of a registry and prints a draft of the Rust chaperone's `install.toml` and one effect manifest for each server, or writes them into a new directory. The operator reviews the draft and installs it as root. The header of the script holds each fact it takes from a server file and each refusal. |
 | `yaml-to-toml.py` | OPERATOR on a development machine, and CI | Converts one YAML file of the three kinds to TOML and prints the text. The three kinds are the family file, the server file and the component manifest. `--check` proves one converted pair: the values are equal, and the count of comments is equal. Status 1 means a pair that differs. Each other fault gives status 2. The header of the script holds the layout and each refusal. The script is temporary. Packet `toml-converter-leave` deletes the script when the tree holds no YAML file of the three kinds. |
@@ -96,36 +96,12 @@ with their tests, and a `host` release installs them at
 ## Quality gate
 
 `quality-gate.sh` runs ruff, ruff format and pyright in every mode. The
-pre-commit hook passes no flag. The pre-push hook passes `--tests-for` with
-the paths the push changes, or `--docs` for a Markdown-only push. `--tests`
-is the full suite in one process. CI runs the full suite as shards with
-`pytest --shard K/N`. Every scoped run also runs
-`tests/test_unique_test_basenames.py`.
-
-A scoped run for a product package also runs `vectors/tests`. A product
-package is each package but `bin/` and `vectors/`. A change in a product
-package can move a vector. That suite fails when a committed vector differs
-from what the Python code does.
-
-A scoped run for a path under `integration/proc/` runs the process-level
-suite in a pytest process of its own, on one worker for each core. Such a path does not
-start the full suite, because the full suite holds no test in that directory.
-A push with no other path runs no other suite. One test of `bin/tests` reads
-`integration/proc/proc_services.py`. CI runs it.
-
-- The gate sets `CRECHE_PROC_NO_SKIP=1` for that run, as the `proc` job does.
-  A test that needs the facade build then fails when the build is missing.
-- Build the facade before the push. `integration/proc/AGENTS.md` gives the
-  command.
-- Prose under `integration/proc/` picks no suite, because no test reads it.
-  A push of a package and one line of `integration/proc/AGENTS.md` then
-  needs no build.
-- `--tests` does not run the process-level suite. CI runs it for each code
-  change.
+two hooks pass no flag, so they run no test. `--tests` is the full suite in
+one process. `--docs` is the tests marked `docs`, for a Markdown-only PR in
+CI. CI runs the full suite as shards with `pytest --shard K/N`.
 
 `lib/docsrule.sh` holds the one copy of "does this change touch nothing but
-prose?". The pre-push hook, `gate.yml` and `release.yml` source it.
-`quality-gate.sh` sources it for the rule of prose under `integration/proc/`.
+prose?". `gate.yml` and `release.yml` source it.
 
 ## The systemd proof
 
@@ -198,7 +174,6 @@ scope of `release.yml` ask it.
 | `test_envfile_shell.py`, `test_env_upsert.sh` | A re-run never drops another key from a shared env file. |
 | `test_envfile_vectors.py` | The command `creche-env` gives the result of each vector of `envfile.layer` and `envfile.raw`. `creche_env_check` and `creche_env_get` of `lib/envfile.sh` give it too, for each vector whose pair asks no account. Each function runs the command of its own tree, with its words, and keeps status 78. A `cd` after the source does not change that tree. |
 | `test_envfile_catalog.py` | The catalog of the product: the example value of each required key is a value of its type. The two files name no IPv4 address outside 192.0.2.0/24 and 127.0.0.0/8. Each key of `root-keys.txt` is a catalog key. No key of `default.env` has another value than in an earlier version of the file on the base branch. A copy of `example.env` stops the command with status 78 and names each required key. |
-| `test_pre_push_select.sh`, `test_pre_push_scope.py` | What a push tests. |
 | `test_gate_workflow.py`, `test_retest_workflow.py` | The two CI files hold to the same shard command, the same `proc` job, the same `suites` job, the same image build and the same `systemd-proof` job. `!retest` restarts one run. The `systemd-proof` job runs the script on the runner itself, with no container. A scope skips the proof only when the script answers `unchanged`. The last job of `gate.yml` is `gate`, and the last job of `release.yml` is `release`. Each other job name is in both files, and the test fails for a job name that only one file has. The test also names each key at the top level of the two files. One more key there fails the test, for example `defaults` or `env`: such a key changes each job of its file. The `suites` job has the setup of the `proc` job and one pytest run for each of the two old suites of `integration/`. Its last step fails for a test that skipped and for a suite that ran no test. The tag step of the release gets the token and the catalog name, and no variable of a binary component. |
 | `test_systemd_proof.py` | `systemd-proof.sh`, against a fake systemd. Each case fails on a wrong result, and a value of `NRestarts` that is no count fails. The script removes its units after each failure. Only the line for an absent program passes a unit file. `--unchanged` says yes only for a change with no file of the proof. |
 | `test_fleet_up.py` | `fleet-up` against a prefix for `/`, a fake `HOME` and binstubs. `check` on an empty host names each missing item and changes nothing. A second `up` changes no mode, time or byte. `down` removes only recorded paths, and a key that was there before `up` survives `down`. A record line outside the two roots refuses the whole record. The list of token files equals `attendance.auth.Principal`. |

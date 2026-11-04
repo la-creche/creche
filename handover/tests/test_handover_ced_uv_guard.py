@@ -13,7 +13,7 @@ machine has, and then asks the built tree two questions:
    it import from inside the tree?
 
 Question 2 is the one a fake cannot answer. The workspace is copied into
-`tmp_path` first and the COPY's `src` is renamed, because `pre-push` runs
+`tmp_path` first and the COPY's `src` is renamed, because the suite runs
 `pytest -n auto` and renaming a directory in the shared checkout would
 break whatever another worker is reading.
 

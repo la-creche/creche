@@ -1,5 +1,5 @@
 # `docs` or `code`: what the PR changes, from where it forks off its base
-# (bin/lib/docsrule.sh, the rule the pre-push hook reads too). A rule that
+# (bin/lib/docsrule.sh, the rule release.yml reads too). A rule that
 # cannot read the change answers `code`. Written once: gate.yml's scope job
 # and its lint job both ask. It needs a full-history checkout, for the
 # merge-base.

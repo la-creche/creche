@@ -38,7 +38,7 @@
 # A PR of nothing but docs runs `bin/quality-gate.sh --docs` in the lint job,
 # lint and only the tests that read a doc: no shard, no agent job, no
 # facade job, no proc job, no suites job, no rust job and no systemd-proof
-# job (bin/lib/docsrule.sh, the rule the hook reads too).
+# job (bin/lib/docsrule.sh, the rule release.yml reads too).
 #
 # Every shard runs the whole of pyproject.toml's `testpaths` with
 # `--shard K/N` (conftest.py): a test's own id puts it in exactly one shard.

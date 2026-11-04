@@ -16,9 +16,7 @@ cannot judge a service that Python cannot import.
 
 The suite owns no product code. It is not in the root `testpaths`, so the
 full suite does not run it. CI runs it in the `proc` job of `gate.yml` and of
-`release.yml`. The pre-push hook runs it for a push that changes a path of
-this directory, with `CRECHE_PROC_NO_SKIP=1`. A Markdown document of this
-directory does not start it.
+`release.yml`, with `CRECHE_PROC_NO_SKIP=1`. No hook runs it.
 
 ## Run it
 
@@ -29,8 +27,7 @@ uv run pytest integration/proc -m slow -n 4
 
 Run this suite in its own pytest command.
 
-`-n 4` runs the tests on four workers. CI uses that command. The pre-push
-hook uses `-n auto`, one worker for each core. Each test takes its own
+`-n 4` runs the tests on four workers. CI uses that command. Each test takes its own
 ports and its own root. The one thing the workers share is the build of the
 Rust chaperone, and a lock lets one worker build it.
 
