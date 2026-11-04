@@ -69,11 +69,14 @@ use it to prove that the JSON body of an Upgrade request crosses
 of the VM (`VmRunDir::vsock_socket` of `creche-vmm-store`). It writes
 `CONNECT 1200` and waits for `OK`. It retries on ENOENT and on an empty
 reply, because both come before the guest listener exists (fact 74). It
+also retries on ECONNREFUSED (decision CH43 rule 7). `DIAL_PAUSE` (10 ms,
+decision CH43 rule 5) is the pause between two tries. It
 then sends `ControlHello` with the wall time of the vmm (decision CH28)
 and reads one `ControlReady` with the strict reader. `READY_WAIT` (10 s,
 decision CH36 G26) bounds the whole open. A close before `ControlReady`
 is a fault of the VM: `ControlError::needs_cold_boot` is true (decision
-CH32 rule 3).
+CH32 rule 3). Each other error ends the open with a reported fault and
+no cold boot (decision CH43 rule 6).
 
 `control::ControlState` keeps the current link and the last facade state
 of each VM. Each change names its `LinkId`, and only the current link
@@ -108,23 +111,7 @@ write syncs a file and a dir, so the caller runs it in `spawn_blocking`
 
 ## Known gaps
 
-1. CONTRACT-QUESTION: no decision row sets the pause between two dials
-   of a vsock guest port (`DIAL_PAUSE` in `src/control.rs`). Fact 74 saw
-   `OK` 45 to 51 ms after the start of a restore. The reading is 10 ms.
-2. CONTRACT-QUESTION: decision CH32 rule 3 asks for a cold boot only
-   when guest init closes the control link on a hello for another
-   session. No row decides whether a bad line, a timeout, a refused
-   `CONNECT`, a failed dial or a failed read or write before
-   `ControlReady` asks for one. The reading is the narrowest one:
-   `ControlError::needs_cold_boot` is true only for `Closed`. Each other
-   error ends the open with no cold boot, and the caller reports it.
-3. CONTRACT-QUESTION: fact 74 names only ENOENT and an empty reply as
-   the dial errors that the vmm retries. No row says whether it retries
-   on ECONNREFUSED. A socket file exists from `bind` on, and a connect
-   gets ECONNREFUSED until Cloud Hypervisor calls `listen`. The reading:
-   `dial` in `src/control.rs` retries ECONNREFUSED the same way as
-   ENOENT, inside `READY_WAIT`.
-4. CONTRACT-QUESTION: after `ControlReady`, no message on the control
+1. CONTRACT-QUESTION: after `ControlReady`, no message on the control
    link reports a change of the facade state. A turn event shows that the
    facade runs (decision CH32 rule 6), but it carries no pid and no start
    count, and an exit sends nothing. The reading: `ControlState::facade`
