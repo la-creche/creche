@@ -6,7 +6,7 @@
 //! `memory-ranges` relative to it.
 
 use std::fs::{self, File};
-use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -97,6 +97,12 @@ fn allocated(dir: &Path) -> u64 {
                 * 512
         })
         .sum()
+}
+
+/// Sets the mode of `dir`.
+#[cfg(test)]
+fn set_mode(dir: &Path, mode: u32) {
+    fs::set_permissions(dir, fs::Permissions::from_mode(mode)).expect("the mode");
 }
 
 /// The removed generations as (session, generation, reason).
@@ -232,4 +238,49 @@ fn a_leftover_retired_dir_is_removed_and_a_temp_dir_stays() {
     assert!(!retired.exists());
     assert!(taking.exists(), "a take in progress keeps its temp dir");
     assert!(swept.dropped.is_empty(), "{:?}", swept.dropped);
+}
+
+/// A failed read of an older generation keeps the newer one, even past
+/// `MAX_AGE`. So the older one never becomes the newest (decision CH19
+/// (5)).
+#[test]
+fn an_unreadable_older_generation_keeps_the_newer_one() {
+    let temp = Temp::new("unreadable");
+    let older = temp.snapshot(A, FIRST, 2 * MAX_AGE);
+    let newer = temp.snapshot(A, SECOND, 2 * MAX_AGE);
+    set_mode(&older, 0o000);
+    let swept = temp.sweep(0, &InUse::new());
+    set_mode(&older, 0o755);
+    assert_eq!(swept.failures.len(), 1, "{:?}", swept.failures);
+    assert!(swept.dropped.is_empty(), "{:?}", swept.dropped);
+    assert!(newer.exists(), "the newer generation stays");
+}
+
+/// A failed budget drop keeps its bytes in `kept_bytes`.
+#[test]
+fn a_failed_budget_drop_counts_its_bytes() {
+    let temp = Temp::new("budget-fails");
+    let dir = temp.snapshot(A, FIRST, DAY);
+    // The key and the files cannot leave a dir with no write bit.
+    set_mode(&dir, 0o500);
+    let swept = temp.sweep(0, &InUse::new());
+    set_mode(&dir, 0o755);
+    assert!(swept.dropped.is_empty(), "{:?}", swept.dropped);
+    assert_eq!(swept.failures.len(), 1, "{:?}", swept.failures);
+    assert_eq!(swept.kept_bytes, allocated(&dir));
+}
+
+/// A failed drop of a superseded generation is not tried again by the
+/// budget step.
+#[test]
+fn a_failed_superseded_drop_is_tried_once() {
+    let temp = Temp::new("superseded-fails");
+    let older = temp.snapshot(A, FIRST, DAY);
+    let newer = temp.snapshot(A, SECOND, Duration::ZERO);
+    set_mode(&older, 0o500);
+    let swept = temp.sweep(0, &InUse::new());
+    set_mode(&older, 0o755);
+    assert!(swept.dropped.is_empty(), "{:?}", swept.dropped);
+    assert_eq!(swept.failures.len(), 1, "{:?}", swept.failures);
+    assert!(older.exists() && newer.exists());
 }
