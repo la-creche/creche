@@ -29,6 +29,7 @@ A reader must not infer it from the `id -u` guard. A root script asserts
 | Setup | `provision-library.sh`, `fleet-up` | Idempotent, not a no-op. Every step checks before it writes. A value that has a current answer is upserted in place. A token minted once is never replaced in silence. |
 | Operations | `creche-deploy`, `creche-handover` | Run unattended from units and timers. Fail loudly into the journal. |
 | Checks | `quality-gate.sh`, `systemd-proof.sh` | Run from the hooks and from CI. `systemd-proof.sh` runs in CI only. No unit runs them. They use `set -euo pipefail`. The first failed check stops the run. |
+| Build | `build-artifacts.sh` | It runs in CI only, from the job `artifacts` of `release.yml`. No hook and no unit runs it, and the host never runs it. It uses `set -euo pipefail`: the first fault stops the run with one line, and the run then writes no digest list. It can use the GNU tools of a runner. It stays bash 3.2-clean, because its tests run it on a development machine. |
 | Library | `lib/envfile.sh`, `lib/docsrule.sh`, `lib/artifactrows.sh` | Sourced only, never executed. Say "Sourced only" in the header. That marker exempts the file from the mode rule below. |
 | Tools | `yaml-to-toml.py`, `chaperone-install-draft.py` | Run by hand on a development machine, and from a test in CI. No unit runs a tool, and the host does not need one. A tool reads the files that its command names and changes no file. `chaperone-install-draft.py --out-dir` makes one new directory and writes only into it. |
 | Tests | `tests/test_*.py`, `tests/test_*.sh` | pytest collects the `.py` files. The `.sh` files run by hand: `bash bin/tests/<name>.sh`. None needs a host. |
@@ -82,6 +83,7 @@ through a file or a health endpoint, and give a short in-VM command a
 | `fleet-up` | OPERATOR | Draft. `check`, `up`, `down` of the fleet layer: the tokens, the keys, the env files, the state directories and the user units. `check` is read-only and lists the root checklist. `up` records each write, and `down` removes only a recorded path. `docs/fleet-bootstrap.md` is the design. |
 | `quality-gate.sh` | OPERATOR, from the hooks and CI | ruff, ruff format, pyright, then pytest as asked: `--tests` or `--docs`. |
 | `systemd-proof.sh` | CI, from the `systemd-proof` job and from the scope of each workflow | Proves the restart rule of the daemon units on the systemd of the runner, with three transient units. Then gives each unit file under `systemd/` to `systemd-analyze verify`. `--unchanged FROM TO` says if a change needs no proof. |
+| `build-artifacts.sh` | CI, from the job `artifacts` of `release.yml` | It builds, walks, packs and checks the archive of each binary component. "The archives of the binary components" has the rules. |
 | `chaperone-install-draft.py` | OPERATOR on a development machine, and CI | Reads the server files of a registry and prints a draft of the Rust chaperone's `install.toml` and one effect manifest for each server, or writes them into a new directory. The operator reviews the draft and installs it as root. The header of the script holds each fact it takes from a server file and each refusal. |
 | `yaml-to-toml.py` | OPERATOR on a development machine, and CI | Converts one YAML file of the three kinds to TOML and prints the text. The three kinds are the family file, the server file and the component manifest. `--check` proves one converted pair: the values are equal, and the count of comments is equal. Status 1 means a pair that differs. Each other fault gives status 2. The header of the script holds the layout and each refusal. The script is temporary. Packet `toml-converter-leave` deletes the script when the tree holds no YAML file of the three kinds. |
 
@@ -102,6 +104,55 @@ CI. CI runs the full suite as shards with `pytest --shard K/N`.
 
 `lib/docsrule.sh` holds the one copy of "does this change touch nothing but
 prose?". `gate.yml` and `release.yml` source it.
+
+## The archives of the binary components
+
+`build-artifacts.sh` makes the archive of each binary component. The tag
+script attaches the archive and its signature bundle to the Release of the
+component. The host fetches the two files and builds nothing.
+
+The script reads the rows from `handover artifacts --repo "$ARTIFACT_REPO"`.
+A row holds these values:
+
+- the component and the target
+- the names of the two assets
+- the name of the install variable
+- three limits
+- each build command of the manifest
+
+The script holds no copy of a value of a row. Each variable that names a
+path must hold an absolute path. The script changes its directory, so it
+refuses a relative path with one line.
+
+- With no row, the script prints one line and starts no `rustup` and no
+  `cargo`. It writes an empty `SHA256SUMS` and an empty step output
+  `digests`.
+- With a row or more, it installs the toolchain of
+  `rust/rust-toolchain.toml` and adds the target of each row.
+- It runs each command of a row in the repository root, as a list of words.
+  No shell reads a word. The install variable of the row names an empty
+  tree. `RUSTFLAGS` holds one `--remap-path-prefix` each for the workspace,
+  the cargo home and the temporary directory of the runner.
+- The tree must hold one program or more directly in `bin/`, and nothing
+  else.
+- `handover check-tree --kind binary` walks the tree. The needles are the
+  workspace, the home, the cargo home and the temporary directory of the
+  runner.
+- The pack gives each member the name `<component>/bin/<program>`, the
+  owner 0, the group 0, the time 0 and the mode 0755. The members are in
+  sorted order, and the archive has no directory member. gzip writes no name
+  and no time.
+- The script refuses an archive over a limit of its row. The three limits
+  are the bytes of the archive, the count of members and the bytes of the
+  tree. Root refuses such an archive, so CI must not sign it.
+- At the end, `SHA256SUMS` holds one line of `sha256sum` for each archive,
+  and the step output `digests` holds the same text.
+
+`lib/artifactrows.sh` is the one reader of the rows. The reader refuses
+each text that is not in the line form of `handover artifacts`. It also
+refuses two rows with one component, one archive or one bundle. The reader
+gives the reason of a refusal to its caller. The script then stops with
+one line.
 
 ## The systemd proof
 
@@ -169,6 +220,7 @@ scope of `release.yml` ask it.
 |---|---|
 | `test_bin_modes.py` | Every tracked file under `bin/` with a `#!` line is mode 100755 in the index. `creche-deploy` copies modes as they are. |
 | `test_artifactrows.py` | `read_rows` of `lib/artifactrows.sh`, sourced in bash, with `set -e` and without it. The rows are the real line form of `handover artifacts`. The reader keeps each word of each command, also for two commands in one row. A last row with no line feed is a whole row. Each text in another form is refused with its reason, and the reader exits no shell. |
+| `test_build_artifacts.py` | `build-artifacts.sh`, against stand-ins for `rustup`, `cargo`, `tar`, `gzip` and the `handover` command. The rows are the real line form. No row: one line, an empty digest list and no call of `rustup` or `cargo`. One row: the words and the variables of each call, the needles of the walk, the member names and the digest file. Each refusal stops the run with one line and writes no digest list. The refusals are a tree with no program, a tree with another thing, a program name that is not plain and a directory in `bin/`. The run also stops for a walk fault, a build fault, each of the three limits and a row in another form. A relative path in a variable stops the run before the first call. No word of a command passes through a shell. `build-artifacts.sh` sources `lib/artifactrows.sh`. No other file under `bin/` outside `tests/` defines `read_rows` or names the key `max-unpacked-bytes`. |
 | `test_bin_path_refs.py` | Every repository path, console script and sibling a script or unit names is in the tree. Marked `docs`. |
 | `test_chaperone_install_draft.py` | The print for the fixture registry of `family` equals `install_draft_golden.txt`. `--out-dir` writes the same files, and refuses a directory that exists. A secret reference is a secret and never a word of the command. A state directory names its variable last. Each refusal of a server file. `integration/proc/test_proc_install_draft.py` gives the golden file to the real `chaperone check`. |
 | `test_yaml_to_toml.py` | The layout that `yaml-to-toml.py` writes, each refusal, the proof of `--check` and each exit status. The test holds its own YAML texts. It also converts each tracked YAML file of the three kinds and checks each pair. A tree with no such file passes. The values of each TOML text equal what `yaml.safe_load` gives for the YAML text. |
