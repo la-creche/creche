@@ -25,9 +25,18 @@ in the tree, full history in every checkout.
 it: the same shard command, a last job that needs every other one, and one
 shared verdict (`.github/actions/verdict`), so a PR and its release cannot
 judge the same results differently. Its tag step runs only after that
-verdict, one allocation at a time, and only its last job may write. The
-release builds no archive, so the tag step gets no variable of a binary
-component.
+verdict, one allocation at a time, and only its last job may write.
+
+The release has jobs that the gate has not. The `plan` job names each
+binary component that gets a tag in the run, from the dry run of the tag
+script. The `artifacts` job builds the archive of each such component
+(`bin/build-artifacts.sh`), in each scope. The tests run the text of the
+plan step against a stand-in dry run.
+The `sign` job signs each archive. It holds the identity token, and each
+word that it runs is in the workflow file. The `release` job takes both
+workflow artifacts and cosign, and the tag step gets `ASSET_DIR` and
+`COSIGN`. The tests run the text of the sign step and of the cosign step
+against a stand-in `curl`.
 
 The `proc` job runs the process-level suite (`integration/proc`), which is
 in no shard: `testpaths` does not hold it. The job builds the facade first,
@@ -61,6 +70,7 @@ that build before their final job can pass.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -74,7 +84,8 @@ from typing import Any
 
 import pytest
 import yaml
-from handover.catalog import Repo
+from handover.artifacts import asset_names
+from handover.catalog import ARCHIVE_SUFFIX, BUNDLE_SUFFIX, Repo
 
 REPO = Path(__file__).resolve().parents[2]
 WORKFLOWS = REPO / ".github" / "workflows"
@@ -99,7 +110,16 @@ BY_NAME = [GATE_NAME, RELEASE_NAME]
 #: `env`. The tests that hold a job equal in the two files read `jobs` only.
 FILE_KEYS = {
     GATE_NAME: {"name", True, "permissions", "concurrency", "jobs"},
-    RELEASE_NAME: {"name", True, "permissions", "jobs"},
+    RELEASE_NAME: {"name", True, "permissions", "env", "jobs"},
+}
+
+#: The one `env` key of the files: the pin of cosign in the release. To take
+#: another cosign, compute the SHA-256 of the asset `cosign-linux-amd64` of
+#: the new release and compare it with the file `cosign_checksums.txt` of
+#: that release. Then change the two values here and in `release.yml`.
+COSIGN_ENV = {
+    "COSIGN_VERSION": "v3.1.3",
+    "COSIGN_SHA256": "4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71",
 }
 
 #: What starts the gate: a pull request, and a merge queue's group.
@@ -199,13 +219,258 @@ SYSTEMD_ASKED = {
 #: The catalog's name for this repository (`handover/src/handover/catalog.py`).
 THIS_REPOSITORY = str(Repo.CRECHE)
 
+#: The job of the release that builds the archive of each binary component.
+ARTIFACTS_JOB = "artifacts"
+
+#: The job of the release that signs each archive.
+SIGN_JOB = "sign"
+
+#: The job of the release that names each binary component with a planned
+#: tag.
+PLAN_JOB = "plan"
+
+#: The jobs that only the release has.
+RELEASE_ONLY = {PLAN_JOB, ARTIFACTS_JOB, SIGN_JOB}
+
 #: The jobs of each file with no rule of their own. The verdict needs a
 #: success from each of them in each scope.
-NO_RULE = {GATE_NAME: {"scope", "lint"}, RELEASE_NAME: {"scope", "lint"}}
+NO_RULE = {GATE_NAME: {"scope", "lint"}, RELEASE_NAME: {"scope", "lint", *RELEASE_ONLY}}
 
-#: The variables of the tag step: the token and the catalog name. No
-#: ASSET_DIR and no COSIGN: this workflow builds no archive.
-TAG_ENV = {"GH_TOKEN": "${{ github.token }}", "TAG_REPO": THIS_REPOSITORY}
+#: The actions of the `artifacts` job, by their commit.
+CHECKOUT_ACTION = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+SETUP_UV = "astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4"
+UPLOAD_ACTION = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+DOWNLOAD_ACTION = "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
+
+#: The days that a workflow artifact stays.
+RETENTION_DAYS = 7
+
+#: Where the archives, the bundles and cosign go on a runner.
+ARTIFACT_DIR = "${{ runner.temp }}/artifacts"
+ASSET_DIR = "${{ runner.temp }}/assets"
+BUNDLE_DIR = "${{ runner.temp }}/bundles"
+COSIGN_PATH = "${{ runner.temp }}/cosign"
+
+#: Each key of the `artifacts` job. No `if`: the job runs in each scope. No
+#: `permissions`: it holds the read-only token of its file.
+ARTIFACTS_KEYS = {"needs", "runs-on", "timeout-minutes", "outputs", "steps"}
+
+#: The one output of the job: the step output of the build.
+ARTIFACTS_OUTPUTS = {"digests": "${{ steps.build.outputs.digests }}"}
+
+#: The variables of the build step, each one.
+BUILD_STEP_ENV = {
+    "ARTIFACT_REPO": THIS_REPOSITORY,
+    "ARTIFACT_PLANNED": "${{ needs.plan.outputs.components }}",
+    "ARTIFACT_OUT": ARTIFACT_DIR,
+}
+
+#: The steps of the job, as a whole. The checkout keeps no token in the
+#: clone, because a build script runs here. The step that takes uv keeps no
+#: cache: the bytes of an archive come from a clean build.
+ARTIFACTS_STEPS = [
+    {"uses": CHECKOUT_ACTION, "with": {"fetch-depth": 0, "persist-credentials": False}},
+    {"uses": SETUP_UV, "with": {"enable-cache": False}},
+    {"name": "build", "id": "build", "env": BUILD_STEP_ENV, "run": "bin/build-artifacts.sh"},
+    {
+        "uses": UPLOAD_ACTION,
+        "with": {
+            "name": ARTIFACTS_JOB,
+            "path": ARTIFACT_DIR,
+            "if-no-files-found": "error",
+            "retention-days": RETENTION_DAYS,
+        },
+    },
+]
+
+#: Each key of the `plan` job. No `needs` and no `if`: it runs in each scope,
+#: beside the scope job. No `permissions`: it holds the read-only token of
+#: its file.
+PLAN_KEYS = {"runs-on", "timeout-minutes", "outputs", "steps"}
+
+#: The one output of the job: the components of the plan step.
+PLAN_OUTPUTS = {"components": "${{ steps.plan.outputs.components }}"}
+
+#: The whole text of the plan step. A dry run that fails leaves the plan
+#: with the lines that it printed, and the tag step judges the rest.
+PLAN_RUN = """\
+set -euo pipefail
+status=0
+handover/bin/allocate-tags.sh --dry-run > "$RUNNER_TEMP/plan" || status=$?
+cat "$RUNNER_TEMP/plan"
+if [[ "$status" != 0 ]]; then
+  echo "::warning::the dry run ended with status $status. The plan holds the lines that it printed."
+fi
+attach='^would attach [^ ]+ to ([a-z][a-z0-9-]*)-v[0-9]+[.][0-9]+[.][0-9]+$'
+components=""
+while IFS= read -r line; do
+  if [[ "$line" =~ $attach && " $components " != *" ${BASH_REMATCH[1]} "* ]]; then
+    components="${components:+$components }${BASH_REMATCH[1]}"
+  fi
+done < "$RUNNER_TEMP/plan"
+# Only main signs: a manual run on another branch builds and signs
+# nothing, so it leaves no public transparency record.
+if [[ "${GITHUB_REF:-}" != refs/heads/main ]]; then
+  echo "plan: ${GITHUB_REF:-no ref} is not main, so no archive is built or signed"
+  components=""
+fi
+echo "components=$components" >> "$GITHUB_OUTPUT"
+echo "plan: ${components:-no binary component}"
+"""
+
+#: The steps of the `plan` job, as a whole. The checkout takes every tag and
+#: keeps no token. The dry run gets the catalog name and no token.
+PLAN_STEPS = [
+    {"uses": CHECKOUT_ACTION, "with": {"fetch-depth": 0, "persist-credentials": False}},
+    {"uses": SETUP_UV, "with": {"enable-cache": False}},
+    {"name": PLAN_JOB, "id": PLAN_JOB, "env": {"TAG_REPO": THIS_REPOSITORY}, "run": PLAN_RUN},
+]
+
+#: The text that takes cosign. The `sign` job and the `release` job hold it.
+#: With no archive it prints one line and fetches nothing, so a run with no
+#: binary component fetches no program of 141 MB. Else it compares the
+#: SHA-256 of the program with the constant before the line that makes the
+#: file a program, and that line is before the first run of it.
+COSIGN_FETCH = """\
+cosign="$RUNNER_TEMP/cosign"
+if compgen -G "$RUNNER_TEMP/assets/*.tar.gz" > /dev/null; then
+  curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 3 \\
+    --output "$cosign" \\
+    "https://github.com/sigstore/cosign/releases/download/$COSIGN_VERSION/cosign-linux-amd64"
+  found="$(sha256sum "$cosign" | cut -d ' ' -f 1)"
+  if [[ "$found" != "$COSIGN_SHA256" ]]; then
+    echo "cosign: the program has the SHA-256 $found, not $COSIGN_SHA256" >&2
+    exit 1
+  fi
+  chmod 0755 "$cosign"
+  "$cosign" version
+else
+  echo "cosign: no archive, so no fetch"
+fi
+"""
+
+#: The whole text of the cosign step of the `release` job.
+COSIGN_RUN = "set -euo pipefail\n" + COSIGN_FETCH
+
+#: The three lines of the fetch that must keep their order.
+COSIGN_COMPARE = 'if [[ "$found" != "$COSIGN_SHA256" ]]; then'
+COSIGN_MODE = 'chmod 0755 "$cosign"'
+COSIGN_FIRST_USE = '"$cosign" version'
+
+#: The line of the `sign` step that compares each archive with the job
+#: output of `artifacts`.
+DIGEST_CHECK = '(cd "$assets" && sha256sum --check --strict <<< "$DIGESTS")'
+
+#: The whole text of the `sign` step: the check of the archives, the fetch,
+#: and one signature for each archive.
+SIGN_RUN = (
+    """\
+set -euo pipefail
+shopt -s dotglob
+assets="$RUNNER_TEMP/assets"
+bundles="$RUNNER_TEMP/bundles"
+mkdir -p "$bundles"
+line='^[0-9a-f]{64}  [A-Za-z0-9][A-Za-z0-9._-]*[.]tar[.]gz$'
+named=""
+if [[ -n "$DIGESTS" ]]; then
+  while IFS= read -r one; do
+    if [[ ! "$one" =~ $line ]]; then
+      echo "sign: the job artifacts gave a line that is no SHA-256 line of an archive" >&2
+      exit 1
+    fi
+    named+="${one:66}"$'\\n'
+  done <<< "$DIGESTS"
+fi
+files=""
+for file in "$assets"/*; do
+  name="${file##*/}"
+  if [[ ! -e "$file" || "$name" == "SHA256SUMS" ]]; then
+    continue
+  fi
+  if [[ -L "$file" || ! -f "$file" || "$name" != *.tar.gz ]]; then
+    echo "sign: the job artifacts gave $name, which is no archive" >&2
+    exit 1
+  fi
+  files+="$name"$'\\n'
+done
+if [[ "$(printf '%s' "$named" | sort -u)" != "$(printf '%s' "$named" | sort)" ]]; then
+  echo "sign: the job artifacts named one archive two times" >&2
+  exit 1
+fi
+if [[ "$(printf '%s' "$named" | sort)" != "$(printf '%s' "$files" | sort)" ]]; then
+  echo "sign: the archives are not the archives that the job artifacts named" >&2
+  exit 1
+fi
+if [[ -z "$named" ]]; then
+  echo "sign: no archive"
+  : > "$bundles/SHA256SUMS"
+  exit 0
+fi
+"""
+    + DIGEST_CHECK
+    + "\n"
+    + COSIGN_FETCH
+    + """\
+while IFS= read -r one; do
+  name="${one:66}"
+  "$cosign" sign-blob --yes --bundle "$bundles/$name.sigstore.json" "$assets/$name" < /dev/null
+done <<< "$DIGESTS"
+printf '%s\\n' "$DIGESTS" > "$bundles/SHA256SUMS"
+"""
+)
+
+#: Each key of the `sign` job. No `if`: the job runs in each scope, and with
+#: no archive it signs nothing and passes.
+SIGN_KEYS = {"needs", "runs-on", "timeout-minutes", "permissions", "steps"}
+
+#: The whole token of the `sign` job.
+SIGN_PERMISSIONS = {"id-token": "write"}
+
+#: The steps of the `sign` job, as a whole: the archives of the run, the one
+#: run step and the bundles. No checkout and no local action.
+SIGN_STEPS = [
+    {"uses": DOWNLOAD_ACTION, "with": {"name": ARTIFACTS_JOB, "path": ASSET_DIR}},
+    {
+        "name": SIGN_JOB,
+        "env": {"DIGESTS": "${{ needs.artifacts.outputs.digests }}"},
+        "run": SIGN_RUN,
+    },
+    {
+        "uses": UPLOAD_ACTION,
+        "with": {
+            "name": "bundles",
+            "path": BUNDLE_DIR,
+            "if-no-files-found": "error",
+            "retention-days": RETENTION_DAYS,
+        },
+    },
+]
+
+#: The time limit of the cosign step of the `release` job. That job holds
+#: the group of one allocation at a time, so a fetch that hangs would hold
+#: each later release run. The step comes before the tag step, so the limit
+#: stops no allocation half way.
+COSIGN_STEP_MINUTES = 10
+
+#: The cosign step of the `release` job.
+COSIGN_STEP = {"name": "cosign", "timeout-minutes": COSIGN_STEP_MINUTES, "run": COSIGN_RUN}
+
+#: The steps of the `release` job between the verdict and the step that
+#: takes uv: the two workflow artifacts into one directory, then cosign.
+RELEASE_ASSET_STEPS = [
+    {"uses": DOWNLOAD_ACTION, "with": {"name": ARTIFACTS_JOB, "path": ASSET_DIR}},
+    {"uses": DOWNLOAD_ACTION, "with": {"name": "bundles", "path": ASSET_DIR}},
+    COSIGN_STEP,
+]
+
+#: The variables of the tag step: the token, the catalog name, the assets of
+#: a binary component and the program that checks their signature.
+TAG_ENV = {
+    "GH_TOKEN": "${{ github.token }}",
+    "TAG_REPO": THIS_REPOSITORY,
+    "ASSET_DIR": ASSET_DIR,
+    "COSIGN": COSIGN_PATH,
+}
 
 #: The whole test command of the `proc` job, as `integration/proc/AGENTS.md`
 #: gives it.
@@ -484,11 +749,497 @@ def test_the_release_runs_the_gates_test_jobs() -> None:
 
 
 def test_the_two_workflows_have_the_same_jobs() -> None:
-    """The release runs each job of the gate before its last job. A job that
-    enters one file alone fails here. So the last job of the release needs
-    as many jobs as the last job of the gate."""
-    assert set(JOBS) - {GATE_NAME} == set(RELEASE_JOBS) - {RELEASE_NAME}
-    assert len(RELEASE_JOBS[RELEASE_NAME]["needs"]) == len(JOBS[GATE_NAME]["needs"])
+    """The release runs each job of the gate before its last job, and the
+    jobs of RELEASE_ONLY. Another job that enters one file alone fails
+    here. So the last job of the release needs as many jobs more than the
+    last job of the gate as RELEASE_ONLY holds."""
+    assert set(JOBS) - {GATE_NAME} == set(RELEASE_JOBS) - {RELEASE_NAME, *RELEASE_ONLY}
+    assert not RELEASE_ONLY & set(JOBS)
+    assert len(RELEASE_JOBS[RELEASE_NAME]["needs"]) == len(JOBS[GATE_NAME]["needs"]) + len(
+        RELEASE_ONLY
+    )
+
+
+def test_the_artifacts_job_is_pinned_as_a_whole() -> None:
+    """Each key of the job and each step, in their order. The job has no
+    rule and no `permissions` key, and no step has a rule. One more step
+    can put another file into the upload, and one more key can let a failed
+    step pass. The checkout keeps no token, and the job keeps no cache."""
+    job = RELEASE_JOBS[ARTIFACTS_JOB]
+
+    assert set(job) == ARTIFACTS_KEYS
+    assert job["needs"] == ["scope", PLAN_JOB]
+    assert job["runs-on"] == "ubuntu-24.04"
+    assert 0 < job["timeout-minutes"] <= 30
+    assert job["outputs"] == ARTIFACTS_OUTPUTS
+    assert job["steps"] == ARTIFACTS_STEPS
+    assert (REPO / "bin" / "build-artifacts.sh").is_file()
+
+
+def test_the_plan_job_is_pinned_as_a_whole() -> None:
+    """The job holds the whole text of its run step. It needs no job, so
+    no failed job before it can leave the plan out. The tag step and the
+    plan name one catalog repository."""
+    job = RELEASE_JOBS[PLAN_JOB]
+
+    assert set(job) == PLAN_KEYS
+    assert job["runs-on"] == "ubuntu-24.04"
+    assert 0 < job["timeout-minutes"] <= 10
+    assert job["outputs"] == PLAN_OUTPUTS
+    assert job["steps"] == PLAN_STEPS
+    assert _step(RELEASE_JOBS, RELEASE_NAME, TAG_STEP)["env"]["TAG_REPO"] == THIS_REPOSITORY
+
+
+#: A stand-in tag script: it prints the file STUB_PLAN and ends with
+#: STUB_STATUS.
+DRY_RUN_STUB = """#!/usr/bin/env bash
+[[ "$*" == "--dry-run" ]] || exit 9
+cat "$STUB_PLAN"
+exit "${STUB_STATUS:-0}"
+"""
+
+#: The lines of a dry run that plans one venv tag and one tag of `vmm`.
+VMM_PLAN = """\
+repo:    creche
+create caregiver-v0.1.67 0.1.66 patch
+create vmm-v0.1.0 - first
+would create caregiver-v0.1.67 on abc and publish its Release
+would create vmm-v0.1.0 on abc and publish its Release
+would attach vmm-x86_64-unknown-linux-musl.tar.gz to vmm-v0.1.0
+would attach vmm-x86_64-unknown-linux-musl.tar.gz.sigstore.json to vmm-v0.1.0
+"""
+
+#: (the lines of the dry run, its status, the output `components`).
+PLANS = {
+    "no-tag": ("allocate-tags: 0 created\n", "0", ""),
+    "a-venv-tag-only": (VMM_PLAN.split("would create vmm")[0], "0", ""),
+    "a-vmm-tag": (VMM_PLAN, "0", "vmm"),
+    "two-binary-tags": (
+        VMM_PLAN + "would attach other-x.tar.gz to other-v1.2.3\n",
+        "0",
+        "vmm other",
+    ),
+    "a-dry-run-that-fails-after-its-plan": (VMM_PLAN, "1", "vmm"),
+    "a-dry-run-that-fails-first": ("", "1", ""),
+    "lines-in-another-form": (
+        "would attach a b to vmm-v1.2.3\nwould attach a to vmm-v1.2\n"
+        "would attach a to Vmm-v1.2.3\n would attach a to vmm-v1.2.3\n",
+        "0",
+        "",
+    ),
+}
+
+
+def _run_plan(
+    tmp_path: Path, lines: str, status: str, ref: str = "refs/heads/main"
+) -> tuple[subprocess.CompletedProcess[str], str]:
+    """Run the plan step against DRY_RUN_STUB that prints `lines` and ends
+    with `status`. Return the run and the text of GITHUB_OUTPUT."""
+    script = tmp_path / "handover" / "bin" / "allocate-tags.sh"
+    script.parent.mkdir(parents=True)
+    script.write_text(DRY_RUN_STUB, encoding="utf-8")
+    script.chmod(0o755)
+    plan = tmp_path / "given-plan"
+    plan.write_text(lines, encoding="utf-8")
+    output = tmp_path / "output"
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    done = subprocess.run(
+        ["bash", "-c", PLAN_RUN],
+        cwd=tmp_path,
+        env={
+            "PATH": os.environ["PATH"],
+            "RUNNER_TEMP": str(temp),
+            "GITHUB_OUTPUT": str(output),
+            "STUB_PLAN": str(plan),
+            "STUB_STATUS": status,
+            "GITHUB_REF": ref,
+        },
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    return done, output.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(("lines", "status", "components"), PLANS.values(), ids=PLANS)
+def test_the_plan_step_names_each_binary_component_with_a_planned_tag(
+    tmp_path: Path, lines: str, status: str, components: str
+) -> None:
+    """The step reads the `would attach` lines of the dry run. A line in
+    another form names no component. The step passes also when the dry run
+    fails: the tag step judges the same tree."""
+    done, output = _run_plan(tmp_path, lines, status)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert output == f"components={components}\n"
+    assert done.stdout.startswith(lines)
+    assert ("::warning::" in done.stdout) == (status != "0")
+
+
+#: The one line of the tag script that names an asset in a dry run.
+ATTACH_LINE = 'say "would attach $name to $tag"'
+
+
+def test_the_plan_step_reads_the_attach_line_of_the_real_tag_script(tmp_path: Path) -> None:
+    """The plan step and the tag script agree on one line. The script holds
+    ATTACH_LINE and no other `would attach` line. That line, with the real
+    asset names of vmm, gives the attach lines of VMM_PLAN, and the plan step
+    names vmm from them. A change to the line in the script fails here, so
+    the plan never drops a binary component without a red test."""
+    script = (REPO / "handover" / "bin" / "allocate-tags.sh").read_text(encoding="utf-8")
+    said = [line.strip() for line in script.splitlines() if "would attach" in line]
+    assert said == [ATTACH_LINE]
+
+    template = ATTACH_LINE.removeprefix('say "').removesuffix('"')
+    names = asset_names("vmm")
+    lines = [
+        template.replace("$name", name).replace("$tag", "vmm-v0.1.0")
+        for name in (names.archive, names.bundle)
+    ]
+    assert lines == [line for line in VMM_PLAN.splitlines() if line.startswith("would attach")]
+
+    done, output = _run_plan(tmp_path, "".join(f"{line}\n" for line in lines), "0")
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert output == "components=vmm\n"
+
+
+def test_the_artifacts_job_takes_uv_at_the_pin_of_the_release_job() -> None:
+    (pinned,) = [
+        step for step in RELEASE_JOBS[RELEASE_NAME]["steps"] if step.get("uses") == SETUP_UV
+    ]
+
+    assert pinned == {"uses": SETUP_UV}
+
+
+def test_the_sign_job_is_pinned_as_a_whole() -> None:
+    """The job holds the identity token. Each word that it runs is in the
+    workflow file: the test holds each step, each key and the whole text of
+    the one run step. No step starts a file of the repository, and no text
+    holds an expression that a value of the run fills in."""
+    job = RELEASE_JOBS[SIGN_JOB]
+    (step,) = [one for one in job["steps"] if "run" in one]
+
+    assert set(job) == SIGN_KEYS
+    assert job["needs"] == ARTIFACTS_JOB
+    assert 0 < job["timeout-minutes"] <= 15
+    assert job["steps"] == SIGN_STEPS
+    assert "bin/" not in step["run"]
+    assert "${{" not in step["run"]
+
+
+def test_the_sign_job_names_the_assets_as_the_catalog_does() -> None:
+    """The tag script takes the names of the two assets from the catalog
+    (`handover allocate-tags --assets`). The `sign` job writes the bundle
+    and finds each archive by the two suffixes of the catalog, so a change
+    of one constant fails here before a release run refuses each binary
+    component."""
+    archive_end = ARCHIVE_SUFFIX.replace(".", "[.]") + "$'"
+
+    assert f'"$bundles/$name{BUNDLE_SUFFIX}"' in SIGN_RUN
+    assert f"line='^[0-9a-f]{{64}}  [A-Za-z0-9][A-Za-z0-9._-]*{archive_end}\n" in SIGN_RUN
+    assert f'"$name" != *{ARCHIVE_SUFFIX} ]]' in SIGN_RUN
+    assert f'compgen -G "$RUNNER_TEMP/assets/*{ARCHIVE_SUFFIX}"' in COSIGN_FETCH
+    assert COSIGN_FETCH in SIGN_RUN
+    assert COSIGN_FETCH in COSIGN_RUN
+
+
+def test_the_digest_check_is_before_the_first_cosign_word() -> None:
+    """The step compares each archive with the job output before it takes
+    cosign. In the fetch the compare of the program comes before the line
+    that makes the file a program, and that line before the first run."""
+    first = re.search(r"\bcosign\b", SIGN_RUN)
+
+    assert first is not None
+    assert SIGN_RUN.index(DIGEST_CHECK) < first.start()
+    assert (
+        COSIGN_FETCH.index(COSIGN_COMPARE)
+        < COSIGN_FETCH.index(COSIGN_MODE)
+        < COSIGN_FETCH.index(COSIGN_FIRST_USE)
+    )
+
+
+def test_the_sign_job_and_the_release_job_take_one_cosign() -> None:
+    """One text takes cosign in the two jobs, with the two constants of the
+    file. The release job then checks a signature with the program that the
+    sign job signed with."""
+    (step,) = [one for one in RELEASE_JOBS[RELEASE_NAME]["steps"] if one.get("name") == "cosign"]
+
+    assert RELEASE["env"] == COSIGN_ENV
+    assert step == COSIGN_STEP
+    assert COSIGN_FETCH in SIGN_RUN
+    for name, job in RELEASE_JOBS.items():
+        for one in job["steps"]:
+            assert not set(one.get("env", {})) & set(COSIGN_ENV), f"{name} sets a constant again"
+
+
+def test_the_release_job_takes_the_assets_after_the_verdict_and_before_the_tag() -> None:
+    """The two workflow artifacts go into one directory, and cosign comes
+    after them: the fetch reads that directory. The tag step gets both."""
+    steps = RELEASE_JOBS[RELEASE_NAME]["steps"]
+    names = [step.get("name") or step.get("uses") for step in steps]
+    verdict = names.index(VERDICT_STEP)
+    tag = names.index(TAG_STEP)
+
+    assert steps[verdict + 1 : verdict + 1 + len(RELEASE_ASSET_STEPS)] == RELEASE_ASSET_STEPS
+    assert verdict + len(RELEASE_ASSET_STEPS) < tag
+    assert _step(RELEASE_JOBS, RELEASE_NAME, TAG_STEP)["env"] == TAG_ENV
+    assert _step(RELEASE_JOBS, RELEASE_NAME, TAG_STEP)["run"] == TAG_RUN
+
+
+def test_each_upload_fails_with_no_file_and_stays_seven_days() -> None:
+    uploads = [
+        step
+        for job in RELEASE_JOBS.values()
+        for step in job["steps"]
+        if step.get("uses", "").startswith("actions/upload-artifact@")
+    ]
+
+    assert uploads
+    for step in uploads:
+        assert step["uses"] == UPLOAD_ACTION
+        assert step["with"]["if-no-files-found"] == "error"
+        assert step["with"]["retention-days"] == RETENTION_DAYS
+    for job in RELEASE_JOBS.values():
+        for step in job["steps"]:
+            if step.get("uses", "").startswith("actions/download-artifact@"):
+                assert step["uses"] == DOWNLOAD_ACTION
+
+
+#: What a run of the `sign` step needs of a runner: `sha256sum --check
+#: --strict`. A case that needs it skips on a development machine without
+#: it, and fails in CI.
+IN_CI = bool(os.environ.get("CI"))
+
+
+def _checks_a_line() -> bool:
+    """Whether the `sha256sum` of this machine takes `--check --strict` and a
+    line on its standard input, as the one of a runner does."""
+    program = shutil.which("sha256sum")
+    if program is None:
+        return False
+
+    done = subprocess.run(
+        [program, "--check", "--strict"],
+        input=f"{hashlib.sha256(b'').hexdigest()}  /dev/null\n",
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    return done.returncode == 0
+
+
+needs_sha256sum_check = pytest.mark.skipif(
+    not IN_CI and not _checks_a_line(), reason="the step uses `sha256sum --check --strict`"
+)
+
+#: `curl`: it writes its words to STUB_LOG and puts STUB_PROGRAM at the path
+#: after `--output`.
+CURL_STUB = """#!/usr/bin/env bash
+printf '%s\\037' curl "$@" >> "$STUB_LOG"
+printf '\\n' >> "$STUB_LOG"
+while [[ "$#" -gt 0 ]]; do
+  if [[ "$1" == "--output" ]]; then
+    cp "$STUB_PROGRAM" "$2"
+  fi
+  shift
+done
+"""
+
+#: What the stub `curl` fetches: a program that writes its words to
+#: STUB_USED, and writes a bundle at the path after `--bundle`.
+FETCHED = """#!/bin/sh
+echo "$*" >> "$STUB_USED"
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--bundle" ]; then
+    echo "a bundle" > "$2"
+  fi
+  shift
+done
+"""
+
+#: Two archives and their lines of `sha256sum`.
+ONE = "one-x86_64-unknown-linux-musl.tar.gz"
+TWO = "two-x86_64-unknown-linux-musl.tar.gz"
+BYTES = {ONE: b"the first archive", TWO: b"the second archive"}
+LINES = {name: f"{hashlib.sha256(body).hexdigest()}  {name}" for name, body in BYTES.items()}
+
+
+class Fetch:
+    """One run of the text of a step that takes cosign, on a runner whose
+    temporary directory holds `files` in `assets/`."""
+
+    def __init__(
+        self,
+        tmp_path: Path,
+        text: str,
+        files: dict[str, bytes],
+        digests: str = "",
+        sha256: str | None = None,
+    ) -> None:
+        stubs = tmp_path / "stubs"
+        stubs.mkdir()
+        curl = stubs / "curl"
+        curl.write_text(CURL_STUB, encoding="utf-8")
+        curl.chmod(0o755)
+        fetched = tmp_path / "fetched"
+        fetched.write_text(FETCHED, encoding="utf-8")
+
+        self.temp = tmp_path / "temp"
+        self.assets = self.temp / "assets"
+        self.assets.mkdir(parents=True)
+        for name, body in files.items():
+            (self.assets / name).write_bytes(body)
+
+        self.bundles = self.temp / "bundles"
+        self.program = self.temp / "cosign"
+        self.log = tmp_path / "calls.log"
+        self.used = tmp_path / "used"
+        self.done = subprocess.run(
+            ["bash", "-c", text],
+            env={
+                "PATH": f"{stubs}{os.pathsep}{os.environ['PATH']}",
+                "RUNNER_TEMP": str(self.temp),
+                "DIGESTS": digests,
+                "COSIGN_VERSION": COSIGN_ENV["COSIGN_VERSION"],
+                "COSIGN_SHA256": sha256 or hashlib.sha256(FETCHED.encode()).hexdigest(),
+                "STUB_LOG": str(self.log),
+                "STUB_PROGRAM": str(fetched),
+                "STUB_USED": str(self.used),
+            },
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+    @property
+    def fetches(self) -> int:
+        if not self.log.exists():
+            return 0
+
+        return len(self.log.read_text(encoding="utf-8").splitlines())
+
+
+def test_with_no_archive_the_sign_step_signs_nothing_and_fetches_nothing(tmp_path: Path) -> None:
+    """The catalog of today holds no binary component. The step prints one
+    line and uploads an empty SHA256SUMS: the release job cannot download an
+    artifact that does not exist."""
+    run = Fetch(tmp_path, SIGN_RUN, {"SHA256SUMS": b""})
+
+    assert run.done.returncode == 0, run.done.stdout + run.done.stderr
+    assert run.done.stdout == "sign: no archive\n"
+    assert sorted(path.name for path in run.bundles.iterdir()) == ["SHA256SUMS"]
+    assert (run.bundles / "SHA256SUMS").read_bytes() == b""
+    assert run.fetches == 0
+
+
+@needs_sha256sum_check
+def test_the_sign_step_signs_each_archive_that_the_job_output_names(tmp_path: Path) -> None:
+    digests = f"{LINES[ONE]}\n{LINES[TWO]}"
+    run = Fetch(tmp_path, SIGN_RUN, {**BYTES, "SHA256SUMS": f"{digests}\n".encode()}, digests)
+
+    assert run.done.returncode == 0, run.done.stdout + run.done.stderr
+    assert run.fetches == 1
+    assert run.used.read_text(encoding="utf-8").splitlines() == [
+        "version",
+        f"sign-blob --yes --bundle {run.bundles}/{ONE}.sigstore.json {run.assets}/{ONE}",
+        f"sign-blob --yes --bundle {run.bundles}/{TWO}.sigstore.json {run.assets}/{TWO}",
+    ]
+    assert sorted(path.name for path in run.bundles.iterdir()) == sorted(
+        ["SHA256SUMS", f"{ONE}.sigstore.json", f"{TWO}.sigstore.json"]
+    )
+    assert (run.bundles / "SHA256SUMS").read_text(encoding="utf-8") == f"{digests}\n"
+
+
+#: (the files of the artifact, the job output, the line of the refusal).
+#: Each one stops the step before it takes cosign.
+REFUSED_SIGNS: dict[str, tuple[dict[str, bytes], str, str]] = {
+    "an-absent-archive": ({}, LINES[ONE], "the archives are not the archives"),
+    "an-archive-that-no-line-names": (BYTES, LINES[ONE], "the archives are not the archives"),
+    "an-archive-with-no-line": ({ONE: BYTES[ONE]}, "", "the archives are not the archives"),
+    "a-file-that-is-no-archive": (
+        {ONE: BYTES[ONE], "notes.txt": b""},
+        LINES[ONE],
+        "gave notes.txt, which is no archive",
+    ),
+    "a-hidden-archive": (
+        {ONE: BYTES[ONE], f".{TWO}": b""},
+        LINES[ONE],
+        "the archives are not the archives",
+    ),
+    "no-sha256-line": ({ONE: BYTES[ONE]}, ONE, "no SHA-256 line of an archive"),
+    "an-option-as-a-name": (
+        {"-rf.tar.gz": b""},
+        LINES[ONE].replace(ONE, "-rf.tar.gz"),
+        "no SHA-256 line",
+    ),
+    "a-path-as-a-name": (
+        {ONE: BYTES[ONE]},
+        LINES[ONE].replace(ONE, f"../{ONE}"),
+        "no SHA-256 line",
+    ),
+    "one-name-two-times": ({ONE: BYTES[ONE]}, f"{LINES[ONE]}\n{LINES[ONE]}", "two times"),
+}
+
+
+@pytest.mark.parametrize(("files", "digests", "fault"), REFUSED_SIGNS.values(), ids=REFUSED_SIGNS)
+def test_the_sign_step_refuses_a_set_that_the_job_output_does_not_name(
+    tmp_path: Path, files: dict[str, bytes], digests: str, fault: str
+) -> None:
+    """Each job of a run can write a workflow artifact. So the step signs
+    only the archives that the job output names."""
+    run = Fetch(tmp_path, SIGN_RUN, files, digests)
+
+    assert run.done.returncode == 1
+    assert fault in run.done.stderr
+    assert run.fetches == 0
+    assert not (run.bundles / "SHA256SUMS").exists()
+
+
+@needs_sha256sum_check
+def test_the_sign_step_refuses_an_archive_with_other_bytes(tmp_path: Path) -> None:
+    run = Fetch(tmp_path, SIGN_RUN, {ONE: BYTES[ONE] + b"!"}, LINES[ONE])
+
+    assert run.done.returncode != 0
+    assert run.fetches == 0
+    assert not run.used.exists()
+
+
+def test_with_no_archive_the_cosign_step_of_the_release_fetches_nothing(tmp_path: Path) -> None:
+    """A run with no binary component fetches no program of 141 MB. The tag
+    script reads COSIGN only for a binary component."""
+    run = Fetch(tmp_path, COSIGN_RUN, {"SHA256SUMS": b""})
+
+    assert run.done.returncode == 0, run.done.stdout + run.done.stderr
+    assert run.done.stdout == "cosign: no archive, so no fetch\n"
+    assert run.fetches == 0
+    assert not run.program.exists()
+
+
+@pytest.mark.skipif(
+    not IN_CI and shutil.which("sha256sum") is None, reason="the step uses sha256sum"
+)
+def test_the_cosign_step_runs_the_program_only_after_the_compare(tmp_path: Path) -> None:
+    run = Fetch(tmp_path, COSIGN_RUN, {ONE: BYTES[ONE]})
+
+    assert run.done.returncode == 0, run.done.stdout + run.done.stderr
+    assert run.fetches == 1
+    assert run.used.read_text(encoding="utf-8") == "version\n"
+    assert os.access(run.program, os.X_OK)
+
+
+@pytest.mark.skipif(
+    not IN_CI and shutil.which("sha256sum") is None, reason="the step uses sha256sum"
+)
+def test_the_cosign_step_never_runs_a_file_with_another_sha256(tmp_path: Path) -> None:
+    run = Fetch(tmp_path, COSIGN_RUN, {ONE: BYTES[ONE]}, sha256=COSIGN_ENV["COSIGN_SHA256"])
+
+    assert run.done.returncode == 1
+    assert f"not {COSIGN_ENV['COSIGN_SHA256']}" in run.done.stderr
+    assert not run.used.exists()
+    assert not os.access(run.program, os.X_OK)
 
 
 @pytest.mark.parametrize(
@@ -500,8 +1251,10 @@ def test_a_workflow_file_has_no_key_that_changes_each_job(
     """A job that is equal in the two files runs the same steps only when no
     key beside `jobs` changes them. A `defaults` key of one file gives each
     `run` step another shell, and an `env` key gives each step a variable.
-    Only the gate has a `concurrency` key."""
+    Only the gate has a `concurrency` key. Only the release has an `env`
+    key, and it holds the pin of cosign and nothing else."""
     assert set(workflow) == FILE_KEYS[name]
+    assert workflow.get("env", COSIGN_ENV) == COSIGN_ENV
 
 
 def _node_steps(job: dict[str, Any]) -> list[dict[str, Any]]:
@@ -958,8 +1711,8 @@ def test_no_time_limit_can_stop_an_allocation_half_way() -> None:
 def test_the_tag_step_says_which_catalog_repository_it_tags() -> None:
     """The allocator would otherwise take the name from where the
     repository is hosted, and refuse a name the catalog does not hold
-    (`handover/bin/allocate-tags.sh`, TAG_REPO). The step gets no variable
-    of a binary component."""
+    (`handover/bin/allocate-tags.sh`, TAG_REPO). The step also gets the
+    assets of a binary component and the program that checks them."""
     tag = _step(RELEASE_JOBS, RELEASE_NAME, TAG_STEP)
 
     assert tag["env"]["TAG_REPO"] == THIS_REPOSITORY
@@ -978,15 +1731,26 @@ def test_two_merges_never_allocate_at_once() -> None:
 
 def test_only_the_release_job_may_write() -> None:
     """Every other job runs the merged code, so none of them holds the
-    token that tags. The `release` job holds that token, and no other job
-    sets its permissions."""
+    token that tags. Three rules:
+
+    1. The `release` job holds the token that tags.
+    2. The `sign` job holds the identity token and no other permission. It
+       has no checkout and no local action, so no code of the repository
+       runs beside that token.
+    3. No other job sets its permissions."""
     assert RELEASE["permissions"] == {"contents": "read", "actions": "read"}
     assert RELEASE_JOBS[RELEASE_NAME]["permissions"] == {
         "contents": "write",
         "pull-requests": "read",
     }
+    assert RELEASE_JOBS[SIGN_JOB]["permissions"] == SIGN_PERMISSIONS
+    for step in RELEASE_JOBS[SIGN_JOB]["steps"]:
+        uses = step.get("uses", "")
+
+        assert not uses.startswith("actions/checkout@"), "the sign job has a checkout"
+        assert not uses.startswith("./"), f"the sign job uses the local action {uses}"
     for name, job in RELEASE_JOBS.items():
-        if name != RELEASE_NAME:
+        if name not in (RELEASE_NAME, SIGN_JOB):
             assert "permissions" not in job, f"{name} sets its own permissions"
     for name, job in JOBS.items():
         assert "permissions" not in job, f"{name} sets its own permissions"
@@ -1107,11 +1871,35 @@ CASES: list[tuple[str | None, dict[str, str], bool]] = [
     (None, DOCS | {"scope": "failure"}, False),
 ]
 
+#: The cases of the jobs that only the release has. Each one runs in each
+#: scope, so a failed or skipped one holds back each tag of the run.
+RELEASE_CASES: list[tuple[str | None, dict[str, str], bool]] = [
+    ("code", {ARTIFACTS_JOB: "failure"}, False),
+    ("code", {ARTIFACTS_JOB: "skipped"}, False),
+    ("docs", DOCS | {ARTIFACTS_JOB: "success"}, True),
+    ("docs", DOCS | {ARTIFACTS_JOB: "skipped"}, False),
+    # A failed signature holds back each tag of the run.
+    ("code", {SIGN_JOB: "failure"}, False),
+    ("code", {SIGN_JOB: "skipped"}, False),
+    ("docs", DOCS | {SIGN_JOB: "cancelled"}, False),
+    ("docs", DOCS | {SIGN_JOB: "success"}, True),
+    # No plan: the archives of the run are not known.
+    ("code", {PLAN_JOB: "failure"}, False),
+    ("code", {PLAN_JOB: "skipped"}, False),
+    ("docs", DOCS | {PLAN_JOB: "success"}, True),
+]
+
 #: (what the jobs did, whether the last job is green)
 VERDICTS = [
-    (_needs(jobs, last, scope, results), green)
-    for jobs, last in WORKFLOW_JOBS
-    for scope, results, green in CASES
+    *[
+        (_needs(jobs, last, scope, results), green)
+        for jobs, last in WORKFLOW_JOBS
+        for scope, results, green in CASES
+    ],
+    *[
+        (_needs(RELEASE_JOBS, RELEASE_NAME, scope, results), green)
+        for scope, results, green in RELEASE_CASES
+    ],
 ]
 
 
@@ -1325,3 +2113,13 @@ def test_every_action_is_pinned_or_in_the_tree(path: Path) -> None:
 
         assert PINNED.match(name), f"{path.name} uses {name}, not a commit"
         assert TAG_COMMENT.match(rest), f"{path.name} uses {name} with no `# vX.Y.Z` beside it"
+
+
+def test_the_plan_step_plans_nothing_off_main(tmp_path: Path) -> None:
+    """A manual run on another branch builds and signs nothing, even when
+    the dry run plans a binary tag. Only main writes a transparency record."""
+    done, output = _run_plan(tmp_path, VMM_PLAN, "0", ref="refs/heads/topic")
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert output == "components=\n"
+    assert "is not main" in done.stdout

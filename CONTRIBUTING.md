@@ -114,9 +114,13 @@ component's own newest tag.
   change under `family/` moves `attendance`, `caregiver` and `noticeboard`.
   A change under a door directory, `door-acp/` included, moves `attendance`.
   A change to `uv.lock` moves every venv component.
-- No job of `release.yml` builds or signs an archive. This repository has
-  no binary component. The tag script refuses a binary component that has
-  no archive, so such a component gets no tag.
+- The `plan` job of `release.yml` names each binary component that gets a
+  tag in the run. The `artifacts` job builds the archive of each such
+  component, and the `sign` job signs it. The tag script attaches the
+  archive and its signature bundle to the Release. With no planned binary
+  component the two jobs build nothing and sign nothing. The tag script
+  refuses a binary component that has no signed archive, so such a
+  component gets no tag.
 - `chaperone` is a binary component of the chaperone repository. The
   `release.yml` of that repository builds, signs and tags it. Its manifest
   is at the root of that repository (`handover/AGENTS.md`).
