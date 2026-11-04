@@ -5,3 +5,6 @@
 //! The code is synchronous. It uses std, plus `creche-wire`, `serde` and
 //! `serde_json`. The PR D4 adds `sha2`. It uses no async runtime. It never
 //! calls `creche-vmm-confine` or `creche-vmm`.
+
+pub mod layout;
+pub mod stale;
