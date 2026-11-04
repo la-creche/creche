@@ -7,6 +7,7 @@
 
 pub mod admission;
 pub mod deny;
+pub mod family;
 pub mod faults;
 pub mod landlock;
 pub mod launch;
