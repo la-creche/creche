@@ -37,6 +37,20 @@ table of the three vmm crates.
   (decision CH45 rule 2). Decision CH50 rule 9 sets `READ_TRIES` (5),
   `RETRY_PAUSE` (10 ms) and `SHAPE_CAP` (4 KiB). A read blocks its thread
   in `thread::sleep`, so a caller in tokio runs it in `spawn_blocking`.
+- `command::ChCommand` renders the CH argv from the checked store types
+  only: `CheckedImage` (PR D6), `SessionDisk` (PR D7) and
+  `ClaimedSnapshot` (PR D11). No input names a network card, and no
+  argument names `--seccomp` (decisions CH6-3, CH8-1, CH8-4). A boot
+  gives the root disk `readonly=on` as the first `--disk` (decision
+  CH8-8), the session disk the `DiskLimit::SESSION` rate limiter
+  (decisions CH8-7, CH36 G15), and `--serial file=` the `serial.log` of
+  the VM run dir with `--console off` (decisions CH36 G23, CH41 rule 2).
+  A restore gives only `--api-socket` and `--restore` with
+  `memory_restore_mode=copyonwrite`, because CH v54 takes the sizes and
+  devices from the snapshot (decisions CH2, CH29). The restore passes
+  `resume=false`, so the VM stays paused (decision CH50 rule 10). A
+  restore consumes the claim. A path with a comma, a bracket or a quote
+  fails, because the CH option parser reads them as syntax.
 - Every launch step forks from the one spawner thread (decision CH19 (4),
   fact 76). The vmm keeps its `Spawner` for its whole life. A drop ends
   the thread, and the kernel then kills every payload it started.
@@ -106,17 +120,25 @@ table of the three vmm crates.
   dir). The ruleset grants no right to make a dir, so the vmm must also
   make each `snapshots/<generation>/` before CH writes a snapshot there.
   Plan PRs L16 (cold boot) and D9 (snapshot) own these steps.
-- Decision CH42 rule 2: on a restore the CH command line shows no
-  device, so `deny::check` cannot see a network card that the snapshot
-  holds. The check trusts that a snapshot comes only from a boot that
-  passed the check. Once the CH API (plan PR D8, `ch_remote`) is in, the
-  vmm also reads the restored VM's device set through `ch-remote info`
-  before the VM is ready. That device-set read is the step of plan PR
-  L17 (restore), under decision CH42 rule 2. No code does the
-  device-set read yet.
+- Decisions CH42 rule 2 and CH50 rule 10: on a restore the CH command
+  line shows no device, so `deny::check` cannot see a device that the
+  snapshot holds. The restore runs with `resume=false`. Plan PR L17
+  (restore) must then run these steps in order, and no code runs them
+  yet:
+  1. `ch-remote info`, whose `state` must be `Paused`.
+  2. The device check. It refuses `net`, `generic_vhost_user`, `fs`,
+     `user_devices`, `vdpa`, `devices`, `pmem` and `tpm`, any disk
+     beyond the fixed two, and a vsock path other than the VM's own.
+  3. `ch-remote resume`.
+  4. The wait for `ControlReady`.
 - CONTRACT-QUESTION (decisions CH21-1, CH36 G18): contract 05 §3.3.1 has
   no row for the vmm until its amendment. Open until then: the group of
   `faults/vmm/` and its files (the vmm sets modes 0750 and 0640 only),
   the value `vmm` in the `source` enum of §3.3, and the reader. caregiver
   reads only the `attendance` and `pep` files today, so it ignores the
   vmm file.
+- Gap G23 sets `serial.log` to mode 0600. CH makes the file with the
+  umask of the launch step, and the crate sets no umask. A `UMask=` in
+  the unit of plan PR C13, or a file that lifecycle makes first in plan
+  PR L16, must set it. Neither plan entry names the step yet. Until then
+  `RuntimeDirectoryMode=0700` of the run root keeps other users out.

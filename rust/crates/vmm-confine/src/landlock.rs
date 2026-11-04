@@ -103,8 +103,17 @@ pub struct VmFiles {
 
 impl VmFiles {
     /// The files of the VM whose state is in `session` and whose sockets
-    /// are in `run`. PR C7 takes the checked image types of the store for
-    /// the root disk and the kernel.
+    /// are in `run`. Lifecycle passes the paths of the checked store
+    /// copies that `command::Boot` renders, so that the rules and the argv
+    /// name the same files.
+    ///
+    /// Plan deviation of PR C7: C6 said that C7 makes this take the
+    /// `CheckedImage` of the root disk and the kernel. C7 does not. The
+    /// plan of C7 names only `command.rs` and its test. `VmFiles` is serde
+    /// data that the launch child reads, and `CheckedImage` is not, so the
+    /// child keeps a `HostPath`. A follow-up PR may add a constructor on
+    /// `&CheckedImage` in the parent. Until then a mismatch fails closed:
+    /// the ruleset denies the file that the argv names, and CH exits.
     ///
     /// # Errors
     ///
