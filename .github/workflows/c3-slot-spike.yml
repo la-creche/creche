@@ -1,0 +1,65 @@
+# SPIKE (decision CH51, draft branch spike/c3-slot-pool, never merges).
+# Runs the C3 slot-pool kit of spike/c3/ on a GitHub runner, the same kit
+# David runs on Hyperion. It tests mechanism H (one hard link of CH per
+# slot, attached by path) and mechanism X (one CH, entered through an
+# AppArmor onexec write), each against cross-slot connects and signals.
+# Runner sudo is allowed (decision CH36 G20): it opens /dev/kvm, installs
+# the tools, and loads and unloads the spike profiles. The probes run as
+# the runner user.
+name: c3-slot-spike
+
+on:
+  pull_request:
+    paths:
+      - spike/c3/**
+      - .github/workflows/c3-slot-spike.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      C3_SPIKE_ROOT: /home/runner/c3-spike
+      C3_SPIKE_USER: runner
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Open /dev/kvm and install the tools
+        run: |
+          [[ -e /dev/kvm ]] || { echo "no /dev/kvm on this runner"; exit 1; }
+          printf '%s\n' \
+            'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
+            sudo tee /etc/udev/rules.d/99-c3-spike-kvm.rules > /dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends cpio apparmor apparmor-utils util-linux
+          uname -r
+          cat /sys/kernel/security/lsm
+      - name: Copy the kit and render the profiles for the runner root
+        run: |
+          mkdir -m 0700 "$C3_SPIKE_ROOT"
+          cp spike/c3/* "$C3_SPIKE_ROOT/"
+          chmod 0755 "$C3_SPIKE_ROOT"/*.sh "$C3_SPIKE_ROOT"/*.py
+          python3 -I "$C3_SPIKE_ROOT/gen-profiles.py" --slots 64 --root "$C3_SPIKE_ROOT" \
+            > "$C3_SPIKE_ROOT/c3spike-slots.profile"
+      - name: Set up (no sudo)
+        run: '"$C3_SPIKE_ROOT/setup.sh"'
+      - name: Load the spike profiles (runner sudo)
+        run: time sudo apparmor_parser -r "$C3_SPIKE_ROOT/c3spike-slots.profile"
+      - name: Run the probes (no sudo)
+        run: '"$C3_SPIKE_ROOT/probes.sh"'
+      - name: Unload the spike profiles (runner sudo)
+        if: always()
+        run: sudo apparmor_parser -R "$C3_SPIKE_ROOT/c3spike-slots.profile" || true
+      - name: Clean up
+        if: always()
+        run: |
+          ls -l "$C3_SPIKE_ROOT/results" 2> /dev/null || true
+          cat "$C3_SPIKE_ROOT"/results/* 2> /dev/null || true
+          "$C3_SPIKE_ROOT/cleanup.sh" --force || true
