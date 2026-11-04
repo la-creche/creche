@@ -158,7 +158,7 @@ RUST_RUNS = [
 FROZEN_STEP = "frozen host api"
 FROZEN_DIFF = (
     "git diff --no-renames --diff-filter=MDT --name-status --exit-code \\\n"
-    "  \"$base\" HEAD -- 'rust/crates/wire/schema/host-api-*.json'"
+    "  \"$base\" HEAD -- 'rust/crates/wire/*host-api-*.json'"
 )
 FROZEN_ENV = {
     "GROUP_BASE": "${{ github.event.merge_group.base_sha }}",
