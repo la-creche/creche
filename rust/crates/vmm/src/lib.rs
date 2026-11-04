@@ -8,6 +8,7 @@ pub mod control;
 pub mod handlers;
 pub mod relay;
 pub mod server;
+pub mod start;
 pub mod stop;
 
 /// Why the host API server stopped or did not start.

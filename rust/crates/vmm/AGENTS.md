@@ -121,7 +121,7 @@ never reaches the hook, so it gets no boot. After `ControlReady` the
 hook dials guest port 1201 with `AcpLink::dial` and returns the link, so
 a failed dial is `sandbox_start_failed` before 101 (decision CH50 rule
 2). A drop during the start or the dial gives `not_found`, even when the
-drop made the dial fail. Plan PR L16 adds the hook of the vmm.
+drop made the dial fail. `start::ColdBoot` is the hook of the vmm.
 `tests/acp.rs` fakes it, and a fake vsock socket plays guest port 1201.
 
 `src/relay.rs` holds the relay registry with a stop signal (decision
@@ -197,6 +197,44 @@ that did not stop. A removal that fails gives `internal` too, and its
 row stays. `tests/drop.rs` runs the handler on paused time with fake
 VMs.
 
+## The cold boot
+
+`src/start.rs` holds `ColdBoot`, the `StartVm` hook of the vmm for a
+session with no usable snapshot (plan PR L16, decisions CH1, CH8-2). It
+keeps one table of VMs, one per session. A VM that runs gets a new dial
+of guest port 1201 and no boot. A VM whose process exited leaves the
+table, and the start boots it again. A cold boot runs these steps:
+
+1. The family VM shape (`FamilyRoot::read_shape`) and the free bytes of
+   the state root, in `spawn_blocking` (decision CH50 rule 9).
+   Admission needs the guest RAM of the shape, so this read comes before
+   admission.
+2. `admission::decide` (decisions CH8-6, CH8-7). The guest RAM of the
+   start counts in the table from here on, so two starts never pass the
+   cap together. `host_full` writes no fault.
+3. In `spawn_blocking`: `remove_stale` (decision CH19 (4)), the store
+   check of the kernel and the root disk of the flavor (decision CH44
+   rule 2), `SessionDisks::for_boot` (decision CH21-4), the run dir
+   `vm/<id>/` and `snapshots/` with mode 0700, and a new `serial.log`
+   with mode 0600 (gap G23). Then the launch with `ChCommand::boot`,
+   `VmLimits` and the Landlock files of the VM (decisions CH8-3, CH8-5,
+   CH8-8, CH30).
+4. `control::open` for the first `ControlReady`. It keeps the facade
+   state in `ControlState`, writes a turn end to the row, and clears the
+   faults of the family (contract 05 §3.3.1 rule 8).
+5. `deny::check` with an empty bound set. Decision CH49 rule 3 binds
+   1104 from phase 7 on.
+6. `AcpLink::dial` of guest port 1201 (decision CH50 rule 2).
+
+Each fault but `host_full` goes to the fault file of the family
+(decisions CH6-3, CH21-1). A fault after the launch stops the VM with
+SIGTERM, then SIGKILL, and sends no graceful stop. A VM whose stop
+failed stays in the table, so admission counts its RAM (decision CH50
+rule 4). A start that is dropped before its end sends SIGKILL to its VM
+and keeps the VM in the table for the same reason. The `Launcher` trait
+lets `tests/start.rs` fake the launch, the command line file and the
+guest. Every other step there is the real one on a scratch dir.
+
 ## Rules
 
 - Each new dependency is its own pull request, with its lock delta
@@ -224,6 +262,20 @@ VMs.
    so a gate that reads only the ready would never snapshot it. The sleep
    gate is plan PR L18, a later PR, so this crate does not hold the rule
    yet.
+3. CONTRACT-QUESTION (plan PR L16, `src/start.rs`): decision CH6-3 runs
+   the deny check "before the VM is ready". The plan puts it before the
+   wait for `ControlReady`. Until CH runs, the command line is the one
+   of the launch step, and the check fails closed. No row bounds a wait
+   for the exec of CH. The code reads "ready" as the 101: the check runs
+   after `ControlReady` and before the dial of 1201. A poll of the
+   command line inside `READY_WAIT` before the open costs about 15
+   lines.
+4. Plan PR L17 runs the evictions. Until then `ColdBoot` passes every VM
+   to admission as busy, so a start past the RAM cap gets `host_full`
+   where L17 would evict an idle VM.
+5. `ColdBoot` keeps the control link of each VM, and no code reads its
+   turn events yet. The `StopVm` hook of the vmm and its use of the
+   table of `ColdBoot` are not built yet either.
 
 ## Caller duties
 
