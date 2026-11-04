@@ -276,14 +276,15 @@ guest. Every other step there is the real one on a scratch dir.
    so a gate that reads only the ready would never snapshot it. The sleep
    gate is plan PR L18, a later PR, so this crate does not hold the rule
    yet.
-3. CONTRACT-QUESTION (plan PR L16, `src/start.rs`): decision CH6-3 runs
-   the deny check "before the VM is ready". The plan puts it before the
-   wait for `ControlReady`. Until CH runs, the command line is the one
-   of the launch step, and the check fails closed. No row bounds a wait
-   for the exec of CH. The code reads "ready" as the 101: the check runs
-   after `ControlReady` and before the dial of 1201. A poll of the
-   command line inside `READY_WAIT` before the open costs about 15
-   lines.
+3. CONTRACT-QUESTION (plan PR L16, `src/start.rs`): the plan order
+   runs the deny check before the wait for `ControlReady`, and decision
+   CH42 rule 2 says "before the VM is ready". Decision CH6-3 says only
+   "at create and after each egress edit". Until CH runs, the command
+   line is the one of the launch step, and the check fails closed. No
+   row bounds a wait for the exec of CH. The code reads "ready" as the
+   101: the check runs after `ControlReady` and before the dial of 1201.
+   A poll of the command line inside `READY_WAIT` before the open costs
+   about 15 lines.
 4. Plan PR L17 runs the evictions. Until then `ColdBoot` passes every VM
    to admission as busy, so a start past the RAM cap gets `host_full`
    where L17 would evict an idle VM.
