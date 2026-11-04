@@ -296,14 +296,11 @@ set.
 
 ## Known gaps
 
-1. CONTRACT-QUESTION (plan PR L15, `src/handlers/drop.rs`): a drop
-   waits for a start that its mark overlapped, and the start has no
-   outer bound (decision CH50 rule 1). So a drop that overlaps a long
-   start can pass the "about 35 s" of decision CH33 rule 11 and the 60 s
-   wait of the client (decision CH34 rule 5). The client retries, and
-   the retry waits for the same start. No row bounds this wait. The
-   narrowest reading waits, because a drop must not remove the files of
-   a VM that a start then boots.
+1. Closed by decision CH54 rule 1: a drop waits for a start that its
+   mark overlapped, with no bound (`src/handlers/drop.rs`). So a drop
+   may outlast the 60 s wait of the client (decision CH34 rule 5). The
+   drop runs in its own task, so a client that hangs up cannot cancel
+   it, and the retry waits for the same start.
 2. Decision CH43 rule 8: no line on the control link reports a change
    of the facade state yet. The phase 3 guest init PR adds a line that
    reports each change. Until then the sleep gate treats a VM as up only
@@ -312,15 +309,10 @@ set.
    so a gate that reads only the ready would never snapshot it. The sleep
    gate is plan PR L18, a later PR, so this crate does not hold the rule
    yet.
-3. CONTRACT-QUESTION (plan PR L16, `src/start.rs`): the plan order
-   runs the deny check before the wait for `ControlReady`, and decision
-   CH42 rule 2 says "before the VM is ready". Decision CH6-3 says only
-   "at create and after each egress edit". Until CH runs, the command
-   line is the one of the launch step, and the check fails closed. No
-   row bounds a wait for the exec of CH. The code reads "ready" as the
-   101: the check runs after `ControlReady` and before the dial of 1201.
-   A poll of the command line inside `READY_WAIT` before the open costs
-   about 15 lines.
+3. Closed by decision CH54 rule 2: the deny check runs after
+   `ControlReady` and before the dial of 1201 and the 101
+   (`src/start.rs`). This departs from the order of plan PR L16, which
+   put the check before the wait for `ControlReady`.
 4. Plan PR L17 runs the evictions. Until then `ColdBoot` passes every VM
    to admission as busy, so a start past the RAM cap gets `host_full`
    where L17 would evict an idle VM.
