@@ -28,6 +28,9 @@
 //!
 //! Each fault but `host_full` goes to the fault file of the family
 //! (decisions CH21-1, CH6-3). A fault after the launch stops the VM.
+//!
+//! The idle sleep and the snapshot sweep of plan PR L18 use the same
+//! table (`ColdBoot::sleep_idle`, `ColdBoot::sweep`, `sleep::run`).
 
 use std::collections::HashMap;
 use std::fs::{DirBuilder, OpenOptions, Permissions};
@@ -50,12 +53,13 @@ use creche_vmm_store::claim::{ClaimError, ClaimedSnapshot, claim};
 use creche_vmm_store::images::{ImageDigest, ImageStore};
 use creche_vmm_store::key::{CheckedCh, KeyCheck, SnapshotKey, check_newest};
 use creche_vmm_store::layout::{RunRoot, SessionDir, StateRoot, VmRunDir};
-use creche_vmm_store::retention::InUse;
+use creche_vmm_store::retention::{BUDGET, InUse, Swept, sweep};
 use creche_vmm_store::rows::Rows;
 use creche_vmm_store::session_disk::SessionDisks;
 use creche_vmm_store::sleep_gate::Activity;
 use creche_vmm_store::stale::remove_stale;
 use creche_wire::{FamilyName, FamilyShape, SandboxFlavor, SessionId, SessionRow};
+use tokio::sync::RwLock;
 use tokio::task::spawn_blocking;
 use tokio::time::sleep;
 
@@ -319,10 +323,23 @@ pub struct ColdBoot<L: Launcher, A: ChApi> {
     api: Arc<A>,
     table: Table<L::Process>,
     in_use: Arc<Mutex<InUse>>,
+    /// Each take holds it to read, and the sweep holds it to write, so no
+    /// sweep runs while a take runs (`retention::sweep`).
+    takes: Arc<RwLock<()>>,
     relays: Relays,
     rows: Arc<Mutex<Rows>>,
     control: Arc<Mutex<ControlState>>,
     faults: Arc<Mutex<FaultBook>>,
+}
+
+/// The gates of one running VM (PR D12).
+struct Gates {
+    /// The last use, for the eviction order (decision CH50 rules 5 and 6).
+    last_use: Instant,
+    /// `Activity::may_evict`, with a control link and a key.
+    evict: bool,
+    /// `Activity::may_sleep`, with a control link and a key.
+    sleep: bool,
 }
 
 impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
@@ -344,6 +361,7 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
             api,
             table: Arc::default(),
             in_use: Arc::default(),
+            takes: Arc::default(),
             relays,
             rows,
             control,
@@ -358,8 +376,8 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
     }
 
     /// The snapshot generations that a VM restores from, from the key
-    /// check of its start until its CH ends (decision CH50 rule 8). The
-    /// sweep of plan PR L18 reads them.
+    /// check of its start until its CH ends (decision CH50 rule 8).
+    /// `sweep` reads them.
     #[must_use]
     pub fn in_use(&self) -> InUse {
         lock_in_use(&self.in_use).clone()
@@ -391,39 +409,47 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         }
     }
 
+    /// The gates of `vm` of `session` at `now` (decisions CH8-6, CH19
+    /// (6)). Only a VM with a link and a key may be evicted or sleep.
+    fn gates(&self, session: &SessionId, vm: &Vm<L::Process>, now: Instant) -> Gates {
+        // Decision CH50 rules 5 and 6: the start, each turn event and each
+        // door close set the last use, and an open door counts as used
+        // now in the eviction order.
+        let door = self.relays.door(session);
+        let control = self.control();
+        let mut last_use = vm.last_use;
+        if let Door::ClosedAt(at) = door {
+            last_use = last_use.max(at.into_std());
+        }
+        if let Some(at) = control.last_turn(session) {
+            last_use = last_use.max(at);
+        }
+        let activity = Activity {
+            facade: control.facade(session),
+            turn_seen: control.turn_seen(session),
+            turn_running: control.turn_running(session),
+            door_open: door == Door::Open,
+            last_use,
+        };
+        let ready = vm.link.is_some() && vm.key.is_some();
+        Gates {
+            last_use: if door == Door::Open { now } else { last_use },
+            evict: ready && activity.may_evict(),
+            sleep: ready && activity.may_sleep(now),
+        }
+    }
+
     /// The admission view of the VM of `session` in `slot` (decisions
-    /// CH8-6, CH19 (6)). Only a VM with a link and a key may be evicted.
+    /// CH8-6, CH19 (6)).
     fn view(&self, session: &SessionId, slot: &Slot<L::Process>, now: Instant) -> Running {
         let (guest_ram, last_use, gate) = match slot {
             Slot::Starting(ram) | Slot::Evicting(ram) => (*ram, now, Gate::Busy),
             Slot::Running(vm) => {
-                // Decision CH50 rules 5 and 6: a door close sets the last
-                // use, and an open door counts as used now.
-                let door = self.relays.door(session);
-                let last_use = match door {
-                    Door::Open => now,
-                    Door::ClosedAt(at) => vm.last_use.max(at.into_std()),
-                    Door::NotOpened => vm.last_use,
-                };
-                let control = self.control();
-                // No code reads the turn events yet, so no turn was seen
-                // after the last ready (decision CH43 rule 8, Known gaps).
-                let activity = Activity {
-                    facade: control.facade(session),
-                    turn_seen: false,
-                    turn_running: control.turn_running(session),
-                    door_open: door == Door::Open,
-                    last_use,
-                };
                 // PR D12: `may_evict`, not `may_sleep`, is the gate of
                 // admission.
-                let ready = vm.link.is_some() && vm.key.is_some();
-                let gate = if ready && activity.may_evict() {
-                    Gate::Idle
-                } else {
-                    Gate::Busy
-                };
-                (vm.guest_ram, last_use, gate)
+                let gates = self.gates(session, vm, now);
+                let gate = if gates.evict { Gate::Idle } else { Gate::Busy };
+                (vm.guest_ram, gates.last_use, gate)
             }
         };
         Running {
@@ -432,6 +458,24 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
             last_use,
             gate,
         }
+    }
+
+    /// Takes the VM of `session` out of `table` and marks its slot
+    /// `Evicting`, so its RAM still counts.
+    fn take_out(
+        &self,
+        table: &mut HashMap<SessionId, Slot<L::Process>>,
+        session: SessionId,
+    ) -> Option<Eviction<L::Process>> {
+        let Some(Slot::Running(vm)) = table.remove(&session) else {
+            return None;
+        };
+        table.insert(session.clone(), Slot::Evicting(vm.guest_ram));
+        Some(Eviction {
+            table: Arc::clone(&self.table),
+            id: session,
+            vm: Some(vm),
+        })
     }
 
     /// Reserves `guest_ram` for `id` when admission admits it, and takes
@@ -448,17 +492,10 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
             Admission::EvictFirst(evict) => evict,
             Admission::HostFull(_) => return None,
         };
-        let mut evictions = Vec::new();
-        for session in evict {
-            if let Some(Slot::Running(vm)) = table.remove(&session) {
-                table.insert(session.clone(), Slot::Evicting(vm.guest_ram));
-                evictions.push(Eviction {
-                    table: Arc::clone(&self.table),
-                    id: session,
-                    vm: Some(vm),
-                });
-            }
-        }
+        let evictions = evict
+            .into_iter()
+            .filter_map(|session| self.take_out(&mut table, session))
+            .collect();
         table.insert(id.clone(), Slot::Starting(guest_ram));
         let pending = Pending {
             table: Arc::clone(&self.table),
@@ -473,13 +510,19 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         Some((pending, evictions))
     }
 
-    /// Evicts one VM: closes its door link, snapshots it, then stops it
-    /// (decisions CH8-6, CH19 (6)). The take ends CH, so the stop finds it
-    /// gone. False when the VM still holds its RAM: a turn started before
-    /// the close, or the stop failed (decision CH50 rule 4).
-    async fn evict(&self, mut eviction: Eviction<L::Process>) -> bool {
+    /// Evicts one VM: closes its door link, then retires it (decisions
+    /// CH8-6, CH19 (6)).
+    async fn evict(&self, eviction: Eviction<L::Process>) -> bool {
+        self.relays.close(&eviction.id).await;
+        self.retire(eviction).await
+    }
+
+    /// Snapshots the VM of `eviction`, then stops it (decision CH19 (6)).
+    /// The take ends CH, so the stop finds it gone. False when the VM
+    /// still holds its RAM: a turn runs, or the stop failed (decision CH50
+    /// rule 4).
+    async fn retire(&self, mut eviction: Eviction<L::Process>) -> bool {
         let id = eviction.id.clone();
-        self.relays.close(&id).await;
         let key = eviction.vm.as_ref().and_then(|vm| vm.key.clone());
         // The lock of the control state goes before the table lock below:
         // admission takes the table lock first.
@@ -499,11 +542,15 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         // Decision CH44 rule 4: the caller decides after a failed take.
         // The VM stops anyway, so its RAM frees, and the session
         // cold-boots from its disk later (decision CH19 (5)).
-        if let Err(message) = blocking(move || api.snapshot(&run, &session, &key)).await {
-            eprintln!("vmm: the eviction snapshot of {id} failed: {message}");
+        let taken = {
+            let _take = self.takes.read().await;
+            blocking(move || api.snapshot(&run, &session, &key)).await
+        };
+        if let Err(message) = taken {
+            eprintln!("vmm: the snapshot of {id} failed: {message}");
         }
         if let Err(error) = stop(vm.link.as_ref(), &mut vm.process, &vm.run).await {
-            eprintln!("vmm: an evicted VM did not stop: {error}");
+            eprintln!("vmm: the VM of {id} did not stop after its snapshot: {error}");
             vm.link = None;
             eviction.put_back();
             return false;
@@ -516,6 +563,59 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         }
         eviction.done(&self.in_use);
         true
+    }
+
+    /// Puts each VM to sleep that `Activity::may_sleep` passes at `now`:
+    /// its facade is up, no turn runs, no door link is open, and it is
+    /// idle past `IDLE_TIMEOUT` (decisions CH2, CH19 (6), CH36 G12). Each
+    /// one leaves the table as `Evicting` and is retired, one at a time.
+    /// Returns the sessions whose VM slept.
+    // Decision CH19 (6): the gate and the take out run under the table
+    // lock. An Upgrade claims its door before its start reads the table,
+    // so a door that opens after the gate finds the VM `Evicting` and gets
+    // `host_full` (Known gaps). The sleep closes no door.
+    pub async fn sleep_idle(&self, now: Instant) -> Vec<SessionId> {
+        let idle: Vec<Eviction<L::Process>> = {
+            let mut table = lock(&self.table);
+            let sessions: Vec<SessionId> = table
+                .iter()
+                .filter_map(|(session, slot)| match slot {
+                    Slot::Running(vm) if self.gates(session, vm, now).sleep => {
+                        Some(session.clone())
+                    }
+                    _ => None,
+                })
+                .collect();
+            sessions
+                .into_iter()
+                .filter_map(|session| self.take_out(&mut table, session))
+                .collect()
+        };
+        let mut slept = Vec::new();
+        for eviction in idle {
+            let id = eviction.id.clone();
+            if self.retire(eviction).await {
+                slept.push(id);
+            }
+        }
+        slept
+    }
+
+    /// Runs `retention::sweep` with `BUDGET` over the state root (PR D13,
+    /// decisions CH2, CH8-7). It holds the lock of the `InUse` set, so no
+    /// key check or claim runs, and it names each generation in use, so
+    /// it never removes the files of a restored VM (decision CH50 rule 8).
+    /// It waits for each take to end, and no take starts until it ends.
+    ///
+    /// # Errors
+    ///
+    /// A failed read of `sessions/`, or a sweep that panicked.
+    pub async fn sweep(&self) -> io::Result<Swept> {
+        let _takes = self.takes.write().await;
+        let (in_use, state) = (Arc::clone(&self.in_use), self.config.state.clone());
+        spawn_blocking(move || sweep(&state, SystemTime::now(), BUDGET, &lock_in_use(&in_use)))
+            .await
+            .unwrap_or_else(|_| Err(io::Error::other("the sweep panicked")))
     }
 
     /// Writes `code` with `message` to the fault file of `family` and

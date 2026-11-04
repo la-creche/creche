@@ -301,6 +301,37 @@ door close, and an open door counts as used now (decision CH50 rules 5
 and 6). An Upgrade of a session under eviction gets `host_full`.
 `tests/start.rs` proves the order, the door close and `host_full`.
 
+## The sleep and the sweep
+
+`sleep::run` times two passes until its stop future ends (plan PR L18).
+Both run at once, then the idle check every `IDLE_CHECK` (30 s) and the
+sweep every `SWEEP_EVERY` (1 h). A pass that runs ends before the stop
+counts. A long pass delays the next tick, and missed ticks do not run
+back to back. The sweep goes first when both are due, so long idle
+passes never starve it. `sleep::Sleeper` lets `tests/sleep.rs` count
+the passes on paused time.
+
+1. `ColdBoot::sleep_idle` reads `Activity::may_sleep` of each VM with a
+   control link and a key: the facade is up, no turn runs, no door link
+   is open, and the VM is idle past `IDLE_TIMEOUT` (decisions CH2, CH19
+   (6), CH36 G12). The gate and the take out run under the table lock.
+   Each VM that passes leaves the table as `Evicting` and is retired as
+   in step 2 to 4 of "The eviction". A sleep closes no door.
+2. `ColdBoot::sweep` runs `retention::sweep` of `creche-vmm-store` with
+   `BUDGET` under the lock of the `InUse` set (PR D13, decisions CH2,
+   CH8-7, CH50 rule 8). So no key check or claim runs, and no generation
+   of a restored VM goes. A lock of the takes keeps each take out of the
+   sweep, as `retention::sweep` asks.
+
+The last use of a VM is the latest of its start, its last door close
+and its last turn event (decision CH50 rule 5). `ControlState::turn`
+keeps the time of each turn event and `turn_seen`: a turn event arrived
+after the last `ControlReady`. A ready clears `turn_seen`. So a VM is up
+only after a ready said `running` or a turn event arrived (decision CH43
+rule 8). Admission reads the same gates. `tests/start.rs` proves the
+sleep, a turn or an open door that keeps a VM awake, `turn_seen`, and a
+sweep that skips a generation in use.
+
 ## Rules
 
 - Each new dependency is its own pull request, with its lock delta
@@ -325,9 +356,8 @@ and 6). An Upgrade of a session under eviction gets `host_full`.
    reports each change. Until then the sleep gate treats a VM as up only
    after a ready said `running` or a turn event arrived. A VM after a
    cold boot reports `not_started` or `starting` (decision CH34 rule 7),
-   so a gate that reads only the ready would never snapshot it. The sleep
-   gate is plan PR L18, a later PR, so this crate does not hold the rule
-   yet.
+   so a gate that reads only the ready would never snapshot it.
+   `ControlState::turn_seen` holds the rule (plan PR L18).
 3. CONTRACT-QUESTION (plan PR L16, `src/start.rs`): decision CH6-3 runs
    the deny check "before the VM is ready". The plan puts it before the
    wait for `ControlReady`. Until CH runs, the command line is the one
@@ -341,7 +371,8 @@ and 6). An Upgrade of a session under eviction gets `host_full`.
    still holds its RAM, so the code answers `host_full`, and attendance
    retries. A door that an eviction closes between the end of the start
    and the 101 gives that Upgrade `not_found`, because the handler reads
-   a stopped claim as a drop.
+   a stopped claim as a drop. An Upgrade of a session whose VM goes to
+   sleep gets `host_full` the same way.
 5. `ColdBoot` keeps the control link of each VM, and no code reads its
    turn events yet. The `StopVm` hook of the vmm and its use of the
    table of `ColdBoot` are not built yet either.
@@ -364,10 +395,20 @@ and 6). An Upgrade of a session under eviction gets `host_full`.
 9. Item 5.7 of the design asks for a guest `sync` before each snapshot
    (`creche-vmm-store` Known gaps). The control link has no `sync`
    line yet, so an eviction takes its snapshot with no guest sync.
-10. No code reads the turn events of a VM yet (gap 5), so the eviction
-    gate passes `turn_seen` false (decision CH43 rule 8). A VM whose last
-    ready did not say `running` is never evicted until plan PR L18 adds
-    the flag.
+10. No code reads the turn events of a VM yet (gap 5), so no code calls
+    `ControlState::turn`, and `turn_seen` and the last turn time stay
+    unset (decisions CH43 rule 8, CH50 rule 5). A VM whose last ready did
+    not say `running` never sleeps and is never evicted until a reader of
+    the control link calls `turn`.
+11. CONTRACT-QUESTION (decisions CH2, CH36 G12, plan PR L18,
+    `src/sleep.rs`): no row names how often the idle timer checks. The
+    code checks every 30 s, a tenth of `IDLE_TIMEOUT`. So a VM sleeps
+    between 5 min and 5 min 30 s after its last use. A change costs the
+    constant `IDLE_CHECK`.
+12. CONTRACT-QUESTION (decisions CH2, CH8-7, CH50 rule 8, plan PR L18,
+    `src/sleep.rs`): no row names how often the sweep runs. The code
+    sweeps at the start of `sleep::run`, then each hour. A change costs
+    the constant `SWEEP_EVERY`.
 
 ## Caller duties
 
@@ -393,9 +434,10 @@ and 6). An Upgrade of a session under eviction gets `host_full`.
 4. Plan PR L20 runs `check_cloud_hypervisor` at vmm start and passes
    its `CheckedCh` as `StartConfig::ch_version`. A failed check refuses
    to start the vmm (gap G10 option A).
-5. Plan PR L18 runs its sweep under the lock of the `InUse` set and
-   names each generation of `ColdBoot::in_use` in it (decision CH50 rule
-   8).
+5. Plan PR L20 runs `sleep::run` with the `ColdBoot` of the vmm on the
+   runtime, and plan PR L19 ends its stop future before the shutdown
+   snapshots. `sleep::run` is the only caller of `ColdBoot::sweep` and
+   `ColdBoot::sleep_idle` in the vmm.
 6. Two drops of one session can overlap. The `StopVm` hook of the vmm
    makes a stop that finds a stop of the same VM running wait for it
    and return its outcome. So no drop removes the files of a VM that
