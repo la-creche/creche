@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::thread::{sleep, spawn};
 use std::time::Duration;
 
-use creche_vmm::control::{ControlError, ControlLink, ControlState, open};
+use creche_vmm::control::{Change, ControlError, ControlLink, ControlState, open};
 use creche_vmm_store::layout::StateRoot;
 use creche_vmm_store::rows::Rows;
 use creche_wire::{CONTROL_LINE_CAP, ControlReady, SessionId, TurnEvent, UnixMillis};
@@ -95,6 +95,21 @@ fn rows(name: &str) -> Rows {
 fn title_and_time(rows: &Rows, vm: &SessionId) -> (serde_json::Value, serde_json::Value) {
     let row = serde_json::to_value(rows.get(vm).unwrap()).unwrap();
     (row["title"].clone(), row["updated_at"].clone())
+}
+
+/// Writes the turn end of `change` to the row of `vm`, as the caller of
+/// `ControlState` does. Returns whether the link was current.
+#[cfg(test)]
+fn apply(rows: &mut Rows, vm: &SessionId, change: Change) -> bool {
+    match change {
+        Change::Stale => false,
+        Change::Applied(end) => {
+            if let Some(end) = end {
+                rows.turn_end(vm, &end).unwrap();
+            }
+            true
+        }
+    }
 }
 
 /// Opens the control link of `SESSION` on `path` and runs `then` on it in
@@ -275,30 +290,30 @@ fn a_new_link_replaces_the_old_one() {
     let mut rows = rows("rows-replace");
     let mut state = ControlState::default();
     let old = state.replace(&vm);
-    assert!(
-        state
-            .ready(&mut rows, &vm, old, ready(READY).unwrap())
-            .unwrap()
-    );
+    assert!(apply(
+        &mut rows,
+        &vm,
+        state.ready(&vm, old, ready(READY).unwrap())
+    ));
 
     // A restore: the vmm opens a new link, and the old one ends later
     // (fact 74).
     let new = state.replace(&vm);
     assert_eq!(state.link(&vm), Some(new));
-    assert!(
-        !state
-            .ready(&mut rows, &vm, old, ready(EXITED).unwrap())
-            .unwrap()
-    );
+    assert!(!apply(
+        &mut rows,
+        &vm,
+        state.ready(&vm, old, ready(EXITED).unwrap())
+    ));
     assert!(!state.closed(&vm, old));
     assert_eq!(state.link(&vm), Some(new));
     assert_eq!(state.facade(&vm), Some(&ready(READY).unwrap().facade));
 
-    assert!(
-        state
-            .ready(&mut rows, &vm, new, ready(EXITED).unwrap())
-            .unwrap()
-    );
+    assert!(apply(
+        &mut rows,
+        &vm,
+        state.ready(&vm, new, ready(EXITED).unwrap())
+    ));
     assert!(state.closed(&vm, new));
     assert_eq!(state.link(&vm), None);
     // A link close never stops the facade (decision CH19 (1)).
@@ -322,17 +337,17 @@ fn turn_events_keep_the_first_title_and_move_updated_at() {
     let mut rows = rows("rows-turns");
     let mut state = ControlState::default();
     let link = state.replace(&vm);
-    assert!(
-        state
-            .ready(&mut rows, &vm, link, ready(READY).unwrap())
-            .unwrap()
-    );
+    assert!(apply(
+        &mut rows,
+        &vm,
+        state.ready(&vm, link, ready(READY).unwrap())
+    ));
     let mut seen = Vec::new();
     let end = with_link(&path, async |mut control| {
         loop {
             match control.event().await {
                 Ok(event) => {
-                    assert!(state.turn(&mut rows, &vm, link, &event).unwrap());
+                    assert!(apply(&mut rows, &vm, state.turn(&vm, link, &event)));
                     seen.push((state.turn_running(&vm), title_and_time(&rows, &vm)));
                 }
                 Err(error) => break error,
@@ -369,21 +384,21 @@ fn a_ready_applies_its_last_turn_end_once() {
     // A restore dropped the end event of the old link (fact 45). The ready
     // of the new link carries it (decision CH32 rule 4).
     let link = state.replace(&vm);
-    assert!(
-        state
-            .ready(&mut rows, &vm, link, ready(ENDED).unwrap())
-            .unwrap()
-    );
+    assert!(apply(
+        &mut rows,
+        &vm,
+        state.ready(&vm, link, ready(ENDED).unwrap())
+    ));
     assert_eq!(title_and_time(&rows, &vm), first);
     assert!(state.turn_running(&vm));
 
     // The next restore repeats the seen end.
     let link = state.replace(&vm);
-    assert!(
-        state
-            .ready(&mut rows, &vm, link, ready(ENDED).unwrap())
-            .unwrap()
-    );
+    assert!(apply(
+        &mut rows,
+        &vm,
+        state.ready(&vm, link, ready(ENDED).unwrap())
+    ));
     assert_eq!(title_and_time(&rows, &vm), first);
 
     // An end of the replaced link changes nothing.
@@ -391,14 +406,14 @@ fn a_ready_applies_its_last_turn_end_once() {
         TurnEvent::End(serde_json::from_str(r#"{"title":"Late","updated_at":9000}"#).unwrap());
     let old = state.replace(&vm);
     let new = state.replace(&vm);
-    assert!(!state.turn(&mut rows, &vm, old, &late).unwrap());
+    assert!(!apply(&mut rows, &vm, state.turn(&vm, old, &late)));
     assert_eq!(title_and_time(&rows, &vm), first);
     assert!(state.turn_running(&vm));
-    assert!(
-        state
-            .ready(&mut rows, &vm, new, ready(EXITED).unwrap())
-            .unwrap()
-    );
+    assert!(apply(
+        &mut rows,
+        &vm,
+        state.ready(&vm, new, ready(EXITED).unwrap())
+    ));
     assert!(!state.turn_running(&vm));
 }
 

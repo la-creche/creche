@@ -82,13 +82,17 @@ changes the state. So the late EOF of a replaced link changes nothing
 because it never stops the facade (decision CH19 (1)).
 
 After `ControlReady`, `ControlLink::event` reads each turn event that
-guest init relays (decision CH21). A close of the link then ends it with
-`ControlError::Ended`, which asks for no cold boot. `ControlState::turn` applies it: a
-start marks a turn running, and an end clears the mark and goes to
-`Rows::turn_end` of `creche-vmm-store`. That sets `updated_at`, and it
-sets the title only while the row has none (decision CH32 rule 4).
-`ControlState::ready` applies the last turn end of each `ControlReady`
-the same way, so an end that a restore dropped still arrives (fact 45).
+guest init relays (decision CH21). `ControlState::turn` applies each
+event in memory: a start marks a turn running, and an end clears the
+mark. `ControlState::ready` keeps the facade state of each
+`ControlReady`. Both return a `Change`. `Change::Applied` holds the turn
+end, if any, and the caller writes it with `Rows::turn_end` of
+`creche-vmm-store`. That write sets `updated_at`, and it sets the title
+only while the row has none (decision CH32 rule 4). So an end that a
+restore dropped still arrives through the next ready (fact 45). The
+write syncs a file and a dir, so the caller runs it in `spawn_blocking`
+(decision CH36 G21). A close of the link after `ControlReady` ends
+`event` with `ControlError::Ended`, which asks for no cold boot.
 `ControlState::turn_running` is the turn state for the sleep gate
 (decision CH19 (6)). `ControlLink::stop` sends the graceful stop
 `{"stop":{}}` (decision CH19 (3)).

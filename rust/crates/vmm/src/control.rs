@@ -13,7 +13,6 @@ use std::io;
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use creche_vmm_store::rows::{RowWriteError, Rows};
 use creche_wire::{
     CONTROL_LINE_CAP, ControlCommand, ControlHello, ControlReady, ControlStop, FacadeState,
     GuestPort, SessionId, TurnEnd, TurnEvent, UnixMillis,
@@ -309,6 +308,20 @@ fn last_turn_end(facade: &FacadeState) -> Option<&TurnEnd> {
     }
 }
 
+/// What a change that names a link did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[must_use]
+pub enum Change {
+    /// The link is not the current link of the VM. Nothing changed.
+    Stale,
+    /// The link is current, and the state changed. `Some` holds a turn
+    /// end for the row of the VM. The caller writes it with
+    /// `creche_vmm_store::rows::Rows::turn_end`. That write syncs a file
+    /// and a dir, so the caller runs it in `spawn_blocking` (decision CH36
+    /// G21) and holds no lock of `ControlState` across it.
+    Applied(Option<TurnEnd>),
+}
+
 /// The control state of every VM, keyed on the session that the VM serves
 /// (decision CH1). Each change names the link it came from, and only the
 /// current link changes the state. So the late EOF of a replaced link
@@ -336,62 +349,39 @@ impl ControlState {
             .filter(|control| control.link == Some(link))
     }
 
-    /// Keeps the facade state of `ready` when `link` is current, and
-    /// applies its last turn end to the row of `vm`. A restore can drop a
-    /// turn event of the old link (fact 45), so the end arrives here
-    /// (decision CH32 rule 4). A repeat of a seen end writes nothing.
-    /// Returns whether `link` is current.
-    ///
-    /// # Errors
-    ///
-    /// A `RowWriteError` when the row write failed. The facade state and
-    /// the turn state change all the same. The next `ControlReady` applies
-    /// the end again.
-    pub fn ready(
-        &mut self,
-        rows: &mut Rows,
-        vm: &SessionId,
-        link: LinkId,
-        ready: ControlReady,
-    ) -> Result<bool, RowWriteError> {
+    /// Keeps the facade state of `ready` when `link` is current. Returns
+    /// `Applied` with the last turn end of the facade state, which the
+    /// caller writes to the row of `vm`. A restore can drop a turn event
+    /// of the old link (fact 45), so the end arrives here (decision CH32
+    /// rule 4). A repeat of a seen end writes nothing. A failed write
+    /// changes no state here, and the next `ControlReady` carries the end
+    /// again.
+    pub fn ready(&mut self, vm: &SessionId, link: LinkId, ready: ControlReady) -> Change {
         let Some(control) = self.current(vm, link) else {
-            return Ok(false);
+            return Change::Stale;
         };
         control.turn_running =
             matches!(&ready.facade, FacadeState::Running(running) if running.turn_running);
         let facade = control.facade.insert(ready.facade);
-        if let Some(end) = last_turn_end(facade) {
-            rows.turn_end(vm, end)?;
-        }
-        Ok(true)
+        Change::Applied(last_turn_end(facade).cloned())
     }
 
     /// Applies a turn event of `link` when `link` is current (decision
-    /// CH21). A start marks a turn running. An end clears the mark, sets
-    /// the row's `updated_at` and sets its title only while that is `null`
-    /// (decision CH32 rule 4). An event of a replaced link changes nothing:
-    /// the `ControlReady` of the new link carries its end (fact 74).
-    /// Returns whether `link` is current.
-    ///
-    /// # Errors
-    ///
-    /// A `RowWriteError` when the row write failed. The turn state changes
-    /// all the same.
-    pub fn turn(
-        &mut self,
-        rows: &mut Rows,
-        vm: &SessionId,
-        link: LinkId,
-        event: &TurnEvent,
-    ) -> Result<bool, RowWriteError> {
+    /// CH21). A start marks a turn running. An end clears the mark and
+    /// returns `Applied` with the end. The caller writes it to the row of
+    /// `vm`: that sets `updated_at`, and it sets the title only while that
+    /// is `null` (decision CH32 rule 4). An event of a replaced link
+    /// changes nothing: the `ControlReady` of the new link carries its end
+    /// (fact 74).
+    pub fn turn(&mut self, vm: &SessionId, link: LinkId, event: &TurnEvent) -> Change {
         let Some(control) = self.current(vm, link) else {
-            return Ok(false);
+            return Change::Stale;
         };
         control.turn_running = matches!(event, TurnEvent::Start(_));
-        if let TurnEvent::End(end) = event {
-            rows.turn_end(vm, end)?;
+        match event {
+            TurnEvent::Start(_) => Change::Applied(None),
+            TurnEvent::End(end) => Change::Applied(Some(end.clone())),
         }
-        Ok(true)
     }
 
     /// Marks the close of `link` when it is current. Returns whether it
