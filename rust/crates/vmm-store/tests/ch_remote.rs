@@ -8,6 +8,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::{Duration, Instant};
 
 use creche_vmm_store::ch_remote::{ChCommand, ChRemote, ChRemoteError, VmState};
@@ -147,11 +148,13 @@ fn a_failed_command_keeps_its_status_and_stderr() {
     assert_eq!(stderr, "Error: VM is not running\n");
 }
 
+/// The timeout kills `ch-remote` and reaps it. `kill -0` on the pid then
+/// fails: a live or an unreaped process would pass it.
 #[test]
 fn a_hung_command_ends_at_its_timeout() {
     let temp = Temp::new("hang");
     temp.set("hang", "");
-    let timeout = Duration::from_millis(200);
+    let timeout = Duration::from_secs(1);
     let start = Instant::now();
     let error = stub().resume(&temp.vm, timeout).expect_err("a timeout");
     assert!(start.elapsed() < Duration::from_secs(5));
@@ -165,6 +168,12 @@ fn a_hung_command_ends_at_its_timeout() {
         ),
         "{error}"
     );
+    let pid = fs::read_to_string(temp.vm.path().join("pid")).expect("the stub pid");
+    let probe = Command::new("sh")
+        .args(["-c", "kill -0 \"$1\" 2>/dev/null", "sh", pid.trim()])
+        .status()
+        .expect("the probe");
+    assert!(!probe.success(), "pid {} still exists", pid.trim());
 }
 
 #[test]
