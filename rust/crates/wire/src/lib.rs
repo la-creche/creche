@@ -22,7 +22,7 @@ pub use routes::{
     AcpError, AcpRoute, Body, CreateError, CreateRoute, DROP_CLIENT_TIMEOUT, DROP_SIGTERM_GRACE,
     DROP_STOP_WAIT, DropError, DropRoute, HOST_API_BODY_CAP, HOST_API_HEADER, HOST_API_PROTOCOL,
     JsonRoute, ListError, ListRoute, MISMATCH_STATUS, ProtocolMismatch, RouteError, SHARED_CODES,
-    Serve, UpgradeRoute,
+    Serve, ServeUpgrade, UpgradeRoute,
 };
 
 /// The length of a session id: 32 hex digits and 4 hyphens.

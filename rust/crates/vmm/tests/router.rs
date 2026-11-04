@@ -1,21 +1,26 @@
-//! The router over raw bytes on a temp socket (decisions CH25, CH26 rule
-//! 4, CH33 rules 2 and 13). A fake handler set answers
+//! The router over raw bytes on a temp socket (decisions CH25, CH26 rules
+//! 3 and 4, CH33 rules 2 and 13, CH34 rule 7). A fake handler set answers
 //! each route, or refuses it with the code that the test sets. The bodies
 //! are vectors of `rust/crates/wire/vectors/wire.json`.
 
+use std::future::poll_fn;
 use std::io::{ErrorKind, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use creche_vmm::server::{Stop, run_routes};
+use creche_vmm::server::{Relay, Stop, run_routes};
 use creche_wire::{
-    CreateError, CreateRoute, CreateSession, DropError, DropRoute, DropTarget, Dropped,
-    HOST_API_HEADER, HOST_API_PROTOCOL, JsonRoute, ListError, ListRoute, ListSessions, RouteError,
-    Serve, SessionPage, SessionRow,
+    AcpRoute, CreateError, CreateRoute, CreateSession, DropError, DropRoute, DropTarget, Dropped,
+    HOST_API_HEADER, HOST_API_PROTOCOL, JsonRoute, ListError, ListRoute, ListSessions, OpenAcp,
+    RouteError, Serve, ServeUpgrade, SessionPage, SessionRow, UpgradeRoute,
 };
+use hyper::upgrade::Upgraded;
+use hyper_util::rt::TokioIo;
+use tokio::io::AsyncWrite;
 use tokio::runtime::{Builder, Runtime};
 use tokio::task::JoinHandle;
 
@@ -27,6 +32,7 @@ const ACP: &str = r#"{"family":"chat","id":"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b
 
 const JSON: &str = "content-type: application/json\r\n";
 const CLOSE: &str = "connection: close\r\n";
+const TOKEN: &str = "upgrade: creche-acp\r\n";
 
 /// The codes and statuses of a route error.
 type Statuses = &'static [(&'static str, u16)];
@@ -90,7 +96,33 @@ mod fake {
         }
     }
 
+    impl ServeUpgrade<AcpRoute> for Fake {
+        type Relay = Hello;
+
+        async fn admit(&self, _: OpenAcp) -> Result<Hello, <AcpRoute as UpgradeRoute>::Error> {
+            self.refusal()?;
+            Ok(Hello)
+        }
+    }
+
     creche_vmm::routes!(Fake);
+
+    /// A relay that writes one line on the stream after 101, then closes it.
+    #[derive(Debug)]
+    pub(super) struct Hello;
+
+    impl Relay for Hello {
+        async fn run(self, mut stream: TokioIo<Upgraded>) {
+            let mut line: &[u8] = b"relay\n";
+            while !line.is_empty() {
+                match poll_fn(|context| Pin::new(&mut stream).poll_write(context, line)).await {
+                    Ok(written) if written > 0 => line = &line[written..],
+                    _ => return,
+                }
+            }
+            let _ = poll_fn(|context| Pin::new(&mut stream).poll_flush(context)).await;
+        }
+    }
 
     /// A server of `Fake` on a temp socket.
     pub(super) struct Server {
@@ -206,8 +238,30 @@ fn the_checks_come_in_order() {
         server.refused(line, &plain, "", no_route);
     }
     server.refused("GET /create", &plain, "", ("bad_method", 405));
-    // The Upgrade route acp is not served yet, so it names no route.
-    server.refused("POST /acp", &plain, "", no_route);
+    server.refused("PUT /acp", &plain, "", ("bad_method", 405));
+
+    // An Upgrade route checks the Upgrade header before the body
+    // (decisions CH26 rule 3, CH34 rule 7), and names the token. Only the
+    // exact token, given once, names it (decision CH40 rule 10).
+    for upgrade in [
+        "",
+        "upgrade: other\r\n",
+        "upgrade: creche-acp, other\r\n",
+        "upgrade: Creche-ACP\r\n",
+        "upgrade: creche-acp\r\nupgrade: creche-acp\r\n",
+    ] {
+        let headers = format!("{plain}{upgrade}");
+        server.refused("POST /acp", &headers, "{}", ("upgrade_required", 426));
+        let (_, head, _) = server.ask("POST /acp", &headers, "{}");
+        assert!(head.contains("\r\nupgrade: creche-acp"), "{head}");
+        assert!(head.contains("\r\nconnection: upgrade"), "{head}");
+    }
+    server.refused(
+        "POST /acp",
+        &format!("{plain}{TOKEN}"),
+        ACP,
+        ("bad_content_type", 415),
+    );
     server.refused("POST /create", &plain, CREATE, ("bad_content_type", 415));
 
     // A strict JSON body of another type gets not_valid.
@@ -219,6 +273,12 @@ fn the_checks_come_in_order() {
     ] {
         server.refused(line, &json, body, ("not_valid", 400));
     }
+    server.refused(
+        "POST /acp",
+        &format!("{json}{TOKEN}"),
+        LIST,
+        ("not_valid", 400),
+    );
     server.end();
 }
 
@@ -226,8 +286,9 @@ fn the_checks_come_in_order() {
 fn each_route_answers_or_refuses_each_code() {
     let server = Server::start("router-codes");
     let json = format!("{CLOSE}{JSON}");
+    let upgrade = format!("{json}{TOKEN}");
 
-    // The one table names each JSON route, its error and its body.
+    // The one table names each route, its error and its body.
     let mut routes: Vec<(&str, Statuses, &str)> = Vec::new();
     macro_rules! each_route {
         (json $route:path) => {
@@ -237,10 +298,21 @@ fn each_route_answers_or_refuses_each_code() {
                 &json,
             ));
         };
-        (upgrade $route:path) => {};
+        (upgrade $route:path) => {
+            routes.push((
+                <$route as UpgradeRoute>::NAME,
+                <<$route as UpgradeRoute>::Error as RouteError>::STATUSES,
+                &upgrade,
+            ));
+        };
     }
     creche_wire::route_table!(each_route);
-    let bodies = [("create", CREATE), ("list", LIST), ("drop", DROP)];
+    let bodies = [
+        ("create", CREATE),
+        ("list", LIST),
+        ("drop", DROP),
+        ("acp", ACP),
+    ];
     assert_eq!(routes.len(), bodies.len());
 
     for (name, statuses, headers) in routes {
@@ -251,6 +323,16 @@ fn each_route_answers_or_refuses_each_code() {
             server.refused(&line, headers, body, (code, status));
         }
         server.fake.0.lock().unwrap().refuse = None;
+        if name == "acp" {
+            let headers = format!("{JSON}connection: upgrade\r\n{TOKEN}");
+            let (status, head, stream) = server.ask(&line, &headers, body);
+            assert_eq!((status, stream.as_str()), (101, "relay\n"), "{head}");
+            assert!(head.contains("\r\nupgrade: creche-acp"), "{head}");
+            // RFC 9110 section 7.8: a 101 that carries Upgrade also says
+            // Connection: upgrade.
+            assert!(head.contains("\r\nconnection: upgrade"), "{head}");
+            continue;
+        }
         let reply = match name {
             "create" => ROW,
             "list" => r#"{"next":null,"rows":[]}"#,
