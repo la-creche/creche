@@ -185,9 +185,8 @@ def _flavor_steps(stage: str) -> list[str]:
 
 @pytest.mark.parametrize("stage", ["agent-sandbox", "agent-sandbox-python"])
 def test_each_flavor_writes_the_env_file_in_its_last_step(stage: str) -> None:
-    """An ENV line after the write would set a name the file does not hold.
-    Only CMD, which sets no variable, may follow it."""
-    steps = [step for step in _flavor_steps(stage) if not step.startswith("CMD ")]
+    """An ENV line after the write would set a name the file does not hold."""
+    steps = _flavor_steps(stage)
 
     assert "/run/creche-env-write" in steps[-1]
     assert steps[-1].endswith("> /etc/creche/env")
