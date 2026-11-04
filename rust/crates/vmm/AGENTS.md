@@ -148,6 +148,26 @@ from the claim to its end, then the time that the last admitted Upgrade
 ended. A refused Upgrade records no close, so the map of close times
 grows only with sessions that ran. A drop clears the time.
 
+## The stop
+
+`src/stop.rs` stops one VM (decisions CH19 (3), CH34 rule 5). It sends
+`stop` on the control link and waits `DROP_STOP_WAIT` (30 s) for Cloud
+Hypervisor to exit. Then it sends SIGTERM through the `Launched` handle
+of `creche-vmm-confine` and waits `DROP_SIGTERM_GRACE` (5 s). Then it
+sends SIGKILL and waits `KILL_WAIT` (1 s, decision CH50 rule 4) at
+most, so a stop ends within 36 s. A process that outlives it gives
+`StopError::Hung`, and its files stay. The first two waits come from
+`creche-wire`. A kill is a power cut
+for the guest, and no error: `Stopped::Killed`. After the exit it runs
+`remove_stale` of `creche-vmm-store` in `spawn_blocking`, which removes
+`api.sock.lock` (fact 75) and the `vsock.sock` that a kill leaves. A stop
+takes no snapshot, so the next start is a cold boot (decision CH19 (5)).
+A step that did not go out skips its wait: no open control link, a
+failed or stalled write of `stop`, or a failed SIGTERM (decision CH50
+rule 3). The write of `stop` has a timeout counted inside
+`DROP_STOP_WAIT`, so SIGTERM follows 30 s after the start at most.
+`StopLink` and `VmProcess` let `tests/stop.rs` give fakes on paused time.
+
 ## Rules
 
 - Each new dependency is its own pull request, with its lock delta
@@ -183,3 +203,7 @@ grows only with sessions that ran. A drop clears the time.
    Phase 3 confirms that. If guest init refuses 1201 until the facade
    runs, 101 waits for the facade, against decision CH34 rule 7, and
    David decides again.
+3. Decision CH50 rule 4: the drop route of plan PR L15 maps
+   `StopError::Hung` to `internal` 500 and keeps the row, so a retried
+   drop finishes the job. The vmm logs the pid of the hung process.
+   Admission keeps counting the RAM of that VM (`src/stop.rs`).
