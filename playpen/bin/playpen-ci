@@ -12,8 +12,10 @@
 #      image config env (CH7-7, CH49).
 #   3. `playpen-rootfs` of each target: the tar export that a root disk
 #      is made from builds, holds `/etc/creche/env` and holds no
-#      `.dockerenv` (CH7-2, fact 59). The export reuses the build cache, and
-#      the script removes each tar after the check.
+#      `.dockerenv` (CH7-2, fact 59). The export reuses the build cache.
+#   4. `playpen-disk` of each tar, two times: both runs give the same
+#      disk digest (CH7-2). The script removes each tar and disk after the
+#      check.
 #
 # The job keeps its steps here, so a new check of the image changes this
 # file and not the two workflow files.
@@ -32,6 +34,7 @@ trap 'rm -rf -- "$work"' EXIT
 FLAVORS="base:agent-sandbox python:agent-sandbox-python"
 
 for pair in $FLAVORS; do
+  flavor="${pair%%:*}"
   target="${pair#*:}"
   image="playpen-ci/$target"
   say "building $target"
@@ -39,5 +42,10 @@ for pair in $FLAVORS; do
     -t "$image" "$ROOT" || die "the $target build failed"
   "$ROOT/playpen/bin/playpen-env-check" "$image"
   "$ROOT/playpen/bin/playpen-rootfs" "$target" "$work/$target.tar"
-  rm -f -- "$work/$target.tar"
+  mkdir "$work/one" "$work/two"
+  first="$("$ROOT/playpen/bin/playpen-disk" "$work/$target.tar" "$work/one" "$flavor")"
+  second="$("$ROOT/playpen/bin/playpen-disk" "$work/$target.tar" "$work/two" "$flavor")"
+  [[ "$first" == "$second" ]] || die "two disks of one $target tar differ: $first, $second"
+  say "$first"
+  rm -rf -- "$work/$target.tar" "$work/one" "$work/two"
 done
