@@ -15,8 +15,7 @@
 //!    completed handshake). The vmm start clears every file (rule 8).
 //!
 //! Every time is RFC 3339 in UTC with `Z`, to the second (root
-//! `AGENTS.md`, Time). A small formatter writes it, so the crate needs no
-//! date crate.
+//! `AGENTS.md`, Time), from `rfc3339::format`.
 //!
 //! CONTRACT-QUESTION (decisions CH21-1, CH36 G18): contract 05 §3.3.1 has
 //! no row for the vmm yet. Until its amendment, three things are open: the
@@ -27,14 +26,16 @@
 //! gaps.
 
 use std::collections::BTreeMap;
-use std::fs::{self, DirBuilder, File, OpenOptions};
+use std::fs::{self, DirBuilder, File, OpenOptions, Permissions};
 use std::io::{self, Write};
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 
 use creche_wire::FamilyName;
 use serde::Serialize;
+
+use crate::rfc3339;
 
 /// The name of the writer: the directory under the faults root and the
 /// `source` of each fault.
@@ -47,6 +48,12 @@ pub const REFRESH: Duration = Duration::from_secs(30);
 
 /// The end of the temporary file of a write.
 const TEMP: &str = ".tmp";
+
+/// The mode of `<faults root>/vmm`. The group may list it.
+const DIR_MODE: u32 = 0o750;
+
+/// The mode of each fault file. The group may read it.
+const FILE_MODE: u32 = 0o640;
 
 /// A fault that the vmm raises (decision CH6-3). Both stop turns
 /// (contract 05 §3.3).
@@ -78,34 +85,6 @@ struct Body<'a> {
     faults: &'a [Entry],
 }
 
-/// Writes `time` as RFC 3339 in UTC, to the second. A time before 1970
-/// writes as 1970-01-01T00:00:00Z: the host clock is never there.
-#[must_use]
-pub fn rfc3339(time: SystemTime) -> String {
-    let secs = time
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let (days, rest) = (secs / 86_400, secs % 86_400);
-    // The civil date of a day count (Howard Hinnant, `civil_from_days`).
-    let shifted = days + 719_468;
-    let era = shifted / 146_097;
-    let day_of_era = shifted % 146_097;
-    let year_of_era =
-        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_index = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * month_index + 2) / 5 + 1;
-    let month = if month_index < 10 {
-        month_index + 3
-    } else {
-        month_index - 9
-    };
-    let year = era * 400 + year_of_era + u64::from(month <= 2);
-    let (hour, minute, second) = (rest / 3600, rest % 3600 / 60, rest % 60);
-    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
-}
-
 /// The directory `<faults root>/vmm`. The vmm is its one writer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FaultDir(PathBuf);
@@ -127,10 +106,15 @@ impl FaultDir {
             ));
         }
         let dir = faults_root.join(SOURCE);
-        match DirBuilder::new().mode(0o750).create(&dir) {
-            Err(error) if error.kind() != io::ErrorKind::AlreadyExists => Err(error),
-            _ => Ok(Self(dir)),
+        match DirBuilder::new().mode(DIR_MODE).create(&dir) {
+            Err(error) if error.kind() != io::ErrorKind::AlreadyExists => return Err(error),
+            _ => {}
         }
+        // The umask masks the mode of the create, and several house units
+        // set UMask=0077. So the mode is set again, whatever the umask
+        // says, as attendance's ensure_dir does.
+        fs::set_permissions(&dir, Permissions::from_mode(DIR_MODE))?;
+        Ok(Self(dir))
     }
 
     /// The fault file of `family`.
@@ -145,7 +129,7 @@ impl FaultDir {
         let body = Body {
             family,
             source: SOURCE,
-            written_at: rfc3339(now),
+            written_at: rfc3339::format(now),
             faults,
         };
         let mut bytes = serde_json::to_vec_pretty(&body).map_err(io::Error::other)?;
@@ -156,8 +140,10 @@ impl FaultDir {
             .write(true)
             .create(true)
             .truncate(true)
-            .mode(0o640)
+            .mode(FILE_MODE)
             .open(&temp)?;
+        // The umask masks the mode of the open too, so fchmod sets it.
+        file.set_permissions(Permissions::from_mode(FILE_MODE))?;
         file.write_all(&bytes)?;
         file.sync_all()?;
         fs::rename(&temp, &path)?;
@@ -221,7 +207,7 @@ impl FaultBook {
             None => faults.push(Entry {
                 code,
                 blocks_turns: true,
-                since: rfc3339(now),
+                since: rfc3339::format(now),
                 source: SOURCE,
                 message,
             }),
@@ -235,12 +221,15 @@ impl FaultBook {
     ///
     /// # Errors
     ///
-    /// The error of the write.
+    /// The error of the write. The book keeps the faults, so the file
+    /// never lists a fault that the book forgot: the next `refresh` writes
+    /// them again, and a later `clear` tries again.
     pub fn clear(&mut self, family: &FamilyName, now: SystemTime) -> io::Result<()> {
-        match self.open.remove(family) {
-            Some(_) => self.dir.write(family, &[], now),
-            None => Ok(()),
+        if self.open.contains_key(family) {
+            self.dir.write(family, &[], now)?;
+            self.open.remove(family);
         }
+        Ok(())
     }
 
     /// Rewrites the file of each family with an open fault, so it gets a

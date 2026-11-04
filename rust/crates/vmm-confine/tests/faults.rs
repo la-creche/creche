@@ -6,7 +6,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use creche_vmm_confine::faults::{FaultBook, FaultCode, FaultDir, REFRESH, rfc3339};
+use creche_vmm_confine::faults::{FaultBook, FaultCode, FaultDir, REFRESH};
 use creche_wire::FamilyName;
 use serde_json::Value;
 
@@ -67,21 +67,6 @@ fn mode(path: &Path) -> u32 {
 }
 
 #[test]
-fn rfc3339_writes_utc_with_z() {
-    assert_eq!(rfc3339(UNIX_EPOCH), "1970-01-01T00:00:00Z");
-    assert_eq!(rfc3339(at(1_835_438_400)), "2028-02-29T12:00:00Z");
-    assert_eq!(rfc3339(at(SINCE)), "2026-09-19T11:58:41Z");
-    assert_eq!(
-        rfc3339(at(SINCE) + Duration::from_millis(999)),
-        "2026-09-19T11:58:41Z"
-    );
-    assert_eq!(
-        rfc3339(UNIX_EPOCH - Duration::from_secs(1)),
-        "1970-01-01T00:00:00Z"
-    );
-}
-
-#[test]
 fn the_bytes_match_the_caregiver_fixture() {
     let root = Root::new("fixture");
     let mut book = root.book(SINCE);
@@ -99,6 +84,10 @@ fn the_bytes_match_the_caregiver_fixture() {
 
 #[test]
 fn a_write_is_atomic_with_the_contract_modes() {
+    // Several house units set UMask=0077. The modes must not depend on it.
+    // The umask is per process. Every mode that a test here reads is one
+    // that the code sets, so the other tests do not depend on it.
+    let umask = rustix::process::umask(rustix::fs::Mode::from_raw_mode(0o077));
     let root = Root::new("atomic");
     let mut book = root.book(SINCE);
     book.raise(
@@ -120,6 +109,17 @@ fn a_write_is_atomic_with_the_contract_modes() {
         "egress_assert_failed"
     );
     assert_eq!(root.read("chat")["faults"][0]["blocks_turns"], true);
+    rustix::process::umask(umask);
+}
+
+#[test]
+fn an_open_sets_the_mode_of_an_existing_dir() {
+    let root = Root::new("existing");
+    let vmm = root.0.join("vmm");
+    fs::create_dir(&vmm).unwrap();
+    fs::set_permissions(&vmm, fs::Permissions::from_mode(0o700)).unwrap();
+    FaultDir::open(&root.0).unwrap();
+    assert_eq!(mode(&vmm), 0o750);
 }
 
 #[test]
@@ -172,6 +172,31 @@ fn control_ready_writes_an_empty_list() {
     // A family with no open fault gets no file.
     book.clear(&"jobs".parse().unwrap(), at(WRITTEN)).unwrap();
     assert!(!root.file("jobs").exists());
+}
+
+#[test]
+fn a_failed_clear_keeps_the_faults_for_a_retry() {
+    let root = Root::new("clear-fails");
+    let mut book = root.book(SINCE);
+    book.raise(
+        &chat(),
+        FaultCode::SandboxStartFailed,
+        MESSAGE.to_owned(),
+        at(SINCE),
+    )
+    .unwrap();
+    let vmm = root.0.join("vmm");
+    fs::set_permissions(&vmm, fs::Permissions::from_mode(0o500)).unwrap();
+    assert!(book.clear(&chat(), at(WRITTEN)).is_err());
+    fs::set_permissions(&vmm, fs::Permissions::from_mode(0o750)).unwrap();
+    // The book still knows the fault, so a refresh rewrites it.
+    book.refresh(at(WRITTEN)).unwrap();
+    assert_eq!(
+        root.read("chat")["faults"][0]["code"],
+        "sandbox_start_failed"
+    );
+    book.clear(&chat(), at(WRITTEN)).unwrap();
+    assert_eq!(root.read("chat")["faults"], serde_json::json!([]));
 }
 
 #[test]

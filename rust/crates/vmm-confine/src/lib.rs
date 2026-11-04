@@ -11,5 +11,6 @@ pub mod faults;
 pub mod landlock;
 pub mod launch;
 pub mod leftovers;
+pub mod rfc3339;
 pub mod scope;
 pub mod spawner;

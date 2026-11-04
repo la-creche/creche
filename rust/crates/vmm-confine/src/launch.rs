@@ -160,9 +160,11 @@ impl Launch {
     }
 }
 
-/// The most bytes in a plan: the default pipe capacity of Linux. The
-/// spawner writes the whole plan before the spawn, and a larger plan
-/// would block that write forever.
+/// The most bytes in a plan: the default pipe capacity of Linux. It is an
+/// upper bound, not a guarantee. Linux gives a new pipe only 8 KiB when an
+/// unprivileged user is over `fs.pipe-user-pages-soft`. So the spawner
+/// writes the whole plan without blocking, before the spawn, and a plan
+/// that does not fit fails with `SpawnError::TooLarge`.
 pub(crate) const PLAN_MAX: usize = 65_536;
 
 /// The plan that the spawner writes on fd 0 of the launch step.
@@ -302,7 +304,9 @@ fn set_death_signal() -> Result<(), LaunchError> {
 /// It stays through the exec of `systemd-run` and of the payload.
 #[cfg(target_os = "linux")]
 fn restrict(launch: &Launch) -> Result<(), LaunchError> {
-    crate::landlock::restrict(&crate::landlock::rules(launch)).map_err(LaunchError::Landlock)
+    let rules =
+        crate::landlock::rules(&launch.files, &launch.systemd_run, launch.payload.program());
+    crate::landlock::restrict(&rules).map_err(LaunchError::Landlock)
 }
 
 /// No other host has Landlock (decision CH38).
