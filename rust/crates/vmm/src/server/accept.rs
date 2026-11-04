@@ -52,8 +52,7 @@ const HEAD_TIMEOUT: Duration = Duration::from_secs(30);
 // such as httpx, which writes the whole request before it reads, loses
 // the reply. A client that sends more than LINGER_BYTES, or takes longer
 // than LINGER_TIME, can still get the reset.
-// CONTRACT-QUESTION: no row decides LINGER_BYTES (4 times the body cap)
-// or LINGER_TIME (5 s). See Known gaps in rust/crates/vmm/AGENTS.md.
+// Decision CH41 rule 3: LINGER_BYTES is 4 MiB and LINGER_TIME is 5 s.
 const LINGER_BYTES: usize = 4 * HOST_API_BODY_CAP;
 
 /// How long the server reads and drops request bytes after hyper ends a

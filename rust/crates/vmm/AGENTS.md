@@ -71,7 +71,4 @@ use it to prove that the JSON body of an Upgrade request crosses
 
 ## Known gaps
 
-- CONTRACT-QUESTION: no row decides the bounds of the lingering close in
-  `src/server/accept.rs`. `LINGER_BYTES` is 4 MiB (4 times the body cap)
-  and `LINGER_TIME` is 5 s. A client that sends more, or sends slower,
-  can still get a reset instead of its typed reply.
+None.
