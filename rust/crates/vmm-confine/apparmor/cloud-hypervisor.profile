@@ -2,7 +2,9 @@
 # CH8-1). Landlock confines the files of each VM (decisions CH8-3, CH30),
 # but Landlock ABI 4 covers neither UDP nor Unix sockets (fact 77). This
 # profile closes both: CH gets no inet socket at all, and no Unix socket
-# but the sockets of its own VM run dir.
+# but the sockets of the VM run dirs under the run root. One static
+# profile cannot tell VMs apart, so each CH may reach the sockets of every
+# VM, not only its own (CONTRACT-QUESTION at the run dir rules).
 #
 # Install (design section 6.1 step 1, gap G28 option A). David runs it on
 # the host once, and again after each edit of this file:
@@ -45,6 +47,14 @@ profile creche-cloud-hypervisor /opt/components/vmm/bin/cloud-hypervisor {
   # names it (decision CH24). One pattern covers every host listener, so a
   # new port needs no reload (decision CH24). The rights follow the
   # Landlock run dir rules: no read of `serial.log` (gap G23).
+  #
+  # CONTRACT-QUESTION (decisions CH8-1, CH24): CH8-1 allows CH only "its
+  # own" vsock and API sockets. CH24 decides the port wildcard, but no row
+  # decides the VM id wildcard `vm/*/`. One static profile cannot name the
+  # id of one VM, and Landlock ABI 4 does not cover AF_UNIX (fact 77). So
+  # the CH of one family may connect to the `api.sock`, `vsock.sock` and
+  # `vsock.sock_<port>` listeners of another family's VM. David decides
+  # whether this reading of "its own" holds.
   owner /run/user/[0-9]*/vmm/vm/*/api.sock rw,
   owner /run/user/[0-9]*/vmm/vm/*/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/vm/*/vsock.sock rw,
