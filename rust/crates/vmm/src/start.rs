@@ -846,10 +846,8 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         match self.find(id) {
             Ok(Found::Runs(vsock)) => return self.dial(family, &vsock).await,
             Ok(Found::Free) => {}
-            // CONTRACT-QUESTION (decisions CH19 (6), CH21-3): no row names
-            // the reply to a reconnect while admission evicts the VM. The
-            // VM still holds its RAM, so the code answers `host_full`, and
-            // attendance retries.
+            // Decision CH54 rule 4: an Upgrade of a session whose VM is
+            // being evicted gets `host_full`. The VM still holds its RAM.
             Ok(Found::Evicting) => return Err(StartFault::HostFull),
             Err(message) => return Err(self.fault(family, sandbox, message).await),
         }

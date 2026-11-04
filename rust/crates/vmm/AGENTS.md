@@ -353,11 +353,10 @@ the dial.
    `ControlReady` and before the dial of 1201 and the 101
    (`src/start.rs`). This departs from the order of plan PR L16, which
    put the check before the wait for `ControlReady`.
-4. CONTRACT-QUESTION (decisions CH19 (6), CH21-3, `src/start.rs`): no
-   row names the reply to an Upgrade of a session under eviction. The VM
-   still holds its RAM, so the code answers `host_full`, and attendance
-   retries. A door that an eviction closes between the end of the start
-   and the 101 gets `host_full` the same way (`relay::Stopped::Evict`).
+4. Closed by decision CH54 rule 4: an Upgrade of a session whose VM is
+   being evicted gets `host_full` (`src/start.rs`). A door that an
+   eviction closes between the end of the start and the 101 gets
+   `host_full` the same way (`relay::Stopped::Evict`).
 5. `ColdBoot` keeps the control link of each VM, and no code reads its
    turn events yet. The `StopVm` hook of the vmm and its use of the
    table of `ColdBoot` are not built yet either.
