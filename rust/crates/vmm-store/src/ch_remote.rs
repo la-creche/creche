@@ -21,7 +21,7 @@ use std::process::{Child, Command, ExitStatus, Output, Stdio};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 use crate::layout::VmRunDir;
 
@@ -77,12 +77,138 @@ pub enum VmState {
     BreakPoint,
 }
 
-/// The part of the `info` reply that the vmm reads. Every other field is
-/// skipped.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+/// The part of the `info` reply that the vmm reads: the state and the
+/// device set that the check of a restore reads (decisions CH42 rule 2,
+/// CH50 rule 10). Every other field is skipped, so a device kind that is
+/// not in `VmConfig` passes the read unseen. A field of the wrong type
+/// fails the read.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct VmInfo {
     /// The VM state.
     pub state: VmState,
+    /// The devices of the VM.
+    pub config: VmConfig,
+}
+
+/// The devices of a VM, with the names of the Cloud Hypervisor v54
+/// `VmConfig` (`vmm/src/vm_config.rs`). CH leaves out a field with no
+/// device, and a missing list and `null` both read as no device.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+pub struct VmConfig {
+    /// The disks, in the order of the guest (`/dev/vda` first).
+    #[serde(default, deserialize_with = "null_as_empty")]
+    pub disks: Vec<DiskConfig>,
+    /// The vsock device.
+    pub vsock: Option<VsockConfig>,
+    /// The network cards.
+    #[serde(default, deserialize_with = "null_as_empty")]
+    pub net: Vec<NetConfig>,
+    /// The vhost-user devices of any type.
+    #[serde(default, deserialize_with = "null_as_empty")]
+    pub generic_vhost_user: Vec<GenericVhostUserConfig>,
+    /// The virtio-fs shares.
+    #[serde(default, deserialize_with = "null_as_empty")]
+    pub fs: Vec<FsConfig>,
+    /// The vfio-user devices.
+    #[serde(default, deserialize_with = "null_as_empty")]
+    pub user_devices: Vec<UserDeviceConfig>,
+    /// The vDPA devices.
+    #[serde(default, deserialize_with = "null_as_empty")]
+    pub vdpa: Vec<VdpaConfig>,
+    /// The VFIO devices.
+    #[serde(default, deserialize_with = "null_as_empty")]
+    pub devices: Vec<DeviceConfig>,
+    /// The persistent-memory devices.
+    #[serde(default, deserialize_with = "null_as_empty")]
+    pub pmem: Vec<PmemConfig>,
+    /// The TPM.
+    pub tpm: Option<TpmConfig>,
+}
+
+/// A disk by its host file. A vhost-user disk has no path.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct DiskConfig {
+    /// The host file.
+    pub path: Option<PathBuf>,
+}
+
+/// The vsock device.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct VsockConfig {
+    /// The guest CID.
+    pub cid: u32,
+    /// The host socket.
+    pub socket: PathBuf,
+}
+
+/// A network card by its host end: a tap or a vhost-user socket.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct NetConfig {
+    /// The host tap.
+    pub tap: Option<String>,
+    /// The vhost-user socket.
+    pub vhost_socket: Option<String>,
+}
+
+/// A vhost-user device by its host socket.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct GenericVhostUserConfig {
+    /// The host socket.
+    pub socket: PathBuf,
+}
+
+/// A virtio-fs share by its tag and its host socket.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct FsConfig {
+    /// The tag that the guest mounts.
+    pub tag: String,
+    /// The host socket.
+    pub socket: PathBuf,
+}
+
+/// A vfio-user device by its host socket.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct UserDeviceConfig {
+    /// The host socket.
+    pub socket: PathBuf,
+}
+
+/// A vDPA device by its host device.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct VdpaConfig {
+    /// The host device.
+    pub path: PathBuf,
+}
+
+/// A VFIO device by its host path. CH v54 can name it by an `fd`
+/// instead, and it writes no `fd` to a reply.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct DeviceConfig {
+    /// The host path.
+    pub path: Option<PathBuf>,
+}
+
+/// A persistent-memory device by its host file.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct PmemConfig {
+    /// The host file.
+    pub file: PathBuf,
+}
+
+/// The TPM by its host socket.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct TpmConfig {
+    /// The host socket.
+    pub socket: PathBuf,
+}
+
+/// Reads a list that may be `null` as an empty list.
+fn null_as_empty<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<Vec<T>>::deserialize(deserializer).map(Option::unwrap_or_default)
 }
 
 /// Why a call of `ch-remote` failed.
@@ -208,7 +334,7 @@ impl ChRemote {
             .map(drop)
     }
 
-    /// Reads the state of the VM of `vm`.
+    /// Reads the state and the device set of the VM of `vm`.
     ///
     /// # Errors
     ///
