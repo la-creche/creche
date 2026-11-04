@@ -155,8 +155,6 @@ fn a_bad_answer_ends_the_open() {
     let cases = [
         // A key given twice: the strict reader refuses it.
         ("control-twice", format!("{twice}\n").into_bytes()),
-        // A line past the cap, with no LF yet.
-        ("control-long", vec![b' '; CONTROL_LINE_CAP + 1]),
         // A turn event in place of the ready.
         ("control-turn", b"{\"start\":{}}\n".to_vec()),
         // A ready cut off before its LF.
@@ -183,6 +181,47 @@ fn a_bad_answer_ends_the_open() {
     });
     let error = open_on(&path, &session).unwrap().unwrap_err();
     assert_eq!(error, ControlError::Connect);
+    guest.join().unwrap().unwrap();
+}
+
+#[test]
+fn the_line_cap_holds_at_its_boundary() {
+    let session = SESSION.parse().unwrap();
+
+    // A line of exactly CONTROL_LINE_CAP bytes passes (rule 2 of "The
+    // vsock JSON links" in wire/AGENTS.md).
+    let path = socket("control-at-cap").unwrap();
+    let listener = UnixListener::bind(&path).unwrap();
+    let mut answer = READY.as_bytes().to_vec();
+    answer.resize(CONTROL_LINE_CAP, b' ');
+    answer.push(b'\n');
+    let guest = spawn(move || play(listener.accept()?.0, &answer));
+    assert_eq!(open_on(&path, &session).unwrap(), Ok(ready(READY).unwrap()));
+    guest.join().unwrap().unwrap();
+
+    // One byte more with no LF, on a stream that stays open: the vmm
+    // refuses the line before any LF comes. The open must not wait for
+    // READY_WAIT, so a 1 s bound ends the test early.
+    let path = socket("control-past-cap").unwrap();
+    let listener = UnixListener::bind(&path).unwrap();
+    let guest = spawn(move || {
+        let mut stream = listener.accept()?.0;
+        play(stream.try_clone()?, &[b' '; CONTROL_LINE_CAP + 1])?;
+        // Hold the stream open until the vmm closes it. A reset counts as
+        // a close.
+        while matches!(stream.read(&mut [0_u8]), Ok(1)) {}
+        Ok::<_, io::Error>(())
+    });
+    let runtime = Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()
+        .unwrap();
+    let clock = || UnixMillis::try_from(1_793_577_600_000).map_err(|_| ControlError::Clock);
+    let open =
+        async { tokio::time::timeout(Duration::from_secs(1), open(&path, &session, clock)).await };
+    let error = runtime.block_on(open).unwrap().map(|_| ()).unwrap_err();
+    assert_eq!(error, ControlError::Line);
     guest.join().unwrap().unwrap();
 }
 

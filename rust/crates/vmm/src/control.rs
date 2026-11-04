@@ -178,6 +178,17 @@ pub async fn open(
     session: &SessionId,
     clock: impl FnOnce() -> Result<UnixMillis, ControlError>,
 ) -> Result<(ControlLink, ControlReady), ControlError> {
+    open_within(vsock, session, clock, READY_WAIT).await
+}
+
+/// `open` with the bound `wait` in place of `READY_WAIT`, so a test can
+/// hold the bound with a short wait.
+async fn open_within(
+    vsock: &Path,
+    session: &SessionId,
+    clock: impl FnOnce() -> Result<UnixMillis, ControlError>,
+    wait: Duration,
+) -> Result<(ControlLink, ControlReady), ControlError> {
     let open = async {
         let mut link = dial(vsock, GuestPort::Control).await?;
         let hello = ControlHello {
@@ -188,7 +199,7 @@ pub async fn open(
         let ready = link.read::<ControlReady>().await?;
         Ok((link, ready))
     };
-    timeout(READY_WAIT, open)
+    timeout(wait, open)
         .await
         .unwrap_or(Err(ControlError::Timeout))
 }
@@ -307,5 +318,55 @@ impl ControlState {
     #[must_use]
     pub fn facade(&self, vm: &SessionId) -> Option<&FacadeState> {
         self.vms.get(vm).and_then(|control| control.facade.as_ref())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixListener;
+    use std::thread::spawn;
+    use std::time::Duration;
+
+    use creche_wire::UnixMillis;
+    use tokio::runtime::Builder;
+
+    use super::{ControlError, open_within};
+
+    /// A guest that takes the hello and never answers ends the open at
+    /// the bound (decision CH36 G26).
+    #[test]
+    fn a_silent_guest_ends_the_open_at_the_bound() {
+        let dir = std::env::temp_dir().join(format!("creche-vmm-{}-silent", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("vsock.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        let guest = spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut byte = [0_u8];
+            while stream.read(&mut byte).unwrap() == 1 && byte != *b"\n" {}
+            stream.write_all(b"OK 1073741824\n").unwrap();
+            // Read the hello, then stay silent until the vmm closes.
+            while matches!(stream.read(&mut byte), Ok(1)) {}
+        });
+
+        let runtime = Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .build()
+            .unwrap();
+        let session = "3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b".parse().unwrap();
+        let clock = || UnixMillis::try_from(1_793_577_600_000).map_err(|_| ControlError::Clock);
+        // The outer 1 s bound ends the test early when the inner bound is
+        // gone.
+        let open = async {
+            let wait = Duration::from_millis(50);
+            let open = open_within(&path, &session, clock, wait);
+            tokio::time::timeout(Duration::from_secs(1), open).await
+        };
+        let error = runtime.block_on(open).unwrap().map(|_| ()).unwrap_err();
+        assert_eq!(error, ControlError::Timeout);
+        guest.join().unwrap();
     }
 }
