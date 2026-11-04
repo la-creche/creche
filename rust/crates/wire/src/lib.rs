@@ -17,8 +17,8 @@ mod schema;
 mod vectors;
 
 pub use routes::{
-    Body, CreateError, CreateRoute, HOST_API_HEADER, HOST_API_PROTOCOL, JsonRoute, MISMATCH_STATUS,
-    ProtocolMismatch, RouteError, SHARED_CODES,
+    Body, CreateError, CreateRoute, HOST_API_BODY_CAP, HOST_API_HEADER, HOST_API_PROTOCOL,
+    JsonRoute, ListError, ListRoute, MISMATCH_STATUS, ProtocolMismatch, RouteError, SHARED_CODES,
 };
 
 /// The length of a session id: 32 hex digits and 4 hyphens.
@@ -831,6 +831,109 @@ pub struct SessionRow {
 
 object_only!(SessionRow);
 
+/// A place on the stored order of the host session list (decision CH21-5).
+/// The vmm gives it as `next` of a `SessionPage`, and the client sends it
+/// back as `cursor` of the next `ListSessions`. It is opaque: a client never
+/// makes one or reads a meaning from it.
+///
+/// On the wire it is a JSON integer from 1 to 2^53 - 1, so JavaScript reads
+/// it exactly. Any such integer reads, so the list route has no cursor
+/// error. attendance turns it into the string cursor of ACP `session/list`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(try_from = "u64", into = "u64")]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[cfg_attr(test, schemars(extend("minimum" = 1, "maximum" = JS_INTEGER_MAX)))]
+pub struct ListCursor(u64);
+
+/// Why an integer is not a `ListCursor`: it is 0 or larger than 2^53 - 1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ListCursorError;
+
+impl ListCursor {
+    /// The place on the stored order.
+    #[must_use]
+    pub fn get(self) -> u64 {
+        self.0
+    }
+}
+
+impl TryFrom<u64> for ListCursor {
+    type Error = ListCursorError;
+
+    fn try_from(place: u64) -> Result<Self, Self::Error> {
+        if place == 0 || place > JS_INTEGER_MAX {
+            return Err(ListCursorError);
+        }
+        Ok(Self(place))
+    }
+}
+
+impl From<ListCursor> for u64 {
+    fn from(cursor: ListCursor) -> Self {
+        cursor.0
+    }
+}
+
+impl fmt::Display for ListCursorError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a list cursor is 1 to 2^53 - 1")
+    }
+}
+
+impl std::error::Error for ListCursorError {}
+
+/// What a client sends to the vmm for one page of the host session list
+/// (decisions CH21-5, CH21-7). The list is scoped to one family, as the
+/// list entry of the route table plan gives it. A family with no rows, or
+/// one the vmm does not know, gives an empty page, so the list route has no
+/// error of its own.
+///
+/// Each key is required, and `null` is the one form of no value.
+// CONTRACT-QUESTION: no decision names the key `family` of the list
+// request. CH33 rule 5 covers the session-scoped requests only. The key
+// comes from the list entry of reframe/route-table-plan.json. The reading
+// taken: the narrowest one, a required family, so one request never reads
+// the rows of two families.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[cfg_attr(test, schemars(transform = schema::require_each_key))]
+pub struct ListSessions {
+    /// The `next` of the page before, or `null` for the first page.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub cursor: Option<ListCursor>,
+    /// Only the rows with this `cwd`, or `null` for every row. The vmm
+    /// applies it before it cuts the page, as `session-index.ts` does today.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub cwd: Option<SessionCwd>,
+    /// The family whose rows the page holds.
+    pub family: FamilyName,
+}
+
+object_only!(ListSessions);
+
+/// One page of the host session list: the reply of the list route. The rows
+/// are newest stored first (decision CH21-5).
+///
+/// The vmm sets the most rows of a page. The page also ends early when one
+/// more row would take the reply past `HOST_API_BODY_CAP` (decision CH33
+/// rule 2). A client then gets fewer rows and a `next` that is not `null`.
+/// The largest row is far under the cap, so a page with a `next` holds at
+/// least one row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[cfg_attr(test, schemars(transform = schema::require_each_key))]
+pub struct SessionPage {
+    /// The cursor of the next page, or `null` when no row follows.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub next: Option<ListCursor>,
+    /// The rows of this page.
+    pub rows: Vec<SessionRow>,
+}
+
+object_only!(SessionPage);
+
 /// A turn started. It carries nothing.
 ///
 /// It is a type of its own so that the generated Python model is a class
@@ -1474,10 +1577,37 @@ pub enum FamilyStateReply {
 #[cfg(test)]
 mod tests {
     use super::{
-        FamilySkills, LitellmKey, PepToken, SESSION_ID_PATTERN, SessionId, SessionIdError,
+        FamilySkills, HOST_API_BODY_CAP, JS_INTEGER_MAX, ListCursor, LitellmKey, PepToken,
+        SESSION_ID_PATTERN, SessionId, SessionIdError, SessionPage,
     };
 
     const GOOD: &str = "3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b";
+
+    /// A page of the largest row is under 1/32 of the body cap. So a page
+    /// that ends early at the cap holds at least one row (decision CH33
+    /// rule 2). serde_json writes a control character in 6 bytes, the most
+    /// of any character, and a dispatch origin is the longest origin.
+    #[test]
+    fn a_page_of_the_largest_row_is_far_under_the_body_cap() {
+        let name = "a".repeat(31);
+        let trigger = serde_json::json!({"dispatch": {"chain": vec![&name; 8], "name": name}});
+        let row = serde_json::json!({
+            "created_at": JS_INTEGER_MAX,
+            "cwd": format!("/{}", "\u{1}".repeat(4095)),
+            "family": name,
+            "id": GOOD,
+            "origin": {"auto": {"job": "auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK", "trigger": trigger}},
+            "title": "\u{1}".repeat(256),
+            "updated_at": JS_INTEGER_MAX,
+        });
+        let page = SessionPage {
+            next: Some(ListCursor::try_from(JS_INTEGER_MAX).unwrap()),
+            rows: vec![serde_json::from_value(row).unwrap()],
+        };
+        let size = serde_json::to_vec(&page).unwrap().len();
+
+        assert!(size < HOST_API_BODY_CAP / 32, "{size} bytes");
+    }
 
     #[test]
     fn a_lowercase_uuid_is_a_session_id() {

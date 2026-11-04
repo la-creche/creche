@@ -630,6 +630,154 @@ export const wire = {
       "pattern": "^job-[0-9A-HJKMNP-TV-Z]{26}$",
       "type": "string"
     },
+    "ListCursor": {
+      "description": "A place on the stored order of the host session list (decision CH21-5).\nThe vmm gives it as `next` of a `SessionPage`, and the client sends it\nback as `cursor` of the next `ListSessions`. It is opaque: a client never\nmakes one or reads a meaning from it.\n\nOn the wire it is a JSON integer from 1 to 2^53 - 1, so JavaScript reads\nit exactly. Any such integer reads, so the list route has no cursor\nerror. attendance turns it into the string cursor of ACP `session/list`.",
+      "format": "uint64",
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "ListError": {
+      "description": "The error of the route `list`. It holds the shared codes only: a\nfamily with no rows gives an empty page, and any cursor reads.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "No route has this path.",
+          "properties": {
+            "code": {
+              "const": "no_route",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The route has this path, but the method is not `POST`.",
+          "properties": {
+            "code": {
+              "const": "bad_method",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The `Content-Type` is not `application/json`.",
+          "properties": {
+            "code": {
+              "const": "bad_content_type",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The body is over the cap.",
+          "properties": {
+            "code": {
+              "const": "too_large",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The body is not strict JSON.",
+          "properties": {
+            "code": {
+              "const": "not_json",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The body is JSON, but not the request type of the route.",
+          "properties": {
+            "code": {
+              "const": "not_valid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The vmm failed after it took the request. The vmm logs\nthe details.",
+          "properties": {
+            "code": {
+              "const": "internal",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ListSessions": {
+      "additionalProperties": false,
+      "description": "What a client sends to the vmm for one page of the host session list\n(decisions CH21-5, CH21-7). The list is scoped to one family, as the\nlist entry of the route table plan gives it. A family with no rows, or\none the vmm does not know, gives an empty page, so the list route has no\nerror of its own.\n\nEach key is required, and `null` is the one form of no value.",
+      "properties": {
+        "cursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ListCursor"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The `next` of the page before, or `null` for the first page."
+        },
+        "cwd": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionCwd"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Only the rows with this `cwd`, or `null` for every row. The vmm\napplies it before it cuts the page, as `session-index.ts` does today."
+        },
+        "family": {
+          "$ref": "#/$defs/FamilyName",
+          "description": "The family whose rows the page holds."
+        }
+      },
+      "required": [
+        "cursor",
+        "cwd",
+        "family"
+      ],
+      "type": "object"
+    },
     "LitellmKey": {
       "description": "The family's LiteLLM key, `litellm_key` of `creds.json`. caregiver\nkeeps only a key that starts with `sk-` (`litellm_keys.py:155`). The\nrest is visible ASCII, with no space or control character, so the key\ncannot break the header that carries it. Decision CH31 keeps this rule\nand gives caregiver's check the same rule in a later change.",
       "pattern": "^sk-[!-~]*$",
@@ -764,6 +912,35 @@ export const wire = {
           "type": "object"
         }
       ]
+    },
+    "SessionPage": {
+      "additionalProperties": false,
+      "description": "One page of the host session list: the reply of the list route. The rows\nare newest stored first (decision CH21-5).\n\nThe vmm sets the most rows of a page. The page also ends early when one\nmore row would take the reply past `HOST_API_BODY_CAP` (decision CH33\nrule 2). A client then gets fewer rows and a `next` that is not `null`.\nThe largest row is far under the cap, so a page with a `next` holds at\nleast one row.",
+      "properties": {
+        "next": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ListCursor"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The cursor of the next page, or `null` when no row follows."
+        },
+        "rows": {
+          "description": "The rows of this page.",
+          "items": {
+            "$ref": "#/$defs/SessionRow"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "next",
+        "rows"
+      ],
+      "type": "object"
     },
     "SessionRow": {
       "additionalProperties": false,
@@ -983,6 +1160,7 @@ export const wire = {
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "x-routes": {
+    "body_cap": 1048576,
     "header": "creche-host-api-protocol",
     "mismatch": {
       "reply": "ProtocolMismatch",
@@ -1005,6 +1183,21 @@ export const wire = {
           "not_valid": 400,
           "too_large": 413,
           "unknown_family": 404
+        }
+      },
+      "list": {
+        "error": "ListError",
+        "kind": "json",
+        "reply": "SessionPage",
+        "request": "ListSessions",
+        "statuses": {
+          "bad_content_type": 415,
+          "bad_method": 405,
+          "internal": 500,
+          "no_route": 404,
+          "not_json": 400,
+          "not_valid": 400,
+          "too_large": 413
         }
       }
     }

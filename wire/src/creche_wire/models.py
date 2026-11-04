@@ -667,6 +667,135 @@ class JobId(RootModel[StrictStr]):
     ]
 
 
+class ListCursor(RootModel[StrictInt]):
+    root: Annotated[
+        StrictInt,
+        Field(
+            description="A place on the stored order of the host session list (decision CH21-5).\nThe vmm gives it as `next` of a `SessionPage`, and the client sends it\nback as `cursor` of the next `ListSessions`. It is opaque: a client never\nmakes one or reads a meaning from it.\n\nOn the wire it is a JSON integer from 1 to 2^53 - 1, so JavaScript reads\nit exactly. Any such integer reads, so the list route has no cursor\nerror. attendance turns it into the string cursor of ACP `session/list`.",
+            ge=1,
+            le=9007199254740991,
+        ),
+    ]
+
+
+class ListError1(BaseModel):
+    """
+    No route has this path.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["no_route"]
+
+
+class ListError2(BaseModel):
+    """
+    The route has this path, but the method is not `POST`.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["bad_method"]
+
+
+class ListError3(BaseModel):
+    """
+    The `Content-Type` is not `application/json`.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["bad_content_type"]
+
+
+class ListError4(BaseModel):
+    """
+    The body is over the cap.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["too_large"]
+
+
+class ListError5(BaseModel):
+    """
+    The body is not strict JSON.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["not_json"]
+
+
+class ListError6(BaseModel):
+    """
+    The body is JSON, but not the request type of the route.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["not_valid"]
+
+
+class ListError7(BaseModel):
+    """
+    The vmm failed after it took the request. The vmm logs
+    the details.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["internal"]
+
+
+class ListError(
+    RootModel[
+        ListError1 | ListError2 | ListError3 | ListError4 | ListError5 | ListError6 | ListError7
+    ]
+):
+    root: Annotated[
+        ListError1 | ListError2 | ListError3 | ListError4 | ListError5 | ListError6 | ListError7,
+        Field(
+            description="The error of the route `list`. It holds the shared codes only: a\nfamily with no rows gives an empty page, and any cursor reads."
+        ),
+    ]
+
+
+class ListSessions(BaseModel):
+    """
+    What a client sends to the vmm for one page of the host session list
+    (decisions CH21-5, CH21-7). The list is scoped to one family, as the
+    list entry of the route table plan gives it. A family with no rows, or
+    one the vmm does not know, gives an empty page, so the list route has no
+    error of its own.
+
+    Each key is required, and `null` is the one form of no value.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    cursor: Annotated[
+        ListCursor | None,
+        Field(description="The `next` of the page before, or `null` for the first page."),
+    ]
+    cwd: Annotated[
+        SessionCwd | None,
+        Field(
+            description="Only the rows with this `cwd`, or `null` for every row. The vmm\napplies it before it cuts the page, as `session-index.ts` does today."
+        ),
+    ]
+    family: Annotated[FamilyName, Field(description="The family whose rows the page holds.")]
+
+
 class LitellmKey(RootModel[StrictStr]):
     root: Annotated[
         StrictStr,
@@ -786,6 +915,28 @@ class SessionOrigin(RootModel[DoorOrigin | DelegateOrigin | AutoOrigin]):
             description="Who made a session, kept on its row of the host session list (decision\nCH21-4). On the wire the variant name is the one key of an object.\n\nEach variant has a `title`. datamodel-codegen names a class of a `oneOf`\nmember by its title, and by its position without one."
         ),
     ]
+
+
+class SessionPage(BaseModel):
+    """
+    One page of the host session list: the reply of the list route. The rows
+    are newest stored first (decision CH21-5).
+
+    The vmm sets the most rows of a page. The page also ends early when one
+    more row would take the reply past `HOST_API_BODY_CAP` (decision CH33
+    rule 2). A client then gets fewer rows and a `next` that is not `null`.
+    The largest row is far under the cap, so a page with a `next` holds at
+    least one row.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    next: Annotated[
+        ListCursor | None,
+        Field(description="The cursor of the next page, or `null` when no row follows."),
+    ]
+    rows: Annotated[list[SessionRow], Field(description="The rows of this page.")]
 
 
 class SessionRow(BaseModel):

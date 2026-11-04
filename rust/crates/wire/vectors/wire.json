@@ -1674,6 +1674,212 @@
       "note": "a trailing newline"
     }
   ],
+  "ListCursor": [
+    {
+      "json": "1",
+      "written": "1",
+      "note": "the smallest cursor"
+    },
+    {
+      "json": "9007199254740991",
+      "written": "9007199254740991",
+      "note": "2^53 - 1, the cap"
+    },
+    {
+      "json": "0",
+      "written": null,
+      "note": "zero: a cursor is at least 1"
+    },
+    {
+      "json": "-0",
+      "written": null,
+      "note": "the integer -0"
+    },
+    {
+      "json": "-1",
+      "written": null,
+      "note": "a negative cursor"
+    },
+    {
+      "json": "9007199254740992",
+      "written": null,
+      "note": "2^53, past the cap"
+    },
+    {
+      "json": "1.0",
+      "written": null,
+      "note": "a cursor written as a float"
+    },
+    {
+      "json": "1e3",
+      "written": null,
+      "note": "a cursor written with an exponent"
+    },
+    {
+      "json": "\"1\"",
+      "written": null,
+      "note": "a cursor as a string, the ACP form"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null: the absent cursor is a key of ListSessions"
+    }
+  ],
+  "ListError": [
+    {
+      "json": "{\"code\":\"no_route\"}",
+      "written": "{\"code\":\"no_route\"}",
+      "note": "the shared code no_route: a path with no route"
+    },
+    {
+      "json": "{\"code\":\"bad_method\"}",
+      "written": "{\"code\":\"bad_method\"}",
+      "note": "the shared code bad_method: a method that is not POST"
+    },
+    {
+      "json": "{\"code\":\"bad_content_type\"}",
+      "written": "{\"code\":\"bad_content_type\"}",
+      "note": "the shared code bad_content_type: a Content-Type that is not JSON"
+    },
+    {
+      "json": "{\"code\":\"too_large\"}",
+      "written": "{\"code\":\"too_large\"}",
+      "note": "the shared code too_large: a body over the cap"
+    },
+    {
+      "json": "{\"code\":\"not_json\"}",
+      "written": "{\"code\":\"not_json\"}",
+      "note": "the shared code not_json: a body that is not strict JSON"
+    },
+    {
+      "json": "{\"code\":\"not_valid\"}",
+      "written": "{\"code\":\"not_valid\"}",
+      "note": "the shared code not_valid: a body that is not the request type"
+    },
+    {
+      "json": "{\"code\":\"internal\"}",
+      "written": "{\"code\":\"internal\"}",
+      "note": "the shared code internal: a fault of the vmm"
+    },
+    {
+      "json": "{\"code\":\"unknown_family\"}",
+      "written": null,
+      "note": "a code of create: an unknown family gives an empty page"
+    },
+    {
+      "json": "{\"code\":\"conflict\"}",
+      "written": null,
+      "note": "a code of create"
+    },
+    {
+      "json": "{\"code\":\"bad_cursor\"}",
+      "written": null,
+      "note": "a cursor error: any cursor reads"
+    },
+    {
+      "json": "{\"code\":\"not_valid\",\"field\":\"cursor\"}",
+      "written": null,
+      "note": "a shared code with an extra key"
+    },
+    {
+      "json": "{\"code\":\"internal\",\"message\":\"disk full\"}",
+      "written": null,
+      "note": "a shared code with free text"
+    },
+    {
+      "json": "{\"code\":\"protocol_mismatch\"}",
+      "written": null,
+      "note": "the protocol mismatch, which is in no route error"
+    },
+    {
+      "json": "[\"not_json\"]",
+      "written": null,
+      "note": "the array form of a shared code"
+    },
+    {
+      "json": "{}",
+      "written": null,
+      "note": "no code"
+    },
+    {
+      "json": "\"internal\"",
+      "written": null,
+      "note": "the plain string form"
+    }
+  ],
+  "ListSessions": [
+    {
+      "json": "{\"cursor\":null,\"cwd\":null,\"family\":\"chat\"}",
+      "written": "{\"cursor\":null,\"cwd\":null,\"family\":\"chat\"}",
+      "note": "the first page of every row of a family"
+    },
+    {
+      "json": "{\"cursor\":42,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\"}",
+      "written": "{\"cursor\":42,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\"}",
+      "note": "a later page of one cwd"
+    },
+    {
+      "json": "{\"family\":\"chat\",\"cwd\":null,\"cursor\":42}",
+      "written": "{\"cursor\":42,\"cwd\":null,\"family\":\"chat\"}",
+      "note": "its keys in any order"
+    },
+    {
+      "json": "{\"cwd\":null,\"family\":\"chat\"}",
+      "written": null,
+      "note": "no cursor key: null is the one form of the first page"
+    },
+    {
+      "json": "{\"cursor\":null,\"family\":\"chat\"}",
+      "written": null,
+      "note": "no cwd key: null is the one form of no filter"
+    },
+    {
+      "json": "{\"cursor\":null,\"cwd\":null}",
+      "written": null,
+      "note": "no family: the list is scoped to one family"
+    },
+    {
+      "json": "{\"cursor\":null,\"cwd\":null,\"family\":null}",
+      "written": null,
+      "note": "a null family"
+    },
+    {
+      "json": "{\"cursor\":0,\"cwd\":null,\"family\":\"chat\"}",
+      "written": null,
+      "note": "a cursor of zero"
+    },
+    {
+      "json": "{\"cursor\":\"42\",\"cwd\":null,\"family\":\"chat\"}",
+      "written": null,
+      "note": "a cursor as a string, the ACP form"
+    },
+    {
+      "json": "{\"cursor\":null,\"cwd\":\"home\",\"family\":\"chat\"}",
+      "written": null,
+      "note": "a cwd that is not absolute"
+    },
+    {
+      "json": "{\"cursor\":null,\"cwd\":null,\"family\":\"Chat\"}",
+      "written": null,
+      "note": "a family name in capitals"
+    },
+    {
+      "json": "{\"cursor\":null,\"cwd\":null,\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}",
+      "written": null,
+      "note": "an extra key"
+    },
+    {
+      "json": "[null,null,\"chat\"]",
+      "written": null,
+      "note": "the fields in order as an array, the array form of a struct"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an empty array"
+    }
+  ],
   "LitellmKey": [
     {
       "json": "\"sk-test-key-0001\"",
@@ -2353,6 +2559,68 @@
       "json": "{\"auto\":{\"job\":\"auto-01JBQ7ZZ9D6M0Q4RXT2J8HYVBK\",\"trigger\":{\"webhook\":{\"chain\":[\"chat\"],\"name\":\"boiler-alert\"}}}}",
       "written": null,
       "note": "an autonomous job of a webhook with a chain"
+    }
+  ],
+  "SessionPage": [
+    {
+      "json": "{\"next\":null,\"rows\":[]}",
+      "written": "{\"next\":null,\"rows\":[]}",
+      "note": "an empty page: a family with no rows, or one the vmm does not know"
+    },
+    {
+      "json": "{\"next\":null,\"rows\":[{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}]}",
+      "written": "{\"next\":null,\"rows\":[{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}]}",
+      "note": "the last page"
+    },
+    {
+      "json": "{\"next\":41,\"rows\":[{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}]}",
+      "written": "{\"next\":41,\"rows\":[{\"created_at\":1793577600000,\"cwd\":\"/home/david/code/lacreche\",\"family\":\"chat\",\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\",\"origin\":{\"door\":{}},\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}]}",
+      "note": "a page with a next page"
+    },
+    {
+      "json": "{\"rows\":[],\"next\":null}",
+      "written": "{\"next\":null,\"rows\":[]}",
+      "note": "its keys in any order"
+    },
+    {
+      "json": "{\"rows\":[]}",
+      "written": null,
+      "note": "no next key: null is the one form of no next page"
+    },
+    {
+      "json": "{\"next\":null}",
+      "written": null,
+      "note": "no rows key"
+    },
+    {
+      "json": "{\"next\":null,\"rows\":null}",
+      "written": null,
+      "note": "null rows"
+    },
+    {
+      "json": "{\"next\":0,\"rows\":[]}",
+      "written": null,
+      "note": "a next of zero"
+    },
+    {
+      "json": "{\"next\":\"41\",\"rows\":[]}",
+      "written": null,
+      "note": "a next as a string, the ACP form"
+    },
+    {
+      "json": "{\"next\":null,\"rows\":[{\"id\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}]}",
+      "written": null,
+      "note": "a row that is not a SessionRow"
+    },
+    {
+      "json": "{\"next\":null,\"nextCursor\":null,\"rows\":[]}",
+      "written": null,
+      "note": "an extra key, the facade name of next"
+    },
+    {
+      "json": "[null,[]]",
+      "written": null,
+      "note": "the fields in order as an array, the array form of a struct"
     }
   ],
   "SessionRow": [
