@@ -91,6 +91,13 @@ describe("readFamilyConfig", () => {
     expect(config.runtime.modelAlias).toBe("chat");
   });
 
+  it("fills toolEnv from the env, with the set TOOL_ENV names only", async () => {
+    const env = { ...mounts(VALID), MPLBACKEND: "Agg", NODE_ENV: "production" };
+    const read = await readFamilyConfig(env, NO_RETRY_MS);
+
+    expect(read.ok && read.config.toolEnv).toEqual({ MPLBACKEND: "Agg" });
+  });
+
   it("never shows a secret as text", async () => {
     const read = await readFamilyConfig(mounts(VALID), NO_RETRY_MS);
     if (!read.ok) {

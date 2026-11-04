@@ -107,6 +107,67 @@ and turn events set `turn_running` (decision CH43 rule 8).
 `ControlLink::stop` sends the graceful stop
 `{"stop":{}}` (decision CH19 (3)).
 
+## The acp route
+
+`src/handlers/acp.rs` admits or refuses an `acp` Upgrade before 101, in
+the order of decision CH34 rule 7. It reads the row first (`not_found`
+404 for an unknown id or another family, decisions CH21-9, CH33 rule
+5). Then it claims the session in the relay registry (`busy` 409,
+decision CH33 rule 7) and reads the row again. So another family never
+touches the claim of the owner. Then the `StartVm` hook starts the VM: admission, the
+boot or restore, and the first `ControlReady`, whatever facade state it
+reports. Each `StartFault` is a typed code before 101. An unknown id
+never reaches the hook, so it gets no boot. After `ControlReady` the
+hook dials guest port 1201 with `AcpLink::dial` and returns the link, so
+a failed dial is `sandbox_start_failed` before 101 (decision CH50 rule
+2). A drop during the start or the dial gives `not_found`, even when the
+drop made the dial fail. Plan PR L16 adds the hook of the vmm.
+`tests/acp.rs` fakes it, and a fake vsock socket plays guest port 1201.
+
+`src/relay.rs` holds the relay registry with a stop signal (decision
+CH26 rule 5). `Relays::claim` holds a session for one Upgrade until the
+relay ends. `Relays::mark_drop` stops the open relay of a session and
+marks the drop. An Upgrade under the mark gets `not_found` (decision
+CH34 rule 6), and so does one whose start a drop overlapped. The drop
+keeps its mark until the row is gone. The second row read comes after
+the claim, so a drop that ends between the first read and the claim
+leaves no row, and the Upgrade gets `not_found`.
+
+`AcpLink::dial` dials guest port 1201 with `control::dial`, the dial of
+the control link (decision CH13). It pauses 10 ms between two tries and
+retries ECONNREFUSED, and `READY_WAIT` bounds it (decision CH43 rules 5
+and 7). After 101, `AcpRelay` copies bytes both ways over that link and
+sends the bytes that came after `OK` first (decision CH20). An EOF
+in one direction shuts down the write half of the other stream, and the
+other direction runs on, as with `copy_bidirectional`. The relay ends
+when both directions reach EOF, a read or write fails, or the stop
+signal fires. Then it drops both streams. It
+parses no ACP byte and caps none (decision CH34 rule 3). `Relays::door`
+gives the door of a session for the sleep gate (decision CH19 (6)): open
+from the claim to its end, then the time that the last admitted Upgrade
+ended. A refused Upgrade records no close, so the map of close times
+grows only with sessions that ran. A drop clears the time.
+
+## The stop
+
+`src/stop.rs` stops one VM (decisions CH19 (3), CH34 rule 5). It sends
+`stop` on the control link and waits `DROP_STOP_WAIT` (30 s) for Cloud
+Hypervisor to exit. Then it sends SIGTERM through the `Launched` handle
+of `creche-vmm-confine` and waits `DROP_SIGTERM_GRACE` (5 s). Then it
+sends SIGKILL and waits `KILL_WAIT` (1 s, decision CH50 rule 4) at
+most, so a stop ends within 36 s. A process that outlives it gives
+`StopError::Hung`, and its files stay. The first two waits come from
+`creche-wire`. A kill is a power cut
+for the guest, and no error: `Stopped::Killed`. After the exit it runs
+`remove_stale` of `creche-vmm-store` in `spawn_blocking`, which removes
+`api.sock.lock` (fact 75) and the `vsock.sock` that a kill leaves. A stop
+takes no snapshot, so the next start is a cold boot (decision CH19 (5)).
+A step that did not go out skips its wait: no open control link, a
+failed or stalled write of `stop`, or a failed SIGTERM (decision CH50
+rule 3). The write of `stop` has a timeout counted inside
+`DROP_STOP_WAIT`, so SIGTERM follows 30 s after the start at most.
+`StopLink` and `VmProcess` let `tests/stop.rs` give fakes on paused time.
+
 ## Rules
 
 - Each new dependency is its own pull request, with its lock delta
@@ -126,3 +187,23 @@ and turn events set `turn_running` (decision CH43 rule 8).
    so a gate that reads only the ready would never snapshot it. The sleep
    gate is plan PR L18, a later PR, so this crate does not hold the rule
    yet.
+
+## Caller duties
+
+1. Decision CH50 rule 1: the start of an `acp` Upgrade has no outer
+   bound, and the handler adds none around the `StartVm` hook
+   (`src/handlers/acp.rs`). Each step keeps its own bound. Plan PR L17
+   names the timeout of one eviction's snapshot. The bound of a start
+   grows with the number of VMs that its admission evicts.
+2. Decision CH50 rule 2: the `StartVm` hook of plan PR L16 dials guest
+   port 1201 with `AcpLink::dial` before it returns. It answers a failed
+   dial with `StartFault::SandboxStartFailed` and writes that fault to
+   the fault file (decision CH21-1). The handler writes no fault. The
+   rule holds only if guest init accepts 1201 in every facade state.
+   Phase 3 confirms that. If guest init refuses 1201 until the facade
+   runs, 101 waits for the facade, against decision CH34 rule 7, and
+   David decides again.
+3. Decision CH50 rule 4: the drop route of plan PR L15 maps
+   `StopError::Hung` to `internal` 500 and keeps the row, so a retried
+   drop finishes the job. The vmm logs the pid of the hung process.
+   Admission keeps counting the RAM of that VM (`src/stop.rs`).

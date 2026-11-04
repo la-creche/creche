@@ -29,5 +29,10 @@ serde_json.workspace = true
 # no crate to the lock.
 tokio = { workspace = true, features = ["net", "sync", "time"] }
 
+# `test-util` for paused time: a stop test checks the 30 s and 5 s waits
+# of decision CH34 rule 5 with no real wait. It adds no crate to the lock.
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+
 [lints]
 workspace = true

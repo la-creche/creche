@@ -36,6 +36,12 @@ impl Scope {
         }
     }
 
+    /// The session id of the VM.
+    #[must_use]
+    pub fn id(&self) -> &SessionId {
+        &self.id
+    }
+
     /// The scope unit name, `creche-vm-<id>` (fact 76). `systemd-run`
     /// refuses the name of a live leftover scope, so the launch step then
     /// exits with an error status, and the caller reads it as a start

@@ -4,12 +4,13 @@
 import { DatabaseSync } from "node:sqlite";
 
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { validator } from "agent/wire-read";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { facadeApp } from "../src/acp.js";
 import { LIST_PAGE_SIZE, SessionIndex } from "../src/session-index.js";
 import { sessionService } from "../src/service.js";
-import { MAX_TITLE_BYTES, Sessions, titleOf } from "../src/sessions.js";
+import { MAX_CWD_CHARS, MAX_TITLE_BYTES, Sessions, titleOf } from "../src/sessions.js";
 import { Wire } from "./acp-wire.js";
 import { faux, Probe, startFlue } from "./faux-flue.js";
 
@@ -65,6 +66,21 @@ describe("session/new", () => {
 
     expect(answers.map((answer) => answer.error?.code)).toEqual([INVALID_PARAMS, INVALID_PARAMS, INVALID_PARAMS]);
     expect((await list())["sessions"]).toEqual([]);
+  });
+
+  it("takes each cwd that the wire takes, and refuses a NUL and a long one", async () => {
+    // An astral character is two UTF-16 units and one code point.
+    const longest = `/${"𝒜".repeat(MAX_CWD_CHARS - 1)}`;
+    const refused = ["/a\u0000b", `${longest}a`, `/${"a".repeat(MAX_CWD_CHARS)}`];
+    const isCwd = (cwd: string): boolean => validator("SessionCwd").Check(cwd);
+
+    expect(isCwd(longest)).toBe(true);
+    expect(refused.map(isCwd)).toEqual([false, false, false]);
+    expect(await newSession(longest)).toMatch(UUID);
+    for (const cwd of refused) {
+      expect((await wire.request("session/new", { cwd, mcpServers: [] })).error?.code).toBe(INVALID_PARAMS);
+      expect((await wire.request("session/load", { sessionId: "x", cwd, mcpServers: [] })).error?.code).toBe(INVALID_PARAMS);
+    }
   });
 });
 
@@ -131,7 +147,33 @@ describe("the record of a turn", () => {
   it("cuts a title to its byte cap and knows no other session", () => {
     expect(Buffer.byteLength(titleOf("€".repeat(1000)))).toBeLessThanOrEqual(MAX_TITLE_BYTES);
     expect(titleOf("\n \n")).toBe("");
+    expect(titleOf(`${"a".repeat(255)} b`)).toBe("a".repeat(255));
+    expect(titleOf("𝒜".repeat(256))).toBe("𝒜".repeat(64));
     expect(sessions.recordTurn("no-such-session", "text", null)).toBeNull();
     expect(sessions.handle("no-such-session")).toBeNull();
+  });
+
+  it("makes a title that the wire takes, or none", () => {
+    const spaces = "\t\v\f\r \u00a0\u1680\u2000\u200a\u2028\u2029\u202f\u205f\u3000\ufeff";
+    const texts = [
+      `${"a".repeat(255)} b`,
+      // The fold makes 258 bytes. The cut lands inside the euro sign and backs to the space.
+      `${"a".repeat(254)}\u3000€`,
+      "𝒜".repeat(256),
+      `${spaces}one${spaces}two${spaces}\nthree`,
+      "\ud800 lone \udc00",
+      "a\u0085b",
+      "\n \n",
+    ];
+    // TypeBox takes a lone surrogate, so the check below needs `isWellFormed` too.
+    const isTitle = (title: string): boolean => validator("SessionTitle").Check(title) && title.isWellFormed();
+
+    for (const text of texts) {
+      const title = titleOf(text);
+      expect(title === "" || isTitle(title), JSON.stringify(text)).toBe(true);
+    }
+    expect(titleOf(`${spaces}one${spaces}two`)).toBe("one two");
+    expect(titleOf(`${"a".repeat(254)}\u3000€`)).toBe("a".repeat(254));
+    expect(titleOf("\ud800 lone \udc00")).toBe("\ufffd lone \ufffd");
   });
 });

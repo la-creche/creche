@@ -125,7 +125,7 @@ export function composeAgent(
     }
 
     if (grant.length > 0) {
-      useSandbox(grantedSandbox(grant, workspace));
+      useSandbox(grantedSandbox(grant, workspace, config.toolEnv));
     }
 
     for (const skill of skills.skills) {

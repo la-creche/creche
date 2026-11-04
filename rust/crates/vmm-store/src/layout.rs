@@ -120,10 +120,17 @@ impl StateRoot {
         self.0.join("store")
     }
 
+    /// The directory that holds one directory per session. Retention reads
+    /// it to find every snapshot (PR D13).
+    #[must_use]
+    pub fn sessions_dir(&self) -> PathBuf {
+        self.0.join("sessions")
+    }
+
     /// The directory of the session disk and the snapshots of `id`.
     #[must_use]
     pub fn session(&self, id: &SessionId) -> SessionDir {
-        SessionDir(self.0.join("sessions").join(id.as_str()))
+        SessionDir(self.sessions_dir().join(id.as_str()))
     }
 }
 

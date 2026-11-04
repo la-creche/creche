@@ -5,7 +5,10 @@
 use std::{fmt, io};
 
 pub mod control;
+pub mod handlers;
+pub mod relay;
 pub mod server;
+pub mod stop;
 
 /// Why the host API server stopped or did not start.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
