@@ -16,4 +16,6 @@ pub mod leftovers;
 pub mod limits;
 pub mod rfc3339;
 pub mod scope;
+// SPIKE (decision CH51): the slot pool profiles. The branch never merges.
+pub mod slot_profile;
 pub mod spawner;
