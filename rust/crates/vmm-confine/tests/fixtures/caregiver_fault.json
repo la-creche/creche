@@ -1,0 +1,14 @@
+{
+  "family": "chat",
+  "source": "vmm",
+  "written_at": "2026-09-19T11:59:55Z",
+  "faults": [
+    {
+      "code": "sandbox_start_failed",
+      "blocks_turns": true,
+      "since": "2026-09-19T11:58:41Z",
+      "source": "vmm",
+      "message": "playpen answered fatal: mount_dir_unset"
+    }
+  ]
+}

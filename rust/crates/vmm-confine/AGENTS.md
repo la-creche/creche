@@ -16,8 +16,10 @@ table of the three vmm crates.
 - The crate reads no env key. Lifecycle (plan PR L20) passes each host
   path from the vmm config (owner env rule, decision CH36 G5): the
   `systemd-run` program of `launch::Launch`, from the existing key
-  `AGENT_SYSTEMD_RUN_PROGRAM`, and the `systemctl` program of
-  `leftovers::stop_all`, from the existing key `AGENT_SYSTEMCTL_PROGRAM`.
+  `AGENT_SYSTEMD_RUN_PROGRAM`, the `systemctl` program of
+  `leftovers::stop_all`, from the existing key `AGENT_SYSTEMCTL_PROGRAM`,
+  and the faults root of `faults::FaultDir::open`, the `faults` dir of
+  the creche state root that caregiver reads (contract 05 §3.3.1).
 - Every launch step forks from the one spawner thread (decision CH19 (4),
   fact 76). The vmm keeps its `Spawner` for its whole life. A drop ends
   the thread, and the kernel then kills every payload it started.
@@ -59,6 +61,14 @@ table of the three vmm crates.
   with the floor. An eviction that breaks the floor gives `HostFull`, and
   no VM stops. Lifecycle passes the sleep-gate result of each VM and runs
   the evictions. The vmm never queues (decision CH21-3).
+- `faults::FaultBook` writes the fault file of the vmm,
+  `<faults root>/vmm/<family>.json`, in the shape of contract 05 §3.3.1
+  with `source` `vmm` (decisions CH21-1, CH36 G18). It holds the two
+  start faults of decision CH6-3. Each change rewrites the whole file
+  atomically. Lifecycle calls `refresh` every `faults::REFRESH` (30 s)
+  while a fault is open, `clear` on a `ControlReady` of the family, and
+  `start` at vmm start, which writes an empty list into every file. Each
+  time is RFC 3339 in UTC to the second, from `rfc3339::format`.
 - The process tests need Landlock ABI 4 and `/dev/kvm`. The host and the
   ubuntu-24.04 runner have both (facts 77, 79).
 
@@ -82,3 +92,9 @@ table of the three vmm crates.
   before the VM is ready. That device-set read is the step of plan PR
   L17 (restore), under decision CH42 rule 2. No code does the
   device-set read yet.
+- CONTRACT-QUESTION (decisions CH21-1, CH36 G18): contract 05 §3.3.1 has
+  no row for the vmm until its amendment. Open until then: the group of
+  `faults/vmm/` and its files (the vmm sets modes 0750 and 0640 only),
+  the value `vmm` in the `source` enum of §3.3, and the reader. caregiver
+  reads only the `attendance` and `pep` files today, so it ignores the
+  vmm file.
