@@ -3,6 +3,10 @@
 //! Hypervisor: it writes `CONNECT 1200` and waits for `OK`. It then sends
 //! `ControlHello` and reads one `ControlReady`. The framing is the one of
 //! "The vsock JSON links" in `wire/AGENTS.md` (decision CH36 G11).
+//!
+//! After `ControlReady`, guest init relays each turn event of the facade
+//! (decision CH21), and the vmm may send the graceful stop (decision CH19
+//! (3)). `ControlState` applies each turn end to the session row.
 
 use std::collections::HashMap;
 use std::io;
@@ -10,7 +14,8 @@ use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use creche_wire::{
-    CONTROL_LINE_CAP, ControlHello, ControlReady, FacadeState, GuestPort, SessionId, UnixMillis,
+    CONTROL_LINE_CAP, ControlCommand, ControlHello, ControlReady, ControlStop, FacadeState,
+    GuestPort, SessionId, TurnEnd, TurnEvent, UnixMillis,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -49,6 +54,10 @@ pub enum ControlError {
     /// the hello names another session than the VM serves (decision CH32
     /// rule 3).
     Closed,
+    /// Guest init closed the link at a line end after `ControlReady`. A
+    /// power-off after `stop` ends a link so, and so does a restore that
+    /// replaced the link (fact 74). It asks for no cold boot.
+    Ended,
     /// A line broke the framing or is not the type that the link expects.
     /// The vmm closes the link (decision CH43 rule 2, `wire/AGENTS.md`,
     /// rule 6 of "The vsock JSON links").
@@ -126,6 +135,30 @@ impl ControlLink {
             return Err(ControlError::Line);
         }
         serde_json::from_slice(&line).map_err(|_| ControlError::Line)
+    }
+
+    /// Reads the next turn event that guest init relays (decision CH21).
+    ///
+    /// # Errors
+    ///
+    /// `Ended` when guest init closed the link at a line end. `Line` for
+    /// a line that is not a `TurnEvent`. The caller then closes the link.
+    pub async fn event(&mut self) -> Result<TurnEvent, ControlError> {
+        self.read().await.map_err(|error| match error {
+            ControlError::Closed => ControlError::Ended,
+            error => error,
+        })
+    }
+
+    /// Sends the graceful stop: guest init stops the facade, syncs and
+    /// powers off (decision CH19 (3)). The line is `{"stop":{}}` (decision
+    /// CH36 G11).
+    ///
+    /// # Errors
+    ///
+    /// `Io` when the write failed.
+    pub async fn stop(&self) -> Result<(), ControlError> {
+        self.write(&ControlCommand::Stop(ControlStop {})).await
     }
 
     /// Reads one line of at most `cap` bytes and drops its LF. An end of
@@ -260,6 +293,32 @@ pub struct LinkId(u64);
 struct VmControl {
     link: Option<LinkId>,
     facade: Option<FacadeState>,
+    turn_running: bool,
+}
+
+/// The last turn end that `facade` holds. Only a state that can follow a
+/// turn holds one (decision CH32 rule 5).
+fn last_turn_end(facade: &FacadeState) -> Option<&TurnEnd> {
+    match facade {
+        FacadeState::NotStarted(_) => None,
+        FacadeState::Starting(starting) => starting.last_turn_end.as_ref(),
+        FacadeState::Running(running) => running.last_turn_end.as_ref(),
+        FacadeState::Exited(exited) => exited.last_turn_end.as_ref(),
+    }
+}
+
+/// What a change that names a link did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[must_use]
+pub enum Change {
+    /// The link is not the current link of the VM. Nothing changed.
+    Stale,
+    /// The link is current, and the state changed. `Some` holds a turn
+    /// end for the row of the VM. The caller writes it with
+    /// `creche_vmm_store::rows::Rows::turn_end`. That write syncs a file
+    /// and a dir, so the caller runs it in `spawn_blocking` (decision CH36
+    /// G21) and holds no lock of `ControlState` across it.
+    Applied(Option<TurnEnd>),
 }
 
 /// The control state of every VM, keyed on the session that the VM serves
@@ -282,21 +341,52 @@ impl ControlState {
         link
     }
 
+    /// The state of `vm` when `link` is its current link.
+    fn current(&mut self, vm: &SessionId, link: LinkId) -> Option<&mut VmControl> {
+        self.vms
+            .get_mut(vm)
+            .filter(|control| control.link == Some(link))
+    }
+
     /// Keeps the facade state of `ready` when `link` is current. Returns
-    /// whether it did.
-    pub fn ready(&mut self, vm: &SessionId, link: LinkId, ready: ControlReady) -> bool {
-        match self.vms.get_mut(vm) {
-            Some(control) if control.link == Some(link) => {
-                control.facade = Some(ready.facade);
-                true
-            }
-            _ => false,
+    /// `Applied` with the last turn end of the facade state, which the
+    /// caller writes to the row of `vm`. A restore can drop a turn event
+    /// of the old link (fact 45), so the end arrives here (decision CH32
+    /// rule 4). A repeat of a seen end writes nothing. A failed write
+    /// changes no state here, and the next `ControlReady` carries the end
+    /// again.
+    pub fn ready(&mut self, vm: &SessionId, link: LinkId, ready: ControlReady) -> Change {
+        let Some(control) = self.current(vm, link) else {
+            return Change::Stale;
+        };
+        control.turn_running =
+            matches!(&ready.facade, FacadeState::Running(running) if running.turn_running);
+        let facade = control.facade.insert(ready.facade);
+        Change::Applied(last_turn_end(facade).cloned())
+    }
+
+    /// Applies a turn event of `link` when `link` is current (decision
+    /// CH21). A start marks a turn running. An end clears the mark and
+    /// returns `Applied` with the end. The caller writes it to the row of
+    /// `vm`: that sets `updated_at`, and it sets the title only while that
+    /// is `null` (decision CH32 rule 4). An event of a replaced link
+    /// changes nothing: the `ControlReady` of the new link carries its end
+    /// (fact 74).
+    pub fn turn(&mut self, vm: &SessionId, link: LinkId, event: &TurnEvent) -> Change {
+        let Some(control) = self.current(vm, link) else {
+            return Change::Stale;
+        };
+        control.turn_running = matches!(event, TurnEvent::Start(_));
+        match event {
+            TurnEvent::Start(_) => Change::Applied(None),
+            TurnEvent::End(end) => Change::Applied(Some(end.clone())),
         }
     }
 
     /// Marks the close of `link` when it is current. Returns whether it
     /// did. The last facade state stays: a link close never stops the
-    /// facade (decision CH19 (1)).
+    /// facade (decision CH19 (1)). The turn state stays too: the turn goes
+    /// on in the guest, and the next `ControlReady` reports it.
     pub fn closed(&mut self, vm: &SessionId, link: LinkId) -> bool {
         match self.vms.get_mut(vm) {
             Some(control) if control.link == Some(link) => {
@@ -313,10 +403,24 @@ impl ControlState {
         self.vms.get(vm).and_then(|control| control.link)
     }
 
-    /// The last facade state that a current link of `vm` reported.
+    /// The last facade state that a current link of `vm` reported in its
+    /// `ControlReady`. A turn event does not change it.
+    // Decision CH43 rule 8: this stays the state of the last
+    // `ControlReady`, and `turn_running` follows the events. No line
+    // reports a change of the facade state yet. The phase 3 guest init PR
+    // adds one. Until then the sleep gate treats a VM as up only after a
+    // ready said `running` or a turn event arrived. The sleep gate is plan
+    // PR L18, a later PR.
     #[must_use]
     pub fn facade(&self, vm: &SessionId) -> Option<&FacadeState> {
         self.vms.get(vm).and_then(|control| control.facade.as_ref())
+    }
+
+    /// Whether a turn runs in `vm`: the last `ControlReady` or turn event
+    /// of a current link said so (decisions CH21, CH19 (6)).
+    #[must_use]
+    pub fn turn_running(&self, vm: &SessionId) -> bool {
+        self.vms.get(vm).is_some_and(|control| control.turn_running)
     }
 }
 

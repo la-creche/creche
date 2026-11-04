@@ -89,6 +89,24 @@ changes the state. So the late EOF of a replaced link changes nothing
 (decision CH19 (2), fact 74). A link close keeps the facade state,
 because it never stops the facade (decision CH19 (1)).
 
+After `ControlReady`, `ControlLink::event` reads each turn event that
+guest init relays (decision CH21). `ControlState::turn` applies each
+event in memory: a start marks a turn running, and an end clears the
+mark. `ControlState::ready` keeps the facade state of each
+`ControlReady`. Both return a `Change`. `Change::Applied` holds the turn
+end, if any, and the caller writes it with `Rows::turn_end` of
+`creche-vmm-store`. That write sets `updated_at`, and it sets the title
+only while the row has none (decision CH32 rule 4). So an end that a
+restore dropped still arrives through the next ready (fact 45). The
+write syncs a file and a dir, so the caller runs it in `spawn_blocking`
+(decision CH36 G21). A close of the link after `ControlReady` ends
+`event` with `ControlError::Ended`, which asks for no cold boot.
+`ControlState::turn_running` is the turn state for the sleep gate
+(decision CH19 (6)). The vmm keeps the facade state of the last ready,
+and turn events set `turn_running` (decision CH43 rule 8).
+`ControlLink::stop` sends the graceful stop
+`{"stop":{}}` (decision CH19 (3)).
+
 ## Rules
 
 - Each new dependency is its own pull request, with its lock delta
@@ -100,4 +118,11 @@ because it never stops the facade (decision CH19 (1)).
 
 ## Known gaps
 
-None.
+1. Decision CH43 rule 8: no line on the control link reports a change
+   of the facade state yet. The phase 3 guest init PR adds a line that
+   reports each change. Until then the sleep gate treats a VM as up only
+   after a ready said `running` or a turn event arrived. A VM after a
+   cold boot reports `not_started` or `starting` (decision CH34 rule 7),
+   so a gate that reads only the ready would never snapshot it. The sleep
+   gate is plan PR L18, a later PR, so this crate does not hold the rule
+   yet.
