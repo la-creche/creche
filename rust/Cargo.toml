@@ -37,6 +37,11 @@ tokio = { version = "1.54.1", default-features = false, features = ["rt", "rt-mu
 # and `http1` only: the vmm serves one Unix socket and owns its accept loop.
 # The version is the one in chaperone's Cargo.lock (decision CH26).
 hyper = { version = "1.12.0", default-features = false, features = ["server", "http1"] }
+# The tokio glue of hyper (decision CH26 rule 1). `tokio` only, for TokioIo.
+# It also turns on the tokio feature `time`. The vmm owns its accept loop
+# (decision CH26), so no `server-auto`. Shutdown uses tokio::sync (decision
+# CH26 rule 2), so no `server-graceful`.
+hyper-util = { version = "0.1.21", default-features = false, features = ["tokio"] }
 
 # The lint gate. A crate inherits it with `[lints] workspace = true`. An
 # exception is written `#[expect(clippy::<lint>, reason = "...")]` at the one
