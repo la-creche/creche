@@ -174,7 +174,11 @@ rule 3). The write of `stop` has a timeout counted inside
 CH27). A session drop of an absent id, or of an id that another family
 owns, gets `not_found` and stops nothing (decision CH33 rules 4 and 5).
 A family drop takes the rows of the family, and a family with no rows
-answers `Dropped`. Then the drop runs in this order:
+answers `Dropped`. The drop runs in a task of its own, and the handler
+waits for that task. hyper drops the handler future when the client
+hangs up, because `src/server/accept.rs` leaves half-close off. The task
+runs on with its marks, so a retry joins the live slot and waits for the
+same start. The drop runs in this order:
 
 1. `Relays::mark_drop` marks each session. The mark stops its open
    relay (decision CH26 rule 5), and an Upgrade under the mark gets
@@ -197,8 +201,9 @@ and the files of that session stay, so a retried drop finishes the job.
 `StopError::Hung` is one such stop. The drop logs the pid of each VM
 that did not stop. A removal that fails gives `internal` too, and its
 row stays. `tests/drop.rs` runs the handler on paused time with fake
-VMs. It proves two drops that overlap a start, a family drop with one
-hung VM, a failed removal, and marks that last until the row is gone.
+VMs. It proves two drops that overlap a start, a retry after a drop
+whose client hung up, a family drop with one hung VM, a failed removal,
+and marks that last until the row is gone.
 
 ## The cold boot
 
