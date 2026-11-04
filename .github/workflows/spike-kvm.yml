@@ -195,6 +195,8 @@ jobs:
           du -sh snap1
 
           # Copy-on-write: snap1 stays unchanged while the VM runs (fact 55).
+          # Record its digests now and check them after the restored VM stops.
+          sha256sum snap1/* > snap1.sha256
           # CH truncates the serial file on restore. Move the boot log
           # aside so the tick count starts at 0.
           mv serial.log serial-boot.log
@@ -208,8 +210,14 @@ jobs:
           # Liveness only. This number includes up to 1 s of guest sleep.
           wait_for ticked
           echo "restore to the first tick ms (includes guest sleep) $(($(now) - start))"
+          # copyonwrite can fall back to copy, which keeps RAM anonymous. CH's
+          # own test_snapshot_restore_copyonwrite checks the mapping the same way.
+          if ! grep -q "$PWD/snap1/memory-ranges" "/proc/$pid/maps"; then
+            echo "the restored VM does not map snap1/memory-ranges: no copy-on-write"; exit 1
+          fi
 
           remote pause
           remote snapshot "file://$PWD/snap2"
           echo "re-snapshot done"
           stop "$pid"
+          sha256sum -c snap1.sha256
