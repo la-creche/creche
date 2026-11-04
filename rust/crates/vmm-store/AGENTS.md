@@ -13,10 +13,7 @@ The second file has the table of the three vmm crates.
   the identity check at VM start fails the start. `ImageStore::check`
   removes and repairs nothing. An operator step or a later re-import
   fixes the copy.
-
-## Known gaps
-
-- CONTRACT-QUESTION (PR D8, `ch_remote.rs`): no row decides the timeout
-  of a `ch-remote` call. A pause takes about 4 ms (fact 72) and a 16 GiB
-  snapshot about 12 s (gap G16). The narrowest reading: each call takes
-  its timeout from its caller, and this crate names no value.
+- Decision CH44 rule 3 (PR D8, `ch_remote.rs`): the timeout of a
+  `ch-remote` call comes from its caller. This crate names no value. A
+  pause takes about 4 ms (fact 72) and a 16 GiB snapshot about 12 s
+  (gap G16).
