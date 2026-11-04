@@ -35,6 +35,19 @@ table of the three vmm crates.
   `NotValid` (decisions CH36 G6, CH43 rule 3). The root has no default.
   Lifecycle passes it, and caregiver writes no `shape.json` before the cut
   (decision CH45 rule 2).
+- `command::ChCommand` renders the CH argv from the checked store types
+  only: `CheckedImage` (PR D6), `SessionDisk` (PR D7) and
+  `ClaimedSnapshot` (PR D11). No input names a network card, and no
+  argument names `--seccomp` (decisions CH6-3, CH8-1, CH8-4). A boot
+  gives the root disk `readonly=on` as the first `--disk` (decision
+  CH8-8), the session disk the `DiskLimit::SESSION` rate limiter
+  (decisions CH8-7, CH36 G15), and `--serial file=` the `serial.log` of
+  the VM run dir with `--console off` (decisions CH36 G23, CH41 rule 2).
+  A restore gives only `--api-socket` and `--restore` with
+  `memory_restore_mode=copyonwrite`, because CH v54 takes the sizes and
+  devices from the snapshot (decisions CH2, CH29). A restore consumes the
+  claim. A path with a comma, a bracket or a quote fails, because the CH
+  option parser reads them as syntax.
 - Every launch step forks from the one spawner thread (decision CH19 (4),
   fact 76). The vmm keeps its `Spawner` for its whole life. A drop ends
   the thread, and the kernel then kills every payload it started.
@@ -122,3 +135,12 @@ table of the three vmm crates.
   `family::FamilyRoot` reads `config/` again, the pause between two
   tries, or the size cap of `shape.json`. The code uses `READ_TRIES` (5),
   `RETRY_PAUSE` (10 ms) and `SHAPE_CAP` (4 KiB).
+- CONTRACT-QUESTION (decisions CH2, CH29): `command::ChCommand::restore`
+  passes `resume=true`, so the restored VM runs at once, as in the spikes
+  of facts 74 and 79. No row decides whether the vmm resumes the VM
+  itself through `ch-remote` after the restore. Plan PR L17 reads it.
+- Gap G23 sets `serial.log` to mode 0600. CH makes the file with the
+  umask of the launch step, and the crate sets no umask. A `UMask=` in
+  the unit of plan PR C13, or a file that lifecycle makes first in plan
+  PR L16, must set it. Neither plan entry names the step yet. Until then
+  `RuntimeDirectoryMode=0700` of the run root keeps other users out.

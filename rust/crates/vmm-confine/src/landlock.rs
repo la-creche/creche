@@ -103,8 +103,9 @@ pub struct VmFiles {
 
 impl VmFiles {
     /// The files of the VM whose state is in `session` and whose sockets
-    /// are in `run`. PR C7 takes the checked image types of the store for
-    /// the root disk and the kernel.
+    /// are in `run`. Lifecycle passes the paths of the checked store
+    /// copies that `command::Boot` renders, so that the rules and the argv
+    /// name the same files.
     ///
     /// # Errors
     ///

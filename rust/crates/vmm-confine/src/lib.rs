@@ -6,6 +6,7 @@
 //! of `creche-vmm-store` and never calls `creche-vmm`.
 
 pub mod admission;
+pub mod command;
 pub mod deny;
 pub mod family;
 pub mod faults;
