@@ -11,6 +11,7 @@ pub mod claim;
 pub mod images;
 pub mod key;
 pub mod layout;
+pub mod retention;
 pub mod rows;
 pub mod session_disk;
 pub mod sleep_gate;
