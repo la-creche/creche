@@ -16,13 +16,21 @@ table of the three vmm crates.
 - The crate reads no env key. Lifecycle (plan PR L20) passes each host
   path from the vmm config (owner env rule, decision CH36 G5): the
   `systemd-run` program of `launch::Launch`, from the existing key
-  `AGENT_SYSTEMD_RUN_PROGRAM`.
+  `AGENT_SYSTEMD_RUN_PROGRAM`, and the `systemctl` program of
+  `leftovers::stop_all`, from the existing key `AGENT_SYSTEMCTL_PROGRAM`.
 - Every launch step forks from the one spawner thread (decision CH19 (4),
   fact 76). The vmm keeps its `Spawner` for its whole life. A drop ends
   the thread, and the kernel then kills every payload it started.
 - The launch step reads its plan only from a pipe that already holds it.
   The spawner writes the whole plan, at most 64 KiB, before the spawn,
   and never blocks on a full pipe.
+- `leftovers::stop_all` stops every user unit with the prefix
+  `creche-vm-` and adopts none (decision CH19 (4), fact 76). The vmm calls
+  it at start, before it binds or unlinks any per-VM socket path. A unit
+  that is still loaded after the stop gets `reset-failed`, because a
+  failed scope blocks `systemd-run --unit` with its name. The last list
+  decides: a unit still loaded then is an error. The vmm config gives the
+  path of `systemctl`, like the path of `systemd-run`.
 - The Landlock ruleset of a VM confines the launch step from its last
   step on, then `systemd-run` and Cloud Hypervisor (decisions CH8-3,
   CH30). The vmm process is never confined, so the `zstd` and `mke2fs`
