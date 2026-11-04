@@ -15,15 +15,15 @@ use serde_json::Value;
 
 use super::schema::wire_schema;
 use super::{
-    AcpError, Auto, AutoJobId, ConfigMissing, ControlHello, ControlReady, CreateError,
-    CreateSession, CredsMissing, Delegate, DelegationId, Dispatch, DispatchChain, Door, DropError,
-    DropFamily, DropSession, DropTarget, Dropped, FacadeExited, FacadeNotStarted, FacadeRunning,
-    FacadeStarting, FacadeState, FamilyConfig, FamilyCreds, FamilyName, FamilySkills, FamilyState,
-    FamilyStateReply, JobId, ListCursor, ListError, ListSessions, LitellmKey, MISMATCH_STATUS,
-    ModelAlias, OpenAcp, PepToken, ProtocolMismatch, RouteError, SHARED_CODES, SandboxGrant,
-    SessionCwd, SessionId, SessionOrigin, SessionPage, SessionRow, SessionTitle, SkillName,
-    StartCount, StateNotValid, StateTooLarge, Timer, Trigger, TurnEnd, TurnEvent, TurnStart,
-    UnixMillis, Webhook, WebhookName, routes::TableRoute,
+    AcpError, Auto, AutoJobId, ConfigMissing, ControlCommand, ControlHello, ControlReady,
+    ControlStop, CreateError, CreateSession, CredsMissing, Delegate, DelegationId, Dispatch,
+    DispatchChain, Door, DropError, DropFamily, DropSession, DropTarget, Dropped, FacadeExited,
+    FacadeNotStarted, FacadeRunning, FacadeStarting, FacadeState, FamilyConfig, FamilyCreds,
+    FamilyName, FamilySkills, FamilyState, FamilyStateReply, JobId, ListCursor, ListError,
+    ListSessions, LitellmKey, MISMATCH_STATUS, ModelAlias, OpenAcp, PepToken, ProtocolMismatch,
+    RouteError, SHARED_CODES, SandboxGrant, SessionCwd, SessionId, SessionOrigin, SessionPage,
+    SessionRow, SessionTitle, SkillName, StartCount, StateNotValid, StateTooLarge, Timer, Trigger,
+    TurnEnd, TurnEvent, TurnStart, UnixMillis, Webhook, WebhookName, routes::TableRoute,
 };
 
 /// The file, relative to the crate.
@@ -69,8 +69,10 @@ fn read_and_write(type_name: &str, json: &str) -> Option<String> {
         "DelegationId" => round_trip::<DelegationId>(json),
         "Dispatch" => round_trip::<Dispatch>(json),
         "ConfigMissing" => round_trip::<ConfigMissing>(json),
+        "ControlCommand" => round_trip::<ControlCommand>(json),
         "ControlHello" => round_trip::<ControlHello>(json),
         "ControlReady" => round_trip::<ControlReady>(json),
+        "ControlStop" => round_trip::<ControlStop>(json),
         "CreateError" => round_trip::<CreateError>(json),
         "CreateSession" => round_trip::<CreateSession>(json),
         "CredsMissing" => round_trip::<CredsMissing>(json),

@@ -438,8 +438,43 @@ key or an added route too, because the match of the number is exact.
    starts from. It fails when a change edits or deletes one, so a file
    deleted and written again fails too.
 6. A change of a type that no route reaches needs no new number:
-   `FamilyStateReply`, `TurnEvent`, `ControlHello` and the types that only
-   they reach. A change of a `description` needs none either.
+   `FamilyStateReply`, `TurnEvent`, `ControlHello`, `ControlCommand` and
+   the types that only they reach. A change of a `description` needs none either.
+
+## The vsock JSON links
+
+Two vsock links carry wire types as JSON (decision CH36 G11). Each one
+carries one JSON value per line.
+
+| Link | The vmm sends | Guest init sends | Line cap |
+|---|---|---|---|
+| Control, guest port 1200 | `ControlHello`, then `ControlCommand` | `ControlReady`, then `TurnEvent` | `CONTROL_LINE_CAP`, 64 KiB |
+| Family state, host port 1100 | `FamilyStateReply` | the pull, no wire type | 256 KiB (decision CH23 default 4) |
+
+1. A writer writes each value in the compact form of serde_json, then one
+   LF. The compact form holds no LF, because JSON escapes an LF in a
+   string. A writer writes no CR and no blank line.
+2. A reader reads one line up to its LF. The cap counts the bytes of the
+   line, the LF not counted. A reader that gets more bytes than the cap
+   and no LF refuses the line. It does not read the rest.
+3. A reader reads each line with the strict reader of its language: the
+   check `strict` of `rust/crates/vmm/src/server/check.rs`,
+   `creche_wire.read` in Python and `read` of `agent/src/wire-read.ts` in
+   TypeScript. It then reads the line as the type that the link expects
+   at that point.
+4. On the control link the vmm sends `ControlHello` first, on each new
+   link (decisions CH19 rule 2, CH28). Guest init answers with one
+   `ControlReady`. After that the vmm sends `ControlCommand` and guest
+   init sends `TurnEvent`, each at any time.
+5. `stop` of `ControlCommand` starts the graceful stop (decision CH19
+   rule 3). `DROP_STOP_WAIT` and `DROP_SIGTERM_GRACE` bound it (see "The
+   drop route").
+6. A refused line ends the link: the reader closes it and logs why. No
+   link carries an error reply for a line.
+7. The framing is part of the guest init protocol. Once guest init is
+   deployed, a change of the framing or of a cap needs a new
+   `GUEST_INIT_PROTOCOL` (decision CH14), so that an old snapshot
+   cold-boots. No route reaches these types, so `HOST_API_PROTOCOL` stays.
 
 ## Change a wire type
 
@@ -468,4 +503,11 @@ a dependency.
 
 ## Known gaps
 
-None.
+1. CONTRACT-QUESTION: decision CH36 G11 sets a per-line cap on the
+   control link and no value. The reading is `CONTROL_LINE_CAP` = 64 KiB,
+   32 times the largest line (a `ControlReady` of about 1.7 KiB). A change
+   later needs a new `GUEST_INIT_PROTOCOL` once guest init is deployed.
+2. CONTRACT-QUESTION: no decision says what a reader does with a refused
+   line on a vsock JSON link. The reading is the narrowest one: the reader
+   closes the link and logs why (rule 6 of "The vsock JSON links"). A
+   typed error line instead needs a new wire type.

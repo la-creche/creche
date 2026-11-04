@@ -313,6 +313,39 @@ class ControlReady(BaseModel):
     facade: Annotated[FacadeState, Field(description="The facade.")]
 
 
+class ControlStop(BaseModel):
+    """
+    The graceful stop. It carries nothing.
+
+    It is a type of its own so that the generated Python model is a class
+    with no field, as `TurnStart` is.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+
+class ControlStopCommand(BaseModel):
+    """
+    Stop the facade, sync and power off.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    stop: ControlStop
+
+
+class ControlCommand(RootModel[ControlStopCommand]):
+    root: Annotated[
+        ControlStopCommand,
+        Field(
+            description="What the vmm sends on control link 1200 after `ControlHello` (decision\nCH36 G11).\n\n`stop` starts the graceful stop of decision CH19 rule 3. Guest init\nstops the facade, for up to 30 s when a turn runs. It then syncs the\ndisks and powers the VM off. The vmm sends SIGTERM, then SIGKILL, only\nwhen the VM does not exit in time, because a kill is a power cut for\nthe guest.\n\nOn the wire the variant name is the one key of an object, and each\nvariant has a `title` for its class name. An externally tagged enum has\nno unit variant, so `stop` holds an empty object (decision CH22 rule 3)."
+        ),
+    ]
+
+
 class CreateError1(BaseModel):
     """
     A row with this id exists, and it was made from a different

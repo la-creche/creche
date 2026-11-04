@@ -216,6 +216,25 @@
       "description": "The reply of a pull when `config/` is absent. It carries nothing.",
       "type": "object"
     },
+    "ControlCommand": {
+      "description": "What the vmm sends on control link 1200 after `ControlHello` (decision\nCH36 G11).\n\n`stop` starts the graceful stop of decision CH19 rule 3. Guest init\nstops the facade, for up to 30 s when a turn runs. It then syncs the\ndisks and powers the VM off. The vmm sends SIGTERM, then SIGKILL, only\nwhen the VM does not exit in time, because a kill is a power cut for\nthe guest.\n\nOn the wire the variant name is the one key of an object, and each\nvariant has a `title` for its class name. An externally tagged enum has\nno unit variant, so `stop` holds an empty object (decision CH22 rule 3).",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Stop the facade, sync and power off.",
+          "properties": {
+            "stop": {
+              "$ref": "#/$defs/ControlStop"
+            }
+          },
+          "required": [
+            "stop"
+          ],
+          "title": "ControlStopCommand",
+          "type": "object"
+        }
+      ]
+    },
     "ControlHello": {
       "additionalProperties": false,
       "description": "What the vmm sends first on each new control link, guest port 1200\n(decisions CH13, CH14). A new link replaces the old one (decision CH19\nrule 2). Guest init sets `CLOCK_REALTIME` to `sent_at` with\n`clock_settime` before it answers with `ControlReady` (decision CH28),\nbecause after a restore the guest clock is behind by the time the VM\nspent as a snapshot (fact 73).\n\nThe hello carries no family name and no protocol version (decision CH32\nrules 1 and 2). The vmm writes guest init at each cold boot (decision\nCH7-6). A restore brings back the guest init of the snapshot, so the\nvmm restores a snapshot only when its key holds the same guest-init\nprotocol version (decision CH7-6). So the two never skew in protocol.\nA later hello can name a session that differs from the first one. Guest\ninit then closes the link, and the vmm records a fault and cold-boots\nthe VM (decision CH32 rule 3). No wire type carries that case.",
@@ -247,6 +266,11 @@
       "required": [
         "facade"
       ],
+      "type": "object"
+    },
+    "ControlStop": {
+      "additionalProperties": false,
+      "description": "The graceful stop. It carries nothing.\n\nIt is a type of its own so that the generated Python model is a class\nwith no field, as `TurnStart` is.",
       "type": "object"
     },
     "CreateError": {
