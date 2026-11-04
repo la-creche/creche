@@ -4,6 +4,7 @@
 
 use std::{fmt, io};
 
+pub mod control;
 pub mod server;
 
 /// Why the host API server stopped or did not start.

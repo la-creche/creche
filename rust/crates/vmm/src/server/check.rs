@@ -106,7 +106,7 @@ impl BodyCheck {
 // integer `-0`, as a float, so this check passes both. strictjson.py
 // refuses them. The type check of an integer field then refuses either
 // one as `not_valid`.
-fn strict(bytes: &[u8]) -> bool {
+pub(crate) fn strict(bytes: &[u8]) -> bool {
     let mut reader = serde_json::Deserializer::from_slice(bytes);
     Strict { open: 0 }.deserialize(&mut reader).is_ok() && reader.end().is_ok()
 }

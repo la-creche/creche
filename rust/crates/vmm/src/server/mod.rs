@@ -21,6 +21,7 @@ use crate::ServeError;
 
 pub use accept::{Stop, StopSignal, run_with};
 pub use check::BodyCheck;
+pub(crate) use check::strict;
 pub use router::{Relay, Route, Routes, run_routes};
 
 /// The wire crate, for the expansion of `routes!` in another crate.

@@ -62,6 +62,33 @@ The cap binds the JSON body only (decision CH34 rule 3).
 use it to prove that the JSON body of an Upgrade request crosses
 (`wire/AGENTS.md`, the `acp` route).
 
+## The control link
+
+`src/control.rs` opens the control link to guest init on guest port 1200
+(decisions CH13, CH14). `control::open` dials through the vsock socket
+of the VM (`VmRunDir::vsock_socket` of `creche-vmm-store`). It writes
+`CONNECT 1200` and waits for `OK`. It retries on ENOENT and on an empty
+reply, because both come before the guest listener exists (fact 74). It
+also retries on ECONNREFUSED (decision CH43 rule 7). `DIAL_PAUSE` (10 ms,
+decision CH43 rule 5) is the pause between two tries. It
+then sends `ControlHello` with the wall time of the vmm (decision CH28)
+and reads one `ControlReady` with the strict reader. `READY_WAIT` (10 s,
+decision CH36 G26) bounds the whole open. A close before `ControlReady`
+is a fault of the VM: `ControlError::needs_cold_boot` is true (decision
+CH32 rule 3). Decision CH43 rule 6 allows a cold boot only when guest
+init closes the link before `ControlReady`. The rule names four cases
+that end the open with a reported fault and no cold boot: a bad line, a
+timeout, a refused `CONNECT` and a failed dial. The rule does not name
+`Io` (a failed read or write) or `Clock`. The code reads "only" to cover
+every other error too, so each of them also ends the open with a
+reported fault and no cold boot.
+
+`control::ControlState` keeps the current link and the last facade state
+of each VM. Each change names its `LinkId`, and only the current link
+changes the state. So the late EOF of a replaced link changes nothing
+(decision CH19 (2), fact 74). A link close keeps the facade state,
+because it never stops the facade (decision CH19 (1)).
+
 ## Rules
 
 - Each new dependency is its own pull request, with its lock delta
