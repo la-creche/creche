@@ -80,6 +80,7 @@ CI builds each flavor on each code change (`bin/playpen-ci`).
 | `bin/playpen-ci` | the steps of the `playpen-image` CI job: build each flavor, then check it |
 | `bin/playpen-rootfs` | the tar export of one flavor, the input of its root disk |
 | `bin/playpen-disk`, `disk/Dockerfile` | the root disk of one flavor from its tar, in the pinned trixie stage |
+| `bin/playpen-kernel` | the pinned CH guest kernel, compressed to ship like the disks |
 
 ## Known gaps
 
