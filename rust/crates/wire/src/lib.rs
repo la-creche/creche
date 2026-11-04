@@ -1510,11 +1510,10 @@ object_only!(FamilyConfig);
 /// The name of the family VM shape file in the family's `config/`
 /// (decision CH36 G6). caregiver writes it in the same folder swap as the
 /// rest of `config/`, and the vmm reads it. The guest never reads it.
-// CONTRACT-QUESTION: decision CH36 G6 puts the shape in a separate file of
-// `config/` and gives the file no name. The reading here is `shape.json`.
-// Contract 01 §6.1 lists the entries of `config/` and needs an amendment
-// for it, as decision CH23-1 amended it for `model_live_at`. A change of
-// the name later changes caregiver and the vmm together.
+// Decision CH43 rule 3: the file is `config/shape.json`. Contract 01 §6.1
+// lists the entries of `config/` and needs an amendment for this file, as
+// decision CH23-1 amended it for `model_live_at`. A change of the name
+// later changes caregiver and the vmm together.
 pub const FAMILY_SHAPE_FILE: &str = "shape.json";
 
 /// A size of the family VM shape, with the range of `family/grammar.py`.
