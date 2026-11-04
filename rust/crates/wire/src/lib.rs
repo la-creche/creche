@@ -10,12 +10,14 @@ use serde::de::value::MapAccessDeserializer;
 use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+mod ports;
 mod routes;
 #[cfg(test)]
 mod schema;
 #[cfg(test)]
 mod vectors;
 
+pub use ports::{GUEST_INIT_PROTOCOL, GuestPort, HostPort};
 pub use routes::{
     AcpError, AcpRoute, Body, CreateError, CreateRoute, DROP_CLIENT_TIMEOUT, DROP_SIGTERM_GRACE,
     DROP_STOP_WAIT, DropError, DropRoute, HOST_API_BODY_CAP, HOST_API_HEADER, HOST_API_PROTOCOL,
