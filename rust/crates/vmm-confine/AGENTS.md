@@ -35,8 +35,8 @@ table of the three vmm crates.
   place of the fds of the vmm, so CH inherits no journal socket (decision
   CH50 rule 12). `output::start` reads it on one thread per VM and gives
   each line to the sink tagged `ch <session id>`, under `LINE_CAP` bytes
-  per line and `RATE_LINES` lines per `RATE_WINDOW`. It escapes each
-  control char, so CH cannot write a vmm line. The vmm sink is the
+  per line and `RATE_LINES` lines per `RATE_WINDOW` (decision CH52 rule
+  6). It escapes each control char, so CH cannot write a vmm line. The vmm sink is the
   stderr of the vmm with the prefix `vmm: `. The crate has no log crate,
   and `rust/Cargo.lock` holds none.
 - `leftovers::stop_all` stops every user unit with the prefix
@@ -116,6 +116,3 @@ table of the three vmm crates.
   the value `vmm` in the `source` enum of §3.3, and the reader. caregiver
   reads only the `attendance` and `pep` files today, so it ignores the
   vmm file.
-- CONTRACT-QUESTION (decision CH50 rule 12): the row sets a byte cap per
-  line and a rate cap for CH's output, but no values. The code uses
-  `LINE_CAP` (4 KiB), `RATE_LINES` (100) and `RATE_WINDOW` (10 s).

@@ -19,10 +19,8 @@
 //! The reader keeps reading while it drops lines, so a full pipe never
 //! blocks CH.
 //!
-//! CONTRACT-QUESTION (decision CH50 rule 12): the row sets a byte cap per
-//! line and a rate cap, but no values. Here they are `LINE_CAP` (4 KiB),
-//! `RATE_LINES` (100) and `RATE_WINDOW` (10 s). AGENTS.md lists this in
-//! Known gaps.
+//! The caps are decision CH52 rule 6: `LINE_CAP` (4 KiB per line), and
+//! `RATE_LINES` (100) lines per `RATE_WINDOW` (10 s) per VM.
 
 use std::fmt::Write as _;
 use std::io::{self, BufRead, BufReader, PipeReader, Read, Write};
