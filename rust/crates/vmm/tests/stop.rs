@@ -65,6 +65,10 @@ impl Fake {
 }
 
 impl VmProcess for FakeProcess {
+    fn pid(&self) -> u32 {
+        4242
+    }
+
     fn exited(&mut self) -> io::Result<bool> {
         let exits_on = self.0.exits_on;
         Ok(exits_on == "gone" || self.0.steps().iter().any(|(step, _)| *step == exits_on))
@@ -308,6 +312,10 @@ struct Shell {
 }
 
 impl VmProcess for Shell {
+    fn pid(&self) -> u32 {
+        self.child.id()
+    }
+
     fn exited(&mut self) -> io::Result<bool> {
         self.status = self.child.try_wait()?;
         Ok(self.status.is_some())

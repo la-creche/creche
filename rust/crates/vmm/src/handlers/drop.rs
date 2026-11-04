@@ -22,18 +22,19 @@ use crate::relay::{DropMark, Relays};
 use crate::stop::StopError;
 
 /// A stop of one VM that did not end with the process gone and its files
-/// removed.
-#[derive(Debug)]
+/// removed. A second stop that waits for the first returns the same one.
+#[derive(Debug, Clone)]
 pub struct VmStopFailed {
     /// The pid of the Cloud Hypervisor process, for the log (decision CH50
     /// rule 4).
     pub pid: u32,
     /// Why the stop failed.
-    pub error: StopError,
+    pub error: Arc<StopError>,
 }
 
-/// The stop of the VM of one session. The hook of the vmm calls
-/// `stop::stop` on the VM that it started. The tests fake it.
+/// The stop of the VM of one session. `start::ColdBoot` is the hook of
+/// the vmm: it calls `stop::stop` on the VM that it started. The tests
+/// fake it.
 pub trait StopVm: Send + Sync + 'static {
     /// Stops the VM of `id`, or returns at once when no VM of `id` runs.
     /// A kill is no error (decision CH19 (3)).

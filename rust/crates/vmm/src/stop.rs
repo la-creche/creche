@@ -59,6 +59,9 @@ impl StopLink for ControlLink {
 /// The process of one Cloud Hypervisor. `Launched` is the one of the vmm,
 /// and a test gives a fake.
 pub trait VmProcess {
+    /// The pid, for the log of a stop that failed (decision CH50 rule 4).
+    fn pid(&self) -> u32;
+
     /// Whether the process has exited. A check reaps an exit.
     ///
     /// # Errors
@@ -82,6 +85,10 @@ pub trait VmProcess {
 }
 
 impl VmProcess for Launched {
+    fn pid(&self) -> u32 {
+        self.id()
+    }
+
     fn exited(&mut self) -> io::Result<bool> {
         Ok(self.try_wait()?.is_some())
     }

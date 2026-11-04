@@ -30,7 +30,8 @@
 //! (decisions CH21-1, CH6-3). A fault after the launch stops the VM.
 //!
 //! The idle sleep and the snapshot sweep of plan PR L18 use the same
-//! table (`ColdBoot::sleep_idle`, `ColdBoot::sweep`, `sleep::run`).
+//! table (`ColdBoot::sleep_idle`, `ColdBoot::sweep`, `sleep::run`), and
+//! so does the `StopVm` hook of the drop route (plan PR L18b).
 
 use std::collections::{HashMap, HashSet};
 use std::fs::{DirBuilder, OpenOptions, Permissions};
@@ -38,7 +39,7 @@ use std::io;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::time::{Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use creche_vmm_confine::admission::{Admission, Gate, Limits, Running, decide, free_bytes};
 use creche_vmm_confine::command::{Boot, ChCommand, DiskLimit};
@@ -59,7 +60,7 @@ use creche_vmm_store::session_disk::SessionDisks;
 use creche_vmm_store::sleep_gate::Activity;
 use creche_vmm_store::stale::remove_stale;
 use creche_wire::{FamilyName, FamilyShape, SandboxFlavor, SessionId, SessionRow};
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, watch};
 use tokio::task::spawn_blocking;
 use tokio::time::sleep;
 
@@ -67,6 +68,7 @@ use crate::control::{
     Change, ControlLink, ControlState, DIAL_PAUSE, LinkId, READY_WAIT, open, wall_time,
 };
 use crate::handlers::acp::{StartFault, StartVm};
+use crate::handlers::drop::{StopVm, VmStopFailed};
 use crate::relay::{AcpLink, Door, Relays};
 use crate::restore::{ChApi, Expected, check_devices};
 use crate::stop::{VmProcess, stop};
@@ -76,6 +78,11 @@ const DIR_MODE: u32 = 0o700;
 
 /// The mode of `serial.log` (gap G23).
 const SERIAL_MODE: u32 = 0o600;
+
+/// The pause between two reads of a slot that a start or a retire holds,
+/// while a stop waits for it. No row sets it. Only the vmm reads it, so a
+/// change costs one constant.
+const SLOT_POLL: Duration = Duration::from_millis(10);
 
 /// The store digests of the guest kernel and of the root disk of each
 /// flavor (decisions CH7-3, CH8-8). Plan PR L20 reads them from the vmm
@@ -183,6 +190,28 @@ enum Slot<P> {
     Running(Vm<P>),
     /// Admission evicts the VM, which holds this much guest RAM.
     Evicting(u64),
+    /// The `StopVm` hook stops the VM, which holds this much guest RAM.
+    /// A second stop waits for the outcome.
+    Stopping(u64, Outcome),
+}
+
+/// The outcome of the stop of a `Stopping` slot, `None` until it ends.
+type Outcome = watch::Receiver<Option<Result<(), VmStopFailed>>>;
+
+/// What a stop finds in the slot of its session.
+enum Held<P: VmProcess> {
+    /// No VM: nothing to stop.
+    Free,
+    /// A start or a retire holds the slot. The stop reads it again later.
+    Busy,
+    /// Another stop runs. This one returns its outcome.
+    Joins(Outcome),
+    /// The VM, out of the table under a `Stopping` slot, and the sender of
+    /// its outcome.
+    Takes(
+        Box<Eviction<P>>,
+        watch::Sender<Option<Result<(), VmStopFailed>>>,
+    ),
 }
 
 /// What the table holds for the session of a start.
@@ -437,14 +466,17 @@ impl<A: ChApi> Retirer<A> {
             eviction.put_back();
             return false;
         }
-        {
-            let mut control = self.control();
-            if let Some(link) = control.link(&id) {
-                control.closed(&id, link);
-            }
-        }
+        forget_link(&self.control, &id);
         eviction.done(&self.in_use);
         true
+    }
+}
+
+/// Marks the current control link of `id` closed: its VM stopped.
+fn forget_link(control: &Mutex<ControlState>, id: &SessionId) {
+    let mut control = control.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(link) = control.link(id) {
+        control.closed(id, link);
     }
 }
 
@@ -532,7 +564,10 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         let vm = match table.get_mut(id) {
             None => return Ok(Found::Free),
             Some(Slot::Starting(_)) => return Err("a start of the VM runs".to_owned()),
-            Some(Slot::Evicting(_)) => return Ok(Found::Evicting),
+            // CONTRACT-QUESTION (Known gaps 4): a stop holds the RAM of the
+            // VM as an eviction does, so the start gets `host_full`. Under
+            // the mark of a drop no Upgrade reaches the hook.
+            Some(Slot::Evicting(_) | Slot::Stopping(..)) => return Ok(Found::Evicting),
             Some(Slot::Running(vm)) => vm,
         };
         match vm.process.exited() {
@@ -580,7 +615,9 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
     /// CH8-6, CH19 (6)).
     fn view(&self, session: &SessionId, slot: &Slot<L::Process>, now: Instant) -> Running {
         let (guest_ram, last_use, gate) = match slot {
-            Slot::Starting(ram) | Slot::Evicting(ram) => (*ram, now, Gate::Busy),
+            Slot::Starting(ram) | Slot::Evicting(ram) | Slot::Stopping(ram, _) => {
+                (*ram, now, Gate::Busy)
+            }
             Slot::Running(vm) => {
                 // PR D12: `may_evict`, not `may_sleep`, is the gate of
                 // admission.
@@ -597,17 +634,18 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         }
     }
 
-    /// Takes the VM of `session` out of `table` and marks its slot
-    /// `Evicting`, so its RAM still counts.
+    /// Takes the VM of `session` out of `table` and marks its slot with
+    /// `mark` of its guest RAM, so its RAM still counts.
     fn take_out(
         &self,
         table: &mut HashMap<SessionId, Slot<L::Process>>,
         session: SessionId,
+        mark: impl FnOnce(u64) -> Slot<L::Process>,
     ) -> Option<Eviction<L::Process>> {
         let Some(Slot::Running(vm)) = table.remove(&session) else {
             return None;
         };
-        table.insert(session.clone(), Slot::Evicting(vm.guest_ram));
+        table.insert(session.clone(), mark(vm.guest_ram));
         Some(Eviction {
             table: Arc::clone(&self.table),
             id: session,
@@ -634,7 +672,7 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         };
         let evictions = evict
             .into_iter()
-            .filter_map(|session| self.take_out(&mut table, session))
+            .filter_map(|session| self.take_out(&mut table, session, Slot::Evicting))
             .collect();
         table.insert(id.clone(), Slot::Starting(guest_ram));
         let pending = Pending {
@@ -690,7 +728,7 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
                     // A VM whose retire fails goes back and passes its gate
                     // again, so each VM gets one try per pass.
                     tried.insert(session.clone());
-                    self.take_out(&mut table, session)
+                    self.take_out(&mut table, session, Slot::Evicting)
                 })
             };
             let Some(eviction) = next else {
@@ -852,6 +890,84 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         .await;
         if !matches!(written, Ok(Ok(()))) {
             eprintln!("vmm: the turn end of the first ready was not written");
+        }
+    }
+}
+
+impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
+    /// What the slot of `id` holds for a stop. A VM that runs leaves the
+    /// table under a `Stopping` slot, so its RAM still counts.
+    fn hold_for_stop(&self, id: &SessionId) -> Held<L::Process> {
+        let mut table = lock(&self.table);
+        match table.get(id) {
+            None => Held::Free,
+            Some(Slot::Starting(_) | Slot::Evicting(_)) => Held::Busy,
+            Some(Slot::Stopping(_, outcome)) => Held::Joins(outcome.clone()),
+            Some(Slot::Running(_)) => {
+                let (sender, outcome) = watch::channel(None);
+                let mark = |ram| Slot::Stopping(ram, outcome);
+                match self.take_out(&mut table, id.clone(), mark) {
+                    Some(eviction) => Held::Takes(Box::new(eviction), sender),
+                    None => Held::Free,
+                }
+            }
+        }
+    }
+
+    /// Stops the VM of `eviction`: the graceful stop on its control link
+    /// first (decision CH19 (3)). A VM that did not stop goes back with no
+    /// link, so admission counts its RAM (decision CH50 rule 4). A drop of
+    /// this future puts the VM back too, after SIGKILL (`Eviction`).
+    async fn stop_taken(&self, mut eviction: Eviction<L::Process>) -> Result<(), VmStopFailed> {
+        let Some(vm) = eviction.vm.as_mut() else {
+            return Ok(());
+        };
+        match stop(vm.link.as_ref(), &mut vm.process, &vm.run).await {
+            Ok(_) => {
+                forget_link(&self.control, &eviction.id);
+                eviction.done(&self.in_use);
+                Ok(())
+            }
+            Err(error) => {
+                let pid = vm.process.pid();
+                vm.link = None;
+                eviction.put_back();
+                let error = Arc::new(error);
+                Err(VmStopFailed { pid, error })
+            }
+        }
+    }
+}
+
+impl<L: Launcher, A: ChApi> StopVm for ColdBoot<L, A> {
+    /// Stops the VM of `id` (plan PR L18b, decisions CH19 (3), CH33 rule
+    /// 11). A start or a retire that holds the slot ends first, so the
+    /// stop finds the VM that the start committed or the retire put back.
+    /// A stop that finds a stop of the same VM waits for it and returns
+    /// its outcome (caller duty 6 of `AGENTS.md`).
+    // A start under the mark of a drop ends before the stop (plan PR L15),
+    // but its launch step can outlive a dropped start future. So the stop
+    // polls a `Starting` slot until the launch output kills the VM and
+    // puts it in the table.
+    async fn stop(&self, id: &SessionId) -> Result<(), VmStopFailed> {
+        loop {
+            match self.hold_for_stop(id) {
+                Held::Free => return Ok(()),
+                Held::Busy => sleep(SLOT_POLL).await,
+                Held::Joins(mut outcome) => {
+                    // A stop whose future was dropped sends no outcome. Its
+                    // `Eviction` put the VM back, so the slot is read again.
+                    let done = outcome.wait_for(Option::is_some).await;
+                    if let Some(result) = done.ok().and_then(|done| done.clone()) {
+                        return result;
+                    }
+                }
+                Held::Takes(eviction, sender) => {
+                    let result = self.stop_taken(*eviction).await;
+                    sender.send_replace(Some(result.clone()));
+                    return result;
+                }
+            }
         }
     }
 }
