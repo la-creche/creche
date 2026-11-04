@@ -15,7 +15,8 @@
 //!    CH8-5).
 //! 4. `--disk` with the root disk `readonly=on` first, so it is
 //!    `/dev/vda` (decision CH8-8), then the session disk with its rate
-//!    limiter (decision CH8-7, CH36 G15).
+//!    limiter (decision CH8-7, CH36 G15). Each names `image_type=raw`,
+//!    which CH v54 requires.
 //! 5. `--vsock cid=3,socket=<run>/vsock.sock` (decisions CH13, CH14).
 //! 6. `--serial file=<run>/serial.log` and `--console off` (decisions
 //!    CH36 G23, CH41 rule 2).
@@ -220,9 +221,15 @@ impl ChCommand {
         args.extend(boot.limits.ch_args());
         args.extend([
             "--disk".to_owned(),
-            format!("path={},readonly=on", text(boot.root.path())?),
+            // CH v54 refuses a disk with no `image_type` (ImageTypeRequired,
+            // seen in the kvm job). Both disks are raw ext4 images, and
+            // naming the type also stops CH from probing the format.
             format!(
-                "path={},{}",
+                "path={},readonly=on,image_type=raw",
+                text(boot.root.path())?
+            ),
+            format!(
+                "path={},image_type=raw,{}",
                 text(boot.session.path())?,
                 boot.disk.options()
             ),
