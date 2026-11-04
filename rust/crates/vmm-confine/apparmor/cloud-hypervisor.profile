@@ -35,8 +35,11 @@ profile creche-cloud-hypervisor /opt/components/vmm/bin/cloud-hypervisor {
   # the profile leaves CH only its own path sockets and socket pairs. No
   # `network` rule: CH can make no inet socket, TCP or UDP (decision CH8-1).
   unix type=stream,
-  deny unix addr=@**,
-  deny unix peer=(addr=@**),
+  # The deny rules name only the permissions that carry an address. A
+  # create has no address, so `deny unix addr=@**,` with no permission
+  # list also denied every Unix socket create (seen on the runner).
+  deny unix (bind, connect) addr=@**,
+  deny unix (connect, send, receive) peer=(addr=@**),
 
   # Signals from the vmm and the user manager, and between CH threads.
   signal (receive) peer=unconfined,
