@@ -32,8 +32,10 @@ The second file has the table of the three vmm crates.
 - Decision CH44 rule 6 (PR D11, `claim.rs`): a failed make or sync of
   the `consumed` mark leaves no durable mark. So the claim renames
   `snapshots/<n>` to `snapshots/<n>.retired`, and the caller cold-boots
-  (`ClaimError::Retired`). When the rename or its sync fails too, the
-  caller fails the start (`ClaimError::Stuck`). D13 removes a leftover
+  (`ClaimError::Retired`). When the rename fails too, the caller fails
+  the start (`ClaimError::Stuck`). The row names only the rename. The
+  code reads a rename that it cannot make durable (the sync of
+  `snapshots/` fails) as a failed rename too. D13 removes a leftover
   `<n>.retired`. CH39 rule 3 does not name it.
 
 ## Known gaps
