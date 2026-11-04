@@ -69,10 +69,15 @@ enum Guest {
 struct FakeVm {
     number: usize,
     exited: Arc<AtomicBool>,
+    /// Fails each status check, so each stop of the VM fails.
+    broken: Arc<AtomicBool>,
 }
 
 impl VmProcess for FakeVm {
     fn exited(&mut self) -> io::Result<bool> {
+        if self.broken.load(Ordering::SeqCst) {
+            return Err(io::Error::other("the status check failed"));
+        }
         Ok(self.exited.load(Ordering::SeqCst))
     }
 
@@ -101,6 +106,7 @@ struct Fake {
     stop_lines: Arc<AtomicUsize>,
     launches: Mutex<Vec<Launch>>,
     vms: Mutex<Vec<Arc<AtomicBool>>>,
+    broken: Mutex<Vec<Arc<AtomicBool>>>,
 }
 
 // `cfg(test)` lets the helpers unwrap (rust/clippy.toml).
@@ -147,13 +153,19 @@ impl Fake {
         fs::write(self.dir.join(format!("cmdline-{number}")), args.join("\0")).unwrap();
         launches.push(launch);
         self.vms.lock().unwrap().push(Arc::clone(&exited));
-        FakeVm { number, exited }
+        let broken = Arc::new(AtomicBool::new(false));
+        self.broken.lock().unwrap().push(Arc::clone(&broken));
+        FakeVm {
+            number,
+            exited,
+            broken,
+        }
     }
 }
 
-/// The fake CH API and what it saw.
+/// The fake CH API and what it saw. `DEVICES` is its `READS_DEVICES`.
 #[derive(Debug)]
-struct FakeApi {
+struct FakeApi<const DEVICES: bool = true> {
     /// The launcher, whose VM a snapshot ends.
     fake: Arc<Fake>,
     /// The run dir of each snapshot.
@@ -164,11 +176,17 @@ struct FakeApi {
     fails: AtomicUsize,
     infos: AtomicUsize,
     resumes: AtomicUsize,
+    /// Fails each snapshot, and the VM runs on.
+    fail_take: AtomicBool,
+    /// Holds each snapshot until the test clears it.
+    hold: AtomicBool,
+    /// A snapshot began.
+    entered: AtomicBool,
 }
 
 #[cfg(test)]
-impl ChApi for FakeApi {
-    const READS_DEVICES: bool = true;
+impl<const DEVICES: bool> ChApi for FakeApi<DEVICES> {
+    const READS_DEVICES: bool = DEVICES;
 
     fn info(&self, _vm: &VmRunDir) -> Result<Vec<u8>, String> {
         self.infos.fetch_add(1, Ordering::SeqCst);
@@ -193,6 +211,13 @@ impl ChApi for FakeApi {
         _session: &SessionDir,
         _key: &SnapshotKey,
     ) -> Result<SnapshotGeneration, String> {
+        self.entered.store(true, Ordering::SeqCst);
+        while self.hold.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        if self.fail_take.load(Ordering::SeqCst) {
+            return Err("the take failed".to_owned());
+        }
         let launches = self.fake.launches.lock().map_err(|_| "poisoned")?;
         let index = launches
             .iter()
@@ -258,11 +283,11 @@ fn play(listener: &UnixListener, guest: Guest, vm: &Vm) {
 
 /// The hook on a scratch dir, with two rows of `chat`.
 #[derive(Debug)]
-struct Test {
+struct Test<const DEVICES: bool = true> {
     dir: PathBuf,
-    hook: ColdBoot<Fake, FakeApi>,
+    hook: ColdBoot<Fake, FakeApi<DEVICES>>,
     fake: Arc<Fake>,
-    api: Arc<FakeApi>,
+    api: Arc<FakeApi<DEVICES>>,
     relays: Relays,
     ch: CheckedCh,
     state: StateRoot,
@@ -277,6 +302,14 @@ struct Test {
 impl Test {
     /// The hook, with `edit` applied to its config.
     fn new(name: &str, edit: impl FnOnce(&mut StartConfig)) -> Self {
+        Self::build(name, edit)
+    }
+}
+
+#[cfg(test)]
+impl<const DEVICES: bool> Test<DEVICES> {
+    /// The hook over a fake API whose `READS_DEVICES` is `DEVICES`.
+    fn build(name: &str, edit: impl FnOnce(&mut StartConfig)) -> Self {
         let dir = PathBuf::from(format!("/tmp/vmm-start-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let config_dir = dir.join("families/chat/config");
@@ -336,6 +369,7 @@ impl Test {
             stop_lines: Arc::default(),
             launches: Mutex::default(),
             vms: Mutex::default(),
+            broken: Mutex::default(),
         });
         let control = Arc::new(Mutex::new(ControlState::default()));
         let store = Arc::new(Mutex::new(store));
@@ -346,6 +380,9 @@ impl Test {
             fails: AtomicUsize::new(0),
             infos: AtomicUsize::new(0),
             resumes: AtomicUsize::new(0),
+            fail_take: AtomicBool::new(false),
+            hold: AtomicBool::new(false),
+            entered: AtomicBool::new(false),
         });
         let relays = Relays::default();
         let hook = ColdBoot::new(
@@ -473,7 +510,7 @@ fn eventually(done: impl Fn() -> bool) {
     }
 }
 
-impl Drop for Test {
+impl<const DEVICES: bool> Drop for Test<DEVICES> {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.dir);
     }
@@ -698,7 +735,7 @@ fn a_key_mismatch_or_a_consumed_snapshot_cold_boots() {
 }
 
 #[cfg(test)]
-impl Test {
+impl<const DEVICES: bool> Test<DEVICES> {
     /// The session ids of the snapshots, in order.
     fn snapshot_ids(&self) -> Vec<String> {
         let snapshots = self.api.snapshots.lock().unwrap();
@@ -812,4 +849,117 @@ fn the_first_ready_writes_its_turn_end_to_the_row() {
         Some("First")
     );
     assert_ne!(row.updated_at, test.rows[0].updated_at);
+}
+
+/// Runs `first` and `second` at once and returns both outputs. The tokio
+/// feature `macros` is off, so the tests have no `join!`.
+#[cfg(test)]
+async fn both<F: Future, G: Future>(first: F, second: G) -> (F::Output, G::Output) {
+    let (mut first, mut second) = (Box::pin(first), Box::pin(second));
+    let (mut one, mut two) = (None, None);
+    std::future::poll_fn(|context| {
+        if one.is_none()
+            && let std::task::Poll::Ready(output) = first.as_mut().poll(context)
+        {
+            one = Some(output);
+        }
+        if two.is_none()
+            && let std::task::Poll::Ready(output) = second.as_mut().poll(context)
+        {
+            two = Some(output);
+        }
+        if one.is_some() && two.is_some() {
+            std::task::Poll::Ready(())
+        } else {
+            std::task::Poll::Pending
+        }
+    })
+    .await;
+    (one.unwrap(), two.unwrap())
+}
+
+/// A failed take is logged, and the eviction still stops the VM with the
+/// graceful stop, so the start fits (decision CH44 rule 4).
+#[test]
+fn a_failed_take_still_stops_the_evicted_vm() {
+    let test = Test::new("take", |config| config.limits.ram_cap = 512 << 20);
+    assert_eq!(test.start(0), Ok(()));
+    test.api.fail_take.store(true, Ordering::SeqCst);
+    assert_eq!(test.start(1), Ok(()));
+    assert!(test.api.snapshots.lock().unwrap().is_empty());
+    assert!(test.stopped(0));
+    assert_eq!(test.stop_lines(), 1);
+    assert!(!test.hook.running(&test.rows[0].id));
+    assert!(test.hook.running(&test.rows[1].id));
+}
+
+/// An evicted VM whose stop fails goes back and keeps its RAM, and the
+/// VMs left in the list go back with no snapshot. The start gets
+/// `host_full`, and so does a retry (decision CH50 rule 4). A shape of
+/// 1 GiB needs both VMs of 512 MiB evicted.
+#[test]
+fn a_failed_eviction_stop_keeps_the_vm_and_its_ram() {
+    let test = Test::new("hung", |config| config.limits.ram_cap = 1 << 30);
+    assert_eq!(test.start(0), Ok(()));
+    assert_eq!(test.start(1), Ok(()));
+    let shape = test.dir.join("families/chat/config/shape.json");
+    fs::write(shape, r#"{"cpus":1,"flavor":"base","memory_mib":1024}"#).unwrap();
+    test.fake.broken.lock().unwrap()[0].store(true, Ordering::SeqCst);
+    assert_eq!(test.start(2), Err(StartFault::HostFull));
+    assert_eq!(test.snapshot_ids(), [A]);
+    assert!(test.hook.running(&test.rows[0].id));
+    assert!(test.hook.running(&test.rows[1].id));
+    assert_eq!(test.start(2), Err(StartFault::HostFull));
+    assert_eq!(test.snapshot_ids(), [A]);
+    assert_eq!(test.launches(), 2);
+}
+
+/// A start of a session whose VM is under eviction gets `host_full` at
+/// once and launches nothing (decisions CH19 (6), CH21-3). The cap is
+/// 1792 MiB. C (1 GiB) evicts A. A second start of A (256 MiB) would fit
+/// by evicting B, so only the `Evicting` slot refuses it.
+#[test]
+fn a_start_under_eviction_is_host_full() {
+    let test = Test::new("evicting", |config| config.limits.ram_cap = 1792 << 20);
+    let shape = |mib: u32| {
+        let path = test.dir.join("families/chat/config/shape.json");
+        let json = format!(r#"{{"cpus":1,"flavor":"base","memory_mib":{mib}}}"#);
+        fs::write(path, json).unwrap();
+    };
+    assert_eq!(test.start(0), Ok(()));
+    assert_eq!(test.start(1), Ok(()));
+    shape(1024);
+    test.api.hold.store(true, Ordering::SeqCst);
+    let (evicts, again) = test
+        .runtime
+        .block_on(both(test.hook.start(&test.rows[2]), async {
+            while !test.api.entered.load(Ordering::SeqCst) {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+            shape(256);
+            let again = test.hook.start(&test.rows[0]);
+            let again = tokio::time::timeout(Duration::from_secs(2), again).await;
+            test.api.hold.store(false, Ordering::SeqCst);
+            again.map(|started| started.map(|_link| ()))
+        }));
+    assert!(evicts.is_ok());
+    assert_eq!(again, Ok(Err(StartFault::HostFull)));
+    assert_eq!(test.snapshot_ids(), [A]);
+    assert!(test.hook.running(&test.rows[1].id));
+    assert_eq!(test.launches(), 3);
+}
+
+/// With no device read, no snapshot would restore, so an eviction takes
+/// none. It sends the graceful stop, and guest init powers off (decision
+/// CH19 (3)).
+#[test]
+fn with_no_device_read_an_eviction_stops_gracefully() {
+    let test = Test::<false>::build("plain", |config| config.limits.ram_cap = 512 << 20);
+    assert_eq!(test.start(0), Ok(()));
+    assert_eq!(test.start(1), Ok(()));
+    assert!(test.api.snapshots.lock().unwrap().is_empty());
+    assert!(!test.api.entered.load(Ordering::SeqCst));
+    assert_eq!(test.stop_lines(), 1);
+    assert!(test.stopped(0));
+    assert!(test.hook.running(&test.rows[1].id));
 }
