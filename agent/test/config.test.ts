@@ -103,6 +103,13 @@ describe("readFamilyConfig", () => {
     expect(read.config.creds).not.toHaveProperty("epoch");
   });
 
+  // Each value failed the old epoch check. A check that comes back fails here.
+  it.each([-1, "seven", null, 1.5])("reads a creds.json whose epoch is %j", async (epoch) => {
+    const read = await readFamilyConfig(mounts({ ...VALID, epoch }), NO_RETRY_MS);
+
+    expect(read.ok).toBe(true);
+  });
+
   it("never shows a secret as text", async () => {
     const read = await readFamilyConfig(mounts(VALID), NO_RETRY_MS);
     if (!read.ok) {
