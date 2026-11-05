@@ -618,9 +618,10 @@ no guest sync.
     config refuses 0 for `VMM_RAM_CAP_GIB`, which admits no VM, and for
     `VMM_SNAPSHOT_BUDGET_GIB`, which drops every snapshot at the first
     sweep. It takes 0 for `VMM_FREE_FLOOR_GIB`.
-17. The defaults `/usr/sbin/mke2fs` and `/usr/bin/fallocate` are the
-    Ubuntu 24.04 paths. No read-only check on Hyperion confirmed them.
-    The G9 check confirmed `/usr/bin/zstd`.
+17. Closed by a read-only check on Hyperion, as david with no sudo
+    (CH36 G31), on 2026-11-04: `/usr/sbin/mke2fs` (e2fsprogs) and
+    `/usr/bin/fallocate` (util-linux) are executable on Ubuntu 24.04.5.
+    The G9 check confirmed `/usr/bin/zstd`, and this check saw it again.
 
 ## Caller duties
 
