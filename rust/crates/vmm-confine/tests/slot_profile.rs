@@ -47,14 +47,26 @@ fn rules(text: &str) -> Vec<&str> {
         .collect()
 }
 
-/// The path glob of each `owner` rule of `block`, with `@{HOME}` and the
-/// uid glob put in.
+/// The words of `rule` after its leading qualifiers, with no comma.
 #[cfg(test)]
-fn owner_globs(block: &str) -> Vec<String> {
-    let owners = rules(block).into_iter().filter(|r| r.starts_with("owner "));
-    let glob = |rule: &str| rule.split(' ').nth(1).unwrap().to_owned();
-    let fill = |glob: String| glob.replace("@{HOME}/", HOME).replace("[0-9]*", "1000");
-    owners.map(glob).map(fill).collect()
+fn body(rule: &str) -> Vec<&str> {
+    let qualifier = |word: &&str| matches!(*word, "audit" | "allow" | "owner" | "file");
+    let words = rule.trim_end_matches(',').split_whitespace();
+    words.skip_while(qualifier).collect()
+}
+
+/// The path glob of each allow rule of `block`, with or without `owner`,
+/// with `@{HOME}` and the uid glob put in. A rule that names a path
+/// without `owner` grants it too, so the test reads every rule but a
+/// deny rule.
+#[cfg(test)]
+fn path_globs(block: &str) -> Vec<String> {
+    let allows = rules(block).into_iter().map(body);
+    let allows = allows.filter(|words| words.first() != Some(&"deny"));
+    let paths = allows.flatten();
+    let paths = paths.filter(|word| word.starts_with('/') || word.starts_with("@{"));
+    let fill = |glob: &str| glob.replace("@{HOME}/", HOME).replace("[0-9]*", "1000");
+    paths.map(fill).collect()
 }
 
 /// Whether the AppArmor glob `glob` matches `path`. `**` matches any bytes,
@@ -84,11 +96,11 @@ fn run_files(vm: &VmRunDir) -> Vec<PathBuf> {
     ]
 }
 
-/// Whether some owner rule of `block` matches `path`.
+/// Whether some allow rule of `block` matches `path`.
 #[cfg(test)]
 fn allowed(block: &str, path: &Path) -> bool {
     let path = path.to_str().unwrap();
-    owner_globs(block)
+    path_globs(block)
         .iter()
         .any(|glob| matches(glob.as_bytes(), path.as_bytes()))
 }
