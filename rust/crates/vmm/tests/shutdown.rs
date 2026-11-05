@@ -228,13 +228,15 @@ fn the_shutdown_stops_the_server_first() {
     let _ = std::fs::remove_file(&path);
 }
 
-/// A SIGTERM after the registration ends the signal future, and the
-/// process lives on.
+/// The signal future stays pending until a SIGTERM arrives. A SIGTERM
+/// after the registration ends it, and the process lives on.
 #[test]
 fn a_sigterm_ends_the_signal_future() {
     let runtime = Builder::new_current_thread().enable_all().build().unwrap();
     runtime.block_on(async {
-        let term = sigterm().unwrap();
+        let mut term = Box::pin(sigterm().unwrap());
+        let early = tokio::time::timeout(Duration::from_millis(50), &mut term).await;
+        assert!(early.is_err(), "the signal future ended before a SIGTERM");
         let pid = std::process::id().to_string();
         let sent = Command::new("kill").args(["-TERM", &pid]).status().unwrap();
         assert!(sent.success());
