@@ -2,6 +2,10 @@
 //! first argument picks the role:
 //!
 //! - `launch` is the launch step, as in `vmm launch`.
+//! - `launch-stage <plan>` is the launch stage, as in `vmm launch-stage`
+//!   (decision CH55). Its exec attribute is stderr: the CI test job loads
+//!   no slot profile, and its payloads are not CH. So the stage writes the
+//!   line `apparmor exec creche-ch-slot-<k>` in place of the label.
 //! - `spawn <systemd-run> <root> <session id> <program> [args]` starts a
 //!   spawner on `/proc/self/exe`, launches the program, prints its pid and
 //!   waits to be killed. `<root>` is the state root and the run root of
@@ -27,7 +31,8 @@ use creche_vmm_confine::landlock::{HostPath, Start, VmFiles};
 use creche_vmm_confine::launch::{self, Launch, MODE, Payload, Program};
 use creche_vmm_confine::scope::Scope;
 use creche_vmm_confine::spawner::{SELF_EXE, Spawner};
-use creche_vmm_store::layout::{RunRoot, StateRoot};
+use creche_vmm_confine::stage::{self, ExecAttr};
+use creche_vmm_store::layout::{RunRoot, Slot, StateRoot};
 use creche_wire::SessionId;
 
 /// The `MemoryMax` of the spawn role: 2 GiB guest plus 512 MiB (CH8-5).
@@ -42,12 +47,15 @@ fn main() -> ExitCode {
         Some((role, _)) if role == MODE => launch::run()
             .map(|never| match never {})
             .map_err(Failure::from),
+        Some((role, rest)) if role == stage::MODE => stage::run_with(rest, &Stderr)
+            .map(|never| match never {})
+            .map_err(Failure::from),
         Some((role, rest)) if role == "spawn" => spawn(rest),
         Some((role, rest)) if role == "--user" => fake_systemd_run(rest),
         Some((role, rest)) if role == "probe" => probe(rest),
         Some((role, rest)) if role == "say" => say(rest),
         _ => {
-            Err("usage: launch_chain launch | spawn ... | --user ... | probe ... | say ...".into())
+            Err("usage: launch_chain launch | launch-stage ... | spawn ... | --user ... | probe ... | say ...".into())
         }
     };
     match result {
@@ -60,6 +68,15 @@ fn main() -> ExitCode {
 }
 
 type Failure = Box<dyn std::error::Error>;
+
+/// The exec attribute of the stage role: one line on stderr.
+struct Stderr;
+
+impl ExecAttr for Stderr {
+    fn write(&self, value: &str) -> io::Result<()> {
+        writeln!(io::stderr(), "apparmor {value}")
+    }
+}
 
 /// The spawn role. It returns only on an error.
 fn spawn(args: &[OsString]) -> Result<(), Failure> {
@@ -77,7 +94,8 @@ fn spawn(args: &[OsString]) -> Result<(), Failure> {
     let quota = NonZeroU32::new(CPU_QUOTA).ok_or("zero quota")?;
     let scope = Scope::new(id, memory, quota);
     let systemd_run = Program::new(PathBuf::from(systemd_run))?;
-    let launch = Launch::new(systemd_run, scope, payload, files);
+    let slot = Slot::new(0).ok_or("no slot 0")?;
+    let launch = Launch::new(systemd_run, scope, payload, files).in_slot(slot);
 
     let spawner = Spawner::start(PathBuf::from(SELF_EXE))?;
     let launched = spawner.launch(launch)?;

@@ -13,6 +13,27 @@ table of the three vmm crates.
 - `launch::run` is the mode `vmm launch`. `rust/crates/vmm/src/main.rs`
   calls it, so a change here never edits that file. `launch::MODE` holds
   the same word as main.rs. Lifecycle may make main.rs read it.
+- `stage::run` is the mode `vmm launch-stage <plan>` (mechanism X,
+  decision CH55, which amends CH30). The launch step execs `systemd-run`
+  with the stage as the scope payload: the resolved path of
+  `/proc/self/exe`, `stage::MODE` and the stage plan as one JSON
+  argument. The stage then runs four steps in this order, and the first
+  failure starts no CH:
+  1. It writes `exec creche-ch-slot-<k>` to
+     `/proc/self/attr/apparmor/exec`, or to `/proc/self/attr/exec` when
+     the first is missing. Any other error fails the launch closed.
+  2. It sets no_new_privs and reads it back.
+  3. It applies the Landlock ruleset of the VM.
+  4. It execs CH.
+  Before step 1 it checks that the death signal is still SIGKILL. A
+  launch needs `Launch::in_slot`, and the launch step refuses a launch
+  with no slot (`LaunchError::NoSlot`). `stage::ProcAttr` is the one
+  production exec attribute. Only the example of the process tests passes
+  another, because the CI test job loads no slot profile.
+- The pid stays the same through the four execs: the launch step,
+  `systemd-run`, the stage and CH (fact 80). The kernel keeps the death
+  signal through an exec that is not a secure exec and changes no uid,
+  gid or capability. No exec of the chain does either.
 - The crate reads no env key. Lifecycle (plan PR L20) passes each host
   path from the vmm config (owner env rule, decision CH36 G5): the
   `systemd-run` program of `launch::Launch`, from the existing key
@@ -72,9 +93,10 @@ table of the three vmm crates.
   failed scope blocks `systemd-run --unit` with its name. The last list
   decides: a unit still loaded then is an error. The vmm config gives the
   path of `systemctl`, like the path of `systemd-run`.
-- The Landlock ruleset of a VM confines the launch step from its last
-  step on, then `systemd-run` and Cloud Hypervisor (decisions CH8-3,
-  CH30). The vmm process is never confined, so the `zstd` and `mke2fs`
+- The Landlock ruleset of a VM confines the launch stage from its step 3
+  on, then Cloud Hypervisor (decisions CH8-3, CH30, CH55). `systemd-run`
+  runs before it, so the ruleset has no rule for it. The vmm process is
+  never confined, so the `zstd` and `mke2fs`
   that the store runs need no rule. Every path of a rule exists before
   the launch. A missing path or a kernel below Landlock ABI 4 fails the
   launch. All Landlock calls sit behind `cfg(target_os = "linux")`
@@ -134,9 +156,24 @@ table of the three vmm crates.
 
 ## Known gaps
 
-- Landlock ABI 4 covers neither UDP nor Unix sockets (fact 77). Until the
-  launch stage enters a slot profile (plan PR C18) and the job kvm loads
-  the slot profiles (plan PR C15), CH can reach both.
+- Landlock ABI 4 covers neither UDP nor Unix sockets (fact 77). The
+  launch stage enters a slot profile, but until the job kvm loads the
+  slot profiles and the host has them, no test proves the denials (plan
+  PR C15, the rework of #443). That kvm test must also prove that CH
+  under its slot label still dies with the vmm (fact 80), and it needs a
+  stage that writes the real exec attribute (`stage::run`).
+- Lifecycle does not use the stage yet. Until plan PR L16b, every launch
+  fails closed with `LaunchError::NoSlot`. L16b must pass the slot with
+  `Launch::in_slot`. `rust/crates/vmm/src/main.rs` routes only `launch`
+  today, so lifecycle must also route `stage::MODE` with its one plan
+  argument to `stage::run`. The plan entry of L16b names only
+  `start.rs`.
+- CONTRACT-QUESTION (decision CH55): no row says where the program of
+  the launch stage comes from. The launch step takes the narrowest
+  reading: the resolved path of `/proc/self/exe`, the same binary, with
+  no new key in the vmm config. After a release renames the old binary to
+  `.prev` (fact 56), the path names `.prev`. A deleted binary fails the
+  launch closed.
 - Decision CH50 rule 11 wants a test that holds the state root of the
   slot profiles equal to the env default. The env key comes with plan PR
   L20, so that test comes with it. Until then `slot_profile::STATE_ROOT`

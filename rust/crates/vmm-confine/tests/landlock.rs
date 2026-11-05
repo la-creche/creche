@@ -1,7 +1,8 @@
 //! The Landlock ruleset of a launch, in force (decisions CH8-3, CH30,
 //! CH8-1 and CH8-8). The payload is the example in its `probe` role. It
-//! runs after the launch step and the fake `systemd-run`, so the test also
-//! shows that the ruleset lets both execs through. It needs Landlock ABI 4
+//! runs after the launch step, the fake `systemd-run` and the launch
+//! stage, which applies the ruleset (decision CH55). So the test also
+//! shows that the ruleset lets the exec of the payload through. It needs Landlock ABI 4
 //! and `/dev/kvm`, which the host and the CI runner have (facts 77, 79).
 #![cfg(target_os = "linux")]
 
@@ -14,6 +15,7 @@ use std::num::{NonZeroU32, NonZeroU64};
 use creche_vmm_confine::launch::{Launch, Payload, Program};
 use creche_vmm_confine::scope::Scope;
 use creche_vmm_confine::spawner::Spawner;
+use creche_vmm_store::layout::Slot;
 
 use common::{TempVm, example};
 
@@ -46,7 +48,8 @@ fn the_payload_reaches_only_its_files_and_no_tcp() {
         NonZeroU32::new(100).unwrap(),
     );
     let payload = Payload::new(program.clone(), args);
-    let launch = Launch::new(program, scope, payload, vm.files.clone());
+    let slot = Slot::new(0).unwrap();
+    let launch = Launch::new(program, scope, payload, vm.files.clone()).in_slot(slot);
 
     let spawner = Spawner::start(example()).unwrap();
     let status = spawner.launch(launch).unwrap().wait().unwrap();

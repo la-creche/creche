@@ -53,7 +53,9 @@ impl Scope {
 
     /// The arguments of `systemd-run` that run `payload` in this scope.
     /// `systemd-run --scope` execs the payload in its own process, so the
-    /// payload keeps the pid of the launch step (decision CH8-2).
+    /// payload keeps the pid of the launch step (decision CH8-2). The
+    /// launch step passes the launch stage as the payload, and the stage
+    /// execs CH in the same process (decision CH55).
     #[must_use]
     pub fn systemd_run_args(&self, payload: &Payload) -> Vec<OsString> {
         let mut args: Vec<OsString> = [

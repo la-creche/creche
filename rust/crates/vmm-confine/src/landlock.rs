@@ -1,16 +1,17 @@
 //! The Landlock ruleset of one VM (decisions CH8-3 and CH30).
 //!
-//! The launch step applies it after `RLIMIT_CORE` and before the exec of
-//! `systemd-run`. So `systemd-run` and the Cloud Hypervisor process run
-//! under it, on boot and on restore, with every CH thread inside it (fact
-//! 64). The vmm itself never runs under it, so the `zstd` and `mke2fs`
-//! that the vmm runs need no rule. The rules are the smallest set of fact
+//! The launch stage applies it after the slot label and no_new_privs and
+//! before the exec of CH (decision CH55, which amends CH30). So only the
+//! Cloud Hypervisor process runs under it, on boot and on restore, with
+//! every CH thread inside it (fact 64). `systemd-run` runs before it and
+//! needs no rule. The vmm itself never runs under it, so the `zstd` and
+//! `mke2fs` that the vmm runs need no rule. The rules are the smallest set of fact
 //! 77. The ruleset handles every file right and TCP bind and connect of
 //! Landlock ABI 4, and no rule allows a TCP port (decision CH8-1). A
 //! kernel below ABI 4 fails the launch.
 //!
-//! Landlock ABI 4 covers neither UDP nor Unix sockets. The AppArmor
-//! profile of decision CH8-1 (PR C15) denies those.
+//! Landlock ABI 4 covers neither UDP nor Unix sockets. The slot profile
+//! of decisions CH8-1 and CH55 (`slot_profile`) denies those.
 
 use std::fmt;
 use std::io;
@@ -177,7 +178,7 @@ pub enum Right {
     MakeSock,
 }
 
-/// Run a program: CH, `systemd-run` and the loader.
+/// Run a program: CH and the loader.
 const PROGRAM: &[Right] = &[Right::Execute, Right::ReadFile];
 /// Read only: the kernel, the libraries and the root disk (decision CH8-8).
 const READ: &[Right] = &[Right::ReadFile];
@@ -207,13 +208,12 @@ fn rule(path: impl Into<PathBuf>, rights: &'static [Right]) -> Rule {
     }
 }
 
-/// The rules of the VM of `files`, whose launch runs `systemd_run` and
-/// then `payload` (fact 77, decision CH30).
+/// The rules of the VM of `files`, whose launch stage execs `payload`
+/// (fact 77, decisions CH30 and CH55).
 #[must_use]
-pub fn rules(files: &VmFiles, systemd_run: &Program, payload: &Program) -> Vec<Rule> {
+pub fn rules(files: &VmFiles, payload: &Program) -> Vec<Rule> {
     let mut rules = vec![
         rule(payload.path(), PROGRAM),
-        rule(systemd_run.path(), PROGRAM),
         rule(LOADER, PROGRAM),
         rule(LIBRARY_DIR, READ),
         rule(KVM, READ_WRITE),
@@ -324,7 +324,7 @@ mod tests {
         HostPath::new(PathBuf::from(path)).unwrap()
     }
 
-    /// The rules of a launch of CH through `/usr/bin/systemd-run`.
+    /// The rules of a launch of CH.
     fn rules(start: Start) -> Vec<Rule> {
         let id = ID.parse().unwrap();
         let session = StateRoot::new(PathBuf::from("/state"))
@@ -333,8 +333,7 @@ mod tests {
         let run = RunRoot::new(PathBuf::from("/run/vmm")).unwrap().vm(&id);
         let files = VmFiles::new(start, host("/state/store/root"), &session, &run).unwrap();
         let payload = Program::new(PathBuf::from(CH)).unwrap();
-        let systemd_run = Program::new(PathBuf::from("/usr/bin/systemd-run")).unwrap();
-        super::rules(&files, &systemd_run, &payload)
+        super::rules(&files, &payload)
     }
 
     fn table(rules: &[Rule]) -> Vec<(String, &'static [Right])> {
@@ -352,7 +351,6 @@ mod tests {
         let session = format!("/state/sessions/{ID}");
         let expected: Vec<(String, &[Right])> = vec![
             (CH.to_owned(), &[Execute, ReadFile]),
-            ("/usr/bin/systemd-run".to_owned(), &[Execute, ReadFile]),
             (
                 "/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2".to_owned(),
                 &[Execute, ReadFile],
