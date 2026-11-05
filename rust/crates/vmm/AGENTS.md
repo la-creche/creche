@@ -608,7 +608,13 @@ no guest sync.
     handler for `create` and `list`, and main has neither. The compose
     step runs the C3 leftover sweep before any per-VM bind (decision
     CH19 (4)), builds the store, confine and handlers, and binds
-    `vmm.sock`. It also holds caller duties 4, 5 and 8.
+    `vmm.sock`. It also holds caller duties 4, 5 and 8. Until then no
+    field of `Config` has a reader outside tests, and `serve` drops its
+    `config`. So the `VMM_*` keys of `default.env` have no consumer yet.
+    `env/AGENTS.md` change rule 1 fixes a merged value for good. So the
+    config half waits for L7, and its PR opens just before the compose
+    step, unless David takes the split as a plan deviation. No decision
+    row allows the split.
 15. CONTRACT-QUESTION: no row names the image source, the dir where
     root installs the `.zst` files of the disk row, or how the vmm
     learns the digests of `start::Digests`. A digest changes with each
