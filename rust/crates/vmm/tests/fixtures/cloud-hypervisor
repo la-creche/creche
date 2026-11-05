@@ -1,0 +1,4 @@
+#!/bin/sh
+# A stub of cloud-hypervisor for tests/start.rs: the version check of
+# the snapshot key (gap G10) passes.
+echo "cloud-hypervisor v54.0.0"

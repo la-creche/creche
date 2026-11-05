@@ -224,9 +224,10 @@ table, and the start boots it again. A cold boot runs these steps:
    check of the kernel and the root disk of the flavor (decision CH44
    rule 2), `SessionDisks::for_boot` (decision CH21-4), the run dir
    `vm/<id>/` and `snapshots/` with mode 0700, and a new `serial.log`
-   with mode 0600 (gap G23). Then the launch with `ChCommand::boot`,
-   `VmLimits` and the Landlock files of the VM (decisions CH8-3, CH8-5,
-   CH8-8, CH30).
+   with mode 0600 (gap G23). Then the restore or cold boot choice (see
+   "The restore"), and the launch with `ChCommand::boot` or
+   `ChCommand::restore`, `VmLimits` and the Landlock files of the VM
+   (decisions CH8-3, CH8-5, CH8-8, CH30).
 4. `control::open` for the first `ControlReady`. It keeps the facade
    state in `ControlState`, writes a turn end to the row, and clears the
    faults of the family (contract 05 §3.3.1 rule 8).
@@ -248,6 +249,41 @@ removes each VM whose process exited, so an exited VM holds no RAM.
 The `Launcher` trait
 lets `tests/start.rs` fake the launch, the command line file and the
 guest. Every other step there is the real one on a scratch dir.
+
+## The restore
+
+`src/start.rs` restores a session from its newest snapshot when it can
+(plan PR L17, decision CH2). `StartConfig::ch_version` is the
+`CheckedCh` of the version check at vmm start (gap G10). With the
+checked kernel and root disk it gives the current `SnapshotKey`.
+
+1. `check_newest` of `creche-vmm-store` compares the key of the newest
+   generation. A mismatch or an unreadable key drops every generation,
+   and the VM cold-boots (decisions CH7-6, CH44 rule 5).
+2. `claim` marks a keyed snapshot consumed before CH starts (decision
+   CH19 (5)). A consumed mark, or a retired claim, gives a cold boot. A
+   claim that cannot retire fails the start (decision CH44 rule 6).
+3. The key check and the claim run under the lock of the `InUse` set.
+   The generation stays in the set from the key check until CH ends:
+   the VM leaves the table, or its start ends with no process
+   (decision CH50 rule 8). `ColdBoot::in_use` gives the set to the
+   sweep.
+4. `ChCommand::restore` runs with `resume=false`. Then
+   `restore::ChApi::info` is read until CH answers, inside
+   `READY_WAIT`. `restore::check_devices` requires `state` `Paused` and
+   refuses `net`, `generic_vhost_user`, `fs`, `user_devices`, `vdpa`,
+   `devices`, `pmem` and `tpm`, any disk but the root disk and then the
+   session disk, and a vsock socket other than the one of the VM. Then
+   `ChApi::resume`, then the wait for `ControlReady` (decisions CH42
+   rule 2, CH50 rule 10). `INFO_TIMEOUT` and `RESUME_TIMEOUT` (5 s each)
+   bound each call (decision CH44 rule 3).
+5. The deny check runs as for a boot. A restore has no `--vsock`
+   argument.
+
+`ChApi::READS_DEVICES` is false for `ChRemote`, so the vmm restores no
+VM yet: the claim consumes the snapshot, and the start cold-boots
+(Known gaps). `tests/start.rs` gives a fake API that reads the device
+set.
 
 ## Rules
 
@@ -283,6 +319,24 @@ guest. Every other step there is the real one on a scratch dir.
 5. `ColdBoot` keeps the control link of each VM, and no code reads its
    turn events yet. The `StopVm` hook of the vmm and its use of the
    table of `ColdBoot` are not built yet either.
+6. CONTRACT-QUESTION (decision CH50 rule 10, plan PR L17,
+   `src/restore.rs`): the plan reads the device set "through ch-remote
+   info (D8)". `ChRemote::info` returns `VmInfo`, which holds only
+   `state`, and this crate may not edit `creche-vmm-store`. So
+   `READS_DEVICES` is false for `ChRemote`, and no VM restores. A store
+   PR that gives the whole `info` reply costs about 10 lines there and 3
+   lines here.
+7. Closed by decision CH54 rule 3: a restore whose VM is not `Paused`,
+   or has a refused device, gives `egress_assert_failed`. A CH that does
+   not answer `info` or `resume` gives `sandbox_start_failed`
+   (`src/start.rs`).
+8. Decision CH43 rule 6: a guest that closes the link before
+   `ControlReady` asks for a cold boot. After a restore the start does
+   not cold-boot then. It faults, stops the VM, and the next start
+   cold-boots, because the claim consumed the snapshot.
+9. Item 5.7 of the design asks for a guest `sync` before each snapshot
+   (`creche-vmm-store` Known gaps). The control link has no `sync`
+   line yet.
 
 ## Caller duties
 
@@ -304,7 +358,13 @@ guest. Every other step there is the real one on a scratch dir.
    (`src/handlers/drop.rs`). The `StopVm` hook of the vmm keeps a VM
    whose stop failed in its table, so admission keeps counting the RAM
    of that VM.
-4. Two drops of one session can overlap. The `StopVm` hook of the vmm
+4. Plan PR L20 runs `check_cloud_hypervisor` at vmm start and passes
+   its `CheckedCh` as `StartConfig::ch_version`. A failed check refuses
+   to start the vmm (gap G10 option A).
+5. Plan PR L18 runs its sweep under the lock of the `InUse` set and
+   names each generation of `ColdBoot::in_use` in it (decision CH50 rule
+   8).
+6. Two drops of one session can overlap. The `StopVm` hook of the vmm
    makes a stop that finds a stop of the same VM running wait for it
    and return its outcome. So no drop removes the files of a VM that
    still runs.

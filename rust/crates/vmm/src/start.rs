@@ -1,6 +1,7 @@
 //! The `StartVm` hook of the vmm: the cold boot of a session with no
-//! usable snapshot (plan PR L16, decisions CH1, CH8-2). Each step keeps
-//! its own bound, and the start has none (decision CH50 rule 1). The steps:
+//! usable snapshot (plan PR L16, decisions CH1, CH8-2), or the restore of
+//! its snapshot (plan PR L17, decision CH2). Each step keeps its own
+//! bound, and the start has none (decision CH50 rule 1). The steps:
 //!
 //! 1. The family VM shape (PR C11) and the free bytes of the state root,
 //!    in `spawn_blocking` (decision CH50 rule 9). Admission needs the
@@ -11,13 +12,17 @@
 //!    (4)), the kernel and the root disk pass the store check (PR D6,
 //!    decision CH44 rule 2), the session disk exists (PR D7, decision
 //!    CH21-4), the run dir `vm/<id>/` and `snapshots/` exist, and
-//!    `serial.log` is a new file with mode 0600 (gap G23). Then the launch
-//!    step starts CH with the argv of PR C7 and the sizes of PR C4 under
-//!    the ruleset of PR C6 (PR C2, decisions CH8-3, CH8-5, CH8-8, CH30).
-//! 4. The first `ControlReady` (plan PR L10). It clears the faults of the
+//!    `serial.log` is a new file with mode 0600 (gap G23). The key check
+//!    (PR D10) and the claim (PR D11) pick a restore or a cold boot. Then
+//!    the launch step starts CH with the argv of PR C7 and the sizes of PR
+//!    C4 under the ruleset of PR C6 (PR C2, decisions CH8-3, CH8-5, CH8-8,
+//!    CH30).
+//! 4. A restore only: `ch-remote info` must say `Paused`, the device
+//!    check passes, then `ch-remote resume` (decision CH50 rule 10).
+//! 5. The first `ControlReady` (plan PR L10). It clears the faults of the
 //!    family (contract 05 §3.3.1 rule 8).
-//! 5. The deny check (PR C8, decision CH6-3).
-//! 6. The dial of guest port 1201 (decision CH50 rule 2).
+//! 6. The deny check (PR C8, decision CH6-3).
+//! 7. The dial of guest port 1201 (decision CH50 rule 2).
 //!
 //! Each fault but `host_full` goes to the fault file of the family
 //! (decisions CH21-1, CH6-3). A fault after the launch stops the VM.
@@ -39,17 +44,24 @@ use creche_vmm_confine::landlock::{HostPath, Start, VmFiles};
 use creche_vmm_confine::launch::{Launch, Program};
 use creche_vmm_confine::limits::VmLimits;
 use creche_vmm_confine::spawner::{Launched, SpawnError, Spawner};
+use creche_vmm_store::claim::{ClaimError, ClaimedSnapshot, claim};
 use creche_vmm_store::images::{ImageDigest, ImageStore};
-use creche_vmm_store::layout::{RunRoot, StateRoot, VmRunDir};
+use creche_vmm_store::key::{CheckedCh, KeyCheck, SnapshotKey, check_newest};
+use creche_vmm_store::layout::{RunRoot, SessionDir, StateRoot, VmRunDir};
+use creche_vmm_store::retention::InUse;
 use creche_vmm_store::rows::Rows;
 use creche_vmm_store::session_disk::SessionDisks;
 use creche_vmm_store::stale::remove_stale;
 use creche_wire::{FamilyName, FamilyShape, SandboxFlavor, SessionId, SessionRow};
 use tokio::task::spawn_blocking;
+use tokio::time::sleep;
 
-use crate::control::{Change, ControlLink, ControlState, LinkId, open, wall_time};
+use crate::control::{
+    Change, ControlLink, ControlState, DIAL_PAUSE, LinkId, READY_WAIT, open, wall_time,
+};
 use crate::handlers::acp::{StartFault, StartVm};
 use crate::relay::AcpLink;
+use crate::restore::{ChApi, Expected, check_devices};
 use crate::stop::{VmProcess, stop};
 
 /// The mode of the run dir and the snapshots dir of a VM.
@@ -104,6 +116,9 @@ pub struct StartConfig {
     pub systemd_run: Program,
     /// The RAM cap and the free-space floor of admission.
     pub limits: Limits,
+    /// The version check of `ch`, for the snapshot key (decision CH7-6,
+    /// gap G10). The vmm runs it at its start.
+    pub ch_version: CheckedCh,
 }
 
 /// The start of a launch step. `Spawner` is the one of the vmm, and a
@@ -172,13 +187,31 @@ fn lock<P>(table: &Table<P>) -> MutexGuard<'_, HashMap<SessionId, Slot<P>>> {
     table.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Removes each VM whose process exited from `table`. Decision CH50 rule
-/// 4 keeps the RAM of a VM that may still run, and an exited one runs no
-/// more. A failed status check keeps the entry, so its RAM still counts.
-fn reap<P: VmProcess>(table: &mut HashMap<SessionId, Slot<P>>) {
-    table.retain(|_, slot| match slot {
-        Slot::Running(vm) => !matches!(vm.process.exited(), Ok(true)),
-        Slot::Starting(_) => true,
+/// The lock of `in_use`. Each change is one insert or one remove.
+fn lock_in_use(in_use: &Mutex<InUse>) -> MutexGuard<'_, InUse> {
+    in_use.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Removes the generation of `id` from `in_use`: its CH ended (decision
+/// CH50 rule 8).
+fn release(in_use: &Mutex<InUse>, id: &SessionId) {
+    lock_in_use(in_use).retain(|(session, _)| session != id);
+}
+
+/// Removes each VM whose process exited from `table`, and its generation
+/// from `in_use`. Decision CH50 rule 4 keeps the RAM of a VM that may
+/// still run, and an exited one runs no more. A failed status check keeps
+/// the entry, so its RAM still counts.
+fn reap<P: VmProcess>(table: &mut HashMap<SessionId, Slot<P>>, in_use: &Mutex<InUse>) {
+    table.retain(|id, slot| {
+        let Slot::Running(vm) = slot else {
+            return true;
+        };
+        let exited = matches!(vm.process.exited(), Ok(true));
+        if exited {
+            release(in_use, id);
+        }
+        !exited
     });
 }
 
@@ -187,6 +220,7 @@ fn reap<P: VmProcess>(table: &mut HashMap<SessionId, Slot<P>>) {
 /// the table, so admission counts its RAM and a later start reaps it.
 struct Pending<P: VmProcess> {
     table: Table<P>,
+    in_use: Arc<Mutex<InUse>>,
     id: SessionId,
     guest_ram: u64,
     run: VmRunDir,
@@ -233,28 +267,32 @@ impl<P: VmProcess> Drop for Pending<P> {
             }
             None => {
                 table.remove(&self.id);
+                release(&self.in_use, &self.id);
             }
         }
     }
 }
 
-/// The `StartVm` hook of the vmm.
+/// The `StartVm` hook of the vmm: a cold boot or a restore.
 #[derive(Debug)]
-pub struct ColdBoot<L: Launcher> {
+pub struct ColdBoot<L: Launcher, A: ChApi> {
     config: Arc<StartConfig>,
     launcher: Arc<L>,
+    api: Arc<A>,
     table: Table<L::Process>,
+    in_use: Arc<Mutex<InUse>>,
     rows: Arc<Mutex<Rows>>,
     control: Arc<Mutex<ControlState>>,
     faults: Arc<Mutex<FaultBook>>,
 }
 
-impl<L: Launcher> ColdBoot<L> {
-    /// The hook over `config` and `launcher`. It shares the rows, the
-    /// control state and the fault book with the rest of the vmm.
+impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
+    /// The hook over `config`, `launcher` and `api`. It shares the rows,
+    /// the control state and the fault book with the rest of the vmm.
     pub fn new(
         config: StartConfig,
         launcher: Arc<L>,
+        api: Arc<A>,
         rows: Arc<Mutex<Rows>>,
         control: Arc<Mutex<ControlState>>,
         faults: Arc<Mutex<FaultBook>>,
@@ -262,7 +300,9 @@ impl<L: Launcher> ColdBoot<L> {
         Self {
             config: Arc::new(config),
             launcher,
+            api,
             table: Arc::default(),
+            in_use: Arc::default(),
             rows,
             control,
             faults,
@@ -273,6 +313,14 @@ impl<L: Launcher> ColdBoot<L> {
     #[must_use]
     pub fn running(&self, id: &SessionId) -> bool {
         matches!(lock(&self.table).get(id), Some(Slot::Running(_)))
+    }
+
+    /// The snapshot generations that a VM restores from, from the key
+    /// check of its start until its CH ends (decision CH50 rule 8). The
+    /// sweep of plan PR L18 reads them.
+    #[must_use]
+    pub fn in_use(&self) -> InUse {
+        lock_in_use(&self.in_use).clone()
     }
 
     /// The control state of every VM.
@@ -293,6 +341,7 @@ impl<L: Launcher> ColdBoot<L> {
             Ok(false) => Ok(Some(vm.run.vsock_socket())),
             Ok(true) => {
                 table.remove(id);
+                release(&self.in_use, id);
                 Ok(None)
             }
             Err(error) => Err(format!("checking the VM process: {error}")),
@@ -304,7 +353,7 @@ impl<L: Launcher> ColdBoot<L> {
         let mut table = lock(&self.table);
         // A start that was dropped, a failed stop or a guest crash leaves
         // an entry whose process may have exited since.
-        reap(&mut table);
+        reap(&mut table, &self.in_use);
         let now = Instant::now();
         // Plan PR L17 adds the sleep gate and runs the evictions. Until
         // then every VM counts as busy, so admission never names one.
@@ -332,6 +381,7 @@ impl<L: Launcher> ColdBoot<L> {
         table.insert(id.clone(), Slot::Starting(guest_ram));
         Some(Pending {
             table: Arc::clone(&self.table),
+            in_use: Arc::clone(&self.in_use),
             id: id.clone(),
             guest_ram,
             run: self.config.run.vm(id),
@@ -411,6 +461,38 @@ impl<L: Launcher> ColdBoot<L> {
         }
     }
 
+    /// Checks a restored VM, then resumes it (decision CH50 rule 10). CH
+    /// serves its API only after it starts, so a failed `info` is tried
+    /// again inside `READY_WAIT`.
+    // Decision CH54 rule 3: a VM that is not `Paused`, or that has a
+    // refused device, gives `egress_assert_failed`. A CH that does not
+    // answer `info` or `resume` gives `sandbox_start_failed`.
+    async fn resume_checked(
+        &self,
+        run: &VmRunDir,
+        expected: Expected,
+    ) -> Result<(), (FaultCode, String)> {
+        let sandbox = FaultCode::SandboxStartFailed;
+        let deadline = Instant::now() + READY_WAIT;
+        let reply = loop {
+            let (api, vm) = (Arc::clone(&self.api), run.clone());
+            match blocking(move || api.info(&vm)).await {
+                Ok(reply) => break reply,
+                Err(error) if Instant::now() >= deadline => {
+                    return Err((sandbox, format!("reading ch-remote info: {error}")));
+                }
+                Err(_) => sleep(DIAL_PAUSE).await,
+            }
+        };
+        if let Err(error) = check_devices(&reply, &expected) {
+            return Err((FaultCode::EgressAssertFailed, error.to_string()));
+        }
+        let (api, vm) = (Arc::clone(&self.api), run.clone());
+        blocking(move || api.resume(&vm))
+            .await
+            .map_err(|error| (sandbox, format!("resuming the VM: {error}")))
+    }
+
     /// Writes the turn end of `change` to the row of `id` (decision CH32
     /// rule 4). A failed write is logged: the next `ControlReady` carries
     /// the end again.
@@ -469,14 +551,65 @@ fn make_dir(dir: &Path) -> Result<(), String> {
         .map_err(|error| format!("making {}: {error}", dir.display()))
 }
 
-/// Step 3: the files of the boot, then the launch. Returns the process
-/// and the start that the ruleset and the deny check name.
-fn launch<L: Launcher>(
+/// The snapshot that the start restores, or `None` for a cold boot
+/// (decisions CH7-6, CH19 (5), CH44 rules 5 and 6). When `A` reads no
+/// device set (`ChApi::READS_DEVICES`), the claim still consumes the
+/// snapshot, because the cold boot moves the session disk on.
+///
+/// The key check and the claim run under the lock of `in_use`, and the
+/// generation stays in it until CH ends (decision CH50 rule 8). So a
+/// sweep that holds the lock never removes a generation that a start
+/// restores.
+fn claim_newest<A: ChApi>(
+    session: &SessionDir,
+    key: &SnapshotKey,
+    in_use: &Mutex<InUse>,
+    id: &SessionId,
+) -> Result<Option<ClaimedSnapshot>, String> {
+    let mut in_use = lock_in_use(in_use);
+    let keyed = match check_newest(session, key).map_err(|error| error.to_string())? {
+        KeyCheck::Keyed(keyed) => keyed,
+        KeyCheck::NoSnapshot | KeyCheck::Dropped { .. } => return Ok(None),
+    };
+    let entry = (id.clone(), keyed.generation());
+    in_use.insert(entry.clone());
+    let claimed = match claim(keyed) {
+        Ok(claimed) => claimed,
+        Err(error @ ClaimError::Retired { .. }) => {
+            eprintln!("vmm: {error}");
+            None
+        }
+        Err(error @ ClaimError::Stuck { .. }) => {
+            in_use.remove(&entry);
+            return Err(error.to_string());
+        }
+    };
+    if claimed.is_none() || !A::READS_DEVICES {
+        in_use.remove(&entry);
+        return Ok(None);
+    }
+    Ok(claimed)
+}
+
+/// What the launch step started.
+struct Booted<P> {
+    /// The CH process.
+    process: P,
+    /// The start that the ruleset and the deny check name.
+    start: Start,
+    /// The files of a restore, for the device check. `None` for a boot.
+    restore: Option<Expected>,
+}
+
+/// Step 3: the files of the boot, the restore or cold boot choice, then
+/// the launch.
+fn launch<L: Launcher, A: ChApi>(
     config: &StartConfig,
     launcher: &L,
+    in_use: &Mutex<InUse>,
     id: &SessionId,
     shape: FamilyShape,
-) -> Result<(L::Process, Start), String> {
+) -> Result<Booted<L::Process>, String> {
     let run = config.run.vm(id);
     remove_stale(&run).map_err(|error| format!("{error}: {}", error.source))?;
     let checked = |digest| {
@@ -505,18 +638,33 @@ fn launch<L: Launcher>(
         .and_then(|file| file.set_permissions(Permissions::from_mode(SERIAL_MODE)))
         .map_err(|error| format!("making {}: {error}", serial.display()))?;
     let limits = VmLimits::from(shape);
-    let boot = Boot {
-        kernel: &kernel,
-        initramfs: config.initramfs.as_ref(),
-        root: &root,
-        session: &disk,
-        disk: DiskLimit::SESSION,
-        limits,
-    };
-    let command = ChCommand::boot(boot, &run).map_err(|error| error.to_string())?;
-    let start = Start::Boot {
-        kernel: host(kernel.path())?,
-        initramfs: config.initramfs.clone(),
+    let key = SnapshotKey::current(config.ch_version, &kernel, &root);
+    let (command, start, restore) = match claim_newest::<A>(&session, &key, in_use, id)? {
+        Some(snapshot) => {
+            let command = ChCommand::restore(snapshot, &run).map_err(|error| error.to_string())?;
+            let expected = Expected {
+                root: root.path().to_owned(),
+                session: disk.path().to_owned(),
+                vsock: run.vsock_socket(),
+            };
+            (command, Start::Restore, Some(expected))
+        }
+        None => {
+            let boot = Boot {
+                kernel: &kernel,
+                initramfs: config.initramfs.as_ref(),
+                root: &root,
+                session: &disk,
+                disk: DiskLimit::SESSION,
+                limits,
+            };
+            let command = ChCommand::boot(boot, &run).map_err(|error| error.to_string())?;
+            let start = Start::Boot {
+                kernel: host(kernel.path())?,
+                initramfs: config.initramfs.clone(),
+            };
+            (command, start, None)
+        }
     };
     let files = VmFiles::new(start.clone(), host(root.path())?, &session, &run)
         .map_err(|error| error.to_string())?;
@@ -524,10 +672,14 @@ fn launch<L: Launcher>(
     let scope = limits.scope(id.clone());
     let plan = Launch::new(config.systemd_run.clone(), scope, payload, files);
     let process = launcher.launch(plan).map_err(|error| error.to_string())?;
-    Ok((process, start))
+    Ok(Booted {
+        process,
+        start,
+        restore,
+    })
 }
 
-impl<L: Launcher> StartVm for ColdBoot<L> {
+impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
     async fn start(&self, row: &SessionRow) -> Result<AcpLink, StartFault> {
         let (id, family) = (&row.id, &row.family);
         let sandbox = FaultCode::SandboxStartFailed;
@@ -547,9 +699,10 @@ impl<L: Launcher> StartVm for ColdBoot<L> {
             .admit(id, guest_ram, free)
             .ok_or(StartFault::HostFull)?;
 
-        let (config, launcher, session) = (
+        let (config, launcher, in_use, session) = (
             Arc::clone(&self.config),
             Arc::clone(&self.launcher),
+            Arc::clone(&self.in_use),
             id.clone(),
         );
         // The process goes into `pending` inside the closure. hyper drops
@@ -559,19 +712,24 @@ impl<L: Launcher> StartVm for ColdBoot<L> {
         // counts its RAM and no CH runs outside the table (decisions CH8-6,
         // CH50 rule 4).
         let launched = blocking(move || {
-            let (process, start) = launch(&config, &*launcher, &session, shape)?;
-            let cmdline = launcher.cmdline(&process);
-            pending.process = Some(process);
-            Ok((pending, start, cmdline))
+            let booted = launch::<L, A>(&config, &*launcher, &in_use, &session, shape)?;
+            let cmdline = launcher.cmdline(&booted.process);
+            pending.process = Some(booted.process);
+            Ok((pending, booted.start, booted.restore, cmdline))
         })
         .await;
-        let (pending, start, cmdline) = match launched {
+        let (pending, start, restore, cmdline) = match launched {
             Ok(launched) => launched,
             Err(message) => return Err(self.fault(family, sandbox, message).await),
         };
 
         let vsock = pending.run.vsock_socket();
         let link = self.control().replace(id);
+        if let Some(expected) = restore
+            && let Err((code, message)) = self.resume_checked(&pending.run, expected).await
+        {
+            return Err(self.abort(pending, link, None, family, code, message).await);
+        }
         let (control, ready) = match open(&vsock, id, wall_time).await {
             Ok(opened) => opened,
             Err(error) => {
@@ -616,5 +774,58 @@ impl<L: Launcher> StartVm for ColdBoot<L> {
         };
         pending.commit(control);
         Ok(acp)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::Mutex;
+    use std::time::Duration;
+
+    use creche_vmm_store::ch_remote::ChRemote;
+    use creche_vmm_store::images::ImageStore;
+    use creche_vmm_store::key::{SnapshotKey, check_cloud_hypervisor, write_key};
+    use creche_vmm_store::layout::{SnapshotGeneration, StateRoot};
+    use creche_vmm_store::retention::InUse;
+    use creche_wire::SessionId;
+
+    use super::claim_newest;
+
+    const EMPTY: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+    /// With no device check (`ChRemote`), the start cold-boots, and the
+    /// claim still consumes the snapshot, because the cold boot moves the
+    /// session disk on (decisions CH19 (5), CH50 rule 10).
+    #[test]
+    fn no_device_check_consumes_and_cold_boots() {
+        let dir = PathBuf::from(format!("/tmp/vmm-claim-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("image"), b"").unwrap();
+        let state = StateRoot::new(dir.join("state")).unwrap();
+        let images = ImageStore::new(&state, PathBuf::from("/usr/bin/zstd"));
+        let digest = EMPTY.parse().unwrap();
+        images.import(&dir.join("image"), digest).unwrap();
+        let empty = images.check(digest).unwrap();
+        let stub = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/cloud-hypervisor"
+        );
+        let ch = check_cloud_hypervisor(stub.as_ref(), Duration::from_secs(10)).unwrap();
+        let key = SnapshotKey::current(ch, &empty, &empty);
+        let id: SessionId = "3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b".parse().unwrap();
+        let session = state.session(&id);
+        let generation = SnapshotGeneration(1);
+        fs::create_dir_all(session.snapshot(generation)).unwrap();
+        write_key(&session, generation, &key).unwrap();
+
+        let in_use = Mutex::new(InUse::new());
+        let claimed = claim_newest::<ChRemote>(&session, &key, &in_use, &id).unwrap();
+        assert!(claimed.is_none());
+        assert!(session.snapshot(generation).join("consumed").is_file());
+        assert!(in_use.lock().unwrap().is_empty());
+        let _ = fs::remove_dir_all(&dir);
     }
 }

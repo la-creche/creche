@@ -33,7 +33,7 @@ pub const READY_WAIT: Duration = Duration::from_secs(10);
 // Decision CH43 rule 5: the pause is 10 ms. Fact 74 saw `OK` 45 to 51 ms
 // after the start of a restore, so that is about 5 tries per restore.
 // Only the vmm reads it, so a change costs one constant.
-const DIAL_PAUSE: Duration = Duration::from_millis(10);
+pub(crate) const DIAL_PAUSE: Duration = Duration::from_millis(10);
 
 /// The most bytes of the answer of Cloud Hypervisor to `CONNECT`, the LF
 /// not counted. `OK ` and a 32-bit port number fit with room to spare.
