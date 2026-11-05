@@ -448,7 +448,9 @@ G16 option A). `shutdown::sigterm` registers the handler and gives the
 future of the signal. `shutdown::shutdown` then runs these steps:
 
 1. `Stop::stop`: the server accepts no further connection (decision
-   CH26 rule 2).
+   CH26 rule 2). Then `VmSet::refuse_starts`: each start on an open
+   connection gets `host_full`, so no VM joins the set (decision CH54
+   rule 4, Known gaps 14).
 2. It waits for its `sleep` future, the end of `sleep::run`, so no idle
    retire runs beside a shutdown take (caller duty 5).
 3. Each VM of the `VmSet`, all at once: `Relays::close` stops its door
@@ -458,8 +460,10 @@ future of the signal. `shutdown::shutdown` then runs these steps:
    VM gets `StopVm::stop`, the stop of plan PR L14 through the `Stopper`
    (decision CH19 (3)). `GUEST_SYNCS` is false for `ChTools`, so each VM
    gets the graceful stop today.
-4. A VM that a start adds meanwhile, on a connection of before the stop,
-   gets the next pass. Each VM gets one pass.
+4. A start that passed admission before the refusal holds a slot, so
+   the first read finds it. A session that a later read adds gets the
+   next pass. Each session gets one pass, and no seen session gets a new
+   VM.
 
 `SHUTDOWN_WAIT` (85 s) bounds the whole shutdown from SIGTERM, 5 s
 inside the `TimeoutStopSec` of 90 s (gap G16). A stop (36 s) and a take
@@ -542,6 +546,11 @@ no guest sync.
     taken: `EXIT_TIME` is 5 s, so `SHUTDOWN_WAIT` is 85 s, and caller
     duty 8 gets 5 s for the end of the runtime and the exit. A change
     costs one constant per bound.
+14. CONTRACT-QUESTION: decision CH54 rule 4 gives `host_full` to an
+    Upgrade of a session whose VM is being stopped. No row names the
+    answer for a session with no VM during a shutdown. Reading taken:
+    `VmSet::refuse_starts` gives `host_full` to each start from the
+    refusal on (`src/shutdown.rs`, `src/start.rs`).
 
 ## Caller duties
 

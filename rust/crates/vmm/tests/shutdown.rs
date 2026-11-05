@@ -5,6 +5,7 @@
 use std::future::pending;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -47,6 +48,8 @@ struct Fake {
     reads: Mutex<Vec<Vec<(&'static str, Kind)>>>,
     steps: Mutex<Vec<(String, &'static str, Duration)>>,
     start: Instant,
+    /// The shutdown refused each start.
+    refused: AtomicBool,
 }
 
 #[cfg(test)]
@@ -56,6 +59,7 @@ impl Fake {
             reads: Mutex::new(reads),
             steps: Mutex::default(),
             start: Instant::now(),
+            refused: AtomicBool::new(false),
         }
     }
 
@@ -99,7 +103,14 @@ impl StopVm for Fake {
 
 #[cfg(test)]
 impl VmSet for Fake {
+    fn refuse_starts(&self) {
+        self.refused.store(true, Ordering::SeqCst);
+    }
+
+    /// Each read comes after the refusal, so no start adds a VM that a
+    /// read misses (plan PR L19).
     fn sessions(&self) -> Vec<SessionId> {
+        assert!(self.refused.load(Ordering::SeqCst), "a read before the refusal");
         let mut reads = self.reads.lock().unwrap();
         let read = if reads.len() > 1 {
             reads.remove(0)
@@ -177,8 +188,8 @@ fn a_hung_stop_ends_the_shutdown_at_its_wait() {
     assert_eq!(fake.steps(A).len(), 2);
 }
 
-/// A VM that starts during the first pass gets the next one. A failed
-/// stop ends the shutdown as `Kept`, and its VM gets no second try.
+/// A session that a later read adds gets the next pass. A failed stop
+/// ends the shutdown as `Kept`, and its VM gets no second try.
 #[test]
 fn a_late_vm_gets_the_next_pass() {
     let first = vec![(A, Kind::Fails)];

@@ -24,7 +24,7 @@ use creche_vmm::handlers::drop::{Drops, StopVm, VmStopFailed};
 use creche_vmm::relay::{AcpLink, Door, Relays};
 use creche_vmm::restore::ChApi;
 use creche_vmm::server::Stop;
-use creche_vmm::shutdown::{Ended, shutdown};
+use creche_vmm::shutdown::{Ended, VmSet, shutdown};
 use creche_vmm::start::{ColdBoot, Digests, Launcher, StartConfig};
 use creche_vmm::stop::VmProcess;
 use creche_vmm_confine::admission::{GIB, Limits};
@@ -1196,6 +1196,24 @@ fn a_shutdown_snapshots_an_idle_vm_and_stops_a_busy_one() {
         assert!(test.stopped(index));
         assert!(!test.hook.running(&test.rows[index].id));
     }
+}
+
+/// From the refusal of a shutdown on, a start gets `host_full`: a start
+/// of a running VM, and a start that would boot one, which launches
+/// nothing. The shutdown then stops the VM (plan PR L19, decision CH54
+/// rule 4).
+#[test]
+fn a_start_during_a_shutdown_is_host_full() {
+    let test = Test::new("shutdown-refuse", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    test.hook.refuse_starts();
+    assert_eq!(test.start(0), Err(StartFault::HostFull));
+    assert_eq!(test.start(1), Err(StartFault::HostFull));
+    assert_eq!(test.launches(), 1);
+    assert_eq!(test.shut_down(), Ended::Clean);
+    assert!(!test.hook.running(&test.rows[0].id));
+    assert_eq!(test.start(1), Err(StartFault::HostFull));
+    assert_eq!(test.launches(), 1);
 }
 
 /// With no guest sync, a shutdown takes no snapshot, and each VM gets the

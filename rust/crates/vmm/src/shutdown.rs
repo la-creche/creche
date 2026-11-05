@@ -2,6 +2,8 @@
 //! decision CH36). The steps:
 //!
 //! 1. The server accepts no further connection (decision CH26 rule 2).
+//!    The set refuses each start, so no Upgrade on a connection of
+//!    before the stop starts a VM (decision CH54 rule 4: `host_full`).
 //! 2. The sleep loop ends, so no idle retire runs beside a shutdown take
 //!    (caller duty 5 of `AGENTS.md`).
 //! 3. Each VM of the set, all at once: its door link closes, then it
@@ -88,6 +90,15 @@ pub enum Ended {
 /// vmm, and a test gives a fake. Its `StopVm::stop` is the stop path of
 /// plan PR L14, through the `Stopper` of plan PR L18b.
 pub trait VmSet: StopVm {
+    /// Refuses each start from now on with `host_full`, so no VM joins
+    /// the set during the shutdown. A start that passed admission before
+    /// holds a slot, so the next read of `sessions` holds it.
+    // CONTRACT-QUESTION: decision CH54 rule 4 gives `host_full` to an
+    // Upgrade of a session whose VM is being stopped. No row names the
+    // answer for a session with no VM during a shutdown. Reading taken:
+    // `host_full` too (Known gaps 14).
+    fn refuse_starts(&self);
+
     /// The sessions with a slot in the set: a VM, a start or a retire.
     fn sessions(&self) -> Vec<SessionId>;
 
@@ -118,12 +129,14 @@ pub fn sigterm() -> io::Result<impl Future<Output = ()>> {
 }
 
 /// Shuts the vmm down (gap G16): stops `server`, waits for `sleep`, the
-/// end of the sleep loop, then retires each VM of `vms` at once. A VM that
-/// starts meanwhile, on a connection of before the stop, gets the next
-/// pass. `SHUTDOWN_WAIT` bounds the whole shutdown.
+/// end of the sleep loop, then retires each VM of `vms` at once. `vms`
+/// refuses each start first, so a seen session gets no new VM. A session
+/// that a later read adds gets the next pass. `SHUTDOWN_WAIT` bounds the
+/// whole shutdown.
 pub async fn shutdown<V: VmSet>(vms: &V, server: Stop, sleep: impl Future<Output = ()>) -> Ended {
     let deadline = Instant::now() + SHUTDOWN_WAIT;
     server.stop();
+    vms.refuse_starts();
     let passes = async {
         sleep.await;
         let (mut seen, mut whole) = (HashSet::new(), true);

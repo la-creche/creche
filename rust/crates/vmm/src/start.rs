@@ -41,6 +41,7 @@ use std::fs::{DirBuilder, OpenOptions, Permissions};
 use std::io;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -233,6 +234,8 @@ enum Found {
     Runs(PathBuf),
     /// Admission evicts the VM of the session.
     Evicting,
+    /// The shutdown refuses each start (plan PR L19).
+    Refused,
 }
 
 /// The VMs of the vmm, one per session (decision CH1).
@@ -597,6 +600,10 @@ pub struct ColdBoot<L: Launcher, A: ChApi> {
     rows: Arc<Mutex<Rows>>,
     control: Arc<Mutex<ControlState>>,
     faults: Arc<Mutex<FaultBook>>,
+    /// The shutdown set it (`VmSet::refuse_starts`). It is set and read
+    /// under the table lock, so no start adds a slot after a shutdown read
+    /// the table.
+    refusing: AtomicBool,
 }
 
 /// The gates of one running VM (PR D12).
@@ -634,6 +641,7 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
             rows,
             control,
             faults,
+            refusing: AtomicBool::new(false),
         }
     }
 
@@ -660,6 +668,9 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
     /// the start boots it again.
     fn find(&self, id: &SessionId) -> Result<Found, String> {
         let mut table = lock(&self.table);
+        if self.refusing.load(Ordering::SeqCst) {
+            return Ok(Found::Refused);
+        }
         let vm = match table.get_mut(id) {
             None => return Ok(Found::Free),
             Some(Slot::Starting(_)) => return Err("a start of the VM runs".to_owned()),
@@ -738,6 +749,11 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
     /// out each VM that admission evicts first, in its order.
     fn admit(&self, id: &SessionId, guest_ram: u64, free: u64) -> Option<Admitted<L::Process>> {
         let mut table = lock(&self.table);
+        // A start that read the table before the refusal of a shutdown
+        // stops here, so it adds no slot (plan PR L19).
+        if self.refusing.load(Ordering::SeqCst) {
+            return None;
+        }
         // A start that was dropped, a failed stop or a guest crash leaves
         // an entry whose process may have exited since.
         reap(&mut table, &self.in_use);
@@ -1159,6 +1175,11 @@ impl<L: Launcher, A: ChApi> StopVm for ColdBoot<L, A> {
 }
 
 impl<L: Launcher, A: ChApi> VmSet for ColdBoot<L, A> {
+    fn refuse_starts(&self) {
+        let _table = lock(&self.table);
+        self.refusing.store(true, Ordering::SeqCst);
+    }
+
     fn sessions(&self) -> Vec<SessionId> {
         lock(&self.table).keys().cloned().collect()
     }
@@ -1382,7 +1403,8 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
             // Decision CH54 rule 4: an Upgrade of a session whose VM is
             // being evicted or put to sleep gets `host_full`. The VM still
             // holds its RAM.
-            Ok(Found::Evicting) => return Err(StartFault::HostFull),
+            // Plan PR L19: a start during the shutdown gets it too.
+            Ok(Found::Evicting | Found::Refused) => return Err(StartFault::HostFull),
             Err(message) => return Err(self.fault(family, sandbox, message).await),
         }
         let (config, name) = (Arc::clone(&self.config), family.clone());
