@@ -3,9 +3,14 @@
 //   <config dir>/skills/<name>/SKILL.md      frontmatter name, description; then the body
 //   <config dir>/skills/<name>/<file>        supporting files, served by Flue
 //
-// Each one becomes a `defineSkill` value at process start. A skill that is
-// not valid is skipped and named, never mounted half. `caregiver` writes
-// the mount, and the agent cannot write it.
+// At process start each one becomes a `defineSkill` value, with its
+// supporting files. A skill that is not valid is skipped and named, never
+// mounted half. `caregiver` writes the mount, and the agent cannot write it.
+//
+// Before each prompt the family state carries the `SKILL.md` text only
+// (`FamilySkills`). A skill whose text is the text of the start keeps its
+// start value, files included. A changed skill has no files
+// (`agent/AGENTS.md`, "Known gaps").
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
@@ -23,8 +28,15 @@ const MAX_FILE_BYTES = 1048576;
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
 const FIELD_RE = /^([a-z][a-z-]*):[ \t]*(.*)$/;
 
+/** One skill: its folder name, its `SKILL.md` text and its `defineSkill` value. */
+export interface LiveSkill {
+  readonly name: string;
+  readonly text: string;
+  readonly definition: SkillDefinition;
+}
+
 export interface SkillsRead {
-  readonly skills: readonly SkillDefinition[];
+  readonly skills: readonly LiveSkill[];
   readonly skipped: readonly string[];
 }
 
@@ -84,20 +96,46 @@ function supportingFiles(dir: string): Record<string, Uint8Array> | null {
   return files;
 }
 
-function readSkill(dir: string, name: string): SkillDefinition | null {
+function readSkill(dir: string, name: string): LiveSkill | null {
   try {
-    const split = splitSkill(readFileSync(join(dir, SKILL_FILE), "utf8"));
+    const text = readFileSync(join(dir, SKILL_FILE), "utf8");
+    const split = splitSkill(text);
     const files = supportingFiles(dir);
     if (split === null || files === null) {
       return null;
     }
 
-    return defineSkill({
+    const definition = defineSkill({
       name: split.fields.get("name") ?? name,
       description: split.fields.get("description") ?? "",
       instructions: split.body,
       ...(Object.keys(files).length > 0 ? { files } : {}),
     });
+
+    return { name, text, definition };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One skill from the text of its `SKILL.md` alone, as the family state
+ * carries it (`FamilySkills`). Null: the text is not a valid skill.
+ */
+export function skillOf(name: string, text: string): LiveSkill | null {
+  const split = splitSkill(text);
+  if (split === null) {
+    return null;
+  }
+
+  try {
+    const definition = defineSkill({
+      name: split.fields.get("name") ?? name,
+      description: split.fields.get("description") ?? "",
+      instructions: split.body,
+    });
+
+    return { name, text, definition };
   } catch {
     return null;
   }
@@ -117,7 +155,7 @@ export function readSkills(skillsPath: string | null): SkillsRead {
     return { skills: [], skipped: [] };
   }
 
-  const skills: SkillDefinition[] = [];
+  const skills: LiveSkill[] = [];
   const skipped: string[] = [];
   for (const name of names.sort()) {
     const skill = readSkill(join(skillsPath, name), name);

@@ -5,14 +5,17 @@
 // A refusal names a field, never a value.
 //
 // The reader takes `litellm_key` and `pep_token` and ignores every other key.
-// It checks each one itself and does not use a wire validator. `caregiver`
-// still writes `epoch`, but no reader compares it with anything (contract 03
-// section 12 rule 3, decision CH5b, fact 36).
+// The key and the token must be what the wire types `LitellmKey` and
+// `PepToken` allow, so the file holds what the vmm's family state would hold
+// (decision CH31 rule 5). `caregiver` still writes `epoch`, but no reader
+// compares it with anything (contract 03 section 12 rule 3, decision CH5b,
+// fact 36).
 
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Secret } from "./secret.js";
+import { validator } from "./wire-read.js";
 
 const CRED_FILE = "creds.json";
 
@@ -47,11 +50,11 @@ function parseCreds(text: string): CredsRead {
   const raw = parsed as Record<string, unknown>;
   const key = raw["litellm_key"];
   const token = raw["pep_token"];
-  if (typeof key !== "string" || key.length === 0) {
+  if (typeof key !== "string" || !validator("LitellmKey").Check(key)) {
     return { ok: false, field: "litellm_key" };
   }
 
-  if (typeof token !== "string" || token.length === 0) {
+  if (typeof token !== "string" || !validator("PepToken").Check(token)) {
     return { ok: false, field: "pep_token" };
   }
 

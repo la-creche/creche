@@ -5,7 +5,8 @@
 //
 //   FamilyConfig.planes.litellm ──► baseUrl   (the OpenAI SDK appends
 //                                              `/chat/completions`)
-//   FamilyConfig.creds.litellmKey ──► Authorization: Bearer, per request
+//   creds().litellmKey ──► Authorization: Bearer, per request. The facade
+//                          pulls the creds before each prompt (decision CH5a).
 //   runtime.json model_alias ──► `litellm/<alias>`, the one model
 //   GET <plane>/v1/model/info ──► the alias's context window and output
 //                                  limit, read one time at process start
@@ -20,6 +21,7 @@ import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completio
 import * as v from "valibot";
 
 import type { FamilyConfig } from "./config.js";
+import type { LiveCreds } from "./family-state.js";
 import { revealSecret } from "./secret.js";
 
 /** The provider id, and the prefix of the model specifier `useModel` takes. */
@@ -156,19 +158,23 @@ function bareAlias(alias: string): string {
   return alias.startsWith(prefix) ? alias.slice(prefix.length) : alias;
 }
 
-export function litellmModel(config: FamilyConfig, limits: ModelLimits = FALLBACK_LIMITS): LitellmRead {
+/** `creds` gives the current creds, read at each request. The default is the start creds. */
+export function litellmModel(
+  config: FamilyConfig,
+  limits: ModelLimits = FALLBACK_LIMITS,
+  creds: () => LiveCreds = () => config.creds,
+): LitellmRead {
   const alias = bareAlias(config.runtime.modelAlias ?? "");
   if (alias.length === 0) {
     return { ok: false, reason: "model_alias_unset" };
   }
 
-  const key = config.creds.litellmKey;
   const provider = createProvider({
     id: LITELLM_PROVIDER,
     auth: {
       apiKey: {
         name: "LiteLLM family key",
-        resolve: async () => ({ auth: { apiKey: revealSecret(key) } }),
+        resolve: async () => ({ auth: { apiKey: revealSecret(creds().litellmKey) } }),
       },
     },
     models: [

@@ -11,8 +11,8 @@ import { describe, expect, it } from "vitest";
 import { readFamilyConfig } from "../src/config.js";
 import { revealSecret } from "../src/secret.js";
 
-const KEY = "FIXTURE-LITELLM-KEY";
-const TOKEN = "FIXTURE-PEP-TOKEN";
+const KEY = "sk-FIXTURE-LITELLM-KEY";
+const TOKEN = "feedface".repeat(8);
 const NO_RETRY_MS = 0;
 
 function mounts(creds: unknown): NodeJS.ProcessEnv {
@@ -55,6 +55,12 @@ describe("readFamilyConfig", () => {
 
     expect(read).toEqual({ ok: false, refusal: { reason: "creds_not_valid", field: "pep_token" } });
     expect(JSON.stringify(read)).not.toContain(KEY);
+  });
+
+  it("refuses a key that the wire type LitellmKey refuses", async () => {
+    const read = await readFamilyConfig(mounts({ ...VALID, litellm_key: "FIXTURE-NO-PREFIX" }), NO_RETRY_MS);
+
+    expect(read).toEqual({ ok: false, refusal: { reason: "creds_not_valid", field: "litellm_key" } });
   });
 
   it("refuses a plane variable that is not a plane URL, by fault", async () => {
