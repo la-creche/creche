@@ -69,6 +69,13 @@ fn path_globs(block: &str) -> Vec<String> {
     paths.map(fill).collect()
 }
 
+/// The signal rules of `block`, allow and deny, as written.
+#[cfg(test)]
+fn signal_rules(block: &str) -> Vec<&str> {
+    let signal = |rule: &&str| body(rule).iter().any(|word| word.starts_with("signal"));
+    rules(block).into_iter().filter(signal).collect()
+}
+
 /// Whether the AppArmor glob `glob` matches `path`. `**` matches any bytes,
 /// and `*` any bytes with no `/`. The globs here use no other syntax.
 #[cfg(test)]
@@ -155,10 +162,18 @@ fn each_slot_names_only_its_own_label() {
         assert_eq!(rules(&block).first(), Some(&header));
         let labels = block.matches("creche-ch-slot-").count();
         assert_eq!(labels, 2, "slot {number}: the header and the signal rule");
-        let signal = format!("signal (send, receive) peer={},", label(slot(number)));
-        assert!(rules(&block).contains(&signal.as_str()));
     }
     assert_eq!(label(slot(5)), "creche-ch-slot-5");
+}
+
+#[test]
+fn each_slot_signals_only_its_own_label() {
+    for other in Slot::all() {
+        let block = render(other);
+        let own = format!("signal (send, receive) peer={},", label(other));
+        let want = vec!["signal (receive) peer=unconfined,", own.as_str()];
+        assert_eq!(signal_rules(&block), want, "slot {}", other.number());
+    }
 }
 
 #[test]
