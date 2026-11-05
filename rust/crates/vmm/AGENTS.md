@@ -173,6 +173,27 @@ from the claim to its end, then the time that the last admitted Upgrade
 ended. A refused Upgrade records no close, so the map of close times
 grows only with sessions that ran. A drop clears the time.
 
+## The create and list routes
+
+`src/handlers/create.rs` serves `create` (plan PR L7, decisions CH21-4,
+CH25 rule 2). It first reads the family with `FamilyRoot::exists` of
+`creche-vmm-confine`. A family with no `config/` dir gets
+`unknown_family` 404 (decision CH33 rule 3). Then `Rows::create` of
+`creche-vmm-store` makes the row. The same typed request gives the same
+row, and a different one gives `conflict` 409 (decision CH33 rule 12).
+The family read can sleep between its tries (decision CH50 rule 9), and
+the row write syncs a file and a dir. So both run in `spawn_blocking`
+(decision CH36 G21). The family read holds no lock of the rows. A create
+makes no session disk and boots no VM: the first boot makes the disk
+(decision CH21-4).
+
+`src/handlers/list.rs` serves `list` (decisions CH21-5, CH21-7). It
+answers `Rows::page` from memory, on the runtime worker, so a list boots
+no VM. The request type requires `family` (decision CH34 rule 4). A page
+ends early under the 1 MiB cap with a `next` (decision CH33 rule 2).
+`tests/create_list.rs` proves a repeat create, a conflict, an unknown
+family, and a page of 4096-character cwds that ends early.
+
 ## The stop
 
 `src/stop.rs` stops one VM (decisions CH19 (3), CH34 rule 5). It sends
@@ -538,6 +559,12 @@ no guest sync.
     after its last use.
 12. Closed by decision CH54 rule 5: the sweep runs at the start of
     `sleep::run`, then each hour (`sleep::SWEEP_EVERY`).
+13. CONTRACT-QUESTION (decision CH33 rule 3, plan PR L7): a family dir
+    or a `config` that is a symlink or a file (`FamilyError::NotDir`)
+    gets `unknown_family`, not `internal` (`src/handlers/create.rs`).
+    The vmm logs it. The reading takes "no `config/` dir" as the text of
+    the rule. caregiver never writes such a family. A change to
+    `internal` costs one match arm and one test line.
 
 ## Caller duties
 
