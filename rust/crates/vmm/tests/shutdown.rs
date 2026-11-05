@@ -202,24 +202,29 @@ fn a_late_vm_gets_the_next_pass() {
     assert_eq!(at, STOP);
 }
 
-/// The shutdown stops the server: its accept loop returns.
+/// The shutdown stops the server before it retires a VM: the end of the
+/// accept loop is the `sleep` future here, and it ends with no paused
+/// time gone. A server that never stops would hold the shutdown until
+/// `SHUTDOWN_WAIT` (decision CH26 rule 2).
 #[test]
-fn the_shutdown_stops_the_server() {
+fn the_shutdown_stops_the_server_first() {
     let path = PathBuf::from(format!("/tmp/vmm-shutdown-{}.sock", std::process::id()));
     let _ = std::fs::remove_file(&path);
     let runtime = paused();
     let fake = runtime.block_on(async { Fake::new(vec![Vec::new()]) });
     let (stop, signal) = Stop::pair();
-    let served = runtime.block_on(async {
+    let (ended, at) = runtime.block_on(async {
         let server = tokio::spawn({
             let path = path.clone();
             async move { run(&path, signal).await }
         });
         sleep(Duration::from_millis(10)).await;
-        assert_eq!(shutdown(&fake, stop, async {}).await, Ended::Clean);
-        server.await.unwrap()
+        let begun = Instant::now();
+        let served = async { assert_eq!(server.await.unwrap(), Ok(())) };
+        (shutdown(&fake, stop, served).await, begun.elapsed())
     });
-    assert_eq!(served, Ok(()));
+    assert_eq!(ended, Ended::Clean);
+    assert_eq!(at, Duration::ZERO);
     let _ = std::fs::remove_file(&path);
 }
 
