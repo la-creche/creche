@@ -338,6 +338,14 @@ admission:
    CH50 rule 4), and the start gets `host_full`. The VMs left in the
    list go back too.
 
+Decision CH54 rule 6 binds a retire too, for an eviction and for an idle
+sleep. A VM whose control link closed after its gate takes no snapshot.
+A VM whose link closed on a refused line during the take or the stop
+(`ControlState::refused`) gets its take consumed with `claim`, so the
+next start cold-boots (decision CH19 (5)). Either VM stops and frees its
+RAM, but an idle sleep does not count it as slept. `tests/start.rs`
+proves a refused line during a take.
+
 The list runs in a task of its own (`tokio::spawn`), and the start
 waits for it. hyper drops the start future when the client hangs up
 before 101. The task runs on, so no take or stop ends half way, and no

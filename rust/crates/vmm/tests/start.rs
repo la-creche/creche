@@ -204,6 +204,9 @@ struct FakeApi<const DEVICES: bool = true> {
     hold: AtomicBool,
     /// A snapshot began.
     entered: AtomicBool,
+    /// Writes generation 1 of the session with the key, as a real take
+    /// does.
+    keep: AtomicBool,
 }
 
 #[cfg(test)]
@@ -230,8 +233,8 @@ impl<const DEVICES: bool> ChApi for FakeApi<DEVICES> {
     fn snapshot(
         &self,
         vm: &VmRunDir,
-        _session: &SessionDir,
-        _key: &SnapshotKey,
+        session: &SessionDir,
+        key: &SnapshotKey,
     ) -> Result<SnapshotGeneration, String> {
         self.entered.store(true, Ordering::SeqCst);
         while self.hold.load(Ordering::SeqCst) {
@@ -249,6 +252,11 @@ impl<const DEVICES: bool> ChApi for FakeApi<DEVICES> {
         vms.get(index)
             .ok_or("no such VM")?
             .store(true, Ordering::SeqCst);
+        if self.keep.load(Ordering::SeqCst) {
+            let generation = SnapshotGeneration(1);
+            fs::create_dir_all(session.snapshot(generation)).map_err(|error| error.to_string())?;
+            write_key(session, generation, key).map_err(|error| format!("{error:?}"))?;
+        }
         let mut snapshots = self.snapshots.lock().map_err(|_| "poisoned")?;
         snapshots.push(vm.path().to_owned());
         Ok(SnapshotGeneration(1))
@@ -415,6 +423,7 @@ impl<const DEVICES: bool> Test<DEVICES> {
             fail_take: AtomicBool::new(false),
             hold: AtomicBool::new(false),
             entered: AtomicBool::new(false),
+            keep: AtomicBool::new(false),
         });
         let relays = Relays::default();
         let hook = Arc::new(ColdBoot::new(
@@ -1545,5 +1554,41 @@ fn a_refused_line_stops_only_its_own_vm() {
     test.runtime.block_on(pause);
     assert!(test.hook.running(&id));
     assert!(!test.stopped(1));
+    assert_eq!(test.launches(), 2);
+}
+
+/// A refused line during the take of an idle sleep keeps no snapshot of
+/// the faulted guest (decision CH54 rule 6). The VM stops, and the sleep
+/// does not count it as slept. The take is consumed, so the next start
+/// cold-boots (decision CH19 (5)).
+#[test]
+fn a_refused_line_during_a_take_keeps_no_snapshot() {
+    let test = Test::new("refused-take", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    let id = test.rows[0].id.clone();
+    test.api.keep.store(true, Ordering::SeqCst);
+    test.api.hold.store(true, Ordering::SeqCst);
+    let now = Instant::now() + PAST_IDLE;
+    let pause = || tokio::time::sleep(Duration::from_millis(1));
+    let (slept, ()) = test
+        .runtime
+        .block_on(both(test.hook.sleep_idle(now), async {
+            while !test.api.entered.load(Ordering::SeqCst) {
+                pause().await;
+            }
+            test.send("not a turn event");
+            while test.control.lock().unwrap().link(&id).is_some() {
+                pause().await;
+            }
+            test.api.hold.store(false, Ordering::SeqCst);
+        }));
+    assert!(slept.is_empty());
+    assert!(test.stopped(0));
+    assert!(!test.hook.running(&id));
+    let generation = test.state.session(&id).snapshot(SnapshotGeneration(1));
+    assert!(generation.join("consumed").is_file());
+    test.reply(0, "Paused", &[]);
+    assert_eq!(test.start(0), Ok(()));
+    assert!(!test.restored(1));
     assert_eq!(test.launches(), 2);
 }
