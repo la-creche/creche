@@ -32,8 +32,9 @@
 //! (decisions CH21-1, CH6-3). A fault after the launch stops the VM.
 //!
 //! The idle sleep and the snapshot sweep of plan PR L18 use the same
-//! table (`ColdBoot::sleep_idle`, `ColdBoot::sweep`, `sleep::run`), and
-//! so does the `StopVm` hook of the drop route (plan PR L18b).
+//! table (`ColdBoot::sleep_idle`, `ColdBoot::sweep`, `sleep::run`). So
+//! do the `StopVm` hook of the drop route (plan PR L18b) and the `VmSet`
+//! of the shutdown (plan PR L19).
 
 use std::collections::{HashMap, HashSet};
 use std::fs::{DirBuilder, OpenOptions, Permissions};
@@ -76,6 +77,7 @@ use crate::handlers::acp::{StartFault, StartVm};
 use crate::handlers::drop::{StopVm, VmStopFailed};
 use crate::relay::{AcpLink, Door, Relays};
 use crate::restore::{ChApi, Expected, check_devices};
+use crate::shutdown::{Taken, VmSet};
 use crate::stop::{VmProcess, stop};
 
 /// The mode of the run dir and the snapshots dir of a VM.
@@ -1153,6 +1155,49 @@ impl<L: Launcher, A: ChApi> StopVm for ColdBoot<L, A> {
     /// its outcome (caller duty 6 of `AGENTS.md`).
     async fn stop(&self, id: &SessionId) -> Result<(), VmStopFailed> {
         self.stopper().stop(id, None).await
+    }
+}
+
+impl<L: Launcher, A: ChApi> VmSet for ColdBoot<L, A> {
+    fn sessions(&self) -> Vec<SessionId> {
+        lock(&self.table).keys().cloned().collect()
+    }
+
+    async fn close_door(&self, id: &SessionId) {
+        self.relays.close(id).await;
+    }
+
+    /// Retires the VM of `id` as an eviction does, when the gate of
+    /// admission passes after its door closed (plan PR L19, decision CH19
+    /// (6)). A VM that a start, a retire or a stop holds is skipped, and
+    /// the stop of the shutdown waits for that slot.
+    async fn take(&self, id: &SessionId) -> Taken {
+        // Caller duty 7: with no device read or no guest sync no take
+        // runs, so each VM gets the graceful stop of the `Stopper`.
+        if !(A::READS_DEVICES && A::GUEST_SYNCS) {
+            return Taken::Skipped;
+        }
+        let eviction = {
+            let mut table = lock(&self.table);
+            let now = Instant::now();
+            let passes = matches!(
+                table.get(id),
+                Some(Slot::Running(vm)) if self.gates(id, vm, now).evict
+            );
+            if !passes {
+                return Taken::Skipped;
+            }
+            take_out(&self.table, &mut table, id.clone(), Slot::Evicting)
+        };
+        let Some(eviction) = eviction else {
+            return Taken::Skipped;
+        };
+        match self.retirer().retire(eviction).await {
+            Retired::Slept => Taken::Slept,
+            Retired::Stopped => Taken::Stopped,
+            // A turn started, or the stop failed: the VM is back.
+            Retired::Kept => Taken::Skipped,
+        }
     }
 }
 

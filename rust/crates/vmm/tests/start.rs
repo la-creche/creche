@@ -23,6 +23,8 @@ use creche_vmm::handlers::acp::{Acp, StartFault, StartVm};
 use creche_vmm::handlers::drop::{Drops, StopVm, VmStopFailed};
 use creche_vmm::relay::{AcpLink, Door, Relays};
 use creche_vmm::restore::ChApi;
+use creche_vmm::server::Stop;
+use creche_vmm::shutdown::{Ended, shutdown};
 use creche_vmm::start::{ColdBoot, Digests, Launcher, StartConfig};
 use creche_vmm::stop::VmProcess;
 use creche_vmm_confine::admission::{GIB, Limits};
@@ -1160,6 +1162,53 @@ fn with_no_guest_sync_a_retire_stops_gracefully() {
     assert_eq!(test.stop_lines(), 2);
     assert!(test.stopped(1));
     assert!(!test.hook.running(&test.rows[1].id));
+}
+
+#[cfg(test)]
+impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
+    /// Shuts the hook down, with no sleep loop (plan PR L19).
+    fn shut_down(&self) -> Ended {
+        let (stop, _signal) = Stop::pair();
+        self.runtime.block_on(shutdown(&*self.hook, stop, async {}))
+    }
+}
+
+/// A shutdown closes the open door link first. Then the idle VM takes its
+/// snapshot, and the VM with a turn running gets the graceful stop (gap
+/// G16, decision CH19 (6)).
+#[test]
+fn a_shutdown_snapshots_an_idle_vm_and_stops_a_busy_one() {
+    let test = Test::new("shutdown", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    *test.fake.guest.lock().unwrap() = Guest::Turn;
+    assert_eq!(test.start(1), Ok(()));
+    let mut door = test.relays.claim(&test.rows[0].id).unwrap();
+    let relay = spawn(move || {
+        while !door.stopped() {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    });
+    assert_eq!(test.shut_down(), Ended::Clean);
+    relay.join().unwrap();
+    assert_eq!(test.snapshot_ids(), [A]);
+    assert_eq!(test.stop_lines(), 1);
+    for index in [0, 1] {
+        assert!(test.stopped(index));
+        assert!(!test.hook.running(&test.rows[index].id));
+    }
+}
+
+/// With no guest sync, a shutdown takes no snapshot, and each VM gets the
+/// graceful stop (caller duty 7, decision CH19 (3)).
+#[test]
+fn with_no_guest_sync_a_shutdown_stops_each_vm_gracefully() {
+    let test = Test::<true, false>::build("shutdown-nosync", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    assert_eq!(test.start(1), Ok(()));
+    assert_eq!(test.shut_down(), Ended::Clean);
+    assert!(!test.api.entered.load(Ordering::SeqCst));
+    assert_eq!(test.stop_lines(), 2);
+    assert!(test.stopped(0) && test.stopped(1));
 }
 
 /// The hook behind an `Arc`, for the acp handler, which owns its hook.

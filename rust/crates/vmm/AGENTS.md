@@ -441,6 +441,35 @@ that overlap, a stop during a launch, and the RAM of a VM under a stop. It
 also proves a start of the session under a stop (`host_full`, one
 launch) and a stop that waits for an idle sleep whose retire fails.
 
+## The shutdown
+
+`src/shutdown.rs` stops the vmm cleanly on SIGTERM (plan PR L19, gap
+G16 option A). `shutdown::sigterm` registers the handler and gives the
+future of the signal. `shutdown::shutdown` then runs these steps:
+
+1. `Stop::stop`: the server accepts no further connection (decision
+   CH26 rule 2).
+2. It waits for its `sleep` future, the end of `sleep::run`, so no idle
+   retire runs beside a shutdown take (caller duty 5).
+3. Each VM of the `VmSet`, all at once: `Relays::close` stops its door
+   link and waits for its claim (decision CH19 (6)). Then
+   `VmSet::take` retires the VM as an eviction does, when the gate of
+   admission passes and the take gate passes (caller duty 7). Each other
+   VM gets `StopVm::stop`, the stop of plan PR L14 through the `Stopper`
+   (decision CH19 (3)). `GUEST_SYNCS` is false for `ChTools`, so each VM
+   gets the graceful stop today.
+4. A VM that a start adds meanwhile, on a connection of before the stop,
+   gets the next pass. Each VM gets one pass.
+
+`SHUTDOWN_WAIT` (85 s) bounds the whole shutdown from SIGTERM, 5 s
+inside the `TimeoutStopSec` of 90 s (gap G16). A stop (36 s) and a take
+(75 s) each fit inside it. A VM still in the set at the deadline ends
+with the vmm (decision CH19 (4)). `ColdBoot` is the `VmSet` of the vmm.
+`tests/shutdown.rs` runs the steps on paused time with a fake set.
+`tests/start.rs` proves the take of an idle VM, the stop of a busy one
+and the door close over the hook, and the graceful stop of each VM with
+no guest sync.
+
 ## Rules
 
 - Each new dependency is its own pull request, with its lock delta
@@ -503,6 +532,13 @@ launch) and a stop that waits for an idle sleep whose retire fails.
     after its last use.
 12. Closed by decision CH54 rule 5: the sweep runs at the start of
     `sleep::run`, then each hour (`sleep::SWEEP_EVERY`).
+13. CONTRACT-QUESTION: gap G16 sets `TimeoutStopSec` to 90 s from a
+    16 GiB take of about 20 s (fact 72). No row says what happens when
+    one VM needs a full take and then a full stop (75 s and 36 s), or
+    when an idle retire of the sleep loop runs at SIGTERM. Reading taken:
+    `SHUTDOWN_WAIT` bounds every step from SIGTERM, and a VM still in the
+    set at the deadline ends with the vmm, a power cut for its guest
+    (`src/shutdown.rs`). A change costs one constant per bound.
 
 ## Caller duties
 
@@ -530,7 +566,9 @@ launch) and a stop that waits for an idle sleep whose retire fails.
    to start the vmm (gap G10 option A).
 5. Plan PR L20 runs `sleep::run` with the `ColdBoot` of the vmm on the
    runtime, and plan PR L19 ends its stop future before the shutdown
-   snapshots. `sleep::run` is the only caller of `ColdBoot::sweep` and
+   snapshots. L20 fires that stop at SIGTERM and passes the end of
+   `sleep::run` to `shutdown::shutdown` as its `sleep` future.
+   `sleep::run` is the only caller of `ColdBoot::sweep` and
    `ColdBoot::sleep_idle` in the vmm.
 6. Two drops of one session can overlap. The `StopVm` hook of the vmm
    makes a stop that finds a stop of the same VM running wait for it
@@ -547,3 +585,8 @@ launch) and a stop that waits for an idle sleep whose retire fails.
    end CH with no guest sync, and a cold boot after it (a key mismatch,
    a failed restore, an `Aged` or a `Budget` sweep) would find the
    session disk as a power cut leaves it.
+8. Plan PR L20 calls `shutdown::sigterm` at vmm start, inside the
+   runtime, and runs `shutdown::shutdown` when the signal fires. A take
+   runs in `spawn_blocking`, and the drop of a runtime waits for each
+   blocking task. So L20 ends the runtime with `shutdown_timeout`, and
+   the vmm exits within the 5 s that `SHUTDOWN_WAIT` leaves.

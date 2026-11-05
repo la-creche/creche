@@ -196,7 +196,7 @@ impl<S: StopVm> Drops<S> {
 
 /// Runs each future in `futures` at once and returns their outputs in
 /// order (decision CH33 rule 11: every VM of the target stops at once).
-async fn all<F: Future>(futures: Vec<F>) -> Vec<F::Output> {
+pub(crate) async fn all<F: Future>(futures: Vec<F>) -> Vec<F::Output> {
     let mut futures: Vec<Pin<Box<F>>> = futures.into_iter().map(Box::pin).collect();
     let mut outputs: Vec<Option<F::Output>> = futures.iter().map(|_| None).collect();
     poll_fn(|context| {
