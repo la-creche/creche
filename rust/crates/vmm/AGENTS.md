@@ -297,21 +297,30 @@ checked kernel and root disk it gives the current `SnapshotKey`.
    sweep.
 4. `ChCommand::restore` runs with `resume=false`. Then
    `restore::ChApi::info` is read until CH answers, inside
-   `READY_WAIT`. `restore::check_devices` requires `state` `Paused` and
-   refuses `net`, `generic_vhost_user`, `fs`, `user_devices`, `vdpa`,
-   `devices`, `pmem` and `tpm`, any disk but the root disk and then the
-   session disk, and a vsock socket other than the one of the VM. Then
+   `READY_WAIT`. A reply that is not a `VmInfo` ends the wait at once.
+   `restore::check_devices` reads the `VmInfo` of `creche-vmm-store`
+   (PR D15). It requires `state` `Paused` and refuses `net`,
+   `generic_vhost_user`, `fs`, `user_devices`, `vdpa`, `devices`, `pmem`
+   and `tpm`, a disk with `vhost_user` or a `vhost_socket` (CH v54 opens
+   the socket and ignores the path), any disk but the root disk and then
+   the session disk, and a vsock socket other than the one of the VM. Then
    `ChApi::resume`, then the wait for `ControlReady` (decisions CH42
    rule 2, CH50 rule 10). `INFO_TIMEOUT` and `RESUME_TIMEOUT` (5 s each)
    bound each call (decision CH44 rule 3).
 5. The deny check runs as for a boot. A restore has no `--vsock`
    argument.
 
-`ChApi::READS_DEVICES` is false for `restore::ChTools`, the API of the
-vmm, so the vmm restores no VM yet: the claim consumes the snapshot, and
-the start cold-boots (Known gaps). For the same reason an eviction takes
-no snapshot (see "The eviction"). `tests/start.rs` gives a fake API that reads the device
-set.
+`ChApi::READS_DEVICES` is true for `restore::ChTools`, the API of the
+vmm, since PR D15 (plan PR L18b). So the vmm restores a snapshot that
+it finds. An API with no device read restores no VM: the claim consumes
+the snapshot, and the start cold-boots. `ChApi::GUEST_SYNCS` is false
+for `ChTools`: the control link has no `sync` command until phase 3
+(item 5.7, the item 42 note of the design). So an eviction or a sleep
+takes no snapshot yet (caller duty 7). So the vmm restores no VM that
+it put to sleep until the phase 3 PR. The restore path and the device
+check run only in the tests. `tests/start.rs` gives a fake API with
+each value of each constant, and its `info` replies have the shape of
+CH v54.
 
 ## The eviction
 
@@ -331,8 +340,10 @@ admission:
    take ends CH. A failed take is logged, and the stop follows anyway
    (decision CH44 rule 4). An API with no device read
    (`ChApi::READS_DEVICES` false) takes no snapshot: no snapshot would
-   restore, and a take ends CH with no guest power-off. The stop of
-   step 4 is then the graceful one (decision CH19 (3)).
+   restore, and a take ends CH with no guest power-off. An API with no
+   guest sync (`ChApi::GUEST_SYNCS` false) takes no snapshot either:
+   item 5.7 of the design asks for a guest `sync` before each take. The
+   stop of step 4 is then the graceful one (decision CH19 (3)).
 4. `stop::stop` with the control link of the VM. A VM that does not
    stop goes back with no link, so admission counts its RAM (decision
    CH50 rule 4), and the start gets `host_full`. The VMs left in the
@@ -362,8 +373,9 @@ an Upgrade whose door an eviction closes after its start: `Relays::close`
 stops the claim with `relay::Stopped::Evict`, and the acp handler answers
 it with `host_full`. A drop stops it with `Stopped::Drop`, which gets
 `not_found`. `tests/start.rs` proves the order, the door close,
-`host_full`, a failed take, a failed stop, a start under eviction and an
-eviction with no device read. `tests/acp.rs` proves the eviction during
+`host_full`, a failed take, a failed stop, a start under eviction, an
+eviction with no device read, and an eviction and a sleep with no guest
+sync. `tests/acp.rs` proves the eviction during
 the dial.
 
 ## The sleep and the sweep
@@ -465,27 +477,24 @@ launch) and a stop that waits for an idle sleep whose retire fails.
 5. Closed by plan PR L18b: the two production pieces that no earlier
    plan PR named. `impl StopVm for ColdBoot` is "The stop hook", and the
    turn reader is in "The control link".
-6. CONTRACT-QUESTION (decision CH50 rule 10, plan PR L17,
-   `src/restore.rs`): the plan reads the device set "through ch-remote
-   info (D8)". `ChRemote::info` returns `VmInfo`, which holds only
-   `state`, and this crate may not edit `creche-vmm-store`. So
-   `READS_DEVICES` is false for `ChRemote`, and no VM restores. A store
-   PR that gives the whole `info` reply costs about 10 lines there and 3
-   lines here.
+6. Closed by plan PR L18b: `ChTools::info` returns the `VmInfo` of PR
+   D15, so `READS_DEVICES` is true and the vmm restores. A device kind
+   that `VmConfig` does not name passes the read unseen
+   (`creche-vmm-store` AGENTS.md). A new kind needs a field there and a
+   line in `check_devices`.
 7. Closed by decision CH54 rule 3: a restore whose VM is not `Paused`,
    or has a refused device, gives `egress_assert_failed`. A CH that does
    not answer `info` or `resume` gives `sandbox_start_failed`
-   (`src/start.rs`).
+   (`src/start.rs`). A reply that is not a `VmInfo` is a device set that
+   the check cannot read, so it gives `egress_assert_failed` too.
 8. Decision CH43 rule 6: a guest that closes the link before
    `ControlReady` asks for a cold boot. After a restore the start does
    not cold-boot then. It faults, stops the VM, and the next start
    cold-boots, because the claim consumed the snapshot.
-9. Item 5.7 of the design asks for a guest `sync` before each snapshot
-   (`creche-vmm-store` Known gaps). The control link has no `sync`
-   line yet, so an API that reads the device set takes its snapshot
-   with no guest sync. `ChTools` takes none (gap 6), so the vmm stops
-   each evicted or idle VM with the graceful stop until the store PR of gap 6
-   lands.
+9. Closed by plan PR L18b: no take runs with no guest `sync`.
+   `ChApi::GUEST_SYNCS` gates each take, and it is false for `ChTools`.
+   So `Retirer::retire` sends the graceful stop, as before L18b. The
+   rest is caller duty 7.
 10. Closed by plan PR L18b: the turn reader calls `ControlState::turn`
     for each event, so `turn_seen` and the last turn time follow the
     guest (decisions CH43 rule 8, CH50 rule 5).
@@ -527,3 +536,14 @@ launch) and a stop that waits for an idle sleep whose retire fails.
    makes a stop that finds a stop of the same VM running wait for it
    and return its outcome. So no drop removes the files of a VM that
    still runs.
+7. Item 5.7 of the design and its item 42 note: lifecycle syncs the
+   guest through the control link before each snapshot. The store gives
+   that duty to lifecycle, before `Snapshotter::take` (`creche-vmm-store`
+   Known gaps, caller duty of PR D9). The phase 3 guest init PR that
+   adds the `sync` command sets `ChTools::GUEST_SYNCS` true. In the same
+   PR, `Retirer::retire` sends `sync` on the control link before each
+   take. Each other take, such as the shutdown snapshots of plan PR L19,
+   reads the same gate. A gate set true before the sync would let a take
+   end CH with no guest sync, and a cold boot after it (a key mismatch,
+   a failed restore, an `Aged` or a `Budget` sweep) would find the
+   session disk as a power cut leaves it.

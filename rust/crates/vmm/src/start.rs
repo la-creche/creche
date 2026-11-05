@@ -10,6 +10,8 @@
 //!    counts from here on, so two starts never pass the cap together.
 //!    Each VM that admission evicts loses its door link, then its
 //!    snapshot is taken and it stops (plan PR L17, decision CH19 (6)).
+//!    Until the guest can sync (`ChApi::GUEST_SYNCS`), the VM takes no
+//!    snapshot and gets the graceful stop.
 //! 3. In `spawn_blocking`: the stale sockets go (PR D1, decision CH19
 //!    (4)), the kernel and the root disk pass the store check (PR D6,
 //!    decision CH44 rule 2), the session disk exists (PR D7, decision
@@ -50,6 +52,7 @@ use creche_vmm_confine::landlock::{HostPath, Start, VmFiles};
 use creche_vmm_confine::launch::{Launch, Program};
 use creche_vmm_confine::limits::VmLimits;
 use creche_vmm_confine::spawner::{Launched, SpawnError, Spawner};
+use creche_vmm_store::ch_remote::ChRemoteError;
 use creche_vmm_store::claim::{ClaimError, ClaimedSnapshot, claim};
 use creche_vmm_store::images::{ImageDigest, ImageStore};
 use creche_vmm_store::key::{CheckedCh, KeyCheck, SnapshotKey, check_newest};
@@ -444,10 +447,10 @@ impl<A: ChApi> Retirer<A> {
 
     /// Snapshots the VM of `eviction`, then stops it (decision CH19 (6)).
     /// The take ends CH, so the stop finds it gone. With no device read
-    /// (`ChApi::READS_DEVICES`) it takes no snapshot and sends the graceful
-    /// stop. `Kept` when the VM still holds its RAM: a turn runs, or the
-    /// stop failed (decision CH50 rule 4). `Stopped` when the VM faulted
-    /// (decision CH54 rule 6).
+    /// (`ChApi::READS_DEVICES`) or no guest sync (`ChApi::GUEST_SYNCS`) it
+    /// takes no snapshot and sends the graceful stop. `Kept` when the VM
+    /// still holds its RAM: a turn runs, or the stop failed (decision CH50
+    /// rule 4). `Stopped` when the VM faulted (decision CH54 rule 6).
     async fn retire<P: VmProcess>(&self, mut eviction: Eviction<P>) -> Retired {
         let id = eviction.id.clone();
         let key = eviction.vm.as_ref().and_then(|vm| vm.key.clone());
@@ -476,12 +479,17 @@ impl<A: ChApi> Retirer<A> {
         // The VM stops anyway, so its RAM frees, and the session
         // cold-boots from its disk later (decision CH19 (5)).
         // An API that reads no device set restores no snapshot, and the
-        // next claim consumes it unused (Known gaps). A take ends CH with
-        // no guest power-off, so that cold boot would find its disk as a
-        // power cut left it. So with no device read the VM takes no
-        // snapshot, and the stop below is the graceful one (decision CH19
-        // (3)): guest init syncs and powers off.
-        let took = open && A::READS_DEVICES;
+        // next claim consumes it unused (`ChApi::READS_DEVICES`). A take
+        // ends CH with no guest power-off, so that cold boot would find its
+        // disk as a power cut left it. So with no device read the VM takes
+        // no snapshot, and the stop below is the graceful one (decision
+        // CH19 (3)): guest init syncs and powers off.
+        // Item 5.7 of the design asks for a guest `sync` before each take,
+        // and the item 42 note gives it to lifecycle. The control link has
+        // no `sync` command until phase 3, so with no guest sync
+        // (`ChApi::GUEST_SYNCS`) the VM takes no snapshot either. The
+        // phase 3 PR sends `sync` here before the take (caller duty 7).
+        let took = open && A::READS_DEVICES && A::GUEST_SYNCS;
         if took {
             // The blocking step owns the read lock, so the lock lasts as
             // long as the take (`retention::sweep`).
@@ -918,26 +926,34 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
     /// again inside `READY_WAIT`.
     // Decision CH54 rule 3: a VM that is not `Paused`, or that has a
     // refused device, gives `egress_assert_failed`. A CH that does not
-    // answer `info` or `resume` gives `sandbox_start_failed`.
+    // answer `info` or `resume` gives `sandbox_start_failed`. A reply that
+    // is not a VM info is a device set that the check cannot read, so it
+    // gives `egress_assert_failed` at once.
     async fn resume_checked(
         &self,
         run: &VmRunDir,
         expected: Expected,
     ) -> Result<(), (FaultCode, String)> {
-        let sandbox = FaultCode::SandboxStartFailed;
+        let (sandbox, egress) = (FaultCode::SandboxStartFailed, FaultCode::EgressAssertFailed);
         let deadline = Instant::now() + READY_WAIT;
-        let reply = loop {
+        let info = loop {
             let (api, vm) = (Arc::clone(&self.api), run.clone());
-            match blocking(move || api.info(&vm)).await {
-                Ok(reply) => break reply,
+            match blocking(move || Ok(api.info(&vm))).await {
+                Ok(Ok(info)) => break info,
+                Ok(Err(ChRemoteError::NotInfo(error))) => {
+                    return Err((egress, format!("the info reply is not a VM info: {error}")));
+                }
+                Ok(Err(error)) if Instant::now() >= deadline => {
+                    return Err((sandbox, format!("reading ch-remote info: {error}")));
+                }
                 Err(error) if Instant::now() >= deadline => {
                     return Err((sandbox, format!("reading ch-remote info: {error}")));
                 }
-                Err(_) => sleep(DIAL_PAUSE).await,
+                Ok(Err(_)) | Err(_) => sleep(DIAL_PAUSE).await,
             }
         };
-        if let Err(error) = check_devices(&reply, &expected) {
-            return Err((FaultCode::EgressAssertFailed, error.to_string()));
+        if let Err(error) = check_devices(&info, &expected) {
+            return Err((egress, error.to_string()));
         }
         let (api, vm) = (Arc::clone(&self.api), run.clone());
         blocking(move || api.resume(&vm))
@@ -1444,11 +1460,44 @@ mod tests {
     use super::claim_newest;
     use crate::restore::ChTools;
 
+    /// The check of a claim needs only `READS_DEVICES`. Each call fails.
+    struct NoDevices;
+
+    impl crate::restore::ChApi for NoDevices {
+        const READS_DEVICES: bool = false;
+        const GUEST_SYNCS: bool = false;
+
+        fn info(
+            &self,
+            _vm: &creche_vmm_store::layout::VmRunDir,
+        ) -> Result<creche_vmm_store::ch_remote::VmInfo, creche_vmm_store::ch_remote::ChRemoteError>
+        {
+            Err(creche_vmm_store::ch_remote::ChRemoteError::BadDestination(
+                PathBuf::new(),
+            ))
+        }
+
+        fn resume(&self, _vm: &creche_vmm_store::layout::VmRunDir) -> Result<(), String> {
+            Err("no resume".to_owned())
+        }
+
+        fn snapshot(
+            &self,
+            _vm: &creche_vmm_store::layout::VmRunDir,
+            _session: &creche_vmm_store::layout::SessionDir,
+            _key: &SnapshotKey,
+        ) -> Result<SnapshotGeneration, String> {
+            Err("no snapshot".to_owned())
+        }
+    }
+
     const EMPTY: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
-    /// With no device check (`ChTools`), the start cold-boots, and the
-    /// claim still consumes the snapshot, because the cold boot moves the
-    /// session disk on (decisions CH19 (5), CH50 rule 10).
+    /// With no device check, the start cold-boots, and the claim still
+    /// consumes the snapshot, because the cold boot moves the session disk
+    /// on (decisions CH19 (5), CH50 rule 10). `ChTools` reads the device
+    /// set (PR D15), so its claim gives the snapshot and keeps the
+    /// generation in use (decision CH50 rule 8).
     #[test]
     fn no_device_check_consumes_and_cold_boots() {
         let dir = PathBuf::from(format!("/tmp/vmm-claim-{}", std::process::id()));
@@ -1473,8 +1522,17 @@ mod tests {
         write_key(&session, generation, &key).unwrap();
 
         let in_use = Mutex::new(InUse::new());
-        let claimed =
-            claim_newest::<ChTools>(&session, &key, (&Mutex::new(()), &in_use), &id).unwrap();
+        let locks = (&Mutex::new(()), &in_use);
+        let claimed = claim_newest::<ChTools>(&session, &key, locks, &id).unwrap();
+        assert!(claimed.is_some());
+        assert!(in_use.lock().unwrap().contains(&(id.clone(), generation)));
+
+        let generation = SnapshotGeneration(2);
+        fs::create_dir_all(session.snapshot(generation)).unwrap();
+        write_key(&session, generation, &key).unwrap();
+        let in_use = Mutex::new(InUse::new());
+        let locks = (&Mutex::new(()), &in_use);
+        let claimed = claim_newest::<NoDevices>(&session, &key, locks, &id).unwrap();
         assert!(claimed.is_none());
         assert!(session.snapshot(generation).join("consumed").is_file());
         assert!(in_use.lock().unwrap().is_empty());
