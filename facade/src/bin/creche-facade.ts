@@ -4,7 +4,7 @@
 //
 // This file is the composition root and nothing else.
 
-import { readFamily, serveFamily } from "../family.js";
+import { limitsLine, readFamily, serveFamily } from "../family.js";
 import { SupervisorLock } from "../lock.js";
 import { relaySocketPath } from "../relay.js";
 import { claimStdout, say } from "../stdio.js";
@@ -20,12 +20,7 @@ if (read.ok) {
     say(`skill ${name} is not valid; skipped`);
   }
 
-  const { limits } = family;
-  say(
-    limits.ok
-      ? `model window ${limits.limits.contextWindow} tokens, output ${limits.limits.maxTokens}`
-      : `model limits not read (${limits.fault}); window ${limits.limits.contextWindow} tokens`,
-  );
+  say(limitsLine(family.limits));
 
   void runSupervisor({
     input: process.stdin,
