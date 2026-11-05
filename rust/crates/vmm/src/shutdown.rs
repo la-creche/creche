@@ -3,7 +3,7 @@
 //!
 //! 1. The server accepts no further connection (decision CH26 rule 2).
 //!    The set refuses each start, so no Upgrade on a connection of
-//!    before the stop starts a VM (decision CH54 rule 4: `host_full`).
+//!    before the stop starts a VM (decision CH56 rule 4: `host_full`).
 //! 2. The sleep loop ends, so no idle retire runs beside a shutdown take
 //!    (caller duty 5 of `AGENTS.md`).
 //! 3. Each VM of the set, all at once: its door link closes, then it
@@ -35,9 +35,9 @@ const UNIT_STOP_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// The time that the vmm keeps for its exit after the shutdown: the end
 /// of the runtime and the exit of the process.
-// CONTRACT-QUESTION: no row sets the exit margin. Reading taken: 5 s,
-// which fixes `SHUTDOWN_WAIT` at 85 s and the exit budget of caller duty
-// 8 (Known gaps 13). A change costs one constant.
+// Decision CH56 rule 3: the exit margin is 5 s, so `SHUTDOWN_WAIT` is
+// 85 s inside the `TimeoutStopSec` of 90 s (gap G16). Caller duty 8 gets
+// these 5 s for its exit.
 const EXIT_TIME: Duration = Duration::from_secs(5);
 
 /// The longest shutdown. Past it the shutdown ends, and each VM still in
@@ -46,12 +46,10 @@ pub const SHUTDOWN_WAIT: Duration = UNIT_STOP_TIMEOUT.saturating_sub(EXIT_TIME);
 
 // A stop (30 + 5 + 1 s, decision CH50 rule 4) and a take (5 + 60 + 10 s,
 // decision CH44 rule 3) each fit inside the wait.
-// CONTRACT-QUESTION: gap G16 sets 90 s from a 16 GiB take of about 20 s
-// (fact 72). The rows do not say what happens when one VM needs both a
-// full take and a full stop, or when an idle retire of the sleep loop
-// runs at SIGTERM. Reading taken: one deadline from SIGTERM bounds every
-// step. A VM still in the set at the deadline ends with the vmm, a power
-// cut for its guest. A change costs one constant per bound.
+// Decision CH56 rule 2: one deadline from SIGTERM bounds every step, so
+// a full take and then a full stop of one VM need not both fit. A VM
+// still in the set at the deadline ends with the vmm through PDEATHSIG,
+// a power cut for its guest.
 const _: () = assert!(
     SHUTDOWN_WAIT.as_secs() + EXIT_TIME.as_secs() <= UNIT_STOP_TIMEOUT.as_secs()
         && DROP_STOP_WAIT.as_secs() + DROP_SIGTERM_GRACE.as_secs() + KILL_WAIT.as_secs()
@@ -93,10 +91,9 @@ pub trait VmSet: StopVm {
     /// Refuses each start from now on with `host_full`, so no VM joins
     /// the set during the shutdown. A start that passed admission before
     /// holds a slot, so the next read of `sessions` holds it.
-    // CONTRACT-QUESTION: decision CH54 rule 4 gives `host_full` to an
-    // Upgrade of a session whose VM is being stopped. No row names the
-    // answer for a session with no VM during a shutdown. Reading taken:
-    // `host_full` too (Known gaps 14).
+    // Decision CH56 rule 4: from SIGTERM on, every start gets
+    // `host_full`, also for a session with no VM (it extends decision
+    // CH54 rule 4).
     fn refuse_starts(&self);
 
     /// The sessions with a slot in the set: a VM, a start or a retire.

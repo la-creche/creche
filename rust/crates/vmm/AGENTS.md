@@ -449,8 +449,8 @@ future of the signal. `shutdown::shutdown` then runs these steps:
 
 1. `Stop::stop`: the server accepts no further connection (decision
    CH26 rule 2). Then `VmSet::refuse_starts`: each start on an open
-   connection gets `host_full`, so no VM joins the set (decision CH54
-   rule 4, Known gaps 14).
+   connection gets `host_full`, so no VM joins the set (decision CH56
+   rule 4). This covers a session with no VM too.
 2. It waits for its `sleep` future, the end of `sleep::run`, so no idle
    retire runs beside a shutdown take (caller duty 5).
 3. Each VM of the `VmSet`, all at once: `Relays::close` stops its door
@@ -466,9 +466,11 @@ future of the signal. `shutdown::shutdown` then runs these steps:
    VM.
 
 `SHUTDOWN_WAIT` (85 s) bounds the whole shutdown from SIGTERM, 5 s
-inside the `TimeoutStopSec` of 90 s (gap G16). A stop (36 s) and a take
-(75 s) each fit inside it. A VM still in the set at the deadline ends
-with the vmm (decision CH19 (4)). `ColdBoot` is the `VmSet` of the vmm.
+inside the `TimeoutStopSec` of 90 s (decision CH56 rule 3, gap G16). A
+stop (36 s) and a take (75 s) each fit inside it. One deadline bounds
+every step, so a full take and then a full stop of one VM need not both
+fit (decision CH56 rule 2). A VM still in the set at the deadline ends
+with the vmm through PDEATHSIG (decision CH19 (4)). `ColdBoot` is the `VmSet` of the vmm.
 `tests/shutdown.rs` runs the steps on paused time with a fake set.
 `tests/start.rs` proves the take of an idle VM, the stop of a busy one
 and the door close over the hook, and the graceful stop of each VM with
@@ -536,21 +538,6 @@ no guest sync.
     after its last use.
 12. Closed by decision CH54 rule 5: the sweep runs at the start of
     `sleep::run`, then each hour (`sleep::SWEEP_EVERY`).
-13. CONTRACT-QUESTION: gap G16 sets `TimeoutStopSec` to 90 s from a
-    16 GiB take of about 20 s (fact 72). No row says what happens when
-    one VM needs a full take and then a full stop (75 s and 36 s), or
-    when an idle retire of the sleep loop runs at SIGTERM. Reading taken:
-    `SHUTDOWN_WAIT` bounds every step from SIGTERM, and a VM still in the
-    set at the deadline ends with the vmm, a power cut for its guest
-    (`src/shutdown.rs`). No row sets the exit margin either. Reading
-    taken: `EXIT_TIME` is 5 s, so `SHUTDOWN_WAIT` is 85 s, and caller
-    duty 8 gets 5 s for the end of the runtime and the exit. A change
-    costs one constant per bound.
-14. CONTRACT-QUESTION: decision CH54 rule 4 gives `host_full` to an
-    Upgrade of a session whose VM is being stopped. No row names the
-    answer for a session with no VM during a shutdown. Reading taken:
-    `VmSet::refuse_starts` gives `host_full` to each start from the
-    refusal on (`src/shutdown.rs`, `src/start.rs`).
 
 ## Caller duties
 

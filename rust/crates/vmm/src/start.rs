@@ -234,7 +234,8 @@ enum Found {
     Runs(PathBuf),
     /// Admission evicts the VM of the session.
     Evicting,
-    /// The shutdown refuses each start (plan PR L19).
+    /// The shutdown refuses each start (plan PR L19, decision CH56 rule
+    /// 4).
     Refused,
 }
 
