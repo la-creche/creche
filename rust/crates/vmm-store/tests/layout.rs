@@ -314,6 +314,12 @@ fn the_link_empties_the_slot() {
     let listener = std::os::unix::net::UnixListener::bind(dir.join("vsock.sock_1100"))
         .expect("a leftover listener");
     drop(listener);
+    let outside = temp.0.join("outside");
+    fs::create_dir(&outside).expect("a dir outside the slot");
+    fs::write(outside.join("kept"), b"").expect("a file outside the slot");
+    std::os::unix::fs::symlink(&outside, dir.join("dir-link")).expect("a link to the dir");
+    std::os::unix::fs::symlink(outside.join("kept"), dir.join("file-link"))
+        .expect("a link to the file");
 
     run.link_vm(&id(), slot(6)).expect("the link");
 
@@ -325,4 +331,6 @@ fn the_link_empties_the_slot() {
     assert_eq!(names, ["sub"]);
     assert!(dir.join("sub").is_dir());
     assert!(dir.join("sub/kept").exists());
+    assert!(outside.is_dir());
+    assert!(outside.join("kept").exists());
 }
