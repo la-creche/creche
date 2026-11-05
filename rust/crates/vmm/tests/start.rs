@@ -1420,7 +1420,7 @@ fn a_refused_line_stops_the_vm() {
 /// rule 3).
 #[test]
 fn a_closed_control_link_keeps_the_vm_awake() {
-    let test = Test::new("closed", |_| {});
+    let test = Test::new("link-closed", |_| {});
     assert_eq!(test.start(0), Ok(()));
     let id = test.rows[0].id.clone();
     let links = test.fake.links.lock().unwrap();
