@@ -110,7 +110,10 @@ impl VmSet for Fake {
     /// Each read comes after the refusal, so no start adds a VM that a
     /// read misses (plan PR L19).
     fn sessions(&self) -> Vec<SessionId> {
-        assert!(self.refused.load(Ordering::SeqCst), "a read before the refusal");
+        assert!(
+            self.refused.load(Ordering::SeqCst),
+            "a read before the refusal"
+        );
         let mut reads = self.reads.lock().unwrap();
         let read = if reads.len() > 1 {
             reads.remove(0)
