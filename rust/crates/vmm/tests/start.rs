@@ -1221,6 +1221,21 @@ fn a_shutdown_stops_a_vm_that_its_retire_kept() {
     assert!(!test.hook.running(&test.rows[0].id));
 }
 
+/// A VM whose facade is not up fails the gate of admission, so a
+/// shutdown takes no snapshot of it. It gets the graceful stop (decision
+/// CH19 (6), PR D12).
+#[test]
+fn a_shutdown_takes_no_snapshot_of_a_vm_that_is_not_up() {
+    let test = Test::new("shutdown-starting", |_| {});
+    *test.fake.guest.lock().unwrap() = Guest::Starting;
+    assert_eq!(test.start(0), Ok(()));
+    assert_eq!(test.shut_down(), Ended::Clean);
+    assert!(!test.api.entered.load(Ordering::SeqCst));
+    assert_eq!(test.stop_lines(), 1);
+    assert!(test.stopped(0));
+    assert!(!test.hook.running(&test.rows[0].id));
+}
+
 /// From the refusal of a shutdown on, a start gets `host_full`: a start
 /// of a running VM, and a start that would boot one, which launches
 /// nothing. The shutdown then stops the VM (plan PR L19, decision CH54
