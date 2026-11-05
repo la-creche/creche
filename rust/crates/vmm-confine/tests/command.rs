@@ -4,7 +4,6 @@
 //! start.
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -127,11 +126,16 @@ impl Temp {
     }
 
     /// Snapshot generation 1 with the current key, claimed as at a VM
-    /// start. A CH stub that reports `CH_VERSION` makes the key.
+    /// start. A CH stub that reports `CH_VERSION` makes the key. The stub
+    /// is the committed vmm-store fixture, run through a link whose name
+    /// sets its reply. A stub written at run time can fail its exec with
+    /// ETXTBSY, because a parallel test's fork may still hold it open for
+    /// writing (seen in CI on #466).
     fn claimed(&self) -> ClaimedSnapshot {
-        let ch = self.root.join("cloud-hypervisor");
-        fs::write(&ch, format!("#!/bin/sh\necho {CH_VERSION}\n")).unwrap();
-        fs::set_permissions(&ch, fs::Permissions::from_mode(0o755)).unwrap();
+        let ch = self.root.join(format!("bare-{CH_VERSION}"));
+        let stub = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../vmm-store/tests/fixtures/cloud-hypervisor");
+        std::os::unix::fs::symlink(stub, &ch).unwrap();
         let checked = check_cloud_hypervisor(&ch, Duration::from_secs(10)).unwrap();
         let key = SnapshotKey::current(checked, &self.kernel, &self.root_disk);
 

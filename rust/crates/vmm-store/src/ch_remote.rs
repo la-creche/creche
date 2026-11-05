@@ -21,7 +21,7 @@ use std::process::{Child, Command, ExitStatus, Output, Stdio};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 use crate::layout::VmRunDir;
 
@@ -77,12 +77,95 @@ pub enum VmState {
     BreakPoint,
 }
 
-/// The part of the `info` reply that the vmm reads. Every other field is
-/// skipped.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+/// The part of the `info` reply that the vmm reads: the state and the
+/// device set that the check of a restore reads (decisions CH42 rule 2,
+/// CH50 rule 10). Every other field is skipped, so a device kind that is
+/// not in `VmConfig` passes the read unseen. A field of the wrong type
+/// fails the read.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct VmInfo {
     /// The VM state.
     pub state: VmState,
+    /// The devices of the VM.
+    pub config: VmConfig,
+}
+
+/// The devices of a VM, with the names of the Cloud Hypervisor v54
+/// `VmConfig` (`vmm/src/vm_config.rs`). CH leaves out a field with no
+/// device, and a missing list and `null` both read as no device.
+///
+/// The check of a restore refuses each kind held as a list of `Present`
+/// (decision CH50 rule 10), so the type reads no field of those kinds.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+pub struct VmConfig {
+    /// The disks, in the order of the guest (`/dev/vda` first).
+    #[serde(default, deserialize_with = "null_as_empty")]
+    pub disks: Vec<DiskConfig>,
+    /// The vsock device.
+    pub vsock: Option<VsockConfig>,
+    /// The network cards.
+    #[serde(default, deserialize_with = "null_as_empty")]
+    pub net: Vec<Present>,
+    /// The vhost-user devices of any type.
+    #[serde(default, deserialize_with = "null_as_empty")]
+    pub generic_vhost_user: Vec<Present>,
+    /// The virtio-fs shares.
+    #[serde(default, deserialize_with = "null_as_empty")]
+    pub fs: Vec<Present>,
+    /// The vfio-user devices.
+    #[serde(default, deserialize_with = "null_as_empty")]
+    pub user_devices: Vec<Present>,
+    /// The vDPA devices.
+    #[serde(default, deserialize_with = "null_as_empty")]
+    pub vdpa: Vec<Present>,
+    /// The VFIO devices.
+    #[serde(default, deserialize_with = "null_as_empty")]
+    pub devices: Vec<Present>,
+    /// The persistent-memory devices.
+    #[serde(default, deserialize_with = "null_as_empty")]
+    pub pmem: Vec<Present>,
+    /// The TPM.
+    pub tpm: Option<Present>,
+}
+
+/// One device of a kind that the check of a restore refuses (decision
+/// CH50 rule 10). The check needs only that the kind is present, so the
+/// type reads no field and takes an entry of any fields. The PR that
+/// first reads a field of the device adds it (decision CH44 rule 1).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Present {}
+
+/// A disk by its host end: a file or a vhost-user socket. CH v54 opens
+/// the socket and ignores `path` when `vhost_user` is set, and it allows
+/// both fields together (`device_manager.rs`, `DiskConfig::validate`).
+/// So the check of a restore refuses a disk with `vhost_user` or with a
+/// `vhost_socket`, whatever its path (decisions CH42 rule 2, CH50 rule
+/// 10).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct DiskConfig {
+    /// The host file.
+    pub path: Option<PathBuf>,
+    /// The disk is a vhost-user disk.
+    #[serde(default)]
+    pub vhost_user: bool,
+    /// The vhost-user socket.
+    pub vhost_socket: Option<String>,
+}
+
+/// The vsock device by its host socket.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct VsockConfig {
+    /// The host socket.
+    pub socket: PathBuf,
+}
+
+/// Reads a list that may be `null` as an empty list.
+fn null_as_empty<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<Vec<T>>::deserialize(deserializer).map(Option::unwrap_or_default)
 }
 
 /// Why a call of `ch-remote` failed.
@@ -208,7 +291,7 @@ impl ChRemote {
             .map(drop)
     }
 
-    /// Reads the state of the VM of `vm`.
+    /// Reads the state and the device set of the VM of `vm`.
     ///
     /// # Errors
     ///
