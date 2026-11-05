@@ -672,7 +672,7 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
     // Decision CH19 (6): the gate and the take out run under the table
     // lock. An Upgrade claims its door before its start reads the table,
     // so a door that opens after the gate finds the VM `Evicting` and gets
-    // `host_full` (Known gaps). The sleep closes no door.
+    // `host_full` (decision CH54 rule 4). The sleep closes no door.
     pub async fn sleep_idle(&self, now: Instant) -> Vec<SessionId> {
         let (mut tried, mut slept) = (HashSet::new(), Vec::new());
         loop {
@@ -1033,7 +1033,8 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
             Ok(Found::Runs(vsock)) => return self.dial(family, &vsock).await,
             Ok(Found::Free) => {}
             // Decision CH54 rule 4: an Upgrade of a session whose VM is
-            // being evicted gets `host_full`. The VM still holds its RAM.
+            // being evicted or put to sleep gets `host_full`. The VM still
+            // holds its RAM.
             Ok(Found::Evicting) => return Err(StartFault::HostFull),
             Err(message) => return Err(self.fault(family, sandbox, message).await),
         }

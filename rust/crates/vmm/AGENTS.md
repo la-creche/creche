@@ -401,10 +401,9 @@ dropped start, and an idle check that takes out one VM at a time.
    (`src/start.rs`). This departs from the order of plan PR L16, which
    put the check before the wait for `ControlReady`.
 4. Closed by decision CH54 rule 4: an Upgrade of a session whose VM is
-   being evicted gets `host_full` (`src/start.rs`). A door that an
-   eviction closes between the end of the start and the 101 gets
-   `host_full` the same way (`relay::Stopped::Evict`).
-   An Upgrade of a session whose VM goes to sleep gets `host_full` too.
+   being evicted or put to sleep gets `host_full` (`src/start.rs`). A
+   door that an eviction closes between the end of the start and the
+   101 gets `host_full` the same way (`relay::Stopped::Evict`).
 5. Plan gap (CONTRACT-QUESTION, plan PRs L11, L15, L19, L20): two
    production pieces have no plan PR. (1) No `impl StopVm for ColdBoot`
    exists, and the table is private, so the drop route has no hook over
@@ -440,15 +439,11 @@ dropped start, and an idle check that takes out one VM at a time.
     ready did not say `running` never sleeps and is never evicted until a
     reader of the control link calls `turn`. The lifecycle PR of gap 5
     adds that reader.
-11. CONTRACT-QUESTION (decisions CH2, CH36 G12, plan PR L18,
-    `src/sleep.rs`): no row names how often the idle timer checks. The
-    code checks every 30 s, a tenth of `IDLE_TIMEOUT`. So a VM sleeps
-    between 5 min and 5 min 30 s after its last use. A change costs the
-    constant `IDLE_CHECK`.
-12. CONTRACT-QUESTION (decisions CH2, CH8-7, CH50 rule 8, plan PR L18,
-    `src/sleep.rs`): no row names how often the sweep runs. The code
-    sweeps at the start of `sleep::run`, then each hour. A change costs
-    the constant `SWEEP_EVERY`.
+11. Closed by decision CH54 rule 5: the idle check runs every 30 s
+    (`sleep::IDLE_CHECK`). So a VM sleeps between 5 min and 5 min 30 s
+    after its last use.
+12. Closed by decision CH54 rule 5: the sweep runs at the start of
+    `sleep::run`, then each hour (`sleep::SWEEP_EVERY`).
 
 ## Caller duties
 
