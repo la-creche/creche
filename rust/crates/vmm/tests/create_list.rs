@@ -241,6 +241,60 @@ fn an_unknown_family_gets_unknown_family() {
     server.end();
 }
 
+/// A repeat of a create whose family `config/` is gone gets
+/// `unknown_family` 404, not the stored row (decision CH33 rule 3). The
+/// order is a CONTRACT-QUESTION against CH25 rule 2, Known gap 14 of
+/// `rust/crates/vmm/AGENTS.md`.
+#[test]
+fn a_repeat_create_after_the_family_went_gets_unknown_family() {
+    let server = Server::start("create-gone");
+    let create = vector("CreateSession", "a door session");
+    let (status, first) = server.ask("create", &create);
+    assert_eq!(status, 200, "{first}");
+
+    std::fs::remove_dir(server.dir.join("families/chat/config")).unwrap();
+    assert_eq!(
+        server.ask("create", &create),
+        (404, r#"{"code":"unknown_family"}"#.to_owned())
+    );
+    server.end();
+}
+
+/// A family read or a row write that fails for another reason gets
+/// `internal` 500 and makes no row. A family dir of mode 0o000 fails the
+/// read, and a rows dir of mode 0o500 fails the write. A root user opens
+/// any dir, so the test skips.
+#[test]
+fn a_failed_family_read_or_row_write_gets_internal() {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = |path: &std::path::Path, mode: u32| {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+    };
+    let server = Server::start("create-internal");
+    let internal = (500, r#"{"code":"internal"}"#.to_owned());
+    let create = vector("CreateSession", "a door session");
+
+    let family = server.dir.join("families/chat");
+    mode(&family, 0o000);
+    if std::fs::read_dir(&family).is_ok() {
+        mode(&family, 0o755);
+        server.end();
+        return;
+    }
+    let answer = server.ask("create", &create);
+    mode(&family, 0o755);
+    assert_eq!(answer, internal);
+
+    let rows = server.state.rows_dir();
+    mode(&rows, 0o500);
+    let answer = server.ask("create", &create);
+    mode(&rows, 0o755);
+    assert_eq!(answer, internal);
+
+    assert_eq!(server.page("chat", None).rows, []);
+    server.end();
+}
+
 /// A walk of rows with 4096-character cwds: serde_json writes U+0001 in 6
 /// bytes, so 50 rows pass the 1 MiB cap. The first page ends early with a
 /// `next`, each page fits the cap, and the walk gives each row once,
