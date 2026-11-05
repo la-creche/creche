@@ -2,6 +2,7 @@
 //! and the slot dirs with their `vm/<id>` links (decisions CH51, CH55).
 
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use creche_vmm_store::layout::{
@@ -269,4 +270,19 @@ fn unlink_keeps_the_slot() {
 
     assert!(fs::symlink_metadata(vm.path()).is_err());
     assert!(run.slot(slot(2)).join("serial.log").exists());
+}
+
+// The spike on spike/c3-slot-pool proved the link with 0700 dirs
+// (decisions CH51, CH55). Only the vmm user reaches the sockets.
+#[test]
+fn the_link_makes_owner_only_dirs() {
+    let temp = TempRun::new("mode");
+    let run = &temp.1;
+
+    run.link_vm(&id(), slot(9)).expect("the link");
+
+    for dir in [run.vms_dir(), run.slots_dir(), run.slot(slot(9))] {
+        let mode = fs::metadata(&dir).expect("the dir").permissions().mode();
+        assert_eq!(mode & 0o777, 0o700, "{}", dir.display());
+    }
 }
