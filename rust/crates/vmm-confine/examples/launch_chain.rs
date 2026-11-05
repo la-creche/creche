@@ -47,7 +47,7 @@ fn main() -> ExitCode {
         Some((role, _)) if role == MODE => launch::run()
             .map(|never| match never {})
             .map_err(Failure::from),
-        Some((role, rest)) if role == stage::MODE => stage::run_with(rest, &Stderr)
+        Some((role, rest)) if role == stage::MODE => stage::run_with_fake_attr_for_tests(rest, &Stderr)
             .map(|never| match never {})
             .map_err(Failure::from),
         Some((role, rest)) if role == "spawn" => spawn(rest),

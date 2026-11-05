@@ -27,9 +27,11 @@ table of the three vmm crates.
   4. It execs CH.
   Before step 1 it checks that the death signal is still SIGKILL. A
   launch needs `Launch::in_slot`, and the launch step refuses a launch
-  with no slot (`LaunchError::NoSlot`). `stage::ProcAttr` is the one
-  production exec attribute. Only the example of the process tests passes
-  another, because the CI test job loads no slot profile.
+  with no slot (`LaunchError::NoSlot`). `stage::run` is the one
+  production entry, and it writes the real exec attribute
+  (`stage::ProcAttr`). `stage::run_with_fake_attr_for_tests` skips the
+  slot label, so production must never call it. Only the example of the
+  process tests calls it, because the CI test job loads no slot profile.
 - The pid stays the same through the four execs: the launch step,
   `systemd-run`, the stage and CH (fact 80). The kernel keeps the death
   signal through an exec that is not a secure exec and changes no uid,
@@ -165,9 +167,15 @@ table of the three vmm crates.
 - Lifecycle does not use the stage yet. Until plan PR L16b, every launch
   fails closed with `LaunchError::NoSlot`. L16b must pass the slot with
   `Launch::in_slot`. `rust/crates/vmm/src/main.rs` routes only `launch`
-  today, so lifecycle must also route `stage::MODE` with its one plan
-  argument to `stage::run`. The plan entry of L16b names only
-  `start.rs`.
+  today. Plan PR L16c routes `stage::MODE` with its one plan argument to
+  `stage::run`, never to `stage::run_with_fake_attr_for_tests`. C18,
+  L16c and L16b merge in that order, back to back.
+- CONTRACT-QUESTION (decision CH55): no row allows a test seam past the
+  slot label. `stage::run_with_fake_attr_for_tests` and
+  `stage::ExecAttr` stay public for the example, with `doc(hidden)`. A
+  crate feature would remove both from production builds, but the
+  example then needs a dev-dependency of this crate on itself, which adds
+  a line to `rust/Cargo.lock`. That needs a lock-lane PR.
 - CONTRACT-QUESTION (decision CH55): no row says where the program of
   the launch stage comes from. The launch step takes the narrowest
   reading: the resolved path of `/proc/self/exe`, the same binary, with

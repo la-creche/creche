@@ -159,8 +159,10 @@ impl fmt::Display for StageError {
 impl std::error::Error for StageError {}
 
 /// The writer of the exec attribute. `ProcAttr` is the one production
-/// writer. Only the example of the process tests passes another, because
-/// the CI test job loads no slot profile and its payload is not CH.
+/// writer. Only the example of the process tests passes another, through
+/// `run_with_fake_attr_for_tests`, because the CI test job loads no slot
+/// profile and its payload is not CH. Production never implements it.
+#[doc(hidden)]
 pub trait ExecAttr {
     /// Writes `value` to the exec attribute in one write.
     ///
@@ -245,15 +247,35 @@ fn steps(steps: &mut impl Steps, stage: &Stage) -> StageError {
 ///
 /// Each step that fails gives its `StageError`.
 pub fn run(args: &[OsString]) -> Result<Infallible, StageError> {
-    run_with(args, &ProcAttr)
+    stage_with(args, &ProcAttr)
 }
 
-/// Runs the stage as `run` does, with `attr` as the exec attribute.
+/// Runs the stage as `run` does, with `attr` in place of the real exec
+/// attribute. A fake `attr` skips the slot label, and the stage still
+/// sets no_new_privs, applies Landlock and execs the payload. So the
+/// AppArmor layer of decision CH55 fails open. Production never calls
+/// this: `rust/crates/vmm/src/main.rs` routes `MODE` to `run` (plan PR
+/// L16c). Only the example `launch_chain` of the process tests calls it.
+///
+/// CONTRACT-QUESTION (decision CH55): no row allows a test seam past the
+/// label. The narrowest reading keeps it `doc(hidden)` with a name that
+/// says what it skips. A crate feature would remove it from production
+/// builds, but the example then needs a dev-dependency of this crate on
+/// itself, which adds a rust/Cargo.lock line. That needs a lock-lane PR.
 ///
 /// # Errors
 ///
 /// Each step that fails gives its `StageError`.
-pub fn run_with(args: &[OsString], attr: &dyn ExecAttr) -> Result<Infallible, StageError> {
+#[doc(hidden)]
+pub fn run_with_fake_attr_for_tests(
+    args: &[OsString],
+    attr: &dyn ExecAttr,
+) -> Result<Infallible, StageError> {
+    stage_with(args, attr)
+}
+
+/// The stage with `attr` as the exec attribute.
+fn stage_with(args: &[OsString], attr: &dyn ExecAttr) -> Result<Infallible, StageError> {
     if !cfg!(target_os = "linux") {
         return Err(StageError::NotLinux);
     }
