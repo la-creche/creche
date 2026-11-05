@@ -107,6 +107,31 @@ and turn events set `turn_running` (decision CH43 rule 8).
 `ControlLink::stop` sends the graceful stop
 `{"stop":{}}` (decision CH19 (3)).
 
+`ControlLink::split` splits a link after `ControlReady`: a reader of the
+turn events and a `StopSender` for the graceful stop (plan PR L18b).
+`ColdBoot` splits the link when a start commits its VM. The table keeps
+the sender, and one task per VM runs the reader. The reader passes each
+event to `ControlState::turn` and writes each turn end with
+`Rows::turn_end` in `spawn_blocking`, as for a ready (decision CH32 rule
+4). A refused line ends the reader (decision CH43 rule 2). So does the
+close of the link, or an event of a replaced link. The reader holds the
+only strong handle of the stream, so its end closes the link. The sender
+then sends nothing, and a stop skips the graceful step (decision CH50
+rule 3). A VM whose link closed has no control link for the sleep gate,
+so it never sleeps and is never evicted.
+
+Decision CH54 rule 6: a refused line is a guest fault. The reader logs
+the line with the session id (`ControlLink::next_event` gives its first
+`REFUSED_LOG_CAP` bytes, 512). Then it stops the VM at once through the
+stop path of the `StopVm` hook (`Stopper`). The link is gone, so the
+stop sends SIGTERM, then SIGKILL. The VM leaves the table and frees its
+RAM, so the next start of the session cold-boots (decision CH19 (5)).
+A reader whose link is no longer current stops nothing. The stop names
+the link too (`Vm::link_id`): it takes only the VM of that link, and a
+later VM of the session runs on. `tests/start.rs` proves the events, the
+row write, the gate, the stop after a refused line, a stale reader, and
+a new VM of the session that the old reader leaves alone.
+
 ## The acp route
 
 `src/handlers/acp.rs` admits or refuses an `acp` Upgrade before 101, in
@@ -313,6 +338,14 @@ admission:
    CH50 rule 4), and the start gets `host_full`. The VMs left in the
    list go back too.
 
+Decision CH54 rule 6 binds a retire too, for an eviction and for an idle
+sleep. A VM whose control link closed after its gate takes no snapshot.
+A VM whose link closed on a refused line during the take or the stop
+(`ControlState::refused`) gets its take consumed with `claim`, so the
+next start cold-boots (decision CH19 (5)). Either VM stops and frees its
+RAM, but an idle sleep does not count it as slept. `tests/start.rs`
+proves a refused line during a take.
+
 The list runs in a task of its own (`tokio::spawn`), and the start
 waits for it. hyper drops the start future when the client hangs up
 before 101. The task runs on, so no take or stop ends half way, and no
@@ -429,11 +462,9 @@ launch) and a stop that waits for an idle sleep whose retire fails.
    the start and the 101 gets `host_full` the same way
    (`relay::Stopped::Evict`). Under the mark of a drop no such Upgrade
    reaches the hook (decision CH34 rule 6).
-5. Plan gap (plan PRs L11, L15, L19, L20): plan PR L18b owns two
-   production pieces that no earlier plan PR named. (1) `impl StopVm
-   for ColdBoot` is done (see "The stop hook"). (2) No task runs a
-   per-VM loop over `ControlLink::event` and `ControlState::turn` yet.
-   The next PR of L18b adds it.
+5. Closed by plan PR L18b: the two production pieces that no earlier
+   plan PR named. `impl StopVm for ColdBoot` is "The stop hook", and the
+   turn reader is in "The control link".
 6. CONTRACT-QUESTION (decision CH50 rule 10, plan PR L17,
    `src/restore.rs`): the plan reads the device set "through ch-remote
    info (D8)". `ChRemote::info` returns `VmInfo`, which holds only
@@ -455,12 +486,9 @@ launch) and a stop that waits for an idle sleep whose retire fails.
    with no guest sync. `ChTools` takes none (gap 6), so the vmm stops
    each evicted or idle VM with the graceful stop until the store PR of gap 6
    lands.
-10. No code reads the turn events of a VM yet (gap 5, part 2), so no
-    code calls `ControlState::turn`, and `turn_seen` and the last turn
-    time stay unset (decisions CH43 rule 8, CH50 rule 5). A VM whose last
-    ready did not say `running` never sleeps and is never evicted until a
-    reader of the control link calls `turn`. The lifecycle PR of gap 5
-    adds that reader.
+10. Closed by plan PR L18b: the turn reader calls `ControlState::turn`
+    for each event, so `turn_seen` and the last turn time follow the
+    guest (decisions CH43 rule 8, CH50 rule 5).
 11. Closed by decision CH54 rule 5: the idle check runs every 30 s
     (`sleep::IDLE_CHECK`). So a VM sleeps between 5 min and 5 min 30 s
     after its last use.

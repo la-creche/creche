@@ -60,12 +60,14 @@ use creche_vmm_store::session_disk::SessionDisks;
 use creche_vmm_store::sleep_gate::Activity;
 use creche_vmm_store::stale::remove_stale;
 use creche_wire::{FamilyName, FamilyShape, SandboxFlavor, SessionId, SessionRow};
+use tokio::net::UnixStream;
 use tokio::sync::{RwLock, watch};
 use tokio::task::spawn_blocking;
 use tokio::time::sleep;
 
 use crate::control::{
-    Change, ControlLink, ControlState, DIAL_PAUSE, LinkId, READY_WAIT, open, wall_time,
+    Change, ControlError, ControlLink, ControlState, DIAL_PAUSE, EventEnd, LinkId, READY_WAIT,
+    StopSender, open, wall_time,
 };
 use crate::handlers::acp::{StartFault, StartVm};
 use crate::handlers::drop::{StopVm, VmStopFailed};
@@ -174,7 +176,11 @@ struct Vm<P> {
     /// The configured guest RAM in bytes, for admission.
     guest_ram: u64,
     /// The control link after `ControlReady`. `None` after a failed stop.
-    link: Option<ControlLink>,
+    link: Option<StopSender>,
+    /// The identity of that link, so its reader stops only this VM
+    /// (decision CH54 rule 6). `None` for a VM whose start never
+    /// committed it.
+    link_id: Option<LinkId>,
     /// The snapshot key of the VM. `None` after a failed stop.
     key: Option<SnapshotKey>,
     /// The last use, for the eviction order (decision CH50 rule 5).
@@ -283,14 +289,16 @@ struct Pending<P: VmProcess> {
 }
 
 impl<P: VmProcess> Pending<P> {
-    /// Makes the VM an entry of the table with its control link.
-    fn commit(mut self, link: ControlLink) {
+    /// Makes the VM an entry of the table with its control link `link`,
+    /// whose identity is `link_id`.
+    fn commit(mut self, link: StopSender, link_id: LinkId) {
         if let Some(process) = self.process.take() {
             let vm = Vm {
                 process,
                 run: self.run.clone(),
                 guest_ram: self.guest_ram,
                 link: Some(link),
+                link_id: Some(link_id),
                 key: self.key.take(),
                 last_use: Instant::now(),
             };
@@ -316,6 +324,7 @@ impl<P: VmProcess> Drop for Pending<P> {
                     run: self.run.clone(),
                     guest_ram: self.guest_ram,
                     link: None,
+                    link_id: None,
                     key: None,
                     last_use: Instant::now(),
                 };
@@ -378,12 +387,27 @@ async fn detached(job: impl Future<Output = bool> + Send + 'static) -> bool {
     tokio::spawn(job).await.unwrap_or(false)
 }
 
+/// How a retire ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Retired {
+    /// The VM still holds its RAM: a turn runs, or the stop failed
+    /// (decision CH50 rule 4).
+    Kept,
+    /// The VM stopped after its snapshot or its graceful stop.
+    Slept,
+    /// The VM stopped and left no snapshot to restore: its control link
+    /// closed, or it refused a line (decision CH54 rule 6).
+    Stopped,
+}
+
 /// The owned parts of a retire, so it runs in a task of its own.
 #[derive(Debug, Clone)]
 struct Retirer<A> {
     api: Arc<A>,
     /// Each take holds it to read, and the sweep holds it to write.
     takes: Arc<RwLock<()>>,
+    /// The lock of the claims, for the claim of a faulted take.
+    claims: Arc<Mutex<()>>,
     in_use: Arc<Mutex<InUse>>,
     relays: Relays,
     control: Arc<Mutex<ControlState>>,
@@ -404,7 +428,7 @@ impl<A: ChApi> Retirer<A> {
         for eviction in evictions {
             if fits {
                 self.relays.close(&eviction.id).await;
-                fits = self.retire(eviction).await;
+                fits = self.retire(eviction).await != Retired::Kept;
             } else {
                 eviction.put_back();
             }
@@ -412,27 +436,37 @@ impl<A: ChApi> Retirer<A> {
         fits
     }
 
-    /// Retires the idle VM of `eviction` (decisions CH2, CH19 (6)).
+    /// Retires the idle VM of `eviction` (decisions CH2, CH19 (6)). True
+    /// when it slept.
     async fn sleep<P: VmProcess>(self, eviction: Eviction<P>) -> bool {
-        self.retire(eviction).await
+        self.retire(eviction).await == Retired::Slept
     }
 
     /// Snapshots the VM of `eviction`, then stops it (decision CH19 (6)).
     /// The take ends CH, so the stop finds it gone. With no device read
     /// (`ChApi::READS_DEVICES`) it takes no snapshot and sends the graceful
-    /// stop. False when the VM still holds its RAM: a turn runs, or the
-    /// stop failed (decision CH50 rule 4).
-    async fn retire<P: VmProcess>(&self, mut eviction: Eviction<P>) -> bool {
+    /// stop. `Kept` when the VM still holds its RAM: a turn runs, or the
+    /// stop failed (decision CH50 rule 4). `Stopped` when the VM faulted
+    /// (decision CH54 rule 6).
+    async fn retire<P: VmProcess>(&self, mut eviction: Eviction<P>) -> Retired {
         let id = eviction.id.clone();
         let key = eviction.vm.as_ref().and_then(|vm| vm.key.clone());
         let turn = self.control().turn_running(&id);
         let (Some(key), false) = (key, turn) else {
             eviction.put_back();
-            return false;
+            return Retired::Kept;
         };
         let Some(vm) = eviction.vm.as_mut() else {
-            return false;
+            return Retired::Kept;
         };
+        // Decision CH54 rule 6: a refused line is a guest fault, and the
+        // next start cold-boots. A link that closed after the gate leaves
+        // the VM with no control link, so it takes no snapshot either. The
+        // stop below then sends SIGTERM, then SIGKILL.
+        let link = vm.link_id;
+        let refused =
+            |retirer: &Self| link.is_some_and(|link| retirer.control().refused(&id, link));
+        let open = vm.link.as_ref().is_some_and(StopSender::is_open) && !refused(self);
         let (api, run, session) = (
             Arc::clone(&self.api),
             vm.run.clone(),
@@ -447,10 +481,12 @@ impl<A: ChApi> Retirer<A> {
         // power cut left it. So with no device read the VM takes no
         // snapshot, and the stop below is the graceful one (decision CH19
         // (3)): guest init syncs and powers off.
-        if A::READS_DEVICES {
+        let took = open && A::READS_DEVICES;
+        if took {
             // The blocking step owns the read lock, so the lock lasts as
             // long as the take (`retention::sweep`).
             let take = Arc::clone(&self.takes).read_owned().await;
+            let key = key.clone();
             let taken = blocking(move || {
                 let _take = take;
                 api.snapshot(&run, &session, &key)
@@ -460,16 +496,69 @@ impl<A: ChApi> Retirer<A> {
                 eprintln!("vmm: the snapshot of {id} failed: {message}");
             }
         }
-        if let Err(error) = stop(vm.link.as_ref(), &mut vm.process, &vm.run).await {
+        let stopped = stop(vm.link.as_ref(), &mut vm.process, &vm.run).await;
+        // A refused line that arrived during the take or the stop makes
+        // the take one of a faulted guest, so the claim consumes it. A
+        // line that the reader reads after this check is not seen here.
+        let faulted = !open || refused(self);
+        if took && faulted {
+            self.discard(&id, key).await;
+        }
+        if let Err(error) = stopped {
             eprintln!("vmm: the VM of {id} did not stop after its snapshot: {error}");
             vm.link = None;
             eviction.put_back();
-            return false;
+            return Retired::Kept;
         }
         forget_link(&self.control, &id);
         eviction.done(&self.in_use);
-        true
+        if faulted {
+            eprintln!("vmm: the VM of {id} faulted during its retire, so it keeps no snapshot");
+            Retired::Stopped
+        } else {
+            Retired::Slept
+        }
     }
+
+    /// Consumes the newest snapshot of `id`, the take of a faulted guest,
+    /// so the next start cold-boots (decisions CH19 (5), CH54 rule 6). It
+    /// holds the lock of the claims, as a start does. A failed claim is
+    /// logged.
+    async fn discard(&self, id: &SessionId, key: SnapshotKey) {
+        let (claims, session) = (Arc::clone(&self.claims), self.state.session(id));
+        let claimed = blocking(move || {
+            let _claims = lock_claims(&claims);
+            match check_newest(&session, &key).map_err(|error| error.to_string())? {
+                KeyCheck::Keyed(keyed) => claim(keyed)
+                    .map(|_unused| ())
+                    .map_err(|error| error.to_string()),
+                KeyCheck::NoSnapshot | KeyCheck::Dropped { .. } => Ok(()),
+            }
+        })
+        .await;
+        if let Err(message) = claimed {
+            eprintln!("vmm: the snapshot of the faulted VM of {id} was not consumed: {message}");
+        }
+    }
+}
+
+/// Takes the VM of `session` out of `slots`, the locked `table`, and
+/// marks its slot with `mark` of its guest RAM, so its RAM still counts.
+fn take_out<P: VmProcess>(
+    table: &Table<P>,
+    slots: &mut HashMap<SessionId, Slot<P>>,
+    session: SessionId,
+    mark: impl FnOnce(u64) -> Slot<P>,
+) -> Option<Eviction<P>> {
+    let Some(Slot::Running(vm)) = slots.remove(&session) else {
+        return None;
+    };
+    slots.insert(session.clone(), mark(vm.guest_ram));
+    Some(Eviction {
+        table: Arc::clone(table),
+        id: session,
+        vm: Some(vm),
+    })
 }
 
 /// Marks the current control link of `id` closed: its VM stopped.
@@ -603,7 +692,8 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
             door_open: door == Door::Open,
             last_use,
         };
-        let ready = vm.link.is_some() && vm.key.is_some();
+        // A link whose reader ended is closed (decision CH43 rule 2).
+        let ready = vm.link.as_ref().is_some_and(StopSender::is_open) && vm.key.is_some();
         Gates {
             last_use: if door == Door::Open { now } else { last_use },
             evict: ready && activity.may_evict(),
@@ -634,25 +724,6 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         }
     }
 
-    /// Takes the VM of `session` out of `table` and marks its slot with
-    /// `mark` of its guest RAM, so its RAM still counts.
-    fn take_out(
-        &self,
-        table: &mut HashMap<SessionId, Slot<L::Process>>,
-        session: SessionId,
-        mark: impl FnOnce(u64) -> Slot<L::Process>,
-    ) -> Option<Eviction<L::Process>> {
-        let Some(Slot::Running(vm)) = table.remove(&session) else {
-            return None;
-        };
-        table.insert(session.clone(), mark(vm.guest_ram));
-        Some(Eviction {
-            table: Arc::clone(&self.table),
-            id: session,
-            vm: Some(vm),
-        })
-    }
-
     /// Reserves `guest_ram` for `id` when admission admits it, and takes
     /// out each VM that admission evicts first, in its order.
     fn admit(&self, id: &SessionId, guest_ram: u64, free: u64) -> Option<Admitted<L::Process>> {
@@ -672,7 +743,7 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         };
         let evictions = evict
             .into_iter()
-            .filter_map(|session| self.take_out(&mut table, session, Slot::Evicting))
+            .filter_map(|session| take_out(&self.table, &mut table, session, Slot::Evicting))
             .collect();
         table.insert(id.clone(), Slot::Starting(guest_ram));
         let pending = Pending {
@@ -693,6 +764,7 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         Retirer {
             api: Arc::clone(&self.api),
             takes: Arc::clone(&self.takes),
+            claims: Arc::clone(&self.claims),
             in_use: Arc::clone(&self.in_use),
             relays: self.relays.clone(),
             control: Arc::clone(&self.control),
@@ -728,7 +800,7 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
                     // A VM whose retire fails goes back and passes its gate
                     // again, so each VM gets one try per pass.
                     tried.insert(session.clone());
-                    self.take_out(&mut table, session, Slot::Evicting)
+                    take_out(&self.table, &mut table, session, Slot::Evicting)
                 })
             };
             let Some(eviction) = next else {
@@ -872,39 +944,116 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
             .await
             .map_err(|error| (sandbox, format!("resuming the VM: {error}")))
     }
+}
 
-    /// Writes the turn end of `change` to the row of `id` (decision CH32
-    /// rule 4). A failed write is logged: the next `ControlReady` carries
-    /// the end again.
-    async fn turn_end(&self, id: &SessionId, change: Change) {
-        let Change::Applied(Some(end)) = change else {
-            return;
-        };
-        let (rows, id) = (Arc::clone(&self.rows), id.clone());
-        let written = spawn_blocking(move || {
-            let mut rows = rows.lock().map_err(|_| ())?;
-            rows.turn_end(&id, &end).map(|_| ()).map_err(|_| ())
-        })
-        .await;
-        if !matches!(written, Ok(Ok(()))) {
-            eprintln!("vmm: the turn end of the first ready was not written");
-        }
+/// Writes the turn end of `change` to the row of `id` in `rows`
+/// (decision CH32 rule 4): `updated_at`, and the title only while the row
+/// has none. A failed write is logged: the next `ControlReady` carries the
+/// end again.
+async fn turn_end(rows: &Arc<Mutex<Rows>>, id: &SessionId, change: Change) {
+    let Change::Applied(Some(end)) = change else {
+        return;
+    };
+    let (rows, session) = (Arc::clone(rows), id.clone());
+    let written = spawn_blocking(move || {
+        let mut rows = rows.lock().map_err(|_| ())?;
+        rows.turn_end(&session, &end).map(|_| ()).map_err(|_| ())
+    })
+    .await;
+    if !matches!(written, Ok(Ok(()))) {
+        eprintln!("vmm: the turn end of {id} was not written");
     }
 }
 
-impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
+/// Reads the turn events of `events`, the control link `link` of the VM
+/// of `id`, until the link ends (plan PR L18b, decision CH21). Each event
+/// goes to `ControlState::turn`, which sets `turn_running` and `turn_seen`
+/// (decision CH43 rule 8) and the time of the last use (decision CH50 rule
+/// 5). Each turn end goes to the row (decision CH32 rule 4). The end of
+/// the reader drops the stream, so the link closes, and a stop then skips
+/// the graceful step (decision CH50 rule 3). An event of a replaced link
+/// ends the reader too.
+///
+/// A refused line ends the reader (decision CH43 rule 2). It is a guest
+/// fault (decision CH54 rule 6): the reader logs the line with `id`, and
+/// `stopper` stops the VM of `link` at once. The link is gone, so the
+/// stop sends SIGTERM, then SIGKILL. The VM leaves the table, so the next
+/// start of the session cold-boots (decision CH19 (5)). A later VM of the
+/// session has another link, so the stop leaves it alone.
+async fn read_turns<P: VmProcess>(
+    mut events: ControlLink<Arc<UnixStream>>,
+    (id, link): (SessionId, LinkId),
+    stopper: Stopper<P>,
+    rows: Arc<Mutex<Rows>>,
+) {
+    let control = Arc::clone(&stopper.control);
+    let lock = || control.lock().unwrap_or_else(PoisonError::into_inner);
+    let refused = loop {
+        let event = match events.next_event().await {
+            Ok(event) => event,
+            Err(EventEnd::Error(ControlError::Ended)) => break false,
+            Err(EventEnd::Error(error)) => {
+                eprintln!("vmm: the control link of {id} closed: {error:?}");
+                break false;
+            }
+            Err(EventEnd::Refused(line)) => {
+                let line = String::from_utf8_lossy(&line);
+                eprintln!("vmm: the guest of {id} sent a refused line: {line:?}");
+                break true;
+            }
+        };
+        let change = lock().turn(&id, link, &event);
+        if change == Change::Stale {
+            break false;
+        }
+        turn_end(&rows, &id, change).await;
+    };
+    drop(events);
+    // A link that is no longer current belongs to a VM that stopped or
+    // to a replaced link, so the reader stops nothing.
+    let current = if refused {
+        lock().refuse(&id, link)
+    } else {
+        lock().closed(&id, link)
+    };
+    if !(refused && current) {
+        return;
+    }
+    if let Err(VmStopFailed { pid, error }) = stopper.stop(&id, Some(link)).await {
+        eprintln!("vmm: the VM of {id} (pid {pid}) did not stop after a refused line: {error}");
+    }
+}
+
+/// The owned parts of a stop, so the reader of a control link stops its
+/// VM through the same path as the `StopVm` hook (decision CH54 rule 6).
+#[derive(Debug)]
+struct Stopper<P> {
+    table: Table<P>,
+    in_use: Arc<Mutex<InUse>>,
+    control: Arc<Mutex<ControlState>>,
+}
+
+impl<P: VmProcess> Stopper<P> {
     /// What the slot of `id` holds for a stop. A VM that runs leaves the
-    /// table under a `Stopping` slot, so its RAM still counts.
-    fn hold_for_stop(&self, id: &SessionId) -> Held<L::Process> {
+    /// table under a `Stopping` slot, so its RAM still counts. With
+    /// `Some(link)`, only the VM of the control link `link` counts.
+    fn hold(&self, id: &SessionId, link: Option<LinkId>) -> Held<P> {
         let mut table = lock(&self.table);
         match table.get(id) {
             None => Held::Free,
+            // Decision CH54 rule 6: the reader of a refused line stops only
+            // its own VM. A start takes the slot only after that VM left
+            // the table, and a VM of another link is not its own.
+            Some(Slot::Starting(_)) if link.is_some() => Held::Free,
+            Some(Slot::Running(vm)) if link.is_some_and(|link| vm.link_id != Some(link)) => {
+                Held::Free
+            }
             Some(Slot::Starting(_) | Slot::Evicting(_)) => Held::Busy,
             Some(Slot::Stopping(_, outcome)) => Held::Joins(outcome.clone()),
             Some(Slot::Running(_)) => {
                 let (sender, outcome) = watch::channel(None);
                 let mark = |ram| Slot::Stopping(ram, outcome);
-                match self.take_out(&mut table, id.clone(), mark) {
+                match take_out(&self.table, &mut table, id.clone(), mark) {
                     Some(eviction) => Held::Takes(Box::new(eviction), sender),
                     None => Held::Free,
                 }
@@ -916,7 +1065,7 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
     /// first (decision CH19 (3)). A VM that did not stop goes back with no
     /// link, so admission counts its RAM (decision CH50 rule 4). A drop of
     /// this future puts the VM back too, after SIGKILL (`Eviction`).
-    async fn stop_taken(&self, mut eviction: Eviction<L::Process>) -> Result<(), VmStopFailed> {
+    async fn stop_taken(&self, mut eviction: Eviction<P>) -> Result<(), VmStopFailed> {
         let Some(vm) = eviction.vm.as_mut() else {
             return Ok(());
         };
@@ -935,21 +1084,20 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
             }
         }
     }
-}
 
-impl<L: Launcher, A: ChApi> StopVm for ColdBoot<L, A> {
-    /// Stops the VM of `id` (plan PR L18b, decisions CH19 (3), CH33 rule
-    /// 11). A start or a retire that holds the slot ends first, so the
-    /// stop finds the VM that the start committed or the retire put back.
-    /// A stop that finds a stop of the same VM waits for it and returns
-    /// its outcome (caller duty 6 of `AGENTS.md`).
+    /// Stops the VM of `id`. With `Some(link)`, it stops only the VM of
+    /// the control link `link`, for the reader of that link (decision
+    /// CH54 rule 6). A start or a retire that holds the slot ends first,
+    /// so the stop finds the VM that the start committed or the retire put
+    /// back. A stop that finds a stop of the same VM waits for it and
+    /// returns its outcome (caller duty 6 of `AGENTS.md`).
     // A start under the mark of a drop ends before the stop (plan PR L15),
     // but its launch step can outlive a dropped start future. So the stop
     // polls a `Starting` slot until the launch output kills the VM and
     // puts it in the table.
-    async fn stop(&self, id: &SessionId) -> Result<(), VmStopFailed> {
+    async fn stop(&self, id: &SessionId, link: Option<LinkId>) -> Result<(), VmStopFailed> {
         loop {
-            match self.hold_for_stop(id) {
+            match self.hold(id, link) {
                 Held::Free => return Ok(()),
                 Held::Busy => sleep(SLOT_POLL).await,
                 Held::Joins(mut outcome) => {
@@ -970,8 +1118,30 @@ impl<L: Launcher, A: ChApi> StopVm for ColdBoot<L, A> {
     }
 }
 
+impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
+    /// The owned parts of a stop, for the reader of a control link.
+    fn stopper(&self) -> Stopper<L::Process> {
+        Stopper {
+            table: Arc::clone(&self.table),
+            in_use: Arc::clone(&self.in_use),
+            control: Arc::clone(&self.control),
+        }
+    }
+}
+
+impl<L: Launcher, A: ChApi> StopVm for ColdBoot<L, A> {
+    /// Stops the VM of `id` (plan PR L18b, decisions CH19 (3), CH33 rule
+    /// 11). A start or a retire that holds the slot ends first, so the
+    /// stop finds the VM that the start committed or the retire put back.
+    /// A stop that finds a stop of the same VM waits for it and returns
+    /// its outcome (caller duty 6 of `AGENTS.md`).
+    async fn stop(&self, id: &SessionId) -> Result<(), VmStopFailed> {
+        self.stopper().stop(id, None).await
+    }
+}
+
 /// The fault text of a failed dial of guest port 1201.
-fn dial_text(error: crate::control::ControlError) -> String {
+fn dial_text(error: ControlError) -> String {
     format!("dialing guest port 1201: {error:?}")
 }
 
@@ -1216,7 +1386,7 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
             }
         };
         let change = self.control().ready(id, link, ready);
-        self.turn_end(id, change).await;
+        turn_end(&self.rows, id, change).await;
         self.book(family, FaultBook::clear).await;
 
         // Decision CH54 rule 2: the deny check runs after `ControlReady`
@@ -1248,7 +1418,12 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
                     .await);
             }
         };
-        pending.commit(control);
+        // The reader owns the stream, and the table keeps the sender of the
+        // graceful stop (decision CH19 (3)).
+        let (sender, events) = control.split();
+        let (stopper, rows) = (self.stopper(), Arc::clone(&self.rows));
+        tokio::spawn(read_turns(events, (id.clone(), link), stopper, rows));
+        pending.commit(sender, link);
         Ok(acp)
     }
 }
