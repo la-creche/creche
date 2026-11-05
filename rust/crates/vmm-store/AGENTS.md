@@ -17,6 +17,18 @@ The second file has the table of the three vmm crates.
   `ch-remote` call comes from its caller. This crate names no value. A
   pause takes about 4 ms (fact 72) and a 16 GiB snapshot about 12 s
   (gap G16).
+- Decisions CH42 rule 2 and CH50 rule 10 (PR D15, `ch_remote.rs`):
+  `ChRemote::info` returns the state and the device set of the VM: the
+  disks, the vsock and each kind that the check of a restore refuses.
+  Each list has its own struct with the names of the CH v54
+  `VmConfig`. A missing list and `null` read as no device. The type
+  skips every other field, so a device kind that it does not name passes
+  the read unseen. A new kind needs a field here and in the check
+  (plan PR D15). Each refused kind is a list of `Present`, which reads
+  no field. A disk keeps `path`, `vhost_user` and `vhost_socket`. CH
+  v54 opens the socket and ignores the path of a vhost-user disk, so
+  the L17 check must refuse a disk with `vhost_user` or with a
+  `vhost_socket`, even on the path of a fixed slot.
 - Decision CH44 rule 4 (PR D9, `snapshot.rs`): when a snapshot step
   fails, `Snapshotter::take` removes its temp dir and changes nothing
   else. It resumes nothing and stops nothing more. The caller decides.
