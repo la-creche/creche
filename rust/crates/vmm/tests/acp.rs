@@ -559,3 +559,35 @@ fn a_drop_during_the_start_gets_not_found() {
     eventually(|| server.guest.lock().unwrap().closes == 1);
     server.end();
 }
+
+/// An eviction that closes the door during the dial, after the start,
+/// gets `host_full` before 101. The session still exists, so the answer
+/// is not `not_found` (decisions CH19 (6), CH21-3, CH33 rule 4).
+#[test]
+fn an_eviction_during_the_dial_gets_host_full() {
+    let server = Server::start("acp-dial-evict");
+    server.guest.lock().unwrap().answer = Answer::Hold;
+    let id: SessionId = A.parse().unwrap();
+    let close = spawn({
+        let (guest, relays, id) = (server.guest.clone(), server.relays.clone(), id.clone());
+        move || {
+            eventually(|| guest.lock().unwrap().connects.len() == 1);
+            // The close stops the claim at once, then waits for its end.
+            let closer = spawn({
+                let relays = relays.clone();
+                let id = id.clone();
+                move || {
+                    let runtime = Builder::new_current_thread().build().unwrap();
+                    runtime.block_on(relays.close(&id));
+                }
+            });
+            eventually(|| relays.door(&id) != Door::Open);
+            guest.lock().unwrap().answer = Answer::Echo;
+            closer
+        }
+    });
+    server.refused("chat", A, AcpError::HostFull {});
+    close.join().unwrap().join().unwrap();
+    eventually(|| server.guest.lock().unwrap().closes == 1);
+    server.end();
+}

@@ -9,6 +9,7 @@ pub mod handlers;
 pub mod relay;
 pub mod restore;
 pub mod server;
+pub mod sleep;
 pub mod start;
 pub mod stop;
 
