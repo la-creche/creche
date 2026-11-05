@@ -208,6 +208,22 @@ fn the_catalog_defaults_are_the_design_values() {
     // user unit.
     let state = "${AGENT_OPERATOR_HOME}/.local/state/creche-vmm";
     assert_eq!(default_of(STATE_ROOT), Some(state));
+    // Each other path key of the catalog. The family root and the faults
+    // root are a contract with caregiver: paths.py names FAMILIES_DIR
+    // "families" (CH36 G6) and FAULTS_DIR "faults" (CH36 G5). Gap G9
+    // checked /usr/bin/zstd on Hyperion.
+    let paths = [
+        (FAMILY_ROOT, "${CAREGIVER_STATE_ROOT}/families"),
+        (FAULTS_ROOT, "${CAREGIVER_STATE_ROOT}/faults"),
+        (CH, "${AGENT_INSTALL_ROOT}/vmm/bin/cloud-hypervisor"),
+        (CH_REMOTE, "${AGENT_INSTALL_ROOT}/vmm/bin/ch-remote"),
+        (ZSTD, "/usr/bin/zstd"),
+        (MKE2FS, "/usr/sbin/mke2fs"),
+        (FALLOCATE, "/usr/bin/fallocate"),
+    ];
+    for (key, expected) in paths {
+        assert_eq!(default_of(key), Some(expected), "{key}");
+    }
     // Gap G14: the design values of the cap, the floor and the budget.
     let mut env = good();
     for key in SIZES {
