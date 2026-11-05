@@ -119,8 +119,11 @@ table of the three vmm crates.
   (decision CH50 rule 11). The test `tests/slot_profile.rs` holds the
   committed file equal to the generator. After a change, run
   `CRECHE_SLOT_PROFILES=write cargo test -p creche-vmm-confine --test
-  slot_profile` in rust/ and commit the file. Each change of the file
-  needs a sudo reload on the host by David (design section 6.1 step 2).
+  slot_profile` in rust/ and commit the file. David installs it at
+  `/etc/apparmor.d/opt.components.vmm.bin.cloud-hypervisor` (design
+  section 6.1 step 1, decision CH36 gap G28 option A). Each change of
+  the file needs a sudo reload on the host by David (design section 6.1
+  step 2).
 - The process tests need Landlock ABI 4 and `/dev/kvm`. The host and the
   ubuntu-24.04 runner have both (facts 77, 79).
 - A test that boots CH has a name that holds `kvm_` and carries

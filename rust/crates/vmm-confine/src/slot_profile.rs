@@ -18,8 +18,10 @@
 //! 3. Each run dir rule names `slot/<k>/` of the run root.
 //!
 //! `render_file` makes `apparmor/cloud-hypervisor-slots.profile`, the file
-//! that David installs (design section 6.1 step 1). The test
-//! `tests/slot_profile.rs` holds the committed file equal to it.
+//! that David installs (design section 6.1 step 1). Its install path is
+//! the decided `/etc/apparmor.d/opt.components.vmm.bin.cloud-hypervisor`
+//! (gap G28 option A of decision CH36). The test `tests/slot_profile.rs`
+//! holds the committed file equal to it.
 
 use creche_vmm_store::layout::Slot;
 
@@ -58,13 +60,15 @@ const HEAD: &str = "\
 # `exec creche-ch-slot-<k>` to /proc/self/attr/apparmor/exec and then
 # execs CH, so each CH runs under the label of its slot (decision CH55).
 #
-# Install (design section 6.1 step 1). David runs it on the host once,
-# and again after each change of this file:
+# Install (design section 6.1 step 1, gap G28 option A of decision CH36).
+# David runs it on the host once, and again after each change of this
+# file:
 #   sudo install -m 0644 rust/crates/vmm-confine/apparmor/cloud-hypervisor-slots.profile \\
-#     /etc/apparmor.d/creche-ch-slots
-#   sudo apparmor_parser -r /etc/apparmor.d/creche-ch-slots
-# Check with `sudo aa-status | grep creche-ch-slot`. Agents never install
-# it on the host.
+#     /etc/apparmor.d/opt.components.vmm.bin.cloud-hypervisor
+#   sudo apparmor_parser -r /etc/apparmor.d/opt.components.vmm.bin.cloud-hypervisor
+# Check with `sudo aa-status | grep creche-ch-slot`, because the labels
+# are the slot labels (decision CH55). Agents never install it on the
+# host.
 ";
 
 /// The label of `slot`: `creche-ch-slot-<k>` (decision CH55).
