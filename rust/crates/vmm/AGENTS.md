@@ -384,14 +384,11 @@ dropped start, and an idle check that takes out one VM at a time.
 
 ## Known gaps
 
-1. CONTRACT-QUESTION (plan PR L15, `src/handlers/drop.rs`): a drop
-   waits for a start that its mark overlapped, and the start has no
-   outer bound (decision CH50 rule 1). So a drop that overlaps a long
-   start can pass the "about 35 s" of decision CH33 rule 11 and the 60 s
-   wait of the client (decision CH34 rule 5). The client retries, and
-   the retry waits for the same start. No row bounds this wait. The
-   narrowest reading waits, because a drop must not remove the files of
-   a VM that a start then boots.
+1. Closed by decision CH54 rule 1: a drop waits for a start that its
+   mark overlapped, with no bound (`src/handlers/drop.rs`). So a drop
+   may outlast the 60 s wait of the client (decision CH34 rule 5). The
+   drop runs in its own task, so a client that hangs up cannot cancel
+   it, and the retry waits for the same start.
 2. Decision CH43 rule 8: no line on the control link reports a change
    of the facade state yet. The phase 3 guest init PR adds a line that
    reports each change. Until then the sleep gate treats a VM as up only
@@ -399,20 +396,14 @@ dropped start, and an idle check that takes out one VM at a time.
    cold boot reports `not_started` or `starting` (decision CH34 rule 7),
    so a gate that reads only the ready would never snapshot it.
    `ControlState::turn_seen` holds the rule (plan PR L18).
-3. CONTRACT-QUESTION (plan PR L16, `src/start.rs`): the plan order
-   runs the deny check before the wait for `ControlReady`, and decision
-   CH42 rule 2 says "before the VM is ready". Decision CH6-3 says only
-   "at create and after each egress edit". Until CH runs, the command
-   line is the one of the launch step, and the check fails closed. No
-   row bounds a wait for the exec of CH. The code reads "ready" as the
-   101: the check runs after `ControlReady` and before the dial of 1201.
-   A poll of the command line inside `READY_WAIT` before the open costs
-   about 15 lines.
-4. CONTRACT-QUESTION (decisions CH19 (6), CH21-3, `src/start.rs`): no
-   row names the reply to an Upgrade of a session under eviction. The VM
-   still holds its RAM, so the code answers `host_full`, and attendance
-   retries. A door that an eviction closes between the end of the start
-   and the 101 gets `host_full` the same way (`relay::Stopped::Evict`).
+3. Closed by decision CH54 rule 2: the deny check runs after
+   `ControlReady` and before the dial of 1201 and the 101
+   (`src/start.rs`). This departs from the order of plan PR L16, which
+   put the check before the wait for `ControlReady`.
+4. Closed by decision CH54 rule 4: an Upgrade of a session whose VM is
+   being evicted gets `host_full` (`src/start.rs`). A door that an
+   eviction closes between the end of the start and the 101 gets
+   `host_full` the same way (`relay::Stopped::Evict`).
    An Upgrade of a session whose VM goes to sleep gets `host_full` too.
 5. Plan gap (CONTRACT-QUESTION, plan PRs L11, L15, L19, L20): two
    production pieces have no plan PR. (1) No `impl StopVm for ColdBoot`
@@ -429,11 +420,10 @@ dropped start, and an idle check that takes out one VM at a time.
    `READS_DEVICES` is false for `ChRemote`, and no VM restores. A store
    PR that gives the whole `info` reply costs about 10 lines there and 3
    lines here.
-7. CONTRACT-QUESTION (decision CH50 rule 10, `src/start.rs`): no row
-   names the fault of each restore step. The code reads a VM that is not
-   `Paused`, or that has a refused device, as `egress_assert_failed`
-   (decisions CH6-3, CH42 rule 2). An `info` that never answers, or a
-   failed resume, is `sandbox_start_failed`.
+7. Closed by decision CH54 rule 3: a restore whose VM is not `Paused`,
+   or has a refused device, gives `egress_assert_failed`. A CH that does
+   not answer `info` or `resume` gives `sandbox_start_failed`
+   (`src/start.rs`).
 8. Decision CH43 rule 6: a guest that closes the link before
    `ControlReady` asks for a cold boot. After a restore the start does
    not cold-boot then. It faults, stops the VM, and the next start
