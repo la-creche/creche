@@ -1,4 +1,5 @@
-//! The start hook over fakes (plan PRs L16 and L17). A fake launcher
+//! The start hook over fakes (plan PRs L16 and L17), and the idle sleep
+//! and the sweep over the same fakes (plan PR L18). A fake launcher
 //! records each launch, writes a fake command line file and binds a fake
 //! vsock socket that plays CH and guest init. A fake CH API answers
 //! `info` and `resume` of a restore, and its snapshot ends the fake VM. Every other step is the real one on
@@ -17,8 +18,8 @@ use std::time::{Duration, Instant, SystemTime};
 use std::{fs, io};
 
 use creche_vmm::control::ControlState;
-use creche_vmm::handlers::acp::{StartFault, StartVm};
-use creche_vmm::relay::Relays;
+use creche_vmm::handlers::acp::{Acp, StartFault, StartVm};
+use creche_vmm::relay::{AcpLink, Door, Relays};
 use creche_vmm::restore::ChApi;
 use creche_vmm::start::{ColdBoot, Digests, Launcher, StartConfig};
 use creche_vmm::stop::VmProcess;
@@ -30,9 +31,11 @@ use creche_vmm_confine::spawner::SpawnError;
 use creche_vmm_store::images::{ImageDigest, ImageStore};
 use creche_vmm_store::key::{CheckedCh, SnapshotKey, check_cloud_hypervisor, write_key};
 use creche_vmm_store::layout::{RunRoot, SessionDir, SnapshotGeneration, StateRoot, VmRunDir};
+use creche_vmm_store::retention::Reason;
 use creche_vmm_store::rows::Rows;
 use creche_vmm_store::session_disk::SessionDisks;
-use creche_wire::{FamilyName, SessionRow};
+use creche_vmm_store::sleep_gate::IDLE_TIMEOUT;
+use creche_wire::{FamilyName, OpenAcp, ServeUpgrade as _, SessionId, SessionRow};
 use tokio::runtime::{Builder, Runtime};
 
 const A: &str = "3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b";
@@ -44,6 +47,7 @@ const READY: &str =
     r#"{"facade":{"running":{"last_turn_end":null,"pid":42,"starts":1,"turn_running":false}}}"#;
 const TURN: &str =
     r#"{"facade":{"running":{"last_turn_end":null,"pid":42,"starts":1,"turn_running":true}}}"#;
+const STARTING: &str = r#"{"facade":{"starting":{"last_turn_end":null,"pid":42,"starts":1}}}"#;
 /// As `READY`, with the end of a turn that the row has not seen.
 const ENDED: &str = r#"{"facade":{"running":{"last_turn_end":{"title":"First","updated_at":1793577700000},"pid":42,"starts":1,"turn_running":false}}}"#;
 /// The SHA-256 of no bytes: the fake kernel and root disk are empty.
@@ -56,6 +60,8 @@ enum Guest {
     Ready,
     /// As `Ready`, with a turn running, so admission may not evict it.
     Turn,
+    /// As `Ready`, with the facade `starting`.
+    Starting,
     /// As `Ready`, with a turn end in the ready.
     Ended,
     /// A close after the hello, before `ControlReady`.
@@ -260,6 +266,7 @@ fn play(listener: &UnixListener, guest: Guest, vm: &Vm) {
                 }
                 let ready = match guest {
                     Guest::Turn => TURN,
+                    Guest::Starting => STARTING,
                     Guest::Ended => ENDED,
                     _ => READY,
                 };
@@ -285,7 +292,7 @@ fn play(listener: &UnixListener, guest: Guest, vm: &Vm) {
 #[derive(Debug)]
 struct Test<const DEVICES: bool = true> {
     dir: PathBuf,
-    hook: ColdBoot<Fake, FakeApi<DEVICES>>,
+    hook: Arc<ColdBoot<Fake, FakeApi<DEVICES>>>,
     fake: Arc<Fake>,
     api: Arc<FakeApi<DEVICES>>,
     relays: Relays,
@@ -385,7 +392,7 @@ impl<const DEVICES: bool> Test<DEVICES> {
             entered: AtomicBool::new(false),
         });
         let relays = Relays::default();
-        let hook = ColdBoot::new(
+        let hook = Arc::new(ColdBoot::new(
             config,
             Arc::clone(&fake),
             Arc::clone(&api),
@@ -393,7 +400,7 @@ impl<const DEVICES: bool> Test<DEVICES> {
             Arc::clone(&store),
             Arc::clone(&control),
             Arc::new(Mutex::new(book)),
-        );
+        ));
         let runtime = Builder::new_current_thread().enable_all().build().unwrap();
         Self {
             dir,
@@ -814,6 +821,107 @@ fn a_turn_before_the_close_keeps_the_vm() {
     assert_eq!(test.launches(), 1);
 }
 
+#[cfg(test)]
+impl<const DEVICES: bool> Test<DEVICES> {
+    /// Runs the idle check `after` from now.
+    fn sleep_after(&self, after: Duration) -> Vec<SessionId> {
+        let now = Instant::now() + after;
+        self.runtime.block_on(self.hook.sleep_idle(now))
+    }
+
+    /// Applies the turn event `line` to the VM of row `index`, as the
+    /// reader of the control link does.
+    fn turn(&self, index: usize, line: &str) {
+        let id = &self.rows[index].id;
+        let mut control = self.control.lock().unwrap();
+        let link = control.link(id).unwrap();
+        let _ = control.turn(id, link, &serde_json::from_str(line).unwrap());
+    }
+}
+
+/// Just past the idle timeout.
+const PAST_IDLE: Duration = IDLE_TIMEOUT.saturating_add(Duration::from_secs(1));
+
+/// A VM idle past `IDLE_TIMEOUT` sleeps: its snapshot ends it, and it
+/// leaves the table. Before the timeout it stays (decisions CH2, CH36
+/// G12).
+#[test]
+fn an_idle_vm_sleeps_after_the_timeout() {
+    let test = Test::new("sleep", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    assert!(test.sleep_after(Duration::ZERO).is_empty());
+    assert!(test.api.snapshots.lock().unwrap().is_empty());
+
+    assert_eq!(test.sleep_after(PAST_IDLE), [test.rows[0].id.clone()]);
+    assert_eq!(test.snapshot_ids(), [A]);
+    assert!(test.stopped(0));
+    assert!(!test.hook.running(&test.rows[0].id));
+}
+
+/// A turn that runs or an open door link keeps the VM awake (decision
+/// CH19 (6)).
+#[test]
+fn a_turn_or_an_open_door_keeps_the_vm_awake() {
+    let test = Test::new("awake-turn", |_| {});
+    *test.fake.guest.lock().unwrap() = Guest::Turn;
+    assert_eq!(test.start(0), Ok(()));
+    assert!(test.sleep_after(PAST_IDLE).is_empty());
+
+    let test = Test::new("awake-door", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    let door = test.relays.claim(&test.rows[0].id).unwrap();
+    assert!(test.sleep_after(PAST_IDLE).is_empty());
+    assert!(test.api.snapshots.lock().unwrap().is_empty());
+    assert!(test.hook.running(&test.rows[0].id));
+
+    // A refused Upgrade records no door close, so after it the VM sleeps
+    // at once.
+    drop(door);
+    assert_eq!(test.sleep_after(PAST_IDLE).len(), 1);
+}
+
+/// A VM whose ready said `starting` is up only after a turn event, and
+/// each turn event sets its last use (decisions CH43 rule 8, CH50 rule
+/// 5).
+#[test]
+fn a_turn_event_marks_the_facade_up_and_used() {
+    let test = Test::new("seen", |_| {});
+    *test.fake.guest.lock().unwrap() = Guest::Starting;
+    assert_eq!(test.start(0), Ok(()));
+    assert!(test.sleep_after(PAST_IDLE).is_empty());
+
+    std::thread::sleep(Duration::from_millis(5));
+    let before = Instant::now();
+    test.turn(0, r#"{"start":{}}"#);
+    test.turn(0, r#"{"end":{"title":"First","updated_at":2000}}"#);
+    let now = before + IDLE_TIMEOUT;
+    assert!(test.runtime.block_on(test.hook.sleep_idle(now)).is_empty());
+    assert_eq!(test.sleep_after(PAST_IDLE).len(), 1);
+}
+
+/// The sweep keeps the consumed generation of a VM that restored from
+/// it. After that VM sleeps, the next sweep drops it (decision CH50 rule
+/// 8).
+#[test]
+fn the_sweep_skips_a_snapshot_in_use() {
+    let test = Test::new("sweep", |_| {});
+    let dir = test.snapshot(0, Some(&test.key()));
+    test.reply(0, "Paused", &[]);
+    assert_eq!(test.start(0), Ok(()));
+    assert!(test.restored(0));
+
+    let swept = test.runtime.block_on(test.hook.sweep()).unwrap();
+    assert!(swept.dropped.is_empty());
+    assert!(dir.is_dir());
+
+    assert_eq!(test.sleep_after(PAST_IDLE).len(), 1);
+    assert!(test.hook.in_use().is_empty());
+    let swept = test.runtime.block_on(test.hook.sweep()).unwrap();
+    let reasons: Vec<Reason> = swept.dropped.iter().map(|each| each.reason).collect();
+    assert_eq!(reasons, [Reason::Consumed]);
+    assert!(!dir.exists());
+}
+
 /// A start that is dropped during its launch leaves no CH outside the
 /// table. The launch output holds the process, and its drop kills the VM
 /// and keeps it in the table (decisions CH8-6, CH50 rule 4). The next
@@ -962,4 +1070,117 @@ fn with_no_device_read_an_eviction_stops_gracefully() {
     assert_eq!(test.stop_lines(), 1);
     assert!(test.stopped(0));
     assert!(test.hook.running(&test.rows[1].id));
+}
+
+/// The hook behind an `Arc`, for the acp handler, which owns its hook.
+#[derive(Debug)]
+struct Shared<const DEVICES: bool>(Arc<ColdBoot<Fake, FakeApi<DEVICES>>>);
+
+impl<const DEVICES: bool> StartVm for Shared<DEVICES> {
+    async fn start(&self, row: &SessionRow) -> Result<AcpLink, StartFault> {
+        self.0.start(row).await
+    }
+}
+
+/// A door close counts as a use (decision CH50 rule 5). An Upgrade
+/// through the acp handler opens the door, and its end records the close.
+/// The VM sleeps only `IDLE_TIMEOUT` after the close, not after its start.
+#[test]
+fn a_door_close_counts_as_a_use() {
+    let test = Test::new("closed", |_| {});
+    let hook = Shared(Arc::clone(&test.hook));
+    let acp = Acp::new(Arc::clone(&test.store), test.relays.clone(), hook);
+    let open: OpenAcp =
+        serde_json::from_str(&format!(r#"{{"family":"chat","id":"{A}"}}"#)).unwrap();
+    let relay = test.runtime.block_on(acp.admit(open)).unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    drop(relay);
+    let Door::ClosedAt(closed) = test.relays.door(&test.rows[0].id) else {
+        panic!("the end of the Upgrade recorded no close");
+    };
+    let closed = closed.into_std();
+    let before = closed + IDLE_TIMEOUT - Duration::from_millis(50);
+    assert!(
+        test.runtime
+            .block_on(test.hook.sleep_idle(before))
+            .is_empty()
+    );
+    let after = closed + PAST_IDLE;
+    assert_eq!(test.runtime.block_on(test.hook.sleep_idle(after)).len(), 1);
+}
+
+/// A new `ControlReady` clears `turn_seen`. A VM that saw a turn event,
+/// slept, and booted again `starting` is not up, so it does not sleep
+/// (decision CH43 rule 8).
+#[test]
+fn a_new_ready_clears_the_turn_seen() {
+    let test = Test::new("reseen", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    test.turn(0, r#"{"start":{}}"#);
+    test.turn(0, r#"{"end":{"title":"First","updated_at":2000}}"#);
+    assert_eq!(test.sleep_after(PAST_IDLE).len(), 1);
+    *test.fake.guest.lock().unwrap() = Guest::Starting;
+    assert_eq!(test.start(0), Ok(()));
+    assert!(test.sleep_after(PAST_IDLE).is_empty());
+}
+
+/// A start that hyper drops during an eviction leaves the eviction to
+/// finish in its own task. The VM stays `Evicting` with no kill, its
+/// snapshot ends, and it leaves the table. A later start of it boots.
+#[test]
+fn a_dropped_start_lets_its_eviction_finish() {
+    let test = Test::new("evict-cut", |config| config.limits.ram_cap = 512 << 20);
+    assert_eq!(test.start(0), Ok(()));
+    test.api.hold.store(true, Ordering::SeqCst);
+    let start = test.hook.start(&test.rows[1]);
+    let cut = test
+        .runtime
+        .block_on(async { tokio::time::timeout(Duration::from_millis(100), start).await });
+    // The release comes first, so a failed assert below leaves no
+    // blocking step that holds the runtime drop for ever. The eviction
+    // task waits until a block_on drives the runtime again.
+    test.api.hold.store(false, Ordering::SeqCst);
+    assert!(cut.is_err());
+    assert!(test.api.entered.load(Ordering::SeqCst));
+    assert!(!test.hook.running(&test.rows[0].id));
+    assert!(!test.stopped(0));
+    // The sleep drives the runtime, so the eviction task runs. A start
+    // gets `host_full` until the eviction ends.
+    eventually(|| {
+        let pause = async { tokio::time::sleep(Duration::from_millis(1)).await };
+        test.runtime.block_on(pause);
+        test.start(0) == Ok(())
+    });
+    assert_eq!(test.snapshot_ids(), [A]);
+    assert_eq!(test.launches(), 2);
+}
+
+/// The idle check retires one VM at a time and reads the table again
+/// before the next. A VM that waits its turn still runs: a start of it
+/// dials it, and its open door keeps it up after the first sleep.
+#[test]
+fn the_idle_check_takes_out_one_vm_at_a_time() {
+    let test = Test::new("one-by-one", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    assert_eq!(test.start(1), Ok(()));
+    test.api.hold.store(true, Ordering::SeqCst);
+    let now = Instant::now() + PAST_IDLE;
+    let (slept, other) = test
+        .runtime
+        .block_on(both(test.hook.sleep_idle(now), async {
+            while !test.api.entered.load(Ordering::SeqCst) {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+            // The VM that still runs waits its turn.
+            let other = usize::from(test.hook.running(&test.rows[1].id));
+            let door = test.relays.claim(&test.rows[other].id).unwrap();
+            let started = test.hook.start(&test.rows[other]).await.map(|_link| ());
+            test.api.hold.store(false, Ordering::SeqCst);
+            (other, door, started)
+        }));
+    let (other, _door, started) = other;
+    assert_eq!(started, Ok(()));
+    assert_eq!(slept, [test.rows[1 - other].id.clone()]);
+    assert!(test.hook.running(&test.rows[other].id));
+    assert_eq!(test.launches(), 2);
 }

@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 use std::io;
 use std::path::Path;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use creche_wire::{
     CONTROL_LINE_CAP, ControlCommand, ControlHello, ControlReady, ControlStop, FacadeState,
@@ -301,6 +301,11 @@ struct VmControl {
     link: Option<LinkId>,
     facade: Option<FacadeState>,
     turn_running: bool,
+    /// A turn event arrived after the last `ControlReady` (decision CH43
+    /// rule 8).
+    turn_seen: bool,
+    /// The time of the last turn event (decision CH50 rule 5).
+    last_turn: Option<Instant>,
 }
 
 /// The last turn end that `facade` holds. Only a state that can follow a
@@ -368,6 +373,7 @@ impl ControlState {
         };
         control.turn_running =
             matches!(&ready.facade, FacadeState::Running(running) if running.turn_running);
+        control.turn_seen = false;
         let facade = control.facade.insert(ready.facade);
         Change::Applied(last_turn_end(facade).cloned())
     }
@@ -384,6 +390,10 @@ impl ControlState {
             return Change::Stale;
         };
         control.turn_running = matches!(event, TurnEvent::Start(_));
+        control.turn_seen = true;
+        // The tokio clock, as the door close time of `Relays::door`, so a
+        // test on paused time sees one clock.
+        control.last_turn = Some(tokio::time::Instant::now().into_std());
         match event {
             TurnEvent::Start(_) => Change::Applied(None),
             TurnEvent::End(end) => Change::Applied(Some(end.clone())),
@@ -416,8 +426,7 @@ impl ControlState {
     // `ControlReady`, and `turn_running` follows the events. No line
     // reports a change of the facade state yet. The phase 3 guest init PR
     // adds one. Until then the sleep gate treats a VM as up only after a
-    // ready said `running` or a turn event arrived. The sleep gate is plan
-    // PR L18, a later PR.
+    // ready said `running` or a turn event arrived (`turn_seen`).
     #[must_use]
     pub fn facade(&self, vm: &SessionId) -> Option<&FacadeState> {
         self.vms.get(vm).and_then(|control| control.facade.as_ref())
@@ -428,6 +437,20 @@ impl ControlState {
     #[must_use]
     pub fn turn_running(&self, vm: &SessionId) -> bool {
         self.vms.get(vm).is_some_and(|control| control.turn_running)
+    }
+
+    /// Whether a turn event of a current link of `vm` arrived after its
+    /// last `ControlReady` (decision CH43 rule 8).
+    #[must_use]
+    pub fn turn_seen(&self, vm: &SessionId) -> bool {
+        self.vms.get(vm).is_some_and(|control| control.turn_seen)
+    }
+
+    /// The time of the last turn event of `vm`, for its last use
+    /// (decision CH50 rule 5).
+    #[must_use]
+    pub fn last_turn(&self, vm: &SessionId) -> Option<Instant> {
+        self.vms.get(vm).and_then(|control| control.last_turn)
     }
 }
 
