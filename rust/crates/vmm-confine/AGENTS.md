@@ -108,6 +108,22 @@ table of the three vmm crates.
   while a fault is open, `clear` on a `ControlReady` of the family, and
   `start` at vmm start, which writes an empty list into every file. Each
   time is RFC 3339 in UTC to the second, from `rfc3339::format`.
+- `slot_profile::render_file` makes
+  `apparmor/cloud-hypervisor-slots.profile`, one AppArmor profile
+  `creche-ch-slot-<k>` for each slot of `creche_vmm_store::layout::SLOTS`
+  (mechanism X, decisions CH51, CH55). The crate never defines its own
+  `Slot`. No profile has an attachment path. Each names the one installed
+  CH, the run dir `/run/user/[0-9]*/vmm/slot/<k>/` and its own signal
+  label only. The state root rules name the default
+  `@{HOME}/.local/state/creche-vmm/` through `include <tunables/global>`
+  (decision CH50 rule 11). The test `tests/slot_profile.rs` holds the
+  committed file equal to the generator. After a change, run
+  `CRECHE_SLOT_PROFILES=write cargo test -p creche-vmm-confine --test
+  slot_profile` in rust/ and commit the file. David installs it at
+  `/etc/apparmor.d/opt.components.vmm.bin.cloud-hypervisor` (design
+  section 6.1 step 1, decision CH36 gap G28 option A). Each change of
+  the file needs a sudo reload on the host by David (design section 6.1
+  step 2).
 - The process tests need Landlock ABI 4 and `/dev/kvm`. The host and the
   ubuntu-24.04 runner have both (facts 77, 79).
 - A test that boots CH has a name that holds `kvm_` and carries
@@ -119,7 +135,12 @@ table of the three vmm crates.
 ## Known gaps
 
 - Landlock ABI 4 covers neither UDP nor Unix sockets (fact 77). Until the
-  AppArmor profile of PR C15, CH can reach both.
+  launch stage enters a slot profile (plan PR C18) and the job kvm loads
+  the slot profiles (plan PR C15), CH can reach both.
+- Decision CH50 rule 11 wants a test that holds the state root of the
+  slot profiles equal to the env default. The env key comes with plan PR
+  L20, so that test comes with it. Until then `slot_profile::STATE_ROOT`
+  holds the default alone.
 - Lifecycle must make two dirs before each launch, because the ruleset
   opens each path and a missing one fails the launch with
   `RulesetError::Open`: the VM run dir `<run root>/vm/<id>/` and the
