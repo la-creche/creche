@@ -221,6 +221,31 @@ fn a_stage_plan_that_is_not_json_is_refused() {
     assert!(stderr.contains("the stage plan is not valid"), "{stderr}");
 }
 
+#[test]
+fn a_stage_with_no_death_signal_starts_nothing() {
+    // A child of this test has death signal 0, so the check of fact 80
+    // refuses it before the label, Landlock and the exec.
+    let vm = TempVm::new("nosignal", ID);
+    let launch = launch_with(&vm, vec!["0".to_owned()]);
+    let plan = serde_json::json!({
+        "slot": SLOT,
+        "payload": launch.payload(),
+        "files": launch.files(),
+    });
+    let output = Command::new(example())
+        .args(["launch-stage".to_owned(), plan.to_string()])
+        .stderr(Stdio::piped())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(78));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("the death signal is not SIGKILL"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("apparmor exec"), "{stderr}");
+}
+
 /// The exit code and stderr of the launch step with `stdin`.
 #[cfg(test)]
 fn launch_step(stdin: Stdio) -> (Option<i32>, String) {
