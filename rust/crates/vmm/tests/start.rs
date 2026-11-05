@@ -7,7 +7,7 @@
 //! the session disk (with `/usr/bin/true` as `mke2fs`), the key check,
 //! the claim, the deny check and the fault file.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::Shutdown;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -208,6 +208,9 @@ struct FakeApi<const DEVICES: bool = true, const SYNCS: bool = true> {
     hold: AtomicBool,
     /// A snapshot began.
     entered: AtomicBool,
+    /// Writes generation 1 of the session with the key, as a real take
+    /// does.
+    keep: AtomicBool,
 }
 
 #[cfg(test)]
@@ -238,8 +241,8 @@ impl<const DEVICES: bool, const SYNCS: bool> ChApi for FakeApi<DEVICES, SYNCS> {
     fn snapshot(
         &self,
         vm: &VmRunDir,
-        _session: &SessionDir,
-        _key: &SnapshotKey,
+        session: &SessionDir,
+        key: &SnapshotKey,
     ) -> Result<SnapshotGeneration, String> {
         self.entered.store(true, Ordering::SeqCst);
         while self.hold.load(Ordering::SeqCst) {
@@ -257,6 +260,11 @@ impl<const DEVICES: bool, const SYNCS: bool> ChApi for FakeApi<DEVICES, SYNCS> {
         vms.get(index)
             .ok_or("no such VM")?
             .store(true, Ordering::SeqCst);
+        if self.keep.load(Ordering::SeqCst) {
+            let generation = SnapshotGeneration(1);
+            fs::create_dir_all(session.snapshot(generation)).map_err(|error| error.to_string())?;
+            write_key(session, generation, key).map_err(|error| format!("{error:?}"))?;
+        }
         let mut snapshots = self.snapshots.lock().map_err(|_| "poisoned")?;
         snapshots.push(vm.path().to_owned());
         Ok(SnapshotGeneration(1))
@@ -424,6 +432,7 @@ impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
             fail_take: AtomicBool::new(false),
             hold: AtomicBool::new(false),
             entered: AtomicBool::new(false),
+            keep: AtomicBool::new(false),
         });
         let relays = Relays::default();
         let hook = Arc::new(ColdBoot::new(
@@ -1530,4 +1539,112 @@ fn a_stop_during_a_sleep_waits_for_the_retire() {
     assert!(stopped.is_err());
     assert_eq!(test.stop_lines(), 1);
     assert!(test.hook.running(id));
+}
+
+/// A reader whose link is no longer current stops nothing (decision CH54
+/// rule 6). Row 0 stops, and its next start replaces the link. The old
+/// link then ends on a partial line, and the old reader refuses it. The
+/// new VM of row 0 runs on.
+#[test]
+fn a_stale_reader_stops_nothing() {
+    let test = Test::new("refused-stale", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    let id = test.rows[0].id.clone();
+    assert!(test.runtime.block_on(test.hook.stop(&id)).is_ok());
+    assert_eq!(test.start(0), Ok(()));
+    let old = test.fake.links.lock().unwrap()[0].try_clone().unwrap();
+    (&old).write_all(br#"{"start""#).unwrap();
+    old.shutdown(Shutdown::Write).unwrap();
+    old.set_read_timeout(Some(Duration::from_millis(1)))
+        .unwrap();
+    // The end of the old reader closes the vmm end of the old link.
+    test.settle(|_| matches!((&old).read(&mut [0_u8; 64]), Ok(0)));
+    let pause = async { tokio::time::sleep(Duration::from_millis(100)).await };
+    test.runtime.block_on(pause);
+    assert!(test.hook.running(&id));
+    assert!(!test.stopped(1));
+    assert_eq!(test.launches(), 2);
+}
+
+/// The reader of a refused line stops only its own VM (decision CH54
+/// rule 6). The line arrives while an idle sleep holds the VM. The retire
+/// frees the slot, and a new start of row 0 takes it while its launch is
+/// held. The old reader then finds the new VM, and that VM runs on.
+#[test]
+fn a_refused_line_stops_only_its_own_vm() {
+    let test = Test::new("refused-own", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    let id = test.rows[0].id.clone();
+    test.api.hold.store(true, Ordering::SeqCst);
+    let now = Instant::now() + PAST_IDLE;
+    let pause = || tokio::time::sleep(Duration::from_millis(1));
+    let (_, started) = test
+        .runtime
+        .block_on(both(test.hook.sleep_idle(now), async {
+            while !test.api.entered.load(Ordering::SeqCst) {
+                pause().await;
+            }
+            test.send("not a turn event");
+            while test.control.lock().unwrap().link(&id).is_some() {
+                pause().await;
+            }
+            test.fake.hold.store(true, Ordering::SeqCst);
+            test.api.hold.store(false, Ordering::SeqCst);
+            let fake = Arc::clone(&test.fake);
+            let release = spawn(move || {
+                std::thread::sleep(Duration::from_millis(100));
+                fake.hold.store(false, Ordering::SeqCst);
+            });
+            // The start gets `host_full` until the retire frees the slot.
+            let started = loop {
+                match test.hook.start(&test.rows[0]).await {
+                    Err(StartFault::HostFull) => tokio::task::yield_now().await,
+                    started => break started.map(|_link| ()),
+                }
+            };
+            release.join().unwrap();
+            started
+        }));
+    assert_eq!(started, Ok(()));
+    let pause = async { tokio::time::sleep(Duration::from_millis(100)).await };
+    test.runtime.block_on(pause);
+    assert!(test.hook.running(&id));
+    assert!(!test.stopped(1));
+    assert_eq!(test.launches(), 2);
+}
+
+/// A refused line during the take of an idle sleep keeps no snapshot of
+/// the faulted guest (decision CH54 rule 6). The VM stops, and the sleep
+/// does not count it as slept. The take is consumed, so the next start
+/// cold-boots (decision CH19 (5)).
+#[test]
+fn a_refused_line_during_a_take_keeps_no_snapshot() {
+    let test = Test::new("refused-take", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    let id = test.rows[0].id.clone();
+    test.api.keep.store(true, Ordering::SeqCst);
+    test.api.hold.store(true, Ordering::SeqCst);
+    let now = Instant::now() + PAST_IDLE;
+    let pause = || tokio::time::sleep(Duration::from_millis(1));
+    let (slept, ()) = test
+        .runtime
+        .block_on(both(test.hook.sleep_idle(now), async {
+            while !test.api.entered.load(Ordering::SeqCst) {
+                pause().await;
+            }
+            test.send("not a turn event");
+            while test.control.lock().unwrap().link(&id).is_some() {
+                pause().await;
+            }
+            test.api.hold.store(false, Ordering::SeqCst);
+        }));
+    assert!(slept.is_empty());
+    assert!(test.stopped(0));
+    assert!(!test.hook.running(&id));
+    let generation = test.state.session(&id).snapshot(SnapshotGeneration(1));
+    assert!(generation.join("consumed").is_file());
+    test.reply(0, "Paused", &[]);
+    assert_eq!(test.start(0), Ok(()));
+    assert!(!test.restored(1));
+    assert_eq!(test.launches(), 2);
 }

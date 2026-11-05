@@ -405,6 +405,8 @@ struct VmControl {
     turn_seen: bool,
     /// The time of the last turn event (decision CH50 rule 5).
     last_turn: Option<Instant>,
+    /// The link that closed on a refused line (decision CH54 rule 6).
+    refused: Option<LinkId>,
 }
 
 /// The last turn end that `facade` holds. Only a state that can follow a
@@ -511,6 +513,26 @@ impl ControlState {
             }
             _ => false,
         }
+    }
+
+    /// Marks the close of `link` after a refused line when it is current
+    /// (decision CH54 rule 6), as `closed` does. A retire then reads the
+    /// mark with `refused`. Returns whether it did.
+    pub fn refuse(&mut self, vm: &SessionId, link: LinkId) -> bool {
+        let current = self.closed(vm, link);
+        if let Some(control) = self.vms.get_mut(vm).filter(|_| current) {
+            control.refused = Some(link);
+        }
+        current
+    }
+
+    /// Whether `link` of `vm` closed on a refused line (decision CH54
+    /// rule 6).
+    #[must_use]
+    pub fn refused(&self, vm: &SessionId, link: LinkId) -> bool {
+        self.vms
+            .get(vm)
+            .is_some_and(|control| control.refused == Some(link))
     }
 
     /// The current link of `vm`, if one is open.

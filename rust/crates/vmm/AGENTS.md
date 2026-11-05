@@ -126,9 +126,11 @@ the line with the session id (`ControlLink::next_event` gives its first
 stop path of the `StopVm` hook (`Stopper`). The link is gone, so the
 stop sends SIGTERM, then SIGKILL. The VM leaves the table and frees its
 RAM, so the next start of the session cold-boots (decision CH19 (5)).
-A reader whose link is no longer current stops nothing. `tests/start.rs`
-proves the events, the row write, the gate and the stop after a refused
-line.
+A reader whose link is no longer current stops nothing. The stop names
+the link too (`Vm::link_id`): it takes only the VM of that link, and a
+later VM of the session runs on. `tests/start.rs` proves the events, the
+row write, the gate, the stop after a refused line, a stale reader, and
+a new VM of the session that the old reader leaves alone.
 
 ## The acp route
 
@@ -346,6 +348,14 @@ admission:
    stop goes back with no link, so admission counts its RAM (decision
    CH50 rule 4), and the start gets `host_full`. The VMs left in the
    list go back too.
+
+Decision CH54 rule 6 binds a retire too, for an eviction and for an idle
+sleep. A VM whose control link closed after its gate takes no snapshot.
+A VM whose link closed on a refused line during the take or the stop
+(`ControlState::refused`) gets its take consumed with `claim`, so the
+next start cold-boots (decision CH19 (5)). Either VM stops and frees its
+RAM, but an idle sleep does not count it as slept. `tests/start.rs`
+proves a refused line during a take.
 
 The list runs in a task of its own (`tokio::spawn`), and the start
 waits for it. hyper drops the start future when the client hangs up
