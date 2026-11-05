@@ -32,14 +32,16 @@
 //! (decisions CH21-1, CH6-3). A fault after the launch stops the VM.
 //!
 //! The idle sleep and the snapshot sweep of plan PR L18 use the same
-//! table (`ColdBoot::sleep_idle`, `ColdBoot::sweep`, `sleep::run`), and
-//! so does the `StopVm` hook of the drop route (plan PR L18b).
+//! table (`ColdBoot::sleep_idle`, `ColdBoot::sweep`, `sleep::run`). So
+//! do the `StopVm` hook of the drop route (plan PR L18b) and the `VmSet`
+//! of the shutdown (plan PR L19).
 
 use std::collections::{HashMap, HashSet};
 use std::fs::{DirBuilder, OpenOptions, Permissions};
 use std::io;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -76,6 +78,7 @@ use crate::handlers::acp::{StartFault, StartVm};
 use crate::handlers::drop::{StopVm, VmStopFailed};
 use crate::relay::{AcpLink, Door, Relays};
 use crate::restore::{ChApi, Expected, check_devices};
+use crate::shutdown::{Taken, VmSet};
 use crate::stop::{VmProcess, stop};
 
 /// The mode of the run dir and the snapshots dir of a VM.
@@ -231,6 +234,9 @@ enum Found {
     Runs(PathBuf),
     /// Admission evicts the VM of the session.
     Evicting,
+    /// The shutdown refuses each start (plan PR L19, decision CH56 rule
+    /// 4).
+    Refused,
 }
 
 /// The VMs of the vmm, one per session (decision CH1).
@@ -595,6 +601,10 @@ pub struct ColdBoot<L: Launcher, A: ChApi> {
     rows: Arc<Mutex<Rows>>,
     control: Arc<Mutex<ControlState>>,
     faults: Arc<Mutex<FaultBook>>,
+    /// The shutdown set it (`VmSet::refuse_starts`). It is set and read
+    /// under the table lock, so no start adds a slot after a shutdown read
+    /// the table.
+    refusing: AtomicBool,
 }
 
 /// The gates of one running VM (PR D12).
@@ -632,6 +642,7 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
             rows,
             control,
             faults,
+            refusing: AtomicBool::new(false),
         }
     }
 
@@ -658,6 +669,9 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
     /// the start boots it again.
     fn find(&self, id: &SessionId) -> Result<Found, String> {
         let mut table = lock(&self.table);
+        if self.refusing.load(Ordering::SeqCst) {
+            return Ok(Found::Refused);
+        }
         let vm = match table.get_mut(id) {
             None => return Ok(Found::Free),
             Some(Slot::Starting(_)) => return Err("a start of the VM runs".to_owned()),
@@ -736,6 +750,11 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
     /// out each VM that admission evicts first, in its order.
     fn admit(&self, id: &SessionId, guest_ram: u64, free: u64) -> Option<Admitted<L::Process>> {
         let mut table = lock(&self.table);
+        // A start that read the table before the refusal of a shutdown
+        // stops here, so it adds no slot (plan PR L19).
+        if self.refusing.load(Ordering::SeqCst) {
+            return None;
+        }
         // A start that was dropped, a failed stop or a guest crash leaves
         // an entry whose process may have exited since.
         reap(&mut table, &self.in_use);
@@ -1156,6 +1175,54 @@ impl<L: Launcher, A: ChApi> StopVm for ColdBoot<L, A> {
     }
 }
 
+impl<L: Launcher, A: ChApi> VmSet for ColdBoot<L, A> {
+    fn refuse_starts(&self) {
+        let _table = lock(&self.table);
+        self.refusing.store(true, Ordering::SeqCst);
+    }
+
+    fn sessions(&self) -> Vec<SessionId> {
+        lock(&self.table).keys().cloned().collect()
+    }
+
+    async fn close_door(&self, id: &SessionId) {
+        self.relays.close(id).await;
+    }
+
+    /// Retires the VM of `id` as an eviction does, when the gate of
+    /// admission passes after its door closed (plan PR L19, decision CH19
+    /// (6)). A VM that a start, a retire or a stop holds is skipped, and
+    /// the stop of the shutdown waits for that slot.
+    async fn take(&self, id: &SessionId) -> Taken {
+        // Caller duty 7: with no device read or no guest sync no take
+        // runs, so each VM gets the graceful stop of the `Stopper`.
+        if !(A::READS_DEVICES && A::GUEST_SYNCS) {
+            return Taken::Skipped;
+        }
+        let eviction = {
+            let mut table = lock(&self.table);
+            let now = Instant::now();
+            let passes = matches!(
+                table.get(id),
+                Some(Slot::Running(vm)) if self.gates(id, vm, now).evict
+            );
+            if !passes {
+                return Taken::Skipped;
+            }
+            take_out(&self.table, &mut table, id.clone(), Slot::Evicting)
+        };
+        let Some(eviction) = eviction else {
+            return Taken::Skipped;
+        };
+        match self.retirer().retire(eviction).await {
+            Retired::Slept => Taken::Slept,
+            Retired::Stopped => Taken::Stopped,
+            // A turn started, or the stop failed: the VM is back.
+            Retired::Kept => Taken::Skipped,
+        }
+    }
+}
+
 /// The fault text of a failed dial of guest port 1201.
 fn dial_text(error: ControlError) -> String {
     format!("dialing guest port 1201: {error:?}")
@@ -1337,7 +1404,8 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
             // Decision CH54 rule 4: an Upgrade of a session whose VM is
             // being evicted or put to sleep gets `host_full`. The VM still
             // holds its RAM.
-            Ok(Found::Evicting) => return Err(StartFault::HostFull),
+            // Plan PR L19: a start during the shutdown gets it too.
+            Ok(Found::Evicting | Found::Refused) => return Err(StartFault::HostFull),
             Err(message) => return Err(self.fault(family, sandbox, message).await),
         }
         let (config, name) = (Arc::clone(&self.config), family.clone());

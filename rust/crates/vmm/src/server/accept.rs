@@ -91,8 +91,9 @@ impl Stop {
 ///
 /// The run directory of the unit is the guard of the socket (decision
 /// CH20), so the bind refuses a path that exists. At the stop, open
-/// connections keep running. The shutdown order of a later change closes
-/// them.
+/// connections keep running. The shutdown of plan PR L19 refuses each
+/// start on them (`shutdown::VmSet::refuse_starts`), and the exit of the
+/// vmm ends them.
 pub async fn run_with<H, F>(path: &Path, stop: StopSignal, handler: H) -> Result<(), ServeError>
 where
     H: Fn(Request<Incoming>) -> F + Clone + Send + Sync + 'static,

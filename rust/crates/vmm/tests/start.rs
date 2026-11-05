@@ -23,6 +23,8 @@ use creche_vmm::handlers::acp::{Acp, StartFault, StartVm};
 use creche_vmm::handlers::drop::{Drops, StopVm, VmStopFailed};
 use creche_vmm::relay::{AcpLink, Door, Relays};
 use creche_vmm::restore::ChApi;
+use creche_vmm::server::Stop;
+use creche_vmm::shutdown::{Ended, VmSet, shutdown};
 use creche_vmm::start::{ColdBoot, Digests, Launcher, StartConfig};
 use creche_vmm::stop::VmProcess;
 use creche_vmm_confine::admission::{GIB, Limits};
@@ -86,6 +88,8 @@ struct FakeVm {
     exited: Arc<AtomicBool>,
     /// Fails each status check, so each stop of the VM fails.
     broken: Arc<AtomicBool>,
+    /// Fails the next status check only.
+    flaky: Arc<AtomicBool>,
 }
 
 impl VmProcess for FakeVm {
@@ -94,7 +98,7 @@ impl VmProcess for FakeVm {
     }
 
     fn exited(&mut self) -> io::Result<bool> {
-        if self.broken.load(Ordering::SeqCst) {
+        if self.broken.load(Ordering::SeqCst) || self.flaky.swap(false, Ordering::SeqCst) {
             return Err(io::Error::other("the status check failed"));
         }
         Ok(self.exited.load(Ordering::SeqCst))
@@ -128,6 +132,7 @@ struct Fake {
     launches: Mutex<Vec<Launch>>,
     vms: Mutex<Vec<Arc<AtomicBool>>>,
     broken: Mutex<Vec<Arc<AtomicBool>>>,
+    flaky: Mutex<Vec<Arc<AtomicBool>>>,
 }
 
 // `cfg(test)` lets the helpers unwrap (rust/clippy.toml).
@@ -178,10 +183,13 @@ impl Fake {
         launches.push(launch);
         self.vms.lock().unwrap().push(Arc::clone(&exited));
         self.broken.lock().unwrap().push(Arc::clone(&broken));
+        let flaky = Arc::new(AtomicBool::new(false));
+        self.flaky.lock().unwrap().push(Arc::clone(&flaky));
         FakeVm {
             number,
             exited,
             broken,
+            flaky,
         }
     }
 }
@@ -419,6 +427,7 @@ impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
             launches: Mutex::default(),
             vms: Mutex::default(),
             broken: Mutex::default(),
+            flaky: Mutex::default(),
         });
         let control = Arc::new(Mutex::new(ControlState::default()));
         let store = Arc::new(Mutex::new(store));
@@ -1160,6 +1169,102 @@ fn with_no_guest_sync_a_retire_stops_gracefully() {
     assert_eq!(test.stop_lines(), 2);
     assert!(test.stopped(1));
     assert!(!test.hook.running(&test.rows[1].id));
+}
+
+#[cfg(test)]
+impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
+    /// Shuts the hook down, with no sleep loop (plan PR L19).
+    fn shut_down(&self) -> Ended {
+        let (stop, _signal) = Stop::pair();
+        self.runtime.block_on(shutdown(&*self.hook, stop, async {}))
+    }
+}
+
+/// A shutdown closes the open door link first. Then the idle VM takes its
+/// snapshot, and the VM with a turn running gets the graceful stop (gap
+/// G16, decision CH19 (6)).
+#[test]
+fn a_shutdown_snapshots_an_idle_vm_and_stops_a_busy_one() {
+    let test = Test::new("shutdown", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    *test.fake.guest.lock().unwrap() = Guest::Turn;
+    assert_eq!(test.start(1), Ok(()));
+    let mut door = test.relays.claim(&test.rows[0].id).unwrap();
+    let relay = spawn(move || {
+        while !door.stopped() {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    });
+    assert_eq!(test.shut_down(), Ended::Clean);
+    relay.join().unwrap();
+    assert_eq!(test.snapshot_ids(), [A]);
+    assert_eq!(test.stop_lines(), 1);
+    for index in [0, 1] {
+        assert!(test.stopped(index));
+        assert!(!test.hook.running(&test.rows[index].id));
+    }
+}
+
+/// A retire whose stop fails after the snapshot puts the VM back
+/// (`Kept`). The shutdown then stops it, and it leaves the set (decision
+/// CH50 rule 4).
+#[test]
+fn a_shutdown_stops_a_vm_that_its_retire_kept() {
+    let test = Test::new("shutdown-kept", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    let flaky = Arc::clone(&test.fake.flaky.lock().unwrap()[0]);
+    flaky.store(true, Ordering::SeqCst);
+    assert_eq!(test.shut_down(), Ended::Clean);
+    assert!(!flaky.load(Ordering::SeqCst));
+    assert_eq!(test.snapshot_ids(), [A]);
+    assert!(test.stopped(0));
+    assert!(!test.hook.running(&test.rows[0].id));
+}
+
+/// A VM whose facade is not up fails the gate of admission, so a
+/// shutdown takes no snapshot of it. It gets the graceful stop (decision
+/// CH19 (6), PR D12).
+#[test]
+fn a_shutdown_takes_no_snapshot_of_a_vm_that_is_not_up() {
+    let test = Test::new("shutdown-starting", |_| {});
+    *test.fake.guest.lock().unwrap() = Guest::Starting;
+    assert_eq!(test.start(0), Ok(()));
+    assert_eq!(test.shut_down(), Ended::Clean);
+    assert!(!test.api.entered.load(Ordering::SeqCst));
+    assert_eq!(test.stop_lines(), 1);
+    assert!(test.stopped(0));
+    assert!(!test.hook.running(&test.rows[0].id));
+}
+
+/// From the refusal of a shutdown on, a start gets `host_full`: a start
+/// of a running VM, and a start that would boot one, which launches
+/// nothing. The shutdown then stops the VM (plan PR L19, decision CH54
+/// rule 4).
+#[test]
+fn a_start_during_a_shutdown_is_host_full() {
+    let test = Test::new("shutdown-refuse", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    test.hook.refuse_starts();
+    assert_eq!(test.start(0), Err(StartFault::HostFull));
+    assert_eq!(test.start(1), Err(StartFault::HostFull));
+    assert_eq!(test.launches(), 1);
+    assert_eq!(test.shut_down(), Ended::Clean);
+    assert!(!test.hook.running(&test.rows[0].id));
+    assert_eq!(test.start(1), Err(StartFault::HostFull));
+    assert_eq!(test.launches(), 1);
+}
+
+/// With no guest sync, a shutdown takes no snapshot, and each VM gets the
+/// graceful stop (caller duty 7, decision CH19 (3)).
+#[test]
+fn with_no_guest_sync_a_shutdown_stops_each_vm_gracefully() {
+    let test = Test::<true, false>::build("shutdown-nosync", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    assert_eq!(test.start(1), Ok(()));
+    assert_eq!(test.shut_down(), Ended::Clean);
+    assert!(!test.api.entered.load(Ordering::SeqCst));
+    assert_eq!(test.stop_lines(), 2);
+    assert!(test.stopped(0) && test.stopped(1));
 }
 
 /// The hook behind an `Arc`, for the acp handler, which owns its hook.
