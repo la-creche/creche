@@ -7,7 +7,7 @@
 //! the session disk (with `/usr/bin/true` as `mke2fs`), the key check,
 //! the claim, the deny check and the fault file.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::Shutdown;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -1474,4 +1474,28 @@ fn a_stop_during_a_sleep_waits_for_the_retire() {
     assert!(stopped.is_err());
     assert_eq!(test.stop_lines(), 1);
     assert!(test.hook.running(id));
+}
+
+/// A reader whose link is no longer current stops nothing (decision CH54
+/// rule 6). Row 0 stops, and its next start replaces the link. The old
+/// link then ends on a partial line, and the old reader refuses it. The
+/// new VM of row 0 runs on.
+#[test]
+fn a_stale_reader_stops_nothing() {
+    let test = Test::new("refused-stale", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    let id = test.rows[0].id.clone();
+    assert!(test.runtime.block_on(test.hook.stop(&id)).is_ok());
+    assert_eq!(test.start(0), Ok(()));
+    let old = test.fake.links.lock().unwrap()[0].try_clone().unwrap();
+    (&old).write_all(br#"{"start""#).unwrap();
+    old.shutdown(Shutdown::Write).unwrap();
+    old.set_read_timeout(Some(Duration::from_millis(1))).unwrap();
+    // The end of the old reader closes the vmm end of the old link.
+    test.settle(|_| matches!((&old).read(&mut [0_u8; 64]), Ok(0)));
+    let pause = async { tokio::time::sleep(Duration::from_millis(100)).await };
+    test.runtime.block_on(pause);
+    assert!(test.hook.running(&id));
+    assert!(!test.stopped(1));
+    assert_eq!(test.launches(), 2);
 }
