@@ -188,6 +188,8 @@ fn a_hung_stop_ends_the_shutdown_at_its_wait() {
     assert_eq!(ended, Ended::Late);
     assert_eq!(at, SHUTDOWN_WAIT);
     assert!(SHUTDOWN_WAIT < UNIT_STOP_TIMEOUT);
+    // Decision CH56 rule 3: the exit margin is 5 s, so the wait is 85 s.
+    assert_eq!(SHUTDOWN_WAIT, Duration::from_secs(85));
     assert_eq!(fake.steps(A).len(), 2);
 }
 
