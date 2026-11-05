@@ -187,8 +187,8 @@ same start. The drop runs in this order:
    Its start may still boot a VM, so the drop waits for that start to
    end. Then no Upgrade starts a VM of the session under the mark.
 3. The `StopVm` hook stops every VM of the target at once (decision
-   CH33 rule 11). The hook of the vmm calls `stop::stop`. The tests fake
-   it.
+   CH33 rule 11). `ColdBoot` is the hook of the vmm (see "The stop
+   hook"). `tests/drop.rs` fakes it.
 4. `remove_session` of `creche-vmm-store` removes the data of each
    session whose VM stopped, then its row (PR D14). It runs in
    `spawn_blocking`, one row at a time. The lock of the rows lasts one
@@ -373,6 +373,29 @@ clear at a new ready, a door close through the acp handler as a use, a
 sweep that skips a generation in use, an eviction that outlives its
 dropped start, and an idle check that takes out one VM at a time.
 
+## The stop hook
+
+`ColdBoot` implements `StopVm` (plan PR L18b). A stop takes the VM out
+of the table under a `Stopping` slot, so its RAM still counts (decision
+CH50 rule 4). Then it calls `stop::stop` with the control link of the VM,
+so the graceful stop goes first (decision CH19 (3)). A stop that worked
+removes the VM from the table and its generation from `InUse`. A stop
+that failed puts the VM back with no link, and `VmStopFailed` carries the
+pid (`VmProcess::pid`). A second stop of the session waits for the first
+and returns its outcome: the same `VmStopFailed`, whose error is shared
+in an `Arc` (caller duty 6).
+
+A slot that a start or a retire holds is read again every `SLOT_POLL`
+(10 ms) until it ends. A launch step can outlive a dropped start future,
+and its output then kills the VM and puts it in the table. A drop of the
+stop future kills the VM and puts it back (`Eviction`), and a second stop
+that waits then reads the slot again. A start of a session under a stop
+gets `host_full` (decision CH54 rule 4). `tests/start.rs` proves a drop
+through the hook, a failed stop that keeps the row and the RAM, two stops
+that overlap, a stop during a launch, and the RAM of a VM under a stop. It
+also proves a start of the session under a stop (`host_full`, one
+launch) and a stop that waits for an idle sleep whose retire fails.
+
 ## Rules
 
 - Each new dependency is its own pull request, with its lock delta
@@ -401,17 +424,16 @@ dropped start, and an idle check that takes out one VM at a time.
    (`src/start.rs`). This departs from the order of plan PR L16, which
    put the check before the wait for `ControlReady`.
 4. Closed by decision CH54 rule 4: an Upgrade of a session whose VM is
-   being evicted or put to sleep gets `host_full` (`src/start.rs`). A
-   door that an eviction closes between the end of the start and the
-   101 gets `host_full` the same way (`relay::Stopped::Evict`).
-5. Plan gap (CONTRACT-QUESTION, plan PRs L11, L15, L19, L20): two
-   production pieces have no plan PR. (1) No `impl StopVm for ColdBoot`
-   exists, and the table is private, so the drop route has no hook over
-   the VMs of the vmm. (2) No task runs a per-VM loop over
-   `ControlLink::event` and `ControlState::turn`. L11 gave the parts
-   only. L15 needs (1), L19 and L20 need both, and none names them. The
-   narrowest owner is one lifecycle PR before L19 that adds both. Until
-   then the plan owner decides.
+   being evicted, put to sleep or stopped gets `host_full`
+   (`src/start.rs`). A door that an eviction closes between the end of
+   the start and the 101 gets `host_full` the same way
+   (`relay::Stopped::Evict`). Under the mark of a drop no such Upgrade
+   reaches the hook (decision CH34 rule 6).
+5. Plan gap (plan PRs L11, L15, L19, L20): plan PR L18b owns two
+   production pieces that no earlier plan PR named. (1) `impl StopVm
+   for ColdBoot` is done (see "The stop hook"). (2) No task runs a
+   per-VM loop over `ControlLink::event` and `ControlState::turn` yet.
+   The next PR of L18b adds it.
 6. CONTRACT-QUESTION (decision CH50 rule 10, plan PR L17,
    `src/restore.rs`): the plan reads the device set "through ch-remote
    info (D8)". `ChRemote::info` returns `VmInfo`, which holds only

@@ -19,6 +19,7 @@ use std::{fs, io};
 
 use creche_vmm::control::ControlState;
 use creche_vmm::handlers::acp::{Acp, StartFault, StartVm};
+use creche_vmm::handlers::drop::{Drops, StopVm, VmStopFailed};
 use creche_vmm::relay::{AcpLink, Door, Relays};
 use creche_vmm::restore::ChApi;
 use creche_vmm::start::{ColdBoot, Digests, Launcher, StartConfig};
@@ -35,7 +36,10 @@ use creche_vmm_store::retention::Reason;
 use creche_vmm_store::rows::Rows;
 use creche_vmm_store::session_disk::SessionDisks;
 use creche_vmm_store::sleep_gate::IDLE_TIMEOUT;
-use creche_wire::{FamilyName, OpenAcp, ServeUpgrade as _, SessionId, SessionRow};
+use creche_wire::{
+    DropError, DropRoute, DropSession, DropTarget, Dropped, FamilyName, OpenAcp, Serve,
+    ServeUpgrade as _, SessionId, SessionRow,
+};
 use tokio::runtime::{Builder, Runtime};
 
 const A: &str = "3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b";
@@ -68,6 +72,9 @@ enum Guest {
     Closes,
     /// `ControlReady`, then a refused `CONNECT 1201`.
     RefusesAcp,
+    /// As `Ready`, and 20 ms after a `stop` line the status check of the
+    /// VM fails, in place of the power-off.
+    Wedges,
 }
 
 /// A launched fake VM. A signal ends it at once.
@@ -80,6 +87,10 @@ struct FakeVm {
 }
 
 impl VmProcess for FakeVm {
+    fn pid(&self) -> u32 {
+        4242
+    }
+
     fn exited(&mut self) -> io::Result<bool> {
         if self.broken.load(Ordering::SeqCst) {
             return Err(io::Error::other("the status check failed"));
@@ -149,8 +160,10 @@ impl Fake {
         let listener = UnixListener::bind(vsock).unwrap();
         let guest = *self.guest.lock().unwrap();
         let exited = Arc::new(AtomicBool::new(false));
+        let broken = Arc::new(AtomicBool::new(false));
         let vm = Vm {
             exited: Arc::clone(&exited),
+            broken: Arc::clone(&broken),
             stop_lines: Arc::clone(&self.stop_lines),
         };
         spawn(move || play(&listener, guest, &vm));
@@ -159,7 +172,6 @@ impl Fake {
         fs::write(self.dir.join(format!("cmdline-{number}")), args.join("\0")).unwrap();
         launches.push(launch);
         self.vms.lock().unwrap().push(Arc::clone(&exited));
-        let broken = Arc::new(AtomicBool::new(false));
         self.broken.lock().unwrap().push(Arc::clone(&broken));
         FakeVm {
             number,
@@ -243,6 +255,7 @@ impl<const DEVICES: bool> ChApi for FakeApi<DEVICES> {
 #[derive(Debug, Clone)]
 struct Vm {
     exited: Arc<AtomicBool>,
+    broken: Arc<AtomicBool>,
     stop_lines: Arc<AtomicUsize>,
 }
 
@@ -276,7 +289,12 @@ fn play(listener: &UnixListener, guest: Guest, vm: &Vm) {
                     for line in reader.lines() {
                         if line.is_ok_and(|line| line.contains("stop")) {
                             vm.stop_lines.fetch_add(1, Ordering::SeqCst);
-                            vm.exited.store(true, Ordering::SeqCst);
+                            if guest == Guest::Wedges {
+                                std::thread::sleep(Duration::from_millis(20));
+                                vm.broken.store(true, Ordering::SeqCst);
+                            } else {
+                                vm.exited.store(true, Ordering::SeqCst);
+                            }
                         }
                     }
                 });
@@ -1082,6 +1100,12 @@ impl<const DEVICES: bool> StartVm for Shared<DEVICES> {
     }
 }
 
+impl<const DEVICES: bool> StopVm for Shared<DEVICES> {
+    async fn stop(&self, id: &SessionId) -> Result<(), VmStopFailed> {
+        self.0.stop(id).await
+    }
+}
+
 /// A door close counts as a use (decision CH50 rule 5). An Upgrade
 /// through the acp handler opens the door, and its end records the close.
 /// The VM sleeps only `IDLE_TIMEOUT` after the close, not after its start.
@@ -1183,4 +1207,161 @@ fn the_idle_check_takes_out_one_vm_at_a_time() {
     assert_eq!(slept, [test.rows[1 - other].id.clone()]);
     assert!(test.hook.running(&test.rows[other].id));
     assert_eq!(test.launches(), 2);
+}
+
+#[cfg(test)]
+impl Test {
+    /// Drops the session of row `index` through the drop handler over the
+    /// hook (plan PR L18b).
+    fn drop_session(&self, index: usize) -> Result<Dropped, DropError> {
+        let hook = Shared(Arc::clone(&self.hook));
+        let drops = Drops::new(Arc::clone(&self.store), self.relays.clone(), hook);
+        let row = &self.rows[index];
+        let target = DropTarget::Session(DropSession {
+            family: row.family.clone(),
+            id: row.id.clone(),
+        });
+        self.runtime
+            .block_on(Serve::<DropRoute>::serve(&drops, target))
+    }
+}
+
+/// A drop through the hook of the vmm sends the graceful stop, removes
+/// the row and frees the RAM of the VM (decisions CH19 (3), CH33 rule
+/// 11). The cap holds one VM, and the next start evicts nothing.
+#[test]
+fn a_drop_stops_the_vm_through_the_hook() {
+    let test = Test::new("drop", |config| config.limits.ram_cap = 512 << 20);
+    assert_eq!(test.start(0), Ok(()));
+    assert_eq!(test.drop_session(0), Ok(Dropped {}));
+    assert_eq!(test.stop_lines(), 1);
+    assert!(test.stopped(0));
+    assert!(!test.hook.running(&test.rows[0].id));
+    assert!(test.store.lock().unwrap().get(&test.rows[0].id).is_none());
+    assert_eq!(test.start(1), Ok(()));
+    assert!(test.api.snapshots.lock().unwrap().is_empty());
+}
+
+/// A VM whose stop fails stays in the table with no link, so admission
+/// counts its RAM and evicts nothing. The drop answers `internal`, and
+/// the row stays (decision CH50 rule 4).
+#[test]
+fn a_failed_stop_keeps_the_vm_and_its_row() {
+    let test = Test::new("drop-hung", |config| config.limits.ram_cap = 512 << 20);
+    assert_eq!(test.start(0), Ok(()));
+    test.fake.broken.lock().unwrap()[0].store(true, Ordering::SeqCst);
+    assert_eq!(test.drop_session(0), Err(DropError::Internal {}));
+    assert!(test.hook.running(&test.rows[0].id));
+    assert!(test.store.lock().unwrap().get(&test.rows[0].id).is_some());
+    assert_eq!(test.start(1), Err(StartFault::HostFull));
+    assert!(test.api.snapshots.lock().unwrap().is_empty());
+}
+
+/// Two stops of one VM overlap. The second waits for the first and
+/// returns its outcome: one `stop` line, one error (caller duty 6).
+#[test]
+fn a_second_stop_returns_the_outcome_of_the_first() {
+    let test = Test::new("drop-twice", |_| {});
+    *test.fake.guest.lock().unwrap() = Guest::Wedges;
+    assert_eq!(test.start(0), Ok(()));
+    let id = &test.rows[0].id;
+    let (first, second) = test
+        .runtime
+        .block_on(both(test.hook.stop(id), test.hook.stop(id)));
+    let (first, second) = (first.unwrap_err(), second.unwrap_err());
+    assert!(Arc::ptr_eq(&first.error, &second.error));
+    assert_eq!(first.pid, 4242);
+    assert_eq!(test.stop_lines(), 1);
+    assert!(test.hook.running(id));
+}
+
+/// A stop that finds a start in its launch step waits for it. The start
+/// future was dropped, so the launch output kills the VM, and the stop
+/// then finds it gone and removes it from the table.
+#[test]
+fn a_stop_waits_for_a_launch_that_outlives_its_start() {
+    let test = Test::new("drop-launch", |_| {});
+    test.fake.hold.store(true, Ordering::SeqCst);
+    let start = test.hook.start(&test.rows[0]);
+    let cut = test
+        .runtime
+        .block_on(async { tokio::time::timeout(Duration::from_millis(50), start).await });
+    assert!(cut.is_err());
+    let id = &test.rows[0].id;
+    let ((stopped, killed), ()) = test.runtime.block_on(both(
+        async {
+            let stopped = test.hook.stop(id).await;
+            // No index: a panic here would leave the launch held for ever.
+            let vms = test.fake.vms.lock().unwrap();
+            let killed = vms.first().is_some_and(|vm| vm.load(Ordering::SeqCst));
+            (stopped, killed)
+        },
+        async {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            test.fake.hold.store(false, Ordering::SeqCst);
+        },
+    ));
+    assert!(stopped.is_ok());
+    assert!(killed);
+    assert!(!test.hook.running(id));
+}
+
+/// A VM under a stop keeps its RAM, so a start of another session that
+/// would need it gets `host_full` (decision CH50 rule 4).
+#[test]
+fn a_vm_under_a_stop_keeps_its_ram() {
+    let test = Test::new("drop-ram", |config| config.limits.ram_cap = 512 << 20);
+    *test.fake.guest.lock().unwrap() = Guest::Wedges;
+    assert_eq!(test.start(0), Ok(()));
+    let (stopped, started) = test
+        .runtime
+        .block_on(both(test.hook.stop(&test.rows[0].id), async {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            test.hook.start(&test.rows[1]).await.map(|_link| ())
+        }));
+    assert!(stopped.is_err());
+    assert_eq!(started, Err(StartFault::HostFull));
+    assert_eq!(test.launches(), 1);
+}
+
+/// A start of the session under a stop finds its `Stopping` slot and gets
+/// `host_full` at once. It launches no second CH on the session disk
+/// (decision CH54 rule 4).
+#[test]
+fn a_start_of_the_stopped_session_is_host_full() {
+    let test = Test::new("drop-same", |_| {});
+    *test.fake.guest.lock().unwrap() = Guest::Wedges;
+    assert_eq!(test.start(0), Ok(()));
+    let (stopped, started) = test
+        .runtime
+        .block_on(both(test.hook.stop(&test.rows[0].id), async {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            test.hook.start(&test.rows[0]).await.map(|_link| ())
+        }));
+    assert!(stopped.is_err());
+    assert_eq!(started, Err(StartFault::HostFull));
+    assert_eq!(test.launches(), 1);
+}
+
+/// A stop that finds the VM under an idle sleep waits for the retire. The
+/// take fails and the retire stop fails, so the VM goes back. The stop
+/// then fails too, and the VM still runs (decision CH50 rule 4).
+#[test]
+fn a_stop_during_a_sleep_waits_for_the_retire() {
+    let test = Test::new("drop-sleep", |_| {});
+    *test.fake.guest.lock().unwrap() = Guest::Wedges;
+    assert_eq!(test.start(0), Ok(()));
+    test.api.fail_take.store(true, Ordering::SeqCst);
+    let id = &test.rows[0].id;
+    let now = Instant::now() + PAST_IDLE;
+    let (slept, stopped) = test
+        .runtime
+        .block_on(both(test.hook.sleep_idle(now), async {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            test.hook.stop(id).await
+        }));
+    assert!(slept.is_empty());
+    assert!(stopped.is_err());
+    assert_eq!(test.stop_lines(), 1);
+    assert!(test.hook.running(id));
 }

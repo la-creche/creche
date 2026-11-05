@@ -65,7 +65,7 @@ mod fake {
             let mut vms = self.0.lock().unwrap();
             if vms.hung.as_ref() == Some(id) {
                 // The VM stays in the table, so admission counts its RAM.
-                let error = StopError::Hung;
+                let error = Arc::new(StopError::Hung);
                 return Err(VmStopFailed { pid: 4242, error });
             }
             vms.running.remove(id);
