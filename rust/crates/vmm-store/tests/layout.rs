@@ -286,3 +286,17 @@ fn the_link_makes_owner_only_dirs() {
         assert_eq!(mode & 0o777, 0o700, "{}", dir.display());
     }
 }
+
+// A real dir at `vm/<id>` is no link. The unlink fails and names it, so
+// the caller does not free a slot that a VM may still use.
+#[test]
+fn unlink_fails_on_a_real_dir() {
+    let temp = TempRun::new("unlink-dir");
+    let run = &temp.1;
+    fs::create_dir_all(run.vm(&id()).path()).expect("a real dir");
+
+    let error = run.unlink_vm(&id()).expect_err("a dir was unlinked");
+
+    assert_eq!(error.path, run.vm(&id()).path());
+    assert!(run.vm(&id()).path().is_dir());
+}
