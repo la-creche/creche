@@ -11,6 +11,7 @@ import { Loader } from "./load.js";
 import type { SessionIndex } from "./session-index.js";
 import { Sessions } from "./sessions.js";
 import { Turns } from "./turns.js";
+import type { Refresh } from "./turns.js";
 
 export interface ServiceOptions {
   /** The one agent of the facade, as `start()` registers it. */
@@ -21,12 +22,14 @@ export interface ServiceOptions {
   /** The conversation store of the started runtime (`tapStores`). */
   readonly store: () => ConversationStreamStore | null;
   readonly now?: () => Date;
+  /** The pull of the family state before each prompt. None: the state of the start stays. */
+  readonly refresh?: Refresh;
 }
 
 export function sessionService(options: ServiceOptions): SessionService {
   const sessions = new Sessions(options.agent, options.index, options.now);
   const live = new Live();
-  const turns = new Turns(sessions, live);
+  const turns = new Turns(sessions, live, options.refresh);
   const loader = new Loader(sessions, live, options.store, options.agentName);
 
   return {
