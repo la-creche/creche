@@ -17,4 +17,5 @@ pub mod limits;
 pub mod output;
 pub mod rfc3339;
 pub mod scope;
+pub mod slot_profile;
 pub mod spawner;
