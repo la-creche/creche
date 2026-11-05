@@ -538,7 +538,10 @@ no guest sync.
     when an idle retire of the sleep loop runs at SIGTERM. Reading taken:
     `SHUTDOWN_WAIT` bounds every step from SIGTERM, and a VM still in the
     set at the deadline ends with the vmm, a power cut for its guest
-    (`src/shutdown.rs`). A change costs one constant per bound.
+    (`src/shutdown.rs`). No row sets the exit margin either. Reading
+    taken: `EXIT_TIME` is 5 s, so `SHUTDOWN_WAIT` is 85 s, and caller
+    duty 8 gets 5 s for the end of the runtime and the exit. A change
+    costs one constant per bound.
 
 ## Caller duties
 

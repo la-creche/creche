@@ -32,7 +32,10 @@ use crate::stop::KILL_WAIT;
 const UNIT_STOP_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// The time that the vmm keeps for its exit after the shutdown: the end
-/// of the runtime and the exit of the process. No row sets it.
+/// of the runtime and the exit of the process.
+// CONTRACT-QUESTION: no row sets the exit margin. Reading taken: 5 s,
+// which fixes `SHUTDOWN_WAIT` at 85 s and the exit budget of caller duty
+// 8 (Known gaps 13). A change costs one constant.
 const EXIT_TIME: Duration = Duration::from_secs(5);
 
 /// The longest shutdown. Past it the shutdown ends, and each VM still in
