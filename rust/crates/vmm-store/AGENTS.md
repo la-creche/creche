@@ -66,6 +66,18 @@ The second file has the table of the three vmm crates.
   finishes. It removes nothing when no row of the family has the id, and
   the route answers `not_found` (decision CH33 rules 4 and 5). The
   caller (L15) stops the VM first and drops a family one row at a time.
+- Decisions CH51 and CH55 (PR D16, `layout.rs`): the run root holds
+  `SLOTS` = 64 slot dirs `slot/<k>/`, one per slot profile
+  `creche-ch-slot-<k>`. `RunRoot::link_vm` makes `vm/<id>` a symlink to
+  `../slot/<k>` and replaces any link there in one rename, so a re-link
+  moves the VM to another slot. Every `VmRunDir` path stays
+  `vm/<id>/...`, so a snapshot's vsock path holds across a restore into
+  another slot. `remove_stale` works through the link.
+- Decision CH56 rule 1 (PR D16, `layout.rs`): `link_vm` empties
+  `slot/<k>/` before it links `vm/<id>` to it. It removes every entry that
+  is not a dir (each regular file, socket and link) and no dir, since a
+  free slot holds no live CH (CH19 (4)). The old VM's `serial.log` goes
+  with it, and its fault file stays in the faults dir.
 
 ## Known gaps
 
@@ -114,3 +126,11 @@ The second file has the table of the three vmm crates.
   remove the files of a restore that is starting. (b) pass the budget
   from the vmm config. L20 reads it from an env key with `BUDGET` as the
   default (CH36 G14).
+- Caller duties (PR D16, `layout.rs`), for lifecycle (L16b): (a) run
+  `link_vm` before `remove_stale` at each start. `start.rs` runs
+  `remove_stale` first, and through an old link to a slot that another VM
+  took it removes that VM's sockets. (b) run `unlink_vm` when the VM frees
+  its slot. (c) link a VM only to a free slot, one that no live CH holds.
+  `link_vm` empties the slot (CH56 rule 1), so a link to a held slot
+  removes the sockets of the CH in it. Until L16b, `start.rs` makes
+  `vm/<id>` a real dir, and `link_vm` fails on a real dir.

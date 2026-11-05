@@ -6,8 +6,17 @@
 //! directory of the vmm unit. It holds `vmm.sock` (decision CH20) and one
 //! directory per VM with the sockets of Cloud Hypervisor. The vmm config
 //! (PR L20) passes both roots in. No path is compiled in.
+//!
+//! Decisions CH51 and CH55 (PR D16): the run root also holds `SLOTS` slot
+//! dirs `slot/<k>/`, one per AppArmor slot profile `creche-ch-slot-<k>`.
+//! Each VM takes a free slot, and `vm/<id>` is a symlink to `../slot/<k>`.
+//! So every `VmRunDir` path stays `vm/<id>/...` for its users, and the
+//! vsock path in a snapshot holds across a restore into another slot.
 
 use std::fmt;
+use std::fs::{self, DirBuilder};
+use std::io;
+use std::os::unix::fs::{DirBuilderExt, symlink};
 use std::path::{Component, Path, PathBuf};
 
 use creche_wire::{HostPort, SessionId};
@@ -27,6 +36,91 @@ const VSOCK_SOCKET: &str = "vsock.sock";
 /// A session id in the form that `SessionId` accepts. Every session id has
 /// this length, so the run root check uses it for the longest path.
 const ID_OF_MAX_LEN: &str = "00000000-0000-0000-0000-000000000000";
+
+/// The pool size (decisions CH51, CH55). 80 GiB of host RAM over 2 GiB
+/// per VM is 40 VMs, so 64 slots cover every VM that admission lets in
+/// (item 45 C3, option 2).
+pub const SLOTS: u16 = 64;
+
+/// The mode of each dir that `RunRoot::link_vm` makes.
+const DIR_MODE: u32 = 0o700;
+
+/// One slot of the pool, below `SLOTS` (decisions CH51, CH55).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Slot(u16);
+
+impl Slot {
+    /// The last slot. Its dir name is the longest.
+    pub const LAST: Self = Self(SLOTS - 1);
+
+    /// The slot `number`, or `None` at or above `SLOTS`.
+    #[must_use]
+    pub fn new(number: u16) -> Option<Self> {
+        (number < SLOTS).then_some(Self(number))
+    }
+
+    /// Every slot, from 0.
+    pub fn all() -> impl Iterator<Item = Self> {
+        (0..SLOTS).map(Self)
+    }
+
+    /// The slot number.
+    #[must_use]
+    pub fn number(self) -> u16 {
+        self.0
+    }
+}
+
+/// Why `RunRoot::link_vm` or `RunRoot::unlink_vm` failed.
+#[derive(Debug)]
+pub struct LinkError {
+    /// The path that the failed step worked on.
+    pub path: PathBuf,
+    /// Why the step failed.
+    pub source: io::Error,
+}
+
+impl fmt::Display for LinkError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "cannot link {}", self.path.display())
+    }
+}
+
+impl std::error::Error for LinkError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+/// Wraps an IO error with the path of its step.
+fn at(path: &Path) -> impl FnOnce(io::Error) -> LinkError + '_ {
+    move |source| LinkError {
+        path: path.to_owned(),
+        source,
+    }
+}
+
+/// Removes the file or link at `path`. A missing one is no error.
+fn remove_if_present(path: &Path) -> Result<(), LinkError> {
+    match fs::remove_file(path) {
+        Err(source) if source.kind() != io::ErrorKind::NotFound => Err(at(path)(source)),
+        _ => Ok(()),
+    }
+}
+
+/// Removes every entry of the slot dir `dir` that is not a dir (decision
+/// CH56 rule 1). The file type comes from the dir entry, so a link is
+/// removed and never followed. An entry that is gone first is no error.
+fn empty_slot(dir: &Path) -> Result<(), LinkError> {
+    for entry in fs::read_dir(dir).map_err(at(dir))? {
+        let entry = entry.map_err(at(dir))?;
+        let path = entry.path();
+        if !entry.file_type().map_err(at(&path))?.is_dir() {
+            remove_if_present(&path)?;
+        }
+    }
+    Ok(())
+}
 
 /// Why a path is not a root.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -207,11 +301,21 @@ impl RunRoot {
         check_root(&path)?;
 
         let root = Self(path);
-        let vm = VmRunDir(root.0.join("vm").join(ID_OF_MAX_LEN));
-        let longest = HostPort::ALL
+        // The vmm and CH name each socket by its `vm/<id>` path. A slot
+        // name is shorter, and the check counts it too.
+        let dirs = [
+            VmRunDir(root.vms_dir().join(ID_OF_MAX_LEN)),
+            VmRunDir(root.slot(Slot::LAST)),
+        ];
+        let longest = dirs
             .iter()
-            .map(|&port| vm.host_listener(port))
-            .chain([vm.vsock_socket(), vm.api_socket(), root.vmm_socket()])
+            .flat_map(|vm| {
+                HostPort::ALL
+                    .iter()
+                    .map(|&port| vm.host_listener(port))
+                    .chain([vm.vsock_socket(), vm.api_socket()])
+            })
+            .chain([root.vmm_socket()])
             .map(|socket| socket.as_os_str().len())
             .max()
             .unwrap_or(0);
@@ -233,10 +337,90 @@ impl RunRoot {
         self.0.join("vmm.sock")
     }
 
-    /// The run directory of the VM of `id` (gap G5).
+    /// The directory of every `vm/<id>` link (PR D16).
+    #[must_use]
+    pub fn vms_dir(&self) -> PathBuf {
+        self.0.join("vm")
+    }
+
+    /// The directory of every slot dir (PR D16).
+    #[must_use]
+    pub fn slots_dir(&self) -> PathBuf {
+        self.0.join("slot")
+    }
+
+    /// The dir of `slot`, `slot/<k>` (decisions CH51, CH55). The slot
+    /// profile `creche-ch-slot-<k>` allows only the sockets under it.
+    #[must_use]
+    pub fn slot(&self, slot: Slot) -> PathBuf {
+        self.slots_dir().join(slot.number().to_string())
+    }
+
+    /// The run directory of the VM of `id` (gap G5). After `link_vm` it is
+    /// a symlink to the dir of the slot of the VM.
     #[must_use]
     pub fn vm(&self, id: &SessionId) -> VmRunDir {
-        VmRunDir(self.0.join("vm").join(id.as_str()))
+        VmRunDir(self.vms_dir().join(id.as_str()))
+    }
+
+    // Decision CH56 rule 1: a VM that takes a slot empties it first. A
+    // slot that held another VM can keep its `serial.log` and its
+    // `vsock.sock_*` listeners. A leftover listener fails the next bind,
+    // and the deny check refuses an extra listener (CH6-3).
+    /// Makes `vm/<id>` a symlink to `../slot/<k>`, and makes the slot dir
+    /// if it is not there (decisions CH51, CH55).
+    ///
+    /// Before the link, it empties the slot dir (decision CH56 rule 1). It
+    /// removes every entry that is not a dir: each regular file, socket
+    /// and link. It removes no dir. A free slot holds no live Cloud
+    /// Hypervisor (CH19 (4)), so the files of the old VM are stale. The
+    /// old VM's `serial.log` goes with them.
+    ///
+    /// A link that is there, to any target, is replaced in one rename, so
+    /// a re-link moves the VM to another slot. A real dir at `vm/<id>`
+    /// stays, and the rename fails. The run root is a tmpfs, so no step
+    /// syncs.
+    ///
+    /// The caller runs one link of an id at a time. The link names the
+    /// slot only. Which VM holds which slot is the caller's (PR L16b). The
+    /// caller links a VM only to a free slot, since the link empties it.
+    ///
+    /// # Errors
+    ///
+    /// A `LinkError` for the first step that fails.
+    pub fn link_vm(&self, id: &SessionId, slot: Slot) -> Result<VmRunDir, LinkError> {
+        let dir = self.slot(slot);
+        let vms = self.vms_dir();
+        for path in [&dir, &vms] {
+            DirBuilder::new()
+                .recursive(true)
+                .mode(DIR_MODE)
+                .create(path)
+                .map_err(at(path))?;
+        }
+        empty_slot(&dir)?;
+        let vm = self.vm(id);
+        let temp = vms.join(format!(".{id}.link"));
+        remove_if_present(&temp)?;
+        let target = Path::new("..").join("slot").join(slot.number().to_string());
+        symlink(target, &temp).map_err(at(&temp))?;
+        if let Err(source) = fs::rename(&temp, vm.path()) {
+            let _ = fs::remove_file(&temp);
+            return Err(at(vm.path())(source));
+        }
+        Ok(vm)
+    }
+
+    /// Removes the `vm/<id>` link. A missing link is no error. The slot
+    /// dir and its files stay. Run it when the VM frees its slot, so that
+    /// no later step of the VM reaches the files of the next VM in the
+    /// slot.
+    ///
+    /// # Errors
+    ///
+    /// A `LinkError` when the removal fails.
+    pub fn unlink_vm(&self, id: &SessionId) -> Result<(), LinkError> {
+        remove_if_present(self.vm(id).path())
     }
 }
 
@@ -278,9 +462,11 @@ impl VmRunDir {
         self.0.join("api.sock.lock")
     }
 
-    /// The guest serial output, kept until the next start (gap G23). The
-    /// gap writes `<run>/serial.log`. This reading puts it in the run
-    /// directory of the VM, so that two VMs do not share one file.
+    /// The guest serial output (gap G23). The gap writes
+    /// `<run>/serial.log`. This reading puts it in the run directory of the
+    /// VM, so that two VMs do not share one file. It stays until a VM next
+    /// takes the slot, and `RunRoot::link_vm` removes it (decision CH56
+    /// rule 1).
     #[must_use]
     pub fn serial_log(&self) -> PathBuf {
         self.0.join("serial.log")

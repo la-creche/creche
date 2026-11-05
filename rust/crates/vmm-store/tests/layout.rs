@@ -1,9 +1,13 @@
-//! Pins every path of the per-VM layout (gap G5, decisions CH20, CH24).
+//! Pins every path of the per-VM layout (gap G5, decisions CH20, CH24),
+//! and the slot dirs with their `vm/<id>` links (decisions CH51, CH55).
 
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use creche_vmm_store::layout::{
-    RootError, RunRoot, SCOPE_PREFIX, SOCKET_PATH_MAX, SnapshotGeneration, StateRoot, scope_unit,
+    RootError, RunRoot, SCOPE_PREFIX, SLOTS, SOCKET_PATH_MAX, Slot, SnapshotGeneration, StateRoot,
+    scope_unit,
 };
 use creche_wire::{HostPort, SessionId};
 
@@ -118,4 +122,215 @@ fn the_run_root_keeps_sockets_in_the_limit() {
         RunRoot::new(long.into()),
         Err(RootError::SocketPathTooLong(SOCKET_PATH_MAX + 1))
     );
+}
+
+// The slot dirs are shorter than the `vm/<id>` dirs, so the check of a
+// root of 51 bytes holds for them too (decisions CH51, CH55).
+#[test]
+fn slot_sockets_are_shorter() {
+    let run = RunRoot::new(format!("/{}", "r".repeat(50)).into()).expect("a run root");
+    let slot = run.slot(Slot::LAST).join("vsock.sock_1104");
+    let vm = run.vm(&id()).host_listener(HostPort::Egress);
+    assert!(slot.as_os_str().len() < vm.as_os_str().len());
+}
+
+#[test]
+fn slot_paths_are_pinned() {
+    let run = RunRoot::new(PathBuf::from("/run/vmm")).expect("a run root");
+
+    assert_eq!(SLOTS, 64);
+    assert_eq!(Slot::all().count(), 64);
+    assert_eq!(Slot::LAST.number(), 63);
+    assert_eq!(Slot::new(63), Some(Slot::LAST));
+    assert_eq!(Slot::new(64), None);
+    assert_eq!(run.slots_dir(), Path::new("/run/vmm/slot"));
+    assert_eq!(run.vms_dir(), Path::new("/run/vmm/vm"));
+    let slot = Slot::new(5).expect("slot 5");
+    assert_eq!(run.slot(slot), Path::new("/run/vmm/slot/5"));
+}
+
+/// A run root in a new directory under `/tmp`, removed on drop. The temp
+/// dir of some hosts is too long for the socket limit of `RunRoot`.
+struct TempRun(PathBuf, RunRoot);
+
+// `cfg(test)` lets the helper use `expect` (rust/clippy.toml).
+#[cfg(test)]
+impl TempRun {
+    fn new(name: &str) -> Self {
+        let path = PathBuf::from(format!("/tmp/vmm-layout-{}-{name}", std::process::id()));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir(&path).expect("the run root");
+        let run = RunRoot::new(path.clone()).expect("a run root");
+        Self(path, run)
+    }
+}
+
+impl Drop for TempRun {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+#[cfg(test)]
+fn slot(number: u16) -> Slot {
+    Slot::new(number).expect("a slot")
+}
+
+/// The slot dir that `vm/<id>` resolves to.
+#[cfg(test)]
+fn resolved(run: &RunRoot) -> PathBuf {
+    fs::canonicalize(run.vm(&id()).path()).expect("the link resolves")
+}
+
+#[test]
+fn the_link_resolves_to_the_slot_dir() {
+    let temp = TempRun::new("link");
+    let run = &temp.1;
+
+    let vm = run.link_vm(&id(), slot(3)).expect("the link");
+
+    assert_eq!(vm, run.vm(&id()));
+    assert_eq!(
+        fs::read_link(vm.path()).expect("a symlink"),
+        Path::new("../slot/3")
+    );
+    assert_eq!(
+        resolved(run),
+        fs::canonicalize(run.slot(slot(3))).expect("the slot")
+    );
+    fs::write(vm.api_socket(), b"").expect("a file through the link");
+    assert!(run.slot(slot(3)).join("api.sock").exists());
+}
+
+#[test]
+fn a_relink_moves_the_vm_to_another_slot() {
+    let temp = TempRun::new("relink");
+    let run = &temp.1;
+    run.link_vm(&id(), slot(3)).expect("the first link");
+    fs::write(run.vm(&id()).serial_log(), b"old").expect("a log in slot 3");
+
+    let vm = run.link_vm(&id(), slot(7)).expect("the re-link");
+
+    assert_eq!(
+        resolved(run),
+        fs::canonicalize(run.slot(slot(7))).expect("the slot")
+    );
+    assert!(!vm.serial_log().exists());
+    assert!(run.slot(slot(3)).join("serial.log").exists());
+    let names: Vec<_> = fs::read_dir(run.vms_dir())
+        .expect("the vm dir")
+        .map(|entry| entry.expect("an entry").file_name())
+        .collect();
+    assert_eq!(names, [ID]);
+}
+
+#[test]
+fn a_stale_link_and_temp_are_replaced() {
+    let temp = TempRun::new("stale");
+    let run = &temp.1;
+    fs::create_dir(run.vms_dir()).expect("the vm dir");
+    std::os::unix::fs::symlink("../slot/99", run.vm(&id()).path()).expect("a stale link");
+    fs::write(run.vms_dir().join(format!(".{ID}.link")), b"").expect("a stale temp");
+
+    run.link_vm(&id(), slot(0)).expect("the link");
+
+    assert_eq!(
+        resolved(run),
+        fs::canonicalize(run.slot(slot(0))).expect("the slot")
+    );
+    assert!(!run.vms_dir().join(format!(".{ID}.link")).exists());
+}
+
+#[test]
+fn a_real_dir_stays_and_the_link_fails() {
+    let temp = TempRun::new("dir");
+    let run = &temp.1;
+    fs::create_dir_all(run.vm(&id()).path()).expect("a real dir");
+
+    let error = run.link_vm(&id(), slot(1)).expect_err("a dir was replaced");
+
+    assert_eq!(error.path, run.vm(&id()).path());
+    assert!(
+        fs::symlink_metadata(run.vm(&id()).path())
+            .expect("the dir")
+            .is_dir()
+    );
+    assert!(!run.vms_dir().join(format!(".{ID}.link")).exists());
+}
+
+#[test]
+fn unlink_keeps_the_slot() {
+    let temp = TempRun::new("unlink");
+    let run = &temp.1;
+    let vm = run.link_vm(&id(), slot(2)).expect("the link");
+    fs::write(vm.serial_log(), b"").expect("a log");
+
+    run.unlink_vm(&id()).expect("the unlink");
+    run.unlink_vm(&id()).expect("a second unlink");
+
+    assert!(fs::symlink_metadata(vm.path()).is_err());
+    assert!(run.slot(slot(2)).join("serial.log").exists());
+}
+
+// The spike on spike/c3-slot-pool proved the link with 0700 dirs
+// (decisions CH51, CH55). Only the vmm user reaches the sockets.
+#[test]
+fn the_link_makes_owner_only_dirs() {
+    let temp = TempRun::new("mode");
+    let run = &temp.1;
+
+    run.link_vm(&id(), slot(9)).expect("the link");
+
+    for dir in [run.vms_dir(), run.slots_dir(), run.slot(slot(9))] {
+        let mode = fs::metadata(&dir).expect("the dir").permissions().mode();
+        assert_eq!(mode & 0o777, 0o700, "{}", dir.display());
+    }
+}
+
+// A real dir at `vm/<id>` is no link. The unlink fails and names it, so
+// the caller does not free a slot that a VM may still use.
+#[test]
+fn unlink_fails_on_a_real_dir() {
+    let temp = TempRun::new("unlink-dir");
+    let run = &temp.1;
+    fs::create_dir_all(run.vm(&id()).path()).expect("a real dir");
+
+    let error = run.unlink_vm(&id()).expect_err("a dir was unlinked");
+
+    assert_eq!(error.path, run.vm(&id()).path());
+    assert!(run.vm(&id()).path().is_dir());
+}
+
+// Decision CH56 rule 1: a VM that takes a slot empties it first. The old
+// VM's log and host listener go, and a dir stays with its contents.
+#[test]
+fn the_link_empties_the_slot() {
+    let temp = TempRun::new("empty");
+    let run = &temp.1;
+    let dir = run.slot(slot(6));
+    fs::create_dir_all(dir.join("sub")).expect("a sub dir");
+    fs::write(dir.join("sub/kept"), b"").expect("a file in the sub dir");
+    fs::write(dir.join("serial.log"), b"old").expect("a leftover log");
+    let listener = std::os::unix::net::UnixListener::bind(dir.join("vsock.sock_1100"))
+        .expect("a leftover listener");
+    drop(listener);
+    let outside = temp.0.join("outside");
+    fs::create_dir(&outside).expect("a dir outside the slot");
+    fs::write(outside.join("kept"), b"").expect("a file outside the slot");
+    std::os::unix::fs::symlink(&outside, dir.join("dir-link")).expect("a link to the dir");
+    std::os::unix::fs::symlink(outside.join("kept"), dir.join("file-link"))
+        .expect("a link to the file");
+
+    run.link_vm(&id(), slot(6)).expect("the link");
+
+    let mut names: Vec<_> = fs::read_dir(&dir)
+        .expect("the slot dir")
+        .map(|entry| entry.expect("an entry").file_name())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["sub"]);
+    assert!(dir.join("sub").is_dir());
+    assert!(dir.join("sub/kept").exists());
+    assert!(outside.is_dir());
+    assert!(outside.join("kept").exists());
 }
