@@ -33,6 +33,10 @@ STAGE_RE = re.compile(r"^FROM \S+ AS (\S+)$", re.MULTILINE)
 #: no image, so it is not a flavor target.
 BUILD_ONLY_STAGES = ("build", "creche-test-venv")
 
+#: Flavors that ship as a root disk only: CI builds them, playpen-build does
+#: not, and SandboxFlavor has no member for them (CH7-1, CH53 rule 1).
+DISK_ONLY = ("coding:agent-sandbox-coding",)
+
 
 def _text() -> str:
     return DOCKERFILE.read_text(encoding="utf-8")
@@ -59,8 +63,8 @@ def test_the_targets_are_the_flavors_the_release_builds() -> None:
 
     assert flavors is not None
     assert checked is not None
-    assert targets == [pair.split(":", 1)[1] for pair in flavors.group(1).split()]
-    assert checked.group(1) == flavors.group(1)
+    assert targets == [pair.split(":", 1)[1] for pair in checked.group(1).split()]
+    assert checked.group(1) == flavors.group(1) + " " + " ".join(DISK_ONLY)
     assert "FROM agent-sandbox AS agent-sandbox-python" in _text()
 
 

@@ -19,12 +19,16 @@ export interface SeenCompletion {
   readonly path: string;
   readonly authorization: string;
   readonly model: string;
+  /** The output limit of the request, from the model's `maxTokens`. */
+  readonly maxTokens: number | null;
   readonly tools: readonly string[];
   readonly messages: readonly { readonly role: string; readonly content: unknown }[];
 }
 
 interface CompletionBody {
   readonly model?: string;
+  readonly max_tokens?: number;
+  readonly max_completion_tokens?: number;
   readonly tools?: readonly { readonly function?: { readonly name?: string } }[];
   readonly messages?: readonly { readonly role: string; readonly content: unknown }[];
 }
@@ -33,6 +37,9 @@ const CALL_ID = "call_fake_1";
 
 /** The path that pi's OpenAI client posts each request to. */
 const COMPLETIONS_PATH = "/chat/completions";
+
+/** LiteLLM's model list, which the facade reads at start and at a model change. */
+const MODEL_INFO_PATH = "/v1/model/info";
 
 function readBody(request: IncomingMessage): Promise<string> {
   return new Promise((resolve) => {
@@ -74,6 +81,12 @@ function chunksFor(model: string, reply: FakeReply): readonly unknown[] {
 export class FakeModel {
   public readonly seen: SeenCompletion[] = [];
 
+  /** The body of `GET /v1/model/info`. Null: the list gets 404. */
+  public modelInfo: unknown = null;
+
+  /** The `authorization` header of each model list request, in order. */
+  public readonly infoAuthorizations: string[] = [];
+
   private server: Server | null = null;
 
   public constructor(private readonly script: readonly FakeReply[]) {}
@@ -82,8 +95,14 @@ export class FakeModel {
   public async start(): Promise<string> {
     const server = createServer((request, response) => {
       // Only a chat completions request takes a reply of the script. The
-      // model list that the facade reads at start gets 404, so the agent
-      // keeps its fallback limits.
+      // model list gets `modelInfo`, or 404, so the agent keeps its
+      // fallback limits.
+      if (request.method === "GET" && request.url === MODEL_INFO_PATH && this.modelInfo !== null) {
+        this.infoAuthorizations.push(request.headers.authorization ?? "");
+        response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(this.modelInfo));
+        return;
+      }
+
       if (request.method !== "POST" || !(request.url ?? "").endsWith(COMPLETIONS_PATH)) {
         response.writeHead(404).end();
         return;
@@ -95,6 +114,7 @@ export class FakeModel {
           path: request.url ?? "",
           authorization: request.headers.authorization ?? "",
           model: body.model ?? "",
+          maxTokens: body.max_completion_tokens ?? body.max_tokens ?? null,
           tools: (body.tools ?? []).map((tool) => tool.function?.name ?? ""),
           messages: body.messages ?? [],
         });
