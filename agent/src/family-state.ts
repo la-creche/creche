@@ -18,6 +18,7 @@ import { join } from "node:path";
 
 import { CRED_RETRY_MS, readCreds } from "./creds.js";
 import type { FamilyCreds } from "./creds.js";
+import { bareAlias } from "./litellm.js";
 import type { MountDirs } from "./mounts.js";
 import { readRuntimeConfig, SANDBOX_TOOL_NAMES } from "./runtime-config.js";
 import type { SandboxToolName, SystemPrompt } from "./runtime-config.js";
@@ -43,12 +44,12 @@ const NO_CRED_TEXT = { litellm_key: "", pep_token: "" };
 export type LiveCreds = Pick<FamilyCreds, "litellmKey" | "pepToken">;
 
 /**
- * What the agent function renders from. PR 3 of phase 6 (CH5c, CH5c-2)
- * adds the model alias here and switches the model at the next prompt.
- * Until then the agent keeps the model of its start, and a pulled
- * `model_alias` that differs changes nothing.
+ * What the agent function renders from. `modelAlias` is the bare alias,
+ * with no `litellm/` prefix. Flue reads the model at the start of each
+ * submission only (decisions CH5c, CH5c-2).
  */
 export interface LiveConfig {
+  readonly modelAlias: string;
   readonly instructions: string | null;
   readonly systemPrompt: SystemPrompt;
   readonly sandboxTools: readonly SandboxToolName[];
@@ -119,6 +120,7 @@ export function liveConfig(config: Wire<"FamilyConfig">, previous: readonly Live
   const skills = Object.entries(config.skills).flatMap(([name, text]) => same(name, text) ?? skillOf(name, text) ?? []);
 
   return {
+    modelAlias: bareAlias(config.model_alias),
     instructions: instructions.length > 0 ? instructions : null,
     systemPrompt: config.system_prompt,
     sandboxTools: SANDBOX_TOOL_NAMES.filter((name) => config.sandbox_tools[name]),
@@ -192,7 +194,9 @@ function readConfigDir(dir: string, previous: readonly LiveSkill[]): ConfigRead 
     system_prompt: systemPrompt,
   };
 
-  if (!validator("FamilyConfig").Check(config)) {
+  // The wire pattern takes `litellm/`, which names no model. The start
+  // refuses it (`model_alias_unset`), so a pull keeps the last good config.
+  if (!validator("FamilyConfig").Check(config) || bareAlias(modelAlias ?? "").length === 0) {
     return { ok: false, fault: "not_valid" };
   }
 

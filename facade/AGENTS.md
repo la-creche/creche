@@ -68,9 +68,11 @@ lock.
 
 Before each `session/prompt`, the facade pulls the family state from the
 mounts into the agent (`src/turns.ts`, decision CH5a). A rotated key or
-token and an edited config reach that prompt. When `creds.json` does not
-read, the prompt fails and the facade serves on. When `config/` does not
-read, the last good config stays, with one stderr line.
+token and an edited config reach that prompt. A new `model_alias` reaches
+it too, with one stderr line that gives the new alias's limits (decisions
+CH5c, CH5c-2). When `creds.json` does not read, the prompt fails and the
+facade serves on. When `config/` does not read, the last good config
+stays, with one stderr line.
 
 The workspace of the granted sandbox tools is
 `$AGENT_SESSIONS_DIR/workspace`: the one writable mount for the agent's
