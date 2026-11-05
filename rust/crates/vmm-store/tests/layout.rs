@@ -300,3 +300,29 @@ fn unlink_fails_on_a_real_dir() {
     assert_eq!(error.path, run.vm(&id()).path());
     assert!(run.vm(&id()).path().is_dir());
 }
+
+// Decision CH56 rule 1: a VM that takes a slot empties it first. The old
+// VM's log and host listener go, and a dir stays with its contents.
+#[test]
+fn the_link_empties_the_slot() {
+    let temp = TempRun::new("empty");
+    let run = &temp.1;
+    let dir = run.slot(slot(6));
+    fs::create_dir_all(dir.join("sub")).expect("a sub dir");
+    fs::write(dir.join("sub/kept"), b"").expect("a file in the sub dir");
+    fs::write(dir.join("serial.log"), b"old").expect("a leftover log");
+    let listener = std::os::unix::net::UnixListener::bind(dir.join("vsock.sock_1100"))
+        .expect("a leftover listener");
+    drop(listener);
+
+    run.link_vm(&id(), slot(6)).expect("the link");
+
+    let mut names: Vec<_> = fs::read_dir(&dir)
+        .expect("the slot dir")
+        .map(|entry| entry.expect("an entry").file_name())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["sub"]);
+    assert!(dir.join("sub").is_dir());
+    assert!(dir.join("sub/kept").exists());
+}

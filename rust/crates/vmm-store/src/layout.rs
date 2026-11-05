@@ -108,6 +108,20 @@ fn remove_if_present(path: &Path) -> Result<(), LinkError> {
     }
 }
 
+/// Removes every entry of the slot dir `dir` that is not a dir (decision
+/// CH56 rule 1). The file type comes from the dir entry, so a link is
+/// removed and never followed. An entry that is gone first is no error.
+fn empty_slot(dir: &Path) -> Result<(), LinkError> {
+    for entry in fs::read_dir(dir).map_err(at(dir))? {
+        let entry = entry.map_err(at(dir))?;
+        let path = entry.path();
+        if !entry.file_type().map_err(at(&path))?.is_dir() {
+            remove_if_present(&path)?;
+        }
+    }
+    Ok(())
+}
+
 /// Why a path is not a root.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RootError {
@@ -349,19 +363,27 @@ impl RunRoot {
         VmRunDir(self.vms_dir().join(id.as_str()))
     }
 
-    // CONTRACT-QUESTION (PR D16): no row says whether a VM that takes a
-    // slot empties it first. A slot that held another VM can keep its
-    // `serial.log` and its `vsock.sock_*` listeners. `remove_stale` removes
-    // only the three CH files, and the start truncates `serial.log`. The
-    // narrow reading: the link removes nothing (crate AGENTS.md).
+    // Decision CH56 rule 1: a VM that takes a slot empties it first. A
+    // slot that held another VM can keep its `serial.log` and its
+    // `vsock.sock_*` listeners. A leftover listener fails the next bind,
+    // and the deny check refuses an extra listener (CH6-3).
     /// Makes `vm/<id>` a symlink to `../slot/<k>`, and makes the slot dir
-    /// if it is not there (decisions CH51, CH55). A link that is there,
-    /// to any target, is replaced in one rename, so a re-link moves the VM
-    /// to another slot. A real dir at `vm/<id>` stays, and the rename
-    /// fails. The run root is a tmpfs, so no step syncs.
+    /// if it is not there (decisions CH51, CH55).
+    ///
+    /// Before the link, it empties the slot dir (decision CH56 rule 1). It
+    /// removes every entry that is not a dir: each regular file, socket
+    /// and link. It removes no dir. A free slot holds no live Cloud
+    /// Hypervisor (CH19 (4)), so the files of the old VM are stale. The
+    /// old VM's `serial.log` goes with them.
+    ///
+    /// A link that is there, to any target, is replaced in one rename, so
+    /// a re-link moves the VM to another slot. A real dir at `vm/<id>`
+    /// stays, and the rename fails. The run root is a tmpfs, so no step
+    /// syncs.
     ///
     /// The caller runs one link of an id at a time. The link names the
-    /// slot only. Which VM holds which slot is the caller's (PR L16b).
+    /// slot only. Which VM holds which slot is the caller's (PR L16b). The
+    /// caller links a VM only to a free slot, since the link empties it.
     ///
     /// # Errors
     ///
@@ -376,6 +398,7 @@ impl RunRoot {
                 .create(path)
                 .map_err(at(path))?;
         }
+        empty_slot(&dir)?;
         let vm = self.vm(id);
         let temp = vms.join(format!(".{id}.link"));
         remove_if_present(&temp)?;
@@ -439,9 +462,11 @@ impl VmRunDir {
         self.0.join("api.sock.lock")
     }
 
-    /// The guest serial output, kept until the next start (gap G23). The
-    /// gap writes `<run>/serial.log`. This reading puts it in the run
-    /// directory of the VM, so that two VMs do not share one file.
+    /// The guest serial output (gap G23). The gap writes
+    /// `<run>/serial.log`. This reading puts it in the run directory of the
+    /// VM, so that two VMs do not share one file. It stays until a VM next
+    /// takes the slot, and `RunRoot::link_vm` removes it (decision CH56
+    /// rule 1).
     #[must_use]
     pub fn serial_log(&self) -> PathBuf {
         self.0.join("serial.log")

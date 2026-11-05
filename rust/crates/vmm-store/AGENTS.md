@@ -73,6 +73,11 @@ The second file has the table of the three vmm crates.
   moves the VM to another slot. Every `VmRunDir` path stays
   `vm/<id>/...`, so a snapshot's vsock path holds across a restore into
   another slot. `remove_stale` works through the link.
+- Decision CH56 rule 1 (PR D16, `layout.rs`): `link_vm` empties
+  `slot/<k>/` before it links `vm/<id>` to it. It removes every entry that
+  is not a dir (each regular file, socket and link) and no dir, since a
+  free slot holds no live CH (CH19 (4)). The old VM's `serial.log` goes
+  with it, and its fault file stays in the faults dir.
 
 ## Known gaps
 
@@ -125,13 +130,7 @@ The second file has the table of the three vmm crates.
   `link_vm` before `remove_stale` at each start. `start.rs` runs
   `remove_stale` first, and through an old link to a slot that another VM
   took it removes that VM's sockets. (b) run `unlink_vm` when the VM frees
-  its slot. Until L16b, `start.rs` makes `vm/<id>` a real dir, and
-  `link_vm` fails on a real dir.
-- CONTRACT-QUESTION (PR D16, `layout.rs`): no row says whether a VM that
-  takes a slot empties it first. A slot that held another VM can keep that
-  VM's `serial.log` and `vsock.sock_*` listeners. The start truncates
-  `serial.log`, and `remove_stale` removes only the three CH files. A
-  leftover listener would fail the bind of the next VM, and the deny check
-  refuses an extra listener. The narrow reading: `link_vm` removes no file
-  in the slot. CH41 rule 2 names one `serial.log` per VM. After a re-link
-  the old log stays in the old slot until the next VM there truncates it.
+  its slot. (c) link a VM only to a free slot, one that no live CH holds.
+  `link_vm` empties the slot (CH56 rule 1), so a link to a held slot
+  removes the sockets of the CH in it. Until L16b, `start.rs` makes
+  `vm/<id>` a real dir, and `link_vm` fails on a real dir.
