@@ -79,8 +79,21 @@ export class FakeCh {
   public refused = 0;
 
   private server: Server | null = null;
+  private gate: { readonly arrived: () => void; readonly release: Promise<void> } | null = null;
 
-  public constructor(private readonly token: string) {}
+  public constructor(private token: string) {}
+
+  /** Holds the answer of the next `tools/call` until `release`. Resolves when that call arrives. */
+  public holdNextCall(release: Promise<void>): Promise<void> {
+    return new Promise((arrived) => {
+      this.gate = { arrived, release };
+    });
+  }
+
+  /** From now on, only `token` is the bearer, as after a rotation. */
+  public rotate(token: string): void {
+    this.token = token;
+  }
 
   /** Binds 127.0.0.1 and answers with the plane URL, `http://127.0.0.1:<port>`. */
   public async start(): Promise<string> {
@@ -126,6 +139,13 @@ export class FakeCh {
     if (rpc.id === undefined) {
       response.writeHead(HTTP_ACCEPTED).end();
       return;
+    }
+
+    const gate = rpc.method === "tools/call" ? this.gate : null;
+    if (gate !== null) {
+      this.gate = null;
+      gate.arrived();
+      await gate.release;
     }
 
     response.writeHead(HTTP_OK, { "content-type": "application/json" });

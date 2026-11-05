@@ -1,6 +1,8 @@
 // The one generic agent of a family sandbox. `composeAgent` reads the
-// family's mounts one time, at process start, and returns what Flue's
-// `start()` takes: the agent function, the provider and the store.
+// family's mounts at process start, and returns what Flue's `start()`
+// takes: the agent function, the provider and the store. It also returns
+// the live state, which the facade pulls before each prompt
+// (`src/family-state.ts`, decision CH5a).
 //
 //   useModel          litellm/<model_alias>              src/litellm.ts
 //   useMcpConnection  ch, <pep>/mcp, family bearer        src/chaperone.ts
@@ -12,26 +14,31 @@
 //   useInstruction    <config>/instructions.md
 //   db                sqlite(<AGENT_SESSIONS_DIR>/flue.db)
 //
-// The agent function reads no file and no credential. It closes over values
-// that this module made at process start.
+// The agent function reads no file and no credential. Flue renders it again
+// at each model turn. Each render reads the instructions, the skills and
+// the sandbox grant of its session's last pull (decision CH5c). The id of
+// a Flue instance is the facade's session id.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { Provider } from "@earendil-works/pi-ai";
 import { useInstruction, useMcpConnection, useModel, useSandbox, useSkill, useTool } from "@flue/runtime";
-import type { Agent } from "@flue/runtime";
+import type { Agent, AgentProps } from "@flue/runtime";
 import { sqlite } from "@flue/runtime/node";
 
 import { chaperoneConnection } from "./chaperone.js";
 import { codemodeTool } from "./codemode.js";
 import type { FamilyConfig } from "./config.js";
+import { StateHolder } from "./family-state.js";
 import { indexSearchFor } from "./index-search.js";
 import { FALLBACK_LIMITS, litellmModel } from "./litellm.js";
 import type { ModelLimits } from "./litellm.js";
 
 export { readModelLimits } from "./litellm.js";
 export type { LimitsFault, LimitsRead, ModelLimits } from "./litellm.js";
+export { fileBackend, StateHolder } from "./family-state.js";
+export type { PullFault, StateBackend, StatePull } from "./family-state.js";
 import { queryEmbedder } from "./query-embed.js";
 import { grantedSandbox } from "./sandbox-tools.js";
 import { readSkills } from "./skills.js";
@@ -63,11 +70,22 @@ export interface ComposedAgent {
   readonly db: StartDb;
   /** The skill directories that were not valid, by name. The caller logs them to stderr. */
   readonly skippedSkills: readonly string[];
+  /** The live state, first from the start reads. The facade sets it before each prompt. */
+  readonly state: StateHolder;
 }
 
 export type ComposeRead =
   | { readonly ok: true; readonly composed: ComposedAgent }
   | { readonly ok: false; readonly reason: "model_alias_unset" | "instructions_unreadable" };
+
+/** The instance id, or null on a bare render, where `props.id` throws. */
+function instanceOf(props: AgentProps | undefined): string | null {
+  try {
+    return props?.id ?? null;
+  } catch {
+    return null;
+  }
+}
 
 /** Null: no file, or an empty one. Undefined: a file that does not read. */
 function readInstructions(path: string | null): string | null | undefined {
@@ -94,7 +112,8 @@ export function composeAgent(
   workspace: string,
   limits: ModelLimits = FALLBACK_LIMITS,
 ): ComposeRead {
-  const model = litellmModel(config, limits);
+  // The provider reads `state` at each request, after it exists.
+  const model = litellmModel(config, limits, () => state.creds);
   if (!model.ok) {
     return model;
   }
@@ -104,19 +123,25 @@ export function composeAgent(
     return { ok: false, reason: "instructions_unreadable" };
   }
 
-  const instructions: string | null = text;
-
   const { spec, provider } = model.model;
-  const ch = chaperoneConnection(config);
+  const skills = readSkills(config.runtime.skillsPath);
+  const { systemPrompt, sandboxTools } = config.runtime;
+  const state = new StateHolder({
+    creds: config.creds,
+    config: { instructions: text, systemPrompt, sandboxTools, skills: skills.skills },
+  });
+  const ch = chaperoneConnection(config, () => state.creds);
   const codemode = codemodeTool(ch);
   // No contract names an embedding endpoint, so the vector half refuses
   // (the CONTRACT-QUESTION of `query-embed.ts`).
   const search = indexSearchFor(config.mounts.indexRoot, queryEmbedder(null));
-  const grant = config.runtime.sandboxTools;
-  const skills = readSkills(config.runtime.skillsPath);
-  const replacement = config.runtime.systemPrompt === "replace" ? instructions : null;
 
-  function FamilyAgent(): string {
+  function FamilyAgent(props?: AgentProps): string {
+    const live = state.configFor(instanceOf(props));
+    const { instructions, sandboxTools: grant, skills: granted, systemPrompt: mode } = live;
+    const replacement = mode === "replace" ? instructions : null;
+    // The model stays the model of the start. PR 3 of phase 6 (CH5c)
+    // switches it at the next prompt when the pulled alias differs.
     useModel(spec);
     useMcpConnection(ch);
     useTool(codemode);
@@ -128,8 +153,8 @@ export function composeAgent(
       useSandbox(grantedSandbox(grant, workspace, config.toolEnv));
     }
 
-    for (const skill of skills.skills) {
-      useSkill(skill);
+    for (const skill of granted) {
+      useSkill(skill.definition);
     }
 
     if (instructions !== null && replacement === null) {
@@ -148,6 +173,7 @@ export function composeAgent(
       providers: [provider],
       db: sqlite(storePath(config)),
       skippedSkills: skills.skipped,
+      state,
     },
   };
 }

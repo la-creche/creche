@@ -2,12 +2,15 @@
 // half a write. A reader can still see the file before its content crosses
 // the mount boundary, so the read retries for a short time. Keep the retry.
 //
-// A refusal names a field, never a value.
+// A refusal names a field, never a value. The key and the token must be
+// what the wire types `LitellmKey` and `PepToken` allow, so the file holds
+// what the vmm's family state would hold (decision CH31 rule 5).
 
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Secret } from "./secret.js";
+import { validator } from "./wire-read.js";
 
 const CRED_FILE = "creds.json";
 
@@ -48,11 +51,11 @@ function parseCreds(text: string): CredsRead {
     return { ok: false, field: "epoch" };
   }
 
-  if (typeof key !== "string" || key.length === 0) {
+  if (typeof key !== "string" || !validator("LitellmKey").Check(key)) {
     return { ok: false, field: "litellm_key" };
   }
 
-  if (typeof token !== "string" || token.length === 0) {
+  if (typeof token !== "string" || !validator("PepToken").Check(token)) {
     return { ok: false, field: "pep_token" };
   }
 
