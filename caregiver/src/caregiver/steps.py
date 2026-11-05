@@ -12,15 +12,16 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Final
 
-from agent_family import FamilyFile, Index, Kind, duration_s
+from agent_family import FamilyFile, Index, Kind, Registry, duration_s
 
 from . import paths
-from .config_mount import RuntimeConfig, config_mount_matches, write_config_mount
+from .config_mount import SKILL_FILE, RuntimeConfig, config_mount_matches, write_config_mount
 from .credentials import Credentials, mint_token, read_creds, token_sha256, write_creds
 from .driver import DriverError, SandboxDriver
 from .egress import EgressConfig
@@ -226,8 +227,26 @@ def _accepted_digests(creds: Credentials) -> tuple[str, ...]:
     return tuple(token_sha256(one) for one in creds.accepted_tokens(now_rfc3339()))
 
 
+def skill_files(registry: Registry, family: FamilyFile) -> dict[str, Mapping[str, str]]:
+    """The files of every skill the family grants, by skill name.
+
+    A skill's own directory decides the keys: `SKILL.md` plus each helper
+    file its frontmatter declares. A skill the registry does not hold
+    stages an empty `SKILL.md`, which is what a granted skill has always
+    staged."""
+    staged: dict[str, Mapping[str, str]] = {}
+    for name in family.skills:
+        content = registry.skill_texts.get(name)
+        staged[name] = content.files if content is not None else {SKILL_FILE: ""}
+
+    return staged
+
+
 def write_config(
-    family: FamilyFile, state_root: Path, instructions: str, skills: dict[str, str]
+    family: FamilyFile,
+    state_root: Path,
+    instructions: str,
+    skills: Mapping[str, Mapping[str, str]],
 ) -> bool:
     """Contract 05 §3.4's `write_config`: `instructions.md`, `skills/` and
     `runtime.json`, one revision for the directory (contract 01 §6.1).

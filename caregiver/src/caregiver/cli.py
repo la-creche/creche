@@ -682,6 +682,7 @@ def _index_of(registry: Registry) -> Index:
         kinds={name: one.kind for name, one in registry.families.items()},
         servers=registry.servers,
         skills=registry.skills,
+        skill_texts=registry.skill_texts,
     )
 
 

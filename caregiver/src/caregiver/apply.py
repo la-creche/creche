@@ -10,6 +10,7 @@ new one is the reconciler's classify()-based job, not this one's."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -124,15 +125,14 @@ def apply_once(
         kinds={name: one.kind for name, one in registry.families.items()},
         servers=registry.servers,
         skills=registry.skills,
+        skill_texts=registry.skill_texts,
     )
     return _apply_valid(
         family=family,
         report=report,
         registry_revision=registry.revision,
         instructions=registry.instructions(family_name).read_text(encoding="utf-8"),
-        skills={
-            name: registry.skill_file(name).read_text(encoding="utf-8") for name in family.skills
-        },
+        skills=steps.skill_files(registry, family),
         index=index,
         state_root=state_root,
         images=SandboxImages(base=image, python=python_image),
@@ -210,7 +210,7 @@ def _apply_valid(
     report: Report,
     registry_revision: str,
     instructions: str,
-    skills: dict[str, str],
+    skills: Mapping[str, Mapping[str, str]],
     index: Index,
     state_root: Path,
     images: SandboxImages,

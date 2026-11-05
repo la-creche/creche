@@ -25,7 +25,7 @@ Four rules shape every branch below.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
@@ -1052,12 +1052,14 @@ def _index_of(registry: Registry) -> Index:
         kinds={name: one.kind for name, one in registry.families.items()},
         servers=registry.servers,
         skills=registry.skills,
+        skill_texts=registry.skill_texts,
     )
 
 
-def _config_text(registry: Registry, family: FamilyFile) -> tuple[str, dict[str, str]]:
-    skills = {name: _text(registry.skill_file(name)) for name in family.skills}
-    return _text(registry.instructions(family.name)), skills
+def _config_text(
+    registry: Registry, family: FamilyFile
+) -> tuple[str, dict[str, Mapping[str, str]]]:
+    return _text(registry.instructions(family.name)), steps.skill_files(registry, family)
 
 
 def _family_text(registry: Registry, report: Report) -> str | None:

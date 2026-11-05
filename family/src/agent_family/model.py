@@ -8,6 +8,8 @@ message nobody wrote."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Final
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -184,3 +186,17 @@ class FamilyFile(Strict):
 #: Every top-level field name, for the "closest known field" hint.
 FAMILY_FIELDS: Final = tuple(FamilyFile.model_fields)
 VERB_FIELDS: Final = tuple(VerbsBlock.model_fields)
+
+
+@dataclass(frozen=True)
+class SkillContent:
+    """What one skill directory holds, as the loader read it.
+
+    `files` maps every staged path — SKILL.md plus each helper its
+    frontmatter declares — to its text; `faults` holds why the declaration
+    could not be honored in full. The validator reports the faults on every
+    family that grants the skill, so a stage that copies the files is never
+    the first to discover a broken declaration."""
+
+    files: Mapping[str, str] = field(default_factory=dict)
+    faults: tuple[str, ...] = ()

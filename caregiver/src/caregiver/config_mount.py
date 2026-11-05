@@ -1,5 +1,6 @@
 """The family config mount (contract 01 section 6.1, contract 03 section
-7.1): `instructions.md`, `skills/<name>/SKILL.md`, `runtime.json`.
+7.1): `instructions.md`, `skills/<name>/` and its declared helper files,
+`runtime.json`.
 
 `caregiver` is its only writer. The directory is built fully in a staging
 copy, then swapped in with one atomic operation, so a reader never sees
@@ -14,7 +15,7 @@ import json
 import shutil
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Final
 
 from .atomic import atomic_replace_dir
@@ -58,14 +59,20 @@ class RuntimeConfig:
 
 
 def write_config_mount(
-    target: Path, *, instructions: str, skills: Mapping[str, str], runtime: RuntimeConfig
+    target: Path,
+    *,
+    instructions: str,
+    skills: Mapping[str, Mapping[str, str]],
+    runtime: RuntimeConfig,
 ) -> None:
     """Build the whole directory in `<target>.tmp`, then swap it in.
 
-    `instructions` is `families/<name>/instructions.md`'s text and `skills`
-    maps a granted skill's name to its `SKILL.md` text -- both read from
-    the registry by the caller, since this module has no registry
-    knowledge of its own (it only writes files)."""
+    `instructions` is `families/<name>/instructions.md`'s text. `skills`
+    maps a granted skill's name to its files: each key is a path relative
+    to the skill's own directory, so `SKILL.md` and the helper files that
+    skill's frontmatter declares. Both come from the registry, read by the
+    caller, since this module has no registry knowledge of its own (it
+    only writes files)."""
     staging = target.with_name(target.name + ".tmp")
     if staging.exists():
         shutil.rmtree(staging)
@@ -75,10 +82,16 @@ def write_config_mount(
 
     skills_dir = staging / SKILLS_DIR
     skills_dir.mkdir()
-    for name, text in skills.items():
+    for name, files in skills.items():
         one = skills_dir / name
         one.mkdir()
-        (one / SKILL_FILE).write_text(text, encoding="utf-8")
+        for relpath, text in files.items():
+            if not _is_plain_relative(relpath):
+                continue
+
+            path = one / relpath
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
 
     runtime_body = json.dumps(runtime.as_json(), indent=2) + "\n"
     (staging / RUNTIME_FILE).write_text(runtime_body, encoding="utf-8")
@@ -87,7 +100,11 @@ def write_config_mount(
 
 
 def config_mount_matches(
-    target: Path, *, instructions: str, skills: Mapping[str, str], runtime: RuntimeConfig
+    target: Path,
+    *,
+    instructions: str,
+    skills: Mapping[str, Mapping[str, str]],
+    runtime: RuntimeConfig,
 ) -> bool:
     """Whether the directory already holds exactly this revision.
 
@@ -105,7 +122,45 @@ def config_mount_matches(
     if _skill_names(skills_dir) != set(skills):
         return False
 
-    return all(_read(skills_dir / name / SKILL_FILE) == text for name, text in skills.items())
+    return all(_skill_matches(skills_dir / name, files) for name, files in skills.items())
+
+
+def _skill_matches(directory: Path, files: Mapping[str, str]) -> bool:
+    """Whether one skill's directory holds exactly these files.
+
+    The set matters as much as the text. A helper file the registry
+    dropped since the last write leaves a stale copy in the mount, and a
+    comparison of the declared files alone would never notice it."""
+    staged = {relpath: text for relpath, text in files.items() if _is_plain_relative(relpath)}
+
+    return _held_files(directory) == set(staged) and all(
+        _read(directory / relpath) == text for relpath, text in staged.items()
+    )
+
+
+def _held_files(directory: Path) -> set[str]:
+    """Every file under a skill's directory, as a relative path."""
+    if not directory.is_dir():
+        return set()
+
+    return {str(one.relative_to(directory)) for one in directory.rglob("*") if one.is_file()}
+
+
+def _is_plain_relative(relpath: str) -> bool:
+    """Whether a declared path may be written under a skill's directory.
+
+    The registry is a user-editable tree, so a path a SKILL.md declares is
+    not trusted here. An absolute path, or one that climbs out of the
+    skill's directory, would write somewhere else in the mount. The loader
+    refuses such a path too, and faults it; this is the second check, in
+    the one module that actually writes the file."""
+    if not relpath or relpath != relpath.strip():
+        return False
+
+    if relpath.startswith("/") or "\\" in relpath:
+        return False
+
+    return ".." not in PurePosixPath(relpath).parts
 
 
 def _read(path: Path) -> str | None:

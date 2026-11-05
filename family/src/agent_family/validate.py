@@ -68,7 +68,7 @@ from .grammar import (
     is_under,
     memory_mb,
 )
-from .model import DailyCall, FamilyFile
+from .model import DailyCall, FamilyFile, SkillContent
 from .report import Issues
 from .server import McpServerFile
 
@@ -124,6 +124,7 @@ class Index:
     kinds: Mapping[str, str] = field(default_factory=dict[str, str])
     servers: Mapping[str, McpServerFile] = field(default_factory=dict[str, McpServerFile])
     skills: frozenset[str] = frozenset()
+    skill_texts: Mapping[str, SkillContent] = field(default_factory=dict)
 
     def granted_tools(self, family: FamilyFile, server: str) -> tuple[str, ...]:
         """What one server grant resolves to. `all` expands against the server
@@ -645,6 +646,12 @@ def _check_skills(family: FamilyFile, index: Index, issues: Issues) -> None:
 
         if skill not in index.skills:
             issues.error(loc, f"'{skill}' has no skills/{skill}/SKILL.md")
+            continue
+
+        content = index.skill_texts.get(skill)
+        if content is not None:
+            for fault in content.faults:
+                issues.error(loc, f"'{skill}' {fault}")
 
 
 def _check_approval(family: FamilyFile, index: Index, issues: Issues) -> None:

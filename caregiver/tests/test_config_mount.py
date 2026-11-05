@@ -41,13 +41,54 @@ def test_writes_one_skill_file_per_granted_skill(tmp_path: Path) -> None:
     write_config_mount(
         target,
         instructions="x",
-        skills={"grill-me": "# Grill Me\n", "handoff": "# Handoff\n"},
+        skills={
+            "grill-me": {"SKILL.md": "# Grill Me\n"},
+            "handoff": {"SKILL.md": "# Handoff\n"},
+        },
         runtime=RuntimeConfig(shell=False, sandbox_tools=(), model_alias="agent-router"),
     )
     assert (target / "skills" / "grill-me" / "SKILL.md").read_text(
         encoding="utf-8"
     ) == "# Grill Me\n"
     assert (target / "skills" / "handoff" / "SKILL.md").read_text(encoding="utf-8") == "# Handoff\n"
+
+
+def test_writes_a_declared_helper_at_its_own_path(tmp_path: Path) -> None:
+    """A skill's helpers sit beside its SKILL.md, and one may live in a
+    directory of its own. The mount has to carry that directory with it."""
+    target = tmp_path / "config"
+    write_config_mount(
+        target,
+        instructions="x",
+        skills={
+            "diagnosing-bugs": {
+                "SKILL.md": "# Diagnosing Bugs\n",
+                "reference/checklist.md": "# Checklist\n",
+            }
+        },
+        runtime=RuntimeConfig(False, (), "agent-router"),
+    )
+    skill = target / "skills" / "diagnosing-bugs"
+    assert (skill / "SKILL.md").read_text(encoding="utf-8") == "# Diagnosing Bugs\n"
+    assert (skill / "reference" / "checklist.md").read_text(encoding="utf-8") == "# Checklist\n"
+
+
+def test_a_declared_path_outside_the_skill_directory_is_not_written(tmp_path: Path) -> None:
+    """The registry is a user-editable tree, so a path a SKILL.md declares
+    is not trusted here. A path that climbs out of the skill's directory is
+    skipped, and the mount still matches on the files that are left."""
+    target = tmp_path / "config"
+    revision = {
+        "instructions": "x",
+        "skills": {"notes": {"SKILL.md": "s", "../escape.md": "no", "/etc/passwd": "no"}},
+        "runtime": RuntimeConfig(False, (), "agent-router"),
+    }
+    write_config_mount(target, **revision)
+
+    assert not (tmp_path / "escape.md").exists()
+    assert not (target / "skills" / "escape.md").exists()
+    assert (target / "skills" / "notes" / "SKILL.md").is_file()
+    assert config_mount_matches(target, **revision) is True
 
 
 def test_empty_skills_still_makes_the_directory(tmp_path: Path) -> None:
@@ -64,17 +105,36 @@ def test_reapplying_drops_a_skill_that_is_no_longer_granted(tmp_path: Path) -> N
     write_config_mount(
         target,
         instructions="x",
-        skills={"grill-me": "old text"},
+        skills={"grill-me": {"SKILL.md": "old text"}},
         runtime=RuntimeConfig(False, (), "agent-router"),
     )
     write_config_mount(
         target,
         instructions="x",
-        skills={"handoff": "new text"},
+        skills={"handoff": {"SKILL.md": "new text"}},
         runtime=RuntimeConfig(False, (), "agent-router"),
     )
     assert not (target / "skills" / "grill-me").exists()
     assert (target / "skills" / "handoff" / "SKILL.md").read_text(encoding="utf-8") == "new text"
+
+
+def test_reapplying_drops_a_helper_that_is_no_longer_declared(tmp_path: Path) -> None:
+    target = tmp_path / "config"
+    write_config_mount(
+        target,
+        instructions="x",
+        skills={"notes": {"SKILL.md": "s", "helper.md": "h"}},
+        runtime=RuntimeConfig(False, (), "agent-router"),
+    )
+    assert (target / "skills" / "notes" / "helper.md").is_file()
+
+    write_config_mount(
+        target,
+        instructions="x",
+        skills={"notes": {"SKILL.md": "s"}},
+        runtime=RuntimeConfig(False, (), "agent-router"),
+    )
+    assert not (target / "skills" / "notes" / "helper.md").exists()
 
 
 def test_reapplying_updates_instructions_and_runtime(tmp_path: Path) -> None:
@@ -119,7 +179,7 @@ def test_a_mount_file_that_is_not_utf8_does_not_match(tmp_path: Path, name: str)
     target = tmp_path / "config"
     revision = {
         "instructions": "You are chat.",
-        "skills": {"notes": "Take notes."},
+        "skills": {"notes": {"SKILL.md": "Take notes."}},
         "runtime": RuntimeConfig(shell=False, sandbox_tools=(), model_alias="agent-router"),
     }
     write_config_mount(target, **revision)
@@ -128,6 +188,40 @@ def test_a_mount_file_that_is_not_utf8_does_not_match(tmp_path: Path, name: str)
     (target / name).write_bytes(b"You are \xff chat.")
 
     assert config_mount_matches(target, **revision) is False
+
+
+def test_a_changed_helper_does_not_match(tmp_path: Path) -> None:
+    target = tmp_path / "config"
+    revision = {
+        "instructions": "x",
+        "skills": {"notes": {"SKILL.md": "s", "helper.md": "old"}},
+        "runtime": RuntimeConfig(False, (), "agent-router"),
+    }
+    write_config_mount(target, **revision)
+    assert config_mount_matches(target, **revision) is True
+
+    (target / "skills" / "notes" / "helper.md").write_text("new", encoding="utf-8")
+
+    assert config_mount_matches(target, **revision) is False
+
+
+def test_a_helper_that_is_no_longer_declared_does_not_match(tmp_path: Path) -> None:
+    """A stale helper left in the mount is a difference, so the next pass
+    rebuilds the directory and takes the file away."""
+    target = tmp_path / "config"
+    write_config_mount(
+        target,
+        instructions="x",
+        skills={"notes": {"SKILL.md": "s", "helper.md": "h"}},
+        runtime=RuntimeConfig(False, (), "agent-router"),
+    )
+    without = {
+        "instructions": "x",
+        "skills": {"notes": {"SKILL.md": "s"}},
+        "runtime": RuntimeConfig(False, (), "agent-router"),
+    }
+
+    assert config_mount_matches(target, **without) is False
 
 
 _FAMILY_HEAD = (
