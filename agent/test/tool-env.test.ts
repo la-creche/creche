@@ -19,7 +19,7 @@ const DOCKERFILE = join(ROOT, "..", "playpen", "Dockerfile");
 const FLUE_DIST = join(ROOT, "node_modules", "@flue", "runtime", "dist", "node", "index.mjs");
 
 /** The stages that ship, and the build-only stages of `bin/tests/test_playpen_image.py`. */
-const SHIPPED = ["agent-sandbox", "agent-sandbox-python"];
+const SHIPPED = ["agent-sandbox", "agent-sandbox-python", "agent-sandbox-coding"];
 const BUILD_ONLY = ["build", "creche-test-venv"];
 
 /** `FROM [--flag=...] <parent> AS <stage>`, and `ENV <pairs>`. Docker reads both words in any case. */

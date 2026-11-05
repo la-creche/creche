@@ -32,8 +32,9 @@ PLATFORM=linux/amd64
 work="$(mktemp -d)"
 trap 'rm -rf -- "$work"' EXIT
 
-# The flavors of playpen-build, in the same order (playpen/AGENTS.md rule 6).
-FLAVORS="base:agent-sandbox python:agent-sandbox-python"
+# The flavors of playpen-build, in the same order, then the flavors that
+# ship as a root disk only (playpen/AGENTS.md rule 6).
+FLAVORS="base:agent-sandbox python:agent-sandbox-python coding:agent-sandbox-coding"
 
 for pair in $FLAVORS; do
   flavor="${pair%%:*}"
