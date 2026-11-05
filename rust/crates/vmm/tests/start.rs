@@ -8,6 +8,7 @@
 //! the claim, the deny check and the fault file.
 
 use std::io::{BufRead, BufReader, Write};
+use std::net::Shutdown;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
@@ -1411,6 +1412,26 @@ fn a_refused_line_stops_the_vm() {
     assert_eq!(test.launches(), 3);
     assert!(!test.restored(2));
     assert!(test.hook.running(&id));
+}
+
+/// A guest that closes the control link after `ControlReady` ends the
+/// reader, and the VM runs on (decision CH43 rule 2). With no control
+/// link it never sleeps, and a drop skips the graceful stop (decision CH50
+/// rule 3).
+#[test]
+fn a_closed_control_link_keeps_the_vm_awake() {
+    let test = Test::new("closed", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    let id = test.rows[0].id.clone();
+    let links = test.fake.links.lock().unwrap();
+    links.last().unwrap().shutdown(Shutdown::Both).unwrap();
+    drop(links);
+    test.settle(|test| test.control.lock().unwrap().link(&id).is_none());
+    assert!(test.hook.running(&id));
+    assert!(test.sleep_after(PAST_IDLE).is_empty());
+    assert_eq!(test.drop_session(0), Ok(Dropped {}));
+    assert_eq!(test.stop_lines(), 0);
+    assert!(test.stopped(0));
 }
 
 /// A start of the session under a stop finds its `Stopping` slot and gets
