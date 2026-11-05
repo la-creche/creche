@@ -88,6 +88,8 @@ struct FakeVm {
     exited: Arc<AtomicBool>,
     /// Fails each status check, so each stop of the VM fails.
     broken: Arc<AtomicBool>,
+    /// Fails the next status check only.
+    flaky: Arc<AtomicBool>,
 }
 
 impl VmProcess for FakeVm {
@@ -96,7 +98,7 @@ impl VmProcess for FakeVm {
     }
 
     fn exited(&mut self) -> io::Result<bool> {
-        if self.broken.load(Ordering::SeqCst) {
+        if self.broken.load(Ordering::SeqCst) || self.flaky.swap(false, Ordering::SeqCst) {
             return Err(io::Error::other("the status check failed"));
         }
         Ok(self.exited.load(Ordering::SeqCst))
@@ -130,6 +132,7 @@ struct Fake {
     launches: Mutex<Vec<Launch>>,
     vms: Mutex<Vec<Arc<AtomicBool>>>,
     broken: Mutex<Vec<Arc<AtomicBool>>>,
+    flaky: Mutex<Vec<Arc<AtomicBool>>>,
 }
 
 // `cfg(test)` lets the helpers unwrap (rust/clippy.toml).
@@ -180,10 +183,13 @@ impl Fake {
         launches.push(launch);
         self.vms.lock().unwrap().push(Arc::clone(&exited));
         self.broken.lock().unwrap().push(Arc::clone(&broken));
+        let flaky = Arc::new(AtomicBool::new(false));
+        self.flaky.lock().unwrap().push(Arc::clone(&flaky));
         FakeVm {
             number,
             exited,
             broken,
+            flaky,
         }
     }
 }
@@ -421,6 +427,7 @@ impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
             launches: Mutex::default(),
             vms: Mutex::default(),
             broken: Mutex::default(),
+            flaky: Mutex::default(),
         });
         let control = Arc::new(Mutex::new(ControlState::default()));
         let store = Arc::new(Mutex::new(store));
@@ -1196,6 +1203,22 @@ fn a_shutdown_snapshots_an_idle_vm_and_stops_a_busy_one() {
         assert!(test.stopped(index));
         assert!(!test.hook.running(&test.rows[index].id));
     }
+}
+
+/// A retire whose stop fails after the snapshot puts the VM back
+/// (`Kept`). The shutdown then stops it, and it leaves the set (decision
+/// CH50 rule 4).
+#[test]
+fn a_shutdown_stops_a_vm_that_its_retire_kept() {
+    let test = Test::new("shutdown-kept", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    let flaky = Arc::clone(&test.fake.flaky.lock().unwrap()[0]);
+    flaky.store(true, Ordering::SeqCst);
+    assert_eq!(test.shut_down(), Ended::Clean);
+    assert!(!flaky.load(Ordering::SeqCst));
+    assert_eq!(test.snapshot_ids(), [A]);
+    assert!(test.stopped(0));
+    assert!(!test.hook.running(&test.rows[0].id));
 }
 
 /// From the refusal of a shutdown on, a start gets `host_full`: a start
