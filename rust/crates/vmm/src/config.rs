@@ -96,6 +96,9 @@ pub enum Fault {
     NotAbsolute,
     /// A path has a `..` component.
     ParentComponent,
+    /// The run root holds a `:`. systemd joins the paths with `:` when a
+    /// unit sets more than one `RuntimeDirectory=` entry (gap G5 option A).
+    ListOfPaths,
     /// A socket path under the run root has this many bytes, more than
     /// `SOCKET_PATH_MAX`.
     SocketPathTooLong(usize),
@@ -122,6 +125,7 @@ impl fmt::Display for ConfigError {
             Fault::Missing => "has no value",
             Fault::NotAbsolute => "is not an absolute path",
             Fault::ParentComponent => "has a `..` component",
+            Fault::ListOfPaths => "holds a `:`, so it lists more than one path",
             Fault::SocketPathTooLong(bytes) => {
                 return write!(
                     formatter,
@@ -161,7 +165,7 @@ impl Config {
         let gib_of = |key, zero| gib(&lookup, key, zero);
         Ok(Self {
             state: StateRoot::new(path_of(STATE_ROOT)?).map_err(|e| root(STATE_ROOT, e))?,
-            run: RunRoot::new(path_of(RUN_ROOT)?).map_err(|e| root(RUN_ROOT, e))?,
+            run: RunRoot::new(run_root(&lookup)?).map_err(|e| root(RUN_ROOT, e))?,
             families: FamilyRoot::new(path_of(FAMILY_ROOT)?).map_err(|e| root(FAMILY_ROOT, e))?,
             faults_root: path_of(FAULTS_ROOT)?,
             ch: program_of(CH)?,
@@ -216,6 +220,19 @@ fn path(
     }
     if path.components().any(|part| part == Component::ParentDir) {
         return Err(error(key, Fault::ParentComponent));
+    }
+    Ok(path)
+}
+
+/// The path of `RUNTIME_DIRECTORY`. Gap G5 option A gives the vmm one
+/// run root. A unit with more than one `RuntimeDirectory=` entry gets the
+/// paths joined with `:`. Each such value is absolute with no `..`, so the
+/// start would fail later, at the bind of `vmm.sock`, with no key named.
+/// So a `:` refuses the start here.
+fn run_root(lookup: &impl Fn(&str) -> Option<OsString>) -> Result<PathBuf, ConfigError> {
+    let path = path(lookup, RUN_ROOT)?;
+    if path.as_os_str().as_encoded_bytes().contains(&b':') {
+        return Err(error(RUN_ROOT, Fault::ListOfPaths));
     }
     Ok(path)
 }

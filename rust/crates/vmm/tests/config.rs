@@ -127,6 +127,22 @@ fn a_run_root_too_long_for_its_sockets_is_refused() {
 }
 
 #[test]
+fn a_run_root_that_lists_paths_is_refused() {
+    // Gap G5 option A: one run root. systemd joins the paths of more than
+    // one RuntimeDirectory= entry with `:`.
+    let error = fault_of(RUN_ROOT, "/run/user/1000/creche-vmm:/run/user/1000/other");
+    let expected = ConfigError {
+        key: RUN_ROOT,
+        fault: Fault::ListOfPaths,
+    };
+    assert_eq!(error, expected);
+    assert_eq!(
+        error.to_string(),
+        "RUNTIME_DIRECTORY: the key holds a `:`, so it lists more than one path"
+    );
+}
+
+#[test]
 fn a_size_is_decimal_digits_only() {
     for key in SIZES {
         for bad in ["8O", "-1", "+1", " 80", "1.5", "0x10", "80G"] {

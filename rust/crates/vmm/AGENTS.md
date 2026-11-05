@@ -50,7 +50,9 @@ A fault names the key and never the value, as in `env/AGENTS.md`.
 | `VMM_FREE_FLOOR_GIB` | `50` | `Limits::free_floor` (gap G14) |
 | `VMM_SNAPSHOT_BUDGET_GIB` | `150` | `retention::sweep` (gap G14) |
 
-Each path is absolute with no `..` component. A size is decimal digits,
+Each path is absolute with no `..` component. The run root holds no
+`:`, because systemd joins the paths of more than one
+`RuntimeDirectory=` entry with `:` (gap G5 option A). A size is decimal digits,
 a whole number of GiB. `tests/config.rs` holds each fault and holds the
 size defaults equal to `Limits::DESIGN` and `retention::BUDGET`.
 `tests/binary.rs` runs `vmm serve` with no KVM: a missing or bad key
