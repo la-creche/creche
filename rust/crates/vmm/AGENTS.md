@@ -24,6 +24,38 @@ The root `AGENTS.md` applies here too.
 
 `src/main.rs` documents the modes of `vmm` and the exit status 78.
 
+## The config
+
+`src/config.rs` reads the env of `vmm serve` once, at its start (plan PR
+L20). Each path and each size is a key with a default in
+`env/src/creche_env/default.env` (the owner env rule, gap G5 option A).
+The vmm compiles in no default, so a missing or empty key refuses the
+start, and so does a bad one. `src/main.rs` then exits 78 (owner item 86).
+A fault names the key and never the value, as in `env/AGENTS.md`.
+
+| Key | Default | Use |
+|---|---|---|
+| `VMM_STATE_ROOT` | `${AGENT_OPERATOR_HOME}/.local/state/creche-vmm` | `StateRoot` (decision CH50 rule 11) |
+| `RUNTIME_DIRECTORY` | set by systemd | `RunRoot` (gap G5) |
+| `VMM_FAMILY_ROOT` | `${CAREGIVER_STATE_ROOT}/families` | `FamilyRoot` (gap G6) |
+| `VMM_FAULTS_ROOT` | `${CAREGIVER_STATE_ROOT}/faults` | `FaultDir::open` (contract 05 §3.3.1) |
+| `VMM_CH_PROGRAM` | `${AGENT_INSTALL_ROOT}/vmm/bin/cloud-hypervisor` | CH (decision CH7-5) |
+| `VMM_CH_REMOTE_PROGRAM` | `${AGENT_INSTALL_ROOT}/vmm/bin/ch-remote` | `ChRemote` |
+| `AGENT_SYSTEMD_RUN_PROGRAM` | existing key | `Launch` (PR C2) |
+| `AGENT_SYSTEMCTL_PROGRAM` | existing key | `leftovers::stop_all` (PR C3) |
+| `VMM_ZSTD_PROGRAM` | `/usr/bin/zstd` | `ImageStore` (gap G9) |
+| `VMM_MKE2FS_PROGRAM` | `/usr/sbin/mke2fs` | `SessionDisks` (gap G7) |
+| `VMM_FALLOCATE_PROGRAM` | `/usr/bin/fallocate` | `Snapshotter` (decision CH29) |
+| `VMM_RAM_CAP_GIB` | `80` | `Limits::ram_cap` (gap G14) |
+| `VMM_FREE_FLOOR_GIB` | `50` | `Limits::free_floor` (gap G14) |
+| `VMM_SNAPSHOT_BUDGET_GIB` | `150` | `retention::sweep` (gap G14) |
+
+Each path is absolute with no `..` component. A size is decimal digits,
+a whole number of GiB. `tests/config.rs` holds each fault and holds the
+size defaults equal to `Limits::DESIGN` and `retention::BUDGET`.
+`tests/binary.rs` runs `vmm serve` with no KVM: a missing or bad key
+exits 78 and names the key.
+
 ## The server
 
 `src/server/` holds the host API server (decisions CH20, CH26).
@@ -567,6 +599,25 @@ no guest sync.
 13. Closed by decision CH57 rules 3 and 4 (plan PR L7): a family dir or
     `config` that is a symlink or a file gets `unknown_family`, and a
     repeat create whose family `config/` is gone gets `unknown_family`.
+14. Plan PR L20 is split in two. This crate has its config
+    (`src/config.rs`), and `serve` still fails closed after the config
+    read. The compose step waits for plan PR L7: `routes!` needs a
+    handler for `create` and `list`, and main has neither. The compose
+    step runs the C3 leftover sweep before any per-VM bind (decision
+    CH19 (4)), builds the store, confine and handlers, and binds
+    `vmm.sock`. It also holds caller duties 4, 5 and 8.
+15. CONTRACT-QUESTION: no row names the image source, the dir where
+    root installs the `.zst` files of the disk row, or how the vmm
+    learns the digests of `start::Digests`. A digest changes with each
+    release, so it is no default of the catalog (`env/AGENTS.md` rule
+    5). The config reads neither, and the compose step needs both.
+16. CONTRACT-QUESTION: no row says whether a size of 0 GiB is good. The
+    config refuses 0 for `VMM_RAM_CAP_GIB`, which admits no VM, and for
+    `VMM_SNAPSHOT_BUDGET_GIB`, which drops every snapshot at the first
+    sweep. It takes 0 for `VMM_FREE_FLOOR_GIB`.
+17. The defaults `/usr/sbin/mke2fs` and `/usr/bin/fallocate` are the
+    Ubuntu 24.04 paths. No read-only check on Hyperion confirmed them.
+    The G9 check confirmed `/usr/bin/zstd`.
 
 ## Caller duties
 
@@ -589,14 +640,14 @@ no guest sync.
    (`src/handlers/drop.rs`). The `StopVm` hook of the vmm keeps a VM
    whose stop failed in its table, so admission keeps counting the RAM
    of that VM.
-4. Plan PR L20 runs `check_cloud_hypervisor` at vmm start and passes
-   its `CheckedCh` as `StartConfig::ch_version`. A failed check refuses
-   to start the vmm (gap G10 option A).
-5. Plan PR L20 runs `sleep::run` with the `ColdBoot` of the vmm on the
-   runtime, and plan PR L19 ends its stop future before the shutdown
-   snapshots. L20 fires that stop at SIGTERM and passes the end of
-   `sleep::run` to `shutdown::shutdown` as its `sleep` future.
-   `sleep::run` is the only caller of `ColdBoot::sweep` and
+4. The compose step of plan PR L20 runs `check_cloud_hypervisor` at
+   vmm start and passes its `CheckedCh` as `StartConfig::ch_version`.
+   A failed check refuses to start the vmm (gap G10 option A).
+5. The compose step of plan PR L20 runs `sleep::run` with the `ColdBoot`
+   of the vmm on the runtime, and plan PR L19 ends its stop future
+   before the shutdown snapshots. L20 fires that stop at SIGTERM and
+   passes the end of `sleep::run` to `shutdown::shutdown` as its `sleep`
+   future. `sleep::run` is the only caller of `ColdBoot::sweep` and
    `ColdBoot::sleep_idle` in the vmm.
 6. Two drops of one session can overlap. The `StopVm` hook of the vmm
    makes a stop that finds a stop of the same VM running wait for it
@@ -613,8 +664,9 @@ no guest sync.
    end CH with no guest sync, and a cold boot after it (a key mismatch,
    a failed restore, an `Aged` or a `Budget` sweep) would find the
    session disk as a power cut leaves it.
-8. Plan PR L20 calls `shutdown::sigterm` at vmm start, inside the
-   runtime, and runs `shutdown::shutdown` when the signal fires. A take
-   runs in `spawn_blocking`, and the drop of a runtime waits for each
-   blocking task. So L20 ends the runtime with `shutdown_timeout`, and
-   the vmm exits within the 5 s that `SHUTDOWN_WAIT` leaves.
+8. The compose step of plan PR L20 calls `shutdown::sigterm` at vmm
+   start, inside the runtime, and runs `shutdown::shutdown` when the
+   signal fires. A take runs in `spawn_blocking`, and the drop of a
+   runtime waits for each blocking task. So L20 ends the runtime with
+   `shutdown_timeout`, and the vmm exits within the 5 s that
+   `SHUTDOWN_WAIT` leaves.

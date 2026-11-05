@@ -1,7 +1,8 @@
 //! The program `vmm` (decision CH7-5). The one argument picks the mode:
 //!
-//! - `vmm serve` runs the host API server on the multi-thread tokio
-//!   runtime.
+//! - `vmm serve` reads its config from the env (`creche_vmm::config`) and
+//!   runs the host API server on the multi-thread tokio runtime. A missing
+//!   or bad key exits 78.
 //! - `vmm launch` is the launch step of one Cloud Hypervisor process. It
 //!   runs on the main thread with no runtime, because the access rules of
 //!   Landlock bind only the thread that sets them.
@@ -10,6 +11,7 @@ use std::ffi::OsString;
 use std::fmt;
 use std::process::ExitCode;
 
+use creche_vmm::config::Config;
 use tokio::runtime::Builder;
 
 /// The exit status of a refused start (owner item 86). A unit with
@@ -59,9 +61,13 @@ fn dispatch(args: &[OsString]) -> ExitCode {
     }
 }
 
-/// Builds the tokio runtime and runs the host API server on it (decision
-/// CH26 rule 1). Only this mode builds a runtime.
+/// Reads the config, then builds the tokio runtime and runs the host API
+/// server on it (decision CH26 rule 1). Only this mode builds a runtime.
 fn serve() -> ExitCode {
+    let config = match Config::read() {
+        Ok(config) => config,
+        Err(error) => return refuse(&error),
+    };
     // The multi-thread runtime (decision CH36, gap G21), so one stray
     // blocking call cannot stall every relay. The server needs the IO
     // driver for its socket and the time driver for its timeouts.
@@ -74,7 +80,7 @@ fn serve() -> ExitCode {
         Err(error) => return refuse(&error),
     };
 
-    match runtime.block_on(creche_vmm::serve()) {
+    match runtime.block_on(creche_vmm::serve(config)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => refuse(&error),
     }
