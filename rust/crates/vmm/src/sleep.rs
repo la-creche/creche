@@ -18,17 +18,14 @@ use crate::start::{ColdBoot, Launcher};
 
 /// The time between two idle checks. A VM sleeps between `IDLE_TIMEOUT`
 /// and `IDLE_TIMEOUT` plus this after its last use.
-// CONTRACT-QUESTION (decisions CH2, CH36 G12): no row names how often
-// the idle timer checks. The code checks every 30 s, a tenth of the 5
-// minutes of `IDLE_TIMEOUT`. A change costs this constant.
+// Decision CH54 rule 5: the idle check runs every 30 s, a tenth of the 5
+// minutes of `IDLE_TIMEOUT`.
 pub const IDLE_CHECK: Duration = Duration::from_secs(30);
 
 /// The time between two snapshot sweeps.
-// CONTRACT-QUESTION (decisions CH2, CH8-7, CH50 rule 8): no row names how
-// often the sweep runs. The code sweeps at the start of `run`, then each
+// Decision CH54 rule 5: the sweep runs at the start of `run`, then each
 // hour. An hour is small next to the 7 days of `MAX_AGE`, and a consumed
-// snapshot takes about 100 MB (decision CH29). A change costs this
-// constant.
+// snapshot takes about 100 MB (decision CH29).
 pub const SWEEP_EVERY: Duration = Duration::from_secs(60 * 60);
 
 /// The timeouts of the snapshot of one eviction or one idle sleep

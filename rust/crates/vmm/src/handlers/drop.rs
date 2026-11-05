@@ -156,11 +156,10 @@ impl<S: StopVm> Drops<S> {
         let mut marks: Vec<DropMark> = ids.iter().map(|id| self.relays.mark_drop(id)).collect();
         // A start that the mark stopped may still boot a VM. The drop
         // waits for it, so the stops below find that VM too.
-        // CONTRACT-QUESTION: the start has no outer bound (decision CH50
-        // rule 1), so this wait has none either. A drop that overlaps a
-        // long start can pass the "about 35 s" of decision CH33 rule 11
-        // and the 60 s wait of the client. The client then retries, and
-        // the retry waits for the same start. No row bounds this wait.
+        // Decision CH54 rule 1: this wait has no bound, as the start has
+        // none (decision CH50 rule 1). So a drop that overlaps a long
+        // start may outlast the 60 s wait of the client. The client then
+        // retries, and the retry waits for the same start.
         for mark in &mut marks {
             mark.claim_ended().await;
         }
