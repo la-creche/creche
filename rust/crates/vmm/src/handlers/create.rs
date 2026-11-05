@@ -45,27 +45,20 @@ fn create(
 ) -> Result<SessionRow, CreateError> {
     // Decision CH33 rule 3: a family with no `config/` dir gets
     // `unknown_family`. The check comes first, so a repeat of a create
-    // whose family is gone gets `unknown_family` too. The read holds no
-    // lock of the rows while it sleeps between its tries.
-    match families.exists(&request.family) {
-        Ok(()) => {}
-        Err(FamilyError::Unknown) => return Err(CreateError::UnknownFamily {}),
-        // CONTRACT-QUESTION (decision CH33 rule 3): a family dir or a
-        // `config/` that is a symlink or a file is no `config/` dir, so
-        // this reads it as `unknown_family`. No row decides it. The vmm
-        // logs it, because caregiver never writes such a family. A change
-        // to `internal` costs this arm and one test line.
-        Err(FamilyError::NotDir) => {
-            eprintln!("vmm: create in {}: config/ is no dir", request.family);
-            return Err(CreateError::UnknownFamily {});
-        }
-        Err(error) => {
-            eprintln!("vmm: create in {}: {error:?}", request.family);
-            return Err(CreateError::Internal {});
-        }
-    }
+    // whose family is gone gets `unknown_family` too.
+    // CONTRACT-QUESTION (decisions CH25 rule 2, CH33 rule 3): CH25 rule 2
+    // returns the same row to a repeat. This reading lets CH33 rule 3
+    // win, because its text has no exception. Known gap 14.
+    // This first read holds no lock of the rows while it sleeps between
+    // its tries.
+    check_family(families, &request)?;
     let id = request.id.clone();
     let mut rows = rows.lock().map_err(|_| CreateError::Internal {})?;
+    // Decision CH33 rule 3: caregiver removes the family files, then drops
+    // the family. So the vmm reads the family again under the lock of the
+    // rows. A drop then sees the new row, or this read sees no family. The
+    // read sleeps only when `config/` went or changed since the first one.
+    check_family(families, &request)?;
     // Decisions CH25 rule 2, CH33 rule 12: the same typed request gives
     // the same row, and a different one gives `conflict` 409.
     rows.create(request).map_err(|error| match error {
@@ -75,4 +68,25 @@ fn create(
             CreateError::Internal {}
         }
     })
+}
+
+/// The family read of one create (decision CH33 rule 3).
+fn check_family(families: &FamilyRoot, request: &CreateSession) -> Result<(), CreateError> {
+    match families.exists(&request.family) {
+        Ok(()) => Ok(()),
+        Err(FamilyError::Unknown) => Err(CreateError::UnknownFamily {}),
+        // CONTRACT-QUESTION (decision CH33 rule 3): a family dir or a
+        // `config/` that is a symlink or a file is no `config/` dir, so
+        // this reads it as `unknown_family`. No row decides it. The vmm
+        // logs it, because caregiver never writes such a family. A change
+        // to `internal` costs this arm and one test line.
+        Err(FamilyError::NotDir) => {
+            eprintln!("vmm: create in {}: config/ is no dir", request.family);
+            Err(CreateError::UnknownFamily {})
+        }
+        Err(error) => {
+            eprintln!("vmm: create in {}: {error:?}", request.family);
+            Err(CreateError::Internal {})
+        }
+    }
 }

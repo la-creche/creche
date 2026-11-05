@@ -183,16 +183,21 @@ CH25 rule 2). It first reads the family with `FamilyRoot::exists` of
 row, and a different one gives `conflict` 409 (decision CH33 rule 12).
 The family read can sleep between its tries (decision CH50 rule 9), and
 the row write syncs a file and a dir. So both run in `spawn_blocking`
-(decision CH36 G21). The family read holds no lock of the rows. A create
-makes no session disk and boots no VM: the first boot makes the disk
-(decision CH21-4).
+(decision CH36 G21). The first family read holds no lock of the rows.
+caregiver removes the family files, then drops the family (decision
+CH33 rule 3). So create reads the family a second time under the lock
+of the rows, before the write. A drop of the family then sees the new
+row, or that read sees no family, and no row outlives its family. A
+create makes no session disk and boots no VM: the first boot makes the
+disk (decision CH21-4).
 
 `src/handlers/list.rs` serves `list` (decisions CH21-5, CH21-7). It
 answers `Rows::page` from memory, on the runtime worker, so a list boots
 no VM. The request type requires `family` (decision CH34 rule 4). A page
 ends early under the 1 MiB cap with a `next` (decision CH33 rule 2).
 `tests/create_list.rs` proves a repeat create, a conflict, an unknown
-family, and a page of 4096-character cwds that ends early.
+family, a repeat after the family went, `internal` for a failed family
+read or row write, and a page of 4096-character cwds that ends early.
 
 ## The stop
 
@@ -565,6 +570,17 @@ no guest sync.
     The vmm logs it. The reading takes "no `config/` dir" as the text of
     the rule. caregiver never writes such a family. A change to
     `internal` costs one match arm and one test line.
+14. CONTRACT-QUESTION (decisions CH25 rule 2, CH33 rule 3, plan PR L7):
+    a repeat of a create whose family `config/` is gone gets
+    `unknown_family` 404, not the same row with the same status
+    (`src/handlers/create.rs`). CH25 rule 2 returns the same row to a
+    repeat with the same body. CH33 rule 3 refuses a create for a family
+    with no `config/` dir. The two rows meet in the caregiver removal
+    window, where caregiver removes the files before it drops the
+    family. The reading lets CH33 rule 3 win: its text has no exception,
+    and its purpose is that no create gets in after caregiver removes
+    the files. `tests/create_list.rs` holds the order. If David picks
+    CH25 rule 2, the row lookup moves before the family read.
 
 ## Caller duties
 
