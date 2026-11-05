@@ -174,10 +174,32 @@ impl<S: Borrow<UnixStream>> ControlLink<S> {
     /// `Ended` when guest init closed the link at a line end. `Line` for
     /// a line that is not a `TurnEvent`. The caller then closes the link.
     pub async fn event(&mut self) -> Result<TurnEvent, ControlError> {
-        self.read().await.map_err(|error| match error {
-            ControlError::Closed => ControlError::Ended,
-            error => error,
+        self.next_event().await.map_err(|end| match end {
+            EventEnd::Refused(_) => ControlError::Line,
+            EventEnd::Error(error) => error,
         })
+    }
+
+    /// Reads the next turn event as `event` does. A refused line comes
+    /// back with its first `REFUSED_LOG_CAP` bytes, so the caller logs it
+    /// (decision CH54 rule 6).
+    ///
+    /// # Errors
+    ///
+    /// `EventEnd::Refused` for a line that is not a `TurnEvent`, and
+    /// `EventEnd::Error` with the error of `event` for every other end.
+    pub(crate) async fn next_event(&mut self) -> Result<TurnEvent, EventEnd> {
+        let line = match self.line(CONTROL_LINE_CAP).await {
+            Ok(line) => line,
+            Err(ControlError::Closed) => return Err(EventEnd::Error(ControlError::Ended)),
+            // A line past the cap stays in `pending`.
+            Err(ControlError::Line) => return Err(refused(&self.pending)),
+            Err(error) => return Err(EventEnd::Error(error)),
+        };
+        if !strict(&line) {
+            return Err(refused(&line));
+        }
+        serde_json::from_slice(&line).map_err(|_| refused(&line))
     }
 
     /// Sends the graceful stop: guest init stops the facade, syncs and
@@ -219,6 +241,26 @@ impl<S: Borrow<UnixStream>> ControlLink<S> {
             }
         }
     }
+}
+
+/// The most bytes of a refused line that the vmm logs. A line may hold
+/// up to `CONTROL_LINE_CAP` bytes. No row sets it. Only the vmm reads it,
+/// so a change costs one constant.
+pub(crate) const REFUSED_LOG_CAP: usize = 512;
+
+/// Why `ControlLink::next_event` read no turn event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum EventEnd {
+    /// The strict reader refused a line (decision CH43 rule 2). It holds
+    /// the first `REFUSED_LOG_CAP` bytes of the line, for the log.
+    Refused(Vec<u8>),
+    /// Any other end, as `ControlLink::event` gives it.
+    Error(ControlError),
+}
+
+/// The refused `line`, cut to `REFUSED_LOG_CAP` bytes.
+fn refused(line: &[u8]) -> EventEnd {
+    EventEnd::Refused(line.iter().take(REFUSED_LOG_CAP).copied().collect())
 }
 
 /// The sender of the graceful stop of a split control link. It holds a

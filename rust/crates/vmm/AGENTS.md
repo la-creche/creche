@@ -113,14 +113,22 @@ turn events and a `StopSender` for the graceful stop (plan PR L18b).
 the sender, and one task per VM runs the reader. The reader passes each
 event to `ControlState::turn` and writes each turn end with
 `Rows::turn_end` in `spawn_blocking`, as for a ready (decision CH32 rule
-4). A refused line ends the reader, which logs why (decision CH43 rule
-2). So does the close of the link, or an event of a replaced link. The
-reader holds the only strong handle of the stream, so its end closes
-the link. The sender then sends nothing, and a stop skips the graceful
-step (decision CH50 rule 3). A VM whose link closed has no control link
-for the sleep gate, so it never sleeps and is never evicted.
-`tests/start.rs` proves the events, the row write, the gate and the
-close.
+4). A refused line ends the reader (decision CH43 rule 2). So does the
+close of the link, or an event of a replaced link. The reader holds the
+only strong handle of the stream, so its end closes the link. The sender
+then sends nothing, and a stop skips the graceful step (decision CH50
+rule 3). A VM whose link closed has no control link for the sleep gate,
+so it never sleeps and is never evicted.
+
+Decision CH54 rule 6: a refused line is a guest fault. The reader logs
+the line with the session id (`ControlLink::next_event` gives its first
+`REFUSED_LOG_CAP` bytes, 512). Then it stops the VM at once through the
+stop path of the `StopVm` hook (`Stopper`). The link is gone, so the
+stop sends SIGTERM, then SIGKILL. The VM leaves the table and frees its
+RAM, so the next start of the session cold-boots (decision CH19 (5)).
+A reader whose link is no longer current stops nothing. `tests/start.rs`
+proves the events, the row write, the gate and the stop after a refused
+line.
 
 ## The acp route
 
@@ -471,16 +479,10 @@ launch) and a stop that waits for an idle sleep whose retire fails.
 10. Closed by plan PR L18b: the turn reader calls `ControlState::turn`
     for each event, so `turn_seen` and the last turn time follow the
     guest (decisions CH43 rule 8, CH50 rule 5).
-11. CONTRACT-QUESTION (decision CH43 rule 2, plan PR L18b,
-    `src/start.rs`): no row says what follows the close of a control link
-    after a refused line. The narrowest reading opens no new link: the VM
-    runs on with no control link, so it never sleeps and is never
-    evicted, and its stop goes to SIGTERM. A drop or the shutdown of plan
-    PR L19 stops it.
-12. Closed by decision CH54 rule 5: the idle check runs every 30 s
+11. Closed by decision CH54 rule 5: the idle check runs every 30 s
     (`sleep::IDLE_CHECK`). So a VM sleeps between 5 min and 5 min 30 s
     after its last use.
-13. Closed by decision CH54 rule 5: the sweep runs at the start of
+12. Closed by decision CH54 rule 5: the sweep runs at the start of
     `sleep::run`, then each hour (`sleep::SWEEP_EVERY`).
 
 ## Caller duties

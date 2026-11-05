@@ -1386,20 +1386,31 @@ fn the_reader_applies_each_turn_event() {
     assert_eq!(test.sleep_after(PAST_IDLE), [id]);
 }
 
-/// A refused line ends the reader, and the link closes (decision CH43
-/// rule 2). The VM then never sleeps, and a drop skips the graceful stop
-/// (decision CH50 rule 3).
+/// A refused line closes the link (decision CH43 rule 2) and stops the
+/// VM at once (decision CH54 rule 6). The link is gone, so the stop sends
+/// no `stop` line (decision CH50 rule 3). The cap holds one VM, so the
+/// start of row 1 proves the RAM is free. The next start of row 0
+/// launches a new CH and cold-boots (decision CH19 (5)).
 #[test]
-fn a_refused_line_closes_the_control_link() {
-    let test = Test::new("refused", |_| {});
+fn a_refused_line_stops_the_vm() {
+    let test = Test::new("refused", |config| config.limits.ram_cap = 512 << 20);
     assert_eq!(test.start(0), Ok(()));
     let id = test.rows[0].id.clone();
     test.send("not a turn event");
-    test.settle(|test| test.control.lock().unwrap().link(&id).is_none());
-    assert!(test.sleep_after(PAST_IDLE).is_empty());
-    assert_eq!(test.drop_session(0), Ok(Dropped {}));
-    assert_eq!(test.stop_lines(), 0);
+    // The stop runs in the reader task, so the start of row 1 gets
+    // `host_full` until the stop frees the RAM.
+    test.settle(|test| test.start(1) == Ok(()));
+    assert!(!test.hook.running(&id));
+    assert!(test.control.lock().unwrap().link(&id).is_none());
     assert!(test.stopped(0));
+    assert_eq!(test.stop_lines(), 0);
+    assert!(test.api.snapshots.lock().unwrap().is_empty());
+    let other = &test.rows[1].id;
+    assert!(test.runtime.block_on(test.hook.stop(other)).is_ok());
+    assert_eq!(test.start(0), Ok(()));
+    assert_eq!(test.launches(), 3);
+    assert!(!test.restored(2));
+    assert!(test.hook.running(&id));
 }
 
 /// A start of the session under a stop finds its `Stopping` slot and gets
