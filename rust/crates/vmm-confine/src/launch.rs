@@ -447,6 +447,16 @@ mod tests {
         assert_eq!(payload.args(), ["60"]);
     }
 
+    /// `systemd-run` would resolve `SELF_EXE` to itself, so the stage
+    /// program is the resolved binary (decision CH55).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_stage_program_is_the_resolved_binary() {
+        let program = super::stage_program().unwrap();
+        assert_eq!(program.path(), std::env::current_exe().unwrap());
+        assert_ne!(program.path(), std::path::Path::new(super::SELF_EXE));
+    }
+
     #[cfg(not(target_os = "linux"))]
     #[test]
     fn run_refuses_off_linux() {
