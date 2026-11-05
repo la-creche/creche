@@ -1490,9 +1490,57 @@ fn a_stale_reader_stops_nothing() {
     let old = test.fake.links.lock().unwrap()[0].try_clone().unwrap();
     (&old).write_all(br#"{"start""#).unwrap();
     old.shutdown(Shutdown::Write).unwrap();
-    old.set_read_timeout(Some(Duration::from_millis(1))).unwrap();
+    old.set_read_timeout(Some(Duration::from_millis(1)))
+        .unwrap();
     // The end of the old reader closes the vmm end of the old link.
     test.settle(|_| matches!((&old).read(&mut [0_u8; 64]), Ok(0)));
+    let pause = async { tokio::time::sleep(Duration::from_millis(100)).await };
+    test.runtime.block_on(pause);
+    assert!(test.hook.running(&id));
+    assert!(!test.stopped(1));
+    assert_eq!(test.launches(), 2);
+}
+
+/// The reader of a refused line stops only its own VM (decision CH54
+/// rule 6). The line arrives while an idle sleep holds the VM. The retire
+/// frees the slot, and a new start of row 0 takes it while its launch is
+/// held. The old reader then finds the new VM, and that VM runs on.
+#[test]
+fn a_refused_line_stops_only_its_own_vm() {
+    let test = Test::new("refused-own", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    let id = test.rows[0].id.clone();
+    test.api.hold.store(true, Ordering::SeqCst);
+    let now = Instant::now() + PAST_IDLE;
+    let pause = || tokio::time::sleep(Duration::from_millis(1));
+    let (_, started) = test
+        .runtime
+        .block_on(both(test.hook.sleep_idle(now), async {
+            while !test.api.entered.load(Ordering::SeqCst) {
+                pause().await;
+            }
+            test.send("not a turn event");
+            while test.control.lock().unwrap().link(&id).is_some() {
+                pause().await;
+            }
+            test.fake.hold.store(true, Ordering::SeqCst);
+            test.api.hold.store(false, Ordering::SeqCst);
+            let fake = Arc::clone(&test.fake);
+            let release = spawn(move || {
+                std::thread::sleep(Duration::from_millis(100));
+                fake.hold.store(false, Ordering::SeqCst);
+            });
+            // The start gets `host_full` until the retire frees the slot.
+            let started = loop {
+                match test.hook.start(&test.rows[0]).await {
+                    Err(StartFault::HostFull) => tokio::task::yield_now().await,
+                    started => break started.map(|_link| ()),
+                }
+            };
+            release.join().unwrap();
+            started
+        }));
+    assert_eq!(started, Ok(()));
     let pause = async { tokio::time::sleep(Duration::from_millis(100)).await };
     test.runtime.block_on(pause);
     assert!(test.hook.running(&id));

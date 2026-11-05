@@ -177,6 +177,10 @@ struct Vm<P> {
     guest_ram: u64,
     /// The control link after `ControlReady`. `None` after a failed stop.
     link: Option<StopSender>,
+    /// The identity of that link, so its reader stops only this VM
+    /// (decision CH54 rule 6). `None` for a VM whose start never
+    /// committed it.
+    link_id: Option<LinkId>,
     /// The snapshot key of the VM. `None` after a failed stop.
     key: Option<SnapshotKey>,
     /// The last use, for the eviction order (decision CH50 rule 5).
@@ -285,14 +289,16 @@ struct Pending<P: VmProcess> {
 }
 
 impl<P: VmProcess> Pending<P> {
-    /// Makes the VM an entry of the table with its control link.
-    fn commit(mut self, link: StopSender) {
+    /// Makes the VM an entry of the table with its control link `link`,
+    /// whose identity is `link_id`.
+    fn commit(mut self, link: StopSender, link_id: LinkId) {
         if let Some(process) = self.process.take() {
             let vm = Vm {
                 process,
                 run: self.run.clone(),
                 guest_ram: self.guest_ram,
                 link: Some(link),
+                link_id: Some(link_id),
                 key: self.key.take(),
                 last_use: Instant::now(),
             };
@@ -318,6 +324,7 @@ impl<P: VmProcess> Drop for Pending<P> {
                     run: self.run.clone(),
                     guest_ram: self.guest_ram,
                     link: None,
+                    link_id: None,
                     key: None,
                     last_use: Instant::now(),
                 };
@@ -907,9 +914,10 @@ async fn turn_end(rows: &Arc<Mutex<Rows>>, id: &SessionId, change: Change) {
 ///
 /// A refused line ends the reader (decision CH43 rule 2). It is a guest
 /// fault (decision CH54 rule 6): the reader logs the line with `id`, and
-/// `stopper` stops the VM at once. The link is gone, so the stop sends
-/// SIGTERM, then SIGKILL. The VM leaves the table, so the next start of
-/// the session cold-boots (decision CH19 (5)).
+/// `stopper` stops the VM of `link` at once. The link is gone, so the
+/// stop sends SIGTERM, then SIGKILL. The VM leaves the table, so the next
+/// start of the session cold-boots (decision CH19 (5)). A later VM of the
+/// session has another link, so the stop leaves it alone.
 async fn read_turns<P: VmProcess>(
     mut events: ControlLink<Arc<UnixStream>>,
     (id, link): (SessionId, LinkId),
@@ -945,7 +953,7 @@ async fn read_turns<P: VmProcess>(
     if !(refused && current) {
         return;
     }
-    if let Err(VmStopFailed { pid, error }) = stopper.stop(&id).await {
+    if let Err(VmStopFailed { pid, error }) = stopper.stop(&id, Some(link)).await {
         eprintln!("vmm: the VM of {id} (pid {pid}) did not stop after a refused line: {error}");
     }
 }
@@ -961,11 +969,19 @@ struct Stopper<P> {
 
 impl<P: VmProcess> Stopper<P> {
     /// What the slot of `id` holds for a stop. A VM that runs leaves the
-    /// table under a `Stopping` slot, so its RAM still counts.
-    fn hold(&self, id: &SessionId) -> Held<P> {
+    /// table under a `Stopping` slot, so its RAM still counts. With
+    /// `Some(link)`, only the VM of the control link `link` counts.
+    fn hold(&self, id: &SessionId, link: Option<LinkId>) -> Held<P> {
         let mut table = lock(&self.table);
         match table.get(id) {
             None => Held::Free,
+            // Decision CH54 rule 6: the reader of a refused line stops only
+            // its own VM. A start takes the slot only after that VM left
+            // the table, and a VM of another link is not its own.
+            Some(Slot::Starting(_)) if link.is_some() => Held::Free,
+            Some(Slot::Running(vm)) if link.is_some_and(|link| vm.link_id != Some(link)) => {
+                Held::Free
+            }
             Some(Slot::Starting(_) | Slot::Evicting(_)) => Held::Busy,
             Some(Slot::Stopping(_, outcome)) => Held::Joins(outcome.clone()),
             Some(Slot::Running(_)) => {
@@ -1003,17 +1019,19 @@ impl<P: VmProcess> Stopper<P> {
         }
     }
 
-    /// Stops the VM of `id`. A start or a retire that holds the slot ends
-    /// first, so the stop finds the VM that the start committed or the
-    /// retire put back. A stop that finds a stop of the same VM waits for
-    /// it and returns its outcome (caller duty 6 of `AGENTS.md`).
+    /// Stops the VM of `id`. With `Some(link)`, it stops only the VM of
+    /// the control link `link`, for the reader of that link (decision
+    /// CH54 rule 6). A start or a retire that holds the slot ends first,
+    /// so the stop finds the VM that the start committed or the retire put
+    /// back. A stop that finds a stop of the same VM waits for it and
+    /// returns its outcome (caller duty 6 of `AGENTS.md`).
     // A start under the mark of a drop ends before the stop (plan PR L15),
     // but its launch step can outlive a dropped start future. So the stop
     // polls a `Starting` slot until the launch output kills the VM and
     // puts it in the table.
-    async fn stop(&self, id: &SessionId) -> Result<(), VmStopFailed> {
+    async fn stop(&self, id: &SessionId, link: Option<LinkId>) -> Result<(), VmStopFailed> {
         loop {
-            match self.hold(id) {
+            match self.hold(id, link) {
                 Held::Free => return Ok(()),
                 Held::Busy => sleep(SLOT_POLL).await,
                 Held::Joins(mut outcome) => {
@@ -1052,7 +1070,7 @@ impl<L: Launcher, A: ChApi> StopVm for ColdBoot<L, A> {
     /// A stop that finds a stop of the same VM waits for it and returns
     /// its outcome (caller duty 6 of `AGENTS.md`).
     async fn stop(&self, id: &SessionId) -> Result<(), VmStopFailed> {
-        self.stopper().stop(id).await
+        self.stopper().stop(id, None).await
     }
 }
 
@@ -1339,7 +1357,7 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         let (sender, events) = control.split();
         let (stopper, rows) = (self.stopper(), Arc::clone(&self.rows));
         tokio::spawn(read_turns(events, (id.clone(), link), stopper, rows));
-        pending.commit(sender);
+        pending.commit(sender, link);
         Ok(acp)
     }
 }
