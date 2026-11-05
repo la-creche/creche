@@ -566,9 +566,9 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         let vm = match table.get_mut(id) {
             None => return Ok(Found::Free),
             Some(Slot::Starting(_)) => return Err("a start of the VM runs".to_owned()),
-            // CONTRACT-QUESTION (Known gaps 4): a stop holds the RAM of the
-            // VM as an eviction does, so the start gets `host_full`. Under
-            // the mark of a drop no Upgrade reaches the hook.
+            // Decision CH54 rule 4: a stop holds the RAM of the VM as an
+            // eviction does, so the start gets `host_full`. Under the mark
+            // of a drop no Upgrade reaches the hook.
             Some(Slot::Evicting(_) | Slot::Stopping(..)) => return Ok(Found::Evicting),
             Some(Slot::Running(vm)) => vm,
         };
@@ -713,7 +713,7 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
     // Decision CH19 (6): the gate and the take out run under the table
     // lock. An Upgrade claims its door before its start reads the table,
     // so a door that opens after the gate finds the VM `Evicting` and gets
-    // `host_full` (Known gaps). The sleep closes no door.
+    // `host_full` (decision CH54 rule 4). The sleep closes no door.
     pub async fn sleep_idle(&self, now: Instant) -> Vec<SessionId> {
         let (mut tried, mut slept) = (HashSet::new(), Vec::new());
         loop {
@@ -847,11 +847,9 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
     /// Checks a restored VM, then resumes it (decision CH50 rule 10). CH
     /// serves its API only after it starts, so a failed `info` is tried
     /// again inside `READY_WAIT`.
-    // CONTRACT-QUESTION (decision CH50 rule 10): no row names the fault of
-    // each step. The code reads a VM that is not `Paused`, or that has a
-    // refused device, as a failed deny check: `egress_assert_failed`
-    // (decisions CH6-3, CH42 rule 2). An `info` that never answers, or a
-    // failed resume, is `sandbox_start_failed`.
+    // Decision CH54 rule 3: a VM that is not `Paused`, or that has a
+    // refused device, gives `egress_assert_failed`. A CH that does not
+    // answer `info` or `resume` gives `sandbox_start_failed`.
     async fn resume_checked(
         &self,
         run: &VmRunDir,
@@ -1192,10 +1190,9 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         match self.find(id) {
             Ok(Found::Runs(vsock)) => return self.dial(family, &vsock).await,
             Ok(Found::Free) => {}
-            // CONTRACT-QUESTION (decisions CH19 (6), CH21-3): no row names
-            // the reply to a reconnect while admission evicts the VM. The
-            // VM still holds its RAM, so the code answers `host_full`, and
-            // attendance retries.
+            // Decision CH54 rule 4: an Upgrade of a session whose VM is
+            // being evicted or put to sleep gets `host_full`. The VM still
+            // holds its RAM.
             Ok(Found::Evicting) => return Err(StartFault::HostFull),
             Err(message) => return Err(self.fault(family, sandbox, message).await),
         }
@@ -1264,15 +1261,11 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         turn_end(&self.rows, id, change).await;
         self.book(family, FaultBook::clear).await;
 
-        // CONTRACT-QUESTION (plan PR L16, decision CH42 rule 2): the plan
-        // order puts the check before the wait for `ControlReady`, and
-        // CH42 rule 2 says "before the VM is ready". Decision CH6-3 says
-        // only "at create and after each egress edit". But until CH runs,
-        // the command line is the one of the launch step, and the check
-        // fails closed (`deny::check`). No row bounds a wait for the exec
-        // of CH. The code reads "ready" as the 101: the check runs after
-        // `ControlReady` and before the dial of 1201. A poll of the command
-        // line inside `READY_WAIT` before the open costs about 15 lines.
+        // Decision CH54 rule 2: the deny check runs after `ControlReady`
+        // and before the dial of 1201 and the 101. Before CH execs, the
+        // command line is the one of the launch step, and the check fails
+        // closed (`deny::check`). The kernel fixes the command line at
+        // exec, so a check after `ControlReady` proves the same thing.
         // Decision CH49 rule 3 binds 1104 from phase 7 on, so the bound
         // set is empty in phase 2.
         let (ch, run) = (self.config.ch.clone(), pending.run.clone());
