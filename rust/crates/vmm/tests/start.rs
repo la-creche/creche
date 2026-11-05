@@ -1326,7 +1326,7 @@ fn a_vm_under_a_stop_keeps_its_ram() {
 
 /// A start of the session under a stop finds its `Stopping` slot and gets
 /// `host_full` at once. It launches no second CH on the session disk
-/// (Known gaps 4).
+/// (decision CH54 rule 4).
 #[test]
 fn a_start_of_the_stopped_session_is_host_full() {
     let test = Test::new("drop-same", |_| {});

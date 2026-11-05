@@ -564,9 +564,9 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         let vm = match table.get_mut(id) {
             None => return Ok(Found::Free),
             Some(Slot::Starting(_)) => return Err("a start of the VM runs".to_owned()),
-            // CONTRACT-QUESTION (Known gaps 4): a stop holds the RAM of the
-            // VM as an eviction does, so the start gets `host_full`. Under
-            // the mark of a drop no Upgrade reaches the hook.
+            // Decision CH54 rule 4: a stop holds the RAM of the VM as an
+            // eviction does, so the start gets `host_full`. Under the mark
+            // of a drop no Upgrade reaches the hook.
             Some(Slot::Evicting(_) | Slot::Stopping(..)) => return Ok(Found::Evicting),
             Some(Slot::Running(vm)) => vm,
         };

@@ -390,9 +390,9 @@ A slot that a start or a retire holds is read again every `SLOT_POLL`
 and its output then kills the VM and puts it in the table. A drop of the
 stop future kills the VM and puts it back (`Eviction`), and a second stop
 that waits then reads the slot again. A start of a session under a stop
-gets `host_full` (Known gaps 4). `tests/start.rs` proves a drop through
-the hook, a failed stop that keeps the row and the RAM, two stops that
-overlap, a stop during a launch, and the RAM of a VM under a stop. It
+gets `host_full` (decision CH54 rule 4). `tests/start.rs` proves a drop
+through the hook, a failed stop that keeps the row and the RAM, two stops
+that overlap, a stop during a launch, and the RAM of a VM under a stop. It
 also proves a start of the session under a stop (`host_full`, one
 launch) and a stop that waits for an idle sleep whose retire fails.
 
@@ -424,12 +424,11 @@ launch) and a stop that waits for an idle sleep whose retire fails.
    (`src/start.rs`). This departs from the order of plan PR L16, which
    put the check before the wait for `ControlReady`.
 4. Closed by decision CH54 rule 4: an Upgrade of a session whose VM is
-   being evicted or put to sleep gets `host_full` (`src/start.rs`). A
-   door that an eviction closes between the end of the start and the
-   101 gets `host_full` the same way (`relay::Stopped::Evict`).
-   An Upgrade of a session whose VM a stop holds gets `host_full` too.
-   Under the mark of a drop no such Upgrade reaches the hook (decision
-   CH34 rule 6).
+   being evicted, put to sleep or stopped gets `host_full`
+   (`src/start.rs`). A door that an eviction closes between the end of
+   the start and the 101 gets `host_full` the same way
+   (`relay::Stopped::Evict`). Under the mark of a drop no such Upgrade
+   reaches the hook (decision CH34 rule 6).
 5. Plan gap (plan PRs L11, L15, L19, L20): plan PR L18b owns two
    production pieces that no earlier plan PR named. (1) `impl StopVm
    for ColdBoot` is done (see "The stop hook"). (2) No task runs a
