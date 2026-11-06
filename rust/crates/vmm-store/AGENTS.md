@@ -132,5 +132,5 @@ The second file has the table of the three vmm crates.
   took it removes that VM's sockets. (b) run `unlink_vm` when the VM frees
   its slot. (c) link a VM only to a free slot, one that no live CH holds.
   `link_vm` empties the slot (CH56 rule 1), so a link to a held slot
-  removes the sockets of the CH in it. Until L16b, `start.rs` makes
-  `vm/<id>` a real dir, and `link_vm` fails on a real dir.
+  removes the sockets of the CH in it. Plan PR L16b keeps all three in
+  `rust/crates/vmm/src/start.rs` ("The slots" in the vmm `AGENTS.md`).

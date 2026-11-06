@@ -7,6 +7,7 @@
 //! the session disk (with `/usr/bin/true` as `mke2fs`), the key check,
 //! the claim, the deny check and the fault file.
 
+use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::Shutdown;
 use std::os::unix::fs::PermissionsExt;
@@ -1752,4 +1753,178 @@ fn a_refused_line_during_a_take_keeps_no_snapshot() {
     assert_eq!(test.start(0), Ok(()));
     assert!(!test.restored(1));
     assert_eq!(test.launches(), 2);
+}
+
+#[cfg(test)]
+impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
+    /// Adds rows of `chat` until the test has `count` rows.
+    fn rows_up_to(&mut self, count: usize) {
+        let mut store = self.store.lock().unwrap();
+        for number in self.rows.len()..count {
+            let create = format!(
+                r#"{{"created_at":1793577600000,"cwd":"/home/david","family":"chat","id":"00000000-0000-4000-8000-{number:012x}","origin":{{"door":{{}}}}}}"#
+            );
+            let row = store
+                .create(serde_json::from_str(&create).unwrap())
+                .unwrap();
+            self.rows.push(row);
+        }
+    }
+
+    /// The slot number of launch `index` (plan PR L16b).
+    fn slot(&self, index: usize) -> u16 {
+        let launches = self.fake.launches.lock().unwrap();
+        launches[index].slot().unwrap().number()
+    }
+
+    /// The target of the `vm/<id>` link of row `index`, or `None` when
+    /// the row has no link (PR D16).
+    fn link(&self, index: usize) -> Option<PathBuf> {
+        let id = &self.rows[index].id;
+        fs::read_link(self.dir.join(format!("run/vm/{id}"))).ok()
+    }
+}
+
+/// The link target of slot `number`.
+#[cfg(test)]
+fn slot_dir(number: u16) -> PathBuf {
+    PathBuf::from(format!("../slot/{number}"))
+}
+
+/// Each VM takes its own slot, and its `vm/<id>` links to it (plan PR
+/// L16b, decisions CH51, CH55). A stop frees the slot and removes the
+/// link, and the next start takes the freed slot. The link empties the
+/// slot first, so the `serial.log` of the old VM is new (decision CH56
+/// rule 1).
+#[test]
+fn two_vms_get_two_slots_and_a_freed_slot_is_reused() {
+    let test = Test::new("slots", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    assert_eq!(test.start(1), Ok(()));
+    assert_eq!((test.slot(0), test.slot(1)), (0, 1));
+    assert_eq!(test.link(0), Some(slot_dir(0)));
+    assert_eq!(test.link(1), Some(slot_dir(1)));
+    let serial = test.dir.join("run/slot/0/serial.log");
+    fs::write(&serial, b"the old guest").unwrap();
+
+    let id = test.rows[0].id.clone();
+    assert!(test.runtime.block_on(test.hook.stop(&id)).is_ok());
+    assert_eq!(test.link(0), None);
+    assert_eq!(test.start(2), Ok(()));
+    assert_eq!(test.slot(2), 0);
+    assert_eq!(test.link(2), Some(slot_dir(0)));
+    assert_eq!(fs::read(&serial).unwrap(), b"");
+}
+
+/// With each of the 64 slots held, the next start gets `host_full` with
+/// no fault and no launch, though its RAM fits (plan PR L16b, decision
+/// CH21-3). A stop frees one slot, and the start then takes it.
+#[test]
+fn a_full_pool_makes_the_next_start_host_full() {
+    let mut test = Test::new("pool", |_| {});
+    *test.fake.guest.lock().unwrap() = Guest::Turn;
+    test.rows_up_to(65);
+    for index in 0..64 {
+        assert_eq!(test.start(index), Ok(()), "start {index}");
+    }
+    let slots: HashSet<u16> = (0..64).map(|index| test.slot(index)).collect();
+    assert_eq!(slots.len(), 64);
+    assert_eq!(test.start(64), Err(StartFault::HostFull));
+    assert_eq!(test.launches(), 64);
+    assert!(test.fault_codes().is_empty());
+
+    let id = test.rows[10].id.clone();
+    assert!(test.runtime.block_on(test.hook.stop(&id)).is_ok());
+    assert_eq!(test.start(64), Ok(()));
+    assert_eq!(test.slot(64), test.slot(10));
+}
+
+/// A guest fault at the start, a refused line and a VM that exited each
+/// free the slot and remove the link (plan PR L16b, decision CH54 rule
+/// 6). The next start takes the slot.
+#[test]
+fn a_fault_or_an_exit_frees_the_slot() {
+    let test = Test::new("slot-fault", |_| {});
+    *test.fake.guest.lock().unwrap() = Guest::Closes;
+    assert_eq!(test.start(0), Err(StartFault::SandboxStartFailed));
+    assert_eq!(test.link(0), None);
+
+    *test.fake.guest.lock().unwrap() = Guest::Ready;
+    assert_eq!(test.start(1), Ok(()));
+    assert_eq!(test.slot(1), 0);
+    test.send("not a turn event");
+    test.settle(|test| test.link(1).is_none());
+    assert_eq!(test.start(2), Ok(()));
+    assert_eq!(test.slot(2), 0);
+
+    // An exited VM holds its slot until admission reaps it.
+    test.fake.vms.lock().unwrap()[2].store(true, Ordering::SeqCst);
+    assert_eq!(test.link(2), Some(slot_dir(0)));
+    assert_eq!(test.start(0), Ok(()));
+    assert_eq!(test.link(2), None);
+    assert_eq!(test.slot(3), 0);
+}
+
+/// A drop, an eviction and an idle sleep each free the slot and remove
+/// the link (plan PR L16b). An evicted VM holds its slot until its CH
+/// ends, so the start that evicts it takes another slot.
+#[test]
+fn a_drop_an_eviction_or_a_sleep_frees_the_slot() {
+    let test = Test::new("slot-drop", |config| config.limits.ram_cap = 512 << 20);
+    assert_eq!(test.start(0), Ok(()));
+    assert_eq!(test.drop_session(0), Ok(Dropped {}));
+    assert_eq!(test.link(0), None);
+
+    assert_eq!(test.start(1), Ok(()));
+    assert_eq!(test.slot(1), 0);
+    assert_eq!(test.start(2), Ok(()));
+    assert_eq!(test.snapshot_ids(), [B]);
+    assert_eq!(test.slot(2), 1);
+    assert_eq!(test.link(1), None);
+
+    assert_eq!(test.sleep_after(PAST_IDLE).len(), 1);
+    assert_eq!(test.link(2), None);
+    assert_eq!(test.start(1), Ok(()));
+    assert_eq!(test.slot(3), 0);
+}
+
+/// A shutdown frees the slot of each VM: the take of an idle one and the
+/// stop of a busy one (plan PRs L16b, L19).
+#[test]
+fn a_shutdown_frees_each_slot() {
+    let test = Test::new("slot-shutdown", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    *test.fake.guest.lock().unwrap() = Guest::Turn;
+    assert_eq!(test.start(1), Ok(()));
+    assert_eq!(test.shut_down(), Ended::Clean);
+    assert_eq!(test.snapshot_ids(), [A]);
+    assert_eq!((test.link(0), test.link(1)), (None, None));
+}
+
+/// A restore links the `vm/<id>` of its snapshot to the slot of the
+/// start, which is not the slot of the VM that took the snapshot. The
+/// device check passes, so the vsock path of the snapshot holds (PR D16,
+/// plan PR L16b).
+#[test]
+fn a_restore_links_the_snapshot_to_its_new_slot() {
+    let test = Test::new("slot-restore", |_| {});
+    *test.fake.guest.lock().unwrap() = Guest::Turn;
+    assert_eq!(test.start(1), Ok(()));
+    *test.fake.guest.lock().unwrap() = Guest::Ready;
+    assert_eq!(test.start(0), Ok(()));
+    assert_eq!(test.slot(1), 1);
+    test.api.keep.store(true, Ordering::SeqCst);
+    assert_eq!(test.sleep_after(PAST_IDLE), [test.rows[0].id.clone()]);
+    assert_eq!(test.link(0), None);
+
+    *test.fake.guest.lock().unwrap() = Guest::Turn;
+    assert_eq!(test.start(2), Ok(()));
+    assert_eq!(test.slot(2), 1);
+    test.reply(0, "Paused", &[]);
+    assert_eq!(test.start(0), Ok(()));
+    assert!(test.restored(3));
+    assert_eq!(test.slot(3), 2);
+    assert_eq!(test.link(0), Some(slot_dir(2)));
+    assert_eq!(test.api.resumes.load(Ordering::SeqCst), 1);
+    assert!(test.fault_codes().is_empty());
 }

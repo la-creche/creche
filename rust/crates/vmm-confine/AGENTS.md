@@ -164,12 +164,12 @@ table of the three vmm crates.
   PR C15, the rework of #443). That kvm test must also prove that CH
   under its slot label still dies with the vmm (fact 80), and it needs a
   stage that writes the real exec attribute (`stage::run`).
-- Lifecycle does not use the stage yet. Until plan PR L16b, every launch
-  fails closed with `LaunchError::NoSlot`. L16b must pass the slot with
-  `Launch::in_slot`. `rust/crates/vmm/src/main.rs` routes only `launch`
-  today. Plan PR L16c routes `stage::MODE` with its one plan argument to
-  `stage::run`, never to `stage::run_with_fake_attr_for_tests`. C18,
-  L16c and L16b merge in that order, back to back.
+- Closed by plan PRs L16b and L16c: lifecycle passes the slot of each
+  start with `Launch::in_slot`, so no launch of the vmm fails with
+  `LaunchError::NoSlot`. `rust/crates/vmm/src/main.rs` routes
+  `stage::MODE` with its one plan argument to `stage::run`, never to
+  `stage::run_with_fake_attr_for_tests`. C18, L16b and L16c are in one
+  PR.
 - CONTRACT-QUESTION (decision CH55): no row allows a test seam past the
   slot label. `stage::run_with_fake_attr_for_tests` and
   `stage::ExecAttr` stay public for the example, with `doc(hidden)`. A

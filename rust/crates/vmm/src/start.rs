@@ -15,12 +15,12 @@
 //! 3. In `spawn_blocking`: the stale sockets go (PR D1, decision CH19
 //!    (4)), the kernel and the root disk pass the store check (PR D6,
 //!    decision CH44 rule 2), the session disk exists (PR D7, decision
-//!    CH21-4), the run dir `vm/<id>/` and `snapshots/` exist, and
-//!    `serial.log` is a new file with mode 0600 (gap G23). The key check
-//!    (PR D10) and the claim (PR D11) pick a restore or a cold boot. Then
-//!    the launch step starts CH with the argv of PR C7 and the sizes of PR
-//!    C4 under the ruleset of PR C6 (PR C2, decisions CH8-3, CH8-5, CH8-8,
-//!    CH30).
+//!    CH21-4), the run dir `vm/<id>/` links to the slot of the start (PR
+//!    D16), `snapshots/` exists, and `serial.log` is a new file with mode
+//!    0600 (gap G23). The key check (PR D10) and the claim (PR D11) pick a
+//!    restore or a cold boot. Then the launch step starts CH in its slot
+//!    (PR C18) with the argv of PR C7 and the sizes of PR C4 under the
+//!    ruleset of PR C6 (PR C2, decisions CH8-3, CH8-5, CH8-8, CH30, CH55).
 //! 4. A restore only: `ch-remote info` must say `Paused`, the device
 //!    check passes, then `ch-remote resume` (decision CH50 rule 10).
 //! 5. The first `ControlReady` (plan PR L10). It clears the faults of the
@@ -30,6 +30,14 @@
 //!
 //! Each fault but `host_full` goes to the fault file of the family
 //! (decisions CH21-1, CH6-3). A fault after the launch stops the VM.
+//!
+//! Plan PR L16b: each entry of the table holds one slot of the pool
+//! (decisions CH51, CH55). Admission takes the lowest free slot under
+//! the table lock, and no free slot gives `host_full` (decision CH21-3).
+//! The entry keeps its slot until its CH ended. Then the entry leaves the
+//! table, and `release` removes the `vm/<id>` link first. So a free slot
+//! holds no live CH (decision CH19 (4)), and `RunRoot::link_vm` may
+//! empty it (decision CH56 rule 1).
 //!
 //! The idle sleep and the snapshot sweep of plan PR L18 use the same
 //! table (`ColdBoot::sleep_idle`, `ColdBoot::sweep`, `sleep::run`). So
@@ -58,7 +66,7 @@ use creche_vmm_store::ch_remote::ChRemoteError;
 use creche_vmm_store::claim::{ClaimError, ClaimedSnapshot, claim};
 use creche_vmm_store::images::{ImageDigest, ImageStore};
 use creche_vmm_store::key::{CheckedCh, KeyCheck, SnapshotKey, check_newest};
-use creche_vmm_store::layout::{RunRoot, SessionDir, StateRoot, VmRunDir};
+use creche_vmm_store::layout::{RunRoot, SessionDir, Slot as PoolSlot, StateRoot, VmRunDir};
 use creche_vmm_store::retention::{BUDGET, InUse, Swept, sweep};
 use creche_vmm_store::rows::Rows;
 use creche_vmm_store::session_disk::SessionDisks;
@@ -181,6 +189,8 @@ struct Vm<P> {
     run: VmRunDir,
     /// The configured guest RAM in bytes, for admission.
     guest_ram: u64,
+    /// The slot of the VM until its CH ended (plan PR L16b).
+    slot: PoolSlot,
     /// The control link after `ControlReady`. `None` after a failed stop.
     link: Option<StopSender>,
     /// The identity of that link, so its reader stops only this VM
@@ -193,18 +203,36 @@ struct Vm<P> {
     last_use: Instant,
 }
 
-/// What the table holds for a session.
+/// What the table holds for a session. Each entry holds its pool slot
+/// (plan PR L16b).
 #[derive(Debug)]
 enum Slot<P> {
     /// A start passed admission and holds this much guest RAM.
-    Starting(u64),
+    Starting(u64, PoolSlot),
     /// The VM runs, or its stop failed (decision CH50 rule 4).
     Running(Vm<P>),
     /// Admission evicts the VM, which holds this much guest RAM.
-    Evicting(u64),
+    Evicting(u64, PoolSlot),
     /// The `StopVm` hook stops the VM, which holds this much guest RAM.
     /// A second stop waits for the outcome.
-    Stopping(u64, Outcome),
+    Stopping(u64, PoolSlot, Outcome),
+}
+
+impl<P> Slot<P> {
+    /// The pool slot of the entry.
+    fn pool(&self) -> PoolSlot {
+        match self {
+            Self::Starting(_, slot) | Self::Evicting(_, slot) | Self::Stopping(_, slot, _) => *slot,
+            Self::Running(vm) => vm.slot,
+        }
+    }
+}
+
+/// The lowest pool slot that no entry of `table` holds, or `None` when
+/// each slot is held (decisions CH51, CH55).
+fn free_slot<P>(table: &HashMap<SessionId, Slot<P>>) -> Option<PoolSlot> {
+    let held: HashSet<PoolSlot> = table.values().map(Slot::pool).collect();
+    PoolSlot::all().find(|slot| !held.contains(slot))
 }
 
 /// The outcome of the stop of a `Stopping` slot, `None` until it ends.
@@ -260,9 +288,20 @@ fn lock_in_use(in_use: &Mutex<InUse>) -> MutexGuard<'_, InUse> {
     in_use.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Removes the generation of `id` from `in_use`: its CH ended (decision
-/// CH50 rule 8).
-fn release(in_use: &Mutex<InUse>, id: &SessionId) {
+/// Frees the slot of `id`: its CH ended. It removes the `vm/<id>` link
+/// (caller duty (b) of PR D16) and the generation of `id` from `in_use`
+/// (decision CH50 rule 8). The caller holds the table lock and removes
+/// the entry after this call, so no start of `id` links it before the
+/// unlink. A failed unlink is logged. The slot still frees: the next link
+/// of `id` replaces the link, and the old VM has no step left.
+// The unlink is one `unlink` on the tmpfs of the run root, so it runs
+// under the table lock and not in `spawn_blocking` (decision CH36 G21).
+// The status check and the SIGKILL under the same lock are system calls
+// of the same cost.
+fn release(in_use: &Mutex<InUse>, run: &RunRoot, id: &SessionId) {
+    if let Err(error) = run.unlink_vm(id) {
+        eprintln!("vmm: {error}: {}", error.source);
+    }
     lock_in_use(in_use).retain(|(session, _)| session != id);
 }
 
@@ -270,14 +309,18 @@ fn release(in_use: &Mutex<InUse>, id: &SessionId) {
 /// from `in_use`. Decision CH50 rule 4 keeps the RAM of a VM that may
 /// still run, and an exited one runs no more. A failed status check keeps
 /// the entry, so its RAM still counts.
-fn reap<P: VmProcess>(table: &mut HashMap<SessionId, Slot<P>>, in_use: &Mutex<InUse>) {
+fn reap<P: VmProcess>(
+    table: &mut HashMap<SessionId, Slot<P>>,
+    in_use: &Mutex<InUse>,
+    run: &RunRoot,
+) {
     table.retain(|id, slot| {
         let Slot::Running(vm) = slot else {
             return true;
         };
         let exited = matches!(vm.process.exited(), Ok(true));
         if exited {
-            release(in_use, id);
+            release(in_use, run, id);
         }
         !exited
     });
@@ -289,8 +332,10 @@ fn reap<P: VmProcess>(table: &mut HashMap<SessionId, Slot<P>>, in_use: &Mutex<In
 struct Pending<P: VmProcess> {
     table: Table<P>,
     in_use: Arc<Mutex<InUse>>,
+    root: RunRoot,
     id: SessionId,
     guest_ram: u64,
+    slot: PoolSlot,
     run: VmRunDir,
     process: Option<P>,
     key: Option<SnapshotKey>,
@@ -306,6 +351,7 @@ impl<P: VmProcess> Pending<P> {
                 process,
                 run: self.run.clone(),
                 guest_ram: self.guest_ram,
+                slot: self.slot,
                 link: Some(link),
                 link_id: Some(link_id),
                 key: self.key.take(),
@@ -332,6 +378,7 @@ impl<P: VmProcess> Drop for Pending<P> {
                     process,
                     run: self.run.clone(),
                     guest_ram: self.guest_ram,
+                    slot: self.slot,
                     link: None,
                     link_id: None,
                     key: None,
@@ -340,8 +387,8 @@ impl<P: VmProcess> Drop for Pending<P> {
                 table.insert(self.id.clone(), Slot::Running(vm));
             }
             None => {
+                release(&self.in_use, &self.root, &self.id);
                 table.remove(&self.id);
-                release(&self.in_use, &self.id);
             }
         }
     }
@@ -365,11 +412,13 @@ impl<P: VmProcess> Eviction<P> {
         }
     }
 
-    /// Removes the stopped VM from the table and from `in_use`.
-    fn done(mut self, in_use: &Mutex<InUse>) {
+    /// Removes the stopped VM from the table and from `in_use`, and frees
+    /// its slot.
+    fn done(mut self, in_use: &Mutex<InUse>, run: &RunRoot) {
         self.vm = None;
-        lock(&self.table).remove(&self.id);
-        release(in_use, &self.id);
+        let mut table = lock(&self.table);
+        release(in_use, run, &self.id);
+        table.remove(&self.id);
     }
 }
 
@@ -421,6 +470,7 @@ struct Retirer<A> {
     relays: Relays,
     control: Arc<Mutex<ControlState>>,
     state: StateRoot,
+    run: RunRoot,
 }
 
 impl<A: ChApi> Retirer<A> {
@@ -525,7 +575,7 @@ impl<A: ChApi> Retirer<A> {
             return Retired::Kept;
         }
         forget_link(&self.control, &id);
-        eviction.done(&self.in_use);
+        eviction.done(&self.in_use, &self.run);
         if faulted {
             eprintln!("vmm: the VM of {id} faulted during its retire, so it keeps no snapshot");
             Retired::Stopped
@@ -557,17 +607,18 @@ impl<A: ChApi> Retirer<A> {
 }
 
 /// Takes the VM of `session` out of `slots`, the locked `table`, and
-/// marks its slot with `mark` of its guest RAM, so its RAM still counts.
+/// marks its slot with `mark` of its guest RAM and its pool slot, so its
+/// RAM and its pool slot stay held.
 fn take_out<P: VmProcess>(
     table: &Table<P>,
     slots: &mut HashMap<SessionId, Slot<P>>,
     session: SessionId,
-    mark: impl FnOnce(u64) -> Slot<P>,
+    mark: impl FnOnce(u64, PoolSlot) -> Slot<P>,
 ) -> Option<Eviction<P>> {
     let Some(Slot::Running(vm)) = slots.remove(&session) else {
         return None;
     };
-    slots.insert(session.clone(), mark(vm.guest_ram));
+    slots.insert(session.clone(), mark(vm.guest_ram, vm.slot));
     Some(Eviction {
         table: Arc::clone(table),
         id: session,
@@ -674,18 +725,18 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         }
         let vm = match table.get_mut(id) {
             None => return Ok(Found::Free),
-            Some(Slot::Starting(_)) => return Err("a start of the VM runs".to_owned()),
+            Some(Slot::Starting(..)) => return Err("a start of the VM runs".to_owned()),
             // Decision CH54 rule 4: a stop holds the RAM of the VM as an
             // eviction does, so the start gets `host_full`. Under the mark
             // of a drop no Upgrade reaches the hook.
-            Some(Slot::Evicting(_) | Slot::Stopping(..)) => return Ok(Found::Evicting),
+            Some(Slot::Evicting(..) | Slot::Stopping(..)) => return Ok(Found::Evicting),
             Some(Slot::Running(vm)) => vm,
         };
         match vm.process.exited() {
             Ok(false) => Ok(Found::Runs(vm.run.vsock_socket())),
             Ok(true) => {
+                release(&self.in_use, &self.config.run, id);
                 table.remove(id);
-                release(&self.in_use, id);
                 Ok(Found::Free)
             }
             Err(error) => Err(format!("checking the VM process: {error}")),
@@ -727,7 +778,7 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
     /// CH8-6, CH19 (6)).
     fn view(&self, session: &SessionId, slot: &Slot<L::Process>, now: Instant) -> Running {
         let (guest_ram, last_use, gate) = match slot {
-            Slot::Starting(ram) | Slot::Evicting(ram) | Slot::Stopping(ram, _) => {
+            Slot::Starting(ram, _) | Slot::Evicting(ram, _) | Slot::Stopping(ram, ..) => {
                 (*ram, now, Gate::Busy)
             }
             Slot::Running(vm) => {
@@ -746,8 +797,10 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         }
     }
 
-    /// Reserves `guest_ram` for `id` when admission admits it, and takes
-    /// out each VM that admission evicts first, in its order.
+    /// Reserves `guest_ram` and a free pool slot for `id` when admission
+    /// admits it, and takes out each VM that admission evicts first, in
+    /// its order. With no free slot it admits nothing (plan PR L16b,
+    /// decision CH21-3).
     fn admit(&self, id: &SessionId, guest_ram: u64, free: u64) -> Option<Admitted<L::Process>> {
         let mut table = lock(&self.table);
         // A start that read the table before the refusal of a shutdown
@@ -757,7 +810,7 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         }
         // A start that was dropped, a failed stop or a guest crash leaves
         // an entry whose process may have exited since.
-        reap(&mut table, &self.in_use);
+        reap(&mut table, &self.in_use, &self.config.run);
         let now = Instant::now();
         let running: Vec<Running> = table
             .iter()
@@ -768,16 +821,26 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
             Admission::EvictFirst(evict) => evict,
             Admission::HostFull(_) => return None,
         };
+        // CONTRACT-QUESTION (decisions CH21-3, CH55): no row says whether
+        // admission evicts an idle VM to free a slot. The narrowest
+        // reading evicts for RAM only, and no free slot gives `host_full`.
+        // An evicted VM holds its slot until its CH ends, so it frees no
+        // slot for this start. 64 slots cover 40 VMs of 2 GiB under the
+        // 80 GiB cap (item 45 C3), but a smaller VM shape fills the slots
+        // first.
+        let slot = free_slot(&table)?;
         let evictions = evict
             .into_iter()
             .filter_map(|session| take_out(&self.table, &mut table, session, Slot::Evicting))
             .collect();
-        table.insert(id.clone(), Slot::Starting(guest_ram));
+        table.insert(id.clone(), Slot::Starting(guest_ram, slot));
         let pending = Pending {
             table: Arc::clone(&self.table),
             in_use: Arc::clone(&self.in_use),
+            root: self.config.run.clone(),
             id: id.clone(),
             guest_ram,
+            slot,
             run: self.config.run.vm(id),
             process: None,
             key: None,
@@ -796,6 +859,7 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
             relays: self.relays.clone(),
             control: Arc::clone(&self.control),
             state: self.config.state.clone(),
+            run: self.config.run.clone(),
         }
     }
 
@@ -1066,6 +1130,7 @@ struct Stopper<P> {
     table: Table<P>,
     in_use: Arc<Mutex<InUse>>,
     control: Arc<Mutex<ControlState>>,
+    run: RunRoot,
 }
 
 impl<P: VmProcess> Stopper<P> {
@@ -1079,15 +1144,15 @@ impl<P: VmProcess> Stopper<P> {
             // Decision CH54 rule 6: the reader of a refused line stops only
             // its own VM. A start takes the slot only after that VM left
             // the table, and a VM of another link is not its own.
-            Some(Slot::Starting(_)) if link.is_some() => Held::Free,
+            Some(Slot::Starting(..)) if link.is_some() => Held::Free,
             Some(Slot::Running(vm)) if link.is_some_and(|link| vm.link_id != Some(link)) => {
                 Held::Free
             }
-            Some(Slot::Starting(_) | Slot::Evicting(_)) => Held::Busy,
-            Some(Slot::Stopping(_, outcome)) => Held::Joins(outcome.clone()),
+            Some(Slot::Starting(..) | Slot::Evicting(..)) => Held::Busy,
+            Some(Slot::Stopping(.., outcome)) => Held::Joins(outcome.clone()),
             Some(Slot::Running(_)) => {
                 let (sender, outcome) = watch::channel(None);
-                let mark = |ram| Slot::Stopping(ram, outcome);
+                let mark = |ram, slot| Slot::Stopping(ram, slot, outcome);
                 match take_out(&self.table, &mut table, id.clone(), mark) {
                     Some(eviction) => Held::Takes(Box::new(eviction), sender),
                     None => Held::Free,
@@ -1107,7 +1172,7 @@ impl<P: VmProcess> Stopper<P> {
         match stop(vm.link.as_ref(), &mut vm.process, &vm.run).await {
             Ok(_) => {
                 forget_link(&self.control, &eviction.id);
-                eviction.done(&self.in_use);
+                eviction.done(&self.in_use, &self.run);
                 Ok(())
             }
             Err(error) => {
@@ -1160,6 +1225,7 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
             table: Arc::clone(&self.table),
             in_use: Arc::clone(&self.in_use),
             control: Arc::clone(&self.control),
+            run: self.config.run.clone(),
         }
     }
 }
@@ -1315,16 +1381,24 @@ struct Booted<P> {
     restore: Option<Expected>,
 }
 
-/// Step 3: the files of the boot, the restore or cold boot choice, then
-/// the launch.
+/// Step 3: the link of `vm/<id>` to `slot`, the files of the boot, the
+/// restore or cold boot choice, then the launch in `slot`.
 fn launch<L: Launcher, A: ChApi>(
     config: &StartConfig,
     launcher: &L,
     locks: (&Mutex<()>, &Mutex<InUse>),
-    id: &SessionId,
+    (id, slot): (&SessionId, PoolSlot),
     shape: FamilyShape,
 ) -> Result<Booted<L::Process>, String> {
-    let run = config.run.vm(id);
+    // Caller duty (a) of PR D16: the link comes before `remove_stale`, so
+    // an old link to a slot that another VM took removes nothing of that
+    // VM. The slot is free (caller duty (c)), so the link may empty it
+    // (decision CH56 rule 1). A restore links the `vm/<id>` of its
+    // snapshot to the new slot, and each path in the snapshot holds.
+    let run = config
+        .run
+        .link_vm(id, slot)
+        .map_err(|error| format!("{error}: {}", error.source))?;
     remove_stale(&run).map_err(|error| format!("{error}: {}", error.source))?;
     let checked = |digest| {
         config
@@ -1340,7 +1414,7 @@ fn launch<L: Launcher, A: ChApi>(
         .map_err(|error| error.to_string())?;
     let session = config.state.session(id);
     // The ruleset opens each path, and a missing one fails the launch.
-    make_dir(run.path())?;
+    // `link_vm` made the slot dir of `vm/<id>`.
     make_dir(&session.snapshots())?;
     let serial = run.serial_log();
     OpenOptions::new()
@@ -1384,7 +1458,7 @@ fn launch<L: Launcher, A: ChApi>(
         .map_err(|error| error.to_string())?;
     let payload = command.payload(config.ch.clone());
     let scope = limits.scope(id.clone());
-    let plan = Launch::new(config.systemd_run.clone(), scope, payload, files);
+    let plan = Launch::new(config.systemd_run.clone(), scope, payload, files).in_slot(slot);
     let process = launcher.launch(plan).map_err(|error| error.to_string())?;
     Ok(Booted {
         process,
@@ -1439,9 +1513,10 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         // output kills the VM and keeps it in the table, so admission
         // counts its RAM and no CH runs outside the table (decisions CH8-6,
         // CH50 rule 4).
+        let slot = pending.slot;
         let launched = blocking(move || {
             let locks = (&*claims, &*in_use);
-            let booted = launch::<L, A>(&config, &*launcher, locks, &session, shape)?;
+            let booted = launch::<L, A>(&config, &*launcher, locks, (&session, slot), shape)?;
             let cmdline = launcher.cmdline(&booted.process);
             pending.process = Some(booted.process);
             pending.key = Some(booted.key);
