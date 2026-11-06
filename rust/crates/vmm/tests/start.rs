@@ -36,7 +36,7 @@ use creche_vmm_store::ch_remote::{ChRemoteError, VmInfo};
 use creche_vmm_store::images::{ImageDigest, ImageStore};
 use creche_vmm_store::key::{CheckedCh, SnapshotKey, check_cloud_hypervisor, write_key};
 use creche_vmm_store::layout::{RunRoot, SessionDir, SnapshotGeneration, StateRoot, VmRunDir};
-use creche_vmm_store::retention::Reason;
+use creche_vmm_store::retention::{BUDGET, Reason};
 use creche_vmm_store::rows::Rows;
 use creche_vmm_store::session_disk::SessionDisks;
 use creche_vmm_store::sleep_gate::IDLE_TIMEOUT;
@@ -397,11 +397,11 @@ impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
             families: FamilyRoot::new(dir.join("families")).unwrap(),
             images,
             disks: SessionDisks::new(&state, PathBuf::from("/usr/bin/true")),
-            digests: Digests {
+            digests: Some(Digests {
                 kernel: empty,
                 base: empty,
                 python: empty,
-            },
+            }),
             initramfs: None,
             ch: Program::new(PathBuf::from(CH)).unwrap(),
             systemd_run: Program::new(PathBuf::from("/usr/bin/systemd-run")).unwrap(),
@@ -409,6 +409,7 @@ impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
                 ram_cap: 80 * GIB,
                 free_floor: 0,
             },
+            budget: BUDGET,
             ch_version: ch,
         };
         edit(&mut config);
@@ -665,9 +666,16 @@ fn a_failed_launch_faults_and_frees_its_ram() {
 }
 
 /// A store copy with no identity fails the start, and so does a failed
-/// `mke2fs` (decision CH44 rule 2, PR D7). Neither launches.
+/// `mke2fs` (decision CH44 rule 2, PR D7). So does a config with no
+/// digests, the vmm of plan PR L20 until design item 49 Q49-1 has an
+/// answer. None launches.
 #[test]
 fn a_bad_image_or_disk_faults_before_the_launch() {
+    let test = Test::new("digests", |config| config.digests = None);
+    assert_eq!(test.start(0), Err(StartFault::SandboxStartFailed));
+    assert_eq!(test.fault_codes(), ["sandbox_start_failed"]);
+    assert_eq!(test.launches(), 0);
+
     let test = Test::new("image", |config| {
         let empty: ImageDigest = EMPTY.parse().unwrap();
         fs::remove_file(config.images.identity_path(&empty)).unwrap();

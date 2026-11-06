@@ -59,7 +59,7 @@ use creche_vmm_store::claim::{ClaimError, ClaimedSnapshot, claim};
 use creche_vmm_store::images::{ImageDigest, ImageStore};
 use creche_vmm_store::key::{CheckedCh, KeyCheck, SnapshotKey, check_newest};
 use creche_vmm_store::layout::{RunRoot, SessionDir, StateRoot, VmRunDir};
-use creche_vmm_store::retention::{BUDGET, InUse, Swept, sweep};
+use creche_vmm_store::retention::{InUse, Swept, sweep};
 use creche_vmm_store::rows::Rows;
 use creche_vmm_store::session_disk::SessionDisks;
 use creche_vmm_store::sleep_gate::Activity;
@@ -92,9 +92,11 @@ const SERIAL_MODE: u32 = 0o600;
 /// change costs one constant.
 const SLOT_POLL: Duration = Duration::from_millis(10);
 
+/// The fault text of a start with no digests (design item 49 Q49-1).
+const NO_DIGESTS: &str = "the vmm has no image digests yet (design item 49 Q49-1)";
+
 /// The store digests of the guest kernel and of the root disk of each
-/// flavor (decisions CH7-3, CH8-8). Plan PR L20 reads them from the vmm
-/// config.
+/// flavor (decisions CH7-3, CH8-8).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Digests {
     /// The guest kernel. Every flavor boots it.
@@ -128,8 +130,13 @@ pub struct StartConfig {
     pub images: ImageStore,
     /// The session disks.
     pub disks: SessionDisks,
-    /// The kernel and the root disks.
-    pub digests: Digests,
+    /// The kernel and the root disks. `None` fails each start closed.
+    // CONTRACT-QUESTION (design item 49 Q49-1): no row says where the vmm
+    // learns the expected digests. The vmm of plan PR L20 passes `None`,
+    // so each start gets `sandbox_start_failed` with a fault line, and no
+    // VM boots. Each other route works. An answer to Q49-1 costs one
+    // config read in `compose.rs` and no change here.
+    pub digests: Option<Digests>,
     /// The initramfs, optional until phase 3 adds guest init (PR C7).
     pub initramfs: Option<HostPath>,
     /// The Cloud Hypervisor program.
@@ -138,6 +145,10 @@ pub struct StartConfig {
     pub systemd_run: Program,
     /// The RAM cap and the free-space floor of admission.
     pub limits: Limits,
+    /// The snapshot budget of the sweep, in bytes (decision CH8-7, gap
+    /// G14). The vmm config reads it, with `retention::BUDGET` as the
+    /// default.
+    pub budget: u64,
     /// The version check of `ch`, for the snapshot key (decision CH7-6,
     /// gap G10). The vmm runs it at its start.
     pub ch_version: CheckedCh,
@@ -840,9 +851,10 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         }
     }
 
-    /// Runs `retention::sweep` with `BUDGET` over the state root (PR D13,
-    /// decisions CH2, CH8-7). It holds the lock of the claims, so no key
-    /// check or claim runs, and it names each generation in a copy of the
+    /// Runs `retention::sweep` with `StartConfig::budget` over the state
+    /// root (PR D13, decisions CH2, CH8-7). It holds the lock of the
+    /// claims, so no key check or claim runs, and it names each generation
+    /// in a copy of the
     /// `InUse` set. A VM that ends meanwhile only shrinks the set, so the
     /// copy names each generation in use, and the sweep never removes the
     /// files of a restored VM (decision CH50 rule 8). It waits for each
@@ -854,16 +866,17 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
     /// A failed read of `sessions/`, or a sweep that panicked.
     pub async fn sweep(&self) -> io::Result<Swept> {
         let takes = Arc::clone(&self.takes).write_owned().await;
-        let (claims, in_use, state) = (
+        let (claims, in_use, state, budget) = (
             Arc::clone(&self.claims),
             Arc::clone(&self.in_use),
             self.config.state.clone(),
+            self.config.budget,
         );
         spawn_blocking(move || {
             let _takes = takes;
             let _claims = lock_claims(&claims);
             let in_use = lock_in_use(&in_use).clone();
-            sweep(&state, SystemTime::now(), BUDGET, &in_use)
+            sweep(&state, SystemTime::now(), budget, &in_use)
         })
         .await
         .unwrap_or_else(|_| Err(io::Error::other("the sweep panicked")))
@@ -1332,8 +1345,9 @@ fn launch<L: Launcher, A: ChApi>(
             .check(digest)
             .map_err(|error| error.to_string())
     };
-    let kernel = checked(config.digests.kernel)?;
-    let root = checked(config.digests.root(shape.flavor))?;
+    let digests = config.digests.ok_or_else(|| NO_DIGESTS.to_owned())?;
+    let kernel = checked(digests.kernel)?;
+    let root = checked(digests.root(shape.flavor))?;
     let disk = config
         .disks
         .for_boot(id)
