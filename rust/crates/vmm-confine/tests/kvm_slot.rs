@@ -944,6 +944,17 @@ fn unit_property(name: &str, property: &str) -> Vec<String> {
     text.split_whitespace().map(str::to_owned).collect()
 }
 
+/// Polls until the user unit `name` is `state` and has no job left. A
+/// restart job of the vmm unit sends a try-restart to each bound scope,
+/// and the job of the scope may still run once the restart of the vmm
+/// unit is done.
+#[cfg(test)]
+fn until_settled(name: &str, state: &str) {
+    until(&format!("{name} {state} with no job"), || {
+        state_of(name) == state && unit_property(name, "Job").is_empty()
+    });
+}
+
 /// The cgroup dir of the scope of `pid`.
 #[cfg(test)]
 fn scope_dir(pid: u32) -> PathBuf {
@@ -1039,32 +1050,34 @@ fn kvm_ch_dies_with_a_killed_vmm() {
 /// The restart job sends a try-restart to the scope, which has
 /// `BindsTo=` the unit. As in the stop test, the gate holds the stop part
 /// of the restart. The control: CH and its scope still run 1 s into it,
-/// because the scope is ordered `Before=` the unit. The restarted `hold`
-/// reads EOF and exits 78, so `systemd-run` exits once the restart job
-/// and that exit are done.
+/// because the scope is ordered `Before=` the unit. A blocking
+/// `systemctl restart` runs on a second thread. The restarted `hold`
+/// reads EOF and exits 78, so the unit then stays down.
 #[test]
 #[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
 fn kvm_ch_stops_after_its_vmm_unit_restarts() {
     let mut rig = Rig::new("unit-restart");
     let seat = rig.seat("0123abcd-0000-4000-8000-0000000c15b0", 20);
     let _scope = ScopeGuard::new(&seat.id);
-    let (mut vmm, pid) = hold_booted(&rig, &seat, true);
+    let (vmm, pid) = hold_booted(&rig, &seat, true);
     let scope = format!("{}.scope", scope_unit(&seat.id));
     let dir = scope_dir(pid);
     assert_eq!(state_of(&scope), "active");
 
-    assert!(vmm.systemctl(&["restart", "--no-block"]), "no restart job");
-    until_state(rig.unit.name(), "deactivating");
-    sleep(Duration::from_secs(1));
-    assert!(running(pid), "CH stopped before the vmm unit");
-    assert_eq!(state_of(&scope), "active");
+    thread::scope(|threads| {
+        let restart = threads.spawn(|| vmm.systemctl(&["restart"]));
+        until_state(rig.unit.name(), "deactivating");
+        sleep(Duration::from_secs(1));
+        assert!(running(pid), "CH stopped before the vmm unit");
+        assert_eq!(state_of(&scope), "active");
 
-    fs::write(&vmm.gate, b"").unwrap();
+        fs::write(&vmm.gate, b"").unwrap();
+        assert!(restart.join().unwrap(), "the restart failed");
+    });
     until("CH death after the vmm unit restart", || !running(pid));
     until("scope removal", || !dir.exists());
-    vmm.until_gone();
-    assert_eq!(vmm.state(), "inactive");
-    assert_eq!(state_of(&scope), "inactive", "a scope came back");
+    until_settled(&scope, "inactive");
+    until_state(rig.unit.name(), "inactive");
 }
 
 /// After a restart of the vmm unit, the session of a stopped VM starts
@@ -1086,9 +1099,9 @@ fn kvm_a_vmm_unit_restart_frees_the_scope_of_each_vm() {
     assert_eq!(state_of(&scope), "active");
 
     assert!(vmm.unit.systemctl(&["restart"]), "the restart failed");
-    assert_eq!(vmm.unit.state(), "active");
     until("CH death after the vmm unit restart", || !running(pid));
-    until_state(&scope, "inactive");
+    until_settled(&scope, "inactive");
+    assert_eq!(vmm.unit.state(), "active");
     relaunch(&rig, &vmm, &seat);
 }
 
@@ -1116,7 +1129,7 @@ fn kvm_a_vmm_crash_frees_the_scope_of_each_vm() {
     until_state(&scope, "inactive");
     assert_eq!(vmm.unit.sub_state(), "auto-restart");
     until_state(rig.unit.name(), "active");
-    assert_eq!(state_of(&scope), "inactive", "a scope came back");
+    until_settled(&scope, "inactive");
     relaunch(&rig, &vmm, &seat);
 }
 

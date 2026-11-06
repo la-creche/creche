@@ -233,21 +233,6 @@ impl StandIn {
         let kill = ["kill", "--kill-whom=main", "--signal=SIGKILL"];
         assert!(self.systemctl(&kill), "no SIGKILL");
     }
-
-    /// Waits until `systemd-run` exits. With `--pipe` it exits once the
-    /// unit has ended and has no job left, so a restart job has run to
-    /// its end. Fails after `STATE_WAIT`.
-    pub fn until_gone(&mut self) {
-        let deadline = Instant::now() + STATE_WAIT;
-        while self.child.try_wait().unwrap().is_none() {
-            assert!(
-                Instant::now() < deadline,
-                "systemd-run of {} still runs after {STATE_WAIT:?}",
-                self.unit.name()
-            );
-            sleep(Duration::from_millis(20));
-        }
-    }
 }
 
 /// Whether `pid` has no_new_privs set. A pid that is gone has not.
