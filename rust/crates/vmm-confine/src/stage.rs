@@ -28,12 +28,13 @@
 //! exec is a secure exec (set-user-ID, set-group-ID, file capabilities)
 //! or a uid, a gid or a capability changes. This stage checks that the
 //! signal is still SIGKILL before step 1, so a clear by the exec of
-//! `systemd-run` fails closed. But AppArmor clears the death signal at an
-//! exec that changes the label (`apparmor_bprm_committing_creds` in
-//! `security/apparmor/lsm.c`), so the exec of CH under the slot label
-//! drops it. `tests/kvm_slot.rs` shows that CH outlives the spawner
-//! thread and a killed vmm. The crate AGENTS.md lists it under Known
-//! gaps.
+//! `systemd-run` fails closed, and a vmm that dies before CH runs ends
+//! the stage. AppArmor clears the death signal at an exec that changes
+//! the label (`apparmor_bprm_committing_creds` in
+//! `security/apparmor/lsm.c`), so CH under its slot label has none. The
+//! scope of CH is bound to the vmm unit, so systemd stops CH when the vmm
+//! unit stops or dies (decision CH60 rule 1). `tests/kvm_slot.rs` proves
+//! both stops through a vmm stand-in that runs as a user service.
 
 use std::convert::Infallible;
 use std::ffi::OsString;
@@ -133,8 +134,8 @@ pub enum StageError {
     NotPlan(serde_json::Error),
     /// The death signal did not read.
     DeathSignal(io::Error),
-    /// The death signal is no longer SIGKILL, so CH would outlive the vmm
-    /// (fact 80).
+    /// The death signal is no longer SIGKILL, so the stage would outlive
+    /// a vmm that dies before CH runs (fact 80).
     DeathSignalLost,
     /// The kernel refused the slot label (decision CH55). The value is the
     /// label.

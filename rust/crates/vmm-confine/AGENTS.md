@@ -35,8 +35,26 @@ table of the three vmm crates.
 - The pid stays the same through the four execs: the launch step,
   `systemd-run`, the stage and CH (fact 80). The kernel keeps the death
   signal through an exec that is not a secure exec and changes no uid,
-  gid or capability, but AppArmor clears it at the exec into the slot
-  label (Known gaps).
+  gid or capability. AppArmor clears it at the exec into the slot label
+  (`apparmor_bprm_committing_creds` in `security/apparmor/lsm.c`), so CH
+  has none (decision CH60 rule 1).
+- Two links end each launch with the vmm (decision CH60 rule 1). The
+  death signal ends the launch step, `systemd-run` and the stage when the
+  vmm dies before CH runs. The scope binds to the vmm unit: `Launch::new`
+  takes a `vmm_unit::VmmUnit`, and `scope::Scope::systemd_run_args` adds
+  `-p BindsTo=<unit>` and `-p Before=<unit>`. systemd then stops the
+  scope and its CH when the vmm unit stops or dies. `Before=` makes that
+  stop wait until the vmm unit has stopped, so the shutdown of
+  `rust/crates/vmm/src/shutdown.rs` runs before any VM stops (decision
+  CH19 (4)). A crash leaves the vmm unit down at once, so every VM stops
+  with it, and the leftover sweep of the next start still runs.
+- `vmm_unit::VmmUnit::of_self` reads the unit of the vmm from
+  `/proc/self/cgroup`, with no config key: the first `.service` part of
+  the `0::` path after `user@<uid>.service`. A vmm in a scope, in a
+  system service or in no user manager gets a `UnitError`, and lifecycle
+  then refuses every launch with it and starts nothing. A unit name has
+  only the characters of a systemd unit name, so it is one word in
+  `BindsTo=`.
 - The crate reads no env key. Lifecycle (plan PR L20) passes each host
   path from the vmm config (owner env rule, decision CH36 G5): the
   `systemd-run` program of `launch::Launch`, from the existing key
@@ -78,8 +96,8 @@ table of the three vmm crates.
 - Every launch step forks from the one spawner thread (decision CH19 (4),
   fact 76). The vmm keeps its `Spawner` for its whole life. A drop ends
   the thread. The death signal then ends only a launch that has not yet
-  execed CH: the launch step, `systemd-run` or the launch stage. CH under
-  its slot label has no death signal (the first Known gap).
+  execed CH: the launch step, `systemd-run` or the launch stage. A drop
+  does not end CH. CH ends with the vmm unit (decision CH60 rule 1).
 - The launch step reads its plan only from a pipe that already holds it.
   The spawner writes the whole plan, at most 64 KiB, before the spawn,
   and never blocks on a full pipe.
@@ -144,7 +162,10 @@ table of the three vmm crates.
   (mechanism X, decisions CH51, CH55). The crate never defines its own
   `Slot`. No profile has an attachment path. Each names the one installed
   CH, the run dir `/run/user/[0-9]*/vmm/slot/<k>/` and its own signal
-  label only. The state root rules name the default
+  label only. CH reads a kernel, an initramfs or a root disk only as
+  `store/*`. The vmm writes the guest init initramfs into the state store
+  as a content-named `store/<sha256>`, like the root disks, so that rule
+  covers it (decision CH60 rule 2). The state root rules name the default
   `@{HOME}/.local/state/creche-vmm/` through `include <tunables/global>`
   (decision CH50 rule 11). The test `tests/slot_profile.rs` holds the
   committed file equal to the generator. After a change, run
@@ -168,7 +189,9 @@ table of the three vmm crates.
   (decision CH36 G20). It fails unless each label of the file is in
   enforce mode. `tests/kvm_slot.rs` starts each CH through the real chain
   of the vmm: the spawner, the launch step, `systemd-run --user --scope`,
-  the launch stage and CH. Each VM takes a slot through
+  the launch stage and CH. Each test runs its vmm stand-in as a transient
+  user service (`tests/stand_in`, decision CH60 rule 1), and each scope
+  binds to that unit. Each VM takes a slot through
   `RunRoot::link_vm`, under the real run root and the default state
   root. Each test has a control, and together they prove decision CH58
   rule 1:
@@ -187,55 +210,18 @@ table of the three vmm crates.
      `api.sock` or `vsock.sock` of a live CH in another slot, and not to
      `vmm.sock` or the user bus. One slot cannot signal the CH of another
      slot (decision CH51).
-  4. CH dies with the spawner thread and with a killed vmm (fact 80).
-     These two tests fail today: see the first Known gap.
-     `Launched::terminate` sends SIGTERM.
+  4. The scope of CH has `BindsTo=` and `Before=` the vmm unit. The
+     example in its role `hold` runs as the vmm unit and launches CH.
+     A stop of that unit stops CH and its scope, after the stand-in has
+     exited: CH still runs 1 s into the stop. A SIGKILL of the stand-in
+     stops CH and its scope (decision CH60 rule 1). Each test has the
+     control that CH runs while the stand-in runs. A drop of the spawner
+     does not end CH, so no test claims it. `Launched::terminate` sends
+     SIGTERM.
   5. The output of each CH reaches the sink tagged `ch <session id>`.
   `tests/kvm_boot.rs` runs the copy in `CRECHE_KVM_DIR` with no chain.
 
 ## Known gaps
-
-- CONTRACT-QUESTION (decisions CH19 (4), CH55, CH56 rule 2, facts 76
-  and 80): AppArmor sets the death signal to 0 at each exec that changes
-  the label (`apparmor_bprm_committing_creds` in
-  `security/apparmor/lsm.c`). The exec of CH into `creche-ch-slot-<k>`
-  is one, so CH under its label has no death signal. The death signal
-  ends only a launch that has not yet execed CH: the launch step,
-  `systemd-run` or the launch stage. In the job `kvm`, CH runs on after a
-  drop of the spawner and after a SIGKILL of the vmm
-  (`kvm_ch_dies_with_the_spawner_thread`, `kvm_ch_dies_with_a_killed_vmm`
-  fail). No row picks the replacement. The options:
-  1. A scope bound to the vmm unit (`BindsTo=creche-vmm.service`). It
-     drops the kill path of the spawner thread. The job `kvm` then needs
-     a stand-in `creche-vmm.service`, and
-     `kvm_ch_dies_with_the_spawner_thread` can then claim only the end
-     of the scope with that unit.
-  2. An immediate profile change. The stage writes
-     `changeprofile creche-ch-slot-<k>` to `attr/current` in place of
-     `exec creche-ch-slot-<k>` to `attr/exec`, before the Landlock step.
-     The slot profile changes the CH rule
-     `/opt/components/vmm/bin/cloud-hypervisor mr` to `ix`. The label
-     then stays the same at the exec of CH. In v6.8
-     `apparmor_bprm_committing_creds` returns early when the label proxy
-     stays the same, before it clears the death signal, and no other
-     place in `domain.c` or `lsm.c` clears it. `aa_change_profile` lets
-     an unconfined task change its profile under no_new_privs
-     (`domain.c`). This keeps the kill path of the spawner thread and
-     needs no `creche-vmm.service` in the job `kvm`. It amends CH55 and
-     depends on the same knob,
-     `kernel.apparmor_restrict_unprivileged_unconfined = 0`. Untested:
-     nobody has run it end to end, and the slot profile may need rules
-     for the steps of the stage after the change.
-  3. A resident stage that kills CH when the vmm dies.
-  4. A cgroup that the vmm unit delegates.
-  Until David decides, the two tests stay red and CH56 rule 2 does not
-  hold. The chosen fix also updates each text that relies on the death
-  signal of CH: the module doc, the `Drop` doc and the `serve` comment
-  of `src/spawner.rs`, the doc of `tests/launch.rs`, the role `hold` of
-  `examples/launch_chain.rs`, the two tests of `tests/kvm_slot.rs`,
-  `SHUTDOWN_WAIT` and the deadline comment of
-  `rust/crates/vmm/src/shutdown.rs`, and the `SHUTDOWN_WAIT` paragraph
-  of `rust/crates/vmm/AGENTS.md`.
 
 - Closed by plan PRs L16b and L16c: lifecycle passes the slot of each
   start with `Launch::in_slot`, so no launch of the vmm fails with
@@ -271,10 +257,6 @@ table of the three vmm crates.
   the value `vmm` in the `source` enum of §3.3, and the reader. caregiver
   reads only the `attendance` and `pep` files today, so it ignores the
   vmm file.
-- The slot profiles read only `store/*` for a kernel or an initramfs.
-  Decision CH7-6 has the vmm write the initramfs of guest init at VM
-  start, in a place that no row names yet. A file outside the store needs
-  a rule in `slot_profile.rs` and David's sudo reload.
 - Gap G23 sets `serial.log` to mode 0600. CH makes the file with the
   umask of the launch step, and the crate sets no umask. A `UMask=` in
   the unit of plan PR C13, or a file that lifecycle makes first in plan

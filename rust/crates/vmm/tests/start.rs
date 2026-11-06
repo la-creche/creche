@@ -33,6 +33,7 @@ use creche_vmm_confine::family::FamilyRoot;
 use creche_vmm_confine::faults::{FaultBook, FaultDir};
 use creche_vmm_confine::launch::{Launch, Program};
 use creche_vmm_confine::spawner::SpawnError;
+use creche_vmm_confine::vmm_unit::{UnitError, VmmUnit};
 use creche_vmm_store::ch_remote::{ChRemoteError, VmInfo};
 use creche_vmm_store::images::{ImageDigest, ImageStore};
 use creche_vmm_store::key::{CheckedCh, SnapshotKey, check_cloud_hypervisor, write_key};
@@ -410,6 +411,7 @@ impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
             initramfs: None,
             ch: Program::new(PathBuf::from(CH)).unwrap(),
             systemd_run: Program::new(PathBuf::from("/usr/bin/systemd-run")).unwrap(),
+            vmm_unit: Ok(VmmUnit::new("creche-vmm.service".to_owned()).unwrap()),
             limits: Limits {
                 ram_cap: 80 * GIB,
                 free_floor: 0,
@@ -627,6 +629,28 @@ fn a_cold_boot_launches_the_checked_files_and_clears_the_fault() {
     let serial = test.dir.join(format!("run/vm/{A}/serial.log"));
     let mode = fs::metadata(serial).unwrap().permissions().mode();
     assert_eq!(mode & 0o777, 0o600);
+}
+
+/// A vmm in no service unit refuses every launch and starts nothing
+/// (decision CH60 rule 1). The start faults, makes no `vm/<id>` link, and
+/// the fake launcher sees no launch. Each launch of a vmm with a unit
+/// binds its scope to that unit.
+#[test]
+fn a_vmm_in_no_service_unit_launches_nothing() {
+    let path = "/user.slice/user-1000.slice/session-3.scope".to_owned();
+    let test = Test::new("no-unit", |config| {
+        config.vmm_unit = Err(UnitError::NoUserManager(path));
+    });
+    assert_eq!(test.start(0), Err(StartFault::SandboxStartFailed));
+    assert_eq!(test.fault_codes(), ["sandbox_start_failed"]);
+    assert_eq!(test.launches(), 0);
+    let link = test.dir.join(format!("run/vm/{A}"));
+    assert!(fs::symlink_metadata(link).is_err());
+
+    let test = Test::new("unit", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    let launches = test.fake.launches.lock().unwrap();
+    assert_eq!(launches[0].unit().name(), "creche-vmm.service");
 }
 
 /// Each VM boots the root disk of the flavor of its family shape

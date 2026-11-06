@@ -9,14 +9,20 @@
 //!
 //! 1. `Spawner::launch` forks the launch step `launch::run`.
 //! 2. The launch step sets the death signal and the core limit 0, then
-//!    execs `/usr/bin/systemd-run --user --scope` with the scope limits.
+//!    execs `/usr/bin/systemd-run --user --scope` with the scope limits
+//!    and `BindsTo=` and `Before=` the vmm unit (decision CH60 rule 1).
 //! 3. `systemd-run` execs the launch stage `stage::run`, which writes the
 //!    exec attribute of the slot label, sets no_new_privs and applies the
 //!    Landlock ruleset of the VM.
 //! 4. The stage execs CH.
 //!
 //! The example `launch_chain` is the vmm binary of steps 1 and 3, as in
-//! `tests/launch.rs`. `Launch::in_slot` gives the slot, and
+//! `tests/launch.rs`. Each test has its own vmm unit, a transient user
+//! service of `tests/stand_in` (decision CH60 rule 1). Most tests run the
+//! spawner in the test and the service `/bin/sleep infinity` as the unit
+//! that the scopes bind to. The two kill tests run the example in its
+//! role `hold` as the service, so the spawner runs in the unit, as in the
+//! vmm. `Launch::in_slot` gives the slot, and
 //! `RunRoot::link_vm` makes `vm/<id>` a symlink to `slot/<k>` (PR D16).
 //! The run root is the real `/run/user/<uid>/vmm` (decision CH20). The
 //! state root is the default `~/.local/state/creche-vmm` (decision CH50
@@ -41,9 +47,10 @@
 
 mod kvm;
 mod scope_guard;
+mod stand_in;
 
 use std::fs::{self, OpenOptions};
-use std::io::{BufRead, BufReader, ErrorKind, Write};
+use std::io::{ErrorKind, Write};
 use std::net::{Ipv4Addr, TcpListener, UdpSocket};
 use std::num::{NonZeroU32, NonZeroU64};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -60,15 +67,18 @@ use creche_vmm_confine::output::Sink;
 use creche_vmm_confine::scope::Scope;
 use creche_vmm_confine::slot_profile::{CH_BINARY, label};
 use creche_vmm_confine::spawner::{Launched, Spawner};
+use creche_vmm_confine::vmm_unit::VmmUnit;
 use creche_vmm_store::layout::{RunRoot, SessionDir, Slot, StateRoot, VmRunDir, scope_unit};
 use creche_wire::{HostPort, SessionId};
 
 use kvm::{BOOT, Vm, booted, files};
 use scope_guard::ScopeGuard;
+use stand_in::{StandIn, state_of, until_state};
 
 /// The host programs of the ubuntu-24.04 runner. The vmm config passes
 /// each one (plan PR L20).
 const SYSTEMD_RUN: &str = "/usr/bin/systemd-run";
+const SYSTEMCTL: &str = "/usr/bin/systemctl";
 
 /// The busybox guest runs its `/init` from the initramfs.
 const CMDLINE: &str = "console=ttyS0 rdinit=/init";
@@ -205,20 +215,28 @@ impl Drop for Ch {
     }
 }
 
-/// The vmm side of the chain: a spawner on the example, and its sink.
+/// The vmm side of the chain: a spawner on the example, its sink, and
+/// the vmm unit of the rig that each scope binds to. The spawner drops
+/// first. The drop of the unit then stops every scope bound to it.
 struct Vmm {
     spawner: Spawner,
     lines: Arc<Mutex<Vec<String>>>,
+    _unit: StandIn,
 }
 
 #[cfg(test)]
 impl Vmm {
-    fn new() -> Self {
+    fn new(rig: &Rig) -> Self {
+        let unit = StandIn::start(&rig.unit, false, &["/bin/sleep", "infinity"]);
         let lines = Arc::new(Mutex::new(Vec::new()));
         let kept = Arc::clone(&lines);
         let sink: Sink = Arc::new(move |line| kept.lock().unwrap().push(line.to_owned()));
         let spawner = Spawner::with_sink(example(), sink).unwrap();
-        Self { spawner, lines }
+        Self {
+            spawner,
+            lines,
+            _unit: unit,
+        }
     }
 
     fn launch(&self, launch: Launch) -> Ch {
@@ -267,8 +285,10 @@ struct BootFiles {
     serial: PathBuf,
 }
 
-/// The files of one test under the two roots. A drop removes them.
+/// The files of one test under the two roots, and the vmm unit of the
+/// test. A drop removes the files.
 struct Rig {
+    unit: VmmUnit,
     run: RunRoot,
     state: StateRoot,
     kernel: PathBuf,
@@ -310,6 +330,7 @@ impl Rig {
         zeros(&root);
         let made = vec![kernel.clone(), initramfs.clone(), root.clone()];
         Self {
+            unit: stand_in::unit(&format!("slot-{name}")),
             run,
             state,
             kernel,
@@ -381,7 +402,8 @@ impl Rig {
         );
         let ch = Program::new(PathBuf::from(CH_BINARY)).unwrap();
         let systemd_run = Program::new(PathBuf::from(SYSTEMD_RUN)).unwrap();
-        Launch::new(systemd_run, scope, Payload::new(ch, args), files).in_slot(seat.slot)
+        let payload = Payload::new(ch, args);
+        Launch::new(systemd_run, scope, payload, files, self.unit.clone()).in_slot(seat.slot)
     }
 
     /// The kernel and the guest of a CH with no disk and no socket.
@@ -651,7 +673,7 @@ fn kvm_ch_boots_under_its_slot_label() {
     let mut rig = Rig::new("boot");
     // The last slot has the longest name (spike T6, the far attach).
     let seat = rig.seat("0123abcd-0000-4000-8000-0000000c1500", Slot::LAST.number());
-    let vmm = Vmm::new();
+    let vmm = Vmm::new(&rig);
     let ch = vmm.launch(rig.boot(&seat));
     wait_booted(&vmm, &ch, &seat);
 
@@ -666,8 +688,20 @@ fn kvm_ch_boots_under_its_slot_label() {
     assert_eq!(status_field(&pid, "NoNewPrivs"), "1");
     assert_eq!(core_limits(&pid), ("0".to_owned(), "0".to_owned()));
     let cgroup = fs::read_to_string(format!("/proc/{pid}/cgroup")).unwrap();
-    let scope = format!("/{}.scope", scope_unit(&seat.id));
-    assert!(cgroup.trim_end().ends_with(&scope), "{cgroup}");
+    let scope = format!("{}.scope", scope_unit(&seat.id));
+    assert!(
+        cgroup.trim_end().ends_with(&format!("/{scope}")),
+        "{cgroup}"
+    );
+    // The scope binds to the vmm unit and is ordered before it (decision
+    // CH60 rule 1).
+    for property in ["BindsTo", "Before"] {
+        let units = unit_property(&scope, property);
+        assert!(
+            units.contains(&rig.unit.name().to_owned()),
+            "{property}: {units:?}"
+        );
+    }
     let slot_dir = rig.run.slot(seat.slot);
     for socket in ["api.sock", "vsock.sock"] {
         assert!(slot_dir.join(socket).exists(), "no {socket} in slot dir");
@@ -721,7 +755,7 @@ fn kvm_the_ruleset_holds_ch_to_its_vm_files() {
     let outside = rig
         .session(&"0123abcd-0000-4000-8000-0000000c1511".parse().unwrap())
         .disk();
-    let vmm = Vmm::new();
+    let vmm = Vmm::new(&rig);
 
     // A write open of the root disk.
     let seat = rig.seat("0123abcd-0000-4000-8000-0000000c1512", 2);
@@ -761,7 +795,7 @@ fn kvm_the_ruleset_holds_ch_to_its_vm_files() {
 fn kvm_ch_under_the_chain_makes_no_tcp_connect() {
     let mut rig = Rig::new("tcp");
     let seat = rig.seat("0123abcd-0000-4000-8000-0000000c1520", 5);
-    let vmm = Vmm::new();
+    let vmm = Vmm::new(&rig);
     let ch = vmm.launch(rig.boot(&seat));
     wait_booted(&vmm, &ch, &seat);
 
@@ -871,7 +905,7 @@ fn kvm_ch_output_reaches_the_sink_with_its_id() {
     let mut rig = Rig::new("output");
     let one = rig.seat("0123abcd-0000-4000-8000-0000000c1530", 7);
     let two = rig.seat("0123abcd-0000-4000-8000-0000000c1531", 8);
-    let vmm = Vmm::new();
+    let vmm = Vmm::new(&rig);
     let uid = rustix::process::getuid().as_raw();
     let bus = PathBuf::from(format!("/run/user/{uid}/bus"));
     let path = two.run.host_listener(HostPort::Chaperone);
@@ -895,60 +929,38 @@ fn kvm_ch_output_reaches_the_sink_with_its_id() {
     );
 }
 
-/// A drop of the spawner ends its thread, and the kernel kills CH by its
-/// death signal (decision CH19 (4), facts 76 and 80). The control: CH
-/// still runs after its boot while the spawner lives. This test fails
-/// today: AppArmor clears the death signal at the exec into the slot
-/// label (the CONTRACT-QUESTION in the crate AGENTS.md).
-#[test]
-#[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
-fn kvm_ch_dies_with_the_spawner_thread() {
-    let mut rig = Rig::new("spawner");
-    let seat = rig.seat("0123abcd-0000-4000-8000-0000000c1540", 9);
-    let vmm = Vmm::new();
-    let mut ch = vmm.launch(rig.boot(&seat));
-    wait_booted(&vmm, &ch, &seat);
-    assert_eq!(label_of(ch.0.id()), Some(enforced(seat.slot)));
-    sleep(Duration::from_secs(1));
-    assert!(running(ch.0.id()), "CH exited while the spawner lived");
-
-    drop(vmm);
-    // A bounded wait: a CH that outlives the spawner fails the test and
-    // is killed by the drop of `ch`.
-    let pid = ch.0.id();
-    until("CH death after the spawner drop", || !running(pid));
-    let status = ch.0.wait().unwrap();
-    assert_eq!(status.signal(), Some(9), "{status}");
+/// The units in the dependency `property` of the user unit `name`.
+#[cfg(test)]
+fn unit_property(name: &str, property: &str) -> Vec<String> {
+    let output = Command::new(SYSTEMCTL)
+        .args(["--user", "show", "--value"])
+        .arg(format!("--property={property}"))
+        .arg("--")
+        .arg(name)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "systemctl show: {output:?}");
+    let text = String::from_utf8(output.stdout).unwrap();
+    text.split_whitespace().map(str::to_owned).collect()
 }
 
-/// A SIGKILL of the vmm kills CH by its death signal, and the scope goes
-/// with it (decision CH19 (4), fact 80). The example in its role `hold`
-/// is the vmm. The control: CH still runs after its boot while the vmm
-/// lives. This test fails today for the same reason as
-/// `kvm_ch_dies_with_the_spawner_thread`.
-#[test]
-#[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
-fn kvm_ch_dies_with_a_killed_vmm() {
-    let mut rig = Rig::new("vmm-kill");
-    let seat = rig.seat("0123abcd-0000-4000-8000-0000000c1550", 10);
-    // CH is not a child of the test, so a drop of `vmm` does not reach
-    // it. The guard kills the scope when an assert fails.
-    let _scope = ScopeGuard::new(&seat.id);
-    let mut vmm = Vm(Command::new(example())
-        .arg("hold")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap());
-    let plan = serde_json::to_vec(&rig.boot(&seat)).unwrap();
-    vmm.0.stdin.take().unwrap().write_all(&plan).unwrap();
-    // The chain writes to the output pipe of the spawner, so the one line
-    // on the stdout of the vmm is the pid.
-    let mut line = String::new();
-    BufReader::new(vmm.0.stdout.take().unwrap())
-        .read_line(&mut line)
-        .unwrap();
-    let pid: u32 = line.trim().parse().unwrap();
+/// The cgroup dir of the scope of `pid`.
+#[cfg(test)]
+fn scope_dir(pid: u32) -> PathBuf {
+    let cgroup = fs::read_to_string(format!("/proc/{pid}/cgroup")).unwrap();
+    let path = cgroup.trim_end().strip_prefix("0::").unwrap();
+    let dir = PathBuf::from(format!("/sys/fs/cgroup{path}"));
+    assert!(dir.exists(), "no scope dir {}", dir.display());
+    dir
+}
+
+/// Starts the example in its role `hold` as the vmm unit of `rig`, with
+/// the boot of `seat`. Waits for the boot marker, then checks the label
+/// and the control: CH still runs 1 s later while the stand-in runs.
+/// Returns the stand-in and the pid of CH.
+#[cfg(test)]
+fn hold_booted(rig: &Rig, seat: &Seat, gated: bool) -> (StandIn, u32) {
+    let (vmm, pid) = StandIn::hold(&example(), &rig.boot(seat), gated);
     until("boot marker", || {
         assert!(running(pid), "CH exited before the marker");
         booted(&seat.run.serial_log())
@@ -956,18 +968,65 @@ fn kvm_ch_dies_with_a_killed_vmm() {
     assert_eq!(label_of(pid), Some(enforced(seat.slot)));
     sleep(Duration::from_secs(1));
     assert!(running(pid), "CH exited while the vmm lived");
-    let cgroup = format!("/proc/{pid}/cgroup");
-    let scope = fs::read_to_string(&cgroup).unwrap();
-    let scope_dir = PathBuf::from(format!(
-        "/sys/fs/cgroup{}",
-        scope.trim_end().trim_start_matches("0::")
-    ));
-    assert!(scope_dir.exists(), "no scope dir {}", scope_dir.display());
+    assert_eq!(vmm.state(), "active");
+    (vmm, pid)
+}
 
-    vmm.0.kill().unwrap();
-    vmm.0.wait().unwrap();
+/// A stop of the vmm unit stops the VM scope and its CH, after the vmm
+/// has exited (decision CH60 rule 1). The stand-in is gated: its stop
+/// waits in `ExecStop=` until the test opens the gate, as a vmm shutdown
+/// runs before the vmm exits. The controls: CH runs while the stand-in
+/// runs, and CH and its scope still run 1 s into the stop of the unit,
+/// because the scope is ordered `Before=` the unit. A drop of the spawner
+/// no longer ends CH, because AppArmor clears the death signal at the
+/// exec into the slot label. So this test proves the stop of the unit in
+/// place of the drop of the spawner.
+#[test]
+#[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
+fn kvm_ch_stops_after_its_vmm_unit_stops() {
+    let mut rig = Rig::new("unit-stop");
+    let seat = rig.seat("0123abcd-0000-4000-8000-0000000c1540", 9);
+    // CH is not a child of the test. The guard kills the scope when an
+    // assert fails.
+    let _scope = ScopeGuard::new(&seat.id);
+    let (vmm, pid) = hold_booted(&rig, &seat, true);
+    let scope = format!("{}.scope", scope_unit(&seat.id));
+    let dir = scope_dir(pid);
+    assert_eq!(state_of(&scope), "active");
+
+    assert!(vmm.systemctl(&["stop", "--no-block"]), "no stop job");
+    until_state(rig.unit.name(), "deactivating");
+    sleep(Duration::from_secs(1));
+    assert!(running(pid), "CH stopped before the vmm unit");
+    assert_eq!(state_of(&scope), "active");
+
+    fs::write(&vmm.gate, b"").unwrap();
+    until("CH death after the vmm unit stop", || !running(pid));
+    until("scope removal", || !dir.exists());
+    until_state(&scope, "inactive");
+    until_state(rig.unit.name(), "inactive");
+}
+
+/// A SIGKILL of the vmm stops the VM scope and its CH (decision CH60 rule
+/// 1). The stand-in's main process gets the SIGKILL, as a crash ends the
+/// vmm. Its unit then fails, and systemd stops each scope bound to it.
+/// The control: CH runs while the stand-in runs.
+#[test]
+#[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
+fn kvm_ch_dies_with_a_killed_vmm() {
+    let mut rig = Rig::new("vmm-kill");
+    let seat = rig.seat("0123abcd-0000-4000-8000-0000000c1550", 10);
+    let _scope = ScopeGuard::new(&seat.id);
+    let (vmm, pid) = hold_booted(&rig, &seat, false);
+    let scope = format!("{}.scope", scope_unit(&seat.id));
+    let dir = scope_dir(pid);
+    assert_eq!(state_of(&scope), "active");
+
+    vmm.kill();
     until("CH death after the vmm kill", || !running(pid));
-    until("scope removal", || !scope_dir.exists());
+    until("scope removal", || !dir.exists());
+    until_state(&scope, "inactive");
+    until_state(rig.unit.name(), "inactive");
 }
 
 /// `Launched::terminate` sends SIGTERM, which the label lets the vmm send
@@ -980,7 +1039,7 @@ fn kvm_terminate_sends_sigterm_to_ch() {
     let mut rig = Rig::new("terminate");
     let term = rig.seat("0123abcd-0000-4000-8000-0000000c1560", 11);
     let kill = rig.seat("0123abcd-0000-4000-8000-0000000c1561", 12);
-    let vmm = Vmm::new();
+    let vmm = Vmm::new(&rig);
     let mut termed = vmm.launch(rig.boot(&term));
     let mut killed = vmm.launch(rig.boot(&kill));
     wait_booted(&vmm, &termed, &term);
@@ -1009,7 +1068,7 @@ fn kvm_ch_connects_only_to_listeners_of_its_slot() {
     let mut rig = Rig::new("listener");
     let own = rig.seat("0123abcd-0000-4000-8000-0000000c1570", 13);
     let other = rig.seat("0123abcd-0000-4000-8000-0000000c1571", 14);
-    let vmm = Vmm::new();
+    let vmm = Vmm::new(&rig);
 
     let path = other.run.host_listener(HostPort::Chaperone);
     let listener = listen(&path);
@@ -1034,7 +1093,7 @@ fn kvm_ch_cannot_reach_a_live_ch_in_another_slot() {
     let mut rig = Rig::new("live");
     let prober = rig.seat("0123abcd-0000-4000-8000-0000000c1580", 15);
     let live = rig.seat("0123abcd-0000-4000-8000-0000000c1581", 16);
-    let vmm = Vmm::new();
+    let vmm = Vmm::new(&rig);
     let ch = vmm.launch(rig.boot(&live));
     wait_booted(&vmm, &ch, &live);
 
@@ -1073,7 +1132,7 @@ fn kvm_ch_cannot_reach_a_live_ch_in_another_slot() {
 fn kvm_ch_cannot_connect_to_vmm_sock_or_the_user_bus() {
     let mut rig = Rig::new("host-sockets");
     let seat = rig.seat("0123abcd-0000-4000-8000-0000000c1590", 17);
-    let vmm = Vmm::new();
+    let vmm = Vmm::new(&rig);
 
     let path = rig.run.vmm_socket();
     let listener = listen(&path);
@@ -1101,7 +1160,7 @@ fn kvm_ch_cannot_connect_to_vmm_sock_or_the_user_bus() {
 fn kvm_a_slot_cannot_signal_the_ch_of_another_slot() {
     let mut rig = Rig::new("signal");
     let seat = rig.seat("0123abcd-0000-4000-8000-0000000c15a0", 19);
-    let vmm = Vmm::new();
+    let vmm = Vmm::new(&rig);
     let mut ch = vmm.launch(rig.boot(&seat));
     wait_booted(&vmm, &ch, &seat);
     let target = rustix::process::Pid::from_raw(i32::try_from(ch.0.id()).unwrap()).unwrap();

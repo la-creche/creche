@@ -1,8 +1,9 @@
 //! The user scope of one VM, killed on drop. The CH of the `hold`
-//! stand-in is not a child of the test, so the drop of the `Vm` of the
-//! stand-in does not reach it. The guard kills every process of the
-//! scope, then waits until systemd drops the unit. So a failed test
-//! leaves no CH and no scope.
+//! stand-in is not a child of the test. The drop of the stand-in stops
+//! its unit, and systemd stops the bound scope with it (decision CH60
+//! rule 1). The guard does not rely on that binding: it kills every
+//! process of the scope, then waits until systemd drops the unit. So a
+//! failed test leaves no CH and no scope.
 #![cfg(test)]
 
 use std::process::{Command, Stdio};

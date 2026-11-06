@@ -1,11 +1,13 @@
-//! The helpers of the process tests: the example binary and the VM files
-//! that a launch needs before its Landlock ruleset opens them.
+//! The helpers of the process tests: the example binary, the vmm unit of
+//! each launch and the VM files that a launch needs before its Landlock
+//! ruleset opens them.
 #![cfg(test)]
 
 use std::fs;
 use std::path::PathBuf;
 
 use creche_vmm_confine::landlock::{HostPath, Start, VmFiles};
+use creche_vmm_confine::vmm_unit::VmmUnit;
 use creche_vmm_store::layout::{RunRoot, StateRoot};
 
 /// The example binary. Cargo builds it next to the test's `deps` dir.
@@ -13,6 +15,13 @@ pub fn example() -> PathBuf {
     let exe = std::env::current_exe().unwrap();
     let debug = exe.parent().and_then(|deps| deps.parent()).unwrap();
     debug.join("examples").join("launch_chain")
+}
+
+/// The vmm unit of each launch (decision CH60 rule 1). The fake
+/// `systemd-run` of the example makes no scope, so no unit of this name
+/// needs to run.
+pub fn vmm_unit() -> VmmUnit {
+    VmmUnit::new("creche-vmm.service".to_owned()).unwrap()
 }
 
 /// The files of one VM under a new directory in `/tmp`, removed on drop.

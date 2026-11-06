@@ -12,8 +12,9 @@
 //!    snapshot is taken and it stops (plan PR L17, decision CH19 (6)).
 //!    Until the guest can sync (`ChApi::GUEST_SYNCS`), the VM takes no
 //!    snapshot and gets the graceful stop.
-//! 3. In `spawn_blocking`: the stale sockets go (PR D1, decision CH19
-//!    (4)), the kernel and the root disk pass the store check (PR D6,
+//! 3. In `spawn_blocking`: a vmm in no service unit refuses the launch
+//!    here (decision CH60 rule 1). Then the stale sockets go (PR D1,
+//!    decision CH19 (4)), the kernel and the root disk pass the store check (PR D6,
 //!    decision CH44 rule 2), the session disk exists (PR D7, decision
 //!    CH21-4), the run dir `vm/<id>/` links to the slot of the start (PR
 //!    D16), `snapshots/` exists, and `serial.log` is a new file with mode
@@ -64,6 +65,7 @@ use creche_vmm_confine::landlock::{HostPath, Start, VmFiles};
 use creche_vmm_confine::launch::{Launch, Program};
 use creche_vmm_confine::limits::VmLimits;
 use creche_vmm_confine::spawner::{Launched, SpawnError, Spawner};
+use creche_vmm_confine::vmm_unit::{UnitError, VmmUnit};
 use creche_vmm_store::ch_remote::ChRemoteError;
 use creche_vmm_store::claim::{ClaimError, ClaimedSnapshot, claim};
 use creche_vmm_store::images::{ImageDigest, ImageStore};
@@ -135,6 +137,11 @@ pub struct StartConfig {
     pub ch: Program,
     /// The `systemd-run` program of the launch (PR C2).
     pub systemd_run: Program,
+    /// The unit of the vmm, which each VM scope binds to (decision CH60
+    /// rule 1). The vmm reads it at its start with `VmmUnit::of_self`. A
+    /// vmm in no service unit keeps the error, and every launch then
+    /// refuses with it and starts nothing.
+    pub vmm_unit: Result<VmmUnit, UnitError>,
     /// The RAM cap and the free-space floor of admission.
     pub limits: Limits,
     /// The snapshot budget of the sweep, in bytes (decision CH8-7, gap
@@ -1403,6 +1410,9 @@ fn launch<L: Launcher, A: ChApi>(
     (id, slot): (&SessionId, PoolSlot),
     shape: FamilyShape,
 ) -> Result<Booted<L::Process>, String> {
+    // Decision CH60 rule 1: with no vmm unit to bind the scope to, the
+    // launch stops here and touches no file.
+    let unit = config.vmm_unit.clone().map_err(|error| error.to_string())?;
     // Caller duty (a) of PR D16: the link comes before `remove_stale`, so
     // an old link to a slot that another VM took removes nothing of that
     // VM. The slot is free (caller duty (c)), so the link may empty it
@@ -1473,7 +1483,7 @@ fn launch<L: Launcher, A: ChApi>(
         .map_err(|error| error.to_string())?;
     let payload = command.payload(config.ch.clone());
     let scope = limits.scope(id.clone());
-    let plan = Launch::new(config.systemd_run.clone(), scope, payload, files).in_slot(slot);
+    let plan = Launch::new(config.systemd_run.clone(), scope, payload, files, unit).in_slot(slot);
     let process = launcher.launch(plan).map_err(|error| error.to_string())?;
     Ok(Booted {
         process,

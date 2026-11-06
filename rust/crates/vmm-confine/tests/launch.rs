@@ -7,9 +7,8 @@
 //! core limit of the launch step, and its hold of one session id gives
 //! `Launched::terminate` a live process. The kvm job loads the slot
 //! profiles and proves the label, no_new_privs, Landlock and CH
-//! (`tests/kvm_slot.rs`). The kill chain of fact 80 does not hold under
-//! the slot label: see the CONTRACT-QUESTION in the Known gaps of the
-//! crate AGENTS.md.
+//! (`tests/kvm_slot.rs`). The kvm job also proves that systemd stops CH
+//! with the vmm unit that its scope binds to (decision CH60 rule 1).
 #![cfg(target_os = "linux")]
 
 mod common;
@@ -29,7 +28,7 @@ use creche_vmm_confine::scope::Scope;
 use creche_vmm_confine::spawner::{SpawnError, Spawner};
 use creche_vmm_store::layout::Slot;
 
-use common::{TempVm, example};
+use common::{TempVm, example, vmm_unit};
 
 const ID: &str = "0123abcd-0000-4000-8000-00000000c2c2";
 
@@ -59,7 +58,7 @@ fn launch_with(vm: &TempVm, args: Vec<String>) -> Launch {
     );
     let payload = Payload::new(Program::new(PathBuf::from(SLEEP)).unwrap(), args);
     let systemd_run = Program::new(example()).unwrap();
-    Launch::new(systemd_run, scope, payload, vm.files.clone()).in_slot(slot())
+    Launch::new(systemd_run, scope, payload, vm.files.clone(), vmm_unit()).in_slot(slot())
 }
 
 #[cfg(test)]
@@ -89,7 +88,8 @@ fn a_launch_with_no_slot_profile_fails_closed_and_starts_no_payload() {
         vec!["say".to_owned(), "hello".to_owned()],
     );
     let systemd_run = Program::new(example()).unwrap();
-    let launch = Launch::new(systemd_run, scope, payload, vm.files.clone()).in_slot(slot());
+    let launch =
+        Launch::new(systemd_run, scope, payload, vm.files.clone(), vmm_unit()).in_slot(slot());
     let mut launched = spawner.launch(launch).unwrap();
     assert_eq!(launched.wait().unwrap().code(), Some(78));
     let got: Vec<String> =
@@ -118,7 +118,8 @@ fn terminate_sends_sigterm() {
     );
     let payload = Payload::new(Program::new(PathBuf::from(SLEEP)).unwrap(), vec![]);
     let systemd_run = Program::new(example()).unwrap();
-    let launch = Launch::new(systemd_run, scope, payload, vm.files.clone()).in_slot(slot());
+    let launch =
+        Launch::new(systemd_run, scope, payload, vm.files.clone(), vmm_unit()).in_slot(slot());
     let mut launched = spawner.launch(launch).unwrap();
     let pid = launched.id();
     let comm = || std::fs::read_to_string(format!("/proc/{pid}/comm")).unwrap_or_default();
