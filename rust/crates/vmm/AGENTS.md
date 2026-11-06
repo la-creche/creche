@@ -28,6 +28,135 @@ The root `AGENTS.md` applies here too.
 writes the real exec attribute (plan PR L16c, decisions CH55, CH58 rule
 1).
 
+## The compose step
+
+`src/compose.rs` builds the vmm from its config and serves until SIGTERM
+(plan PR L20, decisions CH9, CH20). It runs these steps:
+
+1. `shutdown::sigterm` registers the handler of SIGTERM inside the
+   runtime, before any other step (caller duty 8).
+2. In `spawn_blocking`: `leftovers::stop_all` stops each VM scope of an
+   earlier vmm before any per-VM bind (decision CH19 (4), PR C3). Then
+   `check_cloud_hypervisor` checks the CH version, and a failed check
+   refuses the start (caller duty 4, gap G10 option A). Then
+   `image_root::read` reads `digests.json`, and `ImageSet::import` puts
+   each file that it names into the digest store (see "The image root").
+   Then `FaultBook::start` clears every fault file (contract 05 §3.3.1
+   rule 8), and `Rows::open` loads the rows.
+3. The digest store, the session disks, the spawner, `ChTools` and one
+   `ColdBoot`. That `ColdBoot` is the `StartVm` and the `StopVm` hook,
+   the `VmSet` of the shutdown and the `Sleeper` of `sleep::run`.
+4. The handler set of `routes!` (`Creates`, `Lists`, `Acp`, `Drops`)
+   binds `vmm.sock` in the run root. `sleep::run` runs beside it (caller
+   duty 5), and so does `FaultBook::refresh` every `faults::REFRESH`.
+5. At SIGTERM the sleep loop gets its stop, and `shutdown::shutdown`
+   runs with the end of `sleep::run` as its `sleep` future. `src/main.rs`
+   then ends the runtime with `shutdown_timeout(RUNTIME_END)`, 4 s of
+   the 5 s that `SHUTDOWN_WAIT` leaves (caller duty 8).
+
+A failed start step, or a server that stops before SIGTERM, exits 78. The
+end of a shutdown exits 0, also when a VM did not stop: its CH ends with
+the vmm (decision CH19 (4)). The vmm has one start entry, `build`, and
+it always requires root as the owner of `digests.json` (decision CH58
+rule 1: no test-only entry stays in production code). `build` runs
+`check` (the leftover sweep, the CH version, the image root), then
+`parts`. `src/compose/tests.rs` runs on temp paths with no KVM:
+
+1. In the rust job, a `digests.json` that the test user owns refuses
+   `build` with `NotOwned`, and no digest reaches the store.
+2. In the rust job, the serve tests start from `parts` after the checks
+   that a test can run: the CH fixture and an import into the store.
+   They prove an empty list page, a 412 on a bad protocol header, the
+   end of the run at the signal, and a failed run when the bind fails.
+3. The ignored `kvm_` tests run `build` on a root-owned `digests.json`.
+   The job kvm runs them, and its runner may use sudo (decision CH36
+   G20). They prove that each key reaches its part (the `Debug` text of
+   each part gives its program path, because the store crate gives no
+   accessor), and that a missing image refuses the start.
+
+`tests/binary.rs` runs `vmm serve` with no KVM. It proves the exit 78
+of a missing `digests.json` and of one that root does not own. The
+Hyperion proof of the unit (plan PR C13) runs the binary end to end.
+
+## The config
+
+`src/config.rs` reads the env of `vmm serve` once, at its start (plan PR
+L20). Each path and each size is a key with a default in
+`env/src/creche_env/default.env` (the owner env rule, gap G5 option A).
+The vmm compiles in no default, so a missing or empty key refuses the
+start, and so does a bad one. `src/main.rs` then exits 78 (owner item 86).
+A fault names the key and never the value, as in `env/AGENTS.md`.
+
+| Key | Default | Use |
+|---|---|---|
+| `VMM_STATE_ROOT` | `${AGENT_OPERATOR_HOME}/.local/state/creche-vmm` | `StateRoot` (decision CH50 rule 11) |
+| `RUNTIME_DIRECTORY` | set by systemd | `RunRoot` (gap G5) |
+| `VMM_FAMILY_ROOT` | `${CAREGIVER_STATE_ROOT}/families` | `FamilyRoot` (gap G6) |
+| `VMM_FAULTS_ROOT` | `${CAREGIVER_STATE_ROOT}/faults` | `FaultDir::open` (contract 05 §3.3.1) |
+| `VMM_IMAGE_ROOT` | `${AGENT_INSTALL_ROOT}/disks` | `image_root::read` (decision CH57 rule 1) |
+| `VMM_CH_PROGRAM` | `${AGENT_INSTALL_ROOT}/vmm/bin/cloud-hypervisor` | CH (decision CH7-5) |
+| `VMM_CH_REMOTE_PROGRAM` | `${AGENT_INSTALL_ROOT}/vmm/bin/ch-remote` | `ChRemote` |
+| `AGENT_SYSTEMD_RUN_PROGRAM` | existing key | `Launch` (PR C2) |
+| `AGENT_SYSTEMCTL_PROGRAM` | existing key | `leftovers::stop_all` (PR C3) |
+| `VMM_ZSTD_PROGRAM` | `/usr/bin/zstd` | `ImageStore` (gap G9) |
+| `VMM_MKE2FS_PROGRAM` | `/usr/sbin/mke2fs` | `SessionDisks` (gap G7) |
+| `VMM_FALLOCATE_PROGRAM` | `/usr/bin/fallocate` | `Snapshotter` (decision CH29) |
+| `VMM_RAM_CAP_GIB` | `80` | `Limits::ram_cap` (gap G14) |
+| `VMM_FREE_FLOOR_GIB` | `50` | `Limits::free_floor` (gap G14) |
+| `VMM_SNAPSHOT_BUDGET_GIB` | `150` | `StartConfig::budget`, for `retention::sweep` (gap G14) |
+
+Each path is absolute with no `..` component. The run root holds no
+`:`, because systemd joins the paths of more than one
+`RuntimeDirectory=` entry with `:` (gap G5 option A). A size is decimal
+digits, a whole number of GiB. `tests/config.rs` holds each fault. It
+holds each path default of the table literally, and the size defaults
+equal to `Limits::DESIGN` and `retention::BUDGET`.
+`tests/binary.rs` runs `vmm serve` with no KVM: a missing or bad key
+exits 78 and names the key. `src/compose.rs` is the first reader of each
+key.
+
+## The image root
+
+`src/image_root.rs` reads the `digests.json` of `VMM_IMAGE_ROOT`
+(decision CH57 rule 1). The phase 5 disk row installs it there with the
+root disks and the kernel. It holds the decompressed digest of each file
+(decision CH41 rule 1). Handover checks the release signature at
+install, so the vmm trusts the file only when root owns it and the vmm
+user cannot write it. `image_root::read` runs these checks:
+
+1. The path holds a regular file, not a symlink or a dir. A missing
+   file is `DigestsError::Missing`.
+2. It opens the file and checks that the open file is the file of step
+   1. Each later check reads the open file, so the parsed bytes are the
+   checked bytes.
+3. Root owns the file. No caller passes another owner (decision CH58
+   rule 1).
+4. No group or other write bit is set. The vmm does not read its group
+   list, so any group write bit refuses.
+5. The file has at most `DIGESTS_CAP` (64 KiB) bytes, and it parses as
+   strict JSON (decision CH58 rule 4): the key `kernel` plus one key for
+   each value of the wire flavor enum `SandboxFlavor`, each `{"file",
+   "sha256"}`, and no other key. Each key comes once. A file is one file
+   name in the image root.
+
+The vmm holds no list of the flavors. `PerFlavor` of `creche-wire`
+holds one value for each value of `SandboxFlavor`, and its `get` gives
+the value of any flavor. So a new flavor of `creche-wire` needs no vmm
+change.
+
+Each fault refuses the start, and `src/main.rs` exits 78. Then
+`ImageSet::import` copies each file into the digest store with
+`ImageStore::import` of `creche-vmm-store`, one at a time, and gives the
+`Digests` of `StartConfig`. A store that already holds a digest with its
+identity reads no byte. An entry that does not import (a missing disk, a
+digest mismatch, a failed `zstd -d`) refuses the start too (decision
+CH58 rule 5). `tests/image_root.rs` proves the file checks. In the rust
+job it proves that a file the test user owns refuses and imports
+nothing. Its ignored `kvm_` tests make a root-owned file with the sudo
+of the runner (decision CH36 G20) and prove the accept path, a writable
+file, a file past the cap and a malformed one. `src/image_root/tests.rs`
+proves the parse and the import on the bytes, with no file check.
+
 ## The server
 
 `src/server/` holds the host API server (decisions CH20, CH26).
@@ -465,7 +594,8 @@ the passes on paused time.
    opens meanwhile stays up. Each VM gets one try per pass. A sleep
    closes no door.
 2. `ColdBoot::sweep` runs `retention::sweep` of `creche-vmm-store` with
-   `BUDGET` (PR D13, decisions CH2, CH8-7, CH50 rule 8). It holds the
+   `StartConfig::budget`, the key `VMM_SNAPSHOT_BUDGET_GIB` (PR D13,
+   decisions CH2, CH8-7, CH50 rule 8). It holds the
    lock of the claims, so no key check or claim runs, and it reads a
    copy of the `InUse` set. A VM that ends meanwhile only shrinks the
    set, so the copy names each generation in use, and no generation of
@@ -608,6 +738,21 @@ no guest sync.
 13. Closed by decision CH57 rules 3 and 4 (plan PR L7): a family dir or
     `config` that is a symlink or a file gets `unknown_family`, and a
     repeat create whose family `config/` is gone gets `unknown_family`.
+14. Closed by plan PR L20: the config and the compose step are one PR.
+    `src/compose.rs` reads each field of `Config`, so each `VMM_*` key
+    of `default.env` lands with its first reader.
+15. Closed by decisions CH57 rule 1 and CH58 rules 4 and 5: the key
+    `VMM_IMAGE_ROOT`, its root-owned `digests.json` with `kernel` plus
+    one entry for each flavor, and a failed import that refuses the
+    start ("The image root"). Caller duty 9 gives the start time to plan
+    PR C13.
+16. Closed by decision CH57 rule 2: the config refuses 0 GiB for
+    `VMM_RAM_CAP_GIB` and `VMM_SNAPSHOT_BUDGET_GIB`, and takes 0 for
+    `VMM_FREE_FLOOR_GIB`.
+17. Closed by a read-only check on Hyperion, as david with no sudo
+    (CH36 G31), on 2026-11-04: `/usr/sbin/mke2fs` (e2fsprogs) and
+    `/usr/bin/fallocate` (util-linux) are executable on Ubuntu 24.04.5.
+    The G9 check confirmed `/usr/bin/zstd`, and this check saw it again.
 
 ## Caller duties
 
@@ -630,14 +775,15 @@ no guest sync.
    (`src/handlers/drop.rs`). The `StopVm` hook of the vmm keeps a VM
    whose stop failed in its table, so admission keeps counting the RAM
    of that VM.
-4. Plan PR L20 runs `check_cloud_hypervisor` at vmm start and passes
-   its `CheckedCh` as `StartConfig::ch_version`. A failed check refuses
-   to start the vmm (gap G10 option A).
-5. Plan PR L20 runs `sleep::run` with the `ColdBoot` of the vmm on the
-   runtime, and plan PR L19 ends its stop future before the shutdown
-   snapshots. L20 fires that stop at SIGTERM and passes the end of
-   `sleep::run` to `shutdown::shutdown` as its `sleep` future.
-   `sleep::run` is the only caller of `ColdBoot::sweep` and
+4. Held by `src/compose.rs`: the compose step of plan PR L20 runs
+   `check_cloud_hypervisor` at vmm start and passes its `CheckedCh` as
+   `StartConfig::ch_version`. A failed check refuses to start the vmm
+   (gap G10 option A).
+5. Held by `src/compose.rs`: the compose step of plan PR L20 runs
+   `sleep::run` with the `ColdBoot` of the vmm on the runtime, and plan
+   PR L19 ends its stop future before the shutdown snapshots. L20 fires
+   that stop at SIGTERM and passes the end of `sleep::run` to
+   `shutdown::shutdown` as its `sleep` future. `sleep::run` is the only caller of `ColdBoot::sweep` and
    `ColdBoot::sleep_idle` in the vmm.
 6. Two drops of one session can overlap. The `StopVm` hook of the vmm
    makes a stop that finds a stop of the same VM running wait for it
@@ -654,8 +800,14 @@ no guest sync.
    end CH with no guest sync, and a cold boot after it (a key mismatch,
    a failed restore, an `Aged` or a `Budget` sweep) would find the
    session disk as a power cut leaves it.
-8. Plan PR L20 calls `shutdown::sigterm` at vmm start, inside the
-   runtime, and runs `shutdown::shutdown` when the signal fires. A take
-   runs in `spawn_blocking`, and the drop of a runtime waits for each
-   blocking task. So L20 ends the runtime with `shutdown_timeout`, and
-   the vmm exits within the 5 s that `SHUTDOWN_WAIT` leaves.
+8. Held by `src/compose.rs` and `src/main.rs`: the compose step of plan
+   PR L20 calls `shutdown::sigterm` at vmm start, inside the runtime,
+   and runs `shutdown::shutdown` when the signal fires. A take runs in
+   `spawn_blocking`, and the drop of a runtime waits for each blocking
+   task. So L20 ends the runtime with `shutdown_timeout(RUNTIME_END)`,
+   and the vmm exits within the 5 s that `SHUTDOWN_WAIT` leaves.
+9. Decision CH58 rule 5: the compose step imports each entry of
+   `digests.json` before the bind of `vmm.sock`. The first import of a
+   release decompresses each disk (`zstd -d`) and hashes it. So the unit
+   of plan PR C13 must not bound the start of the vmm below that time.
+   A later start finds each digest in the store and reads no byte.
