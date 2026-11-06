@@ -74,7 +74,7 @@ use creche_wire::{HostPort, SessionId};
 
 use kvm::{BOOT, Vm, booted, files};
 use scope_guard::ScopeGuard;
-use stand_in::{StandIn, kill_scopes, state_of, until_state};
+use stand_in::{SYSTEMCTL_KEY, StandIn, built_vmm, state_of, until_state};
 
 /// The host programs of the ubuntu-24.04 runner. The vmm config passes
 /// each one (plan PR L20).
@@ -974,6 +974,23 @@ fn scope_dir(pid: u32) -> PathBuf {
     let dir = PathBuf::from(format!("/sys/fs/cgroup{path}"));
     assert!(dir.exists(), "no scope dir {}", dir.display());
     dir
+}
+
+/// The step of a stand-in, the built `vmm kill-scopes` (decision CH63),
+/// as a command that a test runs by hand. Its env holds the one key of
+/// the mode and the `XDG_RUNTIME_DIR` that the user manager gives each
+/// of its units, so `systemctl --user` finds the manager.
+#[cfg(test)]
+fn kill_scopes() -> Command {
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR").unwrap();
+    let mut command = Command::new(built_vmm());
+    command
+        .arg("kill-scopes")
+        .env_clear()
+        .env(SYSTEMCTL_KEY, SYSTEMCTL)
+        .env("XDG_RUNTIME_DIR", runtime)
+        .stdin(Stdio::null());
+    command
 }
 
 /// Starts the example in its role `hold` as the vmm unit of `rig`, with
