@@ -108,9 +108,15 @@ TimeoutStopSec=90
 # `Before=` orders after the stop of this unit, which waits for this
 # step: a deadlock. The glob matches each loaded unit with the name, in
 # any state. No match exits 0. The leftover sweep of the next start
-# (CH19 (4)) still stops each unit that it finds. A scope that the
-# manager drops between the glob and the kill fails the step, and this
-# unit then ends `failed`. That changes no restart.
+# (CH19 (4)) still stops each unit that it finds.
+# CONTRACT-QUESTION (CH61 rule 1): `systemctl kill` lists the units of
+# the glob, then kills each by name, and the KillUnit call loads no unit.
+# A scope that the manager unloads between the list and the kill gives
+# NoSuchUnit. The step then exits non-zero, and the stop ends with the
+# result exit-code, so the unit ends `failed`. That changes no restart.
+# The narrowest reading of rule 1 holds: a scope that is gone has ended.
+# No row decides whether this failure of the step is accepted. The
+# options are in systemd/AGENTS.md, Known gaps.
 ExecStopPost=/usr/bin/systemctl --user kill --signal=SIGKILL -- creche-vm-*.scope
 
 # A user unit on this host cannot use mount-namespace options

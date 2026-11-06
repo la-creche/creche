@@ -175,7 +175,7 @@ pub async fn shutdown<V: VmSet>(vms: &V, server: Stop, sleep: impl Future<Output
         Ok(false) => Ended::Kept,
         Err(_) => {
             eprintln!(
-                "vmm: the shutdown passed {SHUTDOWN_WAIT:?}, so its VMs end with the vmm unit"
+                "vmm: the shutdown passed {SHUTDOWN_WAIT:?}, so the ExecStopPost= step of the vmm unit kills its VMs"
             );
             Ended::Late
         }
