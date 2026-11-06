@@ -186,13 +186,13 @@ table of the three vmm crates.
   `tests/kvm_boot.rs` runs the copy in `CRECHE_KVM_DIR` with no chain.
 - `tests/kvm_vm.rs` runs one VM through the crate and the store (decision
   CH8-4, plan PR C16). The example `launch_chain` in its role `hold` plays
-  the vmm with the real `systemd-run`: a cold boot in the scope with the
-  C4 limits and under the ruleset, a snapshot with dug holes, the key and
-  the claim, a copy-on-write restore, a second snapshot, then a restore
-  and a SIGKILL of the stand-in, which takes CH and its scope down. A
-  runner step may have no `XDG_RUNTIME_DIR`, so the test sets it for each
-  program that talks to the user manager. Under the unit the user manager
-  sets it.
+  the vmm with the real chain of `tests/kvm_slot.rs`: a cold boot in the
+  scope with the C4 limits, under the slot label and the ruleset, a
+  snapshot with dug holes, the key and the claim, a copy-on-write
+  restore, a second snapshot, then a restore and a SIGKILL of the
+  stand-in, which takes CH and its scope down. Each start takes a new slot
+  with `RunRoot::link_vm` and runs `remove_stale`, as lifecycle does, so
+  each restore moves the VM to another slot.
 
 ## Known gaps
 

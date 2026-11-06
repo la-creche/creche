@@ -10,8 +10,8 @@
 //!   (`tests/kvm_slot.rs`).
 //! - `hold` reads one `Launch` as JSON on stdin. It starts a spawner on
 //!   `/proc/self/exe`, as the vmm does, launches it, prints the pid and
-//!   waits to be killed. `tests/kvm_slot.rs` kills it to prove that CH
-//!   dies with the vmm (fact 80).
+//!   waits to be killed. `tests/kvm_slot.rs` and `tests/kvm_vm.rs` kill
+//!   it to prove that CH dies with the vmm (fact 80).
 //! - `--user ...` is a fake `systemd-run` for a host with no systemd. It
 //!   writes `core <soft> <hard>`, its own core limits, to stderr. It then
 //!   execs the arguments after `--`. For the scope unit of `HOLD` it

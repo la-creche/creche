@@ -1,12 +1,21 @@
 //! One VM through the code of the vmm, on the KVM of the runner (decision
 //! CH8-4, plan PR C16). The example `launch_chain` in its role `hold`
 //! plays the vmm: it holds the spawner (PR C2) and launches what the test
-//! makes. Each launch goes through the real `systemd-run --user --scope`
-//! with the scope limits of the family VM shape (PR C4) and under the
-//! Landlock ruleset of the VM (PR C6, decisions CH8-3 and CH30).
+//! makes. Each launch goes through the real chain of `tests/kvm_slot.rs`:
+//! the launch step, `systemd-run --user --scope` with the scope limits of
+//! the family VM shape (PR C4), and the launch stage, which enters the
+//! slot label and applies the Landlock ruleset of the VM before it execs
+//! the installed CH (decisions CH8-3, CH55, CH58 rule 1). Each start takes
+//! a new slot with `RunRoot::link_vm` and then runs `remove_stale`, as
+//! lifecycle does (PR L16b). So each restore moves the VM to another slot,
+//! and the paths in the snapshot hold through the `vm/<id>` link (PR
+//! D16). The run root is the real `/run/user/<uid>/vmm` and the state root
+//! is the default `~/.local/state/creche-vmm`, which the slot profiles
+//! name (decisions CH20, CH50 rule 11).
 //!
 //! 1. A cold boot with the argv of PR C7 from checked store copies (PRs
-//!    D6, D7). The test reads the scope limits back from the cgroup.
+//!    D6, D7). The test reads the scope limits back from the cgroup, and
+//!    the label of the slot from CH.
 //! 2. A snapshot with dug holes (PR D9, decision CH29), keyed (PR D10)
 //!    and claimed (PR D11, decision CH19 (5)).
 //! 3. A copy-on-write restore (decisions CH2, CH29): the restored CH maps
@@ -19,8 +28,7 @@
 //!
 //! The busybox guest has no guest init, so the control link, ControlReady
 //! and the guest `sync` before a snapshot wait for phase 3. The test reads
-//! readiness from the serial marker and from `ch-remote info`. CH is the
-//! copy in `CRECHE_KVM_DIR`, which no AppArmor profile confines.
+//! readiness from the serial marker and from `ch-remote info`.
 //!
 //! `#[ignore]`: only the job `kvm` runs it, after `bin/vm-smoke-setup.sh`.
 #![cfg(target_os = "linux")]
@@ -28,7 +36,7 @@
 mod kvm;
 
 use std::fs;
-use std::io::{BufRead, BufReader, ErrorKind, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -39,14 +47,15 @@ use creche_vmm_confine::command::{Boot, ChCommand, DiskLimit};
 use creche_vmm_confine::landlock::{HostPath, Start, VmFiles};
 use creche_vmm_confine::launch::{Launch, Payload, Program};
 use creche_vmm_confine::limits::VmLimits;
+use creche_vmm_confine::slot_profile::{CH_BINARY, label};
 use creche_vmm_store::ch_remote::{ChRemote, VmState};
 use creche_vmm_store::claim::{ClaimedSnapshot, claim};
-use creche_vmm_store::images::{CheckedImage, ImageStore};
+use creche_vmm_store::images::{CheckedImage, ImageDigest, ImageStore};
 use creche_vmm_store::key::{
     CH_VERSION, ChVersionError, CheckedCh, KeyCheck, SnapshotKey, check_cloud_hypervisor,
     check_newest, write_key,
 };
-use creche_vmm_store::layout::{RunRoot, SessionDir, StateRoot, VmRunDir, scope_unit};
+use creche_vmm_store::layout::{RunRoot, SessionDir, Slot, StateRoot, VmRunDir, scope_unit};
 use creche_vmm_store::session_disk::{SessionDisk, SessionDisks};
 use creche_vmm_store::snapshot::{MEMORY_RANGES, Snapshot, SnapshotTimeouts, Snapshotter};
 use creche_vmm_store::stale::remove_stale;
@@ -55,6 +64,10 @@ use creche_wire::{FamilyShape, SessionId};
 use kvm::{BOOT, Vm, booted, files};
 
 const ID: &str = "0123abcd-0000-4000-8000-0000000c16c1";
+
+/// The slot of the cold boot, then of the first and the second restore.
+/// `tests/kvm_slot.rs` uses none of them.
+const SLOTS: [u16; 3] = [32, 33, 34];
 
 /// The smallest family VM shape: 1 vCPU and 256 MiB.
 const SHAPE: &str = r#"{"cpus":1,"flavor":"base","memory_mib":256}"#;
@@ -97,6 +110,25 @@ fn until(what: &str, mut check: impl FnMut() -> bool) {
         assert!(Instant::now() < deadline, "no {what} in {BOOT:?}");
         sleep(Duration::from_millis(20));
     }
+}
+
+/// Fails if `path` exists. A live vmm may own a path under the two
+/// roots, so the test stops at one it did not make, and a drop removes
+/// only its own.
+#[cfg(test)]
+fn absent(path: &Path) {
+    assert!(
+        fs::symlink_metadata(path).is_err(),
+        "{} exists: a vmm may be live, so the test stops",
+        path.display()
+    );
+}
+
+/// The AppArmor label of `pid`.
+#[cfg(test)]
+fn label_of(pid: u32) -> String {
+    let attr = format!("/proc/{pid}/attr/apparmor/current");
+    fs::read_to_string(attr).unwrap().trim_end().to_owned()
 }
 
 /// Whether `pid` runs and is not a zombie.
@@ -155,14 +187,15 @@ fn checked_ch(ch: &Path, work: &Path) -> CheckedCh {
     }
 }
 
-/// One session: the store copies, the session disk and the VM run dir. A
-/// drop removes the state root and the run dir.
+/// One session: the store copies, the session disk and the VM link in
+/// each slot of `SLOTS`. A drop removes only what the setup made.
 struct Setup {
     id: SessionId,
-    uid: u32,
     work: PathBuf,
+    run: RunRoot,
     session: SessionDir,
     vm: VmRunDir,
+    store: Vec<PathBuf>,
     ch: Program,
     remote: ChRemote,
     checked_ch: CheckedCh,
@@ -179,32 +212,41 @@ impl Setup {
         let files = files();
         let id: SessionId = ID.parse().unwrap();
         let uid = rustix::process::getuid().as_raw();
-        // The real run root of decision CH20, as in `kvm_apparmor.rs`.
-        let run = RunRoot::new(PathBuf::from(format!("/run/user/{uid}/vmm"))).unwrap();
-        let vm = run.vm(&id);
-        // A live vmm may own a VM dir under the real run root, so the test
-        // stops at one it did not make, and a drop removes only its own.
-        assert!(
-            fs::symlink_metadata(vm.path()).is_err(),
-            "{} exists: a vmm may be live, so the test stops",
-            vm.path().display()
+        let runtime = format!("/run/user/{uid}");
+        assert_eq!(
+            std::env::var("XDG_RUNTIME_DIR").ok().as_deref(),
+            Some(runtime.as_str()),
+            "systemd-run --user needs XDG_RUNTIME_DIR: bin/vm-smoke-setup.sh exports it"
         );
-        fs::create_dir_all(vm.path()).unwrap();
+        let run = RunRoot::new(PathBuf::from(format!("{runtime}/vmm"))).unwrap();
+        let vm = run.vm(&id);
+        absent(vm.path());
+        for slot in SLOTS {
+            absent(&run.slot(Slot::new(slot).unwrap()));
+        }
+        let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+        let state = StateRoot::new(home.join(".local/state/creche-vmm")).unwrap();
+        let session = state.session(&id);
+        absent(session.path());
         let work = files.join(format!("kvm-vm-{}", std::process::id()));
         let _ = fs::remove_dir_all(&work);
         fs::create_dir(&work).unwrap();
-        let state = StateRoot::new(work.clone()).unwrap();
 
         // The guest runs from its initramfs and mounts no root, so 1 MiB
         // of zeros stands in for the root disk.
         let root = work.join("root.img");
         fs::write(&root, vec![0_u8; 1 << 20]).unwrap();
-        let store = ImageStore::new(&state, PathBuf::from(ZSTD));
-        let import = |source: &Path| {
+        let images = ImageStore::new(&state, PathBuf::from(ZSTD));
+        let mut store = Vec::new();
+        let mut import = |source: &Path| {
             let line = digests(&[source.to_owned()]);
-            let digest = line.split_whitespace().next().unwrap().parse().unwrap();
-            store.import(source, digest).unwrap();
-            store.check(digest).unwrap()
+            let digest: ImageDigest = line.split_whitespace().next().unwrap().parse().unwrap();
+            for path in [images.path(&digest), images.identity_path(&digest)] {
+                absent(&path);
+                store.push(path);
+            }
+            images.import(source, digest).unwrap();
+            images.check(digest).unwrap()
         };
         let kernel = import(&files.join("vmlinux"));
         let initramfs = import(&files.join("initramfs.cpio"));
@@ -212,20 +254,20 @@ impl Setup {
         let disk = SessionDisks::new(&state, PathBuf::from(MKE2FS))
             .for_boot(&id)
             .unwrap();
-        let session = state.session(&id);
         // The ruleset opens the snapshot dir, so it exists before a launch.
         fs::create_dir_all(session.snapshots()).unwrap();
 
-        let ch_path = files.join("cloud-hypervisor");
-        let checked_ch = checked_ch(&ch_path, &work);
+        let ch = PathBuf::from(CH_BINARY);
+        let checked_ch = checked_ch(&ch, &work);
         let shape: FamilyShape = serde_json::from_str(SHAPE).unwrap();
         Self {
             id,
-            uid,
             work,
+            run,
             session,
             vm,
-            ch: Program::new(ch_path).unwrap(),
+            store,
+            ch: Program::new(ch).unwrap(),
             remote: ChRemote::new(files.join("ch-remote")),
             checked_ch,
             kernel,
@@ -236,8 +278,17 @@ impl Setup {
         }
     }
 
-    /// The launch of a cold boot.
-    fn boot(&self) -> Launch {
+    /// Takes `slot` for the next start, as lifecycle does: the link of
+    /// `vm/<id>` to the slot, which empties the slot dir, then
+    /// `remove_stale` of PR D1 (decision CH56 rule 1, fact 75).
+    fn take(&self, slot: Slot) {
+        self.run.link_vm(&self.id, slot).unwrap();
+        remove_stale(&self.vm).unwrap();
+    }
+
+    /// The launch of a cold boot in `slot`.
+    fn boot(&self, slot: Slot) -> Launch {
+        self.take(slot);
         let initramfs = HostPath::new(self.initramfs.path().to_owned()).unwrap();
         let boot = Boot {
             kernel: &self.kernel,
@@ -255,32 +306,24 @@ impl Setup {
             kernel,
             initramfs: Some(initramfs),
         };
-        self.launch(start, payload)
+        self.launch(start, payload, slot)
     }
 
-    /// The launch of a restore of `snapshot`. CH under the ruleset cannot
-    /// unlink, so its sockets stay after it exits, and a stale
-    /// `vsock.sock` fails the next start (fact 75). The test calls
-    /// `remove_stale` of PR D1 first, as lifecycle does. A stale
-    /// `api.sock` alone does not block a start, so it stays. The test
-    /// also removes `serial.log`, so each tick it reads comes from the
-    /// restored guest.
-    fn restore(&self, snapshot: ClaimedSnapshot) -> Launch {
-        remove_stale(&self.vm).unwrap();
-        let serial = self.vm.serial_log();
-        if let Err(error) = fs::remove_file(&serial)
-            && error.kind() != ErrorKind::NotFound
-        {
-            panic!("remove {}: {error}", serial.display());
-        }
+    /// The launch of a restore of `snapshot` in `slot`. The new slot dir is
+    /// empty, so each tick that the test reads comes from the restored
+    /// guest. The snapshot names its files by the `vm/<id>` path, which
+    /// now links to `slot`.
+    fn restore(&self, snapshot: ClaimedSnapshot, slot: Slot) -> Launch {
+        self.take(slot);
         let payload = ChCommand::restore(snapshot, &self.vm)
             .unwrap()
             .payload(self.ch.clone());
-        self.launch(Start::Restore, payload)
+        self.launch(Start::Restore, payload, slot)
     }
 
-    /// `payload` in the scope of the VM, under its ruleset.
-    fn launch(&self, start: Start, payload: Payload) -> Launch {
+    /// `payload` in the scope of the VM, under its ruleset and the label
+    /// of `slot`.
+    fn launch(&self, start: Start, payload: Payload, slot: Slot) -> Launch {
         let root = HostPath::new(self.root.path().to_owned()).unwrap();
         let files = VmFiles::new(start, root, &self.session, &self.vm).unwrap();
         let systemd_run = Program::new(PathBuf::from(SYSTEMD_RUN)).unwrap();
@@ -290,58 +333,49 @@ impl Setup {
             payload,
             files,
         )
-    }
-
-    /// The env of a program that talks to the user manager. A runner step
-    /// may have no `XDG_RUNTIME_DIR` of its own (the C0 spike set it).
-    fn user_env(&self, command: &mut Command) {
-        command.env("XDG_RUNTIME_DIR", format!("/run/user/{}", self.uid));
+        .in_slot(slot)
     }
 
     /// Starts the vmm stand-in with `launch`. Returns it, killed on drop,
     /// and the pid that becomes CH.
     fn hold(&self, launch: &Launch) -> (Vm, u32) {
-        let mut command = Command::new(example());
-        command
+        let mut vmm = Vm(Command::new(example())
             .arg("hold")
             .stdin(Stdio::piped())
-            .stdout(Stdio::piped());
-        self.user_env(&mut command);
-        let mut vmm = Vm(command.spawn().unwrap());
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap());
         let plan = serde_json::to_vec(launch).unwrap();
         vmm.0.stdin.take().unwrap().write_all(&plan).unwrap();
-        // `systemd-run` shares the stdout, so the pid line may not come
-        // first.
-        let mut stdout = BufReader::new(vmm.0.stdout.as_mut().unwrap());
+        // The chain writes to the output pipe of the spawner, so the one
+        // line on the stdout of the stand-in is the pid.
         let mut line = String::new();
-        let pid = loop {
-            line.clear();
-            let read = stdout.read_line(&mut line).unwrap();
-            assert!(read > 0, "the stand-in printed no pid");
-            if let Ok(pid) = line.trim().parse() {
-                break pid;
-            }
-        };
-        drop(stdout);
-        (vmm, pid)
+        BufReader::new(vmm.0.stdout.take().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        (vmm, line.trim().parse().unwrap())
     }
 
-    /// Waits for the marker of a cold boot.
-    fn wait_booted(&self, pid: u32) {
+    /// Waits for the marker of a cold boot, then checks the label of
+    /// `slot` (decision CH55).
+    fn wait_booted(&self, pid: u32, slot: Slot) {
         until("boot marker", || {
             assert!(running(pid), "CH exited before the marker");
             booted(&self.vm.serial_log())
         });
+        assert_eq!(label_of(pid), format!("{} (enforce)", label(slot)));
     }
 
-    /// Waits for `ch-remote info` to report the VM running.
-    fn wait_running(&self, pid: u32) {
+    /// Waits for `ch-remote info` to report the VM running, then checks
+    /// the label of `slot` (decision CH55).
+    fn wait_running(&self, pid: u32, slot: Slot) {
         until("running VM", || {
             assert!(running(pid), "CH exited before it ran");
             self.remote
                 .info(&self.vm, CALL)
                 .is_ok_and(|info| info.state == VmState::Running)
         });
+        assert_eq!(label_of(pid), format!("{} (enforce)", label(slot)));
     }
 
     /// Checks that `pid` runs in the VM scope with the C4 limits.
@@ -365,7 +399,6 @@ impl Setup {
             .args(["--user", "list-units", "--all", "--plain", "--no-legend"])
             .args(["--no-pager", "--"])
             .arg(format!("{}.scope", scope_unit(&self.id)));
-        self.user_env(&mut command);
         let output = command.output().unwrap();
         assert!(output.status.success(), "systemctl: {output:?}");
         String::from_utf8(output.stdout).unwrap()
@@ -404,7 +437,14 @@ impl Setup {
 
 impl Drop for Setup {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(self.vm.path());
+        let _ = self.run.unlink_vm(&self.id);
+        for slot in SLOTS.into_iter().filter_map(Slot::new) {
+            let _ = fs::remove_dir_all(self.run.slot(slot));
+        }
+        let _ = fs::remove_dir_all(self.session.path());
+        for path in &self.store {
+            let _ = fs::remove_file(path);
+        }
         let _ = fs::remove_dir_all(&self.work);
     }
 }
@@ -415,17 +455,18 @@ fn kvm_vm_snapshot_restore_kill() {
     let setup = Setup::new();
 
     // 1 and 2: a cold boot in its scope, then a snapshot.
-    let (vmm, pid) = setup.hold(&setup.boot());
-    setup.wait_booted(pid);
+    let [boot, restore, last] = SLOTS.map(|slot| Slot::new(slot).unwrap());
+    let (vmm, pid) = setup.hold(&setup.boot(boot));
+    setup.wait_booted(pid, boot);
     setup.check_scope(pid);
     let first = setup.snapshot(pid);
     drop(vmm);
     let first_files = snapshot_files(&first.dir);
     let first_digests = digests(&first_files);
 
-    // 3: a copy-on-write restore. The guest runs on.
-    let (vmm, pid) = setup.hold(&setup.restore(setup.claim(&first)));
-    setup.wait_running(pid);
+    // 3: a copy-on-write restore in a new slot. The guest runs on.
+    let (vmm, pid) = setup.hold(&setup.restore(setup.claim(&first), restore));
+    setup.wait_running(pid, restore);
     setup.check_scope(pid);
     let maps = fs::read_to_string(format!("/proc/{pid}/maps")).unwrap();
     let memory = first.dir.join(MEMORY_RANGES);
@@ -443,9 +484,9 @@ fn kvm_vm_snapshot_restore_kill() {
     assert_eq!(second.generation.0, first.generation.0 + 1);
     assert_eq!(digests(&first_files), first_digests);
 
-    // 5: a SIGKILL of the vmm takes CH and its scope down.
-    let (mut vmm, pid) = setup.hold(&setup.restore(setup.claim(&second)));
-    setup.wait_running(pid);
+    // 5: a SIGKILL of the vmm takes CH under its label and its scope down.
+    let (mut vmm, pid) = setup.hold(&setup.restore(setup.claim(&second), last));
+    setup.wait_running(pid, last);
     assert!(!setup.units().trim().is_empty(), "no VM scope");
     vmm.0.kill().unwrap();
     vmm.0.wait().unwrap();
