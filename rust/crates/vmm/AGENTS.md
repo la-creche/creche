@@ -677,9 +677,9 @@ inside the `TimeoutStopSec` of 90 s (decision CH56 rule 3, gap G16). A
 stop (36 s) and a take (75 s) each fit inside it. One deadline bounds
 every step, so a full take and then a full stop of one VM need not both
 fit (decision CH56 rule 2). A VM still in the set at the deadline ends
-with the vmm unit: each VM scope has `BindsTo=` and `Before=` the vmm
-unit, so systemd stops it after the vmm has exited (decision CH60 rule
-1). `ColdBoot` is the `VmSet` of the vmm.
+after the vmm has exited: each VM scope has `BindsTo=` and `Before=` the
+vmm unit (decision CH61 rule 2), and the `ExecStopPost=` step of the
+unit kills its scope (decision CH61 rule 1). `ColdBoot` is the `VmSet` of the vmm.
 `tests/shutdown.rs` runs the steps on paused time with a fake set.
 `tests/start.rs` proves the take of an idle VM, the stop of a busy one
 and the door close over the hook, and the graceful stop of each VM with

@@ -135,9 +135,10 @@ table of the three vmm crates.
   `store/<sha256>` initramfs of its snapshot (decision CH60 rule 2),
   and the snapshot key of `creche-vmm-store` holds its digest. A
   snapshot with the current key names the initramfs of the vmm config,
-  so the vmm passes that checked store copy. A boot has none until
-  phase 3 adds guest init (PR C7), and then its snapshot and its
-  restore have none. `tests/kvm_vm.rs` restores with one.
+  so the vmm passes that checked store copy. The vmm config names no
+  initramfs until phase 3 adds guest init (PR C7). A boot with none
+  makes a snapshot whose key holds none, and its restore carries none.
+  So `Start::Boot` and `Start::Restore` each hold an `Option`.
 - `deny::check` is the proof of deny-by-default (decision CH6-3). The
   first argument of the command line is the payload program, so a pid
   that still runs the launch step or `systemd-run`, or a CH zombie, fails

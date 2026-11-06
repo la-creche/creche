@@ -31,6 +31,7 @@ use creche_vmm::stop::VmProcess;
 use creche_vmm_confine::admission::{GIB, Limits};
 use creche_vmm_confine::family::FamilyRoot;
 use creche_vmm_confine::faults::{FaultBook, FaultDir};
+use creche_vmm_confine::landlock::{HostPath, Start};
 use creche_vmm_confine::launch::{Launch, Program};
 use creche_vmm_confine::spawner::SpawnError;
 use creche_vmm_confine::vmm_unit::{UnitError, VmmUnit};
@@ -811,6 +812,62 @@ fn a_keyed_snapshot_restores_paused_then_resumes() {
     assert_eq!(test.start(0), Ok(()));
     assert!(!test.restored(1));
     assert!(test.hook.in_use().is_empty());
+}
+
+/// With an initramfs in the config, a boot names it and its ruleset reads
+/// it, and the key holds its digest. A restore with that key carries the
+/// same `store/<sha256>` file, so its ruleset reads it too, and a key
+/// with no initramfs drops the snapshot (decisions CH60 rule 2, CH61
+/// rule 3).
+#[test]
+fn a_restore_carries_the_initramfs_of_its_key() {
+    let initramfs: ImageDigest = ABC.parse().unwrap();
+    let with = |config: &mut StartConfig| {
+        let file = config.state.path().parent().unwrap().join("initramfs");
+        fs::write(&file, "abc").unwrap();
+        config.images.import(&file, initramfs).unwrap();
+        config.initramfs = Some(initramfs);
+    };
+    let store = |test: &Test| test.dir.join(format!("state/store/{initramfs}"));
+
+    let test = Test::new("initramfs-boot", with);
+    assert_eq!(test.start(0), Ok(()));
+    let launches = test.fake.launches.lock().unwrap();
+    let args = launches[0].payload().args();
+    let at = args.iter().position(|arg| arg == "--initramfs").unwrap();
+    assert_eq!(args[at + 1], store(&test).to_str().unwrap());
+    let Start::Boot {
+        initramfs: Some(read),
+        ..
+    } = launches[0].files().start()
+    else {
+        panic!("not a boot with an initramfs: {:?}", launches[0].files());
+    };
+    assert_eq!(read.path(), store(&test));
+    drop(launches);
+
+    let test = Test::new("initramfs-restore", with);
+    let images = ImageStore::new(&test.state, PathBuf::from("/usr/bin/zstd"));
+    let empty = images.check(EMPTY.parse().unwrap()).unwrap();
+    let checked = images.check(initramfs).unwrap();
+    let key = SnapshotKey::current(test.ch, &empty, Some(&checked), &empty);
+    test.snapshot(0, Some(&key));
+    test.reply(0, "Paused", &[]);
+    assert_eq!(test.start(0), Ok(()));
+    assert!(test.restored(0));
+    let launches = test.fake.launches.lock().unwrap();
+    let path = HostPath::new(store(&test)).unwrap();
+    let restore = Start::Restore {
+        initramfs: Some(path),
+    };
+    assert_eq!(launches[0].files().start(), &restore);
+    drop(launches);
+
+    let test = Test::new("initramfs-mismatch", with);
+    let dir = test.snapshot(0, Some(&test.key()));
+    assert_eq!(test.start(0), Ok(()));
+    assert!(!test.restored(0));
+    assert!(!dir.exists());
 }
 
 /// Fields that a test adds to the config of an `info` reply.
