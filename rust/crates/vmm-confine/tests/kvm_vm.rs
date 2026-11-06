@@ -2,8 +2,9 @@
 //! CH8-4, plan PR C16). The example `launch_chain` in its role `hold`
 //! plays the vmm: it holds the spawner (PR C2) and launches what the test
 //! makes. It runs as a transient user service of `tests/stand_in`, and
-//! each VM scope binds to that unit (decision CH60 rule 1). Each launch goes through the real chain of `tests/kvm_slot.rs`:
-//! the launch step, `systemd-run --user --scope` with the scope limits of
+//! each VM scope binds to that unit and is ordered before it (decision
+//! CH61 rule 2). Each launch goes through the real chain of
+//! `tests/kvm_slot.rs`: the launch step, `systemd-run --user --scope` with the scope limits of
 //! the family VM shape (PR C4), and the launch stage, which enters the
 //! slot label and applies the Landlock ruleset of the VM before it execs
 //! the installed CH (decisions CH8-3, CH55, CH58 rule 1). Each start takes
@@ -20,12 +21,15 @@
 //! 2. A snapshot with dug holes (PR D9, decision CH29), keyed (PR D10)
 //!    and claimed (PR D11, decision CH19 (5)).
 //! 3. A copy-on-write restore (decisions CH2, CH29): the restored CH maps
-//!    the snapshot's `memory-ranges`, and the guest runs on.
+//!    the snapshot's `memory-ranges`, and the guest runs on. CH opens the
+//!    initramfs of the snapshot config, so the restore carries that
+//!    `store/<sha256>` file, the key holds its digest, and the ruleset
+//!    reads it (decision CH61 rule 3).
 //! 4. A second snapshot to a new generation. The first one stays
 //!    byte-identical (fact 55).
 //! 5. A restore of the second one, then a SIGKILL of the vmm stand-in.
-//!    Its unit fails, and systemd stops the bound VM scope and its CH
-//!    (decision CH60 rule 1, the phase 2 proof line). The control: CH
+//!    The `ExecStopPost=` step of its unit kills the VM scope and its CH
+//!    (decision CH61 rule 1, the phase 2 proof line). The control: CH
 //!    runs while the stand-in runs.
 //!
 //! The busybox guest has no guest init, so the control link, ControlReady
@@ -304,10 +308,9 @@ impl Setup {
     /// The launch of a cold boot in `slot`, bound to `unit`.
     fn boot(&self, slot: Slot, unit: &VmmUnit) -> Launch {
         self.take(slot);
-        let initramfs = HostPath::new(self.initramfs.path().to_owned()).unwrap();
         let boot = Boot {
             kernel: &self.kernel,
-            initramfs: Some(&initramfs),
+            initramfs: Some(&self.initramfs),
             root: &self.root,
             session: &self.disk,
             disk: DiskLimit::SESSION,
@@ -319,7 +322,7 @@ impl Setup {
         let kernel = HostPath::new(self.kernel.path().to_owned()).unwrap();
         let start = Start::Boot {
             kernel,
-            initramfs: Some(initramfs),
+            initramfs: Some(self.initramfs_path()),
         };
         self.launch(start, payload, slot, unit)
     }
@@ -327,13 +330,24 @@ impl Setup {
     /// The launch of a restore of `snapshot` in `slot`. The new slot dir is
     /// empty, so each tick that the test reads comes from the restored
     /// guest. The snapshot names its files by the `vm/<id>` path, which
-    /// now links to `slot`. The scope binds to `unit`.
+    /// now links to `slot`. The key of the claim holds the digest of the
+    /// initramfs of the boot, so the restore carries that same store file
+    /// (decision CH61 rule 3). The scope binds to `unit`.
     fn restore(&self, snapshot: ClaimedSnapshot, slot: Slot, unit: &VmmUnit) -> Launch {
         self.take(slot);
         let payload = ChCommand::restore(snapshot, &self.vm)
             .unwrap()
             .payload(self.ch.clone());
-        self.launch(Start::Restore, payload, slot, unit)
+        let start = Start::Restore {
+            initramfs: Some(self.initramfs_path()),
+        };
+        self.launch(start, payload, slot, unit)
+    }
+
+    /// The `store/<sha256>` initramfs of the ruleset (decision CH60 rule
+    /// 2).
+    fn initramfs_path(&self) -> HostPath {
+        HostPath::new(self.initramfs.path().to_owned()).unwrap()
     }
 
     /// `payload` in the scope of the VM bound to `unit`, under its ruleset
@@ -434,7 +448,12 @@ impl Setup {
 
     /// Keys `snapshot`, checks the key and claims it.
     fn claim(&self, snapshot: &Snapshot) -> ClaimedSnapshot {
-        let key = SnapshotKey::current(self.checked_ch, &self.kernel, &self.root);
+        let key = SnapshotKey::current(
+            self.checked_ch,
+            &self.kernel,
+            Some(&self.initramfs),
+            &self.root,
+        );
         write_key(&self.session, snapshot.generation, &key).unwrap();
         let check = check_newest(&self.session, &key).unwrap();
         let KeyCheck::Keyed(keyed) = check else {
@@ -498,10 +517,10 @@ fn kvm_vm_snapshot_restore_kill() {
     assert_eq!(second.generation.0, first.generation.0 + 1);
     assert_eq!(digests(&first_files), first_digests);
 
-    // 5: a SIGKILL of the vmm stand-in. Under `Restart=always` its unit
-    // passes through `failed` into `auto-restart`, and systemd stops the
-    // bound scope and CH before the next start, 5 s later (decision CH60
-    // rule 1). The restarted `hold` reads EOF and exits 78, so the unit
+    // 5: a SIGKILL of the vmm stand-in. The `ExecStopPost=` step of its
+    // unit kills the VM scope and CH, and under `Restart=always` the unit
+    // passes through `failed` into `auto-restart`, 5 s before the next
+    // start (decision CH61 rule 1). The restarted `hold` reads EOF and exits 78, so the unit
     // then stays down. The control: CH and its scope run while the
     // stand-in runs.
     let unit = stand_in::unit("vm-kill");

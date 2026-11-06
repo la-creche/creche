@@ -253,27 +253,21 @@ table of the three vmm crates.
   snapshot with dug holes, the key and the claim, a copy-on-write
   restore, a second snapshot, then a restore and a SIGKILL of the
   stand-in. Each start runs the stand-in as a transient user service,
-  and the scope binds to it (decision CH60 rule 1). Step 5, the SIGKILL
-  of the stand-in, proves that systemd then stops CH and its scope while
-  the unit waits in `auto-restart`, with the control that CH runs while
-  the stand-in runs. Each start takes
-  a new slot with `RunRoot::link_vm` and runs `remove_stale`, as the
-  start of `rust/crates/vmm/src/start.rs` does, so each restore moves the
-  VM to another slot. The ruleset grants no right to remove a file, so CH
+  and the scope binds to it and is ordered before it (decision CH61
+  rule 2). Each restore carries the `store/<sha256>` initramfs of the
+  boot, the key holds its digest, and the ruleset reads it (decision
+  CH61 rule 3). Step 5, the SIGKILL of the stand-in, proves that the
+  `ExecStopPost=` step of its unit then kills CH and its scope while the
+  unit waits in `auto-restart` (decision CH61 rule 1), with the control
+  that CH runs while the stand-in runs. Each start takes a new slot
+  with `RunRoot::link_vm` and runs `remove_stale`, as the start of
+  `rust/crates/vmm/src/start.rs` does, so each restore moves the VM to
+  another slot. The ruleset grants no right to remove a file, so CH
   cannot unlink its own sockets, and a stale `vsock.sock` would fail the
   next start (fact 75).
 
 ## Known gaps
 
-- OPEN (open item 53, Q53-3), needs a decision row before #444 merges:
-  a restore cannot read the initramfs. CH v54 opens the initramfs of the snapshot config on a
-  restore, and `landlock::rules` grants the kernel and the initramfs
-  only for `Start::Boot`. So step 3 of `tests/kvm_vm.rs` fails with
-  `VM Restore failed: InitramfsFile(... PermissionDenied)` (CI run
-  42280123973, job `kvm`), and steps 3 to 5 never run. Decision CH60
-  rule 2 puts the initramfs in `store/<sha256>`, but no row says how a
-  restore names it to the ruleset. The ruleset stays as it is until a
-  row says so.
 - Closed by plan PRs L16b and L16c: lifecycle passes the slot of each
   start with `Launch::in_slot`, so no launch of the vmm fails with
   `LaunchError::NoSlot`. `rust/crates/vmm/src/main.rs` routes
