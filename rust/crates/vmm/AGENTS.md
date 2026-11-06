@@ -230,11 +230,16 @@ changes the state. So the late EOF of a replaced link changes nothing
 (decision CH19 (2), fact 74). A link close keeps the facade state,
 because it never stops the facade (decision CH19 (1)).
 
-After `ControlReady`, `ControlLink::event` reads each turn event that
-guest init relays (decision CH21). `ControlState::turn` applies each
+After `ControlReady`, `ControlLink::event` reads each `GuestEvent` that
+guest init sends (decisions CH21, CH62 rule 11): a `facade` line at each
+change of the facade state, a `synced` line, and each turn event of the
+facade nested in a `turn` line. `ControlState::turn` applies each turn
 event in memory: a start marks a turn running, and an end clears the
-mark. `ControlState::ready` keeps the facade state of each
-`ControlReady`. Both return a `Change`. `Change::Applied` holds the turn
+mark. `ControlState::report` keeps the facade state of each `facade`
+line, and `ControlState::ready` does the same for each `ControlReady`.
+The turn state then follows the flag of a `running` state, and any
+other state clears it, so a facade that exits mid-turn blocks no
+snapshot (decision CH62 rule 11). Each returns a `Change`. `Change::Applied` holds the turn
 end, if any, and the caller writes it with `Rows::turn_end` of
 `creche-vmm-store`. That write sets `updated_at`, and it sets the title
 only while the row has none (decision CH32 rule 4). So an end that a
@@ -243,8 +248,8 @@ write syncs a file and a dir, so the caller runs it in `spawn_blocking`
 (decision CH36 G21). A close of the link after `ControlReady` ends
 `event` with `ControlError::Ended`, which asks for no cold boot.
 `ControlState::turn_running` is the turn state for the sleep gate
-(decision CH19 (6)). The vmm keeps the facade state of the last ready,
-and turn events set `turn_running` (decision CH43 rule 8).
+(decision CH19 (6)). The vmm keeps the facade state that guest init
+reported last, and turn events set `turn_running`.
 `ControlLink::stop` sends the graceful stop
 `{"stop":{}}` (decision CH19 (3)).
 
@@ -252,9 +257,12 @@ and turn events set `turn_running` (decision CH43 rule 8).
 turn events and a `StopSender` for the graceful stop (plan PR L18b).
 `ColdBoot` splits the link when a start commits its VM. The table keeps
 the sender, and one task per VM runs the reader. The reader passes each
-event to `ControlState::turn` and writes each turn end with
-`Rows::turn_end` in `spawn_blocking`, as for a ready (decision CH32 rule
-4). A refused line ends the reader (decision CH43 rule 2). So does the
+`facade` line to `ControlState::report` and each turn event to
+`ControlState::turn`. It writes each turn end with `Rows::turn_end` in
+`spawn_blocking`, as for a ready (decision CH32 rule 4). No take sends
+`sync` yet, so a `synced` line has no waiter: the reader logs it and
+reads on (decision CH62 rule 23). Plan PR V9 sends `sync` and hands each
+`synced` to its take. A refused line ends the reader (decision CH43 rule 2). So does the
 close of the link, or an event of a replaced link. The reader holds the
 only strong handle of the stream, so its end closes the link. The sender
 then sends nothing, and a stop skips the graceful step (decision CH50
@@ -620,12 +628,12 @@ the passes on paused time.
 
 The last use of a VM is the latest of its start, its last door close
 and its last turn event (decision CH50 rule 5). `ControlState::turn`
-keeps the time of each turn event and `turn_seen`: a turn event arrived
-after the last `ControlReady`. A ready clears `turn_seen`. So a VM is up
-only after a ready said `running` or a turn event arrived (decision CH43
-rule 8). Admission reads the same gates. `tests/start.rs` proves the
-sleep, a turn or an open door that keeps a VM awake, `turn_seen` and its
-clear at a new ready, a door close through the acp handler as a use, a
+keeps the time of each turn event. A VM is up only while the facade
+state that guest init reported last is `running`, in a ready or in a
+later `facade` line (decisions CH32 rule 6, CH62 rule 11). Admission
+reads the same gates. `tests/start.rs` proves the sleep, a turn or an
+open door that keeps a VM awake, a `starting` VM that a `running` line
+opens, a door close through the acp handler as a use, a
 sweep that skips a generation in use, an eviction that outlives its
 dropped start, and an idle check that takes out one VM at a time.
 
@@ -705,13 +713,10 @@ no guest sync.
    may outlast the 60 s wait of the client (decision CH34 rule 5). The
    drop runs in its own task, so a client that hangs up cannot cancel
    it, and the retry waits for the same start.
-2. Decision CH43 rule 8: no line on the control link reports a change
-   of the facade state yet. The phase 3 guest init PR adds a line that
-   reports each change. Until then the sleep gate treats a VM as up only
-   after a ready said `running` or a turn event arrived. A VM after a
-   cold boot reports `not_started` or `starting` (decision CH34 rule 7),
-   so a gate that reads only the ready would never snapshot it.
-   `ControlState::turn_seen` holds the rule (plan PR L18).
+2. Closed by decision CH62 rule 11 (plan PR V1): guest init sends a
+   `facade` line at each change of the facade state, and the sleep gate
+   reads the state it reported last. The stand-in rule of decision CH43
+   rule 8, `ControlState::turn_seen`, is gone.
 3. Closed by decision CH54 rule 2: the deny check runs after
    `ControlReady` and before the dial of 1201 and the 101
    (`src/start.rs`). This departs from the order of plan PR L16, which
@@ -744,8 +749,8 @@ no guest sync.
    So `Retirer::retire` sends the graceful stop, as before L18b. The
    rest is caller duty 7.
 10. Closed by plan PR L18b: the turn reader calls `ControlState::turn`
-    for each event, so `turn_seen` and the last turn time follow the
-    guest (decisions CH43 rule 8, CH50 rule 5).
+    for each event, so the last turn time follows the guest (decision
+    CH50 rule 5).
 11. Closed by decision CH54 rule 5: the idle check runs every 30 s
     (`sleep::IDLE_CHECK`). So a VM sleeps between 5 min and 5 min 30 s
     after its last use.
@@ -808,14 +813,17 @@ no guest sync.
 7. Item 5.7 of the design and its item 42 note: lifecycle syncs the
    guest through the control link before each snapshot. The store gives
    that duty to lifecycle, before `Snapshotter::take` (`creche-vmm-store`
-   Known gaps, caller duty of PR D9). The phase 3 guest init PR that
-   adds the `sync` command sets `ChTools::GUEST_SYNCS` true. In the same
-   PR, `Retirer::retire` sends `sync` on the control link before each
-   take. Each other take, such as the shutdown snapshots of plan PR L19,
-   reads the same gate. A gate set true before the sync would let a take
-   end CH with no guest sync, and a cold boot after it (a key mismatch,
-   a failed restore, an `Aged` or a `Budget` sweep) would find the
-   session disk as a power cut leaves it.
+   Known gaps, caller duty of PR D9). Decision CH62 rule 23 replaces the
+   old wording "sets `GUEST_SYNCS` true". The wire has `sync` and
+   `synced` (plan PR V1). Plan PR V9 removes `ChApi::GUEST_SYNCS`, and
+   `Retirer::retire` then sends `sync` on the control link before each
+   take and waits `SYNC_WAIT` (10 s) for `synced`. No `synced` in time
+   means no snapshot, and the graceful stop runs. Each other take, such
+   as the shutdown snapshots of plan PR L19, syncs the same way. Until
+   V9, `GUEST_SYNCS` stays false for `ChTools`, so no take ends CH with
+   no guest sync. A take with no sync would leave the session disk as a
+   power cut leaves it, for each cold boot after it (a key mismatch, a
+   failed restore, an `Aged` or a `Budget` sweep).
 8. Held by `src/compose.rs` and `src/main.rs`: the compose step of plan
    PR L20 calls `shutdown::sigterm` at vmm start, inside the runtime,
    and runs `shutdown::shutdown` when the signal fires. A take runs in

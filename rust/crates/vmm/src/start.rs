@@ -76,7 +76,7 @@ use creche_vmm_store::rows::Rows;
 use creche_vmm_store::session_disk::SessionDisks;
 use creche_vmm_store::sleep_gate::Activity;
 use creche_vmm_store::stale::remove_stale;
-use creche_wire::{FamilyName, FamilyShape, PerFlavor, SessionId, SessionRow};
+use creche_wire::{FamilyName, FamilyShape, GuestEvent, PerFlavor, SessionId, SessionRow};
 use tokio::net::UnixStream;
 use tokio::sync::{RwLock, watch};
 use tokio::task::spawn_blocking;
@@ -774,7 +774,6 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         }
         let activity = Activity {
             facade: control.facade(session),
-            turn_seen: control.turn_seen(session),
             turn_running: control.turn_running(session),
             door_open: door == Door::Open,
             last_use,
@@ -1087,14 +1086,20 @@ async fn turn_end(rows: &Arc<Mutex<Rows>>, id: &SessionId, change: Change) {
     }
 }
 
-/// Reads the turn events of `events`, the control link `link` of the VM
-/// of `id`, until the link ends (plan PR L18b, decision CH21). Each event
-/// goes to `ControlState::turn`, which sets `turn_running` and `turn_seen`
-/// (decision CH43 rule 8) and the time of the last use (decision CH50 rule
-/// 5). Each turn end goes to the row (decision CH32 rule 4). The end of
-/// the reader drops the stream, so the link closes, and a stop then skips
-/// the graceful step (decision CH50 rule 3). An event of a replaced link
-/// ends the reader too.
+/// Reads the guest events of `events`, the control link `link` of the VM
+/// of `id`, until the link ends (plan PR L18b, decisions CH21, CH62 rule
+/// 11). A `facade` line goes to `ControlState::report`, which keeps the
+/// state for the sleep gate and clears `turn_running` when the facade
+/// leaves `running`. A turn event goes to `ControlState::turn`, which sets
+/// `turn_running` and the time of the last use (decision CH50 rule 5).
+/// Each turn end of either goes to the row (decision CH32 rule 4). The
+/// end of the reader drops the stream, so the link closes, and a stop
+/// then skips the graceful step (decision CH50 rule 3). An event of a
+/// replaced link ends the reader too.
+///
+/// No take sends `sync` yet, so a `synced` line has no waiter. The reader
+/// logs it and drops it (decision CH62 rule 23). Plan PR V9 sends `sync`
+/// and hands each `synced` to the take that waits for it.
 ///
 /// A refused line ends the reader (decision CH43 rule 2). It is a guest
 /// fault (decision CH54 rule 6): the reader logs the line with `id`, and
@@ -1102,7 +1107,7 @@ async fn turn_end(rows: &Arc<Mutex<Rows>>, id: &SessionId, change: Change) {
 /// stop sends SIGTERM, then SIGKILL. The VM leaves the table, so the next
 /// start of the session cold-boots (decision CH19 (5)). A later VM of the
 /// session has another link, so the stop leaves it alone.
-async fn read_turns<P: VmProcess>(
+async fn read_guest<P: VmProcess>(
     mut events: ControlLink<Arc<UnixStream>>,
     (id, link): (SessionId, LinkId),
     stopper: Stopper<P>,
@@ -1124,7 +1129,15 @@ async fn read_turns<P: VmProcess>(
                 break true;
             }
         };
-        let change = lock().turn(&id, link, &event);
+        let change = match event {
+            GuestEvent::Facade(facade) => lock().report(&id, link, facade),
+            GuestEvent::Turn(turn) => lock().turn(&id, link, &turn),
+            GuestEvent::Synced(_) if lock().link(&id) == Some(link) => {
+                eprintln!("vmm: the guest of {id} sent synced, and no sync waits");
+                continue;
+            }
+            GuestEvent::Synced(_) => Change::Stale,
+        };
         if change == Change::Stale {
             break false;
         }
@@ -1620,7 +1633,7 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         // graceful stop (decision CH19 (3)).
         let (sender, events) = control.split();
         let (stopper, rows) = (self.stopper(), Arc::clone(&self.rows));
-        tokio::spawn(read_turns(events, (id.clone(), link), stopper, rows));
+        tokio::spawn(read_guest(events, (id.clone(), link), stopper, rows));
         pending.commit(sender, link);
         Ok(acp)
     }
