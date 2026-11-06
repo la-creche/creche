@@ -15,10 +15,18 @@
 #      of the job reach the user manager, as the vmm unit does.
 #   4. It fetches the upstream static CH v54.0 and ch-remote (fact 71) and
 #      the CH guest kernel (fact 53), each checked by its sha256.
-#   5. It builds a busybox initramfs from `apt-get download busybox-static`.
+#   5. It builds guest-init and the stand-in facade static for musl, the
+#      one target of the vmm row (CH7-4, CH7-5). The job runs this script
+#      before its `toolchain` step, so the script installs the pinned
+#      toolchain and the musl target itself, with no workflow edit (CH62
+#      rule 3). It refuses a program with a PT_INTERP header. The stand-in
+#      is a test program in no release row (CH62 rule 12). It packs
+#      guest-init as /init in guest-init.cpio, with dev/console 5:1.
+#   6. It builds a busybox initramfs from `apt-get download busybox-static`.
 #      Its init writes the line CRECHE-KVM-BOOTED to the serial port, then
-#      `tick` once a second.
-#   6. It installs CH at /opt/components/vmm/bin/cloud-hypervisor and loads
+#      `tick` once a second. It keeps the static busybox program, which a
+#      kvm test packs into its own initramfs.
+#   7. It installs CH at /opt/components/vmm/bin/cloud-hypervisor and loads
 #      the slot profiles of rust/crates/vmm-confine/apparmor/
 #      cloud-hypervisor-slots.profile with the commands of design section
 #      6.1 step 1 (decisions CH8-1, CH55, gap G28 of CH36). It fails unless
@@ -31,7 +39,8 @@
 # (CH36 G19).
 #
 # The files land in CRECHE_KVM_DIR, which is absent or empty:
-#   cloud-hypervisor  ch-remote  vmlinux  initramfs.cpio
+#   cloud-hypervisor  ch-remote  vmlinux  initramfs.cpio  busybox
+#   guest-init  standin_facade  guest-init.cpio
 # The kvm_ tests read the same variable.
 #
 # `set -euo pipefail`: the first fault stops the run.
@@ -45,6 +54,7 @@ SLOT_PROFILES=$REPO/rust/crates/vmm-confine/apparmor/cloud-hypervisor-slots.prof
 RESTRICT=/proc/sys/kernel/apparmor_restrict_unprivileged_unconfined
 CH_URL=https://github.com/cloud-hypervisor/cloud-hypervisor/releases/download/v54.0
 KERNEL_URL=https://github.com/cloud-hypervisor/linux/releases/download/ch-release-v7.2.8-20261009
+MUSL=x86_64-unknown-linux-musl
 
 say() { printf 'vm-smoke-setup: %s\n' "$*"; }
 die() {
@@ -96,6 +106,35 @@ edfeb8a8a6c04ff2979e9f1c700feaa29b8f564f952261834ef0b7d2e673a853  vmlinux
 EOF
 chmod 0755 cloud-hypervisor ch-remote
 
+say "build guest-init and the stand-in facade static for $MUSL"
+# In rust/, rustup reads the pinned toolchain from rust-toolchain.toml.
+(
+  cd "$REPO/rust"
+  rustup toolchain install --no-self-update
+  rustup target add "$MUSL"
+  cargo build --locked --release --target "$MUSL" \
+    -p creche-guest-init --bin guest-init --example standin_facade
+)
+built=$REPO/rust/target/$MUSL/release
+install -m 0755 "$built/guest-init" guest-init
+install -m 0755 "$built/examples/standin_facade" standin_facade
+for program in guest-init standin_facade; do
+  # A static program has no PT_INTERP header. The guest has no loader.
+  headers=$(readelf -lW "$program")
+  if grep -Eq '^[[:space:]]+INTERP[[:space:]]' <<< "$headers"; then
+    die "$program names a program interpreter: it is not static"
+  fi
+done
+say "guest-init and standin_facade are static"
+work=$(mktemp -d "$dir/guest-init.XXXXXX")
+mkdir -p "$work/root/dev"
+install -m 0755 guest-init "$work/root/init"
+# The kernel opens /dev/console for PID 1 before any devtmpfs mount.
+sudo mknod -m 0600 "$work/root/dev/console" c 5 1
+# `-R 0:0`: root owns each entry, as on a booted root disk.
+(cd "$work/root" && find . | cpio -o -H newc -R 0:0 --quiet) > guest-init.cpio
+rm -rf "$work"
+
 say "build the busybox initramfs"
 sudo apt-get update -qq
 work=$(mktemp -d "$dir/busybox.XXXXXX")
@@ -106,6 +145,7 @@ mkdir -p "$work/root/bin" "$work/root/proc"
 busybox=$(find "$work/deb" -type f -name busybox | head -n 1)
 [[ -n "$busybox" ]] || die "busybox-static holds no busybox program"
 cp "$busybox" "$work/root/bin/busybox"
+install -m 0755 "$busybox" busybox
 printf '%s\n' '#!/bin/busybox sh' '/bin/busybox --install -s /bin' \
   'mount -t proc proc /proc' 'echo CRECHE-KVM-BOOTED' \
   'while :; do echo tick; sleep 1; done' > "$work/root/init"
@@ -128,4 +168,5 @@ for label in "${labels[@]}"; do
 done
 say "${#labels[@]} slot labels in enforce mode"
 
+df -h /
 say "ready in $dir"
