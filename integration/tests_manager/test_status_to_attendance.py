@@ -59,14 +59,6 @@ def test_the_reader_finds_the_sandbox_id(reader: StatusReader) -> None:
     assert status.sandboxes[0].index == 1
 
 
-def test_the_reader_takes_the_credential_epoch(reader: StatusReader) -> None:
-    """Contract 03 §12.5: the epoch rides on the channel, so a wrong one
-    would make the playpen refuse every turn."""
-    status = reader.read(FAMILY)
-    assert status is not None
-    assert status.epoch == 1
-
-
 def test_the_document_is_not_stale_when_written(reader: StatusReader) -> None:
     status = reader.read(FAMILY)
     assert status is not None

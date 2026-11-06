@@ -13,6 +13,29 @@ table of the three vmm crates.
 - `launch::run` is the mode `vmm launch`. `rust/crates/vmm/src/main.rs`
   calls it, so a change here never edits that file. `launch::MODE` holds
   the same word as main.rs. Lifecycle may make main.rs read it.
+- `stage::run` is the mode `vmm launch-stage <plan>` (mechanism X,
+  decision CH55, which amends CH30). The launch step execs `systemd-run`
+  with the stage as the scope payload: the resolved path of
+  `/proc/self/exe` (decision CH57 rule 5, no new config key),
+  `stage::MODE` and the stage plan as one JSON argument. After a release
+  renames the old binary to `.prev` (fact 56), the path names `.prev`. A
+  deleted binary fails the launch closed. The stage then runs four steps
+  in this order, and the first failure starts no CH:
+  1. It writes `exec creche-ch-slot-<k>` to
+     `/proc/self/attr/apparmor/exec`, or to `/proc/self/attr/exec` when
+     the first is missing. Any other error fails the launch closed.
+  2. It sets no_new_privs and reads it back.
+  3. It applies the Landlock ruleset of the VM.
+  4. It execs CH.
+  Before step 1 it checks that the death signal is still SIGKILL. A
+  launch needs `Launch::in_slot`, and the launch step refuses a launch
+  with no slot (`LaunchError::NoSlot`). `stage::run` is the one entry,
+  and it always writes the real exec attribute (decision CH58 rule 1).
+  No entry skips the slot label, in production or in a test.
+- The pid stays the same through the four execs: the launch step,
+  `systemd-run`, the stage and CH (fact 80). The kernel keeps the death
+  signal through an exec that is not a secure exec and changes no uid,
+  gid or capability. No exec of the chain does either.
 - The crate reads no env key. Lifecycle (plan PR L20) passes each host
   path from the vmm config (owner env rule, decision CH36 G5): the
   `systemd-run` program of `launch::Launch`, from the existing key
@@ -72,9 +95,10 @@ table of the three vmm crates.
   failed scope blocks `systemd-run --unit` with its name. The last list
   decides: a unit still loaded then is an error. The vmm config gives the
   path of `systemctl`, like the path of `systemd-run`.
-- The Landlock ruleset of a VM confines the launch step from its last
-  step on, then `systemd-run` and Cloud Hypervisor (decisions CH8-3,
-  CH30). The vmm process is never confined, so the `zstd` and `mke2fs`
+- The Landlock ruleset of a VM confines the launch stage from its step 3
+  on, then Cloud Hypervisor (decisions CH8-3, CH30, CH55). `systemd-run`
+  runs before it, so the ruleset has no rule for it. The vmm process is
+  never confined, so the `zstd` and `mke2fs`
   that the store runs need no rule. Every path of a rule exists before
   the launch. A missing path or a kernel below Landlock ABI 4 fails the
   launch. All Landlock calls sit behind `cfg(target_os = "linux")`
@@ -89,11 +113,14 @@ table of the three vmm crates.
   exactly the `vsock.sock_<port>` listeners of the host ports that the
   vmm bound for the family. Any failure is the fault
   `egress_assert_failed`.
-- `admission::decide` is a pure decision (decisions CH8-6, CH8-7). Free
-  bytes below the floor give `HostFull`. The configured guest RAM of the
-  running VMs plus the RAM wanted at or below the cap gives `Admit`. Else
-  the idle VMs, least recently used first, either free enough RAM
-  (`EvictFirst`) or not (`HostFull`, and no VM stops). The floor must
+- `admission::decide` is a pure decision (decisions CH8-6, CH8-7, CH58
+  rule 2). Free bytes below the floor give `HostFull`. The configured
+  guest RAM of the running VMs plus the RAM wanted at or below the cap,
+  with a free slot, gives `Admit`. Else the idle VMs, least recently used
+  first, either free enough RAM and one slot when none is free
+  (`EvictFirst`) or not (`HostFull`, and no VM stops). A full slot pool
+  counts like a full RAM cap: it needs one eviction at least, and with no
+  idle VM it gives `HostFull` with `Full::Slots`. The floor must
   hold after the writes that admission causes (decision CH42 rule 3).
   The snapshot of each evicted VM writes its whole guest RAM (fact 72),
   so admission subtracts that RAM from the free bytes before it compares
@@ -108,30 +135,55 @@ table of the three vmm crates.
   while a fault is open, `clear` on a `ControlReady` of the family, and
   `start` at vmm start, which writes an empty list into every file. Each
   time is RFC 3339 in UTC to the second, from `rfc3339::format`.
-- The process tests need Landlock ABI 4 and `/dev/kvm`. The host and the
-  ubuntu-24.04 runner have both (facts 77, 79).
+- `slot_profile::render_file` makes
+  `apparmor/cloud-hypervisor-slots.profile`, one AppArmor profile
+  `creche-ch-slot-<k>` for each slot of `creche_vmm_store::layout::SLOTS`
+  (mechanism X, decisions CH51, CH55). The crate never defines its own
+  `Slot`. No profile has an attachment path. Each names the one installed
+  CH, the run dir `/run/user/[0-9]*/vmm/slot/<k>/` and its own signal
+  label only. The state root rules name the default
+  `@{HOME}/.local/state/creche-vmm/` through `include <tunables/global>`
+  (decision CH50 rule 11). The test `tests/slot_profile.rs` holds the
+  committed file equal to the generator. After a change, run
+  `CRECHE_SLOT_PROFILES=write cargo test -p creche-vmm-confine --test
+  slot_profile` in rust/ and commit the file. David installs it at
+  `/etc/apparmor.d/opt.components.vmm.bin.cloud-hypervisor` (design
+  section 6.1 step 1, decision CH36 gap G28 option A). Each change of
+  the file needs a sudo reload on the host by David (design section 6.1
+  step 2).
+- The process tests `tests/launch.rs` and `tests/landlock.rs` run the
+  real launch stage on a host with no slot profile, as the job `rust` of
+  gate.yml is. There each launch fails closed at the label step with
+  `StageError::Enter`, and no payload starts (decision CH58 rule 1).
 - A test that boots CH has a name that holds `kvm_` and carries
   `#[ignore]` (decisions CH8-4, CH36 G19). The job `kvm` of gate.yml runs
   every such test of the workspace after `bin/vm-smoke-setup.sh`. The test
   reads CH, ch-remote, the kernel and the busybox initramfs from the
   directory in `CRECHE_KVM_DIR`, and fails when it is not set.
-- `apparmor/cloud-hypervisor.profile` is the AppArmor profile
-  `creche-cloud-hypervisor` of `/opt/components/vmm/bin/cloud-hypervisor`
-  (decision CH8-1, gap G28). It allows Unix stream sockets, denies every
-  abstract address, and has no `network` rule, so CH gets no inet socket.
-  The file rules mediate a pathname socket, so the write rules are the
-  socket allow list: the VM run dir files of PR D1 under
-  `/run/user/<uid>/vmm/vm/*/`, with one `vsock.sock_*` pattern (decision
-  CH24), and the state names of decision CH39 rule 3. `tests/profile.rs`
-  holds each rule equal to the layout names. A rename there needs an edit
-  of the profile and David's sudo reload (design section 6.1 step 2).
-  Agents never install it on the host.
-- The job `kvm` installs CH at that path and loads the profile with the
-  runner's sudo (decision CH36 G20). `tests/kvm_apparmor.rs` starts the
-  installed CH through `setpriv --no-new-privs`: CH boots under the
-  profile, and its `--tpm socket=` connect reaches a `vsock.sock_<port>`
-  listener, but not `vmm.sock` or the user bus. The other kvm_ tests run
-  the copy in `CRECHE_KVM_DIR`, which no profile confines.
+- The job `kvm` installs CH at `slot_profile::CH_BINARY` and loads the
+  slot profiles at the install path above with the runner's sudo
+  (decision CH36 G20). It fails unless each label of the file is in
+  enforce mode. `tests/kvm_slot.rs` starts each CH through the real chain
+  of the vmm: the spawner, the launch step, `systemd-run --user --scope`,
+  the launch stage and CH. Each VM takes a slot through
+  `RunRoot::link_vm`, under the real run root and the default state
+  root. Each test has a control, and together they prove decision CH58
+  rule 1:
+  1. CH runs under `creche-ch-slot-<k>`, with no_new_privs set, the core
+     limit 0 and the scope of its VM. CH with no chain runs unconfined.
+  2. The ruleset lets CH read the root disk and write the session disk.
+     It denies a write of the root disk and a read outside the VM files,
+     at paths that the slot profile allows (decisions CH8-3, CH8-8). CH
+     makes no TCP connect, and a slot label opens no inet socket, TCP or
+     UDP (decision CH8-1, fact 77).
+  3. CH in one slot connects to no listener of another slot, to no
+     `api.sock` or `vsock.sock` of a live CH in another slot, and not to
+     `vmm.sock` or the user bus. One slot cannot signal the CH of another
+     slot (decision CH51).
+  4. CH dies with the spawner thread and with a killed vmm (fact 80).
+     `Launched::terminate` sends SIGTERM.
+  5. The output of each CH reaches the sink tagged `ch <session id>`.
+  `tests/kvm_boot.rs` runs the copy in `CRECHE_KVM_DIR` with no chain.
 - `tests/kvm_vm.rs` runs one VM through the crate and the store (decision
   CH8-4, plan PR C16). The example `launch_chain` in its role `hold` plays
   the vmm with the real `systemd-run`: a cold boot in the scope with the
@@ -144,35 +196,15 @@ table of the three vmm crates.
 
 ## Known gaps
 
-- Landlock ABI 4 covers neither UDP nor Unix sockets (fact 77). The
-  AppArmor profile closes both, but on the host only after David's sudo
-  install (design section 6.1 step 1). Phase 8 checks it with
-  `aa-status`. Until then CH on the host can reach both.
-- CONTRACT-QUESTION (decisions CH8-1, CH24): the run dir rules of the
-  AppArmor profile match `vm/*/`, because one static profile cannot tell
-  VMs apart. So each CH may connect to the `api.sock`, `vsock.sock` and
-  `vsock.sock_<port>` listeners of every VM, also of another family.
-  Landlock ABI 4 does not cover AF_UNIX (fact 77), so no other layer
-  stops it. CH8-1 says "its own" sockets, and CH24 decides only the port
-  wildcard. David decides whether this reading of "its own" holds.
-- CONTRACT-QUESTION (decisions CH8-1, CH39 rule 3): no row sets the
-  default of the state root (plan PR L20). The state rules of the profile
-  match `store/*`, `sessions/*/disk.ext4` and `sessions/*/snapshots/**`
-  under any root. This widens the socket deny of CH8-1: `w` on a
-  pathname socket allows a connect, so CH may connect to any socket of
-  the owner at a path that matches `**/sessions/*/disk.ext4` or lies
-  under `**/sessions/*/snapshots/`. A rule that names one root needs a
-  fixed root (plan PR L20) or a variable that the install of design
-  section 6.1 sets, and a sudo reload.
-- CONTRACT-QUESTION (decision CH8-1): the launch step passes the stdout
-  and stderr of the vmm to CH. Under the unit they may be a stream socket
-  of the journal. AppArmor checks each inherited file at the exec, and no
-  rule names a journal socket, so the kernel may replace them with a null
-  file and drop the error lines of CH. No row decides whether CH may
-  write to the journal. The runner does not test it.
-- The profile reads only `store/*` for a kernel or an initramfs. Phase 3
-  writes the initramfs at VM start (decision CH7-6) in a place that no row
-  names yet. A file outside the store needs a rule and a sudo reload.
+- Closed by plan PRs L16b and L16c: lifecycle passes the slot of each
+  start with `Launch::in_slot`, so no launch of the vmm fails with
+  `LaunchError::NoSlot`. `rust/crates/vmm/src/main.rs` routes
+  `stage::MODE` with its one plan argument to `stage::run`. C18, L16b
+  and L16c are in one PR.
+- Decision CH50 rule 11 wants a test that holds the state root of the
+  slot profiles equal to the env default. The env key comes with plan PR
+  L20, so that test comes with it. Until then `slot_profile::STATE_ROOT`
+  holds the default alone.
 - Lifecycle must make two dirs before each launch, because the ruleset
   opens each path and a missing one fails the launch with
   `RulesetError::Open`: the VM run dir `<run root>/vm/<id>/` and the
@@ -209,6 +241,10 @@ table of the three vmm crates.
   the value `vmm` in the `source` enum of §3.3, and the reader. caregiver
   reads only the `attendance` and `pep` files today, so it ignores the
   vmm file.
+- The slot profiles read only `store/*` for a kernel or an initramfs.
+  Decision CH7-6 has the vmm write the initramfs of guest init at VM
+  start, in a place that no row names yet. A file outside the store needs
+  a rule in `slot_profile.rs` and David's sudo reload.
 - Gap G23 sets `serial.log` to mode 0600. CH makes the file with the
   umask of the launch step, and the crate sets no umask. A `UMask=` in
   the unit of plan PR C13, or a file that lifecycle makes first in plan

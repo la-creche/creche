@@ -7,7 +7,11 @@ use std::{fmt, io};
 pub mod control;
 pub mod handlers;
 pub mod relay;
+pub mod restore;
 pub mod server;
+pub mod shutdown;
+pub mod sleep;
+pub mod start;
 pub mod stop;
 
 /// Why the host API server stopped or did not start.

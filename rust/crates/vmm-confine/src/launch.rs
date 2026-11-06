@@ -4,11 +4,13 @@
 //!
 //! The step reads its plan as JSON on fd 0. It then sets
 //! `PR_SET_PDEATHSIG` to SIGKILL, checks that its parent is still the
-//! spawner, sets `RLIMIT_CORE` to 0, applies the Landlock ruleset of the
-//! VM and execs `systemd-run` (decisions CH19 (4), CH8-5, CH36 G3 and G27,
-//! CH30).
+//! spawner, sets `RLIMIT_CORE` to 0 and execs `systemd-run` (decisions
+//! CH19 (4), CH8-5, CH36 G3 and G27). The payload of the scope is the
+//! launch stage of `stage`, which enters the slot label, applies the
+//! Landlock ruleset and execs CH (decision CH55, which amends CH30).
 
 use std::convert::Infallible;
+use std::ffi::OsString;
 use std::fmt;
 use std::fs::File;
 use std::io::{self, Read};
@@ -16,10 +18,13 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use creche_vmm_store::layout::Slot;
 use serde::{Deserialize, Serialize};
 
 use crate::landlock::VmFiles;
 use crate::scope::Scope;
+use crate::spawner::SELF_EXE;
+use crate::stage::{SlotNumber, Stage};
 
 /// The argument of the launch mode. `rust/crates/vmm/src/main.rs` parses
 /// the same word.
@@ -111,8 +116,8 @@ impl Payload {
 }
 
 /// What one launch starts: the payload in its scope, through the
-/// `systemd-run` at a path that the vmm config gives, under the Landlock
-/// ruleset of `files`.
+/// `systemd-run` at a path that the vmm config gives, under the slot label
+/// of `slot` and the Landlock ruleset of `files` (decision CH55).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Launch {
@@ -120,11 +125,13 @@ pub struct Launch {
     scope: Scope,
     payload: Payload,
     files: VmFiles,
+    slot: Option<SlotNumber>,
 }
 
 impl Launch {
     /// The launch of `payload` in `scope` through `systemd_run`, with
-    /// access to `files` only.
+    /// access to `files` only. It has no slot yet, and the launch step
+    /// refuses it with `LaunchError::NoSlot` until `in_slot` gives one.
     #[must_use]
     pub fn new(systemd_run: Program, scope: Scope, payload: Payload, files: VmFiles) -> Self {
         Self {
@@ -132,7 +139,24 @@ impl Launch {
             scope,
             payload,
             files,
+            slot: None,
         }
+    }
+
+    /// The same launch in `slot`, whose label the payload runs under
+    /// (decision CH55). Lifecycle passes the slot that `vm/<id>` links to.
+    #[must_use]
+    pub fn in_slot(self, slot: Slot) -> Self {
+        Self {
+            slot: Some(SlotNumber(slot)),
+            ..self
+        }
+    }
+
+    /// The slot, if `in_slot` gave one.
+    #[must_use]
+    pub fn slot(&self) -> Option<Slot> {
+        self.slot.map(|slot| slot.0)
     }
 
     /// The `systemd-run` program.
@@ -199,8 +223,14 @@ pub enum LaunchError {
     SpawnerGone,
     /// The kernel refused `RLIMIT_CORE` 0.
     CoreLimit(io::Error),
-    /// The Landlock ruleset is not in force (decision CH30).
-    Landlock(crate::landlock::RulesetError),
+    /// The launch has no slot, so the payload would run under no slot
+    /// label (decision CH55).
+    NoSlot,
+    /// The path of the running vmm binary, the program of the launch
+    /// stage, did not read, or its file is deleted.
+    SelfExe(io::Error),
+    /// The stage plan did not serialize.
+    StagePlan(serde_json::Error),
     /// The open of `/dev/null`, the stdin of `systemd-run`, failed.
     NullInput(io::Error),
     /// The exec of `systemd-run` failed.
@@ -218,7 +248,9 @@ impl fmt::Display for LaunchError {
             Self::DeathSignal(error) => write!(formatter, "setting the death signal: {error}"),
             Self::SpawnerGone => formatter.write_str("the vmm exited before the launch"),
             Self::CoreLimit(error) => write!(formatter, "setting the core limit: {error}"),
-            Self::Landlock(error) => write!(formatter, "applying the Landlock ruleset: {error}"),
+            Self::NoSlot => formatter.write_str("the launch has no slot"),
+            Self::SelfExe(error) => write!(formatter, "reading {SELF_EXE}: {error}"),
+            Self::StagePlan(error) => write!(formatter, "serializing the stage plan: {error}"),
             Self::NullInput(error) => write!(formatter, "opening {NULL}: {error}"),
             Self::Exec(error) => write!(formatter, "running systemd-run: {error}"),
         }
@@ -252,20 +284,43 @@ pub fn run() -> Result<Infallible, LaunchError> {
     rustix::process::setrlimit(rustix::process::Resource::Core, no_core)
         .map_err(|errno| LaunchError::CoreLimit(errno.into()))?;
 
-    // The ruleset has no rule for /dev/null, so the step opens the new
-    // stdin first. The ruleset comes last, so no step before the exec
-    // runs under it.
     let null = File::open(NULL).map_err(LaunchError::NullInput)?;
-    let launch = plan.launch;
-    restrict(&launch)?;
+    let args = systemd_run_args(&plan.launch, stage_program()?)?;
 
-    // Fds 1 and 2 stay the output pipe of the spawner, so `systemd-run`
-    // and CH write their lines there (decision CH50 rule 12).
-    let error = Command::new(launch.systemd_run.path())
-        .args(launch.scope.systemd_run_args(&launch.payload))
+    // Fds 1 and 2 stay the output pipe of the spawner, so `systemd-run`,
+    // the stage and CH write their lines there (decision CH50 rule 12).
+    let error = Command::new(plan.launch.systemd_run.path())
+        .args(args)
         .stdin(null)
         .exec();
     Err(LaunchError::Exec(error))
+}
+
+/// The arguments of `systemd-run` for `launch`. The scope payload is
+/// `stage` in the stage mode with the stage plan (decision CH55).
+pub(crate) fn systemd_run_args(
+    launch: &Launch,
+    stage: Program,
+) -> Result<Vec<OsString>, LaunchError> {
+    let slot = launch.slot().ok_or(LaunchError::NoSlot)?;
+    let plan = Stage::new(slot, launch.payload.clone(), launch.files.clone());
+    let payload = plan.command(stage).map_err(LaunchError::StagePlan)?;
+    Ok(launch.scope.systemd_run_args(&payload))
+}
+
+/// The path of the running vmm binary, the program of the launch stage
+/// (decision CH57 rule 5). It needs no new key in the vmm config. The
+/// launch step runs it through `SELF_EXE`, but `systemd-run` would
+/// resolve `SELF_EXE` to itself, so the stage gets the resolved path. A
+/// release renames the old file to `.prev` (fact 56), and the link then
+/// names `.prev`, the binary of this plan. A deleted file fails the
+/// launch closed.
+fn stage_program() -> Result<Program, LaunchError> {
+    let path = std::fs::read_link(SELF_EXE).map_err(LaunchError::SelfExe)?;
+    if path.as_os_str().as_encoded_bytes().ends_with(b" (deleted)") {
+        return Err(LaunchError::SelfExe(io::ErrorKind::NotFound.into()));
+    }
+    Program::new(path).map_err(|error| LaunchError::SelfExe(io::Error::other(error)))
 }
 
 /// Reads the whole plan from fd 0. The spawner closes its end of the pipe
@@ -287,8 +342,8 @@ fn read_plan() -> Result<Plan, LaunchError> {
 }
 
 /// Sets SIGKILL as the death signal of this process (decision CH19 (4)).
-/// The signal stays through the exec of `systemd-run` and of the payload
-/// (fact 76).
+/// The signal stays through the execs of `systemd-run`, the stage and CH
+/// (facts 76 and 80). The `stage` module says why.
 #[cfg(target_os = "linux")]
 fn set_death_signal() -> Result<(), LaunchError> {
     let kill = Some(rustix::process::Signal::KILL);
@@ -302,26 +357,78 @@ fn set_death_signal() -> Result<(), LaunchError> {
     Err(LaunchError::NotLinux)
 }
 
-/// Applies the Landlock ruleset of `launch` (decisions CH8-3 and CH30).
-/// It stays through the exec of `systemd-run` and of the payload.
-#[cfg(target_os = "linux")]
-fn restrict(launch: &Launch) -> Result<(), LaunchError> {
-    let rules =
-        crate::landlock::rules(&launch.files, &launch.systemd_run, launch.payload.program());
-    crate::landlock::restrict(&rules).map_err(LaunchError::Landlock)
-}
-
-/// No other host has Landlock (decision CH38).
-#[cfg(not(target_os = "linux"))]
-fn restrict(_launch: &Launch) -> Result<(), LaunchError> {
-    Err(LaunchError::NotLinux)
-}
-
 #[cfg(test)]
 mod tests {
+    use std::num::{NonZeroU32, NonZeroU64};
     use std::path::PathBuf;
 
-    use super::{NotAbsolute, Payload, Program};
+    use creche_vmm_store::layout::{RunRoot, Slot, StateRoot};
+
+    use super::{Launch, LaunchError, NotAbsolute, Payload, Program};
+    use crate::landlock::{HostPath, Start, VmFiles};
+    use crate::scope::Scope;
+
+    const ID: &str = "0123abcd-0000-4000-8000-00000000c18a";
+    const VMM: &str = "/opt/components/vmm/bin/vmm";
+
+    /// A restore of CH through `/usr/bin/systemd-run`, with no slot.
+    fn launch() -> Launch {
+        let id = ID.parse().unwrap();
+        let session = StateRoot::new(PathBuf::from("/state"))
+            .unwrap()
+            .session(&id);
+        let run = RunRoot::new(PathBuf::from("/run/vmm")).unwrap().vm(&id);
+        let root = HostPath::new(PathBuf::from("/state/store/root")).unwrap();
+        let files = VmFiles::new(Start::Restore, root, &session, &run).unwrap();
+        let ch = Program::new(PathBuf::from("/opt/components/vmm/bin/cloud-hypervisor")).unwrap();
+        let payload = Payload::new(ch, vec!["--restore".to_owned()]);
+        let scope = Scope::new(
+            id,
+            NonZeroU64::new(1 << 30).unwrap(),
+            NonZeroU32::new(100).unwrap(),
+        );
+        let systemd_run = Program::new(PathBuf::from("/usr/bin/systemd-run")).unwrap();
+        Launch::new(systemd_run, scope, payload, files)
+    }
+
+    fn vmm() -> Program {
+        Program::new(PathBuf::from(VMM)).unwrap()
+    }
+
+    #[test]
+    fn the_scope_payload_is_the_stage_with_its_plan() {
+        let launch = launch().in_slot(Slot::new(7).unwrap());
+        let args = super::systemd_run_args(&launch, vmm()).unwrap();
+        let split = args.iter().position(|arg| arg == "--").unwrap();
+        let (scope, payload) = args.split_at(split);
+        let limits = launch
+            .scope()
+            .systemd_run_args(&Payload::new(vmm(), Vec::new()));
+        assert_eq!(scope, &limits[..split]);
+        let [_, program, mode, plan] = payload else {
+            panic!("{payload:?}");
+        };
+        assert_eq!(
+            (program.as_os_str(), mode.as_os_str()),
+            (VMM.as_ref(), "launch-stage".as_ref())
+        );
+        let plan: serde_json::Value = serde_json::from_str(plan.to_str().unwrap()).unwrap();
+        assert_eq!(plan["slot"], 7);
+        assert_eq!(
+            plan["payload"],
+            serde_json::to_value(launch.payload()).unwrap()
+        );
+        assert_eq!(plan["files"], serde_json::to_value(launch.files()).unwrap());
+    }
+
+    #[test]
+    fn a_launch_with_no_slot_is_refused() {
+        let error = super::systemd_run_args(&launch(), vmm());
+        assert!(matches!(error, Err(LaunchError::NoSlot)), "{error:?}");
+        assert_eq!(launch().slot(), None);
+        let json = serde_json::to_value(launch()).unwrap();
+        assert_eq!(json["slot"], serde_json::Value::Null);
+    }
 
     #[test]
     fn a_program_path_is_absolute() {
@@ -336,6 +443,16 @@ mod tests {
         let json = r#"{"program":"/usr/bin/sleep","args":["60"]}"#;
         let payload: Payload = serde_json::from_str(json).unwrap();
         assert_eq!(payload.args(), ["60"]);
+    }
+
+    /// `systemd-run` would resolve `SELF_EXE` to itself, so the stage
+    /// program is the resolved binary (decision CH55).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_stage_program_is_the_resolved_binary() {
+        let program = super::stage_program().unwrap();
+        assert_eq!(program.path(), std::env::current_exe().unwrap());
+        assert_ne!(program.path(), std::path::Path::new(super::SELF_EXE));
     }
 
     #[cfg(not(target_os = "linux"))]

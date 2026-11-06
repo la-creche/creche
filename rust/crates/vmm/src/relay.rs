@@ -22,7 +22,7 @@ use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::UnixStream;
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
 use tokio::time::{Instant, timeout};
 
 use crate::control::{ControlError, READY_WAIT, dial};
@@ -36,12 +36,29 @@ const PIPE_BUFFER: usize = 16 * 1024;
 #[derive(Debug)]
 enum Slot {
     /// The claim `claim` holds the session. `stop` is its stop signal.
+    /// `ended` closes when the claim ends.
     Open {
         claim: u64,
-        stop: oneshot::Sender<()>,
+        stop: oneshot::Sender<Stopped>,
+        ended: watch::Receiver<()>,
     },
-    /// This many drops of the session run.
-    Dropping(usize),
+    /// This many drops of the session run. `ended` closes when the claim
+    /// that the first drop stopped ends, if one held the session.
+    Dropping {
+        drops: usize,
+        ended: Option<watch::Receiver<()>>,
+    },
+}
+
+/// What stopped a claim. The acp handler answers each one in its own way
+/// before 101.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stopped {
+    /// A drop marked the session (`not_found`, decision CH34 rule 6).
+    Drop,
+    /// Admission closed the door to evict the VM (`host_full`, decisions
+    /// CH19 (6), CH21-3).
+    Evict,
 }
 
 /// Why a claim failed.
@@ -96,15 +113,17 @@ impl Relays {
         let mut registry = self.registry();
         match registry.slots.get(id) {
             Some(Slot::Open { .. }) => return Err(Taken::Busy),
-            Some(Slot::Dropping(_)) => return Err(Taken::Dropping),
+            Some(Slot::Dropping { .. }) => return Err(Taken::Dropping),
             None => {}
         }
         registry.next = registry.next.wrapping_add(1);
         let claim = registry.next;
         let (sender, stop) = oneshot::channel();
+        let (ends, ended) = watch::channel(());
         let slot = Slot::Open {
             claim,
             stop: sender,
+            ended,
         };
         registry.slots.insert(id.clone(), slot);
         Ok(Claim {
@@ -112,7 +131,9 @@ impl Relays {
             id: id.clone(),
             claim,
             stop,
+            stopped: None,
             admitted: false,
+            _ends: ends,
         })
     }
 
@@ -131,6 +152,34 @@ impl Relays {
             .map_or(Door::NotOpened, |&at| Door::ClosedAt(at))
     }
 
+    /// Stops the open relay of `id`, if any, and waits until its claim
+    /// ends. Admission does so before it evicts the VM, and the client
+    /// reconnects with `session/load` (decision CH19 (6)). The slot goes
+    /// at once, so a new Upgrade may claim the session. Its start then
+    /// finds the VM under eviction.
+    pub async fn close(&self, id: &SessionId) {
+        let ended = {
+            let mut registry = self.registry();
+            match registry.slots.remove(id) {
+                Some(Slot::Open { stop, ended, .. }) => {
+                    // An Err means the relay ended already.
+                    let _ = stop.send(Stopped::Evict);
+                    Some(ended)
+                }
+                Some(slot) => {
+                    registry.slots.insert(id.clone(), slot);
+                    None
+                }
+                None => None,
+            }
+        };
+        if let Some(mut ended) = ended {
+            // No sender ever sends, so `changed` returns only when the
+            // claim drops its sender.
+            let _ = ended.changed().await;
+        }
+    }
+
     /// Marks a drop of `id` and stops its open relay, if any (decision
     /// CH26 rule 5). The mark lasts until `DropMark` drops. The drop
     /// keeps it until the row of `id` is gone, so no Upgrade starts a VM
@@ -140,19 +189,24 @@ impl Relays {
         // A dropped session needs no door time, and no claim can add one
         // under the mark.
         registry.closed.remove(id);
-        let drops = match registry.slots.remove(id) {
-            Some(Slot::Dropping(drops)) => drops.saturating_add(1),
-            Some(Slot::Open { stop, .. }) => {
+        let (drops, ended) = match registry.slots.remove(id) {
+            Some(Slot::Dropping { drops, ended }) => (drops.saturating_add(1), ended),
+            Some(Slot::Open { stop, ended, .. }) => {
                 // An Err means the relay ended already.
-                let _ = stop.send(());
-                1
+                let _ = stop.send(Stopped::Drop);
+                (1, Some(ended))
             }
-            None => 1,
+            None => (1, None),
         };
-        registry.slots.insert(id.clone(), Slot::Dropping(drops));
+        let slot = Slot::Dropping {
+            drops,
+            ended: ended.clone(),
+        };
+        registry.slots.insert(id.clone(), slot);
         DropMark {
             relays: self.clone(),
             id: id.clone(),
+            ended,
         }
     }
 }
@@ -163,10 +217,15 @@ pub struct Claim {
     relays: Relays,
     id: SessionId,
     claim: u64,
-    stop: oneshot::Receiver<()>,
+    stop: oneshot::Receiver<Stopped>,
+    /// What stopped the claim, once `stop_reason` read it.
+    stopped: Option<Stopped>,
     /// Whether the Upgrade passed each check and its VM started. Only an
     /// admitted claim records a door close when it ends.
     admitted: bool,
+    /// Its drop closes the `ended` link of the slot, so a drop that
+    /// stopped the claim learns that it ended (`DropMark::claim_ended`).
+    _ends: watch::Sender<()>,
 }
 
 impl Claim {
@@ -175,13 +234,22 @@ impl Claim {
         self.admitted = true;
     }
 
-    /// Whether a drop stopped the claim. A sent stop and a dropped sender
-    /// both count.
+    /// Whether a drop or an eviction stopped the claim.
     pub fn stopped(&mut self) -> bool {
-        !matches!(
-            self.stop.try_recv(),
-            Err(oneshot::error::TryRecvError::Empty)
-        )
+        self.stop_reason().is_some()
+    }
+
+    /// What stopped the claim, if anything did. A dropped sender with no
+    /// reason counts as a drop, as before the reasons existed.
+    pub fn stop_reason(&mut self) -> Option<Stopped> {
+        if self.stopped.is_none() {
+            self.stopped = match self.stop.try_recv() {
+                Ok(reason) => Some(reason),
+                Err(oneshot::error::TryRecvError::Empty) => None,
+                Err(oneshot::error::TryRecvError::Closed) => Some(Stopped::Drop),
+            };
+        }
+        self.stopped
     }
 }
 
@@ -210,16 +278,36 @@ impl Drop for Claim {
 pub struct DropMark {
     relays: Relays,
     id: SessionId,
+    /// Closes when the claim that the first mark stopped ends.
+    ended: Option<watch::Receiver<()>>,
+}
+
+impl DropMark {
+    /// Waits until the Upgrade that held the session at the first mark
+    /// has ended, or returns at once when none held it. A start that the
+    /// drop overlapped may have booted a VM, and the start has no outer
+    /// bound (decision CH50 rule 1). After this wait no Upgrade starts a
+    /// VM of the session under the mark, so a stop that follows finds
+    /// every VM of the session.
+    pub async fn claim_ended(&mut self) {
+        if let Some(ended) = &mut self.ended {
+            // No sender ever sends, so `changed` returns only when the
+            // claim drops its sender.
+            let _ = ended.changed().await;
+        }
+    }
 }
 
 impl Drop for DropMark {
     fn drop(&mut self) {
         let mut registry = self.relays.registry();
         match registry.slots.remove(&self.id) {
-            Some(Slot::Dropping(drops)) if drops > 1 => {
-                registry
-                    .slots
-                    .insert(self.id.clone(), Slot::Dropping(drops - 1));
+            Some(Slot::Dropping { drops, ended }) if drops > 1 => {
+                let slot = Slot::Dropping {
+                    drops: drops - 1,
+                    ended,
+                };
+                registry.slots.insert(self.id.clone(), slot);
             }
             // The last mark of the session removes its slot.
             _ => {}
@@ -403,7 +491,7 @@ mod tests {
     use creche_wire::SessionId;
     use tokio::time::Instant;
 
-    use super::{Door, Relays, Taken};
+    use super::{Door, Relays, Stopped, Taken};
 
     /// A claim that a drop stopped ends after a later claim of its
     /// session. Its end leaves the later claim in place.
@@ -459,5 +547,32 @@ mod tests {
         let closed = relays.door(&id);
         drop(relays.claim(&id).unwrap());
         assert_eq!(relays.door(&id), closed);
+    }
+
+    /// A close stops a claim as an eviction, and a mark stops it as a
+    /// drop. The reason stays after the first read.
+    #[test]
+    fn a_close_and_a_mark_give_their_reason() {
+        let relays = Relays::default();
+        let id: SessionId = "3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b".parse().unwrap();
+        let mut claim = relays.claim(&id).unwrap();
+        assert_eq!(claim.stop_reason(), None);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        // The close waits for the claim to end, so it ends first.
+        let mut close = Box::pin(relays.close(&id));
+        let waker = std::task::Waker::noop();
+        let mut context = std::task::Context::from_waker(waker);
+        assert!(close.as_mut().poll(&mut context).is_pending());
+        assert_eq!(claim.stop_reason(), Some(Stopped::Evict));
+        assert_eq!(claim.stop_reason(), Some(Stopped::Evict));
+        drop(claim);
+        runtime.block_on(close);
+
+        let mut claim = relays.claim(&id).unwrap();
+        let mark = relays.mark_drop(&id);
+        assert_eq!(claim.stop_reason(), Some(Stopped::Drop));
+        drop((claim, mark));
     }
 }

@@ -29,7 +29,6 @@ SANDBOX = "chat-s1"
 PLAYPEN_ENV = "/srv/agents/state/creche/families/chat/supervisor.env"
 CHAT_SESSION = "owui-3f2a9c41-77b0-4a1e-9a4c-1d0e5f8b2c33"
 CONFIG_REV = "reg-9f21c4"
-EPOCH = 7
 SETTLE_TIMEOUT_S = 2.0
 
 # Contract 01 §3.12's default, mirrored into the status document's limits.
@@ -63,7 +62,6 @@ def write_status(
     playpen_env: str = PLAYPEN_ENV,
     never_valid: bool = False,
     faults: tuple[dict[str, Any], ...] = (),
-    epoch: int = EPOCH,
     job_timeout_s: int | None = JOB_TIMEOUT_S,
     max_running_turns: int | None = None,
     config_rev: str = CONFIG_REV,
@@ -91,7 +89,8 @@ def write_status(
             {"id": box, "state": box_state, "supervisor_env": playpen_env}
             for box, box_state in sandboxes
         ],
-        "credentials": {"epoch": epoch},
+        # `caregiver` still publishes the epoch. `attendance` ignores it.
+        "credentials": {"epoch": 7},
         "limits": limits,
         # Contract 05 §2.1's triggers block. `enqueue` is what contract 02
         # §13.4.1 rule 3 reads, and a family without it is not dispatchable.

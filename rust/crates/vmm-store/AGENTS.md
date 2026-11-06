@@ -17,6 +17,18 @@ The second file has the table of the three vmm crates.
   `ch-remote` call comes from its caller. This crate names no value. A
   pause takes about 4 ms (fact 72) and a 16 GiB snapshot about 12 s
   (gap G16).
+- Decisions CH42 rule 2 and CH50 rule 10 (PR D15, `ch_remote.rs`):
+  `ChRemote::info` returns the state and the device set of the VM: the
+  disks, the vsock and each kind that the check of a restore refuses.
+  Each list has its own struct with the names of the CH v54
+  `VmConfig`. A missing list and `null` read as no device. The type
+  skips every other field, so a device kind that it does not name passes
+  the read unseen. A new kind needs a field here and in the check
+  (plan PR D15). Each refused kind is a list of `Present`, which reads
+  no field. A disk keeps `path`, `vhost_user` and `vhost_socket`. CH
+  v54 opens the socket and ignores the path of a vhost-user disk, so
+  the L17 check must refuse a disk with `vhost_user` or with a
+  `vhost_socket`, even on the path of a fixed slot.
 - Decision CH44 rule 4 (PR D9, `snapshot.rs`): when a snapshot step
   fails, `Snapshotter::take` removes its temp dir and changes nothing
   else. It resumes nothing and stops nothing more. The caller decides.
@@ -54,6 +66,26 @@ The second file has the table of the three vmm crates.
   finishes. It removes nothing when no row of the family has the id, and
   the route answers `not_found` (decision CH33 rules 4 and 5). The
   caller (L15) stops the VM first and drops a family one row at a time.
+- Decisions CH51 and CH55 (PR D16, `layout.rs`): the run root holds
+  `SLOTS` = 64 slot dirs `slot/<k>/`, one per slot profile
+  `creche-ch-slot-<k>`. `RunRoot::link_vm` makes `vm/<id>` a symlink to
+  `../slot/<k>` and replaces any link there in one rename, so a re-link
+  moves the VM to another slot. Every `VmRunDir` path stays
+  `vm/<id>/...`, so a snapshot's vsock path holds across a restore into
+  another slot. `remove_stale` works through the link.
+- Decision CH56 rule 1 (PR D16, `layout.rs`): `link_vm` empties
+  `slot/<k>/` before it links `vm/<id>` to it. It removes every entry that
+  is not a dir (each regular file, socket and link) and no dir, since a
+  free slot holds no live CH (CH19 (4)). The old VM's `serial.log` goes
+  with it, and its fault file stays in the faults dir.
+- The caller duties of PR D16 (`layout.rs`). Plan PR L16b meets all
+  three in `rust/crates/vmm/src/start.rs` ("The slots" in the vmm
+  `AGENTS.md`). (a) Each start runs `link_vm` before `remove_stale`, so
+  an old link to a slot that another VM took removes no file of that VM.
+  (b) A VM that frees its slot runs `unlink_vm`. (c) A start links a VM
+  only to a free slot, one that no live CH holds. `link_vm` empties the
+  slot (CH56 rule 1), so a link to a held slot would remove the sockets
+  of the CH in it.
 
 ## Known gaps
 

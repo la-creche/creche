@@ -3,15 +3,16 @@
 // the content of `runtime.json`, the other files of the config mount and the
 // index root.
 
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { readFamilyConfig } from "../src/config.js";
 import type { FamilyConfig } from "../src/config.js";
 
-export const FIXTURE_KEY = "FIXTURE-LITELLM-KEY";
-export const FIXTURE_TOKEN = "FIXTURE-PEP-TOKEN";
+/** Fixture values in the forms of the wire types `LitellmKey` and `PepToken`. */
+export const FIXTURE_KEY = "sk-FIXTURE-LITELLM-KEY";
+export const FIXTURE_TOKEN = "feedface".repeat(8);
 
 const NO_RETRY_MS = 0;
 const UNUSED_PLANE = "http://192.0.2.10:9";
@@ -31,13 +32,9 @@ export function familyEnv(fixture: FamilyFixture): Record<string, string> {
   const dir = (name: string): string => mkdtempSync(join(root, name));
   const credDir = dir("creds");
   const configDir = dir("config");
-  const creds = { epoch: 1, litellm_key: FIXTURE_KEY, pep_token: FIXTURE_TOKEN };
-  writeFileSync(join(credDir, "creds.json"), JSON.stringify(creds));
+  writeCreds(credDir, { litellm_key: FIXTURE_KEY, pep_token: FIXTURE_TOKEN });
   writeFileSync(join(configDir, "runtime.json"), JSON.stringify(fixture.runtime ?? {}));
-  for (const [name, text] of Object.entries(fixture.configFiles ?? {})) {
-    mkdirSync(dirname(join(configDir, name)), { recursive: true });
-    writeFileSync(join(configDir, name), text);
-  }
+  writeFiles(configDir, fixture.configFiles ?? {});
 
   return {
     AGENT_SESSIONS_DIR: dir("sessions"),
@@ -49,6 +46,28 @@ export function familyEnv(fixture: FamilyFixture): Record<string, string> {
     AGENT_LITELLM_BASE_URL: fixture.litellmUrl ?? UNUSED_PLANE,
     ...(fixture.indexRoot === undefined ? {} : { AGENT_INDEX_ROOT: fixture.indexRoot }),
   };
+}
+
+/** Files under `dir`, by path relative to it. */
+function writeFiles(dir: string, files: Readonly<Record<string, string>>): void {
+  for (const [name, text] of Object.entries(files)) {
+    mkdirSync(dirname(join(dir, name)), { recursive: true });
+    writeFileSync(join(dir, name), text);
+  }
+}
+
+/** A new `config/` in place of `dir`, swapped as caregiver swaps it (`atomic.py`). */
+export function swapConfig(dir: string, files: Readonly<Record<string, string>>): void {
+  writeFiles(`${dir}.tmp`, files);
+  renameSync(dir, `${dir}.old`);
+  renameSync(`${dir}.tmp`, dir);
+  rmSync(`${dir}.old`, { recursive: true });
+}
+
+/** A new `creds.json`, replaced by a rename as caregiver replaces it. */
+export function writeCreds(dir: string, creds: Readonly<Record<string, unknown>>): void {
+  writeFileSync(join(dir, "creds.json.tmp"), JSON.stringify(creds));
+  renameSync(join(dir, "creds.json.tmp"), join(dir, "creds.json"));
 }
 
 export async function familyConfig(fixture: FamilyFixture): Promise<FamilyConfig> {

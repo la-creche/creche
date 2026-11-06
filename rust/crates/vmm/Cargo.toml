@@ -26,8 +26,10 @@ serde_json.workspace = true
 # `net` for the UnixListener of vmm.sock and `sync` for the stop signal
 # (decision CH26 rules 1 and 2). `time` for the pause after a failed accept
 # and the read timeouts. hyper-util `tokio` turns it on already, so it adds
-# no crate to the lock.
-tokio = { workspace = true, features = ["net", "sync", "time"] }
+# no crate to the lock. `signal` for the SIGTERM that starts a clean stop
+# (L19, decisions CH19 (4) and CH26 rule 2). It adds signal-hook-registry
+# to the lock.
+tokio = { workspace = true, features = ["net", "signal", "sync", "time"] }
 
 # `test-util` for paused time: a stop test checks the 30 s and 5 s waits
 # of decision CH34 rule 5 with no real wait. It adds no crate to the lock.

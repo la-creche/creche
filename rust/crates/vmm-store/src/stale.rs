@@ -42,6 +42,12 @@ impl std::error::Error for StaleError {
 /// Decision CH19 (4): call this only after the leftover scopes are
 /// stopped, so that no live Cloud Hypervisor holds the files.
 ///
+/// Decisions CH51 and CH55 (PR D16): `vm` is the `vm/<id>` symlink to the
+/// slot dir, and each removal goes through it into `slot/<k>/`. So call
+/// this only while the VM holds its slot. Through a link to a slot that
+/// another VM took, it removes the files of that VM. After
+/// `RunRoot::unlink_vm` every file is missing, and this is a no-op.
+///
 /// # Errors
 ///
 /// A `StaleError` for the first file that a removal fails on.
