@@ -46,9 +46,8 @@ fn create(
     // Decision CH33 rule 3: a family with no `config/` dir gets
     // `unknown_family`. The check comes first, so a repeat of a create
     // whose family is gone gets `unknown_family` too.
-    // CONTRACT-QUESTION (decisions CH25 rule 2, CH33 rule 3): CH25 rule 2
-    // returns the same row to a repeat. This reading lets CH33 rule 3
-    // win, because its text has no exception. Known gap 14.
+    // Decision CH57 rule 4: CH33 rule 3 wins over CH25 rule 2 here, so
+    // no create gets in after caregiver removes the family files.
     // This first read holds no lock of the rows while it sleeps between
     // its tries.
     check_family(families, &request)?;
@@ -75,11 +74,10 @@ fn check_family(families: &FamilyRoot, request: &CreateSession) -> Result<(), Cr
     match families.exists(&request.family) {
         Ok(()) => Ok(()),
         Err(FamilyError::Unknown) => Err(CreateError::UnknownFamily {}),
-        // CONTRACT-QUESTION (decision CH33 rule 3): a family dir or a
-        // `config/` that is a symlink or a file is no `config/` dir, so
-        // this reads it as `unknown_family`. No row decides it. The vmm
-        // logs it, because caregiver never writes such a family. A change
-        // to `internal` costs this arm and one test line.
+        // Decision CH57 rule 3: a family dir or a `config/` that is a
+        // symlink or a file is no `config/` dir, so it gets
+        // `unknown_family`. The vmm logs it, because caregiver never
+        // writes such a family.
         Err(FamilyError::NotDir) => {
             eprintln!("vmm: create in {}: config/ is no dir", request.family);
             Err(CreateError::UnknownFamily {})

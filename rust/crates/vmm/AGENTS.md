@@ -564,23 +564,9 @@ no guest sync.
     after its last use.
 12. Closed by decision CH54 rule 5: the sweep runs at the start of
     `sleep::run`, then each hour (`sleep::SWEEP_EVERY`).
-13. CONTRACT-QUESTION (decision CH33 rule 3, plan PR L7): a family dir
-    or a `config` that is a symlink or a file (`FamilyError::NotDir`)
-    gets `unknown_family`, not `internal` (`src/handlers/create.rs`).
-    The vmm logs it. The reading takes "no `config/` dir" as the text of
-    the rule. caregiver never writes such a family. A change to
-    `internal` costs one match arm and one test line.
-14. CONTRACT-QUESTION (decisions CH25 rule 2, CH33 rule 3, plan PR L7):
-    a repeat of a create whose family `config/` is gone gets
-    `unknown_family` 404, not the same row with the same status
-    (`src/handlers/create.rs`). CH25 rule 2 returns the same row to a
-    repeat with the same body. CH33 rule 3 refuses a create for a family
-    with no `config/` dir. The two rows meet in the caregiver removal
-    window, where caregiver removes the files before it drops the
-    family. The reading lets CH33 rule 3 win: its text has no exception,
-    and its purpose is that no create gets in after caregiver removes
-    the files. `tests/create_list.rs` holds the order. If David picks
-    CH25 rule 2, the row lookup moves before the family read.
+13. Closed by decision CH57 rules 3 and 4 (plan PR L7): a family dir or
+    `config` that is a symlink or a file gets `unknown_family`, and a
+    repeat create whose family `config/` is gone gets `unknown_family`.
 
 ## Caller duties
 
