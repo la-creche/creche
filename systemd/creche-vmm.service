@@ -87,6 +87,8 @@ TimeoutStartSec=infinity
 # exit (CH56 rule 3), so 90 s here. Past it systemd sends SIGKILL, and each
 # CH ends with the vmm through PDEATHSIG (CH19 (4)). Change this value and
 # UNIT_STOP_TIMEOUT of rust/crates/vmm/src/shutdown.rs together.
+# bin/tests/test_vmm_unit.py fails when they differ, and it pins each
+# decided line of this unit.
 KillSignal=SIGTERM
 # SIGTERM goes to the vmm alone. The default, control-group, sends it to
 # each process of the cgroup at once. An idle retire may already run at
