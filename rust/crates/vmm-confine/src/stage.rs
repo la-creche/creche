@@ -15,6 +15,12 @@
 //! `kernel.apparmor_restrict_unprivileged_unconfined` 1, fails the launch
 //! closed (decision CH55).
 //!
+//! `run` is the one entry, and it always writes the real exec attribute
+//! (decision CH58 rule 1). The rust job of CI loads no slot profile, so
+//! there each launch fails closed at step 1 and starts no payload. The kvm
+//! job loads the slot profiles and proves the full chain (the C15 rework,
+//! #443).
+//!
 //! The pid stays the same through all four execs: the launch step,
 //! `systemd-run`, this stage and CH. `systemd-run --scope` execs its
 //! payload in its own process. So the `Launched` handle of the spawner is
@@ -158,30 +164,6 @@ impl fmt::Display for StageError {
 
 impl std::error::Error for StageError {}
 
-/// The writer of the exec attribute. `ProcAttr` is the one production
-/// writer. Only the example of the process tests passes another, through
-/// `run_with_fake_attr_for_tests`, because the CI test job loads no slot
-/// profile and its payload is not CH. Production never implements it.
-#[doc(hidden)]
-pub trait ExecAttr {
-    /// Writes `value` to the exec attribute in one write.
-    ///
-    /// # Errors
-    ///
-    /// The open or the write failed.
-    fn write(&self, value: &str) -> io::Result<()>;
-}
-
-/// The exec attributes of `ATTRS`.
-#[derive(Debug, Clone, Copy)]
-pub struct ProcAttr;
-
-impl ExecAttr for ProcAttr {
-    fn write(&self, value: &str) -> io::Result<()> {
-        write_first(&ATTRS.map(Path::new), value)
-    }
-}
-
 /// Writes `value` to the first of `paths` that exists. Only a missing
 /// path moves on to the next. Any other error ends the write, and so does
 /// a write error, because ENOENT on the write means that no profile has
@@ -205,7 +187,8 @@ fn write_first(paths: &[&Path], value: &str) -> io::Result<()> {
     Err(io::ErrorKind::NotFound.into())
 }
 
-/// The kernel calls of the stage, so the unit tests can fake them.
+/// The kernel calls of the stage. Only `Kernel` implements it outside
+/// the unit tests of this file, which fake it to check the step order.
 trait Steps {
     /// Whether the death signal is SIGKILL.
     fn death_signal_is_kill(&mut self) -> io::Result<bool>;
@@ -240,63 +223,34 @@ fn steps(steps: &mut impl Steps, stage: &Stage) -> StageError {
     StageError::Exec(steps.exec(&stage.payload))
 }
 
-/// Runs the stage with `args`, the arguments after `MODE`. A stage that
-/// works replaces this process with CH, so this returns only an error.
+/// Runs the stage with `args`, the arguments after `MODE`. It is the one
+/// entry of the stage, and it always writes the real exec attribute of
+/// `ATTRS` (decision CH58 rule 1). A stage that works replaces this
+/// process with CH, so this returns only an error.
 ///
 /// # Errors
 ///
 /// Each step that fails gives its `StageError`.
 pub fn run(args: &[OsString]) -> Result<Infallible, StageError> {
-    stage_with(args, &ProcAttr)
-}
-
-/// Runs the stage as `run` does, with `attr` in place of the real exec
-/// attribute. A fake `attr` skips the slot label, and the stage still
-/// sets no_new_privs, applies Landlock and execs the payload. So the
-/// AppArmor layer of decision CH55 fails open. Production never calls
-/// this: `rust/crates/vmm/src/main.rs` routes `MODE` to `run` (plan PR
-/// L16c). Only the example `launch_chain` of the process tests calls it.
-///
-/// CONTRACT-QUESTION (decision CH55): no row allows a test seam past the
-/// label. The narrowest reading keeps it `doc(hidden)` with a name that
-/// says what it skips. A crate feature would remove it from production
-/// builds, but the example then needs a dev-dependency of this crate on
-/// itself, which adds a rust/Cargo.lock line. That needs a lock-lane PR.
-///
-/// # Errors
-///
-/// Each step that fails gives its `StageError`.
-#[doc(hidden)]
-pub fn run_with_fake_attr_for_tests(
-    args: &[OsString],
-    attr: &dyn ExecAttr,
-) -> Result<Infallible, StageError> {
-    stage_with(args, attr)
-}
-
-/// The stage with `attr` as the exec attribute.
-fn stage_with(args: &[OsString], attr: &dyn ExecAttr) -> Result<Infallible, StageError> {
     if !cfg!(target_os = "linux") {
         return Err(StageError::NotLinux);
     }
     let stage = Stage::parse(args)?;
-    Err(steps(&mut Kernel { attr }, &stage))
+    Err(steps(&mut Kernel, &stage))
 }
 
 /// The real kernel calls.
-struct Kernel<'a> {
-    attr: &'a dyn ExecAttr,
-}
+struct Kernel;
 
 #[cfg(target_os = "linux")]
-impl Steps for Kernel<'_> {
+impl Steps for Kernel {
     fn death_signal_is_kill(&mut self) -> io::Result<bool> {
         let signal = rustix::process::parent_process_death_signal()?;
         Ok(signal == Some(rustix::process::Signal::KILL))
     }
 
     fn enter(&mut self, value: &str) -> io::Result<()> {
-        self.attr.write(value)
+        write_first(&ATTRS.map(Path::new), value)
     }
 
     fn no_new_privs(&mut self) -> io::Result<()> {
@@ -324,13 +278,13 @@ impl Steps for Kernel<'_> {
 
 /// No other host has AppArmor or Landlock (decision CH38).
 #[cfg(not(target_os = "linux"))]
-impl Steps for Kernel<'_> {
+impl Steps for Kernel {
     fn death_signal_is_kill(&mut self) -> io::Result<bool> {
         Err(io::ErrorKind::Unsupported.into())
     }
 
     fn enter(&mut self, value: &str) -> io::Result<()> {
-        self.attr.write(value)
+        write_first(&ATTRS.map(Path::new), value)
     }
 
     fn no_new_privs(&mut self) -> io::Result<()> {

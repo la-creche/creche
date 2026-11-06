@@ -24,9 +24,9 @@ The root `AGENTS.md` applies here too.
 
 `src/main.rs` documents the modes of `vmm` and the exit status 78.
 `vmm launch-stage <plan>` takes exactly one plan argument and calls
-`creche_vmm_confine::stage::run`, the one entry that writes the real
-exec attribute (plan PR L16c, decision CH55). It never calls
-`stage::run_with_fake_attr_for_tests`, which skips the slot label.
+`creche_vmm_confine::stage::run`, the one entry of the stage. It always
+writes the real exec attribute (plan PR L16c, decisions CH55, CH58 rule
+1).
 
 ## The server
 

@@ -1,15 +1,11 @@
-//! A stand-in for the vmm in the launch tests and the host spike. The
-//! first argument picks the role:
+//! A stand-in for the vmm in the launch tests. The first argument picks
+//! the role:
 //!
 //! - `launch` is the launch step, as in `vmm launch`.
 //! - `launch-stage <plan>` is the launch stage, as in `vmm launch-stage`
-//!   (decision CH55). Its exec attribute is stderr: the CI test job loads
-//!   no slot profile, and its payloads are not CH. So the stage writes the
-//!   line `apparmor exec creche-ch-slot-<k>` in place of the label.
-//! - `spawn <systemd-run> <root> <session id> <program> [args]` starts a
-//!   spawner on `/proc/self/exe`, launches the program, prints its pid and
-//!   waits to be killed. `<root>` is the state root and the run root of
-//!   the VM files, with the root disk at `<root>/root.img`.
+//!   (decisions CH55, CH58 rule 1). It calls `stage::run`, which writes
+//!   the real exec attribute. The rust job of CI loads no slot profile,
+//!   so the stage fails closed at its label step and starts no payload.
 //! - `--user ...` is a fake `systemd-run` for a host with no systemd. It
 //!   execs the arguments after `--`.
 //! - `probe <run dir> <root disk> <session disk> <outside file> <port>`
@@ -21,25 +17,12 @@ use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::net::{Ipv4Addr, TcpStream};
-use std::num::{NonZeroU32, NonZeroU64};
 use std::os::unix::process::CommandExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, ExitCode};
-use std::thread;
 
-use creche_vmm_confine::landlock::{HostPath, Start, VmFiles};
-use creche_vmm_confine::launch::{self, Launch, MODE, Payload, Program};
-use creche_vmm_confine::scope::Scope;
-use creche_vmm_confine::spawner::{SELF_EXE, Spawner};
-use creche_vmm_confine::stage::{self, ExecAttr};
-use creche_vmm_store::layout::{RunRoot, Slot, StateRoot};
-use creche_wire::SessionId;
-
-/// The `MemoryMax` of the spawn role: 2 GiB guest plus 512 MiB (CH8-5).
-const MEMORY_MAX: u64 = 2_684_354_560;
-
-/// The `CPUQuota` of the spawn role in percent, one CPU.
-const CPU_QUOTA: u32 = 100;
+use creche_vmm_confine::launch::{self, MODE};
+use creche_vmm_confine::stage;
 
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
@@ -47,16 +30,16 @@ fn main() -> ExitCode {
         Some((role, _)) if role == MODE => launch::run()
             .map(|never| match never {})
             .map_err(Failure::from),
-        Some((role, rest)) if role == stage::MODE => stage::run_with_fake_attr_for_tests(rest, &Stderr)
+        Some((role, rest)) if role == stage::MODE => stage::run(rest)
             .map(|never| match never {})
             .map_err(Failure::from),
-        Some((role, rest)) if role == "spawn" => spawn(rest),
         Some((role, rest)) if role == "--user" => fake_systemd_run(rest),
         Some((role, rest)) if role == "probe" => probe(rest),
         Some((role, rest)) if role == "say" => say(rest),
-        _ => {
-            Err("usage: launch_chain launch | launch-stage ... | spawn ... | --user ... | probe ... | say ...".into())
-        }
+        _ => Err(
+            "usage: launch_chain launch | launch-stage ... | --user ... | probe ... | say ..."
+                .into(),
+        ),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -69,43 +52,6 @@ fn main() -> ExitCode {
 
 type Failure = Box<dyn std::error::Error>;
 
-/// The exec attribute of the stage role: one line on stderr.
-struct Stderr;
-
-impl ExecAttr for Stderr {
-    fn write(&self, value: &str) -> io::Result<()> {
-        writeln!(io::stderr(), "apparmor {value}")
-    }
-}
-
-/// The spawn role. It returns only on an error.
-fn spawn(args: &[OsString]) -> Result<(), Failure> {
-    let [systemd_run, root, id, program, rest @ ..] = args else {
-        return Err("spawn <systemd-run> <root> <session id> <program> [args]".into());
-    };
-    let text = |arg: &OsString| arg.to_str().map(str::to_owned).ok_or("not UTF-8");
-    let id: SessionId = text(id)?.parse().map_err(|_| "not a session id")?;
-    let files = vm_files(Path::new(root), &id)?;
-    let payload = Payload::new(
-        Program::new(PathBuf::from(program))?,
-        rest.iter().map(text).collect::<Result<_, _>>()?,
-    );
-    let memory = NonZeroU64::new(MEMORY_MAX).ok_or("zero memory")?;
-    let quota = NonZeroU32::new(CPU_QUOTA).ok_or("zero quota")?;
-    let scope = Scope::new(id, memory, quota);
-    let systemd_run = Program::new(PathBuf::from(systemd_run))?;
-    let slot = Slot::new(0).ok_or("no slot 0")?;
-    let launch = Launch::new(systemd_run, scope, payload, files).in_slot(slot);
-
-    let spawner = Spawner::start(PathBuf::from(SELF_EXE))?;
-    let launched = spawner.launch(launch)?;
-    writeln!(io::stdout(), "{}", launched.id())?;
-    io::stdout().flush()?;
-    loop {
-        thread::park();
-    }
-}
-
 /// The fake `systemd-run`. It returns only on an error.
 fn fake_systemd_run(args: &[OsString]) -> Result<(), Failure> {
     let after = args.iter().position(|arg| arg == "--").ok_or("no --")?;
@@ -114,14 +60,6 @@ fn fake_systemd_run(args: &[OsString]) -> Result<(), Failure> {
         .and_then(<[OsString]>::split_first)
         .ok_or("no payload")?;
     Err(Command::new(program).args(rest).exec().into())
-}
-
-/// The VM files of `id` under `root`, for a restore (no kernel).
-fn vm_files(root: &Path, id: &SessionId) -> Result<VmFiles, Failure> {
-    let session = StateRoot::new(root.to_path_buf())?.session(id);
-    let run = RunRoot::new(root.to_path_buf())?.vm(id);
-    let root_disk = HostPath::new(root.join("root.img"))?;
-    Ok(VmFiles::new(Start::Restore, root_disk, &session, &run)?)
 }
 
 /// The say role: one line on stdout, then one on stderr.

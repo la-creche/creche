@@ -1,26 +1,26 @@
 //! The launch chain without systemd (decision CH19 (4), fact 76). The
-//! example `launch_chain` plays the vmm, the launch step, a fake
-//! `systemd-run` and the launch stage, so each payload runs after four
-//! execs: the launch step, the fake `systemd-run`, the stage and
-//! `/bin/sleep` (decision CH55). The Landlock ruleset of the VM is in
-//! force from the last exec on.
+//! example `launch_chain` plays the launch step, a fake `systemd-run` and
+//! the launch stage. The stage is `stage::run`, the one entry, which
+//! writes the real exec attribute (decision CH58 rule 1). The rust job
+//! loads no slot profile, so each launch here fails closed at the label
+//! step and starts no payload. The kvm job loads the slot profiles and
+//! proves the full chain: the label, no_new_privs, Landlock, CH and the
+//! kill chain of fact 80 (the C15 rework, #443).
 #![cfg(target_os = "linux")]
 
 mod common;
 
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, Write};
 use std::num::{NonZeroU32, NonZeroU64};
-use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, mpsc};
-use std::thread::sleep;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use creche_vmm_confine::launch::{Launch, Payload, Program};
 use creche_vmm_confine::output::Sink;
 use creche_vmm_confine::scope::Scope;
-use creche_vmm_confine::spawner::{Launched, SpawnError, Spawner};
+use creche_vmm_confine::spawner::{SpawnError, Spawner};
 use creche_vmm_store::layout::Slot;
 
 use common::{TempVm, example};
@@ -57,113 +57,14 @@ fn slot() -> Slot {
     Slot::new(SLOT).unwrap()
 }
 
-/// Whether `pid` runs and is not a zombie.
-fn running(pid: u32) -> bool {
-    std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
-        stat.rsplit_once(") ")
-            .is_some_and(|(_, rest)| !rest.starts_with('Z'))
-    })
-}
-
-/// Waits up to 5 s for `check`.
-fn eventually(check: impl Fn() -> bool) -> bool {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < deadline {
-        if check() {
-            return true;
-        }
-        sleep(Duration::from_millis(5));
-    }
-    false
-}
-
-/// Waits until the pid runs `sleep`, so all three execs are done.
-fn wait_for_payload(pid: u32) {
-    let comm = || std::fs::read_to_string(format!("/proc/{pid}/comm")).unwrap_or_default();
-    assert!(eventually(|| comm() == "sleep\n"), "the payload never ran");
-}
-
-#[cfg(test)]
-fn launched(spawner: &Spawner, vm: &TempVm) -> Launched {
-    let launched = spawner.launch(launch(vm)).unwrap();
-    wait_for_payload(launched.id());
-    launched
-}
-
+/// A launch through the real stage fails closed when no slot profile is
+/// loaded (decision CH58 rule 1). The stage refuses the label with
+/// `StageError::Enter`, so the payload `say hello` never runs. The error
+/// reaches the sink tagged with the session id, and no line of the
+/// payload does.
 #[test]
-fn the_payload_dies_with_the_spawner_thread() {
-    let vm = TempVm::new("thread", ID);
-    let spawner = Spawner::start(example()).unwrap();
-    let mut payload = launched(&spawner, &vm);
-    drop(spawner);
-    assert_eq!(payload.wait().unwrap().signal(), Some(9));
-}
-
-#[test]
-fn the_payload_dies_with_a_killed_vmm() {
-    let vm = TempVm::new("killed", ID);
-    let mut vmm = Command::new(example())
-        .args([
-            "spawn".as_ref(),
-            example().as_os_str(),
-            vm.path().as_os_str(),
-        ])
-        .args([ID, SLEEP, "60"])
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let mut line = String::new();
-    BufReader::new(vmm.stdout.take().unwrap())
-        .read_line(&mut line)
-        .unwrap();
-    let pid: u32 = line.trim().parse().unwrap();
-    wait_for_payload(pid);
-
-    vmm.kill().unwrap();
-    vmm.wait().unwrap();
-    assert!(eventually(|| !running(pid)), "the payload outlived the vmm");
-}
-
-#[test]
-fn the_payload_has_no_core_limit() {
-    let vm = TempVm::new("core", ID);
-    let spawner = Spawner::start(example()).unwrap();
-    let launched = launched(&spawner, &vm);
-    let limits = std::fs::read_to_string(format!("/proc/{}/limits", launched.id())).unwrap();
-    let core = limits
-        .lines()
-        .find(|line| line.starts_with("Max core file size"))
-        .unwrap();
-    let values: Vec<&str> = core.split_whitespace().skip(4).take(2).collect();
-    assert_eq!(values, ["0", "0"], "{core}");
-}
-
-#[test]
-fn a_plan_larger_than_the_pipe_fails_at_once() {
-    let vm = TempVm::new("large", ID);
-    let spawner = Spawner::start(example()).unwrap();
-    let launch = launch_with(&vm, vec!["x".repeat(70_000)]);
-    let result = spawner.launch(launch);
-    assert!(matches!(result, Err(SpawnError::TooLarge(_))), "{result:?}");
-    // The spawner thread still works after the refusal.
-    let mut payload = launched(&spawner, &vm);
-    payload.kill().unwrap();
-    payload.wait().unwrap();
-}
-
-#[test]
-fn terminate_sends_sigterm() {
-    let vm = TempVm::new("sigterm", ID);
-    let spawner = Spawner::start(example()).unwrap();
-    let mut payload = launched(&spawner, &vm);
-    payload.terminate().unwrap();
-    assert_eq!(payload.wait().unwrap().signal(), Some(15));
-    payload.terminate().unwrap();
-}
-
-#[test]
-fn the_payload_output_reaches_the_sink_tagged_with_the_session_id() {
-    let vm = TempVm::new("output", ID);
+fn a_launch_with_no_slot_profile_fails_closed_and_starts_no_payload() {
+    let vm = TempVm::new("closed", ID);
     let (sender, lines) = mpsc::channel();
     let sink: Sink = Arc::new(move |line| sender.send(line.to_owned()).unwrap());
     let spawner = Spawner::with_sink(example(), sink).unwrap();
@@ -179,20 +80,28 @@ fn the_payload_output_reaches_the_sink_tagged_with_the_session_id() {
     let systemd_run = Program::new(example()).unwrap();
     let launch = Launch::new(systemd_run, scope, payload, vm.files.clone()).in_slot(slot());
     let mut launched = spawner.launch(launch).unwrap();
-    assert!(launched.wait().unwrap().success());
-    let mut got: Vec<String> = (0..3)
-        .map(|_| lines.recv_timeout(Duration::from_secs(5)).unwrap())
-        .collect();
-    got.sort();
-    // The stage of the example writes its exec attribute to stderr.
-    assert_eq!(
-        got,
-        [
-            format!("ch {ID}: apparmor exec creche-ch-slot-{SLOT}"),
-            format!("ch {ID}: hello err"),
-            format!("ch {ID}: hello out"),
-        ]
+    assert_eq!(launched.wait().unwrap().code(), Some(78));
+    let got: Vec<String> =
+        std::iter::from_fn(|| lines.recv_timeout(Duration::from_millis(500)).ok()).collect();
+    let prefix = format!("ch {ID}: launch_chain: entering creche-ch-slot-{SLOT}: ");
+    assert!(
+        got.first().is_some_and(|line| line.starts_with(&prefix)),
+        "{got:?}"
     );
+    assert!(got.iter().all(|line| !line.contains("hello")), "{got:?}");
+}
+
+#[test]
+fn a_plan_larger_than_the_pipe_fails_at_once() {
+    let vm = TempVm::new("large", ID);
+    let spawner = Spawner::start(example()).unwrap();
+    let launch_large = launch_with(&vm, vec!["x".repeat(70_000)]);
+    let result = spawner.launch(launch_large);
+    assert!(matches!(result, Err(SpawnError::TooLarge(_))), "{result:?}");
+    // The spawner thread still works after the refusal: the next launch
+    // runs the chain, which fails closed at the label step.
+    let mut launched = spawner.launch(launch(&vm)).unwrap();
+    assert_eq!(launched.wait().unwrap().code(), Some(78));
 }
 
 #[test]
@@ -243,7 +152,7 @@ fn a_stage_with_no_death_signal_starts_nothing() {
         stderr.contains("the death signal is not SIGKILL"),
         "{stderr}"
     );
-    assert!(!stderr.contains("apparmor exec"), "{stderr}");
+    assert!(!stderr.contains("entering"), "{stderr}");
 }
 
 /// The exit code and stderr of the launch step with `stdin`.

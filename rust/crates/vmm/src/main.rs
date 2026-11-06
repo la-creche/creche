@@ -9,7 +9,8 @@
 //!   CH55). `systemd-run` execs it in the VM scope. It enters the slot
 //!   label, applies Landlock and execs CH, with no runtime either. It
 //!   takes exactly one plan argument and calls `stage::run`, the one entry
-//!   that writes the real exec attribute.
+//!   of the stage, which always writes the real exec attribute (decision
+//!   CH58 rule 1).
 
 use std::ffi::OsString;
 use std::fmt;
@@ -66,8 +67,6 @@ fn dispatch(args: &[OsString]) -> ExitCode {
             let Err(error) = launch::run();
             refuse(&error)
         }
-        // Never `stage::run_with_fake_attr_for_tests`: it skips the slot
-        // label (decision CH55).
         Mode::Stage(plan) => {
             let Err(error) = stage::run(std::slice::from_ref(plan));
             refuse(&error)

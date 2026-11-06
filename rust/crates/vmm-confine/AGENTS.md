@@ -27,11 +27,9 @@ table of the three vmm crates.
   4. It execs CH.
   Before step 1 it checks that the death signal is still SIGKILL. A
   launch needs `Launch::in_slot`, and the launch step refuses a launch
-  with no slot (`LaunchError::NoSlot`). `stage::run` is the one
-  production entry, and it writes the real exec attribute
-  (`stage::ProcAttr`). `stage::run_with_fake_attr_for_tests` skips the
-  slot label, so production must never call it. Only the example of the
-  process tests calls it, because the CI test job loads no slot profile.
+  with no slot (`LaunchError::NoSlot`). `stage::run` is the one entry,
+  and it always writes the real exec attribute (decision CH58 rule 1).
+  No entry skips the slot label, in production or in a test.
 - The pid stays the same through the four execs: the launch step,
   `systemd-run`, the stage and CH (fact 80). The kernel keeps the death
   signal through an exec that is not a secure exec and changes no uid,
@@ -148,8 +146,10 @@ table of the three vmm crates.
   section 6.1 step 1, decision CH36 gap G28 option A). Each change of
   the file needs a sudo reload on the host by David (design section 6.1
   step 2).
-- The process tests need Landlock ABI 4 and `/dev/kvm`. The host and the
-  ubuntu-24.04 runner have both (facts 77, 79).
+- The process tests `tests/launch.rs` and `tests/landlock.rs` run the
+  real launch stage on a host with no slot profile, as the job `rust` of
+  gate.yml is. There each launch fails closed at the label step with
+  `StageError::Enter`, and no payload starts (decision CH58 rule 1).
 - A test that boots CH has a name that holds `kvm_` and carries
   `#[ignore]` (decisions CH8-4, CH36 G19). The job `kvm` of gate.yml runs
   every such test of the workspace after `bin/vm-smoke-setup.sh`. The test
@@ -158,24 +158,11 @@ table of the three vmm crates.
 
 ## Known gaps
 
-- Landlock ABI 4 covers neither UDP nor Unix sockets (fact 77). The
-  launch stage enters a slot profile, but until the job kvm loads the
-  slot profiles and the host has them, no test proves the denials (plan
-  PR C15, the rework of #443). That kvm test must also prove that CH
-  under its slot label still dies with the vmm (fact 80), and it needs a
-  stage that writes the real exec attribute (`stage::run`).
 - Closed by plan PRs L16b and L16c: lifecycle passes the slot of each
   start with `Launch::in_slot`, so no launch of the vmm fails with
   `LaunchError::NoSlot`. `rust/crates/vmm/src/main.rs` routes
-  `stage::MODE` with its one plan argument to `stage::run`, never to
-  `stage::run_with_fake_attr_for_tests`. C18, L16b and L16c are in one
-  PR.
-- CONTRACT-QUESTION (decision CH55): no row allows a test seam past the
-  slot label. `stage::run_with_fake_attr_for_tests` and
-  `stage::ExecAttr` stay public for the example, with `doc(hidden)`. A
-  crate feature would remove both from production builds, but the
-  example then needs a dev-dependency of this crate on itself, which adds
-  a line to `rust/Cargo.lock`. That needs a lock-lane PR.
+  `stage::MODE` with its one plan argument to `stage::run`. C18, L16b
+  and L16c are in one PR.
 - CONTRACT-QUESTION (decision CH55): no row says where the program of
   the launch stage comes from. The launch step takes the narrowest
   reading: the resolved path of `/proc/self/exe`, the same binary, with
@@ -216,3 +203,20 @@ table of the three vmm crates.
   the unit of plan PR C13, or a file that lifecycle makes first in plan
   PR L16, must set it. Neither plan entry names the step yet. Until then
   `RuntimeDirectoryMode=0700` of the run root keeps other users out.
+
+## Caller duties
+
+1. Decision CH58 rule 1: plan PR C15 (the rework of #443) proves the
+   full chain in the job `kvm`, which loads the slot profiles. The rust
+   job cannot, because no payload starts there. The kvm tests run
+   `stage::run` and prove each of these:
+   1. CH runs under `creche-ch-slot-<k>`, with no_new_privs set and the
+      Landlock ruleset in force.
+   2. The ruleset lets CH read the root disk and write the session disk,
+      and denies a write of the root disk, a read outside the VM files
+      and a TCP connect (decisions CH8-1, CH8-3, CH8-8, CH30).
+   3. The slot profile denies UDP and Unix sockets, which Landlock ABI 4
+      does not cover (fact 77).
+   4. CH dies with the spawner thread and with a killed vmm (fact 80).
+   5. CH has core limit 0, `Launched::terminate` sends SIGTERM, and the
+      output of CH reaches the sink tagged `ch <session id>`.
