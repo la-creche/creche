@@ -35,7 +35,8 @@ table of the three vmm crates.
 - The pid stays the same through the four execs: the launch step,
   `systemd-run`, the stage and CH (fact 80). The kernel keeps the death
   signal through an exec that is not a secure exec and changes no uid,
-  gid or capability. No exec of the chain does either.
+  gid or capability, but AppArmor clears it at the exec into the slot
+  label (Known gaps).
 - The crate reads no env key. Lifecycle (plan PR L20) passes each host
   path from the vmm config (owner env rule, decision CH36 G5): the
   `systemd-run` program of `launch::Launch`, from the existing key
@@ -181,11 +182,25 @@ table of the three vmm crates.
      `vmm.sock` or the user bus. One slot cannot signal the CH of another
      slot (decision CH51).
   4. CH dies with the spawner thread and with a killed vmm (fact 80).
+     These two tests fail today: see the first Known gap.
      `Launched::terminate` sends SIGTERM.
   5. The output of each CH reaches the sink tagged `ch <session id>`.
   `tests/kvm_boot.rs` runs the copy in `CRECHE_KVM_DIR` with no chain.
 
 ## Known gaps
+
+- CONTRACT-QUESTION (decisions CH19 (4), CH55, CH56 rule 2, facts 76
+  and 80): AppArmor sets the death signal to 0 at each exec that changes
+  the label (`apparmor_bprm_committing_creds` in
+  `security/apparmor/lsm.c`). The exec of CH into `creche-ch-slot-<k>`
+  is one, so CH under its label has no death signal. In the job `kvm`, CH
+  runs on after a drop of the spawner and after a SIGKILL of the vmm
+  (`kvm_ch_dies_with_the_spawner_thread`, `kvm_ch_dies_with_a_killed_vmm`
+  fail). The single profile of #443 attached at the same exec, so it had
+  the same gap. No row picks the replacement: for example a scope bound to
+  the vmm unit (`BindsTo=`), a resident stage that kills CH when the vmm
+  dies, or a cgroup that the vmm unit delegates. Until David decides, the
+  two tests stay red and CH56 rule 2 does not hold.
 
 - Closed by plan PRs L16b and L16c: lifecycle passes the slot of each
   start with `Launch::in_slot`, so no launch of the vmm fails with
