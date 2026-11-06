@@ -47,6 +47,7 @@
 #![cfg(target_os = "linux")]
 
 mod kvm;
+mod plain_ch;
 mod scope_guard;
 mod stand_in;
 
@@ -72,7 +73,8 @@ use creche_vmm_confine::vmm_unit::VmmUnit;
 use creche_vmm_store::layout::{RunRoot, SessionDir, Slot, StateRoot, VmRunDir, scope_unit};
 use creche_wire::{HostPort, SessionId};
 
-use kvm::{BOOT, Vm, booted, files};
+use kvm::{BOOT, booted, files};
+use plain_ch::Vm;
 use scope_guard::ScopeGuard;
 use stand_in::{SYSTEMCTL_KEY, StandIn, built_vmm, state_of, until_state};
 

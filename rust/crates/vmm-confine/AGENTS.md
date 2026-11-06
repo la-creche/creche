@@ -265,6 +265,31 @@ table of the three vmm crates.
      `Launched::terminate` sends SIGTERM.
   5. The output of each CH reaches the sink tagged `ch <session id>`.
   `tests/kvm_boot.rs` runs the copy in `CRECHE_KVM_DIR` with no chain.
+- `tests/kvm_vm.rs` runs one VM through the crate and the store (decision
+  CH8-4, plan PR C16). The example `launch_chain` in its role `hold` plays
+  the vmm with the real chain of `tests/kvm_slot.rs`: a cold boot in the
+  scope with the C4 limits, under the slot label and the ruleset, a
+  snapshot with dug holes, the key and the claim, a copy-on-write
+  restore, a second snapshot, then a restore and a SIGKILL of the
+  stand-in. Each restore passes `resume=false`, so the test waits for
+  the paused VM, then resumes it, as the vmm does (decision CH50 rule
+  10). Each start runs the stand-in as a transient user service,
+  and the scope binds to it and is ordered before it (decision CH61
+  rule 2). Each restore carries the `store/<sha256>` initramfs of the
+  boot, the key holds its digest, and the ruleset reads it (decision
+  CH61 rule 3). Step 5, the SIGKILL of the stand-in, proves that a crash
+  ends CH and its scope while the unit waits in `auto-restart` (decision
+  CH61 rule 1), with the control that CH runs while the stand-in runs.
+  `BindsTo=` or the `ExecStopPost=` step ends CH there, and CH is a child
+  of `hold`, so step 5 cannot tell them apart. The signal-9 check of
+  `kvm_a_vmm_crash_frees_the_scope_of_each_vm` in `tests/kvm_slot.rs`
+  proves the step itself. In `auto-restart` step 5 also reads that the
+  step ran in the unit and exited 0 (decision CH63). Each start takes a new slot
+  with `RunRoot::link_vm` and runs `remove_stale`, as the start of
+  `rust/crates/vmm/src/start.rs` does, so each restore moves the VM to
+  another slot. The ruleset grants no right to remove a file, so CH
+  cannot unlink its own sockets, and a stale `vsock.sock` would fail the
+  next start (fact 75).
 
 ## Known gaps
 
@@ -285,6 +310,11 @@ table of the three vmm crates.
   dir). The ruleset grants no right to make a dir, so the vmm must also
   make each `snapshots/<generation>/` before CH writes a snapshot there.
   Plan PRs L16 (cold boot) and D9 (snapshot) own these steps.
+- The upstream CH asset of fact 71 may print its git tag to `--version`,
+  not the `v54.0.0` of a `--rev` build (fact 78). `tests/kvm_vm.rs` then
+  makes the `CheckedCh` of the key from a stand-in that prints
+  `CH_VERSION`, after it checks that the asset names v54.0. The CI-built
+  CH of phase 4 ends the stand-in (decision CH36 G19).
 - Decisions CH42 rule 2 and CH50 rule 10: on a restore the CH command
   line shows no device, so `deny::check` cannot see a device that the
   snapshot holds. The restore runs with `resume=false`. Plan PR L17

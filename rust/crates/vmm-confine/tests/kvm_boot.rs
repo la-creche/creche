@@ -10,6 +10,7 @@
 #![cfg(target_os = "linux")]
 
 mod kvm;
+mod plain_ch;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -17,7 +18,8 @@ use std::process::{Command, Stdio};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use kvm::{BOOT, MARKER, Vm, booted, files};
+use kvm::{BOOT, MARKER, booted, files};
+use plain_ch::Vm;
 
 // Each helper with `cfg(test)` may unwrap (rust/clippy.toml).
 

@@ -1,10 +1,10 @@
 //! The helpers of the kvm_ tests: the files of `bin/vm-smoke-setup.sh`
-//! and a CH process that a drop kills.
+//! and the boot marker of the guest. `tests/plain_ch` has the CH process
+//! that a drop kills.
 #![cfg(test)]
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Child;
 use std::time::Duration;
 
 /// The variable that names the files of the setup script.
@@ -15,18 +15,6 @@ pub const MARKER: &str = "CRECHE-KVM-BOOTED";
 
 /// A boot takes about 0.6 s on the runner (fact 79).
 pub const BOOT: Duration = Duration::from_secs(30);
-
-/// A child process of the test, killed and reaped on drop. For a CH that
-/// the test starts itself, a failed test leaves no VM. The CH of a `hold`
-/// stand-in is not a child, so its test also takes a `ScopeGuard`.
-pub struct Vm(pub Child);
-
-impl Drop for Vm {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
 
 /// The directory of the setup script.
 pub fn files() -> PathBuf {
