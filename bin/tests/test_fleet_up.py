@@ -439,15 +439,27 @@ def test_up_writes_each_vmm_key_as_the_catalog_resolves_it(ready: Host) -> None:
         assert value == _catalog_value(key, site), key
 
 
-def test_a_site_value_reaches_vmm_env(ready: Host, tmp_path: Path) -> None:
-    """The site file overrides the catalog, and `vmm.env` follows it."""
+def test_vmm_env_follows_each_change_of_the_site_file(ready: Host, tmp_path: Path) -> None:
+    """A later `up` rewrites `vmm.env`: it takes a new override, and it goes
+    back to the catalog value when the site file drops the override. A
+    write only on the first `up`, or a writer that keeps a set key, fails."""
+    example = os.environ["AGENT_SITE_FILE"]
     site = tmp_path / "site.env"
-    example = Path(os.environ["AGENT_SITE_FILE"]).read_text(encoding="utf-8")
-    site.write_text(example + "VMM_RAM_CAP_GIB=12\n", encoding="utf-8")
+    site.write_text(Path(example).read_text(encoding="utf-8"), encoding="utf-8")
+    vmm_env = ready.state / "vmm.env"
+    default = _catalog_value("VMM_RAM_CAP_GIB", example)
+    assert default != "12", "the override must differ from the catalog value"
 
     assert ready.run("up", AGENT_SITE_FILE=str(site)).returncode == 0
+    assert _env_pairs(vmm_env)["VMM_RAM_CAP_GIB"] == default
 
-    assert _env_pairs(ready.state / "vmm.env")["VMM_RAM_CAP_GIB"] == "12"
+    site.write_text(f"{site.read_text(encoding='utf-8')}VMM_RAM_CAP_GIB=12\n", encoding="utf-8")
+    assert ready.run("up", AGENT_SITE_FILE=str(site)).returncode == 0
+    assert _env_pairs(vmm_env)["VMM_RAM_CAP_GIB"] == "12"
+
+    site.write_text(Path(example).read_text(encoding="utf-8"), encoding="utf-8")
+    assert ready.run("up", AGENT_SITE_FILE=str(site)).returncode == 0
+    assert _env_pairs(vmm_env)["VMM_RAM_CAP_GIB"] == default
 
 
 def test_up_never_writes_hooks_env(ready: Host) -> None:
