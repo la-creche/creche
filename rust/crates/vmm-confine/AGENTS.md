@@ -129,6 +129,15 @@ table of the three vmm crates.
   the launch. A missing path or a kernel below Landlock ABI 4 fails the
   launch. All Landlock calls sit behind `cfg(target_os = "linux")`
   (decision CH38).
+- Only a boot reads the kernel. A boot and a restore both read the
+  initramfs (decision CH61 rule 3): CH v54 opens the initramfs of the
+  snapshot config on a restore, so `Start::Restore` carries the
+  `store/<sha256>` initramfs of its snapshot (decision CH60 rule 2),
+  and the snapshot key of `creche-vmm-store` holds its digest. A
+  snapshot with the current key names the initramfs of the vmm config,
+  so the vmm passes that checked store copy. A boot has none until
+  phase 3 adds guest init (PR C7), and then its snapshot and its
+  restore have none. `tests/kvm_vm.rs` restores with one.
 - `deny::check` is the proof of deny-by-default (decision CH6-3). The
   first argument of the command line is the payload program, so a pid
   that still runs the launch step or `systemd-run`, or a CH zombie, fails

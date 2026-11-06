@@ -129,7 +129,7 @@ fn check_args(bytes: &[u8], payload: &Program, start: &Start) -> Result<(), Egre
     let vsock = args().filter(|arg| is_vsock(arg)).count();
     let wanted = match start {
         Start::Boot { .. } => 1,
-        Start::Restore => 0,
+        Start::Restore { .. } => 0,
     };
     if vsock == wanted {
         Ok(())

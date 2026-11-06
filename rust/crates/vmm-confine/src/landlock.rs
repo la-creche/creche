@@ -76,18 +76,27 @@ impl From<HostPath> for PathBuf {
     }
 }
 
-/// How Cloud Hypervisor starts the VM. Only a boot reads the kernel.
+/// How Cloud Hypervisor starts the VM. Only a boot reads the kernel. A
+/// boot and a restore both read the initramfs (decision CH61 rule 3).
+///
+/// A boot has no initramfs until phase 3 adds guest init (PR C7), and
+/// the kvm job boots with one, so each variant holds an `Option`. The
+/// snapshot of a boot with none has none, and its restore carries none.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum Start {
-    /// A cold boot. PR C7 makes the initramfs optional until phase 3, and
-    /// the CI boot of PR C16 uses one, so the rules allow it too.
+    /// A cold boot.
     Boot {
         kernel: HostPath,
         initramfs: Option<HostPath>,
     },
-    /// A restore from a snapshot under the snapshot directory.
-    Restore,
+    /// A restore from a snapshot under the snapshot directory. CH opens
+    /// the initramfs that the snapshot config names, so the restore
+    /// carries the `store/<sha256>` initramfs of its snapshot (decisions
+    /// CH60 rule 2, CH61 rule 3). The snapshot key holds that digest, so
+    /// a snapshot with the current key names the initramfs of the vmm
+    /// config, and the vmm passes that checked store copy.
+    Restore { initramfs: Option<HostPath> },
 }
 
 /// The files of one VM that its ruleset names. Each one exists before the
@@ -219,10 +228,14 @@ pub fn rules(files: &VmFiles, payload: &Program) -> Vec<Rule> {
         rule(KVM, READ_WRITE),
         rule(URANDOM, READ),
     ];
-    if let Start::Boot { kernel, initramfs } = &files.start {
-        rules.push(rule(kernel.path(), READ));
-        rules.extend(initramfs.iter().map(|image| rule(image.path(), READ)));
-    }
+    let initramfs = match &files.start {
+        Start::Boot { kernel, initramfs } => {
+            rules.push(rule(kernel.path(), READ));
+            initramfs
+        }
+        Start::Restore { initramfs } => initramfs,
+    };
+    rules.extend(initramfs.iter().map(|image| rule(image.path(), READ)));
     rules.extend([
         rule(files.root_disk.path(), READ),
         rule(files.session_disk.path(), READ_WRITE),
@@ -382,12 +395,35 @@ mod tests {
         };
         let mut boot = table(&rules(boot));
         boot.retain(|(path, _)| path != "/state/store/kernel");
-        assert_eq!(table(&rules(Start::Restore)), boot);
+        let restore = Start::Restore { initramfs: None };
+        assert_eq!(table(&rules(restore)), boot);
+    }
+
+    /// A restore reads the initramfs of its snapshot, as a boot reads
+    /// its own (decision CH61 rule 3), and no kernel.
+    #[test]
+    fn a_restore_reads_the_initramfs_of_its_snapshot() {
+        let boot = Start::Boot {
+            kernel: host("/state/store/kernel"),
+            initramfs: Some(host("/state/store/initramfs")),
+        };
+        let mut boot = table(&rules(boot));
+        boot.retain(|(path, _)| path != "/state/store/kernel");
+        let restore = Start::Restore {
+            initramfs: Some(host("/state/store/initramfs")),
+        };
+        let rules = rules(restore);
+        assert_eq!(table(&rules), boot);
+        let initramfs = rules
+            .iter()
+            .find(|rule| rule.path.ends_with("initramfs"))
+            .map(|rule| rule.rights);
+        assert_eq!(initramfs, Some(&[Right::ReadFile][..]));
     }
 
     #[test]
     fn the_root_disk_is_read_only() {
-        let rules = rules(Start::Restore);
+        let rules = rules(Start::Restore { initramfs: None });
         let root = rules.iter().find(|rule| rule.path.ends_with("root"));
         assert_eq!(root.map(|rule| rule.rights), Some(&[Right::ReadFile][..]));
     }
@@ -416,7 +452,8 @@ mod tests {
         fs::write(root.join("root.img"), "root").unwrap();
         fs::write(session.disk(), "session").unwrap();
         let root_disk = HostPath::new(root.join("root.img")).unwrap();
-        let files = VmFiles::new(Start::Restore, root_disk, &session, &run).unwrap();
+        let start = Start::Restore { initramfs: None };
+        let files = VmFiles::new(start, root_disk, &session, &run).unwrap();
         let payload = Program::new(std::env::current_exe().unwrap()).unwrap();
         let rules = super::rules(&files, &payload);
 
@@ -447,9 +484,9 @@ mod tests {
         assert!(
             serde_json::from_str::<Start>(r#"{"boot":{"kernel":"k","initramfs":null}}"#).is_err()
         );
-        assert_eq!(
-            serde_json::to_string(&Start::Restore).unwrap(),
-            r#""restore""#
-        );
+        let json = r#"{"restore":{"initramfs":"/i"}}"#;
+        let start: Start = serde_json::from_str(json).unwrap();
+        assert_eq!(serde_json::to_string(&start).unwrap(), json);
+        assert!(serde_json::from_str::<Start>(r#""restore""#).is_err());
     }
 }

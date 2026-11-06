@@ -517,7 +517,7 @@ impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
     fn key(&self) -> SnapshotKey {
         let images = ImageStore::new(&self.state, PathBuf::from("/usr/bin/zstd"));
         let empty = images.check(EMPTY.parse().unwrap()).unwrap();
-        SnapshotKey::current(self.ch, &empty, &empty)
+        SnapshotKey::current(self.ch, &empty, None, &empty)
     }
 
     /// Makes generation 1 of row `index` with `key`, or with a key of

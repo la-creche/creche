@@ -412,7 +412,7 @@ mod tests {
             .session(&id);
         let run = RunRoot::new(PathBuf::from("/run/vmm")).unwrap().vm(&id);
         let root = HostPath::new(PathBuf::from("/state/store/root")).unwrap();
-        let files = VmFiles::new(Start::Restore, root, &session, &run).unwrap();
+        let files = VmFiles::new(Start::Restore { initramfs: None }, root, &session, &run).unwrap();
         let ch = Program::new(PathBuf::from("/opt/components/vmm/bin/cloud-hypervisor")).unwrap();
         let payload = Payload::new(ch, vec!["--restore".to_owned()]);
         let scope = Scope::new(

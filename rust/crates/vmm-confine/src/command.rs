@@ -38,7 +38,6 @@ use creche_vmm_store::images::CheckedImage;
 use creche_vmm_store::layout::VmRunDir;
 use creche_vmm_store::session_disk::SessionDisk;
 
-use crate::landlock::HostPath;
 use crate::launch::{Payload, Program};
 use crate::limits::{MIB, VmLimits};
 
@@ -152,9 +151,9 @@ impl DiskLimit {
 pub struct Boot<'a> {
     /// The guest kernel (decision CH7-3).
     pub kernel: &'a CheckedImage,
-    /// The initramfs that the vmm writes at VM start (decision CH7-6). It
-    /// is optional until phase 3 adds guest init.
-    pub initramfs: Option<&'a HostPath>,
+    /// The guest init initramfs, a checked store copy (decisions CH7-6,
+    /// CH60 rule 2). A boot has none until phase 3 adds guest init.
+    pub initramfs: Option<&'a CheckedImage>,
     /// The shared root disk, read only (decision CH8-8).
     pub root: &'a CheckedImage,
     /// The session disk (decision CH8-7).

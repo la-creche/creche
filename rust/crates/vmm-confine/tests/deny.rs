@@ -85,6 +85,11 @@ fn boot() -> Start {
     }
 }
 
+#[cfg(test)]
+fn restore() -> Start {
+    Start::Restore { initramfs: None }
+}
+
 const BOOT: &[&str] = &[
     "--cpus",
     "boot=2",
@@ -109,7 +114,7 @@ fn an_empty_bound_set_with_no_listener_passes() {
 #[test]
 fn a_restore_with_no_vsock_argument_passes() {
     let fake = Fake::new("restore", RESTORE);
-    fake.check(&Start::Restore, &[]).unwrap();
+    fake.check(&restore(), &[]).unwrap();
 }
 
 #[test]
@@ -179,7 +184,7 @@ fn a_boot_needs_exactly_one_vsock() {
 fn a_restore_with_a_vsock_argument_fails() {
     let fake = Fake::new("restore-vsock", &[RESTORE, &["--vsock", "cid=3"]].concat());
     assert!(matches!(
-        fake.check(&Start::Restore, &[]),
+        fake.check(&restore(), &[]),
         Err(EgressAssertFailed::Vsock(1))
     ));
 }
@@ -218,7 +223,7 @@ fn a_process_that_is_not_ch_fails() {
     ];
     for (name, args) in cases {
         let fake = Fake::raw(name, args);
-        for start in [boot(), Start::Restore] {
+        for start in [boot(), restore()] {
             let result = fake.check(&start, &[]);
             assert!(
                 matches!(result, Err(EgressAssertFailed::NotCh)),

@@ -44,7 +44,8 @@ impl TempVm {
         fs::write(root.join("root.img"), "root").unwrap();
         fs::write(session.disk(), "session").unwrap();
         let root_disk = HostPath::new(root.join("root.img")).unwrap();
-        let files = VmFiles::new(Start::Restore, root_disk, &session, &run).unwrap();
+        let start = Start::Restore { initramfs: None };
+        let files = VmFiles::new(start, root_disk, &session, &run).unwrap();
         Self { root, files }
     }
 }

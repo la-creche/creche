@@ -412,7 +412,8 @@ table, and the start boots it again. A cold boot runs these steps:
    admission names runs (see "The eviction").
 3. In `spawn_blocking`: `RunRoot::link_vm` links `vm/<id>` to the slot
    (PR D16), then `remove_stale` (decision CH19 (4)), the store check of
-   the kernel and the root disk of the flavor (decision CH44 rule 2),
+   the kernel, the initramfs when the config names one, and the root
+   disk of the flavor (decision CH44 rule 2),
    `SessionDisks::for_boot` (decision CH21-4), `snapshots/` with mode
    0700, and a new `serial.log` with mode 0600 (gap G23). Then the
    restore or cold boot choice (see "The restore"), and the launch with
@@ -482,7 +483,11 @@ stop path and a restore into a new slot.
 `src/start.rs` restores a session from its newest snapshot when it can
 (plan PR L17, decision CH2). `StartConfig::ch_version` is the
 `CheckedCh` of the version check at vmm start (gap G10). With the
-checked kernel and root disk it gives the current `SnapshotKey`.
+checked kernel, initramfs and root disk it gives the current
+`SnapshotKey`. A snapshot with the current key names the initramfs of
+the config, so `Start::Restore` carries that `store/<sha256>` file and
+the ruleset reads it, as on a boot (decision CH61 rule 3). The config
+names none until phase 3 adds guest init (PR C7).
 
 1. `check_newest` of `creche-vmm-store` compares the key of the newest
    generation. A mismatch or an unreadable key drops every generation,

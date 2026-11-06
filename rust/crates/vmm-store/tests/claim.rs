@@ -54,7 +54,7 @@ impl Temp {
         let id: SessionId = ID.parse().expect("ID is a session id");
         Self {
             session: state.session(&id),
-            key: SnapshotKey::current(ch, &kernel, &root_disk),
+            key: SnapshotKey::current(ch, &kernel, None, &root_disk),
             root,
         }
     }
