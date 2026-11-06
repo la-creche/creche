@@ -283,7 +283,8 @@ table of the three vmm crates.
   `BindsTo=` or the `ExecStopPost=` step ends CH there, and CH is a child
   of `hold`, so step 5 cannot tell them apart. The signal-9 check of
   `kvm_a_vmm_crash_frees_the_scope_of_each_vm` in `tests/kvm_slot.rs`
-  proves the step itself. Each start takes a new slot
+  proves the step itself. In `auto-restart` step 5 also reads that the
+  step ran in the unit and exited 0 (decision CH63). Each start takes a new slot
   with `RunRoot::link_vm` and runs `remove_stale`, as the start of
   `rust/crates/vmm/src/start.rs` does, so each restore moves the VM to
   another slot. The ruleset grants no right to remove a file, so CH
