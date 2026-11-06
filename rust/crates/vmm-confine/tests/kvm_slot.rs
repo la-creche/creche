@@ -859,6 +859,10 @@ fn kvm_ch_dies_with_the_spawner_thread() {
     assert!(running(ch.0.id()), "CH exited while the spawner lived");
 
     drop(vmm);
+    // A bounded wait: a CH that outlives the spawner fails the test and
+    // is killed by the drop of `ch`.
+    let pid = ch.0.id();
+    until("CH death after the spawner drop", || !running(pid));
     let status = ch.0.wait().unwrap();
     assert_eq!(status.signal(), Some(9), "{status}");
 }
