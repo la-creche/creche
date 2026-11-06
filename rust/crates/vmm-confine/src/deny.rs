@@ -140,7 +140,7 @@ fn check_args(bytes: &[u8], payload: &Program, start: &Start) -> Result<(), Egre
 
 /// Part 2: each `vsock.sock_*` entry of the run directory is the listener
 /// of a bound port, and each bound port has one. Other entries (the CH
-/// sockets and `serial.log`) are not listeners.
+/// sockets and the lock file of the API socket) are not listeners.
 fn check_listeners(run: &VmRunDir, bound: &[HostPort]) -> Result<(), EgressAssertFailed> {
     let name = |path: PathBuf| path.file_name().map(OsString::from).unwrap_or_default();
     let mut prefix = name(run.vsock_socket());

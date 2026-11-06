@@ -57,6 +57,7 @@ impl TempState {
         fs::create_dir(session.snapshots().join("3.retired")).expect("a retired dir");
         fs::write(session.disk(), "disk").expect("the disk");
         fs::write(session.disk_temp(), "temp").expect("a temp disk");
+        fs::write(session.serial_log(), "guest").expect("a serial log");
         session
     }
 }
@@ -97,6 +98,7 @@ fn a_drop_removes_every_file_and_then_the_row() {
     assert!(!dropped.path().exists());
     assert!(!state.0.row_file(&parse(A)).exists());
     assert!(kept.disk().exists());
+    assert!(kept.serial_log().exists());
     assert!(kept.snapshot(SnapshotGeneration(2)).exists());
     for rows in [rows, state.open()] {
         assert_eq!(rows.get(&parse(A)), None);

@@ -14,6 +14,7 @@ pub mod layout;
 pub mod remove;
 pub mod retention;
 pub mod rows;
+pub mod serial_log;
 pub mod session_disk;
 pub mod sleep_gate;
 pub mod snapshot;

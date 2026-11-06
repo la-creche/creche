@@ -1,7 +1,7 @@
 //! The Cloud Hypervisor command line of a boot and a restore. Each input
 //! is a checked store type, so each test imports three images, makes a
-//! session disk and, for a restore, claims a keyed snapshot, as at a VM
-//! start.
+//! session disk and a new serial log and, for a restore, claims a keyed
+//! snapshot, as at a VM start.
 
 use std::fs;
 use std::path::PathBuf;
@@ -18,6 +18,7 @@ use creche_vmm_store::key::{
     CH_VERSION, KeyCheck, SnapshotKey, check_cloud_hypervisor, check_newest, write_key,
 };
 use creche_vmm_store::layout::{RunRoot, SnapshotGeneration, StateRoot, VmRunDir};
+use creche_vmm_store::serial_log::SerialLog;
 use creche_vmm_store::session_disk::{SessionDisk, SessionDisks};
 use creche_wire::{FamilyShape, SessionId};
 
@@ -53,7 +54,7 @@ const BOOT: &[&str] = &[
     "--vsock",
     "cid=3,socket=<root>/run/vm/0123abcd-0000-4000-8000-00000000c7c7/vsock.sock",
     "--serial",
-    "file=<root>/run/vm/0123abcd-0000-4000-8000-00000000c7c7/serial.log",
+    "file=<root>/state/sessions/0123abcd-0000-4000-8000-00000000c7c7/serial.log",
     "--console",
     "off",
 ];
@@ -66,8 +67,8 @@ const RESTORE: &[&str] = &[
     "source_url=file://<root>/state/sessions/0123abcd-0000-4000-8000-00000000c7c7/snapshots/1,memory_restore_mode=copyonwrite,resume=false",
 ];
 
-/// A state root with a kernel, an initramfs, a root disk and a session
-/// disk, and a run root, in a new temp dir, removed on drop.
+/// A state root with a kernel, an initramfs, a root disk, a session disk
+/// and a serial log, and a run root, in a new temp dir, removed on drop.
 struct Temp {
     root: PathBuf,
     state: StateRoot,
@@ -75,6 +76,7 @@ struct Temp {
     initramfs: CheckedImage,
     root_disk: CheckedImage,
     session: SessionDisk,
+    serial: SerialLog,
     run: VmRunDir,
 }
 
@@ -108,6 +110,7 @@ impl Temp {
         let session = SessionDisks::new(&state, PathBuf::from(MKE2FS))
             .for_boot(&id)
             .unwrap();
+        let serial = SerialLog::fresh(&state.session(&id)).unwrap();
         let run = RunRoot::new(root.join("run")).unwrap().vm(&id);
         Self {
             root,
@@ -116,6 +119,7 @@ impl Temp {
             initramfs,
             root_disk,
             session,
+            serial,
             run,
         }
     }
@@ -127,6 +131,7 @@ impl Temp {
             initramfs,
             root: &self.root_disk,
             session: &self.session,
+            serial: &self.serial,
             disk: DiskLimit::SESSION,
             limits: limits(),
         }
@@ -284,6 +289,23 @@ fn a_session_disk_path_with_option_syntax_is_refused() {
     };
     let error = ChCommand::boot(boot, &temp.run).unwrap_err();
     assert_eq!(error, CommandError::OptionSyntax(session.path().to_owned()));
+}
+
+#[test]
+fn a_serial_log_path_with_option_syntax_is_refused() {
+    // The images and the session disk are in a clean state root.
+    let temp = Temp::new("syntax-serial");
+    let session = StateRoot::new(temp.root.join("st,ate"))
+        .unwrap()
+        .session(&id());
+    fs::create_dir_all(session.path()).unwrap();
+    let serial = SerialLog::fresh(&session).unwrap();
+    let boot = Boot {
+        serial: &serial,
+        ..temp.boot(None)
+    };
+    let error = ChCommand::boot(boot, &temp.run).unwrap_err();
+    assert_eq!(error, CommandError::OptionSyntax(serial.path().to_owned()));
 }
 
 #[test]

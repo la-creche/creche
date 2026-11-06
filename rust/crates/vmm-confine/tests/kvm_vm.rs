@@ -8,8 +8,9 @@
 //! the family VM shape (PR C4), and the launch stage, which enters the
 //! slot label and applies the Landlock ruleset of the VM before it execs
 //! the installed CH (decisions CH8-3, CH55, CH58 rule 1). Each start takes
-//! a new slot with `RunRoot::link_vm` and then runs `remove_stale`, as
-//! lifecycle does (PR L16b). So each restore moves the VM to another slot,
+//! a new slot with `RunRoot::link_vm`, runs `remove_stale` and makes the
+//! serial log in the session dir new, as lifecycle does (PR L16b, decision
+//! CH59 rule 2). So each restore moves the VM to another slot,
 //! and the paths in the snapshot hold through the `vm/<id>` link (PR
 //! D16). The run root is the real `/run/user/<uid>/vmm` and the state root
 //! is the default `~/.local/state/creche-vmm`, which the slot profiles
@@ -36,7 +37,8 @@
 //!    `hold`, so the step cannot read how CH died. The signal-9 check of
 //!    `kvm_a_vmm_crash_frees_the_scope_of_each_vm` in `tests/kvm_slot.rs`
 //!    proves the `ExecStopPost=` step itself. The control: CH runs while
-//!    the stand-in runs.
+//!    the stand-in runs. The serial log in the state root still holds the
+//!    ticks of the guest after the crash (decision CH59 rule 2).
 //!
 //! The busybox guest has no guest init, so the control link, ControlReady
 //! and the guest `sync` before a snapshot wait for phase 3. The test reads
@@ -70,6 +72,7 @@ use creche_vmm_store::key::{
     check_newest, write_key,
 };
 use creche_vmm_store::layout::{RunRoot, SessionDir, Slot, StateRoot, VmRunDir, scope_unit};
+use creche_vmm_store::serial_log::SerialLog;
 use creche_vmm_store::session_disk::{SessionDisk, SessionDisks};
 use creche_vmm_store::snapshot::{MEMORY_RANGES, Snapshot, SnapshotTimeouts, Snapshotter};
 use creche_vmm_store::stale::remove_stale;
@@ -305,20 +308,23 @@ impl Setup {
 
     /// Takes `slot` for the next start, as lifecycle does: the link of
     /// `vm/<id>` to the slot, which empties the slot dir, then
-    /// `remove_stale` of PR D1 (decision CH56 rule 1, fact 75).
-    fn take(&self, slot: Slot) {
+    /// `remove_stale` of PR D1 (decision CH56 rule 1, fact 75), then a new
+    /// serial log (decision CH59 rule 2).
+    fn take(&self, slot: Slot) -> SerialLog {
         self.run.link_vm(&self.id, slot).unwrap();
         remove_stale(&self.vm).unwrap();
+        SerialLog::fresh(&self.session).unwrap()
     }
 
     /// The launch of a cold boot in `slot`, bound to `unit`.
     fn boot(&self, slot: Slot, unit: &VmmUnit) -> Launch {
-        self.take(slot);
+        let serial = self.take(slot);
         let boot = Boot {
             kernel: &self.kernel,
             initramfs: Some(&self.initramfs),
             root: &self.root,
             session: &self.disk,
+            serial: &serial,
             disk: DiskLimit::SESSION,
             limits: self.limits,
         };
@@ -333,10 +339,10 @@ impl Setup {
         self.launch(start, payload, slot, unit)
     }
 
-    /// The launch of a restore of `snapshot` in `slot`. The new slot dir is
-    /// empty, so each tick that the test reads comes from the restored
-    /// guest. The snapshot names its files by the `vm/<id>` path, which
-    /// now links to `slot`. The key of the claim holds the digest of the
+    /// The launch of a restore of `snapshot` in `slot`. The serial log is
+    /// new, so each tick that the test reads comes from the restored
+    /// guest. The snapshot names its sockets by the `vm/<id>` path, which
+    /// now links to `slot`, and its serial log by the session dir path. The key of the claim holds the digest of the
     /// initramfs of the boot, so the restore carries that same store file
     /// (decision CH61 rule 3). The scope binds to `unit`.
     fn restore(&self, snapshot: ClaimedSnapshot, slot: Slot, unit: &VmmUnit) -> Launch {
@@ -391,7 +397,7 @@ impl Setup {
     fn wait_booted(&self, pid: u32, slot: Slot) {
         until("boot marker", || {
             assert!(running(pid), "CH exited before the marker");
-            booted(&self.vm.serial_log())
+            booted(&self.session.serial_log())
         });
         assert_eq!(label_of(pid), format!("{} (enforce)", label(slot)));
     }
@@ -413,7 +419,7 @@ impl Setup {
     fn resume(&self, pid: u32, slot: Slot) {
         self.until_state(pid, VmState::Paused);
         assert!(
-            fs::read(self.vm.serial_log()).map_or(true, |bytes| bytes.is_empty()),
+            fs::read(self.session.serial_log()).map_or(true, |bytes| bytes.is_empty()),
             "the paused guest wrote to its serial file"
         );
         self.remote.resume(&self.vm, CALL).unwrap();
@@ -528,7 +534,7 @@ fn kvm_vm_snapshot_restore_kill() {
         "the restored CH does not map {}",
         memory.display()
     );
-    let serial = setup.vm.serial_log();
+    let serial = setup.session.serial_log();
     until("guest tick after the restore", || ticked(&serial));
 
     // 4: a second snapshot to a new generation.
@@ -551,9 +557,11 @@ fn kvm_vm_snapshot_restore_kill() {
     setup.resume(pid, last);
     assert!(!setup.units().trim().is_empty(), "no VM scope");
     assert_eq!(held.vmm.state(), "active");
+    until("guest tick before the vmm kill", || ticked(&serial));
     held.vmm.kill();
     until("CH death after the vmm kill", || !running(pid));
     until("scope removal", || setup.units().trim().is_empty());
     assert_eq!(held.vmm.sub_state(), "auto-restart");
     until_state(unit.name(), "inactive");
+    assert!(ticked(&serial), "the vmm crash lost the serial log");
 }

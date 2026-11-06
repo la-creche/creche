@@ -562,7 +562,7 @@ impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
             "cpus": {"boot_vcpus": 1, "max_vcpus": 1},
             "memory": {"size": 536_870_912, "shared": false},
             "disks": self.disks(index),
-            "serial": {"file": self.dir.join(format!("run/vm/{id}/serial.log")), "mode": "File"},
+            "serial": {"file": self.dir.join(format!("state/sessions/{id}/serial.log")), "mode": "File"},
             "vsock": {"cid": 3, "socket": vsock, "id": "_vsock0", "pci_segment": 0},
         });
         for (field, value) in extra {
@@ -627,9 +627,43 @@ fn a_cold_boot_launches_the_checked_files_and_clears_the_fault() {
     let session = test.dir.join(format!("state/sessions/{A}"));
     assert!(session.join("disk.ext4").is_file());
     assert!(session.join("snapshots").is_dir());
-    let serial = test.dir.join(format!("run/vm/{A}/serial.log"));
-    let mode = fs::metadata(serial).unwrap().permissions().mode();
+    let serial = session.join("serial.log");
+    let mode = fs::metadata(&serial).unwrap().permissions().mode();
     assert_eq!(mode & 0o777, 0o600);
+    let at = args.iter().position(|arg| arg == "--serial").unwrap();
+    assert_eq!(args[at + 1], format!("file={}", serial.display()));
+}
+
+/// The serial log of a session is in the state root, so a restart of the
+/// vmm keeps it until the next start of the session (gap G23, decision
+/// CH59 rule 2). The test stops the VM, then removes the run root, as
+/// each stop of the vmm unit does, a crash included. The log still holds
+/// the guest output. The next start of the session makes it new, with
+/// mode 0600, and a restore does the same.
+#[test]
+fn a_vmm_restart_keeps_the_serial_log_until_the_next_start() {
+    let test = Test::new("serial", |_| {});
+    let id = test.rows[0].id.clone();
+    let serial = test.dir.join(format!("state/sessions/{A}/serial.log"));
+    for restore in [false, true] {
+        assert_eq!(test.start(0), Ok(()));
+        fs::write(&serial, b"the last guest\r\n").unwrap();
+        fs::set_permissions(&serial, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(test.runtime.block_on(test.hook.stop(&id)).is_ok());
+        fs::remove_dir_all(test.dir.join("run")).unwrap();
+        assert_eq!(fs::read(&serial).unwrap(), b"the last guest\r\n");
+
+        if restore {
+            test.snapshot(0, Some(&test.key()));
+            test.reply(0, "Paused", &[]);
+        }
+        assert_eq!(test.start(0), Ok(()));
+        assert_eq!(test.restored(test.launches() - 1), restore);
+        assert_eq!(fs::read(&serial).unwrap(), b"");
+        let mode = fs::metadata(&serial).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        assert!(test.runtime.block_on(test.hook.stop(&id)).is_ok());
+    }
 }
 
 /// A vmm in no service unit refuses every launch and starts nothing
@@ -1939,8 +1973,8 @@ fn slot_dir(number: u16) -> PathBuf {
 /// Each VM takes its own slot, and its `vm/<id>` links to it (plan PR
 /// L16b, decisions CH51, CH55). A stop frees the slot and removes the
 /// link, and the next start takes the freed slot. The link empties the
-/// slot first, so the `serial.log` of the old VM is new (decision CH56
-/// rule 1).
+/// slot first, so a leftover listener of the old VM is gone (decision
+/// CH56 rule 1).
 #[test]
 fn two_vms_get_two_slots_and_a_freed_slot_is_reused() {
     let test = Test::new("slots", |_| {});
@@ -1949,8 +1983,8 @@ fn two_vms_get_two_slots_and_a_freed_slot_is_reused() {
     assert_eq!((test.slot(0), test.slot(1)), (0, 1));
     assert_eq!(test.link(0), Some(slot_dir(0)));
     assert_eq!(test.link(1), Some(slot_dir(1)));
-    let serial = test.dir.join("run/slot/0/serial.log");
-    fs::write(&serial, b"the old guest").unwrap();
+    let leftover = test.dir.join("run/slot/0/vsock.sock_1104");
+    fs::write(&leftover, b"the old guest").unwrap();
 
     let id = test.rows[0].id.clone();
     assert!(test.runtime.block_on(test.hook.stop(&id)).is_ok());
@@ -1958,7 +1992,7 @@ fn two_vms_get_two_slots_and_a_freed_slot_is_reused() {
     assert_eq!(test.start(2), Ok(()));
     assert_eq!(test.slot(2), 0);
     assert_eq!(test.link(2), Some(slot_dir(0)));
-    assert_eq!(fs::read(&serial).unwrap(), b"");
+    assert!(!leftover.exists());
 }
 
 /// With each of the 64 slots held by a busy VM, the next start gets

@@ -2,9 +2,12 @@
 //! phase 2 plan, taken by decision CH36).
 //!
 //! The state root holds what lives across a host restart: the session
-//! rows, the session disks and the snapshots. The run root is the runtime
-//! directory of the vmm unit. It holds `vmm.sock` (decision CH20) and one
-//! directory per VM with the sockets of Cloud Hypervisor. The vmm config
+//! rows, the session disks, the snapshots and the serial log of each
+//! session. The run root is the runtime directory of the vmm unit, and
+//! systemd removes it at each stop of the unit. It holds `vmm.sock`
+//! (decision CH20) and one directory per VM with the sockets of Cloud
+//! Hypervisor. So the serial log is in the state root, and a vmm restart
+//! keeps it (decision CH59 rule 2). The vmm config
 //! (PR L20) passes both roots in. No path is compiled in.
 //!
 //! Decisions CH51 and CH55 (PR D16): the run root also holds `SLOTS` slot
@@ -184,9 +187,10 @@ impl StateRoot {
     // Decision CH39 rule 3 names the files under the state root:
     // `rows/<id>.json`, `sessions/<id>/disk.ext4` (temp `disk.ext4.tmp`),
     // `sessions/<id>/snapshots/<generation>/`, and `store/<sha256>` with
-    // `store/<sha256>.identity`. A snapshot holds the disk path, so a
-    // rename costs a cold boot of every VM (plan risk 8) and an edit of the
-    // confine rules that name these paths.
+    // `store/<sha256>.identity`. Decision CH59 rule 2 adds
+    // `sessions/<id>/serial.log`. A snapshot holds the disk path and the
+    // serial log path, so a rename costs a cold boot of every VM (plan
+    // risk 8) and an edit of the confine rules that name these paths.
 
     /// The directory of every session row file (PR D2).
     #[must_use]
@@ -284,6 +288,16 @@ impl SessionDir {
     pub fn snapshot_key(&self, generation: SnapshotGeneration) -> PathBuf {
         self.snapshot(generation).join("key.json")
     }
+
+    /// The guest serial output of the session (gap G23, decision CH59
+    /// rule 2). Each session has its own, so two VMs never share one file.
+    /// `serial_log::SerialLog::fresh` makes it new before each launch,
+    /// and it stays until the next start of the session. A drop of the
+    /// session removes it with the session dir.
+    #[must_use]
+    pub fn serial_log(&self) -> PathBuf {
+        self.0.join("serial.log")
+    }
 }
 
 /// The run root: an absolute path with no `..` component, short enough
@@ -364,8 +378,7 @@ impl RunRoot {
     }
 
     // Decision CH56 rule 1: a VM that takes a slot empties it first. A
-    // slot that held another VM can keep its `serial.log` and its
-    // `vsock.sock_*` listeners. A leftover listener fails the next bind,
+    // slot that held another VM can keep its `vsock.sock_*` listeners. A leftover listener fails the next bind,
     // and the deny check refuses an extra listener (CH6-3).
     /// Makes `vm/<id>` a symlink to `../slot/<k>`, and makes the slot dir
     /// if it is not there (decisions CH51, CH55).
@@ -374,7 +387,8 @@ impl RunRoot {
     /// removes every entry that is not a dir: each regular file, socket
     /// and link. It removes no dir. A free slot holds no live Cloud
     /// Hypervisor (CH19 (4)), so the files of the old VM are stale. The
-    /// old VM's `serial.log` goes with them.
+    /// serial log is in the state root (decision CH59 rule 2), so the
+    /// empty step never reaches it.
     ///
     /// A link that is there, to any target, is replaced in one rename, so
     /// a re-link moves the VM to another slot. A real dir at `vm/<id>`
@@ -460,16 +474,6 @@ impl VmRunDir {
     #[must_use]
     pub fn api_socket_lock(&self) -> PathBuf {
         self.0.join("api.sock.lock")
-    }
-
-    /// The guest serial output (gap G23). The gap writes
-    /// `<run>/serial.log`. This reading puts it in the run directory of the
-    /// VM, so that two VMs do not share one file. It stays until a VM next
-    /// takes the slot, and `RunRoot::link_vm` removes it (decision CH56
-    /// rule 1).
-    #[must_use]
-    pub fn serial_log(&self) -> PathBuf {
-        self.0.join("serial.log")
     }
 }
 

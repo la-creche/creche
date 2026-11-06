@@ -81,10 +81,9 @@ file's removal is always a human verb.
    `RUNTIME_DIRECTORY`.
 2. The lifetime of `serial.log` is decision CH59 rule 2. The unit keeps
    `RuntimeDirectoryPreserve=no`, so systemd removes the run root at each
-   stop and each restart. Plan PR D17 moves each `serial.log` to
+   stop and each restart. So each `serial.log` is in
    `sessions/<id>/serial.log` in the state root, kept until the next start
-   of that session (gap G23). Until D17 merges, each stop removes the
-   `serial.log` of each VM.
+   of that session (gap G23, plan PR D17).
 3. The vmm stand-in of the job `kvm` copies the decided lines of
    `creche-vmm.service` that touch the launch chain and its stop:
    `NoNewPrivileges=yes`, `KillMode=mixed`, `ExecStopPost=` and each

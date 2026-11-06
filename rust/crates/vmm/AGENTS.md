@@ -415,7 +415,8 @@ table, and the start boots it again. A cold boot runs these steps:
    the kernel, the initramfs when the config names one, and the root
    disk of the flavor (decision CH44 rule 2),
    `SessionDisks::for_boot` (decision CH21-4), `snapshots/` with mode
-   0700, and a new `serial.log` with mode 0600 (gap G23). Then the
+   0700, and a new `sessions/<id>/serial.log` in the state root with
+   `SerialLog::fresh`, mode 0600 (gap G23, decision CH59 rule 2). Then the
    restore or cold boot choice (see "The restore"), and the launch with
    `ChCommand::boot` or `ChCommand::restore`, `VmLimits`, the Landlock
    files of the VM, the vmm unit and `Launch::in_slot` (decisions CH8-3,

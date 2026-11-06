@@ -12,8 +12,9 @@
 //! go oldest first, each with its key first (`key::remove_generation`). So
 //! a crash never leaves an older generation as the newest, which would
 //! restore onto a session disk that moved on (decision CH19 (5)). Then one
-//! remove of the session dir takes the session disk, its temp file and any
-//! `<n>.tmp` or `<n>.retired` dir.
+//! remove of the session dir takes the session disk, its temp file, the
+//! serial log (decision CH59 rule 2) and any `<n>.tmp` or `<n>.retired`
+//! dir.
 //!
 //! The caller stops the VM of the session first (decisions CH19 (3), CH33
 //! rule 11). It runs no take, claim or sweep of the session during the

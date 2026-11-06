@@ -84,13 +84,14 @@ table of the three vmm crates.
   `RETRY_PAUSE` (10 ms) and `SHAPE_CAP` (4 KiB). A read blocks its thread
   in `thread::sleep`, so a caller in tokio runs it in `spawn_blocking`.
 - `command::ChCommand` renders the CH argv from the checked store types
-  only: `CheckedImage` (PR D6), `SessionDisk` (PR D7) and
-  `ClaimedSnapshot` (PR D11). No input names a network card, and no
+  only: `CheckedImage` (PR D6), `SessionDisk` (PR D7), `SerialLog` (PR
+  D17) and `ClaimedSnapshot` (PR D11). No input names a network card, and no
   argument names `--seccomp` (decisions CH6-3, CH8-1, CH8-4). A boot
   gives the root disk `readonly=on` as the first `--disk` (decision
   CH8-8), the session disk the `DiskLimit::SESSION` rate limiter
-  (decisions CH8-7, CH36 G15), and `--serial file=` the `serial.log` of
-  the VM run dir with `--console off` (decisions CH36 G23, CH41 rule 2).
+  (decisions CH8-7, CH36 G15), and `--serial file=` the `SerialLog` of
+  the session, `<state root>/sessions/<id>/serial.log`, with `--console
+  off` (decisions CH36 G23, CH41 rule 2, CH59 rule 2).
   A restore gives only `--api-socket` and `--restore` with
   `memory_restore_mode=copyonwrite`, because CH v54 takes the sizes and
   devices from the snapshot (decisions CH2, CH29). The restore passes
@@ -139,6 +140,17 @@ table of the three vmm crates.
   initramfs until phase 3 adds guest init (PR C7). A boot with none
   makes a snapshot whose key holds none, and its restore carries none.
   So `Start::Boot` and `Start::Restore` each hold an `Option`.
+- Decision CH59 rule 2 (PR D17, `landlock.rs`): the ruleset of a VM
+  names its serial log, `<state root>/sessions/<id>/serial.log`, with
+  write and truncate only. CH v54 opens it with `File::create`. The run
+  dir rule has make socket, make file and write, and no truncate,
+  because CH v54 makes `api.sock.lock` with no truncate
+  (`vmm/src/locked_unix_listener.rs`). The ruleset opens the log, so
+  lifecycle makes it with `SerialLog::fresh` (mode 0600, gap G23) before
+  each launch, a boot and a restore alike. A missing log fails the
+  launch with `RulesetError::Open`. The kvm job proves the rights: each
+  boot of `tests/kvm_slot.rs` and `tests/kvm_vm.rs` writes its marker
+  to the log under the ruleset.
 - `deny::check` is the proof of deny-by-default (decision CH6-3). The
   first argument of the command line is the payload program, so a pid
   that still runs the launch step or `systemd-run`, or a CH zombie, fails
@@ -178,7 +190,8 @@ table of the three vmm crates.
   `Slot`. No profile has an attachment path. Each names the one installed
   CH, the run dir `/run/user/[0-9]*/vmm/slot/<k>/` and its own signal
   label only. CH reads a kernel, an initramfs or a root disk only as
-  `store/*`. The vmm writes the guest init initramfs into the state store
+  `store/*`. CH writes the serial log only as `sessions/*/serial.log`,
+  with no read (decision CH59 rule 2, gap G23). The vmm writes the guest init initramfs into the state store
   as a content-named `store/<sha256>`, like the root disks, so that rule
   covers it (decision CH60 rule 2). The state root rules name the default
   `@{HOME}/.local/state/creche-vmm/` through `include <tunables/global>`
@@ -317,8 +330,3 @@ table of the three vmm crates.
   the value `vmm` in the `source` enum of §3.3, and the reader. caregiver
   reads only the `attendance` and `pep` files today, so it ignores the
   vmm file.
-- Gap G23 sets `serial.log` to mode 0600. CH makes the file with the
-  umask of the launch step, and the crate sets no umask. A `UMask=` in
-  the unit of plan PR C13, or a file that lifecycle makes first in plan
-  PR L16, must set it. Neither plan entry names the step yet. Until then
-  `RuntimeDirectoryMode=0700` of the run root keeps other users out.
