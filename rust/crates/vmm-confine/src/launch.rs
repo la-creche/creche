@@ -9,13 +9,15 @@
 //! launch stage of `stage`, which enters the slot label, applies the
 //! Landlock ruleset and execs CH (decision CH55, which amends CH30).
 //!
-//! Two links end a launch with the vmm (decision CH60 rule 1). The death
-//! signal ends the launch step, `systemd-run` and the stage when the vmm
-//! dies before CH runs. AppArmor clears the death signal at the exec of CH
-//! into its slot label. The scope is bound to the vmm unit
-//! (`Launch::unit`), so from the scope on, systemd stops CH when the vmm
-//! unit stops or dies. `systemd-run` makes the scope and its binding in
-//! one call, so each step of the chain has at least one of the two links.
+//! Two links end a launch with the vmm. The death signal ends the launch
+//! step, `systemd-run` and the stage when the vmm dies before CH runs.
+//! AppArmor clears the death signal at the exec of CH into its slot
+//! label. The scope is bound to the vmm unit and ordered before it
+//! (`Launch::unit`, decision CH61 rule 2), so from the scope on, the
+//! `ExecStopPost=` step of the vmm unit kills CH after a stop, a restart
+//! or a crash of the vmm (decision CH61 rule 1). `systemd-run` makes the
+//! scope and its binding in one call, so each step of the chain has at
+//! least one of the two links.
 
 use std::convert::Infallible;
 use std::ffi::OsString;
@@ -127,7 +129,7 @@ impl Payload {
 /// What one launch starts: the payload in its scope bound to the vmm
 /// unit, through the `systemd-run` at a path that the vmm config gives,
 /// under the slot label of `slot` and the Landlock ruleset of `files`
-/// (decisions CH55, CH60 rule 1).
+/// (decisions CH55, CH61 rule 2).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Launch {
@@ -202,7 +204,7 @@ impl Launch {
         &self.files
     }
 
-    /// The vmm unit that the scope binds to (decision CH60 rule 1).
+    /// The vmm unit that the scope binds to (decision CH61 rule 2).
     #[must_use]
     pub fn unit(&self) -> &VmmUnit {
         &self.unit
@@ -323,7 +325,7 @@ pub fn run() -> Result<Infallible, LaunchError> {
 
 /// The arguments of `systemd-run` for `launch`. The scope binds to the
 /// vmm unit of the launch, and its payload is `stage` in the stage mode
-/// with the stage plan (decisions CH55, CH60 rule 1).
+/// with the stage plan (decisions CH55, CH61 rule 2).
 pub(crate) fn systemd_run_args(
     launch: &Launch,
     stage: Program,
@@ -370,7 +372,8 @@ fn read_plan() -> Result<Plan, LaunchError> {
 /// Sets SIGKILL as the death signal of this process (decision CH19 (4)).
 /// The signal stays through the execs of `systemd-run` and the stage
 /// (facts 76 and 80). AppArmor clears it at the exec of CH into its slot
-/// label, and the scope binding ends CH from there (decision CH60 rule 1).
+/// label, and the `ExecStopPost=` step of the vmm unit ends CH from there
+/// (decision CH61 rule 1).
 /// The `stage` module says why.
 #[cfg(target_os = "linux")]
 fn set_death_signal() -> Result<(), LaunchError> {

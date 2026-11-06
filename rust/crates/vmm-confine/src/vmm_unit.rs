@@ -1,5 +1,7 @@
-//! The systemd unit of the vmm (decision CH60 rule 1). Each VM scope binds
-//! to it, so systemd stops every VM scope when the vmm unit stops or dies.
+//! The systemd unit of the vmm (decisions CH60 rule 1, CH61 rule 2). Each
+//! VM scope binds to it and is ordered before it, so the shutdown of the
+//! vmm runs before any VM stops. The `ExecStopPost=` step of the unit
+//! then kills each VM scope that is left (decision CH61 rule 1).
 //!
 //! The vmm reads its unit from `/proc/self/cgroup`, with no config key. The
 //! unit is the service that holds the vmm under the user manager

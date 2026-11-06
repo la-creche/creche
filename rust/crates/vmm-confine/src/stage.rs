@@ -32,9 +32,9 @@
 //! the stage. AppArmor clears the death signal at an exec that changes
 //! the label (`apparmor_bprm_committing_creds` in
 //! `security/apparmor/lsm.c`), so CH under its slot label has none. The
-//! scope of CH is bound to the vmm unit, so systemd stops CH when the vmm
-//! unit stops or dies (decision CH60 rule 1). `tests/kvm_slot.rs` proves
-//! both stops through a vmm stand-in that runs as a user service.
+//! `ExecStopPost=` step of the vmm unit kills CH after a stop, a restart
+//! or a crash of the vmm (decision CH61 rule 1). `tests/kvm_slot.rs`
+//! proves each one through a vmm stand-in that runs as a user service.
 
 use std::convert::Infallible;
 use std::ffi::OsString;

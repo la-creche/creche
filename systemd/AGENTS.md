@@ -87,12 +87,23 @@ file's removal is always a human verb.
    `serial.log` of each VM.
 3. The vmm stand-in of the job `kvm` copies the decided lines of
    `creche-vmm.service` that touch the launch chain and its stop:
-   `NoNewPrivileges=yes`, `KillMode=mixed` and each `Restart` line
-   (`rust/crates/vmm-confine/tests/stand_in`, decision CH60 rule 1). A
-   test in the job `rust` fails when a line differs from this unit. So
-   no_new_privs is set before the launch stage writes the AppArmor exec
-   attribute, as in production. The stage sets it only after that write
-   (decision CH55). The kvm tests check no_new_privs of the stand-in
-   before each launch, then prove the slot label of CH. A refused write
-   fails the launch closed (decision CH55), so a wrong order starts no VM
-   and lets no VM run unconfined.
+   `NoNewPrivileges=yes`, `KillMode=mixed`, `ExecStopPost=` and each
+   `Restart` line (`rust/crates/vmm-confine/tests/stand_in`, decisions
+   CH60 rule 1, CH61 rule 1). A test in the job `rust` fails when a line
+   differs from this unit. So no_new_privs is set before the launch
+   stage writes the AppArmor exec attribute, as in production. The stage
+   sets it only after that write (decision CH55). The kvm tests check
+   no_new_privs of the stand-in before each launch, then prove the slot
+   label of CH. A refused write fails the launch closed (decision CH55),
+   so a wrong order starts no VM and lets no VM run unconfined.
+4. The end of each VM is decision CH61. Each `creche-vm-*` scope has
+   `BindsTo=` and `Before=` `creche-vmm.service` (CH61 rule 2), so the
+   shutdown of the vmm runs before any VM stops. The `ExecStopPost=`
+   step of the unit then sends SIGKILL to every `creche-vm-*` scope
+   that is left, after a stop, a restart and a crash (CH61 rule 1). It
+   runs `systemctl --user kill`, which queues no job. A `systemctl stop`
+   of a scope there would wait for a stop job that `Before=` orders
+   after the stop of the vmm unit, which waits for the step: a
+   deadlock. The kvm tests prove the stop, the restart and the crash,
+   each with the control that CH runs while the stand-in runs
+   (`rust/crates/vmm-confine/tests/kvm_slot.rs`).

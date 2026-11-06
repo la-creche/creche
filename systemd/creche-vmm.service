@@ -81,14 +81,10 @@ TimeoutStartSec=infinity
 # The stop. At SIGTERM the vmm closes the door links, snapshots each VM that
 # may sleep and stops the rest (gap G16 option A). One deadline bounds every
 # step: SHUTDOWN_WAIT, 85 s (decision CH56 rule 2). The vmm keeps 5 s for its
-# exit (CH56 rule 3), so 90 s here. Past it systemd sends SIGKILL. Each
-# creche-vm-* scope has `BindsTo=` and `Before=` this unit, so systemd
-# stops each scope and its CH once this unit has stopped (decision CH60
-# rule 1). A restart stops no scope: the leftover sweep of the next start
-# stops each one (CH19 (4), open item 53). Change this value and
-# UNIT_STOP_TIMEOUT of rust/crates/vmm/src/shutdown.rs together.
-# bin/tests/test_vmm_unit.py fails when they differ, and it pins each
-# decided line of this unit.
+# exit (CH56 rule 3), so 90 s here. Past it systemd sends SIGKILL. Change
+# this value and UNIT_STOP_TIMEOUT of rust/crates/vmm/src/shutdown.rs
+# together. bin/tests/test_vmm_unit.py fails when they differ, and it
+# pins each decided line of this unit.
 KillSignal=SIGTERM
 # SIGTERM goes to the vmm alone. The default, control-group, sends it to
 # each process of the cgroup at once. An idle retire may already run at
@@ -99,6 +95,23 @@ KillSignal=SIGTERM
 # sits in its own creche-vm-* scope, outside this cgroup.
 KillMode=mixed
 TimeoutStopSec=90
+# The end of each VM (decision CH61). Each creche-vm-* scope has
+# `BindsTo=` and `Before=` this unit (CH61 rule 2). `Before=` keeps each
+# VM running while this unit stops, so the shutdown above runs before any
+# VM stops. This step then ends each VM that is left (CH61 rule 1). It
+# runs after the vmm has exited, on a stop, on a restart and after a
+# crash, also after the SIGKILL of TimeoutStopSec. A restart passes no
+# stop to a bound scope, so without this step a VM would outlive it.
+# The step sends SIGKILL, a power cut for the guest, as the deadline of
+# CH56 rule 2 allows. `systemctl kill` sends a signal and queues no job.
+# A `systemctl stop` of a scope here would wait for a stop job that
+# `Before=` orders after the stop of this unit, which waits for this
+# step: a deadlock. The glob matches each loaded unit with the name, in
+# any state. No match exits 0. The leftover sweep of the next start
+# (CH19 (4)) still stops each unit that it finds. A scope that the
+# manager drops between the glob and the kill fails the step, and this
+# unit then ends `failed`. That changes no restart.
+ExecStopPost=/usr/bin/systemctl --user kill --signal=SIGKILL -- creche-vm-*.scope
 
 # A user unit on this host cannot use mount-namespace options
 # (apparmor_restrict_unprivileged_userns=1), but seccomp, prctl and rlimit

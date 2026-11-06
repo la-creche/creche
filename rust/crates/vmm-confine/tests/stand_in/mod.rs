@@ -1,21 +1,27 @@
-//! The vmm unit of the kvm_ tests (decision CH60 rule 1). Each VM scope
-//! binds to the unit of its vmm (`BindsTo=` and `Before=`), so each test
-//! runs a stand-in for the vmm as a transient user service:
-//! `systemd-run --user --pipe --collect --unit=<unique name>`. With
-//! `--pipe` the service reads the stdin and writes the stdout of its
+//! The vmm unit of the kvm_ tests (decisions CH60 rule 1, CH61). Each VM
+//! scope binds to the unit of its vmm (`BindsTo=` and `Before=`, CH61 rule
+//! 2), so each test runs a stand-in for the vmm as a transient user
+//! service: `systemd-run --user --pipe --collect --unit=<unique name>`.
+//! With `--pipe` the service reads the stdin and writes the stdout of its
 //! `systemd-run`, so the test talks to it through the `Child`.
 //!
 //! Each stand-in copies the lines of `systemd/creche-vmm.service` that
 //! touch the launch chain and its stop (`UNIT_LINES`). So the launch
 //! stage runs with no_new_privs set before it writes the exec attribute,
-//! SIGTERM goes to the main process alone, and a crash puts the unit into
-//! auto-restart, as in production.
+//! SIGTERM goes to the main process alone, a crash puts the unit into
+//! auto-restart, and the `ExecStopPost=` step ends each VM scope that is
+//! left after each stop, as in production.
+//!
+//! That step kills every `creche-vm-*` scope of the user manager, because
+//! one vmm owns every VM (CH61 rule 1). So one stand-in runs at a time in
+//! a test binary: `StandIn::start` takes `ONE_VMM` and holds it until the
+//! drop has stopped the unit. A test with no stand-in launches no VM.
 //!
 //! A gated stand-in gets an `ExecStop=` that waits for its gate file. A
 //! stop of its unit then lasts until the test opens the gate, as the
 //! shutdown of the vmm lasts until the vmm exits. A drop opens the gate,
 //! stops the unit and reaps its `systemd-run`, so a failed test leaves no
-//! stand-in. systemd stops each VM scope bound to it in that stop.
+//! stand-in. The `ExecStopPost=` step of that stop ends each VM scope.
 #![cfg(test)]
 
 use std::ffi::OsStr;
@@ -23,6 +29,7 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
@@ -42,28 +49,40 @@ const STATE_WAIT: Duration = Duration::from_secs(30);
 const STOP_TIMEOUT: &str = "TimeoutStopSec=60";
 
 /// The lines of `systemd/creche-vmm.service` that each stand-in copies
-/// (decision CH60 rule 1):
+/// (decisions CH60 rule 1, CH61 rule 1):
 ///
 /// 1. The `Restart` lines put a unit whose main process died into
 ///    auto-restart, 5 s before the next start. Exit 78 ends the restarts,
 ///    so a restarted `hold`, which reads EOF, exits 78 and stays down.
 /// 2. `KillMode=mixed` sends the SIGTERM of a stop to the main process
 ///    alone.
-/// 3. `NoNewPrivileges=yes` sets no_new_privs before the launch stage
+/// 3. `ExecStopPost=` kills each VM scope that is left after a stop, a
+///    restart or a crash of the unit.
+/// 4. `NoNewPrivileges=yes` sets no_new_privs before the launch stage
 ///    writes the exec attribute (decision CH55).
 ///
 /// The lines keep the order of the unit. The test
 /// `the_stand_in_copies_the_vmm_unit` fails when a line with one of these
 /// keys differs from the unit.
-const UNIT_LINES: [&str; 7] = [
+const UNIT_LINES: [&str; 8] = [
     "Restart=always",
     "RestartSec=5s",
     "RestartSteps=5",
     "RestartMaxDelaySec=120s",
     "RestartPreventExitStatus=78",
     "KillMode=mixed",
+    STOP_POST,
     "NoNewPrivileges=yes",
 ];
+
+/// The `ExecStopPost=` line of the vmm unit (decision CH61 rule 1).
+pub const STOP_POST: &str =
+    "ExecStopPost=/usr/bin/systemctl --user kill --signal=SIGKILL -- creche-vm-*.scope";
+
+/// The one stand-in of this test binary. The `ExecStopPost=` step of a
+/// stand-in kills the VM scopes of every test, so a second stand-in waits
+/// here until the first one has stopped.
+static ONE_VMM: Mutex<()> = Mutex::new(());
 
 /// The unit file of the vmm, from the root of the repository.
 const VMM_UNIT_FILE: &str = "systemd/creche-vmm.service";
@@ -121,13 +140,19 @@ pub struct StandIn {
     /// stop of the unit go on.
     pub gate: PathBuf,
     child: Child,
+    /// `ONE_VMM`, held until the drop has stopped the unit. Fields drop
+    /// after `Drop::drop` and in this order, so it goes last.
+    _one: MutexGuard<'static, ()>,
 }
 
 impl StandIn {
     /// Starts `command` as the service `unit` and waits until the unit is
-    /// active. With `gated`, the stop of the unit runs `example await
-    /// <gate>` first, where `example` is the first word of `command`.
-    pub fn start<S: AsRef<OsStr>>(unit: &VmmUnit, gated: bool, command: &[S]) -> Self {
+    /// active. With `gated_by` the example, the stop of the unit runs
+    /// `<example> await <gate>` first. It first waits for `ONE_VMM`. A
+    /// test that panicked while it held the lock still stopped its unit
+    /// in the drop, so a poisoned lock is free too.
+    pub fn start<S: AsRef<OsStr>>(unit: &VmmUnit, gated_by: Option<&Path>, command: &[S]) -> Self {
+        let one = ONE_VMM.lock().unwrap_or_else(PoisonError::into_inner);
         let gate = std::env::temp_dir().join(format!("{}.gate", unit.name()));
         let _ = fs::remove_file(&gate);
         let mut run = Command::new(SYSTEMD_RUN);
@@ -137,8 +162,7 @@ impl StandIn {
         for line in UNIT_LINES {
             run.args(["-p", line]);
         }
-        if gated {
-            let example = Path::new(command.first().unwrap());
+        if let Some(example) = gated_by {
             let stop = format!("ExecStop={} await {}", example.display(), gate.display());
             run.arg("-p").arg(stop);
         }
@@ -153,6 +177,7 @@ impl StandIn {
             unit: unit.clone(),
             gate,
             child,
+            _one: one,
         };
         until_state(unit.name(), "active");
         stand_in
@@ -169,7 +194,8 @@ impl StandIn {
     /// `creche-vmm.service` (decision CH55).
     pub fn hold(example: &Path, launch: &Launch, gated: bool) -> (Self, u32) {
         let command = [example.as_os_str(), OsStr::new("hold")];
-        let mut stand_in = Self::start(launch.unit(), gated, &command);
+        let gated_by = gated.then_some(example);
+        let mut stand_in = Self::start(launch.unit(), gated_by, &command);
         let main = stand_in.main_pid();
         let deadline = Instant::now() + STATE_WAIT;
         while !no_new_privs(main) {
@@ -258,7 +284,8 @@ impl Drop for StandIn {
 
 /// Each line of `UNIT_LINES` is a line of the vmm unit, and each line of
 /// the unit with one of their keys is in `UNIT_LINES`. So a stand-in
-/// runs with the decided lines of the vmm unit (decision CH60 rule 1).
+/// runs with the decided lines of the vmm unit (decisions CH60 rule 1,
+/// CH61 rule 1).
 #[test]
 fn the_stand_in_copies_the_vmm_unit() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");

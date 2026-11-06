@@ -17,7 +17,7 @@ pub fn example() -> PathBuf {
     debug.join("examples").join("launch_chain")
 }
 
-/// The vmm unit of each launch (decision CH60 rule 1). The fake
+/// The vmm unit of each launch (decision CH61 rule 2). The fake
 /// `systemd-run` of the example makes no scope, so no unit of this name
 /// needs to run.
 pub fn vmm_unit() -> VmmUnit {

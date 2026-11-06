@@ -58,8 +58,9 @@ writes the real exec attribute (plan PR L16c, decisions CH55, CH58 rule
    the 5 s that `SHUTDOWN_WAIT` leaves (caller duty 8).
 
 A failed start step, or a server that stops before SIGTERM, exits 78. The
-end of a shutdown exits 0, also when a VM did not stop: systemd stops its
-scope with the vmm unit (decision CH60 rule 1). The vmm has one start entry, `build`, and
+end of a shutdown exits 0, also when a VM did not stop: the
+`ExecStopPost=` step of the vmm unit kills its scope after the vmm has
+exited (decision CH61 rule 1). The vmm has one start entry, `build`, and
 it always requires root as the owner of `digests.json` (decision CH58
 rule 1: no test-only entry stays in production code). `build` runs
 `check` (the leftover sweep, the CH version, the image root), then
