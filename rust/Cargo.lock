@@ -45,6 +45,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "creche-guest-init"
+version = "0.0.0"
+dependencies = [
+ "creche-wire",
+ "rustix",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "creche-vmm"
 version = "0.0.0"
 dependencies = [
