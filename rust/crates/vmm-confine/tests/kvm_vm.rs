@@ -30,9 +30,13 @@
 //! 4. A second snapshot to a new generation. The first one stays
 //!    byte-identical (fact 55).
 //! 5. A restore of the second one, then a SIGKILL of the vmm stand-in.
-//!    The `ExecStopPost=` step of its unit kills the VM scope and its CH
-//!    (decision CH61 rule 1, the phase 2 proof line). The control: CH
-//!    runs while the stand-in runs.
+//!    `BindsTo=` or the `ExecStopPost=` step of its unit ends the VM
+//!    scope and its CH, so this step proves that a crash ends the VM
+//!    (decision CH61 rule 1, the phase 2 proof line). CH is a child of
+//!    `hold`, so the step cannot read how CH died. The signal-9 check of
+//!    `kvm_a_vmm_crash_frees_the_scope_of_each_vm` in `tests/kvm_slot.rs`
+//!    proves the `ExecStopPost=` step itself. The control: CH runs while
+//!    the stand-in runs.
 //!
 //! The busybox guest has no guest init, so the control link, ControlReady
 //! and the guest `sync` before a snapshot wait for phase 3. The test reads
@@ -533,12 +537,14 @@ fn kvm_vm_snapshot_restore_kill() {
     assert_eq!(second.generation.0, first.generation.0 + 1);
     assert_eq!(digests(&first_files), first_digests);
 
-    // 5: a SIGKILL of the vmm stand-in. The `ExecStopPost=` step of its
-    // unit kills the VM scope and CH, and under `Restart=always` the unit
-    // passes through `failed` into `auto-restart`, 5 s before the next
-    // start (decision CH61 rule 1). The restarted `hold` reads EOF and exits 78, so the unit
-    // then stays down. The control: CH and its scope run while the
-    // stand-in runs.
+    // 5: a SIGKILL of the vmm stand-in. `BindsTo=` or the `ExecStopPost=`
+    // step of its unit ends the VM scope and CH, so this step proves that
+    // a crash ends the VM (decision CH61 rule 1). The signal-9 check of
+    // `kvm_a_vmm_crash_frees_the_scope_of_each_vm` in tests/kvm_slot.rs
+    // proves the step itself. Under `Restart=always` the unit passes
+    // through `failed` into `auto-restart`, 5 s before the next start.
+    // The restarted `hold` reads EOF and exits 78, so the unit then stays
+    // down. The control: CH and its scope run while the stand-in runs.
     let unit = stand_in::unit("vm-kill");
     let held = setup.hold(&setup.restore(setup.claim(&second), last, &unit));
     let pid = held.pid;

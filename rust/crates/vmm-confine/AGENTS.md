@@ -263,10 +263,13 @@ table of the three vmm crates.
   and the scope binds to it and is ordered before it (decision CH61
   rule 2). Each restore carries the `store/<sha256>` initramfs of the
   boot, the key holds its digest, and the ruleset reads it (decision
-  CH61 rule 3). Step 5, the SIGKILL of the stand-in, proves that the
-  `ExecStopPost=` step of its unit then kills CH and its scope while the
-  unit waits in `auto-restart` (decision CH61 rule 1), with the control
-  that CH runs while the stand-in runs. Each start takes a new slot
+  CH61 rule 3). Step 5, the SIGKILL of the stand-in, proves that a crash
+  ends CH and its scope while the unit waits in `auto-restart` (decision
+  CH61 rule 1), with the control that CH runs while the stand-in runs.
+  `BindsTo=` or the `ExecStopPost=` step ends CH there, and CH is a child
+  of `hold`, so step 5 cannot tell them apart. The signal-9 check of
+  `kvm_a_vmm_crash_frees_the_scope_of_each_vm` in `tests/kvm_slot.rs`
+  proves the step itself. Each start takes a new slot
   with `RunRoot::link_vm` and runs `remove_stale`, as the start of
   `rust/crates/vmm/src/start.rs` does, so each restore moves the VM to
   another slot. The ruleset grants no right to remove a file, so CH
