@@ -9,9 +9,9 @@
 # or `BindsTo=` (CH19 (4), CH20). A restart of the vmm drops every client
 # link, and each client treats that as transient.
 #
-# Installed by: `bin/fleet-up up`, which the operator runs. It installs
-# the unit when the vmm tree is there, and it starts the unit when the
-# image root holds `digests.json`. No agent installs it.
+# Installed by: the operator, by hand, once (design section 6.2 step 3).
+# No agent installs it, and no script does yet. `bin/fleet-up up` writes
+# only its env file (decision CH59 rule 1).
 [Unit]
 Description=creche-vmm, the owner of every Cloud Hypervisor VM
 # THE REWORK RESTART POLICY, argued in full in

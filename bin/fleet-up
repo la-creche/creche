@@ -105,11 +105,10 @@ SECRET_BYTES=48
 # watchdog, the syncs, the drift check, `library@` and follow) are no unit of
 # this list: a `host` release of creche-release links them.
 UNITS="creche-attendance.service creche-caregiver.service creche-noticeboard.service \
-creche-door-acp.service creche-door-trigger.service creche-door-trigger@.service \
-creche-vmm.service"
+creche-door-acp.service creche-door-trigger.service creche-door-trigger@.service"
 # The units `up` enables with `--now`. A template is installed only.
 ENABLED_UNITS="creche-attendance.service creche-caregiver.service creche-noticeboard.service \
-creche-door-acp.service creche-door-trigger.service creche-vmm.service"
+creche-door-acp.service creche-door-trigger.service"
 
 # Each key of `rust/crates/vmm/src/config.rs` but RUNTIME_DIRECTORY, which
 # systemd sets (decision CH59 rule 1). `vmm.env` holds each one as
@@ -119,9 +118,6 @@ VMM_KEYS="VMM_STATE_ROOT VMM_FAMILY_ROOT VMM_FAULTS_ROOT VMM_IMAGE_ROOT \
 VMM_CH_PROGRAM VMM_CH_REMOTE_PROGRAM AGENT_SYSTEMD_RUN_PROGRAM AGENT_SYSTEMCTL_PROGRAM \
 VMM_ZSTD_PROGRAM VMM_MKE2FS_PROGRAM VMM_FALLOCATE_PROGRAM \
 VMM_RAM_CAP_GIB VMM_FREE_FLOOR_GIB VMM_SNAPSHOT_BUDGET_GIB"
-# The file of the disk release in VMM_IMAGE_ROOT. The vmm refuses to start
-# without it (decision CH57 rule 1).
-VMM_DIGESTS=digests.json
 
 UV_MINIMUM=0.12.17
 CHAPERONE_DIR_MODE=1775
@@ -211,17 +207,13 @@ unit_tree() {  # unit_tree <unit>: which tree the unit runs from
       say attendance ;;
     creche-caregiver.service) say caregiver ;;
     creche-noticeboard.service) say noticeboard ;;
-    creche-vmm.service) say vmm ;;
     *) return 1 ;;
   esac
 }
 
-# A venv tree is the operator's, under ~/.local/components. The vmm tree is
-# root's, under /opt/components (decision CH7-5).
 tree_is_there() {  # tree_is_there <tree>
   case "$1" in
     attendance|caregiver|noticeboard) [[ -f "$COMPONENT_ROOT/$1/$STAMP" ]] ;;
-    vmm) [[ -f "$INSTALL_ROOT/$1/$STAMP" ]] ;;
     *) return 1 ;;
   esac
 }
@@ -467,15 +459,6 @@ up_env_files() {
   say "  set LITELLM_MASTER_KEY in $CAREGIVER_ENV (from $HOOKS_ENV, the value is never printed)"
 }
 
-# The vmm refuses to start with no `digests.json` in its image root, and it
-# then stays stopped (exit 78). The image root is the value of vmm.env. The
-# test prefix goes in front of it, as for each other absolute root.
-vmm_is_whole() {
-  local images
-  images="$(envfile_value "$VMM_ENV" VMM_IMAGE_ROOT)"
-  [[ -n "$images" && -f "$PREFIX$images/$VMM_DIGESTS" ]]
-}
-
 # caregiver refuses to start with no master key, and its unit passes both
 # image flags. A start before the file is whole only fills the journal.
 caregiver_is_whole() {
@@ -532,12 +515,6 @@ up_units() {
       continue
     fi
 
-    if [[ "$unit" == creche-vmm.service ]] && ! vmm_is_whole; then
-      say "  not started: $unit. Its image root has no $VMM_DIGESTS yet."
-      pending "no $VMM_DIGESTS in the VMM_IMAGE_ROOT of $VMM_ENV: release the disks first, then run fleet-up up again"
-      continue
-    fi
-
     if ! systemctl --user enable --now "$unit"; then
       fail "could not enable and start $unit. Read: journalctl --user -u $unit"
       continue
@@ -556,7 +533,7 @@ waiting_line() {  # waiting_line <trees>
   local tree components=""
   for tree in $1; do
     case "$tree" in
-      attendance|caregiver|noticeboard|vmm) components="$components $tree" ;;
+      attendance|caregiver|noticeboard) components="$components $tree" ;;
     esac
   done
 

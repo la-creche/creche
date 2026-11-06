@@ -11,7 +11,7 @@ from this directory at run time. The root `AGENTS.md` applies here too.
 | `creche-door-acp.service` | user | no script yet. The door ships in `attendance` |
 | `creche-memory.service` | user | no script yet. The memory component ships it |
 | `creche-door-trigger@.service` | user, templated | the cutover script, only when the host has none |
-| `creche-vmm.service` | user | `bin/fleet-up up`, which the operator runs. No agent installs it |
+| `creche-vmm.service` | user | no script yet. The operator installs it by hand once (design section 6.2 step 3). No agent installs it |
 The host's own units are not here: the watchdog, the registry sync, the
 corpus sync, the drift check, `creche-library@` and follow. They are files
 of creche-release (`units/user/`), and a `host` release links each one into

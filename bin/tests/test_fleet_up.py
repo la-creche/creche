@@ -54,7 +54,6 @@ UNITS: Final = (
     "creche-door-acp.service",
     "creche-door-trigger.service",
     "creche-door-trigger@.service",
-    "creche-vmm.service",
 )
 
 #: The units `up` enables and starts. A template and a service that a
@@ -65,7 +64,6 @@ ENABLED: Final = (
     "creche-noticeboard.service",
     "creche-door-acp.service",
     "creche-door-trigger.service",
-    "creche-vmm.service",
 )
 
 DIRS: Final = (
@@ -85,9 +83,6 @@ ENV_FILES: Final = ("attendance.env", "noticeboard.env", "caregiver.env", "vmm.e
 #: The key of `config.rs` that systemd sets from `RuntimeDirectory=`. No
 #: env file holds it (decision CH59 rule 1).
 RUN_ROOT_KEY: Final = "RUNTIME_DIRECTORY"
-
-#: The file of the disk release that the vmm needs to start.
-DIGESTS: Final = "opt/components/disks/digests.json"
 
 #: The `systemctl` verbs that change nothing.
 READ_ONLY_VERBS: Final = frozenset({"is-enabled", "is-active", "show"})
@@ -255,13 +250,6 @@ def ready(tmp_path: Path) -> Host:
         tree = host.home / ".local" / "components" / name
         tree.mkdir(parents=True)
         (tree / ".release-version").write_text("0.1.50\n", encoding="utf-8")
-
-    vmm = host.prefix / "opt/components/vmm"
-    vmm.mkdir(parents=True)
-    (vmm / ".release-version").write_text("0.1.1\n", encoding="utf-8")
-    digests = host.prefix / DIGESTS
-    digests.parent.mkdir(parents=True)
-    digests.write_text("{}\n", encoding="utf-8")
 
     handover = host.prefix / "opt/components/handover"
     handover.mkdir(parents=True)
@@ -460,30 +448,6 @@ def test_a_site_value_reaches_vmm_env(ready: Host, tmp_path: Path) -> None:
     assert ready.run("up", AGENT_SITE_FILE=str(site)).returncode == 0
 
     assert _env_pairs(ready.state / "vmm.env")["VMM_RAM_CAP_GIB"] == "12"
-
-
-def test_the_vmm_waits_for_its_digests(ready: Host) -> None:
-    """The vmm refuses to start with no `digests.json`, and stays stopped."""
-    (ready.prefix / DIGESTS).unlink()
-
-    done = ready.run("up")
-
-    assert done.returncode == PENDING, done.stdout + done.stderr
-    assert "digests.json" in done.stdout
-    assert (ready.unit_dir / "creche-vmm.service").exists()
-    assert "creche-vmm.service" not in ready.enabled.read_text(encoding="utf-8")
-
-
-def test_the_vmm_waits_for_its_tree(ready: Host) -> None:
-    tree = ready.prefix / "opt/components/vmm"
-    (tree / ".release-version").unlink()
-    tree.rmdir()
-
-    done = ready.run("up")
-
-    assert done.returncode == PENDING, done.stdout + done.stderr
-    assert "handover request vmm" in done.stdout
-    assert not (ready.unit_dir / "creche-vmm.service").exists()
 
 
 def test_up_never_writes_hooks_env(ready: Host) -> None:
