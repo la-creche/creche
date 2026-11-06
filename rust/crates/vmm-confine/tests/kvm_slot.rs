@@ -223,10 +223,17 @@ impl Vmm {
 
     /// The lines of the sink with the tag of `id`.
     fn lines_of(&self, id: &SessionId) -> Vec<String> {
+        self.lines_since(0, id)
+    }
+
+    /// The lines of the sink with the tag of `id`, from line `start` on.
+    /// A seat that runs two probes gets the lines of each probe apart.
+    fn lines_since(&self, start: usize, id: &SessionId) -> Vec<String> {
         let tag = format!("ch {id}");
         let lines = self.all_lines();
         lines
             .into_iter()
+            .skip(start)
             .filter(|line| line.starts_with(&tag))
             .collect()
     }
@@ -503,6 +510,7 @@ fn accepted(listener: Option<&Listener>) -> bool {
 #[cfg(test)]
 fn probe(vmm: &Vmm, launch: Launch, listener: Option<&Listener>) -> Probe {
     let id = launch.scope().id().clone();
+    let before = vmm.all_lines().len();
     let mut ch = vmm.launch(launch);
     let pid = ch.0.id();
     let deadline = Instant::now() + PROBE;
@@ -526,7 +534,7 @@ fn probe(vmm: &Vmm, launch: Launch, listener: Option<&Listener>) -> Probe {
         label,
         connected,
         status,
-        lines: vmm.lines_of(&id),
+        lines: vmm.lines_since(before, &id),
     }
 }
 
@@ -641,8 +649,10 @@ fn kvm_ch_boots_under_its_slot_label() {
     assert!(ping.status.success(), "ping: {ping:?}");
 
     // The control: the same binary started with no chain runs unconfined,
-    // with no_new_privs clear and the core limit of the test, because no
-    // slot profile has an attachment path.
+    // with the core limit of the test, because no slot profile has an
+    // attachment path. The runner starts each job step with no_new_privs
+    // set already, so no control here can show the set of the stage. The
+    // stage reads the flag back and fails closed (`StageError::NoNewPrivs`).
     let work = files().join(format!("kvm-slot-control-{}", std::process::id()));
     let _ = fs::remove_dir_all(&work);
     fs::create_dir(&work).unwrap();
@@ -656,7 +666,6 @@ fn kvm_ch_boots_under_its_slot_label() {
     until("API socket of the plain CH", || api.exists());
     let plain_pid = plain.0.id().to_string();
     assert_eq!(label_of(plain.0.id()).as_deref(), Some("unconfined"));
-    assert_eq!(status_field(&plain_pid, "NoNewPrivs"), "0");
     let (_, hard) = core_limits(&plain_pid);
     assert_ne!(
         hard, "0",
@@ -816,7 +825,10 @@ fn kvm_a_slot_label_opens_no_inet_socket() {
 
 /// The output of each CH reaches the sink of the vmm, tagged with its own
 /// session id (decision CH50 rule 12). Two CHs on one spawner fail with
-/// two different errors. Each error comes with its own id only.
+/// two different errors: a refused connect to the user bus, and a TPM
+/// listener that closes the connect. The EACCES lines come with the id of
+/// the first CH only, and the error chain of the second CH comes with its
+/// own id.
 #[test]
 #[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
 fn kvm_ch_output_reaches_the_sink_with_its_id() {
@@ -826,21 +838,25 @@ fn kvm_ch_output_reaches_the_sink_with_its_id() {
     let vmm = Vmm::new();
     let uid = rustix::process::getuid().as_raw();
     let bus = PathBuf::from(format!("/run/user/{uid}/bus"));
-    let missing = two.run.path().join("no-such-socket");
+    let path = two.run.host_listener(HostPort::Chaperone);
+    let listener = listen(&path);
     let first = probe(&vmm, rig.tpm(&one, &bus), None);
-    let second = probe(&vmm, rig.tpm(&two, &missing), None);
+    let second = probe(&vmm, rig.tpm(&two, &path), Some(&listener));
 
     assert!(first.denied() && !second.denied(), "{first:?} {second:?}");
-
-    // Each error text of CH comes only with the tag of its own CH.
-    let gone = "No such file or directory";
+    let exited = "Cloud Hypervisor exited";
+    assert!(
+        second.lines.iter().any(|line| line.contains(exited)),
+        "{second:?}"
+    );
+    let tag = format!("ch {}: ", one.id);
     let lines = vmm.all_lines();
-    for (text, seat) in [(DENIED, &one), (gone, &two)] {
-        let tag = format!("ch {}: ", seat.id);
-        let with: Vec<&String> = lines.iter().filter(|line| line.contains(text)).collect();
-        assert!(!with.is_empty(), "no {text}: {lines:?}");
-        assert!(with.iter().all(|line| line.starts_with(&tag)), "{lines:?}");
-    }
+    let denied: Vec<&String> = lines.iter().filter(|line| line.contains(DENIED)).collect();
+    assert!(!denied.is_empty(), "{lines:?}");
+    assert!(
+        denied.iter().all(|line| line.starts_with(&tag)),
+        "{lines:?}"
+    );
 }
 
 /// A drop of the spawner ends its thread, and the kernel kills CH by its
@@ -859,6 +875,10 @@ fn kvm_ch_dies_with_the_spawner_thread() {
     assert!(running(ch.0.id()), "CH exited while the spawner lived");
 
     drop(vmm);
+    // A bounded wait: a CH that outlives the spawner fails the test and
+    // is killed by the drop of `ch`.
+    let pid = ch.0.id();
+    until("CH death after the spawner drop", || !running(pid));
     let status = ch.0.wait().unwrap();
     assert_eq!(status.signal(), Some(9), "{status}");
 }
