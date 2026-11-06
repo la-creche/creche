@@ -13,6 +13,29 @@ table of the three vmm crates.
 - `launch::run` is the mode `vmm launch`. `rust/crates/vmm/src/main.rs`
   calls it, so a change here never edits that file. `launch::MODE` holds
   the same word as main.rs. Lifecycle may make main.rs read it.
+- `stage::run` is the mode `vmm launch-stage <plan>` (mechanism X,
+  decision CH55, which amends CH30). The launch step execs `systemd-run`
+  with the stage as the scope payload: the resolved path of
+  `/proc/self/exe` (decision CH57 rule 5, no new config key),
+  `stage::MODE` and the stage plan as one JSON argument. After a release
+  renames the old binary to `.prev` (fact 56), the path names `.prev`. A
+  deleted binary fails the launch closed. The stage then runs four steps
+  in this order, and the first failure starts no CH:
+  1. It writes `exec creche-ch-slot-<k>` to
+     `/proc/self/attr/apparmor/exec`, or to `/proc/self/attr/exec` when
+     the first is missing. Any other error fails the launch closed.
+  2. It sets no_new_privs and reads it back.
+  3. It applies the Landlock ruleset of the VM.
+  4. It execs CH.
+  Before step 1 it checks that the death signal is still SIGKILL. A
+  launch needs `Launch::in_slot`, and the launch step refuses a launch
+  with no slot (`LaunchError::NoSlot`). `stage::run` is the one entry,
+  and it always writes the real exec attribute (decision CH58 rule 1).
+  No entry skips the slot label, in production or in a test.
+- The pid stays the same through the four execs: the launch step,
+  `systemd-run`, the stage and CH (fact 80). The kernel keeps the death
+  signal through an exec that is not a secure exec and changes no uid,
+  gid or capability. No exec of the chain does either.
 - The crate reads no env key. Lifecycle (plan PR L20) passes each host
   path from the vmm config (owner env rule, decision CH36 G5): the
   `systemd-run` program of `launch::Launch`, from the existing key
@@ -72,9 +95,10 @@ table of the three vmm crates.
   failed scope blocks `systemd-run --unit` with its name. The last list
   decides: a unit still loaded then is an error. The vmm config gives the
   path of `systemctl`, like the path of `systemd-run`.
-- The Landlock ruleset of a VM confines the launch step from its last
-  step on, then `systemd-run` and Cloud Hypervisor (decisions CH8-3,
-  CH30). The vmm process is never confined, so the `zstd` and `mke2fs`
+- The Landlock ruleset of a VM confines the launch stage from its step 3
+  on, then Cloud Hypervisor (decisions CH8-3, CH30, CH55). `systemd-run`
+  runs before it, so the ruleset has no rule for it. The vmm process is
+  never confined, so the `zstd` and `mke2fs`
   that the store runs need no rule. Every path of a rule exists before
   the launch. A missing path or a kernel below Landlock ABI 4 fails the
   launch. All Landlock calls sit behind `cfg(target_os = "linux")`
@@ -89,11 +113,14 @@ table of the three vmm crates.
   exactly the `vsock.sock_<port>` listeners of the host ports that the
   vmm bound for the family. Any failure is the fault
   `egress_assert_failed`.
-- `admission::decide` is a pure decision (decisions CH8-6, CH8-7). Free
-  bytes below the floor give `HostFull`. The configured guest RAM of the
-  running VMs plus the RAM wanted at or below the cap gives `Admit`. Else
-  the idle VMs, least recently used first, either free enough RAM
-  (`EvictFirst`) or not (`HostFull`, and no VM stops). The floor must
+- `admission::decide` is a pure decision (decisions CH8-6, CH8-7, CH58
+  rule 2). Free bytes below the floor give `HostFull`. The configured
+  guest RAM of the running VMs plus the RAM wanted at or below the cap,
+  with a free slot, gives `Admit`. Else the idle VMs, least recently used
+  first, either free enough RAM and one slot when none is free
+  (`EvictFirst`) or not (`HostFull`, and no VM stops). A full slot pool
+  counts like a full RAM cap: it needs one eviction at least, and with no
+  idle VM it gives `HostFull` with `Full::Slots`. The floor must
   hold after the writes that admission causes (decision CH42 rule 3).
   The snapshot of each evicted VM writes its whole guest RAM (fact 72),
   so admission subtracts that RAM from the free bytes before it compares
@@ -124,8 +151,10 @@ table of the three vmm crates.
   section 6.1 step 1, decision CH36 gap G28 option A). Each change of
   the file needs a sudo reload on the host by David (design section 6.1
   step 2).
-- The process tests need Landlock ABI 4 and `/dev/kvm`. The host and the
-  ubuntu-24.04 runner have both (facts 77, 79).
+- The process tests `tests/launch.rs` and `tests/landlock.rs` run the
+  real launch stage on a host with no slot profile, as the job `rust` of
+  gate.yml is. There each launch fails closed at the label step with
+  `StageError::Enter`, and no payload starts (decision CH58 rule 1).
 - A test that boots CH has a name that holds `kvm_` and carries
   `#[ignore]` (decisions CH8-4, CH36 G19). The job `kvm` of gate.yml runs
   every such test of the workspace after `bin/vm-smoke-setup.sh`. The test
@@ -134,9 +163,11 @@ table of the three vmm crates.
 
 ## Known gaps
 
-- Landlock ABI 4 covers neither UDP nor Unix sockets (fact 77). Until the
-  launch stage enters a slot profile (plan PR C18) and the job kvm loads
-  the slot profiles (plan PR C15), CH can reach both.
+- Closed by plan PRs L16b and L16c: lifecycle passes the slot of each
+  start with `Launch::in_slot`, so no launch of the vmm fails with
+  `LaunchError::NoSlot`. `rust/crates/vmm/src/main.rs` routes
+  `stage::MODE` with its one plan argument to `stage::run`. C18, L16b
+  and L16c are in one PR.
 - Decision CH50 rule 11 wants a test that holds the state root of the
   slot profiles equal to the env default. The env key comes with plan PR
   L20, so that test comes with it. Until then `slot_profile::STATE_ROOT`
@@ -171,3 +202,19 @@ table of the three vmm crates.
   the unit of plan PR C13, or a file that lifecycle makes first in plan
   PR L16, must set it. Neither plan entry names the step yet. Until then
   `RuntimeDirectoryMode=0700` of the run root keeps other users out.
+
+## Caller duties
+
+1. Decision CH58 rule 1: plan PR C15 (the rework of #443) proves the
+   full chain in the job `kvm`, which loads the slot profiles. The rust
+   job cannot, because no payload starts there. The kvm tests run
+   `stage::run` and prove each of these:
+   1. CH runs under `creche-ch-slot-<k>`, with no_new_privs set and the
+      Landlock ruleset in force.
+   2. The ruleset lets CH read the root disk and write the session disk,
+      and denies a write of the root disk, a read outside the VM files
+      and a TCP connect (decisions CH8-1, CH8-3, CH8-8, CH30).
+   3. The slot profile denies UDP and Unix sockets, which Landlock ABI 4
+      does not cover (fact 77).
+   4. CH dies with the spawner thread and with a killed vmm (fact 80).
+   5. The output of CH reaches the sink tagged `ch <session id>`.

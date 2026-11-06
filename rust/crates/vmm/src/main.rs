@@ -5,11 +5,18 @@
 //! - `vmm launch` is the launch step of one Cloud Hypervisor process. It
 //!   runs on the main thread with no runtime, because the access rules of
 //!   Landlock bind only the thread that sets them.
+//! - `vmm launch-stage <plan>` is the launch stage (plan PR L16c, decision
+//!   CH55). `systemd-run` execs it in the VM scope. It enters the slot
+//!   label, applies Landlock and execs CH, with no runtime either. It
+//!   takes exactly one plan argument and calls `stage::run`, the one entry
+//!   of the stage, which always writes the real exec attribute (decision
+//!   CH58 rule 1).
 
 use std::ffi::OsString;
 use std::fmt;
 use std::process::ExitCode;
 
+use creche_vmm_confine::{launch, stage};
 use tokio::runtime::Builder;
 
 /// The exit status of a refused start (owner item 86). A unit with
@@ -18,22 +25,26 @@ use tokio::runtime::Builder;
 const EX_CONFIG: u8 = 78;
 
 /// The usage line for a wrong argument list.
-const USAGE: &str = "usage: vmm serve | vmm launch";
+const USAGE: &str = "usage: vmm serve | vmm launch | vmm launch-stage <plan>";
 
 /// The modes of the program.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Mode {
+enum Mode<'a> {
     Serve,
     Launch,
+    /// The launch stage with its one plan argument.
+    Stage(&'a OsString),
 }
 
-impl Mode {
+impl<'a> Mode<'a> {
     /// The mode of the arguments after the program name. Any list that is
-    /// not exactly one known mode is refused.
-    fn parse(args: &[OsString]) -> Option<Self> {
+    /// not exactly one known mode, or the stage mode and one plan, is
+    /// refused.
+    fn parse(args: &'a [OsString]) -> Option<Self> {
         match args {
             [mode] if mode == "serve" => Some(Self::Serve),
-            [mode] if mode == "launch" => Some(Self::Launch),
+            [mode] if mode == launch::MODE => Some(Self::Launch),
+            [mode, plan] if mode == stage::MODE => Some(Self::Stage(plan)),
             _ => None,
         }
     }
@@ -53,7 +64,11 @@ fn dispatch(args: &[OsString]) -> ExitCode {
     match mode {
         Mode::Serve => serve(),
         Mode::Launch => {
-            let Err(error) = creche_vmm_confine::launch::run();
+            let Err(error) = launch::run();
+            refuse(&error)
+        }
+        Mode::Stage(plan) => {
+            let Err(error) = stage::run(std::slice::from_ref(plan));
             refuse(&error)
         }
     }
@@ -105,6 +120,8 @@ mod tests {
     fn parse_names_each_mode() {
         assert_eq!(Mode::parse(&args(&["serve"])), Some(Mode::Serve));
         assert_eq!(Mode::parse(&args(&["launch"])), Some(Mode::Launch));
+        let stage = args(&["launch-stage", "{}"]);
+        assert_eq!(Mode::parse(&stage), Some(Mode::Stage(&stage[1])));
     }
 
     #[test]
@@ -112,6 +129,17 @@ mod tests {
         assert_eq!(Mode::parse(&args(&[])), None);
         assert_eq!(Mode::parse(&args(&["start"])), None);
         assert_eq!(Mode::parse(&args(&["serve", "extra"])), None);
+        assert_eq!(Mode::parse(&args(&["launch", "extra"])), None);
+        assert_eq!(Mode::parse(&args(&["launch-stage"])), None);
+        assert_eq!(Mode::parse(&args(&["launch-stage", "a", "b"])), None);
+    }
+
+    /// Each mode names the word of its crate, so the launch step execs the
+    /// stage that this program routes.
+    #[test]
+    fn each_mode_is_the_word_of_its_crate() {
+        assert_eq!(creche_vmm_confine::launch::MODE, "launch");
+        assert_eq!(creche_vmm_confine::stage::MODE, "launch-stage");
     }
 
     #[test]
@@ -120,10 +148,18 @@ mod tests {
         assert_eq!(status(&["launch"]), ExitCode::from(EX_CONFIG));
     }
 
+    /// A plan that does not parse ends the stage with exit 78 before any
+    /// kernel call. Off Linux the stage refuses first.
+    #[test]
+    fn a_bad_stage_plan_is_refused() {
+        assert_eq!(status(&["launch-stage", "{"]), ExitCode::from(EX_CONFIG));
+    }
+
     #[test]
     fn a_wrong_argument_list_is_refused() {
         assert_eq!(status(&[]), ExitCode::from(EX_CONFIG));
         assert_eq!(status(&["start"]), ExitCode::from(EX_CONFIG));
         assert_eq!(status(&["serve", "extra"]), ExitCode::from(EX_CONFIG));
+        assert_eq!(status(&["launch-stage"]), ExitCode::from(EX_CONFIG));
     }
 }

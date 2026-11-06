@@ -23,6 +23,10 @@ The root `AGENTS.md` applies here too.
 ## The program
 
 `src/main.rs` documents the modes of `vmm` and the exit status 78.
+`vmm launch-stage <plan>` takes exactly one plan argument and calls
+`creche_vmm_confine::stage::run`, the one entry of the stage. It always
+writes the real exec attribute (plan PR L16c, decisions CH55, CH58 rule
+1).
 
 ## The server
 
@@ -268,18 +272,20 @@ table, and the start boots it again. A cold boot runs these steps:
    the state root, in `spawn_blocking` (decision CH50 rule 9).
    Admission needs the guest RAM of the shape, so this read comes before
    admission.
-2. `admission::decide` (decisions CH8-6, CH8-7). The guest RAM of the
-   start counts in the table from here on, so two starts never pass the
-   cap together. `host_full` writes no fault. Then each eviction that
+2. `admission::decide` (decisions CH8-6, CH8-7, CH58 rule 2). The guest
+   RAM of the start counts in the table from here on, so two starts never
+   pass the cap together. The start also takes the lowest free slot, or
+   with none free the slot of its first eviction (see "The slots"). `host_full` writes no fault. Then each eviction that
    admission names runs (see "The eviction").
-3. In `spawn_blocking`: `remove_stale` (decision CH19 (4)), the store
-   check of the kernel and the root disk of the flavor (decision CH44
-   rule 2), `SessionDisks::for_boot` (decision CH21-4), the run dir
-   `vm/<id>/` and `snapshots/` with mode 0700, and a new `serial.log`
-   with mode 0600 (gap G23). Then the restore or cold boot choice (see
-   "The restore"), and the launch with `ChCommand::boot` or
-   `ChCommand::restore`, `VmLimits` and the Landlock files of the VM
-   (decisions CH8-3, CH8-5, CH8-8, CH30).
+3. In `spawn_blocking`: `RunRoot::link_vm` links `vm/<id>` to the slot
+   (PR D16), then `remove_stale` (decision CH19 (4)), the store check of
+   the kernel and the root disk of the flavor (decision CH44 rule 2),
+   `SessionDisks::for_boot` (decision CH21-4), `snapshots/` with mode
+   0700, and a new `serial.log` with mode 0600 (gap G23). Then the
+   restore or cold boot choice (see "The restore"), and the launch with
+   `ChCommand::boot` or `ChCommand::restore`, `VmLimits`, the Landlock
+   files of the VM and `Launch::in_slot` (decisions CH8-3, CH8-5, CH8-8,
+   CH30, CH55).
 4. `control::open` for the first `ControlReady`. It keeps the facade
    state in `ControlState`, writes a turn end to the row, and clears the
    faults of the family (contract 05 §3.3.1 rule 8).
@@ -301,6 +307,41 @@ removes each VM whose process exited, so an exited VM holds no RAM.
 The `Launcher` trait
 lets `tests/start.rs` fake the launch, the command line file and the
 guest. Every other step there is the real one on a scratch dir.
+
+## The slots
+
+Plan PR L16b gives each VM one slot of the pool of
+`creche_vmm_store::layout::SLOTS` (64, decisions CH51, CH55). Each entry
+of the table holds its slot: a start, a VM that runs, a VM under
+eviction or under a stop, and a VM whose stop failed. Admission takes
+the lowest slot that no entry holds, under the table lock, so two starts
+never take one slot. A full pool counts like a full RAM cap (decision
+CH58 rule 2): with no free slot, admission evicts the least recently used
+VM that `may_evict` passes (decision CH8-6), and the start takes the slot
+of its first eviction. With no such VM, the start gets `host_full`
+(decision CH21-3) and launches nothing. An evicted VM holds its slot as
+`Evicting` until its CH ends. The start links that slot only after each
+eviction ended, and a failed eviction fails the start, so no two live CH
+share a slot. With a free slot, a start that evicts for RAM takes the
+free slot.
+
+The start runs `RunRoot::link_vm` before `remove_stale`, and passes the
+slot to the launch with `Launch::in_slot` (PR C18). So the launch stage
+enters the slot profile `creche-ch-slot-<k>`. A restore links the
+`vm/<id>` of its snapshot to its new slot, and each path in the snapshot
+holds. `link_vm` empties the slot (decision CH56 rule 1), so the start
+takes only a slot that no live CH holds (caller duty (c) of PR D16).
+
+An entry leaves the table only after its CH ended: a stop, a drop, the
+stop after a guest fault, an eviction, an idle sleep, a shutdown, a start
+that failed, or a VM that exited. Each of these runs `release`. It runs
+`RunRoot::unlink_vm` under the table lock before the entry goes, so no
+start of the session links before the unlink. It is one `unlink` on the
+tmpfs of the run root, an accepted exception to the `spawn_blocking`
+rule of CH36 G21 (decision CH58 rule 3). A failed unlink is logged,
+and the slot still frees. `tests/start.rs` proves two slots, a reused
+slot, a full pool of busy VMs, a full pool that evicts its idle VM, each
+stop path and a restore into a new slot.
 
 ## The restore
 
