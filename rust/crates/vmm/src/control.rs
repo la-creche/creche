@@ -4,11 +4,12 @@
 //! `ControlHello` and reads one `ControlReady`. The framing is the one of
 //! "The vsock JSON links" in `wire/AGENTS.md` (decision CH36 G11).
 //!
-//! After `ControlReady`, guest init relays each turn event of the facade
-//! (decision CH21), and the vmm may send the graceful stop (decision CH19
-//! (3)). `ControlLink::split` gives a reader of the turn events and a
-//! `StopSender` for the stop. `ControlState` applies each turn end to the
-//! session row.
+//! After `ControlReady`, guest init sends a `GuestEvent` line at each
+//! change of the facade state and for each turn event of the facade
+//! (decisions CH21, CH62 rule 11), and the vmm may send the graceful stop
+//! (decision CH19 (3)). `ControlLink::split` gives a reader of the guest
+//! events and a `StopSender` for the stop. `ControlState` keeps the facade
+//! state and applies each turn end to the session row.
 
 use std::borrow::Borrow;
 use std::collections::HashMap;
@@ -19,7 +20,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use creche_wire::{
     CONTROL_LINE_CAP, ControlCommand, ControlHello, ControlReady, ControlStop, FacadeState,
-    GuestPort, SessionId, TurnEnd, TurnEvent, UnixMillis,
+    GuestEvent, GuestPort, SessionId, TurnEnd, TurnEvent, UnixMillis,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -117,7 +118,7 @@ impl ControlLink {
     }
 
     /// Splits the link after `ControlReady`: the sender of the graceful
-    /// stop and the reader of the turn events (plan PR L18b). The reader
+    /// stop and the reader of the guest events (plan PR L18b). The reader
     /// holds the only strong handle of the stream, so its end closes the
     /// link (decision CH43 rule 2), and the sender then sends nothing.
     #[must_use]
@@ -167,28 +168,30 @@ impl<S: Borrow<UnixStream>> ControlLink<S> {
         serde_json::from_slice(&line).map_err(|_| ControlError::Line)
     }
 
-    /// Reads the next turn event that guest init relays (decision CH21).
+    /// Reads the next line that guest init sends after `ControlReady`: a
+    /// facade state, a `synced` or a relayed turn event (decisions CH21,
+    /// CH62 rules 11 and 23).
     ///
     /// # Errors
     ///
     /// `Ended` when guest init closed the link at a line end. `Line` for
-    /// a line that is not a `TurnEvent`. The caller then closes the link.
-    pub async fn event(&mut self) -> Result<TurnEvent, ControlError> {
+    /// a line that is not a `GuestEvent`. The caller then closes the link.
+    pub async fn event(&mut self) -> Result<GuestEvent, ControlError> {
         self.next_event().await.map_err(|end| match end {
             EventEnd::Refused(_) => ControlError::Line,
             EventEnd::Error(error) => error,
         })
     }
 
-    /// Reads the next turn event as `event` does. A refused line comes
+    /// Reads the next guest event as `event` does. A refused line comes
     /// back with its first `REFUSED_LOG_CAP` bytes, so the caller logs it
     /// (decision CH54 rule 6).
     ///
     /// # Errors
     ///
-    /// `EventEnd::Refused` for a line that is not a `TurnEvent`, and
+    /// `EventEnd::Refused` for a line that is not a `GuestEvent`, and
     /// `EventEnd::Error` with the error of `event` for every other end.
-    pub(crate) async fn next_event(&mut self) -> Result<TurnEvent, EventEnd> {
+    pub(crate) async fn next_event(&mut self) -> Result<GuestEvent, EventEnd> {
         let line = match self.line(CONTROL_LINE_CAP).await {
             Ok(line) => line,
             Err(ControlError::Closed) => return Err(EventEnd::Error(ControlError::Ended)),
@@ -248,7 +251,7 @@ impl<S: Borrow<UnixStream>> ControlLink<S> {
 /// so a change costs one constant.
 pub(crate) const REFUSED_LOG_CAP: usize = 512;
 
-/// Why `ControlLink::next_event` read no turn event.
+/// Why `ControlLink::next_event` read no guest event.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum EventEnd {
     /// The strict reader refused a line (decision CH43 rule 2). It holds
@@ -400,9 +403,6 @@ struct VmControl {
     link: Option<LinkId>,
     facade: Option<FacadeState>,
     turn_running: bool,
-    /// A turn event arrived after the last `ControlReady` (decision CH43
-    /// rule 8).
-    turn_seen: bool,
     /// The time of the last turn event (decision CH50 rule 5).
     last_turn: Option<Instant>,
     /// The link that closed on a refused line (decision CH54 rule 6).
@@ -461,21 +461,30 @@ impl ControlState {
             .filter(|control| control.link == Some(link))
     }
 
-    /// Keeps the facade state of `ready` when `link` is current. Returns
-    /// `Applied` with the last turn end of the facade state, which the
-    /// caller writes to the row of `vm`. A restore can drop a turn event
-    /// of the old link (fact 45), so the end arrives here (decision CH32
-    /// rule 4). A repeat of a seen end writes nothing. A failed write
-    /// changes no state here, and the next `ControlReady` carries the end
-    /// again.
+    /// Keeps the facade state of `ready` when `link` is current, as
+    /// `report` does. A restore can drop a turn event of the old link
+    /// (fact 45), so the end arrives here (decision CH32 rule 4). A failed
+    /// write changes no state here, and the next `ControlReady` carries
+    /// the end again.
     pub fn ready(&mut self, vm: &SessionId, link: LinkId, ready: ControlReady) -> Change {
+        self.report(vm, link, ready.facade)
+    }
+
+    /// Keeps `facade`, the state of a `ControlReady` or of a `facade` line
+    /// of `link`, when `link` is current (decisions CH19 rule 2, CH62 rule
+    /// 11). The turn state follows the flag of a `running` state. Any
+    /// other state runs no turn, so a facade that leaves `running` clears
+    /// `turn_running`, and a facade that exited mid-turn blocks no
+    /// snapshot. Returns `Applied` with the last turn end of the state,
+    /// which the caller writes to the row of `vm`. A repeat of a seen end
+    /// writes nothing.
+    pub fn report(&mut self, vm: &SessionId, link: LinkId, facade: FacadeState) -> Change {
         let Some(control) = self.current(vm, link) else {
             return Change::Stale;
         };
         control.turn_running =
-            matches!(&ready.facade, FacadeState::Running(running) if running.turn_running);
-        control.turn_seen = false;
-        let facade = control.facade.insert(ready.facade);
+            matches!(&facade, FacadeState::Running(running) if running.turn_running);
+        let facade = control.facade.insert(facade);
         Change::Applied(last_turn_end(facade).cloned())
     }
 
@@ -491,7 +500,6 @@ impl ControlState {
             return Change::Stale;
         };
         control.turn_running = matches!(event, TurnEvent::Start(_));
-        control.turn_seen = true;
         // The tokio clock, as the door close time of `Relays::door`, so a
         // test on paused time sees one clock.
         control.last_turn = Some(tokio::time::Instant::now().into_std());
@@ -541,30 +549,20 @@ impl ControlState {
         self.vms.get(vm).and_then(|control| control.link)
     }
 
-    /// The last facade state that a current link of `vm` reported in its
-    /// `ControlReady`. A turn event does not change it.
-    // Decision CH43 rule 8: this stays the state of the last
-    // `ControlReady`, and `turn_running` follows the events. No line
-    // reports a change of the facade state yet. The phase 3 guest init PR
-    // adds one. Until then the sleep gate treats a VM as up only after a
-    // ready said `running` or a turn event arrived (`turn_seen`).
+    /// The last facade state that a current link of `vm` reported, in its
+    /// `ControlReady` or in a later `facade` line (decision CH62 rule 11).
+    /// A turn event does not change it: `turn_running` follows the turn
+    /// events.
     #[must_use]
     pub fn facade(&self, vm: &SessionId) -> Option<&FacadeState> {
         self.vms.get(vm).and_then(|control| control.facade.as_ref())
     }
 
-    /// Whether a turn runs in `vm`: the last `ControlReady` or turn event
+    /// Whether a turn runs in `vm`: the last facade state or turn event
     /// of a current link said so (decisions CH21, CH19 (6)).
     #[must_use]
     pub fn turn_running(&self, vm: &SessionId) -> bool {
         self.vms.get(vm).is_some_and(|control| control.turn_running)
-    }
-
-    /// Whether a turn event of a current link of `vm` arrived after its
-    /// last `ControlReady` (decision CH43 rule 8).
-    #[must_use]
-    pub fn turn_seen(&self, vm: &SessionId) -> bool {
-        self.vms.get(vm).is_some_and(|control| control.turn_seen)
     }
 
     /// The time of the last turn event of `vm`, for its last use

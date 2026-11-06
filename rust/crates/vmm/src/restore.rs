@@ -90,10 +90,11 @@ pub struct ChTools {
 }
 
 // PR D15 gives the device set in `VmInfo`, so the vmm restores (plan PR
-// L18b). `INFO_TIMEOUT` is the timeout of the call. The control link has
-// no `sync` command until the phase 3 guest init PR adds one (item 5.7,
-// the item 42 note of the design). So the vmm takes no snapshot yet, and
-// the phase 3 PR sets `GUEST_SYNCS` true (caller duty 7 of AGENTS.md).
+// L18b). `INFO_TIMEOUT` is the timeout of the call. The wire has `sync`
+// and `synced` (plan PR V1, item 5.7 and its item 42 note of the design).
+// Plan PR V9 removes `ChApi::GUEST_SYNCS` and sends `sync` before each
+// take (decision CH62 rule 23, caller duty 7 of AGENTS.md). Until V9, the
+// vmm takes no snapshot.
 impl ChApi for ChTools {
     const READS_DEVICES: bool = true;
     const GUEST_SYNCS: bool = false;

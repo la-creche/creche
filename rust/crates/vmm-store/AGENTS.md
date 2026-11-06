@@ -129,11 +129,12 @@ The second file has the table of the three vmm crates.
   CH50 rule 6). When L17 builds the `Running` list for
   `creche_vmm_confine::admission::decide`, it passes `last_use = now`
   for each VM with an open door link. D12 and C9 stay as built.
-- Caller duties (PR D12, `sleep_gate.rs`), for lifecycle: (a) keep a
-  `turn_seen` flag per VM that a turn event sets and each
-  `ControlReady` clears, for decision CH43 rule 8.
-  `creche_vmm::control::ControlState` has no such flag yet. L18 needs
-  it. (b) pass `Activity::may_evict`, not `may_sleep`, as
+- Caller duty (PR D12, `sleep_gate.rs`), for lifecycle: pass
+  `Activity::facade` as the facade state that guest init reported last,
+  in a `ControlReady` or a later `facade` line (decision CH62 rule 11).
+  The `turn_seen` flag of decision CH43 rule 8 is gone with that line.
+- Caller duty (PR D12, `sleep_gate.rs`), for lifecycle: pass
+  `Activity::may_evict`, not `may_sleep`, as
   `admission::Gate::Idle`. Admission snapshots an idle VM sooner than
   `IDLE_TIMEOUT` (decision CH8-6), and the doc of `Gate::Idle` says
   "may sleep now". L17 maps the two.

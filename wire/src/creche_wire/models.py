@@ -337,13 +337,53 @@ class ControlStopCommand(BaseModel):
     stop: ControlStop
 
 
-class ControlCommand(RootModel[ControlStopCommand]):
+class ControlSync(BaseModel):
+    """
+    The guest sync before a snapshot. It carries nothing (decision CH62
+    rule 23).
+
+    It is a type of its own so that the generated Python model is a class
+    with no field, as `ControlStop` is.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+
+class ControlSyncCommand(BaseModel):
+    """
+    Sync the session disk, then answer `synced`.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    sync: ControlSync
+
+
+class ControlCommand(RootModel[ControlStopCommand | ControlSyncCommand]):
     root: Annotated[
-        ControlStopCommand,
+        ControlStopCommand | ControlSyncCommand,
         Field(
-            description="What the vmm sends on control link 1200 after `ControlHello` (decision\nCH36 G11).\n\n`stop` starts the graceful stop of decision CH19 rule 3. Guest init\nstops the facade, for up to 30 s when a turn runs. It then syncs the\ndisks and powers the VM off. The vmm sends SIGTERM, then SIGKILL, only\nwhen the VM does not exit in time, because a kill is a power cut for\nthe guest.\n\nOn the wire the variant name is the one key of an object, and each\nvariant has a `title` for its class name. An externally tagged enum has\nno unit variant, so `stop` holds an empty object (decision CH22 rule 3)."
+            description="What the vmm sends on control link 1200 after `ControlHello` (decision\nCH36 G11). Guest init sends `stop` on its local link to the facade too\n(decision CH62 rule 10).\n\n`stop` starts the graceful stop of decision CH19 rule 3. Guest init\nstops the facade, for up to 25 s when a turn runs (decision CH62 rule\n9). It then syncs the disks and powers the VM off. The vmm sends\nSIGTERM, then SIGKILL, only when the VM does not exit in time, because\na kill is a power cut for the guest.\n\n`sync` asks guest init to sync the session disk before a snapshot\n(decision CH62 rule 23, item 5.7). Guest init runs `syncfs` of the\nsession disk, then `sync`, and answers with `GuestEvent::Synced`. A VM\nwith no `synced` in time gets no snapshot, and the graceful stop runs.\n\nOn the wire the variant name is the one key of an object, and each\nvariant has a `title` for its class name. An externally tagged enum has\nno unit variant, so each variant holds an empty object (decision CH22\nrule 3)."
         ),
     ]
+
+
+class ControlSynced(BaseModel):
+    """
+    The answer of guest init to `ControlCommand::Sync`: the session disk
+    and every other disk are synced (decision CH62 rule 23). It carries
+    nothing.
+
+    It is a type of its own so that the generated Python model is a class
+    with no field, as `ControlStop` is.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
 
 
 class CreateError1(BaseModel):
@@ -1096,6 +1136,69 @@ class FamilyState(BaseModel):
     creds: Annotated[FamilyCreds, Field(description="What the vmm read from `creds.json`.")]
 
 
+class FamilyStatePull(BaseModel):
+    """
+    What the facade sends on host port 1100 to pull the family state,
+    before each prompt (decisions CH5a, CH43 rule 4). It carries nothing:
+    the facade sends no revision, and the vmm sends the full typed state on
+    every pull (decision CH23).
+
+    The facade connects to `guest::FAMILY_STATE_SOCKET`, and guest init
+    splices each connection to a new vsock dial of host port 1100 (decision
+    CH62 rule 13). The facade may send many pulls on one link. The vmm
+    answers each pull with one `FamilyStateReply`.
+
+    It is a type of its own so that the generated Python model is a class
+    with no field, as `ControlStop` is.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+
+class GuestFacadeEvent(BaseModel):
+    """
+    The facade state after a change.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    facade: FacadeState
+
+
+class GuestSyncedEvent(BaseModel):
+    """
+    The disks are synced.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    synced: ControlSynced
+
+
+class GuestTurnEvent(BaseModel):
+    """
+    A turn started or ended.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    turn: TurnEvent
+
+
+class GuestEvent(RootModel[GuestFacadeEvent | GuestSyncedEvent | GuestTurnEvent]):
+    root: Annotated[
+        GuestFacadeEvent | GuestSyncedEvent | GuestTurnEvent,
+        Field(
+            description="What guest init sends on control link 1200 after `ControlReady`, each\nat any time (decisions CH21, CH36 G11).\n\n1. `facade`: the facade state changed (decision CH19 rule 2). Guest init\n   sends each change, so the vmm sees a facade that opened its local\n   link and is up (decision CH32 rule 6). The vmm applies it as it\n   applies the state of `ControlReady`.\n2. `synced`: the answer to `ControlCommand::Sync` (decision CH62 rule\n   23).\n3. `turn`: a turn event of the facade, relayed (decision CH21). The\n   facade sends the bare `TurnEvent` on its local link, and guest init\n   nests it here (decision CH62 rules 10 and 11). A turn event with no\n   control link open is dropped, and the next `ControlReady` carries\n   the last `TurnEnd`.\n\nOn the wire the variant name is the one key of an object, and each\nvariant has a `title` for its class name."
+        ),
+    ]
+
+
 class JobId(RootModel[StrictStr]):
     root: Annotated[
         StrictStr,
@@ -1598,7 +1701,7 @@ class FamilyStateReply(
     root: Annotated[
         StateReply | CredsMissingReply | ConfigMissingReply | NotValidReply | TooLargeReply,
         Field(
-            description="What the vmm answers on host port 1100 when the facade pulls the family\nstate, before each prompt (decisions CH5a, CH5b, CH23). The vmm reads\ncaregiver's `creds.json` and `config/` at each pull.\n\nA read failure is a typed reply, and the link stays open (decision CH23\ndefault 2). The facade fails that prompt and keeps running. At start it\npulls again with a backoff, and never exits on a typed error. When\n`creds.json` and `config/` are both absent, `creds_missing` wins\n(decision CH31).\n\nA reply text has a cap of 256 KiB (decision CH23 default 4). The cap is\na rule of the read surface, not of this type: the vmm's writer and the\n`cap` of `creche_wire.read` hold it, because JSON Schema counts code\npoints, not bytes. A `state` reply over the cap is `too_large`, not\n`not_valid` (decision CH31).\n\nThe vmm reads `model_live_at` from `config/runtime.json` (decision\nCH23-1). It holds the `state` reply until the host time passes that\ntime, for at most 10 s (decision CH31). No wire type carries\n`model_live_at`, and the guest needs no clock for it. A held pull can\ntake up to 10 s longer.\n\nOn the wire the variant name is the one key of an object, and each\nvariant has a `title` for its class name."
+            description="What the vmm answers on host port 1100 to each `FamilyStatePull`, before\neach prompt (decisions CH5a, CH5b, CH23). The vmm reads caregiver's\n`creds.json` and `config/` at each pull.\n\nA read failure is a typed reply, and the link stays open (decision CH23\ndefault 2). The facade fails that prompt and keeps running. At start it\npulls again with a backoff, and never exits on a typed error. When\n`creds.json` and `config/` are both absent, `creds_missing` wins\n(decision CH31).\n\nA reply text has a cap of 256 KiB, `FAMILY_STATE_CAP` (decision CH23\ndefault 4). The cap is a rule of the read surface, not of this type:\nthe vmm's writer and the `cap` of `creche_wire.read` hold it, because\nJSON Schema counts code points, not bytes. A `state` reply over the cap is `too_large`, not\n`not_valid` (decision CH31).\n\nThe vmm reads `model_live_at` from `config/runtime.json` (decision\nCH23-1). It holds the `state` reply until the host time passes that\ntime, for at most 10 s (decision CH31). No wire type carries\n`model_live_at`, and the guest needs no clock for it. A held pull can\ntake up to 10 s longer.\n\nOn the wire the variant name is the one key of an object, and each\nvariant has a `title` for its class name."
         ),
     ]
 
@@ -1666,7 +1769,7 @@ class TurnEvent(RootModel[TurnStartEvent | TurnEndEvent]):
     root: Annotated[
         TurnStartEvent | TurnEndEvent,
         Field(
-            description="What the facade tells guest init at each turn start and turn end, and\nwhat guest init relays to the vmm on control link 1200 (decision CH21).\nAt each end the vmm sets the row's `updated_at`, and it sets the row's\n`title` only while that is `null`, as `nameOnce` does today. It\nsnapshots a VM only between an end and the next start (decision CH19\nrule 6).\n\nThe event names no session: a VM serves one session (decision CH1), and\nthe link names the VM. On the wire the variant name is the one key of an\nobject, and each variant has a `title` for its class name."
+            description="What the facade tells guest init at each turn start and turn end, on\nits local link (decision CH62 rule 10). Guest init relays it to the vmm\non control link 1200 inside `GuestEvent::Turn` (decision CH21).\nAt each end the vmm sets the row's `updated_at`, and it sets the row's\n`title` only while that is `null`, as `nameOnce` does today. It\nsnapshots a VM only between an end and the next start (decision CH19\nrule 6).\n\nThe event names no session: a VM serves one session (decision CH1), and\nthe link names the VM. On the wire the variant name is the one key of an\nobject, and each variant has a `title` for its class name."
         ),
     ]
 
