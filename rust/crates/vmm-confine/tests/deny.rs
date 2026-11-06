@@ -24,7 +24,7 @@ const PLANES: &[HostPort] = &[
 
 /// A command line file and a VM run directory in a new directory in
 /// `/tmp`, removed on drop. The run directory holds the CH sockets and
-/// `serial.log`, which are not listeners.
+/// the lock file of the API socket, which are not listeners.
 struct Fake {
     root: PathBuf,
     run: VmRunDir,
@@ -42,7 +42,7 @@ impl Fake {
         let _ = fs::remove_dir_all(&root);
         let run = RunRoot::new(root.clone()).unwrap().vm(&ID.parse().unwrap());
         fs::create_dir_all(run.path()).unwrap();
-        for file in [run.vsock_socket(), run.api_socket(), run.serial_log()] {
+        for file in [run.vsock_socket(), run.api_socket(), run.api_socket_lock()] {
             fs::write(file, "").unwrap();
         }
         let mut cmdline = Vec::new();

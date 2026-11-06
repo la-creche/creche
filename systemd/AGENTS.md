@@ -81,12 +81,12 @@ file's removal is always a human verb.
    `RUNTIME_DIRECTORY`.
 2. The lifetime of `serial.log` is decision CH59 rule 2. The unit keeps
    `RuntimeDirectoryPreserve=no`, so systemd removes the run root at each
-   stop and each restart. Plan PR D17 moves each `serial.log` to
+   stop and each restart. So each `serial.log` is in
    `sessions/<id>/serial.log` in the state root, kept until the next start
-   of that session (gap G23). Until D17 merges, each stop removes the
-   `serial.log` of each VM.
+   of that session (gap G23, plan PR D17).
 3. The vmm stand-in of the job `kvm` copies the decided lines of
    `creche-vmm.service` that touch the launch chain and its stop:
+   `RuntimeDirectory=vmm`, `RuntimeDirectoryMode=0700`,
    `NoNewPrivileges=yes`, `KillMode=mixed`, `ExecStopPost=` and each
    `Restart` line (`rust/crates/vmm-confine/tests/stand_in`, decisions
    CH60 rule 1, CH61 rule 1). A test in the job `rust` fails when a line
@@ -97,7 +97,11 @@ file's removal is always a human verb.
    sets it only after that write (decision CH55). The kvm tests check
    no_new_privs of the stand-in before each launch, then prove the slot
    label of CH. A refused write fails the launch closed (decision CH55),
-   so a wrong order starts no VM and lets no VM run unconfined.
+   so a wrong order starts no VM and lets no VM run unconfined. systemd
+   removes the run root at each stop of a stand-in, so the kvm tests
+   prove that a restart and a crash remove the run root and keep each
+   `serial.log` (item 2). Each stop removes the files of every test, so
+   the kvm tests that write in the run root run one at a time.
 4. The end of each VM is decision CH61, and its step is decision CH63.
    Each `creche-vm-*` scope has `BindsTo=` and `Before=`
    `creche-vmm.service` (CH61 rule 2), so the shutdown of the vmm runs

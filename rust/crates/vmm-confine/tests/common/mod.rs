@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use creche_vmm_confine::landlock::{HostPath, Start, VmFiles};
 use creche_vmm_confine::vmm_unit::VmmUnit;
 use creche_vmm_store::layout::{RunRoot, StateRoot};
+use creche_vmm_store::serial_log::SerialLog;
 
 /// The example binary. Cargo builds it next to the test's `deps` dir.
 pub fn example() -> PathBuf {
@@ -43,6 +44,7 @@ impl TempVm {
         fs::create_dir_all(run.path()).unwrap();
         fs::write(root.join("root.img"), "root").unwrap();
         fs::write(session.disk(), "session").unwrap();
+        SerialLog::fresh(&session).unwrap();
         let root_disk = HostPath::new(root.join("root.img")).unwrap();
         let start = Start::Restore { initramfs: None };
         let files = VmFiles::new(start, root_disk, &session, &run).unwrap();

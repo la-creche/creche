@@ -17,8 +17,9 @@
 //!    decision CH19 (4)), the kernel, the initramfs and the root disk
 //!    pass the store check (PR D6, decision CH44 rule 2), the session disk exists (PR D7, decision
 //!    CH21-4), the run dir `vm/<id>/` links to the slot of the start (PR
-//!    D16), `snapshots/` exists, and `serial.log` is a new file with mode
-//!    0600 (gap G23). The key check (PR D10) and the claim (PR D11) pick a
+//!    D16), `snapshots/` exists, and `sessions/<id>/serial.log` in the
+//!    state root is a new file with mode 0600 (gap G23, decision CH59 rule
+//!    2, PR D17). The key check (PR D10) and the claim (PR D11) pick a
 //!    restore or a cold boot. Then the launch step starts CH in its slot
 //!    (PR C18) with the argv of PR C7 and the sizes of PR C4 under the
 //!    ruleset of PR C6 (PR C2, decisions CH8-3, CH8-5, CH8-8, CH30, CH55).
@@ -48,9 +49,9 @@
 //! of the shutdown (plan PR L19).
 
 use std::collections::{HashMap, HashSet};
-use std::fs::{DirBuilder, OpenOptions, Permissions};
+use std::fs::DirBuilder;
 use std::io;
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -73,6 +74,7 @@ use creche_vmm_store::key::{CheckedCh, KeyCheck, SnapshotKey, check_newest};
 use creche_vmm_store::layout::{RunRoot, SessionDir, Slot as PoolSlot, StateRoot, VmRunDir};
 use creche_vmm_store::retention::{InUse, Swept, sweep};
 use creche_vmm_store::rows::Rows;
+use creche_vmm_store::serial_log::SerialLog;
 use creche_vmm_store::session_disk::SessionDisks;
 use creche_vmm_store::sleep_gate::Activity;
 use creche_vmm_store::stale::remove_stale;
@@ -95,9 +97,6 @@ use crate::stop::{VmProcess, stop};
 
 /// The mode of the run dir and the snapshots dir of a VM.
 const DIR_MODE: u32 = 0o700;
-
-/// The mode of `serial.log` (gap G23).
-const SERIAL_MODE: u32 = 0o600;
 
 /// The pause between two reads of a slot that a start or a retire holds,
 /// while a stop waits for it. No row sets it. Only the vmm reads it, so a
@@ -1456,17 +1455,13 @@ fn launch<L: Launcher, A: ChApi>(
         .map_err(|error| error.to_string())?;
     let session = config.state.session(id);
     // The ruleset opens each path, and a missing one fails the launch.
-    // `link_vm` made the slot dir of `vm/<id>`.
+    // `link_vm` made the slot dir of `vm/<id>`, and `for_boot` made the
+    // session dir. The serial log of the last start stays until here, also
+    // across a vmm restart (decision CH59 rule 2). A restore opens the
+    // same path from its snapshot config.
     make_dir(&session.snapshots())?;
-    let serial = run.serial_log();
-    OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(SERIAL_MODE)
-        .open(&serial)
-        .and_then(|file| file.set_permissions(Permissions::from_mode(SERIAL_MODE)))
-        .map_err(|error| format!("making {}: {error}", serial.display()))?;
+    let serial =
+        SerialLog::fresh(&session).map_err(|error| format!("{error}: {}", error.source))?;
     let limits = VmLimits::from(shape);
     let key = SnapshotKey::current(config.ch_version, &kernel, initramfs.as_ref(), &root);
     // The initramfs of the ruleset. A snapshot with the current key names
@@ -1495,6 +1490,7 @@ fn launch<L: Launcher, A: ChApi>(
                 initramfs: initramfs.as_ref(),
                 root: &root,
                 session: &disk,
+                serial: &serial,
                 disk: DiskLimit::SESSION,
                 limits,
             };

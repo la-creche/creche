@@ -36,9 +36,9 @@ profile creche-ch-slot-0 {
   owner /run/user/[0-9]*/vmm/slot/0/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/0/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/0/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/0/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -56,9 +56,9 @@ profile creche-ch-slot-1 {
   owner /run/user/[0-9]*/vmm/slot/1/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/1/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/1/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/1/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -76,9 +76,9 @@ profile creche-ch-slot-2 {
   owner /run/user/[0-9]*/vmm/slot/2/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/2/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/2/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/2/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -96,9 +96,9 @@ profile creche-ch-slot-3 {
   owner /run/user/[0-9]*/vmm/slot/3/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/3/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/3/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/3/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -116,9 +116,9 @@ profile creche-ch-slot-4 {
   owner /run/user/[0-9]*/vmm/slot/4/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/4/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/4/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/4/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -136,9 +136,9 @@ profile creche-ch-slot-5 {
   owner /run/user/[0-9]*/vmm/slot/5/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/5/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/5/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/5/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -156,9 +156,9 @@ profile creche-ch-slot-6 {
   owner /run/user/[0-9]*/vmm/slot/6/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/6/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/6/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/6/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -176,9 +176,9 @@ profile creche-ch-slot-7 {
   owner /run/user/[0-9]*/vmm/slot/7/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/7/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/7/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/7/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -196,9 +196,9 @@ profile creche-ch-slot-8 {
   owner /run/user/[0-9]*/vmm/slot/8/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/8/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/8/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/8/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -216,9 +216,9 @@ profile creche-ch-slot-9 {
   owner /run/user/[0-9]*/vmm/slot/9/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/9/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/9/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/9/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -236,9 +236,9 @@ profile creche-ch-slot-10 {
   owner /run/user/[0-9]*/vmm/slot/10/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/10/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/10/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/10/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -256,9 +256,9 @@ profile creche-ch-slot-11 {
   owner /run/user/[0-9]*/vmm/slot/11/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/11/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/11/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/11/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -276,9 +276,9 @@ profile creche-ch-slot-12 {
   owner /run/user/[0-9]*/vmm/slot/12/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/12/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/12/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/12/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -296,9 +296,9 @@ profile creche-ch-slot-13 {
   owner /run/user/[0-9]*/vmm/slot/13/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/13/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/13/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/13/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -316,9 +316,9 @@ profile creche-ch-slot-14 {
   owner /run/user/[0-9]*/vmm/slot/14/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/14/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/14/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/14/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -336,9 +336,9 @@ profile creche-ch-slot-15 {
   owner /run/user/[0-9]*/vmm/slot/15/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/15/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/15/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/15/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -356,9 +356,9 @@ profile creche-ch-slot-16 {
   owner /run/user/[0-9]*/vmm/slot/16/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/16/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/16/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/16/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -376,9 +376,9 @@ profile creche-ch-slot-17 {
   owner /run/user/[0-9]*/vmm/slot/17/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/17/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/17/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/17/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -396,9 +396,9 @@ profile creche-ch-slot-18 {
   owner /run/user/[0-9]*/vmm/slot/18/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/18/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/18/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/18/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -416,9 +416,9 @@ profile creche-ch-slot-19 {
   owner /run/user/[0-9]*/vmm/slot/19/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/19/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/19/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/19/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -436,9 +436,9 @@ profile creche-ch-slot-20 {
   owner /run/user/[0-9]*/vmm/slot/20/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/20/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/20/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/20/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -456,9 +456,9 @@ profile creche-ch-slot-21 {
   owner /run/user/[0-9]*/vmm/slot/21/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/21/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/21/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/21/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -476,9 +476,9 @@ profile creche-ch-slot-22 {
   owner /run/user/[0-9]*/vmm/slot/22/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/22/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/22/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/22/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -496,9 +496,9 @@ profile creche-ch-slot-23 {
   owner /run/user/[0-9]*/vmm/slot/23/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/23/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/23/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/23/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -516,9 +516,9 @@ profile creche-ch-slot-24 {
   owner /run/user/[0-9]*/vmm/slot/24/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/24/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/24/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/24/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -536,9 +536,9 @@ profile creche-ch-slot-25 {
   owner /run/user/[0-9]*/vmm/slot/25/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/25/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/25/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/25/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -556,9 +556,9 @@ profile creche-ch-slot-26 {
   owner /run/user/[0-9]*/vmm/slot/26/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/26/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/26/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/26/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -576,9 +576,9 @@ profile creche-ch-slot-27 {
   owner /run/user/[0-9]*/vmm/slot/27/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/27/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/27/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/27/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -596,9 +596,9 @@ profile creche-ch-slot-28 {
   owner /run/user/[0-9]*/vmm/slot/28/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/28/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/28/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/28/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -616,9 +616,9 @@ profile creche-ch-slot-29 {
   owner /run/user/[0-9]*/vmm/slot/29/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/29/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/29/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/29/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -636,9 +636,9 @@ profile creche-ch-slot-30 {
   owner /run/user/[0-9]*/vmm/slot/30/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/30/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/30/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/30/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -656,9 +656,9 @@ profile creche-ch-slot-31 {
   owner /run/user/[0-9]*/vmm/slot/31/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/31/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/31/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/31/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -676,9 +676,9 @@ profile creche-ch-slot-32 {
   owner /run/user/[0-9]*/vmm/slot/32/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/32/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/32/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/32/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -696,9 +696,9 @@ profile creche-ch-slot-33 {
   owner /run/user/[0-9]*/vmm/slot/33/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/33/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/33/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/33/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -716,9 +716,9 @@ profile creche-ch-slot-34 {
   owner /run/user/[0-9]*/vmm/slot/34/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/34/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/34/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/34/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -736,9 +736,9 @@ profile creche-ch-slot-35 {
   owner /run/user/[0-9]*/vmm/slot/35/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/35/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/35/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/35/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -756,9 +756,9 @@ profile creche-ch-slot-36 {
   owner /run/user/[0-9]*/vmm/slot/36/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/36/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/36/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/36/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -776,9 +776,9 @@ profile creche-ch-slot-37 {
   owner /run/user/[0-9]*/vmm/slot/37/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/37/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/37/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/37/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -796,9 +796,9 @@ profile creche-ch-slot-38 {
   owner /run/user/[0-9]*/vmm/slot/38/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/38/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/38/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/38/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -816,9 +816,9 @@ profile creche-ch-slot-39 {
   owner /run/user/[0-9]*/vmm/slot/39/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/39/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/39/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/39/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -836,9 +836,9 @@ profile creche-ch-slot-40 {
   owner /run/user/[0-9]*/vmm/slot/40/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/40/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/40/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/40/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -856,9 +856,9 @@ profile creche-ch-slot-41 {
   owner /run/user/[0-9]*/vmm/slot/41/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/41/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/41/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/41/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -876,9 +876,9 @@ profile creche-ch-slot-42 {
   owner /run/user/[0-9]*/vmm/slot/42/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/42/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/42/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/42/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -896,9 +896,9 @@ profile creche-ch-slot-43 {
   owner /run/user/[0-9]*/vmm/slot/43/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/43/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/43/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/43/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -916,9 +916,9 @@ profile creche-ch-slot-44 {
   owner /run/user/[0-9]*/vmm/slot/44/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/44/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/44/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/44/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -936,9 +936,9 @@ profile creche-ch-slot-45 {
   owner /run/user/[0-9]*/vmm/slot/45/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/45/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/45/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/45/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -956,9 +956,9 @@ profile creche-ch-slot-46 {
   owner /run/user/[0-9]*/vmm/slot/46/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/46/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/46/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/46/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -976,9 +976,9 @@ profile creche-ch-slot-47 {
   owner /run/user/[0-9]*/vmm/slot/47/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/47/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/47/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/47/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -996,9 +996,9 @@ profile creche-ch-slot-48 {
   owner /run/user/[0-9]*/vmm/slot/48/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/48/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/48/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/48/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -1016,9 +1016,9 @@ profile creche-ch-slot-49 {
   owner /run/user/[0-9]*/vmm/slot/49/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/49/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/49/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/49/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -1036,9 +1036,9 @@ profile creche-ch-slot-50 {
   owner /run/user/[0-9]*/vmm/slot/50/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/50/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/50/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/50/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -1056,9 +1056,9 @@ profile creche-ch-slot-51 {
   owner /run/user/[0-9]*/vmm/slot/51/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/51/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/51/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/51/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -1076,9 +1076,9 @@ profile creche-ch-slot-52 {
   owner /run/user/[0-9]*/vmm/slot/52/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/52/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/52/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/52/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -1096,9 +1096,9 @@ profile creche-ch-slot-53 {
   owner /run/user/[0-9]*/vmm/slot/53/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/53/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/53/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/53/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -1116,9 +1116,9 @@ profile creche-ch-slot-54 {
   owner /run/user/[0-9]*/vmm/slot/54/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/54/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/54/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/54/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -1136,9 +1136,9 @@ profile creche-ch-slot-55 {
   owner /run/user/[0-9]*/vmm/slot/55/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/55/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/55/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/55/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -1156,9 +1156,9 @@ profile creche-ch-slot-56 {
   owner /run/user/[0-9]*/vmm/slot/56/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/56/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/56/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/56/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -1176,9 +1176,9 @@ profile creche-ch-slot-57 {
   owner /run/user/[0-9]*/vmm/slot/57/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/57/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/57/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/57/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -1196,9 +1196,9 @@ profile creche-ch-slot-58 {
   owner /run/user/[0-9]*/vmm/slot/58/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/58/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/58/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/58/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -1216,9 +1216,9 @@ profile creche-ch-slot-59 {
   owner /run/user/[0-9]*/vmm/slot/59/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/59/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/59/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/59/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -1236,9 +1236,9 @@ profile creche-ch-slot-60 {
   owner /run/user/[0-9]*/vmm/slot/60/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/60/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/60/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/60/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -1256,9 +1256,9 @@ profile creche-ch-slot-61 {
   owner /run/user/[0-9]*/vmm/slot/61/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/61/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/61/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/61/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -1276,9 +1276,9 @@ profile creche-ch-slot-62 {
   owner /run/user/[0-9]*/vmm/slot/62/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/62/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/62/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/62/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 
@@ -1296,8 +1296,8 @@ profile creche-ch-slot-63 {
   owner /run/user/[0-9]*/vmm/slot/63/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/63/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/63/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/63/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }

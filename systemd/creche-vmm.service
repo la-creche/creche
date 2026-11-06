@@ -43,9 +43,9 @@ EnvironmentFile=/etc/creche/site.env
 # RuntimeDirectoryPreserve keeps its default, `no`: systemd removes the dir
 # at each stop and each restart, a crash included. The bind refuses a path
 # that exists (rust/crates/vmm/src/server/accept.rs), and the vmm then exits
-# 78, so the dir must be fresh at each start. Each VM's `serial.log` is in
-# the run root until plan PR D17 moves it to `sessions/<id>/` in the state
-# root (decision CH59 rule 2). Until then each stop also removes it.
+# 78, so the dir must be fresh at each start. No log sits in it: each VM's
+# `serial.log` is in `sessions/<id>/` of the state root, kept until the
+# next start of its session (decision CH59 rule 2).
 RuntimeDirectory=vmm
 RuntimeDirectoryMode=0700
 # The state root: `%S/creche-vmm`, which is ~/.local/state/creche-vmm, the
