@@ -7,7 +7,7 @@ use std::path::Path;
 
 use creche_vmm::config::{
     BUDGET, CH, CH_REMOTE, Config, ConfigError, FALLOCATE, FAMILY_ROOT, FAULTS_ROOT, FREE_FLOOR,
-    Fault, MKE2FS, RAM_CAP, RUN_ROOT, STATE_ROOT, SYSTEMCTL, SYSTEMD_RUN, ZSTD,
+    Fault, IMAGE_ROOT, MKE2FS, RAM_CAP, RUN_ROOT, STATE_ROOT, SYSTEMCTL, SYSTEMD_RUN, ZSTD,
 };
 use creche_vmm_confine::admission::{GIB, Limits};
 use creche_vmm_store::retention;
@@ -16,11 +16,12 @@ use creche_vmm_store::retention;
 const DEFAULT_ENV: &str = include_str!("../../../../env/src/creche_env/default.env");
 
 /// Each path key of the config, in the order that `Config` reads them.
-const PATHS: [&str; 11] = [
+const PATHS: [&str; 12] = [
     STATE_ROOT,
     RUN_ROOT,
     FAMILY_ROOT,
     FAULTS_ROOT,
+    IMAGE_ROOT,
     CH,
     CH_REMOTE,
     SYSTEMD_RUN,
@@ -63,6 +64,7 @@ fn a_good_env_gives_each_path_and_size() {
     );
     assert_eq!(config.families.path(), Path::new("/srv/VMM_FAMILY_ROOT"));
     assert_eq!(config.faults_root, Path::new("/srv/VMM_FAULTS_ROOT"));
+    assert_eq!(config.image_root, Path::new("/srv/VMM_IMAGE_ROOT"));
     assert_eq!(config.ch.path(), Path::new("/srv/VMM_CH_PROGRAM"));
     assert_eq!(
         config.ch_remote.path(),
@@ -210,11 +212,13 @@ fn the_catalog_defaults_are_the_design_values() {
     assert_eq!(default_of(STATE_ROOT), Some(state));
     // Each other path key of the catalog. The family root and the faults
     // root are a contract with caregiver: paths.py names FAMILIES_DIR
-    // "families" (CH36 G6) and FAULTS_DIR "faults" (CH36 G5). Gap G9
-    // checked /usr/bin/zstd on Hyperion.
+    // "families" (CH36 G6) and FAULTS_DIR "faults" (CH36 G5). Decision
+    // CH57 rule 1 sets the image root. Gap G9 checked /usr/bin/zstd on
+    // Hyperion.
     let paths = [
         (FAMILY_ROOT, "${CAREGIVER_STATE_ROOT}/families"),
         (FAULTS_ROOT, "${CAREGIVER_STATE_ROOT}/faults"),
+        (IMAGE_ROOT, "${AGENT_INSTALL_ROOT}/disks"),
         (CH, "${AGENT_INSTALL_ROOT}/vmm/bin/cloud-hypervisor"),
         (CH_REMOTE, "${AGENT_INSTALL_ROOT}/vmm/bin/ch-remote"),
         (ZSTD, "/usr/bin/zstd"),

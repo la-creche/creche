@@ -397,11 +397,11 @@ impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
             families: FamilyRoot::new(dir.join("families")).unwrap(),
             images,
             disks: SessionDisks::new(&state, PathBuf::from("/usr/bin/true")),
-            digests: Some(Digests {
+            digests: Digests {
                 kernel: empty,
                 base: empty,
                 python: empty,
-            }),
+            },
             initramfs: None,
             ch: Program::new(PathBuf::from(CH)).unwrap(),
             systemd_run: Program::new(PathBuf::from("/usr/bin/systemd-run")).unwrap(),
@@ -666,16 +666,9 @@ fn a_failed_launch_faults_and_frees_its_ram() {
 }
 
 /// A store copy with no identity fails the start, and so does a failed
-/// `mke2fs` (decision CH44 rule 2, PR D7). So does a config with no
-/// digests: the vmm of plan PR L20 until it reads the `digests.json` of
-/// decision CH57 rule 1. None launches.
+/// `mke2fs` (decision CH44 rule 2, PR D7). Neither launches.
 #[test]
 fn a_bad_image_or_disk_faults_before_the_launch() {
-    let test = Test::new("digests", |config| config.digests = None);
-    assert_eq!(test.start(0), Err(StartFault::SandboxStartFailed));
-    assert_eq!(test.fault_codes(), ["sandbox_start_failed"]);
-    assert_eq!(test.launches(), 0);
-
     let test = Test::new("image", |config| {
         let empty: ImageDigest = EMPTY.parse().unwrap();
         fs::remove_file(config.images.identity_path(&empty)).unwrap();

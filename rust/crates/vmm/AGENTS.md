@@ -35,8 +35,10 @@ The root `AGENTS.md` applies here too.
    earlier vmm before any per-VM bind (decision CH19 (4), PR C3). Then
    `check_cloud_hypervisor` checks the CH version, and a failed check
    refuses the start (caller duty 4, gap G10 option A). Then
-   `FaultBook::start` clears every fault file (contract 05 §3.3.1 rule
-   8), and `Rows::open` loads the rows.
+   `image_root::read` reads `digests.json`, and `ImageSet::import` puts
+   each file that it names into the digest store (see "The image root").
+   Then `FaultBook::start` clears every fault file (contract 05 §3.3.1
+   rule 8), and `Rows::open` loads the rows.
 3. The digest store, the session disks, the spawner, `ChTools` and one
    `ColdBoot`. That `ColdBoot` is the `StartVm` and the `StopVm` hook,
    the `VmSet` of the shutdown and the `Sleeper` of `sleep::run`.
@@ -50,9 +52,16 @@ The root `AGENTS.md` applies here too.
 
 A failed start step, or a server that stops before SIGTERM, exits 78. The
 end of a shutdown exits 0, also when a VM did not stop: its CH ends with
-the vmm (decision CH19 (4)). `tests/binary.rs` runs `vmm serve` on temp
-paths with no KVM. It proves an empty list page, a 412 on a bad protocol
-header and the exit 0 on SIGTERM.
+the vmm (decision CH19 (4)). `src/compose/tests.rs` builds the vmm on
+temp paths with no KVM, with the uid of the test as the owner of
+`digests.json`. It proves an empty list page, a 412 on a bad protocol
+header, the end of the run at the signal, and a failed run when the
+bind fails. It also proves that each key reaches its part: it reads the
+`Debug` text of each part for its program path, because the store crate
+gives no accessor. `tests/binary.rs` runs `vmm serve` with no KVM. The
+binary always requires root as the owner, so it proves only the exit 78
+of a missing `digests.json` and of one that root does not own. The
+Hyperion proof of the unit (plan PR C13) runs the binary end to end.
 
 ## The config
 
@@ -69,6 +78,7 @@ A fault names the key and never the value, as in `env/AGENTS.md`.
 | `RUNTIME_DIRECTORY` | set by systemd | `RunRoot` (gap G5) |
 | `VMM_FAMILY_ROOT` | `${CAREGIVER_STATE_ROOT}/families` | `FamilyRoot` (gap G6) |
 | `VMM_FAULTS_ROOT` | `${CAREGIVER_STATE_ROOT}/faults` | `FaultDir::open` (contract 05 §3.3.1) |
+| `VMM_IMAGE_ROOT` | `${AGENT_INSTALL_ROOT}/disks` | `image_root::read` (decision CH57 rule 1) |
 | `VMM_CH_PROGRAM` | `${AGENT_INSTALL_ROOT}/vmm/bin/cloud-hypervisor` | CH (decision CH7-5) |
 | `VMM_CH_REMOTE_PROGRAM` | `${AGENT_INSTALL_ROOT}/vmm/bin/ch-remote` | `ChRemote` |
 | `AGENT_SYSTEMD_RUN_PROGRAM` | existing key | `Launch` (PR C2) |
@@ -89,6 +99,37 @@ equal to `Limits::DESIGN` and `retention::BUDGET`.
 `tests/binary.rs` runs `vmm serve` with no KVM: a missing or bad key
 exits 78 and names the key. `src/compose.rs` is the first reader of each
 key.
+
+## The image root
+
+`src/image_root.rs` reads the `digests.json` of `VMM_IMAGE_ROOT`
+(decision CH57 rule 1). The phase 5 disk row installs it there with the
+root disks and the kernel. It holds the decompressed digest of each file
+(decision CH41 rule 1). Handover checks the release signature at
+install, so the vmm trusts the file only when root owns it and the vmm
+user cannot write it. `image_root::read` runs these checks:
+
+1. The path holds a regular file, not a symlink or a dir. A missing
+   file is `DigestsError::Missing`.
+2. It opens the file and checks that the open file is the file of step
+   1. Each later check reads the open file, so the parsed bytes are the
+   checked bytes.
+3. `Owner::ROOT` owns the file. A test passes its own uid with
+   `Owner::new`, because a test cannot make a root-owned file. The
+   binary always passes `Owner::ROOT`.
+4. No group or other write bit is set. The vmm does not read its group
+   list, so any group write bit refuses.
+5. The file has at most `DIGESTS_CAP` (64 KiB) bytes, and it parses as
+   strict JSON: the keys `kernel`, `base` and `python`, each `{"file",
+   "sha256"}`, and no other key. A file is one file name in the image
+   root.
+
+Each fault refuses the start, and `src/main.rs` exits 78. Then
+`ImageSet::import` copies each file into the digest store with
+`ImageStore::import` of `creche-vmm-store`, one at a time, and gives the
+`Digests` of `StartConfig`. A store that already holds a digest with its
+identity reads no byte. A failed import refuses the start too.
+`tests/image_root.rs` proves each fault and the import.
 
 ## The server
 
@@ -490,7 +531,8 @@ the passes on paused time.
    opens meanwhile stays up. Each VM gets one try per pass. A sleep
    closes no door.
 2. `ColdBoot::sweep` runs `retention::sweep` of `creche-vmm-store` with
-   `BUDGET` (PR D13, decisions CH2, CH8-7, CH50 rule 8). It holds the
+   `StartConfig::budget`, the key `VMM_SNAPSHOT_BUDGET_GIB` (PR D13,
+   decisions CH2, CH8-7, CH50 rule 8). It holds the
    lock of the claims, so no key check or claim runs, and it reads a
    copy of the `InUse` set. A VM that ends meanwhile only shrinks the
    set, so the copy names each generation in use, and no generation of
@@ -636,18 +678,19 @@ no guest sync.
 14. Closed by plan PR L20: the config and the compose step are one PR.
     `src/compose.rs` reads each field of `Config`, so each `VMM_*` key
     of `default.env` lands with its first reader.
-15. Open, not built yet: decision CH57 rule 1 (design item 49 Q49-1)
-    gives the key `VMM_IMAGE_ROOT`, default `${AGENT_INSTALL_ROOT}/disks`,
-    and a `digests.json` there that the phase 5 disk row installs. The
-    vmm trusts that file only when root owns it and the vmm user cannot
-    write it, and a missing, malformed or writable file refuses the
-    start. This branch has no such key. The compose step reads the
-    images from the digest store of the state root only and imports
-    none. It passes `StartConfig::digests` as `None`, so each start gets
-    `sandbox_start_failed` with a fault line, and no VM boots
-    (`src/start.rs`, `src/compose.rs`). The list, create and drop routes
-    work. The build of rule 1 adds the key, its read in `src/compose.rs`
-    and the import.
+15. Built by decision CH57 rule 1 (design item 49 Q49-1): the key
+    `VMM_IMAGE_ROOT` and its root-owned `digests.json` ("The image
+    root"). Two CONTRACT-QUESTIONs stay open. (a) No row sets the fields
+    of `digests.json`. `src/image_root.rs` takes the narrowest reading:
+    `kernel`, `base` and `python`, each with a `file` and a `sha256`, and
+    no other key. The phase 5 disk row writes this shape, or a change
+    costs that module and its tests. (b) No row says what a file that
+    does not import does. `src/compose.rs` refuses the start, so the vmm
+    never serves with a disk row that it cannot boot. The other reading
+    serves and fails each start of that flavor. A change costs one `?`.
+    The first import of a release decompresses each disk before the
+    bind, so the unit of plan PR C13 must not bound the start of the vmm
+    below that time.
 16. Closed by decision CH57 rule 2: the config refuses 0 GiB for
     `VMM_RAM_CAP_GIB` and `VMM_SNAPSHOT_BUDGET_GIB`, and takes 0 for
     `VMM_FREE_FLOOR_GIB`.

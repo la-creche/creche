@@ -92,9 +92,6 @@ const SERIAL_MODE: u32 = 0o600;
 /// change costs one constant.
 const SLOT_POLL: Duration = Duration::from_millis(10);
 
-/// The fault text of a start with no digests (decision CH57 rule 1).
-const NO_DIGESTS: &str = "the vmm has no image digests yet (decision CH57 rule 1)";
-
 /// The store digests of the guest kernel and of the root disk of each
 /// flavor (decisions CH7-3, CH8-8).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,13 +127,9 @@ pub struct StartConfig {
     pub images: ImageStore,
     /// The session disks.
     pub disks: SessionDisks,
-    /// The kernel and the root disks. `None` fails each start closed.
-    // Decision CH57 rule 1 (design item 49 Q49-1) gives the digests a
-    // root-owned `digests.json`, which the vmm does not read yet. Until
-    // then the vmm passes `None`, so each start gets
-    // `sandbox_start_failed` with a fault line, and no VM boots. Each
-    // other route works.
-    pub digests: Option<Digests>,
+    /// The kernel and the root disks. The vmm reads them from the
+    /// `digests.json` of its image root (decision CH57 rule 1).
+    pub digests: Digests,
     /// The initramfs, optional until phase 3 adds guest init (PR C7).
     pub initramfs: Option<HostPath>,
     /// The Cloud Hypervisor program.
@@ -146,8 +139,8 @@ pub struct StartConfig {
     /// The RAM cap and the free-space floor of admission.
     pub limits: Limits,
     /// The snapshot budget of the sweep, in bytes (decision CH8-7, gap
-    /// G14). The vmm config reads it, with `retention::BUDGET` as the
-    /// default.
+    /// G14). The vmm config reads it, and its catalog default equals
+    /// `retention::BUDGET`.
     pub budget: u64,
     /// The version check of `ch`, for the snapshot key (decision CH7-6,
     /// gap G10). The vmm runs it at its start.
@@ -657,6 +650,13 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         }
     }
 
+    /// The config and the API of the hook, for the wiring test of the
+    /// compose step.
+    #[cfg(test)]
+    pub(crate) fn parts(&self) -> (&StartConfig, &A) {
+        (&self.config, &self.api)
+    }
+
     /// Whether the table holds a VM of `id`.
     #[must_use]
     pub fn running(&self, id: &SessionId) -> bool {
@@ -854,12 +854,12 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
     /// Runs `retention::sweep` with `StartConfig::budget` over the state
     /// root (PR D13, decisions CH2, CH8-7). It holds the lock of the
     /// claims, so no key check or claim runs, and it names each generation
-    /// in a copy of the
-    /// `InUse` set. A VM that ends meanwhile only shrinks the set, so the
-    /// copy names each generation in use, and the sweep never removes the
-    /// files of a restored VM (decision CH50 rule 8). It waits for each
-    /// take to end, and no take starts until it ends. The blocking step
-    /// owns both locks, so a dropped sweep future frees neither early.
+    /// in a copy of the `InUse` set. A VM that ends meanwhile only shrinks
+    /// the set, so the copy names each generation in use, and the sweep
+    /// never removes the files of a restored VM (decision CH50 rule 8). It
+    /// waits for each take to end, and no take starts until it ends. The
+    /// blocking step owns both locks, so a dropped sweep future frees
+    /// neither early.
     ///
     /// # Errors
     ///
@@ -1345,9 +1345,8 @@ fn launch<L: Launcher, A: ChApi>(
             .check(digest)
             .map_err(|error| error.to_string())
     };
-    let digests = config.digests.ok_or_else(|| NO_DIGESTS.to_owned())?;
-    let kernel = checked(digests.kernel)?;
-    let root = checked(digests.root(shape.flavor))?;
+    let kernel = checked(config.digests.kernel)?;
+    let root = checked(config.digests.root(shape.flavor))?;
     let disk = config
         .disks
         .for_boot(id)

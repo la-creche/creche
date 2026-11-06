@@ -1,0 +1,269 @@
+//! The image root of the vmm (decision CH57 rule 1): the dir of
+//! `VMM_IMAGE_ROOT`, where the disk row of phase 5 installs the root disks,
+//! the kernel and `digests.json`.
+//!
+//! `digests.json` holds the decompressed digest of each file (decision CH41
+//! rule 1). Handover checks the release signature at install, so the vmm
+//! trusts the file only when root owns it and the vmm user cannot write
+//! it. A missing, malformed or writable file refuses the start of the vmm.
+//! `read` opens the file once and runs each check on the open file, so the
+//! bytes that it parses are the bytes that it checked.
+//!
+//! The compose step then imports each named file into the digest store of
+//! the state root (`ImageStore::import`) and gives the `Digests` of
+//! `StartConfig`. An import reads no byte when the store already holds the
+//! digest with its identity.
+
+// CONTRACT-QUESTION: decision CH57 rule 1 names `digests.json` and its
+// trust rule, but no row sets its fields. This code takes the narrowest
+// reading: one JSON object with exactly the keys `kernel`, `base` and
+// `python`, each `{"file": <one file name in the image root>, "sha256":
+// <64 lowercase hex characters>}`, and no other key. The file name lets
+// the disk row of phase 5 name its files, and the vmm compiles in no
+// name. A different shape costs this module and its tests
+// (`AGENTS.md`, Known gap 15).
+
+use std::fmt;
+use std::fs::{self, File};
+use std::io::{self, Read};
+use std::os::unix::fs::MetadataExt;
+use std::path::{Component, Path, PathBuf};
+
+use creche_vmm_store::images::{ImageDigest, ImageStore, ImportError};
+use serde::Deserialize;
+
+use crate::start::Digests;
+
+/// The name of the digest file in the image root (decision CH57 rule 1).
+pub const DIGESTS_FILE: &str = "digests.json";
+
+/// The most bytes of `digests.json`. No row sets it. Three entries take
+/// less than 1 KiB, so a larger file is no file of the disk row.
+pub const DIGESTS_CAP: u64 = 64 * 1024;
+
+/// The mode bits that let a user other than the owner write a file.
+const GROUP_OR_OTHER_WRITE: u32 = 0o022;
+
+/// The uid that must own `digests.json`. The vmm passes `Owner::ROOT`. A
+/// test passes its own uid, because a test cannot make a root-owned file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Owner(u32);
+
+impl Owner {
+    /// Root, the owner that the vmm requires (decision CH57 rule 1).
+    pub const ROOT: Self = Self(0);
+
+    /// The owner `uid`. Only a test passes a uid other than 0.
+    #[must_use]
+    pub const fn new(uid: u32) -> Self {
+        Self(uid)
+    }
+}
+
+/// Why the vmm does not trust `digests.json`. Each refuses the start.
+#[derive(Debug)]
+pub enum DigestsError {
+    /// The image root has no `digests.json`.
+    Missing,
+    /// A read of the file failed.
+    Io(io::Error),
+    /// The path holds a symlink, a dir or another file that is not a
+    /// regular file.
+    NotRegular,
+    /// The file that `read` opened is not the file that its first look
+    /// found, so the path changed between the two.
+    Replaced,
+    /// The file has another owner than the required one.
+    NotOwned {
+        /// The uid of the owner of the file.
+        uid: u32,
+    },
+    /// The group or other users may write the file.
+    Writable {
+        /// The permission bits of the file.
+        mode: u32,
+    },
+    /// The file has more than `DIGESTS_CAP` bytes.
+    TooLarge,
+    /// The bytes are not the strict JSON shape of the module doc.
+    Malformed(serde_json::Error),
+}
+
+impl fmt::Display for DigestsError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "VMM_IMAGE_ROOT: the {DIGESTS_FILE} ")?;
+        match self {
+            Self::Missing => formatter.write_str("is missing"),
+            Self::Io(error) => write!(formatter, "cannot be read: {error}"),
+            Self::NotRegular => formatter.write_str("is not a regular file"),
+            Self::Replaced => formatter.write_str("changed during the read"),
+            Self::NotOwned { uid } => write!(formatter, "is owned by uid {uid}, not by root"),
+            Self::Writable { mode } => {
+                write!(formatter, "has mode {mode:04o}, so others may write it")
+            }
+            Self::TooLarge => write!(formatter, "has more than {DIGESTS_CAP} bytes"),
+            Self::Malformed(error) => write!(formatter, "is malformed: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for DigestsError {}
+
+/// An import that failed. It names the file in the image root.
+#[derive(Debug)]
+pub struct ImageImportError {
+    /// The file in the image root.
+    pub file: String,
+    /// Why the import failed.
+    pub source: ImportError,
+}
+
+impl fmt::Display for ImageImportError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "VMM_IMAGE_ROOT: cannot import {}: {}",
+            self.file, self.source
+        )
+    }
+}
+
+impl std::error::Error for ImageImportError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+/// One file name in the image root: one normal path component.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "String")]
+struct FileName(String);
+
+impl TryFrom<String> for FileName {
+    type Error = &'static str;
+
+    fn try_from(name: String) -> Result<Self, Self::Error> {
+        let mut parts = Path::new(&name).components();
+        match (parts.next(), parts.next()) {
+            (Some(Component::Normal(part)), None) if part == name.as_str() => Ok(Self(name)),
+            _ => Err("a file is one file name in the image root"),
+        }
+    }
+}
+
+/// One digest of the file, in the text form of `ImageDigest`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "String")]
+struct Sha256(ImageDigest);
+
+impl TryFrom<String> for Sha256 {
+    type Error = &'static str;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        text.parse()
+            .map(Self)
+            .map_err(|_| "a sha256 is 64 lowercase hex characters")
+    }
+}
+
+/// One entry of `digests.json`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Entry {
+    file: FileName,
+    sha256: Sha256,
+}
+
+/// The whole `digests.json`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Manifest {
+    kernel: Entry,
+    base: Entry,
+    python: Entry,
+}
+
+/// The files that a trusted `digests.json` names. Only `read` makes one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImageSet {
+    root: PathBuf,
+    manifest: Manifest,
+}
+
+/// Reads `digests.json` in `root` and checks that `owner` owns it and
+/// that no group or other user may write it (decision CH57 rule 1). The
+/// vmm does not read its group list, so any group write bit refuses.
+///
+/// # Errors
+///
+/// A `DigestsError`. Each one refuses the start of the vmm.
+pub fn read(root: &Path, owner: Owner) -> Result<ImageSet, DigestsError> {
+    let path = root.join(DIGESTS_FILE);
+    let first = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Err(DigestsError::Missing);
+        }
+        Err(error) => return Err(DigestsError::Io(error)),
+    };
+    if !first.file_type().is_file() {
+        return Err(DigestsError::NotRegular);
+    }
+
+    let mut file = File::open(&path).map_err(DigestsError::Io)?;
+    let open = file.metadata().map_err(DigestsError::Io)?;
+    if (open.dev(), open.ino()) != (first.dev(), first.ino()) || !open.file_type().is_file() {
+        return Err(DigestsError::Replaced);
+    }
+    if open.uid() != owner.0 {
+        return Err(DigestsError::NotOwned { uid: open.uid() });
+    }
+    if open.mode() & GROUP_OR_OTHER_WRITE != 0 {
+        return Err(DigestsError::Writable {
+            mode: open.mode() & 0o7777,
+        });
+    }
+    if open.len() > DIGESTS_CAP {
+        return Err(DigestsError::TooLarge);
+    }
+
+    let mut bytes = Vec::new();
+    (&mut file)
+        .take(DIGESTS_CAP + 1)
+        .read_to_end(&mut bytes)
+        .map_err(DigestsError::Io)?;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > DIGESTS_CAP {
+        return Err(DigestsError::TooLarge);
+    }
+    let manifest = serde_json::from_slice(&bytes).map_err(DigestsError::Malformed)?;
+    Ok(ImageSet {
+        root: root.to_owned(),
+        manifest,
+    })
+}
+
+impl ImageSet {
+    /// Imports the kernel and each root disk into `store`, one file at a
+    /// time, and gives their digests. Blocks.
+    ///
+    /// # Errors
+    ///
+    /// The first import that failed.
+    pub fn import(&self, store: &ImageStore) -> Result<Digests, ImageImportError> {
+        let import = |entry: &Entry| {
+            let source = self.root.join(&entry.file.0);
+            store
+                .import(&source, entry.sha256.0)
+                .map(|stored| stored.digest)
+                .map_err(|source| ImageImportError {
+                    file: entry.file.0.clone(),
+                    source,
+                })
+        };
+        Ok(Digests {
+            kernel: import(&self.manifest.kernel)?,
+            base: import(&self.manifest.base)?,
+            python: import(&self.manifest.python)?,
+        })
+    }
+}

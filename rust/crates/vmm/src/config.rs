@@ -28,6 +28,9 @@ pub const RUN_ROOT: &str = "RUNTIME_DIRECTORY";
 pub const FAMILY_ROOT: &str = "VMM_FAMILY_ROOT";
 /// The faults dir of the creche state root (contract 05 §3.3.1).
 pub const FAULTS_ROOT: &str = "VMM_FAULTS_ROOT";
+/// The root disks, the kernel and `digests.json` that the phase 5 disk
+/// row installs (decision CH57 rule 1).
+pub const IMAGE_ROOT: &str = "VMM_IMAGE_ROOT";
 /// The shipped `cloud-hypervisor` (decision CH7-5).
 pub const CH: &str = "VMM_CH_PROGRAM";
 /// The shipped `ch-remote` (decision CH7-5).
@@ -50,11 +53,6 @@ pub const FREE_FLOOR: &str = "VMM_FREE_FLOOR_GIB";
 pub const BUDGET: &str = "VMM_SNAPSHOT_BUDGET_GIB";
 
 /// What the vmm reads from its env.
-///
-/// Decision CH57 rule 1 (design item 49 Q49-1) gives the image source
-/// the key `VMM_IMAGE_ROOT` and a root-owned `digests.json` in it. This
-/// config does not read it yet (`AGENTS.md`, Known gap 15). So the
-/// compose step knows no digest, and each start fails closed.
 #[derive(Debug)]
 pub struct Config {
     /// `VMM_STATE_ROOT`.
@@ -65,6 +63,8 @@ pub struct Config {
     pub families: FamilyRoot,
     /// `VMM_FAULTS_ROOT`. `faults::FaultDir::open` makes its `vmm` dir.
     pub faults_root: PathBuf,
+    /// `VMM_IMAGE_ROOT`. `image_root::read` reads its `digests.json`.
+    pub image_root: PathBuf,
     /// `VMM_CH_PROGRAM`.
     pub ch: Program,
     /// `VMM_CH_REMOTE_PROGRAM`.
@@ -167,6 +167,7 @@ impl Config {
             run: RunRoot::new(run_root(&lookup)?).map_err(|e| root(RUN_ROOT, e))?,
             families: FamilyRoot::new(path_of(FAMILY_ROOT)?).map_err(|e| root(FAMILY_ROOT, e))?,
             faults_root: path_of(FAULTS_ROOT)?,
+            image_root: path_of(IMAGE_ROOT)?,
             ch: program_of(CH)?,
             ch_remote: program_of(CH_REMOTE)?,
             systemd_run: program_of(SYSTEMD_RUN)?,

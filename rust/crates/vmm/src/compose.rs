@@ -6,8 +6,11 @@
 //! 2. In `spawn_blocking`: `leftovers::stop_all` stops each VM scope of an
 //!    earlier vmm before any per-VM bind (decision CH19 (4), PR C3). Then
 //!    `check_cloud_hypervisor` checks the CH version (caller duty 4, gap
-//!    G10 option A). Then the fault book starts, which clears every fault
-//!    file (contract 05 §3.3.1 rule 8), and the rows load.
+//!    G10 option A). Then `image_root::read` reads the `digests.json` of
+//!    the image root, and a missing, malformed or writable file refuses
+//!    the start (decision CH57 rule 1). Each file that it names goes into
+//!    the digest store. Then the fault book starts, which clears every
+//!    fault file (contract 05 §3.3.1 rule 8), and the rows load.
 //! 3. The store, the confine parts and `ColdBoot` from the config. One
 //!    `ColdBoot` is the `StartVm` hook, the `StopVm` hook, the `VmSet`
 //!    and the `Sleeper` of the vmm.
@@ -55,6 +58,7 @@ use crate::handlers::acp::{Acp, StartFault, StartVm};
 use crate::handlers::create::Creates;
 use crate::handlers::drop::{Drops, StopVm, VmStopFailed};
 use crate::handlers::list::Lists;
+use crate::image_root::{self, DigestsError, ImageImportError, Owner};
 use crate::relay::{AcpLink, AcpRelay, Relays};
 use crate::restore::ChTools;
 use crate::server::{Stop, run_routes};
@@ -78,6 +82,11 @@ pub enum StartError {
     Leftovers(LeftoverError),
     /// The CH version check failed (gap G10 option A).
     ChVersion(ChVersionError),
+    /// The `digests.json` of the image root is not trusted (decision CH57
+    /// rule 1).
+    Digests(DigestsError),
+    /// A file of the image root did not go into the digest store.
+    Import(ImageImportError),
     /// The fault dir or the fault book did not start.
     Faults(io::Error),
     /// The rows did not load.
@@ -96,6 +105,8 @@ impl fmt::Display for StartError {
             Self::Sigterm(error) => write!(formatter, "cannot register SIGTERM: {error}"),
             Self::Leftovers(error) => write!(formatter, "{error}"),
             Self::ChVersion(error) => write!(formatter, "{error}"),
+            Self::Digests(error) => write!(formatter, "{error}"),
+            Self::Import(error) => write!(formatter, "{error}"),
             Self::Faults(error) => write!(formatter, "cannot start the fault book: {error}"),
             Self::Rows(error) => write!(formatter, "cannot load the rows: {error:?}"),
             Self::Spawner(error) => write!(formatter, "cannot start the spawner: {error}"),
@@ -183,19 +194,33 @@ struct Vmm {
 /// VMs that are left end with the vmm (decision CH19 (4)).
 pub async fn serve(config: Config) -> Result<(), StartError> {
     let sigterm = shutdown::sigterm().map_err(StartError::Sigterm)?;
-    let vmm = spawn_blocking(move || build(config))
+    let vmm = spawn_blocking(move || build(config, Owner::ROOT))
         .await
         .map_err(|_| StartError::Panicked)??;
     vmm.run(sigterm).await
 }
 
-/// Step 2 and 3: the blocking start steps, then the parts. Blocks.
-fn build(config: Config) -> Result<Vmm, StartError> {
+/// Step 2 and 3: the blocking start steps, then the parts. `owner` must
+/// own `digests.json`: the vmm passes `Owner::ROOT`, and a test its own
+/// uid. Blocks.
+fn build(config: Config, owner: Owner) -> Result<Vmm, StartError> {
     for unit in stop_all(&config.systemctl).map_err(StartError::Leftovers)? {
         eprintln!("vmm: stopped the leftover unit {unit}");
     }
     let ch_version =
         check_cloud_hypervisor(config.ch.path(), VERSION_WAIT).map_err(StartError::ChVersion)?;
+    let images = ImageStore::new(&config.state, config.zstd.path().to_owned());
+    // CONTRACT-QUESTION: decision CH57 rule 1 refuses the start for a bad
+    // `digests.json`, but no row says what a file that does not import
+    // does: a missing disk, a digest mismatch or a failed `zstd -d`. This
+    // code takes the strict reading and refuses the start too, so the
+    // vmm never serves with a disk row that it cannot boot. The other
+    // reading lets the vmm serve and fails each start of that flavor. A
+    // change costs this one `?` (`AGENTS.md`, Known gap 15).
+    let digests = image_root::read(&config.image_root, owner)
+        .map_err(StartError::Digests)?
+        .import(&images)
+        .map_err(StartError::Import)?;
     let faults = FaultDir::open(&config.faults_root)
         .and_then(|dir| FaultBook::start(dir, SystemTime::now()))
         .map_err(StartError::Faults)?;
@@ -210,14 +235,9 @@ fn build(config: Config) -> Result<Vmm, StartError> {
         snapshotter: Snapshotter::new(remote(), config.fallocate.path().to_owned()),
     };
     let start = StartConfig {
-        images: ImageStore::new(&config.state, config.zstd.path().to_owned()),
+        images,
         disks: SessionDisks::new(&config.state, config.mke2fs.path().to_owned()),
-        // Decision CH57 rule 1 (design item 49 Q49-1) is not built yet:
-        // no `VMM_IMAGE_ROOT` and no `digests.json`. The vmm reads the
-        // images from the digest store of the state root only, imports
-        // none, and knows no digest. So each start fails closed with
-        // `sandbox_start_failed` (`AGENTS.md`, Known gap 15).
-        digests: None,
+        digests,
         initramfs: None,
         state: config.state,
         run: config.run.clone(),
@@ -333,3 +353,6 @@ async fn refresh_faults(faults: Arc<Mutex<FaultBook>>) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

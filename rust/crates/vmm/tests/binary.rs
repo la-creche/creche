@@ -1,16 +1,13 @@
 //! The program `vmm serve` and its config (plan PR L20). It needs no KVM.
-//! A missing or bad key exits 78 and names the key (owner item 86). A good
-//! config on temp paths serves until SIGTERM.
+//! A missing or bad key exits 78 and names the key (owner item 86), and so
+//! does an untrusted image root (decision CH57 rule 1). Each test waits
+//! for the vmm to exit, so no test leaves a vmm behind.
 
-use std::io::{Read, Write};
-use std::os::unix::net::UnixStream;
-use std::path::Path;
-use std::process::{Child, Command, ExitStatus, Output, Stdio};
-use std::thread::sleep;
-use std::time::{Duration, Instant};
+use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
 
 use creche_vmm::config::{BUDGET, RAM_CAP, STATE_ROOT};
-use creche_wire::{HOST_API_HEADER, HOST_API_PROTOCOL, SessionPage};
 
 /// The exit status of a refused start.
 const EX_CONFIG: i32 = 78;
@@ -18,19 +15,14 @@ const EX_CONFIG: i32 = 78;
 /// A program that does nothing and exits 0.
 const TRUE: &str = "/usr/bin/true";
 
-/// The longest wait of one step of the serve test.
-const WAIT: Duration = Duration::from_secs(10);
-
-/// The frozen mismatch reply. Never change it to make a change pass.
-const MISMATCH: &str = r#"{"code":"protocol_mismatch","protocol":1}"#;
-
 /// Each key with a good value. The paths need not exist: the config
 /// checks their form only.
-const GOOD: [(&str, &str); 14] = [
+const GOOD: [(&str, &str); 15] = [
     ("VMM_STATE_ROOT", "/srv/vmm/state"),
     ("RUNTIME_DIRECTORY", "/run/user/1000/vmm"),
     ("VMM_FAMILY_ROOT", "/srv/families"),
     ("VMM_FAULTS_ROOT", "/srv/faults"),
+    ("VMM_IMAGE_ROOT", "/opt/components/disks"),
     ("VMM_CH_PROGRAM", "/opt/components/vmm/bin/cloud-hypervisor"),
     ("VMM_CH_REMOTE_PROGRAM", "/opt/components/vmm/bin/ch-remote"),
     ("AGENT_SYSTEMD_RUN_PROGRAM", "/usr/bin/systemd-run"),
@@ -42,6 +34,15 @@ const GOOD: [(&str, &str); 14] = [
     ("VMM_FREE_FLOOR_GIB", "50"),
     ("VMM_SNAPSHOT_BUDGET_GIB", "150"),
 ];
+
+/// A scratch dir that its drop removes, also after a failed assert.
+struct Scratch(PathBuf);
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
 
 /// Runs `vmm serve` with only the keys of `env` and gives its stderr.
 #[cfg(test)]
@@ -85,18 +86,21 @@ fn a_bad_key_exits_78_and_names_the_key() {
     assert_eq!(stderr, format!("vmm: {RAM_CAP}: the key has no value\n"));
 }
 
-/// The plan proof of L20 with no KVM: `vmm serve` on temp paths answers
-/// an empty list page and a 412 on a bad protocol header, and exits 0 on
-/// SIGTERM (decisions CH19 (4), CH25 rule 1, CH26 rule 2). The CH fixture
-/// passes the version check, and `true` plays every other program: it
-/// lists no leftover scope.
+/// A good config on temp paths runs each start step before the image
+/// root: the leftover sweep (`true` lists no scope) and the CH version
+/// check (the fixture). Then the vmm refuses a missing `digests.json`
+/// and one that root does not own, and exits 78 (decision CH57 rule 1,
+/// owner item 86). A test cannot make a root-owned file, so the serve
+/// proof of plan PR L20 runs on the compose step (`src/compose/tests.rs`).
 #[test]
-fn serve_lists_refuses_and_exits_on_sigterm() {
+fn an_untrusted_image_root_exits_78() {
     // `/tmp`, not `temp_dir`: the run root bounds the socket paths under
     // it (`SOCKET_PATH_MAX`), and the temp dir of macOS is too long.
-    let dir = Path::new("/tmp").join(format!("creche-vmm-{}-serve", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    for sub in ["state", "run", "families", "faults"] {
+    let scratch =
+        Scratch(Path::new("/tmp").join(format!("creche-vmm-{}-binary", std::process::id())));
+    let dir = &scratch.0;
+    let _ = std::fs::remove_dir_all(dir);
+    for sub in ["state", "run", "families", "faults", "images"] {
         std::fs::create_dir_all(dir.join(sub)).unwrap();
     }
     let path = |sub: &str| dir.join(sub).to_str().unwrap().to_owned();
@@ -104,8 +108,13 @@ fn serve_lists_refuses_and_exits_on_sigterm() {
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/cloud-hypervisor"
     );
-    let (state, run, families, faults) =
-        (path("state"), path("run"), path("families"), path("faults"));
+    let (state, run, families, faults, images) = (
+        path("state"),
+        path("run"),
+        path("families"),
+        path("faults"),
+        path("images"),
+    );
     let mut env = GOOD.to_vec();
     for one in &mut env {
         one.1 = match one.0 {
@@ -113,83 +122,26 @@ fn serve_lists_refuses_and_exits_on_sigterm() {
             "RUNTIME_DIRECTORY" => &run,
             "VMM_FAMILY_ROOT" => &families,
             "VMM_FAULTS_ROOT" => &faults,
+            "VMM_IMAGE_ROOT" => &images,
             "VMM_CH_PROGRAM" => ch,
             key if key.ends_with("_GIB") => one.1,
             _ => TRUE,
         };
     }
-    let mut vmm = Command::new(env!("CARGO_BIN_EXE_vmm"))
-        .arg("serve")
-        .env_clear()
-        .envs(env.iter().copied())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let socket = dir.join("run/vmm.sock");
 
-    let list = r#"{"cursor":null,"cwd":null,"family":"chat"}"#;
-    let header = format!("{HOST_API_HEADER}: {HOST_API_PROTOCOL}\r\n");
-    let (status, body) = ask(&socket, "list", &header, list);
-    assert_eq!(status, 200, "{body}");
-    let page: SessionPage = serde_json::from_str(&body).unwrap();
-    assert_eq!((page.next, page.rows.len()), (None, 0));
+    let (output, stderr) = serve(&env);
+    assert_eq!(output.status.code(), Some(EX_CONFIG), "{stderr}");
+    assert_eq!(stderr, "vmm: VMM_IMAGE_ROOT: the digests.json is missing\n");
 
-    let bad = format!("{HOST_API_HEADER}: 2\r\n");
-    let (status, body) = ask(&socket, "list", &bad, list);
-    assert_eq!(status, 412);
-    assert_eq!(body, MISMATCH);
-
-    let term = Command::new("kill")
-        .args(["-TERM", &vmm.id().to_string()])
-        .status()
-        .unwrap();
-    assert!(term.success());
-    let status = wait(&mut vmm);
-    let mut stderr = String::new();
-    vmm.stderr
-        .take()
+    std::fs::write(dir.join("images/digests.json"), "{}").unwrap();
+    let uid = std::fs::metadata(dir.join("images/digests.json"))
         .unwrap()
-        .read_to_string(&mut stderr)
-        .unwrap();
-    assert_eq!(status.code(), Some(0), "{stderr}");
-    assert_eq!(stderr, "");
-    std::fs::remove_dir_all(dir).unwrap();
-}
-
-/// The status and the body of the answer to `POST /<route>` with
-/// `headers` and `body`. It waits until the vmm binds its socket.
-#[cfg(test)]
-fn ask(socket: &Path, route: &str, headers: &str, body: &str) -> (u16, String) {
-    let deadline = Instant::now() + WAIT;
-    let mut stream = loop {
-        match UnixStream::connect(socket) {
-            Err(_) if Instant::now() < deadline => sleep(Duration::from_millis(10)),
-            connected => break connected.unwrap(),
-        }
-    };
-    stream.set_read_timeout(Some(WAIT)).unwrap();
-    write!(
-        stream,
-        "POST /{route} HTTP/1.1\r\nhost: vmm\r\n{headers}content-type: application/json\r\n\
-         connection: close\r\ncontent-length: {}\r\n\r\n{body}",
-        body.len()
-    )
-    .unwrap();
-    let mut text = String::new();
-    stream.read_to_string(&mut text).unwrap();
-    let (head, body) = text.split_once("\r\n\r\n").unwrap();
-    (head.get(9..12).unwrap().parse().unwrap(), body.to_owned())
-}
-
-/// The exit status of `vmm`, within `WAIT`.
-#[cfg(test)]
-fn wait(vmm: &mut Child) -> ExitStatus {
-    let deadline = Instant::now() + WAIT;
-    loop {
-        if let Some(status) = vmm.try_wait().unwrap() {
-            return status;
-        }
-        assert!(Instant::now() < deadline, "the vmm did not exit on SIGTERM");
-        sleep(Duration::from_millis(10));
+        .uid();
+    let (output, stderr) = serve(&env);
+    if uid != 0 {
+        assert_eq!(output.status.code(), Some(EX_CONFIG), "{stderr}");
+        let expected =
+            format!("vmm: VMM_IMAGE_ROOT: the digests.json is owned by uid {uid}, not by root\n");
+        assert_eq!(stderr, expected);
     }
 }
