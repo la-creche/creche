@@ -24,14 +24,16 @@
 //! The pid stays the same through all four execs: the launch step,
 //! `systemd-run`, this stage and CH. `systemd-run --scope` execs its
 //! payload in its own process. So the `Launched` handle of the spawner is
-//! CH, and the kill chain of fact 80 holds. The kernel keeps
-//! `PR_SET_PDEATHSIG` through an exec unless the exec is a secure exec
-//! (set-user-ID, set-group-ID, file capabilities) or a uid, a gid or a
-//! capability changes. No exec of the chain is one of those. The slot
-//! label and the Landlock ruleset change only the LSM state, not a uid.
-//! This stage checks that the signal is still SIGKILL before step 1, so a
-//! clear by the exec of `systemd-run` fails closed. `tests/kvm_slot.rs`
-//! proves that CH under its label still dies with the vmm.
+//! CH. The kernel keeps `PR_SET_PDEATHSIG` through an exec unless the
+//! exec is a secure exec (set-user-ID, set-group-ID, file capabilities)
+//! or a uid, a gid or a capability changes. This stage checks that the
+//! signal is still SIGKILL before step 1, so a clear by the exec of
+//! `systemd-run` fails closed. But AppArmor clears the death signal at an
+//! exec that changes the label (`apparmor_bprm_committing_creds` in
+//! `security/apparmor/lsm.c`), so the exec of CH under the slot label
+//! drops it. `tests/kvm_slot.rs` shows that CH outlives the spawner
+//! thread and a killed vmm. The crate AGENTS.md lists it under Known
+//! gaps.
 
 use std::convert::Infallible;
 use std::ffi::OsString;
