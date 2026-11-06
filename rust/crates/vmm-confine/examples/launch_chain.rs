@@ -14,7 +14,7 @@
 //!   spawner on `/proc/self/exe`, as the vmm does, launches it, prints the
 //!   pid and waits to be stopped. `tests/kvm_slot.rs` runs it as a
 //!   transient user service, then stops, restarts or kills that service
-//!   to prove that systemd stops CH with it. A restarted `hold` reads EOF,
+//!   to prove when systemd stops CH with it. A restarted `hold` reads EOF,
 //!   fails and exits 78, which ends the restarts of `Restart=always`.
 //! - `await <path>` returns once `<path>` exists. A test gives it as the
 //!   `ExecStop=` of the `hold` service, so the stop of that unit lasts

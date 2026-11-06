@@ -20,9 +20,9 @@
 //! `tests/launch.rs`. Each test has its own vmm unit, a transient user
 //! service of `tests/stand_in` (decision CH60 rule 1). Most tests run the
 //! spawner in the test and the service `/bin/sleep infinity` as the unit
-//! that the scopes bind to. The stop, restart and kill tests run the
-//! example in its role `hold` as the service, so the spawner runs in the
-//! unit, as in the vmm. `Launch::in_slot` gives the slot, and
+//! that the scopes bind to. The stop, kill and failed restart tests run
+//! the example in its role `hold` as the service, so the spawner runs in
+//! the unit, as in the vmm. `Launch::in_slot` gives the slot, and
 //! `RunRoot::link_vm` makes `vm/<id>` a symlink to `slot/<k>` (PR D16).
 //! The run root is the real `/run/user/<uid>/vmm` (decision CH20). The
 //! state root is the default `~/.local/state/creche-vmm` (decision CH50
@@ -944,10 +944,8 @@ fn unit_property(name: &str, property: &str) -> Vec<String> {
     text.split_whitespace().map(str::to_owned).collect()
 }
 
-/// Polls until the user unit `name` is `state` and has no job left. A
-/// restart job of the vmm unit sends a try-restart to each bound scope,
-/// and the job of the scope may still run once the restart of the vmm
-/// unit is done.
+/// Polls until the user unit `name` is `state` and has no job left, so
+/// no queued job of systemd can still start or stop it.
 #[cfg(test)]
 fn until_settled(name: &str, state: &str) {
     until(&format!("{name} {state} with no job"), || {
@@ -1045,51 +1043,40 @@ fn kvm_ch_dies_with_a_killed_vmm() {
     until_state(rig.unit.name(), "inactive");
 }
 
-/// A restart of the vmm unit stops the VM scope and its CH after the vmm
-/// has exited, and systemd starts no scope again (decision CH60 rule 1).
-/// The restart job sends a try-restart to the scope, which has
-/// `BindsTo=` the unit. As in the stop test, the gate holds the stop part
-/// of the restart. The control: CH and its scope still run 1 s into it,
-/// because the scope is ordered `Before=` the unit. A blocking
-/// `systemctl restart` runs on a second thread. The restarted `hold`
-/// reads EOF and exits 78, so the unit then stays down.
+/// A restart whose start fails stops the VM scope and its CH (decision
+/// CH60 rule 1, open item 53). The restarted `hold` reads EOF and exits
+/// 78, so the unit ends `failed`, and systemd stops each scope bound to
+/// it. The restart alone stops no scope: the next test shows it. The
+/// control: CH runs while the stand-in runs.
 #[test]
 #[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
-fn kvm_ch_stops_after_its_vmm_unit_restarts() {
+fn kvm_ch_stops_when_the_restarted_vmm_fails() {
     let mut rig = Rig::new("unit-restart");
     let seat = rig.seat("0123abcd-0000-4000-8000-0000000c15b0", 20);
     let _scope = ScopeGuard::new(&seat.id);
-    let (vmm, pid) = hold_booted(&rig, &seat, true);
+    let (vmm, pid) = hold_booted(&rig, &seat, false);
     let scope = format!("{}.scope", scope_unit(&seat.id));
     let dir = scope_dir(pid);
     assert_eq!(state_of(&scope), "active");
 
-    thread::scope(|threads| {
-        let restart = threads.spawn(|| vmm.systemctl(&["restart"]));
-        until_state(rig.unit.name(), "deactivating");
-        sleep(Duration::from_secs(1));
-        assert!(running(pid), "CH stopped before the vmm unit");
-        assert_eq!(state_of(&scope), "active");
-
-        fs::write(&vmm.gate, b"").unwrap();
-        assert!(restart.join().unwrap(), "the restart failed");
-    });
-    until("CH death after the vmm unit restart", || !running(pid));
+    assert!(vmm.systemctl(&["restart"]), "the restart failed");
+    until("CH death after the failed start", || !running(pid));
     until("scope removal", || !dir.exists());
     until_settled(&scope, "inactive");
     until_state(rig.unit.name(), "inactive");
 }
 
-/// After a restart of the vmm unit, the session of a stopped VM starts
-/// again under the same scope name (decision CH60 rule 1). The stand-in
-/// is `/bin/sleep infinity`, which comes back, and the spawner runs in
-/// the test. The restart stops CH and its scope, and systemd starts no
-/// scope again. The control: CH runs before the restart, and a new
-/// launch of the same session boots.
+/// A restart of the vmm unit leaves each VM scope and its CH running,
+/// and the leftover sweep of the next start frees the session (decision
+/// CH19 (4), open item 53). systemd does not pass the restart on to a
+/// bound scope. The stand-in is `/bin/sleep infinity`, which comes back,
+/// and the spawner runs in the test. The test stops the scope as
+/// `leftovers::stop_all` does. The controls: CH runs before the restart,
+/// and a new launch of the same session boots after the sweep.
 #[test]
 #[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
-fn kvm_a_vmm_unit_restart_frees_the_scope_of_each_vm() {
-    let mut rig = Rig::new("restart-free");
+fn kvm_a_vmm_unit_restart_leaves_each_vm_to_the_sweep() {
+    let mut rig = Rig::new("restart-sweep");
     let seat = rig.seat("0123abcd-0000-4000-8000-0000000c15c0", 21);
     let vmm = Vmm::new(&rig);
     let ch = vmm.launch(rig.boot(&seat));
@@ -1099,9 +1086,20 @@ fn kvm_a_vmm_unit_restart_frees_the_scope_of_each_vm() {
     assert_eq!(state_of(&scope), "active");
 
     assert!(vmm.unit.systemctl(&["restart"]), "the restart failed");
-    until("CH death after the vmm unit restart", || !running(pid));
-    until_settled(&scope, "inactive");
     assert_eq!(vmm.unit.state(), "active");
+    sleep(Duration::from_secs(1));
+    assert!(running(pid), "the restart stopped CH");
+    until_settled(&scope, "active");
+
+    let stop = Command::new(SYSTEMCTL)
+        .args(["--user", "stop", "--"])
+        .arg(&scope)
+        .stdin(Stdio::null())
+        .status()
+        .unwrap();
+    assert!(stop.success(), "systemctl stop: {stop}");
+    until("CH death after the sweep", || !running(pid));
+    until_settled(&scope, "inactive");
     relaunch(&rig, &vmm, &seat);
 }
 

@@ -46,10 +46,16 @@ table of the three vmm crates.
   scope and its CH when the vmm unit stops or dies. `Before=` makes that
   stop wait until the vmm unit has stopped, so the shutdown of
   `rust/crates/vmm/src/shutdown.rs` runs before any VM stops (decision
-  CH19 (4)). A restart of the vmm unit starts no VM scope again. A crash
-  puts the unit through `failed` into `auto-restart` (`Restart=always`),
-  and systemd stops every VM scope then, before the next start. The
-  leftover sweep of that start still runs.
+  CH19 (4)). A crash puts the unit through `failed` into `auto-restart`
+  (`Restart=always`), and systemd stops every VM scope then, before the
+  next start. The leftover sweep of that start still runs.
+- OPEN (open item 53): a restart of the vmm unit stops no VM scope.
+  systemd does not pass the restart on to a bound scope (CI run
+  42283795398, job `kvm`). Each VM that the shutdown leaves runs on
+  until the leftover sweep of the next start stops it (decision CH19
+  (4)). A start that fails puts the unit in `failed`, and systemd then
+  stops every VM scope. Each release restarts the unit, so this is the
+  release path.
 - `vmm_unit::VmmUnit::of_self` reads the unit of the vmm from
   `/proc/self/cgroup`, with no config key: the first `.service` part of
   the `0::` path after `user@<uid>.service`. A vmm in a scope, in a
@@ -217,12 +223,15 @@ table of the three vmm crates.
      `systemd/creche-vmm.service`, and a test in the job `rust` fails
      when they differ. The example in its role `hold` runs as the vmm
      unit and launches CH, with no_new_privs set before the launch. A
-     stop and a restart of that unit stop CH and its scope after the
-     stand-in has exited: CH still runs 1 s into each. The restart
-     starts no scope again. A SIGKILL of the stand-in stops CH and its
-     scope while the unit waits in `auto-restart` (decision CH60 rule
-     1). After a restart and after a crash of a `/bin/sleep` stand-in,
-     a new launch of the same session boots. Each test has the control
+     stop of that unit stops CH and its scope after the stand-in has
+     exited: CH still runs 1 s into the stop. A SIGKILL of the stand-in
+     stops CH and its scope while the unit waits in `auto-restart`
+     (decision CH60 rule 1). A restart of a `/bin/sleep` stand-in leaves
+     CH and its scope running, and a stop of the scope, as the leftover
+     sweep does, frees the session. A restart whose start fails, as a
+     restarted `hold` does, stops CH and its scope (open item 53). After
+     the restart and after a crash, a new launch of the same session
+     boots. Each test has the control
      that CH runs while the stand-in runs. A drop of the spawner does
      not end CH, so no test claims it. `Launched::terminate` sends
      SIGTERM.

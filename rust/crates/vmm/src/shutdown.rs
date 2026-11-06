@@ -12,11 +12,13 @@
 //!
 //! Each VM scope has `BindsTo=` and `Before=` the vmm unit (decision CH60
 //! rule 1). systemd stops the scopes only after the vmm unit has stopped,
-//! so a stop or a restart of the unit reaches this code before any VM
-//! stops (decision CH19 (4)). The kvm tests of
-//! `rust/crates/vmm-confine/tests/kvm_slot.rs` prove both orders. A
-//! client that finds the socket gone treats ENOENT, ECONNREFUSED and EOF
-//! as transient (decision CH20).
+//! so a stop of the unit reaches this code before any VM stops (decision
+//! CH19 (4)). A restart of the unit stops no VM scope: each VM that this
+//! code leaves runs on until the leftover sweep of the next start stops
+//! it (open item 53). The kvm tests of
+//! `rust/crates/vmm-confine/tests/kvm_slot.rs` prove both paths. A client
+//! that finds the socket gone treats ENOENT, ECONNREFUSED and EOF as
+//! transient (decision CH20).
 
 use std::collections::HashSet;
 use std::future::Future;
