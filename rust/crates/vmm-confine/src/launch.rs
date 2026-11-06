@@ -308,15 +308,13 @@ pub(crate) fn systemd_run_args(
     Ok(launch.scope.systemd_run_args(&payload))
 }
 
-/// The path of the running vmm binary. The launch step runs it through
-/// `SELF_EXE`, but `systemd-run` would resolve `SELF_EXE` to itself, so
-/// the stage gets the resolved path. A release renames the old file to
-/// `.prev` (fact 56), and the link then names `.prev`, the binary of this
-/// plan. A deleted file fails the launch closed.
-///
-/// CONTRACT-QUESTION (decision CH55): no row says where the program of
-/// the launch stage comes from. This is the narrowest reading: the same
-/// binary, with no new key in the vmm config.
+/// The path of the running vmm binary, the program of the launch stage
+/// (decision CH57 rule 5). It needs no new key in the vmm config. The
+/// launch step runs it through `SELF_EXE`, but `systemd-run` would
+/// resolve `SELF_EXE` to itself, so the stage gets the resolved path. A
+/// release renames the old file to `.prev` (fact 56), and the link then
+/// names `.prev`, the binary of this plan. A deleted file fails the
+/// launch closed.
 fn stage_program() -> Result<Program, LaunchError> {
     let path = std::fs::read_link(SELF_EXE).map_err(LaunchError::SelfExe)?;
     if path.as_os_str().as_encoded_bytes().ends_with(b" (deleted)") {

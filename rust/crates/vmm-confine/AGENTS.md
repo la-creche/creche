@@ -16,9 +16,11 @@ table of the three vmm crates.
 - `stage::run` is the mode `vmm launch-stage <plan>` (mechanism X,
   decision CH55, which amends CH30). The launch step execs `systemd-run`
   with the stage as the scope payload: the resolved path of
-  `/proc/self/exe`, `stage::MODE` and the stage plan as one JSON
-  argument. The stage then runs four steps in this order, and the first
-  failure starts no CH:
+  `/proc/self/exe` (decision CH57 rule 5, no new config key),
+  `stage::MODE` and the stage plan as one JSON argument. After a release
+  renames the old binary to `.prev` (fact 56), the path names `.prev`. A
+  deleted binary fails the launch closed. The stage then runs four steps
+  in this order, and the first failure starts no CH:
   1. It writes `exec creche-ch-slot-<k>` to
      `/proc/self/attr/apparmor/exec`, or to `/proc/self/attr/exec` when
      the first is missing. Any other error fails the launch closed.
@@ -166,12 +168,6 @@ table of the three vmm crates.
   `LaunchError::NoSlot`. `rust/crates/vmm/src/main.rs` routes
   `stage::MODE` with its one plan argument to `stage::run`. C18, L16b
   and L16c are in one PR.
-- CONTRACT-QUESTION (decision CH55): no row says where the program of
-  the launch stage comes from. The launch step takes the narrowest
-  reading: the resolved path of `/proc/self/exe`, the same binary, with
-  no new key in the vmm config. After a release renames the old binary to
-  `.prev` (fact 56), the path names `.prev`. A deleted binary fails the
-  launch closed.
 - Decision CH50 rule 11 wants a test that holds the state root of the
   slot profiles equal to the env default. The env key comes with plan PR
   L20, so that test comes with it. Until then `slot_profile::STATE_ROOT`

@@ -336,7 +336,9 @@ An entry leaves the table only after its CH ended: a stop, a drop, the
 stop after a guest fault, an eviction, an idle sleep, a shutdown, a start
 that failed, or a VM that exited. Each of these runs `release`. It runs
 `RunRoot::unlink_vm` under the table lock before the entry goes, so no
-start of the session links before the unlink. A failed unlink is logged,
+start of the session links before the unlink. It is one `unlink` on the
+tmpfs of the run root, an accepted exception to the `spawn_blocking`
+rule of CH36 G21 (decision CH58 rule 3). A failed unlink is logged,
 and the slot still frees. `tests/start.rs` proves two slots, a reused
 slot, a full pool of busy VMs, a full pool that evicts its idle VM, each
 stop path and a restore into a new slot.
@@ -606,12 +608,6 @@ no guest sync.
 13. Closed by decision CH57 rules 3 and 4 (plan PR L7): a family dir or
     `config` that is a symlink or a file gets `unknown_family`, and a
     repeat create whose family `config/` is gone gets `unknown_family`.
-14. CONTRACT-QUESTION (decision CH36 G21): decision CH36 G21 puts
-    blocking work in `spawn_blocking`.
-    `release` runs `RunRoot::unlink_vm` under the table lock
-    (`src/start.rs`), so that no start of the session links first. It is
-    one `unlink` on the tmpfs of the run root, as cheap as the status
-    check and the SIGKILL that run under the same lock.
 
 ## Caller duties
 
