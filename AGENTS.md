@@ -103,6 +103,7 @@ text with no UTC offset is not a time.
 | `rust/crates/vmm/` | `rust/crates/vmm/AGENTS.md` |
 | `rust/crates/vmm-store/` | `rust/crates/vmm-store/AGENTS.md` |
 | `rust/crates/vmm-confine/` | `rust/crates/vmm-confine/AGENTS.md` |
+| `rust/crates/guest-init/` | `rust/crates/guest-init/AGENTS.md` |
 | `memory/` | `memory/AGENTS.md` |
 | `library/` | `library/AGENTS.md` |
 | `integration/` | `integration/AGENTS.md` |
