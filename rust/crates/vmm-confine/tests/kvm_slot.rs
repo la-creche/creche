@@ -80,7 +80,7 @@ use creche_wire::{HostPort, SessionId};
 use kvm::{BOOT, booted, files};
 use plain_ch::Vm;
 use scope_guard::ScopeGuard;
-use stand_in::{OneVmm, STOP_POST, StandIn, state_of, until_state};
+use stand_in::{OneVmm, SYSTEMCTL_KEY, StandIn, built_vmm, state_of, until_state};
 
 /// The host programs of the ubuntu-24.04 runner. The vmm config passes
 /// each one (plan PR L20).
@@ -990,18 +990,21 @@ fn scope_dir(pid: u32) -> PathBuf {
     dir
 }
 
-/// Whether the user manager has no loaded `creche-vm-*` unit, in any
-/// state.
+/// The step of a stand-in, the built `vmm kill-scopes` (decision CH63),
+/// as a command that a test runs by hand. Its env holds the one key of
+/// the mode and the `XDG_RUNTIME_DIR` that the user manager gives each
+/// of its units, so `systemctl --user` finds the manager.
 #[cfg(test)]
-fn no_vm_scope_loaded() -> bool {
-    let output = Command::new(SYSTEMCTL)
-        .args(["--user", "list-units", "--all", "--plain", "--no-legend"])
-        .args(["--no-pager", "--", "creche-vm-*.scope"])
-        .stdin(Stdio::null())
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "systemctl list-units: {output:?}");
-    output.stdout.iter().all(u8::is_ascii_whitespace)
+fn kill_scopes() -> Command {
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR").unwrap();
+    let mut command = Command::new(built_vmm());
+    command
+        .arg("kill-scopes")
+        .env_clear()
+        .env(SYSTEMCTL_KEY, SYSTEMCTL)
+        .env("XDG_RUNTIME_DIR", runtime)
+        .stdin(Stdio::null());
+    command
 }
 
 /// Starts the example in its role `hold` as the vmm unit of `rig`, with
@@ -1171,7 +1174,7 @@ fn kvm_a_vmm_unit_stop_kills_each_vm() {
 /// A restart of the vmm unit ends each VM scope and its CH at the stop
 /// part of the restart (decision CH61 rule 1). systemd passes no stop of
 /// a restart on to a bound scope, so only the `ExecStopPost=` step of the
-/// unit ends CH. The stand-in is a gated `/bin/sleep infinity`, which
+/// unit, the built `vmm kill-scopes` (decision CH63), ends CH. The stand-in is a gated `/bin/sleep infinity`, which
 /// comes back, and the spawner runs in the test. CH dies of the SIGKILL
 /// of that step. The controls: CH runs while the stand-in runs, CH and
 /// its scope still run 1 s into the gated stop, as `Before=` promises
@@ -1186,22 +1189,10 @@ fn kvm_a_vmm_unit_restart_ends_each_vm() {
     let seat = rig.seat("0123abcd-0000-4000-8000-0000000c15c0", 21);
     let vmm = Vmm::gated(&rig);
     // One test runs at a time, so no other test launches a VM now. A scope
-    // of an earlier test may still wait for its unload, and the step could
-    // then fail on a scope that goes between its list and its kill
-    // (systemd/AGENTS.md, Known gaps). So the test waits until no VM
-    // scope is loaded before it runs the step with no VM.
-    until("no loaded VM scope", no_vm_scope_loaded);
-    let argv: Vec<&str> = STOP_POST
-        .strip_prefix("ExecStopPost=")
-        .unwrap()
-        .split_whitespace()
-        .collect();
-    let (program, args) = argv.split_first().unwrap();
-    let status = Command::new(program)
-        .args(args)
-        .stdin(Stdio::null())
-        .status()
-        .unwrap();
+    // of an earlier test may still wait for its unload. The step kills it,
+    // or finds it gone and counts it as ended (decision CH63), so the
+    // step exits 0 either way.
+    let status = kill_scopes().status().unwrap();
     assert!(status.success(), "the step with no VM: {status}");
 
     let mut ch = vmm.launch(rig.boot(&seat));
@@ -1233,8 +1224,8 @@ fn kvm_a_vmm_unit_restart_ends_each_vm() {
 /// After a crash of the vmm, the session of a stopped VM starts again
 /// under the same scope name (decision CH61 rule 1). The stand-in is
 /// `/bin/sleep infinity`, and the spawner runs in the test. A SIGKILL of
-/// its main process runs the `ExecStopPost=` step, and CH dies of its
-/// SIGKILL. The unit then waits in `auto-restart`. CH and its scope are
+/// its main process runs the `ExecStopPost=` step, the built `vmm
+/// kill-scopes` (decision CH63), and CH dies of its SIGKILL. The unit then waits in `auto-restart`. CH and its scope are
 /// gone before the unit starts again, 5 s later, and systemd starts no
 /// scope again. The control: CH runs before the kill. After the restart
 /// systemd has made the run root new, the serial log of the last boot is

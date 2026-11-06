@@ -90,7 +90,9 @@ file's removal is always a human verb.
    `NoNewPrivileges=yes`, `KillMode=mixed`, `ExecStopPost=` and each
    `Restart` line (`rust/crates/vmm-confine/tests/stand_in`, decisions
    CH60 rule 1, CH61 rule 1). A test in the job `rust` fails when a line
-   differs from this unit. So no_new_privs is set before the launch
+   differs from this unit. The stand-in runs its `ExecStopPost=` line
+   with the `vmm` that cargo built in place of `/opt/components/vmm/bin/vmm`
+   (decision CH63). So no_new_privs is set before the launch
    stage writes the AppArmor exec attribute, as in production. The stage
    sets it only after that write (decision CH55). The kvm tests check
    no_new_privs of the stand-in before each launch, then prove the slot
@@ -100,37 +102,19 @@ file's removal is always a human verb.
    prove that a restart and a crash remove the run root and keep each
    `serial.log` (item 2). Each stop removes the files of every test, so
    the kvm tests that write in the run root run one at a time.
-4. The end of each VM is decision CH61. Each `creche-vm-*` scope has
-   `BindsTo=` and `Before=` `creche-vmm.service` (CH61 rule 2), so the
-   shutdown of the vmm runs before any VM stops. The `ExecStopPost=`
-   step of the unit then sends SIGKILL to every `creche-vm-*` scope
-   that is left, after a stop, a restart and a crash (CH61 rule 1). It
-   runs `systemctl --user kill`, which queues no job. A `systemctl stop`
-   of a scope there would wait for a stop job that `Before=` orders
-   after the stop of the vmm unit, which waits for the step: a
-   deadlock. The kvm tests prove the stop, the restart and the crash,
-   each with the control that CH runs while the stand-in runs
-   (`rust/crates/vmm-confine/tests/kvm_slot.rs`).
-
-## Known gaps
-
-- CONTRACT-QUESTION (decision CH61 rule 1): the `ExecStopPost=` step of
-  `creche-vmm.service` can fail on a race. `systemctl kill` lists the
-  units of the glob `creche-vm-*.scope`, then kills each one by name.
-  The KillUnit call of systemd loads no unit (`method_kill_unit` calls
-  `bus_get_unit_by_name`). So a scope that the manager unloads between
-  the list and the kill gives NoSuchUnit. `systemctl` then exits
-  non-zero, the stop ends with the result exit-code, and the unit ends
-  `failed`. The unit takes the narrowest
-  reading of rule 1: a scope that is gone has ended. No row decides
-  whether that failure of the step is accepted. Options for David:
-  1. Add the `-` prefix to the step. It also hides a real bus failure.
-     `BindsTo=` still stops each scope on a stop and on a crash, and the
-     leftover sweep of the next start (CH19 (4)) still catches a VM that
-     a restart left.
-  2. Add a typed `vmm` subcommand for the step. It kills each
-     `creche-vm-*` scope and counts NoSuchUnit as ended, so only a real
-     failure fails the step.
-  The kvm test `kvm_a_vmm_unit_restart_ends_each_vm` waits until no VM
-  scope is loaded before it runs the step with no VM, so this race does
-  not reach it.
+4. The end of each VM is decision CH61, and its step is decision CH63.
+   Each `creche-vm-*` scope has `BindsTo=` and `Before=`
+   `creche-vmm.service` (CH61 rule 2), so the shutdown of the vmm runs
+   before any VM stops. The `ExecStopPost=` step of the unit then sends
+   SIGKILL to every `creche-vm-*` scope that is left, after a stop, a
+   restart and a crash (CH61 rule 1). It runs `vmm kill-scopes` (CH63),
+   which lists the scopes with the code of the leftover sweep (CH19 (4))
+   and runs `systemctl --user kill` on each one by name. A kill queues no
+   job. A `systemctl stop` of a scope there would wait for a stop job
+   that `Before=` orders after the stop of the vmm unit, which waits for
+   the step: a deadlock. A scope that goes between the list and its kill
+   gives NoSuchUnit and counts as ended. Any other failure fails the
+   step. The kvm tests prove the stop, the restart and the crash, each
+   with the control that CH runs while the stand-in runs
+   (`rust/crates/vmm-confine/tests/kvm_slot.rs`). Each stand-in runs the
+   `vmm kill-scopes` of the `vmm` that cargo built for the test run.

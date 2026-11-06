@@ -95,7 +95,7 @@ KillSignal=SIGTERM
 # sits in its own creche-vm-* scope, outside this cgroup.
 KillMode=mixed
 TimeoutStopSec=90
-# The end of each VM (decision CH61). Each creche-vm-* scope has
+# The end of each VM (decisions CH61, CH63). Each creche-vm-* scope has
 # `BindsTo=` and `Before=` this unit (CH61 rule 2). `Before=` keeps each
 # VM running while this unit stops, so the shutdown above runs before any
 # VM stops. This step then ends each VM that is left (CH61 rule 1). It
@@ -103,21 +103,19 @@ TimeoutStopSec=90
 # crash, also after the SIGKILL of TimeoutStopSec. A restart passes no
 # stop to a bound scope, so without this step a VM would outlive it.
 # The step sends SIGKILL, a power cut for the guest, as the deadline of
-# CH56 rule 2 allows. `systemctl kill` sends a signal and queues no job.
-# A `systemctl stop` of a scope here would wait for a stop job that
-# `Before=` orders after the stop of this unit, which waits for this
-# step: a deadlock. The glob matches each loaded unit with the name, in
-# any state. No match exits 0. The leftover sweep of the next start
-# (CH19 (4)) still stops each unit that it finds.
-# CONTRACT-QUESTION (CH61 rule 1): `systemctl kill` lists the units of
-# the glob, then kills each by name, and the KillUnit call loads no unit.
-# A scope that the manager unloads between the list and the kill gives
-# NoSuchUnit. The step then exits non-zero, and the stop ends with the
-# result exit-code, so the unit ends `failed`. That changes no restart.
-# The narrowest reading of rule 1 holds: a scope that is gone has ended.
-# No row decides whether this failure of the step is accepted. The
-# options are in systemd/AGENTS.md, Known gaps.
-ExecStopPost=/usr/bin/systemctl --user kill --signal=SIGKILL -- creche-vm-*.scope
+# CH56 rule 2 allows. `vmm kill-scopes` (CH63) lists each loaded
+# creche-vm-* unit with the code of the leftover sweep (CH19 (4)) and
+# runs `systemctl --user kill --signal=SIGKILL` on each one by name. A
+# kill sends a signal and queues no job. A `systemctl stop` of a scope
+# here would wait for a stop job that `Before=` orders after the stop of
+# this unit, which waits for this step: a deadlock. A scope that the
+# manager unloads between the list and its kill gives NoSuchUnit. That
+# scope has ended, so a fresh list that no longer holds it counts it as
+# ended. Any other failure exits 1, so the unit ends `failed` only on a
+# real failure. A missing or bad AGENT_SYSTEMCTL_PROGRAM, the one key of
+# the step, from vmm.env, exits 78. The leftover sweep of the next start
+# still stops each unit that it finds.
+ExecStopPost=/opt/components/vmm/bin/vmm kill-scopes
 
 # A user unit on this host cannot use mount-namespace options
 # (apparmor_restrict_unprivileged_userns=1), but seccomp, prctl and rlimit

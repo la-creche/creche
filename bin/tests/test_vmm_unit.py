@@ -37,8 +37,8 @@ DECIDED = [
     ("KillMode", ["mixed"], "G16, CH56 rule 2"),
     (
         "ExecStopPost",
-        ["/usr/bin/systemctl --user kill --signal=SIGKILL -- creche-vm-*.scope"],
-        "CH61 rule 1: a signal, no stop job, so no deadlock with Before=",
+        ["/opt/components/vmm/bin/vmm kill-scopes"],
+        "CH61 rule 1, CH63: a signal, no stop job, so no deadlock with Before=",
     ),
     ("NoNewPrivileges", ["yes"], "systemd/AGENTS.md"),
     ("BindsTo", [], "CH19 (4), CH20"),
@@ -86,12 +86,13 @@ def test_the_stop_timeout_is_unit_stop_timeout() -> None:
     assert _settings(UNIT.read_text(), "TimeoutStopSec") == found
 
 
-def test_serve_is_a_mode_of_the_vmm() -> None:
-    """A wrong mode word exits 78 at the first start on the host."""
+@pytest.mark.parametrize("mode", ["vmm serve", "vmm kill-scopes"])
+def test_each_mode_of_the_unit_is_a_mode_of_the_vmm(mode: str) -> None:
+    """A wrong mode word exits 78 at the first start or stop on the host."""
     usage = re.findall(r'const USAGE: &str = "usage: (.*)";', MAIN_RS.read_text())
 
     assert len(usage) == 1
-    assert "vmm serve" in [mode.strip() for mode in usage[0].split("|")]
+    assert mode in [mode.strip() for mode in usage[0].split("|")]
 
 
 def test_no_client_unit_needs_the_vmm() -> None:

@@ -26,7 +26,11 @@ The root `AGENTS.md` applies here too.
 `vmm launch-stage <plan>` takes exactly one plan argument and calls
 `creche_vmm_confine::stage::run`, the one entry of the stage. It always
 writes the real exec attribute (plan PR L16c, decisions CH55, CH58 rule
-1).
+1). `vmm kill-scopes` is the `ExecStopPost=` step of the unit (decision
+CH63). It reads only `AGENT_SYSTEMCTL_PROGRAM` through
+`config::KillScopesConfig`, with the check of `Config`, and calls
+`creche_vmm_confine::leftovers::kill_all`. A bad key exits 78, and any
+other failure exits 1.
 
 ## The compose step
 
