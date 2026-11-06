@@ -1,29 +1,24 @@
 //! The user scope of one Cloud Hypervisor process: the `systemd-run`
 //! arguments that put the payload in its own scope with its limits
-//! (decisions CH8-2 and CH8-5), bound to the vmm unit (decision CH60 rule
-//! 1).
+//! (decisions CH8-2 and CH8-5), bound to the vmm unit and ordered before
+//! it (decision CH61 rule 2, which amends CH60 rule 1).
 //!
 //! `BindsTo=<vmm unit>` makes systemd stop the scope when the vmm unit
-//! stops or dies. AppArmor clears the death signal at the exec of CH into
-//! its slot label, so this binding is what ends CH with the vmm (decision
-//! CH60 rule 1). `Before=<vmm unit>` orders the two stops. systemd runs
+//! stops or fails. `Before=<vmm unit>` orders the two stops. systemd runs
 //! stop jobs in the reverse of the start order, so a scope ordered before
 //! the vmm unit stops only after the vmm unit has stopped. On a stop of
 //! the vmm unit, the shutdown of `rust/crates/vmm/src/shutdown.rs`
-//! therefore runs before any VM stops (decision CH19 (4)). After a crash,
-//! `Restart=always` puts the vmm unit through `failed` into
-//! `auto-restart`, and systemd stops every VM scope then, before the next
-//! start of the unit.
+//! therefore runs before any VM stops (decision CH61 rule 2).
 //!
-//! A restart of the vmm unit stops no VM scope. systemd does not pass the
-//! restart on to a bound scope (CI run 42283795398, job `kvm`). So after
-//! a restart each VM that the shutdown left still runs, until the
-//! leftover sweep of the next start stops it (decision CH19 (4)). A start
-//! that fails puts the unit in `failed`, and systemd then stops every VM
-//! scope. Open item 53 asks whether that path stands.
+//! The `ExecStopPost=` step of `systemd/creche-vmm.service` then kills
+//! every VM scope that is left after the vmm has exited, on a stop, a
+//! restart and a crash (decision CH61 rule 1). It is the kill path of CH:
+//! AppArmor clears the death signal at the exec of CH into its slot
+//! label, and systemd passes no stop of a restart on to a bound scope.
+//! The leftover sweep of the next start still runs (decision CH19 (4)).
 //!
-//! `tests/kvm_slot.rs` proves the stop, the crash and both restart paths,
-//! each with a vmm stand-in that has the restart and kill lines of
+//! `tests/kvm_slot.rs` proves the stop, the restart and the crash, each
+//! with a vmm stand-in that has the restart, kill and stop lines of
 //! `systemd/creche-vmm.service`.
 
 use std::ffi::OsString;
@@ -77,7 +72,7 @@ impl Scope {
     }
 
     /// The arguments of `systemd-run` that run `payload` in this scope,
-    /// bound to `vmm` and ordered before it (decision CH60 rule 1).
+    /// bound to `vmm` and ordered before it (decision CH61 rule 2).
     /// `systemd-run --scope` execs the payload in its own process, so the
     /// payload keeps the pid of the launch step (decision CH8-2). The
     /// launch step passes the launch stage as the payload, and the stage
@@ -135,7 +130,7 @@ mod tests {
     }
 
     /// The scope binds to the vmm unit and is ordered before it (decision
-    /// CH60 rule 1), then the payload follows the limits.
+    /// CH61 rule 2), then the payload follows the limits.
     #[test]
     fn the_arguments_bind_the_scope_and_put_the_payload_last() {
         let program = Program::new(PathBuf::from("/opt/ch/cloud-hypervisor")).unwrap();

@@ -7,8 +7,8 @@
 //! ends the thread. The kernel then sends SIGKILL only to a launch that
 //! has not yet execed CH: the launch step, `systemd-run` or the launch
 //! stage. AppArmor clears the death signal at the exec of CH into its slot
-//! label, so a drop does not end CH. CH ends with the vmm unit instead:
-//! its scope is bound to that unit (decision CH60 rule 1). The vmm keeps
+//! label, so a drop does not end CH. The `ExecStopPost=` step of the vmm
+//! unit ends CH after the vmm stops (decision CH61 rule 1). The vmm keeps
 //! its `Spawner` for its whole life.
 //!
 //! Each launch step gets one pipe for its stdout and stderr in place of
@@ -121,7 +121,7 @@ impl Spawner {
 impl Drop for Spawner {
     /// Ends the thread. The death signal then ends each launch that has
     /// not yet execed CH. CH under its slot label has no death signal, and
-    /// it ends when the vmm unit stops (decision CH60 rule 1).
+    /// it ends after the vmm unit stops (decision CH61 rule 1).
     fn drop(&mut self) {
         drop(self.requests.take());
         if let Some(thread) = self.thread.take() {
@@ -137,7 +137,8 @@ fn serve(program: &Path, sink: &Sink, queue: &Receiver<Request>) {
     for request in queue {
         // A caller that stopped waiting drops its answer. Its child then
         // has no handle. Before its exec of CH it dies with this thread.
-        // After it, CH ends when the vmm unit stops (decision CH60 rule 1).
+        // After it, CH ends after the vmm unit stops (decision CH61 rule
+        // 1).
         let _ = request.reply.send(spawn(program, sink, request.launch));
     }
 }

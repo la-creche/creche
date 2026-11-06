@@ -35,6 +35,11 @@ DECIDED = [
     ("StateDirectoryMode", ["0700"], "CH50 rule 11"),
     ("LimitCORE", ["0"], "CH8-5, G27 option A"),
     ("KillMode", ["mixed"], "G16, CH56 rule 2"),
+    (
+        "ExecStopPost",
+        ["/usr/bin/systemctl --user kill --signal=SIGKILL -- creche-vm-*.scope"],
+        "CH61 rule 1: a signal, no stop job, so no deadlock with Before=",
+    ),
     ("NoNewPrivileges", ["yes"], "systemd/AGENTS.md"),
     ("BindsTo", [], "CH19 (4), CH20"),
     ("Requires", [], "CH19 (4), CH20"),

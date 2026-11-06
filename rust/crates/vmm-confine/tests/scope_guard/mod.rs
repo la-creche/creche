@@ -1,7 +1,7 @@
 //! The user scope of one VM, killed on drop. The CH of the `hold`
 //! stand-in is not a child of the test. The drop of the stand-in stops
-//! its unit, and systemd stops the bound scope with it (decision CH60
-//! rule 1). The guard does not rely on that binding: it kills every
+//! its unit, and its `ExecStopPost=` step kills the scope (decision CH61
+//! rule 1). The guard does not rely on that step: it kills every
 //! process of the scope, then waits until systemd drops the unit. So a
 //! failed test leaves no CH and no scope.
 #![cfg(test)]

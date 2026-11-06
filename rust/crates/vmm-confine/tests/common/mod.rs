@@ -17,7 +17,7 @@ pub fn example() -> PathBuf {
     debug.join("examples").join("launch_chain")
 }
 
-/// The vmm unit of each launch (decision CH60 rule 1). The fake
+/// The vmm unit of each launch (decision CH61 rule 2). The fake
 /// `systemd-run` of the example makes no scope, so no unit of this name
 /// needs to run.
 pub fn vmm_unit() -> VmmUnit {
@@ -44,7 +44,8 @@ impl TempVm {
         fs::write(root.join("root.img"), "root").unwrap();
         fs::write(session.disk(), "session").unwrap();
         let root_disk = HostPath::new(root.join("root.img")).unwrap();
-        let files = VmFiles::new(Start::Restore, root_disk, &session, &run).unwrap();
+        let start = Start::Restore { initramfs: None };
+        let files = VmFiles::new(start, root_disk, &session, &run).unwrap();
         Self { root, files }
     }
 }

@@ -38,24 +38,20 @@ table of the three vmm crates.
   gid or capability. AppArmor clears it at the exec into the slot label
   (`apparmor_bprm_committing_creds` in `security/apparmor/lsm.c`), so CH
   has none (decision CH60 rule 1).
-- Two links end each launch with the vmm (decision CH60 rule 1). The
-  death signal ends the launch step, `systemd-run` and the stage when the
-  vmm dies before CH runs. The scope binds to the vmm unit: `Launch::new`
-  takes a `vmm_unit::VmmUnit`, and `scope::Scope::systemd_run_args` adds
-  `-p BindsTo=<unit>` and `-p Before=<unit>`. systemd then stops the
-  scope and its CH when the vmm unit stops or dies. `Before=` makes that
-  stop wait until the vmm unit has stopped, so the shutdown of
-  `rust/crates/vmm/src/shutdown.rs` runs before any VM stops (decision
-  CH19 (4)). A crash puts the unit through `failed` into `auto-restart`
-  (`Restart=always`), and systemd stops every VM scope then, before the
-  next start. The leftover sweep of that start still runs.
-- OPEN (open item 53): a restart of the vmm unit stops no VM scope.
-  systemd does not pass the restart on to a bound scope (CI run
-  42283795398, job `kvm`). Each VM that the shutdown leaves runs on
-  until the leftover sweep of the next start stops it (decision CH19
-  (4)). A start that fails puts the unit in `failed`, and systemd then
-  stops every VM scope. Each release restarts the unit, so this is the
-  release path.
+- Two links end each launch with the vmm (decision CH61, which amends
+  CH60 rule 1, CH19 (4) and CH56 rule 2). The death signal ends the
+  launch step, `systemd-run` and the stage when the vmm dies before CH
+  runs. The scope binds to the vmm unit: `Launch::new` takes a
+  `vmm_unit::VmmUnit`, and `scope::Scope::systemd_run_args` adds `-p
+  BindsTo=<unit>` and `-p Before=<unit>` (CH61 rule 2). `Before=` keeps
+  each VM running while the vmm unit stops, so the shutdown of
+  `rust/crates/vmm/src/shutdown.rs` runs before any VM stops. The
+  `ExecStopPost=` step of `systemd/creche-vmm.service` then kills every
+  `creche-vm-*` scope that is left, after a stop, a restart and a crash
+  (CH61 rule 1). It is the kill path of CH: systemd passes no stop of a
+  restart on to a bound scope (CI run 42283795398). The step queues no
+  job, because a stop job of a scope waits for the stop of the vmm unit.
+  The leftover sweep of the next start still runs (CH19 (4)).
 - `vmm_unit::VmmUnit::of_self` reads the unit of the vmm from
   `/proc/self/cgroup`, with no config key: the first `.service` part of
   the `0::` path after `user@<uid>.service`. A vmm in a scope, in a
@@ -105,7 +101,8 @@ table of the three vmm crates.
   fact 76). The vmm keeps its `Spawner` for its whole life. A drop ends
   the thread. The death signal then ends only a launch that has not yet
   execed CH: the launch step, `systemd-run` or the launch stage. A drop
-  does not end CH. CH ends with the vmm unit (decision CH60 rule 1).
+  does not end CH. The `ExecStopPost=` step of the vmm unit ends CH
+  (decision CH61 rule 1).
 - The launch step reads its plan only from a pipe that already holds it.
   The spawner writes the whole plan, at most 64 KiB, before the spawn,
   and never blocks on a full pipe.
@@ -132,6 +129,16 @@ table of the three vmm crates.
   the launch. A missing path or a kernel below Landlock ABI 4 fails the
   launch. All Landlock calls sit behind `cfg(target_os = "linux")`
   (decision CH38).
+- Only a boot reads the kernel. A boot and a restore both read the
+  initramfs (decision CH61 rule 3): CH v54 opens the initramfs of the
+  snapshot config on a restore, so `Start::Restore` carries the
+  `store/<sha256>` initramfs of its snapshot (decision CH60 rule 2),
+  and the snapshot key of `creche-vmm-store` holds its digest. A
+  snapshot with the current key names the initramfs of the vmm config,
+  so the vmm passes that checked store copy. The vmm config names no
+  initramfs until phase 3 adds guest init (PR C7). A boot with none
+  makes a snapshot whose key holds none, and its restore carries none.
+  So `Start::Boot` and `Start::Restore` each hold an `Option`.
 - `deny::check` is the proof of deny-by-default (decision CH6-3). The
   first argument of the command line is the payload program, so a pid
   that still runs the launch step or `systemd-run`, or a CH zombie, fails
@@ -198,8 +205,10 @@ table of the three vmm crates.
   enforce mode. `tests/kvm_slot.rs` starts each CH through the real chain
   of the vmm: the spawner, the launch step, `systemd-run --user --scope`,
   the launch stage and CH. Each test runs its vmm stand-in as a transient
-  user service (`tests/stand_in`, decision CH60 rule 1), and each scope
-  binds to that unit. Each VM takes a slot through
+  user service (`tests/stand_in`, decisions CH60 rule 1, CH61), and each
+  scope binds to that unit. The `ExecStopPost=` step of a stand-in kills
+  every VM scope, as one vmm owns every VM, so one stand-in runs at a time
+  in a test binary. Each VM takes a slot through
   `RunRoot::link_vm`, under the real run root and the default state
   root. Each test has a control, and together they prove decision CH58
   rule 1:
@@ -218,23 +227,23 @@ table of the three vmm crates.
      `api.sock` or `vsock.sock` of a live CH in another slot, and not to
      `vmm.sock` or the user bus. One slot cannot signal the CH of another
      slot (decision CH51).
-  4. The scope of CH has `BindsTo=` and `Before=` the vmm unit. Each
-     stand-in copies the restart, kill and no_new_privs lines of
-     `systemd/creche-vmm.service`, and a test in the job `rust` fails
-     when they differ. The example in its role `hold` runs as the vmm
-     unit and launches CH, with no_new_privs set before the launch. A
-     stop of that unit stops CH and its scope after the stand-in has
-     exited: CH still runs 1 s into the stop. A SIGKILL of the stand-in
-     stops CH and its scope while the unit waits in `auto-restart`
-     (decision CH60 rule 1). A restart of a `/bin/sleep` stand-in leaves
-     CH and its scope running, and a stop of the scope, as the leftover
-     sweep does, frees the session. A restart whose start fails, as a
-     restarted `hold` does, stops CH and its scope (open item 53). After
-     the restart and after a crash, a new launch of the same session
-     boots. Each test has the control
-     that CH runs while the stand-in runs. A drop of the spawner does
-     not end CH, so no test claims it. `Launched::terminate` sends
-     SIGTERM.
+  4. The scope of CH has `BindsTo=` and `Before=` the vmm unit (CH61
+     rule 2). Each stand-in copies the restart, kill, `ExecStopPost=`
+     and no_new_privs lines of `systemd/creche-vmm.service`, and a test
+     in the job `rust` fails when they differ. The example in its role
+     `hold` runs as the vmm unit and launches CH, with no_new_privs set
+     before the launch. A stop of that unit ends CH and its scope after
+     the stand-in has exited: CH still runs 1 s into the stop. A SIGKILL
+     of the stand-in ends CH and its scope while the unit waits in
+     `auto-restart`. A restart of the `hold` stand-in ends CH and its
+     scope. A restart of a gated `/bin/sleep` stand-in ends CH by the
+     SIGKILL of the `ExecStopPost=` step, after CH ran 1 s into the
+     gated stop, and the unit comes back. A crash of a `/bin/sleep`
+     stand-in ends CH by that SIGKILL too (CH61 rule 1). After the
+     restart and after the crash, a new launch of the same session
+     boots. Each test has the control that CH runs while the stand-in
+     runs. A drop of the spawner does not end CH, so no test claims it.
+     `Launched::terminate` sends SIGTERM.
   5. The output of each CH reaches the sink tagged `ch <session id>`.
   `tests/kvm_boot.rs` runs the copy in `CRECHE_KVM_DIR` with no chain.
 - `tests/kvm_vm.rs` runs one VM through the crate and the store (decision

@@ -7,8 +7,8 @@
 //! core limit of the launch step, and its hold of one session id gives
 //! `Launched::terminate` a live process. The kvm job loads the slot
 //! profiles and proves the label, no_new_privs, Landlock and CH
-//! (`tests/kvm_slot.rs`). The kvm job also proves that systemd stops CH
-//! with the vmm unit that its scope binds to (decision CH60 rule 1).
+//! (`tests/kvm_slot.rs`). The kvm job also proves that the vmm unit that
+//! its scope binds to ends CH at each stop (decision CH61).
 #![cfg(target_os = "linux")]
 
 mod common;

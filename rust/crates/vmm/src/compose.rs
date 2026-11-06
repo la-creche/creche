@@ -192,7 +192,8 @@ struct Vmm {
 ///
 /// A `StartError` when a start step fails, or when the server stops
 /// before SIGTERM. A shutdown that ends `Kept` or `Late` is no error: the
-/// VMs that are left end with the vmm unit (decision CH60 rule 1).
+/// `ExecStopPost=` step of the vmm unit kills each VM that is left after
+/// the vmm has exited (decision CH61 rule 1).
 pub async fn serve(config: Config) -> Result<(), StartError> {
     let sigterm = shutdown::sigterm().map_err(StartError::Sigterm)?;
     let vmm = spawn_blocking(move || build(config))
