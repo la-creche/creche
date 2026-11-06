@@ -339,7 +339,7 @@ impl Vmm {
 
         let ended = shutdown::shutdown(&*hook.0, stop, async move { _ = sleep.await }).await;
         if ended == Ended::Kept {
-            eprintln!("vmm: a VM did not stop, so systemd stops its scope with the vmm unit");
+            eprintln!("vmm: a VM did not stop, so the ExecStopPost= step of the vmm unit kills it");
         }
         refresh.abort();
         match server.await {
