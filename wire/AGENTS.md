@@ -441,18 +441,20 @@ key or an added route too, because the match of the number is exact.
    deleted and written again fails too.
 6. A change of a type that no route reaches needs no new number:
    `FamilyStateReply`, `TurnEvent`, `ControlHello`, `ControlCommand`,
-   `FamilyShape` and the types that only they reach. A change of a
+   `GuestEvent`, `FamilyShape` and the types that only they reach. A change of a
    `description` needs none either.
 
 ## The vsock JSON links
 
-Two vsock links carry wire types as JSON (decision CH36 G11). Each one
-carries one JSON value per line.
+Two vsock links and one Unix socket in the guest carry wire types as JSON
+(decisions CH36 G11, CH62 rule 10). Each one carries one JSON value per
+line.
 
-| Link | The vmm sends | The guest sends | Line cap |
+| Link | The host end sends | The guest end sends | Line cap |
 |---|---|---|---|
-| Control, guest port 1200 | `ControlHello`, then `ControlCommand` | Guest init sends `ControlReady`, then `TurnEvent` | `CONTROL_LINE_CAP`, 64 KiB (decision CH43 rule 1) |
+| Control, guest port 1200 | The vmm sends `ControlHello`, then `ControlCommand` | Guest init sends `ControlReady`, then `GuestEvent` | `CONTROL_LINE_CAP`, 64 KiB (decision CH43 rule 1) |
 | Family state, host port 1100 | `FamilyStateReply` | The facade sends the pull (decision CH5a). The pull has no wire type yet (decision CH43 rule 4) | 256 KiB (decision CH23 default 4) |
+| Local link, `/run/creche/guest-init.sock` in the guest (decision CH62 rule 10) | Guest init, the listener, sends `ControlCommand`, only `stop` | The facade sends `TurnEvent` | `CONTROL_LINE_CAP` |
 
 1. A writer writes each value in the compact form of serde_json, then one
    LF. The compact form holds no LF, because JSON escapes an LF in a
@@ -468,7 +470,13 @@ carries one JSON value per line.
 4. On the control link the vmm sends `ControlHello` first, on each new
    link (decisions CH19 rule 2, CH28). Guest init answers with one
    `ControlReady`. After that the vmm sends `ControlCommand` and guest
-   init sends `TurnEvent`, each at any time.
+   init sends `GuestEvent`, each at any time. Guest init sends nothing
+   before `ControlReady` (decision CH62 rule 11). `GuestEvent` holds a
+   `facade` line at each change of the facade state, a `synced` line
+   after each `sync`, and each turn event of the local link nested in a
+   `turn` line (decisions CH21, CH62 rules 11 and 23). A `facade` line
+   has the same bytes as the `ControlReady` of the same state, so a
+   reader tells the two apart by their place on the link.
 5. `stop` of `ControlCommand` starts the graceful stop (decision CH19
    rule 3). `DROP_STOP_WAIT` and `DROP_SIGTERM_GRACE` bound it (see "The
    drop route").
@@ -480,6 +488,14 @@ carries one JSON value per line.
    cold-boots. No route reaches these types, so `HOST_API_PROTOCOL` stays.
 8. The pull on host port 1100 has no wire type yet (decision CH43 rule 4).
    The phase 3 guest init PR that adds the pull defines its line.
+9. On the local link the facade sends `TurnEvent` and guest init sends
+   `stop` (decision CH62 rules 9 and 10). Guest init accepts one link at
+   a time, and only from the pid of the live facade (`SO_PEERCRED`). It
+   reads each turn event strictly. A refused line closes the link, and
+   guest init then kills the facade (decisions CH32 rule 7 and CH62 rule
+   11). An event that comes while no control link is open is dropped,
+   with no buffer. No guest init is deployed yet, so these new lines keep
+   `GUEST_INIT_PROTOCOL` at 1 (rule 7).
 
 ## Change a wire type
 

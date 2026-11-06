@@ -42,8 +42,8 @@ use creche_vmm_store::rows::Rows;
 use creche_vmm_store::session_disk::SessionDisks;
 use creche_vmm_store::sleep_gate::IDLE_TIMEOUT;
 use creche_wire::{
-    DropError, DropRoute, DropSession, DropTarget, Dropped, FamilyName, OpenAcp, PerFlavor,
-    SandboxFlavor, Serve, ServeUpgrade as _, SessionId, SessionRow,
+    DropError, DropRoute, DropSession, DropTarget, Dropped, FacadeState, FamilyName, OpenAcp,
+    PerFlavor, SandboxFlavor, Serve, ServeUpgrade as _, SessionId, SessionRow,
 };
 use tokio::runtime::{Builder, Runtime};
 
@@ -1003,16 +1003,26 @@ fn a_turn_or_an_open_door_keeps_the_vm_awake() {
     assert_eq!(test.sleep_after(PAST_IDLE).len(), 1);
 }
 
-/// A VM whose ready said `starting` is up only after a turn event, and
-/// each turn event sets its last use (decisions CH43 rule 8, CH50 rule
-/// 5).
+/// A VM whose ready said `starting` is up only after a `facade` line
+/// says `running`, and a turn event alone does not make it up (decisions
+/// CH32 rule 6, CH62 rule 11). Each turn event sets its last use
+/// (decision CH50 rule 5).
 #[test]
-fn a_turn_event_marks_the_facade_up_and_used() {
+fn the_gate_opens_on_a_running_facade_line() {
     let test = Test::new("seen", |_| {});
     *test.fake.guest.lock().unwrap() = Guest::Starting;
     assert_eq!(test.start(0), Ok(()));
+    let id = test.rows[0].id.clone();
+    test.turn(0, r#"{"start":{}}"#);
+    test.turn(0, r#"{"end":{"title":"First","updated_at":2000}}"#);
     assert!(test.sleep_after(PAST_IDLE).is_empty());
 
+    // A `facade` line has the bytes of the `ControlReady` of its state.
+    test.send(READY);
+    test.settle(|test| {
+        let control = test.control.lock().unwrap();
+        matches!(control.facade(&id), Some(FacadeState::Running(_)))
+    });
     std::thread::sleep(Duration::from_millis(5));
     let before = Instant::now();
     test.turn(0, r#"{"start":{}}"#);
@@ -1375,21 +1385,6 @@ fn a_door_close_counts_as_a_use() {
     assert_eq!(test.runtime.block_on(test.hook.sleep_idle(after)).len(), 1);
 }
 
-/// A new `ControlReady` clears `turn_seen`. A VM that saw a turn event,
-/// slept, and booted again `starting` is not up, so it does not sleep
-/// (decision CH43 rule 8).
-#[test]
-fn a_new_ready_clears_the_turn_seen() {
-    let test = Test::new("reseen", |_| {});
-    assert_eq!(test.start(0), Ok(()));
-    test.turn(0, r#"{"start":{}}"#);
-    test.turn(0, r#"{"end":{"title":"First","updated_at":2000}}"#);
-    assert_eq!(test.sleep_after(PAST_IDLE).len(), 1);
-    *test.fake.guest.lock().unwrap() = Guest::Starting;
-    assert_eq!(test.start(0), Ok(()));
-    assert!(test.sleep_after(PAST_IDLE).is_empty());
-}
-
 /// A start that hyper drops during an eviction leaves the eviction to
 /// finish in its own task. The VM stays `Evicting` with no kill, its
 /// snapshot ends, and it leaves the table. A later start of it boots.
@@ -1569,7 +1564,7 @@ fn a_vm_under_a_stop_keeps_its_ram() {
 #[cfg(test)]
 impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
     /// Writes `line` on the guest end of the newest control link, as guest
-    /// init relays a turn event (decision CH21).
+    /// init sends a guest event (decisions CH21, CH62 rule 11).
     fn send(&self, line: &str) {
         let links = self.fake.links.lock().unwrap();
         let mut link = links.last().unwrap();
@@ -1595,25 +1590,25 @@ impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
     }
 }
 
-/// The reader of the control link applies each turn event (plan PR
-/// L18b). A VM whose ready said `starting` is up after its first event
-/// (decision CH43 rule 8). A start keeps it awake. An end clears the turn,
-/// writes the row (decision CH32 rule 4) and counts as a use (decision
-/// CH50 rule 5).
+/// The reader of the control link applies each turn line (plan PR
+/// L18b, decision CH62 rule 11). A start keeps the VM awake. A `synced`
+/// line with no sync waiting is dropped, and the link stays open
+/// (decision CH62 rule 23). An end clears the turn, writes the row
+/// (decision CH32 rule 4) and counts as a use (decision CH50 rule 5).
 #[test]
 fn the_reader_applies_each_turn_event() {
     let test = Test::new("reader", |_| {});
-    *test.fake.guest.lock().unwrap() = Guest::Starting;
     assert_eq!(test.start(0), Ok(()));
     let id = test.rows[0].id.clone();
-    test.send(r#"{"start":{}}"#);
+    test.send(r#"{"turn":{"start":{}}}"#);
     test.settle(|test| test.control.lock().unwrap().turn_running(&id));
-    assert!(test.control.lock().unwrap().turn_seen(&id));
     assert!(test.sleep_after(PAST_IDLE).is_empty());
+    // The end below arrives only when the reader reads on past it.
+    test.send(r#"{"synced":{}}"#);
 
     std::thread::sleep(Duration::from_millis(5));
     let before = Instant::now();
-    test.send(r#"{"end":{"title":"First","updated_at":1793577700000}}"#);
+    test.send(r#"{"turn":{"end":{"title":"First","updated_at":1793577700000}}}"#);
     test.settle(|test| test.title(0).0.is_some());
     assert!(!test.control.lock().unwrap().turn_running(&id));
     assert_eq!(test.title(0), (Some("First".to_owned()), true));

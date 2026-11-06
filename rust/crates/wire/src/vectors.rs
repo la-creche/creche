@@ -16,15 +16,15 @@ use serde_json::Value;
 use super::schema::wire_schema;
 use super::{
     AcpError, Auto, AutoJobId, ConfigMissing, ControlCommand, ControlHello, ControlReady,
-    ControlStop, CreateError, CreateSession, CredsMissing, Delegate, DelegationId, Dispatch,
-    DispatchChain, Door, DropError, DropFamily, DropSession, DropTarget, Dropped, FacadeExited,
-    FacadeNotStarted, FacadeRunning, FacadeStarting, FacadeState, FamilyConfig, FamilyCpus,
-    FamilyCreds, FamilyMemoryMib, FamilyName, FamilyShape, FamilySkills, FamilyState,
-    FamilyStateReply, JobId, ListCursor, ListError, ListSessions, LitellmKey, MISMATCH_STATUS,
-    ModelAlias, OpenAcp, PepToken, ProtocolMismatch, RouteError, SHARED_CODES, SandboxGrant,
-    SessionCwd, SessionId, SessionOrigin, SessionPage, SessionRow, SessionTitle, SkillName,
-    StartCount, StateNotValid, StateTooLarge, Timer, Trigger, TurnEnd, TurnEvent, TurnStart,
-    UnixMillis, Webhook, WebhookName, routes::TableRoute,
+    ControlStop, ControlSync, ControlSynced, CreateError, CreateSession, CredsMissing, Delegate,
+    DelegationId, Dispatch, DispatchChain, Door, DropError, DropFamily, DropSession, DropTarget,
+    Dropped, FacadeExited, FacadeNotStarted, FacadeRunning, FacadeStarting, FacadeState,
+    FamilyConfig, FamilyCpus, FamilyCreds, FamilyMemoryMib, FamilyName, FamilyShape, FamilySkills,
+    FamilyState, FamilyStateReply, GuestEvent, JobId, ListCursor, ListError, ListSessions,
+    LitellmKey, MISMATCH_STATUS, ModelAlias, OpenAcp, PepToken, ProtocolMismatch, RouteError,
+    SHARED_CODES, SandboxGrant, SessionCwd, SessionId, SessionOrigin, SessionPage, SessionRow,
+    SessionTitle, SkillName, StartCount, StateNotValid, StateTooLarge, Timer, Trigger, TurnEnd,
+    TurnEvent, TurnStart, UnixMillis, Webhook, WebhookName, routes::TableRoute,
 };
 
 /// The file, relative to the crate.
@@ -74,6 +74,8 @@ fn read_and_write(type_name: &str, json: &str) -> Option<String> {
         "ControlHello" => round_trip::<ControlHello>(json),
         "ControlReady" => round_trip::<ControlReady>(json),
         "ControlStop" => round_trip::<ControlStop>(json),
+        "ControlSync" => round_trip::<ControlSync>(json),
+        "ControlSynced" => round_trip::<ControlSynced>(json),
         "CreateError" => round_trip::<CreateError>(json),
         "CreateSession" => round_trip::<CreateSession>(json),
         "CredsMissing" => round_trip::<CredsMissing>(json),
@@ -98,6 +100,7 @@ fn read_and_write(type_name: &str, json: &str) -> Option<String> {
         "FamilySkills" => round_trip::<FamilySkills>(json),
         "FamilyState" => round_trip::<FamilyState>(json),
         "FamilyStateReply" => round_trip::<FamilyStateReply>(json),
+        "GuestEvent" => round_trip::<GuestEvent>(json),
         "JobId" => round_trip::<JobId>(json),
         "ListCursor" => round_trip::<ListCursor>(json),
         "ListError" => round_trip::<ListError>(json),

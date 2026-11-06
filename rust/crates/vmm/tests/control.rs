@@ -1,6 +1,6 @@
 //! The control link against a fake vsock socket of Cloud Hypervisor
 //! (decisions CH13, CH19 (2), CH19 (3), CH21, CH28, CH32 rules 3 and 4,
-//! fact 74). The fake answers the `CONNECT` line and plays guest init. The
+//! CH62 rule 11, fact 74). The fake answers the `CONNECT` line and plays guest init. The
 //! live proof against guest init is phase 3.
 
 use std::io::{self, ErrorKind, Read, Write};
@@ -12,7 +12,9 @@ use std::time::Duration;
 use creche_vmm::control::{Change, ControlError, ControlLink, ControlState, open};
 use creche_vmm_store::layout::StateRoot;
 use creche_vmm_store::rows::Rows;
-use creche_wire::{CONTROL_LINE_CAP, ControlReady, SessionId, TurnEvent, UnixMillis};
+use creche_wire::{
+    CONTROL_LINE_CAP, ControlReady, FacadeState, GuestEvent, SessionId, TurnEvent, UnixMillis,
+};
 use tokio::runtime::Builder;
 
 const SESSION: &str = "3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b";
@@ -25,6 +27,13 @@ const ENDED: &str = r#"{"facade":{"running":{"last_turn_end":{"title":"First","u
 /// The `ControlReady` of `json`.
 fn ready(json: &str) -> serde_json::Result<ControlReady> {
     serde_json::from_str(json)
+}
+
+// `cfg(test)` lets the helper unwrap (rust/clippy.toml).
+/// The facade state of `json`.
+#[cfg(test)]
+fn facade(json: &str) -> FacadeState {
+    serde_json::from_str(json).unwrap()
 }
 
 /// A fresh vsock socket path for the test `name`.
@@ -332,10 +341,10 @@ fn turn_events_keep_the_first_title_and_move_updated_at() {
     let path = socket("control-turns").unwrap();
     let listener = UnixListener::bind(&path).unwrap();
     let events = [
-        r#"{"start":{}}"#,
-        r#"{"end":{"title":"First","updated_at":2000}}"#,
-        r#"{"start":{}}"#,
-        r#"{"end":{"title":"Second","updated_at":3000}}"#,
+        r#"{"turn":{"start":{}}}"#,
+        r#"{"turn":{"end":{"title":"First","updated_at":2000}}}"#,
+        r#"{"turn":{"start":{}}}"#,
+        r#"{"turn":{"end":{"title":"Second","updated_at":3000}}}"#,
     ];
     let lines = format!("{READY}\n{}\n", events.join("\n"));
     let guest = spawn(move || play(listener.accept()?.0, lines.as_bytes()));
@@ -353,10 +362,11 @@ fn turn_events_keep_the_first_title_and_move_updated_at() {
     let end = with_link(&path, async |mut control| {
         loop {
             match control.event().await {
-                Ok(event) => {
+                Ok(GuestEvent::Turn(event)) => {
                     assert!(apply(&mut rows, &vm, state.turn(&vm, link, &event)));
                     seen.push((state.turn_running(&vm), title_and_time(&rows, &vm)));
                 }
+                Ok(other) => panic!("not a turn line: {other:?}"),
                 Err(error) => break error,
             }
         }
@@ -457,4 +467,119 @@ fn stop_sends_one_stop_line() {
 
     with_link(&path, async |control| control.stop().await).unwrap();
     assert_eq!(guest.join().unwrap().unwrap(), "{\"stop\":{}}\n");
+}
+
+/// After `ControlReady`, the reader reads each kind of guest line: a
+/// facade state, a `synced` and a relayed turn event (decisions CH21,
+/// CH62 rules 11 and 23). A bare turn event, the line of the local link,
+/// is not a guest event, so the reader refuses it.
+#[test]
+fn reads_facade_synced_and_turn_lines() {
+    let path = socket("control-guest-lines").unwrap();
+    let listener = UnixListener::bind(&path).unwrap();
+    let lines = [
+        READY,
+        EXITED,
+        r#"{"synced":{}}"#,
+        r#"{"turn":{"start":{}}}"#,
+        r#"{"start":{}}"#,
+    ];
+    let lines = format!("{}\n", lines.join("\n"));
+    let guest = spawn(move || play(listener.accept()?.0, lines.as_bytes()));
+
+    let (read, end) = with_link(&path, async |mut control| {
+        let mut read = Vec::new();
+        loop {
+            match control.event().await {
+                Ok(event) => read.push(event),
+                Err(error) => break (read, error),
+            }
+        }
+    });
+
+    assert!(
+        matches!(
+            &read[..],
+            [
+                GuestEvent::Facade(FacadeState::Exited(_)),
+                GuestEvent::Synced(_),
+                GuestEvent::Turn(TurnEvent::Start(_)),
+            ]
+        ),
+        "{read:?}"
+    );
+    assert_eq!(read[0], GuestEvent::Facade(ready(EXITED).unwrap().facade));
+    assert_eq!(end, ControlError::Line);
+    guest.join().unwrap().unwrap();
+}
+
+/// A `facade` line of a replaced link changes nothing, not even the row
+/// (decision CH28). The same line of the current link applies.
+#[test]
+fn a_facade_line_from_a_replaced_link_is_stale() {
+    let vm: SessionId = SESSION.parse().unwrap();
+    let mut rows = rows("rows-facade-stale");
+    let mut state = ControlState::default();
+    let old = state.replace(&vm);
+    assert!(apply(
+        &mut rows,
+        &vm,
+        state.ready(&vm, old, ready(READY).unwrap())
+    ));
+    let new = state.replace(&vm);
+    assert!(apply(
+        &mut rows,
+        &vm,
+        state.ready(&vm, new, ready(READY).unwrap())
+    ));
+
+    let exited = r#"{"exited":{"last_turn_end":{"title":"Late","updated_at":9000},"starts":1}}"#;
+    assert!(!apply(
+        &mut rows,
+        &vm,
+        state.report(&vm, old, facade(exited))
+    ));
+    let untitled = (serde_json::Value::Null, serde_json::json!(1000));
+    assert_eq!(title_and_time(&rows, &vm), untitled);
+    assert_eq!(state.facade(&vm), Some(&ready(READY).unwrap().facade));
+
+    assert!(apply(
+        &mut rows,
+        &vm,
+        state.report(&vm, new, facade(exited))
+    ));
+    let late = (serde_json::json!("Late"), serde_json::json!(9000));
+    assert_eq!(title_and_time(&rows, &vm), late);
+    assert_eq!(state.facade(&vm), Some(&facade(exited)));
+}
+
+/// A facade that leaves `running` clears `turn_running`, so a facade that
+/// exits mid-turn blocks no snapshot (decision CH62 rule 11). A `running`
+/// line sets the flag that it holds.
+#[test]
+fn leaving_running_clears_turn_running() {
+    let vm: SessionId = SESSION.parse().unwrap();
+    let mut state = ControlState::default();
+    let link = state.replace(&vm);
+    let _ = state.ready(&vm, link, ready(READY).unwrap());
+    let start: TurnEvent = serde_json::from_str(r#"{"start":{}}"#).unwrap();
+    let left = [
+        r#"{"exited":{"last_turn_end":null,"starts":1}}"#,
+        r#"{"starting":{"last_turn_end":null,"pid":43,"starts":2}}"#,
+        r#"{"not_started":{}}"#,
+    ];
+    for json in left {
+        assert_eq!(state.turn(&vm, link, &start), Change::Applied(None));
+        assert!(state.turn_running(&vm));
+        assert_eq!(state.report(&vm, link, facade(json)), Change::Applied(None));
+        assert!(!state.turn_running(&vm), "{json}");
+        assert_eq!(state.facade(&vm), Some(&facade(json)));
+    }
+
+    let busy = r#"{"running":{"last_turn_end":null,"pid":44,"starts":3,"turn_running":true}}"#;
+    let _ = state.report(&vm, link, facade(busy));
+    assert!(state.turn_running(&vm));
+    let idle = r#"{"running":{"last_turn_end":null,"pid":44,"starts":3,"turn_running":false}}"#;
+    let _ = state.report(&vm, link, facade(idle));
+    assert!(!state.turn_running(&vm));
 }

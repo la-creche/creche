@@ -1044,8 +1044,9 @@ pub struct TurnEnd {
 
 object_only!(TurnEnd);
 
-/// What the facade tells guest init at each turn start and turn end, and
-/// what guest init relays to the vmm on control link 1200 (decision CH21).
+/// What the facade tells guest init at each turn start and turn end, on
+/// its local link (decision CH62 rule 10). Guest init relays it to the vmm
+/// on control link 1200 inside `GuestEvent::Turn` (decision CH21).
 /// At each end the vmm sets the row's `updated_at`, and it sets the row's
 /// `title` only while that is `null`, as `nameOnce` does today. It
 /// snapshots a VM only between an end and the next start (decision CH19
@@ -1281,8 +1282,8 @@ pub struct ControlReady {
 
 object_only!(ControlReady);
 
-/// The most bytes of one line on control link 1200, the LF not counted
-/// (decision CH36 G11). A reader that gets this many bytes and no LF
+/// The most bytes of one line on control link 1200 and on the local link
+/// of guest init, the LF not counted (decisions CH36 G11, CH62 rule 10). A reader that gets this many bytes and no LF
 /// refuses the line. The largest line of each control link type is far
 /// under it. A test holds that.
 // Decision CH43 rule 1: the cap is 64 KiB. That is 32 times the largest
@@ -1302,18 +1303,37 @@ pub struct ControlStop {}
 
 object_only!(ControlStop);
 
+/// The guest sync before a snapshot. It carries nothing (decision CH62
+/// rule 23).
+///
+/// It is a type of its own so that the generated Python model is a class
+/// with no field, as `ControlStop` is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct ControlSync {}
+
+object_only!(ControlSync);
+
 /// What the vmm sends on control link 1200 after `ControlHello` (decision
-/// CH36 G11).
+/// CH36 G11). Guest init sends `stop` on its local link to the facade too
+/// (decision CH62 rule 10).
 ///
 /// `stop` starts the graceful stop of decision CH19 rule 3. Guest init
-/// stops the facade, for up to 30 s when a turn runs. It then syncs the
-/// disks and powers the VM off. The vmm sends SIGTERM, then SIGKILL, only
-/// when the VM does not exit in time, because a kill is a power cut for
-/// the guest.
+/// stops the facade, for up to 25 s when a turn runs (decision CH62 rule
+/// 9). It then syncs the disks and powers the VM off. The vmm sends
+/// SIGTERM, then SIGKILL, only when the VM does not exit in time, because
+/// a kill is a power cut for the guest.
+///
+/// `sync` asks guest init to sync the session disk before a snapshot
+/// (decision CH62 rule 23, item 5.7). Guest init runs `syncfs` of the
+/// session disk, then `sync`, and answers with `GuestEvent::Synced`. A VM
+/// with no `synced` in time gets no snapshot, and the graceful stop runs.
 ///
 /// On the wire the variant name is the one key of an object, and each
 /// variant has a `title` for its class name. An externally tagged enum has
-/// no unit variant, so `stop` holds an empty object (decision CH22 rule 3).
+/// no unit variant, so each variant holds an empty object (decision CH22
+/// rule 3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
@@ -1321,6 +1341,54 @@ pub enum ControlCommand {
     /// Stop the facade, sync and power off.
     #[cfg_attr(test, schemars(title = "ControlStopCommand"))]
     Stop(ControlStop),
+    /// Sync the session disk, then answer `synced`.
+    #[cfg_attr(test, schemars(title = "ControlSyncCommand"))]
+    Sync(ControlSync),
+}
+
+/// The answer of guest init to `ControlCommand::Sync`: the session disk
+/// and every other disk are synced (decision CH62 rule 23). It carries
+/// nothing.
+///
+/// It is a type of its own so that the generated Python model is a class
+/// with no field, as `ControlStop` is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct ControlSynced {}
+
+object_only!(ControlSynced);
+
+/// What guest init sends on control link 1200 after `ControlReady`, each
+/// at any time (decisions CH21, CH36 G11).
+///
+/// 1. `facade`: the facade state changed (decision CH19 rule 2). Guest init
+///    sends each change, so the vmm sees a facade that opened its local
+///    link and is up (decision CH32 rule 6). The vmm applies it as it
+///    applies the state of `ControlReady`.
+/// 2. `synced`: the answer to `ControlCommand::Sync` (decision CH62 rule
+///    23).
+/// 3. `turn`: a turn event of the facade, relayed (decision CH21). The
+///    facade sends the bare `TurnEvent` on its local link, and guest init
+///    nests it here (decision CH62 rules 10 and 11). A turn event with no
+///    control link open is dropped, and the next `ControlReady` carries
+///    the last `TurnEnd`.
+///
+/// On the wire the variant name is the one key of an object, and each
+/// variant has a `title` for its class name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub enum GuestEvent {
+    /// The facade state after a change.
+    #[cfg_attr(test, schemars(title = "GuestFacadeEvent"))]
+    Facade(FacadeState),
+    /// The disks are synced.
+    #[cfg_attr(test, schemars(title = "GuestSyncedEvent"))]
+    Synced(ControlSynced),
+    /// A turn started or ended.
+    #[cfg_attr(test, schemars(title = "GuestTurnEvent"))]
+    Turn(TurnEvent),
 }
 
 family_name!(
@@ -1841,9 +1909,9 @@ pub enum FamilyStateReply {
 #[cfg(test)]
 mod tests {
     use super::{
-        CONTROL_LINE_CAP, ControlReady, FamilySkills, HOST_API_BODY_CAP, JS_INTEGER_MAX,
-        ListCursor, LitellmKey, PepToken, SESSION_ID_PATTERN, SessionId, SessionIdError,
-        SessionPage,
+        CONTROL_LINE_CAP, ControlReady, FamilySkills, GuestEvent, HOST_API_BODY_CAP,
+        JS_INTEGER_MAX, ListCursor, LitellmKey, PepToken, SESSION_ID_PATTERN, SessionId,
+        SessionIdError, SessionPage,
     };
 
     const GOOD: &str = "3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b";
@@ -1876,9 +1944,11 @@ mod tests {
 
     /// The largest line of the control link is under 1/32 of its cap
     /// (decision CH36 G11). A running facade with a title of 256 control
-    /// characters is the largest `ControlReady`, and `ControlReady` is the
-    /// largest type of the link. serde_json writes no LF in a value, so
-    /// one value fills one line.
+    /// characters is the largest `ControlReady`. The `facade` line of
+    /// `GuestEvent` holds the same state under the same key, so it has the
+    /// same bytes. The two are the largest types of the link and of the
+    /// local link. serde_json writes no LF in a value, so one value fills
+    /// one line.
     #[test]
     fn the_largest_control_line_is_far_under_its_cap() {
         let ready = serde_json::json!({"facade": {"running": {
@@ -1889,7 +1959,9 @@ mod tests {
         }}});
         let ready: ControlReady = serde_json::from_value(ready).unwrap();
         let line = serde_json::to_vec(&ready).unwrap();
+        let event = serde_json::to_vec(&GuestEvent::Facade(ready.facade)).unwrap();
 
+        assert_eq!(event, line);
         assert!(!line.contains(&b'\n'));
         assert!(line.len() < CONTROL_LINE_CAP / 32, "{} bytes", line.len());
     }

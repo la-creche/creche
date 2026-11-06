@@ -214,6 +214,16 @@
       "note": "a stop with whitespace"
     },
     {
+      "json": "{\"sync\":{}}",
+      "written": "{\"sync\":{}}",
+      "note": "a sync"
+    },
+    {
+      "json": "{\"sync\": {} }",
+      "written": "{\"sync\":{}}",
+      "note": "a sync with whitespace"
+    },
+    {
       "json": "\"stop\"",
       "written": null,
       "note": "a variant as a string, the unit form"
@@ -272,6 +282,41 @@
       "json": "{\"sent_at\":1793577660000,\"session\":\"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b\"}",
       "written": null,
       "note": "a hello, which comes before each command"
+    },
+    {
+      "json": "\"sync\"",
+      "written": null,
+      "note": "a sync as a string, the unit form"
+    },
+    {
+      "json": "{\"stop\":{},\"sync\":{}}",
+      "written": null,
+      "note": "two variants"
+    },
+    {
+      "json": "{\"sync\":null}",
+      "written": null,
+      "note": "a sync as null"
+    },
+    {
+      "json": "{\"sync\":[]}",
+      "written": null,
+      "note": "a sync as an array, the array form of a struct"
+    },
+    {
+      "json": "{\"sync\":{\"x\":1}}",
+      "written": null,
+      "note": "a sync with a key"
+    },
+    {
+      "json": "{\"synced\":{}}",
+      "written": null,
+      "note": "a synced line, which guest init sends and the vmm never does"
+    },
+    {
+      "json": "{\"turn\":{\"start\":{}}}",
+      "written": null,
+      "note": "a turn line, which guest init sends and the vmm never does"
     }
   ],
   "ControlHello": [
@@ -473,6 +518,60 @@
       "json": "[]",
       "written": null,
       "note": "an empty array, the array form of a struct"
+    }
+  ],
+  "ControlSync": [
+    {
+      "json": "{}",
+      "written": "{}",
+      "note": "the empty object"
+    },
+    {
+      "json": "{\"x\":1}",
+      "written": null,
+      "note": "a key"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an empty array, the array form of a struct"
+    },
+    {
+      "json": "true",
+      "written": null,
+      "note": "a boolean"
+    }
+  ],
+  "ControlSynced": [
+    {
+      "json": "{}",
+      "written": "{}",
+      "note": "the empty object"
+    },
+    {
+      "json": "{\"x\":1}",
+      "written": null,
+      "note": "a key"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an empty array, the array form of a struct"
+    },
+    {
+      "json": "true",
+      "written": null,
+      "note": "a boolean"
     }
   ],
   "CreateError": [
@@ -2292,6 +2391,168 @@
       "json": "null",
       "written": null,
       "note": "null"
+    }
+  ],
+  "GuestEvent": [
+    {
+      "json": "{\"facade\":{\"running\":{\"last_turn_end\":null,\"pid\":412,\"starts\":1,\"turn_running\":false}}}",
+      "written": "{\"facade\":{\"running\":{\"last_turn_end\":null,\"pid\":412,\"starts\":1,\"turn_running\":false}}}",
+      "note": "a facade that opened its local link"
+    },
+    {
+      "json": "{\"facade\":{\"starting\":{\"starts\":2,\"pid\":413,\"last_turn_end\":{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}}}}",
+      "written": "{\"facade\":{\"starting\":{\"last_turn_end\":{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000},\"pid\":413,\"starts\":2}}}",
+      "note": "a restarted facade, its keys in any order"
+    },
+    {
+      "json": "{\"facade\":{\"exited\":{\"last_turn_end\":{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000},\"starts\":1}}}",
+      "written": "{\"facade\":{\"exited\":{\"last_turn_end\":{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000},\"starts\":1}}}",
+      "note": "a facade that exited keeps the last turn end"
+    },
+    {
+      "json": "{\"facade\":{\"not_started\":{}}}",
+      "written": "{\"facade\":{\"not_started\":{}}}",
+      "note": "the bytes of the ready of a cold boot: the vmm reads a ready only first on a link, and a guest event only after it"
+    },
+    {
+      "json": "{\"synced\":{}}",
+      "written": "{\"synced\":{}}",
+      "note": "the answer to a sync"
+    },
+    {
+      "json": "{\"turn\":{\"start\":{}}}",
+      "written": "{\"turn\":{\"start\":{}}}",
+      "note": "a turn start"
+    },
+    {
+      "json": "{\"turn\":{\"end\":{\"updated_at\":1793577660000,\"title\":\"Fix the boiler alert\"}}}",
+      "written": "{\"turn\":{\"end\":{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}}}",
+      "note": "a turn end, its keys in any order"
+    },
+    {
+      "json": "{\"start\":{}}",
+      "written": null,
+      "note": "a bare turn start, the line of the local link"
+    },
+    {
+      "json": "{\"end\":{\"title\":\"Fix the boiler alert\",\"updated_at\":1793577660000}}",
+      "written": null,
+      "note": "a bare turn end, the line of the local link"
+    },
+    {
+      "json": "{\"facade\":{\"not_started\":{}},\"synced\":{}}",
+      "written": null,
+      "note": "two variants"
+    },
+    {
+      "json": "{\"synced\":{},\"synced\":{}}",
+      "written": null,
+      "note": "a variant given twice"
+    },
+    {
+      "json": "{}",
+      "written": null,
+      "note": "an object with no variant"
+    },
+    {
+      "json": "\"synced\"",
+      "written": null,
+      "note": "a variant as a string, the unit form"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an empty array"
+    },
+    {
+      "json": "{\"Synced\":{}}",
+      "written": null,
+      "note": "a variant name in the wrong case"
+    },
+    {
+      "json": "{\"synced\":null}",
+      "written": null,
+      "note": "a synced as null"
+    },
+    {
+      "json": "{\"synced\":[]}",
+      "written": null,
+      "note": "a synced as an array, the array form of a struct"
+    },
+    {
+      "json": "{\"synced\":{\"x\":1}}",
+      "written": null,
+      "note": "a synced with a key"
+    },
+    {
+      "json": "{\"facade\":null}",
+      "written": null,
+      "note": "a null facade"
+    },
+    {
+      "json": "{\"facade\":{}}",
+      "written": null,
+      "note": "a facade with no state"
+    },
+    {
+      "json": "{\"facade\":\"not_started\"}",
+      "written": null,
+      "note": "a facade state as a string"
+    },
+    {
+      "json": "{\"facade\":{\"running\":{\"pid\":412,\"starts\":1,\"turn_running\":false}}}",
+      "written": null,
+      "note": "a running facade with no last_turn_end"
+    },
+    {
+      "json": "{\"facade\":{\"facade\":{\"not_started\":{}}}}",
+      "written": null,
+      "note": "a ready inside a facade line"
+    },
+    {
+      "json": "{\"facade\":{\"exited\":{\"last_turn_end\":null,\"pid\":412,\"starts\":1}}}",
+      "written": null,
+      "note": "an exited facade with a pid"
+    },
+    {
+      "json": "{\"turn\":null}",
+      "written": null,
+      "note": "a null turn"
+    },
+    {
+      "json": "{\"turn\":{}}",
+      "written": null,
+      "note": "a turn with no event"
+    },
+    {
+      "json": "{\"turn\":{\"turn\":{\"start\":{}}}}",
+      "written": null,
+      "note": "a turn line nested twice"
+    },
+    {
+      "json": "{\"turn\":{\"start\":[]}}",
+      "written": null,
+      "note": "a turn start as an array, the array form of a struct"
+    },
+    {
+      "json": "{\"turn\":{\"end\":{\"title\":\"Fix the boiler alert\"}}}",
+      "written": null,
+      "note": "a turn end with no time"
+    },
+    {
+      "json": "{\"stop\":{}}",
+      "written": null,
+      "note": "a command, which the vmm sends and guest init never does"
+    },
+    {
+      "json": "{\"sync\":{}}",
+      "written": null,
+      "note": "a sync, which the vmm sends and guest init never does"
     }
   ],
   "JobId": [
