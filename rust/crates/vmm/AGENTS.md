@@ -177,6 +177,32 @@ from the claim to its end, then the time that the last admitted Upgrade
 ended. A refused Upgrade records no close, so the map of close times
 grows only with sessions that ran. A drop clears the time.
 
+## The create and list routes
+
+`src/handlers/create.rs` serves `create` (plan PR L7, decisions CH21-4,
+CH25 rule 2). It first reads the family with `FamilyRoot::exists` of
+`creche-vmm-confine`. A family with no `config/` dir gets
+`unknown_family` 404 (decision CH33 rule 3). Then `Rows::create` of
+`creche-vmm-store` makes the row. The same typed request gives the same
+row, and a different one gives `conflict` 409 (decision CH33 rule 12).
+The family read can sleep between its tries (decision CH50 rule 9), and
+the row write syncs a file and a dir. So both run in `spawn_blocking`
+(decision CH36 G21). The first family read holds no lock of the rows.
+caregiver removes the family files, then drops the family (decision
+CH33 rule 3). So create reads the family a second time under the lock
+of the rows, before the write. A drop of the family then sees the new
+row, or that read sees no family, and no row outlives its family. A
+create makes no session disk and boots no VM: the first boot makes the
+disk (decision CH21-4).
+
+`src/handlers/list.rs` serves `list` (decisions CH21-5, CH21-7). It
+answers `Rows::page` from memory, on the runtime worker, so a list boots
+no VM. The request type requires `family` (decision CH34 rule 4). A page
+ends early under the 1 MiB cap with a `next` (decision CH33 rule 2).
+`tests/create_list.rs` proves a repeat create, a conflict, an unknown
+family, a repeat after the family went, `internal` for a failed family
+read or row write, and a page of 4096-character cwds that ends early.
+
 ## The stop
 
 `src/stop.rs` stops one VM (decisions CH19 (3), CH34 rule 5). It sends
@@ -570,14 +596,17 @@ no guest sync.
     after its last use.
 12. Closed by decision CH54 rule 5: the sweep runs at the start of
     `sleep::run`, then each hour (`sleep::SWEEP_EVERY`).
-13. CONTRACT-QUESTION (decisions CH21-3, CH55): no row says whether
+13. Closed by decision CH57 rules 3 and 4 (plan PR L7): a family dir or
+    `config` that is a symlink or a file gets `unknown_family`, and a
+    repeat create whose family `config/` is gone gets `unknown_family`.
+14. CONTRACT-QUESTION (decisions CH21-3, CH55): no row says whether
     admission evicts an idle VM to free a slot (`src/start.rs`). The
     narrowest reading evicts for RAM only, and no free slot gives
     `host_full`. 64 slots cover 40 VMs of 2 GiB under the 80 GiB cap
     (item 45 C3), but a smaller VM shape fills the slots first. Then an
     idle VM keeps its slot, and a new start gets `host_full`. A change
     adds a slot gate to `admission::decide`.
-14. CONTRACT-QUESTION (decision CH36 G21): decision CH36 G21 puts
+15. CONTRACT-QUESTION (decision CH36 G21): decision CH36 G21 puts
     blocking work in `spawn_blocking`.
     `release` runs `RunRoot::unlink_vm` under the table lock
     (`src/start.rs`), so that no start of the session links first. It is
