@@ -23,8 +23,11 @@
 //! 4. A second snapshot to a new generation. The first one stays
 //!    byte-identical (fact 55).
 //! 5. A restore of the second one, then a SIGKILL of the vmm stand-in. CH
-//!    dies by its death signal and leaves no scope (decision CH19 (4), the
-//!    phase 2 proof line).
+//!    is meant to die by its death signal and leave no scope (decision
+//!    CH19 (4), the phase 2 proof line). This step fails today: AppArmor
+//!    clears the death signal at the exec into the slot label (the
+//!    CONTRACT-QUESTION in the crate AGENTS.md). The step proves the
+//!    mechanism that David picks there.
 //!
 //! The busybox guest has no guest init, so the control link, ControlReady
 //! and the guest `sync` before a snapshot wait for phase 3. The test reads
@@ -34,6 +37,7 @@
 #![cfg(target_os = "linux")]
 
 mod kvm;
+mod scope_guard;
 
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -62,6 +66,7 @@ use creche_vmm_store::stale::remove_stale;
 use creche_wire::{FamilyShape, SessionId};
 
 use kvm::{BOOT, Vm, booted, files};
+use scope_guard::ScopeGuard;
 
 const ID: &str = "0123abcd-0000-4000-8000-0000000c16c1";
 
@@ -185,6 +190,15 @@ fn checked_ch(ch: &Path, work: &Path) -> CheckedCh {
         }
         Err(error) => panic!("cloud-hypervisor --version: {error:?}"),
     }
+}
+
+/// A vmm stand-in that holds one CH. A drop kills the stand-in, then the
+/// scope of the VM with CH in it. Each test takes it after its `Setup`,
+/// so it drops first.
+struct Held {
+    vmm: Vm,
+    _scope: ScopeGuard,
+    pid: u32,
 }
 
 /// One session: the store copies, the session disk and the VM link in
@@ -336,9 +350,12 @@ impl Setup {
         .in_slot(slot)
     }
 
-    /// Starts the vmm stand-in with `launch`. Returns it, killed on drop,
-    /// and the pid that becomes CH.
-    fn hold(&self, launch: &Launch) -> (Vm, u32) {
+    /// Starts the vmm stand-in with `launch`. Returns it with the guard
+    /// of the VM scope, both killed on drop, and the pid that becomes CH.
+    /// The guard comes first, so a failed assert in any phase leaves no
+    /// CH and no scope.
+    fn hold(&self, launch: &Launch) -> Held {
+        let scope = ScopeGuard::new(&self.id);
         let mut vmm = Vm(Command::new(example())
             .arg("hold")
             .stdin(Stdio::piped())
@@ -353,7 +370,11 @@ impl Setup {
         BufReader::new(vmm.0.stdout.take().unwrap())
             .read_line(&mut line)
             .unwrap();
-        (vmm, line.trim().parse().unwrap())
+        Held {
+            vmm,
+            _scope: scope,
+            pid: line.trim().parse().unwrap(),
+        }
     }
 
     /// Waits for the marker of a cold boot, then checks the label of
@@ -456,16 +477,18 @@ fn kvm_vm_snapshot_restore_kill() {
 
     // 1 and 2: a cold boot in its scope, then a snapshot.
     let [boot, restore, last] = SLOTS.map(|slot| Slot::new(slot).unwrap());
-    let (vmm, pid) = setup.hold(&setup.boot(boot));
+    let held = setup.hold(&setup.boot(boot));
+    let pid = held.pid;
     setup.wait_booted(pid, boot);
     setup.check_scope(pid);
     let first = setup.snapshot(pid);
-    drop(vmm);
+    drop(held);
     let first_files = snapshot_files(&first.dir);
     let first_digests = digests(&first_files);
 
     // 3: a copy-on-write restore in a new slot. The guest runs on.
-    let (vmm, pid) = setup.hold(&setup.restore(setup.claim(&first), restore));
+    let held = setup.hold(&setup.restore(setup.claim(&first), restore));
+    let pid = held.pid;
     setup.wait_running(pid, restore);
     setup.check_scope(pid);
     let maps = fs::read_to_string(format!("/proc/{pid}/maps")).unwrap();
@@ -480,16 +503,19 @@ fn kvm_vm_snapshot_restore_kill() {
 
     // 4: a second snapshot to a new generation.
     let second = setup.snapshot(pid);
-    drop(vmm);
+    drop(held);
     assert_eq!(second.generation.0, first.generation.0 + 1);
     assert_eq!(digests(&first_files), first_digests);
 
-    // 5: a SIGKILL of the vmm takes CH under its label and its scope down.
-    let (mut vmm, pid) = setup.hold(&setup.restore(setup.claim(&second), last));
+    // 5: a SIGKILL of the vmm is meant to take CH and its scope down.
+    // This fails today under the slot label (the CONTRACT-QUESTION in the
+    // crate AGENTS.md).
+    let mut held = setup.hold(&setup.restore(setup.claim(&second), last));
+    let pid = held.pid;
     setup.wait_running(pid, last);
     assert!(!setup.units().trim().is_empty(), "no VM scope");
-    vmm.0.kill().unwrap();
-    vmm.0.wait().unwrap();
+    held.vmm.0.kill().unwrap();
+    held.vmm.0.wait().unwrap();
     until("CH death after the vmm kill", || !running(pid));
     until("scope removal", || setup.units().trim().is_empty());
 }

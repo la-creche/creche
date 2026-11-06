@@ -198,10 +198,11 @@ table of the three vmm crates.
   scope with the C4 limits, under the slot label and the ruleset, a
   snapshot with dug holes, the key and the claim, a copy-on-write
   restore, a second snapshot, then a restore and a SIGKILL of the
-  stand-in, which takes CH and its scope down. Each start takes a new slot
-  with `RunRoot::link_vm` and runs `remove_stale`, as the start of
-  `rust/crates/vmm/src/start.rs` does, so each restore moves the VM to
-  another slot. The ruleset grants no right to remove a file, so CH
+  stand-in. Step 5, the SIGKILL, checks that CH and its scope go down.
+  It fails today for the reason of the first Known gap. Each start takes
+  a new slot with `RunRoot::link_vm` and runs `remove_stale`, as the
+  start of `rust/crates/vmm/src/start.rs` does, so each restore moves the
+  VM to another slot. The ruleset grants no right to remove a file, so CH
   cannot unlink its own sockets, and a stale `vsock.sock` would fail the
   next start (fact 75).
 
@@ -216,7 +217,9 @@ table of the three vmm crates.
   `systemd-run` or the launch stage. In the job `kvm`, CH runs on after a
   drop of the spawner and after a SIGKILL of the vmm
   (`kvm_ch_dies_with_the_spawner_thread`, `kvm_ch_dies_with_a_killed_vmm`
-  fail). No row picks the replacement. The options:
+  fail). Step 5 of `kvm_vm_snapshot_restore_kill` checks the same kill
+  after a restore, so it fails too. No row picks the replacement. The
+  options:
   1. A scope bound to the vmm unit (`BindsTo=creche-vmm.service`). It
      drops the kill path of the spawner thread. The job `kvm` then needs
      a stand-in `creche-vmm.service`, and
@@ -240,11 +243,12 @@ table of the three vmm crates.
      for the steps of the stage after the change.
   3. A resident stage that kills CH when the vmm dies.
   4. A cgroup that the vmm unit delegates.
-  Until David decides, the two tests stay red and CH56 rule 2 does not
+  Until David decides, the three tests stay red and CH56 rule 2 does not
   hold. The chosen fix also updates each text that relies on the death
   signal of CH: the module doc, the `Drop` doc and the `serve` comment
   of `src/spawner.rs`, the doc of `tests/launch.rs`, the role `hold` of
-  `examples/launch_chain.rs`, the two tests of `tests/kvm_slot.rs`,
+  `examples/launch_chain.rs`, the two tests of `tests/kvm_slot.rs`, step 5
+  of `tests/kvm_vm.rs`,
   `SHUTDOWN_WAIT` and the deadline comment of
   `rust/crates/vmm/src/shutdown.rs`, and the `SHUTDOWN_WAIT` paragraph
   of `rust/crates/vmm/AGENTS.md`.
