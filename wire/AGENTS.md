@@ -146,8 +146,9 @@ holds the two equal. The file also holds `family_state_cap`, the value of
 `FAMILY_STATE_CAP` in `lib.rs` (decision CH23 rule 4). A phase 6 agent
 test reads the file to hold its own copies equal, `STATE_REPLY_CAP` of
 `agent/src/family-state.ts` among them. Change a value in the constant
-and in the file together. A changed value needs a new
-`GUEST_INIT_PROTOCOL` once guest init is deployed (decision CH14).
+and in the file together. After the first deploy, a change of a bridge
+row value (the ports 4000 and 8300, the family-state socket) needs a new
+`GUEST_INIT_PROTOCOL` (decision CH62 rule 15).
 
 ## A struct on the wire
 
