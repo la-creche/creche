@@ -1000,6 +1000,25 @@ fn the_sweep_skips_a_snapshot_in_use() {
     assert!(!dir.exists());
 }
 
+/// The sweep reads the budget of `StartConfig`, the key
+/// `VMM_SNAPSHOT_BUDGET_GIB` (gap G14). A budget of 1 byte drops a keyed
+/// generation that `BUDGET` keeps.
+#[test]
+fn the_sweep_drops_past_the_config_budget() {
+    let test = Test::new("budget-design", |_| {});
+    let dir = test.snapshot(0, Some(&test.key()));
+    let swept = test.runtime.block_on(test.hook.sweep()).unwrap();
+    assert!(swept.dropped.is_empty());
+    assert!(dir.is_dir());
+
+    let test = Test::new("budget-small", |config| config.budget = 1);
+    let dir = test.snapshot(0, Some(&test.key()));
+    let swept = test.runtime.block_on(test.hook.sweep()).unwrap();
+    let reasons: Vec<Reason> = swept.dropped.iter().map(|each| each.reason).collect();
+    assert_eq!(reasons, [Reason::Budget]);
+    assert!(!dir.exists());
+}
+
 /// A start that is dropped during its launch leaves no CH outside the
 /// table. The launch output holds the process, and its drop kills the VM
 /// and keeps it in the table (decisions CH8-6, CH50 rule 4). The next
