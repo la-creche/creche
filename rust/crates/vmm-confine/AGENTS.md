@@ -256,8 +256,8 @@ table of the three vmm crates.
 
 ## Known gaps
 
-- OPEN, needs a decision row before #444 merges: a restore cannot read
-  the initramfs. CH v54 opens the initramfs of the snapshot config on a
+- OPEN (open item 53, Q53-3), needs a decision row before #444 merges:
+  a restore cannot read the initramfs. CH v54 opens the initramfs of the snapshot config on a
   restore, and `landlock::rules` grants the kernel and the initramfs
   only for `Start::Boot`. So step 3 of `tests/kvm_vm.rs` fails with
   `VM Restore failed: InitramfsFile(... PermissionDenied)` (CI run
