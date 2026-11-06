@@ -21,8 +21,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import stat
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -33,6 +35,7 @@ from attendance.auth import Principal
 REPO_ROOT: Final = Path(__file__).resolve().parents[2]
 SCRIPT: Final = REPO_ROOT / "bin" / "fleet-up"
 UNIT_SOURCE: Final = REPO_ROOT / "systemd"
+VMM_CONFIG: Final = REPO_ROOT / "rust" / "crates" / "vmm" / "src" / "config.rs"
 
 STATE: Final = "srv/agents/state/creche"
 MASTER_KEY: Final = "sk-fleet-up-test-master-key-0123456789abcdef"
@@ -51,6 +54,7 @@ UNITS: Final = (
     "creche-door-acp.service",
     "creche-door-trigger.service",
     "creche-door-trigger@.service",
+    "creche-vmm.service",
 )
 
 #: The units `up` enables and starts. A template and a service that a
@@ -61,6 +65,7 @@ ENABLED: Final = (
     "creche-noticeboard.service",
     "creche-door-acp.service",
     "creche-door-trigger.service",
+    "creche-vmm.service",
 )
 
 DIRS: Final = (
@@ -75,7 +80,14 @@ DIRS: Final = (
     "sock",
 )
 
-ENV_FILES: Final = ("attendance.env", "noticeboard.env", "caregiver.env")
+ENV_FILES: Final = ("attendance.env", "noticeboard.env", "caregiver.env", "vmm.env")
+
+#: The key of `config.rs` that systemd sets from `RuntimeDirectory=`. No
+#: env file holds it (decision CH59 rule 1).
+RUN_ROOT_KEY: Final = "RUNTIME_DIRECTORY"
+
+#: The file of the disk release that the vmm needs to start.
+DIGESTS: Final = "opt/components/disks/digests.json"
 
 #: The `systemctl` verbs that change nothing.
 READ_ONLY_VERBS: Final = frozenset({"is-enabled", "is-active", "show"})
@@ -244,6 +256,13 @@ def ready(tmp_path: Path) -> Host:
         tree.mkdir(parents=True)
         (tree / ".release-version").write_text("0.1.50\n", encoding="utf-8")
 
+    vmm = host.prefix / "opt/components/vmm"
+    vmm.mkdir(parents=True)
+    (vmm / ".release-version").write_text("0.1.1\n", encoding="utf-8")
+    digests = host.prefix / DIGESTS
+    digests.parent.mkdir(parents=True)
+    digests.write_text("{}\n", encoding="utf-8")
+
     handover = host.prefix / "opt/components/handover"
     handover.mkdir(parents=True)
     (handover / ".release-version").write_text("0.1.30\n", encoding="utf-8")
@@ -279,6 +298,43 @@ def _mode(path: Path) -> int:
 
 def _fail_lines(done: subprocess.CompletedProcess[str]) -> list[str]:
     return [line for line in done.stdout.splitlines() if line.startswith("FAIL: ")]
+
+
+def _vmm_keys() -> set[str]:
+    """Each key that the vmm reads from its env, from `config.rs`."""
+    pattern = r'^pub const [A-Z0-9_]+: &str = "([A-Z0-9_]+)";$'
+    keys = set(re.findall(pattern, VMM_CONFIG.read_text(encoding="utf-8"), re.MULTILINE))
+    assert RUN_ROOT_KEY in keys, "config.rs no longer reads the run root"
+
+    return keys - {RUN_ROOT_KEY}
+
+
+def _catalog_value(key: str, site: str) -> str:
+    """The value of one key as `creche-env get` resolves it."""
+    done = subprocess.run(
+        [sys.executable, "-m", "creche_env", "get", key, "--env", site],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    )
+
+    return done.stdout.removesuffix("\n")
+
+
+def _env_pairs(path: Path) -> dict[str, str]:
+    """Each `KEY=value` line of an env file. A key twice fails."""
+    pairs: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("#"):
+            continue
+
+        key, sign, value = line.partition("=")
+        assert sign, f"{path.name}: not a KEY=value line: {line!r}"
+        assert key not in pairs, f"{path.name}: {key} twice"
+        pairs[key] = value
+
+    return pairs
 
 
 # --- check ------------------------------------------------------------------
@@ -379,6 +435,55 @@ def test_up_writes_the_env_files_at_0600(ready: Host) -> None:
     for name in ("attendance.env", "noticeboard.env"):
         text = (ready.state / name).read_text(encoding="utf-8")
         assert "KEY=" not in text.replace("ACCESS_KEY_FILE=", ""), name
+
+
+def test_up_writes_each_vmm_key_as_the_catalog_resolves_it(ready: Host) -> None:
+    """CH59 rule 1: `vmm.env` holds each key of `config.rs` but the run
+    root, with the value of `creche-env get`. A missing key, an extra key
+    and a wrong value each fail."""
+    assert ready.run("up").returncode == 0
+
+    pairs = _env_pairs(ready.state / "vmm.env")
+
+    assert set(pairs) == _vmm_keys()
+    site = os.environ["AGENT_SITE_FILE"]
+    for key, value in pairs.items():
+        assert value == _catalog_value(key, site), key
+
+
+def test_a_site_value_reaches_vmm_env(ready: Host, tmp_path: Path) -> None:
+    """The site file overrides the catalog, and `vmm.env` follows it."""
+    site = tmp_path / "site.env"
+    example = Path(os.environ["AGENT_SITE_FILE"]).read_text(encoding="utf-8")
+    site.write_text(example + "VMM_RAM_CAP_GIB=12\n", encoding="utf-8")
+
+    assert ready.run("up", AGENT_SITE_FILE=str(site)).returncode == 0
+
+    assert _env_pairs(ready.state / "vmm.env")["VMM_RAM_CAP_GIB"] == "12"
+
+
+def test_the_vmm_waits_for_its_digests(ready: Host) -> None:
+    """The vmm refuses to start with no `digests.json`, and stays stopped."""
+    (ready.prefix / DIGESTS).unlink()
+
+    done = ready.run("up")
+
+    assert done.returncode == PENDING, done.stdout + done.stderr
+    assert "digests.json" in done.stdout
+    assert (ready.unit_dir / "creche-vmm.service").exists()
+    assert "creche-vmm.service" not in ready.enabled.read_text(encoding="utf-8")
+
+
+def test_the_vmm_waits_for_its_tree(ready: Host) -> None:
+    tree = ready.prefix / "opt/components/vmm"
+    (tree / ".release-version").unlink()
+    tree.rmdir()
+
+    done = ready.run("up")
+
+    assert done.returncode == PENDING, done.stdout + done.stderr
+    assert "handover request vmm" in done.stdout
+    assert not (ready.unit_dir / "creche-vmm.service").exists()
 
 
 def test_up_never_writes_hooks_env(ready: Host) -> None:

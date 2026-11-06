@@ -41,7 +41,7 @@ DECIDED = [
     (
         "EnvironmentFile",
         ["/srv/agents/state/creche/vmm.env", "/etc/creche/site.env"],
-        "G5 option A, the site file last",
+        "CH59 rule 1, the site file last",
     ),
 ]
 

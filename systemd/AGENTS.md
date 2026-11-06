@@ -11,7 +11,7 @@ from this directory at run time. The root `AGENTS.md` applies here too.
 | `creche-door-acp.service` | user | no script yet. The door ships in `attendance` |
 | `creche-memory.service` | user | no script yet. The memory component ships it |
 | `creche-door-trigger@.service` | user, templated | the cutover script, only when the host has none |
-| `creche-vmm.service` | user | no script yet. The operator installs it by hand once (design section 6.2 step 3). No agent installs it |
+| `creche-vmm.service` | user | `bin/fleet-up up`, which the operator runs. No agent installs it |
 The host's own units are not here: the watchdog, the registry sync, the
 corpus sync, the drift check, `creche-library@` and follow. They are files
 of creche-release (`units/user/`), and a `host` release links each one into
@@ -72,38 +72,27 @@ file's removal is always a human verb.
    creche-release, not here.
 5. Name it in the root `README.md`, section 3.
 
-## Known gaps
+## Caller duties
 
-1. CONTRACT-QUESTION: the env file of `creche-vmm.service`. Gap G5
-   option A (decision CH36) says the keys of the vmm are "rendered into
-   the unit from the site file", and no row names the renderer. The vmm
-   compiles in no default, and the site file holds only overrides. The
-   reading taken: the unit reads
-   `/srv/agents/state/creche/vmm.env`, as the other user units read their
-   own env file. The file holds each key of
-   `rust/crates/vmm/src/config.rs` except `RUNTIME_DIRECTORY`, as
-   `creche-env get` resolves it against the site file. No script writes
-   the file yet, and no script installs the unit. A proposal: `fleet-up up`
-   writes the file with `creche_env_get`, as it writes `noticeboard.env`,
-   and installs the unit. Until then the start fails, and the vmm never
-   runs with a guessed value.
-2. Plan risk 5: the unit sets `NoNewPrivileges`, so no_new_privs is set
-   when the launch stage writes the AppArmor exec attribute. The kvm job
-   sets it after that write, as the stage does (decision CH55). No job
-   proves the order under the unit. The pre-cut proof (decision CH47)
-   runs the vmm by hand with the unit stopped, so the first start of the
-   unit on the host is also its first run in this order. A refused write
-   fails the launch closed (decision CH55), so a wrong order starts no
-   VM and lets no VM run unconfined.
-3. CONTRACT-QUESTION: the lifetime of `serial.log` under
-   `creche-vmm.service`. Each VM's `serial.log` lives in the run root
-   (decision CH41 Q39-2, `rust/crates/vmm-store/src/layout.rs`). Gap G23
-   keeps it until the next start, and `layout.rs` keeps it until a VM next
-   takes the slot. The unit keeps the default
+1. The rework of #443 (plan PR C15) proves the order under
+   `creche-vmm.service` in the job `kvm`. The unit sets
+   `NoNewPrivileges=yes`, so no_new_privs is set before the launch stage
+   writes the AppArmor exec attribute. The stage sets it only after that
+   write (decision CH55). The kvm tests must set no_new_privs before the
+   write, as the unit does, and prove the slot label. A refused write
+   fails the launch closed (decision CH55), so a wrong order starts no VM
+   and lets no VM run unconfined.
+
+## Decided
+
+1. The env file of `creche-vmm.service` is decision CH59 rule 1. The
+   unit reads `/srv/agents/state/creche/vmm.env`, then the site file, so
+   a site value wins. `bin/fleet-up up` writes `vmm.env` with
+   `creche_env_get`: each key of `rust/crates/vmm/src/config.rs` except
+   `RUNTIME_DIRECTORY`.
+2. The lifetime of `serial.log` is decision CH59 rule 2. The unit keeps
    `RuntimeDirectoryPreserve=no`, so systemd removes the run root at each
-   stop and each restart, a crash included. Each `serial.log` is then gone
-   when it matters most. `RuntimeDirectoryPreserve=restart` is no fix: the
-   bind refuses an existing `vmm.sock` (`rust/crates/vmm/src/server/accept.rs`),
-   so the vmm exits 78 and the unit stays stopped. The alternative needs a
-   decision: move `serial.log` out of the run root, for example into the
-   state root.
+   stop and each restart. Plan PR D17 moves each `serial.log` to
+   `sessions/<id>/serial.log` in the state root, kept until the next start
+   of that session (gap G23). Until D17 merges, each stop removes the
+   `serial.log` of each VM.

@@ -117,12 +117,12 @@ each recorded path in reverse order and nothing else.
 | Eight principal token files | `.../rework/tokens/<principal>.token` | operator, 0600 | Only when `up` minted it. |
 | The access key of the noticeboard | `.../rework/tokens/noticeboard-access.key` | operator, 0600 | Only when `up` minted it. |
 | The key of the ACP door | `.../rework/door-acp.key` | operator, 0600 | Only when `up` minted it. |
-| Three env files | `.../rework/{sessiond,view,managerd}.env` | operator, 0600 | Only when `up` made the file. |
+| Four env files | `.../{attendance,noticeboard,caregiver,vmm}.env` | operator, 0600 | Only when `up` made the file. |
 | `families/`, `leases/`, `faults/`, `triggers/`, `triggers/webhooks/`, `log/` | under the state root | operator, 0750 | Only when `up` made it and it is empty. |
 | `sock/` | `.../rework/sock/` | operator, group `agents`, 2750 | Only when `up` made it and it is empty. |
 | `~/.config`, `~/.config/systemd`, `~/.config/systemd/user` | the home of the operator | operator, 0755 | Only when `up` made it and it is empty. |
-| Twelve unit files | `~/.config/systemd/user/` | operator, 0644 | Only when `up` installed it. A file that `up` refreshed stays. |
-| The state "enabled" of eight units | the user manager | | `systemctl --user disable --now`, only for a unit that `up` enabled. |
+| Seven unit files | `~/.config/systemd/user/` | operator, 0644 | Only when `up` installed it. A file that `up` refreshed stays. |
+| The state "enabled" of six units | the user manager | | `systemctl --user disable --now`, only for a unit that `up` enabled. |
 
 **What `up` does with a file that is there before it runs.**
 
@@ -180,6 +180,7 @@ a shell builtin, so the value reaches no argv. It never prints the value.
 | `creche-door-acp.service` | the `attendance` tree | yes |
 | `creche-door-trigger.service` | the `attendance` tree | yes |
 | `creche-door-trigger@.service` | the `attendance` tree | no, it is a template |
+| `creche-vmm.service` | the `vmm` tree, `/opt/components/vmm` | yes, when `digests.json` is in the `VMM_IMAGE_ROOT` of `vmm.env` |
 
 `creche-door-owui.service` is not in the list. The ACP door replaces it.
 

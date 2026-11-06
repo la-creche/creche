@@ -9,9 +9,9 @@
 # or `BindsTo=` (CH19 (4), CH20). A restart of the vmm drops every client
 # link, and each client treats that as transient.
 #
-# Installed by: the operator, by hand, once (design section 6.2 step 3).
-# No agent installs it, and no script does yet. See the CONTRACT-QUESTION
-# at `EnvironmentFile=` and `systemd/AGENTS.md`, Known gaps.
+# Installed by: `bin/fleet-up up`, which the operator runs. It installs
+# the unit when the vmm tree is there, and it starts the unit when the
+# image root holds `digests.json`. No agent installs it.
 [Unit]
 Description=creche-vmm, the owner of every Cloud Hypervisor VM
 # THE REWORK RESTART POLICY, argued in full in
@@ -22,18 +22,15 @@ StartLimitIntervalSec=0
 Type=simple
 Environment=HOME=%h
 Environment=XDG_CONFIG_HOME=%h/.config
-# CONTRACT-QUESTION: gap G5 option A (decision CH36) says the keys are
-# "rendered into the unit from the site file", and no row names the
-# renderer. The vmm compiles in no default (rust/crates/vmm/AGENTS.md, "The
-# config"), and the site file holds only the overrides of the catalog
-# (env/AGENTS.md, "The files" rule 4). The reading taken: the unit reads a
-# second env file, as the other user units do. It holds each key of
+# Decision CH59 rule 1: the vmm compiles in no default
+# (rust/crates/vmm/AGENTS.md, "The config"), and the site file holds only
+# the overrides of the catalog (env/AGENTS.md, "The files" rule 4). So the
+# unit reads `vmm.env` first. It holds each key of
 # `rust/crates/vmm/src/config.rs` except RUNTIME_DIRECTORY, as `creche-env
-# get` resolves it against the site file: paths and sizes, no secret. The
-# unit source stays one file for each host, and a release that refreshes
-# it in place (systemd/AGENTS.md) loses no value. No script writes the file
-# yet. Without it the start fails before the vmm runs. Without a key the
-# vmm exits 78 and names the key. A change costs this line and its writer.
+# get` resolves it against the site file: paths and sizes, no secret.
+# `bin/fleet-up up` writes it with `creche_env_get`, as it writes
+# `noticeboard.env`. Without the file the start fails before the vmm runs.
+# Without a key the vmm exits 78 and names the key.
 EnvironmentFile=/srv/agents/state/creche/vmm.env
 # The site values. The site file comes last, so a value that it sets wins
 # over a stale copy in vmm.env.
@@ -46,9 +43,9 @@ EnvironmentFile=/etc/creche/site.env
 # RuntimeDirectoryPreserve keeps its default, `no`: systemd removes the dir
 # at each stop and each restart, a crash included. The bind refuses a path
 # that exists (rust/crates/vmm/src/server/accept.rs), and the vmm then exits
-# 78, so the dir must be fresh at each start. So each stop also removes the
-# `serial.log` of each VM (decision CH41 Q39-2), against the lifetime of
-# gap G23 and `layout.rs`. CONTRACT-QUESTION: systemd/AGENTS.md, Known gaps.
+# 78, so the dir must be fresh at each start. Each VM's `serial.log` is in
+# the run root until plan PR D17 moves it to `sessions/<id>/` in the state
+# root (decision CH59 rule 2). Until then each stop also removes it.
 RuntimeDirectory=vmm
 RuntimeDirectoryMode=0700
 # The state root: `%S/creche-vmm`, which is ~/.local/state/creche-vmm, the
@@ -105,8 +102,8 @@ TimeoutStopSec=90
 # options need no namespace (systemd/AGENTS.md). The launch stage sets
 # no_new_privs itself before the exec of CH (decision CH55), and the kvm
 # job proves the slot label after it. Under this line no_new_privs is set
-# earlier, at the write of the exec attribute too. No job proves that
-# order yet (plan risk 5, systemd/AGENTS.md, Known gaps).
+# earlier, at the write of the exec attribute too. The rework of #443
+# proves that order in the kvm job (systemd/AGENTS.md, Caller duties).
 NoNewPrivileges=yes
 SystemCallArchitectures=native
 RestrictRealtime=yes
