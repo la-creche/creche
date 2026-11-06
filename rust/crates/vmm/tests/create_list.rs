@@ -242,9 +242,8 @@ fn an_unknown_family_gets_unknown_family() {
 }
 
 /// A repeat of a create whose family `config/` is gone gets
-/// `unknown_family` 404, not the stored row (decision CH33 rule 3). The
-/// order is a CONTRACT-QUESTION against CH25 rule 2, Known gap 14 of
-/// `rust/crates/vmm/AGENTS.md`.
+/// `unknown_family` 404, not the stored row (decision CH57 rule 4: CH33
+/// rule 3 wins over CH25 rule 2).
 #[test]
 fn a_repeat_create_after_the_family_went_gets_unknown_family() {
     let server = Server::start("create-gone");
