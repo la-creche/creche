@@ -81,9 +81,11 @@ TimeoutStartSec=infinity
 # The stop. At SIGTERM the vmm closes the door links, snapshots each VM that
 # may sleep and stops the rest (gap G16 option A). One deadline bounds every
 # step: SHUTDOWN_WAIT, 85 s (decision CH56 rule 2). The vmm keeps 5 s for its
-# exit (CH56 rule 3), so 90 s here. Past it systemd sends SIGKILL, and each
-# CH ends with the vmm through PDEATHSIG (CH19 (4)). Change this value and
-# UNIT_STOP_TIMEOUT of rust/crates/vmm/src/shutdown.rs together.
+# exit (CH56 rule 3), so 90 s here. Past it systemd sends SIGKILL. Each
+# creche-vm-* scope has `BindsTo=` and `Before=` this unit, so systemd
+# stops each scope and its CH once this unit has stopped (decision CH60
+# rule 1). Change this value and UNIT_STOP_TIMEOUT of
+# rust/crates/vmm/src/shutdown.rs together.
 # bin/tests/test_vmm_unit.py fails when they differ, and it pins each
 # decided line of this unit.
 KillSignal=SIGTERM
