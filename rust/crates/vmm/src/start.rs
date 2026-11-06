@@ -1336,6 +1336,10 @@ fn launch<L: Launcher, A: ChApi>(
             .map_err(|error| error.to_string())
     };
     let kernel = checked(config.digests.kernel)?;
+    // `PerFlavor` holds each flavor that the serde derive of the wire enum
+    // lists, and the vmm holds no list of its own (decision CH58 rule 4).
+    // So only a variant that the derive skips gives `None`. The launch
+    // then fails closed.
     let root = config
         .digests
         .roots
