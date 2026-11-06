@@ -12,6 +12,17 @@
 //! auto-restart, and the `ExecStopPost=` step ends each VM scope that is
 //! left after each stop, as in production.
 //!
+//! The step runs the real `vmm kill-scopes` (decision CH63). The runner
+//! has no vmm at `/opt/components/vmm/bin/vmm`, so a stand-in swaps that
+//! path for the `vmm` that cargo built for this test run, and nothing
+//! else. This crate cannot name the bin of `creche-vmm` (that crate
+//! depends on this one), so `built_vmm` finds it beside the deps dir of
+//! the test binary, as `kvm_slot.rs` finds its example. The kvm job runs
+//! `cargo test` over the workspace, and cargo builds the bin `vmm` for
+//! the tests of `creche-vmm` before it runs any test. A missing `vmm`
+//! fails the start of the stand-in. The stand-in sets the one key of the
+//! mode, `AGENT_SYSTEMCTL_PROGRAM`, as the env file of the unit does.
+//!
 //! That step kills every `creche-vm-*` scope of the user manager, because
 //! one vmm owns every VM (CH61 rule 1). So one stand-in runs at a time in
 //! a test binary: `StandIn::start` takes `ONE_VMM` and holds it until the
@@ -57,7 +68,8 @@ const STOP_TIMEOUT: &str = "TimeoutStopSec=60";
 /// 2. `KillMode=mixed` sends the SIGTERM of a stop to the main process
 ///    alone.
 /// 3. `ExecStopPost=` kills each VM scope that is left after a stop, a
-///    restart or a crash of the unit.
+///    restart or a crash of the unit, with `vmm kill-scopes` (decision
+///    CH63). A stand-in runs it as `stop_post` gives it.
 /// 4. `NoNewPrivileges=yes` sets no_new_privs before the launch stage
 ///    writes the exec attribute (decision CH55).
 ///
@@ -75,9 +87,52 @@ const UNIT_LINES: [&str; 8] = [
     "NoNewPrivileges=yes",
 ];
 
-/// The `ExecStopPost=` line of the vmm unit (decision CH61 rule 1).
-pub const STOP_POST: &str =
-    "ExecStopPost=/usr/bin/systemctl --user kill --signal=SIGKILL -- creche-vm-*.scope";
+/// The `ExecStopPost=` line of the vmm unit (decisions CH61 rule 1,
+/// CH63).
+const STOP_POST: &str = "ExecStopPost=/opt/components/vmm/bin/vmm kill-scopes";
+
+/// The installed vmm that `STOP_POST` runs.
+const INSTALLED_VMM: &str = "/opt/components/vmm/bin/vmm";
+
+/// The one key of `vmm kill-scopes`, as the env file of the unit sets it.
+const SYSTEMCTL_KEY: &str = "AGENT_SYSTEMCTL_PROGRAM";
+
+/// The `vmm` that cargo built for this test run, beside the deps dir of
+/// the test binary. Fails when it is missing.
+fn built_vmm() -> PathBuf {
+    let exe = std::env::current_exe().unwrap();
+    let debug = exe.parent().and_then(|deps| deps.parent()).unwrap();
+    let vmm = debug.join("vmm");
+    assert!(
+        vmm.is_file(),
+        "{} is missing: run `cargo test` over the workspace, which builds the bin vmm",
+        vmm.display()
+    );
+    vmm
+}
+
+/// The `ExecStopPost=` line of a stand-in: `STOP_POST` with the built
+/// vmm in place of the installed one.
+fn stop_post() -> String {
+    let vmm = built_vmm();
+    STOP_POST.replacen(INSTALLED_VMM, vmm.to_str().unwrap(), 1)
+}
+
+/// The step of a stand-in as a command that a test runs by hand. Its env
+/// holds the one key that `vmm kill-scopes` reads and the
+/// `XDG_RUNTIME_DIR` that the user manager gives each of its units, so
+/// `systemctl --user` finds the manager.
+pub fn kill_scopes() -> Command {
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR").unwrap();
+    let mut command = Command::new(built_vmm());
+    command
+        .arg("kill-scopes")
+        .env_clear()
+        .env(SYSTEMCTL_KEY, SYSTEMCTL)
+        .env("XDG_RUNTIME_DIR", runtime)
+        .stdin(Stdio::null());
+    command
+}
 
 /// The one stand-in of this test binary. The `ExecStopPost=` step of a
 /// stand-in kills the VM scopes of every test, so a second stand-in waits
@@ -158,9 +213,14 @@ impl StandIn {
         let mut run = Command::new(SYSTEMD_RUN);
         run.args(["--user", "--pipe", "--quiet", "--collect"])
             .arg(format!("--unit={}", unit.name()))
+            .arg(format!("--setenv={SYSTEMCTL_KEY}={SYSTEMCTL}"))
             .args(["-p", STOP_TIMEOUT]);
         for line in UNIT_LINES {
-            run.args(["-p", line]);
+            if line == STOP_POST {
+                run.arg("-p").arg(stop_post());
+            } else {
+                run.args(["-p", line]);
+            }
         }
         if let Some(example) = gated_by {
             let stop = format!("ExecStop={} await {}", example.display(), gate.display());
@@ -298,4 +358,12 @@ fn the_stand_in_copies_the_vmm_unit() {
         .filter(|line| key(line).is_some_and(|key| keys.contains(&key)))
         .collect();
     assert_eq!(unit, UNIT_LINES, "{}", path.display());
+}
+
+/// The stand-in swaps only the program of the step, and the program is
+/// the installed vmm (decision CH63).
+#[test]
+fn the_stand_in_step_names_the_installed_vmm() {
+    let tail = STOP_POST.strip_prefix("ExecStopPost=").unwrap();
+    assert_eq!(tail.strip_suffix(" kill-scopes"), Some(INSTALLED_VMM));
 }
