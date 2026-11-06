@@ -255,6 +255,10 @@ table of the three vmm crates.
      each end CH by the SIGKILL of the step, after CH ran 1 s into the
      gated stop. After the restart the unit comes back. A crash of a
      `/bin/sleep` stand-in ends CH by that SIGKILL too (CH61 rule 1).
+     After each crash, while the unit waits in `auto-restart`, the test
+     reads that the step ran in the unit and exited 0 (decision CH63).
+     The start part of a restart clears that run of the step, so no
+     test reads it after a restart.
      After the restart and after the crash, a new launch of the same
      session boots. Each test has the control that CH runs while the stand-in
      runs. A drop of the spawner does not end CH, so no test claims it.
