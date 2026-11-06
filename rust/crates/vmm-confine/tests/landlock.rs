@@ -19,7 +19,7 @@ use creche_vmm_confine::scope::Scope;
 use creche_vmm_confine::spawner::Spawner;
 use creche_vmm_store::layout::Slot;
 
-use common::{TempVm, example};
+use common::{TempVm, example, vmm_unit};
 
 const ID: &str = "0123abcd-0000-4000-8000-00000000c6c6";
 
@@ -51,7 +51,7 @@ fn a_payload_with_no_slot_profile_never_runs_its_probe() {
     );
     let payload = Payload::new(program.clone(), args);
     let slot = Slot::new(0).unwrap();
-    let launch = Launch::new(program, scope, payload, vm.files.clone()).in_slot(slot);
+    let launch = Launch::new(program, scope, payload, vm.files.clone(), vmm_unit()).in_slot(slot);
 
     let spawner = Spawner::start(example()).unwrap();
     let status = spawner.launch(launch).unwrap().wait().unwrap();

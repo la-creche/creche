@@ -44,7 +44,10 @@ writes the real exec attribute (plan PR L16c, decisions CH55, CH58 rule
    Then `FaultBook::start` clears every fault file (contract 05 §3.3.1
    rule 8), and `Rows::open` loads the rows.
 3. The digest store, the session disks, the spawner, `ChTools` and one
-   `ColdBoot`. That `ColdBoot` is the `StartVm` and the `StopVm` hook,
+   `ColdBoot`. The vmm reads its own unit with `VmmUnit::of_self`
+   (decision CH60 rule 1, no config key). In no service unit of a user
+   manager it logs the error and still serves, and every VM launch
+   refuses with that error and starts nothing. That `ColdBoot` is the `StartVm` and the `StopVm` hook,
    the `VmSet` of the shutdown and the `Sleeper` of `sleep::run`.
 4. The handler set of `routes!` (`Creates`, `Lists`, `Acp`, `Drops`)
    binds `vmm.sock` in the run root. `sleep::run` runs beside it (caller
@@ -55,8 +58,8 @@ writes the real exec attribute (plan PR L16c, decisions CH55, CH58 rule
    the 5 s that `SHUTDOWN_WAIT` leaves (caller duty 8).
 
 A failed start step, or a server that stops before SIGTERM, exits 78. The
-end of a shutdown exits 0, also when a VM did not stop: its CH ends with
-the vmm (decision CH19 (4)). The vmm has one start entry, `build`, and
+end of a shutdown exits 0, also when a VM did not stop: systemd stops its
+scope with the vmm unit (decision CH60 rule 1). The vmm has one start entry, `build`, and
 it always requires root as the owner of `digests.json` (decision CH58
 rule 1: no test-only entry stays in production code). `build` runs
 `check` (the leftover sweep, the CH version, the image root), then
@@ -413,8 +416,9 @@ table, and the start boots it again. A cold boot runs these steps:
    0700, and a new `serial.log` with mode 0600 (gap G23). Then the
    restore or cold boot choice (see "The restore"), and the launch with
    `ChCommand::boot` or `ChCommand::restore`, `VmLimits`, the Landlock
-   files of the VM and `Launch::in_slot` (decisions CH8-3, CH8-5, CH8-8,
-   CH30, CH55).
+   files of the VM, the vmm unit and `Launch::in_slot` (decisions CH8-3,
+   CH8-5, CH8-8, CH30, CH55, CH60 rule 1). A vmm with no unit fails the
+   start before the link, with no file touched.
 4. `control::open` for the first `ControlReady`. It keeps the facade
    state in `ControlState`, writes a turn end to the row, and clears the
    faults of the family (contract 05 §3.3.1 rule 8).
@@ -666,11 +670,10 @@ future of the signal. `shutdown::shutdown` then runs these steps:
 inside the `TimeoutStopSec` of 90 s (decision CH56 rule 3, gap G16). A
 stop (36 s) and a take (75 s) each fit inside it. One deadline bounds
 every step, so a full take and then a full stop of one VM need not both
-fit (decision CH56 rule 2). Decision CH19 (4) wants a VM still in the
-set at the deadline to end with the vmm through PDEATHSIG. CH under its
-slot label has no death signal, so this does not hold yet: see the
-CONTRACT-QUESTION in `rust/crates/vmm-confine/AGENTS.md`. `ColdBoot` is
-the `VmSet` of the vmm.
+fit (decision CH56 rule 2). A VM still in the set at the deadline ends
+with the vmm unit: each VM scope has `BindsTo=` and `Before=` the vmm
+unit, so systemd stops it after the vmm has exited (decision CH60 rule
+1). `ColdBoot` is the `VmSet` of the vmm.
 `tests/shutdown.rs` runs the steps on paused time with a fake set.
 `tests/start.rs` proves the take of an idle VM, the stop of a busy one
 and the door close over the hook, and the graceful stop of each VM with
