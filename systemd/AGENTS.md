@@ -107,3 +107,26 @@ file's removal is always a human verb.
    deadlock. The kvm tests prove the stop, the restart and the crash,
    each with the control that CH runs while the stand-in runs
    (`rust/crates/vmm-confine/tests/kvm_slot.rs`).
+
+## Known gaps
+
+- CONTRACT-QUESTION (decision CH61 rule 1): the `ExecStopPost=` step of
+  `creche-vmm.service` can fail on a race. `systemctl kill` lists the
+  units of the glob `creche-vm-*.scope`, then kills each one by name.
+  The KillUnit call of systemd loads no unit (`method_kill_unit` calls
+  `bus_get_unit_by_name`). So a scope that the manager unloads between
+  the list and the kill gives NoSuchUnit. `systemctl` then exits
+  non-zero, the stop ends with the result exit-code, and the unit ends
+  `failed`. The unit takes the narrowest
+  reading of rule 1: a scope that is gone has ended. No row decides
+  whether that failure of the step is accepted. Options for David:
+  1. Add the `-` prefix to the step. It also hides a real bus failure.
+     `BindsTo=` still stops each scope on a stop and on a crash, and the
+     leftover sweep of the next start (CH19 (4)) still catches a VM that
+     a restart left.
+  2. Add a typed `vmm` subcommand for the step. It kills each
+     `creche-vm-*` scope and counts NoSuchUnit as ended, so only a real
+     failure fails the step.
+  The kvm test `kvm_a_vmm_unit_restart_ends_each_vm` waits until no VM
+  scope is loaded before it runs the step with no VM, so this race does
+  not reach it.

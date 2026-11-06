@@ -976,6 +976,20 @@ fn scope_dir(pid: u32) -> PathBuf {
     dir
 }
 
+/// Whether the user manager has no loaded `creche-vm-*` unit, in any
+/// state.
+#[cfg(test)]
+fn no_vm_scope_loaded() -> bool {
+    let output = Command::new(SYSTEMCTL)
+        .args(["--user", "list-units", "--all", "--plain", "--no-legend"])
+        .args(["--no-pager", "--", "creche-vm-*.scope"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "systemctl list-units: {output:?}");
+    output.stdout.iter().all(u8::is_ascii_whitespace)
+}
+
 /// Starts the example in its role `hold` as the vmm unit of `rig`, with
 /// the boot of `seat`. Waits for the boot marker, then checks the label
 /// and the control: CH still runs 1 s later while the stand-in runs.
@@ -1155,7 +1169,12 @@ fn kvm_a_vmm_unit_restart_ends_each_vm() {
     let mut rig = Rig::new("restart");
     let seat = rig.seat("0123abcd-0000-4000-8000-0000000c15c0", 21);
     let vmm = Vmm::gated(&rig);
-    // One stand-in runs at a time, so no VM scope is loaded yet.
+    // One stand-in runs at a time, so no test launches a VM now. A scope
+    // of an earlier test may still wait for its unload, and the step could
+    // then fail on a scope that goes between its list and its kill
+    // (systemd/AGENTS.md, Known gaps). So the test waits until no VM
+    // scope is loaded before it runs the step with no VM.
+    until("no loaded VM scope", no_vm_scope_loaded);
     let argv: Vec<&str> = STOP_POST
         .strip_prefix("ExecStopPost=")
         .unwrap()
