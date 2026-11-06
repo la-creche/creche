@@ -111,11 +111,14 @@ table of the three vmm crates.
   exactly the `vsock.sock_<port>` listeners of the host ports that the
   vmm bound for the family. Any failure is the fault
   `egress_assert_failed`.
-- `admission::decide` is a pure decision (decisions CH8-6, CH8-7). Free
-  bytes below the floor give `HostFull`. The configured guest RAM of the
-  running VMs plus the RAM wanted at or below the cap gives `Admit`. Else
-  the idle VMs, least recently used first, either free enough RAM
-  (`EvictFirst`) or not (`HostFull`, and no VM stops). The floor must
+- `admission::decide` is a pure decision (decisions CH8-6, CH8-7, CH58
+  rule 2). Free bytes below the floor give `HostFull`. The configured
+  guest RAM of the running VMs plus the RAM wanted at or below the cap,
+  with a free slot, gives `Admit`. Else the idle VMs, least recently used
+  first, either free enough RAM and one slot when none is free
+  (`EvictFirst`) or not (`HostFull`, and no VM stops). A full slot pool
+  counts like a full RAM cap: it needs one eviction at least, and with no
+  idle VM it gives `HostFull` with `Full::Slots`. The floor must
   hold after the writes that admission causes (decision CH42 rule 3).
   The snapshot of each evicted VM writes its whole guest RAM (fact 72),
   so admission subtracts that RAM from the free bytes before it compares

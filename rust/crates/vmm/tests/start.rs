@@ -1816,9 +1816,10 @@ fn two_vms_get_two_slots_and_a_freed_slot_is_reused() {
     assert_eq!(fs::read(&serial).unwrap(), b"");
 }
 
-/// With each of the 64 slots held, the next start gets `host_full` with
-/// no fault and no launch, though its RAM fits (plan PR L16b, decision
-/// CH21-3). A stop frees one slot, and the start then takes it.
+/// With each of the 64 slots held by a busy VM, the next start gets
+/// `host_full` with no fault and no launch, though its RAM fits (plan PR
+/// L16b, decisions CH21-3, CH58 rule 2). A stop frees one slot, and the
+/// start then takes it.
 #[test]
 fn a_full_pool_makes_the_next_start_host_full() {
     let mut test = Test::new("pool", |_| {});
@@ -1837,6 +1838,35 @@ fn a_full_pool_makes_the_next_start_host_full() {
     assert!(test.runtime.block_on(test.hook.stop(&id)).is_ok());
     assert_eq!(test.start(64), Ok(()));
     assert_eq!(test.slot(64), test.slot(10));
+}
+
+/// A full pool counts like a full RAM cap (decision CH58 rule 2). 64 VMs
+/// hold each slot, and one of them is idle. The 65th start evicts the
+/// idle VM, which takes its snapshot and stops, and the start takes its
+/// slot.
+#[test]
+fn a_full_pool_evicts_the_idle_vm_and_takes_its_slot() {
+    let mut test = Test::new("pool-evict", |_| {});
+    test.rows_up_to(65);
+    for index in 0..64 {
+        let guest = if index == 7 {
+            Guest::Ready
+        } else {
+            Guest::Turn
+        };
+        *test.fake.guest.lock().unwrap() = guest;
+        assert_eq!(test.start(index), Ok(()), "start {index}");
+    }
+    let idle = test.slot(7);
+    *test.fake.guest.lock().unwrap() = Guest::Ready;
+    assert_eq!(test.start(64), Ok(()));
+    assert_eq!(test.launches(), 65);
+    assert!(test.stopped(7));
+    assert_eq!(test.snapshot_ids(), [test.rows[7].id.to_string()]);
+    assert_eq!(test.slot(64), idle);
+    assert_eq!(test.link(7), None);
+    assert_eq!(test.link(64), Some(slot_dir(idle)));
+    assert!(test.fault_codes().is_empty());
 }
 
 /// A guest fault at the start, a refused line and a VM that exited each
@@ -1867,7 +1897,8 @@ fn a_fault_or_an_exit_frees_the_slot() {
 
 /// A drop, an eviction and an idle sleep each free the slot and remove
 /// the link (plan PR L16b). An evicted VM holds its slot until its CH
-/// ends, so the start that evicts it takes another slot.
+/// ends. So a start that evicts it for RAM while a slot is free takes
+/// the free slot.
 #[test]
 fn a_drop_an_eviction_or_a_sleep_frees_the_slot() {
     let test = Test::new("slot-drop", |config| config.limits.ram_cap = 512 << 20);

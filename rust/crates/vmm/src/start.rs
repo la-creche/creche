@@ -33,7 +33,9 @@
 //!
 //! Plan PR L16b: each entry of the table holds one slot of the pool
 //! (decisions CH51, CH55). Admission takes the lowest free slot under
-//! the table lock, and no free slot gives `host_full` (decision CH21-3).
+//! the table lock. With no free slot it evicts the least recently used
+//! idle VM and takes its slot, else `host_full` (decisions CH21-3, CH58
+//! rule 2).
 //! The entry keeps its slot until its CH ended. Then the entry leaves the
 //! table, and `release` removes the `vm/<id>` link first. So a free slot
 //! holds no live CH (decision CH19 (4)), and `RunRoot::link_vm` may
@@ -228,11 +230,13 @@ impl<P> Slot<P> {
     }
 }
 
-/// The lowest pool slot that no entry of `table` holds, or `None` when
-/// each slot is held (decisions CH51, CH55).
-fn free_slot<P>(table: &HashMap<SessionId, Slot<P>>) -> Option<PoolSlot> {
+/// The pool slots that no entry of `table` holds, lowest first
+/// (decisions CH51, CH55).
+fn free_slots<P>(table: &HashMap<SessionId, Slot<P>>) -> Vec<PoolSlot> {
     let held: HashSet<PoolSlot> = table.values().map(Slot::pool).collect();
-    PoolSlot::all().find(|slot| !held.contains(slot))
+    PoolSlot::all()
+        .filter(|slot| !held.contains(slot))
+        .collect()
 }
 
 /// The outcome of the stop of a `Stopping` slot, `None` until it ends.
@@ -798,10 +802,10 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         }
     }
 
-    /// Reserves `guest_ram` and a free pool slot for `id` when admission
-    /// admits it, and takes out each VM that admission evicts first, in
-    /// its order. With no free slot it admits nothing (plan PR L16b,
-    /// decision CH21-3).
+    /// Reserves `guest_ram` and a pool slot for `id` when admission admits
+    /// it, and takes out each VM that admission evicts first, in its
+    /// order. With no free slot, the start takes the slot of its first
+    /// eviction (plan PR L16b, decision CH58 rule 2).
     fn admit(&self, id: &SessionId, guest_ram: u64, free: u64) -> Option<Admitted<L::Process>> {
         let mut table = lock(&self.table);
         // A start that read the table before the refusal of a shutdown
@@ -817,19 +821,26 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
             .iter()
             .map(|(session, slot)| self.view(session, slot, now))
             .collect();
-        let evict = match decide(guest_ram, &running, free, self.config.limits) {
+        let free_slots = free_slots(&table);
+        let limits = self.config.limits;
+        let evict = match decide(guest_ram, &running, free, free_slots.len(), limits) {
             Admission::Admit => Vec::new(),
             Admission::EvictFirst(evict) => evict,
             Admission::HostFull(_) => return None,
         };
-        // CONTRACT-QUESTION (decisions CH21-3, CH55): no row says whether
-        // admission evicts an idle VM to free a slot. The narrowest
-        // reading evicts for RAM only, and no free slot gives `host_full`.
-        // An evicted VM holds its slot until its CH ends, so it frees no
-        // slot for this start. 64 slots cover 40 VMs of 2 GiB under the
-        // 80 GiB cap (item 45 C3), but a smaller VM shape fills the slots
-        // first.
-        let slot = free_slot(&table)?;
+        // Decision CH58 rule 2: a full pool counts like a full RAM cap, so
+        // admission evicts one idle VM at least, and the start takes the
+        // slot of the first. That VM holds the slot as `Evicting` until
+        // its CH ends. The start links the slot only after each eviction
+        // ended, and a failed eviction fails the start, so no two live CH
+        // share a slot.
+        let slot = match free_slots.first() {
+            Some(slot) => *slot,
+            None => evict
+                .first()
+                .and_then(|session| table.get(session))
+                .map(Slot::pool)?,
+        };
         let evictions = evict
             .into_iter()
             .filter_map(|session| take_out(&self.table, &mut table, session, Slot::Evicting))

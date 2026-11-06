@@ -272,10 +272,10 @@ table, and the start boots it again. A cold boot runs these steps:
    the state root, in `spawn_blocking` (decision CH50 rule 9).
    Admission needs the guest RAM of the shape, so this read comes before
    admission.
-2. `admission::decide` (decisions CH8-6, CH8-7). The guest RAM of the
-   start counts in the table from here on, so two starts never pass the
-   cap together. The start also takes the lowest free slot (see "The
-   slots"). `host_full` writes no fault. Then each eviction that
+2. `admission::decide` (decisions CH8-6, CH8-7, CH58 rule 2). The guest
+   RAM of the start counts in the table from here on, so two starts never
+   pass the cap together. The start also takes the lowest free slot, or
+   with none free the slot of its first eviction (see "The slots"). `host_full` writes no fault. Then each eviction that
    admission names runs (see "The eviction").
 3. In `spawn_blocking`: `RunRoot::link_vm` links `vm/<id>` to the slot
    (PR D16), then `remove_stale` (decision CH19 (4)), the store check of
@@ -315,9 +315,15 @@ Plan PR L16b gives each VM one slot of the pool of
 of the table holds its slot: a start, a VM that runs, a VM under
 eviction or under a stop, and a VM whose stop failed. Admission takes
 the lowest slot that no entry holds, under the table lock, so two starts
-never take one slot. No free slot gives `host_full` (decision CH21-3),
-and the start launches nothing. An evicted VM holds its slot until its
-CH ends, so the start that evicts it takes another slot.
+never take one slot. A full pool counts like a full RAM cap (decision
+CH58 rule 2): with no free slot, admission evicts the least recently used
+VM that `may_evict` passes (decision CH8-6), and the start takes the slot
+of its first eviction. With no such VM, the start gets `host_full`
+(decision CH21-3) and launches nothing. An evicted VM holds its slot as
+`Evicting` until its CH ends. The start links that slot only after each
+eviction ended, and a failed eviction fails the start, so no two live CH
+share a slot. With a free slot, a start that evicts for RAM takes the
+free slot.
 
 The start runs `RunRoot::link_vm` before `remove_stale`, and passes the
 slot to the launch with `Launch::in_slot` (PR C18). So the launch stage
@@ -332,7 +338,8 @@ that failed, or a VM that exited. Each of these runs `release`. It runs
 `RunRoot::unlink_vm` under the table lock before the entry goes, so no
 start of the session links before the unlink. A failed unlink is logged,
 and the slot still frees. `tests/start.rs` proves two slots, a reused
-slot, a full pool, each stop path and a restore into a new slot.
+slot, a full pool of busy VMs, a full pool that evicts its idle VM, each
+stop path and a restore into a new slot.
 
 ## The restore
 
@@ -599,14 +606,7 @@ no guest sync.
 13. Closed by decision CH57 rules 3 and 4 (plan PR L7): a family dir or
     `config` that is a symlink or a file gets `unknown_family`, and a
     repeat create whose family `config/` is gone gets `unknown_family`.
-14. CONTRACT-QUESTION (decisions CH21-3, CH55): no row says whether
-    admission evicts an idle VM to free a slot (`src/start.rs`). The
-    narrowest reading evicts for RAM only, and no free slot gives
-    `host_full`. 64 slots cover 40 VMs of 2 GiB under the 80 GiB cap
-    (item 45 C3), but a smaller VM shape fills the slots first. Then an
-    idle VM keeps its slot, and a new start gets `host_full`. A change
-    adds a slot gate to `admission::decide`.
-15. CONTRACT-QUESTION (decision CH36 G21): decision CH36 G21 puts
+14. CONTRACT-QUESTION (decision CH36 G21): decision CH36 G21 puts
     blocking work in `spawn_blocking`.
     `release` runs `RunRoot::unlink_vm` under the table lock
     (`src/start.rs`), so that no start of the session links first. It is
