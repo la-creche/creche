@@ -3,7 +3,7 @@
 #![cfg(test)]
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use creche_vmm_confine::landlock::{HostPath, Start, VmFiles};
 use creche_vmm_store::layout::{RunRoot, StateRoot};
@@ -16,9 +16,8 @@ pub fn example() -> PathBuf {
 }
 
 /// The files of one VM under a new directory in `/tmp`, removed on drop.
-/// The layout is the one of the `spawn` role of the example: the state
-/// root and the run root are both the directory, and the root disk is
-/// `root.img`.
+/// The state root and the run root are both the directory, and the root
+/// disk is `root.img`.
 pub struct TempVm {
     root: PathBuf,
     pub files: VmFiles,
@@ -38,10 +37,6 @@ impl TempVm {
         let root_disk = HostPath::new(root.join("root.img")).unwrap();
         let files = VmFiles::new(Start::Restore, root_disk, &session, &run).unwrap();
         Self { root, files }
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.root
     }
 }
 

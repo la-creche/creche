@@ -49,8 +49,8 @@ pub enum EgressAssertFailed {
     /// The command line of the CH process did not read.
     Cmdline(io::Error),
     /// The first argument is not the payload program. The pid still runs
-    /// the launch step or `systemd-run`, or CH has exited: the command
-    /// line of a zombie reads as empty.
+    /// the launch step, `systemd-run` or the launch stage (decision CH55),
+    /// or CH has exited: the command line of a zombie reads as empty.
     NotCh,
     /// An argument starts with `--net` (decision CH8-1).
     Net,
@@ -82,7 +82,8 @@ impl fmt::Display for EgressAssertFailed {
 impl std::error::Error for EgressAssertFailed {}
 
 /// The command line file of the process `pid`. The pid is the one of
-/// `Launched::id`: CH keeps it after the exec of `systemd-run`.
+/// `Launched::id`: CH keeps it after the execs of `systemd-run` and the
+/// launch stage.
 #[must_use]
 pub fn cmdline_of(pid: u32) -> PathBuf {
     PathBuf::from(format!("/proc/{pid}/cmdline"))
@@ -112,8 +113,8 @@ pub fn check(
 /// Part 1: the arguments, NUL-separated as in `/proc/<pid>/cmdline`.
 fn check_args(bytes: &[u8], payload: &Program, start: &Start) -> Result<(), EgressAssertFailed> {
     let args = || bytes.split(|&byte| byte == 0);
-    // `systemd-run --scope` execs the payload with its full path as the
-    // first argument (`scope::Scope::systemd_run_args`).
+    // The launch stage execs CH with its full path as the first argument
+    // (decision CH55).
     let program = payload.path().as_os_str().as_encoded_bytes();
     if bytes.is_empty() || args().next() != Some(program) {
         return Err(EgressAssertFailed::NotCh);

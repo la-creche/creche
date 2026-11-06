@@ -78,6 +78,14 @@ The second file has the table of the three vmm crates.
   is not a dir (each regular file, socket and link) and no dir, since a
   free slot holds no live CH (CH19 (4)). The old VM's `serial.log` goes
   with it, and its fault file stays in the faults dir.
+- The caller duties of PR D16 (`layout.rs`). Plan PR L16b meets all
+  three in `rust/crates/vmm/src/start.rs` ("The slots" in the vmm
+  `AGENTS.md`). (a) Each start runs `link_vm` before `remove_stale`, so
+  an old link to a slot that another VM took removes no file of that VM.
+  (b) A VM that frees its slot runs `unlink_vm`. (c) A start links a VM
+  only to a free slot, one that no live CH holds. `link_vm` empties the
+  slot (CH56 rule 1), so a link to a held slot would remove the sockets
+  of the CH in it.
 
 ## Known gaps
 
@@ -126,11 +134,3 @@ The second file has the table of the three vmm crates.
   remove the files of a restore that is starting. (b) pass the budget
   from the vmm config. L20 reads it from an env key with `BUDGET` as the
   default (CH36 G14).
-- Caller duties (PR D16, `layout.rs`), for lifecycle (L16b): (a) run
-  `link_vm` before `remove_stale` at each start. `start.rs` runs
-  `remove_stale` first, and through an old link to a slot that another VM
-  took it removes that VM's sockets. (b) run `unlink_vm` when the VM frees
-  its slot. (c) link a VM only to a free slot, one that no live CH holds.
-  `link_vm` empties the slot (CH56 rule 1), so a link to a held slot
-  removes the sockets of the CH in it. Until L16b, `start.rs` makes
-  `vm/<id>` a real dir, and `link_vm` fails on a real dir.
