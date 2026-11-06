@@ -392,6 +392,53 @@ mod tests {
         assert_eq!(root.map(|rule| rule.rights), Some(&[Right::ReadFile][..]));
     }
 
+    /// The ruleset denies a TCP connect (decision CH8-1). This test is the
+    /// proof of the TCP rule. Under the chain, the slot profile refuses
+    /// the inet socket first, so no kvm_ test reaches the rule. Landlock
+    /// confines only the thread that calls `restrict`, so the ruleset runs
+    /// on a new thread. The control: a second new thread with no ruleset
+    /// connects to the same listener.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_ruleset_denies_a_tcp_connect() {
+        use std::fs;
+        use std::io::ErrorKind;
+        use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+        use std::thread;
+
+        let root = PathBuf::from(format!("/tmp/vmm-confine-{}-tcp", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let id = ID.parse().unwrap();
+        let session = StateRoot::new(root.clone()).unwrap().session(&id);
+        let run = RunRoot::new(root.clone()).unwrap().vm(&id);
+        fs::create_dir_all(session.snapshots()).unwrap();
+        fs::create_dir_all(run.path()).unwrap();
+        fs::write(root.join("root.img"), "root").unwrap();
+        fs::write(session.disk(), "session").unwrap();
+        let root_disk = HostPath::new(root.join("root.img")).unwrap();
+        let files = VmFiles::new(Start::Restore, root_disk, &session, &run).unwrap();
+        let payload = Program::new(std::env::current_exe().unwrap()).unwrap();
+        let rules = super::rules(&files, &payload);
+
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let connect = |address: SocketAddr| {
+            TcpStream::connect(address)
+                .map(drop)
+                .map_err(|error| error.kind())
+        };
+        let confined = thread::spawn(move || {
+            super::restrict(&rules).unwrap();
+            connect(address)
+        })
+        .join()
+        .unwrap();
+        let control = thread::spawn(move || connect(address)).join().unwrap();
+        fs::remove_dir_all(&root).unwrap();
+        assert_eq!(confined, Err(ErrorKind::PermissionDenied));
+        assert_eq!(control, Ok(()));
+    }
+
     #[test]
     fn a_start_is_snake_case_json() {
         let json = r#"{"boot":{"kernel":"/k","initramfs":null}}"#;

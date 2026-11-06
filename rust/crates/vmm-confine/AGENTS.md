@@ -176,7 +176,11 @@ table of the three vmm crates.
      It denies a write of the root disk and a read outside the VM files,
      at paths that the slot profile allows (decisions CH8-3, CH8-8). CH
      makes no TCP connect, and a slot label opens no inet socket, TCP or
-     UDP (decision CH8-1, fact 77).
+     UDP (decision CH8-1, fact 77). Under the chain, AppArmor alone
+     stops TCP: the slot profile refuses the socket before the Landlock
+     connect rule runs. The unit test
+     `landlock::tests::the_ruleset_denies_a_tcp_connect` in the job
+     `rust` proves the Landlock TCP rule on its own.
   3. CH in one slot connects to no listener of another slot, to no
      `api.sock` or `vsock.sock` of a live CH in another slot, and not to
      `vmm.sock` or the user bus. One slot cannot signal the CH of another
