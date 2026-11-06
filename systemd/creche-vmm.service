@@ -84,8 +84,9 @@ TimeoutStartSec=infinity
 # exit (CH56 rule 3), so 90 s here. Past it systemd sends SIGKILL. Each
 # creche-vm-* scope has `BindsTo=` and `Before=` this unit, so systemd
 # stops each scope and its CH once this unit has stopped (decision CH60
-# rule 1). Change this value and UNIT_STOP_TIMEOUT of
-# rust/crates/vmm/src/shutdown.rs together.
+# rule 1). A restart stops no scope: the leftover sweep of the next start
+# stops each one (CH19 (4), open item 53). Change this value and
+# UNIT_STOP_TIMEOUT of rust/crates/vmm/src/shutdown.rs together.
 # bin/tests/test_vmm_unit.py fails when they differ, and it pins each
 # decided line of this unit.
 KillSignal=SIGTERM
