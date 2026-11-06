@@ -217,5 +217,4 @@ table of the three vmm crates.
    3. The slot profile denies UDP and Unix sockets, which Landlock ABI 4
       does not cover (fact 77).
    4. CH dies with the spawner thread and with a killed vmm (fact 80).
-   5. CH has core limit 0, `Launched::terminate` sends SIGTERM, and the
-      output of CH reaches the sink tagged `ch <session id>`.
+   5. The output of CH reaches the sink tagged `ch <session id>`.

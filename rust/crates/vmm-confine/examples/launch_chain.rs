@@ -7,7 +7,10 @@
 //!   the real exec attribute. The rust job of CI loads no slot profile,
 //!   so the stage fails closed at its label step and starts no payload.
 //! - `--user ...` is a fake `systemd-run` for a host with no systemd. It
-//!   execs the arguments after `--`.
+//!   writes `core <soft> <hard>`, its own core limits, to stderr. It then
+//!   execs the arguments after `--`. For the scope unit of `HOLD` it
+//!   execs `/bin/sleep 60` instead, so a test has a live process to
+//!   signal.
 //! - `probe <run dir> <root disk> <session disk> <outside file> <port>`
 //!   tries five accesses and writes each result to `<run dir>/probe.txt`.
 //! - `say <text>` writes `<text> out` to stdout and `<text> err` to
@@ -52,8 +55,26 @@ fn main() -> ExitCode {
 
 type Failure = Box<dyn std::error::Error>;
 
-/// The fake `systemd-run`. It returns only on an error.
+/// The scope unit whose launch the fake `systemd-run` holds in
+/// `/bin/sleep 60`. `tests/launch.rs` launches the session id
+/// `0123abcd-0000-4000-8000-00000000d0d0` for it.
+const HOLD: &str = "--unit=creche-vm-0123abcd-0000-4000-8000-00000000d0d0";
+
+/// The fake `systemd-run`. It returns only on an error. Its core limits
+/// are the ones that the launch step set (decision CH8-5, CH36 G27), so
+/// the line on stderr lets a test check them.
 fn fake_systemd_run(args: &[OsString]) -> Result<(), Failure> {
+    let core = rustix::process::getrlimit(rustix::process::Resource::Core);
+    let limit = |value: Option<u64>| value.map_or("unlimited".to_owned(), |v| v.to_string());
+    writeln!(
+        io::stderr(),
+        "core {} {}",
+        limit(core.current),
+        limit(core.maximum)
+    )?;
+    if args.iter().any(|arg| arg == HOLD) {
+        return Err(Command::new("/bin/sleep").arg("60").exec().into());
+    }
     let after = args.iter().position(|arg| arg == "--").ok_or("no --")?;
     let (program, rest) = args
         .get(after + 1..)
