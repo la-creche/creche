@@ -95,11 +95,11 @@ const STOP_POST: &str = "ExecStopPost=/opt/components/vmm/bin/vmm kill-scopes";
 const INSTALLED_VMM: &str = "/opt/components/vmm/bin/vmm";
 
 /// The one key of `vmm kill-scopes`, as the env file of the unit sets it.
-const SYSTEMCTL_KEY: &str = "AGENT_SYSTEMCTL_PROGRAM";
+pub const SYSTEMCTL_KEY: &str = "AGENT_SYSTEMCTL_PROGRAM";
 
 /// The `vmm` that cargo built for this test run, beside the deps dir of
 /// the test binary. Fails when it is missing.
-fn built_vmm() -> PathBuf {
+pub fn built_vmm() -> PathBuf {
     let exe = std::env::current_exe().unwrap();
     let debug = exe.parent().and_then(|deps| deps.parent()).unwrap();
     let vmm = debug.join("vmm");
@@ -116,22 +116,6 @@ fn built_vmm() -> PathBuf {
 fn stop_post() -> String {
     let vmm = built_vmm();
     STOP_POST.replacen(INSTALLED_VMM, vmm.to_str().unwrap(), 1)
-}
-
-/// The step of a stand-in as a command that a test runs by hand. Its env
-/// holds the one key that `vmm kill-scopes` reads and the
-/// `XDG_RUNTIME_DIR` that the user manager gives each of its units, so
-/// `systemctl --user` finds the manager.
-pub fn kill_scopes() -> Command {
-    let runtime = std::env::var_os("XDG_RUNTIME_DIR").unwrap();
-    let mut command = Command::new(built_vmm());
-    command
-        .arg("kill-scopes")
-        .env_clear()
-        .env(SYSTEMCTL_KEY, SYSTEMCTL)
-        .env("XDG_RUNTIME_DIR", runtime)
-        .stdin(Stdio::null());
-    command
 }
 
 /// The one stand-in of this test binary. The `ExecStopPost=` step of a
