@@ -21,8 +21,6 @@ mod tests {
 
     #[test]
     fn run_returns_exit_code_78() {
-        // `ExitCode` has no `PartialEq`, so the test compares the `Debug`
-        // text.
-        assert_eq!(format!("{:?}", run()), format!("{:?}", ExitCode::from(78)));
+        assert_eq!(run(), ExitCode::from(EX_CONFIG));
     }
 }
