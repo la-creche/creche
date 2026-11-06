@@ -1,8 +1,8 @@
 //! The slot profiles against the committed file and the names of the store
 //! layout (decisions CH8-1, CH24, CH51, CH55, CH50 rule 11). Each slot gets
 //! the same rules but its label and its run dir, and its run dir rules
-//! match only the files of its own slot. The kvm_ tests of plan PR C15
-//! prove the same rules in the kernel.
+//! match only the files of its own slot. `tests/kvm_slot.rs` proves the
+//! same rules in the kernel.
 //!
 //! To write the file after a change of the generator, run
 //! `CRECHE_SLOT_PROFILES=write cargo test -p creche-vmm-confine --test slot_profile`

@@ -4,8 +4,8 @@
 //! stage is `stage::run`, which writes the real exec attribute (decision
 //! CH58 rule 1). The rust job loads no slot profile, so the stage stops at
 //! the label, and the probe never runs. The kvm job loads the slot
-//! profiles and proves the denials of the ruleset under the label (the
-//! C15 rework, #443).
+//! profiles and proves the denials of the ruleset under the label
+//! (`tests/kvm_slot.rs`).
 #![cfg(target_os = "linux")]
 
 mod common;

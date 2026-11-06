@@ -18,8 +18,8 @@
 //! `run` is the one entry, and it always writes the real exec attribute
 //! (decision CH58 rule 1). The rust job of CI loads no slot profile, so
 //! there each launch fails closed at step 1 and starts no payload. The kvm
-//! job loads the slot profiles and proves the full chain (the C15 rework,
-//! #443).
+//! job loads the slot profiles and proves the full chain
+//! (`tests/kvm_slot.rs`).
 //!
 //! The pid stays the same through all four execs: the launch step,
 //! `systemd-run`, this stage and CH. `systemd-run --scope` execs its
@@ -30,9 +30,8 @@
 //! capability changes. No exec of the chain is one of those. The slot
 //! label and the Landlock ruleset change only the LSM state, not a uid.
 //! This stage checks that the signal is still SIGKILL before step 1, so a
-//! clear by the exec of `systemd-run` fails closed. The kvm test of the
-//! C15 rework (#443) proves that CH under its label still dies with the
-//! vmm.
+//! clear by the exec of `systemd-run` fails closed. `tests/kvm_slot.rs`
+//! proves that CH under its label still dies with the vmm.
 
 use std::convert::Infallible;
 use std::ffi::OsString;

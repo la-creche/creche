@@ -160,23 +160,30 @@ table of the three vmm crates.
   every such test of the workspace after `bin/vm-smoke-setup.sh`. The test
   reads CH, ch-remote, the kernel and the busybox initramfs from the
   directory in `CRECHE_KVM_DIR`, and fails when it is not set.
-- `apparmor/cloud-hypervisor.profile` is the AppArmor profile
-  `creche-cloud-hypervisor` of `/opt/components/vmm/bin/cloud-hypervisor`
-  (decision CH8-1, gap G28). It allows Unix stream sockets, denies every
-  abstract address, and has no `network` rule, so CH gets no inet socket.
-  The file rules mediate a pathname socket, so the write rules are the
-  socket allow list: the VM run dir files of PR D1 under
-  `/run/user/<uid>/vmm/vm/*/`, with one `vsock.sock_*` pattern (decision
-  CH24), and the state names of decision CH39 rule 3. `tests/profile.rs`
-  holds each rule equal to the layout names. A rename there needs an edit
-  of the profile and David's sudo reload (design section 6.1 step 2).
-  Agents never install it on the host.
-- The job `kvm` installs CH at that path and loads the profile with the
-  runner's sudo (decision CH36 G20). `tests/kvm_apparmor.rs` starts the
-  installed CH through `setpriv --no-new-privs`: CH boots under the
-  profile, and its `--tpm socket=` connect reaches a `vsock.sock_<port>`
-  listener, but not `vmm.sock` or the user bus. The other kvm_ tests run
-  the copy in `CRECHE_KVM_DIR`, which no profile confines.
+- The job `kvm` installs CH at `slot_profile::CH_BINARY` and loads the
+  slot profiles at the install path above with the runner's sudo
+  (decision CH36 G20). It fails unless each label of the file is in
+  enforce mode. `tests/kvm_slot.rs` starts each CH through the real chain
+  of the vmm: the spawner, the launch step, `systemd-run --user --scope`,
+  the launch stage and CH. Each VM takes a slot through
+  `RunRoot::link_vm`, under the real run root and the default state
+  root. Each test has a control, and together they prove decision CH58
+  rule 1:
+  1. CH runs under `creche-ch-slot-<k>`, with no_new_privs set, the core
+     limit 0 and the scope of its VM. CH with no chain runs unconfined.
+  2. The ruleset lets CH read the root disk and write the session disk.
+     It denies a write of the root disk and a read outside the VM files,
+     at paths that the slot profile allows (decisions CH8-3, CH8-8). CH
+     makes no TCP connect, and a slot label opens no inet socket, TCP or
+     UDP (decision CH8-1, fact 77).
+  3. CH in one slot connects to no listener of another slot, to no
+     `api.sock` or `vsock.sock` of a live CH in another slot, and not to
+     `vmm.sock` or the user bus. One slot cannot signal the CH of another
+     slot (decision CH51).
+  4. CH dies with the spawner thread and with a killed vmm (fact 80).
+     `Launched::terminate` sends SIGTERM.
+  5. The output of each CH reaches the sink tagged `ch <session id>`.
+  `tests/kvm_boot.rs` runs the copy in `CRECHE_KVM_DIR` with no chain.
 
 ## Known gaps
 
@@ -214,24 +221,12 @@ table of the three vmm crates.
   the value `vmm` in the `source` enum of §3.3, and the reader. caregiver
   reads only the `attendance` and `pep` files today, so it ignores the
   vmm file.
+- The slot profiles read only `store/*` for a kernel or an initramfs.
+  Decision CH7-6 has the vmm write the initramfs of guest init at VM
+  start, in a place that no row names yet. A file outside the store needs
+  a rule in `slot_profile.rs` and David's sudo reload.
 - Gap G23 sets `serial.log` to mode 0600. CH makes the file with the
   umask of the launch step, and the crate sets no umask. A `UMask=` in
   the unit of plan PR C13, or a file that lifecycle makes first in plan
   PR L16, must set it. Neither plan entry names the step yet. Until then
   `RuntimeDirectoryMode=0700` of the run root keeps other users out.
-
-## Caller duties
-
-1. Decision CH58 rule 1: plan PR C15 (the rework of #443) proves the
-   full chain in the job `kvm`, which loads the slot profiles. The rust
-   job cannot, because no payload starts there. The kvm tests run
-   `stage::run` and prove each of these:
-   1. CH runs under `creche-ch-slot-<k>`, with no_new_privs set and the
-      Landlock ruleset in force.
-   2. The ruleset lets CH read the root disk and write the session disk,
-      and denies a write of the root disk, a read outside the VM files
-      and a TCP connect (decisions CH8-1, CH8-3, CH8-8, CH30).
-   3. The slot profile denies UDP and Unix sockets, which Landlock ABI 4
-      does not cover (fact 77).
-   4. CH dies with the spawner thread and with a killed vmm (fact 80).
-   5. The output of CH reaches the sink tagged `ch <session id>`.

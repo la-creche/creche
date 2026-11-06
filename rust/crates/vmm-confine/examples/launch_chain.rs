@@ -6,6 +6,12 @@
 //!   (decisions CH55, CH58 rule 1). It calls `stage::run`, which writes
 //!   the real exec attribute. The rust job of CI loads no slot profile,
 //!   so the stage fails closed at its label step and starts no payload.
+//!   The kvm job loads them, and the stage execs CH under the label
+//!   (`tests/kvm_slot.rs`).
+//! - `hold` reads one `Launch` as JSON on stdin. It starts a spawner on
+//!   `/proc/self/exe`, as the vmm does, launches it, prints the pid and
+//!   waits to be killed. `tests/kvm_slot.rs` kills it to prove that CH
+//!   dies with the vmm (fact 80).
 //! - `--user ...` is a fake `systemd-run` for a host with no systemd. It
 //!   writes `core <soft> <hard>`, its own core limits, to stderr. It then
 //!   execs the arguments after `--`. For the scope unit of `HOLD` it
@@ -21,10 +27,12 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::net::{Ipv4Addr, TcpStream};
 use std::os::unix::process::CommandExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
+use std::thread;
 
-use creche_vmm_confine::launch::{self, MODE};
+use creche_vmm_confine::launch::{self, Launch, MODE};
+use creche_vmm_confine::spawner::{SELF_EXE, Spawner};
 use creche_vmm_confine::stage;
 
 fn main() -> ExitCode {
@@ -36,11 +44,12 @@ fn main() -> ExitCode {
         Some((role, rest)) if role == stage::MODE => stage::run(rest)
             .map(|never| match never {})
             .map_err(Failure::from),
+        Some((role, [])) if role == "hold" => hold(),
         Some((role, rest)) if role == "--user" => fake_systemd_run(rest),
         Some((role, rest)) if role == "probe" => probe(rest),
         Some((role, rest)) if role == "say" => say(rest),
         _ => Err(
-            "usage: launch_chain launch | launch-stage ... | --user ... | probe ... | say ..."
+            "usage: launch_chain launch | launch-stage ... | hold | --user ... | probe ... | say ..."
                 .into(),
         ),
     };
@@ -54,6 +63,18 @@ fn main() -> ExitCode {
 }
 
 type Failure = Box<dyn std::error::Error>;
+
+/// The hold role. It returns only on an error.
+fn hold() -> Result<(), Failure> {
+    let launch: Launch = serde_json::from_reader(io::stdin().lock())?;
+    let spawner = Spawner::start(PathBuf::from(SELF_EXE))?;
+    let launched = spawner.launch(launch)?;
+    writeln!(io::stdout(), "{}", launched.id())?;
+    io::stdout().flush()?;
+    loop {
+        thread::park();
+    }
+}
 
 /// The scope unit whose launch the fake `systemd-run` holds in
 /// `/bin/sleep 60`. `tests/launch.rs` launches the session id
