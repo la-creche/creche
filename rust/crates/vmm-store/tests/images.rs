@@ -1,13 +1,18 @@
 //! The digest store copies each file once, refuses a wrong digest, keeps
 //! its copy when the source goes and decompresses a `.zst` source
-//! (fact 56, decisions CH35 rule 4, CH36 with gaps G8 and G9).
+//! (fact 56, decisions CH35 rule 4, CH36 with gaps G8 and G9). It names
+//! the bytes that the vmm makes by their digest, keeps an equal copy and
+//! refuses a changed one (decisions CH60 rule 2, CH62 rule 18, CH44
+//! rule 2).
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::PathBuf;
 use std::process::Command;
 
-use creche_vmm_store::images::{ImageDigest, ImageStore, ImportError, STORE_MODE};
+use creche_vmm_store::images::{
+    CheckError, FileIdentity, ImageDigest, ImageStore, ImportError, MadeError, STORE_MODE,
+};
 use creche_vmm_store::layout::StateRoot;
 use sha2::{Digest, Sha256};
 
@@ -167,4 +172,56 @@ fn a_bad_zst_source_refuses_and_leaves_no_file() {
         .expect_err("a failure");
     assert!(matches!(error, ImportError::Decompress { .. }), "{error}");
     assert!(temp.store_files().is_empty());
+}
+
+#[test]
+fn put_made_names_the_file_by_its_digest() {
+    let temp = Temp::new("made");
+    let digest = digest_of(BYTES);
+
+    let checked = temp.store.put_made(BYTES).expect("the write");
+    assert_eq!(checked.digest(), digest);
+    assert_eq!(checked.path(), temp.store.path(&digest));
+    assert_eq!(fs::read(checked.path()).expect("the copy"), BYTES);
+    let mode = fs::metadata(checked.path()).expect("the copy").mode();
+    assert_eq!(mode & 0o7777, STORE_MODE);
+    assert_eq!(
+        temp.store_files(),
+        [digest.to_string(), format!("{digest}.identity")]
+    );
+    assert_eq!(temp.store.check(digest).expect("the check"), checked);
+}
+
+#[test]
+fn put_made_keeps_an_equal_copy() {
+    let temp = Temp::new("made-twice");
+    let first = temp.store.put_made(BYTES).expect("the write");
+    let before = FileIdentity::of(&fs::metadata(first.path()).expect("the copy"));
+
+    let second = temp.store.put_made(BYTES).expect("the repeat");
+    assert_eq!(second, first);
+    let after = FileIdentity::of(&fs::metadata(second.path()).expect("the copy"));
+    assert_eq!(after, before, "the repeat wrote the copy again");
+    assert_eq!(temp.store_files().len(), 2);
+}
+
+#[test]
+fn put_made_refuses_a_different_file_at_the_name() {
+    let temp = Temp::new("made-changed");
+    let checked = temp.store.put_made(BYTES).expect("the write");
+    let path = checked.path();
+    fs::set_permissions(path, fs::Permissions::from_mode(0o644)).expect("the mode");
+    fs::write(path, b"other bytes at the name").expect("the edit");
+    fs::set_permissions(path, fs::Permissions::from_mode(STORE_MODE)).expect("the mode");
+
+    let error = temp.store.put_made(BYTES).expect_err("a refusal");
+    assert!(
+        matches!(error, MadeError::Check(CheckError::Changed { .. })),
+        "{error}"
+    );
+    assert_eq!(
+        fs::read(path).expect("the copy"),
+        b"other bytes at the name",
+        "the refusal repaired the copy"
+    );
 }

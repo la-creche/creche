@@ -13,6 +13,16 @@ The second file has the table of the three vmm crates.
   the identity check at VM start fails the start. `ImageStore::check`
   removes and repairs nothing. Item 42 Q42-2 adds that an operator step
   or a later re-import fixes the copy.
+- Decisions CH7-6, CH60 rule 2 and CH62 rule 18 (plan PR V4,
+  `initramfs.rs`, `images.rs`): `initramfs::pack` writes the guest init
+  initramfs as a newc archive with uid 0, gid 0, mtime 0 and inode
+  numbers in entry order, so equal entries give equal bytes and one
+  digest across vmm restarts. It refuses a name that the kernel would
+  skip (a name size past 4096) and an entry whose parent dir is not an
+  earlier entry. `ImageStore::put_made` puts the bytes at
+  `store/<sha256>` with an identity file, as an import does. When an
+  identity for the digest exists, it writes no byte and returns the check
+  of that copy, so a changed copy fails (CH44 rule 2).
 - Decision CH44 rule 3 (PR D8, `ch_remote.rs`): the timeout of a
   `ch-remote` call comes from its caller. This crate names no value. A
   pause takes about 4 ms (fact 72) and a 16 GiB snapshot about 12 s
@@ -101,18 +111,6 @@ The second file has the table of the three vmm crates.
   confines only the CH launch. L20 needs a config key for its path (the
   owner env rule). Its list has no such key yet. Item 42 lists config
   keys for `fallocate`, `zstd` and `mke2fs` as a lifecycle duty.
-- Caller duties (PR D10, `key.rs`), for lifecycle: (a) run `write_key`
-  after every `Snapshotter::take`, or the next check drops the snapshot
-  as `Unreadable`. L17 and L19 snapshot but name no key write. (b) run
-  `check_cloud_hypervisor` at the vmm start and refuse to start on an
-  error (gap G10 option A). No lifecycle PR (L17, L20) calls it yet.
-  Item 42 notes a better way for (a) and gives it to a later PR: `take`
-  writes `key.json` into its temp dir before the rename, so no snapshot
-  exists without a key.
-- Caller duty (PR D12, `sleep_gate.rs`), for lifecycle: set
-  `Activity::last_use`, the start of the idle time, at the VM start or
-  restore, at each turn event, and at each open and each close of a door
-  link (decision CH50 rule 5). L18 sets it.
 - Caller duty (PR D12, `sleep_gate.rs`), for lifecycle (L17): a VM with
   an open door link counts as used now in the eviction order (decision
   CH50 rule 6). When L17 builds the `Running` list for

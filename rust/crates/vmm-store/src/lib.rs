@@ -1,6 +1,6 @@
 //! The store of the vmm: everything that the vmm keeps per session on the
-//! host disk. The session rows, the session disks, the root images and the
-//! snapshots live here.
+//! host disk. The session rows, the session disks, the root images, the
+//! guest init initramfs and the snapshots live here.
 //!
 //! The code is synchronous. It uses std, plus `creche-wire`, `serde`,
 //! `serde_json` and `sha2`. It uses no async runtime. It never
@@ -9,6 +9,7 @@
 pub mod ch_remote;
 pub mod claim;
 pub mod images;
+pub mod initramfs;
 pub mod key;
 pub mod layout;
 pub mod remove;
