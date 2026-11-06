@@ -191,8 +191,11 @@ table of the three vmm crates.
   snapshot with dug holes, the key and the claim, a copy-on-write
   restore, a second snapshot, then a restore and a SIGKILL of the
   stand-in, which takes CH and its scope down. Each start takes a new slot
-  with `RunRoot::link_vm` and runs `remove_stale`, as lifecycle does, so
-  each restore moves the VM to another slot.
+  with `RunRoot::link_vm` and runs `remove_stale`, as the start of
+  `rust/crates/vmm/src/start.rs` does, so each restore moves the VM to
+  another slot. The ruleset grants no right to remove a file, so CH
+  cannot unlink its own sockets, and a stale `vsock.sock` would fail the
+  next start (fact 75).
 
 ## Known gaps
 
@@ -213,12 +216,6 @@ table of the three vmm crates.
   dir). The ruleset grants no right to make a dir, so the vmm must also
   make each `snapshots/<generation>/` before CH writes a snapshot there.
   Plan PRs L16 (cold boot) and D9 (snapshot) own these steps.
-- The ruleset grants no right to remove a file, so CH cannot unlink its
-  own sockets, and a stale `vsock.sock` fails the next boot or restore
-  (fact 75). Plan PRs L16 and L17 call `remove_stale` of PR D1 before
-  each start. It removes `vsock.sock` and `api.sock.lock`. A stale
-  `api.sock` alone does not block a start, so it stays.
-  `tests/kvm_vm.rs` calls `remove_stale` before each restore.
 - The upstream CH asset of fact 71 may print its git tag to `--version`,
   not the `v54.0.0` of a `--rev` build (fact 78). `tests/kvm_vm.rs` then
   makes the `CheckedCh` of the key from a stand-in that prints
