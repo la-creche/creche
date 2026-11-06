@@ -40,6 +40,7 @@
 #![cfg(target_os = "linux")]
 
 mod kvm;
+mod scope_guard;
 
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, ErrorKind, Write};
@@ -63,6 +64,7 @@ use creche_vmm_store::layout::{RunRoot, SessionDir, Slot, StateRoot, VmRunDir, s
 use creche_wire::{HostPort, SessionId};
 
 use kvm::{BOOT, Vm, booted, files};
+use scope_guard::ScopeGuard;
 
 /// The host programs of the ubuntu-24.04 runner. The vmm config passes
 /// each one (plan PR L20).
@@ -79,6 +81,13 @@ const MEMORY_MAX: u64 = 1 << 30;
 
 /// The text of EACCES in the output of CH.
 const DENIED: &str = "Permission denied";
+
+/// The text of an EACCES error of Rust's `io::Error`, as CH logs it.
+const EACCES: &str = "Permission denied (os error 13)";
+
+/// The log line of CH v54 for any failed migration. It holds the whole
+/// error chain (`check_migration` in `vmm/src/lib.rs`).
+const MIGRATION_FAILED: &str = "Migration failed";
 
 /// The longest wait for a probe CH to exit. A CH that connected to a live
 /// socket may wait for an answer that never comes, and is then killed.
@@ -248,6 +257,16 @@ struct Seat {
     run: VmRunDir,
 }
 
+/// The paths of the devices of one boot: the API socket, the root disk,
+/// the session disk, the vsock socket and the serial file.
+struct BootFiles {
+    api: PathBuf,
+    root: PathBuf,
+    disk: PathBuf,
+    vsock: PathBuf,
+    serial: PathBuf,
+}
+
 /// The files of one test under the two roots. A drop removes them.
 struct Rig {
     run: RunRoot,
@@ -391,20 +410,33 @@ impl Rig {
     /// API socket, the root disk `readonly=on`, the session disk, the
     /// vsock and the serial file.
     fn boot_args(&self, seat: &Seat, root: &Path) -> Vec<String> {
+        let run = &seat.run;
+        let files = BootFiles {
+            api: run.api_socket(),
+            root: root.to_owned(),
+            disk: seat.session.disk(),
+            vsock: run.vsock_socket(),
+            serial: run.serial_log(),
+        };
+        self.boot_args_at(&files)
+    }
+
+    /// The boot of the busybox guest with the devices of `files`.
+    fn boot_args_at(&self, files: &BootFiles) -> Vec<String> {
         let mut args = vec![
             "--api-socket".to_owned(),
-            format!("path={}", seat.run.api_socket().display()),
+            format!("path={}", files.api.display()),
         ];
         args.extend(self.guest_args());
         args.extend([
             "--disk".to_owned(),
-            format!("path={},readonly=on,image_type=raw", root.display()),
+            format!("path={},readonly=on,image_type=raw", files.root.display()),
             "--disk".to_owned(),
-            format!("path={},image_type=raw", seat.session.disk().display()),
+            format!("path={},image_type=raw", files.disk.display()),
             "--vsock".to_owned(),
-            format!("cid=3,socket={}", seat.run.vsock_socket().display()),
+            format!("cid=3,socket={}", files.vsock.display()),
             "--serial".to_owned(),
-            format!("file={}", seat.run.serial_log().display()),
+            format!("file={}", files.serial.display()),
             "--console".to_owned(),
             "off".to_owned(),
         ]);
@@ -719,8 +751,11 @@ fn kvm_the_ruleset_holds_ch_to_its_vm_files() {
 
 /// A TCP connect of CH under the chain is refused (decisions CH8-1,
 /// CH8-3). `ch-remote send-migration` makes CH connect to a TCP address.
-/// The control sends the same call to a CH that runs with no chain, and
-/// its connect arrives.
+/// The refusal must be the socket error of that migration: a `Migration
+/// failed` line of CH since the call, or the answer of `ch-remote`, with
+/// the EACCES text. The control sends the same call to a CH with the same
+/// devices that runs with no chain, and its connect arrives. So only the
+/// chain differs.
 #[test]
 #[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
 fn kvm_ch_under_the_chain_makes_no_tcp_connect() {
@@ -730,40 +765,41 @@ fn kvm_ch_under_the_chain_makes_no_tcp_connect() {
     let ch = vmm.launch(rig.boot(&seat));
     wait_booted(&vmm, &ch, &seat);
 
+    let before = vmm.all_lines().len();
     let refused = migrate(&seat.run.api_socket(), NO_CONNECT);
     assert!(!refused.0, "CH under the chain made a TCP connect");
-    let lines = vmm.lines_of(&seat.id);
-    let denied = |text: &str| text.contains(DENIED);
+    let lines = vmm.lines_since(before, &seat.id);
+    let socket_error = |text: &str| text.contains(EACCES);
+    let migration_error = |line: &String| line.contains(MIGRATION_FAILED) && socket_error(line);
     assert!(
-        denied(&refused.1) || lines.iter().any(|line| denied(line)),
-        "no {DENIED}: ch-remote {}, sink {lines:?}",
+        socket_error(&refused.1) || lines.iter().any(migration_error),
+        "no migration socket error {EACCES}: ch-remote {}, sink {lines:?}",
         refused.1
     );
 
-    // The control: the same binary with no chain, so with no label and no
-    // ruleset.
+    // The control: the same binary and the same devices with no chain, so
+    // with no label and no ruleset.
     let work = files().join(format!("kvm-slot-tcp-{}", std::process::id()));
     let _ = fs::remove_dir_all(&work);
     fs::create_dir(&work).unwrap();
-    let serial = work.join("serial.log");
-    let mut args = vec![
-        "--api-socket".to_owned(),
-        format!("path={}", work.join("api.sock").display()),
-    ];
-    args.extend(rig.guest_args());
-    args.extend([
-        "--serial".to_owned(),
-        format!("file={}", serial.display()),
-        "--console".to_owned(),
-        "off".to_owned(),
-    ]);
+    let plain_files = BootFiles {
+        api: work.join("api.sock"),
+        root: work.join("root"),
+        disk: work.join("disk"),
+        vsock: work.join("vsock.sock"),
+        serial: work.join("serial.log"),
+    };
+    zeros(&plain_files.root);
+    zeros(&plain_files.disk);
     let plain = Vm(Command::new(CH_BINARY)
-        .args(args)
+        .args(rig.boot_args_at(&plain_files))
         .stdin(Stdio::null())
         .spawn()
         .unwrap());
-    until("boot marker of the plain CH", || booted(&serial));
-    let control = migrate(&work.join("api.sock"), BOOT);
+    until("boot marker of the plain CH", || {
+        booted(&plain_files.serial)
+    });
+    let control = migrate(&plain_files.api, BOOT);
     assert!(control.0, "the plain CH made no TCP connect: {}", control.1);
     drop(plain);
     fs::remove_dir_all(&work).unwrap();
@@ -861,7 +897,9 @@ fn kvm_ch_output_reaches_the_sink_with_its_id() {
 
 /// A drop of the spawner ends its thread, and the kernel kills CH by its
 /// death signal (decision CH19 (4), facts 76 and 80). The control: CH
-/// still runs after its boot while the spawner lives.
+/// still runs after its boot while the spawner lives. This test fails
+/// today: AppArmor clears the death signal at the exec into the slot
+/// label (the CONTRACT-QUESTION in the crate AGENTS.md).
 #[test]
 #[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
 fn kvm_ch_dies_with_the_spawner_thread() {
@@ -886,12 +924,16 @@ fn kvm_ch_dies_with_the_spawner_thread() {
 /// A SIGKILL of the vmm kills CH by its death signal, and the scope goes
 /// with it (decision CH19 (4), fact 80). The example in its role `hold`
 /// is the vmm. The control: CH still runs after its boot while the vmm
-/// lives.
+/// lives. This test fails today for the same reason as
+/// `kvm_ch_dies_with_the_spawner_thread`.
 #[test]
 #[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
 fn kvm_ch_dies_with_a_killed_vmm() {
     let mut rig = Rig::new("vmm-kill");
     let seat = rig.seat("0123abcd-0000-4000-8000-0000000c1550", 10);
+    // CH is not a child of the test, so a drop of `vmm` does not reach
+    // it. The guard kills the scope when an assert fails.
+    let _scope = ScopeGuard::new(&seat.id);
     let mut vmm = Vm(Command::new(example())
         .arg("hold")
         .stdin(Stdio::piped())

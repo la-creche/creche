@@ -77,7 +77,9 @@ table of the three vmm crates.
   fails, because the CH option parser reads them as syntax.
 - Every launch step forks from the one spawner thread (decision CH19 (4),
   fact 76). The vmm keeps its `Spawner` for its whole life. A drop ends
-  the thread, and the kernel then kills every payload it started.
+  the thread. The death signal then ends only a launch that has not yet
+  execed CH: the launch step, `systemd-run` or the launch stage. CH under
+  its slot label has no death signal (the first Known gap).
 - The launch step reads its plan only from a pipe that already holds it.
   The spawner writes the whole plan, at most 64 KiB, before the spawn,
   and never blocks on a full pipe.
@@ -176,7 +178,11 @@ table of the three vmm crates.
      It denies a write of the root disk and a read outside the VM files,
      at paths that the slot profile allows (decisions CH8-3, CH8-8). CH
      makes no TCP connect, and a slot label opens no inet socket, TCP or
-     UDP (decision CH8-1, fact 77).
+     UDP (decision CH8-1, fact 77). Under the chain, AppArmor alone
+     stops TCP: the slot profile refuses the socket before the Landlock
+     connect rule runs. The unit test
+     `landlock::tests::the_ruleset_denies_a_tcp_connect` in the job
+     `rust` proves the Landlock TCP rule on its own.
   3. CH in one slot connects to no listener of another slot, to no
      `api.sock` or `vsock.sock` of a live CH in another slot, and not to
      `vmm.sock` or the user bus. One slot cannot signal the CH of another
@@ -205,14 +211,43 @@ table of the three vmm crates.
   and 80): AppArmor sets the death signal to 0 at each exec that changes
   the label (`apparmor_bprm_committing_creds` in
   `security/apparmor/lsm.c`). The exec of CH into `creche-ch-slot-<k>`
-  is one, so CH under its label has no death signal. In the job `kvm`, CH
-  runs on after a drop of the spawner and after a SIGKILL of the vmm
+  is one, so CH under its label has no death signal. The death signal
+  ends only a launch that has not yet execed CH: the launch step,
+  `systemd-run` or the launch stage. In the job `kvm`, CH runs on after a
+  drop of the spawner and after a SIGKILL of the vmm
   (`kvm_ch_dies_with_the_spawner_thread`, `kvm_ch_dies_with_a_killed_vmm`
-  fail). The single profile of #443 attached at the same exec, so it had
-  the same gap. No row picks the replacement: for example a scope bound to
-  the vmm unit (`BindsTo=`), a resident stage that kills CH when the vmm
-  dies, or a cgroup that the vmm unit delegates. Until David decides, the
-  two tests stay red and CH56 rule 2 does not hold.
+  fail). No row picks the replacement. The options:
+  1. A scope bound to the vmm unit (`BindsTo=creche-vmm.service`). It
+     drops the kill path of the spawner thread. The job `kvm` then needs
+     a stand-in `creche-vmm.service`, and
+     `kvm_ch_dies_with_the_spawner_thread` can then claim only the end
+     of the scope with that unit.
+  2. An immediate profile change. The stage writes
+     `changeprofile creche-ch-slot-<k>` to `attr/current` in place of
+     `exec creche-ch-slot-<k>` to `attr/exec`, before the Landlock step.
+     The slot profile changes the CH rule
+     `/opt/components/vmm/bin/cloud-hypervisor mr` to `ix`. The label
+     then stays the same at the exec of CH. In v6.8
+     `apparmor_bprm_committing_creds` returns early when the label proxy
+     stays the same, before it clears the death signal, and no other
+     place in `domain.c` or `lsm.c` clears it. `aa_change_profile` lets
+     an unconfined task change its profile under no_new_privs
+     (`domain.c`). This keeps the kill path of the spawner thread and
+     needs no `creche-vmm.service` in the job `kvm`. It amends CH55 and
+     depends on the same knob,
+     `kernel.apparmor_restrict_unprivileged_unconfined = 0`. Untested:
+     nobody has run it end to end, and the slot profile may need rules
+     for the steps of the stage after the change.
+  3. A resident stage that kills CH when the vmm dies.
+  4. A cgroup that the vmm unit delegates.
+  Until David decides, the two tests stay red and CH56 rule 2 does not
+  hold. The chosen fix also updates each text that relies on the death
+  signal of CH: the module doc, the `Drop` doc and the `serve` comment
+  of `src/spawner.rs`, the doc of `tests/launch.rs`, the role `hold` of
+  `examples/launch_chain.rs`, the two tests of `tests/kvm_slot.rs`,
+  `SHUTDOWN_WAIT` and the deadline comment of
+  `rust/crates/vmm/src/shutdown.rs`, and the `SHUTDOWN_WAIT` paragraph
+  of `rust/crates/vmm/AGENTS.md`.
 
 - Closed by plan PRs L16b and L16c: lifecycle passes the slot of each
   start with `Launch::in_slot`, so no launch of the vmm fails with

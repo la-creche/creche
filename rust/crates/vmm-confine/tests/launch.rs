@@ -6,8 +6,10 @@
 //! step and starts no payload. The fake `systemd-run` still proves the
 //! core limit of the launch step, and its hold of one session id gives
 //! `Launched::terminate` a live process. The kvm job loads the slot
-//! profiles and proves the full chain: the label, no_new_privs, Landlock,
-//! CH and the kill chain of fact 80 (`tests/kvm_slot.rs`).
+//! profiles and proves the label, no_new_privs, Landlock and CH
+//! (`tests/kvm_slot.rs`). The kill chain of fact 80 does not hold under
+//! the slot label: see the CONTRACT-QUESTION in the Known gaps of the
+//! crate AGENTS.md.
 #![cfg(target_os = "linux")]
 
 mod common;

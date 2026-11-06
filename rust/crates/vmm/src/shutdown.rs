@@ -40,8 +40,10 @@ const UNIT_STOP_TIMEOUT: Duration = Duration::from_secs(90);
 // these 5 s for its exit.
 const EXIT_TIME: Duration = Duration::from_secs(5);
 
-/// The longest shutdown. Past it the shutdown ends, and each VM still in
-/// the set ends with the vmm (decision CH19 (4): PDEATHSIG).
+/// The longest shutdown. Past it the shutdown ends. Decision CH19 (4)
+/// wants each VM still in the set to end with the vmm through PDEATHSIG.
+/// CH under its slot label has no death signal, so this does not hold
+/// yet: see the CONTRACT-QUESTION in rust/crates/vmm-confine/AGENTS.md.
 pub const SHUTDOWN_WAIT: Duration = UNIT_STOP_TIMEOUT.saturating_sub(EXIT_TIME);
 
 /// The longest wait of `Runtime::shutdown_timeout` after the shutdown
@@ -61,8 +63,9 @@ const _: () = assert!(
 // decision CH44 rule 3) each fit inside the wait.
 // Decision CH56 rule 2: one deadline from SIGTERM bounds every step, so
 // a full take and then a full stop of one VM need not both fit. A VM
-// still in the set at the deadline ends with the vmm through PDEATHSIG,
-// a power cut for its guest.
+// still in the set at the deadline is meant to end with the vmm through
+// PDEATHSIG, a power cut for its guest. Under the slot label CH has no
+// death signal (the CONTRACT-QUESTION in rust/crates/vmm-confine/AGENTS.md).
 const _: () = assert!(
     SHUTDOWN_WAIT.as_secs() + EXIT_TIME.as_secs() <= UNIT_STOP_TIMEOUT.as_secs()
         && DROP_STOP_WAIT.as_secs() + DROP_SIGTERM_GRACE.as_secs() + KILL_WAIT.as_secs()

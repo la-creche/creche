@@ -4,8 +4,11 @@
 //! `PR_SET_PDEATHSIG` fires when the thread that forked the child exits,
 //! not the process (fact 76). So every launch forks from this one thread,
 //! and the thread lives as long as the `Spawner`. A drop of the `Spawner`
-//! ends the thread, and the kernel then sends SIGKILL to every payload it
-//! started. The vmm keeps its `Spawner` for its whole life.
+//! ends the thread. The kernel then sends SIGKILL only to a launch that
+//! has not yet execed CH: the launch step, `systemd-run` or the launch
+//! stage. AppArmor clears the death signal at the exec of CH into its slot
+//! label, so CH has none (the CONTRACT-QUESTION in the Known gaps of the
+//! crate AGENTS.md). The vmm keeps its `Spawner` for its whole life.
 //!
 //! Each launch step gets one pipe for its stdout and stderr in place of
 //! the fds of the vmm (decision CH50 rule 12). The spawner starts the
@@ -115,7 +118,9 @@ impl Spawner {
 }
 
 impl Drop for Spawner {
-    /// Ends the thread. The kernel kills every payload it started.
+    /// Ends the thread. The death signal then ends each launch that has
+    /// not yet execed CH. CH under its slot label has no death signal
+    /// (Known gaps of the crate AGENTS.md).
     fn drop(&mut self) {
         drop(self.requests.take());
         if let Some(thread) = self.thread.take() {
@@ -130,7 +135,8 @@ impl Drop for Spawner {
 fn serve(program: &Path, sink: &Sink, queue: &Receiver<Request>) {
     for request in queue {
         // A caller that stopped waiting drops its answer. Its child then
-        // has no handle and dies with this thread.
+        // has no handle. It dies with this thread only before its exec of
+        // CH (Known gaps of the crate AGENTS.md).
         let _ = request.reply.send(spawn(program, sink, request.launch));
     }
 }
