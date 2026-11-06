@@ -1928,3 +1928,65 @@ fn a_restore_links_the_snapshot_to_its_new_slot() {
     assert_eq!(test.api.resumes.load(Ordering::SeqCst), 1);
     assert!(test.fault_codes().is_empty());
 }
+
+/// Two starts overlap in their launch steps. The `Starting` entry of the
+/// first holds its slot, so the second takes another one, and its link
+/// empties no slot of the first (plan PR L16b, PR D16 caller duty (c),
+/// decision CH56 rule 1).
+#[test]
+fn two_overlapping_starts_take_two_slots() {
+    let test = Test::new("slot-overlap", |_| {});
+    test.fake.hold.store(true, Ordering::SeqCst);
+    for index in 0..2 {
+        let start = test.hook.start(&test.rows[index]);
+        let cut = test
+            .runtime
+            .block_on(async { tokio::time::timeout(Duration::from_millis(50), start).await });
+        assert!(cut.is_err(), "start {index}");
+    }
+    test.fake.hold.store(false, Ordering::SeqCst);
+    eventually(|| test.launches() == 2);
+    assert_ne!(test.slot(0), test.slot(1));
+}
+
+/// A start runs while a stop of another VM runs. The `Stopping` entry
+/// holds the slot of the live CH, so the start takes another slot and
+/// leaves the sockets of that CH alone (plan PR L16b, PR D16 caller duty
+/// (c), decision CH56 rule 1).
+#[test]
+fn a_start_during_a_stop_takes_another_slot() {
+    let test = Test::new("slot-stopping", |_| {});
+    *test.fake.guest.lock().unwrap() = Guest::Wedges;
+    assert_eq!(test.start(0), Ok(()));
+    assert_eq!(test.slot(0), 0);
+    *test.fake.guest.lock().unwrap() = Guest::Ready;
+    let (stopped, started) = test
+        .runtime
+        .block_on(both(test.hook.stop(&test.rows[0].id), async {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            test.hook.start(&test.rows[1]).await.map(|_link| ())
+        }));
+    assert!(stopped.is_err());
+    assert_eq!(started, Ok(()));
+    assert_eq!(test.slot(1), 1);
+    assert_eq!(test.link(0), Some(slot_dir(0)));
+}
+
+/// A stale `vm/<id>` link names the slot of another VM, as after a failed
+/// unlink or a vmm restart with no reboot. The start links `vm/<id>` to
+/// its own slot before `remove_stale` runs, so the stale sweep removes no
+/// file of the other VM (PR D16 caller duty (a)).
+#[test]
+fn a_stale_link_to_a_held_slot_removes_nothing_of_its_vm() {
+    let test = Test::new("slot-stale", |_| {});
+    assert_eq!(test.start(1), Ok(()));
+    assert_eq!(test.slot(0), 0);
+    let vsock = test.dir.join("run/slot/0/vsock.sock");
+    assert!(vsock.exists());
+    let id = &test.rows[0].id;
+    std::os::unix::fs::symlink(slot_dir(0), test.dir.join(format!("run/vm/{id}"))).unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    assert_eq!(test.slot(1), 1);
+    assert_eq!(test.link(0), Some(slot_dir(1)));
+    assert!(vsock.exists());
+}
