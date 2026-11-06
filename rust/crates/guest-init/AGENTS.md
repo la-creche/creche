@@ -2,8 +2,13 @@
 
 The crate `creche-guest-init`: a library and the program `guest-init`,
 PID 1 of each Cloud Hypervisor VM (decisions CH9, CH7-5). It is the fourth
-program of the vmm row. The root `AGENTS.md` and `rust/crates/vmm/AGENTS.md`
-apply here too.
+program of the vmm row. Only the root `AGENTS.md` applies here.
+
+## Layer rule
+
+`creche-guest-init` calls `creche-wire` only. It depends on no vmm crate,
+and no vmm crate depends on it. It runs blocking std threads, not tokio
+(CH62 rule 2).
 
 ## The program
 
