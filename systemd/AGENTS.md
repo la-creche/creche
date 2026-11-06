@@ -11,6 +11,7 @@ from this directory at run time. The root `AGENTS.md` applies here too.
 | `creche-door-acp.service` | user | no script yet. The door ships in `attendance` |
 | `creche-memory.service` | user | no script yet. The memory component ships it |
 | `creche-door-trigger@.service` | user, templated | the cutover script, only when the host has none |
+| `creche-vmm.service` | user | no script yet. The operator installs it by hand once (design section 6.2 step 3). No agent installs it |
 The host's own units are not here: the watchdog, the registry sync, the
 corpus sync, the drift check, `creche-library@` and follow. They are files
 of creche-release (`units/user/`), and a `host` release links each one into
@@ -70,3 +71,28 @@ file's removal is always a human verb.
 4. A unit of the host itself, one that no component ships, goes in
    creche-release, not here.
 5. Name it in the root `README.md`, section 3.
+
+## Caller duties
+
+1. The rework of #443 (plan PR C15) proves the order under
+   `creche-vmm.service` in the job `kvm`. The unit sets
+   `NoNewPrivileges=yes`, so no_new_privs is set before the launch stage
+   writes the AppArmor exec attribute. The stage sets it only after that
+   write (decision CH55). The kvm tests must set no_new_privs before the
+   write, as the unit does, and prove the slot label. A refused write
+   fails the launch closed (decision CH55), so a wrong order starts no VM
+   and lets no VM run unconfined.
+
+## Decided
+
+1. The env file of `creche-vmm.service` is decision CH59 rule 1. The
+   unit reads `/srv/agents/state/creche/vmm.env`, then the site file, so
+   a site value wins. `bin/fleet-up up` writes `vmm.env` with
+   `creche_env_get`: each key of `rust/crates/vmm/src/config.rs` except
+   `RUNTIME_DIRECTORY`.
+2. The lifetime of `serial.log` is decision CH59 rule 2. The unit keeps
+   `RuntimeDirectoryPreserve=no`, so systemd removes the run root at each
+   stop and each restart. Plan PR D17 moves each `serial.log` to
+   `sessions/<id>/serial.log` in the state root, kept until the next start
+   of that session (gap G23). Until D17 merges, each stop removes the
+   `serial.log` of each VM.
