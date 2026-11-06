@@ -19,9 +19,16 @@
 #      one target of the vmm row (CH7-4, CH7-5). The job runs this script
 #      before its `toolchain` step, so the script installs the pinned
 #      toolchain and the musl target itself, with no workflow edit (CH62
-#      rule 3). It refuses a program with a PT_INTERP header. The stand-in
-#      is a test program in no release row (CH62 rule 12). It packs
-#      guest-init as /init in guest-init.cpio, with dev/console 5:1.
+#      rule 3). It refuses a program with a PT_INTERP header, and first
+#      proves that the check refuses the runner's dynamic /bin/bash. The
+#      stand-in is a test program in no release row (CH62 rule 12). It
+#      packs guest-init as /init in guest-init.cpio, with dev/console 5:1,
+#      and fails unless GNU cpio lists exactly those entries, owned by root.
+#      CONTRACT-QUESTION: the kvm job comments of gate.yml and release.yml
+#      still say the setup fetches only CH, the kernel and busybox, in
+#      under a minute. This step adds a toolchain install and a release
+#      build. CH62 rule 3 bars a workflow edit, so the comments stay stale
+#      until David says whether rule 3 also bars a comment-only fix.
 #   6. It builds a busybox initramfs from `apt-get download busybox-static`.
 #      Its init writes the line CRECHE-KVM-BOOTED to the serial port, then
 #      `tick` once a second. It keeps the static busybox program, which a
@@ -118,22 +125,46 @@ say "build guest-init and the stand-in facade static for $MUSL"
 built=$REPO/rust/target/$MUSL/release
 install -m 0755 "$built/guest-init" guest-init
 install -m 0755 "$built/examples/standin_facade" standin_facade
-for program in guest-init standin_facade; do
-  # A static program has no PT_INTERP header. The guest has no loader.
-  headers=$(readelf -lW "$program")
+# A static program has no PT_INTERP header. The guest has no loader.
+# require_static dies when the program names a program interpreter.
+require_static() {
+  local headers
+  headers=$(readelf -lW "$1") || die "readelf cannot read $1"
   if grep -Eq '^[[:space:]]+INTERP[[:space:]]' <<< "$headers"; then
-    die "$program names a program interpreter: it is not static"
+    die "$1 names a program interpreter: it is not static"
   fi
+}
+# The positive control: the check must refuse a dynamic program. A broken
+# pattern or a lost `die` makes the subshell pass, and this line fails.
+if (require_static /bin/bash) 2> /dev/null; then
+  die "the static check is broken: it passes the dynamic /bin/bash"
+fi
+for program in guest-init standin_facade; do
+  require_static "$program"
 done
 say "guest-init and standin_facade are static"
 work=$(mktemp -d "$dir/guest-init.XXXXXX")
-mkdir -p "$work/root/dev"
+install -d -m 0755 "$work/root" "$work/root/dev"
 install -m 0755 guest-init "$work/root/init"
 # The kernel opens /dev/console for PID 1 before any devtmpfs mount.
 sudo mknod -m 0600 "$work/root/dev/console" c 5 1
 # `-R 0:0`: root owns each entry, as on a booted root disk.
 (cd "$work/root" && find . | cpio -o -H newc -R 0:0 --quiet) > guest-init.cpio
 rm -rf "$work"
+# GNU cpio with `-H newc` refuses an archive in another format. The kernel
+# reads newc only. awk keeps the mode, the numeric owner, a device's
+# major,minor and the name.
+listing=$(cpio -itvn -H newc --quiet < guest-init.cpio |
+  awk '$1 ~ /^c/ { print $1, $3, $4, $5 $6, $NF; next } { print $1, $3, $4, $NF }' |
+  sort) || die "GNU cpio cannot list guest-init.cpio as a newc archive"
+expected=$(printf '%s\n' \
+  'drwxr-xr-x 0 0 .' \
+  'drwxr-xr-x 0 0 dev' \
+  'crw------- 0 0 5,1 dev/console' \
+  '-rwxr-xr-x 0 0 init' | sort)
+[[ "$listing" == "$expected" ]] ||
+  die "guest-init.cpio is not /init, dev and dev/console 5:1 owned by root:"$'\n'"$listing"
+say "guest-init.cpio holds /init, dev and dev/console 5:1, owned by root"
 
 say "build the busybox initramfs"
 sudo apt-get update -qq
