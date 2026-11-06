@@ -1706,6 +1706,41 @@ fn a_stop_during_a_sleep_waits_for_the_retire() {
     assert!(test.hook.running(id));
 }
 
+/// A `facade` line after `ControlReady` writes its turn end to the row
+/// through the reader too (decision CH32 rule 4).
+#[test]
+fn a_facade_line_writes_its_turn_end_to_the_row() {
+    let test = Test::new("facade-ended", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    test.send(ENDED);
+    test.settle(|test| test.title(0).0.is_some());
+    assert_eq!(test.title(0), (Some("First".to_owned()), true));
+}
+
+/// A valid line on a replaced link ends the old reader, and the line
+/// changes nothing (decisions CH54 rule 6, CH62 rule 23). Row 0 stops,
+/// and its next start replaces the link. The old link then gets a
+/// `synced`, a `facade` line, or a `facade` line with a turn end. The new
+/// VM of row 0 runs on, and its row keeps no title.
+#[test]
+fn a_line_on_a_replaced_link_ends_its_reader() {
+    for (index, line) in [r#"{"synced":{}}"#, READY, ENDED].into_iter().enumerate() {
+        let test = Test::new(&format!("stale-line-{index}"), |_| {});
+        assert_eq!(test.start(0), Ok(()));
+        let id = test.rows[0].id.clone();
+        assert!(test.runtime.block_on(test.hook.stop(&id)).is_ok());
+        assert_eq!(test.start(0), Ok(()));
+        let old = test.fake.links.lock().unwrap()[0].try_clone().unwrap();
+        (&old).write_all(format!("{line}\n").as_bytes()).unwrap();
+        old.set_read_timeout(Some(Duration::from_millis(1)))
+            .unwrap();
+        // The end of the old reader closes the vmm end of the old link.
+        test.settle(|_| matches!((&old).read(&mut [0_u8; 64]), Ok(0)));
+        assert!(test.hook.running(&id), "{line}");
+        assert_eq!(test.title(0).0, None, "{line}");
+    }
+}
+
 /// A reader whose link is no longer current stops nothing (decision CH54
 /// rule 6). Row 0 stops, and its next start replaces the link. The old
 /// link then ends on a partial line, and the old reader refuses it. The
