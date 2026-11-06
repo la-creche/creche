@@ -11,6 +11,7 @@ from this directory at run time. The root `AGENTS.md` applies here too.
 | `creche-door-acp.service` | user | no script yet. The door ships in `attendance` |
 | `creche-memory.service` | user | no script yet. The memory component ships it |
 | `creche-door-trigger@.service` | user, templated | the cutover script, only when the host has none |
+| `creche-vmm.service` | user | no script yet. The operator installs it by hand once (design section 6.2 step 3). No agent installs it |
 The host's own units are not here: the watchdog, the registry sync, the
 corpus sync, the drift check, `creche-library@` and follow. They are files
 of creche-release (`units/user/`), and a `host` release links each one into
@@ -70,3 +71,28 @@ file's removal is always a human verb.
 4. A unit of the host itself, one that no component ships, goes in
    creche-release, not here.
 5. Name it in the root `README.md`, section 3.
+
+## Decided
+
+1. The env file of `creche-vmm.service` is decision CH59 rule 1. The
+   unit reads `/srv/agents/state/creche/vmm.env`, then the site file, so
+   a site value wins. `bin/fleet-up up` writes `vmm.env` with
+   `creche_env_get`: each key of `rust/crates/vmm/src/config.rs` except
+   `RUNTIME_DIRECTORY`.
+2. The lifetime of `serial.log` is decision CH59 rule 2. The unit keeps
+   `RuntimeDirectoryPreserve=no`, so systemd removes the run root at each
+   stop and each restart. Plan PR D17 moves each `serial.log` to
+   `sessions/<id>/serial.log` in the state root, kept until the next start
+   of that session (gap G23). Until D17 merges, each stop removes the
+   `serial.log` of each VM.
+3. The vmm stand-in of the job `kvm` copies the decided lines of
+   `creche-vmm.service` that touch the launch chain and its stop:
+   `NoNewPrivileges=yes`, `KillMode=mixed` and each `Restart` line
+   (`rust/crates/vmm-confine/tests/stand_in`, decision CH60 rule 1). A
+   test in the job `rust` fails when a line differs from this unit. So
+   no_new_privs is set before the launch stage writes the AppArmor exec
+   attribute, as in production. The stage sets it only after that write
+   (decision CH55). The kvm tests check no_new_privs of the stand-in
+   before each launch, then prove the slot label of CH. A refused write
+   fails the launch closed (decision CH55), so a wrong order starts no VM
+   and lets no VM run unconfined.

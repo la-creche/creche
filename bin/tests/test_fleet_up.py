@@ -21,8 +21,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import stat
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -33,6 +35,7 @@ from attendance.auth import Principal
 REPO_ROOT: Final = Path(__file__).resolve().parents[2]
 SCRIPT: Final = REPO_ROOT / "bin" / "fleet-up"
 UNIT_SOURCE: Final = REPO_ROOT / "systemd"
+VMM_CONFIG: Final = REPO_ROOT / "rust" / "crates" / "vmm" / "src" / "config.rs"
 
 STATE: Final = "srv/agents/state/creche"
 MASTER_KEY: Final = "sk-fleet-up-test-master-key-0123456789abcdef"
@@ -75,7 +78,11 @@ DIRS: Final = (
     "sock",
 )
 
-ENV_FILES: Final = ("attendance.env", "noticeboard.env", "caregiver.env")
+ENV_FILES: Final = ("attendance.env", "noticeboard.env", "caregiver.env", "vmm.env")
+
+#: The key of `config.rs` that systemd sets from `RuntimeDirectory=`. No
+#: env file holds it (decision CH59 rule 1).
+RUN_ROOT_KEY: Final = "RUNTIME_DIRECTORY"
 
 #: The `systemctl` verbs that change nothing.
 READ_ONLY_VERBS: Final = frozenset({"is-enabled", "is-active", "show"})
@@ -281,6 +288,43 @@ def _fail_lines(done: subprocess.CompletedProcess[str]) -> list[str]:
     return [line for line in done.stdout.splitlines() if line.startswith("FAIL: ")]
 
 
+def _vmm_keys() -> set[str]:
+    """Each key that the vmm reads from its env, from `config.rs`."""
+    pattern = r'^pub const [A-Z0-9_]+: &str = "([A-Z0-9_]+)";$'
+    keys = set(re.findall(pattern, VMM_CONFIG.read_text(encoding="utf-8"), re.MULTILINE))
+    assert RUN_ROOT_KEY in keys, "config.rs no longer reads the run root"
+
+    return keys - {RUN_ROOT_KEY}
+
+
+def _catalog_value(key: str, site: str) -> str:
+    """The value of one key as `creche-env get` resolves it."""
+    done = subprocess.run(
+        [sys.executable, "-m", "creche_env", "get", key, "--env", site],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    )
+
+    return done.stdout.removesuffix("\n")
+
+
+def _env_pairs(path: Path) -> dict[str, str]:
+    """Each `KEY=value` line of an env file. A key twice fails."""
+    pairs: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("#"):
+            continue
+
+        key, sign, value = line.partition("=")
+        assert sign, f"{path.name}: not a KEY=value line: {line!r}"
+        assert key not in pairs, f"{path.name}: {key} twice"
+        pairs[key] = value
+
+    return pairs
+
+
 # --- check ------------------------------------------------------------------
 
 
@@ -379,6 +423,43 @@ def test_up_writes_the_env_files_at_0600(ready: Host) -> None:
     for name in ("attendance.env", "noticeboard.env"):
         text = (ready.state / name).read_text(encoding="utf-8")
         assert "KEY=" not in text.replace("ACCESS_KEY_FILE=", ""), name
+
+
+def test_up_writes_each_vmm_key_as_the_catalog_resolves_it(ready: Host) -> None:
+    """CH59 rule 1: `vmm.env` holds each key of `config.rs` but the run
+    root, with the value of `creche-env get`. A missing key, an extra key
+    and a wrong value each fail."""
+    assert ready.run("up").returncode == 0
+
+    pairs = _env_pairs(ready.state / "vmm.env")
+
+    assert set(pairs) == _vmm_keys()
+    site = os.environ["AGENT_SITE_FILE"]
+    for key, value in pairs.items():
+        assert value == _catalog_value(key, site), key
+
+
+def test_vmm_env_follows_each_change_of_the_site_file(ready: Host, tmp_path: Path) -> None:
+    """A later `up` rewrites `vmm.env`: it takes a new override, and it goes
+    back to the catalog value when the site file drops the override. A
+    write only on the first `up`, or a writer that keeps a set key, fails."""
+    example = os.environ["AGENT_SITE_FILE"]
+    site = tmp_path / "site.env"
+    site.write_text(Path(example).read_text(encoding="utf-8"), encoding="utf-8")
+    vmm_env = ready.state / "vmm.env"
+    default = _catalog_value("VMM_RAM_CAP_GIB", example)
+    assert default != "12", "the override must differ from the catalog value"
+
+    assert ready.run("up", AGENT_SITE_FILE=str(site)).returncode == 0
+    assert _env_pairs(vmm_env)["VMM_RAM_CAP_GIB"] == default
+
+    site.write_text(f"{site.read_text(encoding='utf-8')}VMM_RAM_CAP_GIB=12\n", encoding="utf-8")
+    assert ready.run("up", AGENT_SITE_FILE=str(site)).returncode == 0
+    assert _env_pairs(vmm_env)["VMM_RAM_CAP_GIB"] == "12"
+
+    site.write_text(Path(example).read_text(encoding="utf-8"), encoding="utf-8")
+    assert ready.run("up", AGENT_SITE_FILE=str(site)).returncode == 0
+    assert _env_pairs(vmm_env)["VMM_RAM_CAP_GIB"] == default
 
 
 def test_up_never_writes_hooks_env(ready: Host) -> None:

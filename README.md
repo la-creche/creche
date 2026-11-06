@@ -56,6 +56,7 @@ turn. The `attendance` service takes that call from four doors.
 | `family/` | in `caregiver` | none, a library | The `family.toml` and `server.toml` schemas, the validator, the registry loader. | [family/AGENTS.md](family/AGENTS.md) |
 | `memory/` | none yet | `creche-memory.service`, user | The memory service: the store of the vault, its sync, the search and every agent write. | [memory/AGENTS.md](memory/AGENTS.md) |
 | `library/` | none | none here. creche-release's `creche-library@.timer` runs it | The retrieval index builder. Not an agent. | [library/AGENTS.md](library/AGENTS.md) |
+| `rust/crates/vmm/` | `vmm` | `creche-vmm.service`, user | Every Cloud Hypervisor VM of the playpen. Not installed yet. | [rust/crates/vmm/AGENTS.md](rust/crates/vmm/AGENTS.md) |
 
 The chaperone is the Rust program of the `chaperone` repository. Its unit,
 `creche-chaperone.service`, ships from that repository.

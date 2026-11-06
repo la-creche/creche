@@ -13,8 +13,10 @@
 //!   launch binds to that unit (decision CH60 rule 1). It then starts a
 //!   spawner on `/proc/self/exe`, as the vmm does, launches it, prints the
 //!   pid and waits to be stopped. `tests/kvm_slot.rs` and
-//!   `tests/kvm_vm.rs` run it as a transient user service, then stop or
-//!   kill that service to prove that systemd stops CH with it.
+//!   `tests/kvm_vm.rs` run it as a transient user service, then stop,
+//!   restart or kill that service to prove that systemd stops CH with it.
+//!   A restarted `hold` reads EOF, fails and exits 78, which ends the
+//!   restarts of `Restart=always`.
 //! - `await <path>` returns once `<path>` exists. A test gives it as the
 //!   `ExecStop=` of the `hold` service, so the stop of that unit lasts
 //!   until the test opens the gate, as the shutdown of the vmm does.
