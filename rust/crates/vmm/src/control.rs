@@ -6,12 +6,16 @@
 //!
 //! After `ControlReady`, guest init relays each turn event of the facade
 //! (decision CH21), and the vmm may send the graceful stop (decision CH19
-//! (3)). `ControlState` applies each turn end to the session row.
+//! (3)). `ControlLink::split` gives a reader of the turn events and a
+//! `StopSender` for the stop. `ControlState` applies each turn end to the
+//! session row.
 
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::io;
 use std::path::Path;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Weak};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use creche_wire::{
     CONTROL_LINE_CAP, ControlCommand, ControlHello, ControlReady, ControlStop, FacadeState,
@@ -33,7 +37,7 @@ pub const READY_WAIT: Duration = Duration::from_secs(10);
 // Decision CH43 rule 5: the pause is 10 ms. Fact 74 saw `OK` 45 to 51 ms
 // after the start of a restore, so that is about 5 tries per restore.
 // Only the vmm reads it, so a change costs one constant.
-const DIAL_PAUSE: Duration = Duration::from_millis(10);
+pub(crate) const DIAL_PAUSE: Duration = Duration::from_millis(10);
 
 /// The most bytes of the answer of Cloud Hypervisor to `CONNECT`, the LF
 /// not counted. `OK ` and a 32-bit port number fit with room to spare.
@@ -97,14 +101,40 @@ pub fn wall_time() -> Result<UnixMillis, ControlError> {
 }
 
 /// An open control link. It keeps the bytes that guest init sent after
-/// `ControlReady` for the next read.
+/// `ControlReady` for the next read. `S` holds the stream: the stream
+/// itself, or the `Arc` of the reader after `split`.
 #[derive(Debug)]
-pub struct ControlLink {
-    stream: UnixStream,
+pub struct ControlLink<S = UnixStream> {
+    stream: S,
     pending: Vec<u8>,
 }
 
 impl ControlLink {
+    /// The stream and the bytes that came after the answer to `CONNECT`.
+    /// The ACP relay copies both (plan PR L13).
+    pub(crate) fn into_parts(self) -> (UnixStream, Vec<u8>) {
+        (self.stream, self.pending)
+    }
+
+    /// Splits the link after `ControlReady`: the sender of the graceful
+    /// stop and the reader of the turn events (plan PR L18b). The reader
+    /// holds the only strong handle of the stream, so its end closes the
+    /// link (decision CH43 rule 2), and the sender then sends nothing.
+    #[must_use]
+    pub fn split(self) -> (StopSender, ControlLink<Arc<UnixStream>>) {
+        let stream = Arc::new(self.stream);
+        let sender = StopSender {
+            stream: Arc::downgrade(&stream),
+        };
+        let reader = ControlLink {
+            stream,
+            pending: self.pending,
+        };
+        (sender, reader)
+    }
+}
+
+impl<S: Borrow<UnixStream>> ControlLink<S> {
     /// Writes `value` as one compact JSON line (rule 1 of "The vsock JSON
     /// links").
     pub(crate) async fn write<T: Serialize>(&self, value: &T) -> Result<(), ControlError> {
@@ -117,8 +147,8 @@ impl ControlLink {
     async fn write_raw(&self, bytes: &[u8]) -> Result<(), ControlError> {
         let mut left = bytes;
         while !left.is_empty() {
-            self.stream.writable().await.map_err(io_error)?;
-            match self.stream.try_write(left) {
+            self.stream.borrow().writable().await.map_err(io_error)?;
+            match self.stream.borrow().try_write(left) {
                 Ok(written) => left = left.get(written..).unwrap_or_default(),
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
                 Err(error) => return Err(io_error(error)),
@@ -144,10 +174,32 @@ impl ControlLink {
     /// `Ended` when guest init closed the link at a line end. `Line` for
     /// a line that is not a `TurnEvent`. The caller then closes the link.
     pub async fn event(&mut self) -> Result<TurnEvent, ControlError> {
-        self.read().await.map_err(|error| match error {
-            ControlError::Closed => ControlError::Ended,
-            error => error,
+        self.next_event().await.map_err(|end| match end {
+            EventEnd::Refused(_) => ControlError::Line,
+            EventEnd::Error(error) => error,
         })
+    }
+
+    /// Reads the next turn event as `event` does. A refused line comes
+    /// back with its first `REFUSED_LOG_CAP` bytes, so the caller logs it
+    /// (decision CH54 rule 6).
+    ///
+    /// # Errors
+    ///
+    /// `EventEnd::Refused` for a line that is not a `TurnEvent`, and
+    /// `EventEnd::Error` with the error of `event` for every other end.
+    pub(crate) async fn next_event(&mut self) -> Result<TurnEvent, EventEnd> {
+        let line = match self.line(CONTROL_LINE_CAP).await {
+            Ok(line) => line,
+            Err(ControlError::Closed) => return Err(EventEnd::Error(ControlError::Ended)),
+            // A line past the cap stays in `pending`.
+            Err(ControlError::Line) => return Err(refused(&self.pending)),
+            Err(error) => return Err(EventEnd::Error(error)),
+        };
+        if !strict(&line) {
+            return Err(refused(&line));
+        }
+        serde_json::from_slice(&line).map_err(|_| refused(&line))
     }
 
     /// Sends the graceful stop: guest init stops the facade, syncs and
@@ -177,8 +229,8 @@ impl ControlLink {
             if self.pending.len() > cap {
                 return Err(ControlError::Line);
             }
-            self.stream.readable().await.map_err(io_error)?;
-            match self.stream.try_read(&mut chunk) {
+            self.stream.borrow().readable().await.map_err(io_error)?;
+            match self.stream.borrow().try_read(&mut chunk) {
                 Ok(0) if self.pending.is_empty() => return Err(ControlError::Closed),
                 Ok(0) => return Err(ControlError::Line),
                 Ok(read) => self
@@ -188,6 +240,59 @@ impl ControlLink {
                 Err(error) => return Err(io_error(error)),
             }
         }
+    }
+}
+
+/// The most bytes of a refused line that the vmm logs. A line may hold
+/// up to `CONTROL_LINE_CAP` bytes. No row sets it. Only the vmm reads it,
+/// so a change costs one constant.
+pub(crate) const REFUSED_LOG_CAP: usize = 512;
+
+/// Why `ControlLink::next_event` read no turn event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum EventEnd {
+    /// The strict reader refused a line (decision CH43 rule 2). It holds
+    /// the first `REFUSED_LOG_CAP` bytes of the line, for the log.
+    Refused(Vec<u8>),
+    /// Any other end, as `ControlLink::event` gives it.
+    Error(ControlError),
+}
+
+/// The refused `line`, cut to `REFUSED_LOG_CAP` bytes.
+fn refused(line: &[u8]) -> EventEnd {
+    EventEnd::Refused(line.iter().take(REFUSED_LOG_CAP).copied().collect())
+}
+
+/// The sender of the graceful stop of a split control link. It holds a
+/// weak handle, so the end of the reader closes the link.
+#[derive(Debug)]
+pub struct StopSender {
+    stream: Weak<UnixStream>,
+}
+
+impl StopSender {
+    /// Whether the reader of the link still runs, so the link is open.
+    #[must_use]
+    pub fn is_open(&self) -> bool {
+        self.stream.strong_count() > 0
+    }
+
+    /// Sends `{"stop":{}}` as `ControlLink::stop` does.
+    ///
+    /// # Errors
+    ///
+    /// `Io` with `NotConnected` when the reader ended and closed the link,
+    /// or when the write failed.
+    pub async fn stop(&self) -> Result<(), ControlError> {
+        let stream = self
+            .stream
+            .upgrade()
+            .ok_or(ControlError::Io(io::ErrorKind::NotConnected))?;
+        let link = ControlLink {
+            stream,
+            pending: Vec::new(),
+        };
+        link.stop().await
     }
 }
 
@@ -240,13 +345,14 @@ async fn open_within(
 /// Dials `port` through the vsock socket of Cloud Hypervisor. It retries
 /// while the socket does not exist (ENOENT) and after an empty reply,
 /// because both come before the guest listener exists (fact 74). It
-/// retries on ECONNREFUSED too.
+/// retries on ECONNREFUSED too. It has no bound of its own, so the
+/// caller bounds it with `READY_WAIT`. Both guest ports use it (plan PR L13).
 // Decision CH43 rule 7: the dial retries ECONNREFUSED inside `READY_WAIT`,
 // the same way as ENOENT. A socket file exists from `bind` on, and a
 // connect gets ECONNREFUSED until Cloud Hypervisor calls `listen`. A
 // socket file that a dead Cloud Hypervisor left behind gets it too.
 // `READY_WAIT` still bounds the open, so a stale socket ends as `Timeout`.
-async fn dial(vsock: &Path, port: GuestPort) -> Result<ControlLink, ControlError> {
+pub(crate) async fn dial(vsock: &Path, port: GuestPort) -> Result<ControlLink, ControlError> {
     let connect = format!("CONNECT {}\n", port.number());
     loop {
         let stream = match UnixStream::connect(vsock).await {
@@ -294,6 +400,13 @@ struct VmControl {
     link: Option<LinkId>,
     facade: Option<FacadeState>,
     turn_running: bool,
+    /// A turn event arrived after the last `ControlReady` (decision CH43
+    /// rule 8).
+    turn_seen: bool,
+    /// The time of the last turn event (decision CH50 rule 5).
+    last_turn: Option<Instant>,
+    /// The link that closed on a refused line (decision CH54 rule 6).
+    refused: Option<LinkId>,
 }
 
 /// The last turn end that `facade` holds. Only a state that can follow a
@@ -361,6 +474,7 @@ impl ControlState {
         };
         control.turn_running =
             matches!(&ready.facade, FacadeState::Running(running) if running.turn_running);
+        control.turn_seen = false;
         let facade = control.facade.insert(ready.facade);
         Change::Applied(last_turn_end(facade).cloned())
     }
@@ -377,6 +491,10 @@ impl ControlState {
             return Change::Stale;
         };
         control.turn_running = matches!(event, TurnEvent::Start(_));
+        control.turn_seen = true;
+        // The tokio clock, as the door close time of `Relays::door`, so a
+        // test on paused time sees one clock.
+        control.last_turn = Some(tokio::time::Instant::now().into_std());
         match event {
             TurnEvent::Start(_) => Change::Applied(None),
             TurnEvent::End(end) => Change::Applied(Some(end.clone())),
@@ -397,6 +515,26 @@ impl ControlState {
         }
     }
 
+    /// Marks the close of `link` after a refused line when it is current
+    /// (decision CH54 rule 6), as `closed` does. A retire then reads the
+    /// mark with `refused`. Returns whether it did.
+    pub fn refuse(&mut self, vm: &SessionId, link: LinkId) -> bool {
+        let current = self.closed(vm, link);
+        if let Some(control) = self.vms.get_mut(vm).filter(|_| current) {
+            control.refused = Some(link);
+        }
+        current
+    }
+
+    /// Whether `link` of `vm` closed on a refused line (decision CH54
+    /// rule 6).
+    #[must_use]
+    pub fn refused(&self, vm: &SessionId, link: LinkId) -> bool {
+        self.vms
+            .get(vm)
+            .is_some_and(|control| control.refused == Some(link))
+    }
+
     /// The current link of `vm`, if one is open.
     #[must_use]
     pub fn link(&self, vm: &SessionId) -> Option<LinkId> {
@@ -409,8 +547,7 @@ impl ControlState {
     // `ControlReady`, and `turn_running` follows the events. No line
     // reports a change of the facade state yet. The phase 3 guest init PR
     // adds one. Until then the sleep gate treats a VM as up only after a
-    // ready said `running` or a turn event arrived. The sleep gate is plan
-    // PR L18, a later PR.
+    // ready said `running` or a turn event arrived (`turn_seen`).
     #[must_use]
     pub fn facade(&self, vm: &SessionId) -> Option<&FacadeState> {
         self.vms.get(vm).and_then(|control| control.facade.as_ref())
@@ -421,6 +558,20 @@ impl ControlState {
     #[must_use]
     pub fn turn_running(&self, vm: &SessionId) -> bool {
         self.vms.get(vm).is_some_and(|control| control.turn_running)
+    }
+
+    /// Whether a turn event of a current link of `vm` arrived after its
+    /// last `ControlReady` (decision CH43 rule 8).
+    #[must_use]
+    pub fn turn_seen(&self, vm: &SessionId) -> bool {
+        self.vms.get(vm).is_some_and(|control| control.turn_seen)
+    }
+
+    /// The time of the last turn event of `vm`, for its last use
+    /// (decision CH50 rule 5).
+    #[must_use]
+    pub fn last_turn(&self, vm: &SessionId) -> Option<Instant> {
+        self.vms.get(vm).and_then(|control| control.last_turn)
     }
 }
 

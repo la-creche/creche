@@ -1,6 +1,6 @@
-//! Table tests of admission: the RAM cap, the LRU idle order and the
-//! free-space floor (decisions CH8-6, CH8-7, CH21-3, CH36 G14, CH42
-//! rule 3).
+//! Table tests of admission: the RAM cap, the slot pool, the LRU idle
+//! order and the free-space floor (decisions CH8-6, CH8-7, CH21-3, CH36
+//! G14, CH42 rule 3, CH58 rule 2).
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -12,6 +12,9 @@ use creche_wire::SessionId;
 
 /// Free bytes well above the floor.
 const ROOMY: u64 = 500 * GIB;
+
+/// One free slot, so the pool is not full.
+const SLOT: usize = 1;
 
 // Each helper with `cfg(test)` may unwrap (rust/clippy.toml).
 
@@ -93,7 +96,7 @@ fn the_ram_table() {
         ("the whole cap alone", RAM_CAP, &[], Admission::Admit),
     ];
     for (name, wanted, running, answer) in cases {
-        let got = decide(*wanted, running, ROOMY, Limits::DESIGN);
+        let got = decide(*wanted, running, ROOMY, SLOT, Limits::DESIGN);
         assert_eq!(got, *answer, "{name}");
     }
 }
@@ -107,7 +110,7 @@ fn a_small_lru_idle_vm_goes_with_the_next_one() {
         vm(2, 32, 60, Gate::Idle, now),
         vm(3, 44, 1, Gate::Busy, now),
     ];
-    let got = decide(8 * GIB, &running, ROOMY, Limits::DESIGN);
+    let got = decide(8 * GIB, &running, ROOMY, SLOT, Limits::DESIGN);
     assert_eq!(got, Admission::EvictFirst(vec![id(1), id(2)]));
 }
 
@@ -123,7 +126,11 @@ fn the_floor_table() {
         ("no free byte", 0, Admission::HostFull(Full::Disk)),
     ];
     for (name, free, answer) in cases {
-        assert_eq!(decide(GIB, &[], free, Limits::DESIGN), answer, "{name}");
+        assert_eq!(
+            decide(GIB, &[], free, SLOT, Limits::DESIGN),
+            answer,
+            "{name}"
+        );
     }
 }
 
@@ -131,7 +138,7 @@ fn the_floor_table() {
 fn the_floor_comes_before_an_eviction() {
     let now = Instant::now() + Duration::from_secs(3600);
     let running = [vm(1, 80, 600, Gate::Idle, now)];
-    let low = decide(GIB, &running, FREE_FLOOR - 1, Limits::DESIGN);
+    let low = decide(GIB, &running, FREE_FLOOR - 1, SLOT, Limits::DESIGN);
     assert_eq!(low, Admission::HostFull(Full::Disk));
 }
 
@@ -186,7 +193,7 @@ fn the_floor_holds_after_the_eviction_writes() {
     ];
     for (name, wanted, free, answer) in cases {
         assert_eq!(
-            decide(wanted, &running, free, Limits::DESIGN),
+            decide(wanted, &running, free, SLOT, Limits::DESIGN),
             answer,
             "{name}"
         );
@@ -202,11 +209,11 @@ fn a_zero_floor_still_needs_room_for_the_snapshots() {
     };
     let running = [vm(1, 8, 60, Gate::Idle, now)];
     assert_eq!(
-        decide(GIB, &running, 8 * GIB, limits),
+        decide(GIB, &running, 8 * GIB, SLOT, limits),
         Admission::EvictFirst(vec![id(1)])
     );
     assert_eq!(
-        decide(GIB, &running, 8 * GIB - 1, limits),
+        decide(GIB, &running, 8 * GIB - 1, SLOT, limits),
         Admission::HostFull(Full::Disk)
     );
 }
@@ -217,10 +224,77 @@ fn other_limits_hold() {
         ram_cap: 8 * GIB,
         free_floor: 0,
     };
-    assert_eq!(decide(8 * GIB, &[], 0, limits), Admission::Admit);
+    assert_eq!(decide(8 * GIB, &[], 0, SLOT, limits), Admission::Admit);
     assert_eq!(
-        decide(8 * GIB + 1, &[], 0, limits),
+        decide(8 * GIB + 1, &[], 0, SLOT, limits),
         Admission::HostFull(Full::Ram)
+    );
+}
+
+/// 64 VMs of 1 GiB, all busy but VM `idle`, which is the only idle one.
+/// They take each slot of the pool and 64 of the 80 GiB.
+#[cfg(test)]
+fn full_pool(idle: Option<u8>, now: Instant) -> Vec<Running> {
+    (0..64)
+        .map(|n| {
+            let gate = if Some(n) == idle {
+                Gate::Idle
+            } else {
+                Gate::Busy
+            };
+            vm(n, 1, u64::from(n) + 1, gate, now)
+        })
+        .collect()
+}
+
+#[test]
+fn a_full_pool_evicts_its_one_idle_vm() {
+    let now = Instant::now() + Duration::from_secs(3600);
+    // The 65th start fits the RAM cap, but no slot is free. The one idle
+    // VM goes, and the start takes its slot (decision CH58 rule 2).
+    let running = full_pool(Some(7), now);
+    assert_eq!(
+        decide(GIB, &running, ROOMY, 0, Limits::DESIGN),
+        Admission::EvictFirst(vec![id(7)])
+    );
+    // A free slot admits the start with no eviction.
+    assert_eq!(
+        decide(GIB, &running, ROOMY, SLOT, Limits::DESIGN),
+        Admission::Admit
+    );
+}
+
+#[test]
+fn a_full_pool_of_busy_vms_is_host_full() {
+    let now = Instant::now() + Duration::from_secs(3600);
+    let running = full_pool(None, now);
+    assert_eq!(
+        decide(GIB, &running, ROOMY, 0, Limits::DESIGN),
+        Admission::HostFull(Full::Slots)
+    );
+}
+
+#[test]
+fn a_full_pool_evicts_the_lru_idle_vm_once() {
+    let now = Instant::now() + Duration::from_secs(3600);
+    // VM 1 is used least recently. One eviction frees the one slot.
+    let running = [
+        vm(1, 8, 600, Gate::Idle, now),
+        vm(2, 8, 60, Gate::Idle, now),
+    ];
+    assert_eq!(
+        decide(GIB, &running, ROOMY, 0, Limits::DESIGN),
+        Admission::EvictFirst(vec![id(1)])
+    );
+    // The floor holds after the snapshot of the evicted VM.
+    assert_eq!(
+        decide(GIB, &running, FREE_FLOOR + 8 * GIB - 1, 0, Limits::DESIGN),
+        Admission::HostFull(Full::Disk)
+    );
+    // When the RAM needs more, the RAM sets the prefix.
+    assert_eq!(
+        decide(RAM_CAP - 8 * GIB + 1, &running, ROOMY, 0, Limits::DESIGN),
+        Admission::EvictFirst(vec![id(1), id(2)])
     );
 }
 

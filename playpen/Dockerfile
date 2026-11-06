@@ -11,15 +11,19 @@
 # image installs them from the facade's lockfile, so the Flue pin is the one
 # that `facade/pnpm-lock.yaml` holds and no second copy exists.
 #
-# Two image targets and one build-only stage:
+# Three image targets and one build-only stage:
 #   agent-sandbox         every family
 #   agent-sandbox-python  the python flavor: pandas, numpy and matplotlib
 #                         for the analysis stack, plus the 3.12 test venv
 #                         that runs this repository's own test suites. All
 #                         installed at BUILD time, so a run needs no network
+#   agent-sandbox-coding  the coding flavor of code and creche (CH7-1): the
+#                         python flavor plus uv, pnpm and cargo. A root
+#                         disk only (CH53 rule 1): no sbx image, no
+#                         SandboxFlavor member
 #   creche-test-venv      build-only: it resolves uv.lock and installs the
 #                         test venv and the 3.12 interpreter. It ships in
-#                         no image, and neither does uv
+#                         no image. Only the coding flavor copies its uv
 ARG NODE_IMAGE=node:24-bookworm@sha256:e7add2a490bb17d97b485b8641bd88455fff7839ade0f5eba493c3508124d413
 ARG PYTHON_IMAGE=python:3.12-slim-bookworm@sha256:e697c81897302a4c4333bade000d98038fbb21eb064f8ee1fd42d02ebcd9d337
 ARG UV_VERSION=0.13.6
@@ -95,9 +99,21 @@ RUN err="$(AGENT_SESSIONS_DIR=/nonexistent/sessions AGENT_CRED_DIR=/nonexistent/
 # No facade listens in a build, so the relay exits 1.
 RUN acp-relay </dev/null; [ "$?" = "1" ]
 
-# The VM stays up because the host holds one long-lived `sbx exec` open.
-# This CMD only keeps PID 1 alive.
-CMD ["sleep", "infinity"]
+# The image env for guest init, because a root disk carries no image config
+# (CH7-7, CH49): playpen/bin/creche-env-write. The list names every variable
+# of the image config, the parent image's too. CI compares the file with the
+# built config (playpen/bin/playpen-env-check), so a new ENV name fails there
+# until it is listed. This RUN stays the last step of the flavor.
+RUN --mount=type=bind,source=playpen/bin/creche-env-write,target=/run/creche-env-write \
+    mkdir -p /etc/creche \
+    && sh /run/creche-env-write HOME NODE_ENV NODE_VERSION PATH TMPDIR YARN_VERSION \
+       > /etc/creche/env
+
+# No CMD (fact 59). sbx v0.50.1 gives each sandbox its own command, a fixed
+# `sh -c "trap ...; sleep infinity & wait"` in its binary, so the image CMD
+# never runs. A Cloud Hypervisor guest boots guest init as PID 1 from a root
+# disk that carries no image config. The node parent's CMD, `node`, stays in
+# the config, and neither runtime reads it.
 
 # --- creche-test-venv -------------------------------------------------------
 # Build-only stage. It resolves the Python workspace of this repository
@@ -265,4 +281,55 @@ RUN ldconfig \
          echo "the test venv ships nodeenv" >&2; exit 1; \
        fi
 
-CMD ["sleep", "infinity"]
+# The image env for guest init, as in agent-sandbox, with the names this
+# flavor adds. This RUN stays the last step of the flavor.
+RUN --mount=type=bind,source=playpen/bin/creche-env-write,target=/run/creche-env-write \
+    sh /run/creche-env-write HOME MPLBACKEND MPLCONFIGDIR NODE_ENV NODE_VERSION PATH \
+       TMPDIR YARN_VERSION > /etc/creche/env
+
+# --- agent-sandbox-coding ---------------------------------------------------
+# The coding flavor of code and creche (CH7-1, for now). It is the python
+# flavor plus the installers that a repo's checks need: uv, pnpm through
+# corepack, and cargo with Rust 1.92.0, rustfmt and clippy. Python 3.12 is
+# the python flavor's. Agents install a repo's locked dependencies through
+# the egress proxy (CH6-1), then run its checks.
+#
+# This flavor ALONE breaks the no-installer rule of the python flavor. Every
+# other flavor keeps it. "For now": revisit with the mirror trigger of
+# CH6-1.
+FROM agent-sandbox-python AS agent-sandbox-coding
+ARG RUST_VERSION=1.92.0
+ARG RUST_SHA256=d2ccef59dd9f7439f2c694948069f789a044dc1addcc0803613232af8f88ee0c
+ARG PNPM_VERSION=11.20.0
+
+# uv: the binary that the creche-test-venv stage installed from the pinned
+# wheel. It needs no Python of its own.
+COPY --from=creche-test-venv /usr/local/bin/uv /usr/local/bin/uv
+
+# Rust from the standalone installer, pinned by its SHA-256, into
+# /usr/local. No rustup: the toolchain is the one version, and no ENV names a
+# rustup or cargo home.
+RUN tarball="rust-${RUST_VERSION}-x86_64-unknown-linux-gnu" \
+    && curl --proto '=https' --tlsv1.2 -fsSL -o "/tmp/${tarball}.tar.xz" \
+       "https://static.rust-lang.org/dist/${tarball}.tar.xz" \
+    && printf '%s  %s\n' "${RUST_SHA256}" "/tmp/${tarball}.tar.xz" | sha256sum -c - \
+    && tar -xJf "/tmp/${tarball}.tar.xz" -C /tmp \
+    && "/tmp/${tarball}/install.sh" --prefix=/usr/local --disable-ldconfig \
+       --components=rustc,cargo,rust-std-x86_64-unknown-linux-gnu,rustfmt-preview,clippy-preview \
+    && rm -rf "/tmp/${tarball}" "/tmp/${tarball}.tar.xz" /usr/local/share/doc/rust
+
+# pnpm through corepack, with the version of facade/package.json in its
+# cache, so a repo on that version starts with no download.
+RUN corepack enable pnpm \
+    && corepack prepare "pnpm@${PNPM_VERSION}" --activate
+
+# Fail the BUILD, not the first switch: each installer starts.
+RUN uv --version \
+    && cargo --version && rustc --version \
+    && cargo fmt --version && cargo clippy --version \
+    && pnpm --version \
+    && python3.12 --version
+
+RUN --mount=type=bind,source=playpen/bin/creche-env-write,target=/run/creche-env-write \
+    sh /run/creche-env-write HOME MPLBACKEND MPLCONFIGDIR NODE_ENV NODE_VERSION PATH \
+       TMPDIR YARN_VERSION > /etc/creche/env

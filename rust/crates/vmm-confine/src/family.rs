@@ -23,10 +23,10 @@
 //! the cut each shape read gives `NotValid(Absent)`. A proof uses a scratch
 //! family root with a hand-written `shape.json` (decision CH47 rule 2).
 //!
-//! CONTRACT-QUESTION (decisions CH5b, CH23 (3)): no row sets the number of
-//! tries, the pause between two tries or the size cap of `shape.json`.
-//! Here they are `READ_TRIES` (5), `RETRY_PAUSE` (10 ms) and `SHAPE_CAP`
-//! (4 KiB). AGENTS.md lists this in Known gaps.
+//! Decision CH50 rule 9 sets the number of tries, the pause between two
+//! tries and the size cap of `shape.json`: `READ_TRIES` (5),
+//! `RETRY_PAUSE` (10 ms) and `SHAPE_CAP` (4 KiB). A read blocks its thread
+//! in `thread::sleep`, so a caller in tokio runs it in `spawn_blocking`.
 
 use std::fs::File;
 use std::io::{self, Read};
@@ -43,13 +43,15 @@ use rustix::io::Errno;
 /// The name of the config dir in each family dir (contract 01 §6.1).
 pub const CONFIG_DIR: &str = "config";
 
-/// The most reads of one request before it gives up.
+/// The most reads of one request before it gives up (decision CH50
+/// rule 9).
 pub const READ_TRIES: u32 = 5;
 
-/// The pause before each try after the first.
+/// The pause before each try after the first (decision CH50 rule 9).
 pub const RETRY_PAUSE: Duration = Duration::from_millis(10);
 
-/// The most bytes of `shape.json`. The file holds three short fields.
+/// The most bytes of `shape.json`. The file holds three short fields
+/// (decision CH50 rule 9).
 pub const SHAPE_CAP: u64 = 4096;
 
 /// The flags of each directory open. `O_NOFOLLOW` refuses a symlink as the

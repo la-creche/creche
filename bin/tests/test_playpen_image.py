@@ -18,6 +18,7 @@ from typing import cast
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DOCKERFILE = REPO_ROOT / "playpen" / "Dockerfile"
 BUILD = REPO_ROOT / "playpen" / "bin" / "playpen-build"
+CI = REPO_ROOT / "playpen" / "bin" / "playpen-ci"
 FACADE_PACKAGE = REPO_ROOT / "facade" / "package.json"
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 UV_LOCK = REPO_ROOT / "uv.lock"
@@ -31,6 +32,10 @@ STAGE_RE = re.compile(r"^FROM \S+ AS (\S+)$", re.MULTILINE)
 #: Stages that build a tool for a later stage. A build-only stage ships in
 #: no image, so it is not a flavor target.
 BUILD_ONLY_STAGES = ("build", "creche-test-venv")
+
+#: Flavors that ship as a root disk only: CI builds them, playpen-build does
+#: not, and SandboxFlavor has no member for them (CH7-1, CH53 rule 1).
+DISK_ONLY = ("coding:agent-sandbox-coding",)
 
 
 def _text() -> str:
@@ -54,9 +59,12 @@ def test_the_targets_are_the_flavors_the_release_builds() -> None:
     """playpen/AGENTS.md rule 6: the targets and the flavors are one list."""
     targets = [name for name in STAGE_RE.findall(_text()) if name not in BUILD_ONLY_STAGES]
     flavors = re.search(r'^FLAVORS="([^"]*)"$', BUILD.read_text(encoding="utf-8"), re.MULTILINE)
+    checked = re.search(r'^FLAVORS="([^"]*)"$', CI.read_text(encoding="utf-8"), re.MULTILINE)
 
     assert flavors is not None
-    assert targets == [pair.split(":", 1)[1] for pair in flavors.group(1).split()]
+    assert checked is not None
+    assert targets == [pair.split(":", 1)[1] for pair in checked.group(1).split()]
+    assert checked.group(1) == flavors.group(1) + " " + " ".join(DISK_ONLY)
     assert "FROM agent-sandbox AS agent-sandbox-python" in _text()
 
 
@@ -221,3 +229,9 @@ def test_the_image_ships_no_installer() -> None:
     assert "the test venv ships pip" in stage
     assert "the analysis interpreter ships ensurepip" in stage
     assert "the test venv ships nodeenv" in stage
+
+
+def test_no_flavor_sets_a_cmd() -> None:
+    """Fact 59: sbx gives each sandbox its own command, and a root disk
+    carries no image config, so a CMD line would only mislead."""
+    assert re.search(r"^CMD ", _text(), re.MULTILINE) is None

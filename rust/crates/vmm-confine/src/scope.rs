@@ -36,6 +36,12 @@ impl Scope {
         }
     }
 
+    /// The session id of the VM.
+    #[must_use]
+    pub fn id(&self) -> &SessionId {
+        &self.id
+    }
+
     /// The scope unit name, `creche-vm-<id>` (fact 76). `systemd-run`
     /// refuses the name of a live leftover scope, so the launch step then
     /// exits with an error status, and the caller reads it as a start
@@ -47,7 +53,9 @@ impl Scope {
 
     /// The arguments of `systemd-run` that run `payload` in this scope.
     /// `systemd-run --scope` execs the payload in its own process, so the
-    /// payload keeps the pid of the launch step (decision CH8-2).
+    /// payload keeps the pid of the launch step (decision CH8-2). The
+    /// launch step passes the launch stage as the payload, and the stage
+    /// execs CH in the same process (decision CH55).
     #[must_use]
     pub fn systemd_run_args(&self, payload: &Payload) -> Vec<OsString> {
         let mut args: Vec<OsString> = [

@@ -11,8 +11,8 @@ import { describe, expect, it } from "vitest";
 import { readFamilyConfig } from "../src/config.js";
 import { revealSecret } from "../src/secret.js";
 
-const KEY = "FIXTURE-LITELLM-KEY";
-const TOKEN = "FIXTURE-PEP-TOKEN";
+const KEY = "sk-FIXTURE-LITELLM-KEY";
+const TOKEN = "feedface".repeat(8);
 const NO_RETRY_MS = 0;
 
 function mounts(creds: unknown): NodeJS.ProcessEnv {
@@ -34,6 +34,7 @@ function mounts(creds: unknown): NodeJS.ProcessEnv {
   };
 }
 
+// `caregiver` still writes `epoch`. The reader ignores it.
 const VALID = { epoch: 3, litellm_key: KEY, pep_token: TOKEN };
 
 describe("readFamilyConfig", () => {
@@ -50,10 +51,16 @@ describe("readFamilyConfig", () => {
   });
 
   it("refuses a creds.json with no pep_token by name and echoes no value", async () => {
-    const read = await readFamilyConfig(mounts({ epoch: 3, litellm_key: KEY }), NO_RETRY_MS);
+    const read = await readFamilyConfig(mounts({ litellm_key: KEY }), NO_RETRY_MS);
 
     expect(read).toEqual({ ok: false, refusal: { reason: "creds_not_valid", field: "pep_token" } });
     expect(JSON.stringify(read)).not.toContain(KEY);
+  });
+
+  it("refuses a key that the wire type LitellmKey refuses", async () => {
+    const read = await readFamilyConfig(mounts({ ...VALID, litellm_key: "FIXTURE-NO-PREFIX" }), NO_RETRY_MS);
+
+    expect(read).toEqual({ ok: false, refusal: { reason: "creds_not_valid", field: "litellm_key" } });
   });
 
   it("refuses a plane variable that is not a plane URL, by fault", async () => {
@@ -86,9 +93,34 @@ describe("readFamilyConfig", () => {
     expect(config.mounts.creds).toBe(env["AGENT_CRED_DIR"]);
     expect(config.mounts.indexRoot).toBeNull();
     expect(config.planes.pep.text).toBe("http://192.0.2.10:8300");
-    expect(config.creds.epoch).toBe(3);
+    expect(revealSecret(config.creds.litellmKey)).toBe(KEY);
     expect(revealSecret(config.creds.pepToken)).toBe(TOKEN);
     expect(config.runtime.modelAlias).toBe("chat");
+  });
+
+  it("reads a creds.json with no epoch", async () => {
+    const creds = { litellm_key: KEY, pep_token: TOKEN };
+    const read = await readFamilyConfig(mounts(creds), NO_RETRY_MS);
+    if (!read.ok) {
+      throw new Error(read.refusal.reason);
+    }
+
+    expect(revealSecret(read.config.creds.litellmKey)).toBe(KEY);
+    expect(read.config.creds).not.toHaveProperty("epoch");
+  });
+
+  // Each value failed the old epoch check. A check that comes back fails here.
+  it.each([-1, "seven", null, 1.5])("reads a creds.json whose epoch is %j", async (epoch) => {
+    const read = await readFamilyConfig(mounts({ ...VALID, epoch }), NO_RETRY_MS);
+
+    expect(read.ok).toBe(true);
+  });
+
+  it("fills toolEnv from the env, with the set TOOL_ENV names only", async () => {
+    const env = { ...mounts(VALID), MPLBACKEND: "Agg", NODE_ENV: "production" };
+    const read = await readFamilyConfig(env, NO_RETRY_MS);
+
+    expect(read.ok && read.config.toolEnv).toEqual({ MPLBACKEND: "Agg" });
   });
 
   it("never shows a secret as text", async () => {

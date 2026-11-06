@@ -1,31 +1,35 @@
-//! Admission of one VM start: the RAM cap and the free-space floor
-//! (decisions CH8-6, CH8-7).
+//! Admission of one VM start: the RAM cap, the slot pool and the
+//! free-space floor (decisions CH8-6, CH8-7, CH58 rule 2).
 //!
 //! `decide` is a pure decision. Lifecycle passes in the running VMs, the
-//! sleep-gate result of each and the free bytes. It runs each eviction
-//! that the answer names, then starts the VM. The rules:
+//! sleep-gate result of each, the free bytes and the free slots of the
+//! pool. It runs each eviction that the answer names, then starts the VM.
+//! The rules:
 //!
 //! 1. The free bytes of the state root are below the floor: `HostFull`
 //!    with `Full::Disk`.
 //! 2. The configured guest RAM of the running VMs plus the RAM wanted is at
-//!    or below the cap: `Admit`.
-//! 3. Else the idle VMs, least recently used first, free enough RAM, and
-//!    the floor holds after the writes of the shortest such prefix of
-//!    that order: `EvictFirst` with that prefix. The snapshot of an
-//!    evicted VM writes its whole guest RAM to disk (fact 72). So the free
-//!    bytes minus the guest RAM of each evicted VM must stay at or above
-//!    the floor (decision CH42 rule 3).
-//! 4. Else the shortest prefix that frees enough RAM breaks the floor:
-//!    `HostFull` with `Full::Disk`. A longer prefix writes no fewer bytes,
-//!    so no prefix frees enough RAM and holds the floor.
-//! 5. Else `HostFull` with `Full::Ram`. The vmm never queues (decision
-//!    CH21-3). It answers `host_full` (503) before 101 (decisions CH21-9,
-//!    CH34 rule 6).
+//!    or below the cap, and a slot is free: `Admit`.
+//! 3. Else the idle VMs, least recently used first, free enough RAM and at
+//!    least one slot when none is free, and the floor holds after the
+//!    writes of the shortest such prefix of that order: `EvictFirst` with
+//!    that prefix. A full slot pool counts like a full RAM cap (decision
+//!    CH58 rule 2), so it needs a prefix of one VM at least. The snapshot
+//!    of an evicted VM writes its whole guest RAM to disk (fact 72). So
+//!    the free bytes minus the guest RAM of each evicted VM must stay at
+//!    or above the floor (decision CH42 rule 3).
+//! 4. Else the shortest such prefix breaks the floor: `HostFull` with
+//!    `Full::Disk`. A longer prefix writes no fewer bytes, so no prefix
+//!    frees enough and holds the floor.
+//! 5. Else `HostFull` with `Full::Ram` when the RAM does not fit, or with
+//!    `Full::Slots` when only the slot pool is full. The vmm never queues
+//!    (decision CH21-3). It answers `host_full` (503) before 101
+//!    (decisions CH21-9, CH34 rule 6).
 //!
 //! A partial eviction never happens: when no prefix of the idle VMs frees
-//! enough RAM and holds the floor, the answer is `HostFull` and no VM
-//! stops. A start with no eviction writes no snapshot, so rule 1 alone
-//! checks its floor.
+//! enough and holds the floor, the answer is `HostFull` and no VM stops.
+//! A start with no eviction writes no snapshot, so rule 1 alone checks
+//! its floor.
 
 use std::io;
 use std::path::Path;
@@ -93,6 +97,9 @@ pub enum Full {
     Disk,
     /// No set of idle VMs frees enough RAM (decision CH8-6).
     Ram,
+    /// Each slot of the pool is held, and no VM is idle to free one
+    /// (decision CH58 rule 2).
+    Slots,
 }
 
 /// The answer of admission.
@@ -107,9 +114,16 @@ pub enum Admission {
 }
 
 /// Decides whether a VM with `wanted` bytes of guest RAM may start beside
-/// `running`, with `free` bytes free on the state root.
+/// `running`, with `free` bytes free on the state root and `free_slots`
+/// slots of the pool that no VM holds.
 #[must_use]
-pub fn decide(wanted: u64, running: &[Running], free: u64, limits: Limits) -> Admission {
+pub fn decide(
+    wanted: u64,
+    running: &[Running],
+    free: u64,
+    free_slots: usize,
+    limits: Limits,
+) -> Admission {
     if free < limits.free_floor {
         return Admission::HostFull(Full::Disk);
     }
@@ -117,9 +131,13 @@ pub fn decide(wanted: u64, running: &[Running], free: u64, limits: Limits) -> Ad
         .iter()
         .fold(0_u64, |sum, vm| sum.saturating_add(vm.guest_ram));
     let total = used.saturating_add(wanted);
-    let Some(need) = total.checked_sub(limits.ram_cap).filter(|&over| over > 0) else {
+    // The RAM that the evictions must free, 0 when the start fits the cap.
+    let need = total.saturating_sub(limits.ram_cap);
+    if need == 0 && free_slots > 0 {
         return Admission::Admit;
-    };
+    }
+    // Each evicted VM frees its slot, so any prefix of one VM or more
+    // frees the slot that a full pool needs (decision CH58 rule 2).
     let mut idle: Vec<&Running> = running.iter().filter(|vm| vm.gate == Gate::Idle).collect();
     idle.sort_by_key(|vm| vm.last_use);
     let mut freed = 0_u64;
@@ -140,7 +158,7 @@ pub fn decide(wanted: u64, running: &[Running], free: u64, limits: Limits) -> Ad
             };
         }
     }
-    Admission::HostFull(Full::Ram)
+    Admission::HostFull(if need > 0 { Full::Ram } else { Full::Slots })
 }
 
 /// The bytes that an unprivileged user may still write on the filesystem

@@ -1,10 +1,12 @@
 // One prompt turn: `session/prompt` to Flue and back.
 //
 //   prompt ──► dispatch ──► read({onEvent}) ──► chunk ──► session/update
-//                                 │
-//                                 └─► settled ──► completed ─► end_turn
-//                                              ├─► aborted ───► cancelled
-//                                              └─► failed ────► JSON-RPC error
+//     │                           │
+//     │                           └─► settled ──► completed ─► end_turn
+//     │                                        ├─► aborted ───► cancelled
+//     │                                        └─► failed ────► JSON-RPC error
+//     │
+//     └─► refresh first ──► a fault ──► JSON-RPC error. The facade serves on.
 //
 //   session/cancel ──► abort() ──► the prompt answers `cancelled`
 //
@@ -33,6 +35,16 @@ import type { Sessions } from "./sessions.js";
 export const MAX_PROMPT_BYTES = 262_144;
 
 export type Settlement = "completed" | "failed" | "aborted";
+
+/**
+ * Pulls the family state into the agent before a prompt of the session
+ * `sessionId` (decision CH5a). Null: the prompt runs. A text: the fault
+ * that fails the prompt.
+ */
+export type Refresh = (sessionId: string) => Promise<string | null>;
+
+/** No pull: the agent keeps the state of its start. */
+export const NO_REFRESH: Refresh = () => Promise.resolve(null);
 
 /** The one map from a settlement to an answer. `failed` is never a stop reason. */
 export function settle(settlement: Settlement, detail: string): Outcome<PromptResponse> {
@@ -107,6 +119,7 @@ export class Turns {
   public constructor(
     private readonly sessions: Sessions,
     private readonly live: Live,
+    private readonly refresh: Refresh = NO_REFRESH,
   ) {}
 
   /** The updates go to every peer on the session, the prompting one too. */
@@ -126,26 +139,55 @@ export class Turns {
       return text;
     }
 
+    const running: Running = { handle, cancelled: false };
+    this.running.set(sessionId, running);
+    try {
+      return await this.pulledTurn(running, params, peer, text.value);
+    } finally {
+      // A later prompt can hold the session by now. Free only this one.
+      if (this.running.get(sessionId) === running) {
+        this.running.delete(sessionId);
+      }
+    }
+  }
+
+  /** The pull, the keys of `_meta`, then the turn. The session is busy until the caller frees it. */
+  private async pulledTurn(
+    running: Running,
+    params: PromptRequest,
+    peer: Peer,
+    text: string,
+  ): Promise<Outcome<PromptResponse>> {
+    const { sessionId } = params;
+    // A fault fails this prompt only (decision CH23 rule 2). The pull comes
+    // first, so a prompt that fails here keeps no `_meta`.
+    const fault = await this.refresh(sessionId);
+    if (running.cancelled) {
+      return settle("aborted", "");
+    }
+
+    if (fault !== null) {
+      return settle("failed", `the family state did not read (${fault})`);
+    }
+
     // The keys go on the row, never into the text that the model reads.
     const kept = this.sessions.keepPromptMeta(sessionId, params._meta);
     if (!kept.ok) {
       return kept;
     }
 
-    const running: Running = { handle, cancelled: false };
-    this.running.set(sessionId, running);
     this.live.attach(sessionId, peer);
     let sent = Promise.resolve();
     let lastRecordAt: string | null = null;
 
-    const settlement = await this.run(running, text.value, (chunk) => {
+    const settlement = await this.run(running, text, (chunk) => {
       lastRecordAt = ("timestamp" in chunk ? chunk.timestamp : undefined) ?? lastRecordAt;
       const items = chunkToUpdates(chunk).map((update) => ({ position: chunk.position, update }));
       sent = this.live.publish(sessionId, items);
     });
     this.running.delete(sessionId);
 
-    const info = this.sessions.recordTurn(sessionId, text.value, lastRecordAt);
+    const info = this.sessions.recordTurn(sessionId, text, lastRecordAt);
     if (info !== null) {
       sent = this.live.publish(sessionId, [{ position: null, update: { sessionUpdate: "session_info_update", ...info } }]);
     }

@@ -230,6 +230,12 @@ impl Rows {
         Ok(())
     }
 
+    /// The state root of the rows. A drop finds the session dir by it
+    /// (PR D14).
+    pub(crate) fn root(&self) -> &StateRoot {
+        &self.root
+    }
+
     /// The row of `id`, if one exists.
     #[must_use]
     pub fn get(&self, id: &SessionId) -> Option<&SessionRow> {

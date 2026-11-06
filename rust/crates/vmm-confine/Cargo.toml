@@ -11,7 +11,9 @@ publish.workspace = true
 [dependencies]
 creche-vmm-store = { path = "../vmm-store" }
 creche-wire = { path = "../wire" }
-rustix.workspace = true
+# `thread` adds `set_no_new_privs` for the launch stage (decision CH55).
+# The feature adds no crate, so rust/Cargo.lock does not change.
+rustix = { workspace = true, features = ["thread"] }
 serde.workspace = true
 serde_json.workspace = true
 
