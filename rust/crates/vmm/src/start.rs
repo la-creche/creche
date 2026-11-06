@@ -294,8 +294,9 @@ fn lock_in_use(in_use: &Mutex<InUse>) -> MutexGuard<'_, InUse> {
 /// the entry after this call, so no start of `id` links it before the
 /// unlink. A failed unlink is logged. The slot still frees: the next link
 /// of `id` replaces the link, and the old VM has no step left.
-// The unlink is one `unlink` on the tmpfs of the run root, so it runs
-// under the table lock and not in `spawn_blocking` (decision CH36 G21).
+// CONTRACT-QUESTION (decision CH36 G21): the unlink is one `unlink` on
+// the tmpfs of the run root, so it runs under the table lock and not in
+// `spawn_blocking`.
 // The status check and the SIGKILL under the same lock are system calls
 // of the same cost.
 fn release(in_use: &Mutex<InUse>, run: &RunRoot, id: &SessionId) {

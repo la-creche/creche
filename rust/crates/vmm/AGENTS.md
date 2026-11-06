@@ -577,7 +577,8 @@ no guest sync.
     (item 45 C3), but a smaller VM shape fills the slots first. Then an
     idle VM keeps its slot, and a new start gets `host_full`. A change
     adds a slot gate to `admission::decide`.
-14. Decision CH36 G21 puts blocking work in `spawn_blocking`.
+14. CONTRACT-QUESTION (decision CH36 G21): decision CH36 G21 puts
+    blocking work in `spawn_blocking`.
     `release` runs `RunRoot::unlink_vm` under the table lock
     (`src/start.rs`), so that no start of the session links first. It is
     one `unlink` on the tmpfs of the run root, as cheap as the status
