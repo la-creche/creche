@@ -10,6 +10,7 @@ use serde::de::value::MapAccessDeserializer;
 use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+pub mod guest;
 mod per_flavor;
 mod ports;
 mod routes;

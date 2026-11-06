@@ -135,6 +135,18 @@ same file.
    last block of a type, and the strict reader of the Python test refuses
    two equal keys.
 
+## The guest paths
+
+`rust/crates/wire/src/guest.rs` holds the fixed paths, ports and env name
+inside the guest (decisions CH5e, CH62 rules 5, 6, 10 and 13). They are
+plain Rust constants with no serde and no schema entry (decision CH14), so
+no generated copy changes. `rust/crates/wire/vectors/guest.json` lists the
+same values, and `guest::tests::the_vector_file_matches_the_constants`
+holds the two equal. A phase 6 agent test reads the file to hold its own
+copies equal. Change a value in the constant and in the file together. A
+changed value needs a new `GUEST_INIT_PROTOCOL` once guest init is
+deployed (decision CH14).
+
 ## A struct on the wire
 
 A derived `Deserialize` of a struct also reads a JSON array, its fields in

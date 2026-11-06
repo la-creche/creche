@@ -1,0 +1,12 @@
+{
+  "session_disk_mount": "/var/lib/creche/session",
+  "flue_db": "/var/lib/creche/session/flue.db",
+  "workspace": "/var/lib/creche/session/workspace",
+  "facade_program": "/usr/local/bin/creche-facade",
+  "local_link_socket": "/run/creche/guest-init.sock",
+  "family_state_socket": "/run/creche/family-state.sock",
+  "relay_socket": "/tmp/creche-facade/acp.sock",
+  "litellm_port": 4000,
+  "chaperone_port": 8300,
+  "session_id_env": "CRECHE_SESSION_ID"
+}
