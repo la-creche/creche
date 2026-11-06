@@ -31,9 +31,10 @@ use serde_json::{Map, Value, json};
 
 use super::{
     AutoJobId, ControlCommand, ControlHello, ControlReady, DelegationId, FamilyConfig, FamilyShape,
-    FamilyStateReply, GuestEvent, HOST_API_BODY_CAP, HOST_API_HEADER, HOST_API_PROTOCOL,
-    JS_INTEGER_MAX, JobId, JsonRoute, MISMATCH_STATUS, ProtocolMismatch, RouteError, SHARED_CODES,
-    SessionId, SessionOrigin, TurnEvent, UnixMillis, UpgradeRoute, routes::TableRoute,
+    FamilyStatePull, FamilyStateReply, GuestEvent, HOST_API_BODY_CAP, HOST_API_HEADER,
+    HOST_API_PROTOCOL, JS_INTEGER_MAX, JobId, JsonRoute, MISMATCH_STATUS, ProtocolMismatch,
+    RouteError, SHARED_CODES, SessionId, SessionOrigin, TurnEvent, UnixMillis, UpgradeRoute,
+    routes::TableRoute,
 };
 
 /// The variable that makes the test write the file instead of checking it.
@@ -94,6 +95,7 @@ pub(super) fn wire_schema() -> Value {
     let _ = generator.subschema_for::<UnixMillis>();
     let _ = generator.subschema_for::<TurnEvent>();
     let _ = generator.subschema_for::<FamilyConfig>();
+    let _ = generator.subschema_for::<FamilyStatePull>();
     let _ = generator.subschema_for::<FamilyStateReply>();
     let _ = generator.subschema_for::<ControlHello>();
     let _ = generator.subschema_for::<ControlReady>();

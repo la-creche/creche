@@ -2301,6 +2301,38 @@
       "note": "null"
     }
   ],
+  "FamilyStatePull": [
+    {
+      "json": "{}",
+      "written": "{}",
+      "note": "the empty object, the one pull line"
+    },
+    {
+      "json": "{\"revision\":1}",
+      "written": null,
+      "note": "a key: the pull carries no revision (decision CH23)"
+    },
+    {
+      "json": "{\"x\":1}",
+      "written": null,
+      "note": "a key"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    },
+    {
+      "json": "[]",
+      "written": null,
+      "note": "an empty array, the array form of a struct"
+    },
+    {
+      "json": "{\"pull\":{}}",
+      "written": null,
+      "note": "a tagged form: the pull is the bare empty object"
+    }
+  ],
   "FamilyStateReply": [
     {
       "json": "{\"state\":{\"config\":{\"instructions\":\"You work on the creche repository.\",\"model_alias\":\"code-router\",\"sandbox_tools\":{\"bash\":true,\"edit\":true,\"glob\":true,\"grep\":true,\"read\":true,\"write\":true},\"skills\":{},\"system_prompt\":\"replace\"},\"creds\":{\"litellm_key\":\"sk-test-key-0001\",\"pep_token\":\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e\"}}}",

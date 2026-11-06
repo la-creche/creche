@@ -1136,6 +1136,27 @@ class FamilyState(BaseModel):
     creds: Annotated[FamilyCreds, Field(description="What the vmm read from `creds.json`.")]
 
 
+class FamilyStatePull(BaseModel):
+    """
+    What the facade sends on host port 1100 to pull the family state,
+    before each prompt (decisions CH5a, CH43 rule 4). It carries nothing:
+    the facade sends no revision, and the vmm sends the full typed state on
+    every pull (decision CH23).
+
+    The facade connects to `guest::FAMILY_STATE_SOCKET`, and guest init
+    splices each connection to a new vsock dial of host port 1100 (decision
+    CH62 rule 13). The facade may send many pulls on one link. The vmm
+    answers each pull with one `FamilyStateReply`.
+
+    It is a type of its own so that the generated Python model is a class
+    with no field, as `ControlStop` is.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+
 class GuestFacadeEvent(BaseModel):
     """
     The facade state after a change.
@@ -1680,7 +1701,7 @@ class FamilyStateReply(
     root: Annotated[
         StateReply | CredsMissingReply | ConfigMissingReply | NotValidReply | TooLargeReply,
         Field(
-            description="What the vmm answers on host port 1100 when the facade pulls the family\nstate, before each prompt (decisions CH5a, CH5b, CH23). The vmm reads\ncaregiver's `creds.json` and `config/` at each pull.\n\nA read failure is a typed reply, and the link stays open (decision CH23\ndefault 2). The facade fails that prompt and keeps running. At start it\npulls again with a backoff, and never exits on a typed error. When\n`creds.json` and `config/` are both absent, `creds_missing` wins\n(decision CH31).\n\nA reply text has a cap of 256 KiB (decision CH23 default 4). The cap is\na rule of the read surface, not of this type: the vmm's writer and the\n`cap` of `creche_wire.read` hold it, because JSON Schema counts code\npoints, not bytes. A `state` reply over the cap is `too_large`, not\n`not_valid` (decision CH31).\n\nThe vmm reads `model_live_at` from `config/runtime.json` (decision\nCH23-1). It holds the `state` reply until the host time passes that\ntime, for at most 10 s (decision CH31). No wire type carries\n`model_live_at`, and the guest needs no clock for it. A held pull can\ntake up to 10 s longer.\n\nOn the wire the variant name is the one key of an object, and each\nvariant has a `title` for its class name."
+            description="What the vmm answers on host port 1100 to each `FamilyStatePull`, before\neach prompt (decisions CH5a, CH5b, CH23). The vmm reads caregiver's\n`creds.json` and `config/` at each pull.\n\nA read failure is a typed reply, and the link stays open (decision CH23\ndefault 2). The facade fails that prompt and keeps running. At start it\npulls again with a backoff, and never exits on a typed error. When\n`creds.json` and `config/` are both absent, `creds_missing` wins\n(decision CH31).\n\nA reply text has a cap of 256 KiB, `FAMILY_STATE_CAP` (decision CH23\ndefault 4). The cap is a rule of the read surface, not of this type:\nthe vmm's writer and the `cap` of `creche_wire.read` hold it, because\nJSON Schema counts code points, not bytes. A `state` reply over the cap is `too_large`, not\n`not_valid` (decision CH31).\n\nThe vmm reads `model_live_at` from `config/runtime.json` (decision\nCH23-1). It holds the `state` reply until the host time passes that\ntime, for at most 10 s (decision CH31). No wire type carries\n`model_live_at`, and the guest needs no clock for it. A held pull can\ntake up to 10 s longer.\n\nOn the wire the variant name is the one key of an object, and each\nvariant has a `title` for its class name."
         ),
     ]
 

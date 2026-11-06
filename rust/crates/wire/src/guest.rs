@@ -4,8 +4,10 @@
 //! Guest init and the facade compile these values in. They are plain
 //! constants with no serde and no schema entry (decision CH14), so
 //! nothing here is generated. `vectors/guest.json` lists the same
-//! values. A test holds the two equal, so the TypeScript agent can read
-//! one definition (decision CH62 rule 5).
+//! values, and `family_state_cap` there is `crate::FAMILY_STATE_CAP`, the
+//! line cap of host port 1100 (decisions CH23 rule 4, CH62 rule 13). A
+//! test holds the file equal to the constants, so the TypeScript agent can
+//! read one definition (decision CH62 rule 5).
 //!
 //! The session `cwd` is a display value and never one of these paths
 //! (decision CH21-4).
@@ -54,6 +56,8 @@ mod tests {
 
     use serde_json::{Value, json};
 
+    use crate::FAMILY_STATE_CAP;
+
     use super::{
         CHAPERONE_PORT, FACADE_PROGRAM, FAMILY_STATE_SOCKET, FLUE_DB, LITELLM_PORT,
         LOCAL_LINK_SOCKET, RELAY_SOCKET, SESSION_DISK_MOUNT, SESSION_ID_ENV, WORKSPACE,
@@ -75,6 +79,7 @@ mod tests {
             ("facade_program", json!(FACADE_PROGRAM)),
             ("local_link_socket", json!(LOCAL_LINK_SOCKET)),
             ("family_state_socket", json!(FAMILY_STATE_SOCKET)),
+            ("family_state_cap", json!(FAMILY_STATE_CAP)),
             ("relay_socket", json!(RELAY_SOCKET)),
             ("litellm_port", json!(LITELLM_PORT)),
             ("chaperone_port", json!(CHAPERONE_PORT)),
@@ -85,6 +90,18 @@ mod tests {
         .collect();
 
         assert_eq!(file, constants);
+    }
+
+    /// The file holds the cap of host port 1100 in bytes: 256 KiB
+    /// (decision CH23 rule 4). The facade caps each reply with it.
+    #[test]
+    fn the_vector_file_names_the_state_cap() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(VECTOR_FILE);
+        let text = std::fs::read_to_string(path).unwrap();
+        let file: BTreeMap<String, Value> = serde_json::from_str(&text).unwrap();
+
+        assert_eq!(file["family_state_cap"], json!(262_144));
+        assert_eq!(FAMILY_STATE_CAP, 262_144);
     }
 
     #[test]

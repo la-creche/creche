@@ -1293,6 +1293,16 @@ object_only!(ControlReady);
 // guest init is deployed (decision CH14).
 pub const CONTROL_LINE_CAP: usize = 64 << 10;
 
+/// The most bytes of one line on host port 1100, the LF not counted
+/// (decision CH23 rule 4). A reader that gets this many bytes and no LF
+/// refuses the line. The vmm answers a pull whose `state` reply is over
+/// the cap with `too_large` (decision CH31 rule 3). `vectors/guest.json`
+/// holds the same value as `family_state_cap`, so a TypeScript test can
+/// hold its own copy equal (decision CH62 rule 5).
+// A change of the value later is a change of the framing, so it needs a
+// new `GUEST_INIT_PROTOCOL` once guest init is deployed (decision CH14).
+pub const FAMILY_STATE_CAP: usize = 256 << 10;
+
 /// The graceful stop. It carries nothing.
 ///
 /// It is a type of its own so that the generated Python model is a class
@@ -1862,9 +1872,28 @@ pub struct StateTooLarge {}
 
 object_only!(StateTooLarge);
 
-/// What the vmm answers on host port 1100 when the facade pulls the family
-/// state, before each prompt (decisions CH5a, CH5b, CH23). The vmm reads
-/// caregiver's `creds.json` and `config/` at each pull.
+/// What the facade sends on host port 1100 to pull the family state,
+/// before each prompt (decisions CH5a, CH43 rule 4). It carries nothing:
+/// the facade sends no revision, and the vmm sends the full typed state on
+/// every pull (decision CH23).
+///
+/// The facade connects to `guest::FAMILY_STATE_SOCKET`, and guest init
+/// splices each connection to a new vsock dial of host port 1100 (decision
+/// CH62 rule 13). The facade may send many pulls on one link. The vmm
+/// answers each pull with one `FamilyStateReply`.
+///
+/// It is a type of its own so that the generated Python model is a class
+/// with no field, as `ControlStop` is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct FamilyStatePull {}
+
+object_only!(FamilyStatePull);
+
+/// What the vmm answers on host port 1100 to each `FamilyStatePull`, before
+/// each prompt (decisions CH5a, CH5b, CH23). The vmm reads caregiver's
+/// `creds.json` and `config/` at each pull.
 ///
 /// A read failure is a typed reply, and the link stays open (decision CH23
 /// default 2). The facade fails that prompt and keeps running. At start it
@@ -1872,10 +1901,10 @@ object_only!(StateTooLarge);
 /// `creds.json` and `config/` are both absent, `creds_missing` wins
 /// (decision CH31).
 ///
-/// A reply text has a cap of 256 KiB (decision CH23 default 4). The cap is
-/// a rule of the read surface, not of this type: the vmm's writer and the
-/// `cap` of `creche_wire.read` hold it, because JSON Schema counts code
-/// points, not bytes. A `state` reply over the cap is `too_large`, not
+/// A reply text has a cap of 256 KiB, `FAMILY_STATE_CAP` (decision CH23
+/// default 4). The cap is a rule of the read surface, not of this type:
+/// the vmm's writer and the `cap` of `creche_wire.read` hold it, because
+/// JSON Schema counts code points, not bytes. A `state` reply over the cap is `too_large`, not
 /// `not_valid` (decision CH31).
 ///
 /// The vmm reads `model_live_at` from `config/runtime.json` (decision

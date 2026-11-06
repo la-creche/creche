@@ -20,11 +20,11 @@ use super::{
     DelegationId, Dispatch, DispatchChain, Door, DropError, DropFamily, DropSession, DropTarget,
     Dropped, FacadeExited, FacadeNotStarted, FacadeRunning, FacadeStarting, FacadeState,
     FamilyConfig, FamilyCpus, FamilyCreds, FamilyMemoryMib, FamilyName, FamilyShape, FamilySkills,
-    FamilyState, FamilyStateReply, GuestEvent, JobId, ListCursor, ListError, ListSessions,
-    LitellmKey, MISMATCH_STATUS, ModelAlias, OpenAcp, PepToken, ProtocolMismatch, RouteError,
-    SHARED_CODES, SandboxGrant, SessionCwd, SessionId, SessionOrigin, SessionPage, SessionRow,
-    SessionTitle, SkillName, StartCount, StateNotValid, StateTooLarge, Timer, Trigger, TurnEnd,
-    TurnEvent, TurnStart, UnixMillis, Webhook, WebhookName, routes::TableRoute,
+    FamilyState, FamilyStatePull, FamilyStateReply, GuestEvent, JobId, ListCursor, ListError,
+    ListSessions, LitellmKey, MISMATCH_STATUS, ModelAlias, OpenAcp, PepToken, ProtocolMismatch,
+    RouteError, SHARED_CODES, SandboxGrant, SessionCwd, SessionId, SessionOrigin, SessionPage,
+    SessionRow, SessionTitle, SkillName, StartCount, StateNotValid, StateTooLarge, Timer, Trigger,
+    TurnEnd, TurnEvent, TurnStart, UnixMillis, Webhook, WebhookName, routes::TableRoute,
 };
 
 /// The file, relative to the crate.
@@ -99,6 +99,7 @@ fn read_and_write(type_name: &str, json: &str) -> Option<String> {
         "FamilyShape" => round_trip::<FamilyShape>(json),
         "FamilySkills" => round_trip::<FamilySkills>(json),
         "FamilyState" => round_trip::<FamilyState>(json),
+        "FamilyStatePull" => round_trip::<FamilyStatePull>(json),
         "FamilyStateReply" => round_trip::<FamilyStateReply>(json),
         "GuestEvent" => round_trip::<GuestEvent>(json),
         "JobId" => round_trip::<JobId>(json),

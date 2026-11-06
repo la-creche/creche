@@ -142,10 +142,12 @@ inside the guest (decisions CH5e, CH62 rules 5, 6, 10 and 13). They are
 plain Rust constants with no serde and no schema entry (decision CH14), so
 no generated copy changes. `rust/crates/wire/vectors/guest.json` lists the
 same values, and `guest::tests::the_vector_file_matches_the_constants`
-holds the two equal. A phase 6 agent test reads the file to hold its own
-copies equal. Change a value in the constant and in the file together. A
-changed value needs a new `GUEST_INIT_PROTOCOL` once guest init is
-deployed (decision CH14).
+holds the two equal. The file also holds `family_state_cap`, the value of
+`FAMILY_STATE_CAP` in `lib.rs` (decision CH23 rule 4). A phase 6 agent
+test reads the file to hold its own copies equal, `STATE_REPLY_CAP` of
+`agent/src/family-state.ts` among them. Change a value in the constant
+and in the file together. A changed value needs a new
+`GUEST_INIT_PROTOCOL` once guest init is deployed (decision CH14).
 
 ## A struct on the wire
 
@@ -465,7 +467,7 @@ line.
 | Link | The host end sends | The guest end sends | Line cap |
 |---|---|---|---|
 | Control, guest port 1200 | The vmm sends `ControlHello`, then `ControlCommand` | Guest init sends `ControlReady`, then `GuestEvent` | `CONTROL_LINE_CAP`, 64 KiB (decision CH43 rule 1) |
-| Family state, host port 1100 | `FamilyStateReply` | The facade sends the pull (decision CH5a). The pull has no wire type yet (decision CH43 rule 4) | 256 KiB (decision CH23 default 4) |
+| Family state, host port 1100 | The vmm sends one `FamilyStateReply` per pull | The facade sends `FamilyStatePull` (decisions CH5a, CH43 rule 4) | `FAMILY_STATE_CAP`, 256 KiB (decision CH23 default 4) |
 | Local link, `/run/creche/guest-init.sock` in the guest (decision CH62 rule 10) | Guest init, the listener, sends `ControlCommand`, only `stop` | The facade sends `TurnEvent` | `CONTROL_LINE_CAP` |
 
 1. A writer writes each value in the compact form of serde_json, then one
@@ -498,8 +500,14 @@ line.
    deployed, a change of the framing or of a cap needs a new
    `GUEST_INIT_PROTOCOL` (decision CH14), so that an old snapshot
    cold-boots. No route reaches these types, so `HOST_API_PROTOCOL` stays.
-8. The pull on host port 1100 has no wire type yet (decision CH43 rule 4).
-   The phase 3 guest init PR that adds the pull defines its line.
+8. On host port 1100 the facade sends `FamilyStatePull`, the empty
+   object, before each prompt, and the vmm answers each pull with one
+   `FamilyStateReply` (decisions CH5a, CH23, CH43 rule 4). One link
+   carries many pulls. The facade connects to
+   `/run/creche/family-state.sock` in the guest, and guest init splices
+   each connection to a new vsock dial of host port 1100, for the facade
+   pid only (decision CH62 rule 13). A `state` reply over
+   `FAMILY_STATE_CAP` goes out as `too_large` (decision CH31 rule 3).
 9. On the local link the facade sends `TurnEvent` and guest init sends
    `stop` (decision CH62 rules 9 and 10). Guest init accepts one link at
    a time, and only from the pid of the live facade (`SO_PEERCRED`). It
