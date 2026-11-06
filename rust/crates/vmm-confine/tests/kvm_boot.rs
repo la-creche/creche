@@ -4,44 +4,22 @@
 //! directly: no launch step, no scope and no Landlock ruleset.
 //!
 //! `#[ignore]`: only the job `kvm` runs it, after the setup script, with
-//! `cargo test --locked -- --ignored kvm_`. A kvm_ test in any crate runs
-//! there with no workflow edit. With no setup or no `/dev/kvm` it fails.
+//! `cargo test --locked --no-fail-fast -- --ignored kvm_`. A kvm_ test in
+//! any crate runs there with no workflow edit. With no setup or no
+//! `/dev/kvm` it fails.
 #![cfg(target_os = "linux")]
+
+mod kvm;
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-/// The variable that names the files of the setup script.
-const DIR: &str = "CRECHE_KVM_DIR";
-
-/// The line that the guest init writes once it runs.
-const MARKER: &str = "CRECHE-KVM-BOOTED";
-
-/// A boot takes about 0.6 s on the runner (fact 79).
-const BOOT: Duration = Duration::from_secs(30);
+use kvm::{BOOT, MARKER, Vm, booted, files};
 
 // Each helper with `cfg(test)` may unwrap (rust/clippy.toml).
-
-/// A CH process, killed on drop, so a failed test leaves no VM.
-struct Vm(Child);
-
-impl Drop for Vm {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
-/// The directory of the setup script.
-#[cfg(test)]
-fn files() -> PathBuf {
-    let dir = std::env::var_os(DIR)
-        .unwrap_or_else(|| panic!("{DIR} is not set: run bin/vm-smoke-setup.sh first"));
-    PathBuf::from(dir)
-}
 
 /// A new empty work directory for one VM.
 #[cfg(test)]
@@ -50,12 +28,6 @@ fn work(files: &Path, name: &str) -> PathBuf {
     let _ = fs::remove_dir_all(&work);
     fs::create_dir(&work).unwrap();
     work
-}
-
-/// Whether the serial file holds the marker as a line of its own. The
-/// serial file has CRLF line ends.
-fn booted(serial: &Path) -> bool {
-    fs::read_to_string(serial).is_ok_and(|text| text.lines().any(|line| line.trim_end() == MARKER))
 }
 
 #[test]

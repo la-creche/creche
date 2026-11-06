@@ -10,10 +10,14 @@
 //!    takes its snapshot when its gate and the take gate pass. Each other
 //!    VM gets the stop of plan PR L14 (decision CH19 (3)).
 //!
-//! The vmm sets no `BindsTo`, so a restart of the unit reaches this code
-//! before any VM stops (decision CH19 (4)). A client that finds the
-//! socket gone treats ENOENT, ECONNREFUSED and EOF as transient (decision
-//! CH20).
+//! Each VM scope has `BindsTo=` and `Before=` the vmm unit (decision CH61
+//! rule 2). `Before=` keeps each VM running while the vmm unit stops, so
+//! a stop or a restart of the unit reaches this code before any VM stops.
+//! After the vmm exits, the `ExecStopPost=` step of the unit kills each VM
+//! that this code leaves, on a stop, a restart and a crash (decision CH61
+//! rule 1). The kvm tests of `rust/crates/vmm-confine/tests/kvm_slot.rs`
+//! prove each path. A client that finds the socket gone treats ENOENT,
+//! ECONNREFUSED and EOF as transient (decision CH20).
 
 use std::collections::HashSet;
 use std::future::Future;
@@ -40,8 +44,9 @@ const UNIT_STOP_TIMEOUT: Duration = Duration::from_secs(90);
 // these 5 s for its exit.
 const EXIT_TIME: Duration = Duration::from_secs(5);
 
-/// The longest shutdown. Past it the shutdown ends, and each VM still in
-/// the set ends with the vmm (decision CH19 (4): PDEATHSIG).
+/// The longest shutdown. Past it the shutdown ends. Each VM still in the
+/// set ends after the vmm has exited: the `ExecStopPost=` step of the vmm
+/// unit kills its scope (decisions CH56 rule 2, CH61 rule 1).
 pub const SHUTDOWN_WAIT: Duration = UNIT_STOP_TIMEOUT.saturating_sub(EXIT_TIME);
 
 /// The longest wait of `Runtime::shutdown_timeout` after the shutdown
@@ -61,8 +66,9 @@ const _: () = assert!(
 // decision CH44 rule 3) each fit inside the wait.
 // Decision CH56 rule 2: one deadline from SIGTERM bounds every step, so
 // a full take and then a full stop of one VM need not both fit. A VM
-// still in the set at the deadline ends with the vmm through PDEATHSIG,
-// a power cut for its guest.
+// still in the set at the deadline ends after the vmm exits (decision
+// CH61 rule 1): the `ExecStopPost=` step of the unit kills its scope, a
+// power cut for its guest.
 const _: () = assert!(
     SHUTDOWN_WAIT.as_secs() + EXIT_TIME.as_secs() <= UNIT_STOP_TIMEOUT.as_secs()
         && DROP_STOP_WAIT.as_secs() + DROP_SIGTERM_GRACE.as_secs() + KILL_WAIT.as_secs()
@@ -91,7 +97,8 @@ pub enum Taken {
 pub enum Ended {
     /// Each VM left the set.
     Clean,
-    /// A VM did not stop (decision CH50 rule 4). Its CH ends with the vmm.
+    /// A VM did not stop (decision CH50 rule 4). Its CH ends at the
+    /// `ExecStopPost=` step of the vmm unit (decision CH61 rule 1).
     Kept,
     /// `SHUTDOWN_WAIT` passed first.
     Late,
@@ -167,7 +174,9 @@ pub async fn shutdown<V: VmSet>(vms: &V, server: Stop, sleep: impl Future<Output
         Ok(true) => Ended::Clean,
         Ok(false) => Ended::Kept,
         Err(_) => {
-            eprintln!("vmm: the shutdown passed {SHUTDOWN_WAIT:?}, so its VMs end with it");
+            eprintln!(
+                "vmm: the shutdown passed {SHUTDOWN_WAIT:?}, so the ExecStopPost= step of the vmm unit kills its VMs"
+            );
             Ended::Late
         }
     }

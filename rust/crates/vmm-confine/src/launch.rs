@@ -8,6 +8,16 @@
 //! CH19 (4), CH8-5, CH36 G3 and G27). The payload of the scope is the
 //! launch stage of `stage`, which enters the slot label, applies the
 //! Landlock ruleset and execs CH (decision CH55, which amends CH30).
+//!
+//! Two links end a launch with the vmm. The death signal ends the launch
+//! step, `systemd-run` and the stage when the vmm dies before CH runs.
+//! AppArmor clears the death signal at the exec of CH into its slot
+//! label. The scope is bound to the vmm unit and ordered before it
+//! (`Launch::unit`, decision CH61 rule 2), so from the scope on, the
+//! `ExecStopPost=` step of the vmm unit kills CH after a stop, a restart
+//! or a crash of the vmm (decision CH61 rule 1). `systemd-run` makes the
+//! scope and its binding in one call, so each step of the chain has at
+//! least one of the two links.
 
 use std::convert::Infallible;
 use std::ffi::OsString;
@@ -25,6 +35,7 @@ use crate::landlock::VmFiles;
 use crate::scope::Scope;
 use crate::spawner::SELF_EXE;
 use crate::stage::{SlotNumber, Stage};
+use crate::vmm_unit::VmmUnit;
 
 /// The argument of the launch mode. `rust/crates/vmm/src/main.rs` parses
 /// the same word.
@@ -115,9 +126,10 @@ impl Payload {
     }
 }
 
-/// What one launch starts: the payload in its scope, through the
-/// `systemd-run` at a path that the vmm config gives, under the slot label
-/// of `slot` and the Landlock ruleset of `files` (decision CH55).
+/// What one launch starts: the payload in its scope bound to the vmm
+/// unit, through the `systemd-run` at a path that the vmm config gives,
+/// under the slot label of `slot` and the Landlock ruleset of `files`
+/// (decisions CH55, CH61 rule 2).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Launch {
@@ -125,20 +137,29 @@ pub struct Launch {
     scope: Scope,
     payload: Payload,
     files: VmFiles,
+    unit: VmmUnit,
     slot: Option<SlotNumber>,
 }
 
 impl Launch {
     /// The launch of `payload` in `scope` through `systemd_run`, with
-    /// access to `files` only. It has no slot yet, and the launch step
+    /// access to `files` only. The scope binds to `unit`, the unit of the
+    /// vmm (`VmmUnit::of_self`). It has no slot yet, and the launch step
     /// refuses it with `LaunchError::NoSlot` until `in_slot` gives one.
     #[must_use]
-    pub fn new(systemd_run: Program, scope: Scope, payload: Payload, files: VmFiles) -> Self {
+    pub fn new(
+        systemd_run: Program,
+        scope: Scope,
+        payload: Payload,
+        files: VmFiles,
+        unit: VmmUnit,
+    ) -> Self {
         Self {
             systemd_run,
             scope,
             payload,
             files,
+            unit,
             slot: None,
         }
     }
@@ -181,6 +202,12 @@ impl Launch {
     #[must_use]
     pub fn files(&self) -> &VmFiles {
         &self.files
+    }
+
+    /// The vmm unit that the scope binds to (decision CH61 rule 2).
+    #[must_use]
+    pub fn unit(&self) -> &VmmUnit {
+        &self.unit
     }
 }
 
@@ -296,8 +323,9 @@ pub fn run() -> Result<Infallible, LaunchError> {
     Err(LaunchError::Exec(error))
 }
 
-/// The arguments of `systemd-run` for `launch`. The scope payload is
-/// `stage` in the stage mode with the stage plan (decision CH55).
+/// The arguments of `systemd-run` for `launch`. The scope binds to the
+/// vmm unit of the launch, and its payload is `stage` in the stage mode
+/// with the stage plan (decisions CH55, CH61 rule 2).
 pub(crate) fn systemd_run_args(
     launch: &Launch,
     stage: Program,
@@ -305,7 +333,7 @@ pub(crate) fn systemd_run_args(
     let slot = launch.slot().ok_or(LaunchError::NoSlot)?;
     let plan = Stage::new(slot, launch.payload.clone(), launch.files.clone());
     let payload = plan.command(stage).map_err(LaunchError::StagePlan)?;
-    Ok(launch.scope.systemd_run_args(&payload))
+    Ok(launch.scope.systemd_run_args(&payload, &launch.unit))
 }
 
 /// The path of the running vmm binary, the program of the launch stage
@@ -342,8 +370,11 @@ fn read_plan() -> Result<Plan, LaunchError> {
 }
 
 /// Sets SIGKILL as the death signal of this process (decision CH19 (4)).
-/// The signal stays through the execs of `systemd-run`, the stage and CH
-/// (facts 76 and 80). The `stage` module says why.
+/// The signal stays through the execs of `systemd-run` and the stage
+/// (facts 76 and 80). AppArmor clears it at the exec of CH into its slot
+/// label, and the `ExecStopPost=` step of the vmm unit ends CH from there
+/// (decision CH61 rule 1).
+/// The `stage` module says why.
 #[cfg(target_os = "linux")]
 fn set_death_signal() -> Result<(), LaunchError> {
     let kill = Some(rustix::process::Signal::KILL);
@@ -367,9 +398,11 @@ mod tests {
     use super::{Launch, LaunchError, NotAbsolute, Payload, Program};
     use crate::landlock::{HostPath, Start, VmFiles};
     use crate::scope::Scope;
+    use crate::vmm_unit::VmmUnit;
 
     const ID: &str = "0123abcd-0000-4000-8000-00000000c18a";
     const VMM: &str = "/opt/components/vmm/bin/vmm";
+    const UNIT: &str = "creche-vmm.service";
 
     /// A restore of CH through `/usr/bin/systemd-run`, with no slot.
     fn launch() -> Launch {
@@ -379,7 +412,7 @@ mod tests {
             .session(&id);
         let run = RunRoot::new(PathBuf::from("/run/vmm")).unwrap().vm(&id);
         let root = HostPath::new(PathBuf::from("/state/store/root")).unwrap();
-        let files = VmFiles::new(Start::Restore, root, &session, &run).unwrap();
+        let files = VmFiles::new(Start::Restore { initramfs: None }, root, &session, &run).unwrap();
         let ch = Program::new(PathBuf::from("/opt/components/vmm/bin/cloud-hypervisor")).unwrap();
         let payload = Payload::new(ch, vec!["--restore".to_owned()]);
         let scope = Scope::new(
@@ -388,7 +421,8 @@ mod tests {
             NonZeroU32::new(100).unwrap(),
         );
         let systemd_run = Program::new(PathBuf::from("/usr/bin/systemd-run")).unwrap();
-        Launch::new(systemd_run, scope, payload, files)
+        let unit = VmmUnit::new(UNIT.to_owned()).unwrap();
+        Launch::new(systemd_run, scope, payload, files, unit)
     }
 
     fn vmm() -> Program {
@@ -403,8 +437,10 @@ mod tests {
         let (scope, payload) = args.split_at(split);
         let limits = launch
             .scope()
-            .systemd_run_args(&Payload::new(vmm(), Vec::new()));
+            .systemd_run_args(&Payload::new(vmm(), Vec::new()), launch.unit());
         assert_eq!(scope, &limits[..split]);
+        let binds = format!("BindsTo={UNIT}");
+        assert!(scope.iter().any(|arg| *arg == *binds), "{scope:?}");
         let [_, program, mode, plan] = payload else {
             panic!("{payload:?}");
         };

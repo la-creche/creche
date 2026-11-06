@@ -1,5 +1,6 @@
 //! The config of the vmm (plan PR L20): each key, each fault, and the
-//! defaults of `env/src/creche_env/default.env`.
+//! defaults of `env/src/creche_env/default.env`. Also the config of `vmm
+//! kill-scopes` (decision CH63): one key, with the check of `Config`.
 
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -7,7 +8,8 @@ use std::path::Path;
 
 use creche_vmm::config::{
     BUDGET, CH, CH_REMOTE, Config, ConfigError, FALLOCATE, FAMILY_ROOT, FAULTS_ROOT, FREE_FLOOR,
-    Fault, IMAGE_ROOT, MKE2FS, RAM_CAP, RUN_ROOT, STATE_ROOT, SYSTEMCTL, SYSTEMD_RUN, ZSTD,
+    Fault, IMAGE_ROOT, KillScopesConfig, MKE2FS, RAM_CAP, RUN_ROOT, STATE_ROOT, SYSTEMCTL,
+    SYSTEMD_RUN, ZSTD,
 };
 use creche_vmm_confine::admission::{GIB, Limits};
 use creche_vmm_store::retention;
@@ -118,6 +120,31 @@ fn each_path_is_absolute_with_no_parent_component() {
             "{key}"
         );
     }
+}
+
+/// `vmm kill-scopes` reads only `AGENT_SYSTEMCTL_PROGRAM`, so an env
+/// with no other key gives its program.
+#[test]
+fn kill_scopes_reads_only_the_systemctl_key() {
+    let lookup = |key: &str| (key == SYSTEMCTL).then(|| OsString::from("/usr/bin/systemctl"));
+    let config = KillScopesConfig::from_lookup(lookup).unwrap();
+    assert_eq!(config.systemctl.path(), Path::new("/usr/bin/systemctl"));
+}
+
+/// `vmm kill-scopes` checks its key as `Config` checks it: each fault of
+/// a program path, with the same error.
+#[test]
+fn kill_scopes_checks_the_key_as_serve_does() {
+    for value in ["", "srv/x", "/srv/../x"] {
+        let kill = KillScopesConfig::from_lookup(|_| Some(OsString::from(value))).unwrap_err();
+        assert_eq!(kill, fault_of(SYSTEMCTL, value), "{value:?}");
+    }
+    let missing = KillScopesConfig::from_lookup(|_| None).unwrap_err();
+    let expected = ConfigError {
+        key: SYSTEMCTL,
+        fault: Fault::Missing,
+    };
+    assert_eq!(missing, expected);
 }
 
 #[test]

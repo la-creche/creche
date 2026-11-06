@@ -1,6 +1,6 @@
 //! The key of a memory snapshot (decision CH7-6). A snapshot restores only
-//! into the same Cloud Hypervisor, kernel, root disk and guest init that
-//! wrote it. The key names those four parts:
+//! into the same Cloud Hypervisor, kernel, initramfs, root disk and guest
+//! init protocol that wrote it. The key names those five parts:
 //!
 //! 1. The CH rev: the constant `CH_REV`, equal to the rev of the CH7-4
 //!    build argv (decision CH35 rule 3). CH7-6 keys on the rev, not on a
@@ -10,8 +10,14 @@
 //!    proves the release, and a phase 5 test ties `CH_REV` to the build
 //!    argv (gap G10).
 //! 2. The SHA-256 of the kernel, from its checked store copy (PR D6).
-//! 3. The SHA-256 of the root disk, from its checked store copy (PR D6).
-//! 4. `GUEST_INIT_PROTOCOL` of the wire crate. A port renumber bumps it
+//! 3. The SHA-256 of the initramfs, from its checked store copy, or
+//!    `null` for a boot with none (decision CH61 rule 3). CH opens the
+//!    initramfs of the snapshot config on a restore, so a restore with
+//!    the current key reads the `store/<sha256>` file that the vmm
+//!    config names (decision CH60 rule 2). A boot has none until phase 3
+//!    adds guest init (PR C7).
+//! 4. The SHA-256 of the root disk, from its checked store copy (PR D6).
+//! 5. `GUEST_INIT_PROTOCOL` of the wire crate. A port renumber bumps it
 //!    (decision CH14).
 //!
 //! `write_key` puts the key in `snapshots/<generation>/key.json` after the
@@ -174,6 +180,7 @@ pub fn check_cloud_hypervisor(
 struct KeyFile {
     ch_rev: String,
     kernel: String,
+    initramfs: Option<String>,
     root_disk: String,
     guest_init_protocol: u32,
 }
@@ -183,12 +190,20 @@ struct KeyFile {
 pub struct SnapshotKey(KeyFile);
 
 impl SnapshotKey {
-    /// The key of a VM with the checked `kernel` and `root_disk`.
+    /// The key of a VM with the checked `kernel`, `initramfs` and
+    /// `root_disk`. `initramfs` is `None` for a boot with none (decision
+    /// CH61 rule 3).
     #[must_use]
-    pub fn current(_ch: CheckedCh, kernel: &CheckedImage, root_disk: &CheckedImage) -> Self {
+    pub fn current(
+        _ch: CheckedCh,
+        kernel: &CheckedImage,
+        initramfs: Option<&CheckedImage>,
+        root_disk: &CheckedImage,
+    ) -> Self {
         Self(KeyFile {
             ch_rev: CH_REV.to_owned(),
             kernel: kernel.digest().to_string(),
+            initramfs: initramfs.map(|image| image.digest().to_string()),
             root_disk: root_disk.digest().to_string(),
             guest_init_protocol: GUEST_INIT_PROTOCOL,
         })

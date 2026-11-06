@@ -31,8 +31,10 @@ use creche_vmm::stop::VmProcess;
 use creche_vmm_confine::admission::{GIB, Limits};
 use creche_vmm_confine::family::FamilyRoot;
 use creche_vmm_confine::faults::{FaultBook, FaultDir};
+use creche_vmm_confine::landlock::{HostPath, Start};
 use creche_vmm_confine::launch::{Launch, Program};
 use creche_vmm_confine::spawner::SpawnError;
+use creche_vmm_confine::vmm_unit::{UnitError, VmmUnit};
 use creche_vmm_store::ch_remote::{ChRemoteError, VmInfo};
 use creche_vmm_store::images::{ImageDigest, ImageStore};
 use creche_vmm_store::key::{CheckedCh, SnapshotKey, check_cloud_hypervisor, write_key};
@@ -410,6 +412,7 @@ impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
             initramfs: None,
             ch: Program::new(PathBuf::from(CH)).unwrap(),
             systemd_run: Program::new(PathBuf::from("/usr/bin/systemd-run")).unwrap(),
+            vmm_unit: Ok(VmmUnit::new("creche-vmm.service".to_owned()).unwrap()),
             limits: Limits {
                 ram_cap: 80 * GIB,
                 free_floor: 0,
@@ -515,7 +518,7 @@ impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
     fn key(&self) -> SnapshotKey {
         let images = ImageStore::new(&self.state, PathBuf::from("/usr/bin/zstd"));
         let empty = images.check(EMPTY.parse().unwrap()).unwrap();
-        SnapshotKey::current(self.ch, &empty, &empty)
+        SnapshotKey::current(self.ch, &empty, None, &empty)
     }
 
     /// Makes generation 1 of row `index` with `key`, or with a key of
@@ -627,6 +630,28 @@ fn a_cold_boot_launches_the_checked_files_and_clears_the_fault() {
     let serial = test.dir.join(format!("run/vm/{A}/serial.log"));
     let mode = fs::metadata(serial).unwrap().permissions().mode();
     assert_eq!(mode & 0o777, 0o600);
+}
+
+/// A vmm in no service unit refuses every launch and starts nothing
+/// (decision CH60 rule 1). The start faults, makes no `vm/<id>` link, and
+/// the fake launcher sees no launch. Each launch of a vmm with a unit
+/// binds its scope to that unit.
+#[test]
+fn a_vmm_in_no_service_unit_launches_nothing() {
+    let path = "/user.slice/user-1000.slice/session-3.scope".to_owned();
+    let test = Test::new("no-unit", |config| {
+        config.vmm_unit = Err(UnitError::NoUserManager(path));
+    });
+    assert_eq!(test.start(0), Err(StartFault::SandboxStartFailed));
+    assert_eq!(test.fault_codes(), ["sandbox_start_failed"]);
+    assert_eq!(test.launches(), 0);
+    let link = test.dir.join(format!("run/vm/{A}"));
+    assert!(fs::symlink_metadata(link).is_err());
+
+    let test = Test::new("unit", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    let launches = test.fake.launches.lock().unwrap();
+    assert_eq!(launches[0].unit().name(), "creche-vmm.service");
 }
 
 /// Each VM boots the root disk of the flavor of its family shape
@@ -787,6 +812,62 @@ fn a_keyed_snapshot_restores_paused_then_resumes() {
     assert_eq!(test.start(0), Ok(()));
     assert!(!test.restored(1));
     assert!(test.hook.in_use().is_empty());
+}
+
+/// With an initramfs in the config, a boot names it and its ruleset reads
+/// it, and the key holds its digest. A restore with that key carries the
+/// same `store/<sha256>` file, so its ruleset reads it too, and a key
+/// with no initramfs drops the snapshot (decisions CH60 rule 2, CH61
+/// rule 3).
+#[test]
+fn a_restore_carries_the_initramfs_of_its_key() {
+    let initramfs: ImageDigest = ABC.parse().unwrap();
+    let with = |config: &mut StartConfig| {
+        let file = config.state.path().parent().unwrap().join("initramfs");
+        fs::write(&file, "abc").unwrap();
+        config.images.import(&file, initramfs).unwrap();
+        config.initramfs = Some(initramfs);
+    };
+    let store = |test: &Test| test.dir.join(format!("state/store/{initramfs}"));
+
+    let test = Test::new("initramfs-boot", with);
+    assert_eq!(test.start(0), Ok(()));
+    let launches = test.fake.launches.lock().unwrap();
+    let args = launches[0].payload().args();
+    let at = args.iter().position(|arg| arg == "--initramfs").unwrap();
+    assert_eq!(args[at + 1], store(&test).to_str().unwrap());
+    let Start::Boot {
+        initramfs: Some(read),
+        ..
+    } = launches[0].files().start()
+    else {
+        panic!("not a boot with an initramfs: {:?}", launches[0].files());
+    };
+    assert_eq!(read.path(), store(&test));
+    drop(launches);
+
+    let test = Test::new("initramfs-restore", with);
+    let images = ImageStore::new(&test.state, PathBuf::from("/usr/bin/zstd"));
+    let empty = images.check(EMPTY.parse().unwrap()).unwrap();
+    let checked = images.check(initramfs).unwrap();
+    let key = SnapshotKey::current(test.ch, &empty, Some(&checked), &empty);
+    test.snapshot(0, Some(&key));
+    test.reply(0, "Paused", &[]);
+    assert_eq!(test.start(0), Ok(()));
+    assert!(test.restored(0));
+    let launches = test.fake.launches.lock().unwrap();
+    let path = HostPath::new(store(&test)).unwrap();
+    let restore = Start::Restore {
+        initramfs: Some(path),
+    };
+    assert_eq!(launches[0].files().start(), &restore);
+    drop(launches);
+
+    let test = Test::new("initramfs-mismatch", with);
+    let dir = test.snapshot(0, Some(&test.key()));
+    assert_eq!(test.start(0), Ok(()));
+    assert!(!test.restored(0));
+    assert!(!dir.exists());
 }
 
 /// Fields that a test adds to the config of an `info` reply.

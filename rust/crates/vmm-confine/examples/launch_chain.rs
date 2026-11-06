@@ -6,6 +6,20 @@
 //!   (decisions CH55, CH58 rule 1). It calls `stage::run`, which writes
 //!   the real exec attribute. The rust job of CI loads no slot profile,
 //!   so the stage fails closed at its label step and starts no payload.
+//!   The kvm job loads them, and the stage execs CH under the label
+//!   (`tests/kvm_slot.rs`).
+//! - `hold` reads one `Launch` as JSON on stdin. It reads its own unit
+//!   with `VmmUnit::of_self`, as the vmm does, and fails unless the
+//!   launch binds to that unit (decision CH61 rule 2). It then starts a
+//!   spawner on `/proc/self/exe`, as the vmm does, launches it, prints the
+//!   pid and waits to be stopped. `tests/kvm_slot.rs` runs it as a
+//!   transient user service, then stops, restarts or kills that service
+//!   to prove that each one ends CH (decision CH61 rule 1). A restarted
+//!   `hold` reads EOF, fails and exits 78, which ends the restarts of
+//!   `Restart=always`.
+//! - `await <path>` returns once `<path>` exists. A test gives it as the
+//!   `ExecStop=` of the `hold` service, so the stop of that unit lasts
+//!   until the test opens the gate, as the shutdown of the vmm does.
 //! - `--user ...` is a fake `systemd-run` for a host with no systemd. It
 //!   writes `core <soft> <hard>`, its own core limits, to stderr. It then
 //!   execs the arguments after `--`. For the scope unit of `HOLD` it
@@ -21,11 +35,15 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::net::{Ipv4Addr, TcpStream};
 use std::os::unix::process::CommandExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
+use std::thread;
+use std::time::Duration;
 
-use creche_vmm_confine::launch::{self, MODE};
+use creche_vmm_confine::launch::{self, Launch, MODE};
+use creche_vmm_confine::spawner::{SELF_EXE, Spawner};
 use creche_vmm_confine::stage;
+use creche_vmm_confine::vmm_unit::VmmUnit;
 
 fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
@@ -36,11 +54,13 @@ fn main() -> ExitCode {
         Some((role, rest)) if role == stage::MODE => stage::run(rest)
             .map(|never| match never {})
             .map_err(Failure::from),
+        Some((role, [])) if role == "hold" => hold(),
+        Some((role, [path])) if role == "await" => await_path(Path::new(path)),
         Some((role, rest)) if role == "--user" => fake_systemd_run(rest),
         Some((role, rest)) if role == "probe" => probe(rest),
         Some((role, rest)) if role == "say" => say(rest),
         _ => Err(
-            "usage: launch_chain launch | launch-stage ... | --user ... | probe ... | say ..."
+            "usage: launch_chain launch | launch-stage ... | hold | await <path> | --user ... | probe ... | say ..."
                 .into(),
         ),
     };
@@ -54,6 +74,33 @@ fn main() -> ExitCode {
 }
 
 type Failure = Box<dyn std::error::Error>;
+
+/// The hold role. It returns only on an error.
+fn hold() -> Result<(), Failure> {
+    let launch: Launch = serde_json::from_reader(io::stdin().lock())?;
+    let unit = VmmUnit::of_self()?;
+    if launch.unit() != &unit {
+        let bound = launch.unit().name();
+        let own = unit.name();
+        return Err(format!("the launch binds to {bound}, and the stand-in runs in {own}").into());
+    }
+    let spawner = Spawner::start(PathBuf::from(SELF_EXE))?;
+    let launched = spawner.launch(launch)?;
+    writeln!(io::stdout(), "{}", launched.id())?;
+    io::stdout().flush()?;
+    loop {
+        thread::park();
+    }
+}
+
+/// The await role: it polls for `path` every 20 ms. The `TimeoutStopSec`
+/// of the unit bounds it.
+fn await_path(path: &Path) -> Result<(), Failure> {
+    while !path.exists() {
+        thread::sleep(Duration::from_millis(20));
+    }
+    Ok(())
+}
 
 /// The scope unit whose launch the fake `systemd-run` holds in
 /// `/bin/sleep 60`. `tests/launch.rs` launches the session id
