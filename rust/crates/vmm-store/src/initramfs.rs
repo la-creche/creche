@@ -334,6 +334,12 @@ mod tests {
             refusal(&[file("dev/console"), entry("dev", 0o755, Kind::Dir)]),
             Reason::NoParent
         );
+
+        // The parent is the whole name before the last slash, not the
+        // first component.
+        let dir = |name: &str| entry(name, 0o755, Kind::Dir);
+        assert_eq!(refusal(&[dir("a"), file("a/b/c")]), Reason::NoParent);
+        pack(&[dir("a"), dir("a/b"), file("a/b/c")]).unwrap();
     }
 
     #[test]

@@ -205,6 +205,33 @@ fn put_made_keeps_an_equal_copy() {
     assert_eq!(temp.store_files().len(), 2);
 }
 
+/// A crash between the rename and the identity write leaves a copy with
+/// no identity. The next `put_made` writes the copy again and records its
+/// identity, so the next check passes. A copy with no identity never fails
+/// every later start (decision CH44 rule 2 repairs nothing).
+#[test]
+fn put_made_writes_again_a_copy_with_no_identity() {
+    let temp = Temp::new("made-no-identity");
+    let digest = digest_of(BYTES);
+    temp.store.put_made(BYTES).expect("the write");
+    fs::remove_file(temp.store.identity_path(&digest)).expect("the identity");
+
+    let checked = temp.store.put_made(BYTES).expect("the repeat");
+    assert_eq!(temp.store.check(digest).expect("the check"), checked);
+}
+
+/// A failed rename leaves no temp file in the store.
+#[test]
+fn put_made_leaves_no_temp_file_on_a_failed_step() {
+    let temp = Temp::new("made-failed");
+    let digest = digest_of(BYTES);
+    fs::create_dir_all(temp.store.path(&digest).join("in")).expect("a dir at the name");
+
+    let error = temp.store.put_made(BYTES).expect_err("a failed rename");
+    assert!(matches!(error, MadeError::Io { .. }), "{error}");
+    assert_eq!(temp.store_files(), [digest.to_string()]);
+}
+
 #[test]
 fn put_made_refuses_a_different_file_at_the_name() {
     let temp = Temp::new("made-changed");

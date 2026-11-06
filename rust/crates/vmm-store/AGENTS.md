@@ -111,6 +111,12 @@ The second file has the table of the three vmm crates.
   confines only the CH launch. L20 needs a config key for its path (the
   owner env rule). Its list has no such key yet. Item 42 lists config
   keys for `fallocate`, `zstd` and `mke2fs` as a lifecycle duty.
+- Item 42 (PR D10, `key.rs`, decision CH44): `Snapshotter::take` should
+  write `key.json` into its temp dir before the rename, so no snapshot
+  exists without a key. Today `vmm/src/sleep.rs` `take_keyed` writes the
+  key after the take, and a failed write drops the generation at the
+  next check. Item 42 gives the change to a later PR. No plan entry
+  holds it yet.
 - Caller duty (PR D12, `sleep_gate.rs`), for lifecycle (L17): a VM with
   an open door link counts as used now in the eviction order (decision
   CH50 rule 6). When L17 builds the `Running` list for
