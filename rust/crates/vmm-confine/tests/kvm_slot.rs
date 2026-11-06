@@ -40,6 +40,7 @@
 #![cfg(target_os = "linux")]
 
 mod kvm;
+mod scope_guard;
 
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, ErrorKind, Write};
@@ -63,6 +64,7 @@ use creche_vmm_store::layout::{RunRoot, SessionDir, Slot, StateRoot, VmRunDir, s
 use creche_wire::{HostPort, SessionId};
 
 use kvm::{BOOT, Vm, booted, files};
+use scope_guard::ScopeGuard;
 
 /// The host programs of the ubuntu-24.04 runner. The vmm config passes
 /// each one (plan PR L20).
@@ -926,6 +928,9 @@ fn kvm_ch_dies_with_the_spawner_thread() {
 fn kvm_ch_dies_with_a_killed_vmm() {
     let mut rig = Rig::new("vmm-kill");
     let seat = rig.seat("0123abcd-0000-4000-8000-0000000c1550", 10);
+    // CH is not a child of the test, so a drop of `vmm` does not reach
+    // it. The guard kills the scope when an assert fails.
+    let _scope = ScopeGuard::new(&seat.id);
     let mut vmm = Vm(Command::new(example())
         .arg("hold")
         .stdin(Stdio::piped())
