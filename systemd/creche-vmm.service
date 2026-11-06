@@ -43,6 +43,12 @@ EnvironmentFile=/etc/creche/site.env
 # every client runs as the operator (CH20). systemd sets RUNTIME_DIRECTORY
 # to it, and `config.rs` reads that key (gap G5 option A). One entry only:
 # systemd joins more than one with `:`, and the config refuses a `:`.
+# RuntimeDirectoryPreserve keeps its default, `no`: systemd removes the dir
+# at each stop and each restart, a crash included. The bind refuses a path
+# that exists (rust/crates/vmm/src/server/accept.rs), and the vmm then exits
+# 78, so the dir must be fresh at each start. So each stop also removes the
+# `serial.log` of each VM (decision CH41 Q39-2), against the lifetime of
+# gap G23 and `layout.rs`. CONTRACT-QUESTION: systemd/AGENTS.md, Known gaps.
 RuntimeDirectory=vmm
 RuntimeDirectoryMode=0700
 # The state root: `%S/creche-vmm`, which is ~/.local/state/creche-vmm, the
@@ -82,6 +88,14 @@ TimeoutStartSec=infinity
 # CH ends with the vmm through PDEATHSIG (CH19 (4)). Change this value and
 # UNIT_STOP_TIMEOUT of rust/crates/vmm/src/shutdown.rs together.
 KillSignal=SIGTERM
+# SIGTERM goes to the vmm alone. The default, control-group, sends it to
+# each process of the cgroup at once. An idle retire may already run at
+# SIGTERM (decision CH56 rule 2), and its ch-remote, fallocate, zstd or
+# mke2fs child would die behind the back of the vmm. The vmm finishes or
+# stops its own children inside SHUTDOWN_WAIT (gap G16). The SIGKILL at
+# TimeoutStopSec still reaches each process left in the cgroup. Each CH
+# sits in its own creche-vm-* scope, outside this cgroup.
+KillMode=mixed
 TimeoutStopSec=90
 
 # A user unit on this host cannot use mount-namespace options

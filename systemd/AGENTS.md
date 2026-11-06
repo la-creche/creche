@@ -95,3 +95,15 @@ file's removal is always a human verb.
    unit on the host is also its first run in this order. A refused write
    fails the launch closed (decision CH55), so a wrong order starts no
    VM and lets no VM run unconfined.
+3. CONTRACT-QUESTION: the lifetime of `serial.log` under
+   `creche-vmm.service`. Each VM's `serial.log` lives in the run root
+   (decision CH41 Q39-2, `rust/crates/vmm-store/src/layout.rs`). Gap G23
+   keeps it until the next start, and `layout.rs` keeps it until a VM next
+   takes the slot. The unit keeps the default
+   `RuntimeDirectoryPreserve=no`, so systemd removes the run root at each
+   stop and each restart, a crash included. Each `serial.log` is then gone
+   when it matters most. `RuntimeDirectoryPreserve=restart` is no fix: the
+   bind refuses an existing `vmm.sock` (`rust/crates/vmm/src/server/accept.rs`),
+   so the vmm exits 78 and the unit stays stopped. The alternative needs a
+   decision: move `serial.log` out of the run root, for example into the
+   state root.
