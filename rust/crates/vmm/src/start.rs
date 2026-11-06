@@ -69,12 +69,12 @@ use creche_vmm_store::claim::{ClaimError, ClaimedSnapshot, claim};
 use creche_vmm_store::images::{ImageDigest, ImageStore};
 use creche_vmm_store::key::{CheckedCh, KeyCheck, SnapshotKey, check_newest};
 use creche_vmm_store::layout::{RunRoot, SessionDir, Slot as PoolSlot, StateRoot, VmRunDir};
-use creche_vmm_store::retention::{BUDGET, InUse, Swept, sweep};
+use creche_vmm_store::retention::{InUse, Swept, sweep};
 use creche_vmm_store::rows::Rows;
 use creche_vmm_store::session_disk::SessionDisks;
 use creche_vmm_store::sleep_gate::Activity;
 use creche_vmm_store::stale::remove_stale;
-use creche_wire::{FamilyName, FamilyShape, SandboxFlavor, SessionId, SessionRow};
+use creche_wire::{FamilyName, FamilyShape, PerFlavor, SessionId, SessionRow};
 use tokio::net::UnixStream;
 use tokio::sync::{RwLock, watch};
 use tokio::task::spawn_blocking;
@@ -103,26 +103,14 @@ const SERIAL_MODE: u32 = 0o600;
 const SLOT_POLL: Duration = Duration::from_millis(10);
 
 /// The store digests of the guest kernel and of the root disk of each
-/// flavor (decisions CH7-3, CH8-8). Plan PR L20 reads them from the vmm
-/// config.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// flavor (decisions CH7-3, CH8-8). The vmm keeps one root disk for each
+/// value of the wire flavor enum (decision CH58 rule 4).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Digests {
     /// The guest kernel. Every flavor boots it.
     pub kernel: ImageDigest,
-    /// The root disk of the flavor `base`.
-    pub base: ImageDigest,
-    /// The root disk of the flavor `python`.
-    pub python: ImageDigest,
-}
-
-impl Digests {
-    /// The root disk of `flavor`.
-    fn root(&self, flavor: SandboxFlavor) -> ImageDigest {
-        match flavor {
-            SandboxFlavor::Base => self.base,
-            SandboxFlavor::Python => self.python,
-        }
-    }
+    /// The root disk of each flavor.
+    pub roots: PerFlavor<ImageDigest>,
 }
 
 /// What a cold boot reads. Plan PR L20 builds it from the vmm config.
@@ -138,7 +126,8 @@ pub struct StartConfig {
     pub images: ImageStore,
     /// The session disks.
     pub disks: SessionDisks,
-    /// The kernel and the root disks.
+    /// The kernel and the root disks. The vmm reads them from the
+    /// `digests.json` of its image root (decision CH57 rule 1).
     pub digests: Digests,
     /// The initramfs, optional until phase 3 adds guest init (PR C7).
     pub initramfs: Option<HostPath>,
@@ -148,6 +137,10 @@ pub struct StartConfig {
     pub systemd_run: Program,
     /// The RAM cap and the free-space floor of admission.
     pub limits: Limits,
+    /// The snapshot budget of the sweep, in bytes (decision CH8-7, gap
+    /// G14). The vmm config reads it, and its catalog default equals
+    /// `retention::BUDGET`.
+    pub budget: u64,
     /// The version check of `ch`, for the snapshot key (decision CH7-6,
     /// gap G10). The vmm runs it at its start.
     pub ch_version: CheckedCh,
@@ -701,6 +694,13 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         }
     }
 
+    /// The config and the API of the hook, for the wiring test of the
+    /// compose step.
+    #[cfg(test)]
+    pub(crate) fn parts(&self) -> (&StartConfig, &A) {
+        (&self.config, &self.api)
+    }
+
     /// Whether the table holds a VM of `id`.
     #[must_use]
     pub fn running(&self, id: &SessionId) -> bool {
@@ -915,30 +915,32 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         }
     }
 
-    /// Runs `retention::sweep` with `BUDGET` over the state root (PR D13,
-    /// decisions CH2, CH8-7). It holds the lock of the claims, so no key
-    /// check or claim runs, and it names each generation in a copy of the
-    /// `InUse` set. A VM that ends meanwhile only shrinks the set, so the
-    /// copy names each generation in use, and the sweep never removes the
-    /// files of a restored VM (decision CH50 rule 8). It waits for each
-    /// take to end, and no take starts until it ends. The blocking step
-    /// owns both locks, so a dropped sweep future frees neither early.
+    /// Runs `retention::sweep` with `StartConfig::budget` over the state
+    /// root (PR D13, decisions CH2, CH8-7). It holds the lock of the
+    /// claims, so no key check or claim runs, and it names each generation
+    /// in a copy of the `InUse` set. A VM that ends meanwhile only shrinks
+    /// the set, so the copy names each generation in use, and the sweep
+    /// never removes the files of a restored VM (decision CH50 rule 8). It
+    /// waits for each take to end, and no take starts until it ends. The
+    /// blocking step owns both locks, so a dropped sweep future frees
+    /// neither early.
     ///
     /// # Errors
     ///
     /// A failed read of `sessions/`, or a sweep that panicked.
     pub async fn sweep(&self) -> io::Result<Swept> {
         let takes = Arc::clone(&self.takes).write_owned().await;
-        let (claims, in_use, state) = (
+        let (claims, in_use, state, budget) = (
             Arc::clone(&self.claims),
             Arc::clone(&self.in_use),
             self.config.state.clone(),
+            self.config.budget,
         );
         spawn_blocking(move || {
             let _takes = takes;
             let _claims = lock_claims(&claims);
             let in_use = lock_in_use(&in_use).clone();
-            sweep(&state, SystemTime::now(), BUDGET, &in_use)
+            sweep(&state, SystemTime::now(), budget, &in_use)
         })
         .await
         .unwrap_or_else(|_| Err(io::Error::other("the sweep panicked")))
@@ -1418,7 +1420,9 @@ fn launch<L: Launcher, A: ChApi>(
             .map_err(|error| error.to_string())
     };
     let kernel = checked(config.digests.kernel)?;
-    let root = checked(config.digests.root(shape.flavor))?;
+    // `PerFlavor` of the wire crate holds each flavor, so the vmm holds no
+    // list of its own (decision CH58 rule 4).
+    let root = checked(*config.digests.roots.get(shape.flavor))?;
     let disk = config
         .disks
         .for_boot(id)
