@@ -20,13 +20,14 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use creche_vmm_confine::admission::GIB;
-use creche_wire::{HOST_API_HEADER, HOST_API_PROTOCOL, SessionPage};
+use creche_wire::{HOST_API_HEADER, HOST_API_PROTOCOL, SandboxFlavor, SessionPage};
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::oneshot;
 
 use super::{StartError, Vmm, build};
 use crate::ServeError;
 use crate::config::Config;
+use crate::flavors::PerFlavor;
 use crate::image_root::{DIGESTS_FILE, DigestsError, Owner};
 use crate::start::Digests;
 
@@ -192,24 +193,23 @@ fn build_wires_each_key_to_its_part() {
     assert_eq!(start.budget, 7 * GIB);
     assert_eq!(start.limits.ram_cap, 80 * GIB);
 
-    // Decision CH57 rule 1: the digests of `digests.json`, each in the
-    // digest store of the state root.
+    // Decisions CH57 rule 1 and CH58 rule 4: the digests of
+    // `digests.json`, each in the digest store of the state root.
     let [kernel, base, python] = IMAGES.map(|(_, _, sha256)| sha256.parse().unwrap());
-    assert_eq!(
-        start.digests,
-        Digests {
-            kernel,
-            base,
-            python
-        }
-    );
+    let roots = PerFlavor::new(vec![
+        (SandboxFlavor::Base, base),
+        (SandboxFlavor::Python, python),
+    ])
+    .unwrap();
+    assert_eq!(start.digests, Digests { kernel, roots });
     for digest in [kernel, base, python] {
         start.images.check(digest).unwrap();
     }
 }
 
 /// Decision CH57 rule 1: a `digests.json` that root does not own refuses
-/// the start, and so does a file that it names and the image root lacks.
+/// the start. Decision CH58 rule 5: so does a file that it names and the
+/// image root lacks.
 #[test]
 fn an_untrusted_or_broken_image_root_refuses_the_start() {
     let scratch = Scratch::new("untrusted");

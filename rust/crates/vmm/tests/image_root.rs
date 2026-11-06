@@ -1,13 +1,15 @@
-//! The `digests.json` of the image root (decision CH57 rule 1). A test
-//! cannot make a root-owned file, so each test passes its own uid as the
-//! owner, and one case proves that `Owner::ROOT` refuses the file of the
-//! test.
+//! The `digests.json` of the image root (decisions CH57 rule 1, CH58
+//! rules 4 and 5). A test cannot make a root-owned file, so each test
+//! passes its own uid as the owner, and one case proves that `Owner::ROOT`
+//! refuses the file of the test. The fixture takes its flavors from the
+//! wire enum, as the vmm does.
 
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::path::PathBuf;
 
-use creche_vmm::image_root::{DIGESTS_CAP, DIGESTS_FILE, DigestsError, Owner, read};
+use creche_vmm::flavors::{PerFlavor, all};
+use creche_vmm::image_root::{DIGESTS_CAP, DIGESTS_FILE, DigestsError, KERNEL_KEY, Owner, read};
 use creche_vmm::start::Digests;
 use creche_vmm_store::images::{ImageStore, ImportError};
 use creche_vmm_store::layout::StateRoot;
@@ -32,16 +34,17 @@ impl Drop for Root {
 
 #[cfg(test)]
 impl Root {
-    /// An image root with the files `vmlinux` (no bytes) and `base.ext4`
-    /// and `python.ext4` (`abc` each), and a good `digests.json`.
+    /// An image root with the file `vmlinux` (no bytes), one file
+    /// `<flavor>.ext4` (`abc`) for each flavor, and a good `digests.json`.
     fn new(name: &str) -> Self {
         let dir =
             std::env::temp_dir().join(format!("creche-vmm-images-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("images")).unwrap();
         fs::write(dir.join("images/vmlinux"), "").unwrap();
-        fs::write(dir.join("images/base.ext4"), "abc").unwrap();
-        fs::write(dir.join("images/python.ext4"), "abc").unwrap();
+        for (flavor, _) in all().unwrap() {
+            fs::write(dir.join(format!("images/{flavor}.ext4")), "abc").unwrap();
+        }
         let root = Self(dir);
         root.write(&good());
         root
@@ -80,14 +83,20 @@ fn entry(file: &str, sha256: &str) -> serde_json::Value {
     serde_json::json!({ "file": file, "sha256": sha256 })
 }
 
+/// The good `digests.json`: the kernel and one entry for each flavor.
+#[cfg(test)]
+fn good_json() -> serde_json::Map<String, serde_json::Value> {
+    let mut json = serde_json::Map::new();
+    json.insert(KERNEL_KEY.to_owned(), entry("vmlinux", EMPTY));
+    for (flavor, _) in all().unwrap() {
+        json.insert(flavor.to_owned(), entry(&format!("{flavor}.ext4"), ABC));
+    }
+    json
+}
+
 #[cfg(test)]
 fn good() -> String {
-    serde_json::json!({
-        "kernel": entry("vmlinux", EMPTY),
-        "base": entry("base.ext4", ABC),
-        "python": entry("python.ext4", ABC),
-    })
-    .to_string()
+    serde_json::Value::Object(good_json()).to_string()
 }
 
 #[test]
@@ -96,8 +105,7 @@ fn a_trusted_file_gives_the_digests_after_the_import() {
     let digests = root.read().unwrap();
     let expected = Digests {
         kernel: EMPTY.parse().unwrap(),
-        base: ABC.parse().unwrap(),
-        python: ABC.parse().unwrap(),
+        roots: PerFlavor::every(|_| ABC.parse().unwrap()).unwrap(),
     };
     assert_eq!(digests, expected);
     // A second read finds each digest in the store and imports nothing.
@@ -181,18 +189,17 @@ fn a_file_past_the_cap_refuses() {
 fn a_malformed_file_refuses() {
     let root = Root::new("malformed");
     let other = |key: &str, value: serde_json::Value| {
-        let mut json: serde_json::Value = serde_json::from_str(&good()).unwrap();
-        json[key] = value;
-        json.to_string()
+        let mut json = good_json();
+        json.insert(key.to_owned(), value);
+        serde_json::Value::Object(json).to_string()
     };
-    let mut no_python: serde_json::Value = serde_json::from_str(&good()).unwrap();
-    no_python.as_object_mut().unwrap().remove("python");
     let cases = [
         String::new(),
         "{".to_owned(),
+        "[]".to_owned(),
         format!("{} {{}}", good()),
-        no_python.to_string(),
         other("extra", entry("vmlinux", EMPTY)),
+        other("Base", entry("base.ext4", ABC)),
         other("base", serde_json::json!({ "file": "base.ext4" })),
         other(
             "base",
@@ -200,6 +207,10 @@ fn a_malformed_file_refuses() {
         ),
         other("base", entry("base.ext4", &ABC.to_uppercase())),
         other("base", entry("base.ext4", ABC.get(1..).unwrap())),
+        other(
+            "base",
+            entry("base.ext4", &format!("{}g", ABC.get(1..).unwrap())),
+        ),
         other("base", entry("../base.ext4", ABC)),
         other("base", entry("sub/base.ext4", ABC)),
         other("base", entry("/base.ext4", ABC)),
@@ -218,17 +229,45 @@ fn a_malformed_file_refuses() {
     }
 }
 
+/// Decision CH58 rule 4: the kernel and each flavor of the wire enum, each
+/// once. A file that lacks one of them, or repeats one, refuses.
+#[test]
+fn a_file_that_lacks_or_repeats_a_key_refuses() {
+    let root = Root::new("keys");
+    let keys: Vec<String> = good_json().keys().cloned().collect();
+    for key in &keys {
+        let mut json = good_json();
+        json.remove(key);
+        root.write(&serde_json::Value::Object(json).to_string());
+        let fault = root.fault();
+        assert!(
+            matches!(fault, DigestsError::Malformed(_)),
+            "{key}: {fault:?}"
+        );
+        assert!(fault.to_string().contains(&format!("`{key}`")), "{fault}");
+
+        let text = good();
+        let repeated = format!(
+            "{},\"{key}\":{}}}",
+            text.get(..text.len() - 1).unwrap(),
+            entry("vmlinux", EMPTY)
+        );
+        root.write(&repeated);
+        let fault = root.fault();
+        assert!(
+            matches!(fault, DigestsError::Malformed(_)),
+            "{key}: {fault:?}"
+        );
+        assert!(fault.to_string().contains(&format!("`{key}`")), "{fault}");
+    }
+}
+
+/// Decision CH58 rule 5: an entry that does not import refuses the start,
+/// and the error names its file.
 #[test]
 fn a_file_that_does_not_import_names_the_file() {
     let root = Root::new("import");
-    root.write(
-        &serde_json::json!({
-            "kernel": entry("vmlinux", EMPTY),
-            "base": entry("base.ext4", HELLO),
-            "python": entry("python.ext4", ABC),
-        })
-        .to_string(),
-    );
+    root.write(&other_sha("base", HELLO));
     let set = read(&root.images(), root.owner()).unwrap();
     let state = StateRoot::new(root.0.join("state")).unwrap();
     let store = ImageStore::new(&state, PathBuf::from("/usr/bin/zstd"));
@@ -241,4 +280,21 @@ fn a_file_that_does_not_import_names_the_file() {
             .starts_with("VMM_IMAGE_ROOT: cannot import base.ext4: the SHA-256 is "),
         "{error}"
     );
+
+    // A missing disk refuses too. The failed import above stored no root
+    // disk, so this import reads the file.
+    fs::remove_file(root.images().join("base.ext4")).unwrap();
+    root.write(&good());
+    let set = read(&root.images(), root.owner()).unwrap();
+    let error = set.import(&store).unwrap_err();
+    assert_eq!(error.file, "base.ext4");
+    assert!(matches!(error.source, ImportError::Io { .. }), "{error}");
+}
+
+/// The good `digests.json` with the sha256 of `key` set to `sha256`.
+#[cfg(test)]
+fn other_sha(key: &str, sha256: &str) -> String {
+    let mut json = good_json();
+    json.insert(key.to_owned(), entry(&format!("{key}.ext4"), sha256));
+    serde_json::Value::Object(json).to_string()
 }

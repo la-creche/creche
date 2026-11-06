@@ -210,13 +210,9 @@ fn build(config: Config, owner: Owner) -> Result<Vmm, StartError> {
     let ch_version =
         check_cloud_hypervisor(config.ch.path(), VERSION_WAIT).map_err(StartError::ChVersion)?;
     let images = ImageStore::new(&config.state, config.zstd.path().to_owned());
-    // CONTRACT-QUESTION: decision CH57 rule 1 refuses the start for a bad
-    // `digests.json`, but no row says what a file that does not import
-    // does: a missing disk, a digest mismatch or a failed `zstd -d`. This
-    // code takes the strict reading and refuses the start too, so the
-    // vmm never serves with a disk row that it cannot boot. The other
-    // reading lets the vmm serve and fails each start of that flavor. A
-    // change costs this one `?` (`AGENTS.md`, Known gap 15).
+    // Decision CH57 rule 1 refuses the start for a bad `digests.json`, and
+    // decision CH58 rule 5 for an entry that does not import: a missing
+    // disk, a digest mismatch or a failed `zstd -d`.
     let digests = image_root::read(&config.image_root, owner)
         .map_err(StartError::Digests)?
         .import(&images)

@@ -9,19 +9,19 @@
 //! `read` opens the file once and runs each check on the open file, so the
 //! bytes that it parses are the bytes that it checked.
 //!
+//! `digests.json` holds `kernel` plus one entry for each value of the wire
+//! flavor enum `SandboxFlavor`, each `{"file": <one file name in the image
+//! root>, "sha256": <64 lowercase hex characters>}`, and no other key
+//! (decision CH58 rule 4). The key list comes from the enum
+//! (`crate::flavors`), so a new flavor needs no vmm change. The file name
+//! lets the disk row of phase 5 name its files, and the vmm compiles in
+//! no name.
+//!
 //! The compose step then imports each named file into the digest store of
 //! the state root (`ImageStore::import`) and gives the `Digests` of
 //! `StartConfig`. An import reads no byte when the store already holds the
-//! digest with its identity.
-
-// CONTRACT-QUESTION: decision CH57 rule 1 names `digests.json` and its
-// trust rule, but no row sets its fields. This code takes the narrowest
-// reading: one JSON object with exactly the keys `kernel`, `base` and
-// `python`, each `{"file": <one file name in the image root>, "sha256":
-// <64 lowercase hex characters>}`, and no other key. The file name lets
-// the disk row of phase 5 name its files, and the vmm compiles in no
-// name. A different shape costs this module and its tests
-// (`AGENTS.md`, Known gap 15).
+//! digest with its identity. An entry that does not import refuses the
+//! start of the vmm (decision CH58 rule 5).
 
 use std::fmt;
 use std::fs::{self, File};
@@ -30,15 +30,23 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 
 use creche_vmm_store::images::{ImageDigest, ImageStore, ImportError};
+use creche_wire::SandboxFlavor;
 use serde::Deserialize;
+use serde::de::value::StrDeserializer;
+use serde::de::{Deserializer, Error as _, MapAccess, Visitor};
 
+use crate::flavors::PerFlavor;
 use crate::start::Digests;
 
 /// The name of the digest file in the image root (decision CH57 rule 1).
 pub const DIGESTS_FILE: &str = "digests.json";
 
-/// The most bytes of `digests.json`. No row sets it. Three entries take
-/// less than 1 KiB, so a larger file is no file of the disk row.
+/// The key of the kernel entry in `digests.json` (decision CH58 rule 4).
+pub const KERNEL_KEY: &str = "kernel";
+
+/// The most bytes of `digests.json`. No row sets it. The kernel and a few
+/// flavors take less than 1 KiB, so a larger file is no file of the disk
+/// row.
 pub const DIGESTS_CAP: u64 = 64 * 1024;
 
 /// The mode bits that let a user other than the owner write a file.
@@ -174,13 +182,54 @@ struct Entry {
     sha256: Sha256,
 }
 
-/// The whole `digests.json`.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields)]
+/// The whole `digests.json`: the kernel and one root disk for each flavor
+/// (decision CH58 rule 4).
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct Manifest {
     kernel: Entry,
-    base: Entry,
-    python: Entry,
+    roots: PerFlavor<Entry>,
+}
+
+impl<'de> Deserialize<'de> for Manifest {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_map(ManifestVisitor)
+    }
+}
+
+/// Reads the keys of `digests.json`: `kernel` once, and each other key
+/// once as the wire name of a flavor.
+struct ManifestVisitor;
+
+impl<'de> Visitor<'de> for ManifestVisitor {
+    type Value = Manifest;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("an object of `kernel` and one entry for each flavor")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Manifest, A::Error> {
+        let mut kernel = None;
+        let mut roots = Vec::new();
+        while let Some(key) = map.next_key::<String>()? {
+            if key == KERNEL_KEY {
+                if kernel.is_some() {
+                    return Err(A::Error::duplicate_field(KERNEL_KEY));
+                }
+                kernel = Some(map.next_value()?);
+                continue;
+            }
+            let flavor = SandboxFlavor::deserialize(StrDeserializer::<A::Error>::new(&key))
+                .map_err(|_: A::Error| {
+                    A::Error::custom(format_args!(
+                        "unknown key `{key}`: a key is `{KERNEL_KEY}` or a flavor"
+                    ))
+                })?;
+            roots.push((flavor, map.next_value()?));
+        }
+        let kernel = kernel.ok_or_else(|| A::Error::missing_field(KERNEL_KEY))?;
+        let roots = PerFlavor::new(roots).map_err(A::Error::custom)?;
+        Ok(Manifest { kernel, roots })
+    }
 }
 
 /// The files that a trusted `digests.json` names. Only `read` makes one.
@@ -248,7 +297,8 @@ impl ImageSet {
     ///
     /// # Errors
     ///
-    /// The first import that failed.
+    /// The first import that failed. It refuses the start of the vmm
+    /// (decision CH58 rule 5).
     pub fn import(&self, store: &ImageStore) -> Result<Digests, ImageImportError> {
         let import = |entry: &Entry| {
             let source = self.root.join(&entry.file.0);
@@ -262,8 +312,7 @@ impl ImageSet {
         };
         Ok(Digests {
             kernel: import(&self.manifest.kernel)?,
-            base: import(&self.manifest.base)?,
-            python: import(&self.manifest.python)?,
+            roots: self.manifest.roots.try_map(|_, entry| import(entry))?,
         })
     }
 }

@@ -19,6 +19,7 @@ use std::time::{Duration, Instant, SystemTime};
 use std::{fs, io};
 
 use creche_vmm::control::ControlState;
+use creche_vmm::flavors::PerFlavor;
 use creche_vmm::handlers::acp::{Acp, StartFault, StartVm};
 use creche_vmm::handlers::drop::{Drops, StopVm, VmStopFailed};
 use creche_vmm::relay::{AcpLink, Door, Relays};
@@ -399,8 +400,7 @@ impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
             disks: SessionDisks::new(&state, PathBuf::from("/usr/bin/true")),
             digests: Digests {
                 kernel: empty,
-                base: empty,
-                python: empty,
+                roots: PerFlavor::every(|_| empty).unwrap(),
             },
             initramfs: None,
             ch: Program::new(PathBuf::from(CH)).unwrap(),

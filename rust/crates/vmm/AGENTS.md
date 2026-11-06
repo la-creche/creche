@@ -120,16 +120,23 @@ user cannot write it. `image_root::read` runs these checks:
 4. No group or other write bit is set. The vmm does not read its group
    list, so any group write bit refuses.
 5. The file has at most `DIGESTS_CAP` (64 KiB) bytes, and it parses as
-   strict JSON: the keys `kernel`, `base` and `python`, each `{"file",
-   "sha256"}`, and no other key. A file is one file name in the image
-   root.
+   strict JSON (decision CH58 rule 4): the key `kernel` plus one key for
+   each value of the wire flavor enum `SandboxFlavor`, each `{"file",
+   "sha256"}`, and no other key. Each key comes once. A file is one file
+   name in the image root.
+
+The vmm holds no list of the flavors. `src/flavors.rs` takes the wire
+names from the serde derive of `SandboxFlavor`, and `PerFlavor` holds
+one value for each of them. So a new flavor of `creche-wire` needs no
+vmm change.
 
 Each fault refuses the start, and `src/main.rs` exits 78. Then
 `ImageSet::import` copies each file into the digest store with
 `ImageStore::import` of `creche-vmm-store`, one at a time, and gives the
 `Digests` of `StartConfig`. A store that already holds a digest with its
-identity reads no byte. A failed import refuses the start too.
-`tests/image_root.rs` proves each fault and the import.
+identity reads no byte. An entry that does not import (a missing disk, a
+digest mismatch, a failed `zstd -d`) refuses the start too (decision
+CH58 rule 5). `tests/image_root.rs` proves each fault and the import.
 
 ## The server
 
@@ -678,19 +685,11 @@ no guest sync.
 14. Closed by plan PR L20: the config and the compose step are one PR.
     `src/compose.rs` reads each field of `Config`, so each `VMM_*` key
     of `default.env` lands with its first reader.
-15. Built by decision CH57 rule 1 (design item 49 Q49-1): the key
-    `VMM_IMAGE_ROOT` and its root-owned `digests.json` ("The image
-    root"). Two CONTRACT-QUESTIONs stay open. (a) No row sets the fields
-    of `digests.json`. `src/image_root.rs` takes the narrowest reading:
-    `kernel`, `base` and `python`, each with a `file` and a `sha256`, and
-    no other key. The phase 5 disk row writes this shape, or a change
-    costs that module and its tests. (b) No row says what a file that
-    does not import does. `src/compose.rs` refuses the start, so the vmm
-    never serves with a disk row that it cannot boot. The other reading
-    serves and fails each start of that flavor. A change costs one `?`.
-    The first import of a release decompresses each disk before the
-    bind, so the unit of plan PR C13 must not bound the start of the vmm
-    below that time.
+15. Closed by decisions CH57 rule 1 and CH58 rules 4 and 5: the key
+    `VMM_IMAGE_ROOT`, its root-owned `digests.json` with `kernel` plus
+    one entry for each flavor, and a failed import that refuses the
+    start ("The image root"). Caller duty 9 gives the start time to plan
+    PR C13.
 16. Closed by decision CH57 rule 2: the config refuses 0 GiB for
     `VMM_RAM_CAP_GIB` and `VMM_SNAPSHOT_BUDGET_GIB`, and takes 0 for
     `VMM_FREE_FLOOR_GIB`.
@@ -751,3 +750,8 @@ no guest sync.
    `spawn_blocking`, and the drop of a runtime waits for each blocking
    task. So L20 ends the runtime with `shutdown_timeout(RUNTIME_END)`,
    and the vmm exits within the 5 s that `SHUTDOWN_WAIT` leaves.
+9. Decision CH58 rule 5: the compose step imports each entry of
+   `digests.json` before the bind of `vmm.sock`. The first import of a
+   release decompresses each disk (`zstd -d`) and hashes it. So the unit
+   of plan PR C13 must not bound the start of the vmm below that time.
+   A later start finds each digest in the store and reads no byte.

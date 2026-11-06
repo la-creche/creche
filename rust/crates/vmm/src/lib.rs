@@ -7,6 +7,7 @@ use std::{fmt, io};
 mod compose;
 pub mod config;
 pub mod control;
+pub mod flavors;
 pub mod handlers;
 pub mod image_root;
 pub mod relay;

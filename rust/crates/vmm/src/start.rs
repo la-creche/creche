@@ -64,7 +64,7 @@ use creche_vmm_store::rows::Rows;
 use creche_vmm_store::session_disk::SessionDisks;
 use creche_vmm_store::sleep_gate::Activity;
 use creche_vmm_store::stale::remove_stale;
-use creche_wire::{FamilyName, FamilyShape, SandboxFlavor, SessionId, SessionRow};
+use creche_wire::{FamilyName, FamilyShape, SessionId, SessionRow};
 use tokio::net::UnixStream;
 use tokio::sync::{RwLock, watch};
 use tokio::task::spawn_blocking;
@@ -74,6 +74,7 @@ use crate::control::{
     Change, ControlError, ControlLink, ControlState, DIAL_PAUSE, EventEnd, LinkId, READY_WAIT,
     StopSender, open, wall_time,
 };
+use crate::flavors::PerFlavor;
 use crate::handlers::acp::{StartFault, StartVm};
 use crate::handlers::drop::{StopVm, VmStopFailed};
 use crate::relay::{AcpLink, Door, Relays};
@@ -93,25 +94,14 @@ const SERIAL_MODE: u32 = 0o600;
 const SLOT_POLL: Duration = Duration::from_millis(10);
 
 /// The store digests of the guest kernel and of the root disk of each
-/// flavor (decisions CH7-3, CH8-8).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// flavor (decisions CH7-3, CH8-8). The vmm keeps one root disk for each
+/// value of the wire flavor enum (decision CH58 rule 4).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Digests {
     /// The guest kernel. Every flavor boots it.
     pub kernel: ImageDigest,
-    /// The root disk of the flavor `base`.
-    pub base: ImageDigest,
-    /// The root disk of the flavor `python`.
-    pub python: ImageDigest,
-}
-
-impl Digests {
-    /// The root disk of `flavor`.
-    fn root(&self, flavor: SandboxFlavor) -> ImageDigest {
-        match flavor {
-            SandboxFlavor::Base => self.base,
-            SandboxFlavor::Python => self.python,
-        }
-    }
+    /// The root disk of each flavor.
+    pub roots: PerFlavor<ImageDigest>,
 }
 
 /// What a cold boot reads. Plan PR L20 builds it from the vmm config.
@@ -1346,7 +1336,12 @@ fn launch<L: Launcher, A: ChApi>(
             .map_err(|error| error.to_string())
     };
     let kernel = checked(config.digests.kernel)?;
-    let root = checked(config.digests.root(shape.flavor))?;
+    let root = config
+        .digests
+        .roots
+        .get(shape.flavor)
+        .ok_or_else(|| format!("no root disk for the flavor {:?}", shape.flavor))?;
+    let root = checked(*root)?;
     let disk = config
         .disks
         .for_boot(id)
