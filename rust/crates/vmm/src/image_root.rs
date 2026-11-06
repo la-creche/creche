@@ -30,12 +30,11 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 
 use creche_vmm_store::images::{ImageDigest, ImageStore, ImportError};
-use creche_wire::SandboxFlavor;
+use creche_wire::{PerFlavor, SandboxFlavor};
 use serde::Deserialize;
 use serde::de::value::StrDeserializer;
 use serde::de::{Deserializer, Error as _, MapAccess, Visitor};
 
-use crate::flavors::PerFlavor;
 use crate::start::Digests;
 
 /// The name of the digest file in the image root (decision CH57 rule 1).
@@ -196,7 +195,7 @@ impl<'de> Visitor<'de> for ManifestVisitor {
 
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Manifest, A::Error> {
         let mut kernel = None;
-        let mut roots = Vec::new();
+        let mut roots = PerFlavor::every(|_| None);
         while let Some(key) = map.next_key::<String>()? {
             if key == KERNEL_KEY {
                 if kernel.is_some() {
@@ -211,10 +210,20 @@ impl<'de> Visitor<'de> for ManifestVisitor {
                         "unknown key `{key}`: a key is `{KERNEL_KEY}` or a flavor"
                     ))
                 })?;
-            roots.push((flavor, map.next_value()?));
+            let slot = roots.get_mut(flavor);
+            if slot.is_some() {
+                return Err(A::Error::custom(format_args!(
+                    "two entries for the flavor `{key}`"
+                )));
+            }
+            *slot = Some(map.next_value()?);
         }
         let kernel = kernel.ok_or_else(|| A::Error::missing_field(KERNEL_KEY))?;
-        let roots = PerFlavor::new(roots).map_err(A::Error::custom)?;
+        let roots = PerFlavor::try_every(|flavor| {
+            roots.get_mut(flavor).take().ok_or_else(|| {
+                A::Error::custom(format_args!("no entry for the flavor `{}`", flavor.name()))
+            })
+        })?;
         Ok(Manifest { kernel, roots })
     }
 }

@@ -11,9 +11,9 @@ use std::path::PathBuf;
 
 use creche_vmm_store::images::{ImageStore, ImportError};
 use creche_vmm_store::layout::StateRoot;
+use creche_wire::{PerFlavor, SandboxFlavor};
 
 use super::{ImageSet, KERNEL_KEY, Manifest};
-use crate::flavors::{PerFlavor, all};
 use crate::start::Digests;
 
 /// The SHA-256 of no bytes.
@@ -43,7 +43,7 @@ impl Root {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("images")).unwrap();
         fs::write(dir.join("images/vmlinux"), "").unwrap();
-        for (flavor, _) in all().unwrap() {
+        for (_, &flavor) in PerFlavor::every(SandboxFlavor::name).iter() {
             fs::write(dir.join(format!("images/{flavor}.ext4")), "abc").unwrap();
         }
         Self(dir)
@@ -80,7 +80,7 @@ fn entry(file: &str, sha256: &str) -> serde_json::Value {
 fn good_json() -> serde_json::Map<String, serde_json::Value> {
     let mut json = serde_json::Map::new();
     json.insert(KERNEL_KEY.to_owned(), entry("vmlinux", EMPTY));
-    for (flavor, _) in all().unwrap() {
+    for (_, &flavor) in PerFlavor::every(SandboxFlavor::name).iter() {
         json.insert(flavor.to_owned(), entry(&format!("{flavor}.ext4"), ABC));
     }
     json
@@ -104,7 +104,7 @@ fn a_good_file_gives_the_digests_after_the_import() {
     let set = root.set(&good());
     let expected = Digests {
         kernel: EMPTY.parse().unwrap(),
-        roots: PerFlavor::every(|_| ABC.parse().unwrap()).unwrap(),
+        roots: PerFlavor::every(|_| ABC.parse().unwrap()),
     };
     assert_eq!(set.import(&store).unwrap(), expected);
     // A second import finds each digest in the store and reads no file.

@@ -19,7 +19,6 @@ use std::time::{Duration, Instant, SystemTime};
 use std::{fs, io};
 
 use creche_vmm::control::ControlState;
-use creche_vmm::flavors::PerFlavor;
 use creche_vmm::handlers::acp::{Acp, StartFault, StartVm};
 use creche_vmm::handlers::drop::{Drops, StopVm, VmStopFailed};
 use creche_vmm::relay::{AcpLink, Door, Relays};
@@ -42,8 +41,8 @@ use creche_vmm_store::rows::Rows;
 use creche_vmm_store::session_disk::SessionDisks;
 use creche_vmm_store::sleep_gate::IDLE_TIMEOUT;
 use creche_wire::{
-    DropError, DropRoute, DropSession, DropTarget, Dropped, FamilyName, OpenAcp, SandboxFlavor,
-    Serve, ServeUpgrade as _, SessionId, SessionRow,
+    DropError, DropRoute, DropSession, DropTarget, Dropped, FamilyName, OpenAcp, PerFlavor,
+    SandboxFlavor, Serve, ServeUpgrade as _, SessionId, SessionRow,
 };
 use tokio::runtime::{Builder, Runtime};
 
@@ -405,7 +404,7 @@ impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
             disks: SessionDisks::new(&state, PathBuf::from("/usr/bin/true")),
             digests: Digests {
                 kernel: empty,
-                roots: PerFlavor::every(|_| empty).unwrap(),
+                roots: PerFlavor::every(|_| empty),
             },
             initramfs: None,
             ch: Program::new(PathBuf::from(CH)).unwrap(),
@@ -650,8 +649,7 @@ fn each_flavor_boots_its_own_root_disk() {
             } else {
                 other
             }
-        })
-        .unwrap();
+        });
     });
     let shape = test.dir.join("families/chat/config/shape.json");
     for (index, flavor, digest) in [(0, "python", python), (1, "base", other)] {

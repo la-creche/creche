@@ -11,11 +11,11 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use creche_vmm::flavors::{PerFlavor, all};
 use creche_vmm::image_root::{DIGESTS_CAP, DIGESTS_FILE, DigestsError, KERNEL_KEY, read};
 use creche_vmm::start::Digests;
 use creche_vmm_store::images::ImageStore;
 use creche_vmm_store::layout::StateRoot;
+use creche_wire::{PerFlavor, SandboxFlavor};
 
 /// The SHA-256 of no bytes.
 const EMPTY: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
@@ -44,7 +44,7 @@ impl Root {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("images")).unwrap();
         fs::write(dir.join("images/vmlinux"), "").unwrap();
-        for (flavor, _) in all().unwrap() {
+        for (_, &flavor) in PerFlavor::every(SandboxFlavor::name).iter() {
             fs::write(dir.join(format!("images/{flavor}.ext4")), "abc").unwrap();
         }
         let root = Self(dir);
@@ -105,7 +105,7 @@ fn good() -> String {
     let entry = |file: &str, sha256: &str| serde_json::json!({ "file": file, "sha256": sha256 });
     let mut json = serde_json::Map::new();
     json.insert(KERNEL_KEY.to_owned(), entry("vmlinux", EMPTY));
-    for (flavor, _) in all().unwrap() {
+    for (_, &flavor) in PerFlavor::every(SandboxFlavor::name).iter() {
         json.insert(flavor.to_owned(), entry(&format!("{flavor}.ext4"), ABC));
     }
     serde_json::Value::Object(json).to_string()
@@ -172,7 +172,7 @@ fn kvm_a_root_owned_file_gives_the_digests() {
         root.write_as_root(&good(), mode);
         let expected = Digests {
             kernel: EMPTY.parse().unwrap(),
-            roots: PerFlavor::every(|_| ABC.parse().unwrap()).unwrap(),
+            roots: PerFlavor::every(|_| ABC.parse().unwrap()),
         };
         assert_eq!(root.read().unwrap(), expected, "{mode:o}");
     }

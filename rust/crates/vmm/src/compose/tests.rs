@@ -27,14 +27,13 @@ use std::time::{Duration, Instant};
 use creche_vmm_confine::admission::GIB;
 use creche_vmm_store::images::ImageStore;
 use creche_vmm_store::key::check_cloud_hypervisor;
-use creche_wire::{HOST_API_HEADER, HOST_API_PROTOCOL, SandboxFlavor, SessionPage};
+use creche_wire::{HOST_API_HEADER, HOST_API_PROTOCOL, PerFlavor, SandboxFlavor, SessionPage};
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::oneshot;
 
 use super::{Checked, StartError, VERSION_WAIT, Vmm, build, parts};
 use crate::ServeError;
 use crate::config::Config;
-use crate::flavors::PerFlavor;
 use crate::image_root::{DIGESTS_FILE, DigestsError};
 use crate::start::Digests;
 
@@ -158,11 +157,10 @@ impl Scratch {
                 .unwrap();
             digest
         });
-        let roots = PerFlavor::new(vec![
-            (SandboxFlavor::Base, base),
-            (SandboxFlavor::Python, python),
-        ])
-        .unwrap();
+        let roots = PerFlavor::every(|flavor| match flavor {
+            SandboxFlavor::Base => base,
+            SandboxFlavor::Python => python,
+        });
         let checked = Checked {
             ch_version,
             images,
@@ -246,11 +244,10 @@ fn kvm_build_wires_each_key_to_its_part() {
     // Decisions CH57 rule 1 and CH58 rule 4: the digests of
     // `digests.json`, each in the digest store of the state root.
     let [kernel, base, python] = IMAGES.map(|(_, _, sha256)| sha256.parse().unwrap());
-    let roots = PerFlavor::new(vec![
-        (SandboxFlavor::Base, base),
-        (SandboxFlavor::Python, python),
-    ])
-    .unwrap();
+    let roots = PerFlavor::every(|flavor| match flavor {
+        SandboxFlavor::Base => base,
+        SandboxFlavor::Python => python,
+    });
     assert_eq!(start.digests, Digests { kernel, roots });
     for digest in [kernel, base, python] {
         start.images.check(digest).unwrap();

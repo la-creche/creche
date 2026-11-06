@@ -64,7 +64,7 @@ use creche_vmm_store::rows::Rows;
 use creche_vmm_store::session_disk::SessionDisks;
 use creche_vmm_store::sleep_gate::Activity;
 use creche_vmm_store::stale::remove_stale;
-use creche_wire::{FamilyName, FamilyShape, SessionId, SessionRow};
+use creche_wire::{FamilyName, FamilyShape, PerFlavor, SessionId, SessionRow};
 use tokio::net::UnixStream;
 use tokio::sync::{RwLock, watch};
 use tokio::task::spawn_blocking;
@@ -74,7 +74,6 @@ use crate::control::{
     Change, ControlError, ControlLink, ControlState, DIAL_PAUSE, EventEnd, LinkId, READY_WAIT,
     StopSender, open, wall_time,
 };
-use crate::flavors::PerFlavor;
 use crate::handlers::acp::{StartFault, StartVm};
 use crate::handlers::drop::{StopVm, VmStopFailed};
 use crate::relay::{AcpLink, Door, Relays};
@@ -1336,16 +1335,9 @@ fn launch<L: Launcher, A: ChApi>(
             .map_err(|error| error.to_string())
     };
     let kernel = checked(config.digests.kernel)?;
-    // `PerFlavor` holds each flavor that the serde derive of the wire enum
-    // lists, and the vmm holds no list of its own (decision CH58 rule 4).
-    // So only a variant that the derive skips gives `None`. The launch
-    // then fails closed.
-    let root = config
-        .digests
-        .roots
-        .get(shape.flavor)
-        .ok_or_else(|| format!("no root disk for the flavor {:?}", shape.flavor))?;
-    let root = checked(*root)?;
+    // `PerFlavor` of the wire crate holds each flavor, so the vmm holds no
+    // list of its own (decision CH58 rule 4).
+    let root = checked(*config.digests.roots.get(shape.flavor))?;
     let disk = config
         .disks
         .for_boot(id)

@@ -135,10 +135,10 @@ user cannot write it. `image_root::read` runs these checks:
    "sha256"}`, and no other key. Each key comes once. A file is one file
    name in the image root.
 
-The vmm holds no list of the flavors. `src/flavors.rs` takes the wire
-names from the serde derive of `SandboxFlavor`, and `PerFlavor` holds
-one value for each of them. So a new flavor of `creche-wire` needs no
-vmm change.
+The vmm holds no list of the flavors. `PerFlavor` of `creche-wire`
+holds one value for each value of `SandboxFlavor`, and its `get` gives
+the value of any flavor. So a new flavor of `creche-wire` needs no vmm
+change.
 
 Each fault refuses the start, and `src/main.rs` exits 78. Then
 `ImageSet::import` copies each file into the digest store with
