@@ -85,7 +85,10 @@ The second file has the table of the three vmm crates.
   (gap G23) before each launch, a boot and a restore alike, so the log
   of the last VM stays until the next start of the session. A drop of
   the session removes it with the session dir. `tests/serial_log.rs`
-  proves that a removal of the run root keeps it.
+  proves that a removal of the run root keeps it. The kvm tests of
+  vmm-confine prove it under systemd: the vmm stand-in copies
+  `RuntimeDirectory=vmm`, and the log outlives a unit restart and a
+  crash.
 - The caller duties of PR D16 (`layout.rs`). Plan PR L16b meets all
   three in `rust/crates/vmm/src/start.rs` ("The slots" in the vmm
   `AGENTS.md`). (a) Each start runs `link_vm` before `remove_stale`, so

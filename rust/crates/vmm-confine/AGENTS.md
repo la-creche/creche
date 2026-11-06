@@ -220,8 +220,10 @@ table of the three vmm crates.
   the launch stage and CH. Each test runs its vmm stand-in as a transient
   user service (`tests/stand_in`, decisions CH60 rule 1, CH61), and each
   scope binds to that unit. The `ExecStopPost=` step of a stand-in kills
-  every VM scope, as one vmm owns every VM, so one stand-in runs at a time
-  in a test binary. Each VM takes a slot through
+  every VM scope, as one vmm owns every VM, and systemd removes the run
+  root at each stop of a stand-in (`RuntimeDirectory=vmm`). So one test
+  at a time in a test binary writes in the run root (`OneVmm`). Each VM
+  takes a slot through
   `RunRoot::link_vm`, under the real run root and the default state
   root. Each test has a control, and together they prove decision CH58
   rule 1:
@@ -241,8 +243,9 @@ table of the three vmm crates.
      `vmm.sock` or the user bus. One slot cannot signal the CH of another
      slot (decision CH51).
   4. The scope of CH has `BindsTo=` and `Before=` the vmm unit (CH61
-     rule 2). Each stand-in copies the restart, kill, `ExecStopPost=`
-     and no_new_privs lines of `systemd/creche-vmm.service`, and a test
+     rule 2). Each stand-in copies the run root, restart, kill,
+     `ExecStopPost=` and no_new_privs lines of
+     `systemd/creche-vmm.service`, and a test
      in the job `rust` fails when they differ. The example in its role
      `hold` runs as the vmm unit and launches CH, with no_new_privs set
      before the launch. A stop of that unit ends CH and its scope after
@@ -258,8 +261,11 @@ table of the three vmm crates.
      each end CH by the SIGKILL of the step, after CH ran 1 s into the
      gated stop. After the restart the unit comes back. A crash of a
      `/bin/sleep` stand-in ends CH by that SIGKILL too (CH61 rule 1).
-     After the restart and after the crash, a new launch of the same
-     session boots. Each test has the control that CH runs while the stand-in
+     After the restart and after the crash, the slot dir and the
+     `vm/<id>` link of the last boot are gone with the run root, the
+     serial log in the state root still holds the boot marker (decision
+     CH59 rule 2), and a new launch of the same session boots. Each test
+     has the control that CH runs while the stand-in
      runs. A drop of the spawner does not end CH, so no test claims it.
      `Launched::terminate` sends SIGTERM.
   5. The output of each CH reaches the sink tagged `ch <session id>`.
@@ -282,7 +288,10 @@ table of the three vmm crates.
   `BindsTo=` or the `ExecStopPost=` step ends CH there, and CH is a child
   of `hold`, so step 5 cannot tell them apart. The signal-9 check of
   `kvm_a_vmm_crash_frees_the_scope_of_each_vm` in `tests/kvm_slot.rs`
-  proves the step itself. Each start takes a new slot
+  proves the step itself. After the crash the `vm/<id>` link and the
+  slot dir are gone with the run root, and the serial log in the state
+  root still holds the ticks of the guest (decision CH59 rule 2). Each
+  start takes a new slot
   with `RunRoot::link_vm` and runs `remove_stale`, as the start of
   `rust/crates/vmm/src/start.rs` does, so each restore moves the VM to
   another slot. The ruleset grants no right to remove a file, so CH

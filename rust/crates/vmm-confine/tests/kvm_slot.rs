@@ -42,10 +42,11 @@
 //! thread that enters a slot label with `changeprofile`. That is the
 //! spike's `aa-exec` with no exec.
 //!
-//! Each test uses its own slots and session ids. The tests run at the
-//! same time, but one stand-in runs at a time (`tests/stand_in`), because
-//! its `ExecStopPost=` step kills every VM scope. A test stops at a slot dir or a session dir that it did not
-//! make, and a drop removes only what it made.
+//! Each test uses its own slots and session ids. The tests run one at a
+//! time: `Rig::new` takes `OneVmm` (`tests/stand_in`), because the
+//! `ExecStopPost=` step of a stand-in kills every VM scope and its stop
+//! removes the whole run root. A test stops at a slot dir or a session
+//! dir that it did not make, and a drop removes only what it made.
 #![cfg(target_os = "linux")]
 
 mod kvm;
@@ -79,7 +80,7 @@ use creche_wire::{HostPort, SessionId};
 use kvm::{BOOT, booted, files};
 use plain_ch::Vm;
 use scope_guard::ScopeGuard;
-use stand_in::{STOP_POST, StandIn, state_of, until_state};
+use stand_in::{OneVmm, STOP_POST, StandIn, state_of, until_state};
 
 /// The host programs of the ubuntu-24.04 runner. The vmm config passes
 /// each one (plan PR L20).
@@ -245,7 +246,8 @@ impl Vmm {
 
     /// The `/bin/sleep infinity` stand-in, gated by `gated_by`.
     fn start(rig: &Rig, gated_by: Option<&Path>) -> Self {
-        let unit = StandIn::start(&rig.unit, gated_by, &["/bin/sleep", "infinity"]);
+        let command = ["/bin/sleep", "infinity"];
+        let unit = StandIn::start(&rig.one, &rig.unit, gated_by, &command);
         let lines = Arc::new(Mutex::new(Vec::new()));
         let kept = Arc::clone(&lines);
         let sink: Sink = Arc::new(move |line| kept.lock().unwrap().push(line.to_owned()));
@@ -304,7 +306,8 @@ struct BootFiles {
 }
 
 /// The files of one test under the two roots, and the vmm unit of the
-/// test. A drop removes the files.
+/// test. A drop removes the files. The rig holds `OneVmm` from its start
+/// to the end of its drop.
 struct Rig {
     unit: VmmUnit,
     run: RunRoot,
@@ -315,6 +318,9 @@ struct Rig {
     links: Vec<SessionId>,
     dirs: Vec<PathBuf>,
     files: Vec<PathBuf>,
+    /// Fields drop after `Drop::drop` and in this order, so the lock goes
+    /// last.
+    one: OneVmm,
 }
 
 #[cfg(test)]
@@ -323,6 +329,7 @@ impl Rig {
     /// root disk. The profiles match `store/*`, so a name of the test
     /// stands in for the digest name of the store (fact 56).
     fn new(name: &str) -> Self {
+        let one = OneVmm::take();
         let uid = rustix::process::getuid().as_raw();
         let runtime = format!("/run/user/{uid}");
         assert_eq!(
@@ -357,6 +364,7 @@ impl Rig {
             links: Vec::new(),
             dirs: Vec::new(),
             files: made,
+            one,
         }
     }
 
@@ -1002,7 +1010,7 @@ fn no_vm_scope_loaded() -> bool {
 /// Returns the stand-in and the pid of CH.
 #[cfg(test)]
 fn hold_booted(rig: &Rig, seat: &Seat, gated: bool) -> (StandIn, u32) {
-    let (vmm, pid) = StandIn::hold(&example(), &rig.boot(seat), gated);
+    let (vmm, pid) = StandIn::hold(&rig.one, &example(), &rig.boot(seat), gated);
     until("boot marker", || {
         assert!(running(pid), "CH exited before the marker");
         booted(&seat.session.serial_log())
@@ -1168,15 +1176,16 @@ fn kvm_a_vmm_unit_stop_kills_each_vm() {
 /// of that step. The controls: CH runs while the stand-in runs, CH and
 /// its scope still run 1 s into the gated stop, as `Before=` promises
 /// (CH61 rule 2), and with no VM the step exits 0. After the restart the
-/// unit is active, the serial log of the last boot stays (decision CH59
-/// rule 2), and a new launch of the same session boots.
+/// unit is active, systemd has made the run root new, the serial log of
+/// the last boot is still in the state root (decision CH59 rule 2), and a
+/// new launch of the same session boots.
 #[test]
 #[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
 fn kvm_a_vmm_unit_restart_ends_each_vm() {
     let mut rig = Rig::new("restart");
     let seat = rig.seat("0123abcd-0000-4000-8000-0000000c15c0", 21);
     let vmm = Vmm::gated(&rig);
-    // One stand-in runs at a time, so no test launches a VM now. A scope
+    // One test runs at a time, so no other test launches a VM now. A scope
     // of an earlier test may still wait for its unload, and the step could
     // then fail on a scope that goes between its list and its kill
     // (systemd/AGENTS.md, Known gaps). So the test waits until no VM
@@ -1227,8 +1236,9 @@ fn kvm_a_vmm_unit_restart_ends_each_vm() {
 /// its main process runs the `ExecStopPost=` step, and CH dies of its
 /// SIGKILL. The unit then waits in `auto-restart`. CH and its scope are
 /// gone before the unit starts again, 5 s later, and systemd starts no
-/// scope again. The control: CH runs before the kill. The serial log of
-/// the last boot stays (decision CH59 rule 2), and a new launch of the
+/// scope again. The control: CH runs before the kill. After the restart
+/// systemd has made the run root new, the serial log of the last boot is
+/// still in the state root (decision CH59 rule 2), and a new launch of the
 /// same session boots.
 #[test]
 #[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
@@ -1254,17 +1264,28 @@ fn kvm_a_vmm_crash_frees_the_scope_of_each_vm() {
 }
 
 /// A new launch of the session of `seat` in its slot, after its CH has
-/// stopped. The serial log in the state root still holds the marker of
-/// the last boot, so the restart or the crash of the vmm unit kept it
-/// (decision CH59 rule 2). Then, as lifecycle does, `RunRoot::link_vm`
-/// empties the slot (decision CH56 rule 1) and `SerialLog::fresh` makes
-/// the log new, so the marker that the wait reads comes from the new boot.
-/// The launch boots, so the scope name is free.
+/// stopped and the vmm unit has started again. The stop part of that
+/// restart or crash removed the run root (`RuntimeDirectory=vmm`), so the
+/// slot dir and the `vm/<id>` link of the last boot are gone. The serial
+/// log in the state root still holds the marker of the last boot, so the
+/// log outlived the run root (decision CH59 rule 2). Then, as lifecycle
+/// does, `RunRoot::link_vm` makes the slot dir and the link again
+/// (decision CH56 rule 1) and `SerialLog::fresh` makes the log new, so
+/// the marker that the wait reads comes from the new boot. The launch
+/// boots, so the scope name is free.
 #[cfg(test)]
 fn relaunch(rig: &Rig, vmm: &Vmm, seat: &Seat) {
     assert!(
+        fs::symlink_metadata(rig.run.slot(seat.slot)).is_err(),
+        "the run root kept the slot dir through the vmm unit restart"
+    );
+    assert!(
+        fs::symlink_metadata(rig.run.vm(&seat.id).path()).is_err(),
+        "the run root kept the vm link through the vmm unit restart"
+    );
+    assert!(
         booted(&seat.session.serial_log()),
-        "the vmm unit lost the serial log of the last boot"
+        "the serial log of the last boot did not outlive the run root"
     );
     rig.run.link_vm(&seat.id, seat.slot).unwrap();
     SerialLog::fresh(&seat.session).unwrap();

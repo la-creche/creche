@@ -9,13 +9,15 @@
 //! touch the launch chain and its stop (`UNIT_LINES`). So the launch
 //! stage runs with no_new_privs set before it writes the exec attribute,
 //! SIGTERM goes to the main process alone, a crash puts the unit into
-//! auto-restart, and the `ExecStopPost=` step ends each VM scope that is
-//! left after each stop, as in production.
+//! auto-restart, the `ExecStopPost=` step ends each VM scope that is left
+//! after each stop, and systemd removes the run root at each stop, a
+//! restart and a crash included, as in production.
 //!
 //! That step kills every `creche-vm-*` scope of the user manager, because
-//! one vmm owns every VM (CH61 rule 1). So one stand-in runs at a time in
-//! a test binary: `StandIn::start` takes `ONE_VMM` and holds it until the
-//! drop has stopped the unit. A test with no stand-in launches no VM.
+//! one vmm owns every VM (CH61 rule 1). Each stop also removes every file
+//! of the run root. So one test at a time in a test binary writes in the
+//! run root: each such test takes `OneVmm` first and holds it to its
+//! end. `StandIn::start` needs it. A test with no stand-in launches no VM.
 //!
 //! A gated stand-in gets an `ExecStop=` that waits for its gate file. A
 //! stop of its unit then lasts until the test opens the gate, as the
@@ -60,11 +62,18 @@ const STOP_TIMEOUT: &str = "TimeoutStopSec=60";
 ///    restart or a crash of the unit.
 /// 4. `NoNewPrivileges=yes` sets no_new_privs before the launch stage
 ///    writes the exec attribute (decision CH55).
+/// 5. `RuntimeDirectory=vmm` makes the run root `/run/user/<uid>/vmm`
+///    with `RuntimeDirectoryMode=0700` at each start. systemd removes it at
+///    each stop, a restart and a crash included, so the kvm tests prove
+///    that each serial log in the state root outlives it (decision CH59
+///    rule 2).
 ///
 /// The lines keep the order of the unit. The test
 /// `the_stand_in_copies_the_vmm_unit` fails when a line with one of these
 /// keys differs from the unit.
-const UNIT_LINES: [&str; 8] = [
+const UNIT_LINES: [&str; 10] = [
+    "RuntimeDirectory=vmm",
+    "RuntimeDirectoryMode=0700",
     "Restart=always",
     "RestartSec=5s",
     "RestartSteps=5",
@@ -79,10 +88,30 @@ const UNIT_LINES: [&str; 8] = [
 pub const STOP_POST: &str =
     "ExecStopPost=/usr/bin/systemctl --user kill --signal=SIGKILL -- creche-vm-*.scope";
 
-/// The one stand-in of this test binary. The `ExecStopPost=` step of a
-/// stand-in kills the VM scopes of every test, so a second stand-in waits
-/// here until the first one has stopped.
+/// The lock of the run root of this test binary. The `ExecStopPost=` step
+/// of a stand-in kills the VM scopes of every test, and its stop removes
+/// the run root of every test. So a second test waits here until the
+/// first one has ended.
 static ONE_VMM: Mutex<()> = Mutex::new(());
+
+/// The hold of `ONE_VMM` by one test. The test takes it before it writes
+/// in the run root and keeps it until its last drop, so no stop of
+/// another stand-in removes its files and no other `ExecStopPost=` step
+/// kills its VMs.
+pub struct OneVmm {
+    _guard: MutexGuard<'static, ()>,
+}
+
+impl OneVmm {
+    /// Waits for `ONE_VMM`. A test that panicked while it held the lock
+    /// still stopped its stand-in and removed its files in its drops, so a
+    /// poisoned lock is free too.
+    pub fn take() -> Self {
+        Self {
+            _guard: ONE_VMM.lock().unwrap_or_else(PoisonError::into_inner),
+        }
+    }
+}
 
 /// The unit file of the vmm, from the root of the repository.
 const VMM_UNIT_FILE: &str = "systemd/creche-vmm.service";
@@ -140,19 +169,20 @@ pub struct StandIn {
     /// stop of the unit go on.
     pub gate: PathBuf,
     child: Child,
-    /// `ONE_VMM`, held until the drop has stopped the unit. Fields drop
-    /// after `Drop::drop` and in this order, so it goes last.
-    _one: MutexGuard<'static, ()>,
 }
 
 impl StandIn {
     /// Starts `command` as the service `unit` and waits until the unit is
     /// active. With `gated_by` the example, the stop of the unit runs
-    /// `<example> await <gate>` first. It first waits for `ONE_VMM`. A
-    /// test that panicked while it held the lock still stopped its unit
-    /// in the drop, so a poisoned lock is free too.
-    pub fn start<S: AsRef<OsStr>>(unit: &VmmUnit, gated_by: Option<&Path>, command: &[S]) -> Self {
-        let one = ONE_VMM.lock().unwrap_or_else(PoisonError::into_inner);
+    /// `<example> await <gate>` first. The `OneVmm` of the test outlives
+    /// the stand-in: the test makes its `Rig` or `Setup` first, which
+    /// holds it, so that drops last.
+    pub fn start<S: AsRef<OsStr>>(
+        _one: &OneVmm,
+        unit: &VmmUnit,
+        gated_by: Option<&Path>,
+        command: &[S],
+    ) -> Self {
         let gate = std::env::temp_dir().join(format!("{}.gate", unit.name()));
         let _ = fs::remove_file(&gate);
         let mut run = Command::new(SYSTEMD_RUN);
@@ -177,7 +207,6 @@ impl StandIn {
             unit: unit.clone(),
             gate,
             child,
-            _one: one,
         };
         until_state(unit.name(), "active");
         stand_in
@@ -192,10 +221,10 @@ impl StandIn {
     /// sets it there, and every launch inherits it. So the launch stage
     /// writes the exec attribute under no_new_privs, as under
     /// `creche-vmm.service` (decision CH55).
-    pub fn hold(example: &Path, launch: &Launch, gated: bool) -> (Self, u32) {
+    pub fn hold(one: &OneVmm, example: &Path, launch: &Launch, gated: bool) -> (Self, u32) {
         let command = [example.as_os_str(), OsStr::new("hold")];
         let gated_by = gated.then_some(example);
-        let mut stand_in = Self::start(launch.unit(), gated_by, &command);
+        let mut stand_in = Self::start(one, launch.unit(), gated_by, &command);
         let main = stand_in.main_pid();
         let deadline = Instant::now() + STATE_WAIT;
         while !no_new_privs(main) {

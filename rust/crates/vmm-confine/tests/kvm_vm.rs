@@ -37,8 +37,10 @@
 //!    `hold`, so the step cannot read how CH died. The signal-9 check of
 //!    `kvm_a_vmm_crash_frees_the_scope_of_each_vm` in `tests/kvm_slot.rs`
 //!    proves the `ExecStopPost=` step itself. The control: CH runs while
-//!    the stand-in runs. The serial log in the state root still holds the
-//!    ticks of the guest after the crash (decision CH59 rule 2).
+//!    the stand-in runs. After the crash systemd has removed the run root
+//!    (`RuntimeDirectory=vmm`), so the `vm/<id>` link and the slot dir
+//!    are gone. The serial log in the state root still holds the ticks of
+//!    the guest, so it outlived the run root (decision CH59 rule 2).
 //!
 //! The busybox guest has no guest init, so the control link, ControlReady
 //! and the guest `sync` before a snapshot wait for phase 3. The test reads
@@ -80,7 +82,7 @@ use creche_wire::{FamilyShape, SessionId};
 
 use kvm::{BOOT, booted, files};
 use scope_guard::ScopeGuard;
-use stand_in::{StandIn, until_state};
+use stand_in::{OneVmm, StandIn, until_state};
 
 const ID: &str = "0123abcd-0000-4000-8000-0000000c16c1";
 
@@ -216,7 +218,9 @@ struct Held {
 }
 
 /// One session: the store copies, the session disk and the VM link in
-/// each slot of `SLOTS`. A drop removes only what the setup made.
+/// each slot of `SLOTS`. A drop removes only what the setup made. The
+/// setup holds `OneVmm` from its start to the end of its drop. Each stop
+/// of a stand-in removes the run root, and the next `take` makes it again.
 struct Setup {
     id: SessionId,
     work: PathBuf,
@@ -232,11 +236,15 @@ struct Setup {
     root: CheckedImage,
     disk: SessionDisk,
     limits: VmLimits,
+    /// Fields drop after `Drop::drop` and in this order, so the lock goes
+    /// last.
+    one: OneVmm,
 }
 
 #[cfg(test)]
 impl Setup {
     fn new() -> Self {
+        let one = OneVmm::take();
         let files = files();
         let id: SessionId = ID.parse().unwrap();
         let uid = rustix::process::getuid().as_raw();
@@ -303,6 +311,7 @@ impl Setup {
             root,
             disk,
             limits: VmLimits::from(shape),
+            one,
         }
     }
 
@@ -384,7 +393,7 @@ impl Setup {
     /// phase leaves no CH and no scope.
     fn hold(&self, launch: &Launch) -> Held {
         let scope = ScopeGuard::new(&self.id);
-        let (vmm, pid) = StandIn::hold(&example(), launch, false);
+        let (vmm, pid) = StandIn::hold(&self.one, &example(), launch, false);
         Held {
             vmm,
             _scope: scope,
@@ -551,6 +560,9 @@ fn kvm_vm_snapshot_restore_kill() {
     // through `failed` into `auto-restart`, 5 s before the next start.
     // The restarted `hold` reads EOF and exits 78, so the unit then stays
     // down. The control: CH and its scope run while the stand-in runs.
+    // Each stop part removed the run root, so the link and the slot dir
+    // are gone, and the serial log in the state root still holds the
+    // ticks (decision CH59 rule 2).
     let unit = stand_in::unit("vm-kill");
     let held = setup.hold(&setup.restore(setup.claim(&second), last, &unit));
     let pid = held.pid;
@@ -563,5 +575,16 @@ fn kvm_vm_snapshot_restore_kill() {
     until("scope removal", || setup.units().trim().is_empty());
     assert_eq!(held.vmm.sub_state(), "auto-restart");
     until_state(unit.name(), "inactive");
-    assert!(ticked(&serial), "the vmm crash lost the serial log");
+    assert!(
+        fs::symlink_metadata(setup.vm.path()).is_err(),
+        "the run root kept the vm link through the vmm crash"
+    );
+    assert!(
+        fs::symlink_metadata(setup.run.slot(last)).is_err(),
+        "the run root kept the slot dir through the vmm crash"
+    );
+    assert!(
+        ticked(&serial),
+        "the serial log of the guest did not outlive the run root"
+    );
 }
