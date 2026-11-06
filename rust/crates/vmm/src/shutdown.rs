@@ -44,6 +44,19 @@ const EXIT_TIME: Duration = Duration::from_secs(5);
 /// the set ends with the vmm (decision CH19 (4): PDEATHSIG).
 pub const SHUTDOWN_WAIT: Duration = UNIT_STOP_TIMEOUT.saturating_sub(EXIT_TIME);
 
+/// The longest wait of `Runtime::shutdown_timeout` after the shutdown
+/// (caller duty 8 of `AGENTS.md`). A take runs in `spawn_blocking`, and a
+/// plain drop of the runtime waits for each blocking task with no bound.
+// No row sets the split of the 5 s of `EXIT_TIME`. The runtime end gets
+// 4 s, and the exit of the process keeps 1 s. Only main.rs reads it, so
+// a change costs one constant.
+pub const RUNTIME_END: Duration = Duration::from_secs(4);
+
+const _: () = assert!(
+    RUNTIME_END.as_secs() < EXIT_TIME.as_secs(),
+    "the runtime ends inside the exit time",
+);
+
 // A stop (30 + 5 + 1 s, decision CH50 rule 4) and a take (5 + 60 + 10 s,
 // decision CH44 rule 3) each fit inside the wait.
 // Decision CH56 rule 2: one deadline from SIGTERM bounds every step, so

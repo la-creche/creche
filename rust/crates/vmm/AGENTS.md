@@ -24,6 +24,36 @@ The root `AGENTS.md` applies here too.
 
 `src/main.rs` documents the modes of `vmm` and the exit status 78.
 
+## The compose step
+
+`src/compose.rs` builds the vmm from its config and serves until SIGTERM
+(plan PR L20, decisions CH9, CH20). It runs these steps:
+
+1. `shutdown::sigterm` registers the handler of SIGTERM inside the
+   runtime, before any other step (caller duty 8).
+2. In `spawn_blocking`: `leftovers::stop_all` stops each VM scope of an
+   earlier vmm before any per-VM bind (decision CH19 (4), PR C3). Then
+   `check_cloud_hypervisor` checks the CH version, and a failed check
+   refuses the start (caller duty 4, gap G10 option A). Then
+   `FaultBook::start` clears every fault file (contract 05 §3.3.1 rule
+   8), and `Rows::open` loads the rows.
+3. The digest store, the session disks, the spawner, `ChTools` and one
+   `ColdBoot`. That `ColdBoot` is the `StartVm` and the `StopVm` hook,
+   the `VmSet` of the shutdown and the `Sleeper` of `sleep::run`.
+4. The handler set of `routes!` (`Creates`, `Lists`, `Acp`, `Drops`)
+   binds `vmm.sock` in the run root. `sleep::run` runs beside it (caller
+   duty 5), and so does `FaultBook::refresh` every `faults::REFRESH`.
+5. At SIGTERM the sleep loop gets its stop, and `shutdown::shutdown`
+   runs with the end of `sleep::run` as its `sleep` future. `src/main.rs`
+   then ends the runtime with `shutdown_timeout(RUNTIME_END)`, 4 s of
+   the 5 s that `SHUTDOWN_WAIT` leaves (caller duty 8).
+
+A failed start step, or a server that stops before SIGTERM, exits 78. The
+end of a shutdown exits 0, also when a VM did not stop: its CH ends with
+the vmm (decision CH19 (4)). `tests/binary.rs` runs `vmm serve` on temp
+paths with no KVM. It proves an empty list page, a 412 on a bad protocol
+header and the exit 0 on SIGTERM.
+
 ## The config
 
 `src/config.rs` reads the env of `vmm serve` once, at its start (plan PR
@@ -48,7 +78,7 @@ A fault names the key and never the value, as in `env/AGENTS.md`.
 | `VMM_FALLOCATE_PROGRAM` | `/usr/bin/fallocate` | `Snapshotter` (decision CH29) |
 | `VMM_RAM_CAP_GIB` | `80` | `Limits::ram_cap` (gap G14) |
 | `VMM_FREE_FLOOR_GIB` | `50` | `Limits::free_floor` (gap G14) |
-| `VMM_SNAPSHOT_BUDGET_GIB` | `150` | `retention::sweep` (gap G14) |
+| `VMM_SNAPSHOT_BUDGET_GIB` | `150` | `StartConfig::budget`, for `retention::sweep` (gap G14) |
 
 Each path is absolute with no `..` component. The run root holds no
 `:`, because systemd joins the paths of more than one
@@ -57,7 +87,8 @@ digits, a whole number of GiB. `tests/config.rs` holds each fault. It
 holds each path default of the table literally, and the size defaults
 equal to `Limits::DESIGN` and `retention::BUDGET`.
 `tests/binary.rs` runs `vmm serve` with no KVM: a missing or bad key
-exits 78 and names the key.
+exits 78 and names the key. `src/compose.rs` is the first reader of each
+key.
 
 ## The server
 
@@ -602,28 +633,25 @@ no guest sync.
 13. Closed by decision CH57 rules 3 and 4 (plan PR L7): a family dir or
     `config` that is a symlink or a file gets `unknown_family`, and a
     repeat create whose family `config/` is gone gets `unknown_family`.
-14. Plan PR L20 is split in two. This crate has its config
-    (`src/config.rs`), and `serve` still fails closed after the config
-    read. The compose step waits for plan PR L7: `routes!` needs a
-    handler for `create` and `list`, and main has neither. The compose
-    step runs the C3 leftover sweep before any per-VM bind (decision
-    CH19 (4)), builds the store, confine and handlers, and binds
-    `vmm.sock`. It also holds caller duties 4, 5 and 8. Until then no
-    field of `Config` has a reader outside tests, and `serve` drops its
-    `config`. So the `VMM_*` keys of `default.env` have no consumer yet.
-    `env/AGENTS.md` change rule 1 fixes a merged value for good. So the
-    config half waits for L7, and its PR opens just before the compose
-    step, unless David takes the split as a plan deviation. No decision
-    row allows the split.
-15. CONTRACT-QUESTION: no row names the image source, the dir where
-    root installs the `.zst` files of the disk row, or how the vmm
-    learns the digests of `start::Digests`. A digest changes with each
-    release, so it is no default of the catalog (`env/AGENTS.md` rule
-    5). The config reads neither, and the compose step needs both.
-16. CONTRACT-QUESTION: no row says whether a size of 0 GiB is good. The
-    config refuses 0 for `VMM_RAM_CAP_GIB`, which admits no VM, and for
-    `VMM_SNAPSHOT_BUDGET_GIB`, which drops every snapshot at the first
-    sweep. It takes 0 for `VMM_FREE_FLOOR_GIB`.
+14. Closed by plan PR L20: the config and the compose step are one PR.
+    `src/compose.rs` reads each field of `Config`, so each `VMM_*` key
+    of `default.env` lands with its first reader.
+15. CONTRACT-QUESTION (design item 49 Q49-1): no row names the image
+    source, the dir where root installs the `.zst` files of the disk
+    row, or how the vmm learns the digests of `start::Digests`. A digest
+    changes with each release, so it is no default of the catalog
+    (`env/AGENTS.md` rule 5). The config reads neither. The compose step
+    reads the images from the digest store of the state root only and
+    imports none. It passes `StartConfig::digests` as `None`, so each
+    start gets `sandbox_start_failed` with a fault line, and no VM boots
+    (`src/start.rs`, `src/compose.rs`). The list, create and drop routes
+    work. An answer costs one config key and its read in
+    `src/compose.rs`.
+16. CONTRACT-QUESTION (design item 49 Q49-2): no row says whether a
+    size of 0 GiB is good. The config refuses 0 for `VMM_RAM_CAP_GIB`,
+    which admits no VM, and for `VMM_SNAPSHOT_BUDGET_GIB`, which drops
+    every snapshot at the first sweep. It takes 0 for
+    `VMM_FREE_FLOOR_GIB`.
 17. Closed by a read-only check on Hyperion, as david with no sudo
     (CH36 G31), on 2026-11-04: `/usr/sbin/mke2fs` (e2fsprogs) and
     `/usr/bin/fallocate` (util-linux) are executable on Ubuntu 24.04.5.
@@ -650,14 +678,15 @@ no guest sync.
    (`src/handlers/drop.rs`). The `StopVm` hook of the vmm keeps a VM
    whose stop failed in its table, so admission keeps counting the RAM
    of that VM.
-4. The compose step of plan PR L20 runs `check_cloud_hypervisor` at
-   vmm start and passes its `CheckedCh` as `StartConfig::ch_version`.
-   A failed check refuses to start the vmm (gap G10 option A).
-5. The compose step of plan PR L20 runs `sleep::run` with the `ColdBoot`
-   of the vmm on the runtime, and plan PR L19 ends its stop future
-   before the shutdown snapshots. L20 fires that stop at SIGTERM and
-   passes the end of `sleep::run` to `shutdown::shutdown` as its `sleep`
-   future. `sleep::run` is the only caller of `ColdBoot::sweep` and
+4. Held by `src/compose.rs`: the compose step of plan PR L20 runs
+   `check_cloud_hypervisor` at vmm start and passes its `CheckedCh` as
+   `StartConfig::ch_version`. A failed check refuses to start the vmm
+   (gap G10 option A).
+5. Held by `src/compose.rs`: the compose step of plan PR L20 runs
+   `sleep::run` with the `ColdBoot` of the vmm on the runtime, and plan
+   PR L19 ends its stop future before the shutdown snapshots. L20 fires
+   that stop at SIGTERM and passes the end of `sleep::run` to
+   `shutdown::shutdown` as its `sleep` future. `sleep::run` is the only caller of `ColdBoot::sweep` and
    `ColdBoot::sleep_idle` in the vmm.
 6. Two drops of one session can overlap. The `StopVm` hook of the vmm
    makes a stop that finds a stop of the same VM running wait for it
@@ -674,9 +703,9 @@ no guest sync.
    end CH with no guest sync, and a cold boot after it (a key mismatch,
    a failed restore, an `Aged` or a `Budget` sweep) would find the
    session disk as a power cut leaves it.
-8. The compose step of plan PR L20 calls `shutdown::sigterm` at vmm
-   start, inside the runtime, and runs `shutdown::shutdown` when the
-   signal fires. A take runs in `spawn_blocking`, and the drop of a
-   runtime waits for each blocking task. So L20 ends the runtime with
-   `shutdown_timeout`, and the vmm exits within the 5 s that
-   `SHUTDOWN_WAIT` leaves.
+8. Held by `src/compose.rs` and `src/main.rs`: the compose step of plan
+   PR L20 calls `shutdown::sigterm` at vmm start, inside the runtime,
+   and runs `shutdown::shutdown` when the signal fires. A take runs in
+   `spawn_blocking`, and the drop of a runtime waits for each blocking
+   task. So L20 ends the runtime with `shutdown_timeout(RUNTIME_END)`,
+   and the vmm exits within the 5 s that `SHUTDOWN_WAIT` leaves.

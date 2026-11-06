@@ -1,0 +1,336 @@
+//! The compose step of `vmm serve` (plan PR L20, decisions CH9, CH20).
+//! It builds the vmm from its config and serves until SIGTERM:
+//!
+//! 1. `shutdown::sigterm` registers the handler of SIGTERM, inside the
+//!    runtime and before any other step (caller duty 8 of `AGENTS.md`).
+//! 2. In `spawn_blocking`: `leftovers::stop_all` stops each VM scope of an
+//!    earlier vmm before any per-VM bind (decision CH19 (4), PR C3). Then
+//!    `check_cloud_hypervisor` checks the CH version (caller duty 4, gap
+//!    G10 option A). Then the fault book starts, which clears every fault
+//!    file (contract 05 §3.3.1 rule 8), and the rows load.
+//! 3. The store, the confine parts and `ColdBoot` from the config. One
+//!    `ColdBoot` is the `StartVm` hook, the `StopVm` hook, the `VmSet`
+//!    and the `Sleeper` of the vmm.
+//! 4. The handler set of `routes!` binds `vmm.sock` in the run root.
+//!    `sleep::run` and the refresh of the fault book run beside it
+//!    (caller duty 5).
+//! 5. At SIGTERM, the sleep loop gets its stop, and `shutdown::shutdown`
+//!    runs with the end of `sleep::run` as its `sleep` future. `main.rs`
+//!    then ends the runtime with `shutdown_timeout` (caller duty 8).
+//!
+//! A fault before the bind refuses the start, and `main.rs` exits 78
+//! (owner item 86).
+
+use std::fmt;
+use std::future::{Future, poll_fn};
+use std::io;
+use std::path::PathBuf;
+use std::pin::{Pin, pin};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::task::Poll;
+use std::time::{Duration, SystemTime};
+
+use creche_vmm_confine::faults::{FaultBook, FaultDir, REFRESH};
+use creche_vmm_confine::leftovers::{LeftoverError, stop_all};
+use creche_vmm_confine::spawner::{SELF_EXE, Spawner};
+use creche_vmm_store::ch_remote::ChRemote;
+use creche_vmm_store::images::ImageStore;
+use creche_vmm_store::key::{ChVersionError, check_cloud_hypervisor};
+use creche_vmm_store::rows::{LoadError, Rows};
+use creche_vmm_store::session_disk::SessionDisks;
+use creche_vmm_store::snapshot::Snapshotter;
+use creche_wire::{
+    AcpError, AcpRoute, CreateError, CreateRoute, CreateSession, DropError, DropRoute, DropTarget,
+    Dropped, ListError, ListRoute, ListSessions, OpenAcp, Serve, ServeUpgrade, SessionId,
+    SessionPage, SessionRow,
+};
+use tokio::sync::oneshot;
+use tokio::task::{JoinHandle, spawn_blocking};
+use tokio::time::{MissedTickBehavior, interval};
+
+use crate::ServeError;
+use crate::config::Config;
+use crate::control::ControlState;
+use crate::handlers::acp::{Acp, StartFault, StartVm};
+use crate::handlers::create::Creates;
+use crate::handlers::drop::{Drops, StopVm, VmStopFailed};
+use crate::handlers::list::Lists;
+use crate::relay::{AcpLink, AcpRelay, Relays};
+use crate::restore::ChTools;
+use crate::server::{Stop, run_routes};
+use crate::shutdown::{self, Ended};
+use crate::sleep;
+use crate::start::{ColdBoot, StartConfig};
+
+/// The bound of `cloud-hypervisor --version` at the start (decision CH44
+/// rule 3: the caller sets each timeout).
+// No row sets it. The check runs once per start, and the tests of the
+// store use 10 s. Only this file reads it, so a change costs one
+// constant.
+const VERSION_WAIT: Duration = Duration::from_secs(10);
+
+/// Why `vmm serve` did not start, or stopped before SIGTERM.
+#[derive(Debug)]
+pub enum StartError {
+    /// The handler of SIGTERM did not register.
+    Sigterm(io::Error),
+    /// The leftover VM scopes did not clear (PR C3).
+    Leftovers(LeftoverError),
+    /// The CH version check failed (gap G10 option A).
+    ChVersion(ChVersionError),
+    /// The fault dir or the fault book did not start.
+    Faults(io::Error),
+    /// The rows did not load.
+    Rows(LoadError),
+    /// The spawner thread did not start.
+    Spawner(io::Error),
+    /// A blocking step of the start panicked.
+    Panicked,
+    /// The server stopped before SIGTERM, such as a failed bind.
+    Serve(ServeError),
+}
+
+impl fmt::Display for StartError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Sigterm(error) => write!(formatter, "cannot register SIGTERM: {error}"),
+            Self::Leftovers(error) => write!(formatter, "{error}"),
+            Self::ChVersion(error) => write!(formatter, "{error}"),
+            Self::Faults(error) => write!(formatter, "cannot start the fault book: {error}"),
+            Self::Rows(error) => write!(formatter, "cannot load the rows: {error:?}"),
+            Self::Spawner(error) => write!(formatter, "cannot start the spawner: {error}"),
+            Self::Panicked => formatter.write_str("a start step panicked"),
+            Self::Serve(error) => write!(formatter, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for StartError {}
+
+/// The `ColdBoot` of the vmm.
+type Hook = ColdBoot<Spawner, ChTools>;
+
+/// One `ColdBoot`, shared by the acp and the drop handler, the sleep loop
+/// and the shutdown.
+#[derive(Debug, Clone)]
+struct Shared(Arc<Hook>);
+
+impl StartVm for Shared {
+    async fn start(&self, row: &SessionRow) -> Result<AcpLink, StartFault> {
+        self.0.start(row).await
+    }
+}
+
+impl StopVm for Shared {
+    async fn stop(&self, id: &SessionId) -> Result<(), VmStopFailed> {
+        self.0.stop(id).await
+    }
+}
+
+/// The handler set of the vmm: one handler for each route of the table.
+#[derive(Debug)]
+struct Handlers {
+    creates: Creates,
+    lists: Lists,
+    acp: Acp<Shared>,
+    drops: Drops<Shared>,
+}
+
+impl Serve<CreateRoute> for Handlers {
+    async fn serve(&self, request: CreateSession) -> Result<SessionRow, CreateError> {
+        self.creates.serve(request).await
+    }
+}
+
+impl Serve<ListRoute> for Handlers {
+    async fn serve(&self, request: ListSessions) -> Result<SessionPage, ListError> {
+        self.lists.serve(request).await
+    }
+}
+
+impl Serve<DropRoute> for Handlers {
+    async fn serve(&self, request: DropTarget) -> Result<Dropped, DropError> {
+        self.drops.serve(request).await
+    }
+}
+
+impl ServeUpgrade<AcpRoute> for Handlers {
+    type Relay = AcpRelay;
+
+    async fn admit(&self, request: OpenAcp) -> Result<AcpRelay, AcpError> {
+        self.acp.admit(request).await
+    }
+}
+
+crate::routes!(Handlers);
+
+/// The vmm after the start steps, before the bind.
+struct Vmm {
+    socket: PathBuf,
+    handlers: Handlers,
+    hook: Shared,
+    faults: Arc<Mutex<FaultBook>>,
+}
+
+/// Builds the vmm from `config`, then serves until SIGTERM and shuts
+/// down. The caller runs it on the multi-thread runtime (decision CH36,
+/// gap G21), then ends the runtime with `shutdown_timeout`.
+///
+/// # Errors
+///
+/// A `StartError` when a start step fails, or when the server stops
+/// before SIGTERM. A shutdown that ends `Kept` or `Late` is no error: the
+/// VMs that are left end with the vmm (decision CH19 (4)).
+pub async fn serve(config: Config) -> Result<(), StartError> {
+    let sigterm = shutdown::sigterm().map_err(StartError::Sigterm)?;
+    let vmm = spawn_blocking(move || build(config))
+        .await
+        .map_err(|_| StartError::Panicked)??;
+    vmm.run(sigterm).await
+}
+
+/// Step 2 and 3: the blocking start steps, then the parts. Blocks.
+fn build(config: Config) -> Result<Vmm, StartError> {
+    for unit in stop_all(&config.systemctl).map_err(StartError::Leftovers)? {
+        eprintln!("vmm: stopped the leftover unit {unit}");
+    }
+    let ch_version =
+        check_cloud_hypervisor(config.ch.path(), VERSION_WAIT).map_err(StartError::ChVersion)?;
+    let faults = FaultDir::open(&config.faults_root)
+        .and_then(|dir| FaultBook::start(dir, SystemTime::now()))
+        .map_err(StartError::Faults)?;
+    let faults = Arc::new(Mutex::new(faults));
+    let rows = Rows::open(config.state.clone()).map_err(StartError::Rows)?;
+    let rows = Arc::new(Mutex::new(rows));
+    let spawner = Spawner::start(PathBuf::from(SELF_EXE)).map_err(StartError::Spawner)?;
+
+    let remote = || ChRemote::new(config.ch_remote.path().to_owned());
+    let api = ChTools {
+        remote: remote(),
+        snapshotter: Snapshotter::new(remote(), config.fallocate.path().to_owned()),
+    };
+    let start = StartConfig {
+        images: ImageStore::new(&config.state, config.zstd.path().to_owned()),
+        disks: SessionDisks::new(&config.state, config.mke2fs.path().to_owned()),
+        // CONTRACT-QUESTION (design item 49 Q49-1): no row names the image
+        // source or the source of the digests. The vmm reads the images
+        // from the digest store of the state root only, imports none, and
+        // knows no digest. So each start fails closed with
+        // `sandbox_start_failed`. An answer costs one config key and its
+        // read here.
+        digests: None,
+        initramfs: None,
+        state: config.state,
+        run: config.run.clone(),
+        families: config.families.clone(),
+        ch: config.ch,
+        systemd_run: config.systemd_run,
+        limits: config.limits,
+        budget: config.budget,
+        ch_version,
+    };
+    let relays = Relays::default();
+    let control = Arc::new(Mutex::new(ControlState::default()));
+    let hook = Shared(Arc::new(ColdBoot::new(
+        start,
+        Arc::new(spawner),
+        Arc::new(api),
+        relays.clone(),
+        Arc::clone(&rows),
+        control,
+        Arc::clone(&faults),
+    )));
+    let handlers = Handlers {
+        creates: Creates::new(Arc::clone(&rows), config.families),
+        lists: Lists::new(Arc::clone(&rows)),
+        acp: Acp::new(Arc::clone(&rows), relays.clone(), hook.clone()),
+        drops: Drops::new(rows, relays, hook.clone()),
+    };
+    Ok(Vmm {
+        socket: config.run.vmm_socket(),
+        handlers,
+        hook,
+        faults,
+    })
+}
+
+impl Vmm {
+    /// Step 4 and 5: serves until SIGTERM, then shuts down.
+    async fn run(self, sigterm: impl Future<Output = ()>) -> Result<(), StartError> {
+        let Self {
+            socket,
+            handlers,
+            hook,
+            faults,
+        } = self;
+        let (stop, signal) = Stop::pair();
+        let mut server = tokio::spawn(async move { run_routes(&socket, signal, handlers).await });
+        let (sleep_stop, sleep_signal) = oneshot::channel::<()>();
+        let sleep = tokio::spawn({
+            let hook = hook.clone();
+            async move {
+                // An Err means the sender dropped, so the loop stops too.
+                sleep::run(&*hook.0, async move { _ = sleep_signal.await }).await;
+            }
+        });
+        let refresh = tokio::spawn(refresh_faults(faults));
+
+        let early = first_of(&mut server, sigterm).await;
+        let _ = sleep_stop.send(());
+        if let Some(ended) = early {
+            refresh.abort();
+            return Err(match ended {
+                Ok(Err(error)) => StartError::Serve(error),
+                Ok(Ok(())) | Err(_) => StartError::Panicked,
+            });
+        }
+
+        let ended = shutdown::shutdown(&*hook.0, stop, async move { _ = sleep.await }).await;
+        if ended == Ended::Kept {
+            eprintln!("vmm: a VM did not stop, so its CH ends with the vmm");
+        }
+        refresh.abort();
+        match server.await {
+            Ok(Err(error)) => Err(StartError::Serve(error)),
+            Ok(Ok(())) | Err(_) => Ok(()),
+        }
+    }
+}
+
+/// The end of `server` when it ends before `sigterm` fires, or `None` at
+/// SIGTERM.
+async fn first_of<T>(
+    server: &mut JoinHandle<T>,
+    sigterm: impl Future<Output = ()>,
+) -> Option<Result<T, tokio::task::JoinError>> {
+    let mut sigterm = pin!(sigterm);
+    poll_fn(|context| {
+        if let Poll::Ready(ended) = Pin::new(&mut *server).poll(context) {
+            return Poll::Ready(Some(ended));
+        }
+        sigterm.as_mut().poll(context).map(|()| None)
+    })
+    .await
+}
+
+/// Rewrites each open fault file every `REFRESH`, so `written_at` never
+/// passes the 90 s of contract 05 §3.3.1 rule 7 (`creche-vmm-confine`
+/// AGENTS.md). Each write runs in `spawn_blocking` (decision CH36 G21).
+async fn refresh_faults(faults: Arc<Mutex<FaultBook>>) {
+    let mut tick = interval(REFRESH);
+    tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    loop {
+        tick.tick().await;
+        let faults = Arc::clone(&faults);
+        let written = spawn_blocking(move || {
+            let book = faults.lock().unwrap_or_else(PoisonError::into_inner);
+            book.refresh(SystemTime::now())
+        })
+        .await;
+        match written {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => eprintln!("vmm: the fault refresh failed: {error}"),
+            Err(_) => eprintln!("vmm: the fault refresh panicked"),
+        }
+    }
+}

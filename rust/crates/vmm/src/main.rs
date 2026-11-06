@@ -1,8 +1,9 @@
 //! The program `vmm` (decision CH7-5). The one argument picks the mode:
 //!
 //! - `vmm serve` reads its config from the env (`creche_vmm::config`) and
-//!   runs the host API server on the multi-thread tokio runtime. A missing
-//!   or bad key exits 78.
+//!   runs the vmm on the multi-thread tokio runtime until SIGTERM. A
+//!   missing or bad key, or a failed start step, exits 78. The end of a
+//!   shutdown exits 0.
 //! - `vmm launch` is the launch step of one Cloud Hypervisor process. It
 //!   runs on the main thread with no runtime, because the access rules of
 //!   Landlock bind only the thread that sets them.
@@ -12,6 +13,7 @@ use std::fmt;
 use std::process::ExitCode;
 
 use creche_vmm::config::Config;
+use creche_vmm::shutdown::RUNTIME_END;
 use tokio::runtime::Builder;
 
 /// The exit status of a refused start (owner item 86). A unit with
@@ -61,8 +63,8 @@ fn dispatch(args: &[OsString]) -> ExitCode {
     }
 }
 
-/// Reads the config, then builds the tokio runtime and runs the host API
-/// server on it (decision CH26 rule 1). Only this mode builds a runtime.
+/// Reads the config, then builds the tokio runtime and runs the vmm on it
+/// (decision CH26 rule 1). Only this mode builds a runtime.
 fn serve() -> ExitCode {
     let config = match Config::read() {
         Ok(config) => config,
@@ -80,7 +82,12 @@ fn serve() -> ExitCode {
         Err(error) => return refuse(&error),
     };
 
-    match runtime.block_on(creche_vmm::serve(config)) {
+    let served = runtime.block_on(creche_vmm::serve(config));
+    // Caller duty 8: a take runs in `spawn_blocking`, and a plain drop of
+    // the runtime waits for each blocking task. So the end of the runtime
+    // has a bound inside the 5 s that `SHUTDOWN_WAIT` leaves.
+    runtime.shutdown_timeout(RUNTIME_END);
+    match served {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => refuse(&error),
     }
@@ -120,8 +127,9 @@ mod tests {
         assert_eq!(Mode::parse(&args(&["serve", "extra"])), None);
     }
 
+    /// The test env has no vmm key and no launch plan.
     #[test]
-    fn each_mode_refuses_until_built() {
+    fn each_mode_refuses_a_bare_env() {
         assert_eq!(status(&["serve"]), ExitCode::from(EX_CONFIG));
         assert_eq!(status(&["launch"]), ExitCode::from(EX_CONFIG));
     }
