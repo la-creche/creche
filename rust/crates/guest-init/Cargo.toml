@@ -19,6 +19,8 @@ serde_json.workspace = true
 # The features that the mount plan, the power-off, the clock and the
 # loopback link need (CH62 rule 1). A feature add changes no lock entry.
 rustix = { workspace = true, features = ["mount", "system", "time", "net"] }
+# The vsock listen and dial calls (CH13, CH62 rule 1).
+nix.workspace = true
 
 [lints]
 workspace = true
