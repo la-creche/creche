@@ -38,7 +38,7 @@ use creche_vmm_confine::leftovers::{LeftoverError, stop_all};
 use creche_vmm_confine::spawner::{SELF_EXE, Spawner};
 use creche_vmm_store::ch_remote::ChRemote;
 use creche_vmm_store::images::ImageStore;
-use creche_vmm_store::key::{ChVersionError, check_cloud_hypervisor};
+use creche_vmm_store::key::{ChVersionError, CheckedCh, check_cloud_hypervisor};
 use creche_vmm_store::rows::{LoadError, Rows};
 use creche_vmm_store::session_disk::SessionDisks;
 use creche_vmm_store::snapshot::Snapshotter;
@@ -58,13 +58,13 @@ use crate::handlers::acp::{Acp, StartFault, StartVm};
 use crate::handlers::create::Creates;
 use crate::handlers::drop::{Drops, StopVm, VmStopFailed};
 use crate::handlers::list::Lists;
-use crate::image_root::{self, DigestsError, ImageImportError, Owner};
+use crate::image_root::{self, DigestsError, ImageImportError};
 use crate::relay::{AcpLink, AcpRelay, Relays};
 use crate::restore::ChTools;
 use crate::server::{Stop, run_routes};
 use crate::shutdown::{self, Ended};
 use crate::sleep;
-use crate::start::{ColdBoot, StartConfig};
+use crate::start::{ColdBoot, Digests, StartConfig};
 
 /// The bound of `cloud-hypervisor --version` at the start (decision CH44
 /// rule 3: the caller sets each timeout).
@@ -194,16 +194,28 @@ struct Vmm {
 /// VMs that are left end with the vmm (decision CH19 (4)).
 pub async fn serve(config: Config) -> Result<(), StartError> {
     let sigterm = shutdown::sigterm().map_err(StartError::Sigterm)?;
-    let vmm = spawn_blocking(move || build(config, Owner::ROOT))
+    let vmm = spawn_blocking(move || build(config))
         .await
         .map_err(|_| StartError::Panicked)??;
     vmm.run(sigterm).await
 }
 
-/// Step 2 and 3: the blocking start steps, then the parts. `owner` must
-/// own `digests.json`: the vmm passes `Owner::ROOT`, and a test its own
-/// uid. Blocks.
-fn build(config: Config, owner: Owner) -> Result<Vmm, StartError> {
+/// Step 2 and 3: the blocking start steps, then the parts. Blocks.
+fn build(config: Config) -> Result<Vmm, StartError> {
+    let checked = check(&config)?;
+    parts(config, checked)
+}
+
+/// What the checks of step 2 give to the parts.
+struct Checked {
+    ch_version: CheckedCh,
+    images: ImageStore,
+    digests: Digests,
+}
+
+/// The first checks of step 2: the leftover sweep, the CH version and
+/// the image root. Blocks.
+fn check(config: &Config) -> Result<Checked, StartError> {
     for unit in stop_all(&config.systemctl).map_err(StartError::Leftovers)? {
         eprintln!("vmm: stopped the leftover unit {unit}");
     }
@@ -213,10 +225,25 @@ fn build(config: Config, owner: Owner) -> Result<Vmm, StartError> {
     // Decision CH57 rule 1 refuses the start for a bad `digests.json`, and
     // decision CH58 rule 5 for an entry that does not import: a missing
     // disk, a digest mismatch or a failed `zstd -d`.
-    let digests = image_root::read(&config.image_root, owner)
+    let digests = image_root::read(&config.image_root)
         .map_err(StartError::Digests)?
         .import(&images)
         .map_err(StartError::Import)?;
+    Ok(Checked {
+        ch_version,
+        images,
+        digests,
+    })
+}
+
+/// The rest of step 2 (the fault book, the rows, the spawner), then step
+/// 3. Blocks.
+fn parts(config: Config, checked: Checked) -> Result<Vmm, StartError> {
+    let Checked {
+        ch_version,
+        images,
+        digests,
+    } = checked;
     let faults = FaultDir::open(&config.faults_root)
         .and_then(|dir| FaultBook::start(dir, SystemTime::now()))
         .map_err(StartError::Faults)?;

@@ -1,8 +1,12 @@
 //! The compose step on temp paths with no KVM (plan PR L20). `build`
-//! takes the uid of the test as the owner of `digests.json`, because a
-//! test cannot make a root-owned file (decision CH57 rule 1). The binary
-//! always passes `Owner::ROOT`, so `tests/binary.rs` proves only its
-//! refusals.
+//! trusts only a root-owned `digests.json` (decision CH57 rule 1). A test
+//! of the rust job runs as the runner user and cannot make a root-owned
+//! file, so the rust job proves that the file of the test refuses the
+//! start before any import. The serve tests there start from `parts`,
+//! with the checks of `check` done by the test: the CH version check of
+//! the fixture and an import into the store. The `kvm_` tests run `build`
+//! itself on a root-owned file: the job kvm runs each ignored `kvm_` test,
+//! and its runner may use sudo (decision CH36 G20).
 //!
 //! Each program that a part only holds gets its own path, and a test
 //! reads the `Debug` text of the part. The store crate gives no accessor
@@ -16,19 +20,22 @@ use std::io::{Read, Write};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use creche_vmm_confine::admission::GIB;
+use creche_vmm_store::images::ImageStore;
+use creche_vmm_store::key::check_cloud_hypervisor;
 use creche_wire::{HOST_API_HEADER, HOST_API_PROTOCOL, SandboxFlavor, SessionPage};
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::oneshot;
 
-use super::{StartError, Vmm, build};
+use super::{Checked, StartError, VERSION_WAIT, Vmm, build, parts};
 use crate::ServeError;
 use crate::config::Config;
 use crate::flavors::PerFlavor;
-use crate::image_root::{DIGESTS_FILE, DigestsError, Owner};
+use crate::image_root::{DIGESTS_FILE, DigestsError};
 use crate::start::Digests;
 
 /// The CH fixture of the version check (gap G10).
@@ -78,7 +85,7 @@ impl Drop for Scratch {
 }
 
 impl Scratch {
-    /// The dirs, the images, a `digests.json` that the test owns, and a
+    /// The dirs, the images, a `digests.json` that the test user owns, and a
     /// `systemctl` that logs each call and lists no unit.
     fn new(name: &str) -> Self {
         let dir = Path::new("/tmp").join(format!("creche-vmm-{}-{name}", std::process::id()));
@@ -131,19 +138,60 @@ impl Scratch {
         Config::from_lookup(|key| self.env.get(key).cloned()).unwrap()
     }
 
-    /// The uid of the test, as the owner of the files that it makes.
-    fn owner(&self) -> Owner {
-        Owner::new(fs::metadata(&self.dir).unwrap().uid())
+    /// Makes root the owner of `digests.json`, as the disk row of phase 5
+    /// installs it. Only a `kvm_` test calls it.
+    fn trust(&self) {
+        chown_root(&self.dir.join("images").join(DIGESTS_FILE));
     }
 
-    fn build(&self) -> Result<Vmm, StartError> {
-        build(self.config(), self.owner())
+    /// The vmm from `parts`, after the checks of `check` that a test of
+    /// the rust job can run: the CH version check of the fixture and an
+    /// import of each image into the store of the state root.
+    fn parts(&self) -> Vmm {
+        let config = self.config();
+        let ch_version = check_cloud_hypervisor(config.ch.path(), VERSION_WAIT).unwrap();
+        let images = ImageStore::new(&config.state, config.zstd.path().to_owned());
+        let [kernel, base, python] = IMAGES.map(|(file, _, sha256)| {
+            let digest = sha256.parse().unwrap();
+            images
+                .import(&self.dir.join("images").join(file), digest)
+                .unwrap();
+            digest
+        });
+        let roots = PerFlavor::new(vec![
+            (SandboxFlavor::Base, base),
+            (SandboxFlavor::Python, python),
+        ])
+        .unwrap();
+        let checked = Checked {
+            ch_version,
+            images,
+            digests: Digests { kernel, roots },
+        };
+        parts(config, checked).unwrap()
     }
 
     /// The `Debug` text of the path of `bin/<program>`.
     fn program(&self, program: &str) -> String {
         format!("{:?}", self.dir.join("bin").join(program))
     }
+}
+
+/// Makes root the owner of `path` with the sudo of the runner. Decision
+/// CH36 G20 allows sudo on GitHub's throwaway runners only, never on the
+/// host, so it refuses outside GitHub Actions.
+fn chown_root(path: &Path) {
+    assert_eq!(
+        std::env::var("GITHUB_ACTIONS").as_deref(),
+        Ok("true"),
+        "sudo runs only on a GitHub runner (decision CH36 G20)"
+    );
+    let status = Command::new("sudo")
+        .args(["-n", "chown", "0:0"])
+        .arg(path)
+        .status()
+        .unwrap();
+    assert!(status.success(), "sudo chown: {status}");
 }
 
 fn runtime() -> Runtime {
@@ -158,9 +206,11 @@ fn runtime() -> Runtime {
 /// sweep, a faults dir on another root or the design budget in place of
 /// the key each fail here.
 #[test]
-fn build_wires_each_key_to_its_part() {
+#[ignore = "needs runner sudo for a root-owned file: the job kvm runs it"]
+fn kvm_build_wires_each_key_to_its_part() {
     let scratch = Scratch::new("wire");
-    let vmm = scratch.build().unwrap();
+    scratch.trust();
+    let vmm = build(scratch.config()).unwrap();
 
     // Decision CH19 (4): the leftover sweep lists the VM scopes first.
     let log = fs::read_to_string(scratch.dir.join("systemctl.log")).unwrap();
@@ -208,22 +258,37 @@ fn build_wires_each_key_to_its_part() {
 }
 
 /// Decision CH57 rule 1: a `digests.json` that root does not own refuses
-/// the start. Decision CH58 rule 5: so does a file that it names and the
-/// image root lacks.
+/// the start, and no import runs: no digest reaches the store. A test
+/// that runs as root owns a root-owned file, so the case has nothing to
+/// prove there.
 #[test]
-fn an_untrusted_or_broken_image_root_refuses_the_start() {
+fn a_digests_file_that_root_does_not_own_refuses_the_start() {
     let scratch = Scratch::new("untrusted");
     let uid = fs::metadata(&scratch.dir).unwrap().uid();
-    if uid != 0 {
-        let refused = build(scratch.config(), Owner::ROOT).err();
-        assert!(
-            matches!(refused, Some(StartError::Digests(DigestsError::NotOwned { uid: found })) if found == uid),
-            "{refused:?}"
-        );
+    if uid == 0 {
+        return;
     }
+    let refused = build(scratch.config()).err();
+    assert!(
+        matches!(refused, Some(StartError::Digests(DigestsError::NotOwned { uid: found })) if found == uid),
+        "{refused:?}"
+    );
+    let config = scratch.config();
+    let images = ImageStore::new(&config.state, config.zstd.path().to_owned());
+    for (file, _, sha256) in IMAGES {
+        assert!(images.check(sha256.parse().unwrap()).is_err(), "{file}");
+    }
+}
 
+/// Decision CH58 rule 5: a file that a root-owned `digests.json` names
+/// and the image root lacks refuses the start.
+#[test]
+#[ignore = "needs runner sudo for a root-owned file: the job kvm runs it"]
+fn kvm_a_missing_image_refuses_the_start() {
+    let scratch = Scratch::new("broken");
+    scratch.trust();
     fs::remove_file(scratch.dir.join("images/base.ext4")).unwrap();
-    let refused = scratch.build().err();
+    let refused = build(scratch.config()).err();
     let Some(StartError::Import(error)) = refused else {
         panic!("{refused:?}");
     };
@@ -241,7 +306,7 @@ fn an_untrusted_or_broken_image_root_refuses_the_start() {
 #[test]
 fn serve_lists_refuses_and_stops_on_the_signal() {
     let scratch = Scratch::new("serve");
-    let vmm = scratch.build().unwrap();
+    let vmm = scratch.parts();
     let runtime = runtime();
     let (term, signal) = oneshot::channel::<()>();
     let run = runtime.spawn(vmm.run(async move { _ = signal.await }));
@@ -271,7 +336,7 @@ fn a_server_that_ends_before_the_signal_fails_the_run() {
     let file = scratch.dir.join("run-file");
     fs::write(&file, "").unwrap();
     scratch.env.insert("RUNTIME_DIRECTORY", file.into());
-    let vmm = scratch.build().unwrap();
+    let vmm = scratch.parts();
 
     let ended = runtime().block_on(async { tokio::time::timeout(WAIT, vmm.run(pending())).await });
     let Ok(Err(error)) = ended else {

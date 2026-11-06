@@ -52,14 +52,25 @@ The root `AGENTS.md` applies here too.
 
 A failed start step, or a server that stops before SIGTERM, exits 78. The
 end of a shutdown exits 0, also when a VM did not stop: its CH ends with
-the vmm (decision CH19 (4)). `src/compose/tests.rs` builds the vmm on
-temp paths with no KVM, with the uid of the test as the owner of
-`digests.json`. It proves an empty list page, a 412 on a bad protocol
-header, the end of the run at the signal, and a failed run when the
-bind fails. It also proves that each key reaches its part: it reads the
-`Debug` text of each part for its program path, because the store crate
-gives no accessor. `tests/binary.rs` runs `vmm serve` with no KVM. The
-binary always requires root as the owner, so it proves only the exit 78
+the vmm (decision CH19 (4)). The vmm has one start entry, `build`, and
+it always requires root as the owner of `digests.json` (decision CH58
+rule 1: no test-only entry stays in production code). `build` runs
+`check` (the leftover sweep, the CH version, the image root), then
+`parts`. `src/compose/tests.rs` runs on temp paths with no KVM:
+
+1. In the rust job, a `digests.json` that the test user owns refuses
+   `build` with `NotOwned`, and no digest reaches the store.
+2. In the rust job, the serve tests start from `parts` after the checks
+   that a test can run: the CH fixture and an import into the store.
+   They prove an empty list page, a 412 on a bad protocol header, the
+   end of the run at the signal, and a failed run when the bind fails.
+3. The ignored `kvm_` tests run `build` on a root-owned `digests.json`.
+   The job kvm runs them, and its runner may use sudo (decision CH36
+   G20). They prove that each key reaches its part (the `Debug` text of
+   each part gives its program path, because the store crate gives no
+   accessor), and that a missing image refuses the start.
+
+`tests/binary.rs` runs `vmm serve` with no KVM. It proves the exit 78
 of a missing `digests.json` and of one that root does not own. The
 Hyperion proof of the unit (plan PR C13) runs the binary end to end.
 
@@ -114,9 +125,8 @@ user cannot write it. `image_root::read` runs these checks:
 2. It opens the file and checks that the open file is the file of step
    1. Each later check reads the open file, so the parsed bytes are the
    checked bytes.
-3. `Owner::ROOT` owns the file. A test passes its own uid with
-   `Owner::new`, because a test cannot make a root-owned file. The
-   binary always passes `Owner::ROOT`.
+3. Root owns the file. No caller passes another owner (decision CH58
+   rule 1).
 4. No group or other write bit is set. The vmm does not read its group
    list, so any group write bit refuses.
 5. The file has at most `DIGESTS_CAP` (64 KiB) bytes, and it parses as
@@ -136,7 +146,12 @@ Each fault refuses the start, and `src/main.rs` exits 78. Then
 `Digests` of `StartConfig`. A store that already holds a digest with its
 identity reads no byte. An entry that does not import (a missing disk, a
 digest mismatch, a failed `zstd -d`) refuses the start too (decision
-CH58 rule 5). `tests/image_root.rs` proves each fault and the import.
+CH58 rule 5). `tests/image_root.rs` proves the file checks. In the rust
+job it proves that a file the test user owns refuses and imports
+nothing. Its ignored `kvm_` tests make a root-owned file with the sudo
+of the runner (decision CH36 G20) and prove the accept path, a writable
+file, a file past the cap and a malformed one. `src/image_root/tests.rs`
+proves the parse and the import on the bytes, with no file check.
 
 ## The server
 

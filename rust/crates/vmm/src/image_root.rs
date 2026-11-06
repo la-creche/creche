@@ -52,21 +52,8 @@ pub const DIGESTS_CAP: u64 = 64 * 1024;
 /// The mode bits that let a user other than the owner write a file.
 const GROUP_OR_OTHER_WRITE: u32 = 0o022;
 
-/// The uid that must own `digests.json`. The vmm passes `Owner::ROOT`. A
-/// test passes its own uid, because a test cannot make a root-owned file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Owner(u32);
-
-impl Owner {
-    /// Root, the owner that the vmm requires (decision CH57 rule 1).
-    pub const ROOT: Self = Self(0);
-
-    /// The owner `uid`. Only a test passes a uid other than 0.
-    #[must_use]
-    pub const fn new(uid: u32) -> Self {
-        Self(uid)
-    }
-}
+/// The uid that must own `digests.json`: root (decision CH57 rule 1).
+const ROOT_UID: u32 = 0;
 
 /// Why the vmm does not trust `digests.json`. Each refuses the start.
 #[derive(Debug)]
@@ -81,7 +68,7 @@ pub enum DigestsError {
     /// The file that `read` opened is not the file that its first look
     /// found, so the path changed between the two.
     Replaced,
-    /// The file has another owner than the required one.
+    /// The file has an owner other than root.
     NotOwned {
         /// The uid of the owner of the file.
         uid: u32,
@@ -239,14 +226,14 @@ pub struct ImageSet {
     manifest: Manifest,
 }
 
-/// Reads `digests.json` in `root` and checks that `owner` owns it and
-/// that no group or other user may write it (decision CH57 rule 1). The
-/// vmm does not read its group list, so any group write bit refuses.
+/// Reads `digests.json` in `root` and checks that root owns it and that
+/// no group or other user may write it (decision CH57 rule 1). The vmm
+/// does not read its group list, so any group write bit refuses.
 ///
 /// # Errors
 ///
 /// A `DigestsError`. Each one refuses the start of the vmm.
-pub fn read(root: &Path, owner: Owner) -> Result<ImageSet, DigestsError> {
+pub fn read(root: &Path) -> Result<ImageSet, DigestsError> {
     let path = root.join(DIGESTS_FILE);
     let first = match fs::symlink_metadata(&path) {
         Ok(metadata) => metadata,
@@ -264,7 +251,7 @@ pub fn read(root: &Path, owner: Owner) -> Result<ImageSet, DigestsError> {
     if (open.dev(), open.ino()) != (first.dev(), first.ino()) || !open.file_type().is_file() {
         return Err(DigestsError::Replaced);
     }
-    if open.uid() != owner.0 {
+    if open.uid() != ROOT_UID {
         return Err(DigestsError::NotOwned { uid: open.uid() });
     }
     if open.mode() & GROUP_OR_OTHER_WRITE != 0 {
@@ -316,3 +303,6 @@ impl ImageSet {
         })
     }
 }
+
+#[cfg(test)]
+mod tests;
