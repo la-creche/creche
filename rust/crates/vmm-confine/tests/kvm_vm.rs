@@ -1,7 +1,8 @@
 //! One VM through the code of the vmm, on the KVM of the runner (decision
 //! CH8-4, plan PR C16). The example `launch_chain` in its role `hold`
 //! plays the vmm: it holds the spawner (PR C2) and launches what the test
-//! makes. Each launch goes through the real chain of `tests/kvm_slot.rs`:
+//! makes. It runs as a transient user service of `tests/stand_in`, and
+//! each VM scope binds to that unit (decision CH60 rule 1). Each launch goes through the real chain of `tests/kvm_slot.rs`:
 //! the launch step, `systemd-run --user --scope` with the scope limits of
 //! the family VM shape (PR C4), and the launch stage, which enters the
 //! slot label and applies the Landlock ruleset of the VM before it execs
@@ -22,12 +23,10 @@
 //!    the snapshot's `memory-ranges`, and the guest runs on.
 //! 4. A second snapshot to a new generation. The first one stays
 //!    byte-identical (fact 55).
-//! 5. A restore of the second one, then a SIGKILL of the vmm stand-in. CH
-//!    is meant to die by its death signal and leave no scope (decision
-//!    CH19 (4), the phase 2 proof line). This step fails today: AppArmor
-//!    clears the death signal at the exec into the slot label (the
-//!    CONTRACT-QUESTION in the crate AGENTS.md). The step proves the
-//!    mechanism that David picks there.
+//! 5. A restore of the second one, then a SIGKILL of the vmm stand-in.
+//!    Its unit fails, and systemd stops the bound VM scope and its CH
+//!    (decision CH60 rule 1, the phase 2 proof line). The control: CH
+//!    runs while the stand-in runs.
 //!
 //! The busybox guest has no guest init, so the control link, ControlReady
 //! and the guest `sync` before a snapshot wait for phase 3. The test reads
@@ -38,12 +37,12 @@
 
 mod kvm;
 mod scope_guard;
+mod stand_in;
 
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
@@ -52,6 +51,7 @@ use creche_vmm_confine::landlock::{HostPath, Start, VmFiles};
 use creche_vmm_confine::launch::{Launch, Payload, Program};
 use creche_vmm_confine::limits::VmLimits;
 use creche_vmm_confine::slot_profile::{CH_BINARY, label};
+use creche_vmm_confine::vmm_unit::VmmUnit;
 use creche_vmm_store::ch_remote::{ChRemote, VmState};
 use creche_vmm_store::claim::{ClaimedSnapshot, claim};
 use creche_vmm_store::images::{CheckedImage, ImageDigest, ImageStore};
@@ -65,8 +65,9 @@ use creche_vmm_store::snapshot::{MEMORY_RANGES, Snapshot, SnapshotTimeouts, Snap
 use creche_vmm_store::stale::remove_stale;
 use creche_wire::{FamilyShape, SessionId};
 
-use kvm::{BOOT, Vm, booted, files};
+use kvm::{BOOT, booted, files};
 use scope_guard::ScopeGuard;
+use stand_in::{StandIn, until_state};
 
 const ID: &str = "0123abcd-0000-4000-8000-0000000c16c1";
 
@@ -192,11 +193,11 @@ fn checked_ch(ch: &Path, work: &Path) -> CheckedCh {
     }
 }
 
-/// A vmm stand-in that holds one CH. A drop kills the stand-in, then the
-/// scope of the VM with CH in it. Each test takes it after its `Setup`,
-/// so it drops first.
+/// A vmm stand-in that holds one CH. A drop stops the unit of the
+/// stand-in, then kills the scope of the VM with CH in it. Each test
+/// takes it after its `Setup`, so it drops first.
 struct Held {
-    vmm: Vm,
+    vmm: StandIn,
     _scope: ScopeGuard,
     pid: u32,
 }
@@ -300,8 +301,8 @@ impl Setup {
         remove_stale(&self.vm).unwrap();
     }
 
-    /// The launch of a cold boot in `slot`.
-    fn boot(&self, slot: Slot) -> Launch {
+    /// The launch of a cold boot in `slot`, bound to `unit`.
+    fn boot(&self, slot: Slot, unit: &VmmUnit) -> Launch {
         self.take(slot);
         let initramfs = HostPath::new(self.initramfs.path().to_owned()).unwrap();
         let boot = Boot {
@@ -320,24 +321,24 @@ impl Setup {
             kernel,
             initramfs: Some(initramfs),
         };
-        self.launch(start, payload, slot)
+        self.launch(start, payload, slot, unit)
     }
 
     /// The launch of a restore of `snapshot` in `slot`. The new slot dir is
     /// empty, so each tick that the test reads comes from the restored
     /// guest. The snapshot names its files by the `vm/<id>` path, which
-    /// now links to `slot`.
-    fn restore(&self, snapshot: ClaimedSnapshot, slot: Slot) -> Launch {
+    /// now links to `slot`. The scope binds to `unit`.
+    fn restore(&self, snapshot: ClaimedSnapshot, slot: Slot, unit: &VmmUnit) -> Launch {
         self.take(slot);
         let payload = ChCommand::restore(snapshot, &self.vm)
             .unwrap()
             .payload(self.ch.clone());
-        self.launch(Start::Restore, payload, slot)
+        self.launch(Start::Restore, payload, slot, unit)
     }
 
-    /// `payload` in the scope of the VM, under its ruleset and the label
-    /// of `slot`.
-    fn launch(&self, start: Start, payload: Payload, slot: Slot) -> Launch {
+    /// `payload` in the scope of the VM bound to `unit`, under its ruleset
+    /// and the label of `slot`.
+    fn launch(&self, start: Start, payload: Payload, slot: Slot, unit: &VmmUnit) -> Launch {
         let root = HostPath::new(self.root.path().to_owned()).unwrap();
         let files = VmFiles::new(start, root, &self.session, &self.vm).unwrap();
         let systemd_run = Program::new(PathBuf::from(SYSTEMD_RUN)).unwrap();
@@ -346,34 +347,22 @@ impl Setup {
             self.limits.scope(self.id.clone()),
             payload,
             files,
+            unit.clone(),
         )
         .in_slot(slot)
     }
 
-    /// Starts the vmm stand-in with `launch`. Returns it with the guard
-    /// of the VM scope, both killed on drop, and the pid that becomes CH.
-    /// The guard comes first, so a failed assert in any phase leaves no
-    /// CH and no scope.
+    /// Starts the vmm stand-in with `launch`, as the service of the unit
+    /// of `launch`. Returns it with the guard of the VM scope, and the pid
+    /// that becomes CH. The guard comes first, so a failed assert in any
+    /// phase leaves no CH and no scope.
     fn hold(&self, launch: &Launch) -> Held {
         let scope = ScopeGuard::new(&self.id);
-        let mut vmm = Vm(Command::new(example())
-            .arg("hold")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap());
-        let plan = serde_json::to_vec(launch).unwrap();
-        vmm.0.stdin.take().unwrap().write_all(&plan).unwrap();
-        // The chain writes to the output pipe of the spawner, so the one
-        // line on the stdout of the stand-in is the pid.
-        let mut line = String::new();
-        BufReader::new(vmm.0.stdout.take().unwrap())
-            .read_line(&mut line)
-            .unwrap();
+        let (vmm, pid) = StandIn::hold(&example(), launch, false);
         Held {
             vmm,
             _scope: scope,
-            pid: line.trim().parse().unwrap(),
+            pid,
         }
     }
 
@@ -477,7 +466,8 @@ fn kvm_vm_snapshot_restore_kill() {
 
     // 1 and 2: a cold boot in its scope, then a snapshot.
     let [boot, restore, last] = SLOTS.map(|slot| Slot::new(slot).unwrap());
-    let held = setup.hold(&setup.boot(boot));
+    let unit = stand_in::unit("vm-boot");
+    let held = setup.hold(&setup.boot(boot, &unit));
     let pid = held.pid;
     setup.wait_booted(pid, boot);
     setup.check_scope(pid);
@@ -487,7 +477,8 @@ fn kvm_vm_snapshot_restore_kill() {
     let first_digests = digests(&first_files);
 
     // 3: a copy-on-write restore in a new slot. The guest runs on.
-    let held = setup.hold(&setup.restore(setup.claim(&first), restore));
+    let unit = stand_in::unit("vm-restore");
+    let held = setup.hold(&setup.restore(setup.claim(&first), restore, &unit));
     let pid = held.pid;
     setup.wait_running(pid, restore);
     setup.check_scope(pid);
@@ -507,15 +498,17 @@ fn kvm_vm_snapshot_restore_kill() {
     assert_eq!(second.generation.0, first.generation.0 + 1);
     assert_eq!(digests(&first_files), first_digests);
 
-    // 5: a SIGKILL of the vmm is meant to take CH and its scope down.
-    // This fails today under the slot label (the CONTRACT-QUESTION in the
-    // crate AGENTS.md).
-    let mut held = setup.hold(&setup.restore(setup.claim(&second), last));
+    // 5: a SIGKILL of the vmm stand-in. Its unit fails, and systemd stops
+    // the bound scope and CH (decision CH60 rule 1). The control: CH and
+    // its scope run while the stand-in runs.
+    let unit = stand_in::unit("vm-kill");
+    let held = setup.hold(&setup.restore(setup.claim(&second), last, &unit));
     let pid = held.pid;
     setup.wait_running(pid, last);
     assert!(!setup.units().trim().is_empty(), "no VM scope");
-    held.vmm.0.kill().unwrap();
-    held.vmm.0.wait().unwrap();
+    assert_eq!(held.vmm.state(), "active");
+    held.vmm.kill();
     until("CH death after the vmm kill", || !running(pid));
     until("scope removal", || setup.units().trim().is_empty());
+    until_state(unit.name(), "inactive");
 }
