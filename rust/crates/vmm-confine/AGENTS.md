@@ -252,7 +252,9 @@ table of the three vmm crates.
   scope with the C4 limits, under the slot label and the ruleset, a
   snapshot with dug holes, the key and the claim, a copy-on-write
   restore, a second snapshot, then a restore and a SIGKILL of the
-  stand-in. Each start runs the stand-in as a transient user service,
+  stand-in. Each restore passes `resume=false`, so the test waits for
+  the paused VM, then resumes it, as the vmm does (decision CH50 rule
+  10). Each start runs the stand-in as a transient user service,
   and the scope binds to it and is ordered before it (decision CH61
   rule 2). Each restore carries the `store/<sha256>` initramfs of the
   boot, the key holds its digest, and the ruleset reads it (decision

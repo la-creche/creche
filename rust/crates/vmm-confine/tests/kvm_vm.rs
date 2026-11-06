@@ -21,7 +21,9 @@
 //! 2. A snapshot with dug holes (PR D9, decision CH29), keyed (PR D10)
 //!    and claimed (PR D11, decision CH19 (5)).
 //! 3. A copy-on-write restore (decisions CH2, CH29): the restored CH maps
-//!    the snapshot's `memory-ranges`, and the guest runs on. CH opens the
+//!    the snapshot's `memory-ranges`. The restore passes `resume=false`,
+//!    so the VM waits paused until the test resumes it, as the vmm does
+//!    (decision CH50 rule 10), and the guest then runs on. CH opens the
 //!    initramfs of the snapshot config, so the restore carries that
 //!    `store/<sha256>` file, the key holds its digest, and the ruleset
 //!    reads it (decision CH61 rule 3).
@@ -390,15 +392,28 @@ impl Setup {
         assert_eq!(label_of(pid), format!("{} (enforce)", label(slot)));
     }
 
-    /// Waits for `ch-remote info` to report the VM running, then checks
-    /// the label of `slot` (decision CH55).
-    fn wait_running(&self, pid: u32, slot: Slot) {
-        until("running VM", || {
-            assert!(running(pid), "CH exited before it ran");
+    /// Waits until `ch-remote info` reports the restored VM `state`.
+    fn until_state(&self, pid: u32, state: VmState) {
+        until(&format!("{state:?} VM"), || {
+            assert!(running(pid), "CH exited before the VM was {state:?}");
             self.remote
                 .info(&self.vm, CALL)
-                .is_ok_and(|info| info.state == VmState::Running)
+                .is_ok_and(|info| info.state == state)
         });
+    }
+
+    /// Resumes a restored VM, as the vmm does after its checks, then
+    /// checks the label of `slot` (decision CH55). The restore passes
+    /// `resume=false`, so the VM is paused first and its guest writes no
+    /// serial line (decision CH50 rule 10).
+    fn resume(&self, pid: u32, slot: Slot) {
+        self.until_state(pid, VmState::Paused);
+        assert!(
+            fs::read(self.vm.serial_log()).map_or(true, |bytes| bytes.is_empty()),
+            "the paused guest wrote to its serial file"
+        );
+        self.remote.resume(&self.vm, CALL).unwrap();
+        self.until_state(pid, VmState::Running);
         assert_eq!(label_of(pid), format!("{} (enforce)", label(slot)));
     }
 
@@ -495,11 +510,12 @@ fn kvm_vm_snapshot_restore_kill() {
     let first_files = snapshot_files(&first.dir);
     let first_digests = digests(&first_files);
 
-    // 3: a copy-on-write restore in a new slot. The guest runs on.
+    // 3: a copy-on-write restore in a new slot. After the resume the
+    // guest runs on.
     let unit = stand_in::unit("vm-restore");
     let held = setup.hold(&setup.restore(setup.claim(&first), restore, &unit));
     let pid = held.pid;
-    setup.wait_running(pid, restore);
+    setup.resume(pid, restore);
     setup.check_scope(pid);
     let maps = fs::read_to_string(format!("/proc/{pid}/maps")).unwrap();
     let memory = first.dir.join(MEMORY_RANGES);
@@ -526,7 +542,7 @@ fn kvm_vm_snapshot_restore_kill() {
     let unit = stand_in::unit("vm-kill");
     let held = setup.hold(&setup.restore(setup.claim(&second), last, &unit));
     let pid = held.pid;
-    setup.wait_running(pid, last);
+    setup.resume(pid, last);
     assert!(!setup.units().trim().is_empty(), "no VM scope");
     assert_eq!(held.vmm.state(), "active");
     held.vmm.kill();
