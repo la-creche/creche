@@ -4,8 +4,9 @@
 //! directly: no launch step, no scope and no Landlock ruleset.
 //!
 //! `#[ignore]`: only the job `kvm` runs it, after the setup script, with
-//! `cargo test --locked -- --ignored kvm_`. A kvm_ test in any crate runs
-//! there with no workflow edit. With no setup or no `/dev/kvm` it fails.
+//! `cargo test --locked --no-fail-fast -- --ignored kvm_`. A kvm_ test in
+//! any crate runs there with no workflow edit. With no setup or no
+//! `/dev/kvm` it fails.
 #![cfg(target_os = "linux")]
 
 mod kvm;

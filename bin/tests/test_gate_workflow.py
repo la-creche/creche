@@ -177,10 +177,11 @@ RUST_RUNS = [
 ]
 
 #: The KVM smoke job, the script that readies the runner, and the one test
-#: run: each ignored test whose name holds `kvm_`, in every crate.
+#: run: each ignored test whose name holds `kvm_`, in every crate. The run
+#: has `--no-fail-fast`, so one red test binary does not hide the next.
 KVM_JOB = "kvm"
 KVM_SETUP = "bin/vm-smoke-setup.sh"
-KVM_RUN = "cargo test --locked -- --ignored kvm_"
+KVM_RUN = "cargo test --locked --no-fail-fast -- --ignored kvm_"
 
 #: The step before the test run. `cargo test` exits 0 when its filter
 #: matches no test, so this list fails the job when no ignored kvm_ test
