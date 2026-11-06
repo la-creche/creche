@@ -11,6 +11,7 @@ from this directory at run time. The root `AGENTS.md` applies here too.
 | `creche-door-acp.service` | user | no script yet. The door ships in `attendance` |
 | `creche-memory.service` | user | no script yet. The memory component ships it |
 | `creche-door-trigger@.service` | user, templated | the cutover script, only when the host has none |
+| `creche-vmm.service` | user | no script yet. The operator installs it by hand once (design section 6.2 step 3). No agent installs it |
 The host's own units are not here: the watchdog, the registry sync, the
 corpus sync, the drift check, `creche-library@` and follow. They are files
 of creche-release (`units/user/`), and a `host` release links each one into
@@ -70,3 +71,27 @@ file's removal is always a human verb.
 4. A unit of the host itself, one that no component ships, goes in
    creche-release, not here.
 5. Name it in the root `README.md`, section 3.
+
+## Known gaps
+
+1. CONTRACT-QUESTION: the env file of `creche-vmm.service`. Gap G5
+   option A (decision CH36) says the keys of the vmm are "rendered into
+   the unit from the site file", and no row names the renderer. The vmm
+   compiles in no default, and the site file holds only overrides. The
+   reading taken: the unit reads
+   `/srv/agents/state/creche/vmm.env`, as the other user units read their
+   own env file. The file holds each key of
+   `rust/crates/vmm/src/config.rs` except `RUNTIME_DIRECTORY`, as
+   `creche-env get` resolves it against the site file. No script writes
+   the file yet, and no script installs the unit. A proposal: `fleet-up up`
+   writes the file with `creche_env_get`, as it writes `noticeboard.env`,
+   and installs the unit. Until then the start fails, and the vmm never
+   runs with a guessed value.
+2. Plan risk 5: the unit sets `NoNewPrivileges`, so no_new_privs is set
+   when the launch stage writes the AppArmor exec attribute. The kvm job
+   sets it after that write, as the stage does (decision CH55). No job
+   proves the order under the unit. The pre-cut proof (decision CH47)
+   runs the vmm by hand with the unit stopped, so the first start of the
+   unit on the host is also its first run in this order. A refused write
+   fails the launch closed (decision CH55), so a wrong order starts no
+   VM and lets no VM run unconfined.
