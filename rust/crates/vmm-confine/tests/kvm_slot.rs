@@ -897,7 +897,9 @@ fn kvm_ch_output_reaches_the_sink_with_its_id() {
 
 /// A drop of the spawner ends its thread, and the kernel kills CH by its
 /// death signal (decision CH19 (4), facts 76 and 80). The control: CH
-/// still runs after its boot while the spawner lives.
+/// still runs after its boot while the spawner lives. This test fails
+/// today: AppArmor clears the death signal at the exec into the slot
+/// label (the CONTRACT-QUESTION in the crate AGENTS.md).
 #[test]
 #[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
 fn kvm_ch_dies_with_the_spawner_thread() {
@@ -922,7 +924,8 @@ fn kvm_ch_dies_with_the_spawner_thread() {
 /// A SIGKILL of the vmm kills CH by its death signal, and the scope goes
 /// with it (decision CH19 (4), fact 80). The example in its role `hold`
 /// is the vmm. The control: CH still runs after its boot while the vmm
-/// lives.
+/// lives. This test fails today for the same reason as
+/// `kvm_ch_dies_with_the_spawner_thread`.
 #[test]
 #[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
 fn kvm_ch_dies_with_a_killed_vmm() {

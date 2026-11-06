@@ -666,8 +666,11 @@ future of the signal. `shutdown::shutdown` then runs these steps:
 inside the `TimeoutStopSec` of 90 s (decision CH56 rule 3, gap G16). A
 stop (36 s) and a take (75 s) each fit inside it. One deadline bounds
 every step, so a full take and then a full stop of one VM need not both
-fit (decision CH56 rule 2). A VM still in the set at the deadline ends
-with the vmm through PDEATHSIG (decision CH19 (4)). `ColdBoot` is the `VmSet` of the vmm.
+fit (decision CH56 rule 2). Decision CH19 (4) wants a VM still in the
+set at the deadline to end with the vmm through PDEATHSIG. CH under its
+slot label has no death signal, so this does not hold yet: see the
+CONTRACT-QUESTION in `rust/crates/vmm-confine/AGENTS.md`. `ColdBoot` is
+the `VmSet` of the vmm.
 `tests/shutdown.rs` runs the steps on paused time with a fake set.
 `tests/start.rs` proves the take of an idle VM, the stop of a busy one
 and the door close over the hook, and the graceful stop of each VM with
