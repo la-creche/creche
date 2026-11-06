@@ -667,8 +667,8 @@ fn a_failed_launch_faults_and_frees_its_ram() {
 
 /// A store copy with no identity fails the start, and so does a failed
 /// `mke2fs` (decision CH44 rule 2, PR D7). So does a config with no
-/// digests, the vmm of plan PR L20 until design item 49 Q49-1 has an
-/// answer. None launches.
+/// digests: the vmm of plan PR L20 until it reads the `digests.json` of
+/// decision CH57 rule 1. None launches.
 #[test]
 fn a_bad_image_or_disk_faults_before_the_launch() {
     let test = Test::new("digests", |config| config.digests = None);

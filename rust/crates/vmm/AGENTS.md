@@ -636,21 +636,20 @@ no guest sync.
 14. Closed by plan PR L20: the config and the compose step are one PR.
     `src/compose.rs` reads each field of `Config`, so each `VMM_*` key
     of `default.env` lands with its first reader.
-15. CONTRACT-QUESTION (design item 49 Q49-1): no row names the image
-    source, the dir where root installs the `.zst` files of the disk
-    row, or how the vmm learns the digests of `start::Digests`. A digest
-    changes with each release, so it is no default of the catalog
-    (`env/AGENTS.md` rule 5). The config reads neither. The compose step
-    reads the images from the digest store of the state root only and
-    imports none. It passes `StartConfig::digests` as `None`, so each
-    start gets `sandbox_start_failed` with a fault line, and no VM boots
+15. Open, not built yet: decision CH57 rule 1 (design item 49 Q49-1)
+    gives the key `VMM_IMAGE_ROOT`, default `${AGENT_INSTALL_ROOT}/disks`,
+    and a `digests.json` there that the phase 5 disk row installs. The
+    vmm trusts that file only when root owns it and the vmm user cannot
+    write it, and a missing, malformed or writable file refuses the
+    start. This branch has no such key. The compose step reads the
+    images from the digest store of the state root only and imports
+    none. It passes `StartConfig::digests` as `None`, so each start gets
+    `sandbox_start_failed` with a fault line, and no VM boots
     (`src/start.rs`, `src/compose.rs`). The list, create and drop routes
-    work. An answer costs one config key and its read in
-    `src/compose.rs`.
-16. CONTRACT-QUESTION (design item 49 Q49-2): no row says whether a
-    size of 0 GiB is good. The config refuses 0 for `VMM_RAM_CAP_GIB`,
-    which admits no VM, and for `VMM_SNAPSHOT_BUDGET_GIB`, which drops
-    every snapshot at the first sweep. It takes 0 for
+    work. The build of rule 1 adds the key, its read in `src/compose.rs`
+    and the import.
+16. Closed by decision CH57 rule 2: the config refuses 0 GiB for
+    `VMM_RAM_CAP_GIB` and `VMM_SNAPSHOT_BUDGET_GIB`, and takes 0 for
     `VMM_FREE_FLOOR_GIB`.
 17. Closed by a read-only check on Hyperion, as david with no sudo
     (CH36 G31), on 2026-11-04: `/usr/sbin/mke2fs` (e2fsprogs) and

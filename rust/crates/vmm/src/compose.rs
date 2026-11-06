@@ -212,12 +212,11 @@ fn build(config: Config) -> Result<Vmm, StartError> {
     let start = StartConfig {
         images: ImageStore::new(&config.state, config.zstd.path().to_owned()),
         disks: SessionDisks::new(&config.state, config.mke2fs.path().to_owned()),
-        // CONTRACT-QUESTION (design item 49 Q49-1): no row names the image
-        // source or the source of the digests. The vmm reads the images
-        // from the digest store of the state root only, imports none, and
-        // knows no digest. So each start fails closed with
-        // `sandbox_start_failed`. An answer costs one config key and its
-        // read here.
+        // Decision CH57 rule 1 (design item 49 Q49-1) is not built yet:
+        // no `VMM_IMAGE_ROOT` and no `digests.json`. The vmm reads the
+        // images from the digest store of the state root only, imports
+        // none, and knows no digest. So each start fails closed with
+        // `sandbox_start_failed` (`AGENTS.md`, Known gap 15).
         digests: None,
         initramfs: None,
         state: config.state,

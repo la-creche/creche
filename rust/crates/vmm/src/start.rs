@@ -92,8 +92,8 @@ const SERIAL_MODE: u32 = 0o600;
 /// change costs one constant.
 const SLOT_POLL: Duration = Duration::from_millis(10);
 
-/// The fault text of a start with no digests (design item 49 Q49-1).
-const NO_DIGESTS: &str = "the vmm has no image digests yet (design item 49 Q49-1)";
+/// The fault text of a start with no digests (decision CH57 rule 1).
+const NO_DIGESTS: &str = "the vmm has no image digests yet (decision CH57 rule 1)";
 
 /// The store digests of the guest kernel and of the root disk of each
 /// flavor (decisions CH7-3, CH8-8).
@@ -131,11 +131,11 @@ pub struct StartConfig {
     /// The session disks.
     pub disks: SessionDisks,
     /// The kernel and the root disks. `None` fails each start closed.
-    // CONTRACT-QUESTION (design item 49 Q49-1): no row says where the vmm
-    // learns the expected digests. The vmm of plan PR L20 passes `None`,
-    // so each start gets `sandbox_start_failed` with a fault line, and no
-    // VM boots. Each other route works. An answer to Q49-1 costs one
-    // config read in `compose.rs` and no change here.
+    // Decision CH57 rule 1 (design item 49 Q49-1) gives the digests a
+    // root-owned `digests.json`, which the vmm does not read yet. Until
+    // then the vmm passes `None`, so each start gets
+    // `sandbox_start_failed` with a fault line, and no VM boots. Each
+    // other route works.
     pub digests: Option<Digests>,
     /// The initramfs, optional until phase 3 adds guest init (PR C7).
     pub initramfs: Option<HostPath>,

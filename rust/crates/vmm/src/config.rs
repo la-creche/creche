@@ -51,12 +51,10 @@ pub const BUDGET: &str = "VMM_SNAPSHOT_BUDGET_GIB";
 
 /// What the vmm reads from its env.
 ///
-/// CONTRACT-QUESTION (design item 49 Q49-1): no row names the image
-/// source (the dir of the `.zst` files that root installs, decision CH35
-/// rule 4) or the source of the digests of `start::Digests`. A digest
-/// changes with each release, so it is no catalog default (`env/AGENTS.md`
-/// rule 5). The config reads neither until a row decides. So the compose
-/// step knows no digest, and each start fails closed.
+/// Decision CH57 rule 1 (design item 49 Q49-1) gives the image source
+/// the key `VMM_IMAGE_ROOT` and a root-owned `digests.json` in it. This
+/// config does not read it yet (`AGENTS.md`, Known gap 15). So the
+/// compose step knows no digest, and each start fails closed.
 #[derive(Debug)]
 pub struct Config {
     /// `VMM_STATE_ROOT`.
@@ -185,10 +183,10 @@ impl Config {
     }
 }
 
-/// Whether a size of 0 GiB is a good value. CONTRACT-QUESTION (design
-/// item 49 Q49-2): no row says. A cap of 0 admits no VM, and a budget of 0 drops every snapshot
-/// at the first sweep, so both refuse 0. A floor of 0 only turns the
-/// free-space check off.
+/// Whether a size of 0 GiB is a good value (decision CH57 rule 2). A cap
+/// of 0 admits no VM, and a budget of 0 drops every snapshot at the first
+/// sweep, so both refuse 0. A floor of 0 only turns the free-space check
+/// off.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Zero {
     Allowed,
