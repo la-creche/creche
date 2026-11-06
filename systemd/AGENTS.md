@@ -72,17 +72,6 @@ file's removal is always a human verb.
    creche-release, not here.
 5. Name it in the root `README.md`, section 3.
 
-## Caller duties
-
-1. The rework of #443 (plan PR C15) proves the order under
-   `creche-vmm.service` in the job `kvm`. The unit sets
-   `NoNewPrivileges=yes`, so no_new_privs is set before the launch stage
-   writes the AppArmor exec attribute. The stage sets it only after that
-   write (decision CH55). The kvm tests must set no_new_privs before the
-   write, as the unit does, and prove the slot label. A refused write
-   fails the launch closed (decision CH55), so a wrong order starts no VM
-   and lets no VM run unconfined.
-
 ## Decided
 
 1. The env file of `creche-vmm.service` is decision CH59 rule 1. The
@@ -96,3 +85,14 @@ file's removal is always a human verb.
    `sessions/<id>/serial.log` in the state root, kept until the next start
    of that session (gap G23). Until D17 merges, each stop removes the
    `serial.log` of each VM.
+3. The vmm stand-in of the job `kvm` copies the decided lines of
+   `creche-vmm.service` that touch the launch chain and its stop:
+   `NoNewPrivileges=yes`, `KillMode=mixed` and each `Restart` line
+   (`rust/crates/vmm-confine/tests/stand_in`, decision CH60 rule 1). A
+   test in the job `rust` fails when a line differs from this unit. So
+   no_new_privs is set before the launch stage writes the AppArmor exec
+   attribute, as in production. The stage sets it only after that write
+   (decision CH55). The kvm tests check no_new_privs of the stand-in
+   before each launch, then prove the slot label of CH. A refused write
+   fails the launch closed (decision CH55), so a wrong order starts no VM
+   and lets no VM run unconfined.

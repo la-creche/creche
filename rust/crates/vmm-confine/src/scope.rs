@@ -11,8 +11,12 @@
 //! the vmm unit stops only after the vmm unit has stopped. On a stop or a
 //! restart of the vmm unit, the shutdown of
 //! `rust/crates/vmm/src/shutdown.rs` therefore runs before any VM stops
-//! (decision CH19 (4)). After a crash the vmm unit is down at once, and
-//! systemd stops every VM scope.
+//! (decision CH19 (4)). A restart starts no VM scope again. After a crash,
+//! `Restart=always` puts the vmm unit through `failed` into
+//! `auto-restart`, and systemd stops every VM scope then, before the next
+//! start of the unit. `tests/kvm_slot.rs` proves the stop, the restart
+//! and the crash, each with a vmm stand-in that has the restart and kill
+//! lines of `systemd/creche-vmm.service`.
 
 use std::ffi::OsString;
 use std::num::{NonZeroU32, NonZeroU64};
