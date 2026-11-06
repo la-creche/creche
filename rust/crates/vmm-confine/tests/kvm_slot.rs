@@ -1003,6 +1003,14 @@ fn hold_booted(rig: &Rig, seat: &Seat, gated: bool) -> (StandIn, u32) {
 /// the spawner does not end CH, because AppArmor clears the death signal
 /// at the exec into the slot label. So this test proves the stop of the
 /// unit in place of the drop of the spawner.
+///
+/// This test proves the outcome of CH61 rule 1 on a stop, not the
+/// `ExecStopPost=` step. `BindsTo=` also stops the scope here, and CH is
+/// a child of `hold`, so the test cannot read how CH died. The tests
+/// that read the signal 9 of the step are
+/// `kvm_a_vmm_unit_stop_kills_each_vm`,
+/// `kvm_a_vmm_unit_restart_ends_each_vm` and
+/// `kvm_a_vmm_crash_frees_the_scope_of_each_vm`.
 #[test]
 #[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
 fn kvm_ch_stops_after_its_vmm_unit_stops() {
@@ -1032,11 +1040,18 @@ fn kvm_ch_stops_after_its_vmm_unit_stops() {
 /// A SIGKILL of the vmm ends the VM scope and its CH before the vmm unit
 /// starts again (decision CH61 rule 1). The stand-in's main process gets
 /// the SIGKILL, as a crash ends the vmm. The `ExecStopPost=` step of the
-/// unit kills each VM scope, then the unit passes through `failed` into
-/// `auto-restart` (`Restart=always`). `RestartSec` is 5 s, so CH and its
-/// scope are gone while the unit still waits in `auto-restart`. The restarted `hold`
-/// reads EOF and exits 78, so the unit then stays down. The control: CH
-/// runs while the stand-in runs.
+/// unit or `BindsTo=` ends each VM scope, and the unit passes through
+/// `failed` into `auto-restart` (`Restart=always`). `RestartSec` is 5 s,
+/// so CH and its scope are gone while the unit still waits in
+/// `auto-restart`. The restarted `hold` reads EOF and exits 78, so the
+/// unit then stays down. The control: CH runs while the stand-in runs.
+///
+/// This test proves the outcome of CH61 rule 1 on a crash, not the
+/// `ExecStopPost=` step. `BindsTo=` alone stops the scope when the unit
+/// fails, and CH is a child of `hold`, so the test cannot read how CH
+/// died. The signal 9 of `kvm_a_vmm_crash_frees_the_scope_of_each_vm`
+/// proves the step on a crash, and the signal 9 of
+/// `kvm_a_vmm_unit_restart_ends_each_vm` proves it on a restart.
 #[test]
 #[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
 fn kvm_ch_dies_with_a_killed_vmm() {
@@ -1058,9 +1073,17 @@ fn kvm_ch_dies_with_a_killed_vmm() {
 
 /// A restart of the `hold` stand-in, whose spawner runs in the unit as in
 /// the vmm, ends the VM scope and its CH (decision CH61 rule 1). The
-/// `ExecStopPost=` step of the stop part of the restart kills the scope.
-/// The restarted `hold` reads EOF and exits 78, so the unit then ends
-/// `failed` and stays down. The control: CH runs while the stand-in runs.
+/// `ExecStopPost=` step of the stop part of the restart kills the scope,
+/// or `BindsTo=` stops it when the restarted `hold` fails: it reads EOF
+/// and exits 78, so the unit then ends `failed` and stays down. The
+/// control: CH runs while the stand-in runs.
+///
+/// This test proves the outcome of CH61 rule 1 on a failed restart, not
+/// the `ExecStopPost=` step. `BindsTo=` alone also stops the scope here,
+/// and CH is a child of `hold`, so the test cannot read how CH died. The
+/// signal 9 of `kvm_a_vmm_unit_restart_ends_each_vm` proves the step on
+/// a restart, and the signal 9 of
+/// `kvm_a_vmm_crash_frees_the_scope_of_each_vm` proves it on a crash.
 #[test]
 #[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
 fn kvm_ch_stops_when_the_restarted_vmm_fails() {
@@ -1074,6 +1097,44 @@ fn kvm_ch_stops_when_the_restarted_vmm_fails() {
 
     assert!(vmm.systemctl(&["restart"]), "the restart failed");
     until("CH death after the failed start", || !running(pid));
+    until("scope removal", || !dir.exists());
+    until_settled(&scope, "inactive");
+    until_state(rig.unit.name(), "inactive");
+}
+
+/// A stop of the vmm unit ends each VM scope and its CH by the SIGKILL of
+/// the `ExecStopPost=` step (decision CH61 rule 1). The stand-in is a
+/// gated `/bin/sleep infinity`, and the spawner runs in the test, so the
+/// test reads how CH died. Without the step, `BindsTo=` stops the scope
+/// after the stop of the unit (`Before=`, CH61 rule 2), and CH answers
+/// the SIGTERM of that scope stop with an exit code. So the signal 9
+/// proves that the step ran. The controls: CH runs while the stand-in
+/// runs, and CH and its scope still run 1 s into the gated stop.
+#[test]
+#[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
+fn kvm_a_vmm_unit_stop_kills_each_vm() {
+    let mut rig = Rig::new("stop-kill");
+    let seat = rig.seat("0123abcd-0000-4000-8000-0000000c15e0", 23);
+    let vmm = Vmm::gated(&rig);
+    let mut ch = vmm.launch(rig.boot(&seat));
+    wait_booted(&vmm, &ch, &seat);
+    let pid = ch.0.id();
+    let scope = format!("{}.scope", scope_unit(&seat.id));
+    let dir = scope_dir(pid);
+    sleep(Duration::from_secs(1));
+    assert!(running(pid), "CH exited while the vmm lived");
+    assert_eq!(state_of(&scope), "active");
+
+    assert!(vmm.unit.systemctl(&["stop", "--no-block"]), "no stop job");
+    until_state(rig.unit.name(), "deactivating");
+    sleep(Duration::from_secs(1));
+    assert!(running(pid), "CH stopped before the vmm unit");
+    assert_eq!(state_of(&scope), "active");
+
+    fs::write(&vmm.unit.gate, b"").unwrap();
+    until("CH death after the stop", || !running(pid));
+    let status = ch.0.wait().unwrap();
+    assert_eq!(status.signal(), Some(9), "{status}");
     until("scope removal", || !dir.exists());
     until_settled(&scope, "inactive");
     until_state(rig.unit.name(), "inactive");

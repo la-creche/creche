@@ -236,12 +236,17 @@ table of the three vmm crates.
      the stand-in has exited: CH still runs 1 s into the stop. A SIGKILL
      of the stand-in ends CH and its scope while the unit waits in
      `auto-restart`. A restart of the `hold` stand-in ends CH and its
-     scope. A restart of a gated `/bin/sleep` stand-in ends CH by the
-     SIGKILL of the `ExecStopPost=` step, after CH ran 1 s into the
-     gated stop, and the unit comes back. A crash of a `/bin/sleep`
-     stand-in ends CH by that SIGKILL too (CH61 rule 1). After the
-     restart and after the crash, a new launch of the same session
-     boots. Each test has the control that CH runs while the stand-in
+     scope. In these three `hold` tests `BindsTo=` also stops the scope,
+     and CH is a child of `hold`, so they prove the outcome of CH61 rule
+     1, not the `ExecStopPost=` step. The step has its own proof, with
+     the spawner in the test, which reads the signal 9 of CH. Without
+     the step, the scope stop of `BindsTo=` sends SIGTERM, and CH exits
+     with a code. A stop and a restart of a gated `/bin/sleep` stand-in
+     each end CH by the SIGKILL of the step, after CH ran 1 s into the
+     gated stop. After the restart the unit comes back. A crash of a
+     `/bin/sleep` stand-in ends CH by that SIGKILL too (CH61 rule 1).
+     After the restart and after the crash, a new launch of the same
+     session boots. Each test has the control that CH runs while the stand-in
      runs. A drop of the spawner does not end CH, so no test claims it.
      `Launched::terminate` sends SIGTERM.
   5. The output of each CH reaches the sink tagged `ch <session id>`.
