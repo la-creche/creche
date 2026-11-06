@@ -297,6 +297,30 @@ impl StandIn {
             .is_ok_and(|status| status.success())
     }
 
+    /// Fails unless the last `ExecStopPost=` step of the unit ran and
+    /// exited 0 (decision CH63). systemd shows a run of the step as
+    /// `{ path=… ; … ; pid=<pid> ; code=exited ; status=0 }`. It clears
+    /// that run at the next start of the unit (`service_start` in
+    /// `src/core/service.c`, systemd v255), and then shows `pid=0 ;
+    /// code=(null) ; status=0/0`. So a test calls this while the unit
+    /// waits in `auto-restart`, after the step and before the next start.
+    pub fn assert_stop_post_exited_0(&self) {
+        let run = property_of(self.unit.name(), "ExecStopPost");
+        let fields: Vec<(&str, &str)> = run
+            .trim_start_matches("{ ")
+            .trim_end_matches(" }")
+            .split(" ; ")
+            .filter_map(|field| field.split_once('='))
+            .collect();
+        let field = |key: &str| fields.iter().find(|(name, _)| *name == key).map(|f| f.1);
+        assert!(
+            field("pid").is_some_and(|pid| pid != "0"),
+            "the step did not run: {run}"
+        );
+        assert_eq!(field("code"), Some("exited"), "{run}");
+        assert_eq!(field("status"), Some("0"), "{run}");
+    }
+
     /// Sends SIGKILL to the main process of the unit, as a crash of the
     /// vmm ends it.
     pub fn kill(&self) {
