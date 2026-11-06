@@ -498,9 +498,12 @@ fn kvm_vm_snapshot_restore_kill() {
     assert_eq!(second.generation.0, first.generation.0 + 1);
     assert_eq!(digests(&first_files), first_digests);
 
-    // 5: a SIGKILL of the vmm stand-in. Its unit fails, and systemd stops
-    // the bound scope and CH (decision CH60 rule 1). The control: CH and
-    // its scope run while the stand-in runs.
+    // 5: a SIGKILL of the vmm stand-in. Under `Restart=always` its unit
+    // passes through `failed` into `auto-restart`, and systemd stops the
+    // bound scope and CH before the next start, 5 s later (decision CH60
+    // rule 1). The restarted `hold` reads EOF and exits 78, so the unit
+    // then stays down. The control: CH and its scope run while the
+    // stand-in runs.
     let unit = stand_in::unit("vm-kill");
     let held = setup.hold(&setup.restore(setup.claim(&second), last, &unit));
     let pid = held.pid;
@@ -510,5 +513,6 @@ fn kvm_vm_snapshot_restore_kill() {
     held.vmm.kill();
     until("CH death after the vmm kill", || !running(pid));
     until("scope removal", || setup.units().trim().is_empty());
+    assert_eq!(held.vmm.sub_state(), "auto-restart");
     until_state(unit.name(), "inactive");
 }
