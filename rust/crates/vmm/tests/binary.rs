@@ -1,0 +1,147 @@
+//! The program `vmm serve` and its config (plan PR L20). It needs no KVM.
+//! A missing or bad key exits 78 and names the key (owner item 86), and so
+//! does an untrusted image root (decision CH57 rule 1). Each test waits
+//! for the vmm to exit, so no test leaves a vmm behind.
+
+use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+
+use creche_vmm::config::{BUDGET, RAM_CAP, STATE_ROOT};
+
+/// The exit status of a refused start.
+const EX_CONFIG: i32 = 78;
+
+/// A program that does nothing and exits 0.
+const TRUE: &str = "/usr/bin/true";
+
+/// Each key with a good value. The paths need not exist: the config
+/// checks their form only.
+const GOOD: [(&str, &str); 15] = [
+    ("VMM_STATE_ROOT", "/srv/vmm/state"),
+    ("RUNTIME_DIRECTORY", "/run/user/1000/vmm"),
+    ("VMM_FAMILY_ROOT", "/srv/families"),
+    ("VMM_FAULTS_ROOT", "/srv/faults"),
+    ("VMM_IMAGE_ROOT", "/opt/components/disks"),
+    ("VMM_CH_PROGRAM", "/opt/components/vmm/bin/cloud-hypervisor"),
+    ("VMM_CH_REMOTE_PROGRAM", "/opt/components/vmm/bin/ch-remote"),
+    ("AGENT_SYSTEMD_RUN_PROGRAM", "/usr/bin/systemd-run"),
+    ("AGENT_SYSTEMCTL_PROGRAM", "/usr/bin/systemctl"),
+    ("VMM_ZSTD_PROGRAM", "/usr/bin/zstd"),
+    ("VMM_MKE2FS_PROGRAM", "/usr/sbin/mke2fs"),
+    ("VMM_FALLOCATE_PROGRAM", "/usr/bin/fallocate"),
+    ("VMM_RAM_CAP_GIB", "80"),
+    ("VMM_FREE_FLOOR_GIB", "50"),
+    ("VMM_SNAPSHOT_BUDGET_GIB", "150"),
+];
+
+/// A scratch dir that its drop removes, also after a failed assert.
+struct Scratch(PathBuf);
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// Runs `vmm serve` with only the keys of `env` and gives its stderr.
+#[cfg(test)]
+fn serve(env: &[(&str, &str)]) -> (Output, String) {
+    let output = Command::new(env!("CARGO_BIN_EXE_vmm"))
+        .arg("serve")
+        .env_clear()
+        .envs(env.iter().copied())
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8(output.stderr.clone()).unwrap();
+    (output, stderr)
+}
+
+#[test]
+fn an_empty_env_exits_78_and_names_the_first_key() {
+    let (output, stderr) = serve(&[]);
+    assert_eq!(output.status.code(), Some(EX_CONFIG));
+    assert_eq!(stderr, format!("vmm: {STATE_ROOT}: the key has no value\n"));
+}
+
+#[test]
+fn a_bad_key_exits_78_and_names_the_key() {
+    let mut env = GOOD.to_vec();
+    for one in &mut env {
+        if one.0 == BUDGET {
+            one.1 = "0";
+        }
+    }
+    let (output, stderr) = serve(&env);
+    assert_eq!(output.status.code(), Some(EX_CONFIG));
+    assert_eq!(stderr, format!("vmm: {BUDGET}: the key is 0\n"));
+
+    let env: Vec<_> = GOOD
+        .iter()
+        .copied()
+        .filter(|one| one.0 != RAM_CAP)
+        .collect();
+    let (output, stderr) = serve(&env);
+    assert_eq!(output.status.code(), Some(EX_CONFIG));
+    assert_eq!(stderr, format!("vmm: {RAM_CAP}: the key has no value\n"));
+}
+
+/// A good config on temp paths runs each start step before the image
+/// root: the leftover sweep (`true` lists no scope) and the CH version
+/// check (the fixture). Then the vmm refuses a missing `digests.json`
+/// and one that root does not own, and exits 78 (decision CH57 rule 1,
+/// owner item 86). A test cannot make a root-owned file, so the serve
+/// proof of plan PR L20 runs on the compose step (`src/compose/tests.rs`).
+#[test]
+fn an_untrusted_image_root_exits_78() {
+    // `/tmp`, not `temp_dir`: the run root bounds the socket paths under
+    // it (`SOCKET_PATH_MAX`), and the temp dir of macOS is too long.
+    let scratch =
+        Scratch(Path::new("/tmp").join(format!("creche-vmm-{}-binary", std::process::id())));
+    let dir = &scratch.0;
+    let _ = std::fs::remove_dir_all(dir);
+    for sub in ["state", "run", "families", "faults", "images"] {
+        std::fs::create_dir_all(dir.join(sub)).unwrap();
+    }
+    let path = |sub: &str| dir.join(sub).to_str().unwrap().to_owned();
+    let ch = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/cloud-hypervisor"
+    );
+    let (state, run, families, faults, images) = (
+        path("state"),
+        path("run"),
+        path("families"),
+        path("faults"),
+        path("images"),
+    );
+    let mut env = GOOD.to_vec();
+    for one in &mut env {
+        one.1 = match one.0 {
+            "VMM_STATE_ROOT" => &state,
+            "RUNTIME_DIRECTORY" => &run,
+            "VMM_FAMILY_ROOT" => &families,
+            "VMM_FAULTS_ROOT" => &faults,
+            "VMM_IMAGE_ROOT" => &images,
+            "VMM_CH_PROGRAM" => ch,
+            key if key.ends_with("_GIB") => one.1,
+            _ => TRUE,
+        };
+    }
+
+    let (output, stderr) = serve(&env);
+    assert_eq!(output.status.code(), Some(EX_CONFIG), "{stderr}");
+    assert_eq!(stderr, "vmm: VMM_IMAGE_ROOT: the digests.json is missing\n");
+
+    std::fs::write(dir.join("images/digests.json"), "{}").unwrap();
+    let uid = std::fs::metadata(dir.join("images/digests.json"))
+        .unwrap()
+        .uid();
+    let (output, stderr) = serve(&env);
+    if uid != 0 {
+        assert_eq!(output.status.code(), Some(EX_CONFIG), "{stderr}");
+        let expected =
+            format!("vmm: VMM_IMAGE_ROOT: the digests.json is owned by uid {uid}, not by root\n");
+        assert_eq!(stderr, expected);
+    }
+}

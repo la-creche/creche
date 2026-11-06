@@ -37,13 +37,13 @@ use creche_vmm_store::ch_remote::{ChRemoteError, VmInfo};
 use creche_vmm_store::images::{ImageDigest, ImageStore};
 use creche_vmm_store::key::{CheckedCh, SnapshotKey, check_cloud_hypervisor, write_key};
 use creche_vmm_store::layout::{RunRoot, SessionDir, SnapshotGeneration, StateRoot, VmRunDir};
-use creche_vmm_store::retention::Reason;
+use creche_vmm_store::retention::{BUDGET, Reason};
 use creche_vmm_store::rows::Rows;
 use creche_vmm_store::session_disk::SessionDisks;
 use creche_vmm_store::sleep_gate::IDLE_TIMEOUT;
 use creche_wire::{
-    DropError, DropRoute, DropSession, DropTarget, Dropped, FamilyName, OpenAcp, Serve,
-    ServeUpgrade as _, SessionId, SessionRow,
+    DropError, DropRoute, DropSession, DropTarget, Dropped, FamilyName, OpenAcp, PerFlavor,
+    SandboxFlavor, Serve, ServeUpgrade as _, SessionId, SessionRow,
 };
 use tokio::runtime::{Builder, Runtime};
 
@@ -61,6 +61,11 @@ const STARTING: &str = r#"{"facade":{"starting":{"last_turn_end":null,"pid":42,"
 const ENDED: &str = r#"{"facade":{"running":{"last_turn_end":{"title":"First","updated_at":1793577700000},"pid":42,"starts":1,"turn_running":false}}}"#;
 /// The SHA-256 of no bytes: the fake kernel and root disk are empty.
 const EMPTY: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+/// The SHA-256 of `abc`: the root disk of each flavor but `python` in
+/// the flavor test.
+const ABC: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+/// The SHA-256 of `hello world`: the python root disk in the flavor test.
+const HELLO: &str = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9";
 
 /// How the fake guest answers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -400,8 +405,7 @@ impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
             disks: SessionDisks::new(&state, PathBuf::from("/usr/bin/true")),
             digests: Digests {
                 kernel: empty,
-                base: empty,
-                python: empty,
+                roots: PerFlavor::every(|_| empty),
             },
             initramfs: None,
             ch: Program::new(PathBuf::from(CH)).unwrap(),
@@ -410,6 +414,7 @@ impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
                 ram_cap: 80 * GIB,
                 free_floor: 0,
             },
+            budget: BUDGET,
             ch_version: ch,
         };
         edit(&mut config);
@@ -622,6 +627,46 @@ fn a_cold_boot_launches_the_checked_files_and_clears_the_fault() {
     let serial = test.dir.join(format!("run/vm/{A}/serial.log"));
     let mode = fs::metadata(serial).unwrap().permissions().mode();
     assert_eq!(mode & 0o777, 0o600);
+}
+
+/// Each VM boots the root disk of the flavor of its family shape
+/// (decisions CH8-8, CH58 rule 4). The python disk and the other disks
+/// hold other bytes, so a launch that takes the disk of another flavor
+/// fails the check of the `--disk` path.
+#[test]
+fn each_flavor_boots_its_own_root_disk() {
+    let python: ImageDigest = HELLO.parse().unwrap();
+    let other: ImageDigest = ABC.parse().unwrap();
+    let test = Test::new("flavor", |config| {
+        let dir = config.state.path().parent().unwrap().to_owned();
+        for (digest, bytes) in [(python, "hello world"), (other, "abc")] {
+            let file = dir.join(format!("{digest}.disk"));
+            fs::write(&file, bytes).unwrap();
+            config.images.import(&file, digest).unwrap();
+        }
+        config.digests.roots = PerFlavor::every(|flavor| {
+            if flavor == SandboxFlavor::Python {
+                python
+            } else {
+                other
+            }
+        });
+    });
+    let shape = test.dir.join("families/chat/config/shape.json");
+    for (index, flavor, digest) in [(0, "python", python), (1, "base", other)] {
+        let json = format!(r#"{{"cpus":1,"flavor":"{flavor}","memory_mib":512}}"#);
+        fs::write(&shape, json).unwrap();
+        assert_eq!(test.start(index), Ok(()), "{flavor}");
+        let launches = test.fake.launches.lock().unwrap();
+        let args = launches[index].payload().args();
+        let disk = args.iter().position(|arg| arg == "--disk").unwrap();
+        let root = test.dir.join(format!("state/store/{digest}"));
+        assert_eq!(
+            args[disk + 1],
+            format!("path={},readonly=on,image_type=raw", root.display()),
+            "{flavor}"
+        );
+    }
 }
 
 /// A second start of a VM that runs dials it and launches nothing. A
@@ -997,6 +1042,25 @@ fn the_sweep_skips_a_snapshot_in_use() {
     let swept = test.runtime.block_on(test.hook.sweep()).unwrap();
     let reasons: Vec<Reason> = swept.dropped.iter().map(|each| each.reason).collect();
     assert_eq!(reasons, [Reason::Consumed]);
+    assert!(!dir.exists());
+}
+
+/// The sweep reads the budget of `StartConfig`, the key
+/// `VMM_SNAPSHOT_BUDGET_GIB` (gap G14). A budget of 1 byte drops a keyed
+/// generation that `BUDGET` keeps.
+#[test]
+fn the_sweep_drops_past_the_config_budget() {
+    let test = Test::new("budget-design", |_| {});
+    let dir = test.snapshot(0, Some(&test.key()));
+    let swept = test.runtime.block_on(test.hook.sweep()).unwrap();
+    assert!(swept.dropped.is_empty());
+    assert!(dir.is_dir());
+
+    let test = Test::new("budget-small", |config| config.budget = 1);
+    let dir = test.snapshot(0, Some(&test.key()));
+    let swept = test.runtime.block_on(test.hook.sweep()).unwrap();
+    let reasons: Vec<Reason> = swept.dropped.iter().map(|each| each.reason).collect();
+    assert_eq!(reasons, [Reason::Budget]);
     assert!(!dir.exists());
 }
 

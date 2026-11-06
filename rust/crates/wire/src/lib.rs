@@ -10,6 +10,7 @@ use serde::de::value::MapAccessDeserializer;
 use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+mod per_flavor;
 mod ports;
 mod routes;
 #[cfg(test)]
@@ -17,6 +18,7 @@ mod schema;
 #[cfg(test)]
 mod vectors;
 
+pub use per_flavor::PerFlavor;
 pub use ports::{GUEST_INIT_PROTOCOL, GuestPort, HostPort};
 pub use routes::{
     AcpError, AcpRoute, Body, CreateError, CreateRoute, DROP_CLIENT_TIMEOUT, DROP_SIGTERM_GRACE,
@@ -1611,6 +1613,19 @@ shape_size!(
 pub enum SandboxFlavor {
     Base,
     Python,
+}
+
+impl SandboxFlavor {
+    /// The wire name of the flavor, as the serde derive writes it. The
+    /// match names each variant, so a new flavor fails to compile until it
+    /// has a name. A test of `per_flavor.rs` holds it equal to the derive.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Base => "base",
+            Self::Python => "python",
+        }
+    }
 }
 
 /// The family VM shape: the file `FAMILY_SHAPE_FILE` in the family's
