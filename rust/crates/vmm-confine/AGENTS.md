@@ -63,7 +63,8 @@ table of the three vmm crates.
   path from the vmm config (owner env rule, decision CH36 G5): the
   `systemd-run` program of `launch::Launch`, from the existing key
   `AGENT_SYSTEMD_RUN_PROGRAM`, the `systemctl` program of
-  `leftovers::stop_all`, from the existing key `AGENT_SYSTEMCTL_PROGRAM`,
+  `leftovers::stop_all` and `leftovers::kill_all`, from the existing key
+  `AGENT_SYSTEMCTL_PROGRAM`,
   and the faults root of `faults::FaultDir::open`, the `faults` dir of
   the creche state root that caregiver reads (contract 05 §3.3.1).
 - `limits::VmLimits` maps the family VM shape to the VM sizes and the
@@ -121,6 +122,15 @@ table of the three vmm crates.
   failed scope blocks `systemd-run --unit` with its name. The last list
   decides: a unit still loaded then is an error. The vmm config gives the
   path of `systemctl`, like the path of `systemd-run`.
+- `leftovers::kill_all` is the mode `vmm kill-scopes`, the `ExecStopPost=`
+  step of the vmm unit (decisions CH61 rule 1, CH63). It lists the same
+  units as `stop_all` and runs `systemctl --user kill --signal=SIGKILL`
+  on each one by name. It queues no stop job, because each scope is
+  ordered `Before=` the vmm unit (CH61 rule 2), so a wait for that job
+  in the step would deadlock. When a kill fails, one fresh list decides:
+  a unit that it no longer holds had ended (NoSuchUnit), and a unit that
+  it still holds is an error. `tests/leftovers.rs` proves both against a
+  fake `systemctl`.
 - The Landlock ruleset of a VM confines the launch stage from its step 3
   on, then Cloud Hypervisor (decisions CH8-3, CH30, CH55). `systemd-run`
   runs before it, so the ruleset has no rule for it. The vmm process is

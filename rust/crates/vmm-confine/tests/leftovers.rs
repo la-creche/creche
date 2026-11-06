@@ -1,8 +1,12 @@
-//! The stop of leftover VM scopes against a fake `systemctl` (decision
-//! CH19 (4), fact 76). The fake records each call and prints the listing
-//! of its turn: `list.1` for the first `list-units`, `list.2` for the
-//! second, and so on. Its `stop` and `reset-failed` exit 5, so a test also
-//! shows that their status is not read.
+//! The stop of leftover VM scopes and the kill of `vmm kill-scopes`
+//! against a fake `systemctl` (decisions CH19 (4), CH63, fact 76). The
+//! fake records each call and prints the listing of its turn: `list.1`
+//! for the first `list-units`, `list.2` for the second, and so on. It
+//! exits with `list.status`, or with `list.status.<turn>` when that file
+//! exists. Its `stop` and `reset-failed` exit 5, so a test also shows
+//! that their status is not read. Its `kill` of a unit exits 0. When the
+//! file `kill.<unit>` exists, it prints the NoSuchUnit text of systemd
+//! 255 (`Unit <unit> not loaded.`) and exits 1.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -10,7 +14,7 @@ use std::path::PathBuf;
 use std::sync::{PoisonError, RwLock};
 
 use creche_vmm_confine::launch::Program;
-use creche_vmm_confine::leftovers::{LeftoverError, stop_all};
+use creche_vmm_confine::leftovers::{KillError, Kills, LeftoverError, kill_all, stop_all};
 
 const FAKE: &str = r#"#!/bin/sh
 dir=${0%/*}
@@ -18,7 +22,15 @@ printf '%s\n' "$*" >> "$dir/calls"
 if [ "$2" = list-units ]; then
   turn=$(grep -c ' list-units ' "$dir/calls")
   cat "$dir/list.$turn" 2>/dev/null
+  if [ -e "$dir/list.status.$turn" ]; then
+    exit "$(cat "$dir/list.status.$turn")"
+  fi
   exit "$(cat "$dir/list.status")"
+fi
+if [ "$2" = kill ]; then
+  [ -e "$dir/kill.$5" ] || exit 0
+  printf 'Failed to kill unit %s: Unit %s not loaded.\n' "$5" "$5" >&2
+  exit 1
 fi
 exit 5
 "#;
@@ -63,6 +75,16 @@ impl Fake {
     fn stop_all(&self) -> Result<Vec<String>, LeftoverError> {
         let _read = EXEC.read().unwrap_or_else(PoisonError::into_inner);
         stop_all(&self.systemctl)
+    }
+
+    fn kill_all(&self) -> Result<Kills, KillError> {
+        let _read = EXEC.read().unwrap_or_else(PoisonError::into_inner);
+        kill_all(&self.systemctl)
+    }
+
+    /// The kill of `unit` fails as for a unit that is not loaded.
+    fn fail_kill(&self, unit: &str) {
+        fs::write(self.dir.join(format!("kill.{unit}")), "").unwrap();
     }
 
     /// The arguments of each call, in order.
@@ -150,4 +172,88 @@ fn a_missing_systemctl_is_an_error() {
     let missing = Program::new(PathBuf::from("/nonexistent/systemctl")).unwrap();
     let _read = EXEC.read().unwrap();
     assert!(matches!(stop_all(&missing), Err(LeftoverError::Run(_))));
+    assert!(matches!(kill_all(&missing), Err(KillError::Run(_))));
+}
+
+#[cfg(test)]
+fn kill(unit: &str) -> String {
+    format!("--user kill --signal=SIGKILL -- {unit}")
+}
+
+#[test]
+fn no_vm_unit_runs_no_kill() {
+    let fake = Fake::new("kill-none", &[""], 0);
+    assert_eq!(fake.kill_all().unwrap(), Kills::default());
+    assert_eq!(fake.calls(), [LIST]);
+}
+
+/// One `kill` per unit, by name, and no `stop`: a stop job would wait on
+/// `Before=` (decision CH61 rule 2).
+#[test]
+fn each_vm_unit_gets_its_own_sigkill_and_no_stop() {
+    let first = line(A, "active running") + &line(B, "failed failed");
+    let fake = Fake::new("kill-each", &[&first], 0);
+    let kills = fake.kill_all().unwrap();
+    assert_eq!(kills.killed, [A, B]);
+    assert!(kills.gone.is_empty());
+    let (kill_a, kill_b) = (kill(A), kill(B));
+    assert_eq!(fake.calls(), [LIST, kill_a.as_str(), kill_b.as_str()]);
+}
+
+/// A unit that the manager unloads between the list and its kill gives
+/// NoSuchUnit. The fresh list no longer holds it, so it counts as ended
+/// (decision CH63).
+#[test]
+fn a_unit_gone_between_the_list_and_the_kill_has_ended() {
+    let first = line(A, "active running") + &line(B, "failed failed");
+    let fresh = line(A, "deactivating stop-sigterm");
+    let fake = Fake::new("kill-gone", &[&first, &fresh], 0);
+    fake.fail_kill(B);
+    let kills = fake.kill_all().unwrap();
+    assert_eq!(kills.killed, [A]);
+    assert_eq!(kills.gone, [B]);
+    let (kill_a, kill_b) = (kill(A), kill(B));
+    let expected = [LIST, kill_a.as_str(), kill_b.as_str(), LIST];
+    assert_eq!(fake.calls(), expected);
+}
+
+/// A failed kill of a unit that the fresh list still holds is an error,
+/// and the error carries the stderr of `systemctl`. The fresh list
+/// decides, not the text of that stderr.
+#[test]
+fn a_failed_kill_of_a_loaded_unit_is_an_error() {
+    let first = line(A, "active running") + &line(B, "active running");
+    let fake = Fake::new("kill-fail", &[&first, &first], 0);
+    fake.fail_kill(B);
+    match fake.kill_all() {
+        Err(KillError::Unkilled(units)) => {
+            assert_eq!(units.len(), 1);
+            assert_eq!(units[0].unit, B);
+            assert_eq!(units[0].status.code(), Some(1));
+            let stderr = format!("Failed to kill unit {B}: Unit {B} not loaded.");
+            assert_eq!(units[0].stderr, stderr);
+        }
+        other => panic!("expected Unkilled, got {other:?}"),
+    }
+    let (kill_a, kill_b) = (kill(A), kill(B));
+    let expected = [LIST, kill_a.as_str(), kill_b.as_str(), LIST];
+    assert_eq!(fake.calls(), expected);
+}
+
+#[test]
+fn a_failed_listing_is_an_error_and_kills_nothing() {
+    let fake = Fake::new("kill-list", &[&line(A, "active running")], 1);
+    assert!(matches!(fake.kill_all(), Err(KillError::List(_))));
+    assert_eq!(fake.calls(), [LIST]);
+}
+
+#[test]
+fn a_failed_fresh_listing_after_a_failed_kill_is_an_error() {
+    let first = line(A, "active running");
+    let fake = Fake::new("kill-relist", &[&first], 0);
+    fake.fail_kill(A);
+    fs::write(fake.dir.join("list.status.2"), "1").unwrap();
+    assert!(matches!(fake.kill_all(), Err(KillError::List(_))));
+    let kill_a = kill(A);
+    assert_eq!(fake.calls(), [LIST, kill_a.as_str(), LIST]);
 }
