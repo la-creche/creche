@@ -558,7 +558,8 @@ fn kvm_vm_snapshot_restore_kill() {
     // `kvm_a_vmm_crash_frees_the_scope_of_each_vm` in tests/kvm_slot.rs
     // proves the step itself. Under `Restart=always` the unit passes
     // through `failed` into `auto-restart`, 5 s before the next start.
-    // The restarted `hold` reads EOF and exits 78, so the unit then stays
+    // There the step must have exited 0 in the unit (decision CH63). The
+    // restarted `hold` reads EOF and exits 78, so the unit then stays
     // down. The control: CH and its scope run while the stand-in runs.
     // Each stop part removed the run root, so the link and the slot dir
     // are gone, and the serial log in the state root still holds the
@@ -574,6 +575,7 @@ fn kvm_vm_snapshot_restore_kill() {
     until("CH death after the vmm kill", || !running(pid));
     until("scope removal", || setup.units().trim().is_empty());
     assert_eq!(held.vmm.sub_state(), "auto-restart");
+    held.vmm.assert_stop_post_exited_0();
     until_state(unit.name(), "inactive");
     assert!(
         fs::symlink_metadata(setup.vm.path()).is_err(),

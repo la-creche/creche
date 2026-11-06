@@ -1074,13 +1074,15 @@ fn kvm_ch_stops_after_its_vmm_unit_stops() {
 /// unit or `BindsTo=` ends each VM scope, and the unit passes through
 /// `failed` into `auto-restart` (`Restart=always`). `RestartSec` is 5 s,
 /// so CH and its scope are gone while the unit still waits in
-/// `auto-restart`. The restarted `hold` reads EOF and exits 78, so the
-/// unit then stays down. The control: CH runs while the stand-in runs.
+/// `auto-restart`. There the test reads that the step exited 0 in the
+/// unit (decision CH63). The restarted `hold` reads EOF and exits 78, so
+/// the unit then stays down. The control: CH runs while the stand-in
+/// runs.
 ///
-/// This test proves the outcome of CH61 rule 1 on a crash, not the
-/// `ExecStopPost=` step. `BindsTo=` alone stops the scope when the unit
-/// fails, and CH is a child of `hold`, so the test cannot read how CH
-/// died. The signal 9 of `kvm_a_vmm_crash_frees_the_scope_of_each_vm`
+/// This test proves the outcome of CH61 rule 1 on a crash, not that the
+/// `ExecStopPost=` step ended CH. `BindsTo=` alone stops the scope when
+/// the unit fails, and CH is a child of `hold`, so the test cannot read
+/// how CH died. The signal 9 of `kvm_a_vmm_crash_frees_the_scope_of_each_vm`
 /// proves the step on a crash, and the signal 9 of
 /// `kvm_a_vmm_unit_restart_ends_each_vm` proves it on a restart.
 #[test]
@@ -1099,6 +1101,7 @@ fn kvm_ch_dies_with_a_killed_vmm() {
     until("scope removal", || !dir.exists());
     until_state(&scope, "inactive");
     assert_eq!(vmm.sub_state(), "auto-restart");
+    vmm.assert_stop_post_exited_0();
     until_state(rig.unit.name(), "inactive");
 }
 
@@ -1182,6 +1185,11 @@ fn kvm_a_vmm_unit_stop_kills_each_vm() {
 /// unit is active, systemd has made the run root new, the serial log of
 /// the last boot is still in the state root (decision CH59 rule 2), and a
 /// new launch of the same session boots.
+///
+/// This test cannot read the exit of the step in the unit: the start
+/// part of the restart clears that run of the step before the unit is
+/// active. `kvm_a_vmm_crash_frees_the_scope_of_each_vm` reads it in
+/// `auto-restart`, with the same step and a live scope.
 #[test]
 #[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
 fn kvm_a_vmm_unit_restart_ends_each_vm() {
@@ -1225,12 +1233,15 @@ fn kvm_a_vmm_unit_restart_ends_each_vm() {
 /// under the same scope name (decision CH61 rule 1). The stand-in is
 /// `/bin/sleep infinity`, and the spawner runs in the test. A SIGKILL of
 /// its main process runs the `ExecStopPost=` step, the built `vmm
-/// kill-scopes` (decision CH63), and CH dies of its SIGKILL. The unit then waits in `auto-restart`. CH and its scope are
-/// gone before the unit starts again, 5 s later, and systemd starts no
-/// scope again. The control: CH runs before the kill. After the restart
-/// systemd has made the run root new, the serial log of the last boot is
-/// still in the state root (decision CH59 rule 2), and a new launch of the
-/// same session boots.
+/// kill-scopes` (decision CH63), and CH dies of its SIGKILL. The unit
+/// then waits in `auto-restart`, and the test reads there that the step
+/// exited 0 in the unit after it killed a live scope. So only a real
+/// failure fails the step (CH63). CH and its scope are gone before the
+/// unit starts again, 5 s later, and systemd starts no scope again. The
+/// control: CH runs before the kill. After the restart systemd has made
+/// the run root new, the serial log of the last boot is still in the
+/// state root (decision CH59 rule 2), and a new launch of the same
+/// session boots.
 #[test]
 #[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
 fn kvm_a_vmm_crash_frees_the_scope_of_each_vm() {
@@ -1249,6 +1260,7 @@ fn kvm_a_vmm_crash_frees_the_scope_of_each_vm() {
     assert_eq!(status.signal(), Some(9), "{status}");
     until_state(&scope, "inactive");
     assert_eq!(vmm.unit.sub_state(), "auto-restart");
+    vmm.unit.assert_stop_post_exited_0();
     until_state(rig.unit.name(), "active");
     until_settled(&scope, "inactive");
     relaunch(&rig, &vmm, &seat);

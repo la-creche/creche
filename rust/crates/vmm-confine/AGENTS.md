@@ -271,6 +271,10 @@ table of the three vmm crates.
      each end CH by the SIGKILL of the step, after CH ran 1 s into the
      gated stop. After the restart the unit comes back. A crash of a
      `/bin/sleep` stand-in ends CH by that SIGKILL too (CH61 rule 1).
+     After each crash, while the unit waits in `auto-restart`, the test
+     reads that the step ran in the unit and exited 0 (decision CH63).
+     The start part of a restart clears that run of the step, so no
+     test reads it after a restart.
      After the restart and after the crash, the slot dir and the
      `vm/<id>` link of the last boot are gone with the run root, the
      serial log in the state root still holds the boot marker (decision
@@ -298,10 +302,11 @@ table of the three vmm crates.
   `BindsTo=` or the `ExecStopPost=` step ends CH there, and CH is a child
   of `hold`, so step 5 cannot tell them apart. The signal-9 check of
   `kvm_a_vmm_crash_frees_the_scope_of_each_vm` in `tests/kvm_slot.rs`
-  proves the step itself. After the crash the `vm/<id>` link and the
-  slot dir are gone with the run root, and the serial log in the state
-  root still holds the ticks of the guest (decision CH59 rule 2). Each
-  start takes a new slot
+  proves the step itself. In `auto-restart` step 5 also reads that the
+  step ran in the unit and exited 0 (decision CH63). After the crash the
+  `vm/<id>` link and the slot dir are gone with the run root, and the
+  serial log in the state root still holds the ticks of the guest
+  (decision CH59 rule 2). Each start takes a new slot
   with `RunRoot::link_vm` and runs `remove_stale`, as the start of
   `rust/crates/vmm/src/start.rs` does, so each restore moves the VM to
   another slot. The ruleset grants no right to remove a file, so CH
