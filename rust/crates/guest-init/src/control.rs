@@ -691,7 +691,8 @@ mod shell {
         };
         let local_events = events.clone();
         // A failed 1201 accept ends the loop, as a failed 1200 accept
-        // does, so the main thread powers off (decision CH19 rule 3).
+        // does, so the main thread powers off (decisions CH19 rule 3,
+        // CH67 rule 11).
         let rows = events.clone();
         let failed = move |row, error| {
             let _ = rows.send(Event::RowAcceptFailed(row, error));

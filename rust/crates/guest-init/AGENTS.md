@@ -101,17 +101,23 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   for up to 10 s after the accept (the vmm `READY_WAIT`), then guest
   init closes the link. Any other dial error closes it at once. The row
   holds at most 64 open links, from the accept to the close, and closes
-  each link past that at once. No idle timeout closes a link. Each link
+  each link past that at once (CH67 rule 3). No idle timeout closes a
+  link. Each link
   writes `acp link <n> open`, `relay connected` or `relay dial failed:
   <error>`, then `closed`. A failed accept ends the accept thread,
   which hands the error to the control loop, as the 1200 accept thread
   does. The loop ends with `acp accept failed: <error>`, and the main
-  thread powers off (CH19 rule 3).
+  thread powers off (CH19 rule 3, CH67 rule 11).
 - `src/splice.rs` copies the bytes of one link both ways on two std
-  threads and reads none of them. An EOF, a failed read or a failed
-  write in either direction shuts both sockets down in both directions,
-  so a stale 1201 link after a restore closes only its own relay
-  connection, and the facade keeps running (CH19 rule 1, fact 74).
+  threads and reads none of them. An EOF in one direction shuts down
+  the write half of the other socket, and the other direction runs on,
+  so a client that half-closes after its request still reads the
+  answer. The splice closes both sockets when both directions have
+  ended (CH67 rule 9). A failed read or a failed write in either
+  direction shuts both sockets down in both directions. A reset link
+  thus dies with both halves closed (CH62 rule 14), so a stale 1201
+  link after a restore closes only its own relay connection, and the
+  facade keeps running (CH19 rule 1, fact 74).
 - After the ready of a link, each facade state change goes out on it as
   `{"facade": <state>}` (`GuestEvent::Facade`, CH43 rule 8). A change
   before the ready goes out in that ready.
@@ -196,10 +202,3 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   link write with `wait_for_line`, because the guest writes that line
   after the link write and the tty can buffer it. After a stop, `dumpe2fs -h` and
   `e2fsck -fn` read the session disk. Only the `kvm` job runs them.
-
-## Known gaps
-
-- CONTRACT-QUESTION (splice EOF): CH62 rule 14 closes both halves of a
-  reset link. No row decides an EOF. The splice follows plan entry G6
-  and closes both halves on an EOF too, while the vmm `AcpRelay` shuts
-  down only the write half of the other stream on an EOF.
