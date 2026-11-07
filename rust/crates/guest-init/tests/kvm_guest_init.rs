@@ -273,8 +273,8 @@ fn kvm_guest_init_powers_off_on_stop() {
 /// A process outside the facade group misses the SIGTERM of the stop
 /// and holds a file of the session disk open for writing. The power-off
 /// sends it SIGKILL and waits until it is gone, so the read-only remount
-/// passes and the session disk is clean (decision CH62 rule 9, the
-/// power-off wait gap of `AGENTS.md` Known gaps).
+/// passes and the session disk is clean (decisions CH62 rule 9, CH66
+/// rule 2).
 #[test]
 #[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
 fn kvm_guest_init_kills_every_process_left_at_the_power_off() {
@@ -350,8 +350,8 @@ fn kvm_guest_init_starts_the_facade_with_the_session_id() {
 /// An exited facade starts again after the restart pause, so the link gets
 /// `starting` 1, `exited` 1, then `starting` 2 with a new pid (decisions
 /// CH19 rule 1, CH43 rule 8, CH62 rule 8). The child that the first start
-/// left in its process group gets SIGKILL before the second start (the
-/// process group gap of `AGENTS.md` Known gaps).
+/// left in its process group gets SIGKILL before the second start
+/// (decision CH66 rule 3).
 #[test]
 #[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
 fn kvm_guest_init_restarts_an_exited_facade() {
