@@ -308,6 +308,17 @@ fn run(step: &Step) -> io::Result<()> {
     Ok(())
 }
 
+/// The flags of the read-only remount of the session disk at power off:
+/// the flags of its boot mount, read-only added. A remount sets each
+/// flag again, so nosuid and nodev stay.
+#[cfg(target_os = "linux")]
+pub fn session_remount_flags() -> rustix::mount::MountFlags {
+    flags(Options {
+        read_only: true,
+        ..WRITABLE
+    })
+}
+
 /// The kernel mount flags of `options`.
 #[cfg(target_os = "linux")]
 fn flags(options: Options) -> rustix::mount::MountFlags {

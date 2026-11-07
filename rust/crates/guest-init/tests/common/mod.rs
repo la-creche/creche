@@ -1,15 +1,22 @@
 //! The helpers of the kvm_ tests of guest init: the files of
 //! `bin/vm-smoke-setup.sh`, the ext4 disks that each test builds with
-//! `mke2fs -d` (decision CH62 rule 12) and a CH process killed on drop.
+//! `mke2fs -d` (decision CH62 rule 12), a CH process killed on drop and a
+//! link to a guest port through the hybrid vsock socket of CH.
 #![cfg(test)]
 
 use std::fs::{self, File};
+use std::io::{self, BufRead as _, BufReader, Write as _};
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread::sleep;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use creche_wire::guest::SESSION_DISK_MOUNT;
+use creche_wire::{
+    ControlHello, ControlReady, FacadeNotStarted, FacadeState, GuestPort, UnixMillis,
+};
+use serde::Serialize;
 
 /// The variable that names the files of the setup script.
 const DIR: &str = "CRECHE_KVM_DIR";
@@ -34,6 +41,12 @@ const ROOT_DIRS: [&str; 8] = [
 
 /// A boot takes about 0.6 s on the runner (fact 79).
 pub const BOOT: Duration = Duration::from_secs(30);
+
+/// The guest CID of each test VM. The vmm gives CID 3 too.
+const CID: u32 = 3;
+
+/// The pause between two dials, as the vmm pauses (decision CH43 rule 5).
+const DIAL_PAUSE: Duration = Duration::from_millis(10);
 
 /// The directory of the setup script.
 pub fn files() -> PathBuf {
@@ -142,10 +155,20 @@ pub fn wait_for_exit(vm: &mut Vm, serial: &Path) -> ExitStatus {
     }
 }
 
+/// The hybrid vsock socket of the CH of `work`.
+pub fn vsock(work: &Path) -> PathBuf {
+    work.join("vsock.sock")
+}
+
+/// The session disk of `vm_with_env`.
+pub fn session_disk(work: &Path) -> PathBuf {
+    work.join("session.img")
+}
+
 /// Builds a test root disk whose env file holds `env`, and an empty
-/// session disk, and returns the CH command with both. The root disk
-/// goes first, read-only, then the session disk (decisions CH8-7, CH8-8,
-/// CH50 rule 10).
+/// session disk, and returns the CH command with both and a vsock device
+/// at `vsock(work)`. The root disk goes first, read-only, then the
+/// session disk (decisions CH8-7, CH8-8, CH50 rule 10).
 pub fn vm_with_env(work: &Path, env: &[u8]) -> Command {
     let tree = work.join("tree");
     let session_dir = SESSION_DISK_MOUNT.trim_start_matches('/');
@@ -154,7 +177,7 @@ pub fn vm_with_env(work: &Path, env: &[u8]) -> Command {
     }
     fs::write(tree.join("etc/creche/env"), env).unwrap();
     let root = work.join("root.img");
-    let session = work.join("session.img");
+    let session = session_disk(work);
     ext4(&root, Some(&tree));
     ext4(&session, None);
 
@@ -166,6 +189,146 @@ pub fn vm_with_env(work: &Path, env: &[u8]) -> Command {
             root.display()
         ))
         .arg("--disk")
-        .arg(format!("path={},image_type=raw", session.display()));
+        .arg(format!("path={},image_type=raw", session.display()))
+        .arg("--vsock")
+        .arg(format!("cid={CID},socket={}", vsock(work).display()));
     command
+}
+
+/// One link to a guest port: the test writes `CONNECT <port>` on the
+/// hybrid vsock socket and CH answers `OK <host port>` (decision CH13).
+/// Then each line is one compact JSON value (decision CH36 G11).
+pub struct Link {
+    reader: BufReader<UnixStream>,
+    writer: UnixStream,
+}
+
+/// Dials `port` of the VM of `work`, as the vmm dials: it retries while
+/// the socket is missing or refused, and while CH closes the link because
+/// no guest listener is there yet. It panics after `BOOT`.
+pub fn dial(work: &Path, port: GuestPort) -> Link {
+    let deadline = Instant::now() + BOOT;
+    let log = || fs::read_to_string(work.join("serial.log")).unwrap_or_default();
+    loop {
+        assert!(
+            Instant::now() < deadline,
+            "no link to {port:?} in {BOOT:?}. Serial:\n{}",
+            log()
+        );
+        let mut writer = match UnixStream::connect(vsock(work)) {
+            Ok(stream) => stream,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
+                ) =>
+            {
+                sleep(DIAL_PAUSE);
+                continue;
+            }
+            Err(error) => panic!("the vsock socket refused: {error}"),
+        };
+        writer.set_read_timeout(Some(BOOT)).unwrap();
+        writeln!(writer, "CONNECT {}", port.number()).unwrap();
+        let mut link = Link {
+            reader: BufReader::new(writer.try_clone().unwrap()),
+            writer,
+        };
+        match link.line() {
+            Some(reply) if reply.starts_with("OK ") => return link,
+            Some(reply) => panic!("CH answered CONNECT with {reply:?}"),
+            None => sleep(DIAL_PAUSE),
+        }
+    }
+}
+
+impl Link {
+    /// Writes `value` as one compact JSON line.
+    pub fn send<T: Serialize>(&mut self, value: &T) {
+        let mut line = serde_json::to_vec(value).unwrap();
+        line.push(b'\n');
+        self.writer.write_all(&line).unwrap();
+    }
+
+    /// Reads one line, its LF cut, or `None` at the end of the link. It
+    /// panics after `BOOT` with no line.
+    pub fn line(&mut self) -> Option<String> {
+        let mut line = String::new();
+        match self.reader.read_line(&mut line) {
+            Ok(0) => None,
+            Ok(_) => {
+                assert_eq!(line.pop(), Some('\n'), "a line with no LF: {line:?}");
+                Some(line)
+            }
+            Err(error) if error.kind() == io::ErrorKind::ConnectionReset => None,
+            Err(error) => panic!("the read failed: {error}"),
+        }
+    }
+
+    /// Whether no byte comes within `wait`.
+    pub fn quiet_for(&mut self, wait: Duration) -> bool {
+        self.writer.set_read_timeout(Some(wait)).unwrap();
+        let mut line = String::new();
+        let quiet = match self.reader.read_line(&mut line) {
+            Err(error) => matches!(
+                error.kind(),
+                io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+            ),
+            Ok(_) => false,
+        };
+        self.writer.set_read_timeout(Some(BOOT)).unwrap();
+        quiet
+    }
+}
+
+/// A valid env file, as `playpen/bin/creche-env-write` writes it.
+pub const GOOD_ENV: &[u8] = b"LANG=C.UTF-8\nPATH=/usr/bin:/bin\n";
+
+/// The session of each hello.
+pub const SESSION: &str = "0123abcd-0000-4000-8000-00000000c7c7";
+
+/// 2030-01-01T00:00:00Z, a time the guest clock cannot hold at boot.
+pub const IN_2030: u64 = 1_893_456_000_000;
+
+/// The host tools that read a session disk after the VM, as `MKE2FS`.
+pub const E2FSCK: &str = "/usr/sbin/e2fsck";
+pub const DUMPE2FS: &str = "/usr/sbin/dumpe2fs";
+
+/// A VM with a good env file and a session disk, booted to `up`.
+pub fn booted(name: &str) -> (PathBuf, Vm) {
+    let work = work(name);
+    let serial = work.join("serial.log");
+    let mut vm = Vm(vm_with_env(&work, GOOD_ENV).spawn().unwrap());
+    wait_for(&mut vm, &serial, "guest-init: up", |lines| {
+        lines.iter().any(|line| line == "guest-init: up")
+    });
+    (work, vm)
+}
+
+/// The wall time of the host.
+pub fn now() -> u64 {
+    let since = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+    u64::try_from(since.as_millis()).unwrap()
+}
+
+/// Sends a hello at `sent_at` and returns the ready.
+pub fn hello(link: &mut Link, sent_at: u64) -> ControlReady {
+    link.send(&ControlHello {
+        sent_at: UnixMillis::try_from(sent_at).unwrap(),
+        session: SESSION.parse().unwrap(),
+    });
+    let line = link.line().expect("no ready: the link ended");
+    serde_json::from_str(&line).unwrap_or_else(|error| panic!("{line:?}: {error}"))
+}
+
+/// The ready of a VM whose facade never started (until plan PR G4).
+pub fn not_started() -> ControlReady {
+    ControlReady {
+        facade: FacadeState::NotStarted(FacadeNotStarted {}),
+    }
+}
+
+/// Whether `serial` holds `line`.
+pub fn logged(serial: &Path, line: &str) -> bool {
+    lines(serial).iter().any(|each| each == line)
 }

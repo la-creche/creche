@@ -30,25 +30,60 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   line. One rule goes beyond the script: a 64 KiB cap. A refused file
   writes `guest-init: env refused: <reason>` and powers off, so the vmm
   dial fails. The parsed env becomes the facade env (CH49 rule 1).
-  `run()` then writes `guest-init: up` and waits.
+- Then `src/control.rs` listens on AF_VSOCK port 1200 of any CID through
+  `nix` (CH13, CH14, CH62 rule 1), and `run()` writes `guest-init: up`.
+  A listen fault powers off. One std thread accepts, one reads each
+  link, and the main thread owns the state and every write (CH62 rule
+  2).
+- The control link (CH19 rule 2, CH28, CH32): each accepted link gets a
+  new id, and a new link closes the old one. A line or an EOF of an old
+  link changes nothing. Guest init sends nothing before `ControlHello`.
+  Each hello sets `CLOCK_REALTIME` to `sent_at`, a backward step
+  included, and then guest init answers one `ControlReady` (CH62 rule
+  25, CH34 rule 7). The facade state is `not_started` until plan PR G4.
+  A failed clock set closes the link before the ready (CH62 rule 25).
+  So does a hello for a session other than the first hello of the boot
+  (CH32 rule 3).
+- A refused line closes the link with no error line, and the console
+  line names why (CH43 rules 1 and 2). A line is refused when it is over
+  `CONTROL_LINE_CAP`, is not one JSON value, or is not the type that the
+  link expects at that point. A line of exactly the cap passes.
+- After the ready, `stop` powers the VM off (CH19 rule 3).
 - Each step writes one `guest-init: <step>` line to the console (CH62
   rule 26). A fault writes `guest-init: <step> failed: <error>`.
-- A boot fault, a refused env file and a panic all end in `power::off`:
-  sync, then `reboot(RB_POWER_OFF)` (CH19 rule 3). The guest kernel has
+- A stop, a boot fault, a refused env file, a listen fault and a panic
+  all end in `power::off`: sync, a read-only remount of the session disk,
+  then `reboot(RB_POWER_OFF)` (CH19 rule 3). The remount flushes the ext4
+  journal and marks the disk clean. Before the switch root it fails with
+  its own console line. The guest kernel has
   `PANIC_TIMEOUT=0`, so an exit of PID 1 would hang the VM (fact 53). No
   fsck runs (CH62 rule 4).
 - `examples/standin_facade.rs` is a stub that calls `run()`.
 
 ## Tests
 
-- The unit tests check the boot plan, the netlink bytes and the env
-  grammar on any OS. One runs the real `playpen/bin/creche-env-write`, so
+- The unit tests check the boot plan, the netlink bytes, the env grammar,
+  the control state machine and the line framing on any OS. One runs the real `playpen/bin/creche-env-write`, so
   the reader and the script cannot drift.
 - `tests/kvm_guest_init.rs` boots CH with `$CRECHE_KVM_DIR/guest-init.cpio`
   of `bin/vm-smoke-setup.sh`, the cmdline `console=ttyS0 rdinit=/init`
-  (CH62 rule 19) and ext4 disks that `tests/common/mod.rs` builds with
-  `mke2fs -d` (CH62 rule 12). Only the `kvm` job runs them.
+  (CH62 rule 19), ext4 disks that `tests/common/mod.rs` builds with
+  `mke2fs -d` (CH62 rule 12) and a vsock device. The tests speak control
+  link 1200 themselves: `CONNECT 1200` on the hybrid vsock socket of CH,
+  then the creche-wire types. After a stop, `dumpe2fs -h` and
+  `e2fsck -fn` read the session disk. Only the `kvm` job runs them.
 
 ## Known gaps
 
-None.
+1. `sync` on the control link gets no answer until plan PR G8. Guest
+   init writes a console line and changes nothing. With no `synced` the
+   vmm takes no snapshot and runs the graceful stop (CH62 rule 23).
+2. CONTRACT-QUESTION: rule 3 of "The vsock JSON links" in
+   `wire/AGENTS.md` names the check `strict` of the vmm crate as the
+   strict reader. Guest init may call creche-wire only. The reading
+   taken: the typed serde reader is the strict reader of the control
+   link, because each of its types denies unknown fields and holds no
+   free JSON value. A unit test holds that it refuses a key given twice,
+   a second value, a float for an integer and an array for an object. A
+   change costs one wire lane PR that moves `strict` into creche-wire,
+   and one call in `src/control.rs`.
