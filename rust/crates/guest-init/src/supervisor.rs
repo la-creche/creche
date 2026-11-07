@@ -12,27 +12,39 @@
 //! 3. Each other reaped pid is an orphan that PID 1 took over. It changes
 //!    no state.
 //! 4. A control link close never touches the facade (decision CH19 rule
-//!    1). Only a stop ends it.
-//! 5. The stop: SIGTERM to the facade group, up to `SIGTERM_GRACE` for its exit,
-//!    then the power-off, which sends SIGKILL to every process left
-//!    (decision CH62 rule 9). With no live facade, the power-off comes at
-//!    once.
+//!    1). A close of its local link kills it (decision CH32 rule 7).
+//! 5. A live facade is `starting` until it opens its local link, then
+//!    `running` until the reap (decision CH32 rules 6 and 7). Its turn
+//!    events set `turn_running` and the last turn end, which every later
+//!    state keeps (decision CH32 rules 4 and 5).
+//! 6. The stop (decision CH62 rule 9): the stop line on the local link,
+//!    up to `FACADE_STOP_WAIT`, then SIGTERM to the facade group, up to
+//!    `SIGTERM_GRACE`, then the power-off, which sends SIGKILL to every
+//!    process left. With no live facade, the power-off comes at once.
 //!
-//! `Supervisor` is the pure state machine: the inputs of the shell in, one
-//! `Order` or none out. It reads no clock: the shell runs each timer and
-//! calls `timer` when it ends. The Linux shell, `Facade`, starts the
-//! process and runs the reaper thread.
+//! `Supervisor` is the pure state machine: the inputs of the shell in,
+//! the orders out. It reads no clock: the shell runs each timer and calls
+//! `timer` when it ends. The Linux shell, `Facade`, starts the process
+//! and runs the reaper thread.
 
 use std::num::NonZeroU32;
 use std::time::Duration;
 
-use creche_wire::{FacadeExited, FacadeNotStarted, FacadeStarting, FacadeState, StartCount};
+use creche_wire::{
+    FacadeExited, FacadeNotStarted, FacadeRunning, FacadeStarting, FacadeState, StartCount,
+    TurnEnd, TurnEvent,
+};
 
 /// The pause between a facade exit and the next start (decision CH62
 /// rule 8). A correct facade never exits on a typed error (decision CH23
 /// rule 2), so a loop means a bug, and the pause keeps it from spinning a
 /// vCPU.
 pub const RESTART_PAUSE: Duration = Duration::from_secs(1);
+
+/// How long the facade has to exit after the stop line on its local
+/// link, before SIGTERM (decision CH62 rule 9, which amends CH19 rule 3
+/// from 30 s to 25 s).
+pub const FACADE_STOP_WAIT: Duration = Duration::from_secs(25);
 
 /// How long the facade has to exit after SIGTERM, before the SIGKILL of
 /// every process left (decision CH62 rule 9).
@@ -47,10 +59,14 @@ pub enum Order {
     /// Run a timer of this length, then call `Supervisor::timer`. A new
     /// timer replaces the one that runs.
     Timer(Duration),
+    /// Write the stop line on the local link of the facade (decision CH62
+    /// rule 9).
+    AskStop,
     /// Send SIGTERM to the process group of the facade.
     Terminate(NonZeroU32),
-    /// Send SIGKILL to the process group of the facade that exited, so
-    /// no child of it runs beside the next start.
+    /// Send SIGKILL to the process group of the facade: its local link
+    /// closed (decision CH32 rule 7), or it exited, so no child of it runs
+    /// beside the next start.
     Kill(NonZeroU32),
     /// Power the VM off. The power-off sends SIGKILL to every process
     /// left first (decision CH62 rule 9).
@@ -68,19 +84,39 @@ enum Life {
     Live(NonZeroU32),
     /// `RESTART_PAUSE` runs, after an exit or a failed start.
     Paused,
+    /// The stop line went to the facade, and `FACADE_STOP_WAIT` runs.
+    Asked(NonZeroU32),
     /// SIGTERM went to the facade, and `SIGTERM_GRACE` runs.
     Stopping(NonZeroU32),
     /// `Order::PowerOff` went out.
     Stopped,
 }
 
-/// The facade of the VM: its life and its start count.
+/// The local link of the facade that runs (decision CH32 rules 6 and 7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Link {
+    /// The facade did not open it yet: the state is `starting`.
+    Waiting,
+    /// It is open: the state is `running`.
+    Open,
+    /// It closed. A facade gets one link per start, so the state stays
+    /// `running` until the reap.
+    Closed,
+}
+
+/// The facade of the VM: its life, its start count, its local link and
+/// its turns.
 #[derive(Debug)]
 pub struct Supervisor {
     life: Life,
     /// How many times guest init started the facade, or `None` before
     /// the first start.
     starts: Option<StartCount>,
+    link: Link,
+    /// True between a turn start and the next turn end (decision CH21).
+    turn_running: bool,
+    /// The last turn end since boot (decision CH32 rule 4).
+    last_turn_end: Option<TurnEnd>,
 }
 
 impl Default for Supervisor {
@@ -89,6 +125,9 @@ impl Default for Supervisor {
         Self {
             life: Life::Idle,
             starts: None,
+            link: Link::Waiting,
+            turn_running: false,
+            last_turn_end: None,
         }
     }
 }
@@ -104,7 +143,7 @@ impl Supervisor {
         Some(Order::Start)
     }
 
-    /// The shell started the facade as `pid`.
+    /// The shell started the facade as `pid`. It waits for its local link.
     pub fn started(&mut self, pid: NonZeroU32) -> Option<Order> {
         if self.life != Life::Spawning {
             return None;
@@ -118,6 +157,8 @@ impl Supervisor {
             self.starts = Some(starts);
         }
         self.life = Life::Live(pid);
+        self.link = Link::Waiting;
+        self.turn_running = false;
         None
     }
 
@@ -136,79 +177,145 @@ impl Supervisor {
     }
 
     /// The reaper reaped `pid`. Only the facade pid changes the state
-    /// (decision CH19 rule 1). An exit outside the stop kills the group of
-    /// the facade before the restart pause. In the stop, the power-off
-    /// kills every process left.
+    /// (decision CH19 rule 1). Its link and its turn end with it. An exit
+    /// outside the stop kills the group of the facade before the restart
+    /// pause. In the stop, the power-off kills every process left.
     pub fn reaped(&mut self, pid: NonZeroU32) -> Vec<Order> {
-        match self.life {
+        let orders = match self.life {
             Life::Live(facade) if facade == pid => {
                 self.life = Life::Paused;
                 vec![Order::Kill(pid), Order::Timer(RESTART_PAUSE)]
             }
-            Life::Stopping(facade) if facade == pid => {
+            Life::Asked(facade) | Life::Stopping(facade) if facade == pid => {
                 self.life = Life::Stopped;
                 vec![Order::PowerOff]
             }
-            _ => Vec::new(),
-        }
+            _ => return Vec::new(),
+        };
+        self.link = Link::Closed;
+        self.turn_running = false;
+        orders
     }
 
     /// The timer of the last `Order::Timer` ended.
-    pub fn timer(&mut self) -> Option<Order> {
+    pub fn timer(&mut self) -> Vec<Order> {
         match self.life {
             Life::Paused => {
                 self.life = Life::Spawning;
-                Some(Order::Start)
+                vec![Order::Start]
             }
+            Life::Asked(pid) => self.terminate(pid),
             Life::Stopping(_) => {
                 self.life = Life::Stopped;
-                Some(Order::PowerOff)
+                vec![Order::PowerOff]
             }
-            Life::Idle | Life::Spawning | Life::Live(_) | Life::Stopped => None,
+            Life::Idle | Life::Spawning | Life::Live(_) | Life::Stopped => Vec::new(),
         }
     }
 
     /// The vmm sent `stop` (decisions CH19 rule 3, CH62 rule 9). A second
     /// stop changes nothing.
+    // Decision CH66 rule 4: a facade with no open local link cannot get
+    // the stop line, so its stop starts at SIGTERM. A `starting` facade
+    // runs no turn that guest init can see (decision CH32 rule 6).
     pub fn stop(&mut self) -> Vec<Order> {
         match self.life {
-            Life::Live(pid) => {
-                self.life = Life::Stopping(pid);
-                vec![Order::Terminate(pid), Order::Timer(SIGTERM_GRACE)]
+            Life::Live(pid) if self.link == Link::Open => {
+                self.life = Life::Asked(pid);
+                vec![Order::AskStop, Order::Timer(FACADE_STOP_WAIT)]
             }
+            Life::Live(pid) => self.terminate(pid),
             Life::Idle | Life::Spawning | Life::Paused => {
                 self.life = Life::Stopped;
                 vec![Order::PowerOff]
             }
-            Life::Stopping(_) | Life::Stopped => Vec::new(),
+            Life::Asked(_) | Life::Stopping(_) | Life::Stopped => Vec::new(),
+        }
+    }
+
+    /// The SIGTERM step of the stop.
+    fn terminate(&mut self, pid: NonZeroU32) -> Vec<Order> {
+        self.life = Life::Stopping(pid);
+        vec![Order::Terminate(pid), Order::Timer(SIGTERM_GRACE)]
+    }
+
+    /// A peer with pid `peer` opened the local link. Guest init keeps it
+    /// only when `peer` is the live facade and the facade did not open a
+    /// link before (decision CH62 rule 10). Then the state is `running`
+    /// (decision CH32 rule 6).
+    pub fn linked(&mut self, peer: NonZeroU32) -> bool {
+        if self.life != Life::Live(peer) || self.link != Link::Waiting {
+            return false;
+        }
+        self.link = Link::Open;
+        true
+    }
+
+    /// The local link closed. A facade that is not stopping is killed
+    /// (decision CH32 rule 7).
+    // Decision CH66 rule 5: during the stop, a close kills nothing, and
+    // the stop wait and SIGTERM bound the exit. A facade may close its
+    // link as it exits.
+    pub fn unlinked(&mut self) -> Option<Order> {
+        if self.link != Link::Open {
+            return None;
+        }
+        self.link = Link::Closed;
+        match self.life {
+            Life::Live(pid) => Some(Order::Kill(pid)),
+            Life::Asked(_)
+            | Life::Stopping(_)
+            | Life::Idle
+            | Life::Spawning
+            | Life::Paused
+            | Life::Stopped => None,
+        }
+    }
+
+    /// A turn event on the open local link (decisions CH21, CH32 rule 4).
+    /// No order follows. A start or an end with no turn before it is
+    /// kept as it comes: the reader checks each line, not the order.
+    pub fn turn(&mut self, event: &TurnEvent) {
+        if self.link != Link::Open {
+            return;
+        }
+        match event {
+            TurnEvent::Start(_) => self.turn_running = true,
+            TurnEvent::End(end) => {
+                self.turn_running = false;
+                self.last_turn_end = Some(end.clone());
+            }
         }
     }
 
     /// The pid of the live facade.
-    #[cfg(target_os = "linux")]
     pub fn pid(&self) -> Option<NonZeroU32> {
         match self.life {
-            Life::Live(pid) | Life::Stopping(pid) => Some(pid),
+            Life::Live(pid) | Life::Asked(pid) | Life::Stopping(pid) => Some(pid),
             Life::Idle | Life::Spawning | Life::Paused | Life::Stopped => None,
         }
     }
 
     /// The facade state that `ControlReady` and `GuestEvent::Facade`
-    /// report (decisions CH19 rule 2, CH32 rule 6). A live facade is
-    /// `starting`: it has no local link to guest init yet. No turn can
-    /// end before that link opens, so `last_turn_end` is `null` (decision
-    /// CH32 rule 7).
+    /// report (decisions CH19 rule 2, CH32 rules 4 to 7).
     pub fn state(&self) -> FacadeState {
-        match (self.life, self.starts) {
-            (Life::Live(pid) | Life::Stopping(pid), Some(starts)) => {
+        let last_turn_end = self.last_turn_end.clone();
+        match (self.pid(), self.starts) {
+            (Some(pid), Some(starts)) if self.link == Link::Waiting => {
                 FacadeState::Starting(FacadeStarting {
-                    last_turn_end: None,
+                    last_turn_end,
                     pid,
                     starts,
                 })
             }
-            (_, Some(starts)) => FacadeState::Exited(FacadeExited {
-                last_turn_end: None,
+            (Some(pid), Some(starts)) => FacadeState::Running(FacadeRunning {
+                last_turn_end,
+                pid,
+                starts,
+                turn_running: self.turn_running,
+            }),
+            (None, Some(starts)) => FacadeState::Exited(FacadeExited {
+                last_turn_end,
                 starts,
             }),
             (_, None) => FacadeState::NotStarted(FacadeNotStarted {}),
@@ -343,7 +450,8 @@ mod shell {
     }
 
     /// Sends `signal` to the process group of the facade `pid`: SIGTERM
-    /// in the stop (decision CH62 rule 9), SIGKILL after its exit.
+    /// in the stop (decision CH62 rule 9), SIGKILL when its local link
+    /// closed (decision CH32 rule 7) or after its exit.
     ///
     /// # Errors
     ///
@@ -440,6 +548,22 @@ mod tests {
         })
     }
 
+    fn running(raw: u32, turn_running: bool, last_turn_end: Option<TurnEnd>) -> FacadeState {
+        FacadeState::Running(FacadeRunning {
+            last_turn_end,
+            pid: pid(raw),
+            starts: StartCount::try_from(1).unwrap(),
+            turn_running,
+        })
+    }
+
+    fn end() -> TurnEnd {
+        TurnEnd {
+            title: "a turn".parse().unwrap(),
+            updated_at: creche_wire::UnixMillis::try_from(1_893_456_000_000).unwrap(),
+        }
+    }
+
     fn exited(starts: u64) -> FacadeState {
         FacadeState::Exited(FacadeExited {
             last_turn_end: None,
@@ -458,7 +582,7 @@ mod tests {
     #[test]
     fn starts_only_after_the_first_hello() {
         let mut supervisor = Supervisor::default();
-        assert_eq!(supervisor.timer(), None);
+        assert_eq!(supervisor.timer(), vec![]);
         assert_eq!(supervisor.reaped(pid(7)), vec![]);
         assert_eq!(
             supervisor.state(),
@@ -477,7 +601,7 @@ mod tests {
     fn restarts_only_after_the_reaper_reports_the_exit() {
         let mut supervisor = live(7);
         // No timer and no hello starts a second facade while one runs.
-        assert_eq!(supervisor.timer(), None);
+        assert_eq!(supervisor.timer(), vec![]);
         assert_eq!(supervisor.hello(), None);
         assert_eq!(supervisor.state(), starting(7, 1));
 
@@ -498,8 +622,8 @@ mod tests {
         );
         // Only the end of the pause starts the next one.
         assert_eq!(supervisor.hello(), None);
-        assert_eq!(supervisor.timer(), Some(Order::Start));
-        assert_eq!(supervisor.timer(), None);
+        assert_eq!(supervisor.timer(), vec![Order::Start]);
+        assert_eq!(supervisor.timer(), vec![]);
     }
 
     #[test]
@@ -518,7 +642,7 @@ mod tests {
         supervisor.timer();
         assert_eq!(supervisor.start_failed(), Some(Order::Timer(RESTART_PAUSE)));
         assert_eq!(supervisor.state(), exited(2));
-        assert_eq!(supervisor.timer(), Some(Order::Start));
+        assert_eq!(supervisor.timer(), vec![Order::Start]);
         supervisor.started(pid(11));
         assert_eq!(supervisor.state(), starting(11, 3));
     }
@@ -532,7 +656,7 @@ mod tests {
             supervisor.state(),
             FacadeState::NotStarted(FacadeNotStarted {})
         );
-        assert_eq!(supervisor.timer(), Some(Order::Start));
+        assert_eq!(supervisor.timer(), vec![Order::Start]);
         supervisor.started(pid(7));
         assert_eq!(supervisor.state(), starting(7, 1));
     }
@@ -563,8 +687,8 @@ mod tests {
         assert_eq!(supervisor.reaped(pid(8)), vec![]);
         // The end of the grace powers off, and the power-off sends
         // SIGKILL to every process left.
-        assert_eq!(supervisor.timer(), Some(Order::PowerOff));
-        assert_eq!(supervisor.timer(), None);
+        assert_eq!(supervisor.timer(), vec![Order::PowerOff]);
+        assert_eq!(supervisor.timer(), vec![]);
         assert_eq!(supervisor.stop(), vec![]);
     }
 
@@ -575,7 +699,7 @@ mod tests {
         assert_eq!(supervisor.reaped(pid(7)), vec![Order::PowerOff]);
         assert_eq!(supervisor.state(), exited(1));
         // No restart follows the exit.
-        assert_eq!(supervisor.timer(), None);
+        assert_eq!(supervisor.timer(), vec![]);
     }
 
     #[test]
@@ -588,6 +712,96 @@ mod tests {
         supervisor.reaped(pid(7));
         assert_eq!(supervisor.stop(), vec![Order::PowerOff]);
         // The pause ends with no start.
-        assert_eq!(supervisor.timer(), None);
+        assert_eq!(supervisor.timer(), vec![]);
+    }
+
+    /// With an open local link, the stop writes the stop line first and
+    /// waits `FACADE_STOP_WAIT`. Only then SIGTERM goes out, then the
+    /// grace, then the power-off (decision CH62 rule 9).
+    #[test]
+    fn stop_writes_the_stop_line_before_sigterm() {
+        assert_eq!(FACADE_STOP_WAIT, Duration::from_secs(25));
+        let mut supervisor = live(7);
+        assert!(supervisor.linked(pid(7)));
+        assert_eq!(
+            supervisor.stop(),
+            vec![Order::AskStop, Order::Timer(FACADE_STOP_WAIT)]
+        );
+        assert_eq!(supervisor.stop(), vec![]);
+        assert_eq!(
+            supervisor.timer(),
+            vec![Order::Terminate(pid(7)), Order::Timer(SIGTERM_GRACE)]
+        );
+        assert_eq!(supervisor.timer(), vec![Order::PowerOff]);
+
+        // A facade that exits in the wait powers off at once.
+        let mut supervisor = live(7);
+        supervisor.linked(pid(7));
+        supervisor.stop();
+        assert_eq!(supervisor.reaped(pid(7)), vec![Order::PowerOff]);
+        assert_eq!(supervisor.timer(), vec![]);
+    }
+
+    /// A close of the link in the stop wait kills nothing: the stop goes
+    /// on (decision CH66 rule 5). Out of a stop, a close kills.
+    #[test]
+    fn a_close_kills_only_out_of_a_stop() {
+        let mut supervisor = live(7);
+        supervisor.linked(pid(7));
+        supervisor.stop();
+        assert_eq!(supervisor.unlinked(), None);
+        assert_eq!(
+            supervisor.timer(),
+            vec![Order::Terminate(pid(7)), Order::Timer(SIGTERM_GRACE)]
+        );
+
+        let mut supervisor = live(7);
+        assert_eq!(supervisor.unlinked(), None, "no link was open");
+        supervisor.linked(pid(7));
+        assert_eq!(supervisor.unlinked(), Some(Order::Kill(pid(7))));
+        assert_eq!(supervisor.unlinked(), None);
+        // The killed facade stays `running` until the reap, and it gets
+        // no second link (decision CH32 rule 7).
+        assert_eq!(supervisor.state(), running(7, false, None));
+        assert!(!supervisor.linked(pid(7)));
+    }
+
+    /// The link moves `starting` to `running`, and only the live pid gets
+    /// it (decisions CH32 rule 6, CH62 rule 10).
+    #[test]
+    fn links_only_the_live_facade() {
+        let mut supervisor = Supervisor::default();
+        assert!(!supervisor.linked(pid(7)));
+        let mut supervisor = live(7);
+        assert!(!supervisor.linked(pid(8)));
+        assert_eq!(supervisor.state(), starting(7, 1));
+        assert!(supervisor.linked(pid(7)));
+        assert_eq!(supervisor.state(), running(7, false, None));
+        assert!(!supervisor.linked(pid(7)), "a second link");
+    }
+
+    /// The turn flag follows the events, and the last end stays across
+    /// the exit (decisions CH21, CH32 rules 4 and 5).
+    #[test]
+    fn keeps_the_turn_state() {
+        let mut supervisor = live(7);
+        // No event counts before the link opens.
+        supervisor.turn(&TurnEvent::End(end()));
+        assert_eq!(supervisor.state(), starting(7, 1));
+
+        supervisor.linked(pid(7));
+        supervisor.turn(&TurnEvent::Start(creche_wire::TurnStart {}));
+        assert_eq!(supervisor.state(), running(7, true, None));
+        supervisor.turn(&TurnEvent::End(end()));
+        assert_eq!(supervisor.state(), running(7, false, Some(end())));
+
+        supervisor.reaped(pid(7));
+        assert_eq!(
+            supervisor.state(),
+            FacadeState::Exited(FacadeExited {
+                last_turn_end: Some(end()),
+                starts: StartCount::try_from(1).unwrap(),
+            })
+        );
     }
 }

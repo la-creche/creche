@@ -16,8 +16,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use creche_wire::guest::{FACADE_PROGRAM, SESSION_DISK_MOUNT};
 use creche_wire::{
-    ControlHello, ControlReady, FacadeExited, FacadeState, GuestEvent, GuestPort, StartCount,
-    UnixMillis,
+    ControlHello, ControlReady, FacadeExited, FacadeRunning, FacadeState, GuestEvent, GuestPort,
+    StartCount, TurnEnd, UnixMillis,
 };
 use serde::Serialize;
 
@@ -192,6 +192,16 @@ pub enum Standin {
     /// group that holds a file of the session disk open for writing, and
     /// stays up.
     Holder,
+    /// Mode `turn`: the stand-in opens the local link, sends one turn,
+    /// starts a stranger that opens the link too, and exits on the stop
+    /// line.
+    Turn,
+    /// Mode `stream`: the stand-in opens the local link and writes turns
+    /// on it with no pause. It never reads the stop line.
+    Stream,
+    /// Mode `close-once`: the first start opens the local link, closes it
+    /// and stays up. Each later start stays up.
+    CloseOnce,
 }
 
 /// The mode file of the stand-in on the root disk.
@@ -223,6 +233,9 @@ pub fn vm_with(work: &Path, env: &[u8], standin: Standin) -> Command {
         Standin::StaysUp => None,
         Standin::ExitsOnce => Some("exit-once\n"),
         Standin::Holder => Some("holder\n"),
+        Standin::Turn => Some("turn\n"),
+        Standin::Stream => Some("stream\n"),
+        Standin::CloseOnce => Some("close-once\n"),
     };
     if let Some(mode) = mode {
         let file = tree.join(STANDIN_MODE);
@@ -324,6 +337,16 @@ impl Link {
         serde_json::from_str(&line).unwrap_or_else(|error| panic!("{line:?}: {error}"))
     }
 
+    /// Reads each line until the end of the link and returns the last
+    /// one. A read that waits `BOOT` for a line panics.
+    pub fn last_line(mut self) -> Option<String> {
+        let mut last = None;
+        while let Some(line) = self.line() {
+            last = Some(line);
+        }
+        last
+    }
+
     /// Whether no byte comes within `wait`.
     pub fn quiet_for(&mut self, wait: Duration) -> bool {
         self.writer.set_read_timeout(Some(wait)).unwrap();
@@ -407,10 +430,35 @@ pub fn logged(serial: &Path, line: &str) -> bool {
 
 /// The facade state `exited` after `starts` starts, as a link event.
 pub fn exited(starts: u64) -> GuestEvent {
+    exited_after(starts, None)
+}
+
+/// The facade state `exited` after `starts` starts and `last_turn_end`,
+/// as a link event.
+pub fn exited_after(starts: u64, last_turn_end: Option<TurnEnd>) -> GuestEvent {
     GuestEvent::Facade(FacadeState::Exited(FacadeExited {
-        last_turn_end: None,
+        last_turn_end,
         starts: StartCount::try_from(starts).unwrap(),
     }))
+}
+
+/// The state `running` of the first start of the facade `pid`.
+pub fn running(pid: NonZeroU32, turn_running: bool, last_turn_end: Option<TurnEnd>) -> FacadeState {
+    FacadeState::Running(FacadeRunning {
+        last_turn_end,
+        pid,
+        starts: StartCount::try_from(1).unwrap(),
+        turn_running,
+    })
+}
+
+/// The turn end that the stand-in sends in mode `turn`, as
+/// `examples/standin_facade.rs` makes it.
+pub fn standin_turn_end() -> TurnEnd {
+    TurnEnd {
+        title: "standin turn".parse().unwrap(),
+        updated_at: UnixMillis::try_from(IN_2030).unwrap(),
+    }
 }
 
 /// The session disk of `work` is clean after the VM: guest init synced

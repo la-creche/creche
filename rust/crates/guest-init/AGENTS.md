@@ -31,8 +31,10 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   writes `guest-init: env refused: <reason>` and powers off, so the vmm
   dial fails. The parsed env becomes the facade env (CH49 rule 1).
 - Then `src/control.rs` listens on AF_VSOCK port 1200 of any CID through
-  `nix` (CH13, CH14, CH62 rule 1), and `run()` writes `guest-init: up`.
-  A listen fault powers off. One std thread accepts, one reads each
+  `nix` (CH13, CH14, CH62 rule 1), and `src/local_link.rs` listens on
+  the Unix socket `creche_wire::guest::LOCAL_LINK_SOCKET`, mode 0600
+  (CH62 rule 10). Then `run()` writes `guest-init: up`. A listen fault
+  powers off. One std thread accepts on each listener, one reads each
   link, and the main thread owns the state and every write (CH62 rule
   2).
 - The control link (CH19 rule 2, CH28, CH32): each accepted link gets a
@@ -58,9 +60,9 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   `CRECHE_SESSION_ID` (CH49 rule 1, CH62 rule 6), cwd
   `creche_wire::guest::WORKSPACE` (made when absent), stdin and stdout
   /dev/null and stderr on the console (CH62 rule 26). It runs as root
-  (CH8-1). A link close never touches it. It runs in a process group of
-  its own, so each SIGTERM and SIGKILL of guest init goes to its group
-  and reaches its children too.
+  (CH8-1). A control link close never touches it. It runs in a process
+  group of its own, so each SIGTERM and SIGKILL of guest init goes to its
+  group and reaches its children too.
 - PID 1 reaps each child in a reaper thread. When the facade pid is
   reaped, the state becomes `exited`, guest init sends SIGKILL to its
   group (`guest-init: facade pid <n> sent SIGKILL` when a child was
@@ -70,13 +72,35 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   orphan and changes no state. The reaper waits with `WNOWAIT` and reaps
   under the spawn lock, so it never takes a child whose exec failed:
   std reaps that one inside `Command::spawn`.
+- The local link (`src/local_link.rs`, CH21, CH32 rules 6 and 7, CH62
+  rules 10 and 11): guest init keeps a peer only when its `SO_PEERCRED`
+  pid is the live facade and that facade opened no link before. It
+  closes each other peer at once, and the facade stays. The open moves
+  the facade from `starting` to `running`, and it stays `running` until
+  the reap. The framing is the one of control link 1200: each facade
+  line is one `TurnEvent`, at most `CONTROL_LINE_CAP` bytes, and
+  `creche_wire::strict` checks it before the typed read (CH65 rule 2). A
+  refused line closes the local link. A close of the local link outside
+  a stop sends SIGKILL to the facade group, and the restart follows the
+  reap. The
+  facade exit closes its local link too.
+- Each turn event sets `turn_running`, and each end becomes the
+  `last_turn_end` of every later state, across a restart too (CH32 rules
+  4 and 5). Guest init relays each event on the control link after its
+  ready as `{"turn": <event>}` (`GuestEvent::Turn`), then the facade
+  line of the change. With no ready link, the event is dropped, and the
+  next ready carries the last end (CH62 rule 11). The reader checks
+  each line, not the order of starts and ends.
 - After the ready of a link, each facade state change goes out on it as
   `{"facade": <state>}` (`GuestEvent::Facade`, CH43 rule 8). A change
   before the ready goes out in that ready.
-- After the ready, `stop` sends SIGTERM to the group of a live facade
-  and waits up to `SIGTERM_GRACE` (2 s) for its exit. Then guest init
-  powers off (CH19 rule 3, CH62 rule 9). With no live facade, the
-  power-off comes at once. A second stop changes nothing.
+- After the ready, `stop` runs the stop of CH62 rule 9. With an open
+  local link, guest init writes `{"stop":{}}` on it and waits up to
+  `FACADE_STOP_WAIT` (25 s). Then it sends SIGTERM to the facade group
+  and waits up to `SIGTERM_GRACE` (2 s). Then it powers off. A facade
+  exit in either wait powers off at once. A facade with no open local
+  link gets SIGTERM at once. With no live facade, the power-off comes at
+  once. A second stop changes nothing.
 - After the ready, `sync` runs `syncfs` of the session disk, then
   `sync`, and guest init answers `{"synced":{}}` (`GuestEvent::Synced`)
   on the same link (CH62 rule 23). The link stays ready. A sync of a
@@ -84,9 +108,9 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   control link <n> sync failed: <error>`, sends no `synced` and keeps
   the link (CH65 rule 3).
 - One thread, the main one, reads the event channel, runs the one timer
-  of the supervisor and holds no sender. The accept thread, the reaper
-  thread and each reader thread hold one, so the channel ends only when
-  all of them are gone. Then guest init writes
+  of the supervisor and holds no sender. The two accept threads, the
+  reaper thread and each reader thread hold one, so the channel ends
+  only when all of them are gone. Then guest init writes
   `guest-init: control events ended` and powers off.
 - Each pass of that loop checks the timer before it reads the channel,
   so a steady stream of events cannot hold off the stop waits (CH62
@@ -120,13 +144,20 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   that child is gone. With the mode `holder`, it starts a child that
   leaves its group with `setsid`, so the SIGTERM of the stop misses it,
   and that child keeps a file of the session disk open for writing.
-  Each other start stays up until a signal ends it.
+  With the mode `turn`, it opens the local link, sends one turn start
+  and one turn end, starts a child of itself that opens the link too,
+  and exits with status 0 on the stop line. With the mode `stream`, it
+  opens the local link, writes turns on it with no pause and never
+  reads the stop line. With the mode `close-once`, its first start opens
+  the local link, closes it and stays up. Each other start stays up
+  until a signal ends it.
 
 ## Tests
 
 - The unit tests check the boot plan, the options of every mount, the
   netlink bytes, the env grammar, the control state machine, the
-  supervisor state machine and the line framing on any OS. On Linux, one more test checks the kernel flags
+  supervisor state machine, the local link rules and the line framing on
+  any OS. On Linux, one more test checks the kernel flags
   that each set of options gives. One runs the real
   `playpen/bin/creche-env-write`, so the reader and the script cannot
   drift.

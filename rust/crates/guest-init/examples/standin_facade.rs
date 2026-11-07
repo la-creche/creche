@@ -22,20 +22,37 @@
 //!    misses it, as it misses a process that ignores SIGTERM. The holder
 //!    keeps a file of the session disk open for writing and writes to it
 //!    until a SIGKILL ends it. The stand-in then stays up.
+//! 5. In mode `turn` it opens the local link and writes a turn start and
+//!    a turn end on it (decisions CH21, CH62 rule 10). Then it starts a
+//!    child of itself, the stranger, that opens the link too and waits
+//!    for guest init to close it. Then it waits for the stop line, and it
+//!    exits with status 0 on it (decision CH62 rule 9). A fault exits
+//!    with status 4.
+//! 6. In mode `stream` it opens the local link and writes turn starts
+//!    and turn ends on it with no pause, until a signal ends it. It never
+//!    reads the stop line, so the stop waits its full `FACADE_STOP_WAIT`.
+//! 7. In mode `close-once`, a start that finds no marker on the session
+//!    disk writes the marker, opens the local link, closes it and stays
+//!    up. Guest init then kills it (decision CH32 rule 7). Each other
+//!    start stays up.
 
+use std::convert::Infallible;
 use std::fs::{self, File};
-use std::io::{self, Write as _};
+use std::io::{self, BufRead as _, BufReader, Read as _, Write as _};
+use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::process::{Command, ExitCode};
 use std::thread;
 use std::time::Duration;
 
-use creche_wire::guest::{SESSION_DISK_MOUNT, SESSION_ID_ENV};
+use creche_wire::guest::{LOCAL_LINK_SOCKET, SESSION_DISK_MOUNT, SESSION_ID_ENV};
+use creche_wire::{ControlCommand, TurnEnd, TurnEvent, TurnStart, UnixMillis};
 
 /// The mode file of the test root disk.
 const MODE: &str = "/etc/creche-standin/mode";
 
-/// The marker of mode `exit-once`, on the session disk.
+/// The marker of the modes `exit-once` and `close-once`, on the session
+/// disk.
 const MARKER: &str = "standin-exited-once";
 
 /// The exit status of the first start in mode `exit-once`.
@@ -43,6 +60,9 @@ const EXIT_ONCE: u8 = 3;
 
 /// The exit status of a mode that the stand-in does not know.
 const BAD_MODE: u8 = 2;
+
+/// The exit status of a fault in mode `turn`.
+const TURN_FAILED: u8 = 4;
 
 /// The exit status of a child that failed.
 const CHILD_FAILED: u8 = 5;
@@ -53,16 +73,28 @@ const CHILD: &str = "child";
 /// The argument that makes the stand-in the holder of mode `holder`.
 const HOLDER: &str = "holder";
 
+/// The argument that makes the stand-in the stranger of mode `turn`.
+const STRANGER: &str = "stranger";
+
 /// The file that the holder keeps open, on the session disk.
 const HELD: &str = "standin-held";
 
 /// The pause between two writes of the holder.
 const HOLD_PAUSE: Duration = Duration::from_millis(10);
 
+/// The title of the turn end of mode `turn`. `tests/common/mod.rs` holds
+/// the same value.
+const TURN_TITLE: &str = "standin turn";
+
+/// The `updated_at` of the turn end of mode `turn`, 2030-01-01T00:00:00Z.
+/// `tests/common/mod.rs` holds the same value.
+const TURN_UPDATED_AT: u64 = 1_893_456_000_000;
+
 fn main() -> ExitCode {
     match std::env::args().nth(1).as_deref() {
         Some(CHILD) => stay_up(),
         Some(HOLDER) => hold(),
+        Some(STRANGER) => stranger(),
         _ => facade(),
     }
 }
@@ -101,6 +133,27 @@ fn facade() -> ExitCode {
         Ok(mode) if mode.trim_end() == "holder" => {
             if let Err(error) = start_self(HOLDER) {
                 say(&format!("holder start failed: {error}"));
+            }
+        }
+        Ok(mode) if mode.trim_end() == "turn" => {
+            return turn().unwrap_or_else(|error| {
+                say(&format!("turn failed: {error}"));
+                ExitCode::from(TURN_FAILED)
+            });
+        }
+        Ok(mode) if mode.trim_end() == "stream" => {
+            let Err(error) = stream();
+            say(&format!("stream failed: {error}"));
+            return ExitCode::from(TURN_FAILED);
+        }
+        Ok(mode) if mode.trim_end() == "close-once" => {
+            let marker = Path::new(SESSION_DISK_MOUNT).join(MARKER);
+            if !marker.exists() {
+                if let Err(error) = close_once(&marker) {
+                    say(&format!("close-once failed: {error}"));
+                    return ExitCode::from(TURN_FAILED);
+                }
+                return stay_up();
             }
         }
         Ok(mode) => {
@@ -172,4 +225,94 @@ fn hold() -> ExitCode {
 /// guest-init line on the same console cannot land inside it.
 fn say(text: &str) {
     let _ = io::stderr().write_all(format!("standin: {text}\n").as_bytes());
+}
+
+/// The lines of one turn: a turn start, then the turn end of the tests.
+fn turn_lines() -> io::Result<Vec<u8>> {
+    let end = TurnEnd {
+        title: TURN_TITLE
+            .parse()
+            .map_err(|error| io::Error::other(format!("{error}")))?,
+        updated_at: UnixMillis::try_from(TURN_UPDATED_AT)
+            .map_err(|error| io::Error::other(format!("{error}")))?,
+    };
+    let mut lines = Vec::new();
+    for event in [TurnEvent::Start(TurnStart {}), TurnEvent::End(end)] {
+        serde_json::to_writer(&mut lines, &event)?;
+        lines.push(b'\n');
+    }
+    Ok(lines)
+}
+
+/// Mode `turn`: the turn, the stranger, then the wait for the stop line.
+fn turn() -> io::Result<ExitCode> {
+    let mut link = UnixStream::connect(LOCAL_LINK_SOCKET)?;
+    say("link open");
+    link.write_all(&turn_lines()?)?;
+    say("turn sent");
+
+    let status = Command::new(std::env::current_exe()?)
+        .arg(STRANGER)
+        .status()?;
+    say(&format!("stranger {status}"));
+
+    let mut line = String::new();
+    BufReader::new(&link).read_line(&mut line)?;
+    match serde_json::from_str::<ControlCommand>(line.trim_end()) {
+        Ok(ControlCommand::Stop(_)) => {
+            say("stop line");
+            Ok(ExitCode::SUCCESS)
+        }
+        _ => {
+            say(&format!("unexpected line {line:?}"));
+            Ok(ExitCode::from(TURN_FAILED))
+        }
+    }
+}
+
+/// The stranger of mode `turn`: a process other than the facade opens
+/// the local link. Guest init closes it at once (decision CH62 rule 10).
+fn stranger() -> ExitCode {
+    let mut link = match UnixStream::connect(LOCAL_LINK_SOCKET) {
+        Ok(link) => link,
+        Err(error) => {
+            say(&format!("stranger connect failed: {error}"));
+            return ExitCode::from(TURN_FAILED);
+        }
+    };
+    let mut byte = [0_u8; 1];
+    match link.read(&mut byte) {
+        Ok(0) => {
+            say("stranger closed");
+            ExitCode::SUCCESS
+        }
+        Ok(_) => {
+            say("stranger got a byte");
+            ExitCode::from(TURN_FAILED)
+        }
+        Err(error) => {
+            say(&format!("stranger read failed: {error}"));
+            ExitCode::from(TURN_FAILED)
+        }
+    }
+}
+
+/// Mode `stream`: turns on the local link with no pause. It returns only
+/// the error that ends the stream.
+fn stream() -> io::Result<Infallible> {
+    let mut link = UnixStream::connect(LOCAL_LINK_SOCKET)?;
+    say("link open");
+    let lines = turn_lines()?;
+    loop {
+        link.write_all(&lines)?;
+    }
+}
+
+/// The first start of mode `close-once`: the marker, then a local link
+/// that closes at once.
+fn close_once(marker: &Path) -> io::Result<()> {
+    fs::write(marker, b"")?;
+    drop(UnixStream::connect(LOCAL_LINK_SOCKET)?);
+    say("link closed");
+    Ok(())
 }
