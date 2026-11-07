@@ -93,8 +93,9 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   next ready carries the last end (CH62 rule 11). The reader checks
   each line, not the order of starts and ends.
 - The ACP row (`src/bridge.rs`, CH13, CH50 rule 2, CH62 rules 14 and
-  16): an accept thread of its own takes each link of 1201 from `up`
-  on, before the first hello and in every facade state. Each link dials
+  16): guest init listens on 1201 before `up`, and an accept thread of
+  its own starts before the control loop reads the first hello. It
+  takes each link in every facade state. Each link dials
   `creche_wire::guest::RELAY_SOCKET` fresh. While nothing listens there
   (no socket file, or ECONNREFUSED), the dial tries again every 100 ms
   for up to 10 s after the accept (the vmm `READY_WAIT`), then guest
@@ -102,8 +103,10 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   holds at most 64 open links, from the accept to the close, and closes
   each link past that at once. No idle timeout closes a link. Each link
   writes `acp link <n> open`, `relay connected` or `relay dial failed:
-  <error>`, then `closed`. A failed accept writes `acp accept failed:
-  <error>` and powers off, as a failed accept of 1200 does.
+  <error>`, then `closed`. A failed accept ends the accept thread,
+  which hands the error to the control loop, as the 1200 accept thread
+  does. The loop ends with `acp accept failed: <error>`, and the main
+  thread powers off (CH19 rule 3).
 - `src/splice.rs` copies the bytes of one link both ways on two std
   threads and reads none of them. An EOF, a failed read or a failed
   write in either direction shuts both sockets down in both directions,
@@ -126,7 +129,7 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   control link <n> sync failed: <error>`, sends no `synced` and keeps
   the link (CH65 rule 3).
 - One thread, the main one, reads the event channel, runs the one timer
-  of the supervisor and holds no sender. The two accept threads, the
+  of the supervisor and holds no sender. The three accept threads, the
   reaper thread and each reader thread hold one, so the channel ends
   only when all of them are gone. Then guest init writes
   `guest-init: control events ended` and powers off.

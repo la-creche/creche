@@ -18,8 +18,11 @@
 //!    close of both halves. It closes a link past the cap at once
 //!    (decision CH62 rule 14). No idle timeout closes a link.
 //! 4. Each link writes `acp link <n> open`, then `relay connected` or the
-//!    dial fault, then `closed` on the console (decision CH62 rule 26). A
-//!    failed accept writes its error and powers off, as on 1200.
+//!    dial fault, then `closed` on the console (decision CH62 rule 26).
+//! 5. A failed accept ends the accept thread. The thread hands the error
+//!    to the control loop, as the 1200 accept thread does. The loop then
+//!    returns its end line, and the main thread powers off (decision CH19
+//!    rule 3, plan risk 9).
 //!
 //! `Slots`, `dial` and `accept_links` are the portable core, so the unit
 //! tests drive them on any OS. The Linux shell runs the vsock listener
@@ -134,7 +137,7 @@ pub fn accept_links(
 }
 
 #[cfg(target_os = "linux")]
-pub use shell::{listen_vsock, serve_acp};
+pub use shell::{listen_acp, listen_vsock, serve_acp};
 
 /// The vsock listener and the threads of the ACP row (decisions CH62
 /// rules 1 and 2). The kvm tests prove it.
@@ -174,16 +177,31 @@ mod shell {
         Ok(listener)
     }
 
-    /// Listens on guest port 1201 and starts its accept thread (decisions
-    /// CH13, CH50 rule 2). The backlog is `ROW_CAP`: the row never holds
-    /// more links.
+    /// Listens on guest port 1201 (decision CH13). The backlog is
+    /// `ROW_CAP`: the row never holds more links. The listen comes before
+    /// `up`, and a link that comes before `serve_acp` waits in the
+    /// backlog.
     ///
     /// # Errors
     ///
-    /// The error of the listen or of the thread spawn.
-    pub fn serve_acp() -> io::Result<()> {
+    /// The error of the listen.
+    pub fn listen_acp() -> io::Result<OwnedFd> {
         let backlog = i32::try_from(ROW_CAP).map_err(io::Error::other)?;
-        let listener = listen_vsock(GuestPort::Acp, backlog)?;
+        listen_vsock(GuestPort::Acp, backlog)
+    }
+
+    /// Starts the accept thread of the 1201 `listener` (decision CH50
+    /// rule 2). The thread ends only on an accept error, and it hands that
+    /// error and the row name to `failed`. The caller then powers off on
+    /// its main thread (decision CH19 rule 3).
+    ///
+    /// # Errors
+    ///
+    /// The error of the thread spawn.
+    pub fn serve_acp(
+        listener: OwnedFd,
+        failed: impl FnOnce(&'static str, io::Error) + Send + 'static,
+    ) -> io::Result<()> {
         thread::Builder::new()
             .name("acp-accept".to_owned())
             .spawn(move || {
@@ -197,8 +215,7 @@ mod shell {
                     },
                     relay,
                 );
-                crate::say(&format!("acp accept failed: {error}"));
-                let _ = crate::power::off();
+                failed("acp", error);
             })?;
         Ok(())
     }

@@ -97,13 +97,15 @@ fn life() -> String {
         Ok(local) => local,
         Err(error) => return format!("local link listen failed: {error}"),
     };
-    // 1201 accepts from here on, before the first hello and in every
-    // facade state (decision CH50 rule 2).
-    if let Err(error) = bridge::serve_acp() {
-        return format!("acp listen failed: {error}");
-    }
+    // 1201 listens from here on. `control::serve` starts its accept
+    // thread before it reads the first hello, so 1201 accepts before the
+    // first hello and in every facade state (decision CH50 rule 2).
+    let acp = match bridge::listen_acp() {
+        Ok(acp) => acp,
+        Err(error) => return format!("acp listen failed: {error}"),
+    };
     say("up");
-    control::serve(listener, local, env)
+    control::serve(listener, local, acp, env)
 }
 
 /// Boots, then reads the env file of the switched root. Both run before
