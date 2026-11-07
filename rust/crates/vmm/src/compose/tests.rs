@@ -104,6 +104,25 @@ impl Drop for Scratch {
     }
 }
 
+/// Copies `source` to `dest` as an executable through a `cp` child. The
+/// write fd of the copy then lives only in that child, so no fork of a
+/// parallel test can hold it open for writing, and the exec of `dest`
+/// never fails with ETXTBSY. The rust job saw that race when the copy was
+/// a `fs::copy` in this process (run 42406264853).
+fn place_program(source: &Path, dest: &Path) {
+    let status = Command::new("cp").arg(source).arg(dest).status().unwrap();
+    assert!(status.success(), "cp {} failed", source.display());
+    fs::set_permissions(dest, fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// Writes `script` next to `dest`, then places it with `place_program`, so
+/// the executed file never had a write fd in this process.
+fn write_program(dest: &Path, script: &str) {
+    let source = dest.with_extension("src");
+    fs::write(&source, script).unwrap();
+    place_program(&source, dest);
+}
+
 impl Scratch {
     /// The dirs, the images, a `digests.json` and the three programs of
     /// `PROGRAMS` that the test user owns, and a `systemctl` that logs each
@@ -126,16 +145,13 @@ impl Scratch {
         });
         fs::write(dir.join("images").join(DIGESTS_FILE), digests.to_string()).unwrap();
         fs::write(dir.join("bin/guest-init"), GUEST_INIT).unwrap();
-        fs::copy(CH_FIXTURE, dir.join("bin/cloud-hypervisor")).unwrap();
-        let ch_remote = dir.join("bin/ch-remote");
-        fs::write(&ch_remote, "#!/bin/sh\nexit 1\n").unwrap();
-        fs::set_permissions(&ch_remote, fs::Permissions::from_mode(0o755)).unwrap();
+        place_program(Path::new(CH_FIXTURE), &dir.join("bin/cloud-hypervisor"));
+        write_program(&dir.join("bin/ch-remote"), "#!/bin/sh\nexit 1\n");
 
         let systemctl = dir.join("bin/systemctl");
         let log = dir.join("systemctl.log");
         let script = format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\n", log.display());
-        fs::write(&systemctl, script).unwrap();
-        fs::set_permissions(&systemctl, fs::Permissions::from_mode(0o755)).unwrap();
+        write_program(&systemctl, &script);
 
         let text = |path: PathBuf| OsString::from(path);
         let env = HashMap::from([
