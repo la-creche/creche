@@ -125,10 +125,15 @@ fn start() -> Result<env_file::Env, String> {
 /// and `console=ttyS0` sends it to the serial file of the VM. A failed
 /// write has no other place to go, so `say` drops it. In a unit test the
 /// line goes to the stderr of the test process.
+///
+/// The facade writes its stderr to the same console (CH62 rule 26). So the
+/// whole line goes out in one `write_all`, and a facade line cannot land
+/// inside it. `writeln!` on the unbuffered stderr makes one write per
+/// piece, which the facade's output split in the kvm job.
 #[cfg(any(test, target_os = "linux"))]
 fn say(text: &str) {
     use std::io::Write as _;
-    let _ = writeln!(std::io::stderr(), "guest-init: {text}");
+    let _ = std::io::stderr().write_all(format!("guest-init: {text}\n").as_bytes());
 }
 
 #[cfg(test)]
