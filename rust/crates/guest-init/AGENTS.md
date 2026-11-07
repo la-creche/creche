@@ -171,22 +171,3 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   link write with `wait_for_line`, because the guest writes that line
   after the link write and the tty can buffer it. After a stop, `dumpe2fs -h` and
   `e2fsck -fn` read the session disk. Only the `kvm` job runs them.
-
-## Known gaps
-
-4. CONTRACT-QUESTION: CH62 rule 9 starts the stop with the stop line on
-   the local link, and a facade with no open local link cannot get it.
-   The reading taken, in `src/supervisor.rs`: the stop of a `starting`
-   facade, or of one whose link closed, starts at SIGTERM. A `starting`
-   facade runs no turn that guest init can see (CH32 rule 6). A change
-   costs the `Live` arm of `Supervisor::stop` and its test.
-5. CONTRACT-QUESTION: CH32 rule 7 kills the facade when its local link
-   closes, and CH62 rule 9 asks it to exit at a stop. A facade may close
-   its link as it exits. The reading taken, in `src/supervisor.rs`:
-   during the stop, a close of the local link kills nothing, and the
-   stop wait and SIGTERM bound the exit. A change costs one arm of
-   `Supervisor::unlinked` and its test.
-6. CONTRACT-QUESTION: no row decides the mode of `/run/creche`, the dir
-   of the local link. The reading taken, in `src/local_link.rs`: the
-   umask default of PID 1, 0755, as each dir of `/run`. The socket mode
-   0600 guards the link. A change costs one `DirBuilder` mode.

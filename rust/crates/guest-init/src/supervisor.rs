@@ -215,11 +215,9 @@ impl Supervisor {
 
     /// The vmm sent `stop` (decisions CH19 rule 3, CH62 rule 9). A second
     /// stop changes nothing.
-    // CONTRACT-QUESTION: CH62 rule 9 starts the stop with the stop line,
-    // and a facade with no open local link cannot get it. The reading
-    // taken: that stop starts at SIGTERM. A `starting` facade runs no turn
-    // that guest init can see (decision CH32 rule 6). A change costs the
-    // `Live` arm and its test.
+    // Decision CH66 rule 4: a facade with no open local link cannot get
+    // the stop line, so its stop starts at SIGTERM. A `starting` facade
+    // runs no turn that guest init can see (decision CH32 rule 6).
     pub fn stop(&mut self) -> Vec<Order> {
         match self.life {
             Life::Live(pid) if self.link == Link::Open => {
@@ -255,11 +253,9 @@ impl Supervisor {
 
     /// The local link closed. A facade that is not stopping is killed
     /// (decision CH32 rule 7).
-    // CONTRACT-QUESTION: CH32 rule 7 kills the facade at a close, and CH62
-    // rule 9 asks it to exit at a stop. A facade may close its link as it
-    // exits. The reading taken: during the stop, a close kills nothing,
-    // and the stop waits and SIGTERM bound the exit. A change costs the
-    // `Asked` and `Stopping` arm and its test.
+    // Decision CH66 rule 5: during the stop, a close kills nothing, and
+    // the stop wait and SIGTERM bound the exit. A facade may close its
+    // link as it exits.
     pub fn unlinked(&mut self) -> Option<Order> {
         if self.link != Link::Open {
             return None;
@@ -747,8 +743,7 @@ mod tests {
     }
 
     /// A close of the link in the stop wait kills nothing: the stop goes
-    /// on (the stop close gap of `AGENTS.md` Known gaps). Out of a stop, a
-    /// close kills.
+    /// on (decision CH66 rule 5). Out of a stop, a close kills.
     #[test]
     fn a_close_kills_only_out_of_a_stop() {
         let mut supervisor = live(7);

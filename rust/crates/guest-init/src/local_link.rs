@@ -79,10 +79,9 @@ mod shell {
     /// # Errors
     ///
     /// The error of the dir, `socket`, `bind`, the mode or `listen`.
-    // CONTRACT-QUESTION: no row decides the mode of `/run/creche`. The
-    // reading taken: the dir gets the umask default of PID 1, 0755, as
-    // each dir of `/run`. The socket mode 0600 guards the link. A change
-    // costs one `DirBuilder` mode here.
+    // Decision CH66 rule 6: the dir `/run/creche` gets mode 0755, the
+    // umask default of PID 1, as each dir of `/run`. The socket mode 0600
+    // guards the link.
     pub fn listen() -> io::Result<UnixListener> {
         let path = Path::new(LOCAL_LINK_SOCKET);
         if let Some(dir) = path.parent() {

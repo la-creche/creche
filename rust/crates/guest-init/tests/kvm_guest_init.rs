@@ -236,7 +236,7 @@ fn kvm_guest_init_answers_sync_with_synced() {
 /// A stop sends SIGTERM to a facade with no local link and powers the VM
 /// off within the 10 s of the plan, and the session disk is clean after
 /// it: guest init synced and remounted it read-only (decisions CH19 rule
-/// 3, CH62 rule 9, the no-link stop gap of `AGENTS.md` Known gaps). The
+/// 3, CH62 rule 9, CH66 rule 4). The
 /// facade exit goes out on the link first (decision CH43 rule 8).
 #[test]
 #[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
