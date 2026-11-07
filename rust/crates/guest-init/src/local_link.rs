@@ -62,28 +62,31 @@ mod shell {
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::path::Path;
 
-    use creche_wire::guest::LOCAL_LINK_SOCKET;
     use rustix::net::sockopt::socket_peercred;
     use rustix::net::{AddressFamily, SocketAddrUnix, SocketFlags, SocketType, bind, socket_with};
 
     /// The mode of the socket (decision CH62 rule 10).
     const MODE: u32 = 0o600;
 
-    /// The listen backlog. One facade opens one link (decision CH62 rule
-    /// 10), so a few slots are room.
+    /// The listen backlog. One facade opens one local link (decision CH62
+    /// rule 10), and the family-state accept thread takes each link at
+    /// once, so a few slots are room.
     const BACKLOG: i32 = 4;
 
-    /// Listens on `LOCAL_LINK_SOCKET`, mode 0600 (decision CH62 rule 10).
-    /// The mode is set before `listen`, so no connect can come before it.
+    /// Listens on the Unix socket `path`, mode 0600: `LOCAL_LINK_SOCKET`
+    /// (decision CH62 rule 10) or the family-state socket (decisions CH62
+    /// rule 13, CH67 rule 10). The mode is set before `listen`, so no
+    /// connect can come before it.
     ///
     /// # Errors
     ///
     /// The error of the dir, `socket`, `bind`, the mode or `listen`.
     // Decision CH66 rule 6: the dir `/run/creche` gets mode 0755, the
     // umask default of PID 1, as each dir of `/run`. The socket mode 0600
-    // guards the link.
-    pub fn listen() -> io::Result<UnixListener> {
-        let path = Path::new(LOCAL_LINK_SOCKET);
+    // guards the link. The family-state socket takes 0600 too (decision
+    // CH67 rule 10).
+    pub fn listen(path: &str) -> io::Result<UnixListener> {
+        let path = Path::new(path);
         if let Some(dir) = path.parent() {
             fs::create_dir_all(dir)?;
         }

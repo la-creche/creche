@@ -31,7 +31,7 @@ beforeEach(() => {
   db = new DatabaseSync(":memory:");
   index = new SessionIndex(db);
   const now = (): Date => new Date(created.value);
-  wire = new Wire(facadeApp(NO_HOOKS, sessionService({ agent: Probe, agentName: "Probe", index, mode: SBX, store: flue.store, now })));
+  wire = new Wire(facadeApp(NO_HOOKS, sessionService({ agent: Probe, agentName: "Probe", index, mode: SBX, link: null, store: flue.store, now })));
 });
 
 async function newSession(meta?: Record<string, unknown>): Promise<string> {

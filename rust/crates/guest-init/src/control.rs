@@ -427,6 +427,12 @@ impl Control {
         self.facade.pid()
     }
 
+    /// Whether `peer` is the live facade. Only it may use the
+    /// family-state socket (decision CH62 rule 13).
+    pub fn is_facade(&self, peer: NonZeroU32) -> bool {
+        self.facade.pid() == Some(peer)
+    }
+
     /// The disks of `link`'s sync are synced. Guest init answers
     /// `GuestEvent::Synced` on the same link (decision CH62 rule 23). A
     /// link that is no longer current gets nothing.
@@ -596,7 +602,7 @@ mod shell {
     use std::hash::Hash;
     use std::io::{self, Read as _, Write as _};
     use std::num::NonZeroU32;
-    use std::os::fd::{AsRawFd as _, OwnedFd};
+    use std::os::fd::OwnedFd;
     use std::os::unix::net::UnixListener;
     use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
     use std::thread;
@@ -604,13 +610,13 @@ mod shell {
 
     use creche_wire::guest::SESSION_DISK_MOUNT;
     use creche_wire::{GuestPort, UnixMillis};
-    use nix::sys::socket::{AddressFamily, SockFlag, SockType, VsockAddr, bind, socket};
     use rustix::io::Errno;
     use rustix::net::{Shutdown, SocketFlags, accept_with, shutdown};
     use rustix::process::Signal;
     use rustix::time::{ClockId, Timespec, clock_gettime, clock_settime};
 
     use super::{Action, Control, Lines, LinkId, Why};
+    use crate::bridge;
     use crate::env_file::Env;
     use crate::local_link::{self, LocalId, STOP_LINE};
     use crate::supervisor::{Facade, Reaped, signal};
@@ -648,10 +654,15 @@ mod shell {
         LocalAccepted(OwnedFd, NonZeroU32, SyncSender<Event>),
         /// The local accept loop stopped on this error.
         LocalAcceptFailed(io::Error),
+        /// The accept loop of this bridge row stopped on this error.
+        RowAcceptFailed(&'static str, io::Error),
         LocalLine(LocalId, Vec<u8>),
         LocalRefused(LocalId, Why),
         /// The local link ended at a line end, or its read failed.
         LocalEnded(LocalId),
+        /// The family-state accept thread asks whether a peer pid is the
+        /// live facade (decision CH62 rule 13), and waits for the answer.
+        IsFacade(NonZeroU32, SyncSender<bool>),
     }
 
     /// What one reader thread got.
@@ -668,22 +679,14 @@ mod shell {
     ///
     /// The error of `socket`, `bind` or `listen`.
     pub fn listen() -> io::Result<OwnedFd> {
-        let listener = socket(
-            AddressFamily::Vsock,
-            SockType::Stream,
-            SockFlag::SOCK_CLOEXEC,
-            None,
-        )?;
-        let address = VsockAddr::new(nix::libc::VMADDR_CID_ANY, GuestPort::Control.number());
-        bind(listener.as_raw_fd(), &address)?;
-        rustix::net::listen(&listener, BACKLOG)?;
-        Ok(listener)
+        crate::bridge::listen_vsock(GuestPort::Control, BACKLOG)
     }
 
-    /// Serves control link 1200, the local link on `local` and the
-    /// facade, which gets `env`, until a stop or a fault. It returns the
-    /// console line of the end, and the caller powers off.
-    pub fn serve(listener: OwnedFd, local: UnixListener, env: Env) -> String {
+    /// Serves control link 1200, the local link on `local`, the bridge
+    /// rows on `rows` and the facade, which gets `env`, until a stop or a
+    /// fault. It returns the console line of the end, and the caller
+    /// powers off.
+    pub fn serve(listener: OwnedFd, local: UnixListener, rows: bridge::Rows, env: Env) -> String {
         let (events, inbox) = sync_channel(INBOX);
         let reaps = events.clone();
         let facade = match Facade::new(env, move |reaped| {
@@ -697,6 +700,17 @@ mod shell {
             Err(error) => return format!("reaper thread failed: {error}"),
         };
         let local_events = events.clone();
+        // A failed accept of a bridge row ends the loop, as a failed 1200
+        // accept does, so the main thread powers off (decisions CH19 rule
+        // 3, CH67 rule 11).
+        let asks = events.clone();
+        let row_events = events.clone();
+        let failed = move |row, error| {
+            let _ = row_events.send(Event::RowAcceptFailed(row, error));
+        };
+        if let Err(error) = bridge::serve(rows, move |peer| is_facade(&asks, peer), failed) {
+            return format!("bridge accept thread failed: {error}");
+        }
         let spawned = thread::Builder::new()
             .name("control-accept".to_owned())
             .spawn(move || accept_loop(&listener, &events));
@@ -715,7 +729,7 @@ mod shell {
     /// The control loop: one thread owns the state, every write and the
     /// one timer of the supervisor.
     ///
-    /// The loop holds no sender. The two accept threads, the reaper
+    /// The loop holds no sender. Each accept thread, the reaper
     /// thread and each reader thread hold one, so the inbox ends only when
     /// all of them are gone. Then no vmm can reach the guest again, and the
     /// caller powers off (decision CH19 rule 3). A panic in any thread
@@ -829,9 +843,18 @@ mod shell {
                 Event::LocalAcceptFailed(error) => {
                     return format!("local link accept failed: {error}");
                 }
+                Event::RowAcceptFailed(row, error) => {
+                    return format!("{row} accept failed: {error}");
+                }
                 Event::LocalLine(local, line) => control.local_line(local, &line),
                 Event::LocalRefused(local, why) => control.local_refused(local, why),
                 Event::LocalEnded(local) => control.local_ended(local),
+                Event::IsFacade(peer, answer) => {
+                    // The asker waits on a channel of one slot, so this
+                    // send never blocks the loop.
+                    let _ = answer.send(control.is_facade(peer));
+                    Vec::new()
+                }
             };
             if let Some(end) = act(
                 &mut control,
@@ -1000,6 +1023,13 @@ mod shell {
                 }
             }
         }
+    }
+
+    /// Asks the control loop whether `peer` is the live facade (decision
+    /// CH62 rule 13). With no loop to answer, it is not.
+    fn is_facade(events: &SyncSender<Event>, peer: NonZeroU32) -> bool {
+        let (answer, answered) = sync_channel(1);
+        events.send(Event::IsFacade(peer, answer)).is_ok() && answered.recv().unwrap_or(false)
     }
 
     /// Accepts each local link, reads its peer pid and hands both to the

@@ -17,6 +17,7 @@ import { readFamilyConfig } from "agent/config";
 import type { ConfigRefusal, FamilyConfig } from "agent/config";
 
 import { tapStores } from "./flue-history.js";
+import type { LocalLink } from "./local-link.js";
 import { readMode } from "./mode.js";
 import type { FacadeMode } from "./mode.js";
 import { sessionService } from "./service.js";
@@ -122,15 +123,18 @@ function refreshOf(backend: StateBackend, { state, model }: ComposedAgent): Refr
   };
 }
 
-/** Flue on the composed store, and the session methods on the same file. */
-export async function serveFamily({ mode, config, composed, workspace }: Family): Promise<ServingStart> {
+/**
+ * Flue on the composed store, and the session methods on the same file.
+ * `link` is the local link of guest init under CH, or null on sbx.
+ */
+export async function serveFamily({ mode, config, composed, workspace }: Family, link: LocalLink | null): Promise<ServingStart> {
   try {
     mkdirSync(workspace, { recursive: true });
     const tapped = tapStores(composed.db);
     const runtime = await start({ agents: [composed.agent], db: tapped.adapter, providers: composed.providers });
     const index = new SessionIndex(new DatabaseSync(storePath(config)));
     const refresh = refreshOf(fileBackend(config.mounts, composed.state.config), composed);
-    const sessions = sessionService({ agent: composed.agent, agentName: AGENT_NAME, index, mode, store: tapped.store, refresh });
+    const sessions = sessionService({ agent: composed.agent, agentName: AGENT_NAME, index, mode, link, store: tapped.store, refresh });
 
     return { ok: true, serving: { runtime, sessions } };
   } catch (error) {

@@ -33,7 +33,7 @@ let service: SessionService;
 
 beforeEach(() => {
   const index = new SessionIndex(new DatabaseSync(":memory:"));
-  service = sessionService({ agent: Echoer, agentName: "Echoer", index, mode: SBX, store: flue.store });
+  service = sessionService({ agent: Echoer, agentName: "Echoer", index, mode: SBX, link: null, store: flue.store });
 });
 
 function link(): Wire {
