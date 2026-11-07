@@ -1,17 +1,19 @@
 //! The program `vmm serve` and its config (plan PR L20). It needs no KVM.
 //! A missing or bad key exits 78 and names the key (owner item 86), and so
 //! does an untrusted CH program (decision CH67 rule 1). Each test waits
-//! for the vmm to exit, so no test leaves a vmm behind. Each run has a
-//! hard `RLIMIT_NOFILE` below the fd need of the vmm, so each test also
-//! proves that its check refuses the start before the fd raise (decision
-//! CH67 rule 4). The ignored `kvm_` test passes every start check on
-//! root-owned files, so the short hard limit itself refuses the start,
-//! before the bind of `vmm.sock`. The job kvm runs it, and its runner may
-//! use sudo (decision CH36 G20).
+//! for the vmm to exit, so no test leaves a vmm behind. The wait has a
+//! bound, so a vmm that serves fails the test and does not hang it. Each
+//! run has a hard `RLIMIT_NOFILE` below the fd need of the vmm, so each
+//! test also proves that its check refuses the start before the fd raise
+//! (decision CH67 rule 4). The ignored `kvm_` test passes every start
+//! check on root-owned files, so the short hard limit itself refuses the
+//! start, before the bind of `vmm.sock`. The job kvm runs it, and its
+//! runner may use sudo (decision CH36 G20).
 
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 use creche_vmm::config::{
     BUDGET, CH, CH_REMOTE, CHAPERONE, EGRESS_LOG, GUEST_INIT, LITELLM, RAM_CAP, STATE_ROOT,
@@ -19,6 +21,7 @@ use creche_vmm::config::{
 use creche_vmm::egress::proxy;
 use creche_vmm::image_root::DIGESTS_FILE;
 use creche_vmm::{family_state, planes};
+use creche_vmm_confine::vmm_unit::VmmUnit;
 
 /// The exit status of a refused start.
 const EX_CONFIG: i32 = 78;
@@ -117,8 +120,9 @@ impl Scratch {
     }
 
     /// `GOOD` with each root key on its dir and each key of `PROGRAMS` on
-    /// its file in `bin/`. Each other program key is `true`, which lists
-    /// no leftover scope.
+    /// its file in `bin/`. The egress log is `egress.jsonl` in the dir, so
+    /// its open passes, as in `src/compose/tests.rs`. Each other program
+    /// key is `true`, which lists no leftover scope.
     fn env(&self) -> Vec<(&'static str, String)> {
         GOOD.iter()
             .map(|&(key, good)| {
@@ -128,6 +132,7 @@ impl Scratch {
                     "VMM_FAMILY_ROOT" => self.path("families"),
                     "VMM_FAULTS_ROOT" => self.path("faults"),
                     "VMM_IMAGE_ROOT" => self.path("images"),
+                    "VMM_EGRESS_LOG" => self.path("egress.jsonl"),
                     key if key.ends_with("_GIB") || key.ends_with("_ADDR") => good.to_owned(),
                     key => match PROGRAMS.iter().find(|program| program.0 == key) {
                         Some((_, file)) => self.path(&format!("bin/{file}")),
@@ -204,12 +209,21 @@ fn sudo(command: &[&str], path: &Path) {
 /// below the hard limit of each host that runs the tests.
 const SHORT_NOFILE: &str = "1024";
 
+/// The longest wait for the exit of `vmm serve`. A refused start exits
+/// in well under a second. A vmm that passes its start serves until
+/// SIGTERM, so the wait ends the test instead of a hang.
+const SERVE_WAIT: Duration = Duration::from_secs(60);
+
+/// The time between two checks for the exit of the vmm.
+const POLL: Duration = Duration::from_millis(50);
+
 /// Runs `vmm serve` with only the keys of `env` and gives its stderr. A
 /// shell sets the soft and the hard `RLIMIT_NOFILE` to `SHORT_NOFILE`,
-/// then execs the vmm.
+/// then execs the vmm. A vmm that runs past `SERVE_WAIT` gets SIGKILL,
+/// and the test panics with its stderr.
 #[cfg(test)]
 fn serve(env: &[(&str, &str)]) -> (Output, String) {
-    let output = Command::new("/bin/sh")
+    let mut child = Command::new("/bin/sh")
         .args([
             "-c",
             "ulimit -n \"$1\" && exec \"$0\" serve",
@@ -218,8 +232,22 @@ fn serve(env: &[(&str, &str)]) -> (Output, String) {
         ])
         .env_clear()
         .envs(env.iter().copied())
-        .output()
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .unwrap();
+    let deadline = Instant::now() + SERVE_WAIT;
+    while child.try_wait().unwrap().is_none() {
+        if Instant::now() >= deadline {
+            child.kill().unwrap();
+            let output = child.wait_with_output().unwrap();
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            panic!("vmm serve ran past {SERVE_WAIT:?}: {stderr}");
+        }
+        std::thread::sleep(POLL);
+    }
+    let output = child.wait_with_output().unwrap();
     let stderr = String::from_utf8(output.stderr.clone()).unwrap();
     (output, stderr)
 }
@@ -354,6 +382,9 @@ fn an_untrusted_ch_program_exits_78() {
 /// `RLIMIT_NOFILE` below the fd need refuses the start with exit 78 and
 /// names both numbers. The raise runs before the bind, so no `vmm.sock`
 /// exists. A raise after the bind would leave `vmm.sock` in the run root.
+/// A vmm in no service unit prints the unit line of `parts` first. The
+/// vmm runs in the cgroup of this test, so `VmmUnit::of_self` here gives
+/// the same answer (decision CH60 rule 1).
 #[test]
 #[ignore = "needs runner sudo for a root-owned file: the job kvm runs it"]
 fn kvm_a_short_hard_fd_limit_refuses_before_the_bind() {
@@ -368,8 +399,12 @@ fn kvm_a_short_hard_fd_limit_refuses_before_the_bind() {
     let (output, stderr) = serve(&env);
     let need = planes::fd_need() + family_state::fd_need() + proxy::fd_need();
     assert_eq!(output.status.code(), Some(EX_CONFIG), "{stderr}");
-    let expected =
+    let unit = match VmmUnit::of_self() {
+        Ok(_) => String::new(),
+        Err(error) => format!("vmm: {error}, so every VM launch refuses\n"),
+    };
+    let nofile =
         format!("vmm: the hard RLIMIT_NOFILE is {SHORT_NOFILE}, and the vmm needs {need} fds\n");
-    assert_eq!(stderr, expected);
+    assert_eq!(stderr, format!("{unit}{nofile}"));
     assert!(!scratch.0.join("run/vmm.sock").exists());
 }
