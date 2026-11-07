@@ -64,7 +64,7 @@ impl Temp {
         let dir = self.session.snapshot(generation);
         fs::create_dir_all(&dir).expect("the dir");
         fs::write(dir.join("memory-ranges"), "ram").expect("a file");
-        write_key(&self.session, generation, &self.key).expect("the key");
+        write_key(&dir, &self.key).expect("the key");
     }
 
     /// The newest snapshot after a key check, as at each VM start.

@@ -157,7 +157,7 @@ impl Temp {
         let generation = SnapshotGeneration(1);
         fs::create_dir_all(session.snapshot(generation)).unwrap();
         fs::write(session.snapshot(generation).join("memory-ranges"), "ram").unwrap();
-        write_key(&session, generation, &key).unwrap();
+        write_key(&session.snapshot(generation), &key).unwrap();
         let KeyCheck::Keyed(keyed) = check_newest(&session, &key).unwrap() else {
             panic!("the snapshot has the current key");
         };

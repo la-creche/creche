@@ -93,7 +93,7 @@ impl Temp {
         let dir = self.session.snapshot(generation);
         fs::create_dir_all(&dir).expect("the dir");
         fs::write(dir.join("memory-ranges"), "ram").expect("a file");
-        write_key(&self.session, generation, key).expect("the key");
+        write_key(&dir, key).expect("the key");
     }
 
     /// Sets `field` of the key file of `generation` to `value`.

@@ -1,0 +1,17 @@
+#!/bin/sh
+# A stub of fallocate for tests/snapshot.rs. The last argument is
+# <root>/sessions/<id>/snapshots/<generation>.tmp/memory-ranges. The stub
+# makes eight dirs stuck-0 to stuck-7 of mode 0300 in the temp dir, so a
+# remove of the snapshot dir fails at the first of them that it opens.
+# Eight make it likely that the remove meets one before key.json in any
+# readdir order. Then the stub sets snapshots/ to mode 0300, so the rename
+# into it still works but the open for its sync fails. It logs its argv
+# to <root>/calls.
+for last; do :; done
+printf 'fallocate %s\n' "$*" >> "${last%/sessions/*}/calls"
+temp=${last%/*}
+for n in 0 1 2 3 4 5 6 7; do
+  mkdir "$temp/stuck-$n"
+  chmod 0300 "$temp/stuck-$n"
+done
+chmod 0300 "${temp%/*}"

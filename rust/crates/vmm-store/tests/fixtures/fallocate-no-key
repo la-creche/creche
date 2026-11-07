@@ -1,0 +1,8 @@
+#!/bin/sh
+# A stub of fallocate for tests/snapshot.rs. The last argument is
+# <root>/sessions/<id>/snapshots/<generation>.tmp/memory-ranges. The stub
+# makes key.json.tmp a dir in the temp dir, so the key write of the take
+# fails at its open. It logs its argv to <root>/calls.
+for last; do :; done
+printf 'fallocate %s\n' "$*" >> "${last%/sessions/*}/calls"
+mkdir "${last%/*}/key.json.tmp"

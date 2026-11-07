@@ -19,15 +19,18 @@
 //!    72). On ext4 each snapshot writes the whole guest RAM again (fact
 //!    63), so the dig runs after every snapshot. No compression, so no
 //!    decompress step sits before a restore.
-//! 6. Sync each file and the temp dir. Rename the temp dir to
-//!    `snapshots/<generation>` and sync `snapshots/`.
+//! 6. Sync each file and the temp dir.
+//! 7. Write `key.json` into the temp dir (`key::write_key`), so no
+//!    snapshot exists without a key (decision CH44, item 42).
+//! 8. Rename the temp dir to `snapshots/<generation>` and sync
+//!    `snapshots/`.
 //!
 //! The result holds the allocated bytes (`st_blocks`), the measure of the
 //! snapshot budget (decision CH36 with gap G13, PR D13).
 //!
 //! Item 5.7 also asks for a guest `sync` before each snapshot. This crate
-//! has no link to the guest, so the caller syncs the guest through the
-//! control link before `take` (`AGENTS.md`, Known gaps).
+//! has no link to the guest, so the vmm syncs the guest through the
+//! control link before `take` (decision CH62 rule 23).
 //!
 //! Decision CH44 rule 4: when a step fails, `take` removes the temp dir and
 //! changes nothing else. It resumes nothing and stops nothing more. The VM
@@ -36,8 +39,10 @@
 //! cold-boots (decision CH19 (5)).
 //!
 //! The code reads a rename that the sync of `snapshots/` cannot make
-//! durable as a failed step too. Then `take` removes `snapshots/<n>`, the
-//! renamed temp dir, and returns the sync error.
+//! durable as a failed step too. Then `take` removes `key.json` of
+//! `snapshots/<n>` (the renamed temp dir) first, then the dir, and returns
+//! the sync error. A dir that a failed remove leaves has no key, so it
+//! never restores (see `Snapshotter::take`).
 
 use std::fmt;
 use std::fs::{self, DirBuilder, File};
@@ -48,7 +53,8 @@ use std::process::{Command, ExitStatus, Stdio};
 use std::time::Duration;
 
 use crate::ch_remote::{ChRemote, ChRemoteError};
-use crate::layout::{SessionDir, SnapshotGeneration, VmRunDir};
+use crate::key::{KeyError, SnapshotKey, write_key};
+use crate::layout::{KEY_FILE, SessionDir, SnapshotGeneration, VmRunDir};
 
 /// The guest RAM file that Cloud Hypervisor writes into a snapshot dir.
 pub const MEMORY_RANGES: &str = "memory-ranges";
@@ -87,7 +93,8 @@ pub struct Snapshot {
 /// unless its remove after a failed sync also failed (see `take`).
 #[derive(Debug)]
 pub enum SnapshotError {
-    /// A make, a read, a mode set, a sync or a rename failed.
+    /// A make, a read, a mode set, a sync, a rename or the key write
+    /// failed.
     Io {
         /// The file or dir that the step failed on.
         path: PathBuf,
@@ -190,8 +197,8 @@ impl Snapshotter {
         Self { ch, fallocate }
     }
 
-    /// Snapshots the VM of `vm` into a new generation of `session` and ends
-    /// its Cloud Hypervisor process. The dig of a 16 GiB guest takes about
+    /// Snapshots the VM of `vm` into a new generation of `session` with
+    /// `key` and ends its Cloud Hypervisor process. The dig of a 16 GiB guest takes about
     /// 8 s (fact 72) and has no timeout. The vmm runs one take of a session
     /// at a time, so two takes never share a temp dir.
     ///
@@ -199,19 +206,24 @@ impl Snapshotter {
     ///
     /// `Ch` when a `ch-remote` call fails, `NotAFile` for an entry that is
     /// no regular file, `Dig` when `fallocate` fails, `Io` on a failed
-    /// step. Then no snapshot dir exists for the new generation, except in
+    /// step, the key write included. Then no snapshot dir exists for the new generation, except in
     /// the case below.
     ///
     /// When the sync of `snapshots/` after the rename fails, `take`
-    /// removes `snapshots/<n>` and returns the sync error. If that remove
-    /// fails too, `take` still returns the sync error, and `snapshots/<n>`
-    /// may remain. That dir has no key, so it never restores. When it is
-    /// the newest generation, the key check of PR D10 drops every
-    /// generation (decision CH44 rule 5), and the next start cold-boots.
+    /// removes `snapshots/<n>/key.json` first, then `snapshots/<n>`, and
+    /// returns the sync error. If the remove of the dir fails too, `take`
+    /// still returns the sync error, and `snapshots/<n>` may remain. That
+    /// dir has no key, so it never restores. When it is the newest
+    /// generation, the key check of PR D10 drops every generation
+    /// (decision CH44 rule 5), and the next start cold-boots (decision
+    /// CH19 (5)). Only a failed remove of the key itself leaves a keyed
+    /// dir. Its files are all synced, so a restore of it finds the
+    /// session disk as the take left it.
     pub fn take(
         &self,
         vm: &VmRunDir,
         session: &SessionDir,
+        key: &SnapshotKey,
         timeouts: SnapshotTimeouts,
     ) -> Result<Snapshot, SnapshotError> {
         let snapshots = session.snapshots();
@@ -228,6 +240,8 @@ impl Snapshotter {
         make_dir(&temp, false)?;
         let dir = session.snapshot(generation);
         let taken = self.write(vm, &temp, timeouts).and_then(|allocated_bytes| {
+            write_key(&temp, key)
+                .map_err(|KeyError { path, source }| SnapshotError::Io { path, source })?;
             fs::rename(&temp, &dir).map_err(io_at(&dir))?;
             Ok(allocated_bytes)
         });
@@ -236,6 +250,10 @@ impl Snapshotter {
         }
         let allocated_bytes = taken?;
         if let Err(error) = sync_dir(&snapshots) {
+            // The key goes first, so a remove that fails part way leaves
+            // no keyed dir that holds only some of its files (decision
+            // CH44 rule 4, CH19 (5)).
+            let _ = fs::remove_file(dir.join(KEY_FILE));
             let _ = fs::remove_dir_all(&dir);
             return Err(io_at(&snapshots)(error));
         }
@@ -246,7 +264,7 @@ impl Snapshotter {
         })
     }
 
-    /// Steps 2 to 5 and the syncs of step 6. Returns the allocated bytes.
+    /// Steps 2 to 6. Returns the allocated bytes.
     fn write(
         &self,
         vm: &VmRunDir,

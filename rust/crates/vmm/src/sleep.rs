@@ -8,7 +8,7 @@ use std::pin::pin;
 use std::task::Poll;
 use std::time::Duration;
 
-use creche_vmm_store::key::{SnapshotKey, write_key};
+use creche_vmm_store::key::SnapshotKey;
 use creche_vmm_store::layout::{SessionDir, SnapshotGeneration, VmRunDir};
 use creche_vmm_store::snapshot::{SnapshotTimeouts, Snapshotter};
 use tokio::time::{Instant, MissedTickBehavior, interval};
@@ -32,20 +32,24 @@ pub const SWEEP_EVERY: Duration = Duration::from_secs(60 * 60);
 /// (decisions CH44 rule 3, CH50 rule 1). A pause takes about 4 ms (fact 72). A snapshot of the
 /// largest guest, 16 GiB, takes about 12 s (gap G16), so 60 s leaves
 /// room for a slow disk. The dig of the holes has no timeout (PR D9).
+/// The guest sync waits `control::SYNC_WAIT` (10 s) before the take, so
+/// the eviction bound of CH50 rule 1 grows by 10 s to 10 + 5 + 60 + 10 s
+/// (decision CH62 rule 23).
 pub const EVICT_SNAPSHOT: SnapshotTimeouts = SnapshotTimeouts {
     pause: Duration::from_secs(5),
     snapshot: Duration::from_secs(60),
     shutdown: Duration::from_secs(10),
 };
 
-/// Snapshots the VM of `vm` into a new generation of `session`, ends its
-/// CH (PR D9), then writes `key` into the generation (PR D10). Blocks.
+/// Snapshots the VM of `vm` into a new generation of `session` with `key`
+/// and ends its CH (PRs D9 and D10). The take writes the key before its
+/// rename, so no snapshot exists without a key (decision CH44, item 42).
+/// Blocks.
 ///
 /// # Errors
 ///
-/// The `SnapshotError` of the take, as text. A failed key write is no
-/// error: the next key check drops the generation, and that start
-/// cold-boots (decision CH7-6).
+/// The `SnapshotError` of the take, as text. A failed key write is one:
+/// the take then leaves no generation.
 pub fn take_keyed(
     snapshotter: &Snapshotter,
     vm: &VmRunDir,
@@ -54,11 +58,8 @@ pub fn take_keyed(
     timeouts: SnapshotTimeouts,
 ) -> Result<SnapshotGeneration, String> {
     let snapshot = snapshotter
-        .take(vm, session, timeouts)
+        .take(vm, session, key, timeouts)
         .map_err(|error| format!("{error}: {error:?}"))?;
-    if let Err(error) = write_key(session, snapshot.generation, key) {
-        eprintln!("vmm: the snapshot has no key, so it drops: {error}");
-    }
     Ok(snapshot.generation)
 }
 

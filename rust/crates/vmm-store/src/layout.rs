@@ -36,6 +36,10 @@ pub const SOCKET_PATH_MAX: usize = 107;
 /// this name plus `_<port>` (decision CH24).
 const VSOCK_SOCKET: &str = "vsock.sock";
 
+/// The key file in a snapshot dir (PR D10). `key::write_key` writes it
+/// into the temp dir of a take, so it keeps this name after the rename.
+pub(crate) const KEY_FILE: &str = "key.json";
+
 /// A session id in the form that `SessionId` accepts. Every session id has
 /// this length, so the run root check uses it for the longest path.
 const ID_OF_MAX_LEN: &str = "00000000-0000-0000-0000-000000000000";
@@ -286,7 +290,7 @@ impl SessionDir {
     /// generation dir, so the names of decision CH39 rule 3 hold.
     #[must_use]
     pub fn snapshot_key(&self, generation: SnapshotGeneration) -> PathBuf {
-        self.snapshot(generation).join("key.json")
+        self.snapshot(generation).join(KEY_FILE)
     }
 
     /// The guest serial output of the session (gap G23, decision CH59

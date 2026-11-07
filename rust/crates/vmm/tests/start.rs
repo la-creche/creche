@@ -19,7 +19,7 @@ use std::thread::spawn;
 use std::time::{Duration, Instant, SystemTime};
 use std::{fs, io};
 
-use creche_vmm::control::ControlState;
+use creche_vmm::control::{ControlState, SYNC_WAIT};
 use creche_vmm::handlers::acp::{Acp, StartFault, StartVm};
 use creche_vmm::handlers::drop::{Drops, StopVm, VmStopFailed};
 use creche_vmm::planes::Upstreams;
@@ -92,6 +92,8 @@ enum Guest {
     /// As `Ready`, and 20 ms after a `stop` line the status check of the
     /// VM fails, in place of the power-off.
     Wedges,
+    /// As `Ready`, and guest init never answers `sync` with `synced`.
+    NoSync,
 }
 
 /// A launched fake VM. A signal ends it at once.
@@ -146,6 +148,8 @@ struct Fake {
     hold: AtomicBool,
     /// The `stop` lines that guest init read on each control link.
     stop_lines: Arc<AtomicUsize>,
+    /// The `sync` lines that guest init read on each control link.
+    sync_lines: Arc<AtomicUsize>,
     /// The guest end of each control link, for the turn events.
     links: Arc<Mutex<Vec<UnixStream>>>,
     launches: Mutex<Vec<Launch>>,
@@ -201,6 +205,7 @@ impl Fake {
             exited: Arc::clone(&exited),
             broken: Arc::clone(&broken),
             stop_lines: Arc::clone(&self.stop_lines),
+            sync_lines: Arc::clone(&self.sync_lines),
             links: Arc::clone(&self.links),
         };
         spawn(move || play(&listener, guest, &vm));
@@ -221,12 +226,9 @@ impl Fake {
     }
 }
 
-/// The fake CH API and what it saw. `DEVICES` is its `READS_DEVICES`,
-/// and `SYNCS` is its `GUEST_SYNCS`. `SYNCS` is true by default, so the
-/// take path of an eviction and a sleep stays under test before the
-/// control link can sync the guest.
+/// The fake CH API and what it saw. `DEVICES` is its `READS_DEVICES`.
 #[derive(Debug)]
-struct FakeApi<const DEVICES: bool = true, const SYNCS: bool = true> {
+struct FakeApi<const DEVICES: bool = true> {
     /// The launcher, whose VM a snapshot ends.
     fake: Arc<Fake>,
     /// The run dir of each snapshot.
@@ -243,15 +245,17 @@ struct FakeApi<const DEVICES: bool = true, const SYNCS: bool = true> {
     hold: AtomicBool,
     /// A snapshot began.
     entered: AtomicBool,
+    /// The `sync` lines that guest init had read at the start of each
+    /// snapshot.
+    synced_at_take: Mutex<Vec<usize>>,
     /// Writes generation 1 of the session with the key, as a real take
     /// does.
     keep: AtomicBool,
 }
 
 #[cfg(test)]
-impl<const DEVICES: bool, const SYNCS: bool> ChApi for FakeApi<DEVICES, SYNCS> {
+impl<const DEVICES: bool> ChApi for FakeApi<DEVICES> {
     const READS_DEVICES: bool = DEVICES;
-    const GUEST_SYNCS: bool = SYNCS;
 
     /// Reads the reply as `ChRemote::info` reads the stdout of CH.
     fn info(&self, _vm: &VmRunDir) -> Result<VmInfo, ChRemoteError> {
@@ -280,6 +284,11 @@ impl<const DEVICES: bool, const SYNCS: bool> ChApi for FakeApi<DEVICES, SYNCS> {
         key: &SnapshotKey,
     ) -> Result<SnapshotGeneration, String> {
         self.entered.store(true, Ordering::SeqCst);
+        let synced = self.fake.sync_lines.load(Ordering::SeqCst);
+        self.synced_at_take
+            .lock()
+            .map_err(|_| "poisoned")?
+            .push(synced);
         while self.hold.load(Ordering::SeqCst) {
             std::thread::sleep(Duration::from_millis(1));
         }
@@ -298,7 +307,7 @@ impl<const DEVICES: bool, const SYNCS: bool> ChApi for FakeApi<DEVICES, SYNCS> {
         if self.keep.load(Ordering::SeqCst) {
             let generation = SnapshotGeneration(1);
             fs::create_dir_all(session.snapshot(generation)).map_err(|error| error.to_string())?;
-            write_key(session, generation, key).map_err(|error| format!("{error:?}"))?;
+            write_key(&session.snapshot(generation), key).map_err(|error| format!("{error:?}"))?;
         }
         let mut snapshots = self.snapshots.lock().map_err(|_| "poisoned")?;
         snapshots.push(vm.path().to_owned());
@@ -312,12 +321,15 @@ struct Vm {
     exited: Arc<AtomicBool>,
     broken: Arc<AtomicBool>,
     stop_lines: Arc<AtomicUsize>,
+    sync_lines: Arc<AtomicUsize>,
     links: Arc<Mutex<Vec<UnixStream>>>,
 }
 
 /// Plays CH and guest init on each link: `CONNECT`, then the control
 /// link or the ACP link. Each link stays open until the test ends. A
 /// `stop` line on the control link powers the VM off (decision CH19 (3)).
+/// A `sync` line gets `synced`, but not from `Guest::NoSync` (decision
+/// CH62 rule 23).
 #[cfg(test)]
 fn play(listener: &UnixListener, guest: Guest, vm: &Vm) {
     let mut held = Vec::new();
@@ -342,9 +354,15 @@ fn play(listener: &UnixListener, guest: Guest, vm: &Vm) {
                 stream.write_all(format!("{ready}\n").as_bytes()).unwrap();
                 vm.links.lock().unwrap().push(stream.try_clone().unwrap());
                 let vm = vm.clone();
+                let mut answer = stream.try_clone().unwrap();
                 spawn(move || {
                     for line in reader.lines() {
-                        if line.is_ok_and(|line| line.contains("stop")) {
+                        if line.as_deref().is_ok_and(|line| line == r#"{"sync":{}}"#) {
+                            vm.sync_lines.fetch_add(1, Ordering::SeqCst);
+                            if guest != Guest::NoSync {
+                                answer.write_all(b"{\"synced\":{}}\n").unwrap();
+                            }
+                        } else if line.is_ok_and(|line| line.contains("stop")) {
                             vm.stop_lines.fetch_add(1, Ordering::SeqCst);
                             if guest == Guest::Wedges {
                                 std::thread::sleep(Duration::from_millis(20));
@@ -365,11 +383,11 @@ fn play(listener: &UnixListener, guest: Guest, vm: &Vm) {
 
 /// The hook on a scratch dir, with two rows of `chat`.
 #[derive(Debug)]
-struct Test<const DEVICES: bool = true, const SYNCS: bool = true> {
+struct Test<const DEVICES: bool = true> {
     dir: PathBuf,
-    hook: Arc<ColdBoot<Fake, FakeApi<DEVICES, SYNCS>>>,
+    hook: Arc<ColdBoot<Fake, FakeApi<DEVICES>>>,
     fake: Arc<Fake>,
-    api: Arc<FakeApi<DEVICES, SYNCS>>,
+    api: Arc<FakeApi<DEVICES>>,
     relays: Relays,
     ch: CheckedCh,
     state: StateRoot,
@@ -389,9 +407,8 @@ impl Test {
 }
 
 #[cfg(test)]
-impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
-    /// The hook over a fake API whose `READS_DEVICES` is `DEVICES` and
-    /// whose `GUEST_SYNCS` is `SYNCS`.
+impl<const DEVICES: bool> Test<DEVICES> {
+    /// The hook over a fake API whose `READS_DEVICES` is `DEVICES`.
     fn build(name: &str, edit: impl FnOnce(&mut StartConfig)) -> Self {
         let dir = PathBuf::from(format!("/tmp/vmm-start-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -457,6 +474,7 @@ impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
             fail: AtomicBool::new(false),
             hold: AtomicBool::new(false),
             stop_lines: Arc::default(),
+            sync_lines: Arc::default(),
             links: Arc::default(),
             launches: Mutex::default(),
             vms: Mutex::default(),
@@ -475,6 +493,7 @@ impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
             fail_take: AtomicBool::new(false),
             hold: AtomicBool::new(false),
             entered: AtomicBool::new(false),
+            synced_at_take: Mutex::default(),
             keep: AtomicBool::new(false),
         });
         let relays = Relays::default();
@@ -554,7 +573,7 @@ impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
         let dir = session.snapshot(SnapshotGeneration(1));
         fs::create_dir_all(&dir).unwrap();
         match key {
-            Some(key) => write_key(&session, SnapshotGeneration(1), key).unwrap(),
+            Some(key) => write_key(&dir, key).unwrap(),
             None => {
                 let other = format!(
                     r#"{{"ch_rev":"0","kernel":"{EMPTY}","root_disk":"{EMPTY}","guest_init_protocol":1}}"#
@@ -617,7 +636,7 @@ fn eventually(done: impl Fn() -> bool) {
     }
 }
 
-impl<const DEVICES: bool, const SYNCS: bool> Drop for Test<DEVICES, SYNCS> {
+impl<const DEVICES: bool> Drop for Test<DEVICES> {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.dir);
     }
@@ -1003,7 +1022,7 @@ fn a_key_mismatch_or_a_consumed_snapshot_cold_boots() {
 }
 
 #[cfg(test)]
-impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
+impl<const DEVICES: bool> Test<DEVICES> {
     /// The session ids of the snapshots, in order.
     fn snapshot_ids(&self) -> Vec<String> {
         let snapshots = self.api.snapshots.lock().unwrap();
@@ -1083,7 +1102,7 @@ fn a_turn_before_the_close_keeps_the_vm() {
 }
 
 #[cfg(test)]
-impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
+impl<const DEVICES: bool> Test<DEVICES> {
     /// Runs the idle check `after` from now.
     fn sleep_after(&self, after: Duration) -> Vec<SessionId> {
         let now = Instant::now() + after;
@@ -1362,30 +1381,60 @@ fn with_no_device_read_an_eviction_stops_gracefully() {
     assert!(test.hook.running(&test.rows[1].id));
 }
 
-/// With no guest sync, a retire takes no snapshot: the control link has no
-/// `sync` command until phase 3 (item 5.7, the item 42 note of the
-/// design). An eviction and a sleep each send the graceful stop, and
-/// guest init syncs and powers off (decision CH19 (3)).
+/// An eviction and an idle sleep each sync the guest before the take
+/// (item 5.7 of the design, decision CH62 rule 23). Guest init read one
+/// more `sync` line before each snapshot began. The take ends CH, so no
+/// `stop` line follows.
 #[test]
-fn with_no_guest_sync_a_retire_stops_gracefully() {
-    let test = Test::<true, false>::build("nosync", |config| config.limits.ram_cap = 512 << 20);
+fn retire_syncs_before_the_take() {
+    let test = Test::new("sync-take", |config| config.limits.ram_cap = 512 << 20);
     assert_eq!(test.start(0), Ok(()));
     assert_eq!(test.start(1), Ok(()));
-    assert!(!test.api.entered.load(Ordering::SeqCst));
-    assert_eq!(test.stop_lines(), 1);
-    assert!(test.stopped(0));
-    assert!(test.hook.running(&test.rows[1].id));
-
     assert_eq!(test.sleep_after(PAST_IDLE), [test.rows[1].id.clone()]);
-    assert!(!test.api.entered.load(Ordering::SeqCst));
-    assert!(test.api.snapshots.lock().unwrap().is_empty());
-    assert_eq!(test.stop_lines(), 2);
-    assert!(test.stopped(1));
-    assert!(!test.hook.running(&test.rows[1].id));
+    assert_eq!(test.snapshot_ids(), [A, B]);
+    assert_eq!(*test.api.synced_at_take.lock().unwrap(), [1, 2]);
+    assert_eq!(test.stop_lines(), 0);
 }
 
 #[cfg(test)]
-impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
+impl<const DEVICES: bool> Test<DEVICES> {
+    /// Runs the idle check past the idle timeout on paused time, from
+    /// now on, and gives the paused time that it took. A guest that never
+    /// answers `sync` then costs no real `SYNC_WAIT`.
+    fn sleep_paused(&self) -> (Vec<SessionId>, Duration) {
+        let now = Instant::now() + PAST_IDLE;
+        self.runtime.block_on(async {
+            tokio::time::pause();
+            let start = tokio::time::Instant::now();
+            let slept = self.hook.sleep_idle(now).await;
+            (slept, start.elapsed())
+        })
+    }
+}
+
+/// A guest that sends no `synced` within `SYNC_WAIT` gets no snapshot,
+/// and the graceful stop runs (decision CH62 rule 23). A take would write
+/// generation 1, and none exists. The VM leaves the table.
+#[test]
+fn retire_takes_no_snapshot_without_synced() {
+    let test = Test::new("no-synced", |_| {});
+    *test.fake.guest.lock().unwrap() = Guest::NoSync;
+    test.api.keep.store(true, Ordering::SeqCst);
+    assert_eq!(test.start(0), Ok(()));
+    let (slept, took) = test.sleep_paused();
+    assert_eq!(slept, [test.rows[0].id.clone()]);
+    assert!(took >= SYNC_WAIT, "{took:?}");
+    assert!(!test.api.entered.load(Ordering::SeqCst));
+    let session = test.state.session(&test.rows[0].id);
+    assert!(!session.snapshot(SnapshotGeneration(1)).exists());
+    assert_eq!(test.fake.sync_lines.load(Ordering::SeqCst), 1);
+    eventually(|| test.stop_lines() == 1);
+    assert!(test.stopped(0));
+    assert!(!test.hook.running(&test.rows[0].id));
+}
+
+#[cfg(test)]
+impl<const DEVICES: bool> Test<DEVICES> {
     /// Shuts the hook down, with no sleep loop (plan PR L19).
     fn shut_down(&self) -> Ended {
         let (stop, _signal) = Stop::pair();
@@ -1467,30 +1516,48 @@ fn a_start_during_a_shutdown_is_host_full() {
     assert_eq!(test.launches(), 1);
 }
 
-/// With no guest sync, a shutdown takes no snapshot, and each VM gets the
-/// graceful stop (caller duty 7, decision CH19 (3)).
+/// The shutdown take syncs the guest first, as the take of a retire does
+/// (caller duty 7, decision CH62 rule 23). The take ends CH, so no `stop`
+/// line follows.
 #[test]
-fn with_no_guest_sync_a_shutdown_stops_each_vm_gracefully() {
-    let test = Test::<true, false>::build("shutdown-nosync", |_| {});
+fn the_shutdown_take_syncs_first() {
+    let test = Test::new("shutdown-sync", |_| {});
     assert_eq!(test.start(0), Ok(()));
-    assert_eq!(test.start(1), Ok(()));
+    assert_eq!(test.shut_down(), Ended::Clean);
+    assert_eq!(test.snapshot_ids(), [A]);
+    assert_eq!(*test.api.synced_at_take.lock().unwrap(), [1]);
+    assert_eq!(test.stop_lines(), 0);
+    assert!(!test.hook.running(&test.rows[0].id));
+}
+
+/// A guest that sends no `synced` within `SYNC_WAIT` gets no shutdown
+/// snapshot, and the graceful stop runs (decision CH62 rule 23). The
+/// shutdown runs on paused time, so the wait costs no real 10 s.
+#[test]
+fn a_shutdown_without_synced_stops_gracefully() {
+    let test = Test::new("shutdown-no-synced", |_| {});
+    *test.fake.guest.lock().unwrap() = Guest::NoSync;
+    assert_eq!(test.start(0), Ok(()));
+    test.runtime.block_on(async { tokio::time::pause() });
     assert_eq!(test.shut_down(), Ended::Clean);
     assert!(!test.api.entered.load(Ordering::SeqCst));
-    assert_eq!(test.stop_lines(), 2);
-    assert!(test.stopped(0) && test.stopped(1));
+    assert_eq!(test.fake.sync_lines.load(Ordering::SeqCst), 1);
+    eventually(|| test.stop_lines() == 1);
+    assert!(test.stopped(0));
+    assert!(!test.hook.running(&test.rows[0].id));
 }
 
 /// The hook behind an `Arc`, for the acp handler, which owns its hook.
 #[derive(Debug)]
-struct Shared<const DEVICES: bool, const SYNCS: bool>(Arc<ColdBoot<Fake, FakeApi<DEVICES, SYNCS>>>);
+struct Shared<const DEVICES: bool>(Arc<ColdBoot<Fake, FakeApi<DEVICES>>>);
 
-impl<const DEVICES: bool, const SYNCS: bool> StartVm for Shared<DEVICES, SYNCS> {
+impl<const DEVICES: bool> StartVm for Shared<DEVICES> {
     async fn start(&self, row: &SessionRow) -> Result<AcpLink, StartFault> {
         self.0.start(row).await
     }
 }
 
-impl<const DEVICES: bool, const SYNCS: bool> StopVm for Shared<DEVICES, SYNCS> {
+impl<const DEVICES: bool> StopVm for Shared<DEVICES> {
     async fn stop(&self, id: &SessionId) -> Result<(), VmStopFailed> {
         self.0.stop(id).await
     }
@@ -1700,7 +1767,7 @@ fn a_vm_under_a_stop_keeps_its_ram() {
 }
 
 #[cfg(test)]
-impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
+impl<const DEVICES: bool> Test<DEVICES> {
     /// Writes `line` on the guest end of the newest control link, as guest
     /// init sends a guest event (decisions CH21, CH62 rule 11).
     fn send(&self, line: &str) {
@@ -1988,7 +2055,7 @@ fn a_refused_line_during_a_take_keeps_no_snapshot() {
 }
 
 #[cfg(test)]
-impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
+impl<const DEVICES: bool> Test<DEVICES> {
     /// Adds rows of `chat` until the test has `count` rows.
     fn rows_up_to(&mut self, count: usize) {
         let mut store = self.store.lock().unwrap();

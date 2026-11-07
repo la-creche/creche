@@ -323,15 +323,19 @@ reported last, and turn events set `turn_running`.
 `{"stop":{}}` (decision CH19 (3)).
 
 `ControlLink::split` splits a link after `ControlReady`: a reader of the
-turn events and a `StopSender` for the graceful stop (plan PR L18b).
+guest events (`GuestEvents`) and a `StopSender` for the graceful stop
+and the sync (plan PR L18b).
 `ColdBoot` splits the link when a start commits its VM. The table keeps
 the sender, and one task per VM runs the reader. The reader passes each
 `facade` line to `ControlState::report` and each turn event to
 `ControlState::turn`. It writes each turn end with `Rows::turn_end` in
-`spawn_blocking`, as for a ready (decision CH32 rule 4). No take sends
-`sync` yet, so a `synced` line has no waiter: the reader logs it and
-reads on (decision CH62 rule 23). Plan PR V9 sends `sync` and hands each
-`synced` to its take. A refused line ends the reader (decision CH43 rule 2). So does the
+`spawn_blocking`, as for a ready (decision CH32 rule 4).
+`StopSender::sync` sends `{"sync":{}}` before a take and waits
+`SYNC_WAIT` (10 s) for `synced` (decision CH62 rule 23). Guest init runs
+syncfs of the session disk, then sync. The reader hands each `synced`
+to the sync that waits. A `synced` with no waiter, such as one after
+`SYNC_WAIT`, is logged and dropped, and the reader reads on. The end of
+the reader ends a sync that waits at once. A refused line ends the reader (decision CH43 rule 2). So does the
 close of the link, or an event of a replaced link. The reader holds the
 only strong handle of the stream, so its end closes the link. The sender
 then sends nothing, and a stop skips the graceful step (decision CH50
@@ -710,14 +714,11 @@ same bytes.
 `ChApi::READS_DEVICES` is true for `restore::ChTools`, the API of the
 vmm, since PR D15 (plan PR L18b). So the vmm restores a snapshot that
 it finds. An API with no device read restores no VM: the claim consumes
-the snapshot, and the start cold-boots. `ChApi::GUEST_SYNCS` is false
-for `ChTools`: the control link has no `sync` command until phase 3
-(item 5.7, the item 42 note of the design). So an eviction or a sleep
-takes no snapshot yet (caller duty 7). So the vmm restores no VM that
-it put to sleep until the phase 3 PR. The restore path and the device
-check run only in the tests. `tests/start.rs` gives a fake API with
-each value of each constant, and its `info` replies have the shape of
-CH v54.
+the snapshot, and the start cold-boots. Each eviction and each sleep
+syncs the guest before its take (caller duty 7, decision CH62 rule 23),
+so the vmm restores a VM that it put to sleep. `tests/start.rs` gives a
+fake API with each value of `READS_DEVICES`, and its `info` replies
+have the shape of CH v54.
 
 ## The eviction
 
@@ -730,18 +731,23 @@ admission:
    claim to end. The client reconnects with `session/load` (decision
    CH19 (6)).
 2. A VM with a turn running goes back, and the start gets `host_full`.
-3. `ChApi::snapshot` takes the snapshot and writes its key
-   (`sleep::take_keyed`, PRs D9 and D10). `sleep::EVICT_SNAPSHOT`
+3. `StopSender::sync` syncs the guest (item 5.7 of the design, decision
+   CH62 rule 23). With no `synced` within `SYNC_WAIT` (10 s) the VM
+   takes no snapshot.
+4. `ChApi::snapshot` takes the snapshot with its key
+   (`sleep::take_keyed`, PRs D9 and D10). `Snapshotter::take` writes the
+   key before its rename, so no snapshot exists without a key (decision
+   CH44, item 42). `sleep::EVICT_SNAPSHOT`
    bounds each `ch-remote` call of the take: pause 5 s, snapshot 60 s
-   and `shutdown-vmm` 10 s (decisions CH44 rule 3, CH50 rule 1). The
-   take ends CH. A failed take is logged, and the stop follows anyway
+   and `shutdown-vmm` 10 s (decisions CH44 rule 3, CH50 rule 1). With
+   the sync, one retire waits at most 10 + 5 + 60 + 10 s for the guest
+   and CH. The take ends CH. A failed take is logged, and the stop follows anyway
    (decision CH44 rule 4). An API with no device read
-   (`ChApi::READS_DEVICES` false) takes no snapshot: no snapshot would
-   restore, and a take ends CH with no guest power-off. An API with no
-   guest sync (`ChApi::GUEST_SYNCS` false) takes no snapshot either:
-   item 5.7 of the design asks for a guest `sync` before each take. The
-   stop of step 4 is then the graceful one (decision CH19 (3)).
-4. `stop::stop` with the control link of the VM. A VM that does not
+   (`ChApi::READS_DEVICES` false) takes no snapshot and sends no sync:
+   no snapshot would restore, and a take ends CH with no guest
+   power-off. With no take, the stop of step 5 is the graceful one
+   (decision CH19 (3)).
+5. `stop::stop` with the control link of the VM. A VM that does not
    stop goes back with no link, so admission counts its RAM (decision
    CH50 rule 4), and the start gets `host_full`. The VMs left in the
    list go back too.
@@ -757,9 +763,10 @@ proves a refused line during a take.
 The list runs in a task of its own (`tokio::spawn`), and the start
 waits for it. hyper drops the start future when the client hangs up
 before 101. The task runs on, so no take or stop ends half way, and no
-drop of an `Eviction` kills a VM during its snapshot. The blocking step
-of a take owns its read lock of the takes, so the lock lasts as long as
-the take.
+drop of an `Eviction` kills a VM during its snapshot. The retire takes
+its read lock of the takes before the sync, so no sweep runs between
+the sync and the take. The blocking step of a take owns that lock, so
+the lock lasts as long as the take.
 
 The gate of each VM is `Activity::may_evict` of `creche-vmm-store`, not
 `may_sleep` (PR D12). Only a VM with a control link and a snapshot key
@@ -771,8 +778,11 @@ stops the claim with `relay::Stopped::Evict`, and the acp handler answers
 it with `host_full`. A drop stops it with `Stopped::Drop`, which gets
 `not_found`. `tests/start.rs` proves the order, the door close,
 `host_full`, a failed take, a failed stop, a start under eviction, an
-eviction with no device read, and an eviction and a sleep with no guest
-sync. `tests/acp.rs` proves the eviction during
+eviction with no device read, the sync before each take, and a guest
+with no `synced` that gets no snapshot and the graceful stop.
+`src/control.rs` proves the sync on paused time: the one `sync` line, a
+late `synced` that changes nothing, and a closed link that ends the
+wait at once. `tests/acp.rs` proves the eviction during
 the dial.
 
 ## The sleep and the sweep
@@ -856,8 +866,8 @@ future of the signal. `shutdown::shutdown` then runs these steps:
    `VmSet::take` retires the VM as an eviction does, when the gate of
    admission passes and the take gate passes (caller duty 7). Each other
    VM gets `StopVm::stop`, the stop of plan PR L14 through the `Stopper`
-   (decision CH19 (3)). `GUEST_SYNCS` is false for `ChTools`, so each VM
-   gets the graceful stop today.
+   (decision CH19 (3)). The take syncs the guest first, as a retire does
+   (decision CH62 rule 23).
 4. A start that passed admission before the refusal holds a slot, so
    the first read finds it. A session that a later read adds gets the
    next pass. Each session gets one pass, and no seen session gets a new
@@ -865,7 +875,9 @@ future of the signal. `shutdown::shutdown` then runs these steps:
 
 `SHUTDOWN_WAIT` (85 s) bounds the whole shutdown from SIGTERM, 5 s
 inside the `TimeoutStopSec` of 90 s (decision CH56 rule 3, gap G16). A
-stop (36 s) and a take (75 s) each fit inside it. One deadline bounds
+stop (36 s) and a take each fit inside it. A take syncs first, so it
+costs 10 + 5 + 60 + 10 = 85 s, the whole wait (decision CH62 rule 23),
+and the const assert of `src/shutdown.rs` pins that sum. One deadline bounds
 every step, so a full take and then a full stop of one VM need not both
 fit (decision CH56 rule 2). A VM still in the set at the deadline ends
 after the vmm has exited: each VM scope has `BindsTo=` and `Before=` the
@@ -873,8 +885,8 @@ vmm unit (decision CH61 rule 2), and the `ExecStopPost=` step of the
 unit kills its scope (decision CH61 rule 1). `ColdBoot` is the `VmSet` of the vmm.
 `tests/shutdown.rs` runs the steps on paused time with a fake set.
 `tests/start.rs` proves the take of an idle VM, the stop of a busy one
-and the door close over the hook, and the graceful stop of each VM with
-no guest sync.
+and the door close over the hook, the sync before the shutdown take,
+and the graceful stop of a VM with no `synced`.
 
 ## Rules
 
@@ -923,10 +935,10 @@ no guest sync.
    `ControlReady` asks for a cold boot. After a restore the start does
    not cold-boot then. It faults, stops the VM, and the next start
    cold-boots, because the claim consumed the snapshot.
-9. Closed by plan PR L18b: no take runs with no guest `sync`.
-   `ChApi::GUEST_SYNCS` gates each take, and it is false for `ChTools`.
-   So `Retirer::retire` sends the graceful stop, as before L18b. The
-   rest is caller duty 7.
+9. Closed by plan PR V9 (decision CH62 rule 23): no take runs with no
+   guest `sync`. `Retirer::retire` sends `sync` before each take and
+   takes none with no `synced` within `SYNC_WAIT`. `ChApi::GUEST_SYNCS`
+   is gone.
 10. Closed by plan PR L18b: the turn reader calls `ControlState::turn`
     for each event, so the last turn time follows the guest (decision
     CH50 rule 5).
@@ -986,8 +998,9 @@ no guest sync.
 1. Decision CH50 rule 1: the start of an `acp` Upgrade has no outer
    bound, and the handler adds none around the `StartVm` hook
    (`src/handlers/acp.rs`). Each step keeps its own bound.
-   `sleep::EVICT_SNAPSHOT` bounds the snapshot of one eviction. The
-   bound of a start grows with the number of VMs that its admission
+   `control::SYNC_WAIT` bounds the guest sync of one eviction, and
+   `sleep::EVICT_SNAPSHOT` bounds its snapshot (decision CH62 rule 23
+   adds the 10 s of the sync). The bound of a start grows with the number of VMs that its admission
    evicts.
 2. Decision CH50 rule 2: the `StartVm` hook of plan PR L16 dials guest
    port 1201 with `AcpLink::dial` before it returns. It answers a failed
@@ -1016,20 +1029,17 @@ no guest sync.
    makes a stop that finds a stop of the same VM running wait for it
    and return its outcome. So no drop removes the files of a VM that
    still runs.
-7. Item 5.7 of the design and its item 42 note: lifecycle syncs the
-   guest through the control link before each snapshot. The store gives
-   that duty to lifecycle, before `Snapshotter::take` (`creche-vmm-store`
-   Known gaps, caller duty of PR D9). Decision CH62 rule 23 replaces the
-   old wording "sets `GUEST_SYNCS` true". The wire has `sync` and
-   `synced` (plan PR V1). Plan PR V9 removes `ChApi::GUEST_SYNCS`, and
-   `Retirer::retire` then sends `sync` on the control link before each
-   take and waits `SYNC_WAIT` (10 s) for `synced`. No `synced` in time
-   means no snapshot, and the graceful stop runs. Each other take, such
-   as the shutdown snapshots of plan PR L19, syncs the same way. Until
-   V9, `GUEST_SYNCS` stays false for `ChTools`, so no take ends CH with
-   no guest sync. A take with no sync would leave the session disk as a
-   power cut leaves it, for each cold boot after it (a key mismatch, a
-   failed restore, an `Aged` or a `Budget` sweep).
+7. Held by `src/start.rs` (plan PR V9, decision CH62 rule 23): item
+   5.7 of the design and its item 42 note ask lifecycle to sync the
+   guest through the control link before each snapshot, before
+   `Snapshotter::take`. `Retirer::retire` sends `sync` on the control
+   link before each take and waits `SYNC_WAIT` (10 s) for `synced`. No
+   `synced` in time means no snapshot, and the graceful stop runs. The
+   shutdown snapshots of plan PR L19 take through `Retirer::retire`, so
+   they sync the same way. A new take path must sync first too: a take
+   with no sync leaves the session disk as a power cut leaves it, for
+   each cold boot after it (a key mismatch, a failed restore, an `Aged`
+   or a `Budget` sweep).
 8. Held by `src/compose.rs` and `src/main.rs`: the compose step of plan
    PR L20 calls `shutdown::sigterm` at vmm start, inside the runtime,
    and runs `shutdown::shutdown` when the signal fires. A take runs in
