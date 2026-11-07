@@ -27,15 +27,12 @@
 //!    (fact 74).
 //! 6. A pull does not set `last_use` (decision CH62 rule 22). This module
 //!    holds no handle on the VM table.
-//! 7. Each reply logs its kind and its time, so the phase 3 proof can
-//!    measure the pull (decision CH23).
-//! 8. CONTRACT-QUESTION (crate AGENTS.md, Known gap 22): the listener
-//!    holds at most `LINK_CAP` open links, and a link past the cap is
-//!    accepted and closed at once. No row decides a cap on the 1100 host
-//!    end. V8 takes the 64 splice cap of a bridge row (decision CH62 rule
-//!    14) and its close past the cap (decision CH67 rule 3) as the
-//!    narrowest reading, because a root guest can dial 1100 with no guest
-//!    init.
+//! 7. A good pull writes no log line. Each refused pull and each faulted
+//!    pull writes one stderr line (decision CH68 rule 3). A guest that
+//!    pulls in a loop cannot flood the journal with good pulls.
+//! 8. The listener holds at most `LINK_CAP` open links, and a link past
+//!    the cap is accepted and closed at once (decision CH68 rule 1). A
+//!    root guest can dial 1100 with no guest init.
 //! 9. The drop of `Server` closes the listener and every open link. The
 //!    VM entry of the start table holds it, so the listener goes with the
 //!    VM.
@@ -60,11 +57,9 @@ use crate::server::ACCEPT_PAUSE;
 pub const HOLD_CAP: Duration = Duration::from_secs(10);
 
 /// The most open links of the listener of one VM.
-// CONTRACT-QUESTION (crate AGENTS.md, Known gap 22): no row caps the 1100
-// host end, which is a server, not a splice. Guest init splices each link
-// as one row of its bridges, and decision CH62 rule 14 caps the open
-// splices of a row at 64. V8 takes the same cap here as the narrowest
-// reading, because a root guest can dial 1100 with no guest init.
+// Decision CH68 rule 1: 64 links per VM listener, as the guest row cap
+// (decision CH62 rule 14). A link past the cap is accepted and closed at
+// once, as decision CH67 rule 3 does for a splice.
 pub const LINK_CAP: usize = SPLICE_CAP;
 
 /// The most fds that one `read_state` holds at once: the family dir,
@@ -76,11 +71,8 @@ const READ_FDS: u64 = 6;
 /// `LINK_CAP` links and each link reads: per VM the listener, and per link
 /// its stream and `READ_FDS`. `vmm serve` raises its soft `RLIMIT_NOFILE`
 /// to this plus `planes::fd_need`.
-// CONTRACT-QUESTION (crate AGENTS.md, Known gap 23): decision CH67 rule 4
-// sets the raise to the bridge need plus 4096 headroom (20608). No row
-// adds the 1100 links to it. V8 adds this need (28736), so the raise is
-// 49344, as the narrowest reading that keeps the 1100 links from taking
-// the fds of the bridges.
+// Decision CH68 rule 2: this need (28736) adds to the raise of decision
+// CH67 rule 4 (20608), so the raise is 49344.
 #[must_use]
 pub fn fd_need() -> u64 {
     let links = u64::try_from(LINK_CAP).unwrap_or(u64::MAX);
@@ -188,7 +180,7 @@ async fn serve_link(guest: UnixStream, puller: Arc<Puller>) {
             Err(_) => Some("a failed read"),
         };
         if let Some(why) = why {
-            eprintln!("vmm: session {session} family-state link closed: {why}");
+            eprintln!("{}", refused_log(session, why));
             return;
         }
         let pulled = Instant::now();
@@ -199,11 +191,30 @@ async fn serve_link(guest: UnixStream, puller: Arc<Puller>) {
         if link.write_raw(&line).await.is_err() {
             return;
         }
-        let took = pulled.elapsed().as_micros();
-        let held = held.as_millis();
-        eprintln!("vmm: session {session} family-state {kind} in {took} us, held {held} ms");
+        if let Some(log) = reply_log(session, kind, pulled.elapsed(), held) {
+            eprintln!("{log}");
+        }
     }
 }
+
+/// The one log line of a refused pull (decision CH68 rule 3).
+fn refused_log(session: &SessionId, why: &str) -> String {
+    format!("vmm: session {session} family-state link closed: {why}")
+}
+
+/// The log line of a reply, or `None` for a good pull, which writes no
+/// line (decision CH68 rule 3). A faulted pull writes one line with its
+/// kind and its time.
+fn reply_log(session: &SessionId, kind: &str, took: Duration, held: Duration) -> Option<String> {
+    (kind != KIND_STATE).then(|| {
+        let took = took.as_micros();
+        let held = held.as_millis();
+        format!("vmm: session {session} family-state {kind} in {took} us, held {held} ms")
+    })
+}
+
+/// The kind of a good pull: the `state` reply.
+const KIND_STATE: &str = "state";
 
 /// Whether `line` is one `FamilyStatePull`, read through the strict check
 /// (decision CH65 rule 2).
@@ -223,7 +234,7 @@ async fn answer(puller: &Arc<Puller>) -> Option<(&'static str, Vec<u8>, Duration
         Ok(state) => {
             let held = hold(state.model_live_at(), SystemTime::now());
             sleep(held).await;
-            Some(("state", state.line().to_vec(), held))
+            Some((KIND_STATE, state.line().to_vec(), held))
         }
         Err(fault) => {
             let (kind, line) = fault_reply(fault);
@@ -259,10 +270,14 @@ mod tests {
 
     use creche_vmm_confine::family::StateFault;
     use creche_wire::{
-        ConfigMissing, CredsMissing, FamilyStateReply, StateNotValid, StateTooLarge,
+        ConfigMissing, CredsMissing, FamilyStateReply, SessionId, StateNotValid, StateTooLarge,
     };
 
-    use super::{HOLD_CAP, fault_reply, hold};
+    use super::{HOLD_CAP, KIND_STATE, fault_reply, hold, refused_log, reply_log};
+
+    fn session() -> SessionId {
+        "3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b".parse().unwrap()
+    }
 
     /// Each fault line is the serde_json text of its reply, and its kind
     /// is the key of that text.
@@ -291,6 +306,38 @@ mod tests {
             assert_eq!(line, serde_json::to_vec(&reply).unwrap());
             assert_eq!(line, format!(r#"{{"{kind}":{{}}}}"#).as_bytes());
         }
+    }
+
+    /// A good pull writes no log line, however long its hold (decision
+    /// CH68 rule 3).
+    #[test]
+    fn a_good_pull_logs_nothing() {
+        let session = session();
+        let took = Duration::from_micros(40);
+        assert_eq!(reply_log(&session, KIND_STATE, took, Duration::ZERO), None);
+        assert_eq!(reply_log(&session, KIND_STATE, took, HOLD_CAP), None);
+    }
+
+    /// Each faulted pull writes one line, and a refused pull writes one
+    /// line (decision CH68 rule 3).
+    #[test]
+    fn a_faulted_or_refused_pull_logs_one_line() {
+        let session = session();
+        for fault in [
+            StateFault::CredsMissing,
+            StateFault::ConfigMissing,
+            StateFault::NotValid,
+            StateFault::TooLarge,
+        ] {
+            let (kind, _) = fault_reply(fault);
+            let log = reply_log(&session, kind, Duration::from_micros(7), Duration::ZERO)
+                .expect("a faulted pull writes a line");
+            assert!(log.contains(kind));
+            assert!(!log.contains('\n'));
+        }
+        let log = refused_log(&session, "a failed read");
+        assert!(log.ends_with("a failed read"));
+        assert!(!log.contains('\n'));
     }
 
     /// A time ahead holds until it, at most `HOLD_CAP`. A time that passed,

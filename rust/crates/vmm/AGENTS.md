@@ -606,17 +606,18 @@ CH24).
    ends and the next pull dials fresh (fact 74).
 6. A pull does not set `last_use` (decision CH62 rule 22). The server
    holds no handle on the VM table.
-7. Each reply writes one stderr line with the session, the reply kind,
-   its time in microseconds and its hold in milliseconds, so the phase 3
-   proof can measure the pull (decision CH23).
-8. CONTRACT-QUESTION (Known gap 22): the listener holds at most
-   `LINK_CAP` (64) open links, the splice cap of a guest init row. A
-   link past it is accepted and closed at once.
-9. CONTRACT-QUESTION (Known gap 23): `family_state::fd_need` counts per
-   slot the listener, and per link its stream and the 6 fds that one
-   `read_state` holds at most: 449 per slot, 28736 for all `SLOTS`.
-   `vmm serve` adds it to `planes::fd_need`, so the raised soft limit is
-   49344.
+7. A good pull writes no log line (decision CH68 rule 3). A faulted
+   pull writes one stderr line with the session, the reply kind, its time
+   in microseconds and its hold in milliseconds. A refused pull writes
+   one stderr line with the session and the reason. A guest that pulls
+   in a loop cannot flood the journal with good pulls.
+8. The listener holds at most `LINK_CAP` (64) open links (decision CH68
+   rule 1). A link past it is accepted and closed at once.
+9. `family_state::fd_need` counts per slot the listener, and per link its
+   stream and the 6 fds that one `read_state` holds at most: 449 per
+   slot, 28736 for all `SLOTS`. `vmm serve` adds it to
+   `planes::fd_need`, so the raised soft limit is 49344 (decision CH68
+   rule 2).
 
 `tests/family_state.rs` runs the listener on real Unix sockets over a
 scratch family root, with paused tokio time: many pulls on one link, a
@@ -968,22 +969,14 @@ no guest sync.
     need exits 78. `systemd/creche-vmm.service` gets no `LimitNOFILE=`
     line, so systemd's default hard limit (524288) holds. Each CH
     inherits the raised soft limit.
-22. CONTRACT-QUESTION (plan PR V8): no row caps the open links of the
-    1100 listener. Decision CH62 rule 14 caps the open splices of a
-    bridge row at 64, and decision CH67 rule 3 closes a splice past that
-    cap. The 1100 host end is a server, not a splice. A root guest can
-    dial 1100 with no guest init, so an uncapped listener lets one guest
-    use every fd of the vmm. V8 takes the narrowest fail-closed reading:
-    `family_state::LINK_CAP` is the splice cap (64), and a link past it
-    is accepted and closed at once. Open for David: is 64 the cap of the
-    1100 listener, and does a link past it close at once?
-23. CONTRACT-QUESTION (plan PR V8): decision CH67 rule 4 raises the soft
-    `RLIMIT_NOFILE` to the bridge need plus 4096 headroom (20608), and
-    no row adds the 1100 links. V8 adds `family_state::fd_need` (28736:
-    per slot the listener, and per link its stream and the 6 fds of one
-    `read_state`), so the raise is 49344. The hard limit of 524288 holds
-    it. Open for David: does the raise include the 1100 links, and with
-    this count?
+22. Closed by decision CH68 rule 1: the 1100 listener takes at most 64
+    links per VM (`family_state::LINK_CAP`), and a link past the cap is
+    accepted and closed at once, as decision CH67 rule 3 does for a
+    splice.
+23. Closed by decision CH68 rule 2: the 1100 fd need (28736: per slot the
+    listener, and per link its stream and the 6 fds of one `read_state`)
+    adds to the raise of decision CH67 rule 4 (20608), so the raise is
+    49344.
 
 ## Caller duties
 
