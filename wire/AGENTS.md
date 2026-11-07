@@ -403,7 +403,8 @@ it for each clone on host port 1103. No route reaches the type.
    has no look-ahead, so it spells each name that ends in no `.git`, and
    `maxLength` holds the length. Plan PR F1 adds the test that holds it
    equal to `family/grammar.py` (decision CH23 rule 5).
-3. The list reads a name twice (Known gap 4).
+3. The list reads a name twice, against decision CH69 rule 15 (Known
+   gap 4, held).
 
 ## A route error on the wire
 
@@ -640,9 +641,13 @@ a dependency.
    datamodel-codegen 0.87 writes `list[...]` with no check for
    `uniqueItems`, so a refusal in Rust alone would split the Rust and
    Python readers. Neither changes a verdict of the vmm.
-4. CONTRACT-QUESTION: decision CH69 rule 15 refuses a repo name given
-   twice. `RepoList` reads one, as `FamilyEgress` does by decision CH70
-   rule 4, for the same reason: datamodel-codegen 0.87 drops
-   `uniqueItems`, so a refusal in Rust alone splits the Rust and Python
-   readers. A name twice serves the same repo. The family grammar (plan
-   PR F1) and caregiver (plan PR C2) refuse it before any file exists.
+4. CONFLICT with decision CH69 rule 15, held for David: rule 15 (Q61-15
+   option A) refuses a repo name given twice, and `RepoList` reads one.
+   Decision CH70 rule 4 allows a duplicate only in `FamilyEgress`, so no
+   row allows this one. A refusal in Rust alone splits the readers:
+   datamodel-codegen 0.87 drops `uniqueItems`, so the Python model reads
+   the name twice. David decides one of two answers: amend rule 15 so
+   that CH70 rule 4 also covers `RepoList`, or decide how the Python
+   reader refuses a name twice. A name twice serves the same repo. The
+   family grammar (plan PR F1) and caregiver (plan PR C2) refuse it
+   before any file exists.
