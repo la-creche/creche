@@ -537,9 +537,8 @@ impl<A: ChApi> Retirer<A> {
 
     /// Syncs the guest of `eviction`, snapshots the VM, then stops it
     /// (decisions CH19 (6), CH62 rule 23). The take ends CH, so the stop
-    /// finds it gone. With no device read (`ChApi::READS_DEVICES`) or no
-    /// `synced` within `SYNC_WAIT` it takes no snapshot and sends the
-    /// graceful stop. `Kept` when the VM
+    /// finds it gone. With no `synced` within `SYNC_WAIT` it takes no
+    /// snapshot and sends the graceful stop. `Kept` when the VM
     /// still holds its RAM: a turn runs, or the stop failed (decision CH50
     /// rule 4). `Stopped` when the VM faulted (decision CH54 rule 6).
     async fn retire<P: VmProcess>(&self, mut eviction: Eviction<P>) -> Retired {
@@ -569,14 +568,8 @@ impl<A: ChApi> Retirer<A> {
         // Decision CH44 rule 4: the caller decides after a failed take.
         // The VM stops anyway, so its RAM frees, and the session
         // cold-boots from its disk later (decision CH19 (5)).
-        // An API that reads no device set restores no snapshot, and the
-        // next claim consumes it unused (`ChApi::READS_DEVICES`). A take
-        // ends CH with no guest power-off, so that cold boot would find its
-        // disk as a power cut left it. So with no device read the VM takes
-        // no snapshot, and the stop below is the graceful one (decision
-        // CH19 (3)): guest init syncs and powers off.
         let mut took = false;
-        if open && A::READS_DEVICES {
+        if open {
             // The take waits for no sweep after the sync, so the guest
             // writes little between its sync and the pause. The blocking
             // step owns the read lock, so the lock lasts as long as the
@@ -1346,14 +1339,9 @@ impl<L: Launcher, A: ChApi> VmSet for ColdBoot<L, A> {
     /// Retires the VM of `id` as an eviction does, when the gate of
     /// admission passes after its door closed (plan PR L19, decision CH19
     /// (6)). A VM that a start, a retire or a stop holds is skipped, and
-    /// the stop of the shutdown waits for that slot.
+    /// the stop of the shutdown waits for that slot. The retire syncs the
+    /// guest before its take (caller duty 7, decision CH62 rule 23).
     async fn take(&self, id: &SessionId) -> Taken {
-        // With no device read no take runs, so each VM gets the graceful
-        // stop of the `Stopper`. The retire syncs the guest before its take
-        // (caller duty 7, decision CH62 rule 23).
-        if !A::READS_DEVICES {
-            return Taken::Skipped;
-        }
         let eviction = {
             let mut table = lock(&self.table);
             let now = Instant::now();
@@ -1418,16 +1406,16 @@ fn make_dir(dir: &Path) -> Result<(), String> {
 }
 
 /// The snapshot that the start restores, or `None` for a cold boot
-/// (decisions CH7-6, CH19 (5), CH44 rules 5 and 6). When `A` reads no
-/// device set (`ChApi::READS_DEVICES`), the claim still consumes the
-/// snapshot, because the cold boot moves the session disk on.
+/// (decisions CH7-6, CH19 (5), CH44 rules 5 and 6). The claim consumes
+/// the snapshot, so a restore that the device check refuses never runs
+/// again, and the next start cold-boots (decision CH50 rule 10).
 ///
 /// The key check and the claim run under the lock of the claims, and
 /// the generation stays in `in_use` until CH ends (decision CH50 rule 8).
 /// So a sweep that holds the lock of the claims never removes a
 /// generation that a start restores. The lock of `in_use` lasts one
 /// insert or one remove (decision CH36 G21).
-fn claim_newest<A: ChApi>(
+fn claim_newest(
     session: &SessionDir,
     key: &SnapshotKey,
     (claims, in_use): (&Mutex<()>, &Mutex<InUse>),
@@ -1451,9 +1439,8 @@ fn claim_newest<A: ChApi>(
             return Err(error.to_string());
         }
     };
-    if claimed.is_none() || !A::READS_DEVICES {
+    if claimed.is_none() {
         lock_in_use(in_use).remove(&entry);
-        return Ok(None);
     }
     Ok(claimed)
 }
@@ -1476,7 +1463,7 @@ struct Booted<P> {
 
 /// Step 3: the link of `vm/<id>` to `slot`, the files of the boot, the
 /// restore or cold boot choice, then the launch in `slot`.
-fn launch<L: Launcher, A: ChApi>(
+fn launch<L: Launcher>(
     config: &StartConfig,
     launcher: &L,
     locks: (&Mutex<()>, &Mutex<InUse>),
@@ -1533,7 +1520,7 @@ fn launch<L: Launcher, A: ChApi>(
     // this same `store/<sha256>` file, so a restore reads it as a boot
     // does (decision CH61 rule 3).
     let initramfs_path = host(initramfs.path())?;
-    let (command, start, restore) = match claim_newest::<A>(&session, &key, locks, id)? {
+    let (command, start, restore) = match claim_newest(&session, &key, locks, id)? {
         Some(snapshot) => {
             let command = ChCommand::restore(snapshot, &run).map_err(|error| error.to_string())?;
             let expected = Expected {
@@ -1628,7 +1615,7 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         let slot = pending.slot;
         let launched = blocking(move || {
             let locks = (&*claims, &*in_use);
-            let booted = launch::<L, A>(&config, &*launcher, locks, (&session, slot), shape)?;
+            let booted = launch::<L>(&config, &*launcher, locks, (&session, slot), shape)?;
             let cmdline = launcher.cmdline(&booted.process);
             pending.process = Some(booted.process);
             pending.key = Some(booted.key);
@@ -1742,47 +1729,14 @@ mod tests {
     use creche_wire::SessionId;
 
     use super::claim_newest;
-    use crate::restore::ChTools;
-
-    /// The check of a claim needs only `READS_DEVICES`. Each call fails.
-    struct NoDevices;
-
-    impl crate::restore::ChApi for NoDevices {
-        const READS_DEVICES: bool = false;
-
-        fn info(
-            &self,
-            _vm: &creche_vmm_store::layout::VmRunDir,
-        ) -> Result<creche_vmm_store::ch_remote::VmInfo, creche_vmm_store::ch_remote::ChRemoteError>
-        {
-            Err(creche_vmm_store::ch_remote::ChRemoteError::BadDestination(
-                PathBuf::new(),
-            ))
-        }
-
-        fn resume(&self, _vm: &creche_vmm_store::layout::VmRunDir) -> Result<(), String> {
-            Err("no resume".to_owned())
-        }
-
-        fn snapshot(
-            &self,
-            _vm: &creche_vmm_store::layout::VmRunDir,
-            _session: &creche_vmm_store::layout::SessionDir,
-            _key: &SnapshotKey,
-        ) -> Result<SnapshotGeneration, String> {
-            Err("no snapshot".to_owned())
-        }
-    }
 
     const EMPTY: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
-    /// With no device check, the start cold-boots, and the claim still
-    /// consumes the snapshot, because the cold boot moves the session disk
-    /// on (decisions CH19 (5), CH50 rule 10). `ChTools` reads the device
-    /// set (PR D15), so its claim gives the snapshot and keeps the
-    /// generation in use (decision CH50 rule 8).
+    /// A claim gives the snapshot, consumes it and keeps the generation
+    /// in use (decisions CH19 (5), CH50 rule 8). So a restore that the
+    /// device check refuses never runs again (decision CH50 rule 10).
     #[test]
-    fn no_device_check_consumes_and_cold_boots() {
+    fn a_claim_consumes_and_keeps_the_generation_in_use() {
         let dir = PathBuf::from(format!("/tmp/vmm-claim-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
@@ -1806,19 +1760,10 @@ mod tests {
 
         let in_use = Mutex::new(InUse::new());
         let locks = (&Mutex::new(()), &in_use);
-        let claimed = claim_newest::<ChTools>(&session, &key, locks, &id).unwrap();
+        let claimed = claim_newest(&session, &key, locks, &id).unwrap();
         assert!(claimed.is_some());
-        assert!(in_use.lock().unwrap().contains(&(id.clone(), generation)));
-
-        let generation = SnapshotGeneration(2);
-        fs::create_dir_all(session.snapshot(generation)).unwrap();
-        write_key(&session.snapshot(generation), &key).unwrap();
-        let in_use = Mutex::new(InUse::new());
-        let locks = (&Mutex::new(()), &in_use);
-        let claimed = claim_newest::<NoDevices>(&session, &key, locks, &id).unwrap();
-        assert!(claimed.is_none());
         assert!(session.snapshot(generation).join("consumed").is_file());
-        assert!(in_use.lock().unwrap().is_empty());
+        assert!(in_use.lock().unwrap().contains(&(id.clone(), generation)));
         let _ = fs::remove_dir_all(&dir);
     }
 }

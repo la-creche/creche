@@ -707,14 +707,17 @@ same bytes.
 5. The deny check runs as for a boot. A restore has no `--vsock`
    argument.
 
-`ChApi::READS_DEVICES` is true for `restore::ChTools`, the API of the
-vmm, since PR D15 (plan PR L18b). So the vmm restores a snapshot that
-it finds. An API with no device read restores no VM: the claim consumes
-the snapshot, and the start cold-boots. Each eviction and each sleep
-syncs the guest before its take (caller duty 7, decision CH62 rule 23),
-so the vmm restores a VM that it put to sleep. `tests/start.rs` gives a
-fake API with each value of `READS_DEVICES`, and its `info` replies
-have the shape of CH v54.
+`restore::ChTools`, the API of the vmm, reads the device set since PR
+D15 (plan PR L18b). So every restore runs the device check, and the vmm
+restores a snapshot that it finds. The claim consumes the snapshot, so
+a restore that the check refuses never runs again, and the next start
+cold-boots (decision CH50 rule 10). Each eviction and each sleep syncs
+the guest before its take (caller duty 7, decision CH62 rule 23), so
+the vmm restores a VM that it put to sleep. `tests/start.rs` gives one
+fake API, and its `info` replies have the shape of CH v54.
+`a_claim_always_runs_the_device_check` proves the refused restore and
+the cold boot after it. Plan PR V9b removed the `ChApi` const that let
+a test API skip the device read (decisions CH62 rule 23, CH58 rule 1).
 
 ## The eviction
 
@@ -738,11 +741,8 @@ admission:
    and `shutdown-vmm` 10 s (decisions CH44 rule 3, CH50 rule 1). With
    the sync, one retire waits at most 10 + 5 + 60 + 10 s for the guest
    and CH. The take ends CH. A failed take is logged, and the stop follows anyway
-   (decision CH44 rule 4). An API with no device read
-   (`ChApi::READS_DEVICES` false) takes no snapshot and sends no sync:
-   no snapshot would restore, and a take ends CH with no guest
-   power-off. With no take, the stop of step 5 is the graceful one
-   (decision CH19 (3)).
+   (decision CH44 rule 4). With no take, the stop of step 5 is the
+   graceful one (decision CH19 (3)).
 5. `stop::stop` with the control link of the VM. A VM that does not
    stop goes back with no link, so admission counts its RAM (decision
    CH50 rule 4), and the start gets `host_full`. The VMs left in the
@@ -773,9 +773,9 @@ an Upgrade whose door an eviction closes after its start: `Relays::close`
 stops the claim with `relay::Stopped::Evict`, and the acp handler answers
 it with `host_full`. A drop stops it with `Stopped::Drop`, which gets
 `not_found`. `tests/start.rs` proves the order, the door close,
-`host_full`, a failed take, a failed stop, a start under eviction, an
-eviction with no device read, the sync before each take, and a guest
-with no `synced` that gets no snapshot and the graceful stop.
+`host_full`, a failed take, a failed stop, a start under eviction, the
+sync before each take, and a guest with no `synced` that gets no
+snapshot and the graceful stop.
 `src/control.rs` proves the sync on paused time: the one `sync` line, a
 late `synced` that changes nothing, and a closed link that ends the
 wait at once. `tests/acp.rs` proves the eviction during
@@ -918,7 +918,8 @@ and the graceful stop of a VM with no `synced`.
    plan PR named. `impl StopVm for ColdBoot` is "The stop hook", and the
    turn reader is in "The control link".
 6. Closed by plan PR L18b: `ChTools::info` returns the `VmInfo` of PR
-   D15, so `READS_DEVICES` is true and the vmm restores. A device kind
+   D15, so every restore runs the device check and the vmm restores.
+   Plan PR V9b removed the const that let an API skip it. A device kind
    that `VmConfig` does not name passes the read unseen
    (`creche-vmm-store` AGENTS.md). A new kind needs a field there and a
    line in `check_devices`.

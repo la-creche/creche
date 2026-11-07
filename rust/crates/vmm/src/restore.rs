@@ -36,11 +36,6 @@ pub const RESUME_TIMEOUT: Duration = Duration::from_secs(5);
 /// test gives a fake. Each call blocks, so the start runs it in
 /// `spawn_blocking`.
 pub trait ChApi: Send + Sync + 'static {
-    /// True when `info` gives the device set, so the device check can
-    /// run. A restore with no device check never resumes, so the start
-    /// cold-boots instead (decision CH50 rule 10).
-    const READS_DEVICES: bool;
-
     /// The reply of `ch-remote info`: the state and the device set.
     ///
     /// # Errors
@@ -81,13 +76,12 @@ pub struct ChTools {
     pub snapshotter: Snapshotter,
 }
 
-// PR D15 gives the device set in `VmInfo`, so the vmm restores (plan PR
-// L18b). `INFO_TIMEOUT` is the timeout of the call. The retire syncs the
-// guest on the control link before each take (decision CH62 rule 23,
-// caller duty 7 of AGENTS.md).
+// PR D15 gives the device set in `VmInfo`, so each restore runs the
+// device check (plan PR L18b, decision CH50 rule 10). `INFO_TIMEOUT` is
+// the timeout of the call. The retire syncs the guest on the control
+// link before each take (decision CH62 rule 23, caller duty 7 of
+// AGENTS.md).
 impl ChApi for ChTools {
-    const READS_DEVICES: bool = true;
-
     fn info(&self, vm: &VmRunDir) -> Result<VmInfo, ChRemoteError> {
         self.remote.info(vm, INFO_TIMEOUT)
     }
