@@ -17,9 +17,9 @@
 //
 // guest init kills a facade whose link closes outside a stop (decision CH32
 // rule 7). So the facade never closes the link, and the exit of the process
-// is its only close. A link fault is not fatal here: one stderr line, and
-// the later events are dropped. guest init accepts one link per facade
-// start, so nothing dials again.
+// is its only close. guest init accepts one link per facade start, so
+// nothing dials again. No row says what the facade does when the link does
+// not open or faults: see the CONTRACT-QUESTION in `open`.
 
 import { createConnection } from "node:net";
 import type { Socket } from "node:net";
@@ -84,6 +84,18 @@ export class LocalLink {
     const socket = createConnection(this.path);
     let fault = "";
     socket.on("data", (chunk: Buffer) => this.take(chunk, onStop));
+    // CONTRACT-QUESTION: no row says what the facade does when the link
+    // does not open (ENOENT, ECONNREFUSED) or faults later. CH21, CH32
+    // rules 6 and 7, CH62 rules 10 and 11 and CH66 decide only the link
+    // that opens. The reading taken: one stderr line, and the facade
+    // serves on with no link. guest init then keeps the facade in
+    // `starting`, the vmm never snapshots it (CH19 rule 6), each turn
+    // event is dropped with no stderr line, and a stop starts at SIGTERM
+    // (CH66 rule 4). A close by guest init outside a stop is moot: guest
+    // init kills the facade then (CH32 rule 7). The fail-closed reading:
+    // exit with a status of its own at a close outside a stop, so that
+    // guest init starts the facade again after its 1 s restart pause
+    // (CH62 rule 8). A row that wants it changes only these two handlers.
     socket.on("error", (error) => {
       fault = `: ${error.message}`;
     });

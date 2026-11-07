@@ -198,9 +198,11 @@ rule 5).
    up to 30 s for a running submission, so the facade bounds the wait.
 5. The facade never closes the link. guest init kills a facade whose link
    closes outside a stop (decision CH32 rule 7), so the exit of the
-   process is the only close. A link fault or a close by guest init is
-   not fatal: one stderr line, and later events are dropped. guest init
-   accepts one link per facade start, so nothing dials again.
+   process is the only close. guest init accepts one link per facade
+   start, so nothing dials again. No row decides a link that does not
+   open or that faults. The reading taken: one stderr line, the facade
+   serves on with no link, and later events are dropped (see Known
+   gaps).
 
 TypeBox 1.3.27 counts a `maxLength` in grapheme clusters, and JavaScript
 counts a string in UTF-16 units. `agent/wire-read` compiles each length as
@@ -227,6 +229,16 @@ facade.
   the link at a line that it refuses, but a close gets the facade killed
   (decision CH32 rule 7). The facade drops the line with one stderr line
   and keeps the link. `src/local-link.ts` holds the `CONTRACT-QUESTION`.
+- No row says what the facade does when the local link does not open
+  (ENOENT, ECONNREFUSED) or faults later. The facade writes one stderr
+  line and serves on with no link. guest init then keeps it in
+  `starting` for its whole life, so the vmm never snapshots it (decision
+  CH19 rule 6), each turn event is dropped with no stderr line, and a
+  stop starts at SIGTERM (decision CH66 rule 4). The fail-closed reading
+  is to exit with a status of its own at a close outside a stop, so that
+  guest init starts the facade again after its 1 s restart pause
+  (decision CH62 rule 8). `LocalLink.open` in `src/local-link.ts` holds the
+  `CONTRACT-QUESTION`.
 
 - The facade does not send `creche/delegation` to the chaperone. Flue's MCP
   adapter sends no `_meta` on `tools/call`, and a connection has no

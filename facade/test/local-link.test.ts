@@ -253,6 +253,8 @@ describe("the down lines", () => {
   });
 });
 
+// CONTRACT-QUESTION of `LocalLink.open`: a link that does not open or
+// faults costs one stderr line, and the facade serves on with no link.
 describe("a link fault", () => {
   it("is not fatal when guest init closes the link", async () => {
     const guest = await guestInit();
