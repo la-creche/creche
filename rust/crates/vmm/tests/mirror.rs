@@ -311,8 +311,57 @@ fn a_clone_of_a_listed_repo_matches_the_mirror_head() {
     let (output, dest) = scratch.clone(port, "creche", 0);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "{stderr}");
+    // A v0 request sets no `GIT_PROTOCOL`, so the server answers in v0
+    // (decision CH69 rule 16).
+    assert!(!stderr.contains("< version 2"), "{stderr}");
     let mirror = scratch.dir.join("mirror/creche");
     assert_eq!(scratch.head(&dest), scratch.head(&mirror));
+}
+
+/// `upload-pack` gets the exact argv, only the two config lines as its
+/// env, and `/dev/null` as stderr (decisions CH46 rule 4, CH69 rules 16
+/// and 17). The git program of the test writes its args, its env and
+/// whether fd 2 is `/dev/null`, then one pkt-line.
+#[test]
+fn upload_pack_gets_its_args_and_only_its_env() {
+    let scratch = Scratch::threaded("argv");
+    let (args, env, stderr) = (
+        scratch.dir.join("args"),
+        scratch.dir.join("env"),
+        scratch.dir.join("stderr"),
+    );
+    let body = format!(
+        "printf '%s\\n' \"$@\" > '{}'\n/usr/bin/env > '{}'\n\
+         if [ /dev/fd/2 -ef /dev/null ]; then echo null; else echo other; fi > '{}'\n\
+         printf '0008run\\n'\n",
+        args.display(),
+        env.display(),
+        stderr.display()
+    );
+    let _server = scratch.serve_with(&scratch.fake_git("git-records", &body));
+    assert_eq!(scratch.ask(&request("/creche")), b"0008run\n");
+    let git_dir = scratch.dir.join("mirror/creche/.git");
+    let want = format!(
+        "upload-pack\n--strict\n--timeout=60\n{}\n",
+        git_dir.display()
+    );
+    assert_eq!(std::fs::read_to_string(&args).unwrap(), want);
+    // sh itself adds `PWD`, `SHLVL` and `_`.
+    let env = std::fs::read_to_string(&env).unwrap();
+    let mut lines: Vec<&str> = env
+        .lines()
+        .filter(|line| {
+            !["PWD=", "SHLVL=", "_="]
+                .iter()
+                .any(|key| line.starts_with(key))
+        })
+        .collect();
+    lines.sort_unstable();
+    assert_eq!(
+        lines,
+        ["GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1"]
+    );
+    assert_eq!(std::fs::read_to_string(&stderr).unwrap(), "null\n");
 }
 
 /// A v2 request sets `GIT_PROTOCOL`, so `upload-pack` answers in v2: the

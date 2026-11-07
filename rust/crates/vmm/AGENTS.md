@@ -863,7 +863,8 @@ empty list or a file that does not read binds no listener (Known gap
 family root and a scratch mirror of real repos. A forward in the test
 carries `git clone git://127.0.0.1:<port>/<name>` to the socket, as guest
 init bridges 9418. It proves the clone outside `repos`, the HEAD of a v0
-clone, a v2 clone, the one error for a repo not listed and one not in
+clone with no v2 answer, a v2 clone, the exact argv, env and stderr of
+`upload-pack`, the one error for a repo not listed and one not in
 the mirror, a removal, each refused path form, `git-receive-pack`, a
 symlinked repo, the line cap, the line wait with paused tokio time, the
 link cap, `LINK_CAP` + 1 links one after another, the kill of the child and of its own child at the drop of
