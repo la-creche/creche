@@ -84,6 +84,22 @@ table of the three vmm crates.
   (decision CH45 rule 2). Decision CH50 rule 9 sets `READ_TRIES` (5),
   `RETRY_PAUSE` (10 ms) and `SHAPE_CAP` (4 KiB). A read blocks its thread
   in `thread::sleep`, so a caller in tokio runs it in `spawn_blocking`.
+- `family::FamilyRoot::read_state` reads the family state of one pull on
+  host port 1100 (decisions CH5a, CH5b, CH23). It reads
+  `creds/creds.json` as one capped `O_NOFOLLOW` read, then `config/`
+  through `with_config`, with no cross-check of the two (decision CH62
+  rule 21). Both JSON files go through `creche_wire::strict` (decision
+  CH65 rule 2), and each refuses a key that caregiver does not write. The
+  reply drops `previous_pep_token`, `previous_expires_at`, `epoch`,
+  `written_at` and `shell` (decision CH23 rule 1). `creds_missing` wins
+  over every fault of `config/` (decision CH31 rule 4). A state over
+  `FAMILY_STATE_CAP` is `too_large` (decision CH31 rule 3), and the
+  instructions and skills share one budget of that cap, so no read holds
+  more. `StateRead` holds the checked reply text and `model_live_at` of
+  `runtime.json` (decision CH23-1), and its `Debug` writes no secret.
+  Nothing keeps a last good state (decision CH53 rule 2). No live host
+  writes `model_live_at` before the cut (decision CH45 rule 2), so the
+  tests read the fixture root `tests/fixtures/family`.
 - `command::ChCommand` renders the CH argv from the checked store types
   only: `CheckedImage` (PR D6), `SessionDisk` (PR D7), `SerialLog` (PR
   D17) and `ClaimedSnapshot` (PR D11). No input names a network card, and no
@@ -360,3 +376,16 @@ table of the three vmm crates.
   the value `vmm` in the `source` enum of §3.3, and the reader. caregiver
   reads only the `attendance` and `pep` files today, so it ignores the
   vmm file.
+- CONTRACT-QUESTION (decisions CH23 rule 4, CH31 rule 3): no row sets a
+  cap for `creds.json` or `runtime.json`. `read_state` reads each with
+  the cap `FAMILY_STATE_CAP`, and a larger file is `not_valid`, not
+  `too_large`, because its excess may sit in fields that the reply
+  drops.
+- CONTRACT-QUESTION (decisions CH23 rule 5, CH65 rule 2): `read_state`
+  reads caregiver's files more strictly than the facade's file backend
+  (`agent/src/family-state.ts`, `runtime-config.ts`, `creds.ts`). It
+  refuses as `not_valid` an unknown key in `creds.json` or
+  `runtime.json`, a `runtime.json` with no `shell` or `sandbox_tools`, a
+  tool listed twice, and an entry of `skills/` that is not a dir. The
+  file backend ignores or defaults each. caregiver writes none of these,
+  so both backends give the same reply for every file caregiver writes.

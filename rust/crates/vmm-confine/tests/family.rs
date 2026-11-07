@@ -1,19 +1,25 @@
-//! The read of a family's `config/` and its VM shape in temp directories
-//! (decisions CH5b, CH23 (3), CH33 rule 3, CH36 G6, CH43 rule 3).
+//! The read of a family's `config/`, its VM shape and its family state in
+//! temp directories (decisions CH5b, CH23, CH31, CH33 rule 3, CH36 G6,
+//! CH43 rule 3, CH62 rule 21). The family state tests copy the fixture
+//! family root `fixtures/family`, because no live host writes
+//! `model_live_at` before the cut (decision CH45 rule 2).
 
 use std::fs;
 use std::os::unix::fs::symlink;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use creche_vmm_confine::family::{
-    FamilyError, FamilyRoot, READ_TRIES, RETRY_PAUSE, SHAPE_CAP, ShapeFault,
+    FamilyError, FamilyRoot, READ_TRIES, RETRY_PAUSE, SHAPE_CAP, ShapeFault, StateFault, StateFile,
+    StateRead,
 };
 use creche_vmm_store::layout::RootError;
-use creche_wire::{FamilyName, FamilyShape};
+use creche_wire::{FAMILY_STATE_CAP, FamilyName, FamilyShape, FamilyStateReply};
+use serde_json::{Value, json};
 
 const SHAPE: &str = r#"{"cpus":2,"flavor":"base","memory_mib":2048}"#;
 const BIGGER: &str = r#"{"cpus":4,"flavor":"python","memory_mib":8192}"#;
@@ -43,6 +49,52 @@ impl Root {
         fs::write(config.join("shape.json"), shape).unwrap();
         config
     }
+}
+
+#[cfg(test)]
+impl Root {
+    /// A family root that holds a copy of `fixtures/family`.
+    fn fixture(name: &str) -> Self {
+        let root = Self::new(name);
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/family/code");
+        let copied = Command::new("cp")
+            .arg("-R")
+            .arg(fixture)
+            .arg(root.0.join("code"))
+            .status()
+            .unwrap();
+        assert!(copied.success());
+        root
+    }
+
+    /// A path in the family dir of `code`.
+    fn at(&self, path: &str) -> PathBuf {
+        self.0.join("code").join(path)
+    }
+
+    fn state(&self) -> Result<StateRead, StateFault> {
+        self.families().read_state(&code())
+    }
+}
+
+/// The reply of a read as JSON.
+#[cfg(test)]
+fn reply(read: &StateRead) -> Value {
+    let line: FamilyStateReply = serde_json::from_slice(read.line()).unwrap();
+    assert!(matches!(line, FamilyStateReply::State(_)));
+    serde_json::from_slice(read.line()).unwrap()
+}
+
+/// The fixture `runtime.json` with `change` applied to its JSON.
+#[cfg(test)]
+fn runtime(change: impl FnOnce(&mut serde_json::Map<String, Value>)) -> String {
+    let mut body = json!({
+        "shell": true,
+        "sandbox_tools": ["read"],
+        "model_alias": "litellm/fixture-model",
+    });
+    change(body.as_object_mut().unwrap());
+    body.to_string()
 }
 
 impl Drop for Root {
@@ -238,4 +290,302 @@ fn the_root_is_absolute_with_no_parent_part() {
     assert!(matches!(relative, Err(RootError::NotAbsolute)));
     let parent = FamilyRoot::new(PathBuf::from("/srv/agents/../families"));
     assert!(matches!(parent, Err(RootError::ParentComponent)));
+}
+
+#[test]
+fn reads_creds_and_config_into_one_state() {
+    let root = Root::fixture("state");
+    let read = root.state().unwrap();
+    let expected = json!({"state": {
+        "config": {
+            "instructions": "You help the code family.\n",
+            "model_alias": "litellm/fixture-model",
+            "sandbox_tools": {
+                "bash": true, "edit": false, "glob": false,
+                "grep": true, "read": true, "write": false,
+            },
+            "skills": {
+                "alpha": "---\nname: alpha\ndescription: The first fixture skill.\n---\nAlpha body.\n",
+                "beta": "---\nname: beta\ndescription: The second fixture skill.\n---\nBeta body.\n",
+            },
+            "system_prompt": "replace",
+        },
+        "creds": {
+            "litellm_key": "sk-fixture-key-0001",
+            "pep_token": "ab".repeat(32),
+        },
+    }});
+    assert_eq!(reply(&read), expected);
+    assert!(!read.line().contains(&b'\n'));
+    // 2026-11-06T12:00:10Z.
+    let live = UNIX_EPOCH + Duration::from_secs(1_793_966_410);
+    assert_eq!(read.model_live_at(), Some(live));
+    // The skills go in ascending name order, whatever the dir order.
+    let text = String::from_utf8(read.line().to_vec()).unwrap();
+    assert!(text.find("\"alpha\"").unwrap() < text.find("\"beta\"").unwrap());
+}
+
+#[test]
+fn drops_the_caregiver_only_fields() {
+    let root = Root::fixture("drops");
+    let read = root.state().unwrap();
+    let text = String::from_utf8(read.line().to_vec()).unwrap();
+    for gone in [
+        "epoch",
+        "written_at",
+        "previous",
+        "cdcd",
+        "shell",
+        "model_live_at",
+    ] {
+        assert!(!text.contains(gone), "{gone}");
+    }
+    // The Debug of a read writes no byte of the secrets (invariant 13).
+    let debug = format!("{read:?}");
+    assert!(!debug.contains("sk-") && !debug.contains("abab"), "{debug}");
+    // A creds.json with no previous_* fields still reads, as caregiver
+    // reads it.
+    fs::write(
+        root.at("creds/creds.json"),
+        json!({"litellm_key": "sk-k", "pep_token": "ab".repeat(32)}).to_string(),
+    )
+    .unwrap();
+    assert!(root.state().is_ok());
+}
+
+#[test]
+fn absent_parts_take_their_defaults() {
+    let root = Root::fixture("defaults");
+    fs::write(root.at("config/runtime.json"), runtime(|_| {})).unwrap();
+    fs::remove_file(root.at("config/instructions.md")).unwrap();
+    fs::remove_dir_all(root.at("config/skills")).unwrap();
+    let read = root.state().unwrap();
+    let config = &reply(&read)["state"]["config"];
+    assert_eq!(config["instructions"], "");
+    assert_eq!(config["skills"], json!({}));
+    assert_eq!(config["system_prompt"], "append");
+    assert_eq!(read.model_live_at(), None);
+}
+
+#[test]
+fn missing_creds_is_creds_missing() {
+    let root = Root::fixture("no-creds");
+    fs::remove_file(root.at("creds/creds.json")).unwrap();
+    assert_eq!(root.state().unwrap_err(), StateFault::CredsMissing);
+    fs::remove_dir(root.at("creds")).unwrap();
+    assert_eq!(root.state().unwrap_err(), StateFault::CredsMissing);
+    let other: FamilyName = "other".parse().unwrap();
+    let read = root.families().read_state(&other);
+    assert_eq!(read.unwrap_err(), StateFault::CredsMissing);
+    let wire = serde_json::to_value(StateFault::CredsMissing.reply()).unwrap();
+    assert_eq!(wire, json!({"creds_missing": {}}));
+}
+
+#[test]
+fn missing_config_is_config_missing() {
+    let root = Root::fixture("no-config");
+    fs::remove_dir_all(root.at("config")).unwrap();
+    let start = Instant::now();
+    assert_eq!(root.state().unwrap_err(), StateFault::ConfigMissing);
+    // An absent config/ may be the rename window, so each try waits.
+    assert!(start.elapsed() >= RETRY_PAUSE * (READ_TRIES - 1));
+    let wire = serde_json::to_value(StateFault::ConfigMissing.reply()).unwrap();
+    assert_eq!(wire, json!({"config_missing": {}}));
+}
+
+#[test]
+fn creds_missing_wins() {
+    let root = Root::fixture("both");
+    fs::remove_file(root.at("creds/creds.json")).unwrap();
+    fs::remove_dir_all(root.at("config")).unwrap();
+    assert_eq!(root.state().unwrap_err(), StateFault::CredsMissing);
+    fs::create_dir(root.at("config")).unwrap();
+    fs::write(root.at("config/runtime.json"), "{").unwrap();
+    assert_eq!(root.state().unwrap_err(), StateFault::CredsMissing);
+}
+
+#[test]
+fn a_bad_litellm_key_is_not_valid() {
+    let root = Root::fixture("bad-creds");
+    let token = "ab".repeat(32);
+    let bad = [
+        json!({"litellm_key": "pk-key", "pep_token": token}).to_string(),
+        json!({"litellm_key": "sk-a key", "pep_token": token}).to_string(),
+        json!({"litellm_key": "sk-key", "pep_token": "AB".repeat(32)}).to_string(),
+        json!({"pep_token": token}).to_string(),
+        json!({"litellm_key": "sk-key", "pep_token": token, "spend": 1}).to_string(),
+        format!(r#"{{"litellm_key":"sk-a","litellm_key":"sk-b","pep_token":"{token}"}}"#),
+        "[]".to_owned(),
+        String::new(),
+    ];
+    for text in bad {
+        fs::write(root.at("creds/creds.json"), &text).unwrap();
+        let read = root.state();
+        assert_eq!(
+            read.unwrap_err(),
+            StateFault::NotValid(StateFile::Creds),
+            "{text}"
+        );
+    }
+    let wire = serde_json::to_value(StateFault::NotValid(StateFile::Creds).reply()).unwrap();
+    assert_eq!(wire, json!({"not_valid": {}}));
+}
+
+#[test]
+fn a_bad_runtime_file_is_not_valid() {
+    let root = Root::fixture("bad-runtime");
+    let bad = [
+        runtime(|body| drop(body.remove("model_alias"))),
+        runtime(|body| drop(body.insert("model_alias".into(), json!("Upper")))),
+        runtime(|body| drop(body.remove("sandbox_tools"))),
+        runtime(|body| drop(body.insert("sandbox_tools".into(), json!(["read", "read"])))),
+        runtime(|body| drop(body.insert("sandbox_tools".into(), json!(["codemode"])))),
+        runtime(|body| drop(body.insert("shell".into(), json!("yes")))),
+        runtime(|body| drop(body.insert("system_prompt".into(), json!("prepend")))),
+        runtime(|body| drop(body.insert("model_live_at".into(), Value::Null))),
+        runtime(|body| drop(body.insert("model_live_at".into(), json!("2026-11-06T12:00:10.5Z")))),
+        runtime(|body| drop(body.insert("config_rev".into(), json!(1)))),
+        r#"{"shell":true,"shell":true,"sandbox_tools":[],"model_alias":"m"}"#.to_owned(),
+    ];
+    for text in bad {
+        fs::write(root.at("config/runtime.json"), &text).unwrap();
+        let read = root.state();
+        assert_eq!(
+            read.unwrap_err(),
+            StateFault::NotValid(StateFile::Runtime),
+            "{text}"
+        );
+    }
+    fs::remove_file(root.at("config/runtime.json")).unwrap();
+    let read = root.state();
+    assert_eq!(read.unwrap_err(), StateFault::NotValid(StateFile::Runtime));
+    fs::write(root.at("config/runtime.json"), runtime(|_| {})).unwrap();
+    fs::write(root.at("config/instructions.md"), [0xff, 0xfe]).unwrap();
+    let read = root.state();
+    assert_eq!(
+        read.unwrap_err(),
+        StateFault::NotValid(StateFile::Instructions)
+    );
+    fs::write(root.at("config/instructions.md"), "").unwrap();
+    fs::create_dir(root.at("config/skills/Not_A_Name")).unwrap();
+    fs::write(root.at("config/skills/Not_A_Name/SKILL.md"), "x").unwrap();
+    let read = root.state();
+    assert_eq!(read.unwrap_err(), StateFault::NotValid(StateFile::Skills));
+    fs::remove_dir_all(root.at("config/skills/Not_A_Name")).unwrap();
+    fs::create_dir(root.at("config/skills/gamma")).unwrap();
+    let read = root.state();
+    assert_eq!(read.unwrap_err(), StateFault::NotValid(StateFile::Skills));
+    fs::remove_dir(root.at("config/skills/gamma")).unwrap();
+    fs::write(root.at("config/skills/notes.txt"), "x").unwrap();
+    let read = root.state();
+    assert_eq!(read.unwrap_err(), StateFault::NotValid(StateFile::Skills));
+}
+
+#[test]
+fn a_state_over_the_cap_is_too_large() {
+    let root = Root::fixture("cap");
+    fs::write(root.at("config/instructions.md"), "").unwrap();
+    let empty = root.state().unwrap().line().len();
+    // An ASCII letter is one byte in the file and one in the reply.
+    let fits = FAMILY_STATE_CAP - empty;
+    fs::write(root.at("config/instructions.md"), "a".repeat(fits)).unwrap();
+    assert_eq!(root.state().unwrap().line().len(), FAMILY_STATE_CAP);
+    fs::write(root.at("config/instructions.md"), "a".repeat(fits + 1)).unwrap();
+    assert_eq!(root.state().unwrap_err(), StateFault::TooLarge);
+    // A text past the budget stops the read before the reply is made.
+    fs::write(root.at("config/instructions.md"), "").unwrap();
+    let skill = root.at("config/skills/alpha/SKILL.md");
+    fs::write(&skill, "a".repeat(FAMILY_STATE_CAP + 1)).unwrap();
+    assert_eq!(root.state().unwrap_err(), StateFault::TooLarge);
+    let wire = serde_json::to_value(StateFault::TooLarge.reply()).unwrap();
+    assert_eq!(wire, json!({"too_large": {}}));
+    // A JSON file past the cap is not_valid: its excess may sit in fields
+    // that the reply drops.
+    fs::write(&skill, "a").unwrap();
+    let padded = format!("{}{}", runtime(|_| {}), " ".repeat(FAMILY_STATE_CAP));
+    fs::write(root.at("config/runtime.json"), padded).unwrap();
+    let read = root.state();
+    assert_eq!(read.unwrap_err(), StateFault::NotValid(StateFile::Runtime));
+}
+
+#[test]
+fn a_symlinked_config_is_refused() {
+    let root = Root::fixture("links");
+    let other = Root::fixture("links-other");
+    let refused = [
+        ("config", StateFile::Config),
+        ("config/runtime.json", StateFile::Runtime),
+        ("config/instructions.md", StateFile::Instructions),
+        ("config/skills/alpha", StateFile::Skills),
+        ("config/skills", StateFile::Skills),
+        ("creds/creds.json", StateFile::Creds),
+        ("creds", StateFile::Creds),
+    ];
+    for (path, file) in refused {
+        let moved = root.0.join("moved");
+        fs::rename(root.at(path), &moved).unwrap();
+        symlink(other.at(path), root.at(path)).unwrap();
+        assert_eq!(
+            root.state().unwrap_err(),
+            StateFault::NotValid(file),
+            "{path}"
+        );
+        fs::remove_file(root.at(path)).unwrap();
+        fs::rename(&moved, root.at(path)).unwrap();
+        assert!(root.state().is_ok(), "{path}");
+    }
+    fs::remove_dir_all(root.at("")).unwrap();
+    symlink(other.at(""), root.0.join("code")).unwrap();
+    let read = root.state();
+    assert_eq!(read.unwrap_err(), StateFault::NotValid(StateFile::Creds));
+}
+
+#[test]
+fn a_swapped_config_dir_retries() {
+    let root = Arc::new(Root::fixture("swapping"));
+    // Two whole revisions: each has the same word in its instructions and
+    // in each of its 200 skills, so a reply that mixes them shows. The 200
+    // skills make each read take some ms, so swaps land inside reads. Such
+    // a try sees the inode change and reads again. Without the retry, the
+    // read is not_valid and the unwrap below fails.
+    let write = |dir: &Path, word: &str| {
+        fs::create_dir_all(dir).unwrap();
+        fs::write(dir.join("runtime.json"), runtime(|_| {})).unwrap();
+        fs::write(dir.join("instructions.md"), word).unwrap();
+        for skill in 0..200 {
+            let skill = dir.join(format!("skills/s{skill:03}"));
+            fs::create_dir_all(&skill).unwrap();
+            fs::write(skill.join("SKILL.md"), word).unwrap();
+        }
+    };
+    fs::remove_dir_all(root.at("config")).unwrap();
+    write(&root.at("config"), "one");
+    let done = Arc::new(AtomicBool::new(false));
+    let swapper = {
+        let (root, done) = (Arc::clone(&root), Arc::clone(&done));
+        thread::spawn(move || {
+            // caregiver's folder swap (`atomic_replace_dir`), every 50 ms,
+            // so the READ_TRIES tries of one read rarely all see a swap.
+            for round in 0..12 {
+                write(&root.at("config.tmp"), ["two", "one"][round % 2]);
+                fs::rename(root.at("config"), root.at("config.old")).unwrap();
+                fs::rename(root.at("config.tmp"), root.at("config")).unwrap();
+                fs::remove_dir_all(root.at("config.old")).unwrap();
+                thread::sleep(Duration::from_millis(50));
+            }
+            done.store(true, Ordering::SeqCst);
+        })
+    };
+    let mut words = [0, 0];
+    while !done.load(Ordering::SeqCst) {
+        let read = root.state().unwrap();
+        let config = reply(&read)["state"]["config"].clone();
+        let word = config["instructions"].as_str().unwrap().to_owned();
+        let skills = config["skills"].as_object().unwrap();
+        assert_eq!(skills.len(), 200);
+        assert!(skills.values().all(|text| *text == word.as_str()), "{word}");
+        words[usize::from(word == "two")] += 1;
+    }
+    swapper.join().unwrap();
+    assert!(words[0] > 0 && words[1] > 0, "{words:?}");
 }
