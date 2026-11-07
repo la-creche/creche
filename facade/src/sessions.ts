@@ -1,7 +1,8 @@
 // The sessions of the facade. A session is one Flue agent instance: its id
 // is the instance id, and `creche_sessions` lists it.
 //
-//   session/new  ──► mint an id ──► init() ──► one row
+//   session/new  ──► the id ──► init() ──► one row
+//                    sbx: a fresh UUID. CH: the host's id, one session per VM
 //   session/list ──► one page of rows, newest first, each with the creche keys
 //   a turn ends  ──► the title from the first user text, `updatedAt` from
 //                    the last record, the creche keys ──► session_info_update
@@ -45,6 +46,7 @@ import type {
 import { jobOf, promptMetaOf, utcOf } from "./creche-meta.js";
 import type { Meta } from "./creche-meta.js";
 import { cutToBytes } from "./line.js";
+import type { FacadeMode } from "./mode.js";
 import type { SessionIndex, SessionRow } from "./session-index.js";
 import { META_CREATED, META_DELEGATION, META_JOB, META_TRIGGER } from "./vectors.js";
 
@@ -122,6 +124,7 @@ export class Sessions {
   public constructor(
     private readonly agent: Agent,
     private readonly index: SessionIndex,
+    private readonly mode: FacadeMode,
     private readonly now: () => Date = () => new Date(),
   ) {}
 
@@ -136,7 +139,14 @@ export class Sessions {
       return refuse(job.detail);
     }
 
-    const id = randomUUID();
+    // On sbx each session gets a fresh id until the cut (decision CH52 rule
+    // 2). Under CH the host chose the id, and a VM serves one session
+    // (decisions CH1, CH25 rule 2).
+    const id = this.mode.kind === "ch" ? this.mode.sessionId : randomUUID();
+    if (this.index.get(id) !== null) {
+      return refuse("the VM already holds its one session");
+    }
+
     // `uid: null`: the first send creates the instance, and never joins one.
     this.handles.set(id, init(this.agent, { id, uid: null }));
     this.index.create(id, params.cwd, this.now().toISOString(), job.value);

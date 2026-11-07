@@ -8,6 +8,7 @@ import { validator } from "agent/wire-read";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { facadeApp } from "../src/acp.js";
+import { SBX } from "../src/mode.js";
 import { LIST_PAGE_SIZE, SessionIndex } from "../src/session-index.js";
 import { sessionService } from "../src/service.js";
 import { MAX_CWD_CHARS, MAX_TITLE_BYTES, Sessions, titleOf } from "../src/sessions.js";
@@ -30,8 +31,8 @@ beforeEach(() => {
   clock = Date.parse("2026-10-25T12:00:00Z");
   const index = new SessionIndex(new DatabaseSync(":memory:"));
   const now = (): Date => new Date((clock += 1000));
-  sessions = new Sessions(Probe, index, now);
-  wire = new Wire(facadeApp(NO_HOOKS, sessionService({ agent: Probe, agentName: "Probe", index, store: flue.store, now })));
+  sessions = new Sessions(Probe, index, SBX, now);
+  wire = new Wire(facadeApp(NO_HOOKS, sessionService({ agent: Probe, agentName: "Probe", index, mode: SBX, store: flue.store, now })));
 });
 
 async function newSession(cwd = "/work"): Promise<string> {
@@ -55,6 +56,19 @@ describe("session/new", () => {
     expect(second).toMatch(UUID);
     expect(second).not.toBe(first);
     expect(sessions.handle(first)?.id).toBe(first);
+  });
+
+  it("takes the host's id in CH mode, for one session only", async () => {
+    const id = "0123abcd-0000-4000-8000-00000000c7c7";
+    const index = new SessionIndex(new DatabaseSync(":memory:"));
+    const service = sessionService({ agent: Probe, agentName: "Probe", index, mode: { kind: "ch", sessionId: id }, store: flue.store });
+    const ch = new Wire(facadeApp(NO_HOOKS, service));
+    const first = await ch.request("session/new", { cwd: "/work", mcpServers: [] });
+    const second = await ch.request("session/new", { cwd: "/other", mcpServers: [] });
+
+    expect(first.result).toEqual({ sessionId: id });
+    expect(second.error?.code).toBe(INVALID_PARAMS);
+    expect(index.get(id)?.cwd).toBe("/work");
   });
 
   it("refuses a relative cwd, a client MCP server and another directory", async () => {

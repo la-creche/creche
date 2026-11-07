@@ -10,6 +10,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import vectors from "../vectors/creche-extensions.json" with { type: "json" };
 import { facadeApp } from "../src/acp.js";
 import { jobOf, promptMetaOf, utcOf } from "../src/creche-meta.js";
+import { SBX } from "../src/mode.js";
 import { sessionService } from "../src/service.js";
 import { SessionIndex } from "../src/session-index.js";
 import { Wire } from "./acp-wire.js";
@@ -30,7 +31,7 @@ beforeEach(() => {
   db = new DatabaseSync(":memory:");
   index = new SessionIndex(db);
   const now = (): Date => new Date(created.value);
-  wire = new Wire(facadeApp(NO_HOOKS, sessionService({ agent: Probe, agentName: "Probe", index, store: flue.store, now })));
+  wire = new Wire(facadeApp(NO_HOOKS, sessionService({ agent: Probe, agentName: "Probe", index, mode: SBX, store: flue.store, now })));
 });
 
 async function newSession(meta?: Record<string, unknown>): Promise<string> {
