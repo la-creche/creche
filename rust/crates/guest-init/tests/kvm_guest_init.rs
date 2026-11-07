@@ -1,8 +1,10 @@
 //! The kvm_ tests of guest init as PID 1 (decisions CH9, CH62 rules 4,
-//! 7, 19, 25 and 26) and of control link 1200 (decisions CH13, CH19, CH28,
-//! CH32). CH boots the guest kernel with the `guest-init.cpio` of
-//! `bin/vm-smoke-setup.sh` and the disks that each test builds. The test
-//! runs CH directly, with no vmm, and speaks the link itself.
+//! 7, 19, 25 and 26), of control link 1200 (decisions CH13, CH19, CH28,
+//! CH32) and of the facade supervisor (decisions CH19 rule 1, CH62 rules
+//! 6, 8, 9 and 12). CH boots the guest kernel with the `guest-init.cpio`
+//! of `bin/vm-smoke-setup.sh` and the disks that each test builds, with
+//! the stand-in facade of the script on the root disk. The test runs CH
+//! directly, with no vmm, and speaks the link itself.
 //!
 //! `#[ignore]`: only the job `kvm` runs them, after the setup script, with
 //! `cargo test --locked --no-fail-fast -- --ignored kvm_`. With no setup
@@ -16,10 +18,14 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use common::{
-    DUMPE2FS, E2FSCK, GOOD_ENV, IN_2030, Vm, booted, ch, dial, hello, lines, logged, not_started,
-    now, session_disk, vm_with_env, wait_for, wait_for_exit, wait_for_line, work,
+    DUMPE2FS, E2FSCK, GOOD_ENV, IN_2030, SESSION, Standin, Vm, booted, booted_with, ch, dial,
+    exited, hello, lines, logged, now, session_disk, starting, vm_with_env, wait_for,
+    wait_for_exit, wait_for_line, work,
 };
-use creche_wire::{ControlCommand, ControlStop, ControlSync, ControlSynced, GuestEvent, GuestPort};
+use creche_wire::guest::WORKSPACE;
+use creche_wire::{
+    ControlCommand, ControlStop, ControlSync, ControlSynced, FacadeState, GuestEvent, GuestPort,
+};
 
 /// With no disk, the root mount fails. Guest init names it on the console
 /// and powers the VM off, so CH exits. Without the power-off, PID 1 exits,
@@ -113,7 +119,8 @@ fn kvm_guest_init_powers_off_on_a_bad_env_file() {
 }
 
 /// Guest init sends nothing before the hello, then answers one ready that
-/// says the facade did not start (decisions CH28, CH34 rule 7).
+/// says the facade of the hello is starting (decisions CH21-8, CH28, CH34
+/// rule 7).
 #[test]
 #[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
 fn kvm_guest_init_answers_the_hello() {
@@ -123,7 +130,7 @@ fn kvm_guest_init_answers_the_hello() {
         link.quiet_for(Duration::from_millis(300)),
         "a line came before the hello"
     );
-    assert_eq!(hello(&mut link, now()), not_started());
+    starting(&hello(&mut link, now()));
     wait_for_line(
         &mut vm,
         &work.join("serial.log"),
@@ -145,7 +152,7 @@ fn kvm_guest_init_sets_the_guest_clock_from_the_hello() {
     let (work, mut vm) = booted("kvm-guest-init-clock");
     let mut link = dial(&work, GuestPort::Control);
     let sent_at = IN_2030 + 999;
-    assert_eq!(hello(&mut link, sent_at), not_started());
+    starting(&hello(&mut link, sent_at));
 
     let serial = work.join("serial.log");
     let prefix = "guest-init: control link 1 clock set: realtime ";
@@ -169,15 +176,16 @@ fn kvm_guest_init_sets_the_guest_clock_from_the_hello() {
 }
 
 /// A second link replaces the first: guest init closes the first one, and
-/// the second gets its own ready (decisions CH19 rule 2, CH28).
+/// the second gets its own ready with the same facade (decisions CH19
+/// rules 1 and 2, CH28).
 #[test]
 #[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
 fn kvm_a_new_control_link_replaces_the_old_one() {
     let (work, mut vm) = booted("kvm-guest-init-replace");
     let mut old = dial(&work, GuestPort::Control);
-    assert_eq!(hello(&mut old, now()), not_started());
+    let pid = starting(&hello(&mut old, now()));
     let mut new = dial(&work, GuestPort::Control);
-    assert_eq!(hello(&mut new, now()), not_started());
+    assert_eq!(starting(&hello(&mut new, now())), pid);
 
     assert_eq!(old.line(), None, "the old link stays open");
     let serial = work.join("serial.log");
@@ -202,7 +210,7 @@ fn kvm_a_new_control_link_replaces_the_old_one() {
 fn kvm_guest_init_answers_sync_with_synced() {
     let (work, mut vm) = booted("kvm-guest-init-sync");
     let mut link = dial(&work, GuestPort::Control);
-    assert_eq!(hello(&mut link, now()), not_started());
+    starting(&hello(&mut link, now()));
 
     for _ in 0..2 {
         link.send(&ControlCommand::Sync(ControlSync {}));
@@ -222,18 +230,20 @@ fn kvm_guest_init_answers_sync_with_synced() {
     fs::remove_dir_all(&work).unwrap();
 }
 
-/// A stop powers the VM off within the 10 s of the plan, and the session
-/// disk is clean after it: guest init synced and remounted it read-only
-/// (decision CH19 rule 3).
+/// A stop sends SIGTERM to the facade and powers the VM off within the
+/// 10 s of the plan, and the session disk is clean after it: guest init
+/// synced and remounted it read-only (decisions CH19 rule 3, CH62 rule
+/// 9). The facade exit goes out on the link first (decision CH43 rule 8).
 #[test]
 #[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
 fn kvm_guest_init_powers_off_on_stop() {
     let (work, mut vm) = booted("kvm-guest-init-stop");
     let mut link = dial(&work, GuestPort::Control);
-    assert_eq!(hello(&mut link, now()), not_started());
+    let pid = starting(&hello(&mut link, now()));
 
     let sent = Instant::now();
     link.send(&ControlCommand::Stop(ControlStop {}));
+    assert_eq!(link.event(), exited(1));
     let serial = work.join("serial.log");
     let status = wait_for_exit(&mut vm, &serial);
     assert!(
@@ -243,12 +253,15 @@ fn kvm_guest_init_powers_off_on_stop() {
     );
     let log = lines(&serial).join("\n");
     for line in [
-        "guest-init: stop on control link 1",
-        "guest-init: session remounted ro",
-        "guest-init: power off",
+        "guest-init: stop on control link 1".to_owned(),
+        format!("guest-init: facade pid {pid} sent SIGTERM"),
+        format!("guest-init: facade pid {pid} exited: signal 15"),
+        "guest-init: stop done".to_owned(),
+        "guest-init: session remounted ro".to_owned(),
+        "guest-init: power off".to_owned(),
     ] {
         assert!(
-            logged(&serial, line),
+            logged(&serial, &line),
             "no {line} (CH {status}). Serial:\n{log}"
         );
     }
@@ -279,6 +292,98 @@ fn kvm_guest_init_powers_off_on_stop() {
         "e2fsck -fn: {}{}",
         String::from_utf8_lossy(&check.stdout),
         String::from_utf8_lossy(&check.stderr)
+    );
+
+    drop(vm);
+    fs::remove_dir_all(&work).unwrap();
+}
+
+/// Guest init starts the stand-in only after the hello, with the session
+/// id of the hello, the image env and the workspace as its cwd (decisions
+/// CH21-8, CH49 rule 1, CH62 rules 5 and 6). Its stderr reaches the
+/// console, and its stdout does not (decision CH62 rule 26).
+#[test]
+#[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
+fn kvm_guest_init_starts_the_facade_with_the_session_id() {
+    let (work, mut vm) = booted("kvm-guest-init-facade");
+    let serial = work.join("serial.log");
+    let mut link = dial(&work, GuestPort::Control);
+    assert!(
+        !lines(&serial)
+            .iter()
+            .any(|line| line.starts_with("standin: ")),
+        "the facade started before the hello"
+    );
+
+    let pid = starting(&hello(&mut link, now()));
+    for line in [
+        format!("guest-init: facade pid {pid} started"),
+        format!("standin: session {SESSION}"),
+        "standin: env CRECHE_SESSION_ID LANG PATH".to_owned(),
+        format!("standin: cwd {WORKSPACE}"),
+        "standin: up".to_owned(),
+    ] {
+        wait_for_line(&mut vm, &serial, &line);
+    }
+    assert!(
+        !logged(&serial, "standin: stdout"),
+        "stdout reached the console"
+    );
+
+    drop(vm);
+    fs::remove_dir_all(&work).unwrap();
+}
+
+/// An exited facade starts again after the restart pause, so the link gets
+/// `starting` 1, `exited` 1, then `starting` 2 with a new pid (decisions
+/// CH19 rule 1, CH43 rule 8, CH62 rule 8).
+#[test]
+#[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
+fn kvm_guest_init_restarts_an_exited_facade() {
+    let (work, mut vm) = booted_with("kvm-guest-init-restart", Standin::ExitsOnce);
+    let mut link = dial(&work, GuestPort::Control);
+    let first = starting(&hello(&mut link, now()));
+
+    assert_eq!(link.event(), exited(1));
+    let second = match link.event() {
+        GuestEvent::Facade(FacadeState::Starting(second)) => second,
+        other => panic!("no second start: {other:?}"),
+    };
+    assert_eq!(second.starts.get(), 2);
+    assert_eq!(second.last_turn_end, None);
+    assert_ne!(second.pid, first, "the second start has the first pid");
+
+    let serial = work.join("serial.log");
+    for line in [
+        format!("guest-init: facade pid {first} exited: exit status 3"),
+        format!("guest-init: facade pid {} started", second.pid),
+        "standin: up".to_owned(),
+    ] {
+        wait_for_line(&mut vm, &serial, &line);
+    }
+
+    drop(vm);
+    fs::remove_dir_all(&work).unwrap();
+}
+
+/// A control link that closes leaves the facade running: the ready of a
+/// new link names the same pid and one start (decision CH19 rule 1).
+#[test]
+#[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
+fn kvm_guest_init_keeps_the_facade_when_the_control_link_closes() {
+    let (work, mut vm) = booted("kvm-guest-init-keep");
+    let serial = work.join("serial.log");
+    let mut link = dial(&work, GuestPort::Control);
+    let pid = starting(&hello(&mut link, now()));
+    wait_for_line(&mut vm, &serial, "standin: up");
+    drop(link);
+
+    let mut next = dial(&work, GuestPort::Control);
+    assert_eq!(starting(&hello(&mut next, now())), pid);
+    let exit = format!("guest-init: facade pid {pid} exited");
+    assert!(
+        !lines(&serial).iter().any(|line| line.starts_with(&exit)),
+        "the facade exited"
     );
 
     drop(vm);

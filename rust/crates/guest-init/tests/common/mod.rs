@@ -1,20 +1,23 @@
 //! The helpers of the kvm_ tests of guest init: the files of
 //! `bin/vm-smoke-setup.sh`, the ext4 disks that each test builds with
-//! `mke2fs -d` (decision CH62 rule 12), a CH process killed on drop and a
-//! link to a guest port through the hybrid vsock socket of CH.
+//! `mke2fs -d` and the stand-in facade on them (decision CH62 rule 12), a
+//! CH process killed on drop and a link to a guest port through the
+//! hybrid vsock socket of CH.
 #![cfg(test)]
 
 use std::fs::{self, File};
 use std::io::{self, BufRead as _, BufReader, Write as _};
+use std::num::NonZeroU32;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use creche_wire::guest::SESSION_DISK_MOUNT;
+use creche_wire::guest::{FACADE_PROGRAM, SESSION_DISK_MOUNT};
 use creche_wire::{
-    ControlHello, ControlReady, FacadeNotStarted, FacadeState, GuestPort, UnixMillis,
+    ControlHello, ControlReady, FacadeExited, FacadeState, GuestEvent, GuestPort, StartCount,
+    UnixMillis,
 };
 use serde::Serialize;
 
@@ -175,17 +178,50 @@ pub fn session_disk(work: &Path) -> PathBuf {
     work.join("session.img")
 }
 
-/// Builds a test root disk whose env file holds `env`, and an empty
-/// session disk, and returns the CH command with both and a vsock device
-/// at `vsock(work)`. The root disk goes first, read-only, then the
-/// session disk (decisions CH8-7, CH8-8, CH50 rule 10).
+/// The mode of the stand-in facade on a test root disk
+/// (`examples/standin_facade.rs`).
+#[derive(Debug, Clone, Copy)]
+pub enum Standin {
+    /// No mode file: the stand-in stays up.
+    StaysUp,
+    /// Mode `exit-once`: the first start exits with status 3, and each
+    /// later start stays up.
+    ExitsOnce,
+}
+
+/// The mode file of the stand-in on the root disk.
+const STANDIN_MODE: &str = "etc/creche-standin/mode";
+
+/// `vm_with` with a stand-in that stays up.
 pub fn vm_with_env(work: &Path, env: &[u8]) -> Command {
+    vm_with(work, env, Standin::StaysUp)
+}
+
+/// Builds a test root disk whose env file holds `env`, with the
+/// stand-in facade of the setup script at `FACADE_PROGRAM` in `standin`
+/// mode, and an empty session disk. It returns the CH command with both
+/// and a vsock device at `vsock(work)`. The root disk goes first,
+/// read-only, then the session disk (decisions CH8-7, CH8-8, CH50 rule
+/// 10).
+pub fn vm_with(work: &Path, env: &[u8], standin: Standin) -> Command {
     let tree = work.join("tree");
     let session_dir = SESSION_DISK_MOUNT.trim_start_matches('/');
+    let facade = tree.join(FACADE_PROGRAM.trim_start_matches('/'));
+    let facade_dir = facade.parent().unwrap().to_owned();
     for dir in ROOT_DIRS.into_iter().chain([session_dir, "etc/creche"]) {
         fs::create_dir_all(tree.join(dir)).unwrap();
     }
     fs::write(tree.join("etc/creche/env"), env).unwrap();
+    fs::create_dir_all(facade_dir).unwrap();
+    fs::copy(files().join("standin_facade"), &facade).unwrap();
+    match standin {
+        Standin::StaysUp => {}
+        Standin::ExitsOnce => {
+            let mode = tree.join(STANDIN_MODE);
+            fs::create_dir_all(mode.parent().unwrap()).unwrap();
+            fs::write(mode, "exit-once\n").unwrap();
+        }
+    }
     let root = work.join("root.img");
     let session = session_disk(work);
     ext4(&root, Some(&tree));
@@ -275,6 +311,12 @@ impl Link {
         }
     }
 
+    /// Reads one `GuestEvent` line. It panics at the end of the link.
+    pub fn event(&mut self) -> GuestEvent {
+        let line = self.line().expect("no event: the link ended");
+        serde_json::from_str(&line).unwrap_or_else(|error| panic!("{line:?}: {error}"))
+    }
+
     /// Whether no byte comes within `wait`.
     pub fn quiet_for(&mut self, wait: Duration) -> bool {
         self.writer.set_read_timeout(Some(wait)).unwrap();
@@ -304,11 +346,17 @@ pub const IN_2030: u64 = 1_893_456_000_000;
 pub const E2FSCK: &str = "/usr/sbin/e2fsck";
 pub const DUMPE2FS: &str = "/usr/sbin/dumpe2fs";
 
-/// A VM with a good env file and a session disk, booted to `up`.
+/// `booted_with` with a stand-in that stays up.
 pub fn booted(name: &str) -> (PathBuf, Vm) {
+    booted_with(name, Standin::StaysUp)
+}
+
+/// A VM with a good env file, the stand-in in `standin` mode and a
+/// session disk, booted to `up`.
+pub fn booted_with(name: &str, standin: Standin) -> (PathBuf, Vm) {
     let work = work(name);
     let serial = work.join("serial.log");
-    let mut vm = Vm(vm_with_env(&work, GOOD_ENV).spawn().unwrap());
+    let mut vm = Vm(vm_with(&work, GOOD_ENV, standin).spawn().unwrap());
     wait_for(&mut vm, &serial, "guest-init: up", |lines| {
         lines.iter().any(|line| line == "guest-init: up")
     });
@@ -331,14 +379,29 @@ pub fn hello(link: &mut Link, sent_at: u64) -> ControlReady {
     serde_json::from_str(&line).unwrap_or_else(|error| panic!("{line:?}: {error}"))
 }
 
-/// The ready of a VM whose facade never started (until plan PR G4).
-pub fn not_started() -> ControlReady {
-    ControlReady {
-        facade: FacadeState::NotStarted(FacadeNotStarted {}),
+/// The pid of the facade of a ready that the first start answers: the
+/// state is `starting`, with `starts` 1 and no turn end (decision CH32
+/// rules 6 and 7).
+pub fn starting(ready: &ControlReady) -> NonZeroU32 {
+    match &ready.facade {
+        FacadeState::Starting(starting)
+            if starting.starts.get() == 1 && starting.last_turn_end.is_none() =>
+        {
+            starting.pid
+        }
+        other => panic!("the ready is not a first start: {other:?}"),
     }
 }
 
 /// Whether `serial` holds `line`.
 pub fn logged(serial: &Path, line: &str) -> bool {
     lines(serial).iter().any(|each| each == line)
+}
+
+/// The facade state `exited` after `starts` starts, as a link event.
+pub fn exited(starts: u64) -> GuestEvent {
+    GuestEvent::Facade(FacadeState::Exited(FacadeExited {
+        last_turn_end: None,
+        starts: StartCount::try_from(starts).unwrap(),
+    }))
 }
