@@ -196,7 +196,9 @@ CH26).
 `server::BodyCheck` holds the body checks that follow the route, in the
 order of decisions CH26 and CH33 rule 13: `Content-Type`, then the 1 MiB
 cap, then strict JSON. Each refusal writes the reply of a shared code.
-The cap binds the JSON body only (decision CH34 rule 3).
+The cap binds the JSON body only (decision CH34 rule 3). The strict JSON
+check is `creche_wire::strict`, the check of each vsock JSON line too
+(decision CH65 rule 2).
 
 `examples/upgrade_echo/` is a server with one handler that echoes after
 101. `tests/upgrade_body.rs` and `integration/proc/test_proc_vmm_upgrade.py`
@@ -213,7 +215,8 @@ reply, because both come before the guest listener exists (fact 74). It
 also retries on ECONNREFUSED (decision CH43 rule 7). `DIAL_PAUSE` (10 ms,
 decision CH43 rule 5) is the pause between two tries. It
 then sends `ControlHello` with the wall time of the vmm (decision CH28)
-and reads one `ControlReady` with the strict reader. `READY_WAIT` (10 s,
+and reads one `ControlReady` with the strict reader, `creche_wire::strict`
+(rule 3 of "The vsock JSON links" in `wire/AGENTS.md`). `READY_WAIT` (10 s,
 decision CH36 G26) bounds the whole open. A close before `ControlReady`
 is a fault of the VM: `ControlError::needs_cold_boot` is true (decision
 CH32 rule 3). Decision CH43 rule 6 allows a cold boot only when guest
