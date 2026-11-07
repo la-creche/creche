@@ -2,8 +2,10 @@
 `playpen/bin/playpen-env-check`, with no image (CH7-7, CH49).
 
 The writer runs here under a fixed env. The check runs against a `docker`
-stub on `PATH` that answers `image inspect` with a config env and `run`
-with a file. CI runs the same check on each built flavor.
+stub on `PATH` that answers `image inspect` with a config env, the `cat`
+run with a file, and the `node` run with the names that no agent list
+holds (CH49 rule 1). CI runs the same check on each built flavor, where
+node runs the agent's own `unplacedEnv` (`agent/test/tool-env.test.ts`).
 """
 
 from __future__ import annotations
@@ -41,11 +43,15 @@ FILE = (
     "YARN_VERSION=1.22.22\n"
 )
 
-#: `docker image inspect` prints STUB_CONFIG, `docker run` prints STUB_FILE.
+#: `docker image inspect` prints STUB_CONFIG. The `cat` run prints
+#: STUB_FILE. The `node` run prints STUB_UNPLACED and exits STUB_NODE_EXIT.
 DOCKER_STUB = """#!/usr/bin/env bash
-case "$1" in
-  image) cat "$STUB_CONFIG" ;;
-  run) cat "$STUB_FILE" ;;
+case "$*" in
+  image*) cat "$STUB_CONFIG" ;;
+  run*" --entrypoint /bin/cat "*) cat "$STUB_FILE" ;;
+  run*" --workdir /opt/creche-facade --entrypoint node "*)
+    cat "$STUB_UNPLACED"
+    exit "$STUB_NODE_EXIT" ;;
   *) exit 2 ;;
 esac
 """
@@ -66,7 +72,9 @@ def _write(*names: str, env: dict[str, str] | None = None) -> subprocess.Complet
     )
 
 
-def _check(tmp_path: Path, config: str, file: str) -> subprocess.CompletedProcess[str]:
+def _check(
+    tmp_path: Path, config: str, file: str, unplaced: str = "", node_exit: int = 0
+) -> subprocess.CompletedProcess[str]:
     stubs = tmp_path / "stubs"
     stubs.mkdir()
     docker = stubs / "docker"
@@ -74,10 +82,13 @@ def _check(tmp_path: Path, config: str, file: str) -> subprocess.CompletedProces
     docker.chmod(docker.stat().st_mode | stat.S_IXUSR)
     (tmp_path / "config").write_text(config, encoding="utf-8")
     (tmp_path / "file").write_text(file, encoding="utf-8")
+    (tmp_path / "unplaced").write_text(unplaced, encoding="utf-8")
     env = {
         "PATH": f"{stubs}:/usr/bin:/bin",
         "STUB_CONFIG": str(tmp_path / "config"),
         "STUB_FILE": str(tmp_path / "file"),
+        "STUB_UNPLACED": str(tmp_path / "unplaced"),
+        "STUB_NODE_EXIT": str(node_exit),
         "TMPDIR": os.environ.get("TMPDIR", "/tmp"),
     }
     return subprocess.run(
@@ -130,7 +141,31 @@ def test_the_check_passes_the_file_that_the_writer_prints(tmp_path: Path) -> Non
 
     assert done.returncode == 0, done.stdout + done.stderr
     assert done.stdout == (
-        "playpen-env-check: image:tag: /etc/creche/env equals the config env (6 names)\n"
+        "playpen-env-check: image:tag: /etc/creche/env equals the config env,"
+        " and each name sits in an agent list (6 names)\n"
+    )
+
+
+def test_the_check_names_each_name_that_no_agent_list_holds(tmp_path: Path) -> None:
+    """A parent-image name, or a new ENV name, that sits in no list of
+    `agent/src/tool-env.ts` fails the flavor (CH49 rule 1)."""
+    done = _check(tmp_path, CONFIG, FILE, unplaced="EMPTY\nNODE_VERSION\n")
+
+    assert done.returncode == 1
+    assert done.stderr == (
+        "playpen-env-check: image:tag: no agent list holds EMPTY NODE_VERSION."
+        " Put each name in one list of agent/src/tool-env.ts (CH49 rule 1).\n"
+    )
+
+
+def test_the_check_fails_when_node_cannot_run_the_agent(tmp_path: Path) -> None:
+    """An image whose deploy tree has no `agent/tool-env` fails, and never
+    passes as a flavor with no unplaced name."""
+    done = _check(tmp_path, CONFIG, FILE, node_exit=1)
+
+    assert done.returncode == 1
+    assert done.stderr == (
+        "playpen-env-check: node in image:tag cannot run unplacedEnv of the agent\n"
     )
 
 

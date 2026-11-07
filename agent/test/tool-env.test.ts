@@ -4,16 +4,15 @@
 //
 // This test reads the `ENV` lines of `playpen/Dockerfile` only. The built
 // env also holds the names of the parent image, such as `NODE_VERSION`.
-// The build writes that env to `/etc/creche/env`. No test reads that file
-// to place each of its names in a list yet (CH49 rule 1, see Known gaps in
-// `agent/AGENTS.md`).
+// The `playpen-image` CI job places those: `playpen/bin/playpen-env-check`
+// runs `unplacedEnv` in each built flavor on its `/etc/creche/env`.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { FACADE_ENV, FLUE_ENV, readToolEnv, TOOL_ENV, TOOL_RENAME } from "../src/tool-env.js";
+import { FACADE_ENV, FLUE_ENV, readToolEnv, TOOL_ENV, TOOL_RENAME, unplacedEnv } from "../src/tool-env.js";
 
 const ROOT = join(import.meta.dirname, "..");
 const DOCKERFILE = join(ROOT, "..", "playpen", "Dockerfile");
@@ -164,10 +163,13 @@ describe("the tool env lists", () => {
     expect([...names]).toEqual(
       expect.arrayContaining(["NODE_ENV", "HOME", "TMPDIR", "PATH", "MPLBACKEND", "MPLCONFIGDIR"]),
     );
-    for (const name of names) {
-      const homes = Object.keys(LISTS).filter((list) => LISTS[list]?.includes(name));
-      expect(homes, name).toHaveLength(1);
-    }
+    expect(unplacedEnv([...names])).toEqual([]);
+  });
+
+  it("name each name that no list holds, the parent image's names placed", () => {
+    expect(unplacedEnv(["NODE_VERSION", "YARN_VERSION", "CRECHE_TOOL_HTTPS_PROXY", "PATH"])).toEqual([]);
+    expect(unplacedEnv(["NEW_NAME", "HOME", "HTTPS_PROXY", "OTHER"])).toEqual(["NEW_NAME", "HTTPS_PROXY", "OTHER"]);
+    expect(unplacedEnv([])).toEqual([]);
   });
 
   it("the coding flavor proxy names the guest egress port", () => {

@@ -8,8 +8,15 @@
 # by name in byte order, with each PATH folder only once
 # (`creche-env-write`).
 #
-# Exit 0 when the two are equal. Exit 1, with a diff of the two, when they
-# differ or when docker cannot answer.
+# Then it places each name of the file in one list of the agent (CH49
+# rule 1). Node in the image runs `unplacedEnv` of the agent module that
+# the image ships (`agent/src/tool-env.ts`), so the lists are the ones the
+# flavor runs, and no second copy exists. The file's names are the built
+# env, the parent image's names such as NODE_VERSION too.
+#
+# Exit 0 when the two are equal and each name sits in a list. Exit 1, with
+# a diff or the unplaced names, when one fails or when docker or node
+# cannot answer.
 set -euo pipefail
 
 die() { printf 'playpen-env-check: %s\n' "$*" >&2; exit 1; }
@@ -38,5 +45,22 @@ done < "$work/config" | LC_ALL=C sort -t= -k1,1 > "$work/expected"
 if ! diff -u --label "config of $image" --label "/etc/creche/env" "$work/expected" "$work/file"; then
   die "/etc/creche/env of $image is not the env of its config. List each new name in the RUN of creche-env-write in playpen/Dockerfile."
 fi
-printf 'playpen-env-check: %s: /etc/creche/env equals the config env (%s names)\n' \
+
+# Node runs in the facade's deploy tree, where the bare name
+# `agent/tool-env` resolves. It reads the names of the file, and prints
+# each unplaced name on one line, or nothing when each name sits in a list.
+place='
+import { readFileSync } from "node:fs";
+import { unplacedEnv } from "agent/tool-env";
+const lines = readFileSync("/etc/creche/env", "utf8").split("\n").filter((line) => line !== "");
+for (const name of unplacedEnv(lines.map((line) => line.slice(0, line.indexOf("="))))) {
+  console.log(name);
+}
+'
+unplaced="$(docker run --rm --network none --workdir /opt/creche-facade --entrypoint node "$image" \
+  --input-type=module --eval "$place")" || die "node in $image cannot run unplacedEnv of the agent"
+if [[ -n "$unplaced" ]]; then
+  die "$image: no agent list holds $(paste -sd' ' - <<< "$unplaced"). Put each name in one list of agent/src/tool-env.ts (CH49 rule 1)."
+fi
+printf 'playpen-env-check: %s: /etc/creche/env equals the config env, and each name sits in an agent list (%s names)\n' \
   "$image" "$(wc -l < "$work/expected" | tr -d ' ')"
