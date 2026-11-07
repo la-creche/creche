@@ -180,6 +180,326 @@
       "note": "a trailing newline"
     }
   ],
+  "CheckAllowed": [
+    {
+      "json": "{\"addresses\":[\"140.82.112.3\"]}",
+      "written": "{\"addresses\":[\"140.82.112.3\"]}",
+      "note": "one IPv4 address"
+    },
+    {
+      "json": "{\"addresses\":[\"140.82.112.3\",\"2606:50c0:8000:0000:0000:0000:0000:0153\"]}",
+      "written": "{\"addresses\":[\"140.82.112.3\",\"2606:50c0:8000:0000:0000:0000:0000:0153\"]}",
+      "note": "an IPv4 and an IPv6 address"
+    },
+    {
+      "json": "{\"addresses\":[]}",
+      "written": "{\"addresses\":[]}",
+      "note": "no address: the vmm never writes it, and a reader takes it"
+    },
+    {
+      "json": "{\"addresses\":[\"github.com\"]}",
+      "written": null,
+      "note": "a name, not an address"
+    },
+    {
+      "json": "{\"addresses\":[\"2606:50c0:8000::153\"]}",
+      "written": null,
+      "note": "an IPv6 address with ::, not the one wire text"
+    },
+    {
+      "json": "{\"addresses\":[\"140.82.112.3:443\"]}",
+      "written": null,
+      "note": "an address with a port"
+    },
+    {
+      "json": "{\"addresses\":[2341105667]}",
+      "written": null,
+      "note": "an address as a number"
+    },
+    {
+      "json": "{\"addresses\":null}",
+      "written": null,
+      "note": "null addresses"
+    },
+    {
+      "json": "{\"addresses\":[\"140.82.112.3\"],\"port\":443}",
+      "written": null,
+      "note": "an unknown key"
+    },
+    {
+      "json": "[[\"140.82.112.3\"]]",
+      "written": null,
+      "note": "the array form of a struct"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    }
+  ],
+  "CheckError": [
+    {
+      "json": "{\"code\":\"no_route\"}",
+      "written": "{\"code\":\"no_route\"}",
+      "note": "the shared code no_route: a path with no route"
+    },
+    {
+      "json": "{\"code\":\"bad_method\"}",
+      "written": "{\"code\":\"bad_method\"}",
+      "note": "the shared code bad_method: a method that is not POST"
+    },
+    {
+      "json": "{\"code\":\"bad_content_type\"}",
+      "written": "{\"code\":\"bad_content_type\"}",
+      "note": "the shared code bad_content_type: a Content-Type that is not JSON"
+    },
+    {
+      "json": "{\"code\":\"too_large\"}",
+      "written": "{\"code\":\"too_large\"}",
+      "note": "the shared code too_large: a body over the cap"
+    },
+    {
+      "json": "{\"code\":\"not_json\"}",
+      "written": "{\"code\":\"not_json\"}",
+      "note": "the shared code not_json: a body that is not strict JSON"
+    },
+    {
+      "json": "{\"code\":\"not_valid\"}",
+      "written": "{\"code\":\"not_valid\"}",
+      "note": "the shared code not_valid: a body that is not the request type"
+    },
+    {
+      "json": "{\"code\":\"internal\"}",
+      "written": "{\"code\":\"internal\"}",
+      "note": "the shared code internal: a fault of the vmm"
+    },
+    {
+      "json": "{\"code\":\"not_listed\"}",
+      "written": null,
+      "note": "a reason of the reply: a refusal is no error"
+    },
+    {
+      "json": "{\"code\":\"unknown_family\"}",
+      "written": null,
+      "note": "a code of create: an unknown family has an empty list"
+    },
+    {
+      "json": "{\"code\":\"internal\",\"message\":\"egress.json\"}",
+      "written": null,
+      "note": "a shared code with free text"
+    },
+    {
+      "json": "{\"code\":\"not_valid\",\"field\":\"target\"}",
+      "written": null,
+      "note": "a shared code with an extra key"
+    },
+    {
+      "json": "{\"code\":\"protocol_mismatch\"}",
+      "written": null,
+      "note": "the protocol mismatch, which is in no route error"
+    },
+    {
+      "json": "[\"internal\"]",
+      "written": null,
+      "note": "the array form of a shared code"
+    },
+    {
+      "json": "{}",
+      "written": null,
+      "note": "no code"
+    },
+    {
+      "json": "\"internal\"",
+      "written": null,
+      "note": "the plain string form"
+    }
+  ],
+  "CheckRefused": [
+    {
+      "json": "{\"reason\":\"bad_target\"}",
+      "written": "{\"reason\":\"bad_target\"}",
+      "note": "bad_target: no host:port"
+    },
+    {
+      "json": "{\"reason\":\"ip_literal\"}",
+      "written": "{\"reason\":\"ip_literal\"}",
+      "note": "ip_literal: an IP address as the host"
+    },
+    {
+      "json": "{\"reason\":\"not_listed\"}",
+      "written": "{\"reason\":\"not_listed\"}",
+      "note": "not_listed: no entry of the host and port"
+    },
+    {
+      "json": "{\"reason\":\"not_public\"}",
+      "written": "{\"reason\":\"not_public\"}",
+      "note": "not_public: a record that is not public"
+    },
+    {
+      "json": "{\"reason\":\"no_address\"}",
+      "written": "{\"reason\":\"no_address\"}",
+      "note": "no_address: the name resolves to nothing"
+    },
+    {
+      "json": "{\"reason\":\"not_valid\"}",
+      "written": "{\"reason\":\"not_valid\"}",
+      "note": "not_valid: an egress.json that does not read"
+    },
+    {
+      "json": "{\"reason\":\"Not_Valid\"}",
+      "written": null,
+      "note": "not_valid in the wrong case"
+    },
+    {
+      "json": "{\"reason\":\"Not_Listed\"}",
+      "written": null,
+      "note": "a reason in the wrong case"
+    },
+    {
+      "json": "{\"reason\":\"denied\"}",
+      "written": null,
+      "note": "a reason that is not in the set"
+    },
+    {
+      "json": "{\"reason\":null}",
+      "written": null,
+      "note": "a null reason"
+    },
+    {
+      "json": "{\"reason\":\"not_listed\",\"host\":\"github.com\"}",
+      "written": null,
+      "note": "an unknown key"
+    },
+    {
+      "json": "[\"not_listed\"]",
+      "written": null,
+      "note": "the array form of a struct"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    }
+  ],
+  "CheckReply": [
+    {
+      "json": "{\"allowed\":{\"addresses\":[\"140.82.112.3\"]}}",
+      "written": "{\"allowed\":{\"addresses\":[\"140.82.112.3\"]}}",
+      "note": "an allowed target"
+    },
+    {
+      "json": "{\"refused\":{\"reason\":\"not_listed\"}}",
+      "written": "{\"refused\":{\"reason\":\"not_listed\"}}",
+      "note": "a refused target"
+    },
+    {
+      "json": "{\"refused\":{\"reason\":\"not_valid\"}}",
+      "written": "{\"refused\":{\"reason\":\"not_valid\"}}",
+      "note": "a refusal for an egress.json that does not read"
+    },
+    {
+      "json": "{\"allowed\":{\"addresses\":[\"140.82.112.3\"]},\"refused\":{\"reason\":\"not_listed\"}}",
+      "written": null,
+      "note": "both keys: one verdict"
+    },
+    {
+      "json": "{}",
+      "written": null,
+      "note": "an empty object: no verdict"
+    },
+    {
+      "json": "\"refused\"",
+      "written": null,
+      "note": "a variant as a string"
+    },
+    {
+      "json": "{\"refused\":\"not_listed\"}",
+      "written": null,
+      "note": "a reason with no variant object"
+    },
+    {
+      "json": "{\"refused\":[\"not_listed\"]}",
+      "written": null,
+      "note": "a refusal in the array form"
+    },
+    {
+      "json": "{\"allowed\":[[\"140.82.112.3\"]]}",
+      "written": null,
+      "note": "an allowance in the array form"
+    },
+    {
+      "json": "{\"Allowed\":{\"addresses\":[\"140.82.112.3\"]}}",
+      "written": null,
+      "note": "a variant name in the wrong case"
+    },
+    {
+      "json": "[\"refused\",{\"reason\":\"not_listed\"}]",
+      "written": null,
+      "note": "the variant and its value as an array"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    }
+  ],
+  "CheckRequest": [
+    {
+      "json": "{\"family\":\"code\",\"target\":\"github.com:443\"}",
+      "written": "{\"family\":\"code\",\"target\":\"github.com:443\"}",
+      "note": "a host and a port"
+    },
+    {
+      "json": "{\"family\":\"code\",\"target\":\"1.2.3.4:443\"}",
+      "written": "{\"family\":\"code\",\"target\":\"1.2.3.4:443\"}",
+      "note": "an IP literal reads, and the vmm refuses it"
+    },
+    {
+      "json": "{\"family\":\"code\",\"target\":\"\"}",
+      "written": "{\"family\":\"code\",\"target\":\"\"}",
+      "note": "any text reads, and the vmm answers bad_target"
+    },
+    {
+      "json": "{\"target\": \"GitHub.com:443\", \"family\": \"code\"}",
+      "written": "{\"family\":\"code\",\"target\":\"GitHub.com:443\"}",
+      "note": "keys in another order: the target keeps its case"
+    },
+    {
+      "json": "{\"family\":\"Code\",\"target\":\"github.com:443\"}",
+      "written": null,
+      "note": "a family name that is no family name"
+    },
+    {
+      "json": "{\"family\":\"code\",\"target\":443}",
+      "written": null,
+      "note": "a target as a number"
+    },
+    {
+      "json": "{\"family\":\"code\",\"target\":null}",
+      "written": null,
+      "note": "a null target"
+    },
+    {
+      "json": "{\"family\":\"code\",\"host\":\"github.com\",\"port\":443}",
+      "written": null,
+      "note": "a host and a port as keys"
+    },
+    {
+      "json": "{\"family\":\"code\",\"target\":\"github.com:443\",\"session\":\"x\"}",
+      "written": null,
+      "note": "an unknown key"
+    },
+    {
+      "json": "[\"code\",\"github.com:443\"]",
+      "written": null,
+      "note": "the array form of a struct, the fields in order"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    }
+  ],
   "ConfigMissing": [
     {
       "json": "{}",
@@ -1255,6 +1575,93 @@
       "note": "an empty array, the array form of a struct"
     }
   ],
+  "EgressHost": [
+    {
+      "json": "{\"host\":\"github.com\",\"port\":443}",
+      "written": "{\"host\":\"github.com\",\"port\":443}",
+      "note": "a host on 443"
+    },
+    {
+      "json": "{\"host\":\"github.com\",\"port\":1}",
+      "written": "{\"host\":\"github.com\",\"port\":1}",
+      "note": "the smallest port"
+    },
+    {
+      "json": "{\"host\":\"github.com\",\"port\":65535}",
+      "written": "{\"host\":\"github.com\",\"port\":65535}",
+      "note": "the largest port"
+    },
+    {
+      "json": "{\"port\": 443, \"host\": \"github.com\"}",
+      "written": "{\"host\":\"github.com\",\"port\":443}",
+      "note": "keys in another order, with whitespace"
+    },
+    {
+      "json": "{\"host\":\"github.com\",\"port\":0}",
+      "written": null,
+      "note": "port 0"
+    },
+    {
+      "json": "{\"host\":\"github.com\",\"port\":65536}",
+      "written": null,
+      "note": "a port past 65535"
+    },
+    {
+      "json": "{\"host\":\"github.com\",\"port\":-1}",
+      "written": null,
+      "note": "a negative port"
+    },
+    {
+      "json": "{\"host\":\"github.com\",\"port\":\"443\"}",
+      "written": null,
+      "note": "a port as a string"
+    },
+    {
+      "json": "{\"host\":\"github.com\",\"port\":443.0}",
+      "written": null,
+      "note": "a port as a float"
+    },
+    {
+      "json": "{\"host\":\"github.com\",\"port\":null}",
+      "written": null,
+      "note": "a null port"
+    },
+    {
+      "json": "{\"host\":\"github.com:443\",\"port\":443}",
+      "written": null,
+      "note": "a port in the host"
+    },
+    {
+      "json": "{\"host\":\"1.2.3.4\",\"port\":443}",
+      "written": null,
+      "note": "an IPv4 literal"
+    },
+    {
+      "json": "{\"host\":\"GitHub.com\",\"port\":443}",
+      "written": null,
+      "note": "upper case"
+    },
+    {
+      "json": "{\"host\":\"github.com\",\"port\":443,\"scheme\":\"https\"}",
+      "written": null,
+      "note": "an unknown key"
+    },
+    {
+      "json": "{\"host\":\"github.com\",\"host\":\"github.com\",\"port\":443}",
+      "written": null,
+      "note": "a key given twice"
+    },
+    {
+      "json": "[\"github.com\",443]",
+      "written": null,
+      "note": "the array form of a struct, the fields in order"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    }
+  ],
   "FacadeExited": [
     {
       "json": "{\"last_turn_end\":null,\"starts\":1}",
@@ -1904,6 +2311,68 @@
       "json": "[\"sk-test-key-0001\",\"9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e9c1e\"]",
       "written": null,
       "note": "the fields in order, the array form of a struct"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    }
+  ],
+  "FamilyEgress": [
+    {
+      "json": "{\"hosts\":[]}",
+      "written": "{\"hosts\":[]}",
+      "note": "no egress"
+    },
+    {
+      "json": "{\"hosts\":[{\"host\":\"github.com\",\"port\":443}]}",
+      "written": "{\"hosts\":[{\"host\":\"github.com\",\"port\":443}]}",
+      "note": "one host"
+    },
+    {
+      "json": "{\"hosts\":[{\"host\":\"files.pythonhosted.org\",\"port\":443},{\"host\":\"github.com\",\"port\":443},{\"host\":\"github.com\",\"port\":8443}]}",
+      "written": "{\"hosts\":[{\"host\":\"files.pythonhosted.org\",\"port\":443},{\"host\":\"github.com\",\"port\":443},{\"host\":\"github.com\",\"port\":8443}]}",
+      "note": "two hosts, one on two ports"
+    },
+    {
+      "json": "{\"hosts\":[\"github.com\"]}",
+      "written": null,
+      "note": "a host as a string of the family file"
+    },
+    {
+      "json": "{\"hosts\":[\"github.com:443\"]}",
+      "written": null,
+      "note": "an entry as host:port text"
+    },
+    {
+      "json": "{\"hosts\":[{\"host\":\"github.com\"}]}",
+      "written": null,
+      "note": "an entry with no port"
+    },
+    {
+      "json": "{\"hosts\":null}",
+      "written": null,
+      "note": "null hosts"
+    },
+    {
+      "json": "{\"hosts\":[],\"repos\":[]}",
+      "written": null,
+      "note": "an unknown key"
+    },
+    {
+      "json": "{}",
+      "written": null,
+      "note": "no hosts key"
+    },
+    {
+      "json": "[[]]",
+      "written": null,
+      "note": "the array form of a struct"
+    },
+    {
+      "json": "{\"hosts\":[[\"github.com\",443]]}",
+      "written": null,
+      "note": "an entry in the array form"
     },
     {
       "json": "null",
@@ -2585,6 +3054,250 @@
       "json": "{\"sync\":{}}",
       "written": null,
       "note": "a sync, which the vmm sends and guest init never does"
+    }
+  ],
+  "HostName": [
+    {
+      "json": "\"github.com\"",
+      "written": "\"github.com\"",
+      "note": "a host name"
+    },
+    {
+      "json": "\"a\"",
+      "written": "\"a\"",
+      "note": "one label of one letter"
+    },
+    {
+      "json": "\"files.pythonhosted.org\"",
+      "written": "\"files.pythonhosted.org\"",
+      "note": "three labels"
+    },
+    {
+      "json": "\"a-b--c.example\"",
+      "written": "\"a-b--c.example\"",
+      "note": "inner hyphens, two in a row"
+    },
+    {
+      "json": "\"123\"",
+      "written": "\"123\"",
+      "note": "one label of digits, which the grammar allows"
+    },
+    {
+      "json": "\"1.2.3\"",
+      "written": "\"1.2.3\"",
+      "note": "three labels of digits: no IPv4 literal of the grammar"
+    },
+    {
+      "json": "\"1.2.3.4.5\"",
+      "written": "\"1.2.3.4.5\"",
+      "note": "five labels of digits"
+    },
+    {
+      "json": "\"1234.1.1.1\"",
+      "written": "\"1234.1.1.1\"",
+      "note": "four labels of digits, one of four digits"
+    },
+    {
+      "json": "\"1.2.3.4a\"",
+      "written": "\"1.2.3.4a\"",
+      "note": "four labels, one with a letter"
+    },
+    {
+      "json": "\"1.2-3.4.5\"",
+      "written": "\"1.2-3.4.5\"",
+      "note": "four labels, one with a hyphen"
+    },
+    {
+      "json": "\"x.1.2.3.4\"",
+      "written": "\"x.1.2.3.4\"",
+      "note": "a name before four labels of digits"
+    },
+    {
+      "json": "\"1.2.3.4\"",
+      "written": null,
+      "note": "an IPv4 literal"
+    },
+    {
+      "json": "\"999.0.0.1\"",
+      "written": null,
+      "note": "four labels of 1 to 3 digits, as the grammar counts a literal"
+    },
+    {
+      "json": "\"GitHub.com\"",
+      "written": null,
+      "note": "upper case: caregiver writes lower case"
+    },
+    {
+      "json": "\"github.com.\"",
+      "written": null,
+      "note": "a trailing dot"
+    },
+    {
+      "json": "\".github.com\"",
+      "written": null,
+      "note": "a leading dot"
+    },
+    {
+      "json": "\"github..com\"",
+      "written": null,
+      "note": "an empty label"
+    },
+    {
+      "json": "\"*.github.com\"",
+      "written": null,
+      "note": "a wildcard"
+    },
+    {
+      "json": "\"-github.com\"",
+      "written": null,
+      "note": "a hyphen first in a label"
+    },
+    {
+      "json": "\"github-.com\"",
+      "written": null,
+      "note": "a hyphen last in a label"
+    },
+    {
+      "json": "\"git_hub.com\"",
+      "written": null,
+      "note": "an underscore"
+    },
+    {
+      "json": "\"github.com:443\"",
+      "written": null,
+      "note": "a port in the host"
+    },
+    {
+      "json": "\"::1\"",
+      "written": null,
+      "note": "an IPv6 literal"
+    },
+    {
+      "json": "\"[::1]\"",
+      "written": null,
+      "note": "a bracketed IPv6 literal"
+    },
+    {
+      "json": "\"githüb.com\"",
+      "written": null,
+      "note": "a character of two bytes"
+    },
+    {
+      "json": "\"github.com\\n\"",
+      "written": null,
+      "note": "a trailing newline"
+    },
+    {
+      "json": "\"\"",
+      "written": null,
+      "note": "the empty text"
+    },
+    {
+      "json": "443",
+      "written": null,
+      "note": "a number"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    }
+  ],
+  "IpAddress": [
+    {
+      "json": "\"140.82.112.3\"",
+      "written": "\"140.82.112.3\"",
+      "note": "an IPv4 address"
+    },
+    {
+      "json": "\"0.0.0.0\"",
+      "written": "\"0.0.0.0\"",
+      "note": "the smallest IPv4 address"
+    },
+    {
+      "json": "\"255.255.255.255\"",
+      "written": "\"255.255.255.255\"",
+      "note": "the largest IPv4 address"
+    },
+    {
+      "json": "\"2606:50c0:8000:0000:0000:0000:0000:0153\"",
+      "written": "\"2606:50c0:8000:0000:0000:0000:0000:0153\"",
+      "note": "an IPv6 address as 8 groups of 4 hex digits"
+    },
+    {
+      "json": "\"0000:0000:0000:0000:0000:ffff:8c52:7003\"",
+      "written": "\"0000:0000:0000:0000:0000:ffff:8c52:7003\"",
+      "note": "an IPv4-mapped IPv6 address keeps its IPv6 text"
+    },
+    {
+      "json": "\"2606:50c0:8000::153\"",
+      "written": null,
+      "note": "an IPv6 address with ::"
+    },
+    {
+      "json": "\"2606:50C0:8000:0000:0000:0000:0000:0153\"",
+      "written": null,
+      "note": "an IPv6 address in upper case"
+    },
+    {
+      "json": "\"2606:50c0:8000:0:0:0:0:153\"",
+      "written": null,
+      "note": "IPv6 groups of fewer than 4 digits"
+    },
+    {
+      "json": "\"::ffff:140.82.112.3\"",
+      "written": null,
+      "note": "an IPv4-mapped IPv6 address in the dotted form"
+    },
+    {
+      "json": "\"[2606:50c0:8000:0000:0000:0000:0000:0153]\"",
+      "written": null,
+      "note": "a bracketed IPv6 address"
+    },
+    {
+      "json": "\"140.082.112.3\"",
+      "written": null,
+      "note": "an octet with a zero first"
+    },
+    {
+      "json": "\"256.0.0.1\"",
+      "written": null,
+      "note": "an octet past 255"
+    },
+    {
+      "json": "\"140.82.112\"",
+      "written": null,
+      "note": "three octets"
+    },
+    {
+      "json": "\"140.82.112.3:443\"",
+      "written": null,
+      "note": "an address with a port"
+    },
+    {
+      "json": "\"github.com\"",
+      "written": null,
+      "note": "a name"
+    },
+    {
+      "json": "\"\"",
+      "written": null,
+      "note": "the empty text"
+    },
+    {
+      "json": "\"2341105667\"",
+      "written": null,
+      "note": "an IPv4 address as one decimal number"
+    },
+    {
+      "json": "2341105667",
+      "written": null,
+      "note": "a number"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
     }
   ],
   "JobId": [

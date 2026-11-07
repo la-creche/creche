@@ -1,0 +1,1216 @@
+{
+  "$defs": {
+    "AcpError": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "upgrade_required",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "not_found",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "busy",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "host_full",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "sandbox_start_failed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "egress_assert_failed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "no_route",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "bad_method",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "bad_content_type",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "too_large",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "not_json",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "not_valid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "internal",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Auto": {
+      "additionalProperties": false,
+      "properties": {
+        "job": {
+          "$ref": "#/$defs/AutoJobId"
+        },
+        "trigger": {
+          "$ref": "#/$defs/Trigger"
+        }
+      },
+      "required": [
+        "job",
+        "trigger"
+      ],
+      "type": "object"
+    },
+    "AutoJobId": {
+      "pattern": "^auto-[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "CheckAllowed": {
+      "additionalProperties": false,
+      "properties": {
+        "addresses": {
+          "items": {
+            "$ref": "#/$defs/IpAddress"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "addresses"
+      ],
+      "type": "object"
+    },
+    "CheckError": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "no_route",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "bad_method",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "bad_content_type",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "too_large",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "not_json",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "not_valid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "internal",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "CheckRefused": {
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "enum": [
+            "bad_target",
+            "ip_literal",
+            "not_listed",
+            "not_public",
+            "no_address",
+            "not_valid"
+          ],
+          "title": "CheckReason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "type": "object"
+    },
+    "CheckReply": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "allowed": {
+              "$ref": "#/$defs/CheckAllowed"
+            }
+          },
+          "required": [
+            "allowed"
+          ],
+          "title": "CheckAllowedReply",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "refused": {
+              "$ref": "#/$defs/CheckRefused"
+            }
+          },
+          "required": [
+            "refused"
+          ],
+          "title": "CheckRefusedReply",
+          "type": "object"
+        }
+      ]
+    },
+    "CheckRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "family": {
+          "$ref": "#/$defs/FamilyName"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "family",
+        "target"
+      ],
+      "type": "object"
+    },
+    "CreateError": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "conflict",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "unknown_family",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "no_route",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "bad_method",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "bad_content_type",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "too_large",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "not_json",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "not_valid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "internal",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "CreateSession": {
+      "additionalProperties": false,
+      "properties": {
+        "created_at": {
+          "$ref": "#/$defs/UnixMillis"
+        },
+        "cwd": {
+          "$ref": "#/$defs/SessionCwd"
+        },
+        "family": {
+          "$ref": "#/$defs/FamilyName"
+        },
+        "id": {
+          "$ref": "#/$defs/SessionId"
+        },
+        "origin": {
+          "$ref": "#/$defs/SessionOrigin"
+        }
+      },
+      "required": [
+        "created_at",
+        "cwd",
+        "family",
+        "id",
+        "origin"
+      ],
+      "type": "object"
+    },
+    "Delegate": {
+      "additionalProperties": false,
+      "properties": {
+        "delegation": {
+          "$ref": "#/$defs/DelegationId"
+        },
+        "job": {
+          "$ref": "#/$defs/JobId"
+        }
+      },
+      "required": [
+        "delegation",
+        "job"
+      ],
+      "type": "object"
+    },
+    "DelegationId": {
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "Dispatch": {
+      "additionalProperties": false,
+      "properties": {
+        "chain": {
+          "$ref": "#/$defs/DispatchChain"
+        },
+        "name": {
+          "$ref": "#/$defs/FamilyName"
+        }
+      },
+      "required": [
+        "chain",
+        "name"
+      ],
+      "type": "object"
+    },
+    "DispatchChain": {
+      "items": {
+        "$ref": "#/$defs/FamilyName"
+      },
+      "maxItems": 8,
+      "minItems": 1,
+      "type": "array"
+    },
+    "Door": {
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "DropError": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "not_found",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "no_route",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "bad_method",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "bad_content_type",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "too_large",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "not_json",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "not_valid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "internal",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "DropFamily": {
+      "additionalProperties": false,
+      "properties": {
+        "family": {
+          "$ref": "#/$defs/FamilyName"
+        }
+      },
+      "required": [
+        "family"
+      ],
+      "type": "object"
+    },
+    "DropSession": {
+      "additionalProperties": false,
+      "properties": {
+        "family": {
+          "$ref": "#/$defs/FamilyName"
+        },
+        "id": {
+          "$ref": "#/$defs/SessionId"
+        }
+      },
+      "required": [
+        "family",
+        "id"
+      ],
+      "type": "object"
+    },
+    "DropTarget": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "session": {
+              "$ref": "#/$defs/DropSession"
+            }
+          },
+          "required": [
+            "session"
+          ],
+          "title": "SessionDrop",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "family": {
+              "$ref": "#/$defs/DropFamily"
+            }
+          },
+          "required": [
+            "family"
+          ],
+          "title": "FamilyDrop",
+          "type": "object"
+        }
+      ]
+    },
+    "Dropped": {
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "FamilyName": {
+      "pattern": "^[a-z][a-z0-9-]{1,30}$",
+      "type": "string"
+    },
+    "IpAddress": {
+      "pattern": "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}|[0-9a-f]{4}(:[0-9a-f]{4}){7})$",
+      "type": "string"
+    },
+    "JobId": {
+      "pattern": "^job-[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "ListCursor": {
+      "format": "uint64",
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "ListError": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "no_route",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "bad_method",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "bad_content_type",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "too_large",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "not_json",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "not_valid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "const": "internal",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ListSessions": {
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ListCursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cwd": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionCwd"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "family": {
+          "$ref": "#/$defs/FamilyName"
+        }
+      },
+      "required": [
+        "cursor",
+        "cwd",
+        "family"
+      ],
+      "type": "object"
+    },
+    "OpenAcp": {
+      "additionalProperties": false,
+      "properties": {
+        "family": {
+          "$ref": "#/$defs/FamilyName"
+        },
+        "id": {
+          "$ref": "#/$defs/SessionId"
+        }
+      },
+      "required": [
+        "family",
+        "id"
+      ],
+      "type": "object"
+    },
+    "ProtocolMismatch": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "const": "protocol_mismatch",
+          "type": "string"
+        },
+        "protocol": {
+          "format": "uint32",
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "code",
+        "protocol"
+      ],
+      "type": "object"
+    },
+    "SessionCwd": {
+      "maxLength": 4096,
+      "pattern": "^/[^\\u0000]*$",
+      "type": "string"
+    },
+    "SessionId": {
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "type": "string"
+    },
+    "SessionOrigin": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "door": {
+              "$ref": "#/$defs/Door"
+            }
+          },
+          "required": [
+            "door"
+          ],
+          "title": "DoorOrigin",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "delegate": {
+              "$ref": "#/$defs/Delegate"
+            }
+          },
+          "required": [
+            "delegate"
+          ],
+          "title": "DelegateOrigin",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "auto": {
+              "$ref": "#/$defs/Auto"
+            }
+          },
+          "required": [
+            "auto"
+          ],
+          "title": "AutoOrigin",
+          "type": "object"
+        }
+      ]
+    },
+    "SessionPage": {
+      "additionalProperties": false,
+      "properties": {
+        "next": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ListCursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rows": {
+          "items": {
+            "$ref": "#/$defs/SessionRow"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "next",
+        "rows"
+      ],
+      "type": "object"
+    },
+    "SessionRow": {
+      "additionalProperties": false,
+      "properties": {
+        "created_at": {
+          "$ref": "#/$defs/UnixMillis"
+        },
+        "cwd": {
+          "$ref": "#/$defs/SessionCwd"
+        },
+        "family": {
+          "$ref": "#/$defs/FamilyName"
+        },
+        "id": {
+          "$ref": "#/$defs/SessionId"
+        },
+        "origin": {
+          "$ref": "#/$defs/SessionOrigin"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionTitle"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "updated_at": {
+          "$ref": "#/$defs/UnixMillis"
+        }
+      },
+      "required": [
+        "created_at",
+        "cwd",
+        "family",
+        "id",
+        "origin",
+        "title",
+        "updated_at"
+      ],
+      "type": "object"
+    },
+    "SessionTitle": {
+      "maxLength": 256,
+      "minLength": 1,
+      "pattern": "^[^\\u0009-\\u000D\\u0020\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000\\uFEFF]+( [^\\u0009-\\u000D\\u0020\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000\\uFEFF]+)*$",
+      "type": "string"
+    },
+    "Timer": {
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "Trigger": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "timer": {
+              "$ref": "#/$defs/Timer"
+            }
+          },
+          "required": [
+            "timer"
+          ],
+          "title": "TimerTrigger",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "webhook": {
+              "$ref": "#/$defs/Webhook"
+            }
+          },
+          "required": [
+            "webhook"
+          ],
+          "title": "WebhookTrigger",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "dispatch": {
+              "$ref": "#/$defs/Dispatch"
+            }
+          },
+          "required": [
+            "dispatch"
+          ],
+          "title": "DispatchTrigger",
+          "type": "object"
+        }
+      ]
+    },
+    "UnixMillis": {
+      "format": "uint64",
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "Webhook": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/WebhookName"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "WebhookName": {
+      "pattern": "^[a-z][a-z0-9-]{1,30}$",
+      "type": "string"
+    }
+  },
+  "x-routes": {
+    "body_cap": 1048576,
+    "header": "creche-host-api-protocol",
+    "mismatch": {
+      "reply": "ProtocolMismatch",
+      "status": 412
+    },
+    "protocol": 2,
+    "routes": {
+      "acp": {
+        "error": "AcpError",
+        "kind": "upgrade",
+        "request": "OpenAcp",
+        "statuses": {
+          "bad_content_type": 415,
+          "bad_method": 405,
+          "busy": 409,
+          "egress_assert_failed": 502,
+          "host_full": 503,
+          "internal": 500,
+          "no_route": 404,
+          "not_found": 404,
+          "not_json": 400,
+          "not_valid": 400,
+          "sandbox_start_failed": 502,
+          "too_large": 413,
+          "upgrade_required": 426
+        },
+        "token": "creche-acp"
+      },
+      "check": {
+        "error": "CheckError",
+        "kind": "json",
+        "reply": "CheckReply",
+        "request": "CheckRequest",
+        "statuses": {
+          "bad_content_type": 415,
+          "bad_method": 405,
+          "internal": 500,
+          "no_route": 404,
+          "not_json": 400,
+          "not_valid": 400,
+          "too_large": 413
+        }
+      },
+      "create": {
+        "error": "CreateError",
+        "kind": "json",
+        "reply": "SessionRow",
+        "request": "CreateSession",
+        "statuses": {
+          "bad_content_type": 415,
+          "bad_method": 405,
+          "conflict": 409,
+          "internal": 500,
+          "no_route": 404,
+          "not_json": 400,
+          "not_valid": 400,
+          "too_large": 413,
+          "unknown_family": 404
+        }
+      },
+      "drop": {
+        "client_timeout_s": 60,
+        "error": "DropError",
+        "kind": "json",
+        "reply": "Dropped",
+        "request": "DropTarget",
+        "statuses": {
+          "bad_content_type": 415,
+          "bad_method": 405,
+          "internal": 500,
+          "no_route": 404,
+          "not_found": 404,
+          "not_json": 400,
+          "not_valid": 400,
+          "too_large": 413
+        }
+      },
+      "list": {
+        "error": "ListError",
+        "kind": "json",
+        "reply": "SessionPage",
+        "request": "ListSessions",
+        "statuses": {
+          "bad_content_type": 415,
+          "bad_method": 405,
+          "internal": 500,
+          "no_route": 404,
+          "not_json": 400,
+          "not_valid": 400,
+          "too_large": 413
+        }
+      }
+    }
+  }
+}

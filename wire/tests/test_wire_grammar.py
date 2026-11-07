@@ -1,6 +1,7 @@
 """Each wire name type has the pattern of its name in `family/grammar.py`, and
 each wire set of names has the members of its set there. Each size of the
-family VM shape has the range of its size there.
+family VM shape has the range of its size there. The host name of the egress
+allowlist takes the hosts of the grammar in lower case.
 
 The grammar stays the authority for the family file (decision CH23 rule 5).
 Registry CI cannot install `creche-wire`, so the grammar cannot import the
@@ -85,6 +86,52 @@ def test_the_grammar_counts_memory_in_mib() -> None:
     """The wire counts the guest RAM in MiB. The grammar names its unit MB
     and counts `1g` as 1024 of it, so the two units are one."""
     assert grammar.memory_mb("1g") == 1024
+
+
+#: Hosts of the family file, each good or bad to the grammar: each label
+#: form, the IPv4 literal and its near misses, a wildcard, a trailing dot,
+#: upper case and an IPv6 literal.
+HOSTS = [
+    "github.com",
+    "a",
+    "files.pythonhosted.org",
+    "a-b--c.example",
+    "GitHub.COM",
+    "123",
+    "1.2.3",
+    "1.2.3.4",
+    "999.0.0.1",
+    "1.2.3.4.5",
+    "1234.1.1.1",
+    "1.2.3.4a",
+    "1.2-3.4.5",
+    "x.1.2.3.4",
+    "0x7f.1",
+    "github.com.",
+    ".github.com",
+    "github..com",
+    "*.github.com",
+    "*",
+    "-github.com",
+    "github-.com",
+    "git_hub.com",
+    "gith\u00fcb.com",
+    "::1",
+    "",
+]
+
+
+@pytest.mark.parametrize("host", HOSTS)
+def test_egress_host_pattern_agrees_with_the_grammar(host: str) -> None:
+    """A host that the grammar takes passes the wire pattern in lower case
+    (decision CH69 rule 5: caregiver writes lower case). A host that the
+    grammar refuses fails it. An upper-case host fails it as it is."""
+    pattern = re.compile(_definitions()["HostName"]["pattern"])
+    good = grammar.egress_problem(host) is None
+
+    assert (pattern.fullmatch(host.lower()) is not None) == good
+    if host != host.lower():
+        assert pattern.fullmatch(host) is None
 
 
 def test_the_family_token_has_the_form_that_caregiver_mints() -> None:
