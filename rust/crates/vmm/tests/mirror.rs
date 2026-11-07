@@ -464,29 +464,29 @@ fn the_65th_link_is_closed_at_once() {
     drop(held);
 }
 
-/// The drop of `Server` kills the `upload-pack` child of an open clone and
-/// closes 1103. A wrapper of git writes the pid of the child, then execs
-/// git. A v0 `upload-pack` waits for the wants of the client after its
-/// refs, so the child runs when the drop comes.
+/// The drop of `Server` kills the child of an open clone and closes 1103.
+/// The git program of the test writes its pid and one pkt-line, then
+/// execs `sleep`, which reads no stdin. So only the kill of the drop ends
+/// it: the close of its pipes does not.
 #[test]
 fn the_child_dies_when_the_server_drops() {
     let scratch = Scratch::threaded("child");
     let pid_file = scratch.dir.join("git.pid");
-    let wrapper = scratch.dir.join("git-wrapper");
+    let program = scratch.dir.join("git-sleeps");
     let script = format!(
-        "#!/bin/sh\necho $$ > '{}'\nexec {HOST_GIT} \"$@\"\n",
+        "#!/bin/sh\necho $$ > '{}'\nprintf '0008run\\n'\nexec /bin/sleep 600\n",
         pid_file.display()
     );
-    let source = scratch.dir.join("git-wrapper.src");
+    let source = scratch.dir.join("git-sleeps.src");
     std::fs::write(&source, script).unwrap();
-    run(Command::new("cp").arg(&source).arg(&wrapper));
-    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let server = scratch.serve_with(&wrapper);
+    run(Command::new("cp").arg(&source).arg(&program));
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let server = scratch.serve_with(&program);
     let mut held = scratch.dial();
     held.write_all(&request("/creche")).unwrap();
-    let mut first = [0; 4];
+    let mut first = [0; 8];
     held.read_exact(&mut first).unwrap();
-    assert_ne!(&first, b"0016");
+    assert_eq!(&first, b"0008run\n");
     let pid = std::fs::read_to_string(&pid_file)
         .unwrap()
         .trim()
