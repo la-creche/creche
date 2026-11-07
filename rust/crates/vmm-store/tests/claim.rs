@@ -41,7 +41,7 @@ impl Temp {
         fs::create_dir_all(&root).expect("the temp dir");
         let state = StateRoot::new(root.join("state")).expect("a state root");
         let store = ImageStore::new(&state, PathBuf::from("zstd"));
-        let [kernel, root_disk]: [CheckedImage; 2] = ["kernel", "disk"].map(|text| {
+        let images: [CheckedImage; 3] = ["kernel", "initramfs", "disk"].map(|text| {
             let source = root.join(text);
             fs::write(&source, text).expect("a source file");
             let digest = digest_of(text.as_bytes());
@@ -54,7 +54,7 @@ impl Temp {
         let id: SessionId = ID.parse().expect("ID is a session id");
         Self {
             session: state.session(&id),
-            key: SnapshotKey::current(ch, &kernel, None, &root_disk),
+            key: SnapshotKey::current(ch, &images[0], &images[1], &images[2]),
             root,
         }
     }

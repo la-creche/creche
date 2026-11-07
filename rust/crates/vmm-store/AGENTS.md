@@ -51,6 +51,12 @@ The second file has the table of the three vmm crates.
   newest. `check_newest` reads no older key. So an older generation
   never restores onto a session disk that moved on (decision CH19 (5)).
   This also takes part of the D13 job of removing older generations.
+- Decisions CH61 rule 3, CH62 rules 18 and 24 (plan PR V5, `key.rs`):
+  the key names the CH rev, the kernel, the guest init initramfs, the
+  root disk and `GUEST_INIT_PROTOCOL`. `SnapshotKey::current` takes the
+  checked initramfs, and the key file holds its digest as a string. A
+  key file with `null` there holds no key, so it drops as unreadable.
+  "Disk digest" of CH7-6 means the root disk only (CH62 rule 24).
 - Decision CH44 rule 6 (PR D11, `claim.rs`): a failed make or sync of
   the `consumed` mark leaves no durable mark. So the claim renames
   `snapshots/<n>` to `snapshots/<n>.retired`, and the caller cold-boots

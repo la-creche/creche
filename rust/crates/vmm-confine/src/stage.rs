@@ -326,7 +326,8 @@ mod tests {
             .session(&id);
         let run = RunRoot::new(PathBuf::from("/run/vmm")).unwrap().vm(&id);
         let root = HostPath::new(PathBuf::from("/state/store/root")).unwrap();
-        let files = VmFiles::new(Start::Restore { initramfs: None }, root, &session, &run).unwrap();
+        let initramfs = HostPath::new(PathBuf::from("/state/store/initramfs")).unwrap();
+        let files = VmFiles::new(Start::Restore { initramfs }, root, &session, &run).unwrap();
         let program = Program::new(PathBuf::from(CH)).unwrap();
         let payload = Payload::new(program, vec!["--restore".to_owned()]);
         Stage::new(Slot::new(5).unwrap(), payload, files)

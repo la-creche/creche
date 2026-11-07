@@ -61,7 +61,8 @@ const TURN: &str =
 const STARTING: &str = r#"{"facade":{"starting":{"last_turn_end":null,"pid":42,"starts":1}}}"#;
 /// As `READY`, with the end of a turn that the row has not seen.
 const ENDED: &str = r#"{"facade":{"running":{"last_turn_end":{"title":"First","updated_at":1793577700000},"pid":42,"starts":1,"turn_running":false}}}"#;
-/// The SHA-256 of no bytes: the fake kernel and root disk are empty.
+/// The SHA-256 of no bytes: the fake kernel, initramfs and root disk are
+/// empty.
 const EMPTY: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 /// The SHA-256 of `abc`: the root disk of each flavor but `python` in
 /// the flavor test.
@@ -409,7 +410,7 @@ impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
                 kernel: empty,
                 roots: PerFlavor::every(|_| empty),
             },
-            initramfs: None,
+            initramfs: empty,
             ch: Program::new(PathBuf::from(CH)).unwrap(),
             systemd_run: Program::new(PathBuf::from("/usr/bin/systemd-run")).unwrap(),
             vmm_unit: Ok(VmmUnit::new("creche-vmm.service".to_owned()).unwrap()),
@@ -514,11 +515,12 @@ impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
         args.contains(&"--restore".to_owned()) && !args.contains(&"--kernel".to_owned())
     }
 
-    /// The key of a VM of `chat`: the fake kernel and root disk.
+    /// The key of a VM of `chat`: the fake kernel, initramfs and root
+    /// disk.
     fn key(&self) -> SnapshotKey {
         let images = ImageStore::new(&self.state, PathBuf::from("/usr/bin/zstd"));
         let empty = images.check(EMPTY.parse().unwrap()).unwrap();
-        SnapshotKey::current(self.ch, &empty, None, &empty)
+        SnapshotKey::current(self.ch, &empty, &empty, &empty)
     }
 
     /// Makes generation 1 of row `index` with `key`, or with a key of
@@ -848,19 +850,19 @@ fn a_keyed_snapshot_restores_paused_then_resumes() {
     assert!(test.hook.in_use().is_empty());
 }
 
-/// With an initramfs in the config, a boot names it and its ruleset reads
-/// it, and the key holds its digest. A restore with that key carries the
-/// same `store/<sha256>` file, so its ruleset reads it too, and a key
-/// with no initramfs drops the snapshot (decisions CH60 rule 2, CH61
-/// rule 3).
+/// Every start names the initramfs of the config: a boot names it and its
+/// ruleset reads it, and the key holds its digest. A restore with that key
+/// carries the same `store/<sha256>` file, so its ruleset reads it too,
+/// and a key of another initramfs drops the snapshot (decisions CH60 rule
+/// 2, CH61 rule 3, CH62 rule 18).
 #[test]
-fn a_restore_carries_the_initramfs_of_its_key() {
+fn every_start_names_the_initramfs() {
     let initramfs: ImageDigest = ABC.parse().unwrap();
     let with = |config: &mut StartConfig| {
         let file = config.state.path().parent().unwrap().join("initramfs");
         fs::write(&file, "abc").unwrap();
         config.images.import(&file, initramfs).unwrap();
-        config.initramfs = Some(initramfs);
+        config.initramfs = initramfs;
     };
     let store = |test: &Test| test.dir.join(format!("state/store/{initramfs}"));
 
@@ -871,11 +873,10 @@ fn a_restore_carries_the_initramfs_of_its_key() {
     let at = args.iter().position(|arg| arg == "--initramfs").unwrap();
     assert_eq!(args[at + 1], store(&test).to_str().unwrap());
     let Start::Boot {
-        initramfs: Some(read),
-        ..
+        initramfs: read, ..
     } = launches[0].files().start()
     else {
-        panic!("not a boot with an initramfs: {:?}", launches[0].files());
+        panic!("not a boot: {:?}", launches[0].files());
     };
     assert_eq!(read.path(), store(&test));
     drop(launches);
@@ -884,16 +885,14 @@ fn a_restore_carries_the_initramfs_of_its_key() {
     let images = ImageStore::new(&test.state, PathBuf::from("/usr/bin/zstd"));
     let empty = images.check(EMPTY.parse().unwrap()).unwrap();
     let checked = images.check(initramfs).unwrap();
-    let key = SnapshotKey::current(test.ch, &empty, Some(&checked), &empty);
+    let key = SnapshotKey::current(test.ch, &empty, &checked, &empty);
     test.snapshot(0, Some(&key));
     test.reply(0, "Paused", &[]);
     assert_eq!(test.start(0), Ok(()));
     assert!(test.restored(0));
     let launches = test.fake.launches.lock().unwrap();
     let path = HostPath::new(store(&test)).unwrap();
-    let restore = Start::Restore {
-        initramfs: Some(path),
-    };
+    let restore = Start::Restore { initramfs: path };
     assert_eq!(launches[0].files().start(), &restore);
     drop(launches);
 

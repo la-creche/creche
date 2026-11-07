@@ -49,10 +49,11 @@ pub const KERNEL_KEY: &str = "kernel";
 pub const DIGESTS_CAP: u64 = 64 * 1024;
 
 /// The mode bits that let a user other than the owner write a file.
-const GROUP_OR_OTHER_WRITE: u32 = 0o022;
+pub(crate) const GROUP_OR_OTHER_WRITE: u32 = 0o022;
 
-/// The uid that must own `digests.json`: root (decision CH57 rule 1).
-const ROOT_UID: u32 = 0;
+/// The uid that must own `digests.json`: root (decision CH57 rule 1). The
+/// guest init program has the same owner (`guest_init`, CH62 rule 17).
+pub(crate) const ROOT_UID: u32 = 0;
 
 /// Why the vmm does not trust `digests.json`. Each refuses the start.
 #[derive(Debug)]

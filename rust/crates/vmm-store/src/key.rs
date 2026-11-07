@@ -10,12 +10,13 @@
 //!    proves the release, and a phase 5 test ties `CH_REV` to the build
 //!    argv (gap G10).
 //! 2. The SHA-256 of the kernel, from its checked store copy (PR D6).
-//! 3. The SHA-256 of the initramfs, from its checked store copy, or
-//!    `null` for a boot with none (decision CH61 rule 3). CH opens the
-//!    initramfs of the snapshot config on a restore, so a restore with
-//!    the current key reads the `store/<sha256>` file that the vmm
-//!    config names (decision CH60 rule 2). A boot has none until phase 3
-//!    adds guest init (PR C7).
+//! 3. The SHA-256 of the guest init initramfs, from its checked store
+//!    copy (decisions CH61 rule 3, CH62 rule 24). Every VM start names
+//!    the one initramfs that the vmm wrote at its own start (CH62 rule
+//!    18), so the key always holds it, and a key file with `null` or no
+//!    digest holds no key. CH opens the initramfs of the snapshot config
+//!    on a restore, so a restore with the current key reads the
+//!    `store/<sha256>` file that the vmm wrote (decision CH60 rule 2).
 //! 4. The SHA-256 of the root disk, from its checked store copy (PR D6).
 //! 5. `GUEST_INIT_PROTOCOL` of the wire crate. A port renumber bumps it
 //!    (decision CH14).
@@ -180,7 +181,7 @@ pub fn check_cloud_hypervisor(
 struct KeyFile {
     ch_rev: String,
     kernel: String,
-    initramfs: Option<String>,
+    initramfs: String,
     root_disk: String,
     guest_init_protocol: u32,
 }
@@ -191,19 +192,18 @@ pub struct SnapshotKey(KeyFile);
 
 impl SnapshotKey {
     /// The key of a VM with the checked `kernel`, `initramfs` and
-    /// `root_disk`. `initramfs` is `None` for a boot with none (decision
-    /// CH61 rule 3).
+    /// `root_disk` (decisions CH61 rule 3, CH62 rules 18 and 24).
     #[must_use]
     pub fn current(
         _ch: CheckedCh,
         kernel: &CheckedImage,
-        initramfs: Option<&CheckedImage>,
+        initramfs: &CheckedImage,
         root_disk: &CheckedImage,
     ) -> Self {
         Self(KeyFile {
             ch_rev: CH_REV.to_owned(),
             kernel: kernel.digest().to_string(),
-            initramfs: initramfs.map(|image| image.digest().to_string()),
+            initramfs: initramfs.digest().to_string(),
             root_disk: root_disk.digest().to_string(),
             guest_init_protocol: GUEST_INIT_PROTOCOL,
         })

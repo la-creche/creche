@@ -77,17 +77,27 @@ fn ch() -> Program {
 }
 
 #[cfg(test)]
+fn host(path: &str) -> HostPath {
+    HostPath::new(PathBuf::from(path)).unwrap()
+}
+
+/// A boot of the store kernel and the guest init initramfs (decision CH62
+/// rule 18).
+#[cfg(test)]
 fn boot() -> Start {
-    let kernel = HostPath::new(PathBuf::from("/state/store/kernel")).unwrap();
     Start::Boot {
-        kernel,
-        initramfs: None,
+        kernel: host("/state/store/kernel"),
+        initramfs: host("/state/store/initramfs"),
     }
 }
 
+/// A restore that carries the initramfs of its snapshot (decision CH61
+/// rule 3).
 #[cfg(test)]
 fn restore() -> Start {
-    Start::Restore { initramfs: None }
+    Start::Restore {
+        initramfs: host("/state/store/initramfs"),
+    }
 }
 
 const BOOT: &[&str] = &[

@@ -7,7 +7,7 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use creche_vmm::config::{BUDGET, RAM_CAP, STATE_ROOT};
+use creche_vmm::config::{BUDGET, GUEST_INIT, RAM_CAP, STATE_ROOT};
 
 /// The exit status of a refused start.
 const EX_CONFIG: i32 = 78;
@@ -17,7 +17,7 @@ const TRUE: &str = "/usr/bin/true";
 
 /// Each key with a good value. The paths need not exist: the config
 /// checks their form only.
-const GOOD: [(&str, &str); 15] = [
+const GOOD: [(&str, &str); 16] = [
     ("VMM_STATE_ROOT", "/srv/vmm/state"),
     ("RUNTIME_DIRECTORY", "/run/user/1000/vmm"),
     ("VMM_FAMILY_ROOT", "/srv/families"),
@@ -25,6 +25,10 @@ const GOOD: [(&str, &str); 15] = [
     ("VMM_IMAGE_ROOT", "/opt/components/disks"),
     ("VMM_CH_PROGRAM", "/opt/components/vmm/bin/cloud-hypervisor"),
     ("VMM_CH_REMOTE_PROGRAM", "/opt/components/vmm/bin/ch-remote"),
+    (
+        "VMM_GUEST_INIT_PROGRAM",
+        "/opt/components/vmm/bin/guest-init",
+    ),
     ("AGENT_SYSTEMD_RUN_PROGRAM", "/usr/bin/systemd-run"),
     ("AGENT_SYSTEMCTL_PROGRAM", "/usr/bin/systemctl"),
     ("VMM_ZSTD_PROGRAM", "/usr/bin/zstd"),
@@ -84,6 +88,26 @@ fn a_bad_key_exits_78_and_names_the_key() {
     let (output, stderr) = serve(&env);
     assert_eq!(output.status.code(), Some(EX_CONFIG));
     assert_eq!(stderr, format!("vmm: {RAM_CAP}: the key has no value\n"));
+}
+
+/// Decision CH62 rule 17: the vmm needs its guest init program, so an env
+/// with no `VMM_GUEST_INIT_PROGRAM` refuses the start.
+#[test]
+fn a_missing_guest_init_key_exits_78() {
+    let env: Vec<_> = GOOD
+        .iter()
+        .copied()
+        .filter(|one| one.0 != GUEST_INIT)
+        .collect();
+    let (output, stderr) = serve(&env);
+    assert_eq!(output.status.code(), Some(EX_CONFIG));
+    assert_eq!(
+        stderr,
+        format!(
+            "vmm: {GUEST_INIT}: the key has no value
+"
+        )
+    );
 }
 
 /// A good config on temp paths runs each start step before the image

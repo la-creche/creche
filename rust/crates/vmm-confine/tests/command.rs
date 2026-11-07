@@ -33,15 +33,17 @@ const DISK_DIGEST: &str = "1044dec7206e8d7c9fbb4ae8f766668406d2567fc7fc1a160a9d4
 /// The `mke2fs` of the test: it formats nothing.
 const MKE2FS: &str = "/usr/bin/true";
 
-/// A boot of a 2 vCPU, 2 GiB VM with no initramfs, under the temp root
-/// `<root>`, in this order. `<root>` stands for the root.
+/// A boot of a 2 vCPU, 2 GiB VM under the temp root `<root>`, in this
+/// order. `<root>` stands for the root.
 const BOOT: &[&str] = &[
     "--api-socket",
     "path=<root>/run/vm/0123abcd-0000-4000-8000-00000000c7c7/api.sock",
     "--kernel",
     "<root>/state/store/6923dd1bc0460082c5d55a831908c24a282860b7f1cd6c2b79cf1bc8857c639c",
+    "--initramfs",
+    "<root>/state/store/9752c38a9065f7646ffaac3621d1fa2f7dbe726c7e12e511eac7fdb14d4e2a24",
     "--cmdline",
-    "console=ttyS0 root=/dev/vda ro",
+    "console=ttyS0 rdinit=/init",
     "--cpus",
     "boot=2",
     "--memory",
@@ -124,11 +126,11 @@ impl Temp {
         }
     }
 
-    /// A boot of the 2 vCPU, 2 GiB shape with `initramfs`.
-    fn boot<'a>(&'a self, initramfs: Option<&'a CheckedImage>) -> Boot<'a> {
+    /// A boot of the 2 vCPU, 2 GiB shape.
+    fn boot(&self) -> Boot<'_> {
         Boot {
             kernel: &self.kernel,
-            initramfs,
+            initramfs: &self.initramfs,
             root: &self.root_disk,
             session: &self.session,
             serial: &self.serial,
@@ -149,7 +151,7 @@ impl Temp {
             .join("../vmm-store/tests/fixtures/cloud-hypervisor");
         std::os::unix::fs::symlink(stub, &ch).unwrap();
         let checked = check_cloud_hypervisor(&ch, Duration::from_secs(10)).unwrap();
-        let key = SnapshotKey::current(checked, &self.kernel, None, &self.root_disk);
+        let key = SnapshotKey::current(checked, &self.kernel, &self.initramfs, &self.root_disk);
 
         let session = self.state.session(&id());
         let generation = SnapshotGeneration(1);
@@ -209,26 +211,18 @@ fn assert_safe(args: &[String]) {
     }
 }
 
+/// Every boot names the initramfs after the kernel, and the cmdline has
+/// its final value (decisions CH62 rules 18 and 19).
 #[test]
-fn a_boot_renders_the_whole_argv() {
+fn boot_passes_the_initramfs_and_the_final_cmdline() {
     let temp = Temp::new("boot");
-    let command = ChCommand::boot(temp.boot(None), &temp.run).unwrap();
+    let command = ChCommand::boot(temp.boot(), &temp.run).unwrap();
     assert_eq!(command.args(), temp.argv(BOOT));
-    assert_safe(command.args());
-}
-
-#[test]
-fn a_boot_with_an_initramfs_names_it_after_the_kernel() {
-    let temp = Temp::new("initramfs");
-    let command = ChCommand::boot(temp.boot(Some(&temp.initramfs)), &temp.run).unwrap();
-
-    let mut expected = temp.argv(BOOT);
-    let initramfs = format!("<root>/state/store/{INITRAMFS_DIGEST}");
-    expected.splice(
-        4..4,
-        ["--initramfs".to_owned(), temp.argv(&[&initramfs]).remove(0)],
+    assert_eq!(
+        temp.initramfs.path(),
+        temp.root.join(format!("state/store/{INITRAMFS_DIGEST}"))
     );
-    assert_eq!(command.args(), expected);
+    assert_eq!(CMDLINE, "console=ttyS0 rdinit=/init");
     assert_safe(command.args());
 }
 
@@ -243,7 +237,7 @@ fn a_restore_renders_only_the_api_socket_and_the_source() {
 #[test]
 fn the_payload_keeps_the_program_and_the_argv() {
     let temp = Temp::new("payload");
-    let command = ChCommand::boot(temp.boot(None), &temp.run).unwrap();
+    let command = ChCommand::boot(temp.boot(), &temp.run).unwrap();
     let ch = Program::new(PathBuf::from("/opt/components/vmm/bin/cloud-hypervisor")).unwrap();
     let payload = command.clone().payload(ch.clone());
     assert_eq!(payload.program(), &ch);
@@ -255,7 +249,7 @@ fn a_path_with_option_syntax_is_refused() {
     let temp = Temp::new("syntax");
     for name in ["a,b", "a[b", "a]b", "a\"b"] {
         let run = RunRoot::new(temp.root.join(name)).unwrap().vm(&id());
-        let error = ChCommand::boot(temp.boot(None), &run).unwrap_err();
+        let error = ChCommand::boot(temp.boot(), &run).unwrap_err();
         assert_eq!(error, CommandError::OptionSyntax(run.api_socket()));
     }
 }
@@ -264,7 +258,7 @@ fn a_path_with_option_syntax_is_refused() {
 fn a_state_path_with_option_syntax_is_refused() {
     // The run root is clean, so the check of each state path decides.
     let temp = Temp::with_state("syntax-state", "st,ate");
-    let error = ChCommand::boot(temp.boot(None), &temp.run).unwrap_err();
+    let error = ChCommand::boot(temp.boot(), &temp.run).unwrap_err();
     assert_eq!(
         error,
         CommandError::OptionSyntax(temp.kernel.path().to_owned())
@@ -285,7 +279,7 @@ fn a_session_disk_path_with_option_syntax_is_refused() {
         .unwrap();
     let boot = Boot {
         session: &session,
-        ..temp.boot(None)
+        ..temp.boot()
     };
     let error = ChCommand::boot(boot, &temp.run).unwrap_err();
     assert_eq!(error, CommandError::OptionSyntax(session.path().to_owned()));
@@ -302,7 +296,7 @@ fn a_serial_log_path_with_option_syntax_is_refused() {
     let serial = SerialLog::fresh(&session).unwrap();
     let boot = Boot {
         serial: &serial,
-        ..temp.boot(None)
+        ..temp.boot()
     };
     let error = ChCommand::boot(boot, &temp.run).unwrap_err();
     assert_eq!(error, CommandError::OptionSyntax(serial.path().to_owned()));
@@ -315,9 +309,4 @@ fn a_refill_below_one_second_is_refused() {
     assert_eq!(RefillMs::new(0), Err(RefillTooShort(0)));
     assert_eq!(RefillMs::new(1000).unwrap(), RefillMs::SECOND);
     assert_eq!(RefillMs::new(5000).unwrap().get(), 5000);
-}
-
-#[test]
-fn the_cmdline_reads_the_root_disk_read_only() {
-    assert_eq!(CMDLINE, "console=ttyS0 root=/dev/vda ro");
 }

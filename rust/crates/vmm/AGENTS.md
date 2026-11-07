@@ -45,8 +45,10 @@ other failure exits 1.
    refuses the start (caller duty 4, gap G10 option A). Then
    `image_root::read` reads `digests.json`, and `ImageSet::import` puts
    each file that it names into the digest store (see "The image root").
-   Then `FaultBook::start` clears every fault file (contract 05 §3.3.1
-   rule 8), and `Rows::open` loads the rows.
+   Then `guest_init::write_initramfs` writes the one guest init
+   initramfs of this vmm start (see "The guest init initramfs"). Then
+   `FaultBook::start` clears every fault file (contract 05 §3.3.1 rule
+   8), and `Rows::open` loads the rows.
 3. The digest store, the session disks, the spawner, `ChTools` and one
    `ColdBoot`. The vmm reads its own unit with `VmmUnit::of_self`
    (decision CH60 rule 1, no config key). In no service unit of a user
@@ -65,26 +67,56 @@ A failed start step, or a server that stops before SIGTERM, exits 78. The
 end of a shutdown exits 0, also when a VM did not stop: the
 `ExecStopPost=` step of the vmm unit kills its scope after the vmm has
 exited (decision CH61 rule 1). The vmm has one start entry, `build`, and
-it always requires root as the owner of `digests.json` (decision CH58
-rule 1: no test-only entry stays in production code). `build` runs
-`check` (the leftover sweep, the CH version, the image root), then
-`parts`. `src/compose/tests.rs` runs on temp paths with no KVM:
+it always requires root as the owner of `digests.json` and of the guest
+init program (decision CH58 rule 1: no test-only entry stays in
+production code). `build` runs `check` (the leftover sweep, the CH
+version, the image root, the guest init initramfs), then `parts`. `src/compose/tests.rs` runs on temp paths with no KVM:
 
 1. In the rust job, a `digests.json` that the test user owns refuses
    `build` with `NotOwned`, and no digest reaches the store.
 2. In the rust job, the serve tests start from `parts` after the checks
-   that a test can run: the CH fixture and an import into the store.
+   that a test can run: the CH fixture, an import into the store and a
+   made initramfs in the store.
    They prove an empty list page, a 412 on a bad protocol header, the
    end of the run at the signal, and a failed run when the bind fails.
 3. The ignored `kvm_` tests run `build` on a root-owned `digests.json`.
    The job kvm runs them, and its runner may use sudo (decision CH36
    G20). They prove that each key reaches its part (the `Debug` text of
    each part gives its program path, because the store crate gives no
-   accessor), and that a missing image refuses the start.
+   accessor), and that a missing image refuses the start. The guest
+   init initramfs of a root-owned program is the same across two starts,
+   and a group write bit refuses the start.
 
 `tests/binary.rs` runs `vmm serve` with no KVM. It proves the exit 78
 of a missing `digests.json` and of one that root does not own. The
 Hyperion proof of the unit (plan PR C13) runs the binary end to end.
+
+## The guest init initramfs
+
+`src/guest_init.rs` writes the guest init initramfs once per vmm start
+(decisions CH7-6, CH62 rules 17 and 18). `VMM_GUEST_INIT_PROGRAM` names
+the `guest-init` file of the vmm row. The row signature covers it, so
+the vmm and guest init come from one release. `write_initramfs` opens
+the file once and checks the open file, as `image_root::read` checks
+`digests.json`: a regular file, not a symlink, owned by root, and no
+group or other write bit. A failed check refuses the start, and
+`src/main.rs` exits 78.
+
+The archive holds `dev` (0755), `dev/console` 5:1 (0600) and `/init`
+(the program, 0500), from `creche_vmm_store::initramfs::pack`. Equal
+bytes give an equal archive, so one guest init build gives one
+`store/<sha256>` across vmm restarts (CH62 rule 18). `put_made` keeps an
+equal copy that is there and checks it. `StartConfig::initramfs` holds
+its digest. Each VM start checks that store copy (decision CH44 rule 2),
+each cold boot passes it as `--initramfs` with `CMDLINE`
+`console=ttyS0 rdinit=/init` (CH62 rule 19), the snapshot key holds its
+digest, and each restore carries it (CH61 rule 3, CH62 rule 24).
+
+`src/guest_init/tests.rs` proves the entries and each refusal that a
+test user can make: an owner other than root, a missing file, a
+symlink and a dir. `src/compose/tests.rs` proves a root-owned program in
+the job kvm, and `tests/kvm_guest.rs` boots the archive of the static
+guest init of `bin/vm-smoke-setup.sh` to `guest-init: up`.
 
 ## The config
 
@@ -104,6 +136,7 @@ A fault names the key and never the value, as in `env/AGENTS.md`.
 | `VMM_IMAGE_ROOT` | `${AGENT_INSTALL_ROOT}/disks` | `image_root::read` (decision CH57 rule 1) |
 | `VMM_CH_PROGRAM` | `${AGENT_INSTALL_ROOT}/vmm/bin/cloud-hypervisor` | CH (decision CH7-5) |
 | `VMM_CH_REMOTE_PROGRAM` | `${AGENT_INSTALL_ROOT}/vmm/bin/ch-remote` | `ChRemote` |
+| `VMM_GUEST_INIT_PROGRAM` | `${AGENT_INSTALL_ROOT}/vmm/bin/guest-init` | `guest_init::write_initramfs` (decision CH62 rule 17) |
 | `AGENT_SYSTEMD_RUN_PROGRAM` | existing key | `Launch` (PR C2) |
 | `AGENT_SYSTEMCTL_PROGRAM` | existing key | `leftovers::stop_all` (PR C3) |
 | `VMM_ZSTD_PROGRAM` | `/usr/bin/zstd` | `ImageStore` (gap G9) |
@@ -427,8 +460,8 @@ table, and the start boots it again. A cold boot runs these steps:
    admission names runs (see "The eviction").
 3. In `spawn_blocking`: `RunRoot::link_vm` links `vm/<id>` to the slot
    (PR D16), then `remove_stale` (decision CH19 (4)), the store check of
-   the kernel, the initramfs when the config names one, and the root
-   disk of the flavor (decision CH44 rule 2),
+   the kernel, the guest init initramfs and the root disk of the flavor
+   (decision CH44 rule 2),
    `SessionDisks::for_boot` (decision CH21-4), `snapshots/` with mode
    0700, and a new `sessions/<id>/serial.log` in the state root with
    `SerialLog::fresh`, mode 0600 (gap G23, decision CH59 rule 2). Then the
@@ -503,7 +536,9 @@ checked kernel, initramfs and root disk it gives the current
 `SnapshotKey`. A snapshot with the current key names the initramfs of
 the config, so `Start::Restore` carries that `store/<sha256>` file and
 the ruleset reads it, as on a boot (decision CH61 rule 3). The config
-names none until phase 3 adds guest init (PR C7).
+always names one: the initramfs of this vmm start (CH62 rule 18). A
+snapshot of an earlier vmm start keeps only while that start wrote the
+same bytes.
 
 1. `check_newest` of `creche-vmm-store` compares the key of the newest
    generation. A mismatch or an unreadable key drops every generation,
@@ -778,6 +813,17 @@ no guest sync.
     (CH36 G31), on 2026-11-04: `/usr/sbin/mke2fs` (e2fsprogs) and
     `/usr/bin/fallocate` (util-linux) are executable on Ubuntu 24.04.5.
     The G9 check confirmed `/usr/bin/zstd`, and this check saw it again.
+18. CONTRACT-QUESTION (plan PR V5, decision CH62 rule 17): the rule
+    says `VMM_GUEST_INIT_PROGRAM` is "checked as `VMM_CH_PROGRAM` is",
+    and gap Q54-17 option A spells that out as absolute, root-owned and
+    not writable by david. On main the config checks `VMM_CH_PROGRAM`
+    for its form only (absolute, no `..`), and nothing checks its owner.
+    V5 takes the option text for guest init only: `guest_init.rs` refuses
+    a program that is no regular file, a symlink, an owner other than
+    root or a group or other write bit, as `image_root::read` refuses a
+    `digests.json`. `VMM_CH_PROGRAM` and `VMM_CH_REMOTE_PROGRAM` keep the
+    form check. Open for David: should CH and ch-remote get the same
+    owner check, and may the vmm row install `guest-init` as a symlink?
 
 ## Caller duties
 

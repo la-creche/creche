@@ -6,7 +6,9 @@
 //! with the checks of `check` done by the test: the CH version check of
 //! the fixture and an import into the store. The `kvm_` tests run `build`
 //! itself on a root-owned file: the job kvm runs each ignored `kvm_` test,
-//! and its runner may use sudo (decision CH36 G20).
+//! and its runner may use sudo (decision CH36 G20). The guest init
+//! program is root-owned there too (decision CH62 rule 17), and the serve
+//! tests put a made initramfs into the store in its place.
 //!
 //! Each program that a part only holds gets its own path, and a test
 //! reads the `Debug` text of the part. The store crate gives no accessor
@@ -26,6 +28,7 @@ use std::time::{Duration, Instant};
 
 use creche_vmm_confine::admission::GIB;
 use creche_vmm_store::images::ImageStore;
+use creche_vmm_store::initramfs::{Entry, Kind, pack};
 use creche_vmm_store::key::check_cloud_hypervisor;
 use creche_wire::{HOST_API_HEADER, HOST_API_PROTOCOL, PerFlavor, SandboxFlavor, SessionPage};
 use tokio::runtime::{Builder, Runtime};
@@ -34,6 +37,7 @@ use tokio::sync::oneshot;
 use super::{Checked, StartError, VERSION_WAIT, Vmm, build, parts};
 use crate::ServeError;
 use crate::config::Config;
+use crate::guest_init::GuestInitError;
 use crate::image_root::{DIGESTS_FILE, DigestsError};
 use crate::start::Digests;
 
@@ -42,6 +46,9 @@ const CH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/tests/fixtures/cloud-hypervisor"
 );
+
+/// The bytes of the guest init program of the test.
+const GUEST_INIT: &[u8] = b"guest-init";
 
 /// The longest wait of one step.
 const WAIT: Duration = Duration::from_secs(10);
@@ -102,6 +109,7 @@ impl Scratch {
             "python": entry(IMAGES[2]),
         });
         fs::write(dir.join("images").join(DIGESTS_FILE), digests.to_string()).unwrap();
+        fs::write(dir.join("bin/guest-init"), GUEST_INIT).unwrap();
 
         let systemctl = dir.join("bin/systemctl");
         let log = dir.join("systemctl.log");
@@ -118,6 +126,7 @@ impl Scratch {
             ("VMM_IMAGE_ROOT", text(dir.join("images"))),
             ("VMM_CH_PROGRAM", OsString::from(CH)),
             ("VMM_CH_REMOTE_PROGRAM", text(dir.join("bin/ch-remote"))),
+            ("VMM_GUEST_INIT_PROGRAM", text(dir.join("bin/guest-init"))),
             (
                 "AGENT_SYSTEMD_RUN_PROGRAM",
                 text(dir.join("bin/systemd-run")),
@@ -138,9 +147,14 @@ impl Scratch {
     }
 
     /// Makes root the owner of `digests.json`, as the disk row of phase 5
-    /// installs it. Only a `kvm_` test calls it.
+    /// installs it, and of the guest init program, as the vmm row installs
+    /// it (decision CH62 rule 17). Only a `kvm_` test calls it.
     fn trust(&self) {
-        chown_root(&self.dir.join("images").join(DIGESTS_FILE));
+        sudo(
+            &["chown", "0:0"],
+            &self.dir.join("images").join(DIGESTS_FILE),
+        );
+        sudo(&["chown", "0:0"], &self.dir.join("bin/guest-init"));
     }
 
     /// The vmm from `parts`, after the checks of `check` that a test of
@@ -161,10 +175,12 @@ impl Scratch {
             SandboxFlavor::Base => base,
             SandboxFlavor::Python => python,
         });
+        let initramfs = images.put_made(b"initramfs").unwrap().digest();
         let checked = Checked {
             ch_version,
             images,
             digests: Digests { kernel, roots },
+            initramfs,
         };
         parts(config, checked).unwrap()
     }
@@ -175,21 +191,42 @@ impl Scratch {
     }
 }
 
-/// Makes root the owner of `path` with the sudo of the runner. Decision
-/// CH36 G20 allows sudo on GitHub's throwaway runners only, never on the
-/// host, so it refuses outside GitHub Actions.
-fn chown_root(path: &Path) {
+/// Runs `command` on `path` with the sudo of the runner, such as a
+/// `chown 0:0`. Decision CH36 G20 allows sudo on GitHub's throwaway
+/// runners only, never on the host, so it refuses outside GitHub Actions.
+fn sudo(command: &[&str], path: &Path) {
     assert_eq!(
         std::env::var("GITHUB_ACTIONS").as_deref(),
         Ok("true"),
         "sudo runs only on a GitHub runner (decision CH36 G20)"
     );
     let status = Command::new("sudo")
-        .args(["-n", "chown", "0:0"])
+        .arg("-n")
+        .args(command)
         .arg(path)
         .status()
         .unwrap();
-    assert!(status.success(), "sudo chown: {status}");
+    assert!(status.success(), "sudo {command:?}: {status}");
+}
+
+/// The archive of the guest init program of the test: `dev`,
+/// `dev/console` 5:1 and `/init` with mode 0500 (decision CH62 rule 18).
+fn initramfs() -> Vec<u8> {
+    let entry = |name: &str, mode, kind| Entry {
+        name: name.to_owned(),
+        mode,
+        kind,
+    };
+    pack(&[
+        entry("dev", 0o755, Kind::Dir),
+        entry(
+            "dev/console",
+            0o600,
+            Kind::CharDevice { major: 5, minor: 1 },
+        ),
+        entry("init", 0o500, Kind::File(GUEST_INIT.to_vec())),
+    ])
+    .unwrap()
 }
 
 fn runtime() -> Runtime {
@@ -252,6 +289,38 @@ fn kvm_build_wires_each_key_to_its_part() {
     for digest in [kernel, base, python] {
         start.images.check(digest).unwrap();
     }
+
+    // Decisions CH62 rules 17 and 18: the initramfs of the guest init
+    // program of the key, in the digest store.
+    let stored = start.images.check(start.initramfs).unwrap();
+    assert_eq!(fs::read(stored.path()).unwrap(), initramfs());
+}
+
+/// Decision CH62 rule 17: the vmm packs a guest init program only when
+/// root owns it and no group or other user may write it. A root-owned
+/// program gives one initramfs across vmm starts (CH62 rule 18). A group
+/// write bit refuses the start, and so does an owner other than root
+/// (`guest_init/tests.rs` proves that one in the rust job).
+#[test]
+#[ignore = "needs runner sudo for a root-owned file: the job kvm runs it"]
+fn kvm_guest_init_program_must_be_root_owned() {
+    let scratch = Scratch::new("guest-init");
+    scratch.trust();
+    let first = build(scratch.config()).unwrap().hook.0.parts().0.initramfs;
+    let again = build(scratch.config()).unwrap().hook.0.parts().0.initramfs;
+    assert_eq!(first, again);
+
+    sudo(&["chmod", "0575"], &scratch.dir.join("bin/guest-init"));
+    let refused = build(scratch.config()).err();
+    assert!(
+        matches!(
+            refused,
+            Some(StartError::GuestInit(GuestInitError::Writable {
+                mode: 0o575
+            }))
+        ),
+        "{refused:?}"
+    );
 }
 
 /// Decision CH57 rule 1: a `digests.json` that root does not own refuses

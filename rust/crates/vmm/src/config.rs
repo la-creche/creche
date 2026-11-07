@@ -39,6 +39,9 @@ pub const IMAGE_ROOT: &str = "VMM_IMAGE_ROOT";
 pub const CH: &str = "VMM_CH_PROGRAM";
 /// The shipped `ch-remote` (decision CH7-5).
 pub const CH_REMOTE: &str = "VMM_CH_REMOTE_PROGRAM";
+/// The shipped `guest-init` of the vmm row, which the vmm packs into its
+/// initramfs at its start (decisions CH7-6, CH62 rules 17 and 18).
+pub const GUEST_INIT: &str = "VMM_GUEST_INIT_PROGRAM";
 /// `systemd-run` of the launch (PR C2). The key exists already.
 pub const SYSTEMD_RUN: &str = "AGENT_SYSTEMD_RUN_PROGRAM";
 /// `systemctl` of the leftover sweep (PR C3). The key exists already.
@@ -73,6 +76,9 @@ pub struct Config {
     pub ch: Program,
     /// `VMM_CH_REMOTE_PROGRAM`.
     pub ch_remote: Program,
+    /// `VMM_GUEST_INIT_PROGRAM`. `guest_init::write_initramfs` checks
+    /// that root owns it and that no group or other user may write it.
+    pub guest_init: Program,
     /// `AGENT_SYSTEMD_RUN_PROGRAM`.
     pub systemd_run: Program,
     /// `AGENT_SYSTEMCTL_PROGRAM`.
@@ -173,6 +179,7 @@ impl Config {
             image_root: path_of(IMAGE_ROOT)?,
             ch: program_of(CH)?,
             ch_remote: program_of(CH_REMOTE)?,
+            guest_init: program_of(GUEST_INIT)?,
             systemd_run: program_of(SYSTEMD_RUN)?,
             systemctl: program_of(SYSTEMCTL)?,
             zstd: program_of(ZSTD)?,

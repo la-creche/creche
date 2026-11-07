@@ -26,8 +26,8 @@ pub fn vmm_unit() -> VmmUnit {
 }
 
 /// The files of one VM under a new directory in `/tmp`, removed on drop.
-/// The state root and the run root are both the directory, and the root
-/// disk is `root.img`.
+/// The state root and the run root are both the directory, the root disk
+/// is `root.img` and the initramfs of the restore is `initramfs`.
 pub struct TempVm {
     root: PathBuf,
     pub files: VmFiles,
@@ -43,10 +43,12 @@ impl TempVm {
         fs::create_dir_all(session.snapshots()).unwrap();
         fs::create_dir_all(run.path()).unwrap();
         fs::write(root.join("root.img"), "root").unwrap();
+        fs::write(root.join("initramfs"), "initramfs").unwrap();
         fs::write(session.disk(), "session").unwrap();
         SerialLog::fresh(&session).unwrap();
         let root_disk = HostPath::new(root.join("root.img")).unwrap();
-        let start = Start::Restore { initramfs: None };
+        let initramfs = HostPath::new(root.join("initramfs")).unwrap();
+        let start = Start::Restore { initramfs };
         let files = VmFiles::new(start, root_disk, &session, &run).unwrap();
         Self { root, files }
     }
