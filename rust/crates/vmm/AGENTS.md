@@ -893,11 +893,16 @@ start commits the VM with one `Watch`, a task that starts from the
 reading of the launch, so an edit since the launch acts at the first
 poll.
 
-1. Every `POLL` (2 s) the task reads both files with
-   `FamilyRoot::read_repos` and `FamilyRoot::read_egress`, in
-   `spawn_blocking` (decisions CH36 G21, CH69 rule 11). A reading equal
-   to the last one changes nothing and runs no check. The task compares
-   the readings, not the bytes (Known gap 32).
+1. Every `POLL` (2 s) the task reads the bytes of both files with
+   `FamilyRoot::read_repos_bytes` and `FamilyRoot::read_egress_bytes`,
+   in `spawn_blocking` (decisions CH36 G21, CH69 rule 11). The task
+   compares bytes (`Reach::same`). Bytes equal to the last ones change
+   nothing and run no check. New bytes are a new reading, also when
+   they read as the same list, or when they do not read before or
+   after, so the deny check runs again (decision CH6-3). A read that
+   takes no bytes (a symlink, a file that is not regular, a file past
+   its cap, an error) has nothing to compare, so it is a new reading at
+   each poll. The task reads the list of the bytes only to bind.
 2. A new reading binds or removes the listeners of 1103 and 1104 by
    the rule of the start, `Reach::mirror` and `Reach::egress`: a list
    that holds an entry binds, and so does a present file that does not
@@ -1407,19 +1412,6 @@ the runner.
     keep one host listed. Cost of a change: a close of the listener only
     in `proxy::Server` and `mirror::Server`, which then wait for their
     links.
-32. CONTRACT-QUESTION: decision CH69 rule 11 (Q61-11 option A) says the
-    edit follow compares bytes every 2 s. Reading taken: the follow
-    compares readings (`Reach` in `src/egress/watch.rs`). Two cases
-    differ from bytes. A rewrite to new bytes that read the same list
-    reruns no deny check (decision CH6-3 'after each egress edit'). A
-    file that does not read and changes to other bytes that do not read
-    reruns no check either. Why: `FamilyRoot` is the one checked open of
-    each file (the O_NOFOLLOW read). A byte reader belongs in
-    `creche-vmm-confine/src/family.rs`, which the E1 and M1 lane owns
-    (plan shared_file_edits rule 6). caregiver writes one canonical form
-    (decision CH69 rule 5), so a new list is new bytes and a new
-    reading. Cost of a change: a byte reader in `FamilyRoot` and a byte
-    compare in `Follow::run`.
 
 ## Caller duties
 

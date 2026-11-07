@@ -3,9 +3,13 @@
 //! 1). caregiver edits `egress.json` and `repos.json` of a family while
 //! its VMs run. One task per VM follows both files:
 //!
-//! 1. Every `POLL` it reads both files with the readers of `FamilyRoot`,
-//!    in `spawn_blocking` (decisions CH36 G21, CH69 rule 11). A reading
-//!    equal to the last one changes nothing.
+//! 1. Every `POLL` it reads the bytes of both files with the byte readers
+//!    of `FamilyRoot`, in `spawn_blocking` (decisions CH36 G21, CH69 rule
+//!    11). Bytes equal to the last ones change nothing. New bytes are a
+//!    new reading, also when they read as the same list, or when they do
+//!    not read before or after. A read that takes no bytes (a symlink, a
+//!    file that is not regular, a file past its cap, an error) has nothing
+//!    to compare, so it is a new reading at each poll.
 //! 2. A new reading binds or removes the listeners of host ports 1103 and
 //!    1104 by the rule of the start (`Reach`): a list that holds an
 //!    entry binds, and so does a present file that does not read. An
@@ -40,7 +44,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use creche_vmm_confine::deny::check;
-use creche_vmm_confine::family::FamilyRoot;
+use creche_vmm_confine::family::{FamilyRoot, ReachBytes};
 use creche_vmm_confine::landlock::Start;
 use creche_vmm_confine::launch::Program;
 use creche_vmm_store::layout::VmRunDir;
@@ -58,34 +62,28 @@ use crate::start::blocking;
 /// CH69 rule 11).
 pub const POLL: Duration = Duration::from_secs(2);
 
-/// What the two reach files of a family say. `None` is a file that is
-/// present and does not read.
-// CONTRACT-QUESTION: decision CH69 rule 11 (Q61-11 option A) says the
-// follow compares bytes every 2 s. Reading taken: the follow compares
-// readings. Two cases differ from bytes. A rewrite to new bytes that
-// read the same list reruns no deny check (CH6-3 'after each egress
-// edit'). A file that does not read and changes to other bytes that do
-// not read reruns no check either. Why: `FamilyRoot` is the one checked
-// open of each file (the O_NOFOLLOW read), and a byte reader belongs in
-// `creche-vmm-confine/src/family.rs`, the file of the E1 and M1 lane
-// (plan shared_file_edits rule 6). caregiver writes one canonical form
-// (decision CH69 rule 5), so a new list is new bytes and a new reading.
-// Cost of a change: a byte reader in `FamilyRoot` and a byte compare
-// here (Known gap 32 of AGENTS.md).
+/// What the follow compares of the two reach files of a family: the bytes
+/// of each (decision CH69 rule 11). `None` is a read that took no bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Reach {
-    repos: Option<FamilyRepos>,
-    egress: Option<FamilyEgress>,
+    repos: Option<ReachBytes<FamilyRepos>>,
+    egress: Option<ReachBytes<FamilyEgress>>,
 }
 
 impl Reach {
-    /// Reads `repos.json` and `egress.json` of `family` in `families`. It
-    /// blocks.
+    /// Reads the bytes of `repos.json` and `egress.json` of `family` in
+    /// `families`. It blocks.
     pub(crate) fn read(families: &FamilyRoot, family: &FamilyName) -> Self {
         Self {
-            repos: families.read_repos(family).ok(),
-            egress: families.read_egress(family).ok(),
+            repos: families.read_repos_bytes(family).ok(),
+            egress: families.read_egress_bytes(family).ok(),
         }
+    }
+
+    /// Whether this reading has the bytes of `last`. A read that took no
+    /// bytes has nothing to compare, so it is never the same.
+    fn same(&self, last: &Self) -> bool {
+        self.repos.is_some() && self.egress.is_some() && self == last
     }
 
     /// Whether the VM gets the mirror listener. A clone list that holds a
@@ -96,6 +94,7 @@ impl Reach {
     pub(crate) fn mirror(&self) -> bool {
         self.repos
             .as_ref()
+            .and_then(|bytes| bytes.list().ok())
             .is_none_or(|list| !list.repos.names().is_empty())
     }
 
@@ -107,6 +106,7 @@ impl Reach {
     pub(crate) fn egress(&self) -> bool {
         self.egress
             .as_ref()
+            .and_then(|bytes| bytes.list().ok())
             .is_none_or(|list| !list.hosts.is_empty())
     }
 
@@ -187,9 +187,9 @@ impl Follow {
         }))
     }
 
-    /// Reads both files every `POLL`, and after a new reading moves the
-    /// listeners and runs the deny check. It returns the text of the
-    /// first fault, and its end drops `served`.
+    /// Reads the bytes of both files every `POLL`, and after a new reading
+    /// moves the listeners and runs the deny check. It returns the text of
+    /// the first fault, and its end drops `served`.
     async fn run(self, mut reach: Reach, mut served: Served) -> String {
         loop {
             sleep(POLL).await;
@@ -199,7 +199,7 @@ impl Follow {
             let Ok(now) = spawn_blocking(move || Reach::read(&families, &family)).await else {
                 continue;
             };
-            if now == reach {
+            if now.same(&reach) {
                 continue;
             }
             let moved = self.apply(&now, &mut served).await;

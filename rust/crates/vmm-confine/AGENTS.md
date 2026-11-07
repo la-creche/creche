@@ -117,6 +117,14 @@ table of the three vmm crates.
   rule 2), as
   `FamilyRepos`. An absent family dir or file is the empty list, so the
   family gets no clone. Each fault is a `ReachFault`.
+- `family::FamilyRoot::read_egress_bytes` and `read_repos_bytes` take
+  the bytes of each file through the same checked open and cap, as
+  `ReachBytes<FamilyEgress>` and `ReachBytes<FamilyRepos>`.
+  `read_egress` and `read_repos` are each byte read, then
+  `ReachBytes::list`. The edit follow of the vmm compares the bytes
+  every 2 s, and reads the list only after a change (decision CH69
+  rule 11). An absent family dir or file has no bytes, and its list is
+  empty.
 - `mirror::MirrorRoot::git_dir` gives `<root>/<name>/.git` of a repo of
   the mirror (decisions CH46 rule 4, CH69 rules 16 and 17). It opens the
   root, then `<name>` and `.git`, each from the handle before it with

@@ -2884,6 +2884,55 @@ fn an_unchanged_file_binds_nothing() {
     assert!(!test.stopped(0));
 }
 
+/// The follow compares bytes (decision CH69 rule 11). New bytes that read
+/// as the same list are an edit, so the deny check runs again (decision
+/// CH6-3). A stray listener fails it, and the VM faults and stops
+/// (decision CH69 rule 12).
+#[test]
+fn new_bytes_of_the_same_list_rerun_the_deny_check() {
+    let test = Test::new("follow-same-list", |_| {});
+    let file = test.dir.join("families/chat/egress.json");
+    fs::write(&file, EGRESS).unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    let _stray = UnixListener::bind(test.listener(0, 1105)).unwrap();
+    test.pause();
+    fs::write(&file, format!("{EGRESS}\n")).unwrap();
+    test.follow(|| test.stopped(0) && !test.hook.running(&test.rows[0].id));
+    assert_eq!(test.fault_codes(), ["egress_assert_failed"]);
+}
+
+/// A file that does not read and changes to other bytes that do not read
+/// is an edit too (decision CH69 rule 11). Both bind 1104 (decision CH72
+/// rule 3), and the deny check runs again and fails on a stray listener.
+#[test]
+fn a_bad_file_that_changes_to_other_bad_bytes_reruns_the_deny_check() {
+    let test = Test::new("follow-bad-bytes", |_| {});
+    let file = test.dir.join("families/chat/egress.json");
+    fs::write(&file, "not json").unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    let _stray = UnixListener::bind(test.listener(0, 1105)).unwrap();
+    test.pause();
+    fs::write(&file, "still not json").unwrap();
+    test.follow(|| test.stopped(0) && !test.hook.running(&test.rows[0].id));
+    assert_eq!(test.fault_codes(), ["egress_assert_failed"]);
+}
+
+/// A read that takes no bytes, here of a symlink, has nothing to compare,
+/// so each poll is a new reading and runs the deny check. It fails on a
+/// stray listener with no edit of the file.
+#[test]
+fn a_file_with_no_bytes_to_compare_reruns_the_deny_check() {
+    let test = Test::new("follow-no-bytes", |_| {});
+    let file = test.dir.join("families/chat/egress.json");
+    fs::write(test.dir.join("egress.json"), EGRESS).unwrap();
+    std::os::unix::fs::symlink(test.dir.join("egress.json"), &file).unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    let _stray = UnixListener::bind(test.listener(0, 1105)).unwrap();
+    test.pause();
+    test.follow(|| test.stopped(0) && !test.hook.running(&test.rows[0].id));
+    assert_eq!(test.fault_codes(), ["egress_assert_failed"]);
+}
+
 /// An edit that empties the clone list removes the 1103 listener and its
 /// socket file, and the deny check without 1103 passes (decisions CH49
 /// rule 3, CH69 rules 12 and 13).
