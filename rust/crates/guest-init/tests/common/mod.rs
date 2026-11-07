@@ -138,6 +138,16 @@ pub fn wait_for(vm: &mut Vm, serial: &Path, what: &str, done: impl Fn(&[String])
     }
 }
 
+/// Waits until the serial file holds `line`. The guest writes a console
+/// line after the link write that it names, and the tty can buffer it, so
+/// a test reads the serial file this way after a link read. A one-time
+/// `logged` is right only after `wait_for_exit`.
+pub fn wait_for_line(vm: &mut Vm, serial: &Path, line: &str) {
+    wait_for(vm, serial, line, |lines| {
+        lines.iter().any(|each| each == line)
+    });
+}
+
 /// Waits until CH exits, as it does when the guest powers off. It panics
 /// with the serial text when `BOOT` passes first.
 pub fn wait_for_exit(vm: &mut Vm, serial: &Path) -> ExitStatus {

@@ -25,6 +25,10 @@
 //!    value, or is not the type that the link expects at that point.
 //! 6. After `ControlReady`, `ControlCommand::Stop` powers the VM off
 //!    (decision CH19 rule 3).
+//! 7. After `ControlReady`, `ControlCommand::Sync` runs `syncfs` of the
+//!    session disk, then `sync`, and guest init answers
+//!    `GuestEvent::Synced` on the same link (decision CH62 rule 23). A
+//!    sync of a replaced link is a stale line and changes nothing.
 //!
 //! `Control` is the pure state machine: inputs in, one `Action` out, so
 //! the unit tests drive it on any OS. `Lines` is the pure framing. The
@@ -34,8 +38,8 @@
 use std::fmt;
 
 use creche_wire::{
-    CONTROL_LINE_CAP, ControlCommand, ControlHello, ControlReady, FacadeNotStarted, FacadeState,
-    SessionId, UnixMillis,
+    CONTROL_LINE_CAP, ControlCommand, ControlHello, ControlReady, ControlSynced, FacadeNotStarted,
+    FacadeState, GuestEvent, SessionId, UnixMillis,
 };
 use rustix::io::Errno;
 
@@ -58,6 +62,11 @@ pub enum Action {
     SetClock(LinkId, UnixMillis),
     /// Write this `ControlReady` line, its LF included, to the link.
     Ready(LinkId, Vec<u8>),
+    /// Run `syncfs` of the session disk, then `sync`, then call
+    /// `Control::synced` (decision CH62 rule 23).
+    Sync(LinkId),
+    /// Write this `GuestEvent::Synced` line, its LF included, to the link.
+    Synced(LinkId, Vec<u8>),
     /// Close the link and write why on the console (decision CH43 rule 2).
     Close(LinkId, Why),
     /// Write why on the console and change nothing.
@@ -85,7 +94,8 @@ pub enum Why {
     OtherSession(SessionId),
     /// `clock_settime` failed (decision CH62 rule 25).
     Clock(Errno),
-    /// The ready did not encode. It holds the error of the writer.
+    /// A line of guest init did not encode. It holds the error of the
+    /// writer.
     Encode(String),
 }
 
@@ -101,7 +111,7 @@ impl fmt::Display for Why {
                 write!(formatter, "the hello names another session: {session}")
             }
             Self::Clock(error) => write!(formatter, "the clock set failed: {error}"),
-            Self::Encode(error) => write!(formatter, "the ready did not encode: {error}"),
+            Self::Encode(error) => write!(formatter, "a line did not encode: {error}"),
         }
     }
 }
@@ -112,17 +122,12 @@ pub enum Ignored {
     /// The line came on a link that is no longer the current one: a newer
     /// link replaced it, or guest init closed it (decision CH28).
     Stale,
-    /// `ControlCommand::Sync`. Plan PR G8 answers it. With no `synced`
-    /// the vmm takes no snapshot and runs the graceful stop (decision
-    /// CH62 rule 23).
-    Sync,
 }
 
 impl fmt::Display for Ignored {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::Stale => "a line of a closed or replaced link is ignored",
-            Self::Sync => "sync is not answered yet",
         })
     }
 }
@@ -196,7 +201,7 @@ impl Control {
             Stage::Clock => Some(self.close(link, Why::Early)),
             Stage::Ready => match serde_json::from_slice::<ControlCommand>(line) {
                 Ok(ControlCommand::Stop(_)) => Some(Action::PowerOff(link)),
-                Ok(ControlCommand::Sync(_)) => Some(Action::Ignore(link, Ignored::Sync)),
+                Ok(ControlCommand::Sync(_)) => Some(Action::Sync(link)),
                 Err(error) => Some(self.close(link, Why::Refused(error.to_string()))),
             },
         }
@@ -229,13 +234,25 @@ impl Control {
         let ready = ControlReady {
             facade: self.facade.clone(),
         };
-        match serde_json::to_vec(&ready) {
-            Ok(mut line) => {
-                line.push(b'\n');
+        match encode(&ready) {
+            Ok(line) => {
                 self.current = Some((link, Stage::Ready));
                 Some(Action::Ready(link, line))
             }
-            Err(error) => Some(self.close(link, Why::Encode(error.to_string()))),
+            Err(why) => Some(self.close(link, why)),
+        }
+    }
+
+    /// The disks of `link`'s sync are synced. Guest init answers
+    /// `GuestEvent::Synced` on the same link (decision CH62 rule 23). A
+    /// link that is no longer current gets nothing.
+    pub fn synced(&mut self, link: LinkId) -> Option<Action> {
+        if self.stage(link) != Some(Stage::Ready) {
+            return None;
+        }
+        match encode(&GuestEvent::Synced(ControlSynced {})) {
+            Ok(line) => Some(Action::Synced(link, line)),
+            Err(why) => Some(self.close(link, why)),
         }
     }
 
@@ -269,6 +286,13 @@ impl Control {
         self.current = None;
         Action::Close(link, why)
     }
+}
+
+/// One compact JSON line of guest init, its LF included.
+fn encode<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, Why> {
+    let mut line = serde_json::to_vec(value).map_err(|error| Why::Encode(error.to_string()))?;
+    line.push(b'\n');
+    Ok(line)
 }
 
 /// The framing of one link: bytes in, lines out (rule 2 of "The vsock
@@ -333,6 +357,7 @@ mod shell {
     use std::sync::mpsc::{Receiver, Sender, channel};
     use std::thread;
 
+    use creche_wire::guest::SESSION_DISK_MOUNT;
     use creche_wire::{GuestPort, UnixMillis};
     use nix::sys::socket::{AddressFamily, SockFlag, SockType, VsockAddr, bind, socket};
     use rustix::io::Errno;
@@ -351,7 +376,8 @@ mod shell {
     /// What the threads tell the control loop.
     #[derive(Debug)]
     enum Event {
-        Accepted(OwnedFd),
+        /// A new link, and the sender that its reader thread gets.
+        Accepted(OwnedFd, Sender<Event>),
         /// The accept loop stopped on this error.
         AcceptFailed(io::Error),
         Line(LinkId, Vec<u8>),
@@ -382,23 +408,29 @@ mod shell {
     /// console line of the end, and the caller powers off.
     pub fn serve(listener: OwnedFd) -> String {
         let (events, inbox) = channel();
-        let accepts = events.clone();
         let spawned = thread::Builder::new()
             .name("control-accept".to_owned())
-            .spawn(move || accept_loop(&listener, &accepts));
+            .spawn(move || accept_loop(&listener, &events));
         if let Err(error) = spawned {
             return format!("control accept thread failed: {error}");
         }
-        run(&events, &inbox)
+        run(&inbox)
     }
 
     /// The control loop: one thread owns the state and every write.
-    fn run(events: &Sender<Event>, inbox: &Receiver<Event>) -> String {
+    ///
+    /// The loop holds no sender. The accept thread and each reader thread
+    /// hold one, so the inbox ends only when all of them are gone: the
+    /// accept thread stopped and every link ended. Then no vmm can reach
+    /// the guest again, and the caller powers off (decision CH19 rule 3).
+    /// A panic in any thread powers off through the panic hook of
+    /// `as_pid_1`.
+    fn run(inbox: &Receiver<Event>) -> String {
         let mut control = Control::default();
         let mut links: HashMap<LinkId, File> = HashMap::new();
         for event in inbox {
             let action = match event {
-                Event::Accepted(fd) => {
+                Event::Accepted(fd, events) => {
                     let (link, old) = control.accept();
                     crate::say(&format!("{link} open"));
                     match start_reader(link, fd, events) {
@@ -446,17 +478,17 @@ mod shell {
                     }
                     next = control.clock_set(link, result.map(|_| ()));
                 }
-                Action::Ready(link, line) => {
-                    let written = links.get_mut(&link).map(|file| file.write_all(&line));
-                    match written {
-                        Some(Ok(())) => crate::say(&format!("{link} ready")),
-                        Some(Err(error)) => {
-                            crate::say(&format!("{link} write failed: {error}"));
-                            close(links, link);
-                        }
-                        None => {}
-                    }
-                }
+                Action::Ready(link, line) => write(links, link, &line, "ready"),
+                Action::Sync(link) => match sync_session() {
+                    Ok(()) => next = control.synced(link),
+                    // CONTRACT-QUESTION: no row decides the answer to a
+                    // failed syncfs. The reading taken: guest init sends
+                    // no `synced` and keeps the link, so the vmm's
+                    // SYNC_WAIT runs out, it takes no snapshot and it runs
+                    // the graceful stop (decision CH62 rule 23).
+                    Err(error) => crate::say(&format!("{link} sync failed: {error}")),
+                },
+                Action::Synced(link, line) => write(links, link, &line, "synced"),
                 Action::Close(link, why) => {
                     crate::say(&format!("{link} closed: {why}"));
                     close(links, link);
@@ -466,6 +498,35 @@ mod shell {
             }
         }
         None
+    }
+
+    /// Writes `line` to `link` and names it on the console as `what`. A
+    /// failed write closes the link.
+    fn write(links: &mut HashMap<LinkId, File>, link: LinkId, line: &[u8], what: &str) {
+        match links.get_mut(&link).map(|file| file.write_all(line)) {
+            Some(Ok(())) => crate::say(&format!("{link} {what}")),
+            Some(Err(error)) => {
+                crate::say(&format!("{link} write failed: {error}"));
+                close(links, link);
+            }
+            None => {}
+        }
+    }
+
+    /// Runs `syncfs` of the session disk, then `sync` (decision CH62 rule
+    /// 23). `syncfs` reports a write-back error of the session disk.
+    /// `sync` reports none.
+    fn sync_session() -> io::Result<()> {
+        use rustix::fs::{Mode, OFlags, open, sync, syncfs};
+
+        let dir = open(
+            SESSION_DISK_MOUNT,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+            Mode::empty(),
+        )?;
+        syncfs(&dir)?;
+        sync();
+        Ok(())
     }
 
     /// Shuts the link down, so its reader thread reads an EOF and ends,
@@ -496,7 +557,7 @@ mod shell {
         loop {
             match accept_with(listener, SocketFlags::CLOEXEC) {
                 Ok(fd) => {
-                    if events.send(Event::Accepted(fd)).is_err() {
+                    if events.send(Event::Accepted(fd, events.clone())).is_err() {
                         return;
                     }
                 }
@@ -510,10 +571,9 @@ mod shell {
     }
 
     /// Starts the reader thread of `link` and returns the write end.
-    fn start_reader(link: LinkId, fd: OwnedFd, events: &Sender<Event>) -> io::Result<File> {
+    fn start_reader(link: LinkId, fd: OwnedFd, events: Sender<Event>) -> io::Result<File> {
         let file = File::from(fd);
         let reader = file.try_clone()?;
-        let events = events.clone();
         thread::Builder::new()
             .name(format!("control-{}", link.0))
             .spawn(move || read_loop(link, reader, &events))?;
@@ -797,14 +857,48 @@ mod tests {
         );
     }
 
+    /// A sync asks the shell for the syncs, and only then does guest init
+    /// answer `synced` on the same link (decision CH62 rule 23).
     #[test]
-    fn a_sync_is_ignored_until_plan_pr_g8() {
+    fn sync_answers_synced_after_syncfs() {
         let mut control = Control::default();
         let link = ready(&mut control);
         assert_eq!(
             control.line(link, br#"{"sync":{}}"#),
-            Some(Action::Ignore(link, Ignored::Sync))
+            Some(Action::Sync(link))
+        );
+        assert_eq!(
+            control.synced(link),
+            Some(Action::Synced(link, b"{\"synced\":{}}\n".to_vec()))
+        );
+        // The link stays ready: a second sync and a stop still pass.
+        assert_eq!(
+            control.line(link, br#"{"sync":{}}"#),
+            Some(Action::Sync(link))
         );
         assert_eq!(control.line(link, &stop()), Some(Action::PowerOff(link)));
+    }
+
+    /// A sync before the ready is not a hello, so it closes the link.
+    #[test]
+    fn a_sync_before_the_ready_closes_the_link() {
+        let mut control = Control::default();
+        let (link, _) = control.accept();
+        refused(control.line(link, br#"{"sync":{}}"#), link);
+        assert_eq!(control.synced(link), None);
+    }
+
+    #[test]
+    fn a_sync_from_a_replaced_link_is_ignored() {
+        let mut control = Control::default();
+        let old = ready(&mut control);
+        let (new, _) = control.accept();
+        assert_eq!(
+            control.line(old, br#"{"sync":{}}"#),
+            Some(Action::Ignore(old, Ignored::Stale))
+        );
+        assert_eq!(control.synced(old), None);
+        // The new link gets no synced before its own ready.
+        assert_eq!(control.synced(new), None);
     }
 }

@@ -43,14 +43,22 @@ pub fn run() -> ExitCode {
 
 /// The life of PID 1. A stop, a boot fault, a refused env file, a
 /// listen fault and a panic all end in `power::off` (decisions CH19 rule
-/// 3, CH62 rule 7). The default panic hook writes the panic text to the
-/// console first.
+/// 3, CH62 rule 7).
+///
+/// The panic hook covers a panic in every thread, the accept thread and
+/// the reader threads of `control` included: the default hook writes the
+/// panic text to the console, then the hook powers off. Only a failed
+/// power-off returns from it. The panic then goes on as it would with no
+/// hook, and the vmm stop chain ends the hung VM (plan risk 9).
 #[cfg(target_os = "linux")]
 fn as_pid_1() -> ExitCode {
-    match std::panic::catch_unwind(life) {
-        Ok(end) => say(&end),
-        Err(_) => say("panicked"),
-    }
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        default(info);
+        say("panicked");
+        let _ = power::off();
+    }));
+    say(&life());
     power::off()
 }
 

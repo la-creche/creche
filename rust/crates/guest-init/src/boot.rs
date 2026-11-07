@@ -474,6 +474,10 @@ mod tests {
             MountFlags::NOSUID | MountFlags::NODEV | MountFlags::NOEXEC
         );
         assert_eq!(flags(DEVICES), MountFlags::NOSUID | MountFlags::NOEXEC);
+        assert_eq!(
+            session_remount_flags(),
+            MountFlags::RDONLY | MountFlags::NOSUID | MountFlags::NODEV
+        );
     }
 
     #[test]

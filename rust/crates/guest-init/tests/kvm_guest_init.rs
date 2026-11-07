@@ -17,9 +17,9 @@ use std::time::{Duration, Instant};
 
 use common::{
     DUMPE2FS, E2FSCK, GOOD_ENV, IN_2030, Vm, booted, ch, dial, hello, lines, logged, not_started,
-    now, session_disk, vm_with_env, wait_for, wait_for_exit, work,
+    now, session_disk, vm_with_env, wait_for, wait_for_exit, wait_for_line, work,
 };
-use creche_wire::{ControlCommand, ControlStop, GuestPort};
+use creche_wire::{ControlCommand, ControlStop, ControlSync, ControlSynced, GuestEvent, GuestPort};
 
 /// With no disk, the root mount fails. Guest init names it on the console
 /// and powers the VM off, so CH exits. Without the power-off, PID 1 exits,
@@ -117,17 +117,18 @@ fn kvm_guest_init_powers_off_on_a_bad_env_file() {
 #[test]
 #[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
 fn kvm_guest_init_answers_the_hello() {
-    let (work, vm) = booted("kvm-guest-init-hello");
+    let (work, mut vm) = booted("kvm-guest-init-hello");
     let mut link = dial(&work, GuestPort::Control);
     assert!(
         link.quiet_for(Duration::from_millis(300)),
         "a line came before the hello"
     );
     assert_eq!(hello(&mut link, now()), not_started());
-    assert!(logged(
+    wait_for_line(
+        &mut vm,
         &work.join("serial.log"),
-        "guest-init: control link 1 ready"
-    ));
+        "guest-init: control link 1 ready",
+    );
 
     drop(vm);
     fs::remove_dir_all(&work).unwrap();
@@ -135,16 +136,22 @@ fn kvm_guest_init_answers_the_hello() {
 
 /// The hello sets CLOCK_REALTIME to `sent_at` before the ready (decisions
 /// CH28, CH62 rule 25). The guest has no RTC driver, so its clock starts
-/// near 1970, and the console line shows the clock after the set.
+/// near 1970, and the console line shows the clock after the set. The
+/// `sent_at` has a millisecond part, so a set that drops it reads below
+/// the window.
 #[test]
 #[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
 fn kvm_guest_init_sets_the_guest_clock_from_the_hello() {
-    let (work, vm) = booted("kvm-guest-init-clock");
+    let (work, mut vm) = booted("kvm-guest-init-clock");
     let mut link = dial(&work, GuestPort::Control);
-    assert_eq!(hello(&mut link, IN_2030), not_started());
+    let sent_at = IN_2030 + 999;
+    assert_eq!(hello(&mut link, sent_at), not_started());
 
     let serial = work.join("serial.log");
     let prefix = "guest-init: control link 1 clock set: realtime ";
+    wait_for(&mut vm, &serial, "the clock line", |lines| {
+        lines.iter().any(|line| line.starts_with(prefix))
+    });
     let lines = lines(&serial);
     let realtime: u64 = lines
         .iter()
@@ -153,8 +160,8 @@ fn kvm_guest_init_sets_the_guest_clock_from_the_hello() {
         .parse()
         .unwrap();
     assert!(
-        (IN_2030..IN_2030 + 10_000).contains(&realtime),
-        "the guest clock reads {realtime}, not {IN_2030}"
+        (sent_at..sent_at + 1_000).contains(&realtime),
+        "the guest clock reads {realtime}, not {sent_at}"
     );
 
     drop(vm);
@@ -178,12 +185,37 @@ fn kvm_a_new_control_link_replaces_the_old_one() {
         "guest-init: control link 1 closed: a newer link replaced it",
         "guest-init: control link 2 ready",
     ] {
-        assert!(
-            logged(&serial, line),
-            "no {line}. Serial:\n{}",
-            lines(&serial).join("\n")
-        );
+        wait_for_line(&mut vm, &serial, line);
     }
+    assert!(vm.0.try_wait().unwrap().is_none(), "CH exited");
+
+    drop(vm);
+    fs::remove_dir_all(&work).unwrap();
+}
+
+/// A sync gets `synced` on the same link, after guest init ran `syncfs`
+/// of the session disk and `sync` (decision CH62 rule 23). The link stays
+/// ready, so a second sync gets a second `synced`. Plan PR G8 proves that
+/// the writes reach the disk.
+#[test]
+#[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
+fn kvm_guest_init_answers_sync_with_synced() {
+    let (work, mut vm) = booted("kvm-guest-init-sync");
+    let mut link = dial(&work, GuestPort::Control);
+    assert_eq!(hello(&mut link, now()), not_started());
+
+    for _ in 0..2 {
+        link.send(&ControlCommand::Sync(ControlSync {}));
+        let line = link.line().expect("no synced: the link ended");
+        let event: GuestEvent =
+            serde_json::from_str(&line).unwrap_or_else(|error| panic!("{line:?}: {error}"));
+        assert_eq!(event, GuestEvent::Synced(ControlSynced {}));
+    }
+    wait_for_line(
+        &mut vm,
+        &work.join("serial.log"),
+        "guest-init: control link 1 synced",
+    );
     assert!(vm.0.try_wait().unwrap().is_none(), "CH exited");
 
     drop(vm);

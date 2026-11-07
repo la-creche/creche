@@ -49,10 +49,20 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   `CONTROL_LINE_CAP`, is not one JSON value, or is not the type that the
   link expects at that point. A line of exactly the cap passes.
 - After the ready, `stop` powers the VM off (CH19 rule 3).
+- After the ready, `sync` runs `syncfs` of the session disk, then
+  `sync`, and guest init answers `{"synced":{}}` (`GuestEvent::Synced`)
+  on the same link (CH62 rule 23). The link stays ready. A sync of a
+  replaced link changes nothing.
+- One thread, the main one, reads the event channel and holds no
+  sender. The accept thread and each reader thread hold one, so the
+  channel ends only when all of them are gone. Then guest init writes
+  `guest-init: control events ended` and powers off.
 - Each step writes one `guest-init: <step>` line to the console (CH62
   rule 26). A fault writes `guest-init: <step> failed: <error>`.
 - A stop, a boot fault, a refused env file, a listen fault and a panic
-  all end in `power::off`: sync, a read-only remount of the session disk,
+  in any thread all end in `power::off`. A panic hook, set first by
+  `as_pid_1`, runs the default hook, writes `guest-init: panicked` and
+  powers off. The power-off is: sync, a read-only remount of the session disk,
   then `reboot(RB_POWER_OFF)` (CH19 rule 3). The remount flushes the ext4
   journal and marks the disk clean. Before the switch root it fails with
   its own console line. The guest kernel has
@@ -73,7 +83,9 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   (CH62 rule 19), ext4 disks that `tests/common/mod.rs` builds with
   `mke2fs -d` (CH62 rule 12) and a vsock device. The tests speak control
   link 1200 themselves: `CONNECT 1200` on the hybrid vsock socket of CH,
-  then the creche-wire types. After a stop, `dumpe2fs -h` and
+  then the creche-wire types. A test reads a console line that follows a
+  link write with `wait_for_line`, because the guest writes that line
+  after the link write and the tty can buffer it. After a stop, `dumpe2fs -h` and
   `e2fsck -fn` read the session disk. Only the `kvm` job runs them.
 
 ## Known gaps
@@ -87,9 +99,12 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
    and devpts get nosuid and noexec. proc and sysfs get nosuid, nodev
    and noexec. A change edits only the constants `TMPFS`, `DEVICES` and
    `KERNEL` and the plan test.
-2. `sync` on the control link gets no answer until plan PR G8. Guest
-   init writes a console line and changes nothing. With no `synced` the
-   vmm takes no snapshot and runs the graceful stop (CH62 rule 23).
+2. CONTRACT-QUESTION: no row decides the answer to a failed `syncfs`.
+   The reading taken, in `src/control.rs`: guest init writes
+   `guest-init: control link <n> sync failed: <error>`, sends no
+   `synced` and keeps the link. The vmm's `SYNC_WAIT` then runs out, so
+   it takes no snapshot and runs the graceful stop (CH62 rule 23). A
+   change costs one arm of `act` in `src/control.rs`.
 3. CONTRACT-QUESTION: rule 3 of "The vsock JSON links" in
    `wire/AGENTS.md` names the check `strict` of the vmm crate as the
    strict reader. Guest init may call creche-wire only. The reading
