@@ -114,7 +114,10 @@ file's removal is always a human verb.
    that `Before=` orders after the stop of the vmm unit, which waits for
    the step: a deadlock. A scope that goes between the list and its kill
    gives NoSuchUnit and counts as ended. Any other failure fails the
-   step. The kvm tests prove the stop, the restart and the crash, each
+   step. A crash queues no stop job, so `Before=` orders nothing there,
+   and the `BindsTo=` stop of a scope may end its CH before the step
+   does. Either way the VM ends. The kvm tests prove the stop, the
+   restart and the crash, each
    with the control that CH runs while the stand-in runs
    (`rust/crates/vmm-confine/tests/kvm_slot.rs`). Each stand-in runs the
    `vmm kill-scopes` of the `vmm` that cargo built for the test run.

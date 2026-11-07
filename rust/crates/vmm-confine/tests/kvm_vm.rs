@@ -569,7 +569,7 @@ fn kvm_vm_snapshot_restore_kill() {
     held.vmm.kill();
     until("CH death after the vmm kill", || !running(pid));
     until("scope removal", || setup.units().trim().is_empty());
-    assert_eq!(held.vmm.sub_state(), "auto-restart");
+    held.vmm.until_sub_state("auto-restart");
     held.vmm.assert_stop_post_exited_0();
     until_state(unit.name(), "inactive");
     assert!(
