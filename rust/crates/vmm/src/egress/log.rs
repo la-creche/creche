@@ -13,6 +13,9 @@
 //! 4. A failed write, rename or open writes one stderr line, the only
 //!    stderr line of the proxy (decision CH69 rule 24). A failed rename
 //!    keeps the old file, so no line is lost. The next write tries again.
+//!    A failed open after the rename keeps the old file, now `<path>.1`,
+//!    and the next write tries only the open again. It never renames a
+//!    second time, so no rename replaces the `.1` that it still writes.
 //!
 //! The writes block, so the proxy runs them in `spawn_blocking`.
 
@@ -112,6 +115,9 @@ pub enum ProxyReason {
 struct Open {
     file: File,
     size: u64,
+    /// Whether `file` is now `<path>.1`: the rename of a rollover went,
+    /// and its open did not.
+    moved: bool,
 }
 
 /// The log file. Each clone of its `Arc` shares one file and one lock.
@@ -154,9 +160,8 @@ impl Log {
         // poisoned lock still holds a whole file and size.
         let mut open = self.open.lock().unwrap_or_else(PoisonError::into_inner);
         if open.size > 0 && open.size.saturating_add(added) > LOG_CAP {
-            match self.roll() {
-                Ok(fresh) => *open = fresh,
-                Err(error) => eprintln!("vmm: egress log rollover failed: {}", error.kind()),
+            if let Err(error) = self.roll(&mut open) {
+                eprintln!("vmm: egress log rollover failed: {}", error.kind());
             }
         }
         match open.file.write_all(&bytes) {
@@ -165,10 +170,15 @@ impl Log {
         }
     }
 
-    /// Renames the file to `<path>.1` and opens a new one.
-    fn roll(&self) -> io::Result<Open> {
-        std::fs::rename(&self.path, &self.rolled)?;
-        open_file(&self.path)
+    /// Renames the file to `<path>.1`, unless an earlier roll did, and
+    /// opens a new one in place of `open`.
+    fn roll(&self, open: &mut Open) -> io::Result<()> {
+        if !open.moved {
+            std::fs::rename(&self.path, &self.rolled)?;
+            open.moved = true;
+        }
+        *open = open_file(&self.path)?;
+        Ok(())
     }
 }
 
@@ -181,5 +191,9 @@ fn open_file(path: &Path) -> io::Result<Open> {
         .open(path)?;
     file.set_permissions(Permissions::from_mode(LOG_MODE))?;
     let size = file.metadata()?.len();
-    Ok(Open { file, size })
+    Ok(Open {
+        file,
+        size,
+        moved: false,
+    })
 }

@@ -748,7 +748,9 @@ append, with mode 0600, and a failed open exits 78. Each line has
 gives (decision CH70 rule 2). The proxy reasons are `link_cap`,
 `head_timeout`, `bad_head`, `not_connect`, `connect_failed` and
 `connect_timeout` (Known gap 25). A write that would pass `LOG_CAP` (64
-MiB) renames the file to `<path>.1` and opens a new one. A log fault
+MiB) renames the file to `<path>.1` and opens a new one. When the open
+fails after the rename, the lines go on to `<path>.1`, and each next
+write tries only the open again, with no second rename. A log fault
 writes one stderr line, the only stderr line of the proxy but an accept
 fault (decision CH69 rule 24).
 
@@ -756,7 +758,8 @@ fault (decision CH69 rule 24).
 scratch family root: an IP literal, `check` against CONNECT for one
 table of targets, a list that does not read, 405, 400, the head wait
 with paused tokio time, a removal, the fields of each line, the
-rollover, the link cap and the fd need. No test reaches the network.
+rollover, a rollover whose open failed after its rename, the link cap
+and the fd need. No test reaches the network.
 The kvm job proves an allowed tunnel (plan PR E4, decision CH69 rule
 22). `tests/start.rs` proves the bound set with and without a list, a
 list that does not read, the bind at a restore, and an extra 1104

@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use creche_vmm::egress::log::{LOG_CAP, Log};
+use creche_vmm::egress::log::{LOG_CAP, Line, Log, ProxyReason, Reason, Verdict};
 use creche_vmm::egress::proxy::{self, HEAD_CAP, HEAD_WAIT, LINK_CAP, Server, bind};
 use creche_vmm::handlers::check::Checks;
 use creche_vmm::{family_state, planes};
@@ -396,6 +396,82 @@ fn the_log_rolls_over_at_its_cap() {
     assert_eq!(lines[0]["reason"], "not_listed");
     assert_eq!(std::fs::metadata(rolled).unwrap().len(), LOG_CAP - 10);
     let mode = std::fs::metadata(scratch.log_path()).unwrap().permissions();
+    assert_eq!(mode.mode() & 0o777, 0o600);
+}
+
+/// A rollover whose rename went and whose open failed retries only the
+/// open at the next write, so the log holds two files again (decision
+/// CH69 rule 10). The test runs its own binary as the child
+/// `rolls_after_a_failed_open_for_the_child` under `ulimit -n 64`, so the
+/// child can use up its fds, and reads the real stderr of the vmm code.
+#[test]
+fn a_failed_open_after_the_rename_is_retried() {
+    let output = std::process::Command::new("sh")
+        .args(["-c", "ulimit -n 64 && exec \"$0\" \"$@\""])
+        .arg(std::env::current_exe().unwrap())
+        .args(["--exact", "rolls_after_a_failed_open_for_the_child"])
+        .args(["--ignored", "--nocapture", "--test-threads=1"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(output.status.success(), "{stdout}{stderr}");
+    assert!(stdout.contains("1 passed"), "{stdout}");
+    let lines: Vec<&str> = stderr.lines().collect();
+    assert_eq!(lines.len(), 1, "{stderr}");
+    assert!(
+        lines[0].starts_with("vmm: egress log rollover failed: "),
+        "{stderr}"
+    );
+}
+
+/// The child of `a_failed_open_after_the_rename_is_retried`. It opens the
+/// log, then opens `/dev/null` until no fd is left, so the open of the
+/// rollover fails after its rename. Then it frees the fds and writes
+/// again.
+#[test]
+#[ignore = "the child of a_failed_open_after_the_rename_is_retried"]
+fn rolls_after_a_failed_open_for_the_child() {
+    let scratch = Scratch::threaded("reopen");
+    let (path, rolled) = (scratch.log_path(), scratch.dir.join("egress.jsonl.1"));
+    let full = std::fs::File::create(&path).unwrap();
+    full.set_len(LOG_CAP - 10).unwrap();
+    drop(full);
+    let log = Log::open(path.clone()).unwrap();
+    let line = Line {
+        time: "2026-11-07T00:00:00Z".to_owned(),
+        family: "code".parse().unwrap(),
+        session: session(),
+        host: None,
+        port: None,
+        verdict: Verdict::Refused,
+        reason: Some(Reason::Proxy(ProxyReason::BadHead)),
+        address: None,
+        bytes_up: 0,
+        bytes_down: 0,
+        duration_ms: 0,
+    };
+    let size = u64::try_from(serde_json::to_vec(&line).unwrap().len() + 1).unwrap();
+
+    let mut held = Vec::new();
+    while let Ok(file) = std::fs::File::open("/dev/null") {
+        held.push(file);
+    }
+    log.write(&line);
+    assert!(!path.exists(), "the open went");
+    assert_eq!(
+        std::fs::metadata(&rolled).unwrap().len(),
+        LOG_CAP - 10 + size
+    );
+
+    drop(held);
+    log.write(&line);
+    assert_eq!(std::fs::metadata(&path).unwrap().len(), size);
+    assert_eq!(
+        std::fs::metadata(&rolled).unwrap().len(),
+        LOG_CAP - 10 + size
+    );
+    let mode = std::fs::metadata(&path).unwrap().permissions();
     assert_eq!(mode.mode() & 0o777, 0o600);
 }
 
