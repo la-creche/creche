@@ -33,7 +33,8 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
 - Then `src/control.rs` listens on AF_VSOCK port 1200 of any CID through
   `nix` (CH13, CH14, CH62 rule 1), and `src/local_link.rs` listens on
   the Unix socket `creche_wire::guest::LOCAL_LINK_SOCKET`, mode 0600
-  (CH62 rule 10). Then `run()` writes `guest-init: up`. A listen fault
+  (CH62 rule 10), and `src/bridge.rs` listens on AF_VSOCK port 1201
+  (CH13). Then `run()` writes `guest-init: up`. A listen fault
   powers off. One std thread accepts on each listener, one reads each
   link, and the main thread owns the state and every write (CH62 rule
   2).
@@ -91,6 +92,23 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   line of the change. With no ready link, the event is dropped, and the
   next ready carries the last end (CH62 rule 11). The reader checks
   each line, not the order of starts and ends.
+- The ACP row (`src/bridge.rs`, CH13, CH50 rule 2, CH62 rules 14 and
+  16): an accept thread of its own takes each link of 1201 from `up`
+  on, before the first hello and in every facade state. Each link dials
+  `creche_wire::guest::RELAY_SOCKET` fresh. While nothing listens there
+  (no socket file, or ECONNREFUSED), the dial tries again every 100 ms
+  for up to 10 s after the accept (the vmm `READY_WAIT`), then guest
+  init closes the link. Any other dial error closes it at once. The row
+  holds at most 64 open links, from the accept to the close, and closes
+  each link past that at once. No idle timeout closes a link. Each link
+  writes `acp link <n> open`, `relay connected` or `relay dial failed:
+  <error>`, then `closed`. A failed accept writes `acp accept failed:
+  <error>` and powers off, as a failed accept of 1200 does.
+- `src/splice.rs` copies the bytes of one link both ways on two std
+  threads and reads none of them. An EOF, a failed read or a failed
+  write in either direction shuts both sockets down in both directions,
+  so a stale 1201 link after a restore closes only its own relay
+  connection, and the facade keeps running (CH19 rule 1, fact 74).
 - After the ready of a link, each facade state change goes out on it as
   `{"facade": <state>}` (`GuestEvent::Facade`, CH43 rule 8). A change
   before the ready goes out in that ready.
@@ -149,15 +167,18 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   and exits with status 0 on the stop line. With the mode `stream`, it
   opens the local link, writes turns on it with no pause and never
   reads the stop line. With the mode `close-once`, its first start opens
-  the local link, closes it and stays up. Each other start stays up
-  until a signal ends it.
+  the local link, closes it and stays up. With the mode `relay`, it
+  listens on `RELAY_SOCKET` 2 s after its start, answers each line
+  `ping` with `pong <pid>` and writes `standin: relay link ended` at
+  the end of each link. Each other start stays up until a signal ends
+  it.
 
 ## Tests
 
 - The unit tests check the boot plan, the options of every mount, the
   netlink bytes, the env grammar, the control state machine, the
-  supervisor state machine, the local link rules and the line framing on
-  any OS. On Linux, one more test checks the kernel flags
+  supervisor state machine, the local link rules, the line framing, the
+  splice, the relay dial bound and the row cap on any OS. On Linux, one more test checks the kernel flags
   that each set of options gives. One runs the real
   `playpen/bin/creche-env-write`, so the reader and the script cannot
   drift.
@@ -165,9 +186,17 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   of `bin/vm-smoke-setup.sh`, the cmdline `console=ttyS0 rdinit=/init`
   (CH62 rule 19), ext4 disks that `tests/common/mod.rs` builds with
   `mke2fs -d` (CH62 rule 12) and a vsock device. Each root disk holds
-  `$CRECHE_KVM_DIR/standin_facade` at `FACADE_PROGRAM`. The tests speak control
-  link 1200 themselves: `CONNECT 1200` on the hybrid vsock socket of CH,
-  then the creche-wire types. A test reads a console line that follows a
+  `$CRECHE_KVM_DIR/standin_facade` at `FACADE_PROGRAM`. The tests dial
+  the guest ports themselves: `CONNECT <port>` on the hybrid vsock
+  socket of CH. On 1200 they speak the creche-wire types, and on 1201
+  the `ping` lines of the stand-in. A test reads a console line that follows a
   link write with `wait_for_line`, because the guest writes that line
   after the link write and the tty can buffer it. After a stop, `dumpe2fs -h` and
   `e2fsck -fn` read the session disk. Only the `kvm` job runs them.
+
+## Known gaps
+
+- CONTRACT-QUESTION (splice EOF): CH62 rule 14 closes both halves of a
+  reset link. No row decides an EOF. The splice follows plan entry G6
+  and closes both halves on an EOF too, while the vmm `AcpRelay` shuts
+  down only the write half of the other stream on an EOF.

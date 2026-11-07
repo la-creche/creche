@@ -9,6 +9,9 @@
 //! The first hello starts the facade, and `supervisor` keeps one for the
 //! VM life (decision CH19 rule 1). The facade sends its turn events on
 //! the local link, and `local_link` relays them on 1200 (decision CH21).
+//! `bridge` splices each link of guest port 1201 to the relay socket of
+//! the facade, in every facade state (decisions CH13, CH50 rule 2, CH62
+//! rules 14 and 16).
 //! PID 1 never exits on its own:
 //! the guest kernel has `PANIC_TIMEOUT=0`, so an exit of PID 1 hangs the
 //! VM (fact 53). A stop and each fault power the VM off instead (decision
@@ -22,6 +25,8 @@ use std::process::ExitCode;
 #[cfg(any(test, target_os = "linux"))]
 mod boot;
 #[cfg(any(test, target_os = "linux"))]
+mod bridge;
+#[cfg(any(test, target_os = "linux"))]
 mod control;
 #[cfg(any(test, target_os = "linux"))]
 mod env_file;
@@ -31,6 +36,8 @@ mod lo;
 mod local_link;
 #[cfg(target_os = "linux")]
 mod power;
+#[cfg(any(test, target_os = "linux"))]
+mod splice;
 #[cfg(any(test, target_os = "linux"))]
 mod supervisor;
 
@@ -70,8 +77,9 @@ fn as_pid_1() -> ExitCode {
     power::off()
 }
 
-/// Boots, listens on control link 1200 and on the local link and serves
-/// both. It returns the console line of the stop or of the fault.
+/// Boots, listens on control link 1200, on the local link and on guest
+/// port 1201, and serves them. It returns the console line of the stop or
+/// of the fault.
 #[cfg(target_os = "linux")]
 fn life() -> String {
     // The facade gets the env (decision CH49 rule 1).
@@ -89,6 +97,11 @@ fn life() -> String {
         Ok(local) => local,
         Err(error) => return format!("local link listen failed: {error}"),
     };
+    // 1201 accepts from here on, before the first hello and in every
+    // facade state (decision CH50 rule 2).
+    if let Err(error) = bridge::serve_acp() {
+        return format!("acp listen failed: {error}");
+    }
     say("up");
     control::serve(listener, local, env)
 }

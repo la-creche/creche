@@ -596,7 +596,7 @@ mod shell {
     use std::hash::Hash;
     use std::io::{self, Read as _, Write as _};
     use std::num::NonZeroU32;
-    use std::os::fd::{AsRawFd as _, OwnedFd};
+    use std::os::fd::OwnedFd;
     use std::os::unix::net::UnixListener;
     use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
     use std::thread;
@@ -604,7 +604,6 @@ mod shell {
 
     use creche_wire::guest::SESSION_DISK_MOUNT;
     use creche_wire::{GuestPort, UnixMillis};
-    use nix::sys::socket::{AddressFamily, SockFlag, SockType, VsockAddr, bind, socket};
     use rustix::io::Errno;
     use rustix::net::{Shutdown, SocketFlags, accept_with, shutdown};
     use rustix::process::Signal;
@@ -668,16 +667,7 @@ mod shell {
     ///
     /// The error of `socket`, `bind` or `listen`.
     pub fn listen() -> io::Result<OwnedFd> {
-        let listener = socket(
-            AddressFamily::Vsock,
-            SockType::Stream,
-            SockFlag::SOCK_CLOEXEC,
-            None,
-        )?;
-        let address = VsockAddr::new(nix::libc::VMADDR_CID_ANY, GuestPort::Control.number());
-        bind(listener.as_raw_fd(), &address)?;
-        rustix::net::listen(&listener, BACKLOG)?;
-        Ok(listener)
+        crate::bridge::listen_vsock(GuestPort::Control, BACKLOG)
     }
 
     /// Serves control link 1200, the local link on `local` and the
