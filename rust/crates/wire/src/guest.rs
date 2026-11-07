@@ -1,5 +1,5 @@
-//! The fixed paths, ports and waits inside the guest (decisions CH5e, CH62
-//! rules 5, 6, 9, 10 and 13).
+//! The fixed paths, ports and waits inside the guest (decisions CH5e, CH46
+//! rules 1 and 4, CH62 rules 5, 6, 9, 10 and 13).
 //!
 //! Guest init and the facade compile these values in. They are plain
 //! constants with no serde and no schema entry (decision CH14), so
@@ -49,6 +49,16 @@ pub const LITELLM_PORT: u16 = 4000;
 /// The guest loopback port of the chaperone plane (decision CH6-2).
 pub const CHAPERONE_PORT: u16 = 8300;
 
+/// The guest loopback port of the egress proxy: guest init splices each
+/// link to host port 1104 (decision CH46 rule 1). The coding flavor names
+/// it in `CRECHE_TOOL_HTTPS_PROXY`, and a creche test holds the two equal.
+/// A renumber bumps `GUEST_INIT_PROTOCOL`.
+pub const EGRESS_PROXY_PORT: u16 = 3128;
+
+/// The guest loopback port of the git mirror, the `git://` default:
+/// guest init splices each link to host port 1103 (decision CH46 rule 4).
+pub const MIRROR_PORT: u16 = 9418;
+
 /// How long the facade has to exit after the stop line on its local
 /// link, before guest init sends SIGTERM (decision CH62 rule 9, which
 /// amends CH19 rule 3 from 30 s to 25 s). The facade bounds its own stop
@@ -69,9 +79,9 @@ mod tests {
     use crate::{CONTROL_LINE_CAP, FAMILY_STATE_CAP};
 
     use super::{
-        CHAPERONE_PORT, FACADE_PROGRAM, FACADE_STOP_WAIT, FAMILY_STATE_SOCKET, FLUE_DB,
-        LITELLM_PORT, LOCAL_LINK_SOCKET, RELAY_SOCKET, SESSION_DISK_MOUNT, SESSION_ID_ENV,
-        WORKSPACE,
+        CHAPERONE_PORT, EGRESS_PROXY_PORT, FACADE_PROGRAM, FACADE_STOP_WAIT, FAMILY_STATE_SOCKET,
+        FLUE_DB, LITELLM_PORT, LOCAL_LINK_SOCKET, MIRROR_PORT, RELAY_SOCKET, SESSION_DISK_MOUNT,
+        SESSION_ID_ENV, WORKSPACE,
     };
 
     /// The file, relative to the crate.
@@ -96,6 +106,8 @@ mod tests {
             ("relay_socket", json!(RELAY_SOCKET)),
             ("litellm_port", json!(LITELLM_PORT)),
             ("chaperone_port", json!(CHAPERONE_PORT)),
+            ("egress_proxy_port", json!(EGRESS_PROXY_PORT)),
+            ("mirror_port", json!(MIRROR_PORT)),
             ("session_id_env", json!(SESSION_ID_ENV)),
         ]
         .into_iter()

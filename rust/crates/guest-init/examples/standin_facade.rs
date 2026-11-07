@@ -61,7 +61,36 @@
 //!     status 4. The phase 3 proof of `creche-vmm/tests/kvm_guest.rs`
 //!     runs it: the sleep gate snapshots only a `running` facade
 //!     (decision CH32 rule 6).
+//! 11. In mode `reach` it opens the local link, as mode `linked-relay`
+//!     does, so its state becomes `running` (decision CH32 rule 6).
+//!     Then it listens on the relay socket with no delay and writes
+//!     `relay listening`. Each line of a 1201 link is one action on a
+//!     guest TCP stream, and the stand-in answers it with one line. A
+//!     kvm test thus sets each request itself: the 3128 and 9418 rows
+//!     here (decision CH46 rules 1 and 4), the proxy and mirror tests of
+//!     the vmm (decision CH69 rules 22 and 28).
+//!     - `dial <id> <port> <hex>` opens TCP to guest 127.0.0.1:<port>,
+//!       writes the bytes and reads the reply.
+//!     - `send <id> <hex>` writes the bytes on the open stream `<id>`
+//!       and reads the reply.
+//!     - `close <id>` closes the stream `<id>` and answers `closed
+//!       <id>`.
+//!
+//!     A read stops at the first LF, at `REACH_CAP` (4 KiB), at the
+//!     peer close or after `REACH_WAIT` (5 s) with no byte. The answer
+//!     is `reply <id> <hex read> <open|closed>`. A reset counts as the
+//!     peer close. A failed dial, write or read answers `failed <id>
+//!     <io error kind>`. A `dial` of an open id answers `failed <id>
+//!     AlreadyExists`, and a line of no known form answers `failed <its
+//!     second word, or -> InvalidInput`. A stream that closes or fails
+//!     leaves the link, so a later `send` on its id answers `failed
+//!     <id> NotFound`. `-` stands for no bytes, in a line and in an
+//!     answer. Lowercase hex goes out, and either case comes in. Each
+//!     stream belongs to its 1201 link, and the end of the link closes
+//!     them all. The main thread waits for the stop line on the local
+//!     link and exits with status 0 on it, as mode `turn` does.
 
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::fs::{self, File};
 use std::io::{self, BufRead as _, BufReader, Read as _, Write as _};
@@ -129,6 +158,12 @@ const TURN_UPDATED_AT: u64 = 1_893_456_000_000;
 /// How long mode `relay` waits before it listens on the relay socket, so
 /// a 1201 link of a kvm test comes first.
 const RELAY_DELAY: Duration = Duration::from_secs(2);
+
+/// The bytes of one read of mode `reach` at most.
+const REACH_CAP: u64 = 4096;
+
+/// How long one read of mode `reach` waits for the next byte.
+const REACH_WAIT: Duration = Duration::from_secs(5);
 
 /// How long a pull waits for each answer.
 const PULL_WAIT: Duration = Duration::from_secs(10);
@@ -212,14 +247,20 @@ fn facade() -> ExitCode {
             say("markers written");
         }
         Ok(mode) if mode.trim_end() == "linked-relay" => {
-            return linked_relay().unwrap_or_else(|error| {
+            return linked(RELAY_DELAY, pong).unwrap_or_else(|error| {
                 say(&format!("linked relay failed: {error}"));
+                ExitCode::from(TURN_FAILED)
+            });
+        }
+        Ok(mode) if mode.trim_end() == "reach" => {
+            return linked(Duration::ZERO, reach).unwrap_or_else(|error| {
+                say(&format!("reach failed: {error}"));
                 ExitCode::from(TURN_FAILED)
             });
         }
         Ok(mode) if mode.trim_end() == "relay" => {
             thread::spawn(|| {
-                let Err(error) = relay();
+                let Err(error) = relay(RELAY_DELAY, pong);
                 say(&format!("relay failed: {error}"));
             });
         }
@@ -342,13 +383,13 @@ fn stop_line(link: &UnixStream) -> io::Result<ExitCode> {
     }
 }
 
-/// Mode `linked-relay`: the local link, the relay on a thread, then the
-/// wait for the stop line.
-fn linked_relay() -> io::Result<ExitCode> {
+/// The modes `linked-relay` and `reach`: the local link, the relay with
+/// `delay` and `answer` on a thread, then the wait for the stop line.
+fn linked(delay: Duration, answer: Answer) -> io::Result<ExitCode> {
     let link = UnixStream::connect(LOCAL_LINK_SOCKET)?;
     say("link open");
-    thread::spawn(|| {
-        let Err(error) = relay();
+    thread::spawn(move || {
+        let Err(error) = relay(delay, answer);
         say(&format!("relay failed: {error}"));
     });
     say("up");
@@ -402,10 +443,13 @@ fn close_once(marker: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Mode `relay`: the relay socket after `RELAY_DELAY`, and one thread per
-/// link. It returns only the error that ends the listener.
-fn relay() -> io::Result<Infallible> {
-    thread::sleep(RELAY_DELAY);
+/// The answer of each line of one relay link, until its end.
+type Answer = fn(&UnixStream) -> io::Result<()>;
+
+/// The relay socket after `delay`, and one thread per link that runs
+/// `answer`. It returns only the error that ends the listener.
+fn relay(delay: Duration, answer: Answer) -> io::Result<Infallible> {
+    thread::sleep(delay);
     let path = Path::new(RELAY_SOCKET);
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
@@ -415,7 +459,7 @@ fn relay() -> io::Result<Infallible> {
     loop {
         let (link, _) = listener.accept()?;
         thread::spawn(move || {
-            if let Err(error) = pong(&link) {
+            if let Err(error) = answer(&link) {
                 say(&format!("relay link failed: {error}"));
             }
         });
@@ -521,6 +565,121 @@ fn get(port: u16) -> io::Result<Option<String>> {
     let mut status = String::new();
     BufReader::new(&stream).read_line(&mut status)?;
     Ok(status.split(' ').nth(1).map(str::to_owned))
+}
+
+/// Mode `reach`: answers each line of `link` with one line, until its
+/// end. The streams of the link close with it.
+fn reach(link: &UnixStream) -> io::Result<()> {
+    let mut streams = HashMap::new();
+    for line in BufReader::new(link).lines() {
+        let line = line?;
+        writeln!(&*link, "{}", act(&mut streams, &line))?;
+    }
+    say("reach link ended");
+    Ok(())
+}
+
+/// The answer of one line of mode `reach`. A stream that the answer
+/// names closed leaves `streams`.
+fn act(streams: &mut HashMap<String, BufReader<TcpStream>>, line: &str) -> String {
+    let words: Vec<&str> = line.split(' ').collect();
+    let id = words.get(1).copied().unwrap_or("-");
+    let done = match words.as_slice() {
+        ["dial", id, port, bytes] if !streams.contains_key(*id) => {
+            dial(port, bytes).map(|stream| ((*id).to_owned(), stream))
+        }
+        ["dial", _, _, _] => Err(io::Error::from(io::ErrorKind::AlreadyExists)),
+        ["send", id, bytes] => match streams.remove(*id) {
+            Some(stream) => unhex(bytes)
+                .and_then(|bytes| stream.get_ref().write_all(&bytes))
+                .map(|()| ((*id).to_owned(), stream)),
+            None => Err(io::Error::from(io::ErrorKind::NotFound)),
+        },
+        ["close", id] => {
+            return match streams.remove(*id) {
+                Some(_) => format!("closed {id}"),
+                None => format!("failed {id} {:?}", io::ErrorKind::NotFound),
+            };
+        }
+        _ => Err(io::Error::from(io::ErrorKind::InvalidInput)),
+    };
+    let (id, mut stream) = match done {
+        Ok(done) => done,
+        Err(error) => return format!("failed {id} {:?}", error.kind()),
+    };
+    match read_reply(&mut stream) {
+        Ok((bytes, true)) => {
+            let answer = format!("reply {id} {} open", hex(&bytes));
+            streams.insert(id, stream);
+            answer
+        }
+        Ok((bytes, false)) => format!("reply {id} {} closed", hex(&bytes)),
+        Err(error) => format!("failed {id} {:?}", error.kind()),
+    }
+}
+
+/// Opens TCP to guest 127.0.0.1:`port` and writes `bytes`, in hex.
+fn dial(port: &str, bytes: &str) -> io::Result<BufReader<TcpStream>> {
+    let port: u16 = port
+        .parse()
+        .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+    let bytes = unhex(bytes)?;
+    let stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port))?;
+    stream.set_read_timeout(Some(REACH_WAIT))?;
+    (&stream).write_all(&bytes)?;
+    Ok(BufReader::new(stream))
+}
+
+/// One read of mode `reach`: the bytes up to the first LF, `REACH_CAP`,
+/// the peer close or `REACH_WAIT` with no byte, and whether the stream
+/// is still open. A reset is the peer close.
+fn read_reply(stream: &mut BufReader<TcpStream>) -> io::Result<(Vec<u8>, bool)> {
+    let mut bytes = Vec::new();
+    match stream.take(REACH_CAP).read_until(b'\n', &mut bytes) {
+        Ok(_) => {
+            let open = bytes.ends_with(b"\n") || u64::try_from(bytes.len()) == Ok(REACH_CAP);
+            Ok((bytes, open))
+        }
+        // The bytes before the fault stay in `bytes`.
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+            ) =>
+        {
+            Ok((bytes, true))
+        }
+        Err(error) if error.kind() == io::ErrorKind::ConnectionReset => Ok((bytes, false)),
+        Err(error) => Err(error),
+    }
+}
+
+/// `bytes` in lowercase hex, or `-` for no bytes.
+fn hex(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return "-".to_owned();
+    }
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// The bytes of the hex word `word`, or none for `-`.
+fn unhex(word: &str) -> io::Result<Vec<u8>> {
+    if word == "-" {
+        return Ok(Vec::new());
+    }
+    let bad = || io::Error::from(io::ErrorKind::InvalidInput);
+    if word.is_empty() || !word.len().is_multiple_of(2) {
+        return Err(bad());
+    }
+    word.as_bytes()
+        .chunks(2)
+        .map(|pair| {
+            std::str::from_utf8(pair)
+                .ok()
+                .and_then(|pair| u8::from_str_radix(pair, 16).ok())
+                .ok_or_else(bad)
+        })
+        .collect()
 }
 
 /// Mode `markers`: each marker file holds its own name and a LF.

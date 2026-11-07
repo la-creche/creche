@@ -111,16 +111,21 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   which hands the error to the control loop, as the 1200 accept thread
   does. The loop ends with `acp accept failed: <error>`, and the main
   thread powers off (CH19 rule 3, CH67 rule 11).
-- The host rows (`src/bridge.rs`, CH6-2, CH14, CH62 rules 13 and 14):
-  the loopback rows take each link of guest 127.0.0.1:4000 (`litellm`)
-  and :8300 (`chaperone`) from any guest process, with no allowlist.
+- The host rows (`src/bridge.rs`, CH6-2, CH14, CH46 rules 1 and 4, CH62
+  rules 13 and 14): the loopback rows take each link of guest
+  127.0.0.1:4000 (`litellm`), :8300 (`chaperone`), :3128 (`egress`) and
+  :9418 (`mirror`) from any guest process, with no allowlist. Every VM
+  gets the `egress` and `mirror` rows, because guest init knows no
+  family. The host side is the guard: a VM with no 1104 or 1103
+  listener fails each dial, so it fails closed (CH46 rule 1, CH69 rule
+  13).
   The family-state row takes each link of the family-state socket whose
   `SO_PEERCRED` pid is the live facade, in any facade state with a pid
   and after its local link opened too. The accept thread asks the
   control loop, which owns the facade state. It closes each other link
   at once and writes `family-state peer pid <n> refused: not the
-  facade`. Each kept link dials vsock CID 2 fresh: host port 1101, 1102
-  or 1100. A failed dial closes the guest side at once, and nothing
+  facade`. Each kept link dials vsock CID 2 fresh: host port 1101,
+  1102, 1104, 1103 or 1100. A failed dial closes the guest side at once, and nothing
   retries: the next guest connection dials fresh, which is the reading
   of "the bridge reconnects after a restore" (CH6-2, CH62 rule 14). The
   splice reads and rewrites no byte, so the `Host` header stays valid
@@ -133,8 +138,10 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
 - The row table (CH62 rule 15): before the first deploy, a new bridge
   row needs no `GUEST_INIT_PROTOCOL` bump. After it, any change of the
   row table bumps it, because a restored old guest lacks the new
-  listener. Phase 7 adds 3128 to 1104 and 9418 to 1103 as loopback rows
-  (CH46 rules 1 and 4).
+  listener. The `egress` and `mirror` rows land in one change before the
+  first vmm deploy, so they need no bump (CH69 rules 21 and 29). The
+  ports are `creche_wire::guest::EGRESS_PROXY_PORT` and `MIRROR_PORT`,
+  and `vectors/guest.json` lists them.
 - `src/splice.rs` copies the bytes of one link both ways on two std
   threads and reads none of them. An EOF in one direction shuts down
   the write half of the other socket, and the other direction runs on,
@@ -219,7 +226,21 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   `linked-relay`, it opens the local link, runs the relay of `relay` and
   exits with status 0 on the stop line. The phase 3 proof in
   `creche-vmm/tests/kvm_guest.rs` runs it (plan PR V10, hand-off from
-  this track). Each other start stays up until a signal ends it.
+  this track). With the mode `reach`, it opens the local link and
+  listens on `RELAY_SOCKET` at once, then exits with status 0 on the
+  stop line. Each line of a 1201 link is one action on a guest TCP
+  stream: `dial <id> <port> <hex>` opens TCP to guest 127.0.0.1:<port>
+  and writes the bytes, `send <id> <hex>` writes them on the open
+  stream `<id>`, and both then read the reply. `close <id>` closes the
+  stream and answers `closed <id>`. A read stops at the first LF, at 4
+  KiB, at the peer close or after 5 s with no byte, and the answer is
+  `reply <id> <hex> <open|closed>`. A fault answers `failed <id> <io
+  error kind>`. `-` stands for no bytes. The streams of a 1201 link
+  close with it. A kvm test thus sets each request itself: the guest
+  init tests of the 3128 and 9418 rows, and the vmm tests of the egress
+  proxy and the mirror (CH69 rules 22 and 28, plan PRs A1, E3 and E4).
+  The vmm tests only send these lines and never edit the stand-in.
+  Each other start stays up until a signal ends it.
 
 ## Tests
 
@@ -240,7 +261,7 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   `$CRECHE_KVM_DIR/standin_facade` at `FACADE_PROGRAM`. The tests dial
   the guest ports themselves: `CONNECT <port>` on the hybrid vsock
   socket of CH. On 1200 they speak the creche-wire types, and on 1201
-  the `ping` and `pull` lines of the stand-in. For the host rows, a test
+  the `ping`, `pull`, `dial`, `send` and `close` lines of the stand-in. For the host rows, a test
   listens on `vsock.sock_<port>` itself, where CH joins each guest dial
   of that host port. The family-state test also checks that guest init
   refuses a child of the facade on that socket, with no host dial. A

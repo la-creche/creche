@@ -4,7 +4,7 @@
 //! 6, 8, 9 and 12), of the local link (decisions CH21, CH32 rules 6
 //! and 7, CH62 rules 10 and 11), of the 1201 splice (decisions CH13,
 //! CH50 rule 2, CH62 rules 14 and 16) and of the host rows (decisions
-//! CH6-2, CH14, CH62 rules 13 and 14). CH boots the guest kernel with the `guest-init.cpio`
+//! CH6-2, CH14, CH46 rules 1 and 4, CH62 rules 13 and 14). CH boots the guest kernel with the `guest-init.cpio`
 //! of `bin/vm-smoke-setup.sh` and the disks that each test builds, with
 //! the stand-in facade of the script on the root disk. The test runs CH
 //! directly, with no vmm, and speaks the link itself.
@@ -25,11 +25,11 @@ use std::time::{Duration, Instant};
 
 use common::{
     BOOT, DEBUGFS, E2FSCK, GOOD_ENV, IN_2030, Link, SESSION, STANDIN_MARKERS, Standin, Vm,
-    answer_get, assert_clean, booted, booted_with, ch, dial, exited, exited_after, hello, lines,
-    listen_host, logged, now, pulled, running, session_disk, standin_turn_end, starting,
-    vm_with_env, wait_for, wait_for_exit, wait_for_line, work,
+    answer_get, answer_lines, assert_clean, booted, booted_with, ch, dial, exited, exited_after,
+    hello, hex, lines, listen_host, logged, now, pulled, reach, running, session_disk,
+    standin_turn_end, starting, vm_with_env, wait_for, wait_for_exit, wait_for_line, work,
 };
-use creche_wire::guest::{CHAPERONE_PORT, LITELLM_PORT, WORKSPACE};
+use creche_wire::guest::{CHAPERONE_PORT, EGRESS_PROXY_PORT, LITELLM_PORT, MIRROR_PORT, WORKSPACE};
 use creche_wire::{
     ControlCommand, ControlStop, ControlSync, ControlSynced, CredsMissing, FacadeState,
     FamilyStatePull, FamilyStateReply, GuestEvent, GuestPort, HostPort, TurnEvent, TurnStart,
@@ -857,6 +857,106 @@ fn kvm_guest_init_bridges_the_family_state() {
         std::io::ErrorKind::WouldBlock,
         "the host listener got a second link"
     );
+
+    drop(vm);
+    fs::remove_dir_all(&work).unwrap();
+}
+
+/// A guest tool dials guest 127.0.0.1:3128 and :9418. Each link reaches
+/// the host listener of port 1104 and 1103 byte for byte, a NUL and a
+/// 0xff byte included, and each answer comes back. The listeners bind
+/// after `up`, because each guest link dials fresh (decisions CH46 rules
+/// 1 and 4, CH62 rule 14). A close on either side reaches the other, and
+/// guest init writes the close of each link (decision CH67 rule 9).
+#[test]
+#[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
+fn kvm_guest_init_bridges_the_proxy_and_mirror_ports() {
+    let (work, mut vm) = booted_with("kvm-guest-init-reach", Standin::Reach);
+    let serial = work.join("serial.log");
+    let egress = listen_host(&work, HostPort::Egress);
+    let mirror = listen_host(&work, HostPort::GitMirror);
+    let proxy = thread::spawn(move || answer_lines(&egress, &[b"one\n", b"two\n"]));
+    let git = thread::spawn(move || answer_lines(&mirror, &[b"0008NAK\n"]));
+    let mut link = dial(&work, GuestPort::Control);
+    starting(&hello(&mut link, now()));
+    let mut acp = dial(&work, GuestPort::Acp);
+
+    let connect = b"CONNECT example.com:443 HTTP/1.1\r\n";
+    assert_eq!(
+        reach(
+            &mut acp,
+            &format!("dial p {EGRESS_PROXY_PORT} {}", hex(connect))
+        ),
+        format!("reply p {} open", hex(b"one\n"))
+    );
+    assert_eq!(
+        reach(&mut acp, &format!("send p {}", hex(b"second\n"))),
+        format!("reply p {} open", hex(b"two\n"))
+    );
+    assert_eq!(reach(&mut acp, "close p"), "closed p");
+    assert_eq!(
+        proxy.join().unwrap(),
+        [connect.to_vec(), b"second\n".to_vec()]
+    );
+
+    let request = b"git\0upload\xffpack\n";
+    assert_eq!(
+        reach(&mut acp, &format!("dial m {MIRROR_PORT} {}", hex(request))),
+        format!("reply m {} open", hex(b"0008NAK\n"))
+    );
+    assert_eq!(git.join().unwrap(), [request.to_vec()]);
+    // The host closed its side, so the next read ends at the close.
+    assert_eq!(reach(&mut acp, "send m -"), "reply m - closed");
+
+    for row in ["egress", "mirror"] {
+        for step in ["host connected", "closed"] {
+            wait_for_line(
+                &mut vm,
+                &serial,
+                &format!("guest-init: {row} link 1 {step}"),
+            );
+        }
+    }
+
+    drop(vm);
+    fs::remove_dir_all(&work).unwrap();
+}
+
+/// With no host listener of port 1104, the dial of a guest 3128 link
+/// fails, and guest init closes the link at once: the tool reads the
+/// close with no byte (decision CH46 rule 1: the host side is the guard,
+/// so the VM fails closed). Nothing retries. The next link dials fresh,
+/// so it reaches a listener bound after the fault (decision CH62 rule
+/// 14).
+#[test]
+#[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
+fn kvm_guest_init_closes_a_proxy_dial_with_no_host_listener() {
+    let (work, mut vm) = booted_with("kvm-guest-init-no-egress", Standin::Reach);
+    let serial = work.join("serial.log");
+    let mut link = dial(&work, GuestPort::Control);
+    starting(&hello(&mut link, now()));
+    let mut acp = dial(&work, GuestPort::Acp);
+
+    assert_eq!(
+        reach(&mut acp, &format!("dial p {EGRESS_PROXY_PORT} -")),
+        "reply p - closed"
+    );
+    let fault = "guest-init: egress link 1 host dial failed: ";
+    wait_for(&mut vm, &serial, fault, |lines| {
+        lines.iter().any(|line| line.starts_with(fault))
+    });
+
+    let egress = listen_host(&work, HostPort::Egress);
+    let proxy = thread::spawn(move || answer_lines(&egress, &[b"ok\n"]));
+    assert_eq!(
+        reach(
+            &mut acp,
+            &format!("dial q {EGRESS_PROXY_PORT} {}", hex(b"again\n"))
+        ),
+        format!("reply q {} open", hex(b"ok\n"))
+    );
+    assert_eq!(proxy.join().unwrap(), [b"again\n".to_vec()]);
+    wait_for_line(&mut vm, &serial, "guest-init: egress link 2 host connected");
 
     drop(vm);
     fs::remove_dir_all(&work).unwrap();
