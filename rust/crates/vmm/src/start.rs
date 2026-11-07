@@ -1503,7 +1503,7 @@ fn launch<L: Launcher>(
     // Plan PR V8: the family-state listener has the same lifecycle.
     let family_state =
         family_state::bind(&run).map_err(|error| format!("{error}: {}", error.source))?;
-    let egress = if lists_a_host(config, family) {
+    let egress = if binds_egress(config, family) {
         let bound = proxy::bind(&run).map_err(|error| format!("{error}: {}", error.source))?;
         Some(bound)
     } else {
@@ -1587,25 +1587,15 @@ fn launch<L: Launcher>(
     })
 }
 
-/// Whether the allowlist of `family` holds a host, so the VM gets the
-/// egress proxy listener (decision CH49 rule 3). It blocks.
-// CONTRACT-QUESTION (E2): no row decides the bind for a list that does
-// not read. CH49 rule 3 binds for an allowlist file that is non-empty,
-// and CH70 rule 2 has the proxy log name `not_valid` for such a file. The
-// narrowest reading fails closed: a list that does not read binds no
-// listener, as an empty list, and the guest dial of 1104 fails (decision
-// CH46 rule 1). The start writes one stderr line, and the proxy log stays
-// silent until a later start reads a good file. The other reading binds
-// 1104 for a present file, so each CONNECT gets 403 and a `not_valid`
-// line. It costs one listener per bad file and a deny check that allows
-// 1104 for a family with no good list.
-fn lists_a_host(config: &StartConfig, family: &FamilyName) -> bool {
+/// Whether the VM of `family` gets the egress proxy listener. It blocks.
+/// A list that holds a host binds 1104 (decision CH49 rule 3). A present
+/// `egress.json` that does not read binds it too, so each CONNECT is
+/// refused 403 with a `not_valid` log line (decision CH72 rule 3). An
+/// absent file or an empty list binds no 1104.
+fn binds_egress(config: &StartConfig, family: &FamilyName) -> bool {
     match config.families.read_egress(family) {
         Ok(list) => !list.hosts.is_empty(),
-        Err(fault) => {
-            eprintln!("vmm: {family}: egress.json is not_valid, so no egress: {fault:?}");
-            false
-        }
+        Err(_) => true,
     }
 }
 
@@ -1731,7 +1721,8 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         // exec, so a check after `ControlReady` proves the same thing.
         // The bound set is the family-state port 1100 (plan PR V8), the
         // plane ports 1101 and 1102 (plan PR V6), and 1104 for a family
-        // whose list holds a host (plan PR E2, decision CH49 rule 3).
+        // whose list holds a host or does not read (plan PR E2, decisions
+        // CH49 rule 3, CH72 rule 3).
         let (ch, run) = (self.config.ch.clone(), pending.run.clone());
         let [litellm, chaperone] = self.config.planes.rows().map(|(port, _)| port);
         let mut ports = vec![HostPort::FamilyState, litellm, chaperone];

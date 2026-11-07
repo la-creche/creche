@@ -37,10 +37,9 @@ pub const LOG_CAP: u64 = 64 * 1024 * 1024;
 pub const LOG_MODE: u32 = 0o600;
 
 /// One line of the log: one link of the proxy (decision CH69 rule 10).
-// CONTRACT-QUESTION (E2): Q61-10 names the fields, and no row names their
-// JSON keys or their forms. The narrowest reading: each key is the field
-// name, `time` is RFC 3339 UTC, `duration_ms` is whole ms, and a field
-// that the link never reached is `null`.
+/// Each key is the field name, `time` is RFC 3339 UTC, `duration_ms` is
+/// whole ms, and a field that the link never reached is `null` (decision
+/// CH72 rule 1).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Line {
     /// The time of the refusal, or of the end of a tunnel.
@@ -89,10 +88,9 @@ pub enum Reason {
     Proxy(ProxyReason),
 }
 
-/// The refusals of the proxy that the rule does not give.
-// CONTRACT-QUESTION (E2): no row names these reasons. The narrowest
-// reading: one snake_case name per refusal of CH69 rule 9 and CH67 rule
-// 3 that is not a `check` reason.
+/// The refusals of the proxy that the rule does not give: one snake_case
+/// name per refusal of decisions CH69 rule 9 and CH67 rule 3 that is not
+/// a `check` reason (decision CH72 rule 2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProxyReason {

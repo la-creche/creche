@@ -2457,18 +2457,73 @@ fn the_egress_check_names_1104_for_a_family_with_egress() {
     assert!(test.fault_codes().is_empty());
 }
 
-/// An empty list binds no 1104 (decision CH49 rule 3), and a list that
-/// does not read binds none either (vmm AGENTS.md Known gap 27).
+/// An absent file and an empty list bind no 1104 (decision CH49 rule 3).
 #[test]
-fn a_bad_or_empty_list_binds_no_1104() {
+fn an_absent_or_empty_list_binds_no_1104() {
     let test = Test::new("egress-none", |_| {});
+    assert_eq!(test.start(0), Ok(()));
     let file = test.dir.join("families/chat/egress.json");
     fs::write(&file, r#"{"hosts":[]}"#).unwrap();
-    assert_eq!(test.start(0), Ok(()));
-    fs::write(&file, "{").unwrap();
     assert_eq!(test.start(1), Ok(()));
     assert_eq!(*test.fake.listening.lock().unwrap(), [NO_EGRESS; 2]);
     assert!(test.fault_codes().is_empty());
+}
+
+/// A present `egress.json` that does not read binds 1104, and the deny
+/// check names it (decision CH72 rule 3).
+#[test]
+fn a_bad_list_binds_1104() {
+    let test = Test::new("egress-bad", |_| {});
+    fs::write(test.dir.join("families/chat/egress.json"), "{").unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    assert_eq!(*test.fake.listening.lock().unwrap(), [[true; 4]]);
+    assert!(listeners(&test, 0).contains(&"vsock.sock_1104".to_owned()));
+    assert!(test.fault_codes().is_empty());
+}
+
+/// A CONNECT on the 1104 of a bad list gets 403 and one log line with the
+/// reason `not_valid` (decisions CH70 rule 2, CH72 rule 3).
+#[test]
+fn a_connect_on_a_bad_list_gets_403_and_one_not_valid_line() {
+    let test = Test::new("egress-bad-connect", |_| {});
+    fs::write(test.dir.join("families/chat/egress.json"), "{").unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    let path = test.dir.join("run/slot/0/vsock.sock_1104");
+    // The current-thread runtime runs the proxy only inside `block_on`, so
+    // the guest side runs in `spawn_blocking`.
+    let reply = test.runtime.block_on(test.runtime.spawn_blocking(move || {
+        let mut guest = UnixStream::connect(path).unwrap();
+        guest
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let head = "CONNECT github.com:443 HTTP/1.1\r\nHost: github.com:443\r\n\r\n";
+        guest.write_all(head.as_bytes()).unwrap();
+        let mut reply = String::new();
+        guest.read_to_string(&mut reply).unwrap();
+        reply
+    }));
+    assert!(reply.unwrap().starts_with("HTTP/1.1 403 "));
+    // The fake launch probes 1104 with a dial that sends no head, so the
+    // log holds its `bad_head` line beside the line of the CONNECT.
+    let log = test.dir.join("egress.jsonl");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let (text, mut reasons) = loop {
+        let text = fs::read_to_string(&log).unwrap();
+        let reasons: Vec<String> = text
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .inspect(|line| assert_eq!(line["verdict"], "refused", "{line}"))
+            .map(|line| line["reason"].as_str().unwrap().to_owned())
+            .collect();
+        if reasons.len() >= 2 {
+            break (text, reasons);
+        }
+        assert!(Instant::now() < deadline, "{text}");
+        let pause = async { tokio::time::sleep(Duration::from_millis(1)).await };
+        test.runtime.block_on(pause);
+    };
+    reasons.sort();
+    assert_eq!(reasons, ["bad_head", "not_valid"], "{text}");
 }
 
 /// A restore binds 1104 again before CH starts, as each plane listener

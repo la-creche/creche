@@ -707,12 +707,13 @@ server the right family and root.
 
 `src/egress/proxy.rs` serves CONNECT on host port 1104 (plan PR E2,
 decisions CH6-1, CH6-4, CH46 rules 1 and 3, CH49 rule 3, CH69 rules 7,
-9, 10, 14, 20, 24 and 30). Guest init splices guest 127.0.0.1:3128 to
-a vsock dial of 1104 (decision CH46 rule 1), and CH connects each dial
-to `vsock.sock_1104` (decision CH24). The vmm binds it only for a family
-whose `egress.json` lists a host (decision CH49 rule 3). A list that
-does not read binds no listener either, and the start writes one stderr
-line (Known gap 27).
+9, 10, 14, 20, 24 and 30, CH72). Guest init splices guest
+127.0.0.1:3128 to a vsock dial of 1104 (decision CH46 rule 1), and CH
+connects each dial to `vsock.sock_1104` (decision CH24). The vmm binds
+it for a family whose `egress.json` lists a host (decision CH49 rule 3).
+A present file that does not read binds it too, so each CONNECT gets
+403 and a `not_valid` log line (decision CH72 rule 3). An absent file
+or an empty list binds no listener.
 
 1. `proxy::bind` binds the listener beside the plane listeners, with
    their lifecycle: after `link_vm` and `remove_stale`, before CH
@@ -757,10 +758,10 @@ CH69 rules 10 and 24). The compose step opens it at the start, for
 append, with mode 0600, and a failed open exits 78. Each line has
 `time`, `family`, `session`, `host`, `port`, `verdict` (`allowed` or
 `refused`), `reason`, `address`, `bytes_up`, `bytes_down` and
-`duration_ms` (Known gap 24). A refusal of the rule names the reason that `check`
-gives (decision CH70 rule 2). The proxy reasons are `link_cap`,
+`duration_ms` (decision CH72 rule 1). A refusal of the rule names the
+reason that `check` gives (decision CH70 rule 2). The proxy reasons are `link_cap`,
 `head_timeout`, `bad_head`, `not_connect`, `connect_failed` and
-`connect_timeout` (Known gap 25). A write that would pass `LOG_CAP` (64
+`connect_timeout` (decision CH72 rule 2). A write that would pass `LOG_CAP` (64
 MiB) renames the file to `<path>.1` and opens a new one. When the open
 fails after the rename, the lines go on to `<path>.1`, and each next
 write tries only the open again, with no second rename. A log fault
@@ -1180,33 +1181,24 @@ job kvm runs it.
     listener, and per link its stream and the 6 fds of one `read_state`)
     adds to the raise of decision CH67 rule 4 (20608), so the raise is
     49344.
-24. CONTRACT-QUESTION (plan PR E2): Q61-10 names the fields of a log
-    line, and no row names their JSON keys or forms. The narrowest
-    reading: each key is the field name, `time` is RFC 3339 UTC to the
-    second (`creche_vmm_confine::rfc3339`), `duration_ms` is whole ms,
-    `address` is the `IpAddr` text, and a field that the link never
-    reached is `null` (`src/egress/log.rs`).
-25. CONTRACT-QUESTION (plan PR E2): no row names the log reasons of the
-    proxy refusals that are not `check` reasons. The narrowest reading:
-    one snake_case name per refusal of decisions CH69 rule 9 and CH67
-    rule 3: `link_cap`, `head_timeout`, `bad_head`, `not_connect`,
-    `connect_failed` and `connect_timeout` (`log::ProxyReason`).
+24. Closed by decision CH72 rule 1: each key of a log line is the field
+    name of decision CH69 rule 10, `time` is RFC 3339 UTC to the second
+    (`creche_vmm_confine::rfc3339`), `duration_ms` is whole ms, `address`
+    is the `IpAddr` text, and a field that the link never reached is
+    `null` (`src/egress/log.rs`).
+25. Closed by decision CH72 rule 2: the log reasons of the proxy refusals
+    that are not `check` reasons are `link_cap`, `head_timeout`,
+    `bad_head`, `not_connect`, `connect_failed` and `connect_timeout`
+    (`log::ProxyReason`).
 26. Closed by decision CH69 rule 14: the 1104 listener takes at most 64
     links per VM, and its fd need (20544) adds to the raise of decision
     CH68 rule 2, so the raise is 69888. The plan estimate (16448)
     counted one fd for the allowlist read, which holds two.
-27. CONTRACT-QUESTION (plan PR E2): no row decides the bind of 1104 for
-    an `egress.json` that is present and does not read. Decision CH49
-    rule 3 binds for a non-empty allowlist file, and decision CH70 rule
-    2 has the proxy log name `not_valid` for such a file. The narrowest
-    reading fails closed: a bad list binds no 1104, as an empty list, so
-    the guest dial fails. The start writes one stderr line, and the
-    proxy log stays silent until a later start reads a good file
-    (`lists_a_host` in `src/start.rs`). Decision CH69 rule 24 lets the
-    proxy write stderr only on a log fault, and no row names this start
-    line. The other reading binds 1104 for a present file, so each
-    CONNECT gets 403 and a `not_valid` line, and the start writes no
-    stderr line.
+27. Closed by decision CH72 rule 3: the vmm binds 1104 for a family whose
+    `egress.json` is present, also when it does not read, so each CONNECT
+    is refused 403 with a `not_valid` log line (decision CH70 rule 2). An
+    absent file or an empty list binds no 1104 (decision CH49 rule 3).
+    The start writes no stderr line (`binds_egress` in `src/start.rs`).
 
 ## Caller duties
 
