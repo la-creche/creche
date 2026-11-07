@@ -20,11 +20,16 @@
 //!
 //! A removed host or repo does not wait for the poll: the proxy and the
 //! mirror read their file at each link (decisions CH6-4, CH69 rule 16).
-//! An added one waits one `POLL` at most. Cloud Hypervisor connects each
-//! guest dial to `vsock.sock_<port>` at the dial (decision CH24), so it
-//! finds a listener that the follow bound after a boot or a restore
-//! (decision CH49 rule 4). `tests/kvm_reach.rs` proves both, so the
-//! fallback of CH49 rule 4 (a bound set fixed per boot) is not taken.
+//! An added one waits one `POLL` at most. The follow assumes that Cloud
+//! Hypervisor connects each guest dial to `vsock.sock_<port>` at the dial
+//! (decision CH24), so it finds a listener that the follow bound after a
+//! boot or a restore (decision CH49 rule 4). The CH49 rule 4 spike of
+//! decision CH69 rule 28 checks that assumption: the kvm tests
+//! `kvm_reach_binds_1104_after_an_egress_edit` and
+//! `kvm_reach_binds_1104_after_a_restore_and_an_edit` of
+//! `tests/kvm_reach.rs`. No kvm run has passed them yet (plan risk 6). If
+//! the restore test fails, plan PR E3 takes the fallback of CH49 rule 4:
+//! a bound set fixed per boot and restore.
 //!
 //! The drop of `Watch` ends the task and drops both servers. The VM entry
 //! of the start table holds it, so the follow ends with the VM.
@@ -55,11 +60,18 @@ pub const POLL: Duration = Duration::from_secs(2);
 
 /// What the two reach files of a family say. `None` is a file that is
 /// present and does not read.
-// The follow compares readings, not bytes (Q61-11 option A says bytes).
-// The reader of `FamilyRoot` is the one checked open of each file, and
-// only the reading changes a listener. caregiver writes one canonical
-// form (decision CH69 rule 5), so a new list is new bytes and a new
-// reading.
+// CONTRACT-QUESTION: decision CH69 rule 11 (Q61-11 option A) says the
+// follow compares bytes every 2 s. Reading taken: the follow compares
+// readings. Two cases differ from bytes. A rewrite to new bytes that
+// read the same list reruns no deny check (CH6-3 'after each egress
+// edit'). A file that does not read and changes to other bytes that do
+// not read reruns no check either. Why: `FamilyRoot` is the one checked
+// open of each file (the O_NOFOLLOW read), and a byte reader belongs in
+// `creche-vmm-confine/src/family.rs`, the file of the E1 and M1 lane
+// (plan shared_file_edits rule 6). caregiver writes one canonical form
+// (decision CH69 rule 5), so a new list is new bytes and a new reading.
+// Cost of a change: a byte reader in `FamilyRoot` and a byte compare
+// here (Known gap 32 of AGENTS.md).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Reach {
     repos: Option<FamilyRepos>,

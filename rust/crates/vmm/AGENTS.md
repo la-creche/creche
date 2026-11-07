@@ -897,10 +897,7 @@ poll.
    `FamilyRoot::read_repos` and `FamilyRoot::read_egress`, in
    `spawn_blocking` (decisions CH36 G21, CH69 rule 11). A reading equal
    to the last one changes nothing and runs no check. The task compares
-   the readings, not the bytes: the reader of `FamilyRoot` is the one
-   checked open of each file, and only the reading changes a listener.
-   caregiver writes one canonical form (decision CH69 rule 5), so a new
-   list is new bytes and a new reading.
+   the readings, not the bytes (Known gap 32).
 2. A new reading binds or removes the listeners of 1103 and 1104 by
    the rule of the start, `Reach::mirror` and `Reach::egress`: a list
    that holds an entry binds, and so does a present file that does not
@@ -926,11 +923,15 @@ poll.
    at once, inside the headroom of `planes::fd_need`, so the fd need
    does not change.
 
-Cloud Hypervisor connects each guest dial to `vsock.sock_<port>` at the
-dial (decision CH24). So it finds a listener that the follow bound after
-a boot or a restore, and the fallback of CH49 rule 4 (a bound set fixed
-at each boot and restore) is not taken. The kvm job proves both cases
-(decision CH69 rule 28, plan risk 6).
+The follow assumes that Cloud Hypervisor connects each guest dial to
+`vsock.sock_<port>` at the dial (decision CH24). Then it finds a
+listener that the follow bound after a boot or a restore. The CH49 rule
+4 spike of decision CH69 rule 28 checks the assumption with two kvm
+tests: `kvm_reach_binds_1104_after_an_egress_edit` and
+`kvm_reach_binds_1104_after_a_restore_and_an_edit`. No kvm run has
+passed them yet (plan risk 6). If the restore test fails, plan PR E3
+takes the fallback of CH49 rule 4: a bound set fixed at each boot and
+restore.
 
 `tests/start.rs` runs the follow on paused tokio time, one `POLL` at a
 time: an edit that binds 1104 and serves a 403, an emptied list that
@@ -1398,6 +1399,19 @@ the runner.
     keep one host listed. Cost of a change: a close of the listener only
     in `proxy::Server` and `mirror::Server`, which then wait for their
     links.
+32. CONTRACT-QUESTION: decision CH69 rule 11 (Q61-11 option A) says the
+    edit follow compares bytes every 2 s. Reading taken: the follow
+    compares readings (`Reach` in `src/egress/watch.rs`). Two cases
+    differ from bytes. A rewrite to new bytes that read the same list
+    reruns no deny check (decision CH6-3 'after each egress edit'). A
+    file that does not read and changes to other bytes that do not read
+    reruns no check either. Why: `FamilyRoot` is the one checked open of
+    each file (the O_NOFOLLOW read). A byte reader belongs in
+    `creche-vmm-confine/src/family.rs`, which the E1 and M1 lane owns
+    (plan shared_file_edits rule 6). caregiver writes one canonical form
+    (decision CH69 rule 5), so a new list is new bytes and a new
+    reading. Cost of a change: a byte reader in `FamilyRoot` and a byte
+    compare in `Follow::run`.
 
 ## Caller duties
 

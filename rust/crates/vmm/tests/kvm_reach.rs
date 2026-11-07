@@ -1,10 +1,10 @@
 //! The kvm_ tests of the edit follow (plan PR E3, decisions CH49 rules 3
 //! and 4, CH69 rules 11 and 28). They are the spike of CH49 rule 4: does
 //! Cloud Hypervisor see a host listener that the vmm binds after a boot,
-//! and after a restore? CH connects each guest dial to `vsock.sock_<port>`
-//! at the dial (decision CH24), so the follow binds 1104 on a running VM.
-//! A red test here means the fallback of CH49 rule 4: the bound set fixed
-//! at each boot and restore.
+//! and after a restore? The follow assumes that CH connects each guest
+//! dial to `vsock.sock_<port>` at the dial (decision CH24), so it binds
+//! 1104 on a running VM. A red test here means the fallback of CH49 rule
+//! 4: the bound set fixed at each boot and restore.
 //!
 //! Each test boots `examples/phase3_vm.rs` with the helpers of
 //! `tests/common/mod.rs`, the real guest init and the stand-in facade in
