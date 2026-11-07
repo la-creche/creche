@@ -424,6 +424,21 @@ mod tests {
         );
     }
 
+    /// The exit of an orphan, for example a tool that daemonized, leaves
+    /// the local link of the facade open: only the facade pid closes it
+    /// (decision CH19 rule 1).
+    #[test]
+    fn an_orphan_exit_keeps_the_local_link() {
+        let mut control = Control::default();
+        let link = ready(&mut control);
+        let local = open(&mut control);
+        assert_eq!(control.reaped(pid(8)), vec![]);
+        assert_eq!(
+            control.local_line(local, &start())[0],
+            Action::Turn(link, turn_line(TurnEvent::Start(TurnStart {})))
+        );
+    }
+
     /// The reap of the facade closes its local link, so a forked child
     /// that holds the socket cannot keep it, and the next facade can open
     /// its own.
