@@ -153,9 +153,10 @@ four lists disjoint and puts each `ENV` name of a shipped stage of
 `playpen/Dockerfile` in a list. The built env also holds the parent
 image's names, such as `NODE_VERSION` and `YARN_VERSION`. The
 `playpen-image` CI job places those: `playpen/bin/playpen-env-check` runs
-`unplacedEnv` of the image's own `agent/tool-env` on each flavor's
-`/etc/creche/env` (CH49 rule 1). A new name fails CI until someone picks
-a list.
+`placeEnvFile` of the image's own `agent/tool-env` on each flavor's
+`/etc/creche/env` (CH49 rule 1). The report gives the count of lines read,
+then each unplaced name. The check fails a report whose count is not the
+file's line count. A new name fails CI until someone picks a list.
 
 ## Known gaps
 

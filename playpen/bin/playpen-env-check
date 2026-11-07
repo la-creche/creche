@@ -9,7 +9,7 @@
 # (`creche-env-write`).
 #
 # Then it places each name of the file in one list of the agent (CH49
-# rule 1). Node in the image runs `unplacedEnv` of the agent module that
+# rule 1). Node in the image runs `placeEnvFile` of the agent module that
 # the image ships (`agent/src/tool-env.ts`), so the lists are the ones the
 # flavor runs, and no second copy exists. The file's names are the built
 # env, the parent image's names such as NODE_VERSION too.
@@ -47,20 +47,19 @@ if ! diff -u --label "config of $image" --label "/etc/creche/env" "$work/expecte
 fi
 
 # Node runs in the facade's deploy tree, where the bare name
-# `agent/tool-env` resolves. It reads the names of the file, and prints
-# each unplaced name on one line, or nothing when each name sits in a list.
-place='
-import { readFileSync } from "node:fs";
-import { unplacedEnv } from "agent/tool-env";
-const lines = readFileSync("/etc/creche/env", "utf8").split("\n").filter((line) => line !== "");
-for (const name of unplacedEnv(lines.map((line) => line.slice(0, line.indexOf("="))))) {
-  console.log(name);
-}
-'
-unplaced="$(docker run --rm --network none --workdir /opt/creche-facade --entrypoint node "$image" \
-  --input-type=module --eval "$place")" || die "node in $image cannot run unplacedEnv of the agent"
+# `agent/tool-env` resolves. `placeEnvFile` prints the count of lines it
+# read, then each unplaced name on one line. A report with a wrong count,
+# or no report, fails, so a program that prints nothing never passes.
+place='import { readFileSync } from "node:fs"; import { placeEnvFile } from "agent/tool-env"; process.stdout.write(placeEnvFile(readFileSync("/etc/creche/env", "utf8")));'
+report="$(docker run --rm --network none --workdir /opt/creche-facade --entrypoint node "$image" \
+  --input-type=module --eval "$place")" || die "node in $image cannot run placeEnvFile of the agent"
+count="$(wc -l < "$work/file" | tr -d ' ')"
+read_count="$(head -n 1 <<< "$report")"
+[[ "$read_count" == "$count" ]] \
+  || die "placeEnvFile in $image read ${read_count:-no} lines of /etc/creche/env, not $count"
+unplaced="$(tail -n +2 <<< "$report")"
 if [[ -n "$unplaced" ]]; then
   die "$image: no agent list holds $(paste -sd' ' - <<< "$unplaced"). Put each name in one list of agent/src/tool-env.ts (CH49 rule 1)."
 fi
 printf 'playpen-env-check: %s: /etc/creche/env equals the config env, and each name sits in an agent list (%s names)\n' \
-  "$image" "$(wc -l < "$work/expected" | tr -d ' ')"
+  "$image" "$count"

@@ -11,7 +11,7 @@
 // lists (CH49 rule 1). `test/tool-env.test.ts` holds the lists disjoint,
 // and places each `ENV` name of `playpen/Dockerfile`. CI places the whole
 // built env, the parent image's names too: `playpen/bin/playpen-env-check`
-// runs `unplacedEnv` in each flavor on its `/etc/creche/env`. A new name
+// runs `placeEnvFile` in each flavor on its `/etc/creche/env`. A new name
 // fails CI until someone picks a list.
 
 /**
@@ -63,6 +63,21 @@ export const FACADE_ENV = ["NODE_ENV", "NODE_VERSION", "YARN_VERSION", "MPLCONFI
 export function unplacedEnv(names: readonly string[]): string[] {
   const placed: readonly string[] = [...FLUE_ENV, ...TOOL_ENV, ...Object.keys(TOOL_RENAME), ...FACADE_ENV];
   return names.filter((name) => !placed.includes(name));
+}
+
+/**
+ * The report of `playpen/bin/playpen-env-check` on the text of one
+ * `/etc/creche/env` file (CH49 rule 1). The first line is the count of
+ * `NAME=value` lines that this function read. Each further line is one
+ * name that no list holds. The check compares the count with the line
+ * count of the file, so an empty or short report fails the flavor.
+ */
+export function placeEnvFile(text: string): string {
+  const names = text
+    .split("\n")
+    .filter((line) => line !== "")
+    .map((line) => line.split("=", 1)[0] ?? line);
+  return [String(names.length), ...unplacedEnv(names)].map((line) => `${line}\n`).join("");
 }
 
 /** The names and values that the agent adds to each tool's env. */

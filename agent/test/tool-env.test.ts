@@ -5,14 +5,14 @@
 // This test reads the `ENV` lines of `playpen/Dockerfile` only. The built
 // env also holds the names of the parent image, such as `NODE_VERSION`.
 // The `playpen-image` CI job places those: `playpen/bin/playpen-env-check`
-// runs `unplacedEnv` in each built flavor on its `/etc/creche/env`.
+// runs `placeEnvFile` in each built flavor on its `/etc/creche/env`.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { FACADE_ENV, FLUE_ENV, readToolEnv, TOOL_ENV, TOOL_RENAME, unplacedEnv } from "../src/tool-env.js";
+import { FACADE_ENV, FLUE_ENV, placeEnvFile, readToolEnv, TOOL_ENV, TOOL_RENAME, unplacedEnv } from "../src/tool-env.js";
 
 const ROOT = join(import.meta.dirname, "..");
 const DOCKERFILE = join(ROOT, "..", "playpen", "Dockerfile");
@@ -170,6 +170,13 @@ describe("the tool env lists", () => {
     expect(unplacedEnv(["NODE_VERSION", "YARN_VERSION", "CRECHE_TOOL_HTTPS_PROXY", "PATH"])).toEqual([]);
     expect(unplacedEnv(["NEW_NAME", "HOME", "HTTPS_PROXY", "OTHER"])).toEqual(["NEW_NAME", "HTTPS_PROXY", "OTHER"]);
     expect(unplacedEnv([])).toEqual([]);
+  });
+
+  it("report the count of env file lines read, then each unplaced name", () => {
+    const file = "HOME=/root\nNEW_NAME=a=b\nNODE_VERSION=24.22.2\nEMPTY=\n\n";
+    expect(placeEnvFile(file)).toBe("4\nNEW_NAME\nEMPTY\n");
+    expect(placeEnvFile("PATH=/usr/bin\nYARN_VERSION=1.22.22\n")).toBe("2\n");
+    expect(placeEnvFile("")).toBe("0\n");
   });
 
   it("the coding flavor proxy names the guest egress port", () => {

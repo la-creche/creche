@@ -3,9 +3,10 @@
 
 The writer runs here under a fixed env. The check runs against a `docker`
 stub on `PATH` that answers `image inspect` with a config env, the `cat`
-run with a file, and the `node` run with the names that no agent list
-holds (CH49 rule 1). CI runs the same check on each built flavor, where
-node runs the agent's own `unplacedEnv` (`agent/test/tool-env.test.ts`).
+run with a file, and the `node` run with a report: the count of lines
+read, then the names that no agent list holds (CH49 rule 1). CI runs the
+same check on each built flavor, where node runs the agent's own
+`placeEnvFile` (`agent/test/tool-env.test.ts`).
 """
 
 from __future__ import annotations
@@ -44,13 +45,13 @@ FILE = (
 )
 
 #: `docker image inspect` prints STUB_CONFIG. The `cat` run prints
-#: STUB_FILE. The `node` run prints STUB_UNPLACED and exits STUB_NODE_EXIT.
+#: STUB_FILE. The `node` run prints STUB_REPORT and exits STUB_NODE_EXIT.
 DOCKER_STUB = """#!/usr/bin/env bash
 case "$*" in
   image*) cat "$STUB_CONFIG" ;;
   run*" --entrypoint /bin/cat "*) cat "$STUB_FILE" ;;
   run*" --workdir /opt/creche-facade --entrypoint node "*)
-    cat "$STUB_UNPLACED"
+    cat "$STUB_REPORT"
     exit "$STUB_NODE_EXIT" ;;
   *) exit 2 ;;
 esac
@@ -73,8 +74,10 @@ def _write(*names: str, env: dict[str, str] | None = None) -> subprocess.Complet
 
 
 def _check(
-    tmp_path: Path, config: str, file: str, unplaced: str = "", node_exit: int = 0
+    tmp_path: Path, config: str, file: str, report: str | None = None, node_exit: int = 0
 ) -> subprocess.CompletedProcess[str]:
+    """Run the check. With no `report`, node reports each line of `file`
+    read and no unplaced name."""
     stubs = tmp_path / "stubs"
     stubs.mkdir()
     docker = stubs / "docker"
@@ -82,12 +85,14 @@ def _check(
     docker.chmod(docker.stat().st_mode | stat.S_IXUSR)
     (tmp_path / "config").write_text(config, encoding="utf-8")
     (tmp_path / "file").write_text(file, encoding="utf-8")
-    (tmp_path / "unplaced").write_text(unplaced, encoding="utf-8")
+    if report is None:
+        report = f"{len(file.splitlines())}\n"
+    (tmp_path / "report").write_text(report, encoding="utf-8")
     env = {
         "PATH": f"{stubs}:/usr/bin:/bin",
         "STUB_CONFIG": str(tmp_path / "config"),
         "STUB_FILE": str(tmp_path / "file"),
-        "STUB_UNPLACED": str(tmp_path / "unplaced"),
+        "STUB_REPORT": str(tmp_path / "report"),
         "STUB_NODE_EXIT": str(node_exit),
         "TMPDIR": os.environ.get("TMPDIR", "/tmp"),
     }
@@ -149,7 +154,7 @@ def test_the_check_passes_the_file_that_the_writer_prints(tmp_path: Path) -> Non
 def test_the_check_names_each_name_that_no_agent_list_holds(tmp_path: Path) -> None:
     """A parent-image name, or a new ENV name, that sits in no list of
     `agent/src/tool-env.ts` fails the flavor (CH49 rule 1)."""
-    done = _check(tmp_path, CONFIG, FILE, unplaced="EMPTY\nNODE_VERSION\n")
+    done = _check(tmp_path, CONFIG, FILE, report="6\nEMPTY\nNODE_VERSION\n")
 
     assert done.returncode == 1
     assert done.stderr == (
@@ -165,7 +170,30 @@ def test_the_check_fails_when_node_cannot_run_the_agent(tmp_path: Path) -> None:
 
     assert done.returncode == 1
     assert done.stderr == (
-        "playpen-env-check: node in image:tag cannot run unplacedEnv of the agent\n"
+        "playpen-env-check: node in image:tag cannot run placeEnvFile of the agent\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("report", "read"),
+    [
+        pytest.param("", "no", id="no-report"),
+        pytest.param("5\n", "5", id="a-short-count"),
+        pytest.param("EMPTY\n", "EMPTY", id="no-count"),
+    ],
+)
+def test_the_check_fails_a_report_that_did_not_read_each_line(
+    tmp_path: Path, report: str, read: str
+) -> None:
+    """A node program that prints nothing, prints to stderr, or reads
+    fewer lines than the file holds fails, and never passes as a flavor
+    with no unplaced name."""
+    done = _check(tmp_path, CONFIG, FILE, report=report)
+
+    assert done.returncode == 1
+    assert done.stderr == (
+        f"playpen-env-check: placeEnvFile in image:tag read {read} lines of"
+        " /etc/creche/env, not 6\n"
     )
 
 
