@@ -834,10 +834,14 @@ empty list or a file that does not read binds no listener (Known gap
    (decision CH69 rule 17), and stderr on `/dev/null`. It advertises all
    refs (decision CH69 rule 18). `ChildIo` joins the stdout and the stdin
    of the child, and `relay::Splice` carries the bytes with the
-   half-close of decision CH67 rule 9: a shutdown closes stdin. The child
-   is the leader of a new process group. The drop of the link kills that
-   group with `creche_vmm_confine::group::kill`, so a `pack-objects`
-   child of git ends too, and tokio reaps the child (decision CH69 rule
+   half-close of decision CH67 rule 9: a shutdown closes stdin. The link
+   ends when both directions end, or once the stdout of the child ended
+   and each of its bytes reached the guest, so a silent guest cannot hold
+   an exited child. The child is the leader of a new process group. The
+   end of the link kills that group with
+   `creche_vmm_confine::group::kill`, so a `pack-objects` child of git
+   ends too, and then reaps the child. The drop of a link that did not
+   end kills the group, and tokio reaps the child (decision CH69 rule
    14).
 7. A refused or faulted clone writes one stderr line that names the
    family, the session and the reason, at most `NOTE_CAP` (100) per
@@ -863,7 +867,8 @@ clone, a v2 clone, the one error for a repo not listed and one not in
 the mirror, a removal, each refused path form, `git-receive-pack`, a
 symlinked repo, the line cap, the line wait with paused tokio time, the
 link cap, the kill of the child and of its own child at the drop of
-`Server`, and the fd need. `tests/start.rs` proves the bound set with a clone list, with both
+`Server`, the end and the reap of a link whose child exited, and the fd
+need. `tests/start.rs` proves the bound set with a clone list, with both
 lists, with an absent, empty or bad list, and the bind at a restore.
 
 ## The slots

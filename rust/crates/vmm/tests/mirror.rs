@@ -530,6 +530,45 @@ fn a_grandchild_of_git_dies_when_the_server_drops() {
     wait_dead(&grandchild);
 }
 
+/// A link ends when the child exits and each of its bytes reached the
+/// guest, also while the guest keeps the link open and sends nothing. The
+/// child is reaped first, so no zombie waits for the guest (decision CH69
+/// rule 14). The git program of the test writes its pid and one pkt-line,
+/// then exits.
+#[test]
+fn a_link_ends_when_git_exits() {
+    let scratch = Scratch::threaded("exits");
+    let pid_file = scratch.dir.join("git.pid");
+    let body = format!("echo $$ > '{}'\nprintf '0008run\\n'\n", pid_file.display());
+    let _server = scratch.serve_with(&scratch.fake_git("git-exits", &body));
+    let mut held = scratch.dial();
+    held.write_all(&request("/creche")).unwrap();
+    let mut answer = Vec::new();
+    held.read_to_end(&mut answer).unwrap();
+    assert_eq!(answer, b"0008run\n");
+    let pid = read_pid(&pid_file);
+    let deadline = Instant::now() + WAIT;
+    while !gone(&pid) {
+        assert!(Instant::now() < deadline, "the pid {pid} is not reaped");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    // The vmm closes the link after the reap, so a write fails then.
+    while held.write_all(b"0000").is_ok() {
+        assert!(Instant::now() < deadline, "the link stays open");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Whether no process has the pid `pid`, also no zombie.
+#[cfg(test)]
+fn gone(pid: &str) -> bool {
+    let output = Command::new("ps")
+        .args(["-o", "stat=", "-p", pid])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&output.stdout).trim().is_empty()
+}
+
 /// The pid that a git program of a test wrote to `file`.
 #[cfg(test)]
 fn read_pid(file: &Path) -> String {

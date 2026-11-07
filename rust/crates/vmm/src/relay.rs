@@ -434,6 +434,13 @@ impl Splice {
         }
     }
 
+    /// Whether the far stream reached EOF, each of its bytes reached the
+    /// near stream, and the write half of the near stream is shut down.
+    /// The mirror then ends its link (decision CH69 rule 14).
+    pub(crate) fn far_done(&self) -> bool {
+        self.down.shut
+    }
+
     /// The bytes that reached `far` and the bytes that reached `near` so
     /// far. The egress log writes both (decision CH69 rule 10).
     pub(crate) fn carried(&self) -> (u64, u64) {

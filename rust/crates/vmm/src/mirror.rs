@@ -33,9 +33,12 @@
 //!    request, `GIT_PROTOCOL=version=2`. stderr goes to `/dev/null`. The
 //!    child advertises all refs (decision CH69 rule 18). `ChildIo` joins
 //!    its stdout and stdin, and `relay::Splice` carries the bytes with the
-//!    half-close of decision CH67 rule 9. The child is the leader of a
-//!    new process group. The drop of the link kills that group, so a
-//!    `pack-objects` child of git ends too.
+//!    half-close of decision CH67 rule 9. The link ends when both
+//!    directions end, or once the stdout of the child ended and each of
+//!    its bytes reached the guest. The child is the leader of a new
+//!    process group. The end of the link kills that group, so a
+//!    `pack-objects` child of git ends too, and then reaps the child. The
+//!    drop of a link that did not end kills the group too.
 //! 7. A refused or faulted clone writes one stderr line, at most
 //!    `NOTE_CAP` per `NOTE_WINDOW` for one VM. A good clone writes none
 //!    (decision CH69 rule 24).
@@ -369,25 +372,48 @@ async fn serve_link(guest: UnixStream, clones: Arc<Clones>) {
     };
     let mut guest = guest;
     let mut splice = Splice::new(Vec::new());
-    poll_fn(|context| splice.carry(context, &mut guest, &mut io)).await;
-    // The drop of `upload` kills the group of a child that still runs.
-    drop(upload);
+    // Decision CH69 rule 14: the link also ends once the stdout of the
+    // child ended and each of its bytes reached the guest. No byte can
+    // reach a child whose stdout closed, so the half-close of CH67 rule 9
+    // loses nothing, and a guest that sends nothing more cannot hold the
+    // link and an exited child.
+    poll_fn(|context| match splice.carry(context, &mut guest, &mut io) {
+        Poll::Pending if !splice.far_done() => Poll::Pending,
+        _ => Poll::Ready(()),
+    })
+    .await;
+    upload.end().await;
 }
 
 /// The `git` child of one link, the leader of a process group of its own
-/// (decision CH69 rule 14). Its drop kills that group.
+/// (decision CH69 rule 14). The end of the link kills that group and
+/// reaps the child. The drop of a link that did not end kills the group,
+/// and tokio reaps the child.
 #[derive(Debug)]
 struct Upload(Child);
 
-impl Drop for Upload {
+impl Upload {
+    /// Kills the group of the child, then reaps the child.
+    async fn end(mut self) {
+        self.kill();
+        // The status of the child changes nothing for the link.
+        let _ = self.0.wait().await;
+    }
+
     /// Sends SIGKILL to the group of a child that is not reaped yet. A
     /// reaped child has no id, so the kill never names a group id that
-    /// the kernel gave to another process. tokio reaps the dropped child.
-    fn drop(&mut self) {
+    /// the kernel gave to another process.
+    fn kill(&self) {
         if let Some(leader) = self.0.id() {
             // ESRCH: no process of the group is left.
             let _ = group::kill(leader);
         }
+    }
+}
+
+impl Drop for Upload {
+    fn drop(&mut self) {
+        self.kill();
     }
 }
 
