@@ -153,6 +153,18 @@ and in the file together. After the first deploy, a change of a bridge
 row value (the ports 4000 and 8300, the family-state socket) needs a new
 `GUEST_INIT_PROTOCOL` (decision CH62 rule 15).
 
+## The family dir caps
+
+`rust/crates/wire/vectors/family.json` holds `egress_cap`, the most bytes
+of `egress.json` that the vmm reads (decisions CH70 rule 1, CH71). The
+vmm defines it as `EGRESS_CAP` in
+`rust/crates/vmm-confine/src/family.rs`, and
+`the_egress_cap_matches_the_wire_vectors` in that crate's
+`tests/family.rs` holds the two equal. caregiver refuses a family whose
+file would pass the cap. `caregiver/tests/test_reach_files.py` holds its
+`EGRESS_CAP` equal to the same file. Change the value in all three places
+together.
+
 ## A struct on the wire
 
 A derived `Deserialize` of a struct also reads a JSON array, its fields in

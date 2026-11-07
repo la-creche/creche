@@ -17,6 +17,7 @@ from caregiver.driver import DriverError, FakeDriver, SandboxSpec
 from caregiver.lan import Port, url
 from caregiver.litellm_keys import FakeLiteLLMKeys, LiteLLMError, key_alias
 from caregiver.playpen_env import read_playpen_env
+from caregiver.reach_files import EGRESS_CAP
 from caregiver.status import now_rfc3339
 from caregiver.switch import FakeSwitchClient, SwitchClient
 from caregiver_helpers import (
@@ -122,6 +123,32 @@ def test_apply_once_writes_the_egress_file_before_the_create(
 
     apply_chat(registry_root, state_root, driver=CheckingDriver())
     assert seen == [True]
+
+
+def test_an_egress_list_over_the_cap_stops_the_apply(registry_root: Path, state_root: Path) -> None:
+    """Decision CH71: the refusal comes before the key step, so no key is
+    minted, no sandbox call runs and the last good file stays byte for
+    byte. The one error names the cap."""
+    write_registry(registry_root, egress=["github.com"])
+    good = apply_chat(registry_root, state_root)
+    egress_path = paths.egress_path(state_root, "chat")
+    before = egress_path.read_bytes()
+
+    write_registry(registry_root, egress=[f"h{index:05}.example.com" for index in range(1000)])
+    driver = FakeDriver()
+    litellm = FakeLiteLLMKeys()
+    bad = apply_chat(registry_root, state_root, driver=driver, litellm=litellm)
+
+    assert bad.ok is False
+    assert bad.status.state is FamilyState.INVALID
+    assert bad.status.applied_rev == good.status.applied_rev
+    assert bad.status.validation.error_count == 1
+    first_error = bad.status.validation.first_error
+    assert first_error is not None
+    assert first_error.endswith(f"the cap is {EGRESS_CAP}")
+    assert egress_path.read_bytes() == before
+    assert litellm.minted == 0
+    assert driver.calls == []
 
 
 def test_it_creates_the_sandbox_once(registry_root: Path, state_root: Path) -> None:

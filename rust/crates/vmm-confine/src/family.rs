@@ -90,7 +90,10 @@ pub const SHAPE_CAP: u64 = 4096;
 
 /// The most bytes of `egress.json`: 64 KiB, room for about a thousand
 /// entries (decision CH70 rule 1). A larger file is
-/// `EgressFault::TooLarge`, so the vmm allows nothing.
+/// `EgressFault::TooLarge`, so the vmm allows nothing. caregiver refuses
+/// a family whose file would pass it (decision CH71).
+/// `rust/crates/wire/vectors/family.json` holds the same value for
+/// caregiver, and a test of each side holds it equal.
 pub const EGRESS_CAP: u64 = 64 * 1024;
 
 /// The flags of each directory open. `O_NOFOLLOW` refuses a symlink as the

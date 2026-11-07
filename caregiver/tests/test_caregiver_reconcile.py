@@ -24,6 +24,7 @@ from caregiver.driver import DriverError, FakeDriver, SandboxSpec
 from caregiver.egress import EgressConfig, litellm_endpoint, pep_endpoint
 from caregiver.lan import Port, url
 from caregiver.litellm_keys import FakeLiteLLMKeys, HttpLiteLLMKeys, LiteLLMError, Spend
+from caregiver.reach_files import EGRESS_CAP
 from caregiver.reconcile import (
     DESTROY_STEP,
     SWITCH_STEP,
@@ -393,6 +394,28 @@ def test_an_invalid_edit_keeps_the_egress_file(fleet: Fleet) -> None:
     fleet.write(egress=["*.python.org"])
     fleet.run()
     assert egress_path.read_bytes() == before
+
+
+def test_an_egress_list_over_the_cap_is_refused(fleet: Fleet) -> None:
+    """Decision CH71: the vmm would allow nothing for a file over its cap,
+    so the revision reads `invalid` with one error that names the cap.
+    The refusal comes before any write, so the last good file stays byte
+    for byte and no step runs (invariant 19)."""
+    fleet.write(egress=[DOCS])
+    first = fleet.run()
+    egress_path = paths.egress_path(fleet.state_root, FAMILY)
+    before = egress_path.read_bytes()
+    fleet.forget_calls()
+    fleet.write(egress=[f"h{index:05}.example.com" for index in range(1000)])
+    result = fleet.run()
+    assert result.status.state is FamilyState.INVALID
+    assert result.status.applied_rev == first.status.registry_rev
+    assert result.status.validation.error_count == 1
+    first_error = result.status.validation.first_error
+    assert first_error is not None
+    assert first_error.endswith(f"the cap is {EGRESS_CAP}")
+    assert egress_path.read_bytes() == before
+    assert fleet.ops() == ()
 
 
 def test_a_refused_egress_call_raises_a_blocking_fault(fleet: Fleet) -> None:

@@ -69,6 +69,14 @@ host where something has gone wrong.
   The planes never enter it (decision CH6-2). The file sits beside
   `config/`, mode 0640, and bytes equal to the file on disk write nothing.
   The sbx egress step stays until the cut.
+- A revision whose `egress.json` would pass `EGRESS_CAP` of
+  `reach_files.py`, the 64 KiB cap of the vmm (decision CH70 rule 1), is
+  refused (decision CH71). The pass and `apply-once` render the file
+  before the key step, so nothing lands. The family reads `invalid` with
+  one error that names the cap, and the last good `egress.json` stays, as
+  for a refused table of `policy.toml` (invariant 19).
+  `rust/crates/wire/vectors/family.json` holds the cap, and
+  `test_reach_files.py` holds `EGRESS_CAP` equal to it.
 - No secret on argv, in a URL or in a log line. The master key comes from
   `LITELLM_MASTER_KEY` in the environment.
 - Each verb that applies the registry (`serve`, `reconcile-once`,
@@ -428,9 +436,3 @@ Nothing here touches a real sandbox or LiteLLM.
   absent file. It mints a new key and a new token, writes epoch 1 and
   writes one error line. Contract 03 §12 rule 3 says that the epoch
   increases on every write (`steps.py`).
-- `CONTRACT-QUESTION` in `reach_files.py`. No row gives a rule for an
-  `egress` list whose `egress.json` is over the 64 KiB cap of the vmm
-  (decision CH70 rule 1). caregiver writes the file all the same. The vmm
-  then allows nothing for the family. Its `check` answers `not_valid`, and
-  its log line names `TooLarge` (decision CH70 rule 2). caregiver itself
-  reports no fault and no status entry for it.
