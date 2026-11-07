@@ -137,9 +137,9 @@ struct Fake {
     /// Adds a `vsock.sock_1103` listener to each run dir, a port that the
     /// vmm does not bind.
     extra: AtomicBool,
-    /// For each launch: whether a dial of 1101 and of 1102 connected at
-    /// the launch, before CH would start.
-    listening: Mutex<Vec<[bool; 2]>>,
+    /// For each launch: whether a dial of 1100, 1101 and 1102 connected
+    /// at the launch, before CH would start.
+    listening: Mutex<Vec<[bool; 3]>>,
     /// Fails each launch.
     fail: AtomicBool,
     /// Holds each launch until the test clears it.
@@ -185,7 +185,7 @@ impl Fake {
             args.push("--net".to_owned());
         }
         let run = launch.files().run_dir().path();
-        let listening = [1101, 1102].map(|port| {
+        let listening = [1100, 1101, 1102].map(|port| {
             let listener = run.join(format!("vsock.sock_{port}"));
             UnixStream::connect(listener).is_ok()
         });
@@ -2254,17 +2254,18 @@ fn a_stale_link_to_a_held_slot_removes_nothing_of_its_vm() {
     assert!(vsock.exists());
 }
 
-/// Plan PR V6: the listeners of host ports 1101 and 1102 take a dial at
-/// the launch, before CH starts (decisions CH6-2, CH56 rule 1).
+/// Plan PRs V6 and V8: the listeners of host ports 1100, 1101 and 1102
+/// take a dial at the launch, before CH starts (decisions CH6-2, CH56
+/// rule 1).
 #[test]
 fn listeners_exist_before_the_boot() {
     let test = Test::new("planes-boot", |_| {});
     assert_eq!(test.start(0), Ok(()));
     assert!(!test.restored(0));
-    assert_eq!(*test.fake.listening.lock().unwrap(), [[true, true]]);
+    assert_eq!(*test.fake.listening.lock().unwrap(), [[true; 3]]);
 }
 
-/// A restore empties the slot and binds both listeners again before CH
+/// A restore empties the slot and binds each listener again before CH
 /// starts, so a restored guest that dials again finds them (decisions
 /// CH6-2, CH62 rule 14).
 #[test]
@@ -2277,7 +2278,7 @@ fn a_restore_binds_the_listeners_again() {
     test.reply(0, "Paused", &[]);
     assert_eq!(test.start(0), Ok(()));
     assert!(test.restored(1));
-    assert_eq!(*test.fake.listening.lock().unwrap(), [[true, true]; 2]);
+    assert_eq!(*test.fake.listening.lock().unwrap(), [[true; 3]; 2]);
 }
 
 /// A dial of 1101 reaches the plane of the config while the VM runs. The
@@ -2330,12 +2331,12 @@ fn the_listeners_go_with_the_vm() {
     }
 }
 
-/// The deny check takes 1101 and 1102 as the bound set: a start with both
-/// listeners passes. A listener of a port that the vmm did not bind fails
-/// the check with `egress_assert_failed`, and the VM stops (decisions
-/// CH6-3, CH14, CH49 rule 3).
+/// The deny check takes 1100, 1101 and 1102 as the bound set: a start
+/// with the three listeners passes. A listener of a port that the vmm did
+/// not bind fails the check with `egress_assert_failed`, and the VM stops
+/// (decisions CH6-3, CH14, CH49 rule 3, plan PR V8).
 #[test]
-fn the_egress_check_names_1101_and_1102() {
+fn the_egress_check_names_1100_1101_and_1102() {
     let test = Test::new("planes-deny", |_| {});
     assert_eq!(test.start(0), Ok(()));
     let mut listeners: Vec<String> = fs::read_dir(test.dir.join("run/slot/0"))
@@ -2344,10 +2345,55 @@ fn the_egress_check_names_1101_and_1102() {
         .filter(|name| name.starts_with("vsock.sock_"))
         .collect();
     listeners.sort();
-    assert_eq!(listeners, ["vsock.sock_1101", "vsock.sock_1102"]);
+    assert_eq!(
+        listeners,
+        ["vsock.sock_1100", "vsock.sock_1101", "vsock.sock_1102"]
+    );
 
     test.fake.extra.store(true, Ordering::SeqCst);
     assert_eq!(test.start(1), Err(StartFault::EgressAssertFailed));
     assert_eq!(test.fault_codes(), ["egress_assert_failed"]);
     assert!(test.stopped(1));
+}
+
+/// `creds.json` of the family `chat`, as caregiver writes it.
+const CREDS: &str = r#"{"epoch":3,"litellm_key":"sk-start-key","pep_token":"abababababababababababababababababababababababababababababababab","written_at":"2026-11-06T12:00:00Z"}"#;
+
+/// A pull on host port 1100 does not set `last_use` (decision CH62 rule
+/// 22). The VM pulls 300 ms after its start, and the idle check 100 ms
+/// past the timeout from the start still takes it. The reply is the
+/// `state` of the family of the session in the family root of the config,
+/// so the start hands the server the right family and root.
+#[test]
+fn a_pull_does_not_set_last_use() {
+    let test = Test::new("pull-use", |_| {});
+    let family = test.dir.join("families/chat");
+    fs::create_dir_all(family.join("creds")).unwrap();
+    fs::write(family.join("creds/creds.json"), CREDS).unwrap();
+    fs::write(
+        family.join("config/runtime.json"),
+        r#"{"shell":true,"sandbox_tools":["read"],"model_alias":"litellm/test"}"#,
+    )
+    .unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    let started = Instant::now();
+    std::thread::sleep(Duration::from_millis(300));
+    let path = test.dir.join("run/slot/0/vsock.sock_1100");
+    // The current-thread runtime runs the listener only inside
+    // `block_on`, so the guest side runs in `spawn_blocking`.
+    let reply = test.runtime.block_on(test.runtime.spawn_blocking(move || {
+        let mut guest = UnixStream::connect(path).unwrap();
+        guest
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        guest.write_all(b"{}\n").unwrap();
+        let mut reply = String::new();
+        BufReader::new(guest).read_line(&mut reply).unwrap();
+        reply
+    }));
+    let reply: serde_json::Value = serde_json::from_str(&reply.unwrap()).unwrap();
+    assert_eq!(reply["state"]["creds"]["litellm_key"], "sk-start-key");
+    let at = started + IDLE_TIMEOUT + Duration::from_millis(100);
+    let slept = test.runtime.block_on(test.hook.sleep_idle(at));
+    assert_eq!(slept, [test.rows[0].id.clone()]);
 }

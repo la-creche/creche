@@ -1,0 +1,8 @@
+{
+  "epoch": 3,
+  "litellm_key": "sk-fixture-key-0001",
+  "pep_token": "abababababababababababababababababababababababababababababababab",
+  "written_at": "2026-11-06T12:00:00Z",
+  "previous_pep_token": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+  "previous_expires_at": "2026-11-06T12:05:00Z"
+}
