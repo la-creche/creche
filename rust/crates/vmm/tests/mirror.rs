@@ -7,7 +7,7 @@
 //! family root holds the family `code` with a `repos.json`, and a scratch
 //! mirror holds real repos. No test reaches the network.
 
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::os::unix::net::UnixStream;
@@ -157,13 +157,20 @@ impl Scratch {
     }
 
     /// Sends `bytes` on a new link, half-closes it and gives every byte of
-    /// the answer.
+    /// the answer. On Linux a close by the vmm with bytes of the request
+    /// still unread resets the link (rust job run 42420171022), so a reset
+    /// counts as the end of the answer, and the half-close may then find the
+    /// link gone.
     fn ask(&self, bytes: &[u8]) -> Vec<u8> {
         let mut stream = self.dial();
         stream.write_all(bytes).unwrap();
-        stream.shutdown(Shutdown::Write).unwrap();
+        if let Err(error) = stream.shutdown(Shutdown::Write) {
+            assert_eq!(error.kind(), ErrorKind::NotConnected, "{error}");
+        }
         let mut answer = Vec::new();
-        stream.read_to_end(&mut answer).unwrap();
+        if let Err(error) = stream.read_to_end(&mut answer) {
+            assert_eq!(error.kind(), ErrorKind::ConnectionReset, "{error}");
+        }
         answer
     }
 
@@ -561,10 +568,19 @@ fn clones_for_the_log_test() {
     let mut bytes = Vec::new();
     past.read_to_end(&mut bytes).unwrap();
     assert!(bytes.is_empty());
-    // The drop of `Server` first cuts the held links, so their close
-    // writes no line.
+    // The drop of `Server` cuts the held links. Tokio ends an aborted task
+    // later, so the test waits until each held link reads the end of its
+    // cut before it closes its own side. Else a link task that still runs
+    // reads that close as an empty request and writes a `bad_request` line
+    // (rust job run 42421954640).
     drop(server);
-    drop(held);
+    for mut link in held {
+        let mut bytes = Vec::new();
+        if let Err(error) = link.read_to_end(&mut bytes) {
+            assert_eq!(error.kind(), ErrorKind::ConnectionReset, "{error}");
+        }
+        assert!(bytes.is_empty());
+    }
 }
 
 /// A refused or faulted clone writes one stderr line, and a good clone

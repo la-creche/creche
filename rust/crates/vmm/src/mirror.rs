@@ -4,8 +4,9 @@
 //! (decision CH46 rule 4), and Cloud Hypervisor connects each dial to
 //! `vsock.sock_1103` in the run dir of the VM (decision CH24). The vmm
 //! listens there only for a family whose `repos.json` lists a repo
-//! (decision CH69 rule 13). Without the listener the guest dial fails, so
-//! a VM with no list fails closed.
+//! (decision CH69 rule 13) or is present and does not read (decision
+//! CH73 rule 1). Without the listener the guest dial fails, so a VM with
+//! no list fails closed.
 //!
 //! 1. `bind` binds the listener beside the plane listeners, with their
 //!    lifecycle: after `RunRoot::link_vm` emptied the slot and after

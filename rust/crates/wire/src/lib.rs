@@ -1905,15 +1905,12 @@ impl std::error::Error for RepoListError {}
 /// The repos of a clone list: at most 32 names (decision CH69 rule 15). An
 /// empty list allows no clone.
 //
-// CONFLICT with decision CH69 rule 15, held for David: Q61-15 option A
-// says "Duplicates refused", and this list reads a name given twice.
-// Decision CH70 rule 4 allows a duplicate only in `FamilyEgress`, so no
-// row allows this one. A refusal in Rust alone splits the readers:
-// datamodel-codegen 0.87 drops `uniqueItems`, so the Python model reads
-// the name twice. The question: amend rule 15 so that CH70 rule 4 also
-// covers `RepoList`, or decide how the Python reader refuses a name
-// twice. A name twice serves the same repo. The family grammar (plan PR
-// F1) and caregiver (plan PR C2) refuse it before any file exists.
+// Decision CH73 rule 3 amends CH69 rule 15 as CH70 rule 4 did for
+// `FamilyEgress`: the list reads a name given twice, and the family
+// grammar (plan PR F1) and caregiver (plan PR C2) refuse it before any
+// file is written. datamodel-codegen 0.87 drops `uniqueItems`, so a
+// refusal in Rust alone would split the Rust and Python readers. A name
+// twice serves the same repo.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "Vec<RepoName>", into = "Vec<RepoName>")]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
