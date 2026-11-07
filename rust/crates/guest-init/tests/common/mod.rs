@@ -5,9 +5,11 @@
 
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
+
+use creche_wire::guest::SESSION_DISK_MOUNT;
 
 /// The variable that names the files of the setup script.
 const DIR: &str = "CRECHE_KVM_DIR";
@@ -17,6 +19,18 @@ const MKE2FS: &str = "/usr/sbin/mke2fs";
 
 /// The size of each test disk.
 const DISK_BYTES: u64 = 16 << 20;
+
+/// The dirs of the test root disk: each mount point of the boot plan.
+const ROOT_DIRS: [&str; 8] = [
+    "dev",
+    "proc",
+    "sys",
+    "tmp",
+    "run",
+    "root",
+    "var/cache",
+    "var/tmp",
+];
 
 /// A boot takes about 0.6 s on the runner (fact 79).
 pub const BOOT: Duration = Duration::from_secs(30);
@@ -109,4 +123,49 @@ pub fn wait_for(vm: &mut Vm, serial: &Path, what: &str, done: impl Fn(&[String])
         );
         sleep(Duration::from_millis(20));
     }
+}
+
+/// Waits until CH exits, as it does when the guest powers off. It panics
+/// with the serial text when `BOOT` passes first.
+pub fn wait_for_exit(vm: &mut Vm, serial: &Path) -> ExitStatus {
+    let deadline = Instant::now() + BOOT;
+    loop {
+        if let Some(status) = vm.0.try_wait().unwrap() {
+            return status;
+        }
+        let log = fs::read_to_string(serial).unwrap_or_default();
+        assert!(
+            Instant::now() < deadline,
+            "CH runs after {BOOT:?}. Serial:\n{log}"
+        );
+        sleep(Duration::from_millis(20));
+    }
+}
+
+/// Builds a test root disk whose env file holds `env`, and an empty
+/// session disk, and returns the CH command with both. The root disk
+/// goes first, read-only, then the session disk (decisions CH8-7, CH8-8,
+/// CH50 rule 10).
+pub fn vm_with_env(work: &Path, env: &[u8]) -> Command {
+    let tree = work.join("tree");
+    let session_dir = SESSION_DISK_MOUNT.trim_start_matches('/');
+    for dir in ROOT_DIRS.into_iter().chain([session_dir, "etc/creche"]) {
+        fs::create_dir_all(tree.join(dir)).unwrap();
+    }
+    fs::write(tree.join("etc/creche/env"), env).unwrap();
+    let root = work.join("root.img");
+    let session = work.join("session.img");
+    ext4(&root, Some(&tree));
+    ext4(&session, None);
+
+    let mut command = ch(&work.join("serial.log"));
+    command
+        .arg("--disk")
+        .arg(format!(
+            "path={},readonly=on,image_type=raw",
+            root.display()
+        ))
+        .arg("--disk")
+        .arg(format!("path={},image_type=raw", session.display()));
+    command
 }
