@@ -387,6 +387,7 @@ class CheckReason(StrEnum):
     NOT_LISTED = "not_listed"
     NOT_PUBLIC = "not_public"
     NO_ADDRESS = "no_address"
+    NOT_VALID = "not_valid"
 
 
 class CheckRefused(BaseModel):

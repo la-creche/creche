@@ -1,8 +1,8 @@
 //! The `check` handler over raw bytes on a temp socket (decisions CH6-3,
-//! CH69 rules 1 to 3). A scratch family root holds the family `code` with
-//! an `egress.json`. Each verdict of the route is the verdict of
-//! `egress::rule` on the same list and target. No test reaches the
-//! network: a listed name resolves through `/etc/hosts` (`localhost`).
+//! CH69 rules 1 to 3, CH70 rule 2). A scratch family root holds the
+//! family `code` with an `egress.json`. Each verdict of the route is the
+//! verdict of `egress::rule` on the same list and target. No test reaches
+//! the network: a listed name resolves through `/etc/hosts` (`localhost`).
 
 use std::io::{ErrorKind, Read, Write};
 use std::os::unix::net::UnixStream;
@@ -248,20 +248,36 @@ fn check_answers_the_rule_verdict_for_each_case() {
     server.end();
 }
 
-/// An `egress.json` that does not read allows nothing: `internal` 500.
+/// An `egress.json` that is present and does not read allows nothing: the
+/// refusal `not_valid` with status 200, never `internal` 500 (decision
+/// CH70 rule 2). The test reads the raw status and body, so a handler that
+/// answers 500 again fails it.
 #[test]
-fn a_bad_egress_file_gets_internal() {
+fn a_bad_egress_file_gets_not_valid() {
     let server = Server::start("check-bad");
     let request = json!({"family": "code", "target": "github.com:443"}).to_string();
+    let not_valid = r#"{"refused":{"reason":"not_valid"}}"#.to_owned();
+    // A valid list padded past the cap of 64 KiB (decision CH70 rule 1).
+    let past_cap = format!(r#"{{"hosts":[]}}{}"#, " ".repeat(64 * 1024));
     for text in [
         r#"{"hosts":["github.com"]}"#,
         "{",
         r#"{"hosts":[],"repos":[]}"#,
+        &past_cap,
     ] {
         server.egress(text);
         let answer = server.ask(HOST_API_PROTOCOL, &request);
-        assert_eq!(answer, (500, r#"{"code":"internal"}"#.to_owned()), "{text}");
+        assert_eq!(
+            answer,
+            (200, not_valid.clone()),
+            "{}",
+            text.get(..40).unwrap_or(text)
+        );
     }
+    std::fs::remove_file(server.dir.join("families/code/egress.json")).unwrap();
+    std::fs::create_dir(server.dir.join("families/code/egress.json")).unwrap();
+    let answer = server.ask(HOST_API_PROTOCOL, &request);
+    assert_eq!(answer, (200, not_valid), "a dir as egress.json");
     server.end();
 }
 

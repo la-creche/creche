@@ -447,8 +447,9 @@ of host port 1104 uses too. A check boots no VM.
    reply allows the target at the records, in the resolver's order, with
    no record twice.
 
-An `egress.json` that is present and does not read gets `internal` 500,
-and the vmm logs the fault (Known gap 24). `tests/egress_rule.rs` proves
+An `egress.json` that is present and does not read gets the refusal
+`not_valid` with status 200, and the vmm logs one line that names the
+same reason (decision CH70 rule 2). `tests/egress_rule.rs` proves
 each verdict of the rule: `localhost` resolves through `/etc/hosts`, and
 `judge` takes the addresses that the test gives. For `no_address` it
 lists a name under `.invalid` with a 64-letter label, so the resolver
@@ -456,8 +457,9 @@ may fail before a query, and else gets NXDOMAIN (RFC 6761). An IPv6
 literal with a port, such as `::ffff:127.0.0.1:443`, is refused only by
 its text before the last `:`, and a test holds that case.
 `tests/egress_check.rs` proves the route: each target gets the verdict
-of the rule, an absent file, a bad file, and the mismatch reply to a
-client of protocol 1. `serve_lists_refuses_and_stops_on_the_signal` in
+of the rule, an absent file, a bad file (`not_valid` with 200, never
+500), and the mismatch reply to a client of protocol 1.
+`serve_lists_refuses_and_stops_on_the_signal` in
 `src/compose/tests.rs` sends one `check` through the shipped handler
 set.
 
@@ -1075,11 +1077,6 @@ job kvm runs it.
     listener, and per link its stream and the 6 fds of one `read_state`)
     adds to the raise of decision CH67 rule 4 (20608), so the raise is
     49344.
-24. CONTRACT-QUESTION (plan PR E1): no row decides the answer of `check`
-    for an `egress.json` that is present and does not read. The handler
-    answers `internal` 500 and logs the fault (`src/handlers/check.rs`).
-    It allows nothing and adds no code or reason. A typed reason costs a
-    new `HOST_API_PROTOCOL` (decision CH34 rule 8).
 
 ## Caller duties
 

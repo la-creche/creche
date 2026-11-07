@@ -341,6 +341,16 @@
       "note": "no_address: the name resolves to nothing"
     },
     {
+      "json": "{\"reason\":\"not_valid\"}",
+      "written": "{\"reason\":\"not_valid\"}",
+      "note": "not_valid: an egress.json that does not read"
+    },
+    {
+      "json": "{\"reason\":\"Not_Valid\"}",
+      "written": null,
+      "note": "not_valid in the wrong case"
+    },
+    {
       "json": "{\"reason\":\"Not_Listed\"}",
       "written": null,
       "note": "a reason in the wrong case"
@@ -381,6 +391,11 @@
       "json": "{\"refused\":{\"reason\":\"not_listed\"}}",
       "written": "{\"refused\":{\"reason\":\"not_listed\"}}",
       "note": "a refused target"
+    },
+    {
+      "json": "{\"refused\":{\"reason\":\"not_valid\"}}",
+      "written": "{\"refused\":{\"reason\":\"not_valid\"}}",
+      "note": "a refusal for an egress.json that does not read"
     },
     {
       "json": "{\"allowed\":{\"addresses\":[\"140.82.112.3\"]},\"refused\":{\"reason\":\"not_listed\"}}",

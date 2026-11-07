@@ -1817,13 +1817,11 @@ object_only!(EgressHost);
 /// `HostName` equal to it. No route reaches the type, so it needs no new
 /// `HOST_API_PROTOCOL` (decision CH33 rule 8).
 //
-// CONTRACT-QUESTION (plan PR E1): decision CH69 rule 5 makes the file a
-// wire type in canonical form, sorted and with no entry twice. The type
-// reads a list in any order and with duplicates, a wider reading than
-// rule 5. JSON Schema cannot say "sorted". `uniqueItems` can say "no
-// duplicates", but datamodel-codegen 0.87 drops it, so a refusal in Rust
-// alone would split the Rust and Python readers. Neither changes a
-// verdict. wire/AGENTS.md Known gap 3.
+// Decision CH70 rule 4: the type reads a list in any order and with
+// duplicates, and caregiver writes the sorted, duplicate-free form of
+// decision CH69 rule 5. JSON Schema cannot say "sorted", and
+// datamodel-codegen 0.87 drops `uniqueItems`, so a refusal in Rust alone
+// would split the Rust and Python readers. Neither changes a verdict.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(remote = "Self", deny_unknown_fields)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
@@ -1864,6 +1862,8 @@ object_only!(CheckRequest);
 /// 4. `not_public`: a record of the name is not a public address
 ///    (decisions CH6-4, CH69 rule 8).
 /// 5. `no_address`: the name resolves to no address.
+/// 6. `not_valid`: the `egress.json` of the family is present and does not
+///    read, so the vmm allows nothing (decision CH70 rule 2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
@@ -1874,6 +1874,7 @@ pub enum CheckReason {
     NotListed,
     NotPublic,
     NoAddress,
+    NotValid,
 }
 
 /// One octet of an IPv4 address in decimal, with no zero first.
@@ -1891,10 +1892,10 @@ fn ip_address_pattern() -> String {
 /// hex digits. The IPv6 form has no `::`, so a schema pattern checks it
 /// exactly.
 //
-// CONTRACT-QUESTION (plan PR E1): no row decides the wire text of an IP
-// address. This IPv6 text is not the RFC 5952 form (`2606:50c0:8000::153`).
+// Decision CH70 rule 3 sets this text. It is not the RFC 5952 form
+// (`2606:50c0:8000::153`), which needs a looser pattern.
 // `schema/host-api-2.json` freezes it, so a change after that ships needs
-// protocol 3 (decision CH34 rule 8). wire/AGENTS.md Known gap 2.
+// protocol 3 (decision CH34 rule 8).
 fn ip_address_text(address: IpAddr) -> String {
     match address {
         IpAddr::V4(address) => address.to_string(),
@@ -1909,8 +1910,7 @@ fn ip_address_text(address: IpAddr) -> String {
 /// reader refuses each other text of the address, so the Rust type and the
 /// generated models read the same texts.
 //
-// CONTRACT-QUESTION (plan PR E1): the text of `ip_address_text`, which no
-// row decides. wire/AGENTS.md Known gap 2.
+// Decision CH70 rule 3 sets the text of `ip_address_text`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 #[cfg_attr(test, derive(schemars::JsonSchema))]

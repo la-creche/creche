@@ -88,10 +88,9 @@ pub const RETRY_PAUSE: Duration = Duration::from_millis(10);
 /// (decision CH50 rule 9).
 pub const SHAPE_CAP: u64 = 4096;
 
-/// The most bytes of `egress.json`.
-// CONTRACT-QUESTION: no row sets this cap. It is the 64 KiB of plan PR
-// E1: room for about a thousand entries, far past any family file today.
-// A larger file is `EgressFault::TooLarge`, so the vmm allows nothing.
+/// The most bytes of `egress.json`: 64 KiB, room for about a thousand
+/// entries (decision CH70 rule 1). A larger file is
+/// `EgressFault::TooLarge`, so the vmm allows nothing.
 pub const EGRESS_CAP: u64 = 64 * 1024;
 
 /// The flags of each directory open. `O_NOFOLLOW` refuses a symlink as the

@@ -105,8 +105,9 @@ table of the three vmm crates.
   file sits in the family dir beside `config/`, so the read needs no
   swap retry. It opens the family dir with `O_NOFOLLOW`, then the file
   with one `openat` (`O_NOFOLLOW`, `O_NONBLOCK`). It checks a regular
-  file, reads at most `EGRESS_CAP` (64 KiB) and reads the bytes through
-  `creche_wire::strict` as `FamilyEgress` (decision CH65 rule 2). An
+  file, reads at most `EGRESS_CAP` (64 KiB, decision CH70 rule 1) and
+  reads the bytes through `creche_wire::strict` as `FamilyEgress`
+  (decision CH65 rule 2). An
   absent family dir or file is the empty list, so the family gets no
   egress. A symlink, a file that is not regular, a file past the cap and
   bytes that are not one `FamilyEgress` are each an `EgressFault`.
@@ -410,7 +411,6 @@ table of the three vmm crates.
 - Closed by decision CH67 rule 4: the fd limit of the vmm, its headroom
   of 4096 and the refusal of a short hard limit (`nofile.rs`,
   `rust/crates/vmm/AGENTS.md` Known gap 21).
-- CONTRACT-QUESTION (plan PR E1): no row sets `EGRESS_CAP`. The read
-  takes the 64 KiB of plan PR E1, room for about a thousand entries. A
-  larger file is `EgressFault::TooLarge`, so the vmm allows nothing. A
-  change of the cap costs one constant and its test.
+- Closed by decision CH70 rule 1: `EGRESS_CAP` is 64 KiB, room for
+  about a thousand entries. A larger file is `EgressFault::TooLarge`, so
+  the vmm allows nothing.

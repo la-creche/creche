@@ -346,7 +346,8 @@ export const wire = {
             "ip_literal",
             "not_listed",
             "not_public",
-            "no_address"
+            "no_address",
+            "not_valid"
           ],
           "title": "CheckReason",
           "type": "string"
