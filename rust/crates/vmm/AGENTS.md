@@ -145,11 +145,18 @@ A fault names the key and never the value, as in `env/AGENTS.md`.
 | `VMM_RAM_CAP_GIB` | `80` | `Limits::ram_cap` (gap G14) |
 | `VMM_FREE_FLOOR_GIB` | `50` | `Limits::free_floor` (gap G14) |
 | `VMM_SNAPSHOT_BUDGET_GIB` | `150` | `StartConfig::budget`, for `retention::sweep` (gap G14) |
+| `VMM_LITELLM_ADDR` | `${AGENT_LAN_ADDRESS}:4000` | the bridge of host port 1101 (decision CH62 rule 20) |
+| `VMM_CHAPERONE_ADDR` | `${AGENT_LAN_ADDRESS}:8300` | the bridge of host port 1102 (decision CH62 rule 20) |
 
 Each path is absolute with no `..` component. The run root holds no
 `:`, because systemd joins the paths of more than one
 `RuntimeDirectory=` entry with `:` (gap G5 option A). A size is decimal
-digits, a whole number of GiB. `tests/config.rs` holds each fault. It
+digits, a whole number of GiB. A plane address is an IP address and a
+port, as `std::net::SocketAddr` parses it (Known gap 19). Decision CH62
+rule 20 names `10.0.0.39`, the LAN address of Hyperion. Rule 3 of
+`env/AGENTS.md` keeps a deployment address out of `default.env`, so
+each default takes `AGENT_LAN_ADDRESS`, as `CHAPERONE_LISTEN` does. On
+Hyperion it resolves to the address of the rule. `tests/config.rs` holds each fault. It
 holds each path default of the table literally, and the size defaults
 equal to `Limits::DESIGN` and `retention::BUDGET`.
 `tests/binary.rs` runs `vmm serve` with no KVM: a missing or bad key
@@ -459,7 +466,9 @@ table, and the start boots it again. A cold boot runs these steps:
    with none free the slot of its first eviction (see "The slots"). `host_full` writes no fault. Then each eviction that
    admission names runs (see "The eviction").
 3. In `spawn_blocking`: `RunRoot::link_vm` links `vm/<id>` to the slot
-   (PR D16), then `remove_stale` (decision CH19 (4)), the store check of
+   (PR D16), then `remove_stale` (decision CH19 (4)), `planes::bind` of
+   the listeners of host ports 1101 and 1102 (see "The plane bridges"),
+   the store check of
    the kernel, the guest init initramfs and the root disk of the flavor
    (decision CH44 rule 2),
    `SessionDisks::for_boot` (decision CH21-4), `snapshots/` with mode
@@ -470,11 +479,12 @@ table, and the start boots it again. A cold boot runs these steps:
    files of the VM, the vmm unit and `Launch::in_slot` (decisions CH8-3,
    CH8-5, CH8-8, CH30, CH55, CH60 rule 1). A vmm with no unit fails the
    start before the link, with no file touched.
-4. `control::open` for the first `ControlReady`. It keeps the facade
+4. `Bound::serve` starts the plane bridges. Then `control::open` for
+   the first `ControlReady`. It keeps the facade
    state in `ControlState`, writes a turn end to the row, and clears the
    faults of the family (contract 05 §3.3.1 rule 8).
-5. `deny::check` with an empty bound set. Decision CH49 rule 3 binds
-   1104 from phase 7 on.
+5. `deny::check` with the bound set 1101 and 1102 (plan PR V6).
+   Decision CH49 rule 3 binds 1104 from phase 7 on.
 6. `AcpLink::dial` of guest port 1201 (decision CH50 rule 2).
 
 Each fault but `host_full` goes to the fault file of the family
@@ -491,6 +501,43 @@ removes each VM whose process exited, so an exited VM holds no RAM.
 The `Launcher` trait
 lets `tests/start.rs` fake the launch, the command line file and the
 guest. Every other step there is the real one on a scratch dir.
+
+## The plane bridges
+
+`src/planes.rs` bridges the planes on host ports 1101 and 1102 (plan PR
+V6, decisions CH6-2, CH14). Guest init splices guest 127.0.0.1:4000 and
+:8300 to a vsock dial of 1101 and 1102, and CH connects each dial to
+`vsock.sock_<port>` in the run dir (decision CH24). The vmm splices each
+connection to a fresh TCP connect to `VMM_LITELLM_ADDR` or
+`VMM_CHAPERONE_ADDR`, with no allowlist lookup and no rewrite (fact 46).
+
+1. `planes::bind` binds both listeners after `link_vm` emptied the slot
+   (decision CH56 rule 1) and after `remove_stale`, before CH starts. A
+   cold boot and each restore run it, so a restored guest that dials
+   again finds both (fact 45, decision CH62 rule 14).
+2. `Bound::serve` gives each listener a task. Each connection gets a
+   connect within `CONNECT_WAIT` (5 s). A connect that fails or takes
+   longer closes the guest side, and nothing retries (decision CH62 rule
+   14). Guest clients treat the close as transient (decision CH20).
+3. Each listener holds at most `SPLICE_CAP` (64) open splices, with no
+   idle timeout (decision CH62 rule 14). A connection past the cap
+   closes at once (Known gap 20).
+4. The copy is `relay::Splice`, the copy of the ACP relay, on the tokio
+   `net` types. `copy_bidirectional` needs the tokio feature `io-util`,
+   which adds a lock entry, so the vmm does not use it.
+5. `Vm::planes` holds the bridges. The drop of the entry, when the VM
+   leaves the table, ends each listener task and each open splice. A VM
+   that the vmm killed drops them at the kill.
+6. The deny check gets the ports of `Upstreams::rows` as its bound set,
+   so a listener of any other port fails it (decision CH6-3).
+
+`tests/planes.rs` runs the bridges on real Unix and TCP sockets in
+process: each row reaches its own plane, the bytes pass unchanged, a
+refused connect closes the guest side, the cap, and the drop.
+`tests/start.rs` proves that both listeners take a dial at the launch of
+a boot and of a restore, that a dial reaches the plane of the config,
+that the listener closes with the VM, and the bound set of the deny
+check.
 
 ## The slots
 
@@ -824,6 +871,18 @@ no guest sync.
     `digests.json`. `VMM_CH_PROGRAM` and `VMM_CH_REMOTE_PROGRAM` keep the
     form check. Open for David: should CH and ch-remote get the same
     owner check, and may the vmm row install `guest-init` as a symlink?
+19. CONTRACT-QUESTION (plan PR V6, decision CH62 rule 20): gap Q54-20
+    says the plane keys hold `host:port`, and its defaults are IP
+    addresses. A host name needs a resolver at each connect, which no
+    row decides. The config takes an IP address and a port only, as
+    `std::net::SocketAddr` parses them, and refuses a name with exit 78.
+    Open for David: may a plane key name a host?
+20. CONTRACT-QUESTION (plan PR V6, decision CH62 rule 14): the rule caps
+    the open splices of a bridge row at 64 and does not say what a
+    connection past the cap gets. `planes::bridge` accepts it and closes
+    it at once, so the guest client sees an EOF, a transient fault of
+    decision CH20, and no connection waits in the backlog. Open for
+    David: close at once, or leave it in the backlog until a splice ends?
 
 ## Caller duties
 

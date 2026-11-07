@@ -1,16 +1,19 @@
 //! The config of the vmm (plan PR L20): each key, each fault, and the
-//! defaults of `env/src/creche_env/default.env`. Also the config of `vmm
+//! defaults of `env/src/creche_env/default.env`. The plane addresses come
+//! from plan PR V6. Also the config of `vmm
 //! kill-scopes` (decision CH63): one key, with the check of `Config`.
 
 use std::collections::HashMap;
 use std::ffi::OsString;
+use std::net::SocketAddr;
 use std::path::Path;
 
 use creche_vmm::config::{
-    BUDGET, CH, CH_REMOTE, Config, ConfigError, FALLOCATE, FAMILY_ROOT, FAULTS_ROOT, FREE_FLOOR,
-    Fault, GUEST_INIT, IMAGE_ROOT, KillScopesConfig, MKE2FS, RAM_CAP, RUN_ROOT, STATE_ROOT,
-    SYSTEMCTL, SYSTEMD_RUN, ZSTD,
+    BUDGET, CH, CH_REMOTE, CHAPERONE, Config, ConfigError, FALLOCATE, FAMILY_ROOT, FAULTS_ROOT,
+    FREE_FLOOR, Fault, GUEST_INIT, IMAGE_ROOT, KillScopesConfig, LITELLM, MKE2FS, RAM_CAP,
+    RUN_ROOT, STATE_ROOT, SYSTEMCTL, SYSTEMD_RUN, ZSTD,
 };
+use creche_vmm::planes::Upstreams;
 use creche_vmm_confine::admission::{GIB, Limits};
 use creche_vmm_store::retention;
 
@@ -37,12 +40,22 @@ const PATHS: [&str; 13] = [
 /// Each size key of the config.
 const SIZES: [&str; 3] = [RAM_CAP, FREE_FLOOR, BUDGET];
 
+/// Each address key of the config (decision CH62 rule 20).
+const ADDRS: [&str; 2] = [LITELLM, CHAPERONE];
+
+/// Each key of the config.
+fn keys() -> impl Iterator<Item = &'static str> {
+    PATHS.into_iter().chain(SIZES).chain(ADDRS)
+}
+
 /// An env with a good value for each key.
 fn good() -> HashMap<&'static str, OsString> {
     let paths = PATHS.map(|key| (key, OsString::from(format!("/srv/{key}"))));
     let sizes = [(RAM_CAP, "80"), (FREE_FLOOR, "50"), (BUDGET, "150")]
         .map(|(key, value)| (key, OsString::from(value)));
-    paths.into_iter().chain(sizes).collect()
+    let addrs = [(LITELLM, "192.0.2.10:4000"), (CHAPERONE, "192.0.2.10:8300")]
+        .map(|(key, value)| (key, OsString::from(value)));
+    paths.into_iter().chain(sizes).chain(addrs).collect()
 }
 
 fn read(env: &HashMap<&'static str, OsString>) -> Result<Config, ConfigError> {
@@ -93,11 +106,16 @@ fn a_good_env_gives_each_path_and_size() {
     );
     assert_eq!(config.limits, Limits::DESIGN);
     assert_eq!(config.budget, retention::BUDGET);
+    let planes = Upstreams {
+        litellm: "192.0.2.10:4000".parse().unwrap(),
+        chaperone: "192.0.2.10:8300".parse().unwrap(),
+    };
+    assert_eq!(config.planes, planes);
 }
 
 #[test]
 fn each_missing_key_is_named() {
-    for key in PATHS.into_iter().chain(SIZES) {
+    for key in keys() {
         let mut env = good();
         env.remove(key);
         let expected = ConfigError {
@@ -110,7 +128,7 @@ fn each_missing_key_is_named() {
 
 #[test]
 fn an_empty_value_is_missing() {
-    for key in PATHS.into_iter().chain(SIZES) {
+    for key in keys() {
         assert_eq!(fault_of(key, "").fault, Fault::Missing, "{key}");
     }
 }
@@ -210,6 +228,47 @@ fn only_the_floor_may_be_zero() {
     assert_eq!(read(&env).unwrap().limits.free_floor, 0);
 }
 
+/// Decision CH62 rule 20: each plane key is an IP address and a port, as
+/// `SocketAddr` parses it. A host name, a URL, a missing port and a port
+/// past 65535 each refuse the start.
+#[test]
+fn plane_addresses_parse_host_and_port() {
+    for key in ADDRS {
+        for good in ["192.0.2.10:4000", "127.0.0.1:8300", "[2001:db8::1]:4000"] {
+            let mut env = self::good();
+            env.insert(key, OsString::from(good));
+            let planes = read(&env).unwrap().planes;
+            let read = if key == LITELLM {
+                planes.litellm
+            } else {
+                planes.chaperone
+            };
+            assert_eq!(read, good.parse::<SocketAddr>().unwrap(), "{key} {good}");
+        }
+        for bad in [
+            "192.0.2.10",
+            "hyperion:4000",
+            "http://192.0.2.10:4000",
+            "192.0.2.10:",
+            ":4000",
+            "192.0.2.10:65536",
+            " 192.0.2.10:4000",
+            "2001:db8::1:4000",
+        ] {
+            let error = fault_of(key, bad);
+            let expected = ConfigError {
+                key,
+                fault: Fault::NotSocketAddr,
+            };
+            assert_eq!(error, expected, "{bad}");
+        }
+    }
+    assert_eq!(
+        fault_of(LITELLM, "secret:4000").to_string(),
+        "VMM_LITELLM_ADDR: the key is not an IP address and a port"
+    );
+}
+
 #[test]
 fn a_fault_names_the_key_and_never_the_value() {
     let text = fault_of(ZSTD, "zstd-secret").to_string();
@@ -226,7 +285,7 @@ fn default_of(key: &str) -> Option<&'static str> {
 
 #[test]
 fn the_catalog_holds_a_default_for_each_key_but_the_run_root() {
-    for key in PATHS.into_iter().chain(SIZES) {
+    for key in keys() {
         let found = default_of(key);
         if key == RUN_ROOT {
             assert_eq!(found, None, "systemd sets {key}");
@@ -260,6 +319,17 @@ fn the_catalog_defaults_are_the_design_values() {
         (FALLOCATE, "/usr/bin/fallocate"),
     ];
     for (key, expected) in paths {
+        assert_eq!(default_of(key), Some(expected), "{key}");
+    }
+    // Decision CH62 rule 20 names 10.0.0.39, the LAN address of Hyperion.
+    // Rule 3 of env/AGENTS.md keeps a deployment address out of the
+    // catalog, so each default takes the LAN address key, as
+    // `AGENT_LITELLM_BASE_URL` and `CHAPERONE_LISTEN` do.
+    let addrs = [
+        (LITELLM, "${AGENT_LAN_ADDRESS}:4000"),
+        (CHAPERONE, "${AGENT_LAN_ADDRESS}:8300"),
+    ];
+    for (key, expected) in addrs {
         assert_eq!(default_of(key), Some(expected), "{key}");
     }
     // Gap G14: the design values of the cap, the floor and the budget.

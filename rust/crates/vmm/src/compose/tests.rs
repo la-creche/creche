@@ -138,6 +138,8 @@ impl Scratch {
             ("VMM_RAM_CAP_GIB", OsString::from("80")),
             ("VMM_FREE_FLOOR_GIB", OsString::from("0")),
             ("VMM_SNAPSHOT_BUDGET_GIB", OsString::from("7")),
+            ("VMM_LITELLM_ADDR", OsString::from("192.0.2.10:4000")),
+            ("VMM_CHAPERONE_ADDR", OsString::from("192.0.2.10:8300")),
         ]);
         Self { dir, env }
     }
@@ -277,6 +279,13 @@ fn kvm_build_wires_each_key_to_its_part() {
     );
     assert_eq!(start.budget, 7 * GIB);
     assert_eq!(start.limits.ram_cap, 80 * GIB);
+    // Decision CH62 rule 20: each plane key reaches the bridges.
+    let rows = start
+        .planes
+        .rows()
+        .map(|(port, addr)| (port.number(), addr.to_string()));
+    let planes = [(1101, "192.0.2.10:4000"), (1102, "192.0.2.10:8300")];
+    assert_eq!(rows, planes.map(|(port, addr)| (port, addr.to_owned())));
 
     // Decisions CH57 rule 1 and CH58 rule 4: the digests of
     // `digests.json`, each in the digest store of the state root.

@@ -19,6 +19,7 @@ use hyper::{Response, StatusCode};
 
 use crate::ServeError;
 
+pub(crate) use accept::ACCEPT_PAUSE;
 pub use accept::{Stop, StopSignal, run_with};
 pub use check::BodyCheck;
 pub use router::{Relay, Route, Routes, run_routes};

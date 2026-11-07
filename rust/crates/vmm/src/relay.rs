@@ -377,23 +377,60 @@ impl Relay for AcpRelay {
             pending,
         } = link;
         // Guest init may send bytes right after `OK`. They go out first.
-        let (mut up, mut down) = (Pipe::new(Vec::new()), Pipe::new(pending));
+        let mut splice = Splice::new(pending);
         poll_fn(|context| {
             if Pin::new(&mut claim.stop).poll(context).is_ready() {
                 return Poll::Ready(());
             }
-            // A client that half-closes after its last request still gets
-            // each reply of the guest, as with `copy_bidirectional`.
-            let sent = up.carry(context, &mut client, &mut guest);
-            let received = down.carry(context, &mut guest, &mut client);
-            match (sent, received) {
-                (Poll::Ready(Carried::Failed), _)
-                | (_, Poll::Ready(Carried::Failed))
-                | (Poll::Ready(Carried::Shut), Poll::Ready(Carried::Shut)) => Poll::Ready(()),
-                _ => Poll::Pending,
-            }
+            splice.carry(context, &mut client, &mut guest)
         })
         .await;
+    }
+}
+
+/// Both directions of one byte copy. The ACP relay and the plane bridges
+/// (`crate::planes`) carry their bytes with it.
+#[derive(Debug)]
+pub(crate) struct Splice {
+    /// From the near stream to the far one.
+    up: Pipe,
+    /// From the far stream to the near one.
+    down: Pipe,
+}
+
+impl Splice {
+    /// A splice whose far-to-near direction writes `pending` first.
+    pub(crate) fn new(pending: Vec<u8>) -> Self {
+        Self {
+            up: Pipe::new(Vec::new()),
+            down: Pipe::new(pending),
+        }
+    }
+
+    /// Moves bytes both ways between `near` and `far`. An EOF in one
+    /// direction shuts down the write half of the other stream, and the
+    /// other direction runs on. A peer that half-closes after its last
+    /// request still gets each reply, as with `copy_bidirectional`. Ready
+    /// when both directions reached EOF, or when a read, a write or a
+    /// shutdown failed.
+    pub(crate) fn carry<N, F>(
+        &mut self,
+        context: &mut Context<'_>,
+        near: &mut N,
+        far: &mut F,
+    ) -> Poll<()>
+    where
+        N: AsyncRead + AsyncWrite + Unpin,
+        F: AsyncRead + AsyncWrite + Unpin,
+    {
+        let sent = self.up.carry(context, near, far);
+        let received = self.down.carry(context, far, near);
+        match (sent, received) {
+            (Poll::Ready(Carried::Failed), _)
+            | (_, Poll::Ready(Carried::Failed))
+            | (Poll::Ready(Carried::Shut), Poll::Ready(Carried::Shut)) => Poll::Ready(()),
+            _ => Poll::Pending,
+        }
     }
 }
 

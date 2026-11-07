@@ -7,7 +7,7 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use creche_vmm::config::{BUDGET, GUEST_INIT, RAM_CAP, STATE_ROOT};
+use creche_vmm::config::{BUDGET, CHAPERONE, GUEST_INIT, LITELLM, RAM_CAP, STATE_ROOT};
 
 /// The exit status of a refused start.
 const EX_CONFIG: i32 = 78;
@@ -17,7 +17,7 @@ const TRUE: &str = "/usr/bin/true";
 
 /// Each key with a good value. The paths need not exist: the config
 /// checks their form only.
-const GOOD: [(&str, &str); 16] = [
+const GOOD: [(&str, &str); 18] = [
     ("VMM_STATE_ROOT", "/srv/vmm/state"),
     ("RUNTIME_DIRECTORY", "/run/user/1000/vmm"),
     ("VMM_FAMILY_ROOT", "/srv/families"),
@@ -37,6 +37,8 @@ const GOOD: [(&str, &str); 16] = [
     ("VMM_RAM_CAP_GIB", "80"),
     ("VMM_FREE_FLOOR_GIB", "50"),
     ("VMM_SNAPSHOT_BUDGET_GIB", "150"),
+    ("VMM_LITELLM_ADDR", "192.0.2.10:4000"),
+    ("VMM_CHAPERONE_ADDR", "192.0.2.10:8300"),
 ];
 
 /// A scratch dir that its drop removes, also after a failed assert.
@@ -110,6 +112,19 @@ fn a_missing_guest_init_key_exits_78() {
     );
 }
 
+/// Decision CH62 rule 20: the vmm needs the address of each plane, so an
+/// env with no `VMM_LITELLM_ADDR` or no `VMM_CHAPERONE_ADDR` refuses the
+/// start.
+#[test]
+fn a_missing_plane_key_exits_78() {
+    for key in [LITELLM, CHAPERONE] {
+        let env: Vec<_> = GOOD.iter().copied().filter(|one| one.0 != key).collect();
+        let (output, stderr) = serve(&env);
+        assert_eq!(output.status.code(), Some(EX_CONFIG));
+        assert_eq!(stderr, format!("vmm: {key}: the key has no value\n"));
+    }
+}
+
 /// A good config on temp paths runs each start step before the image
 /// root: the leftover sweep (`true` lists no scope) and the CH version
 /// check (the fixture). Then the vmm refuses a missing `digests.json`
@@ -148,7 +163,7 @@ fn an_untrusted_image_root_exits_78() {
             "VMM_FAULTS_ROOT" => &faults,
             "VMM_IMAGE_ROOT" => &images,
             "VMM_CH_PROGRAM" => ch,
-            key if key.ends_with("_GIB") => one.1,
+            key if key.ends_with("_GIB") || key.ends_with("_ADDR") => one.1,
             _ => TRUE,
         };
     }
