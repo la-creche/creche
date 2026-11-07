@@ -3,7 +3,7 @@ name = "caregiver"
 version = "0.1.0"
 description = "Family manager: converges each family to its file (docs/rework/contracts/01, 04, 05)."
 requires-python = ">=3.12"
-dependencies = ["agent-family", "httpx>=0.27", "pyyaml>=6"]
+dependencies = ["agent-family", "creche-wire", "httpx>=0.27", "pyyaml>=6"]
 
 [project.scripts]
 caregiver = "caregiver.cli:main"
@@ -20,6 +20,7 @@ packages = ["src/caregiver"]
 
 [tool.uv.sources]
 agent-family = { workspace = true }
+creche-wire = { workspace = true }
 
 [tool.uv]
 # uv rebuilds a local package only when pyproject.toml, setup.py or setup.cfg
