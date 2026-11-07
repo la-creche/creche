@@ -165,6 +165,14 @@ file would pass the cap. `caregiver/tests/test_reach_files.py` holds its
 `EGRESS_CAP` equal to the same file. Change the value in all three places
 together.
 
+The file also holds `repos_cap`, the most bytes of `repos.json` that the
+vmm reads (decision CH73 rule 2). The vmm defines it as `REPOS_CAP` in
+the same `family.rs`, and `the_repos_cap_matches_the_wire_vectors` holds
+the two equal. caregiver has no copy. The longest valid list fits the
+cap, and `caregiver/tests/test_reach_files.py` reads `repos_cap` from the
+file to hold that bound. Change the value in the file and in `REPOS_CAP`
+together.
+
 ## A struct on the wire
 
 A derived `Deserialize` of a struct also reads a JSON array, its fields in

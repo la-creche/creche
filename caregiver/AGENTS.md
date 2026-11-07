@@ -85,7 +85,8 @@ host where something has gone wrong.
   list past 32 names (decision CH69 rule 15) before any write, so the
   last good file stays. The longest valid list renders to 3476 bytes,
   under the 4 KiB `REPOS_CAP` of the vmm (decision CH73 rule 2), so the
-  file has no refusal of its own. `test_reach_files.py` holds that bound.
+  file has no refusal of its own. `test_reach_files.py` holds that bound
+  with `repos_cap` of `rust/crates/wire/vectors/family.json`.
 - No secret on argv, in a URL or in a log line. The master key comes from
   `LITELLM_MASTER_KEY` in the environment.
 - Each verb that applies the registry (`serve`, `reconcile-once`,

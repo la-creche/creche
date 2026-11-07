@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import stat
 from pathlib import Path
-from typing import Final, cast
+from typing import Final, Literal, cast
 
 import pytest
 from agent_family import FamilyFile
@@ -33,24 +33,23 @@ from creche_wire import (
 
 from caregiver import paths
 
-#: The cap that the vmm and caregiver share (decision CH71). The vmm test
-#: `the_egress_cap_matches_the_wire_vectors` holds `EGRESS_CAP` of
-#: `rust/crates/vmm-confine/src/family.rs` equal to the same file.
+#: The caps that the vmm and caregiver share (decisions CH71, CH73 rule 2).
+#: The vmm tests `the_egress_cap_matches_the_wire_vectors` and
+#: `the_repos_cap_matches_the_wire_vectors` hold `EGRESS_CAP` and
+#: `REPOS_CAP` of `rust/crates/vmm-confine/src/family.rs` equal to the same
+#: file.
 FAMILY_VECTORS: Final = (
     Path(__file__).resolve().parents[2] / "rust" / "crates" / "wire" / "vectors" / "family.json"
 )
 
-#: `REPOS_CAP` of `rust/crates/vmm-confine/src/family.rs`: the most bytes of
-#: `repos.json` that the vmm reads (decision CH73 rule 2).
-REPOS_CAP: Final = 4 * 1024
 
-
-def vmm_egress_cap() -> int:
-    """`egress_cap` of the wire vectors: the most bytes of `egress.json`
-    that the vmm reads (decision CH70 rule 1)."""
+def vmm_cap(key: Literal["egress_cap", "repos_cap"]) -> int:
+    """One cap of the wire vectors: `egress_cap`, the most bytes of
+    `egress.json` that the vmm reads (decision CH70 rule 1), or
+    `repos_cap`, the most bytes of `repos.json` (decision CH73 rule 2)."""
     vectors = strictjson.loads(FAMILY_VECTORS.read_bytes(), cap=4096)
     assert isinstance(vectors, dict)
-    cap = cast(dict[str, object], vectors)["egress_cap"]
+    cap = cast(dict[str, object], vectors)[key]
     assert isinstance(cap, int)
     return cap
 
@@ -67,7 +66,7 @@ def hosts(count: int) -> list[str]:
 def written(state_root: Path) -> FamilyEgress:
     """The file as the vmm reads it: strict JSON, then the wire type."""
     data = paths.egress_path(state_root, "chat").read_bytes()
-    return read(FamilyEgress, data, cap=vmm_egress_cap())
+    return read(FamilyEgress, data, cap=vmm_cap("egress_cap"))
 
 
 def pairs(egress: FamilyEgress) -> list[tuple[str, int]]:
@@ -150,7 +149,7 @@ def test_an_edit_replaces_the_file_whole(tmp_path: Path) -> None:
 
 
 def test_the_egress_cap_matches_the_wire_vectors() -> None:
-    assert vmm_egress_cap() == EGRESS_CAP
+    assert vmm_cap("egress_cap") == EGRESS_CAP
 
 
 def test_a_list_within_the_cap_renders() -> None:
@@ -168,13 +167,13 @@ def test_a_list_over_the_cap_is_refused_with_the_cap_named() -> None:
 def repos_written(state_root: Path) -> list[str]:
     """`repos.json` as the vmm reads it: strict JSON, then the wire type."""
     data = paths.repos_path(state_root, "chat").read_bytes()
-    return [one.root for one in read(FamilyRepos, data, cap=REPOS_CAP).repos.root]
+    return [one.root for one in read(FamilyRepos, data, cap=vmm_cap("repos_cap")).repos.root]
 
 
 def test_the_repos_file_reads_back_through_creche_wire(tmp_path: Path) -> None:
     write_repos_file(chat_family(repos=["creche"]), tmp_path)
     data = paths.repos_path(tmp_path, "chat").read_bytes()
-    assert read(FamilyRepos, data, cap=REPOS_CAP) == FamilyRepos(
+    assert read(FamilyRepos, data, cap=vmm_cap("repos_cap")) == FamilyRepos(
         repos=RepoList([RepoName("creche")])
     )
     mode = paths.repos_path(tmp_path, "chat").stat().st_mode
@@ -214,12 +213,12 @@ def test_an_unchanged_repos_list_writes_nothing(tmp_path: Path) -> None:
 def test_the_longest_repos_list_fits_the_vmm_cap(tmp_path: Path) -> None:
     """Decision CH73 rule 2: the grammar caps the list at `REPOS_MAX` names
     of `REPO_NAME_MAX` characters (decision CH69 rule 15), so the file of
-    any valid family fits `REPOS_CAP` and caregiver needs no refusal of its
+    any valid family fits `repos_cap` and caregiver needs no refusal of its
     own. The module docstring cites the length."""
     names = [f"{index:0>{REPO_NAME_MAX}}" for index in range(REPOS_MAX)]
     assert all(is_repo_name(name) for name in names)
     write_repos_file(chat_family(repos=names), tmp_path)
     size = paths.repos_path(tmp_path, "chat").stat().st_size
     assert size == 3476
-    assert size <= REPOS_CAP
+    assert size <= vmm_cap("repos_cap")
     assert repos_written(tmp_path) == names

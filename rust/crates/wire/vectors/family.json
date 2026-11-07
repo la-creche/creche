@@ -1,3 +1,4 @@
 {
-  "egress_cap": 65536
+  "egress_cap": 65536,
+  "repos_cap": 4096
 }

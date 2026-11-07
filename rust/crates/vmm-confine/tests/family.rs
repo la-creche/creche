@@ -683,9 +683,27 @@ fn read_egress_refuses_past_its_cap() {
 /// file.
 #[test]
 fn the_egress_cap_matches_the_wire_vectors() {
+    assert_eq!(family_vectors()["egress_cap"], json!(EGRESS_CAP));
+}
+
+/// caregiver writes `repos.json` with no refusal of its own, because the
+/// longest valid list fits the cap (decision CH73 rule 2). The two sides
+/// read one value from `vectors/family.json` of the wire crate, as for
+/// `egress_cap`. The caregiver test reads the same file.
+#[test]
+fn the_repos_cap_matches_the_wire_vectors() {
+    assert_eq!(family_vectors()["repos_cap"], json!(REPOS_CAP));
+}
+
+/// `vectors/family.json` of the wire crate: the caps that the vmm and
+/// caregiver share. The file holds no other key.
+#[cfg(test)]
+fn family_vectors() -> Value {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../wire/vectors/family.json");
     let file: Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
-    assert_eq!(file, json!({ "egress_cap": EGRESS_CAP }));
+    let keys: Vec<&String> = file.as_object().unwrap().keys().collect();
+    assert_eq!(keys, ["egress_cap", "repos_cap"]);
+    file
 }
 
 /// Writes `repos.json` of the family `code`.
