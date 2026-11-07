@@ -78,9 +78,11 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   closes each other peer at once, and the facade stays. The open moves
   the facade from `starting` to `running`, and it stays `running` until
   the reap. The framing is the one of control link 1200: each facade
-  line is one `TurnEvent`, at most `CONTROL_LINE_CAP` bytes. A refused
-  line closes the local link. A close of the local link outside a stop
-  sends SIGKILL to the facade, and the restart follows the reap. The
+  line is one `TurnEvent`, at most `CONTROL_LINE_CAP` bytes, and
+  `creche_wire::strict` checks it before the typed read (CH65 rule 2). A
+  refused line closes the local link. A close of the local link outside
+  a stop sends SIGKILL to the facade group, and the restart follows the
+  reap. The
   facade exit closes its local link too.
 - Each turn event sets `turn_running`, and each end becomes the
   `last_turn_end` of every later state, across a restart too (CH32 rules

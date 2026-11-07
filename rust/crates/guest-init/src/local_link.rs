@@ -13,10 +13,9 @@
 //!    CH32 rule 6).
 //! 3. The framing is the one of control link 1200 (decision CH36 G11):
 //!    one compact JSON value per LF line, at most `CONTROL_LINE_CAP`
-//!    bytes. Each facade line is a `TurnEvent`. CH65 rule 2 decides the
-//!    strict reader: the check `strict` that the wire lane PR moves into
-//!    creche-wire. Until guest init calls it, it reads each line with the
-//!    typed reader of control link 1200 (Known gap 1 of `AGENTS.md`).
+//!    bytes. Each facade line is a `TurnEvent`. Guest init reads it as it
+//!    reads a line of 1200: `creche_wire::strict` first, then the typed
+//!    read (decisions CH62 rule 11, CH65 rule 2).
 //! 4. Guest init keeps the last `TurnEnd` for each later ready (decision
 //!    CH32 rule 4). It relays each event to the current control link as
 //!    `GuestEvent::Turn` once that link got its ready (decision CH21). With
@@ -291,12 +290,14 @@ mod tests {
     /// line over the cap.
     #[test]
     fn a_refused_line_closes_the_local_link() {
-        for bad in [
-            br#"{"start":{},"start":{}}"#.as_slice(),
-            br#"{"start":{"now":true}}"#,
-            br#"{"end":{"title":"a turn"}}"#,
-            br#"{"stop":{}}"#,
-            b"",
+        // The strict check refuses the first two, and the typed read the
+        // rest (decisions CH62 rule 11, CH65 rule 2).
+        for (bad, not_strict) in [
+            (br#"{"start":{},"start":{}}"#.as_slice(), true),
+            (b"", true),
+            (br#"{"start":{"now":true}}"#, false),
+            (br#"{"end":{"title":"a turn"}}"#, false),
+            (br#"{"stop":{}}"#, false),
         ] {
             let mut control = Control::default();
             ready(&mut control);
@@ -305,8 +306,11 @@ mod tests {
             assert!(
                 matches!(
                     actions.as_slice(),
-                    [Action::LocalClose(closed, Why::Refused(_)), Action::Kill(killed)]
-                        if *closed == local && *killed == pid(FACADE)
+                    [Action::LocalClose(closed, why), Action::Kill(killed)]
+                        if *closed == local
+                            && *killed == pid(FACADE)
+                            && matches!(why, Why::NotStrict) == not_strict
+                            && matches!(why, Why::NotStrict | Why::Refused(_))
                 ),
                 "{actions:?}"
             );

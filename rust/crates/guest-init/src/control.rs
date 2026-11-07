@@ -366,11 +366,12 @@ impl Control {
         if self.local != Some(local) {
             return Vec::new();
         }
-        // CONTRACT-QUESTION: CH65 rule 2 decides the strict reader of
-        // this link too: the shared check `strict` of creche-wire. Until
-        // the call lands, the typed reader is the strict reader here, as
-        // for control link 1200 in `Control::line`. `TurnEvent` denies
-        // unknown fields and holds no free JSON value.
+        // The strict reader of decision CH62 rule 11 is the one of
+        // control link 1200: `creche_wire::strict` first, then the typed
+        // read (decision CH65 rule 2).
+        if !strict(line) {
+            return self.local_refused(local, Why::NotStrict);
+        }
         let event = match serde_json::from_slice::<TurnEvent>(line) {
             Ok(event) => event,
             Err(error) => return self.local_refused(local, Why::Refused(error.to_string())),
