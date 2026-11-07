@@ -3,12 +3,14 @@
 //! test plays the guest side, as Cloud Hypervisor connects to
 //! `vsock.sock_1100`, over a scratch family root in `/tmp`. The runtime
 //! starts with paused time, so the hold of decision CH31 rule 1 runs with
-//! no real wait.
+//! no real wait. The log test runs its own binary as a child, so it
+//! reads the real stderr of the vmm code (decision CH68 rule 3).
 
 use std::fs;
 use std::io::{self, ErrorKind};
 use std::net::Shutdown;
 use std::path::PathBuf;
+use std::process::Command;
 use std::time::{Duration, SystemTime};
 
 use creche_vmm::family_state::{HOLD_CAP, LINK_CAP, Server, bind, fd_need};
@@ -26,6 +28,9 @@ const CREDS: &str = r#"{"epoch":3,"litellm_key":"sk-test-key","pep_token":"ababa
 
 /// The bound of a test that waits for a change on the host.
 const TRIES: u32 = 500;
+
+/// The session of the VM of each test.
+const SESSION: &str = "3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b";
 
 /// A family root with the family `chat`, the run dir of one VM in `/tmp`,
 /// and a paused runtime. Its drop removes the dir, also after a failed
@@ -52,7 +57,7 @@ impl Scratch {
         let dir = PathBuf::from(format!("/tmp/vmm-family-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let root = RunRoot::new(dir.join("run")).unwrap();
-        let id: SessionId = "3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b".parse().unwrap();
+        let id: SessionId = SESSION.parse().unwrap();
         let run = root.link_vm(&id, Slot::new(0).unwrap()).unwrap();
         let runtime = Builder::new_current_thread()
             .enable_all()
@@ -88,7 +93,7 @@ impl Scratch {
     fn serve(&self) -> Server {
         let bound = bind(&self.run).unwrap();
         let families = FamilyRoot::new(self.dir.join("families")).unwrap();
-        let id: SessionId = "3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b".parse().unwrap();
+        let id: SessionId = SESSION.parse().unwrap();
         let _runtime = self.runtime.enter();
         bound.serve(families, "chat".parse().unwrap(), id).unwrap()
     }
@@ -337,6 +342,52 @@ fn a_refused_pull_closes_the_link() {
         let mut guest = scratch.dial().await;
         assert_eq!(kind(&guest.pull().await), "state");
     });
+}
+
+/// The child of `a_bad_pull_logs_one_line_and_a_good_pull_none`, run in a
+/// process of its own, so its stderr holds only the lines of the vmm. On
+/// one link it sends a good pull and a faulted pull (no `creds.json`). On
+/// a second link it sends a refused line.
+#[test]
+#[ignore = "the child of a_bad_pull_logs_one_line_and_a_good_pull_none"]
+fn pulls_for_the_log_test() {
+    let scratch = Scratch::new("log");
+    let _server = scratch.serve();
+    scratch.runtime.block_on(async {
+        let mut guest = scratch.dial().await;
+        assert_eq!(kind(&guest.pull().await), "state");
+        fs::remove_file(scratch.family("creds/creds.json")).unwrap();
+        assert_eq!(kind(&guest.pull().await), "creds_missing");
+        let mut refused = scratch.dial().await;
+        refused.send(b"pull\n").await;
+        assert_eq!(refused.line().await, None);
+    });
+}
+
+/// A good pull writes no log line. A faulted pull writes one stderr line,
+/// and a refused pull writes one (decision CH68 rule 3). The test runs
+/// its own binary as the child `pulls_for_the_log_test` and reads the
+/// real stderr of the vmm code.
+#[test]
+fn a_bad_pull_logs_one_line_and_a_good_pull_none() {
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "pulls_for_the_log_test", "--ignored"])
+        .args(["--nocapture", "--test-threads=1"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(output.status.success(), "{stdout}{stderr}");
+    assert!(stdout.contains("1 passed"), "{stdout}");
+    let lines: Vec<&str> = stderr.lines().collect();
+    assert_eq!(lines.len(), 2, "{stderr}");
+    let fault = format!("vmm: session {SESSION} family-state creds_missing in ");
+    assert!(lines[0].starts_with(&fault), "{stderr}");
+    assert!(lines[0].ends_with(", held 0 ms"), "{stderr}");
+    let refused =
+        format!("vmm: session {SESSION} family-state link closed: a line that is not a pull");
+    assert_eq!(lines[1], refused);
+    assert!(!stderr.contains("family-state state"), "{stderr}");
 }
 
 /// The listener holds `LINK_CAP` open links. The next dial closes at once

@@ -626,7 +626,10 @@ CH24).
 `tests/family_state.rs` runs the listener on real Unix sockets over a
 scratch family root, with paused tokio time: many pulls on one link, a
 reply at the cap, the hold and its cap, each typed error on an open
-link, each refused line, the link cap and the drop. `tests/start.rs`
+link, each refused line, the link cap and the drop. Its test
+`a_bad_pull_logs_one_line_and_a_good_pull_none` runs its own binary as
+a child and reads the real stderr: no line for a good pull, one for a
+faulted pull and one for a refused line (rule 7). `tests/start.rs`
 proves that the listener takes a dial at the launch of a boot and of a
 restore, that 1100 is in the bound set of the deny check, and that a
 pull does not set `last_use`. That pull gets the `state` of the family
