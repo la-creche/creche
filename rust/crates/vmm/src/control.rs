@@ -717,6 +717,19 @@ mod tests {
         guest.join().unwrap();
     }
 
+    /// A runtime on real time. A test whose proof is that the sync ends
+    /// before `SYNC_WAIT` uses it: on paused time the runtime can jump the
+    /// clock past `SYNC_WAIT` before the socket event of the closed link
+    /// reaches the reader, which the rust job saw on Linux (run
+    /// 42395164546).
+    fn real() -> Runtime {
+        Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .build()
+            .unwrap()
+    }
+
     /// A runtime on paused time, so a wait of `SYNC_WAIT` costs no real
     /// time.
     fn paused() -> Runtime {
@@ -860,7 +873,7 @@ mod tests {
     /// of `SYNC_WAIT`. A later sync finds the link closed.
     #[test]
     fn a_closed_link_ends_the_sync_at_once() {
-        paused().block_on(async {
+        real().block_on(async {
             let (sender, events, mut guest) = pair();
             let reader = tokio::spawn(read_all(events));
             let answer = tokio::spawn(async move {
