@@ -16,6 +16,7 @@ use creche_vmm_store::initramfs::{Entry, Kind};
 use creche_vmm_store::layout::StateRoot;
 
 use super::{GuestInitError, entries, write_initramfs};
+use crate::root_owned::{OwnerError, ProgramError};
 
 /// A scratch dir that its drop removes.
 struct Scratch(PathBuf);
@@ -78,7 +79,13 @@ fn a_guest_init_program_that_root_does_not_own_refuses() {
     let store = scratch.store();
     let refused = write_initramfs(&program, &store).err();
     assert!(
-        matches!(refused, Some(GuestInitError::NotOwned { uid: found }) if found == uid),
+        matches!(
+            refused,
+            Some(GuestInitError::Program(ProgramError {
+                key: "VMM_GUEST_INIT_PROGRAM",
+                fault: OwnerError::NotOwned { uid: found },
+            })) if found == uid
+        ),
         "{refused:?}"
     );
     assert_eq!(
@@ -96,7 +103,13 @@ fn a_program_that_is_no_regular_file_refuses() {
     let store = scratch.store();
     let missing = write_initramfs(&scratch.0.join("missing"), &store).err();
     assert!(
-        matches!(&missing, Some(GuestInitError::Io(error)) if error.kind() == ErrorKind::NotFound),
+        matches!(
+            &missing,
+            Some(GuestInitError::Program(ProgramError {
+                fault: OwnerError::Io(error),
+                ..
+            })) if error.kind() == ErrorKind::NotFound
+        ),
         "{missing:?}"
     );
 
@@ -109,7 +122,13 @@ fn a_program_that_is_no_regular_file_refuses() {
     for path in [link, dir] {
         let refused = write_initramfs(&path, &store).err();
         assert!(
-            matches!(refused, Some(GuestInitError::NotRegular)),
+            matches!(
+                refused,
+                Some(GuestInitError::Program(ProgramError {
+                    fault: OwnerError::NotRegular,
+                    ..
+                }))
+            ),
             "{path:?}: {refused:?}"
         );
     }

@@ -9,10 +9,9 @@
 //! `raise` sets the soft limit to the need of every VM before the vmm
 //! serves. It leaves the hard limit as it is, and it refuses a hard limit
 //! below the need, so the vmm never runs with fewer fds than its caps
-//! allow. Each CH that the vmm launches inherits the soft limit.
-//!
-//! CONTRACT-QUESTION (crate AGENTS.md, Known gaps): no row sets the fd
-//! limit of the vmm, its headroom or the refusal of a short hard limit.
+//! allow. Each CH that the vmm launches inherits the soft limit. Decision
+//! CH67 rule 4 sets the raise, its headroom of 4096 and the refusal of a
+//! short hard limit, with no `LimitNOFILE=` line in the unit.
 
 use std::fmt;
 use std::io;

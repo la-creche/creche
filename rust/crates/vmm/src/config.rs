@@ -83,12 +83,14 @@ pub struct Config {
     pub faults_root: PathBuf,
     /// `VMM_IMAGE_ROOT`. `image_root::read` reads its `digests.json`.
     pub image_root: PathBuf,
-    /// `VMM_CH_PROGRAM`.
+    /// `VMM_CH_PROGRAM`. The compose step checks its file with
+    /// `root_owned::check_program` (decision CH67 rule 1).
     pub ch: Program,
-    /// `VMM_CH_REMOTE_PROGRAM`.
+    /// `VMM_CH_REMOTE_PROGRAM`. The compose step checks its file with
+    /// `root_owned::check_program` (decision CH67 rule 1).
     pub ch_remote: Program,
-    /// `VMM_GUEST_INIT_PROGRAM`. `guest_init::write_initramfs` checks
-    /// that root owns it and that no group or other user may write it.
+    /// `VMM_GUEST_INIT_PROGRAM`. `guest_init::write_initramfs` checks its
+    /// file with `root_owned::open_program` (decision CH67 rule 1).
     pub guest_init: Program,
     /// `AGENT_SYSTEMD_RUN_PROGRAM`.
     pub systemd_run: Program,
@@ -334,9 +336,8 @@ fn gib(
 
 /// The address of `key`: an IP address and a port, such as
 /// `192.0.2.10:4000` or `[2001:db8::1]:4000`.
-// CONTRACT-QUESTION (AGENTS.md Known gap 19): gap Q54-20 says
-// `host:port`, and its defaults are IP addresses. A host name would need
-// a resolver at each connect, so the config takes an IP address only.
+// Decision CH67 rule 2: an IP address and a port only. A host name
+// refuses the start.
 fn address(
     lookup: &impl Fn(&str) -> Option<OsString>,
     key: &'static str,

@@ -396,6 +396,6 @@ table of the three vmm crates.
   tool listed twice, and an entry of `skills/` that is not a dir. The
   file backend ignores or defaults each. caregiver writes none of these,
   so both backends give the same reply for every file caregiver writes.
-- CONTRACT-QUESTION (plan PR V6, decision CH62 rule 14): no row sets the
-  fd limit of the vmm, its headroom or the refusal of a short hard limit
-  (`nofile.rs`, `rust/crates/vmm/AGENTS.md` Known gap 21).
+- Closed by decision CH67 rule 4: the fd limit of the vmm, its headroom
+  of 4096 and the refusal of a short hard limit (`nofile.rs`,
+  `rust/crates/vmm/AGENTS.md` Known gap 21).
