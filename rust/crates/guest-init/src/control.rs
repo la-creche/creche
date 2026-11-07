@@ -21,8 +21,10 @@
 //!    cold-boots the VM (decision CH43 rule 6).
 //! 5. A refused line closes the link with no error line, and guest init
 //!    writes why on the console (decisions CH43 rules 1 and 2, CH62 rule
-//!    26). A line is refused when it is over the cap, is not one JSON
-//!    value, or is not the type that the link expects at that point.
+//!    26). A line is refused when it is over the cap, is not one strict
+//!    JSON text, or is not the type that the link expects at that point.
+//!    Guest init checks each line with `creche_wire::strict` before it
+//!    reads the line as that type, as the vmm does (decision CH65 rule 2).
 //! 6. After `ControlReady`, `ControlCommand::Stop` runs the stop of the
 //!    supervisor: the stop line on the local link, up to 25 s, SIGTERM to
 //!    the facade group, up to 2 s, then the power-off (decisions CH19
@@ -54,7 +56,7 @@ use std::time::Duration;
 
 use creche_wire::{
     CONTROL_LINE_CAP, ControlCommand, ControlHello, ControlReady, ControlSynced, FacadeState,
-    GuestEvent, SessionId, TurnEvent, UnixMillis,
+    GuestEvent, SessionId, TurnEvent, UnixMillis, strict,
 };
 use rustix::io::Errno;
 
@@ -132,6 +134,9 @@ pub enum Why {
     TooLong,
     /// The link ended inside a line: bytes with no LF before the EOF.
     CutLine,
+    /// A line is not one strict JSON text: `creche_wire::strict` refused
+    /// it (decision CH65 rule 2).
+    NotStrict,
     /// A line is not the type that the link expects at that point. It
     /// holds the error of the reader.
     Refused(String),
@@ -160,6 +165,7 @@ impl fmt::Display for Why {
             Self::Replaced => formatter.write_str("a newer link replaced it"),
             Self::TooLong => write!(formatter, "a line is over {CONTROL_LINE_CAP} bytes"),
             Self::CutLine => formatter.write_str("the link ended inside a line"),
+            Self::NotStrict => formatter.write_str("a line is not one strict JSON text"),
             Self::Refused(error) => write!(formatter, "a refused line: {error}"),
             Self::Early => formatter.write_str("a line came before the ready"),
             Self::OtherSession(session) => {
@@ -254,20 +260,15 @@ impl Control {
         (link, old.map(|(old, _)| Action::Close(old, Why::Replaced)))
     }
 
-    /// A line of `link`, its LF cut.
-    // CONTRACT-QUESTION: CH65 rule 2 decides it. One wire lane PR moves
-    // the check `strict` of the vmm crate into creche-wire, and both ends
-    // read each line through it. Until that PR merges, the typed serde
-    // reader is the strict reader here. Each type of this link denies
-    // unknown fields and holds no free JSON value, so it refuses a key
-    // given twice, a second value, a float for an integer and an array
-    // for an object, as `strict` does. A unit test holds that. A later
-    // commit on this branch calls the shared check once the wire PR
-    // merges.
+    /// A line of `link`, its LF cut. `creche_wire::strict` checks it
+    /// before the typed read, as the vmm does (decision CH65 rule 2).
     pub fn line(&mut self, link: LinkId, line: &[u8]) -> Option<Action> {
         let Some(stage) = self.stage(link) else {
             return Some(Action::Ignore(link, Ignored::Stale));
         };
+        if !strict(line) {
+            return Some(self.close(link, Why::NotStrict));
+        }
         match stage {
             Stage::Hello => match serde_json::from_slice::<ControlHello>(line) {
                 Ok(hello) => Some(self.hello(link, hello)),
@@ -1308,29 +1309,53 @@ mod tests {
         assert!(error.contains("unknown field `now`"), "{error}");
     }
 
-    /// The strict reader rules that the types of this link need (rule 3
-    /// of "The vsock JSON links"): a key given twice, a second value, a
-    /// float for an integer and an array for an object are refused.
+    /// `creche_wire::strict` refuses a key given twice, a second value, a
+    /// text that is not JSON and a nesting past its depth limit (decision
+    /// CH65 rule 2). The typed reader refuses each of these lines too, with
+    /// its own error. `Why::NotStrict` shows that the strict check read
+    /// the line first, as the vmm does.
     #[test]
-    fn a_line_that_is_not_one_strict_value_closes_the_link() {
+    fn a_line_that_strict_refuses_closes_the_link() {
         for line in [
             format!(r#"{{"sent_at":{SENT_AT},"sent_at":{SENT_AT},"session":"{SESSION}"}}"#),
             format!(r#"{{"sent_at":{SENT_AT},"session":"{SESSION}"}} {{}}"#),
-            format!(r#"{{"sent_at":{SENT_AT}.0,"session":"{SESSION}"}}"#),
-            format!(r#"[{SENT_AT},"{SESSION}"]"#),
             String::new(),
             "hello".to_owned(),
         ] {
             let mut control = Control::default();
             let (link, _) = control.accept();
+            assert_eq!(
+                control.line(link, line.as_bytes()),
+                Some(Action::Close(link, Why::NotStrict)),
+                "{line}"
+            );
+        }
+        let deep = format!(r#"{{"stop":{}{}}}"#, "[".repeat(64), "]".repeat(64));
+        for line in [r#"{"stop":{},"stop":{}}"#.to_owned(), deep] {
+            let mut control = Control::default();
+            let link = ready(&mut control);
+            assert_eq!(
+                control.line(link, line.as_bytes()),
+                Some(Action::Close(link, Why::NotStrict)),
+                "{line}"
+            );
+        }
+    }
+
+    /// A strict line of the wrong type is refused by the typed read: a
+    /// float for an integer, an array for an object, a second variant and
+    /// a string for a variant.
+    #[test]
+    fn a_strict_line_of_the_wrong_type_closes_the_link() {
+        for line in [
+            format!(r#"{{"sent_at":{SENT_AT}.0,"session":"{SESSION}"}}"#),
+            format!(r#"[{SENT_AT},"{SESSION}"]"#),
+        ] {
+            let mut control = Control::default();
+            let (link, _) = control.accept();
             refused(control.line(link, line.as_bytes()), link);
         }
-        for line in [
-            r#"{"stop":{},"stop":{}}"#,
-            r#"{"stop":{},"sync":{}}"#,
-            r#"{"stop":[]}"#,
-            r#""stop""#,
-        ] {
+        for line in [r#"{"stop":{},"sync":{}}"#, r#"{"stop":[]}"#, r#""stop""#] {
             let mut control = Control::default();
             let link = ready(&mut control);
             refused(control.line(link, line.as_bytes()), link);
