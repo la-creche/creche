@@ -81,6 +81,30 @@ def test_the_fragment_and_creds_are_already_gone_when_the_sandbox_is_destroyed(
     assert checked == {"key_deleted": True, "fragment_gone": True, "creds_gone": True}
 
 
+def test_delete_unlinks_the_egress_file_before_the_sandboxes(tmp_path: Path) -> None:
+    """Contract 01 §6.1.1 rule 7, decision CH69 rule 23: reach narrows
+    before processes stop."""
+    state_root = tmp_path / "state"
+    seed(state_root, "chat")
+    egress_path = paths.egress_path(state_root, "chat")
+    egress_path.write_text('{"hosts": []}\n', encoding="utf-8")
+    checked: dict[str, bool] = {}
+
+    class CheckingDriver(FakeDriver):
+        def destroy(self, name: str, allow: tuple[str, ...]) -> None:
+            checked["egress_gone"] = not egress_path.exists()
+            super().destroy(name, allow)
+
+    delete_family(
+        "chat",
+        state_root=state_root,
+        policy=fake_policy(state_root),
+        driver=CheckingDriver(),
+        litellm=FakeLiteLLMKeys(),
+    )
+    assert checked == {"egress_gone": True}
+
+
 def test_the_litellm_key_is_deleted_by_alias(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
     seed(state_root, "chat")

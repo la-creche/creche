@@ -26,7 +26,7 @@ from agent_family import (
     load_registry,
 )
 
-from . import paths, sandboxes, steps
+from . import paths, reach_files, sandboxes, steps
 from .atomic import read_json
 from .credentials import read_creds
 from .driver import SandboxDriver
@@ -250,6 +250,9 @@ def _apply_valid(
         return refuse(standing.reason)
 
     steps.write_config(family, state_root, instructions, skills)
+    # Contract 01 §6.1.1, decision CH69 rule 6: the egress allowlist of the
+    # vmm, before the sandbox step, as a pass writes it.
+    reach_files.write_egress_file(family, state_root)
     # Contract 05 §6.4, invariant 16: a declared webhook opens a live route
     # with no second, hand-made act. Beside the other credentials, before
     # any sandbox exists (invariant 13).

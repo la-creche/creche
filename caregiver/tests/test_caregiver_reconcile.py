@@ -354,6 +354,30 @@ def test_an_egress_edit_moves_the_rows_a_destroy_will_remove(fleet: Fleet) -> No
     assert fleet.allow_of("chat-s1") == (*planes(), DOCS)
 
 
+def test_a_pass_writes_the_egress_file(fleet: Fleet) -> None:
+    """Contract 01 §6.1.1, decision CH69 rule 6: every pass, beside the
+    sbx egress step, which stays until the cut."""
+    fleet.run()
+    egress_path = paths.egress_path(fleet.state_root, FAMILY)
+    assert json.loads(egress_path.read_bytes()) == {"hosts": []}
+    fleet.write(egress=[DOCS])
+    fleet.run()
+    assert json.loads(egress_path.read_bytes()) == {
+        "hosts": [{"host": "docs.python.org", "port": 443}]
+    }
+
+
+def test_an_invalid_edit_keeps_the_egress_file(fleet: Fleet) -> None:
+    """Invariant 19: the last good definition keeps serving."""
+    fleet.write(egress=[DOCS])
+    fleet.run()
+    egress_path = paths.egress_path(fleet.state_root, FAMILY)
+    before = egress_path.read_bytes()
+    fleet.write(egress=["*.python.org"])
+    fleet.run()
+    assert egress_path.read_bytes() == before
+
+
 def test_a_refused_egress_call_raises_a_blocking_fault(fleet: Fleet) -> None:
     fleet.write(egress=[DOCS])
     fleet.run()

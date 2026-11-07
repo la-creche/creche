@@ -100,6 +100,14 @@ def test_it_writes_the_config_mount(registry_root: Path, state_root: Path) -> No
     assert (config / "instructions.md").read_text(encoding="utf-8") == "Be helpful.\n"
 
 
+def test_apply_once_writes_the_egress_file(tmp_path: Path, state_root: Path) -> None:
+    """Contract 01 §6.1.1, decision CH69 rule 6."""
+    registry_root = write_registry(tmp_path / "registry", egress=["GitHub.com"])
+    apply_chat(registry_root, state_root)
+    body = json.loads(paths.egress_path(state_root, "chat").read_bytes())
+    assert body == {"hosts": [{"host": "github.com", "port": 443}]}
+
+
 def test_it_creates_the_sandbox_once(registry_root: Path, state_root: Path) -> None:
     driver = FakeDriver()
     apply_chat(registry_root, state_root, driver=driver)
