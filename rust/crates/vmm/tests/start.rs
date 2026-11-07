@@ -2522,8 +2522,11 @@ fn a_connect_on_a_bad_list_gets_403_and_one_not_valid_line() {
     let deadline = Instant::now() + Duration::from_secs(5);
     let (text, mut reasons) = loop {
         let text = fs::read_to_string(&log).unwrap();
+        // A read during an append can see part of it, so only a line that
+        // ends in its LF counts.
         let reasons: Vec<String> = text
-            .lines()
+            .split_inclusive('\n')
+            .filter_map(|line| line.strip_suffix('\n'))
             .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
             .inspect(|line| assert_eq!(line["verdict"], "refused", "{line}"))
             .map(|line| line["reason"].as_str().unwrap().to_owned())
