@@ -32,7 +32,8 @@ CH63). It reads only `AGENT_SYSTEMCTL_PROGRAM` through
 `creche_vmm_confine::leftovers::kill_all`. A bad key exits 78, and any
 other failure exits 1. `vmm serve` raises its soft `RLIMIT_NOFILE` to
 `planes::fd_need` plus `family_state::fd_need` after the config read
-(decision CH67 rule 4 for the bridge need).
+(decision CH67 rule 4 for the bridge need, Known gap 23 for the
+family-state need).
 
 ## The compose step
 
@@ -564,7 +565,8 @@ connection to a fresh TCP connect to `VMM_LITELLM_ADDR` or
    headroom of 4096: 20608. `vmm serve` raises its soft `RLIMIT_NOFILE`
    to it plus `family_state::fd_need` before it serves (see "The
    family-state reply"), and a hard limit below the sum exits 78
-   (`creche_vmm_confine::nofile`, decision CH67 rule 4). So the busy guests of
+   (`creche_vmm_confine::nofile`, decision CH67 rule 4, Known gap 23).
+   So the busy guests of
    a few VMs cannot use every fd of the vmm.
 
 `tests/planes.rs` runs the bridges on real Unix and TCP sockets in
@@ -607,13 +609,14 @@ CH24).
 7. Each reply writes one stderr line with the session, the reply kind,
    its time in microseconds and its hold in milliseconds, so the phase 3
    proof can measure the pull (decision CH23).
-8. The listener holds at most `LINK_CAP` (64) open links, the cap of
-   the guest init row (decision CH62 rule 14). A link past it is
-   accepted and closed at once (decision CH67 rule 3).
-9. `family_state::fd_need` counts per slot the listener, and per link
-   its stream and the 6 fds that one `read_state` holds at most: 449
-   per slot, 28736 for all `SLOTS`. `vmm serve` adds it to
-   `planes::fd_need`, so the raised soft limit is 49344.
+8. CONTRACT-QUESTION (Known gap 22): the listener holds at most
+   `LINK_CAP` (64) open links, the splice cap of a guest init row. A
+   link past it is accepted and closed at once.
+9. CONTRACT-QUESTION (Known gap 23): `family_state::fd_need` counts per
+   slot the listener, and per link its stream and the 6 fds that one
+   `read_state` holds at most: 449 per slot, 28736 for all `SLOTS`.
+   `vmm serve` adds it to `planes::fd_need`, so the raised soft limit is
+   49344.
 
 `tests/family_state.rs` runs the listener on real Unix sockets over a
 scratch family root, with paused tokio time: many pulls on one link, a
@@ -963,6 +966,22 @@ no guest sync.
     need exits 78. `systemd/creche-vmm.service` gets no `LimitNOFILE=`
     line, so systemd's default hard limit (524288) holds. Each CH
     inherits the raised soft limit.
+22. CONTRACT-QUESTION (plan PR V8): no row caps the open links of the
+    1100 listener. Decision CH62 rule 14 caps the open splices of a
+    bridge row at 64, and decision CH67 rule 3 closes a splice past that
+    cap. The 1100 host end is a server, not a splice. A root guest can
+    dial 1100 with no guest init, so an uncapped listener lets one guest
+    use every fd of the vmm. V8 takes the narrowest fail-closed reading:
+    `family_state::LINK_CAP` is the splice cap (64), and a link past it
+    is accepted and closed at once. Open for David: is 64 the cap of the
+    1100 listener, and does a link past it close at once?
+23. CONTRACT-QUESTION (plan PR V8): decision CH67 rule 4 raises the soft
+    `RLIMIT_NOFILE` to the bridge need plus 4096 headroom (20608), and
+    no row adds the 1100 links. V8 adds `family_state::fd_need` (28736:
+    per slot the listener, and per link its stream and the 6 fds of one
+    `read_state`), so the raise is 49344. The hard limit of 524288 holds
+    it. Open for David: does the raise include the 1100 links, and with
+    this count?
 
 ## Caller duties
 

@@ -29,9 +29,13 @@
 //!    holds no handle on the VM table.
 //! 7. Each reply logs its kind and its time, so the phase 3 proof can
 //!    measure the pull (decision CH23).
-//! 8. The listener holds at most `LINK_CAP` open links (decision CH62
-//!    rule 14). A link past the cap is accepted and closed at once
-//!    (decision CH67 rule 3).
+//! 8. CONTRACT-QUESTION (crate AGENTS.md, Known gap 22): the listener
+//!    holds at most `LINK_CAP` open links, and a link past the cap is
+//!    accepted and closed at once. No row decides a cap on the 1100 host
+//!    end. V8 takes the 64 splice cap of a bridge row (decision CH62 rule
+//!    14) and its close past the cap (decision CH67 rule 3) as the
+//!    narrowest reading, because a root guest can dial 1100 with no guest
+//!    init.
 //! 9. The drop of `Server` closes the listener and every open link. The
 //!    VM entry of the start table holds it, so the listener goes with the
 //!    VM.
@@ -55,9 +59,12 @@ use crate::server::ACCEPT_PAUSE;
 /// The longest hold of a `state` reply (decision CH31 rule 1).
 pub const HOLD_CAP: Duration = Duration::from_secs(10);
 
-/// The most open links of the listener of one VM. Guest init splices each
-/// link as one row of its bridges, and decision CH62 rule 14 caps the open
-/// splices of a row at 64, so the host end takes the same cap.
+/// The most open links of the listener of one VM.
+// CONTRACT-QUESTION (crate AGENTS.md, Known gap 22): no row caps the 1100
+// host end, which is a server, not a splice. Guest init splices each link
+// as one row of its bridges, and decision CH62 rule 14 caps the open
+// splices of a row at 64. V8 takes the same cap here as the narrowest
+// reading, because a root guest can dial 1100 with no guest init.
 pub const LINK_CAP: usize = SPLICE_CAP;
 
 /// The most fds that one `read_state` holds at once: the family dir,
@@ -68,7 +75,12 @@ const READ_FDS: u64 = 6;
 /// The fds that the listeners of all `SLOTS` need when each one holds
 /// `LINK_CAP` links and each link reads: per VM the listener, and per link
 /// its stream and `READ_FDS`. `vmm serve` raises its soft `RLIMIT_NOFILE`
-/// to this plus `planes::fd_need` (decision CH67 rule 4).
+/// to this plus `planes::fd_need`.
+// CONTRACT-QUESTION (crate AGENTS.md, Known gap 23): decision CH67 rule 4
+// sets the raise to the bridge need plus 4096 headroom (20608). No row
+// adds the 1100 links to it. V8 adds this need (28736), so the raise is
+// 49344, as the narrowest reading that keeps the 1100 links from taking
+// the fds of the bridges.
 #[must_use]
 pub fn fd_need() -> u64 {
     let links = u64::try_from(LINK_CAP).unwrap_or(u64::MAX);

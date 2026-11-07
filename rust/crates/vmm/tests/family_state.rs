@@ -341,7 +341,7 @@ fn a_refused_pull_closes_the_link() {
 
 /// The listener holds `LINK_CAP` open links. The next dial closes at once
 /// with no reply. After one link ends, a dial gets through again
-/// (decisions CH62 rule 14, CH67 rule 3).
+/// (CONTRACT-QUESTION, crate AGENTS.md Known gap 22).
 #[test]
 fn a_link_past_the_cap_closes_at_once() {
     let scratch = Scratch::new("links");
@@ -394,8 +394,8 @@ fn the_drop_closes_the_listener() {
 
 /// Each of the 64 slots with `LINK_CAP` links, each in a read: the
 /// listener, and per link its stream and the 6 fds of one read, 64 × (1 +
-/// 64 × 7). The vmm adds it to the bridge need at start (decision CH67
-/// rule 4).
+/// 64 × 7). The vmm adds it to the bridge need at start
+/// (CONTRACT-QUESTION, crate AGENTS.md Known gap 23).
 #[test]
 fn the_fd_need_holds_every_full_listener() {
     assert_eq!(LINK_CAP, 64);
