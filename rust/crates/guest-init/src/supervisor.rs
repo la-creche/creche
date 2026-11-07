@@ -5,14 +5,15 @@
 //!    facade opens the session of the handshake id (decisions CH21-8,
 //!    CH25 rule 2, CH62 rule 6).
 //! 2. When the reaper reports the facade pid gone, the state becomes
-//!    `exited`. After `RESTART_PAUSE` guest init starts the next one, so
-//!    at most one runs (decisions CH19 rule 1, CH62 rule 8). The pause has
-//!    no cap, and `starts` counts every start.
+//!    `exited`. Guest init sends SIGKILL to the process group of the old
+//!    facade, and after `RESTART_PAUSE` it starts the next one, so at most
+//!    one runs, its children included (decisions CH19 rule 1, CH62 rule
+//!    8). The pause has no cap, and `starts` counts every start.
 //! 3. Each other reaped pid is an orphan that PID 1 took over. It changes
 //!    no state.
 //! 4. A control link close never touches the facade (decision CH19 rule
 //!    1). Only a stop ends it.
-//! 5. The stop: SIGTERM to the facade, up to `SIGTERM_GRACE` for its exit,
+//! 5. The stop: SIGTERM to the facade group, up to `SIGTERM_GRACE` for its exit,
 //!    then the power-off, which sends SIGKILL to every process left
 //!    (decision CH62 rule 9). With no live facade, the power-off comes at
 //!    once.
@@ -46,8 +47,11 @@ pub enum Order {
     /// Run a timer of this length, then call `Supervisor::timer`. A new
     /// timer replaces the one that runs.
     Timer(Duration),
-    /// Send SIGTERM to the facade.
+    /// Send SIGTERM to the process group of the facade.
     Terminate(NonZeroU32),
+    /// Send SIGKILL to the process group of the facade that exited, so
+    /// no child of it runs beside the next start.
+    Kill(NonZeroU32),
     /// Power the VM off. The power-off sends SIGKILL to every process
     /// left first (decision CH62 rule 9).
     PowerOff,
@@ -134,18 +138,20 @@ impl Supervisor {
     }
 
     /// The reaper reaped `pid`. Only the facade pid changes the state
-    /// (decision CH19 rule 1).
-    pub fn reaped(&mut self, pid: NonZeroU32) -> Option<Order> {
+    /// (decision CH19 rule 1). An exit outside the stop kills the group of
+    /// the facade before the restart pause. In the stop, the power-off
+    /// kills every process left.
+    pub fn reaped(&mut self, pid: NonZeroU32) -> Vec<Order> {
         match self.life {
             Life::Live(facade) if facade == pid => {
                 self.life = Life::Paused;
-                Some(Order::Timer(RESTART_PAUSE))
+                vec![Order::Kill(pid), Order::Timer(RESTART_PAUSE)]
             }
             Life::Stopping(facade) if facade == pid => {
                 self.life = Life::Stopped;
-                Some(Order::PowerOff)
+                vec![Order::PowerOff]
             }
-            _ => None,
+            _ => Vec::new(),
         }
     }
 
@@ -213,7 +219,7 @@ impl Supervisor {
 }
 
 #[cfg(target_os = "linux")]
-pub use shell::{Facade, Reaped, terminate};
+pub use shell::{Facade, Reaped, signal};
 
 /// The facade process and the reaper thread (decisions CH8-1, CH49 rule
 /// 1, CH62 rules 2, 6 and 26). The kvm tests prove it.
@@ -223,6 +229,7 @@ mod shell {
     use std::fmt;
     use std::io;
     use std::num::NonZeroU32;
+    use std::os::unix::process::CommandExt as _;
     use std::process::{Command, Stdio};
     use std::sync::mpsc::{Receiver, Sender, channel};
     use std::sync::{Arc, Mutex, PoisonError};
@@ -232,7 +239,8 @@ mod shell {
     use creche_wire::guest::{FACADE_PROGRAM, SESSION_ID_ENV, WORKSPACE};
     use rustix::io::Errno;
     use rustix::process::{
-        Pid, Signal, WaitId, WaitIdOptions, WaitOptions, WaitStatus, kill_process, wait, waitid,
+        Pid, Signal, WaitId, WaitIdOptions, WaitOptions, WaitStatus, kill_process_group, wait,
+        waitid,
     };
 
     use crate::env_file::Env;
@@ -315,7 +323,17 @@ mod shell {
                 .current_dir(WORKSPACE)
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
-                .stderr(Stdio::inherit());
+                .stderr(Stdio::inherit())
+                // A process group of its own, with the facade pid as its
+                // id, so each signal of guest init reaches the children
+                // of the facade too.
+                // CONTRACT-QUESTION: CH19 rule 1, CH32 rule 7 and CH62
+                // rule 9 name only the facade. The reading taken: each
+                // SIGTERM and SIGKILL goes to its group, and the group of
+                // an exited facade gets SIGKILL before the restart. A
+                // change costs this call, `signal` and the `Live` arm of
+                // `Supervisor::reaped`.
+                .process_group(0);
             let child = {
                 let _guard = self.spawning.lock().unwrap_or_else(PoisonError::into_inner);
                 command.spawn()?
@@ -329,18 +347,19 @@ mod shell {
         }
     }
 
-    /// Sends SIGTERM to the facade (decision CH62 rule 9).
+    /// Sends `signal` to the process group of the facade `pid`: SIGTERM
+    /// in the stop (decision CH62 rule 9), SIGKILL after its exit.
     ///
     /// # Errors
     ///
-    /// The error of `kill`. A pid past `i32::MAX` is `EINVAL`.
-    pub fn terminate(pid: NonZeroU32) -> io::Result<()> {
+    /// The error of `kill`. ESRCH means that no process of the group is
+    /// left. A pid past `i32::MAX` is `EINVAL`.
+    pub fn signal(pid: NonZeroU32, signal: Signal) -> Result<(), Errno> {
         let pid = i32::try_from(pid.get())
             .ok()
             .and_then(Pid::from_raw)
             .ok_or(Errno::INVAL)?;
-        kill_process(pid, Signal::TERM)?;
-        Ok(())
+        kill_process_group(pid, signal)
     }
 
     /// Reaps each child of PID 1: the facade and each orphan that PID 1
@@ -445,7 +464,7 @@ mod tests {
     fn starts_only_after_the_first_hello() {
         let mut supervisor = Supervisor::default();
         assert_eq!(supervisor.timer(), None);
-        assert_eq!(supervisor.reaped(pid(7)), None);
+        assert_eq!(supervisor.reaped(pid(7)), vec![]);
         assert_eq!(
             supervisor.state(),
             FacadeState::NotStarted(FacadeNotStarted {})
@@ -467,7 +486,10 @@ mod tests {
         assert_eq!(supervisor.hello(), None);
         assert_eq!(supervisor.state(), starting(7, 1));
 
-        assert_eq!(supervisor.reaped(pid(7)), Some(Order::Timer(RESTART_PAUSE)));
+        assert_eq!(
+            supervisor.reaped(pid(7)),
+            vec![Order::Kill(pid(7)), Order::Timer(RESTART_PAUSE)]
+        );
         assert_eq!(supervisor.state(), exited(1));
     }
 
@@ -475,7 +497,10 @@ mod tests {
     fn waits_the_restart_pause() {
         assert_eq!(RESTART_PAUSE, Duration::from_secs(1));
         let mut supervisor = live(7);
-        assert_eq!(supervisor.reaped(pid(7)), Some(Order::Timer(RESTART_PAUSE)));
+        assert_eq!(
+            supervisor.reaped(pid(7)),
+            vec![Order::Kill(pid(7)), Order::Timer(RESTART_PAUSE)]
+        );
         // Only the end of the pause starts the next one.
         assert_eq!(supervisor.hello(), None);
         assert_eq!(supervisor.timer(), Some(Order::Start));
@@ -520,12 +545,12 @@ mod tests {
     #[test]
     fn ignores_an_orphan_exit() {
         let mut supervisor = live(7);
-        assert_eq!(supervisor.reaped(pid(8)), None);
+        assert_eq!(supervisor.reaped(pid(8)), vec![]);
         assert_eq!(supervisor.state(), starting(7, 1));
 
         // An orphan during the pause starts nothing either.
         supervisor.reaped(pid(7));
-        assert_eq!(supervisor.reaped(pid(8)), None);
+        assert_eq!(supervisor.reaped(pid(8)), vec![]);
         assert_eq!(supervisor.state(), exited(1));
     }
 
@@ -540,7 +565,7 @@ mod tests {
         // The facade is live until the reaper reports it.
         assert_eq!(supervisor.state(), starting(7, 1));
         assert_eq!(supervisor.stop(), vec![]);
-        assert_eq!(supervisor.reaped(pid(8)), None);
+        assert_eq!(supervisor.reaped(pid(8)), vec![]);
         // The end of the grace powers off, and the power-off sends
         // SIGKILL to every process left.
         assert_eq!(supervisor.timer(), Some(Order::PowerOff));
@@ -552,7 +577,7 @@ mod tests {
     fn stop_powers_off_when_the_facade_exits_in_the_grace() {
         let mut supervisor = live(7);
         supervisor.stop();
-        assert_eq!(supervisor.reaped(pid(7)), Some(Order::PowerOff));
+        assert_eq!(supervisor.reaped(pid(7)), vec![Order::PowerOff]);
         assert_eq!(supervisor.state(), exited(1));
         // No restart follows the exit.
         assert_eq!(supervisor.timer(), None);

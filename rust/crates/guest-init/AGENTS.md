@@ -55,21 +55,25 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   `CRECHE_SESSION_ID` (CH49 rule 1, CH62 rule 6), cwd
   `creche_wire::guest::WORKSPACE` (made when absent), stdin and stdout
   /dev/null and stderr on the console (CH62 rule 26). It runs as root
-  (CH8-1). A link close never touches it.
+  (CH8-1). A link close never touches it. It runs in a process group of
+  its own, so each SIGTERM and SIGKILL of guest init goes to its group
+  and reaches its children too.
 - PID 1 reaps each child in a reaper thread. When the facade pid is
-  reaped, the state becomes `exited`, and after `RESTART_PAUSE` (1 s, no
-  cap) guest init starts the next one, so at most one runs (CH19 rule 1,
-  CH62 rule 8). `starts` counts each start. Each other reaped pid is an
+  reaped, the state becomes `exited`, guest init sends SIGKILL to its
+  group (`guest-init: facade pid <n> sent SIGKILL` when a child was
+  left), and after `RESTART_PAUSE` (1 s, no cap) it starts the next one,
+  so at most one runs, its children included (CH19 rule 1, CH62 rule
+  8). `starts` counts each start. Each other reaped pid is an
   orphan and changes no state. The reaper waits with `WNOWAIT` and reaps
   under the spawn lock, so it never takes a child whose exec failed:
   std reaps that one inside `Command::spawn`.
 - After the ready of a link, each facade state change goes out on it as
   `{"facade": <state>}` (`GuestEvent::Facade`, CH43 rule 8). A change
   before the ready goes out in that ready.
-- After the ready, `stop` sends SIGTERM to a live facade and waits up to
-  `SIGTERM_GRACE` (2 s) for its exit. Then guest init powers off (CH19
-  rule 3, CH62 rule 9). With no live facade, the power-off comes at once.
-  A second stop changes nothing.
+- After the ready, `stop` sends SIGTERM to the group of a live facade
+  and waits up to `SIGTERM_GRACE` (2 s) for its exit. Then guest init
+  powers off (CH19 rule 3, CH62 rule 9). With no live facade, the
+  power-off comes at once. A second stop changes nothing.
 - After the ready, `sync` runs `syncfs` of the session disk, then
   `sync`, and guest init answers `{"synced":{}}` (`GuestEvent::Synced`)
   on the same link (CH62 rule 23). The link stays ready. A sync of a
@@ -155,3 +159,11 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
    be gone, so a process in D state cannot hang it, and it writes
    `guest-init: processes left after 1s` when the wait runs out. A
    change costs the constant `KILL_WAIT`.
+4. CONTRACT-QUESTION: CH19 rule 1 and CH62 rule 9 name only the
+   facade. Its children would live on as orphans of PID 1 beside the
+   next start, for example agent tools that write the workspace. The
+   reading taken, in `src/supervisor.rs`: the facade runs in a process
+   group of its own, each SIGTERM and SIGKILL goes to that group, and
+   the group of an exited facade gets SIGKILL before the restart pause.
+   A change costs the `process_group` call, `signal` and the `Live` arm
+   of `Supervisor::reaped`.

@@ -24,7 +24,7 @@
 //!    26). A line is refused when it is over the cap, is not one JSON
 //!    value, or is not the type that the link expects at that point.
 //! 6. After `ControlReady`, `ControlCommand::Stop` runs the stop of the
-//!    supervisor: SIGTERM to the facade, up to 2 s, then the power-off
+//!    supervisor: SIGTERM to the facade group, up to 2 s, then the power-off
 //!    (decisions CH19 rule 3, CH62 rule 9).
 //! 7. After `ControlReady`, `ControlCommand::Sync` runs `syncfs` of the
 //!    session disk, then `sync`, and guest init answers
@@ -88,8 +88,11 @@ pub enum Action {
     /// Run a timer of this length, then call `Control::timer`. A new timer
     /// replaces the one that runs.
     Timer(Duration),
-    /// Send SIGTERM to the facade (decision CH62 rule 9).
+    /// Send SIGTERM to the process group of the facade (decision CH62
+    /// rule 9).
     Terminate(NonZeroU32),
+    /// Send SIGKILL to the process group of the facade that exited.
+    Kill(NonZeroU32),
     /// Close the link and write why on the console (decision CH43 rule 2).
     Close(LinkId, Why),
     /// Write why on the console and change nothing.
@@ -377,6 +380,7 @@ impl Control {
             Order::Start => self.session.clone().map(Action::Start),
             Order::Timer(length) => Some(Action::Timer(length)),
             Order::Terminate(pid) => Some(Action::Terminate(pid)),
+            Order::Kill(pid) => Some(Action::Kill(pid)),
             Order::PowerOff => Some(Action::PowerOff),
         }
     }
@@ -488,11 +492,12 @@ mod shell {
     use nix::sys::socket::{AddressFamily, SockFlag, SockType, VsockAddr, bind, socket};
     use rustix::io::Errno;
     use rustix::net::{Shutdown, SocketFlags, accept_with, shutdown};
+    use rustix::process::Signal;
     use rustix::time::{ClockId, Timespec, clock_gettime, clock_settime};
 
     use super::{Action, Control, Lines, LinkId, Why};
     use crate::env_file::Env;
-    use crate::supervisor::{Facade, Reaped, terminate};
+    use crate::supervisor::{Facade, Reaped, signal};
 
     /// The bytes of one read, as the vmm reader takes them.
     const CHUNK: usize = 4096;
@@ -677,9 +682,15 @@ mod shell {
                 },
                 Action::Facade(link, line) => write(links, link, &line, "facade"),
                 Action::Timer(length) => *timer = Some(Instant::now() + length),
-                Action::Terminate(pid) => match terminate(pid) {
+                Action::Terminate(pid) => match signal(pid, Signal::TERM) {
                     Ok(()) => crate::say(&format!("facade pid {pid} sent SIGTERM")),
                     Err(error) => crate::say(&format!("facade pid {pid} SIGTERM failed: {error}")),
+                },
+                Action::Kill(pid) => match signal(pid, Signal::KILL) {
+                    Ok(()) => crate::say(&format!("facade pid {pid} sent SIGKILL")),
+                    // No process of the group is left.
+                    Err(Errno::SRCH) => {}
+                    Err(error) => crate::say(&format!("facade pid {pid} SIGKILL failed: {error}")),
                 },
                 Action::Sync(link) => match sync_session() {
                     Ok(()) => next.extend(control.synced(link)),
@@ -1174,7 +1185,7 @@ mod tests {
         control.ended(next);
         assert_eq!(
             control.reaped(pid(FACADE)),
-            vec![Action::Timer(RESTART_PAUSE)]
+            vec![Action::Kill(pid(FACADE)), Action::Timer(RESTART_PAUSE)]
         );
         let (last, _) = control.accept();
         control.line(last, &hello(SESSION));
@@ -1213,6 +1224,7 @@ mod tests {
             control.reaped(pid(FACADE)),
             vec![
                 Action::Facade(link, exited(1)),
+                Action::Kill(pid(FACADE)),
                 Action::Timer(RESTART_PAUSE)
             ]
         );
@@ -1243,7 +1255,7 @@ mod tests {
         let (new, _) = control.accept();
         assert_eq!(
             control.reaped(pid(FACADE)),
-            vec![Action::Timer(RESTART_PAUSE)]
+            vec![Action::Kill(pid(FACADE)), Action::Timer(RESTART_PAUSE)]
         );
         assert_eq!(
             control.line(old, &stop()),
