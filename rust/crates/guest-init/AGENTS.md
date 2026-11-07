@@ -90,22 +90,13 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
 
 ## Known gaps
 
-1. CONTRACT-QUESTION: CH62 rule 4 fixes only ro and nodev on the root
-   disk, rw, nosuid and nodev on the session disk, and nosuid and nodev
-   on the five tmpfs dirs. No row decides the rest of the mount options.
-   The readings taken, in `src/boot.rs`: the Debian mode of each tmpfs
-   dir (`/tmp` and `/var/tmp` 1777, `/run` and `/var/cache` 0755,
-   `/root` 0700), devtmpfs mode 0755 and `/dev/shm` mode 1777. devtmpfs
-   and devpts get nosuid and noexec. proc and sysfs get nosuid, nodev
-   and noexec. A change edits only the constants `TMPFS`, `DEVICES` and
-   `KERNEL` and the plan test.
-2. CONTRACT-QUESTION: no row decides the answer to a failed `syncfs`.
+1. CONTRACT-QUESTION: no row decides the answer to a failed `syncfs`.
    The reading taken, in `src/control.rs`: guest init writes
    `guest-init: control link <n> sync failed: <error>`, sends no
    `synced` and keeps the link. The vmm's `SYNC_WAIT` then runs out, so
    it takes no snapshot and runs the graceful stop (CH62 rule 23). A
    change costs one arm of `act` in `src/control.rs`.
-3. CONTRACT-QUESTION: rule 3 of "The vsock JSON links" in
+2. CONTRACT-QUESTION: rule 3 of "The vsock JSON links" in
    `wire/AGENTS.md` names the check `strict` of the vmm crate as the
    strict reader. Guest init may call creche-wire only. The reading
    taken: the typed serde reader is the strict reader of the control
