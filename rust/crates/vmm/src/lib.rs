@@ -10,6 +10,7 @@ pub mod control;
 pub mod guest_init;
 pub mod handlers;
 pub mod image_root;
+pub mod planes;
 pub mod relay;
 pub mod restore;
 pub mod root_owned;

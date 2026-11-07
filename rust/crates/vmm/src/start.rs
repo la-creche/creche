@@ -14,7 +14,8 @@
 //!    snapshot and gets the graceful stop.
 //! 3. In `spawn_blocking`: a vmm in no service unit refuses the launch
 //!    here (decision CH60 rule 1). Then the stale sockets go (PR D1,
-//!    decision CH19 (4)), the kernel, the initramfs and the root disk
+//!    decision CH19 (4)), the plane listeners bind (plan PR V6, decision
+//!    CH6-2), the kernel, the initramfs and the root disk
 //!    pass the store check (PR D6, decision CH44 rule 2), the session disk exists (PR D7, decision
 //!    CH21-4), the run dir `vm/<id>/` links to the slot of the start (PR
 //!    D16), `snapshots/` exists, and `sessions/<id>/serial.log` in the
@@ -23,11 +24,13 @@
 //!    restore or a cold boot. Then the launch step starts CH in its slot
 //!    (PR C18) with the argv of PR C7 and the sizes of PR C4 under the
 //!    ruleset of PR C6 (PR C2, decisions CH8-3, CH8-5, CH8-8, CH30, CH55).
-//! 4. A restore only: `ch-remote info` must say `Paused`, the device
-//!    check passes, then `ch-remote resume` (decision CH50 rule 10).
+//! 4. The plane bridges serve their listeners (`planes`). A restore
+//!    only: `ch-remote info` must say `Paused`, the device check passes,
+//!    then `ch-remote resume` (decision CH50 rule 10).
 //! 5. The first `ControlReady` (plan PR L10). It clears the faults of the
 //!    family (contract 05 §3.3.1 rule 8).
-//! 6. The deny check (PR C8, decision CH6-3).
+//! 6. The deny check (PR C8, decision CH6-3), with the plane ports as the
+//!    bound set.
 //! 7. The dial of guest port 1201 (decision CH50 rule 2).
 //!
 //! Each fault but `host_full` goes to the fault file of the family
@@ -90,6 +93,7 @@ use crate::control::{
 };
 use crate::handlers::acp::{StartFault, StartVm};
 use crate::handlers::drop::{StopVm, VmStopFailed};
+use crate::planes::{Bound, Planes, Upstreams, bind};
 use crate::relay::{AcpLink, Door, Relays};
 use crate::restore::{ChApi, Expected, check_devices};
 use crate::shutdown::{Taken, VmSet};
@@ -154,6 +158,9 @@ pub struct StartConfig {
     /// The version check of `ch`, for the snapshot key (decision CH7-6,
     /// gap G10). The vmm runs it at its start.
     pub ch_version: CheckedCh,
+    /// The address of each plane that the bridges of each VM splice to
+    /// (decisions CH6-2, CH62 rule 20).
+    pub planes: Upstreams,
 }
 
 /// The start of a launch step. `Spawner` is the one of the vmm, and a
@@ -204,6 +211,10 @@ struct Vm<P> {
     link_id: Option<LinkId>,
     /// The snapshot key of the VM. `None` after a failed stop.
     key: Option<SnapshotKey>,
+    /// The plane bridges of the VM (plan PR V6). They go with the entry,
+    /// so the listeners close when the VM leaves the table. `None` once
+    /// the vmm killed the VM.
+    planes: Option<Planes>,
     /// The last use, for the eviction order (decision CH50 rule 5).
     last_use: Instant,
 }
@@ -351,8 +362,8 @@ struct Pending<P: VmProcess> {
 
 impl<P: VmProcess> Pending<P> {
     /// Makes the VM an entry of the table with its control link `link`,
-    /// whose identity is `link_id`.
-    fn commit(mut self, link: StopSender, link_id: LinkId) {
+    /// whose identity is `link_id`, and its plane bridges `planes`.
+    fn commit(mut self, link: StopSender, link_id: LinkId, planes: Planes) {
         if let Some(process) = self.process.take() {
             let vm = Vm {
                 process,
@@ -362,6 +373,7 @@ impl<P: VmProcess> Pending<P> {
                 link: Some(link),
                 link_id: Some(link_id),
                 key: self.key.take(),
+                planes: Some(planes),
                 last_use: Instant::now(),
             };
             lock(&self.table).insert(self.id.clone(), Slot::Running(vm));
@@ -389,6 +401,7 @@ impl<P: VmProcess> Drop for Pending<P> {
                     link: None,
                     link_id: None,
                     key: None,
+                    planes: None,
                     last_use: Instant::now(),
                 };
                 table.insert(self.id.clone(), Slot::Running(vm));
@@ -434,6 +447,7 @@ impl<P: VmProcess> Drop for Eviction<P> {
         if let Some(mut vm) = self.vm.take() {
             let _ = vm.process.kill();
             vm.link = None;
+            vm.planes = None;
             lock(&self.table).insert(self.id.clone(), Slot::Running(vm));
         }
     }
@@ -1415,6 +1429,8 @@ struct Booted<P> {
     start: Start,
     /// The files of a restore, for the device check. `None` for a boot.
     restore: Option<Expected>,
+    /// The plane listeners, bound before CH started.
+    planes: Bound,
 }
 
 /// Step 3: the link of `vm/<id>` to `slot`, the files of the boot, the
@@ -1439,6 +1455,10 @@ fn launch<L: Launcher, A: ChApi>(
         .link_vm(id, slot)
         .map_err(|error| format!("{error}: {}", error.source))?;
     remove_stale(&run).map_err(|error| format!("{error}: {}", error.source))?;
+    // Plan PR V6: the listeners exist before CH starts, for a boot and for
+    // each restore, so no guest dial of 1101 or 1102 finds none. The slot
+    // is empty here (decision CH56 rule 1).
+    let planes = bind(&run, config.planes).map_err(|error| format!("{error}: {}", error.source))?;
     let checked = |digest| {
         config
             .images
@@ -1511,6 +1531,7 @@ fn launch<L: Launcher, A: ChApi>(
         key,
         start,
         restore,
+        planes,
     })
 }
 
@@ -1566,16 +1587,32 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
             let cmdline = launcher.cmdline(&booted.process);
             pending.process = Some(booted.process);
             pending.key = Some(booted.key);
-            Ok((pending, booted.start, booted.restore, cmdline))
+            Ok((
+                pending,
+                booted.start,
+                booted.restore,
+                cmdline,
+                booted.planes,
+            ))
         })
         .await;
-        let (pending, start, restore, cmdline) = match launched {
+        let (pending, start, restore, cmdline, bound) = match launched {
             Ok(launched) => launched,
             Err(message) => return Err(self.fault(family, sandbox, message).await),
         };
 
         let vsock = pending.run.vsock_socket();
         let link = self.control().replace(id);
+        // A fault from here on drops `planes`, which closes the bridges.
+        let planes = match bound.serve() {
+            Ok(planes) => planes,
+            Err(error) => {
+                let message = format!("serving the plane bridges: {error}");
+                return Err(self
+                    .abort(pending, link, None, family, sandbox, message)
+                    .await);
+            }
+        };
         if let Some(expected) = restore
             && let Err((code, message)) = self.resume_checked(&pending.run, expected).await
         {
@@ -1599,11 +1636,12 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         // command line is the one of the launch step, and the check fails
         // closed (`deny::check`). The kernel fixes the command line at
         // exec, so a check after `ControlReady` proves the same thing.
-        // Decision CH49 rule 3 binds 1104 from phase 7 on, so the bound
-        // set is empty in phase 2.
+        // The bound set is the plane ports 1101 and 1102 (plan PR V6).
+        // Decision CH49 rule 3 binds 1104 from phase 7 on.
         let (ch, run) = (self.config.ch.clone(), pending.run.clone());
+        let ports = self.config.planes.rows().map(|(port, _)| port);
         let denied = blocking(move || {
-            check(&cmdline, &ch, &start, &run, &[]).map_err(|error| error.to_string())
+            check(&cmdline, &ch, &start, &run, &ports).map_err(|error| error.to_string())
         })
         .await;
         if let Err(message) = denied {
@@ -1628,7 +1666,7 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         let (sender, events) = control.split();
         let (stopper, rows) = (self.stopper(), Arc::clone(&self.rows));
         tokio::spawn(read_guest(events, (id.clone(), link), stopper, rows));
-        pending.commit(sender, link);
+        pending.commit(sender, link, planes);
         Ok(acp)
     }
 }

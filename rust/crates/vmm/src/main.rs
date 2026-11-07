@@ -1,9 +1,10 @@
 //! The program `vmm` (decision CH7-5). The one argument picks the mode:
 //!
-//! - `vmm serve` reads its config from the env (`creche_vmm::config`) and
-//!   runs the vmm on the multi-thread tokio runtime until SIGTERM. A
-//!   missing or bad key, or a failed start step, exits 78. The end of a
-//!   shutdown exits 0.
+//! - `vmm serve` reads its config from the env (`creche_vmm::config`),
+//!   raises its soft `RLIMIT_NOFILE` to `planes::fd_need` and runs the vmm
+//!   on the multi-thread tokio runtime until SIGTERM. A missing or bad
+//!   key, a hard fd limit below the need, or a failed start step, exits
+//!   78. The end of a shutdown exits 0.
 //! - `vmm launch` is the launch step of one Cloud Hypervisor process. It
 //!   runs on the main thread with no runtime, because the access rules of
 //!   Landlock bind only the thread that sets them.
@@ -26,8 +27,9 @@ use std::fmt;
 use std::process::ExitCode;
 
 use creche_vmm::config::{Config, KillScopesConfig};
+use creche_vmm::planes::fd_need;
 use creche_vmm::shutdown::RUNTIME_END;
-use creche_vmm_confine::{launch, leftovers, stage};
+use creche_vmm_confine::{launch, leftovers, nofile, stage};
 use tokio::runtime::Builder;
 
 /// The exit status of a refused start (owner item 86). A unit with
@@ -108,13 +110,19 @@ fn kill_scopes() -> ExitCode {
     }
 }
 
-/// Reads the config, then builds the tokio runtime and runs the vmm on it
-/// (decision CH26 rule 1). Only this mode builds a runtime.
+/// Reads the config, raises the fd limit, then builds the tokio runtime
+/// and runs the vmm on it (decision CH26 rule 1). Only this mode builds a
+/// runtime.
 fn serve() -> ExitCode {
     let config = match Config::read() {
         Ok(config) => config,
         Err(error) => return refuse(&error),
     };
+    // Before any fd of a VM: the soft limit of systemd (1024) holds the
+    // bridges of a few busy guests only (decision CH67 rule 4).
+    if let Err(error) = nofile::raise(fd_need()) {
+        return refuse(&error);
+    }
     // The multi-thread runtime (decision CH36, gap G21), so one stray
     // blocking call cannot stall every relay. The server needs the IO
     // driver for its socket and the time driver for its timeouts.

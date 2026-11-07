@@ -9,7 +9,7 @@
 
 use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::Shutdown;
+use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr, TcpListener};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
@@ -22,6 +22,7 @@ use std::{fs, io};
 use creche_vmm::control::ControlState;
 use creche_vmm::handlers::acp::{Acp, StartFault, StartVm};
 use creche_vmm::handlers::drop::{Drops, StopVm, VmStopFailed};
+use creche_vmm::planes::Upstreams;
 use creche_vmm::relay::{AcpLink, Door, Relays};
 use creche_vmm::restore::ChApi;
 use creche_vmm::server::Stop;
@@ -61,6 +62,9 @@ const TURN: &str =
 const STARTING: &str = r#"{"facade":{"starting":{"last_turn_end":null,"pid":42,"starts":1}}}"#;
 /// As `READY`, with the end of a turn that the row has not seen.
 const ENDED: &str = r#"{"facade":{"running":{"last_turn_end":{"title":"First","updated_at":1793577700000},"pid":42,"starts":1,"turn_running":false}}}"#;
+/// The plane of each bridge of a test that dials none: port 9 of
+/// 127.0.0.1, where nothing listens on a test host.
+const NO_PLANE: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 9);
 /// The SHA-256 of no bytes: the fake kernel, initramfs and root disk are
 /// empty.
 const EMPTY: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
@@ -130,6 +134,12 @@ struct Fake {
     guest: Mutex<Guest>,
     /// Adds `--net` to each command line file.
     net: AtomicBool,
+    /// Adds a `vsock.sock_1103` listener to each run dir, a port that the
+    /// vmm does not bind.
+    extra: AtomicBool,
+    /// For each launch: whether a dial of 1101 and of 1102 connected at
+    /// the launch, before CH would start.
+    listening: Mutex<Vec<[bool; 2]>>,
     /// Fails each launch.
     fail: AtomicBool,
     /// Holds each launch until the test clears it.
@@ -174,8 +184,16 @@ impl Fake {
         if self.net.load(Ordering::SeqCst) {
             args.push("--net".to_owned());
         }
-        let vsock = launch.files().run_dir().path().join("vsock.sock");
-        let listener = UnixListener::bind(vsock).unwrap();
+        let run = launch.files().run_dir().path();
+        let listening = [1101, 1102].map(|port| {
+            let listener = run.join(format!("vsock.sock_{port}"));
+            UnixStream::connect(listener).is_ok()
+        });
+        self.listening.lock().unwrap().push(listening);
+        if self.extra.load(Ordering::SeqCst) {
+            UnixListener::bind(run.join("vsock.sock_1103")).unwrap();
+        }
+        let listener = UnixListener::bind(run.join("vsock.sock")).unwrap();
         let guest = *self.guest.lock().unwrap();
         let exited = Arc::new(AtomicBool::new(false));
         let broken = Arc::new(AtomicBool::new(false));
@@ -420,6 +438,10 @@ impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
             },
             budget: BUDGET,
             ch_version: ch,
+            planes: Upstreams {
+                litellm: NO_PLANE,
+                chaperone: NO_PLANE,
+            },
         };
         edit(&mut config);
 
@@ -430,6 +452,8 @@ impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
             dir: dir.clone(),
             guest: Mutex::new(Guest::Ready),
             net: AtomicBool::new(false),
+            extra: AtomicBool::new(false),
+            listening: Mutex::default(),
             fail: AtomicBool::new(false),
             hold: AtomicBool::new(false),
             stop_lines: Arc::default(),
@@ -2228,4 +2252,102 @@ fn a_stale_link_to_a_held_slot_removes_nothing_of_its_vm() {
     assert_eq!(test.slot(1), 1);
     assert_eq!(test.link(0), Some(slot_dir(1)));
     assert!(vsock.exists());
+}
+
+/// Plan PR V6: the listeners of host ports 1101 and 1102 take a dial at
+/// the launch, before CH starts (decisions CH6-2, CH56 rule 1).
+#[test]
+fn listeners_exist_before_the_boot() {
+    let test = Test::new("planes-boot", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    assert!(!test.restored(0));
+    assert_eq!(*test.fake.listening.lock().unwrap(), [[true, true]]);
+}
+
+/// A restore empties the slot and binds both listeners again before CH
+/// starts, so a restored guest that dials again finds them (decisions
+/// CH6-2, CH62 rule 14).
+#[test]
+fn a_restore_binds_the_listeners_again() {
+    let test = Test::new("planes-restore", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    let id = test.rows[0].id.clone();
+    assert!(test.runtime.block_on(test.hook.stop(&id)).is_ok());
+    test.snapshot(0, Some(&test.key()));
+    test.reply(0, "Paused", &[]);
+    assert_eq!(test.start(0), Ok(()));
+    assert!(test.restored(1));
+    assert_eq!(*test.fake.listening.lock().unwrap(), [[true, true]; 2]);
+}
+
+/// A dial of 1101 reaches the plane of the config while the VM runs. The
+/// stop of the VM closes the listener (plan PR V6).
+#[test]
+fn the_listeners_go_with_the_vm() {
+    let plane = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = plane.local_addr().unwrap();
+    spawn(move || {
+        for stream in plane.incoming() {
+            let mut stream = stream.unwrap();
+            spawn(move || {
+                let mut buffer = [0; 64];
+                while let Ok(read @ 1..) = stream.read(&mut buffer) {
+                    stream.write_all(&buffer[..read]).unwrap();
+                }
+            });
+        }
+    });
+    let test = Test::new("planes-stop", |config| config.planes.litellm = addr);
+    assert_eq!(test.start(0), Ok(()));
+    let listener = test.dir.join("run/slot/0/vsock.sock_1101");
+    let path = listener.clone();
+    // The current-thread runtime runs the bridge only inside `block_on`,
+    // so the guest side runs in `spawn_blocking`.
+    let echoed = test.runtime.block_on(test.runtime.spawn_blocking(move || {
+        let mut guest = UnixStream::connect(path).unwrap();
+        guest
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        guest.write_all(b"ping").unwrap();
+        let mut back = [0; 4];
+        guest.read_exact(&mut back).unwrap();
+        back
+    }));
+    assert_eq!(&echoed.unwrap(), b"ping");
+
+    let id = test.rows[0].id.clone();
+    assert!(test.runtime.block_on(test.hook.stop(&id)).is_ok());
+    // The file stays until the next link of the slot empties it. The end
+    // of the bridge task closes its socket.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let pause = async { tokio::time::sleep(Duration::from_millis(1)).await };
+        test.runtime.block_on(pause);
+        match UnixStream::connect(&listener) {
+            Err(error) if error.kind() == io::ErrorKind::ConnectionRefused => break,
+            _ => assert!(Instant::now() < deadline, "1101 still listens"),
+        }
+    }
+}
+
+/// The deny check takes 1101 and 1102 as the bound set: a start with both
+/// listeners passes. A listener of a port that the vmm did not bind fails
+/// the check with `egress_assert_failed`, and the VM stops (decisions
+/// CH6-3, CH14, CH49 rule 3).
+#[test]
+fn the_egress_check_names_1101_and_1102() {
+    let test = Test::new("planes-deny", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    let mut listeners: Vec<String> = fs::read_dir(test.dir.join("run/slot/0"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .filter(|name| name.starts_with("vsock.sock_"))
+        .collect();
+    listeners.sort();
+    assert_eq!(listeners, ["vsock.sock_1101", "vsock.sock_1102"]);
+
+    test.fake.extra.store(true, Ordering::SeqCst);
+    assert_eq!(test.start(1), Err(StartFault::EgressAssertFailed));
+    assert_eq!(test.fault_codes(), ["egress_assert_failed"]);
+    assert!(test.stopped(1));
 }

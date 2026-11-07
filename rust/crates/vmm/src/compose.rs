@@ -309,6 +309,7 @@ fn parts(config: Config, checked: Checked) -> Result<Vmm, StartError> {
         limits: config.limits,
         budget: config.budget,
         ch_version,
+        planes: config.planes,
     };
     let relays = Relays::default();
     let control = Arc::new(Mutex::new(ControlState::default()));

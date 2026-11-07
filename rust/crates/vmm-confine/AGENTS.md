@@ -84,6 +84,10 @@ table of the three vmm crates.
   (decision CH45 rule 2). Decision CH50 rule 9 sets `READ_TRIES` (5),
   `RETRY_PAUSE` (10 ms) and `SHAPE_CAP` (4 KiB). A read blocks its thread
   in `thread::sleep`, so a caller in tokio runs it in `spawn_blocking`.
+- `nofile::raise` sets the soft `RLIMIT_NOFILE` of the vmm to the need
+  that the vmm passes, and keeps the hard limit. A soft limit at or above
+  the need stays. A hard limit below it is `NofileError::Short`, so the
+  vmm never serves with fewer fds than its caps allow.
 - `command::ChCommand` renders the CH argv from the checked store types
   only: `CheckedImage` (PR D6), `SessionDisk` (PR D7), `SerialLog` (PR
   D17) and `ClaimedSnapshot` (PR D11). No input names a network card, and no
@@ -363,3 +367,6 @@ table of the three vmm crates.
   the value `vmm` in the `source` enum of §3.3, and the reader. caregiver
   reads only the `attendance` and `pep` files today, so it ignores the
   vmm file.
+- Closed by decision CH67 rule 4: the fd limit of the vmm, its headroom
+  of 4096 and the refusal of a short hard limit (`nofile.rs`,
+  `rust/crates/vmm/AGENTS.md` Known gap 21).
