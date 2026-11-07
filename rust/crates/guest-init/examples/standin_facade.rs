@@ -168,7 +168,8 @@ fn hold() -> ExitCode {
     }
 }
 
-/// Writes one `standin: <text>` line on stderr.
+/// Writes one `standin: <text>` line on stderr, in one `write_all`, so a
+/// guest-init line on the same console cannot land inside it.
 fn say(text: &str) {
-    let _ = writeln!(io::stderr(), "standin: {text}");
+    let _ = io::stderr().write_all(format!("standin: {text}\n").as_bytes());
 }
