@@ -149,18 +149,14 @@ describe("the record of a turn", () => {
       });
     }
 
-    expect(sessions.recordTurn(id, "  Plan the   garden \nsecond line", settledAt[0] ?? null)).toEqual({
-      title: "Plan the garden",
-      updatedAt: settledAt[0],
-      update: { title: "Plan the garden", updatedAt: settledAt[0], _meta },
-    });
+    const first = sessions.turnEndOf("  Plan the   garden \nsecond line", settledAt[0] ?? null);
+    expect(first).toEqual({ title: "Plan the garden", updatedAt: settledAt[0] });
+    expect(sessions.recordTurn(id, first)).toEqual({ title: "Plan the garden", updatedAt: settledAt[0], _meta });
     // The update names the session once. The turn end of the local link
     // carries the title of each turn (decision CH21).
-    expect(sessions.recordTurn(id, "Another thing", settledAt[1] ?? null)).toEqual({
-      title: "Another thing",
-      updatedAt: settledAt[1],
-      update: { updatedAt: settledAt[1], _meta },
-    });
+    const second = sessions.turnEndOf("Another thing", settledAt[1] ?? null);
+    expect(second).toEqual({ title: "Another thing", updatedAt: settledAt[1] });
+    expect(sessions.recordTurn(id, second)).toEqual({ updatedAt: settledAt[1], _meta });
     expect((await list())["sessions"]).toEqual([{ sessionId: id, cwd: "/work", title: "Plan the garden", updatedAt: settledAt[1], _meta }]);
   });
 
@@ -169,7 +165,7 @@ describe("the record of a turn", () => {
     expect(titleOf("\n \n")).toBe("");
     expect(titleOf(`${"a".repeat(255)} b`)).toBe("a".repeat(255));
     expect(titleOf("𝒜".repeat(256))).toBe("𝒜".repeat(64));
-    expect(sessions.recordTurn("no-such-session", "text", null).update).toBeNull();
+    expect(sessions.recordTurn("no-such-session", sessions.turnEndOf("text", null))).toBeNull();
     expect(sessions.handle("no-such-session")).toBeNull();
   });
 

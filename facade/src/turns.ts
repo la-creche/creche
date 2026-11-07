@@ -197,10 +197,13 @@ export class Turns {
     });
     this.running.delete(sessionId);
 
-    const record = this.sessions.recordTurn(sessionId, text, lastRecordAt);
-    this.link?.turnEnd(record.title, record.updatedAt);
-    if (record.update !== null) {
-      sent = this.live.publish(sessionId, [{ position: null, update: { sessionUpdate: "session_info_update", ...record.update } }]);
+    // The end goes up before the row write, so a write that throws still
+    // ends the turn for guest init.
+    const end = this.sessions.turnEndOf(text, lastRecordAt);
+    this.link?.turnEnd(end.title, end.updatedAt);
+    const update = this.sessions.recordTurn(sessionId, end);
+    if (update !== null) {
+      sent = this.live.publish(sessionId, [{ position: null, update: { sessionUpdate: "session_info_update", ...update } }]);
     }
 
     await sent;

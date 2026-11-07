@@ -111,14 +111,12 @@ function metaOf(row: SessionRow): Record<string, unknown> | null {
   return kept.length > 0 ? Object.fromEntries(kept) : null;
 }
 
-/** The end of one turn, as the row and the turn end event of the local link take it. */
-export interface TurnRecord {
+/** The end of one turn, as the turn end event of the local link and the row take it. */
+export interface TurnEnd {
   /** `titleOf` of the turn's prompt: the title of a turn end (decision CH21). */
   readonly title: string;
   /** The time of the turn's last record, or the clock when it wrote none. */
   readonly updatedAt: string;
-  /** The `session_info_update` of the turn. Null for an unknown id. */
-  readonly update: SessionInfoUpdate | null;
 }
 
 function toInfo(row: SessionRow): SessionInfo {
@@ -226,15 +224,23 @@ export class Sessions {
   }
 
   /**
-   * One turn ended. The first turn names the session. Each turn moves
-   * `updatedAt` to the time of its last record.
+   * The end of a turn on the prompt `userText`. It reads no row and writes
+   * none, so the turn end event never waits on a row write.
    */
-  public recordTurn(id: string, userText: string, lastRecordAt: string | null): TurnRecord {
-    const updatedAt = lastRecordAt ?? this.now().toISOString();
-    const title = titleOf(userText);
+  public turnEndOf(userText: string, lastRecordAt: string | null): TurnEnd {
+    return { title: titleOf(userText), updatedAt: lastRecordAt ?? this.now().toISOString() };
+  }
+
+  /**
+   * Writes the end of one turn on its row. The first turn names the
+   * session. Each turn moves `updatedAt` to the time of its last record.
+   * The answer is the `session_info_update` of the turn, or null for an
+   * unknown id.
+   */
+  public recordTurn(id: string, { title, updatedAt }: TurnEnd): SessionInfoUpdate | null {
     const row = this.index.get(id);
     if (row === null) {
-      return { title, updatedAt, update: null };
+      return null;
     }
 
     this.index.touch(id, updatedAt);
@@ -242,11 +248,11 @@ export class Sessions {
     const meta = metaOf(row);
     const tail = meta === null ? { updatedAt } : { updatedAt, _meta: meta };
     if (row.title !== null || title.length === 0) {
-      return { title, updatedAt, update: tail };
+      return tail;
     }
 
     this.index.nameOnce(id, title);
 
-    return { title, updatedAt, update: { title, ...tail } };
+    return { title, ...tail };
   }
 }

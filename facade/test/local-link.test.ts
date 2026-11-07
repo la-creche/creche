@@ -174,6 +174,25 @@ describe("a prompt", () => {
       { end: { title: "Another thing", updated_at: times[1] } },
     ]);
   });
+
+  it("sends the turn end when the row write throws", async () => {
+    const guest = await guestInit();
+    const facade = link(guest.path, []);
+    facade.open(() => undefined);
+    const db = new DatabaseSync(":memory:");
+    const service = sessionService({ agent: Probe, agentName: "Probe", index: new SessionIndex(db), mode: SBX, link: facade, store: flue.store });
+    const wire = new Wire(facadeApp({ onBeat: () => undefined, onShutdown: () => undefined }, service));
+    const id = (await wire.request("session/new", { cwd: "/work", mcpServers: [] })).result?.["sessionId"] as string;
+    // A real SQLite fault at the turn's write, as a full disk gives one.
+    db.exec("CREATE TRIGGER full BEFORE UPDATE OF updated_at ON creche_sessions BEGIN SELECT RAISE(ABORT, 'FIXTURE-FULL'); END");
+    faux.setResponses([fauxAssistantMessage("done")]);
+
+    const answer = await wire.request("session/prompt", { sessionId: id, prompt: [{ type: "text", text: "Plan the garden" }] });
+    await until(() => guest.received().split("\n").length === 3);
+
+    expect(answer.result).toBeUndefined();
+    expect(guest.received().split("\n").slice(0, 2).map((line) => Object.keys(JSON.parse(line) as object))).toEqual([["start"], ["end"]]);
+  });
 });
 
 describe("the down lines", () => {

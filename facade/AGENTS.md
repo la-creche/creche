@@ -184,7 +184,9 @@ rule 5).
 2. Each turn sends `{"start":{}}` before Flue runs it, and
    `{"end":{"title":…,"updated_at":…}}` after its record. The end
    carries `titleOf` of the turn's prompt and the time of the turn's last
-   record, in `UnixMillis` (decision CH21). Each start gets an end.
+   record, in `UnixMillis` (decision CH21). Each start gets an end: the
+   end goes up before the row write, so a write that throws still ends
+   the turn for guest init.
 3. Each line up is one wire `TurnEvent`, checked with the wire validator,
    then written as one strict JSON line under `CONTROL_LINE_CAP`. guest
    init kills the facade at a line that it refuses (decision CH62 rule
