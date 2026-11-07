@@ -1,7 +1,7 @@
 //! The strict JSON check of the Rust readers (decision CH65 rule 2).
 //!
-//! The vmm reads each host API body through `strict`. Each Rust reader of
-//! a vsock JSON link, the vmm and guest init, reads each line through it
+//! The vmm reads each host API body through `strict`. Each Rust end of a
+//! vsock JSON link, the vmm and guest init, must read each line through it
 //! too (`wire/AGENTS.md`, "The vsock JSON links", rule 3). So the two ends
 //! of a link cannot drift. A caller then reads the checked bytes as its
 //! wire type.

@@ -481,9 +481,10 @@ line.
    check `creche_wire::strict` of `rust/crates/wire/src/strict_json.rs`
    in Rust, `creche_wire.read` in Python and `read` of
    `agent/src/wire-read.ts` in TypeScript. It then reads the line as the
-   type that the link expects at that point. The vmm and guest init both
-   call `creche_wire::strict`, so the two Rust ends of a link cannot drift
-   (decision CH65 rule 2). The vmm reads the host API body through it too.
+   type that the link expects at that point. Each Rust end of a link, the
+   vmm and guest init, reads each line through `creche_wire::strict`, so
+   the two Rust ends cannot drift (decision CH65 rule 2). The vmm reads the
+   host API body through it too.
 4. On the control link the vmm sends `ControlHello` first, on each new
    link (decisions CH19 rule 2, CH28). Guest init answers with one
    `ControlReady`. After that the vmm sends `ControlCommand` and guest
