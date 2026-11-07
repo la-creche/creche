@@ -28,8 +28,10 @@ serde_json.workspace = true
 # and the read timeouts. hyper-util `tokio` turns it on already, so it adds
 # no crate to the lock. `signal` for the SIGTERM that starts a clean stop
 # (L19, decisions CH19 (4) and CH26 rule 2). It adds signal-hook-registry
-# to the lock.
-tokio = { workspace = true, features = ["net", "signal", "sync", "time"] }
+# to the lock. `process` for the `git upload-pack` child of the 1103
+# mirror serve: an async child with pipes and kill_on_drop (CH46 rule 4,
+# CH67 rule 9). It adds no crate to the lock (CH9-1).
+tokio = { workspace = true, features = ["net", "process", "signal", "sync", "time"] }
 
 # `test-util` for paused time: a stop test checks the 30 s and 5 s waits
 # of decision CH34 rule 5 with no real wait. It adds no crate to the lock.
