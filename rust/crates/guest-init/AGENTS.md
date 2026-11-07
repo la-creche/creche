@@ -215,8 +215,11 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   `pulled <pid> <reply key> <status 4000> <status 8300> <pull ms>`,
   with `closed` for a link that ended with no answer.
   With the mode `markers`, it writes three marker files on the session
-  disk and `standin: markers written`, then stays up. Each other start
-  stays up until a signal ends it.
+  disk and `standin: markers written`, then stays up. With the mode
+  `linked-relay`, it opens the local link, runs the relay of `relay` and
+  exits with status 0 on the stop line. The phase 3 proof in
+  `creche-vmm/tests/kvm_guest.rs` runs it (plan PR V10, hand-off from
+  this track). Each other start stays up until a signal ends it.
 
 ## Tests
 

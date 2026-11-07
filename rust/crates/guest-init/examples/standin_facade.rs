@@ -54,6 +54,13 @@
 //!    each with its own line, and writes `markers written`. Then it stays
 //!    up. A fault exits with status 4. A kvm test syncs and kills CH,
 //!    then reads them from the disk (decision CH62 rule 23).
+//! 10. In mode `linked-relay` it opens the local link, so its state
+//!     becomes `running`, and runs the relay of mode `relay` on a thread.
+//!     Then it waits for the stop line on the local link, and it exits
+//!     with status 0 on it, as mode `turn` does. A fault exits with
+//!     status 4. The phase 3 proof of `creche-vmm/tests/kvm_guest.rs`
+//!     runs it: the sleep gate snapshots only a `running` facade
+//!     (decision CH32 rule 6).
 
 use std::convert::Infallible;
 use std::fs::{self, File};
@@ -204,6 +211,12 @@ fn facade() -> ExitCode {
             }
             say("markers written");
         }
+        Ok(mode) if mode.trim_end() == "linked-relay" => {
+            return linked_relay().unwrap_or_else(|error| {
+                say(&format!("linked relay failed: {error}"));
+                ExitCode::from(TURN_FAILED)
+            });
+        }
         Ok(mode) if mode.trim_end() == "relay" => {
             thread::spawn(|| {
                 let Err(error) = relay();
@@ -309,9 +322,14 @@ fn turn() -> io::Result<ExitCode> {
         .arg(STRANGER)
         .status()?;
     say(&format!("stranger {status}"));
+    stop_line(&link)
+}
 
+/// Reads one line of the local link `link`: status 0 for the stop line,
+/// else status 4.
+fn stop_line(link: &UnixStream) -> io::Result<ExitCode> {
     let mut line = String::new();
-    BufReader::new(&link).read_line(&mut line)?;
+    BufReader::new(link).read_line(&mut line)?;
     match serde_json::from_str::<ControlCommand>(line.trim_end()) {
         Ok(ControlCommand::Stop(_)) => {
             say("stop line");
@@ -322,6 +340,19 @@ fn turn() -> io::Result<ExitCode> {
             Ok(ExitCode::from(TURN_FAILED))
         }
     }
+}
+
+/// Mode `linked-relay`: the local link, the relay on a thread, then the
+/// wait for the stop line.
+fn linked_relay() -> io::Result<ExitCode> {
+    let link = UnixStream::connect(LOCAL_LINK_SOCKET)?;
+    say("link open");
+    thread::spawn(|| {
+        let Err(error) = relay();
+        say(&format!("relay failed: {error}"));
+    });
+    say("up");
+    stop_line(&link)
 }
 
 /// The stranger of mode `turn`: a process other than the facade opens
