@@ -106,8 +106,12 @@ no KVM:
    a `digests.json` that the test user owns.
 
 `tests/binary.rs` runs `vmm serve` with no KVM. It proves the exit 78
-of a missing CH program and of one that root does not own. The Hyperion
-proof of the unit (plan PR C13) runs the binary end to end.
+of a missing CH program and of one that root does not own. Its ignored
+`kvm_` test makes root the owner of the files that the start checks, as
+`src/compose/tests.rs` does. Under a hard `RLIMIT_NOFILE` of 1024 the
+vmm then exits 78 on the fd need itself, and no `vmm.sock` exists
+(decision CH67 rule 4). The Hyperion proof of the unit (plan PR C13)
+runs the binary end to end.
 
 ## The root-owned files
 
