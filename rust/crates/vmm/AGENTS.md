@@ -866,7 +866,7 @@ init bridges 9418. It proves the clone outside `repos`, the HEAD of a v0
 clone, a v2 clone, the one error for a repo not listed and one not in
 the mirror, a removal, each refused path form, `git-receive-pack`, a
 symlinked repo, the line cap, the line wait with paused tokio time, the
-link cap, the kill of the child and of its own child at the drop of
+link cap, `LINK_CAP` + 1 links one after another, the kill of the child and of its own child at the drop of
 `Server`, the end and the reap of a link whose child exited, and the fd
 need. `tests/start.rs` proves the bound set with a clone list, with both
 lists, with an absent, empty or bad list, and the bind at a restore.

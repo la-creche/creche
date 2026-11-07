@@ -477,6 +477,18 @@ fn the_65th_link_is_closed_at_once() {
     drop(held);
 }
 
+/// A link that ended frees its place under `LINK_CAP`: `LINK_CAP` + 1
+/// links one after another each get `DENIED`, so the listener reaps each
+/// link that ended (decisions CH67 rule 3, CH69 rule 14).
+#[test]
+fn links_one_after_another_pass_the_cap() {
+    let scratch = Scratch::threaded("serial");
+    let _server = scratch.serve();
+    for link in 0..=LINK_CAP {
+        assert_eq!(scratch.ask(&request("/other")), DENIED, "link {link}");
+    }
+}
+
 /// The drop of `Server` kills the child of an open clone and closes 1103.
 /// The git program of the test writes its pid and one pkt-line, then
 /// execs `sleep`, which reads no stdin. So only the kill of the drop ends
