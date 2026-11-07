@@ -44,8 +44,8 @@ use creche_vmm_store::rows::Rows;
 use creche_vmm_store::session_disk::SessionDisks;
 use creche_vmm_store::sleep_gate::IDLE_TIMEOUT;
 use creche_wire::{
-    DropError, DropRoute, DropSession, DropTarget, Dropped, FamilyName, OpenAcp, PerFlavor,
-    SandboxFlavor, Serve, ServeUpgrade as _, SessionId, SessionRow,
+    DropError, DropRoute, DropSession, DropTarget, Dropped, FacadeState, FamilyName, OpenAcp,
+    PerFlavor, SandboxFlavor, Serve, ServeUpgrade as _, SessionId, SessionRow,
 };
 use tokio::runtime::{Builder, Runtime};
 
@@ -562,7 +562,7 @@ impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
             "cpus": {"boot_vcpus": 1, "max_vcpus": 1},
             "memory": {"size": 536_870_912, "shared": false},
             "disks": self.disks(index),
-            "serial": {"file": self.dir.join(format!("run/vm/{id}/serial.log")), "mode": "File"},
+            "serial": {"file": self.dir.join(format!("state/sessions/{id}/serial.log")), "mode": "File"},
             "vsock": {"cid": 3, "socket": vsock, "id": "_vsock0", "pci_segment": 0},
         });
         for (field, value) in extra {
@@ -627,9 +627,43 @@ fn a_cold_boot_launches_the_checked_files_and_clears_the_fault() {
     let session = test.dir.join(format!("state/sessions/{A}"));
     assert!(session.join("disk.ext4").is_file());
     assert!(session.join("snapshots").is_dir());
-    let serial = test.dir.join(format!("run/vm/{A}/serial.log"));
-    let mode = fs::metadata(serial).unwrap().permissions().mode();
+    let serial = session.join("serial.log");
+    let mode = fs::metadata(&serial).unwrap().permissions().mode();
     assert_eq!(mode & 0o777, 0o600);
+    let at = args.iter().position(|arg| arg == "--serial").unwrap();
+    assert_eq!(args[at + 1], format!("file={}", serial.display()));
+}
+
+/// The serial log of a session is in the state root, so a restart of the
+/// vmm keeps it until the next start of the session (gap G23, decision
+/// CH59 rule 2). The test stops the VM, then removes the run root, as
+/// each stop of the vmm unit does, a crash included. The log still holds
+/// the guest output. The next start of the session makes it new, with
+/// mode 0600, and a restore does the same.
+#[test]
+fn a_vmm_restart_keeps_the_serial_log_until_the_next_start() {
+    let test = Test::new("serial", |_| {});
+    let id = test.rows[0].id.clone();
+    let serial = test.dir.join(format!("state/sessions/{A}/serial.log"));
+    for restore in [false, true] {
+        assert_eq!(test.start(0), Ok(()));
+        fs::write(&serial, b"the last guest\r\n").unwrap();
+        fs::set_permissions(&serial, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(test.runtime.block_on(test.hook.stop(&id)).is_ok());
+        fs::remove_dir_all(test.dir.join("run")).unwrap();
+        assert_eq!(fs::read(&serial).unwrap(), b"the last guest\r\n");
+
+        if restore {
+            test.snapshot(0, Some(&test.key()));
+            test.reply(0, "Paused", &[]);
+        }
+        assert_eq!(test.start(0), Ok(()));
+        assert_eq!(test.restored(test.launches() - 1), restore);
+        assert_eq!(fs::read(&serial).unwrap(), b"");
+        let mode = fs::metadata(&serial).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        assert!(test.runtime.block_on(test.hook.stop(&id)).is_ok());
+    }
 }
 
 /// A vmm in no service unit refuses every launch and starts nothing
@@ -1084,16 +1118,26 @@ fn a_turn_or_an_open_door_keeps_the_vm_awake() {
     assert_eq!(test.sleep_after(PAST_IDLE).len(), 1);
 }
 
-/// A VM whose ready said `starting` is up only after a turn event, and
-/// each turn event sets its last use (decisions CH43 rule 8, CH50 rule
-/// 5).
+/// A VM whose ready said `starting` is up only after a `facade` line
+/// says `running`, and a turn event alone does not make it up (decisions
+/// CH32 rule 6, CH62 rule 11). Each turn event sets its last use
+/// (decision CH50 rule 5).
 #[test]
-fn a_turn_event_marks_the_facade_up_and_used() {
+fn the_gate_opens_on_a_running_facade_line() {
     let test = Test::new("seen", |_| {});
     *test.fake.guest.lock().unwrap() = Guest::Starting;
     assert_eq!(test.start(0), Ok(()));
+    let id = test.rows[0].id.clone();
+    test.turn(0, r#"{"start":{}}"#);
+    test.turn(0, r#"{"end":{"title":"First","updated_at":2000}}"#);
     assert!(test.sleep_after(PAST_IDLE).is_empty());
 
+    // A `facade` line has the bytes of the `ControlReady` of its state.
+    test.send(READY);
+    test.settle(|test| {
+        let control = test.control.lock().unwrap();
+        matches!(control.facade(&id), Some(FacadeState::Running(_)))
+    });
     std::thread::sleep(Duration::from_millis(5));
     let before = Instant::now();
     test.turn(0, r#"{"start":{}}"#);
@@ -1456,21 +1500,6 @@ fn a_door_close_counts_as_a_use() {
     assert_eq!(test.runtime.block_on(test.hook.sleep_idle(after)).len(), 1);
 }
 
-/// A new `ControlReady` clears `turn_seen`. A VM that saw a turn event,
-/// slept, and booted again `starting` is not up, so it does not sleep
-/// (decision CH43 rule 8).
-#[test]
-fn a_new_ready_clears_the_turn_seen() {
-    let test = Test::new("reseen", |_| {});
-    assert_eq!(test.start(0), Ok(()));
-    test.turn(0, r#"{"start":{}}"#);
-    test.turn(0, r#"{"end":{"title":"First","updated_at":2000}}"#);
-    assert_eq!(test.sleep_after(PAST_IDLE).len(), 1);
-    *test.fake.guest.lock().unwrap() = Guest::Starting;
-    assert_eq!(test.start(0), Ok(()));
-    assert!(test.sleep_after(PAST_IDLE).is_empty());
-}
-
 /// A start that hyper drops during an eviction leaves the eviction to
 /// finish in its own task. The VM stays `Evicting` with no kill, its
 /// snapshot ends, and it leaves the table. A later start of it boots.
@@ -1650,7 +1679,7 @@ fn a_vm_under_a_stop_keeps_its_ram() {
 #[cfg(test)]
 impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
     /// Writes `line` on the guest end of the newest control link, as guest
-    /// init relays a turn event (decision CH21).
+    /// init sends a guest event (decisions CH21, CH62 rule 11).
     fn send(&self, line: &str) {
         let links = self.fake.links.lock().unwrap();
         let mut link = links.last().unwrap();
@@ -1676,25 +1705,25 @@ impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
     }
 }
 
-/// The reader of the control link applies each turn event (plan PR
-/// L18b). A VM whose ready said `starting` is up after its first event
-/// (decision CH43 rule 8). A start keeps it awake. An end clears the turn,
-/// writes the row (decision CH32 rule 4) and counts as a use (decision
-/// CH50 rule 5).
+/// The reader of the control link applies each turn line (plan PR
+/// L18b, decision CH62 rule 11). A start keeps the VM awake. A `synced`
+/// line with no sync waiting is dropped, and the link stays open
+/// (decision CH62 rule 23). An end clears the turn, writes the row
+/// (decision CH32 rule 4) and counts as a use (decision CH50 rule 5).
 #[test]
 fn the_reader_applies_each_turn_event() {
     let test = Test::new("reader", |_| {});
-    *test.fake.guest.lock().unwrap() = Guest::Starting;
     assert_eq!(test.start(0), Ok(()));
     let id = test.rows[0].id.clone();
-    test.send(r#"{"start":{}}"#);
+    test.send(r#"{"turn":{"start":{}}}"#);
     test.settle(|test| test.control.lock().unwrap().turn_running(&id));
-    assert!(test.control.lock().unwrap().turn_seen(&id));
     assert!(test.sleep_after(PAST_IDLE).is_empty());
+    // The end below arrives only when the reader reads on past it.
+    test.send(r#"{"synced":{}}"#);
 
     std::thread::sleep(Duration::from_millis(5));
     let before = Instant::now();
-    test.send(r#"{"end":{"title":"First","updated_at":1793577700000}}"#);
+    test.send(r#"{"turn":{"end":{"title":"First","updated_at":1793577700000}}}"#);
     test.settle(|test| test.title(0).0.is_some());
     assert!(!test.control.lock().unwrap().turn_running(&id));
     assert_eq!(test.title(0), (Some("First".to_owned()), true));
@@ -1790,6 +1819,41 @@ fn a_stop_during_a_sleep_waits_for_the_retire() {
     assert!(stopped.is_err());
     assert_eq!(test.stop_lines(), 1);
     assert!(test.hook.running(id));
+}
+
+/// A `facade` line after `ControlReady` writes its turn end to the row
+/// through the reader too (decision CH32 rule 4).
+#[test]
+fn a_facade_line_writes_its_turn_end_to_the_row() {
+    let test = Test::new("facade-ended", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    test.send(ENDED);
+    test.settle(|test| test.title(0).0.is_some());
+    assert_eq!(test.title(0), (Some("First".to_owned()), true));
+}
+
+/// A valid line on a replaced link ends the old reader, and the line
+/// changes nothing (decisions CH54 rule 6, CH62 rule 23). Row 0 stops,
+/// and its next start replaces the link. The old link then gets a
+/// `synced`, a `facade` line, or a `facade` line with a turn end. The new
+/// VM of row 0 runs on, and its row keeps no title.
+#[test]
+fn a_line_on_a_replaced_link_ends_its_reader() {
+    for (index, line) in [r#"{"synced":{}}"#, READY, ENDED].into_iter().enumerate() {
+        let test = Test::new(&format!("stale-line-{index}"), |_| {});
+        assert_eq!(test.start(0), Ok(()));
+        let id = test.rows[0].id.clone();
+        assert!(test.runtime.block_on(test.hook.stop(&id)).is_ok());
+        assert_eq!(test.start(0), Ok(()));
+        let old = test.fake.links.lock().unwrap()[0].try_clone().unwrap();
+        (&old).write_all(format!("{line}\n").as_bytes()).unwrap();
+        old.set_read_timeout(Some(Duration::from_millis(1)))
+            .unwrap();
+        // The end of the old reader closes the vmm end of the old link.
+        test.settle(|_| matches!((&old).read(&mut [0_u8; 64]), Ok(0)));
+        assert!(test.hook.running(&id), "{line}");
+        assert_eq!(test.title(0).0, None, "{line}");
+    }
 }
 
 /// A reader whose link is no longer current stops nothing (decision CH54
@@ -1939,8 +2003,8 @@ fn slot_dir(number: u16) -> PathBuf {
 /// Each VM takes its own slot, and its `vm/<id>` links to it (plan PR
 /// L16b, decisions CH51, CH55). A stop frees the slot and removes the
 /// link, and the next start takes the freed slot. The link empties the
-/// slot first, so the `serial.log` of the old VM is new (decision CH56
-/// rule 1).
+/// slot first, so a leftover listener of the old VM is gone (decision
+/// CH56 rule 1).
 #[test]
 fn two_vms_get_two_slots_and_a_freed_slot_is_reused() {
     let test = Test::new("slots", |_| {});
@@ -1949,8 +2013,8 @@ fn two_vms_get_two_slots_and_a_freed_slot_is_reused() {
     assert_eq!((test.slot(0), test.slot(1)), (0, 1));
     assert_eq!(test.link(0), Some(slot_dir(0)));
     assert_eq!(test.link(1), Some(slot_dir(1)));
-    let serial = test.dir.join("run/slot/0/serial.log");
-    fs::write(&serial, b"the old guest").unwrap();
+    let leftover = test.dir.join("run/slot/0/vsock.sock_1104");
+    fs::write(&leftover, b"the old guest").unwrap();
 
     let id = test.rows[0].id.clone();
     assert!(test.runtime.block_on(test.hook.stop(&id)).is_ok());
@@ -1958,7 +2022,7 @@ fn two_vms_get_two_slots_and_a_freed_slot_is_reused() {
     assert_eq!(test.start(2), Ok(()));
     assert_eq!(test.slot(2), 0);
     assert_eq!(test.link(2), Some(slot_dir(0)));
-    assert_eq!(fs::read(&serial).unwrap(), b"");
+    assert!(!leftover.exists());
 }
 
 /// With each of the 64 slots held by a busy VM, the next start gets

@@ -1,10 +1,11 @@
 //! The Cloud Hypervisor command line of one VM, for a boot or a restore.
 //!
 //! The inputs are the checked store types, so only a checked kernel and
-//! root disk (PR D6), a made session disk (PR D7) and a claimed snapshot
-//! (PR D11) reach the argv. No input names a network card, so the argv
-//! has no `--net` (decisions CH6-3, CH8-1, fact 44). The argv never names
-//! `--seccomp`, so the upstream default `true` holds (decision CH8-4).
+//! root disk (PR D6), a made session disk (PR D7), a new serial log (PR
+//! D17) and a claimed snapshot (PR D11) reach the argv. No input names a
+//! network card, so the argv has no `--net` (decisions CH6-3, CH8-1, fact
+//! 44). The argv never names `--seccomp`, so the upstream default `true`
+//! holds (decision CH8-4).
 //!
 //! A boot renders, in this order:
 //!
@@ -18,8 +19,8 @@
 //!    limiter (decision CH8-7, CH36 G15). Each names `image_type=raw`,
 //!    which CH v54 requires.
 //! 5. `--vsock cid=3,socket=<run>/vsock.sock` (decisions CH13, CH14).
-//! 6. `--serial file=<run>/serial.log` and `--console off` (decisions
-//!    CH36 G23, CH41 rule 2).
+//! 6. `--serial file=<state>/sessions/<id>/serial.log` and `--console
+//!    off` (decisions CH36 G23, CH41 rule 2, CH59 rule 2).
 //!
 //! A restore renders only `--api-socket` and `--restore`. CH v54 takes
 //! the sizes and every device from the snapshot and refuses a device
@@ -36,6 +37,7 @@ use std::path::{Path, PathBuf};
 use creche_vmm_store::claim::ClaimedSnapshot;
 use creche_vmm_store::images::CheckedImage;
 use creche_vmm_store::layout::VmRunDir;
+use creche_vmm_store::serial_log::SerialLog;
 use creche_vmm_store::session_disk::SessionDisk;
 
 use crate::launch::{Payload, Program};
@@ -158,6 +160,9 @@ pub struct Boot<'a> {
     pub root: &'a CheckedImage,
     /// The session disk (decision CH8-7).
     pub session: &'a SessionDisk,
+    /// The serial log of the session, new for this boot (decision CH59
+    /// rule 2).
+    pub serial: &'a SerialLog,
     /// The limiter of the session disk.
     pub disk: DiskLimit,
     /// The sizes from the family VM shape (decision CH8-5).
@@ -235,7 +240,7 @@ impl ChCommand {
             "--vsock".to_owned(),
             format!("cid={GUEST_CID},socket={}", text(&run.vsock_socket())?),
             "--serial".to_owned(),
-            format!("file={}", text(&run.serial_log())?),
+            format!("file={}", text(boot.serial.path())?),
             "--console".to_owned(),
             "off".to_owned(),
         ]);

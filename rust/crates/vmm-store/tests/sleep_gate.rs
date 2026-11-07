@@ -1,5 +1,5 @@
 //! The sleep gate over each facade state and each condition (decisions
-//! CH2, CH19 (6), CH32 rule 6, CH43 rule 8, CH8-6).
+//! CH2, CH19 (6), CH32 rule 6, CH62 rule 11, CH8-6).
 
 use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
@@ -48,7 +48,6 @@ fn every_state() -> [FacadeState; 4] {
 fn quiet(facade: Option<&FacadeState>, last_use: Instant) -> Activity<'_> {
     Activity {
         facade,
-        turn_seen: false,
         turn_running: false,
         door_open: false,
         last_use,
@@ -61,7 +60,7 @@ fn idle_timeout_is_five_minutes() {
 }
 
 #[test]
-fn only_running_is_up_without_a_turn_event() {
+fn only_running_is_up() {
     let last_use = Instant::now();
     let late = last_use + IDLE_TIMEOUT + MS;
     for state in &every_state() {
@@ -74,27 +73,9 @@ fn only_running_is_up_without_a_turn_event() {
 }
 
 #[test]
-fn a_turn_event_after_the_ready_makes_each_state_up() {
-    let last_use = Instant::now();
-    let late = last_use + IDLE_TIMEOUT + MS;
-    for state in &every_state() {
-        let vm = Activity {
-            turn_seen: true,
-            ..quiet(Some(state), last_use)
-        };
-        assert!(vm.up(), "{state:?}");
-        assert!(vm.may_sleep(late), "{state:?}");
-        assert!(vm.may_evict(), "{state:?}");
-    }
-}
-
-#[test]
 fn no_ready_is_never_up() {
     let last_use = Instant::now();
-    let vm = Activity {
-        turn_seen: true,
-        ..quiet(None, last_use)
-    };
+    let vm = quiet(None, last_use);
     assert!(!vm.up());
     assert!(!vm.may_sleep(last_use + IDLE_TIMEOUT + MS));
     assert!(!vm.may_evict());
@@ -115,7 +96,7 @@ fn a_running_turn_blocks_sleep_and_eviction() {
 #[test]
 fn the_turn_flag_inside_running_is_not_read() {
     // A turn end event clears `turn_running` and leaves the facade state
-    // of the ready as it was (decision CH43 rule 8).
+    // that guest init reported as it was.
     let running = FacadeState::Running(FacadeRunning {
         last_turn_end: None,
         pid: pid(),

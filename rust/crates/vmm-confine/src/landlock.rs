@@ -10,6 +10,11 @@
 //! Landlock ABI 4, and no rule allows a TCP port (decision CH8-1). A
 //! kernel below ABI 4 fails the launch.
 //!
+//! Decision CH59 rule 2 moves `serial.log` from the run dir of fact 77 to
+//! `sessions/<id>/serial.log` in the state root. So that one file gets a
+//! rule with write and truncate, and the run dir rule drops truncate,
+//! which only the log used.
+//!
 //! Landlock ABI 4 covers neither UDP nor Unix sockets. The slot profile
 //! of decisions CH8-1 and CH55 (`slot_profile`) denies those.
 
@@ -107,6 +112,7 @@ pub struct VmFiles {
     start: Start,
     root_disk: HostPath,
     session_disk: HostPath,
+    serial_log: HostPath,
     snapshots: HostPath,
     run_dir: HostPath,
 }
@@ -139,6 +145,7 @@ impl VmFiles {
             start,
             root_disk,
             session_disk: HostPath::new(session.disk())?,
+            serial_log: HostPath::new(session.serial_log())?,
             snapshots: HostPath::new(session.snapshots())?,
             run_dir: HostPath::new(run.path().to_path_buf())?,
         })
@@ -160,6 +167,12 @@ impl VmFiles {
     #[must_use]
     pub fn session_disk(&self) -> &HostPath {
         &self.session_disk
+    }
+
+    /// The serial log of the session (gap G23, decision CH59 rule 2).
+    #[must_use]
+    pub fn serial_log(&self) -> &HostPath {
+        &self.serial_log
     }
 
     /// The directory of every snapshot generation of the session.
@@ -193,13 +206,15 @@ const PROGRAM: &[Right] = &[Right::Execute, Right::ReadFile];
 const READ: &[Right] = &[Right::ReadFile];
 /// Read and write an existing file: `/dev/kvm` and the session disk.
 const READ_WRITE: &[Right] = &[Right::ReadFile, Right::WriteFile];
-/// The run directory: the sockets and `serial.log` (gap G23).
-const RUN_DIR: &[Right] = &[
-    Right::MakeSock,
-    Right::MakeReg,
-    Right::WriteFile,
-    Right::Truncate,
-];
+/// The run directory: the sockets and the lock file of the API socket.
+/// CH v54 makes the lock with no truncate
+/// (`vmm/src/locked_unix_listener.rs`), so the dir needs no truncate.
+const RUN_DIR: &[Right] = &[Right::MakeSock, Right::MakeReg, Right::WriteFile];
+/// The serial log in the state root (gap G23, decision CH59 rule 2). The
+/// vmm makes it before the launch, and CH opens it with `File::create`
+/// (`vmm/src/console_devices.rs`), a write open that truncates. CH never
+/// reads it.
+const SERIAL_LOG: &[Right] = &[Right::WriteFile, Right::Truncate];
 /// The snapshot directory: write a snapshot, read one on restore.
 const SNAPSHOTS: &[Right] = &[Right::MakeReg, Right::WriteFile, Right::ReadFile];
 
@@ -239,6 +254,7 @@ pub fn rules(files: &VmFiles, payload: &Program) -> Vec<Rule> {
     rules.extend([
         rule(files.root_disk.path(), READ),
         rule(files.session_disk.path(), READ_WRITE),
+        rule(files.serial_log.path(), SERIAL_LOG),
         rule(files.run_dir.path(), RUN_DIR),
         rule(files.snapshots.path(), SNAPSHOTS),
     ]);
@@ -375,10 +391,8 @@ mod tests {
             ("/state/store/initramfs".to_owned(), &[ReadFile]),
             ("/state/store/root".to_owned(), &[ReadFile]),
             (format!("{session}/disk.ext4"), &[ReadFile, WriteFile]),
-            (
-                format!("/run/vmm/vm/{ID}"),
-                &[MakeSock, MakeReg, WriteFile, Truncate],
-            ),
+            (format!("{session}/serial.log"), &[WriteFile, Truncate]),
+            (format!("/run/vmm/vm/{ID}"), &[MakeSock, MakeReg, WriteFile]),
             (
                 format!("{session}/snapshots"),
                 &[MakeReg, WriteFile, ReadFile],
@@ -451,6 +465,7 @@ mod tests {
         fs::create_dir_all(run.path()).unwrap();
         fs::write(root.join("root.img"), "root").unwrap();
         fs::write(session.disk(), "session").unwrap();
+        fs::write(session.serial_log(), "").unwrap();
         let root_disk = HostPath::new(root.join("root.img")).unwrap();
         let start = Start::Restore { initramfs: None };
         let files = VmFiles::new(start, root_disk, &session, &run).unwrap();

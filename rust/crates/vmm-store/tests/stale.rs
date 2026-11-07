@@ -38,7 +38,7 @@ impl Drop for TempRun {
 fn stale_files_go_and_others_stay() {
     let (_run, vm) = TempRun::new("mixed");
     let gone = [vm.vsock_socket(), vm.api_socket(), vm.api_socket_lock()];
-    let kept = [vm.serial_log(), vm.host_listener(HostPort::Chaperone)];
+    let kept = [vm.host_listener(HostPort::Chaperone)];
     for path in gone.iter().chain(&kept) {
         fs::write(path, b"").expect("a file");
     }
@@ -85,7 +85,7 @@ fn removal_goes_through_the_slot_link() {
         .link_vm(&id, Slot::new(4).expect("slot 4"))
         .expect("the link");
     let slot = root.slot(Slot::new(4).expect("slot 4"));
-    for name in ["vsock.sock", "api.sock", "api.sock.lock", "serial.log"] {
+    for name in ["vsock.sock", "api.sock", "api.sock.lock", "vsock.sock_1100"] {
         fs::write(slot.join(name), b"").expect("a file");
     }
 
@@ -93,7 +93,7 @@ fn removal_goes_through_the_slot_link() {
     assert!(!slot.join("vsock.sock").exists());
     assert!(!slot.join("api.sock").exists());
     assert!(!slot.join("api.sock.lock").exists());
-    assert!(slot.join("serial.log").exists());
+    assert!(slot.join("vsock.sock_1100").exists());
 
     fs::write(slot.join("api.sock"), b"").expect("the next VM's socket");
     root.unlink_vm(&id).expect("the unlink");

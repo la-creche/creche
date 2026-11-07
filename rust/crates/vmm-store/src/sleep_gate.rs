@@ -2,18 +2,17 @@
 //! Hypervisor (decisions CH2, CH19 (6)).
 //!
 //! The gate is a pure predicate over what lifecycle knows of one VM. It
-//! reads no file and no clock. Lifecycle passes in the facade state of
-//! the last `ControlReady`, the turn and door link state and the last use
-//! of the VM.
+//! reads no file and no clock. Lifecycle passes in the facade state that
+//! guest init reported last, the turn and door link state and the last
+//! use of the VM.
 //!
 //! The facade is up only in `running` (decision CH32 rule 6). A
 //! `starting` facade did not open its local link, so guest init cannot
-//! see its turns, and a snapshot could hold a turn that nobody sees. No
-//! line reports a change of the facade state yet. So until the phase 3
-//! guest init PR adds one, a turn event after the last `ControlReady`
-//! also counts as up (decision CH43 rule 8). A VM after a cold boot
-//! reports `not_started` or `starting`, and without that rule it would
-//! never sleep.
+//! see its turns, and a snapshot could hold a turn that nobody sees. A VM
+//! after a cold boot reports `not_started` or `starting` in its
+//! `ControlReady`. Guest init then reports `running` in a `facade` line
+//! once the local link opens (decision CH62 rule 11), so the VM can
+//! sleep.
 //!
 //! Two answers use the gate:
 //!
@@ -44,13 +43,10 @@ pub const IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// What lifecycle knows of one running VM.
 #[derive(Debug, Clone, Copy)]
 pub struct Activity<'a> {
-    /// The facade state of the last `ControlReady` of the current control
-    /// link, or `None` before the first one
-    /// (`creche_vmm::control::ControlState::facade`).
+    /// The facade state that the current control link reported last, in
+    /// its `ControlReady` or a later `facade` line, or `None` before the
+    /// first `ControlReady` (`creche_vmm::control::ControlState::facade`).
     pub facade: Option<&'a FacadeState>,
-    /// True when a turn event arrived after the last `ControlReady`
-    /// (decision CH43 rule 8).
-    pub turn_seen: bool,
     /// True when a turn runs (`ControlState::turn_running`). The gate
     /// reads this, not the flag inside `FacadeState::Running`, because
     /// turn events change only this one.
@@ -64,14 +60,10 @@ pub struct Activity<'a> {
 }
 
 impl Activity<'_> {
-    /// Whether the facade is up (decisions CH32 rule 6, CH43 rule 8).
+    /// Whether the facade is up (decisions CH32 rule 6, CH62 rule 11).
     #[must_use]
     pub fn up(&self) -> bool {
-        match self.facade {
-            Some(FacadeState::Running(_)) => true,
-            Some(_) => self.turn_seen,
-            None => false,
-        }
+        matches!(self.facade, Some(FacadeState::Running(_)))
     }
 
     /// Whether the VM may sleep at `now` (decisions CH2, CH19 (6)).

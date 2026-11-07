@@ -104,18 +104,20 @@ pub fn render(slot: Slot) -> String {
         // The run dir of the slot. `vmm.sock` sits in the run root itself,
         // so no rule names it (decision CH24). One pattern covers every
         // host listener, so a new port needs no reload (decision CH24). A
-        // pathname socket needs `w` for a connect or a bind. `serial.log`
-        // gets no read (gap G23).
+        // pathname socket needs `w` for a connect or a bind.
         format!("owner {run}api.sock rw"),
         format!("owner {run}api.sock.lock wk"),
         format!("owner {run}vsock.sock rw"),
         format!("owner {run}vsock.sock_* rw"),
-        format!("owner {run}serial.log w"),
         // The state root names of decision CH39 rule 3 under the default
         // root (decision CH50 rule 11). The root disks and kernels are
-        // read only (decision CH8-8).
+        // read only (decision CH8-8). `serial.log` sits in the session dir
+        // (decision CH59 rule 2) and gets no read (gap G23). The rule
+        // matches the log of every session, as the disk rule does. The
+        // Landlock ruleset of the VM allows only its own.
         format!("owner {STATE_ROOT}store/* rk"),
         format!("owner {STATE_ROOT}sessions/*/disk.ext4 rwk"),
+        format!("owner {STATE_ROOT}sessions/*/serial.log w"),
         format!("owner {STATE_ROOT}sessions/*/snapshots/** rw"),
     ];
 

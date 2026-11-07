@@ -17,8 +17,9 @@
 //!    decision CH19 (4)), the kernel, the initramfs and the root disk
 //!    pass the store check (PR D6, decision CH44 rule 2), the session disk exists (PR D7, decision
 //!    CH21-4), the run dir `vm/<id>/` links to the slot of the start (PR
-//!    D16), `snapshots/` exists, and `serial.log` is a new file with mode
-//!    0600 (gap G23). The key check (PR D10) and the claim (PR D11) pick a
+//!    D16), `snapshots/` exists, and `sessions/<id>/serial.log` in the
+//!    state root is a new file with mode 0600 (gap G23, decision CH59 rule
+//!    2, PR D17). The key check (PR D10) and the claim (PR D11) pick a
 //!    restore or a cold boot. Then the launch step starts CH in its slot
 //!    (PR C18) with the argv of PR C7 and the sizes of PR C4 under the
 //!    ruleset of PR C6 (PR C2, decisions CH8-3, CH8-5, CH8-8, CH30, CH55).
@@ -48,9 +49,9 @@
 //! of the shutdown (plan PR L19).
 
 use std::collections::{HashMap, HashSet};
-use std::fs::{DirBuilder, OpenOptions, Permissions};
+use std::fs::DirBuilder;
 use std::io;
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -73,10 +74,11 @@ use creche_vmm_store::key::{CheckedCh, KeyCheck, SnapshotKey, check_newest};
 use creche_vmm_store::layout::{RunRoot, SessionDir, Slot as PoolSlot, StateRoot, VmRunDir};
 use creche_vmm_store::retention::{InUse, Swept, sweep};
 use creche_vmm_store::rows::Rows;
+use creche_vmm_store::serial_log::SerialLog;
 use creche_vmm_store::session_disk::SessionDisks;
 use creche_vmm_store::sleep_gate::Activity;
 use creche_vmm_store::stale::remove_stale;
-use creche_wire::{FamilyName, FamilyShape, PerFlavor, SessionId, SessionRow};
+use creche_wire::{FamilyName, FamilyShape, GuestEvent, PerFlavor, SessionId, SessionRow};
 use tokio::net::UnixStream;
 use tokio::sync::{RwLock, watch};
 use tokio::task::spawn_blocking;
@@ -95,9 +97,6 @@ use crate::stop::{VmProcess, stop};
 
 /// The mode of the run dir and the snapshots dir of a VM.
 const DIR_MODE: u32 = 0o700;
-
-/// The mode of `serial.log` (gap G23).
-const SERIAL_MODE: u32 = 0o600;
 
 /// The pause between two reads of a slot that a start or a retire holds,
 /// while a stop waits for it. No row sets it. Only the vmm reads it, so a
@@ -774,7 +773,6 @@ impl<L: Launcher, A: ChApi> ColdBoot<L, A> {
         }
         let activity = Activity {
             facade: control.facade(session),
-            turn_seen: control.turn_seen(session),
             turn_running: control.turn_running(session),
             door_open: door == Door::Open,
             last_use,
@@ -1087,14 +1085,20 @@ async fn turn_end(rows: &Arc<Mutex<Rows>>, id: &SessionId, change: Change) {
     }
 }
 
-/// Reads the turn events of `events`, the control link `link` of the VM
-/// of `id`, until the link ends (plan PR L18b, decision CH21). Each event
-/// goes to `ControlState::turn`, which sets `turn_running` and `turn_seen`
-/// (decision CH43 rule 8) and the time of the last use (decision CH50 rule
-/// 5). Each turn end goes to the row (decision CH32 rule 4). The end of
-/// the reader drops the stream, so the link closes, and a stop then skips
-/// the graceful step (decision CH50 rule 3). An event of a replaced link
-/// ends the reader too.
+/// Reads the guest events of `events`, the control link `link` of the VM
+/// of `id`, until the link ends (plan PR L18b, decisions CH21, CH62 rule
+/// 11). A `facade` line goes to `ControlState::report`, which keeps the
+/// state for the sleep gate and clears `turn_running` when the facade
+/// leaves `running`. A turn event goes to `ControlState::turn`, which sets
+/// `turn_running` and the time of the last use (decision CH50 rule 5).
+/// Each turn end of either goes to the row (decision CH32 rule 4). The
+/// end of the reader drops the stream, so the link closes, and a stop
+/// then skips the graceful step (decision CH50 rule 3). An event of a
+/// replaced link ends the reader too.
+///
+/// No take sends `sync` yet, so a `synced` line has no waiter. The reader
+/// logs it and drops it (decision CH62 rule 23). Plan PR V9 sends `sync`
+/// and hands each `synced` to the take that waits for it.
 ///
 /// A refused line ends the reader (decision CH43 rule 2). It is a guest
 /// fault (decision CH54 rule 6): the reader logs the line with `id`, and
@@ -1102,7 +1106,7 @@ async fn turn_end(rows: &Arc<Mutex<Rows>>, id: &SessionId, change: Change) {
 /// stop sends SIGTERM, then SIGKILL. The VM leaves the table, so the next
 /// start of the session cold-boots (decision CH19 (5)). A later VM of the
 /// session has another link, so the stop leaves it alone.
-async fn read_turns<P: VmProcess>(
+async fn read_guest<P: VmProcess>(
     mut events: ControlLink<Arc<UnixStream>>,
     (id, link): (SessionId, LinkId),
     stopper: Stopper<P>,
@@ -1124,7 +1128,15 @@ async fn read_turns<P: VmProcess>(
                 break true;
             }
         };
-        let change = lock().turn(&id, link, &event);
+        let change = match event {
+            GuestEvent::Facade(facade) => lock().report(&id, link, facade),
+            GuestEvent::Turn(turn) => lock().turn(&id, link, &turn),
+            GuestEvent::Synced(_) if lock().link(&id) == Some(link) => {
+                eprintln!("vmm: the guest of {id} sent synced, and no sync waits");
+                continue;
+            }
+            GuestEvent::Synced(_) => Change::Stale,
+        };
         if change == Change::Stale {
             break false;
         }
@@ -1443,17 +1455,13 @@ fn launch<L: Launcher, A: ChApi>(
         .map_err(|error| error.to_string())?;
     let session = config.state.session(id);
     // The ruleset opens each path, and a missing one fails the launch.
-    // `link_vm` made the slot dir of `vm/<id>`.
+    // `link_vm` made the slot dir of `vm/<id>`, and `for_boot` made the
+    // session dir. The serial log of the last start stays until here, also
+    // across a vmm restart (decision CH59 rule 2). A restore opens the
+    // same path from its snapshot config.
     make_dir(&session.snapshots())?;
-    let serial = run.serial_log();
-    OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(SERIAL_MODE)
-        .open(&serial)
-        .and_then(|file| file.set_permissions(Permissions::from_mode(SERIAL_MODE)))
-        .map_err(|error| format!("making {}: {error}", serial.display()))?;
+    let serial =
+        SerialLog::fresh(&session).map_err(|error| format!("{error}: {}", error.source))?;
     let limits = VmLimits::from(shape);
     let key = SnapshotKey::current(config.ch_version, &kernel, initramfs.as_ref(), &root);
     // The initramfs of the ruleset. A snapshot with the current key names
@@ -1482,6 +1490,7 @@ fn launch<L: Launcher, A: ChApi>(
                 initramfs: initramfs.as_ref(),
                 root: &root,
                 session: &disk,
+                serial: &serial,
                 disk: DiskLimit::SESSION,
                 limits,
             };
@@ -1620,7 +1629,7 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         // graceful stop (decision CH19 (3)).
         let (sender, events) = control.split();
         let (stopper, rows) = (self.stopper(), Arc::clone(&self.rows));
-        tokio::spawn(read_turns(events, (id.clone(), link), stopper, rows));
+        tokio::spawn(read_guest(events, (id.clone(), link), stopper, rows));
         pending.commit(sender, link);
         Ok(acp)
     }

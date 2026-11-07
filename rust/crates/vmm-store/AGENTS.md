@@ -76,8 +76,19 @@ The second file has the table of the three vmm crates.
 - Decision CH56 rule 1 (PR D16, `layout.rs`): `link_vm` empties
   `slot/<k>/` before it links `vm/<id>` to it. It removes every entry that
   is not a dir (each regular file, socket and link) and no dir, since a
-  free slot holds no live CH (CH19 (4)). The old VM's `serial.log` goes
-  with it, and its fault file stays in the faults dir.
+  free slot holds no live CH (CH19 (4)). The fault file of the old VM
+  stays in the faults dir, and its serial log stays in the state root.
+- Decision CH59 rule 2 (PR D17, `serial_log.rs`): the serial log of a
+  session is `sessions/<id>/serial.log` in the state root, not in the
+  run root, because systemd removes the run root at each stop of the vmm
+  unit, a crash included. `SerialLog::fresh` makes it new with mode 0600
+  (gap G23) before each launch, a boot and a restore alike, so the log
+  of the last VM stays until the next start of the session. A drop of
+  the session removes it with the session dir. `tests/serial_log.rs`
+  proves that a removal of the run root keeps it. The kvm tests of
+  vmm-confine prove it under systemd: the vmm stand-in copies
+  `RuntimeDirectory=vmm`, and the log outlives a unit restart and a
+  crash.
 - The caller duties of PR D16 (`layout.rs`). Plan PR L16b meets all
   three in `rust/crates/vmm/src/start.rs` ("The slots" in the vmm
   `AGENTS.md`). (a) Each start runs `link_vm` before `remove_stale`, so
@@ -118,11 +129,12 @@ The second file has the table of the three vmm crates.
   CH50 rule 6). When L17 builds the `Running` list for
   `creche_vmm_confine::admission::decide`, it passes `last_use = now`
   for each VM with an open door link. D12 and C9 stay as built.
-- Caller duties (PR D12, `sleep_gate.rs`), for lifecycle: (a) keep a
-  `turn_seen` flag per VM that a turn event sets and each
-  `ControlReady` clears, for decision CH43 rule 8.
-  `creche_vmm::control::ControlState` has no such flag yet. L18 needs
-  it. (b) pass `Activity::may_evict`, not `may_sleep`, as
+- Caller duty (PR D12, `sleep_gate.rs`), for lifecycle: pass
+  `Activity::facade` as the facade state that guest init reported last,
+  in a `ControlReady` or a later `facade` line (decision CH62 rule 11).
+  The `turn_seen` flag of decision CH43 rule 8 is gone with that line.
+- Caller duty (PR D12, `sleep_gate.rs`), for lifecycle: pass
+  `Activity::may_evict`, not `may_sleep`, as
   `admission::Gate::Idle`. Admission snapshots an idle VM sooner than
   `IDLE_TIMEOUT` (decision CH8-6), and the doc of `Gate::Idle` says
   "may sleep now". L17 maps the two.
