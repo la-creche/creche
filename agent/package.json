@@ -20,6 +20,10 @@
       "types": "./dist/strict-json.d.ts",
       "default": "./dist/strict-json.js"
     },
+    "./tool-env": {
+      "types": "./dist/tool-env.d.ts",
+      "default": "./dist/tool-env.js"
+    },
     "./wire": {
       "types": "./dist/wire.d.ts",
       "default": "./dist/wire.js"
