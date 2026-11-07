@@ -49,11 +49,20 @@ def test_a_bare_host_is_written_with_port_443(tmp_path: Path) -> None:
 
 def test_case_and_duplicates_are_normalized(tmp_path: Path) -> None:
     family = chat_family(
-        egress=["PyPI.org", "github.com:8443", "GitHub.com:443", "github.com", "pypi.org:443"]
+        egress=[
+            "PyPI.org",
+            "github.com:8443",
+            "github.com:1000",
+            "GitHub.com:443",
+            "github.com",
+            "pypi.org:443",
+        ]
     )
     write_egress_file(family, tmp_path)
+    # Port 1000 sorts after 443 as a number. As text, "1000" sorts first.
     assert pairs(written(tmp_path)) == [
         ("github.com", 443),
+        ("github.com", 1000),
         ("github.com", 8443),
         ("pypi.org", 443),
     ]

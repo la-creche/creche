@@ -367,6 +367,23 @@ def test_a_pass_writes_the_egress_file(fleet: Fleet) -> None:
     }
 
 
+def test_a_pass_writes_the_egress_file_before_the_create(fleet: Fleet) -> None:
+    """Decision CH69 rule 6: the file is on disk before the sandbox step,
+    so a cut pass or a failed create still leaves the list of its
+    revision."""
+    seen: list[bool] = []
+    egress_path = paths.egress_path(fleet.state_root, FAMILY)
+
+    class CheckingDriver(FakeDriver):
+        def create(self, spec: SandboxSpec) -> None:
+            seen.append(egress_path.exists())
+            super().create(spec)
+
+    fleet.driver = CheckingDriver()
+    fleet.run()
+    assert seen == [True]
+
+
 def test_an_invalid_edit_keeps_the_egress_file(fleet: Fleet) -> None:
     """Invariant 19: the last good definition keeps serving."""
     fleet.write(egress=[DOCS])

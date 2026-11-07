@@ -108,6 +108,22 @@ def test_apply_once_writes_the_egress_file(tmp_path: Path, state_root: Path) -> 
     assert body == {"hosts": [{"host": "github.com", "port": 443}]}
 
 
+def test_apply_once_writes_the_egress_file_before_the_create(
+    registry_root: Path, state_root: Path
+) -> None:
+    """Decision CH69 rule 6: the file is on disk before the sandbox step,
+    so a create that fails still leaves the list of its revision."""
+    seen: list[bool] = []
+
+    class CheckingDriver(FakeDriver):
+        def create(self, spec: SandboxSpec) -> None:
+            seen.append(paths.egress_path(state_root, "chat").exists())
+            super().create(spec)
+
+    apply_chat(registry_root, state_root, driver=CheckingDriver())
+    assert seen == [True]
+
+
 def test_it_creates_the_sandbox_once(registry_root: Path, state_root: Path) -> None:
     driver = FakeDriver()
     apply_chat(registry_root, state_root, driver=driver)

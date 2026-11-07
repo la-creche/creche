@@ -22,8 +22,10 @@ rule 3).
 
 `CONTRACT-QUESTION`: no row gives a rule for an `egress` list whose file is
 over the 64 KiB cap of the vmm (decision CH70 rule 1). A family file of
-64 KiB can hold such a list. This module writes the file all the same, and
-the vmm allows nothing for it. No fault names it."""
+64 KiB can hold such a list. This module writes the file all the same. The
+vmm then allows nothing for the family. Its `check` answers `not_valid`, and
+its log line names `TooLarge` (decision CH70 rule 2). caregiver itself
+reports no fault and no status entry for it."""
 
 from __future__ import annotations
 

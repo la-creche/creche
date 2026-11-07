@@ -430,5 +430,7 @@ Nothing here touches a real sandbox or LiteLLM.
   increases on every write (`steps.py`).
 - `CONTRACT-QUESTION` in `reach_files.py`. No row gives a rule for an
   `egress` list whose `egress.json` is over the 64 KiB cap of the vmm
-  (decision CH70 rule 1). caregiver writes the file all the same, the vmm
-  allows nothing for it, and no fault names it.
+  (decision CH70 rule 1). caregiver writes the file all the same. The vmm
+  then allows nothing for the family. Its `check` answers `not_valid`, and
+  its log line names `TooLarge` (decision CH70 rule 2). caregiver itself
+  reports no fault and no status entry for it.
