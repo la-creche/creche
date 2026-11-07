@@ -38,7 +38,7 @@ let wire: Wire;
 
 beforeEach(() => {
   const index = new SessionIndex(new DatabaseSync(":memory:"));
-  wire = new Wire(facadeApp(NO_HOOKS, sessionService({ agent: Echoer, agentName: "Echoer", index, mode: SBX, store: flue.store })));
+  wire = new Wire(facadeApp(NO_HOOKS, sessionService({ agent: Echoer, agentName: "Echoer", index, mode: SBX, link: null, store: flue.store })));
 });
 
 async function newSession(): Promise<string> {

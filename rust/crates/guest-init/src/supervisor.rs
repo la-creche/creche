@@ -42,9 +42,9 @@ use creche_wire::{
 pub const RESTART_PAUSE: Duration = Duration::from_secs(1);
 
 /// How long the facade has to exit after the stop line on its local
-/// link, before SIGTERM (decision CH62 rule 9, which amends CH19 rule 3
-/// from 30 s to 25 s).
-pub const FACADE_STOP_WAIT: Duration = Duration::from_secs(25);
+/// link, before SIGTERM (decision CH62 rule 9). The wire crate holds it,
+/// so the facade reads the same value from `vectors/guest.json`.
+pub use creche_wire::guest::FACADE_STOP_WAIT;
 
 /// How long the facade has to exit after SIGTERM, before the SIGKILL of
 /// every process left (decision CH62 rule 9).
