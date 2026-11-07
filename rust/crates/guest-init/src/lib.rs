@@ -3,10 +3,12 @@
 //!
 //! As PID 1 it runs the boot plan of `boot` (decision CH62 rule 4): the
 //! mounts, the switch root into the root disk and `lo` up. Then it reads
-//! the image env with `env_file` (decision CH62 rule 7), writes
-//! `guest-init: up` and waits. PID 1 never exits on its own: the guest
-//! kernel has `PANIC_TIMEOUT=0`, so an exit of PID 1 hangs the VM (fact
-//! 53). Each fault powers the VM off instead (decision CH19 rule 3).
+//! the image env with `env_file` (decision CH62 rule 7), listens on
+//! control link 1200, writes `guest-init: up` and serves the link with
+//! `control` (decisions CH13, CH28, CH32). PID 1 never exits on its own:
+//! the guest kernel has `PANIC_TIMEOUT=0`, so an exit of PID 1 hangs the
+//! VM (fact 53). A stop and each fault power the VM off instead (decision
+//! CH19 rule 3).
 //!
 //! Off Linux, and on Linux in a process that is not PID 1, `run` starts
 //! nothing and returns exit status 78 (decision CH38).
@@ -15,6 +17,8 @@ use std::process::ExitCode;
 
 #[cfg(any(test, target_os = "linux"))]
 mod boot;
+#[cfg(any(test, target_os = "linux"))]
+mod control;
 #[cfg(any(test, target_os = "linux"))]
 mod env_file;
 #[cfg(any(test, target_os = "linux"))]
@@ -37,26 +41,44 @@ pub fn run() -> ExitCode {
     ExitCode::from(EX_CONFIG)
 }
 
-/// The life of PID 1. A boot fault, a refused env file and a panic all
-/// end in `power::off` (decisions CH19 rule 3, CH62 rule 7). The default
-/// panic hook writes the panic text to the console first.
+/// The life of PID 1. A stop, a boot fault, a refused env file, a
+/// listen fault and a panic all end in `power::off` (decisions CH19 rule
+/// 3, CH62 rule 7).
+///
+/// The panic hook covers a panic in every thread, the accept thread and
+/// the reader threads of `control` included: the default hook writes the
+/// panic text to the console, then the hook powers off. Only a failed
+/// power-off returns from it. The panic then goes on as it would with no
+/// hook, and the vmm stop chain ends the hung VM (plan risk 9).
 #[cfg(target_os = "linux")]
 fn as_pid_1() -> ExitCode {
-    match std::panic::catch_unwind(start) {
-        // The env stays alive while PID 1 waits: the facade gets it
-        // (decision CH49 rule 1).
-        Ok(Ok(_env)) => {
-            say("up");
-            // PID 1 must not exit (fact 53). `park` may return early, so
-            // it runs in a loop.
-            loop {
-                std::thread::park();
-            }
-        }
-        Ok(Err(fault)) => say(&fault),
-        Err(_) => say("boot panicked"),
-    }
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        default(info);
+        say("panicked");
+        let _ = power::off();
+    }));
+    say(&life());
     power::off()
+}
+
+/// Boots, listens on control link 1200 and serves it. It returns the
+/// console line of the stop or of the fault.
+#[cfg(target_os = "linux")]
+fn life() -> String {
+    // The env stays alive while PID 1 serves: the facade gets it
+    // (decision CH49 rule 1).
+    let _env = match start() {
+        Ok(env) => env,
+        Err(fault) => return fault,
+    };
+    // The listener opens before `up`, so a dial after `up` reaches it.
+    let listener = match control::listen() {
+        Ok(listener) => listener,
+        Err(error) => return format!("control listen failed: {error}"),
+    };
+    say("up");
+    control::serve(listener)
 }
 
 /// Boots, then reads the env file of the switched root. Both run before
