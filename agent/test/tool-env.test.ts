@@ -3,8 +3,10 @@
 // the `TOOL_ENV` and `TOOL_RENAME` names that are set.
 //
 // This test reads the `ENV` lines of `playpen/Dockerfile` only. The built
-// env also holds the names of the parent image, such as `NODE_VERSION`,
-// and this test does not read it.
+// env also holds the names of the parent image, such as `NODE_VERSION`.
+// The build writes that env to `/etc/creche/env`. No test reads that file
+// to place each of its names in a list yet (CH49 rule 1, see Known gaps in
+// `agent/AGENTS.md`).
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
