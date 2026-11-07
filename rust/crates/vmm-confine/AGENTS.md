@@ -415,4 +415,7 @@ table of the three vmm crates.
   `rust/crates/vmm/AGENTS.md` Known gap 21).
 - Closed by decision CH70 rule 1: `EGRESS_CAP` is 64 KiB, room for
   about a thousand entries. A larger file is `EgressFault::TooLarge`, so
-  the vmm allows nothing.
+  the vmm allows nothing. Decision CH71 makes caregiver refuse a family
+  whose file would pass the cap. `rust/crates/wire/vectors/family.json`
+  holds the value, and `the_egress_cap_matches_the_wire_vectors` in
+  `tests/family.rs` holds `EGRESS_CAP` equal to it.

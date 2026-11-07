@@ -672,3 +672,14 @@ fn read_egress_refuses_past_its_cap() {
     let read = root.families().read_egress(&code());
     assert!(matches!(read, Err(EgressFault::TooLarge)), "{read:?}");
 }
+
+/// caregiver refuses a family whose `egress.json` passes the cap, so the
+/// two sides read one value from `vectors/family.json` of the wire crate
+/// (decision CH71). The caregiver test holds its copy equal to the same
+/// file.
+#[test]
+fn the_egress_cap_matches_the_wire_vectors() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../wire/vectors/family.json");
+    let file: Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+    assert_eq!(file, json!({ "egress_cap": EGRESS_CAP }));
+}

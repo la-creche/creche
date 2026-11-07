@@ -66,6 +66,10 @@ STATUS_FILE: Final = "status.json"
 VALIDATION_FILE: Final = "validation.json"
 SANDBOX_SEQ_FILE: Final = "sandbox-seq"
 CREDS_FILE: Final = "creds.json"
+#: Contract 01 §6.1.1: the egress allowlist of the vmm, beside `config/`.
+#: `FAMILY_EGRESS_FILE` of `creche-wire` in Rust spells the same name, and
+#: the vmm reads it (decision CH69 rule 3).
+EGRESS_FILE: Final = "egress.json"
 #: Contract 03 §7.1's file, one per sandbox: `supervisor-<family>-s<N>.env`.
 PLAYPEN_ENV_PREFIX: Final = "supervisor-"
 PLAYPEN_ENV_SUFFIX: Final = ".env"
@@ -108,6 +112,12 @@ def config_dir(root: Path, family: str) -> Path:
     path inside the VM. Holds `instructions.md`, `skills/`,
     `runtime.json`."""
     return family_dir(root, family) / "config"
+
+
+def egress_path(root: Path, family: str) -> Path:
+    """Contract 01 §6.1.1: `egress.json` in the family dir, beside
+    `config/` and never inside it (decision CH69 rule 3)."""
+    return family_dir(root, family) / EGRESS_FILE
 
 
 def control_root(root: Path, family: str) -> Path:

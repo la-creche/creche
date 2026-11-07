@@ -12,6 +12,7 @@ from caregiver.paths import (
     control_root,
     creds_dir,
     creds_path,
+    egress_path,
     family_dir,
     fault_path,
     playpen_env_path,
@@ -45,6 +46,12 @@ def test_creds_dir_and_path() -> None:
 
 def test_config_dir() -> None:
     assert config_dir(ROOT, "chat") == ROOT / "families" / "chat" / "config"
+
+
+def test_egress_path() -> None:
+    """Contract 01 §6.1.1: beside `config/`, never inside it."""
+    assert egress_path(ROOT, "chat") == ROOT / "families" / "chat" / "egress.json"
+    assert not egress_path(ROOT, "chat").is_relative_to(config_dir(ROOT, "chat"))
 
 
 def test_control_dir_is_per_sandbox() -> None:
@@ -108,6 +115,7 @@ def test_every_family_path_lives_under_the_family_directory() -> None:
         creds_dir(ROOT, "chat"),
         creds_path(ROOT, "chat"),
         config_dir(ROOT, "chat"),
+        egress_path(ROOT, "chat"),
         control_dir(ROOT, "chat", "chat-s1"),
         playpen_env_path(ROOT, "chat", "chat-s1"),
         sandbox_seq_path(ROOT, "chat"),
