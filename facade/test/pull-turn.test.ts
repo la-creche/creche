@@ -18,7 +18,7 @@ import { SessionIndex } from "../src/session-index.js";
 import type { Refresh } from "../src/turns.js";
 import { Wire } from "./acp-wire.js";
 import { faux, Probe, startFlue } from "./faux-flue.js";
-import { closeGuestInits, guestInit, until } from "./guest-init.js";
+import { closeGuestInits, guestInit, NO_HANDLERS, until } from "./guest-init.js";
 import type { GuestInit } from "./guest-init.js";
 
 const { trigger } = vectors.session_meta;
@@ -96,7 +96,7 @@ describe("the local link in a turn", () => {
   async function linked(): Promise<GuestInit> {
     const guest = await guestInit();
     const link = new LocalLink(guest.path, FLUE_STOP_MS, () => undefined);
-    link.open(() => undefined);
+    link.open(NO_HANDLERS);
     await guest.peer();
     const service = sessionService({ agent: Probe, agentName: "Probe", index, mode: SBX, link, store: flue.store, refresh: (id) => refresh(id) });
     wire = new Wire(facadeApp(NO_HOOKS, service));

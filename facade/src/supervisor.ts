@@ -8,8 +8,11 @@
 //         └─► serve ──► _creche/shutdown ──► stop Flue ──► exit 0
 //                   ├─► stdin closed ──────► stop Flue ──► exit 0
 //                   ├─► no beat in time ───► stop Flue ──► exit 5
-//                   └─► a stop line on the local link (CH only)
-//                                  ──► stop Flue, for at most `stopMs` ──► exit 0
+//                   ├─► a stop line on the local link (CH only)
+//                   │              ──► stop Flue, for at most `stopMs` ──► exit 0
+//                   └─► the local link does not open, closes or faults,
+//                       outside a stop (CH only)
+//                                  ──► stop Flue, for at most `stopMs` ──► exit 18
 
 import type { Readable } from "node:stream";
 
@@ -27,6 +30,7 @@ export const EXIT_DEADLINE = 5;
 export const EXIT_CONTROL_MOUNT = 6;
 export const EXIT_RELAY_SOCKET = 8;
 export const EXIT_NOT_STARTED = 16;
+export const EXIT_LOCAL_LINK = 18;
 
 /** The agent runtime that the facade owns. Flue's `start()` gives one. */
 export interface Runtime {
@@ -167,8 +171,14 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
   // The link opens before stdio serves, so each turn has a link to report
   // on. guest init sends the stop line only to an open link, and it moves
   // the facade to `running` at the open (decisions CH32 rule 6, CH66 rule 4).
+  // A lost link outside a stop exits 18, so that guest init starts the
+  // facade again (decision CH67 rule 8). Inside a stop, `stop` returns at
+  // once and the stop goes on (decision CH66 rule 5).
   const { link } = options;
-  link?.open(() => void stop("the stop line of guest init", EXIT_OK, link.stopMs));
+  link?.open({
+    onStop: () => void stop("the stop line of guest init", EXIT_OK, link.stopMs),
+    onLost: (detail) => void stop(`${detail}; the facade exits`, EXIT_LOCAL_LINK, link.stopMs),
+  });
 
   const connection = app.connect(strictStream(options.input, strictWriter(stdout.writeLine, say)));
   say("serving ACP v1 on stdio");

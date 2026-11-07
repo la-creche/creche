@@ -7,6 +7,7 @@
 //     a turn starts ──► {"start":{}} ────────────────────────► up
 //     a turn ends ────► {"end":{"title":…,"updated_at":…}} ──► up
 //     {"stop":{}} ◄── down ──► stop Flue ──► exit 0, inside the stop wait
+//     no open, a close or a fault outside a stop ──► stop Flue ──► exit 18
 //   sbx ──► no link (decision CH10-4)
 //
 // The framing is the one of control link 1200: one compact JSON value per
@@ -18,8 +19,12 @@
 // guest init kills a facade whose link closes outside a stop (decision CH32
 // rule 7). So the facade never closes the link, and the exit of the process
 // is its only close. guest init accepts one link per facade start, so
-// nothing dials again. No row says what the facade does when the link does
-// not open or faults: see the CONTRACT-QUESTION in `open`.
+// nothing dials again. The facade fails closed on its link (decision CH67
+// rule 8): when the link does not open, or closes or faults, the link tells
+// the supervisor. Outside a stop, the supervisor stops Flue and exits 18,
+// and guest init starts the facade again after its 1 s restart pause
+// (decisions CH62 rule 8, CH66 rule 1). Inside a stop, the stop goes on
+// (decision CH66 rule 5).
 
 import { createConnection } from "node:net";
 import type { Socket } from "node:net";
@@ -62,6 +67,17 @@ export function turnLine(event: Wire<"TurnEvent">): TurnLine {
   return encoded.ok ? encoded : { ok: false, detail: describeRefusal(encoded.refusal) };
 }
 
+/** What the link tells the supervisor. */
+export interface LinkHandlers {
+  /** Runs at each stop line. */
+  readonly onStop: () => void;
+  /**
+   * Runs once, when the link does not open, or closes or faults. `detail`
+   * says which, with the fault's message.
+   */
+  readonly onLost: (detail: string) => void;
+}
+
 export class LocalLink {
   private socket: Socket | null = null;
   /** The bytes of a down line with no LF yet. */
@@ -79,29 +95,21 @@ export class LocalLink {
     private readonly say: Say,
   ) {}
 
-  /** Connects. `onStop` runs at each stop line. */
-  public open(onStop: () => void): void {
+  /** Connects. `handlers` get each stop line and the loss of the link. */
+  public open({ onStop, onLost }: LinkHandlers): void {
     const socket = createConnection(this.path);
+    let opened = false;
     let fault = "";
+    socket.on("connect", () => {
+      opened = true;
+    });
     socket.on("data", (chunk: Buffer) => this.take(chunk, onStop));
-    // CONTRACT-QUESTION: no row says what the facade does when the link
-    // does not open (ENOENT, ECONNREFUSED) or faults later. CH21, CH32
-    // rules 6 and 7, CH62 rules 10 and 11 and CH66 decide only the link
-    // that opens. The reading taken: one stderr line, and the facade
-    // serves on with no link. guest init then keeps the facade in
-    // `starting`, the vmm never snapshots it (CH19 rule 6), each turn
-    // event is dropped with no stderr line, and a stop starts at SIGTERM
-    // (CH66 rule 4). A close by guest init outside a stop is moot: guest
-    // init kills the facade then (CH32 rule 7). The fail-closed reading:
-    // exit with a status of its own at a close outside a stop, so that
-    // guest init starts the facade again after its 1 s restart pause
-    // (CH62 rule 8). A row that wants it changes only these two handlers.
     socket.on("error", (error) => {
       fault = `: ${error.message}`;
     });
     socket.on("close", () => {
       this.socket = null;
-      this.say(`the local link closed${fault}; the turn events are dropped`);
+      onLost(`the local link ${opened ? "closed" : "did not open"}${fault}`);
     });
     this.socket = socket;
   }
@@ -155,12 +163,9 @@ export class LocalLink {
     }
   }
 
-  // CONTRACT-QUESTION: CH62 rule 10 sends only `stop` down the local link,
-  // and no row says what the facade does with another line. guest init
-  // closes the link at a line that it refuses, but here a close gets the
-  // facade killed (CH32 rule 7). The reading taken: the facade drops the
-  // line with one stderr line and keeps the link. A row that wants a
-  // refused line to stop or end the facade changes only this method.
+  // A line that is not `stop` is dropped with one stderr line, and the link
+  // stays open (decision CH67 rule 7). A close gets the facade killed
+  // (decision CH32 rule 7).
   private command(line: Buffer, onStop: () => void): void {
     const command = read("ControlCommand", line, { cap: CONTROL_LINE_CAP });
     if (!command.ok) {

@@ -6,7 +6,11 @@ import { createServer } from "node:net";
 import type { Server, Socket } from "node:net";
 import { join } from "node:path";
 
+import type { LinkHandlers } from "../src/local-link.js";
 import { shortTmp } from "./facade-process.js";
+
+/** Link handlers that do nothing, for a test that needs neither the stop nor the loss. */
+export const NO_HANDLERS: LinkHandlers = { onStop: () => undefined, onLost: () => undefined };
 
 /** How long `until` waits for its check. */
 export const WAIT_MS = 2000;

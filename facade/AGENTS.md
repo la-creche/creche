@@ -99,6 +99,7 @@ files, with `flue.db` kept out of the listing that Flue puts in the prompt.
 | 9 to 15 | the agent module refuses the family config (`EXIT_BY_REFUSAL` in `src/family.ts`) |
 | 16 | Flue does not start |
 | 17 | `CRECHE_SESSION_ID` is set and is not a session id (`src/mode.ts`) |
+| 18 | under CH, the local link does not open, or closes or faults outside a stop (decision CH67 rule 8) |
 
 A refusal (2, 7, 9 to 15, 17) writes one stderr line: the reason, and the
 variable or the field, never a value.
@@ -199,10 +200,15 @@ rule 5).
 5. The facade never closes the link. guest init kills a facade whose link
    closes outside a stop (decision CH32 rule 7), so the exit of the
    process is the only close. guest init accepts one link per facade
-   start, so nothing dials again. No row decides a link that does not
-   open or that faults. The reading taken: one stderr line, the facade
-   serves on with no link, and later events are dropped (see Known
-   gaps).
+   start, so nothing dials again.
+6. The facade fails closed on its link (decision CH67 rule 8). When the
+   link does not open, or closes or faults outside a stop, the facade
+   writes one stderr line, stops Flue for at most `FLUE_STOP_MS`,
+   releases the lock and exits 18. guest init starts it again after the
+   1 s restart pause (decisions CH62 rule 8, CH66 rule 1). A close during
+   a stop keeps the stop path (decision CH66 rule 5).
+7. The facade drops a down line that is not `stop` with one stderr line,
+   and keeps the link (decision CH67 rule 7).
 
 TypeBox 1.3.27 counts a `maxLength` in grapheme clusters, and JavaScript
 counts a string in UTF-16 units. `agent/wire-read` compiles each length as
@@ -223,22 +229,6 @@ relay connection does nothing: only the supervisor link stops the
 facade.
 
 ## Known gaps
-
-- No row says what the facade does with a local link line that is not
-  `stop` (decision CH62 rule 10 sends only `stop` down). guest init closes
-  the link at a line that it refuses, but a close gets the facade killed
-  (decision CH32 rule 7). The facade drops the line with one stderr line
-  and keeps the link. `src/local-link.ts` holds the `CONTRACT-QUESTION`.
-- No row says what the facade does when the local link does not open
-  (ENOENT, ECONNREFUSED) or faults later. The facade writes one stderr
-  line and serves on with no link. guest init then keeps it in
-  `starting` for its whole life, so the vmm never snapshots it (decision
-  CH19 rule 6), each turn event is dropped with no stderr line, and a
-  stop starts at SIGTERM (decision CH66 rule 4). The fail-closed reading
-  is to exit with a status of its own at a close outside a stop, so that
-  guest init starts the facade again after its 1 s restart pause
-  (decision CH62 rule 8). `LocalLink.open` in `src/local-link.ts` holds the
-  `CONTRACT-QUESTION`.
 
 - The facade does not send `creche/delegation` to the chaperone. Flue's MCP
   adapter sends no `_meta` on `tools/call`, and a connection has no
