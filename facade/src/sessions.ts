@@ -111,6 +111,14 @@ function metaOf(row: SessionRow): Record<string, unknown> | null {
   return kept.length > 0 ? Object.fromEntries(kept) : null;
 }
 
+/** The end of one turn, as the turn end event of the local link and the row take it. */
+export interface TurnEnd {
+  /** `titleOf` of the turn's prompt: the title of a turn end (decision CH21). */
+  readonly title: string;
+  /** The time of the turn's last record, or the clock when it wrote none. */
+  readonly updatedAt: string;
+}
+
 function toInfo(row: SessionRow): SessionInfo {
   const info = { sessionId: row.id, cwd: row.cwd, title: row.title, updatedAt: row.updatedAt };
   const meta = metaOf(row);
@@ -216,21 +224,29 @@ export class Sessions {
   }
 
   /**
-   * One turn ended. The first turn names the session. Each turn moves
-   * `updatedAt` to the time of its last record. Null for an unknown id.
+   * The end of a turn on the prompt `userText`. It reads no row and writes
+   * none, so the turn end event never waits on a row write.
    */
-  public recordTurn(id: string, userText: string, lastRecordAt: string | null): SessionInfoUpdate | null {
+  public turnEndOf(userText: string, lastRecordAt: string | null): TurnEnd {
+    return { title: titleOf(userText), updatedAt: lastRecordAt ?? this.now().toISOString() };
+  }
+
+  /**
+   * Writes the end of one turn on its row. The first turn names the
+   * session. Each turn moves `updatedAt` to the time of its last record.
+   * The answer is the `session_info_update` of the turn, or null for an
+   * unknown id.
+   */
+  public recordTurn(id: string, { title, updatedAt }: TurnEnd): SessionInfoUpdate | null {
     const row = this.index.get(id);
     if (row === null) {
       return null;
     }
 
-    const updatedAt = lastRecordAt ?? this.now().toISOString();
     this.index.touch(id, updatedAt);
 
     const meta = metaOf(row);
     const tail = meta === null ? { updatedAt } : { updatedAt, _meta: meta };
-    const title = titleOf(userText);
     if (row.title !== null || title.length === 0) {
       return tail;
     }

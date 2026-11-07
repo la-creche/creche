@@ -7,7 +7,12 @@
 //         ├─► relay socket refused ─────► exit 8
 //         └─► serve ──► _creche/shutdown ──► stop Flue ──► exit 0
 //                   ├─► stdin closed ──────► stop Flue ──► exit 0
-//                   └─► no beat in time ───► stop Flue ──► exit 5
+//                   ├─► no beat in time ───► stop Flue ──► exit 5
+//                   ├─► a stop line on the local link (CH only)
+//                   │              ──► stop Flue, for at most `stopMs` ──► exit 0
+//                   └─► the local link does not open, closes or faults,
+//                       outside a stop (CH only)
+//                                  ──► stop Flue, for at most `stopMs` ──► exit 18
 
 import type { Readable } from "node:stream";
 
@@ -15,6 +20,7 @@ import { facadeApp, strictStream, strictWriter } from "./acp.js";
 import type { SessionService } from "./acp.js";
 import { SupervisorLock } from "./lock.js";
 import { BeatDeadline } from "./liveness.js";
+import type { LocalLink } from "./local-link.js";
 import { closeRelay, listenRelay } from "./relay.js";
 import type { Say, Stdout } from "./stdio.js";
 
@@ -24,6 +30,7 @@ export const EXIT_DEADLINE = 5;
 export const EXIT_CONTROL_MOUNT = 6;
 export const EXIT_RELAY_SOCKET = 8;
 export const EXIT_NOT_STARTED = 16;
+export const EXIT_LOCAL_LINK = 18;
 
 /** The agent runtime that the facade owns. Flue's `start()` gives one. */
 export interface Runtime {
@@ -44,10 +51,48 @@ export interface SupervisorOptions {
   readonly say: Say;
   readonly lock: SupervisorLock;
   readonly deadlineMs: number;
-  /** Starts Flue once the lock is held, never before: one Flue owner per sandbox. */
-  readonly serve: () => Promise<ServingStart>;
+  /**
+   * Starts Flue once the lock is held, never before: one Flue owner per
+   * sandbox. It gets `link`, the one link that the supervisor opens, so
+   * the turns report on that link and no other.
+   */
+  readonly serve: (link: LocalLink | null) => Promise<ServingStart>;
   /** The relay socket (`relaySocketPath`), or null for no relay. */
   readonly socketPath: string | null;
+  /** The local link of guest init under CH (`localLinkOf`), or null on sbx. */
+  readonly link: LocalLink | null;
+}
+
+/**
+ * Flue's stop. With a bound, the stop ends after `boundMs` at the latest,
+ * and Flue's own close may still run when the process exits. Flue 2.3.0
+ * waits up to 30 s for a running submission, past the 25 s of a stop line
+ * (decision CH62 rule 9).
+ */
+async function stopFlue(runtime: Runtime | null, boundMs: number | null, say: Say): Promise<void> {
+  if (runtime === null) {
+    return;
+  }
+
+  const stopped = runtime.stop().then(() => "stopped" as const);
+  if (boundMs === null) {
+    await stopped;
+    return;
+  }
+
+  // A stop that fails after the bound has nobody to tell.
+  stopped.catch(() => undefined);
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<"late">((resolve) => {
+    timer = setTimeout(() => resolve("late"), boundMs);
+  });
+  try {
+    if ((await Promise.race([stopped, late])) === "late") {
+      say(`Flue did not stop in ${String(boundMs)} ms; the facade exits`);
+    }
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function runSupervisor(options: SupervisorOptions): Promise<void> {
@@ -67,7 +112,7 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
     return;
   }
 
-  const started = await options.serve();
+  const started = await options.serve(options.link);
   if (!started.ok) {
     say(`Flue did not start: ${started.detail}`);
     lock.release();
@@ -88,7 +133,8 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
   }
 
   let stopping = false;
-  const stop = async (reason: string, code: number): Promise<void> => {
+  /** `boundMs`: the most time Flue's stop takes, or null for no bound. */
+  const stop = async (reason: string, code: number, boundMs: number | null = null): Promise<void> => {
     if (stopping) {
       return;
     }
@@ -101,7 +147,7 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
 
     say(reason);
     try {
-      await runtime?.stop();
+      await stopFlue(runtime, boundMs, say);
     } catch (error) {
       say(`Flue did not stop cleanly: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -122,6 +168,18 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
     },
     sessions,
   );
+  // The link opens before stdio serves, so each turn has a link to report
+  // on. guest init sends the stop line only to an open link, and it moves
+  // the facade to `running` at the open (decisions CH32 rule 6, CH66 rule 4).
+  // A lost link outside a stop exits 18, so that guest init starts the
+  // facade again (decision CH67 rule 8). Inside a stop, `stop` returns at
+  // once and the stop goes on (decision CH66 rule 5).
+  const { link } = options;
+  link?.open({
+    onStop: () => void stop("the stop line of guest init", EXIT_OK, link.stopMs),
+    onLost: (detail) => void stop(`${detail}; the facade exits`, EXIT_LOCAL_LINK, link.stopMs),
+  });
+
   const connection = app.connect(strictStream(options.input, strictWriter(stdout.writeLine, say)));
   say("serving ACP v1 on stdio");
 

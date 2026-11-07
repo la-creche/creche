@@ -137,15 +137,18 @@ same file.
 
 ## The guest paths
 
-`rust/crates/wire/src/guest.rs` holds the fixed paths, ports and env name
-inside the guest (decisions CH5e, CH62 rules 5, 6, 10 and 13). They are
-plain Rust constants with no serde and no schema entry (decision CH14), so
-no generated copy changes. `rust/crates/wire/vectors/guest.json` lists the
-same values, and `guest::tests::the_vector_file_matches_the_constants`
+`rust/crates/wire/src/guest.rs` holds the fixed paths, ports, env name
+and stop wait inside the guest (decisions CH5e, CH62 rules 5, 6, 9, 10 and
+13). They are plain Rust constants with no serde and no schema entry
+(decision CH14), so no generated copy changes. guest init takes
+`FACADE_STOP_WAIT` from there. `rust/crates/wire/vectors/guest.json` lists
+the same values, and `guest::tests::the_vector_file_matches_the_constants`
 holds the two equal. The file also holds `family_state_cap`, the value of
-`FAMILY_STATE_CAP` in `lib.rs` (decision CH23 rule 4). A phase 6 agent
-test reads the file to hold its own copies equal, `STATE_REPLY_CAP` of
-`agent/src/family-state.ts` among them. Change a value in the constant
+`FAMILY_STATE_CAP` in `lib.rs` (decision CH23 rule 4), and
+`control_line_cap`, the value of `CONTROL_LINE_CAP` (decision CH62 rule
+10). `facade/test/guest.test.ts` reads the file and holds the copies of
+`facade/src/guest.ts` equal. A phase 6 agent test reads it to hold
+`STATE_REPLY_CAP` of `agent/src/family-state.ts` equal. Change a value in the constant
 and in the file together. After the first deploy, a change of a bridge
 row value (the ports 4000 and 8300, the family-state socket) needs a new
 `GUEST_INIT_PROTOCOL` (decision CH62 rule 15).

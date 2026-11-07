@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import vectors from "../vectors/creche-extensions.json" with { type: "json" };
 import { EXIT_SESSION_ID } from "../src/family.js";
 import { readMode, SBX } from "../src/mode.js";
+import { EXIT_LOCAL_LINK } from "../src/supervisor.js";
 import { facadeEnv, startFacade } from "./facade-process.js";
 import type { FacadeProcess } from "./facade-process.js";
 
@@ -56,16 +57,15 @@ describe("the built facade", () => {
     expect(running.stderr()).toBe("creche-facade: CRECHE_SESSION_ID is not a session id\n");
   });
 
-  it("gives session/new the host's id in CH mode, and refuses a second session", async () => {
+  it("exits 18 in CH mode when no guest init listens, with one stderr line", async () => {
+    // No guest init listens at `LOCAL_LINK_SOCKET` here, so the link does
+    // not open, and the facade fails closed (decision CH67 rule 8).
+    // `test/sessions.test.ts` checks the host's id of CH mode.
     running = startFacade({ ...facadeEnv(), CRECHE_SESSION_ID: SESSION });
-    running.send(vectors.initialize.request);
-    await running.nextMessage();
-    const request = { jsonrpc: "2.0", method: "session/new", params: { cwd: "/work", mcpServers: [] } };
-    running.send({ ...request, id: 2 });
-    running.send({ ...request, id: 3 });
 
-    expect(await running.nextMessage()).toEqual({ jsonrpc: "2.0", id: 2, result: { sessionId: SESSION } });
-    expect(await running.nextMessage()).toMatchObject({ id: 3, error: { code: -32602 } });
+    expect(await running.exited()).toBe(EXIT_LOCAL_LINK);
+    expect(running.stdout().length).toBe(0);
+    expect(running.stderr()).toMatch(/creche-facade: the local link did not open: connect E[A-Z]+ \/run\/creche\/guest-init\.sock; the facade exits\n/);
   });
 
   it("mints a fresh id on sbx", async () => {
@@ -77,5 +77,7 @@ describe("the built facade", () => {
 
     expect(answer.result.sessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     expect(answer.result.sessionId).not.toBe(SESSION);
+    // On sbx the facade opens no local link (decision CH10-4).
+    expect(running.stderr()).not.toContain("local link");
   });
 });
