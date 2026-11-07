@@ -69,6 +69,9 @@ pub const LITELLM: &str = "VMM_LITELLM_ADDR";
 /// The chaperone, the plane of host port 1102 (decisions CH6-2, CH62
 /// rule 20).
 pub const CHAPERONE: &str = "VMM_CHAPERONE_ADDR";
+/// The JSONL log of the egress proxy on host port 1104 (decisions CH6-4,
+/// CH69 rule 10).
+pub const EGRESS_LOG: &str = "VMM_EGRESS_LOG";
 
 /// What the vmm reads from its env.
 #[derive(Debug)]
@@ -108,6 +111,8 @@ pub struct Config {
     pub budget: u64,
     /// `VMM_LITELLM_ADDR` and `VMM_CHAPERONE_ADDR`.
     pub planes: Upstreams,
+    /// `VMM_EGRESS_LOG`. The compose step opens it with `Log::open`.
+    pub egress_log: PathBuf,
 }
 
 /// What is wrong with one key. A fault never holds the value, as in
@@ -212,6 +217,7 @@ impl Config {
                 litellm: address(&lookup, LITELLM)?,
                 chaperone: address(&lookup, CHAPERONE)?,
             },
+            egress_log: path_of(EGRESS_LOG)?,
         })
     }
 }

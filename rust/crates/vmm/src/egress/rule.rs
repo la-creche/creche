@@ -54,6 +54,18 @@ impl Target {
         let host = host.parse().map_err(|_| CheckReason::BadTarget)?;
         Ok(Self { host, port })
     }
+
+    /// The host name, in lower case.
+    #[must_use]
+    pub fn host(&self) -> &HostName {
+        &self.host
+    }
+
+    /// The port.
+    #[must_use]
+    pub fn port(&self) -> NonZeroU16 {
+        self.port
+    }
 }
 
 /// Whether `text` is an IPv6 address, bare or in brackets, with a port or

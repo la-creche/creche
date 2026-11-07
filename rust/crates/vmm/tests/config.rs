@@ -9,9 +9,9 @@ use std::net::SocketAddr;
 use std::path::Path;
 
 use creche_vmm::config::{
-    BUDGET, CH, CH_REMOTE, CHAPERONE, Config, ConfigError, FALLOCATE, FAMILY_ROOT, FAULTS_ROOT,
-    FREE_FLOOR, Fault, GUEST_INIT, IMAGE_ROOT, KillScopesConfig, LITELLM, MKE2FS, RAM_CAP,
-    RUN_ROOT, STATE_ROOT, SYSTEMCTL, SYSTEMD_RUN, ZSTD,
+    BUDGET, CH, CH_REMOTE, CHAPERONE, Config, ConfigError, EGRESS_LOG, FALLOCATE, FAMILY_ROOT,
+    FAULTS_ROOT, FREE_FLOOR, Fault, GUEST_INIT, IMAGE_ROOT, KillScopesConfig, LITELLM, MKE2FS,
+    RAM_CAP, RUN_ROOT, STATE_ROOT, SYSTEMCTL, SYSTEMD_RUN, ZSTD,
 };
 use creche_vmm::planes::Upstreams;
 use creche_vmm_confine::admission::{GIB, Limits};
@@ -21,7 +21,7 @@ use creche_vmm_store::retention;
 const DEFAULT_ENV: &str = include_str!("../../../../env/src/creche_env/default.env");
 
 /// Each path key of the config, in the order that `Config` reads them.
-const PATHS: [&str; 13] = [
+const PATHS: [&str; 14] = [
     STATE_ROOT,
     RUN_ROOT,
     FAMILY_ROOT,
@@ -35,6 +35,7 @@ const PATHS: [&str; 13] = [
     ZSTD,
     MKE2FS,
     FALLOCATE,
+    EGRESS_LOG,
 ];
 
 /// Each size key of the config.
@@ -111,6 +112,7 @@ fn a_good_env_gives_each_path_and_size() {
         chaperone: "192.0.2.10:8300".parse().unwrap(),
     };
     assert_eq!(config.planes, planes);
+    assert_eq!(config.egress_log, Path::new("/srv/VMM_EGRESS_LOG"));
 }
 
 #[test]
@@ -317,6 +319,12 @@ fn the_catalog_defaults_are_the_design_values() {
         (ZSTD, "/usr/bin/zstd"),
         (MKE2FS, "/usr/sbin/mke2fs"),
         (FALLOCATE, "/usr/bin/fallocate"),
+        // Decision CH69 rule 10: a file of its own beside the state root,
+        // so it amends no state-root layout (decision CH39 rule 3).
+        (
+            EGRESS_LOG,
+            "${AGENT_OPERATOR_HOME}/.local/state/creche-vmm-egress.jsonl",
+        ),
     ];
     for (key, expected) in paths {
         assert_eq!(default_of(key), Some(expected), "{key}");
