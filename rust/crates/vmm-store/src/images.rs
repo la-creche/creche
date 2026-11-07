@@ -20,6 +20,12 @@
 //! has zstd. The check ran on 2026-11-03 as david, under the G31 standing
 //! go: `/usr/bin/zstd`, Zstandard CLI v1.5.5, from the Ubuntu package
 //! `zstd`. So the vmm config passes `/usr/bin/zstd`.
+//!
+//! The vmm also makes one file itself: the guest init initramfs, which it
+//! writes once at its own start (decisions CH7-6, CH62 rule 18).
+//! `ImageStore::put_made` names it by the SHA-256 of its bytes, so it
+//! lands at `store/<sha256>` with an identity file, as an import does, and
+//! the slot profiles' `store/*` rule covers it (decision CH60 rule 2).
 
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
@@ -203,6 +209,63 @@ fn io_at(path: &Path) -> impl FnOnce(io::Error) -> ImportError {
     move |source| ImportError::Io { path, source }
 }
 
+/// A failed step of a write into the store, on `path`.
+struct StepError {
+    path: PathBuf,
+    source: io::Error,
+}
+
+/// Maps an `io::Error` on `path` to a `StepError`.
+fn step_at(path: &Path) -> impl FnOnce(io::Error) -> StepError {
+    let path = path.to_owned();
+    move |source| StepError { path, source }
+}
+
+impl From<StepError> for ImportError {
+    fn from(StepError { path, source }: StepError) -> Self {
+        Self::Io { path, source }
+    }
+}
+
+/// Why `ImageStore::put_made` returned no checked copy.
+#[derive(Debug)]
+pub enum MadeError {
+    /// A write, a sync or a rename failed.
+    Io {
+        /// The file or dir that the step failed on.
+        path: PathBuf,
+        /// Why the step failed.
+        source: io::Error,
+    },
+    /// The store holds an identity for the bytes, and the copy fails the
+    /// check (decision CH44 rule 2). Nothing removes or repairs it.
+    Check(CheckError),
+}
+
+impl fmt::Display for MadeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io { path, .. } => write!(formatter, "cannot write {}", path.display()),
+            Self::Check(error) => write!(formatter, "the store copy fails its check: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for MadeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io { source, .. } => Some(source),
+            Self::Check(error) => Some(error),
+        }
+    }
+}
+
+impl From<StepError> for MadeError {
+    fn from(StepError { path, source }: StepError) -> Self {
+        Self::Io { path, source }
+    }
+}
+
 /// The mode of a store copy with its file type bits: a regular file with
 /// mode 0444 (gap G8).
 const STORE_FILE_MODE: u32 = 0o100_000 | STORE_MODE;
@@ -374,20 +437,50 @@ impl ImageStore {
         }
         result?;
 
-        let identity = FileIdentity::of(&fs::metadata(&path).map_err(io_at(&path))?);
-        let text = serde_json::to_vec(&identity).map_err(|source| ImportError::Parse {
-            path: identity_path.clone(),
-            source,
-        })?;
-        let identity_temp = self.dir.join(format!("{expected}.identity.tmp"));
-        write_synced(&identity_temp, &text).map_err(io_at(&identity_temp))?;
-        fs::rename(&identity_temp, &identity_path).map_err(io_at(&identity_path))?;
-        sync_dir(&self.dir).map_err(io_at(&self.dir))?;
+        let identity = self.record_identity(&expected)?;
         Ok(StoredImage {
             digest: expected,
             path,
             identity,
         })
+    }
+
+    /// Puts `bytes` that the vmm made itself into the store as
+    /// `store/<sha256>` and checks the copy: the guest init initramfs that
+    /// the vmm writes at its own start (decisions CH7-6, CH60 rule 2, CH62
+    /// rule 18). When the store holds an identity for the SHA-256,
+    /// `put_made` writes no byte and returns the check of that copy. So an
+    /// equal copy is kept, and a copy that changed after its write fails
+    /// (decision CH44 rule 2). Else it writes the bytes into a temp file,
+    /// syncs it, sets mode 0444, renames it into place and records the
+    /// identity, as `import` does. The vmm writes one file at a time, so
+    /// two writes never share a temp file.
+    ///
+    /// # Errors
+    ///
+    /// `Check` when the copy at the name fails the check, `Io` on a failed
+    /// step.
+    pub fn put_made(&self, bytes: &[u8]) -> Result<CheckedImage, MadeError> {
+        let digest = ImageDigest(Sha256::digest(bytes).into());
+        let identity_path = self.identity_path(&digest);
+        match fs::symlink_metadata(&identity_path) {
+            Ok(_) => return self.check(digest).map_err(MadeError::Check),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(step_at(&identity_path)(error).into()),
+        }
+
+        fs::create_dir_all(&self.dir).map_err(step_at(&self.dir))?;
+        let temp = self.dir.join(format!("{digest}.tmp"));
+        let path = self.path(&digest);
+        let result = write_synced(&temp, bytes)
+            .map_err(step_at(&temp))
+            .and_then(|()| self.place(&temp, &path));
+        if result.is_err() {
+            let _ = fs::remove_file(&temp);
+        }
+        result?;
+        self.record_identity(&digest)?;
+        self.check(digest).map_err(MadeError::Check)
     }
 
     /// Checks the store copy of `digest` at a VM start and hashes no byte
@@ -468,9 +561,31 @@ impl ImageStore {
         }
         out.sync_all().map_err(io_at(temp))?;
         drop(out);
-        fs::set_permissions(temp, fs::Permissions::from_mode(STORE_MODE)).map_err(io_at(temp))?;
-        fs::rename(temp, path).map_err(io_at(path))?;
-        sync_dir(&self.dir).map_err(io_at(&self.dir))
+        Ok(self.place(temp, path)?)
+    }
+
+    /// Sets mode 0444 on the synced `temp` and renames it to `path` for
+    /// good: the rename, then a sync of the store dir.
+    fn place(&self, temp: &Path, path: &Path) -> Result<(), StepError> {
+        fs::set_permissions(temp, fs::Permissions::from_mode(STORE_MODE)).map_err(step_at(temp))?;
+        fs::rename(temp, path).map_err(step_at(path))?;
+        sync_dir(&self.dir).map_err(step_at(&self.dir))
+    }
+
+    /// Records the identity of the store copy of `digest` in its identity
+    /// file, through a temp file, a sync and a rename.
+    fn record_identity(&self, digest: &ImageDigest) -> Result<FileIdentity, StepError> {
+        let path = self.path(digest);
+        let identity_path = self.identity_path(digest);
+        let identity = FileIdentity::of(&fs::metadata(&path).map_err(step_at(&path))?);
+        let text = serde_json::to_vec(&identity)
+            .map_err(io::Error::from)
+            .map_err(step_at(&identity_path))?;
+        let identity_temp = self.dir.join(format!("{digest}.identity.tmp"));
+        write_synced(&identity_temp, &text).map_err(step_at(&identity_temp))?;
+        fs::rename(&identity_temp, &identity_path).map_err(step_at(&identity_path))?;
+        sync_dir(&self.dir).map_err(step_at(&self.dir))?;
+        Ok(identity)
     }
 
     /// Runs `zstd -d` on `source` and copies its output into `out`. The
