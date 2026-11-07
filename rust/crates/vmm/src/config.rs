@@ -72,12 +72,14 @@ pub struct Config {
     pub faults_root: PathBuf,
     /// `VMM_IMAGE_ROOT`. `image_root::read` reads its `digests.json`.
     pub image_root: PathBuf,
-    /// `VMM_CH_PROGRAM`.
+    /// `VMM_CH_PROGRAM`. The compose step checks its file with
+    /// `root_owned::check_program` (decision CH67 rule 1).
     pub ch: Program,
-    /// `VMM_CH_REMOTE_PROGRAM`.
+    /// `VMM_CH_REMOTE_PROGRAM`. The compose step checks its file with
+    /// `root_owned::check_program` (decision CH67 rule 1).
     pub ch_remote: Program,
-    /// `VMM_GUEST_INIT_PROGRAM`. `guest_init::write_initramfs` checks
-    /// that root owns it and that no group or other user may write it.
+    /// `VMM_GUEST_INIT_PROGRAM`. `guest_init::write_initramfs` checks its
+    /// file with `root_owned::open_program` (decision CH67 rule 1).
     pub guest_init: Program,
     /// `AGENT_SYSTEMD_RUN_PROGRAM`.
     pub systemd_run: Program,

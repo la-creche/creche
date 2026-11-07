@@ -12,6 +12,7 @@ pub mod handlers;
 pub mod image_root;
 pub mod relay;
 pub mod restore;
+pub mod root_owned;
 pub mod server;
 pub mod shutdown;
 pub mod sleep;
