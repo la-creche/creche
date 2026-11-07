@@ -396,17 +396,39 @@ def test_an_invalid_edit_keeps_the_egress_file(fleet: Fleet) -> None:
     assert egress_path.read_bytes() == before
 
 
+def landed_bytes(fleet: Fleet) -> dict[Path, bytes]:
+    """Every file a later step of the pass writes: the config mount, the
+    fragments of `policy.toml`, the chaperone directory and `egress.json`."""
+    roots = (
+        paths.config_dir(fleet.state_root, FAMILY),
+        paths.policy_fragments_dir(fleet.state_root),
+        fake_policy(fleet.state_root).target.config_dir,
+    )
+    found = {one: one.read_bytes() for root in roots for one in root.rglob("*") if one.is_file()}
+    egress_path = paths.egress_path(fleet.state_root, FAMILY)
+    found[egress_path] = egress_path.read_bytes()
+    return found
+
+
 def test_an_egress_list_over_the_cap_is_refused(fleet: Fleet) -> None:
     """Decision CH71: the vmm would allow nothing for a file over its cap,
     so the revision reads `invalid` with one error that names the cap.
-    The refusal comes before any write, so the last good file stays byte
-    for byte and no step runs (invariant 19)."""
+    The refusal comes before any write, so the last good files stay byte
+    for byte and no step runs (invariant 19). The revision also moves the
+    model and grants a tool. Each one lands in a later step: the key
+    update, `runtime.json` and the table of `policy.toml`. A refusal placed
+    after any of those steps lets that change land, and this test fails."""
+    write_server(fleet.registry_root, ("search",))
     fleet.write(egress=[DOCS])
     first = fleet.run()
-    egress_path = paths.egress_path(fleet.state_root, FAMILY)
-    before = egress_path.read_bytes()
+    before = landed_bytes(fleet)
+    budgets = dict(fleet.litellm.budgets)
     fleet.forget_calls()
-    fleet.write(egress=[f"h{index:05}.example.com" for index in range(1000)])
+    fleet.write(
+        egress=[f"h{index:05}.example.com" for index in range(1000)],
+        model={"router": "agent-fast", "budget_usd_per_day": 5},
+        tools={SERVER: ["search"]},
+    )
     result = fleet.run()
     assert result.status.state is FamilyState.INVALID
     assert result.status.applied_rev == first.status.registry_rev
@@ -414,7 +436,8 @@ def test_an_egress_list_over_the_cap_is_refused(fleet: Fleet) -> None:
     first_error = result.status.validation.first_error
     assert first_error is not None
     assert first_error.endswith(f"the cap is {EGRESS_CAP}")
-    assert egress_path.read_bytes() == before
+    assert landed_bytes(fleet) == before
+    assert fleet.litellm.budgets == budgets
     assert fleet.ops() == ()
 
 
