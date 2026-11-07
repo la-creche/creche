@@ -330,6 +330,13 @@ RUN uv --version \
     && pnpm --version \
     && python3.12 --version
 
+# The egress proxy of the tools: guest init bridges guest 127.0.0.1:3128 to
+# the host proxy (CH46 rule 1). No tool reads this name. The agent gives its
+# value to each tool as HTTPS_PROXY and https_proxy, and as nothing else
+# (CH46 rules 2 and 3, CH49 rule 1). agent/test/tool-env.test.ts holds the
+# port equal to creche_wire::guest::EGRESS_PROXY_PORT.
+ENV CRECHE_TOOL_HTTPS_PROXY=http://127.0.0.1:3128
+
 RUN --mount=type=bind,source=playpen/bin/creche-env-write,target=/run/creche-env-write \
-    sh /run/creche-env-write HOME MPLBACKEND MPLCONFIGDIR NODE_ENV NODE_VERSION PATH \
-       TMPDIR YARN_VERSION > /etc/creche/env
+    sh /run/creche-env-write CRECHE_TOOL_HTTPS_PROXY HOME MPLBACKEND MPLCONFIGDIR NODE_ENV \
+       NODE_VERSION PATH TMPDIR YARN_VERSION > /etc/creche/env
