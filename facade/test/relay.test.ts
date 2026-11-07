@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import vectors from "../vectors/creche-extensions.json" with { type: "json" };
 import { SupervisorLock } from "../src/lock.js";
+import { SBX } from "../src/mode.js";
 import { sessionService } from "../src/service.js";
 import { SessionIndex } from "../src/session-index.js";
 import { EXIT_OK, runSupervisor } from "../src/supervisor.js";
@@ -75,7 +76,7 @@ async function facade(): Promise<Facade> {
       deadlineMs: DEADLINE_MS,
       serve: async () => ({
         ok: true,
-        serving: { runtime: null, sessions: sessionService({ agent: Probe, agentName: "Probe", index, store: flue.store }) },
+        serving: { runtime: null, sessions: sessionService({ agent: Probe, agentName: "Probe", index, mode: SBX, store: flue.store }) },
       }),
       socketPath: socket,
     });
