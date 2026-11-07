@@ -159,10 +159,11 @@ impl Log {
         // Each change of `Open` is whole before the next statement, so a
         // poisoned lock still holds a whole file and size.
         let mut open = self.open.lock().unwrap_or_else(PoisonError::into_inner);
-        if open.size > 0 && open.size.saturating_add(added) > LOG_CAP {
-            if let Err(error) = self.roll(&mut open) {
-                eprintln!("vmm: egress log rollover failed: {}", error.kind());
-            }
+        if open.size > 0
+            && open.size.saturating_add(added) > LOG_CAP
+            && let Err(error) = self.roll(&mut open)
+        {
+            eprintln!("vmm: egress log rollover failed: {}", error.kind());
         }
         match open.file.write_all(&bytes) {
             Ok(()) => open.size = open.size.saturating_add(added),
