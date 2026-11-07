@@ -569,8 +569,9 @@ table, and the start boots it again. A cold boot runs these steps:
    family-state reply"), `mirror::bind` of the listener of host port
    1103 when `repos.json` of the family lists a repo or does not read
    (see "The git mirror"), `proxy::bind` of the listener of host port 1104
-   when `egress.json` of the family lists a host (see "The egress
-   proxy"), the store check of
+   when `egress.json` of the family lists a host or does not read (see
+   "The egress proxy"). `watch::Reach::read` reads both files once for
+   both binds. Then the store check of
    the kernel, the guest init initramfs and the root disk of the flavor
    (decision CH44 rule 2),
    `SessionDisks::for_boot` (decision CH21-4), `snapshots/` with mode
@@ -589,8 +590,10 @@ table, and the start boots it again. A cold boot runs these steps:
    faults of the family (contract 05 §3.3.1 rule 8).
 5. `deny::check` with the bound set 1100, 1101 and 1102 (plan PRs V6
    and V8), plus 1103 and 1104 when step 3 bound each (plan PRs M1 and
-   E2, decisions CH49 rule 3, CH69 rule 13).
+   E2, decisions CH49 rule 3, CH69 rule 13). `Reach::ports` gives the set.
 6. `AcpLink::dial` of guest port 1201 (decision CH50 rule 2).
+7. The VM joins the table, and the follow of its reach files starts
+   from the reading of step 3 (see "The edit follow").
 
 Each fault but `host_full` goes to the fault file of the family
 (decisions CH6-3, CH21-1). A fault after the launch stops the VM with
@@ -630,11 +633,11 @@ connection to a fresh TCP connect to `VMM_LITELLM_ADDR` or
 4. The copy is `relay::Splice`, the copy of the ACP relay, on the tokio
    `net` types. `copy_bidirectional` needs the tokio feature `io-util`,
    which adds a lock entry, so the vmm does not use it.
-5. `Vm::listeners` holds the bridges, the family-state reply, the
-   mirror and the egress proxy. The
-   drop of the entry, when the VM leaves the table, ends each listener
-   task and each open splice. A VM that the vmm killed drops them at the
-   kill.
+5. `Vm::listeners` holds the bridges, the family-state reply and the
+   follow, which holds the mirror and the egress proxy (see "The edit
+   follow"). The drop of the entry, when the VM leaves the table, ends
+   each listener task and each open splice. A VM that the vmm killed
+   drops them at the kill.
 6. The deny check gets 1100, the ports of `Upstreams::rows`, 1103 for
    a family with a clone list and 1104 for a family with egress as its
    bound set, so a listener of any other port fails it (decisions CH6-3,
@@ -724,7 +727,8 @@ connects each dial to `vsock.sock_1104` (decision CH24). The vmm binds
 it for a family whose `egress.json` lists a host (decision CH49 rule 3).
 A present file that does not read binds it too, so each CONNECT gets
 403 and a `not_valid` log line (decision CH72 rule 3). An absent file
-or an empty list binds no listener.
+or an empty list binds no listener. On a running VM the follow binds
+and removes it after each edit (see "The edit follow").
 
 1. `proxy::bind` binds the listener beside the plane listeners, with
    their lifecycle: after `link_vm` and `remove_stale`, before CH
@@ -804,7 +808,8 @@ decisions CH3, CH5f, CH10-10, CH46 rule 4, CH69 rules 13 to 20, 24 and
 lists a repo (decision CH69 rule 13, which amends CH8-1, CH14 and
 section 3.2.3 as CH49 rule 3 amended them for 1104), or is present and
 does not read (decision CH73 rule 1, Known gap 29). An absent file or
-an empty list binds no listener.
+an empty list binds no listener. On a running VM the follow binds and
+removes it after each edit (see "The edit follow").
 
 1. `mirror::bind` binds the listener beside the plane listeners, with
    their lifecycle: after `link_vm` and `remove_stale`, before CH
@@ -878,6 +883,65 @@ the bind at a restore. Its test
 `a_clone_on_a_bad_clone_list_gets_denied_and_one_line` runs its own
 binary as a child: a clone on a list that does not read gets `DENIED`
 and one stderr line that names `not_valid` (decision CH73 rule 1).
+
+## The edit follow
+
+`src/egress/watch.rs` follows `egress.json` and `repos.json` of the
+family on each running VM (plan PR E3, decisions CH6-3, CH49 rules 3
+and 4, CH69 rules 11, 12, 13 and 28, CH72 rule 3, CH73 rule 1). The
+start commits the VM with one `Watch`, a task that starts from the
+reading of the launch, so an edit since the launch acts at the first
+poll.
+
+1. Every `POLL` (2 s) the task reads both files with
+   `FamilyRoot::read_repos` and `FamilyRoot::read_egress`, in
+   `spawn_blocking` (decisions CH36 G21, CH69 rule 11). A reading equal
+   to the last one changes nothing and runs no check. The task compares
+   the readings, not the bytes: the reader of `FamilyRoot` is the one
+   checked open of each file, and only the reading changes a listener.
+   caregiver writes one canonical form (decision CH69 rule 5), so a new
+   list is new bytes and a new reading.
+2. A new reading binds or removes the listeners of 1103 and 1104 by
+   the rule of the start, `Reach::mirror` and `Reach::egress`: a list
+   that holds an entry binds, and so does a present file that does not
+   read. An absent file or an empty list binds none. A new listener
+   gets the server of the start (`mirror::Bound::serve`,
+   `proxy::Bound::serve`). A removed listener loses its server, which
+   cuts its open links (Known gap 31), and then its socket file.
+3. Then `deny::check` runs with `Reach::ports` of the new reading, the
+   check of the start (`Follow::check`, decisions CH6-3, CH49 rule 3).
+4. A failed check, and a failed bind, serve or removal (Known gap 30),
+   ends the task. A task of its own then writes `egress_assert_failed`
+   to the fault file and stops the VM of that control link, with the
+   graceful stop first (decisions CH19 (3), CH21-1, CH54 rule 6, CH69
+   rule 12). The stop runs apart from the follow, because the stop
+   drops the VM entry, and that drop ends the follow.
+5. A removed host or repo does not wait for the poll: the proxy and the
+   mirror read their file at each link (decisions CH6-4, CH69 rule 16).
+   An added one waits one `POLL` at most.
+6. The drop of the VM entry drops the `Watch`, which ends the task and
+   drops both servers. A restore binds from the files of that time and
+   starts a new follow.
+7. The reads and the check of the follow hold at most 2 fds of one VM
+   at once, inside the headroom of `planes::fd_need`, so the fd need
+   does not change.
+
+Cloud Hypervisor connects each guest dial to `vsock.sock_<port>` at the
+dial (decision CH24). So it finds a listener that the follow bound after
+a boot or a restore, and the fallback of CH49 rule 4 (a bound set fixed
+at each boot and restore) is not taken. The kvm job proves both cases
+(decision CH69 rule 28, plan risk 6).
+
+`tests/start.rs` runs the follow on paused tokio time, one `POLL` at a
+time: an edit that binds 1104 and serves a 403, an emptied list that
+removes 1104 and its file and a later edit that binds it again, an edit
+that binds 1103 and serves `DENIED`, a failed check after an edit that
+writes the fault and stops the VM, and an unchanged file that keeps the
+socket file and runs no check. `tests/kvm_reach.rs` boots the vmm of
+`examples/phase3_vm.rs` with the real guest init and the stand-in in
+mode `reach`. A CONNECT to an IP literal from the guest gets no 403
+before the edit and a 403 after it, after a boot and after a restore,
+and no 403 again after an emptied list. The test needs no internet.
 
 ## The slots
 
@@ -1135,7 +1199,12 @@ and the graceful stop of a VM with no `synced`.
 
 `tests/kvm_guest.rs` holds the phase 3 proof of section 5 of the design
 (plan PR V10), `kvm_phase3_pulls_sleeps_restores_and_stops`. Only the
-job kvm runs it.
+job kvm runs it. Its boot helpers and the env of each config key sit in
+`tests/common/mod.rs` (plan PR E3), and `tests/kvm_reach.rs` boots the
+same vmm. `common::boot` takes the mode of the stand-in and holds a lock,
+so one vmm of the test binary runs at a time: each proof uses one
+session, the run root of `RuntimeDirectory=vmm` and the state root of
+the runner.
 
 - `examples/phase3_vm.rs` plays the vmm (decision CH62 rule 29). It is
   an example in no release row (decision CH58 rule 1). It reads the vmm
@@ -1295,7 +1364,8 @@ job kvm runs it.
     `egress.json` is present, also when it does not read, so each CONNECT
     is refused 403 with a `not_valid` log line (decision CH70 rule 2). An
     absent file or an empty list binds no 1104 (decision CH49 rule 3).
-    The start writes no stderr line (`binds_egress` in `src/start.rs`).
+    The start writes no stderr line (`Reach::egress` in
+    `src/egress/watch.rs`).
     A zero-byte `egress.json` is present and does not read, so it binds
     1104 and each CONNECT gets `not_valid` (CH72 rule 3).
 28. Closed by decision CH69 rule 14: the 1103 listener takes at most 64
@@ -1307,9 +1377,27 @@ job kvm runs it.
     refused with `DENIED` and one stderr line that names `not_valid`
     (decision CH69 rule 24). An absent file or an empty list binds no
     1103 (decision CH69 rule 13). A zero-byte `repos.json` is present and
-    does not read, so it binds 1103 (`binds_mirror` in `src/start.rs`).
+    does not read, so it binds 1103 (`Reach::mirror` in
+    `src/egress/watch.rs`).
     Decision CH73 rule 2 sets `REPOS_CAP` of `creche-vmm-confine` to 4
     KiB.
+30. CONTRACT-QUESTION: decision CH69 rule 12 decides a failed deny check
+    after an edit. No row decides a failed bind or serve of a listener
+    that an edit adds, or a failed removal of a socket file. Reading
+    taken: each ends the follow as a failed check, so the VM faults
+    `egress_assert_failed` and stops (`Follow::apply` in
+    `src/egress/watch.rs`). A path that is there fails the bind, and the
+    deny check reads only names, so it would pass a listener that the
+    vmm did not bind. Cost of a change: one branch in `Follow::apply`.
+31. CONTRACT-QUESTION: fact 43 and the P1 draft of contract 01 section
+    3.7 say that open connections finish after a removal. The plan PR
+    E3 entry drops the server when a list turns empty, and that drop
+    cuts each open tunnel and clone of the VM. Reading taken: the plan
+    entry, which fails closed. A removal that leaves an entry in the
+    list keeps each open link. So the fact 43 proof of plan PR E4 must
+    keep one host listed. Cost of a change: a close of the listener only
+    in `proxy::Server` and `mirror::Server`, which then wait for their
+    links.
 
 ## Caller duties
 
@@ -1376,13 +1464,11 @@ job kvm runs it.
     of `VMM_GIT_PROGRAM` (`/usr/bin/git` of Ubuntu). The hard
     `RLIMIT_NOFILE` of the user unit must hold 102720 (decision CH67
     rule 4, plan risk 3).
-11. Plan PR M1 binds 1103 at each boot and each restore from the clone
-    list of that time, and each clone reads the list again. A list that
-    goes from empty to a repo gets its listener at the next start or
-    restore of the VM, until plan PR E3 follows the edit (decision CH69
-    rules 11 and 13).
-12. Plan PR E2 binds 1104 at each boot and each restore from the list
-    of that time. Each CONNECT reads the list again, so a removal
-    refuses at once. A list that goes from empty to a host gets its
-    listener at the next start or restore of the VM, until plan PR E3
-    follows the edit on a running VM (decision CH49 rules 3 and 4).
+11. Closed by plan PR E3 (decision CH69 rules 11 and 13): plan PR M1
+    binds 1103 at each boot and each restore from the clone list of that
+    time, and the follow binds or removes it after each edit on a
+    running VM (see "The edit follow").
+12. Closed by plan PR E3 (decision CH49 rules 3 and 4): plan PR E2
+    binds 1104 at each boot and each restore from the list of that time,
+    and the follow binds or removes it after each edit on a running VM.
+    Each CONNECT reads the list again, so a removal refuses at once.

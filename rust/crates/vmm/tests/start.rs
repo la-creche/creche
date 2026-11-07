@@ -5,7 +5,8 @@
 //! `info` and `resume` of a restore, and its snapshot ends the fake VM. Every other step is the real one on
 //! a scratch dir in `/tmp`: the shape read, admission, the store check,
 //! the session disk (with `/usr/bin/true` as `mke2fs`), the key check,
-//! the claim, the deny check and the fault file.
+//! the claim, the deny check and the fault file. The edit follow of plan
+//! PR E3 runs on paused tokio time, one `POLL` at a time.
 
 use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -22,6 +23,7 @@ use std::{fs, io};
 
 use creche_vmm::control::{ControlState, SYNC_WAIT};
 use creche_vmm::egress::log::Log;
+use creche_vmm::egress::watch::POLL;
 use creche_vmm::handlers::acp::{Acp, StartFault, StartVm};
 use creche_vmm::handlers::drop::{Drops, StopVm, VmStopFailed};
 use creche_vmm::mirror::{DENIED, Mirror};
@@ -2712,6 +2714,171 @@ fn a_restore_binds_1103_again() {
     assert_eq!(test.start(0), Ok(()));
     assert!(test.restored(1));
     assert_eq!(*test.fake.listening.lock().unwrap(), [REPOS_ONLY; 2]);
+}
+
+/// The listeners of a VM of a family with no egress and no clone list.
+const PLANES: [&str; 3] = ["vsock.sock_1100", "vsock.sock_1101", "vsock.sock_1102"];
+
+/// A CONNECT to an IP literal, which the proxy refuses with 403 before
+/// any lookup (decision CH6-4), so no test reaches the network.
+const IP_CONNECT: &str = "CONNECT 192.0.2.1:443 HTTP/1.1\r\nHost: 192.0.2.1:443\r\n\r\n";
+
+#[cfg(test)]
+impl Test {
+    /// Pauses the clock of the runtime, so a `POLL` of the edit follow
+    /// costs no real time.
+    fn pause(&self) {
+        self.runtime.block_on(async { tokio::time::pause() });
+    }
+
+    /// Runs the paused runtime one `POLL` at a time until `done` holds,
+    /// for at most 5 s of real time. Then it runs two more, so the poll
+    /// that met `done` ends its deny check (decision CH69 rule 11).
+    fn follow(&self, done: impl Fn() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !done() {
+            assert!(Instant::now() < deadline, "the follow did not act in 5 s");
+            self.runtime
+                .block_on(async { tokio::time::sleep(POLL).await });
+        }
+        for _ in 0..2 {
+            self.runtime
+                .block_on(async { tokio::time::sleep(POLL).await });
+        }
+    }
+
+    /// The path of the listener of `port` of row `index`.
+    fn listener(&self, index: usize, port: u16) -> PathBuf {
+        let id = &self.rows[index].id;
+        self.dir.join(format!("run/vm/{id}/vsock.sock_{port}"))
+    }
+
+    /// Writes `request` on the listener of `port` of row `index`, then
+    /// reads to the close. A reset counts as the close: Linux resets a
+    /// Unix socket that closes with input unread. The current-thread
+    /// runtime runs each server only inside `block_on`, so the guest side
+    /// runs in `spawn_blocking`.
+    fn ask(&self, index: usize, port: u16, request: &[u8]) -> Vec<u8> {
+        let (path, request) = (self.listener(index, port), request.to_vec());
+        let answer = self.runtime.block_on(self.runtime.spawn_blocking(move || {
+            let mut guest = UnixStream::connect(path).unwrap();
+            guest
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            guest.write_all(&request).unwrap();
+            guest.shutdown(Shutdown::Write).unwrap();
+            let mut answer = Vec::new();
+            match guest.read_to_end(&mut answer) {
+                Err(error) if error.kind() != io::ErrorKind::ConnectionReset => panic!("{error}"),
+                _ => answer,
+            }
+        }));
+        answer.unwrap()
+    }
+
+    /// Whether the VM of row `index` runs, with no fault.
+    fn runs_clean(&self, index: usize) -> bool {
+        self.hook.running(&self.rows[index].id) && self.fault_codes().is_empty()
+    }
+}
+
+/// An edit that lists a host on a running VM binds 1104 at the next poll,
+/// and the proxy serves it: a CONNECT to an IP literal gets 403. The deny
+/// check names 1104, so the VM runs on with no fault (plan PR E3,
+/// decisions CH49 rule 3, CH69 rule 11).
+#[test]
+fn an_egress_edit_binds_1104_on_a_running_vm() {
+    let test = Test::new("follow-egress", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    assert_eq!(listeners(&test, 0), PLANES);
+    test.pause();
+    fs::write(test.dir.join("families/chat/egress.json"), EGRESS).unwrap();
+    test.follow(|| test.listener(0, 1104).exists());
+    let reply = test.ask(0, 1104, IP_CONNECT.as_bytes());
+    assert!(reply.starts_with(b"HTTP/1.1 403 "), "{reply:?}");
+    assert!(test.runs_clean(0));
+    assert!(!test.stopped(0));
+}
+
+/// An edit that empties the list removes the 1104 listener and its
+/// socket file, and the deny check without 1104 passes. A later edit that
+/// lists a host binds it again (decisions CH49 rule 3, CH69 rule 12).
+#[test]
+fn an_emptied_list_removes_1104_and_the_check_passes() {
+    let test = Test::new("follow-empty", |_| {});
+    let file = test.dir.join("families/chat/egress.json");
+    fs::write(&file, EGRESS).unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    test.pause();
+    fs::write(&file, r#"{"hosts":[]}"#).unwrap();
+    test.follow(|| !test.listener(0, 1104).exists());
+    assert_eq!(listeners(&test, 0), PLANES);
+    assert!(UnixStream::connect(test.listener(0, 1104)).is_err());
+    assert!(test.runs_clean(0));
+
+    fs::write(&file, EGRESS).unwrap();
+    test.follow(|| test.listener(0, 1104).exists());
+    let reply = test.ask(0, 1104, IP_CONNECT.as_bytes());
+    assert!(reply.starts_with(b"HTTP/1.1 403 "), "{reply:?}");
+    assert!(test.runs_clean(0));
+}
+
+/// An edit that lists a repo on a running VM binds 1103 at the next poll,
+/// and the mirror serves it: the mirror root of the test is missing, so a
+/// clone gets the one error (decisions CH69 rules 11, 13 and 16).
+#[test]
+fn a_repos_edit_binds_1103_on_a_running_vm() {
+    let test = Test::new("follow-repos", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    test.pause();
+    fs::write(test.dir.join("families/chat/repos.json"), REPOS).unwrap();
+    test.follow(|| test.listener(0, 1103).exists());
+    assert!(listeners(&test, 0).contains(&"vsock.sock_1103".to_owned()));
+    let payload = "git-upload-pack /creche\0host=127.0.0.1:9418\0";
+    let line = format!("{:04x}{payload}", payload.len() + 4);
+    assert_eq!(test.ask(0, 1103, line.as_bytes()), DENIED);
+    assert!(test.runs_clean(0));
+}
+
+/// A deny check that fails after an edit writes `egress_assert_failed` to
+/// the fault file and stops the VM, with the graceful stop first: a
+/// listener that the vmm did not bind sits in the run dir (decisions
+/// CH6-3, CH19 (3), CH69 rule 12).
+#[test]
+fn a_failed_check_after_an_edit_writes_the_fault_and_stops_the_vm() {
+    let test = Test::new("follow-fault", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    let _stray = UnixListener::bind(test.listener(0, 1105)).unwrap();
+    test.pause();
+    fs::write(test.dir.join("families/chat/egress.json"), EGRESS).unwrap();
+    test.follow(|| test.stopped(0) && !test.hook.running(&test.rows[0].id));
+    assert_eq!(test.fault_codes(), ["egress_assert_failed"]);
+    eventually(|| test.stop_lines() == 1);
+}
+
+/// A file that does not change binds nothing and runs no deny check: the
+/// same bytes written again keep the 1104 listener of the start, the same
+/// socket file. The check runs after each edit only (decisions CH6-3,
+/// CH69 rule 11), so a stray listener that would fail it stays unseen,
+/// and the VM runs with no fault.
+#[test]
+fn an_unchanged_file_binds_nothing() {
+    use std::os::unix::fs::MetadataExt as _;
+
+    let test = Test::new("follow-same", |_| {});
+    let file = test.dir.join("families/chat/egress.json");
+    fs::write(&file, EGRESS).unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    let inode = || fs::metadata(test.listener(0, 1104)).unwrap().ino();
+    let before = inode();
+    let _stray = UnixListener::bind(test.listener(0, 1105)).unwrap();
+    test.pause();
+    fs::write(&file, EGRESS).unwrap();
+    test.follow(|| true);
+    test.follow(|| true);
+    assert_eq!(inode(), before);
+    assert!(test.runs_clean(0));
+    assert!(!test.stopped(0));
 }
 
 /// `creds.json` of the family `chat`, as caregiver writes it.
