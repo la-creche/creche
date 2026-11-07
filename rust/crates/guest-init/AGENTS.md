@@ -94,8 +94,12 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   in any thread all end in `power::off`. A panic hook, set first by
   `as_pid_1`, runs the default hook, writes `guest-init: panicked` and
   powers off. The power-off is: SIGKILL to every process left
-  (`kill(-1)`), sync, a read-only remount of the session disk, then
-  `reboot(RB_POWER_OFF)` (CH19 rule 3, CH62 rule 9). The remount flushes the ext4
+  (`kill(-1)`), a wait of up to `KILL_WAIT` (1 s) until PID 1 has no
+  child left, sync, a read-only remount of the session disk, then
+  `reboot(RB_POWER_OFF)` (CH19 rule 3, CH62 rule 9). The wait matters
+  because `kill` only queues the signal: a killed process can still
+  finish a write and holds its files until it exits. A wait that runs
+  out writes `guest-init: processes left after 1s`. The remount flushes the ext4
   journal and marks the disk clean. Before the switch root it fails with
   its own console line. The guest kernel has
   `PANIC_TIMEOUT=0`, so an exit of PID 1 would hang the VM (fact 53). No
@@ -145,3 +149,9 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
    the state and tries again after `RESTART_PAUSE` (CH62 rule 8), with
    no cap. The vmm sees no `starting`, so it never snapshots the VM. A
    change costs one arm of `Supervisor::start_failed` and its test.
+3. CONTRACT-QUESTION: CH62 rule 9 names SIGKILL, sync and power off,
+   with no wait between them. The reading taken, in `src/power.rs`: the
+   power-off waits up to `KILL_WAIT` (1 s) for the killed processes to
+   be gone, so a process in D state cannot hang it, and it writes
+   `guest-init: processes left after 1s` when the wait runs out. A
+   change costs the constant `KILL_WAIT`.
