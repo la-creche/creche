@@ -47,15 +47,14 @@ impl fmt::Display for NofileError {
 
 impl std::error::Error for NofileError {}
 
-/// Sets the soft `RLIMIT_NOFILE` to at least `need`, and gives the soft
-/// limit that holds afterwards. A soft limit at or above `need` stays. A
-/// `None` limit is `RLIM_INFINITY`.
+/// Sets the soft `RLIMIT_NOFILE` to at least `need`. A soft limit at or
+/// above `need` stays. A `None` limit is `RLIM_INFINITY`.
 ///
 /// # Errors
 ///
 /// `Short` when the hard limit is below `need`, `Set` when the kernel
 /// refuses the soft limit.
-pub fn raise(need: u64) -> Result<u64, NofileError> {
+pub fn raise(need: u64) -> Result<(), NofileError> {
     let limit = getrlimit(Resource::Nofile);
     if let Some(hard) = limit.maximum
         && hard < need
@@ -70,7 +69,6 @@ pub fn raise(need: u64) -> Result<u64, NofileError> {
             maximum: limit.maximum,
         };
         setrlimit(Resource::Nofile, raised).map_err(|errno| NofileError::Set(errno.into()))?;
-        return Ok(need);
     }
-    Ok(limit.current.unwrap_or(u64::MAX))
+    Ok(())
 }

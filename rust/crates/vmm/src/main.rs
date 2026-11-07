@@ -120,9 +120,8 @@ fn serve() -> ExitCode {
     };
     // Before any fd of a VM: the soft limit of systemd (1024) holds the
     // bridges of a few busy guests only (crate AGENTS.md, Known gap 21).
-    match nofile::raise(fd_need()) {
-        Ok(soft) => eprintln!("vmm: RLIMIT_NOFILE soft limit {soft}"),
-        Err(error) => return refuse(&error),
+    if let Err(error) = nofile::raise(fd_need()) {
+        return refuse(&error);
     }
     // The multi-thread runtime (decision CH36, gap G21), so one stray
     // blocking call cannot stall every relay. The server needs the IO

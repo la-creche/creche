@@ -10,7 +10,7 @@ fn raise_grows_the_soft_limit_to_the_need() {
     let before = getrlimit(Resource::Nofile);
     let soft = before.current.unwrap_or(u64::MAX);
     // A need at or below the soft limit changes nothing.
-    assert_eq!(raise(soft.min(64)).unwrap(), soft);
+    raise(soft.min(64)).unwrap();
     assert_eq!(getrlimit(Resource::Nofile).current, before.current);
     if let Some(hard) = before.maximum {
         // A hard limit below the need refuses, and the soft limit stays.
@@ -24,7 +24,7 @@ fn raise_grows_the_soft_limit_to_the_need() {
     if before.current.is_some() && before.maximum.is_none_or(|hard| soft < hard) {
         // A need above the soft limit sets the soft limit to the need and
         // keeps the hard limit.
-        assert_eq!(raise(soft + 1).unwrap(), soft + 1);
+        raise(soft + 1).unwrap();
         let after = getrlimit(Resource::Nofile);
         assert_eq!(after.current, Some(soft + 1));
         assert_eq!(after.maximum, before.maximum);
