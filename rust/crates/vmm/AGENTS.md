@@ -888,6 +888,48 @@ unit kills its scope (decision CH61 rule 1). `ColdBoot` is the `VmSet` of the vm
 and the door close over the hook, the sync before the shutdown take,
 and the graceful stop of a VM with no `synced`.
 
+## The phase 3 proof
+
+`tests/kvm_guest.rs` holds the phase 3 proof of section 5 of the design
+(plan PR V10), `kvm_phase3_pulls_sleeps_restores_and_stops`. Only the
+job kvm runs it.
+
+- `examples/phase3_vm.rs` plays the vmm (decision CH62 rule 29). It is
+  an example in no release row (decision CH58 rule 1). It reads the vmm
+  config with `Config::read` and composes the parts of the compose step
+  with one `ColdBoot`. It runs the leftover sweep (decision CH19 (4))
+  and the owner check of CH and ch-remote (decision CH67 rule 1), as
+  the compose step does. The version check runs a program that the test
+  gives, not `VMM_CH_PROGRAM`: the upstream CH of the runner may print
+  its git tag, and the CI-built CH comes in phase 4 (decision CH7-4,
+  fact 78). It binds no `vmm.sock`. The test sends it one step per line: `start`,
+  `facade`, `sleep` and `stop`.
+- The test runs it as a transient user service with
+  `RuntimeDirectory=vmm` and `NoNewPrivileges=yes`, so each VM scope
+  binds to its unit (decisions CH55, CH60 rule 1). The env holds each
+  key of "The config", with a root-owned `digests.json`, guest init and
+  ch-remote (decision CH36 G20), a scratch family root with `shape.json` and a
+  past `model_live_at` (decisions CH45 rule 2, CH47 rule 2), and the
+  addresses of two stub planes on 127.0.0.1 in the test (decision CH62
+  rule 28).
+- The root disk holds the stand-in facade in mode `linked-relay` at
+  `FACADE_PROGRAM` (decision CH62 rule 12) and an env file from
+  `playpen/bin/creche-env-write` (decision CH7-7). The stand-in opens
+  its local link, so it is `running` and may sleep (decision CH32 rule
+  6).
+- The steps: a cold boot with start 1, a `facade` line that says
+  `running`, a `pull` on 1201 that gets `state` and a 200 from each stub
+  plane, a sleep with a guest sync and one snapshot, a restore that
+  claims it and whose ready says `running` with the same pid and start
+  1, a second `pull` with the same answer, and a stop that leaves a
+  clean session disk (decisions CH19 rules 1 to 3, CH62 rules 9, 13, 14
+  and 23). The stop ends before `FACADE_STOP_WAIT`, the serial log
+  holds the stop line of the stand-in, and guest init sent the facade
+  no signal. The test dials 1201 itself, as
+  `AcpLink::dial` does, because only the door relay of phase 6 carries
+  the bytes of an `AcpLink`. It writes both pull times to the job log
+  (decision CH23).
+
 ## Rules
 
 - Each new dependency is its own pull request, with its lock delta
