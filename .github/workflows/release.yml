@@ -553,14 +553,16 @@ jobs:
   # rust/, so a new kvm_ test needs no edit here. bin/vm-smoke-setup.sh
   # first opens /dev/kvm and /dev/vhost-vsock with the runner's own sudo,
   # starts the user manager, and fetches CH v54.0 and the guest kernel by
-  # their digests (facts 53, 71) and busybox from apt. The method is the
-  # one the C0 spike proved (fact 79).
+  # their digests (facts 53, 71) and busybox from apt. It also installs the
+  # toolchain and the musl target and builds guest-init, about 1 to 2
+  # minutes more cold. The method is the one the C0 spike proved (fact 79).
   #
   # No KVM on the runner fails the job. It never skips: a job skipped on a
   # code change reads as red in the verdict.
   #
-  # The time limit: the setup takes under a minute and the build about as
-  # long as the rust job.
+  # The time limit: the fetch takes under a minute, the toolchain install
+  # and the guest-init build add about 1 to 2 minutes cold, and the build
+  # of the tests takes about as long as the rust job.
   kvm:
     needs: scope
     if: needs.scope.outputs.scope == 'code'
