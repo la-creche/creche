@@ -84,7 +84,7 @@ fn as_pid_1() -> ExitCode {
 /// console line of the stop or of the fault.
 #[cfg(target_os = "linux")]
 fn life() -> String {
-    use creche_wire::guest::{FAMILY_STATE_SOCKET, LOCAL_LINK_SOCKET};
+    use creche_wire::guest::LOCAL_LINK_SOCKET;
 
     // The facade gets the env (decision CH49 rule 1).
     let env = match start() {
@@ -101,21 +101,17 @@ fn life() -> String {
         Ok(local) => local,
         Err(error) => return format!("local link listen failed: {error}"),
     };
-    let family = match local_link::listen(FAMILY_STATE_SOCKET) {
-        Ok(family) => family,
-        Err(error) => return format!("family-state listen failed: {error}"),
+    // Every bridge row listens from here on: 1201, the planes before the
+    // facade can dial them, and the family-state socket (decisions CH13,
+    // CH6-2, CH62 rule 13). `control::serve` starts their accept threads
+    // before it reads the first hello, so 1201 accepts before the first
+    // hello and in every facade state (decision CH50 rule 2).
+    let rows = match bridge::listen() {
+        Ok(rows) => rows,
+        Err(fault) => return fault,
     };
-    // 1201 accepts from here on, before the first hello and in every
-    // facade state (decision CH50 rule 2).
-    if let Err(error) = bridge::serve_acp() {
-        return format!("acp listen failed: {error}");
-    }
-    // The planes, before the facade can dial them (decision CH6-2).
-    if let Err(error) = bridge::serve_loopback() {
-        return format!("loopback listen failed: {error}");
-    }
     say("up");
-    control::serve(listener, local, family, env)
+    control::serve(listener, local, rows, env)
 }
 
 /// Boots, then reads the env file of the switched root. Both run before
@@ -133,8 +129,9 @@ fn start() -> Result<env_file::Env, String> {
 /// Writes one `guest-init: <text>` line to the console (decision CH62
 /// rule 26). The kernel opens `/dev/console` as fd 0, 1 and 2 of PID 1,
 /// and `console=ttyS0` sends it to the serial file of the VM. A failed
-/// write has no other place to go, so `say` drops it.
-#[cfg(target_os = "linux")]
+/// write has no other place to go, so `say` drops it. In a unit test the
+/// line goes to the stderr of the test process.
+#[cfg(any(test, target_os = "linux"))]
 fn say(text: &str) {
     use std::io::Write as _;
     let _ = writeln!(std::io::stderr(), "guest-init: {text}");

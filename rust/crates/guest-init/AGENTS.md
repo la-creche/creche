@@ -96,8 +96,9 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   next ready carries the last end (CH62 rule 11). The reader checks
   each line, not the order of starts and ends.
 - The ACP row (`src/bridge.rs`, CH13, CH50 rule 2, CH62 rules 14 and
-  16): an accept thread of its own takes each link of 1201 from `up`
-  on, before the first hello and in every facade state. Each link dials
+  16): guest init listens on 1201 before `up`, and an accept thread of
+  its own starts before the control loop reads the first hello. It
+  takes each link in every facade state. Each link dials
   `creche_wire::guest::RELAY_SOCKET` fresh. While nothing listens there
   (no socket file, or ECONNREFUSED), the dial tries again every 100 ms
   for up to 10 s after the accept (the vmm `READY_WAIT`), then guest
@@ -105,8 +106,10 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   holds at most 64 open links, from the accept to the close, and closes
   each link past that at once. No idle timeout closes a link. Each link
   writes `acp link <n> open`, `relay connected` or `relay dial failed:
-  <error>`, then `closed`. A failed accept writes `acp accept failed:
-  <error>` and powers off, as a failed accept of 1200 does.
+  <error>`, then `closed`. A failed accept ends the accept thread,
+  which hands the error to the control loop, as the 1200 accept thread
+  does. The loop ends with `acp accept failed: <error>`, and the main
+  thread powers off (CH19 rule 3).
 - The host rows (`src/bridge.rs`, CH6-2, CH14, CH62 rules 13 and 14):
   the loopback rows take each link of guest 127.0.0.1:4000 (`litellm`)
   and :8300 (`chaperone`) from any guest process, with no allowlist.
@@ -123,7 +126,8 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   (fact 46), and guest init reads none of the pull lines (CH62 rule 13).
   Each row holds at most 64 open links. Each link writes `<row> link <n>
   open`, `host connected` or `host dial failed: <error>`, then `closed`.
-  A failed accept writes `<row> accept failed: <error>` and powers off.
+  A failed accept ends the control loop, as on 1200 and 1201: `<row>
+  accept failed: <error>`, then the power-off.
 - The row table (CH62 rule 15): before the first deploy, a new bridge
   row needs no `GUEST_INIT_PROTOCOL` bump. After it, any change of the
   row table bumps it, because a restored old guest lacks the new
@@ -151,8 +155,8 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   control link <n> sync failed: <error>`, sends no `synced` and keeps
   the link (CH65 rule 3).
 - One thread, the main one, reads the event channel, runs the one timer
-  of the supervisor and holds no sender. The 1200, local link and
-  family-state accept threads, the
+  of the supervisor and holds no sender. The 1200, local link, 1201,
+  plane and family-state accept threads, the
   reaper thread and each reader thread hold one, so the channel ends
   only when all of them are gone. Then guest init writes
   `guest-init: control events ended` and powers off.
@@ -209,9 +213,10 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
 - The unit tests check the boot plan, the options of every mount, the
   netlink bytes, the env grammar, the control state machine, the
   supervisor state machine, the local link rules, the line framing, the
-  splice, the relay dial bound, the row cap, the row table, the closed
-  guest side of a failed dial and the facade check of the family-state
-  row on any OS. On Linux, one more test checks the kernel flags
+  splice, the relay dial bound, the dial end on any other error, the row
+  cap, the accept loop at the cap, the row table, the closed guest side
+  of a failed dial and the facade check of the family-state row on any
+  OS. On Linux, one more test checks the kernel flags
   that each set of options gives. One runs the real
   `playpen/bin/creche-env-write`, so the reader and the script cannot
   drift.

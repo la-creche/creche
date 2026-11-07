@@ -29,12 +29,18 @@
 //!    (decision CH62 rule 14). No idle timeout closes a link.
 //! 6. Each link writes `<row> link <n> open`, then `relay connected` or
 //!    `host connected` or the dial fault, then `closed` on the console
-//!    (decision CH62 rule 26). A failed accept writes its error and powers
-//!    off, as on 1200.
+//!    (decision CH62 rule 26).
+//! 7. Guest init listens on every row before `up`, and `control::serve`
+//!    starts the accept threads before it reads the first hello. A link
+//!    that comes in between waits in the backlog.
+//! 8. A failed accept ends the accept thread of its row. The thread hands
+//!    the error to the control loop, as the 1200 accept thread does. The
+//!    loop then returns its end line, and the main thread powers off
+//!    (decision CH19 rule 3, plan risk 9).
 //!
-//! `Slots`, `dial`, `join` and the row table are the pure core, so the
-//! unit tests drive them on any OS. The Linux shell runs the listeners,
-//! the vsock dial and the threads.
+//! `Slots`, `dial`, `join`, `accept_links` and the row table are the
+//! portable core, so the unit tests drive them on any OS. The Linux shell
+//! runs the listeners, the vsock dial and the accept threads.
 
 // Decision CH62 rule 15: before the first deploy, a new row needs no
 // GUEST_INIT_PROTOCOL bump. After it, each change of the row table bumps
@@ -48,7 +54,7 @@ use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::thread::sleep;
+use std::thread::{self, sleep};
 use std::time::{Duration, Instant};
 
 use creche_wire::HostPort;
@@ -188,8 +194,44 @@ pub fn join(link: OwnedFd, dialed: io::Result<OwnedFd>) -> End {
     }
 }
 
+/// Takes each link that `accept` returns and starts its thread, which
+/// runs `bridge` and holds a slot of the row until `bridge` returns
+/// (decision CH62 rule 14). `accept` returns `None` for an accept that
+/// the loop tries again. A link past `ROW_CAP` closes at once. It returns
+/// the accept error that ends the loop.
+pub fn accept_links(
+    row: &str,
+    mut accept: impl FnMut() -> io::Result<Option<OwnedFd>>,
+    bridge: impl Fn(&str, OwnedFd) + Copy + Send + 'static,
+) -> io::Error {
+    let slots = Slots::default();
+    let mut count: u64 = 0;
+    loop {
+        let link = match accept() {
+            Ok(Some(link)) => link,
+            Ok(None) => continue,
+            Err(error) => return error,
+        };
+        count += 1;
+        let name = format!("{row} link {count}");
+        // A refused link closes here, at the end of this pass.
+        let Some(slot) = slots.take() else {
+            crate::say(&format!("{name} refused: {ROW_CAP} links open"));
+            continue;
+        };
+        crate::say(&format!("{name} open"));
+        let spawned = thread::Builder::new().name(name.clone()).spawn(move || {
+            bridge(&name, link);
+            drop(slot);
+        });
+        if let Err(error) = spawned {
+            crate::say(&format!("{row} link {count} thread failed: {error}"));
+        }
+    }
+}
+
 #[cfg(target_os = "linux")]
-pub use shell::{listen_vsock, serve_acp, serve_family, serve_loopback};
+pub use shell::{Rows, listen, listen_vsock, serve};
 
 /// The listeners, the vsock dial and the threads of the rows (decisions
 /// CH62 rules 1 and 2). The kvm tests prove it.
@@ -204,13 +246,16 @@ mod shell {
     use std::thread;
     use std::time::Instant;
 
-    use creche_wire::guest::RELAY_SOCKET;
+    use creche_wire::guest::{FAMILY_STATE_SOCKET, RELAY_SOCKET};
     use creche_wire::{GuestPort, HostPort};
     use nix::sys::socket::{AddressFamily, SockFlag, SockType, VsockAddr, bind, connect, socket};
     use rustix::io::Errno;
     use rustix::net::{SocketFlags, accept_with};
 
-    use super::{FAMILY_STATE_HOST, LOOPBACK_ROWS, RELAY_WAIT, ROW_CAP, Slots, dial, join};
+    use super::{
+        FAMILY_STATE_HOST, LOOPBACK_ROWS, LoopbackRow, RELAY_WAIT, ROW_CAP, accept_links, dial,
+        join,
+    };
     use crate::local_link;
 
     /// A vsock socket of guest init.
@@ -246,37 +291,81 @@ mod shell {
         Ok(stream)
     }
 
-    /// Listens on guest port 1201 and starts its accept thread (decisions
-    /// CH13, CH50 rule 2). The backlog is `ROW_CAP`: the row never holds
-    /// more links.
+    /// The listeners of the bridge rows. They open before `up` (decision
+    /// CH62 rule 1), and `serve` starts their accept threads.
+    #[derive(Debug)]
+    pub struct Rows {
+        /// Guest port 1201 (decision CH13).
+        acp: OwnedFd,
+        /// Guest 127.0.0.1 at the port of each loopback row (decision
+        /// CH6-2).
+        loopback: Vec<(LoopbackRow, TcpListener)>,
+        /// The family-state socket (decision CH62 rule 13).
+        family: UnixListener,
+    }
+
+    /// Listens on every bridge row: guest port 1201 with a backlog of
+    /// `ROW_CAP`, since the row never holds more links (decision CH13),
+    /// each loopback row (decision CH6-2) and the family-state socket,
+    /// mode 0600 (decision CH62 rule 13).
     ///
     /// # Errors
     ///
-    /// The error of the listen or of the thread spawn.
-    pub fn serve_acp() -> io::Result<()> {
-        let backlog = i32::try_from(ROW_CAP).map_err(io::Error::other)?;
-        let listener = listen_vsock(GuestPort::Acp, backlog)?;
-        serve(
+    /// The console line of the listen fault.
+    pub fn listen() -> Result<Rows, String> {
+        let acp = i32::try_from(ROW_CAP)
+            .map_err(io::Error::other)
+            .and_then(|backlog| listen_vsock(GuestPort::Acp, backlog))
+            .map_err(|error| format!("acp listen failed: {error}"))?;
+        let loopback = LOOPBACK_ROWS
+            .iter()
+            .map(|row| {
+                TcpListener::bind((Ipv4Addr::LOCALHOST, row.guest)).map(|listener| (*row, listener))
+            })
+            .collect::<io::Result<_>>()
+            .map_err(|error| format!("loopback listen failed: {error}"))?;
+        let family = local_link::listen(FAMILY_STATE_SOCKET)
+            .map_err(|error| format!("family-state listen failed: {error}"))?;
+        Ok(Rows {
+            acp,
+            loopback,
+            family,
+        })
+    }
+
+    /// Starts the accept thread of each row in `rows` (decisions CH50
+    /// rule 2, CH62 rule 2). The family-state row keeps a link only when
+    /// `is_facade` holds for its peer pid (decision CH62 rule 13). Each
+    /// thread ends only on an accept error, and it hands that error and
+    /// its row name to `failed`. The caller then powers off on its main
+    /// thread (decision CH19 rule 3).
+    ///
+    /// # Errors
+    ///
+    /// The error of a thread spawn.
+    pub fn serve(
+        rows: Rows,
+        is_facade: impl Fn(NonZeroU32) -> bool + Send + 'static,
+        failed: impl Fn(&'static str, io::Error) + Clone + Send + 'static,
+    ) -> io::Result<()> {
+        let Rows {
+            acp,
+            loopback,
+            family,
+        } = rows;
+        spawn_row(
             "acp",
-            move || match accept_with(&listener, SocketFlags::CLOEXEC) {
+            // EINTR and ECONNABORTED are tried again, as on 1200.
+            move || match accept_with(&acp, SocketFlags::CLOEXEC) {
                 Ok(link) => Ok(Some(link)),
                 Err(Errno::INTR | Errno::CONNABORTED) => Ok(None),
                 Err(error) => Err(error.into()),
             },
             relay,
-        )
-    }
-
-    /// Listens on guest 127.0.0.1 at the port of each loopback row and
-    /// starts its accept thread (decision CH6-2).
-    ///
-    /// # Errors
-    ///
-    /// The error of a listen or of a thread spawn.
-    pub fn serve_loopback() -> io::Result<()> {
-        for row in LOOPBACK_ROWS {
-            let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, row.guest))?;
-            serve(
+            failed.clone(),
+        )?;
+        for (row, listener) in loopback {
+            spawn_row(
                 row.name,
                 move || match listener.accept() {
                     Ok((link, _)) => Ok(Some(link.into())),
@@ -284,30 +373,18 @@ mod shell {
                     Err(error) => Err(error),
                 },
                 move |name, link| to_host(name, link, row.host),
+                failed.clone(),
             )?;
         }
-        Ok(())
-    }
-
-    /// Starts the accept thread of the family-state socket `listener`. It
-    /// keeps a link only when `is_facade` holds for its peer pid
-    /// (decision CH62 rule 13), and closes each other link at once.
-    ///
-    /// # Errors
-    ///
-    /// The error of the thread spawn.
-    pub fn serve_family(
-        listener: UnixListener,
-        is_facade: impl Fn(NonZeroU32) -> bool + Send + 'static,
-    ) -> io::Result<()> {
-        serve(
+        spawn_row(
             "family-state",
             move || {
-                let link = match listener.accept() {
+                let link = match family.accept() {
                     Ok((link, _)) => link,
                     Err(error) if retried(&error) => return Ok(None),
                     Err(error) => return Err(error),
                 };
+                // A refused link closes here, as it goes out of scope.
                 match local_link::peer(&link) {
                     Ok(peer) if is_facade(peer) => Ok(Some(link.into())),
                     Ok(peer) => {
@@ -323,10 +400,11 @@ mod shell {
                 }
             },
             |name, link| to_host(name, link, FAMILY_STATE_HOST),
+            failed,
         )
     }
 
-    /// An accept error that the loop retries, as on 1200.
+    /// An accept error that the loop tries again, as on 1200.
     fn retried(error: &io::Error) -> bool {
         matches!(
             error.kind(),
@@ -334,54 +412,18 @@ mod shell {
         )
     }
 
-    /// Starts the accept thread of the row `row`. A failed accept writes
-    /// its error and powers off, as a failed accept of 1200 does.
-    fn serve(
+    /// Starts the accept thread of the row `row`. A failed accept hands
+    /// its error and `row` to `failed`.
+    fn spawn_row(
         row: &'static str,
         accept: impl FnMut() -> io::Result<Option<OwnedFd>> + Send + 'static,
         bridge: impl Fn(&str, OwnedFd) + Copy + Send + 'static,
+        failed: impl FnOnce(&'static str, io::Error) + Send + 'static,
     ) -> io::Result<()> {
         thread::Builder::new()
             .name(format!("{row}-accept"))
-            .spawn(move || {
-                let error = accept_loop(row, accept, bridge);
-                crate::say(&format!("{row} accept failed: {error}"));
-                let _ = crate::power::off();
-            })?;
+            .spawn(move || failed(row, accept_links(row, accept, bridge)))?;
         Ok(())
-    }
-
-    /// Takes each link that `accept` returns and starts its thread, which
-    /// runs `bridge` (decision CH62 rule 14). `accept` returns `None` for
-    /// a link that the row does not keep. It returns each other error.
-    fn accept_loop(
-        row: &str,
-        mut accept: impl FnMut() -> io::Result<Option<OwnedFd>>,
-        bridge: impl Fn(&str, OwnedFd) + Copy + Send + 'static,
-    ) -> io::Error {
-        let slots = Slots::default();
-        let mut count: u64 = 0;
-        loop {
-            let link = match accept() {
-                Ok(Some(link)) => link,
-                Ok(None) => continue,
-                Err(error) => return error,
-            };
-            count += 1;
-            let name = format!("{row} link {count}");
-            let Some(slot) = slots.take() else {
-                crate::say(&format!("{name} refused: {ROW_CAP} links open"));
-                continue;
-            };
-            crate::say(&format!("{name} open"));
-            let spawned = thread::Builder::new().name(name.clone()).spawn(move || {
-                bridge(&name, link);
-                drop(slot);
-            });
-            if let Err(error) = spawned {
-                crate::say(&format!("{row} link {count} thread failed: {error}"));
-            }
-        }
     }
 
     /// Dials the relay socket for `link` and splices the two until either
@@ -410,11 +452,13 @@ mod shell {
 
 #[cfg(test)]
 mod tests {
+    use std::fs::File;
     use std::io::{self, Read as _, Write as _};
     use std::num::NonZeroU32;
     use std::os::fd::OwnedFd;
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::path::PathBuf;
+    use std::sync::mpsc::{Sender, channel};
     use std::thread;
     use std::time::{Duration, Instant};
 
@@ -422,7 +466,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        End, FAMILY_STATE_HOST, LOOPBACK_ROWS, RELAY_PAUSE, RELAY_WAIT, ROW_CAP, Slots, dial, join,
+        End, FAMILY_STATE_HOST, LOOPBACK_ROWS, RELAY_PAUSE, RELAY_WAIT, ROW_CAP, Slots,
+        accept_links, dial, join,
     };
     use crate::control::{Action, Control};
 
@@ -473,6 +518,32 @@ mod tests {
         assert!(waited + RELAY_PAUSE >= bound, "it gave up after {waited:?}");
         assert!(waited < bound + RELAY_PAUSE, "it waited {waited:?}");
         std::fs::remove_file(&stale).unwrap();
+    }
+
+    /// A dial error other than a missing or refused listener ends the
+    /// dial at once, with no retry, even with time left until the bound
+    /// (decision CH62 rule 14). A socket path under a regular file gives
+    /// ENOTDIR.
+    #[test]
+    fn the_relay_dial_ends_at_once_on_another_error() {
+        let file = path("file");
+        std::fs::write(&file, b"").unwrap();
+        let started = Instant::now();
+        let error = dial(&file.join("relay.sock"), started + Duration::from_secs(5)).unwrap_err();
+        let waited = started.elapsed();
+        assert!(
+            !matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+            ),
+            "{error:?}"
+        );
+        assert_eq!(
+            error.raw_os_error(),
+            Some(rustix::io::Errno::NOTDIR.raw_os_error())
+        );
+        assert!(waited < RELAY_PAUSE / 2, "it waited {waited:?}");
+        std::fs::remove_file(&file).unwrap();
     }
 
     /// A row holds `ROW_CAP` open links. One more is refused, and a close
@@ -555,5 +626,78 @@ mod tests {
 
         control.reaped(facade);
         assert!(!control.is_facade(facade));
+    }
+
+    /// Hands one new link to the accept loop of `links` and returns its
+    /// peer, which reads with a bound of `wait`.
+    fn hand(links: &Sender<OwnedFd>, wait: Duration) -> UnixStream {
+        let (peer, link) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(wait)).unwrap();
+        links.send(link.into()).unwrap();
+        peer
+    }
+
+    /// Whether the accept loop kept the link of `peer`: the read of a kept
+    /// link waits, and the read of a closed one gets an EOF.
+    fn kept(peer: &mut UnixStream) -> bool {
+        match peer.read(&mut [0_u8; 1]) {
+            Ok(0) => false,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) =>
+            {
+                true
+            }
+            other => panic!("the link got {other:?}"),
+        }
+    }
+
+    /// The accept loop holds `ROW_CAP` open links and closes the next one
+    /// at once. After one of them closes, it keeps a new link again
+    /// (decision CH62 rule 14).
+    #[test]
+    fn the_accept_loop_closes_a_link_past_the_cap() {
+        let (links, accepted) = channel::<OwnedFd>();
+        let row = thread::spawn(move || {
+            accept_links(
+                "test",
+                move || {
+                    accepted
+                        .recv()
+                        .map(Some)
+                        .map_err(|_| io::Error::other("no more links"))
+                },
+                // A link stays open until its peer writes or closes.
+                |_: &str, link: OwnedFd| {
+                    let _ = File::from(link).read(&mut [0_u8; 1]);
+                },
+            )
+        });
+        let wait = Duration::from_millis(300);
+        let mut open: Vec<_> = (0..ROW_CAP).map(|_| hand(&links, wait)).collect();
+        // Link 65 finds every slot taken, so it reads an EOF at once. A
+        // kept link would wait the full 5 s.
+        assert!(!kept(&mut hand(&links, Duration::from_secs(5))));
+
+        // The slot frees when the bridge thread of the closed link ends.
+        // Until then, each new link reads an EOF.
+        drop(open.remove(0));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let again = loop {
+            let mut peer = hand(&links, wait);
+            if kept(&mut peer) {
+                break peer;
+            }
+            assert!(Instant::now() < deadline, "no slot freed after a close");
+        };
+        // The row is full again.
+        assert!(!kept(&mut hand(&links, Duration::from_secs(5))));
+
+        drop(links);
+        assert_eq!(row.join().unwrap().to_string(), "no more links");
+        drop(open);
+        drop(again);
     }
 }

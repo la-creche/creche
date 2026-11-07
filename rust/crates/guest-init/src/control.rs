@@ -654,6 +654,8 @@ mod shell {
         LocalAccepted(OwnedFd, NonZeroU32, SyncSender<Event>),
         /// The local accept loop stopped on this error.
         LocalAcceptFailed(io::Error),
+        /// The accept loop of this bridge row stopped on this error.
+        RowAcceptFailed(&'static str, io::Error),
         LocalLine(LocalId, Vec<u8>),
         LocalRefused(LocalId, Why),
         /// The local link ended at a line end, or its read failed.
@@ -680,11 +682,11 @@ mod shell {
         crate::bridge::listen_vsock(GuestPort::Control, BACKLOG)
     }
 
-    /// Serves control link 1200, the local link on `local`, the
-    /// family-state socket on `family` and the facade, which gets `env`,
-    /// until a stop or a fault. It returns the console line of the end,
-    /// and the caller powers off.
-    pub fn serve(listener: OwnedFd, local: UnixListener, family: UnixListener, env: Env) -> String {
+    /// Serves control link 1200, the local link on `local`, the bridge
+    /// rows on `rows` and the facade, which gets `env`, until a stop or a
+    /// fault. It returns the console line of the end, and the caller
+    /// powers off.
+    pub fn serve(listener: OwnedFd, local: UnixListener, rows: bridge::Rows, env: Env) -> String {
         let (events, inbox) = sync_channel(INBOX);
         let reaps = events.clone();
         let facade = match Facade::new(env, move |reaped| {
@@ -698,9 +700,16 @@ mod shell {
             Err(error) => return format!("reaper thread failed: {error}"),
         };
         let local_events = events.clone();
+        // A failed accept of a bridge row ends the loop, as a failed 1200
+        // accept does, so the main thread powers off (decision CH19 rule
+        // 3).
         let asks = events.clone();
-        if let Err(error) = bridge::serve_family(family, move |peer| is_facade(&asks, peer)) {
-            return format!("family-state accept thread failed: {error}");
+        let row_events = events.clone();
+        let failed = move |row, error| {
+            let _ = row_events.send(Event::RowAcceptFailed(row, error));
+        };
+        if let Err(error) = bridge::serve(rows, move |peer| is_facade(&asks, peer), failed) {
+            return format!("bridge accept thread failed: {error}");
         }
         let spawned = thread::Builder::new()
             .name("control-accept".to_owned())
@@ -720,7 +729,7 @@ mod shell {
     /// The control loop: one thread owns the state, every write and the
     /// one timer of the supervisor.
     ///
-    /// The loop holds no sender. The three accept threads, the reaper
+    /// The loop holds no sender. Each accept thread, the reaper
     /// thread and each reader thread hold one, so the inbox ends only when
     /// all of them are gone. Then no vmm can reach the guest again, and the
     /// caller powers off (decision CH19 rule 3). A panic in any thread
@@ -833,6 +842,9 @@ mod shell {
                 }
                 Event::LocalAcceptFailed(error) => {
                     return format!("local link accept failed: {error}");
+                }
+                Event::RowAcceptFailed(row, error) => {
+                    return format!("{row} accept failed: {error}");
                 }
                 Event::LocalLine(local, line) => control.local_line(local, &line),
                 Event::LocalRefused(local, why) => control.local_refused(local, why),
