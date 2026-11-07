@@ -89,7 +89,7 @@ files, with `flue.db` kept out of the listing that Flue puts in the prompt.
 
 | Status | Cause |
 |---|---|
-| 0 | `_creche/shutdown`, or stdin closed |
+| 0 | `_creche/shutdown`, stdin closed, or the stop line of the local link |
 | 2 | no `AGENT_SANDBOX` |
 | 3 | a live facade holds the lock |
 | 5 | no `_creche/beat` for three beat windows (90 s) |
@@ -169,6 +169,44 @@ position follow it.
 10. Never make stdin EOF the only way the process ends. A client-side kill
    of `sbx exec` does not reach the VM. The beat deadline ends the process.
 
+## The local link
+
+In CH mode the facade connects to guest init on the Unix socket
+`LOCAL_LINK_SOCKET` (`src/local-link.ts`, decisions CH21, CH62 rules 9 to
+11). On sbx it opens no link (decision CH10-4). `src/guest.ts` holds the
+socket path, the line cap and the stop wait, and `test/guest.test.ts`
+holds them equal to `rust/crates/wire/vectors/guest.json` (decision CH62
+rule 5).
+
+1. The link opens after the relay socket listens and before stdio serves.
+   guest init then moves the facade from `starting` to `running`
+   (decision CH32 rule 6).
+2. Each turn sends `{"start":{}}` before Flue runs it, and
+   `{"end":{"title":…,"updated_at":…}}` after its record. The end
+   carries `titleOf` of the turn's prompt and the time of the turn's last
+   record, in `UnixMillis` (decision CH21). Each start gets an end.
+3. Each line up is one wire `TurnEvent`, checked with the wire validator,
+   then written as one strict JSON line under `CONTROL_LINE_CAP`. guest
+   init kills the facade at a line that it refuses (decision CH62 rule
+   11), so the facade drops an event that does not check, with one
+   stderr line.
+4. A `{"stop":{}}` line down stops the facade: it closes the relay,
+   stops Flue for at most `FLUE_STOP_MS` (the 25 s stop wait less 1 s),
+   releases the lock and exits 0 (decision CH62 rule 9). Flue 2.3.0 waits
+   up to 30 s for a running submission, so the facade bounds the wait.
+5. The facade never closes the link. guest init kills a facade whose link
+   closes outside a stop (decision CH32 rule 7), so the exit of the
+   process is the only close. A link fault or a close by guest init is
+   not fatal: one stderr line, and later events are dropped. guest init
+   accepts one link per facade start, so nothing dials again.
+
+TypeBox 1.3.27 counts a `maxLength` in grapheme clusters, and JavaScript
+counts a string in UTF-16 units. `agent/wire-read` compiles each length as
+a pattern of code points, as Rust counts. So a title of 256 astral
+characters (512 UTF-16 units) passes, and 257 is refused
+(`test/local-link.test.ts`). `titleOf` cuts at 256 bytes, so it never
+makes such a title.
+
 ## Relay connections
 
 Each socket connection gets an app of its own on the one session
@@ -181,6 +219,12 @@ relay connection does nothing: only the supervisor link stops the
 facade.
 
 ## Known gaps
+
+- No row says what the facade does with a local link line that is not
+  `stop` (decision CH62 rule 10 sends only `stop` down). guest init closes
+  the link at a line that it refuses, but a close gets the facade killed
+  (decision CH32 rule 7). The facade drops the line with one stderr line
+  and keeps the link. `src/local-link.ts` holds the `CONTRACT-QUESTION`.
 
 - The facade does not send `creche/delegation` to the chaperone. Flue's MCP
   adapter sends no `_meta` on `tools/call`, and a connection has no

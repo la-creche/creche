@@ -5,6 +5,7 @@
 // This file is the composition root and nothing else.
 
 import { limitsLine, readFamily, serveFamily } from "../family.js";
+import { localLinkOf } from "../local-link.js";
 import { SupervisorLock } from "../lock.js";
 import { relaySocketPath } from "../relay.js";
 import { claimStdout, say } from "../stdio.js";
@@ -22,14 +23,16 @@ if (read.ok) {
 
   say(limitsLine(family.limits));
 
+  const link = localLinkOf(family.mode, say);
   void runSupervisor({
     input: process.stdin,
     stdout,
     say,
     lock: new SupervisorLock(family.config.mounts.control, family.config.sandbox),
     deadlineMs: BEAT_DEADLINE_MS,
-    serve: () => serveFamily(family),
+    serve: () => serveFamily(family, link),
     socketPath: relaySocketPath(),
+    link,
   });
 } else {
   say(read.detail);

@@ -29,7 +29,7 @@ let refresh: Refresh;
 
 beforeEach(() => {
   index = new SessionIndex(new DatabaseSync(":memory:"));
-  const service = sessionService({ agent: Probe, agentName: "Probe", index, mode: SBX, store: flue.store, refresh: (id) => refresh(id) });
+  const service = sessionService({ agent: Probe, agentName: "Probe", index, mode: SBX, link: null, store: flue.store, refresh: (id) => refresh(id) });
   wire = new Wire(facadeApp(NO_HOOKS, service));
 });
 

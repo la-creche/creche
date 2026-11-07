@@ -10,6 +10,10 @@
 //
 //   session/cancel ──► abort() ──► the prompt answers `cancelled`
 //
+// Under CH the turn start and the turn end each go to guest init on the
+// local link (`src/local-link.ts`, decision CH21). The end carries the
+// title and `updatedAt` of the turn record.
+//
 // One turn runs per session at a time. A second prompt is refused: Flue
 // would join it to the running response, and its reply would have no turn
 // of its own.
@@ -28,6 +32,7 @@ import type {
 } from "./acp.js";
 import { byteLength } from "./line.js";
 import type { Live } from "./live.js";
+import type { LocalLink } from "./local-link.js";
 import { chunkToUpdates, forward, SubmissionChunks } from "./mapper.js";
 import type { Sessions } from "./sessions.js";
 
@@ -116,9 +121,11 @@ function describe(error: unknown): string {
 export class Turns {
   private readonly running = new Map<string, Running>();
 
+  /** `link` is the local link of guest init under CH, and null on sbx (decision CH10-4). */
   public constructor(
     private readonly sessions: Sessions,
     private readonly live: Live,
+    private readonly link: LocalLink | null,
     private readonly refresh: Refresh = NO_REFRESH,
   ) {}
 
@@ -177,6 +184,9 @@ export class Turns {
     }
 
     this.live.attach(sessionId, peer);
+    // Each start gets an end, so guest init sees each running turn
+    // (decisions CH21, CH32 rule 6).
+    this.link?.turnStart();
     let sent = Promise.resolve();
     let lastRecordAt: string | null = null;
 
@@ -187,9 +197,10 @@ export class Turns {
     });
     this.running.delete(sessionId);
 
-    const info = this.sessions.recordTurn(sessionId, text, lastRecordAt);
-    if (info !== null) {
-      sent = this.live.publish(sessionId, [{ position: null, update: { sessionUpdate: "session_info_update", ...info } }]);
+    const record = this.sessions.recordTurn(sessionId, text, lastRecordAt);
+    this.link?.turnEnd(record.title, record.updatedAt);
+    if (record.update !== null) {
+      sent = this.live.publish(sessionId, [{ position: null, update: { sessionUpdate: "session_info_update", ...record.update } }]);
     }
 
     await sent;

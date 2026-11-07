@@ -66,6 +66,8 @@ describe("the built facade", () => {
 
     expect(await running.nextMessage()).toEqual({ jsonrpc: "2.0", id: 2, result: { sessionId: SESSION } });
     expect(await running.nextMessage()).toMatchObject({ id: 3, error: { code: -32602 } });
+    // No guest init listens here, and the facade serves on.
+    expect(running.stderr()).toMatch(/the local link closed: connect E[A-Z]+ \/run\/creche\/guest-init\.sock; the turn events are dropped/);
   });
 
   it("mints a fresh id on sbx", async () => {
@@ -77,5 +79,7 @@ describe("the built facade", () => {
 
     expect(answer.result.sessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     expect(answer.result.sessionId).not.toBe(SESSION);
+    // On sbx the facade opens no local link (decision CH10-4).
+    expect(running.stderr()).not.toContain("local link");
   });
 });

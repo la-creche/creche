@@ -32,7 +32,7 @@ beforeEach(() => {
   const index = new SessionIndex(new DatabaseSync(":memory:"));
   const now = (): Date => new Date((clock += 1000));
   sessions = new Sessions(Probe, index, SBX, now);
-  wire = new Wire(facadeApp(NO_HOOKS, sessionService({ agent: Probe, agentName: "Probe", index, mode: SBX, store: flue.store, now })));
+  wire = new Wire(facadeApp(NO_HOOKS, sessionService({ agent: Probe, agentName: "Probe", index, mode: SBX, link: null, store: flue.store, now })));
 });
 
 async function newSession(cwd = "/work"): Promise<string> {
@@ -61,7 +61,7 @@ describe("session/new", () => {
   it("takes the host's id in CH mode, for one session only", async () => {
     const id = "0123abcd-0000-4000-8000-00000000c7c7";
     const index = new SessionIndex(new DatabaseSync(":memory:"));
-    const service = sessionService({ agent: Probe, agentName: "Probe", index, mode: { kind: "ch", sessionId: id }, store: flue.store });
+    const service = sessionService({ agent: Probe, agentName: "Probe", index, mode: { kind: "ch", sessionId: id }, link: null, store: flue.store });
     const ch = new Wire(facadeApp(NO_HOOKS, service));
     const first = await ch.request("session/new", { cwd: "/work", mcpServers: [] });
     const second = await ch.request("session/new", { cwd: "/other", mcpServers: [] });
@@ -152,9 +152,15 @@ describe("the record of a turn", () => {
     expect(sessions.recordTurn(id, "  Plan the   garden \nsecond line", settledAt[0] ?? null)).toEqual({
       title: "Plan the garden",
       updatedAt: settledAt[0],
-      _meta,
+      update: { title: "Plan the garden", updatedAt: settledAt[0], _meta },
     });
-    expect(sessions.recordTurn(id, "Another thing", settledAt[1] ?? null)).toEqual({ updatedAt: settledAt[1], _meta });
+    // The update names the session once. The turn end of the local link
+    // carries the title of each turn (decision CH21).
+    expect(sessions.recordTurn(id, "Another thing", settledAt[1] ?? null)).toEqual({
+      title: "Another thing",
+      updatedAt: settledAt[1],
+      update: { updatedAt: settledAt[1], _meta },
+    });
     expect((await list())["sessions"]).toEqual([{ sessionId: id, cwd: "/work", title: "Plan the garden", updatedAt: settledAt[1], _meta }]);
   });
 
@@ -163,7 +169,7 @@ describe("the record of a turn", () => {
     expect(titleOf("\n \n")).toBe("");
     expect(titleOf(`${"a".repeat(255)} b`)).toBe("a".repeat(255));
     expect(titleOf("𝒜".repeat(256))).toBe("𝒜".repeat(64));
-    expect(sessions.recordTurn("no-such-session", "text", null)).toBeNull();
+    expect(sessions.recordTurn("no-such-session", "text", null).update).toBeNull();
     expect(sessions.handle("no-such-session")).toBeNull();
   });
 

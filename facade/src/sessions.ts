@@ -111,6 +111,16 @@ function metaOf(row: SessionRow): Record<string, unknown> | null {
   return kept.length > 0 ? Object.fromEntries(kept) : null;
 }
 
+/** The end of one turn, as the row and the turn end event of the local link take it. */
+export interface TurnRecord {
+  /** `titleOf` of the turn's prompt: the title of a turn end (decision CH21). */
+  readonly title: string;
+  /** The time of the turn's last record, or the clock when it wrote none. */
+  readonly updatedAt: string;
+  /** The `session_info_update` of the turn. Null for an unknown id. */
+  readonly update: SessionInfoUpdate | null;
+}
+
 function toInfo(row: SessionRow): SessionInfo {
   const info = { sessionId: row.id, cwd: row.cwd, title: row.title, updatedAt: row.updatedAt };
   const meta = metaOf(row);
@@ -217,26 +227,26 @@ export class Sessions {
 
   /**
    * One turn ended. The first turn names the session. Each turn moves
-   * `updatedAt` to the time of its last record. Null for an unknown id.
+   * `updatedAt` to the time of its last record.
    */
-  public recordTurn(id: string, userText: string, lastRecordAt: string | null): SessionInfoUpdate | null {
+  public recordTurn(id: string, userText: string, lastRecordAt: string | null): TurnRecord {
+    const updatedAt = lastRecordAt ?? this.now().toISOString();
+    const title = titleOf(userText);
     const row = this.index.get(id);
     if (row === null) {
-      return null;
+      return { title, updatedAt, update: null };
     }
 
-    const updatedAt = lastRecordAt ?? this.now().toISOString();
     this.index.touch(id, updatedAt);
 
     const meta = metaOf(row);
     const tail = meta === null ? { updatedAt } : { updatedAt, _meta: meta };
-    const title = titleOf(userText);
     if (row.title !== null || title.length === 0) {
-      return tail;
+      return { title, updatedAt, update: tail };
     }
 
     this.index.nameOnce(id, title);
 
-    return { title, ...tail };
+    return { title, updatedAt, update: { title, ...tail } };
   }
 }
