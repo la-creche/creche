@@ -39,12 +39,17 @@
 //!    `creche_wire::guest::RELAY_SOCKET` and answers each line `ping` of
 //!    each link with `pong <its pid>`. It writes `relay listening`, and
 //!    `relay link ended` at the end of each link (decisions CH13, CH62
-//!    rule 16). Then it stays up. A line `pull` makes it pull once: one
-//!    `FamilyStatePull` on `creche_wire::guest::FAMILY_STATE_SOCKET`,
-//!    then one HTTP GET to guest 127.0.0.1:4000 and one to :8300. It
-//!    answers `pulled <its pid> <reply key> <status 4000> <status 8300>
-//!    <pull ms>`. A link that ends with no answer gives `closed`, and each
-//!    other fault `failed` (decisions CH5a, CH6-2, CH62 rule 13).
+//!    rule 16). Then it stays up. A line `pull` first starts a child of
+//!    itself, the family stranger, and waits for it. The stranger sends
+//!    one `FamilyStatePull` on `creche_wire::guest::FAMILY_STATE_SOCKET`
+//!    and writes `family stranger pid <its pid> <answer>`. Guest init
+//!    closes its link, so the answer is `closed` (decision CH62 rule 13).
+//!    Then the stand-in pulls once itself: one `FamilyStatePull` on that
+//!    socket, then one HTTP GET to guest 127.0.0.1:4000 and one to
+//!    :8300. It answers `pulled <its pid> <reply key> <status 4000>
+//!    <status 8300> <pull ms>`. A link that ends with no answer gives
+//!    `closed`, and each other fault `failed` (decisions CH5a, CH6-2,
+//!    CH62 rule 13).
 //! 9. In mode `markers` it writes `MARKERS` files on the session disk,
 //!    each with its own line, and writes `markers written`. Then it stays
 //!    up. A fault exits with status 4. A kvm test syncs and kills CH,
@@ -97,6 +102,9 @@ const HOLDER: &str = "holder";
 /// The argument that makes the stand-in the stranger of mode `turn`.
 const STRANGER: &str = "stranger";
 
+/// The argument that makes the stand-in the family stranger of a `pull`.
+const FAMILY_STRANGER: &str = "family-stranger";
+
 /// The file that the holder keeps open, on the session disk.
 const HELD: &str = "standin-held";
 
@@ -127,6 +135,7 @@ fn main() -> ExitCode {
         Some(CHILD) => stay_up(),
         Some(HOLDER) => hold(),
         Some(STRANGER) => stranger(),
+        Some(FAMILY_STRANGER) => family_stranger(),
         _ => facade(),
     }
 }
@@ -390,6 +399,10 @@ fn pong(link: &UnixStream) -> io::Result<()> {
         if line == "ping" {
             writeln!(&*link, "pong {pid}")?;
         } else if line == "pull" {
+            let status = Command::new(std::env::current_exe()?)
+                .arg(FAMILY_STRANGER)
+                .status()?;
+            say(&format!("family stranger {status}"));
             let started = Instant::now();
             let reply = answer(pull());
             let pull_ms = started.elapsed().as_millis();
@@ -405,6 +418,22 @@ fn pong(link: &UnixStream) -> io::Result<()> {
     }
     say("relay link ended");
     Ok(())
+}
+
+/// The family stranger of a `pull`: a process other than the facade
+/// sends a pull on the family-state socket. Guest init closes the link at
+/// once, with no host dial (decision CH62 rule 13).
+fn family_stranger() -> ExitCode {
+    let word = answer(pull());
+    say(&format!(
+        "family stranger pid {} {word}",
+        std::process::id()
+    ));
+    if word == "closed" {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(CHILD_FAILED)
+    }
 }
 
 /// The word of one answer: the answer, `closed` for a link that ended

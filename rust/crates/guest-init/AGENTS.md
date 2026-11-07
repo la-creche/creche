@@ -200,10 +200,13 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   the local link, closes it and stays up. With the mode `relay`, it
   listens on `RELAY_SOCKET` 2 s after its start, answers each line
   `ping` with `pong <pid>` and writes `standin: relay link ended` at
-  the end of each link. A line `pull` on such a link makes it send one
-  `FamilyStatePull` on the family-state socket and one HTTP GET to each
-  plane, then answer `pulled <pid> <reply key> <status 4000> <status
-  8300> <pull ms>`, with `closed` for a link that ended with no answer.
+  the end of each link. A line `pull` on such a link first starts a
+  child, the family stranger, which sends a `FamilyStatePull` on the
+  family-state socket and writes `standin: family stranger pid <pid>
+  closed` when guest init closes its link. Then the stand-in sends one
+  `FamilyStatePull` itself and one HTTP GET to each plane, and answers
+  `pulled <pid> <reply key> <status 4000> <status 8300> <pull ms>`,
+  with `closed` for a link that ended with no answer.
   With the mode `markers`, it writes three marker files on the session
   disk and `standin: markers written`, then stays up. Each other start
   stays up until a signal ends it.
@@ -229,7 +232,9 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   socket of CH. On 1200 they speak the creche-wire types, and on 1201
   the `ping` and `pull` lines of the stand-in. For the host rows, a test
   listens on `vsock.sock_<port>` itself, where CH joins each guest dial
-  of that host port. A test reads a console line that follows a
+  of that host port. The family-state test also checks that guest init
+  refuses a child of the facade on that socket, with no host dial. A
+  test reads a console line that follows a
   link write with `wait_for_line`, because the guest writes that line
   after the link write and the tty can buffer it. After a stop, `dumpe2fs -h` and
   `e2fsck -fn` read the session disk. After a sync and a SIGKILL of CH,

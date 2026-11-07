@@ -783,9 +783,12 @@ fn kvm_guest_init_bridges_the_planes() {
 /// The facade sends one `FamilyStatePull` on the family-state socket. It
 /// reaches the host listener of port 1100 as the facade wrote it, and the
 /// `FamilyStateReply` of the test comes back (decisions CH5a, CH62 rule
-/// 13). The facade passes the pid check. With no plane listener, each
-/// plane dial fails, and guest init closes the TCP link at once (decision
-/// CH62 rule 14).
+/// 13). The facade passes the pid check. Before it, a child of the
+/// facade sends a pull too. Guest init refuses that pid and closes the
+/// link with no host dial, so the host listener accepts exactly one link
+/// (decision CH62 rule 13). With no plane listener, each plane dial
+/// fails, and guest init closes the TCP link at once (decision CH62 rule
+/// 14).
 #[test]
 #[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
 fn kvm_guest_init_bridges_the_family_state() {
@@ -801,7 +804,7 @@ fn kvm_guest_init_bridges_the_family_state() {
             serde_json::to_vec(&FamilyStateReply::CredsMissing(CredsMissing {})).unwrap();
         reply.push(b'\n');
         (&stream).write_all(&reply).unwrap();
-        line
+        (line, listener)
     });
     let mut link = dial(&work, GuestPort::Control);
     let pid = starting(&hello(&mut link, now()));
@@ -814,7 +817,7 @@ fn kvm_guest_init_bridges_the_family_state() {
     );
     let pull_ms: u64 = words[3].parse().unwrap();
     eprintln!("the pull took {pull_ms} ms");
-    let line = host.join().unwrap();
+    let (line, listener) = host.join().unwrap();
     let mut pull = serde_json::to_string(&FamilyStatePull {}).unwrap();
     pull.push('\n');
     assert_eq!(line, pull);
@@ -829,6 +832,31 @@ fn kvm_guest_init_bridges_the_family_state() {
             lines.iter().any(|line| line.starts_with(&fault))
         });
     }
+
+    // The stranger read an EOF or a reset, and guest init named its pid.
+    wait_for_line(&mut vm, &serial, "standin: family stranger exit status: 0");
+    let stranger = lines(&serial)
+        .iter()
+        .find_map(|line| {
+            line.strip_prefix("standin: family stranger pid ")?
+                .strip_suffix(" closed")
+                .map(str::to_owned)
+        })
+        .expect("no stranger pid on the console");
+    assert_ne!(stranger, pid.to_string());
+    wait_for_line(
+        &mut vm,
+        &serial,
+        &format!("guest-init: family-state peer pid {stranger} refused: not the facade"),
+    );
+    // The stranger ran before the pull of the facade, so a link of the
+    // stranger would be queued by now.
+    listener.set_nonblocking(true).unwrap();
+    assert_eq!(
+        listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock,
+        "the host listener got a second link"
+    );
 
     drop(vm);
     fs::remove_dir_all(&work).unwrap();

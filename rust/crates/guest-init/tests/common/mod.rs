@@ -205,7 +205,9 @@ pub enum Standin {
     /// Mode `relay`: after 2 s the stand-in listens on the relay socket
     /// and answers each line `ping` with `pong <pid>` and each line
     /// `pull` with `pulled <pid> <reply key> <status 4000> <status 8300>
-    /// <pull ms>`, and stays up.
+    /// <pull ms>`, and stays up. Before each pull of its own, a child of
+    /// it sends a pull and writes `standin: family stranger pid <pid>
+    /// <answer>`.
     Relay,
     /// Mode `markers`: the stand-in writes `STANDIN_MARKERS` on the
     /// session disk, each holding its name and a LF, and stays up.
