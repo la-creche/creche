@@ -13,9 +13,10 @@
 //!    CH32 rule 6).
 //! 3. The framing is the one of control link 1200 (decision CH36 G11):
 //!    one compact JSON value per LF line, at most `CONTROL_LINE_CAP`
-//!    bytes. Each facade line is a `TurnEvent`. Guest init reads it with
-//!    the typed reader of control link 1200 (the strict reader gap of
-//!    `AGENTS.md` Known gaps).
+//!    bytes. Each facade line is a `TurnEvent`. CH65 rule 2 decides the
+//!    strict reader: the check `strict` that the wire lane PR moves into
+//!    creche-wire. Until guest init calls it, it reads each line with the
+//!    typed reader of control link 1200 (Known gap 1 of `AGENTS.md`).
 //! 4. Guest init keeps the last `TurnEnd` for each later ready (decision
 //!    CH32 rule 4). It relays each event to the current control link as
 //!    `GuestEvent::Turn` once that link got its ready (decision CH21). With

@@ -175,7 +175,9 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
    free JSON value. A unit test holds that it refuses a key given twice,
    a second value, a float for an integer and an array for an object. A
    later commit on this branch calls the shared check in
-   `src/control.rs` once the wire PR merges.
+   `src/control.rs` once the wire PR merges. The local link reads each
+   `TurnEvent` line the same way, in `Control::local_line`, and the same
+   call covers it.
 2. CONTRACT-QUESTION: no row decides the answer to a failed facade
    start, for example a root disk with no facade program. The reading
    taken, in `src/supervisor.rs`: guest init writes
