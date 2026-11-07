@@ -5,6 +5,9 @@
 //! the vmm the keys. So the vmm compiles in no default: a missing or a bad
 //! key refuses the start, and `src/main.rs` exits 78 (owner item 86).
 //!
+//! The plane addresses are an IP address and a port each, as
+//! `std::net::SocketAddr` parses them (decision CH62 rule 20).
+//!
 //! The run root is `RUNTIME_DIRECTORY`, which systemd sets from
 //! `RuntimeDirectory=` (gap G5 option A). It is no catalog key.
 //!
@@ -14,12 +17,15 @@
 
 use std::ffi::OsString;
 use std::fmt;
+use std::net::SocketAddr;
 use std::path::{Component, PathBuf};
 
 use creche_vmm_confine::admission::{GIB, Limits};
 use creche_vmm_confine::family::FamilyRoot;
 use creche_vmm_confine::launch::Program;
 use creche_vmm_store::layout::{RootError, RunRoot, StateRoot};
+
+use crate::planes::Upstreams;
 
 /// The rows, the session disks, the snapshots and the digest store
 /// (decision CH39 rule 3). Its default is the `StateDirectory=` of the
@@ -58,6 +64,11 @@ pub const RAM_CAP: &str = "VMM_RAM_CAP_GIB";
 pub const FREE_FLOOR: &str = "VMM_FREE_FLOOR_GIB";
 /// The snapshot budget, in GiB (decision CH8-7, gap G14).
 pub const BUDGET: &str = "VMM_SNAPSHOT_BUDGET_GIB";
+/// LiteLLM, the plane of host port 1101 (decisions CH6-2, CH62 rule 20).
+pub const LITELLM: &str = "VMM_LITELLM_ADDR";
+/// The chaperone, the plane of host port 1102 (decisions CH6-2, CH62
+/// rule 20).
+pub const CHAPERONE: &str = "VMM_CHAPERONE_ADDR";
 
 /// What the vmm reads from its env.
 #[derive(Debug)]
@@ -95,6 +106,8 @@ pub struct Config {
     pub limits: Limits,
     /// `VMM_SNAPSHOT_BUDGET_GIB`, in bytes.
     pub budget: u64,
+    /// `VMM_LITELLM_ADDR` and `VMM_CHAPERONE_ADDR`.
+    pub planes: Upstreams,
 }
 
 /// What is wrong with one key. A fault never holds the value, as in
@@ -119,6 +132,8 @@ pub enum Fault {
     Zero,
     /// A size has more bytes than a `u64` holds.
     TooLarge,
+    /// An address is not an IP address and a port.
+    NotSocketAddr,
 }
 
 /// The first key that refused the start.
@@ -147,6 +162,7 @@ impl fmt::Display for ConfigError {
             Fault::NotGib => "is not a whole number of GiB",
             Fault::Zero => "is 0",
             Fault::TooLarge => "is too large",
+            Fault::NotSocketAddr => "is not an IP address and a port",
         };
         write!(formatter, "{}: the key {fault}", self.key)
     }
@@ -192,6 +208,10 @@ impl Config {
                 free_floor: gib_of(FREE_FLOOR, Zero::Allowed)?,
             },
             budget: gib_of(BUDGET, Zero::Refused)?,
+            planes: Upstreams {
+                litellm: address(&lookup, LITELLM)?,
+                chaperone: address(&lookup, CHAPERONE)?,
+            },
         })
     }
 }
@@ -312,4 +332,17 @@ fn gib(
         return Err(error(key, Fault::Zero));
     }
     count.checked_mul(GIB).ok_or(error(key, Fault::TooLarge))
+}
+
+/// The address of `key`: an IP address and a port, such as
+/// `192.0.2.10:4000` or `[2001:db8::1]:4000`.
+// Decision CH67 rule 2: an IP address and a port only. A host name
+// refuses the start.
+fn address(
+    lookup: &impl Fn(&str) -> Option<OsString>,
+    key: &'static str,
+) -> Result<SocketAddr, ConfigError> {
+    let value = value(lookup, key)?;
+    let text = value.to_str().ok_or(error(key, Fault::NotSocketAddr))?;
+    text.parse().map_err(|_| error(key, Fault::NotSocketAddr))
 }

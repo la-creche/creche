@@ -29,7 +29,7 @@ use crate::ServeError;
 
 /// The pause after a failed accept, so an error such as EMFILE does not
 /// spin the loop (decision CH40 rule 1).
-const ACCEPT_PAUSE: Duration = Duration::from_millis(100);
+pub(crate) const ACCEPT_PAUSE: Duration = Duration::from_millis(100);
 
 /// How long a client has to send the whole head of a request, the first
 /// one and each one on a kept-alive connection. Past it, the server shuts
