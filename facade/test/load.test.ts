@@ -9,6 +9,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { facadeApp } from "../src/acp.js";
 import type { SessionService } from "../src/acp.js";
+import { SBX } from "../src/mode.js";
 import { sessionService } from "../src/service.js";
 import { SessionIndex } from "../src/session-index.js";
 import { Wire } from "./acp-wire.js";
@@ -32,7 +33,7 @@ let service: SessionService;
 
 beforeEach(() => {
   const index = new SessionIndex(new DatabaseSync(":memory:"));
-  service = sessionService({ agent: Echoer, agentName: "Echoer", index, store: flue.store });
+  service = sessionService({ agent: Echoer, agentName: "Echoer", index, mode: SBX, store: flue.store });
 });
 
 function link(): Wire {
