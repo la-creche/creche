@@ -438,7 +438,10 @@ table of the three vmm crates.
   holds the value, and `the_egress_cap_matches_the_wire_vectors` in
   `tests/family.rs` holds `EGRESS_CAP` equal to it.
 - Closed by decision CH73 rule 2: `REPOS_CAP` is 4 KiB, the smallest
-  cap that holds the canonical form of every list of decision CH69 rule
-  15 (32 names of 100 characters: 3307 bytes). So caregiver needs no cap check of its own, as decision
-  CH71 needs for `egress.json`. A larger file is `ReachFault::TooLarge`,
-  and the vmm serves no clone.
+  cap that holds every list of decision CH69 rule 15 in the indented
+  form that caregiver writes (32 names of 100 characters: 3476 bytes).
+  So caregiver needs no cap check of its own, as decision CH71 needs
+  for `egress.json`. A larger file is `ReachFault::TooLarge`, and the
+  vmm serves no clone. `rust/crates/wire/vectors/family.json` holds the
+  value, and `the_repos_cap_matches_the_wire_vectors` in
+  `tests/family.rs` holds `REPOS_CAP` equal to it.

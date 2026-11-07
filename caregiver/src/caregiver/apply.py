@@ -257,9 +257,10 @@ def _apply_valid(
         return refuse(standing.reason)
 
     steps.write_config(family, state_root, instructions, skills)
-    # Contract 01 §6.1.1, decision CH69 rule 6: the egress allowlist of the
-    # vmm, before the sandbox step, as a pass writes it.
+    # Contract 01 §6.1.1, decision CH69 rule 6: the egress allowlist and the
+    # clone list of the vmm, before the sandbox step, as a pass writes them.
     reach_files.write_egress_file(egress_file, state_root)
+    reach_files.write_repos_file(family, state_root)
     # Contract 05 §6.4, invariant 16: a declared webhook opens a live route
     # with no second, hand-made act. Beside the other credentials, before
     # any sandbox exists (invariant 13).

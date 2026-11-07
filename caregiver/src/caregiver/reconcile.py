@@ -379,10 +379,11 @@ def _converge(
     if steps.write_config(family, state_root, *_config_text(registry, family)):
         ran.append(str(Step.WRITE_CONFIG))
 
-    # Contract 01 §6.1.1. On every pass, before the sandboxes, so the file
+    # Contract 01 §6.1.1. On every pass, before the sandboxes, so each file
     # holds the list of the revision this pass converges to (decision CH69
     # rule 6). The sbx egress step below stays until the cut.
     reach_files.write_egress_file(egress_file, state_root)
+    reach_files.write_repos_file(family, state_root)
 
     timers = apply_timers(family, actors.units)
     if timers.changed:

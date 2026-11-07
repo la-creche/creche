@@ -36,7 +36,7 @@ def delete_family(
     """1. The LiteLLM key. 2. The fragment of the family, then a new
     assembly of `policy.toml` with no table for it (the table carries the
     token's digest, so its removal revokes the token). 3. `creds.json`,
-    `egress.json` and the webhook bearers. 4. Every sandbox this family
+    `egress.json`, `repos.json` and the webhook bearers. 4. Every sandbox this family
     ever had. 5. This family's own state directory.
 
     Answers why `policy.toml` still holds a table of the family, or `None`.
@@ -61,6 +61,7 @@ def delete_family(
     # Reach narrows before processes stop, as credentials do (contract 01
     # §6.1.1 rule 7, decision CH69 rule 23).
     paths.egress_path(state_root, family_name).unlink(missing_ok=True)
+    paths.repos_path(state_root, family_name).unlink(missing_ok=True)
     # A webhook bearer lives outside `family_dir` (contract 05 §6.4), so
     # step 5's rmtree does not reach it. It is a credential, so it goes
     # here, with the others, before any sandbox is touched.

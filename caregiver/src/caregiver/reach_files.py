@@ -1,4 +1,5 @@
-"""The reach file of a family beside its config mount (contract 01 §6.1.1).
+"""The two reach files of a family beside its config mount (contract 01
+§6.1.1): `egress.json` and `repos.json`.
 
 `egress.json` is the egress allowlist of the vmm proxy, the wire type
 `FamilyEgress` of `creche-wire` (decisions CH6-4, CH69 rules 3 and 5). It
@@ -24,7 +25,19 @@ A list whose file would pass `EGRESS_CAP`, the cap of the vmm (decision
 CH70 rule 1), is refused (decision CH71). `render_egress_file` raises
 `EgressTooLargeError`, and a pass calls it before any write. The family
 then reads `invalid` with one error that names the cap, and the last good
-`egress.json` stays, as for a refused `policy.toml` (invariant 19)."""
+`egress.json` stays, as for a refused `policy.toml` (invariant 19).
+
+`repos.json` is the clone list of the vmm mirror, the wire type
+`FamilyRepos` (decisions CH10-10, CH69 rules 4 and 5). It sits beside
+`egress.json`, with the same mode and the same byte compare. It holds the
+`repos` list of the family file, sorted. A family with no `repos` gets
+`{"repos": []}`. `check_family` of `agent_family` refuses a name given
+twice (decision CH73 rule 3), so the file has no name twice.
+
+`repos.json` gets no refusal of its own. The vmm cap `REPOS_CAP` is 4 KiB
+(decision CH73 rule 2), and the longest list that `check_family` passes,
+32 names of 100 characters (decision CH69 rule 15), renders to 3476
+bytes. `test_reach_files.py` holds that bound."""
 
 from __future__ import annotations
 
@@ -34,12 +47,12 @@ from pathlib import Path
 from typing import Final
 
 from agent_family import FamilyFile
-from creche_wire import EgressHost, FamilyEgress, HostName
+from creche_wire import EgressHost, FamilyEgress, FamilyRepos, HostName, RepoList, RepoName
 
 from . import paths
 from .atomic import atomic_write
 
-#: The mode of a reach file (contract 01 §6.1.1 rule 1).
+#: The mode of each reach file (contract 01 §6.1.1 rule 1).
 REACH_FILE_MODE: Final = 0o640
 
 #: The port of a bare host (contract 01 §3.7 rule 7).
@@ -87,11 +100,15 @@ def write_egress_file(egress: EgressFile, state_root: Path) -> None:
     One `rename` lands the removals and the additions at once (invariant
     9). Bytes equal to the file on disk write nothing, so a pass that moves
     nothing touches no file."""
-    path = paths.egress_path(state_root, egress.family)
-    if _bytes_of(path) == egress.body:
-        return
+    _write_when_changed(paths.egress_path(state_root, egress.family), egress.body)
 
-    atomic_write(path, egress.body, mode=REACH_FILE_MODE)
+
+def write_repos_file(family: FamilyFile, state_root: Path) -> None:
+    """Write `repos.json` of `family` when its bytes change, as
+    `write_egress_file` writes `egress.json` (decision CH69 rule 6)."""
+    names = [RepoName(name) for name in sorted(family.repos)]
+    body = _json_text(FamilyRepos(repos=RepoList(names)))
+    _write_when_changed(paths.repos_path(state_root, family.name), body)
 
 
 def _egress_text(entries: list[str]) -> bytes:
@@ -100,13 +117,25 @@ def _egress_text(entries: list[str]) -> bytes:
     entry, so the port is ASCII digits from 1 to 65535."""
     unique = {_host_port(entry) for entry in entries}
     hosts = [EgressHost(host=HostName(host), port=port) for host, port in sorted(unique)]
-    egress = FamilyEgress(hosts=hosts)
-    return json.dumps(egress.model_dump(mode="json"), indent=2).encode("utf-8") + b"\n"
+    return _json_text(FamilyEgress(hosts=hosts))
+
+
+def _json_text(file: FamilyEgress | FamilyRepos) -> bytes:
+    """The text of one reach file: JSON with an indent of 2 and one end of
+    line."""
+    return json.dumps(file.model_dump(mode="json"), indent=2).encode("utf-8") + b"\n"
 
 
 def _host_port(entry: str) -> tuple[str, int]:
     host, colon, port = entry.partition(":")
     return host.lower(), int(port) if colon else BARE_HOST_PORT
+
+
+def _write_when_changed(path: Path, body: bytes) -> None:
+    if _bytes_of(path) == body:
+        return
+
+    atomic_write(path, body, mode=REACH_FILE_MODE)
 
 
 def _bytes_of(path: Path) -> bytes | None:
