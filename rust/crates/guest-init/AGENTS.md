@@ -21,18 +21,29 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   `/root`, `/var/cache` and `/var/tmp`, proc and sysfs. Then `/dev` moves
   into the new root, the new root moves onto `/` (MS_MOVE) and guest init
   chroots into it. It stays PID 1. Last, `src/lo.rs` brings `lo` up with
-  one RTM_NEWLINK message, and `run()` writes `guest-init: up` and waits.
+  one RTM_NEWLINK message.
+- Then `src/env_file.rs` reads `/etc/creche/env` of the switched root
+  (CH7-7, CH62 rule 7) before any listener. The grammar is what
+  `playpen/bin/creche-env-write` writes: `NAME=value` lines ended by LF,
+  NAME `[A-Za-z_][A-Za-z0-9_]*`, the value any bytes but LF and NUL (a CR
+  is a value byte), names in strictly ascending byte order, at least one
+  line. One rule goes beyond the script: a 64 KiB cap. A refused file
+  writes `guest-init: env refused: <reason>` and powers off, so the vmm
+  dial fails. The parsed env becomes the facade env (CH49 rule 1).
+  `run()` then writes `guest-init: up` and waits.
 - Each step writes one `guest-init: <step>` line to the console (CH62
   rule 26). A fault writes `guest-init: <step> failed: <error>`.
-- A boot fault and a panic both end in `power::off`: sync, then
-  `reboot(RB_POWER_OFF)` (CH19 rule 3). The guest kernel has
+- A boot fault, a refused env file and a panic all end in `power::off`:
+  sync, then `reboot(RB_POWER_OFF)` (CH19 rule 3). The guest kernel has
   `PANIC_TIMEOUT=0`, so an exit of PID 1 would hang the VM (fact 53). No
   fsck runs (CH62 rule 4).
 - `examples/standin_facade.rs` is a stub that calls `run()`.
 
 ## Tests
 
-- The unit tests check the boot plan and the netlink bytes on any OS.
+- The unit tests check the boot plan, the netlink bytes and the env
+  grammar on any OS. One runs the real `playpen/bin/creche-env-write`, so
+  the reader and the script cannot drift.
 - `tests/kvm_guest_init.rs` boots CH with `$CRECHE_KVM_DIR/guest-init.cpio`
   of `bin/vm-smoke-setup.sh`, the cmdline `console=ttyS0 rdinit=/init`
   (CH62 rule 19) and ext4 disks that `tests/common/mod.rs` builds with
