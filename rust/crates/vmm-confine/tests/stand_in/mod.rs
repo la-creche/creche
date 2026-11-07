@@ -304,6 +304,26 @@ impl StandIn {
         property_of(self.unit.name(), "SubState")
     }
 
+    /// Polls the `SubState` of the unit until it is `state`. Fails after
+    /// `STATE_WAIT`. After a crash the `BindsTo=` stop can end a scope
+    /// while the `ExecStopPost=` step still runs (`stop-post`), so a test
+    /// waits for `auto-restart` and does not read it once.
+    pub fn until_sub_state(&self, state: &str) {
+        let deadline = Instant::now() + STATE_WAIT;
+        loop {
+            let now = self.sub_state();
+            if now == state {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "{} is {now}, not {state}, after {STATE_WAIT:?}",
+                self.unit.name()
+            );
+            sleep(Duration::from_millis(20));
+        }
+    }
+
     /// The pid of the main process of the unit. Fails when the unit has
     /// none.
     pub fn main_pid(&self) -> u32 {

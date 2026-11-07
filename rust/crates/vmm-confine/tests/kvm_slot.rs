@@ -1100,7 +1100,7 @@ fn kvm_ch_dies_with_a_killed_vmm() {
     until("CH death after the vmm kill", || !running(pid));
     until("scope removal", || !dir.exists());
     until_state(&scope, "inactive");
-    assert_eq!(vmm.sub_state(), "auto-restart");
+    vmm.until_sub_state("auto-restart");
     vmm.assert_stop_post_exited_0();
     until_state(rig.unit.name(), "inactive");
 }
@@ -1266,7 +1266,7 @@ fn kvm_a_vmm_crash_frees_the_scope_of_each_vm() {
         "CH ended neither by the SIGKILL of the step nor by the SIGTERM of the scope stop: {status}"
     );
     until_state(&scope, "inactive");
-    assert_eq!(vmm.unit.sub_state(), "auto-restart");
+    vmm.unit.until_sub_state("auto-restart");
     vmm.unit.assert_stop_post_exited_0();
     until_state(rig.unit.name(), "active");
     until_settled(&scope, "inactive");
