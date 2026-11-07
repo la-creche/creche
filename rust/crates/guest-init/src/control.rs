@@ -25,25 +25,37 @@
 //!    JSON text, or is not the type that the link expects at that point.
 //!    Guest init checks each line with `creche_wire::strict` before it
 //!    reads the line as that type, as the vmm does (decision CH65 rule 2).
-//! 6. After `ControlReady`, `ControlCommand::Stop` powers the VM off
-//!    (decision CH19 rule 3).
+//! 6. After `ControlReady`, `ControlCommand::Stop` runs the stop of the
+//!    supervisor: SIGTERM to the facade group, up to 2 s, then the power-off
+//!    (decisions CH19 rule 3, CH62 rule 9).
 //! 7. After `ControlReady`, `ControlCommand::Sync` runs `syncfs` of the
 //!    session disk, then `sync`, and guest init answers
 //!    `GuestEvent::Synced` on the same link (decision CH62 rule 23). A
 //!    sync of a replaced link is a stale line and changes nothing.
+//! 8. The clock set of the first hello starts the facade, and the ready
+//!    of that hello reports it (decisions CH21-8, CH25 rule 2). The
+//!    facade lives for the VM life: a link close never touches it
+//!    (decision CH19 rule 1). `supervisor` has the rules.
+//! 9. After `ControlReady`, each facade state change goes out on the link
+//!    as `GuestEvent::Facade` (decision CH43 rule 8). A change before the
+//!    ready of a link goes out in that ready.
 //!
-//! `Control` is the pure state machine: inputs in, one `Action` out, so
-//! the unit tests drive it on any OS. `Lines` is the pure framing. The
+//! `Control` is the pure state machine: inputs in, actions out, so the
+//! unit tests drive it on any OS. `Lines` is the pure framing. The
 //! Linux shell, `serve`, runs the vsock listener and std threads
 //! (decisions CH62 rules 1 and 2).
 
 use std::fmt;
+use std::num::NonZeroU32;
+use std::time::Duration;
 
 use creche_wire::{
-    CONTROL_LINE_CAP, ControlCommand, ControlHello, ControlReady, ControlSynced, FacadeNotStarted,
-    FacadeState, GuestEvent, SessionId, UnixMillis, strict,
+    CONTROL_LINE_CAP, ControlCommand, ControlHello, ControlReady, ControlSynced, FacadeState,
+    GuestEvent, SessionId, UnixMillis, strict,
 };
 use rustix::io::Errno;
+
+use crate::supervisor::{Order, Supervisor};
 
 /// The identity of one control link (decision CH28). Each accepted link
 /// gets a new one, in accept order.
@@ -69,12 +81,30 @@ pub enum Action {
     Sync(LinkId),
     /// Write this `GuestEvent::Synced` line, its LF included, to the link.
     Synced(LinkId, Vec<u8>),
+    /// Start the facade for this session, then call `Control::started` or
+    /// `Control::start_failed` (decision CH62 rule 6).
+    Start(SessionId),
+    /// Write this `GuestEvent::Facade` line, its LF included, to the link
+    /// (decision CH43 rule 8).
+    Facade(LinkId, Vec<u8>),
+    /// Run a timer of this length, then call `Control::timer`. A new timer
+    /// replaces the one that runs.
+    Timer(Duration),
+    /// Send SIGTERM to the process group of the facade (decision CH62
+    /// rule 9).
+    Terminate(NonZeroU32),
+    /// Send SIGKILL to the process group of the facade that exited.
+    Kill(NonZeroU32),
     /// Close the link and write why on the console (decision CH43 rule 2).
     Close(LinkId, Why),
     /// Write why on the console and change nothing.
     Ignore(LinkId, Ignored),
-    /// Power the VM off (decision CH19 rule 3).
-    PowerOff(LinkId),
+    /// The vmm sent `stop` on the link. Write it on the console, then call
+    /// `Control::stop` (decision CH19 rule 3).
+    Stop(LinkId),
+    /// Power the VM off. The power-off sends SIGKILL to every process left
+    /// first (decision CH62 rule 9).
+    PowerOff,
 }
 
 /// Why guest init closes a link.
@@ -150,7 +180,7 @@ enum Stage {
 }
 
 /// The control state of the VM: the current link, the session of the
-/// first hello and the facade state.
+/// first hello and the facade.
 #[derive(Debug)]
 pub struct Control {
     /// The id of the last accepted link.
@@ -159,18 +189,24 @@ pub struct Control {
     current: Option<(LinkId, Stage)>,
     /// The session of the first hello of the boot (decision CH32 rule 3).
     session: Option<SessionId>,
-    /// The facade, as `ControlReady` reports it (decision CH19 rule 2).
-    facade: FacadeState,
+    /// The facade for the VM life (decision CH19 rule 1).
+    facade: Supervisor,
+    /// The facade state after the last input, so a change is seen
+    /// (decision CH43 rule 8).
+    reported: FacadeState,
 }
 
 impl Default for Control {
     /// The state at boot: no link, no session and no facade.
     fn default() -> Self {
+        let facade = Supervisor::default();
+        let reported = facade.state();
         Self {
             accepted: 0,
             current: None,
             session: None,
-            facade: FacadeState::NotStarted(FacadeNotStarted {}),
+            facade,
+            reported,
         }
     }
 }
@@ -201,7 +237,7 @@ impl Control {
             },
             Stage::Clock => Some(self.close(link, Why::Early)),
             Stage::Ready => match serde_json::from_slice::<ControlCommand>(line) {
-                Ok(ControlCommand::Stop(_)) => Some(Action::PowerOff(link)),
+                Ok(ControlCommand::Stop(_)) => Some(Action::Stop(link)),
                 Ok(ControlCommand::Sync(_)) => Some(Action::Sync(link)),
                 Err(error) => Some(self.close(link, Why::Refused(error.to_string()))),
             },
@@ -224,7 +260,9 @@ impl Control {
 
     /// The result of `Action::SetClock`. On success guest init answers
     /// `ControlReady`. On a failure it closes the link before the ready
-    /// (decision CH62 rule 25).
+    /// (decision CH62 rule 25). The first success starts the facade
+    /// first, and the ready waits for the start (decisions CH21-8, CH25
+    /// rule 2).
     pub fn clock_set(&mut self, link: LinkId, result: Result<(), Errno>) -> Option<Action> {
         if self.stage(link) != Some(Stage::Clock) {
             return None;
@@ -232,16 +270,52 @@ impl Control {
         if let Err(error) = result {
             return Some(self.close(link, Why::Clock(error)));
         }
-        let ready = ControlReady {
-            facade: self.facade.clone(),
-        };
-        match encode(&ready) {
-            Ok(line) => {
-                self.current = Some((link, Stage::Ready));
-                Some(Action::Ready(link, line))
-            }
-            Err(why) => Some(self.close(link, why)),
+        match self.facade.hello() {
+            Some(order) => self.order(order),
+            None => Some(self.ready(link)),
         }
+    }
+
+    /// The facade of `Action::Start` runs as `pid`. A ready that waits
+    /// for the start goes out now.
+    pub fn started(&mut self, pid: NonZeroU32) -> Vec<Action> {
+        let order = self.facade.started(pid);
+        let mut actions = self.follow(order);
+        actions.extend(self.waiting_ready());
+        actions
+    }
+
+    /// The facade of `Action::Start` did not start. A ready that waits
+    /// for the start goes out now.
+    pub fn start_failed(&mut self) -> Vec<Action> {
+        let order = self.facade.start_failed();
+        let mut actions = self.follow(order);
+        actions.extend(self.waiting_ready());
+        actions
+    }
+
+    /// The reaper reaped `pid` (decision CH19 rule 1).
+    pub fn reaped(&mut self, pid: NonZeroU32) -> Vec<Action> {
+        let order = self.facade.reaped(pid);
+        self.follow(order)
+    }
+
+    /// The timer of the last `Action::Timer` ended.
+    pub fn timer(&mut self) -> Vec<Action> {
+        let order = self.facade.timer();
+        self.follow(order)
+    }
+
+    /// The stop of `Action::Stop` (decisions CH19 rule 3, CH62 rule 9).
+    pub fn stop(&mut self) -> Vec<Action> {
+        let orders = self.facade.stop();
+        self.follow(orders)
+    }
+
+    /// The pid of the live facade.
+    #[cfg(target_os = "linux")]
+    pub fn facade_pid(&self) -> Option<NonZeroU32> {
+        self.facade.pid()
     }
 
     /// The disks of `link`'s sync are synced. Guest init answers
@@ -254,6 +328,61 @@ impl Control {
         match encode(&GuestEvent::Synced(ControlSynced {})) {
             Ok(line) => Some(Action::Synced(link, line)),
             Err(why) => Some(self.close(link, why)),
+        }
+    }
+
+    /// The `ControlReady` of `link`, with the facade state now.
+    fn ready(&mut self, link: LinkId) -> Action {
+        let ready = ControlReady {
+            facade: self.facade.state(),
+        };
+        match encode(&ready) {
+            Ok(line) => {
+                self.current = Some((link, Stage::Ready));
+                Action::Ready(link, line)
+            }
+            Err(why) => self.close(link, why),
+        }
+    }
+
+    /// The ready of a current link whose clock set waits for the facade
+    /// start.
+    fn waiting_ready(&mut self) -> Option<Action> {
+        match self.current {
+            Some((link, Stage::Clock)) => Some(self.ready(link)),
+            Some((_, Stage::Hello | Stage::Ready)) | None => None,
+        }
+    }
+
+    /// The actions of supervisor `orders`, after a facade line when the
+    /// state changed and the current link got its ready (decision CH43
+    /// rule 8).
+    fn follow(&mut self, orders: impl IntoIterator<Item = Order>) -> Vec<Action> {
+        let mut actions = Vec::new();
+        let state = self.facade.state();
+        if state != self.reported {
+            self.reported = state.clone();
+            if let Some((link, Stage::Ready)) = self.current {
+                actions.push(match encode(&GuestEvent::Facade(state)) {
+                    Ok(line) => Action::Facade(link, line),
+                    Err(why) => self.close(link, why),
+                });
+            }
+        }
+        actions.extend(orders.into_iter().filter_map(|order| self.order(order)));
+        actions
+    }
+
+    /// The action of one supervisor order.
+    fn order(&self, order: Order) -> Option<Action> {
+        match order {
+            // The first hello sets the session before it starts the
+            // facade, so a start always has one.
+            Order::Start => self.session.clone().map(Action::Start),
+            Order::Timer(length) => Some(Action::Timer(length)),
+            Order::Terminate(pid) => Some(Action::Terminate(pid)),
+            Order::Kill(pid) => Some(Action::Kill(pid)),
+            Order::PowerOff => Some(Action::PowerOff),
         }
     }
 
@@ -347,25 +476,29 @@ impl Lines {
 #[cfg(target_os = "linux")]
 pub use shell::{listen, serve};
 
-/// The vsock listener and the threads (decisions CH62 rules 1 and 2). The
-/// kvm tests prove it.
+/// The vsock listener, the threads and the facade process (decisions
+/// CH62 rules 1 and 2). The kvm tests prove it.
 #[cfg(target_os = "linux")]
 mod shell {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, VecDeque};
     use std::fs::File;
     use std::io::{self, Read as _, Write as _};
     use std::os::fd::{AsRawFd as _, OwnedFd};
-    use std::sync::mpsc::{Receiver, Sender, channel};
+    use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
     use std::thread;
+    use std::time::Instant;
 
     use creche_wire::guest::SESSION_DISK_MOUNT;
     use creche_wire::{GuestPort, UnixMillis};
     use nix::sys::socket::{AddressFamily, SockFlag, SockType, VsockAddr, bind, socket};
     use rustix::io::Errno;
     use rustix::net::{Shutdown, SocketFlags, accept_with, shutdown};
+    use rustix::process::Signal;
     use rustix::time::{ClockId, Timespec, clock_gettime, clock_settime};
 
     use super::{Action, Control, Lines, LinkId, Why};
+    use crate::env_file::Env;
+    use crate::supervisor::{Facade, Reaped, signal};
 
     /// The bytes of one read, as the vmm reader takes them.
     const CHUNK: usize = 4096;
@@ -374,17 +507,27 @@ mod shell {
     /// (decision CH13), so a few slots are room.
     const BACKLOG: i32 = 4;
 
+    /// The events that the inbox holds before a send blocks. A full
+    /// inbox stops each reader thread before its next socket read, so a
+    /// peer that writes faster than the control loop acts fills only its
+    /// own socket buffer, and the inbox of PID 1 stays bounded.
+    const INBOX: usize = 64;
+
     /// What the threads tell the control loop.
     #[derive(Debug)]
     enum Event {
         /// A new link, and the sender that its reader thread gets.
-        Accepted(OwnedFd, Sender<Event>),
+        Accepted(OwnedFd, SyncSender<Event>),
         /// The accept loop stopped on this error.
         AcceptFailed(io::Error),
         Line(LinkId, Vec<u8>),
         Refused(LinkId, Why),
         /// The link ended at a line end, or its read failed.
         Ended(LinkId),
+        /// The reaper reaped a child of PID 1.
+        Reaped(Reaped),
+        /// The reaper stopped on this wait error.
+        ReapFailed(io::Error),
     }
 
     /// Listens on vsock port 1200 of any CID (decisions CH13, CH14).
@@ -405,32 +548,71 @@ mod shell {
         Ok(listener)
     }
 
-    /// Serves control link 1200 until a stop or a fault. It returns the
-    /// console line of the end, and the caller powers off.
-    pub fn serve(listener: OwnedFd) -> String {
-        let (events, inbox) = channel();
+    /// Serves control link 1200 and the facade, which gets `env`, until a
+    /// stop or a fault. It returns the console line of the end, and the
+    /// caller powers off.
+    pub fn serve(listener: OwnedFd, env: Env) -> String {
+        let (events, inbox) = sync_channel(INBOX);
+        let reaps = events.clone();
+        let facade = match Facade::new(env, move |reaped| {
+            let event = match reaped {
+                Ok(reaped) => Event::Reaped(reaped),
+                Err(error) => Event::ReapFailed(error),
+            };
+            reaps.send(event).is_ok()
+        }) {
+            Ok(facade) => facade,
+            Err(error) => return format!("reaper thread failed: {error}"),
+        };
         let spawned = thread::Builder::new()
             .name("control-accept".to_owned())
             .spawn(move || accept_loop(&listener, &events));
         if let Err(error) = spawned {
             return format!("control accept thread failed: {error}");
         }
-        run(&inbox)
+        run(&inbox, &facade)
     }
 
-    /// The control loop: one thread owns the state and every write.
+    /// The control loop: one thread owns the state, every write and the
+    /// one timer of the supervisor.
     ///
-    /// The loop holds no sender. The accept thread and each reader thread
-    /// hold one, so the inbox ends only when all of them are gone: the
-    /// accept thread stopped and every link ended. Then no vmm can reach
-    /// the guest again, and the caller powers off (decision CH19 rule 3).
-    /// A panic in any thread powers off through the panic hook of
-    /// `as_pid_1`.
-    fn run(inbox: &Receiver<Event>) -> String {
+    /// The loop holds no sender. The accept thread, the reaper thread and
+    /// each reader thread hold one, so the inbox ends only when all of
+    /// them are gone. Then no vmm can reach the guest again, and the
+    /// caller powers off (decision CH19 rule 3). A panic in any thread
+    /// powers off through the panic hook of `as_pid_1`.
+    fn run(inbox: &Receiver<Event>, facade: &Facade) -> String {
         let mut control = Control::default();
         let mut links: HashMap<LinkId, File> = HashMap::new();
-        for event in inbox {
-            let action = match event {
+        let mut timer: Option<Instant> = None;
+        loop {
+            // The timer goes first. `recv_timeout` hands out a queued event
+            // before it reads the clock, so a full inbox would starve a
+            // timer that the loop reads only on a timeout, and the stop
+            // waits of decision CH62 rule 9 would have no bound.
+            if timer.is_some_and(|end| Instant::now() >= end) {
+                timer = None;
+                let actions = control.timer();
+                if let Some(end) = act(&mut control, &mut links, &mut timer, facade, actions) {
+                    return end;
+                }
+                continue;
+            }
+            let event = match timer {
+                Some(end) => {
+                    match inbox.recv_timeout(end.saturating_duration_since(Instant::now())) {
+                        Ok(event) => event,
+                        // The next pass runs the timer.
+                        Err(RecvTimeoutError::Timeout) => continue,
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    }
+                }
+                None => match inbox.recv() {
+                    Ok(event) => event,
+                    Err(_) => break,
+                },
+            };
+            let actions = match event {
                 Event::Accepted(fd, events) => {
                     let (link, old) = control.accept();
                     crate::say(&format!("{link} open"));
@@ -444,44 +626,75 @@ mod shell {
                         }
                     }
                     // The close of the replaced link.
-                    old
+                    old.into_iter().collect()
                 }
                 Event::AcceptFailed(error) => return format!("control accept failed: {error}"),
-                Event::Line(link, line) => control.line(link, &line),
-                Event::Refused(link, why) => control.refused(link, why),
+                Event::Line(link, line) => control.line(link, &line).into_iter().collect(),
+                Event::Refused(link, why) => control.refused(link, why).into_iter().collect(),
                 Event::Ended(link) => {
                     control.ended(link);
                     links.remove(&link);
-                    None
+                    Vec::new()
                 }
+                Event::Reaped(reaped) => {
+                    if control.facade_pid() == Some(reaped.pid) {
+                        crate::say(&format!("facade pid {} exited: {reaped}", reaped.pid));
+                    }
+                    control.reaped(reaped.pid)
+                }
+                Event::ReapFailed(error) => return format!("reaper failed: {error}"),
             };
-            if let Some(end) = action.and_then(|action| act(&mut control, &mut links, action)) {
+            if let Some(end) = act(&mut control, &mut links, &mut timer, facade, actions) {
                 return end;
             }
         }
         "control events ended".to_owned()
     }
 
-    /// Runs `action` and each action that follows from it. It returns the
-    /// console line of a stop.
+    /// Runs `actions` and each action that follows from them, in order. It
+    /// returns the console line of the end of a stop.
     fn act(
         control: &mut Control,
         links: &mut HashMap<LinkId, File>,
-        action: Action,
+        timer: &mut Option<Instant>,
+        facade: &Facade,
+        actions: Vec<Action>,
     ) -> Option<String> {
-        let mut next = Some(action);
-        while let Some(action) = next.take() {
+        let mut next = VecDeque::from(actions);
+        while let Some(action) = next.pop_front() {
             match action {
                 Action::SetClock(link, at) => {
                     let result = set_clock(at);
                     if let Ok(realtime) = result {
                         crate::say(&format!("{link} clock set: realtime {realtime}"));
                     }
-                    next = control.clock_set(link, result.map(|_| ()));
+                    next.extend(control.clock_set(link, result.map(|_| ())));
                 }
                 Action::Ready(link, line) => write(links, link, &line, "ready"),
+                Action::Start(session) => match facade.start(&session) {
+                    Ok(pid) => {
+                        crate::say(&format!("facade pid {pid} started"));
+                        next.extend(control.started(pid));
+                    }
+                    Err(error) => {
+                        crate::say(&format!("facade start failed: {error}"));
+                        next.extend(control.start_failed());
+                    }
+                },
+                Action::Facade(link, line) => write(links, link, &line, "facade"),
+                Action::Timer(length) => *timer = Some(Instant::now() + length),
+                Action::Terminate(pid) => match signal(pid, Signal::TERM) {
+                    Ok(()) => crate::say(&format!("facade pid {pid} sent SIGTERM")),
+                    Err(error) => crate::say(&format!("facade pid {pid} SIGTERM failed: {error}")),
+                },
+                Action::Kill(pid) => match signal(pid, Signal::KILL) {
+                    Ok(()) => crate::say(&format!("facade pid {pid} sent SIGKILL")),
+                    // No process of the group is left.
+                    Err(Errno::SRCH) => {}
+                    Err(error) => crate::say(&format!("facade pid {pid} SIGKILL failed: {error}")),
+                },
                 Action::Sync(link) => match sync_session() {
-                    Ok(()) => next = control.synced(link),
+                    Ok(()) => next.extend(control.synced(link)),
                     // CH65 rule 3: guest init sends no `synced` and keeps
                     // the link, so the vmm's SYNC_WAIT runs out, it takes
                     // no snapshot and it runs the graceful stop (decision
@@ -494,7 +707,11 @@ mod shell {
                     close(links, link);
                 }
                 Action::Ignore(link, ignored) => crate::say(&format!("{link}: {ignored}")),
-                Action::PowerOff(link) => return Some(format!("stop on {link}")),
+                Action::Stop(link) => {
+                    crate::say(&format!("stop on {link}"));
+                    next.extend(control.stop());
+                }
+                Action::PowerOff => return Some("stop done".to_owned()),
             }
         }
         None
@@ -553,7 +770,7 @@ mod shell {
 
     /// Accepts each link and hands it to the control loop. EINTR and
     /// ECONNABORTED are retried. Each other error ends the loop.
-    fn accept_loop(listener: &OwnedFd, events: &Sender<Event>) {
+    fn accept_loop(listener: &OwnedFd, events: &SyncSender<Event>) {
         loop {
             match accept_with(listener, SocketFlags::CLOEXEC) {
                 Ok(fd) => {
@@ -571,7 +788,7 @@ mod shell {
     }
 
     /// Starts the reader thread of `link` and returns the write end.
-    fn start_reader(link: LinkId, fd: OwnedFd, events: Sender<Event>) -> io::Result<File> {
+    fn start_reader(link: LinkId, fd: OwnedFd, events: SyncSender<Event>) -> io::Result<File> {
         let file = File::from(fd);
         let reader = file.try_clone()?;
         thread::Builder::new()
@@ -581,7 +798,7 @@ mod shell {
     }
 
     /// Reads the lines of one link until its end or a refused line.
-    fn read_loop(link: LinkId, mut reader: File, events: &Sender<Event>) {
+    fn read_loop(link: LinkId, mut reader: File, events: &SyncSender<Event>) {
         let mut lines = Lines::default();
         let mut chunk = [0_u8; CHUNK];
         loop {
@@ -626,6 +843,8 @@ mod tests {
     use creche_wire::{ControlCommand, ControlStop};
     use serde_json::json;
 
+    use crate::supervisor::{RESTART_PAUSE, SIGTERM_GRACE};
+
     const SESSION: &str = "0123abcd-0000-4000-8000-00000000c7c7";
     const OTHER: &str = "0123abcd-0000-4000-8000-00000000d8d8";
 
@@ -640,27 +859,62 @@ mod tests {
         UnixMillis::try_from(SENT_AT).unwrap()
     }
 
-    fn ready_line() -> Vec<u8> {
-        let mut line = br#"{"facade":{"not_started":{}}}"#.to_vec();
-        line.push(b'\n');
-        line
+    fn session() -> SessionId {
+        SESSION.parse().unwrap()
+    }
+
+    /// The pid of the first facade.
+    const FACADE: u32 = 7;
+
+    fn pid(raw: u32) -> NonZeroU32 {
+        NonZeroU32::new(raw).unwrap()
+    }
+
+    /// A line of `{"facade": <state>}`: the shape of `ControlReady` and of
+    /// `GuestEvent::Facade` both.
+    fn facade_line(state: &str) -> Vec<u8> {
+        format!(r#"{{"facade":{state}}}"#)
+            .into_bytes()
+            .into_iter()
+            .chain([b'\n'])
+            .collect()
+    }
+
+    fn starting(raw: u32, starts: u64) -> Vec<u8> {
+        facade_line(&format!(
+            r#"{{"starting":{{"last_turn_end":null,"pid":{raw},"starts":{starts}}}}}"#
+        ))
+    }
+
+    fn exited(starts: u64) -> Vec<u8> {
+        facade_line(&format!(
+            r#"{{"exited":{{"last_turn_end":null,"starts":{starts}}}}}"#
+        ))
     }
 
     fn stop() -> Vec<u8> {
         serde_json::to_vec(&ControlCommand::Stop(ControlStop {})).unwrap()
     }
 
-    /// A link that got its ready.
+    /// A link that got its ready. The first ready of the boot starts the
+    /// facade as `FACADE` first.
     fn ready(control: &mut Control) -> LinkId {
         let (link, _) = control.accept();
         assert_eq!(
             control.line(link, &hello(SESSION)),
             Some(Action::SetClock(link, at()))
         );
-        assert_eq!(
-            control.clock_set(link, Ok(())),
-            Some(Action::Ready(link, ready_line()))
-        );
+        let mut action = control.clock_set(link, Ok(()));
+        if action == Some(Action::Start(session())) {
+            let mut actions = control.started(pid(FACADE));
+            action = actions.pop();
+            assert_eq!(actions, vec![]);
+        }
+        let line = encode(&ControlReady {
+            facade: control.facade.state(),
+        })
+        .unwrap();
+        assert_eq!(action, Some(Action::Ready(link, line)));
         link
     }
 
@@ -686,11 +940,9 @@ mod tests {
             Some(Action::Close(link, Why::Early))
         );
 
-        // The ready reports not_started: no facade starts before plan PR
-        // G4.
         let mut control = Control::default();
         let link = ready(&mut control);
-        assert_eq!(control.line(link, &stop()), Some(Action::PowerOff(link)));
+        assert_eq!(control.line(link, &stop()), Some(Action::Stop(link)));
     }
 
     #[test]
@@ -900,7 +1152,7 @@ mod tests {
             control.line(link, br#"{"sync":{}}"#),
             Some(Action::Sync(link))
         );
-        assert_eq!(control.line(link, &stop()), Some(Action::PowerOff(link)));
+        assert_eq!(control.line(link, &stop()), Some(Action::Stop(link)));
     }
 
     /// A sync before the ready is not a hello, so it closes the link.
@@ -924,5 +1176,120 @@ mod tests {
         assert_eq!(control.synced(old), None);
         // The new link gets no synced before its own ready.
         assert_eq!(control.synced(new), None);
+    }
+
+    /// The clock set of the first hello starts the facade, and its ready
+    /// says `starting`. Each later ready reports the state at that time,
+    /// and a link close never touches the facade (decisions CH19 rule 1,
+    /// CH21-8, CH25 rule 2).
+    #[test]
+    fn the_ready_reports_the_current_facade_state() {
+        let mut control = Control::default();
+        let (link, _) = control.accept();
+        control.line(link, &hello(SESSION));
+        assert_eq!(
+            control.clock_set(link, Ok(())),
+            Some(Action::Start(session()))
+        );
+        assert_eq!(
+            control.started(pid(FACADE)),
+            vec![Action::Ready(link, starting(FACADE, 1))]
+        );
+
+        // The link closes, and the next link finds the same facade.
+        control.ended(link);
+        let (next, _) = control.accept();
+        control.line(next, &hello(SESSION));
+        assert_eq!(
+            control.clock_set(next, Ok(())),
+            Some(Action::Ready(next, starting(FACADE, 1)))
+        );
+
+        // An exit with no link open sends no line, and the next ready
+        // carries it.
+        control.ended(next);
+        assert_eq!(
+            control.reaped(pid(FACADE)),
+            vec![Action::Kill(pid(FACADE)), Action::Timer(RESTART_PAUSE)]
+        );
+        let (last, _) = control.accept();
+        control.line(last, &hello(SESSION));
+        assert_eq!(
+            control.clock_set(last, Ok(())),
+            Some(Action::Ready(last, exited(1)))
+        );
+    }
+
+    /// A failed first start lets the ready go out with `not_started`, and
+    /// the next try follows the restart pause.
+    #[test]
+    fn a_failed_start_reports_not_started() {
+        let mut control = Control::default();
+        let (link, _) = control.accept();
+        control.line(link, &hello(SESSION));
+        control.clock_set(link, Ok(()));
+        assert_eq!(
+            control.start_failed(),
+            vec![
+                Action::Timer(RESTART_PAUSE),
+                Action::Ready(link, facade_line(r#"{"not_started":{}}"#)),
+            ]
+        );
+        assert_eq!(control.timer(), vec![Action::Start(session())]);
+    }
+
+    /// After the ready, each state change goes out as a facade line, and
+    /// an orphan exit changes nothing (decisions CH19 rule 1, CH43 rule 8).
+    #[test]
+    fn sends_a_facade_line_on_each_state_change() {
+        let mut control = Control::default();
+        let link = ready(&mut control);
+        assert_eq!(control.reaped(pid(8)), vec![]);
+        assert_eq!(
+            control.reaped(pid(FACADE)),
+            vec![
+                Action::Facade(link, exited(1)),
+                Action::Kill(pid(FACADE)),
+                Action::Timer(RESTART_PAUSE)
+            ]
+        );
+        assert_eq!(control.timer(), vec![Action::Start(session())]);
+        assert_eq!(
+            control.started(pid(9)),
+            vec![Action::Facade(link, starting(9, 2))]
+        );
+
+        // The stop: SIGTERM and the grace, then the exit line and the
+        // power-off (decision CH62 rule 9).
+        assert_eq!(control.line(link, &stop()), Some(Action::Stop(link)));
+        assert_eq!(
+            control.stop(),
+            vec![Action::Terminate(pid(9)), Action::Timer(SIGTERM_GRACE)]
+        );
+        assert_eq!(
+            control.reaped(pid(9)),
+            vec![Action::Facade(link, exited(2)), Action::PowerOff]
+        );
+    }
+
+    /// A facade line goes to the current link only, after its ready.
+    #[test]
+    fn a_link_before_its_ready_gets_no_facade_line() {
+        let mut control = Control::default();
+        let old = ready(&mut control);
+        let (new, _) = control.accept();
+        assert_eq!(
+            control.reaped(pid(FACADE)),
+            vec![Action::Kill(pid(FACADE)), Action::Timer(RESTART_PAUSE)]
+        );
+        assert_eq!(
+            control.line(old, &stop()),
+            Some(Action::Ignore(old, Ignored::Stale))
+        );
+        control.line(new, &hello(SESSION));
+        assert_eq!(
+            control.clock_set(new, Ok(())),
+            Some(Action::Ready(new, exited(1)))
+        );
     }
 }

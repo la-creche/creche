@@ -43,6 +43,17 @@ impl Env {
     pub fn len(&self) -> usize {
         self.vars.len()
     }
+
+    /// Each name with its value, for the facade env (decision CH49 rule
+    /// 1).
+    #[cfg(target_os = "linux")]
+    pub fn vars(&self) -> impl Iterator<Item = (&str, &std::ffi::OsStr)> {
+        use std::os::unix::ffi::OsStrExt as _;
+
+        self.vars
+            .iter()
+            .map(|(name, value)| (name.as_str(), std::ffi::OsStr::from_bytes(value)))
+    }
 }
 
 /// Why the reader refused the file. Its text goes into the console line

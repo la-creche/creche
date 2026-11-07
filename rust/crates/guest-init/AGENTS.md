@@ -39,9 +39,9 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   new id, and a new link closes the old one. A line or an EOF of an old
   link changes nothing. Guest init sends nothing before `ControlHello`.
   Each hello sets `CLOCK_REALTIME` to `sent_at`, a backward step
-  included, and then guest init answers one `ControlReady` (CH62 rule
-  25, CH34 rule 7). The facade state is `not_started` until plan PR G4.
-  A failed clock set closes the link before the ready (CH62 rule 25).
+  included, and then guest init answers one `ControlReady` with the
+  facade state (CH62 rule 25, CH34 rule 7). A failed clock set closes the
+  link before the ready (CH62 rule 25).
   So does a hello for a session other than the first hello of the boot
   (CH32 rule 3).
 - A refused line closes the link with no error line, and the console
@@ -51,42 +51,90 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
 - Guest init checks each control line with `creche_wire::strict` before
   it reads the line as its type, as the vmm does (CH65 rule 2). So the two
   Rust ends of the link cannot drift.
-- After the ready, `stop` powers the VM off (CH19 rule 3).
+- The facade (`src/supervisor.rs`, CH5d, CH19 rule 1): the clock set of
+  the first hello starts it, and the ready of that hello says
+  `starting` (CH21-8, CH25 rule 2). The facade is
+  `creche_wire::guest::FACADE_PROGRAM`, with the parsed env plus
+  `CRECHE_SESSION_ID` (CH49 rule 1, CH62 rule 6), cwd
+  `creche_wire::guest::WORKSPACE` (made when absent), stdin and stdout
+  /dev/null and stderr on the console (CH62 rule 26). It runs as root
+  (CH8-1). A link close never touches it. It runs in a process group of
+  its own, so each SIGTERM and SIGKILL of guest init goes to its group
+  and reaches its children too.
+- PID 1 reaps each child in a reaper thread. When the facade pid is
+  reaped, the state becomes `exited`, guest init sends SIGKILL to its
+  group (`guest-init: facade pid <n> sent SIGKILL` when a child was
+  left), and after `RESTART_PAUSE` (1 s, no cap) it starts the next one,
+  so at most one runs, its children included (CH19 rule 1, CH62 rule
+  8). `starts` counts each start. Each other reaped pid is an
+  orphan and changes no state. The reaper waits with `WNOWAIT` and reaps
+  under the spawn lock, so it never takes a child whose exec failed:
+  std reaps that one inside `Command::spawn`.
+- After the ready of a link, each facade state change goes out on it as
+  `{"facade": <state>}` (`GuestEvent::Facade`, CH43 rule 8). A change
+  before the ready goes out in that ready.
+- After the ready, `stop` sends SIGTERM to the group of a live facade
+  and waits up to `SIGTERM_GRACE` (2 s) for its exit. Then guest init
+  powers off (CH19 rule 3, CH62 rule 9). With no live facade, the
+  power-off comes at once. A second stop changes nothing.
 - After the ready, `sync` runs `syncfs` of the session disk, then
   `sync`, and guest init answers `{"synced":{}}` (`GuestEvent::Synced`)
   on the same link (CH62 rule 23). The link stays ready. A sync of a
   replaced link changes nothing. A failed `syncfs` writes `guest-init:
   control link <n> sync failed: <error>`, sends no `synced` and keeps
   the link (CH65 rule 3).
-- One thread, the main one, reads the event channel and holds no
-  sender. The accept thread and each reader thread hold one, so the
-  channel ends only when all of them are gone. Then guest init writes
+- One thread, the main one, reads the event channel, runs the one timer
+  of the supervisor and holds no sender. The accept thread, the reaper
+  thread and each reader thread hold one, so the channel ends only when
+  all of them are gone. Then guest init writes
   `guest-init: control events ended` and powers off.
+- Each pass of that loop checks the timer before it reads the channel,
+  so a steady stream of events cannot hold off the stop waits (CH62
+  rule 9) or the restart pause (CH62 rule 8). The channel holds `INBOX`
+  (64) events. A full channel blocks the sender: a reader thread then
+  reads no more of its socket, so a fast peer fills only its own socket
+  buffer. The reaper sends its reports after it drops the spawn lock,
+  because `Facade::start` takes that lock on the control loop.
 - Each step writes one `guest-init: <step>` line to the console (CH62
   rule 26). A fault writes `guest-init: <step> failed: <error>`.
 - A stop, a boot fault, a refused env file, a listen fault and a panic
   in any thread all end in `power::off`. A panic hook, set first by
   `as_pid_1`, runs the default hook, writes `guest-init: panicked` and
-  powers off. The power-off is: sync, a read-only remount of the session disk,
-  then `reboot(RB_POWER_OFF)` (CH19 rule 3). The remount flushes the ext4
+  powers off. The power-off is: SIGKILL to every process left
+  (`kill(-1)`), a wait of up to `KILL_WAIT` (1 s) until PID 1 has no
+  child left, sync, a read-only remount of the session disk, then
+  `reboot(RB_POWER_OFF)` (CH19 rule 3, CH62 rule 9). The wait matters
+  because `kill` only queues the signal: a killed process can still
+  finish a write and holds its files until it exits. A wait that runs
+  out writes `guest-init: processes left after 1s`. The remount flushes the ext4
   journal and marks the disk clean. Before the switch root it fails with
   its own console line. The guest kernel has
   `PANIC_TIMEOUT=0`, so an exit of PID 1 would hang the VM (fact 53). No
   fsck runs (CH62 rule 4).
-- `examples/standin_facade.rs` is a stub that calls `run()`.
+- `examples/standin_facade.rs` is the stand-in facade of the kvm tests,
+  a test program in no release row (CH62 rule 12). It writes one line on
+  stdout and its session id, env names and cwd on stderr. With the mode
+  `exit-once` in `/etc/creche-standin/mode`, its first start leaves a
+  child in its process group, writes the child pid in a marker on the
+  session disk and exits with status 3. The next start writes whether
+  that child is gone. With the mode `holder`, it starts a child that
+  leaves its group with `setsid`, so the SIGTERM of the stop misses it,
+  and that child keeps a file of the session disk open for writing.
+  Each other start stays up until a signal ends it.
 
 ## Tests
 
 - The unit tests check the boot plan, the options of every mount, the
-  netlink bytes, the env grammar, the control state machine and the line
-  framing on any OS. On Linux, one more test checks the kernel flags
+  netlink bytes, the env grammar, the control state machine, the
+  supervisor state machine and the line framing on any OS. On Linux, one more test checks the kernel flags
   that each set of options gives. One runs the real
   `playpen/bin/creche-env-write`, so the reader and the script cannot
   drift.
 - `tests/kvm_guest_init.rs` boots CH with `$CRECHE_KVM_DIR/guest-init.cpio`
   of `bin/vm-smoke-setup.sh`, the cmdline `console=ttyS0 rdinit=/init`
   (CH62 rule 19), ext4 disks that `tests/common/mod.rs` builds with
-  `mke2fs -d` (CH62 rule 12) and a vsock device. The tests speak control
+  `mke2fs -d` (CH62 rule 12) and a vsock device. Each root disk holds
+  `$CRECHE_KVM_DIR/standin_facade` at `FACADE_PROGRAM`. The tests speak control
   link 1200 themselves: `CONNECT 1200` on the hybrid vsock socket of CH,
   then the creche-wire types. A test reads a console line that follows a
   link write with `wait_for_line`, because the guest writes that line

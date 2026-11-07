@@ -5,7 +5,9 @@
 //! mounts, the switch root into the root disk and `lo` up. Then it reads
 //! the image env with `env_file` (decision CH62 rule 7), listens on
 //! control link 1200, writes `guest-init: up` and serves the link with
-//! `control` (decisions CH13, CH28, CH32). PID 1 never exits on its own:
+//! `control` (decisions CH13, CH28, CH32). The first hello starts the
+//! facade, and `supervisor` keeps one for the VM life (decision CH19 rule
+//! 1). PID 1 never exits on its own:
 //! the guest kernel has `PANIC_TIMEOUT=0`, so an exit of PID 1 hangs the
 //! VM (fact 53). A stop and each fault power the VM off instead (decision
 //! CH19 rule 3).
@@ -25,6 +27,8 @@ mod env_file;
 mod lo;
 #[cfg(target_os = "linux")]
 mod power;
+#[cfg(any(test, target_os = "linux"))]
+mod supervisor;
 
 /// The exit status of a refused start (owner item 86), the same value as
 /// `EX_CONFIG` in `rust/crates/vmm/src/main.rs`.
@@ -66,9 +70,8 @@ fn as_pid_1() -> ExitCode {
 /// console line of the stop or of the fault.
 #[cfg(target_os = "linux")]
 fn life() -> String {
-    // The env stays alive while PID 1 serves: the facade gets it
-    // (decision CH49 rule 1).
-    let _env = match start() {
+    // The facade gets the env (decision CH49 rule 1).
+    let env = match start() {
         Ok(env) => env,
         Err(fault) => return fault,
     };
@@ -78,7 +81,7 @@ fn life() -> String {
         Err(error) => return format!("control listen failed: {error}"),
     };
     say("up");
-    control::serve(listener)
+    control::serve(listener, env)
 }
 
 /// Boots, then reads the env file of the switched root. Both run before
@@ -97,10 +100,15 @@ fn start() -> Result<env_file::Env, String> {
 /// rule 26). The kernel opens `/dev/console` as fd 0, 1 and 2 of PID 1,
 /// and `console=ttyS0` sends it to the serial file of the VM. A failed
 /// write has no other place to go, so `say` drops it.
+///
+/// The facade writes its stderr to the same console (CH62 rule 26). So the
+/// whole line goes out in one `write_all`, and a facade line cannot land
+/// inside it. `writeln!` on the unbuffered stderr makes one write per
+/// piece, which the facade's output split in the kvm job.
 #[cfg(target_os = "linux")]
 fn say(text: &str) {
     use std::io::Write as _;
-    let _ = writeln!(std::io::stderr(), "guest-init: {text}");
+    let _ = std::io::stderr().write_all(format!("guest-init: {text}\n").as_bytes());
 }
 
 #[cfg(test)]
