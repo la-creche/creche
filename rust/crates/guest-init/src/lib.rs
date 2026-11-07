@@ -9,6 +9,9 @@
 //! The first hello starts the facade, and `supervisor` keeps one for the
 //! VM life (decision CH19 rule 1). The facade sends its turn events on
 //! the local link, and `local_link` relays them on 1200 (decision CH21).
+//! `bridge` splices each link of guest port 1201 to the relay socket of
+//! the facade, in every facade state (decisions CH13, CH50 rule 2, CH62
+//! rules 14 and 16).
 //! PID 1 never exits on its own:
 //! the guest kernel has `PANIC_TIMEOUT=0`, so an exit of PID 1 hangs the
 //! VM (fact 53). A stop and each fault power the VM off instead (decision
@@ -22,6 +25,8 @@ use std::process::ExitCode;
 #[cfg(any(test, target_os = "linux"))]
 mod boot;
 #[cfg(any(test, target_os = "linux"))]
+mod bridge;
+#[cfg(any(test, target_os = "linux"))]
 mod control;
 #[cfg(any(test, target_os = "linux"))]
 mod env_file;
@@ -31,6 +36,8 @@ mod lo;
 mod local_link;
 #[cfg(target_os = "linux")]
 mod power;
+#[cfg(any(test, target_os = "linux"))]
+mod splice;
 #[cfg(any(test, target_os = "linux"))]
 mod supervisor;
 
@@ -70,8 +77,9 @@ fn as_pid_1() -> ExitCode {
     power::off()
 }
 
-/// Boots, listens on control link 1200 and on the local link and serves
-/// both. It returns the console line of the stop or of the fault.
+/// Boots, listens on control link 1200, on the local link and on guest
+/// port 1201, and serves them. It returns the console line of the stop or
+/// of the fault.
 #[cfg(target_os = "linux")]
 fn life() -> String {
     // The facade gets the env (decision CH49 rule 1).
@@ -89,8 +97,15 @@ fn life() -> String {
         Ok(local) => local,
         Err(error) => return format!("local link listen failed: {error}"),
     };
+    // 1201 listens from here on. `control::serve` starts its accept
+    // thread before it reads the first hello, so 1201 accepts before the
+    // first hello and in every facade state (decision CH50 rule 2).
+    let acp = match bridge::listen_acp() {
+        Ok(acp) => acp,
+        Err(error) => return format!("acp listen failed: {error}"),
+    };
     say("up");
-    control::serve(listener, local, env)
+    control::serve(listener, local, acp, env)
 }
 
 /// Boots, then reads the env file of the switched root. Both run before
@@ -108,13 +123,14 @@ fn start() -> Result<env_file::Env, String> {
 /// Writes one `guest-init: <text>` line to the console (decision CH62
 /// rule 26). The kernel opens `/dev/console` as fd 0, 1 and 2 of PID 1,
 /// and `console=ttyS0` sends it to the serial file of the VM. A failed
-/// write has no other place to go, so `say` drops it.
+/// write has no other place to go, so `say` drops it. In a unit test the
+/// line goes to the stderr of the test process.
 ///
 /// The facade writes its stderr to the same console (CH62 rule 26). So the
 /// whole line goes out in one `write_all`, and a facade line cannot land
 /// inside it. `writeln!` on the unbuffered stderr makes one write per
 /// piece, which the facade's output split in the kvm job.
-#[cfg(target_os = "linux")]
+#[cfg(any(test, target_os = "linux"))]
 fn say(text: &str) {
     use std::io::Write as _;
     let _ = std::io::stderr().write_all(format!("guest-init: {text}\n").as_bytes());

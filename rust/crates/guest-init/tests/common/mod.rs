@@ -202,6 +202,9 @@ pub enum Standin {
     /// Mode `close-once`: the first start opens the local link, closes it
     /// and stays up. Each later start stays up.
     CloseOnce,
+    /// Mode `relay`: after 2 s the stand-in listens on the relay socket
+    /// and answers each line `ping` with `pong <pid>`, and stays up.
+    Relay,
 }
 
 /// The mode file of the stand-in on the root disk.
@@ -236,6 +239,7 @@ pub fn vm_with(work: &Path, env: &[u8], standin: Standin) -> Command {
         Standin::Turn => Some("turn\n"),
         Standin::Stream => Some("stream\n"),
         Standin::CloseOnce => Some("close-once\n"),
+        Standin::Relay => Some("relay\n"),
     };
     if let Some(mode) = mode {
         let file = tree.join(STANDIN_MODE);
@@ -314,6 +318,11 @@ impl Link {
         let mut line = serde_json::to_vec(value).unwrap();
         line.push(b'\n');
         self.writer.write_all(&line).unwrap();
+    }
+
+    /// Writes `bytes` as they are, for a link that carries no JSON.
+    pub fn write(&mut self, bytes: &[u8]) {
+        self.writer.write_all(bytes).unwrap();
     }
 
     /// Reads one line, its LF cut, or `None` at the end of the link. It
