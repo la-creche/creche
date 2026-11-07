@@ -3,8 +3,6 @@
 // the turn events up, the stop line down, a fault that is not fatal, and
 // the stop of the supervisor at a stop line.
 
-import { createServer } from "node:net";
-import type { Server, Socket } from "node:net";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { PassThrough } from "node:stream";
@@ -26,75 +24,15 @@ import type { Runtime } from "../src/supervisor.js";
 import { Wire } from "./acp-wire.js";
 import { shortTmp } from "./facade-process.js";
 import { faux, Probe, startFlue } from "./faux-flue.js";
+import { closeGuestInits, guestInit, until, WAIT_MS } from "./guest-init.js";
+import type { GuestInit } from "./guest-init.js";
 
 const STOP = '{"stop":{}}\n';
-const WAIT_MS = 2000;
-
-/** The test end of the link: what guest init reads and writes. */
-interface GuestInit {
-  readonly path: string;
-  /** Every byte that the facade sent, as text. */
-  received(): string;
-  /** The facade's end, once it connected. */
-  peer(): Promise<Socket>;
-  /** True once the facade closed its end. */
-  closedByFacade(): boolean;
-}
 
 const flue = await startFlue();
 afterAll(() => flue.stop());
 
-const servers: Server[] = [];
-const links: Socket[] = [];
-
-afterEach(() => {
-  for (const socket of links.splice(0)) {
-    socket.destroy();
-  }
-  for (const server of servers.splice(0)) {
-    server.close();
-  }
-});
-
-async function until(check: () => boolean): Promise<void> {
-  const deadline = Date.now() + WAIT_MS;
-  while (!check()) {
-    if (Date.now() > deadline) {
-      throw new Error("the wait ran out");
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-}
-
-async function guestInit(): Promise<GuestInit> {
-  const path = join(shortTmp(), "guest-init.sock");
-  let received = "";
-  let closed = false;
-  let socket: Socket | null = null;
-  const server = createServer((peer) => {
-    socket = peer;
-    links.push(peer);
-    peer.on("data", (chunk: Buffer) => {
-      received += chunk.toString("utf8");
-    });
-    peer.on("end", () => {
-      closed = true;
-    });
-  });
-  servers.push(server);
-  await new Promise<void>((resolve) => server.listen(path, resolve));
-
-  return {
-    path,
-    received: () => received,
-    peer: async () => {
-      await until(() => socket !== null);
-      return socket as unknown as Socket;
-    },
-    closedByFacade: () => closed,
-  };
-}
+afterEach(closeGuestInits);
 
 function link(path: string, said: string[], stopMs = FLUE_STOP_MS): LocalLink {
   return new LocalLink(path, stopMs, (text) => said.push(text));
@@ -159,12 +97,23 @@ describe("a prompt", () => {
     const service = sessionService({ agent: Probe, agentName: "Probe", index, mode: SBX, link: facade, store: flue.store });
     const wire = new Wire(facadeApp({ onBeat: () => undefined, onShutdown: () => undefined }, service));
     const id = (await wire.request("session/new", { cwd: "/work", mcpServers: [] })).result?.["sessionId"] as string;
-    faux.setResponses([fauxAssistantMessage("done"), fauxAssistantMessage("again")]);
+    // The start goes up while Flue runs the turn, not after: the vmm must
+    // see a running turn (decisions CH19 rule 6, CH32 rule 6).
+    let duringTurn = "";
+    faux.setResponses([
+      async () => {
+        await until(() => guest.received().length > 0).catch(() => undefined);
+        duringTurn = guest.received();
+        return fauxAssistantMessage("done");
+      },
+      fauxAssistantMessage("again"),
+    ]);
     for (const text of ["  Plan the   garden \nsecond line", "Another thing"]) {
       await wire.request("session/prompt", { sessionId: id, prompt: [{ type: "text", text }] });
     }
     await until(() => guest.received().split("\n").length === 5);
 
+    expect(duringTurn).toBe('{"start":{}}\n');
     const times = wire.updates(id).flatMap((update) => (update["sessionUpdate"] === "session_info_update" ? [Date.parse(String(update["updatedAt"]))] : []));
     expect(times).toHaveLength(2);
     expect(guest.received().split("\n").slice(0, 4).map((line) => JSON.parse(line) as unknown)).toEqual([
