@@ -276,9 +276,12 @@ table of the three vmm crates.
      with a code. A stop and a restart of a gated `/bin/sleep` stand-in
      each end CH by the SIGKILL of the step, after CH ran 1 s into the
      gated stop. After the restart the unit comes back. A crash of a
-     `/bin/sleep` stand-in ends CH by that SIGKILL too (CH61 rule 1).
-     After each crash, while the unit waits in `auto-restart`, the test
-     reads that the step ran in the unit and exited 0 (decision CH63).
+     `/bin/sleep` stand-in queues no stop job, so `Before=` orders
+     nothing, and CH ends either by the SIGKILL of the step or by the
+     SIGTERM of the `BindsTo=` scope stop, whichever comes first (CH61
+     rule 1). The crash test accepts both. After each crash, while the
+     unit waits in `auto-restart`, the test reads that the step ran in
+     the unit and exited 0 (decision CH63), which proves the step there.
      The start part of a restart clears that run of the step, so no
      test reads it after a restart.
      After the restart and after the crash, the slot dir and the
@@ -306,10 +309,10 @@ table of the three vmm crates.
   ends CH and its scope while the unit waits in `auto-restart` (decision
   CH61 rule 1), with the control that CH runs while the stand-in runs.
   `BindsTo=` or the `ExecStopPost=` step ends CH there, and CH is a child
-  of `hold`, so step 5 cannot tell them apart. The signal-9 check of
-  `kvm_a_vmm_crash_frees_the_scope_of_each_vm` in `tests/kvm_slot.rs`
-  proves the step itself. In `auto-restart` step 5 also reads that the
-  step ran in the unit and exited 0 (decision CH63). After the crash the
+  of `hold`, so step 5 cannot tell them apart. On a crash the two race
+  (no stop job, so `Before=` orders nothing). The step's exit status,
+  read in `auto-restart`, proves that the step ran: step 5 reads that it
+  ran in the unit and exited 0 (decision CH63). After the crash the
   `vm/<id>` link and the slot dir are gone with the run root, and the
   serial log in the state root still holds the ticks of the guest
   (decision CH59 rule 2). Each start takes a new slot
