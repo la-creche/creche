@@ -50,9 +50,8 @@ pub const LITELLM_PORT: u16 = 4000;
 pub const CHAPERONE_PORT: u16 = 8300;
 
 /// The guest loopback port of the egress proxy: guest init splices each
-/// link to host port 1104 (decision CH46 rule 1). The coding flavor names
-/// it in `CRECHE_TOOL_HTTPS_PROXY`, and a creche test holds the two equal.
-/// A renumber bumps `GUEST_INIT_PROTOCOL`.
+/// link to host port 1104 (decision CH46 rule 1). A renumber bumps
+/// `GUEST_INIT_PROTOCOL`.
 pub const EGRESS_PROXY_PORT: u16 = 3128;
 
 /// The guest loopback port of the git mirror, the `git://` default:
