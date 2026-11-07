@@ -39,8 +39,10 @@
 //! cold-boots (decision CH19 (5)).
 //!
 //! The code reads a rename that the sync of `snapshots/` cannot make
-//! durable as a failed step too. Then `take` removes `snapshots/<n>`, the
-//! renamed temp dir, and returns the sync error.
+//! durable as a failed step too. Then `take` removes `key.json` of
+//! `snapshots/<n>` (the renamed temp dir) first, then the dir, and returns
+//! the sync error. A dir that a failed remove leaves has no key, so it
+//! never restores (see `Snapshotter::take`).
 
 use std::fmt;
 use std::fs::{self, DirBuilder, File};
@@ -52,7 +54,7 @@ use std::time::Duration;
 
 use crate::ch_remote::{ChRemote, ChRemoteError};
 use crate::key::{KeyError, SnapshotKey, write_key};
-use crate::layout::{SessionDir, SnapshotGeneration, VmRunDir};
+use crate::layout::{KEY_FILE, SessionDir, SnapshotGeneration, VmRunDir};
 
 /// The guest RAM file that Cloud Hypervisor writes into a snapshot dir.
 pub const MEMORY_RANGES: &str = "memory-ranges";
@@ -208,11 +210,15 @@ impl Snapshotter {
     /// the case below.
     ///
     /// When the sync of `snapshots/` after the rename fails, `take`
-    /// removes `snapshots/<n>` and returns the sync error. If that remove
-    /// fails too, `take` still returns the sync error, and `snapshots/<n>`
-    /// may remain with its key. It holds every synced file of a CH that
-    /// the take ended, so a restore of it finds the session disk as the
-    /// take left it.
+    /// removes `snapshots/<n>/key.json` first, then `snapshots/<n>`, and
+    /// returns the sync error. If the remove of the dir fails too, `take`
+    /// still returns the sync error, and `snapshots/<n>` may remain. That
+    /// dir has no key, so it never restores. When it is the newest
+    /// generation, the key check of PR D10 drops every generation
+    /// (decision CH44 rule 5), and the next start cold-boots (decision
+    /// CH19 (5)). Only a failed remove of the key itself leaves a keyed
+    /// dir. Its files are all synced, so a restore of it finds the
+    /// session disk as the take left it.
     pub fn take(
         &self,
         vm: &VmRunDir,
@@ -244,6 +250,10 @@ impl Snapshotter {
         }
         let allocated_bytes = taken?;
         if let Err(error) = sync_dir(&snapshots) {
+            // The key goes first, so a remove that fails part way leaves
+            // no keyed dir that holds only some of its files (decision
+            // CH44 rule 4, CH19 (5)).
+            let _ = fs::remove_file(dir.join(KEY_FILE));
             let _ = fs::remove_dir_all(&dir);
             return Err(io_at(&snapshots)(error));
         }
