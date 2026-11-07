@@ -373,6 +373,16 @@ describe("a lost link at the supervisor", () => {
     expect(run.said.at(-1)).toMatch(/^the local link did not open: connect ENOENT .*none\.sock; the facade exits$/);
   });
 
+  it("exits 18 at the bound when Flue does not stop", async () => {
+    const sent = Date.now();
+    const run = await supervise({ stop: () => new Promise<void>(() => undefined) }, 50, join(shortTmp(), "none.sock"));
+
+    expect(await run.exited).toBe(EXIT_LOCAL_LINK);
+    expect(Date.now() - sent).toBeLessThan(WAIT_MS);
+    expect(run.events).toEqual([`exit ${EXIT_LOCAL_LINK}`]);
+    expect(run.said).toContain("Flue did not stop in 50 ms; the facade exits");
+  });
+
   it("exits 18 when guest init closes the link outside a stop", async () => {
     const events: string[] = [];
     const run = await supervise(recorded(events), FLUE_STOP_MS);
