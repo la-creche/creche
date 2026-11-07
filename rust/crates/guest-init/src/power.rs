@@ -17,10 +17,8 @@ use rustix::system::{RebootCommand, reboot};
 
 /// How long the power-off waits for the killed processes to be gone
 /// before the sync.
-// CONTRACT-QUESTION: no row decides this wait. CH62 rule 9 names
-// SIGKILL, sync, power off with no wait between. The reading taken: up
-// to 1 s, so a process in D state cannot hang the power-off, and one
-// console line names a wait that ran out. A change costs this constant.
+// Decision CH66 rule 2: up to 1 s, so a process in D state cannot hang
+// the power-off, and one console line names a wait that ran out.
 const KILL_WAIT: Duration = Duration::from_secs(1);
 
 /// The pause between two reap tries of `reap_all`.
