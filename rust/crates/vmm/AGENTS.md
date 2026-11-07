@@ -31,8 +31,9 @@ CH63). It reads only `AGENT_SYSTEMCTL_PROGRAM` through
 `config::KillScopesConfig`, with the check of `Config`, and calls
 `creche_vmm_confine::leftovers::kill_all`. A bad key exits 78, and any
 other failure exits 1. `vmm serve` raises its soft `RLIMIT_NOFILE` to
-`planes::fd_need` plus `family_state::fd_need` after the config read
-(decision CH67 rule 4 for the bridge need, Known gap 23 for the
+`planes::fd_need` plus `family_state::fd_need` plus `proxy::fd_need`
+in step 4 of the compose step, after the start checks and before the
+bind (decision CH67 rule 4 for the bridge need, Known gap 23 for the
 family-state need).
 
 ## The compose step
@@ -61,10 +62,17 @@ family-state need).
    manager it logs the error and still serves, and every VM launch
    refuses with that error and starts nothing. That `ColdBoot` is the `StartVm` and the `StopVm` hook,
    the `VmSet` of the shutdown and the `Sleeper` of `sleep::run`.
-4. The handler set of `routes!` (`Creates`, `Lists`, `Acp`, `Drops`,
+4. `nofile::raise` sets the soft `RLIMIT_NOFILE` to the `fd_need` of
+   the compose step, and a hard limit below it exits 78 (decision CH67
+   rule 4). The raise runs after the checks of step 2. So a bad
+   program, image root or digest exits 78 with its own fault, also on a
+   host whose hard limit is below the need, such as the 65536 of a
+   GitHub runner. The raise runs before the bind and the first VM, so
+   each listener and each CH gets the raised limit.
+5. The handler set of `routes!` (`Creates`, `Lists`, `Acp`, `Drops`,
    `Checks`) binds `vmm.sock` in the run root. `sleep::run` runs beside it (caller
    duty 5), and so does `FaultBook::refresh` every `faults::REFRESH`.
-5. At SIGTERM the sleep loop gets its stop, and `shutdown::shutdown`
+6. At SIGTERM the sleep loop gets its stop, and `shutdown::shutdown`
    runs with the end of `sleep::run` as its `sleep` future. `src/main.rs`
    then ends the runtime with `shutdown_timeout(RUNTIME_END)`, 4 s of
    the 5 s that `SHUTDOWN_WAIT` leaves (caller duty 8).
@@ -620,8 +628,9 @@ connection to a fresh TCP connect to `VMM_LITELLM_ADDR` or
 7. A full row holds 129 fds: its listener and two streams per splice.
    `planes::fd_need` is that for both rows of all `SLOTS` (64), plus a
    headroom of 4096: 20608. `vmm serve` raises its soft `RLIMIT_NOFILE`
-   to it plus `family_state::fd_need` and `proxy::fd_need` before it
-   serves (see "The family-state reply" and "The egress proxy"), and a
+   to it plus `family_state::fd_need` and `proxy::fd_need` after its
+   start checks and before it serves (step 4 of "The compose step", see
+   also "The family-state reply" and "The egress proxy"), and a
    hard limit below the sum exits 78
    (`creche_vmm_confine::nofile`, decision CH67 rule 4, Known gap 23).
    So the busy guests of

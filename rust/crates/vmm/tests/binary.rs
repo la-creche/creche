@@ -1,7 +1,10 @@
 //! The program `vmm serve` and its config (plan PR L20). It needs no KVM.
 //! A missing or bad key exits 78 and names the key (owner item 86), and so
 //! does an untrusted CH program (decision CH67 rule 1). Each test waits
-//! for the vmm to exit, so no test leaves a vmm behind.
+//! for the vmm to exit, so no test leaves a vmm behind. Each run has a
+//! hard `RLIMIT_NOFILE` below the fd need of the vmm, so each test also
+//! proves that its check refuses the start before the fd raise (decision
+//! CH67 rule 4).
 
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -51,11 +54,22 @@ impl Drop for Scratch {
     }
 }
 
-/// Runs `vmm serve` with only the keys of `env` and gives its stderr.
+/// A hard `RLIMIT_NOFILE` below the fd need of the vmm (69888), and
+/// below the hard limit of each host that runs the tests.
+const SHORT_NOFILE: &str = "1024";
+
+/// Runs `vmm serve` with only the keys of `env` and gives its stderr. A
+/// shell sets the soft and the hard `RLIMIT_NOFILE` to `SHORT_NOFILE`,
+/// then execs the vmm.
 #[cfg(test)]
 fn serve(env: &[(&str, &str)]) -> (Output, String) {
-    let output = Command::new(env!("CARGO_BIN_EXE_vmm"))
-        .arg("serve")
+    let output = Command::new("/bin/sh")
+        .args([
+            "-c",
+            "ulimit -n \"$1\" && exec \"$0\" serve",
+            env!("CARGO_BIN_EXE_vmm"),
+            SHORT_NOFILE,
+        ])
         .env_clear()
         .envs(env.iter().copied())
         .output()
@@ -157,7 +171,9 @@ fn a_relative_egress_log_exits_78() {
 
 /// A good config on temp paths runs the leftover sweep (`true` lists no
 /// scope). Then the vmm refuses a missing CH program and one that root
-/// does not own, and exits 78 (decision CH67 rule 1, owner item 86). A
+/// does not own, and exits 78 (decision CH67 rule 1, owner item 86). The
+/// short hard fd limit does not hide either fault, because the fd raise
+/// runs after the start checks (decision CH67 rule 4). A
 /// test cannot make a root-owned file, so the serve proof of plan PR L20
 /// runs on the compose step (`src/compose/tests.rs`).
 #[test]
