@@ -14,8 +14,7 @@ use std::thread;
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use creche_vmm_confine::family::{
-    FamilyError, FamilyRoot, READ_TRIES, RETRY_PAUSE, SHAPE_CAP, ShapeFault, StateFault, StateFile,
-    StateRead,
+    FamilyError, FamilyRoot, READ_TRIES, RETRY_PAUSE, SHAPE_CAP, ShapeFault, StateFault, StateRead,
 };
 use creche_vmm_store::layout::RootError;
 use creche_wire::{FAMILY_STATE_CAP, FamilyName, FamilyShape, FamilyStateReply};
@@ -377,8 +376,6 @@ fn missing_creds_is_creds_missing() {
     let other: FamilyName = "other".parse().unwrap();
     let read = root.families().read_state(&other);
     assert_eq!(read.unwrap_err(), StateFault::CredsMissing);
-    let wire = serde_json::to_value(StateFault::CredsMissing.reply()).unwrap();
-    assert_eq!(wire, json!({"creds_missing": {}}));
 }
 
 #[test]
@@ -389,8 +386,6 @@ fn missing_config_is_config_missing() {
     assert_eq!(root.state().unwrap_err(), StateFault::ConfigMissing);
     // An absent config/ may be the rename window, so each try waits.
     assert!(start.elapsed() >= RETRY_PAUSE * (READ_TRIES - 1));
-    let wire = serde_json::to_value(StateFault::ConfigMissing.reply()).unwrap();
-    assert_eq!(wire, json!({"config_missing": {}}));
 }
 
 #[test]
@@ -421,14 +416,8 @@ fn a_bad_litellm_key_is_not_valid() {
     for text in bad {
         fs::write(root.at("creds/creds.json"), &text).unwrap();
         let read = root.state();
-        assert_eq!(
-            read.unwrap_err(),
-            StateFault::NotValid(StateFile::Creds),
-            "{text}"
-        );
+        assert_eq!(read.unwrap_err(), StateFault::NotValid, "{text}");
     }
-    let wire = serde_json::to_value(StateFault::NotValid(StateFile::Creds).reply()).unwrap();
-    assert_eq!(wire, json!({"not_valid": {}}));
 }
 
 #[test]
@@ -450,35 +439,28 @@ fn a_bad_runtime_file_is_not_valid() {
     for text in bad {
         fs::write(root.at("config/runtime.json"), &text).unwrap();
         let read = root.state();
-        assert_eq!(
-            read.unwrap_err(),
-            StateFault::NotValid(StateFile::Runtime),
-            "{text}"
-        );
+        assert_eq!(read.unwrap_err(), StateFault::NotValid, "{text}");
     }
     fs::remove_file(root.at("config/runtime.json")).unwrap();
     let read = root.state();
-    assert_eq!(read.unwrap_err(), StateFault::NotValid(StateFile::Runtime));
+    assert_eq!(read.unwrap_err(), StateFault::NotValid);
     fs::write(root.at("config/runtime.json"), runtime(|_| {})).unwrap();
     fs::write(root.at("config/instructions.md"), [0xff, 0xfe]).unwrap();
     let read = root.state();
-    assert_eq!(
-        read.unwrap_err(),
-        StateFault::NotValid(StateFile::Instructions)
-    );
+    assert_eq!(read.unwrap_err(), StateFault::NotValid);
     fs::write(root.at("config/instructions.md"), "").unwrap();
     fs::create_dir(root.at("config/skills/Not_A_Name")).unwrap();
     fs::write(root.at("config/skills/Not_A_Name/SKILL.md"), "x").unwrap();
     let read = root.state();
-    assert_eq!(read.unwrap_err(), StateFault::NotValid(StateFile::Skills));
+    assert_eq!(read.unwrap_err(), StateFault::NotValid);
     fs::remove_dir_all(root.at("config/skills/Not_A_Name")).unwrap();
     fs::create_dir(root.at("config/skills/gamma")).unwrap();
     let read = root.state();
-    assert_eq!(read.unwrap_err(), StateFault::NotValid(StateFile::Skills));
+    assert_eq!(read.unwrap_err(), StateFault::NotValid);
     fs::remove_dir(root.at("config/skills/gamma")).unwrap();
     fs::write(root.at("config/skills/notes.txt"), "x").unwrap();
     let read = root.state();
-    assert_eq!(read.unwrap_err(), StateFault::NotValid(StateFile::Skills));
+    assert_eq!(read.unwrap_err(), StateFault::NotValid);
 }
 
 #[test]
@@ -497,15 +479,13 @@ fn a_state_over_the_cap_is_too_large() {
     let skill = root.at("config/skills/alpha/SKILL.md");
     fs::write(&skill, "a".repeat(FAMILY_STATE_CAP + 1)).unwrap();
     assert_eq!(root.state().unwrap_err(), StateFault::TooLarge);
-    let wire = serde_json::to_value(StateFault::TooLarge.reply()).unwrap();
-    assert_eq!(wire, json!({"too_large": {}}));
     // A JSON file past the cap is not_valid: its excess may sit in fields
     // that the reply drops.
     fs::write(&skill, "a").unwrap();
     let padded = format!("{}{}", runtime(|_| {}), " ".repeat(FAMILY_STATE_CAP));
     fs::write(root.at("config/runtime.json"), padded).unwrap();
     let read = root.state();
-    assert_eq!(read.unwrap_err(), StateFault::NotValid(StateFile::Runtime));
+    assert_eq!(read.unwrap_err(), StateFault::NotValid);
 }
 
 #[test]
@@ -513,23 +493,19 @@ fn a_symlinked_config_is_refused() {
     let root = Root::fixture("links");
     let other = Root::fixture("links-other");
     let refused = [
-        ("config", StateFile::Config),
-        ("config/runtime.json", StateFile::Runtime),
-        ("config/instructions.md", StateFile::Instructions),
-        ("config/skills/alpha", StateFile::Skills),
-        ("config/skills", StateFile::Skills),
-        ("creds/creds.json", StateFile::Creds),
-        ("creds", StateFile::Creds),
+        "config",
+        "config/runtime.json",
+        "config/instructions.md",
+        "config/skills/alpha",
+        "config/skills",
+        "creds/creds.json",
+        "creds",
     ];
-    for (path, file) in refused {
+    for path in refused {
         let moved = root.0.join("moved");
         fs::rename(root.at(path), &moved).unwrap();
         symlink(other.at(path), root.at(path)).unwrap();
-        assert_eq!(
-            root.state().unwrap_err(),
-            StateFault::NotValid(file),
-            "{path}"
-        );
+        assert_eq!(root.state().unwrap_err(), StateFault::NotValid, "{path}");
         fs::remove_file(root.at(path)).unwrap();
         fs::rename(&moved, root.at(path)).unwrap();
         assert!(root.state().is_ok(), "{path}");
@@ -537,7 +513,7 @@ fn a_symlinked_config_is_refused() {
     fs::remove_dir_all(root.at("")).unwrap();
     symlink(other.at(""), root.0.join("code")).unwrap();
     let read = root.state();
-    assert_eq!(read.unwrap_err(), StateFault::NotValid(StateFile::Creds));
+    assert_eq!(read.unwrap_err(), StateFault::NotValid);
 }
 
 #[test]

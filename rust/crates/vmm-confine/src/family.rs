@@ -45,9 +45,9 @@ use std::time::{Duration, SystemTime};
 
 use creche_vmm_store::layout::RootError;
 use creche_wire::{
-    ConfigMissing, CredsMissing, FAMILY_SHAPE_FILE, FAMILY_STATE_CAP, FamilyConfig, FamilyCreds,
-    FamilyName, FamilyShape, FamilySkills, FamilyState, FamilyStateReply, LitellmKey, ModelAlias,
-    PepToken, SandboxGrant, StateNotValid, StateTooLarge, SystemPrompt, strict,
+    FAMILY_SHAPE_FILE, FAMILY_STATE_CAP, FamilyConfig, FamilyCreds, FamilyName, FamilyShape,
+    FamilySkills, FamilyState, FamilyStateReply, LitellmKey, ModelAlias, PepToken, SandboxGrant,
+    SystemPrompt, strict,
 };
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, Stat};
 use rustix::io::Errno;
@@ -123,25 +123,8 @@ impl From<Errno> for FamilyError {
     }
 }
 
-/// Which part of the family state did not read. The vmm names it in its
-/// host log only, never on the wire (`StateNotValid`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StateFile {
-    /// The family dir, `creds/` or `creds/creds.json`.
-    Creds,
-    /// `config/` itself: a symlink, a file, a swap during every try, or an
-    /// error of the file system.
-    Config,
-    /// `config/runtime.json`.
-    Runtime,
-    /// `config/instructions.md`.
-    Instructions,
-    /// `config/skills/` or a `SKILL.md` in it.
-    Skills,
-}
-
 /// Why a pull gets no `state` reply (decisions CH23 rule 2, CH31 rules 3
-/// and 4). `reply` gives the typed reply of each.
+/// and 4). Each variant is one typed error reply on host port 1100.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StateFault {
     /// `creds.json` is absent: no family dir, no `creds/` or no file. It
@@ -150,25 +133,13 @@ pub enum StateFault {
     CredsMissing,
     /// `config/` is absent through every try.
     ConfigMissing,
-    /// A file is present and does not read as its part of the state.
-    NotValid(StateFile),
+    /// A file is present and does not read as its part of the state, or
+    /// `config/` is a symlink, a file, swapped during every try, or an
+    /// error of the file system.
+    NotValid,
     /// The `state` reply is over `FAMILY_STATE_CAP` (decision CH31
     /// rule 3).
     TooLarge,
-}
-
-impl StateFault {
-    /// The typed reply of the fault on host port 1100. It carries no value
-    /// of the files.
-    #[must_use]
-    pub fn reply(self) -> FamilyStateReply {
-        match self {
-            Self::CredsMissing => FamilyStateReply::CredsMissing(CredsMissing {}),
-            Self::ConfigMissing => FamilyStateReply::ConfigMissing(ConfigMissing {}),
-            Self::NotValid(_) => FamilyStateReply::NotValid(StateNotValid {}),
-            Self::TooLarge => FamilyStateReply::TooLarge(StateTooLarge {}),
-        }
-    }
 }
 
 /// The family state of one pull: the text of its `state` reply and the
@@ -370,8 +341,8 @@ impl FamilyRoot {
     /// # Errors
     ///
     /// `CredsMissing` first, whatever `config/` holds (decision CH31
-    /// rule 4). Then `ConfigMissing`, `NotValid` with the part that failed,
-    /// or `TooLarge` when the reply passes `FAMILY_STATE_CAP`.
+    /// rule 4). Then `ConfigMissing`, `NotValid`, or `TooLarge` when the
+    /// reply passes `FAMILY_STATE_CAP`.
     pub fn read_state(&self, family: &FamilyName) -> Result<StateRead, StateFault> {
         let creds = self.read_creds(family)?;
         let (config, model_live_at) = match self.with_config(family, read_config) {
@@ -382,12 +353,12 @@ impl FamilyRoot {
                 | FamilyError::NotValid(_)
                 | FamilyError::Swapped
                 | FamilyError::Io(_),
-            ) => return Err(StateFault::NotValid(StateFile::Config)),
+            ) => return Err(StateFault::NotValid),
         };
         // serde_json fails only on a map key that is not a string, or on
         // a writer error, and a Vec has none.
         let line = serde_json::to_vec(&FamilyStateReply::State(FamilyState { config, creds }))
-            .map_err(|_| StateFault::NotValid(StateFile::Config))?;
+            .map_err(|_| StateFault::NotValid)?;
         if line.len() > FAMILY_STATE_CAP {
             return Err(StateFault::TooLarge);
         }
@@ -403,7 +374,7 @@ impl FamilyRoot {
         let opened = |dir: Result<OwnedFd, FamilyError>| match dir {
             Ok(dir) => Ok(dir),
             Err(FamilyError::Unknown) => Err(StateFault::CredsMissing),
-            Err(_) => Err(StateFault::NotValid(StateFile::Creds)),
+            Err(_) => Err(StateFault::NotValid),
         };
         let path = self.0.join(family.as_str());
         let family_dir = opened(open_dir(rustix::fs::open(path, DIR_FLAGS, Mode::empty())))?;
@@ -423,7 +394,7 @@ impl FamilyRoot {
             Ok(FileRead::Absent) => return Err(StateFault::CredsMissing),
             Ok(FileRead::NotFile | FileRead::OverCap) | Err(_) => None,
         }
-        .ok_or(StateFault::NotValid(StateFile::Creds))?;
+        .ok_or(StateFault::NotValid)?;
         Ok(FamilyCreds {
             litellm_key: file.litellm_key,
             pep_token: file.pep_token,
@@ -493,16 +464,16 @@ fn cap_u64(cap: usize) -> u64 {
 fn read_config(
     config: BorrowedFd<'_>,
 ) -> Result<Result<(FamilyConfig, Option<SystemTime>), StateFault>, FamilyError> {
-    let not_valid = |file| Ok(Err(StateFault::NotValid(file)));
+    let not_valid = || Ok(Err(StateFault::NotValid));
     let runtime: RuntimeFile = match read_file(config, RUNTIME_FILE, cap_u64(FAMILY_STATE_CAP)) {
         Ok(FileRead::Bytes(bytes)) => match strict_json(&bytes) {
             Some(runtime) => runtime,
-            None => return not_valid(StateFile::Runtime),
+            None => return not_valid(),
         },
-        Ok(_) | Err(_) => return not_valid(StateFile::Runtime),
+        Ok(_) | Err(_) => return not_valid(),
     };
     let Some(sandbox_tools) = grant(&runtime.sandbox_tools) else {
-        return not_valid(StateFile::Runtime);
+        return not_valid();
     };
     let mut budget = FAMILY_STATE_CAP;
     // caregiver always writes instructions.md. An absent one gives no
@@ -510,11 +481,11 @@ fn read_config(
     let instructions = match read_text(config, INSTRUCTIONS_FILE, &mut budget) {
         Ok(Some(text)) => text,
         Ok(None) => String::new(),
-        Err(fault) => return Ok(Err(fault.of(StateFile::Instructions))),
+        Err(fault) => return Ok(Err(fault.into())),
     };
     let skills = match read_skills(config, &mut budget) {
         Ok(skills) => skills,
-        Err(fault) => return Ok(Err(fault.of(StateFile::Skills))),
+        Err(fault) => return Ok(Err(fault.into())),
     };
     let family = FamilyConfig {
         instructions,
@@ -534,12 +505,11 @@ enum TextFault {
     OverBudget,
 }
 
-impl TextFault {
-    /// The fault of the state, for the part `file`.
-    fn of(self, file: StateFile) -> StateFault {
-        match self {
-            Self::NotValid => StateFault::NotValid(file),
-            Self::OverBudget => StateFault::TooLarge,
+impl From<TextFault> for StateFault {
+    fn from(fault: TextFault) -> Self {
+        match fault {
+            TextFault::NotValid => Self::NotValid,
+            TextFault::OverBudget => Self::TooLarge,
         }
     }
 }
