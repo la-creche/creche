@@ -62,9 +62,12 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
 
 ## Tests
 
-- The unit tests check the boot plan, the netlink bytes, the env grammar,
-  the control state machine and the line framing on any OS. One runs the real `playpen/bin/creche-env-write`, so
-  the reader and the script cannot drift.
+- The unit tests check the boot plan, the options of every mount, the
+  netlink bytes, the env grammar, the control state machine and the line
+  framing on any OS. On Linux, one more test checks the kernel flags
+  that each set of options gives. One runs the real
+  `playpen/bin/creche-env-write`, so the reader and the script cannot
+  drift.
 - `tests/kvm_guest_init.rs` boots CH with `$CRECHE_KVM_DIR/guest-init.cpio`
   of `bin/vm-smoke-setup.sh`, the cmdline `console=ttyS0 rdinit=/init`
   (CH62 rule 19), ext4 disks that `tests/common/mod.rs` builds with
@@ -75,10 +78,19 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
 
 ## Known gaps
 
-1. `sync` on the control link gets no answer until plan PR G8. Guest
+1. CONTRACT-QUESTION: CH62 rule 4 fixes only ro and nodev on the root
+   disk, rw, nosuid and nodev on the session disk, and nosuid and nodev
+   on the five tmpfs dirs. No row decides the rest of the mount options.
+   The readings taken, in `src/boot.rs`: the Debian mode of each tmpfs
+   dir (`/tmp` and `/var/tmp` 1777, `/run` and `/var/cache` 0755,
+   `/root` 0700), devtmpfs mode 0755 and `/dev/shm` mode 1777. devtmpfs
+   and devpts get nosuid and noexec. proc and sysfs get nosuid, nodev
+   and noexec. A change edits only the constants `TMPFS`, `DEVICES` and
+   `KERNEL` and the plan test.
+2. `sync` on the control link gets no answer until plan PR G8. Guest
    init writes a console line and changes nothing. With no `synced` the
    vmm takes no snapshot and runs the graceful stop (CH62 rule 23).
-2. CONTRACT-QUESTION: rule 3 of "The vsock JSON links" in
+3. CONTRACT-QUESTION: rule 3 of "The vsock JSON links" in
    `wire/AGENTS.md` names the check `strict` of the vmm crate as the
    strict reader. Guest init may call creche-wire only. The reading
    taken: the typed serde reader is the strict reader of the control

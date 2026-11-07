@@ -47,6 +47,11 @@ const SESSION_DISK: &str = "/dev/vdb";
 /// The tmpfs mounts of the new root and the mode of each root dir. tmpfs
 /// gives mode 1777 when no mode is set, so each mount names its mode: the
 /// modes of these dirs in Debian.
+///
+/// CONTRACT-QUESTION: CH62 rule 4 names these five dirs, and Q54-4 rec. A
+/// makes them nosuid and nodev. No row names their modes, or the modes of
+/// `/dev` (0755) and `/dev/shm` (1777). The reading taken: the Debian mode
+/// of each dir. A change edits only the mode strings.
 const TMPFS: [(&str, &CStr); 5] = [
     ("/tmp", c"mode=1777"),
     ("/run", c"mode=0755"),
@@ -65,6 +70,11 @@ pub struct Options {
 }
 
 /// devtmpfs and devpts: their nodes are devices, so no nodev.
+///
+/// CONTRACT-QUESTION: no row decides the flags of the device mounts. The
+/// reading taken: nosuid and noexec, as Debian mounts `/dev` and
+/// `/dev/pts`, since no program runs from them. A change edits only this
+/// constant.
 const DEVICES: Options = Options {
     read_only: false,
     nosuid: true,
@@ -73,6 +83,10 @@ const DEVICES: Options = Options {
 };
 
 /// proc and sysfs.
+///
+/// CONTRACT-QUESTION: no row decides the flags of the kernel mounts. The
+/// reading taken: nosuid, nodev and noexec, as Debian mounts `/proc` and
+/// `/sys`. A change edits only this constant.
 const KERNEL: Options = Options {
     read_only: false,
     nosuid: true,
@@ -419,6 +433,47 @@ mod tests {
                 Step::LoopbackUp,
             ]
         );
+    }
+
+    /// The flags and the data of every mount (CH62 rule 4, and the
+    /// CONTRACT-QUESTION readings on `TMPFS`, `DEVICES` and `KERNEL`).
+    #[test]
+    fn the_plan_gives_each_mount_its_options() {
+        let expected = [
+            ("/dev", DEVICES, Some(c"mode=0755")),
+            ("/dev/pts", DEVICES, None),
+            ("/dev/shm", WRITABLE, Some(c"mode=1777")),
+            ("root", READ_ONLY, None),
+            ("session", WRITABLE, None),
+            ("/tmp", WRITABLE, Some(c"mode=1777")),
+            ("/run", WRITABLE, Some(c"mode=0755")),
+            ("/root", WRITABLE, Some(c"mode=0700")),
+            ("/var/cache", WRITABLE, Some(c"mode=0755")),
+            ("/var/tmp", WRITABLE, Some(c"mode=1777")),
+            ("/proc", KERNEL, None),
+            ("/sys", KERNEL, None),
+        ];
+        let got: Vec<_> = mounts()
+            .into_iter()
+            .map(|mount| (mount.name, mount.options, mount.data))
+            .collect();
+        assert_eq!(got, expected);
+    }
+
+    /// The kernel flags of each set of options. `flags` is the only path
+    /// from the plan to `mount(2)`, so this pins what reaches the kernel.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn each_set_of_options_gives_its_kernel_flags() {
+        use rustix::mount::MountFlags;
+
+        assert_eq!(flags(READ_ONLY), MountFlags::RDONLY | MountFlags::NODEV);
+        assert_eq!(flags(WRITABLE), MountFlags::NOSUID | MountFlags::NODEV);
+        assert_eq!(
+            flags(KERNEL),
+            MountFlags::NOSUID | MountFlags::NODEV | MountFlags::NOEXEC
+        );
+        assert_eq!(flags(DEVICES), MountFlags::NOSUID | MountFlags::NOEXEC);
     }
 
     #[test]
