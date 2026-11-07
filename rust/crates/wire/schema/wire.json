@@ -211,6 +211,200 @@
       "pattern": "^auto-[0-9A-HJKMNP-TV-Z]{26}$",
       "type": "string"
     },
+    "CheckAllowed": {
+      "additionalProperties": false,
+      "description": "The reply of a check that allows the target. It names each address that\nthe check judged, in the order of the resolver. The proxy connects only\nto these (decision CH6-4).",
+      "properties": {
+        "addresses": {
+          "description": "The public addresses of the name. An IPv4-mapped IPv6 address is\nwritten as its IPv4 address.",
+          "items": {
+            "$ref": "#/$defs/IpAddress"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "addresses"
+      ],
+      "type": "object"
+    },
+    "CheckError": {
+      "description": "The error of the route `check`. It holds the shared codes only: an\nunknown family has an empty list, and each target gets a verdict.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "No route has this path.",
+          "properties": {
+            "code": {
+              "const": "no_route",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The route has this path, but the method is not `POST`.",
+          "properties": {
+            "code": {
+              "const": "bad_method",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The `Content-Type` is not `application/json`.",
+          "properties": {
+            "code": {
+              "const": "bad_content_type",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The body is over the cap.",
+          "properties": {
+            "code": {
+              "const": "too_large",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The body is not strict JSON.",
+          "properties": {
+            "code": {
+              "const": "not_json",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The body is JSON, but not the request type of the route.",
+          "properties": {
+            "code": {
+              "const": "not_valid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The vmm failed after it took the request. The vmm logs\nthe details.",
+          "properties": {
+            "code": {
+              "const": "internal",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "CheckRefused": {
+      "additionalProperties": false,
+      "description": "The reply of a check that refuses the target.",
+      "properties": {
+        "reason": {
+          "description": "Why.",
+          "enum": [
+            "bad_target",
+            "ip_literal",
+            "not_listed",
+            "not_public",
+            "no_address"
+          ],
+          "title": "CheckReason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "type": "object"
+    },
+    "CheckReply": {
+      "description": "The verdict of the vmm on one target: the reply of the route `check`\nand of the one egress decision that the proxy uses too (decisions\nCH6-3, CH69 rule 2). A refusal is a reply, not a route error. On the\nwire the variant name is the one key of an object, and each variant has\na `title` for its class name.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "The family may reach the target at these addresses.",
+          "properties": {
+            "allowed": {
+              "$ref": "#/$defs/CheckAllowed"
+            }
+          },
+          "required": [
+            "allowed"
+          ],
+          "title": "CheckAllowedReply",
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The family may not reach the target.",
+          "properties": {
+            "refused": {
+              "$ref": "#/$defs/CheckRefused"
+            }
+          },
+          "required": [
+            "refused"
+          ],
+          "title": "CheckRefusedReply",
+          "type": "object"
+        }
+      ]
+    },
+    "CheckRequest": {
+      "additionalProperties": false,
+      "description": "What a client sends to ask the vmm whether a family may reach a target\n(decisions CH6-3, CH69 rule 1): the request of the route `check`.",
+      "properties": {
+        "family": {
+          "$ref": "#/$defs/FamilyName",
+          "description": "The family whose allowlist the vmm reads. A family the vmm does not\nknow has an empty list."
+        },
+        "target": {
+          "description": "The target as `host:port`, the form of a CONNECT target. Any text\nreads, and the vmm answers a bad one with `bad_target` or\n`ip_literal`, as the proxy refuses it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "family",
+        "target"
+      ],
+      "type": "object"
+    },
     "ConfigMissing": {
       "additionalProperties": false,
       "description": "The reply of a pull when `config/` is absent. It carries nothing.",
@@ -712,6 +906,28 @@
       "description": "The reply of the drop route. It carries nothing: the vmm sends it after\nthe target has no VM, no snapshot, no session disk and no row.\n\nIt is a type of its own so that the generated Python model is a class\nwith no field. An inline empty object generates a `dict` with lax keys.",
       "type": "object"
     },
+    "EgressHost": {
+      "additionalProperties": false,
+      "description": "One entry of the allowlist file: a host name and its port (decision\nCH6-4). caregiver writes a bare host of the family file with the port\n443 (decision CH69 rule 5).",
+      "properties": {
+        "host": {
+          "$ref": "#/$defs/HostName",
+          "description": "The host name, in lower case."
+        },
+        "port": {
+          "description": "The port: 1 to 65535.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "host",
+        "port"
+      ],
+      "type": "object"
+    },
     "FacadeExited": {
       "additionalProperties": false,
       "description": "A facade that exited: `waitpid` reported it gone, and guest init did not\nstart the next one yet (decision CH19 rule 1). No turn runs.\n\nEach key is required. `last_turn_end` reads with `Option::deserialize`,\nso a missing key is refused.",
@@ -942,6 +1158,23 @@
       ],
       "type": "object"
     },
+    "FamilyEgress": {
+      "additionalProperties": false,
+      "description": "The egress allowlist of one family: the file `FAMILY_EGRESS_FILE`\n(decisions CH6-4, CH69 rules 3 and 5). caregiver writes it from the\n`egress` list of the family file, with each host in lower case and an\nexplicit port, sorted and with no entry twice. The vmm reads it on each\ncheck and each CONNECT. The planes never enter it (decision CH6-2).\n\n`family/grammar.py` stays the authority for the host form (decision\nCH23 rule 5). `wire/tests/test_wire_grammar.py` holds the pattern of\n`HostName` equal to it. No route reaches the type, so it needs no new\n`HOST_API_PROTOCOL` (decision CH33 rule 8).",
+      "properties": {
+        "hosts": {
+          "description": "The allowed hosts. An empty list allows no egress.",
+          "items": {
+            "$ref": "#/$defs/EgressHost"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "hosts"
+      ],
+      "type": "object"
+    },
     "FamilyMemoryMib": {
       "description": "The guest RAM of the family VM in MiB: `sandbox.memory` of the\nfamily file as `memory_mb` of `family/grammar.py` reads it, which\ncounts `1g` as 1024. The range is `MEMORY_MIN_MB` to\n`MEMORY_MAX_MB` there. The scope gets a memory cap above it\n(decision CH8-5).",
       "format": "uint64",
@@ -1138,6 +1371,16 @@
           "type": "object"
         }
       ]
+    },
+    "HostName": {
+      "description": "The host name of one entry of the allowlist file (decisions CH6-4,\nCH69 rule 5). caregiver writes the host of the family file in lower\ncase, so the vmm compares two names byte for byte.",
+      "pattern": "^([a-z0-9]+(-+[a-z0-9]+)*(\\.[a-z0-9]+(-+[a-z0-9]+)*){0,2}|[a-z0-9]+(-+[a-z0-9]+)*(\\.[a-z0-9]+(-+[a-z0-9]+)*){4,}|([a-z0-9]+(-+[a-z0-9]+)*\\.)*([0-9]{4,}|[0-9]*[a-z][a-z0-9]*|[a-z0-9]+(-+[a-z0-9]+)+)(\\.[a-z0-9]+(-+[a-z0-9]+)*)*)$",
+      "type": "string"
+    },
+    "IpAddress": {
+      "description": "An IP address on the wire, in the one text of `ip_address_text`. A\nreader refuses each other text of the address, so the Rust type and the\ngenerated models read the same texts.",
+      "pattern": "^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}|[0-9a-f]{4}(:[0-9a-f]{4}){7})$",
+      "type": "string"
     },
     "JobId": {
       "description": "The id that attendance gives a thin job of the delegate door:\n`job-<ulid>` (contract 02 §2 and §12). Contract 02 calls it a session\nid. The `SessionId` of the job's row on the host session list is a\nseparate value.",
@@ -1699,7 +1942,7 @@
       "reply": "ProtocolMismatch",
       "status": 412
     },
-    "protocol": 1,
+    "protocol": 2,
     "routes": {
       "acp": {
         "error": "AcpError",
@@ -1721,6 +1964,21 @@
           "upgrade_required": 426
         },
         "token": "creche-acp"
+      },
+      "check": {
+        "error": "CheckError",
+        "kind": "json",
+        "reply": "CheckReply",
+        "request": "CheckRequest",
+        "statuses": {
+          "bad_content_type": 415,
+          "bad_method": 405,
+          "internal": 500,
+          "no_route": 404,
+          "not_json": 400,
+          "not_valid": 400,
+          "too_large": 413
+        }
       },
       "create": {
         "error": "CreateError",

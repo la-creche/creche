@@ -3,7 +3,8 @@
 //! init, caregiver and attendance.
 
 use std::fmt;
-use std::num::NonZeroU32;
+use std::net::IpAddr;
+use std::num::{NonZeroU16, NonZeroU32};
 use std::str::FromStr;
 
 use serde::de::value::MapAccessDeserializer;
@@ -23,10 +24,10 @@ mod vectors;
 pub use per_flavor::PerFlavor;
 pub use ports::{GUEST_INIT_PROTOCOL, GuestPort, HostPort};
 pub use routes::{
-    AcpError, AcpRoute, Body, CreateError, CreateRoute, DROP_CLIENT_TIMEOUT, DROP_SIGTERM_GRACE,
-    DROP_STOP_WAIT, DropError, DropRoute, HOST_API_BODY_CAP, HOST_API_HEADER, HOST_API_PROTOCOL,
-    JsonRoute, ListError, ListRoute, MISMATCH_STATUS, ProtocolMismatch, RouteError, SHARED_CODES,
-    Serve, ServeUpgrade, UpgradeRoute,
+    AcpError, AcpRoute, Body, CheckError, CheckRoute, CreateError, CreateRoute,
+    DROP_CLIENT_TIMEOUT, DROP_SIGTERM_GRACE, DROP_STOP_WAIT, DropError, DropRoute,
+    HOST_API_BODY_CAP, HOST_API_HEADER, HOST_API_PROTOCOL, JsonRoute, ListError, ListRoute,
+    MISMATCH_STATUS, ProtocolMismatch, RouteError, SHARED_CODES, Serve, ServeUpgrade, UpgradeRoute,
 };
 pub use strict_json::strict;
 
@@ -1731,6 +1732,241 @@ pub struct FamilyShape {
 }
 
 object_only!(FamilyShape);
+
+/// The name of the egress allowlist file of a family: `egress.json` in the
+/// family dir, beside `config/` (decisions CH6-4, CH69 rule 3). caregiver
+/// writes it, and the vmm reads it. An absent file means no egress.
+pub const FAMILY_EGRESS_FILE: &str = "egress.json";
+
+/// Whether `label` is one label of a host name: `_HOSTNAME` of
+/// `family/grammar.py` in lower case. A lowercase letter or digit, then
+/// lowercase letters, digits or hyphens, and a letter or digit last.
+fn is_host_label(label: &str) -> bool {
+    !label.is_empty()
+        && !label.starts_with('-')
+        && !label.ends_with('-')
+        && label
+            .bytes()
+            .all(|byte| matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'-'))
+}
+
+/// Whether `text` is a host name of the allowlist file: the labels of
+/// `egress_problem` of `family/grammar.py` in lower case, one dot apart. So
+/// it refuses `*`, a trailing dot, upper case and the IPv4 literal of the
+/// grammar: four labels of 1 to 3 digits (decision CH6-4).
+fn is_host_name(text: &str) -> bool {
+    let labels: Vec<&str> = text.split('.').collect();
+    let dotted_quad = labels.len() == 4
+        && labels.iter().all(|label| {
+            (1..=3).contains(&label.len()) && label.bytes().all(|b| b.is_ascii_digit())
+        });
+
+    labels.iter().all(|label| is_host_label(label)) && !dotted_quad
+}
+
+/// The rule of `is_host_name` as a regular expression, for the JSON Schema.
+/// The schema has no look-ahead, so the pattern spells the names that are
+/// no IPv4 literal: 1 to 3 labels, 5 or more labels, or a label that is not
+/// 1 to 3 digits. `wire/tests` holds it equal to the grammar.
+#[cfg(test)]
+fn host_name_pattern() -> String {
+    // A label of `_HOSTNAME` in lower case: runs of letters and digits,
+    // hyphens between them.
+    let label = "[a-z0-9]+(-+[a-z0-9]+)*";
+    // A label that is not 1 to 3 digits: 4 or more digits, a letter with
+    // no hyphen, or a hyphen.
+    let other = "([0-9]{4,}|[0-9]*[a-z][a-z0-9]*|[a-z0-9]+(-+[a-z0-9]+)+)";
+    format!(
+        "^({label}(\\.{label}){{0,2}}|{label}(\\.{label}){{4,}}|({label}\\.)*{other}(\\.{label})*)$"
+    )
+}
+
+checked_text!(
+    /// The host name of one entry of the allowlist file (decisions CH6-4,
+    /// CH69 rule 5). caregiver writes the host of the family file in lower
+    /// case, so the vmm compares two names byte for byte.
+    HostName,
+    is_host_name,
+    "a host name is lowercase labels of letters, digits and inner hyphens, one dot apart, and no IPv4 literal",
+    "pattern" = host_name_pattern()
+);
+
+/// One entry of the allowlist file: a host name and its port (decision
+/// CH6-4). caregiver writes a bare host of the family file with the port
+/// 443 (decision CH69 rule 5).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct EgressHost {
+    /// The host name, in lower case.
+    pub host: HostName,
+    /// The port: 1 to 65535.
+    pub port: NonZeroU16,
+}
+
+object_only!(EgressHost);
+
+/// The egress allowlist of one family: the file `FAMILY_EGRESS_FILE`
+/// (decisions CH6-4, CH69 rules 3 and 5). caregiver writes it from the
+/// `egress` list of the family file, with each host in lower case and an
+/// explicit port, sorted and with no entry twice. The vmm reads it on each
+/// check and each CONNECT. The planes never enter it (decision CH6-2).
+///
+/// `family/grammar.py` stays the authority for the host form (decision
+/// CH23 rule 5). `wire/tests/test_wire_grammar.py` holds the pattern of
+/// `HostName` equal to it. No route reaches the type, so it needs no new
+/// `HOST_API_PROTOCOL` (decision CH33 rule 8).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct FamilyEgress {
+    /// The allowed hosts. An empty list allows no egress.
+    pub hosts: Vec<EgressHost>,
+}
+
+object_only!(FamilyEgress);
+
+/// What a client sends to ask the vmm whether a family may reach a target
+/// (decisions CH6-3, CH69 rule 1): the request of the route `check`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct CheckRequest {
+    /// The family whose allowlist the vmm reads. A family the vmm does not
+    /// know has an empty list.
+    pub family: FamilyName,
+    /// The target as `host:port`, the form of a CONNECT target. Any text
+    /// reads, and the vmm answers a bad one with `bad_target` or
+    /// `ip_literal`, as the proxy refuses it.
+    pub target: String,
+}
+
+object_only!(CheckRequest);
+
+/// Why the vmm refuses a target (decision CH69 rule 2). On the wire it is
+/// the name of a reason, a JSON string. The schema holds it inline in
+/// `CheckRefused`, and its `title` names the generated class. The variants
+/// carry no doc, so the schema is a plain `enum`, as `SystemPrompt` is.
+///
+/// 1. `bad_target`: the target is not `host:port` with a host name and a
+///    port of 1 to 65535.
+/// 2. `ip_literal`: the host is an IP address, not a name (decision
+///    CH6-4).
+/// 3. `not_listed`: the allowlist has no entry of this host and this port.
+/// 4. `not_public`: a record of the name is not a public address
+///    (decisions CH6-4, CH69 rule 8).
+/// 5. `no_address`: the name resolves to no address.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[cfg_attr(test, schemars(inline, title = "CheckReason"))]
+pub enum CheckReason {
+    BadTarget,
+    IpLiteral,
+    NotListed,
+    NotPublic,
+    NoAddress,
+}
+
+/// One octet of an IPv4 address in decimal, with no zero first.
+#[cfg(test)]
+const OCTET: &str = "(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])";
+
+/// The rule of `IpAddress` as a regular expression, for the JSON Schema.
+#[cfg(test)]
+fn ip_address_pattern() -> String {
+    format!("^({OCTET}(\\.{OCTET}){{3}}|[0-9a-f]{{4}}(:[0-9a-f]{{4}}){{7}})$")
+}
+
+/// The one wire text of `address`: an IPv4 address in dotted decimal with
+/// no zero first in an octet, an IPv6 address as 8 groups of 4 lowercase
+/// hex digits. The IPv6 form has no `::`, so a schema pattern checks it
+/// exactly.
+fn ip_address_text(address: IpAddr) -> String {
+    match address {
+        IpAddr::V4(address) => address.to_string(),
+        IpAddr::V6(address) => address
+            .segments()
+            .map(|group| format!("{group:04x}"))
+            .join(":"),
+    }
+}
+
+/// An IP address on the wire, in the one text of `ip_address_text`. A
+/// reader refuses each other text of the address, so the Rust type and the
+/// generated models read the same texts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[cfg_attr(test, schemars(extend("pattern" = ip_address_pattern())))]
+pub struct IpAddress(IpAddr);
+
+impl From<IpAddr> for IpAddress {
+    fn from(address: IpAddr) -> Self {
+        Self(address)
+    }
+}
+
+impl TryFrom<String> for IpAddress {
+    type Error = TextError;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        match text.parse::<IpAddr>() {
+            Ok(address) if ip_address_text(address) == text => Ok(Self(address)),
+            _ => Err(TextError(
+                "an IP address is IPv4 in dotted decimal, or IPv6 as 8 groups of 4 lowercase hex digits",
+            )),
+        }
+    }
+}
+
+impl From<IpAddress> for String {
+    fn from(address: IpAddress) -> Self {
+        ip_address_text(address.0)
+    }
+}
+
+/// The reply of a check that allows the target. It names each address that
+/// the check judged, in the order of the resolver. The proxy connects only
+/// to these (decision CH6-4).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct CheckAllowed {
+    /// The public addresses of the name. An IPv4-mapped IPv6 address is
+    /// written as its IPv4 address.
+    pub addresses: Vec<IpAddress>,
+}
+
+object_only!(CheckAllowed);
+
+/// The reply of a check that refuses the target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct CheckRefused {
+    /// Why.
+    pub reason: CheckReason,
+}
+
+object_only!(CheckRefused);
+
+/// The verdict of the vmm on one target: the reply of the route `check`
+/// and of the one egress decision that the proxy uses too (decisions
+/// CH6-3, CH69 rule 2). A refusal is a reply, not a route error. On the
+/// wire the variant name is the one key of an object, and each variant has
+/// a `title` for its class name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub enum CheckReply {
+    /// The family may reach the target at these addresses.
+    #[cfg_attr(test, schemars(title = "CheckAllowedReply"))]
+    Allowed(CheckAllowed),
+    /// The family may not reach the target.
+    #[cfg_attr(test, schemars(title = "CheckRefusedReply"))]
+    Refused(CheckRefused),
+}
 
 /// A secret text that `$check` accepts. On the wire it is a JSON string with
 /// the schema pattern `$pattern`, and a string that breaks the rule is

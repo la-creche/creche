@@ -11,10 +11,14 @@ use std::time::{Duration, Instant};
 
 use creche_vmm::ServeError;
 use creche_vmm::server::{Stop, run};
+use creche_wire::HOST_API_PROTOCOL;
 use tokio::runtime::Builder;
 
-/// The frozen mismatch reply. Never change it to make a change pass.
-const MISMATCH: &str = r#"{"code":"protocol_mismatch","protocol":1}"#;
+/// The frozen mismatch reply of this protocol. Never change its form to
+/// make a change pass.
+fn mismatch() -> String {
+    format!(r#"{{"code":"protocol_mismatch","protocol":{HOST_API_PROTOCOL}}}"#)
+}
 
 /// Connects once the server has bound the socket.
 fn connect(path: &Path) -> io::Result<UnixStream> {
@@ -57,27 +61,30 @@ fn each_header_form_gets_its_reply() {
     });
 
     let named = |value: &str| format!("creche-host-api-protocol: {value}\r\n");
-    let twice = format!("{}{}", named("1"), named("1"));
+    let protocol = HOST_API_PROTOCOL.to_string();
+    let twice = format!("{}{}", named(&protocol), named(&protocol));
     let forms = [
         String::new(),
-        named("2"),
-        named("01"),
+        named(&(HOST_API_PROTOCOL - 1).to_string()),
+        named(&(HOST_API_PROTOCOL + 1).to_string()),
+        named(&format!("0{protocol}")),
         named("x"),
-        named("1, 1"),
+        named(&format!("{protocol}, {protocol}")),
         twice,
     ];
     for form in forms {
         let (head, body) = answer(&path, &form).unwrap();
         assert!(head.starts_with("HTTP/1.1 412 "), "{form:?}: {head}");
         assert!(head.contains("content-type: application/json"), "{head}");
-        assert_eq!(body, MISMATCH, "{form:?}");
+        assert_eq!(body, mismatch(), "{form:?}");
     }
 
-    // The exact text passes. So does the raw form "  1 ": hyper (httparse)
-    // strips the spaces around a header value (RFC 9110 section 5.5), and
-    // the check reads "1" (decision CH40 rule 3, which amends CH34 rule 1).
-    for value in ["1", "  1 "] {
-        let (head, body) = answer(&path, &named(value)).unwrap();
+    // The exact text passes. So does the raw form with spaces around it:
+    // hyper (httparse) strips the spaces around a header value (RFC 9110
+    // section 5.5), and the check reads the number (decision CH40 rule 3,
+    // which amends CH34 rule 1).
+    for value in [protocol.clone(), format!("  {protocol} ")] {
+        let (head, body) = answer(&path, &named(&value)).unwrap();
         assert!(head.starts_with("HTTP/1.1 404 "), "{value:?}: {head}");
         assert_eq!(body, r#"{"code":"no_route"}"#);
     }
@@ -121,13 +128,14 @@ fn an_idle_connection_holds_up_no_other() {
         .unwrap();
     let mut reply = Vec::new();
     let mut chunk = [0; 512];
-    while !reply.ends_with(MISMATCH.as_bytes()) {
+    while !reply.ends_with(mismatch().as_bytes()) {
         let read = idle.read(&mut chunk).unwrap();
         assert_ne!(read, 0, "the server closed a kept-alive connection");
         reply.extend_from_slice(&chunk[..read]);
     }
 
-    let (head, body) = answer(&path, "creche-host-api-protocol: 1\r\n").unwrap();
+    let header = format!("creche-host-api-protocol: {HOST_API_PROTOCOL}\r\n");
+    let (head, body) = answer(&path, &header).unwrap();
     assert!(head.starts_with("HTTP/1.1 404 "), "{head}");
     assert_eq!(body, r#"{"code":"no_route"}"#);
 

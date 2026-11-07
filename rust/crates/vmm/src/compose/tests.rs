@@ -64,8 +64,11 @@ const PROGRAMS: [(&str, &str); 3] = [
 /// The longest wait of one step.
 const WAIT: Duration = Duration::from_secs(10);
 
-/// The frozen mismatch reply. Never change it to make a change pass.
-const MISMATCH: &str = r#"{"code":"protocol_mismatch","protocol":1}"#;
+/// The frozen mismatch reply of this protocol. Never change its form to
+/// make a change pass.
+fn mismatch() -> String {
+    format!(r#"{{"code":"protocol_mismatch","protocol":{HOST_API_PROTOCOL}}}"#)
+}
 
 /// The kernel, the base disk and the python disk, each with the SHA-256
 /// of its bytes.
@@ -465,8 +468,8 @@ fn serve_lists_refuses_and_stops_on_the_signal() {
     let page: SessionPage = serde_json::from_str(&body).unwrap();
     assert_eq!((page.next, page.rows.len()), (None, 0));
 
-    let bad = format!("{HOST_API_HEADER}: 2\r\n");
-    assert_eq!(ask(&socket, &bad, list), (412, MISMATCH.to_owned()));
+    let bad = format!("{HOST_API_HEADER}: {}\r\n", HOST_API_PROTOCOL + 1);
+    assert_eq!(ask(&socket, &bad, list), (412, mismatch()));
 
     term.send(()).unwrap();
     let ended = runtime.block_on(async { tokio::time::timeout(WAIT, run).await });

@@ -1,6 +1,6 @@
-//! The read of a family's `config/`, its VM shape and its family state in
-//! temp directories (decisions CH5b, CH23, CH31, CH33 rule 3, CH36 G6,
-//! CH43 rule 3, CH62 rule 21). The family state tests copy the fixture
+//! The read of a family's `config/`, its VM shape, its family state and
+//! its egress allowlist in temp directories (decisions CH5b, CH6-4, CH23,
+//! CH31, CH33 rule 3, CH36 G6, CH43 rule 3, CH62 rule 21, CH69 rule 3). The family state tests copy the fixture
 //! family root `fixtures/family`, because no live host writes
 //! `model_live_at` before the cut (decision CH45 rule 2).
 
@@ -14,14 +14,16 @@ use std::thread;
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use creche_vmm_confine::family::{
-    FamilyError, FamilyRoot, READ_TRIES, RETRY_PAUSE, SHAPE_CAP, ShapeFault, StateFault, StateRead,
+    EGRESS_CAP, EgressFault, FamilyError, FamilyRoot, READ_TRIES, RETRY_PAUSE, SHAPE_CAP,
+    ShapeFault, StateFault, StateRead,
 };
 use creche_vmm_store::layout::RootError;
-use creche_wire::{FAMILY_STATE_CAP, FamilyName, FamilyShape, FamilyStateReply};
+use creche_wire::{FAMILY_STATE_CAP, FamilyEgress, FamilyName, FamilyShape, FamilyStateReply};
 use serde_json::{Value, json};
 
 const SHAPE: &str = r#"{"cpus":2,"flavor":"base","memory_mib":2048}"#;
 const BIGGER: &str = r#"{"cpus":4,"flavor":"python","memory_mib":8192}"#;
+const EGRESS: &str = r#"{"hosts":[{"host":"github.com","port":443}]}"#;
 
 // Each helper with `cfg(test)` may unwrap (rust/clippy.toml).
 
@@ -567,4 +569,106 @@ fn a_swapped_config_dir_retries() {
     }
     swapper.join().unwrap();
     assert!(words[0] > 0 && words[1] > 0, "{words:?}");
+}
+
+/// Writes `egress.json` of the family `code`.
+#[cfg(test)]
+fn write_egress(root: &Root, text: &str) -> PathBuf {
+    fs::create_dir_all(root.0.join("code")).unwrap();
+    let path = root.0.join("code/egress.json");
+    fs::write(&path, text).unwrap();
+    path
+}
+
+#[test]
+fn read_egress_reads_the_allowlist() {
+    let root = Root::new("egress");
+    write_egress(&root, EGRESS);
+    let read = root.families().read_egress(&code()).unwrap();
+    assert_eq!(read, serde_json::from_str::<FamilyEgress>(EGRESS).unwrap());
+}
+
+/// An absent family dir and an absent file both allow no egress (decision
+/// CH69 rule 3), with no wait.
+#[test]
+fn read_egress_reads_an_absent_file_as_no_egress() {
+    let root = Root::new("egress-absent");
+    let families = root.families();
+    assert_eq!(families.read_egress(&code()).unwrap().hosts, []);
+    fs::create_dir_all(root.0.join("code/config")).unwrap();
+    assert_eq!(families.read_egress(&code()).unwrap().hosts, []);
+}
+
+#[test]
+fn read_egress_refuses_a_symlink() {
+    let root = Root::new("egress-symlink");
+    let other = root.0.join("other.json");
+    fs::write(&other, EGRESS).unwrap();
+    fs::create_dir_all(root.0.join("code")).unwrap();
+    symlink(&other, root.0.join("code/egress.json")).unwrap();
+    let read = root.families().read_egress(&code());
+    assert!(matches!(read, Err(EgressFault::NotFile)), "{read:?}");
+    fs::remove_file(root.0.join("code/egress.json")).unwrap();
+    fs::create_dir(root.0.join("code/egress.json")).unwrap();
+    let read = root.families().read_egress(&code());
+    assert!(matches!(read, Err(EgressFault::NotFile)), "{read:?}");
+    // A symlinked family dir is refused too, not followed.
+    fs::remove_dir_all(root.0.join("code")).unwrap();
+    fs::create_dir_all(root.0.join("real")).unwrap();
+    fs::write(root.0.join("real/egress.json"), EGRESS).unwrap();
+    symlink(root.0.join("real"), root.0.join("code")).unwrap();
+    let read = root.families().read_egress(&code());
+    assert!(matches!(read, Err(EgressFault::NotDir)), "{read:?}");
+}
+
+/// A FIFO with no writer: only `O_NONBLOCK` keeps the open from waiting.
+#[test]
+fn read_egress_refuses_a_fifo_at_once() {
+    let root = Root::new("egress-fifo");
+    fs::create_dir_all(root.0.join("code")).unwrap();
+    let made = Command::new("mkfifo")
+        .arg(root.0.join("code/egress.json"))
+        .status()
+        .unwrap();
+    assert!(made.success());
+    let families = root.families();
+    let (sent, got) = mpsc::channel();
+    thread::spawn(move || sent.send(families.read_egress(&code())));
+    let read = got.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(matches!(read, Err(EgressFault::NotFile)), "{read:?}");
+}
+
+#[test]
+fn read_egress_refuses_an_unknown_key() {
+    let root = Root::new("egress-key");
+    let not_valid = [
+        r#"{"hosts":[],"repos":[]}"#,
+        r#"{"hosts":[{"host":"github.com","port":443,"scheme":"https"}]}"#,
+        r#"{"hosts":[],"hosts":[]}"#,
+        r#"{"hosts":[{"host":"GitHub.com","port":443}]}"#,
+        r#"{"hosts":[{"host":"1.2.3.4","port":443}]}"#,
+        r#"{"hosts":["github.com"]}"#,
+        r#"[[]]"#,
+        "",
+    ];
+    for text in not_valid {
+        write_egress(&root, text);
+        let read = root.families().read_egress(&code());
+        assert!(
+            matches!(read, Err(EgressFault::NotValid)),
+            "{text}: {read:?}"
+        );
+    }
+}
+
+#[test]
+fn read_egress_refuses_past_its_cap() {
+    let root = Root::new("egress-cap");
+    let cap = usize::try_from(EGRESS_CAP).unwrap();
+    let at_cap = format!("{EGRESS}{}", " ".repeat(cap - EGRESS.len()));
+    write_egress(&root, &at_cap);
+    assert!(root.families().read_egress(&code()).is_ok());
+    write_egress(&root, &format!("{at_cap} "));
+    let read = root.families().read_egress(&code());
+    assert!(matches!(read, Err(EgressFault::TooLarge)), "{read:?}");
 }

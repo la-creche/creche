@@ -30,11 +30,11 @@ use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde_json::{Map, Value, json};
 
 use super::{
-    AutoJobId, ControlCommand, ControlHello, ControlReady, DelegationId, FamilyConfig, FamilyShape,
-    FamilyStatePull, FamilyStateReply, GuestEvent, HOST_API_BODY_CAP, HOST_API_HEADER,
-    HOST_API_PROTOCOL, JS_INTEGER_MAX, JobId, JsonRoute, MISMATCH_STATUS, ProtocolMismatch,
-    RouteError, SHARED_CODES, SessionId, SessionOrigin, TurnEvent, UnixMillis, UpgradeRoute,
-    routes::TableRoute,
+    AutoJobId, ControlCommand, ControlHello, ControlReady, DelegationId, FamilyConfig,
+    FamilyEgress, FamilyShape, FamilyStatePull, FamilyStateReply, GuestEvent, HOST_API_BODY_CAP,
+    HOST_API_HEADER, HOST_API_PROTOCOL, JS_INTEGER_MAX, JobId, JsonRoute, MISMATCH_STATUS,
+    ProtocolMismatch, RouteError, SHARED_CODES, SessionId, SessionOrigin, TurnEvent, UnixMillis,
+    UpgradeRoute, routes::TableRoute,
 };
 
 /// The variable that makes the test write the file instead of checking it.
@@ -102,6 +102,7 @@ pub(super) fn wire_schema() -> Value {
     let _ = generator.subschema_for::<ControlCommand>();
     let _ = generator.subschema_for::<GuestEvent>();
     let _ = generator.subschema_for::<FamilyShape>();
+    let _ = generator.subschema_for::<FamilyEgress>();
     let routes = route_table(&mut generator);
 
     json!({

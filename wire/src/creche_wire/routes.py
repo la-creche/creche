@@ -8,6 +8,9 @@ from typing import Final
 
 from .models import (
     AcpError,
+    CheckError,
+    CheckReply,
+    CheckRequest,
     CreateError,
     CreateSession,
     DropError,
@@ -21,7 +24,7 @@ from .models import (
 )
 from .route import JsonRoute, UpgradeRoute
 
-HOST_API_PROTOCOL: Final = 1
+HOST_API_PROTOCOL: Final = 2
 HOST_API_HEADER: Final = "creche-host-api-protocol"
 HOST_API_BODY_CAP: Final = 1048576
 MISMATCH_STATUS: Final = 412
@@ -31,6 +34,13 @@ ACP: Final = UpgradeRoute(
     token="creche-acp",
     request=OpenAcp,
     error=AcpError,
+)
+
+CHECK: Final = JsonRoute(
+    name="check",
+    request=CheckRequest,
+    reply=CheckReply,
+    error=CheckError,
 )
 
 CREATE: Final = JsonRoute(

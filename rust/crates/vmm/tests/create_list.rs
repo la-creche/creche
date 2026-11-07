@@ -19,9 +19,10 @@ use creche_vmm_confine::family::FamilyRoot;
 use creche_vmm_store::layout::StateRoot;
 use creche_vmm_store::rows::{PAGE_ROWS, Rows};
 use creche_wire::{
-    AcpError, AcpRoute, CreateError, CreateRoute, CreateSession, DropError, DropRoute, DropTarget,
-    Dropped, HOST_API_BODY_CAP, HOST_API_HEADER, HOST_API_PROTOCOL, ListError, ListRoute,
-    ListSessions, OpenAcp, Serve, ServeUpgrade, SessionPage, SessionRow,
+    AcpError, AcpRoute, CheckError, CheckReply, CheckRequest, CheckRoute, CreateError, CreateRoute,
+    CreateSession, DropError, DropRoute, DropTarget, Dropped, HOST_API_BODY_CAP, HOST_API_HEADER,
+    HOST_API_PROTOCOL, ListError, ListRoute, ListSessions, OpenAcp, Serve, ServeUpgrade,
+    SessionPage, SessionRow,
 };
 use serde_json::{Value, json};
 use tokio::runtime::{Builder, Runtime};
@@ -55,6 +56,12 @@ mod fake {
     impl Serve<DropRoute> for Set {
         async fn serve(&self, _: DropTarget) -> Result<Dropped, DropError> {
             Err(DropError::Internal {})
+        }
+    }
+
+    impl Serve<CheckRoute> for Set {
+        async fn serve(&self, _: CheckRequest) -> Result<CheckReply, CheckError> {
+            Err(CheckError::Internal {})
         }
     }
 

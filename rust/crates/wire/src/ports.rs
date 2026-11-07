@@ -60,7 +60,8 @@ port_enum! {
         Chaperone = 1102,
         /// The git mirror.
         GitMirror = 1103,
-        /// The egress proxy. Only the code and creche families use it.
+        /// The egress proxy, for families with a non-empty egress list
+        /// (today code and creche, decision CH49 rule 3).
         Egress = 1104,
     }
 }
