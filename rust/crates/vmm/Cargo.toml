@@ -30,7 +30,8 @@ serde_json.workspace = true
 # (L19, decisions CH19 (4) and CH26 rule 2). It adds signal-hook-registry
 # to the lock. `process` for the `git upload-pack` child of the 1103
 # mirror serve: an async child with pipes and kill_on_drop (CH46 rule 4,
-# CH67 rule 9). It adds no crate to the lock (CH9-1).
+# CH67 rule 9). It adds the `bytes` edge to the tokio lock entry and no
+# crate (CH9-1).
 tokio = { workspace = true, features = ["net", "process", "signal", "sync", "time"] }
 
 # `test-util` for paused time: a stop test checks the 30 s and 5 s waits
