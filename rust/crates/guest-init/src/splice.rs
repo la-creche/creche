@@ -19,6 +19,8 @@
 // reset. No row decides an EOF. The plan entry G6 closes both on an EOF
 // too, and this splice does so. The vmm relay instead shuts down only the
 // write half of the other stream on an EOF (vmm/AGENTS.md, `AcpRelay`).
+// The host rows of plan entry G7 use this splice too, so a guest client
+// that shuts down its write half after a request loses the answer.
 
 use std::fs::File;
 use std::io::{self, Read as _, Write as _};

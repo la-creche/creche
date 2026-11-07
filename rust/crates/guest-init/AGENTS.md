@@ -33,8 +33,11 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
 - Then `src/control.rs` listens on AF_VSOCK port 1200 of any CID through
   `nix` (CH13, CH14, CH62 rule 1), and `src/local_link.rs` listens on
   the Unix socket `creche_wire::guest::LOCAL_LINK_SOCKET`, mode 0600
-  (CH62 rule 10), and `src/bridge.rs` listens on AF_VSOCK port 1201
-  (CH13). Then `run()` writes `guest-init: up`. A listen fault
+  (CH62 rule 10), and on the family-state socket
+  `creche_wire::guest::FAMILY_STATE_SOCKET`, mode 0600 too (CH62 rule
+  13). `src/bridge.rs` listens on AF_VSOCK port 1201 (CH13) and on TCP
+  guest 127.0.0.1:4000 and :8300 (CH6-2). Then `run()` writes
+  `guest-init: up`. A listen fault
   powers off. One std thread accepts on each listener, one reads each
   link, and the main thread owns the state and every write (CH62 rule
   2).
@@ -104,6 +107,28 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   writes `acp link <n> open`, `relay connected` or `relay dial failed:
   <error>`, then `closed`. A failed accept writes `acp accept failed:
   <error>` and powers off, as a failed accept of 1200 does.
+- The host rows (`src/bridge.rs`, CH6-2, CH14, CH62 rules 13 and 14):
+  the loopback rows take each link of guest 127.0.0.1:4000 (`litellm`)
+  and :8300 (`chaperone`) from any guest process, with no allowlist.
+  The family-state row takes each link of the family-state socket whose
+  `SO_PEERCRED` pid is the live facade, in any facade state with a pid
+  and after its local link opened too. The accept thread asks the
+  control loop, which owns the facade state. It closes each other link
+  at once and writes `family-state peer pid <n> refused: not the
+  facade`. Each kept link dials vsock CID 2 fresh: host port 1101, 1102
+  or 1100. A failed dial closes the guest side at once, and nothing
+  retries: the next guest connection dials fresh, which is the reading
+  of "the bridge reconnects after a restore" (CH6-2, CH62 rule 14). The
+  splice reads and rewrites no byte, so the `Host` header stays valid
+  (fact 46), and guest init reads none of the pull lines (CH62 rule 13).
+  Each row holds at most 64 open links. Each link writes `<row> link <n>
+  open`, `host connected` or `host dial failed: <error>`, then `closed`.
+  A failed accept writes `<row> accept failed: <error>` and powers off.
+- The row table (CH62 rule 15): before the first deploy, a new bridge
+  row needs no `GUEST_INIT_PROTOCOL` bump. After it, any change of the
+  row table bumps it, because a restored old guest lacks the new
+  listener. Phase 7 adds 3128 to 1104 and 9418 to 1103 as loopback rows
+  (CH46 rules 1 and 4).
 - `src/splice.rs` copies the bytes of one link both ways on two std
   threads and reads none of them. An EOF, a failed read or a failed
   write in either direction shuts both sockets down in both directions,
@@ -126,7 +151,8 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   control link <n> sync failed: <error>`, sends no `synced` and keeps
   the link (CH65 rule 3).
 - One thread, the main one, reads the event channel, runs the one timer
-  of the supervisor and holds no sender. The two accept threads, the
+  of the supervisor and holds no sender. The 1200, local link and
+  family-state accept threads, the
   reaper thread and each reader thread hold one, so the channel ends
   only when all of them are gone. Then guest init writes
   `guest-init: control events ended` and powers off.
@@ -170,15 +196,22 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   the local link, closes it and stays up. With the mode `relay`, it
   listens on `RELAY_SOCKET` 2 s after its start, answers each line
   `ping` with `pong <pid>` and writes `standin: relay link ended` at
-  the end of each link. Each other start stays up until a signal ends
-  it.
+  the end of each link. A line `pull` on such a link makes it send one
+  `FamilyStatePull` on the family-state socket and one HTTP GET to each
+  plane, then answer `pulled <pid> <reply key> <status 4000> <status
+  8300> <pull ms>`, with `closed` for a link that ended with no answer.
+  With the mode `markers`, it writes three marker files on the session
+  disk and `standin: markers written`, then stays up. Each other start
+  stays up until a signal ends it.
 
 ## Tests
 
 - The unit tests check the boot plan, the options of every mount, the
   netlink bytes, the env grammar, the control state machine, the
   supervisor state machine, the local link rules, the line framing, the
-  splice, the relay dial bound and the row cap on any OS. On Linux, one more test checks the kernel flags
+  splice, the relay dial bound, the row cap, the row table, the closed
+  guest side of a failed dial and the facade check of the family-state
+  row on any OS. On Linux, one more test checks the kernel flags
   that each set of options gives. One runs the real
   `playpen/bin/creche-env-write`, so the reader and the script cannot
   drift.
@@ -189,14 +222,24 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   `$CRECHE_KVM_DIR/standin_facade` at `FACADE_PROGRAM`. The tests dial
   the guest ports themselves: `CONNECT <port>` on the hybrid vsock
   socket of CH. On 1200 they speak the creche-wire types, and on 1201
-  the `ping` lines of the stand-in. A test reads a console line that follows a
+  the `ping` and `pull` lines of the stand-in. For the host rows, a test
+  listens on `vsock.sock_<port>` itself, where CH joins each guest dial
+  of that host port. A test reads a console line that follows a
   link write with `wait_for_line`, because the guest writes that line
   after the link write and the tty can buffer it. After a stop, `dumpe2fs -h` and
-  `e2fsck -fn` read the session disk. Only the `kvm` job runs them.
+  `e2fsck -fn` read the session disk. After a sync and a SIGKILL of CH,
+  `e2fsck -fy` replays the journal, as the next mount would, and
+  `debugfs -R cat` reads each marker. Only the `kvm` job runs them.
 
 ## Known gaps
 
 - CONTRACT-QUESTION (splice EOF): CH62 rule 14 closes both halves of a
   reset link. No row decides an EOF. The splice follows plan entry G6
   and closes both halves on an EOF too, while the vmm `AcpRelay` shuts
-  down only the write half of the other stream on an EOF.
+  down only the write half of the other stream on an EOF. From G7 on the
+  host rows use the same splice, so a guest client that shuts down its
+  write half after a request loses the answer.
+- CONTRACT-QUESTION (family-state socket mode): no row decides the mode
+  of `FAMILY_STATE_SOCKET`. Guest init gives it 0600, the mode of the
+  local link (CH62 rule 10). The facade runs as root (CH62 rule 4), so
+  the pid check guards the socket in any mode (CH62 rule 13).
