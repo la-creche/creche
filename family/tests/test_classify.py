@@ -191,7 +191,7 @@ def test_a_lowered_inflight_cap_narrows() -> None:
     assert change_for(classify(old, new), "max_inflight_delegations").direction is Direction.REMOVE
 
 
-# --- config: egress, skills, shell, sandbox_tools (contract 01 §3.7-3.8) -----
+# --- config: egress, repos, skills, shell, sandbox_tools (contract 01 §3.7-3.8)
 
 
 def test_egress_added() -> None:
@@ -204,6 +204,31 @@ def test_egress_added() -> None:
 def test_egress_removed() -> None:
     old, new = built("chat", {"egress": ["github.com"]}, {"egress": []})
     assert change_for(classify(old, new), "egress").direction is Direction.REMOVE
+
+
+@pytest.mark.parametrize(
+    ("before", "after", "expect"),
+    [
+        ([], ["lacreche"], Direction.ADD),
+        (["lacreche", "agent-mcp"], ["lacreche"], Direction.REMOVE),
+        (["lacreche"], ["agent-mcp"], Direction.BOTH),
+    ],
+)
+def test_a_repos_change_is_a_live_write_config(
+    before: list[str], after: list[str], expect: Direction
+) -> None:
+    """Contract 01 §6: caregiver rewrites `repos.json`, and no sandbox is
+    replaced."""
+    old, new = built("chat", {"repos": before}, {"repos": after})
+    change = change_for(classify(old, new), "repos")
+    assert change.landing is Landing.LIVE
+    assert change.direction is expect
+    assert change.step is Step.WRITE_CONFIG
+
+
+def test_reordered_repos_are_no_change() -> None:
+    old, new = built("chat", {"repos": ["a", "b"]}, {"repos": ["b", "a"]})
+    assert not classify(old, new).changed
 
 
 def test_skills_added() -> None:

@@ -70,6 +70,10 @@ CREDS_FILE: Final = "creds.json"
 #: `FAMILY_EGRESS_FILE` of `creche-wire` in Rust spells the same name, and
 #: the vmm reads it (decision CH69 rule 3).
 EGRESS_FILE: Final = "egress.json"
+#: Contract 01 §6.1.1: the clone list of the vmm mirror, beside
+#: `egress.json`. `FAMILY_REPOS_FILE` of `creche-wire` in Rust spells the
+#: same name, and the vmm reads it (decision CH69 rule 4).
+REPOS_FILE: Final = "repos.json"
 #: Contract 03 §7.1's file, one per sandbox: `supervisor-<family>-s<N>.env`.
 PLAYPEN_ENV_PREFIX: Final = "supervisor-"
 PLAYPEN_ENV_SUFFIX: Final = ".env"
@@ -118,6 +122,12 @@ def egress_path(root: Path, family: str) -> Path:
     """Contract 01 §6.1.1: `egress.json` in the family dir, beside
     `config/` and never inside it (decision CH69 rule 3)."""
     return family_dir(root, family) / EGRESS_FILE
+
+
+def repos_path(root: Path, family: str) -> Path:
+    """Contract 01 §6.1.1: `repos.json` in the family dir, beside
+    `egress.json` and outside `config/` (decision CH69 rules 4 and 6)."""
+    return family_dir(root, family) / REPOS_FILE
 
 
 def control_root(root: Path, family: str) -> Path:
