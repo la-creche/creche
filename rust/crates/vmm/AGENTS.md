@@ -756,10 +756,13 @@ fault (decision CH69 rule 24).
 
 `tests/egress_proxy.rs` runs the proxy on real Unix sockets over a
 scratch family root: an IP literal, `check` against CONNECT for one
-table of targets, a list that does not read, 405, 400, the head wait
-with paused tokio time, a removal, the fields of each line, the
-rollover, a rollover whose open failed after its rename, the link cap
-and the fd need. No test reaches the network.
+table of targets with `no_address` among them, a list that does not
+read, 405, 400, a head that two reads split, a head of exactly
+`HEAD_CAP`, the head wait with paused tokio time, a removal, the fields
+of each line, the rollover, a rollover whose open failed after its
+rename, the link cap, `LINK_CAP` + 2 links one after another, the drop
+of `Server` (a cut link and its line, then a refused dial) and the fd
+need. No test reaches the network.
 The kvm job proves an allowed tunnel (plan PR E4, decision CH69 rule
 22). `tests/start.rs` proves the bound set with and without a list, a
 list that does not read, the bind at a restore, and an extra 1104

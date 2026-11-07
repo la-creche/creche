@@ -191,12 +191,20 @@ fn a_connect_to_an_ip_literal_is_refused() {
 
 /// The phase 7 proof line: for each target the verdict of `check` is the
 /// verdict of a CONNECT, and the log names the reason of `check`
-/// (decisions CH6-3, CH69 rule 2, CH70 rule 2). The last row is a host
-/// that the list no longer holds.
+/// (decisions CH6-3, CH69 rules 2 and 9, CH70 rule 2). The sixth row is
+/// a host that the list no longer holds. The last row is a listed name
+/// with no address, which gets 502.
 #[test]
 fn check_agrees_with_the_proxy() {
     let scratch = Scratch::threaded("agree");
     let _server = scratch.serve();
+    // The 64-letter label is over the 63 of a DNS label, and RFC 6761
+    // reserves `.invalid`, so the lookup fails with no network.
+    let host = format!("{}.invalid", "a".repeat(64));
+    let (invalid, invalid_list) = (
+        format!("{host}:443"),
+        format!(r#"{{"hosts":[{{"host":"{host}","port":443}}]}}"#),
+    );
     let rows = [
         (EGRESS, "140.82.112.3:443", 403),
         (EGRESS, "pypi.org:443", 403),
@@ -204,6 +212,7 @@ fn check_agrees_with_the_proxy() {
         (EGRESS, "localhost:443", 403),
         (EGRESS, "github.com", 400),
         (REMOVED, "localhost:443", 403),
+        (invalid_list.as_str(), invalid.as_str(), 502),
     ];
     for (count, (list, target, code)) in rows.into_iter().enumerate() {
         scratch.egress(list);
@@ -223,6 +232,7 @@ fn check_agrees_with_the_proxy() {
         "not_public",
         "bad_target",
         "not_listed",
+        "no_address",
     ];
     assert_eq!(reasons, expected);
 }
@@ -275,6 +285,31 @@ fn a_head_past_8_kib_gets_400() {
     }
     let lines = scratch.lines(4);
     assert!(lines.iter().all(|line| line["reason"] == "bad_head"));
+}
+
+/// A CRLF CRLF that two reads split still ends the head, and a whole
+/// head of exactly `HEAD_CAP` bytes passes the cap (decision CH69 rule
+/// 9). Both get 405.
+#[test]
+fn a_split_head_and_a_head_at_the_cap_read_whole() {
+    let scratch = Scratch::threaded("split");
+    scratch.egress(EGRESS);
+    let _server = scratch.serve();
+    let mut split = scratch.dial();
+    split.write_all(b"GET / HTTP/1.1\r\n\r").unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    split.write_all(b"\n").unwrap();
+    let mut reply = String::new();
+    split.read_to_string(&mut reply).unwrap();
+    assert_eq!(status(&reply), 405, "{reply}");
+
+    let start = "GET / HTTP/1.1\r\nX: ";
+    let fill = "a".repeat(HEAD_CAP - start.len() - 4);
+    let head = format!("{start}{fill}\r\n\r\n");
+    assert_eq!(head.len(), HEAD_CAP);
+    assert_eq!(status(&scratch.ask(&head)), 405);
+    let lines = scratch.lines(2);
+    assert!(lines.iter().all(|line| line["reason"] == "not_connect"));
 }
 
 /// A head that is not whole after `HEAD_WAIT` closes the link with no
@@ -493,6 +528,54 @@ fn the_65th_link_is_closed_at_once() {
     let line = &scratch.lines(1)[0];
     assert_eq!(line["reason"], "link_cap");
     drop(held);
+}
+
+/// Links that end free their place under the cap, so `LINK_CAP` + 2
+/// links one after another each get a reply and a line (decision CH67
+/// rule 3).
+#[test]
+fn ended_links_free_the_cap() {
+    let scratch = Scratch::threaded("reap");
+    scratch.egress(EGRESS);
+    let _server = scratch.serve();
+    for count in 1..=LINK_CAP + 2 {
+        let reply = scratch.ask("GET / HTTP/1.1\r\n\r\n");
+        assert!(reply.starts_with("HTTP/1.1 405 "), "link {count}: {reply}");
+        let lines = scratch.lines(count);
+        assert_eq!(lines[count - 1]["reason"], "not_connect", "link {count}");
+    }
+}
+
+/// The drop of `Server` closes the listener and cuts each open link, and
+/// the cut link writes its line with no reason (decision CH69 rule 10).
+/// The held link is accepted before the link whose line the test waits
+/// for, so the proxy serves it when the drop comes.
+#[test]
+fn the_drop_cuts_each_link_and_closes_1104() {
+    let scratch = Scratch::threaded("cut");
+    scratch.egress(EGRESS);
+    let server = scratch.serve();
+    let mut held = scratch.dial();
+    held.write_all(b"CONNECT gith").unwrap();
+    scratch.ask("GET / HTTP/1.1\r\n\r\n");
+    assert_eq!(scratch.lines(1)[0]["reason"], "not_connect");
+    drop(server);
+    let mut bytes = Vec::new();
+    held.read_to_end(&mut bytes).unwrap();
+    assert!(bytes.is_empty());
+    let line = &scratch.lines(2)[1];
+    assert_eq!(line["reason"], Value::Null);
+    assert_eq!(line["verdict"], "refused");
+    assert_eq!(line["host"], Value::Null);
+    let path = scratch.run.host_listener(HostPort::Egress);
+    let deadline = Instant::now() + WAIT;
+    loop {
+        match UnixStream::connect(&path) {
+            Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => break,
+            dialed => assert!(Instant::now() < deadline, "1104 listens: {dialed:?}"),
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }
 
 /// The raise of `vmm serve` holds every proxy at its cap (decisions CH67
