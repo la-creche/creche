@@ -1,19 +1,22 @@
 //! A take pauses, snapshots and shuts Cloud Hypervisor down, digs the holes
-//! of `memory-ranges` and renames a new generation into place (decisions
-//! CH2, CH29, section 4 item 5.7).
+//! of `memory-ranges`, writes the key and renames a new generation into
+//! place (decisions CH2, CH29, CH44, section 4 item 5.7).
 //!
 //! `tests/fixtures/ch-remote-snapshot` and `tests/fixtures/fallocate` stand
 //! in for the programs. `tests/fixtures/fallocate-lock` also locks
-//! `snapshots/` against a read. Each logs to `<root>/calls`, so a test reads
+//! `snapshots/` against a read, and `tests/fixtures/fallocate-no-key`
+//! blocks the key write. Each logs to `<root>/calls`, so a test reads
 //! the call order. The last test runs the host `fallocate`, a Linux tool, so it
 //! is Linux only. C16 takes a real snapshot.
 
 use std::fs;
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use creche_vmm_store::ch_remote::{ChCommand, ChRemote, ChRemoteError};
+use creche_vmm_store::images::ImageStore;
+use creche_vmm_store::key::{KeyCheck, SnapshotKey, check_cloud_hypervisor, check_newest};
 use creche_vmm_store::layout::{RunRoot, SessionDir, SnapshotGeneration, StateRoot, VmRunDir};
 use creche_vmm_store::snapshot::{
     MEMORY_RANGES, Snapshot, SnapshotError, SnapshotTimeouts, Snapshotter, generations,
@@ -28,6 +31,9 @@ const TIMEOUTS: SnapshotTimeouts = SnapshotTimeouts {
     shutdown: TIMEOUT,
 };
 const FIRST: SnapshotGeneration = SnapshotGeneration(1);
+/// The SHA-256 of no bytes: the kernel, initramfs and root disk of the
+/// key are one empty image.
+const EMPTY: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 /// One dir under `/tmp` that is both the run root and the state root, so
 /// both stubs find `<root>/calls`. Removed on drop.
@@ -35,6 +41,7 @@ struct Temp {
     root: PathBuf,
     vm: VmRunDir,
     session: SessionDir,
+    key: SnapshotKey,
 }
 
 // `cfg(test)` lets the helpers use `expect` (rust/clippy.toml).
@@ -46,15 +53,21 @@ impl Temp {
         let id: SessionId = ID.parse().expect("ID is a session id");
         let vm = RunRoot::new(root.clone()).expect("a run root").vm(&id);
         fs::create_dir_all(vm.path()).expect("the run dir");
-        let session = StateRoot::new(root.clone())
-            .expect("a state root")
-            .session(&id);
-        Self { root, vm, session }
+        let state = StateRoot::new(root.clone()).expect("a state root");
+        let session = state.session(&id);
+        let key = key(&root, &state);
+        Self {
+            root,
+            vm,
+            session,
+            key,
+        }
     }
 
     fn take(&self, fallocate: &Path) -> Result<Snapshot, SnapshotError> {
         let ch = ChRemote::new(fixture("ch-remote-snapshot"));
-        Snapshotter::new(ch, fallocate.to_owned()).take(&self.vm, &self.session, TIMEOUTS)
+        let snapshotter = Snapshotter::new(ch, fallocate.to_owned());
+        snapshotter.take(&self.vm, &self.session, &self.key, TIMEOUTS)
     }
 
     fn calls(&self) -> Vec<String> {
@@ -85,6 +98,22 @@ impl Drop for Temp {
     }
 }
 
+/// A key of one empty image in the store of `state`, with a CH stub that
+/// reports `v54.0.0` through a link in `root`.
+#[cfg(test)]
+fn key(root: &Path, state: &StateRoot) -> SnapshotKey {
+    let image = root.join("image");
+    fs::write(&image, b"").expect("the image");
+    let store = ImageStore::new(state, PathBuf::from("zstd"));
+    let digest = EMPTY.parse().expect("a digest");
+    store.import(&image, digest).expect("the import");
+    let empty = store.check(digest).expect("the check");
+    let ch = root.join("v54.0.0");
+    symlink(fixture("cloud-hypervisor"), &ch).expect("the link");
+    let ch = check_cloud_hypervisor(&ch, TIMEOUT).expect("the version check");
+    SnapshotKey::current(ch, &empty, &empty, &empty)
+}
+
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
@@ -110,6 +139,8 @@ fn a_take_runs_its_steps_in_order() {
     assert_eq!(snapshot.dir, temp.session.snapshot(FIRST));
     assert!(!Path::new(tmp).exists());
     assert_eq!(generations(&temp.session).expect("a read"), [FIRST]);
+    let check = check_newest(&temp.session, &temp.key).expect("the check");
+    assert!(matches!(check, KeyCheck::Keyed(_)), "{check:?}");
 }
 
 #[test]
@@ -120,7 +151,7 @@ fn the_dir_is_0700_and_each_file_0600() {
     assert_eq!(mode(&snapshot.dir), 0o700);
     assert_eq!(
         temp.names(FIRST),
-        ["config.json", MEMORY_RANGES, "state.json"]
+        ["config.json", "key.json", MEMORY_RANGES, "state.json"]
     );
     for name in temp.names(FIRST) {
         assert_eq!(mode(&snapshot.dir.join(&name)), 0o600, "{name}");
@@ -240,6 +271,26 @@ fn a_failed_sync_after_the_rename_leaves_no_generation() {
     };
     assert_eq!(path, snapshots);
     let left = fs::read_dir(&snapshots).expect("the dir");
+    assert_eq!(left.count(), 0);
+}
+
+/// A failed key write ends the take before the rename, so no snapshot
+/// exists without a key (decision CH44, item 42). The dig stub makes
+/// `key.json.tmp` a dir, so the open of the key temp file fails.
+#[test]
+fn a_failed_key_write_leaves_no_generation() {
+    let temp = Temp::new("no-key");
+    let error = temp
+        .take(&fixture("fallocate-no-key"))
+        .expect_err("a failure");
+    let SnapshotError::Io { path, .. } = error else {
+        panic!("not Io: {error}");
+    };
+    let tmp = temp.session.snapshot_temp(FIRST);
+    assert_eq!(path, tmp.join("key.json.tmp"));
+    assert!(!tmp.exists());
+    assert!(generations(&temp.session).expect("a read").is_empty());
+    let left = fs::read_dir(temp.session.snapshots()).expect("the dir");
     assert_eq!(left.count(), 0);
 }
 

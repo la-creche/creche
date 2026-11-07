@@ -7,24 +7,26 @@
 //! After `ControlReady`, guest init sends a `GuestEvent` line at each
 //! change of the facade state and for each turn event of the facade
 //! (decisions CH21, CH62 rule 11), and the vmm may send the graceful stop
-//! (decision CH19 (3)). `ControlLink::split` gives a reader of the guest
-//! events and a `StopSender` for the stop. `ControlState` keeps the facade
+//! (decision CH19 (3)) or a `sync` before a take (decision CH62 rule 23).
+//! `ControlLink::split` gives a reader of the guest events and a
+//! `StopSender` for the stop and the sync. `ControlState` keeps the facade
 //! state and applies each turn end to the session row.
 
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::io;
 use std::path::Path;
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use creche_wire::{
-    CONTROL_LINE_CAP, ControlCommand, ControlHello, ControlReady, ControlStop, FacadeState,
-    GuestEvent, GuestPort, SessionId, TurnEnd, TurnEvent, UnixMillis, strict,
+    CONTROL_LINE_CAP, ControlCommand, ControlHello, ControlReady, ControlStop, ControlSync,
+    FacadeState, GuestEvent, GuestPort, SessionId, TurnEnd, TurnEvent, UnixMillis, strict,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::net::UnixStream;
+use tokio::sync::oneshot;
 use tokio::time::{sleep, timeout};
 
 /// How long an open of the control link may take, from the first dial to
@@ -38,6 +40,11 @@ pub const READY_WAIT: Duration = Duration::from_secs(10);
 // Only the vmm reads it, so a change costs one constant.
 pub(crate) const DIAL_PAUSE: Duration = Duration::from_millis(10);
 
+/// How long a take waits for `synced` after it sends `sync` (decision
+/// CH62 rule 23: 10 s). The bound covers the write of `sync` too. No
+/// `synced` in time means no snapshot, and the graceful stop runs.
+pub const SYNC_WAIT: Duration = Duration::from_secs(10);
+
 /// The most bytes of the answer of Cloud Hypervisor to `CONNECT`, the LF
 /// not counted. `OK ` and a 32-bit port number fit with room to spare.
 const CONNECT_REPLY_CAP: usize = 32;
@@ -45,7 +52,8 @@ const CONNECT_REPLY_CAP: usize = 32;
 /// Why the control link did not open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControlError {
-    /// No `ControlReady` came within `READY_WAIT`.
+    /// No `ControlReady` came within `READY_WAIT`, or no `synced` within
+    /// `SYNC_WAIT`.
     Timeout,
     /// The host clock is before 1970 or past the range of `UnixMillis`.
     Clock,
@@ -127,20 +135,23 @@ impl ControlLink {
     }
 
     /// Splits the link after `ControlReady`: the sender of the graceful
-    /// stop and the reader of the guest events (plan PR L18b). The reader
-    /// holds the only strong handle of the stream, so its end closes the
-    /// link (decision CH43 rule 2), and the sender then sends nothing.
+    /// stop and of the sync, and the reader of the guest events (plan PR
+    /// L18b). The reader holds the only strong handles of the stream and
+    /// of the sync waiter, so its end closes the link (decision CH43 rule
+    /// 2), and the sender then sends nothing.
     #[must_use]
-    pub fn split(self) -> (StopSender, ControlLink<Arc<UnixStream>>) {
+    pub fn split(self) -> (StopSender, GuestEvents) {
         let stream = Arc::new(self.stream);
+        let waiter = Arc::new(Mutex::new(None));
         let sender = StopSender {
             stream: Arc::downgrade(&stream),
+            waiter: Arc::downgrade(&waiter),
         };
-        let reader = ControlLink {
+        let link = ControlLink {
             stream,
             pending: self.pending,
         };
-        (sender, reader)
+        (sender, GuestEvents { link, waiter })
     }
 }
 
@@ -276,11 +287,46 @@ fn refused(line: &[u8]) -> EventEnd {
     EventEnd::Refused(line.iter().take(REFUSED_LOG_CAP).copied().collect())
 }
 
-/// The sender of the graceful stop of a split control link. It holds a
-/// weak handle, so the end of the reader closes the link.
+/// The waiter of the `synced` that answers one `sync`.
+type SyncWaiter = Mutex<Option<oneshot::Sender<()>>>;
+
+/// The lock of `waiter`. It holds one sender, so a poisoned lock is whole.
+fn lock_waiter(waiter: &SyncWaiter) -> MutexGuard<'_, Option<oneshot::Sender<()>>> {
+    waiter.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The reader of the guest events of a split control link (plan PR
+/// L18b). It owns the stream and the sync waiter, so its end closes the
+/// link and ends a `StopSender::sync` that waits.
+#[derive(Debug)]
+pub struct GuestEvents {
+    link: ControlLink<Arc<UnixStream>>,
+    waiter: Arc<SyncWaiter>,
+}
+
+impl GuestEvents {
+    /// Reads the next guest event, as `ControlLink::next_event` does.
+    pub(crate) async fn next_event(&mut self) -> Result<GuestEvent, EventEnd> {
+        self.link.next_event().await
+    }
+
+    /// Hands a `synced` line to the `StopSender::sync` that waits for it
+    /// (decision CH62 rule 23). False when none waits: no take sent
+    /// `sync`, or its `SYNC_WAIT` passed. The caller then logs the line
+    /// and reads on.
+    pub(crate) fn synced(&self) -> bool {
+        lock_waiter(&self.waiter)
+            .take()
+            .is_some_and(|waiter| waiter.send(()).is_ok())
+    }
+}
+
+/// The sender of the graceful stop and of the sync of a split control
+/// link. It holds weak handles, so the end of the reader closes the link.
 #[derive(Debug)]
 pub struct StopSender {
     stream: Weak<UnixStream>,
+    waiter: Weak<SyncWaiter>,
 }
 
 impl StopSender {
@@ -306,6 +352,40 @@ impl StopSender {
             pending: Vec::new(),
         };
         link.stop().await
+    }
+
+    /// Syncs the guest before a take (item 5.7 of the design, decision
+    /// CH62 rule 23). It registers the waiter of the next `synced`, sends
+    /// `{"sync":{}}`, and waits for the reader to hand it that `synced`.
+    /// Guest init runs syncfs of the session disk, then sync. `SYNC_WAIT`
+    /// bounds the write and the wait. The sender keeps no strong handle
+    /// while it waits, so the end of the reader ends the wait at once.
+    ///
+    /// # Errors
+    ///
+    /// `Timeout` when no `synced` came within `SYNC_WAIT`. `Io` with
+    /// `NotConnected` when the reader ended, before or during the wait.
+    /// `Io` when the write failed.
+    pub async fn sync(&self) -> Result<(), ControlError> {
+        let closed = ControlError::Io(io::ErrorKind::NotConnected);
+        let (Some(stream), Some(waiter)) = (self.stream.upgrade(), self.waiter.upgrade()) else {
+            return Err(closed);
+        };
+        let (sender, synced) = oneshot::channel();
+        *lock_waiter(&waiter) = Some(sender);
+        drop(waiter);
+        let link = ControlLink {
+            stream,
+            pending: Vec::new(),
+        };
+        let sync = async move {
+            link.write(&ControlCommand::Sync(ControlSync {})).await?;
+            drop(link);
+            synced.await.map_err(|_| closed)
+        };
+        timeout(SYNC_WAIT, sync)
+            .await
+            .unwrap_or(Err(ControlError::Timeout))
     }
 }
 
@@ -590,10 +670,12 @@ mod tests {
     use std::thread::spawn;
     use std::time::Duration;
 
-    use creche_wire::UnixMillis;
-    use tokio::runtime::Builder;
+    use creche_wire::{CONTROL_LINE_CAP, GuestEvent, UnixMillis};
+    use tokio::net::UnixStream;
+    use tokio::runtime::{Builder, Runtime};
+    use tokio::time::Instant;
 
-    use super::{ControlError, open_within};
+    use super::{ControlError, ControlLink, GuestEvents, SYNC_WAIT, open_within};
 
     /// A guest that takes the hello and never answers ends the open at
     /// the bound (decision CH36 G26).
@@ -630,5 +712,113 @@ mod tests {
         let error = runtime.block_on(open).unwrap().map(|_| ()).unwrap_err();
         assert_eq!(error, ControlError::Timeout);
         guest.join().unwrap();
+    }
+
+    /// A runtime on paused time, so a wait of `SYNC_WAIT` costs no real
+    /// time.
+    fn paused() -> Runtime {
+        Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .start_paused(true)
+            .build()
+            .unwrap()
+    }
+
+    /// Reads each guest event as the reader of the vmm does, and hands
+    /// each `synced` to a waiting sync. Returns each event with whether a
+    /// sync took it, until the link ends.
+    async fn read_all(mut events: GuestEvents) -> Vec<(GuestEvent, bool)> {
+        let mut read = Vec::new();
+        while let Ok(event) = events.next_event().await {
+            let took = matches!(event, GuestEvent::Synced(_)) && events.synced();
+            read.push((event, took));
+        }
+        read
+    }
+
+    /// A socket pair: the split vmm end and the guest end.
+    fn pair() -> (super::StopSender, GuestEvents, ControlLink) {
+        let (vmm, guest) = UnixStream::pair().unwrap();
+        let (sender, events) = ControlLink::accepted(vmm).split();
+        (sender, events, ControlLink::accepted(guest))
+    }
+
+    const SYNCED: &[u8] = b"{\"synced\":{}}\n";
+    const RUNNING: &[u8] = b"{\"facade\":{\"running\":{\"last_turn_end\":null,\"pid\":42,\"starts\":1,\"turn_running\":false}}}\n";
+
+    /// `sync` sends one `sync` line, and the `synced` of the guest ends it
+    /// (decision CH62 rule 23).
+    #[test]
+    fn sync_sends_one_line_and_takes_the_synced() {
+        paused().block_on(async {
+            let (sender, events, mut guest) = pair();
+            let reader = tokio::spawn(read_all(events));
+            let answer = tokio::spawn(async move {
+                let line = guest.line(CONTROL_LINE_CAP).await.unwrap();
+                guest.write_raw(SYNCED).await.unwrap();
+                line
+            });
+            assert_eq!(sender.sync().await, Ok(()));
+            assert_eq!(answer.await.unwrap(), br#"{"sync":{}}"#);
+            drop(sender);
+            let read = reader.await.unwrap();
+            assert!(
+                matches!(&read[..], [(GuestEvent::Synced(_), true)]),
+                "{read:?}"
+            );
+        });
+    }
+
+    /// A `synced` after `SYNC_WAIT` finds no waiter, so it changes
+    /// nothing: the sync ended with `Timeout`, and the reader reads on
+    /// (decision CH62 rule 23).
+    #[test]
+    fn a_late_synced_after_the_wait_changes_nothing() {
+        paused().block_on(async {
+            let (sender, events, mut guest) = pair();
+            let reader = tokio::spawn(read_all(events));
+            let answer = tokio::spawn(async move {
+                guest.line(CONTROL_LINE_CAP).await.unwrap();
+                tokio::time::sleep(SYNC_WAIT + Duration::from_secs(1)).await;
+                guest.write_raw(SYNCED).await.unwrap();
+                guest.write_raw(RUNNING).await.unwrap();
+            });
+            let start = Instant::now();
+            assert_eq!(sender.sync().await, Err(ControlError::Timeout));
+            assert_eq!(start.elapsed(), SYNC_WAIT);
+            answer.await.unwrap();
+            let read = reader.await.unwrap();
+            assert!(
+                matches!(
+                    &read[..],
+                    [
+                        (GuestEvent::Synced(_), false),
+                        (GuestEvent::Facade(_), false)
+                    ]
+                ),
+                "{read:?}"
+            );
+        });
+    }
+
+    /// The end of the reader ends a sync that waits at once, with no wait
+    /// of `SYNC_WAIT`. A later sync finds the link closed.
+    #[test]
+    fn a_closed_link_ends_the_sync_at_once() {
+        paused().block_on(async {
+            let (sender, events, mut guest) = pair();
+            let reader = tokio::spawn(read_all(events));
+            let answer = tokio::spawn(async move {
+                guest.line(CONTROL_LINE_CAP).await.unwrap();
+            });
+            let start = Instant::now();
+            let closed = ControlError::Io(std::io::ErrorKind::NotConnected);
+            assert_eq!(sender.sync().await, Err(closed));
+            assert!(start.elapsed() < SYNC_WAIT);
+            answer.await.unwrap();
+            assert!(reader.await.unwrap().is_empty());
+            assert_eq!(sender.sync().await, Err(closed));
+        });
     }
 }

@@ -28,6 +28,7 @@ use creche_wire::{DROP_SIGTERM_GRACE, DROP_STOP_WAIT, SessionId};
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::time::{Instant, timeout_at};
 
+use crate::control::SYNC_WAIT;
 use crate::handlers::drop::{StopVm, VmStopFailed, all};
 use crate::server::Stop;
 use crate::sleep::EVICT_SNAPSHOT;
@@ -62,8 +63,11 @@ const _: () = assert!(
     "the runtime ends inside the exit time",
 );
 
-// A stop (30 + 5 + 1 s, decision CH50 rule 4) and a take (5 + 60 + 10 s,
-// decision CH44 rule 3) each fit inside the wait.
+// A stop (30 + 5 + 1 s, decision CH50 rule 4) and a take each fit inside
+// the wait. A take syncs the guest first (decision CH62 rule 23), so it
+// costs the sync, pause, snapshot and shutdown waits: 10 + 5 + 60 + 10 =
+// 85 s (decision CH44 rule 3), the whole `SHUTDOWN_WAIT`. The assert pins
+// that sum, so a longer `SYNC_WAIT` fails the build.
 // Decision CH56 rule 2: one deadline from SIGTERM bounds every step, so
 // a full take and then a full stop of one VM need not both fit. A VM
 // still in the set at the deadline ends after the vmm exits (decision
@@ -73,7 +77,8 @@ const _: () = assert!(
     SHUTDOWN_WAIT.as_secs() + EXIT_TIME.as_secs() <= UNIT_STOP_TIMEOUT.as_secs()
         && DROP_STOP_WAIT.as_secs() + DROP_SIGTERM_GRACE.as_secs() + KILL_WAIT.as_secs()
             <= SHUTDOWN_WAIT.as_secs()
-        && EVICT_SNAPSHOT.pause.as_secs()
+        && SYNC_WAIT.as_secs()
+            + EVICT_SNAPSHOT.pause.as_secs()
             + EVICT_SNAPSHOT.snapshot.as_secs()
             + EVICT_SNAPSHOT.shutdown.as_secs()
             <= SHUTDOWN_WAIT.as_secs(),

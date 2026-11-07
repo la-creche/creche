@@ -46,6 +46,15 @@ The second file has the table of the three vmm crates.
   cold-boots (decision CH19 (5)). The code reads a rename that the sync
   of `snapshots/` cannot make durable as a failed step too, so `take`
   removes `snapshots/<n>` and returns the sync error.
+- Decision CH44 and item 42 (plan PR V9, `snapshot.rs`, `key.rs`):
+  `Snapshotter::take` writes `key.json` into its temp dir with
+  `write_key` before the rename, so no snapshot exists without a key. A
+  failed key write is a failed step: `take` removes the temp dir, and no
+  generation exists.
+- Section 4 item 5.7 and decision CH62 rule 23 (plan PR V9): a guest
+  `sync` comes before each snapshot. The store has no link to the guest,
+  so the vmm syncs the guest through the control link before
+  `Snapshotter::take` (`vmm/src/start.rs`, the D9 caller duty).
 - Decision CH44 rule 5 (PR D10, `key.rs`): a key mismatch or an
   unreadable key drops every generation of the session, not only the
   newest. `check_newest` reads no older key. So an older generation
@@ -116,24 +125,12 @@ The second file has the table of the three vmm crates.
 
 ## Known gaps
 
-- Caller duty (PR D9, `snapshot.rs`): section 4 item 5.7 asks for a
-  guest `sync` before each snapshot. The store has no link to the guest,
-  so lifecycle syncs the guest through the control link before
-  `Snapshotter::take`. No plan PR has that step yet. L17 and L19 need
-  it. Without it, a dropped or a consumed snapshot cold-boots from a
-  session disk that may lack the last guest writes.
 - Host program (PR D9, `snapshot.rs`): the vmm execs the host
   `fallocate` (decision CH29). The exec needs no Landlock rule. Item 42
   notes that the vmm process itself is not under Landlock, because C6
   confines only the CH launch. L20 needs a config key for its path (the
   owner env rule). Its list has no such key yet. Item 42 lists config
   keys for `fallocate`, `zstd` and `mke2fs` as a lifecycle duty.
-- Item 42 (PR D10, `key.rs`, decision CH44): `Snapshotter::take` should
-  write `key.json` into its temp dir before the rename, so no snapshot
-  exists without a key. Today `vmm/src/sleep.rs` `take_keyed` writes the
-  key after the take, and a failed write drops the generation at the
-  next check. Item 42 gives the change to a later PR. No plan entry
-  holds it yet.
 - Caller duty (PR D12, `sleep_gate.rs`), for lifecycle (L17): a VM with
   an open door link counts as used now in the eviction order (decision
   CH50 rule 6). When L17 builds the `Running` list for

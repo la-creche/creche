@@ -71,7 +71,7 @@ use creche_vmm_store::claim::{ClaimedSnapshot, claim};
 use creche_vmm_store::images::{CheckedImage, ImageDigest, ImageStore};
 use creche_vmm_store::key::{
     CH_VERSION, ChVersionError, CheckedCh, KeyCheck, SnapshotKey, check_cloud_hypervisor,
-    check_newest, write_key,
+    check_newest,
 };
 use creche_vmm_store::layout::{RunRoot, SessionDir, Slot, StateRoot, VmRunDir, scope_unit};
 use creche_vmm_store::serial_log::SerialLog;
@@ -465,7 +465,9 @@ impl Setup {
     /// Snapshots the VM of `pid`, which then exits, and checks the dig.
     fn snapshot(&self, pid: u32) -> Snapshot {
         let snapshotter = Snapshotter::new(self.remote.clone(), PathBuf::from(FALLOCATE));
-        let snapshot = snapshotter.take(&self.vm, &self.session, TIMEOUTS).unwrap();
+        let snapshot = snapshotter
+            .take(&self.vm, &self.session, &self.key(), TIMEOUTS)
+            .unwrap();
         until("CH exit after shutdown-vmm", || !running(pid));
         // The next launch needs the unit name (fact 76).
         until("scope removal after the exit", || {
@@ -480,11 +482,15 @@ impl Setup {
         snapshot
     }
 
-    /// Keys `snapshot`, checks the key and claims it.
+    /// The key of the VM. The take writes it into the snapshot (decision
+    /// CH44, item 42).
+    fn key(&self) -> SnapshotKey {
+        SnapshotKey::current(self.checked_ch, &self.kernel, &self.initramfs, &self.root)
+    }
+
+    /// Checks the key of `snapshot` and claims it.
     fn claim(&self, snapshot: &Snapshot) -> ClaimedSnapshot {
-        let key = SnapshotKey::current(self.checked_ch, &self.kernel, &self.initramfs, &self.root);
-        write_key(&self.session, snapshot.generation, &key).unwrap();
-        let check = check_newest(&self.session, &key).unwrap();
+        let check = check_newest(&self.session, &self.key()).unwrap();
         let KeyCheck::Keyed(keyed) = check else {
             panic!("the key check gave {check:?}");
         };

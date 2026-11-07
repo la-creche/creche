@@ -21,9 +21,9 @@
 //! 5. `GUEST_INIT_PROTOCOL` of the wire crate. A port renumber bumps it
 //!    (decision CH14).
 //!
-//! `write_key` puts the key in `snapshots/<generation>/key.json` after the
-//! take. A crash before the write leaves a snapshot with no key, and the
-//! next check drops it. `check_newest` reads the key of the newest
+//! `Snapshotter::take` writes the key with `write_key` into its temp dir
+//! before the rename, so no snapshot exists without a key (decision CH44,
+//! item 42, plan PR V9). `check_newest` reads the key of the newest
 //! generation. A key that differs from the current key, or a key file that
 //! does not read, drops the snapshot, and the VM cold-boots from its
 //! session disk (decision CH7-6).
@@ -37,9 +37,8 @@
 //! the next check drops it again. While the newest key matches, retention
 //! removes the older ones (PR D13).
 //!
-//! Caller duties (`AGENTS.md`, Known gaps): lifecycle runs `write_key`
-//! after each `Snapshotter::take`, and it runs `check_cloud_hypervisor` at
-//! the vmm start. No plan PR has either step yet.
+//! Caller duty: lifecycle runs `check_cloud_hypervisor` at the vmm start
+//! (`vmm/src/compose.rs`).
 
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
@@ -54,7 +53,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ch_remote::output_until;
 use crate::images::CheckedImage;
-use crate::layout::{SessionDir, SnapshotGeneration};
+use crate::layout::{KEY_FILE, SessionDir, SnapshotGeneration};
 use crate::snapshot::generations;
 
 /// The Cloud Hypervisor rev of the CH7-4 build argv: the signed v54.0 tag
@@ -241,21 +240,16 @@ fn io_at(path: &Path) -> impl FnOnce(io::Error) -> KeyError {
     move |source| KeyError { path, source }
 }
 
-/// Writes `key` into the dir of `generation` through a temp file and a
-/// rename, then syncs the dir. Lifecycle runs it right after each take:
-/// a snapshot with no key drops at the next check (`AGENTS.md`, Known
-/// gaps).
+/// Writes `key` into the snapshot dir `dir` through a temp file and a
+/// rename, then syncs `dir`. `Snapshotter::take` runs it on its temp dir
+/// before the rename, so no snapshot exists without a key (decision CH44,
+/// item 42).
 ///
 /// # Errors
 ///
-/// A failed write, sync or rename. The next check then drops the
-/// generation.
-pub fn write_key(
-    session: &SessionDir,
-    generation: SnapshotGeneration,
-    key: &SnapshotKey,
-) -> Result<(), KeyError> {
-    let path = session.snapshot_key(generation);
+/// A failed write, sync or rename. `take` then makes no snapshot.
+pub fn write_key(dir: &Path, key: &SnapshotKey) -> Result<(), KeyError> {
+    let path = dir.join(KEY_FILE);
     let temp = path.with_extension("json.tmp");
     let text = serde_json::to_vec(&key.0).map_err(|error| io_at(&path)(error.into()))?;
     let written = OpenOptions::new()
@@ -273,8 +267,7 @@ pub fn write_key(
         return Err(io_at(&temp)(error));
     }
     fs::rename(&temp, &path).map_err(io_at(&path))?;
-    let dir = session.snapshot(generation);
-    sync_dir(&dir).map_err(io_at(&dir))
+    sync_dir(dir).map_err(io_at(dir))
 }
 
 /// A snapshot whose key equals the current key. Only `check_newest` makes

@@ -10,8 +10,9 @@
 //!    counts from here on, so two starts never pass the cap together.
 //!    Each VM that admission evicts loses its door link, then its
 //!    snapshot is taken and it stops (plan PR L17, decision CH19 (6)).
-//!    Until the guest can sync (`ChApi::GUEST_SYNCS`), the VM takes no
-//!    snapshot and gets the graceful stop.
+//!    The guest syncs first, and with no `synced` within `SYNC_WAIT` the
+//!    VM takes no snapshot and gets the graceful stop (decision CH62 rule
+//!    23).
 //! 3. In `spawn_blocking`: a vmm in no service unit refuses the launch
 //!    here (decision CH60 rule 1). Then the stale sockets go (PR D1,
 //!    decision CH19 (4)), the plane listeners bind (plan PR V6, decision
@@ -86,14 +87,13 @@ use creche_vmm_store::stale::remove_stale;
 use creche_wire::{
     FamilyName, FamilyShape, GuestEvent, HostPort, PerFlavor, SessionId, SessionRow,
 };
-use tokio::net::UnixStream;
 use tokio::sync::{RwLock, watch};
 use tokio::task::spawn_blocking;
 use tokio::time::sleep;
 
 use crate::control::{
-    Change, ControlError, ControlLink, ControlState, DIAL_PAUSE, EventEnd, LinkId, READY_WAIT,
-    StopSender, open, wall_time,
+    Change, ControlError, ControlLink, ControlState, DIAL_PAUSE, EventEnd, GuestEvents, LinkId,
+    READY_WAIT, SYNC_WAIT, StopSender, open, wall_time,
 };
 use crate::family_state::{self, Server};
 use crate::handlers::acp::{StartFault, StartVm};
@@ -535,10 +535,11 @@ impl<A: ChApi> Retirer<A> {
         self.retire(eviction).await == Retired::Slept
     }
 
-    /// Snapshots the VM of `eviction`, then stops it (decision CH19 (6)).
-    /// The take ends CH, so the stop finds it gone. With no device read
-    /// (`ChApi::READS_DEVICES`) or no guest sync (`ChApi::GUEST_SYNCS`) it
-    /// takes no snapshot and sends the graceful stop. `Kept` when the VM
+    /// Syncs the guest of `eviction`, snapshots the VM, then stops it
+    /// (decisions CH19 (6), CH62 rule 23). The take ends CH, so the stop
+    /// finds it gone. With no device read (`ChApi::READS_DEVICES`) or no
+    /// `synced` within `SYNC_WAIT` it takes no snapshot and sends the
+    /// graceful stop. `Kept` when the VM
     /// still holds its RAM: a turn runs, or the stop failed (decision CH50
     /// rule 4). `Stopped` when the VM faulted (decision CH54 rule 6).
     async fn retire<P: VmProcess>(&self, mut eviction: Eviction<P>) -> Retired {
@@ -574,24 +575,28 @@ impl<A: ChApi> Retirer<A> {
         // disk as a power cut left it. So with no device read the VM takes
         // no snapshot, and the stop below is the graceful one (decision
         // CH19 (3)): guest init syncs and powers off.
-        // Item 5.7 of the design asks for a guest `sync` before each take,
-        // and the item 42 note gives it to lifecycle. The control link has
-        // no `sync` command until phase 3, so with no guest sync
-        // (`ChApi::GUEST_SYNCS`) the VM takes no snapshot either. The
-        // phase 3 PR sends `sync` here before the take (caller duty 7).
-        let took = open && A::READS_DEVICES && A::GUEST_SYNCS;
-        if took {
-            // The blocking step owns the read lock, so the lock lasts as
-            // long as the take (`retention::sweep`).
+        let mut took = false;
+        if open && A::READS_DEVICES {
+            // The take waits for no sweep after the sync, so the guest
+            // writes little between its sync and the pause. The blocking
+            // step owns the read lock, so the lock lasts as long as the
+            // take (`retention::sweep`).
             let take = Arc::clone(&self.takes).read_owned().await;
-            let key = key.clone();
-            let taken = blocking(move || {
-                let _take = take;
-                api.snapshot(&run, &session, &key)
-            })
-            .await;
-            if let Err(message) = taken {
-                eprintln!("vmm: the snapshot of {id} failed: {message}");
+            // Item 5.7 of the design, its item 42 note and decision CH62
+            // rule 23 (caller duty 7): the guest syncs before each take.
+            // With no `synced` within `SYNC_WAIT` the VM takes no snapshot,
+            // and the stop below is the graceful one.
+            took = synced(&id, vm.link.as_ref()).await;
+            if took {
+                let key = key.clone();
+                let taken = blocking(move || {
+                    let _take = take;
+                    api.snapshot(&run, &session, &key)
+                })
+                .await;
+                if let Err(message) = taken {
+                    eprintln!("vmm: the snapshot of {id} failed: {message}");
+                }
             }
         }
         let stopped = stop(vm.link.as_ref(), &mut vm.process, &vm.run).await;
@@ -658,6 +663,24 @@ fn take_out<P: VmProcess>(
         id: session,
         vm: Some(vm),
     })
+}
+
+/// Syncs the guest of `id` on its control link `link` (decision CH62 rule
+/// 23). False, with a log line, when no `synced` came within `SYNC_WAIT`
+/// or the link is gone. The take then does not run.
+async fn synced(id: &SessionId, link: Option<&StopSender>) -> bool {
+    let Some(link) = link else {
+        return false;
+    };
+    match link.sync().await {
+        Ok(()) => true,
+        Err(error) => {
+            eprintln!(
+                "vmm: the guest of {id} did not sync within {SYNC_WAIT:?}, so it takes no snapshot: {error:?}"
+            );
+            false
+        }
+    }
 }
 
 /// Marks the current control link of `id` closed: its VM stopped.
@@ -1124,9 +1147,9 @@ async fn turn_end(rows: &Arc<Mutex<Rows>>, id: &SessionId, change: Change) {
 /// then skips the graceful step (decision CH50 rule 3). An event of a
 /// replaced link ends the reader too.
 ///
-/// No take sends `sync` yet, so a `synced` line has no waiter. The reader
-/// logs it and drops it (decision CH62 rule 23). Plan PR V9 sends `sync`
-/// and hands each `synced` to the take that waits for it.
+/// A `synced` line goes to the take that waits for it (`StopSender::sync`,
+/// decision CH62 rule 23). A `synced` with no waiter, such as one after
+/// `SYNC_WAIT`, is logged and dropped, and the reader reads on.
 ///
 /// A refused line ends the reader (decision CH43 rule 2). It is a guest
 /// fault (decision CH54 rule 6): the reader logs the line with `id`, and
@@ -1135,7 +1158,7 @@ async fn turn_end(rows: &Arc<Mutex<Rows>>, id: &SessionId, change: Change) {
 /// start of the session cold-boots (decision CH19 (5)). A later VM of the
 /// session has another link, so the stop leaves it alone.
 async fn read_guest<P: VmProcess>(
-    mut events: ControlLink<Arc<UnixStream>>,
+    mut events: GuestEvents,
     (id, link): (SessionId, LinkId),
     stopper: Stopper<P>,
     rows: Arc<Mutex<Rows>>,
@@ -1160,7 +1183,9 @@ async fn read_guest<P: VmProcess>(
             GuestEvent::Facade(facade) => lock().report(&id, link, facade),
             GuestEvent::Turn(turn) => lock().turn(&id, link, &turn),
             GuestEvent::Synced(_) if lock().link(&id) == Some(link) => {
-                eprintln!("vmm: the guest of {id} sent synced, and no sync waits");
+                if !events.synced() {
+                    eprintln!("vmm: the guest of {id} sent synced, and no sync waits");
+                }
                 continue;
             }
             GuestEvent::Synced(_) => Change::Stale,
@@ -1323,9 +1348,10 @@ impl<L: Launcher, A: ChApi> VmSet for ColdBoot<L, A> {
     /// (6)). A VM that a start, a retire or a stop holds is skipped, and
     /// the stop of the shutdown waits for that slot.
     async fn take(&self, id: &SessionId) -> Taken {
-        // Caller duty 7: with no device read or no guest sync no take
-        // runs, so each VM gets the graceful stop of the `Stopper`.
-        if !(A::READS_DEVICES && A::GUEST_SYNCS) {
+        // With no device read no take runs, so each VM gets the graceful
+        // stop of the `Stopper`. The retire syncs the guest before its take
+        // (caller duty 7, decision CH62 rule 23).
+        if !A::READS_DEVICES {
             return Taken::Skipped;
         }
         let eviction = {
@@ -1723,7 +1749,6 @@ mod tests {
 
     impl crate::restore::ChApi for NoDevices {
         const READS_DEVICES: bool = false;
-        const GUEST_SYNCS: bool = false;
 
         fn info(
             &self,
@@ -1777,7 +1802,7 @@ mod tests {
         let session = state.session(&id);
         let generation = SnapshotGeneration(1);
         fs::create_dir_all(session.snapshot(generation)).unwrap();
-        write_key(&session, generation, &key).unwrap();
+        write_key(&session.snapshot(generation), &key).unwrap();
 
         let in_use = Mutex::new(InUse::new());
         let locks = (&Mutex::new(()), &in_use);
@@ -1787,7 +1812,7 @@ mod tests {
 
         let generation = SnapshotGeneration(2);
         fs::create_dir_all(session.snapshot(generation)).unwrap();
-        write_key(&session, generation, &key).unwrap();
+        write_key(&session.snapshot(generation), &key).unwrap();
         let in_use = Mutex::new(InUse::new());
         let locks = (&Mutex::new(()), &in_use);
         let claimed = claim_newest::<NoDevices>(&session, &key, locks, &id).unwrap();

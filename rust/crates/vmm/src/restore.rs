@@ -41,14 +41,6 @@ pub trait ChApi: Send + Sync + 'static {
     /// cold-boots instead (decision CH50 rule 10).
     const READS_DEVICES: bool;
 
-    /// True when lifecycle can sync the guest through the control link
-    /// before each take. Item 5.7 of the design asks for a guest `sync`
-    /// before each snapshot. The item 42 note of the design and the
-    /// `creche-vmm-store` Known gaps give that sync to lifecycle, before
-    /// `Snapshotter::take`. With it false, a retire takes no snapshot and
-    /// sends the graceful stop (decision CH19 (3)).
-    const GUEST_SYNCS: bool;
-
     /// The reply of `ch-remote info`: the state and the device set.
     ///
     /// # Errors
@@ -90,14 +82,11 @@ pub struct ChTools {
 }
 
 // PR D15 gives the device set in `VmInfo`, so the vmm restores (plan PR
-// L18b). `INFO_TIMEOUT` is the timeout of the call. The wire has `sync`
-// and `synced` (plan PR V1, item 5.7 and its item 42 note of the design).
-// Plan PR V9 removes `ChApi::GUEST_SYNCS` and sends `sync` before each
-// take (decision CH62 rule 23, caller duty 7 of AGENTS.md). Until V9, the
-// vmm takes no snapshot.
+// L18b). `INFO_TIMEOUT` is the timeout of the call. The retire syncs the
+// guest on the control link before each take (decision CH62 rule 23,
+// caller duty 7 of AGENTS.md).
 impl ChApi for ChTools {
     const READS_DEVICES: bool = true;
-    const GUEST_SYNCS: bool = false;
 
     fn info(&self, vm: &VmRunDir) -> Result<VmInfo, ChRemoteError> {
         self.remote.info(vm, INFO_TIMEOUT)
