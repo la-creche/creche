@@ -9,6 +9,7 @@ of the pass left more reach than the target."""
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -377,6 +378,37 @@ def test_a_pass_writes_the_repos_file(fleet: Fleet) -> None:
     fleet.write(repos=["mcp", "creche"])
     fleet.run()
     assert json.loads(repos_path.read_bytes()) == {"repos": ["creche", "mcp"]}
+
+
+class Damage(StrEnum):
+    """What happens to a reach file between two passes."""
+
+    DELETED = "deleted"
+    EDITED = "edited"
+
+
+@pytest.mark.parametrize("damage", list(Damage))
+@pytest.mark.parametrize(
+    "reach_path", [paths.egress_path, paths.repos_path], ids=["egress.json", "repos.json"]
+)
+def test_a_pass_with_no_change_restores_a_reach_file(
+    fleet: Fleet, reach_path: Callable[[Path, str], Path], damage: Damage
+) -> None:
+    """Decision CH69 rule 6: caregiver writes each reach file on every
+    pass, not only on a pass that moves the family. The second pass has no
+    registry change, so a write gated on a step of the diff leaves the
+    damaged file."""
+    fleet.write(egress=[DOCS], repos=["creche"])
+    fleet.run()
+    reach = reach_path(fleet.state_root, FAMILY)
+    canonical = reach.read_bytes()
+    match damage:
+        case Damage.DELETED:
+            reach.unlink()
+        case Damage.EDITED:
+            reach.write_bytes(b"{}\n")
+    fleet.run()
+    assert reach.read_bytes() == canonical
 
 
 def test_a_pass_writes_the_reach_files_before_the_create(fleet: Fleet) -> None:
