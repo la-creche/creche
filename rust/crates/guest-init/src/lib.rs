@@ -4,10 +4,12 @@
 //! As PID 1 it runs the boot plan of `boot` (decision CH62 rule 4): the
 //! mounts, the switch root into the root disk and `lo` up. Then it reads
 //! the image env with `env_file` (decision CH62 rule 7), listens on
-//! control link 1200, writes `guest-init: up` and serves the link with
-//! `control` (decisions CH13, CH28, CH32). The first hello starts the
-//! facade, and `supervisor` keeps one for the VM life (decision CH19 rule
-//! 1). PID 1 never exits on its own:
+//! control link 1200 and on the local link, writes `guest-init: up` and
+//! serves both with `control` (decisions CH13, CH28, CH32, CH62 rule 10).
+//! The first hello starts the facade, and `supervisor` keeps one for the
+//! VM life (decision CH19 rule 1). The facade sends its turn events on
+//! the local link, and `local_link` relays them on 1200 (decision CH21).
+//! PID 1 never exits on its own:
 //! the guest kernel has `PANIC_TIMEOUT=0`, so an exit of PID 1 hangs the
 //! VM (fact 53). A stop and each fault power the VM off instead (decision
 //! CH19 rule 3).
@@ -25,6 +27,8 @@ mod control;
 mod env_file;
 #[cfg(any(test, target_os = "linux"))]
 mod lo;
+#[cfg(any(test, target_os = "linux"))]
+mod local_link;
 #[cfg(target_os = "linux")]
 mod power;
 #[cfg(any(test, target_os = "linux"))]
@@ -66,8 +70,8 @@ fn as_pid_1() -> ExitCode {
     power::off()
 }
 
-/// Boots, listens on control link 1200 and serves it. It returns the
-/// console line of the stop or of the fault.
+/// Boots, listens on control link 1200 and on the local link and serves
+/// both. It returns the console line of the stop or of the fault.
 #[cfg(target_os = "linux")]
 fn life() -> String {
     // The facade gets the env (decision CH49 rule 1).
@@ -75,13 +79,18 @@ fn life() -> String {
         Ok(env) => env,
         Err(fault) => return fault,
     };
-    // The listener opens before `up`, so a dial after `up` reaches it.
+    // The listeners open before `up`, so a dial after `up` reaches them,
+    // and the facade, which starts later, finds its link.
     let listener = match control::listen() {
         Ok(listener) => listener,
         Err(error) => return format!("control listen failed: {error}"),
     };
+    let local = match local_link::listen() {
+        Ok(local) => local,
+        Err(error) => return format!("local link listen failed: {error}"),
+    };
     say("up");
-    control::serve(listener, env)
+    control::serve(listener, local, env)
 }
 
 /// Boots, then reads the env file of the switched root. Both run before

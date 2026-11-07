@@ -24,8 +24,8 @@
 //!    26). A line is refused when it is over the cap, is not one JSON
 //!    value, or is not the type that the link expects at that point.
 //! 6. After `ControlReady`, `ControlCommand::Stop` runs the stop of the
-//!    supervisor: SIGTERM to the facade, up to 2 s, then the power-off
-//!    (decisions CH19 rule 3, CH62 rule 9).
+//!    supervisor: the stop line on the local link, up to 25 s, SIGTERM,
+//!    up to 2 s, then the power-off (decisions CH19 rule 3, CH62 rule 9).
 //! 7. After `ControlReady`, `ControlCommand::Sync` runs `syncfs` of the
 //!    session disk, then `sync`, and guest init answers
 //!    `GuestEvent::Synced` on the same link (decision CH62 rule 23). A
@@ -37,6 +37,10 @@
 //! 9. After `ControlReady`, each facade state change goes out on the link
 //!    as `GuestEvent::Facade` (decision CH43 rule 8). A change before the
 //!    ready of a link goes out in that ready.
+//! 10. The local link of the facade feeds the turn events, and each goes
+//!     out on the link after its ready as `GuestEvent::Turn`, then the
+//!     facade state that it changed (decisions CH21, CH62 rules 10 and
+//!     11). `local_link` has the rules.
 //!
 //! `Control` is the pure state machine: inputs in, actions out, so the
 //! unit tests drive it on any OS. `Lines` is the pure framing. The
@@ -49,10 +53,11 @@ use std::time::Duration;
 
 use creche_wire::{
     CONTROL_LINE_CAP, ControlCommand, ControlHello, ControlReady, ControlSynced, FacadeState,
-    GuestEvent, SessionId, UnixMillis,
+    GuestEvent, SessionId, TurnEvent, UnixMillis,
 };
 use rustix::io::Errno;
 
+use crate::local_link::LocalId;
 use crate::supervisor::{Order, Supervisor};
 
 /// The identity of one control link (decision CH28). Each accepted link
@@ -90,8 +95,22 @@ pub enum Action {
     Timer(Duration),
     /// Send SIGTERM to the facade (decision CH62 rule 9).
     Terminate(NonZeroU32),
+    /// Send SIGKILL to the facade: its local link closed (decision CH32
+    /// rule 7).
+    Kill(NonZeroU32),
     /// Close the link and write why on the console (decision CH43 rule 2).
     Close(LinkId, Why),
+    /// Write this `GuestEvent::Turn` line, its LF included, to the link
+    /// (decision CH21).
+    Turn(LinkId, Vec<u8>),
+    /// Write on the console that the turn event of this local link is
+    /// dropped: no control link got its ready (decision CH62 rule 11).
+    Dropped(LocalId),
+    /// Write `local_link::STOP_LINE` to the local link (decision CH62
+    /// rule 9). A failed write calls `Control::local_ended`.
+    LocalStop(LocalId),
+    /// Close the local link and write why on the console.
+    LocalClose(LocalId, Why),
     /// Write why on the console and change nothing.
     Ignore(LinkId, Ignored),
     /// The vmm sent `stop` on the link. Write it on the console, then call
@@ -124,6 +143,13 @@ pub enum Why {
     /// A line of guest init did not encode. It holds the error of the
     /// writer.
     Encode(String),
+    /// The local link peer is not the live facade that waits for its
+    /// link (decision CH62 rule 10). It holds the peer pid.
+    NotFacade(NonZeroU32),
+    /// The peer of a local link ended it, or its read failed.
+    Ended,
+    /// The facade of a local link exited.
+    FacadeExited,
 }
 
 impl fmt::Display for Why {
@@ -139,6 +165,14 @@ impl fmt::Display for Why {
             }
             Self::Clock(error) => write!(formatter, "the clock set failed: {error}"),
             Self::Encode(error) => write!(formatter, "a line did not encode: {error}"),
+            Self::NotFacade(pid) => {
+                write!(
+                    formatter,
+                    "pid {pid} is not a facade that waits for its link"
+                )
+            }
+            Self::Ended => formatter.write_str("the link ended"),
+            Self::FacadeExited => formatter.write_str("the facade exited"),
         }
     }
 }
@@ -185,6 +219,10 @@ pub struct Control {
     /// The facade state after the last input, so a change is seen
     /// (decision CH43 rule 8).
     reported: FacadeState,
+    /// The id of the last accepted local link.
+    local_accepted: u64,
+    /// The open local link of the facade (decision CH62 rule 10).
+    local: Option<LocalId>,
 }
 
 impl Default for Control {
@@ -198,6 +236,8 @@ impl Default for Control {
             session: None,
             facade,
             reported,
+            local_accepted: 0,
+            local: None,
         }
     }
 }
@@ -290,10 +330,76 @@ impl Control {
         actions
     }
 
-    /// The reaper reaped `pid` (decision CH19 rule 1).
+    /// The reaper reaped `pid` (decision CH19 rule 1). The exit of the
+    /// facade closes its local link, so a child that holds the socket
+    /// cannot keep it.
     pub fn reaped(&mut self, pid: NonZeroU32) -> Vec<Action> {
         let order = self.facade.reaped(pid);
-        self.follow(order)
+        let mut actions = self.follow(order);
+        if self.facade.pid().is_none()
+            && let Some(local) = self.local.take()
+        {
+            actions.push(Action::LocalClose(local, Why::FacadeExited));
+        }
+        actions
+    }
+
+    /// A peer with pid `peer` connected to the local link. It is the link
+    /// of the facade only when the supervisor takes it (decision CH62 rule
+    /// 10). Each other peer is closed at once.
+    pub fn local_accept(&mut self, peer: NonZeroU32) -> (LocalId, Vec<Action>) {
+        self.local_accepted = self.local_accepted.saturating_add(1);
+        let local = LocalId(self.local_accepted);
+        if !self.facade.linked(peer) {
+            return (local, vec![Action::LocalClose(local, Why::NotFacade(peer))]);
+        }
+        self.local = Some(local);
+        (local, self.follow(None))
+    }
+
+    /// A line of local link `local`, its LF cut: one `TurnEvent`
+    /// (decisions CH21, CH62 rule 11). A refused line closes the link.
+    pub fn local_line(&mut self, local: LocalId, line: &[u8]) -> Vec<Action> {
+        if self.local != Some(local) {
+            return Vec::new();
+        }
+        // The typed reader of this link (the strict reader gap of
+        // `AGENTS.md` Known gaps).
+        let event = match serde_json::from_slice::<TurnEvent>(line) {
+            Ok(event) => event,
+            Err(error) => return self.local_refused(local, Why::Refused(error.to_string())),
+        };
+        self.facade.turn(&event);
+        let relay = match self.current {
+            Some((link, Stage::Ready)) => match encode(&GuestEvent::Turn(event)) {
+                Ok(line) => Action::Turn(link, line),
+                Err(why) => self.close(link, why),
+            },
+            Some((_, Stage::Hello | Stage::Clock)) | None => Action::Dropped(local),
+        };
+        let mut actions = vec![relay];
+        actions.extend(self.follow(None));
+        actions
+    }
+
+    /// The reader of local link `local` refused its bytes, or a line of
+    /// it. The link closes, and the facade is killed (decision CH32 rule
+    /// 7).
+    pub fn local_refused(&mut self, local: LocalId, why: Why) -> Vec<Action> {
+        if self.local != Some(local) {
+            return Vec::new();
+        }
+        self.local = None;
+        let mut actions = vec![Action::LocalClose(local, why)];
+        let order = self.facade.unlinked();
+        actions.extend(self.follow(order));
+        actions
+    }
+
+    /// Local link `local` ended, or its read or a write failed. The
+    /// facade is killed (decision CH32 rule 7).
+    pub fn local_ended(&mut self, local: LocalId) -> Vec<Action> {
+        self.local_refused(local, Why::Ended)
     }
 
     /// The timer of the last `Action::Timer` ended.
@@ -376,7 +482,10 @@ impl Control {
             // facade, so a start always has one.
             Order::Start => self.session.clone().map(Action::Start),
             Order::Timer(length) => Some(Action::Timer(length)),
+            // The supervisor asks only with an open link.
+            Order::AskStop => self.local.map(Action::LocalStop),
             Order::Terminate(pid) => Some(Action::Terminate(pid)),
+            Order::Kill(pid) => Some(Action::Kill(pid)),
             Order::PowerOff => Some(Action::PowerOff),
         }
     }
@@ -471,14 +580,17 @@ impl Lines {
 #[cfg(target_os = "linux")]
 pub use shell::{listen, serve};
 
-/// The vsock listener, the threads and the facade process (decisions
-/// CH62 rules 1 and 2). The kvm tests prove it.
+/// The vsock listener, the local link, the threads and the facade
+/// process (decisions CH62 rules 1, 2 and 10). The kvm tests prove it.
 #[cfg(target_os = "linux")]
 mod shell {
     use std::collections::{HashMap, VecDeque};
     use std::fs::File;
+    use std::hash::Hash;
     use std::io::{self, Read as _, Write as _};
+    use std::num::NonZeroU32;
     use std::os::fd::{AsRawFd as _, OwnedFd};
+    use std::os::unix::net::UnixListener;
     use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
     use std::thread;
     use std::time::Instant;
@@ -488,11 +600,13 @@ mod shell {
     use nix::sys::socket::{AddressFamily, SockFlag, SockType, VsockAddr, bind, socket};
     use rustix::io::Errno;
     use rustix::net::{Shutdown, SocketFlags, accept_with, shutdown};
+    use rustix::process::Signal;
     use rustix::time::{ClockId, Timespec, clock_gettime, clock_settime};
 
     use super::{Action, Control, Lines, LinkId, Why};
     use crate::env_file::Env;
-    use crate::supervisor::{Facade, Reaped, terminate};
+    use crate::local_link::{self, LocalId, STOP_LINE};
+    use crate::supervisor::{Facade, Reaped, signal};
 
     /// The bytes of one read, as the vmm reader takes them.
     const CHUNK: usize = 4096;
@@ -516,6 +630,23 @@ mod shell {
         Reaped(Reaped),
         /// The reaper stopped on this wait error.
         ReapFailed(io::Error),
+        /// A new local link, its peer pid, and the sender that its reader
+        /// thread gets.
+        LocalAccepted(OwnedFd, NonZeroU32, Sender<Event>),
+        /// The local accept loop stopped on this error.
+        LocalAcceptFailed(io::Error),
+        LocalLine(LocalId, Vec<u8>),
+        LocalRefused(LocalId, Why),
+        /// The local link ended at a line end, or its read failed.
+        LocalEnded(LocalId),
+    }
+
+    /// What one reader thread got.
+    enum Got {
+        Line(Vec<u8>),
+        Refused(Why),
+        /// The link ended at a line end, or its read failed.
+        Ended,
     }
 
     /// Listens on vsock port 1200 of any CID (decisions CH13, CH14).
@@ -536,10 +667,10 @@ mod shell {
         Ok(listener)
     }
 
-    /// Serves control link 1200 and the facade, which gets `env`, until a
-    /// stop or a fault. It returns the console line of the end, and the
-    /// caller powers off.
-    pub fn serve(listener: OwnedFd, env: Env) -> String {
+    /// Serves control link 1200, the local link on `local` and the
+    /// facade, which gets `env`, until a stop or a fault. It returns the
+    /// console line of the end, and the caller powers off.
+    pub fn serve(listener: OwnedFd, local: UnixListener, env: Env) -> String {
         let (events, inbox) = channel();
         let reaps = events.clone();
         let facade = match Facade::new(env, move |reaped| {
@@ -552,11 +683,18 @@ mod shell {
             Ok(facade) => facade,
             Err(error) => return format!("reaper thread failed: {error}"),
         };
+        let local_events = events.clone();
         let spawned = thread::Builder::new()
             .name("control-accept".to_owned())
             .spawn(move || accept_loop(&listener, &events));
         if let Err(error) = spawned {
             return format!("control accept thread failed: {error}");
+        }
+        let spawned = thread::Builder::new()
+            .name("local-accept".to_owned())
+            .spawn(move || local_accept_loop(&local, &local_events));
+        if let Err(error) = spawned {
+            return format!("local link accept thread failed: {error}");
         }
         run(&inbox, &facade)
     }
@@ -564,14 +702,15 @@ mod shell {
     /// The control loop: one thread owns the state, every write and the
     /// one timer of the supervisor.
     ///
-    /// The loop holds no sender. The accept thread, the reaper thread and
-    /// each reader thread hold one, so the inbox ends only when all of
-    /// them are gone. Then no vmm can reach the guest again, and the
+    /// The loop holds no sender. The two accept threads, the reaper
+    /// thread and each reader thread hold one, so the inbox ends only when
+    /// all of them are gone. Then no vmm can reach the guest again, and the
     /// caller powers off (decision CH19 rule 3). A panic in any thread
     /// powers off through the panic hook of `as_pid_1`.
     fn run(inbox: &Receiver<Event>, facade: &Facade) -> String {
         let mut control = Control::default();
         let mut links: HashMap<LinkId, File> = HashMap::new();
+        let mut locals: HashMap<LocalId, File> = HashMap::new();
         let mut timer: Option<Instant> = None;
         loop {
             let event = match timer {
@@ -591,7 +730,14 @@ mod shell {
                 // The timer ended.
                 timer = None;
                 let actions = control.timer();
-                if let Some(end) = act(&mut control, &mut links, &mut timer, facade, actions) {
+                if let Some(end) = act(
+                    &mut control,
+                    &mut links,
+                    &mut locals,
+                    &mut timer,
+                    facade,
+                    actions,
+                ) {
                     return end;
                 }
                 continue;
@@ -600,7 +746,15 @@ mod shell {
                 Event::Accepted(fd, events) => {
                     let (link, old) = control.accept();
                     crate::say(&format!("{link} open"));
-                    match start_reader(link, fd, events) {
+                    let reader = move |got| {
+                        let event = match got {
+                            Got::Line(line) => Event::Line(link, line),
+                            Got::Refused(why) => Event::Refused(link, why),
+                            Got::Ended => Event::Ended(link),
+                        };
+                        events.send(event).is_ok()
+                    };
+                    match start_reader(&link.to_string(), fd, reader) {
                         Ok(file) => {
                             links.insert(link, file);
                         }
@@ -627,8 +781,49 @@ mod shell {
                     control.reaped(reaped.pid)
                 }
                 Event::ReapFailed(error) => return format!("reaper failed: {error}"),
+                Event::LocalAccepted(fd, peer, events) => {
+                    let (local, mut actions) = control.local_accept(peer);
+                    crate::say(&format!("{local} open: peer pid {peer}"));
+                    // A refused peer gets no reader: its fd closes here.
+                    let refused = actions.iter().any(
+                        |action| matches!(action, Action::LocalClose(closed, _) if *closed == local),
+                    );
+                    if !refused {
+                        let reader = move |got| {
+                            let event = match got {
+                                Got::Line(line) => Event::LocalLine(local, line),
+                                Got::Refused(why) => Event::LocalRefused(local, why),
+                                Got::Ended => Event::LocalEnded(local),
+                            };
+                            events.send(event).is_ok()
+                        };
+                        match start_reader(&local.to_string(), fd, reader) {
+                            Ok(file) => {
+                                locals.insert(local, file);
+                            }
+                            Err(error) => {
+                                crate::say(&format!("{local} reader failed: {error}"));
+                                actions.extend(control.local_ended(local));
+                            }
+                        }
+                    }
+                    actions
+                }
+                Event::LocalAcceptFailed(error) => {
+                    return format!("local link accept failed: {error}");
+                }
+                Event::LocalLine(local, line) => control.local_line(local, &line),
+                Event::LocalRefused(local, why) => control.local_refused(local, why),
+                Event::LocalEnded(local) => control.local_ended(local),
             };
-            if let Some(end) = act(&mut control, &mut links, &mut timer, facade, actions) {
+            if let Some(end) = act(
+                &mut control,
+                &mut links,
+                &mut locals,
+                &mut timer,
+                facade,
+                actions,
+            ) {
                 return end;
             }
         }
@@ -640,6 +835,7 @@ mod shell {
     fn act(
         control: &mut Control,
         links: &mut HashMap<LinkId, File>,
+        locals: &mut HashMap<LocalId, File>,
         timer: &mut Option<Instant>,
         facade: &Facade,
         actions: Vec<Action>,
@@ -667,10 +863,32 @@ mod shell {
                 },
                 Action::Facade(link, line) => write(links, link, &line, "facade"),
                 Action::Timer(length) => *timer = Some(Instant::now() + length),
-                Action::Terminate(pid) => match terminate(pid) {
+                Action::Terminate(pid) => match signal(pid, Signal::TERM) {
                     Ok(()) => crate::say(&format!("facade pid {pid} sent SIGTERM")),
                     Err(error) => crate::say(&format!("facade pid {pid} SIGTERM failed: {error}")),
                 },
+                Action::Kill(pid) => match signal(pid, Signal::KILL) {
+                    Ok(()) => crate::say(&format!("facade pid {pid} sent SIGKILL")),
+                    Err(error) => crate::say(&format!("facade pid {pid} SIGKILL failed: {error}")),
+                },
+                Action::Turn(link, line) => write(links, link, &line, "turn"),
+                Action::Dropped(local) => crate::say(&format!(
+                    "{local}: a turn event with no ready control link is dropped"
+                )),
+                Action::LocalStop(local) => {
+                    match locals.get_mut(&local).map(|file| file.write_all(STOP_LINE)) {
+                        Some(Ok(())) => crate::say(&format!("{local} stop")),
+                        Some(Err(error)) => {
+                            crate::say(&format!("{local} write failed: {error}"));
+                            next.extend(control.local_ended(local));
+                        }
+                        None => {}
+                    }
+                }
+                Action::LocalClose(local, why) => {
+                    crate::say(&format!("{local} closed: {why}"));
+                    close(locals, local);
+                }
                 Action::Sync(link) => match sync_session() {
                     Ok(()) => next.extend(control.synced(link)),
                     // CONTRACT-QUESTION: no row decides the answer to a
@@ -727,7 +945,7 @@ mod shell {
 
     /// Shuts the link down, so its reader thread reads an EOF and ends,
     /// and drops the write end.
-    fn close(links: &mut HashMap<LinkId, File>, link: LinkId) {
+    fn close<K: Eq + Hash>(links: &mut HashMap<K, File>, link: K) {
         if let Some(file) = links.remove(&link) {
             let _ = shutdown(&file, Shutdown::Both);
         }
@@ -766,48 +984,78 @@ mod shell {
         }
     }
 
-    /// Starts the reader thread of `link` and returns the write end.
-    fn start_reader(link: LinkId, fd: OwnedFd, events: Sender<Event>) -> io::Result<File> {
+    /// Accepts each local link, reads its peer pid and hands both to the
+    /// control loop (decision CH62 rule 10). A failed peer read closes
+    /// that link. Each other error ends the loop.
+    fn local_accept_loop(listener: &UnixListener, events: &Sender<Event>) {
+        loop {
+            match listener.accept() {
+                Ok((stream, _)) => match local_link::peer(&stream) {
+                    Ok(peer) => {
+                        let event = Event::LocalAccepted(stream.into(), peer, events.clone());
+                        if events.send(event).is_err() {
+                            return;
+                        }
+                    }
+                    Err(error) => crate::say(&format!("local link peer read failed: {error}")),
+                },
+                Err(error) if error.kind() == io::ErrorKind::ConnectionAborted => {}
+                Err(error) => {
+                    let _ = events.send(Event::LocalAcceptFailed(error));
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Starts the reader thread of the link `name` and returns the write
+    /// end. The thread hands each `Got` to `send` and stops when `send`
+    /// returns false.
+    fn start_reader(
+        name: &str,
+        fd: OwnedFd,
+        mut send: impl FnMut(Got) -> bool + Send + 'static,
+    ) -> io::Result<File> {
         let file = File::from(fd);
         let reader = file.try_clone()?;
+        let link = name.to_owned();
         thread::Builder::new()
-            .name(format!("control-{}", link.0))
-            .spawn(move || read_loop(link, reader, &events))?;
+            .name(link.clone())
+            .spawn(move || read_loop(&link, reader, &mut send))?;
         Ok(file)
     }
 
     /// Reads the lines of one link until its end or a refused line.
-    fn read_loop(link: LinkId, mut reader: File, events: &Sender<Event>) {
+    fn read_loop(link: &str, mut reader: File, send: &mut impl FnMut(Got) -> bool) {
         let mut lines = Lines::default();
         let mut chunk = [0_u8; CHUNK];
         loop {
             let read = match reader.read(&mut chunk) {
                 Ok(0) => {
-                    let end = match lines.end() {
-                        Ok(()) => Event::Ended(link),
-                        Err(why) => Event::Refused(link, why),
-                    };
-                    let _ = events.send(end);
+                    let _ = send(match lines.end() {
+                        Ok(()) => Got::Ended,
+                        Err(why) => Got::Refused(why),
+                    });
                     return;
                 }
                 Ok(read) => read,
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
                 Err(error) => {
                     crate::say(&format!("{link} read failed: {error}"));
-                    let _ = events.send(Event::Ended(link));
+                    let _ = send(Got::Ended);
                     return;
                 }
             };
             match lines.push(chunk.get(..read).unwrap_or_default()) {
                 Ok(each) => {
                     for line in each {
-                        if events.send(Event::Line(link, line)).is_err() {
+                        if !send(Got::Line(line)) {
                             return;
                         }
                     }
                 }
                 Err(why) => {
-                    let _ = events.send(Event::Refused(link, why));
+                    let _ = send(Got::Refused(why));
                     return;
                 }
             }
