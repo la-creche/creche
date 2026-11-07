@@ -97,12 +97,11 @@ pub const SHAPE_CAP: u64 = 4096;
 /// caregiver, and a test of each side holds it equal.
 pub const EGRESS_CAP: u64 = 64 * 1024;
 
-/// The most bytes of `repos.json`: 4 KiB. The canonical form of the
-/// longest list, 32 names of 100 characters (decision CH69 rule 15),
-/// has 3307 bytes, so a file that caregiver writes always fits. A larger
-/// file is `ReachFault::TooLarge`, so the vmm serves no clone.
-// CONTRACT-QUESTION: no row sets the byte cap of `repos.json`. This is the
-// narrowest cap that holds every list of decision CH69 rule 15.
+/// The most bytes of `repos.json`: 4 KiB (decision CH73 rule 2). The
+/// canonical form of the longest list, 32 names of 100 characters
+/// (decision CH69 rule 15), has 3307 bytes, so a file that caregiver
+/// writes always fits. A larger file is `ReachFault::TooLarge`, so the
+/// vmm serves no clone.
 pub const REPOS_CAP: u64 = 4 * 1024;
 
 /// The flags of each directory open. `O_NOFOLLOW` refuses a symlink as the

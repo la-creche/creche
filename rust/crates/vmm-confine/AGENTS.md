@@ -113,7 +113,8 @@ table of the three vmm crates.
   bytes that are not one `FamilyEgress` are each a `ReachFault`.
 - `family::FamilyRoot::read_repos` reads the clone list `repos.json` of
   a family (decisions CH10-10, CH69 rules 4 and 5) as `read_egress`
-  reads `egress.json`, with the cap `REPOS_CAP` (4 KiB), as
+  reads `egress.json`, with the cap `REPOS_CAP` (4 KiB, decision CH73
+  rule 2), as
   `FamilyRepos`. An absent family dir or file is the empty list, so the
   family gets no clone. Each fault is a `ReachFault`.
 - `mirror::MirrorRoot::git_dir` gives `<root>/<name>/.git` of a repo of
@@ -436,9 +437,8 @@ table of the three vmm crates.
   whose file would pass the cap. `rust/crates/wire/vectors/family.json`
   holds the value, and `the_egress_cap_matches_the_wire_vectors` in
   `tests/family.rs` holds `EGRESS_CAP` equal to it.
-- CONTRACT-QUESTION: no row sets the byte cap of `repos.json`.
-  `REPOS_CAP` is 4 KiB, the narrowest cap that holds the canonical form
-  of every list of decision CH69 rule 15 (32 names of 100 characters:
-  3307 bytes). So caregiver needs no cap check of its own, as decision
+- Closed by decision CH73 rule 2: `REPOS_CAP` is 4 KiB, the smallest
+  cap that holds the canonical form of every list of decision CH69 rule
+  15 (32 names of 100 characters: 3307 bytes). So caregiver needs no cap check of its own, as decision
   CH71 needs for `egress.json`. A larger file is `ReachFault::TooLarge`,
   and the vmm serves no clone.

@@ -13,6 +13,7 @@ use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr, TcpListener};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::spawn;
@@ -23,7 +24,7 @@ use creche_vmm::control::{ControlState, SYNC_WAIT};
 use creche_vmm::egress::log::Log;
 use creche_vmm::handlers::acp::{Acp, StartFault, StartVm};
 use creche_vmm::handlers::drop::{Drops, StopVm, VmStopFailed};
-use creche_vmm::mirror::Mirror;
+use creche_vmm::mirror::{DENIED, Mirror};
 use creche_vmm::planes::Upstreams;
 use creche_vmm::relay::{AcpLink, Door, Relays};
 use creche_vmm::restore::ChApi;
@@ -2602,19 +2603,99 @@ fn a_family_with_repos_and_egress_binds_1103_and_1104() {
     assert!(test.fault_codes().is_empty());
 }
 
-/// An absent file, an empty list and a file that does not read bind no
-/// 1103 (decision CH69 rule 13, the CONTRACT-QUESTION of `binds_mirror`).
+/// An absent file and an empty list bind no 1103 (decisions CH69 rule 13,
+/// CH73 rule 1).
 #[test]
-fn an_absent_empty_or_bad_clone_list_binds_no_1103() {
+fn an_absent_or_empty_clone_list_binds_no_1103() {
     let test = Test::new("repos-none", |_| {});
     assert_eq!(test.start(0), Ok(()));
     let file = test.dir.join("families/chat/repos.json");
     fs::write(&file, r#"{"repos":[]}"#).unwrap();
     assert_eq!(test.start(1), Ok(()));
-    fs::write(&file, "{").unwrap();
-    assert_eq!(test.start(2), Ok(()));
-    assert_eq!(*test.fake.listening.lock().unwrap(), [NO_EGRESS; 3]);
+    assert_eq!(*test.fake.listening.lock().unwrap(), [NO_EGRESS; 2]);
     assert!(test.fault_codes().is_empty());
+}
+
+/// A present `repos.json` that does not read binds 1103, and the deny
+/// check names it. A zero-byte file is present and does not read, so it
+/// binds 1103 too (decision CH73 rule 1).
+#[test]
+fn a_bad_clone_list_binds_1103() {
+    let test = Test::new("repos-bad", |_| {});
+    let file = test.dir.join("families/chat/repos.json");
+    fs::write(&file, "{").unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    assert!(listeners(&test, 0).contains(&"vsock.sock_1103".to_owned()));
+    fs::write(&file, "").unwrap();
+    assert_eq!(test.start(1), Ok(()));
+    assert!(listeners(&test, 1).contains(&"vsock.sock_1103".to_owned()));
+    assert_eq!(*test.fake.listening.lock().unwrap(), [REPOS_ONLY; 2]);
+    assert!(test.fault_codes().is_empty());
+}
+
+/// The child of `a_clone_on_a_bad_clone_list_gets_denied_and_one_line`,
+/// run in a process of its own, so its stderr holds only the lines of the
+/// vmm. It starts a VM whose `repos.json` does not read, then sends the
+/// first pkt-line of a clone on its 1103.
+#[test]
+#[ignore = "the child of a_clone_on_a_bad_clone_list_gets_denied_and_one_line"]
+fn clone_on_a_bad_clone_list_for_the_log_test() {
+    let test = Test::new("repos-bad-clone", |_| {});
+    fs::write(test.dir.join("families/chat/repos.json"), "{").unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    let path = test.dir.join("run/slot/0/vsock.sock_1103");
+    // The current-thread runtime runs the mirror only inside `block_on`,
+    // so the guest side runs in `spawn_blocking`.
+    let answer = test.runtime.block_on(test.runtime.spawn_blocking(move || {
+        let mut guest = UnixStream::connect(path).unwrap();
+        guest
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let payload = "git-upload-pack /creche\0host=127.0.0.1:9418\0";
+        let line = format!("{:04x}{payload}", payload.len() + 4);
+        guest.write_all(line.as_bytes()).unwrap();
+        guest.shutdown(Shutdown::Write).unwrap();
+        let mut answer = Vec::new();
+        guest.read_to_end(&mut answer).unwrap();
+        answer
+    }));
+    assert_eq!(answer.unwrap(), DENIED);
+}
+
+/// A clone on the 1103 of a `repos.json` that does not read gets the one
+/// error and one stderr line that names `not_valid` (decisions CH69 rule
+/// 24, CH73 rule 1). The test runs its own binary as the child
+/// `clone_on_a_bad_clone_list_for_the_log_test` and reads the real stderr
+/// of the vmm code. The fake launch probes 1103 with a dial that sends no
+/// line, so stderr may also hold its `bad_request` line.
+#[test]
+fn a_clone_on_a_bad_clone_list_gets_denied_and_one_line() {
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "clone_on_a_bad_clone_list_for_the_log_test"])
+        .args(["--ignored", "--nocapture", "--test-threads=1"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(output.status.success(), "{stdout}{stderr}");
+    assert!(stdout.contains("1 passed"), "{stdout}");
+    let prefix = format!("vmm: a clone of the family chat, session {A}, ");
+    // Only a line that ends in its LF counts.
+    let reasons: Vec<&str> = stderr
+        .split_inclusive('\n')
+        .filter_map(|line| line.strip_suffix('\n'))
+        .filter_map(|line| line.strip_prefix(prefix.as_str()))
+        .collect();
+    let named: Vec<&str> = reasons
+        .iter()
+        .copied()
+        .filter(|reason| reason.contains("not_valid"))
+        .collect();
+    assert_eq!(named, ["refused: repos_not_valid"], "{stderr}");
+    let probe = reasons
+        .iter()
+        .filter(|reason| **reason == "refused: bad_request");
+    assert_eq!(probe.count() + named.len(), reasons.len(), "{stderr}");
 }
 
 /// A restore binds 1103 again before CH starts, as each plane listener
