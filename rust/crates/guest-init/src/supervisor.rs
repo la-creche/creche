@@ -164,12 +164,10 @@ impl Supervisor {
 
     /// The shell did not start the facade. The next try follows the
     /// restart pause, and the count stays.
-    // CONTRACT-QUESTION: no row decides the answer to a failed start, for
-    // example a root disk with no facade program. The reading taken:
-    // guest init writes the error on the console, counts no start, keeps
-    // the state and tries again after `RESTART_PAUSE` (decision CH62 rule
-    // 8), with no cap. The vmm sees no `starting`, so it never snapshots
-    // the VM. A change costs this arm and its test.
+    // Decision CH66 rule 1: guest init writes the error on the console,
+    // counts no start, keeps the state and tries again after
+    // `RESTART_PAUSE` (decision CH62 rule 8), with no cap. The vmm sees
+    // no `starting`, so it never snapshots the VM.
     pub fn start_failed(&mut self) -> Option<Order> {
         if self.life != Life::Spawning {
             return None;
@@ -438,12 +436,9 @@ mod shell {
                 // A process group of its own, with the facade pid as its
                 // id, so each signal of guest init reaches the children
                 // of the facade too.
-                // CONTRACT-QUESTION: CH19 rule 1, CH32 rule 7 and CH62
-                // rule 9 name only the facade. The reading taken: each
-                // SIGTERM and SIGKILL goes to its group, and the group of
-                // an exited facade gets SIGKILL before the restart. A
-                // change costs this call, `signal` and the `Live` arm of
-                // `Supervisor::reaped`.
+                // Decision CH66 rule 3: each SIGTERM and SIGKILL goes to
+                // this group, and the group of an exited facade gets
+                // SIGKILL before the restart.
                 .process_group(0);
             let child = {
                 let _guard = self.spawning.lock().unwrap_or_else(PoisonError::into_inner);

@@ -174,27 +174,6 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
 
 ## Known gaps
 
-1. CONTRACT-QUESTION: no row decides the answer to a failed facade
-   start, for example a root disk with no facade program. The reading
-   taken, in `src/supervisor.rs`: guest init writes
-   `guest-init: facade start failed: <error>`, counts no start, keeps
-   the state and tries again after `RESTART_PAUSE` (CH62 rule 8), with
-   no cap. The vmm sees no `starting`, so it never snapshots the VM. A
-   change costs one arm of `Supervisor::start_failed` and its test.
-2. CONTRACT-QUESTION: CH62 rule 9 names SIGKILL, sync and power off,
-   with no wait between them. The reading taken, in `src/power.rs`: the
-   power-off waits up to `KILL_WAIT` (1 s) for the killed processes to
-   be gone, so a process in D state cannot hang it, and it writes
-   `guest-init: processes left after 1s` when the wait runs out. A
-   change costs the constant `KILL_WAIT`.
-3. CONTRACT-QUESTION: CH19 rule 1, CH32 rule 7 and CH62 rule 9 name only
-   the facade. Its children would live on as orphans of PID 1 beside the
-   next start, for example agent tools that write the workspace. The
-   reading taken, in `src/supervisor.rs`: the facade runs in a process
-   group of its own, each SIGTERM and SIGKILL goes to that group, and
-   the group of an exited facade gets SIGKILL before the restart pause.
-   A change costs the `process_group` call, `signal` and the `Live` arm
-   of `Supervisor::reaped`.
 4. CONTRACT-QUESTION: CH62 rule 9 starts the stop with the stop line on
    the local link, and a facade with no open local link cannot get it.
    The reading taken, in `src/supervisor.rs`: the stop of a `starting`
