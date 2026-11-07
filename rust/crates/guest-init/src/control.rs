@@ -701,8 +701,8 @@ mod shell {
         };
         let local_events = events.clone();
         // A failed accept of a bridge row ends the loop, as a failed 1200
-        // accept does, so the main thread powers off (decision CH19 rule
-        // 3).
+        // accept does, so the main thread powers off (decisions CH19 rule
+        // 3, CH67 rule 11).
         let asks = events.clone();
         let row_events = events.clone();
         let failed = move |row, error| {

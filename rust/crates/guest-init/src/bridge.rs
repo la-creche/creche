@@ -26,7 +26,8 @@
 //!    no allowlist).
 //! 5. A row holds at most `ROW_CAP` open links, from the accept to the
 //!    close of both halves. It closes a link past the cap at once
-//!    (decision CH62 rule 14). No idle timeout closes a link.
+//!    (decisions CH62 rule 14, CH67 rule 3). No idle timeout closes a
+//!    link.
 //! 6. Each link writes `<row> link <n> open`, then `relay connected` or
 //!    `host connected` or the dial fault, then `closed` on the console
 //!    (decision CH62 rule 26).
@@ -36,7 +37,7 @@
 //! 8. A failed accept ends the accept thread of its row. The thread hands
 //!    the error to the control loop, as the 1200 accept thread does. The
 //!    loop then returns its end line, and the main thread powers off
-//!    (decision CH19 rule 3, plan risk 9).
+//!    (decisions CH19 rule 3, CH67 rule 11, plan risk 9).
 //!
 //! `Slots`, `dial`, `join`, `accept_links` and the row table are the
 //! portable core, so the unit tests drive them on any OS. The Linux shell
@@ -160,7 +161,8 @@ pub fn dial(path: &Path, until: Instant) -> io::Result<UnixStream> {
 pub enum End {
     /// The fresh dial failed, and the link closed at once.
     DialFailed(io::Error),
-    /// The splice ran until an EOF or a fault in either direction.
+    /// The splice ran until both directions had ended or one faulted
+    /// (decisions CH62 rule 14, CH67 rule 9).
     Closed,
     /// The splice did not start its second copy thread.
     SpliceFailed(io::Error),
@@ -307,7 +309,7 @@ mod shell {
     /// Listens on every bridge row: guest port 1201 with a backlog of
     /// `ROW_CAP`, since the row never holds more links (decision CH13),
     /// each loopback row (decision CH6-2) and the family-state socket,
-    /// mode 0600 (decision CH62 rule 13).
+    /// mode 0600 (decisions CH62 rule 13, CH67 rule 10).
     ///
     /// # Errors
     ///
@@ -338,7 +340,7 @@ mod shell {
     /// `is_facade` holds for its peer pid (decision CH62 rule 13). Each
     /// thread ends only on an accept error, and it hands that error and
     /// its row name to `failed`. The caller then powers off on its main
-    /// thread (decision CH19 rule 3).
+    /// thread (decisions CH19 rule 3, CH67 rule 11).
     ///
     /// # Errors
     ///

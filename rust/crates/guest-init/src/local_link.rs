@@ -74,20 +74,17 @@ mod shell {
     const BACKLOG: i32 = 4;
 
     /// Listens on the Unix socket `path`, mode 0600: `LOCAL_LINK_SOCKET`
-    /// (decision CH62 rule 10) or the family-state socket (decision CH62
-    /// rule 13). The mode is set before `listen`, so no connect can come
-    /// before it.
+    /// (decision CH62 rule 10) or the family-state socket (decisions CH62
+    /// rule 13, CH67 rule 10). The mode is set before `listen`, so no
+    /// connect can come before it.
     ///
     /// # Errors
     ///
     /// The error of the dir, `socket`, `bind`, the mode or `listen`.
     // Decision CH66 rule 6: the dir `/run/creche` gets mode 0755, the
     // umask default of PID 1, as each dir of `/run`. The socket mode 0600
-    // guards the link.
-    // CONTRACT-QUESTION: no row decides the mode of the family-state
-    // socket. It takes 0600, the mode of the local link. The facade runs
-    // as root (decision CH62 rule 4), so the pid check guards that socket
-    // in any mode (decision CH62 rule 13).
+    // guards the link. The family-state socket takes 0600 too (decision
+    // CH67 rule 10).
     pub fn listen(path: &str) -> io::Result<UnixListener> {
         let path = Path::new(path);
         if let Some(dir) = path.parent() {
