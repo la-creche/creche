@@ -100,6 +100,10 @@ table of the three vmm crates.
   Nothing keeps a last good state (decision CH53 rule 2). No live host
   writes `model_live_at` before the cut (decision CH45 rule 2), so the
   tests read the fixture root `tests/fixtures/family`.
+- `nofile::raise` sets the soft `RLIMIT_NOFILE` of the vmm to the need
+  that the vmm passes, and keeps the hard limit. A soft limit at or above
+  the need stays. A hard limit below it is `NofileError::Short`, so the
+  vmm never serves with fewer fds than its caps allow.
 - `command::ChCommand` renders the CH argv from the checked store types
   only: `CheckedImage` (PR D6), `SessionDisk` (PR D7), `SerialLog` (PR
   D17) and `ClaimedSnapshot` (PR D11). No input names a network card, and no
@@ -389,3 +393,6 @@ table of the three vmm crates.
   tool listed twice, and an entry of `skills/` that is not a dir. The
   file backend ignores or defaults each. caregiver writes none of these,
   so both backends give the same reply for every file caregiver writes.
+- CONTRACT-QUESTION (plan PR V6, decision CH62 rule 14): no row sets the
+  fd limit of the vmm, its headroom or the refusal of a short hard limit
+  (`nofile.rs`, `rust/crates/vmm/AGENTS.md` Known gap 21).

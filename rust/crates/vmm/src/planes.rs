@@ -34,7 +34,7 @@ use std::os::unix::net::UnixListener as StdListener;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use creche_vmm_store::layout::VmRunDir;
+use creche_vmm_store::layout::{SLOTS, VmRunDir};
 use creche_wire::HostPort;
 use tokio::net::{TcpStream, UnixListener, UnixStream};
 use tokio::task::{JoinHandle, JoinSet};
@@ -49,6 +49,30 @@ pub const SPLICE_CAP: usize = 64;
 
 /// The bound of the connect to a plane (decision CH62 rule 14).
 pub const CONNECT_WAIT: Duration = Duration::from_secs(5);
+
+/// The bridge rows of each VM: 1101 and 1102.
+const ROWS: usize = 2;
+
+/// The fds that the vmm holds beside the plane bridges: `vmm.sock` and
+/// its links, the links and run files of each VM, the store and the CH
+/// children. No row sets it (crate AGENTS.md, Known gap 21).
+const FD_HEADROOM: u64 = 4096;
+
+/// The fds that the vmm needs when each slot holds a VM whose bridge rows
+/// are full: per row its listener, and a Unix and a TCP stream per splice,
+/// plus `FD_HEADROOM`. `vmm serve` raises its soft `RLIMIT_NOFILE` to it
+/// (`creche_vmm_confine::nofile`), so a busy guest cannot use the fds of
+/// every other VM.
+#[must_use]
+pub fn fd_need() -> u64 {
+    let streams = u64::try_from(SPLICE_CAP).map_or(u64::MAX, |cap| cap.saturating_mul(2));
+    let rows = u64::try_from(ROWS).unwrap_or(u64::MAX);
+    streams
+        .saturating_add(1)
+        .saturating_mul(rows)
+        .saturating_mul(u64::from(SLOTS))
+        .saturating_add(FD_HEADROOM)
+}
 
 /// The address of each plane (decision CH62 rule 20): the keys
 /// `VMM_LITELLM_ADDR` and `VMM_CHAPERONE_ADDR`.
@@ -65,7 +89,7 @@ impl Upstreams {
     /// (decisions CH6-2, CH14). Its ports are the bound set of the deny
     /// check (decision CH6-3).
     #[must_use]
-    pub fn rows(self) -> [(HostPort, SocketAddr); 2] {
+    pub fn rows(self) -> [(HostPort, SocketAddr); ROWS] {
         [
             (HostPort::Litellm, self.litellm),
             (HostPort::Chaperone, self.chaperone),

@@ -30,7 +30,8 @@ writes the real exec attribute (plan PR L16c, decisions CH55, CH58 rule
 CH63). It reads only `AGENT_SYSTEMCTL_PROGRAM` through
 `config::KillScopesConfig`, with the check of `Config`, and calls
 `creche_vmm_confine::leftovers::kill_all`. A bad key exits 78, and any
-other failure exits 1.
+other failure exits 1. `vmm serve` raises its soft `RLIMIT_NOFILE` to
+`planes::fd_need` after the config read (Known gap 21).
 
 ## The compose step
 
@@ -530,6 +531,12 @@ connection to a fresh TCP connect to `VMM_LITELLM_ADDR` or
    that the vmm killed drops them at the kill.
 6. The deny check gets the ports of `Upstreams::rows` as its bound set,
    so a listener of any other port fails it (decision CH6-3).
+7. A full row holds 129 fds: its listener and two streams per splice.
+   `planes::fd_need` is that for both rows of all `SLOTS` (64), plus a
+   headroom of 4096: 20608. `vmm serve` raises its soft `RLIMIT_NOFILE`
+   to it before it serves, and a hard limit below it exits 78
+   (`creche_vmm_confine::nofile`, Known gap 21). So the busy guests of
+   a few VMs cannot use every fd of the vmm.
 
 `tests/planes.rs` runs the bridges on real Unix and TCP sockets in
 process: each row reaches its own plane, the bytes pass unchanged, a
@@ -883,6 +890,17 @@ no guest sync.
     it at once, so the guest client sees an EOF, a transient fault of
     decision CH20, and no connection waits in the backlog. Open for
     David: close at once, or leave it in the backlog until a splice ends?
+21. CONTRACT-QUESTION (plan PR V6, decision CH62 rule 14): no row sets
+    the fd limit of the vmm. systemd starts the unit with a soft
+    `RLIMIT_NOFILE` of 1024, and `systemd/creche-vmm.service` sets no
+    `LimitNOFILE=`. The bridges of 4 VMs with full rows would use every
+    fd, and each other VM and `vmm.sock` would then fail with `EMFILE`.
+    `vmm serve` raises the soft limit to `planes::fd_need` (20608) and
+    keeps the hard limit, which systemd sets to 524288 by default. A
+    hard limit below the need exits 78. The headroom of 4096 is a first
+    value. Each CH inherits the raised soft limit. Open for David: raise
+    in the vmm, or set `LimitNOFILE=` in the unit, and is 4096 the
+    headroom?
 
 ## Caller duties
 
