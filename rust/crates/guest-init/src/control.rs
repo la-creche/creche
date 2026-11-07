@@ -479,7 +479,7 @@ mod shell {
     use std::fs::File;
     use std::io::{self, Read as _, Write as _};
     use std::os::fd::{AsRawFd as _, OwnedFd};
-    use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
+    use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
     use std::thread;
     use std::time::Instant;
 
@@ -501,11 +501,17 @@ mod shell {
     /// (decision CH13), so a few slots are room.
     const BACKLOG: i32 = 4;
 
+    /// The events that the inbox holds before a send blocks. A full
+    /// inbox stops each reader thread before its next socket read, so a
+    /// peer that writes faster than the control loop acts fills only its
+    /// own socket buffer, and the inbox of PID 1 stays bounded.
+    const INBOX: usize = 64;
+
     /// What the threads tell the control loop.
     #[derive(Debug)]
     enum Event {
         /// A new link, and the sender that its reader thread gets.
-        Accepted(OwnedFd, Sender<Event>),
+        Accepted(OwnedFd, SyncSender<Event>),
         /// The accept loop stopped on this error.
         AcceptFailed(io::Error),
         Line(LinkId, Vec<u8>),
@@ -540,7 +546,7 @@ mod shell {
     /// stop or a fault. It returns the console line of the end, and the
     /// caller powers off.
     pub fn serve(listener: OwnedFd, env: Env) -> String {
-        let (events, inbox) = channel();
+        let (events, inbox) = sync_channel(INBOX);
         let reaps = events.clone();
         let facade = match Facade::new(env, move |reaped| {
             let event = match reaped {
@@ -574,27 +580,31 @@ mod shell {
         let mut links: HashMap<LinkId, File> = HashMap::new();
         let mut timer: Option<Instant> = None;
         loop {
-            let event = match timer {
-                Some(end) => {
-                    match inbox.recv_timeout(end.saturating_duration_since(Instant::now())) {
-                        Ok(event) => Some(event),
-                        Err(RecvTimeoutError::Timeout) => None,
-                        Err(RecvTimeoutError::Disconnected) => break,
-                    }
-                }
-                None => match inbox.recv() {
-                    Ok(event) => Some(event),
-                    Err(_) => break,
-                },
-            };
-            let Some(event) = event else {
-                // The timer ended.
+            // The timer goes first. `recv_timeout` hands out a queued event
+            // before it reads the clock, so a full inbox would starve a
+            // timer that the loop reads only on a timeout, and the stop
+            // waits of decision CH62 rule 9 would have no bound.
+            if timer.is_some_and(|end| Instant::now() >= end) {
                 timer = None;
                 let actions = control.timer();
                 if let Some(end) = act(&mut control, &mut links, &mut timer, facade, actions) {
                     return end;
                 }
                 continue;
+            }
+            let event = match timer {
+                Some(end) => {
+                    match inbox.recv_timeout(end.saturating_duration_since(Instant::now())) {
+                        Ok(event) => event,
+                        // The next pass runs the timer.
+                        Err(RecvTimeoutError::Timeout) => continue,
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    }
+                }
+                None => match inbox.recv() {
+                    Ok(event) => event,
+                    Err(_) => break,
+                },
             };
             let actions = match event {
                 Event::Accepted(fd, events) => {
@@ -748,7 +758,7 @@ mod shell {
 
     /// Accepts each link and hands it to the control loop. EINTR and
     /// ECONNABORTED are retried. Each other error ends the loop.
-    fn accept_loop(listener: &OwnedFd, events: &Sender<Event>) {
+    fn accept_loop(listener: &OwnedFd, events: &SyncSender<Event>) {
         loop {
             match accept_with(listener, SocketFlags::CLOEXEC) {
                 Ok(fd) => {
@@ -766,7 +776,7 @@ mod shell {
     }
 
     /// Starts the reader thread of `link` and returns the write end.
-    fn start_reader(link: LinkId, fd: OwnedFd, events: Sender<Event>) -> io::Result<File> {
+    fn start_reader(link: LinkId, fd: OwnedFd, events: SyncSender<Event>) -> io::Result<File> {
         let file = File::from(fd);
         let reader = file.try_clone()?;
         thread::Builder::new()
@@ -776,7 +786,7 @@ mod shell {
     }
 
     /// Reads the lines of one link until its end or a refused line.
-    fn read_loop(link: LinkId, mut reader: File, events: &Sender<Event>) {
+    fn read_loop(link: LinkId, mut reader: File, events: &SyncSender<Event>) {
         let mut lines = Lines::default();
         let mut chunk = [0_u8; CHUNK];
         loop {

@@ -370,27 +370,41 @@ mod shell {
                     return;
                 }
             }
-            let _guard = lock.lock().unwrap_or_else(PoisonError::into_inner);
-            loop {
-                match wait(WaitOptions::NOHANG) {
-                    Ok(Some((pid, status))) => {
-                        let Ok(pid) = u32::try_from(pid.as_raw_nonzero().get()) else {
-                            continue;
-                        };
-                        let Some(pid) = NonZeroU32::new(pid) else {
-                            continue;
-                        };
-                        if !report(Ok(Reaped { pid, status })) {
-                            return;
-                        }
-                    }
-                    Err(Errno::INTR) => {}
-                    Ok(None) | Err(Errno::CHILD) => break,
-                    Err(error) => {
-                        report(Err(error.into()));
-                        return;
-                    }
+            // The reports go out after the lock is dropped. A report can
+            // block on a full inbox, and the control loop takes this lock
+            // in `Facade::start`.
+            let (reaped, failed) = reap_zombies(lock);
+            for each in reaped {
+                if !report(Ok(each)) {
+                    return;
                 }
+            }
+            if let Some(error) = failed {
+                report(Err(error.into()));
+                return;
+            }
+        }
+    }
+
+    /// Reaps each zombie under the spawn lock, with `wait(WNOHANG)`. It
+    /// returns them, and the wait error that stopped it.
+    fn reap_zombies(lock: &Mutex<()>) -> (Vec<Reaped>, Option<Errno>) {
+        let _guard = lock.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut reaped = Vec::new();
+        loop {
+            match wait(WaitOptions::NOHANG) {
+                Ok(Some((pid, status))) => {
+                    let Ok(pid) = u32::try_from(pid.as_raw_nonzero().get()) else {
+                        continue;
+                    };
+                    let Some(pid) = NonZeroU32::new(pid) else {
+                        continue;
+                    };
+                    reaped.push(Reaped { pid, status });
+                }
+                Err(Errno::INTR) => {}
+                Ok(None) | Err(Errno::CHILD) => return (reaped, None),
+                Err(error) => return (reaped, Some(error)),
             }
         }
     }

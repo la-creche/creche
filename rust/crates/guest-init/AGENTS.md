@@ -81,6 +81,13 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   thread and each reader thread hold one, so the channel ends only when
   all of them are gone. Then guest init writes
   `guest-init: control events ended` and powers off.
+- Each pass of that loop checks the timer before it reads the channel,
+  so a steady stream of events cannot hold off the stop waits (CH62
+  rule 9) or the restart pause (CH62 rule 8). The channel holds `INBOX`
+  (64) events. A full channel blocks the sender: a reader thread then
+  reads no more of its socket, so a fast peer fills only its own socket
+  buffer. The reaper sends its reports after it drops the spawn lock,
+  because `Facade::start` takes that lock on the control loop.
 - Each step writes one `guest-init: <step>` line to the console (CH62
   rule 26). A fault writes `guest-init: <step> failed: <error>`.
 - A stop, a boot fault, a refused env file, a listen fault and a panic
