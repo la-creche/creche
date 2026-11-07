@@ -132,6 +132,7 @@ mod tests {
             b" \t\r\n{} ",
             b"\"x\"",
             b"0",
+            br#"{"\u0061":1,"b":2}"#,
         ] {
             assert!(strict(text), "{:?} failed", String::from_utf8_lossy(text));
         }
@@ -140,6 +141,7 @@ mod tests {
         for text in [
             &b""[..],
             br#"{"a":1,"a":2}"#,
+            br#"{"\u0061":1,"a":2}"#,
             br#"{"a":{"b":1,"b":1}}"#,
             br#"["\ud800"]"#,
             b"\"\x01\"",
