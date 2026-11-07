@@ -33,8 +33,9 @@
 //!    request, `GIT_PROTOCOL=version=2`. stderr goes to `/dev/null`. The
 //!    child advertises all refs (decision CH69 rule 18). `ChildIo` joins
 //!    its stdout and stdin, and `relay::Splice` carries the bytes with the
-//!    half-close of decision CH67 rule 9. The drop of the link kills the
-//!    child.
+//!    half-close of decision CH67 rule 9. The child is the leader of a
+//!    new process group. The drop of the link kills that group, so a
+//!    `pack-objects` child of git ends too.
 //! 7. A refused or faulted clone writes one stderr line, at most
 //!    `NOTE_CAP` per `NOTE_WINDOW` for one VM. A good clone writes none
 //!    (decision CH69 rule 24).
@@ -61,6 +62,7 @@ use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 use creche_vmm_confine::family::FamilyRoot;
+use creche_vmm_confine::group;
 use creche_vmm_confine::launch::Program;
 use creche_vmm_confine::mirror::{MirrorFault, MirrorRoot};
 use creche_vmm_store::layout::{SLOTS, VmRunDir};
@@ -196,7 +198,7 @@ impl Bound {
 
 /// The served listener of one VM. Its drop ends the listener task, and the
 /// end of the task drops its listener and its open links, which kills
-/// each child.
+/// the process group of each child.
 #[derive(Debug)]
 pub struct Server(JoinHandle<()>);
 
@@ -354,11 +356,11 @@ async fn serve_link(guest: UnixStream, clones: Arc<Clones>) {
         Ok(git_dir) => git_dir,
         Err(note) => return deny(&guest, &clones, note).await,
     };
-    let mut child = match upload_pack(&clones.mirror.git, git_dir, request.v2) {
-        Ok(child) => child,
+    let mut upload = match upload_pack(&clones.mirror.git, git_dir, request.v2) {
+        Ok(child) => Upload(child),
         Err(error) => return deny(&guest, &clones, Note::Git(error.kind())).await,
     };
-    let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
+    let (Some(stdin), Some(stdout)) = (upload.0.stdin.take(), upload.0.stdout.take()) else {
         return;
     };
     let mut io = ChildIo {
@@ -368,8 +370,25 @@ async fn serve_link(guest: UnixStream, clones: Arc<Clones>) {
     let mut guest = guest;
     let mut splice = Splice::new(Vec::new());
     poll_fn(|context| splice.carry(context, &mut guest, &mut io)).await;
-    // The drop of `child` kills a child that still runs.
-    drop(child);
+    // The drop of `upload` kills the group of a child that still runs.
+    drop(upload);
+}
+
+/// The `git` child of one link, the leader of a process group of its own
+/// (decision CH69 rule 14). Its drop kills that group.
+#[derive(Debug)]
+struct Upload(Child);
+
+impl Drop for Upload {
+    /// Sends SIGKILL to the group of a child that is not reaped yet. A
+    /// reaped child has no id, so the kill never names a group id that
+    /// the kernel gave to another process. tokio reaps the dropped child.
+    fn drop(&mut self) {
+        if let Some(leader) = self.0.id() {
+            // ESRCH: no process of the group is left.
+            let _ = group::kill(leader);
+        }
+    }
 }
 
 /// Answers a refused clone with `DENIED` and writes `note`. The drop of
@@ -468,7 +487,9 @@ fn upload_pack(git: &Program, git_dir: PathBuf, v2: bool) -> io::Result<Child> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .kill_on_drop(true);
+        // The leader of a new group, so the kill of `Upload` reaches each
+        // child of git too (decision CH69 rule 14).
+        .process_group(0);
     if v2 {
         command.env("GIT_PROTOCOL", "version=2");
     }

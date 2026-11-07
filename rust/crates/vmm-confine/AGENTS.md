@@ -123,6 +123,11 @@ table of the three vmm crates.
   refuses the repo (`MirrorFault::NotDir`), and an absent part is
   `MirrorFault::Absent`. The caller passes a `RepoName` of the clone
   list, which holds no `/` and no `..`, never the client bytes.
+- `group::kill` sends SIGKILL to the process group of a leader pid
+  (decision CH69 rule 14). The vmm spawns each `upload-pack` of the
+  mirror as the leader of a new group, so the kill also ends its
+  `pack-objects` child. The caller kills before it reaps the leader, so
+  the group id names no other process.
 - `nofile::raise` sets the soft `RLIMIT_NOFILE` of the vmm to the need
   that the vmm passes, and keeps the hard limit. A soft limit at or above
   the need stays. A hard limit below it is `NofileError::Short`, so the

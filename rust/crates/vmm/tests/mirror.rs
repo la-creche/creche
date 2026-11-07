@@ -126,6 +126,19 @@ impl Scratch {
             .unwrap()
     }
 
+    /// A git program `name` in the scratch dir: a shell script of `body`.
+    /// The script goes through a copy, so no open fd of the write is left
+    /// for a fork of another test thread to keep, which would make the
+    /// exec fail with ETXTBSY.
+    fn fake_git(&self, name: &str, body: &str) -> PathBuf {
+        let program = self.dir.join(name);
+        let source = self.dir.join(format!("{name}.src"));
+        std::fs::write(&source, format!("#!/bin/sh\n{body}")).unwrap();
+        run(Command::new("cp").arg(&source).arg(&program));
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        program
+    }
+
     /// Binds and serves the mirror with the git of the host.
     fn serve(&self) -> Server {
         self.serve_with(Path::new(HOST_GIT))
@@ -472,35 +485,66 @@ fn the_65th_link_is_closed_at_once() {
 fn the_child_dies_when_the_server_drops() {
     let scratch = Scratch::threaded("child");
     let pid_file = scratch.dir.join("git.pid");
-    let program = scratch.dir.join("git-sleeps");
-    let script = format!(
-        "#!/bin/sh\necho $$ > '{}'\nprintf '0008run\\n'\nexec /bin/sleep 600\n",
+    let body = format!(
+        "echo $$ > '{}'\nprintf '0008run\\n'\nexec /bin/sleep 600\n",
         pid_file.display()
     );
-    let source = scratch.dir.join("git-sleeps.src");
-    std::fs::write(&source, script).unwrap();
-    run(Command::new("cp").arg(&source).arg(&program));
-    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let server = scratch.serve_with(&program);
+    let server = scratch.serve_with(&scratch.fake_git("git-sleeps", &body));
     let mut held = scratch.dial();
     held.write_all(&request("/creche")).unwrap();
     let mut first = [0; 8];
     held.read_exact(&mut first).unwrap();
     assert_eq!(&first, b"0008run\n");
-    let pid = std::fs::read_to_string(&pid_file)
-        .unwrap()
-        .trim()
-        .to_owned();
+    let pid = read_pid(&pid_file);
     assert!(alive(&pid), "the child of pid {pid} does not run");
     drop(server);
-    let deadline = Instant::now() + WAIT;
-    while alive(&pid) {
-        assert!(Instant::now() < deadline, "the child of pid {pid} runs on");
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    wait_dead(&pid);
     let path = scratch.run.host_listener(HostPort::GitMirror);
     let refused = UnixStream::connect(path).err().map(|error| error.kind());
     assert_eq!(refused, Some(std::io::ErrorKind::ConnectionRefused));
+}
+
+/// The drop of `Server` kills the whole process group of the child, so a
+/// child of git, as `pack-objects` is, dies too (decision CH69 rule 14).
+/// The git program of the test starts a `sleep` in the background, writes
+/// both pids and one pkt-line, then execs `sleep`.
+#[test]
+fn a_grandchild_of_git_dies_when_the_server_drops() {
+    let scratch = Scratch::threaded("grandchild");
+    let (pid_file, grandchild_file) = (scratch.dir.join("git.pid"), scratch.dir.join("sub.pid"));
+    let body = format!(
+        "/bin/sleep 600 &\necho $! > '{}'\necho $$ > '{}'\nprintf '0008run\\n'\nexec /bin/sleep 600\n",
+        grandchild_file.display(),
+        pid_file.display()
+    );
+    let server = scratch.serve_with(&scratch.fake_git("git-forks", &body));
+    let mut held = scratch.dial();
+    held.write_all(&request("/creche")).unwrap();
+    let mut first = [0; 8];
+    held.read_exact(&mut first).unwrap();
+    assert_eq!(&first, b"0008run\n");
+    let (pid, grandchild) = (read_pid(&pid_file), read_pid(&grandchild_file));
+    assert!(alive(&grandchild), "{grandchild} does not run");
+    drop(server);
+    wait_dead(&pid);
+    wait_dead(&grandchild);
+}
+
+/// The pid that a git program of a test wrote to `file`.
+#[cfg(test)]
+fn read_pid(file: &Path) -> String {
+    std::fs::read_to_string(file).unwrap().trim().to_owned()
+}
+
+/// Waits until the process `pid` no longer runs, and fails the test after
+/// `WAIT`.
+#[cfg(test)]
+fn wait_dead(pid: &str) {
+    let deadline = Instant::now() + WAIT;
+    while alive(pid) {
+        assert!(Instant::now() < deadline, "the pid {pid} runs on");
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 /// Whether the process `pid` runs: `ps` lists it, and not as a zombie.

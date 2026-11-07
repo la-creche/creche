@@ -10,6 +10,7 @@ pub mod command;
 pub mod deny;
 pub mod family;
 pub mod faults;
+pub mod group;
 pub mod landlock;
 pub mod launch;
 pub mod leftovers;
