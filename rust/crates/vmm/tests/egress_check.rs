@@ -30,9 +30,12 @@ const EGRESS: &str =
     r#"{"hosts":[{"host":"github.com","port":443},{"host":"localhost","port":443}]}"#;
 
 /// The targets of `tests/egress_rule.rs`, one per kind of verdict.
-const TARGETS: [&str; 14] = [
+const TARGETS: [&str; 17] = [
     "140.82.112.3:443",
     "[2606:50c0:8000::153]:443",
+    "::ffff:127.0.0.1:443",
+    "2606:50c0:8000:0:0:0:0:153:443",
+    "fe80:0:0:0:0:0:0:1:443",
     "[::ffff:127.0.0.1]:443",
     "2130706433:443",
     "github.com",

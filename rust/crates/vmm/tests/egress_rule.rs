@@ -1,7 +1,8 @@
 //! The one egress decision of `egress::rule` (decisions CH6-3, CH6-4,
-//! CH69 rules 2 and 8). No test reaches the network: a listed name
-//! resolves through `/etc/hosts` (`localhost`), and `judge` takes
-//! addresses that the test gives.
+//! CH69 rules 2 and 8). A listed name resolves through `/etc/hosts`
+//! (`localhost`), and `judge` takes addresses that the test gives. Only
+//! the `no_address` test may send a DNS query, for a name under the
+//! reserved `.invalid`.
 
 use std::net::{IpAddr, SocketAddr};
 
@@ -53,6 +54,11 @@ fn an_ip_literal_target_is_refused() {
         "140.82.112.3",
         "2606:50c0:8000::153",
         "2606:50c0:8000::153:443",
+        // An IPv6 literal only once the port goes: the whole text is no
+        // address, so only the text before the last `:` shows it.
+        "::ffff:127.0.0.1:443",
+        "2606:50c0:8000:0:0:0:0:153:443",
+        "fe80:0:0:0:0:0:0:1:443",
         "[2606:50c0:8000::153]:443",
         "[::1]",
         "[::ffff:127.0.0.1]:443",
@@ -203,6 +209,20 @@ fn one_private_record_refuses_the_name() {
         refused(CheckReason::NotPublic)
     );
     assert_eq!(judged(&[]), refused(CheckReason::NoAddress));
+}
+
+/// A name that does not resolve is `no_address`: the lookup error arm of
+/// `decide`. The 64-letter label is over the 63 of a DNS label, so the
+/// resolver may fail before it sends a query. Else RFC 6761 reserves
+/// `.invalid`, and the answer is NXDOMAIN.
+#[test]
+fn a_name_with_no_address_is_refused() {
+    let name = format!("{}.invalid", "a".repeat(64));
+    let listed = list(&[(name.as_str(), 443)]);
+    assert_eq!(
+        verdict(&listed, &format!("{name}:443")),
+        refused(CheckReason::NoAddress)
+    );
 }
 
 /// Each range of decision CH69 rule 8, at its first and last address, is

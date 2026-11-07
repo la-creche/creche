@@ -463,13 +463,20 @@ fn serve_lists_refuses_and_stops_on_the_signal() {
 
     let list = r#"{"cursor":null,"cwd":null,"family":"chat"}"#;
     let header = format!("{HOST_API_HEADER}: {HOST_API_PROTOCOL}\r\n");
-    let (status, body) = ask(&socket, &header, list);
+    let (status, body) = ask(&socket, "list", &header, list);
     assert_eq!(status, 200, "{body}");
     let page: SessionPage = serde_json::from_str(&body).unwrap();
     assert_eq!((page.next, page.rows.len()), (None, 0));
 
+    // The shipped handler of `check` (decision CH69 rule 1). The scratch
+    // families dir has no `egress.json`, so the list is empty and the
+    // answer needs no lookup (decision CH69 rule 3).
+    let check = r#"{"family":"code","target":"github.com:443"}"#;
+    let refused = r#"{"refused":{"reason":"not_listed"}}"#.to_owned();
+    assert_eq!(ask(&socket, "check", &header, check), (200, refused));
+
     let bad = format!("{HOST_API_HEADER}: {}\r\n", HOST_API_PROTOCOL + 1);
-    assert_eq!(ask(&socket, &bad, list), (412, mismatch()));
+    assert_eq!(ask(&socket, "list", &bad, list), (412, mismatch()));
 
     term.send(()).unwrap();
     let ended = runtime.block_on(async { tokio::time::timeout(WAIT, run).await });
@@ -498,9 +505,9 @@ fn a_server_that_ends_before_the_signal_fails_the_run() {
     assert!(error.to_string().starts_with("cannot bind the socket: "));
 }
 
-/// The status and the body of the answer to `POST /list` with `headers`
-/// and `body`. It waits until the vmm binds its socket.
-fn ask(socket: &Path, headers: &str, body: &str) -> (u16, String) {
+/// The status and the body of the answer to `POST /<route>` with
+/// `headers` and `body`. It waits until the vmm binds its socket.
+fn ask(socket: &Path, route: &str, headers: &str, body: &str) -> (u16, String) {
     let deadline = Instant::now() + WAIT;
     let mut stream = loop {
         match UnixStream::connect(socket) {
@@ -511,7 +518,7 @@ fn ask(socket: &Path, headers: &str, body: &str) -> (u16, String) {
     stream.set_read_timeout(Some(WAIT)).unwrap();
     write!(
         stream,
-        "POST /list HTTP/1.1\r\nhost: vmm\r\n{headers}content-type: application/json\r\n\
+        "POST /{route} HTTP/1.1\r\nhost: vmm\r\n{headers}content-type: application/json\r\n\
          connection: close\r\ncontent-length: {}\r\n\r\n{body}",
         body.len()
     )

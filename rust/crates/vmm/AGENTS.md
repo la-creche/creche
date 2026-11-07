@@ -449,11 +449,17 @@ of host port 1104 uses too. A check boots no VM.
 
 An `egress.json` that is present and does not read gets `internal` 500,
 and the vmm logs the fault (Known gap 24). `tests/egress_rule.rs` proves
-each verdict of the rule with no network: `localhost` resolves through
-`/etc/hosts`, and `judge` takes the addresses that the test gives.
+each verdict of the rule: `localhost` resolves through `/etc/hosts`, and
+`judge` takes the addresses that the test gives. For `no_address` it
+lists a name under `.invalid` with a 64-letter label, so the resolver
+may fail before a query, and else gets NXDOMAIN (RFC 6761). An IPv6
+literal with a port, such as `::ffff:127.0.0.1:443`, is refused only by
+its text before the last `:`, and a test holds that case.
 `tests/egress_check.rs` proves the route: each target gets the verdict
 of the rule, an absent file, a bad file, and the mismatch reply to a
-client of protocol 1.
+client of protocol 1. `serve_lists_refuses_and_stops_on_the_signal` in
+`src/compose/tests.rs` sends one `check` through the shipped handler
+set.
 
 ## The stop
 

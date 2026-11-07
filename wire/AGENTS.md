@@ -355,7 +355,7 @@ rules 1 and 2). It came with `HOST_API_PROTOCOL` 2. The request is
    first in an octet, IPv6 as 8 groups of 4 lowercase hex digits with no
    `::`. So the schema pattern checks it exactly, and Python and
    TypeScript read the same texts as Rust. The vmm writes an IPv4-mapped
-   record as its IPv4 address.
+   record as its IPv4 address. No row decides this text (Known gap 2).
 6. `CheckError` holds the shared codes only.
 
 ### The egress allowlist file
@@ -372,8 +372,8 @@ caregiver writes it, and the vmm reads it. No route reaches the type.
 2. The port is an integer of 1 to 65535. caregiver writes a bare host of
    the family file with the port 443.
 3. caregiver writes the hosts sorted and with no entry twice (decision
-   CH69 rule 5). The type does not refuse another order or a duplicate,
-   because the schema cannot say "sorted". Neither changes a verdict.
+   CH69 rule 5). The type does not refuse another order or a duplicate
+   (Known gap 3). Neither changes a verdict.
 
 ## A route error on the wire
 
@@ -599,3 +599,16 @@ a dependency.
    `config/shape.json` (`FAMILY_SHAPE_FILE`). Contract 01 §6.1 lists the
    entries of `config/` and needs an amendment for this file, as decision
    CH23-1 amended it for `model_live_at`. That amendment is not made yet.
+2. CONTRACT-QUESTION (plan PR E1): no row decides the wire text of
+   `IpAddress`. The crate writes IPv6 as 8 groups of 4 lowercase hex
+   digits with no `::`, so the schema pattern checks one text exactly.
+   That text is not the RFC 5952 form. `schema/host-api-2.json` freezes
+   it, so a change after it ships needs a new `HOST_API_PROTOCOL`
+   (decision CH34 rule 8). David decides the text before then.
+3. CONTRACT-QUESTION (plan PR E1): decision CH69 rule 5 makes
+   `egress.json` a wire type in canonical form, sorted and with no entry
+   twice. `FamilyEgress` reads any order and duplicates, a wider reading.
+   JSON Schema cannot say "sorted". `uniqueItems` can say "no
+   duplicates", but datamodel-codegen 0.87 writes `list[...]` with no
+   check for it, so a refusal in Rust alone would split the Rust and
+   Python readers. Neither changes a verdict of the vmm.
