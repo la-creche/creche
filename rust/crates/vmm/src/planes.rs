@@ -55,7 +55,7 @@ const ROWS: usize = 2;
 
 /// The fds that the vmm holds beside the plane bridges: `vmm.sock` and
 /// its links, the links and run files of each VM, the store and the CH
-/// children. No row sets it (crate AGENTS.md, Known gap 21).
+/// children (decision CH67 rule 4).
 const FD_HEADROOM: u64 = 4096;
 
 /// The fds that the vmm needs when each slot holds a VM whose bridge rows
@@ -187,9 +187,8 @@ async fn bridge(listener: UnixListener, upstream: SocketAddr) {
             Ok((guest, _)) if splices.len() < SPLICE_CAP => {
                 splices.spawn(splice(guest, upstream));
             }
-            // CONTRACT-QUESTION (AGENTS.md Known gap 20): decision CH62
-            // rule 14 caps the open splices and says nothing of a
-            // connection past the cap. It closes at once here.
+            // Decision CH67 rule 3: a connection past the cap of CH62
+            // rule 14 closes at once, and the client retries.
             Ok((guest, _)) => drop(guest),
             Err(error) => {
                 eprintln!("vmm: a plane accept failed: {}", error.kind());

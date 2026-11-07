@@ -119,7 +119,7 @@ fn serve() -> ExitCode {
         Err(error) => return refuse(&error),
     };
     // Before any fd of a VM: the soft limit of systemd (1024) holds the
-    // bridges of a few busy guests only (crate AGENTS.md, Known gap 21).
+    // bridges of a few busy guests only (decision CH67 rule 4).
     if let Err(error) = nofile::raise(fd_need()) {
         return refuse(&error);
     }

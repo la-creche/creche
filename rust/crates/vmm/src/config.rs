@@ -336,9 +336,8 @@ fn gib(
 
 /// The address of `key`: an IP address and a port, such as
 /// `192.0.2.10:4000` or `[2001:db8::1]:4000`.
-// CONTRACT-QUESTION (AGENTS.md Known gap 19): gap Q54-20 says
-// `host:port`, and its defaults are IP addresses. A host name would need
-// a resolver at each connect, so the config takes an IP address only.
+// Decision CH67 rule 2: an IP address and a port only. A host name
+// refuses the start.
 fn address(
     lookup: &impl Fn(&str) -> Option<OsString>,
     key: &'static str,

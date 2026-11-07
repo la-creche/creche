@@ -31,7 +31,7 @@ CH63). It reads only `AGENT_SYSTEMCTL_PROGRAM` through
 `config::KillScopesConfig`, with the check of `Config`, and calls
 `creche_vmm_confine::leftovers::kill_all`. A bad key exits 78, and any
 other failure exits 1. `vmm serve` raises its soft `RLIMIT_NOFILE` to
-`planes::fd_need` after the config read (Known gap 21).
+`planes::fd_need` after the config read (decision CH67 rule 4).
 
 ## The compose step
 
@@ -175,7 +175,8 @@ Each path is absolute with no `..` component. The run root holds no
 `:`, because systemd joins the paths of more than one
 `RuntimeDirectory=` entry with `:` (gap G5 option A). A size is decimal
 digits, a whole number of GiB. A plane address is an IP address and a
-port, as `std::net::SocketAddr` parses it (Known gap 19). Decision CH62
+port, as `std::net::SocketAddr` parses it, and a host name refuses the
+start (decision CH67 rule 2). Decision CH62
 rule 20 names `10.0.0.39`, the LAN address of Hyperion. Rule 3 of
 `env/AGENTS.md` keeps a deployment address out of `default.env`, so
 each default takes `AGENT_LAN_ADDRESS`, as `CHAPERONE_LISTEN` does. On
@@ -544,7 +545,7 @@ connection to a fresh TCP connect to `VMM_LITELLM_ADDR` or
    14). Guest clients treat the close as transient (decision CH20).
 3. Each listener holds at most `SPLICE_CAP` (64) open splices, with no
    idle timeout (decision CH62 rule 14). A connection past the cap
-   closes at once (Known gap 20).
+   closes at once (decision CH67 rule 3).
 4. The copy is `relay::Splice`, the copy of the ACP relay, on the tokio
    `net` types. `copy_bidirectional` needs the tokio feature `io-util`,
    which adds a lock entry, so the vmm does not use it.
@@ -557,7 +558,7 @@ connection to a fresh TCP connect to `VMM_LITELLM_ADDR` or
    `planes::fd_need` is that for both rows of all `SLOTS` (64), plus a
    headroom of 4096: 20608. `vmm serve` raises its soft `RLIMIT_NOFILE`
    to it before it serves, and a hard limit below it exits 78
-   (`creche_vmm_confine::nofile`, Known gap 21). So the busy guests of
+   (`creche_vmm_confine::nofile`, decision CH67 rule 4). So the busy guests of
    a few VMs cannot use every fd of the vmm.
 
 `tests/planes.rs` runs the bridges on real Unix and TCP sockets in
@@ -895,29 +896,19 @@ no guest sync.
     bit, as `digests.json`. `src/root_owned.rs` holds that one check
     ("The root-owned files"). So the vmm row must install each file as
     a regular file, not a symlink.
-19. CONTRACT-QUESTION (plan PR V6, decision CH62 rule 20): gap Q54-20
-    says the plane keys hold `host:port`, and its defaults are IP
-    addresses. A host name needs a resolver at each connect, which no
-    row decides. The config takes an IP address and a port only, as
-    `std::net::SocketAddr` parses them, and refuses a name with exit 78.
-    Open for David: may a plane key name a host?
-20. CONTRACT-QUESTION (plan PR V6, decision CH62 rule 14): the rule caps
-    the open splices of a bridge row at 64 and does not say what a
-    connection past the cap gets. `planes::bridge` accepts it and closes
-    it at once, so the guest client sees an EOF, a transient fault of
-    decision CH20, and no connection waits in the backlog. Open for
-    David: close at once, or leave it in the backlog until a splice ends?
-21. CONTRACT-QUESTION (plan PR V6, decision CH62 rule 14): no row sets
-    the fd limit of the vmm. systemd starts the unit with a soft
-    `RLIMIT_NOFILE` of 1024, and `systemd/creche-vmm.service` sets no
-    `LimitNOFILE=`. The bridges of 4 VMs with full rows would use every
-    fd, and each other VM and `vmm.sock` would then fail with `EMFILE`.
-    `vmm serve` raises the soft limit to `planes::fd_need` (20608) and
-    keeps the hard limit, which systemd sets to 524288 by default. A
-    hard limit below the need exits 78. The headroom of 4096 is a first
-    value. Each CH inherits the raised soft limit. Open for David: raise
-    in the vmm, or set `LimitNOFILE=` in the unit, and is 4096 the
-    headroom?
+19. Closed by decision CH67 rule 2: a plane key takes an IP address and
+    a port, as `std::net::SocketAddr` parses them, and a host name exits
+    78.
+20. Closed by decision CH67 rule 3: `planes::bridge` accepts a
+    connection past the 64 splice cap of a bridge row and closes it at
+    once. So the guest client reads an EOF, a transient fault of
+    decision CH20, and retries.
+21. Closed by decision CH67 rule 4: `vmm serve` raises its soft
+    `RLIMIT_NOFILE` to `planes::fd_need` (20608: the bridge need plus a
+    headroom of 4096) and keeps the hard limit. A hard limit below the
+    need exits 78. `systemd/creche-vmm.service` gets no `LimitNOFILE=`
+    line, so systemd's default hard limit (524288) holds. Each CH
+    inherits the raised soft limit.
 
 ## Caller duties
 

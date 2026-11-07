@@ -367,6 +367,6 @@ table of the three vmm crates.
   the value `vmm` in the `source` enum of §3.3, and the reader. caregiver
   reads only the `attendance` and `pep` files today, so it ignores the
   vmm file.
-- CONTRACT-QUESTION (plan PR V6, decision CH62 rule 14): no row sets the
-  fd limit of the vmm, its headroom or the refusal of a short hard limit
-  (`nofile.rs`, `rust/crates/vmm/AGENTS.md` Known gap 21).
+- Closed by decision CH67 rule 4: the fd limit of the vmm, its headroom
+  of 4096 and the refusal of a short hard limit (`nofile.rs`,
+  `rust/crates/vmm/AGENTS.md` Known gap 21).
