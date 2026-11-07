@@ -12,6 +12,12 @@ publish.workspace = true
 name = "guest-init"
 path = "src/main.rs"
 
+# The stand-in facade of the kvm tests. `test = true` runs its unit tests
+# of mode `reach` on every host, with no VM.
+[[example]]
+name = "standin_facade"
+test = true
+
 [dependencies]
 creche-wire = { path = "../wire" }
 serde.workspace = true
