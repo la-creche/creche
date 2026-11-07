@@ -226,9 +226,9 @@ impl Fake {
     }
 }
 
-/// The fake CH API and what it saw. `DEVICES` is its `READS_DEVICES`.
+/// The fake CH API and what it saw.
 #[derive(Debug)]
-struct FakeApi<const DEVICES: bool = true> {
+struct FakeApi {
     /// The launcher, whose VM a snapshot ends.
     fake: Arc<Fake>,
     /// The run dir of each snapshot.
@@ -254,9 +254,7 @@ struct FakeApi<const DEVICES: bool = true> {
 }
 
 #[cfg(test)]
-impl<const DEVICES: bool> ChApi for FakeApi<DEVICES> {
-    const READS_DEVICES: bool = DEVICES;
-
+impl ChApi for FakeApi {
     /// Reads the reply as `ChRemote::info` reads the stdout of CH.
     fn info(&self, _vm: &VmRunDir) -> Result<VmInfo, ChRemoteError> {
         self.infos.fetch_add(1, Ordering::SeqCst);
@@ -383,11 +381,11 @@ fn play(listener: &UnixListener, guest: Guest, vm: &Vm) {
 
 /// The hook on a scratch dir, with two rows of `chat`.
 #[derive(Debug)]
-struct Test<const DEVICES: bool = true> {
+struct Test {
     dir: PathBuf,
-    hook: Arc<ColdBoot<Fake, FakeApi<DEVICES>>>,
+    hook: Arc<ColdBoot<Fake, FakeApi>>,
     fake: Arc<Fake>,
-    api: Arc<FakeApi<DEVICES>>,
+    api: Arc<FakeApi>,
     relays: Relays,
     ch: CheckedCh,
     state: StateRoot,
@@ -402,14 +400,6 @@ struct Test<const DEVICES: bool = true> {
 impl Test {
     /// The hook, with `edit` applied to its config.
     fn new(name: &str, edit: impl FnOnce(&mut StartConfig)) -> Self {
-        Self::build(name, edit)
-    }
-}
-
-#[cfg(test)]
-impl<const DEVICES: bool> Test<DEVICES> {
-    /// The hook over a fake API whose `READS_DEVICES` is `DEVICES`.
-    fn build(name: &str, edit: impl FnOnce(&mut StartConfig)) -> Self {
         let dir = PathBuf::from(format!("/tmp/vmm-start-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let config_dir = dir.join("families/chat/config");
@@ -636,7 +626,7 @@ fn eventually(done: impl Fn() -> bool) {
     }
 }
 
-impl<const DEVICES: bool> Drop for Test<DEVICES> {
+impl Drop for Test {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.dir);
     }
@@ -1001,6 +991,32 @@ fn a_refused_device_set_stops_the_restore() {
     }
 }
 
+/// Every restore runs the device check, since the one CH API reads the
+/// device set (PR D15, decision CH50 rule 10). The fake reports a changed
+/// device set, so the restore faults and never resumes. The claim
+/// consumed the generation, so the next start cold-boots and reads no
+/// `info` (decisions CH19 (5), CH62 rule 23).
+#[test]
+fn a_claim_always_runs_the_device_check() {
+    let test = Test::new("device-check", |_| {});
+    let dir = test.snapshot(0, Some(&test.key()));
+    let net = serde_json::json!([{"tap": "tap0", "num_queues": 2, "queue_size": 256,
+        "vhost_user": false, "vhost_mode": "Client", "id": "_net0", "pci_segment": 0}]);
+    test.reply(0, "Paused", &[("net", net)]);
+    assert_eq!(test.start(0), Err(StartFault::EgressAssertFailed));
+    assert!(test.restored(0));
+    assert_eq!(test.api.infos.load(Ordering::SeqCst), 1);
+    assert_eq!(test.api.resumes.load(Ordering::SeqCst), 0);
+    assert!(dir.join("consumed").is_file());
+    assert!(test.hook.in_use().is_empty());
+
+    assert_eq!(test.start(0), Ok(()));
+    assert_eq!(test.launches(), 2);
+    assert!(!test.restored(1));
+    assert_eq!(test.api.infos.load(Ordering::SeqCst), 1);
+    assert!(test.fault_codes().is_empty());
+}
+
 /// A key of another release drops the snapshot, and a consumed one is
 /// not restored again. Each start cold-boots (decisions CH7-6, CH19 (5),
 /// CH44 rule 5).
@@ -1022,7 +1038,7 @@ fn a_key_mismatch_or_a_consumed_snapshot_cold_boots() {
 }
 
 #[cfg(test)]
-impl<const DEVICES: bool> Test<DEVICES> {
+impl Test {
     /// The session ids of the snapshots, in order.
     fn snapshot_ids(&self) -> Vec<String> {
         let snapshots = self.api.snapshots.lock().unwrap();
@@ -1102,7 +1118,7 @@ fn a_turn_before_the_close_keeps_the_vm() {
 }
 
 #[cfg(test)]
-impl<const DEVICES: bool> Test<DEVICES> {
+impl Test {
     /// Runs the idle check `after` from now.
     fn sleep_after(&self, after: Duration) -> Vec<SessionId> {
         let now = Instant::now() + after;
@@ -1366,21 +1382,6 @@ fn a_start_under_eviction_is_host_full() {
     assert_eq!(test.launches(), 3);
 }
 
-/// With no device read, no snapshot would restore, so an eviction takes
-/// none. It sends the graceful stop, and guest init powers off (decision
-/// CH19 (3)).
-#[test]
-fn with_no_device_read_an_eviction_stops_gracefully() {
-    let test = Test::<false>::build("plain", |config| config.limits.ram_cap = 512 << 20);
-    assert_eq!(test.start(0), Ok(()));
-    assert_eq!(test.start(1), Ok(()));
-    assert!(test.api.snapshots.lock().unwrap().is_empty());
-    assert!(!test.api.entered.load(Ordering::SeqCst));
-    assert_eq!(test.stop_lines(), 1);
-    assert!(test.stopped(0));
-    assert!(test.hook.running(&test.rows[1].id));
-}
-
 /// An eviction and an idle sleep each sync the guest before the take
 /// (item 5.7 of the design, decision CH62 rule 23). Guest init read one
 /// more `sync` line before each snapshot began. The take ends CH, so no
@@ -1397,7 +1398,7 @@ fn retire_syncs_before_the_take() {
 }
 
 #[cfg(test)]
-impl<const DEVICES: bool> Test<DEVICES> {
+impl Test {
     /// Runs the idle check past the idle timeout on paused time, from
     /// now on, and gives the paused time that it took. A guest that never
     /// answers `sync` then costs no real `SYNC_WAIT`.
@@ -1434,7 +1435,7 @@ fn retire_takes_no_snapshot_without_synced() {
 }
 
 #[cfg(test)]
-impl<const DEVICES: bool> Test<DEVICES> {
+impl Test {
     /// Shuts the hook down, with no sleep loop (plan PR L19).
     fn shut_down(&self) -> Ended {
         let (stop, _signal) = Stop::pair();
@@ -1549,15 +1550,15 @@ fn a_shutdown_without_synced_stops_gracefully() {
 
 /// The hook behind an `Arc`, for the acp handler, which owns its hook.
 #[derive(Debug)]
-struct Shared<const DEVICES: bool>(Arc<ColdBoot<Fake, FakeApi<DEVICES>>>);
+struct Shared(Arc<ColdBoot<Fake, FakeApi>>);
 
-impl<const DEVICES: bool> StartVm for Shared<DEVICES> {
+impl StartVm for Shared {
     async fn start(&self, row: &SessionRow) -> Result<AcpLink, StartFault> {
         self.0.start(row).await
     }
 }
 
-impl<const DEVICES: bool> StopVm for Shared<DEVICES> {
+impl StopVm for Shared {
     async fn stop(&self, id: &SessionId) -> Result<(), VmStopFailed> {
         self.0.stop(id).await
     }
@@ -1767,7 +1768,7 @@ fn a_vm_under_a_stop_keeps_its_ram() {
 }
 
 #[cfg(test)]
-impl<const DEVICES: bool> Test<DEVICES> {
+impl Test {
     /// Writes `line` on the guest end of the newest control link, as guest
     /// init sends a guest event (decisions CH21, CH62 rule 11).
     fn send(&self, line: &str) {
@@ -2055,7 +2056,7 @@ fn a_refused_line_during_a_take_keeps_no_snapshot() {
 }
 
 #[cfg(test)]
-impl<const DEVICES: bool> Test<DEVICES> {
+impl Test {
     /// Adds rows of `chat` until the test has `count` rows.
     fn rows_up_to(&mut self, count: usize) {
         let mut store = self.store.lock().unwrap();
