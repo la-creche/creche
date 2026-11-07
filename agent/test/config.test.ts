@@ -116,11 +116,21 @@ describe("readFamilyConfig", () => {
     expect(read.ok).toBe(true);
   });
 
-  it("fills toolEnv from the env, with the set TOOL_ENV names only", async () => {
-    const env = { ...mounts(VALID), MPLBACKEND: "Agg", NODE_ENV: "production" };
+  it("fills toolEnv with the set TOOL_ENV names and the TOOL_RENAME targets", async () => {
+    const proxy = "http://127.0.0.1:3128";
+    const env = {
+      ...mounts(VALID),
+      MPLBACKEND: "Agg",
+      NODE_ENV: "production",
+      CRECHE_TOOL_HTTPS_PROXY: proxy,
+    };
     const read = await readFamilyConfig(env, NO_RETRY_MS);
 
-    expect(read.ok && read.config.toolEnv).toEqual({ MPLBACKEND: "Agg" });
+    expect(read.ok && read.config.toolEnv).toEqual({
+      MPLBACKEND: "Agg",
+      HTTPS_PROXY: proxy,
+      https_proxy: proxy,
+    });
   });
 
   it("never shows a secret as text", async () => {

@@ -244,6 +244,7 @@ version = "0.1.0"
 source = { editable = "caregiver" }
 dependencies = [
     { name = "agent-family" },
+    { name = "creche-wire" },
     { name = "httpx" },
     { name = "pyyaml" },
 ]
@@ -251,6 +252,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-family", editable = "family" },
+    { name = "creche-wire", editable = "wire" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "pyyaml", specifier = ">=6" },
 ]

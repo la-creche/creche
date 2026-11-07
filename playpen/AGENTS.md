@@ -45,6 +45,9 @@ per variable of the image config, sorted, with each `PATH` folder once.
 Guest init reads it, because a root disk carries no image config (CH7-7,
 CH49). The step lists the names. `bin/playpen-env-check` compares the file
 with the built config in CI, so a new `ENV` name fails until it is listed.
+Then node in the image places each name of the file in one list of the
+agent (`agent/src/tool-env.ts`, CH49 rule 1), so a new name, the parent
+image's too, fails until it sits in a list.
 
 The image holds no pi, no fd, no playpen bundle, no PEP bridge, no
 `agent-pi-launch`. Only the `coding` flavor holds a package installer.
@@ -83,7 +86,7 @@ CI builds each flavor on each code change (`bin/playpen-ci`).
 | `Dockerfile` | the image: the build stage and the flavors |
 | `component.yaml` | the release manifest of the component |
 | `bin/playpen-build`, `bin/playpen-verify`, `bin/lib/registry.sh` | the release build, the verify hook, the one registry question |
-| `bin/creche-env-write`, `bin/playpen-env-check` | `/etc/creche/env` in each flavor's last step, and the CI check that it equals the image config env |
+| `bin/creche-env-write`, `bin/playpen-env-check` | `/etc/creche/env` in each flavor's last step, and the CI check that it equals the image config env and that an agent list holds each name |
 | `bin/playpen-ci` | the steps of the `playpen-image` CI job: build each flavor, then check it |
 | `bin/playpen-rootfs` | the tar export of one flavor, the input of its root disk |
 | `bin/playpen-disk`, `disk/Dockerfile` | the root disk of one flavor from its tar, in the pinned trixie stage |

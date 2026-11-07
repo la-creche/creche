@@ -9,7 +9,8 @@
 #      python flavor builds on the base flavor, so the second build reuses
 #      the first.
 #   2. `playpen-env-check` on each image: `/etc/creche/env` equals the
-#      image config env (CH7-7, CH49).
+#      image config env (CH7-7, CH49), and a list of the image's agent
+#      holds each of its names (CH49 rule 1).
 #   3. `playpen-rootfs` of each target: the tar export that a root disk
 #      is made from builds, holds `/etc/creche/env` and holds no
 #      `.dockerenv` (CH7-2, fact 59). The export reuses the build cache.
