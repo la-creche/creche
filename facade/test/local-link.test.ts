@@ -270,6 +270,30 @@ describe("localLinkOf", () => {
   });
 });
 
+describe("the supervisor", () => {
+  it("hands serve the link that it opens", async () => {
+    const guest = await guestInit();
+    const facade = link(guest.path, []);
+    const served = new Promise<LocalLink | null>((resolve) => {
+      void runSupervisor({
+        input: new PassThrough(),
+        stdout: { writeLine: () => undefined, exit: () => undefined },
+        say: () => undefined,
+        lock: new SupervisorLock(shortTmp(), "chat-s1"),
+        deadlineMs: 60_000,
+        serve: async (given) => {
+          resolve(given);
+          return { ok: false, detail: "FIXTURE-NO-FLUE" };
+        },
+        socketPath: null,
+        link: facade,
+      });
+    });
+
+    expect(await served).toBe(facade);
+  });
+});
+
 describe("the stop line", () => {
   async function supervise(runtime: Runtime, stopMs: number): Promise<{ guest: GuestInit; events: string[]; said: string[]; exited: Promise<number> }> {
     const guest = await guestInit();

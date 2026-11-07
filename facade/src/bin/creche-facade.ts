@@ -23,16 +23,15 @@ if (read.ok) {
 
   say(limitsLine(family.limits));
 
-  const link = localLinkOf(family.mode, say);
   void runSupervisor({
     input: process.stdin,
     stdout,
     say,
     lock: new SupervisorLock(family.config.mounts.control, family.config.sandbox),
     deadlineMs: BEAT_DEADLINE_MS,
-    serve: () => serveFamily(family, link),
+    serve: (link) => serveFamily(family, link),
     socketPath: relaySocketPath(),
-    link,
+    link: localLinkOf(family.mode, say),
   });
 } else {
   say(read.detail);

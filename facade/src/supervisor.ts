@@ -47,8 +47,12 @@ export interface SupervisorOptions {
   readonly say: Say;
   readonly lock: SupervisorLock;
   readonly deadlineMs: number;
-  /** Starts Flue once the lock is held, never before: one Flue owner per sandbox. */
-  readonly serve: () => Promise<ServingStart>;
+  /**
+   * Starts Flue once the lock is held, never before: one Flue owner per
+   * sandbox. It gets `link`, the one link that the supervisor opens, so
+   * the turns report on that link and no other.
+   */
+  readonly serve: (link: LocalLink | null) => Promise<ServingStart>;
   /** The relay socket (`relaySocketPath`), or null for no relay. */
   readonly socketPath: string | null;
   /** The local link of guest init under CH (`localLinkOf`), or null on sbx. */
@@ -104,7 +108,7 @@ export async function runSupervisor(options: SupervisorOptions): Promise<void> {
     return;
   }
 
-  const started = await options.serve();
+  const started = await options.serve(options.link);
   if (!started.ok) {
     say(`Flue did not start: ${started.detail}`);
     lock.release();
