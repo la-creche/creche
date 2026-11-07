@@ -180,15 +180,15 @@ impl Control {
     }
 
     /// A line of `link`, its LF cut.
-    // CONTRACT-QUESTION: rule 3 of "The vsock JSON links" in
-    // `wire/AGENTS.md` names the check `strict` of the vmm crate, and
-    // guest init may call creche-wire only (layer rule). The reading
-    // taken: the typed serde reader is the strict reader here. Each type
-    // of this link denies unknown fields and holds no free JSON value, so
-    // it refuses a key given twice, a second value, a float for an
-    // integer and an array for an object, as `strict` does. A unit test
-    // holds that. A change costs one wire lane PR that moves `strict`
-    // into creche-wire, and one call here.
+    // CONTRACT-QUESTION: CH65 rule 2 decides it. One wire lane PR moves
+    // the check `strict` of the vmm crate into creche-wire, and both ends
+    // read each line through it. Until that PR merges, the typed serde
+    // reader is the strict reader here. Each type of this link denies
+    // unknown fields and holds no free JSON value, so it refuses a key
+    // given twice, a second value, a float for an integer and an array
+    // for an object, as `strict` does. A unit test holds that. A later
+    // commit on this branch calls the shared check once the wire PR
+    // merges.
     pub fn line(&mut self, link: LinkId, line: &[u8]) -> Option<Action> {
         let Some(stage) = self.stage(link) else {
             return Some(Action::Ignore(link, Ignored::Stale));
@@ -481,11 +481,10 @@ mod shell {
                 Action::Ready(link, line) => write(links, link, &line, "ready"),
                 Action::Sync(link) => match sync_session() {
                     Ok(()) => next = control.synced(link),
-                    // CONTRACT-QUESTION: no row decides the answer to a
-                    // failed syncfs. The reading taken: guest init sends
-                    // no `synced` and keeps the link, so the vmm's
-                    // SYNC_WAIT runs out, it takes no snapshot and it runs
-                    // the graceful stop (decision CH62 rule 23).
+                    // CH65 rule 3: guest init sends no `synced` and keeps
+                    // the link, so the vmm's SYNC_WAIT runs out, it takes
+                    // no snapshot and it runs the graceful stop (decision
+                    // CH62 rule 23).
                     Err(error) => crate::say(&format!("{link} sync failed: {error}")),
                 },
                 Action::Synced(link, line) => write(links, link, &line, "synced"),
