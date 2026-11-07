@@ -1591,7 +1591,8 @@ fn launch<L: Launcher>(
 /// A list that holds a host binds 1104 (decision CH49 rule 3). A present
 /// `egress.json` that does not read binds it too, so each CONNECT is
 /// refused 403 with a `not_valid` log line (decision CH72 rule 3). An
-/// absent file or an empty list binds no 1104.
+/// absent file or an empty list binds no 1104. A zero-byte file does not
+/// read, so it binds 1104 (Known gap 27).
 fn binds_egress(config: &StartConfig, family: &FamilyName) -> bool {
     match config.families.read_egress(family) {
         Ok(list) => !list.hosts.is_empty(),

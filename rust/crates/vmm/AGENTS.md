@@ -1199,6 +1199,9 @@ job kvm runs it.
     is refused 403 with a `not_valid` log line (decision CH70 rule 2). An
     absent file or an empty list binds no 1104 (decision CH49 rule 3).
     The start writes no stderr line (`binds_egress` in `src/start.rs`).
+    Open: CH72 rule 3 says "an absent or empty file binds no 1104". A
+    zero-byte `egress.json` does not read, so it reads as `not_valid`
+    and binds 1104. David decides whether zero bytes bind no 1104.
 
 ## Caller duties
 
