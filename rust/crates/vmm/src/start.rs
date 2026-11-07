@@ -1589,10 +1589,16 @@ fn launch<L: Launcher>(
 
 /// Whether the allowlist of `family` holds a host, so the VM gets the
 /// egress proxy listener (decision CH49 rule 3). It blocks.
-// Decision CH70 rules 1 and 2: a list that does not read allows nothing,
-// so it binds no listener, as an empty list. The guest dial of 1104 then
-// fails closed (decision CH46 rule 1). One stderr line names the fault,
-// once per start. The next start reads the file again.
+// CONTRACT-QUESTION (E2): no row decides the bind for a list that does
+// not read. CH49 rule 3 binds for an allowlist file that is non-empty,
+// and CH70 rule 2 has the proxy log name `not_valid` for such a file. The
+// narrowest reading fails closed: a list that does not read binds no
+// listener, as an empty list, and the guest dial of 1104 fails (decision
+// CH46 rule 1). The start writes one stderr line, and the proxy log stays
+// silent until a later start reads a good file. The other reading binds
+// 1104 for a present file, so each CONNECT gets 403 and a `not_valid`
+// line. It costs one listener per bad file and a deny check that allows
+// 1104 for a family with no good list.
 fn lists_a_host(config: &StartConfig, family: &FamilyName) -> bool {
     match config.families.read_egress(family) {
         Ok(list) => !list.hosts.is_empty(),

@@ -697,9 +697,9 @@ decisions CH6-1, CH6-4, CH46 rules 1 and 3, CH49 rule 3, CH69 rules 7,
 9, 10, 14, 20, 24 and 30). Guest init splices guest 127.0.0.1:3128 to
 a vsock dial of 1104 (decision CH46 rule 1), and CH connects each dial
 to `vsock.sock_1104` (decision CH24). The vmm binds it only for a family
-whose `egress.json` lists a host. A list that does not read allows
-nothing, so it binds no listener, as an empty list (decision CH70 rules
-1 and 2), and the start writes one stderr line.
+whose `egress.json` lists a host (decision CH49 rule 3). A list that
+does not read binds no listener either, and the start writes one stderr
+line (Known gap 27).
 
 1. `proxy::bind` binds the listener beside the plane listeners, with
    their lifecycle: after `link_vm` and `remove_stale`, before CH
@@ -1176,6 +1176,18 @@ job kvm runs it.
     links per VM, and its fd need (20544) adds to the raise of decision
     CH68 rule 2, so the raise is 69888. The plan estimate (16448)
     counted one fd for the allowlist read, which holds two.
+27. CONTRACT-QUESTION (plan PR E2): no row decides the bind of 1104 for
+    an `egress.json` that is present and does not read. Decision CH49
+    rule 3 binds for a non-empty allowlist file, and decision CH70 rule
+    2 has the proxy log name `not_valid` for such a file. The narrowest
+    reading fails closed: a bad list binds no 1104, as an empty list, so
+    the guest dial fails. The start writes one stderr line, and the
+    proxy log stays silent until a later start reads a good file
+    (`lists_a_host` in `src/start.rs`). Decision CH69 rule 24 lets the
+    proxy write stderr only on a log fault, and no row names this start
+    line. The other reading binds 1104 for a present file, so each
+    CONNECT gets 403 and a `not_valid` line, and the start writes no
+    stderr line.
 
 ## Caller duties
 

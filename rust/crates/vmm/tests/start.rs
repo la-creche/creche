@@ -2457,8 +2457,8 @@ fn the_egress_check_names_1104_for_a_family_with_egress() {
     assert!(test.fault_codes().is_empty());
 }
 
-/// A list that does not read allows nothing, so it binds no 1104, as an
-/// empty list (decisions CH49 rule 3, CH70 rules 1 and 2).
+/// An empty list binds no 1104 (decision CH49 rule 3), and a list that
+/// does not read binds none either (vmm AGENTS.md Known gap 27).
 #[test]
 fn a_bad_or_empty_list_binds_no_1104() {
     let test = Test::new("egress-none", |_| {});
