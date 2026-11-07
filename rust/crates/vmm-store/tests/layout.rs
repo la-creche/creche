@@ -49,6 +49,7 @@ fn state_paths_are_pinned() {
         session.snapshot_key(SnapshotGeneration(7)),
         session.path().join("snapshots/7/key.json")
     );
+    assert_eq!(session.serial_log(), session.path().join("serial.log"));
 }
 
 #[test]
@@ -65,7 +66,6 @@ fn run_paths_are_pinned() {
         vm.api_socket_lock(),
         Path::new(&format!("{dir}/api.sock.lock"))
     );
-    assert_eq!(vm.serial_log(), Path::new(&format!("{dir}/serial.log")));
     assert_eq!(
         vm.host_listener(HostPort::Egress),
         Path::new(&format!("{dir}/vsock.sock_1104"))
@@ -207,7 +207,7 @@ fn a_relink_moves_the_vm_to_another_slot() {
     let temp = TempRun::new("relink");
     let run = &temp.1;
     run.link_vm(&id(), slot(3)).expect("the first link");
-    fs::write(run.vm(&id()).serial_log(), b"old").expect("a log in slot 3");
+    fs::write(run.vm(&id()).api_socket_lock(), b"old").expect("a lock in slot 3");
 
     let vm = run.link_vm(&id(), slot(7)).expect("the re-link");
 
@@ -215,8 +215,8 @@ fn a_relink_moves_the_vm_to_another_slot() {
         resolved(run),
         fs::canonicalize(run.slot(slot(7))).expect("the slot")
     );
-    assert!(!vm.serial_log().exists());
-    assert!(run.slot(slot(3)).join("serial.log").exists());
+    assert!(!vm.api_socket_lock().exists());
+    assert!(run.slot(slot(3)).join("api.sock.lock").exists());
     let names: Vec<_> = fs::read_dir(run.vms_dir())
         .expect("the vm dir")
         .map(|entry| entry.expect("an entry").file_name())
@@ -263,13 +263,13 @@ fn unlink_keeps_the_slot() {
     let temp = TempRun::new("unlink");
     let run = &temp.1;
     let vm = run.link_vm(&id(), slot(2)).expect("the link");
-    fs::write(vm.serial_log(), b"").expect("a log");
+    fs::write(vm.api_socket_lock(), b"").expect("a lock");
 
     run.unlink_vm(&id()).expect("the unlink");
     run.unlink_vm(&id()).expect("a second unlink");
 
     assert!(fs::symlink_metadata(vm.path()).is_err());
-    assert!(run.slot(slot(2)).join("serial.log").exists());
+    assert!(run.slot(slot(2)).join("api.sock.lock").exists());
 }
 
 // The spike on spike/c3-slot-pool proved the link with 0700 dirs
@@ -302,7 +302,7 @@ fn unlink_fails_on_a_real_dir() {
 }
 
 // Decision CH56 rule 1: a VM that takes a slot empties it first. The old
-// VM's log and host listener go, and a dir stays with its contents.
+// VM's lock file and host listener go, and a dir stays with its contents.
 #[test]
 fn the_link_empties_the_slot() {
     let temp = TempRun::new("empty");
@@ -310,7 +310,7 @@ fn the_link_empties_the_slot() {
     let dir = run.slot(slot(6));
     fs::create_dir_all(dir.join("sub")).expect("a sub dir");
     fs::write(dir.join("sub/kept"), b"").expect("a file in the sub dir");
-    fs::write(dir.join("serial.log"), b"old").expect("a leftover log");
+    fs::write(dir.join("api.sock.lock"), b"old").expect("a leftover lock");
     let listener = std::os::unix::net::UnixListener::bind(dir.join("vsock.sock_1100"))
         .expect("a leftover listener");
     drop(listener);

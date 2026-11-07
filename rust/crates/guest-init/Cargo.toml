@@ -1,0 +1,26 @@
+# The guest init: PID 1 of each Cloud Hypervisor VM of the playpen (decisions
+# CH9, CH7-5). It is the fourth program of the vmm row. The library holds
+# the logic and `src/main.rs` only calls it.
+[package]
+name = "creche-guest-init"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "guest-init"
+path = "src/main.rs"
+
+[dependencies]
+creche-wire = { path = "../wire" }
+serde.workspace = true
+serde_json.workspace = true
+# The features that the mount plan, the power-off, the clock and the
+# loopback link need (CH62 rule 1). A feature add changes no lock entry.
+rustix = { workspace = true, features = ["mount", "system", "time", "net"] }
+# The vsock listen and dial calls (CH13, CH62 rule 1).
+nix.workspace = true
+
+[lints]
+workspace = true

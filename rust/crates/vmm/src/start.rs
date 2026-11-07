@@ -12,12 +12,14 @@
 //!    snapshot is taken and it stops (plan PR L17, decision CH19 (6)).
 //!    Until the guest can sync (`ChApi::GUEST_SYNCS`), the VM takes no
 //!    snapshot and gets the graceful stop.
-//! 3. In `spawn_blocking`: the stale sockets go (PR D1, decision CH19
-//!    (4)), the kernel and the root disk pass the store check (PR D6,
-//!    decision CH44 rule 2), the session disk exists (PR D7, decision
+//! 3. In `spawn_blocking`: a vmm in no service unit refuses the launch
+//!    here (decision CH60 rule 1). Then the stale sockets go (PR D1,
+//!    decision CH19 (4)), the kernel, the initramfs and the root disk
+//!    pass the store check (PR D6, decision CH44 rule 2), the session disk exists (PR D7, decision
 //!    CH21-4), the run dir `vm/<id>/` links to the slot of the start (PR
-//!    D16), `snapshots/` exists, and `serial.log` is a new file with mode
-//!    0600 (gap G23). The key check (PR D10) and the claim (PR D11) pick a
+//!    D16), `snapshots/` exists, and `sessions/<id>/serial.log` in the
+//!    state root is a new file with mode 0600 (gap G23, decision CH59 rule
+//!    2, PR D17). The key check (PR D10) and the claim (PR D11) pick a
 //!    restore or a cold boot. Then the launch step starts CH in its slot
 //!    (PR C18) with the argv of PR C7 and the sizes of PR C4 under the
 //!    ruleset of PR C6 (PR C2, decisions CH8-3, CH8-5, CH8-8, CH30, CH55).
@@ -47,9 +49,9 @@
 //! of the shutdown (plan PR L19).
 
 use std::collections::{HashMap, HashSet};
-use std::fs::{DirBuilder, OpenOptions, Permissions};
+use std::fs::DirBuilder;
 use std::io;
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -64,6 +66,7 @@ use creche_vmm_confine::landlock::{HostPath, Start, VmFiles};
 use creche_vmm_confine::launch::{Launch, Program};
 use creche_vmm_confine::limits::VmLimits;
 use creche_vmm_confine::spawner::{Launched, SpawnError, Spawner};
+use creche_vmm_confine::vmm_unit::{UnitError, VmmUnit};
 use creche_vmm_store::ch_remote::ChRemoteError;
 use creche_vmm_store::claim::{ClaimError, ClaimedSnapshot, claim};
 use creche_vmm_store::images::{ImageDigest, ImageStore};
@@ -71,6 +74,7 @@ use creche_vmm_store::key::{CheckedCh, KeyCheck, SnapshotKey, check_newest};
 use creche_vmm_store::layout::{RunRoot, SessionDir, Slot as PoolSlot, StateRoot, VmRunDir};
 use creche_vmm_store::retention::{InUse, Swept, sweep};
 use creche_vmm_store::rows::Rows;
+use creche_vmm_store::serial_log::SerialLog;
 use creche_vmm_store::session_disk::SessionDisks;
 use creche_vmm_store::sleep_gate::Activity;
 use creche_vmm_store::stale::remove_stale;
@@ -93,9 +97,6 @@ use crate::stop::{VmProcess, stop};
 
 /// The mode of the run dir and the snapshots dir of a VM.
 const DIR_MODE: u32 = 0o700;
-
-/// The mode of `serial.log` (gap G23).
-const SERIAL_MODE: u32 = 0o600;
 
 /// The pause between two reads of a slot that a start or a retire holds,
 /// while a stop waits for it. No row sets it. Only the vmm reads it, so a
@@ -129,12 +130,20 @@ pub struct StartConfig {
     /// The kernel and the root disks. The vmm reads them from the
     /// `digests.json` of its image root (decision CH57 rule 1).
     pub digests: Digests,
-    /// The initramfs, optional until phase 3 adds guest init (PR C7).
-    pub initramfs: Option<HostPath>,
+    /// The guest init initramfs in the digest store (decision CH60 rule
+    /// 2). `None` until phase 3 adds guest init (PR C7): the compose step
+    /// sets none, so each boot has none, its snapshot has none, and its
+    /// restore carries none (decision CH61 rule 3).
+    pub initramfs: Option<ImageDigest>,
     /// The Cloud Hypervisor program.
     pub ch: Program,
     /// The `systemd-run` program of the launch (PR C2).
     pub systemd_run: Program,
+    /// The unit of the vmm, which each VM scope binds to (decision CH60
+    /// rule 1). The vmm reads it at its start with `VmmUnit::of_self`. A
+    /// vmm in no service unit keeps the error, and every launch then
+    /// refuses with it and starts nothing.
+    pub vmm_unit: Result<VmmUnit, UnitError>,
     /// The RAM cap and the free-space floor of admission.
     pub limits: Limits,
     /// The snapshot budget of the sweep, in bytes (decision CH8-7, gap
@@ -1416,6 +1425,9 @@ fn launch<L: Launcher, A: ChApi>(
     (id, slot): (&SessionId, PoolSlot),
     shape: FamilyShape,
 ) -> Result<Booted<L::Process>, String> {
+    // Decision CH60 rule 1: with no vmm unit to bind the scope to, the
+    // launch stops here and touches no file.
+    let unit = config.vmm_unit.clone().map_err(|error| error.to_string())?;
     // Caller duty (a) of PR D16: the link comes before `remove_stale`, so
     // an old link to a slot that another VM took removes nothing of that
     // VM. The slot is free (caller duty (c)), so the link may empty it
@@ -1433,6 +1445,7 @@ fn launch<L: Launcher, A: ChApi>(
             .map_err(|error| error.to_string())
     };
     let kernel = checked(config.digests.kernel)?;
+    let initramfs = config.initramfs.map(checked).transpose()?;
     // `PerFlavor` of the wire crate holds each flavor, so the vmm holds no
     // list of its own (decision CH58 rule 4).
     let root = checked(*config.digests.roots.get(shape.flavor))?;
@@ -1442,19 +1455,22 @@ fn launch<L: Launcher, A: ChApi>(
         .map_err(|error| error.to_string())?;
     let session = config.state.session(id);
     // The ruleset opens each path, and a missing one fails the launch.
-    // `link_vm` made the slot dir of `vm/<id>`.
+    // `link_vm` made the slot dir of `vm/<id>`, and `for_boot` made the
+    // session dir. The serial log of the last start stays until here, also
+    // across a vmm restart (decision CH59 rule 2). A restore opens the
+    // same path from its snapshot config.
     make_dir(&session.snapshots())?;
-    let serial = run.serial_log();
-    OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(SERIAL_MODE)
-        .open(&serial)
-        .and_then(|file| file.set_permissions(Permissions::from_mode(SERIAL_MODE)))
-        .map_err(|error| format!("making {}: {error}", serial.display()))?;
+    let serial =
+        SerialLog::fresh(&session).map_err(|error| format!("{error}: {}", error.source))?;
     let limits = VmLimits::from(shape);
-    let key = SnapshotKey::current(config.ch_version, &kernel, &root);
+    let key = SnapshotKey::current(config.ch_version, &kernel, initramfs.as_ref(), &root);
+    // The initramfs of the ruleset. A snapshot with the current key names
+    // this same `store/<sha256>` file, so a restore reads it as a boot
+    // does (decision CH61 rule 3).
+    let initramfs_path = initramfs
+        .as_ref()
+        .map(|image| host(image.path()))
+        .transpose()?;
     let (command, start, restore) = match claim_newest::<A>(&session, &key, locks, id)? {
         Some(snapshot) => {
             let command = ChCommand::restore(snapshot, &run).map_err(|error| error.to_string())?;
@@ -1463,21 +1479,25 @@ fn launch<L: Launcher, A: ChApi>(
                 session: disk.path().to_owned(),
                 vsock: run.vsock_socket(),
             };
-            (command, Start::Restore, Some(expected))
+            let start = Start::Restore {
+                initramfs: initramfs_path,
+            };
+            (command, start, Some(expected))
         }
         None => {
             let boot = Boot {
                 kernel: &kernel,
-                initramfs: config.initramfs.as_ref(),
+                initramfs: initramfs.as_ref(),
                 root: &root,
                 session: &disk,
+                serial: &serial,
                 disk: DiskLimit::SESSION,
                 limits,
             };
             let command = ChCommand::boot(boot, &run).map_err(|error| error.to_string())?;
             let start = Start::Boot {
                 kernel: host(kernel.path())?,
-                initramfs: config.initramfs.clone(),
+                initramfs: initramfs_path,
             };
             (command, start, None)
         }
@@ -1486,7 +1506,7 @@ fn launch<L: Launcher, A: ChApi>(
         .map_err(|error| error.to_string())?;
     let payload = command.payload(config.ch.clone());
     let scope = limits.scope(id.clone());
-    let plan = Launch::new(config.systemd_run.clone(), scope, payload, files).in_slot(slot);
+    let plan = Launch::new(config.systemd_run.clone(), scope, payload, files, unit).in_slot(slot);
     let process = launcher.launch(plan).map_err(|error| error.to_string())?;
     Ok(Booted {
         process,
@@ -1685,7 +1705,7 @@ mod tests {
             "/tests/fixtures/cloud-hypervisor"
         );
         let ch = check_cloud_hypervisor(stub.as_ref(), Duration::from_secs(10)).unwrap();
-        let key = SnapshotKey::current(ch, &empty, &empty);
+        let key = SnapshotKey::current(ch, &empty, None, &empty);
         let id: SessionId = "3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b".parse().unwrap();
         let session = state.session(&id);
         let generation = SnapshotGeneration(1);

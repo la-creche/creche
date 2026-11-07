@@ -1,8 +1,8 @@
 //! The slot profiles against the committed file and the names of the store
 //! layout (decisions CH8-1, CH24, CH51, CH55, CH50 rule 11). Each slot gets
 //! the same rules but its label and its run dir, and its run dir rules
-//! match only the files of its own slot. The kvm_ tests of plan PR C15
-//! prove the same rules in the kernel.
+//! match only the files of its own slot. `tests/kvm_slot.rs` proves the
+//! same rules in the kernel.
 //!
 //! To write the file after a change of the generator, run
 //! `CRECHE_SLOT_PROFILES=write cargo test -p creche-vmm-confine --test slot_profile`
@@ -99,7 +99,6 @@ fn run_files(vm: &VmRunDir) -> Vec<PathBuf> {
         vm.api_socket_lock(),
         vm.vsock_socket(),
         vm.host_listener(HostPort::Chaperone),
-        vm.serial_log(),
     ]
 }
 
@@ -143,9 +142,9 @@ profile creche-ch-slot-7 {
   owner /run/user/[0-9]*/vmm/slot/7/api.sock.lock wk,
   owner /run/user/[0-9]*/vmm/slot/7/vsock.sock rw,
   owner /run/user/[0-9]*/vmm/slot/7/vsock.sock_* rw,
-  owner /run/user/[0-9]*/vmm/slot/7/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/store/* rk,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/disk.ext4 rwk,
+  owner @{HOME}/.local/state/creche-vmm/sessions/*/serial.log w,
   owner @{HOME}/.local/state/creche-vmm/sessions/*/snapshots/** rw,
 }
 ";
@@ -208,12 +207,16 @@ fn the_state_rules_name_the_store_layout_under_the_default_root() {
     for path in [
         state.store_dir().join("root.ext4"),
         session.disk(),
+        session.serial_log(),
         session.snapshot(generation).join("memory-ranges"),
         session.snapshot_temp(generation).join("config.json"),
     ] {
         assert!(allowed(&block, &path), "{path:?}");
     }
-    for path in [state.row_file(&id()), session.disk_temp()] {
+    // The serial log left the run dir (decision CH59 rule 2).
+    let run = RunRoot::new(PathBuf::from(RUN_ROOT)).unwrap();
+    let old_log = run.slot(slot(3)).join("serial.log");
+    for path in [state.row_file(&id()), session.disk_temp(), old_log] {
         assert!(!allowed(&block, &path), "{path:?}");
     }
     let other = StateRoot::new(PathBuf::from("/srv/agents/state/vmm")).unwrap();

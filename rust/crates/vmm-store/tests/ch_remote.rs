@@ -140,7 +140,7 @@ const V54_REPLY: &str = r#"{
     "rng": {"src": "/dev/urandom"},
     "balloon": {"size": 0, "deflate_on_oom": true,
       "free_page_reporting": false, "id": "_balloon0"},
-    "serial": {"file": "/r/a/serial.log", "mode": "File"},
+    "serial": {"file": "/s/sessions/a/serial.log", "mode": "File"},
     "console": {"mode": "Off"},
     "debug_console": {"mode": "Off", "iobase": 233},
     "vsock": {"cid": 3, "socket": "/r/a/vsock.sock", "id": "_vsock0",

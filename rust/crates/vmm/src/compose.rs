@@ -36,6 +36,7 @@ use std::time::{Duration, SystemTime};
 use creche_vmm_confine::faults::{FaultBook, FaultDir, REFRESH};
 use creche_vmm_confine::leftovers::{LeftoverError, stop_all};
 use creche_vmm_confine::spawner::{SELF_EXE, Spawner};
+use creche_vmm_confine::vmm_unit::VmmUnit;
 use creche_vmm_store::ch_remote::ChRemote;
 use creche_vmm_store::images::ImageStore;
 use creche_vmm_store::key::{ChVersionError, CheckedCh, check_cloud_hypervisor};
@@ -191,7 +192,8 @@ struct Vmm {
 ///
 /// A `StartError` when a start step fails, or when the server stops
 /// before SIGTERM. A shutdown that ends `Kept` or `Late` is no error: the
-/// VMs that are left end with the vmm (decision CH19 (4)).
+/// `ExecStopPost=` step of the vmm unit kills each VM that is left after
+/// the vmm has exited (decision CH61 rule 1).
 pub async fn serve(config: Config) -> Result<(), StartError> {
     let sigterm = shutdown::sigterm().map_err(StartError::Sigterm)?;
     let vmm = spawn_blocking(move || build(config))
@@ -257,6 +259,13 @@ fn parts(config: Config, checked: Checked) -> Result<Vmm, StartError> {
         remote: remote(),
         snapshotter: Snapshotter::new(remote(), config.fallocate.path().to_owned()),
     };
+    // Decision CH60 rule 1: the unit comes from `/proc/self/cgroup`, with
+    // no config key. A vmm in no service unit still serves, and each VM
+    // launch refuses with the error.
+    let vmm_unit = VmmUnit::of_self();
+    if let Err(error) = &vmm_unit {
+        eprintln!("vmm: {error}, so every VM launch refuses");
+    }
     let start = StartConfig {
         images,
         disks: SessionDisks::new(&config.state, config.mke2fs.path().to_owned()),
@@ -267,6 +276,7 @@ fn parts(config: Config, checked: Checked) -> Result<Vmm, StartError> {
         families: config.families.clone(),
         ch: config.ch,
         systemd_run: config.systemd_run,
+        vmm_unit,
         limits: config.limits,
         budget: config.budget,
         ch_version,
@@ -329,7 +339,7 @@ impl Vmm {
 
         let ended = shutdown::shutdown(&*hook.0, stop, async move { _ = sleep.await }).await;
         if ended == Ended::Kept {
-            eprintln!("vmm: a VM did not stop, so its CH ends with the vmm");
+            eprintln!("vmm: a VM did not stop, so the ExecStopPost= step of the vmm unit kills it");
         }
         refresh.abort();
         match server.await {

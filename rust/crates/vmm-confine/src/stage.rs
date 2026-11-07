@@ -18,21 +18,23 @@
 //! `run` is the one entry, and it always writes the real exec attribute
 //! (decision CH58 rule 1). The rust job of CI loads no slot profile, so
 //! there each launch fails closed at step 1 and starts no payload. The kvm
-//! job loads the slot profiles and proves the full chain (the C15 rework,
-//! #443).
+//! job loads the slot profiles and proves the full chain
+//! (`tests/kvm_slot.rs`).
 //!
 //! The pid stays the same through all four execs: the launch step,
 //! `systemd-run`, this stage and CH. `systemd-run --scope` execs its
 //! payload in its own process. So the `Launched` handle of the spawner is
-//! CH, and the kill chain of fact 80 holds. The kernel keeps
-//! `PR_SET_PDEATHSIG` through an exec unless the exec is a secure exec
-//! (set-user-ID, set-group-ID, file capabilities) or a uid, a gid or a
-//! capability changes. No exec of the chain is one of those. The slot
-//! label and the Landlock ruleset change only the LSM state, not a uid.
-//! This stage checks that the signal is still SIGKILL before step 1, so a
-//! clear by the exec of `systemd-run` fails closed. The kvm test of the
-//! C15 rework (#443) proves that CH under its label still dies with the
-//! vmm.
+//! CH. The kernel keeps `PR_SET_PDEATHSIG` through an exec unless the
+//! exec is a secure exec (set-user-ID, set-group-ID, file capabilities)
+//! or a uid, a gid or a capability changes. This stage checks that the
+//! signal is still SIGKILL before step 1, so a clear by the exec of
+//! `systemd-run` fails closed, and a vmm that dies before CH runs ends
+//! the stage. AppArmor clears the death signal at an exec that changes
+//! the label (`apparmor_bprm_committing_creds` in
+//! `security/apparmor/lsm.c`), so CH under its slot label has none. The
+//! `ExecStopPost=` step of the vmm unit kills CH after a stop, a restart
+//! or a crash of the vmm (decision CH61 rule 1). `tests/kvm_slot.rs`
+//! proves each one through a vmm stand-in that runs as a user service.
 
 use std::convert::Infallible;
 use std::ffi::OsString;
@@ -132,8 +134,8 @@ pub enum StageError {
     NotPlan(serde_json::Error),
     /// The death signal did not read.
     DeathSignal(io::Error),
-    /// The death signal is no longer SIGKILL, so CH would outlive the vmm
-    /// (fact 80).
+    /// The death signal is no longer SIGKILL, so the stage would outlive
+    /// a vmm that dies before CH runs (fact 80).
     DeathSignalLost,
     /// The kernel refused the slot label (decision CH55). The value is the
     /// label.
@@ -324,7 +326,7 @@ mod tests {
             .session(&id);
         let run = RunRoot::new(PathBuf::from("/run/vmm")).unwrap().vm(&id);
         let root = HostPath::new(PathBuf::from("/state/store/root")).unwrap();
-        let files = VmFiles::new(Start::Restore, root, &session, &run).unwrap();
+        let files = VmFiles::new(Start::Restore { initramfs: None }, root, &session, &run).unwrap();
         let program = Program::new(PathBuf::from(CH)).unwrap();
         let payload = Payload::new(program, vec!["--restore".to_owned()]);
         Stage::new(Slot::new(5).unwrap(), payload, files)

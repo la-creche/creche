@@ -31,8 +31,10 @@ use creche_vmm::stop::VmProcess;
 use creche_vmm_confine::admission::{GIB, Limits};
 use creche_vmm_confine::family::FamilyRoot;
 use creche_vmm_confine::faults::{FaultBook, FaultDir};
+use creche_vmm_confine::landlock::{HostPath, Start};
 use creche_vmm_confine::launch::{Launch, Program};
 use creche_vmm_confine::spawner::SpawnError;
+use creche_vmm_confine::vmm_unit::{UnitError, VmmUnit};
 use creche_vmm_store::ch_remote::{ChRemoteError, VmInfo};
 use creche_vmm_store::images::{ImageDigest, ImageStore};
 use creche_vmm_store::key::{CheckedCh, SnapshotKey, check_cloud_hypervisor, write_key};
@@ -410,6 +412,7 @@ impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
             initramfs: None,
             ch: Program::new(PathBuf::from(CH)).unwrap(),
             systemd_run: Program::new(PathBuf::from("/usr/bin/systemd-run")).unwrap(),
+            vmm_unit: Ok(VmmUnit::new("creche-vmm.service".to_owned()).unwrap()),
             limits: Limits {
                 ram_cap: 80 * GIB,
                 free_floor: 0,
@@ -515,7 +518,7 @@ impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
     fn key(&self) -> SnapshotKey {
         let images = ImageStore::new(&self.state, PathBuf::from("/usr/bin/zstd"));
         let empty = images.check(EMPTY.parse().unwrap()).unwrap();
-        SnapshotKey::current(self.ch, &empty, &empty)
+        SnapshotKey::current(self.ch, &empty, None, &empty)
     }
 
     /// Makes generation 1 of row `index` with `key`, or with a key of
@@ -559,7 +562,7 @@ impl<const DEVICES: bool, const SYNCS: bool> Test<DEVICES, SYNCS> {
             "cpus": {"boot_vcpus": 1, "max_vcpus": 1},
             "memory": {"size": 536_870_912, "shared": false},
             "disks": self.disks(index),
-            "serial": {"file": self.dir.join(format!("run/vm/{id}/serial.log")), "mode": "File"},
+            "serial": {"file": self.dir.join(format!("state/sessions/{id}/serial.log")), "mode": "File"},
             "vsock": {"cid": 3, "socket": vsock, "id": "_vsock0", "pci_segment": 0},
         });
         for (field, value) in extra {
@@ -624,9 +627,65 @@ fn a_cold_boot_launches_the_checked_files_and_clears_the_fault() {
     let session = test.dir.join(format!("state/sessions/{A}"));
     assert!(session.join("disk.ext4").is_file());
     assert!(session.join("snapshots").is_dir());
-    let serial = test.dir.join(format!("run/vm/{A}/serial.log"));
-    let mode = fs::metadata(serial).unwrap().permissions().mode();
+    let serial = session.join("serial.log");
+    let mode = fs::metadata(&serial).unwrap().permissions().mode();
     assert_eq!(mode & 0o777, 0o600);
+    let at = args.iter().position(|arg| arg == "--serial").unwrap();
+    assert_eq!(args[at + 1], format!("file={}", serial.display()));
+}
+
+/// The serial log of a session is in the state root, so a restart of the
+/// vmm keeps it until the next start of the session (gap G23, decision
+/// CH59 rule 2). The test stops the VM, then removes the run root, as
+/// each stop of the vmm unit does, a crash included. The log still holds
+/// the guest output. The next start of the session makes it new, with
+/// mode 0600, and a restore does the same.
+#[test]
+fn a_vmm_restart_keeps_the_serial_log_until_the_next_start() {
+    let test = Test::new("serial", |_| {});
+    let id = test.rows[0].id.clone();
+    let serial = test.dir.join(format!("state/sessions/{A}/serial.log"));
+    for restore in [false, true] {
+        assert_eq!(test.start(0), Ok(()));
+        fs::write(&serial, b"the last guest\r\n").unwrap();
+        fs::set_permissions(&serial, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(test.runtime.block_on(test.hook.stop(&id)).is_ok());
+        fs::remove_dir_all(test.dir.join("run")).unwrap();
+        assert_eq!(fs::read(&serial).unwrap(), b"the last guest\r\n");
+
+        if restore {
+            test.snapshot(0, Some(&test.key()));
+            test.reply(0, "Paused", &[]);
+        }
+        assert_eq!(test.start(0), Ok(()));
+        assert_eq!(test.restored(test.launches() - 1), restore);
+        assert_eq!(fs::read(&serial).unwrap(), b"");
+        let mode = fs::metadata(&serial).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        assert!(test.runtime.block_on(test.hook.stop(&id)).is_ok());
+    }
+}
+
+/// A vmm in no service unit refuses every launch and starts nothing
+/// (decision CH60 rule 1). The start faults, makes no `vm/<id>` link, and
+/// the fake launcher sees no launch. Each launch of a vmm with a unit
+/// binds its scope to that unit.
+#[test]
+fn a_vmm_in_no_service_unit_launches_nothing() {
+    let path = "/user.slice/user-1000.slice/session-3.scope".to_owned();
+    let test = Test::new("no-unit", |config| {
+        config.vmm_unit = Err(UnitError::NoUserManager(path));
+    });
+    assert_eq!(test.start(0), Err(StartFault::SandboxStartFailed));
+    assert_eq!(test.fault_codes(), ["sandbox_start_failed"]);
+    assert_eq!(test.launches(), 0);
+    let link = test.dir.join(format!("run/vm/{A}"));
+    assert!(fs::symlink_metadata(link).is_err());
+
+    let test = Test::new("unit", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    let launches = test.fake.launches.lock().unwrap();
+    assert_eq!(launches[0].unit().name(), "creche-vmm.service");
 }
 
 /// Each VM boots the root disk of the flavor of its family shape
@@ -787,6 +846,62 @@ fn a_keyed_snapshot_restores_paused_then_resumes() {
     assert_eq!(test.start(0), Ok(()));
     assert!(!test.restored(1));
     assert!(test.hook.in_use().is_empty());
+}
+
+/// With an initramfs in the config, a boot names it and its ruleset reads
+/// it, and the key holds its digest. A restore with that key carries the
+/// same `store/<sha256>` file, so its ruleset reads it too, and a key
+/// with no initramfs drops the snapshot (decisions CH60 rule 2, CH61
+/// rule 3).
+#[test]
+fn a_restore_carries_the_initramfs_of_its_key() {
+    let initramfs: ImageDigest = ABC.parse().unwrap();
+    let with = |config: &mut StartConfig| {
+        let file = config.state.path().parent().unwrap().join("initramfs");
+        fs::write(&file, "abc").unwrap();
+        config.images.import(&file, initramfs).unwrap();
+        config.initramfs = Some(initramfs);
+    };
+    let store = |test: &Test| test.dir.join(format!("state/store/{initramfs}"));
+
+    let test = Test::new("initramfs-boot", with);
+    assert_eq!(test.start(0), Ok(()));
+    let launches = test.fake.launches.lock().unwrap();
+    let args = launches[0].payload().args();
+    let at = args.iter().position(|arg| arg == "--initramfs").unwrap();
+    assert_eq!(args[at + 1], store(&test).to_str().unwrap());
+    let Start::Boot {
+        initramfs: Some(read),
+        ..
+    } = launches[0].files().start()
+    else {
+        panic!("not a boot with an initramfs: {:?}", launches[0].files());
+    };
+    assert_eq!(read.path(), store(&test));
+    drop(launches);
+
+    let test = Test::new("initramfs-restore", with);
+    let images = ImageStore::new(&test.state, PathBuf::from("/usr/bin/zstd"));
+    let empty = images.check(EMPTY.parse().unwrap()).unwrap();
+    let checked = images.check(initramfs).unwrap();
+    let key = SnapshotKey::current(test.ch, &empty, Some(&checked), &empty);
+    test.snapshot(0, Some(&key));
+    test.reply(0, "Paused", &[]);
+    assert_eq!(test.start(0), Ok(()));
+    assert!(test.restored(0));
+    let launches = test.fake.launches.lock().unwrap();
+    let path = HostPath::new(store(&test)).unwrap();
+    let restore = Start::Restore {
+        initramfs: Some(path),
+    };
+    assert_eq!(launches[0].files().start(), &restore);
+    drop(launches);
+
+    let test = Test::new("initramfs-mismatch", with);
+    let dir = test.snapshot(0, Some(&test.key()));
+    assert_eq!(test.start(0), Ok(()));
+    assert!(!test.restored(0));
+    assert!(!dir.exists());
 }
 
 /// Fields that a test adds to the config of an `info` reply.
@@ -1888,8 +2003,8 @@ fn slot_dir(number: u16) -> PathBuf {
 /// Each VM takes its own slot, and its `vm/<id>` links to it (plan PR
 /// L16b, decisions CH51, CH55). A stop frees the slot and removes the
 /// link, and the next start takes the freed slot. The link empties the
-/// slot first, so the `serial.log` of the old VM is new (decision CH56
-/// rule 1).
+/// slot first, so a leftover listener of the old VM is gone (decision
+/// CH56 rule 1).
 #[test]
 fn two_vms_get_two_slots_and_a_freed_slot_is_reused() {
     let test = Test::new("slots", |_| {});
@@ -1898,8 +2013,8 @@ fn two_vms_get_two_slots_and_a_freed_slot_is_reused() {
     assert_eq!((test.slot(0), test.slot(1)), (0, 1));
     assert_eq!(test.link(0), Some(slot_dir(0)));
     assert_eq!(test.link(1), Some(slot_dir(1)));
-    let serial = test.dir.join("run/slot/0/serial.log");
-    fs::write(&serial, b"the old guest").unwrap();
+    let leftover = test.dir.join("run/slot/0/vsock.sock_1104");
+    fs::write(&leftover, b"the old guest").unwrap();
 
     let id = test.rows[0].id.clone();
     assert!(test.runtime.block_on(test.hook.stop(&id)).is_ok());
@@ -1907,7 +2022,7 @@ fn two_vms_get_two_slots_and_a_freed_slot_is_reused() {
     assert_eq!(test.start(2), Ok(()));
     assert_eq!(test.slot(2), 0);
     assert_eq!(test.link(2), Some(slot_dir(0)));
-    assert_eq!(fs::read(&serial).unwrap(), b"");
+    assert!(!leftover.exists());
 }
 
 /// With each of the 64 slots held by a busy VM, the next start gets

@@ -13,14 +13,21 @@
 //!   takes exactly one plan argument and calls `stage::run`, the one entry
 //!   of the stage, which always writes the real exec attribute (decision
 //!   CH58 rule 1).
+//! - `vmm kill-scopes` is the `ExecStopPost=` step of the vmm unit
+//!   (decisions CH61 rule 1, CH63). It reads only
+//!   `AGENT_SYSTEMCTL_PROGRAM` (`config::KillScopesConfig`) and calls
+//!   `leftovers::kill_all`, which sends SIGKILL to each `creche-vm-*`
+//!   unit and queues no stop job. A missing or bad key exits 78. A unit
+//!   that is gone at its kill has ended. Any other failure exits 1, so
+//!   the unit ends `failed` only on a real failure.
 
 use std::ffi::OsString;
 use std::fmt;
 use std::process::ExitCode;
 
-use creche_vmm::config::Config;
+use creche_vmm::config::{Config, KillScopesConfig};
 use creche_vmm::shutdown::RUNTIME_END;
-use creche_vmm_confine::{launch, stage};
+use creche_vmm_confine::{launch, leftovers, stage};
 use tokio::runtime::Builder;
 
 /// The exit status of a refused start (owner item 86). A unit with
@@ -29,7 +36,7 @@ use tokio::runtime::Builder;
 const EX_CONFIG: u8 = 78;
 
 /// The usage line for a wrong argument list.
-const USAGE: &str = "usage: vmm serve | vmm launch | vmm launch-stage <plan>";
+const USAGE: &str = "usage: vmm serve | vmm launch | vmm launch-stage <plan> | vmm kill-scopes";
 
 /// The modes of the program.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +45,8 @@ enum Mode<'a> {
     Launch,
     /// The launch stage with its one plan argument.
     Stage(&'a OsString),
+    /// The `ExecStopPost=` step of the vmm unit (decision CH63).
+    KillScopes,
 }
 
 impl<'a> Mode<'a> {
@@ -49,6 +58,7 @@ impl<'a> Mode<'a> {
             [mode] if mode == "serve" => Some(Self::Serve),
             [mode] if mode == launch::MODE => Some(Self::Launch),
             [mode, plan] if mode == stage::MODE => Some(Self::Stage(plan)),
+            [mode] if mode == "kill-scopes" => Some(Self::KillScopes),
             _ => None,
         }
     }
@@ -74,6 +84,26 @@ fn dispatch(args: &[OsString]) -> ExitCode {
         Mode::Stage(plan) => {
             let Err(error) = stage::run(std::slice::from_ref(plan));
             refuse(&error)
+        }
+        Mode::KillScopes => kill_scopes(),
+    }
+}
+
+/// Reads `AGENT_SYSTEMCTL_PROGRAM`, then sends SIGKILL to each VM unit
+/// (decision CH63). A bad key exits 78, and a failed kill exits 1.
+fn kill_scopes() -> ExitCode {
+    let config = match KillScopesConfig::read() {
+        Ok(config) => config,
+        Err(error) => return refuse(&error),
+    };
+    match leftovers::kill_all(&config.systemctl) {
+        Ok(kills) => {
+            eprintln!("vmm: {kills}");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("vmm: {error}");
+            ExitCode::FAILURE
         }
     }
 }
@@ -135,6 +165,8 @@ mod tests {
         assert_eq!(Mode::parse(&args(&["launch"])), Some(Mode::Launch));
         let stage = args(&["launch-stage", "{}"]);
         assert_eq!(Mode::parse(&stage), Some(Mode::Stage(&stage[1])));
+        let kill = args(&["kill-scopes"]);
+        assert_eq!(Mode::parse(&kill), Some(Mode::KillScopes));
     }
 
     #[test]
@@ -145,6 +177,8 @@ mod tests {
         assert_eq!(Mode::parse(&args(&["launch", "extra"])), None);
         assert_eq!(Mode::parse(&args(&["launch-stage"])), None);
         assert_eq!(Mode::parse(&args(&["launch-stage", "a", "b"])), None);
+        assert_eq!(Mode::parse(&args(&["kill-scopes", "extra"])), None);
+        assert_eq!(Mode::parse(&args(&["kill-scope"])), None);
     }
 
     /// Each mode names the word of its crate, so the launch step execs the
@@ -175,5 +209,7 @@ mod tests {
         assert_eq!(status(&["start"]), ExitCode::from(EX_CONFIG));
         assert_eq!(status(&["serve", "extra"]), ExitCode::from(EX_CONFIG));
         assert_eq!(status(&["launch-stage"]), ExitCode::from(EX_CONFIG));
+        let extra = ["kill-scopes", "extra"];
+        assert_eq!(status(&extra), ExitCode::from(EX_CONFIG));
     }
 }

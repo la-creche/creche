@@ -24,7 +24,7 @@ const PLANES: &[HostPort] = &[
 
 /// A command line file and a VM run directory in a new directory in
 /// `/tmp`, removed on drop. The run directory holds the CH sockets and
-/// `serial.log`, which are not listeners.
+/// the lock file of the API socket, which are not listeners.
 struct Fake {
     root: PathBuf,
     run: VmRunDir,
@@ -42,7 +42,7 @@ impl Fake {
         let _ = fs::remove_dir_all(&root);
         let run = RunRoot::new(root.clone()).unwrap().vm(&ID.parse().unwrap());
         fs::create_dir_all(run.path()).unwrap();
-        for file in [run.vsock_socket(), run.api_socket(), run.serial_log()] {
+        for file in [run.vsock_socket(), run.api_socket(), run.api_socket_lock()] {
             fs::write(file, "").unwrap();
         }
         let mut cmdline = Vec::new();
@@ -85,6 +85,11 @@ fn boot() -> Start {
     }
 }
 
+#[cfg(test)]
+fn restore() -> Start {
+    Start::Restore { initramfs: None }
+}
+
 const BOOT: &[&str] = &[
     "--cpus",
     "boot=2",
@@ -109,7 +114,7 @@ fn an_empty_bound_set_with_no_listener_passes() {
 #[test]
 fn a_restore_with_no_vsock_argument_passes() {
     let fake = Fake::new("restore", RESTORE);
-    fake.check(&Start::Restore, &[]).unwrap();
+    fake.check(&restore(), &[]).unwrap();
 }
 
 #[test]
@@ -179,7 +184,7 @@ fn a_boot_needs_exactly_one_vsock() {
 fn a_restore_with_a_vsock_argument_fails() {
     let fake = Fake::new("restore-vsock", &[RESTORE, &["--vsock", "cid=3"]].concat());
     assert!(matches!(
-        fake.check(&Start::Restore, &[]),
+        fake.check(&restore(), &[]),
         Err(EgressAssertFailed::Vsock(1))
     ));
 }
@@ -218,7 +223,7 @@ fn a_process_that_is_not_ch_fails() {
     ];
     for (name, args) in cases {
         let fake = Fake::raw(name, args);
-        for start in [boot(), Start::Restore] {
+        for start in [boot(), restore()] {
             let result = fake.check(&start, &[]);
             assert!(
                 matches!(result, Err(EgressAssertFailed::NotCh)),

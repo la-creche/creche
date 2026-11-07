@@ -43,9 +43,9 @@ EnvironmentFile=/etc/creche/site.env
 # RuntimeDirectoryPreserve keeps its default, `no`: systemd removes the dir
 # at each stop and each restart, a crash included. The bind refuses a path
 # that exists (rust/crates/vmm/src/server/accept.rs), and the vmm then exits
-# 78, so the dir must be fresh at each start. Each VM's `serial.log` is in
-# the run root until plan PR D17 moves it to `sessions/<id>/` in the state
-# root (decision CH59 rule 2). Until then each stop also removes it.
+# 78, so the dir must be fresh at each start. No log sits in it: each VM's
+# `serial.log` is in `sessions/<id>/` of the state root, kept until the
+# next start of its session (decision CH59 rule 2).
 RuntimeDirectory=vmm
 RuntimeDirectoryMode=0700
 # The state root: `%S/creche-vmm`, which is ~/.local/state/creche-vmm, the
@@ -81,11 +81,10 @@ TimeoutStartSec=infinity
 # The stop. At SIGTERM the vmm closes the door links, snapshots each VM that
 # may sleep and stops the rest (gap G16 option A). One deadline bounds every
 # step: SHUTDOWN_WAIT, 85 s (decision CH56 rule 2). The vmm keeps 5 s for its
-# exit (CH56 rule 3), so 90 s here. Past it systemd sends SIGKILL, and each
-# CH ends with the vmm through PDEATHSIG (CH19 (4)). Change this value and
-# UNIT_STOP_TIMEOUT of rust/crates/vmm/src/shutdown.rs together.
-# bin/tests/test_vmm_unit.py fails when they differ, and it pins each
-# decided line of this unit.
+# exit (CH56 rule 3), so 90 s here. Past it systemd sends SIGKILL. Change
+# this value and UNIT_STOP_TIMEOUT of rust/crates/vmm/src/shutdown.rs
+# together. bin/tests/test_vmm_unit.py fails when they differ, and it
+# pins each decided line of this unit.
 KillSignal=SIGTERM
 # SIGTERM goes to the vmm alone. The default, control-group, sends it to
 # each process of the cgroup at once. An idle retire may already run at
@@ -96,14 +95,36 @@ KillSignal=SIGTERM
 # sits in its own creche-vm-* scope, outside this cgroup.
 KillMode=mixed
 TimeoutStopSec=90
+# The end of each VM (decisions CH61, CH63). Each creche-vm-* scope has
+# `BindsTo=` and `Before=` this unit (CH61 rule 2). `Before=` keeps each
+# VM running while this unit stops, so the shutdown above runs before any
+# VM stops. This step then ends each VM that is left (CH61 rule 1). It
+# runs after the vmm has exited, on a stop, on a restart and after a
+# crash, also after the SIGKILL of TimeoutStopSec. A restart passes no
+# stop to a bound scope, so without this step a VM would outlive it.
+# The step sends SIGKILL, a power cut for the guest, as the deadline of
+# CH56 rule 2 allows. `vmm kill-scopes` (CH63) lists each loaded
+# creche-vm-* unit with the code of the leftover sweep (CH19 (4)) and
+# runs `systemctl --user kill --signal=SIGKILL` on each one by name. A
+# kill sends a signal and queues no job. A `systemctl stop` of a scope
+# here would wait for a stop job that `Before=` orders after the stop of
+# this unit, which waits for this step: a deadlock. A scope that the
+# manager unloads between the list and its kill gives NoSuchUnit. That
+# scope has ended, so a fresh list that no longer holds it counts it as
+# ended. Any other failure exits 1, so the unit ends `failed` only on a
+# real failure. A missing or bad AGENT_SYSTEMCTL_PROGRAM, the one key of
+# the step, from vmm.env, exits 78. The leftover sweep of the next start
+# still stops each unit that it finds.
+ExecStopPost=/opt/components/vmm/bin/vmm kill-scopes
 
 # A user unit on this host cannot use mount-namespace options
 # (apparmor_restrict_unprivileged_userns=1), but seccomp, prctl and rlimit
 # options need no namespace (systemd/AGENTS.md). The launch stage sets
 # no_new_privs itself before the exec of CH (decision CH55), and the kvm
 # job proves the slot label after it. Under this line no_new_privs is set
-# earlier, at the write of the exec attribute too. The rework of #443
-# proves that order in the kvm job (systemd/AGENTS.md, Caller duties).
+# earlier, at the write of the exec attribute too. The kvm job proves
+# that order: its vmm stand-in in rust/crates/vmm-confine/tests/stand_in
+# runs with this line (systemd/AGENTS.md, Decided rule 3).
 NoNewPrivileges=yes
 SystemCallArchitectures=native
 RestrictRealtime=yes

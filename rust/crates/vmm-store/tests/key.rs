@@ -1,6 +1,7 @@
 //! A snapshot keeps only while its key equals the current key: the CH rev,
-//! the kernel digest, the root disk digest and the guest init protocol
-//! (decision CH7-6). The vmm accepts its `cloud-hypervisor` only when
+//! the kernel digest, the initramfs digest or none, the root disk digest
+//! and the guest init protocol (decisions CH7-6, CH61 rule 3). The vmm
+//! accepts its `cloud-hypervisor` only when
 //! `--version` reports `CH_VERSION` (decision CH36 with gap G10).
 //!
 //! `tests/fixtures/cloud-hypervisor` stands in for the program. A test
@@ -73,10 +74,17 @@ impl Temp {
         link
     }
 
-    /// The key of a VM with images `kernel` and `root_disk`.
+    /// The key of a VM with images `kernel` and `root_disk` and no
+    /// initramfs.
     fn key(&self, kernel: usize, root_disk: usize) -> SnapshotKey {
+        self.key_with(kernel, None, root_disk)
+    }
+
+    /// The key of a VM with images `kernel`, `initramfs` and `root_disk`.
+    fn key_with(&self, kernel: usize, initramfs: Option<usize>, root_disk: usize) -> SnapshotKey {
         let ch = self.ch("v54.0.0").expect("the version check");
-        SnapshotKey::current(ch, &self.images[kernel], &self.images[root_disk])
+        let initramfs = initramfs.map(|index| &self.images[index]);
+        SnapshotKey::current(ch, &self.images[kernel], initramfs, &self.images[root_disk])
     }
 
     /// Makes a generation dir with one file and writes `key` into it.
@@ -176,6 +184,40 @@ fn another_kernel_drops_the_snapshot() {
     let temp = Temp::new("kernel");
     temp.snapshot(FIRST, &temp.key(2, 1));
     temp.assert_dropped(DropReason::Differs);
+}
+
+/// The key holds the initramfs digest, so a restore reads the file of
+/// its snapshot (decision CH61 rule 3). A key with one keeps only
+/// against the same one, and a key with none keeps only against none.
+#[test]
+fn another_initramfs_drops_the_snapshot() {
+    let temp = Temp::new("initramfs");
+    let with = |index| temp.key_with(0, Some(index), 1);
+    temp.snapshot(FIRST, &with(2));
+    let text = fs::read_to_string(temp.session.snapshot_key(FIRST)).expect("the key");
+    let key: Value = serde_json::from_str(&text).expect("a JSON key");
+    assert_eq!(
+        key["initramfs"],
+        Value::from(temp.images[2].digest().to_string())
+    );
+    let check = check_newest(&temp.session, &with(2)).expect("the check");
+    assert!(matches!(check, KeyCheck::Keyed(_)), "{check:?}");
+    for current in [with(0), temp.key(0, 1)] {
+        temp.snapshot(FIRST, &with(2));
+        let check = check_newest(&temp.session, &current).expect("the check");
+        let dropped = KeyCheck::Dropped {
+            generation: FIRST,
+            reason: DropReason::Differs,
+        };
+        assert_eq!(check, dropped);
+    }
+    temp.snapshot(FIRST, &temp.key(0, 1));
+    let key: Value =
+        serde_json::from_slice(&fs::read(temp.session.snapshot_key(FIRST)).expect("the key"))
+            .expect("a JSON key");
+    assert_eq!(key["initramfs"], Value::Null);
+    let check = check_newest(&temp.session, &with(2)).expect("the check");
+    assert!(matches!(check, KeyCheck::Dropped { .. }), "{check:?}");
 }
 
 #[test]

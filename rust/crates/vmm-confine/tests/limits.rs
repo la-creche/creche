@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use creche_vmm_confine::launch::{Payload, Program};
 use creche_vmm_confine::limits::{BALLOON, MEMORY_HEADROOM_MIB, MIB, VmLimits};
+use creche_vmm_confine::vmm_unit::VmmUnit;
 use creche_wire::{FamilyShape, SessionId};
 
 const ID: &str = "0123abcd-0000-4000-8000-00000000c4c4";
@@ -77,7 +78,8 @@ fn the_scope_carries_the_limits_into_systemd_run() {
     let payload = Payload::new(program, Vec::new());
     let scope = limits(8, 16384).scope(id);
     assert_eq!(scope.unit(), format!("creche-vm-{ID}"));
-    let args = scope.systemd_run_args(&payload);
+    let vmm = VmmUnit::new("creche-vmm.service".to_owned()).unwrap();
+    let args = scope.systemd_run_args(&payload, &vmm);
     for arg in ["MemoryMax=17716740096", "CPUQuota=800%", "TasksMax=256"] {
         assert!(args.contains(&OsString::from(arg)), "no {arg} in {args:?}");
     }

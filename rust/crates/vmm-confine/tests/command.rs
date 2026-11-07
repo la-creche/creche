@@ -1,7 +1,7 @@
 //! The Cloud Hypervisor command line of a boot and a restore. Each input
-//! is a checked store type, so each test imports two images, makes a
-//! session disk and, for a restore, claims a keyed snapshot, as at a VM
-//! start.
+//! is a checked store type, so each test imports three images, makes a
+//! session disk and a new serial log and, for a restore, claims a keyed
+//! snapshot, as at a VM start.
 
 use std::fs;
 use std::path::PathBuf;
@@ -10,7 +10,6 @@ use std::time::Duration;
 use creche_vmm_confine::command::{
     Boot, CMDLINE, ChCommand, CommandError, DiskLimit, REFILL_MIN_MS, RefillMs, RefillTooShort,
 };
-use creche_vmm_confine::landlock::HostPath;
 use creche_vmm_confine::launch::Program;
 use creche_vmm_confine::limits::VmLimits;
 use creche_vmm_store::claim::{ClaimedSnapshot, claim};
@@ -19,13 +18,16 @@ use creche_vmm_store::key::{
     CH_VERSION, KeyCheck, SnapshotKey, check_cloud_hypervisor, check_newest, write_key,
 };
 use creche_vmm_store::layout::{RunRoot, SnapshotGeneration, StateRoot, VmRunDir};
+use creche_vmm_store::serial_log::SerialLog;
 use creche_vmm_store::session_disk::{SessionDisk, SessionDisks};
 use creche_wire::{FamilyShape, SessionId};
 
 const ID: &str = "0123abcd-0000-4000-8000-00000000c7c7";
 
-/// The SHA-256 of the bytes `kernel` and `disk`, the two image sources.
+/// The SHA-256 of the bytes `kernel`, `initramfs` and `disk`, the three
+/// image sources.
 const KERNEL_DIGEST: &str = "6923dd1bc0460082c5d55a831908c24a282860b7f1cd6c2b79cf1bc8857c639c";
+const INITRAMFS_DIGEST: &str = "9752c38a9065f7646ffaac3621d1fa2f7dbe726c7e12e511eac7fdb14d4e2a24";
 const DISK_DIGEST: &str = "1044dec7206e8d7c9fbb4ae8f766668406d2567fc7fc1a160a9d4700fcf8f8e9";
 
 /// The `mke2fs` of the test: it formats nothing.
@@ -52,7 +54,7 @@ const BOOT: &[&str] = &[
     "--vsock",
     "cid=3,socket=<root>/run/vm/0123abcd-0000-4000-8000-00000000c7c7/vsock.sock",
     "--serial",
-    "file=<root>/run/vm/0123abcd-0000-4000-8000-00000000c7c7/serial.log",
+    "file=<root>/state/sessions/0123abcd-0000-4000-8000-00000000c7c7/serial.log",
     "--console",
     "off",
 ];
@@ -65,14 +67,16 @@ const RESTORE: &[&str] = &[
     "source_url=file://<root>/state/sessions/0123abcd-0000-4000-8000-00000000c7c7/snapshots/1,memory_restore_mode=copyonwrite,resume=false",
 ];
 
-/// A state root with a kernel, a root disk and a session disk, and a run
-/// root, in a new temp dir, removed on drop.
+/// A state root with a kernel, an initramfs, a root disk, a session disk
+/// and a serial log, and a run root, in a new temp dir, removed on drop.
 struct Temp {
     root: PathBuf,
     state: StateRoot,
     kernel: CheckedImage,
+    initramfs: CheckedImage,
     root_disk: CheckedImage,
     session: SessionDisk,
+    serial: SerialLog,
     run: VmRunDir,
 }
 
@@ -90,36 +94,44 @@ impl Temp {
         fs::create_dir_all(&root).unwrap();
         let state = StateRoot::new(root.join(state)).unwrap();
         let store = ImageStore::new(&state, PathBuf::from("zstd"));
-        let [kernel, root_disk] =
-            [("kernel", KERNEL_DIGEST), ("disk", DISK_DIGEST)].map(|(text, digest)| {
-                let source = root.join(text);
-                fs::write(&source, text).unwrap();
-                let digest = digest.parse().unwrap();
-                store.import(&source, digest).unwrap();
-                store.check(digest).unwrap()
-            });
+        let images = [
+            ("kernel", KERNEL_DIGEST),
+            ("initramfs", INITRAMFS_DIGEST),
+            ("disk", DISK_DIGEST),
+        ];
+        let [kernel, initramfs, root_disk] = images.map(|(text, digest)| {
+            let source = root.join(text);
+            fs::write(&source, text).unwrap();
+            let digest = digest.parse().unwrap();
+            store.import(&source, digest).unwrap();
+            store.check(digest).unwrap()
+        });
         let id = id();
         let session = SessionDisks::new(&state, PathBuf::from(MKE2FS))
             .for_boot(&id)
             .unwrap();
+        let serial = SerialLog::fresh(&state.session(&id)).unwrap();
         let run = RunRoot::new(root.join("run")).unwrap().vm(&id);
         Self {
             root,
             state,
             kernel,
+            initramfs,
             root_disk,
             session,
+            serial,
             run,
         }
     }
 
     /// A boot of the 2 vCPU, 2 GiB shape with `initramfs`.
-    fn boot<'a>(&'a self, initramfs: Option<&'a HostPath>) -> Boot<'a> {
+    fn boot<'a>(&'a self, initramfs: Option<&'a CheckedImage>) -> Boot<'a> {
         Boot {
             kernel: &self.kernel,
             initramfs,
             root: &self.root_disk,
             session: &self.session,
+            serial: &self.serial,
             disk: DiskLimit::SESSION,
             limits: limits(),
         }
@@ -137,7 +149,7 @@ impl Temp {
             .join("../vmm-store/tests/fixtures/cloud-hypervisor");
         std::os::unix::fs::symlink(stub, &ch).unwrap();
         let checked = check_cloud_hypervisor(&ch, Duration::from_secs(10)).unwrap();
-        let key = SnapshotKey::current(checked, &self.kernel, &self.root_disk);
+        let key = SnapshotKey::current(checked, &self.kernel, None, &self.root_disk);
 
         let session = self.state.session(&id());
         let generation = SnapshotGeneration(1);
@@ -208,12 +220,14 @@ fn a_boot_renders_the_whole_argv() {
 #[test]
 fn a_boot_with_an_initramfs_names_it_after_the_kernel() {
     let temp = Temp::new("initramfs");
-    let initramfs = HostPath::new(temp.root.join("initramfs.cpio")).unwrap();
-    let command = ChCommand::boot(temp.boot(Some(&initramfs)), &temp.run).unwrap();
+    let command = ChCommand::boot(temp.boot(Some(&temp.initramfs)), &temp.run).unwrap();
 
     let mut expected = temp.argv(BOOT);
-    let initramfs = initramfs.path().to_str().unwrap().to_owned();
-    expected.splice(4..4, ["--initramfs".to_owned(), initramfs]);
+    let initramfs = format!("<root>/state/store/{INITRAMFS_DIGEST}");
+    expected.splice(
+        4..4,
+        ["--initramfs".to_owned(), temp.argv(&[&initramfs]).remove(0)],
+    );
     assert_eq!(command.args(), expected);
     assert_safe(command.args());
 }
@@ -275,6 +289,23 @@ fn a_session_disk_path_with_option_syntax_is_refused() {
     };
     let error = ChCommand::boot(boot, &temp.run).unwrap_err();
     assert_eq!(error, CommandError::OptionSyntax(session.path().to_owned()));
+}
+
+#[test]
+fn a_serial_log_path_with_option_syntax_is_refused() {
+    // The images and the session disk are in a clean state root.
+    let temp = Temp::new("syntax-serial");
+    let session = StateRoot::new(temp.root.join("st,ate"))
+        .unwrap()
+        .session(&id());
+    fs::create_dir_all(session.path()).unwrap();
+    let serial = SerialLog::fresh(&session).unwrap();
+    let boot = Boot {
+        serial: &serial,
+        ..temp.boot(None)
+    };
+    let error = ChCommand::boot(boot, &temp.run).unwrap_err();
+    assert_eq!(error, CommandError::OptionSyntax(serial.path().to_owned()));
 }
 
 #[test]

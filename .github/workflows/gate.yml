@@ -519,7 +519,9 @@ jobs:
           echo "ignored kvm_ tests: $count"
           test "$count" -ge 1
 
-      - run: cargo test --locked -- --ignored kvm_
+      # `--no-fail-fast` runs every test binary, so one red binary does
+      # not hide the result of the next one.
+      - run: cargo test --locked --no-fail-fast -- --ignored kvm_
         working-directory: rust
         env:
           CRECHE_KVM_DIR: ${{ runner.temp }}/kvm

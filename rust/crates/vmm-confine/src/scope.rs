@@ -1,6 +1,25 @@
 //! The user scope of one Cloud Hypervisor process: the `systemd-run`
 //! arguments that put the payload in its own scope with its limits
-//! (decisions CH8-2 and CH8-5).
+//! (decisions CH8-2 and CH8-5), bound to the vmm unit and ordered before
+//! it (decision CH61 rule 2, which amends CH60 rule 1).
+//!
+//! `BindsTo=<vmm unit>` makes systemd stop the scope when the vmm unit
+//! stops or fails. `Before=<vmm unit>` orders the two stops. systemd runs
+//! stop jobs in the reverse of the start order, so a scope ordered before
+//! the vmm unit stops only after the vmm unit has stopped. On a stop of
+//! the vmm unit, the shutdown of `rust/crates/vmm/src/shutdown.rs`
+//! therefore runs before any VM stops (decision CH61 rule 2).
+//!
+//! The `ExecStopPost=` step of `systemd/creche-vmm.service` then kills
+//! every VM scope that is left after the vmm has exited, on a stop, a
+//! restart and a crash (decision CH61 rule 1). It is the kill path of CH:
+//! AppArmor clears the death signal at the exec of CH into its slot
+//! label, and systemd passes no stop of a restart on to a bound scope.
+//! The leftover sweep of the next start still runs (decision CH19 (4)).
+//!
+//! `tests/kvm_slot.rs` proves the stop, the restart and the crash, each
+//! with a vmm stand-in that has the restart, kill and stop lines of
+//! `systemd/creche-vmm.service`.
 
 use std::ffi::OsString;
 use std::num::{NonZeroU32, NonZeroU64};
@@ -10,6 +29,7 @@ use creche_wire::SessionId;
 use serde::{Deserialize, Serialize};
 
 use crate::launch::Payload;
+use crate::vmm_unit::VmmUnit;
 
 /// The most tasks in one VM scope (decision CH8-5).
 pub const TASKS_MAX: u32 = 256;
@@ -51,13 +71,14 @@ impl Scope {
         scope_unit(&self.id)
     }
 
-    /// The arguments of `systemd-run` that run `payload` in this scope.
+    /// The arguments of `systemd-run` that run `payload` in this scope,
+    /// bound to `vmm` and ordered before it (decision CH61 rule 2).
     /// `systemd-run --scope` execs the payload in its own process, so the
     /// payload keeps the pid of the launch step (decision CH8-2). The
     /// launch step passes the launch stage as the payload, and the stage
     /// execs CH in the same process (decision CH55).
     #[must_use]
-    pub fn systemd_run_args(&self, payload: &Payload) -> Vec<OsString> {
+    pub fn systemd_run_args(&self, payload: &Payload, vmm: &VmmUnit) -> Vec<OsString> {
         let mut args: Vec<OsString> = [
             "--user".to_owned(),
             "--scope".to_owned(),
@@ -68,6 +89,10 @@ impl Scope {
             format!("CPUQuota={}%", self.cpu_quota),
             "-p".to_owned(),
             format!("TasksMax={TASKS_MAX}"),
+            "-p".to_owned(),
+            format!("BindsTo={}", vmm.name()),
+            "-p".to_owned(),
+            format!("Before={}", vmm.name()),
             "--".to_owned(),
         ]
         .into_iter()
@@ -89,6 +114,7 @@ mod tests {
 
     use super::Scope;
     use crate::launch::{Payload, Program};
+    use crate::vmm_unit::VmmUnit;
 
     const ID: &str = "0123abcd-0000-4000-8000-00000000beef";
 
@@ -103,11 +129,14 @@ mod tests {
         assert_eq!(scope().unit(), format!("creche-vm-{ID}"));
     }
 
+    /// The scope binds to the vmm unit and is ordered before it (decision
+    /// CH61 rule 2), then the payload follows the limits.
     #[test]
-    fn the_arguments_put_the_payload_after_the_limits() {
+    fn the_arguments_bind_the_scope_and_put_the_payload_last() {
         let program = Program::new(PathBuf::from("/opt/ch/cloud-hypervisor")).unwrap();
         let payload = Payload::new(program, vec!["--cpus".to_owned(), "boot=2".to_owned()]);
-        let args = scope().systemd_run_args(&payload);
+        let vmm = VmmUnit::new("creche-vmm.service".to_owned()).unwrap();
+        let args = scope().systemd_run_args(&payload, &vmm);
         let unit = format!("--unit=creche-vm-{ID}");
         let expected = [
             "--user",
@@ -119,6 +148,10 @@ mod tests {
             "CPUQuota=200%",
             "-p",
             "TasksMax=256",
+            "-p",
+            "BindsTo=creche-vmm.service",
+            "-p",
+            "Before=creche-vmm.service",
             "--",
             "/opt/ch/cloud-hypervisor",
             "--cpus",

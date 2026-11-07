@@ -35,12 +35,36 @@ table of the three vmm crates.
 - The pid stays the same through the four execs: the launch step,
   `systemd-run`, the stage and CH (fact 80). The kernel keeps the death
   signal through an exec that is not a secure exec and changes no uid,
-  gid or capability. No exec of the chain does either.
+  gid or capability. AppArmor clears it at the exec into the slot label
+  (`apparmor_bprm_committing_creds` in `security/apparmor/lsm.c`), so CH
+  has none (decision CH60 rule 1).
+- Two links end each launch with the vmm (decision CH61, which amends
+  CH60 rule 1, CH19 (4) and CH56 rule 2). The death signal ends the
+  launch step, `systemd-run` and the stage when the vmm dies before CH
+  runs. The scope binds to the vmm unit: `Launch::new` takes a
+  `vmm_unit::VmmUnit`, and `scope::Scope::systemd_run_args` adds `-p
+  BindsTo=<unit>` and `-p Before=<unit>` (CH61 rule 2). `Before=` keeps
+  each VM running while the vmm unit stops, so the shutdown of
+  `rust/crates/vmm/src/shutdown.rs` runs before any VM stops. The
+  `ExecStopPost=` step of `systemd/creche-vmm.service` then kills every
+  `creche-vm-*` scope that is left, after a stop, a restart and a crash
+  (CH61 rule 1). It is the kill path of CH: systemd passes no stop of a
+  restart on to a bound scope (CI run 42283795398). The step queues no
+  job, because a stop job of a scope waits for the stop of the vmm unit.
+  The leftover sweep of the next start still runs (CH19 (4)).
+- `vmm_unit::VmmUnit::of_self` reads the unit of the vmm from
+  `/proc/self/cgroup`, with no config key: the first `.service` part of
+  the `0::` path after `user@<uid>.service`. A vmm in a scope, in a
+  system service or in no user manager gets a `UnitError`, and lifecycle
+  then refuses every launch with it and starts nothing. A unit name has
+  only the characters of a systemd unit name, so it is one word in
+  `BindsTo=`.
 - The crate reads no env key. Lifecycle (plan PR L20) passes each host
   path from the vmm config (owner env rule, decision CH36 G5): the
   `systemd-run` program of `launch::Launch`, from the existing key
   `AGENT_SYSTEMD_RUN_PROGRAM`, the `systemctl` program of
-  `leftovers::stop_all`, from the existing key `AGENT_SYSTEMCTL_PROGRAM`,
+  `leftovers::stop_all` and `leftovers::kill_all`, from the existing key
+  `AGENT_SYSTEMCTL_PROGRAM`,
   and the faults root of `faults::FaultDir::open`, the `faults` dir of
   the creche state root that caregiver reads (contract 05 §3.3.1).
 - `limits::VmLimits` maps the family VM shape to the VM sizes and the
@@ -61,13 +85,14 @@ table of the three vmm crates.
   `RETRY_PAUSE` (10 ms) and `SHAPE_CAP` (4 KiB). A read blocks its thread
   in `thread::sleep`, so a caller in tokio runs it in `spawn_blocking`.
 - `command::ChCommand` renders the CH argv from the checked store types
-  only: `CheckedImage` (PR D6), `SessionDisk` (PR D7) and
-  `ClaimedSnapshot` (PR D11). No input names a network card, and no
+  only: `CheckedImage` (PR D6), `SessionDisk` (PR D7), `SerialLog` (PR
+  D17) and `ClaimedSnapshot` (PR D11). No input names a network card, and no
   argument names `--seccomp` (decisions CH6-3, CH8-1, CH8-4). A boot
   gives the root disk `readonly=on` as the first `--disk` (decision
   CH8-8), the session disk the `DiskLimit::SESSION` rate limiter
-  (decisions CH8-7, CH36 G15), and `--serial file=` the `serial.log` of
-  the VM run dir with `--console off` (decisions CH36 G23, CH41 rule 2).
+  (decisions CH8-7, CH36 G15), and `--serial file=` the `SerialLog` of
+  the session, `<state root>/sessions/<id>/serial.log`, with `--console
+  off` (decisions CH36 G23, CH41 rule 2, CH59 rule 2).
   A restore gives only `--api-socket` and `--restore` with
   `memory_restore_mode=copyonwrite`, because CH v54 takes the sizes and
   devices from the snapshot (decisions CH2, CH29). The restore passes
@@ -76,7 +101,10 @@ table of the three vmm crates.
   fails, because the CH option parser reads them as syntax.
 - Every launch step forks from the one spawner thread (decision CH19 (4),
   fact 76). The vmm keeps its `Spawner` for its whole life. A drop ends
-  the thread, and the kernel then kills every payload it started.
+  the thread. The death signal then ends only a launch that has not yet
+  execed CH: the launch step, `systemd-run` or the launch stage. A drop
+  does not end CH. The `ExecStopPost=` step of the vmm unit ends CH
+  (decision CH61 rule 1).
 - The launch step reads its plan only from a pipe that already holds it.
   The spawner writes the whole plan, at most 64 KiB, before the spawn,
   and never blocks on a full pipe.
@@ -95,6 +123,15 @@ table of the three vmm crates.
   failed scope blocks `systemd-run --unit` with its name. The last list
   decides: a unit still loaded then is an error. The vmm config gives the
   path of `systemctl`, like the path of `systemd-run`.
+- `leftovers::kill_all` is the mode `vmm kill-scopes`, the `ExecStopPost=`
+  step of the vmm unit (decisions CH61 rule 1, CH63). It lists the same
+  units as `stop_all` and runs `systemctl --user kill --signal=SIGKILL`
+  on each one by name. It queues no stop job, because each scope is
+  ordered `Before=` the vmm unit (CH61 rule 2), so a wait for that job
+  in the step would deadlock. When a kill fails, one fresh list decides:
+  a unit that it no longer holds had ended (NoSuchUnit), and a unit that
+  it still holds is an error. `tests/leftovers.rs` proves both against a
+  fake `systemctl`.
 - The Landlock ruleset of a VM confines the launch stage from its step 3
   on, then Cloud Hypervisor (decisions CH8-3, CH30, CH55). `systemd-run`
   runs before it, so the ruleset has no rule for it. The vmm process is
@@ -103,6 +140,27 @@ table of the three vmm crates.
   the launch. A missing path or a kernel below Landlock ABI 4 fails the
   launch. All Landlock calls sit behind `cfg(target_os = "linux")`
   (decision CH38).
+- Only a boot reads the kernel. A boot and a restore both read the
+  initramfs (decision CH61 rule 3): CH v54 opens the initramfs of the
+  snapshot config on a restore, so `Start::Restore` carries the
+  `store/<sha256>` initramfs of its snapshot (decision CH60 rule 2),
+  and the snapshot key of `creche-vmm-store` holds its digest. A
+  snapshot with the current key names the initramfs of the vmm config,
+  so the vmm passes that checked store copy. The vmm config names no
+  initramfs until phase 3 adds guest init (PR C7). A boot with none
+  makes a snapshot whose key holds none, and its restore carries none.
+  So `Start::Boot` and `Start::Restore` each hold an `Option`.
+- Decision CH59 rule 2 (PR D17, `landlock.rs`): the ruleset of a VM
+  names its serial log, `<state root>/sessions/<id>/serial.log`, with
+  write and truncate only. CH v54 opens it with `File::create`. The run
+  dir rule has make socket, make file and write, and no truncate,
+  because CH v54 makes `api.sock.lock` with no truncate
+  (`vmm/src/locked_unix_listener.rs`). The ruleset opens the log, so
+  lifecycle makes it with `SerialLog::fresh` (mode 0600, gap G23) before
+  each launch, a boot and a restore alike. A missing log fails the
+  launch with `RulesetError::Open`. The kvm job proves the rights: each
+  boot of `tests/kvm_slot.rs` and `tests/kvm_vm.rs` writes its marker
+  to the log under the ruleset.
 - `deny::check` is the proof of deny-by-default (decision CH6-3). The
   first argument of the command line is the payload program, so a pid
   that still runs the launch step or `systemd-run`, or a CH zombie, fails
@@ -141,7 +199,11 @@ table of the three vmm crates.
   (mechanism X, decisions CH51, CH55). The crate never defines its own
   `Slot`. No profile has an attachment path. Each names the one installed
   CH, the run dir `/run/user/[0-9]*/vmm/slot/<k>/` and its own signal
-  label only. The state root rules name the default
+  label only. CH reads a kernel, an initramfs or a root disk only as
+  `store/*`. CH writes the serial log only as `sessions/*/serial.log`,
+  with no read (decision CH59 rule 2, gap G23). The vmm writes the guest init initramfs into the state store
+  as a content-named `store/<sha256>`, like the root disks, so that rule
+  covers it (decision CH60 rule 2). The state root rules name the default
   `@{HOME}/.local/state/creche-vmm/` through `include <tunables/global>`
   (decision CH50 rule 11). The test `tests/slot_profile.rs` holds the
   committed file equal to the generator. After a change, run
@@ -160,6 +222,96 @@ table of the three vmm crates.
   every such test of the workspace after `bin/vm-smoke-setup.sh`. The test
   reads CH, ch-remote, the kernel and the busybox initramfs from the
   directory in `CRECHE_KVM_DIR`, and fails when it is not set.
+- The job `kvm` installs CH at `slot_profile::CH_BINARY` and loads the
+  slot profiles at the install path above with the runner's sudo
+  (decision CH36 G20). It fails unless each label of the file is in
+  enforce mode. `tests/kvm_slot.rs` starts each CH through the real chain
+  of the vmm: the spawner, the launch step, `systemd-run --user --scope`,
+  the launch stage and CH. Each test runs its vmm stand-in as a transient
+  user service (`tests/stand_in`, decisions CH60 rule 1, CH61), and each
+  scope binds to that unit. The `ExecStopPost=` step of a stand-in kills
+  every VM scope, as one vmm owns every VM, and systemd removes the run
+  root at each stop of a stand-in (`RuntimeDirectory=vmm`). So one test
+  at a time in a test binary writes in the run root (`OneVmm`). Each VM
+  takes a slot through
+  `RunRoot::link_vm`, under the real run root and the default state
+  root. Each test has a control, and together they prove decision CH58
+  rule 1:
+  1. CH runs under `creche-ch-slot-<k>`, with no_new_privs set, the core
+     limit 0 and the scope of its VM. CH with no chain runs unconfined.
+  2. The ruleset lets CH read the root disk and write the session disk.
+     It denies a write of the root disk and a read outside the VM files,
+     at paths that the slot profile allows (decisions CH8-3, CH8-8). CH
+     makes no TCP connect, and a slot label opens no inet socket, TCP or
+     UDP (decision CH8-1, fact 77). Under the chain, AppArmor alone
+     stops TCP: the slot profile refuses the socket before the Landlock
+     connect rule runs. The unit test
+     `landlock::tests::the_ruleset_denies_a_tcp_connect` in the job
+     `rust` proves the Landlock TCP rule on its own.
+  3. CH in one slot connects to no listener of another slot, to no
+     `api.sock` or `vsock.sock` of a live CH in another slot, and not to
+     `vmm.sock` or the user bus. One slot cannot signal the CH of another
+     slot (decision CH51).
+  4. The scope of CH has `BindsTo=` and `Before=` the vmm unit (CH61
+     rule 2). Each stand-in copies the run root, restart, kill,
+     `ExecStopPost=` and no_new_privs lines of
+     `systemd/creche-vmm.service`, and a test
+     in the job `rust` fails when they differ. The example in its role
+     `hold` runs as the vmm unit and launches CH, with no_new_privs set
+     before the launch. A stop of that unit ends CH and its scope after
+     the stand-in has exited: CH still runs 1 s into the stop. A SIGKILL
+     of the stand-in ends CH and its scope while the unit waits in
+     `auto-restart`. A restart of the `hold` stand-in ends CH and its
+     scope. In these three `hold` tests `BindsTo=` also stops the scope,
+     and CH is a child of `hold`, so they prove the outcome of CH61 rule
+     1, not the `ExecStopPost=` step. The step has its own proof, with
+     the spawner in the test, which reads the signal 9 of CH. Without
+     the step, the scope stop of `BindsTo=` sends SIGTERM, and CH exits
+     with a code. A stop and a restart of a gated `/bin/sleep` stand-in
+     each end CH by the SIGKILL of the step, after CH ran 1 s into the
+     gated stop. After the restart the unit comes back. A crash of a
+     `/bin/sleep` stand-in ends CH by that SIGKILL too (CH61 rule 1).
+     After each crash, while the unit waits in `auto-restart`, the test
+     reads that the step ran in the unit and exited 0 (decision CH63).
+     The start part of a restart clears that run of the step, so no
+     test reads it after a restart.
+     After the restart and after the crash, the slot dir and the
+     `vm/<id>` link of the last boot are gone with the run root, the
+     serial log in the state root still holds the boot marker (decision
+     CH59 rule 2), and a new launch of the same session boots. Each test
+     has the control that CH runs while the stand-in
+     runs. A drop of the spawner does not end CH, so no test claims it.
+     `Launched::terminate` sends SIGTERM.
+  5. The output of each CH reaches the sink tagged `ch <session id>`.
+  `tests/kvm_boot.rs` runs the copy in `CRECHE_KVM_DIR` with no chain.
+- `tests/kvm_vm.rs` runs one VM through the crate and the store (decision
+  CH8-4, plan PR C16). The example `launch_chain` in its role `hold` plays
+  the vmm with the real chain of `tests/kvm_slot.rs`: a cold boot in the
+  scope with the C4 limits, under the slot label and the ruleset, a
+  snapshot with dug holes, the key and the claim, a copy-on-write
+  restore, a second snapshot, then a restore and a SIGKILL of the
+  stand-in. Each restore passes `resume=false`, so the test waits for
+  the paused VM, then resumes it, as the vmm does (decision CH50 rule
+  10). Each start runs the stand-in as a transient user service,
+  and the scope binds to it and is ordered before it (decision CH61
+  rule 2). Each restore carries the `store/<sha256>` initramfs of the
+  boot, the key holds its digest, and the ruleset reads it (decision
+  CH61 rule 3). Step 5, the SIGKILL of the stand-in, proves that a crash
+  ends CH and its scope while the unit waits in `auto-restart` (decision
+  CH61 rule 1), with the control that CH runs while the stand-in runs.
+  `BindsTo=` or the `ExecStopPost=` step ends CH there, and CH is a child
+  of `hold`, so step 5 cannot tell them apart. The signal-9 check of
+  `kvm_a_vmm_crash_frees_the_scope_of_each_vm` in `tests/kvm_slot.rs`
+  proves the step itself. In `auto-restart` step 5 also reads that the
+  step ran in the unit and exited 0 (decision CH63). After the crash the
+  `vm/<id>` link and the slot dir are gone with the run root, and the
+  serial log in the state root still holds the ticks of the guest
+  (decision CH59 rule 2). Each start takes a new slot
+  with `RunRoot::link_vm` and runs `remove_stale`, as the start of
+  `rust/crates/vmm/src/start.rs` does, so each restore moves the VM to
+  another slot. The ruleset grants no right to remove a file, so CH
+  cannot unlink its own sockets, and a stale `vsock.sock` would fail the
+  next start (fact 75).
 
 ## Known gaps
 
@@ -180,6 +332,11 @@ table of the three vmm crates.
   dir). The ruleset grants no right to make a dir, so the vmm must also
   make each `snapshots/<generation>/` before CH writes a snapshot there.
   Plan PRs L16 (cold boot) and D9 (snapshot) own these steps.
+- The upstream CH asset of fact 71 may print its git tag to `--version`,
+  not the `v54.0.0` of a `--rev` build (fact 78). `tests/kvm_vm.rs` then
+  makes the `CheckedCh` of the key from a stand-in that prints
+  `CH_VERSION`, after it checks that the asset names v54.0. The CI-built
+  CH of phase 4 ends the stand-in (decision CH36 G19).
 - Decisions CH42 rule 2 and CH50 rule 10: on a restore the CH command
   line shows no device, so `deny::check` cannot see a device that the
   snapshot holds. The restore runs with `resume=false`. Plan PR L17
@@ -197,24 +354,3 @@ table of the three vmm crates.
   the value `vmm` in the `source` enum of §3.3, and the reader. caregiver
   reads only the `attendance` and `pep` files today, so it ignores the
   vmm file.
-- Gap G23 sets `serial.log` to mode 0600. CH makes the file with the
-  umask of the launch step, and the crate sets no umask. A `UMask=` in
-  the unit of plan PR C13, or a file that lifecycle makes first in plan
-  PR L16, must set it. Neither plan entry names the step yet. Until then
-  `RuntimeDirectoryMode=0700` of the run root keeps other users out.
-
-## Caller duties
-
-1. Decision CH58 rule 1: plan PR C15 (the rework of #443) proves the
-   full chain in the job `kvm`, which loads the slot profiles. The rust
-   job cannot, because no payload starts there. The kvm tests run
-   `stage::run` and prove each of these:
-   1. CH runs under `creche-ch-slot-<k>`, with no_new_privs set and the
-      Landlock ruleset in force.
-   2. The ruleset lets CH read the root disk and write the session disk,
-      and denies a write of the root disk, a read outside the VM files
-      and a TCP connect (decisions CH8-1, CH8-3, CH8-8, CH30).
-   3. The slot profile denies UDP and Unix sockets, which Landlock ABI 4
-      does not cover (fact 77).
-   4. CH dies with the spawner thread and with a killed vmm (fact 80).
-   5. The output of CH reaches the sink tagged `ch <session id>`.

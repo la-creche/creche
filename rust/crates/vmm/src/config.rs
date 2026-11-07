@@ -7,6 +7,10 @@
 //!
 //! The run root is `RUNTIME_DIRECTORY`, which systemd sets from
 //! `RuntimeDirectory=` (gap G5 option A). It is no catalog key.
+//!
+//! `KillScopesConfig::read` is the config of `vmm kill-scopes`, the
+//! `ExecStopPost=` step of the unit (decision CH63). It reads only
+//! `AGENT_SYSTEMCTL_PROGRAM`, with the same check as `Config`.
 
 use std::ffi::OsString;
 use std::fmt;
@@ -159,8 +163,7 @@ impl Config {
     /// The first key that is missing or bad, in the order of `Config`.
     pub fn from_lookup(lookup: impl Fn(&str) -> Option<OsString>) -> Result<Self, ConfigError> {
         let path_of = |key| path(&lookup, key);
-        let program_of =
-            |key| Program::new(path_of(key)?).map_err(|_| error(key, Fault::NotAbsolute));
+        let program_of = |key| program(&lookup, key);
         let gib_of = |key, zero| gib(&lookup, key, zero);
         Ok(Self {
             state: StateRoot::new(path_of(STATE_ROOT)?).map_err(|e| root(STATE_ROOT, e))?,
@@ -180,6 +183,35 @@ impl Config {
                 free_floor: gib_of(FREE_FLOOR, Zero::Allowed)?,
             },
             budget: gib_of(BUDGET, Zero::Refused)?,
+        })
+    }
+}
+
+/// What `vmm kill-scopes` reads from its env (decision CH63).
+#[derive(Debug)]
+pub struct KillScopesConfig {
+    /// `AGENT_SYSTEMCTL_PROGRAM`, checked as `Config` checks it.
+    pub systemctl: Program,
+}
+
+impl KillScopesConfig {
+    /// Reads the env of the process.
+    ///
+    /// # Errors
+    ///
+    /// `AGENT_SYSTEMCTL_PROGRAM` when it is missing or bad.
+    pub fn read() -> Result<Self, ConfigError> {
+        Self::from_lookup(|key| std::env::var_os(key))
+    }
+
+    /// Reads the key through `lookup`. A test passes a map.
+    ///
+    /// # Errors
+    ///
+    /// `AGENT_SYSTEMCTL_PROGRAM` when it is missing or bad.
+    pub fn from_lookup(lookup: impl Fn(&str) -> Option<OsString>) -> Result<Self, ConfigError> {
+        Ok(Self {
+            systemctl: program(&lookup, SYSTEMCTL)?,
         })
     }
 }
@@ -222,6 +254,14 @@ fn path(
         return Err(error(key, Fault::ParentComponent));
     }
     Ok(path)
+}
+
+/// The program of `key`: a path as `path` checks it.
+fn program(
+    lookup: &impl Fn(&str) -> Option<OsString>,
+    key: &'static str,
+) -> Result<Program, ConfigError> {
+    Program::new(path(lookup, key)?).map_err(|_| error(key, Fault::NotAbsolute))
 }
 
 /// The path of `RUNTIME_DIRECTORY`. Gap G5 option A gives the vmm one
