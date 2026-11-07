@@ -7,7 +7,7 @@ pub mod log;
 pub mod proxy;
 pub mod rule;
 
-use creche_vmm_confine::family::{EgressFault, FamilyRoot};
+use creche_vmm_confine::family::{FamilyRoot, ReachFault};
 use creche_wire::{FamilyEgress, FamilyName};
 use tokio::task::spawn_blocking;
 
@@ -18,7 +18,7 @@ use tokio::task::spawn_blocking;
 pub async fn read_list(
     families: &FamilyRoot,
     family: &FamilyName,
-) -> Option<Result<FamilyEgress, EgressFault>> {
+) -> Option<Result<FamilyEgress, ReachFault>> {
     let (families, family) = (families.clone(), family.clone());
     spawn_blocking(move || families.read_egress(&family))
         .await

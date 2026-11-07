@@ -58,7 +58,8 @@ port_enum! {
         Litellm = 1101,
         /// The chaperone plane.
         Chaperone = 1102,
-        /// The git mirror.
+        /// The git mirror, for families with a non-empty clone list
+        /// `repos.json` (decision CH69 rule 13, as CH49 rule 3 for 1104).
         GitMirror = 1103,
         /// The egress proxy, for families with a non-empty egress list
         /// (today code and creche, decision CH49 rule 3).

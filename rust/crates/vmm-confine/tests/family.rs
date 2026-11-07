@@ -1,6 +1,7 @@
-//! The read of a family's `config/`, its VM shape, its family state and
-//! its egress allowlist in temp directories (decisions CH5b, CH6-4, CH23,
-//! CH31, CH33 rule 3, CH36 G6, CH43 rule 3, CH62 rule 21, CH69 rule 3). The family state tests copy the fixture
+//! The read of a family's `config/`, its VM shape, its family state, its
+//! egress allowlist and its clone list in temp directories (decisions
+//! CH5b, CH6-4, CH10-10, CH23, CH31, CH33 rule 3, CH36 G6, CH43 rule 3,
+//! CH62 rule 21, CH69 rules 3 and 4). The family state tests copy the fixture
 //! family root `fixtures/family`, because no live host writes
 //! `model_live_at` before the cut (decision CH45 rule 2).
 
@@ -14,16 +15,19 @@ use std::thread;
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use creche_vmm_confine::family::{
-    EGRESS_CAP, EgressFault, FamilyError, FamilyRoot, READ_TRIES, RETRY_PAUSE, SHAPE_CAP,
+    EGRESS_CAP, FamilyError, FamilyRoot, READ_TRIES, REPOS_CAP, RETRY_PAUSE, ReachFault, SHAPE_CAP,
     ShapeFault, StateFault, StateRead,
 };
 use creche_vmm_store::layout::RootError;
-use creche_wire::{FAMILY_STATE_CAP, FamilyEgress, FamilyName, FamilyShape, FamilyStateReply};
+use creche_wire::{
+    FAMILY_STATE_CAP, FamilyEgress, FamilyName, FamilyRepos, FamilyShape, FamilyStateReply,
+};
 use serde_json::{Value, json};
 
 const SHAPE: &str = r#"{"cpus":2,"flavor":"base","memory_mib":2048}"#;
 const BIGGER: &str = r#"{"cpus":4,"flavor":"python","memory_mib":8192}"#;
 const EGRESS: &str = r#"{"hosts":[{"host":"github.com","port":443}]}"#;
+const REPOS: &str = r#"{"repos":["chaperone","creche"]}"#;
 
 // Each helper with `cfg(test)` may unwrap (rust/clippy.toml).
 
@@ -607,18 +611,18 @@ fn read_egress_refuses_a_symlink() {
     fs::create_dir_all(root.0.join("code")).unwrap();
     symlink(&other, root.0.join("code/egress.json")).unwrap();
     let read = root.families().read_egress(&code());
-    assert!(matches!(read, Err(EgressFault::NotFile)), "{read:?}");
+    assert!(matches!(read, Err(ReachFault::NotFile)), "{read:?}");
     fs::remove_file(root.0.join("code/egress.json")).unwrap();
     fs::create_dir(root.0.join("code/egress.json")).unwrap();
     let read = root.families().read_egress(&code());
-    assert!(matches!(read, Err(EgressFault::NotFile)), "{read:?}");
+    assert!(matches!(read, Err(ReachFault::NotFile)), "{read:?}");
     // A symlinked family dir is refused too, not followed.
     fs::remove_dir_all(root.0.join("code")).unwrap();
     fs::create_dir_all(root.0.join("real")).unwrap();
     fs::write(root.0.join("real/egress.json"), EGRESS).unwrap();
     symlink(root.0.join("real"), root.0.join("code")).unwrap();
     let read = root.families().read_egress(&code());
-    assert!(matches!(read, Err(EgressFault::NotDir)), "{read:?}");
+    assert!(matches!(read, Err(ReachFault::NotDir)), "{read:?}");
 }
 
 /// A FIFO with no writer: only `O_NONBLOCK` keeps the open from waiting.
@@ -635,7 +639,7 @@ fn read_egress_refuses_a_fifo_at_once() {
     let (sent, got) = mpsc::channel();
     thread::spawn(move || sent.send(families.read_egress(&code())));
     let read = got.recv_timeout(Duration::from_secs(5)).unwrap();
-    assert!(matches!(read, Err(EgressFault::NotFile)), "{read:?}");
+    assert!(matches!(read, Err(ReachFault::NotFile)), "{read:?}");
 }
 
 #[test]
@@ -655,7 +659,7 @@ fn read_egress_refuses_an_unknown_key() {
         write_egress(&root, text);
         let read = root.families().read_egress(&code());
         assert!(
-            matches!(read, Err(EgressFault::NotValid)),
+            matches!(read, Err(ReachFault::NotValid)),
             "{text}: {read:?}"
         );
     }
@@ -670,7 +674,7 @@ fn read_egress_refuses_past_its_cap() {
     assert!(root.families().read_egress(&code()).is_ok());
     write_egress(&root, &format!("{at_cap} "));
     let read = root.families().read_egress(&code());
-    assert!(matches!(read, Err(EgressFault::TooLarge)), "{read:?}");
+    assert!(matches!(read, Err(ReachFault::TooLarge)), "{read:?}");
 }
 
 /// caregiver refuses a family whose `egress.json` passes the cap, so the
@@ -682,4 +686,126 @@ fn the_egress_cap_matches_the_wire_vectors() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../wire/vectors/family.json");
     let file: Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
     assert_eq!(file, json!({ "egress_cap": EGRESS_CAP }));
+}
+
+/// Writes `repos.json` of the family `code`.
+#[cfg(test)]
+fn write_repos(root: &Root, text: &str) -> PathBuf {
+    fs::create_dir_all(root.0.join("code")).unwrap();
+    let path = root.0.join("code/repos.json");
+    fs::write(&path, text).unwrap();
+    path
+}
+
+#[test]
+fn read_repos_reads_the_clone_list() {
+    let root = Root::new("repos");
+    write_repos(&root, REPOS);
+    let read = root.families().read_repos(&code()).unwrap();
+    assert_eq!(read, serde_json::from_str::<FamilyRepos>(REPOS).unwrap());
+    let names: Vec<&str> = read
+        .repos
+        .names()
+        .iter()
+        .map(|name| name.as_str())
+        .collect();
+    assert_eq!(names, ["chaperone", "creche"]);
+}
+
+/// An absent family dir and an absent file both allow no clone (decisions
+/// CH69 rules 4 and 13), with no wait.
+#[test]
+fn an_absent_repos_file_reads_as_empty() {
+    let root = Root::new("repos-absent");
+    let families = root.families();
+    assert_eq!(
+        families.read_repos(&code()).unwrap(),
+        FamilyRepos::default()
+    );
+    fs::create_dir_all(root.0.join("code/config")).unwrap();
+    assert!(
+        families
+            .read_repos(&code())
+            .unwrap()
+            .repos
+            .names()
+            .is_empty()
+    );
+}
+
+/// A symlinked `repos.json`, a dir in its place and a symlinked family dir
+/// are each refused, not followed.
+#[test]
+fn read_repos_refuses_a_symlink() {
+    let root = Root::new("repos-symlink");
+    let other = root.0.join("other.json");
+    fs::write(&other, REPOS).unwrap();
+    fs::create_dir_all(root.0.join("code")).unwrap();
+    symlink(&other, root.0.join("code/repos.json")).unwrap();
+    let read = root.families().read_repos(&code());
+    assert!(matches!(read, Err(ReachFault::NotFile)), "{read:?}");
+    fs::remove_file(root.0.join("code/repos.json")).unwrap();
+    fs::create_dir(root.0.join("code/repos.json")).unwrap();
+    let read = root.families().read_repos(&code());
+    assert!(matches!(read, Err(ReachFault::NotFile)), "{read:?}");
+    fs::remove_dir_all(root.0.join("code")).unwrap();
+    fs::create_dir_all(root.0.join("real")).unwrap();
+    fs::write(root.0.join("real/repos.json"), REPOS).unwrap();
+    symlink(root.0.join("real"), root.0.join("code")).unwrap();
+    let read = root.families().read_repos(&code());
+    assert!(matches!(read, Err(ReachFault::NotDir)), "{read:?}");
+}
+
+/// The strict reader refuses a key given twice, and the type refuses a
+/// name that is no repo name and a list past 32 (decisions CH65 rule 2,
+/// CH69 rule 15).
+#[test]
+fn read_repos_refuses_a_bad_list() {
+    let root = Root::new("repos-bad");
+    let past: Vec<String> = (0..33).map(|index| format!("r{index}")).collect();
+    let past = json!({ "repos": past }).to_string();
+    let not_valid = [
+        r#"{"repos":[],"repos":[]}"#,
+        r#"{"repos":["owner/name"]}"#,
+        r#"{"repos":["chaperone.git"]}"#,
+        r#"{"repos":[".."]}"#,
+        r#"{"repos":[],"hosts":[]}"#,
+        past.as_str(),
+        "",
+    ];
+    for text in not_valid {
+        write_repos(&root, text);
+        let read = root.families().read_repos(&code());
+        assert!(
+            matches!(read, Err(ReachFault::NotValid)),
+            "{text}: {read:?}"
+        );
+    }
+}
+
+/// The longest list in its canonical form fits `REPOS_CAP`, and a file
+/// one byte past the cap is refused.
+#[test]
+fn read_repos_refuses_past_its_cap() {
+    let root = Root::new("repos-cap");
+    let longest: Vec<String> = (0..32).map(|index| format!("{index:0>100}")).collect();
+    let longest = json!({ "repos": longest }).to_string();
+    assert_eq!(longest.len(), 3307);
+    write_repos(&root, &longest);
+    assert_eq!(
+        root.families()
+            .read_repos(&code())
+            .unwrap()
+            .repos
+            .names()
+            .len(),
+        32
+    );
+    let cap = usize::try_from(REPOS_CAP).unwrap();
+    let at_cap = format!("{REPOS}{}", " ".repeat(cap - REPOS.len()));
+    write_repos(&root, &at_cap);
+    assert!(root.families().read_repos(&code()).is_ok());
+    write_repos(&root, &format!("{at_cap} "));
+    let read = root.families().read_repos(&code());
+    assert!(matches!(read, Err(ReachFault::TooLarge)), "{read:?}");
 }

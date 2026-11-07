@@ -45,9 +45,9 @@ family-state need).
    runtime, before any other step (caller duty 8).
 2. In `spawn_blocking`: `leftovers::stop_all` stops each VM scope of an
    earlier vmm before any per-VM bind (decision CH19 (4), PR C3). Then
-   `root_owned::check_program` checks the files of `VMM_CH_PROGRAM` and
-   `VMM_CH_REMOTE_PROGRAM` before any run of either (see "The
-   root-owned files"). Then `check_cloud_hypervisor` checks the CH
+   `root_owned::check_program` checks the files of `VMM_CH_PROGRAM`,
+   `VMM_CH_REMOTE_PROGRAM` and `VMM_GIT_PROGRAM` before any run of one
+   (see "The root-owned files", decision CH69 rule 17). Then `check_cloud_hypervisor` checks the CH
    version, and a failed check refuses the start (caller duty 4, gap G10
    option A). Then
    `image_root::read` reads `digests.json`, and `ImageSet::import` puts
@@ -81,28 +81,31 @@ A failed start step, or a server that stops before SIGTERM, exits 78. The
 end of a shutdown exits 0, also when a VM did not stop: the
 `ExecStopPost=` step of the vmm unit kills its scope after the vmm has
 exited (decision CH61 rule 1). The vmm has one start entry, `build`, and
-it always requires root as the owner of CH, ch-remote, the guest init
-program and `digests.json` (decision CH58 rule 1: no test-only entry
-stays in production code). `build` runs `check` (the leftover sweep, the
-CH and ch-remote files, the CH version, the image root, the guest init
-initramfs), then `parts`. `src/compose/tests.rs` runs on temp paths with
+it always requires root as the owner of CH, ch-remote, git, the guest
+init program and `digests.json` (decision CH58 rule 1: no test-only
+entry stays in production code). `build` runs `check` (the leftover
+sweep, the CH, ch-remote and git files, the CH version, the image root,
+the guest init initramfs), then `parts`. `src/compose/tests.rs` runs on temp paths with
 no KVM:
 
 1. In the rust job, a CH copy that the test user owns refuses `build`
-   with `NotOwned`, and no digest reaches the store.
+   with `NotOwned`, and no digest reaches the store. With CH and
+   ch-remote on the root-owned `/usr/bin/true`, a git copy that the test
+   user owns refuses `build` with `NotOwned`, and a git symlink to a
+   root-owned file with `NotRegular` (decision CH69 rule 17).
 2. In the rust job, the serve tests start from `parts` after the checks
    that a test can run: the CH fixture, an import into the store and a
    made initramfs in the store.
    They prove an empty list page, a 412 on a bad protocol header, the
    end of the run at the signal, and a failed run when the bind fails.
 3. The ignored `kvm_` tests run `build` on a root-owned `digests.json`
-   and root-owned copies of the three programs. The job kvm runs them,
+   and root-owned copies of the four programs. The job kvm runs them,
    and its runner may use sudo (decision CH36 G20). They prove that each
    key reaches its part (the `Debug` text of each part gives its program
    path, because the store crate gives no accessor), and that a missing
    image refuses the start. The guest init initramfs of a root-owned
    program is the same across two starts. A group write bit on any of
-   the three programs refuses the start and names its key, and so does
+   the four programs refuses the start and names its key, and so does
    a `digests.json` that the test user owns.
 
 `tests/binary.rs` runs `vmm serve` with no KVM. It proves the exit 78
@@ -117,12 +120,14 @@ runs the binary end to end.
 
 `src/root_owned.rs` holds the one check of each file that the vmm trusts
 at its start: `digests.json` (decision CH57 rule 1) and the files of
-`VMM_CH_PROGRAM`, `VMM_CH_REMOTE_PROGRAM` and `VMM_GUEST_INIT_PROGRAM`
-(decisions CH62 rule 17, CH67 rule 1). Each must be a regular file, not
+`VMM_CH_PROGRAM`, `VMM_CH_REMOTE_PROGRAM`, `VMM_GIT_PROGRAM` and
+`VMM_GUEST_INIT_PROGRAM` (decisions CH62 rule 17, CH67 rule 1, CH69 rule
+17). Each must be a regular file, not
 a symlink, owned by root, with no group or other write bit. `open` looks
 at the path with no follow of a symlink, opens it, and checks the open
 file, so a reader reads the bytes that it checked. `check_program` runs
-the same check on CH and ch-remote, which the vmm runs by their paths. A
+the same check on CH, ch-remote and git, which the vmm runs by their
+paths. A
 failed check refuses the start, the fault names the key, and
 `src/main.rs` exits 78. The config checks each program key for its form
 only (absolute, no `..`). `tests/root_owned.rs` proves each refusal that
@@ -185,6 +190,8 @@ A fault names the key and never the value, as in `env/AGENTS.md`.
 | `VMM_LITELLM_ADDR` | `${AGENT_LAN_ADDRESS}:4000` | the bridge of host port 1101 (decision CH62 rule 20) |
 | `VMM_CHAPERONE_ADDR` | `${AGENT_LAN_ADDRESS}:8300` | the bridge of host port 1102 (decision CH62 rule 20) |
 | `VMM_EGRESS_LOG` | `${AGENT_OPERATOR_HOME}/.local/state/creche-vmm-egress.jsonl` | `egress::log::Log`, the JSONL log of host port 1104 (decision CH69 rule 10) |
+| `VMM_MIRROR_ROOT` | `/srv/agents/code` | `mirror::Mirror::root`, the mirror of host port 1103 (decision CH69 rule 17, fact 13) |
+| `VMM_GIT_PROGRAM` | `/usr/bin/git` | `mirror::Mirror::git`, the `upload-pack` of each clone (decisions CH67 rule 1, CH69 rule 17) |
 
 Each path is absolute with no `..` component. The run root holds no
 `:`, because systemd joins the paths of more than one
@@ -559,7 +566,9 @@ table, and the start boots it again. A cold boot runs these steps:
    (PR D16), then `remove_stale` (decision CH19 (4)), `planes::bind` of
    the listeners of host ports 1101 and 1102 (see "The plane bridges"),
    `family_state::bind` of the listener of host port 1100 (see "The
-   family-state reply"), `proxy::bind` of the listener of host port 1104
+   family-state reply"), `mirror::bind` of the listener of host port
+   1103 when `repos.json` of the family lists a repo (see "The git
+   mirror"), `proxy::bind` of the listener of host port 1104
    when `egress.json` of the family lists a host (see "The egress
    proxy"), the store check of
    the kernel, the guest init initramfs and the root disk of the flavor
@@ -572,15 +581,15 @@ table, and the start boots it again. A cold boot runs these steps:
    files of the VM, the vmm unit and `Launch::in_slot` (decisions CH8-3,
    CH8-5, CH8-8, CH30, CH55, CH60 rule 1). A vmm with no unit fails the
    start before the link, with no file touched.
-4. `Bound::serve` starts the plane bridges, the family-state reply and
-   the egress proxy.
+4. `Bound::serve` starts the plane bridges, the family-state reply, the
+   mirror and the egress proxy.
    Then `control::open` for
    the first `ControlReady`. It keeps the facade
    state in `ControlState`, writes a turn end to the row, and clears the
    faults of the family (contract 05 §3.3.1 rule 8).
 5. `deny::check` with the bound set 1100, 1101 and 1102 (plan PRs V6
-   and V8), plus 1104 when step 3 bound it (plan PR E2, decision CH49
-   rule 3).
+   and V8), plus 1103 and 1104 when step 3 bound each (plan PRs M1 and
+   E2, decisions CH49 rule 3, CH69 rule 13).
 6. `AcpLink::dial` of guest port 1201 (decision CH50 rule 2).
 
 Each fault but `host_full` goes to the fault file of the family
@@ -621,20 +630,22 @@ connection to a fresh TCP connect to `VMM_LITELLM_ADDR` or
 4. The copy is `relay::Splice`, the copy of the ACP relay, on the tokio
    `net` types. `copy_bidirectional` needs the tokio feature `io-util`,
    which adds a lock entry, so the vmm does not use it.
-5. `Vm::listeners` holds the bridges, the family-state reply and the
-   egress proxy. The
+5. `Vm::listeners` holds the bridges, the family-state reply, the
+   mirror and the egress proxy. The
    drop of the entry, when the VM leaves the table, ends each listener
    task and each open splice. A VM that the vmm killed drops them at the
    kill.
-6. The deny check gets 1100, the ports of `Upstreams::rows` and 1104
-   for a family with egress as its bound set, so a listener of any
-   other port fails it (decisions CH6-3, CH49 rule 3).
+6. The deny check gets 1100, the ports of `Upstreams::rows`, 1103 for
+   a family with a clone list and 1104 for a family with egress as its
+   bound set, so a listener of any other port fails it (decisions CH6-3,
+   CH49 rule 3, CH69 rule 13).
 7. A full row holds 129 fds: its listener and two streams per splice.
    `planes::fd_need` is that for both rows of all `SLOTS` (64), plus a
    headroom of 4096: 20608. `vmm serve` raises its soft `RLIMIT_NOFILE`
-   to it plus `family_state::fd_need` and `proxy::fd_need` after its
-   start checks and before it serves (step 4 of "The compose step", see
-   also "The family-state reply" and "The egress proxy"), and a
+   to it plus `family_state::fd_need`, `mirror::fd_need` and
+   `proxy::fd_need` after its start checks and before it serves (step 4
+   of "The compose step", see also "The family-state reply", "The git
+   mirror" and "The egress proxy"), and a
    hard limit below the sum exits 78
    (`creche_vmm_confine::nofile`, decision CH67 rule 4, Known gap 23).
    So the busy guests of
@@ -751,7 +762,8 @@ or an empty list binds no listener.
 9. `proxy::fd_need` counts per slot the listener, and per link its
    stream and 4 more fds (the family dir and `egress.json` of the read, a
    resolver socket, the upstream socket): 321 per slot, 20544 for all
-   `SLOTS`. The raised soft limit is 69888 (decision CH69 rule 14).
+   `SLOTS`. With the 1103 need of "The git mirror", the raised soft
+   limit is 102720 (decision CH69 rule 14).
 
 `src/egress/log.rs` writes the log of `VMM_EGRESS_LOG` (decisions CH6-4,
 CH69 rules 10 and 24). The compose step opens it at the start, for
@@ -781,6 +793,75 @@ The kvm job proves an allowed tunnel (plan PR E4, decision CH69 rule
 22). `tests/start.rs` proves the bound set with and without a list, a
 list that does not read, the bind at a restore, and an extra 1104
 listener.
+
+## The git mirror
+
+`src/mirror.rs` serves `git://` clones on host port 1103 (plan PR M1,
+decisions CH3, CH5f, CH10-10, CH46 rule 4, CH69 rules 13 to 20, 24 and
+30). Guest init splices guest 127.0.0.1:9418 to a vsock dial of 1103
+(decision CH46 rule 4), and CH connects each dial to `vsock.sock_1103`
+(decision CH24). The vmm binds it only for a family whose `repos.json`
+lists a repo (decision CH69 rule 13, which amends CH8-1, CH14 and
+section 3.2.3 as CH49 rule 3 amended them for 1104). An absent file, an
+empty list or a file that does not read binds no listener (Known gap
+29).
+
+1. `mirror::bind` binds the listener beside the plane listeners, with
+   their lifecycle: after `link_vm` and `remove_stale`, before CH
+   starts, for a cold boot and for each restore.
+2. Each link reads the first pkt-line within `LINE_WAIT` (10 s), at
+   most `LINE_CAP` (1024) bytes with its 4 length digits. A line past
+   the wait closes with no answer (decision CH69 rule 16). The read
+   takes no byte past the line.
+3. Only `git-upload-pack /<name>\0host=<any>\0` passes, with nothing
+   more or with `\0version=2\0`, which sets `GIT_PROTOCOL=version=2`.
+   `<name>` must be a `RepoName`: no `.git` suffix, no `~`, no `..`, no
+   `/`. The host value is not read (decision CH69 rule 16).
+4. Each link reads `repos.json` again (`FamilyRoot::read_repos`), so a
+   removed repo refuses the next clone at once. The name must equal an
+   entry byte for byte (decision CH46 rule 4), and
+   `MirrorRoot::git_dir` must open `<name>` and `.git` as dirs with
+   `O_NOFOLLOW` from the root handle (decision CH10-10). The path comes
+   from the list entry, never from the client bytes.
+5. Every refusal of steps 3 and 4, and a failed start of git, gets the
+   one pkt-line `DENIED` (`ERR access denied`), then the close. So a
+   family cannot tell a repo that is not listed from one that the mirror
+   lacks (decision CH69 rule 16).
+6. The vmm runs `<VMM_GIT_PROGRAM> upload-pack --strict --timeout=60
+   <mirror>/<name>/.git` as david, with no extra confinement (decision
+   CH69 rule 19), a cleared env that holds only `GIT_CONFIG_NOSYSTEM=1`,
+   `GIT_CONFIG_GLOBAL=/dev/null` and the `GIT_PROTOCOL` of step 3
+   (decision CH69 rule 17), and stderr on `/dev/null`. It advertises all
+   refs (decision CH69 rule 18). `ChildIo` joins the stdout and the stdin
+   of the child, and `relay::Splice` carries the bytes with the
+   half-close of decision CH67 rule 9: a shutdown closes stdin. The drop
+   of the link kills the child (`kill_on_drop`).
+7. A refused or faulted clone writes one stderr line that names the
+   family, the session and the reason, at most `NOTE_CAP` (100) per
+   `NOTE_WINDOW` (10 s) for one VM. A good clone writes none (decision
+   CH69 rule 24).
+8. At most `LINK_CAP` (64) links. A link past the cap is accepted and
+   closed at once (decisions CH67 rule 3, CH69 rule 14). A failed accept
+   is logged by kind, then the loop pauses `ACCEPT_PAUSE` (decisions
+   CH40 rule 1, CH69 rule 30).
+9. A link sets no `last_use` and blocks no snapshot (decision CH69 rule
+   20), so a restore cuts each open clone (fact 45).
+10. `mirror::fd_need` counts per slot the listener, and per link its
+    stream and 7 more fds (the spawn holds both ends of two pipes,
+    `/dev/null` and both ends of the exec pipe of std): 513 per slot,
+    32832 for all `SLOTS`. The raised soft limit is 102720 (decision
+    CH69 rule 14, Known gap 28).
+
+`tests/mirror.rs` runs the mirror on a real Unix socket over a scratch
+family root and a scratch mirror of real repos. A forward in the test
+carries `git clone git://127.0.0.1:<port>/<name>` to the socket, as guest
+init bridges 9418. It proves the clone outside `repos`, the HEAD of a v0
+clone, a v2 clone, the one error for a repo not listed and one not in
+the mirror, a removal, each refused path form, `git-receive-pack`, a
+symlinked repo, the line cap, the line wait with paused tokio time, the
+link cap, the kill of the child at the drop of `Server`, and the fd
+need. `tests/start.rs` proves the bound set with a clone list, with both
+lists, with an absent, empty or bad list, and the bind at a restore.
 
 ## The slots
 
@@ -1201,6 +1282,18 @@ job kvm runs it.
     The start writes no stderr line (`binds_egress` in `src/start.rs`).
     A zero-byte `egress.json` is present and does not read, so it binds
     1104 and each CONNECT gets `not_valid` (CH72 rule 3).
+28. Closed by decision CH69 rule 14: the 1103 listener takes at most 64
+    links per VM, and its fd need (32832) adds to the raise, so the raise
+    is 102720. The plan estimate (20544) counted 5 fds per link. The
+    spawn of `upload-pack` holds 7 at once.
+29. CONTRACT-QUESTION: no row decides a `repos.json` that is present and
+    does not read. Decision CH72 rule 3 binds 1104 for such an
+    `egress.json`, so the log names `not_valid`. The mirror keeps no log,
+    and decision CH69 rule 13 binds 1103 only for a non-empty list, so
+    the vmm takes the narrowest reading: such a file binds no 1103
+    (`binds_mirror` in `src/start.rs`). Each clone would be refused
+    anyway. Byte cap: `REPOS_CAP` of `creche-vmm-confine` is the second
+    CONTRACT-QUESTION of plan PR M1.
 
 ## Caller duties
 
@@ -1261,11 +1354,18 @@ job kvm runs it.
    of plan PR C13 must not bound the start of the vmm below that time.
    A later start finds each digest in the store and reads no byte.
 10. Decision CH59 rule 1: the vmm reads `VMM_EGRESS_LOG` (plan PR E2),
-    so the `vmm.env` that `bin/fleet-up up` writes must hold it before
-    this vmm starts on a host, or the start exits 78. The hard
-    `RLIMIT_NOFILE` of the user unit must hold 69888 (decision CH67
+    `VMM_MIRROR_ROOT` and `VMM_GIT_PROGRAM` (plan PR M1), so the
+    `vmm.env` that `bin/fleet-up up` writes must hold them before this
+    vmm starts on a host, or the start exits 78. Root must own the file
+    of `VMM_GIT_PROGRAM` (`/usr/bin/git` of Ubuntu). The hard
+    `RLIMIT_NOFILE` of the user unit must hold 102720 (decision CH67
     rule 4, plan risk 3).
-11. Plan PR E2 binds 1104 at each boot and each restore from the list
+11. Plan PR M1 binds 1103 at each boot and each restore from the clone
+    list of that time, and each clone reads the list again. A list that
+    goes from empty to a repo gets its listener at the next start or
+    restore of the VM, until plan PR E3 follows the edit (decision CH69
+    rules 11 and 13).
+12. Plan PR E2 binds 1104 at each boot and each restore from the list
     of that time. Each CONNECT reads the list again, so a removal
     refuses at once. A list that goes from empty to a host gets its
     listener at the next start or restore of the VM, until plan PR E3

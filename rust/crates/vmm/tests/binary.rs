@@ -16,11 +16,12 @@ use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
 use creche_vmm::config::{
-    BUDGET, CH, CH_REMOTE, CHAPERONE, EGRESS_LOG, GUEST_INIT, LITELLM, RAM_CAP, STATE_ROOT,
+    BUDGET, CH, CH_REMOTE, CHAPERONE, EGRESS_LOG, GIT, GUEST_INIT, LITELLM, MIRROR_ROOT, RAM_CAP,
+    STATE_ROOT,
 };
 use creche_vmm::egress::proxy;
 use creche_vmm::image_root::DIGESTS_FILE;
-use creche_vmm::{family_state, planes};
+use creche_vmm::{family_state, mirror, planes};
 use creche_vmm_confine::vmm_unit::VmmUnit;
 
 /// The exit status of a refused start.
@@ -31,7 +32,7 @@ const TRUE: &str = "/usr/bin/true";
 
 /// Each key with a good value. The paths need not exist: the config
 /// checks their form only.
-const GOOD: [(&str, &str); 19] = [
+const GOOD: [(&str, &str); 21] = [
     ("VMM_STATE_ROOT", "/srv/vmm/state"),
     ("RUNTIME_DIRECTORY", "/run/user/1000/vmm"),
     ("VMM_FAMILY_ROOT", "/srv/families"),
@@ -54,6 +55,8 @@ const GOOD: [(&str, &str); 19] = [
     ("VMM_LITELLM_ADDR", "192.0.2.10:4000"),
     ("VMM_CHAPERONE_ADDR", "192.0.2.10:8300"),
     ("VMM_EGRESS_LOG", "/srv/vmm/egress.jsonl"),
+    ("VMM_MIRROR_ROOT", "/srv/agents/code"),
+    ("VMM_GIT_PROGRAM", "/usr/bin/git"),
 ];
 
 /// The CH fixture of the version check (gap G10). Each scratch dir gets a
@@ -121,8 +124,10 @@ impl Scratch {
 
     /// `GOOD` with each root key on its dir and each key of `PROGRAMS` on
     /// its file in `bin/`. The egress log is `egress.jsonl` in the dir, so
-    /// its open passes, as in `src/compose/tests.rs`. Each other program
-    /// key is `true`, which lists no leftover scope.
+    /// its open passes, as in `src/compose/tests.rs`. The mirror root is
+    /// `mirror/` in the dir, which no start step opens. Each other program
+    /// key is `true`, which lists no leftover scope and passes the owner
+    /// check of `VMM_GIT_PROGRAM` (decision CH69 rule 17).
     fn env(&self) -> Vec<(&'static str, String)> {
         GOOD.iter()
             .map(|&(key, good)| {
@@ -133,6 +138,7 @@ impl Scratch {
                     "VMM_FAULTS_ROOT" => self.path("faults"),
                     "VMM_IMAGE_ROOT" => self.path("images"),
                     "VMM_EGRESS_LOG" => self.path("egress.jsonl"),
+                    "VMM_MIRROR_ROOT" => self.path("mirror"),
                     key if key.ends_with("_GIB") || key.ends_with("_ADDR") => good.to_owned(),
                     key => match PROGRAMS.iter().find(|program| program.0 == key) {
                         Some((_, file)) => self.path(&format!("bin/{file}")),
@@ -205,7 +211,7 @@ fn sudo(command: &[&str], path: &Path) {
     assert!(status.success(), "sudo {command:?}: {status}");
 }
 
-/// A hard `RLIMIT_NOFILE` below the fd need of the vmm (69888), and
+/// A hard `RLIMIT_NOFILE` below the fd need of the vmm (102720), and
 /// below the hard limit of each host that runs the tests.
 const SHORT_NOFILE: &str = "1024";
 
@@ -343,6 +349,37 @@ fn a_relative_egress_log_exits_78() {
     assert_eq!(stderr, expected);
 }
 
+/// Decisions CH59 rule 1 and CH69 rule 17: the vmm needs the mirror root
+/// and its git, so an env with no `VMM_MIRROR_ROOT` or no
+/// `VMM_GIT_PROGRAM` refuses the start.
+#[test]
+fn a_missing_mirror_key_exits_78() {
+    for key in [MIRROR_ROOT, GIT] {
+        let env: Vec<_> = GOOD.iter().copied().filter(|one| one.0 != key).collect();
+        let (output, stderr) = serve(&env);
+        assert_eq!(output.status.code(), Some(EX_CONFIG));
+        assert_eq!(stderr, format!("vmm: {key}: the key has no value\n"));
+    }
+}
+
+/// Each mirror key is a path key: a relative path refuses the start
+/// (decision CH69 rule 17).
+#[test]
+fn a_relative_mirror_key_exits_78() {
+    for (key, relative) in [(MIRROR_ROOT, "srv/agents/code"), (GIT, "git")] {
+        let mut env = GOOD.to_vec();
+        for one in &mut env {
+            if one.0 == key {
+                one.1 = relative;
+            }
+        }
+        let (output, stderr) = serve(&env);
+        assert_eq!(output.status.code(), Some(EX_CONFIG));
+        let expected = format!("vmm: {key}: the key is not an absolute path\n");
+        assert_eq!(stderr, expected);
+    }
+}
+
 /// A good config on temp paths runs the leftover sweep (`true` lists no
 /// scope). Then the vmm refuses a missing CH program and one that root
 /// does not own, and exits 78 (decision CH67 rule 1, owner item 86). The
@@ -397,7 +434,8 @@ fn kvm_a_short_hard_fd_limit_refuses_before_the_bind() {
         .collect();
 
     let (output, stderr) = serve(&env);
-    let need = planes::fd_need() + family_state::fd_need() + proxy::fd_need();
+    let need = planes::fd_need() + family_state::fd_need() + mirror::fd_need() + proxy::fd_need();
+    assert_eq!(need, 102_720);
     assert_eq!(output.status.code(), Some(EX_CONFIG), "{stderr}");
     let unit = match VmmUnit::of_self() {
         Ok(_) => String::new(),

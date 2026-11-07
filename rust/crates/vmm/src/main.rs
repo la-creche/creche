@@ -4,7 +4,8 @@
 //!   and runs the vmm on the multi-thread tokio runtime until SIGTERM.
 //!   The compose step checks the programs and the image root first. Then
 //!   it raises the soft `RLIMIT_NOFILE` to the sum of `planes::fd_need`,
-//!   `family_state::fd_need` and `egress::proxy::fd_need`, before the
+//!   `family_state::fd_need`, `mirror::fd_need` and
+//!   `egress::proxy::fd_need`, before the
 //!   bind and the first VM. A missing or bad key, a failed start check,
 //!   a hard fd limit below the need, or another failed start step, exits
 //!   78. The end of a shutdown exits 0.

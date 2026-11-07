@@ -2579,6 +2579,63 @@
       "note": "an array"
     }
   ],
+  "FamilyRepos": [
+    {
+      "json": "{\"repos\":[]}",
+      "written": "{\"repos\":[]}",
+      "note": "no repo"
+    },
+    {
+      "json": "{\"repos\":[\"chaperone\"]}",
+      "written": "{\"repos\":[\"chaperone\"]}",
+      "note": "one repo"
+    },
+    {
+      "json": "{\"repos\":[\"creche\",\"mcp\"]}",
+      "written": "{\"repos\":[\"creche\",\"mcp\"]}",
+      "note": "two repos"
+    },
+    {
+      "json": "{\"repos\":[\"r0\",\"r1\",\"r2\",\"r3\",\"r4\",\"r5\",\"r6\",\"r7\",\"r8\",\"r9\",\"r10\",\"r11\",\"r12\",\"r13\",\"r14\",\"r15\",\"r16\",\"r17\",\"r18\",\"r19\",\"r20\",\"r21\",\"r22\",\"r23\",\"r24\",\"r25\",\"r26\",\"r27\",\"r28\",\"r29\",\"r30\",\"r31\",\"r32\"]}",
+      "written": null,
+      "note": "33 repos, one past the most"
+    },
+    {
+      "json": "{\"repos\":[\"owner/name\"]}",
+      "written": null,
+      "note": "an owner and a name"
+    },
+    {
+      "json": "{\"repos\":[\"/chaperone\"]}",
+      "written": null,
+      "note": "a path"
+    },
+    {
+      "json": "{\"repos\":[],\"hosts\":[]}",
+      "written": null,
+      "note": "an unknown key"
+    },
+    {
+      "json": "{}",
+      "written": null,
+      "note": "no repos key"
+    },
+    {
+      "json": "{\"repos\":null}",
+      "written": null,
+      "note": "null repos"
+    },
+    {
+      "json": "[[]]",
+      "written": null,
+      "note": "the array form of a struct"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    }
+  ],
   "FamilyShape": [
     {
       "json": "{\"cpus\":2,\"flavor\":\"base\",\"memory_mib\":2048}",
@@ -3926,6 +3983,210 @@
       "json": "[\"protocol_mismatch\",1]",
       "written": null,
       "note": "the array form"
+    }
+  ],
+  "RepoList": [
+    {
+      "json": "[]",
+      "written": "[]",
+      "note": "no repo"
+    },
+    {
+      "json": "[\"chaperone\"]",
+      "written": "[\"chaperone\"]",
+      "note": "one repo"
+    },
+    {
+      "json": "[\"creche\",\"chaperone\"]",
+      "written": "[\"creche\",\"chaperone\"]",
+      "note": "two repos, in the order given"
+    },
+    {
+      "json": "[\"chaperone\",\"chaperone\"]",
+      "written": "[\"chaperone\",\"chaperone\"]",
+      "note": "a repo twice: the list reads it (CH70 rule 4)"
+    },
+    {
+      "json": "[\"r0\",\"r1\",\"r2\",\"r3\",\"r4\",\"r5\",\"r6\",\"r7\",\"r8\",\"r9\",\"r10\",\"r11\",\"r12\",\"r13\",\"r14\",\"r15\",\"r16\",\"r17\",\"r18\",\"r19\",\"r20\",\"r21\",\"r22\",\"r23\",\"r24\",\"r25\",\"r26\",\"r27\",\"r28\",\"r29\",\"r30\",\"r31\"]",
+      "written": "[\"r0\",\"r1\",\"r2\",\"r3\",\"r4\",\"r5\",\"r6\",\"r7\",\"r8\",\"r9\",\"r10\",\"r11\",\"r12\",\"r13\",\"r14\",\"r15\",\"r16\",\"r17\",\"r18\",\"r19\",\"r20\",\"r21\",\"r22\",\"r23\",\"r24\",\"r25\",\"r26\",\"r27\",\"r28\",\"r29\",\"r30\",\"r31\"]",
+      "note": "32 repos, the most"
+    },
+    {
+      "json": "[\"r0\",\"r1\",\"r2\",\"r3\",\"r4\",\"r5\",\"r6\",\"r7\",\"r8\",\"r9\",\"r10\",\"r11\",\"r12\",\"r13\",\"r14\",\"r15\",\"r16\",\"r17\",\"r18\",\"r19\",\"r20\",\"r21\",\"r22\",\"r23\",\"r24\",\"r25\",\"r26\",\"r27\",\"r28\",\"r29\",\"r30\",\"r31\",\"r32\"]",
+      "written": null,
+      "note": "33 repos, one past the most"
+    },
+    {
+      "json": "[\"x.git\"]",
+      "written": null,
+      "note": "a name that is no repo name"
+    },
+    {
+      "json": "[7]",
+      "written": null,
+      "note": "a number in the list"
+    },
+    {
+      "json": "{}",
+      "written": null,
+      "note": "an object"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
+    }
+  ],
+  "RepoName": [
+    {
+      "json": "\"chaperone\"",
+      "written": "\"chaperone\"",
+      "note": "a mirror dir name"
+    },
+    {
+      "json": "\"a\"",
+      "written": "\"a\"",
+      "note": "one letter"
+    },
+    {
+      "json": "\"7\"",
+      "written": "\"7\"",
+      "note": "one digit"
+    },
+    {
+      "json": "\"creche-release\"",
+      "written": "\"creche-release\"",
+      "note": "an inner hyphen"
+    },
+    {
+      "json": "\"Mixed_Case.repo\"",
+      "written": "\"Mixed_Case.repo\"",
+      "note": "upper case, an underscore and an inner dot"
+    },
+    {
+      "json": "\"x.\"",
+      "written": "\"x.\"",
+      "note": "a trailing dot"
+    },
+    {
+      "json": "\"x.git.\"",
+      "written": "\"x.git.\"",
+      "note": "a .git that a dot follows"
+    },
+    {
+      "json": "\"x.gitx\"",
+      "written": "\"x.gitx\"",
+      "note": ".git with more after it"
+    },
+    {
+      "json": "\"git\"",
+      "written": "\"git\"",
+      "note": "the bare word git"
+    },
+    {
+      "json": "\"xgit\"",
+      "written": "\"xgit\"",
+      "note": "git with no dot before it"
+    },
+    {
+      "json": "\"x.it\"",
+      "written": "\"x.it\"",
+      "note": "a dot before it"
+    },
+    {
+      "json": "\"x.t\"",
+      "written": "\"x.t\"",
+      "note": "a dot before t"
+    },
+    {
+      "json": "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+      "written": "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+      "note": "100 characters, the most"
+    },
+    {
+      "json": "\"x.git\"",
+      "written": null,
+      "note": "a .git suffix"
+    },
+    {
+      "json": "\"a.b.git\"",
+      "written": null,
+      "note": "a .git suffix after a dot"
+    },
+    {
+      "json": "\".hidden\"",
+      "written": null,
+      "note": "a dot first"
+    },
+    {
+      "json": "\"-x\"",
+      "written": null,
+      "note": "a hyphen first"
+    },
+    {
+      "json": "\"_x\"",
+      "written": null,
+      "note": "an underscore first"
+    },
+    {
+      "json": "\"x..y\"",
+      "written": null,
+      "note": "two dots in a row"
+    },
+    {
+      "json": "\"..\"",
+      "written": null,
+      "note": "two dots"
+    },
+    {
+      "json": "\".\"",
+      "written": null,
+      "note": "one dot"
+    },
+    {
+      "json": "\"owner/name\"",
+      "written": null,
+      "note": "a slash, the form of REPO_FORM"
+    },
+    {
+      "json": "\"x~\"",
+      "written": null,
+      "note": "a tilde"
+    },
+    {
+      "json": "\"x y\"",
+      "written": null,
+      "note": "a space"
+    },
+    {
+      "json": "\"caf\\u00e9\"",
+      "written": null,
+      "note": "a character of two bytes"
+    },
+    {
+      "json": "\"x\\n\"",
+      "written": null,
+      "note": "a trailing newline"
+    },
+    {
+      "json": "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+      "written": null,
+      "note": "101 characters, one past the most"
+    },
+    {
+      "json": "\"\"",
+      "written": null,
+      "note": "the empty text"
+    },
+    {
+      "json": "7",
+      "written": null,
+      "note": "a number"
+    },
+    {
+      "json": "null",
+      "written": null,
+      "note": "null"
     }
   ],
   "SandboxGrant": [

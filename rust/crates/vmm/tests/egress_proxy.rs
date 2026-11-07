@@ -17,7 +17,6 @@ use std::time::{Duration, Instant};
 use creche_vmm::egress::log::{LOG_CAP, Line, Log, ProxyReason, Reason, Verdict};
 use creche_vmm::egress::proxy::{self, HEAD_CAP, HEAD_WAIT, LINK_CAP, Server, bind};
 use creche_vmm::handlers::check::Checks;
-use creche_vmm::{family_state, planes};
 use creche_vmm_confine::family::FamilyRoot;
 use creche_vmm_store::layout::{RunRoot, Slot, VmRunDir};
 use creche_wire::{CheckReply, CheckRequest, HostPort, Serve as _, SessionId};
@@ -580,10 +579,8 @@ fn the_drop_cuts_each_link_and_closes_1104() {
 
 /// The raise of `vmm serve` holds every proxy at its cap (decisions CH67
 /// rule 4, CH69 rule 14): per VM the listener, per link its stream and
-/// four more fds.
+/// four more fds. `tests/mirror.rs` holds the whole raise.
 #[test]
 fn the_fd_need_holds_every_full_proxy() {
     assert_eq!(proxy::fd_need(), (5 * 64 + 1) * 64);
-    let raise = planes::fd_need() + family_state::fd_need() + proxy::fd_need();
-    assert_eq!(raise, 69_888);
 }

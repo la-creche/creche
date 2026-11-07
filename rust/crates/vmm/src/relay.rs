@@ -389,8 +389,8 @@ impl Relay for AcpRelay {
 }
 
 /// Both directions of one byte copy. The ACP relay, the plane bridges
-/// (`crate::planes`) and the egress proxy (`crate::egress::proxy`) carry
-/// their bytes with it.
+/// (`crate::planes`), the mirror (`crate::mirror`) and the egress proxy
+/// (`crate::egress::proxy`) carry their bytes with it.
 #[derive(Debug)]
 pub(crate) struct Splice {
     /// From the near stream to the far one.

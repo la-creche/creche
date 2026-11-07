@@ -388,6 +388,23 @@ caregiver writes it, and the vmm reads it. No route reaches the type.
    CH69 rule 5). The type reads any order and duplicates (decision CH70
    rule 4). Neither changes a verdict.
 
+### The clone list file
+
+`FamilyRepos` is the file `repos.json` (`FAMILY_REPOS_FILE`) in each
+family dir, beside `config/` and `egress.json` (decisions CH10-10, CH69
+rules 4 and 5). caregiver writes it from plan PR C2 on, and the vmm reads
+it for each clone on host port 1103. No route reaches the type.
+
+1. The file is `{repos: [name]}`, at most 32 names (`RepoList`,
+   decision CH69 rule 15). An empty or absent list allows no clone.
+2. `RepoName` is the name of one mirror dir: a letter or digit, then at
+   most 99 letters, digits, `.`, `_` or `-`, with no `..` and no `.git`
+   at the end (decision CH69 rule 15). So it holds no `/`. The pattern
+   has no look-ahead, so it spells each name that ends in no `.git`, and
+   `maxLength` holds the length. Plan PR F1 adds the test that holds it
+   equal to `family/grammar.py` (decision CH23 rule 5).
+3. The list reads a name twice (Known gap 4).
+
 ## A route error on the wire
 
 Each route has a typed error (decision CH26 rule 4). A caller matches it on
@@ -516,8 +533,8 @@ key or an added route too, because the match of the number is exact.
    deleted and written again fails too.
 6. A change of a type that no route reaches needs no new number:
    `FamilyStateReply`, `TurnEvent`, `ControlHello`, `ControlCommand`,
-   `GuestEvent`, `FamilyShape`, `FamilyEgress` and the types that only
-   they reach. A change of a `description` needs none either.
+   `GuestEvent`, `FamilyShape`, `FamilyEgress`, `FamilyRepos` and the
+   types that only they reach. A change of a `description` needs none either.
 
 ## The vsock JSON links
 
@@ -623,3 +640,9 @@ a dependency.
    datamodel-codegen 0.87 writes `list[...]` with no check for
    `uniqueItems`, so a refusal in Rust alone would split the Rust and
    Python readers. Neither changes a verdict of the vmm.
+4. CONTRACT-QUESTION: decision CH69 rule 15 refuses a repo name given
+   twice. `RepoList` reads one, as `FamilyEgress` does by decision CH70
+   rule 4, for the same reason: datamodel-codegen 0.87 drops
+   `uniqueItems`, so a refusal in Rust alone splits the Rust and Python
+   readers. A name twice serves the same repo. The family grammar (plan
+   PR F1) and caregiver (plan PR C2) refuse it before any file exists.

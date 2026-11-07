@@ -23,6 +23,7 @@ use std::path::{Component, PathBuf};
 use creche_vmm_confine::admission::{GIB, Limits};
 use creche_vmm_confine::family::FamilyRoot;
 use creche_vmm_confine::launch::Program;
+use creche_vmm_confine::mirror::MirrorRoot;
 use creche_vmm_store::layout::{RootError, RunRoot, StateRoot};
 
 use crate::planes::Upstreams;
@@ -72,6 +73,12 @@ pub const CHAPERONE: &str = "VMM_CHAPERONE_ADDR";
 /// The JSONL log of the egress proxy on host port 1104 (decisions CH6-4,
 /// CH69 rule 10).
 pub const EGRESS_LOG: &str = "VMM_EGRESS_LOG";
+/// The git mirror that host port 1103 serves: one dir per repo (decisions
+/// CH46 rule 4, CH69 rule 17, fact 13).
+pub const MIRROR_ROOT: &str = "VMM_MIRROR_ROOT";
+/// The `git` that runs `upload-pack` for each clone on host port 1103
+/// (decision CH69 rule 17).
+pub const GIT: &str = "VMM_GIT_PROGRAM";
 
 /// What the vmm reads from its env.
 #[derive(Debug)]
@@ -113,6 +120,12 @@ pub struct Config {
     pub planes: Upstreams,
     /// `VMM_EGRESS_LOG`. The compose step opens it with `Log::open`.
     pub egress_log: PathBuf,
+    /// `VMM_MIRROR_ROOT`. The config checks its form only, and each clone
+    /// opens it (`MirrorRoot::git_dir`).
+    pub mirror_root: MirrorRoot,
+    /// `VMM_GIT_PROGRAM`. The compose step checks its file with
+    /// `root_owned::check_program` (decision CH69 rule 17, as CH67 rule 1).
+    pub git: Program,
 }
 
 /// What is wrong with one key. A fault never holds the value, as in
@@ -218,6 +231,9 @@ impl Config {
                 chaperone: address(&lookup, CHAPERONE)?,
             },
             egress_log: path_of(EGRESS_LOG)?,
+            mirror_root: MirrorRoot::new(path_of(MIRROR_ROOT)?)
+                .map_err(|e| root(MIRROR_ROOT, e))?,
+            git: program_of(GIT)?,
         })
     }
 }

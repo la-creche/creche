@@ -23,6 +23,7 @@ use creche_vmm::control::{ControlState, SYNC_WAIT};
 use creche_vmm::egress::log::Log;
 use creche_vmm::handlers::acp::{Acp, StartFault, StartVm};
 use creche_vmm::handlers::drop::{Drops, StopVm, VmStopFailed};
+use creche_vmm::mirror::Mirror;
 use creche_vmm::planes::Upstreams;
 use creche_vmm::relay::{AcpLink, Door, Relays};
 use creche_vmm::restore::ChApi;
@@ -35,6 +36,7 @@ use creche_vmm_confine::family::FamilyRoot;
 use creche_vmm_confine::faults::{FaultBook, FaultDir};
 use creche_vmm_confine::landlock::{HostPath, Start};
 use creche_vmm_confine::launch::{Launch, Program};
+use creche_vmm_confine::mirror::MirrorRoot;
 use creche_vmm_confine::spawner::SpawnError;
 use creche_vmm_confine::vmm_unit::{UnitError, VmmUnit};
 use creche_vmm_store::ch_remote::{ChRemoteError, VmInfo};
@@ -63,11 +65,18 @@ const TURN: &str =
 const STARTING: &str = r#"{"facade":{"starting":{"last_turn_end":null,"pid":42,"starts":1}}}"#;
 /// As `READY`, with the end of a turn that the row has not seen.
 const ENDED: &str = r#"{"facade":{"running":{"last_turn_end":{"title":"First","updated_at":1793577700000},"pid":42,"starts":1,"turn_running":false}}}"#;
-/// The listeners at the launch of a family with no egress: 1100, 1101 and
-/// 1102, and no 1104.
-const NO_EGRESS: [bool; 4] = [true, true, true, false];
+/// The listeners at the launch of a family with no egress and no clone
+/// list: 1100, 1101 and 1102, and no 1103 or 1104.
+const NO_EGRESS: [bool; 5] = [true, true, true, false, false];
+/// The listeners at the launch of a family with egress and no clone list.
+const EGRESS_ONLY: [bool; 5] = [true, true, true, false, true];
+/// The listeners at the launch of a family with a clone list and no
+/// egress.
+const REPOS_ONLY: [bool; 5] = [true, true, true, true, false];
 /// The allowlist of a family with egress (decision CH49 rule 3).
 const EGRESS: &str = r#"{"hosts":[{"host":"github.com","port":443}]}"#;
+/// The clone list of a family with repos (decision CH69 rule 13).
+const REPOS: &str = r#"{"repos":["creche"]}"#;
 /// The plane of each bridge of a test that dials none: port 9 of
 /// 127.0.0.1, where nothing listens on a test host.
 const NO_PLANE: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 9);
@@ -145,9 +154,9 @@ struct Fake {
     /// Adds a `vsock.sock_<port>` listener of this port to each run dir,
     /// a port that the vmm does not bind.
     extra: Mutex<Option<u32>>,
-    /// For each launch: whether a dial of 1100, 1101, 1102 and 1104
+    /// For each launch: whether a dial of 1100, 1101, 1102, 1103 and 1104
     /// connected at the launch, before CH would start.
-    listening: Mutex<Vec<[bool; 4]>>,
+    listening: Mutex<Vec<[bool; 5]>>,
     /// Fails each launch.
     fail: AtomicBool,
     /// Holds each launch until the test clears it.
@@ -195,7 +204,7 @@ impl Fake {
             args.push("--net".to_owned());
         }
         let run = launch.files().run_dir().path();
-        let listening = [1100, 1101, 1102, 1104].map(|port| {
+        let listening = [1100, 1101, 1102, 1103, 1104].map(|port| {
             let listener = run.join(format!("vsock.sock_{port}"));
             UnixStream::connect(listener).is_ok()
         });
@@ -456,6 +465,10 @@ impl Test {
                 chaperone: NO_PLANE,
             },
             egress_log: Arc::new(Log::open(dir.join("egress.jsonl")).unwrap()),
+            mirror: Mirror {
+                root: MirrorRoot::new(dir.join("mirror")).unwrap(),
+                git: Program::new(PathBuf::from("/usr/bin/git")).unwrap(),
+            },
         };
         edit(&mut config);
 
@@ -2444,7 +2457,7 @@ fn the_egress_check_names_1104_for_a_family_with_egress() {
     let test = Test::new("egress-deny", |_| {});
     fs::write(test.dir.join("families/chat/egress.json"), EGRESS).unwrap();
     assert_eq!(test.start(0), Ok(()));
-    assert_eq!(*test.fake.listening.lock().unwrap(), [[true; 4]]);
+    assert_eq!(*test.fake.listening.lock().unwrap(), [EGRESS_ONLY]);
     assert_eq!(
         listeners(&test, 0),
         [
@@ -2476,7 +2489,7 @@ fn a_bad_list_binds_1104() {
     let test = Test::new("egress-bad", |_| {});
     fs::write(test.dir.join("families/chat/egress.json"), "{").unwrap();
     assert_eq!(test.start(0), Ok(()));
-    assert_eq!(*test.fake.listening.lock().unwrap(), [[true; 4]]);
+    assert_eq!(*test.fake.listening.lock().unwrap(), [EGRESS_ONLY]);
     assert!(listeners(&test, 0).contains(&"vsock.sock_1104".to_owned()));
     assert!(test.fault_codes().is_empty());
 }
@@ -2539,7 +2552,7 @@ fn a_restore_binds_1104_again() {
     test.reply(0, "Paused", &[]);
     assert_eq!(test.start(0), Ok(()));
     assert!(test.restored(1));
-    assert_eq!(*test.fake.listening.lock().unwrap(), [[true; 4]; 2]);
+    assert_eq!(*test.fake.listening.lock().unwrap(), [EGRESS_ONLY; 2]);
 }
 
 /// A 1104 listener in the run dir of a family with no egress is a port
@@ -2552,6 +2565,69 @@ fn an_extra_1104_listener_for_a_family_with_no_egress_fails() {
     assert_eq!(test.start(0), Err(StartFault::EgressAssertFailed));
     assert_eq!(test.fault_codes(), ["egress_assert_failed"]);
     assert!(test.stopped(0));
+}
+
+/// A family whose `repos.json` lists a repo gets 1103 at the launch, and
+/// the deny check names it (plan PR M1, decision CH69 rule 13).
+#[test]
+fn the_egress_check_names_1103_for_a_family_with_repos() {
+    let test = Test::new("repos-deny", |_| {});
+    fs::write(test.dir.join("families/chat/repos.json"), REPOS).unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    assert_eq!(*test.fake.listening.lock().unwrap(), [REPOS_ONLY]);
+    assert_eq!(
+        listeners(&test, 0),
+        [
+            "vsock.sock_1100",
+            "vsock.sock_1101",
+            "vsock.sock_1102",
+            "vsock.sock_1103"
+        ]
+    );
+    assert!(test.fault_codes().is_empty());
+}
+
+/// A family with a clone list and egress gets both 1103 and 1104, and the
+/// deny check names both.
+#[test]
+fn a_family_with_repos_and_egress_binds_1103_and_1104() {
+    let test = Test::new("repos-egress", |_| {});
+    fs::write(test.dir.join("families/chat/repos.json"), REPOS).unwrap();
+    fs::write(test.dir.join("families/chat/egress.json"), EGRESS).unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    assert_eq!(*test.fake.listening.lock().unwrap(), [[true; 5]]);
+    assert!(test.fault_codes().is_empty());
+}
+
+/// An absent file, an empty list and a file that does not read bind no
+/// 1103 (decision CH69 rule 13, the CONTRACT-QUESTION of `binds_mirror`).
+#[test]
+fn an_absent_empty_or_bad_clone_list_binds_no_1103() {
+    let test = Test::new("repos-none", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    let file = test.dir.join("families/chat/repos.json");
+    fs::write(&file, r#"{"repos":[]}"#).unwrap();
+    assert_eq!(test.start(1), Ok(()));
+    fs::write(&file, "{").unwrap();
+    assert_eq!(test.start(2), Ok(()));
+    assert_eq!(*test.fake.listening.lock().unwrap(), [NO_EGRESS; 3]);
+    assert!(test.fault_codes().is_empty());
+}
+
+/// A restore binds 1103 again before CH starts, as each plane listener
+/// (decisions CH62 rule 14, CH69 rule 13).
+#[test]
+fn a_restore_binds_1103_again() {
+    let test = Test::new("repos-restore", |_| {});
+    fs::write(test.dir.join("families/chat/repos.json"), REPOS).unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    let id = test.rows[0].id.clone();
+    assert!(test.runtime.block_on(test.hook.stop(&id)).is_ok());
+    test.snapshot(0, Some(&test.key()));
+    test.reply(0, "Paused", &[]);
+    assert_eq!(test.start(0), Ok(()));
+    assert!(test.restored(1));
+    assert_eq!(*test.fake.listening.lock().unwrap(), [REPOS_ONLY; 2]);
 }
 
 /// `creds.json` of the family `chat`, as caregiver writes it.
