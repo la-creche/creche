@@ -12,15 +12,23 @@
 //!    CH49 rule 1, CH62 rules 5 and 6).
 //! 3. It reads its mode from `/etc/creche-standin/mode` of the root disk.
 //!    In mode `exit-once`, a start that finds no marker on the session
-//!    disk writes the marker and exits with status 3. Each other start
-//!    stays up until a signal ends it. With no mode file it stays up. An
-//!    other mode exits with status 2.
+//!    disk starts a child of itself that stays up in its process group,
+//!    writes the child pid in the marker and exits with status 3. A start
+//!    that finds the marker writes whether that child is gone, then stays
+//!    up. Each other start stays up until a signal ends it. With no mode
+//!    file it stays up. An other mode exits with status 2.
+//! 4. In mode `holder` it starts a child of itself, the holder, that
+//!    leaves its process group with `setsid`, so the SIGTERM of the group
+//!    misses it, as it misses a process that ignores SIGTERM. The holder
+//!    keeps a file of the session disk open for writing and writes to it
+//!    until a SIGKILL ends it. The stand-in then stays up.
 
-use std::fs;
+use std::fs::{self, File};
 use std::io::{self, Write as _};
 use std::path::Path;
-use std::process::ExitCode;
+use std::process::{Command, ExitCode};
 use std::thread;
+use std::time::Duration;
 
 use creche_wire::guest::{SESSION_DISK_MOUNT, SESSION_ID_ENV};
 
@@ -36,7 +44,31 @@ const EXIT_ONCE: u8 = 3;
 /// The exit status of a mode that the stand-in does not know.
 const BAD_MODE: u8 = 2;
 
+/// The exit status of a child that failed.
+const CHILD_FAILED: u8 = 5;
+
+/// The argument that makes the stand-in the child of mode `exit-once`.
+const CHILD: &str = "child";
+
+/// The argument that makes the stand-in the holder of mode `holder`.
+const HOLDER: &str = "holder";
+
+/// The file that the holder keeps open, on the session disk.
+const HELD: &str = "standin-held";
+
+/// The pause between two writes of the holder.
+const HOLD_PAUSE: Duration = Duration::from_millis(10);
+
 fn main() -> ExitCode {
+    match std::env::args().nth(1).as_deref() {
+        Some(CHILD) => stay_up(),
+        Some(HOLDER) => hold(),
+        _ => facade(),
+    }
+}
+
+/// The facade itself.
+fn facade() -> ExitCode {
     let _ = writeln!(io::stdout(), "standin: stdout");
     let _ = io::stdout().flush();
     say(&format!(
@@ -55,12 +87,20 @@ fn main() -> ExitCode {
     match fs::read_to_string(MODE) {
         Ok(mode) if mode.trim_end() == "exit-once" => {
             let marker = Path::new(SESSION_DISK_MOUNT).join(MARKER);
-            if !marker.exists() {
-                if let Err(error) = fs::write(&marker, b"") {
-                    say(&format!("marker write failed: {error}"));
+            match fs::read_to_string(&marker) {
+                Ok(child) => say(&first_child(child.trim_end())),
+                Err(_) => {
+                    if let Err(error) = exit_once(&marker) {
+                        say(&format!("first start failed: {error}"));
+                    }
+                    say(&format!("exit {EXIT_ONCE}"));
+                    return ExitCode::from(EXIT_ONCE);
                 }
-                say(&format!("exit {EXIT_ONCE}"));
-                return ExitCode::from(EXIT_ONCE);
+            }
+        }
+        Ok(mode) if mode.trim_end() == "holder" => {
+            if let Err(error) = start_self(HOLDER) {
+                say(&format!("holder start failed: {error}"));
             }
         }
         Ok(mode) => {
@@ -70,8 +110,61 @@ fn main() -> ExitCode {
         Err(_) => {}
     }
     say("up");
+    stay_up()
+}
+
+/// Parks until a signal ends the process.
+fn stay_up() -> ExitCode {
     loop {
         thread::park();
+    }
+}
+
+/// Starts a child of the stand-in with `arg` and returns its pid. The
+/// child is never waited for: guest init reaps it.
+fn start_self(arg: &str) -> io::Result<u32> {
+    let child = Command::new(std::env::current_exe()?).arg(arg).spawn()?;
+    Ok(child.id())
+}
+
+/// The first start of mode `exit-once`: a child that stays up, and its
+/// pid in `marker`.
+fn exit_once(marker: &Path) -> io::Result<()> {
+    let child = start_self(CHILD)?;
+    say(&format!("child pid {child} started"));
+    fs::write(marker, child.to_string())
+}
+
+/// Whether the child of the first start, `pid`, is gone.
+fn first_child(pid: &str) -> String {
+    if Path::new("/proc").join(pid).exists() {
+        format!("first child {pid} left")
+    } else {
+        "first child gone".to_owned()
+    }
+}
+
+/// The holder of mode `holder`: its own session and process group, and a
+/// file of the session disk open for writing.
+fn hold() -> ExitCode {
+    if let Err(error) = rustix::process::setsid() {
+        say(&format!("holder setsid failed: {error}"));
+        return ExitCode::from(CHILD_FAILED);
+    }
+    let mut file = match File::create(Path::new(SESSION_DISK_MOUNT).join(HELD)) {
+        Ok(file) => file,
+        Err(error) => {
+            say(&format!("holder open failed: {error}"));
+            return ExitCode::from(CHILD_FAILED);
+        }
+    };
+    say("holder up");
+    loop {
+        if let Err(error) = file.write_all(b"held\n") {
+            say(&format!("holder write failed: {error}"));
+            return ExitCode::from(CHILD_FAILED);
+        }
+        thread::sleep(HOLD_PAUSE);
     }
 }
 

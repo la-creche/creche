@@ -184,9 +184,14 @@ pub fn session_disk(work: &Path) -> PathBuf {
 pub enum Standin {
     /// No mode file: the stand-in stays up.
     StaysUp,
-    /// Mode `exit-once`: the first start exits with status 3, and each
-    /// later start stays up.
+    /// Mode `exit-once`: the first start leaves a child in its process
+    /// group and exits with status 3. The next start writes whether that
+    /// child is gone, and each later start stays up.
     ExitsOnce,
+    /// Mode `holder`: the stand-in starts a child outside its process
+    /// group that holds a file of the session disk open for writing, and
+    /// stays up.
+    Holder,
 }
 
 /// The mode file of the stand-in on the root disk.
@@ -214,13 +219,15 @@ pub fn vm_with(work: &Path, env: &[u8], standin: Standin) -> Command {
     fs::write(tree.join("etc/creche/env"), env).unwrap();
     fs::create_dir_all(facade_dir).unwrap();
     fs::copy(files().join("standin_facade"), &facade).unwrap();
-    match standin {
-        Standin::StaysUp => {}
-        Standin::ExitsOnce => {
-            let mode = tree.join(STANDIN_MODE);
-            fs::create_dir_all(mode.parent().unwrap()).unwrap();
-            fs::write(mode, "exit-once\n").unwrap();
-        }
+    let mode = match standin {
+        Standin::StaysUp => None,
+        Standin::ExitsOnce => Some("exit-once\n"),
+        Standin::Holder => Some("holder\n"),
+    };
+    if let Some(mode) = mode {
+        let file = tree.join(STANDIN_MODE);
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(file, mode).unwrap();
     }
     let root = work.join("root.img");
     let session = session_disk(work);
@@ -404,4 +411,37 @@ pub fn exited(starts: u64) -> GuestEvent {
         last_turn_end: None,
         starts: StartCount::try_from(starts).unwrap(),
     }))
+}
+
+/// The session disk of `work` is clean after the VM: guest init synced
+/// it and remounted it read-only, so no journal waits for a replay, and
+/// `e2fsck -fn` finds no fault.
+pub fn assert_clean(work: &Path) {
+    let disk = session_disk(work);
+    let header = Command::new(DUMPE2FS)
+        .arg("-h")
+        .arg(&disk)
+        .output()
+        .unwrap();
+    let header = String::from_utf8_lossy(&header.stdout);
+    let field = |name: &str| {
+        header
+            .lines()
+            .find_map(|line| line.strip_prefix(name))
+            .map(str::trim)
+            .unwrap_or_else(|| panic!("no {name} in:\n{header}"))
+            .to_owned()
+    };
+    assert_eq!(field("Filesystem state:"), "clean");
+    assert!(
+        !field("Filesystem features:").contains("needs_recovery"),
+        "the journal waits for a replay"
+    );
+    let check = Command::new(E2FSCK).arg("-fn").arg(&disk).output().unwrap();
+    assert!(
+        check.status.success(),
+        "e2fsck -fn: {}{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
 }

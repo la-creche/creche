@@ -14,13 +14,11 @@
 mod common;
 
 use std::fs;
-use std::process::Command;
 use std::time::{Duration, Instant};
 
 use common::{
-    DUMPE2FS, E2FSCK, GOOD_ENV, IN_2030, SESSION, Standin, Vm, booted, booted_with, ch, dial,
-    exited, hello, lines, logged, now, session_disk, starting, vm_with_env, wait_for,
-    wait_for_exit, wait_for_line, work,
+    GOOD_ENV, IN_2030, SESSION, Standin, Vm, assert_clean, booted, booted_with, ch, dial, exited,
+    hello, lines, logged, now, starting, vm_with_env, wait_for, wait_for_exit, wait_for_line, work,
 };
 use creche_wire::guest::WORKSPACE;
 use creche_wire::{
@@ -266,33 +264,48 @@ fn kvm_guest_init_powers_off_on_stop() {
         );
     }
 
-    let disk = session_disk(&work);
-    let header = Command::new(DUMPE2FS)
-        .arg("-h")
-        .arg(&disk)
-        .output()
-        .unwrap();
-    let header = String::from_utf8_lossy(&header.stdout);
-    let field = |name: &str| {
-        header
-            .lines()
-            .find_map(|line| line.strip_prefix(name))
-            .map(str::trim)
-            .unwrap_or_else(|| panic!("no {name} in:\n{header}"))
-            .to_owned()
-    };
-    assert_eq!(field("Filesystem state:"), "clean");
+    assert_clean(&work);
+
+    drop(vm);
+    fs::remove_dir_all(&work).unwrap();
+}
+
+/// A process outside the facade group misses the SIGTERM of the stop
+/// and holds a file of the session disk open for writing. The power-off
+/// sends it SIGKILL and waits until it is gone, so the read-only remount
+/// passes and the session disk is clean (decision CH62 rule 9, the
+/// power-off wait gap of `AGENTS.md` Known gaps).
+#[test]
+#[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
+fn kvm_guest_init_kills_every_process_left_at_the_power_off() {
+    let (work, mut vm) = booted_with("kvm-guest-init-holder", Standin::Holder);
+    let serial = work.join("serial.log");
+    let mut link = dial(&work, GuestPort::Control);
+    let pid = starting(&hello(&mut link, now()));
+    wait_for_line(&mut vm, &serial, "standin: holder up");
+
+    link.send(&ControlCommand::Stop(ControlStop {}));
+    assert_eq!(link.event(), exited(1));
+    let status = wait_for_exit(&mut vm, &serial);
+    let log = lines(&serial).join("\n");
+    for line in [
+        format!("guest-init: facade pid {pid} exited: signal 15"),
+        "guest-init: every process killed".to_owned(),
+        "guest-init: session remounted ro".to_owned(),
+        "guest-init: power off".to_owned(),
+    ] {
+        assert!(
+            logged(&serial, &line),
+            "no {line} (CH {status}). Serial:\n{log}"
+        );
+    }
     assert!(
-        !field("Filesystem features:").contains("needs_recovery"),
-        "the journal waits for a replay"
+        !lines(&serial)
+            .iter()
+            .any(|line| line.starts_with("guest-init: processes left")),
+        "the power-off wait ran out. Serial:\n{log}"
     );
-    let check = Command::new(E2FSCK).arg("-fn").arg(&disk).output().unwrap();
-    assert!(
-        check.status.success(),
-        "e2fsck -fn: {}{}",
-        String::from_utf8_lossy(&check.stdout),
-        String::from_utf8_lossy(&check.stderr)
-    );
+    assert_clean(&work);
 
     drop(vm);
     fs::remove_dir_all(&work).unwrap();
@@ -336,7 +349,9 @@ fn kvm_guest_init_starts_the_facade_with_the_session_id() {
 
 /// An exited facade starts again after the restart pause, so the link gets
 /// `starting` 1, `exited` 1, then `starting` 2 with a new pid (decisions
-/// CH19 rule 1, CH43 rule 8, CH62 rule 8).
+/// CH19 rule 1, CH43 rule 8, CH62 rule 8). The child that the first start
+/// left in its process group gets SIGKILL before the second start (the
+/// process group gap of `AGENTS.md` Known gaps).
 #[test]
 #[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
 fn kvm_guest_init_restarts_an_exited_facade() {
@@ -356,7 +371,9 @@ fn kvm_guest_init_restarts_an_exited_facade() {
     let serial = work.join("serial.log");
     for line in [
         format!("guest-init: facade pid {first} exited: exit status 3"),
+        format!("guest-init: facade pid {first} sent SIGKILL"),
         format!("guest-init: facade pid {} started", second.pid),
+        "standin: first child gone".to_owned(),
         "standin: up".to_owned(),
     ] {
         wait_for_line(&mut vm, &serial, &line);

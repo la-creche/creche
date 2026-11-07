@@ -111,9 +111,13 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
 - `examples/standin_facade.rs` is the stand-in facade of the kvm tests,
   a test program in no release row (CH62 rule 12). It writes one line on
   stdout and its session id, env names and cwd on stderr. With the mode
-  `exit-once` in `/etc/creche-standin/mode`, its first start writes a
-  marker on the session disk and exits with status 3. Each other start
-  stays up until a signal ends it.
+  `exit-once` in `/etc/creche-standin/mode`, its first start leaves a
+  child in its process group, writes the child pid in a marker on the
+  session disk and exits with status 3. The next start writes whether
+  that child is gone. With the mode `holder`, it starts a child that
+  leaves its group with `setsid`, so the SIGTERM of the stop misses it,
+  and that child keeps a file of the session disk open for writing.
+  Each other start stays up until a signal ends it.
 
 ## Tests
 
