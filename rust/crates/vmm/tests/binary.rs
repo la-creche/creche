@@ -7,7 +7,7 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use creche_vmm::config::{BUDGET, CHAPERONE, GUEST_INIT, LITELLM, RAM_CAP, STATE_ROOT};
+use creche_vmm::config::{BUDGET, CHAPERONE, EGRESS_LOG, GUEST_INIT, LITELLM, RAM_CAP, STATE_ROOT};
 
 /// The exit status of a refused start.
 const EX_CONFIG: i32 = 78;
@@ -17,7 +17,7 @@ const TRUE: &str = "/usr/bin/true";
 
 /// Each key with a good value. The paths need not exist: the config
 /// checks their form only.
-const GOOD: [(&str, &str); 18] = [
+const GOOD: [(&str, &str); 19] = [
     ("VMM_STATE_ROOT", "/srv/vmm/state"),
     ("RUNTIME_DIRECTORY", "/run/user/1000/vmm"),
     ("VMM_FAMILY_ROOT", "/srv/families"),
@@ -39,6 +39,7 @@ const GOOD: [(&str, &str); 18] = [
     ("VMM_SNAPSHOT_BUDGET_GIB", "150"),
     ("VMM_LITELLM_ADDR", "192.0.2.10:4000"),
     ("VMM_CHAPERONE_ADDR", "192.0.2.10:8300"),
+    ("VMM_EGRESS_LOG", "/srv/vmm/egress.jsonl"),
 ];
 
 /// A scratch dir that its drop removes, also after a failed assert.
@@ -123,6 +124,35 @@ fn a_missing_plane_key_exits_78() {
         assert_eq!(output.status.code(), Some(EX_CONFIG));
         assert_eq!(stderr, format!("vmm: {key}: the key has no value\n"));
     }
+}
+
+/// Decisions CH59 rule 1 and CH69 rule 10: the vmm needs the path of the
+/// egress log, so an env with no `VMM_EGRESS_LOG` refuses the start.
+#[test]
+fn a_missing_egress_log_key_exits_78() {
+    let env: Vec<_> = GOOD
+        .iter()
+        .copied()
+        .filter(|one| one.0 != EGRESS_LOG)
+        .collect();
+    let (output, stderr) = serve(&env);
+    assert_eq!(output.status.code(), Some(EX_CONFIG));
+    assert_eq!(stderr, format!("vmm: {EGRESS_LOG}: the key has no value\n"));
+}
+
+/// The egress log is a path key: a relative path refuses the start.
+#[test]
+fn a_relative_egress_log_exits_78() {
+    let mut env = GOOD.to_vec();
+    for one in &mut env {
+        if one.0 == EGRESS_LOG {
+            one.1 = "egress.jsonl";
+        }
+    }
+    let (output, stderr) = serve(&env);
+    assert_eq!(output.status.code(), Some(EX_CONFIG));
+    let expected = format!("vmm: {EGRESS_LOG}: the key is not an absolute path\n");
+    assert_eq!(stderr, expected);
 }
 
 /// A good config on temp paths runs the leftover sweep (`true` lists no

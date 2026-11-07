@@ -20,6 +20,7 @@ use std::time::{Duration, Instant, SystemTime};
 use std::{fs, io};
 
 use creche_vmm::control::{ControlState, SYNC_WAIT};
+use creche_vmm::egress::log::Log;
 use creche_vmm::handlers::acp::{Acp, StartFault, StartVm};
 use creche_vmm::handlers::drop::{Drops, StopVm, VmStopFailed};
 use creche_vmm::planes::Upstreams;
@@ -62,6 +63,11 @@ const TURN: &str =
 const STARTING: &str = r#"{"facade":{"starting":{"last_turn_end":null,"pid":42,"starts":1}}}"#;
 /// As `READY`, with the end of a turn that the row has not seen.
 const ENDED: &str = r#"{"facade":{"running":{"last_turn_end":{"title":"First","updated_at":1793577700000},"pid":42,"starts":1,"turn_running":false}}}"#;
+/// The listeners at the launch of a family with no egress: 1100, 1101 and
+/// 1102, and no 1104.
+const NO_EGRESS: [bool; 4] = [true, true, true, false];
+/// The allowlist of a family with egress (decision CH49 rule 3).
+const EGRESS: &str = r#"{"hosts":[{"host":"github.com","port":443}]}"#;
 /// The plane of each bridge of a test that dials none: port 9 of
 /// 127.0.0.1, where nothing listens on a test host.
 const NO_PLANE: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 9);
@@ -136,12 +142,12 @@ struct Fake {
     guest: Mutex<Guest>,
     /// Adds `--net` to each command line file.
     net: AtomicBool,
-    /// Adds a `vsock.sock_1103` listener to each run dir, a port that the
-    /// vmm does not bind.
-    extra: AtomicBool,
-    /// For each launch: whether a dial of 1100, 1101 and 1102 connected
-    /// at the launch, before CH would start.
-    listening: Mutex<Vec<[bool; 3]>>,
+    /// Adds a `vsock.sock_<port>` listener of this port to each run dir,
+    /// a port that the vmm does not bind.
+    extra: Mutex<Option<u32>>,
+    /// For each launch: whether a dial of 1100, 1101, 1102 and 1104
+    /// connected at the launch, before CH would start.
+    listening: Mutex<Vec<[bool; 4]>>,
     /// Fails each launch.
     fail: AtomicBool,
     /// Holds each launch until the test clears it.
@@ -189,13 +195,13 @@ impl Fake {
             args.push("--net".to_owned());
         }
         let run = launch.files().run_dir().path();
-        let listening = [1100, 1101, 1102].map(|port| {
+        let listening = [1100, 1101, 1102, 1104].map(|port| {
             let listener = run.join(format!("vsock.sock_{port}"));
             UnixStream::connect(listener).is_ok()
         });
         self.listening.lock().unwrap().push(listening);
-        if self.extra.load(Ordering::SeqCst) {
-            UnixListener::bind(run.join("vsock.sock_1103")).unwrap();
+        if let Some(port) = *self.extra.lock().unwrap() {
+            UnixListener::bind(run.join(format!("vsock.sock_{port}"))).unwrap();
         }
         let listener = UnixListener::bind(run.join("vsock.sock")).unwrap();
         let guest = *self.guest.lock().unwrap();
@@ -449,6 +455,7 @@ impl Test {
                 litellm: NO_PLANE,
                 chaperone: NO_PLANE,
             },
+            egress_log: Arc::new(Log::open(dir.join("egress.jsonl")).unwrap()),
         };
         edit(&mut config);
 
@@ -459,7 +466,7 @@ impl Test {
             dir: dir.clone(),
             guest: Mutex::new(Guest::Ready),
             net: AtomicBool::new(false),
-            extra: AtomicBool::new(false),
+            extra: Mutex::new(None),
             listening: Mutex::default(),
             fail: AtomicBool::new(false),
             hold: AtomicBool::new(false),
@@ -2324,13 +2331,14 @@ fn a_stale_link_to_a_held_slot_removes_nothing_of_its_vm() {
 
 /// Plan PRs V6 and V8: the listeners of host ports 1100, 1101 and 1102
 /// take a dial at the launch, before CH starts (decisions CH6-2, CH56
-/// rule 1).
+/// rule 1). A family with no `egress.json` gets no 1104 (decision CH69
+/// rule 3).
 #[test]
 fn listeners_exist_before_the_boot() {
     let test = Test::new("planes-boot", |_| {});
     assert_eq!(test.start(0), Ok(()));
     assert!(!test.restored(0));
-    assert_eq!(*test.fake.listening.lock().unwrap(), [[true; 3]]);
+    assert_eq!(*test.fake.listening.lock().unwrap(), [NO_EGRESS]);
 }
 
 /// A restore empties the slot and binds each listener again before CH
@@ -2346,7 +2354,7 @@ fn a_restore_binds_the_listeners_again() {
     test.reply(0, "Paused", &[]);
     assert_eq!(test.start(0), Ok(()));
     assert!(test.restored(1));
-    assert_eq!(*test.fake.listening.lock().unwrap(), [[true; 3]; 2]);
+    assert_eq!(*test.fake.listening.lock().unwrap(), [NO_EGRESS; 2]);
 }
 
 /// A dial of 1101 reaches the plane of the config while the VM runs. The
@@ -2399,29 +2407,96 @@ fn the_listeners_go_with_the_vm() {
     }
 }
 
-/// The deny check takes 1100, 1101 and 1102 as the bound set: a start
-/// with the three listeners passes. A listener of a port that the vmm did
-/// not bind fails the check with `egress_assert_failed`, and the VM stops
-/// (decisions CH6-3, CH14, CH49 rule 3, plan PR V8).
-#[test]
-fn the_egress_check_names_1100_1101_and_1102() {
-    let test = Test::new("planes-deny", |_| {});
-    assert_eq!(test.start(0), Ok(()));
-    let mut listeners: Vec<String> = fs::read_dir(test.dir.join("run/slot/0"))
+/// The names of the host listeners in the run dir of row `index`.
+#[cfg(test)]
+fn listeners(test: &Test, index: usize) -> Vec<String> {
+    let id = &test.rows[index].id;
+    let mut listeners: Vec<String> = fs::read_dir(test.dir.join(format!("run/vm/{id}")))
         .unwrap()
         .map(|entry| entry.unwrap().file_name().into_string().unwrap())
         .filter(|name| name.starts_with("vsock.sock_"))
         .collect();
     listeners.sort();
+    listeners
+}
+
+/// The deny check of a family with no egress names 1100, 1101 and 1102
+/// (decision CH6-3), and an unbound listener fails it (PR C8).
+#[test]
+fn the_egress_check_names_the_planes_for_a_family_with_no_egress() {
+    let test = Test::new("planes-deny", |_| {});
+    assert_eq!(test.start(0), Ok(()));
     assert_eq!(
-        listeners,
+        listeners(&test, 0),
         ["vsock.sock_1100", "vsock.sock_1101", "vsock.sock_1102"]
     );
 
-    test.fake.extra.store(true, Ordering::SeqCst);
+    *test.fake.extra.lock().unwrap() = Some(1103);
     assert_eq!(test.start(1), Err(StartFault::EgressAssertFailed));
     assert_eq!(test.fault_codes(), ["egress_assert_failed"]);
     assert!(test.stopped(1));
+}
+
+/// A family whose `egress.json` lists a host gets 1104 at the launch, and
+/// the deny check names it (plan PR E2, decision CH49 rule 3).
+#[test]
+fn the_egress_check_names_1104_for_a_family_with_egress() {
+    let test = Test::new("egress-deny", |_| {});
+    fs::write(test.dir.join("families/chat/egress.json"), EGRESS).unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    assert_eq!(*test.fake.listening.lock().unwrap(), [[true; 4]]);
+    assert_eq!(
+        listeners(&test, 0),
+        [
+            "vsock.sock_1100",
+            "vsock.sock_1101",
+            "vsock.sock_1102",
+            "vsock.sock_1104"
+        ]
+    );
+    assert!(test.fault_codes().is_empty());
+}
+
+/// A list that does not read allows nothing, so it binds no 1104, as an
+/// empty list (decisions CH49 rule 3, CH70 rules 1 and 2).
+#[test]
+fn a_bad_or_empty_list_binds_no_1104() {
+    let test = Test::new("egress-none", |_| {});
+    let file = test.dir.join("families/chat/egress.json");
+    fs::write(&file, r#"{"hosts":[]}"#).unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    fs::write(&file, "{").unwrap();
+    assert_eq!(test.start(1), Ok(()));
+    assert_eq!(*test.fake.listening.lock().unwrap(), [NO_EGRESS; 2]);
+    assert!(test.fault_codes().is_empty());
+}
+
+/// A restore binds 1104 again before CH starts, as each plane listener
+/// (decisions CH49 rule 3, CH62 rule 14).
+#[test]
+fn a_restore_binds_1104_again() {
+    let test = Test::new("egress-restore", |_| {});
+    fs::write(test.dir.join("families/chat/egress.json"), EGRESS).unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    let id = test.rows[0].id.clone();
+    assert!(test.runtime.block_on(test.hook.stop(&id)).is_ok());
+    test.snapshot(0, Some(&test.key()));
+    test.reply(0, "Paused", &[]);
+    assert_eq!(test.start(0), Ok(()));
+    assert!(test.restored(1));
+    assert_eq!(*test.fake.listening.lock().unwrap(), [[true; 4]; 2]);
+}
+
+/// A 1104 listener in the run dir of a family with no egress is a port
+/// that the vmm did not bind, so the deny check fails and the VM stops
+/// (decisions CH6-3, CH49 rule 3).
+#[test]
+fn an_extra_1104_listener_for_a_family_with_no_egress_fails() {
+    let test = Test::new("egress-extra", |_| {});
+    *test.fake.extra.lock().unwrap() = Some(1104);
+    assert_eq!(test.start(0), Err(StartFault::EgressAssertFailed));
+    assert_eq!(test.fault_codes(), ["egress_assert_failed"]);
+    assert!(test.stopped(0));
 }
 
 /// `creds.json` of the family `chat`, as caregiver writes it.

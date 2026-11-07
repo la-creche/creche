@@ -1,8 +1,8 @@
 //! The program `vmm` (decision CH7-5). The one argument picks the mode:
 //!
 //! - `vmm serve` reads its config from the env (`creche_vmm::config`),
-//!   raises its soft `RLIMIT_NOFILE` to `planes::fd_need` plus
-//!   `family_state::fd_need` and runs the vmm on the multi-thread tokio
+//!   raises its soft `RLIMIT_NOFILE` to the sum of `planes::fd_need`,
+//!   `family_state::fd_need` and `egress::proxy::fd_need` and runs the vmm on the multi-thread tokio
 //!   runtime until SIGTERM. A missing or bad
 //!   key, a hard fd limit below the need, or a failed start step, exits
 //!   78. The end of a shutdown exits 0.
@@ -28,6 +28,7 @@ use std::fmt;
 use std::process::ExitCode;
 
 use creche_vmm::config::{Config, KillScopesConfig};
+use creche_vmm::egress::proxy;
 use creche_vmm::shutdown::RUNTIME_END;
 use creche_vmm::{family_state, planes};
 use creche_vmm_confine::{launch, leftovers, nofile, stage};
@@ -120,9 +121,12 @@ fn serve() -> ExitCode {
         Err(error) => return refuse(&error),
     };
     // Before any fd of a VM: the soft limit of systemd (1024) holds the
-    // bridges and family-state links of a few busy guests only (decision
-    // CH67 rule 4 for the bridges, plus the 1100 links by CH68 rule 2).
-    let need = planes::fd_need().saturating_add(family_state::fd_need());
+    // bridges, family-state links and proxy links of a few busy guests
+    // only (decision CH67 rule 4 for the bridges, plus the 1100 links by
+    // CH68 rule 2 and the 1104 links by CH69 rule 14).
+    let need = planes::fd_need()
+        .saturating_add(family_state::fd_need())
+        .saturating_add(proxy::fd_need());
     if let Err(error) = nofile::raise(need) {
         return refuse(&error);
     }

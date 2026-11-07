@@ -23,8 +23,8 @@
 //!    The VM entry of the start table holds it, so the bridges go with the
 //!    VM.
 //!
-//! Host port 1104 waits for phase 7 (decision CH49 rule 3), and 1100 for
-//! plan PR V8.
+//! Host port 1100 is `family_state` (plan PR V8), and 1104 is
+//! `egress::proxy` (plan PR E2, decision CH49 rule 3).
 
 use std::fmt;
 use std::future::poll_fn;

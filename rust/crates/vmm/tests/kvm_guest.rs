@@ -596,6 +596,7 @@ fn kvm_phase3_pulls_sleeps_restores_and_stops() {
         (config::CH, PathBuf::from(CH_BINARY)),
         (config::CH_REMOTE, ch_remote),
         (config::GUEST_INIT, guest_init),
+        (config::EGRESS_LOG, work.join("egress.jsonl")),
     ];
     let mut env: Vec<(&str, &OsStr)> = paths
         .iter()

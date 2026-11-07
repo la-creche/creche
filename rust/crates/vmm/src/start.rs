@@ -17,7 +17,8 @@
 //!    here (decision CH60 rule 1). Then the stale sockets go (PR D1,
 //!    decision CH19 (4)), the plane listeners bind (plan PR V6, decision
 //!    CH6-2) and so does the family-state listener (plan PR V8, decision
-//!    CH5a), the kernel, the initramfs and the root disk
+//!    CH5a). The egress proxy listener binds when `egress.json` of the
+//!    family lists a host (plan PR E2, decision CH49 rule 3). Then the kernel, the initramfs and the root disk
 //!    pass the store check (PR D6, decision CH44 rule 2), the session disk exists (PR D7, decision
 //!    CH21-4), the run dir `vm/<id>/` links to the slot of the start (PR
 //!    D16), `snapshots/` exists, and `sessions/<id>/serial.log` in the
@@ -26,14 +27,16 @@
 //!    restore or a cold boot. Then the launch step starts CH in its slot
 //!    (PR C18) with the argv of PR C7 and the sizes of PR C4 under the
 //!    ruleset of PR C6 (PR C2, decisions CH8-3, CH8-5, CH8-8, CH30, CH55).
-//! 4. The plane bridges serve their listeners (`planes`), and the
-//!    family-state reply serves its own (`family_state`). A restore
+//! 4. The plane bridges serve their listeners (`planes`), the
+//!    family-state reply serves its own (`family_state`), and so does the
+//!    egress proxy (`egress::proxy`). A restore
 //!    only: `ch-remote info` must say `Paused`, the device check passes,
 //!    then `ch-remote resume` (decision CH50 rule 10).
 //! 5. The first `ControlReady` (plan PR L10). It clears the faults of the
 //!    family (contract 05 §3.3.1 rule 8).
-//! 6. The deny check (PR C8, decision CH6-3), with the family-state port
-//!    and the plane ports as the bound set.
+//! 6. The deny check (PR C8, decision CH6-3), with the family-state port,
+//!    the plane ports and the egress port, when it is bound, as the bound
+//!    set (decision CH49 rule 3).
 //! 7. The dial of guest port 1201 (decision CH50 rule 2).
 //!
 //! Each fault but `host_full` goes to the fault file of the family
@@ -95,6 +98,8 @@ use crate::control::{
     Change, ControlError, ControlLink, ControlState, DIAL_PAUSE, EventEnd, GuestEvents, LinkId,
     READY_WAIT, SYNC_WAIT, StopSender, open, wall_time,
 };
+use crate::egress::log::Log;
+use crate::egress::proxy;
 use crate::family_state::{self, Server};
 use crate::handlers::acp::{StartFault, StartVm};
 use crate::handlers::drop::{StopVm, VmStopFailed};
@@ -166,6 +171,9 @@ pub struct StartConfig {
     /// The address of each plane that the bridges of each VM splice to
     /// (decisions CH6-2, CH62 rule 20).
     pub planes: Upstreams,
+    /// The JSONL log of the egress proxy of every VM (decision CH69 rule
+    /// 10). The compose step opens it at the start of `vmm serve`.
+    pub egress_log: Arc<Log>,
 }
 
 /// The start of a launch step. `Spawner` is the one of the vmm, and a
@@ -224,12 +232,14 @@ struct Vm<P> {
     last_use: Instant,
 }
 
-/// The served host listeners of one VM: the plane bridges (plan PR V6)
-/// and the family-state reply (plan PR V8). The drop closes each one.
+/// The served host listeners of one VM: the plane bridges (plan PR V6),
+/// the family-state reply (plan PR V8) and the egress proxy of a family
+/// with a list (plan PR E2). The drop closes each one.
 #[derive(Debug)]
 struct Listeners {
     _planes: Planes,
     _family_state: Server,
+    _egress: Option<proxy::Server>,
 }
 
 /// What the table holds for a session. Each entry holds its pool slot
@@ -1459,6 +1469,9 @@ struct Booted<P> {
     planes: Bound,
     /// The family-state listener, bound before CH started.
     family_state: family_state::Bound,
+    /// The egress proxy listener, bound before CH started for a family
+    /// whose list holds a host (decision CH49 rule 3).
+    egress: Option<proxy::Bound>,
 }
 
 /// Step 3: the link of `vm/<id>` to `slot`, the files of the boot, the
@@ -1468,7 +1481,7 @@ fn launch<L: Launcher>(
     launcher: &L,
     locks: (&Mutex<()>, &Mutex<InUse>),
     (id, slot): (&SessionId, PoolSlot),
-    shape: FamilyShape,
+    (family, shape): (&FamilyName, FamilyShape),
 ) -> Result<Booted<L::Process>, String> {
     // Decision CH60 rule 1: with no vmm unit to bind the scope to, the
     // launch stops here and touches no file.
@@ -1490,6 +1503,12 @@ fn launch<L: Launcher>(
     // Plan PR V8: the family-state listener has the same lifecycle.
     let family_state =
         family_state::bind(&run).map_err(|error| format!("{error}: {}", error.source))?;
+    let egress = if lists_a_host(config, family) {
+        let bound = proxy::bind(&run).map_err(|error| format!("{error}: {}", error.source))?;
+        Some(bound)
+    } else {
+        None
+    };
     let checked = |digest| {
         config
             .images
@@ -1564,7 +1583,24 @@ fn launch<L: Launcher>(
         restore,
         planes,
         family_state,
+        egress,
     })
+}
+
+/// Whether the allowlist of `family` holds a host, so the VM gets the
+/// egress proxy listener (decision CH49 rule 3). It blocks.
+// Decision CH70 rules 1 and 2: a list that does not read allows nothing,
+// so it binds no listener, as an empty list. The guest dial of 1104 then
+// fails closed (decision CH46 rule 1). One stderr line names the fault,
+// once per start. The next start reads the file again.
+fn lists_a_host(config: &StartConfig, family: &FamilyName) -> bool {
+    match config.families.read_egress(family) {
+        Ok(list) => !list.hosts.is_empty(),
+        Err(fault) => {
+            eprintln!("vmm: {family}: egress.json is not_valid, so no egress: {fault:?}");
+            false
+        }
+    }
 }
 
 impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
@@ -1599,12 +1635,13 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
             return Err(StartFault::HostFull);
         }
 
-        let (config, launcher, claims, in_use, session) = (
+        let (config, launcher, claims, in_use, session, name) = (
             Arc::clone(&self.config),
             Arc::clone(&self.launcher),
             Arc::clone(&self.claims),
             Arc::clone(&self.in_use),
             id.clone(),
+            family.clone(),
         );
         // The process goes into `pending` inside the closure. hyper drops
         // this future when the client hangs up before 101, and the blocking
@@ -1615,7 +1652,7 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         let slot = pending.slot;
         let launched = blocking(move || {
             let locks = (&*claims, &*in_use);
-            let booted = launch::<L>(&config, &*launcher, locks, (&session, slot), shape)?;
+            let booted = launch::<L>(&config, &*launcher, locks, (&session, slot), (&name, shape))?;
             let cmdline = launcher.cmdline(&booted.process);
             pending.process = Some(booted.process);
             pending.key = Some(booted.key);
@@ -1624,7 +1661,7 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
                 booted.start,
                 booted.restore,
                 cmdline,
-                (booted.planes, booted.family_state),
+                (booted.planes, booted.family_state, booted.egress),
             ))
         })
         .await;
@@ -1636,14 +1673,22 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         let vsock = pending.run.vsock_socket();
         let link = self.control().replace(id);
         // A fault from here on drops `listeners`, which closes the
-        // bridges and the family-state listener.
-        let (planes, state) = bound;
-        let families = self.config.families.clone();
+        // bridges, the family-state listener and the egress proxy.
+        let (planes, state, egress) = bound;
+        // Decision CH49 rule 3: the bound set of the deny check follows the
+        // listener that the launch bound from the list.
+        let proxied = egress.is_some();
+        let families = &self.config.families;
         let served = planes.serve().and_then(|planes| {
-            let family_state = state.serve(families, family.clone(), id.clone())?;
+            let family_state = state.serve(families.clone(), family.clone(), id.clone())?;
+            let log = Arc::clone(&self.config.egress_log);
+            let egress = egress
+                .map(|bound| bound.serve(families.clone(), family.clone(), id.clone(), log))
+                .transpose()?;
             Ok(Listeners {
                 _planes: planes,
                 _family_state: family_state,
+                _egress: egress,
             })
         });
         let listeners = match served {
@@ -1678,12 +1723,15 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         // command line is the one of the launch step, and the check fails
         // closed (`deny::check`). The kernel fixes the command line at
         // exec, so a check after `ControlReady` proves the same thing.
-        // The bound set is the family-state port 1100 (plan PR V8) and the
-        // plane ports 1101 and 1102 (plan PR V6). Decision CH49 rule 3
-        // binds 1104 from phase 7 on.
+        // The bound set is the family-state port 1100 (plan PR V8), the
+        // plane ports 1101 and 1102 (plan PR V6), and 1104 for a family
+        // whose list holds a host (plan PR E2, decision CH49 rule 3).
         let (ch, run) = (self.config.ch.clone(), pending.run.clone());
         let [litellm, chaperone] = self.config.planes.rows().map(|(port, _)| port);
-        let ports = [HostPort::FamilyState, litellm, chaperone];
+        let mut ports = vec![HostPort::FamilyState, litellm, chaperone];
+        if proxied {
+            ports.push(HostPort::Egress);
+        }
         let denied = blocking(move || {
             check(&cmdline, &ch, &start, &run, &ports).map_err(|error| error.to_string())
         })

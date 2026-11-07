@@ -388,8 +388,9 @@ impl Relay for AcpRelay {
     }
 }
 
-/// Both directions of one byte copy. The ACP relay and the plane bridges
-/// (`crate::planes`) carry their bytes with it.
+/// Both directions of one byte copy. The ACP relay, the plane bridges
+/// (`crate::planes`) and the egress proxy (`crate::egress::proxy`) carry
+/// their bytes with it.
 #[derive(Debug)]
 pub(crate) struct Splice {
     /// From the near stream to the far one.
@@ -432,6 +433,12 @@ impl Splice {
             _ => Poll::Pending,
         }
     }
+
+    /// The bytes that reached `far` and the bytes that reached `near` so
+    /// far. The egress log writes both (decision CH69 rule 10).
+    pub(crate) fn carried(&self) -> (u64, u64) {
+        (self.up.carried, self.down.carried)
+    }
 }
 
 /// How one direction of the relay ended.
@@ -455,6 +462,8 @@ struct Pipe {
     closed: bool,
     /// The write half of the sink is shut down.
     shut: bool,
+    /// The bytes written to the sink.
+    carried: u64,
 }
 
 impl Pipe {
@@ -468,6 +477,7 @@ impl Pipe {
             end,
             closed: false,
             shut: false,
+            carried: 0,
         }
     }
 
@@ -490,7 +500,11 @@ impl Pipe {
             {
                 match Pin::new(&mut *to).poll_write(context, bytes) {
                     Poll::Ready(Ok(0) | Err(_)) => return Poll::Ready(Carried::Failed),
-                    Poll::Ready(Ok(written)) => self.start = self.start.saturating_add(written),
+                    Poll::Ready(Ok(written)) => {
+                        self.start = self.start.saturating_add(written);
+                        let written = u64::try_from(written).unwrap_or(u64::MAX);
+                        self.carried = self.carried.saturating_add(written);
+                    }
                     Poll::Pending => return Poll::Pending,
                 }
                 continue;

@@ -15,7 +15,8 @@
 //!    guest init program into the one initramfs of this vmm start, in the
 //!    digest store, and each VM start names it (decisions CH62 rules 17
 //!    and 18). Then the fault book starts, which clears every fault file
-//!    (contract 05 §3.3.1 rule 8), and the rows load.
+//!    (contract 05 §3.3.1 rule 8), the rows load, and the egress log
+//!    opens (decision CH69 rule 10).
 //! 3. The store, the confine parts and `ColdBoot` from the config. One
 //!    `ColdBoot` is the `StartVm` hook, the `StopVm` hook, the `VmSet`
 //!    and the `Sleeper` of the vmm.
@@ -58,8 +59,9 @@ use tokio::task::{JoinHandle, spawn_blocking};
 use tokio::time::{MissedTickBehavior, interval};
 
 use crate::ServeError;
-use crate::config::{CH, CH_REMOTE, Config};
+use crate::config::{CH, CH_REMOTE, Config, EGRESS_LOG};
 use crate::control::ControlState;
+use crate::egress::log::Log;
 use crate::guest_init::{GuestInitError, write_initramfs};
 use crate::handlers::acp::{Acp, StartFault, StartVm};
 use crate::handlers::check::Checks;
@@ -105,6 +107,9 @@ pub enum StartError {
     Faults(io::Error),
     /// The rows did not load.
     Rows(LoadError),
+    /// The egress log of `VMM_EGRESS_LOG` did not open (decision CH69
+    /// rule 10).
+    EgressLog(io::Error),
     /// The spawner thread did not start.
     Spawner(io::Error),
     /// A blocking step of the start panicked.
@@ -125,6 +130,9 @@ impl fmt::Display for StartError {
             Self::GuestInit(error) => write!(formatter, "{error}"),
             Self::Faults(error) => write!(formatter, "cannot start the fault book: {error}"),
             Self::Rows(error) => write!(formatter, "cannot load the rows: {error:?}"),
+            Self::EgressLog(error) => {
+                write!(formatter, "{EGRESS_LOG}: cannot open the log: {error}")
+            }
             Self::Spawner(error) => write!(formatter, "cannot start the spawner: {error}"),
             Self::Panicked => formatter.write_str("a start step panicked"),
             Self::Serve(error) => write!(formatter, "{error}"),
@@ -289,6 +297,7 @@ fn parts(config: Config, checked: Checked) -> Result<Vmm, StartError> {
     let faults = Arc::new(Mutex::new(faults));
     let rows = Rows::open(config.state.clone()).map_err(StartError::Rows)?;
     let rows = Arc::new(Mutex::new(rows));
+    let egress_log = Log::open(config.egress_log.clone()).map_err(StartError::EgressLog)?;
     let spawner = Spawner::start(PathBuf::from(SELF_EXE)).map_err(StartError::Spawner)?;
 
     let remote = || ChRemote::new(config.ch_remote.path().to_owned());
@@ -318,6 +327,7 @@ fn parts(config: Config, checked: Checked) -> Result<Vmm, StartError> {
         budget: config.budget,
         ch_version,
         planes: config.planes,
+        egress_log: Arc::new(egress_log),
     };
     let relays = Relays::default();
     let control = Arc::new(Mutex::new(ControlState::default()));

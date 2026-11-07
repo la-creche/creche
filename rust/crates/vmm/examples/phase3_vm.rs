@@ -43,6 +43,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use creche_vmm::config::{CH, CH_REMOTE, Config};
 use creche_vmm::control::ControlState;
+use creche_vmm::egress::log::Log;
 use creche_vmm::guest_init::write_initramfs;
 use creche_vmm::handlers::acp::StartVm as _;
 use creche_vmm::handlers::drop::StopVm as _;
@@ -146,6 +147,7 @@ fn serve(version: &Path, session: &OsString, family: &OsString) -> Result<(), Fa
         budget: config.budget,
         ch_version,
         planes: config.planes,
+        egress_log: Arc::new(Log::open(config.egress_log)?),
     };
     let control = Arc::new(Mutex::new(ControlState::default()));
     let hook = ColdBoot::new(

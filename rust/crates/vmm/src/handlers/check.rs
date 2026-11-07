@@ -7,8 +7,8 @@ use creche_vmm_confine::family::FamilyRoot;
 use creche_wire::{
     CheckError, CheckReason, CheckRefused, CheckReply, CheckRequest, CheckRoute, Serve,
 };
-use tokio::task::spawn_blocking;
 
+use crate::egress::read_list;
 use crate::egress::rule::{Target, decide};
 
 /// The handler of `check`. It reads caregiver's families dir.
@@ -31,17 +31,16 @@ impl Serve<CheckRoute> for Checks {
     /// An unknown family or an absent `egress.json` has an empty list, so
     /// the answer is `not_listed` (decision CH69 rule 3). A file that is
     /// present and does not read is `not_valid` (decision CH70 rule 2).
-    /// The file read blocks, so it runs in `spawn_blocking` (decision CH36
-    /// G21). The lookup runs off the runtime in tokio.
+    /// The proxy reads the file through the same `read_list`. The lookup
+    /// runs off the runtime in tokio.
     async fn serve(&self, request: CheckRequest) -> Result<CheckReply, CheckError> {
         let target = match Target::parse(&request.target) {
             Ok(target) => target,
             Err(reason) => return Ok(CheckReply::Refused(CheckRefused { reason })),
         };
-        let (families, family) = (self.families.clone(), request.family.clone());
-        let read = spawn_blocking(move || families.read_egress(&family))
+        let read = read_list(&self.families, &request.family)
             .await
-            .map_err(|_| CheckError::Internal {})?;
+            .ok_or(CheckError::Internal {})?;
         // Decision CH70 rule 2: an `egress.json` that is present and does
         // not read is the refusal `not_valid`, not a route error. It allows
         // nothing, and the log line names the same reason as the reply.
