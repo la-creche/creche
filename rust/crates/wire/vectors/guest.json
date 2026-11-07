@@ -6,6 +6,8 @@
   "local_link_socket": "/run/creche/guest-init.sock",
   "family_state_socket": "/run/creche/family-state.sock",
   "family_state_cap": 262144,
+  "control_line_cap": 65536,
+  "facade_stop_wait_ms": 25000,
   "relay_socket": "/tmp/creche-facade/acp.sock",
   "litellm_port": 4000,
   "chaperone_port": 8300,

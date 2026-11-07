@@ -65,6 +65,7 @@ function supervise(dir: string = controlDir()): Run {
       deadlineMs: DEADLINE_MS,
       serve: async () => ({ ok: true, serving: { runtime: { stop: async () => void events.push("stop") }, sessions: null } }),
       socketPath: null,
+      link: null,
     });
   });
 

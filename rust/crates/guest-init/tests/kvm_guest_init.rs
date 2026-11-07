@@ -1,8 +1,10 @@
 //! The kvm_ tests of guest init as PID 1 (decisions CH9, CH62 rules 4,
 //! 7, 19, 25 and 26), of control link 1200 (decisions CH13, CH19, CH28,
 //! CH32), of the facade supervisor (decisions CH19 rule 1, CH62 rules
-//! 6, 8, 9 and 12) and of the local link (decisions CH21, CH32 rules 6
-//! and 7, CH62 rules 10 and 11). CH boots the guest kernel with the `guest-init.cpio`
+//! 6, 8, 9 and 12), of the local link (decisions CH21, CH32 rules 6
+//! and 7, CH62 rules 10 and 11), of the 1201 splice (decisions CH13,
+//! CH50 rule 2, CH62 rules 14 and 16) and of the host rows (decisions
+//! CH6-2, CH14, CH62 rules 13 and 14). CH boots the guest kernel with the `guest-init.cpio`
 //! of `bin/vm-smoke-setup.sh` and the disks that each test builds, with
 //! the stand-in facade of the script on the root disk. The test runs CH
 //! directly, with no vmm, and speaks the link itself.
@@ -15,19 +17,22 @@
 mod common;
 
 use std::fs;
+use std::io::{BufRead as _, BufReader, Write as _};
 use std::num::NonZeroU32;
+use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use common::{
-    GOOD_ENV, IN_2030, Link, SESSION, Standin, Vm, assert_clean, booted, booted_with, ch, dial,
-    exited, exited_after, hello, lines, logged, now, running, standin_turn_end, starting,
+    BOOT, DEBUGFS, E2FSCK, GOOD_ENV, IN_2030, Link, SESSION, STANDIN_MARKERS, Standin, Vm,
+    answer_get, assert_clean, booted, booted_with, ch, dial, exited, exited_after, hello, lines,
+    listen_host, logged, now, pulled, running, session_disk, standin_turn_end, starting,
     vm_with_env, wait_for, wait_for_exit, wait_for_line, work,
 };
-use creche_wire::guest::WORKSPACE;
+use creche_wire::guest::{CHAPERONE_PORT, LITELLM_PORT, WORKSPACE};
 use creche_wire::{
-    ControlCommand, ControlStop, ControlSync, ControlSynced, FacadeState, GuestEvent, GuestPort,
-    TurnEvent, TurnStart,
+    ControlCommand, ControlStop, ControlSync, ControlSynced, CredsMissing, FacadeState,
+    FamilyStatePull, FamilyStateReply, GuestEvent, GuestPort, HostPort, TurnEvent, TurnStart,
 };
 
 /// With no disk, the root mount fails. Guest init names it on the console
@@ -206,8 +211,9 @@ fn kvm_a_new_control_link_replaces_the_old_one() {
 
 /// A sync gets `synced` on the same link, after guest init ran `syncfs`
 /// of the session disk and `sync` (decision CH62 rule 23). The link stays
-/// ready, so a second sync gets a second `synced`. Plan PR G8 proves that
-/// the writes reach the disk.
+/// ready, so a second sync gets a second `synced`.
+/// `kvm_guest_init_synced_writes_survive_a_ch_kill` proves that the
+/// writes reach the disk.
 #[test]
 #[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
 fn kvm_guest_init_answers_sync_with_synced() {
@@ -621,6 +627,235 @@ fn kvm_guest_init_kills_the_facade_when_its_local_link_closes() {
             &format!("guest-init: facade pid {pid} sent SIGTERM")
         ),
         "the close sent SIGTERM"
+    );
+
+    drop(vm);
+    fs::remove_dir_all(&work).unwrap();
+}
+
+/// Guest init accepts a 1201 link before the first hello, so before any
+/// facade runs. The link waits for the relay socket, which the stand-in
+/// opens 2 s after its start, and the `ping` sent first gets the `pong`
+/// of the facade inside the 10 s bound (decisions CH13, CH50 rule 2, CH62
+/// rule 16). The close of that link ends only its relay connection: the
+/// facade keeps running, and a new 1201 link reaches the same pid
+/// (decision CH19 rule 1, fact 74).
+#[test]
+#[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
+fn kvm_guest_init_accepts_1201_before_the_facade_runs() {
+    let (work, mut vm) = booted_with("kvm-guest-init-relay", Standin::Relay);
+    let serial = work.join("serial.log");
+    let mut acp = dial(&work, GuestPort::Acp);
+    let dialed = Instant::now();
+    acp.write(b"ping\n");
+    wait_for_line(&mut vm, &serial, "guest-init: acp link 1 open");
+
+    let mut link = dial(&work, GuestPort::Control);
+    let pid = starting(&hello(&mut link, now()));
+    assert_eq!(acp.line(), Some(format!("pong {pid}")));
+    assert!(
+        dialed.elapsed() < Duration::from_secs(10),
+        "the pong came after {:?}",
+        dialed.elapsed()
+    );
+    wait_for_line(&mut vm, &serial, "standin: relay listening");
+    wait_for_line(&mut vm, &serial, "guest-init: acp link 1 relay connected");
+
+    drop(acp);
+    wait_for_line(&mut vm, &serial, "standin: relay link ended");
+    wait_for_line(&mut vm, &serial, "guest-init: acp link 1 closed");
+    let mut next = dial(&work, GuestPort::Acp);
+    next.write(b"ping\n");
+    assert_eq!(next.line(), Some(format!("pong {pid}")));
+    let exit = format!("guest-init: facade pid {pid} exited");
+    assert!(
+        !lines(&serial).iter().any(|line| line.starts_with(&exit)),
+        "the facade exited"
+    );
+
+    drop(vm);
+    fs::remove_dir_all(&work).unwrap();
+}
+
+/// The stand-in writes three markers on the session disk. The test sends
+/// `sync`, reads `synced` and kills CH with SIGKILL within 1 s, as a host
+/// crash would. Each marker is on the disk (decision CH62 rule 23, plan
+/// item 5.7). The guest `dirty_expire` default is 30 s, so with no sync
+/// the markers are lost in almost every run (plan risk 7).
+#[test]
+#[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
+fn kvm_guest_init_synced_writes_survive_a_ch_kill() {
+    let (work, mut vm) = booted_with("kvm-guest-init-markers", Standin::Markers);
+    let serial = work.join("serial.log");
+    let mut link = dial(&work, GuestPort::Control);
+    starting(&hello(&mut link, now()));
+    wait_for_line(&mut vm, &serial, "standin: markers written");
+
+    link.send(&ControlCommand::Sync(ControlSync {}));
+    assert_eq!(link.event(), GuestEvent::Synced(ControlSynced {}));
+    let synced = Instant::now();
+    vm.0.kill().unwrap();
+    vm.0.wait().unwrap();
+    assert!(
+        synced.elapsed() < Duration::from_secs(1),
+        "CH died {:?} after the synced",
+        synced.elapsed()
+    );
+
+    // The kill leaves the journal as a crash does, and debugfs reads no
+    // journal. e2fsck replays it, as the next mount of the vmm would.
+    let disk = session_disk(&work);
+    let check = Command::new(E2FSCK).arg("-fy").arg(&disk).output().unwrap();
+    assert!(
+        matches!(check.status.code(), Some(0 | 1)),
+        "e2fsck -fy: {}{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
+    for marker in STANDIN_MARKERS {
+        let read = Command::new(DEBUGFS)
+            .arg("-R")
+            .arg(format!("cat /{marker}"))
+            .arg(&disk)
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&read.stdout),
+            format!("{marker}\n"),
+            "debugfs: {}",
+            String::from_utf8_lossy(&read.stderr)
+        );
+    }
+
+    drop(vm);
+    fs::remove_dir_all(&work).unwrap();
+}
+
+/// The facade GETs guest 127.0.0.1:4000 and :8300. Each request reaches
+/// the host listener of port 1101 and 1102 byte for byte, its `Host`
+/// header included, and the answer comes back (decisions CH6-2, CH14,
+/// fact 46). With no listener of port 1100, the family-state dial fails,
+/// and guest init closes the link of the facade at once (decision CH62
+/// rule 14).
+#[test]
+#[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
+fn kvm_guest_init_bridges_the_planes() {
+    let (work, mut vm) = booted_with("kvm-guest-init-planes", Standin::Relay);
+    let serial = work.join("serial.log");
+    let planes = [
+        (HostPort::Litellm, LITELLM_PORT),
+        (HostPort::Chaperone, CHAPERONE_PORT),
+    ]
+    .map(|(host, guest)| {
+        let listener = listen_host(&work, host);
+        (guest, thread::spawn(move || answer_get(&listener)))
+    });
+    let mut link = dial(&work, GuestPort::Control);
+    let pid = starting(&hello(&mut link, now()));
+
+    let words = pulled(&work, pid);
+    assert_eq!(words[..3], ["closed", "200", "200"], "{words:?}");
+    for (guest, host) in planes {
+        assert_eq!(
+            host.join().unwrap(),
+            format!(
+                "GET /standin HTTP/1.1\r\nHost: 127.0.0.1:{guest}\r\nConnection: close\r\n\r\n"
+            )
+        );
+    }
+    for row in ["litellm", "chaperone"] {
+        wait_for_line(
+            &mut vm,
+            &serial,
+            &format!("guest-init: {row} link 1 host connected"),
+        );
+    }
+    wait_for(&mut vm, &serial, "the family-state dial fault", |lines| {
+        lines
+            .iter()
+            .any(|line| line.starts_with("guest-init: family-state link 1 host dial failed: "))
+    });
+
+    drop(vm);
+    fs::remove_dir_all(&work).unwrap();
+}
+
+/// The facade sends one `FamilyStatePull` on the family-state socket. It
+/// reaches the host listener of port 1100 as the facade wrote it, and the
+/// `FamilyStateReply` of the test comes back (decisions CH5a, CH62 rule
+/// 13). The facade passes the pid check. Before it, a child of the
+/// facade sends a pull too. Guest init refuses that pid and closes the
+/// link with no host dial, so the host listener accepts exactly one link
+/// (decision CH62 rule 13). With no plane listener, each plane dial
+/// fails, and guest init closes the TCP link at once (decision CH62 rule
+/// 14).
+#[test]
+#[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
+fn kvm_guest_init_bridges_the_family_state() {
+    let (work, mut vm) = booted_with("kvm-guest-init-family", Standin::Relay);
+    let serial = work.join("serial.log");
+    let listener = listen_host(&work, HostPort::FamilyState);
+    let host = thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        stream.set_read_timeout(Some(BOOT)).unwrap();
+        let mut line = String::new();
+        BufReader::new(&stream).read_line(&mut line).unwrap();
+        let mut reply =
+            serde_json::to_vec(&FamilyStateReply::CredsMissing(CredsMissing {})).unwrap();
+        reply.push(b'\n');
+        (&stream).write_all(&reply).unwrap();
+        (line, listener)
+    });
+    let mut link = dial(&work, GuestPort::Control);
+    let pid = starting(&hello(&mut link, now()));
+
+    let words = pulled(&work, pid);
+    assert_eq!(
+        words[..3],
+        ["creds_missing", "closed", "closed"],
+        "{words:?}"
+    );
+    let pull_ms: u64 = words[3].parse().unwrap();
+    eprintln!("the pull took {pull_ms} ms");
+    let (line, listener) = host.join().unwrap();
+    let mut pull = serde_json::to_string(&FamilyStatePull {}).unwrap();
+    pull.push('\n');
+    assert_eq!(line, pull);
+    wait_for_line(
+        &mut vm,
+        &serial,
+        "guest-init: family-state link 1 host connected",
+    );
+    for row in ["litellm", "chaperone"] {
+        let fault = format!("guest-init: {row} link 1 host dial failed: ");
+        wait_for(&mut vm, &serial, &fault, |lines| {
+            lines.iter().any(|line| line.starts_with(&fault))
+        });
+    }
+
+    // The stranger read an EOF or a reset, and guest init named its pid.
+    wait_for_line(&mut vm, &serial, "standin: family stranger exit status: 0");
+    let stranger = lines(&serial)
+        .iter()
+        .find_map(|line| {
+            line.strip_prefix("standin: family stranger pid ")?
+                .strip_suffix(" closed")
+                .map(str::to_owned)
+        })
+        .expect("no stranger pid on the console");
+    assert_ne!(stranger, pid.to_string());
+    wait_for_line(
+        &mut vm,
+        &serial,
+        &format!("guest-init: family-state peer pid {stranger} refused: not the facade"),
+    );
+    // The stranger ran before the pull of the facade, so a link of the
+    // stranger would be queued by now.
+    listener.set_nonblocking(true).unwrap();
+    assert_eq!(
+        listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock,
+        "the host listener got a second link"
     );
 
     drop(vm);

@@ -76,9 +76,10 @@ async function facade(): Promise<Facade> {
       deadlineMs: DEADLINE_MS,
       serve: async () => ({
         ok: true,
-        serving: { runtime: null, sessions: sessionService({ agent: Probe, agentName: "Probe", index, mode: SBX, store: flue.store }) },
+        serving: { runtime: null, sessions: sessionService({ agent: Probe, agentName: "Probe", index, mode: SBX, link: null, store: flue.store }) },
       }),
       socketPath: socket,
+      link: null,
     });
   });
   void exited.then(() => clearInterval(beating));
