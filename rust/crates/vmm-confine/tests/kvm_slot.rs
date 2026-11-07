@@ -1233,10 +1233,14 @@ fn kvm_a_vmm_unit_restart_ends_each_vm() {
 /// under the same scope name (decision CH61 rule 1). The stand-in is
 /// `/bin/sleep infinity`, and the spawner runs in the test. A SIGKILL of
 /// its main process runs the `ExecStopPost=` step, the built `vmm
-/// kill-scopes` (decision CH63), and CH dies of its SIGKILL. The unit
-/// then waits in `auto-restart`, and the test reads there that the step
-/// exited 0 in the unit after it killed a live scope. So only a real
-/// failure fails the step (CH63). CH and its scope are gone before the
+/// kill-scopes` (decision CH63). A crash queues no stop job for the unit,
+/// so `Before=` orders nothing here, and the `BindsTo=` stop of the scope
+/// can reach CH first: then CH exits 0 on its SIGTERM, and the step finds
+/// the scope ended. Otherwise CH dies of the SIGKILL of the step. Both end
+/// the VM (CH61 rule 1), so the test accepts either (kvm job run
+/// 42341689257 saw the SIGTERM). The unit then waits in `auto-restart`,
+/// and the test reads there that the step exited 0 in the unit. So only a
+/// real failure fails the step (CH63). CH and its scope are gone before the
 /// unit starts again, 5 s later, and systemd starts no scope again. The
 /// control: CH runs before the kill. After the restart systemd has made
 /// the run root new, the serial log of the last boot is still in the
@@ -1257,7 +1261,10 @@ fn kvm_a_vmm_crash_frees_the_scope_of_each_vm() {
     vmm.unit.kill();
     until("CH death after the vmm kill", || !running(pid));
     let status = ch.0.wait().unwrap();
-    assert_eq!(status.signal(), Some(9), "{status}");
+    assert!(
+        status.signal() == Some(9) || status.code() == Some(0),
+        "CH ended neither by the SIGKILL of the step nor by the SIGTERM of the scope stop: {status}"
+    );
     until_state(&scope, "inactive");
     assert_eq!(vmm.unit.sub_state(), "auto-restart");
     vmm.unit.assert_stop_post_exited_0();
