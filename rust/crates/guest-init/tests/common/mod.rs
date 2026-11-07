@@ -184,9 +184,14 @@ pub fn session_disk(work: &Path) -> PathBuf {
 pub enum Standin {
     /// No mode file: the stand-in stays up.
     StaysUp,
-    /// Mode `exit-once`: the first start exits with status 3, and each
-    /// later start stays up.
+    /// Mode `exit-once`: the first start leaves a child in its process
+    /// group and exits with status 3. The next start writes whether that
+    /// child is gone, and each later start stays up.
     ExitsOnce,
+    /// Mode `holder`: the stand-in starts a child outside its process
+    /// group that holds a file of the session disk open for writing, and
+    /// stays up.
+    Holder,
     /// Mode `turn`: the stand-in opens the local link, sends one turn,
     /// starts a stranger that opens the link too, and exits on the stop
     /// line.
@@ -221,6 +226,7 @@ pub fn vm_with(work: &Path, env: &[u8], standin: Standin) -> Command {
     let mode = match standin {
         Standin::StaysUp => None,
         Standin::ExitsOnce => Some("exit-once\n"),
+        Standin::Holder => Some("holder\n"),
         Standin::Turn => Some("turn\n"),
     };
     if let Some(mode) = mode {
@@ -435,4 +441,37 @@ pub fn standin_turn_end() -> TurnEnd {
         title: "standin turn".parse().unwrap(),
         updated_at: UnixMillis::try_from(IN_2030).unwrap(),
     }
+}
+
+/// The session disk of `work` is clean after the VM: guest init synced
+/// it and remounted it read-only, so no journal waits for a replay, and
+/// `e2fsck -fn` finds no fault.
+pub fn assert_clean(work: &Path) {
+    let disk = session_disk(work);
+    let header = Command::new(DUMPE2FS)
+        .arg("-h")
+        .arg(&disk)
+        .output()
+        .unwrap();
+    let header = String::from_utf8_lossy(&header.stdout);
+    let field = |name: &str| {
+        header
+            .lines()
+            .find_map(|line| line.strip_prefix(name))
+            .map(str::trim)
+            .unwrap_or_else(|| panic!("no {name} in:\n{header}"))
+            .to_owned()
+    };
+    assert_eq!(field("Filesystem state:"), "clean");
+    assert!(
+        !field("Filesystem features:").contains("needs_recovery"),
+        "the journal waits for a replay"
+    );
+    let check = Command::new(E2FSCK).arg("-fn").arg(&disk).output().unwrap();
+    assert!(
+        check.status.success(),
+        "e2fsck -fn: {}{}",
+        String::from_utf8_lossy(&check.stdout),
+        String::from_utf8_lossy(&check.stderr)
+    );
 }

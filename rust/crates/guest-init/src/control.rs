@@ -24,8 +24,9 @@
 //!    26). A line is refused when it is over the cap, is not one JSON
 //!    value, or is not the type that the link expects at that point.
 //! 6. After `ControlReady`, `ControlCommand::Stop` runs the stop of the
-//!    supervisor: the stop line on the local link, up to 25 s, SIGTERM,
-//!    up to 2 s, then the power-off (decisions CH19 rule 3, CH62 rule 9).
+//!    supervisor: the stop line on the local link, up to 25 s, SIGTERM to
+//!    the facade group, up to 2 s, then the power-off (decisions CH19
+//!    rule 3, CH62 rule 9).
 //! 7. After `ControlReady`, `ControlCommand::Sync` runs `syncfs` of the
 //!    session disk, then `sync`, and guest init answers
 //!    `GuestEvent::Synced` on the same link (decision CH62 rule 23). A
@@ -93,10 +94,11 @@ pub enum Action {
     /// Run a timer of this length, then call `Control::timer`. A new timer
     /// replaces the one that runs.
     Timer(Duration),
-    /// Send SIGTERM to the facade (decision CH62 rule 9).
+    /// Send SIGTERM to the process group of the facade (decision CH62
+    /// rule 9).
     Terminate(NonZeroU32),
-    /// Send SIGKILL to the facade: its local link closed (decision CH32
-    /// rule 7).
+    /// Send SIGKILL to the process group of the facade: its local link
+    /// closed (decision CH32 rule 7), or it exited.
     Kill(NonZeroU32),
     /// Close the link and write why on the console (decision CH43 rule 2).
     Close(LinkId, Why),
@@ -253,15 +255,15 @@ impl Control {
     }
 
     /// A line of `link`, its LF cut.
-    // CONTRACT-QUESTION: rule 3 of "The vsock JSON links" in
-    // `wire/AGENTS.md` names the check `strict` of the vmm crate, and
-    // guest init may call creche-wire only (layer rule). The reading
-    // taken: the typed serde reader is the strict reader here. Each type
-    // of this link denies unknown fields and holds no free JSON value, so
-    // it refuses a key given twice, a second value, a float for an
-    // integer and an array for an object, as `strict` does. A unit test
-    // holds that. A change costs one wire lane PR that moves `strict`
-    // into creche-wire, and one call here.
+    // CONTRACT-QUESTION: CH65 rule 2 decides it. One wire lane PR moves
+    // the check `strict` of the vmm crate into creche-wire, and both ends
+    // read each line through it. Until that PR merges, the typed serde
+    // reader is the strict reader here. Each type of this link denies
+    // unknown fields and holds no free JSON value, so it refuses a key
+    // given twice, a second value, a float for an integer and an array
+    // for an object, as `strict` does. A unit test holds that. A later
+    // commit on this branch calls the shared check once the wire PR
+    // merges.
     pub fn line(&mut self, link: LinkId, line: &[u8]) -> Option<Action> {
         let Some(stage) = self.stage(link) else {
             return Some(Action::Ignore(link, Ignored::Stale));
@@ -591,7 +593,7 @@ mod shell {
     use std::num::NonZeroU32;
     use std::os::fd::{AsRawFd as _, OwnedFd};
     use std::os::unix::net::UnixListener;
-    use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
+    use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
     use std::thread;
     use std::time::Instant;
 
@@ -615,11 +617,17 @@ mod shell {
     /// (decision CH13), so a few slots are room.
     const BACKLOG: i32 = 4;
 
+    /// The events that the inbox holds before a send blocks. A full
+    /// inbox stops each reader thread before its next socket read, so a
+    /// peer that writes faster than the control loop acts fills only its
+    /// own socket buffer, and the inbox of PID 1 stays bounded.
+    const INBOX: usize = 64;
+
     /// What the threads tell the control loop.
     #[derive(Debug)]
     enum Event {
         /// A new link, and the sender that its reader thread gets.
-        Accepted(OwnedFd, Sender<Event>),
+        Accepted(OwnedFd, SyncSender<Event>),
         /// The accept loop stopped on this error.
         AcceptFailed(io::Error),
         Line(LinkId, Vec<u8>),
@@ -632,7 +640,7 @@ mod shell {
         ReapFailed(io::Error),
         /// A new local link, its peer pid, and the sender that its reader
         /// thread gets.
-        LocalAccepted(OwnedFd, NonZeroU32, Sender<Event>),
+        LocalAccepted(OwnedFd, NonZeroU32, SyncSender<Event>),
         /// The local accept loop stopped on this error.
         LocalAcceptFailed(io::Error),
         LocalLine(LocalId, Vec<u8>),
@@ -671,7 +679,7 @@ mod shell {
     /// facade, which gets `env`, until a stop or a fault. It returns the
     /// console line of the end, and the caller powers off.
     pub fn serve(listener: OwnedFd, local: UnixListener, env: Env) -> String {
-        let (events, inbox) = channel();
+        let (events, inbox) = sync_channel(INBOX);
         let reaps = events.clone();
         let facade = match Facade::new(env, move |reaped| {
             let event = match reaped {
@@ -713,21 +721,11 @@ mod shell {
         let mut locals: HashMap<LocalId, File> = HashMap::new();
         let mut timer: Option<Instant> = None;
         loop {
-            let event = match timer {
-                Some(end) => {
-                    match inbox.recv_timeout(end.saturating_duration_since(Instant::now())) {
-                        Ok(event) => Some(event),
-                        Err(RecvTimeoutError::Timeout) => None,
-                        Err(RecvTimeoutError::Disconnected) => break,
-                    }
-                }
-                None => match inbox.recv() {
-                    Ok(event) => Some(event),
-                    Err(_) => break,
-                },
-            };
-            let Some(event) = event else {
-                // The timer ended.
+            // The timer goes first. `recv_timeout` hands out a queued event
+            // before it reads the clock, so a full inbox would starve a
+            // timer that the loop reads only on a timeout, and the stop
+            // waits of decision CH62 rule 9 would have no bound.
+            if timer.is_some_and(|end| Instant::now() >= end) {
                 timer = None;
                 let actions = control.timer();
                 if let Some(end) = act(
@@ -741,6 +739,20 @@ mod shell {
                     return end;
                 }
                 continue;
+            }
+            let event = match timer {
+                Some(end) => {
+                    match inbox.recv_timeout(end.saturating_duration_since(Instant::now())) {
+                        Ok(event) => event,
+                        // The next pass runs the timer.
+                        Err(RecvTimeoutError::Timeout) => continue,
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    }
+                }
+                None => match inbox.recv() {
+                    Ok(event) => event,
+                    Err(_) => break,
+                },
             };
             let actions = match event {
                 Event::Accepted(fd, events) => {
@@ -869,6 +881,8 @@ mod shell {
                 },
                 Action::Kill(pid) => match signal(pid, Signal::KILL) {
                     Ok(()) => crate::say(&format!("facade pid {pid} sent SIGKILL")),
+                    // No process of the group is left.
+                    Err(Errno::SRCH) => {}
                     Err(error) => crate::say(&format!("facade pid {pid} SIGKILL failed: {error}")),
                 },
                 Action::Turn(link, line) => write(links, link, &line, "turn"),
@@ -891,11 +905,10 @@ mod shell {
                 }
                 Action::Sync(link) => match sync_session() {
                     Ok(()) => next.extend(control.synced(link)),
-                    // CONTRACT-QUESTION: no row decides the answer to a
-                    // failed syncfs. The reading taken: guest init sends
-                    // no `synced` and keeps the link, so the vmm's
-                    // SYNC_WAIT runs out, it takes no snapshot and it runs
-                    // the graceful stop (decision CH62 rule 23).
+                    // CH65 rule 3: guest init sends no `synced` and keeps
+                    // the link, so the vmm's SYNC_WAIT runs out, it takes
+                    // no snapshot and it runs the graceful stop (decision
+                    // CH62 rule 23).
                     Err(error) => crate::say(&format!("{link} sync failed: {error}")),
                 },
                 Action::Synced(link, line) => write(links, link, &line, "synced"),
@@ -967,7 +980,7 @@ mod shell {
 
     /// Accepts each link and hands it to the control loop. EINTR and
     /// ECONNABORTED are retried. Each other error ends the loop.
-    fn accept_loop(listener: &OwnedFd, events: &Sender<Event>) {
+    fn accept_loop(listener: &OwnedFd, events: &SyncSender<Event>) {
         loop {
             match accept_with(listener, SocketFlags::CLOEXEC) {
                 Ok(fd) => {
@@ -987,7 +1000,7 @@ mod shell {
     /// Accepts each local link, reads its peer pid and hands both to the
     /// control loop (decision CH62 rule 10). A failed peer read closes
     /// that link. Each other error ends the loop.
-    fn local_accept_loop(listener: &UnixListener, events: &Sender<Event>) {
+    fn local_accept_loop(listener: &UnixListener, events: &SyncSender<Event>) {
         loop {
             match listener.accept() {
                 Ok((stream, _)) => match local_link::peer(&stream) {
@@ -1413,7 +1426,7 @@ mod tests {
         control.ended(next);
         assert_eq!(
             control.reaped(pid(FACADE)),
-            vec![Action::Timer(RESTART_PAUSE)]
+            vec![Action::Kill(pid(FACADE)), Action::Timer(RESTART_PAUSE)]
         );
         let (last, _) = control.accept();
         control.line(last, &hello(SESSION));
@@ -1452,6 +1465,7 @@ mod tests {
             control.reaped(pid(FACADE)),
             vec![
                 Action::Facade(link, exited(1)),
+                Action::Kill(pid(FACADE)),
                 Action::Timer(RESTART_PAUSE)
             ]
         );
@@ -1482,7 +1496,7 @@ mod tests {
         let (new, _) = control.accept();
         assert_eq!(
             control.reaped(pid(FACADE)),
-            vec![Action::Timer(RESTART_PAUSE)]
+            vec![Action::Kill(pid(FACADE)), Action::Timer(RESTART_PAUSE)]
         );
         assert_eq!(
             control.line(old, &stop()),

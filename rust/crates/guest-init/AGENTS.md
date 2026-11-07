@@ -57,11 +57,15 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   `CRECHE_SESSION_ID` (CH49 rule 1, CH62 rule 6), cwd
   `creche_wire::guest::WORKSPACE` (made when absent), stdin and stdout
   /dev/null and stderr on the console (CH62 rule 26). It runs as root
-  (CH8-1). A control link close never touches it.
+  (CH8-1). A control link close never touches it. It runs in a process
+  group of its own, so each SIGTERM and SIGKILL of guest init goes to its
+  group and reaches its children too.
 - PID 1 reaps each child in a reaper thread. When the facade pid is
-  reaped, the state becomes `exited`, and after `RESTART_PAUSE` (1 s, no
-  cap) guest init starts the next one, so at most one runs (CH19 rule 1,
-  CH62 rule 8). `starts` counts each start. Each other reaped pid is an
+  reaped, the state becomes `exited`, guest init sends SIGKILL to its
+  group (`guest-init: facade pid <n> sent SIGKILL` when a child was
+  left), and after `RESTART_PAUSE` (1 s, no cap) it starts the next one,
+  so at most one runs, its children included (CH19 rule 1, CH62 rule
+  8). `starts` counts each start. Each other reaped pid is an
   orphan and changes no state. The reaper waits with `WNOWAIT` and reaps
   under the spawn lock, so it never takes a child whose exec failed:
   std reaps that one inside `Command::spawn`.
@@ -87,28 +91,41 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   before the ready goes out in that ready.
 - After the ready, `stop` runs the stop of CH62 rule 9. With an open
   local link, guest init writes `{"stop":{}}` on it and waits up to
-  `FACADE_STOP_WAIT` (25 s). Then it sends SIGTERM and waits up to
-  `SIGTERM_GRACE` (2 s). Then it powers off. A facade exit in either
-  wait powers off at once. A facade with no open local link gets SIGTERM
-  at once. With no live facade, the power-off comes at once. A second
-  stop changes nothing.
+  `FACADE_STOP_WAIT` (25 s). Then it sends SIGTERM to the facade group
+  and waits up to `SIGTERM_GRACE` (2 s). Then it powers off. A facade
+  exit in either wait powers off at once. A facade with no open local
+  link gets SIGTERM at once. With no live facade, the power-off comes at
+  once. A second stop changes nothing.
 - After the ready, `sync` runs `syncfs` of the session disk, then
   `sync`, and guest init answers `{"synced":{}}` (`GuestEvent::Synced`)
   on the same link (CH62 rule 23). The link stays ready. A sync of a
-  replaced link changes nothing.
+  replaced link changes nothing. A failed `syncfs` writes `guest-init:
+  control link <n> sync failed: <error>`, sends no `synced` and keeps
+  the link (CH65 rule 3).
 - One thread, the main one, reads the event channel, runs the one timer
   of the supervisor and holds no sender. The two accept threads, the
   reaper thread and each reader thread hold one, so the channel ends
   only when all of them are gone. Then guest init writes
   `guest-init: control events ended` and powers off.
+- Each pass of that loop checks the timer before it reads the channel,
+  so a steady stream of events cannot hold off the stop waits (CH62
+  rule 9) or the restart pause (CH62 rule 8). The channel holds `INBOX`
+  (64) events. A full channel blocks the sender: a reader thread then
+  reads no more of its socket, so a fast peer fills only its own socket
+  buffer. The reaper sends its reports after it drops the spawn lock,
+  because `Facade::start` takes that lock on the control loop.
 - Each step writes one `guest-init: <step>` line to the console (CH62
   rule 26). A fault writes `guest-init: <step> failed: <error>`.
 - A stop, a boot fault, a refused env file, a listen fault and a panic
   in any thread all end in `power::off`. A panic hook, set first by
   `as_pid_1`, runs the default hook, writes `guest-init: panicked` and
   powers off. The power-off is: SIGKILL to every process left
-  (`kill(-1)`), sync, a read-only remount of the session disk, then
-  `reboot(RB_POWER_OFF)` (CH19 rule 3, CH62 rule 9). The remount flushes the ext4
+  (`kill(-1)`), a wait of up to `KILL_WAIT` (1 s) until PID 1 has no
+  child left, sync, a read-only remount of the session disk, then
+  `reboot(RB_POWER_OFF)` (CH19 rule 3, CH62 rule 9). The wait matters
+  because `kill` only queues the signal: a killed process can still
+  finish a write and holds its files until it exits. A wait that runs
+  out writes `guest-init: processes left after 1s`. The remount flushes the ext4
   journal and marks the disk clean. Before the switch root it fails with
   its own console line. The guest kernel has
   `PANIC_TIMEOUT=0`, so an exit of PID 1 would hang the VM (fact 53). No
@@ -116,12 +133,16 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
 - `examples/standin_facade.rs` is the stand-in facade of the kvm tests,
   a test program in no release row (CH62 rule 12). It writes one line on
   stdout and its session id, env names and cwd on stderr. With the mode
-  `exit-once` in `/etc/creche-standin/mode`, its first start writes a
-  marker on the session disk and exits with status 3. Each other start
-  stays up until a signal ends it. With the mode `turn`, it opens the
-  local link, sends one turn start and one turn end, starts a child of
-  itself that opens the link too, and exits with status 0 on the stop
-  line.
+  `exit-once` in `/etc/creche-standin/mode`, its first start leaves a
+  child in its process group, writes the child pid in a marker on the
+  session disk and exits with status 3. The next start writes whether
+  that child is gone. With the mode `holder`, it starts a child that
+  leaves its group with `setsid`, so the SIGTERM of the stop misses it,
+  and that child keeps a file of the session disk open for writing.
+  With the mode `turn`, it opens the local link, sends one turn start
+  and one turn end, starts a child of itself that opens the link too,
+  and exits with status 0 on the stop line. Each other start stays up
+  until a signal ends it.
 
 ## Tests
 
@@ -145,37 +166,37 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
 
 ## Known gaps
 
-1. CONTRACT-QUESTION: CH62 rule 4 fixes only ro and nodev on the root
-   disk, rw, nosuid and nodev on the session disk, and nosuid and nodev
-   on the five tmpfs dirs. No row decides the rest of the mount options.
-   The readings taken, in `src/boot.rs`: the Debian mode of each tmpfs
-   dir (`/tmp` and `/var/tmp` 1777, `/run` and `/var/cache` 0755,
-   `/root` 0700), devtmpfs mode 0755 and `/dev/shm` mode 1777. devtmpfs
-   and devpts get nosuid and noexec. proc and sysfs get nosuid, nodev
-   and noexec. A change edits only the constants `TMPFS`, `DEVICES` and
-   `KERNEL` and the plan test.
-2. CONTRACT-QUESTION: no row decides the answer to a failed `syncfs`.
-   The reading taken, in `src/control.rs`: guest init writes
-   `guest-init: control link <n> sync failed: <error>`, sends no
-   `synced` and keeps the link. The vmm's `SYNC_WAIT` then runs out, so
-   it takes no snapshot and runs the graceful stop (CH62 rule 23). A
-   change costs one arm of `act` in `src/control.rs`.
-3. CONTRACT-QUESTION: rule 3 of "The vsock JSON links" in
-   `wire/AGENTS.md` names the check `strict` of the vmm crate as the
-   strict reader. Guest init may call creche-wire only. The reading
-   taken: the typed serde reader is the strict reader of the control
+1. CONTRACT-QUESTION: CH65 rule 2 decides the strict reader. One wire
+   lane PR moves the check `strict` of the vmm crate into creche-wire,
+   and the vmm and guest init both read each vsock JSON line through it
+   (rule 3 of "The vsock JSON links" in `wire/AGENTS.md`). Until that PR
+   merges, the typed serde reader is the strict reader of the control
    link, because each of its types denies unknown fields and holds no
    free JSON value. A unit test holds that it refuses a key given twice,
    a second value, a float for an integer and an array for an object. A
-   change costs one wire lane PR that moves `strict` into creche-wire,
-   and one call in `src/control.rs`.
-4. CONTRACT-QUESTION: no row decides the answer to a failed facade
+   later commit on this branch calls the shared check in
+   `src/control.rs` once the wire PR merges.
+2. CONTRACT-QUESTION: no row decides the answer to a failed facade
    start, for example a root disk with no facade program. The reading
    taken, in `src/supervisor.rs`: guest init writes
    `guest-init: facade start failed: <error>`, counts no start, keeps
    the state and tries again after `RESTART_PAUSE` (CH62 rule 8), with
    no cap. The vmm sees no `starting`, so it never snapshots the VM. A
    change costs one arm of `Supervisor::start_failed` and its test.
+3. CONTRACT-QUESTION: CH62 rule 9 names SIGKILL, sync and power off,
+   with no wait between them. The reading taken, in `src/power.rs`: the
+   power-off waits up to `KILL_WAIT` (1 s) for the killed processes to
+   be gone, so a process in D state cannot hang it, and it writes
+   `guest-init: processes left after 1s` when the wait runs out. A
+   change costs the constant `KILL_WAIT`.
+4. CONTRACT-QUESTION: CH19 rule 1, CH32 rule 7 and CH62 rule 9 name only
+   the facade. Its children would live on as orphans of PID 1 beside the
+   next start, for example agent tools that write the workspace. The
+   reading taken, in `src/supervisor.rs`: the facade runs in a process
+   group of its own, each SIGTERM and SIGKILL goes to that group, and
+   the group of an exited facade gets SIGKILL before the restart pause.
+   A change costs the `process_group` call, `signal` and the `Live` arm
+   of `Supervisor::reaped`.
 5. CONTRACT-QUESTION: CH62 rule 9 starts the stop with the stop line on
    the local link, and a facade with no open local link cannot get it.
    The reading taken, in `src/supervisor.rs`: the stop of a `starting`

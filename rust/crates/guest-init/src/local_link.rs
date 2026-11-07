@@ -279,6 +279,7 @@ mod tests {
             control.reaped(pid(FACADE)),
             vec![
                 Action::Facade(link, format!("{exited}\n").into_bytes()),
+                Action::Kill(pid(FACADE)),
                 Action::Timer(RESTART_PAUSE)
             ]
         );

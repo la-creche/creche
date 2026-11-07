@@ -48,10 +48,8 @@ const SESSION_DISK: &str = "/dev/vdb";
 /// gives mode 1777 when no mode is set, so each mount names its mode: the
 /// modes of these dirs in Debian.
 ///
-/// CONTRACT-QUESTION: CH62 rule 4 names these five dirs, and Q54-4 rec. A
-/// makes them nosuid and nodev. No row names their modes, or the modes of
-/// `/dev` (0755) and `/dev/shm` (1777). The reading taken: the Debian mode
-/// of each dir. A change edits only the mode strings.
+/// CH62 rule 4 names these five dirs, and CH65 rule 1 sets the Debian mode
+/// of each. A change edits only the mode strings.
 const TMPFS: [(&str, &CStr); 5] = [
     ("/tmp", c"mode=1777"),
     ("/run", c"mode=0755"),
@@ -71,8 +69,7 @@ pub struct Options {
 
 /// devtmpfs and devpts: their nodes are devices, so no nodev.
 ///
-/// CONTRACT-QUESTION: no row decides the flags of the device mounts. The
-/// reading taken: nosuid and noexec, as Debian mounts `/dev` and
+/// CH65 rule 1 sets nosuid and noexec, as Debian mounts `/dev` and
 /// `/dev/pts`, since no program runs from them. A change edits only this
 /// constant.
 const DEVICES: Options = Options {
@@ -84,8 +81,7 @@ const DEVICES: Options = Options {
 
 /// proc and sysfs.
 ///
-/// CONTRACT-QUESTION: no row decides the flags of the kernel mounts. The
-/// reading taken: nosuid, nodev and noexec, as Debian mounts `/proc` and
+/// CH65 rule 1 sets nosuid, nodev and noexec, as Debian mounts `/proc` and
 /// `/sys`. A change edits only this constant.
 const KERNEL: Options = Options {
     read_only: false,
@@ -436,7 +432,7 @@ mod tests {
     }
 
     /// The flags and the data of every mount (CH62 rule 4, and the
-    /// CONTRACT-QUESTION readings on `TMPFS`, `DEVICES` and `KERNEL`).
+    /// CH65 rule 1 readings on `TMPFS`, `DEVICES` and `KERNEL`).
     #[test]
     fn the_plan_gives_each_mount_its_options() {
         let expected = [
