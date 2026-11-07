@@ -39,19 +39,40 @@
 //!    `creche_wire::guest::RELAY_SOCKET` and answers each line `ping` of
 //!    each link with `pong <its pid>`. It writes `relay listening`, and
 //!    `relay link ended` at the end of each link (decisions CH13, CH62
-//!    rule 16). Then it stays up.
+//!    rule 16). Then it stays up. A line `pull` first starts a child of
+//!    itself, the family stranger, and waits for it. The stranger sends
+//!    one `FamilyStatePull` on `creche_wire::guest::FAMILY_STATE_SOCKET`
+//!    and writes `family stranger pid <its pid> <answer>`. Guest init
+//!    closes its link, so the answer is `closed` (decision CH62 rule 13).
+//!    Then the stand-in pulls once itself: one `FamilyStatePull` on that
+//!    socket, then one HTTP GET to guest 127.0.0.1:4000 and one to
+//!    :8300. It answers `pulled <its pid> <reply key> <status 4000>
+//!    <status 8300> <pull ms>`. A link that ends with no answer gives
+//!    `closed`, and each other fault `failed` (decisions CH5a, CH6-2,
+//!    CH62 rule 13).
+//! 9. In mode `markers` it writes `MARKERS` files on the session disk,
+//!    each with its own line, and writes `markers written`. Then it stays
+//!    up. A fault exits with status 4. A kvm test syncs and kills CH,
+//!    then reads them from the disk (decision CH62 rule 23).
 
 use std::convert::Infallible;
 use std::fs::{self, File};
 use std::io::{self, BufRead as _, BufReader, Read as _, Write as _};
+use std::net::{Ipv4Addr, TcpStream};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 use std::process::{Command, ExitCode};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use creche_wire::guest::{LOCAL_LINK_SOCKET, RELAY_SOCKET, SESSION_DISK_MOUNT, SESSION_ID_ENV};
-use creche_wire::{ControlCommand, TurnEnd, TurnEvent, TurnStart, UnixMillis};
+use creche_wire::guest::{
+    CHAPERONE_PORT, FAMILY_STATE_SOCKET, LITELLM_PORT, LOCAL_LINK_SOCKET, RELAY_SOCKET,
+    SESSION_DISK_MOUNT, SESSION_ID_ENV,
+};
+use creche_wire::{
+    ControlCommand, FAMILY_STATE_CAP, FamilyStatePull, FamilyStateReply, TurnEnd, TurnEvent,
+    TurnStart, UnixMillis,
+};
 
 /// The mode file of the test root disk.
 const MODE: &str = "/etc/creche-standin/mode";
@@ -81,6 +102,9 @@ const HOLDER: &str = "holder";
 /// The argument that makes the stand-in the stranger of mode `turn`.
 const STRANGER: &str = "stranger";
 
+/// The argument that makes the stand-in the family stranger of a `pull`.
+const FAMILY_STRANGER: &str = "family-stranger";
+
 /// The file that the holder keeps open, on the session disk.
 const HELD: &str = "standin-held";
 
@@ -99,11 +123,19 @@ const TURN_UPDATED_AT: u64 = 1_893_456_000_000;
 /// a 1201 link of a kvm test comes first.
 const RELAY_DELAY: Duration = Duration::from_secs(2);
 
+/// How long a pull waits for each answer.
+const PULL_WAIT: Duration = Duration::from_secs(10);
+
+/// The files of mode `markers`, on the session disk.
+/// `tests/kvm_guest_init.rs` reads the same names.
+const MARKERS: [&str; 3] = ["standin-marker-1", "standin-marker-2", "standin-marker-3"];
+
 fn main() -> ExitCode {
     match std::env::args().nth(1).as_deref() {
         Some(CHILD) => stay_up(),
         Some(HOLDER) => hold(),
         Some(STRANGER) => stranger(),
+        Some(FAMILY_STRANGER) => family_stranger(),
         _ => facade(),
     }
 }
@@ -164,6 +196,13 @@ fn facade() -> ExitCode {
                 }
                 return stay_up();
             }
+        }
+        Ok(mode) if mode.trim_end() == "markers" => {
+            if let Err(error) = markers() {
+                say(&format!("markers failed: {error}"));
+                return ExitCode::from(TURN_FAILED);
+            }
+            say("markers written");
         }
         Ok(mode) if mode.trim_end() == "relay" => {
             thread::spawn(|| {
@@ -352,17 +391,114 @@ fn relay() -> io::Result<Infallible> {
     }
 }
 
-/// Answers each line `ping` of `link` with `pong <pid>` until its end.
+/// Answers each line `ping` of `link` with `pong <pid>` and each line
+/// `pull` with `pulled ...` until its end.
 fn pong(link: &UnixStream) -> io::Result<()> {
     let pid = std::process::id();
     for line in BufReader::new(link).lines() {
         let line = line?;
         if line == "ping" {
             writeln!(&*link, "pong {pid}")?;
+        } else if line == "pull" {
+            let status = Command::new(std::env::current_exe()?)
+                .arg(FAMILY_STRANGER)
+                .status()?;
+            say(&format!("family stranger {status}"));
+            let started = Instant::now();
+            let reply = answer(pull());
+            let pull_ms = started.elapsed().as_millis();
+            let litellm = answer(get(LITELLM_PORT));
+            let chaperone = answer(get(CHAPERONE_PORT));
+            writeln!(
+                &*link,
+                "pulled {pid} {reply} {litellm} {chaperone} {pull_ms}"
+            )?;
         } else {
             say(&format!("relay got {line:?}"));
         }
     }
     say("relay link ended");
+    Ok(())
+}
+
+/// The family stranger of a `pull`: a process other than the facade
+/// sends a pull on the family-state socket. Guest init closes the link at
+/// once, with no host dial (decision CH62 rule 13).
+fn family_stranger() -> ExitCode {
+    let word = answer(pull());
+    say(&format!(
+        "family stranger pid {} {word}",
+        std::process::id()
+    ));
+    if word == "closed" {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(CHILD_FAILED)
+    }
+}
+
+/// The word of one answer: the answer, `closed` for a link that ended
+/// with none, or `failed`.
+fn answer(got: io::Result<Option<String>>) -> String {
+    match got {
+        Ok(Some(word)) => word,
+        Ok(None) => "closed".to_owned(),
+        Err(error) if error.kind() == io::ErrorKind::ConnectionReset => "closed".to_owned(),
+        Err(error) => {
+            say(&format!("pull failed: {error}"));
+            "failed".to_owned()
+        }
+    }
+}
+
+/// One pull on the family-state socket: the key of the reply, or `None`
+/// when the link ends with no line (decisions CH5a, CH62 rule 13).
+fn pull() -> io::Result<Option<String>> {
+    let link = UnixStream::connect(FAMILY_STATE_SOCKET)?;
+    link.set_read_timeout(Some(PULL_WAIT))?;
+    let mut line = serde_json::to_vec(&FamilyStatePull {})?;
+    line.push(b'\n');
+    // A link that guest init closed fails the write. The read then names
+    // the close.
+    let _ = (&link).write_all(&line);
+    let mut reply = String::new();
+    let cap = u64::try_from(FAMILY_STATE_CAP).map_err(io::Error::other)?;
+    BufReader::new(&link).take(cap + 1).read_line(&mut reply)?;
+    if reply.is_empty() {
+        return Ok(None);
+    }
+    let key = match serde_json::from_str(reply.trim_end())? {
+        FamilyStateReply::State(_) => "state",
+        FamilyStateReply::CredsMissing(_) => "creds_missing",
+        FamilyStateReply::ConfigMissing(_) => "config_missing",
+        FamilyStateReply::NotValid(_) => "not_valid",
+        FamilyStateReply::TooLarge(_) => "too_large",
+    };
+    Ok(Some(key.to_owned()))
+}
+
+/// One HTTP GET to the plane at guest 127.0.0.1:`port`: the status code
+/// of the answer, or `None` when the link ends with none (decision
+/// CH6-2).
+fn get(port: u16) -> io::Result<Option<String>> {
+    let stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port))?;
+    stream.set_read_timeout(Some(PULL_WAIT))?;
+    let request =
+        format!("GET /standin HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+    // As in `pull`, the read names a close.
+    let _ = (&stream).write_all(request.as_bytes());
+    let mut status = String::new();
+    BufReader::new(&stream).read_line(&mut status)?;
+    Ok(status.split(' ').nth(1).map(str::to_owned))
+}
+
+/// Mode `markers`: each marker file holds its own name and a LF.
+fn markers() -> io::Result<()> {
+    for marker in MARKERS {
+        fs::write(
+            Path::new(SESSION_DISK_MOUNT).join(marker),
+            format!("{marker}\n"),
+        )?;
+    }
     Ok(())
 }
