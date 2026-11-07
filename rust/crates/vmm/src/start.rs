@@ -469,6 +469,14 @@ impl<P: VmProcess> Eviction<P> {
         }
     }
 
+    /// Whether the CH of the VM exited. A failed status check counts as a
+    /// CH that runs.
+    fn exited(&mut self) -> bool {
+        self.vm
+            .as_mut()
+            .is_some_and(|vm| matches!(vm.process.exited(), Ok(true)))
+    }
+
     /// Removes the stopped VM from the table and from `in_use`, and frees
     /// its slot.
     fn done(mut self, in_use: &Mutex<InUse>, run: &RunRoot) {
@@ -1145,11 +1153,19 @@ async fn write_book(
 
 /// The end of the follow of the VM of `id` on the control link `link`: a
 /// bind or a deny check after an edit of a reach file failed with
-/// `message`. It writes `egress_assert_failed` to the fault file of
-/// `family` and stops the VM of that link (decisions CH21-1, CH69 rule
-/// 12). The stop sends the graceful stop first (decision CH19 (3)), and a
-/// later VM of the session has another link, so the stop leaves it alone
-/// (decision CH54 rule 6).
+/// `message`. It takes the VM out of the table, writes
+/// `egress_assert_failed` to the fault file of `family` and stops the VM
+/// of that link (decisions CH21-1, CH69 rule 12). The stop sends the
+/// graceful stop first (decision CH19 (3)), and a later VM of the session
+/// has another link, so the stop leaves it alone (decision CH54 rule 6).
+///
+/// The VM entry, and so the follow, lives on while a stop or a retire
+/// ends its CH. A check in that window reads the command line of a CH
+/// that exited, so it fails with no fault in the VM. So the fault goes
+/// to the book only when this task takes the VM and its CH runs, or when
+/// the stop that it joined failed, so the VM may still run. A stop that
+/// ends the VM, a retire that ends it and a CH that exited on its own
+/// write no fault.
 async fn reach_failed<P: VmProcess>(
     (stopper, faults): (Stopper<P>, Arc<Mutex<FaultBook>>),
     family: FamilyName,
@@ -1157,12 +1173,31 @@ async fn reach_failed<P: VmProcess>(
     message: String,
 ) {
     eprintln!("vmm: the deny check of {id} failed after an edit: {message}");
-    write_book(&faults, &family, move |book, family, now| {
-        book.raise(family, FaultCode::EgressAssertFailed, message, now)
-    })
-    .await;
-    if let Err(VmStopFailed { pid, error }) = stopper.stop(&id, Some(link)).await {
-        eprintln!("vmm: the VM of {id} (pid {pid}) did not stop after a failed check: {error}");
+    let raise = |message| {
+        write_book(&faults, &family, move |book, family, now| {
+            book.raise(family, FaultCode::EgressAssertFailed, message, now)
+        })
+    };
+    match stopper.take(&id, Some(link)).await {
+        Claim::Took(mut eviction, sender) => {
+            if eviction.exited() {
+                eprintln!("vmm: the CH of {id} exited before the check, so no fault is written");
+            } else {
+                raise(message).await;
+            }
+            if let Err(VmStopFailed { pid, error }) = stopper.finish(*eviction, sender).await {
+                eprintln!(
+                    "vmm: the VM of {id} (pid {pid}) did not stop after a failed check: {error}"
+                );
+            }
+        }
+        Claim::Ended(Ok(())) => {
+            eprintln!("vmm: a stop or a retire ended the VM of {id}, so no fault is written");
+        }
+        Claim::Ended(Err(VmStopFailed { pid, error })) => {
+            raise(message).await;
+            eprintln!("vmm: the VM of {id} (pid {pid}) did not stop after a failed check: {error}");
+        }
     }
 }
 
@@ -1333,26 +1368,57 @@ impl<P: VmProcess> Stopper<P> {
     // polls a `Starting` slot until the launch output kills the VM and
     // puts it in the table.
     async fn stop(&self, id: &SessionId, link: Option<LinkId>) -> Result<(), VmStopFailed> {
+        match self.take(id, link).await {
+            Claim::Took(eviction, sender) => self.finish(*eviction, sender).await,
+            Claim::Ended(result) => result,
+        }
+    }
+
+    /// Takes the VM of `id` for a stop, as `stop` does: a start or a
+    /// retire that holds the slot ends first. With `Some(link)`, only the
+    /// VM of the control link `link` counts (decision CH54 rule 6).
+    async fn take(&self, id: &SessionId, link: Option<LinkId>) -> Claim<P> {
         loop {
             match self.hold(id, link) {
-                Held::Free => return Ok(()),
+                Held::Free => return Claim::Ended(Ok(())),
                 Held::Busy => sleep(SLOT_POLL).await,
                 Held::Joins(mut outcome) => {
                     // A stop whose future was dropped sends no outcome. Its
                     // `Eviction` put the VM back, so the slot is read again.
                     let done = outcome.wait_for(Option::is_some).await;
                     if let Some(result) = done.ok().and_then(|done| done.clone()) {
-                        return result;
+                        return Claim::Ended(result);
                     }
                 }
-                Held::Takes(eviction, sender) => {
-                    let result = self.stop_taken(*eviction).await;
-                    sender.send_replace(Some(result.clone()));
-                    return result;
-                }
+                Held::Takes(eviction, sender) => return Claim::Took(eviction, sender),
             }
         }
     }
+
+    /// Stops the VM of `eviction`, which `take` took, and sends the
+    /// outcome to each stop that joined it.
+    async fn finish(
+        &self,
+        eviction: Eviction<P>,
+        sender: watch::Sender<Option<Result<(), VmStopFailed>>>,
+    ) -> Result<(), VmStopFailed> {
+        let result = self.stop_taken(eviction).await;
+        sender.send_replace(Some(result.clone()));
+        result
+    }
+}
+
+/// What `Stopper::take` found for a stop.
+enum Claim<P: VmProcess> {
+    /// This stop took the VM out of the table under a `Stopping` slot,
+    /// with the sender of its outcome.
+    Took(
+        Box<Eviction<P>>,
+        watch::Sender<Option<Result<(), VmStopFailed>>>,
+    ),
+    /// No VM of the link was there (`Ok`), or another stop of the VM
+    /// ended with this outcome.
+    Ended(Result<(), VmStopFailed>),
 }
 
 impl<L: Launcher, A: ChApi> ColdBoot<L, A> {

@@ -112,6 +112,9 @@ enum Guest {
     Wedges,
     /// As `Ready`, and guest init never answers `sync` with `synced`.
     NoSync,
+    /// As `Ready`, and a `stop` line does not power the VM off, so a stop
+    /// waits `DROP_STOP_WAIT` and then sends SIGTERM.
+    Ignores,
 }
 
 /// A launched fake VM. A signal ends it at once.
@@ -383,7 +386,7 @@ fn play(listener: &UnixListener, guest: Guest, vm: &Vm) {
                             if guest == Guest::Wedges {
                                 std::thread::sleep(Duration::from_millis(20));
                                 vm.broken.store(true, Ordering::SeqCst);
-                            } else {
+                            } else if guest != Guest::Ignores {
                                 vm.exited.store(true, Ordering::SeqCst);
                             }
                         }
@@ -2879,6 +2882,129 @@ fn an_unchanged_file_binds_nothing() {
     assert_eq!(inode(), before);
     assert!(test.runs_clean(0));
     assert!(!test.stopped(0));
+}
+
+/// An edit that empties the clone list removes the 1103 listener and its
+/// socket file, and the deny check without 1103 passes (decisions CH49
+/// rule 3, CH69 rules 12 and 13).
+#[test]
+fn an_emptied_repos_list_removes_1103() {
+    let test = Test::new("follow-repos-empty", |_| {});
+    let file = test.dir.join("families/chat/repos.json");
+    fs::write(&file, REPOS).unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    test.pause();
+    fs::write(&file, r#"{"repos":[]}"#).unwrap();
+    test.follow(|| !test.listener(0, 1103).exists() || test.stopped(0));
+    assert_eq!(listeners(&test, 0), PLANES);
+    assert!(test.runs_clean(0));
+}
+
+/// A bind that fails after an edit writes `egress_assert_failed` and
+/// stops the VM: a path at `vsock.sock_1104` that the vmm did not bind
+/// fails the bind (Known gap 30, decision CH69 rule 12).
+#[test]
+fn a_failed_bind_after_an_edit_writes_the_fault_and_stops_the_vm() {
+    let test = Test::new("follow-bind", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    let _stray = UnixListener::bind(test.listener(0, 1104)).unwrap();
+    test.pause();
+    fs::write(test.dir.join("families/chat/egress.json"), EGRESS).unwrap();
+    test.follow(|| test.stopped(0) && !test.hook.running(&test.rows[0].id));
+    assert_eq!(test.fault_codes(), ["egress_assert_failed"]);
+}
+
+/// An emptied list drops the 1104 server, which cuts a link that is open
+/// (Known gap 31). The guest stream holds a CONNECT head with no blank
+/// line, so the proxy waits for the rest (`HEAD_WAIT`, 30 s) until the
+/// cut.
+#[test]
+fn an_emptied_list_cuts_an_open_link() {
+    let test = Test::new("follow-cut", |_| {});
+    let file = test.dir.join("families/chat/egress.json");
+    fs::write(&file, EGRESS).unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    let mut guest = UnixStream::connect(test.listener(0, 1104)).unwrap();
+    // macOS fails `set_read_timeout` with EINVAL once the peer closed, so
+    // the timeout goes on before the cut.
+    guest
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .unwrap();
+    guest
+        .write_all(b"CONNECT 192.0.2.1:443 HTTP/1.1\r\n")
+        .unwrap();
+    test.pause();
+    fs::write(&file, r#"{"hosts":[]}"#).unwrap();
+    test.follow(|| !test.listener(0, 1104).exists());
+    let mut answer = Vec::new();
+    match guest.read_to_end(&mut answer) {
+        Ok(_) => {}
+        Err(error) => assert_eq!(error.kind(), io::ErrorKind::ConnectionReset, "{error}"),
+    }
+    assert!(test.runs_clean(0));
+}
+
+/// The follow ends with the VM: the drop of the VM entry drops the
+/// `Watch`, and with it the 1104 server of the start. A link that the
+/// guest opened before the drop reads its end, and the drop writes no
+/// fault (plan PR E3).
+#[test]
+fn the_follow_ends_with_the_vm() {
+    let test = Test::new("follow-drop", |_| {});
+    fs::write(test.dir.join("families/chat/egress.json"), EGRESS).unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    let mut guest = UnixStream::connect(test.listener(0, 1104)).unwrap();
+    guest
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .unwrap();
+    guest
+        .write_all(b"CONNECT 192.0.2.1:443 HTTP/1.1\r\n")
+        .unwrap();
+    assert!(test.drop_session(0).is_ok());
+    test.pause();
+    test.follow(|| true);
+    test.follow(|| true);
+    let mut answer = Vec::new();
+    match guest.read_to_end(&mut answer) {
+        Ok(_) => {}
+        Err(error) => assert_eq!(error.kind(), io::ErrorKind::ConnectionReset, "{error}"),
+    }
+    assert!(test.fault_codes().is_empty());
+    assert!(!test.listener(0, 1104).exists());
+}
+
+/// A check that fails while a stop owns the VM writes no fault: the VM
+/// entry, and so the follow, lives on until the stop ends its CH. The
+/// guest ignores the graceful stop, so the stop waits `DROP_STOP_WAIT`,
+/// and the follow polls during that wait. A stray listener fails each
+/// check (decisions CH21-1, CH69 rule 12).
+#[test]
+fn a_failed_check_during_a_stop_writes_no_fault() {
+    let test = Test::new("follow-stopping", |_| {});
+    *test.fake.guest.lock().unwrap() = Guest::Ignores;
+    assert_eq!(test.start(0), Ok(()));
+    let _stray = UnixListener::bind(test.listener(0, 1105)).unwrap();
+    fs::write(test.dir.join("families/chat/egress.json"), EGRESS).unwrap();
+    test.pause();
+    assert!(test.drop_session(0).is_ok());
+    assert!(test.stopped(0));
+    assert!(!test.hook.running(&test.rows[0].id));
+    assert!(test.fault_codes().is_empty());
+}
+
+/// A check that fails after the CH of the VM exited on its own writes no
+/// fault, and the stop of the follow removes the VM (decision CH69 rule
+/// 12).
+#[test]
+fn a_failed_check_after_ch_exited_writes_no_fault() {
+    let test = Test::new("follow-exited", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    let _stray = UnixListener::bind(test.listener(0, 1105)).unwrap();
+    test.fake.vms.lock().unwrap()[0].store(true, Ordering::SeqCst);
+    test.pause();
+    fs::write(test.dir.join("families/chat/egress.json"), EGRESS).unwrap();
+    test.follow(|| !test.hook.running(&test.rows[0].id));
+    assert!(test.fault_codes().is_empty());
 }
 
 /// `creds.json` of the family `chat`, as caregiver writes it.

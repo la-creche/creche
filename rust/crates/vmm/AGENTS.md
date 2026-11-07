@@ -912,7 +912,12 @@ poll.
    to the fault file and stops the VM of that control link, with the
    graceful stop first (decisions CH19 (3), CH21-1, CH54 rule 6, CH69
    rule 12). The stop runs apart from the follow, because the stop
-   drops the VM entry, and that drop ends the follow.
+   drops the VM entry, and that drop ends the follow. The VM entry, and
+   so the follow, lives on while a stop or a retire ends its CH, and a
+   check in that window fails on the command line of a CH that exited.
+   So the task writes the fault only when it takes the VM itself and its
+   CH runs, or when the stop that it joined failed. A stop or a retire
+   that ends the VM, and a CH that exited on its own, write no fault.
 5. A removed host or repo does not wait for the poll: the proxy and the
    mirror read their file at each link (decisions CH6-4, CH69 rule 16).
    An added one waits one `POLL` at most.
@@ -936,9 +941,12 @@ restore.
 `tests/start.rs` runs the follow on paused tokio time, one `POLL` at a
 time: an edit that binds 1104 and serves a 403, an emptied list that
 removes 1104 and its file and a later edit that binds it again, an edit
-that binds 1103 and serves `DENIED`, a failed check after an edit that
-writes the fault and stops the VM, and an unchanged file that keeps the
-socket file and runs no check. `tests/kvm_reach.rs` boots the vmm of
+that binds 1103 and serves `DENIED`, an emptied clone list that removes
+1103, a failed check and a failed bind after an edit that each write
+the fault and stop the VM, an emptied list that cuts an open link, a
+follow that ends with the VM, a failed check during a stop and after a
+CH exit that write no fault, and an unchanged file that keeps the socket
+file and runs no check. `tests/kvm_reach.rs` boots the vmm of
 `examples/phase3_vm.rs` with the real guest init and the stand-in in
 mode `reach`. A CONNECT to an IP literal from the guest gets no 403
 before the edit and a 403 after it, after a boot and after a restore,
