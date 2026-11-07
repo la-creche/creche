@@ -109,6 +109,17 @@ pub struct ControlLink<S = UnixStream> {
 }
 
 impl ControlLink {
+    /// A link on a stream that a host listener accepted. The family-state
+    /// link of host port 1100 has the framing of this link ("The vsock
+    /// JSON links" in `wire/AGENTS.md`), so it reads and writes through
+    /// this type (`family_state`).
+    pub(crate) fn accepted(stream: UnixStream) -> Self {
+        Self {
+            stream,
+            pending: Vec::new(),
+        }
+    }
+
     /// The stream and the bytes that came after the answer to `CONNECT`.
     /// The ACP relay copies both (plan PR L13).
     pub(crate) fn into_parts(self) -> (UnixStream, Vec<u8>) {
@@ -143,7 +154,7 @@ impl<S: Borrow<UnixStream>> ControlLink<S> {
     }
 
     /// Writes all of `bytes`.
-    async fn write_raw(&self, bytes: &[u8]) -> Result<(), ControlError> {
+    pub(crate) async fn write_raw(&self, bytes: &[u8]) -> Result<(), ControlError> {
         let mut left = bytes;
         while !left.is_empty() {
             self.stream.borrow().writable().await.map_err(io_error)?;
@@ -215,8 +226,9 @@ impl<S: Borrow<UnixStream>> ControlLink<S> {
     }
 
     /// Reads one line of at most `cap` bytes and drops its LF. An end of
-    /// the stream before any byte of the line is `Closed`.
-    async fn line(&mut self, cap: usize) -> Result<Vec<u8>, ControlError> {
+    /// the stream before any byte of the line is `Closed`. An end inside a
+    /// line, or more than `cap` bytes with no LF, is `Line`.
+    pub(crate) async fn line(&mut self, cap: usize) -> Result<Vec<u8>, ControlError> {
         let mut chunk = [0_u8; 4096];
         loop {
             if let Some(end) = self.pending.iter().position(|&byte| byte == b'\n') {

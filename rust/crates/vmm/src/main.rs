@@ -1,8 +1,9 @@
 //! The program `vmm` (decision CH7-5). The one argument picks the mode:
 //!
 //! - `vmm serve` reads its config from the env (`creche_vmm::config`),
-//!   raises its soft `RLIMIT_NOFILE` to `planes::fd_need` and runs the vmm
-//!   on the multi-thread tokio runtime until SIGTERM. A missing or bad
+//!   raises its soft `RLIMIT_NOFILE` to `planes::fd_need` plus
+//!   `family_state::fd_need` and runs the vmm on the multi-thread tokio
+//!   runtime until SIGTERM. A missing or bad
 //!   key, a hard fd limit below the need, or a failed start step, exits
 //!   78. The end of a shutdown exits 0.
 //! - `vmm launch` is the launch step of one Cloud Hypervisor process. It
@@ -27,8 +28,8 @@ use std::fmt;
 use std::process::ExitCode;
 
 use creche_vmm::config::{Config, KillScopesConfig};
-use creche_vmm::planes::fd_need;
 use creche_vmm::shutdown::RUNTIME_END;
+use creche_vmm::{family_state, planes};
 use creche_vmm_confine::{launch, leftovers, nofile, stage};
 use tokio::runtime::Builder;
 
@@ -119,8 +120,10 @@ fn serve() -> ExitCode {
         Err(error) => return refuse(&error),
     };
     // Before any fd of a VM: the soft limit of systemd (1024) holds the
-    // bridges of a few busy guests only (decision CH67 rule 4).
-    if let Err(error) = nofile::raise(fd_need()) {
+    // bridges and family-state links of a few busy guests only (decision
+    // CH67 rule 4 for the bridges, plus the 1100 links by CH68 rule 2).
+    let need = planes::fd_need().saturating_add(family_state::fd_need());
+    if let Err(error) = nofile::raise(need) {
         return refuse(&error);
     }
     // The multi-thread runtime (decision CH36, gap G21), so one stray

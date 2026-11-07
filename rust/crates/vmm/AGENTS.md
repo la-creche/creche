@@ -31,7 +31,9 @@ CH63). It reads only `AGENT_SYSTEMCTL_PROGRAM` through
 `config::KillScopesConfig`, with the check of `Config`, and calls
 `creche_vmm_confine::leftovers::kill_all`. A bad key exits 78, and any
 other failure exits 1. `vmm serve` raises its soft `RLIMIT_NOFILE` to
-`planes::fd_need` after the config read (decision CH67 rule 4).
+`planes::fd_need` plus `family_state::fd_need` after the config read
+(decision CH67 rule 4 for the bridge need, Known gap 23 for the
+family-state need).
 
 ## The compose step
 
@@ -492,7 +494,8 @@ table, and the start boots it again. A cold boot runs these steps:
 3. In `spawn_blocking`: `RunRoot::link_vm` links `vm/<id>` to the slot
    (PR D16), then `remove_stale` (decision CH19 (4)), `planes::bind` of
    the listeners of host ports 1101 and 1102 (see "The plane bridges"),
-   the store check of
+   `family_state::bind` of the listener of host port 1100 (see "The
+   family-state reply"), the store check of
    the kernel, the guest init initramfs and the root disk of the flavor
    (decision CH44 rule 2),
    `SessionDisks::for_boot` (decision CH21-4), `snapshots/` with mode
@@ -503,11 +506,13 @@ table, and the start boots it again. A cold boot runs these steps:
    files of the VM, the vmm unit and `Launch::in_slot` (decisions CH8-3,
    CH8-5, CH8-8, CH30, CH55, CH60 rule 1). A vmm with no unit fails the
    start before the link, with no file touched.
-4. `Bound::serve` starts the plane bridges. Then `control::open` for
+4. `Bound::serve` starts the plane bridges and the family-state reply.
+   Then `control::open` for
    the first `ControlReady`. It keeps the facade
    state in `ControlState`, writes a turn end to the row, and clears the
    faults of the family (contract 05 §3.3.1 rule 8).
-5. `deny::check` with the bound set 1101 and 1102 (plan PR V6).
+5. `deny::check` with the bound set 1100, 1101 and 1102 (plan PRs V6
+   and V8).
    Decision CH49 rule 3 binds 1104 from phase 7 on.
 6. `AcpLink::dial` of guest port 1201 (decision CH50 rule 2).
 
@@ -549,16 +554,19 @@ connection to a fresh TCP connect to `VMM_LITELLM_ADDR` or
 4. The copy is `relay::Splice`, the copy of the ACP relay, on the tokio
    `net` types. `copy_bidirectional` needs the tokio feature `io-util`,
    which adds a lock entry, so the vmm does not use it.
-5. `Vm::planes` holds the bridges. The drop of the entry, when the VM
-   leaves the table, ends each listener task and each open splice. A VM
-   that the vmm killed drops them at the kill.
-6. The deny check gets the ports of `Upstreams::rows` as its bound set,
-   so a listener of any other port fails it (decision CH6-3).
+5. `Vm::listeners` holds the bridges and the family-state reply. The
+   drop of the entry, when the VM leaves the table, ends each listener
+   task and each open splice. A VM that the vmm killed drops them at the
+   kill.
+6. The deny check gets 1100 and the ports of `Upstreams::rows` as its
+   bound set, so a listener of any other port fails it (decision CH6-3).
 7. A full row holds 129 fds: its listener and two streams per splice.
    `planes::fd_need` is that for both rows of all `SLOTS` (64), plus a
    headroom of 4096: 20608. `vmm serve` raises its soft `RLIMIT_NOFILE`
-   to it before it serves, and a hard limit below it exits 78
-   (`creche_vmm_confine::nofile`, decision CH67 rule 4). So the busy guests of
+   to it plus `family_state::fd_need` before it serves (see "The
+   family-state reply"), and a hard limit below the sum exits 78
+   (`creche_vmm_confine::nofile`, decision CH67 rule 4, Known gap 23).
+   So the busy guests of
    a few VMs cannot use every fd of the vmm.
 
 `tests/planes.rs` runs the bridges on real Unix and TCP sockets in
@@ -568,6 +576,61 @@ refused connect closes the guest side, the cap, and the drop.
 a boot and of a restore, that a dial reaches the plane of the config,
 that the listener closes with the VM, and the bound set of the deny
 check.
+
+## The family-state reply
+
+`src/family_state.rs` serves the family-state reply on host port 1100
+(plan PR V8, decisions CH5a, CH14, CH23). The facade pulls the state
+before each prompt. Guest init splices each connection of
+`/run/creche/family-state.sock` to a fresh vsock dial of 1100 (decision
+CH62 rule 13), and CH connects each dial to `vsock.sock_1100` (decision
+CH24).
+
+1. `family_state::bind` binds the listener beside the plane listeners,
+   with their lifecycle: after `link_vm` and `remove_stale`, before CH
+   starts, for a cold boot and for each restore.
+2. Each link reads pull lines of at most `FAMILY_STATE_CAP` bytes
+   through `creche_wire::strict`, then as `FamilyStatePull` (decision
+   CH65 rule 2). It reads them with the line reader of `ControlLink`,
+   so the framing is the one of "The vsock JSON links" in
+   `wire/AGENTS.md`. One link carries many pulls (decision CH43 rule 4).
+3. Each pull runs `FamilyRoot::read_state` in `spawn_blocking`
+   (decision CH50 rule 9) and answers with one `FamilyStateReply` line.
+   A fault is its typed reply, and the link stays open (decision CH23
+   rule 2). Nothing keeps a last good state (decision CH53 rule 2).
+4. A `state` reply waits until the host time passes `model_live_at`, for
+   at most `HOLD_CAP` (10 s, decision CH31 rule 1).
+5. A refused line closes the link with no reply, and one stderr line
+   names why, with no byte of the line (decision CH43 rule 2). An EOF
+   at a line end closes it with no log, so after a restore the old link
+   ends and the next pull dials fresh (fact 74).
+6. A pull does not set `last_use` (decision CH62 rule 22). The server
+   holds no handle on the VM table.
+7. A good pull writes no log line (decision CH68 rule 3). A faulted
+   pull writes one stderr line with the session, the reply kind, its time
+   in microseconds and its hold in milliseconds. A refused pull writes
+   one stderr line with the session and the reason. A guest that pulls
+   in a loop cannot flood the journal with good pulls.
+8. The listener holds at most `LINK_CAP` (64) open links (decision CH68
+   rule 1). A link past it is accepted and closed at once.
+9. `family_state::fd_need` counts per slot the listener, and per link its
+   stream and the 6 fds that one `read_state` holds at most: 449 per
+   slot, 28736 for all `SLOTS`. `vmm serve` adds it to
+   `planes::fd_need`, so the raised soft limit is 49344 (decision CH68
+   rule 2).
+
+`tests/family_state.rs` runs the listener on real Unix sockets over a
+scratch family root, with paused tokio time: many pulls on one link, a
+reply at the cap, the hold and its cap, each typed error on an open
+link, each refused line, the link cap and the drop. Its test
+`a_bad_pull_logs_one_line_and_a_good_pull_none` runs its own binary as
+a child and reads the real stderr: no line for a good pull, one for a
+faulted pull and one for a refused line (rule 7). `tests/start.rs`
+proves that the listener takes a dial at the launch of a boot and of a
+restore, that 1100 is in the bound set of the deny check, and that a
+pull does not set `last_use`. That pull gets the `state` of the family
+of the session in the family root of the config, so the start hands the
+server the right family and root.
 
 ## The slots
 
@@ -909,6 +972,14 @@ no guest sync.
     need exits 78. `systemd/creche-vmm.service` gets no `LimitNOFILE=`
     line, so systemd's default hard limit (524288) holds. Each CH
     inherits the raised soft limit.
+22. Closed by decision CH68 rule 1: the 1100 listener takes at most 64
+    links per VM (`family_state::LINK_CAP`), and a link past the cap is
+    accepted and closed at once, as decision CH67 rule 3 does for a
+    splice.
+23. Closed by decision CH68 rule 2: the 1100 fd need (28736: per slot the
+    listener, and per link its stream and the 6 fds of one `read_state`)
+    adds to the raise of decision CH67 rule 4 (20608), so the raise is
+    49344.
 
 ## Caller duties
 

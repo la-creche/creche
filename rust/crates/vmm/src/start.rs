@@ -15,7 +15,8 @@
 //! 3. In `spawn_blocking`: a vmm in no service unit refuses the launch
 //!    here (decision CH60 rule 1). Then the stale sockets go (PR D1,
 //!    decision CH19 (4)), the plane listeners bind (plan PR V6, decision
-//!    CH6-2), the kernel, the initramfs and the root disk
+//!    CH6-2) and so does the family-state listener (plan PR V8, decision
+//!    CH5a), the kernel, the initramfs and the root disk
 //!    pass the store check (PR D6, decision CH44 rule 2), the session disk exists (PR D7, decision
 //!    CH21-4), the run dir `vm/<id>/` links to the slot of the start (PR
 //!    D16), `snapshots/` exists, and `sessions/<id>/serial.log` in the
@@ -24,13 +25,14 @@
 //!    restore or a cold boot. Then the launch step starts CH in its slot
 //!    (PR C18) with the argv of PR C7 and the sizes of PR C4 under the
 //!    ruleset of PR C6 (PR C2, decisions CH8-3, CH8-5, CH8-8, CH30, CH55).
-//! 4. The plane bridges serve their listeners (`planes`). A restore
+//! 4. The plane bridges serve their listeners (`planes`), and the
+//!    family-state reply serves its own (`family_state`). A restore
 //!    only: `ch-remote info` must say `Paused`, the device check passes,
 //!    then `ch-remote resume` (decision CH50 rule 10).
 //! 5. The first `ControlReady` (plan PR L10). It clears the faults of the
 //!    family (contract 05 §3.3.1 rule 8).
-//! 6. The deny check (PR C8, decision CH6-3), with the plane ports as the
-//!    bound set.
+//! 6. The deny check (PR C8, decision CH6-3), with the family-state port
+//!    and the plane ports as the bound set.
 //! 7. The dial of guest port 1201 (decision CH50 rule 2).
 //!
 //! Each fault but `host_full` goes to the fault file of the family
@@ -81,7 +83,9 @@ use creche_vmm_store::serial_log::SerialLog;
 use creche_vmm_store::session_disk::SessionDisks;
 use creche_vmm_store::sleep_gate::Activity;
 use creche_vmm_store::stale::remove_stale;
-use creche_wire::{FamilyName, FamilyShape, GuestEvent, PerFlavor, SessionId, SessionRow};
+use creche_wire::{
+    FamilyName, FamilyShape, GuestEvent, HostPort, PerFlavor, SessionId, SessionRow,
+};
 use tokio::net::UnixStream;
 use tokio::sync::{RwLock, watch};
 use tokio::task::spawn_blocking;
@@ -91,6 +95,7 @@ use crate::control::{
     Change, ControlError, ControlLink, ControlState, DIAL_PAUSE, EventEnd, LinkId, READY_WAIT,
     StopSender, open, wall_time,
 };
+use crate::family_state::{self, Server};
 use crate::handlers::acp::{StartFault, StartVm};
 use crate::handlers::drop::{StopVm, VmStopFailed};
 use crate::planes::{Bound, Planes, Upstreams, bind};
@@ -211,12 +216,20 @@ struct Vm<P> {
     link_id: Option<LinkId>,
     /// The snapshot key of the VM. `None` after a failed stop.
     key: Option<SnapshotKey>,
-    /// The plane bridges of the VM (plan PR V6). They go with the entry,
-    /// so the listeners close when the VM leaves the table. `None` once
-    /// the vmm killed the VM.
-    planes: Option<Planes>,
+    /// The host listeners of the VM (plan PRs V6 and V8). They go with
+    /// the entry, so the listeners close when the VM leaves the table.
+    /// `None` once the vmm killed the VM.
+    listeners: Option<Listeners>,
     /// The last use, for the eviction order (decision CH50 rule 5).
     last_use: Instant,
+}
+
+/// The served host listeners of one VM: the plane bridges (plan PR V6)
+/// and the family-state reply (plan PR V8). The drop closes each one.
+#[derive(Debug)]
+struct Listeners {
+    _planes: Planes,
+    _family_state: Server,
 }
 
 /// What the table holds for a session. Each entry holds its pool slot
@@ -362,8 +375,8 @@ struct Pending<P: VmProcess> {
 
 impl<P: VmProcess> Pending<P> {
     /// Makes the VM an entry of the table with its control link `link`,
-    /// whose identity is `link_id`, and its plane bridges `planes`.
-    fn commit(mut self, link: StopSender, link_id: LinkId, planes: Planes) {
+    /// whose identity is `link_id`, and its host listeners `listeners`.
+    fn commit(mut self, link: StopSender, link_id: LinkId, listeners: Listeners) {
         if let Some(process) = self.process.take() {
             let vm = Vm {
                 process,
@@ -373,7 +386,7 @@ impl<P: VmProcess> Pending<P> {
                 link: Some(link),
                 link_id: Some(link_id),
                 key: self.key.take(),
-                planes: Some(planes),
+                listeners: Some(listeners),
                 last_use: Instant::now(),
             };
             lock(&self.table).insert(self.id.clone(), Slot::Running(vm));
@@ -401,7 +414,7 @@ impl<P: VmProcess> Drop for Pending<P> {
                     link: None,
                     link_id: None,
                     key: None,
-                    planes: None,
+                    listeners: None,
                     last_use: Instant::now(),
                 };
                 table.insert(self.id.clone(), Slot::Running(vm));
@@ -447,7 +460,7 @@ impl<P: VmProcess> Drop for Eviction<P> {
         if let Some(mut vm) = self.vm.take() {
             let _ = vm.process.kill();
             vm.link = None;
-            vm.planes = None;
+            vm.listeners = None;
             lock(&self.table).insert(self.id.clone(), Slot::Running(vm));
         }
     }
@@ -1431,6 +1444,8 @@ struct Booted<P> {
     restore: Option<Expected>,
     /// The plane listeners, bound before CH started.
     planes: Bound,
+    /// The family-state listener, bound before CH started.
+    family_state: family_state::Bound,
 }
 
 /// Step 3: the link of `vm/<id>` to `slot`, the files of the boot, the
@@ -1459,6 +1474,9 @@ fn launch<L: Launcher, A: ChApi>(
     // each restore, so no guest dial of 1101 or 1102 finds none. The slot
     // is empty here (decision CH56 rule 1).
     let planes = bind(&run, config.planes).map_err(|error| format!("{error}: {}", error.source))?;
+    // Plan PR V8: the family-state listener has the same lifecycle.
+    let family_state =
+        family_state::bind(&run).map_err(|error| format!("{error}: {}", error.source))?;
     let checked = |digest| {
         config
             .images
@@ -1532,6 +1550,7 @@ fn launch<L: Launcher, A: ChApi>(
         start,
         restore,
         planes,
+        family_state,
     })
 }
 
@@ -1592,7 +1611,7 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
                 booted.start,
                 booted.restore,
                 cmdline,
-                booted.planes,
+                (booted.planes, booted.family_state),
             ))
         })
         .await;
@@ -1603,11 +1622,21 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
 
         let vsock = pending.run.vsock_socket();
         let link = self.control().replace(id);
-        // A fault from here on drops `planes`, which closes the bridges.
-        let planes = match bound.serve() {
-            Ok(planes) => planes,
+        // A fault from here on drops `listeners`, which closes the
+        // bridges and the family-state listener.
+        let (planes, state) = bound;
+        let families = self.config.families.clone();
+        let served = planes.serve().and_then(|planes| {
+            let family_state = state.serve(families, family.clone(), id.clone())?;
+            Ok(Listeners {
+                _planes: planes,
+                _family_state: family_state,
+            })
+        });
+        let listeners = match served {
+            Ok(listeners) => listeners,
             Err(error) => {
-                let message = format!("serving the plane bridges: {error}");
+                let message = format!("serving the host listeners: {error}");
                 return Err(self
                     .abort(pending, link, None, family, sandbox, message)
                     .await);
@@ -1636,10 +1665,12 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         // command line is the one of the launch step, and the check fails
         // closed (`deny::check`). The kernel fixes the command line at
         // exec, so a check after `ControlReady` proves the same thing.
-        // The bound set is the plane ports 1101 and 1102 (plan PR V6).
-        // Decision CH49 rule 3 binds 1104 from phase 7 on.
+        // The bound set is the family-state port 1100 (plan PR V8) and the
+        // plane ports 1101 and 1102 (plan PR V6). Decision CH49 rule 3
+        // binds 1104 from phase 7 on.
         let (ch, run) = (self.config.ch.clone(), pending.run.clone());
-        let ports = self.config.planes.rows().map(|(port, _)| port);
+        let [litellm, chaperone] = self.config.planes.rows().map(|(port, _)| port);
+        let ports = [HostPort::FamilyState, litellm, chaperone];
         let denied = blocking(move || {
             check(&cmdline, &ch, &start, &run, &ports).map_err(|error| error.to_string())
         })
@@ -1666,7 +1697,7 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         let (sender, events) = control.split();
         let (stopper, rows) = (self.stopper(), Arc::clone(&self.rows));
         tokio::spawn(read_guest(events, (id.clone(), link), stopper, rows));
-        pending.commit(sender, link, planes);
+        pending.commit(sender, link, listeners);
         Ok(acp)
     }
 }
