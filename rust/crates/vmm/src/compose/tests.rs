@@ -64,8 +64,11 @@ const PROGRAMS: [(&str, &str); 3] = [
 /// The longest wait of one step.
 const WAIT: Duration = Duration::from_secs(10);
 
-/// The frozen mismatch reply. Never change it to make a change pass.
-const MISMATCH: &str = r#"{"code":"protocol_mismatch","protocol":1}"#;
+/// The frozen mismatch reply of this protocol. Never change its form to
+/// make a change pass.
+fn mismatch() -> String {
+    format!(r#"{{"code":"protocol_mismatch","protocol":{HOST_API_PROTOCOL}}}"#)
+}
 
 /// The kernel, the base disk and the python disk, each with the SHA-256
 /// of its bytes.
@@ -101,6 +104,25 @@ impl Drop for Scratch {
     }
 }
 
+/// Copies `source` to `dest` as an executable through a `cp` child. The
+/// write fd of the copy then lives only in that child, so no fork of a
+/// parallel test can hold it open for writing, and the exec of `dest`
+/// never fails with ETXTBSY. The rust job saw that race when the copy was
+/// a `fs::copy` in this process (run 42406264853).
+fn place_program(source: &Path, dest: &Path) {
+    let status = Command::new("cp").arg(source).arg(dest).status().unwrap();
+    assert!(status.success(), "cp {} failed", source.display());
+    fs::set_permissions(dest, fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// Writes `script` next to `dest`, then places it with `place_program`, so
+/// the executed file never had a write fd in this process.
+fn write_program(dest: &Path, script: &str) {
+    let source = dest.with_extension("src");
+    fs::write(&source, script).unwrap();
+    place_program(&source, dest);
+}
+
 impl Scratch {
     /// The dirs, the images, a `digests.json` and the three programs of
     /// `PROGRAMS` that the test user owns, and a `systemctl` that logs each
@@ -123,16 +145,13 @@ impl Scratch {
         });
         fs::write(dir.join("images").join(DIGESTS_FILE), digests.to_string()).unwrap();
         fs::write(dir.join("bin/guest-init"), GUEST_INIT).unwrap();
-        fs::copy(CH_FIXTURE, dir.join("bin/cloud-hypervisor")).unwrap();
-        let ch_remote = dir.join("bin/ch-remote");
-        fs::write(&ch_remote, "#!/bin/sh\nexit 1\n").unwrap();
-        fs::set_permissions(&ch_remote, fs::Permissions::from_mode(0o755)).unwrap();
+        place_program(Path::new(CH_FIXTURE), &dir.join("bin/cloud-hypervisor"));
+        write_program(&dir.join("bin/ch-remote"), "#!/bin/sh\nexit 1\n");
 
         let systemctl = dir.join("bin/systemctl");
         let log = dir.join("systemctl.log");
         let script = format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\n", log.display());
-        fs::write(&systemctl, script).unwrap();
-        fs::set_permissions(&systemctl, fs::Permissions::from_mode(0o755)).unwrap();
+        write_program(&systemctl, &script);
 
         let text = |path: PathBuf| OsString::from(path);
         let env = HashMap::from([
@@ -460,13 +479,20 @@ fn serve_lists_refuses_and_stops_on_the_signal() {
 
     let list = r#"{"cursor":null,"cwd":null,"family":"chat"}"#;
     let header = format!("{HOST_API_HEADER}: {HOST_API_PROTOCOL}\r\n");
-    let (status, body) = ask(&socket, &header, list);
+    let (status, body) = ask(&socket, "list", &header, list);
     assert_eq!(status, 200, "{body}");
     let page: SessionPage = serde_json::from_str(&body).unwrap();
     assert_eq!((page.next, page.rows.len()), (None, 0));
 
-    let bad = format!("{HOST_API_HEADER}: 2\r\n");
-    assert_eq!(ask(&socket, &bad, list), (412, MISMATCH.to_owned()));
+    // The shipped handler of `check` (decision CH69 rule 1). The scratch
+    // families dir has no `egress.json`, so the list is empty and the
+    // answer needs no lookup (decision CH69 rule 3).
+    let check = r#"{"family":"code","target":"github.com:443"}"#;
+    let refused = r#"{"refused":{"reason":"not_listed"}}"#.to_owned();
+    assert_eq!(ask(&socket, "check", &header, check), (200, refused));
+
+    let bad = format!("{HOST_API_HEADER}: {}\r\n", HOST_API_PROTOCOL + 1);
+    assert_eq!(ask(&socket, "list", &bad, list), (412, mismatch()));
 
     term.send(()).unwrap();
     let ended = runtime.block_on(async { tokio::time::timeout(WAIT, run).await });
@@ -495,9 +521,9 @@ fn a_server_that_ends_before_the_signal_fails_the_run() {
     assert!(error.to_string().starts_with("cannot bind the socket: "));
 }
 
-/// The status and the body of the answer to `POST /list` with `headers`
-/// and `body`. It waits until the vmm binds its socket.
-fn ask(socket: &Path, headers: &str, body: &str) -> (u16, String) {
+/// The status and the body of the answer to `POST /<route>` with
+/// `headers` and `body`. It waits until the vmm binds its socket.
+fn ask(socket: &Path, route: &str, headers: &str, body: &str) -> (u16, String) {
     let deadline = Instant::now() + WAIT;
     let mut stream = loop {
         match UnixStream::connect(socket) {
@@ -508,7 +534,7 @@ fn ask(socket: &Path, headers: &str, body: &str) -> (u16, String) {
     stream.set_read_timeout(Some(WAIT)).unwrap();
     write!(
         stream,
-        "POST /list HTTP/1.1\r\nhost: vmm\r\n{headers}content-type: application/json\r\n\
+        "POST /{route} HTTP/1.1\r\nhost: vmm\r\n{headers}content-type: application/json\r\n\
          connection: close\r\ncontent-length: {}\r\n\r\n{body}",
         body.len()
     )

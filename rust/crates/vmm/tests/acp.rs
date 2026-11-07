@@ -21,9 +21,10 @@ use creche_vmm::server::{Stop, run_routes};
 use creche_vmm_store::layout::StateRoot;
 use creche_vmm_store::rows::Rows;
 use creche_wire::{
-    AcpError, AcpRoute, CreateError, CreateRoute, CreateSession, DropError, DropRoute, DropTarget,
-    Dropped, HOST_API_HEADER, HOST_API_PROTOCOL, ListError, ListRoute, ListSessions, OpenAcp,
-    RouteError, Serve, ServeUpgrade, SessionId, SessionPage, SessionRow,
+    AcpError, AcpRoute, CheckError, CheckReply, CheckRequest, CheckRoute, CreateError, CreateRoute,
+    CreateSession, DropError, DropRoute, DropTarget, Dropped, HOST_API_HEADER, HOST_API_PROTOCOL,
+    ListError, ListRoute, ListSessions, OpenAcp, RouteError, Serve, ServeUpgrade, SessionId,
+    SessionPage, SessionRow,
 };
 use tokio::runtime::{Builder, Runtime};
 use tokio::task::JoinHandle;
@@ -96,6 +97,12 @@ mod fake {
     impl Serve<DropRoute> for Set {
         async fn serve(&self, _: DropTarget) -> Result<Dropped, DropError> {
             Err(DropError::Internal {})
+        }
+    }
+
+    impl Serve<CheckRoute> for Set {
+        async fn serve(&self, _: CheckRequest) -> Result<CheckReply, CheckError> {
+            Err(CheckError::Internal {})
         }
     }
 

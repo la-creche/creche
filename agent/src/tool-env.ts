@@ -7,9 +7,12 @@
 //              ──► TOOL_RENAME     the agent copies a set source to each target
 //              ──► FACADE_ENV      never reaches a tool
 //
-// `test/tool-env.test.ts` puts each `ENV` name of a shipped playpen stage
-// in exactly one of the four lists. A new `ENV` line fails it until someone
-// picks a list.
+// Each name of each built flavor's env sits in exactly one of the four
+// lists (CH49 rule 1). `test/tool-env.test.ts` holds the lists disjoint,
+// and places each `ENV` name of `playpen/Dockerfile`. CI places the whole
+// built env, the parent image's names too: `playpen/bin/playpen-env-check`
+// runs `placeEnvFile` in each flavor on its `/etc/creche/env`. A new name
+// fails CI until someone picks a list.
 
 /**
  * Flue 2.3.0 `DEFAULT_LOCAL_ENV_ALLOWLIST`. Flue does not export it. A test
@@ -36,10 +39,14 @@ export const FLUE_ENV = [
 export const TOOL_ENV = ["MPLBACKEND"] as const;
 
 /**
- * An image name, and the tool names it becomes. Phase 7 adds the CH46
- * proxy: `CRECHE_TOOL_HTTPS_PROXY` to `HTTPS_PROXY` and `https_proxy`.
+ * An image name, and the tool names it becomes. The coding flavor names
+ * the egress proxy in `CRECHE_TOOL_HTTPS_PROXY`, and tools get it as
+ * `HTTPS_PROXY` and `https_proxy` only (decision CH46 rules 2 and 3): no
+ * `HTTP_PROXY`, no `NO_PROXY`, no proxy CA and no `NODE_USE_ENV_PROXY`.
  */
-export const TOOL_RENAME: Readonly<Record<string, readonly string[]>> = {};
+export const TOOL_RENAME: Readonly<Record<string, readonly string[]>> = {
+  CRECHE_TOOL_HTTPS_PROXY: ["HTTPS_PROXY", "https_proxy"],
+};
 
 /**
  * The names that never reach a tool. npm and pnpm skip devDependencies
@@ -48,6 +55,30 @@ export const TOOL_RENAME: Readonly<Record<string, readonly string[]>> = {};
  * The root disk is read-only.
  */
 export const FACADE_ENV = ["NODE_ENV", "NODE_VERSION", "YARN_VERSION", "MPLCONFIGDIR"] as const;
+
+/**
+ * The names that no list holds, in the order given. The lists are
+ * disjoint, so a name outside this result sits in exactly one list.
+ */
+export function unplacedEnv(names: readonly string[]): string[] {
+  const placed: readonly string[] = [...FLUE_ENV, ...TOOL_ENV, ...Object.keys(TOOL_RENAME), ...FACADE_ENV];
+  return names.filter((name) => !placed.includes(name));
+}
+
+/**
+ * The report of `playpen/bin/playpen-env-check` on the text of one
+ * `/etc/creche/env` file (CH49 rule 1). The first line is the count of
+ * `NAME=value` lines that this function read. Each further line is one
+ * name that no list holds. The check compares the count with the line
+ * count of the file, so an empty or short report fails the flavor.
+ */
+export function placeEnvFile(text: string): string {
+  const names = text
+    .split("\n")
+    .filter((line) => line !== "")
+    .map((line) => line.split("=", 1)[0] ?? line);
+  return [String(names.length), ...unplacedEnv(names)].map((line) => `${line}\n`).join("");
+}
 
 /** The names and values that the agent adds to each tool's env. */
 export type ToolEnv = Readonly<Record<string, string>>;

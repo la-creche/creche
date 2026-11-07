@@ -48,29 +48,31 @@ mod tests {
     use hyper::HeaderMap;
     use hyper::header::HeaderValue;
 
-    use super::{HOST_API_HEADER, ProtocolCheck};
+    use super::{HOST_API_HEADER, HOST_API_PROTOCOL, ProtocolCheck};
 
-    fn refused(values: &[&'static str]) -> bool {
+    fn refused(values: &[String]) -> bool {
         let mut headers = HeaderMap::new();
         for value in values {
-            headers.append(HOST_API_HEADER, HeaderValue::from_static(value));
+            headers.append(HOST_API_HEADER, HeaderValue::from_str(value).unwrap());
         }
         ProtocolCheck::new().unwrap().refuse(&headers).is_some()
     }
 
     #[test]
     fn only_the_exact_text_once_passes() {
-        assert!(!refused(&["1"]));
+        let text = HOST_API_PROTOCOL.to_string();
+        assert!(!refused(std::slice::from_ref(&text)));
         for form in [
-            &[][..],
-            &["2"],
-            &["01"],
-            &[" 1"],
-            &["1 "],
-            &["x"],
-            &["1", "1"],
+            vec![],
+            vec![(HOST_API_PROTOCOL - 1).to_string()],
+            vec![(HOST_API_PROTOCOL + 1).to_string()],
+            vec![format!("0{text}")],
+            vec![format!(" {text}")],
+            vec![format!("{text} ")],
+            vec!["x".to_owned()],
+            vec![text.clone(), text.clone()],
         ] {
-            assert!(refused(form), "{form:?} passed");
+            assert!(refused(&form), "{form:?} passed");
         }
     }
 }

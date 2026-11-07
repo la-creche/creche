@@ -46,7 +46,7 @@ from agent_family import (
 )
 from agent_family.registry import FAMILY_FILE
 
-from . import paths, sandboxes, steps
+from . import paths, reach_files, sandboxes, steps
 from .applied import AppliedState, read_applied, write_applied
 from .chaperone_watch import PepReport, unwatched
 from .clock import now_rfc3339, seconds_from_now
@@ -323,6 +323,16 @@ def _converge(
             state_root, report, registry.revision, folded, applied, chaperone, str(refusal)
         ).noted("refused: app table of policy.toml")
 
+    # Decision CH71: an `egress.json` over the cap of the vmm is refused
+    # here too, before the key step, so no write lands and the last good
+    # file stays (invariant 19).
+    try:
+        egress_file = reach_files.render_egress_file(family)
+    except reach_files.EgressTooLargeError as refusal:
+        return _refuse(
+            state_root, report, registry.revision, folded, applied, chaperone, str(refusal)
+        ).noted("refused: egress.json over its cap")
+
     refresh = KeyRefresh.UPDATE if _needs(diff, Step.UPDATE_KEY) else KeyRefresh.KEEP
     creds, block, key_faults = steps.ensure_credentials(family, state_root, actors.litellm, refresh)
     faults.extend(key_faults)
@@ -368,6 +378,11 @@ def _converge(
 
     if steps.write_config(family, state_root, *_config_text(registry, family)):
         ran.append(str(Step.WRITE_CONFIG))
+
+    # Contract 01 §6.1.1. On every pass, before the sandboxes, so the file
+    # holds the list of the revision this pass converges to (decision CH69
+    # rule 6). The sbx egress step below stays until the cut.
+    reach_files.write_egress_file(egress_file, state_root)
 
     timers = apply_timers(family, actors.units)
     if timers.changed:

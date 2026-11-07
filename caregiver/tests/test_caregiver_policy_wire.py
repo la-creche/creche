@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 from agent_family import FamilyState, Index, load_registry
+from caregiver.apply import ApplyResult, apply_once
 from caregiver.cli import main
 from caregiver.credentials import read_creds, token_sha256
 from caregiver.delete import delete_family
@@ -34,7 +35,7 @@ from caregiver.rotate import (
 from caregiver.steps import WHOLE_FILE
 from caregiver.switch import FakeSwitchClient
 from caregiver.timers import FakeUnits
-from caregiver_helpers import FENCE_ENV, expire_overlap, toml_text, write_registry
+from caregiver_helpers import FENCE_ENV, FENCES, expire_overlap, toml_text, write_registry
 
 from caregiver import paths
 
@@ -188,6 +189,63 @@ def test_a_refused_edit_keeps_the_last_good_table(fleet: Fleet) -> None:
     assert result.status.state is FamilyState.INVALID
     assert fleet.fragment().read_text(encoding="utf-8") == last
     assert sorted(fleet.apps()[FAMILY]["grants"][SERVER]["tools"]) == ["search"]
+
+
+def write_first_revision(fleet: Fleet) -> None:
+    """The last good revision: one tool and one egress host."""
+    write_server(fleet.registry_root, ("search", "extract"))
+    write_registry(fleet.registry_root, tools={SERVER: ["search"]}, egress=["github.com"])
+
+
+def write_refused_revision(fleet: Fleet) -> None:
+    """A revision that moves the fragment and the egress list, and that the
+    check of `policy.toml` refuses. An egress edit alone moves no fragment,
+    so the check would not run."""
+    write_registry(fleet.registry_root, tools={SERVER: ["search", "extract"]}, egress=["pypi.org"])
+    fleet.checker.refused_apps = frozenset({FAMILY})
+
+
+def test_a_refused_edit_keeps_the_last_good_egress_file(fleet: Fleet) -> None:
+    """Invariant 19, decision CH69 rule 6: a pass writes `egress.json` only
+    for a revision that `policy.toml` takes."""
+    write_first_revision(fleet)
+    fleet.run()
+    egress_path = paths.egress_path(fleet.state_root, FAMILY)
+    last = egress_path.read_bytes()
+
+    write_refused_revision(fleet)
+    result = fleet.run()
+
+    assert result.status.state is FamilyState.INVALID
+    assert egress_path.read_bytes() == last
+
+
+def test_a_refused_apply_once_keeps_the_last_good_egress_file(fleet: Fleet) -> None:
+    """Invariant 19, decision CH69 rule 6: `apply-once` writes `egress.json`
+    only after the shape check and the check of `policy.toml` pass."""
+
+    def apply() -> ApplyResult:
+        return apply_once(
+            fleet.registry_root,
+            FAMILY,
+            state_root=fleet.state_root,
+            fences=FENCES,
+            policy=fleet.policy,
+            image=IMAGE,
+            driver=fleet.driver,
+            litellm=fleet.litellm,
+        )
+
+    write_first_revision(fleet)
+    apply()
+    egress_path = paths.egress_path(fleet.state_root, FAMILY)
+    last = egress_path.read_bytes()
+
+    write_refused_revision(fleet)
+    result = apply()
+
+    assert result.status.state is FamilyState.INVALID
+    assert egress_path.read_bytes() == last
 
 
 def test_a_check_that_does_not_run_moves_no_fragment(fleet: Fleet) -> None:

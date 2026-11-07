@@ -14,9 +14,10 @@ use std::time::{Duration, Instant};
 
 use creche_vmm::server::{Relay, Stop, run_routes};
 use creche_wire::{
-    AcpRoute, CreateError, CreateRoute, CreateSession, DropError, DropRoute, DropTarget, Dropped,
-    HOST_API_HEADER, HOST_API_PROTOCOL, JsonRoute, ListError, ListRoute, ListSessions, OpenAcp,
-    RouteError, Serve, ServeUpgrade, SessionPage, SessionRow, UpgradeRoute,
+    AcpRoute, CheckError, CheckReply, CheckRequest, CheckRoute, CreateError, CreateRoute,
+    CreateSession, DropError, DropRoute, DropTarget, Dropped, HOST_API_HEADER, HOST_API_PROTOCOL,
+    JsonRoute, ListError, ListRoute, ListSessions, OpenAcp, RouteError, Serve, ServeUpgrade,
+    SessionPage, SessionRow, UpgradeRoute,
 };
 use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
@@ -29,6 +30,8 @@ const ROW: &str = r#"{"created_at":1793577600000,"cwd":"/home/david/code/lacrech
 const LIST: &str = r#"{"cursor":null,"cwd":null,"family":"chat"}"#;
 const DROP: &str = r#"{"session":{"family":"chat","id":"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b"}}"#;
 const ACP: &str = r#"{"family":"chat","id":"3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b"}"#;
+const CHECK: &str = r#"{"family":"code","target":"github.com:443"}"#;
+const VERDICT: &str = r#"{"refused":{"reason":"not_listed"}}"#;
 
 const JSON: &str = "content-type: application/json\r\n";
 const CLOSE: &str = "connection: close\r\n";
@@ -93,6 +96,13 @@ mod fake {
         async fn serve(&self, _: DropTarget) -> Result<Dropped, DropError> {
             self.refusal()?;
             Ok(Dropped {})
+        }
+    }
+
+    impl Serve<CheckRoute> for Fake {
+        async fn serve(&self, _: CheckRequest) -> Result<CheckReply, CheckError> {
+            self.refusal()?;
+            Ok(serde_json::from_str(VERDICT).unwrap())
         }
     }
 
@@ -312,6 +322,7 @@ fn each_route_answers_or_refuses_each_code() {
         ("list", LIST),
         ("drop", DROP),
         ("acp", ACP),
+        ("check", CHECK),
     ];
     assert_eq!(routes.len(), bodies.len());
 
@@ -336,6 +347,7 @@ fn each_route_answers_or_refuses_each_code() {
         let reply = match name {
             "create" => ROW,
             "list" => r#"{"next":null,"rows":[]}"#,
+            "check" => VERDICT,
             _ => "{}",
         };
         let (status, head, got) = server.ask(&line, headers, body);

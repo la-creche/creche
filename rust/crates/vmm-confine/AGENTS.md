@@ -100,6 +100,17 @@ table of the three vmm crates.
   Nothing keeps a last good state (decision CH53 rule 2). No live host
   writes `model_live_at` before the cut (decision CH45 rule 2), so the
   tests read the fixture root `tests/fixtures/family`.
+- `family::FamilyRoot::read_egress` reads the egress allowlist
+  `egress.json` of a family (decisions CH6-4, CH69 rules 3 and 5). The
+  file sits in the family dir beside `config/`, so the read needs no
+  swap retry. It opens the family dir with `O_NOFOLLOW`, then the file
+  with one `openat` (`O_NOFOLLOW`, `O_NONBLOCK`). It checks a regular
+  file, reads at most `EGRESS_CAP` (64 KiB, decision CH70 rule 1) and
+  reads the bytes through `creche_wire::strict` as `FamilyEgress`
+  (decision CH65 rule 2). An
+  absent family dir or file is the empty list, so the family gets no
+  egress. A symlink, a file that is not regular, a file past the cap and
+  bytes that are not one `FamilyEgress` are each an `EgressFault`.
 - `nofile::raise` sets the soft `RLIMIT_NOFILE` of the vmm to the need
   that the vmm passes, and keeps the hard limit. A soft limit at or above
   the need stays. A hard limit below it is `NofileError::Short`, so the
@@ -400,3 +411,9 @@ table of the three vmm crates.
 - Closed by decision CH67 rule 4: the fd limit of the vmm, its headroom
   of 4096 and the refusal of a short hard limit (`nofile.rs`,
   `rust/crates/vmm/AGENTS.md` Known gap 21).
+- Closed by decision CH70 rule 1: `EGRESS_CAP` is 64 KiB, room for
+  about a thousand entries. A larger file is `EgressFault::TooLarge`, so
+  the vmm allows nothing. Decision CH71 makes caregiver refuse a family
+  whose file would pass the cap. `rust/crates/wire/vectors/family.json`
+  holds the value, and `the_egress_cap_matches_the_wire_vectors` in
+  `tests/family.rs` holds `EGRESS_CAP` equal to it.

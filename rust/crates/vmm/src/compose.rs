@@ -49,9 +49,9 @@ use creche_vmm_store::rows::{LoadError, Rows};
 use creche_vmm_store::session_disk::SessionDisks;
 use creche_vmm_store::snapshot::Snapshotter;
 use creche_wire::{
-    AcpError, AcpRoute, CreateError, CreateRoute, CreateSession, DropError, DropRoute, DropTarget,
-    Dropped, ListError, ListRoute, ListSessions, OpenAcp, Serve, ServeUpgrade, SessionId,
-    SessionPage, SessionRow,
+    AcpError, AcpRoute, CheckError, CheckReply, CheckRequest, CheckRoute, CreateError, CreateRoute,
+    CreateSession, DropError, DropRoute, DropTarget, Dropped, ListError, ListRoute, ListSessions,
+    OpenAcp, Serve, ServeUpgrade, SessionId, SessionPage, SessionRow,
 };
 use tokio::sync::oneshot;
 use tokio::task::{JoinHandle, spawn_blocking};
@@ -62,6 +62,7 @@ use crate::config::{CH, CH_REMOTE, Config};
 use crate::control::ControlState;
 use crate::guest_init::{GuestInitError, write_initramfs};
 use crate::handlers::acp::{Acp, StartFault, StartVm};
+use crate::handlers::check::Checks;
 use crate::handlers::create::Creates;
 use crate::handlers::drop::{Drops, StopVm, VmStopFailed};
 use crate::handlers::list::Lists;
@@ -160,6 +161,7 @@ struct Handlers {
     lists: Lists,
     acp: Acp<Shared>,
     drops: Drops<Shared>,
+    checks: Checks,
 }
 
 impl Serve<CreateRoute> for Handlers {
@@ -177,6 +179,12 @@ impl Serve<ListRoute> for Handlers {
 impl Serve<DropRoute> for Handlers {
     async fn serve(&self, request: DropTarget) -> Result<Dropped, DropError> {
         self.drops.serve(request).await
+    }
+}
+
+impl Serve<CheckRoute> for Handlers {
+    async fn serve(&self, request: CheckRequest) -> Result<CheckReply, CheckError> {
+        self.checks.serve(request).await
     }
 }
 
@@ -323,10 +331,11 @@ fn parts(config: Config, checked: Checked) -> Result<Vmm, StartError> {
         Arc::clone(&faults),
     )));
     let handlers = Handlers {
-        creates: Creates::new(Arc::clone(&rows), config.families),
+        creates: Creates::new(Arc::clone(&rows), config.families.clone()),
         lists: Lists::new(Arc::clone(&rows)),
         acp: Acp::new(Arc::clone(&rows), relays.clone(), hook.clone()),
         drops: Drops::new(rows, relays, hook.clone()),
+        checks: Checks::new(config.families),
     };
     Ok(Vmm {
         socket: config.run.vmm_socket(),

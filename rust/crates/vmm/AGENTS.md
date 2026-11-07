@@ -61,8 +61,8 @@ family-state need).
    manager it logs the error and still serves, and every VM launch
    refuses with that error and starts nothing. That `ColdBoot` is the `StartVm` and the `StopVm` hook,
    the `VmSet` of the shutdown and the `Sleeper` of `sleep::run`.
-4. The handler set of `routes!` (`Creates`, `Lists`, `Acp`, `Drops`)
-   binds `vmm.sock` in the run root. `sleep::run` runs beside it (caller
+4. The handler set of `routes!` (`Creates`, `Lists`, `Acp`, `Drops`,
+   `Checks`) binds `vmm.sock` in the run root. `sleep::run` runs beside it (caller
    duty 5), and so does `FaultBook::refresh` every `faults::REFRESH`.
 5. At SIGTERM the sleep loop gets its stop, and `shutdown::shutdown`
    runs with the end of `sleep::run` as its `sleep` future. `src/main.rs`
@@ -420,6 +420,48 @@ ends early under the 1 MiB cap with a `next` (decision CH33 rule 2).
 `tests/create_list.rs` proves a repeat create, a conflict, an unknown
 family, a repeat after the family went, `internal` for a failed family
 read or row write, and a page of 4096-character cwds that ends early.
+
+## The check route
+
+`src/handlers/check.rs` serves `check` (decisions CH6-3, CH69 rules 1
+and 2). It answers with `egress::rule`, the one decision that the proxy
+of host port 1104 uses too. A check boots no VM.
+
+1. `Target::parse` reads the target as `host:port` (decision CH6-4). An
+   IPv4 or IPv6 address, bracketed or not, is `ip_literal`. So is each
+   name that getaddrinfo reads as an IPv4 address with no lookup (the
+   inet_aton forms, such as `2130706433` or `0x7f.1`). The host goes to
+   lower case. A host that is no `HostName` (a trailing dot, `*`), no
+   port, or a port that is not 1 to 65535 is `bad_target`.
+2. The handler reads `FamilyRoot::read_egress` in `spawn_blocking`
+   (decision CH36 G21). An unknown family or an absent file is the empty
+   list (decision CH69 rule 3).
+3. `decide` refuses a host and port that the list does not hold with
+   `not_listed`, before any lookup. Then tokio `lookup_host` resolves
+   the name with the system resolver (decision CH69 rule 8).
+4. `judge` maps each IPv4-mapped IPv6 record to IPv4. One record that is
+   not public refuses the whole name with `not_public`. Not public: each
+   IPv4 special-purpose range of RFC 6890, 100.64.0.0/10, 0.0.0.0/8,
+   224.0.0.0/4 and 240.0.0.0/4, and each IPv6 address outside 2000::/3
+   or in 2001:db8::/32 or 2001::/23. No record is `no_address`. Else the
+   reply allows the target at the records, in the resolver's order, with
+   no record twice.
+
+An `egress.json` that is present and does not read gets the refusal
+`not_valid` with status 200, and the vmm logs one line that names the
+same reason (decision CH70 rule 2). `tests/egress_rule.rs` proves
+each verdict of the rule: `localhost` resolves through `/etc/hosts`, and
+`judge` takes the addresses that the test gives. For `no_address` it
+lists a name under `.invalid` with a 64-letter label, so the resolver
+may fail before a query, and else gets NXDOMAIN (RFC 6761). An IPv6
+literal with a port, such as `::ffff:127.0.0.1:443`, is refused only by
+its text before the last `:`, and a test holds that case.
+`tests/egress_check.rs` proves the route: each target gets the verdict
+of the rule, an absent file, a bad file (`not_valid` with 200, never
+500), and the mismatch reply to a client of protocol 1.
+`serve_lists_refuses_and_stops_on_the_signal` in
+`src/compose/tests.rs` sends one `check` through the shipped handler
+set.
 
 ## The stop
 

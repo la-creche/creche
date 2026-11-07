@@ -26,7 +26,7 @@ from agent_family import (
     load_registry,
 )
 
-from . import paths, sandboxes, steps
+from . import paths, reach_files, sandboxes, steps
 from .atomic import read_json
 from .credentials import read_creds
 from .driver import SandboxDriver
@@ -235,6 +235,13 @@ def _apply_valid(
     except PolicyShapeError as refusal:
         return refuse(str(refusal))
 
+    # Decision CH71: an `egress.json` over the cap of the vmm stops the
+    # apply before any write, as a refused table does.
+    try:
+        egress_file = reach_files.render_egress_file(family)
+    except reach_files.EgressTooLargeError as refusal:
+        return refuse(str(refusal))
+
     creds, credentials_block, key_faults = steps.ensure_credentials(family, state_root, litellm)
     all_faults = (*faults, *key_faults)
     if creds is None:
@@ -250,6 +257,9 @@ def _apply_valid(
         return refuse(standing.reason)
 
     steps.write_config(family, state_root, instructions, skills)
+    # Contract 01 §6.1.1, decision CH69 rule 6: the egress allowlist of the
+    # vmm, before the sandbox step, as a pass writes it.
+    reach_files.write_egress_file(egress_file, state_root)
     # Contract 05 §6.4, invariant 16: a declared webhook opens a live route
     # with no second, hand-made act. Beside the other credentials, before
     # any sandbox exists (invariant 13).

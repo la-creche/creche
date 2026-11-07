@@ -245,6 +245,205 @@ class AutoOrigin(BaseModel):
     auto: Auto
 
 
+class CheckAllowed(BaseModel):
+    """
+    The reply of a check that allows the target. It names each address that
+    the check judged, in the order of the resolver. The proxy connects only
+    to these (decision CH6-4).
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    addresses: Annotated[
+        list[IpAddress],
+        Field(
+            description="The public addresses of the name. An IPv4-mapped IPv6 address is\nwritten as its IPv4 address."
+        ),
+    ]
+
+
+class CheckAllowedReply(BaseModel):
+    """
+    The family may reach the target at these addresses.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    allowed: CheckAllowed
+
+
+class CheckError1(BaseModel):
+    """
+    No route has this path.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["no_route"]
+
+
+class CheckError2(BaseModel):
+    """
+    The route has this path, but the method is not `POST`.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["bad_method"]
+
+
+class CheckError3(BaseModel):
+    """
+    The `Content-Type` is not `application/json`.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["bad_content_type"]
+
+
+class CheckError4(BaseModel):
+    """
+    The body is over the cap.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["too_large"]
+
+
+class CheckError5(BaseModel):
+    """
+    The body is not strict JSON.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["not_json"]
+
+
+class CheckError6(BaseModel):
+    """
+    The body is JSON, but not the request type of the route.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["not_valid"]
+
+
+class CheckError7(BaseModel):
+    """
+    The vmm failed after it took the request. The vmm logs
+    the details.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: Literal["internal"]
+
+
+class CheckError(
+    RootModel[
+        CheckError1
+        | CheckError2
+        | CheckError3
+        | CheckError4
+        | CheckError5
+        | CheckError6
+        | CheckError7
+    ]
+):
+    root: Annotated[
+        CheckError1
+        | CheckError2
+        | CheckError3
+        | CheckError4
+        | CheckError5
+        | CheckError6
+        | CheckError7,
+        Field(
+            description="The error of the route `check`. It holds the shared codes only: an\nunknown family has an empty list, and each target gets a verdict."
+        ),
+    ]
+
+
+class CheckReason(StrEnum):
+    """
+    Why.
+    """
+
+    BAD_TARGET = "bad_target"
+    IP_LITERAL = "ip_literal"
+    NOT_LISTED = "not_listed"
+    NOT_PUBLIC = "not_public"
+    NO_ADDRESS = "no_address"
+    NOT_VALID = "not_valid"
+
+
+class CheckRefused(BaseModel):
+    """
+    The reply of a check that refuses the target.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    reason: Annotated[CheckReason, Field(description="Why.", title="CheckReason")]
+
+
+class CheckRefusedReply(BaseModel):
+    """
+    The family may not reach the target.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    refused: CheckRefused
+
+
+class CheckReply(RootModel[CheckAllowedReply | CheckRefusedReply]):
+    root: Annotated[
+        CheckAllowedReply | CheckRefusedReply,
+        Field(
+            description="The verdict of the vmm on one target: the reply of the route `check`\nand of the one egress decision that the proxy uses too (decisions\nCH6-3, CH69 rule 2). A refusal is a reply, not a route error. On the\nwire the variant name is the one key of an object, and each variant has\na `title` for its class name."
+        ),
+    ]
+
+
+class CheckRequest(BaseModel):
+    """
+    What a client sends to ask the vmm whether a family may reach a target
+    (decisions CH6-3, CH69 rule 1): the request of the route `check`.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    family: Annotated[
+        FamilyName,
+        Field(
+            description="The family whose allowlist the vmm reads. A family the vmm does not\nknow has an empty list."
+        ),
+    ]
+    target: Annotated[
+        StrictStr,
+        Field(
+            description="The target as `host:port`, the form of a CONNECT target. Any text\nreads, and the vmm answers a bad one with `bad_target` or\n`ip_literal`, as the proxy refuses it."
+        ),
+    ]
+
+
 class ConfigMissing(BaseModel):
     """
     The reply of a pull when `config/` is absent. It carries nothing.
@@ -826,6 +1025,20 @@ class Dropped(BaseModel):
     )
 
 
+class EgressHost(BaseModel):
+    """
+    One entry of the allowlist file: a host name and its port (decision
+    CH6-4). caregiver writes a bare host of the family file with the port
+    443 (decision CH69 rule 5).
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    host: Annotated[HostName, Field(description="The host name, in lower case.")]
+    port: Annotated[StrictInt, Field(description="The port: 1 to 65535.", ge=1, le=65535)]
+
+
 class FacadeExited(BaseModel):
     """
     A facade that exited: `waitpid` reported it gone, and guest init did not
@@ -1057,6 +1270,28 @@ class FamilyDrop(BaseModel):
     family: DropFamily
 
 
+class FamilyEgress(BaseModel):
+    """
+    The egress allowlist of one family: the file `FAMILY_EGRESS_FILE`
+    (decisions CH6-4, CH69 rules 3 and 5). caregiver writes it from the
+    `egress` list of the family file, with each host in lower case and an
+    explicit port, sorted and with no entry twice. The vmm reads it on each
+    check and each CONNECT. The planes never enter it (decision CH6-2).
+
+    `family/grammar.py` stays the authority for the host form (decision
+    CH23 rule 5). `wire/tests/test_wire_grammar.py` holds the pattern of
+    `HostName` equal to it. No route reaches the type, so it needs no new
+    `HOST_API_PROTOCOL` (decision CH33 rule 8).
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    hosts: Annotated[
+        list[EgressHost], Field(description="The allowed hosts. An empty list allows no egress.")
+    ]
+
+
 class FamilyMemoryMib(RootModel[StrictInt]):
     root: Annotated[
         StrictInt,
@@ -1195,6 +1430,26 @@ class GuestEvent(RootModel[GuestFacadeEvent | GuestSyncedEvent | GuestTurnEvent]
         GuestFacadeEvent | GuestSyncedEvent | GuestTurnEvent,
         Field(
             description="What guest init sends on control link 1200 after `ControlReady`, each\nat any time (decisions CH21, CH36 G11).\n\n1. `facade`: the facade state changed (decision CH19 rule 2). Guest init\n   sends each change, so the vmm sees a facade that opened its local\n   link and is up (decision CH32 rule 6). The vmm applies it as it\n   applies the state of `ControlReady`.\n2. `synced`: the answer to `ControlCommand::Sync` (decision CH62 rule\n   23).\n3. `turn`: a turn event of the facade, relayed (decision CH21). The\n   facade sends the bare `TurnEvent` on its local link, and guest init\n   nests it here (decision CH62 rules 10 and 11). A turn event with no\n   control link open is dropped, and the next `ControlReady` carries\n   the last `TurnEnd`.\n\nOn the wire the variant name is the one key of an object, and each\nvariant has a `title` for its class name."
+        ),
+    ]
+
+
+class HostName(RootModel[StrictStr]):
+    root: Annotated[
+        StrictStr,
+        Field(
+            description="The host name of one entry of the allowlist file (decisions CH6-4,\nCH69 rule 5). caregiver writes the host of the family file in lower\ncase, so the vmm compares two names byte for byte.",
+            pattern="^([a-z0-9]+(-+[a-z0-9]+)*(\\.[a-z0-9]+(-+[a-z0-9]+)*){0,2}|[a-z0-9]+(-+[a-z0-9]+)*(\\.[a-z0-9]+(-+[a-z0-9]+)*){4,}|([a-z0-9]+(-+[a-z0-9]+)*\\.)*([0-9]{4,}|[0-9]*[a-z][a-z0-9]*|[a-z0-9]+(-+[a-z0-9]+)+)(\\.[a-z0-9]+(-+[a-z0-9]+)*)*)$",
+        ),
+    ]
+
+
+class IpAddress(RootModel[StrictStr]):
+    root: Annotated[
+        StrictStr,
+        Field(
+            description="An IP address on the wire, in the one text of `ip_address_text`. A\nreader refuses each other text of the address, so the Rust type and the\ngenerated models read the same texts.",
+            pattern="^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}|[0-9a-f]{4}(:[0-9a-f]{4}){7})$",
         ),
     ]
 

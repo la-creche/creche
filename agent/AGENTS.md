@@ -19,7 +19,8 @@ pnpm run build     # src/ to dist/ with declarations, for the facade
 The facade imports `agent/agent`, `agent/config` and `agent/strict-json`
 from `dist/` (`package.json` `exports`). Its `build` and `typecheck` run
 this build first. `agent/wire` and `agent/wire-read` are exported too,
-for the facade's later reads.
+for the facade's later reads. `playpen/bin/playpen-env-check` imports
+`agent/tool-env` in each built flavor.
 
 `src/wire.ts` is the JSON Schema of the wire types of the VM owner. The
 schema test of `rust/crates/wire` writes it (`wire/AGENTS.md`). Never edit
@@ -147,10 +148,15 @@ connection and the `auth` of the LiteLLM provider unwrap it.
 Flue's `local()` copies only 14 names from `process.env` into a tool
 process (`FLUE_ENV`). The agent adds the names of `TOOL_ENV` that are set,
 and the targets of `TOOL_RENAME` (`src/tool-env.ts`, decision CH49).
-`FACADE_ENV` names never reach a tool. `test/tool-env.test.ts` puts each
-`ENV` name of a shipped stage of `playpen/Dockerfile` in exactly one list.
-A new `ENV` line fails it until someone picks a list. The test reads the
-Dockerfile only, not the built env with the parent image's names.
+`FACADE_ENV` names never reach a tool. `test/tool-env.test.ts` holds the
+four lists disjoint and puts each `ENV` name of a shipped stage of
+`playpen/Dockerfile` in a list. The built env also holds the parent
+image's names, such as `NODE_VERSION` and `YARN_VERSION`. The
+`playpen-image` CI job places those: `playpen/bin/playpen-env-check` runs
+`placeEnvFile` of the image's own `agent/tool-env` on each flavor's
+`/etc/creche/env` (CH49 rule 1). The report gives the count of lines read,
+then each unplaced name. The check fails a report whose count is not the
+file's line count. A new name fails CI until someone picks a list.
 
 ## Known gaps
 

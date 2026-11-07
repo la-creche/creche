@@ -153,6 +153,18 @@ and in the file together. After the first deploy, a change of a bridge
 row value (the ports 4000 and 8300, the family-state socket) needs a new
 `GUEST_INIT_PROTOCOL` (decision CH62 rule 15).
 
+## The family dir caps
+
+`rust/crates/wire/vectors/family.json` holds `egress_cap`, the most bytes
+of `egress.json` that the vmm reads (decisions CH70 rule 1, CH71). The
+vmm defines it as `EGRESS_CAP` in
+`rust/crates/vmm-confine/src/family.rs`, and
+`the_egress_cap_matches_the_wire_vectors` in that crate's
+`tests/family.rs` holds the two equal. caregiver refuses a family whose
+file would pass the cap. `caregiver/tests/test_reach_files.py` holds its
+`EGRESS_CAP` equal to the same file. Change the value in all three places
+together.
+
 ## A struct on the wire
 
 A derived `Deserialize` of a struct also reads a JSON array, its fields in
@@ -216,7 +228,7 @@ its error type.
 7. The schema test also writes `src/creche_wire/routes.py`. It holds the
    protocol, its header, `HOST_API_BODY_CAP`, `MISMATCH_STATUS` and one
    `JsonRoute` or `UpgradeRoute` constant per route, named as the route in
-   capitals: `ACP`, `CREATE`, `DROP`, `LIST`. pyright then refuses a wrong
+   capitals: `ACP`, `CHECK`, `CREATE`, `DROP`, `LIST`. pyright then refuses a wrong
    request, reply or error model on a Python client. A route with
    `JsonRoute::CLIENT_TIMEOUT` also gets `<NAME>_CLIENT_TIMEOUT_S`, from
    `client_timeout_s` of its entry in `x-routes`.
@@ -330,6 +342,51 @@ guest port 1201 (decision CH13).
    protocol header, the route and the method, the `Upgrade` header, the
    body (`Content-Type`, cap, JSON, type), the session (`not_found`,
    `busy`), admission (`host_full`), the start of the VM.
+
+### The check route
+
+`check` asks whether a family may reach a target (decisions CH6-3, CH69
+rules 1 and 2). It came with `HOST_API_PROTOCOL` 2. The request is
+`CheckRequest`, the reply is `CheckReply`, and the error is `CheckError`.
+
+1. `CheckRequest` is `{family, target}`. `target` is any text, in the
+   `host:port` form of a CONNECT target. The vmm reads it, so a bad
+   target gets a verdict, not `not_valid`.
+2. The vmm answers with the one egress decision that its proxy uses
+   (decision CH69 rule 2). It reads the allowlist of the family, checks
+   the target and resolves the name. So the answer depends on the DNS of
+   the host at the time of the call.
+3. `CheckReply` has one key: `allowed` (class `CheckAllowedReply`) with
+   `{addresses}`, or `refused` (class `CheckRefusedReply`) with
+   `{reason}`. A refusal is a reply, not a route error.
+4. `CheckReason` is one of `bad_target`, `ip_literal`, `not_listed`,
+   `not_public`, `no_address` and `not_valid`. An unknown family and a
+   family with no `egress.json` have an empty list, so the answer is
+   `not_listed` (decision CH69 rule 3). An `egress.json` that is present
+   and does not read is `not_valid` (decision CH70 rule 2).
+5. `IpAddress` has one wire text: IPv4 in dotted decimal with no zero
+   first in an octet, IPv6 as 8 groups of 4 lowercase hex digits with no
+   `::`. So the schema pattern checks it exactly, and Python and
+   TypeScript read the same texts as Rust. The vmm writes an IPv4-mapped
+   record as its IPv4 address. Decision CH70 rule 3 sets this text.
+6. `CheckError` holds the shared codes only.
+
+### The egress allowlist file
+
+`FamilyEgress` is the file `egress.json` (`FAMILY_EGRESS_FILE`) in each
+family dir, beside `config/` (decisions CH6-4, CH69 rules 3 and 5).
+caregiver writes it, and the vmm reads it. No route reaches the type.
+
+1. The file is `{hosts: [{host, port}]}`. `HostName` is the host form of
+   `egress_problem` in `family/grammar.py` in lower case. It refuses
+   upper case, `*`, a trailing dot and the IPv4 literal of the grammar.
+   The pattern has no look-ahead, so it spells each name that is no IPv4
+   literal. `tests/test_wire_grammar.py` holds it equal to the grammar.
+2. The port is an integer of 1 to 65535. caregiver writes a bare host of
+   the family file with the port 443.
+3. caregiver writes the hosts sorted and with no entry twice (decision
+   CH69 rule 5). The type reads any order and duplicates (decision CH70
+   rule 4). Neither changes a verdict.
 
 ## A route error on the wire
 
@@ -459,8 +516,8 @@ key or an added route too, because the match of the number is exact.
    deleted and written again fails too.
 6. A change of a type that no route reaches needs no new number:
    `FamilyStateReply`, `TurnEvent`, `ControlHello`, `ControlCommand`,
-   `GuestEvent`, `FamilyShape` and the types that only they reach. A change of a
-   `description` needs none either.
+   `GuestEvent`, `FamilyShape`, `FamilyEgress` and the types that only
+   they reach. A change of a `description` needs none either.
 
 ## The vsock JSON links
 
@@ -555,3 +612,14 @@ a dependency.
    `config/shape.json` (`FAMILY_SHAPE_FILE`). Contract 01 §6.1 lists the
    entries of `config/` and needs an amendment for this file, as decision
    CH23-1 amended it for `model_live_at`. That amendment is not made yet.
+2. Closed by decision CH70 rule 3: `IpAddress` writes IPv4 in dotted
+   decimal and IPv6 as 8 groups of 4 lowercase hex digits with no `::`,
+   so the schema pattern checks one text exactly. That text is not the
+   RFC 5952 form. `schema/host-api-2.json` freezes it, so a change after
+   it ships needs a new `HOST_API_PROTOCOL` (decision CH34 rule 8).
+3. Closed by decision CH70 rule 4: `FamilyEgress` reads any order and
+   duplicates, and caregiver writes the sorted, duplicate-free form of
+   decision CH69 rule 5. JSON Schema cannot say "sorted", and
+   datamodel-codegen 0.87 writes `list[...]` with no check for
+   `uniqueItems`, so a refusal in Rust alone would split the Rust and
+   Python readers. Neither changes a verdict of the vmm.

@@ -16,7 +16,8 @@ use serde::de::{DeserializeOwned, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::{
-    CreateSession, DropTarget, Dropped, ListSessions, OpenAcp, SessionPage, SessionRow, object_only,
+    CheckReply, CheckRequest, CreateSession, DropTarget, Dropped, ListSessions, OpenAcp,
+    SessionPage, SessionRow, object_only,
 };
 
 /// The number of the host API protocol (decision CH25 rule 1). A client
@@ -29,7 +30,8 @@ use super::{
 /// of that subset for the number N. The schema test fails when the subset
 /// differs from the file of this number, and it never writes over that
 /// file. Raise the number by one, and the test writes a new file.
-pub const HOST_API_PROTOCOL: u32 = 1;
+// Protocol 2 adds the route `check` (decisions CH69 rule 1, CH34 rule 8).
+pub const HOST_API_PROTOCOL: u32 = 2;
 
 /// The name of the request header that carries `HOST_API_PROTOCOL`, as
 /// decimal text. It is lowercase, the form of an HTTP/1.1 header name that
@@ -533,6 +535,28 @@ route_error! {
     }
 }
 
+/// The route `check`: a client asks whether a family may reach a target
+/// (decisions CH6-3, CH69 rules 1 and 2). The vmm answers with the one
+/// decision of its egress proxy: it reads the allowlist of the family,
+/// checks the target and resolves the name. So an answer depends on the
+/// DNS of the host at the time of the call. A refused target is a reply,
+/// `refused` with its reason, not a route error.
+#[derive(Debug)]
+pub enum CheckRoute {}
+
+impl JsonRoute for CheckRoute {
+    const NAME: &'static str = "check";
+    type Request = CheckRequest;
+    type Reply = CheckReply;
+    type Error = CheckError;
+}
+
+route_error! {
+    /// The error of the route `check`. It holds the shared codes only: an
+    /// unknown family has an empty list, and each target gets a verdict.
+    pub enum CheckError {}
+}
+
 /// What the tests read of each route of the table, of either kind: its
 /// name and its error.
 #[cfg(test)]
@@ -578,5 +602,6 @@ macro_rules! route_table {
         $each!(json $crate::ListRoute);
         $each!(json $crate::DropRoute);
         $each!(upgrade $crate::AcpRoute);
+        $each!(json $crate::CheckRoute);
     };
 }
