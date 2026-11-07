@@ -1,7 +1,8 @@
 """Each wire name type has the pattern of its name in `family/grammar.py`, and
 each wire set of names has the members of its set there. Each size of the
 family VM shape has the range of its size there. The host name of the egress
-allowlist takes the hosts of the grammar in lower case.
+allowlist takes the hosts of the grammar in lower case. The repo name and the
+clone list have the pattern, the length and the count of `repos` there.
 
 The grammar stays the authority for the family file (decision CH23 rule 5).
 Registry CI cannot install `creche-wire`, so the grammar cannot import the
@@ -132,6 +133,20 @@ def test_egress_host_pattern_agrees_with_the_grammar(host: str) -> None:
     assert (pattern.fullmatch(host.lower()) is not None) == good
     if host != host.lower():
         assert pattern.fullmatch(host) is None
+
+
+def test_repo_name_pattern_equals_the_grammar() -> None:
+    """The clone list of `repos.json` takes the names, the length and the
+    count of `repos` in the family file (decision CH69 rule 15). The wire
+    list reads a name given twice, and the grammar refuses it (decision CH73
+    rule 3)."""
+    definitions = _definitions()
+    name = definitions["RepoName"]
+
+    assert name["pattern"] == _schema_form(grammar.REPO_NAME)
+    assert name["maxLength"] == grammar.REPO_NAME_MAX
+    assert definitions["RepoList"]["maxItems"] == grammar.REPOS_MAX
+    assert "uniqueItems" not in definitions["RepoList"]
 
 
 def test_the_family_token_has_the_form_that_caregiver_mints() -> None:

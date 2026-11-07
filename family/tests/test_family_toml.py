@@ -1,17 +1,22 @@
-"""A TOML family file: the strict read of its types, and the file name.
+"""A TOML family file: the strict read of its types, the rules of `repos`,
+and the file name.
 
 The reader reads each field in the strict mode of pydantic: a value of
 another type is a refusal, and an integer for a float field is the one
-conversion. Each test holds its own texts."""
+conversion. Each test of the reader holds its own texts. A test of `repos`
+edits a fixture family and checks it against the fixture registry."""
 
 from __future__ import annotations
 
+import itertools
+import re
 from pathlib import Path
 
 import agent_family
 import pytest
-from agent_family import Markup, load_registry, parse_family, registry, tomlfile
+from agent_family import Markup, grammar, load_registry, parse_family, registry, tomlfile
 from agent_family.report import Issue, Severity
+from family_helpers import check, errors
 
 THIN_TOML = """\
 name = "oracle"
@@ -232,6 +237,65 @@ def test_an_empty_text_names_each_required_field() -> None:
         ("description", "Field required"),
         ("model", "Field required"),
     ]
+
+
+# --- repos (contract 01 §3.7.1, decisions CH69 rule 15 and CH73 rule 3) -----------
+
+
+def _repos_errors(fixture: str, repos: list[str]) -> list[tuple[str, str]]:
+    report = check(fixture, repos=repos)
+    return [(issue.loc, issue.msg) for issue in errors(report) if issue.loc.startswith("repos")]
+
+
+@pytest.mark.parametrize("fixture", ["chat", "code", "vault-oracle", "scrum-lead"])
+def test_repos_accepts_a_mirror_name(fixture: str) -> None:
+    """Every kind may hold `repos` (CH5f), and no mirror is checked."""
+    names = ["lacreche", "agent-mcp", "A.b_c-9", "agit", "a.", "a" * 100]
+    assert _repos_errors(fixture, names) == []
+
+
+@pytest.mark.parametrize(
+    "entry",
+    ["la-creche/creche", "/srv/agents/code/x", "x.git", "a..b", ".a", "_a", "", "a" * 101],
+)
+def test_repos_refuses_a_path_or_owner_form(entry: str) -> None:
+    assert _repos_errors("chat", [entry]) == [
+        (
+            "repos[0]",
+            f"'{entry}' is not a mirror repo name; use [A-Za-z0-9][A-Za-z0-9._-]{{0,99}} "
+            "with no '..' and no '.git' at the end",
+        )
+    ]
+
+
+def test_repos_refuses_a_duplicate() -> None:
+    assert _repos_errors("chat", ["a", "b", "a"]) == [("repos[2]", "'a' is listed twice")]
+
+
+def test_repos_refuses_past_the_cap() -> None:
+    names = [f"r{position}" for position in range(grammar.REPOS_MAX)]
+    assert _repos_errors("chat", names) == []
+    assert _repos_errors("chat", [*names, "one-more"]) == [("repos", "33 entries is more than 32")]
+
+
+def test_an_absent_repos_is_empty() -> None:
+    family, issues = parse_family(THIN_TOML)
+
+    assert issues == []
+    assert family is not None
+    assert family.repos == []
+
+
+def test_the_repo_pattern_holds_the_rule_of_the_contract() -> None:
+    """The pattern spells the rule with no look-ahead (`grammar.py`), so this
+    test reads each short text of the letters that matter against the plain
+    rule of contract 01 §3.7.1 rule 1."""
+    plain = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+    for size in range(1, 6):
+        for letters in itertools.product("gitT.-/", repeat=size):
+            text = "".join(letters)
+            rule = plain.fullmatch(text) is not None and ".." not in text
+            assert grammar.is_repo_name(text) == (rule and not text.endswith(".git")), text
 
 
 # --- the file name in a registry ---------------------------------------------------

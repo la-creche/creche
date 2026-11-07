@@ -253,6 +253,20 @@ def _config(old: FamilyFile, new: FamilyFile, changes: list[FieldChange]) -> Non
             "egress changed: a policy change on the running sandbox",
         )
 
+    # Contract 01 §6: caregiver writes `repos.json` beside the config mount
+    # on every pass when its bytes move, and the vmm reads it on every clone
+    # link (decision CH69 rule 16).
+    repos = _members(old.repos, new.repos)
+    if repos is not None:
+        _add(
+            changes,
+            "repos",
+            Landing.LIVE,
+            repos,
+            Step.WRITE_CONFIG,
+            "repos changed: read on every clone link",
+        )
+
     skills = _members(old.skills, new.skills)
     if skills is not None:
         _add(

@@ -584,6 +584,26 @@ verbs.release.components = ["chaperone", "not-a-component"]
         + "9" * HUGE_DIGITS
         + '"]\n',
     ),
+    # --- repos (contract 01 §3.7.1, decisions CH69 rule 15, CH73 rule 3) ---
+    _case(
+        "rule-repos",
+        HEAD + 'repos = ["example", "example-two.v2_x", "agit", "example.", "' + "a" * 100 + '"]\n',
+    ),
+    _case(
+        "rule-repos-edges",
+        HEAD
+        + 'repos = ["owner/example", "/srv/agents/code/example", "example.git", "a..b", '
+        + '".example", "_example", "", "'
+        + "a" * 101
+        + '"]\n',
+    ),
+    _case("rule-repos-duplicate", HEAD + 'repos = ["example", "other", "example"]\n'),
+    _case(
+        "rule-repos-cap",
+        HEAD + "repos = [" + ", ".join(f'"r{position}"' for position in range(33)) + "]\n",
+    ),
+    _case("rule-repos-empty", HEAD + "repos = []\n"),
+    _case("toml-wrong-type-repos", HEAD + 'repos = "example"\n'),
     # --- the runtime fields (contract 01 §3.8) ---
     _case(
         "rule-runtime",

@@ -47,6 +47,7 @@ from .grammar import (
     PROBE_FAMILY,
     QUIET_FLOOR_MAX_HOURS,
     QUIET_FLOOR_MIN_HOURS,
+    REPOS_MAX,
     RESIDENT_PROCS_MAX,
     RESIDENT_PROCS_MIN,
     SANDBOX_FLAVORS,
@@ -65,6 +66,7 @@ from .grammar import (
     Verb,
     duration_s,
     egress_problem,
+    is_repo_name,
     is_under,
     memory_mb,
 )
@@ -152,6 +154,7 @@ def check_family(
     _check_delegates(family, index, issues)
     _check_inflight_delegations(family, issues)
     _check_egress(family, issues)
+    _check_repos(family, issues)
     _check_runtime(family, issues)
     _check_sandbox(family, issues)
     _check_skills(family, index, issues)
@@ -560,6 +563,32 @@ def _check_egress(family: FamilyFile, issues: Issues) -> None:
         problem = egress_problem(entry)
         if problem is not None:
             issues.error(f"egress[{position}]", f"'{entry}' {_EGRESS_MSG[problem]}")
+
+
+def _check_repos(family: FamilyFile, issues: Issues) -> None:
+    """§3.7.1 (decisions CH10-10, CH69 rule 15, CH73 rule 3). The wire reader
+    of `repos.json` takes a name given twice, so this check refuses it before
+    caregiver writes the file. Every kind may hold `repos`: CH5f gives
+    clone-only reads to families with no push tool. The check does not look
+    at the mirror. The vmm checks at serve (CH10-10)."""
+    if len(family.repos) > REPOS_MAX:
+        issues.error("repos", f"{len(family.repos)} entries is more than {REPOS_MAX}")
+
+    seen: set[str] = set()
+    for position, entry in enumerate(family.repos):
+        loc = f"repos[{position}]"
+        if not is_repo_name(entry):
+            issues.error(
+                loc,
+                f"'{entry}' is not a mirror repo name; use [A-Za-z0-9][A-Za-z0-9._-]{{0,99}} "
+                "with no '..' and no '.git' at the end",
+            )
+            continue
+
+        if entry in seen:
+            issues.error(loc, f"'{entry}' is listed twice")
+
+        seen.add(entry)
 
 
 def _check_runtime(family: FamilyFile, issues: Issues) -> None:

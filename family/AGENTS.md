@@ -188,6 +188,7 @@ refuses each one, and so does the validator.
 | `max_inflight_delegations` | 1 to 8, default 2 |
 | `job.caller_root` | thin only. The path of an `rw` entry of `files`. Each calling chat gets a directory under it. |
 | `egress` | no IP literal, no wildcard, port 1 to 65535 |
+| `repos` | a bare mirror dir name: `[A-Za-z0-9][A-Za-z0-9._-]{0,99}`, no `..`, no `.git` at the end. No name two times. 32 at most. Every kind. The mirror is not checked: the vmm checks at serve. `wire/tests/test_wire_grammar.py` holds the pattern equal to the wire type `RepoName` |
 | `sandbox_tools` | Flue's six names only: `read`, `write`, `edit`, `bash`, `grep`, `glob`. No name two times. The default is empty. `codemode` is not a name: the agent mounts it for every family. |
 | `triggers` cron | five fields of ASCII digits and `*`, `,`, `-`, `/`, or one of the three short forms |
 | `approval` | every entry names something the file grants. No two overlap. |

@@ -152,6 +152,10 @@ class FamilyFile(Strict):
     # grant file the PEP re-reads per call (contract 04 §1.2).
     max_inflight_delegations: int = DEFAULT_MAX_INFLIGHT_DELEGATIONS
     egress: list[str] = Field(default_factory=list[str])
+    # The repos of the host code mirror that the sandbox may clone, each a
+    # bare mirror dir name (contract 01 §3.7.1, decisions CH10-10 and CH69
+    # rule 15). caregiver writes them to `repos.json`, which the vmm reads.
+    repos: list[str] = Field(default_factory=list[str])
     shell: bool = False
     # Flue's built-in tools that the family grants: `read`, `write`, `edit`,
     # `bash`, `grep`, `glob` (`SandboxTool`). Empty by default. `codemode`
