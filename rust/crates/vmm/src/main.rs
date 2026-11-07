@@ -121,8 +121,7 @@ fn serve() -> ExitCode {
     };
     // Before any fd of a VM: the soft limit of systemd (1024) holds the
     // bridges and family-state links of a few busy guests only (decision
-    // CH67 rule 4 for the bridges). CONTRACT-QUESTION (crate AGENTS.md,
-    // Known gap 23): no row adds `family_state::fd_need` to the raise.
+    // CH67 rule 4 for the bridges, plus the 1100 links by CH68 rule 2).
     let need = planes::fd_need().saturating_add(family_state::fd_need());
     if let Err(error) = nofile::raise(need) {
         return refuse(&error);
