@@ -11,7 +11,9 @@
 //! the local link, and `local_link` relays them on 1200 (decision CH21).
 //! `bridge` splices each link of guest port 1201 to the relay socket of
 //! the facade, in every facade state (decisions CH13, CH50 rule 2, CH62
-//! rules 14 and 16).
+//! rules 14 and 16). It splices each link of guest 127.0.0.1:4000 and
+//! :8300, and each link of the facade on the family-state socket, to a
+//! fresh vsock dial of the host (decisions CH6-2, CH14, CH62 rule 13).
 //! PID 1 never exits on its own:
 //! the guest kernel has `PANIC_TIMEOUT=0`, so an exit of PID 1 hangs the
 //! VM (fact 53). A stop and each fault power the VM off instead (decision
@@ -77,11 +79,13 @@ fn as_pid_1() -> ExitCode {
     power::off()
 }
 
-/// Boots, listens on control link 1200, on the local link and on guest
-/// port 1201, and serves them. It returns the console line of the stop or
-/// of the fault.
+/// Boots, listens on control link 1200, on the local link, on guest
+/// port 1201 and on each host row, and serves them. It returns the
+/// console line of the stop or of the fault.
 #[cfg(target_os = "linux")]
 fn life() -> String {
+    use creche_wire::guest::LOCAL_LINK_SOCKET;
+
     // The facade gets the env (decision CH49 rule 1).
     let env = match start() {
         Ok(env) => env,
@@ -93,19 +97,21 @@ fn life() -> String {
         Ok(listener) => listener,
         Err(error) => return format!("control listen failed: {error}"),
     };
-    let local = match local_link::listen() {
+    let local = match local_link::listen(LOCAL_LINK_SOCKET) {
         Ok(local) => local,
         Err(error) => return format!("local link listen failed: {error}"),
     };
-    // 1201 listens from here on. `control::serve` starts its accept
-    // thread before it reads the first hello, so 1201 accepts before the
-    // first hello and in every facade state (decision CH50 rule 2).
-    let acp = match bridge::listen_acp() {
-        Ok(acp) => acp,
-        Err(error) => return format!("acp listen failed: {error}"),
+    // Every bridge row listens from here on: 1201, the planes before the
+    // facade can dial them, and the family-state socket (decisions CH13,
+    // CH6-2, CH62 rule 13). `control::serve` starts their accept threads
+    // before it reads the first hello, so 1201 accepts before the first
+    // hello and in every facade state (decision CH50 rule 2).
+    let rows = match bridge::listen() {
+        Ok(rows) => rows,
+        Err(fault) => return fault,
     };
     say("up");
-    control::serve(listener, local, acp, env)
+    control::serve(listener, local, rows, env)
 }
 
 /// Boots, then reads the env file of the switched root. Both run before

@@ -8,7 +8,7 @@
 use std::fs::{self, File};
 use std::io::{self, BufRead as _, BufReader, Write as _};
 use std::num::NonZeroU32;
-use std::os::unix::net::UnixStream;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread::sleep;
@@ -17,7 +17,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use creche_wire::guest::{FACADE_PROGRAM, SESSION_DISK_MOUNT};
 use creche_wire::{
     ControlHello, ControlReady, FacadeExited, FacadeRunning, FacadeState, GuestEvent, GuestPort,
-    StartCount, TurnEnd, UnixMillis,
+    HostPort, StartCount, TurnEnd, UnixMillis,
 };
 use serde::Serialize;
 
@@ -203,9 +203,20 @@ pub enum Standin {
     /// and stays up. Each later start stays up.
     CloseOnce,
     /// Mode `relay`: after 2 s the stand-in listens on the relay socket
-    /// and answers each line `ping` with `pong <pid>`, and stays up.
+    /// and answers each line `ping` with `pong <pid>` and each line
+    /// `pull` with `pulled <pid> <reply key> <status 4000> <status 8300>
+    /// <pull ms>`, and stays up. Before each pull of its own, a child of
+    /// it sends a pull and writes `standin: family stranger pid <pid>
+    /// <answer>`.
     Relay,
+    /// Mode `markers`: the stand-in writes `STANDIN_MARKERS` on the
+    /// session disk, each holding its name and a LF, and stays up.
+    Markers,
 }
+
+/// The files of mode `markers`, at the root of the session disk, as
+/// `examples/standin_facade.rs` names them.
+pub const STANDIN_MARKERS: [&str; 3] = ["standin-marker-1", "standin-marker-2", "standin-marker-3"];
 
 /// The mode file of the stand-in on the root disk.
 const STANDIN_MODE: &str = "etc/creche-standin/mode";
@@ -240,6 +251,7 @@ pub fn vm_with(work: &Path, env: &[u8], standin: Standin) -> Command {
         Standin::Stream => Some("stream\n"),
         Standin::CloseOnce => Some("close-once\n"),
         Standin::Relay => Some("relay\n"),
+        Standin::Markers => Some("markers\n"),
     };
     if let Some(mode) = mode {
         let file = tree.join(STANDIN_MODE);
@@ -263,6 +275,15 @@ pub fn vm_with(work: &Path, env: &[u8], standin: Standin) -> Command {
         .arg("--vsock")
         .arg(format!("cid={CID},socket={}", vsock(work).display()));
     command
+}
+
+/// Listens on host `port` of the VM of `work`: CH joins each guest dial
+/// of vsock CID 2 at `port` to the Unix socket `<vsock socket>_<port>`
+/// (decision CH14).
+pub fn listen_host(work: &Path, port: HostPort) -> UnixListener {
+    let mut path = vsock(work).into_os_string();
+    path.push(format!("_{}", port.number()));
+    UnixListener::bind(path).unwrap()
 }
 
 /// One link to a guest port: the test writes `CONNECT <port>` on the
@@ -384,6 +405,7 @@ pub const IN_2030: u64 = 1_893_456_000_000;
 /// The host tools that read a session disk after the VM, as `MKE2FS`.
 pub const E2FSCK: &str = "/usr/sbin/e2fsck";
 pub const DUMPE2FS: &str = "/usr/sbin/dumpe2fs";
+pub const DEBUGFS: &str = "/usr/sbin/debugfs";
 
 /// `booted_with` with a stand-in that stays up.
 pub fn booted(name: &str) -> (PathBuf, Vm) {
@@ -501,4 +523,42 @@ pub fn assert_clean(work: &Path) {
         String::from_utf8_lossy(&check.stdout),
         String::from_utf8_lossy(&check.stderr)
     );
+}
+
+/// Accepts one link on the host side `listener`, reads its HTTP request
+/// head and answers `200` with no body. It returns the head.
+pub fn answer_get(listener: &UnixListener) -> String {
+    let (stream, _) = listener.accept().unwrap();
+    stream.set_read_timeout(Some(BOOT)).unwrap();
+    let mut reader = BufReader::new(&stream);
+    let mut head = String::new();
+    loop {
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        head.push_str(&line);
+        if line == "\r\n" || line.is_empty() {
+            break;
+        }
+    }
+    (&stream)
+        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+        .unwrap();
+    head
+}
+
+/// The words of the stand-in answer to a line `pull` on 1201, after the
+/// check of `pulled <pid>`: the reply key, the two plane statuses and the
+/// pull time.
+pub fn pulled(work: &Path, pid: NonZeroU32) -> Vec<String> {
+    let mut acp = dial(work, GuestPort::Acp);
+    acp.write(b"pull\n");
+    let answer = acp.line().expect("no answer: the 1201 link ended");
+    let words: Vec<String> = answer.split(' ').map(str::to_owned).collect();
+    assert_eq!(
+        words.get(..2),
+        Some(["pulled".to_owned(), pid.to_string()].as_slice()),
+        "{answer:?}"
+    );
+    assert_eq!(words.len(), 6, "{answer:?}");
+    words[2..].to_vec()
 }
