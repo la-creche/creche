@@ -70,6 +70,10 @@ pub fn parse(text: &str) -> Option<SystemTime> {
     let month = digits(&[m0, m1])?;
     let day = digits(&[d0, d1])?;
     let (hour, minute, second) = (digits(&[h0, h1])?, digits(&[n0, n1])?, digits(&[s0, s1])?);
+    // Two checks guard the arithmetic below: a day 0 makes `day - 1`
+    // underflow, and a year 0 in January or February makes
+    // `year - 1` underflow. The write-back at the end refuses each other
+    // range by itself. The checks of the other ranges refuse early.
     if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || minute > 59 {
         return None;
     }
@@ -156,6 +160,10 @@ mod tests {
             "2026-13-01T00:00:00Z",
             "2026-00-01T00:00:00Z",
             "2026-01-00T00:00:00Z",
+            // Day 0 of a month after February would underflow the day count.
+            "2026-03-00T00:00:00Z",
+            // Year 0 in January would underflow the shifted year.
+            "0000-01-01T00:00:00Z",
             "2026-01-01T24:00:00Z",
             "2026-01-01T00:60:00Z",
             "2026-01-01T00:00:60Z",
