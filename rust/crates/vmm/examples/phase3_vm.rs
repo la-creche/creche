@@ -9,11 +9,13 @@
 //! of the compose step: `guest_init::write_initramfs`, `image_root::read`,
 //! the fault book, the rows, the spawner, `ChTools` and one `ColdBoot`
 //! with its plane bridges, family-state reply, retire and restore. It
-//! creates the row of `<session>` in `<family>` with origin `door`. It
-//! skips three start steps that wait for phase 4 on the runner (decision
-//! CH7-4, fact 78): the leftover sweep, the owner check of CH and
-//! ch-remote, and the version check of `VMM_CH_PROGRAM`. The version
-//! check runs `<version program>` instead. It binds no `vmm.sock`.
+//! creates the row of `<session>` in `<family>` with origin `door`. Like
+//! the compose step, it first runs the leftover sweep (decision CH19 (4))
+//! and the owner check of CH and ch-remote (decision CH67 rule 1). The
+//! version check runs `<version program>`, not `VMM_CH_PROGRAM`: the
+//! upstream CH of the runner may print its git tag, and the CI-built CH
+//! with the `CH_VERSION` string comes in phase 4 (decision CH7-4, fact
+//! 78). It binds no `vmm.sock`.
 //!
 //! It prints `ready`, then reads one step per stdin line and answers one
 //! stdout line:
@@ -39,7 +41,7 @@ use std::process::ExitCode;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
 
-use creche_vmm::config::Config;
+use creche_vmm::config::{CH, CH_REMOTE, Config};
 use creche_vmm::control::ControlState;
 use creche_vmm::guest_init::write_initramfs;
 use creche_vmm::handlers::acp::StartVm as _;
@@ -47,9 +49,11 @@ use creche_vmm::handlers::drop::StopVm as _;
 use creche_vmm::image_root;
 use creche_vmm::relay::Relays;
 use creche_vmm::restore::ChTools;
+use creche_vmm::root_owned::check_program;
 use creche_vmm::shutdown::RUNTIME_END;
 use creche_vmm::start::{ColdBoot, StartConfig};
 use creche_vmm_confine::faults::{FaultBook, FaultDir};
+use creche_vmm_confine::leftovers::stop_all;
 use creche_vmm_confine::spawner::{SELF_EXE, Spawner};
 use creche_vmm_confine::vmm_unit::VmmUnit;
 use creche_vmm_confine::{launch, stage};
@@ -103,6 +107,11 @@ fn main() -> ExitCode {
 /// The serve role. It returns at the end of stdin.
 fn serve(version: &Path, session: &OsString, family: &OsString) -> Result<(), Failure> {
     let config = Config::read()?;
+    for unit in stop_all(&config.systemctl)? {
+        eprintln!("phase3_vm: stopped the leftover unit {unit}");
+    }
+    check_program(CH, config.ch.path())?;
+    check_program(CH_REMOTE, config.ch_remote.path())?;
     let ch_version = check_cloud_hypervisor(version, VERSION_WAIT)?;
     let images = ImageStore::new(&config.state, config.zstd.path().to_owned());
     let digests = image_root::read(&config.image_root)?.import(&images)?;

@@ -15,8 +15,9 @@
 //!
 //! `#[ignore]`: only the job `kvm` runs them, after the setup script, with
 //! `cargo test --locked --no-fail-fast -- --ignored kvm_`. With no setup
-//! or no `/dev/kvm` they fail. The runner's sudo makes the copy of guest
-//! init root-owned, as the vmm row installs it (decision CH36 G20).
+//! or no `/dev/kvm` they fail. The runner's sudo makes the copies of
+//! guest init and ch-remote root-owned, as the vmm row installs them
+//! (decision CH36 G20).
 #![cfg(target_os = "linux")]
 
 use std::collections::BTreeSet;
@@ -40,7 +41,9 @@ use creche_vmm_store::claim::CONSUMED;
 use creche_vmm_store::images::ImageStore;
 use creche_vmm_store::key::{CH_VERSION, ChVersionError, check_cloud_hypervisor};
 use creche_vmm_store::layout::{RunRoot, StateRoot};
-use creche_wire::guest::{CHAPERONE_PORT, FACADE_PROGRAM, LITELLM_PORT, SESSION_DISK_MOUNT};
+use creche_wire::guest::{
+    CHAPERONE_PORT, FACADE_PROGRAM, FACADE_STOP_WAIT, LITELLM_PORT, SESSION_DISK_MOUNT,
+};
 use creche_wire::{FacadeState, GuestPort, SessionId};
 
 /// The variable that names the files of the setup script.
@@ -237,10 +240,6 @@ const CREDS: &str = r#"{"epoch":3,"litellm_key":"sk-test-key","pep_token":"ababa
 /// `runtime.json` with a past `model_live_at`, so the `state` reply
 /// waits for no hold (decisions CH23-1, CH31 rule 1).
 const RUNTIME: &str = r#"{"shell":true,"sandbox_tools":["read"],"model_alias":"litellm/test","model_live_at":"2026-01-01T00:00:00Z"}"#;
-
-/// The bound of a full stop: the 30 s graceful wait, SIGTERM, 5 s,
-/// SIGKILL and the 1 s `KILL_WAIT` (decisions CH34 rule 5, CH50 rule 4).
-const STOP_BUDGET: Duration = Duration::from_secs(36);
 
 /// The example `phase3_vm`. Cargo builds it next to the `deps` dir of
 /// the test binary.
@@ -574,19 +573,28 @@ fn kvm_phase3_pulls_sleeps_restores_and_stops() {
         work: work.clone(),
     };
 
+    // The owner check of the vmm start refuses a program that root does
+    // not own (decisions CH62 rule 17, CH67 rule 1). The setup script
+    // installs CH with `sudo install`, so only these two need a chown.
     let guest_init = work.join("guest-init");
     fs::copy(files.join("guest-init"), &guest_init).unwrap();
     sudo(&["chown", "0:0"], &guest_init);
+    let ch_remote = work.join("ch-remote");
+    fs::copy(files.join("ch-remote"), &ch_remote).unwrap();
+    sudo(&["chown", "0:0"], &ch_remote);
+    // `FaultDir::open` creates `<faults root>/vmm`, not the root itself.
+    let faults = work.join("faults");
+    fs::create_dir(&faults).unwrap();
     let (litellm, litellm_heads) = stub_plane();
     let (chaperone, chaperone_heads) = stub_plane();
     let (litellm, chaperone) = (litellm.to_string(), chaperone.to_string());
     let paths = [
         (config::STATE_ROOT, state.path().to_owned()),
         (config::FAMILY_ROOT, family_root(&work)),
-        (config::FAULTS_ROOT, work.join("faults")),
+        (config::FAULTS_ROOT, faults),
         (config::IMAGE_ROOT, image_root(&work)),
         (config::CH, PathBuf::from(CH_BINARY)),
-        (config::CH_REMOTE, files.join("ch-remote")),
+        (config::CH_REMOTE, ch_remote),
         (config::GUEST_INIT, guest_init),
     ];
     let mut env: Vec<(&str, &OsStr)> = paths
@@ -696,9 +704,11 @@ fn kvm_phase3_pulls_sleeps_restores_and_stops() {
     );
     io::stderr().write_all(times.as_bytes()).unwrap();
 
-    // 7. Stop: the graceful stop ends CH within the full stop bound, and
-    // guest init synced and remounted the session disk, so e2fsck finds
-    // it clean (CH19 rule 3, CH62 rule 9).
+    // 7. Stop: the graceful stop ends CH, and guest init synced and
+    // remounted the session disk, so e2fsck finds it clean (CH19 rule 3,
+    // CH62 rule 9). The facade got the stop line and exited by itself:
+    // guest init sent it no signal. Guest init signals the facade only
+    // after `FACADE_STOP_WAIT`, so the stop also ends before that.
     let answer = vmm.ask("stop");
     let ms: u64 = answer
         .strip_prefix("stopped ")
@@ -706,15 +716,23 @@ fn kvm_phase3_pulls_sleeps_restores_and_stops() {
         .parse()
         .unwrap();
     assert!(
-        Duration::from_millis(ms) < STOP_BUDGET,
-        "step 7 stop: {ms} ms"
+        Duration::from_millis(ms) < FACADE_STOP_WAIT,
+        "step 7 stop (CH19 rule 3): {ms} ms"
     );
     let serial = lines(&session.serial_log());
-    for line in ["guest-init: session remounted ro", "guest-init: power off"] {
+    for line in [
+        "standin: stop line",
+        "guest-init: session remounted ro",
+        "guest-init: power off",
+    ] {
         assert!(
             serial.iter().any(|each| each == line),
             "step 7 stop: no {line}: {serial:?}"
         );
+    }
+    for signal in ["SIGTERM", "SIGKILL"] {
+        let line = format!("guest-init: facade pid {pid} sent {signal}");
+        assert!(!serial.contains(&line), "step 7 stop (CH19 rule 3): {line}");
     }
     let header = Command::new(DUMPE2FS)
         .arg("-h")
