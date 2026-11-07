@@ -77,8 +77,11 @@
 //!       <id>`.
 //!
 //!     A read stops at the first LF, at `REACH_CAP` (4 KiB), at the
-//!     peer close or after `REACH_WAIT` (5 s) with no byte. The answer
-//!     is `reply <id> <hex read> <open|closed>`. A reset counts as the
+//!     peer close or after `REACH_WAIT` (5 s) with no byte. The bytes
+//!     after the first LF stay buffered, and the next `send` on the
+//!     stream reads them first. So a reply head of n lines takes n
+//!     reads, and `send <id> -` reads the next line with no write. The
+//!     answer is `reply <id> <hex read> <open|closed>`. A reset counts as the
 //!     peer close. A failed dial, write or read answers `failed <id>
 //!     <io error kind>`. A `dial` of an open id answers `failed <id>
 //!     AlreadyExists`, and a line of no known form answers `failed <its
@@ -632,7 +635,8 @@ fn dial(port: &str, bytes: &str) -> io::Result<BufReader<TcpStream>> {
 
 /// One read of mode `reach`: the bytes up to the first LF, `REACH_CAP`,
 /// the peer close or `REACH_WAIT` with no byte, and whether the stream
-/// is still open. A reset is the peer close.
+/// is still open. A reset is the peer close. The bytes after the first
+/// LF stay in `stream` for the next read.
 fn read_reply(stream: &mut BufReader<TcpStream>) -> io::Result<(Vec<u8>, bool)> {
     let mut bytes = Vec::new();
     match stream.take(REACH_CAP).read_until(b'\n', &mut bytes) {
@@ -691,4 +695,131 @@ fn markers() -> io::Result<()> {
         )?;
     }
     Ok(())
+}
+
+/// The answers of mode `reach` over loopback TCP, with no VM. The kvm
+/// tests prove the same lines through guest init.
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::io::{Read as _, Write as _};
+    use std::net::{Ipv4Addr, TcpListener};
+    use std::thread;
+    use std::time::Instant;
+
+    use super::{REACH_CAP, REACH_WAIT, act, unhex};
+
+    /// A loopback listener and its port.
+    fn listen() -> (TcpListener, u16) {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        (listener, port)
+    }
+
+    /// A line that names no open stream, or holds bad hex, fails with
+    /// no dial.
+    #[test]
+    fn reach_refuses_an_unknown_id_and_bad_hex() {
+        let mut streams = HashMap::new();
+        assert_eq!(act(&mut streams, "close z"), "failed z NotFound");
+        assert_eq!(act(&mut streams, "send z 00"), "failed z NotFound");
+        assert_eq!(act(&mut streams, "dial x 1 0"), "failed x InvalidInput");
+        assert_eq!(act(&mut streams, "dial x 1 0g"), "failed x InvalidInput");
+        assert_eq!(act(&mut streams, "dial x port -"), "failed x InvalidInput");
+        assert_eq!(act(&mut streams, "nod x"), "failed x InvalidInput");
+        assert_eq!(act(&mut streams, ""), "failed - InvalidInput");
+        assert!(unhex("0").is_err());
+        assert!(unhex("").is_err());
+        assert_eq!(unhex("Ab0f").unwrap(), [0xab, 0x0f]);
+        assert_eq!(unhex("-").unwrap(), b"");
+    }
+
+    /// Each read ends at the first LF. The next line stays buffered, so
+    /// `send <id> -` reads it at once. A second `dial` of an open id
+    /// fails, and `close` ends the stream.
+    #[test]
+    fn reach_reads_one_line_per_action() {
+        let (listener, port) = listen();
+        let peer = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0; 2];
+            stream.read_exact(&mut request).unwrap();
+            stream.write_all(b"a\r\nb\n").unwrap();
+            let mut rest = Vec::new();
+            stream.read_to_end(&mut rest).unwrap();
+            (request, rest)
+        });
+        let mut streams = HashMap::new();
+        assert_eq!(
+            act(&mut streams, &format!("dial p {port} 0a0b")),
+            "reply p 610d0a open"
+        );
+        let start = Instant::now();
+        assert_eq!(act(&mut streams, "send p -"), "reply p 620a open");
+        assert!(start.elapsed() < REACH_WAIT);
+        assert_eq!(
+            act(&mut streams, &format!("dial p {port} -")),
+            "failed p AlreadyExists"
+        );
+        assert_eq!(act(&mut streams, "close p"), "closed p");
+        assert_eq!(act(&mut streams, "send p 00"), "failed p NotFound");
+        assert_eq!(peer.join().unwrap(), ([0x0a, 0x0b], Vec::new()));
+    }
+
+    /// A read with no byte ends after `REACH_WAIT`, and the stream stays
+    /// open.
+    #[test]
+    fn reach_reads_a_silent_peer_as_open() {
+        let (listener, port) = listen();
+        let mut streams = HashMap::new();
+        let start = Instant::now();
+        assert_eq!(
+            act(&mut streams, &format!("dial s {port} -")),
+            "reply s - open"
+        );
+        assert!(start.elapsed() >= REACH_WAIT);
+        assert_eq!(act(&mut streams, "close s"), "closed s");
+        drop(listener);
+    }
+
+    /// A read ends at `REACH_CAP` with the stream open. The next read
+    /// gets the rest and the peer close, so the stream leaves the link.
+    #[test]
+    fn reach_caps_a_read_and_reads_the_close() {
+        let (listener, port) = listen();
+        let peer = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.write_all(&[b'a'; 5000]).unwrap();
+        });
+        let mut streams = HashMap::new();
+        let cap = usize::try_from(REACH_CAP).unwrap();
+        assert_eq!(
+            act(&mut streams, &format!("dial c {port} -")),
+            format!("reply c {} open", "61".repeat(cap))
+        );
+        peer.join().unwrap();
+        assert_eq!(
+            act(&mut streams, "send c -"),
+            format!("reply c {} closed", "61".repeat(5000 - cap))
+        );
+        assert_eq!(act(&mut streams, "send c -"), "failed c NotFound");
+    }
+
+    /// A reset reads as the peer close. The peer closes with an unread
+    /// byte, so its kernel sends a reset, not a FIN.
+    #[test]
+    fn reach_reads_a_reset_as_closed() {
+        let (listener, port) = listen();
+        let peer = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            stream.peek(&mut [0]).unwrap();
+        });
+        let mut streams = HashMap::new();
+        let start = Instant::now();
+        let answer = act(&mut streams, &format!("dial r {port} 00"));
+        peer.join().unwrap();
+        assert_eq!(answer, "reply r - closed");
+        assert!(start.elapsed() < REACH_WAIT);
+        assert_eq!(act(&mut streams, "send r -"), "failed r NotFound");
+    }
 }

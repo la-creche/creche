@@ -234,7 +234,10 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   stream `<id>`, and both then read the reply. `close <id>` closes the
   stream and answers `closed <id>`. A read stops at the first LF, at 4
   KiB, at the peer close or after 5 s with no byte, and the answer is
-  `reply <id> <hex> <open|closed>`. A fault answers `failed <id> <io
+  `reply <id> <hex> <open|closed>`. The bytes after the first LF stay
+  buffered, and the next `send` on the stream reads them first. So a
+  reply head of n lines takes n reads, and `send <id> -` reads the next
+  line with no write. A fault answers `failed <id> <io
   error kind>`. `-` stands for no bytes. The streams of a 1201 link
   close with it. A kvm test thus sets each request itself: the guest
   init tests of the 3128 and 9418 rows, and the vmm tests of the egress
@@ -254,6 +257,12 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   that each set of options gives. One runs the real
   `playpen/bin/creche-env-write`, so the reader and the script cannot
   drift.
+- The stand-in example has `test = true`, so `cargo test` runs its unit
+  tests of mode `reach` over loopback TCP on any OS, with no VM. They
+  check each answer: an unknown id, bad hex, a second `dial` of an open
+  id, one line per read with the rest buffered, the 5 s wait with no
+  byte, the 4 KiB cap, the peer close and a reset. The plan E3 and E4
+  vmm tests rely on these answers.
 - `tests/kvm_guest_init.rs` boots CH with `$CRECHE_KVM_DIR/guest-init.cpio`
   of `bin/vm-smoke-setup.sh`, the cmdline `console=ttyS0 rdinit=/init`
   (CH62 rule 19), ext4 disks that `tests/common/mod.rs` builds with

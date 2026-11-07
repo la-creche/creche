@@ -893,7 +893,18 @@ fn kvm_guest_init_bridges_the_proxy_and_mirror_ports() {
         reach(&mut acp, &format!("send p {}", hex(b"second\n"))),
         format!("reply p {} open", hex(b"two\n"))
     );
+    // These lines fail in the stand-in, with no guest dial.
+    assert_eq!(
+        reach(&mut acp, &format!("dial p {EGRESS_PROXY_PORT} -")),
+        "failed p AlreadyExists"
+    );
+    assert_eq!(
+        reach(&mut acp, &format!("dial x {EGRESS_PROXY_PORT} 0")),
+        "failed x InvalidInput"
+    );
+    assert_eq!(reach(&mut acp, "close z"), "failed z NotFound");
     assert_eq!(reach(&mut acp, "close p"), "closed p");
+    assert_eq!(reach(&mut acp, "send p 00"), "failed p NotFound");
     assert_eq!(
         proxy.join().unwrap(),
         [connect.to_vec(), b"second\n".to_vec()]
