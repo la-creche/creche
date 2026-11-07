@@ -10,6 +10,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import vectors from "../vectors/creche-extensions.json" with { type: "json" };
 import { facadeApp } from "../src/acp.js";
+import { SBX } from "../src/mode.js";
 import { sessionService } from "../src/service.js";
 import { SessionIndex } from "../src/session-index.js";
 import type { Refresh } from "../src/turns.js";
@@ -28,7 +29,7 @@ let refresh: Refresh;
 
 beforeEach(() => {
   index = new SessionIndex(new DatabaseSync(":memory:"));
-  const service = sessionService({ agent: Probe, agentName: "Probe", index, store: flue.store, refresh: (id) => refresh(id) });
+  const service = sessionService({ agent: Probe, agentName: "Probe", index, mode: SBX, store: flue.store, refresh: (id) => refresh(id) });
   wire = new Wire(facadeApp(NO_HOOKS, service));
 });
 
