@@ -60,6 +60,13 @@ at the end of each turn, sends the keys of the session in its `_meta`.
 
 ## Environment
 
+`src/mode.ts` reads `CRECHE_SESSION_ID` one time at process start, before
+the family config (decision CH62 rule 6). guest init sets it under CH, and
+the variable marks CH mode. On sbx it is absent. A value that is not the
+wire `SessionId` refuses the start with status 17. `src/guest.ts` holds the
+variable name, and `test/guest.test.ts` holds it equal to
+`rust/crates/wire/vectors/guest.json`.
+
 `src/family.ts` reads the family config one time at process start, with
 the agent module's `readFamilyConfig`. `agent/AGENTS.md` names each
 variable. The agent's store and the facade's `creche_sessions` share
@@ -91,8 +98,9 @@ files, with `flue.db` kept out of the listing that Flue puts in the prompt.
 | 8 | the relay socket cannot be made |
 | 9 to 15 | the agent module refuses the family config (`EXIT_BY_REFUSAL` in `src/family.ts`) |
 | 16 | Flue does not start |
+| 17 | `CRECHE_SESSION_ID` is set and is not a session id (`src/mode.ts`) |
 
-A refusal (2, 7, 9 to 15) writes one stderr line: the reason, and the
+A refusal (2, 7, 9 to 15, 17) writes one stderr line: the reason, and the
 variable or the field, never a value.
 
 `acp-relay` exits 0 when its link ends, and 1 when no facade listens.
@@ -100,7 +108,10 @@ variable or the field, never a value.
 ## Sessions
 
 A session is one Flue agent instance. Its ACP session id is the instance
-id. Flue keeps no list of conversations, so the facade keeps one table,
+id. On sbx, `session/new` mints a fresh UUID until the cut (decision CH52
+rule 2). In CH mode the id is the host's `CRECHE_SESSION_ID`, and a VM
+serves one session (decisions CH1, CH25 rule 2), so a second
+`session/new` is refused with invalid params. Flue keeps no list of conversations, so the facade keeps one table,
 `creche_sessions` (id, title, cwd, created_at, updated_at, job_id,
 delegation, trigger_json), in `flue.db`
 beside Flue's own tables (`src/session-index.ts`). No other program of ours

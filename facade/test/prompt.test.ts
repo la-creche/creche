@@ -8,6 +8,7 @@ import { defineTool, useModel, useTool } from "@flue/runtime";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import { facadeApp } from "../src/acp.js";
+import { SBX } from "../src/mode.js";
 import { sessionService } from "../src/service.js";
 import { SessionIndex } from "../src/session-index.js";
 import { Wire } from "./acp-wire.js";
@@ -37,7 +38,7 @@ let wire: Wire;
 
 beforeEach(() => {
   const index = new SessionIndex(new DatabaseSync(":memory:"));
-  wire = new Wire(facadeApp(NO_HOOKS, sessionService({ agent: Echoer, agentName: "Echoer", index, store: flue.store })));
+  wire = new Wire(facadeApp(NO_HOOKS, sessionService({ agent: Echoer, agentName: "Echoer", index, mode: SBX, store: flue.store })));
 });
 
 async function newSession(): Promise<string> {
