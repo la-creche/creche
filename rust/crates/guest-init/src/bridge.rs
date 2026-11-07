@@ -1,12 +1,13 @@
 //! The bridge rows: each joins a listener in the guest to a fresh dial
-//! per connection, through `splice` (decisions CH13, CH6-2, CH62 rules
-//! 13, 14 and 16).
+//! per connection, through `splice` (decisions CH13, CH6-2, CH46 rules 1
+//! and 4, CH62 rules 13, 14 and 16).
 //!
 //! The ACP row joins guest port 1201 to the relay socket of the facade
 //! (decision CH13). The host rows join the guest to the vmm: TCP on
 //! guest 127.0.0.1:4000 to host port 1101 and :8300 to 1102 (decisions
-//! CH6-2, CH14), and the family-state socket to host port 1100 (decisions
-//! CH5a, CH62 rule 13).
+//! CH6-2, CH14), :3128 to the egress proxy on 1104 and :9418 to the git
+//! mirror on 1103 (decision CH46 rules 1 and 4), and the family-state
+//! socket to host port 1100 (decisions CH5a, CH62 rule 13).
 //!
 //! 1. Guest init listens on every row before `up`, and each row has an
 //!    accept thread of its own. 1201 accepts in every facade state,
@@ -22,8 +23,8 @@
 //! 4. The family-state socket keeps only links of the live facade, by
 //!    the `SO_PEERCRED` pid that the local link reads too (decision CH62
 //!    rule 13). The facade speaks the pull lines itself: guest init reads
-//!    none of them. The plane rows take any guest process (decision CH6-2:
-//!    no allowlist).
+//!    none of them. The loopback rows take any guest process (decision
+//!    CH6-2: no allowlist).
 //! 5. A row holds at most `ROW_CAP` open links, from the accept to the
 //!    close of both halves. It closes a link past the cap at once
 //!    (decisions CH62 rule 14, CH67 rule 3). No idle timeout closes a
@@ -38,6 +39,10 @@
 //!    the error to the control loop, as the 1200 accept thread does. The
 //!    loop then returns its end line, and the main thread powers off
 //!    (decisions CH19 rule 3, CH67 rule 11, plan risk 9).
+//! 9. Every VM gets the egress and mirror rows, because guest init knows
+//!    no family. The host side is the guard: a VM with no 1104 or 1103
+//!    listener fails each dial, and guest init closes the link at once
+//!    (decisions CH46 rule 1, CH69 rule 13).
 //!
 //! `Slots`, `dial`, `join`, `accept_links` and the row table are the
 //! portable core, so the unit tests drive them on any OS. The Linux shell
@@ -45,9 +50,9 @@
 
 // Decision CH62 rule 15: before the first deploy, a new row needs no
 // GUEST_INIT_PROTOCOL bump. After it, each change of the row table bumps
-// it, because a restored old guest lacks the new listener. Phase 7 adds
-// 3128 to 1104 and 9418 to 1103 as loopback rows (decision CH46 rules 1
-// and 4).
+// it, because a restored old guest lacks the new listener. The egress and
+// mirror rows land in one change before the first vmm deploy, so they
+// need no bump (decision CH69 rules 21 and 29).
 
 use std::io;
 use std::os::fd::OwnedFd;
@@ -59,7 +64,7 @@ use std::thread::{self, sleep};
 use std::time::{Duration, Instant};
 
 use creche_wire::HostPort;
-use creche_wire::guest::{CHAPERONE_PORT, LITELLM_PORT};
+use creche_wire::guest::{CHAPERONE_PORT, EGRESS_PROXY_PORT, LITELLM_PORT, MIRROR_PORT};
 
 use crate::splice::splice;
 
@@ -86,8 +91,9 @@ pub struct LoopbackRow {
     pub host: HostPort,
 }
 
-/// The loopback rows: the two planes (decision CH6-2).
-pub const LOOPBACK_ROWS: [LoopbackRow; 2] = [
+/// The loopback rows: the two planes (decision CH6-2), the egress proxy
+/// and the git mirror (decision CH46 rules 1 and 4).
+pub const LOOPBACK_ROWS: [LoopbackRow; 4] = [
     LoopbackRow {
         name: "litellm",
         guest: LITELLM_PORT,
@@ -97,6 +103,16 @@ pub const LOOPBACK_ROWS: [LoopbackRow; 2] = [
         name: "chaperone",
         guest: CHAPERONE_PORT,
         host: HostPort::Chaperone,
+    },
+    LoopbackRow {
+        name: "egress",
+        guest: EGRESS_PROXY_PORT,
+        host: HostPort::Egress,
+    },
+    LoopbackRow {
+        name: "mirror",
+        guest: MIRROR_PORT,
+        host: HostPort::GitMirror,
     },
 ];
 
@@ -299,8 +315,8 @@ mod shell {
     pub struct Rows {
         /// Guest port 1201 (decision CH13).
         acp: OwnedFd,
-        /// Guest 127.0.0.1 at the port of each loopback row (decision
-        /// CH6-2).
+        /// Guest 127.0.0.1 at the port of each loopback row (decisions
+        /// CH6-2, CH46 rules 1 and 4).
         loopback: Vec<(LoopbackRow, TcpListener)>,
         /// The family-state socket (decision CH62 rule 13).
         family: UnixListener,
@@ -308,8 +324,9 @@ mod shell {
 
     /// Listens on every bridge row: guest port 1201 with a backlog of
     /// `ROW_CAP`, since the row never holds more links (decision CH13),
-    /// each loopback row (decision CH6-2) and the family-state socket,
-    /// mode 0600 (decisions CH62 rule 13, CH67 rule 10).
+    /// each loopback row (decisions CH6-2, CH46 rules 1 and 4) and the
+    /// family-state socket, mode 0600 (decisions CH62 rule 13, CH67 rule
+    /// 10).
     ///
     /// # Errors
     ///
@@ -437,7 +454,8 @@ mod shell {
     }
 
     /// Dials host `port` for `link` and splices the two until either
-    /// closes (decisions CH6-2, CH62 rules 13 and 14).
+    /// closes (decisions CH6-2, CH46 rules 1 and 4, CH62 rules 13 and
+    /// 14).
     fn to_host(name: &str, link: OwnedFd, port: HostPort) {
         report(name, "host", link, dial_host(port));
     }
@@ -565,25 +583,30 @@ mod tests {
         assert_eq!(all.len(), ROW_CAP);
     }
 
-    /// The rows join the ports of decisions CH6-2 and CH14: guest
-    /// 127.0.0.1:4000 to host port 1101, :8300 to 1102, the family-state
-    /// socket to 1100 and guest port 1201 to the relay socket. The git
-    /// mirror and the egress proxy wait for phase 7 (decision CH46 rules 1
-    /// and 4).
+    /// The rows join the ports of decisions CH6-2, CH14 and CH46: guest
+    /// 127.0.0.1:4000 to host port 1101, :8300 to 1102, :3128 to 1104 and
+    /// :9418 to 1103, the family-state socket to 1100 and guest port 1201
+    /// to the relay socket. A renumber changes the row table, which bumps
+    /// GUEST_INIT_PROTOCOL after the first deploy (decision CH62 rule 15).
     #[test]
-    fn the_table_holds_the_ch6_2_and_ch14_ports() {
+    fn the_table_holds_the_ch6_2_ch14_and_ch46_ports() {
         let rows: Vec<_> = LOOPBACK_ROWS
             .iter()
-            .map(|row| (row.name, row.guest, row.host.number()))
+            .map(|row| (row.name, row.guest, row.host))
             .collect();
-        assert_eq!(rows, [("litellm", 4000, 1101), ("chaperone", 8300, 1102)]);
+        assert_eq!(
+            rows,
+            [
+                ("litellm", 4000, HostPort::Litellm),
+                ("chaperone", 8300, HostPort::Chaperone),
+                ("egress", 3128, HostPort::Egress),
+                ("mirror", 9418, HostPort::GitMirror),
+            ]
+        );
+        let numbers: Vec<_> = LOOPBACK_ROWS.iter().map(|row| row.host.number()).collect();
+        assert_eq!(numbers, [1101, 1102, 1104, 1103]);
         assert_eq!(FAMILY_STATE_HOST.number(), 1100);
         assert_eq!(GuestPort::Acp.number(), 1201);
-        assert!(
-            !LOOPBACK_ROWS
-                .iter()
-                .any(|row| matches!(row.host, HostPort::GitMirror | HostPort::Egress))
-        );
     }
 
     /// A failed dial closes the guest side at once: its peer reads an

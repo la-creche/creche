@@ -11,5 +11,7 @@
   "relay_socket": "/tmp/creche-facade/acp.sock",
   "litellm_port": 4000,
   "chaperone_port": 8300,
+  "egress_proxy_port": 3128,
+  "mirror_port": 9418,
   "session_id_env": "CRECHE_SESSION_ID"
 }

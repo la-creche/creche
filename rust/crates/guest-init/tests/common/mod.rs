@@ -212,6 +212,13 @@ pub enum Standin {
     /// Mode `markers`: the stand-in writes `STANDIN_MARKERS` on the
     /// session disk, each holding its name and a LF, and stays up.
     Markers,
+    /// Mode `reach`: the stand-in opens the local link and listens on
+    /// the relay socket at once. It answers each line `dial <id> <port>
+    /// <hex>`, `send <id> <hex>` and `close <id>` of a 1201 link with
+    /// one line: `reply <id> <hex> <open|closed>`, `closed <id>` or
+    /// `failed <id> <io error kind>`, with `-` for no bytes. It exits
+    /// on the stop line.
+    Reach,
 }
 
 /// The files of mode `markers`, at the root of the session disk, as
@@ -252,6 +259,7 @@ pub fn vm_with(work: &Path, env: &[u8], standin: Standin) -> Command {
         Standin::CloseOnce => Some("close-once\n"),
         Standin::Relay => Some("relay\n"),
         Standin::Markers => Some("markers\n"),
+        Standin::Reach => Some("reach\n"),
     };
     if let Some(mode) = mode {
         let file = tree.join(STANDIN_MODE);
@@ -561,4 +569,34 @@ pub fn pulled(work: &Path, pid: NonZeroU32) -> Vec<String> {
     );
     assert_eq!(words.len(), 6, "{answer:?}");
     words[2..].to_vec()
+}
+
+/// One action of mode `reach` on the 1201 link `acp`: the line, then the
+/// answer of the stand-in.
+pub fn reach(acp: &mut Link, line: &str) -> String {
+    acp.write(format!("{line}\n").as_bytes());
+    acp.line().expect("no answer: the 1201 link ended")
+}
+
+/// `bytes` in lowercase hex, as mode `reach` writes them.
+pub fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// Accepts one link on the host side `listener`. For each answer, it
+/// reads one request up to its LF and writes the answer. Then it closes
+/// the link and returns the requests.
+pub fn answer_lines(listener: &UnixListener, answers: &[&'static [u8]]) -> Vec<Vec<u8>> {
+    let (stream, _) = listener.accept().unwrap();
+    stream.set_read_timeout(Some(BOOT)).unwrap();
+    let mut reader = BufReader::new(&stream);
+    answers
+        .iter()
+        .map(|answer| {
+            let mut request = Vec::new();
+            reader.read_until(b'\n', &mut request).unwrap();
+            (&stream).write_all(answer).unwrap();
+            request
+        })
+        .collect()
 }
