@@ -869,7 +869,10 @@ the mirror, a removal, each refused path form, `git-receive-pack`, a
 symlinked repo, the line cap, the line wait with paused tokio time, the
 link cap, `LINK_CAP` + 1 links one after another, the kill of the child and of its own child at the drop of
 `Server`, the end and the reap of a link whose child exited, and the fd
-need. `tests/start.rs` proves the bound set with a clone list, with both
+need. Its test `a_bad_clone_logs_one_line_and_a_good_clone_none` runs
+its own binary as a child and reads the real stderr: no line for a good
+clone, and one line each for a repo not listed, a repo not in the
+mirror, a missing mirror root and a link past the cap (rule 7). `tests/start.rs` proves the bound set with a clone list, with both
 lists, with an absent, empty or bad list, and the bind at a restore.
 
 ## The slots

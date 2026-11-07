@@ -538,6 +538,60 @@ fn links_one_after_another_pass_the_cap() {
     }
 }
 
+/// The child of `a_bad_clone_logs_one_line_and_a_good_clone_none`, run in
+/// a process of its own, so its stderr holds only the lines of the vmm. It
+/// runs a good clone, then a repo that the list does not name, a listed
+/// repo that the mirror lacks, a clone with no mirror root and a link
+/// past the cap.
+#[test]
+#[ignore = "the child of a_bad_clone_logs_one_line_and_a_good_clone_none"]
+fn clones_for_the_log_test() {
+    let scratch = Scratch::threaded("log");
+    let server = scratch.serve();
+    let port = scratch.forward();
+    let (output, _) = scratch.clone(port, "creche", 0);
+    assert!(output.status.success());
+    assert_eq!(scratch.ask(&request("/other")), DENIED);
+    assert_eq!(scratch.ask(&request("/gone")), DENIED);
+    let mirror = scratch.dir.join("mirror");
+    std::fs::rename(&mirror, scratch.dir.join("mirror-gone")).unwrap();
+    assert_eq!(scratch.ask(&request("/creche")), DENIED);
+    let held: Vec<UnixStream> = (0..LINK_CAP).map(|_| scratch.dial()).collect();
+    let mut past = scratch.dial();
+    let mut bytes = Vec::new();
+    past.read_to_end(&mut bytes).unwrap();
+    assert!(bytes.is_empty());
+    // The drop of `Server` first cuts the held links, so their close
+    // writes no line.
+    drop(server);
+    drop(held);
+}
+
+/// A refused or faulted clone writes one stderr line, and a good clone
+/// none (decision CH69 rule 24). The test runs its own binary as the
+/// child `clones_for_the_log_test` and reads the real stderr of the vmm
+/// code.
+#[test]
+fn a_bad_clone_logs_one_line_and_a_good_clone_none() {
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "clones_for_the_log_test", "--ignored"])
+        .args(["--nocapture", "--test-threads=1"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(output.status.success(), "{stdout}{stderr}");
+    assert!(stdout.contains("1 passed"), "{stdout}");
+    let line = |text: &str| format!("vmm: a clone of the family code, session {SESSION}, {text}");
+    let want = [
+        line("refused: not_listed"),
+        line("refused: not_in_mirror"),
+        line("faulted: the mirror root: entity not found"),
+        line("refused: link_cap"),
+    ];
+    assert_eq!(stderr.lines().collect::<Vec<_>>(), want, "{stderr}");
+}
+
 /// The drop of `Server` kills the child of an open clone and closes 1103.
 /// The git program of the test writes its pid and one pkt-line, then
 /// execs `sleep`, which reads no stdin. So only the kill of the drop ends
