@@ -32,7 +32,9 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
 
 ## Tests
 
-- The unit tests check the boot plan and the netlink bytes on any OS.
+- The unit tests check the boot plan, the options of every mount and the
+  netlink bytes on any OS. On Linux, one more test checks the kernel
+  flags that each set of options gives.
 - `tests/kvm_guest_init.rs` boots CH with `$CRECHE_KVM_DIR/guest-init.cpio`
   of `bin/vm-smoke-setup.sh`, the cmdline `console=ttyS0 rdinit=/init`
   (CH62 rule 19) and ext4 disks that `tests/common/mod.rs` builds with
@@ -40,4 +42,12 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
 
 ## Known gaps
 
-None.
+1. CONTRACT-QUESTION: CH62 rule 4 fixes only ro and nodev on the root
+   disk, rw, nosuid and nodev on the session disk, and nosuid and nodev
+   on the five tmpfs dirs. No row decides the rest of the mount options.
+   The readings taken, in `src/boot.rs`: the Debian mode of each tmpfs
+   dir (`/tmp` and `/var/tmp` 1777, `/run` and `/var/cache` 0755,
+   `/root` 0700), devtmpfs mode 0755 and `/dev/shm` mode 1777. devtmpfs
+   and devpts get nosuid and noexec. proc and sysfs get nosuid, nodev
+   and noexec. A change edits only the constants `TMPFS`, `DEVICES` and
+   `KERNEL` and the plan test.
