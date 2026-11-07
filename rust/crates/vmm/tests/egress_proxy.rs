@@ -135,13 +135,16 @@ impl Scratch {
         self.runtime.block_on(checks.serve(request)).unwrap()
     }
 
-    /// The lines of the log, once it holds `count`.
+    /// The lines of the log, once it holds `count`. A read that runs during
+    /// an append can see part of it (rust job run 42414879212), so only a
+    /// line that ends in its LF counts.
     fn lines(&self, count: usize) -> Vec<Value> {
         let deadline = Instant::now() + WAIT;
         loop {
             let text = std::fs::read_to_string(self.log_path()).unwrap();
             let lines: Vec<Value> = text
-                .lines()
+                .split_inclusive('\n')
+                .filter_map(|line| line.strip_suffix('\n'))
                 .map(|line| serde_json::from_str(line).unwrap())
                 .collect();
             if lines.len() >= count {
