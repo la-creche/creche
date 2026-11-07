@@ -324,6 +324,26 @@ mod tests {
         assert!(matches!(parse(&line(CAP + 1)), Err(Refusal::OverCap)));
     }
 
+    /// A file over the cap whose first `CAP` bytes end on an LF. `read`
+    /// must read past the cap, or it would cut the file at a line end and
+    /// drop `B` with no refusal (CH62 rule 7).
+    #[test]
+    fn read_refuses_a_file_over_the_cap() {
+        let mut bytes = b"A=".to_vec();
+        bytes.resize(CAP - 1, b'x');
+        bytes.extend_from_slice(b"\nB=2\n");
+        assert_eq!(bytes.len(), CAP + 4);
+        assert_eq!(bytes.get(CAP - 1), Some(&b'\n'));
+        let path = std::env::temp_dir().join(format!(
+            "creche-guest-init-env-over-cap-{}",
+            std::process::id()
+        ));
+        std::fs::write(&path, &bytes).unwrap();
+        let result = read(&path);
+        std::fs::remove_file(&path).unwrap();
+        assert!(matches!(result, Err(Refusal::OverCap)), "{result:?}");
+    }
+
     #[test]
     fn refuses_a_missing_file() {
         let refusal = read(Path::new("/nonexistent/creche/env")).unwrap_err();
