@@ -15,20 +15,14 @@
 #      of the job reach the user manager, as the vmm unit does.
 #   4. It fetches the upstream static CH v54.0 and ch-remote (fact 71) and
 #      the CH guest kernel (fact 53), each checked by its sha256.
-#   5. It builds guest-init and the stand-in facade static for musl, the
-#      one target of the vmm row (CH7-4, CH7-5). The job runs this script
+#   5. It builds guest-init static for musl, the one target of the vmm row
+#      (CH7-4, CH7-5). The job runs this script
 #      before its `toolchain` step, so the script installs the pinned
 #      toolchain and the musl target itself, with no workflow edit (CH62
 #      rule 3). It refuses a program with a PT_INTERP header, and first
-#      proves that the check refuses the runner's dynamic /bin/bash. The
-#      stand-in is a test program in no release row (CH62 rule 12). It
+#      proves that the check refuses the runner's dynamic /bin/bash. It
 #      packs guest-init as /init in guest-init.cpio, with dev/console 5:1,
 #      and fails unless GNU cpio lists exactly those entries, owned by root.
-#      CONTRACT-QUESTION: the kvm job comments of gate.yml and release.yml
-#      still say the setup fetches only CH, the kernel and busybox, in
-#      under a minute. This step adds a toolchain install and a release
-#      build. CH62 rule 3 bars a workflow edit, so the comments stay stale
-#      until David says whether rule 3 also bars a comment-only fix.
 #   6. It builds a busybox initramfs from `apt-get download busybox-static`.
 #      Its init writes the line CRECHE-KVM-BOOTED to the serial port, then
 #      `tick` once a second. It keeps the static busybox program, which a
@@ -47,7 +41,7 @@
 #
 # The files land in CRECHE_KVM_DIR, which is absent or empty:
 #   cloud-hypervisor  ch-remote  vmlinux  initramfs.cpio  busybox
-#   guest-init  standin_facade  guest-init.cpio
+#   guest-init  guest-init.cpio
 # The kvm_ tests read the same variable.
 #
 # `set -euo pipefail`: the first fault stops the run.
@@ -113,18 +107,17 @@ edfeb8a8a6c04ff2979e9f1c700feaa29b8f564f952261834ef0b7d2e673a853  vmlinux
 EOF
 chmod 0755 cloud-hypervisor ch-remote
 
-say "build guest-init and the stand-in facade static for $MUSL"
+say "build guest-init static for $MUSL"
 # In rust/, rustup reads the pinned toolchain from rust-toolchain.toml.
 (
   cd "$REPO/rust"
   rustup toolchain install --no-self-update
   rustup target add "$MUSL"
   cargo build --locked --release --target "$MUSL" \
-    -p creche-guest-init --bin guest-init --example standin_facade
+    -p creche-guest-init --bin guest-init
 )
 built=$REPO/rust/target/$MUSL/release
 install -m 0755 "$built/guest-init" guest-init
-install -m 0755 "$built/examples/standin_facade" standin_facade
 # A static program has no PT_INTERP header. The guest has no loader.
 # require_static dies when the program names a program interpreter.
 require_static() {
@@ -139,10 +132,8 @@ require_static() {
 if (require_static /bin/bash) 2> /dev/null; then
   die "the static check is broken: it passes the dynamic /bin/bash"
 fi
-for program in guest-init standin_facade; do
-  require_static "$program"
-done
-say "guest-init and standin_facade are static"
+require_static guest-init
+say "guest-init is static"
 work=$(mktemp -d "$dir/guest-init.XXXXXX")
 install -d -m 0755 "$work/root" "$work/root/dev"
 install -m 0755 guest-init "$work/root/init"
