@@ -120,8 +120,8 @@ fn serve() -> ExitCode {
         Err(error) => return refuse(&error),
     };
     // Before any fd of a VM: the soft limit of systemd (1024) holds the
-    // bridges and family-state links of a few busy guests only (crate
-    // AGENTS.md, Known gap 21, decision CH67 rule 4).
+    // bridges and family-state links of a few busy guests only (decision
+    // CH67 rule 4 for the bridges).
     let need = planes::fd_need().saturating_add(family_state::fd_need());
     if let Err(error) = nofile::raise(need) {
         return refuse(&error);

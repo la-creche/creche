@@ -383,19 +383,20 @@ table of the three vmm crates.
   the value `vmm` in the `source` enum of §3.3, and the reader. caregiver
   reads only the `attendance` and `pep` files today, so it ignores the
   vmm file.
-- CONTRACT-QUESTION (decisions CH23 rule 4, CH31 rule 3): no row sets a
-  cap for `creds.json` or `runtime.json`. `read_state` reads each with
-  the cap `FAMILY_STATE_CAP`, and a larger file is `not_valid`, not
+- Closed by decision CH67 rule 5 (with CH23 rule 4, CH31 rule 3):
+  `read_state` reads `creds.json` and `runtime.json` each with the cap
+  `FAMILY_STATE_CAP`, and a larger file is `not_valid`, not
   `too_large`, because its excess may sit in fields that the reply
   drops.
-- CONTRACT-QUESTION (decisions CH23 rule 5, CH65 rule 2): `read_state`
-  reads caregiver's files more strictly than the facade's file backend
-  (`agent/src/family-state.ts`, `runtime-config.ts`, `creds.ts`). It
-  refuses as `not_valid` an unknown key in `creds.json` or
-  `runtime.json`, a `runtime.json` with no `shell` or `sandbox_tools`, a
-  tool listed twice, and an entry of `skills/` that is not a dir. The
-  file backend ignores or defaults each. caregiver writes none of these,
-  so both backends give the same reply for every file caregiver writes.
-- CONTRACT-QUESTION (plan PR V6, decision CH62 rule 14): no row sets the
-  fd limit of the vmm, its headroom or the refusal of a short hard limit
-  (`nofile.rs`, `rust/crates/vmm/AGENTS.md` Known gap 21).
+- Closed by decision CH67 rule 6 (with CH23 rule 5, CH65 rule 2):
+  `read_state` reads caregiver's files more strictly than the facade's
+  file backend (`agent/src/family-state.ts`, `runtime-config.ts`,
+  `creds.ts`). It refuses as `not_valid` an unknown key in `creds.json`
+  or `runtime.json`, a `runtime.json` with no `shell` or
+  `sandbox_tools`, a tool listed twice, and an entry of `skills/` that
+  is not a dir. The file backend ignores or defaults each. caregiver
+  writes none of these, so both backends give the same reply for every
+  file caregiver writes.
+- Closed by decision CH67 rule 4: the fd limit of the vmm, its headroom
+  of 4096 and the refusal of a short hard limit (`nofile.rs`,
+  `rust/crates/vmm/AGENTS.md` Known gap 21).

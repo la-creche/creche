@@ -17,6 +17,8 @@ import { readFamilyConfig } from "agent/config";
 import type { ConfigRefusal, FamilyConfig } from "agent/config";
 
 import { tapStores } from "./flue-history.js";
+import { readMode } from "./mode.js";
+import type { FacadeMode } from "./mode.js";
 import { sessionService } from "./service.js";
 import { SessionIndex } from "./session-index.js";
 import { say } from "./stdio.js";
@@ -38,7 +40,11 @@ export const EXIT_BY_REFUSAL: { readonly [Reason in ConfigRefusal["reason"] | Co
   instructions_unreadable: 15,
 };
 
+/** `CRECHE_SESSION_ID` is set, and it is not a session id (`src/mode.ts`). */
+export const EXIT_SESSION_ID = 17;
+
 export interface Family {
+  readonly mode: FacadeMode;
   readonly config: FamilyConfig;
   readonly composed: ComposedAgent;
   readonly workspace: string;
@@ -58,6 +64,11 @@ function detailOf({ reason, ...names }: ConfigRefusal): string {
 }
 
 export async function readFamily(env: NodeJS.ProcessEnv): Promise<FamilyRead> {
+  const mode = readMode(env);
+  if (!mode.ok) {
+    return { ok: false, exitCode: EXIT_SESSION_ID, detail: mode.detail };
+  }
+
   const read = await readFamilyConfig(env);
   if (!read.ok) {
     return { ok: false, exitCode: EXIT_BY_REFUSAL[read.refusal.reason], detail: detailOf(read.refusal) };
@@ -68,7 +79,7 @@ export async function readFamily(env: NodeJS.ProcessEnv): Promise<FamilyRead> {
   const composed = composeAgent(read.config, workspace, limits.limits);
 
   return composed.ok
-    ? { ok: true, family: { config: read.config, composed: composed.composed, workspace, limits } }
+    ? { ok: true, family: { mode: mode.mode, config: read.config, composed: composed.composed, workspace, limits } }
     : { ok: false, exitCode: EXIT_BY_REFUSAL[composed.reason], detail: composed.reason };
 }
 
@@ -112,14 +123,14 @@ function refreshOf(backend: StateBackend, { state, model }: ComposedAgent): Refr
 }
 
 /** Flue on the composed store, and the session methods on the same file. */
-export async function serveFamily({ config, composed, workspace }: Family): Promise<ServingStart> {
+export async function serveFamily({ mode, config, composed, workspace }: Family): Promise<ServingStart> {
   try {
     mkdirSync(workspace, { recursive: true });
     const tapped = tapStores(composed.db);
     const runtime = await start({ agents: [composed.agent], db: tapped.adapter, providers: composed.providers });
     const index = new SessionIndex(new DatabaseSync(storePath(config)));
     const refresh = refreshOf(fileBackend(config.mounts, composed.state.config), composed);
-    const sessions = sessionService({ agent: composed.agent, agentName: AGENT_NAME, index, store: tapped.store, refresh });
+    const sessions = sessionService({ agent: composed.agent, agentName: AGENT_NAME, index, mode, store: tapped.store, refresh });
 
     return { ok: true, serving: { runtime, sessions } };
   } catch (error) {

@@ -209,10 +209,9 @@ struct CredsFile {
 /// `RuntimeConfig.as_json`). `system_prompt` is absent for `append`, and
 /// `model_live_at` until a model change sets it (decision CH45 rule 1).
 /// `shell` must be a bool, and the reply does not carry it (`FamilyConfig`).
-// CONTRACT-QUESTION: the facade's file backend ignores an unknown key and
-// defaults a missing `shell` or `sandbox_tools`. This reader refuses each,
-// as it refuses an unknown key of `creds.json` (crate AGENTS.md, Known
-// gaps).
+// Decision CH67 rule 6: this reader refuses an unknown key and a missing
+// `shell` or `sandbox_tools`, as it refuses an unknown key of
+// `creds.json`. The facade's file backend ignores or defaults each.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RuntimeFile {
@@ -384,10 +383,10 @@ impl FamilyRoot {
             DIR_FLAGS,
             Mode::empty(),
         )))?;
-        // CONTRACT-QUESTION: no row sets a cap for creds.json or
-        // runtime.json. Each takes FAMILY_STATE_CAP, and a larger file is
-        // not_valid, not too_large, because its excess may sit in fields
-        // that the reply drops (crate AGENTS.md, Known gaps).
+        // Decision CH67 rule 5: creds.json and runtime.json each take
+        // FAMILY_STATE_CAP, and a larger file is not_valid, not
+        // too_large, because its excess may sit in fields that the reply
+        // drops.
         let read = read_file(creds_dir.as_fd(), CREDS_FILE, cap_u64(FAMILY_STATE_CAP));
         let file: CredsFile = match read {
             Ok(FileRead::Bytes(bytes)) => strict_json(&bytes),

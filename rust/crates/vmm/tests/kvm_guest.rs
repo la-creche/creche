@@ -33,6 +33,9 @@ const MKE2FS: &str = "/usr/sbin/mke2fs";
 /// The size of each test disk.
 const DISK_BYTES: u64 = 16 << 20;
 
+/// The image env of the test root disk (decision CH7-7).
+const ENV: &[u8] = b"LANG=C.UTF-8\nPATH=/usr/bin:/bin\n";
+
 /// The dirs of the test root disk: each mount point of the guest init
 /// boot plan.
 const ROOT_DIRS: [&str; 8] = [
@@ -138,9 +141,13 @@ fn kvm_guest_boots_the_vmm_initramfs() {
 
     let tree = work.join("tree");
     let session_dir = SESSION_DISK_MOUNT.trim_start_matches('/');
-    for dir in ROOT_DIRS.into_iter().chain([session_dir]) {
+    for dir in ROOT_DIRS.into_iter().chain([session_dir, "etc/creche"]) {
         fs::create_dir_all(tree.join(dir)).unwrap();
     }
+    // guest init reads `/etc/creche/env` before `up` and powers off when
+    // it is missing (decision CH62 rule 7). Two sorted lines in the
+    // grammar of `creche-env-write`.
+    fs::write(tree.join("etc/creche/env"), ENV).unwrap();
     let root = work.join("root.img");
     let session = work.join("session.img");
     ext4(&root, Some(&tree));

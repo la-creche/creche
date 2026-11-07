@@ -1,14 +1,15 @@
 //! The compose step on temp paths with no KVM (plan PR L20). `build`
-//! trusts only a root-owned `digests.json` (decision CH57 rule 1). A test
-//! of the rust job runs as the runner user and cannot make a root-owned
-//! file, so the rust job proves that the file of the test refuses the
-//! start before any import. The serve tests there start from `parts`,
-//! with the checks of `check` done by the test: the CH version check of
-//! the fixture and an import into the store. The `kvm_` tests run `build`
-//! itself on a root-owned file: the job kvm runs each ignored `kvm_` test,
-//! and its runner may use sudo (decision CH36 G20). The guest init
-//! program is root-owned there too (decision CH62 rule 17), and the serve
-//! tests put a made initramfs into the store in its place.
+//! trusts only root-owned files: CH, ch-remote and the guest init program
+//! (decision CH67 rule 1), and `digests.json` (decision CH57 rule 1). A
+//! test of the rust job runs as the runner user and cannot make a
+//! root-owned file, so the rust job proves that the CH copy of the test
+//! refuses the start before any import. The serve tests there start from
+//! `parts`, with the checks of `check` done by the test: the CH version
+//! check of the fixture and an import into the store. The serve tests put
+//! a made initramfs into the store in place of the guest init program.
+//! The `kvm_` tests run `build` itself on root-owned files: the job kvm
+//! runs each ignored `kvm_` test, and its runner may use sudo (decision
+//! CH36 G20).
 //!
 //! Each program that a part only holds gets its own path, and a test
 //! reads the `Debug` text of the part. The store crate gives no accessor
@@ -36,19 +37,29 @@ use tokio::sync::oneshot;
 
 use super::{Checked, StartError, VERSION_WAIT, Vmm, build, parts};
 use crate::ServeError;
-use crate::config::Config;
+use crate::config::{CH, CH_REMOTE, Config, GUEST_INIT as GUEST_INIT_KEY};
 use crate::guest_init::GuestInitError;
 use crate::image_root::{DIGESTS_FILE, DigestsError};
+use crate::root_owned::{OwnerError, ProgramError};
 use crate::start::Digests;
 
-/// The CH fixture of the version check (gap G10).
-const CH: &str = concat!(
+/// The CH fixture of the version check (gap G10). Each scratch dir gets a
+/// copy, so a `kvm_` test can make root the owner of the copy.
+const CH_FIXTURE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/tests/fixtures/cloud-hypervisor"
 );
 
 /// The bytes of the guest init program of the test.
 const GUEST_INIT: &[u8] = b"guest-init";
+
+/// Each program key whose file `build` checks, with its file in `bin/`
+/// (decision CH67 rule 1).
+const PROGRAMS: [(&str, &str); 3] = [
+    (CH, "cloud-hypervisor"),
+    (CH_REMOTE, "ch-remote"),
+    (GUEST_INIT_KEY, "guest-init"),
+];
 
 /// The longest wait of one step.
 const WAIT: Duration = Duration::from_secs(10);
@@ -91,8 +102,10 @@ impl Drop for Scratch {
 }
 
 impl Scratch {
-    /// The dirs, the images, a `digests.json` that the test user owns, and a
-    /// `systemctl` that logs each call and lists no unit.
+    /// The dirs, the images, a `digests.json` and the three programs of
+    /// `PROGRAMS` that the test user owns, and a `systemctl` that logs each
+    /// call and lists no unit. The `ch-remote` of the test only exits 1:
+    /// no test runs it.
     fn new(name: &str) -> Self {
         let dir = Path::new("/tmp").join(format!("creche-vmm-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -110,6 +123,10 @@ impl Scratch {
         });
         fs::write(dir.join("images").join(DIGESTS_FILE), digests.to_string()).unwrap();
         fs::write(dir.join("bin/guest-init"), GUEST_INIT).unwrap();
+        fs::copy(CH_FIXTURE, dir.join("bin/cloud-hypervisor")).unwrap();
+        let ch_remote = dir.join("bin/ch-remote");
+        fs::write(&ch_remote, "#!/bin/sh\nexit 1\n").unwrap();
+        fs::set_permissions(&ch_remote, fs::Permissions::from_mode(0o755)).unwrap();
 
         let systemctl = dir.join("bin/systemctl");
         let log = dir.join("systemctl.log");
@@ -124,7 +141,7 @@ impl Scratch {
             ("VMM_FAMILY_ROOT", text(dir.join("families"))),
             ("VMM_FAULTS_ROOT", text(dir.join("faults"))),
             ("VMM_IMAGE_ROOT", text(dir.join("images"))),
-            ("VMM_CH_PROGRAM", OsString::from(CH)),
+            ("VMM_CH_PROGRAM", text(dir.join("bin/cloud-hypervisor"))),
             ("VMM_CH_REMOTE_PROGRAM", text(dir.join("bin/ch-remote"))),
             ("VMM_GUEST_INIT_PROGRAM", text(dir.join("bin/guest-init"))),
             (
@@ -149,14 +166,16 @@ impl Scratch {
     }
 
     /// Makes root the owner of `digests.json`, as the disk row of phase 5
-    /// installs it, and of the guest init program, as the vmm row installs
-    /// it (decision CH62 rule 17). Only a `kvm_` test calls it.
+    /// installs it, and of each program of `PROGRAMS`, as the vmm row
+    /// installs them (decision CH67 rule 1). Only a `kvm_` test calls it.
     fn trust(&self) {
         sudo(
             &["chown", "0:0"],
             &self.dir.join("images").join(DIGESTS_FILE),
         );
-        sudo(&["chown", "0:0"], &self.dir.join("bin/guest-init"));
+        for (_, file) in PROGRAMS {
+            sudo(&["chown", "0:0"], &self.dir.join("bin").join(file));
+        }
     }
 
     /// The vmm from `parts`, after the checks of `check` that a test of
@@ -262,7 +281,10 @@ fn kvm_build_wires_each_key_to_its_part() {
     assert!(disks.contains(&scratch.program("mke2fs")), "{disks}");
     let remote = format!("{:?}", api.remote);
     assert!(remote.contains(&scratch.program("ch-remote")), "{remote}");
-    assert!(!remote.contains(CH), "{remote}");
+    assert!(
+        !remote.contains(&scratch.program("cloud-hypervisor")),
+        "{remote}"
+    );
     let snapshotter = format!("{:?}", api.snapshotter);
     assert!(
         snapshotter.contains(&scratch.program("fallocate")),
@@ -272,7 +294,7 @@ fn kvm_build_wires_each_key_to_its_part() {
         snapshotter.contains(&scratch.program("ch-remote")),
         "{snapshotter}"
     );
-    assert_eq!(start.ch.path(), Path::new(CH));
+    assert_eq!(start.ch.path(), scratch.dir.join("bin/cloud-hypervisor"));
     assert_eq!(
         start.systemd_run.path(),
         scratch.dir.join("bin/systemd-run")
@@ -305,47 +327,96 @@ fn kvm_build_wires_each_key_to_its_part() {
     assert_eq!(fs::read(stored.path()).unwrap(), initramfs());
 }
 
-/// Decision CH62 rule 17: the vmm packs a guest init program only when
-/// root owns it and no group or other user may write it. A root-owned
+/// Decisions CH62 rule 17 and CH67 rule 1: the vmm runs CH and
+/// ch-remote, and packs a guest init program, only when root owns each
+/// file and no group or other user may write it. A root-owned guest init
 /// program gives one initramfs across vmm starts (CH62 rule 18). A group
-/// write bit refuses the start, and so does an owner other than root
-/// (`guest_init/tests.rs` proves that one in the rust job).
+/// write bit on any of the three files refuses the start, and the fault
+/// names its key. An owner other than root refuses too (the rust job
+/// proves that one).
 #[test]
 #[ignore = "needs runner sudo for a root-owned file: the job kvm runs it"]
-fn kvm_guest_init_program_must_be_root_owned() {
-    let scratch = Scratch::new("guest-init");
+fn kvm_each_program_must_be_root_owned() {
+    let scratch = Scratch::new("programs");
     scratch.trust();
     let first = build(scratch.config()).unwrap().hook.0.parts().0.initramfs;
     let again = build(scratch.config()).unwrap().hook.0.parts().0.initramfs;
     assert_eq!(first, again);
 
-    sudo(&["chmod", "0575"], &scratch.dir.join("bin/guest-init"));
-    let refused = build(scratch.config()).err();
-    assert!(
-        matches!(
-            refused,
-            Some(StartError::GuestInit(GuestInitError::Writable {
-                mode: 0o575
-            }))
-        ),
-        "{refused:?}"
-    );
+    for (key, file) in PROGRAMS {
+        let path = scratch.dir.join("bin").join(file);
+        let mode = fs::metadata(&path).unwrap().mode() & 0o7777;
+        let widened = mode | 0o020;
+        sudo(&["chmod", &format!("{widened:o}")], &path);
+        let refused = build(scratch.config()).err();
+        let program = match refused {
+            Some(
+                StartError::Program(program)
+                | StartError::GuestInit(GuestInitError::Program(program)),
+            ) => program,
+            other => panic!("{key}: {other:?}"),
+        };
+        assert_eq!(program.key, key);
+        assert!(
+            matches!(program.fault, OwnerError::Writable { mode: found } if found == widened),
+            "{key}: {program:?}"
+        );
+        sudo(&["chmod", &format!("{mode:o}")], &path);
+    }
 }
 
-/// Decision CH57 rule 1: a `digests.json` that root does not own refuses
-/// the start, and no import runs: no digest reaches the store. A test
-/// that runs as root owns a root-owned file, so the case has nothing to
-/// prove there.
+/// Decision CH67 rule 1: a CH program that root does not own refuses the
+/// start before its version check, and no import runs: no digest reaches
+/// the store. A test that runs as root owns a root-owned file, so the
+/// case has nothing to prove there.
 #[test]
-fn a_digests_file_that_root_does_not_own_refuses_the_start() {
+fn a_ch_program_that_root_does_not_own_refuses_the_start() {
     let scratch = Scratch::new("untrusted");
-    let uid = fs::metadata(&scratch.dir).unwrap().uid();
+    let uid = fs::metadata(scratch.dir.join("bin/cloud-hypervisor"))
+        .unwrap()
+        .uid();
     if uid == 0 {
         return;
     }
     let refused = build(scratch.config()).err();
     assert!(
-        matches!(refused, Some(StartError::Digests(DigestsError::NotOwned { uid: found })) if found == uid),
+        matches!(
+            &refused,
+            Some(StartError::Program(ProgramError {
+                key: CH,
+                fault: OwnerError::NotOwned { uid: found },
+            })) if *found == uid
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(
+        refused.unwrap().to_string(),
+        format!("VMM_CH_PROGRAM: the program is owned by uid {uid}, not by root")
+    );
+    let config = scratch.config();
+    let images = ImageStore::new(&config.state, config.zstd.path().to_owned());
+    for (file, _, sha256) in IMAGES {
+        assert!(images.check(sha256.parse().unwrap()).is_err(), "{file}");
+    }
+}
+
+/// Decision CH57 rule 1: a `digests.json` that root does not own refuses
+/// the start, and no import runs: no digest reaches the store.
+#[test]
+#[ignore = "needs runner sudo for a root-owned file: the job kvm runs it"]
+fn kvm_a_digests_file_that_root_does_not_own_refuses_the_start() {
+    let scratch = Scratch::new("digests");
+    scratch.trust();
+    let uid = fs::metadata(&scratch.dir).unwrap().uid();
+    let digests = scratch.dir.join("images").join(DIGESTS_FILE);
+    sudo(&["chown", &uid.to_string()], &digests);
+    let refused = build(scratch.config()).err();
+    assert!(
+        matches!(
+            refused,
+            Some(StartError::Digests(DigestsError::Owner(OwnerError::NotOwned { uid: found })))
+                if found == uid
+        ),
         "{refused:?}"
     );
     let config = scratch.config();
