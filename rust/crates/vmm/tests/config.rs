@@ -8,8 +8,8 @@ use std::path::Path;
 
 use creche_vmm::config::{
     BUDGET, CH, CH_REMOTE, Config, ConfigError, FALLOCATE, FAMILY_ROOT, FAULTS_ROOT, FREE_FLOOR,
-    Fault, IMAGE_ROOT, KillScopesConfig, MKE2FS, RAM_CAP, RUN_ROOT, STATE_ROOT, SYSTEMCTL,
-    SYSTEMD_RUN, ZSTD,
+    Fault, GUEST_INIT, IMAGE_ROOT, KillScopesConfig, MKE2FS, RAM_CAP, RUN_ROOT, STATE_ROOT,
+    SYSTEMCTL, SYSTEMD_RUN, ZSTD,
 };
 use creche_vmm_confine::admission::{GIB, Limits};
 use creche_vmm_store::retention;
@@ -18,7 +18,7 @@ use creche_vmm_store::retention;
 const DEFAULT_ENV: &str = include_str!("../../../../env/src/creche_env/default.env");
 
 /// Each path key of the config, in the order that `Config` reads them.
-const PATHS: [&str; 12] = [
+const PATHS: [&str; 13] = [
     STATE_ROOT,
     RUN_ROOT,
     FAMILY_ROOT,
@@ -26,6 +26,7 @@ const PATHS: [&str; 12] = [
     IMAGE_ROOT,
     CH,
     CH_REMOTE,
+    GUEST_INIT,
     SYSTEMD_RUN,
     SYSTEMCTL,
     ZSTD,
@@ -71,6 +72,10 @@ fn a_good_env_gives_each_path_and_size() {
     assert_eq!(
         config.ch_remote.path(),
         Path::new("/srv/VMM_CH_REMOTE_PROGRAM")
+    );
+    assert_eq!(
+        config.guest_init.path(),
+        Path::new("/srv/VMM_GUEST_INIT_PROGRAM")
     );
     assert_eq!(
         config.systemd_run.path(),
@@ -248,6 +253,8 @@ fn the_catalog_defaults_are_the_design_values() {
         (IMAGE_ROOT, "${AGENT_INSTALL_ROOT}/disks"),
         (CH, "${AGENT_INSTALL_ROOT}/vmm/bin/cloud-hypervisor"),
         (CH_REMOTE, "${AGENT_INSTALL_ROOT}/vmm/bin/ch-remote"),
+        // Decision CH62 rule 17: the guest-init file of the vmm row.
+        (GUEST_INIT, "${AGENT_INSTALL_ROOT}/vmm/bin/guest-init"),
         (ZSTD, "/usr/bin/zstd"),
         (MKE2FS, "/usr/sbin/mke2fs"),
         (FALLOCATE, "/usr/bin/fallocate"),

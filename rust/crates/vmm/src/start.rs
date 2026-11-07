@@ -131,10 +131,11 @@ pub struct StartConfig {
     /// `digests.json` of its image root (decision CH57 rule 1).
     pub digests: Digests,
     /// The guest init initramfs in the digest store (decision CH60 rule
-    /// 2). `None` until phase 3 adds guest init (PR C7): the compose step
-    /// sets none, so each boot has none, its snapshot has none, and its
-    /// restore carries none (decision CH61 rule 3).
-    pub initramfs: Option<ImageDigest>,
+    /// 2). The compose step writes it once per vmm start, and each VM
+    /// start, cold boot or restore, names it (decisions CH61 rule 3, CH62
+    /// rule 18). Each start checks the store copy, as it checks the kernel
+    /// (decision CH44 rule 2).
+    pub initramfs: ImageDigest,
     /// The Cloud Hypervisor program.
     pub ch: Program,
     /// The `systemd-run` program of the launch (PR C2).
@@ -1445,7 +1446,7 @@ fn launch<L: Launcher, A: ChApi>(
             .map_err(|error| error.to_string())
     };
     let kernel = checked(config.digests.kernel)?;
-    let initramfs = config.initramfs.map(checked).transpose()?;
+    let initramfs = checked(config.initramfs)?;
     // `PerFlavor` of the wire crate holds each flavor, so the vmm holds no
     // list of its own (decision CH58 rule 4).
     let root = checked(*config.digests.roots.get(shape.flavor))?;
@@ -1463,14 +1464,11 @@ fn launch<L: Launcher, A: ChApi>(
     let serial =
         SerialLog::fresh(&session).map_err(|error| format!("{error}: {}", error.source))?;
     let limits = VmLimits::from(shape);
-    let key = SnapshotKey::current(config.ch_version, &kernel, initramfs.as_ref(), &root);
+    let key = SnapshotKey::current(config.ch_version, &kernel, &initramfs, &root);
     // The initramfs of the ruleset. A snapshot with the current key names
     // this same `store/<sha256>` file, so a restore reads it as a boot
     // does (decision CH61 rule 3).
-    let initramfs_path = initramfs
-        .as_ref()
-        .map(|image| host(image.path()))
-        .transpose()?;
+    let initramfs_path = host(initramfs.path())?;
     let (command, start, restore) = match claim_newest::<A>(&session, &key, locks, id)? {
         Some(snapshot) => {
             let command = ChCommand::restore(snapshot, &run).map_err(|error| error.to_string())?;
@@ -1487,7 +1485,7 @@ fn launch<L: Launcher, A: ChApi>(
         None => {
             let boot = Boot {
                 kernel: &kernel,
-                initramfs: initramfs.as_ref(),
+                initramfs: &initramfs,
                 root: &root,
                 session: &disk,
                 serial: &serial,
@@ -1705,7 +1703,7 @@ mod tests {
             "/tests/fixtures/cloud-hypervisor"
         );
         let ch = check_cloud_hypervisor(stub.as_ref(), Duration::from_secs(10)).unwrap();
-        let key = SnapshotKey::current(ch, &empty, None, &empty);
+        let key = SnapshotKey::current(ch, &empty, &empty, &empty);
         let id: SessionId = "3f2b8c1e-9d4a-4e6b-8a7c-0b1d2e3f4a5b".parse().unwrap();
         let session = state.session(&id);
         let generation = SnapshotGeneration(1);

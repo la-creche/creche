@@ -419,7 +419,7 @@ impl Rig {
         let host = |path: &Path| HostPath::new(path.to_owned()).unwrap();
         let start = Start::Boot {
             kernel: host(&self.kernel),
-            initramfs: Some(host(&self.initramfs)),
+            initramfs: host(&self.initramfs),
         };
         let files = VmFiles::new(start, host(root), &seat.session, &seat.run).unwrap();
         let scope = Scope::new(

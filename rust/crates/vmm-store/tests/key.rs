@@ -1,6 +1,6 @@
 //! A snapshot keeps only while its key equals the current key: the CH rev,
-//! the kernel digest, the initramfs digest or none, the root disk digest
-//! and the guest init protocol (decisions CH7-6, CH61 rule 3). The vmm
+//! the kernel digest, the initramfs digest, the root disk digest and the
+//! guest init protocol (decisions CH7-6, CH61 rule 3, CH62 rule 24). The vmm
 //! accepts its `cloud-hypervisor` only when
 //! `--version` reports `CH_VERSION` (decision CH36 with gap G10).
 //!
@@ -74,17 +74,18 @@ impl Temp {
         link
     }
 
-    /// The key of a VM with images `kernel` and `root_disk` and no
-    /// initramfs.
+    /// The key of a VM with images `kernel` and `root_disk` and image 2
+    /// as its initramfs.
     fn key(&self, kernel: usize, root_disk: usize) -> SnapshotKey {
-        self.key_with(kernel, None, root_disk)
+        self.key_with(kernel, 2, root_disk)
     }
 
     /// The key of a VM with images `kernel`, `initramfs` and `root_disk`.
-    fn key_with(&self, kernel: usize, initramfs: Option<usize>, root_disk: usize) -> SnapshotKey {
+    fn key_with(&self, kernel: usize, initramfs: usize, root_disk: usize) -> SnapshotKey {
         let ch = self.ch("v54.0.0").expect("the version check");
-        let initramfs = initramfs.map(|index| &self.images[index]);
-        SnapshotKey::current(ch, &self.images[kernel], initramfs, &self.images[root_disk])
+        let [kernel, initramfs, root_disk] =
+            [kernel, initramfs, root_disk].map(|i| &self.images[i]);
+        SnapshotKey::current(ch, kernel, initramfs, root_disk)
     }
 
     /// Makes a generation dir with one file and writes `key` into it.
@@ -187,37 +188,42 @@ fn another_kernel_drops_the_snapshot() {
 }
 
 /// The key holds the initramfs digest, so a restore reads the file of
-/// its snapshot (decision CH61 rule 3). A key with one keeps only
-/// against the same one, and a key with none keeps only against none.
+/// its snapshot (decision CH61 rule 3). A key keeps only against the
+/// same initramfs.
 #[test]
 fn another_initramfs_drops_the_snapshot() {
     let temp = Temp::new("initramfs");
-    let with = |index| temp.key_with(0, Some(index), 1);
+    let with = |index| temp.key_with(0, index, 1);
     temp.snapshot(FIRST, &with(2));
+    let check = check_newest(&temp.session, &with(2)).expect("the check");
+    assert!(matches!(check, KeyCheck::Keyed(_)), "{check:?}");
+    for other in [0, 1] {
+        temp.snapshot(FIRST, &with(2));
+        let check = check_newest(&temp.session, &with(other)).expect("the check");
+        let dropped = KeyCheck::Dropped {
+            generation: FIRST,
+            reason: DropReason::Differs,
+        };
+        assert_eq!(check, dropped, "initramfs {other}");
+    }
+}
+
+/// Every VM start names the initramfs that the vmm wrote at its start, so
+/// the key file always holds its digest as a string, never `null`
+/// (decisions CH62 rules 18 and 24). A key file of the "optional until
+/// phase 3" form, with `null`, holds no key and drops the snapshot.
+#[test]
+fn the_key_always_names_the_initramfs_digest() {
+    let temp = Temp::new("initramfs-digest");
+    temp.snapshot(FIRST, &temp.key(0, 1));
     let text = fs::read_to_string(temp.session.snapshot_key(FIRST)).expect("the key");
     let key: Value = serde_json::from_str(&text).expect("a JSON key");
     assert_eq!(
         key["initramfs"],
         Value::from(temp.images[2].digest().to_string())
     );
-    let check = check_newest(&temp.session, &with(2)).expect("the check");
-    assert!(matches!(check, KeyCheck::Keyed(_)), "{check:?}");
-    for current in [with(0), temp.key(0, 1)] {
-        temp.snapshot(FIRST, &with(2));
-        let check = check_newest(&temp.session, &current).expect("the check");
-        let dropped = KeyCheck::Dropped {
-            generation: FIRST,
-            reason: DropReason::Differs,
-        };
-        assert_eq!(check, dropped);
-    }
-    temp.snapshot(FIRST, &temp.key(0, 1));
-    let key: Value =
-        serde_json::from_slice(&fs::read(temp.session.snapshot_key(FIRST)).expect("the key"))
-            .expect("a JSON key");
-    assert_eq!(key["initramfs"], Value::Null);
-    let check = check_newest(&temp.session, &with(2)).expect("the check");
-    assert!(matches!(check, KeyCheck::Dropped { .. }), "{check:?}");
+    temp.edit_key(FIRST, "initramfs", Value::Null);
+    temp.assert_dropped(DropReason::Unreadable);
 }
 
 #[test]

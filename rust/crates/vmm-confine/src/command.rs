@@ -10,8 +10,8 @@
 //! A boot renders, in this order:
 //!
 //! 1. `--api-socket path=<run>/api.sock`.
-//! 2. `--kernel`, `--initramfs` when there is one, and `--cmdline`
-//!    `CMDLINE` (decisions CH7-3, CH7-6, CH36 G23).
+//! 2. `--kernel`, `--initramfs` and `--cmdline` `CMDLINE` (decisions
+//!    CH7-3, CH7-6, CH36 G23, CH62 rules 18 and 19).
 //! 3. `--cpus`, `--memory` and `--balloon` from `VmLimits` (decision
 //!    CH8-5).
 //! 4. `--disk` with the root disk `readonly=on` first, so it is
@@ -43,12 +43,13 @@ use creche_vmm_store::session_disk::SessionDisk;
 use crate::launch::{Payload, Program};
 use crate::limits::{MIB, VmLimits};
 
-/// The guest kernel command line (decision CH36 G23). The root disk is
-/// the first `--disk`, so it is `/dev/vda`, mounted read only. The kernel
-/// writes to the serial port. Phase 3 sets the final value with guest
-/// init. With an initramfs the kernel runs its `/init` and ignores
-/// `root=`.
-pub const CMDLINE: &str = "console=ttyS0 root=/dev/vda ro";
+/// The guest kernel command line, its final value (decisions CH36 G23,
+/// CH62 rule 19). The kernel writes to the serial port and runs `/init`
+/// of the initramfs, which is guest init. It has no `root=`: guest init
+/// mounts the root disk `/dev/vda` itself (CH62 rule 4), and the kernel
+/// ignores `root=` when the initramfs has `/init`. It has no `panic=`: a
+/// guest reboot would restart inside the same CH with no vmm in the loop.
+pub const CMDLINE: &str = "console=ttyS0 rdinit=/init";
 
 /// The guest vsock CID. CH gives each VM its own vsock device behind its
 /// own socket, so every VM may use the same CID.
@@ -153,9 +154,9 @@ impl DiskLimit {
 pub struct Boot<'a> {
     /// The guest kernel (decision CH7-3).
     pub kernel: &'a CheckedImage,
-    /// The guest init initramfs, a checked store copy (decisions CH7-6,
-    /// CH60 rule 2). A boot has none until phase 3 adds guest init.
-    pub initramfs: Option<&'a CheckedImage>,
+    /// The guest init initramfs that the vmm wrote at its start, a
+    /// checked store copy (decisions CH7-6, CH60 rule 2, CH62 rule 18).
+    pub initramfs: &'a CheckedImage,
     /// The shared root disk, read only (decision CH8-8).
     pub root: &'a CheckedImage,
     /// The session disk (decision CH8-7).
@@ -218,9 +219,10 @@ impl ChCommand {
     pub fn boot(boot: Boot<'_>, run: &VmRunDir) -> Result<Self, CommandError> {
         let mut args = api_socket(run)?;
         args.extend(["--kernel".to_owned(), text(boot.kernel.path())?.to_owned()]);
-        if let Some(initramfs) = boot.initramfs {
-            args.extend(["--initramfs".to_owned(), text(initramfs.path())?.to_owned()]);
-        }
+        args.extend([
+            "--initramfs".to_owned(),
+            text(boot.initramfs.path())?.to_owned(),
+        ]);
         args.extend(["--cmdline".to_owned(), CMDLINE.to_owned()]);
         args.extend(boot.limits.ch_args());
         args.extend([

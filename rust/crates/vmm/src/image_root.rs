@@ -6,8 +6,9 @@
 //! rule 1). Handover checks the release signature at install, so the vmm
 //! trusts the file only when root owns it and the vmm user cannot write
 //! it. A missing, malformed or writable file refuses the start of the vmm.
-//! `read` opens the file once and runs each check on the open file, so the
-//! bytes that it parses are the bytes that it checked.
+//! `read` opens the file once with `root_owned::open`, which runs each
+//! check on the open file, so the bytes that it parses are the bytes that
+//! it checked.
 //!
 //! `digests.json` holds `kernel` plus one entry for each value of the wire
 //! flavor enum `SandboxFlavor`, each `{"file": <one file name in the image
@@ -24,9 +25,7 @@
 //! start of the vmm (decision CH58 rule 5).
 
 use std::fmt;
-use std::fs::{self, File};
 use std::io::{self, Read};
-use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 
 use creche_vmm_store::images::{ImageDigest, ImageStore, ImportError};
@@ -35,6 +34,7 @@ use serde::Deserialize;
 use serde::de::value::StrDeserializer;
 use serde::de::{Deserializer, Error as _, MapAccess, Visitor};
 
+use crate::root_owned::{self, OwnerError};
 use crate::start::Digests;
 
 /// The name of the digest file in the image root (decision CH57 rule 1).
@@ -48,35 +48,13 @@ pub const KERNEL_KEY: &str = "kernel";
 /// row.
 pub const DIGESTS_CAP: u64 = 64 * 1024;
 
-/// The mode bits that let a user other than the owner write a file.
-const GROUP_OR_OTHER_WRITE: u32 = 0o022;
-
-/// The uid that must own `digests.json`: root (decision CH57 rule 1).
-const ROOT_UID: u32 = 0;
-
 /// Why the vmm does not trust `digests.json`. Each refuses the start.
 #[derive(Debug)]
 pub enum DigestsError {
     /// The image root has no `digests.json`.
     Missing,
-    /// A read of the file failed.
-    Io(io::Error),
-    /// The path holds a symlink, a dir or another file that is not a
-    /// regular file.
-    NotRegular,
-    /// The file that `read` opened is not the file that its first look
-    /// found, so the path changed between the two.
-    Replaced,
-    /// The file has an owner other than root.
-    NotOwned {
-        /// The uid of the owner of the file.
-        uid: u32,
-    },
-    /// The group or other users may write the file.
-    Writable {
-        /// The permission bits of the file.
-        mode: u32,
-    },
+    /// The file failed a check of `root_owned::open`, or its read failed.
+    Owner(OwnerError),
     /// The file has more than `DIGESTS_CAP` bytes.
     TooLarge,
     /// The bytes are not the strict JSON shape of the module doc.
@@ -88,13 +66,7 @@ impl fmt::Display for DigestsError {
         write!(formatter, "VMM_IMAGE_ROOT: the {DIGESTS_FILE} ")?;
         match self {
             Self::Missing => formatter.write_str("is missing"),
-            Self::Io(error) => write!(formatter, "cannot be read: {error}"),
-            Self::NotRegular => formatter.write_str("is not a regular file"),
-            Self::Replaced => formatter.write_str("changed during the read"),
-            Self::NotOwned { uid } => write!(formatter, "is owned by uid {uid}, not by root"),
-            Self::Writable { mode } => {
-                write!(formatter, "has mode {mode:04o}, so others may write it")
-            }
+            Self::Owner(error) => write!(formatter, "{error}"),
             Self::TooLarge => write!(formatter, "has more than {DIGESTS_CAP} bytes"),
             Self::Malformed(error) => write!(formatter, "is malformed: {error}"),
         }
@@ -235,48 +207,22 @@ pub struct ImageSet {
     manifest: Manifest,
 }
 
-/// Reads `digests.json` in `root` and checks that root owns it and that
-/// no group or other user may write it (decision CH57 rule 1). The vmm
-/// does not read its group list, so any group write bit refuses.
+/// Reads `digests.json` in `root` after the checks of `root_owned::open`:
+/// root owns it and no group or other user may write it (decision CH57
+/// rule 1).
 ///
 /// # Errors
 ///
 /// A `DigestsError`. Each one refuses the start of the vmm.
 pub fn read(root: &Path) -> Result<ImageSet, DigestsError> {
-    let path = root.join(DIGESTS_FILE);
-    let first = match fs::symlink_metadata(&path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return Err(DigestsError::Missing);
-        }
-        Err(error) => return Err(DigestsError::Io(error)),
-    };
-    if !first.file_type().is_file() {
-        return Err(DigestsError::NotRegular);
-    }
-
-    let mut file = File::open(&path).map_err(DigestsError::Io)?;
-    let open = file.metadata().map_err(DigestsError::Io)?;
-    if (open.dev(), open.ino()) != (first.dev(), first.ino()) || !open.file_type().is_file() {
-        return Err(DigestsError::Replaced);
-    }
-    if open.uid() != ROOT_UID {
-        return Err(DigestsError::NotOwned { uid: open.uid() });
-    }
-    if open.mode() & GROUP_OR_OTHER_WRITE != 0 {
-        return Err(DigestsError::Writable {
-            mode: open.mode() & 0o7777,
-        });
-    }
-    if open.len() > DIGESTS_CAP {
-        return Err(DigestsError::TooLarge);
-    }
-
+    let file = root_owned::open(&root.join(DIGESTS_FILE)).map_err(|fault| match fault {
+        OwnerError::Io(error) if error.kind() == io::ErrorKind::NotFound => DigestsError::Missing,
+        fault => DigestsError::Owner(fault),
+    })?;
     let mut bytes = Vec::new();
-    (&mut file)
-        .take(DIGESTS_CAP + 1)
+    file.take(DIGESTS_CAP + 1)
         .read_to_end(&mut bytes)
-        .map_err(DigestsError::Io)?;
+        .map_err(|error| DigestsError::Owner(OwnerError::Io(error)))?;
     if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > DIGESTS_CAP {
         return Err(DigestsError::TooLarge);
     }

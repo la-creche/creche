@@ -146,10 +146,16 @@ table of the three vmm crates.
   `store/<sha256>` initramfs of its snapshot (decision CH60 rule 2),
   and the snapshot key of `creche-vmm-store` holds its digest. A
   snapshot with the current key names the initramfs of the vmm config,
-  so the vmm passes that checked store copy. The vmm config names no
-  initramfs until phase 3 adds guest init (PR C7). A boot with none
-  makes a snapshot whose key holds none, and its restore carries none.
-  So `Start::Boot` and `Start::Restore` each hold an `Option`.
+  so the vmm passes that checked store copy. The vmm writes one guest
+  init initramfs at its start, and each VM start names it (decision
+  CH62 rule 18). So `Start::Boot`, `Start::Restore` and
+  `command::Boot` each require one, and a plan with no initramfs does
+  not parse.
+- `command::CMDLINE` is `console=ttyS0 rdinit=/init`, its final value
+  (decisions CH36 G23, CH62 rule 19). The kernel runs `/init` of the
+  initramfs, which is guest init. There is no `root=`, because guest
+  init mounts `/dev/vda` itself, and no `panic=`, because a guest reboot
+  would restart inside the same CH with no vmm in the loop.
 - Decision CH59 rule 2 (PR D17, `landlock.rs`): the ruleset of a VM
   names its serial log, `<state root>/sessions/<id>/serial.log`, with
   write and truncate only. CH v54 opens it with `File::create`. The run

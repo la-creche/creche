@@ -330,7 +330,7 @@ impl Setup {
         let serial = self.take(slot);
         let boot = Boot {
             kernel: &self.kernel,
-            initramfs: Some(&self.initramfs),
+            initramfs: &self.initramfs,
             root: &self.root,
             session: &self.disk,
             serial: &serial,
@@ -343,7 +343,7 @@ impl Setup {
         let kernel = HostPath::new(self.kernel.path().to_owned()).unwrap();
         let start = Start::Boot {
             kernel,
-            initramfs: Some(self.initramfs_path()),
+            initramfs: self.initramfs_path(),
         };
         self.launch(start, payload, slot, unit)
     }
@@ -360,7 +360,7 @@ impl Setup {
             .unwrap()
             .payload(self.ch.clone());
         let start = Start::Restore {
-            initramfs: Some(self.initramfs_path()),
+            initramfs: self.initramfs_path(),
         };
         self.launch(start, payload, slot, unit)
     }
@@ -482,12 +482,7 @@ impl Setup {
 
     /// Keys `snapshot`, checks the key and claims it.
     fn claim(&self, snapshot: &Snapshot) -> ClaimedSnapshot {
-        let key = SnapshotKey::current(
-            self.checked_ch,
-            &self.kernel,
-            Some(&self.initramfs),
-            &self.root,
-        );
+        let key = SnapshotKey::current(self.checked_ch, &self.kernel, &self.initramfs, &self.root);
         write_key(&self.session, snapshot.generation, &key).unwrap();
         let check = check_newest(&self.session, &key).unwrap();
         let KeyCheck::Keyed(keyed) = check else {

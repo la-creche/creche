@@ -5,12 +5,17 @@
 //!    runtime and before any other step (caller duty 8 of `AGENTS.md`).
 //! 2. In `spawn_blocking`: `leftovers::stop_all` stops each VM scope of an
 //!    earlier vmm before any per-VM bind (decision CH19 (4), PR C3). Then
-//!    `check_cloud_hypervisor` checks the CH version (caller duty 4, gap
-//!    G10 option A). Then `image_root::read` reads the `digests.json` of
-//!    the image root, and a missing, malformed or writable file refuses
-//!    the start (decision CH57 rule 1). Each file that it names goes into
-//!    the digest store. Then the fault book starts, which clears every
-//!    fault file (contract 05 §3.3.1 rule 8), and the rows load.
+//!    `root_owned::check_program` checks the files of `VMM_CH_PROGRAM`
+//!    and `VMM_CH_REMOTE_PROGRAM` before any run of either (decision
+//!    CH67 rule 1). Then `check_cloud_hypervisor` checks the CH version
+//!    (caller duty 4, gap G10 option A). Then `image_root::read` reads
+//!    the `digests.json` of the image root, and a missing, malformed or
+//!    writable file refuses the start (decision CH57 rule 1). Each file that it names goes into
+//!    the digest store. Then `guest_init::write_initramfs` packs the
+//!    guest init program into the one initramfs of this vmm start, in the
+//!    digest store, and each VM start names it (decisions CH62 rules 17
+//!    and 18). Then the fault book starts, which clears every fault file
+//!    (contract 05 §3.3.1 rule 8), and the rows load.
 //! 3. The store, the confine parts and `ColdBoot` from the config. One
 //!    `ColdBoot` is the `StartVm` hook, the `StopVm` hook, the `VmSet`
 //!    and the `Sleeper` of the vmm.
@@ -38,7 +43,7 @@ use creche_vmm_confine::leftovers::{LeftoverError, stop_all};
 use creche_vmm_confine::spawner::{SELF_EXE, Spawner};
 use creche_vmm_confine::vmm_unit::VmmUnit;
 use creche_vmm_store::ch_remote::ChRemote;
-use creche_vmm_store::images::ImageStore;
+use creche_vmm_store::images::{ImageDigest, ImageStore};
 use creche_vmm_store::key::{ChVersionError, CheckedCh, check_cloud_hypervisor};
 use creche_vmm_store::rows::{LoadError, Rows};
 use creche_vmm_store::session_disk::SessionDisks;
@@ -53,8 +58,9 @@ use tokio::task::{JoinHandle, spawn_blocking};
 use tokio::time::{MissedTickBehavior, interval};
 
 use crate::ServeError;
-use crate::config::Config;
+use crate::config::{CH, CH_REMOTE, Config};
 use crate::control::ControlState;
+use crate::guest_init::{GuestInitError, write_initramfs};
 use crate::handlers::acp::{Acp, StartFault, StartVm};
 use crate::handlers::create::Creates;
 use crate::handlers::drop::{Drops, StopVm, VmStopFailed};
@@ -62,6 +68,7 @@ use crate::handlers::list::Lists;
 use crate::image_root::{self, DigestsError, ImageImportError};
 use crate::relay::{AcpLink, AcpRelay, Relays};
 use crate::restore::ChTools;
+use crate::root_owned::{ProgramError, check_program};
 use crate::server::{Stop, run_routes};
 use crate::shutdown::{self, Ended};
 use crate::sleep;
@@ -81,6 +88,9 @@ pub enum StartError {
     Sigterm(io::Error),
     /// The leftover VM scopes did not clear (PR C3).
     Leftovers(LeftoverError),
+    /// The file of `VMM_CH_PROGRAM` or `VMM_CH_REMOTE_PROGRAM` is not
+    /// trusted (decision CH67 rule 1).
+    Program(ProgramError),
     /// The CH version check failed (gap G10 option A).
     ChVersion(ChVersionError),
     /// The `digests.json` of the image root is not trusted (decision CH57
@@ -88,6 +98,8 @@ pub enum StartError {
     Digests(DigestsError),
     /// A file of the image root did not go into the digest store.
     Import(ImageImportError),
+    /// The guest init initramfs was not written (decision CH62 rule 17).
+    GuestInit(GuestInitError),
     /// The fault dir or the fault book did not start.
     Faults(io::Error),
     /// The rows did not load.
@@ -105,9 +117,11 @@ impl fmt::Display for StartError {
         match self {
             Self::Sigterm(error) => write!(formatter, "cannot register SIGTERM: {error}"),
             Self::Leftovers(error) => write!(formatter, "{error}"),
+            Self::Program(error) => write!(formatter, "{error}"),
             Self::ChVersion(error) => write!(formatter, "{error}"),
             Self::Digests(error) => write!(formatter, "{error}"),
             Self::Import(error) => write!(formatter, "{error}"),
+            Self::GuestInit(error) => write!(formatter, "{error}"),
             Self::Faults(error) => write!(formatter, "cannot start the fault book: {error}"),
             Self::Rows(error) => write!(formatter, "cannot load the rows: {error:?}"),
             Self::Spawner(error) => write!(formatter, "cannot start the spawner: {error}"),
@@ -213,14 +227,21 @@ struct Checked {
     ch_version: CheckedCh,
     images: ImageStore,
     digests: Digests,
+    /// The guest init initramfs of this vmm start (CH62 rule 18).
+    initramfs: ImageDigest,
 }
 
-/// The first checks of step 2: the leftover sweep, the CH version and
-/// the image root. Blocks.
+/// The first checks of step 2: the leftover sweep, the CH and ch-remote
+/// files, the CH version, the image root and the guest init initramfs.
+/// Blocks.
 fn check(config: &Config) -> Result<Checked, StartError> {
     for unit in stop_all(&config.systemctl).map_err(StartError::Leftovers)? {
         eprintln!("vmm: stopped the leftover unit {unit}");
     }
+    // Decision CH67 rule 1: CH and ch-remote get the check of the guest
+    // init program, before the vmm runs either.
+    check_program(CH, config.ch.path()).map_err(StartError::Program)?;
+    check_program(CH_REMOTE, config.ch_remote.path()).map_err(StartError::Program)?;
     let ch_version =
         check_cloud_hypervisor(config.ch.path(), VERSION_WAIT).map_err(StartError::ChVersion)?;
     let images = ImageStore::new(&config.state, config.zstd.path().to_owned());
@@ -231,10 +252,17 @@ fn check(config: &Config) -> Result<Checked, StartError> {
         .map_err(StartError::Digests)?
         .import(&images)
         .map_err(StartError::Import)?;
+    // Decision CH62 rule 18: one initramfs per vmm start. A program that
+    // root does not own, or that others may write, refuses the start
+    // (CH62 rule 17).
+    let initramfs = write_initramfs(config.guest_init.path(), &images)
+        .map_err(StartError::GuestInit)?
+        .digest();
     Ok(Checked {
         ch_version,
         images,
         digests,
+        initramfs,
     })
 }
 
@@ -245,6 +273,7 @@ fn parts(config: Config, checked: Checked) -> Result<Vmm, StartError> {
         ch_version,
         images,
         digests,
+        initramfs,
     } = checked;
     let faults = FaultDir::open(&config.faults_root)
         .and_then(|dir| FaultBook::start(dir, SystemTime::now()))
@@ -270,7 +299,7 @@ fn parts(config: Config, checked: Checked) -> Result<Vmm, StartError> {
         images,
         disks: SessionDisks::new(&config.state, config.mke2fs.path().to_owned()),
         digests,
-        initramfs: None,
+        initramfs,
         state: config.state,
         run: config.run.clone(),
         families: config.families.clone(),
