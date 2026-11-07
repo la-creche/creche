@@ -542,7 +542,7 @@ mod tests {
     use creche_wire::SessionId;
     use tokio::time::Instant;
 
-    use super::{Door, Relays, Stopped, Taken};
+    use super::{Door, Relays, Splice, Stopped, Taken};
 
     /// A claim that a drop stopped ends after a later claim of its
     /// session. Its end leaves the later claim in place.
@@ -598,6 +598,45 @@ mod tests {
         let closed = relays.door(&id);
         drop(relays.claim(&id).unwrap());
         assert_eq!(relays.door(&id), closed);
+    }
+
+    /// `carried` gives the bytes that reached the far stream, then the
+    /// bytes that reached the near one, the pending bytes counted (decision
+    /// CH69 rule 10). Each peer writes, then shuts its write half, so the
+    /// splice ends when both directions reach EOF.
+    #[test]
+    fn a_splice_counts_the_bytes_of_each_direction() {
+        use std::io::{Read, Write};
+        use std::net::Shutdown;
+        use std::os::unix::net::UnixStream;
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .build()
+            .unwrap();
+        let (mut near_peer, near) = UnixStream::pair().unwrap();
+        let (far, mut far_peer) = UnixStream::pair().unwrap();
+        near_peer.write_all(b"1234").unwrap();
+        near_peer.shutdown(Shutdown::Write).unwrap();
+        far_peer.write_all(b"xyz").unwrap();
+        far_peer.shutdown(Shutdown::Write).unwrap();
+        let mut splice = Splice::new(b"ab".to_vec());
+        runtime.block_on(async {
+            let open = |stream: UnixStream| {
+                stream.set_nonblocking(true).unwrap();
+                tokio::net::UnixStream::from_std(stream).unwrap()
+            };
+            let (mut near, mut far) = (open(near), open(far));
+            std::future::poll_fn(|context| splice.carry(context, &mut near, &mut far)).await;
+        });
+        assert_eq!(splice.carried(), (4, 5));
+        let (mut up, mut down) = (Vec::new(), Vec::new());
+        far_peer.read_to_end(&mut up).unwrap();
+        near_peer.read_to_end(&mut down).unwrap();
+        assert_eq!(
+            (up.as_slice(), down.as_slice()),
+            (&b"1234"[..], &b"abxyz"[..])
+        );
     }
 
     /// A close stops a claim as an eviction, and a mark stops it as a
