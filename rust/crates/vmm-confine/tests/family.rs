@@ -410,6 +410,9 @@ fn a_bad_litellm_key_is_not_valid() {
         json!({"pep_token": token}).to_string(),
         json!({"litellm_key": "sk-key", "pep_token": token, "spend": 1}).to_string(),
         format!(r#"{{"litellm_key":"sk-a","litellm_key":"sk-b","pep_token":"{token}"}}"#),
+        // serde refuses a duplicate field of the struct by itself. Only the
+        // strict check refuses one inside a value that `IgnoredAny` reads.
+        format!(r#"{{"litellm_key":"sk-key","pep_token":"{token}","written_at":{{"a":1,"a":2}}}}"#),
         "[]".to_owned(),
         String::new(),
     ];
