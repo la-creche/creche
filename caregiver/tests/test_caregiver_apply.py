@@ -109,20 +109,33 @@ def test_apply_once_writes_the_egress_file(tmp_path: Path, state_root: Path) -> 
     assert body == {"hosts": [{"host": "github.com", "port": 443}]}
 
 
-def test_apply_once_writes_the_egress_file_before_the_create(
+def test_apply_once_writes_the_repos_file(tmp_path: Path, state_root: Path) -> None:
+    """Contract 01 §6.1.1, decisions CH69 rules 4 and 6."""
+    registry_root = write_registry(tmp_path / "registry", repos=["mcp", "creche"])
+    apply_chat(registry_root, state_root)
+    body = json.loads(paths.repos_path(state_root, "chat").read_bytes())
+    assert body == {"repos": ["creche", "mcp"]}
+
+
+def test_apply_once_writes_the_reach_files_before_the_create(
     registry_root: Path, state_root: Path
 ) -> None:
-    """Decision CH69 rule 6: the file is on disk before the sandbox step,
-    so a create that fails still leaves the list of its revision."""
-    seen: list[bool] = []
+    """Decision CH69 rule 6: both files are on disk before the sandbox
+    step, so a create that fails still leaves the lists of its revision."""
+    seen: list[tuple[bool, bool]] = []
 
     class CheckingDriver(FakeDriver):
         def create(self, spec: SandboxSpec) -> None:
-            seen.append(paths.egress_path(state_root, "chat").exists())
+            seen.append(
+                (
+                    paths.egress_path(state_root, "chat").exists(),
+                    paths.repos_path(state_root, "chat").exists(),
+                )
+            )
             super().create(spec)
 
     apply_chat(registry_root, state_root, driver=CheckingDriver())
-    assert seen == [True]
+    assert seen == [(True, True)]
 
 
 def test_an_egress_list_over_the_cap_stops_the_apply(registry_root: Path, state_root: Path) -> None:

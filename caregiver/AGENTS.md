@@ -23,7 +23,7 @@ host where something has gone wrong.
 | `lan.py`, `images.py`, `released.py` | the LAN address from the site file, the image a flavor maps to, and the images a `playpen` release installed |
 | `driver.py` | `SandboxDriver`: `SbxDriver` (real) and `FakeDriver` |
 | `litellm_keys.py`, `credentials.py`, `config_mount.py` | the key, the token, the config mount |
-| `reach_files.py` | `egress.json` beside the config mount (contract 01 §6.1.1) |
+| `reach_files.py` | `egress.json` and `repos.json` beside the config mount (contract 01 §6.1.1) |
 | `playpen_env.py` | the env file `sbx exec --env-file` carries |
 | `policy_file.py` | the types and the text of `policy.toml`, and `build_app` |
 | `policy_fleet.py` | one fragment per family, and the checked assembly of the one `policy.toml` |
@@ -59,8 +59,8 @@ host where something has gone wrong.
   verb it ends in `cli.main`: one line, and exit code 1.
 - Credentials die before processes. `delete.py` removes the LiteLLM key, then
   the fragment of `policy.toml` and its table, then
-  `creds.json` and `egress.json`, then the sandboxes (decision CH69 rule
-  23). `test_delete.py` checks the order from inside the fake driver.
+  `creds.json`, `egress.json` and `repos.json`, then the sandboxes
+  (decision CH69 rule 23). `test_delete.py` checks the order from inside the fake driver.
 - Each pass and `apply-once` write `egress.json` of the family, before the
   sandbox step (decision CH69 rule 6). It is `FamilyEgress` of
   `creche-wire`: hosts in lower case, an explicit port (a bare host is
@@ -77,6 +77,15 @@ host where something has gone wrong.
   for a refused table of `policy.toml` (invariant 19).
   `rust/crates/wire/vectors/family.json` holds the cap, and
   `test_reach_files.py` holds `EGRESS_CAP` equal to it.
+- Each pass and `apply-once` also write `repos.json` of the family, next
+  to `egress.json` (decisions CH69 rules 4 and 6). It is `FamilyRepos` of
+  `creche-wire`: the `repos` list, sorted. A family with no `repos` gets
+  `{"repos": []}`. Mode and byte compare are those of `egress.json`.
+  `check_family` refuses a name given twice (decision CH73 rule 3) and a
+  list past 32 names (decision CH69 rule 15) before any write, so the
+  last good file stays. The longest valid list renders to 3476 bytes,
+  under the 4 KiB `REPOS_CAP` of the vmm (decision CH73 rule 2), so the
+  file has no refusal of its own. `test_reach_files.py` holds that bound.
 - No secret on argv, in a URL or in a log line. The master key comes from
   `LITELLM_MASTER_KEY` in the environment.
 - Each verb that applies the registry (`serve`, `reconcile-once`,

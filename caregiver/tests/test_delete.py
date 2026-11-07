@@ -105,6 +105,30 @@ def test_delete_unlinks_the_egress_file_before_the_sandboxes(tmp_path: Path) -> 
     assert checked == {"egress_gone": True}
 
 
+def test_delete_unlinks_the_repos_file_before_the_sandboxes(tmp_path: Path) -> None:
+    """Contract 01 §6.1.1 rule 7, decision CH69 rule 23: the clone list
+    goes with the egress allowlist, before processes stop."""
+    state_root = tmp_path / "state"
+    seed(state_root, "chat")
+    repos_path = paths.repos_path(state_root, "chat")
+    repos_path.write_text('{"repos": ["creche"]}\n', encoding="utf-8")
+    checked: dict[str, bool] = {}
+
+    class CheckingDriver(FakeDriver):
+        def destroy(self, name: str, allow: tuple[str, ...]) -> None:
+            checked["repos_gone"] = not repos_path.exists()
+            super().destroy(name, allow)
+
+    delete_family(
+        "chat",
+        state_root=state_root,
+        policy=fake_policy(state_root),
+        driver=CheckingDriver(),
+        litellm=FakeLiteLLMKeys(),
+    )
+    assert checked == {"repos_gone": True}
+
+
 def test_the_litellm_key_is_deleted_by_alias(tmp_path: Path) -> None:
     state_root = tmp_path / "state"
     seed(state_root, "chat")

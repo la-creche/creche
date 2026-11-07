@@ -368,21 +368,33 @@ def test_a_pass_writes_the_egress_file(fleet: Fleet) -> None:
     }
 
 
-def test_a_pass_writes_the_egress_file_before_the_create(fleet: Fleet) -> None:
-    """Decision CH69 rule 6: the file is on disk before the sandbox step,
-    so a cut pass or a failed create still leaves the list of its
+def test_a_pass_writes_the_repos_file(fleet: Fleet) -> None:
+    """Contract 01 §6.1.1, decisions CH69 rules 4 and 6: every pass, in
+    the sorted form."""
+    fleet.run()
+    repos_path = paths.repos_path(fleet.state_root, FAMILY)
+    assert json.loads(repos_path.read_bytes()) == {"repos": []}
+    fleet.write(repos=["mcp", "creche"])
+    fleet.run()
+    assert json.loads(repos_path.read_bytes()) == {"repos": ["creche", "mcp"]}
+
+
+def test_a_pass_writes_the_reach_files_before_the_create(fleet: Fleet) -> None:
+    """Decision CH69 rule 6: both files are on disk before the sandbox
+    step, so a cut pass or a failed create still leaves the lists of its
     revision."""
-    seen: list[bool] = []
+    seen: list[tuple[bool, bool]] = []
     egress_path = paths.egress_path(fleet.state_root, FAMILY)
+    repos_path = paths.repos_path(fleet.state_root, FAMILY)
 
     class CheckingDriver(FakeDriver):
         def create(self, spec: SandboxSpec) -> None:
-            seen.append(egress_path.exists())
+            seen.append((egress_path.exists(), repos_path.exists()))
             super().create(spec)
 
     fleet.driver = CheckingDriver()
     fleet.run()
-    assert seen == [True]
+    assert seen == [(True, True)]
 
 
 def test_an_invalid_edit_keeps_the_egress_file(fleet: Fleet) -> None:
@@ -396,17 +408,39 @@ def test_an_invalid_edit_keeps_the_egress_file(fleet: Fleet) -> None:
     assert egress_path.read_bytes() == before
 
 
+@pytest.mark.parametrize(
+    "repos",
+    [["creche", "creche"], [f"r{index}" for index in range(33)]],
+    ids=["a name twice", "past the count cap"],
+)
+def test_an_invalid_repos_edit_keeps_the_repos_file(fleet: Fleet, repos: list[str]) -> None:
+    """Decision CH73 rule 3: caregiver refuses a name given twice before it
+    writes the file, and decision CH69 rule 15 caps the list at 32. The
+    family reads `invalid`, and the last good file stays (invariant 19)."""
+    fleet.write(repos=["creche"])
+    fleet.run()
+    repos_path = paths.repos_path(fleet.state_root, FAMILY)
+    before = repos_path.read_bytes()
+    fleet.write(repos=repos)
+    result = fleet.run()
+    assert result.status.state is FamilyState.INVALID
+    assert repos_path.read_bytes() == before
+
+
 def landed_bytes(fleet: Fleet) -> dict[Path, bytes]:
     """Every file a later step of the pass writes: the config mount, the
-    fragments of `policy.toml`, the chaperone directory and `egress.json`."""
+    fragments of `policy.toml`, the chaperone directory and both reach
+    files."""
     roots = (
         paths.config_dir(fleet.state_root, FAMILY),
         paths.policy_fragments_dir(fleet.state_root),
         fake_policy(fleet.state_root).target.config_dir,
     )
     found = {one: one.read_bytes() for root in roots for one in root.rglob("*") if one.is_file()}
-    egress_path = paths.egress_path(fleet.state_root, FAMILY)
-    found[egress_path] = egress_path.read_bytes()
+    for reach in (paths.egress_path, paths.repos_path):
+        path = reach(fleet.state_root, FAMILY)
+        found[path] = path.read_bytes()
+
     return found
 
 
