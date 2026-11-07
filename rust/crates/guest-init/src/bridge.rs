@@ -285,6 +285,32 @@ mod tests {
         std::fs::remove_file(&stale).unwrap();
     }
 
+    /// A dial error other than a missing or refused listener ends the
+    /// dial at once, with no retry, even with time left until the bound
+    /// (decision CH62 rule 14). A socket path under a regular file gives
+    /// ENOTDIR.
+    #[test]
+    fn the_relay_dial_ends_at_once_on_another_error() {
+        let file = path("file");
+        std::fs::write(&file, b"").unwrap();
+        let started = Instant::now();
+        let error = dial(&file.join("relay.sock"), started + Duration::from_secs(5)).unwrap_err();
+        let waited = started.elapsed();
+        assert!(
+            !matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+            ),
+            "{error:?}"
+        );
+        assert_eq!(
+            error.raw_os_error(),
+            Some(rustix::io::Errno::NOTDIR.raw_os_error())
+        );
+        assert!(waited < RELAY_PAUSE / 2, "it waited {waited:?}");
+        std::fs::remove_file(&file).unwrap();
+    }
+
     /// A row holds `ROW_CAP` open links. One more is refused, and a close
     /// frees its slot (decision CH62 rule 14).
     #[test]
