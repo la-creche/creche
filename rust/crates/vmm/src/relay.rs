@@ -389,8 +389,8 @@ impl Relay for AcpRelay {
 }
 
 /// Both directions of one byte copy. The ACP relay, the plane bridges
-/// (`crate::planes`) and the egress proxy (`crate::egress::proxy`) carry
-/// their bytes with it.
+/// (`crate::planes`), the mirror (`crate::mirror`) and the egress proxy
+/// (`crate::egress::proxy`) carry their bytes with it.
 #[derive(Debug)]
 pub(crate) struct Splice {
     /// From the near stream to the far one.
@@ -432,6 +432,13 @@ impl Splice {
             | (Poll::Ready(Carried::Shut), Poll::Ready(Carried::Shut)) => Poll::Ready(()),
             _ => Poll::Pending,
         }
+    }
+
+    /// Whether the far stream reached EOF, each of its bytes reached the
+    /// near stream, and the write half of the near stream is shut down.
+    /// The mirror then ends its link (decision CH69 rule 14).
+    pub(crate) fn far_done(&self) -> bool {
+        self.down.shut
     }
 
     /// The bytes that reached `far` and the bytes that reached `near` so

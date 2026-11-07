@@ -13,6 +13,7 @@ use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr, TcpListener};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::spawn;
@@ -23,6 +24,7 @@ use creche_vmm::control::{ControlState, SYNC_WAIT};
 use creche_vmm::egress::log::Log;
 use creche_vmm::handlers::acp::{Acp, StartFault, StartVm};
 use creche_vmm::handlers::drop::{Drops, StopVm, VmStopFailed};
+use creche_vmm::mirror::{DENIED, Mirror};
 use creche_vmm::planes::Upstreams;
 use creche_vmm::relay::{AcpLink, Door, Relays};
 use creche_vmm::restore::ChApi;
@@ -35,6 +37,7 @@ use creche_vmm_confine::family::FamilyRoot;
 use creche_vmm_confine::faults::{FaultBook, FaultDir};
 use creche_vmm_confine::landlock::{HostPath, Start};
 use creche_vmm_confine::launch::{Launch, Program};
+use creche_vmm_confine::mirror::MirrorRoot;
 use creche_vmm_confine::spawner::SpawnError;
 use creche_vmm_confine::vmm_unit::{UnitError, VmmUnit};
 use creche_vmm_store::ch_remote::{ChRemoteError, VmInfo};
@@ -63,11 +66,18 @@ const TURN: &str =
 const STARTING: &str = r#"{"facade":{"starting":{"last_turn_end":null,"pid":42,"starts":1}}}"#;
 /// As `READY`, with the end of a turn that the row has not seen.
 const ENDED: &str = r#"{"facade":{"running":{"last_turn_end":{"title":"First","updated_at":1793577700000},"pid":42,"starts":1,"turn_running":false}}}"#;
-/// The listeners at the launch of a family with no egress: 1100, 1101 and
-/// 1102, and no 1104.
-const NO_EGRESS: [bool; 4] = [true, true, true, false];
+/// The listeners at the launch of a family with no egress and no clone
+/// list: 1100, 1101 and 1102, and no 1103 or 1104.
+const NO_EGRESS: [bool; 5] = [true, true, true, false, false];
+/// The listeners at the launch of a family with egress and no clone list.
+const EGRESS_ONLY: [bool; 5] = [true, true, true, false, true];
+/// The listeners at the launch of a family with a clone list and no
+/// egress.
+const REPOS_ONLY: [bool; 5] = [true, true, true, true, false];
 /// The allowlist of a family with egress (decision CH49 rule 3).
 const EGRESS: &str = r#"{"hosts":[{"host":"github.com","port":443}]}"#;
+/// The clone list of a family with repos (decision CH69 rule 13).
+const REPOS: &str = r#"{"repos":["creche"]}"#;
 /// The plane of each bridge of a test that dials none: port 9 of
 /// 127.0.0.1, where nothing listens on a test host.
 const NO_PLANE: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 9);
@@ -145,9 +155,9 @@ struct Fake {
     /// Adds a `vsock.sock_<port>` listener of this port to each run dir,
     /// a port that the vmm does not bind.
     extra: Mutex<Option<u32>>,
-    /// For each launch: whether a dial of 1100, 1101, 1102 and 1104
+    /// For each launch: whether a dial of 1100, 1101, 1102, 1103 and 1104
     /// connected at the launch, before CH would start.
-    listening: Mutex<Vec<[bool; 4]>>,
+    listening: Mutex<Vec<[bool; 5]>>,
     /// Fails each launch.
     fail: AtomicBool,
     /// Holds each launch until the test clears it.
@@ -195,7 +205,7 @@ impl Fake {
             args.push("--net".to_owned());
         }
         let run = launch.files().run_dir().path();
-        let listening = [1100, 1101, 1102, 1104].map(|port| {
+        let listening = [1100, 1101, 1102, 1103, 1104].map(|port| {
             let listener = run.join(format!("vsock.sock_{port}"));
             UnixStream::connect(listener).is_ok()
         });
@@ -456,6 +466,10 @@ impl Test {
                 chaperone: NO_PLANE,
             },
             egress_log: Arc::new(Log::open(dir.join("egress.jsonl")).unwrap()),
+            mirror: Mirror {
+                root: MirrorRoot::new(dir.join("mirror")).unwrap(),
+                git: Program::new(PathBuf::from("/usr/bin/git")).unwrap(),
+            },
         };
         edit(&mut config);
 
@@ -2444,7 +2458,7 @@ fn the_egress_check_names_1104_for_a_family_with_egress() {
     let test = Test::new("egress-deny", |_| {});
     fs::write(test.dir.join("families/chat/egress.json"), EGRESS).unwrap();
     assert_eq!(test.start(0), Ok(()));
-    assert_eq!(*test.fake.listening.lock().unwrap(), [[true; 4]]);
+    assert_eq!(*test.fake.listening.lock().unwrap(), [EGRESS_ONLY]);
     assert_eq!(
         listeners(&test, 0),
         [
@@ -2476,7 +2490,7 @@ fn a_bad_list_binds_1104() {
     let test = Test::new("egress-bad", |_| {});
     fs::write(test.dir.join("families/chat/egress.json"), "{").unwrap();
     assert_eq!(test.start(0), Ok(()));
-    assert_eq!(*test.fake.listening.lock().unwrap(), [[true; 4]]);
+    assert_eq!(*test.fake.listening.lock().unwrap(), [EGRESS_ONLY]);
     assert!(listeners(&test, 0).contains(&"vsock.sock_1104".to_owned()));
     assert!(test.fault_codes().is_empty());
 }
@@ -2542,7 +2556,7 @@ fn a_restore_binds_1104_again() {
     test.reply(0, "Paused", &[]);
     assert_eq!(test.start(0), Ok(()));
     assert!(test.restored(1));
-    assert_eq!(*test.fake.listening.lock().unwrap(), [[true; 4]; 2]);
+    assert_eq!(*test.fake.listening.lock().unwrap(), [EGRESS_ONLY; 2]);
 }
 
 /// A 1104 listener in the run dir of a family with no egress is a port
@@ -2555,6 +2569,149 @@ fn an_extra_1104_listener_for_a_family_with_no_egress_fails() {
     assert_eq!(test.start(0), Err(StartFault::EgressAssertFailed));
     assert_eq!(test.fault_codes(), ["egress_assert_failed"]);
     assert!(test.stopped(0));
+}
+
+/// A family whose `repos.json` lists a repo gets 1103 at the launch, and
+/// the deny check names it (plan PR M1, decision CH69 rule 13).
+#[test]
+fn the_egress_check_names_1103_for_a_family_with_repos() {
+    let test = Test::new("repos-deny", |_| {});
+    fs::write(test.dir.join("families/chat/repos.json"), REPOS).unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    assert_eq!(*test.fake.listening.lock().unwrap(), [REPOS_ONLY]);
+    assert_eq!(
+        listeners(&test, 0),
+        [
+            "vsock.sock_1100",
+            "vsock.sock_1101",
+            "vsock.sock_1102",
+            "vsock.sock_1103"
+        ]
+    );
+    assert!(test.fault_codes().is_empty());
+}
+
+/// A family with a clone list and egress gets both 1103 and 1104, and the
+/// deny check names both.
+#[test]
+fn a_family_with_repos_and_egress_binds_1103_and_1104() {
+    let test = Test::new("repos-egress", |_| {});
+    fs::write(test.dir.join("families/chat/repos.json"), REPOS).unwrap();
+    fs::write(test.dir.join("families/chat/egress.json"), EGRESS).unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    assert_eq!(*test.fake.listening.lock().unwrap(), [[true; 5]]);
+    assert!(test.fault_codes().is_empty());
+}
+
+/// An absent file and an empty list bind no 1103 (decisions CH69 rule 13,
+/// CH73 rule 1).
+#[test]
+fn an_absent_or_empty_clone_list_binds_no_1103() {
+    let test = Test::new("repos-none", |_| {});
+    assert_eq!(test.start(0), Ok(()));
+    let file = test.dir.join("families/chat/repos.json");
+    fs::write(&file, r#"{"repos":[]}"#).unwrap();
+    assert_eq!(test.start(1), Ok(()));
+    assert_eq!(*test.fake.listening.lock().unwrap(), [NO_EGRESS; 2]);
+    assert!(test.fault_codes().is_empty());
+}
+
+/// A present `repos.json` that does not read binds 1103, and the deny
+/// check names it. A zero-byte file is present and does not read, so it
+/// binds 1103 too (decision CH73 rule 1).
+#[test]
+fn a_bad_clone_list_binds_1103() {
+    let test = Test::new("repos-bad", |_| {});
+    let file = test.dir.join("families/chat/repos.json");
+    fs::write(&file, "{").unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    assert!(listeners(&test, 0).contains(&"vsock.sock_1103".to_owned()));
+    fs::write(&file, "").unwrap();
+    assert_eq!(test.start(1), Ok(()));
+    assert!(listeners(&test, 1).contains(&"vsock.sock_1103".to_owned()));
+    assert_eq!(*test.fake.listening.lock().unwrap(), [REPOS_ONLY; 2]);
+    assert!(test.fault_codes().is_empty());
+}
+
+/// The child of `a_clone_on_a_bad_clone_list_gets_denied_and_one_line`,
+/// run in a process of its own, so its stderr holds only the lines of the
+/// vmm. It starts a VM whose `repos.json` does not read, then sends the
+/// first pkt-line of a clone on its 1103.
+#[test]
+#[ignore = "the child of a_clone_on_a_bad_clone_list_gets_denied_and_one_line"]
+fn clone_on_a_bad_clone_list_for_the_log_test() {
+    let test = Test::new("repos-bad-clone", |_| {});
+    fs::write(test.dir.join("families/chat/repos.json"), "{").unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    let path = test.dir.join("run/slot/0/vsock.sock_1103");
+    // The current-thread runtime runs the mirror only inside `block_on`,
+    // so the guest side runs in `spawn_blocking`.
+    let answer = test.runtime.block_on(test.runtime.spawn_blocking(move || {
+        let mut guest = UnixStream::connect(path).unwrap();
+        guest
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let payload = "git-upload-pack /creche\0host=127.0.0.1:9418\0";
+        let line = format!("{:04x}{payload}", payload.len() + 4);
+        guest.write_all(line.as_bytes()).unwrap();
+        guest.shutdown(Shutdown::Write).unwrap();
+        let mut answer = Vec::new();
+        guest.read_to_end(&mut answer).unwrap();
+        answer
+    }));
+    assert_eq!(answer.unwrap(), DENIED);
+}
+
+/// A clone on the 1103 of a `repos.json` that does not read gets the one
+/// error and one stderr line that names `not_valid` (decisions CH69 rule
+/// 24, CH73 rule 1). The test runs its own binary as the child
+/// `clone_on_a_bad_clone_list_for_the_log_test` and reads the real stderr
+/// of the vmm code. The fake launch probes 1103 with a dial that sends no
+/// line, so stderr may also hold its `bad_request` line.
+#[test]
+fn a_clone_on_a_bad_clone_list_gets_denied_and_one_line() {
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "clone_on_a_bad_clone_list_for_the_log_test"])
+        .args(["--ignored", "--nocapture", "--test-threads=1"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(output.status.success(), "{stdout}{stderr}");
+    assert!(stdout.contains("1 passed"), "{stdout}");
+    let prefix = format!("vmm: a clone of the family chat, session {A}, ");
+    // Only a line that ends in its LF counts.
+    let reasons: Vec<&str> = stderr
+        .split_inclusive('\n')
+        .filter_map(|line| line.strip_suffix('\n'))
+        .filter_map(|line| line.strip_prefix(prefix.as_str()))
+        .collect();
+    let named: Vec<&str> = reasons
+        .iter()
+        .copied()
+        .filter(|reason| reason.contains("not_valid"))
+        .collect();
+    assert_eq!(named, ["refused: repos_not_valid"], "{stderr}");
+    let probe = reasons
+        .iter()
+        .filter(|reason| **reason == "refused: bad_request");
+    assert_eq!(probe.count() + named.len(), reasons.len(), "{stderr}");
+}
+
+/// A restore binds 1103 again before CH starts, as each plane listener
+/// (decisions CH62 rule 14, CH69 rule 13).
+#[test]
+fn a_restore_binds_1103_again() {
+    let test = Test::new("repos-restore", |_| {});
+    fs::write(test.dir.join("families/chat/repos.json"), REPOS).unwrap();
+    assert_eq!(test.start(0), Ok(()));
+    let id = test.rows[0].id.clone();
+    assert!(test.runtime.block_on(test.hook.stop(&id)).is_ok());
+    test.snapshot(0, Some(&test.key()));
+    test.reply(0, "Paused", &[]);
+    assert_eq!(test.start(0), Ok(()));
+    assert!(test.restored(1));
+    assert_eq!(*test.fake.listening.lock().unwrap(), [REPOS_ONLY; 2]);
 }
 
 /// `creds.json` of the family `chat`, as caregiver writes it.

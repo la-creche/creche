@@ -451,8 +451,9 @@ fn request_target(head: &[u8]) -> Result<&str, Refused> {
     Ok(target)
 }
 
-/// Reads at least one byte of `guest` into `buffer`, or 0 at an EOF.
-async fn read_some(guest: &UnixStream, buffer: &mut [u8]) -> io::Result<usize> {
+/// Reads at least one byte of `guest` into `buffer`, or 0 at an EOF. The
+/// mirror of host port 1103 reads its first pkt-line with it too.
+pub(crate) async fn read_some(guest: &UnixStream, buffer: &mut [u8]) -> io::Result<usize> {
     loop {
         guest.readable().await?;
         match guest.try_read(buffer) {
@@ -463,7 +464,7 @@ async fn read_some(guest: &UnixStream, buffer: &mut [u8]) -> io::Result<usize> {
 }
 
 /// Writes all of `bytes` to `guest`, as `ControlLink::write_raw` does.
-async fn write_all(guest: &UnixStream, bytes: &[u8]) -> io::Result<()> {
+pub(crate) async fn write_all(guest: &UnixStream, bytes: &[u8]) -> io::Result<()> {
     let mut left = bytes;
     while !left.is_empty() {
         guest.writable().await?;

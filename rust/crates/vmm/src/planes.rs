@@ -23,8 +23,9 @@
 //!    The VM entry of the start table holds it, so the bridges go with the
 //!    VM.
 //!
-//! Host port 1100 is `family_state` (plan PR V8), and 1104 is
-//! `egress::proxy` (plan PR E2, decision CH49 rule 3).
+//! Host port 1100 is `family_state` (plan PR V8), 1103 is `mirror` (plan
+//! PR M1, decision CH69 rule 13), and 1104 is `egress::proxy` (plan PR
+//! E2, decision CH49 rule 3).
 
 use std::fmt;
 use std::future::poll_fn;

@@ -17,8 +17,11 @@
 //!    here (decision CH60 rule 1). Then the stale sockets go (PR D1,
 //!    decision CH19 (4)), the plane listeners bind (plan PR V6, decision
 //!    CH6-2) and so does the family-state listener (plan PR V8, decision
-//!    CH5a). The egress proxy listener binds when `egress.json` of the
-//!    family lists a host (plan PR E2, decision CH49 rule 3). Then the kernel, the initramfs and the root disk
+//!    CH5a). The mirror listener binds when `repos.json` of the family
+//!    lists a repo or does not read (plan PR M1, decisions CH69 rule 13,
+//!    CH73 rule 1), and the egress
+//!    proxy listener binds when `egress.json` of the family lists a host
+//!    (plan PR E2, decision CH49 rule 3). Then the kernel, the initramfs and the root disk
 //!    pass the store check (PR D6, decision CH44 rule 2), the session disk exists (PR D7, decision
 //!    CH21-4), the run dir `vm/<id>/` links to the slot of the start (PR
 //!    D16), `snapshots/` exists, and `sessions/<id>/serial.log` in the
@@ -28,15 +31,16 @@
 //!    (PR C18) with the argv of PR C7 and the sizes of PR C4 under the
 //!    ruleset of PR C6 (PR C2, decisions CH8-3, CH8-5, CH8-8, CH30, CH55).
 //! 4. The plane bridges serve their listeners (`planes`), the
-//!    family-state reply serves its own (`family_state`), and so does the
-//!    egress proxy (`egress::proxy`). A restore
+//!    family-state reply serves its own (`family_state`), and so do the
+//!    mirror (`mirror`) and the egress proxy (`egress::proxy`). A restore
 //!    only: `ch-remote info` must say `Paused`, the device check passes,
 //!    then `ch-remote resume` (decision CH50 rule 10).
 //! 5. The first `ControlReady` (plan PR L10). It clears the faults of the
 //!    family (contract 05 §3.3.1 rule 8).
 //! 6. The deny check (PR C8, decision CH6-3), with the family-state port,
-//!    the plane ports and the egress port, when it is bound, as the bound
-//!    set (decision CH49 rule 3).
+//!    the plane ports, and the mirror port and the egress port when each
+//!    one is bound, as the bound set (decisions CH49 rule 3, CH69 rule
+//!    13).
 //! 7. The dial of guest port 1201 (decision CH50 rule 2).
 //!
 //! Each fault but `host_full` goes to the fault file of the family
@@ -103,6 +107,7 @@ use crate::egress::proxy;
 use crate::family_state::{self, Server};
 use crate::handlers::acp::{StartFault, StartVm};
 use crate::handlers::drop::{StopVm, VmStopFailed};
+use crate::mirror::{self, Mirror};
 use crate::planes::{Bound, Planes, Upstreams, bind};
 use crate::relay::{AcpLink, Door, Relays};
 use crate::restore::{ChApi, Expected, check_devices};
@@ -174,6 +179,9 @@ pub struct StartConfig {
     /// The JSONL log of the egress proxy of every VM (decision CH69 rule
     /// 10). The compose step opens it at the start of `vmm serve`.
     pub egress_log: Arc<Log>,
+    /// The mirror root and the `git` that the mirror of each VM runs
+    /// (decision CH69 rule 17).
+    pub mirror: Mirror,
 }
 
 /// The start of a launch step. `Spawner` is the one of the vmm, and a
@@ -224,21 +232,24 @@ struct Vm<P> {
     link_id: Option<LinkId>,
     /// The snapshot key of the VM. `None` after a failed stop.
     key: Option<SnapshotKey>,
-    /// The host listeners of the VM (plan PRs V6 and V8). They go with
-    /// the entry, so the listeners close when the VM leaves the table.
-    /// `None` once the vmm killed the VM.
-    listeners: Option<Listeners>,
+    /// The host listeners of the VM (plan PRs V6, V8, M1 and E2). They go
+    /// with the entry, so the listeners close when the VM leaves the
+    /// table. `None` once the vmm killed the VM. The box keeps each entry
+    /// of the table small.
+    listeners: Option<Box<Listeners>>,
     /// The last use, for the eviction order (decision CH50 rule 5).
     last_use: Instant,
 }
 
 /// The served host listeners of one VM: the plane bridges (plan PR V6),
-/// the family-state reply (plan PR V8) and the egress proxy of a family
-/// with a list (plan PR E2). The drop closes each one.
+/// the family-state reply (plan PR V8), the mirror of a family with a
+/// clone list (plan PR M1) and the egress proxy of a family with a list
+/// (plan PR E2). The drop closes each one.
 #[derive(Debug)]
 struct Listeners {
     _planes: Planes,
     _family_state: Server,
+    _mirror: Option<mirror::Server>,
     _egress: Option<proxy::Server>,
 }
 
@@ -396,7 +407,7 @@ impl<P: VmProcess> Pending<P> {
                 link: Some(link),
                 link_id: Some(link_id),
                 key: self.key.take(),
-                listeners: Some(listeners),
+                listeners: Some(Box::new(listeners)),
                 last_use: Instant::now(),
             };
             lock(&self.table).insert(self.id.clone(), Slot::Running(vm));
@@ -1469,6 +1480,10 @@ struct Booted<P> {
     planes: Bound,
     /// The family-state listener, bound before CH started.
     family_state: family_state::Bound,
+    /// The mirror listener, bound before CH started for a family whose
+    /// clone list holds a repo or does not read (decisions CH69 rule 13,
+    /// CH73 rule 1).
+    mirror: Option<mirror::Bound>,
     /// The egress proxy listener, bound before CH started for a family
     /// whose list holds a host (decision CH49 rule 3).
     egress: Option<proxy::Bound>,
@@ -1503,6 +1518,15 @@ fn launch<L: Launcher>(
     // Plan PR V8: the family-state listener has the same lifecycle.
     let family_state =
         family_state::bind(&run).map_err(|error| format!("{error}: {}", error.source))?;
+    // Plan PR M1: the mirror listener has the same lifecycle, for a family
+    // whose clone list holds a repo or does not read (decisions CH69 rule
+    // 13, CH73 rule 1).
+    let mirror = if binds_mirror(config, family) {
+        let bound = mirror::bind(&run).map_err(|error| format!("{error}: {}", error.source))?;
+        Some(bound)
+    } else {
+        None
+    };
     let egress = if binds_egress(config, family) {
         let bound = proxy::bind(&run).map_err(|error| format!("{error}: {}", error.source))?;
         Some(bound)
@@ -1583,8 +1607,22 @@ fn launch<L: Launcher>(
         restore,
         planes,
         family_state,
+        mirror,
         egress,
     })
+}
+
+/// Whether the VM of `family` gets the mirror listener. It blocks. A clone
+/// list that holds a repo binds 1103 (decision CH69 rule 13). A present
+/// `repos.json` that does not read binds it too, so each clone is refused
+/// with `mirror::DENIED` and one stderr line that names `not_valid`
+/// (decision CH73 rule 1). An absent file or an empty list binds no 1103.
+/// A zero-byte file does not read, so it binds 1103 (CH73 rule 1).
+fn binds_mirror(config: &StartConfig, family: &FamilyName) -> bool {
+    match config.families.read_repos(family) {
+        Ok(list) => !list.repos.names().is_empty(),
+        Err(_) => true,
+    }
 }
 
 /// Whether the VM of `family` gets the egress proxy listener. It blocks.
@@ -1658,7 +1696,12 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
                 booted.start,
                 booted.restore,
                 cmdline,
-                (booted.planes, booted.family_state, booted.egress),
+                (
+                    booted.planes,
+                    booted.family_state,
+                    booted.mirror,
+                    booted.egress,
+                ),
             ))
         })
         .await;
@@ -1670,14 +1713,21 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         let vsock = pending.run.vsock_socket();
         let link = self.control().replace(id);
         // A fault from here on drops `listeners`, which closes the
-        // bridges, the family-state listener and the egress proxy.
-        let (planes, state, egress) = bound;
-        // Decision CH49 rule 3: the bound set of the deny check follows the
-        // listener that the launch bound from the list.
-        let proxied = egress.is_some();
+        // bridges, the family-state listener, the mirror and the egress
+        // proxy.
+        let (planes, state, mirror, egress) = bound;
+        // Decisions CH49 rule 3 and CH69 rule 13: the bound set of the deny
+        // check follows the listeners that the launch bound from the lists.
+        let (mirrored, proxied) = (mirror.is_some(), egress.is_some());
         let families = &self.config.families;
         let served = planes.serve().and_then(|planes| {
             let family_state = state.serve(families.clone(), family.clone(), id.clone())?;
+            let mirror = mirror
+                .map(|bound| {
+                    let mirror = self.config.mirror.clone();
+                    bound.serve(mirror, families.clone(), family.clone(), id.clone())
+                })
+                .transpose()?;
             let log = Arc::clone(&self.config.egress_log);
             let egress = egress
                 .map(|bound| bound.serve(families.clone(), family.clone(), id.clone(), log))
@@ -1685,6 +1735,7 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
             Ok(Listeners {
                 _planes: planes,
                 _family_state: family_state,
+                _mirror: mirror,
                 _egress: egress,
             })
         });
@@ -1721,12 +1772,17 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         // closed (`deny::check`). The kernel fixes the command line at
         // exec, so a check after `ControlReady` proves the same thing.
         // The bound set is the family-state port 1100 (plan PR V8), the
-        // plane ports 1101 and 1102 (plan PR V6), and 1104 for a family
-        // whose list holds a host or does not read (plan PR E2, decisions
-        // CH49 rule 3, CH72 rule 3).
+        // plane ports 1101 and 1102 (plan PR V6), 1103 for a family whose
+        // clone list holds a repo or does not read (plan PR M1, decisions
+        // CH69 rule 13, CH73 rule 1), and
+        // 1104 for a family whose list holds a host or does not read (plan
+        // PR E2, decisions CH49 rule 3, CH72 rule 3).
         let (ch, run) = (self.config.ch.clone(), pending.run.clone());
         let [litellm, chaperone] = self.config.planes.rows().map(|(port, _)| port);
         let mut ports = vec![HostPort::FamilyState, litellm, chaperone];
+        if mirrored {
+            ports.push(HostPort::GitMirror);
+        }
         if proxied {
             ports.push(HostPort::Egress);
         }

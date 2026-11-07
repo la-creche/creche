@@ -31,10 +31,11 @@
 //! `rename`, so that read needs no retry.
 //!
 //! `read_egress` reads the egress allowlist `egress.json` of a family
-//! (decisions CH6-4, CH69 rules 3 and 5). The file sits in the family dir
-//! beside `config/`, and caregiver replaces it with one `rename`, so the
-//! read needs no retry. An absent family dir or file is the empty list:
-//! no egress, which fails closed.
+//! (decisions CH6-4, CH69 rules 3 and 5), and `read_repos` reads its clone
+//! list `repos.json` (decisions CH10-10, CH69 rules 4 and 5). Each file
+//! sits in the family dir beside `config/`, and caregiver replaces it with
+//! one `rename`, so the read needs no retry. An absent family dir or file
+//! is the empty list: no egress or no clone, which fails closed.
 //!
 //! Decision CH50 rule 9 sets the number of tries, the pause between two
 //! tries and the size cap of `shape.json`: `READ_TRIES` (5),
@@ -51,9 +52,9 @@ use std::time::{Duration, SystemTime};
 
 use creche_vmm_store::layout::RootError;
 use creche_wire::{
-    FAMILY_EGRESS_FILE, FAMILY_SHAPE_FILE, FAMILY_STATE_CAP, FamilyConfig, FamilyCreds,
-    FamilyEgress, FamilyName, FamilyShape, FamilySkills, FamilyState, FamilyStateReply, LitellmKey,
-    ModelAlias, PepToken, SandboxGrant, SystemPrompt, strict,
+    FAMILY_EGRESS_FILE, FAMILY_REPOS_FILE, FAMILY_SHAPE_FILE, FAMILY_STATE_CAP, FamilyConfig,
+    FamilyCreds, FamilyEgress, FamilyName, FamilyRepos, FamilyShape, FamilySkills, FamilyState,
+    FamilyStateReply, LitellmKey, ModelAlias, PepToken, SandboxGrant, SystemPrompt, strict,
 };
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, Stat};
 use rustix::io::Errno;
@@ -90,15 +91,22 @@ pub const SHAPE_CAP: u64 = 4096;
 
 /// The most bytes of `egress.json`: 64 KiB, room for about a thousand
 /// entries (decision CH70 rule 1). A larger file is
-/// `EgressFault::TooLarge`, so the vmm allows nothing. caregiver refuses
+/// `ReachFault::TooLarge`, so the vmm allows nothing. caregiver refuses
 /// a family whose file would pass it (decision CH71).
 /// `rust/crates/wire/vectors/family.json` holds the same value for
 /// caregiver, and a test of each side holds it equal.
 pub const EGRESS_CAP: u64 = 64 * 1024;
 
+/// The most bytes of `repos.json`: 4 KiB (decision CH73 rule 2). The
+/// canonical form of the longest list, 32 names of 100 characters
+/// (decision CH69 rule 15), has 3307 bytes, so a file that caregiver
+/// writes always fits. A larger file is `ReachFault::TooLarge`, so the
+/// vmm serves no clone.
+pub const REPOS_CAP: u64 = 4 * 1024;
+
 /// The flags of each directory open. `O_NOFOLLOW` refuses a symlink as the
 /// last part of the path (decision CH23 (3)).
-const DIR_FLAGS: OFlags = OFlags::RDONLY
+pub(crate) const DIR_FLAGS: OFlags = OFlags::RDONLY
     .union(OFlags::DIRECTORY)
     .union(OFlags::NOFOLLOW)
     .union(OFlags::CLOEXEC);
@@ -137,17 +145,18 @@ impl From<Errno> for FamilyError {
     }
 }
 
-/// Why `egress.json` of a family does not read. Each fault allows no
-/// egress.
+/// Why a reach file of a family, `egress.json` or `repos.json`, does not
+/// read. Each fault allows no egress or no clone.
 #[derive(Debug)]
-pub enum EgressFault {
+pub enum ReachFault {
     /// The family dir is a symlink or not a dir.
     NotDir,
-    /// `egress.json` is a symlink or not a regular file.
+    /// The file is a symlink or not a regular file.
     NotFile,
-    /// `egress.json` has more than `EGRESS_CAP` bytes.
+    /// The file has more bytes than its cap: `EGRESS_CAP` or `REPOS_CAP`.
     TooLarge,
-    /// The bytes are not one `FamilyEgress` of strict JSON.
+    /// The bytes are not one `FamilyEgress` or `FamilyRepos` of strict
+    /// JSON.
     NotValid,
     /// Any other error of the file system.
     Io(io::Error),
@@ -369,24 +378,52 @@ impl FamilyRoot {
     ///
     /// # Errors
     ///
-    /// An `EgressFault` when the family dir or the file is present and
-    /// does not read.
-    pub fn read_egress(&self, family: &FamilyName) -> Result<FamilyEgress, EgressFault> {
+    /// A `ReachFault` when the family dir or the file is present and does
+    /// not read.
+    pub fn read_egress(&self, family: &FamilyName) -> Result<FamilyEgress, ReachFault> {
+        let empty = FamilyEgress { hosts: Vec::new() };
+        self.read_reach(family, FAMILY_EGRESS_FILE, EGRESS_CAP, empty)
+    }
+
+    /// The clone list of `family`, from `repos.json` in its family dir
+    /// (decisions CH10-10, CH69 rules 4 and 5), read as `read_egress`
+    /// reads `egress.json`, with a cap of `REPOS_CAP`. An absent family
+    /// dir or file is the empty list.
+    ///
+    /// # Errors
+    ///
+    /// A `ReachFault` when the family dir or the file is present and does
+    /// not read.
+    pub fn read_repos(&self, family: &FamilyName) -> Result<FamilyRepos, ReachFault> {
+        self.read_reach(family, FAMILY_REPOS_FILE, REPOS_CAP, FamilyRepos::default())
+    }
+
+    /// The reach file `file` of `family`: one `openat` of the file with
+    /// `O_NOFOLLOW` and `O_NONBLOCK`, a cap of `cap` bytes and the strict
+    /// reader (decision CH65 rule 2). An absent family dir or file gives
+    /// `empty`.
+    fn read_reach<T: DeserializeOwned>(
+        &self,
+        family: &FamilyName,
+        file: &str,
+        cap: u64,
+        empty: T,
+    ) -> Result<T, ReachFault> {
         // `ELOOP` is the refusal of `O_NOFOLLOW`, `ENOTDIR` the refusal of
         // `O_DIRECTORY`, as in `open_dir`.
         let path = self.0.join(family.as_str());
         let family_dir = match rustix::fs::open(path, DIR_FLAGS, Mode::empty()) {
             Ok(dir) => dir,
-            Err(Errno::NOENT) => return Ok(FamilyEgress { hosts: Vec::new() }),
-            Err(Errno::LOOP | Errno::NOTDIR) => return Err(EgressFault::NotDir),
-            Err(errno) => return Err(EgressFault::Io(errno.into())),
+            Err(Errno::NOENT) => return Ok(empty),
+            Err(Errno::LOOP | Errno::NOTDIR) => return Err(ReachFault::NotDir),
+            Err(errno) => return Err(ReachFault::Io(errno.into())),
         };
-        match read_file(family_dir.as_fd(), FAMILY_EGRESS_FILE, EGRESS_CAP) {
-            Ok(FileRead::Bytes(bytes)) => strict_json(&bytes).ok_or(EgressFault::NotValid),
-            Ok(FileRead::Absent) => Ok(FamilyEgress { hosts: Vec::new() }),
-            Ok(FileRead::NotFile) => Err(EgressFault::NotFile),
-            Ok(FileRead::OverCap) => Err(EgressFault::TooLarge),
-            Err(error) => Err(EgressFault::Io(error)),
+        match read_file(family_dir.as_fd(), file, cap) {
+            Ok(FileRead::Bytes(bytes)) => strict_json(&bytes).ok_or(ReachFault::NotValid),
+            Ok(FileRead::Absent) => Ok(empty),
+            Ok(FileRead::NotFile) => Err(ReachFault::NotFile),
+            Ok(FileRead::OverCap) => Err(ReachFault::TooLarge),
+            Err(error) => Err(ReachFault::Io(error)),
         }
     }
 

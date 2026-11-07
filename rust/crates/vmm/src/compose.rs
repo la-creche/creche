@@ -5,9 +5,9 @@
 //!    runtime and before any other step (caller duty 8 of `AGENTS.md`).
 //! 2. In `spawn_blocking`: `leftovers::stop_all` stops each VM scope of an
 //!    earlier vmm before any per-VM bind (decision CH19 (4), PR C3). Then
-//!    `root_owned::check_program` checks the files of `VMM_CH_PROGRAM`
-//!    and `VMM_CH_REMOTE_PROGRAM` before any run of either (decision
-//!    CH67 rule 1). Then `check_cloud_hypervisor` checks the CH version
+//!    `root_owned::check_program` checks the files of `VMM_CH_PROGRAM`,
+//!    `VMM_CH_REMOTE_PROGRAM` and `VMM_GIT_PROGRAM` before any run of one
+//!    (decisions CH67 rule 1, CH69 rule 17). Then `check_cloud_hypervisor` checks the CH version
 //!    (caller duty 4, gap G10 option A). Then `image_root::read` reads
 //!    the `digests.json` of the image root, and a missing, malformed or
 //!    writable file refuses the start (decision CH57 rule 1). Each file that it names goes into
@@ -66,7 +66,7 @@ use tokio::task::{JoinHandle, spawn_blocking};
 use tokio::time::{MissedTickBehavior, interval};
 
 use crate::ServeError;
-use crate::config::{CH, CH_REMOTE, Config, EGRESS_LOG};
+use crate::config::{CH, CH_REMOTE, Config, EGRESS_LOG, GIT};
 use crate::control::ControlState;
 use crate::egress::log::Log;
 use crate::egress::proxy;
@@ -77,6 +77,7 @@ use crate::handlers::create::Creates;
 use crate::handlers::drop::{Drops, StopVm, VmStopFailed};
 use crate::handlers::list::Lists;
 use crate::image_root::{self, DigestsError, ImageImportError};
+use crate::mirror::{self, Mirror};
 use crate::relay::{AcpLink, AcpRelay, Relays};
 use crate::restore::ChTools;
 use crate::root_owned::{ProgramError, check_program};
@@ -99,8 +100,9 @@ pub enum StartError {
     Sigterm(io::Error),
     /// The leftover VM scopes did not clear (PR C3).
     Leftovers(LeftoverError),
-    /// The file of `VMM_CH_PROGRAM` or `VMM_CH_REMOTE_PROGRAM` is not
-    /// trusted (decision CH67 rule 1).
+    /// The file of `VMM_CH_PROGRAM`, `VMM_CH_REMOTE_PROGRAM` or
+    /// `VMM_GIT_PROGRAM` is not trusted (decisions CH67 rule 1, CH69 rule
+    /// 17).
     Program(ProgramError),
     /// The CH version check failed (gap G10 option A).
     ChVersion(ChVersionError),
@@ -246,11 +248,12 @@ pub async fn serve(config: Config) -> Result<(), StartError> {
 }
 
 /// The fds of step 4: the bridges (decision CH67 rule 4), the 1100 links
-/// (CH68 rule 2) and the 1104 links (CH69 rule 14) of every VM. The soft
-/// limit of systemd (1024) holds those of a few busy guests only.
+/// (CH68 rule 2), and the 1103 and 1104 links (CH69 rule 14) of every VM.
+/// The soft limit of systemd (1024) holds those of a few busy guests only.
 fn fd_need() -> u64 {
     planes::fd_need()
         .saturating_add(family_state::fd_need())
+        .saturating_add(mirror::fd_need())
         .saturating_add(proxy::fd_need())
 }
 
@@ -269,8 +272,8 @@ struct Checked {
     initramfs: ImageDigest,
 }
 
-/// The first checks of step 2: the leftover sweep, the CH and ch-remote
-/// files, the CH version, the image root and the guest init initramfs.
+/// The first checks of step 2: the leftover sweep, the CH, ch-remote and
+/// git files, the CH version, the image root and the guest init initramfs.
 /// Blocks.
 fn check(config: &Config) -> Result<Checked, StartError> {
     for unit in stop_all(&config.systemctl).map_err(StartError::Leftovers)? {
@@ -280,6 +283,8 @@ fn check(config: &Config) -> Result<Checked, StartError> {
     // init program, before the vmm runs either.
     check_program(CH, config.ch.path()).map_err(StartError::Program)?;
     check_program(CH_REMOTE, config.ch_remote.path()).map_err(StartError::Program)?;
+    // Decision CH69 rule 17: the git of each clone gets the same check.
+    check_program(GIT, config.git.path()).map_err(StartError::Program)?;
     let ch_version =
         check_cloud_hypervisor(config.ch.path(), VERSION_WAIT).map_err(StartError::ChVersion)?;
     let images = ImageStore::new(&config.state, config.zstd.path().to_owned());
@@ -350,6 +355,10 @@ fn parts(config: Config, checked: Checked) -> Result<Vmm, StartError> {
         ch_version,
         planes: config.planes,
         egress_log: Arc::new(egress_log),
+        mirror: Mirror {
+            root: config.mirror_root,
+            git: config.git,
+        },
     };
     let relays = Relays::default();
     let control = Arc::new(Mutex::new(ControlState::default()));

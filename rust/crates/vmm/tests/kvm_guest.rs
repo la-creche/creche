@@ -226,6 +226,9 @@ const FAMILY: &str = "proof";
 const SYSTEMD_RUN: &str = "/usr/bin/systemd-run";
 const SYSTEMCTL: &str = "/usr/bin/systemctl";
 const ZSTD: &str = "/usr/bin/zstd";
+/// The git of the runner, which root owns, so the owner check of
+/// `VMM_GIT_PROGRAM` passes (decision CH69 rule 17).
+const HOST_GIT: &str = "/usr/bin/git";
 const FALLOCATE: &str = "/usr/bin/fallocate";
 const SHA256SUM: &str = "/usr/bin/sha256sum";
 const E2FSCK: &str = "/usr/sbin/e2fsck";
@@ -597,6 +600,10 @@ fn kvm_phase3_pulls_sleeps_restores_and_stops() {
         (config::CH_REMOTE, ch_remote),
         (config::GUEST_INIT, guest_init),
         (config::EGRESS_LOG, work.join("egress.jsonl")),
+        // The family of the proof has no `repos.json`, so no start opens
+        // the mirror root (decision CH69 rule 13).
+        (config::MIRROR_ROOT, work.join("mirror")),
+        (config::GIT, PathBuf::from(HOST_GIT)),
     ];
     let mut env: Vec<(&str, &OsStr)> = paths
         .iter()

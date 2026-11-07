@@ -12,6 +12,7 @@ pub mod family_state;
 pub mod guest_init;
 pub mod handlers;
 pub mod image_root;
+pub mod mirror;
 pub mod planes;
 pub mod relay;
 pub mod restore;

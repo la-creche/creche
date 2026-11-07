@@ -1192,6 +1192,20 @@ export const wire = {
       "pattern": "^[a-z][a-z0-9-]{1,30}$",
       "type": "string"
     },
+    "FamilyRepos": {
+      "additionalProperties": false,
+      "description": "The clone list of one family: the file `FAMILY_REPOS_FILE` (decisions\nCH10-10, CH69 rules 4, 5 and 15). caregiver writes it from the `repos`\nlist of the family file. The vmm binds host port 1103 only for a\nnon-empty list (decision CH69 rule 13), and it reads the file again for\neach clone (decision CH69 rule 16). It serves a repo only when the\nlist names it and the mirror holds it (decision CH10-10).\n\n`family/grammar.py` stays the authority for the name form (decision\nCH23 rule 5). Plan PR F1 adds the test that holds the pattern of\n`RepoName` equal to it. No route reaches the type, so it needs no new\n`HOST_API_PROTOCOL` (decision CH33 rule 8).",
+      "properties": {
+        "repos": {
+          "$ref": "#/$defs/RepoList",
+          "description": "The repos that the family may clone."
+        }
+      },
+      "required": [
+        "repos"
+      ],
+      "type": "object"
+    },
     "FamilyShape": {
       "additionalProperties": false,
       "description": "The family VM shape: the file `FAMILY_SHAPE_FILE` in the family's\n`config/` (decision CH36 G6). caregiver writes it from the family file.\nThe vmm reads it before it starts a VM of the family (decision CH8-5).\n\nIt is a file of its own, not a part of `runtime.json`, so the guest\nreads none of it. `family/grammar.py` stays the authority for the\nranges and the flavors (decision CH23 rule 5).\n`wire/tests/test_wire_grammar.py` holds them equal. No route reaches\nthe type, so it needs no new `HOST_API_PROTOCOL` (decision CH33 rule 8).",
@@ -1596,6 +1610,20 @@ export const wire = {
         "protocol"
       ],
       "type": "object"
+    },
+    "RepoList": {
+      "description": "The repos of a clone list: at most 32 names (decision CH69 rule 15). An\nempty list allows no clone.",
+      "items": {
+        "$ref": "#/$defs/RepoName"
+      },
+      "maxItems": 32,
+      "type": "array"
+    },
+    "RepoName": {
+      "description": "The name of one repo of a clone list: the name of its dir in the\nmirror (decisions CH10-10, CH46 rule 4, CH69 rule 15). The vmm\nserves `<mirror>/<name>/.git`.",
+      "maxLength": 100,
+      "pattern": "^([A-Za-su-z0-9]|[A-Za-z0-9]([A-Za-z0-9_-]|\\.[A-Za-z0-9_-])*([A-Za-su-z0-9_-]|\\.[A-Za-su-z0-9_-])|t|[A-Za-z0-9]([A-Za-z0-9_-]|\\.[A-Za-z0-9_-])*\\.t|([A-Za-hj-z0-9]|[A-Za-z0-9]([A-Za-z0-9_-]|\\.[A-Za-z0-9_-])*([A-Za-hj-z0-9_-]|\\.[A-Za-hj-z0-9_-]))t|it|[A-Za-z0-9]([A-Za-z0-9_-]|\\.[A-Za-z0-9_-])*\\.it|([A-Zabcdefh-z0-9]|[A-Za-z0-9]([A-Za-z0-9_-]|\\.[A-Za-z0-9_-])*([A-Zabcdefh-z0-9_-]|\\.[A-Zabcdefh-z0-9_-]))it|git|[A-Za-z0-9]([A-Za-z0-9_-]|\\.[A-Za-z0-9_-])*git|[A-Za-z0-9]([A-Za-z0-9_-]|\\.[A-Za-z0-9_-])*\\.)$",
+      "type": "string"
     },
     "SandboxGrant": {
       "additionalProperties": false,

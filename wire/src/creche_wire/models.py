@@ -1331,6 +1331,27 @@ class DispatchChain(RootModel[list[FamilyName]]):
     ]
 
 
+class FamilyRepos(BaseModel):
+    """
+    The clone list of one family: the file `FAMILY_REPOS_FILE` (decisions
+    CH10-10, CH69 rules 4, 5 and 15). caregiver writes it from the `repos`
+    list of the family file. The vmm binds host port 1103 only for a
+    non-empty list (decision CH69 rule 13), and it reads the file again for
+    each clone (decision CH69 rule 16). It serves a repo only when the
+    list names it and the mirror holds it (decision CH10-10).
+
+    `family/grammar.py` stays the authority for the name form (decision
+    CH23 rule 5). Plan PR F1 adds the test that holds the pattern of
+    `RepoName` equal to it. No route reaches the type, so it needs no new
+    `HOST_API_PROTOCOL` (decision CH33 rule 8).
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    repos: Annotated[RepoList, Field(description="The repos that the family may clone.")]
+
+
 class FamilyShape(BaseModel):
     """
     The family VM shape: the file `FAMILY_SHAPE_FILE` in the family's
@@ -1677,6 +1698,32 @@ class ProtocolMismatch(BaseModel):
             description="The host API protocol of the vmm that answers: its\n`HOST_API_PROTOCOL`.",
             ge=0,
             le=4294967295,
+        ),
+    ]
+
+
+class RepoName(RootModel[StrictStr]):
+    root: Annotated[
+        StrictStr,
+        Field(
+            description="The name of one repo of a clone list: the name of its dir in the\nmirror (decisions CH10-10, CH46 rule 4, CH69 rule 15). The vmm\nserves `<mirror>/<name>/.git`.",
+            max_length=100,
+            pattern="^([A-Za-su-z0-9]|[A-Za-z0-9]([A-Za-z0-9_-]|\\.[A-Za-z0-9_-])*([A-Za-su-z0-9_-]|\\.[A-Za-su-z0-9_-])|t|[A-Za-z0-9]([A-Za-z0-9_-]|\\.[A-Za-z0-9_-])*\\.t|([A-Za-hj-z0-9]|[A-Za-z0-9]([A-Za-z0-9_-]|\\.[A-Za-z0-9_-])*([A-Za-hj-z0-9_-]|\\.[A-Za-hj-z0-9_-]))t|it|[A-Za-z0-9]([A-Za-z0-9_-]|\\.[A-Za-z0-9_-])*\\.it|([A-Zabcdefh-z0-9]|[A-Za-z0-9]([A-Za-z0-9_-]|\\.[A-Za-z0-9_-])*([A-Zabcdefh-z0-9_-]|\\.[A-Zabcdefh-z0-9_-]))it|git|[A-Za-z0-9]([A-Za-z0-9_-]|\\.[A-Za-z0-9_-])*git|[A-Za-z0-9]([A-Za-z0-9_-]|\\.[A-Za-z0-9_-])*\\.)$",
+        ),
+    ]
+
+
+class RepoList(RootModel[list[RepoName]]):
+    """
+    The repos of a clone list: at most 32 names (decision CH69 rule 15). An
+    empty list allows no clone.
+    """
+
+    root: Annotated[
+        list[RepoName],
+        Field(
+            description="The repos of a clone list: at most 32 names (decision CH69 rule 15). An\nempty list allows no clone.",
+            max_length=32,
         ),
     ]
 

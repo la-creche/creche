@@ -1,6 +1,7 @@
 //! The compose step on temp paths with no KVM (plan PR L20). `build`
-//! trusts only root-owned files: CH, ch-remote and the guest init program
-//! (decision CH67 rule 1), and `digests.json` (decision CH57 rule 1). A
+//! trusts only root-owned files: CH, ch-remote, git and the guest init
+//! program (decisions CH67 rule 1, CH69 rule 17), and `digests.json`
+//! (decision CH57 rule 1). A
 //! test of the rust job runs as the runner user and cannot make a
 //! root-owned file, so the rust job proves that the CH copy of the test
 //! refuses the start before any import. The serve tests there start from
@@ -20,7 +21,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::future::pending;
 use std::io::{Read, Write};
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -37,7 +38,7 @@ use tokio::sync::oneshot;
 
 use super::{Checked, StartError, VERSION_WAIT, Vmm, build, parts};
 use crate::ServeError;
-use crate::config::{CH, CH_REMOTE, Config, GUEST_INIT as GUEST_INIT_KEY};
+use crate::config::{CH, CH_REMOTE, Config, GIT, GUEST_INIT as GUEST_INIT_KEY};
 use crate::guest_init::GuestInitError;
 use crate::image_root::{DIGESTS_FILE, DigestsError};
 use crate::root_owned::{OwnerError, ProgramError};
@@ -54,12 +55,16 @@ const CH_FIXTURE: &str = concat!(
 const GUEST_INIT: &[u8] = b"guest-init";
 
 /// Each program key whose file `build` checks, with its file in `bin/`
-/// (decision CH67 rule 1).
-const PROGRAMS: [(&str, &str); 3] = [
+/// (decisions CH67 rule 1, CH69 rule 17).
+const PROGRAMS: [(&str, &str); 4] = [
     (CH, "cloud-hypervisor"),
     (CH_REMOTE, "ch-remote"),
+    (GIT, "git"),
     (GUEST_INIT_KEY, "guest-init"),
 ];
+
+/// A root-owned regular file of every host, which the owner check passes.
+const ROOT_OWNED: &str = "/usr/bin/true";
 
 /// The longest wait of one step.
 const WAIT: Duration = Duration::from_secs(10);
@@ -124,10 +129,10 @@ fn write_program(dest: &Path, script: &str) {
 }
 
 impl Scratch {
-    /// The dirs, the images, a `digests.json` and the three programs of
+    /// The dirs, the images, a `digests.json` and the four programs of
     /// `PROGRAMS` that the test user owns, and a `systemctl` that logs each
-    /// call and lists no unit. The `ch-remote` of the test only exits 1:
-    /// no test runs it.
+    /// call and lists no unit. The `ch-remote` and the `git` of the test
+    /// only exit 1: no test runs them.
     fn new(name: &str) -> Self {
         let dir = Path::new("/tmp").join(format!("creche-vmm-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -147,6 +152,7 @@ impl Scratch {
         fs::write(dir.join("bin/guest-init"), GUEST_INIT).unwrap();
         place_program(Path::new(CH_FIXTURE), &dir.join("bin/cloud-hypervisor"));
         write_program(&dir.join("bin/ch-remote"), "#!/bin/sh\nexit 1\n");
+        write_program(&dir.join("bin/git"), "#!/bin/sh\nexit 1\n");
 
         let systemctl = dir.join("bin/systemctl");
         let log = dir.join("systemctl.log");
@@ -177,6 +183,8 @@ impl Scratch {
             ("VMM_LITELLM_ADDR", OsString::from("192.0.2.10:4000")),
             ("VMM_CHAPERONE_ADDR", OsString::from("192.0.2.10:8300")),
             ("VMM_EGRESS_LOG", text(dir.join("egress.jsonl"))),
+            ("VMM_MIRROR_ROOT", text(dir.join("mirror"))),
+            ("VMM_GIT_PROGRAM", text(dir.join("bin/git"))),
         ]);
         Self { dir, env }
     }
@@ -328,6 +336,9 @@ fn kvm_build_wires_each_key_to_its_part() {
         .map(|(port, addr)| (port.number(), addr.to_string()));
     let planes = [(1101, "192.0.2.10:4000"), (1102, "192.0.2.10:8300")];
     assert_eq!(rows, planes.map(|(port, addr)| (port, addr.to_owned())));
+    // Decision CH69 rule 17: both mirror keys reach the mirror.
+    assert_eq!(start.mirror.root.path(), scratch.dir.join("mirror"));
+    assert_eq!(start.mirror.git.path(), scratch.dir.join("bin/git"));
 
     // Decisions CH57 rule 1 and CH58 rule 4: the digests of
     // `digests.json`, each in the digest store of the state root.
@@ -347,12 +358,12 @@ fn kvm_build_wires_each_key_to_its_part() {
     assert_eq!(fs::read(stored.path()).unwrap(), initramfs());
 }
 
-/// Decisions CH62 rule 17 and CH67 rule 1: the vmm runs CH and
-/// ch-remote, and packs a guest init program, only when root owns each
-/// file and no group or other user may write it. A root-owned guest init
-/// program gives one initramfs across vmm starts (CH62 rule 18). A group
-/// write bit on any of the three files refuses the start, and the fault
-/// names its key. An owner other than root refuses too (the rust job
+/// Decisions CH62 rule 17, CH67 rule 1 and CH69 rule 17: the vmm runs CH,
+/// ch-remote and git, and packs a guest init program, only when root owns
+/// each file and no group or other user may write it. A root-owned guest
+/// init program gives one initramfs across vmm starts (CH62 rule 18). A
+/// group write bit on any of the four files refuses the start, and the
+/// fault names its key. An owner other than root refuses too (the rust job
 /// proves that one).
 #[test]
 #[ignore = "needs runner sudo for a root-owned file: the job kvm runs it"]
@@ -418,6 +429,71 @@ fn a_ch_program_that_root_does_not_own_refuses_the_start() {
     for (file, _, sha256) in IMAGES {
         assert!(images.check(sha256.parse().unwrap()).is_err(), "{file}");
     }
+}
+
+/// The scratch with CH and ch-remote on `ROOT_OWNED`, so their check
+/// passes in the rust job and the check of `VMM_GIT_PROGRAM` runs next.
+/// No test runs either.
+fn trusted_ch(scratch: &mut Scratch) {
+    for key in [CH, CH_REMOTE] {
+        scratch.env.insert(key, OsString::from(ROOT_OWNED));
+    }
+}
+
+/// Decision CH69 rule 17: a git program that root does not own refuses the
+/// start after the CH and ch-remote checks, before the CH version check,
+/// and no import runs. A test that runs as root owns a root-owned file, so
+/// the case has nothing to prove there.
+#[test]
+fn a_git_program_that_root_does_not_own_refuses_the_start() {
+    let mut scratch = Scratch::new("git-owner");
+    let uid = fs::metadata(scratch.dir.join("bin/git")).unwrap().uid();
+    if uid == 0 {
+        return;
+    }
+    trusted_ch(&mut scratch);
+    let refused = build(scratch.config()).err();
+    assert!(
+        matches!(
+            &refused,
+            Some(StartError::Program(ProgramError {
+                key: GIT,
+                fault: OwnerError::NotOwned { uid: found },
+            })) if *found == uid
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(
+        refused.unwrap().to_string(),
+        format!("VMM_GIT_PROGRAM: the program is owned by uid {uid}, not by root")
+    );
+    let config = scratch.config();
+    let images = ImageStore::new(&config.state, config.zstd.path().to_owned());
+    for (file, _, sha256) in IMAGES {
+        assert!(images.check(sha256.parse().unwrap()).is_err(), "{file}");
+    }
+}
+
+/// Decision CH69 rule 17, as CH67 rule 1: a git program that is a symlink
+/// refuses the start, also when it points at a root-owned file.
+#[test]
+fn a_symlinked_git_program_refuses_the_start() {
+    let mut scratch = Scratch::new("git-symlink");
+    trusted_ch(&mut scratch);
+    let git = scratch.dir.join("bin/git");
+    fs::remove_file(&git).unwrap();
+    symlink(ROOT_OWNED, &git).unwrap();
+    let refused = build(scratch.config()).err();
+    assert!(
+        matches!(
+            &refused,
+            Some(StartError::Program(ProgramError {
+                key: GIT,
+                fault: OwnerError::NotRegular,
+            }))
+        ),
+        "{refused:?}"
+    );
 }
 
 /// Decision CH57 rule 1: a `digests.json` that root does not own refuses

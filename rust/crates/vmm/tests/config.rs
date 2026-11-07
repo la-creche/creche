@@ -10,8 +10,8 @@ use std::path::Path;
 
 use creche_vmm::config::{
     BUDGET, CH, CH_REMOTE, CHAPERONE, Config, ConfigError, EGRESS_LOG, FALLOCATE, FAMILY_ROOT,
-    FAULTS_ROOT, FREE_FLOOR, Fault, GUEST_INIT, IMAGE_ROOT, KillScopesConfig, LITELLM, MKE2FS,
-    RAM_CAP, RUN_ROOT, STATE_ROOT, SYSTEMCTL, SYSTEMD_RUN, ZSTD,
+    FAULTS_ROOT, FREE_FLOOR, Fault, GIT, GUEST_INIT, IMAGE_ROOT, KillScopesConfig, LITELLM,
+    MIRROR_ROOT, MKE2FS, RAM_CAP, RUN_ROOT, STATE_ROOT, SYSTEMCTL, SYSTEMD_RUN, ZSTD,
 };
 use creche_vmm::planes::Upstreams;
 use creche_vmm_confine::admission::{GIB, Limits};
@@ -21,7 +21,7 @@ use creche_vmm_store::retention;
 const DEFAULT_ENV: &str = include_str!("../../../../env/src/creche_env/default.env");
 
 /// Each path key of the config, in the order that `Config` reads them.
-const PATHS: [&str; 14] = [
+const PATHS: [&str; 16] = [
     STATE_ROOT,
     RUN_ROOT,
     FAMILY_ROOT,
@@ -36,6 +36,8 @@ const PATHS: [&str; 14] = [
     MKE2FS,
     FALLOCATE,
     EGRESS_LOG,
+    MIRROR_ROOT,
+    GIT,
 ];
 
 /// Each size key of the config.
@@ -113,6 +115,8 @@ fn a_good_env_gives_each_path_and_size() {
     };
     assert_eq!(config.planes, planes);
     assert_eq!(config.egress_log, Path::new("/srv/VMM_EGRESS_LOG"));
+    assert_eq!(config.mirror_root.path(), Path::new("/srv/VMM_MIRROR_ROOT"));
+    assert_eq!(config.git.path(), Path::new("/srv/VMM_GIT_PROGRAM"));
 }
 
 #[test]
@@ -325,6 +329,10 @@ fn the_catalog_defaults_are_the_design_values() {
             EGRESS_LOG,
             "${AGENT_OPERATOR_HOME}/.local/state/creche-vmm-egress.jsonl",
         ),
+        // Decision CH69 rule 17 and fact 13: the mirror of the host and
+        // the git of Ubuntu.
+        (MIRROR_ROOT, "/srv/agents/code"),
+        (GIT, "/usr/bin/git"),
     ];
     for (key, expected) in paths {
         assert_eq!(default_of(key), Some(expected), "{key}");

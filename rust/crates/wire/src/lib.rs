@@ -1832,6 +1832,137 @@ pub struct FamilyEgress {
 
 object_only!(FamilyEgress);
 
+/// The name of the clone list file of a family: `repos.json` in the family
+/// dir, beside `config/` and `egress.json` (decisions CH10-10, CH69 rules
+/// 4 and 5). caregiver writes it, and the vmm reads it. An absent file is
+/// the empty list.
+pub const FAMILY_REPOS_FILE: &str = "repos.json";
+
+/// The most characters of a repo name (decision CH69 rule 15).
+const REPO_NAME_MAX: usize = 100;
+
+/// The most entries of a clone list (decision CH69 rule 15).
+const REPOS_MAX: usize = 32;
+
+/// Whether `text` is a repo name: the name of one dir of the mirror
+/// (decision CH69 rule 15). A letter or digit, then at most 99 letters,
+/// digits, `.`, `_` or `-`, with no `..` and no `.git` at the end. So the
+/// name holds no `/` and is never `.` or `..`.
+fn is_repo_name(text: &str) -> bool {
+    let mut bytes = text.bytes();
+    bytes
+        .next()
+        .is_some_and(|first| first.is_ascii_alphanumeric())
+        && bytes.all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+        && text.len() <= REPO_NAME_MAX
+        && !text.contains("..")
+        && !text.ends_with(".git")
+}
+
+/// The rule of `is_repo_name` as a regular expression, for the JSON Schema.
+/// The schema has no look-ahead, so the pattern spells the names that end
+/// in no `.git`: a name that ends in a dot, or in a letter, digit, `_` or
+/// `-` that does not complete `.git`. `maxLength` holds the length.
+#[cfg(test)]
+fn repo_name_pattern() -> String {
+    // A name with no `..` that ends in no dot: a letter or digit, then
+    // each dot before a character that is not a dot.
+    let inner = "[A-Za-z0-9_-]";
+    let name = format!("[A-Za-z0-9]({inner}|\\.{inner})*");
+    // A name that ends in a character of `set`, which holds no dot.
+    let ends = |set: &str, first: &str| format!("{first}|{name}({set}|\\.{set})");
+    // The last character is not `t`, or `t` follows no `i`, or `it`
+    // follows no `g`, or `git` follows no dot.
+    let no_t = ends("[A-Za-su-z0-9_-]", "[A-Za-su-z0-9]");
+    let no_i = ends("[A-Za-hj-z0-9_-]", "[A-Za-hj-z0-9]");
+    let no_g = ends("[A-Zabcdefh-z0-9_-]", "[A-Zabcdefh-z0-9]");
+    format!("^({no_t}|t|{name}\\.t|({no_i})t|it|{name}\\.it|({no_g})it|git|{name}git|{name}\\.)$")
+}
+
+checked_text!(
+    /// The name of one repo of a clone list: the name of its dir in the
+    /// mirror (decisions CH10-10, CH46 rule 4, CH69 rule 15). The vmm
+    /// serves `<mirror>/<name>/.git`.
+    RepoName,
+    is_repo_name,
+    "a repo name is a letter or digit, then at most 99 letters, digits, dots, underscores or hyphens, with no .. and no .git at the end",
+    "pattern" = repo_name_pattern(),
+    "maxLength" = REPO_NAME_MAX
+);
+
+/// Why a list of repo names is not a clone list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RepoListError;
+
+impl fmt::Display for RepoListError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a clone list holds at most 32 repo names")
+    }
+}
+
+impl std::error::Error for RepoListError {}
+
+/// The repos of a clone list: at most 32 names (decision CH69 rule 15). An
+/// empty list allows no clone.
+//
+// Decision CH73 rule 3 amends CH69 rule 15 as CH70 rule 4 did for
+// `FamilyEgress`: the list reads a name given twice, and the family
+// grammar (plan PR F1) and caregiver (plan PR C2) refuse it before any
+// file is written. datamodel-codegen 0.87 drops `uniqueItems`, so a
+// refusal in Rust alone would split the Rust and Python readers. A name
+// twice serves the same repo.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "Vec<RepoName>", into = "Vec<RepoName>")]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[cfg_attr(test, schemars(extend("maxItems" = REPOS_MAX)))]
+pub struct RepoList(Vec<RepoName>);
+
+impl RepoList {
+    /// The names of the list.
+    #[must_use]
+    pub fn names(&self) -> &[RepoName] {
+        &self.0
+    }
+}
+
+impl TryFrom<Vec<RepoName>> for RepoList {
+    type Error = RepoListError;
+
+    fn try_from(names: Vec<RepoName>) -> Result<Self, Self::Error> {
+        if names.len() > REPOS_MAX {
+            return Err(RepoListError);
+        }
+        Ok(Self(names))
+    }
+}
+
+impl From<RepoList> for Vec<RepoName> {
+    fn from(list: RepoList) -> Self {
+        list.0
+    }
+}
+
+/// The clone list of one family: the file `FAMILY_REPOS_FILE` (decisions
+/// CH10-10, CH69 rules 4, 5 and 15). caregiver writes it from the `repos`
+/// list of the family file. The vmm binds host port 1103 only for a
+/// non-empty list (decision CH69 rule 13), and it reads the file again for
+/// each clone (decision CH69 rule 16). It serves a repo only when the
+/// list names it and the mirror holds it (decision CH10-10).
+///
+/// `family/grammar.py` stays the authority for the name form (decision
+/// CH23 rule 5). Plan PR F1 adds the test that holds the pattern of
+/// `RepoName` equal to it. No route reaches the type, so it needs no new
+/// `HOST_API_PROTOCOL` (decision CH33 rule 8).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(remote = "Self", deny_unknown_fields)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+pub struct FamilyRepos {
+    /// The repos that the family may clone.
+    pub repos: RepoList,
+}
+
+object_only!(FamilyRepos);
+
 /// What a client sends to ask the vmm whether a family may reach a target
 /// (decisions CH6-3, CH69 rule 1): the request of the route `check`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -11,7 +11,8 @@
 //! with its plane bridges, family-state reply, retire and restore. It
 //! creates the row of `<session>` in `<family>` with origin `door`. Like
 //! the compose step, it first runs the leftover sweep (decision CH19 (4))
-//! and the owner check of CH and ch-remote (decision CH67 rule 1). The
+//! and the owner check of CH, ch-remote and git (decisions CH67 rule 1,
+//! CH69 rule 17). The
 //! version check runs `<version program>`, not `VMM_CH_PROGRAM`: the
 //! upstream CH of the runner may print its git tag, and the CI-built CH
 //! with the `CH_VERSION` string comes in phase 4 (decision CH7-4, fact
@@ -41,13 +42,14 @@ use std::process::ExitCode;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
 
-use creche_vmm::config::{CH, CH_REMOTE, Config};
+use creche_vmm::config::{CH, CH_REMOTE, Config, GIT};
 use creche_vmm::control::ControlState;
 use creche_vmm::egress::log::Log;
 use creche_vmm::guest_init::write_initramfs;
 use creche_vmm::handlers::acp::StartVm as _;
 use creche_vmm::handlers::drop::StopVm as _;
 use creche_vmm::image_root;
+use creche_vmm::mirror::Mirror;
 use creche_vmm::relay::Relays;
 use creche_vmm::restore::ChTools;
 use creche_vmm::root_owned::check_program;
@@ -113,6 +115,7 @@ fn serve(version: &Path, session: &OsString, family: &OsString) -> Result<(), Fa
     }
     check_program(CH, config.ch.path())?;
     check_program(CH_REMOTE, config.ch_remote.path())?;
+    check_program(GIT, config.git.path())?;
     let ch_version = check_cloud_hypervisor(version, VERSION_WAIT)?;
     let images = ImageStore::new(&config.state, config.zstd.path().to_owned());
     let digests = image_root::read(&config.image_root)?.import(&images)?;
@@ -148,6 +151,10 @@ fn serve(version: &Path, session: &OsString, family: &OsString) -> Result<(), Fa
         ch_version,
         planes: config.planes,
         egress_log: Arc::new(Log::open(config.egress_log)?),
+        mirror: Mirror {
+            root: config.mirror_root,
+            git: config.git,
+        },
     };
     let control = Arc::new(Mutex::new(ControlState::default()));
     let hook = ColdBoot::new(

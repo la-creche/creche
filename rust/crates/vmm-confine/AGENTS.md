@@ -110,7 +110,25 @@ table of the three vmm crates.
   (decision CH65 rule 2). An
   absent family dir or file is the empty list, so the family gets no
   egress. A symlink, a file that is not regular, a file past the cap and
-  bytes that are not one `FamilyEgress` are each an `EgressFault`.
+  bytes that are not one `FamilyEgress` are each a `ReachFault`.
+- `family::FamilyRoot::read_repos` reads the clone list `repos.json` of
+  a family (decisions CH10-10, CH69 rules 4 and 5) as `read_egress`
+  reads `egress.json`, with the cap `REPOS_CAP` (4 KiB, decision CH73
+  rule 2), as
+  `FamilyRepos`. An absent family dir or file is the empty list, so the
+  family gets no clone. Each fault is a `ReachFault`.
+- `mirror::MirrorRoot::git_dir` gives `<root>/<name>/.git` of a repo of
+  the mirror (decisions CH46 rule 4, CH69 rules 16 and 17). It opens the
+  root, then `<name>` and `.git`, each from the handle before it with
+  `O_DIRECTORY` and `O_NOFOLLOW`. So a symlink or a file at either part
+  refuses the repo (`MirrorFault::NotDir`), and an absent part is
+  `MirrorFault::Absent`. The caller passes a `RepoName` of the clone
+  list, which holds no `/` and no `..`, never the client bytes.
+- `group::kill` sends SIGKILL to the process group of a leader pid
+  (decision CH69 rule 14). The vmm spawns each `upload-pack` of the
+  mirror as the leader of a new group, so the kill also ends its
+  `pack-objects` child. The caller kills before it reaps the leader, so
+  the group id names no other process.
 - `nofile::raise` sets the soft `RLIMIT_NOFILE` of the vmm to the need
   that the vmm passes, and keeps the hard limit. A soft limit at or above
   the need stays. A hard limit below it is `NofileError::Short`, so the
@@ -414,8 +432,13 @@ table of the three vmm crates.
   of 4096 and the refusal of a short hard limit (`nofile.rs`,
   `rust/crates/vmm/AGENTS.md` Known gap 21).
 - Closed by decision CH70 rule 1: `EGRESS_CAP` is 64 KiB, room for
-  about a thousand entries. A larger file is `EgressFault::TooLarge`, so
+  about a thousand entries. A larger file is `ReachFault::TooLarge`, so
   the vmm allows nothing. Decision CH71 makes caregiver refuse a family
   whose file would pass the cap. `rust/crates/wire/vectors/family.json`
   holds the value, and `the_egress_cap_matches_the_wire_vectors` in
   `tests/family.rs` holds `EGRESS_CAP` equal to it.
+- Closed by decision CH73 rule 2: `REPOS_CAP` is 4 KiB, the smallest
+  cap that holds the canonical form of every list of decision CH69 rule
+  15 (32 names of 100 characters: 3307 bytes). So caregiver needs no cap check of its own, as decision
+  CH71 needs for `egress.json`. A larger file is `ReachFault::TooLarge`,
+  and the vmm serves no clone.
