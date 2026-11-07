@@ -176,6 +176,7 @@ impl Scratch {
             ("VMM_SNAPSHOT_BUDGET_GIB", OsString::from("7")),
             ("VMM_LITELLM_ADDR", OsString::from("192.0.2.10:4000")),
             ("VMM_CHAPERONE_ADDR", OsString::from("192.0.2.10:8300")),
+            ("VMM_EGRESS_LOG", text(dir.join("egress.jsonl"))),
         ]);
         Self { dir, env }
     }

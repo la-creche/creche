@@ -15,14 +15,21 @@
 //!    guest init program into the one initramfs of this vmm start, in the
 //!    digest store, and each VM start names it (decisions CH62 rules 17
 //!    and 18). Then the fault book starts, which clears every fault file
-//!    (contract 05 §3.3.1 rule 8), and the rows load.
+//!    (contract 05 §3.3.1 rule 8), the rows load, and the egress log
+//!    opens (decision CH69 rule 10).
 //! 3. The store, the confine parts and `ColdBoot` from the config. One
 //!    `ColdBoot` is the `StartVm` hook, the `StopVm` hook, the `VmSet`
 //!    and the `Sleeper` of the vmm.
-//! 4. The handler set of `routes!` binds `vmm.sock` in the run root.
+//! 4. `nofile::raise` sets the soft `RLIMIT_NOFILE` to `fd_need`, and a
+//!    hard limit below it refuses the start (decision CH67 rule 4, CH68
+//!    rule 2, CH69 rule 14). It runs after the checks, so a bad program,
+//!    image root or digest names its own fault on a host of any hard
+//!    limit. It runs before the bind and the first VM, so each listener
+//!    and each CH gets the raised limit.
+//! 5. The handler set of `routes!` binds `vmm.sock` in the run root.
 //!    `sleep::run` and the refresh of the fault book run beside it
 //!    (caller duty 5).
-//! 5. At SIGTERM, the sleep loop gets its stop, and `shutdown::shutdown`
+//! 6. At SIGTERM, the sleep loop gets its stop, and `shutdown::shutdown`
 //!    runs with the end of `sleep::run` as its `sleep` future. `main.rs`
 //!    then ends the runtime with `shutdown_timeout` (caller duty 8).
 //!
@@ -40,6 +47,7 @@ use std::time::{Duration, SystemTime};
 
 use creche_vmm_confine::faults::{FaultBook, FaultDir, REFRESH};
 use creche_vmm_confine::leftovers::{LeftoverError, stop_all};
+use creche_vmm_confine::nofile::{self, NofileError};
 use creche_vmm_confine::spawner::{SELF_EXE, Spawner};
 use creche_vmm_confine::vmm_unit::VmmUnit;
 use creche_vmm_store::ch_remote::ChRemote;
@@ -58,8 +66,10 @@ use tokio::task::{JoinHandle, spawn_blocking};
 use tokio::time::{MissedTickBehavior, interval};
 
 use crate::ServeError;
-use crate::config::{CH, CH_REMOTE, Config};
+use crate::config::{CH, CH_REMOTE, Config, EGRESS_LOG};
 use crate::control::ControlState;
+use crate::egress::log::Log;
+use crate::egress::proxy;
 use crate::guest_init::{GuestInitError, write_initramfs};
 use crate::handlers::acp::{Acp, StartFault, StartVm};
 use crate::handlers::check::Checks;
@@ -72,8 +82,8 @@ use crate::restore::ChTools;
 use crate::root_owned::{ProgramError, check_program};
 use crate::server::{Stop, run_routes};
 use crate::shutdown::{self, Ended};
-use crate::sleep;
 use crate::start::{ColdBoot, Digests, StartConfig};
+use crate::{family_state, planes, sleep};
 
 /// The bound of `cloud-hypervisor --version` at the start (decision CH44
 /// rule 3: the caller sets each timeout).
@@ -105,8 +115,14 @@ pub enum StartError {
     Faults(io::Error),
     /// The rows did not load.
     Rows(LoadError),
+    /// The egress log of `VMM_EGRESS_LOG` did not open (decision CH69
+    /// rule 10).
+    EgressLog(io::Error),
     /// The spawner thread did not start.
     Spawner(io::Error),
+    /// The soft `RLIMIT_NOFILE` did not rise to `fd_need` (decision CH67
+    /// rule 4).
+    Nofile(NofileError),
     /// A blocking step of the start panicked.
     Panicked,
     /// The server stopped before SIGTERM, such as a failed bind.
@@ -125,7 +141,11 @@ impl fmt::Display for StartError {
             Self::GuestInit(error) => write!(formatter, "{error}"),
             Self::Faults(error) => write!(formatter, "cannot start the fault book: {error}"),
             Self::Rows(error) => write!(formatter, "cannot load the rows: {error:?}"),
+            Self::EgressLog(error) => {
+                write!(formatter, "{EGRESS_LOG}: cannot open the log: {error}")
+            }
             Self::Spawner(error) => write!(formatter, "cannot start the spawner: {error}"),
+            Self::Nofile(error) => write!(formatter, "{error}"),
             Self::Panicked => formatter.write_str("a start step panicked"),
             Self::Serve(error) => write!(formatter, "{error}"),
         }
@@ -221,7 +241,17 @@ pub async fn serve(config: Config) -> Result<(), StartError> {
     let vmm = spawn_blocking(move || build(config))
         .await
         .map_err(|_| StartError::Panicked)??;
+    nofile::raise(fd_need()).map_err(StartError::Nofile)?;
     vmm.run(sigterm).await
+}
+
+/// The fds of step 4: the bridges (decision CH67 rule 4), the 1100 links
+/// (CH68 rule 2) and the 1104 links (CH69 rule 14) of every VM. The soft
+/// limit of systemd (1024) holds those of a few busy guests only.
+fn fd_need() -> u64 {
+    planes::fd_need()
+        .saturating_add(family_state::fd_need())
+        .saturating_add(proxy::fd_need())
 }
 
 /// Step 2 and 3: the blocking start steps, then the parts. Blocks.
@@ -289,6 +319,7 @@ fn parts(config: Config, checked: Checked) -> Result<Vmm, StartError> {
     let faults = Arc::new(Mutex::new(faults));
     let rows = Rows::open(config.state.clone()).map_err(StartError::Rows)?;
     let rows = Arc::new(Mutex::new(rows));
+    let egress_log = Log::open(config.egress_log.clone()).map_err(StartError::EgressLog)?;
     let spawner = Spawner::start(PathBuf::from(SELF_EXE)).map_err(StartError::Spawner)?;
 
     let remote = || ChRemote::new(config.ch_remote.path().to_owned());
@@ -318,6 +349,7 @@ fn parts(config: Config, checked: Checked) -> Result<Vmm, StartError> {
         budget: config.budget,
         ch_version,
         planes: config.planes,
+        egress_log: Arc::new(egress_log),
     };
     let relays = Relays::default();
     let control = Arc::new(Mutex::new(ControlState::default()));
@@ -346,7 +378,7 @@ fn parts(config: Config, checked: Checked) -> Result<Vmm, StartError> {
 }
 
 impl Vmm {
-    /// Step 4 and 5: serves until SIGTERM, then shuts down.
+    /// Step 5 and 6: serves until SIGTERM, then shuts down.
     async fn run(self, sigterm: impl Future<Output = ()>) -> Result<(), StartError> {
         let Self {
             socket,

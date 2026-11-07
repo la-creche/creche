@@ -206,8 +206,10 @@ table of the three vmm crates.
   from the snapshot. The check trusts that a snapshot comes only from a
   boot that passed the check (decision CH42 rule 2). The run dir holds
   exactly the `vsock.sock_<port>` listeners of the host ports that the
-  vmm bound for the family. Any failure is the fault
-  `egress_assert_failed`.
+  vmm bound for the family: 1100, 1101 and 1102, plus 1104 for a family
+  whose `egress.json` lists a host (decision CH49 rule 3, plan PR E2).
+  The vmm takes that set from the listeners it bound at the start. Any
+  failure is the fault `egress_assert_failed`.
 - `admission::decide` is a pure decision (decisions CH8-6, CH8-7, CH58
   rule 2). Free bytes below the floor give `HostFull`. The configured
   guest RAM of the running VMs plus the RAM wanted at or below the cap,

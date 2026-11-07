@@ -31,8 +31,9 @@ CH63). It reads only `AGENT_SYSTEMCTL_PROGRAM` through
 `config::KillScopesConfig`, with the check of `Config`, and calls
 `creche_vmm_confine::leftovers::kill_all`. A bad key exits 78, and any
 other failure exits 1. `vmm serve` raises its soft `RLIMIT_NOFILE` to
-`planes::fd_need` plus `family_state::fd_need` after the config read
-(decision CH67 rule 4 for the bridge need, Known gap 23 for the
+`planes::fd_need` plus `family_state::fd_need` plus `proxy::fd_need`
+in step 4 of the compose step, after the start checks and before the
+bind (decision CH67 rule 4 for the bridge need, Known gap 23 for the
 family-state need).
 
 ## The compose step
@@ -61,10 +62,17 @@ family-state need).
    manager it logs the error and still serves, and every VM launch
    refuses with that error and starts nothing. That `ColdBoot` is the `StartVm` and the `StopVm` hook,
    the `VmSet` of the shutdown and the `Sleeper` of `sleep::run`.
-4. The handler set of `routes!` (`Creates`, `Lists`, `Acp`, `Drops`,
+4. `nofile::raise` sets the soft `RLIMIT_NOFILE` to the `fd_need` of
+   the compose step, and a hard limit below it exits 78 (decision CH67
+   rule 4). The raise runs after the checks of step 2. So a bad
+   program, image root or digest exits 78 with its own fault, also on a
+   host whose hard limit is below the need, such as the 65536 of a
+   GitHub runner. The raise runs before the bind and the first VM, so
+   each listener and each CH gets the raised limit.
+5. The handler set of `routes!` (`Creates`, `Lists`, `Acp`, `Drops`,
    `Checks`) binds `vmm.sock` in the run root. `sleep::run` runs beside it (caller
    duty 5), and so does `FaultBook::refresh` every `faults::REFRESH`.
-5. At SIGTERM the sleep loop gets its stop, and `shutdown::shutdown`
+6. At SIGTERM the sleep loop gets its stop, and `shutdown::shutdown`
    runs with the end of `sleep::run` as its `sleep` future. `src/main.rs`
    then ends the runtime with `shutdown_timeout(RUNTIME_END)`, 4 s of
    the 5 s that `SHUTDOWN_WAIT` leaves (caller duty 8).
@@ -98,8 +106,12 @@ no KVM:
    a `digests.json` that the test user owns.
 
 `tests/binary.rs` runs `vmm serve` with no KVM. It proves the exit 78
-of a missing CH program and of one that root does not own. The Hyperion
-proof of the unit (plan PR C13) runs the binary end to end.
+of a missing CH program and of one that root does not own. Its ignored
+`kvm_` test makes root the owner of the files that the start checks, as
+`src/compose/tests.rs` does. Under a hard `RLIMIT_NOFILE` of 1024 the
+vmm then exits 78 on the fd need itself, and no `vmm.sock` exists
+(decision CH67 rule 4). The Hyperion proof of the unit (plan PR C13)
+runs the binary end to end.
 
 ## The root-owned files
 
@@ -172,6 +184,7 @@ A fault names the key and never the value, as in `env/AGENTS.md`.
 | `VMM_SNAPSHOT_BUDGET_GIB` | `150` | `StartConfig::budget`, for `retention::sweep` (gap G14) |
 | `VMM_LITELLM_ADDR` | `${AGENT_LAN_ADDRESS}:4000` | the bridge of host port 1101 (decision CH62 rule 20) |
 | `VMM_CHAPERONE_ADDR` | `${AGENT_LAN_ADDRESS}:8300` | the bridge of host port 1102 (decision CH62 rule 20) |
+| `VMM_EGRESS_LOG` | `${AGENT_OPERATOR_HOME}/.local/state/creche-vmm-egress.jsonl` | `egress::log::Log`, the JSONL log of host port 1104 (decision CH69 rule 10) |
 
 Each path is absolute with no `..` component. The run root holds no
 `:`, because systemd joins the paths of more than one
@@ -187,7 +200,11 @@ holds each path default of the table literally, and the size defaults
 equal to `Limits::DESIGN` and `retention::BUDGET`.
 `tests/binary.rs` runs `vmm serve` with no KVM: a missing or bad key
 exits 78 and names the key. `src/compose.rs` is the first reader of each
-key.
+key. The egress log sits beside the state root, not in it, so it
+amends no state-root layout (decision CH39 rule 3). A new key edits
+`config.rs`, `default.env`, `VMM_KEYS` of `bin/fleet-up`, `GOOD` of
+`tests/binary.rs`, the env of `src/compose/tests.rs` and the env of
+`tests/kvm_guest.rs` in one change (decision CH59 rule 1).
 
 ## The image root
 
@@ -433,8 +450,9 @@ of host port 1104 uses too. A check boots no VM.
    inet_aton forms, such as `2130706433` or `0x7f.1`). The host goes to
    lower case. A host that is no `HostName` (a trailing dot, `*`), no
    port, or a port that is not 1 to 65535 is `bad_target`.
-2. The handler reads `FamilyRoot::read_egress` in `spawn_blocking`
-   (decision CH36 G21). An unknown family or an absent file is the empty
+2. The handler reads `FamilyRoot::read_egress` through
+   `egress::read_list`, in `spawn_blocking` (decision CH36 G21). The
+   proxy reads the list through the same function. An unknown family or an absent file is the empty
    list (decision CH69 rule 3).
 3. `decide` refuses a host and port that the list does not hold with
    `not_listed`, before any lookup. Then tokio `lookup_host` resolves
@@ -541,7 +559,9 @@ table, and the start boots it again. A cold boot runs these steps:
    (PR D16), then `remove_stale` (decision CH19 (4)), `planes::bind` of
    the listeners of host ports 1101 and 1102 (see "The plane bridges"),
    `family_state::bind` of the listener of host port 1100 (see "The
-   family-state reply"), the store check of
+   family-state reply"), `proxy::bind` of the listener of host port 1104
+   when `egress.json` of the family lists a host (see "The egress
+   proxy"), the store check of
    the kernel, the guest init initramfs and the root disk of the flavor
    (decision CH44 rule 2),
    `SessionDisks::for_boot` (decision CH21-4), `snapshots/` with mode
@@ -552,14 +572,15 @@ table, and the start boots it again. A cold boot runs these steps:
    files of the VM, the vmm unit and `Launch::in_slot` (decisions CH8-3,
    CH8-5, CH8-8, CH30, CH55, CH60 rule 1). A vmm with no unit fails the
    start before the link, with no file touched.
-4. `Bound::serve` starts the plane bridges and the family-state reply.
+4. `Bound::serve` starts the plane bridges, the family-state reply and
+   the egress proxy.
    Then `control::open` for
    the first `ControlReady`. It keeps the facade
    state in `ControlState`, writes a turn end to the row, and clears the
    faults of the family (contract 05 §3.3.1 rule 8).
 5. `deny::check` with the bound set 1100, 1101 and 1102 (plan PRs V6
-   and V8).
-   Decision CH49 rule 3 binds 1104 from phase 7 on.
+   and V8), plus 1104 when step 3 bound it (plan PR E2, decision CH49
+   rule 3).
 6. `AcpLink::dial` of guest port 1201 (decision CH50 rule 2).
 
 Each fault but `host_full` goes to the fault file of the family
@@ -600,17 +621,21 @@ connection to a fresh TCP connect to `VMM_LITELLM_ADDR` or
 4. The copy is `relay::Splice`, the copy of the ACP relay, on the tokio
    `net` types. `copy_bidirectional` needs the tokio feature `io-util`,
    which adds a lock entry, so the vmm does not use it.
-5. `Vm::listeners` holds the bridges and the family-state reply. The
+5. `Vm::listeners` holds the bridges, the family-state reply and the
+   egress proxy. The
    drop of the entry, when the VM leaves the table, ends each listener
    task and each open splice. A VM that the vmm killed drops them at the
    kill.
-6. The deny check gets 1100 and the ports of `Upstreams::rows` as its
-   bound set, so a listener of any other port fails it (decision CH6-3).
+6. The deny check gets 1100, the ports of `Upstreams::rows` and 1104
+   for a family with egress as its bound set, so a listener of any
+   other port fails it (decisions CH6-3, CH49 rule 3).
 7. A full row holds 129 fds: its listener and two streams per splice.
    `planes::fd_need` is that for both rows of all `SLOTS` (64), plus a
    headroom of 4096: 20608. `vmm serve` raises its soft `RLIMIT_NOFILE`
-   to it plus `family_state::fd_need` before it serves (see "The
-   family-state reply"), and a hard limit below the sum exits 78
+   to it plus `family_state::fd_need` and `proxy::fd_need` after its
+   start checks and before it serves (step 4 of "The compose step", see
+   also "The family-state reply" and "The egress proxy"), and a
+   hard limit below the sum exits 78
    (`creche_vmm_confine::nofile`, decision CH67 rule 4, Known gap 23).
    So the busy guests of
    a few VMs cannot use every fd of the vmm.
@@ -677,6 +702,85 @@ restore, that 1100 is in the bound set of the deny check, and that a
 pull does not set `last_use`. That pull gets the `state` of the family
 of the session in the family root of the config, so the start hands the
 server the right family and root.
+
+## The egress proxy
+
+`src/egress/proxy.rs` serves CONNECT on host port 1104 (plan PR E2,
+decisions CH6-1, CH6-4, CH46 rules 1 and 3, CH49 rule 3, CH69 rules 7,
+9, 10, 14, 20, 24 and 30, CH72). Guest init splices guest
+127.0.0.1:3128 to a vsock dial of 1104 (decision CH46 rule 1), and CH
+connects each dial to `vsock.sock_1104` (decision CH24). The vmm binds
+it for a family whose `egress.json` lists a host (decision CH49 rule 3).
+A present file that does not read binds it too, so each CONNECT gets
+403 and a `not_valid` log line (decision CH72 rule 3). An absent file
+or an empty list binds no listener.
+
+1. `proxy::bind` binds the listener beside the plane listeners, with
+   their lifecycle: after `link_vm` and `remove_stale`, before CH
+   starts, for a cold boot and for each restore.
+2. Each link reads one head: the bytes to the first CRLF CRLF, at most
+   `HEAD_CAP` (8 KiB), within `HEAD_WAIT` (30 s). A head past the wait
+   closes with no reply (decision CH69 rule 9).
+3. Only `CONNECT <host>:<port> HTTP/1.1` or `HTTP/1.0` passes. Another
+   method gets 405 with `Allow: CONNECT`. A head past the cap, an EOF
+   before the head end, or a request line that does not read gets 400.
+   The proxy reads no header line (decision CH69 rule 7).
+4. Each CONNECT reads the list again with `egress::read_list` and calls
+   `rule::decide`, the function of `check` (decisions CH6-4, CH69 rule
+   2). A removal refuses the next CONNECT at once, and an open tunnel
+   runs on (fact 43). `bad_target` gets 400, `no_address` 502, and
+   `ip_literal`, `not_listed`, `not_public` and `not_valid` 403.
+5. The proxy connects to the judged addresses in their order, within
+   `CONNECT_WAIT` (5 s) in all (decisions CH6-4, CH62 rule 14). No
+   address that takes the connect gets 502, the wait 504. Then `200
+   Connection established`, and `relay::Splice` carries the bytes with
+   the half-close of decision CH67 rule 9. Bytes that the guest sent
+   after its head reach the target first. It reads no tunnel byte (fact
+   42, decision CH46 rule 3) and has no idle timeout.
+6. Each link writes one line to the log: a refusal at its refusal, a
+   tunnel at its end, also when the drop of `Server` cuts it. The line
+   goes out from the drop of the link, in `spawn_blocking`. At the end
+   of the runtime it does not, as at a crash (Q61-10).
+7. At most `LINK_CAP` (64) links. A link past the cap is accepted,
+   logged with `link_cap` and closed at once (decisions CH67 rule 3,
+   CH69 rule 14). A failed accept is logged by kind, then the loop pauses
+   `ACCEPT_PAUSE` (decisions CH40 rule 1, CH69 rule 30). CH67 rule 11
+   binds only the guest rows of guest init.
+8. A link sets no `last_use` and blocks no snapshot (decision CH69 rule
+   20), so a restore cuts each open tunnel (fact 45).
+9. `proxy::fd_need` counts per slot the listener, and per link its
+   stream and 4 more fds (the family dir and `egress.json` of the read, a
+   resolver socket, the upstream socket): 321 per slot, 20544 for all
+   `SLOTS`. The raised soft limit is 69888 (decision CH69 rule 14).
+
+`src/egress/log.rs` writes the log of `VMM_EGRESS_LOG` (decisions CH6-4,
+CH69 rules 10 and 24). The compose step opens it at the start, for
+append, with mode 0600, and a failed open exits 78. Each line has
+`time`, `family`, `session`, `host`, `port`, `verdict` (`allowed` or
+`refused`), `reason`, `address`, `bytes_up`, `bytes_down` and
+`duration_ms` (decision CH72 rule 1). A refusal of the rule names the
+reason that `check` gives (decision CH70 rule 2). The proxy reasons are `link_cap`,
+`head_timeout`, `bad_head`, `not_connect`, `connect_failed` and
+`connect_timeout` (decision CH72 rule 2). A write that would pass `LOG_CAP` (64
+MiB) renames the file to `<path>.1` and opens a new one. When the open
+fails after the rename, the lines go on to `<path>.1`, and each next
+write tries only the open again, with no second rename. A log fault
+writes one stderr line, the only stderr line of the proxy but an accept
+fault (decision CH69 rule 24).
+
+`tests/egress_proxy.rs` runs the proxy on real Unix sockets over a
+scratch family root: an IP literal, `check` against CONNECT for one
+table of targets with `no_address` among them, a list that does not
+read, 405, 400, a head that two reads split, a head of exactly
+`HEAD_CAP`, the head wait with paused tokio time, a removal, the fields
+of each line, the rollover, a rollover whose open failed after its
+rename, the link cap, `LINK_CAP` + 2 links one after another, the drop
+of `Server` (a cut link and its line, then a refused dial) and the fd
+need. No test reaches the network.
+The kvm job proves an allowed tunnel (plan PR E4, decision CH69 rule
+22). `tests/start.rs` proves the bound set with and without a list, a
+list that does not read, the bind at a restore, and an extra 1104
+listener.
 
 ## The slots
 
@@ -1077,6 +1181,26 @@ job kvm runs it.
     listener, and per link its stream and the 6 fds of one `read_state`)
     adds to the raise of decision CH67 rule 4 (20608), so the raise is
     49344.
+24. Closed by decision CH72 rule 1: each key of a log line is the field
+    name of decision CH69 rule 10, `time` is RFC 3339 UTC to the second
+    (`creche_vmm_confine::rfc3339`), `duration_ms` is whole ms, `address`
+    is the `IpAddr` text, and a field that the link never reached is
+    `null` (`src/egress/log.rs`).
+25. Closed by decision CH72 rule 2: the log reasons of the proxy refusals
+    that are not `check` reasons are `link_cap`, `head_timeout`,
+    `bad_head`, `not_connect`, `connect_failed` and `connect_timeout`
+    (`log::ProxyReason`).
+26. Closed by decision CH69 rule 14: the 1104 listener takes at most 64
+    links per VM, and its fd need (20544) adds to the raise of decision
+    CH68 rule 2, so the raise is 69888. The plan estimate (16448)
+    counted one fd for the allowlist read, which holds two.
+27. Closed by decision CH72 rule 3: the vmm binds 1104 for a family whose
+    `egress.json` is present, also when it does not read, so each CONNECT
+    is refused 403 with a `not_valid` log line (decision CH70 rule 2). An
+    absent file or an empty list binds no 1104 (decision CH49 rule 3).
+    The start writes no stderr line (`binds_egress` in `src/start.rs`).
+    A zero-byte `egress.json` is present and does not read, so it binds
+    1104 and each CONNECT gets `not_valid` (CH72 rule 3).
 
 ## Caller duties
 
@@ -1136,3 +1260,13 @@ job kvm runs it.
    release decompresses each disk (`zstd -d`) and hashes it. So the unit
    of plan PR C13 must not bound the start of the vmm below that time.
    A later start finds each digest in the store and reads no byte.
+10. Decision CH59 rule 1: the vmm reads `VMM_EGRESS_LOG` (plan PR E2),
+    so the `vmm.env` that `bin/fleet-up up` writes must hold it before
+    this vmm starts on a host, or the start exits 78. The hard
+    `RLIMIT_NOFILE` of the user unit must hold 69888 (decision CH67
+    rule 4, plan risk 3).
+11. Plan PR E2 binds 1104 at each boot and each restore from the list
+    of that time. Each CONNECT reads the list again, so a removal
+    refuses at once. A list that goes from empty to a host gets its
+    listener at the next start or restore of the VM, until plan PR E3
+    follows the edit on a running VM (decision CH49 rules 3 and 4).
