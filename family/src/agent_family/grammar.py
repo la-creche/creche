@@ -333,6 +333,51 @@ def egress_problem(entry: str) -> EgressProblem | None:
     return None
 
 
+#: Contract 01 §3.7.1 rule 3 and decision CH69 rule 15: the most characters
+#: of a `repos` entry, and the most entries.
+REPO_NAME_MAX: Final = 100
+REPOS_MAX: Final = 32
+
+
+def _repo_name_pattern() -> str:
+    """Contract 01 §3.7.1 rule 1: a letter or digit, then letters, digits,
+    `.`, `_` or `-`, with no `..` and no `.git` at the end. The wire type
+    `RepoName` holds this pattern (decision CH69 rule 15), and its JSON Schema
+    has no look-ahead. So the pattern spells the names that end in no `.git`
+    instead: a name that ends in a dot, or in a character that does not
+    complete `.git`. `wire/tests/test_wire_grammar.py` holds the two equal
+    (decision CH23 rule 5). `REPO_NAME_MAX` holds the length."""
+    # A name with no `..` that ends in no dot: each dot comes before a
+    # character that is not a dot.
+    inner = "[A-Za-z0-9_-]"
+    name = rf"[A-Za-z0-9]({inner}|\.{inner})*"
+
+    def ends(last: str, first: str) -> str:
+        """A name of one character of `first`, or a name that ends in a
+        character of `last`, which holds no dot."""
+        return rf"{first}|{name}({last}|\.{last})"
+
+    # The last character is not `t`, or `t` follows no `i`, or `it` follows
+    # no `g`, or `git` follows no dot.
+    no_t = ends("[A-Za-su-z0-9_-]", "[A-Za-su-z0-9]")
+    no_i = ends("[A-Za-hj-z0-9_-]", "[A-Za-hj-z0-9]")
+    no_g = ends("[A-Zabcdefh-z0-9_-]", "[A-Zabcdefh-z0-9]")
+    return rf"^({no_t}|t|{name}\.t|({no_i})t|it|{name}\.it|({no_g})it|git|{name}git|{name}\.)\Z"
+
+
+#: One entry of `repos`: the name of one dir of the host code mirror,
+#: `/srv/agents/code/<name>` (contract 01 §3.7.1, decision CH69 rule 15).
+#: It is not `REPO_FORM`: the mirror keys its repos by name, not by
+#: `owner/name`.
+REPO_NAME: Final = re.compile(_repo_name_pattern())
+
+
+def is_repo_name(entry: str) -> bool:
+    """Whether `entry` names a repo of the mirror. The length check runs
+    first, so the pattern never reads a long text."""
+    return len(entry) <= REPO_NAME_MAX and REPO_NAME.fullmatch(entry) is not None
+
+
 def closest_name(unknown: str, known: tuple[str, ...]) -> str | None:
     """The nearest known field name, for an unknown-field message (contract 01
     §7 rule 1). difflib is imported here because this is its only caller."""
