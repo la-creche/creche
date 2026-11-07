@@ -11,7 +11,7 @@ use std::sync::mpsc::{Receiver, channel};
 use std::thread::spawn;
 use std::time::{Duration, Instant};
 
-use creche_vmm::planes::{Planes, SPLICE_CAP, Upstreams, bind};
+use creche_vmm::planes::{Planes, SPLICE_CAP, Upstreams, bind, fd_need};
 use creche_vmm_store::layout::{RunRoot, Slot, VmRunDir};
 use creche_wire::{HostPort, SessionId};
 use tokio::runtime::{Builder, Runtime};
@@ -270,4 +270,13 @@ fn a_drop_closes_the_listeners_and_the_splices() {
         let error = UnixStream::connect(&path).unwrap_err();
         assert_eq!(error.kind(), ErrorKind::ConnectionRefused);
     }
+}
+
+/// Each of the 64 slots with both rows full: per row the listener and two
+/// streams per splice, 64 × 2 × 129, plus the headroom of 4096. The vmm
+/// raises its soft fd limit to it at start.
+#[test]
+fn the_fd_need_holds_every_full_bridge() {
+    assert_eq!(SPLICE_CAP, 64);
+    assert_eq!(fd_need(), 64 * 2 * 129 + 4096);
 }
