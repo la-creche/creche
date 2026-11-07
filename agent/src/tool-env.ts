@@ -36,10 +36,14 @@ export const FLUE_ENV = [
 export const TOOL_ENV = ["MPLBACKEND"] as const;
 
 /**
- * An image name, and the tool names it becomes. Phase 7 adds the CH46
- * proxy: `CRECHE_TOOL_HTTPS_PROXY` to `HTTPS_PROXY` and `https_proxy`.
+ * An image name, and the tool names it becomes. The coding flavor names
+ * the egress proxy in `CRECHE_TOOL_HTTPS_PROXY`, and tools get it as
+ * `HTTPS_PROXY` and `https_proxy` only (decision CH46 rules 2 and 3): no
+ * `HTTP_PROXY`, no `NO_PROXY`, no proxy CA and no `NODE_USE_ENV_PROXY`.
  */
-export const TOOL_RENAME: Readonly<Record<string, readonly string[]>> = {};
+export const TOOL_RENAME: Readonly<Record<string, readonly string[]>> = {
+  CRECHE_TOOL_HTTPS_PROXY: ["HTTPS_PROXY", "https_proxy"],
+};
 
 /**
  * The names that never reach a tool. npm and pnpm skip devDependencies
