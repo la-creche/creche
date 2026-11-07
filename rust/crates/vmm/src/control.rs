@@ -665,8 +665,11 @@ impl ControlState {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{Read, Write};
+    use std::future::{Future, poll_fn};
+    use std::io::{ErrorKind, Read, Write};
     use std::os::unix::net::UnixListener;
+    use std::pin::pin;
+    use std::task::Poll;
     use std::thread::spawn;
     use std::time::Duration;
 
@@ -767,6 +770,57 @@ mod tests {
                 matches!(&read[..], [(GuestEvent::Synced(_), true)]),
                 "{read:?}"
             );
+        });
+    }
+
+    /// `sync` registers its waiter before it writes `sync`, so a `synced`
+    /// that comes while the write still waits ends the sync (decision
+    /// CH62 rule 23). The test fills the send buffer of the vmm end, so
+    /// the write of `sync` must wait. One poll of the sync then parks on
+    /// that write. The reader takes a `synced` in that state, and the
+    /// guest end drains the buffer only after it.
+    #[test]
+    fn a_synced_during_the_write_ends_the_sync() {
+        paused().block_on(async {
+            let (vmm, guest) = UnixStream::pair().unwrap();
+            let link = ControlLink::accepted(vmm);
+            let filler = [b'x'; 4096];
+            let mut filled = 0;
+            loop {
+                match link.stream.try_write(&filler) {
+                    Ok(written) => filled += written,
+                    Err(error) if error.kind() == ErrorKind::WouldBlock => break,
+                    Err(error) => panic!("the fill: {error}"),
+                }
+            }
+            let (sender, mut events) = link.split();
+            let guest = ControlLink::accepted(guest);
+
+            let mut sync = pin!(sender.sync());
+            let first = poll_fn(|cx| Poll::Ready(sync.as_mut().poll(cx))).await;
+            assert!(first.is_pending());
+            guest.write_raw(SYNCED).await.unwrap();
+            let event = events.next_event().await.unwrap();
+            assert!(matches!(event, GuestEvent::Synced(_)), "{event:?}");
+            assert!(events.synced());
+
+            let line = br#"{"sync":{}}"#.len() + 1;
+            let drain = tokio::spawn(async move {
+                let mut read = Vec::new();
+                let mut buffer = [0_u8; 4096];
+                while read.len() < filled + line {
+                    guest.stream.readable().await.unwrap();
+                    match guest.stream.try_read(&mut buffer) {
+                        Ok(0) => break,
+                        Ok(count) => read.extend_from_slice(&buffer[..count]),
+                        Err(error) if error.kind() == ErrorKind::WouldBlock => {}
+                        Err(error) => panic!("the drain: {error}"),
+                    }
+                }
+                read.split_off(filled)
+            });
+            assert_eq!(sync.await, Ok(()));
+            assert_eq!(drain.await.unwrap(), b"{\"sync\":{}}\n");
         });
     }
 

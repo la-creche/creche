@@ -45,7 +45,11 @@ The second file has the table of the three vmm crates.
   After a failure past `shutdown-vmm` the VM is gone, and the next start
   cold-boots (decision CH19 (5)). The code reads a rename that the sync
   of `snapshots/` cannot make durable as a failed step too, so `take`
-  removes `snapshots/<n>` and returns the sync error.
+  removes `snapshots/<n>` and returns the sync error. It removes
+  `key.json` first, so a remove that fails part way leaves a dir with no
+  key. The key check drops that dir, and the next start cold-boots
+  (decision CH19 (5)). Only a failed remove of the key itself leaves a
+  keyed dir, and that dir holds every synced file.
 - Decision CH44 and item 42 (plan PR V9, `snapshot.rs`, `key.rs`):
   `Snapshotter::take` writes `key.json` into its temp dir with
   `write_key` before the rename, so no snapshot exists without a key. A

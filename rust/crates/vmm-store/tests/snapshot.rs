@@ -4,8 +4,9 @@
 //!
 //! `tests/fixtures/ch-remote-snapshot` and `tests/fixtures/fallocate` stand
 //! in for the programs. `tests/fixtures/fallocate-lock` also locks
-//! `snapshots/` against a read, and `tests/fixtures/fallocate-no-key`
-//! blocks the key write. Each logs to `<root>/calls`, so a test reads
+//! `snapshots/` against a read, `tests/fixtures/fallocate-lock-stuck`
+//! also blocks the remove of the snapshot dir, and
+//! `tests/fixtures/fallocate-no-key` blocks the key write. Each logs to `<root>/calls`, so a test reads
 //! the call order. The last test runs the host `fallocate`, a Linux tool, so it
 //! is Linux only. C16 takes a real snapshot.
 
@@ -16,7 +17,9 @@ use std::time::Duration;
 
 use creche_vmm_store::ch_remote::{ChCommand, ChRemote, ChRemoteError};
 use creche_vmm_store::images::ImageStore;
-use creche_vmm_store::key::{KeyCheck, SnapshotKey, check_cloud_hypervisor, check_newest};
+use creche_vmm_store::key::{
+    DropReason, KeyCheck, SnapshotKey, check_cloud_hypervisor, check_newest,
+};
 use creche_vmm_store::layout::{RunRoot, SessionDir, SnapshotGeneration, StateRoot, VmRunDir};
 use creche_vmm_store::snapshot::{
     MEMORY_RANGES, Snapshot, SnapshotError, SnapshotTimeouts, Snapshotter, generations,
@@ -272,6 +275,49 @@ fn a_failed_sync_after_the_rename_leaves_no_generation() {
     assert_eq!(path, snapshots);
     let left = fs::read_dir(&snapshots).expect("the dir");
     assert_eq!(left.count(), 0);
+}
+
+/// A failed sync and a failed remove leave `snapshots/<n>` with no key,
+/// so it never restores (decisions CH44 rule 4 and CH19 (5)). The dig
+/// stub makes eight dirs of mode 0300 in the temp dir, so the remove
+/// fails at the first that it opens, and locks `snapshots/` against the
+/// sync. In a readdir order that meets `key.json` before every such dir,
+/// the test passes without the key-first remove too. The key check then
+/// drops the dir, and the next start cold-boots. Root ignores the mode,
+/// so the test skips when a probe dir opens.
+#[test]
+fn a_failed_remove_after_a_failed_sync_leaves_no_key() {
+    let temp = Temp::new("stuck");
+    let probe = temp.root.join("probe");
+    fs::create_dir(&probe).expect("the probe");
+    fs::set_permissions(&probe, fs::Permissions::from_mode(0o300)).expect("a mode");
+    if fs::File::open(&probe).is_ok() {
+        return;
+    }
+    let taken = temp.take(&fixture("fallocate-lock-stuck"));
+    let snapshots = temp.session.snapshots();
+    fs::set_permissions(&snapshots, fs::Permissions::from_mode(0o700)).expect("a mode");
+    let dir = temp.session.snapshot(FIRST);
+    for n in 0..8 {
+        let stuck = dir.join(format!("stuck-{n}"));
+        fs::set_permissions(stuck, fs::Permissions::from_mode(0o700)).expect("a mode");
+    }
+    let error = taken.expect_err("a failure");
+    let SnapshotError::Io { path, .. } = error else {
+        panic!("not Io: {error}");
+    };
+    assert_eq!(path, snapshots);
+    assert!(dir.is_dir());
+    assert!(!temp.session.snapshot_key(FIRST).exists());
+    let check = check_newest(&temp.session, &temp.key).expect("the check");
+    assert_eq!(
+        check,
+        KeyCheck::Dropped {
+            generation: FIRST,
+            reason: DropReason::Unreadable,
+        }
+    );
+    assert!(!dir.exists());
 }
 
 /// A failed key write ends the take before the rename, so no snapshot
