@@ -568,10 +568,19 @@ fn clones_for_the_log_test() {
     let mut bytes = Vec::new();
     past.read_to_end(&mut bytes).unwrap();
     assert!(bytes.is_empty());
-    // The drop of `Server` first cuts the held links, so their close
-    // writes no line.
+    // The drop of `Server` cuts the held links. Tokio ends an aborted task
+    // later, so the test waits until each held link reads the end of its
+    // cut before it closes its own side. Else a link task that still runs
+    // reads that close as an empty request and writes a `bad_request` line
+    // (rust job run 42421954640).
     drop(server);
-    drop(held);
+    for mut link in held {
+        let mut bytes = Vec::new();
+        if let Err(error) = link.read_to_end(&mut bytes) {
+            assert_eq!(error.kind(), ErrorKind::ConnectionReset, "{error}");
+        }
+        assert!(bytes.is_empty());
+    }
 }
 
 /// A refused or faulted clone writes one stderr line, and a good clone
