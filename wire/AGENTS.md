@@ -478,10 +478,13 @@ line.
    line, the LF not counted. A reader that gets more bytes than the cap
    and no LF refuses the line. It does not read the rest.
 3. A reader reads each line with the strict reader of its language: the
-   check `strict` of `rust/crates/vmm/src/server/check.rs`,
-   `creche_wire.read` in Python and `read` of `agent/src/wire-read.ts` in
-   TypeScript. It then reads the line as the type that the link expects
-   at that point.
+   check `creche_wire::strict` of `rust/crates/wire/src/strict_json.rs`
+   in Rust, `creche_wire.read` in Python and `read` of
+   `agent/src/wire-read.ts` in TypeScript. It then reads the line as the
+   type that the link expects at that point. Each Rust end of a link, the
+   vmm and guest init, reads each line through `creche_wire::strict`, so
+   the two Rust ends cannot drift (decision CH65 rule 2). The vmm reads the
+   host API body through it too.
 4. On the control link the vmm sends `ControlHello` first, on each new
    link (decisions CH19 rule 2, CH28). Guest init answers with one
    `ControlReady`. After that the vmm sends `ControlCommand` and guest

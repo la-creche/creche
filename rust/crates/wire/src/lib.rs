@@ -16,6 +16,7 @@ mod ports;
 mod routes;
 #[cfg(test)]
 mod schema;
+mod strict_json;
 #[cfg(test)]
 mod vectors;
 
@@ -27,6 +28,7 @@ pub use routes::{
     JsonRoute, ListError, ListRoute, MISMATCH_STATUS, ProtocolMismatch, RouteError, SHARED_CODES,
     Serve, ServeUpgrade, UpgradeRoute,
 };
+pub use strict_json::strict;
 
 /// The length of a session id: 32 hex digits and 4 hyphens.
 const SESSION_ID_LEN: usize = 36;
