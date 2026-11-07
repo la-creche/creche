@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use creche_vmm::image_root::{DIGESTS_CAP, DIGESTS_FILE, DigestsError, KERNEL_KEY, read};
+use creche_vmm::root_owned::OwnerError;
 use creche_vmm::start::Digests;
 use creche_vmm_store::images::ImageStore;
 use creche_vmm_store::layout::StateRoot;
@@ -129,11 +130,17 @@ fn a_symlink_or_a_dir_refuses() {
     let target = root.0.join("elsewhere.json");
     fs::rename(root.digests(), &target).unwrap();
     symlink(&target, root.digests()).unwrap();
-    assert!(matches!(root.fault(), DigestsError::NotRegular));
+    assert!(matches!(
+        root.fault(),
+        DigestsError::Owner(OwnerError::NotRegular)
+    ));
 
     fs::remove_file(root.digests()).unwrap();
     fs::create_dir(root.digests()).unwrap();
-    assert!(matches!(root.fault(), DigestsError::NotRegular));
+    assert!(matches!(
+        root.fault(),
+        DigestsError::Owner(OwnerError::NotRegular)
+    ));
 }
 
 /// A good file that the test user owns refuses, and so the import never
@@ -153,7 +160,7 @@ fn a_file_that_root_does_not_own_refuses() {
     );
     assert!(matches!(
         root.fault(),
-        DigestsError::NotOwned { uid: found } if found == uid
+        DigestsError::Owner(OwnerError::NotOwned { uid: found }) if found == uid
     ));
     let state = StateRoot::new(root.0.join("state")).unwrap();
     let store = ImageStore::new(&state, PathBuf::from("/usr/bin/zstd"));
@@ -186,7 +193,7 @@ fn kvm_a_root_owned_file_that_others_may_write_refuses() {
         root.write_as_root(&good(), mode);
         let fault = root.fault();
         assert!(
-            matches!(fault, DigestsError::Writable { mode: found } if found == mode),
+            matches!(fault, DigestsError::Owner(OwnerError::Writable { mode: found }) if found == mode),
             "{mode:o} {fault:?}"
         );
     }

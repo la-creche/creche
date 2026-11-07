@@ -1,6 +1,6 @@
 //! The program `vmm serve` and its config (plan PR L20). It needs no KVM.
 //! A missing or bad key exits 78 and names the key (owner item 86), and so
-//! does an untrusted image root (decision CH57 rule 1). Each test waits
+//! does an untrusted CH program (decision CH67 rule 1). Each test waits
 //! for the vmm to exit, so no test leaves a vmm behind.
 
 use std::os::unix::fs::MetadataExt;
@@ -125,34 +125,30 @@ fn a_missing_plane_key_exits_78() {
     }
 }
 
-/// A good config on temp paths runs each start step before the image
-/// root: the leftover sweep (`true` lists no scope) and the CH version
-/// check (the fixture). Then the vmm refuses a missing `digests.json`
-/// and one that root does not own, and exits 78 (decision CH57 rule 1,
-/// owner item 86). A test cannot make a root-owned file, so the serve
-/// proof of plan PR L20 runs on the compose step (`src/compose/tests.rs`).
+/// A good config on temp paths runs the leftover sweep (`true` lists no
+/// scope). Then the vmm refuses a missing CH program and one that root
+/// does not own, and exits 78 (decision CH67 rule 1, owner item 86). A
+/// test cannot make a root-owned file, so the serve proof of plan PR L20
+/// runs on the compose step (`src/compose/tests.rs`).
 #[test]
-fn an_untrusted_image_root_exits_78() {
+fn an_untrusted_ch_program_exits_78() {
     // `/tmp`, not `temp_dir`: the run root bounds the socket paths under
     // it (`SOCKET_PATH_MAX`), and the temp dir of macOS is too long.
     let scratch =
         Scratch(Path::new("/tmp").join(format!("creche-vmm-{}-binary", std::process::id())));
     let dir = &scratch.0;
     let _ = std::fs::remove_dir_all(dir);
-    for sub in ["state", "run", "families", "faults", "images"] {
+    for sub in ["state", "run", "families", "faults", "images", "bin"] {
         std::fs::create_dir_all(dir.join(sub)).unwrap();
     }
     let path = |sub: &str| dir.join(sub).to_str().unwrap().to_owned();
-    let ch = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/cloud-hypervisor"
-    );
-    let (state, run, families, faults, images) = (
+    let (state, run, families, faults, images, ch) = (
         path("state"),
         path("run"),
         path("families"),
         path("faults"),
         path("images"),
+        path("bin/cloud-hypervisor"),
     );
     let mut env = GOOD.to_vec();
     for one in &mut env {
@@ -162,7 +158,7 @@ fn an_untrusted_image_root_exits_78() {
             "VMM_FAMILY_ROOT" => &families,
             "VMM_FAULTS_ROOT" => &faults,
             "VMM_IMAGE_ROOT" => &images,
-            "VMM_CH_PROGRAM" => ch,
+            "VMM_CH_PROGRAM" => &ch,
             key if key.ends_with("_GIB") || key.ends_with("_ADDR") => one.1,
             _ => TRUE,
         };
@@ -170,17 +166,25 @@ fn an_untrusted_image_root_exits_78() {
 
     let (output, stderr) = serve(&env);
     assert_eq!(output.status.code(), Some(EX_CONFIG), "{stderr}");
-    assert_eq!(stderr, "vmm: VMM_IMAGE_ROOT: the digests.json is missing\n");
+    assert!(
+        stderr.starts_with("vmm: VMM_CH_PROGRAM: the program cannot be read: "),
+        "{stderr}"
+    );
 
-    std::fs::write(dir.join("images/digests.json"), "{}").unwrap();
-    let uid = std::fs::metadata(dir.join("images/digests.json"))
-        .unwrap()
-        .uid();
+    std::fs::copy(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/cloud-hypervisor"
+        ),
+        &ch,
+    )
+    .unwrap();
+    let uid = std::fs::metadata(&ch).unwrap().uid();
     let (output, stderr) = serve(&env);
     if uid != 0 {
         assert_eq!(output.status.code(), Some(EX_CONFIG), "{stderr}");
         let expected =
-            format!("vmm: VMM_IMAGE_ROOT: the digests.json is owned by uid {uid}, not by root\n");
+            format!("vmm: VMM_CH_PROGRAM: the program is owned by uid {uid}, not by root\n");
         assert_eq!(stderr, expected);
     }
 }

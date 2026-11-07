@@ -42,8 +42,11 @@ other failure exits 1. `vmm serve` raises its soft `RLIMIT_NOFILE` to
    runtime, before any other step (caller duty 8).
 2. In `spawn_blocking`: `leftovers::stop_all` stops each VM scope of an
    earlier vmm before any per-VM bind (decision CH19 (4), PR C3). Then
-   `check_cloud_hypervisor` checks the CH version, and a failed check
-   refuses the start (caller duty 4, gap G10 option A). Then
+   `root_owned::check_program` checks the files of `VMM_CH_PROGRAM` and
+   `VMM_CH_REMOTE_PROGRAM` before any run of either (see "The
+   root-owned files"). Then `check_cloud_hypervisor` checks the CH
+   version, and a failed check refuses the start (caller duty 4, gap G10
+   option A). Then
    `image_root::read` reads `digests.json`, and `ImageSet::import` puts
    each file that it names into the digest store (see "The image root").
    Then `guest_init::write_initramfs` writes the one guest init
@@ -68,29 +71,49 @@ A failed start step, or a server that stops before SIGTERM, exits 78. The
 end of a shutdown exits 0, also when a VM did not stop: the
 `ExecStopPost=` step of the vmm unit kills its scope after the vmm has
 exited (decision CH61 rule 1). The vmm has one start entry, `build`, and
-it always requires root as the owner of `digests.json` and of the guest
-init program (decision CH58 rule 1: no test-only entry stays in
-production code). `build` runs `check` (the leftover sweep, the CH
-version, the image root, the guest init initramfs), then `parts`. `src/compose/tests.rs` runs on temp paths with no KVM:
+it always requires root as the owner of CH, ch-remote, the guest init
+program and `digests.json` (decision CH58 rule 1: no test-only entry
+stays in production code). `build` runs `check` (the leftover sweep, the
+CH and ch-remote files, the CH version, the image root, the guest init
+initramfs), then `parts`. `src/compose/tests.rs` runs on temp paths with
+no KVM:
 
-1. In the rust job, a `digests.json` that the test user owns refuses
-   `build` with `NotOwned`, and no digest reaches the store.
+1. In the rust job, a CH copy that the test user owns refuses `build`
+   with `NotOwned`, and no digest reaches the store.
 2. In the rust job, the serve tests start from `parts` after the checks
    that a test can run: the CH fixture, an import into the store and a
    made initramfs in the store.
    They prove an empty list page, a 412 on a bad protocol header, the
    end of the run at the signal, and a failed run when the bind fails.
-3. The ignored `kvm_` tests run `build` on a root-owned `digests.json`.
-   The job kvm runs them, and its runner may use sudo (decision CH36
-   G20). They prove that each key reaches its part (the `Debug` text of
-   each part gives its program path, because the store crate gives no
-   accessor), and that a missing image refuses the start. The guest
-   init initramfs of a root-owned program is the same across two starts,
-   and a group write bit refuses the start.
+3. The ignored `kvm_` tests run `build` on a root-owned `digests.json`
+   and root-owned copies of the three programs. The job kvm runs them,
+   and its runner may use sudo (decision CH36 G20). They prove that each
+   key reaches its part (the `Debug` text of each part gives its program
+   path, because the store crate gives no accessor), and that a missing
+   image refuses the start. The guest init initramfs of a root-owned
+   program is the same across two starts. A group write bit on any of
+   the three programs refuses the start and names its key, and so does
+   a `digests.json` that the test user owns.
 
 `tests/binary.rs` runs `vmm serve` with no KVM. It proves the exit 78
-of a missing `digests.json` and of one that root does not own. The
-Hyperion proof of the unit (plan PR C13) runs the binary end to end.
+of a missing CH program and of one that root does not own. The Hyperion
+proof of the unit (plan PR C13) runs the binary end to end.
+
+## The root-owned files
+
+`src/root_owned.rs` holds the one check of each file that the vmm trusts
+at its start: `digests.json` (decision CH57 rule 1) and the files of
+`VMM_CH_PROGRAM`, `VMM_CH_REMOTE_PROGRAM` and `VMM_GUEST_INIT_PROGRAM`
+(decisions CH62 rule 17, CH67 rule 1). Each must be a regular file, not
+a symlink, owned by root, with no group or other write bit. `open` looks
+at the path with no follow of a symlink, opens it, and checks the open
+file, so a reader reads the bytes that it checked. `check_program` runs
+the same check on CH and ch-remote, which the vmm runs by their paths. A
+failed check refuses the start, the fault names the key, and
+`src/main.rs` exits 78. The config checks each program key for its form
+only (absolute, no `..`). `tests/root_owned.rs` proves each refusal that
+a test user can make: a missing file, a symlink, a dir and an owner
+other than root.
 
 ## The guest init initramfs
 
@@ -98,9 +121,8 @@ Hyperion proof of the unit (plan PR C13) runs the binary end to end.
 (decisions CH7-6, CH62 rules 17 and 18). `VMM_GUEST_INIT_PROGRAM` names
 the `guest-init` file of the vmm row. The row signature covers it, so
 the vmm and guest init come from one release. `write_initramfs` opens
-the file once and checks the open file, as `image_root::read` checks
-`digests.json`: a regular file, not a symlink, owned by root, and no
-group or other write bit. A failed check refuses the start, and
+the file once with `root_owned::open_program` and reads the open file
+(see "The root-owned files"). A failed check refuses the start, and
 `src/main.rs` exits 78.
 
 The archive holds `dev` (0755), `dev/console` 5:1 (0600) and `/init`
@@ -135,9 +157,9 @@ A fault names the key and never the value, as in `env/AGENTS.md`.
 | `VMM_FAMILY_ROOT` | `${CAREGIVER_STATE_ROOT}/families` | `FamilyRoot` (gap G6) |
 | `VMM_FAULTS_ROOT` | `${CAREGIVER_STATE_ROOT}/faults` | `FaultDir::open` (contract 05 §3.3.1) |
 | `VMM_IMAGE_ROOT` | `${AGENT_INSTALL_ROOT}/disks` | `image_root::read` (decision CH57 rule 1) |
-| `VMM_CH_PROGRAM` | `${AGENT_INSTALL_ROOT}/vmm/bin/cloud-hypervisor` | CH (decision CH7-5) |
-| `VMM_CH_REMOTE_PROGRAM` | `${AGENT_INSTALL_ROOT}/vmm/bin/ch-remote` | `ChRemote` |
-| `VMM_GUEST_INIT_PROGRAM` | `${AGENT_INSTALL_ROOT}/vmm/bin/guest-init` | `guest_init::write_initramfs` (decision CH62 rule 17) |
+| `VMM_CH_PROGRAM` | `${AGENT_INSTALL_ROOT}/vmm/bin/cloud-hypervisor` | CH (decisions CH7-5, CH67 rule 1) |
+| `VMM_CH_REMOTE_PROGRAM` | `${AGENT_INSTALL_ROOT}/vmm/bin/ch-remote` | `ChRemote` (decision CH67 rule 1) |
+| `VMM_GUEST_INIT_PROGRAM` | `${AGENT_INSTALL_ROOT}/vmm/bin/guest-init` | `guest_init::write_initramfs` (decisions CH62 rule 17, CH67 rule 1) |
 | `AGENT_SYSTEMD_RUN_PROGRAM` | existing key | `Launch` (PR C2) |
 | `AGENT_SYSTEMCTL_PROGRAM` | existing key | `leftovers::stop_all` (PR C3) |
 | `VMM_ZSTD_PROGRAM` | `/usr/bin/zstd` | `ImageStore` (gap G9) |
@@ -867,17 +889,12 @@ no guest sync.
     (CH36 G31), on 2026-11-04: `/usr/sbin/mke2fs` (e2fsprogs) and
     `/usr/bin/fallocate` (util-linux) are executable on Ubuntu 24.04.5.
     The G9 check confirmed `/usr/bin/zstd`, and this check saw it again.
-18. CONTRACT-QUESTION (plan PR V5, decision CH62 rule 17): the rule
-    says `VMM_GUEST_INIT_PROGRAM` is "checked as `VMM_CH_PROGRAM` is",
-    and gap Q54-17 option A spells that out as absolute, root-owned and
-    not writable by david. On main the config checks `VMM_CH_PROGRAM`
-    for its form only (absolute, no `..`), and nothing checks its owner.
-    V5 takes the option text for guest init only: `guest_init.rs` refuses
-    a program that is no regular file, a symlink, an owner other than
-    root or a group or other write bit, as `image_root::read` refuses a
-    `digests.json`. `VMM_CH_PROGRAM` and `VMM_CH_REMOTE_PROGRAM` keep the
-    form check. Open for David: should CH and ch-remote get the same
-    owner check, and may the vmm row install `guest-init` as a symlink?
+18. Closed by decision CH67 rule 1: `VMM_GUEST_INIT_PROGRAM`,
+    `VMM_CH_PROGRAM` and `VMM_CH_REMOTE_PROGRAM` each must be a regular
+    file, not a symlink, owned by root, with no group or other write
+    bit, as `digests.json`. `src/root_owned.rs` holds that one check
+    ("The root-owned files"). So the vmm row must install each file as
+    a regular file, not a symlink.
 19. CONTRACT-QUESTION (plan PR V6, decision CH62 rule 20): gap Q54-20
     says the plane keys hold `host:port`, and its defaults are IP
     addresses. A host name needs a resolver at each connect, which no
