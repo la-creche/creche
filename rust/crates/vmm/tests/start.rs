@@ -2356,13 +2356,25 @@ fn the_egress_check_names_1100_1101_and_1102() {
     assert!(test.stopped(1));
 }
 
+/// `creds.json` of the family `chat`, as caregiver writes it.
+const CREDS: &str = r#"{"epoch":3,"litellm_key":"sk-start-key","pep_token":"abababababababababababababababababababababababababababababababab","written_at":"2026-11-06T12:00:00Z"}"#;
+
 /// A pull on host port 1100 does not set `last_use` (decision CH62 rule
 /// 22). The VM pulls 300 ms after its start, and the idle check 100 ms
-/// past the timeout from the start still takes it. The family has no
-/// `creds.json`, so the reply is `creds_missing`.
+/// past the timeout from the start still takes it. The reply is the
+/// `state` of the family of the session in the family root of the config,
+/// so the start hands the server the right family and root.
 #[test]
 fn a_pull_does_not_set_last_use() {
     let test = Test::new("pull-use", |_| {});
+    let family = test.dir.join("families/chat");
+    fs::create_dir_all(family.join("creds")).unwrap();
+    fs::write(family.join("creds/creds.json"), CREDS).unwrap();
+    fs::write(
+        family.join("config/runtime.json"),
+        r#"{"shell":true,"sandbox_tools":["read"],"model_alias":"litellm/test"}"#,
+    )
+    .unwrap();
     assert_eq!(test.start(0), Ok(()));
     let started = Instant::now();
     std::thread::sleep(Duration::from_millis(300));
@@ -2379,7 +2391,8 @@ fn a_pull_does_not_set_last_use() {
         BufReader::new(guest).read_line(&mut reply).unwrap();
         reply
     }));
-    assert_eq!(reply.unwrap(), "{\"creds_missing\":{}}\n");
+    let reply: serde_json::Value = serde_json::from_str(&reply.unwrap()).unwrap();
+    assert_eq!(reply["state"]["creds"]["litellm_key"], "sk-start-key");
     let at = started + IDLE_TIMEOUT + Duration::from_millis(100);
     let slept = test.runtime.block_on(test.hook.sleep_idle(at));
     assert_eq!(slept, [test.rows[0].id.clone()]);

@@ -624,7 +624,9 @@ reply at the cap, the hold and its cap, each typed error on an open
 link, each refused line, the link cap and the drop. `tests/start.rs`
 proves that the listener takes a dial at the launch of a boot and of a
 restore, that 1100 is in the bound set of the deny check, and that a
-pull does not set `last_use`.
+pull does not set `last_use`. That pull gets the `state` of the family
+of the session in the family root of the config, so the start hands the
+server the right family and root.
 
 ## The slots
 
