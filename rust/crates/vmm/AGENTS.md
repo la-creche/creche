@@ -567,8 +567,8 @@ table, and the start boots it again. A cold boot runs these steps:
    the listeners of host ports 1101 and 1102 (see "The plane bridges"),
    `family_state::bind` of the listener of host port 1100 (see "The
    family-state reply"), `mirror::bind` of the listener of host port
-   1103 when `repos.json` of the family lists a repo (see "The git
-   mirror"), `proxy::bind` of the listener of host port 1104
+   1103 when `repos.json` of the family lists a repo or does not read
+   (see "The git mirror"), `proxy::bind` of the listener of host port 1104
    when `egress.json` of the family lists a host (see "The egress
    proxy"), the store check of
    the kernel, the guest init initramfs and the root disk of the flavor
@@ -802,9 +802,9 @@ decisions CH3, CH5f, CH10-10, CH46 rule 4, CH69 rules 13 to 20, 24 and
 (decision CH46 rule 4), and CH connects each dial to `vsock.sock_1103`
 (decision CH24). The vmm binds it only for a family whose `repos.json`
 lists a repo (decision CH69 rule 13, which amends CH8-1, CH14 and
-section 3.2.3 as CH49 rule 3 amended them for 1104). An absent file, an
-empty list or a file that does not read binds no listener (Known gap
-29).
+section 3.2.3 as CH49 rule 3 amended them for 1104), or is present and
+does not read (decision CH73 rule 1, Known gap 29). An absent file or
+an empty list binds no listener.
 
 1. `mirror::bind` binds the listener beside the plane listeners, with
    their lifecycle: after `link_vm` and `remove_stale`, before CH
@@ -873,7 +873,11 @@ need. Its test `a_bad_clone_logs_one_line_and_a_good_clone_none` runs
 its own binary as a child and reads the real stderr: no line for a good
 clone, and one line each for a repo not listed, a repo not in the
 mirror, a missing mirror root and a link past the cap (rule 7). `tests/start.rs` proves the bound set with a clone list, with both
-lists, with an absent, empty or bad list, and the bind at a restore.
+lists, with an absent or empty list, with a bad or zero-byte list, and
+the bind at a restore. Its test
+`a_clone_on_a_bad_clone_list_gets_denied_and_one_line` runs its own
+binary as a child: a clone on a list that does not read gets `DENIED`
+and one stderr line that names `not_valid` (decision CH73 rule 1).
 
 ## The slots
 
@@ -1298,14 +1302,14 @@ job kvm runs it.
     links per VM, and its fd need (32832) adds to the raise, so the raise
     is 102720. The plan estimate (20544) counted 5 fds per link. The
     spawn of `upload-pack` holds 7 at once.
-29. CONTRACT-QUESTION: no row decides a `repos.json` that is present and
-    does not read. Decision CH72 rule 3 binds 1104 for such an
-    `egress.json`, so the log names `not_valid`. The mirror keeps no log,
-    and decision CH69 rule 13 binds 1103 only for a non-empty list, so
-    the vmm takes the narrowest reading: such a file binds no 1103
-    (`binds_mirror` in `src/start.rs`). Each clone would be refused
-    anyway. Byte cap: `REPOS_CAP` of `creche-vmm-confine` is the second
-    CONTRACT-QUESTION of plan PR M1.
+29. Closed by decision CH73 rule 1: the vmm binds 1103 for a family whose
+    `repos.json` is present, also when it does not read, so each clone is
+    refused with `DENIED` and one stderr line that names `not_valid`
+    (decision CH69 rule 24). An absent file or an empty list binds no
+    1103 (decision CH69 rule 13). A zero-byte `repos.json` is present and
+    does not read, so it binds 1103 (`binds_mirror` in `src/start.rs`).
+    Decision CH73 rule 2 sets `REPOS_CAP` of `creche-vmm-confine` to 4
+    KiB.
 
 ## Caller duties
 

@@ -18,7 +18,8 @@
 //!    decision CH19 (4)), the plane listeners bind (plan PR V6, decision
 //!    CH6-2) and so does the family-state listener (plan PR V8, decision
 //!    CH5a). The mirror listener binds when `repos.json` of the family
-//!    lists a repo (plan PR M1, decision CH69 rule 13), and the egress
+//!    lists a repo or does not read (plan PR M1, decisions CH69 rule 13,
+//!    CH73 rule 1), and the egress
 //!    proxy listener binds when `egress.json` of the family lists a host
 //!    (plan PR E2, decision CH49 rule 3). Then the kernel, the initramfs and the root disk
 //!    pass the store check (PR D6, decision CH44 rule 2), the session disk exists (PR D7, decision
@@ -1480,7 +1481,8 @@ struct Booted<P> {
     /// The family-state listener, bound before CH started.
     family_state: family_state::Bound,
     /// The mirror listener, bound before CH started for a family whose
-    /// clone list holds a repo (decision CH69 rule 13).
+    /// clone list holds a repo or does not read (decisions CH69 rule 13,
+    /// CH73 rule 1).
     mirror: Option<mirror::Bound>,
     /// The egress proxy listener, bound before CH started for a family
     /// whose list holds a host (decision CH49 rule 3).
@@ -1517,7 +1519,8 @@ fn launch<L: Launcher>(
     let family_state =
         family_state::bind(&run).map_err(|error| format!("{error}: {}", error.source))?;
     // Plan PR M1: the mirror listener has the same lifecycle, for a family
-    // whose clone list holds a repo (decision CH69 rule 13).
+    // whose clone list holds a repo or does not read (decisions CH69 rule
+    // 13, CH73 rule 1).
     let mirror = if binds_mirror(config, family) {
         let bound = mirror::bind(&run).map_err(|error| format!("{error}: {}", error.source))?;
         Some(bound)
@@ -1610,18 +1613,16 @@ fn launch<L: Launcher>(
 }
 
 /// Whether the VM of `family` gets the mirror listener. It blocks. A clone
-/// list that holds a repo binds 1103 (decision CH69 rule 13). An absent
-/// file or an empty list binds none.
-// CONTRACT-QUESTION: no row decides a `repos.json` that is present and
-// does not read. Decision CH72 rule 3 binds 1104 for such an
-// `egress.json`, so the log names `not_valid`. The mirror keeps no log,
-// and rule 13 binds 1103 "only for a non-empty repos", so such a file
-// binds none: the narrowest reading. Each clone would be refused anyway.
+/// list that holds a repo binds 1103 (decision CH69 rule 13). A present
+/// `repos.json` that does not read binds it too, so each clone is refused
+/// with `mirror::DENIED` and one stderr line that names `not_valid`
+/// (decision CH73 rule 1). An absent file or an empty list binds no 1103.
+/// A zero-byte file does not read, so it binds 1103 (CH73 rule 1).
 fn binds_mirror(config: &StartConfig, family: &FamilyName) -> bool {
-    config
-        .families
-        .read_repos(family)
-        .is_ok_and(|list| !list.repos.names().is_empty())
+    match config.families.read_repos(family) {
+        Ok(list) => !list.repos.names().is_empty(),
+        Err(_) => true,
+    }
 }
 
 /// Whether the VM of `family` gets the egress proxy listener. It blocks.
@@ -1772,7 +1773,8 @@ impl<L: Launcher, A: ChApi> StartVm for ColdBoot<L, A> {
         // exec, so a check after `ControlReady` proves the same thing.
         // The bound set is the family-state port 1100 (plan PR V8), the
         // plane ports 1101 and 1102 (plan PR V6), 1103 for a family whose
-        // clone list holds a repo (plan PR M1, decision CH69 rule 13), and
+        // clone list holds a repo or does not read (plan PR M1, decisions
+        // CH69 rule 13, CH73 rule 1), and
         // 1104 for a family whose list holds a host or does not read (plan
         // PR E2, decisions CH49 rule 3, CH72 rule 3).
         let (ch, run) = (self.config.ch.clone(), pending.run.clone());
