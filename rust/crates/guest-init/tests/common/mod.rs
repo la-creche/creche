@@ -196,6 +196,12 @@ pub enum Standin {
     /// starts a stranger that opens the link too, and exits on the stop
     /// line.
     Turn,
+    /// Mode `stream`: the stand-in opens the local link and writes turns
+    /// on it with no pause. It never reads the stop line.
+    Stream,
+    /// Mode `close-once`: the first start opens the local link, closes it
+    /// and stays up. Each later start stays up.
+    CloseOnce,
 }
 
 /// The mode file of the stand-in on the root disk.
@@ -228,6 +234,8 @@ pub fn vm_with(work: &Path, env: &[u8], standin: Standin) -> Command {
         Standin::ExitsOnce => Some("exit-once\n"),
         Standin::Holder => Some("holder\n"),
         Standin::Turn => Some("turn\n"),
+        Standin::Stream => Some("stream\n"),
+        Standin::CloseOnce => Some("close-once\n"),
     };
     if let Some(mode) = mode {
         let file = tree.join(STANDIN_MODE);
@@ -327,6 +335,16 @@ impl Link {
     pub fn event(&mut self) -> GuestEvent {
         let line = self.line().expect("no event: the link ended");
         serde_json::from_str(&line).unwrap_or_else(|error| panic!("{line:?}: {error}"))
+    }
+
+    /// Reads each line until the end of the link and returns the last
+    /// one. A read that waits `BOOT` for a line panics.
+    pub fn last_line(mut self) -> Option<String> {
+        let mut last = None;
+        while let Some(line) = self.line() {
+            last = Some(line);
+        }
+        last
     }
 
     /// Whether no byte comes within `wait`.

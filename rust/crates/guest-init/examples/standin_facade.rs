@@ -28,7 +28,15 @@
 //!    for guest init to close it. Then it waits for the stop line, and it
 //!    exits with status 0 on it (decision CH62 rule 9). A fault exits
 //!    with status 4.
+//! 6. In mode `stream` it opens the local link and writes turn starts
+//!    and turn ends on it with no pause, until a signal ends it. It never
+//!    reads the stop line, so the stop waits its full `FACADE_STOP_WAIT`.
+//! 7. In mode `close-once`, a start that finds no marker on the session
+//!    disk writes the marker, opens the local link, closes it and stays
+//!    up. Guest init then kills it (decision CH32 rule 7). Each other
+//!    start stays up.
 
+use std::convert::Infallible;
 use std::fs::{self, File};
 use std::io::{self, BufRead as _, BufReader, Read as _, Write as _};
 use std::os::unix::net::UnixStream;
@@ -43,7 +51,8 @@ use creche_wire::{ControlCommand, TurnEnd, TurnEvent, TurnStart, UnixMillis};
 /// The mode file of the test root disk.
 const MODE: &str = "/etc/creche-standin/mode";
 
-/// The marker of mode `exit-once`, on the session disk.
+/// The marker of the modes `exit-once` and `close-once`, on the session
+/// disk.
 const MARKER: &str = "standin-exited-once";
 
 /// The exit status of the first start in mode `exit-once`.
@@ -132,6 +141,21 @@ fn facade() -> ExitCode {
                 ExitCode::from(TURN_FAILED)
             });
         }
+        Ok(mode) if mode.trim_end() == "stream" => {
+            let Err(error) = stream();
+            say(&format!("stream failed: {error}"));
+            return ExitCode::from(TURN_FAILED);
+        }
+        Ok(mode) if mode.trim_end() == "close-once" => {
+            let marker = Path::new(SESSION_DISK_MOUNT).join(MARKER);
+            if !marker.exists() {
+                if let Err(error) = close_once(&marker) {
+                    say(&format!("close-once failed: {error}"));
+                    return ExitCode::from(TURN_FAILED);
+                }
+                return stay_up();
+            }
+        }
         Ok(mode) => {
             say(&format!("unknown mode {:?}", mode.trim_end()));
             return ExitCode::from(BAD_MODE);
@@ -202,10 +226,8 @@ fn say(text: &str) {
     let _ = writeln!(io::stderr(), "standin: {text}");
 }
 
-/// Mode `turn`: the turn, the stranger, then the wait for the stop line.
-fn turn() -> io::Result<ExitCode> {
-    let mut link = UnixStream::connect(LOCAL_LINK_SOCKET)?;
-    say("link open");
+/// The lines of one turn: a turn start, then the turn end of the tests.
+fn turn_lines() -> io::Result<Vec<u8>> {
     let end = TurnEnd {
         title: TURN_TITLE
             .parse()
@@ -213,11 +235,19 @@ fn turn() -> io::Result<ExitCode> {
         updated_at: UnixMillis::try_from(TURN_UPDATED_AT)
             .map_err(|error| io::Error::other(format!("{error}")))?,
     };
+    let mut lines = Vec::new();
     for event in [TurnEvent::Start(TurnStart {}), TurnEvent::End(end)] {
-        let mut line = serde_json::to_vec(&event)?;
-        line.push(b'\n');
-        link.write_all(&line)?;
+        serde_json::to_writer(&mut lines, &event)?;
+        lines.push(b'\n');
     }
+    Ok(lines)
+}
+
+/// Mode `turn`: the turn, the stranger, then the wait for the stop line.
+fn turn() -> io::Result<ExitCode> {
+    let mut link = UnixStream::connect(LOCAL_LINK_SOCKET)?;
+    say("link open");
+    link.write_all(&turn_lines()?)?;
     say("turn sent");
 
     let status = Command::new(std::env::current_exe()?)
@@ -264,4 +294,24 @@ fn stranger() -> ExitCode {
             ExitCode::from(TURN_FAILED)
         }
     }
+}
+
+/// Mode `stream`: turns on the local link with no pause. It returns only
+/// the error that ends the stream.
+fn stream() -> io::Result<Infallible> {
+    let mut link = UnixStream::connect(LOCAL_LINK_SOCKET)?;
+    say("link open");
+    let lines = turn_lines()?;
+    loop {
+        link.write_all(&lines)?;
+    }
+}
+
+/// The first start of mode `close-once`: the marker, then a local link
+/// that closes at once.
+fn close_once(marker: &Path) -> io::Result<()> {
+    fs::write(marker, b"")?;
+    drop(UnixStream::connect(LOCAL_LINK_SOCKET)?);
+    say("link closed");
+    Ok(())
 }

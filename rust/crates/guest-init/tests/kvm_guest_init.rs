@@ -16,6 +16,7 @@ mod common;
 
 use std::fs;
 use std::num::NonZeroU32;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use common::{
@@ -530,6 +531,96 @@ fn kvm_guest_init_stops_the_facade_through_the_local_link() {
             &format!("guest-init: facade pid {pid} sent SIGTERM")
         ),
         "the stop sent SIGTERM. Serial:\n{log}"
+    );
+
+    drop(vm);
+    fs::remove_dir_all(&work).unwrap();
+}
+
+/// A facade that never reads the stop line and streams turns on its
+/// local link keeps the inbox of guest init full. The stop still sends
+/// SIGTERM when `FACADE_STOP_WAIT` (25 s) ends, because the control loop
+/// checks its timer before it reads the inbox (decision CH62 rule 9).
+#[test]
+#[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
+fn kvm_guest_init_ends_the_stop_wait_under_a_stream_of_turns() {
+    let (work, mut vm) = booted_with("kvm-guest-init-stream", Standin::Stream);
+    let serial = work.join("serial.log");
+    let mut link = dial(&work, GuestPort::Control);
+    let pid = starting(&hello(&mut link, now()));
+    assert_eq!(link.event(), GuestEvent::Facade(running(pid, false, None)));
+
+    let sent = Instant::now();
+    link.send(&ControlCommand::Stop(ControlStop {}));
+    // The guest writes each turn on 1200, so the link is read to its end
+    // in a thread, and the loop never blocks on a full vsock buffer.
+    let drained = thread::spawn(move || link.last_line());
+    let sigterm = format!("guest-init: facade pid {pid} sent SIGTERM");
+    wait_for_line(&mut vm, &serial, &sigterm);
+    let waited = sent.elapsed();
+    assert!(
+        waited >= Duration::from_secs(25) && waited < Duration::from_secs(30),
+        "SIGTERM came {waited:?} after the stop"
+    );
+    let status = wait_for_exit(&mut vm, &serial);
+    let log = lines(&serial).join("\n");
+    for line in [
+        "guest-init: local link 1 stop".to_owned(),
+        format!("guest-init: facade pid {pid} exited: signal 15"),
+        "guest-init: stop done".to_owned(),
+    ] {
+        assert!(
+            logged(&serial, &line),
+            "no {line} (CH {status}). Serial:\n{log}"
+        );
+    }
+    let last = drained.join().unwrap().expect("no line on 1200");
+    assert!(
+        matches!(
+            serde_json::from_str(&last),
+            Ok(GuestEvent::Facade(FacadeState::Exited(_)))
+        ),
+        "the last line on 1200 is {last:?}"
+    );
+
+    drop(vm);
+    fs::remove_dir_all(&work).unwrap();
+}
+
+/// A local link that closes outside a stop kills the facade group with
+/// SIGKILL, and the restart follows: `running`, `exited` 1, then
+/// `starting` 2 on 1200 (decisions CH32 rule 7, CH62 rule 8).
+#[test]
+#[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
+fn kvm_guest_init_kills_the_facade_when_its_local_link_closes() {
+    let (work, mut vm) = booted_with("kvm-guest-init-close", Standin::CloseOnce);
+    let serial = work.join("serial.log");
+    let mut link = dial(&work, GuestPort::Control);
+    let pid = starting(&hello(&mut link, now()));
+
+    assert_eq!(link.event(), GuestEvent::Facade(running(pid, false, None)));
+    assert_eq!(link.event(), exited(1));
+    let second = match link.event() {
+        GuestEvent::Facade(FacadeState::Starting(second)) => second,
+        other => panic!("no second start: {other:?}"),
+    };
+    assert_eq!(second.starts.get(), 2);
+    assert_ne!(second.pid, pid, "the second start has the first pid");
+    for line in [
+        "standin: link closed".to_owned(),
+        format!("guest-init: facade pid {pid} sent SIGKILL"),
+        format!("guest-init: facade pid {pid} exited: signal 9"),
+        format!("guest-init: facade pid {} started", second.pid),
+        "standin: up".to_owned(),
+    ] {
+        wait_for_line(&mut vm, &serial, &line);
+    }
+    assert!(
+        !logged(
+            &serial,
+            &format!("guest-init: facade pid {pid} sent SIGTERM")
+        ),
+        "the close sent SIGTERM"
     );
 
     drop(vm);

@@ -141,7 +141,10 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
   and that child keeps a file of the session disk open for writing.
   With the mode `turn`, it opens the local link, sends one turn start
   and one turn end, starts a child of itself that opens the link too,
-  and exits with status 0 on the stop line. Each other start stays up
+  and exits with status 0 on the stop line. With the mode `stream`, it
+  opens the local link, writes turns on it with no pause and never
+  reads the stop line. With the mode `close-once`, its first start opens
+  the local link, closes it and stays up. Each other start stays up
   until a signal ends it.
 
 ## Tests
