@@ -154,6 +154,13 @@ Dockerfile only, not the built env with the parent image's names.
 
 ## Known gaps
 
+- CH49 rule 1 asks a test to place each name of each built flavor's env
+  in one of the four lists. `test/tool-env.test.ts` reads only the `ENV`
+  lines of `playpen/Dockerfile`. The built env in `/etc/creche/env` also
+  holds the names of the parent image, such as `NODE_VERSION` and
+  `YARN_VERSION`, and no test places them. `playpen-env-check` holds the
+  file equal to the image config only. So a new parent-image name passes
+  CI with no list, once it joins a `creche-env-write` list.
 - The file backend fails a prompt only for `creds.json`. For `config/`
   it keeps the last good config and logs one stderr line (decision CH53
   rule 2). On sbx a config edit leaves the mount of `config/` dead until

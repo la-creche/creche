@@ -4,8 +4,9 @@
 //
 // This test reads the `ENV` lines of `playpen/Dockerfile` only. The built
 // env also holds the names of the parent image, such as `NODE_VERSION`.
-// No build writes that env to a file yet. Phase 4 PR 1 adds
-// `/etc/creche/env` and extends this test to read it.
+// The build writes that env to `/etc/creche/env`. No test reads that file
+// to place each of its names in a list yet (CH49 rule 1, see Known gaps in
+// `agent/AGENTS.md`).
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -17,6 +18,7 @@ import { FACADE_ENV, FLUE_ENV, readToolEnv, TOOL_ENV, TOOL_RENAME } from "../src
 const ROOT = join(import.meta.dirname, "..");
 const DOCKERFILE = join(ROOT, "..", "playpen", "Dockerfile");
 const FLUE_DIST = join(ROOT, "node_modules", "@flue", "runtime", "dist", "node", "index.mjs");
+const GUEST_VECTORS = join(ROOT, "..", "rust", "crates", "wire", "vectors", "guest.json");
 
 /** The stages that ship, and the build-only stages of `bin/tests/test_playpen_image.py`. */
 const SHIPPED = ["agent-sandbox", "agent-sandbox-python", "agent-sandbox-coding"];
@@ -30,22 +32,25 @@ const COMMENT_RE = /^\s*#/;
 const CONTINUED_RE = /\\\s*$/;
 const PAIR_RE = /([A-Za-z_][A-Za-z0-9_]*)=("(?:[^"\\]|\\.)*"|'[^']*'|\S*)\s*/y;
 
-type EnvLine = { readonly ok: true; readonly names: readonly string[] } | { readonly ok: false };
+/** Each name of an `ENV` line, with its value as written: quotes stay. */
+type EnvLine =
+  | { readonly ok: true; readonly pairs: readonly (readonly [string, string])[] }
+  | { readonly ok: false };
 
 /** `ENV K=V` or `ENV K=V K2=V2`. The legacy `ENV K V` form is a refusal. */
-function envNames(rest: string): EnvLine {
-  const names: string[] = [];
+function envPairs(rest: string): EnvLine {
+  const pairs: [string, string][] = [];
   PAIR_RE.lastIndex = 0;
   while (PAIR_RE.lastIndex < rest.length) {
     const match = PAIR_RE.exec(rest);
-    if (match?.[1] === undefined) {
+    if (match?.[1] === undefined || match[2] === undefined) {
       return { ok: false };
     }
 
-    names.push(match[1]);
+    pairs.push([match[1], match[2]]);
   }
 
-  return names.length > 0 ? { ok: true, names } : { ok: false };
+  return pairs.length > 0 ? { ok: true, pairs } : { ok: false };
 }
 
 /**
@@ -75,14 +80,14 @@ function instructions(text: string): { readonly line: string; readonly number: n
   return joined === null ? out : [...out, joined];
 }
 
-/** Each stage's `ENV` names, its parent's included when the parent is a stage. */
-function stageEnv(text: string): Map<string, Set<string>> {
-  const stages = new Map<string, Set<string>>();
-  let current: Set<string> | null = null;
+/** Each stage's `ENV` names and values, its parent's included when the parent is a stage. */
+function stageEnv(text: string): Map<string, Map<string, string>> {
+  const stages = new Map<string, Map<string, string>>();
+  let current: Map<string, string> | null = null;
   for (const { line, number } of instructions(text)) {
     const from = STAGE_RE.exec(line);
     if (from?.[1] !== undefined && from[2] !== undefined) {
-      current = new Set(stages.get(from[1]) ?? []);
+      current = new Map(stages.get(from[1]) ?? []);
       stages.set(from[2], current);
       continue;
     }
@@ -93,12 +98,12 @@ function stageEnv(text: string): Map<string, Set<string>> {
 
     const env = ENV_RE.exec(line);
     if (env?.[1] !== undefined && current !== null) {
-      const read = envNames(env[1].trim());
+      const read = envPairs(env[1].trim());
       if (!read.ok) {
         throw new Error(`Dockerfile line ${number}: write ENV K=V, not the legacy ENV K V form`);
       }
 
-      read.names.forEach((name) => current?.add(name));
+      read.pairs.forEach(([name, value]) => current?.set(name, value));
     }
   }
 
@@ -155,7 +160,7 @@ describe("the tool env lists", () => {
     const stages = stageEnv(readFileSync(DOCKERFILE, "utf8"));
     expect([...stages.keys()].sort()).toEqual([...SHIPPED, ...BUILD_ONLY].sort());
 
-    const names = new Set(SHIPPED.flatMap((stage) => [...(stages.get(stage) ?? [])]));
+    const names = new Set(SHIPPED.flatMap((stage) => [...(stages.get(stage)?.keys() ?? [])]));
     expect([...names]).toEqual(
       expect.arrayContaining(["NODE_ENV", "HOME", "TMPDIR", "PATH", "MPLBACKEND", "MPLCONFIGDIR"]),
     );
@@ -164,25 +169,38 @@ describe("the tool env lists", () => {
       expect(homes, name).toHaveLength(1);
     }
   });
+
+  it("the coding flavor proxy names the guest egress port", () => {
+    const coding = stageEnv(readFileSync(DOCKERFILE, "utf8")).get("agent-sandbox-coding");
+    const port = (JSON.parse(readFileSync(GUEST_VECTORS, "utf8")) as Record<string, unknown>)["egress_proxy_port"];
+
+    expect(typeof port).toBe("number");
+    expect(coding?.get("CRECHE_TOOL_HTTPS_PROXY")).toBe(`http://127.0.0.1:${String(port)}`);
+  });
 });
 
 describe("the Dockerfile ENV reader", () => {
   it("reads one pair, several pairs, a quoted value and a parent stage", () => {
     const text = 'FROM x AS a\nENV A=1\nFROM a AS b\nENV B="p q" C=3 \\\n  D=4\n';
 
-    expect([...(stageEnv(text).get("b") ?? [])]).toEqual(["A", "B", "C", "D"]);
+    expect([...(stageEnv(text).get("b") ?? [])]).toEqual([
+      ["A", "1"],
+      ["B", '"p q"'],
+      ["C", "3"],
+      ["D", "4"],
+    ]);
   });
 
   it("reads either case, a leading space, a tab and a FROM flag", () => {
     const text = "from --platform=linux/amd64 x as a\n  env A=1\nENV\tB=2\n";
 
-    expect([...(stageEnv(text).get("a") ?? [])]).toEqual(["A", "B"]);
+    expect([...(stageEnv(text).get("a")?.keys() ?? [])]).toEqual(["A", "B"]);
   });
 
   it("drops a comment line before it joins a continued line", () => {
     const text = "FROM x AS a\n# a comment \\\nENV A=1\nRUN true \\\n  # inside\n  && true\nENV B=2\n";
 
-    expect([...(stageEnv(text).get("a") ?? [])]).toEqual(["A", "B"]);
+    expect([...(stageEnv(text).get("a")?.keys() ?? [])]).toEqual(["A", "B"]);
   });
 
   it("refuses a FROM line with no stage name", () => {
@@ -211,5 +229,13 @@ describe("readToolEnv", () => {
       https_proxy: "http://10.0.0.1:3128",
     });
     expect(readToolEnv({}, TOOL_ENV, rename)).toEqual({});
+  });
+
+  it("the proxy rename gives tools exactly HTTPS_PROXY and https_proxy", () => {
+    const proxy = "http://127.0.0.1:3128";
+    const env = { CRECHE_TOOL_HTTPS_PROXY: proxy, HTTP_PROXY: proxy, NO_PROXY: "*", NODE_USE_ENV_PROXY: "1" };
+
+    expect(TOOL_RENAME).toEqual({ CRECHE_TOOL_HTTPS_PROXY: ["HTTPS_PROXY", "https_proxy"] });
+    expect(readToolEnv(env)).toEqual({ HTTPS_PROXY: proxy, https_proxy: proxy });
   });
 });

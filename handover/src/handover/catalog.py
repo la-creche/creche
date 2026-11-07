@@ -124,7 +124,8 @@ class CatalogRow:
 #: `noticeboard` at `noticeboard/` and `playpen` at `playpen/`.
 #:
 #: `bundles` follows each build through `uv.lock`: `attendance` installs the
-#: doors, and `agent-door-trigger` brings `agent-family`. `playpen`'s build
+#: doors, `agent-door-trigger` brings `agent-family`, and `caregiver`
+#: brings `agent-family` and `creche-wire`. `playpen`'s build
 #: is an image build, and `playpen/Dockerfile` copies `agent/` and
 #: `facade/` into the image. Its test venv resolves the workspace from
 #: `pyproject.toml` and `uv.lock`, so the row bundles those two files: the
@@ -148,7 +149,7 @@ CATALOG: tuple[CatalogRow, ...] = (
         Releases.YES,
         ("door-acp", "door-trigger", "family"),
     ),
-    CatalogRow("caregiver", Repo.CRECHE, "caregiver", Kind.VENV, Releases.YES, ("family",)),
+    CatalogRow("caregiver", Repo.CRECHE, "caregiver", Kind.VENV, Releases.YES, ("family", "wire")),
     CatalogRow("noticeboard", Repo.CRECHE, "noticeboard", Kind.VENV, Releases.YES, ("family",)),
     CatalogRow(
         "playpen",
