@@ -20,14 +20,12 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use creche_wire::{
     CONTROL_LINE_CAP, ControlCommand, ControlHello, ControlReady, ControlStop, FacadeState,
-    GuestEvent, GuestPort, SessionId, TurnEnd, TurnEvent, UnixMillis,
+    GuestEvent, GuestPort, SessionId, TurnEnd, TurnEvent, UnixMillis, strict,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::net::UnixStream;
 use tokio::time::{sleep, timeout};
-
-use crate::server::strict;
 
 /// How long an open of the control link may take, from the first dial to
 /// `ControlReady` (decision CH36 G26: 10 s). A boot takes about 0.3 s, and

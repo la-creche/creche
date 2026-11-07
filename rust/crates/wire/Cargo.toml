@@ -9,9 +9,10 @@ publish.workspace = true
 
 [dependencies]
 serde.workspace = true
+# The strict JSON check (`strict`, decision CH65 rule 2) reads with it.
+serde_json.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true
 schemars.workspace = true
 
 [lints]
