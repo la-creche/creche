@@ -24,6 +24,7 @@ from caregiver.driver import DriverError, FakeDriver, SandboxSpec
 from caregiver.egress import EgressConfig, litellm_endpoint, pep_endpoint
 from caregiver.lan import Port, url
 from caregiver.litellm_keys import FakeLiteLLMKeys, HttpLiteLLMKeys, LiteLLMError, Spend
+from caregiver.reach_files import EGRESS_CAP
 from caregiver.reconcile import (
     DESTROY_STEP,
     SWITCH_STEP,
@@ -352,6 +353,92 @@ def test_an_egress_edit_moves_the_rows_a_destroy_will_remove(fleet: Fleet) -> No
     fleet.write(egress=[DOCS])
     fleet.run()
     assert fleet.allow_of("chat-s1") == (*planes(), DOCS)
+
+
+def test_a_pass_writes_the_egress_file(fleet: Fleet) -> None:
+    """Contract 01 §6.1.1, decision CH69 rule 6: every pass, beside the
+    sbx egress step, which stays until the cut."""
+    fleet.run()
+    egress_path = paths.egress_path(fleet.state_root, FAMILY)
+    assert json.loads(egress_path.read_bytes()) == {"hosts": []}
+    fleet.write(egress=[DOCS])
+    fleet.run()
+    assert json.loads(egress_path.read_bytes()) == {
+        "hosts": [{"host": "docs.python.org", "port": 443}]
+    }
+
+
+def test_a_pass_writes_the_egress_file_before_the_create(fleet: Fleet) -> None:
+    """Decision CH69 rule 6: the file is on disk before the sandbox step,
+    so a cut pass or a failed create still leaves the list of its
+    revision."""
+    seen: list[bool] = []
+    egress_path = paths.egress_path(fleet.state_root, FAMILY)
+
+    class CheckingDriver(FakeDriver):
+        def create(self, spec: SandboxSpec) -> None:
+            seen.append(egress_path.exists())
+            super().create(spec)
+
+    fleet.driver = CheckingDriver()
+    fleet.run()
+    assert seen == [True]
+
+
+def test_an_invalid_edit_keeps_the_egress_file(fleet: Fleet) -> None:
+    """Invariant 19: the last good definition keeps serving."""
+    fleet.write(egress=[DOCS])
+    fleet.run()
+    egress_path = paths.egress_path(fleet.state_root, FAMILY)
+    before = egress_path.read_bytes()
+    fleet.write(egress=["*.python.org"])
+    fleet.run()
+    assert egress_path.read_bytes() == before
+
+
+def landed_bytes(fleet: Fleet) -> dict[Path, bytes]:
+    """Every file a later step of the pass writes: the config mount, the
+    fragments of `policy.toml`, the chaperone directory and `egress.json`."""
+    roots = (
+        paths.config_dir(fleet.state_root, FAMILY),
+        paths.policy_fragments_dir(fleet.state_root),
+        fake_policy(fleet.state_root).target.config_dir,
+    )
+    found = {one: one.read_bytes() for root in roots for one in root.rglob("*") if one.is_file()}
+    egress_path = paths.egress_path(fleet.state_root, FAMILY)
+    found[egress_path] = egress_path.read_bytes()
+    return found
+
+
+def test_an_egress_list_over_the_cap_is_refused(fleet: Fleet) -> None:
+    """Decision CH71: the vmm would allow nothing for a file over its cap,
+    so the revision reads `invalid` with one error that names the cap.
+    The refusal comes before any write, so the last good files stay byte
+    for byte and no step runs (invariant 19). The revision also moves the
+    model and grants a tool. Each one lands in a later step: the key
+    update, `runtime.json` and the table of `policy.toml`. A refusal placed
+    after any of those steps lets that change land, and this test fails."""
+    write_server(fleet.registry_root, ("search",))
+    fleet.write(egress=[DOCS])
+    first = fleet.run()
+    before = landed_bytes(fleet)
+    budgets = dict(fleet.litellm.budgets)
+    fleet.forget_calls()
+    fleet.write(
+        egress=[f"h{index:05}.example.com" for index in range(1000)],
+        model={"router": "agent-fast", "budget_usd_per_day": 5},
+        tools={SERVER: ["search"]},
+    )
+    result = fleet.run()
+    assert result.status.state is FamilyState.INVALID
+    assert result.status.applied_rev == first.status.registry_rev
+    assert result.status.validation.error_count == 1
+    first_error = result.status.validation.first_error
+    assert first_error is not None
+    assert first_error.endswith(f"the cap is {EGRESS_CAP}")
+    assert landed_bytes(fleet) == before
+    assert fleet.litellm.budgets == budgets
+    assert fleet.ops() == ()
 
 
 def test_a_refused_egress_call_raises_a_blocking_fault(fleet: Fleet) -> None:

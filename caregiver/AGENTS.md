@@ -23,6 +23,7 @@ host where something has gone wrong.
 | `lan.py`, `images.py`, `released.py` | the LAN address from the site file, the image a flavor maps to, and the images a `playpen` release installed |
 | `driver.py` | `SandboxDriver`: `SbxDriver` (real) and `FakeDriver` |
 | `litellm_keys.py`, `credentials.py`, `config_mount.py` | the key, the token, the config mount |
+| `reach_files.py` | `egress.json` beside the config mount (contract 01 §6.1.1) |
 | `playpen_env.py` | the env file `sbx exec --env-file` carries |
 | `policy_file.py` | the types and the text of `policy.toml`, and `build_app` |
 | `policy_fleet.py` | one fragment per family, and the checked assembly of the one `policy.toml` |
@@ -58,8 +59,24 @@ host where something has gone wrong.
   verb it ends in `cli.main`: one line, and exit code 1.
 - Credentials die before processes. `delete.py` removes the LiteLLM key, then
   the fragment of `policy.toml` and its table, then
-  `creds.json`, then the sandboxes. `test_delete.py` checks the order from
-  inside the fake driver.
+  `creds.json` and `egress.json`, then the sandboxes (decision CH69 rule
+  23). `test_delete.py` checks the order from inside the fake driver.
+- Each pass and `apply-once` write `egress.json` of the family, before the
+  sandbox step (decision CH69 rule 6). It is `FamilyEgress` of
+  `creche-wire`: hosts in lower case, an explicit port (a bare host is
+  443), no entry twice, sorted by host and then by port (decision CH69
+  rule 5, CH70 rule 4). A family with no `egress` gets `{"hosts": []}`.
+  The planes never enter it (decision CH6-2). The file sits beside
+  `config/`, mode 0640, and bytes equal to the file on disk write nothing.
+  The sbx egress step stays until the cut.
+- A revision whose `egress.json` would pass `EGRESS_CAP` of
+  `reach_files.py`, the 64 KiB cap of the vmm (decision CH70 rule 1), is
+  refused (decision CH71). The pass and `apply-once` render the file
+  before the key step, so nothing lands. The family reads `invalid` with
+  one error that names the cap, and the last good `egress.json` stays, as
+  for a refused table of `policy.toml` (invariant 19).
+  `rust/crates/wire/vectors/family.json` holds the cap, and
+  `test_reach_files.py` holds `EGRESS_CAP` equal to it.
 - No secret on argv, in a URL or in a log line. The master key comes from
   `LITELLM_MASTER_KEY` in the environment.
 - Each verb that applies the registry (`serve`, `reconcile-once`,
