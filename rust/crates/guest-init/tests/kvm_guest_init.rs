@@ -1,8 +1,9 @@
 //! The kvm_ tests of guest init as PID 1 (decisions CH9, CH62 rules 4,
 //! 7, 19, 25 and 26), of control link 1200 (decisions CH13, CH19, CH28,
 //! CH32), of the facade supervisor (decisions CH19 rule 1, CH62 rules
-//! 6, 8, 9 and 12) and of the local link (decisions CH21, CH32 rules 6
-//! and 7, CH62 rules 10 and 11). CH boots the guest kernel with the `guest-init.cpio`
+//! 6, 8, 9 and 12), of the local link (decisions CH21, CH32 rules 6
+//! and 7, CH62 rules 10 and 11) and of the 1201 splice (decisions CH13,
+//! CH50 rule 2, CH62 rules 14 and 16). CH boots the guest kernel with the `guest-init.cpio`
 //! of `bin/vm-smoke-setup.sh` and the disks that each test builds, with
 //! the stand-in facade of the script on the root disk. The test runs CH
 //! directly, with no vmm, and speaks the link itself.
@@ -621,6 +622,50 @@ fn kvm_guest_init_kills_the_facade_when_its_local_link_closes() {
             &format!("guest-init: facade pid {pid} sent SIGTERM")
         ),
         "the close sent SIGTERM"
+    );
+
+    drop(vm);
+    fs::remove_dir_all(&work).unwrap();
+}
+
+/// Guest init accepts a 1201 link before the first hello, so before any
+/// facade runs. The link waits for the relay socket, which the stand-in
+/// opens 2 s after its start, and the `ping` sent first gets the `pong`
+/// of the facade inside the 10 s bound (decisions CH13, CH50 rule 2, CH62
+/// rule 16). The close of that link ends only its relay connection: the
+/// facade keeps running, and a new 1201 link reaches the same pid
+/// (decision CH19 rule 1, fact 74).
+#[test]
+#[ignore = "needs /dev/kvm and bin/vm-smoke-setup.sh: the job kvm runs it"]
+fn kvm_guest_init_accepts_1201_before_the_facade_runs() {
+    let (work, mut vm) = booted_with("kvm-guest-init-relay", Standin::Relay);
+    let serial = work.join("serial.log");
+    let mut acp = dial(&work, GuestPort::Acp);
+    let dialed = Instant::now();
+    acp.write(b"ping\n");
+    wait_for_line(&mut vm, &serial, "guest-init: acp link 1 open");
+
+    let mut link = dial(&work, GuestPort::Control);
+    let pid = starting(&hello(&mut link, now()));
+    assert_eq!(acp.line(), Some(format!("pong {pid}")));
+    assert!(
+        dialed.elapsed() < Duration::from_secs(10),
+        "the pong came after {:?}",
+        dialed.elapsed()
+    );
+    wait_for_line(&mut vm, &serial, "standin: relay listening");
+    wait_for_line(&mut vm, &serial, "guest-init: acp link 1 relay connected");
+
+    drop(acp);
+    wait_for_line(&mut vm, &serial, "standin: relay link ended");
+    wait_for_line(&mut vm, &serial, "guest-init: acp link 1 closed");
+    let mut next = dial(&work, GuestPort::Acp);
+    next.write(b"ping\n");
+    assert_eq!(next.line(), Some(format!("pong {pid}")));
+    let exit = format!("guest-init: facade pid {pid} exited");
+    assert!(
+        !lines(&serial).iter().any(|line| line.starts_with(&exit)),
+        "the facade exited"
     );
 
     drop(vm);

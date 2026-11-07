@@ -35,17 +35,22 @@
 //!    disk writes the marker, opens the local link, closes it and stays
 //!    up. Guest init then kills it (decision CH32 rule 7). Each other
 //!    start stays up.
+//! 8. In mode `relay` it waits `RELAY_DELAY` (2 s), then listens on
+//!    `creche_wire::guest::RELAY_SOCKET` and answers each line `ping` of
+//!    each link with `pong <its pid>`. It writes `relay listening`, and
+//!    `relay link ended` at the end of each link (decisions CH13, CH62
+//!    rule 16). Then it stays up.
 
 use std::convert::Infallible;
 use std::fs::{self, File};
 use std::io::{self, BufRead as _, BufReader, Read as _, Write as _};
-use std::os::unix::net::UnixStream;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 use std::process::{Command, ExitCode};
 use std::thread;
 use std::time::Duration;
 
-use creche_wire::guest::{LOCAL_LINK_SOCKET, SESSION_DISK_MOUNT, SESSION_ID_ENV};
+use creche_wire::guest::{LOCAL_LINK_SOCKET, RELAY_SOCKET, SESSION_DISK_MOUNT, SESSION_ID_ENV};
 use creche_wire::{ControlCommand, TurnEnd, TurnEvent, TurnStart, UnixMillis};
 
 /// The mode file of the test root disk.
@@ -89,6 +94,10 @@ const TURN_TITLE: &str = "standin turn";
 /// The `updated_at` of the turn end of mode `turn`, 2030-01-01T00:00:00Z.
 /// `tests/common/mod.rs` holds the same value.
 const TURN_UPDATED_AT: u64 = 1_893_456_000_000;
+
+/// How long mode `relay` waits before it listens on the relay socket, so
+/// a 1201 link of a kvm test comes first.
+const RELAY_DELAY: Duration = Duration::from_secs(2);
 
 fn main() -> ExitCode {
     match std::env::args().nth(1).as_deref() {
@@ -155,6 +164,12 @@ fn facade() -> ExitCode {
                 }
                 return stay_up();
             }
+        }
+        Ok(mode) if mode.trim_end() == "relay" => {
+            thread::spawn(|| {
+                let Err(error) = relay();
+                say(&format!("relay failed: {error}"));
+            });
         }
         Ok(mode) => {
             say(&format!("unknown mode {:?}", mode.trim_end()));
@@ -314,5 +329,40 @@ fn close_once(marker: &Path) -> io::Result<()> {
     fs::write(marker, b"")?;
     drop(UnixStream::connect(LOCAL_LINK_SOCKET)?);
     say("link closed");
+    Ok(())
+}
+
+/// Mode `relay`: the relay socket after `RELAY_DELAY`, and one thread per
+/// link. It returns only the error that ends the listener.
+fn relay() -> io::Result<Infallible> {
+    thread::sleep(RELAY_DELAY);
+    let path = Path::new(RELAY_SOCKET);
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    let listener = UnixListener::bind(path)?;
+    say("relay listening");
+    loop {
+        let (link, _) = listener.accept()?;
+        thread::spawn(move || {
+            if let Err(error) = pong(&link) {
+                say(&format!("relay link failed: {error}"));
+            }
+        });
+    }
+}
+
+/// Answers each line `ping` of `link` with `pong <pid>` until its end.
+fn pong(link: &UnixStream) -> io::Result<()> {
+    let pid = std::process::id();
+    for line in BufReader::new(link).lines() {
+        let line = line?;
+        if line == "ping" {
+            writeln!(&*link, "pong {pid}")?;
+        } else {
+            say(&format!("relay got {line:?}"));
+        }
+    }
+    say("relay link ended");
     Ok(())
 }
