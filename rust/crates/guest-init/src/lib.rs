@@ -121,8 +121,9 @@ fn start() -> Result<env_file::Env, String> {
 /// Writes one `guest-init: <text>` line to the console (decision CH62
 /// rule 26). The kernel opens `/dev/console` as fd 0, 1 and 2 of PID 1,
 /// and `console=ttyS0` sends it to the serial file of the VM. A failed
-/// write has no other place to go, so `say` drops it.
-#[cfg(target_os = "linux")]
+/// write has no other place to go, so `say` drops it. In a unit test the
+/// line goes to the stderr of the test process.
+#[cfg(any(test, target_os = "linux"))]
 fn say(text: &str) {
     use std::io::Write as _;
     let _ = writeln!(std::io::stderr(), "guest-init: {text}");

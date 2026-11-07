@@ -21,15 +21,17 @@
 //!    dial fault, then `closed` on the console (decision CH62 rule 26). A
 //!    failed accept writes its error and powers off, as on 1200.
 //!
-//! `Slots` and `dial` are the pure core, so the unit tests drive them on
-//! any OS. The Linux shell runs the vsock listener and the threads.
+//! `Slots`, `dial` and `accept_links` are the portable core, so the unit
+//! tests drive them on any OS. The Linux shell runs the vsock listener
+//! and its accept thread.
 
 use std::io;
+use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::thread::sleep;
+use std::thread::{self, sleep};
 use std::time::{Duration, Instant};
 
 /// The open links of one row at most (decision CH62 rule 14).
@@ -95,6 +97,42 @@ pub fn dial(path: &Path, until: Instant) -> io::Result<UnixStream> {
     }
 }
 
+/// Takes each link that `accept` returns and starts its thread, which
+/// runs `bridge` and holds a slot of the row until `bridge` returns
+/// (decision CH62 rule 14). `accept` returns `None` for an accept that
+/// the loop tries again. A link past `ROW_CAP` closes at once. It returns
+/// the accept error that ends the loop.
+pub fn accept_links(
+    row: &str,
+    mut accept: impl FnMut() -> io::Result<Option<OwnedFd>>,
+    bridge: impl Fn(&str, OwnedFd) + Copy + Send + 'static,
+) -> io::Error {
+    let slots = Slots::default();
+    let mut count: u64 = 0;
+    loop {
+        let link = match accept() {
+            Ok(Some(link)) => link,
+            Ok(None) => continue,
+            Err(error) => return error,
+        };
+        count += 1;
+        let name = format!("{row} link {count}");
+        // A refused link closes here, at the end of this pass.
+        let Some(slot) = slots.take() else {
+            crate::say(&format!("{name} refused: {ROW_CAP} links open"));
+            continue;
+        };
+        crate::say(&format!("{name} open"));
+        let spawned = thread::Builder::new().name(name.clone()).spawn(move || {
+            bridge(&name, link);
+            drop(slot);
+        });
+        if let Err(error) = spawned {
+            crate::say(&format!("{row} link {count} thread failed: {error}"));
+        }
+    }
+}
+
 #[cfg(target_os = "linux")]
 pub use shell::{listen_vsock, serve_acp};
 
@@ -114,7 +152,7 @@ mod shell {
     use rustix::io::Errno;
     use rustix::net::{SocketFlags, accept_with};
 
-    use super::{RELAY_WAIT, ROW_CAP, Slots, dial};
+    use super::{RELAY_WAIT, ROW_CAP, accept_links, dial};
     use crate::splice::splice;
 
     /// Listens on vsock `port` of any CID with `backlog` (decisions CH13,
@@ -149,45 +187,27 @@ mod shell {
         thread::Builder::new()
             .name("acp-accept".to_owned())
             .spawn(move || {
-                let error = accept_loop(&listener);
+                let error = accept_links(
+                    "acp",
+                    // EINTR and ECONNABORTED are tried again, as on 1200.
+                    || match accept_with(&listener, SocketFlags::CLOEXEC) {
+                        Ok(link) => Ok(Some(link)),
+                        Err(Errno::INTR | Errno::CONNABORTED) => Ok(None),
+                        Err(error) => Err(error.into()),
+                    },
+                    relay,
+                );
                 crate::say(&format!("acp accept failed: {error}"));
                 let _ = crate::power::off();
             })?;
         Ok(())
     }
 
-    /// Accepts each 1201 link and starts its splice thread. EINTR and
-    /// ECONNABORTED are retried, as on 1200. It returns each other error.
-    fn accept_loop(listener: &OwnedFd) -> io::Error {
-        let slots = Slots::default();
-        let mut count: u64 = 0;
-        loop {
-            let link = match accept_with(listener, SocketFlags::CLOEXEC) {
-                Ok(link) => link,
-                Err(Errno::INTR | Errno::CONNABORTED) => continue,
-                Err(error) => return error.into(),
-            };
-            count += 1;
-            let name = format!("acp link {count}");
-            let Some(slot) = slots.take() else {
-                crate::say(&format!("{name} refused: {ROW_CAP} links open"));
-                continue;
-            };
-            crate::say(&format!("{name} open"));
-            let until = Instant::now() + RELAY_WAIT;
-            let spawned = thread::Builder::new().name(name.clone()).spawn(move || {
-                relay(&name, link, until);
-                drop(slot);
-            });
-            if let Err(error) = spawned {
-                crate::say(&format!("acp link {count} thread failed: {error}"));
-            }
-        }
-    }
-
     /// Dials the relay socket for `link` and splices the two until either
-    /// closes (decisions CH13, CH62 rules 14 and 16).
-    fn relay(name: &str, link: OwnedFd, until: Instant) {
+    /// closes (decisions CH13, CH62 rules 14 and 16). The link thread
+    /// starts at the accept, so the bound counts from the accept.
+    fn relay(name: &str, link: OwnedFd) {
+        let until = Instant::now() + RELAY_WAIT;
         let relay = match dial(Path::new(RELAY_SOCKET), until) {
             Ok(relay) => relay,
             Err(error) => {
@@ -205,13 +225,16 @@ mod shell {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{Read as _, Write as _};
-    use std::os::unix::net::UnixListener;
+    use std::fs::File;
+    use std::io::{self, Read as _, Write as _};
+    use std::os::fd::OwnedFd;
+    use std::os::unix::net::{UnixListener, UnixStream};
     use std::path::PathBuf;
+    use std::sync::mpsc::{Sender, channel};
     use std::thread;
     use std::time::{Duration, Instant};
 
-    use super::{RELAY_PAUSE, RELAY_WAIT, ROW_CAP, Slots, dial};
+    use super::{RELAY_PAUSE, RELAY_WAIT, ROW_CAP, Slots, accept_links, dial};
 
     /// A socket path of this test process. The `sun_path` cap is 104
     /// bytes on macOS, so the name stays short.
@@ -277,5 +300,78 @@ mod tests {
         drop(again);
         let all: Vec<_> = (0..ROW_CAP).filter_map(|_| slots.take()).collect();
         assert_eq!(all.len(), ROW_CAP);
+    }
+
+    /// Hands one new link to the accept loop of `links` and returns its
+    /// peer, which reads with a bound of `wait`.
+    fn hand(links: &Sender<OwnedFd>, wait: Duration) -> UnixStream {
+        let (peer, link) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(wait)).unwrap();
+        links.send(link.into()).unwrap();
+        peer
+    }
+
+    /// Whether the accept loop kept the link of `peer`: the read of a kept
+    /// link waits, and the read of a closed one gets an EOF.
+    fn kept(peer: &mut UnixStream) -> bool {
+        match peer.read(&mut [0_u8; 1]) {
+            Ok(0) => false,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) =>
+            {
+                true
+            }
+            other => panic!("the link got {other:?}"),
+        }
+    }
+
+    /// The accept loop holds `ROW_CAP` open links and closes the next one
+    /// at once. After one of them closes, it keeps a new link again
+    /// (decision CH62 rule 14).
+    #[test]
+    fn the_accept_loop_closes_a_link_past_the_cap() {
+        let (links, accepted) = channel::<OwnedFd>();
+        let row = thread::spawn(move || {
+            accept_links(
+                "test",
+                move || {
+                    accepted
+                        .recv()
+                        .map(Some)
+                        .map_err(|_| io::Error::other("no more links"))
+                },
+                // A link stays open until its peer writes or closes.
+                |_: &str, link: OwnedFd| {
+                    let _ = File::from(link).read(&mut [0_u8; 1]);
+                },
+            )
+        });
+        let wait = Duration::from_millis(300);
+        let mut open: Vec<_> = (0..ROW_CAP).map(|_| hand(&links, wait)).collect();
+        // Link 65 finds every slot taken, so it reads an EOF at once. A
+        // kept link would wait the full 5 s.
+        assert!(!kept(&mut hand(&links, Duration::from_secs(5))));
+
+        // The slot frees when the bridge thread of the closed link ends.
+        // Until then, each new link reads an EOF.
+        drop(open.remove(0));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let again = loop {
+            let mut peer = hand(&links, wait);
+            if kept(&mut peer) {
+                break peer;
+            }
+            assert!(Instant::now() < deadline, "no slot freed after a close");
+        };
+        // The row is full again.
+        assert!(!kept(&mut hand(&links, Duration::from_secs(5))));
+
+        drop(links);
+        assert_eq!(row.join().unwrap().to_string(), "no more links");
+        drop(open);
+        drop(again);
     }
 }

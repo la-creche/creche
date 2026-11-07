@@ -178,7 +178,7 @@ and no vmm crate depends on it. It runs blocking std threads, not tokio
 - The unit tests check the boot plan, the options of every mount, the
   netlink bytes, the env grammar, the control state machine, the
   supervisor state machine, the local link rules, the line framing, the
-  splice, the relay dial bound and the row cap on any OS. On Linux, one more test checks the kernel flags
+  splice, the relay dial bound, the row cap and the accept loop at the cap on any OS. On Linux, one more test checks the kernel flags
   that each set of options gives. One runs the real
   `playpen/bin/creche-env-write`, so the reader and the script cannot
   drift.
