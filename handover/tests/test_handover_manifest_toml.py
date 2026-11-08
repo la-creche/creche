@@ -414,8 +414,8 @@ def test_the_resolver_refuses_a_disk_image_verify_outside_its_trees() -> None:
 def test_a_disk_image_verify_env_file_is_its_depends_on_units_env_file() -> None:
     """Contract 06 §4 rule 7: the `--env-file` of the disks hook is the
     one of the vmm hook. `test_handover_r7r_verify_env.py` holds that one
-    equal to the `EnvironmentFile=` of `creche-vmm.service`. A hook with
-    no `--env-file` passes too."""
+    equal to the `EnvironmentFile=` of `creche-vmm.service` (CH78 rule 2).
+    A hook with no `--env-file` passes too."""
     vmm = _vmm({VMM_VERIFY: _with_env(VMM_VERIFY, VMM_ENV)})
     disks = _disks({DISKS_VERIFY: _with_env(DISKS_VERIFY, VMM_ENV)})
 
