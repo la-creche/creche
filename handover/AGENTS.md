@@ -535,6 +535,12 @@ CH7-2, CH35 (4), CH76 rules 1 and 5). Its manifest is
     tree, owned by root, and no group or other account may write it. A
     disk-image row names no unit, so step 9 restarts nothing, and a failed
     hook puts the previous tree back (contract 06 §8.4 rules 5 and 6).
+14. `bin/allocate-tags.sh` takes every asset of the `--assets` lines, in
+    pairs of a file and its bundle. It runs the verifier once for each
+    pair, and the Release of a disk-image component holds the eight assets
+    (CH35 (2), CH76 rule 5). `bin/build-artifacts.sh` skips a planned
+    disk-image row, and the `sign` job of `release.yml` signs each of the
+    four files.
 
 ## The host component of creche-release
 
