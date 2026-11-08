@@ -23,7 +23,9 @@ applies here too.
    It decompresses each file into its own digest store (fact 56).
 3. The row has no unit and runs as no account. Its verify hook is
    `vmm check-images` of the vmm tree, so `depends_on` names `vmm` (CH76
-   rule 6). Its `--env-file` is the one of `creche-vmm.service`.
+   rule 6). Its `--env-file` is the one of `creche-vmm.service`. One set
+   may hold `vmm` and `disks`: `vmm` switches first, so the hook runs from
+   the vmm tree that the same set installs (CH78 rule 1).
 4. The flavors are the values of the wire enum `SandboxFlavor`, today base
    and python. Coding joins at the cut, with the PR that adds it to the
    enum (CH76 rule 7).
@@ -46,6 +48,17 @@ the job `disks` of `release.yml` runs it, from the repository root, with
    ships. The job hands it to the `sign` job.
 4. A step that fails before the last one leaves `DISK_OUT` empty.
 
+After the build, the job runs `bin/check-disk-files.sh`, before the `sign`
+job signs any file (decision CH78 rule 3). The script reads the row from
+`handover disk-assets`, so it holds no copy of a limit. It refuses a file
+past its limit (`artifacts.asset_limits`): 2 GiB - 1 for a disk and the
+kernel, 64 KiB for `digests.json`. It also refuses a file that is missing
+or a link, and an entry of `DISK_OUT` that is no file of the row. A refusal
+fails the job, so the `sign` job does not run and no such file gets a
+public Sigstore record. Each file is 415 to 506 MiB today (fact 51). The
+`sign` job makes the bundles, so the tag script checks their limit.
+`bin/tests/test_check_disk_files.py` holds the script.
+
 `rust/crates/wire/vectors/digests.json` holds one good `digests.json`. The
 vmm parses it (`rust/crates/vmm/src/image_root/tests.rs`), and
 `bin/tests/test_playpen_release_disks.py` holds the output of the script
@@ -58,15 +71,6 @@ the vmm (decision CH77 rule 2). The vmm imports new bytes of
 `digests.json` only after they stay the same that long plus one poll, so
 no import runs while `vmm check-images` runs.
 `bin/tests/test_disks_manifest.py` holds the two equal.
-
-## Known gaps
-
-1. CONTRACT-QUESTION: no row says whether CI refuses a disk file past its
-   limit before the `sign` job signs it, as `bin/build-artifacts.sh` does
-   for an archive. The reading taken: the `disks` job checks no limit. The
-   tag script refuses such a file before it makes any tag, so no Release
-   holds one, but the file still gets its public Sigstore record. Each file
-   is 415 to 506 MiB today (fact 51), and the limit is 2 GiB - 1.
 
 ## Not checked
 

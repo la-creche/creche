@@ -334,7 +334,7 @@ for ((AT = 0; AT < ${#PLANNED[@]}; AT++)); do
   if [[ "$FOUND" == no && "$DISKS_READ" == no ]]; then
     "${CLI[@]}" disk-assets --repo "$ARTIFACT_REPO" < /dev/null > "$DISKS" ||
       die "handover gave no disk rows"
-    read_disk_names "$DISKS" || die "$ROWS_FAULT"
+    read_disk_rows "$DISKS" || die "$ROWS_FAULT"
     DISKS_READ=yes
   fi
   if [[ "$FOUND" == no ]]; then

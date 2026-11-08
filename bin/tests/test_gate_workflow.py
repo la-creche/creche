@@ -333,11 +333,25 @@ DISKS_OUTPUTS = {"digests": "${{ steps.build.outputs.digests }}"}
 #: The build argv of `disks/component.toml`, as one line of the step.
 DISKS_ARGV = "/usr/bin/env bash disks/bin/playpen-release-disks"
 
+#: The check of each file of the row against its limit, after the build and
+#: before the `sign` job (decision CH78 rule 3).
+DISKS_CHECK = "bin/check-disk-files.sh"
+
+#: The variables of the build step, each one. DISK_REPO is the catalog name
+#: of this repository, and DISK_ROW the one disk-image row.
+DISKS_STEP_ENV = {
+    "PLANNED": "${{ needs.plan.outputs.components }}",
+    "DISK_REPO": THIS_REPOSITORY,
+    "DISK_ROW": DISKS_JOB,
+    "DISK_OUT": DISK_DIR,
+}
+
 #: The whole text of the build step of the `disks` job.
 DISKS_RUN = f"""\
 set -euo pipefail
-if [[ " $PLANNED " == *" {DISKS_JOB} "* ]]; then
+if [[ " $PLANNED " == *" $DISK_ROW "* ]]; then
   {DISKS_ARGV}
+  {DISKS_CHECK}
 else
   echo "disks: no planned disk-image component"
   mkdir -p "$DISK_OUT"
@@ -351,16 +365,13 @@ fi
 """
 
 #: The steps of the `disks` job, as a whole. The checkout keeps no token in
-#: the clone, because a build script runs here. The upload does not
-#: compress: each file is a zstd file already.
+#: the clone, because a build script runs here. The step that takes uv
+#: keeps no cache: the check reads the limits from the `handover` command.
+#: The upload does not compress: each file is a zstd file already.
 DISKS_STEPS = [
     {"uses": CHECKOUT_ACTION, "with": {"fetch-depth": 0, "persist-credentials": False}},
-    {
-        "name": "build",
-        "id": "build",
-        "env": {"PLANNED": "${{ needs.plan.outputs.components }}", "DISK_OUT": DISK_DIR},
-        "run": DISKS_RUN,
-    },
+    {"uses": SETUP_UV, "with": {"enable-cache": False}},
+    {"name": "build", "id": "build", "env": DISKS_STEP_ENV, "run": DISKS_RUN},
     {
         "uses": UPLOAD_ACTION,
         "with": {
@@ -1034,8 +1045,9 @@ def test_the_disks_job_runs_the_build_of_the_disks_manifest() -> None:
 
     assert disk_components(Repo.CRECHE) == (DISKS_JOB,)
     assert manifest.build == (tuple(DISKS_ARGV.split()),)
-    assert f"\n  {DISKS_ARGV}\n" in DISKS_RUN
+    assert f"\n  {DISKS_ARGV}\n  {DISKS_CHECK}\n" in DISKS_RUN
     assert (REPO / manifest.build[0][-1]).is_file()
+    assert (REPO / DISKS_CHECK).is_file()
 
 
 #: A stand-in build script: it writes STUB_SUMS as SHA256SUMS into DISK_OUT,
@@ -1044,6 +1056,13 @@ DISK_BUILD_STUB = """#!/usr/bin/env bash
 mkdir -p "$DISK_OUT"
 printf '%s\\n' "$STUB_SUMS" > "$DISK_OUT/SHA256SUMS"
 echo "build $*" >> "$STUB_LOG"
+"""
+
+#: A stand-in check: one line with the component and the directory that it
+#: got to STUB_LOG, then the status STUB_CHECK_STATUS.
+DISK_CHECK_STUB = """#!/usr/bin/env bash
+echo "check $DISK_REPO $DISK_ROW $DISK_OUT" >> "$STUB_LOG"
+exit "${STUB_CHECK_STATUS:-0}"
 """
 
 #: (the plan, whether the build runs, the output `digests`).
@@ -1055,40 +1074,66 @@ DISK_PLANS = {
 }
 
 
-@pytest.mark.parametrize(("planned", "built", "digests"), DISK_PLANS.values(), ids=DISK_PLANS)
-def test_the_disks_step_builds_only_a_planned_disks_row(
-    tmp_path: Path, planned: str, built: bool, digests: str
-) -> None:
-    """The step runs the build only when the plan names `disks` as one
-    word. Else it writes an empty SHA256SUMS. The output `digests` holds
-    the text of SHA256SUMS."""
+def _run_disks_step(
+    tmp_path: Path, planned: str, check_status: int = 0
+) -> tuple[subprocess.CompletedProcess[str], Path, Path, Path]:
+    """The build step of the `disks` job, beside a stand-in build and a
+    stand-in check. The answer is the run, the log, the output directory
+    and the step output file."""
     script = tmp_path / "disks" / "bin" / "playpen-release-disks"
     script.parent.mkdir(parents=True)
     script.write_text(DISK_BUILD_STUB, encoding="utf-8")
+    check = tmp_path / DISKS_CHECK
+    check.parent.mkdir(parents=True)
+    check.write_text(DISK_CHECK_STUB, encoding="utf-8")
+    check.chmod(0o755)
     output = tmp_path / "output"
     log = tmp_path / "log"
     out = tmp_path / "temp" / "disks"
+    variables = {**DISKS_STEP_ENV, "PLANNED": planned, "DISK_OUT": str(out)}
     done = subprocess.run(
         ["bash", "-c", DISKS_RUN],
         cwd=tmp_path,
         env={
             "PATH": os.environ["PATH"],
-            "PLANNED": planned,
-            "DISK_OUT": str(out),
+            **variables,
             "GITHUB_OUTPUT": str(output),
             "STUB_SUMS": "a line",
             "STUB_LOG": str(log),
+            "STUB_CHECK_STATUS": str(check_status),
         },
         capture_output=True,
         text=True,
         timeout=30,
     )
 
+    return done, log, out, output
+
+
+@pytest.mark.parametrize(("planned", "built", "digests"), DISK_PLANS.values(), ids=DISK_PLANS)
+def test_the_disks_step_builds_only_a_planned_disks_row(
+    tmp_path: Path, planned: str, built: bool, digests: str
+) -> None:
+    """The step runs the build and then the check only when the plan names
+    `disks` as one word. Else it writes an empty SHA256SUMS. The output
+    `digests` holds the text of SHA256SUMS."""
+    done, log, out, output = _run_disks_step(tmp_path, planned)
+
     assert done.returncode == 0, done.stdout + done.stderr
-    assert log.exists() == built
+    ran = f"build \ncheck {THIS_REPOSITORY} {DISKS_JOB} {out}\n"
+    assert (log.read_text(encoding="utf-8") if log.exists() else "") == (ran if built else "")
     assert (out / "SHA256SUMS").read_text(encoding="utf-8") == (f"{digests}\n" if built else "")
     body = f"{digests}\n" if digests else ""
     assert output.read_text(encoding="utf-8") == f"digests<<END_OF_DIGESTS\n{body}END_OF_DIGESTS\n"
+
+
+def test_a_failed_check_of_the_disk_files_fails_the_step(tmp_path: Path) -> None:
+    """CH78 rule 3: a file past its limit fails the job before the `sign`
+    job, which needs it. The step then writes no step output."""
+    done, _log, _out, output = _run_disks_step(tmp_path, DISKS_JOB, check_status=1)
+
+    assert done.returncode == 1
+    assert not output.exists()
 
 
 def test_the_plan_job_is_pinned_as_a_whole() -> None:

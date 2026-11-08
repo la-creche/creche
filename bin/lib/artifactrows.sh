@@ -251,24 +251,35 @@ read_rows() {
 #   component <name>            the component
 #   out-env <variable>          the variable that names the output directory
 #   asset <name> <count>        one asset and its bytes, at most. A row has
-#   ...                         one asset or more.
+#   ...                         one pair or more: each signed file, then the
+#                               bundle of its signature.
 #   argv <count>                one command, as in the form of `artifacts`.
 #   <word>                      A row has one command or more.
 #   ...
 #   end
 #
-# `read_disk_names FILE` reads each row of FILE and puts its component into
-# DISK_COMPONENT. bin/build-artifacts.sh needs the names alone: it skips a
-# planned disk-image row, because it builds binary rows only. The reader
-# refuses each other text, as `read_rows` does, and two rows with one
-# component. A refusal returns 1 and puts the reason into ROWS_FAULT.
+# `read_disk_rows FILE` reads each row of FILE into the arrays below.
+# bin/build-artifacts.sh reads the components alone: it skips a planned
+# disk-image row, because it builds binary rows only. bin/check-disk-files.sh
+# reads the out variable and each signed file of a row with its limit. The
+# reader keeps no bundle: the `sign` job makes each one. The reader refuses
+# each other text, as `read_rows` does, a file with no bundle and two rows
+# with one component. A refusal returns 1 and puts the reason into
+# ROWS_FAULT.
 
-#: The component of each disk-image row.
+#: The component and the out variable of each disk-image row.
 DISK_COMPONENT=()
+DISK_OUT_ENV=()
+
+#: One entry for each signed file of each row: its name, its bytes at most,
+#: and the index of its row in DISK_COMPONENT.
+DISK_FILE=()
+DISK_FILE_MAX=()
+DISK_FILE_ROW=()
 
 # disk_head: reads the keys of a disk-image row before its first command.
 disk_head() {
-  local assets=0 value
+  local assets=0 value row="${#DISK_COMPONENT[@]}"
 
   rows_value component || return 1
   if [[ ! "$ROWS_VALUE" =~ $PLAIN_NAME ]]; then
@@ -282,6 +293,7 @@ disk_head() {
     ROWS_FAULT="the out-env of a disk row is not a variable name"
     return 1
   fi
+  DISK_OUT_ENV+=("$ROWS_VALUE")
 
   while true; do
     rows_next || return 1
@@ -293,10 +305,20 @@ disk_head() {
       ROWS_FAULT="an asset of a disk row is not a plain name and a count above 0"
       return 1
     fi
+    # The first asset of each pair is the signed file.
+    if [[ $((assets % 2)) -eq 0 ]]; then
+      DISK_FILE+=("${value%% *}")
+      DISK_FILE_MAX+=("${value#* }")
+      DISK_FILE_ROW+=("$row")
+    fi
     assets=$((assets + 1))
   done
   if [[ "$assets" -eq 0 ]]; then
     ROWS_FAULT="a disk row has no asset where the line form puts one"
+    return 1
+  fi
+  if [[ $((assets % 2)) -ne 0 ]]; then
+    ROWS_FAULT="a file of a disk row has no bundle"
     return 1
   fi
 
@@ -336,14 +358,18 @@ disk_commands() {
   done
 }
 
-# read_disk_names FILE: reads each disk-image row of FILE into
-# DISK_COMPONENT. Status 1 with the reason in ROWS_FAULT for a file that it
-# cannot read, for each text that is not in the line form, and for two rows
-# with one component.
-read_disk_names() {
+# read_disk_rows FILE: reads each disk-image row of FILE into the DISK_
+# arrays. Status 1 with the reason in ROWS_FAULT for a file that it cannot
+# read, for each text that is not in the line form, and for two rows with
+# one component.
+read_disk_rows() {
   local row other
 
   DISK_COMPONENT=()
+  DISK_OUT_ENV=()
+  DISK_FILE=()
+  DISK_FILE_MAX=()
+  DISK_FILE_ROW=()
   ROWS_FAULT=""
   rows_load "$1" || return 1
   while [[ "$ROWS_POS" -lt "${#ROWS_LINES[@]}" ]]; do

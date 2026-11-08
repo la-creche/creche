@@ -741,13 +741,13 @@ jobs:
   # holds the text of SHA256SUMS, in the form of the `digests` output of the
   # `artifacts` job.
   #
-  # CONTRACT-QUESTION: no row says whether CI refuses a disk file past its
-  # limit (artifacts.asset_limits) before the `sign` job signs it, as
-  # bin/build-artifacts.sh does for an archive. The reading taken: this job
-  # checks no limit. The tag script refuses a file past its limit before it
-  # makes any tag, so no Release holds one. Such a file still gets its
-  # public Sigstore record. Each file is 415 to 506 MiB today (fact 51), and
-  # the limit is 2 GiB - 1.
+  # After the build, bin/check-disk-files.sh refuses a file past its limit
+  # (artifacts.asset_limits) before the `sign` job signs it, as
+  # bin/build-artifacts.sh does for an archive (decision CH78 rule 3). So no
+  # such file gets a public Sigstore record. A failed check fails the job,
+  # and the `sign` job, which needs it, does not run. Each file is 415 to
+  # 506 MiB today (fact 51), and the limit is 2 GiB - 1. The script reads
+  # the limits from the `handover` command, so the job takes uv.
   disks:
     needs: [scope, plan]
     runs-on: ubuntu-24.04
@@ -760,15 +760,25 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          enable-cache: false
+
+      # DISK_REPO: the catalog's name for this repository, as ARTIFACT_REPO
+      # of the `artifacts` job. DISK_ROW: the one disk-image row of this
+      # repository, which the step builds and checks.
       - name: build
         id: build
         env:
           PLANNED: ${{ needs.plan.outputs.components }}
+          DISK_REPO: creche
+          DISK_ROW: disks
           DISK_OUT: ${{ runner.temp }}/disks
         run: |
           set -euo pipefail
-          if [[ " $PLANNED " == *" disks "* ]]; then
+          if [[ " $PLANNED " == *" $DISK_ROW "* ]]; then
             /usr/bin/env bash disks/bin/playpen-release-disks
+            bin/check-disk-files.sh
           else
             echo "disks: no planned disk-image component"
             mkdir -p "$DISK_OUT"

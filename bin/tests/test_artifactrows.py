@@ -16,9 +16,10 @@ Cases:
 5. The CH build of `bin/lib/chbuild.sh`. Its rev and its version are the
    ones of the key check of the vmm. bin/tests/test_vmm_manifest.py holds
    the third command of the vmm row equal to it (CH35 (3)).
-6. `read_disk_names` reads the names of the disk-image rows from the real
-   line form of `handover.artifacts.DiskRow.lines` (CH76 rule 5), and
-   refuses each other text with its reason.
+6. `read_disk_rows` reads the disk-image rows from the real line form of
+   `handover.artifacts.DiskRow.lines` (CH76 rule 5): the component, the out
+   variable, and each signed file with its limit (CH78 rule 3). It refuses
+   each other text with its reason.
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ from pathlib import Path
 from typing import Final
 
 import pytest
-from handover.artifacts import ArtifactRow, DiskRow, crate_row
+from handover.artifacts import ArtifactRow, DiskRow, crate_row, disk_files
 from handover.catalog import (
     ARCHIVE_MAX_BYTES,
     ARCHIVE_MAX_MEMBERS,
@@ -39,6 +40,9 @@ from handover.catalog import (
     BINARY_INSTALL_ENV,
     BINARY_TARGET,
     BUNDLE_SUFFIX,
+    DIGESTS_FILE,
+    DIGESTS_MAX_BYTES,
+    DISK_FILE_MAX_BYTES,
 )
 
 REPO: Final = Path(__file__).resolve().parents[2]
@@ -301,17 +305,21 @@ def test_a_file_that_the_reader_cannot_read_is_refused(tmp_path: Path) -> None:
     assert (done.returncode, done.stdout) == (1, "fault cannot read the file of the rows\n")
 
 
-#: The driver of the disk reader: it prints each name, or the reason of the
+#: The driver of the disk reader: it prints each row with its out variable,
+#: then each signed file with its limit and its row, or the reason of the
 #: refusal.
 DISK_DRIVER: Final = """\
 $1
 . "$2"
-if ! read_disk_names "$3"; then
+if ! read_disk_rows "$3"; then
   printf 'fault %s\\n' "$ROWS_FAULT"
   exit 1
 fi
 for ((row = 0; row < ${#DISK_COMPONENT[@]}; row++)); do
-  printf 'disk %s\\n' "${DISK_COMPONENT[$row]}"
+  printf 'disk %s %s\\n' "${DISK_COMPONENT[$row]}" "${DISK_OUT_ENV[$row]}"
+done
+for ((at = 0; at < ${#DISK_FILE[@]}; at++)); do
+  printf 'file %s %s %s\\n' "${DISK_FILE[$at]}" "${DISK_FILE_MAX[$at]}" "${DISK_FILE_ROW[$at]}"
 done
 """
 
@@ -338,15 +346,35 @@ def _read_disks(tmp_path: Path, text: str, set_line: str = SET_LINES[0]) -> tupl
     return done.returncode, done.stdout
 
 
-@pytest.mark.parametrize("set_line", SET_LINES)
-def test_the_disk_reader_reads_the_names_that_handover_prints(
-    tmp_path: Path, set_line: str
-) -> None:
-    """Two rows, no row, and a last row with no line feed."""
-    two = _disk_row() + _disk_row("other").removesuffix("\n")
+def _files_of(row: int) -> str:
+    """The `file` lines of the driver for one row of the real form: each
+    signed file of `artifacts.asset_limits`, and no bundle."""
+    return "".join(f"file {one.name} {one.max_bytes} {row}\n" for one in disk_files())
 
-    assert _read_disks(tmp_path, two, set_line) == (0, "disk disks\ndisk other\n")
+
+@pytest.mark.parametrize("set_line", SET_LINES)
+def test_the_disk_reader_reads_the_rows_that_handover_prints(tmp_path: Path, set_line: str) -> None:
+    """Two rows, no row, and a last row with no line feed. The reader keeps
+    the out variable, and each signed file with its limit, and no bundle
+    (CH78 rule 3)."""
+    two = _disk_row() + _disk_row("other").removesuffix("\n")
+    rows = "disk disks DISK_OUT\ndisk other DISK_OUT\n"
+
+    assert _read_disks(tmp_path, two, set_line) == (0, rows + _files_of(0) + _files_of(1))
     assert _read_disks(tmp_path, "", set_line) == (0, "")
+
+
+def test_the_disk_reader_keeps_the_four_files_of_the_row(tmp_path: Path) -> None:
+    """The files that root installs (`artifacts.disk_files`), each with the
+    limit of its kind: 2 GiB - 1 for a disk and the kernel, 64 KiB for
+    `digests.json`."""
+    _, said = _read_disks(tmp_path, _disk_row())
+    files = [line.split() for line in said.splitlines() if line.startswith("file ")]
+
+    assert [name for _, name, _, _ in files] == [one.name for one in disk_files()]
+    for _, name, limit, _ in files:
+        expected = DIGESTS_MAX_BYTES if name == DIGESTS_FILE else DISK_FILE_MAX_BYTES
+        assert int(limit) == expected
 
 
 #: Disk texts that are not in the line form, each with the reason of its
@@ -389,6 +417,10 @@ BROKEN_DISKS: Final = {
     "an-empty-first-word": (
         _disk_row().replace("argv 3\n/usr/bin/env\n", "argv 3\n\n"),
         "a command of a disk row has an empty first word",
+    ),
+    "a-file-with-no-bundle": (
+        re.sub(r"asset python\.ext4\.zst\.sigstore\.json .*\n", "", _disk_row()),
+        "a file of a disk row has no bundle",
     ),
     "no-end": (_disk_row().removesuffix("end\n"), ROWS_END),
     "two-rows-with-one-component": (

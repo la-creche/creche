@@ -561,9 +561,11 @@ CH76 rules 1 and 5). Its manifest is `disks/component.toml`, and
     disk-image row, and the `sign` job of `release.yml` signs each of the
     four files.
 17. The job `disks` of `release.yml` runs the build of the row,
-    `disks/bin/playpen-release-disks`, when the plan tags `disks`. It hands
-    its files and their `SHA256SUMS` to the `sign` job beside the archives
-    of the `artifacts` job. `tests/test_handover_repo_manifests.py` holds
+    `disks/bin/playpen-release-disks`, when the plan tags `disks`. Then
+    `bin/check-disk-files.sh` refuses a file past its limit of
+    `artifacts.asset_limits` before the `sign` job signs it (CH78 rule 3).
+    The job hands its files and their `SHA256SUMS` to the `sign` job beside
+    the archives of the `artifacts` job. `tests/test_handover_repo_manifests.py` holds
     the bundles of the row: what `playpen/Dockerfile` copies, and
     `playpen`.
 
