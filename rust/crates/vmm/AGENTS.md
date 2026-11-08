@@ -1502,15 +1502,13 @@ the runner.
     file. Each open tunnel or clone runs to its own end in `Draining`,
     and a refill reopens with the same links (`Server::close`,
     `Draining::reopen`).
-32. CONTRACT-QUESTION (decision CH76 rules 2 and 6): the unit reads two
-    `EnvironmentFile=` lines, `vmm.env` and then `/etc/creche/site.env`,
-    and a site value wins. Contract 06 §4 rule 7 lets a hook add
-    `--env-file <that path>` for one path. The hooks take the narrowest
-    reading: one `--env-file`, the `vmm.env` of the plan (gap Q68-2
-    option A). `bin/fleet-up up` writes each key of `vmm.env` as
-    `creche-env get` resolves it against the site file. So a hook reads
-    another value than the unit only after a site file edit with no new
-    `fleet-up up`. David decides whether a hook reads the site file too.
+32. Closed by decision CH77 rule 1: `systemd/creche-vmm.service` reads
+    one `EnvironmentFile=`, `vmm.env`, and no site file. The hooks take
+    one `--env-file`, the same `vmm.env` (contract 06 §4 rule 7). So a
+    hook checks the values that the unit runs. `bin/fleet-up up` writes
+    each key of `vmm.env` as `creche-env get` resolves it against the
+    site file, so a site edit reaches the vmm only after `fleet-up up`.
+    `bin/tests/test_vmm_unit.py` pins the one line.
 
 ## Caller duties
 
