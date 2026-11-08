@@ -122,10 +122,12 @@ def sha256_hex(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
-def verified_files(where: Path, files: Mapping[str, bytes] | None = None) -> VerifiedFiles:
-    """A `VerifiedFiles` of `files`, from check P6 itself: a copy in
-    `where`, and a runner that passes each verifier child. The digest is
-    the one that root's copy gives (`artifact.py` rule 5)."""
+def verified_files(
+    where: Path, files: Mapping[str, bytes] | None = None, component: str = DISKS
+) -> VerifiedFiles:
+    """A `VerifiedFiles` of `files` for `component`, from check P6 itself:
+    a copy in `where`, and a runner that passes each verifier child. The
+    digest is the one that root's copy gives (`artifact.py` rule 5)."""
     found = DISK_BYTES if files is None else files
     where.mkdir(parents=True, exist_ok=True)
     signed: list[SignedCopy] = []
@@ -138,7 +140,7 @@ def verified_files(where: Path, files: Mapping[str, bytes] | None = None) -> Ver
     copy = CopiedFiles(files=tuple(signed), digest=f"sha256:{digest}")
     policy = signer_policy(CATALOG_BY_NAME[DISKS].repo, OWNER, REPO, SHA_OF[DISKS])
 
-    return check_files(FakeRun(), DISKS, policy, copy)
+    return check_files(FakeRun(), component, policy, copy)
 
 
 def write_hook(tree: Path, mode: int = 0o755) -> Path:
@@ -174,14 +176,18 @@ class DiskBench:
     def live(self) -> Path:
         return self.components / DISKS
 
-    def release(self) -> dict[str, object]:
-        """Run the release. The answer is the ledger entry."""
-        wiring = Wiring(
+    def wiring(self) -> Wiring:
+        """What the release of `disks` reads off the host and GitHub."""
+        return Wiring(
             host=self.host,
             transport=grant_transport(),
             readers=fake_readers(latest={DISKS: NEW_VERSION}),
             api=green_api(REPO, TAG, SHA_OF[DISKS]),
         )
+
+    def release(self) -> dict[str, object]:
+        """Run the release. The answer is the ledger entry."""
+        wiring = self.wiring()
         write_request(self.spool_root, REQUEST_ID, request_body({DISKS: NEW_VERSION}))
         spool = Spool(str(self.spool_root), this_uid())
         try:

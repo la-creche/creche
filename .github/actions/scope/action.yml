@@ -15,7 +15,7 @@
 #
 # `vmm` is a third answer: `false` only when the change touches no file of
 # the vmm build (decision CH76 rule 4): rust/, bin/lib/chbuild.sh,
-# bin/build-artifacts.sh, bin/lib/artifactrows.sh and bin/lib/elfstatic.sh.
+# bin/build-artifacts.sh and bin/lib/artifactrows.sh.
 # The answer starts as `true`, so a base that git cannot read runs the
 # build.
 name: scope
@@ -64,7 +64,7 @@ runs:
         vmm=true
         if [[ "$base" =~ ^[0-9a-f]{40}$ ]] && git cat-file -e "$base^{commit}" 2> /dev/null &&
           git diff --quiet --no-renames "$base" HEAD -- rust bin/lib/chbuild.sh \
-            bin/build-artifacts.sh bin/lib/artifactrows.sh bin/lib/elfstatic.sh; then
+            bin/build-artifacts.sh bin/lib/artifactrows.sh; then
           vmm=false
         fi
         echo "vmm=$vmm" >> "$GITHUB_OUTPUT"

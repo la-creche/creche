@@ -79,7 +79,7 @@ step before the run fails the job when no such test exists.
 
 The `vmm-archive` job is the one job of the gate alone (decision CH76 rule
 4). It builds the vmm archive with the `artifacts` job's script and holds
-each program static. On a code change that touches no file of the vmm
+guest-init static. On a code change that touches no file of the vmm
 build it skips each step after the checkout, as the `systemd-proof` job
 does. The scope gives that answer.
 """
@@ -395,18 +395,27 @@ VMM_ARCHIVE_KEYS = {"needs", "if", "runs-on", "timeout-minutes", "steps"}
 VMM_ROW = "vmm"
 VMM_ARCHIVE = asset_names(VMM_ROW).archive
 
-#: The text of the last step: the positive control, then each program of
-#: the archive (bin/lib/elfstatic.sh).
-VMM_STATIC_RUN = """\
+#: The program of the archive that the last step holds static: the init of
+#: a guest that has no program interpreter (the H2 proof of the plan).
+STATIC_PROGRAM = "guest-init"
+
+#: The text of the last step: the positive control, then guest-init of the
+#: archive. It is the check of step 7 of bin/vm-smoke-setup.sh.
+VMM_STATIC_RUN = f"""\
 set -euo pipefail
-. bin/lib/elfstatic.sh
-elf_static_refuses_dynamic
+interp='^[[:space:]]+INTERP[[:space:]]'
+if ! readelf -lW /bin/bash | grep -Eq "$interp"; then
+  echo "the static check is broken: it passes the dynamic /bin/bash" >&2
+  exit 1
+fi
 mkdir -- "$TREE"
 tar --extract --gzip --file "$ARCHIVE" --directory "$TREE"
-for program in vmm guest-init cloud-hypervisor ch-remote; do
-  elf_static "$TREE/vmm/bin/$program"
-done
-echo "the four programs of the vmm archive are static"
+headers=$(readelf -lW "$TREE/vmm/bin/{STATIC_PROGRAM}")
+if grep -Eq "$interp" <<< "$headers"; then
+  echo "{STATIC_PROGRAM} names a program interpreter: it is not static" >&2
+  exit 1
+fi
+echo "{STATIC_PROGRAM} of the vmm archive is static"
 """
 
 #: The steps of the job, as a whole. The build step is the build step of
@@ -426,7 +435,7 @@ VMM_ARCHIVE_STEPS = [
         "run": "bin/build-artifacts.sh",
     },
     {
-        "name": "static programs",
+        "name": "static guest-init",
         "if": ONLY_VMM,
         "shell": "bash",
         "env": {"ARCHIVE": f"{ARTIFACT_DIR}/{VMM_ARCHIVE}", "TREE": "${{ runner.temp }}/vmm-tree"},
@@ -968,19 +977,18 @@ def test_the_vmm_archive_job_is_pinned_as_a_whole() -> None:
     assert 0 < job["timeout-minutes"] <= RELEASE_JOBS[ARTIFACTS_JOB]["timeout-minutes"]
     assert job["steps"] == VMM_ARCHIVE_STEPS
     assert [one["run"] for one in artifacts_build] == [VMM_ARCHIVE_STEPS[2]["run"]]
-    assert (REPO / "bin" / "lib" / "elfstatic.sh").is_file()
 
 
-def test_the_vmm_archive_job_checks_each_program_of_the_vmm_row() -> None:
-    """The program list of the last step is the list of `--bin` words of
-    the vmm manifest (CH7-5)."""
+def test_the_vmm_archive_job_checks_guest_init_of_the_vmm_row() -> None:
+    """The last step reads guest-init, one `--bin` word of the vmm manifest
+    (CH7-5), and no other program."""
     manifest = read_one(REPO, VMM_ROW).manifest
     programs = [
         argv[at + 1] for argv in manifest.build for at, word in enumerate(argv) if word == "--bin"
     ]
 
-    assert f"for program in {' '.join(programs)}; do\n" in VMM_STATIC_RUN
-    assert len(programs) == 4
+    assert STATIC_PROGRAM in programs
+    assert VMM_STATIC_RUN.count("$TREE/vmm/bin/") == 1
 
 
 def test_the_scope_action_gives_the_vmm_answer_as_an_output() -> None:
@@ -2562,7 +2570,6 @@ VMM_SCOPES = [
     (["bin/lib/chbuild.sh"], "true"),
     (["bin/build-artifacts.sh"], "true"),
     (["bin/lib/artifactrows.sh"], "true"),
-    (["bin/lib/elfstatic.sh"], "true"),
     (["handover/src/handover/catalog.py"], "false"),
     (["bin/vm-smoke-setup.sh"], "false"),
     (["docs/rust/notes.md"], "false"),

@@ -73,7 +73,6 @@ from .artifact import Copied, CopiedFiles, CopyResult, NoCopy, copy_from_store
 from .host import Host, distrusted
 from .install import (
     UNIT_KEPT_SUFFIX,
-    BorrowedHook,
     Installer,
     Paths,
     StepFailed,
@@ -157,6 +156,11 @@ MAX_SERVERS: Final = 20
 SELF_AFTER: Final = f"{SELF_COMPONENT} switches after the ledger (contract 06 §1.1 rule 2)"
 NOT_BUILT_ROLLBACK: Final = "kind rollback is not built"
 NOTHING_TO_DO: Final = "the request moves no component"
+#: Step 8 of a disk-image component whose hook holder this set stages
+#: too: the hook reads the live tree of the holder alone (contract 06 §4
+#: rule 6, CH76 rule 6). The CONTRACT-QUESTION is at
+#: `Release._hook_holder_tree`.
+DISK_IMAGE_HOLDER_STAGED: Final = "this set also stages the holder of the verify hook"
 
 #: Contract 06 §9.2 rule 3: the registry's `mcp` tree is the one installed.
 NOTHING_REDEPLOYS: Final = "nothing would deploy: the registry's mcp tree is the one installed"
@@ -1204,8 +1208,8 @@ class Release:
         registry_sha = self._approved_registry_sha(plan) if name == MCP_COMPONENT else None
         self.paths[name] = paths
         if manifest.kind is Kind.DISK_IMAGE:
-            hook = self._borrowed_hook(plan, manifest)
-            self.installer.stage_files(manifest, paths, self.verified_files.get(name), hook)
+            holder = self._hook_holder_tree(plan, manifest)
+            self.installer.stage_files(manifest, paths, self.verified_files.get(name), holder)
         else:
             self.installer.build(manifest, source, paths, self.verified.get(name))
         if manifest.kind is Kind.UNITS:
@@ -1240,24 +1244,27 @@ class Release:
         if registry_sha is not None:
             self._stage_servers(plan, source, registry_sha)
 
-    def _borrowed_hook(self, plan: Plan, manifest: ComponentManifest) -> BorrowedHook:
+    def _hook_holder_tree(self, plan: Plan, manifest: ComponentManifest) -> Path:
         """Where the verify program of a disk-image component sits at step
         8 (`install.py` rule 11, contract 06 §4 rule 6, CH76 rule 6): the
-        tree of the `depends_on` component that `manifest.hook_holder`
-        names. When this release staged that component already, its staged
-        tree. Else its live tree. The resolver refused a hook outside every
-        such tree, so a None here is a failed stage."""
+        live tree of the `depends_on` component that `manifest.hook_holder`
+        names. The resolver refused a hook outside every such tree, so a
+        None here is a failed stage.
+
+        CONTRACT-QUESTION: §4 rule 6 says the program sits in the live tree
+        of that component. This reads the rule narrowly. A set that also
+        stages that component fails here, before any swap, so the `vmm` and
+        the `disks` go out in two requests, the `vmm` first. Ask David
+        whether one set may check the program in the `<install.to>.new` of
+        that component, which its switch makes live first."""
         holder = hook_holder(manifest, plan.manifests)
         if holder is None:
             raise StepFailed(f"{manifest.name}: {DISK_IMAGE_HOOK_OUTSIDE}")
 
-        staged = self.paths.get(holder.name)
-        if staged is not None:
-            return BorrowedHook(to=staged.to, tree=staged.new)
+        if holder.name in plan.order:
+            raise StepFailed(f"{manifest.name}: {DISK_IMAGE_HOLDER_STAGED} ({holder.name})")
 
-        live = paths_of(holder, self.wiring.host.install_roots).to
-
-        return BorrowedHook(to=live, tree=live)
+        return paths_of(holder, self.wiring.host.install_roots).to
 
     def _approved_registry_sha(self, plan: Plan) -> str:
         """The registry commit David approved (contract 06 §9). A set that
