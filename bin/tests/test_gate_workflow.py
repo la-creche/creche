@@ -30,8 +30,9 @@ verdict, one allocation at a time, and only its last job may write.
 The release has jobs that the gate has not. The `plan` job names each
 binary component that gets a tag in the run, from the dry run of the tag
 script. The `artifacts` job builds the archive of each such component
-(`bin/build-artifacts.sh`), in each scope. The tests run the text of the
-plan step against a stand-in dry run.
+(`bin/build-artifacts.sh`), in each scope, after a step that installs
+musl-tools (plan risk 13). The tests run the text of the plan step against
+a stand-in dry run.
 The `sign` job signs each archive. It holds the identity token, and each
 word that it runs is in the workflow file. The `release` job takes both
 workflow artifacts and cosign, and the tag step gets `ASSET_DIR` and
@@ -74,10 +75,10 @@ names no crate and no file, so a new kvm_ test needs no workflow edit. A
 step before the run fails the job when no such test exists.
 
 The `vmm-archive` job is the one job of the gate alone (decision CH76 rule
-4). It builds the vmm archive with the `artifacts` job's script and holds
-guest-init static. On a code change that touches no file of the vmm
-build it skips each step after the checkout, as the `systemd-proof` job
-does. The scope gives that answer.
+4). It builds the vmm archive with the `artifacts` job's script, after the
+same musl-tools step, and holds guest-init static. On a code change that
+touches no file of the vmm build it skips each step after the checkout, as
+the `systemd-proof` job does. The scope gives that answer.
 """
 
 from __future__ import annotations
@@ -293,12 +294,27 @@ BUILD_STEP_ENV = {
     "ARTIFACT_OUT": ARTIFACT_DIR,
 }
 
+#: The words of the step that installs musl-gcc before each vmm build
+#: (plan risk 13). ring v0.17.14, a crate under CH, compiles C with
+#: `x86_64-linux-musl-gcc`, and the first gate run of H2 failed without it.
+#: bin/vm-smoke-setup.sh installs the same package with the same words, with
+#: runner sudo (CH36 G20).
+MUSL_TOOLS_RUN = (
+    "sudo apt-get update -qq && sudo apt-get install --yes --no-install-recommends -qq musl-tools"
+)
+
+#: That step, as the `artifacts` job holds it. The `vmm-archive` job holds
+#: the same step with the `if` of its other steps.
+MUSL_TOOLS_STEP = {"name": "musl-tools", "run": MUSL_TOOLS_RUN}
+
 #: The steps of the job, as a whole. The checkout keeps no token in the
 #: clone, because a build script runs here. The step that takes uv keeps no
-#: cache: the bytes of an archive come from a clean build.
+#: cache: the bytes of an archive come from a clean build. The musl-tools
+#: step comes before the build (plan risk 13).
 ARTIFACTS_STEPS = [
     {"uses": CHECKOUT_ACTION, "with": {"fetch-depth": 0, "persist-credentials": False}},
     {"uses": SETUP_UV, "with": {"enable-cache": False}},
+    MUSL_TOOLS_STEP,
     {"name": "build", "id": "build", "env": BUILD_STEP_ENV, "run": "bin/build-artifacts.sh"},
     {
         "uses": UPLOAD_ACTION,
@@ -356,12 +372,14 @@ fi
 echo "{STATIC_PROGRAM} of the vmm archive is static"
 """
 
-#: The steps of the job, as a whole. The build step is the build step of
-#: the `artifacts` job, with the vmm row planned: no step more, so the job
-#: shows what the release run would meet. Nothing uploads and nothing signs.
+#: The steps of the job, as a whole. The musl-tools step and the build step
+#: are the steps of the `artifacts` job, with the vmm row planned: no step
+#: more, so the job shows what the release run would meet (plan risk 13).
+#: Nothing uploads and nothing signs.
 VMM_ARCHIVE_STEPS = [
     {"uses": CHECKOUT_ACTION, "with": {"fetch-depth": 0, "persist-credentials": False}},
     {"uses": SETUP_UV, "if": ONLY_VMM, "with": {"enable-cache": False}},
+    {**MUSL_TOOLS_STEP, "if": ONLY_VMM},
     {
         "name": "build",
         "if": ONLY_VMM,
@@ -866,10 +884,10 @@ def test_the_two_workflows_have_the_same_jobs() -> None:
 
 def test_the_vmm_archive_job_is_pinned_as_a_whole() -> None:
     """Each key of the job and each step, in their order (decision CH76
-    rule 4). The build step runs the script of the `artifacts` job, with
-    its uv, for the vmm row of the catalog."""
+    rule 4). The musl-tools step and the build step run the words of the
+    `artifacts` job, with its uv, for the vmm row of the catalog."""
     job = JOBS[VMM_ARCHIVE_JOB]
-    artifacts_build = [one for one in RELEASE_JOBS[ARTIFACTS_JOB]["steps"] if "run" in one]
+    artifacts_runs = [one["run"] for one in RELEASE_JOBS[ARTIFACTS_JOB]["steps"] if "run" in one]
 
     assert set(job) == VMM_ARCHIVE_KEYS
     assert job["needs"] == "scope"
@@ -877,7 +895,27 @@ def test_the_vmm_archive_job_is_pinned_as_a_whole() -> None:
     assert job["runs-on"] == "ubuntu-24.04"
     assert 0 < job["timeout-minutes"] <= RELEASE_JOBS[ARTIFACTS_JOB]["timeout-minutes"]
     assert job["steps"] == VMM_ARCHIVE_STEPS
-    assert [one["run"] for one in artifacts_build] == [VMM_ARCHIVE_STEPS[2]["run"]]
+    assert artifacts_runs == [one["run"] for one in VMM_ARCHIVE_STEPS[2:4]]
+
+
+def test_both_vmm_builds_install_musl_tools_just_before_the_build() -> None:
+    """The `artifacts` job and the `vmm-archive` job each hold one
+    musl-tools step, right before the build step (plan risk 13). The two
+    steps are equal but for the `if` of the gate job. bin/vm-smoke-setup.sh
+    runs the same words for the same reason (fact 78)."""
+    for steps, rule in (
+        (RELEASE_JOBS[ARTIFACTS_JOB]["steps"], None),
+        (JOBS[VMM_ARCHIVE_JOB]["steps"], ONLY_VMM),
+    ):
+        names = [one.get("name") for one in steps]
+        at = names.index(MUSL_TOOLS_STEP["name"])
+        step = dict(steps[at])
+
+        assert names.count(MUSL_TOOLS_STEP["name"]) == 1
+        assert names[at + 1] == "build"
+        assert step.pop("if", None) == rule
+        assert step == MUSL_TOOLS_STEP
+    assert MUSL_TOOLS_RUN in (REPO / "bin" / "vm-smoke-setup.sh").read_text()
 
 
 def test_the_vmm_archive_job_checks_guest_init_of_the_vmm_row() -> None:
